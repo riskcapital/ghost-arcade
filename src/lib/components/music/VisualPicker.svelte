@@ -7,19 +7,21 @@
    * chooses, Esc closes. Pictures are rendered once and cached.
    */
   import { tick } from 'svelte';
-  import { VOICE_SHADERS } from '../../music/visualScenes';
+  import { VOICE_PACKS, VOICE_SHADERS, type VoicePack } from '../../music/visualScenes';
   import { STUDIO_SETS, type StudioSet } from '../../music/studioSets';
   import { visualFavourites, visualPicker } from '../../music/studioUi';
   import { demoVoiceCode, voiceRespondsTo } from '../../music/voiceThumbnails';
   import { generateCachedThumbnail } from '../../isf/thumbnail';
 
-  interface Item { file: string | null; name: string; family: StudioSet | null; blurb: string }
+  interface Item { file: string | null; name: string; family: StudioSet | null; pack?: VoicePack; blurb: string }
 
-  const ITEMS: Item[] = VOICE_SHADERS.map((v) => ({ file: v.file, name: v.name, family: v.family, blurb: v.blurb }));
+  const ITEMS: Item[] = VOICE_SHADERS.map((v) => ({ file: v.file, name: v.name, family: v.family, pack: v.pack, blurb: v.blurb }));
   const NONE: Item = { file: null, name: 'None', family: null, blurb: 'No visual' };
+  // Pack tabs appear once a pack has visuals in it.
+  const PACK_TABS = VOICE_PACKS.filter((p) => ITEMS.some((i) => i.pack === p.id));
 
   const req = $derived($visualPicker);
-  let family = $state<StudioSet | 'all'>('all');
+  let family = $state<StudioSet | VoicePack | 'all'>('all');
   let query = $state('');
   let favsOnly = $state(false);
   let focus = $state(0);
@@ -100,7 +102,7 @@
   const shown = $derived.by(() => {
     const q = query.trim().toLowerCase();
     const list = ITEMS.filter((i) => {
-      if (family !== 'all' && i.family !== family) return false;
+      if (family !== 'all' && i.family !== family && i.pack !== family) return false;
       if (favsOnly && !$visualFavourites.includes(i.file!)) return false;
       return !q || i.name.toLowerCase().includes(q) || i.blurb.toLowerCase().includes(q) || (responds[i.file!] ?? '').includes(q);
     });
@@ -172,6 +174,9 @@
           <button role="tab" aria-selected={family === 'all'} class:active={family === 'all'} onclick={() => { family = 'all'; focus = 0; }}>All</button>
           {#each STUDIO_SETS as st (st.id)}
             <button role="tab" aria-selected={family === st.id} class:active={family === st.id} onclick={() => { family = st.id; focus = 0; }}>{st.label}</button>
+          {/each}
+          {#each PACK_TABS as pk (pk.id)}
+            <button role="tab" aria-selected={family === pk.id} class:active={family === pk.id} onclick={() => { family = pk.id; focus = 0; }}>{pk.label}</button>
           {/each}
         </div>
         <input class="search" type="search" placeholder="Search" bind:value={query} bind:this={searchEl} aria-label="Search visuals" />

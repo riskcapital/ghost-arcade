@@ -20,7 +20,12 @@ export interface VoiceShader {
   family: StudioSet;
   /** One line on what it is. */
   blurb: string;
+  /** A themed collection it belongs to, with its own tab in the visual browser. */
+  pack?: VoicePack;
 }
+
+export type VoicePack = 'glitch';
+export const VOICE_PACKS: readonly { id: VoicePack; label: string }[] = [{ id: 'glitch', label: 'Glitch' }];
 
 export const VOICE_SHADERS: readonly VoiceShader[] = [
   { file: 'VX-Barcode.fs', name: 'Barcode', family: 'berlin', blurb: 'Black and white data stripes that re-roll on every hit' },
@@ -76,6 +81,27 @@ export const VOICE_SHADERS: readonly VoiceShader[] = [
   { file: 'VX-SyncRoll.fs', name: 'Sync Roll', family: 'analog', blurb: 'A test picture that rolls when it loses sync' },
   { file: 'VX-VectorText.fs', name: 'Vector Text', family: 'analog', blurb: 'Note names written in beam strokes' },
   { file: 'VX-Colorizer.fs', name: 'Colorizer', family: 'analog', blurb: 'A light field sliced into colour bands' },
+  // The Glitch pack.
+  { file: 'VX-VHSTracking.fs', name: 'VHS Tracking', family: 'dub', pack: 'glitch', blurb: 'A night drive off worn tape; hits throw the tracking out' },
+  { file: 'VX-CRTCollapse.fs', name: 'CRT Collapse', family: 'analog', pack: 'glitch', blurb: 'A TV station ident on an old tube that switches off on hits' },
+  { file: 'VX-Interlace.fs', name: 'Interlace', family: 'analog', pack: 'glitch', blurb: 'A spinning ring of level meters whose two fields split on hits' },
+  { file: 'VX-Hologram.fs', name: 'Hologram', family: 'bath', pack: 'glitch', blurb: 'A projected head of glowing slices that breaks up on hits' },
+  { file: 'VX-HexDump.fs', name: 'Hex Dump', family: 'berlin', pack: 'glitch', blurb: 'A memory dump whose bytes corrupt and spread on hits' },
+  { file: 'VX-ASCIIRot.fs', name: 'ASCII Rot', family: 'berlin', pack: 'glitch', blurb: 'A lit 3D form drawn in text, rotting in accent on hits' },
+  { file: 'VX-WrongStride.fs', name: 'Wrong Stride', family: 'berlin', pack: 'glitch', blurb: 'A raw picture read with the wrong stride, shearing on hits' },
+  { file: 'VX-BadSectors.fs', name: 'Bad Sectors', family: 'berlin', pack: 'glitch', blurb: 'A disk platter where bad sectors spread on hits' },
+  { file: 'VX-Bitplanes.fs', name: 'Bitplanes', family: 'berlin', pack: 'glitch', blurb: 'A glowing picture split into its eight bit planes on every hit' },
+  { file: 'VX-DitherStorm.fs', name: 'Dither Storm', family: 'analog', pack: 'glitch', blurb: 'A glowing globe drawn only in dither, crushed by shock fronts' },
+  { file: 'VX-PixelDrip.fs', name: 'Pixel Drip', family: 'dub', pack: 'glitch', blurb: 'A pixel picture that melts into drips on hits and re-forms' },
+  { file: 'VX-PixelBurst.fs', name: 'Pixel Burst', family: 'berlin', pack: 'glitch', blurb: 'A chunky pixel figure that explodes in depth and snaps back' },
+  { file: 'VX-ShardBreak.fs', name: 'Shard Break', family: 'bath', pack: 'glitch', blurb: 'A glass pane over light shatters into radial shards on hits' },
+  { file: 'VX-BrokenMirror.fs', name: 'Broken Mirror', family: 'bath', pack: 'glitch', blurb: 'A kaleidoscope behind a cracked pane slips out of register' },
+  { file: 'VX-RadialTear.fs', name: 'Radial Tear', family: 'berlin', pack: 'glitch', blurb: 'Rings of a great dial torn into sectors that jump and smear' },
+  { file: 'VX-TileFlip.fs', name: 'Tile Flip', family: 'berlin', pack: 'glitch', blurb: 'A wall of tiles flips in waves to show corrupted backs' },
+  { file: 'VX-WireCorrupt.fs', name: 'Wire Corrupt', family: 'analog', pack: 'glitch', blurb: 'A glowing wire sculpture that tears apart on hits and heals' },
+  { file: 'VX-BeamBurn.fs', name: 'Beam Burn', family: 'analog', pack: 'glitch', blurb: 'A phosphor beam that flares, skips and scorches the glass on hits' },
+  { file: 'VX-NeonFault.fs', name: 'Neon Fault', family: 'dub', pack: 'glitch', blurb: 'A neon sign that buzzes and drops letters on hits' },
+  { file: 'VX-LiquidSignal.fs', name: 'Liquid Signal', family: 'bath', pack: 'glitch', blurb: 'A bold picture melting into glossy streaks, stirred on hits' },
 ];
 
 export const voiceShaderByFile = (file: string): VoiceShader | undefined => VOICE_SHADERS.find((v) => v.file === file);

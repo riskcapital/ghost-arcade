@@ -76,7 +76,7 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" /></svg>
             </button>
           </div>
-          <select aria-label="Studio sound {track.name} also plays as" value={s.liveRoles[track.name] ?? ''} onchange={(e) => setRole(track.name, (e.target as HTMLSelectElement).value)} title="Visuals can follow this track itself (Visuals panel); it can also play as one of the studio's sounds, for visuals already following that sound">
+          <select aria-label="{track.name}: also plays as a studio sound" value={s.liveRoles[track.name] ?? ''} onchange={(e) => setRole(track.name, (e.target as HTMLSelectElement).value)} title="Visuals can follow this track itself (Visuals panel); it can also play as one of the studio's sounds, for visuals already following that sound">
             <option value="">Its own visuals</option>
             {#each PART_SOURCES as v (v.id)}<option value={v.id}>{v.label}</option>{/each}
           </select>
