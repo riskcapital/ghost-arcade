@@ -44,6 +44,11 @@ import {
   nativeVideoTransportSnapshot, nativeVideoAnchorDirection, nativeVideoLoopProgress,
 } from '../media/nativeTransport';
 
+/** A clip that hosts a Music Studio instance (its plugin source). */
+function isMusicStudioClip(clip: { effectSource?: unknown } | null | undefined): boolean {
+  return (clip?.effectSource as { effectType?: unknown } | undefined)?.effectType === 'music-studio';
+}
+
 // Cache parsed ISF shader inputs per shader code to avoid re-parsing every
 // frame. Bounded: keys are entire shader source strings, so an unbounded
 // map grows by full shader sources for every unique shader touched in a
@@ -2099,6 +2104,10 @@ function createVJClipLauncherStore() {
             didTrigger = true;
             return { ...layerState, activeColumn: columnIndex, activeClip: triggeredClip };
           }
+          // A playing Music Studio is an instrument, not a cue: a column with
+          // nothing in its row leaves it playing (Ableton scene links and studio
+          // scenes fire columns, and must not cut the Studio off).
+          if (isMusicStudioClip(layerState.activeClip)) return layerState;
           if (layerState.activeClip) {
             outgoingVideos.push(layerState.activeClip);
           }

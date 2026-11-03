@@ -26,7 +26,7 @@ import {
   type StudioVoice,
 } from './studioPlugin';
 import type { StudioSet } from './studioSets';
-import type { VoiceSourceId } from './visualVoices';
+import type { LiveSourceId, VoiceSourceId } from './visualVoices';
 
 export type StudioTarget =
   | { kind: 'vj'; deck: VJDeck; layer: number; column: number; playing: boolean; source: Required<StudioPluginSource> }
@@ -213,12 +213,12 @@ export function setStudioSet(set: StudioSet): boolean {
   return editStudio((s) => ({ ...s, musicSet: set }));
 }
 
-export function addStudioVoice(file: string, source: VoiceSourceId): boolean {
+export function addStudioVoice(file: string, source: VoiceSourceId, live?: LiveSourceId): boolean {
   if (!placeStudio()) return false;
   return editStudio((s) => s.musicVoices.length >= MAX_STUDIO_VOICES ? s : ({
     ...s,
     musicSceneId: null,
-    musicVoices: [...s.musicVoices, { file, source, auto: true, level: 1, params: {} }],
+    musicVoices: [...s.musicVoices, { file, source, ...(live ? { live } : {}), auto: true, level: 1, params: {} }],
   }));
 }
 

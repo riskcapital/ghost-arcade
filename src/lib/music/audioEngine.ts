@@ -110,8 +110,6 @@ export class MusicAudioEngine {
   private strips = new Map<ChannelId, Strip>();
   private mixer: MixerState = {};
   private mixerChannels: readonly ChannelId[] = [];
-  /** Studio instruments go quiet while Live is in control; the input stays. */
-  private instrumentsSilenced = false;
   /** Each band input's fader, monitor and effects send, by input. */
   private inputs: readonly Pick<LiveInputSettings, 'volume' | 'monitor' | 'fxSend'>[] = [{ volume: 0.5, monitor: true, fxSend: 1 }];
   /** Each band input's send into the band effects. */
@@ -653,11 +651,6 @@ export class MusicAudioEngine {
     this.applyMixer();
   }
 
-  setInstrumentsSilenced(on: boolean): void {
-    this.instrumentsSilenced = on;
-    this.applyMixer();
-  }
-
   /**
    * The band inputs' faders (0-1, up to +6 dB at the top), monitors (off,
    * an input only drives the visuals) and effects sends. A strip is made for
@@ -751,7 +744,6 @@ export class MusicAudioEngine {
       strip.pan.pan.setTargetAtTime(settings.pan, t, MIXER_RAMP_SECONDS);
       let open = channelAudible(this.mixer, id, this.mixerChannels);
       if (isInputChannel(id)) open = open && (this.inputs[INPUT_CHANNELS.indexOf(id)]?.monitor ?? true);
-      else if (this.instrumentsSilenced) open = false;
       strip.gate.gain.setTargetAtTime(open ? 1 : 0, t, MIXER_RAMP_SECONDS);
       if (strip.sends) for (const r of RETURN_IDS) strip.sends[r].gain.setTargetAtTime(settings.sends?.[r] ?? 0, t, MIXER_RAMP_SECONDS);
     }

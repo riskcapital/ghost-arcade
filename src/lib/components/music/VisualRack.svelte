@@ -9,7 +9,9 @@
   import { onDestroy, tick as nextTick } from 'svelte';
   import { musicStudio } from '../../music/musicStudioStore';
   import { STUDIO_SETS } from '../../music/studioSets';
-  import { voiceSourcesFor, isVoiceDrivenInput, type VoiceSourceId } from '../../music/visualVoices';
+  import { voiceSourcesFor, isVoiceDrivenInput, isLiveSource, liveSource, LIVE_DRUMS, type LiveDrum, type LiveSourceId, type VoiceSourceId } from '../../music/visualVoices';
+  import { abletonBridge } from '../../ableton/abletonBridge';
+  import { guessRole, isDrumTrack } from '../../music/liveControl';
   import { VISUAL_SCENES, VOICE_SHADERS, shaderInputs, voiceShaderByFile, type ShaderInput } from '../../music/visualScenes';
   import { visualPicker } from '../../music/studioUi';
   import VisualPickButton from './VisualPickButton.svelte';
@@ -46,6 +48,47 @@
   const ownScenes = $derived(VISUAL_SCENES.filter((sc) => sc.set === s.set));
   const otherScenes = $derived(VISUAL_SCENES.filter((sc) => sc.set !== s.set));
 
+  // ── Ableton Live ──
+  // While the studio plays with Live, each Live track (and each drum of a drum
+  // track) is a sound a voice can follow, and the tracks with what they play
+  // now are listed here to put visuals on.
+  const liveOn = $derived(s.isOpen && s.liveControl && $abletonBridge.connected);
+  const liveTracks = $derived(liveOn ? $abletonBridge.tracks.map((t) => {
+    const role = s.liveRoles[t.name] ?? null;
+    const playing = t.playing >= 0 ? t.slots[t.playing] : null;
+    const queued = t.fired >= 0 && t.fired !== t.playing ? t.slots[t.fired] : null;
+    return { name: t.name, color: t.color, midi: t.midi, drums: isDrumTrack(t, role), role, playing: playing?.name ?? null, queued: queued?.name ?? null };
+  }) : []);
+  let liveListOpen = $state(true);
+  const liveColor = (c: number) => `#${(c & 0xffffff).toString(16).padStart(6, '0')}`;
+  /** A voice's follow value in the menu: its Live source while Live leads, its studio sound otherwise. */
+  const followValue = (v: StudioVoice) => (liveOn && v.live ? v.live : v.source);
+  const following = (src: LiveSourceId) => voices.filter((v) => v.live === src || (v.live?.startsWith(`${src}/`) ?? false)).length;
+
+  function setFollow(i: number, value: string) {
+    if (isLiveSource(value)) setStudioVoice(i, { live: value });
+    else setStudioVoice(i, { source: value as VoiceSourceId, live: undefined });
+  }
+
+  /** The studio sound a voice on a Live track falls back to without Live. */
+  function fallbackFor(track: { name: string; role: VoiceSourceId | null }, drum?: LiveDrum): VoiceSourceId {
+    return drum ?? track.role ?? guessRole(track.name) ?? 'all';
+  }
+
+  function addForTrack(track: (typeof liveTracks)[number], drum?: LiveDrum) {
+    const live = liveSource(track.name, drum);
+    const what = drum ? `${track.name}: ${LIVE_DRUMS.find((d) => d.id === drum)?.label}` : track.name;
+    visualPicker.set({ current: null, none: false, title: `A visual for ${what}`, pick: (f) => { if (f && addStudioVoice(f, fallbackFor(track, drum), live)) open = voices.length; } });
+  }
+
+  function addFromMenu(track: (typeof liveTracks)[number], e: Event) {
+    const el = e.target as HTMLSelectElement;
+    const value = el.value;
+    el.value = '';
+    if (value === 'track') addForTrack(track);
+    else if (value) addForTrack(track, value as LiveDrum);
+  }
+
   const where = $derived(
     !target ? '' : target.kind === 'vj' ? `Deck ${target.deck}, row ${target.layer + 1}${target.playing ? '' : ' (stopped)'}` : `Layer: ${target.name}`,
   );
@@ -60,7 +103,7 @@
   let frame = 0;
   function tick() {
     const next = voices.map((v) => {
-      const d = studioRenderInputs.driven(v.source, v.auto);
+      const d = studioRenderInputs.driven(v.source, v.auto, v.live);
       return Math.min(1, (0.25 + 0.75 * (d.vxEnv ?? 0)) * (d.vxPresence ?? 1));
     });
     // Only repaint the lights when one has visibly changed.
@@ -149,6 +192,36 @@
       <button class="studio-btn" onclick={putInPlace}>{$vjClipLauncher.isOpen ? 'Put it on the deck' : 'Show it on the selected layer'}</button>
     </div>
   {:else}
+    {#if liveOn}
+      <section class="live" aria-label="Live tracks">
+        <button class="live-head" onclick={() => (liveListOpen = !liveListOpen)} aria-expanded={liveListOpen} title={liveListOpen ? 'Fold the Live tracks away' : 'Show the Live tracks'}>
+          <svg viewBox="0 0 12 12" aria-hidden="true"><path d={liveListOpen ? 'M3 4.5l3 3 3-3' : 'M4.5 3l3 3-3 3'} /></svg>
+          <span class="ga-eyebrow">In Live now</span>
+          <span class="live-count">{liveTracks.length} tracks</span>
+        </button>
+        {#if liveListOpen}
+          <div class="live-tracks">
+            {#each liveTracks as t (t.name)}
+              <div class="live-track" class:quiet={!t.playing}>
+                <span class="swatch" style="background: {liveColor(t.color)}"></span>
+                <span class="live-name" title={t.name}>{t.name}</span>
+                <span class="live-clip" title={t.playing ? `Playing ${t.playing}${t.queued ? `, ${t.queued} next` : ''}` : 'Nothing playing'}>{t.playing ?? '—'}{#if t.queued} → {t.queued}{/if}</span>
+                {#if following(liveSource(t.name))}<span class="live-n" title="Visuals following this track">{following(liveSource(t.name))}</span>{/if}
+                {#if t.drums}
+                  <select class="live-add" value="" onchange={(e) => addFromMenu(t, e)} aria-label="Add a visual for {t.name}" title="Add a visual that follows this track, or one of its drums" disabled={voices.length >= MAX_STUDIO_VOICES}>
+                    <option value="" disabled>+ Visual</option>
+                    <option value="track">Whole track</option>
+                    {#each LIVE_DRUMS as d (d.id)}<option value={d.id}>{d.label}</option>{/each}
+                  </select>
+                {:else}
+                  <button class="live-add studio-btn" onclick={() => addForTrack(t)} title="Add a visual that follows this track" disabled={voices.length >= MAX_STUDIO_VOICES}>+ Visual</button>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </section>
+    {/if}
     <p class="order">Top of the list draws on top · drag ⋮⋮ or Alt+↑↓ to reorder</p>
     <div class="voices">
       {#each voices as voice, i (i)}
@@ -193,8 +266,23 @@
             <button class="icon step" onclick={() => stepVoiceLook(i, 1)} aria-label="Next look for voice {i + 1}" title="Next look" data-midi-path="studio:voice.{i + 1}.look-next" data-midi-label="Voice {i + 1} next look" data-midi-mode="toggle">
               <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 3 7.5 6l-3 3" /></svg>
             </button>
-            <select class="follows" value={voice.source} onchange={(e) => setStudioVoice(i, { source: (e.target as HTMLSelectElement).value as VoiceSourceId })} aria-label="Sound voice {i + 1} follows" title="The sound this voice follows" data-midi-path="studio:voice.{i + 1}.follow-next" data-midi-label="Voice {i + 1} next sound to follow" data-midi-mode="toggle">
-              {#each voiceSourcesFor($musicStudio.set, voice.source) as src (src.id)}<option value={src.id}>{src.label}</option>{/each}
+            <select class="follows" class:live={liveOn && !!voice.live} value={followValue(voice)} onchange={(e) => setFollow(i, (e.target as HTMLSelectElement).value)} aria-label="Sound voice {i + 1} follows" title={liveOn && voice.live ? 'The Live track this voice follows' : 'The sound this voice follows'} data-midi-path="studio:voice.{i + 1}.follow-next" data-midi-label="Voice {i + 1} next sound to follow" data-midi-mode="toggle">
+              {#if liveOn}
+                <optgroup label="Ableton Live">
+                  {#each liveTracks as t (t.name)}
+                    <option value={liveSource(t.name)}>{t.name}</option>
+                    {#if t.drums}{#each LIVE_DRUMS as d (d.id)}<option value={liveSource(t.name, d.id)}>{t.name}: {d.label}</option>{/each}{/if}
+                  {/each}
+                  {#if voice.live && !liveTracks.some((t) => voice.live === liveSource(t.name) || voice.live?.startsWith(`${liveSource(t.name)}/`))}
+                    <option value={voice.live}>{voice.live.slice(5)} (not in this set)</option>
+                  {/if}
+                </optgroup>
+                <optgroup label="Studio">
+                  {#each voiceSourcesFor($musicStudio.set, voice.source) as src (src.id)}<option value={src.id}>{src.label}</option>{/each}
+                </optgroup>
+              {:else}
+                {#each voiceSourcesFor($musicStudio.set, voice.source) as src (src.id)}<option value={src.id}>{src.label}</option>{/each}
+              {/if}
             </select>
             <button class="auto studio-btn" class:on={voice.auto} onclick={() => setStudioVoice(i, { auto: !voice.auto })} aria-pressed={voice.auto} title={voice.auto ? 'Shows only while its sound plays' : 'Always shows'}>Auto</button>
             <button class="icon" onclick={() => removeStudioVoice(i)} aria-label="Remove voice {i + 1}" title="Remove this voice">
@@ -228,6 +316,21 @@
 </StudioModule>
 
 <style>
+  .live { flex: 0 0 auto; margin-bottom: 6px; border-bottom: 1px solid var(--studio-edge-soft); padding-bottom: 4px; }
+  .live-head { display: flex; align-items: center; gap: 6px; width: 100%; padding: 2px 0; border: 0; background: none; color: var(--studio-ink); cursor: pointer; text-align: left; }
+  .live-head svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; flex: 0 0 auto; }
+  .live-count { margin-left: auto; font-size: var(--ga-text-micro, 9px); color: var(--studio-muted); }
+  /* A long set scrolls here rather than pushing the visuals away. */
+  .live-tracks { max-height: 168px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; padding-top: 2px; }
+  .live-track { display: flex; align-items: center; gap: 6px; min-width: 0; height: 22px; font-size: var(--ga-text-meta, 11px); }
+  .live-track.quiet .live-name, .live-track.quiet .live-clip { color: var(--studio-muted); }
+  .swatch { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 2px; }
+  .live-name { flex: 0 1 38%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--studio-ink); }
+  .live-clip { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--studio-muted); }
+  .live-n { flex: 0 0 auto; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px; background: var(--studio-accent-soft, rgba(255,255,255,0.1)); color: var(--studio-accent); font-size: 9px; line-height: 14px; text-align: center; }
+  .live-add { flex: 0 0 auto; height: 20px; padding: 0 6px; font-size: var(--ga-text-meta, 11px); }
+  select.live-add { width: 74px; }
+  .follows.live { color: var(--studio-accent); }
   .voices { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
   .voice { padding: 4px 0; border-bottom: 1px solid var(--studio-edge-soft); }
   .voice.dragging { opacity: 0.4; }

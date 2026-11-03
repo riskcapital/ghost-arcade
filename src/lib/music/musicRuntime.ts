@@ -107,7 +107,7 @@ import { MAX_STUDIO_VOICES, normalizeStudioSource, type StudioVoice } from './st
 import { soundById } from './sounds/library';
 import { KeyFinder, type KeyGuess } from './keyFinder';
 import { attachLooper, killLooper, stopLooper } from './looperRuntime';
-import type { VoiceSourceId } from './visualVoices';
+import type { AnySourceId, LiveSourceId, VoiceSourceId } from './visualVoices';
 import { BandFxVisuals } from './bandFxVisuals';
 // The studio's MIDI controls and the band's keys answer while the Studio view is hidden.
 import './studioMidiControls';
@@ -2215,6 +2215,44 @@ export function pushOutsideNote(type: 'on' | 'off', note: number, velocity: numb
   ensureFrameLoop();
 }
 
+/**
+ * A note from a Live track, into the voices following that track (and its
+ * drum, on a drum track) as well as any studio part the track stands in for.
+ */
+export function pushLiveNote(type: 'on' | 'off', note: number, velocity: number, sources: AnySourceId[], delaySeconds = 0, oneShot = false): void {
+  if (!sources.length) return;
+  const event: NoteEvent = {
+    type,
+    instrument: oneShot ? 'drums' : 'synth',
+    note: Math.max(0, Math.min(127, Math.round(note))),
+    velocity: type === 'on' ? Math.max(0, Math.min(1, velocity)) : 0,
+    source: 'midi',
+    time: audio.now() + Math.max(0, delaySeconds),
+  };
+  voices.push(event, sources);
+  ensureFrameLoop();
+}
+
+/** A Live audio track's level, into the voices following it. */
+export function setLiveLevel(source: LiveSourceId, level: number): void {
+  voices.setLevel(source, level);
+  if (level > 0.001) ensureFrameLoop();
+}
+
+/** Live sources still followed; the rest are forgotten. */
+export function keepLiveSources(keep: ReadonlySet<string>): void {
+  voices.dropLiveSources(keep);
+}
+
+let liveFeedOn = false;
+/** The studio is playing with Live (open, in Live mode, connected). */
+export function setLiveFeedActive(on: boolean): void {
+  liveFeedOn = on;
+}
+function liveFeedActive(): boolean {
+  return liveFeedOn;
+}
+
 // ── The band ────────────────────────────────────────────────────────────
 
 export interface BandState {
@@ -2311,14 +2349,16 @@ function releaseBand(): void {
 /** This frame's signals per sound, shared by every voice following it. */
 const studioDriven = new Map<string, Record<string, number>>();
 
-function drivenForStudio(source: VoiceSourceId, auto: boolean): Record<string, number> {
+function drivenForStudio(source: VoiceSourceId, auto: boolean, live?: LiveSourceId): Record<string, number> {
   // With the studio closed nothing plays, so a voice on Auto would never
   // show (a studio on a mapping layer would stay black): it shows at rest.
   const follows = auto && wasOpen;
-  const key = `${source}:${follows}`;
+  // A voice given a Live track follows it while the studio plays with Live.
+  const followed: AnySourceId = live && liveFeedActive() ? live : source;
+  const key = `${followed}:${follows}`;
   let values = studioDriven.get(key);
   if (!values) {
-    values = voices.inputs(source, follows);
+    values = voices.inputs(followed, follows);
     studioDriven.set(key, values);
   }
   return values;
@@ -2558,10 +2598,10 @@ export function ensureMusicRuntime(): void {
     audio.setMasterVolume(s.masterVolume);
     applyCableMods(s);
     syncBandInputs(s);
-    // With Live in control the studio's instruments step aside.
+    // With Live playing the backing, the studio's own loops and sequences
+    // stop; its instruments stay live, to play on top.
     if (s.liveControl && !wasLiveControl) stopAll();
     wasLiveControl = s.liveControl;
-    audio.setInstrumentsSilenced(s.liveControl);
     visuals.setSettings(s.visuals);
     syncKeyboard(s);
     if (!macroSubscribed) {

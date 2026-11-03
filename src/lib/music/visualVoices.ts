@@ -62,6 +62,50 @@ export const VOICE_SOURCES: readonly { id: string; label: string; sets?: readonl
 
 export type VoiceSourceId = 'all' | 'kick' | 'snare' | 'hats' | 'perc' | 'bass' | 'lead' | 'chords' | 'pad' | 'fx' | 'played' | 'bowls' | 'drone' | 'xy' | 'analog' | 'scan' | 'echo' | 'drop' | 'siren' | 'acid' | 'dubbass';
 
+/**
+ * A Live track (or one drum of a drum track) a voice follows while the studio
+ * plays with Ableton: `live:<track name>` or `live:<track name>/<drum>`. Named,
+ * not numbered, so moving tracks around in Live keeps every visual on its sound.
+ */
+export type LiveSourceId = `live:${string}`;
+/** Any source the voice engine tracks. */
+export type AnySourceId = VoiceSourceId | LiveSourceId;
+export type LiveDrum = 'kick' | 'snare' | 'hats' | 'perc';
+export const LIVE_DRUMS: readonly { id: LiveDrum; label: string }[] = [
+  { id: 'kick', label: 'Kick' },
+  { id: 'snare', label: 'Snare and clap' },
+  { id: 'hats', label: 'Hats' },
+  { id: 'perc', label: 'Toms and cymbals' },
+];
+
+export function liveSource(track: string, drum?: LiveDrum): LiveSourceId {
+  return `live:${track}${drum ? `/${drum}` : ''}`;
+}
+export function isLiveSource(id: unknown): id is LiveSourceId {
+  return typeof id === 'string' && id.startsWith('live:') && id.length > 5;
+}
+/** The track name and drum a Live source names. */
+export function parseLiveSource(id: LiveSourceId): { track: string; drum?: LiveDrum } {
+  const body = id.slice(5);
+  const slash = body.lastIndexOf('/');
+  const drum = slash >= 0 ? body.slice(slash + 1) : '';
+  if (LIVE_DRUMS.some((d) => d.id === drum)) return { track: body.slice(0, slash), drum: drum as LiveDrum };
+  return { track: body };
+}
+
+/**
+ * The drum a General MIDI drum note plays (what Drum Racks and most kits
+ * follow): 35-36 kick; 37-40 snare, rim and clap; 42, 44 and 46 hats; the
+ * toms and cymbals the rest of the kit.
+ */
+export function gmDrum(note: number): LiveDrum | null {
+  if (note === 35 || note === 36) return 'kick';
+  if (note >= 37 && note <= 40) return 'snare';
+  if (note === 42 || note === 44 || note === 46) return 'hats';
+  if (note === 41 || note === 43 || note === 45 || note === 47 || note === 48 || note === 50 || (note >= 49 && note <= 59)) return 'perc';
+  return null;
+}
+
 /** The sources a voice can follow in `set`, keeping `current` even when the set lacks it. */
 export function voiceSourcesFor(set: StudioSet, current?: string): typeof VOICE_SOURCES {
   return VOICE_SOURCES.filter((s) => !s.sets || s.sets.includes(set) || s.id === current);
@@ -135,6 +179,18 @@ const SHAPES: Record<VoiceSourceId, SourceShape> = {
   acid: { attack: 0.004, release: 0.25, oneShot: false },
   dubbass: { attack: 0.008, release: 0.35, oneShot: false },
 };
+
+/** A whole Live track moves like a played part; a drum of a drum track like the studio's own. */
+const LIVE_TRACK_SHAPE: SourceShape = { attack: 0.006, release: 0.35, oneShot: false };
+function shapeOf(id: string): SourceShape {
+  const fixed = SHAPES[id as VoiceSourceId];
+  if (fixed) return fixed;
+  if (isLiveSource(id)) {
+    const { drum } = parseLiveSource(id);
+    return drum ? SHAPES[drum] : LIVE_TRACK_SHAPE;
+  }
+  return SHAPES.all;
+}
 
 const HIT_SECONDS = 0.08;
 const GLIDE_SECONDS = 0.12;
@@ -261,15 +317,17 @@ export interface VoiceClock {
 }
 
 export class VoiceSignals {
-  private states = Object.fromEntries(VOICE_SOURCES.map((s) => [s.id, freshState()])) as Record<VoiceSourceId, SourceState>;
-  private pending: Array<{ event: NoteEvent; sources: VoiceSourceId[] }> = [];
+  private states = new Map<string, SourceState>(VOICE_SOURCES.map((s) => [s.id, freshState()]));
+  /** A Live audio track's level, 0-1, held per source (no notes to build an envelope from). */
+  private levels = new Map<string, number>();
+  private pending: Array<{ event: NoteEvent; sources: AnySourceId[] }> = [];
   private clock = 0;
   private energy = 0;
   private beat = 0;
   private beatSeconds = 0.5;
 
   /** Queue an event for the sources it belongs to; it takes effect when the clock reaches it. */
-  push(event: NoteEvent, sources: VoiceSourceId[]): void {
+  push(event: NoteEvent, sources: AnySourceId[]): void {
     const time = Number.isFinite(event.time) ? Math.max(event.time, this.clock) : this.clock;
     const queued = { event: { ...event, time }, sources };
     let i = this.pending.length;
@@ -285,17 +343,39 @@ export class VoiceSignals {
     while (this.pending.length && this.pending[0].event.time <= time) {
       const { event, sources } = this.pending.shift()!;
       this.integrate(event.time);
-      for (const id of sources) this.apply(this.states[id], event);
+      for (const id of sources) this.apply(this.state(id), event);
     }
     this.integrate(time);
+  }
+
+  /** A source's state, made the first time it is heard (Live tracks come and go). */
+  private state(id: string): SourceState {
+    let state = this.states.get(id);
+    if (!state) {
+      state = freshState();
+      this.states.set(id, state);
+    }
+    return state;
+  }
+
+  /** A continuous level for a source (a Live audio track's meter), shown in its envelope. */
+  setLevel(id: AnySourceId, level: number): void {
+    this.state(id);
+    this.levels.set(id, Math.max(0, Math.min(1, Number.isFinite(level) ? level : 0)));
+  }
+
+  /** Forget Live sources nobody follows any more. */
+  dropLiveSources(keep: ReadonlySet<string>): void {
+    for (const id of [...this.states.keys()]) if (isLiveSource(id) && !keep.has(id)) { this.states.delete(id); this.levels.delete(id); }
   }
 
   /** Let every held note go (stop, panic); what is showing still fades. */
   releaseAll(): void {
     this.pending = this.pending.filter((p) => p.event.type === 'off');
-    for (const state of Object.values(this.states)) {
+    for (const state of this.states.values()) {
       for (const n of state.notes) if (n.offTime === null) n.offTime = this.clock;
     }
+    this.levels.clear();
   }
 
   get time(): number {
@@ -304,14 +384,14 @@ export class VoiceSignals {
 
   /** True while anything is moving that a voice would show. */
   isActive(): boolean {
-    return Object.values(this.states).some((s) => s.notes.length > 0 || s.hit > 0.001 || s.presence > 0.001) || this.energy > 0.001;
+    return [...this.states.values()].some((s) => s.notes.length > 0 || s.hit > 0.001 || s.presence > 0.001) || this.energy > 0.001 || [...this.levels.values()].some((l) => l > 0.001);
   }
 
   /** The inputs for a voice following `source`. Without `auto` it is always present. */
-  inputs(source: VoiceSourceId, auto: boolean): Record<string, number> {
-    const state = this.states[source];
-    const shape = SHAPES[source];
-    let env = 0;
+  inputs(source: AnySourceId, auto: boolean): Record<string, number> {
+    const state = this.states.get(source) ?? freshState();
+    const shape = shapeOf(source);
+    let env = this.levels.get(source) ?? 0;
     const sounding = state.notes
       .map((n) => ({ note: n.note, energy: noteEnvelope(shape, n, this.clock) }))
       .sort((a, b) => b.energy - a.energy);
@@ -365,16 +445,16 @@ export class VoiceSignals {
     const presenceIn = 1 - Math.exp(-dt / PRESENCE_IN_SECONDS);
     const presenceOut = 1 - Math.exp(-dt / (PRESENCE_OUT_BEATS * this.beatSeconds));
     const holdSeconds = PRESENCE_HOLD_BEATS * this.beatSeconds;
-    for (const id of Object.keys(this.states) as VoiceSourceId[]) {
-      const state = this.states[id];
-      const shape = SHAPES[id];
-      let env = 0;
+    for (const [id, state] of this.states) {
+      const shape = shapeOf(id);
+      let env = this.levels.get(id) ?? 0;
       for (const n of state.notes) env = Math.max(env, noteEnvelope(shape, n, time));
       state.notes = state.notes.filter((n) => n.offTime === null || noteEnvelope(shape, n, time) > 0.001);
       state.hit *= hitDecay;
       state.glide += (state.pitch - state.glide) * glideStep;
       state.phase = (state.phase + dt * (0.2 + 1.8 * env)) % PHASE_WRAP;
-      const held = state.notes.some((n) => n.offTime === null);
+      // A Live audio track has a level, not notes: sounding is "louder than a whisper".
+      const held = state.notes.some((n) => n.offTime === null) || (this.levels.get(id) ?? 0) > 0.05;
       const active = held || time - state.lastOn < holdSeconds;
       state.presence += ((active ? 1 : 0) - state.presence) * (active ? presenceIn : presenceOut);
       if (id === 'all') this.energy += (env - this.energy) * (1 - Math.exp(-dt / ENERGY_SECONDS));

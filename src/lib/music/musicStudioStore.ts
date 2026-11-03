@@ -172,7 +172,7 @@ export interface MusicStudioProjectState {
   mixer: MixerState;
   /** The band inputs, one to four (each one's device is kept per computer). */
   liveInputs: LiveInputSettings[];
-  /** Ableton Live is in control: the studio's instruments are off and the session grid fires Live. */
+  /** Ableton Live is in control: the session grid fires Live, Live plays the backing, the instruments play on top. */
   liveControl: boolean;
   /** Live track name -> the sound it feeds the visual voices as. */
   liveRoles: LiveRoles;

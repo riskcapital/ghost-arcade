@@ -328,6 +328,12 @@ function createAbletonBridge() {
   /** The last watch request sent, to avoid repeating it. */
   let sentWatch = '';
   let studioFeed: StudioFeed | null = null;
+  /** The Music Studio is playing with Live: it has its own setup (no decks,
+   *  no crossfader), so this connector's deck links, crossfader and scramble
+   *  stand down until it lets go. Outside the Studio they work as always. */
+  const studioHosted = () => studioFeed !== null;
+  /** Deck mode turned the VJ crossfader on, so leaving deck mode turns it off again. */
+  let crossfaderByDeckMode = false;
 
   // High-rate values stay out of the store.
   const paramValues = new Map<string, number>();
@@ -390,6 +396,7 @@ function createAbletonBridge() {
   }
 
   function fire(links: AbletonLink[], label: string) {
+    if (studioHosted()) return;
     const { missing } = read();
     const live = links.filter(link => !missing.includes(link.id));
     if (!live.length) return;
@@ -574,7 +581,7 @@ function createAbletonBridge() {
     if (s.playing) autoPlay(s, beat);
 
     // Beat scramble: on each multiple of `every` beats of the song.
-    if (s.beatScramble.on && s.playing) {
+    if (s.beatScramble.on && s.playing && !studioHosted()) {
       const step = Math.floor(beat / s.beatScramble.every + 1e-6);
       if (step !== lastScrambleStep) {
         if (lastScrambleStep !== null && step > lastScrambleStep) scrambleNow(s.beatScramble.target, s.beatScramble.amount);
@@ -725,7 +732,7 @@ function createAbletonBridge() {
       const action = scoreAction(s, pitch, columns);
       if (!action) continue;
       // Each note holds its own input, so overlapping notes don't cut each other short.
-      runAction(action, velocity, { untilBeat: track.startedBeat + at + duration, inputId: `ableton:score:${t}:${pitch}:${at}` });
+      if (!studioHosted()) runAction(action, velocity, { untilBeat: track.startedBeat + at + duration, inputId: `ableton:score:${t}:${pitch}:${at}` });
       hits[pitch] = now;
     }
     if (Object.keys(hits).length) abletonScoreHits.update(h => ({ ...h, ...hits }));
@@ -848,7 +855,7 @@ function createAbletonBridge() {
     if (fromLive && Math.abs(v - liveCrossfader) <= 0.0005) return;
     liveCrossfader = v;
     if (Math.abs(get(abletonCrossfader) - v) > 0.0005) abletonCrossfader.set(v);
-    if (read().deckMode) vjClipLauncher.setCrossfaderValue(v);
+    if (read().deckMode && !studioHosted()) vjClipLauncher.setCrossfaderValue(v);
   }
 
   /** Move Live's crossfader from here, and Ghost Arcade's with it. */
@@ -876,7 +883,7 @@ function createAbletonBridge() {
    *  the project turned that off. */
   function autoLinkDecks() {
     const s = read();
-    if (deckModeChosen || s.deckMode) return;
+    if (deckModeChosen || s.deckMode || studioHosted()) return;
     if (!s.tracks.some(t => t.side === 'A') || !s.tracks.some(t => t.side === 'B')) return;
     applyDeckMode(true);
     update(st => ({ ...st, activity: [{ text: "Linked Live's decks to Ghost Arcade's", at: performance.now() }, ...st.activity].slice(0, ACTIVITY_LENGTH) }));
@@ -885,8 +892,14 @@ function createAbletonBridge() {
   function applyDeckMode(on: boolean) {
     update(s => ({ ...s, deckMode: on }));
     if (on) {
-      vjClipLauncher.setCrossfaderEnabled(true);
+      if (!get(vjClipLauncher).crossfaderEnabled) {
+        crossfaderByDeckMode = true;
+        vjClipLauncher.setCrossfaderEnabled(true);
+      }
       vjClipLauncher.setCrossfaderValue(get(abletonCrossfader));
+    } else if (crossfaderByDeckMode) {
+      crossfaderByDeckMode = false;
+      vjClipLauncher.setCrossfaderEnabled(false);
     }
   }
 
@@ -1176,7 +1189,22 @@ function createAbletonBridge() {
 
     /** What the music studio wants streamed from Live; null stops it. */
     setStudioFeed(feed: StudioFeed | null) {
+      const wasHosted = studioHosted();
       studioFeed = feed;
+      if (!wasHosted && feed && read().deckMode) {
+        // The Studio plays on one deck: give it the picture back.
+        if (crossfaderByDeckMode) {
+          crossfaderByDeckMode = false;
+          vjClipLauncher.setCrossfaderEnabled(false);
+        } else vjClipLauncher.setCrossfaderValue(0);
+      } else if (wasHosted && !feed && read().deckMode) {
+        // Back to the decks: Live's crossfader leads again.
+        if (!get(vjClipLauncher).crossfaderEnabled) {
+          crossfaderByDeckMode = true;
+          vjClipLauncher.setCrossfaderEnabled(true);
+        }
+        vjClipLauncher.setCrossfaderValue(get(abletonCrossfader));
+      }
       syncWatch();
     },
     launchScene(scene: number) {

@@ -17,7 +17,7 @@
 
 import { writable } from 'svelte/store';
 import { BLEND_MODE_ORDER, createLayer, type BlendMode, type Layer } from '../types';
-import { VOICE_AUTO_INPUT, VOICE_SOURCE_INPUT, VOICE_SOURCES, voiceSourceIndex, type VoiceSourceId } from './visualVoices';
+import { isLiveSource, VOICE_AUTO_INPUT, VOICE_SOURCE_INPUT, VOICE_SOURCES, voiceSourceIndex, type LiveSourceId, type VoiceSourceId } from './visualVoices';
 import type { StudioSet } from './studioSets';
 
 export const STUDIO_PLUGIN_ID = 'musicstudio';
@@ -30,6 +30,8 @@ export interface StudioVoice {
   file: string;
   /** The sound it follows. */
   source: VoiceSourceId;
+  /** The Live track (or drum) it follows while the studio plays with Ableton; `source` the rest of the time. */
+  live?: LiveSourceId;
   /** Shows only while its sound plays. */
   auto: boolean;
   /** How much of it shows, 0-1: its opacity in the mix. */
@@ -87,6 +89,7 @@ export function normalizeStudioVoice(raw: unknown): StudioVoice | null {
   return {
     file,
     source: VOICE_SOURCES.some((s) => s.id === r.source) ? (r.source as VoiceSourceId) : 'all',
+    ...(isLiveSource(r.live) && r.live.length <= 260 ? { live: r.live } : {}),
     auto: r.auto === undefined ? true : r.auto === true,
     level: clamp01(r.level, 1),
     blend: studioVoiceBlend(r.blend),
@@ -149,8 +152,8 @@ export function defaultStudioSource(): Required<StudioPluginSource> {
 export interface StudioRenderInputs {
   /** The voice shader's code, or undefined while it loads. */
   code(file: string): string | undefined;
-  /** The driven `vx` inputs for a voice following `source`. */
-  driven(source: VoiceSourceId, auto: boolean): Record<string, number>;
+  /** The driven `vx` inputs for a voice following `source` (or its Live track, while the studio plays with Live). */
+  driven(source: VoiceSourceId, auto: boolean, live?: LiveSourceId): Record<string, number>;
 }
 
 export function studioVoiceLayerId(host: Layer, index: number): string {
@@ -202,7 +205,7 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
           name: voice.file,
           src: `ISF/${voice.file}`,
           shaderCode: code,
-          shaderValues: studioVoiceValues(voice, studio.musicSet, inputs.driven(voice.source, voice.auto)),
+          shaderValues: studioVoiceValues(voice, studio.musicSet, inputs.driven(voice.source, voice.auto, voice.live)),
         },
       } as Layer);
       rows.push({ layerId: id, opacity: voice.level * (voiceMods.get(index) ?? 1), blendMode: studioVoiceBlend(voice.blend) });
@@ -277,7 +280,7 @@ export function studioHostsLive(): number {
 /** The renderer's view: shader code from the cache, signals from the runtime (or resting values before it starts). */
 export const studioRenderInputs: StudioRenderInputs = {
   code: studioVoiceCode,
-  driven: (source, auto) => (driver ? driver(source, auto) : { vxPresence: 1 }),
+  driven: (source, auto, live) => (driver ? driver(source, auto, live) : { vxPresence: 1 }),
 };
 
 /** Called by the renderer with the number of instances in the scene. */

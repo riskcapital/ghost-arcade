@@ -68,6 +68,7 @@
   import SongStrip from './SongStrip.svelte';
   import SceneBar from './SceneBar.svelte';
   import LiveSessionGrid from './LiveSessionGrid.svelte';
+  import { abletonLink } from '../../sync/abletonLink';
   import { abletonBridge } from '../../ableton/abletonBridge';
   import { ensureLiveFeed } from '../../music/liveFeed';
   import { STUDIO_VIEW_KEY_LABEL, showDeck, showTray } from '../../music/studioDeck';
@@ -155,6 +156,8 @@
     const on = !s.liveControl;
     musicStudio.setLiveControl(on);
     if (on && !get(abletonBridge).enabled) await abletonBridge.enable();
+    // Link puts the studio on Live's beat, so instruments played on top land in time.
+    if (on && !get(abletonLink).enabled) void abletonLink.enable();
   }
 
   function toggleAll() {
@@ -237,7 +240,7 @@
         <span class="lower-key">{lowerSubtitle}</span>
         {#if !s.liveControl}<button class="text-btn small" onclick={() => loopBrowser.set({ track: null, row: null })} title="Browse every loop: preview, star, and add">Loops</button>{/if}
         {#snippet liveButton()}
-          <button class="text-btn small" class:on={s.liveControl} aria-pressed={s.liveControl} onclick={toggleLiveControl} title={s.liveControl ? "Go back to the studio's own instruments" : "Control Ableton Live from here: its clips and scenes, its sound. The studio's instruments go quiet."}><span class="live-led" class:on={s.liveControl} class:linked={s.liveControl && $abletonBridge.connected} aria-hidden="true"></span>Ableton Live</button>
+          <button class="text-btn small" class:on={s.liveControl} aria-pressed={s.liveControl} onclick={toggleLiveControl} title={s.liveControl ? "Go back to the studio's own loops and scenes" : "Play with Ableton Live: its clips and scenes launch from here, each Live track can drive visuals, and the studio's instruments play on top"}><span class="live-led" class:on={s.liveControl} class:linked={s.liveControl && $abletonBridge.connected} aria-hidden="true"></span>Ableton Live</button>
         {/snippet}
         {#if !s.liveControl}<LoopRecorderBar split extra={liveButton} />{:else}<div class="live-row">{@render liveButton()}</div>{/if}
       {/if}

@@ -1,10 +1,11 @@
 /**
  * The studio as a controller for Ableton Live.
  *
- * With Live in control, the studio's own instruments go quiet and the session
- * grid shows Live's clips and scenes: launching one fires it in Live, and Live
- * plays the audio. Each Live track can feed the visual voices as one of their
- * sounds (the kick, the bass, the chords...). A MIDI track's clip notes arrive
+ * With Live in control, the studio's own loops and sequences stop and the
+ * session grid shows Live's clips and scenes: launching one fires it in Live,
+ * and Live plays the backing while the studio's instruments play on top. Each
+ * Live track drives the visuals that follow it (see liveFeed.ts), and can also
+ * stand in for one of the studio's sounds (the kick, the bass, the chords...). A MIDI track's clip notes arrive
  * with their pitch on the song clock; an audio track's level is listened to
  * for hits, the way the live input is.
  *
@@ -46,6 +47,16 @@ export function guessRole(name: string): VoiceSourceId | null {
 }
 
 /** Track indices in the set with a role, by their names. Duplicate names all count. */
+/**
+ * A MIDI track that plays a drum kit (by its name, or by the drum part it
+ * stands in for): its notes split into kick, snare, hats and percussion.
+ */
+export function isDrumTrack(track: { name: string; midi: boolean }, role?: VoiceSourceId | null): boolean {
+  if (!track.midi) return false;
+  if (role && ['kick', 'snare', 'hats', 'perc'].includes(role)) return true;
+  return /\b(drum|drums|kit|beat|beats|break|breaks|perc|percussion|808|909|707|606|rack)\b/i.test(track.name);
+}
+
 export function mappedTracks(tracks: readonly { name: string }[], roles: LiveRoles): { index: number; role: VoiceSourceId }[] {
   const out: { index: number; role: VoiceSourceId }[] = [];
   tracks.forEach((t, index) => {

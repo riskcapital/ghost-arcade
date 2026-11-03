@@ -120,9 +120,6 @@
 </script>
 
 <div class="mixer" role="group" aria-label="Mixer">
-  {#if s.liveControl}
-    <p class="note">Live is in control: the studio's instruments are off. The band inputs still play and drive the visuals.</p>
-  {/if}
   <div class="strips">
     {#each channels as id (id)}
       {@const strip = stripFor(s.mixer, id)}
@@ -131,8 +128,7 @@
       {@const st = index >= 0 ? status[index] : undefined}
       {@const label = labelOf(id)}
       {@const deviceId = index >= 0 ? (s.inputDevices[index] ?? '') : ''}
-      {@const off = s.liveControl && !input}
-      <div class="strip" class:input={!!input} class:off>
+      <div class="strip" class:input={!!input}>
         {#if input}
           <div class="input-name">
             <span class="led" class:on={!!st?.on} class:error={!!st?.error} title={st?.error ?? (st?.on ? 'Coming in' : 'Not listening')}></span>
@@ -241,7 +237,6 @@
     border-radius: var(--studio-radius);
   }
   .strip.input { width: 168px; border-color: var(--studio-edge); }
-  .strip.off { opacity: 0.4; }
   /* Strip names are eyebrows, in the panel's ink. */
   .name { font-size: var(--ga-text-eyebrow, 10px); font-weight: 700; letter-spacing: var(--ga-eyebrow-tracking, 0.08em); text-transform: uppercase; white-space: nowrap; color: var(--studio-ink); }
   .input-name { width: 100%; display: flex; align-items: center; gap: 6px; }
