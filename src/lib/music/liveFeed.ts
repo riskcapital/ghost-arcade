@@ -87,8 +87,11 @@ function onScene(scene: number): void {
 function sync(): void {
   const studio = get(musicStudio);
   const bridge = get(abletonBridge);
-  // Only while the studio is open: closed, nothing plays (and Live stops streaming levels).
-  const on = studio.isOpen && studio.liveControl && bridge.connected;
+  // The studio claims Live as soon as it is open in Live mode, before the
+  // connection is up, so a two-sided set never gets linked to the decks while
+  // it connects. Closed, nothing plays (and Live stops streaming levels).
+  const hosting = studio.isOpen && studio.liveControl;
+  const on = hosting && bridge.connected;
   // Live's tempo, for instruments played on top. Link does this exactly (tempo
   // and phase); without a Link peer, follow the tempo Live reports.
   if (on && bridge.tempo > 0 && !launchClockFollowsLink() && Math.abs(get(audioBpm) - bridge.tempo) > 0.01) audioStore.setManualBPM(bridge.tempo);
@@ -100,7 +103,7 @@ function sync(): void {
       next.set(index, { name: track.name, midi: track.midi, drums: isDrumTrack(track, role), role });
     });
   }
-  const key = JSON.stringify([on, [...next.entries()]]);
+  const key = JSON.stringify([hosting, on, [...next.entries()]]);
   if (key === feedKey) return;
   feedKey = key;
   const previous = fed;
@@ -125,7 +128,7 @@ function sync(): void {
   }
   keepLiveSources(keep);
   const tracks = [...next.entries()];
-  abletonBridge.setStudioFeed(on
+  abletonBridge.setStudioFeed(hosting
     ? {
       noteTracks: tracks.filter(([, t]) => t.midi).map(([i]) => i),
       levelTracks: tracks.filter(([, t]) => !t.midi).map(([i]) => i),
