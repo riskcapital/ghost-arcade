@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "An old picture tube showing a station ident: a slatted sun with a channel number inside turning rings of ticks and accent arcs, an orbiting satellite, a sunburst behind, meter columns either side, tone blocks along the top and the station name and a running clock along the bottom. The glass and its bezel stay visible even when the picture is gone. The picture is drawn the way a tube draws it: fat glowing scan lines that swell on bright parts, a red, green and blue phosphor stripe, bloom, a curved glass face and a slow afterglow. Hits of the sound it follows knock the tube about: the big ones switch it off, the picture slamming down to a white-hot line, then a dot that hangs in the glass, before it springs back open with a wobble; others roll the vertical hold, squeeze the picture to a sliver or give it a jolt. Collapse picks which of these the hits do, Spring back how long the tube takes to come back, Afterglow how long the phosphor holds light, Scan lines how coarse the raster is, Curvature the bulge of the glass and Bloom the glow.",
+    "DESCRIPTION": "An old picture tube showing a station ident: a slatted sun with a channel number inside turning rings of ticks and accent arcs, an orbiting satellite, a sunburst behind, meter columns either side, tone blocks along the top and the station name (your own text, cycling, or CHANNEL 7) and a running clock along the bottom. The glass and its bezel stay visible even when the picture is gone. The picture is drawn the way a tube draws it: fat glowing scan lines that swell on bright parts, a red, green and blue phosphor stripe, bloom, a curved glass face and a slow afterglow. Hits of the sound it follows knock the tube about: the big ones switch it off, the picture slamming down to a white-hot line, then a dot that hangs in the glass, before it springs back open with a wobble; others roll the vertical hold, squeeze the picture to a sliver or give it a jolt. Collapse picks which of these the hits do, Spring back how long the tube takes to come back, Afterglow how long the phosphor holds light, Scan lines how coarse the raster is, Curvature the bulge of the glass and Bloom the glow.",
     "PASSES": [
         {
             "TARGET": "clock",
@@ -41,7 +41,12 @@
         { "NAME": "vxVel", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
         { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
         { "NAME": "vxCount", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
-        { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 }
+        { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxTxt0", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 262144 },
+        { "NAME": "vxTxt1", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 262144 },
+        { "NAME": "vxTxt2", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 262144 },
+        { "NAME": "vxTxt3", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 262144 },
+        { "NAME": "vxTxtLen", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 12 }
     ]
 }*/
 
@@ -72,28 +77,54 @@ float duration() {
 
 // ---------------------------------------------------------------- the station ident
 
+// Codes: 0 space, 1-26 A-Z, 27-36 0-9, then . ! ? - + ' : / &
 vec2 glyphBits(float c) {
-    if (c < 0.5) return vec2(476789.0, 26158.0); // 0
-    if (c < 1.5) return vec2(143492.0, 4238.0); // 1
-    if (c < 2.5) return vec2(476194.0, 4383.0); // 2
-    if (c < 3.5) return vec2(1017986.0, 1582.0); // 3
-    if (c < 4.5) return vec2(72018.0, 31810.0); // 4
-    if (c < 5.5) return vec2(1033153.0, 1582.0); // 5
-    if (c < 6.5) return vec2(205342.0, 17966.0); // 6
-    if (c < 7.5) return vec2(1016900.0, 8456.0); // 7
-    if (c < 8.5) return vec2(476718.0, 17966.0); // 8
-    if (c < 9.5) return vec2(476719.0, 1100.0); // 9
-    if (c < 10.5) return vec2(12672.0, 12672.0); // :
-    if (c < 11.5) return vec2(476695.0, 17967.0); // G
-    if (c < 12.5) return vec2(575039.0, 17969.0); // H
-    if (c < 13.5) return vec2(476721.0, 17966.0); // O
-    if (c < 14.5) return vec2(508430.0, 1086.0); // S
-    if (c < 15.5) return vec2(1020036.0, 4228.0); // T
-    if (c < 16.5) return vec2(476735.0, 17969.0); // A
-    if (c < 17.5) return vec2(1001022.0, 21073.0); // R
-    if (c < 18.5) return vec2(476688.0, 16942.0); // C
-    if (c < 19.5) return vec2(1001009.0, 17982.0); // D
-    if (c < 20.5) return vec2(1032734.0, 16927.0); // E
+    if (c < 0.5) return vec2(0.0, 0.0); // space
+    if (c < 1.5) return vec2(476735.0, 17969.0); // A
+    if (c < 2.5) return vec2(1001022.0, 17982.0); // B
+    if (c < 3.5) return vec2(476688.0, 16942.0); // C
+    if (c < 4.5) return vec2(1001009.0, 17982.0); // D
+    if (c < 5.5) return vec2(1032734.0, 16927.0); // E
+    if (c < 6.5) return vec2(1032734.0, 16912.0); // F
+    if (c < 7.5) return vec2(476695.0, 17967.0); // G
+    if (c < 8.5) return vec2(575039.0, 17969.0); // H
+    if (c < 9.5) return vec2(462980.0, 4238.0); // I
+    if (c < 10.5) return vec2(231490.0, 2636.0); // J
+    if (c < 11.5) return vec2(576152.0, 21073.0); // K
+    if (c < 12.5) return vec2(541200.0, 16927.0); // L
+    if (c < 13.5) return vec2(585397.0, 17969.0); // M
+    if (c < 14.5) return vec2(575285.0, 20017.0); // N
+    if (c < 15.5) return vec2(476721.0, 17966.0); // O
+    if (c < 16.5) return vec2(1001022.0, 16912.0); // P
+    if (c < 17.5) return vec2(476721.0, 22093.0); // Q
+    if (c < 18.5) return vec2(1001022.0, 21073.0); // R
+    if (c < 19.5) return vec2(508430.0, 1086.0); // S
+    if (c < 20.5) return vec2(1020036.0, 4228.0); // T
+    if (c < 21.5) return vec2(575025.0, 17966.0); // U
+    if (c < 22.5) return vec2(575025.0, 17732.0); // V
+    if (c < 23.5) return vec2(575029.0, 22186.0); // W
+    if (c < 24.5) return vec2(574788.0, 10801.0); // X
+    if (c < 25.5) return vec2(574788.0, 4228.0); // Y
+    if (c < 26.5) return vec2(1016900.0, 8735.0); // Z
+    if (c < 27.5) return vec2(476789.0, 26158.0); // 0
+    if (c < 28.5) return vec2(143492.0, 4238.0); // 1
+    if (c < 29.5) return vec2(476194.0, 4383.0); // 2
+    if (c < 30.5) return vec2(1017986.0, 1582.0); // 3
+    if (c < 31.5) return vec2(72018.0, 31810.0); // 4
+    if (c < 32.5) return vec2(1033153.0, 1582.0); // 5
+    if (c < 33.5) return vec2(205342.0, 17966.0); // 6
+    if (c < 34.5) return vec2(1016900.0, 8456.0); // 7
+    if (c < 35.5) return vec2(476718.0, 17966.0); // 8
+    if (c < 36.5) return vec2(476719.0, 1100.0); // 9
+    if (c < 37.5) return vec2(0.0, 396.0); // .
+    if (c < 38.5) return vec2(135300.0, 4100.0); // !
+    if (c < 39.5) return vec2(476194.0, 4100.0); // ?
+    if (c < 40.5) return vec2(31.0, 0.0); // -
+    if (c < 41.5) return vec2(4255.0, 4224.0); // +
+    if (c < 42.5) return vec2(135424.0, 0.0); // '
+    if (c < 43.5) return vec2(12672.0, 12672.0); // :
+    if (c < 44.5) return vec2(33860.0, 8720.0); // /
+    if (c < 45.5) return vec2(412296.0, 22093.0); // &
     return vec2(0.0);
 }
 
@@ -110,6 +141,15 @@ float glyph(float c, vec2 g) {
     int ip = int(exp2(idx) + 0.5);
     int q = iv / ip;
     return float(q - (q / 2) * 2);
+}
+
+// The i-th character of text packed three 6-bit codes to a float, first lowest.
+float textChar(float i) {
+    float k = floor(i / 3.0);
+    float v = k < 0.5 ? vxTxt0 : (k < 1.5 ? vxTxt1 : (k < 2.5 ? vxTxt2 : vxTxt3));
+    float j = i - k * 3.0;
+    float div = j < 0.5 ? 1.0 : (j < 1.5 ? 64.0 : 4096.0);
+    return i < vxTxtLen ? mod(floor(floor(v + 0.5) / div), 64.0) : 0.0;
 }
 
 // Up to 12 glyphs in a row; q from the text's top left, y down, in cells.
@@ -176,7 +216,7 @@ vec3 picture(vec2 p, float t, float px) {
     }
     // A big channel number cut through the sun.
     vec2 ng = (vec2(q.x + 0.155, 0.11 - q.y)) / 0.032;
-    float num = glyph(0.0, ng) + glyph(7.0, ng - vec2(6.0, 0.0));
+    float num = glyph(27.0, ng) + glyph(34.0, ng - vec2(6.0, 0.0));
     if (num > 0.5 && r < 0.27) col = vec3(0.0) + inkC * 0.06;
     // The tilted orbit and its satellite.
     vec2 oq = q / vec2(0.62, 0.14);
@@ -225,13 +265,22 @@ vec3 picture(vec2 p, float t, float px) {
     col += acc * band(p.y + 0.34, 0.004, px) * step(abs(p.x + tw - run * 2.0 * tw), 0.04);
     float cell = 0.009;
     vec2 tg = vec2(p.x + tw, -0.37 - p.y) / cell;
-    col += inkC * 0.9 * text12(tg, vec4(11.0, 12.0, 13.0, 14.0), vec4(15.0, -1.0, 16.0, 17.0), vec4(18.0, 16.0, 19.0, 20.0));
+    // The station name: the studio's text when it has some, else CHANNEL 7.
+    vec4 n0 = vec4(3.0, 8.0, 1.0, 14.0);
+    vec4 n1 = vec4(14.0, 5.0, 12.0, 0.0);
+    vec4 n2 = vec4(34.0, 0.0, 0.0, 0.0);
+    if (vxTxtLen > 0.5) {
+        n0 = vec4(textChar(0.0), textChar(1.0), textChar(2.0), textChar(3.0));
+        n1 = vec4(textChar(4.0), textChar(5.0), textChar(6.0), textChar(7.0));
+        n2 = vec4(textChar(8.0), textChar(9.0), textChar(10.0), textChar(11.0));
+    }
+    col += inkC * 0.9 * text12(tg, n0, n1, n2);
     float secs = floor(t * 1.0) + 3723.0;
     vec2 cg = vec2(p.x - tw + 48.0 * cell, -0.37 - p.y) / cell;
     float hh = mod(floor(secs / 3600.0), 24.0);
     float mm = mod(floor(secs / 60.0), 60.0);
     float ss = mod(secs, 60.0);
-    col += inkC * 0.9 * text12(cg, vec4(floor(hh / 10.0), mod(hh, 10.0), 10.0, floor(mm / 10.0)), vec4(mod(mm, 10.0), 10.0, floor(ss / 10.0), mod(ss, 10.0)), vec4(-1.0));
+    col += inkC * 0.9 * text12(cg, vec4(27.0 + floor(hh / 10.0), 27.0 + mod(hh, 10.0), 43.0, 27.0 + floor(mm / 10.0)), vec4(27.0 + mod(mm, 10.0), 43.0, 27.0 + floor(ss / 10.0), 27.0 + mod(ss, 10.0)), vec4(-1.0));
     // A live dot that blinks.
     col += acc * step(length(p - vec2(tw - 58.0 * cell, -0.402)), 0.009) * step(0.5, fract(t * 0.8));
 

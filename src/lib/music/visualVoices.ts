@@ -31,6 +31,7 @@
 import { type DrumVoice, type InstrumentId, type NoteEvent } from './noteEvents';
 import type { LoopRole } from './loops';
 import type { StudioSet } from './studioSets';
+import { isShaderTextInput } from './shaderText';
 
 /**
  * Which sound a voice follows. New entries go on the end: shaders see the
@@ -143,8 +144,9 @@ export const VOICE_DRIVEN_INPUTS: readonly string[] = [
 
 const VOICE_DRIVEN_SET = new Set(VOICE_DRIVEN_INPUTS);
 
+/** Driven by the studio, so no knob shows for it: the voice signals and a lettering visual's text. */
 export function isVoiceDrivenInput(name: string): boolean {
-  return VOICE_DRIVEN_SET.has(name);
+  return VOICE_DRIVEN_SET.has(name) || isShaderTextInput(name);
 }
 
 /** How each source's envelope moves, in seconds. One-shot sources decay from the hit. */

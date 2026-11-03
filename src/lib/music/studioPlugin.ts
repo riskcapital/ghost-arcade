@@ -16,6 +16,7 @@
  */
 
 import { writable } from 'svelte/store';
+import { DEFAULT_TEXT_EVERY, normalizePhrases, normalizeTextEvery, shaderTextValues } from './shaderText';
 import { DEFAULT_MIX, MixFollower, mixAt, normalizeMix, type MixFeel, type StudioMix } from './studioMix';
 import { BLEND_MODE_ORDER, createLayer, type BlendMode, type Layer } from '../types';
 import { isLiveSource, VOICE_AUTO_INPUT, VOICE_SOURCE_INPUT, VOICE_SOURCES, voiceSourceIndex, type LiveSourceId, type VoiceSourceId } from './visualVoices';
@@ -49,6 +50,10 @@ export interface StudioVoice {
   clip?: string;
   /** Look inputs, by name. */
   params: Record<string, number>;
+  /** Phrases for a visual that draws lettering, cycled through; none shows its own. */
+  text?: string[];
+  /** Bars between phrases, or 0 to change on each hit. */
+  textEvery?: number;
 }
 
 /** The plugin's fields on an effect source. */
@@ -104,6 +109,8 @@ export function normalizeStudioVoice(raw: unknown): StudioVoice | null {
     blend: studioVoiceBlend(r.blend),
     ...(typeof r.clip === 'string' && r.clip ? { clip: r.clip } : {}),
     params,
+    ...(normalizePhrases(r.text).length ? { text: normalizePhrases(r.text) } : {}),
+    ...(r.textEvery !== undefined ? { textEvery: normalizeTextEvery(r.textEvery) } : {}),
   };
 }
 
@@ -183,6 +190,7 @@ export function studioVoiceValues(voice: StudioVoice, set: StudioSet, driven: Re
     [VOICE_SOURCE_INPUT]: voiceSourceIndex(voice.source),
     [VOICE_AUTO_INPUT]: voice.auto,
     ...driven,
+    ...shaderTextValues(voice.text ?? [], voice.textEvery ?? DEFAULT_TEXT_EVERY, driven.vxBars ?? 0, driven.vxCount ?? 0),
   };
 }
 

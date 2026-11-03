@@ -17,6 +17,7 @@
   import VisualPickButton from './VisualPickButton.svelte';
   import { BLEND_MODE_ORDER, blendModeLabel, type BlendMode } from '../../types';
   import { MIX_BAR_OPTIONS, MIX_MODES, mixAt, normalizeMix, type MixMode } from '../../music/studioMix';
+  import { DEFAULT_TEXT_EVERY, TEXT_EVERY, normalizePhrases } from '../../music/shaderText';
   import { followedMix, studioCodeTick, studioVoiceBlend, studioRenderInputs, studioVoiceCode, type StudioVoice } from '../../music/studioPlugin';
   import {
     addStudioVoice,
@@ -145,6 +146,25 @@
     void codeTick;
     const code = studioVoiceCode(file);
     return code ? shaderInputs(code).filter((i) => (i.TYPE === 'float' || i.TYPE === 'long') && !LOOK_SKIP.has(i.NAME) && !isVoiceDrivenInput(i.NAME)) : [];
+  }
+
+  /** True for a visual that draws lettering, so it takes your own text. */
+  function takesText(file: string): boolean {
+    void codeTick;
+    const code = studioVoiceCode(file);
+    return !!code && shaderInputs(code).some((i) => i.NAME === 'vxTxtLen');
+  }
+
+  // Your phrases, one a line. What you type stays as typed while the box has
+  // focus (the saved text is cleaned: capitals, 12 characters).
+  let textDraft = $state<Record<number, string>>({});
+  function editText(i: number, raw: string) {
+    textDraft = { ...textDraft, [i]: raw };
+    setStudioVoice(i, { text: normalizePhrases(raw.split('\n')) }, `voice:${i}:text`);
+  }
+  function endText(i: number) {
+    const { [i]: _, ...rest } = textDraft;
+    textDraft = rest;
   }
 
   // How strongly each voice's sound plays now, for its light.
@@ -356,12 +376,34 @@
               {#each BLEND_MODE_ORDER as mode (mode)}<option value={mode}>{blendModeLabel(mode)}</option>{/each}
             </select>
             <StudioKnob label="Opacity" title="How much of this voice shows" value={voice.level} defaultValue={1} size={20} format={levelFormat} midiPath="studio:voice.{i + 1}.level" onchange={(v) => setStudioVoice(i, { level: v }, `voice:${i}:level`)} />
-            {#if all.length > MAIN_CONTROLS}
+            {#if all.length > MAIN_CONTROLS || takesText(voice.file)}
               <button class="icon more" class:on={open === i} onclick={() => (open = open === i ? null : i)} aria-expanded={open === i} aria-label="All controls for voice {i + 1}" title="All controls">
                 <svg viewBox="0 0 12 12" aria-hidden="true"><path d={open === i ? 'M3 7.5L6 4.5 9 7.5' : 'M3 4.5L6 7.5 9 4.5'} /></svg>
               </button>
             {/if}
           </div>
+          {#if open === i && takesText(voice.file)}
+            <div class="text-edit">
+              <label class="ga-eyebrow" for="voice-text-{i}">Text</label>
+              <textarea
+                id="voice-text-{i}"
+                rows="3"
+                spellcheck="false"
+                placeholder="One phrase a line"
+                value={textDraft[i] ?? (voice.text ?? []).join('\n')}
+                oninput={(e) => editText(i, (e.target as HTMLTextAreaElement).value)}
+                onblur={() => endText(i)}
+                onkeydown={(e) => e.stopPropagation()}
+                title="Your own words for this visual, one phrase a line: up to 12 letters, numbers and . ! ? - + ' : / &. Empty shows its own."
+              ></textarea>
+              <div class="text-row">
+                <select value={String(voice.textEvery ?? DEFAULT_TEXT_EVERY)} onchange={(e) => setStudioVoice(i, { textEvery: Number((e.target as HTMLSelectElement).value) })} disabled={(voice.text?.length ?? 0) < 2} aria-label="Change phrase" title="How often it moves on to the next phrase">
+                  {#each TEXT_EVERY as o (o.id)}<option value={String(o.id)}>{o.label}</option>{/each}
+                </select>
+                {#if !voice.text?.length}<span class="text-note">Shows its own words</span>{/if}
+              </div>
+            </div>
+          {/if}
           {#if open === i}
             <div class="all">
               {#each all.slice(MAIN_CONTROLS) as input (input.NAME)}{@render knob(i, voice, input)}{/each}
@@ -469,6 +511,12 @@
   .line .step { width: 16px; }
   .icon svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   .icon.on, .icon:hover { color: var(--studio-ink); border-color: var(--studio-edge); }
+  .text-edit { display: flex; flex-direction: column; gap: 4px; padding: 8px 0 0 15px; }
+  .text-edit textarea { width: 100%; box-sizing: border-box; resize: vertical; min-height: 52px; padding: 5px 7px; font: 12px/1.35 var(--ga-font-mono, ui-monospace); text-transform: uppercase; color: var(--studio-ink); background: var(--studio-well, rgba(0,0,0,0.35)); border: 1px solid var(--studio-edge); border-radius: 6px; user-select: text; }
+  .text-edit textarea:focus { outline: none; border-color: var(--studio-accent); }
+  .text-row { display: flex; align-items: center; gap: 8px; }
+  .text-row select { flex: 0 1 auto; min-width: 0; height: 22px; font-size: var(--ga-text-meta, 11px); }
+  .text-note { font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); }
   .all { display: flex; flex-wrap: wrap; gap: 8px 6px; padding: 8px 0 2px 15px; }
   .add { align-self: flex-start; margin-top: 6px; }
   .none { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 4px 2px; }

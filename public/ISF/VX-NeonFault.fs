@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "An old neon sign on a dark wall. Glass tubes are bent into a word (OPEN, LIVE, SIGNAL, NO SIGNAL, ERROR, GHOST, LOVE or NIGHT) inside a frame, or into a pictogram (an arrow, a heart, a palm, a star or an eye), or both. Each tube has a hot core, a coloured body, a glass rim and a glow that lights the plaster behind it. Blacked-out back tubes run between the letters, glass standoffs and clips hold them to the wall, and the feed tubes drop out of sight at the ends. A few tubes are failing: they stutter, light only part of the way or shimmer with moving bands of gas. Every hit of the sound it follows makes some letters buzz and chatter or surge brighter, and now and then one drops out for a moment. When the word or picture changes (each phrase, if set to change), the new one strikes up letter by letter. Sign picks words, pictures or both; Word and Picture pick which; Faults sets how many tubes are failing, Buzz how hard hits shake the power, Glow how far the light spreads and Tube width the thickness of the glass.",
+    "DESCRIPTION": "An old neon sign on a dark wall. Glass tubes are bent into a word (your own text, cycling through your phrases, or OPEN, LIVE, SIGNAL, NO SIGNAL, ERROR, ON AIR, LOVE or NIGHT) inside a frame, or into a pictogram (an arrow, a heart, a palm, a star or an eye), or both. Each tube has a hot core, a coloured body, a glass rim and a glow that lights the plaster behind it. Blacked-out back tubes run between the letters, glass standoffs and clips hold them to the wall, and the feed tubes drop out of sight at the ends. A few tubes are failing: they stutter, light only part of the way or shimmer with moving bands of gas. Every hit of the sound it follows makes some letters buzz and chatter or surge brighter, and now and then one drops out for a moment. When the word or picture changes (each phrase, if set to change), the new one strikes up letter by letter. Sign picks words, pictures or both; Word and Picture pick which; Faults sets how many tubes are failing, Buzz how hard hits shake the power, Glow how far the light spreads and Tube width the thickness of the glass.",
     "PASSES": [
         {
             "TARGET": "clock",
@@ -20,7 +20,7 @@
         { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 2, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play", "Bowls", "Drone", "XY tone", "Analog synth", "Scan synth", "Echo shots", "Build and drop", "Siren", "Acid line", "Dub bass"] },
         { "NAME": "vxAuto", "LABEL": "Comes and goes with its sound", "TYPE": "bool", "DEFAULT": true },
         { "NAME": "signStyle", "LABEL": "Sign", "TYPE": "long", "DEFAULT": 0, "VALUES": [0, 1, 2], "LABELS": ["Word", "Picture", "Picture and word"] },
-        { "NAME": "word", "LABEL": "Word", "TYPE": "long", "DEFAULT": 0, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8], "LABELS": ["Changes each phrase", "OPEN", "LIVE", "SIGNAL", "NO SIGNAL", "ERROR", "GHOST", "LOVE", "NIGHT"] },
+        { "NAME": "word", "LABEL": "Word", "TYPE": "long", "DEFAULT": 0, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8], "LABELS": ["Changes each phrase", "OPEN", "LIVE", "SIGNAL", "NO SIGNAL", "ERROR", "ON AIR", "LOVE", "NIGHT"] },
         { "NAME": "pictogram", "LABEL": "Picture", "TYPE": "long", "DEFAULT": 0, "VALUES": [0, 1, 2, 3, 4, 5], "LABELS": ["Changes each phrase", "Arrow", "Heart", "Palm", "Star", "Eye"] },
         { "NAME": "faults", "LABEL": "Faults", "TYPE": "float", "DEFAULT": 0.35, "MIN": 0, "MAX": 1 },
         { "NAME": "buzz", "LABEL": "Buzz", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0, "MAX": 1 },
@@ -33,7 +33,14 @@
         { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
         { "NAME": "vxCount", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
         { "NAME": "vxBars", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
-        { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 }
+        { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxTxt0", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 262144 },
+        { "NAME": "vxTxt1", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 262144 },
+        { "NAME": "vxTxt2", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 262144 },
+        { "NAME": "vxTxt3", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 262144 },
+        { "NAME": "vxTxtLen", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 12 },
+        { "NAME": "vxTxtId", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 16 },
+        { "NAME": "vxTxtN", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 16 }
     ]
 }*/
 
@@ -44,7 +51,7 @@ const float TAU = 6.2831853;
 const float PI = 3.14159265;
 const float LW = 0.62;      // letter width, in cap heights
 const float GAP = 0.3;      // space between letters
-const int MAX_CHARS = 9;
+const int MAX_CHARS = 12;
 
 float hash11(float x) {
     float p = fract(x * 0.1031);
@@ -99,29 +106,53 @@ void take(inout vec3 b, vec2 ds, float k, float nk) {
     if (ds.x < b.x) b = vec3(ds.x, (k + ds.y) / nk, k);
 }
 
-// The words, packed four bits a letter, first letter lowest.
-// Letters: 1 A, 2 C, 3 E, 4 G, 5 H, 6 I, 7 L, 8 N, 9 O, 10 P, 11 R, 12 S, 13 T, 14 V, 0 space.
-vec3 wordCode(float w) {
-    if (w < 0.5) return vec3(33705.0, 0.0, 4.0);       // OPEN
-    if (w < 1.5) return vec3(15975.0, 0.0, 4.0);       // LIVE
-    if (w < 2.5) return vec3(99436.0, 7.0, 6.0);       // SIGNAL
-    if (w < 3.5) return vec3(442520.0, 29060.0, 9.0);  // NO SIGNAL
-    if (w < 4.5) return vec3(760755.0, 0.0, 5.0);      // ERROR
-    if (w < 5.5) return vec3(903508.0, 0.0, 5.0);      // GHOST
-    if (w < 6.5) return vec3(16023.0, 0.0, 4.0);       // LOVE
-    return vec3(873576.0, 0.0, 5.0);                    // NIGHT
+// The words, packed six bits a letter, three letters a float, first letter lowest (x y z, then w);
+// the length comes separately.
+// Codes: 0 space, 1-26 A-Z, 27-36 0-9, then . ! ? - + ' : / & (37-45).
+vec4 wordCode(float w) {
+    if (w < 0.5) return vec4(21519.0, 14.0, 0.0, 0.0);       // OPEN
+    if (w < 1.5) return vec4(90700.0, 5.0, 0.0, 0.0);        // LIVE
+    if (w < 2.5) return vec4(29267.0, 49230.0, 0.0, 0.0);    // SIGNAL
+    if (w < 3.5) return vec4(974.0, 29267.0, 49230.0, 0.0);  // NO SIGNAL
+    if (w < 4.5) return vec4(74885.0, 1167.0, 0.0, 0.0);     // ERROR
+    if (w < 5.5) return vec4(911.0, 74305.0, 0.0, 0.0);      // ON AIR
+    if (w < 6.5) return vec4(91084.0, 5.0, 0.0, 0.0);        // LOVE
+    return vec4(29262.0, 1288.0, 0.0, 0.0);                   // NIGHT
 }
 
-float charAt(vec3 wc, float i) {
-    float packed = i < 4.5 ? wc.x : wc.y;
-    float k = i < 4.5 ? i : i - 5.0;
-    return mod(floor(packed / exp2(k * 4.0)), 16.0);
+float wordLength(float w) {
+    if (w < 1.5) return 4.0;
+    if (w < 2.5) return 6.0;
+    if (w < 3.5) return 9.0;
+    if (w < 4.5) return 5.0;
+    if (w < 5.5) return 6.0;
+    if (w < 6.5) return 4.0;
+    return 5.0;
 }
+
+float charAt(vec4 wc, float i) {
+    float k = floor(i / 3.0);
+    float packed = k < 0.5 ? wc.x : (k < 1.5 ? wc.y : (k < 2.5 ? wc.z : wc.w));
+    float j = i - k * 3.0;
+    float div = j < 0.5 ? 1.0 : (j < 1.5 ? 64.0 : 4096.0);
+    return mod(floor(floor(packed + 0.5) / div), 64.0);
+}
+
+const float WM = 0.8;       // M and W are wider
 
 float letterWidth(float c) {
-    if (c < 0.5) return 0.35;
-    if (abs(c - 6.0) < 0.5) return 0.0;
+    if (c < 0.5) return 0.35;                                   // space
+    if (abs(c - 9.0) < 0.5) return 0.0;                         // I: one upright
+    if (abs(c - 13.0) < 0.5 || abs(c - 23.0) < 0.5) return WM;  // M W
+    if (abs(c - 28.0) < 0.5) return 0.36;                       // 1
+    if (abs(c - 37.0) < 0.5 || abs(c - 38.0) < 0.5 || abs(c - 42.0) < 0.5 || abs(c - 43.0) < 0.5) return 0.0; // . ! ' :
+    if (abs(c - 40.0) < 0.5) return 0.42;                       // -
     return LW;
+}
+
+// A tiny ring: reads as a dot of glass.
+vec2 dot2(vec2 p, vec2 c) {
+    return vec2(abs(length(p - c) - 0.02), 0.5);
 }
 
 // A letter of a plain rounded neon sans, built from tube strokes.
@@ -136,57 +167,167 @@ vec3 letterTube(float c, vec2 q) {
         take(b, seg(q, vec2(0.0, 0.0), vec2(r, 1.0)), 0.0, 3.0);
         take(b, seg(q, vec2(r, 1.0), vec2(W, 0.0)), 1.0, 3.0);
         take(b, seg(q, vec2(x, 0.36), vec2(W - x, 0.36)), 2.0, 3.0);
-    } else if (c < 2.5) {   // C
+    } else if (c < 2.5) {   // B
+        float br = 0.25;
+        take(b, seg(q, vec2(0.0, 0.0), vec2(0.0, 1.0)), 0.0, 6.0);
+        take(b, seg(q, vec2(0.0, 1.0), vec2(W - br, 1.0)), 1.0, 6.0);
+        take(b, arc(q, vec2(W - br, 0.75), br, -0.5 * PI, PI), 2.0, 6.0);
+        take(b, seg(q, vec2(W - br, 0.5), vec2(0.0, 0.5)), 3.0, 6.0);
+        take(b, arc(q, vec2(W - br, 0.25), br, -0.5 * PI, PI), 4.0, 6.0);
+        take(b, seg(q, vec2(W - br, 0.0), vec2(0.0, 0.0)), 5.0, 6.0);
+    } else if (c < 3.5) {   // C
         take(b, arc(q, vec2(r, 1.0 - r), r, 0.35, PI - 0.35), 0.0, 3.0);
         take(b, seg(q, vec2(0.0, 1.0 - r), vec2(0.0, r)), 1.0, 3.0);
         take(b, arc(q, vec2(r, r), r, PI, PI - 0.35), 2.0, 3.0);
-    } else if (c < 3.5) {   // E
+    } else if (c < 4.5) {   // D
+        take(b, seg(q, vec2(0.0, 0.0), vec2(0.0, 1.0)), 0.0, 6.0);
+        take(b, seg(q, vec2(0.0, 1.0), vec2(W - r, 1.0)), 1.0, 6.0);
+        take(b, arc(q, vec2(W - r, 1.0 - r), r, 0.0, 0.5 * PI), 2.0, 6.0);
+        take(b, seg(q, vec2(W, 1.0 - r), vec2(W, r)), 3.0, 6.0);
+        take(b, arc(q, vec2(W - r, r), r, -0.5 * PI, 0.5 * PI), 4.0, 6.0);
+        take(b, seg(q, vec2(W - r, 0.0), vec2(0.0, 0.0)), 5.0, 6.0);
+    } else if (c < 5.5) {   // E
         take(b, seg(q, vec2(W, 1.0), vec2(0.0, 1.0)), 0.0, 4.0);
         take(b, seg(q, vec2(0.0, 1.0), vec2(0.0, 0.0)), 1.0, 4.0);
         take(b, seg(q, vec2(0.0, 0.0), vec2(W, 0.0)), 2.0, 4.0);
         take(b, seg(q, vec2(0.0, 0.5), vec2(W * 0.78, 0.5)), 3.0, 4.0);
-    } else if (c < 4.5) {   // G
+    } else if (c < 6.5) {   // F
+        take(b, seg(q, vec2(W, 1.0), vec2(0.0, 1.0)), 0.0, 3.0);
+        take(b, seg(q, vec2(0.0, 1.0), vec2(0.0, 0.0)), 1.0, 3.0);
+        take(b, seg(q, vec2(0.0, 0.5), vec2(W * 0.78, 0.5)), 2.0, 3.0);
+    } else if (c < 7.5) {   // G
         take(b, arc(q, vec2(r, 1.0 - r), r, 0.35, PI - 0.35), 0.0, 5.0);
         take(b, seg(q, vec2(0.0, 1.0 - r), vec2(0.0, r)), 1.0, 5.0);
         take(b, arc(q, vec2(r, r), r, PI, PI), 2.0, 5.0);
         take(b, seg(q, vec2(W, r), vec2(W, 0.46)), 3.0, 5.0);
         take(b, seg(q, vec2(W, 0.46), vec2(W * 0.5, 0.46)), 4.0, 5.0);
-    } else if (c < 5.5) {   // H
+    } else if (c < 8.5) {   // H
         take(b, seg(q, vec2(0.0, 1.0), vec2(0.0, 0.0)), 0.0, 3.0);
         take(b, seg(q, vec2(0.0, 0.5), vec2(W, 0.5)), 1.0, 3.0);
         take(b, seg(q, vec2(W, 1.0), vec2(W, 0.0)), 2.0, 3.0);
-    } else if (c < 6.5) {   // I
+    } else if (c < 9.5) {   // I
         take(b, seg(q, vec2(0.0, 1.0), vec2(0.0, 0.0)), 0.0, 1.0);
-    } else if (c < 7.5) {   // L
+    } else if (c < 10.5) {  // J
+        take(b, seg(q, vec2(W, 1.0), vec2(W, r)), 0.0, 2.0);
+        take(b, arc(q, vec2(r, r), r, PI, PI), 1.0, 2.0);
+    } else if (c < 11.5) {  // K
+        take(b, seg(q, vec2(0.0, 1.0), vec2(0.0, 0.0)), 0.0, 3.0);
+        take(b, seg(q, vec2(W, 1.0), vec2(0.0, 0.42)), 1.0, 3.0);
+        take(b, seg(q, vec2(W * 0.3, 0.59), vec2(W, 0.0)), 2.0, 3.0);
+    } else if (c < 12.5) {  // L
         take(b, seg(q, vec2(0.0, 1.0), vec2(0.0, 0.0)), 0.0, 2.0);
         take(b, seg(q, vec2(0.0, 0.0), vec2(W, 0.0)), 1.0, 2.0);
-    } else if (c < 8.5) {   // N
+    } else if (c < 13.5) {  // M
+        take(b, seg(q, vec2(0.0, 0.0), vec2(0.0, 1.0)), 0.0, 4.0);
+        take(b, seg(q, vec2(0.0, 1.0), vec2(WM * 0.5, 0.38)), 1.0, 4.0);
+        take(b, seg(q, vec2(WM * 0.5, 0.38), vec2(WM, 1.0)), 2.0, 4.0);
+        take(b, seg(q, vec2(WM, 1.0), vec2(WM, 0.0)), 3.0, 4.0);
+    } else if (c < 14.5) {  // N
         take(b, seg(q, vec2(0.0, 0.0), vec2(0.0, 1.0)), 0.0, 3.0);
         take(b, seg(q, vec2(0.0, 1.0), vec2(W, 0.0)), 1.0, 3.0);
         take(b, seg(q, vec2(W, 0.0), vec2(W, 1.0)), 2.0, 3.0);
-    } else if (c < 9.5) {   // O
-        take(b, arc(q, vec2(r, 1.0 - r), r, 0.0, PI), 0.0, 4.0);
-        take(b, seg(q, vec2(0.0, 1.0 - r), vec2(0.0, r)), 1.0, 4.0);
-        take(b, arc(q, vec2(r, r), r, PI, PI), 2.0, 4.0);
-        take(b, seg(q, vec2(W, r), vec2(W, 1.0 - r)), 3.0, 4.0);
-    } else if (c < 11.5) {  // P and R
+    } else if (c < 15.5 || (c > 26.5 && c < 27.5) || (c > 16.5 && c < 17.5)) { // O, 0 (with a slash) and Q (with a tail)
+        float nk = c < 15.5 ? 4.0 : 5.0;
+        take(b, arc(q, vec2(r, 1.0 - r), r, 0.0, PI), 0.0, nk);
+        take(b, seg(q, vec2(0.0, 1.0 - r), vec2(0.0, r)), 1.0, nk);
+        take(b, arc(q, vec2(r, r), r, PI, PI), 2.0, nk);
+        take(b, seg(q, vec2(W, r), vec2(W, 1.0 - r)), 3.0, nk);
+        if (c > 26.5) take(b, seg(q, vec2(W * 0.22, 0.24), vec2(W * 0.78, 0.76)), 4.0, nk);
+        else if (c > 15.5) take(b, seg(q, vec2(W * 0.55, 0.28), vec2(W * 1.05, -0.06)), 4.0, nk);
+    } else if (c < 16.5 || (c > 17.5 && c < 18.5)) {  // P and R
         float br = 0.24;
-        float nk = c < 10.5 ? 4.0 : 5.0;
+        float isR = c > 17.5 ? 1.0 : 0.0;
+        float nk = 4.0 + isR;
         take(b, seg(q, vec2(0.0, 0.0), vec2(0.0, 1.0)), 0.0, nk);
         take(b, seg(q, vec2(0.0, 1.0), vec2(W - br, 1.0)), 1.0, nk);
         take(b, arc(q, vec2(W - br, 1.0 - br), br, -0.5 * PI, PI), 2.0, nk);
         take(b, seg(q, vec2(W - br, 0.52), vec2(0.0, 0.52)), 3.0, nk);
-        if (c > 10.5) take(b, seg(q, vec2(W * 0.42, 0.52), vec2(W, 0.0)), 4.0, nk);
-    } else if (c < 12.5) {  // S
+        if (isR > 0.5) take(b, seg(q, vec2(W * 0.42, 0.52), vec2(W, 0.0)), 4.0, nk);
+    } else if (c < 19.5) {  // S
         float sr = 0.25;
         take(b, arc(q, vec2(r, 0.75), sr, 0.35, 1.5 * PI - 0.35), 0.0, 2.0);
         take(b, arc(q, vec2(r, 0.25), sr, PI + 0.35, 1.5 * PI - 0.35), 1.0, 2.0);
-    } else if (c < 13.5) {  // T
+    } else if (c < 20.5) {  // T
         take(b, seg(q, vec2(0.0, 1.0), vec2(W, 1.0)), 0.0, 2.0);
         take(b, seg(q, vec2(r, 1.0), vec2(r, 0.0)), 1.0, 2.0);
-    } else {                // V
+    } else if (c < 21.5) {  // U
+        take(b, seg(q, vec2(0.0, 1.0), vec2(0.0, r)), 0.0, 3.0);
+        take(b, arc(q, vec2(r, r), r, PI, PI), 1.0, 3.0);
+        take(b, seg(q, vec2(W, r), vec2(W, 1.0)), 2.0, 3.0);
+    } else if (c < 22.5) {  // V
         take(b, seg(q, vec2(0.0, 1.0), vec2(r, 0.0)), 0.0, 2.0);
         take(b, seg(q, vec2(r, 0.0), vec2(W, 1.0)), 1.0, 2.0);
+    } else if (c < 23.5) {  // W
+        take(b, seg(q, vec2(0.0, 1.0), vec2(WM * 0.25, 0.0)), 0.0, 4.0);
+        take(b, seg(q, vec2(WM * 0.25, 0.0), vec2(WM * 0.5, 0.62)), 1.0, 4.0);
+        take(b, seg(q, vec2(WM * 0.5, 0.62), vec2(WM * 0.75, 0.0)), 2.0, 4.0);
+        take(b, seg(q, vec2(WM * 0.75, 0.0), vec2(WM, 1.0)), 3.0, 4.0);
+    } else if (c < 24.5) {  // X
+        take(b, seg(q, vec2(0.0, 0.0), vec2(W, 1.0)), 0.0, 2.0);
+        take(b, seg(q, vec2(0.0, 1.0), vec2(W, 0.0)), 1.0, 2.0);
+    } else if (c < 25.5) {  // Y
+        take(b, seg(q, vec2(0.0, 1.0), vec2(r, 0.5)), 0.0, 3.0);
+        take(b, seg(q, vec2(W, 1.0), vec2(r, 0.5)), 1.0, 3.0);
+        take(b, seg(q, vec2(r, 0.5), vec2(r, 0.0)), 2.0, 3.0);
+    } else if (c < 26.5) {  // Z
+        take(b, seg(q, vec2(0.0, 1.0), vec2(W, 1.0)), 0.0, 3.0);
+        take(b, seg(q, vec2(W, 1.0), vec2(0.0, 0.0)), 1.0, 3.0);
+        take(b, seg(q, vec2(0.0, 0.0), vec2(W, 0.0)), 2.0, 3.0);
+    } else if (c < 28.5) {  // 1
+        take(b, seg(q, vec2(0.0, 0.78), vec2(0.3, 1.0)), 0.0, 2.0);
+        take(b, seg(q, vec2(0.3, 1.0), vec2(0.3, 0.0)), 1.0, 2.0);
+    } else if (c < 29.5) {  // 2
+        float a0 = -0.6;
+        vec2 e = vec2(r, 1.0 - r) + r * vec2(cos(a0), sin(a0));
+        take(b, arc(q, vec2(r, 1.0 - r), r, a0, PI - a0), 0.0, 3.0);
+        take(b, seg(q, e, vec2(0.0, 0.0)), 1.0, 3.0);
+        take(b, seg(q, vec2(0.0, 0.0), vec2(W, 0.0)), 2.0, 3.0);
+    } else if (c < 30.5) {  // 3
+        take(b, arc(q, vec2(r, 0.75), 0.25, -0.5 * PI, 1.25 * PI), 0.0, 2.0);
+        take(b, arc(q, vec2(r, 0.25), 0.25, -0.75 * PI, 1.25 * PI), 1.0, 2.0);
+    } else if (c < 31.5) {  // 4
+        take(b, seg(q, vec2(W * 0.72, 0.0), vec2(W * 0.72, 1.0)), 0.0, 3.0);
+        take(b, seg(q, vec2(W * 0.72, 1.0), vec2(0.0, 0.32)), 1.0, 3.0);
+        take(b, seg(q, vec2(0.0, 0.32), vec2(W, 0.32)), 2.0, 3.0);
+    } else if (c < 32.5) {  // 5
+        vec2 cc = vec2(W * 0.48, 0.3);
+        float a1 = 0.8 * PI;
+        take(b, seg(q, vec2(W, 1.0), vec2(W * 0.08, 1.0)), 0.0, 3.0);
+        take(b, seg(q, vec2(W * 0.08, 1.0), cc + 0.3 * vec2(cos(a1), sin(a1))), 1.0, 3.0);
+        take(b, arc(q, cc, 0.3, -0.8 * PI, 1.6 * PI), 2.0, 3.0);
+    } else if (c < 33.5) {  // 6
+        take(b, seg(q, vec2(W * 0.8, 1.0), vec2(0.02, 0.36)), 0.0, 2.0);
+        take(b, arc(q, vec2(r, 0.3), 0.3, 0.0, TAU), 1.0, 2.0);
+    } else if (c < 34.5) {  // 7
+        take(b, seg(q, vec2(0.0, 1.0), vec2(W, 1.0)), 0.0, 2.0);
+        take(b, seg(q, vec2(W, 1.0), vec2(W * 0.3, 0.0)), 1.0, 2.0);
+    } else if (c < 35.5) {  // 8
+        take(b, arc(q, vec2(r, 0.76), 0.24, 0.0, TAU), 0.0, 2.0);
+        take(b, arc(q, vec2(r, 0.27), 0.27, 0.0, TAU), 1.0, 2.0);
+    } else if (c < 36.5) {  // 9
+        take(b, arc(q, vec2(r, 0.7), 0.3, 0.0, TAU), 0.0, 2.0);
+        take(b, seg(q, vec2(W - 0.01, 0.66), vec2(W * 0.25, 0.0)), 1.0, 2.0);
+    } else if (c < 37.5) {  // .
+        take(b, dot2(q, vec2(0.0, 0.03)), 0.0, 1.0);
+    } else if (c < 38.5) {  // !
+        take(b, seg(q, vec2(0.0, 1.0), vec2(0.0, 0.28)), 0.0, 2.0);
+        take(b, dot2(q, vec2(0.0, 0.03)), 1.0, 2.0);
+    } else if (c < 39.5) {  // ?
+        take(b, arc(q, vec2(r, 0.74), 0.26, -0.5 * PI, 1.5 * PI), 0.0, 3.0);
+        take(b, seg(q, vec2(r, 0.48), vec2(r, 0.28)), 1.0, 3.0);
+        take(b, dot2(q, vec2(r, 0.03)), 2.0, 3.0);
+    } else if (c < 40.5) {  // -
+        take(b, seg(q, vec2(0.0, 0.48), vec2(0.42, 0.48)), 0.0, 1.0);
+    } else if (c < 41.5 || c > 44.5) {  // + (and & drawn as a plus)
+        take(b, seg(q, vec2(0.0, 0.48), vec2(W, 0.48)), 0.0, 2.0);
+        take(b, seg(q, vec2(r, 0.18), vec2(r, 0.78)), 1.0, 2.0);
+    } else if (c < 42.5) {  // '
+        take(b, seg(q, vec2(0.0, 1.0), vec2(0.0, 0.72)), 0.0, 1.0);
+    } else if (c < 43.5) {  // :
+        take(b, dot2(q, vec2(0.0, 0.2)), 0.0, 2.0);
+        take(b, dot2(q, vec2(0.0, 0.62)), 1.0, 2.0);
+    } else {                // /
+        take(b, seg(q, vec2(0.0, 0.0), vec2(W, 1.0)), 0.0, 1.0);
     }
     return b;
 }
@@ -294,7 +435,9 @@ float tubeLight(float id, float along, float dist, float R, float t, float n, fl
 void main() {
     float n = floor(vxCount + 0.5);
     float bars = floor(vxBars + 0.5);
-    float phrase = floor(bars / 4.0);
+    // Your own text: its phrase number marks a change (the strike-up), else every four bars.
+    bool custom = vxTxtLen > 0.5;
+    float phrase = custom ? 1000.0 + floor(vxTxtId + 0.5) : floor(bars / 4.0);
 
     if (PASSINDEX == 0) {
         vec4 c = IMG_NORM_PIXEL(clock, vec2(0.5));
@@ -329,13 +472,13 @@ void main() {
     bool hasWord = signStyle != 1;
     bool hasPic = signStyle != 0;
     // Strike-up only when the sign is set to change.
-    bool changes = (hasWord && word == 0) || (hasPic && pictogram == 0);
+    bool changes = (hasWord && (custom ? vxTxtN > 1.5 : word == 0)) || (hasPic && pictogram == 0);
     if (!changes) strike = 30.0;
 
-    float wi = word == 0 ? mod(phrase, 8.0) : float(word - 1);
-    float pk = pictogram == 0 ? mod(phrase + 1.0, 5.0) : float(pictogram - 1);
-    vec3 wc = wordCode(wi);
-    float len = wc.z;
+    float wi = custom ? phrase : (word == 0 ? mod(phrase, 8.0) : float(word - 1));
+    float pk = pictogram == 0 ? mod((custom ? floor(bars / 4.0) : phrase) + 1.0, 5.0) : float(pictogram - 1);
+    vec4 wc = custom ? vec4(vxTxt0, vxTxt1, vxTxt2, vxTxt3) : wordCode(wi);
+    float len = custom ? min(floor(vxTxtLen + 0.5), 12.0) : wordLength(wi);
 
     // Layout: the word's width in cap heights, then a scale that fits the frame.
     float total = 0.0;
