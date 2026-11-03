@@ -13,7 +13,6 @@
   import { VISUAL_SCENES, VOICE_SHADERS, shaderInputs, voiceShaderByFile } from '../music/visualScenes';
   import { VOICE_SOURCES, isVoiceDrivenInput, type VoiceSourceId } from '../music/visualVoices';
   import {
-    MAX_STUDIO_VOICES,
     normalizeStudioSource,
     studioCodeTick,
     studioVoiceCode,
@@ -105,7 +104,7 @@
 
   <div class="msp-head">
     <span class="msp-eyebrow">Voices</span>
-    <span class="msp-count">{studio.musicVoices.length} of {MAX_STUDIO_VOICES}</span>
+    <span class="msp-count">{studio.musicVoices.length}</span>
   </div>
 
   {#each studio.musicVoices as voice, i (i)}
@@ -155,7 +154,7 @@
   {/each}
 
   <div class="msp-actions">
-    <button class="msp-btn" onclick={addVoice} disabled={studio.musicVoices.length >= MAX_STUDIO_VOICES}>+ Add voice</button>
+    <button class="msp-btn" onclick={addVoice}>+ Add voice</button>
     {#if showOpen && $vjClipLauncher.isOpen}
       <button class="msp-btn" onclick={() => musicStudio.setStudioView(true)} title="Open the music studio: play the instruments, or let Ableton Live drive these voices">Open studio</button>
     {/if}

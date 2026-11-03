@@ -86,7 +86,10 @@ describe('Music Studio plugin', () => {
     const many = Array.from({ length: 9 }, () => ({ file: 'VX-Barcode.fs', source: 'kick', level: 3 }));
     const s = normalizeStudioSource({ musicSet: 'nope', musicVoices: [...many, { file: '../../etc/passwd' }, { file: 'VX-Ok.fs', source: 'nope', params: { a: 'x', b: 2, 'bad name': 1 } }] });
     expect(s.musicSet).toBe('berlin');
-    expect(s.musicVoices).toHaveLength(MAX_STUDIO_VOICES);
+    // No small cap any more: nine visuals and the good extra one all survive.
+    expect(s.musicVoices).toHaveLength(10);
+    // A damaged file cannot make thousands.
+    expect(normalizeStudioSource({ musicVoices: Array.from({ length: 1000 }, () => ({ file: 'VX-Barcode.fs', source: 'kick' })) }).musicVoices).toHaveLength(MAX_STUDIO_VOICES);
     expect(s.musicVoices[0].level).toBe(1);
     const odd = normalizeStudioSource({ musicVoices: [{ file: 'VX-Ok.fs', source: 'nope', params: { a: 'x', b: 2, 'bad name': 1 } }] }).musicVoices[0];
     expect(odd).toEqual({ file: 'VX-Ok.fs', source: 'all', auto: true, level: 1, blend: 'screen', params: { b: 2 } });

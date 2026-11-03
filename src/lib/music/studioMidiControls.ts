@@ -50,7 +50,7 @@ import { musicStudio, type MusicStudioState } from './musicStudioStore';
 import { DUCK_RELEASE_MAX, DUCK_RELEASE_MIN, type BandFxSettings } from './soundSlots';
 import { MAX_LIVE_INPUTS, type LiveInputSettings } from './mixer';
 import { registerStudioControls, releaseStudioControls, type StudioControl } from './studioControls';
-import { MAX_STUDIO_VOICES, studioVoiceBlend } from './studioPlugin';
+import { MIDI_VOICE_SLOTS, studioVoiceBlend } from './studioPlugin';
 import { BLEND_MODE_ORDER } from '../types';
 import { STUDIO_SETS } from './studioSets';
 import { editStudio, loadSceneIntoStudio, replaceStudioVoice, setStudioMix, setStudioVoice, studioTargetNow } from './studioTarget';
@@ -260,7 +260,7 @@ export function nextVoiceBlend(blend: string | undefined, step: 1 | -1) {
 
 const voiceAt = (index: number) => studioTargetNow()?.source.musicVoices[index];
 
-const VOICES: StudioControl[] = range(MAX_STUDIO_VOICES).flatMap((i): StudioControl[] => {
+const VOICES: StudioControl[] = range(MIDI_VOICE_SLOTS).flatMap((i): StudioControl[] => {
   const n = i + 1;
   return [
     { id: `voice.${n}.level`, label: `Voice ${n} level`, group: 'Visuals', kind: 'value', run: (v) => queueVoiceLevel(i, v) },

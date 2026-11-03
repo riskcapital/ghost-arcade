@@ -17,7 +17,7 @@
   import VisualPickButton from './VisualPickButton.svelte';
   import { BLEND_MODE_ORDER, blendModeLabel, type BlendMode } from '../../types';
   import { MIX_BARS, MIX_MODES, mixAt, normalizeMix, type MixMode } from '../../music/studioMix';
-  import { MAX_STUDIO_VOICES, studioCodeTick, studioVoiceBlend, studioRenderInputs, studioVoiceCode, type StudioVoice } from '../../music/studioPlugin';
+  import { studioCodeTick, studioVoiceBlend, studioRenderInputs, studioVoiceCode, type StudioVoice } from '../../music/studioPlugin';
   import {
     addStudioVoice,
     loadSceneIntoStudio,
@@ -211,13 +211,13 @@
               <span class="live-clip" title={t.playing ? `Playing ${t.playing}${t.queued ? `, ${t.queued} next` : ''}` : 'Nothing playing'}>{t.playing ?? '—'}{#if t.queued} → {t.queued}{/if}</span>
               {#if following(liveSource(t.name))}<span class="live-n" title="Visuals following this track">{following(liveSource(t.name))}</span>{/if}
               {#if t.drums}
-                <select class="live-add" value="" onchange={(e) => addFromMenu(t, e)} aria-label="Add a visual for {t.name}" title="Add a visual that follows this track, or one of its drums" disabled={voices.length >= MAX_STUDIO_VOICES}>
+                <select class="live-add" value="" onchange={(e) => addFromMenu(t, e)} aria-label="Add a visual for {t.name}" title="Add a visual that follows this track, or one of its drums">
                   <option value="" disabled>+ Visual</option>
                   <option value="track">Whole track</option>
                   {#each LIVE_DRUMS as d (d.id)}<option value={d.id}>{d.label}</option>{/each}
                 </select>
               {:else}
-                <button class="live-add studio-btn" onclick={() => addForTrack(t)} title="Add a visual that follows this track" disabled={voices.length >= MAX_STUDIO_VOICES}>+ Visual</button>
+                <button class="live-add studio-btn" onclick={() => addForTrack(t)} title="Add a visual that follows this track">+ Visual</button>
               {/if}
             </div>
           {/each}
@@ -326,9 +326,7 @@
           {/if}
         </div>
       {/each}
-      {#if voices.length < MAX_STUDIO_VOICES}
-        <button class="add studio-btn dashed" onclick={addVoice} title="Add a voice to this studio">+ Voice</button>
-      {/if}
+      <button class="add studio-btn dashed" onclick={addVoice} title="Add a voice to this studio">+ Voice</button>
     </div>
   {/if}
 </StudioModule>

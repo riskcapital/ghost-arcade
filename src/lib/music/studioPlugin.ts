@@ -23,8 +23,14 @@ import type { StudioSet } from './studioSets';
 
 export const STUDIO_PLUGIN_ID = 'musicstudio';
 export const STUDIO_EFFECT_TYPE = 'music-studio';
-/** Voices one instance holds at most. Each is a shader rendered every frame. */
-export const MAX_STUDIO_VOICES = 6;
+/**
+ * Visuals one instance holds: no practical limit (each is a shader rendered
+ * every frame, so the GPU sets the real one). The bound only stops a damaged
+ * project file from making thousands.
+ */
+export const MAX_STUDIO_VOICES = 256;
+/** Visuals a MIDI controller can learn controls for (level, mute, look...), by position. */
+export const MIDI_VOICE_SLOTS = 16;
 
 export interface StudioVoice {
   /** A VX shader in public/ISF, e.g. "VX-Barcode.fs". */
