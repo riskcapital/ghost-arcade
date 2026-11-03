@@ -345,13 +345,16 @@ testSuite('HAP compressed textures through native output', () => {
           corners: {topLeft:{x:0,y:1}, topRight:{x:1,y:1}, bottomRight:{x:1,y:0}, bottomLeft:{x:0,y:0}}},
         command(.2, 1, 1), {type: 'bind_media_source', layer_id: 'bounce', source_id: source, uri, source_type: 'video'},
       ]);
+      // The core rebuilds status at most ~15 times a second, so sample until
+      // enough distinct positions are seen rather than for a fixed frame count.
       const times: number[] = [];
+      const distinctTimes = () => times.filter((v, i) => i === 0 || v !== times[i - 1]);
       await waitUntil(async () => {
         const session = await read();
         if (Number.isFinite(session?.source_time_seconds)) times.push(session.source_time_seconds);
         return session;
-      }, session => session?.frames_presented >= 65, 'two bounce turnarounds');
-      const distinct = times.filter((v, i) => i === 0 || v !== times[i - 1]);
+      }, session => session?.frames_presented >= 65 && distinctTimes().length > 45, 'two bounce turnarounds');
+      const distinct = distinctTimes();
       expect(distinct.length).toBeGreaterThan(45);
       expect(Math.min(...distinct)).toBeCloseTo(.2, 5);
       expect(Math.max(...distinct)).toBeCloseTo(.76, 5);
@@ -368,7 +371,8 @@ testSuite('HAP compressed textures through native output', () => {
       await rpc.commands([command(.68, -1, 2)]);
       await waitUntil(read, v => v?.seek_generation === 2 && v.source_time_seconds < .6 && v.source_time_seconds > .4, 'reverse bounce seek');
       await rpc.commands([{type:'set_media_source_playback',source_id:source,paused:true}]);
-      const paused = await read();
+      // Status can trail a command by one rebuild: read once it shows the pause.
+      const paused = await waitUntil(read, v => v?.state !== 'playing', 'bounce pause lands');
       await sleep(100);
       expect((await read()).source_time_seconds).toBe(paused.source_time_seconds);
       await rpc.commands([{type:'set_media_source_playback',source_id:source,paused:false}]);

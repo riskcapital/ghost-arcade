@@ -3582,6 +3582,13 @@ impl SceneLayer {
         let waiting_for_video = held.is_none()
             && self.source_kind == source_kind("video")
             && self.frame_slot.is_none();
+        // Likewise a shader whose pipeline is still building on the worker
+        // thread: it shows nothing until its first frame, not a colour block.
+        let waiting_for_shader = held.is_none()
+            && self.shader_id.is_some()
+            && !self.shader_rendered
+            && !self.explicit_color
+            && !self.source_id.as_deref().is_some_and(|id| id.starts_with("effect-pass:"));
         // An empty layer (nothing bound, no colour of its own) draws the
         // alignment card instead of a flat fill, so it takes the full path.
         let empty_card = held.is_none() && self.shows_empty_card();
@@ -3612,7 +3619,7 @@ impl SceneLayer {
                 self.color[0],
                 self.color[1],
                 self.color[2],
-                if waiting_for_video { 0.0 } else {
+                if waiting_for_video || waiting_for_shader { 0.0 } else {
                     self.opacity.clamp(0.0, 1.0) * self.color[3].clamp(0.0, 1.0)
                 },
             ],
@@ -4310,6 +4317,10 @@ struct RenderState {
     frame_uniform_pool: Vec<NativeComputeGraphGpuBuffer>,
     frame_uniform_cursor: usize,
     allow_async_compile: bool,
+    /// On only while the frame renders its bound shader layers: their new
+    /// pipelines build on a worker thread. A render a command asks for
+    /// builds at once.
+    shader_async_compile: bool,
     pipeline_work: HashMap<String, Receiver<Result<CompiledPipeline, String>>>,
     pipeline_failures: HashMap<String, String>,
     /// Off-screen target for reduced-resolution ISF rendering. Allocated lazily
@@ -16122,13 +16133,16 @@ impl App {
         self.isf_frame_outputs.retain(|_, (_, frame)| *frame == current_frame);
         let layer_ids = self.isf_layer_bindings.keys().cloned().collect::<Vec<_>>();
         // One encoder and one submit for all single-pass shaders this frame.
+        let async_compile = self.render_clock_mode != "manual";
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.begin_native_shader_batch();
+            renderer.shader_async_compile = async_compile;
         }
         for layer_id in layer_ids {
             self.apply_render_isf_to_layer(&json!({ "layer_id": layer_id }));
         }
         if let Some(renderer) = self.renderer.as_mut() {
+            renderer.shader_async_compile = false;
             renderer.finish_native_shader_batch();
         }
     }
@@ -21268,6 +21282,7 @@ impl RenderState {
             frame_uniform_pool: Vec::new(),
             frame_uniform_cursor: 0,
             allow_async_compile: false,
+            shader_async_compile: false,
             pipeline_work: HashMap::new(),
             pipeline_failures: HashMap::new(),
             native_shader_scale_texture: None,
@@ -23103,6 +23118,18 @@ impl RenderState {
         // Built on a worker thread, like graph pipelines: a shader seen for
         // the first time (a new visual coming in) never stalls the frame.
         // Until it lands this layer is skipped and everything else renders.
+        // Outside the frame's own shader pass (a command asking for a render
+        // now, or a manual render clock) it is built at once, so the render
+        // that asked for it has its picture.
+        if !self.shader_async_compile {
+            let pipeline = build_native_shader_pipeline(
+                &self.device, &self.native_shader_vertex_module, &self.native_shader_bind_group_layout,
+                source_kind, source, fragment_entry, format,
+            )?;
+            self.native_shader_pipelines.insert(cache_key.to_string(), pipeline);
+            self.pipeline_used.insert(cache_key.to_string(), self.frame_epoch);
+            return Ok(());
+        }
         let device = self.device.clone();
         let vertex = self.native_shader_vertex_module.clone();
         let layout = self.native_shader_bind_group_layout.clone();
