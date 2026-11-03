@@ -7,9 +7,36 @@
    */
   import { onDestroy } from 'svelte';
   import { audioManualBpm } from '../../stores/audio';
-  import { setFollowBand, studioDownbeat, studioNudge, studioScaleTempo, studioTapPulse, tapStudioTempo } from '../../music/studioTempo';
+  import { setFollowBand, setStudioTempo, studioDownbeat, studioNudge, studioScaleTempo, studioTapPulse, tapStudioTempo } from '../../music/studioTempo';
 
-  let { tempo }: { tempo: number } = $props();
+  /** `locked`: Ableton Live sets the tempo, so it cannot be typed here. */
+  let { tempo, locked = false }: { tempo: number; locked?: boolean } = $props();
+
+  // Click the number to type a tempo; Enter sets it on the next beat, Esc leaves it.
+  let editing = $state(false);
+  let draft = $state('');
+  let bad = $state(false);
+  function startEdit() {
+    if (locked) return;
+    draft = tempo.toFixed(1);
+    bad = false;
+    editing = true;
+  }
+  function commit() {
+    if (!editing) return;
+    const value = Number(draft.replace(',', '.'));
+    if (setStudioTempo(value)) editing = false;
+    else bad = true;
+  }
+  function editKey(e: KeyboardEvent) {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); commit(); (e.target as HTMLInputElement).blur(); }
+    else if (e.key === 'Escape') { e.preventDefault(); editing = false; }
+  }
+  function focusSelect(el: HTMLInputElement) {
+    el.focus();
+    el.select();
+  }
 
   let flash = $state(false);
   let flashTimer: ReturnType<typeof setTimeout> | null = null;
@@ -61,8 +88,23 @@
 
 <svelte:window onkeydown={key} />
 
-<span class="tempo" class:flash title={pulse.bpm === null && pulse.count > 0 && pulse.count < 4 ? `Tap ${4 - pulse.count} more` : `${tempo.toFixed(1)} BPM`}>
-  <span class="tempo-value">{tempo.toFixed(1)}</span> <span class="tempo-unit">BPM</span>
+<span class="tempo" class:flash title={pulse.bpm === null && pulse.count > 0 && pulse.count < 4 ? `Tap ${4 - pulse.count} more` : locked ? `${tempo.toFixed(1)} BPM, set by Ableton Live` : `${tempo.toFixed(1)} BPM: click to type a tempo`}>
+  {#if editing}
+    <input
+      class="tempo-input"
+      class:bad
+      type="text"
+      inputmode="decimal"
+      bind:value={draft}
+      use:focusSelect
+      onkeydown={editKey}
+      onblur={() => { if (editing) { commit(); editing = false; } }}
+      aria-label="Tempo in BPM, from 30 to 300"
+    />
+  {:else}
+    <button class="tempo-value" onclick={startEdit} disabled={locked} aria-label={locked ? 'Tempo, set by Ableton Live' : 'Tempo: click to type one'}>{tempo.toFixed(1)}</button>
+  {/if}
+  <span class="tempo-unit">BPM</span>
 </span>
 <div class="tempo-tools" role="group" aria-label="Tempo">
   <button
@@ -97,7 +139,11 @@
 <style>
   .tempo { display: inline-flex; align-items: baseline; gap: 4px; margin-left: 4px; border-radius: 3px; transition: background 0.1s; }
   .tempo.flash { background: var(--studio-accent-soft); }
-  .tempo-value { font-family: var(--ga-font-mono, ui-monospace); font-variant-numeric: tabular-nums; color: var(--studio-ink); }
+  .tempo-value { font: inherit; font-family: var(--ga-font-mono, ui-monospace); font-variant-numeric: tabular-nums; color: var(--studio-ink); background: none; border: 0; border-bottom: 1px dashed transparent; padding: 0 1px; cursor: text; }
+  .tempo-value:hover:not(:disabled) { border-bottom-color: var(--studio-muted); }
+  .tempo-value:disabled { cursor: default; }
+  .tempo-input { width: 5.2ch; height: 22px; padding: 0 4px; font-family: var(--ga-font-mono, ui-monospace); font-variant-numeric: tabular-nums; color: var(--studio-ink); background: var(--studio-panel); border: 1px solid var(--studio-accent, #8af); border-radius: 4px; box-sizing: content-box; }
+  .tempo-input.bad { border-color: #ff5a6a; }
   .tempo-unit { font-size: var(--ga-text-meta, 11px); font-weight: var(--ga-weight-control, 600); color: var(--studio-muted); }
   .tempo-tools { position: relative; display: inline-flex; align-items: center; gap: 2px; }
   .tempo-tools > .text-btn { min-width: 0; padding: 0 6px; touch-action: none; }

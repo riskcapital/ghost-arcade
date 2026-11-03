@@ -16,8 +16,8 @@
   import { visualPicker } from '../../music/studioUi';
   import VisualPickButton from './VisualPickButton.svelte';
   import { BLEND_MODE_ORDER, blendModeLabel, type BlendMode } from '../../types';
-  import { MIX_BARS, MIX_MODES, mixAt, normalizeMix, type MixMode } from '../../music/studioMix';
-  import { studioCodeTick, studioVoiceBlend, studioRenderInputs, studioVoiceCode, type StudioVoice } from '../../music/studioPlugin';
+  import { MIX_BAR_OPTIONS, MIX_MODES, mixAt, normalizeMix, type MixMode } from '../../music/studioMix';
+  import { followedMix, studioCodeTick, studioVoiceBlend, studioRenderInputs, studioVoiceCode, type StudioVoice } from '../../music/studioPlugin';
   import {
     addStudioVoice,
     loadSceneIntoStudio,
@@ -113,7 +113,8 @@
     const driven = voices.map((v) => studioRenderInputs.driven(v.source, v.auto, v.live));
     // With auto-mix on, a visual sitting out shows a dark light.
     const clock = driven[0];
-    const mixed = mixAt(mix, clock ? (clock.vxBars ?? 0) + (clock.vxBar ?? 0) : 0, voices.map((v) => v.level <= 0));
+    const followed = mix.follow ? followedMix() : [];
+    const mixed = followed.length === voices.length ? followed : mixAt(mix, clock ? (clock.vxBars ?? 0) + (clock.vxBar ?? 0) : 0, voices.map((v) => v.level <= 0));
     const next = driven.map((d, i) => Math.min(1, (0.25 + 0.75 * (d.vxEnv ?? 0)) * (d.vxPresence ?? 1) * (mixed[i]?.gain ?? 1)));
     // Only repaint the lights when one has visibly changed.
     if (next.length !== activity.length || next.some((a, i) => Math.abs(a - activity[i]) > 0.01)) activity = next;
@@ -236,9 +237,10 @@
       <select value={mix.mode} onchange={(e) => setStudioMix({ mode: (e.target as HTMLSelectElement).value as MixMode })} aria-label="Auto-mix" title={MIX_MODES.find((m) => m.id === mix.mode)?.title} data-midi-path="studio:visuals.automix-next" data-midi-label="Next auto-mix mode" data-midi-mode="toggle">
         {#each MIX_MODES as m (m.id)}<option value={m.id} title={m.title}>{m.label}</option>{/each}
       </select>
-      <select value={String(mix.bars)} onchange={(e) => setStudioMix({ bars: Number((e.target as HTMLSelectElement).value) })} disabled={mix.mode === 'all'} aria-label="Auto-mix changes every" title="How often the mix changes, on the bar">
-        {#each MIX_BARS as b (b)}<option value={String(b)}>{b === 1 ? 'Every bar' : `Every ${b} bars`}</option>{/each}
+      <select value={String(mix.bars)} onchange={(e) => setStudioMix({ bars: Number((e.target as HTMLSelectElement).value) })} disabled={mix.mode === 'all'} aria-label="Auto-mix changes every" title={mix.follow ? 'The usual pace; the music speeds it up or slows it down' : 'How often the mix changes, on the beat grid'}>
+        {#each MIX_BAR_OPTIONS as o (o.bars)}<option value={String(o.bars)}>{o.label}</option>{/each}
       </select>
+      <button class="text-btn small follow" class:on={mix.follow} aria-pressed={mix.follow} disabled={mix.mode === 'all'} onclick={() => setStudioMix({ follow: !mix.follow })} title="Follow the music: busy, loud playing changes faster (and shuffle shows more at once); sparse, quiet playing changes slower. Up to two steps either side of the pace you set." data-midi-path="studio:visuals.automix-follow" data-midi-label="Auto-mix follows the music" data-midi-mode="toggle">Follow</button>
     </div>
     <p class="order">Top of the list draws on top · drag ⋮⋮ or Alt+↑↓ to reorder</p>
     <div class="voices">
@@ -335,6 +337,7 @@
   .automix { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; }
   .automix .ga-eyebrow { color: var(--studio-muted); flex: 0 0 auto; }
   .automix select { flex: 1 1 0; min-width: 0; height: 22px; font-size: var(--ga-text-meta, 11px); }
+  .automix .follow { flex: 0 0 auto; height: 22px; padding: 0 7px; }
   .live { flex: 0 0 auto; margin-bottom: 6px; border-bottom: 1px solid var(--studio-edge-soft); padding-bottom: 4px; }
   .live-head { display: flex; align-items: center; gap: 6px; width: 100%; padding: 2px 0; border: 0; background: none; color: var(--studio-ink); cursor: pointer; text-align: left; }
   .live-head svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; flex: 0 0 auto; }

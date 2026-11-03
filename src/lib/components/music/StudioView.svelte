@@ -310,7 +310,7 @@
         <button class="transport rec" class:on={s.recording} onclick={toggleRecord} title={s.recording ? 'Stop the take and keep it' : 'Rec take: record the notes you play (not audio or video; that is Record A/V)'} aria-label={s.recording ? 'Stop the take' : 'Rec take'}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7"/></svg>
         </button>
-        <StudioTempoControls {tempo} />
+        <StudioTempoControls {tempo} locked={s.liveControl && $abletonBridge.connected} />
         {#if s.recording}<span class="rec-time">{seconds(elapsed)}</span>{/if}
       </div>
       <div class="group">

@@ -2625,7 +2625,7 @@ let lastPattern: DrumPattern | null = null;
 export function ensureMusicRuntime(): void {
   if (started) return;
   started = true;
-  setStudioDriver(drivenForStudio);
+  setStudioDriver(drivenForStudio, () => voices.feel());
   // The band looper's actions and MIDI controls (looperRuntime.ts).
   attachLooper(audio);
   // Risers land on the next bar line of the launch clock.

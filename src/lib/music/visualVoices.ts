@@ -195,6 +195,9 @@ function shapeOf(id: string): SourceShape {
 const HIT_SECONDS = 0.08;
 const GLIDE_SECONDS = 0.12;
 const ENERGY_SECONDS = 0.35;
+/** The music's feel looks back over about two bars. */
+const FEEL_BEATS = 8;
+const LOUDNESS_SECONDS = 2;
 const PHASE_WRAP = 1000;
 const COUNT_WRAP = 64;
 /** A sound counts as part of the music for this many beats after its last note. */
@@ -325,6 +328,10 @@ export class VoiceSignals {
   private energy = 0;
   private beat = 0;
   private beatSeconds = 0.5;
+  /** Notes and hits heard, decaying over FEEL_BEATS: how busy the music is. */
+  private onsets = 0;
+  /** How loud the music is, smoothed over a couple of seconds. */
+  private loudness = 0;
 
   /** Queue an event for the sources it belongs to; it takes effect when the clock reaches it. */
   push(event: NoteEvent, sources: AnySourceId[]): void {
@@ -343,6 +350,7 @@ export class VoiceSignals {
     while (this.pending.length && this.pending[0].event.time <= time) {
       const { event, sources } = this.pending.shift()!;
       this.integrate(event.time);
+      if (event.type !== 'off') this.onsets++;
       for (const id of sources) this.apply(this.state(id), event);
     }
     this.integrate(time);
@@ -361,7 +369,10 @@ export class VoiceSignals {
   /** A continuous level for a source (a Live audio track's meter), shown in its envelope. */
   setLevel(id: AnySourceId, level: number): void {
     this.state(id);
-    this.levels.set(id, Math.max(0, Math.min(1, Number.isFinite(level) ? level : 0)));
+    const next = Math.max(0, Math.min(1, Number.isFinite(level) ? level : 0));
+    // An audio track has no notes: a sharp rise in its level counts as a hit.
+    if (next - (this.levels.get(id) ?? 0) > 0.18) this.onsets++;
+    this.levels.set(id, next);
   }
 
   /** Forget Live sources nobody follows any more. */
@@ -385,6 +396,15 @@ export class VoiceSignals {
   /** True while anything is moving that a voice would show. */
   isActive(): boolean {
     return [...this.states.values()].some((s) => s.notes.length > 0 || s.hit > 0.001 || s.presence > 0.001) || this.energy > 0.001 || [...this.levels.values()].some((l) => l > 0.001);
+  }
+
+  /**
+   * How the music feels now, 0-1 each: `pace` from notes and hits per beat
+   * (four a beat, sixteenths, is full), `level` from how loud it is.
+   */
+  feel(): { pace: number; level: number } {
+    const perBeat = this.onsets / FEEL_BEATS;
+    return { pace: Math.min(1, perBeat / 4), level: Math.min(1, this.loudness) };
   }
 
   /** The inputs for a voice following `source`. Without `auto` it is always present. */
@@ -445,6 +465,8 @@ export class VoiceSignals {
     const presenceIn = 1 - Math.exp(-dt / PRESENCE_IN_SECONDS);
     const presenceOut = 1 - Math.exp(-dt / (PRESENCE_OUT_BEATS * this.beatSeconds));
     const holdSeconds = PRESENCE_HOLD_BEATS * this.beatSeconds;
+    this.onsets *= Math.exp(-dt / (FEEL_BEATS * this.beatSeconds));
+    let loud = 0;
     for (const [id, state] of this.states) {
       const shape = shapeOf(id);
       let env = this.levels.get(id) ?? 0;
@@ -458,7 +480,9 @@ export class VoiceSignals {
       const active = held || time - state.lastOn < holdSeconds;
       state.presence += ((active ? 1 : 0) - state.presence) * (active ? presenceIn : presenceOut);
       if (id === 'all') this.energy += (env - this.energy) * (1 - Math.exp(-dt / ENERGY_SECONDS));
+      if (id === 'all' || isLiveSource(id)) loud = Math.max(loud, env);
     }
+    this.loudness += (loud - this.loudness) * (1 - Math.exp(-dt / LOUDNESS_SECONDS));
   }
 }
 

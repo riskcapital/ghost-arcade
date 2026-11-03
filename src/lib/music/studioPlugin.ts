@@ -16,7 +16,7 @@
  */
 
 import { writable } from 'svelte/store';
-import { DEFAULT_MIX, mixAt, normalizeMix, type StudioMix } from './studioMix';
+import { DEFAULT_MIX, MixFollower, mixAt, normalizeMix, type MixFeel, type StudioMix } from './studioMix';
 import { BLEND_MODE_ORDER, createLayer, type BlendMode, type Layer } from '../types';
 import { isLiveSource, VOICE_AUTO_INPUT, VOICE_SOURCE_INPUT, VOICE_SOURCES, voiceSourceIndex, type LiveSourceId, type VoiceSourceId } from './visualVoices';
 import type { StudioSet } from './studioSets';
@@ -165,6 +165,8 @@ export interface StudioRenderInputs {
   code(file: string): string | undefined;
   /** The driven `vx` inputs for a voice following `source` (or its Live track, while the studio plays with Live). */
   driven(source: VoiceSourceId, auto: boolean, live?: LiveSourceId): Record<string, number>;
+  /** How busy and loud the music is, for auto-mix that follows it. */
+  feel?(): MixFeel;
 }
 
 export function studioVoiceLayerId(host: Layer, index: number): string {
@@ -205,7 +207,8 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
     // Auto-mix works from the bar clock every voice shares.
     const clock = driven.find((d) => Number.isFinite(d.vxBars));
     const barPos = clock ? (clock.vxBars ?? 0) + (clock.vxBar ?? 0) : 0;
-    const mixed = mixAt(studio.musicMix, barPos, studio.musicVoices.map((v) => v.level <= 0));
+    const muted = studio.musicVoices.map((v) => v.level <= 0);
+    const mixed = studio.musicMix.follow ? followerFor(layer.id).step(studio.musicMix, barPos, muted, inputs.feel?.()) : mixAt(studio.musicMix, barPos, muted);
     studio.musicVoices.forEach((voice, index) => {
       const code = inputs.code(voice.file);
       if (!code) return;
@@ -281,11 +284,32 @@ export function studioVoiceCode(file: string): string | undefined {
 }
 
 let driver: StudioRenderInputs['driven'] | null = null;
+let feel: (() => MixFeel) | null = null;
 let liveHosts = 0;
 
 /** The studio runtime supplies the voices' signals. */
-export function setStudioDriver(fn: StudioRenderInputs['driven'] | null): void {
+export function setStudioDriver(fn: StudioRenderInputs['driven'] | null, feelFn: (() => MixFeel) | null = null): void {
   driver = fn;
+  feel = feelFn;
+}
+
+/** One follower per studio instance (auto-mix following the music keeps a little state). */
+const followers = new Map<string, MixFollower>();
+let lastFollower: MixFollower | null = null;
+function followerFor(hostId: string): MixFollower {
+  let f = followers.get(hostId);
+  if (!f) {
+    if (followers.size > 32) followers.clear();
+    f = new MixFollower();
+    followers.set(hostId, f);
+  }
+  lastFollower = f;
+  return f;
+}
+
+/** The mix the last music-following instance worked out, for the rack's lights. */
+export function followedMix(): readonly { gain: number }[] {
+  return lastFollower?.current ?? [];
 }
 
 /** Instances in the last rendered scene. */
@@ -297,6 +321,7 @@ export function studioHostsLive(): number {
 export const studioRenderInputs: StudioRenderInputs = {
   code: studioVoiceCode,
   driven: (source, auto, live) => (driver ? driver(source, auto, live) : { vxPresence: 1 }),
+  feel: () => (feel ? feel() : { pace: 0.5, level: 0.5 }),
 };
 
 /** Called by the renderer with the number of instances in the scene. */

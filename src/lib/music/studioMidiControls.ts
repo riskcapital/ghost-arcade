@@ -306,6 +306,10 @@ const SCENES: StudioControl[] = [
       setStudioMix({ mode: MIX_MODES[(i + 1) % MIX_MODES.length].id });
     },
   },
+  {
+    id: 'visuals.automix-follow', label: 'Auto-mix follows the music', group: 'Visuals', kind: 'trigger',
+    run: () => void setStudioMix({ follow: !normalizeMix(studioTargetNow()?.source.musicMix).follow }),
+  },
   { id: 'visuals.scene-next', label: 'Next visual scene', group: 'Visuals', kind: 'trigger', run: () => void stepVisualScene(1) },
   { id: 'visuals.scene-prev', label: 'Previous visual scene', group: 'Visuals', kind: 'trigger', run: () => void stepVisualScene(-1) },
 ];

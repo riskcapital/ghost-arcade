@@ -43,6 +43,13 @@ export function studioNudge(direction: -1 | 0 | 1): void {
   setTempoNudgeInput('studio-nudge', direction);
 }
 
+/** A typed tempo: it lands on the next beat, and stops following the band's audio. */
+export function setStudioTempo(bpm: number): boolean {
+  if (!Number.isFinite(bpm) || bpm < 30 || bpm > 300) return false;
+  setTempoOnBeat(Math.round(bpm * 100) / 100);
+  return true;
+}
+
 export function studioScaleTempo(factor: 0.5 | 2): void {
   const bpm = get(audioBpm);
   if (bpm > 0) setTempoOnBeat(scaleTempo(bpm, factor));

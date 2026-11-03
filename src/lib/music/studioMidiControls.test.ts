@@ -57,7 +57,7 @@ describe('the studio controls a controller can learn', () => {
       ...range(8).map((n) => `pad.${n}`),
       ...range(5).map((n) => `bowl.${n}`),
       ...range(16).flatMap((n) => ['level', 'look-next', 'look-prev', 'mute', 'blend-next', 'blend-prev', 'follow-next'].map((c) => `voice.${n}.${c}`)),
-      'visuals.automix-next', 'visuals.scene-next', 'visuals.scene-prev',
+      'visuals.automix-next', 'visuals.automix-follow', 'visuals.scene-next', 'visuals.scene-prev',
       'tone.synth.next', 'tone.synth.prev', 'tone.keys.next', 'tone.keys.prev', 'tone.drums.next', 'tone.drums.prev',
       ...['bass', 'lead', 'chords', 'texture'].flatMap((t) => [`tone.track.${t}.next`, `tone.track.${t}.prev`]),
       ...Array.from({ length: 32 }, (_, i) => `dubshot.${i + 1}`),
