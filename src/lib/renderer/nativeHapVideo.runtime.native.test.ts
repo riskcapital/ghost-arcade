@@ -361,7 +361,8 @@ testSuite('HAP compressed textures through native output', () => {
       let lastSign = 0, turns = 0;
       for (let i = 1; i < distinct.length; i++) {
         const delta = distinct[i] - distinct[i - 1];
-        expect(Math.abs(delta)).toBeLessThanOrEqual(.080001);
+        // At most three frames apart: status is sampled at ~15 Hz.
+        expect(Math.abs(delta)).toBeLessThanOrEqual(.120001);
         const sign = Math.sign(delta);
         if (lastSign && sign !== lastSign) turns++;
         lastSign = sign;
@@ -369,7 +370,9 @@ testSuite('HAP compressed textures through native output', () => {
       expect(turns).toBeGreaterThanOrEqual(3);
       // Seek onto a reverse leg, pause with no explicit time/rate, then resume.
       await rpc.commands([command(.68, -1, 2)]);
-      await waitUntil(read, v => v?.seek_generation === 2 && v.source_time_seconds < .6 && v.source_time_seconds > .4, 'reverse bounce seek');
+      // Status can name the new seek before its first frame lands, still showing
+      // the old position: wait for a frame of this seek, then the window.
+      await waitUntil(read, v => v?.seek_generation === 2 && v.frames_presented > 0 && v.source_time_seconds < .6 && v.source_time_seconds > .4, 'reverse bounce seek');
       await rpc.commands([{type:'set_media_source_playback',source_id:source,paused:true}]);
       // Status can trail a command by one rebuild: read once it shows the pause.
       const paused = await waitUntil(read, v => v?.state !== 'playing', 'bounce pause lands');
