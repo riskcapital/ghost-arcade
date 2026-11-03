@@ -314,7 +314,7 @@ export const TONES: Tone[] = [
       osc1: { wave: 'saw', level: 0.6 }, osc2: { wave: 'square', oct: 1, pw: 0.3, level: 0.25 },
       filter: { mode: 'ladder', cutoff: 900, res: 0.3, env: 3.4, keyTrack: 0.6, vel: 0.7 },
       fenv: env(0.001, 0.16, 0, 0.12), aenv: env(0.001, 0.32, 0, 0.25),
-      poly: 6, fx: { delay: { mix: 0.32, beats: 0.75, fb: 0.42, tone: 0.65 }, chorus: { mix: 0.2, mode: 2 } }, gain: 1.2,
+      poly: 6, fx: { delay: { mix: 0.32, beats: 0.75, fb: 0.42, tone: 0.65 }, chorus: { mix: 0.2, mode: 2 } }, gain: 1,
     },
   },
   {
