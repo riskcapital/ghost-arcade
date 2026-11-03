@@ -18,7 +18,8 @@ import { audioBpm, audioStore } from '../stores/audio';
 import { launchClockFollowsLink } from '../stores/launchClock';
 import { abletonBridge } from '../ableton/abletonBridge';
 import { musicStudio } from './musicStudioStore';
-import { keepLiveSources, pushLiveNote, pushOutsideNote, setLiveFeedActive, setLiveLevel } from './musicRuntime';
+import { applyLiveScene, noteLiveScene, keepLiveSources, pushLiveNote, pushOutsideNote, setLiveFeedActive, setLiveLevel } from './musicRuntime';
+import { studioSceneForLive } from './scenes';
 import { isDrumTrack, LevelHits, mappedTracks } from './liveControl';
 import { gmDrum, liveSource, type AnySourceId, type VoiceSourceId } from './visualVoices';
 
@@ -74,6 +75,15 @@ function onLevel(track: number, level: number): void {
   if (t.role) pushOutsideNote(hit.type, LEVEL_NOTE, hit.velocity, t.role, 0, false);
 }
 
+/** A Live scene launched: the studio scene that goes with it brings its visuals and sound. */
+function onScene(scene: number): void {
+  noteLiveScene(scene);
+  const studio = get(musicStudio);
+  const id = studioSceneForLive(studio.scenes, scene, get(abletonBridge).scenes.map((sc) => sc.name));
+  if (id) applyLiveScene(id);
+  else if (studio.queuedSceneId) musicStudio.setTransport({ queuedSceneId: null });
+}
+
 function sync(): void {
   const studio = get(musicStudio);
   const bridge = get(abletonBridge);
@@ -121,6 +131,7 @@ function sync(): void {
       levelTracks: tracks.filter(([, t]) => !t.midi).map(([i]) => i),
       onNotes,
       onLevel,
+      onScene,
     }
     : null);
 }

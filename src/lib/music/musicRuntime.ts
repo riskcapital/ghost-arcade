@@ -67,7 +67,8 @@ import { drumPadForKey } from './keyboardLayout';
 import { attachMusicKeyboard, musicKeysArmed } from './musicKeyboard';
 import { DRUM_CHANNEL, MusicMidiInput, type MidiNoteMessage } from './midiNotes';
 import { LOOP_REC_OFF, musicStudio, musicTransport, nextTakeName, sceneSound, type MusicStudioState, type MusicTransportState } from './musicStudioStore';
-import { captureScene, dominantColumn, nextSceneName, sceneLaunchActions, type PlayingNow } from './scenes';
+import { captureScene, dominantColumn, liveSceneFor, nextSceneName, sceneLaunchActions, type PlayingNow } from './scenes';
+import { abletonBridge } from '../ableton/abletonBridge';
 import { macros } from '../stores/macros';
 import { getNativeRendererFrameSnapshot } from '../api/native-renderer';
 import {
@@ -736,6 +737,14 @@ export function captureCurrentScene(name?: string): string {
   scene.sound = sceneSound(captureSetup(s));
   const target = studioTargetNow();
   if (target) scene.voices = JSON.parse(JSON.stringify(target.source.musicVoices));
+  // Playing with Live: the scene goes with the Live scene playing now, and is
+  // named after it unless given a name.
+  const live = liveFeedOn ? lastLiveScene : -1;
+  const liveName = live >= 0 ? get(abletonBridge).scenes[live]?.name ?? '' : '';
+  if (live >= 0) {
+    scene.liveScene = { name: liveName, index: live };
+    if (!name?.trim() && liveName.trim()) scene.name = liveName.trim().slice(0, 60);
+  }
   musicStudio.addScene(scene);
   return scene.id;
 }
@@ -748,7 +757,20 @@ export function captureCurrentScene(name?: string): string {
 export function launchScene(id: string, atOnce = false): void {
   ensureMusicRuntime();
   const s = get(musicStudio);
-  if (!s.scenes.some((sc) => sc.id === id)) return;
+  const scene = s.scenes.find((sc) => sc.id === id);
+  if (!scene) return;
+  // Playing with Live: Live plays the music, so the studio scene brings its
+  // Live scene (Live launches it on its own quantize), and its visuals and
+  // sound follow when Live does. Without a Live scene they change now.
+  if (liveFeedOn) {
+    const bridge = get(abletonBridge);
+    const live = liveSceneFor(scene, bridge.scenes.map((sc) => sc.name));
+    if (live >= 0 && !atOnce) {
+      abletonBridge.launchScene(live);
+      musicStudio.setTransport({ queuedSceneId: id });
+    } else applyLiveScene(id);
+    return;
+  }
   const now = playingNow();
   const idle = !now.beat && !now.takeId && !loopSlots.size;
   if (sceneTimer) clearTimeout(sceneTimer);
@@ -763,6 +785,23 @@ export function launchScene(id: string, atOnce = false): void {
     sceneTimer = null;
     applyScene(id);
   }, wait);
+}
+
+/**
+ * A studio scene while Live plays the music: its sound and its visuals,
+ * not its beat, loops or take (Live has those).
+ */
+export function applyLiveScene(id: string): void {
+  const s = get(musicStudio);
+  const scene = s.scenes.find((sc) => sc.id === id);
+  musicStudio.setTransport({ queuedSceneId: null });
+  if (!scene) return;
+  if (scene.sound) musicStudio.applySetup(scene.sound as Partial<SongSetup>, { sound: true, band: false });
+  if (scene.voices && studioTargetNow()) {
+    const voices = normalizeStudioSource({ musicVoices: scene.voices }).musicVoices;
+    editStudio((src) => ({ ...src, musicVoices: voices }));
+  }
+  musicStudio.setTransport({ sceneId: id });
 }
 
 function applyScene(id: string): void {
@@ -2245,9 +2284,15 @@ export function keepLiveSources(keep: ReadonlySet<string>): void {
 }
 
 let liveFeedOn = false;
+/** The Live scene launched last while the studio plays with Live, or -1. */
+let lastLiveScene = -1;
+export function noteLiveScene(scene: number): void {
+  lastLiveScene = scene;
+}
 /** The studio is playing with Live (open, in Live mode, connected). */
 export function setLiveFeedActive(on: boolean): void {
   liveFeedOn = on;
+  if (!on) lastLiveScene = -1;
 }
 function liveFeedActive(): boolean {
   return liveFeedOn;

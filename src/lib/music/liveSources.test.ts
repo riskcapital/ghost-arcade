@@ -79,3 +79,32 @@ describe('Live sources: visuals that follow an Ableton track', () => {
     expect(normalizeStudioVoice({ file: 'VX-Barcode.fs', source: 'kick', live: 42 })?.live).toBeUndefined();
   });
 });
+
+import { liveSceneFor, normalizeScene, studioSceneForLive } from './scenes';
+
+describe('studio scenes and Live scenes', () => {
+  const live = ['Intro', 'Verse', 'Drop', 'Outro'];
+  it('go together by an explicit link, by name first, then by position', () => {
+    expect(liveSceneFor({ name: 'Peak', liveScene: { name: 'Drop', index: 0 } }, live)).toBe(2);
+    // Renamed in Live: the stored position still finds it.
+    expect(liveSceneFor({ name: 'Peak', liveScene: { name: 'Gone', index: 1 } }, live)).toBe(1);
+    expect(liveSceneFor({ name: 'Peak', liveScene: { name: 'Gone', index: 9 } }, live)).toBe(-1);
+  });
+  it('go together by a shared name when not linked', () => {
+    expect(liveSceneFor({ name: 'drop ' }, live)).toBe(2);
+    expect(liveSceneFor({ name: 'Arrival' }, live)).toBe(-1);
+  });
+  it('a Live scene brings its linked studio scene before a same-named one', () => {
+    const scenes = [
+      { id: 'named', name: 'Drop' },
+      { id: 'linked', name: 'Peak', liveScene: { name: 'Drop', index: 2 } },
+    ];
+    expect(studioSceneForLive(scenes, 2, live)).toBe('linked');
+    expect(studioSceneForLive(scenes.slice(0, 1), 2, live)).toBe('named');
+    expect(studioSceneForLive(scenes, 0, live)).toBeNull();
+  });
+  it('keep their Live link through a save', () => {
+    expect(normalizeScene({ id: 'a', name: 'Peak', liveScene: { name: 'Drop', index: 2 } })?.liveScene).toEqual({ name: 'Drop', index: 2 });
+    expect(normalizeScene({ id: 'a', name: 'Peak', liveScene: { name: 'Drop', index: -1 } })?.liveScene).toBeUndefined();
+  });
+});

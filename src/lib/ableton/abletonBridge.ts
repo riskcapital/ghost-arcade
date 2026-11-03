@@ -271,6 +271,8 @@ export interface StudioFeed {
   /** Notes as they play: velocity 0-127 as Live has it, length in beats. */
   onNotes: (track: number, notes: { pitch: number; velocity: number; beats: number }[]) => void;
   onLevel: (track: number, level: number) => void;
+  /** A Live scene launched (by Live, a controller or the studio). */
+  onScene?: (scene: number, name: string) => void;
 }
 
 type LiveMessage = Record<string, any> & { t: string };
@@ -460,6 +462,7 @@ function createAbletonBridge() {
     const color = read().scenes[scene]?.color;
     if (color) colorValues.set(-1, colorHue(color));
     markPlayed(song => song.kind === 'scenes' && song.sections[0]?.scene === scene);
+    studioFeed?.onScene?.(scene, read().scenes[scene]?.name ?? '');
     fire(linksForScene(read().links, scene), sceneLabel(scene));
   }
 

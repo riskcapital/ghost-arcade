@@ -32,6 +32,32 @@ export interface MusicScene {
   sound?: Record<string, unknown>;
   /** The visual voices when it was saved; none leaves the visuals as they are. */
   voices?: unknown[];
+  /**
+   * The Ableton Live scene it goes with while the studio plays with Live:
+   * launching either one brings the other. Found by name, then by position.
+   * Without one, a Live scene of the same name goes with it.
+   */
+  liveScene?: { name: string; index: number } | null;
+}
+
+/** The Live scene a studio scene goes with: its own link, else a Live scene of the same name. */
+export function liveSceneFor(scene: Pick<MusicScene, 'name' | 'liveScene'>, liveNames: readonly string[]): number {
+  const clean = (n: string) => n.trim().toLowerCase();
+  if (scene.liveScene) {
+    const byName = liveNames.findIndex((n) => clean(n) === clean(scene.liveScene!.name));
+    if (byName >= 0) return byName;
+    if (scene.liveScene.index >= 0 && scene.liveScene.index < liveNames.length) return scene.liveScene.index;
+    return -1;
+  }
+  return scene.name.trim() ? liveNames.findIndex((n) => clean(n) === clean(scene.name)) : -1;
+}
+
+/** The studio scene a Live scene brings, if any (its link first, then a matching name). */
+export function studioSceneForLive(scenes: readonly Pick<MusicScene, 'id' | 'name' | 'liveScene'>[], liveIndex: number, liveNames: readonly string[]): string | null {
+  const linked = scenes.find((sc) => sc.liveScene && liveSceneFor(sc, liveNames) === liveIndex);
+  if (linked) return linked.id;
+  const named = scenes.find((sc) => !sc.liveScene && liveSceneFor(sc, liveNames) === liveIndex);
+  return named?.id ?? null;
 }
 
 export const SCENE_NAMES = ['Arrival', 'Breath', 'Bloom', 'Drift', 'Release', 'Dawn', 'Pressure', 'Peak', 'Break', 'Return'];
@@ -126,5 +152,14 @@ export function normalizeScene(raw: unknown): MusicScene | null {
         return typeof id === 'string' && id ? [[role, id]] : [];
       }),
     ),
+    ...normalizeLiveScene(s.liveScene),
   };
+}
+
+function normalizeLiveScene(raw: unknown): Pick<MusicScene, 'liveScene'> {
+  if (!raw || typeof raw !== 'object') return {};
+  const r = raw as { name?: unknown; index?: unknown };
+  const index = Number(r.index);
+  if (typeof r.name !== 'string' || !Number.isInteger(index) || index < 0) return {};
+  return { liveScene: { name: r.name.slice(0, 200), index } };
 }

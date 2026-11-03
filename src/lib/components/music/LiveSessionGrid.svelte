@@ -9,6 +9,7 @@
   import { liveColor } from '../../ableton/abletonLinks';
   import { musicStudio } from '../../music/musicStudioStore';
   import { guessRole } from '../../music/liveControl';
+  import { studioSceneForLive } from '../../music/scenes';
   import { livePlatform, liveSetupWords } from '../../ableton/liveSetup';
   import { PART_SOURCES, type VoiceSourceId } from '../../music/visualVoices';
 
@@ -16,6 +17,13 @@
   const live = $derived($abletonBridge);
   const words = $derived(liveSetupWords(livePlatform(), live.script?.liveVersions));
   const rows = $derived(Math.max(live.scenes.length, ...live.tracks.map((t) => t.slots.length), 0));
+
+  const liveNames = $derived(live.scenes.map((sc) => sc.name));
+  /** The studio scene this Live scene brings (its visuals and sound), if any. */
+  function studioSceneName(row: number): string | null {
+    const id = studioSceneForLive(s.scenes, row, liveNames);
+    return id ? (s.scenes.find((sc) => sc.id === id)?.name ?? null) : null;
+  }
 
   function setRole(track: string, value: string) {
     musicStudio.setLiveRole(track, value ? (value as VoiceSourceId) : null);
@@ -68,17 +76,19 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" /></svg>
             </button>
           </div>
-          <select aria-label="What {track.name} feeds the visuals as" value={s.liveRoles[track.name] ?? ''} onchange={(e) => setRole(track.name, (e.target as HTMLSelectElement).value)} title={track.midi ? 'Its notes drive the visuals following this sound' : 'Its level drives the visuals following this sound'}>
-            <option value="">No visuals</option>
+          <select aria-label="Studio sound {track.name} also plays as" value={s.liveRoles[track.name] ?? ''} onchange={(e) => setRole(track.name, (e.target as HTMLSelectElement).value)} title="Visuals can follow this track itself (Visuals panel); it can also play as one of the studio's sounds, for visuals already following that sound">
+            <option value="">Its own visuals</option>
             {#each PART_SOURCES as v (v.id)}<option value={v.id}>{v.label}</option>{/each}
           </select>
         </div>
       {/each}
       {#each Array.from({ length: rows }, (_, i) => i) as row (row)}
         {@const scene = live.scenes[row]}
-        <button class="scene" class:queued={scene?.queued} disabled={!scene} onclick={() => abletonBridge.launchScene(row)} title={scene ? `Launch ${scene.name || `scene ${row + 1}`} in Live` : ''}>
+        {@const studioScene = scene ? studioSceneName(row) : null}
+        <button class="scene" class:queued={scene?.queued} disabled={!scene} onclick={() => abletonBridge.launchScene(row)} title={scene ? `Launch ${scene.name || `scene ${row + 1}`} in Live${studioScene ? `; brings the studio scene ${studioScene}` : ''}` : ''}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5l12 7-12 7z" /></svg>
           <span>{scene?.name || `Scene ${row + 1}`}</span>
+          {#if studioScene}<span class="linked" aria-label="Brings studio scene {studioScene}">◆</span>{/if}
         </button>
         {#each live.tracks as track, t (t)}
           {@const clip = track.slots[row]}
@@ -104,6 +114,7 @@
 {/if}
 
 <style>
+  .scene .linked { margin-left: auto; font-size: 8px; color: var(--studio-accent); }
   .waiting { padding: 18px 4px; color: var(--studio-muted); font-size: var(--ga-text-control, 12px); line-height: 1.5; max-width: 520px; }
   .waiting p { margin: 0 0 6px; }
   .waiting .title { color: var(--studio-ink); font-weight: var(--ga-weight-title, 650); font-size: var(--ga-text-body, 13px); }
