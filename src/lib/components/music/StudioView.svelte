@@ -68,6 +68,7 @@
   import SongStrip from './SongStrip.svelte';
   import SceneBar from './SceneBar.svelte';
   import LiveSessionGrid from './LiveSessionGrid.svelte';
+  import LiveShow from './LiveShow.svelte';
   import { abletonLink } from '../../sync/abletonLink';
   import { abletonBridge } from '../../ableton/abletonBridge';
   import { ensureLiveFeed } from '../../music/liveFeed';
@@ -257,6 +258,8 @@
       <SongsPanel />
     {:else if lowerTab === 'takes'}
       <div class="scroll"><TakeList /></div>
+    {:else if s.liveControl}
+      <LiveShow />
     {:else}
       <div class="scene-grid">
         <span></span><span class="col ga-eyebrow">Beat</span><span class="col ga-eyebrow">Loops</span><span class="col ga-eyebrow">Take</span><span class="col ga-eyebrow">Visuals</span><span></span>

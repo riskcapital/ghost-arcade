@@ -67,7 +67,7 @@ import { drumPadForKey } from './keyboardLayout';
 import { attachMusicKeyboard, musicKeysArmed } from './musicKeyboard';
 import { DRUM_CHANNEL, MusicMidiInput, type MidiNoteMessage } from './midiNotes';
 import { LOOP_REC_OFF, musicStudio, musicTransport, nextTakeName, sceneSound, type MusicStudioState, type MusicTransportState } from './musicStudioStore';
-import { captureScene, dominantColumn, liveSceneFor, nextSceneName, sceneLaunchActions, type PlayingNow } from './scenes';
+import { captureScene, dominantColumn, liveSceneFor, nextSceneName, sceneLaunchActions, studioSceneForLive, type PlayingNow } from './scenes';
 import { abletonBridge } from '../ableton/abletonBridge';
 import { macros } from '../stores/macros';
 import { getNativeRendererFrameSnapshot } from '../api/native-renderer';
@@ -785,6 +785,41 @@ export function launchScene(id: string, atOnce = false): void {
     sceneTimer = null;
     applyScene(id);
   }, wait);
+}
+
+/**
+ * Keep the studio's look (its sound and visuals) on a Live scene: the studio
+ * scene that goes with it is updated, or a new one is made, linked to it and
+ * named after the section. Launching that Live scene brings the look back.
+ */
+export function captureLiveLook(liveIndex: number, label: string): string | null {
+  const s = get(musicStudio);
+  const bridge = get(abletonBridge);
+  const live = bridge.scenes[liveIndex];
+  if (!live) return null;
+  const names = bridge.scenes.map((sc) => sc.name);
+  const sound = sceneSound(captureSetup(s));
+  const target = studioTargetNow();
+  const voices = target ? JSON.parse(JSON.stringify(target.source.musicVoices)) : undefined;
+  const existing = studioSceneForLive(s.scenes, liveIndex, names);
+  const link = { name: live.name, index: liveIndex };
+  if (existing) {
+    musicStudio.updateScene(existing, { sound, ...(voices ? { voices } : {}), liveScene: link });
+    return existing;
+  }
+  const scene = captureScene(generateUUID(), (label.trim() || live.name.trim() || nextSceneName(s.scenes)).slice(0, 60), playingNow());
+  scene.sound = sound;
+  if (voices) scene.voices = voices;
+  scene.liveScene = link;
+  musicStudio.addScene(scene);
+  return scene.id;
+}
+
+/** Let a Live scene go without a look (its studio scene stays, unlinked). */
+export function clearLiveLook(liveIndex: number): void {
+  const s = get(musicStudio);
+  const id = studioSceneForLive(s.scenes, liveIndex, get(abletonBridge).scenes.map((sc) => sc.name));
+  if (id) musicStudio.updateScene(id, { liveScene: null });
 }
 
 /**
@@ -2288,11 +2323,17 @@ let liveFeedOn = false;
 let lastLiveScene = -1;
 export function noteLiveScene(scene: number): void {
   lastLiveScene = scene;
+  liveCurrentScene.set(scene);
 }
+/** The Live scene launched last while the studio plays with Live (-1 before any). */
+export const liveCurrentScene = writable(-1);
 /** The studio is playing with Live (open, in Live mode, connected). */
 export function setLiveFeedActive(on: boolean): void {
   liveFeedOn = on;
-  if (!on) lastLiveScene = -1;
+  if (!on) {
+    lastLiveScene = -1;
+    liveCurrentScene.set(-1);
+  }
 }
 function liveFeedActive(): boolean {
   return liveFeedOn;

@@ -25,7 +25,7 @@ except ImportError:
 
 APP_ADDRESS = ("127.0.0.1", 11050)
 SCRIPT_ADDRESS = ("127.0.0.1", 11051)
-PROTOCOL = 3
+PROTOCOL = 4
 NAME_LIMIT = 64
 # update_display runs roughly ten times a second.
 HEARTBEAT_TICKS = 10
@@ -273,6 +273,8 @@ class GhostArcade(ControlSurface):
             except Exception as error:
                 # Live Intro and Lite cap the number of tracks.
                 self._send({"t": "error", "what": "create_score_track", "detail": str(error)})
+        elif kind == "setup":
+            self._setup(message)
         elif kind == "devices":
             self._send_devices(int(message.get("i", -2)))
         elif kind == "watch":
@@ -284,6 +286,62 @@ class GhostArcade(ControlSurface):
             self._forget_notes()
             self._apply_watch()
             self._send_structure(force=True)
+
+    def _setup(self, message):
+        """Lay the set out for the Music Studio: name and colour tracks and
+        scenes, and add tracks and scenes at the end. Never deletes or moves
+        anything. Live Intro and Lite cap tracks and scenes; what Live refuses
+        is reported, the rest still happens."""
+        song = self._song
+        made = {"tracks": 0, "scenes": 0}
+        errors = []
+
+        def colour(target, value):
+            if value is None:
+                return
+            try:
+                target.color = int(value) & 0xFFFFFF
+            except Exception:
+                pass
+
+        for change in message.get("rename", []):
+            try:
+                kind = change.get("k")
+                index = int(change.get("i", -1))
+                items = song.tracks if kind == "track" else song.scenes
+                if 0 <= index < len(items):
+                    if "name" in change:
+                        items[index].name = str(change["name"])[:200]
+                    colour(items[index], change.get("color"))
+            except Exception as error:
+                errors.append("rename: %s" % error)
+        for track in message.get("tracks", []):
+            try:
+                index = len(song.tracks)
+                if track.get("midi", True):
+                    song.create_midi_track(index)
+                else:
+                    song.create_audio_track(index)
+                created = song.tracks[index]
+                created.name = str(track.get("name", ""))[:200]
+                colour(created, track.get("color"))
+                made["tracks"] += 1
+            except Exception as error:
+                errors.append("track %s: %s" % (track.get("name", ""), error))
+                break
+        for scene in message.get("scenes", []):
+            try:
+                index = len(song.scenes)
+                song.create_scene(index)
+                created = song.scenes[index]
+                created.name = str(scene.get("name", ""))[:200]
+                colour(created, scene.get("color"))
+                made["scenes"] += 1
+            except Exception as error:
+                errors.append("scene %s: %s" % (scene.get("name", ""), error))
+                break
+        self._send({"t": "setup_done", "id": message.get("id"), "tracks": made["tracks"], "scenes": made["scenes"], "errors": errors[:8]})
+        self._send_structure(force=True)
 
     # State
 

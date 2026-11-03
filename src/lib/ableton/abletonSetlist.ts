@@ -92,7 +92,15 @@ function songsIn(scenes: LiveScene[], tracks: LiveTrack[]): SetlistSong[] {
     return songs;
   }
 
-  // Stems set: group scenes into songs.
+  return songsFromScenes(scenes, tracks);
+}
+
+/**
+ * Songs as blocks of scenes, whatever sides the tracks are on (how the Music
+ * Studio reads a set): a scene with a tempo in its name starts a song, the
+ * scenes after it are its sections.
+ */
+export function songsFromScenes(scenes: LiveScene[], tracks: LiveTrack[]): SetlistSong[] {
   const groups: number[][] = [];
   scenes.forEach((scene, index) => {
     const hasClips = tracks.some(t => t.slots[index]);

@@ -139,6 +139,8 @@ export interface AbletonBridgeState {
   listening: boolean;
   error: string | null;
   connected: boolean;
+  /** The protocol the Ghost Arcade script in Live speaks (0 before it says). */
+  protocol: number;
   tempo: number;
   numerator: number;
   denominator: number;
@@ -180,6 +182,7 @@ const INITIAL: AbletonBridgeState = {
   listening: false,
   error: null,
   connected: false,
+  protocol: 0,
   tempo: 120,
   numerator: 4,
   denominator: 4,
@@ -263,6 +266,14 @@ export const abletonScoreHits = writable<Record<number, number>>({});
  * of its chosen MIDI tracks as they play, and the level of its chosen audio
  * tracks. Set with `abletonBridge.setStudioFeed`.
  */
+/** A change to the open Live set (see `abletonBridge.setupSet`). Colours are 0xRRGGBB. */
+export interface SetupPlan {
+  rename?: { k: 'track' | 'scene'; i: number; name?: string; color?: number }[];
+  tracks?: { name: string; midi: boolean; color?: number }[];
+  scenes?: { name: string; color?: number }[];
+}
+export interface SetupResult { tracks: number; scenes: number; errors: string[] }
+
 export interface StudioFeed {
   /** MIDI tracks whose clip notes the studio wants. */
   noteTracks: number[];
@@ -336,6 +347,9 @@ function createAbletonBridge() {
   const studioHosted = () => studioFeed !== null;
   /** Deck mode turned the VJ crossfader on, so leaving deck mode turns it off again. */
   let crossfaderByDeckMode = false;
+  /** Set-up requests waiting for Live's answer, by id. */
+  const setups = new Map<number, (result: SetupResult) => void>();
+  let setupId = 0;
 
   // High-rate values stay out of the store.
   const paramValues = new Map<string, number>();
@@ -927,6 +941,7 @@ function createAbletonBridge() {
         update(s => ({
           ...s,
           connected: true,
+          protocol: Number(message.v) || s.protocol,
           tempo: Number(message.tempo) || s.tempo,
           numerator: Number(message.num) || s.numerator,
           denominator: Number(message.den) || s.denominator,
@@ -1088,6 +1103,14 @@ function createAbletonBridge() {
         applyCrossfader(v);
         break;
       }
+      case 'setup_done': {
+        const done = setups.get(Number(message.id));
+        if (done) {
+          setups.delete(Number(message.id));
+          done({ tracks: Number(message.tracks) || 0, scenes: Number(message.scenes) || 0, errors: Array.isArray(message.errors) ? message.errors.map(String) : [] });
+        }
+        break;
+      }
       case 'error':
         if (message.what === 'create_score_track') {
           const now = performance.now();
@@ -1212,6 +1235,22 @@ function createAbletonBridge() {
     },
     launchScene(scene: number) {
       send({ t: 'fire_scene', s: scene });
+    },
+
+    /**
+     * Lay the open set out (the Music Studio's set-up): rename and colour
+     * tracks and scenes, and add tracks and scenes at the end. Live never
+     * loses anything. Needs the script's protocol 4; resolves with what Live
+     * made, or null when Live did not answer.
+     */
+    setupSet(plan: SetupPlan): Promise<SetupResult | null> {
+      if (read().protocol < 4) return Promise.resolve(null);
+      const id = ++setupId;
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => { setups.delete(id); resolve(null); }, 8000);
+        setups.set(id, (result) => { clearTimeout(timer); resolve(result); });
+        send({ t: 'setup', id, ...plan });
+      });
     },
     launchClip(track: number, slot: number) {
       send({ t: 'fire_clip', i: track, s: slot });
