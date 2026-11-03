@@ -208,7 +208,7 @@
     </div>
   </StudioModule>
 {:else if part === 'xy'}
-  <StudioModule title="" grow>
+  <StudioModule title="" foldKey="XY pad" grow>
     {#snippet head()}
       <InstrumentDress instrument="xy" builtIn="XY tone" axes />
       <StudioJack id="audio:xy" label="Out" title="XY tone" />

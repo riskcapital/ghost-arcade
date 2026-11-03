@@ -144,7 +144,7 @@
 <style>
   .visual-menu { position: relative; }
   /* The instrument name takes what width is left, so the octave control stays inside the module. */
-  .instrument { flex: 1 1 140px; min-width: 70px; width: 0; text-overflow: ellipsis; }
+  .instrument { flex: 1 1 140px; min-width: 36px; width: 0; text-overflow: ellipsis; }
   .visual-pop {
     position: fixed;
     z-index: 100;

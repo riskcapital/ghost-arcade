@@ -143,6 +143,7 @@
       <button
         class="pad"
         class:kit={pad.sound.kind === 'drum'}
+        class:marked={fx?.kind === 'loop' || !!pad.key}
         class:choosing={choosing && pad.sound.kind === 'shot'}
         class:lit={t.held.has(pad.held) || isDown(i)}
         onpointerdown={(e) => down(e, i)}
@@ -242,6 +243,8 @@
   .pad.lit { background: var(--studio-accent); border-color: var(--studio-accent); color: var(--studio-on-accent); transition: none; }
   .pad.lit kbd { color: var(--studio-on-accent); }
   .pads.short { min-height: 76px; }
+  /* Room for the corner mark (loop icon or key letter), so it never sits on the name. */
+  .pad.marked { padding-right: 16px; }
   .loop { position: absolute; right: 4px; top: 4px; width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; opacity: 0.8; pointer-events: none; }
   .pad.choosing { border-style: dashed; border-color: var(--studio-accent); color: var(--studio-ink); }
   /* An invisible menu over the pad: tapping it opens the sound list. */
