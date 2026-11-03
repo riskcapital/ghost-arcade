@@ -61,6 +61,7 @@
         class="pad"
         class:lit={lit.has(i)}
         class:editing={editing === i}
+        class:held={d.hold}
         onpointerdown={(e) => down(e, i)}
         onpointerup={up}
         onpointercancel={up}
@@ -71,7 +72,7 @@
         data-midi-mode="toggle"
       >
         <span class="label">{d.name}</span>
-        <span class="div">{d.division}{d.hold ? ' ∞' : ''}</span>
+        {#if d.hold}<span class="hold" aria-label="Hold to keep it going">∞</span>{/if}
       </button>
     {/each}
   </div>
@@ -122,7 +123,7 @@
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     /* The rows share the space there is, down to a pad you can still hit; past that it scrolls. */
-    grid-auto-rows: minmax(28px, 1fr);
+    grid-auto-rows: minmax(26px, 1fr);
     gap: 5px;
     overflow-y: auto;
   }
@@ -130,11 +131,9 @@
     position: relative;
     min-width: 0;
     min-height: 0;
-    padding: 4px 6px;
+    padding: 2px 6px;
     display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    justify-content: space-between;
+    align-items: center;
     overflow: hidden;
     border: 1px solid var(--studio-edge-soft);
     background: var(--studio-cell);
@@ -152,9 +151,20 @@
   .pad:hover { border-color: var(--studio-edge); }
   .pad.editing { border-color: var(--studio-accent); }
   .pad.lit { background: var(--studio-accent); border-color: var(--studio-accent); color: var(--studio-on-accent); transition: none; }
-  .label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
-  .div { font-family: var(--ga-font-mono, ui-monospace); font-size: 9px; color: var(--studio-muted); pointer-events: none; }
-  .pad.lit .div { color: var(--studio-on-accent); }
+  /* The whole name, on two lines when it needs them: the echo timing is in the tooltip and the editor. */
+  .label {
+    max-width: 100%;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-height: 1.15;
+    overflow-wrap: anywhere;
+    pointer-events: none;
+  }
+  .pad.held { padding-right: 16px; }
+  .hold { position: absolute; right: 4px; top: 1px; font-size: 10px; color: var(--studio-muted); pointer-events: none; }
+  .pad.lit .hold { color: var(--studio-on-accent); }
   .editor {
     margin-top: 6px;
     padding: 6px;

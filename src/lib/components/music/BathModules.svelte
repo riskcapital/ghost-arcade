@@ -106,8 +106,9 @@
   function xyAt(e: PointerEvent) {
     if (!pad) return;
     const r = pad.getBoundingClientRect();
-    const x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
-    const y = Math.max(0, Math.min(1, 1 - (e.clientY - r.top) / r.height));
+    // The puck's centre stays 13px inside the edges, so the touch maps to that range.
+    const x = Math.max(0, Math.min(1, (e.clientX - r.left - 13) / Math.max(1, r.width - 26)));
+    const y = Math.max(0, Math.min(1, 1 - (e.clientY - r.top - 13) / Math.max(1, r.height - 26)));
     musicStudio.setParam('xy.x', x);
     musicStudio.setParam('xy.y', y);
     trail = [...trail.slice(-10), { x, y }];
@@ -246,9 +247,9 @@
         <span class="corner tr ga-eyebrow">High · {Y_AXES.find((a) => a.id === xyAxis)?.label.replace(' (as built)', '')}</span>
       {/if}
       {#each trail as p, i (i)}
-        <span class="trail" style="left: {p.x * 100}%; top: {(1 - p.y) * 100}%; opacity: {(i + 1) / (trail.length + 4)}"></span>
+        <span class="trail" style="left: calc(13px + {p.x} * (100% - 26px)); top: calc(13px + {1 - p.y} * (100% - 26px)); opacity: {(i + 1) / (trail.length + 4)}"></span>
       {/each}
-      <span class="puck" style="left: {s.params['xy.x'] * 100}%; top: {(1 - s.params['xy.y']) * 100}%"></span>
+      <span class="puck" style="left: calc(13px + {s.params['xy.x']} * (100% - 26px)); top: calc(13px + {1 - s.params['xy.y']} * (100% - 26px))"></span>
     </div>
   </StudioModule>
 {:else}
@@ -296,7 +297,8 @@
   .xy {
     position: relative;
     flex: 1;
-    min-height: 140px;
+    /* Fills what the module has: a fixed floor pushed it past the module's edge. */
+    min-height: 72px;
     border: 1px solid var(--studio-edge);
     background-color: var(--studio-slot);
     background-image: linear-gradient(var(--studio-edge-soft) 1px, transparent 1px), linear-gradient(90deg, var(--studio-edge-soft) 1px, transparent 1px);

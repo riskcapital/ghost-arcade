@@ -47,11 +47,14 @@ export function installContextHelp() {
     if (target && target !== owner) { clearTimeout(hideTimer); begin(target); }
   }
 
+  // The control a card belongs to can be removed while it shows (a panel or
+  // set switched by key or MIDI): no pointer or focus event says so, so check.
+  let ownerWatch: ReturnType<typeof setInterval> | undefined;
   let enabled = true;
   const unsubscribePreference = tooltipsEnabled.subscribe(value => { enabled = value; hide(); });
 
   function hide() {
-    clearTimeout(timer); clearTimeout(hideTimer);
+    clearTimeout(timer); clearTimeout(hideTimer); clearInterval(ownerWatch);
     if (card.matches(':popover-open')) card.hidePopover();
     card.hidden = true;
     if (owner) {
@@ -92,6 +95,8 @@ export function installContextHelp() {
     target.setAttribute('aria-describedby', [priorDescription, body.id].filter(Boolean).join(' '));
     card.hidden = false;
     if (!card.matches(':popover-open') && typeof card.showPopover === 'function') card.showPopover();
+    clearInterval(ownerWatch);
+    ownerWatch = setInterval(() => { if (!owner?.isConnected) hide(); }, 300);
     card.scrollTop = 0; card.scrollLeft = 0;
     const rect = target.getBoundingClientRect();
     const width = card.offsetWidth;
@@ -172,7 +177,7 @@ export function installContextHelp() {
   window.addEventListener('blur', blur);
   document.addEventListener('visibilitychange', hide);
   return () => {
-    unsubscribePreference(); hide(); card.remove();
+    unsubscribePreference(); hide(); clearInterval(ownerWatch); card.remove();
     document.removeEventListener('pointermove', moved, true);
     document.removeEventListener('pointerover', over); document.removeEventListener('pointerout', leave);
     document.removeEventListener('focusin', focus); document.removeEventListener('focusout', focusOut);

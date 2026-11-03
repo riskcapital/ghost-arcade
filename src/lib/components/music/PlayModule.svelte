@@ -24,6 +24,27 @@
 
   const s = $derived($musicStudio);
   const visual = $derived(s.visuals[s.instrument]);
+  // Below this the header cannot hold the visual controls beside the instrument.
+  let surfaceWidth = $state(1000);
+  const narrow = $derived(surfaceWidth < 640);
+  let visualOpen = $state(false);
+  let visualAt = $state({ x: 0, y: 0 });
+  let visualPop = $state<HTMLElement | undefined>();
+  /** Fixed to the window, kept on screen: opens above the button when there is no room below. */
+  function toggleVisual(button: HTMLElement) {
+    visualOpen = !visualOpen;
+    if (!visualOpen) return;
+    const r = button.getBoundingClientRect();
+    visualAt = { x: r.left, y: r.bottom + 4 };
+    requestAnimationFrame(() => {
+      if (!visualPop) return;
+      const w = visualPop.offsetWidth, h = visualPop.offsetHeight;
+      visualAt = {
+        x: Math.max(8, Math.min(r.left, window.innerWidth - w - 8)),
+        y: r.bottom + 4 + h <= window.innerHeight - 8 ? r.bottom + 4 : Math.max(8, r.top - h - 4),
+      };
+    });
+  }
   const range = $derived(keyboardRange(size ?? s.keyboardSize, s.octave));
 
   const FAMILIES: ToneFamily[] = ['bass', 'pad', 'lead'];
@@ -60,13 +81,22 @@
 
 <StudioModule title="Play" class="play">
   {#snippet head()}
-    <div class="foot">
-    <div class="seg small" role="group" aria-label="Visual behavior">
-      <button class:on={visual.mode === 'fade'} onclick={() => musicStudio.setVisualMode(s.instrument, 'fade')} title="Visuals linger, then fade away">Fade</button>
-      <button class:on={visual.mode === 'build'} onclick={() => musicStudio.setVisualMode(s.instrument, 'build')} title="Visuals keep building while you play">Build</button>
-    </div>
-    <VisualPickButton file={null} placeholder="Add a visual for what you play…" title="A visual for what you play" onpick={(f) => { if (f) addStudioVoice(f, 'played'); }} />
-    </div>
+    {#snippet visualControls()}
+      <div class="seg small" role="group" aria-label="Visual behavior">
+        <button class:on={visual.mode === 'fade'} onclick={() => musicStudio.setVisualMode(s.instrument, 'fade')} title="Visuals linger, then fade away">Fade</button>
+        <button class:on={visual.mode === 'build'} onclick={() => musicStudio.setVisualMode(s.instrument, 'build')} title="Visuals keep building while you play">Build</button>
+      </div>
+      <VisualPickButton file={null} placeholder="Add a visual for what you play…" title="A visual for what you play" onpick={(f) => { visualOpen = false; if (f) addStudioVoice(f, 'played'); }} />
+    {/snippet}
+    {#if narrow}
+      <!-- A narrow column has no room beside the instrument: the visual controls open from here. -->
+      <span class="visual-menu">
+        <button class="studio-btn" aria-expanded={visualOpen} aria-haspopup="true" onclick={(e) => toggleVisual(e.currentTarget as HTMLElement)} title="What you play draws: fade or build, and the visual it plays">Visual ▾</button>
+        {#if visualOpen}<div class="visual-pop" role="group" aria-label="Visual for what you play" style="left: {visualAt.x}px; top: {visualAt.y}px" bind:this={visualPop}>{@render visualControls()}</div>{/if}
+      </span>
+    {:else}
+      <div class="foot">{@render visualControls()}</div>
+    {/if}
     <select class="instrument" value={current} onchange={choose} aria-label="Instrument the keys play" title={TONES.find((t) => current === `tone:${t.id}`)?.blurb ?? 'What the keys play, whatever the set'}>
       <optgroup label="Synth">
         {#each SYNTH_PATCHES as p (p.id)}<option value="synth:{p.id}">Synth · {p.label}</option>{/each}
@@ -100,7 +130,7 @@
       </div>
     {/if}
   {/snippet}
-  <div class="surface">
+  <div class="surface" bind:clientWidth={surfaceWidth}>
     {#if s.instrument === 'drums'}
       <DrumPads />
     {:else}
@@ -109,7 +139,25 @@
   </div>
 </StudioModule>
 
+<svelte:window onpointerdown={(e) => { if (visualOpen && !(e.target as Element).closest?.('.visual-menu')) visualOpen = false; }} onkeydown={(e) => { if (visualOpen && e.key === 'Escape') visualOpen = false; }} />
+
 <style>
+  .visual-menu { position: relative; }
+  /* The instrument name takes what width is left, so the octave control stays inside the module. */
+  .instrument { flex: 1 1 140px; min-width: 70px; width: 0; text-overflow: ellipsis; }
+  .visual-pop {
+    position: fixed;
+    z-index: 100;
+    width: 280px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px;
+    background: var(--studio-panel);
+    border: 1px solid var(--studio-edge);
+    border-radius: var(--studio-radius);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  }
   .surface { flex: 1; min-height: 56px; display: flex; }
   /* Fade / Build and the visual picker sit in the header, beside the module's name. */
   .foot { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 0 1 260px; }

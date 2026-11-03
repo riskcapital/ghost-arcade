@@ -45,7 +45,7 @@
   const LABELS: Record<string, string> = { wave1: 'Wave', wave2: 'Wave', tune1: 'Tune', tune2: 'Tune', lforate: 'Rate', lfodepth: 'Depth' };
 </script>
 
-<StudioModule title="Analog" subtitle="Envelope normalled to filter and amp · patch to re-route, or out to the picture" led={sounding} class="synth-panel">
+<StudioModule title="Analog" subtitle="A mono synth: play it on the keys. It sounds with no cables; patch to bend the sound, or out to move the picture" led={sounding} class="synth-panel">
   {#snippet head()}
     <button class="studio-btn load" onclick={() => void loadAnalogPatch()} title="A first patch: the LFO sweeps the filter and two note visuals follow the envelope and the LFO">Load patch</button>
   {/snippet}
@@ -78,15 +78,16 @@
       <span class="section-name ga-eyebrow">Patch</span>
       <div class="bay-grid">
         <span class="row-name ga-eyebrow legend">Out</span>
-        <StudioJack id="cv:analog.lfo" label="LFO" title="LFO out" />
-        <StudioJack id="cv:analog.env" label="Env" title="Envelope out" />
-        <StudioJack id="cv:analog.vco2" label="VCO 2" title="VCO 2 out: into Pitch for FM" />
-        <StudioJack id="cv:analog.level" label="Level" title="How loud the synth is, as a control signal" />
+        <StudioJack id="cv:analog.lfo" label="LFO" labelAbove title="LFO out" />
+        <StudioJack id="cv:analog.env" label="Env" labelAbove title="Envelope out" />
+        <StudioJack id="cv:analog.vco2" label="VCO 2" labelAbove title="VCO 2 out: into Pitch for FM" />
+        <StudioJack id="cv:analog.level" label="Level" labelAbove title="How loud the synth is, as a control signal" />
+        <StudioJack id="audio:analog" label="Sound" labelAbove title="Synth sound out: patch it to an FX rack or the mixer" />
         <span class="row-name ga-eyebrow legend">In</span>
-        <StudioJack id="dest:analog.cutoff" label="Cutoff" title="Filter cutoff in" />
+        <StudioJack id="dest:analog.cutoff" label="Cutoff" title="Filter cutoff in: patch the LFO here for a sweep" />
         <StudioJack id="dest:analog.pitch" label="Pitch" title="Pitch in" />
         <StudioJack id="dest:analog.amp" label="Amp" title="Amp in" />
-        <StudioJack id="audio:analog" label="Audio" title="Synth sound out" />
+        <span></span>
       </div>
     </div>
     {/if}
@@ -118,7 +119,7 @@
   .bay-grid {
     flex: 1;
     display: grid;
-    grid-template-columns: auto repeat(4, 44px);
+    grid-template-columns: auto repeat(5, 44px);
     align-items: center;
     justify-items: center;
     row-gap: 10px;

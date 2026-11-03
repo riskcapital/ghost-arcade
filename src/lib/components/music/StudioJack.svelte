@@ -7,7 +7,8 @@
   import { canConnect, isOutputJack, jackKind } from '../../music/studioSets';
   import { musicStudio } from '../../music/musicStudioStore';
 
-  let { id, label = '', title = '' }: { id: string; label?: string; title?: string } = $props();
+  /** `labelAbove`: the label sits over the jack, so a cable going down from it does not cover the name. */
+  let { id, label = '', title = '', labelAbove = false }: { id: string; label?: string; title?: string; labelAbove?: boolean } = $props();
 
   const output = $derived(isOutputJack(id));
   const kind = $derived(jackKind(id));
@@ -42,7 +43,7 @@
   }
 </script>
 
-<span class="jack-wrap" class:output class:accepts class:dim>
+<span class="jack-wrap" class:output class:accepts class:dim class:label-above={labelAbove}>
   <button
     class="jack {kind}"
     class:plugged
@@ -64,6 +65,7 @@
     gap: 3px;
     flex: 0 0 auto;
   }
+  .jack-wrap.label-above { flex-direction: column-reverse; }
   .jack {
     width: 18px;
     height: 18px;

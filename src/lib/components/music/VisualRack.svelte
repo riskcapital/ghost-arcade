@@ -266,7 +266,20 @@
   .controls { display: flex; align-items: flex-end; justify-content: space-between; gap: 4px; padding: 3px 0 0 15px; }
   .controls :global(.knob-wrap), .all :global(.knob-wrap) { gap: 1px; min-width: 0; flex: 1 1 0; }
   .all :global(.knob-wrap) { flex: 0 0 52px; }
-  .controls :global(.knob-label), .all :global(.knob-label) { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+  /* Shader parameter names run long: two lines, centred, before any cut. */
+  .controls :global(.knob-label), .all :global(.knob-label) {
+    max-width: 100%;
+    overflow: hidden;
+    white-space: normal;
+    text-align: center;
+    letter-spacing: 0.02em;
+    line-height: 1.1;
+    min-height: 2.2em;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow-wrap: anywhere;
+  }
   .icon {
     flex: 0 0 auto;
     width: 22px;

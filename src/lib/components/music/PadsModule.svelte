@@ -52,6 +52,29 @@
   let choosing = $state(false);
 
   let full = $state(false);
+  let hitsOpen = $state(false);
+  let hitsAt = $state({ x: 0, y: 0 });
+  let hitsMenu = $state<HTMLElement | undefined>();
+  let hitsButton: HTMLElement | undefined;
+  /** The menu is fixed to the window, so a scrolling rack or the window edge never cuts it off. */
+  function toggleHits(button: HTMLElement) {
+    hitsButton = button;
+    hitsOpen = !hitsOpen;
+    if (hitsOpen) placeHits();
+  }
+  function placeHits() {
+    if (!hitsButton) return;
+    const r = hitsButton.getBoundingClientRect();
+    hitsAt = { x: r.left, y: r.bottom + 4 };
+    requestAnimationFrame(() => {
+      if (!hitsMenu) return;
+      const w = hitsMenu.offsetWidth, h = hitsMenu.offsetHeight;
+      hitsAt = {
+        x: Math.max(8, Math.min(r.left, window.innerWidth - w - 8)),
+        y: r.bottom + 4 + h <= window.innerHeight - 8 ? r.bottom + 4 : Math.max(8, r.top - h - 4),
+      };
+    });
+  }
   let repeat = $state(false);
   let rate = $state<(typeof REPEAT_RATES)[number]['id']>('1/16');
   let pressed = $state<Record<number, number>>({});
@@ -96,11 +119,19 @@
     <button class="loop-rec" class:on={recording} class:count={t.loopRec.phase === 'count'} onclick={toggleLoopRecord} aria-pressed={recording} title={recording ? 'Stop recording on the next bar' : 'Record into the beat from the next bar'}>
       <span class="dot"></span>Rec
     </button>
-    <button class="studio-btn" class:on={full} aria-pressed={full} onclick={() => (full = !full)} title="Every hit at full velocity">Full</button>
-    <button class="studio-btn" class:on={repeat} aria-pressed={repeat} onclick={() => (repeat = !repeat)} title="Hold a pad to repeat it on the beat">Repeat</button>
-    <select bind:value={rate} disabled={!repeat} aria-label="Repeat rate">
-      {#each REPEAT_RATES as r}<option value={r.id}>{r.id}</option>{/each}
-    </select>
+    <!-- How the kit pads hit: in a drop-down, so the header fits a narrow column. -->
+    <span class="hits">
+      <button class="studio-btn" class:on={full || repeat} aria-expanded={hitsOpen} aria-haspopup="true" onclick={(e) => toggleHits(e.currentTarget as HTMLElement)} title="How the kit pads hit: full velocity, repeat on the beat">Hits{full || repeat ? ` · ${[full ? 'Full' : '', repeat ? rate : ''].filter(Boolean).join(' ')}` : ''} ▾</button>
+      {#if hitsOpen}
+        <div class="hits-menu" role="group" aria-label="How the kit pads hit" style="left: {hitsAt.x}px; top: {hitsAt.y}px" bind:this={hitsMenu}>
+          <button class="studio-btn" class:on={full} aria-pressed={full} onclick={() => (full = !full)} title="Every hit at full velocity">Full velocity</button>
+          <button class="studio-btn" class:on={repeat} aria-pressed={repeat} onclick={() => (repeat = !repeat)} title="Hold a pad to repeat it on the beat">Repeat</button>
+          <select bind:value={rate} disabled={!repeat} aria-label="Repeat rate">
+            {#each REPEAT_RATES as r}<option value={r.id}>{r.id}</option>{/each}
+          </select>
+        </div>
+      {/if}
+    </span>
     {/if}
     <button class="studio-btn" class:on={choosing} aria-pressed={choosing} onclick={() => (choosing = !choosing)} title="Choose the sound on each FX pad">Sounds</button>
     <StudioJack id="cv:pads.level" title="FX pads out: their level, as a control signal (right-click the cable for a trigger on each hit)" />
@@ -159,7 +190,22 @@
   {/if}
 </StudioModule>
 
+<svelte:window onpointerdown={(e) => { if (hitsOpen && !(e.target as Element).closest?.('.hits')) hitsOpen = false; }} onkeydown={(e) => { if (hitsOpen && e.key === 'Escape') hitsOpen = false; }} />
+
 <style>
+  .hits { position: relative; }
+  .hits-menu {
+    position: fixed;
+    z-index: 100;
+    display: flex;
+    gap: 6px;
+    padding: 6px;
+    background: var(--studio-panel);
+    border: 1px solid var(--studio-edge);
+    border-radius: var(--studio-radius);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    white-space: nowrap;
+  }
   .pads {
     flex: 1;
     min-height: 0;
@@ -190,7 +236,8 @@
     transition: background-color 60ms linear, border-color 60ms linear;
   }
   .pad.kit { background: var(--studio-slot); color: var(--studio-ink); border-color: var(--studio-edge); }
-  .label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
+  /* The whole name, on two lines when it needs them. */
+  .label { max-width: 100%; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.15; overflow-wrap: anywhere; pointer-events: none; }
   kbd { position: absolute; right: 5px; bottom: 3px; font-family: var(--ga-font-mono, ui-monospace); font-size: 9px; color: var(--studio-muted); pointer-events: none; }
   .pad.lit { background: var(--studio-accent); border-color: var(--studio-accent); color: var(--studio-on-accent); transition: none; }
   .pad.lit kbd { color: var(--studio-on-accent); }
