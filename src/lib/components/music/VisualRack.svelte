@@ -148,6 +148,16 @@
     return code ? shaderInputs(code).filter((i) => (i.TYPE === 'float' || i.TYPE === 'long') && !LOOK_SKIP.has(i.NAME) && !isVoiceDrivenInput(i.NAME)) : [];
   }
 
+  /**
+   * Cut out: a transparent background, stacked over the voices below with
+   * plain source-over, like drawings on acetate. Picking a blend mode turns it off.
+   */
+  const CUT_OUT = 'cut-out';
+  function setVoiceBlend(i: number, value: string) {
+    if (value === CUT_OUT) setStudioVoice(i, { clear: true, blend: 'normal' });
+    else setStudioVoice(i, { clear: false, blend: value as BlendMode });
+  }
+
   /** True for a visual that draws lettering, so it takes your own text. */
   function takesText(file: string): boolean {
     void codeTick;
@@ -372,8 +382,11 @@
           </div>
           <div class="controls">
             {#each all.slice(0, MAIN_CONTROLS) as input (input.NAME)}{@render knob(i, voice, input)}{/each}
-            <select class="blend" value={studioVoiceBlend(voice.blend)} onchange={(e) => setStudioVoice(i, { blend: (e.target as HTMLSelectElement).value as BlendMode })} aria-label="Blend mode for voice {i + 1}" title="How this voice blends over the ones below it" data-midi-path="studio:voice.{i + 1}.blend-next" data-midi-label="Voice {i + 1} next blend mode" data-midi-mode="toggle">
-              {#each BLEND_MODE_ORDER as mode (mode)}<option value={mode}>{blendModeLabel(mode)}</option>{/each}
+            <select class="blend" class:cut={voice.clear} value={voice.clear ? CUT_OUT : studioVoiceBlend(voice.blend)} onchange={(e) => setVoiceBlend(i, (e.target as HTMLSelectElement).value)} aria-label="Blend mode for voice {i + 1}" title={voice.clear ? 'Cut out: only its picture draws, over the voices below like a drawing; its empty space shows them through' : 'How this voice blends over the ones below it'} data-midi-path="studio:voice.{i + 1}.blend-next" data-midi-label="Voice {i + 1} next blend mode" data-midi-mode="toggle">
+              <option value={CUT_OUT}>Cut out</option>
+              <optgroup label="Blend">
+                {#each BLEND_MODE_ORDER as mode (mode)}<option value={mode}>{blendModeLabel(mode)}</option>{/each}
+              </optgroup>
             </select>
             <StudioKnob label="Opacity" title="How much of this voice shows" value={voice.level} defaultValue={1} size={20} format={levelFormat} midiPath="studio:voice.{i + 1}.level" onchange={(v) => setStudioVoice(i, { level: v }, `voice:${i}:level`)} />
             {#if all.length > MAIN_CONTROLS || takesText(voice.file)}
@@ -511,6 +524,7 @@
   .line .step { width: 16px; }
   .icon svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   .icon.on, .icon:hover { color: var(--studio-ink); border-color: var(--studio-edge); }
+  .blend.cut { color: var(--studio-accent); }
   .text-edit { display: flex; flex-direction: column; gap: 4px; padding: 8px 0 0 15px; }
   .text-edit textarea { width: 100%; box-sizing: border-box; resize: vertical; min-height: 52px; padding: 5px 7px; font: 12px/1.35 var(--ga-font-mono, ui-monospace); text-transform: uppercase; color: var(--studio-ink); background: var(--studio-well, rgba(0,0,0,0.35)); border: 1px solid var(--studio-edge); border-radius: 6px; user-select: text; }
   .text-edit textarea:focus { outline: none; border-color: var(--studio-accent); }

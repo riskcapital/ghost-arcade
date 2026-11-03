@@ -7,6 +7,11 @@
  *
  * Usage:
  *   node scripts/native-shader-capture.mjs public/ISF/Foo.fs out/dir [t1,t2,...]
+ *
+ * CAP_BACKDROP=1 shows what a shader leaves see-through: its last pass's
+ * output (taken as premultiplied colour and alpha, as the mix reads it) is
+ * laid over bright diagonal stripes, so transparent areas show stripes and
+ * solid ones hide them. The PNG itself is always opaque.
  */
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
@@ -84,7 +89,35 @@ function writePng(path, width, height, rgba) {
 
 mkdirSync(outDir, { recursive: true });
 
-const source = readFileSync(file, 'utf8');
+/* Wrap the shader so its final output sits over stripes: rename its main,
+   call it, then composite `out = src + stripes * (1 - a)`. */
+function withBackdrop(code) {
+  const close = code.indexOf('*/');
+  let passes = 1;
+  try {
+    const meta = JSON.parse(code.slice(code.indexOf('/*') + 2, close));
+    if (Array.isArray(meta.PASSES) && meta.PASSES.length > 1) passes = meta.PASSES.length;
+  } catch { /* single pass */ }
+  const main = /\bvoid\s+main\s*\(\s*(?:void\s*)?\)/;
+  const head = code.slice(0, close + 2);
+  const body = code.slice(close + 2).replace(main, 'void capMain()');
+  const last = passes > 1 ? `PASSINDEX == ${passes - 1}` : 'true';
+  return `${head}${body}
+void main() {
+    capMain();
+    if (${last}) {
+        vec2 capP = gl_FragCoord.xy;
+        float capK = mod(floor((capP.x + capP.y) / 60.0), 3.0);
+        vec3 capS = capK < 0.5 ? vec3(0.78, 0.24, 0.24) : (capK < 1.5 ? vec3(0.24, 0.63, 0.86) : vec3(0.94, 0.78, 0.24));
+        vec4 capC = gl_FragColor;
+        gl_FragColor = vec4(capC.rgb + capS * (1.0 - clamp(capC.a, 0.0, 1.0)), 1.0);
+    }
+}
+`;
+}
+
+const rawSource = readFileSync(file, 'utf8');
+const source = process.env.CAP_BACKDROP === '1' ? withBackdrop(rawSource) : rawSource;
 const digest = createHash('sha1').update(source).digest('hex').slice(0, 8);
 const shaderId = `cap:${digest}`;
 const layerId = 'cap-layer';

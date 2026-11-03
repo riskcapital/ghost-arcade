@@ -277,14 +277,21 @@ const VOICES: StudioControl[] = range(MIDI_VOICE_SLOTS).flatMap((i): StudioContr
       id: `voice.${n}.blend-next`, label: `Voice ${n} next blend mode`, group: 'Visuals', kind: 'trigger',
       run: () => {
         const voice = voiceAt(i);
-        if (voice) setStudioVoice(i, { blend: nextVoiceBlend(voice.blend, 1) });
+        if (voice) setStudioVoice(i, { clear: false, blend: nextVoiceBlend(voice.blend, 1) });
       },
     },
     {
       id: `voice.${n}.blend-prev`, label: `Voice ${n} previous blend mode`, group: 'Visuals', kind: 'trigger',
       run: () => {
         const voice = voiceAt(i);
-        if (voice) setStudioVoice(i, { blend: nextVoiceBlend(voice.blend, -1) });
+        if (voice) setStudioVoice(i, { clear: false, blend: nextVoiceBlend(voice.blend, -1) });
+      },
+    },
+    {
+      id: `voice.${n}.cut-out`, label: `Voice ${n} cut out`, group: 'Visuals', kind: 'toggle',
+      run: () => {
+        const voice = voiceAt(i);
+        if (voice) setStudioVoice(i, voice.clear ? { clear: false } : { clear: true, blend: 'normal' });
       },
     },
     {

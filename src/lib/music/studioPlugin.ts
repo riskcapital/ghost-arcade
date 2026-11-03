@@ -16,6 +16,7 @@
  */
 
 import { writable } from 'svelte/store';
+import { VOICE_CLEAR_INPUT, withClearOption } from './voiceClear';
 import { DEFAULT_TEXT_EVERY, normalizePhrases, normalizeTextEvery, shaderTextValues } from './shaderText';
 import { DEFAULT_MIX, MixFollower, mixAt, normalizeMix, type MixFeel, type StudioMix } from './studioMix';
 import { BLEND_MODE_ORDER, createLayer, type BlendMode, type Layer } from '../types';
@@ -54,6 +55,8 @@ export interface StudioVoice {
   text?: string[];
   /** Bars between phrases, or 0 to change on each hit. */
   textEvery?: number;
+  /** Transparent background: only its subject draws, stacked over the voices below like a drawing. */
+  clear?: boolean;
 }
 
 /** The plugin's fields on an effect source. */
@@ -111,12 +114,13 @@ export function normalizeStudioVoice(raw: unknown): StudioVoice | null {
     params,
     ...(normalizePhrases(r.text).length ? { text: normalizePhrases(r.text) } : {}),
     ...(r.textEvery !== undefined ? { textEvery: normalizeTextEvery(r.textEvery) } : {}),
+    ...(r.clear === true ? { clear: true } : {}),
   };
 }
 
 /** A saved blend mode, or screen (how voices always mixed before they had a choice). */
-export function studioVoiceBlend(raw: unknown): BlendMode {
-  return BLEND_MODE_ORDER.includes(raw as BlendMode) ? (raw as BlendMode) : 'screen';
+export function studioVoiceBlend(raw: unknown, fallback: BlendMode = 'screen'): BlendMode {
+  return BLEND_MODE_ORDER.includes(raw as BlendMode) ? (raw as BlendMode) : fallback;
 }
 
 /** The plugin's fields, filled in and checked (loading a project, pasting a clip). */
@@ -189,6 +193,7 @@ export function studioVoiceValues(voice: StudioVoice, set: StudioSet, driven: Re
     accent: [...palette.accent, 1],
     [VOICE_SOURCE_INPUT]: voiceSourceIndex(voice.source),
     [VOICE_AUTO_INPUT]: voice.auto,
+    [VOICE_CLEAR_INPUT]: voice.clear === true,
     ...driven,
     ...shaderTextValues(voice.text ?? [], voice.textEvery ?? DEFAULT_TEXT_EVERY, driven.vxBars ?? 0, driven.vxCount ?? 0),
   };
@@ -235,7 +240,7 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
           shaderValues: studioVoiceValues(voice, studio.musicSet, driven[index]),
         },
       } as Layer);
-      rows.push({ layerId: id, opacity: voice.level * (voiceMods.get(index) ?? 1) * mixed[index].gain, blendMode: mixed[index].blend ?? studioVoiceBlend(voice.blend) });
+      rows.push({ layerId: id, opacity: voice.level * (voiceMods.get(index) ?? 1) * mixed[index].gain, blendMode: voice.clear ? studioVoiceBlend(voice.blend, 'normal') : mixed[index].blend ?? studioVoiceBlend(voice.blend) });
     });
     // The top of the list draws on top: the mix stacks its rows from the first up.
     rows.reverse();
@@ -279,7 +284,7 @@ export function studioVoiceCode(file: string): string | undefined {
     fetch(`./ISF/${encodeURIComponent(file)}`)
       .then((response) => (response.ok ? response.text() : Promise.reject(new Error(String(response.status)))))
       .then((code) => {
-        codeCache.set(file, code);
+        codeCache.set(file, withClearOption(code));
         studioCodeTick.update((n) => n + 1);
       })
       .catch((err) => {
