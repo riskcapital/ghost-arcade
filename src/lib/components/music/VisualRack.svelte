@@ -186,42 +186,42 @@
       {/if}
     </select>
   {/snippet}
+  {#if liveOn}
+    <section class="live" aria-label="Live tracks">
+      <button class="live-head" onclick={() => (liveListOpen = !liveListOpen)} aria-expanded={liveListOpen} title={liveListOpen ? 'Fold the Live tracks away' : 'Show the Live tracks'}>
+        <svg viewBox="0 0 12 12" aria-hidden="true"><path d={liveListOpen ? 'M3 4.5l3 3 3-3' : 'M4.5 3l3 3-3 3'} /></svg>
+        <span class="ga-eyebrow">In Live now</span>
+        <span class="live-count">{liveTracks.length} tracks</span>
+      </button>
+      {#if liveListOpen}
+        <div class="live-tracks">
+          {#each liveTracks as t (t.name)}
+            <div class="live-track" class:quiet={!t.playing}>
+              <span class="swatch" style="background: {liveColor(t.color)}"></span>
+              <span class="live-name" title={t.name}>{t.name}</span>
+              <span class="live-clip" title={t.playing ? `Playing ${t.playing}${t.queued ? `, ${t.queued} next` : ''}` : 'Nothing playing'}>{t.playing ?? '—'}{#if t.queued} → {t.queued}{/if}</span>
+              {#if following(liveSource(t.name))}<span class="live-n" title="Visuals following this track">{following(liveSource(t.name))}</span>{/if}
+              {#if t.drums}
+                <select class="live-add" value="" onchange={(e) => addFromMenu(t, e)} aria-label="Add a visual for {t.name}" title="Add a visual that follows this track, or one of its drums" disabled={voices.length >= MAX_STUDIO_VOICES}>
+                  <option value="" disabled>+ Visual</option>
+                  <option value="track">Whole track</option>
+                  {#each LIVE_DRUMS as d (d.id)}<option value={d.id}>{d.label}</option>{/each}
+                </select>
+              {:else}
+                <button class="live-add studio-btn" onclick={() => addForTrack(t)} title="Add a visual that follows this track" disabled={voices.length >= MAX_STUDIO_VOICES}>+ Visual</button>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </section>
+  {/if}
   {#if !target}
     <div class="none">
       <p>The studio's visuals play in a Music Studio clip, so they never take over your deck rows. Drag Music Studio from Plugins onto a cell, or put one here.</p>
       <button class="studio-btn" onclick={putInPlace}>{$vjClipLauncher.isOpen ? 'Put it on the deck' : 'Show it on the selected layer'}</button>
     </div>
   {:else}
-    {#if liveOn}
-      <section class="live" aria-label="Live tracks">
-        <button class="live-head" onclick={() => (liveListOpen = !liveListOpen)} aria-expanded={liveListOpen} title={liveListOpen ? 'Fold the Live tracks away' : 'Show the Live tracks'}>
-          <svg viewBox="0 0 12 12" aria-hidden="true"><path d={liveListOpen ? 'M3 4.5l3 3 3-3' : 'M4.5 3l3 3-3 3'} /></svg>
-          <span class="ga-eyebrow">In Live now</span>
-          <span class="live-count">{liveTracks.length} tracks</span>
-        </button>
-        {#if liveListOpen}
-          <div class="live-tracks">
-            {#each liveTracks as t (t.name)}
-              <div class="live-track" class:quiet={!t.playing}>
-                <span class="swatch" style="background: {liveColor(t.color)}"></span>
-                <span class="live-name" title={t.name}>{t.name}</span>
-                <span class="live-clip" title={t.playing ? `Playing ${t.playing}${t.queued ? `, ${t.queued} next` : ''}` : 'Nothing playing'}>{t.playing ?? '—'}{#if t.queued} → {t.queued}{/if}</span>
-                {#if following(liveSource(t.name))}<span class="live-n" title="Visuals following this track">{following(liveSource(t.name))}</span>{/if}
-                {#if t.drums}
-                  <select class="live-add" value="" onchange={(e) => addFromMenu(t, e)} aria-label="Add a visual for {t.name}" title="Add a visual that follows this track, or one of its drums" disabled={voices.length >= MAX_STUDIO_VOICES}>
-                    <option value="" disabled>+ Visual</option>
-                    <option value="track">Whole track</option>
-                    {#each LIVE_DRUMS as d (d.id)}<option value={d.id}>{d.label}</option>{/each}
-                  </select>
-                {:else}
-                  <button class="live-add studio-btn" onclick={() => addForTrack(t)} title="Add a visual that follows this track" disabled={voices.length >= MAX_STUDIO_VOICES}>+ Visual</button>
-                {/if}
-              </div>
-            {/each}
-          </div>
-        {/if}
-      </section>
-    {/if}
     <p class="order">Top of the list draws on top · drag ⋮⋮ or Alt+↑↓ to reorder</p>
     <div class="voices">
       {#each voices as voice, i (i)}
