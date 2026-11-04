@@ -1845,14 +1845,24 @@ fn isf_pass_state_key(source_id: &str) -> String {
     }
 }
 
+/// One pass target as this render needs it.
+struct IsfJobTarget {
+    /// Size in the shader's virtual pixels.
+    size: (f32, f32),
+    float: bool,
+    /// Whether each side is a fixed number of pixels (no $WIDTH/$HEIGHT).
+    fixed: (bool, bool),
+    /// Read back next frame (feedback, clocks): kept at full density so a
+    /// quality-tier change never rebuilds it and wipes what it holds.
+    persistent: bool,
+}
+
 /// Per-render description of a pass-aware ISF shader, resolved by the core.
 struct NativeIsfPassJob<'a> {
     state_key: &'a str,
     generation: u64,
     passes: &'a [isf_passes::IsfPassSpec],
-    /// Per target: virtual size (shader pixels), FLOAT flag, and whether each
-    /// side is a fixed number of pixels (no $WIDTH/$HEIGHT in its expression).
-    targets: Vec<((f32, f32), bool, (bool, bool))>,
+    targets: Vec<IsfJobTarget>,
     fft_width: Option<u32>,
     waveform_width: Option<u32>,
 }
@@ -16389,11 +16399,12 @@ impl App {
                         .targets
                         .iter()
                         .map(|target| {
-                            (
-                                resolve_isf_target_size(target, render_w, render_h, &input_value),
-                                target.float,
-                                isf_target_fixed_sides(target),
-                            )
+                            IsfJobTarget {
+                                size: resolve_isf_target_size(target, render_w, render_h, &input_value),
+                                float: target.float,
+                                fixed: isf_target_fixed_sides(target),
+                                persistent: target.persistent,
+                            }
                         })
                         .collect::<Vec<_>>()
                 })
@@ -24784,7 +24795,7 @@ impl RenderState {
         let mut formats_needed = Vec::new();
         for pass in job.passes {
             if let Some(index) = pass.target
-                && let Some((_, float, _)) = job.targets.get(index)
+                && let Some(IsfJobTarget { float, .. }) = job.targets.get(index)
             {
                 let format = target_format(*float);
                 if !formats_needed.contains(&format) {
@@ -24845,9 +24856,13 @@ impl RenderState {
             ),
         };
         state.targets.resize_with(job.targets.len(), || None);
-        for (index, ((virtual_w, virtual_h), float, fixed)) in job.targets.iter().enumerate() {
+        for (index, target) in job.targets.iter().enumerate() {
+            let (virtual_w, virtual_h) = &target.size;
+            let (float, fixed) = (&target.float, &target.fixed);
+            // Persistent targets stay at full density; the rest follow the tier.
+            let density = if target.persistent { full_size } else { output_edge };
             let (scaled_w, scaled_h) =
-                isf_physical_target_size((*virtual_w, *virtual_h), (base_w, base_h), output_edge);
+                isf_physical_target_size((*virtual_w, *virtual_h), (base_w, base_h), density);
             // A fixed-size target (a 1x1 clock, a 128x1 history) is the same
             // pixels at every density.
             let exact = |value: f32| (value.round() as u32).clamp(1, isf_passes::ISF_PASS_TARGET_MAX_EDGE);
@@ -24892,7 +24907,7 @@ impl RenderState {
         }
 
         let mut pass_sizes = [[0.0f32; 4]; MAX_ISF_PASS_TARGETS / 2];
-        for (index, ((w, h), _, _)) in job.targets.iter().enumerate().take(MAX_ISF_PASS_TARGETS) {
+        for (index, IsfJobTarget { size: (w, h), .. }) in job.targets.iter().enumerate().take(MAX_ISF_PASS_TARGETS) {
             pass_sizes[index / 2][(index % 2) * 2] = *w;
             pass_sizes[index / 2][(index % 2) * 2 + 1] = *h;
         }
@@ -24925,7 +24940,7 @@ impl RenderState {
                 continue;
             }
             let (pass_w, pass_h) = target_index
-                .map(|index| job.targets[index].0)
+                .map(|index| job.targets[index].size)
                 .unwrap_or((base_w, base_h));
             let mut uniforms = *base_uniforms;
             uniforms.resolution_time[0] = pass_w;
