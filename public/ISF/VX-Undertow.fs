@@ -102,12 +102,16 @@ void main() {
         vec4 prev = IMG_NORM_PIXEL(feedback, src);
         // A touch of sharpening against the blur keeps the streams crisp.
         vec4 soft = IMG_NORM_PIXEL(blurA, src);
-        // Sharpen brightness only (per channel it overshoots into stray colours).
+        // Sharpen brightness only (per channel it overshoots into stray colours),
+        // as an unsharp mask: it moves light toward edges without adding any,
+        // so it can never feed the loop. The fade below always wins.
         float detail = luma(prev.rgb) - luma(soft.rgb);
-        prev.rgb *= 1.0 + clamp(detail * 0.5 * s, -0.08, 0.08);
+        float lp = max(luma(prev.rgb), 1e-4);
+        prev.rgb += prev.rgb / lp * clamp(detail * 0.25 * min(s, 1.0), -0.02, 0.02);
+        prev = clamp(prev, 0.0, 1.0);
         // Fade per second: Memory sets how long the past lingers (~1-6 s).
-        float keep = pow(mix(0.9, 0.975, memory) + 0.008 * vxSwell, s);
-        vec4 col = max(prev * keep - vec4(0.002 * s), vec4(0.0));
+        float keep = pow(mix(0.9, 0.975, memory) + 0.008 * vxSwell, max(s, 1.0));
+        vec4 col = max(prev * keep - vec4(0.002 * max(s, 1.0)), vec4(0.0));
         if (FRAMEINDEX < 2) col = vec4(0.0);
 
         // New light: a ring that breathes with the sound, its edge rippling.
@@ -135,7 +139,7 @@ void main() {
         // Lay it in like light (never past white), with coverage for the cut-out.
         col.rgb = col.rgb + add * (1.0 - col.rgb);
         col.a = clamp(col.a + max(add.r, max(add.g, add.b)) * (1.0 - col.a), 0.0, 1.0);
-        gl_FragColor = col;
+        gl_FragColor = clamp(col, 0.0, 1.0);
         return;
     }
 
