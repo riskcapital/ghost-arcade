@@ -129,7 +129,6 @@ export const VOICE_SHADERS: readonly VoiceShader[] = [
   { file: 'VX-Survey.fs', name: 'Survey', family: 'berlin', pack: 'cosmos', blurb: 'A laser survey flight over mountains drawn in points' },
   { file: 'VX-ScanHead.fs', name: 'Scan Head', family: 'berlin', pack: 'cosmos', blurb: 'A 3D-scanned head whose scan rings slip loose on hits' },
   { file: 'VX-Knotwork.fs', name: 'Knotwork', family: 'bath', pack: 'cosmos', blurb: 'A knot of streaming points that fills in with the sound' },
-  { file: 'VX-Murmuration.fs', name: 'Murmuration', family: 'bath', pack: 'cosmos', blurb: 'Thousands of starlings wheeling as one cloud, torn in two on hits' },
   { file: 'VX-BaitBall.fs', name: 'Bait Ball', family: 'dub', pack: 'cosmos', blurb: 'A spinning ring of silver fish that a strike splits apart' },
   { file: 'VX-Fireflies.fs', name: 'Fireflies', family: 'bath', pack: 'cosmos', blurb: 'Fireflies swimming round a hidden centre, gliding near and far with the music' },
   { file: 'VX-Pillars.fs', name: 'Pillars', family: 'analog', pack: 'cosmos', blurb: 'Dark dust columns with burning edges that flare as the beat rolls down' },
