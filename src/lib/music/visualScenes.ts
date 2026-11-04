@@ -132,6 +132,7 @@ export const VOICE_SHADERS: readonly VoiceShader[] = [
   { file: 'VX-Pillars.fs', name: 'Pillars', family: 'analog', pack: 'cosmos', blurb: 'Dark dust columns with burning edges that flare as the beat rolls down' },
   { file: 'VX-Remnant.fs', name: 'Remnant', family: 'analog', pack: 'cosmos', blurb: 'The shell of an exploded star that blasts outward on hits' },
   { file: 'VX-Undertow.fs', name: 'Undertow', family: 'dub', pack: 'cosmos', blurb: 'Light poured into a turning current that folds the music back over itself' },
+  { file: 'VX-Kaleidobloom.fs', name: 'Kaleidobloom', family: 'bath', pack: 'cosmos', blurb: 'A kaleidoscope that blooms outward in glassy echoes, punched open by every hit' },
 ];
 
 export const voiceShaderByFile = (file: string): VoiceShader | undefined => VOICE_SHADERS.find((v) => v.file === file);
