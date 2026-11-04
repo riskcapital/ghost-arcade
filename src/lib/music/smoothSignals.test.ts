@@ -49,4 +49,32 @@ describe('smooth signals for visuals', () => {
     expect(rate(busy)).toBeGreaterThan(rate(quiet) * 2);
     for (let i = 1; i < busy.length; i++) expect(busy[i]).toBeGreaterThan(busy[i - 1]);
   });
+
+  it('gives a level that sits near 1 on any steady part and rises when it gets louder', () => {
+    const steady = (velocity: number) => {
+      const v = new VoiceSignals();
+      for (let i = 0; i < 48; i++) v.push(hit(i * 0.25, velocity), ['kick']);
+      // Averaged over the last second (it rises and falls between hits).
+      const last = run(v, 0, 12).slice(-60);
+      return last.reduce((sum, f) => sum + f.vxLevel, 0) / last.length;
+    };
+    expect(steady(0.3)).toBeGreaterThan(0.7);
+    expect(steady(0.3)).toBeLessThan(1.35);
+    expect(steady(1)).toBeGreaterThan(0.7);
+    expect(steady(1)).toBeLessThan(1.35);
+    // Quiet for a while, then a loud passage: well above 1 at first.
+    const v = new VoiceSignals();
+    for (let i = 0; i < 24; i++) v.push(hit(i * 0.25, 0.2), ['kick']);
+    for (let i = 0; i < 8; i++) v.push(hit(6 + i * 0.25, 1), ['kick']);
+    const loud = run(v, 0, 7).slice(-30);
+    expect(loud.reduce((sum, f) => sum + f.vxLevel, 0) / loud.length).toBeGreaterThan(1.5);
+  });
+
+  it('keeps a hit that lands a hair before the frame (it is still rising)', () => {
+    const v = new VoiceSignals();
+    v.push(hit(1), ['kick']);
+    v.advance(1 + 1e-12, { beat: 2, beatSeconds: 0.5 });
+    v.advance(1 + 1 / 60, { beat: 2, beatSeconds: 0.5 });
+    expect(v.inputs('kick', false).vxEnv).toBeGreaterThan(0.5);
+  });
 });

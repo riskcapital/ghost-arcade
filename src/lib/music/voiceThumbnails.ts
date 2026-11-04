@@ -11,7 +11,7 @@
 const PLAYING: Record<string, number> = {
   vxPresence: 1, vxEnergy: 0.75, vxEnv: 0.8, vxHit: 0.9, vxVel: 0.8, vxPitch: 0.55,
   vxGlide: 0.4, vxCount: 6, vxPhase: 3.2, vxBeat: 2.4, vxBar: 1, vxBars: 4,
-  vxSwell: 0.7, vxPulse: 0.45, vxFlow: 3.2, vxMorph: 5.6,
+  vxSwell: 0.7, vxPulse: 0.45, vxFlow: 3.2, vxMorph: 5.6, vxLevel: 1.2,
 };
 
 /** The shader's text with its sound inputs' defaults set to a phrase playing. */

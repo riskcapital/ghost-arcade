@@ -144,6 +144,7 @@ export const VOICE_DRIVEN_INPUTS: readonly string[] = [
   'vxPulse',
   'vxFlow',
   'vxMorph',
+  'vxLevel',
 ];
 
 const VOICE_DRIVEN_SET = new Set(VOICE_DRIVEN_INPUTS);
@@ -308,10 +309,14 @@ interface SourceState {
   hits: number;
   morph: number;
   morphVel: number;
+  /** The envelope averaged over ~0.3 s: how loud the part is playing now, steady through a beat. */
+  att: number;
+  /** `att` averaged over a few seconds: what "normal" is for this sound right now. */
+  usual: number;
 }
 
 function freshState(): SourceState {
-  return { notes: [], hit: 0, vel: 0, pitch: 0, glide: 0, phase: 0, count: 0, lastOn: -Infinity, presence: 0, swell: 0, kick: 0, pulse: 0, flow: 0, hits: 0, morph: 0, morphVel: 0 };
+  return { notes: [], hit: 0, vel: 0, pitch: 0, glide: 0, phase: 0, count: 0, lastOn: -Infinity, presence: 0, swell: 0, kick: 0, pulse: 0, flow: 0, hits: 0, morph: 0, morphVel: 0, att: 0, usual: 0 };
 }
 
 /** One note's envelope at `time`. */
@@ -453,6 +458,7 @@ export class VoiceSignals {
       vxPulse: state.pulse,
       vxFlow: state.flow,
       vxMorph: ((state.morph % COUNT_WRAP) + COUNT_WRAP) % COUNT_WRAP,
+      vxLevel: levelOf(state),
     };
     for (let i = 0; i < VOICE_NOTE_SLOTS; i++) {
       out[`vxNote${i}`] = sounding[i] ? sounding[i].note / 127 : 0;
@@ -496,7 +502,9 @@ export class VoiceSignals {
       const shape = shapeOf(id);
       let env = this.levels.get(id) ?? 0;
       for (const n of state.notes) env = Math.max(env, noteEnvelope(shape, n, time));
-      state.notes = state.notes.filter((n) => n.offTime === null || noteEnvelope(shape, n, time) > 0.001);
+      // Drop notes that have faded out, but never one still rising: a hit
+      // that lands a hair before this moment reads as ~0 until its attack.
+      state.notes = state.notes.filter((n) => n.offTime === null || time - n.onTime < shape.attack + 0.01 || noteEnvelope(shape, n, time) > 0.001);
       state.hit *= hitDecay;
       state.glide += (state.pitch - state.glide) * glideStep;
       state.phase = (state.phase + dt * (0.2 + 1.8 * env)) % PHASE_WRAP;
@@ -520,12 +528,25 @@ export class VoiceSignals {
  *  - flow: a clock running at 0.25/s at rest, faster as swell and pulse rise.
  *  - morph: the hit count on a critically damped spring, so a visual can
  *    change something per hit as a glide rather than a cut.
+ *  - level: how loud the part plays now (its envelope over ~0.3 s) relative
+ *    to its own average over the last ~4 s, so it
+ *    sits near 1 whatever the track's loudness: above 1 when the part
+ *    rises above its usual level, below when it falls back. Use it to scale
+ *    motion rates, e.g. zoom + k * (level - 1).
  */
 const SWELL_RISE = 0.06;
 const SWELL_FALL = 0.45;
 const KICK_DECAY = 0.45;
 const PULSE_RISE = 0.035;
 const MORPH_OMEGA = 7;
+const ATT_SECONDS = 0.3;
+const USUAL_SECONDS = 4;
+/** A floor so silence reads as "quiet" (below 1), not as a ratio of two zeros. */
+const LEVEL_FLOOR = 0.04;
+
+function levelOf(state: SourceState): number {
+  return Math.min(3, (state.att + LEVEL_FLOOR) / (state.usual + LEVEL_FLOOR));
+}
 
 function surge(state: SourceState, velocity: number): void {
   const v = Math.max(0, Math.min(1, velocity));
@@ -539,6 +560,8 @@ function smoothSignals(state: SourceState, env: number, dt: number): void {
   state.kick *= Math.exp(-dt / KICK_DECAY);
   state.pulse += (Math.min(1, state.kick) - state.pulse) * k(PULSE_RISE);
   state.flow = (state.flow + dt * (0.25 + 1.4 * state.swell + 0.9 * state.pulse)) % PHASE_WRAP;
+  state.att += (env - state.att) * k(ATT_SECONDS);
+  state.usual += (state.att - state.usual) * k(USUAL_SECONDS);
   // Critically damped spring toward the hit count, in small steps so long frames stay stable.
   let left = dt;
   while (left > 0) {
