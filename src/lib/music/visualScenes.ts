@@ -24,8 +24,8 @@ export interface VoiceShader {
   pack?: VoicePack;
 }
 
-export type VoicePack = 'glitch';
-export const VOICE_PACKS: readonly { id: VoicePack; label: string }[] = [{ id: 'glitch', label: 'Glitch' }];
+export type VoicePack = 'glitch' | 'cosmos';
+export const VOICE_PACKS: readonly { id: VoicePack; label: string }[] = [{ id: 'glitch', label: 'Glitch' }, { id: 'cosmos', label: 'Cosmos' }];
 
 export const VOICE_SHADERS: readonly VoiceShader[] = [
   { file: 'VX-Barcode.fs', name: 'Barcode', family: 'berlin', blurb: 'Black and white data stripes that re-roll on every hit' },
@@ -102,6 +102,38 @@ export const VOICE_SHADERS: readonly VoiceShader[] = [
   { file: 'VX-BeamBurn.fs', name: 'Beam Burn', family: 'analog', pack: 'glitch', blurb: 'A phosphor beam that flares, skips and scorches the glass on hits' },
   { file: 'VX-NeonFault.fs', name: 'Neon Fault', family: 'dub', pack: 'glitch', blurb: 'A neon sign that buzzes and drops letters on hits' },
   { file: 'VX-LiquidSignal.fs', name: 'Liquid Signal', family: 'bath', pack: 'glitch', blurb: 'A bold picture melting into glossy streaks, stirred on hits' },
+  // Cosmos: psychedelia, deep space, light through glass and water, point clouds,
+  // flocks and nebulas. Each has its own transparent background (Cut out).
+  { file: 'VX-LiquidLight.fs', name: 'Liquid Light', family: 'dub', pack: 'cosmos', blurb: 'Glossy oil blobs drifting between glass plates that split in two on every hit' },
+  { file: 'VX-OpDisc.fs', name: 'Op Disc', family: 'berlin', pack: 'cosmos', blurb: 'A sixties op-art disc bulging into a sphere, ripped by a shock wave on hits' },
+  { file: 'VX-Paisley.fs', name: 'Paisley', family: 'analog', pack: 'cosmos', blurb: 'A poster-art paisley rosette whose tails flick out long on hits' },
+  { file: 'VX-Mandala.fs', name: 'Mandala', family: 'bath', pack: 'cosmos', blurb: 'A flower mandala that snaps its petals open on hits and re-folds' },
+  { file: 'VX-MeltBow.fs', name: 'Melt Bow', family: 'dub', pack: 'cosmos', blurb: 'A melting seventies rainbow whose colours shunt along on hits' },
+  { file: 'VX-JuliaJewel.fs', name: 'Julia Jewel', family: 'analog', pack: 'cosmos', blurb: 'A fractal gem that reshapes with the pitch and flashes on hits' },
+  { file: 'VX-SpiralEye.fs', name: 'Spiral Eye', family: 'berlin', pack: 'cosmos', blurb: 'A hypnotic eye that blinks, glances and fires its rays on hits' },
+  { file: 'VX-Ferrofluid.fs', name: 'Ferrofluid', family: 'analog', pack: 'cosmos', blurb: 'Glossy black ferrofluid rising into spikes with the sound, snapping up on hits' },
+  { file: 'VX-FractalCoral.fs', name: 'Fractal Coral', family: 'bath', pack: 'cosmos', blurb: 'Glowing branching coral that grows with held notes and flares on hits' },
+  { file: 'VX-DrosteFrames.fs', name: 'Droste', family: 'dub', pack: 'cosmos', blurb: 'Frames inside frames winding into a spiral that whips round on hits' },
+  { file: 'VX-SpiralGalaxy.fs', name: 'Spiral Galaxy', family: 'bath', pack: 'cosmos', blurb: 'A tilted spiral galaxy whose arms flare one after another on hits' },
+  { file: 'VX-EventHorizon.fs', name: 'Event Horizon', family: 'dub', pack: 'cosmos', blurb: 'A black hole whose blazing disk flares and fires jets on hits' },
+  { file: 'VX-RingedPlanet.fs', name: 'Ringed Planet', family: 'analog', pack: 'cosmos', blurb: 'A ringed giant whose day side turns with the note, auroras on hits' },
+  { file: 'VX-MeteorShower.fs', name: 'Meteor Shower', family: 'berlin', pack: 'cosmos', blurb: 'Meteors raking the sky, with a fireball on every hit' },
+  { file: 'VX-Pulsar.fs', name: 'Pulsar', family: 'berlin', pack: 'cosmos', blurb: 'A pulsar in its glowing nebula, sweeping beams through the gas in time with the bar' },
+  { file: 'VX-BurningGlass.fs', name: 'Burning Glass', family: 'analog', pack: 'cosmos', blurb: 'A glass ball focusing sunlight into a blazing pool that flares on hits' },
+  { file: 'VX-Medusa.fs', name: 'Medusa', family: 'bath', pack: 'cosmos', blurb: 'A glowing jellyfish whose bell clenches on every hit' },
+  { file: 'VX-Shallows.fs', name: 'Shallows', family: 'bath', pack: 'cosmos', blurb: 'Looking up through rippling water, shafts of light flashing on hits' },
+  { file: 'VX-SoapFilm.fs', name: 'Soap Film', family: 'bath', pack: 'cosmos', blurb: 'A soap bubble swirling with real thin-film colour that ripples on every hit' },
+  { file: 'VX-Quicksilver.fs', name: 'Quicksilver', family: 'dub', pack: 'cosmos', blurb: 'Mirror-bright mercury beads that burst into droplets on hits' },
+  { file: 'VX-DoubleHelix.fs', name: 'Helix', family: 'analog', pack: 'cosmos', blurb: 'A DNA helix of points that unzips on hits' },
+  { file: 'VX-Shockwave.fs', name: 'Shockwave', family: 'berlin', pack: 'cosmos', blurb: 'A globe of points that blasts off a shell on every kick' },
+  { file: 'VX-Survey.fs', name: 'Survey', family: 'berlin', pack: 'cosmos', blurb: 'A laser survey flight over mountains drawn in points' },
+  { file: 'VX-ScanHead.fs', name: 'Scan Head', family: 'berlin', pack: 'cosmos', blurb: 'A 3D-scanned head whose scan rings slip loose on hits' },
+  { file: 'VX-Knotwork.fs', name: 'Knotwork', family: 'bath', pack: 'cosmos', blurb: 'A knot of streaming points that fills in with the sound' },
+  { file: 'VX-Murmuration.fs', name: 'Murmuration', family: 'bath', pack: 'cosmos', blurb: 'Thousands of starlings wheeling as one cloud, torn in two on hits' },
+  { file: 'VX-BaitBall.fs', name: 'Bait Ball', family: 'dub', pack: 'cosmos', blurb: 'A spinning ring of silver fish that a strike splits apart' },
+  { file: 'VX-Fireflies.fs', name: 'Fireflies', family: 'bath', pack: 'cosmos', blurb: 'A firefly swarm that falls into step with the beat' },
+  { file: 'VX-Pillars.fs', name: 'Pillars', family: 'analog', pack: 'cosmos', blurb: 'Dark dust columns with burning edges that flare as the beat rolls down' },
+  { file: 'VX-Remnant.fs', name: 'Remnant', family: 'analog', pack: 'cosmos', blurb: 'The shell of an exploded star that blasts outward on hits' },
 ];
 
 export const voiceShaderByFile = (file: string): VoiceShader | undefined => VOICE_SHADERS.find((v) => v.file === file);
