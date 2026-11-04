@@ -7,10 +7,12 @@
    */
   import { onMount } from 'svelte';
   import { musicStudio } from '../../music/musicStudioStore';
+  import { startLiveInput } from '../../music/musicRuntime';
   import { SYSTEM_AUDIO_DEVICE, inputKind, listAudioInputs, type AudioInputDevice } from '../../music/liveInput';
   import { liveInputLabel } from '../../music/mixer';
 
-  let { index, compact = false }: { index: number; compact?: boolean } = $props();
+  /** compact drops the hint below it; class styles the select where it sits. */
+  let { index, compact = false, class: cls = '' }: { index: number; compact?: boolean; class?: string } = $props();
 
   const s = $derived($musicStudio);
   let devices = $state<AudioInputDevice[]>([]);
@@ -42,10 +44,12 @@
     // System audio already plays through this computer: hearing it again
     // through the mix would double it.
     if (id === SYSTEM_AUDIO_DEVICE) musicStudio.setLiveInput(index, { monitor: false });
+    // Choosing where to listen is asking to listen.
+    if (!$musicStudio.inputOn) void startLiveInput();
   }
 </script>
 
-<select class="source" class:compact aria-label="Where {label} comes from" title="Where {label} comes from: this computer's sound, a microphone, a phone or an audio interface" value={deviceId} onchange={(e) => choose(e.currentTarget.value)}>
+<select class="source {cls}" class:compact aria-label="Where {label} comes from" title="Where {label} comes from: this computer's sound, a microphone, a phone or an audio interface" value={deviceId} onchange={(e) => choose(e.currentTarget.value)}>
   <option value="">Default microphone</option>
   {#if deviceId && deviceId !== SYSTEM_AUDIO_DEVICE && !devices.some((d) => d.id === deviceId)}<option value={deviceId}>Not connected</option>{/if}
   <optgroup label="This computer">

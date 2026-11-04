@@ -35,6 +35,9 @@
   .clip { width: 100%; min-width: 8px; height: 5px; padding: 0; border: 0; border-radius: 1px; background: color-mix(in srgb, var(--ga-rec, #ff3b30) 18%, transparent); cursor: pointer; }
   .clip.on { background: var(--ga-rec, #ff3b30); box-shadow: 0 0 5px var(--ga-rec, #ff3b30); }
   .cols { flex: 1; display: flex; gap: 2px; padding: 2px; border-radius: 2px; background: var(--studio-slot, #050608); box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.8); }
+  /* Its own layer: a moving meter repaints only itself, never the whole desk. */
+  .cols { will-change: transform; contain: layout paint style; }
+  .clip { will-change: transform; }
   .col { width: 5px; display: flex; flex-direction: column-reverse; gap: 1px; }
   .seg { flex: 1; border-radius: 1px; opacity: 0.16; }
   .seg.green { background: var(--ga-green, #46d18a); }

@@ -25,11 +25,17 @@
   let live = $state<{ d: string; color: string } | null>(null);
   let frame: number | null = null;
   let signature = '';
+  /** Something may have moved a jack: measure on the next frame. */
+  let stale = true;
+  let measuredAt = 0;
+  const invalidate = () => (stale = true);
+  /** Between those events, jacks are looked at again this often, in case a panel moved without saying so. */
+  const RECHECK_MS = 250;
 
   const cables = $derived($musicStudio.cables[$musicStudio.set]);
 
-  function centre(jack: string, origin: DOMRect): [number, number] | null {
-    const el = root?.querySelector<HTMLElement>(`[data-jack="${CSS.escape(jack)}"]:not([data-bay])`);
+  function centre(jacks: Map<string, HTMLElement>, jack: string, origin: DOMRect): [number, number] | null {
+    const el = jacks.get(jack);
     if (!el || !el.offsetParent) return null;
     const r = el.getBoundingClientRect();
     return [r.left + r.width / 2 - origin.left, r.top + r.height / 2 - origin.top];
@@ -48,21 +54,40 @@
     return COLORS[(h + index) % COLORS.length];
   }
 
-  function measure() {
+  /**
+   * Where the cables hang. Reading jack positions makes the browser lay the
+   * page out, so this runs only when something may have moved them (a
+   * resize, a scroll, a panel opening, a cable plugged, a drag) and a few
+   * times a second otherwise, never every frame. Hidden cables are not
+   * measured at all.
+   */
+  function measure(now: number) {
     frame = requestAnimationFrame(measure);
     if (!root) return;
+    const drag = $cableDrag;
+    if (!drag && (!cables.length || $cableView === 'hide')) {
+      if (drawn.length || live) { drawn = []; live = null; signature = ''; }
+      return;
+    }
+    if (!drag && !stale && now - measuredAt < RECHECK_MS) return;
+    stale = false;
+    measuredAt = now;
     const origin = root.getBoundingClientRect();
+    const jacks = new Map<string, HTMLElement>();
+    for (const el of root.querySelectorAll<HTMLElement>('[data-jack]:not([data-bay])')) {
+      const id = el.dataset.jack;
+      if (id && !jacks.has(id)) jacks.set(id, el);
+    }
     const next: Drawn[] = [];
     cables.forEach((c, i) => {
-      const a = centre(c.from, origin);
-      const b = centre(c.to, origin);
+      const a = centre(jacks, c.from, origin);
+      const b = centre(jacks, c.to, origin);
       if (!a || !b) return;
       next.push({ id: c.id, d: path(a[0], a[1], b[0], b[1]), color: colorFor(c.id, i), ends: [a[0], a[1], b[0], b[1]] });
     });
-    const drag = $cableDrag;
     let nextLive: typeof live = null;
     if (drag) {
-      const a = centre(drag.from, origin);
+      const a = centre(jacks, drag.from, origin);
       if (a) nextLive = { d: path(a[0], a[1], drag.x - origin.left, drag.y - origin.top), color: '#a8bcff' };
     }
     const sig = next.map((n) => n.d).join('|') + (nextLive?.d ?? '');
@@ -111,6 +136,31 @@
   onDestroy(() => {
     if (frame !== null) cancelAnimationFrame(frame);
     cableDrag.set(null);
+  });
+
+  // What can move a jack: the window or the view changing size, a scroll, a
+  // panel or tab opening or closing, a cable plugged, the cables shown again.
+  $effect(() => {
+    void cables;
+    void $cableView;
+    invalidate();
+  });
+  $effect(() => {
+    const el = root;
+    if (!el) return;
+    invalidate();
+    const sizes = new ResizeObserver(invalidate);
+    sizes.observe(el);
+    const panels = new MutationObserver(invalidate);
+    panels.observe(el, { childList: true, subtree: true });
+    window.addEventListener('scroll', invalidate, { capture: true, passive: true });
+    window.addEventListener('resize', invalidate);
+    return () => {
+      sizes.disconnect();
+      panels.disconnect();
+      window.removeEventListener('scroll', invalidate, { capture: true });
+      window.removeEventListener('resize', invalidate);
+    };
   });
 
   // The cable under the pointer lights up, with its plugs, so it is clear which one a grab or right-click takes.

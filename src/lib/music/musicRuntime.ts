@@ -85,7 +85,7 @@ import {
 import { SCAN_PARTIALS, columnBands, scanPosition } from './scanSynth';
 import { TRACK_IDS, clipFromRecording, clipFxKey, clipLoop, findClip, type Session, type SessionClip, type TrackId } from './session';
 import type { AnalogDest, AnalogSource } from './analogSynth';
-import { INPUT_CHANNELS, stripFor, type ChannelId } from './mixer';
+import { INPUT_CHANNELS, MAX_LIVE_INPUTS, stripFor, type ChannelId } from './mixer';
 import { LiveInputs, type BandInputSpec } from './liveInput';
 import { InputNoteRoles, overallInputStatus, type BandInputStatus } from './bandInputs';
 import { BassFollower, droneShift } from './bassFollow';
@@ -2522,6 +2522,22 @@ export async function startLiveInput(): Promise<void> {
     bandListening = false;
     musicStudio.setInputStatus(false, err instanceof Error ? err.message : 'The audio input could not be opened.');
   }
+}
+
+/**
+ * Add a band input with its own strip. It starts on the last input's device,
+ * on that device's next channel when it has one.
+ */
+export function addBandInput(): void {
+  const s = get(musicStudio);
+  const count = s.liveInputs.length;
+  if (count >= MAX_LIVE_INPUTS) return;
+  const last = s.liveInputs[count - 1];
+  const sends = get(bandInputStatus)[count - 1]?.channels ?? null;
+  const next = last.channel + 1;
+  // The device first, so the new input never opens the default input on its way.
+  musicStudio.setInputDevice(count, s.inputDevices[count - 1] ?? '');
+  musicStudio.addLiveInput({ channel: last.channel >= 0 && (sends === null || next < sends) ? next : -1 });
 }
 
 export function stopLiveInput(): void {

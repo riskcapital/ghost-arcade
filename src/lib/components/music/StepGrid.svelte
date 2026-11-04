@@ -8,6 +8,10 @@
   let { cell = 0, rowHeight = 18 }: { cell?: number; rowHeight?: number } = $props();
 
   const pattern = $derived($musicStudio.pattern);
+  // The transport changes on every note and step: each cell follows only the
+  // step, and each voice only whether it is sounding.
+  const playStep = $derived($musicTransport.step);
+  const held = $derived($musicTransport.held);
   const steps = $derived(Array.from({ length: pattern.steps }, (_, i) => i));
   // Zero means "fill the width"; otherwise a fixed cell size.
   const columns = $derived(cell > 0 ? `repeat(${pattern.steps}, ${cell}px)` : `repeat(${pattern.steps}, minmax(0, 1fr))`);
@@ -20,13 +24,13 @@
 
 <div class="steps" class:fill={cell === 0} class:stretch={rowHeight === 0} style="grid-template-columns: 64px {columns}; --row: {rowHeight ? `${rowHeight}px` : 'auto'}">
   {#each DRUM_VOICES as voice}
-    <button class="voice" class:lit={$musicTransport.held.has(`drums:${DRUM_NOTES[voice]}`)} onpointerdown={(e) => audition(e, voice)} title="Play {DRUM_LABELS[voice]}">{DRUM_LABELS[voice]}</button>
+    <button class="voice" class:lit={held.has(`drums:${DRUM_NOTES[voice]}`)} onpointerdown={(e) => audition(e, voice)} title="Play {DRUM_LABELS[voice]}">{DRUM_LABELS[voice]}</button>
     {#each steps as step}
       <button
         class="step"
         class:on={pattern.tracks[voice][step] > 0}
         class:bar={step % 4 === 0}
-        class:playhead={step === $musicTransport.step}
+        class:playhead={step === playStep}
         onclick={() => musicStudio.toggleStep(voice, step)}
         aria-label="{DRUM_LABELS[voice]} step {step + 1}"
       ></button>
