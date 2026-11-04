@@ -12,6 +12,7 @@
   import { PART_SOURCES, type VoiceSourceId } from '../../music/visualVoices';
   import { DUCK_RELEASE_MAX, DUCK_RELEASE_MIN } from '../../music/soundSlots';
   import StudioKnob from './StudioKnob.svelte';
+  import InputSourceSelect from './InputSourceSelect.svelte';
 
   const s = $derived($musicStudio);
   const status = $derived($bandInputStatus);
@@ -44,6 +45,10 @@
       <span class="led" class:on={s.inputOn}></span>{s.inputOn ? 'Listening' : 'Off'}
     </button>
   </div>
+  <label class="listen-to">
+    <span>Listen to</span>
+    <InputSourceSelect index={0} compact={s.liveInputs.length > 1} />
+  </label>
   <ul class="rows">
     {#each s.liveInputs as input, i (i)}
       {@const st = status[i]}
@@ -84,6 +89,7 @@
   .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .power { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border: 1px solid var(--studio-edge); background: var(--studio-cell); color: var(--studio-ink); border-radius: var(--studio-radius); font: inherit; font-size: var(--ga-text-control, 12px); cursor: pointer; }
   .power.on { border-color: var(--studio-accent); color: var(--studio-accent); }
+  .listen-to { display: flex; flex-direction: column; gap: 3px; font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); }
   .rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
   .input-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
   .input-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--ga-text-control, 12px); color: var(--studio-ink); }

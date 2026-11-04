@@ -26,6 +26,7 @@
   import { PART_SOURCES, type VoiceSourceId } from '../../music/visualVoices';
   import { bandInputStatus, channelLevels, mixerChannels, startLiveInput, stopLiveInput } from '../../music/musicRuntime';
   import { listAudioInputs, type AudioInputDevice } from '../../music/liveInput';
+  import InputSourceSelect from './InputSourceSelect.svelte';
   import { channelChoices, channelLabel } from '../../music/bandInputs';
   import type { InstrumentId } from '../../music/noteEvents';
   import StudioKnob from './StudioKnob.svelte';
@@ -97,10 +98,7 @@
     }
   }
 
-  /** While listening, the studio opens the new device by itself. */
-  function chooseDevice(index: number, id: string) {
-    musicStudio.setInputDevice(index, id);
-  }
+
 
   /** A new input starts on the last one's device, on its next channel when it has one. */
   function addInput() {
@@ -150,11 +148,7 @@
                 <span class="led" class:on={s.inputOn}></span>{s.inputOn ? 'On' : 'Off'}
               </button>
             {/if}
-            <select aria-label="Audio device of {label}" title={deviceTitle(index)} value={deviceId} onchange={(e) => chooseDevice(index, e.currentTarget.value)}>
-              <option value="">Default input</option>
-              {#if deviceId && !devices.some((d) => d.id === deviceId)}<option value={deviceId}>Not connected</option>{/if}
-              {#each devices as d (d.id)}<option value={d.id}>{d.label}</option>{/each}
-            </select>
+            <InputSourceSelect {index} />
             <label class="labelled" title="Which channel of the device {label} hears. A stereo interface sends its two inputs as 1 and 2; Mix hears them together.">
               <span>Channel</span>
               <select aria-label="Channel {label} hears" value={input.channel} onchange={(e) => musicStudio.setLiveInput(index, { channel: Number(e.currentTarget.value) })}>

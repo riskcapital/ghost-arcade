@@ -27,6 +27,44 @@ export interface AudioInputDevice {
   label: string;
 }
 
+/**
+ * The device id that means "what this computer is playing": system audio,
+ * taken through the display-capture loopback (the video track is dropped).
+ * For a show with no feed from the desk: a DJ app, a stream, a playlist.
+ */
+export const SYSTEM_AUDIO_DEVICE = 'system-audio';
+
+export type InputKind = 'computer' | 'phone' | 'interface';
+
+/** Where an input device lives, from its name: the computer, a phone nearby, or an interface/line input. */
+export function inputKind(label: string): InputKind {
+  if (/iphone|ipad|continuity/i.test(label)) return 'phone';
+  if (/built-?in|macbook|imac|internal|laptop|microphone array|realtek|default/i.test(label)) return 'computer';
+  return 'interface';
+}
+
+const MAC_AUDIO_PERMISSION = 'Allow Ghost Arcade under System Settings > Privacy & Security > Screen & System Audio Recording, then quit and reopen it.';
+
+/** System audio as a stream: the display-capture loopback, audio only. */
+async function openSystemAudio(): Promise<MediaStream> {
+  const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
+  let stream: MediaStream;
+  try {
+    stream = await (navigator.mediaDevices as MediaDevices & { getDisplayMedia(c: unknown): Promise<MediaStream> }).getDisplayMedia({
+      video: { width: 1, height: 1, frameRate: 1 },
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    });
+  } catch (err) {
+    throw Object.assign(new Error(isMac ? `System audio is blocked. ${MAC_AUDIO_PERMISSION}` : 'System audio could not be opened.'), { name: 'SystemAudioError', cause: err });
+  }
+  stream.getVideoTracks().forEach((t) => t.stop());
+  if (!stream.getAudioTracks().length) {
+    stream.getTracks().forEach((t) => t.stop());
+    throw Object.assign(new Error(isMac ? `No system audio came through. ${MAC_AUDIO_PERMISSION}` : 'No system audio came through.'), { name: 'SystemAudioError' });
+  }
+  return stream;
+}
+
 /** Audio inputs on this computer. Labels only show once an input has been allowed. */
 export async function listAudioInputs(): Promise<AudioInputDevice[]> {
   if (typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) return [];
@@ -98,6 +136,7 @@ interface Input {
 
 function openError(err: unknown): string {
   const name = (err as { name?: string })?.name;
+  if (name === 'SystemAudioError') return (err as Error).message;
   if (name === 'NotAllowedError') return 'Audio input was not allowed.';
   if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'That audio input is not connected.';
   return 'The audio input could not be opened.';
@@ -215,7 +254,7 @@ export class LiveInputs {
     this.devices.set(deviceId, device);
     let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
+      stream = deviceId === SYSTEM_AUDIO_DEVICE ? await openSystemAudio() : await navigator.mediaDevices.getUserMedia({
         audio: {
           deviceId: deviceId ? { exact: deviceId } : undefined,
           channelCount: { ideal: channels },
