@@ -434,6 +434,16 @@ pub fn resolve_isf_target_size(
     (eval(&spec.width, render_width), eval(&spec.height, render_height))
 }
 
+/// Whether each side of a target is a fixed number of pixels: declared with an
+/// expression that does not depend on the render size. Those keep their exact
+/// size at every output density, so their contents survive a quality change.
+pub fn isf_target_fixed_sides(spec: &IsfTargetSpec) -> (bool, bool) {
+    let fixed = |expr: &Option<String>| {
+        expr.as_deref().is_some_and(|expr| !expr.contains("$WIDTH") && !expr.contains("$HEIGHT"))
+    };
+    (fixed(&spec.width), fixed(&spec.height))
+}
+
 /// Physical texture size for a target. The ISF output renders into a square
 /// slot of `output_edge` pixels that stands for the virtual render size, so a
 /// target keeps the same pixels-per-virtual-pixel density as the output.
@@ -579,6 +589,22 @@ mod tests {
 
     fn no_inputs(_: &str) -> Option<f64> {
         None
+    }
+
+    #[test]
+    fn fixed_size_targets_are_told_apart_from_render_sized_ones() {
+        let spec = |w: Option<&str>, h: Option<&str>| IsfTargetSpec {
+            name: "t".into(),
+            persistent: true,
+            float: true,
+            width: w.map(Into::into),
+            height: h.map(Into::into),
+        };
+        assert_eq!(isf_target_fixed_sides(&spec(Some("1"), Some("1"))), (true, true));
+        assert_eq!(isf_target_fixed_sides(&spec(Some("128"), Some("1"))), (true, true));
+        assert_eq!(isf_target_fixed_sides(&spec(Some("$WIDTH/2"), Some("$HEIGHT/2"))), (false, false));
+        assert_eq!(isf_target_fixed_sides(&spec(None, None)), (false, false));
+        assert_eq!(isf_target_fixed_sides(&spec(Some("64"), Some("$HEIGHT"))), (true, false));
     }
 
     #[test]

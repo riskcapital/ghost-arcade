@@ -63,7 +63,7 @@ use audio::{GhostAudioUniforms, ghost_audio_uniform_layout};
 use isf_passes::{
     IsfAudioKind, IsfAudioSpectrum, IsfPassPlan, ISF_AUDIO_DEFAULT_WIDTH, MAX_ISF_PASS_TARGETS,
     fill_isf_audio_row, fill_isf_audio_row_from_bands, isf_audio_width, isf_pass_target_image_code,
-    isf_physical_target_size, parse_isf_pass_plan, resolve_isf_target_size,
+    isf_physical_target_size, isf_target_fixed_sides, parse_isf_pass_plan, resolve_isf_target_size,
 };
 use base64::Engine;
 use bytemuck::{Pod, Zeroable};
@@ -1831,13 +1831,28 @@ struct NativeIsfPassState {
     uniform_buffers: Vec<wgpu::Buffer>,
 }
 
+/// The key a pass-aware shader's buffers live under: its output source id
+/// without the trailing quality and size parts. Those change with the quality
+/// tier (which moves under load mid-show); keyed on them, every tier change
+/// started the shader again from empty buffers.
+fn isf_pass_state_key(source_id: &str) -> String {
+    let mut parts = source_id.rsplitn(3, ':');
+    let size = parts.next();
+    let quality = parts.next();
+    match (size, quality, parts.next()) {
+        (Some(size), Some(_), Some(rest)) if size.contains('x') => format!("{rest}:state"),
+        _ => source_id.to_string(),
+    }
+}
+
 /// Per-render description of a pass-aware ISF shader, resolved by the core.
 struct NativeIsfPassJob<'a> {
     state_key: &'a str,
     generation: u64,
     passes: &'a [isf_passes::IsfPassSpec],
-    /// Per target: virtual size (shader pixels) and FLOAT flag.
-    targets: Vec<((f32, f32), bool)>,
+    /// Per target: virtual size (shader pixels), FLOAT flag, and whether each
+    /// side is a fixed number of pixels (no $WIDTH/$HEIGHT in its expression).
+    targets: Vec<((f32, f32), bool, (bool, bool))>,
     fft_width: Option<u32>,
     waveform_width: Option<u32>,
 }
@@ -16106,7 +16121,10 @@ impl App {
             renderer.retain_isf_pass_states(|key| {
                 bindings.contains_key(key)
                     || layers.get(key).is_some_and(|layer| layer.shader_id.is_some())
-                    || layers.values().any(|layer| layer.shader_source_id.as_deref() == Some(key))
+                    || layers.values().any(|layer| {
+                        layer.shader_source_id.as_deref() == Some(key)
+                            || layer.shader_source_id.as_deref().map(isf_pass_state_key).as_deref() == Some(key)
+                    })
             });
         }
         if self.isf_layer_bindings.is_empty() {
@@ -16374,6 +16392,7 @@ impl App {
                             (
                                 resolve_isf_target_size(target, render_w, render_h, &input_value),
                                 target.float,
+                                isf_target_fixed_sides(target),
                             )
                         })
                         .collect::<Vec<_>>()
@@ -16385,8 +16404,9 @@ impl App {
                 Some(renderer) => {
                     let result = if let Some((host, generation)) = pass_host.as_ref() {
                         let passes = host.plan.effective_passes();
+                        let state_key = isf_pass_state_key(&source_id);
                         let job = NativeIsfPassJob {
-                            state_key: &source_id,
+                            state_key: &state_key,
                             generation: *generation,
                             passes: &passes,
                             targets: target_sizes,
@@ -24764,7 +24784,7 @@ impl RenderState {
         let mut formats_needed = Vec::new();
         for pass in job.passes {
             if let Some(index) = pass.target
-                && let Some((_, float)) = job.targets.get(index)
+                && let Some((_, float, _)) = job.targets.get(index)
             {
                 let format = target_format(*float);
                 if !formats_needed.contains(&format) {
@@ -24797,14 +24817,17 @@ impl RenderState {
         let base_h = base_uniforms.resolution_time[1].max(1.0);
 
         // Pass state: a signature change (shader/source, reload generation,
-        // render size, output density) drops every buffer.
+        // render size) drops every buffer. Output density (the quality tier)
+        // is left out: the tier moves under load mid-show, and dropping state
+        // then reset every running visual's clocks, springs and trails.
+        // Render-sized targets still follow the density (they are rebuilt
+        // below when their size changes); fixed-size ones never move.
         let mut signature = 0xcbf29ce484222325_u64;
         for value in [
             stable_hash64(cache_key),
             job.generation,
             base_w.to_bits() as u64,
             base_h.to_bits() as u64,
-            output_edge as u64,
             job.passes.len() as u64,
             job.targets.len() as u64,
         ] {
@@ -24822,9 +24845,14 @@ impl RenderState {
             ),
         };
         state.targets.resize_with(job.targets.len(), || None);
-        for (index, ((virtual_w, virtual_h), float)) in job.targets.iter().enumerate() {
-            let (width, height) =
+        for (index, ((virtual_w, virtual_h), float, fixed)) in job.targets.iter().enumerate() {
+            let (scaled_w, scaled_h) =
                 isf_physical_target_size((*virtual_w, *virtual_h), (base_w, base_h), output_edge);
+            // A fixed-size target (a 1x1 clock, a 128x1 history) is the same
+            // pixels at every density.
+            let exact = |value: f32| (value.round() as u32).clamp(1, isf_passes::ISF_PASS_TARGET_MAX_EDGE);
+            let width = if fixed.0 { exact(*virtual_w) } else { scaled_w };
+            let height = if fixed.1 { exact(*virtual_h) } else { scaled_h };
             let format = target_format(*float);
             let fits = state.targets[index]
                 .as_ref()
@@ -24864,7 +24892,7 @@ impl RenderState {
         }
 
         let mut pass_sizes = [[0.0f32; 4]; MAX_ISF_PASS_TARGETS / 2];
-        for (index, ((w, h), _)) in job.targets.iter().enumerate().take(MAX_ISF_PASS_TARGETS) {
+        for (index, ((w, h), _, _)) in job.targets.iter().enumerate().take(MAX_ISF_PASS_TARGETS) {
             pass_sizes[index / 2][(index % 2) * 2] = *w;
             pass_sizes[index / 2][(index % 2) * 2 + 1] = *h;
         }
@@ -34633,6 +34661,17 @@ fn completed_gpu_frame_schedule(last: Instant, now: Instant, period: Duration, r
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn isf_pass_state_survives_quality_and_size_changes() {
+        use super::isf_pass_state_key as key;
+        let a = key("native-shader:music-voice:L1:0:VX-Nebula.fs:abc:00000000000000ff:0:3f400000:1024x1024");
+        let b = key("native-shader:music-voice:L1:0:VX-Nebula.fs:abc:00000000000000ff:0:3f800000:2048x2048");
+        assert_eq!(a, b);
+        assert_ne!(a, key("native-shader:music-voice:L1:1:VX-Nebula.fs:abc:00000000000000ff:0:3f800000:2048x2048"));
+        // Anything not in the output id's shape is its own key.
+        assert_eq!(key("layer-7"), "layer-7");
+    }
+
     #[test]
     fn frames_are_paced_to_a_whole_fraction_of_the_output_display() {
         use super::paced_frame_rate as rate;
