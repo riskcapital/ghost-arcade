@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A pulsar wind nebula: a dazzling neutron star inside a glowing torus of turbulent, filament-laced gas, with curving jets streaming from its poles. Two beams of light sweep round in time with the bar, lighting up the gas they pass through, and the whole sky flashes when one swings toward you. Each beat sends a shock front racing out that sets the gas glowing as it passes; each hit fattens and brightens the beams and flares the star. With a transparent background the star, nebula and beams float on their own.",
+    "DESCRIPTION": "A pulsar wind nebula: a dazzling neutron star inside a glowing torus of turbulent, filament-laced gas, with curving jets streaming from its poles. Two beams of light sweep round in time with the bar, lighting up the gas they pass through, and the whole sky flashes when one swings toward you. Shock fronts ride endlessly outward, setting the gas glowing as they pass and blazing while the music pulses; the music speeds the whole nebula's churn, its swell fattens and brightens the beams, and each hit flares the star. With a transparent background the star, nebula and beams float on their own.",
     "INPUTS": [
         { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 1, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play", "Bowls", "Drone", "XY tone", "Analog synth", "Scan synth", "Echo shots", "Build and drop", "Siren", "Acid line", "Dub bass"] },
         { "NAME": "vxAuto", "LABEL": "Comes and goes with its sound", "TYPE": "bool", "DEFAULT": true },
@@ -14,16 +14,14 @@
         { "NAME": "shock", "LABEL": "Shock fronts", "TYPE": "float", "DEFAULT": 0.7, "MIN": 0, "MAX": 1 },
         { "NAME": "gas", "LABEL": "Gas", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0, "MAX": 1 },
         { "NAME": "wobble", "LABEL": "Beam angle", "TYPE": "float", "DEFAULT": 0.55, "MIN": 0.1, "MAX": 1 },
-        { "NAME": "sweep", "LABEL": "Sweep", "TYPE": "long", "DEFAULT": 2, "VALUES": [1, 2, 4], "LABELS": ["Once a bar", "Twice a bar", "Every beat"] },
+        { "NAME": "sweep", "LABEL": "Sweep", "TYPE": "long", "DEFAULT": 1, "VALUES": [1, 2, 4], "LABELS": ["Once a bar", "Twice a bar", "Every beat"] },
         { "NAME": "size", "LABEL": "Size", "TYPE": "float", "DEFAULT": 0.7, "MIN": 0.3, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Beams", "TYPE": "color", "DEFAULT": [0.55, 0.75, 1.0, 1.0] },
         { "NAME": "accent", "LABEL": "Nebula", "TYPE": "color", "DEFAULT": [0.85, 0.4, 1.0, 1.0] },
-        { "NAME": "vxEnv", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxHit", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxVel", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
+        { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxFlow", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
         { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxBeat", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
         { "NAME": "vxBar", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
         { "NAME": "vxEnergy", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 }
     ]
@@ -69,7 +67,7 @@ float fbm3(vec2 x) {
 
 // Fine filaments: domain-warped ridged noise, like synchrotron wisps.
 float filaments(vec2 x, float t) {
-    vec2 w = vec2(fbm3(x * 1.7 + vec2(t * 0.03, 0.0)), fbm3(x * 1.7 + vec2(5.2, 1.3 - t * 0.025)));
+    vec2 w = vec2(fbm3(x * 1.7 + vec2(t * 0.11, 0.0)), fbm3(x * 1.7 + vec2(5.2, 1.3 - t * 0.09)));
     vec2 q = x * 3.2 + (w - 0.5) * 3.0;
     float v = 0.0;
     float amp = 0.6;
@@ -92,17 +90,18 @@ void main() {
     vec2 res = RENDERSIZE;
     float sc = size * 0.95;
     vec2 p = (gl_FragCoord.xy - 0.5 * res) / res.y / sc;
-    float t = vxPhase * 0.02 + TIME * 0.05;
+    float t = vxFlow * 0.2;
 
-    float hitK = vxHit * (0.55 + 0.45 * vxVel);
-    float swell = vxEnv * 0.75 + vxEnergy * 0.25;
+    float pls = clamp(vxPulse, 0.0, 1.0);
+    float hitK = pls * pls * (3.0 - 2.0 * pls);
+    float swell = clamp(vxSwell * 0.8 + vxEnergy * 0.2, 0.0, 1.0);
 
     // Spin axis: the torus is seen at a slant, as in the real nebulae.
     vec3 S = normalize(vec3(0.3, 0.86, 0.5));
     vec3 E1 = normalize(cross(S, vec3(0.0, 0.0, 1.0)));
     vec3 E2 = cross(S, E1);
     // Magnetic axis swept round the spin axis in time with the bar.
-    float ph = TAU * vxBar * float(sweep) + TIME * 0.35;
+    float ph = TAU * vxBar * float(sweep) + vxFlow * 0.3;
     float al = mix(0.35, 1.25, wobble);
     vec3 M = cos(al) * S + sin(al) * (cos(ph) * E1 + sin(ph) * E2);
 
@@ -111,11 +110,16 @@ void main() {
     vec3 beamC = mix(ink.rgb, vec3(1.0), 0.35);
 
     // Beam angular width (in 1 - cos units) and strength.
-    float bw = 0.006 + 0.006 * swell + 0.016 * hitK;
-    float bGain = beams * (0.5 + 0.6 * swell + 1.8 * hitK);
+    float bw = 0.006 + 0.009 * swell + 0.014 * hitK;
+    float bGain = beams * (0.5 + 1.0 * swell + 1.8 * hitK);
     // Shock front: a shell racing out over each beat.
-    float sr = 0.12 + vxBeat * 1.1;
-    float shockA = (1.0 - vxBeat) * (1.0 - vxBeat) * shock * (0.3 + 1.4 * max(swell, hitK));
+    // Shock fronts: an endless train of shells riding outward (faster with the
+    // music); they light the gas as they pass, brightly while the pulse is up.
+    float sr0 = 0.12 + fract(t * 0.8) * 1.2;
+    float sr1 = 0.12 + fract(t * 0.8 + 0.5) * 1.2;
+    float sa0 = smoothstep(0.12, 0.3, sr0) * smoothstep(1.32, 0.9, sr0);
+    float sa1 = smoothstep(0.12, 0.3, sr1) * smoothstep(1.32, 0.9, sr1);
+    float shockA = shock * (0.25 + 0.8 * swell + 1.8 * hitK);
     float gasK = (0.35 + 1.3 * gas) * 3.0;
 
     // --- March through the nebula along the view ray. ---
@@ -127,7 +131,9 @@ void main() {
     float pr2 = dot(p, p);
     // Fine filaments: the gas is optically thin, so one structure field per pixel,
     // drifting slowly outward, carries the detail; the march carries the shape.
-    vec2 fp = p * (1.0 - 0.04 * fract(t * 0.05)) ;
+    // The gas turns slowly and puffs outward a little as the sound swells.
+    float fr = t * 0.04;
+    vec2 fp = mat2(cos(fr), sin(fr), -sin(fr), cos(fr)) * p * (1.0 - 0.07 * swell);
     float fil = pow(filaments(fp, t), 1.6) * 1.1 + 0.3;
     for (int i = 0; i < STEPS; i++) {
         // Front to back.
@@ -160,11 +166,11 @@ void main() {
         // Gas lit by the star: brighter near the centre.
         float lit = 0.5 + 0.9 / (1.0 + r2 * 9.0);
         // Shock front lighting the gas as it passes.
-        float sh = exp(-pow((rl - sr) / 0.07, 2.0)) * shockA;
+        float sh = (exp(-pow((rl - sr0) / 0.08, 2.0)) * sa0 + exp(-pow((rl - sr1) / 0.08, 2.0)) * sa1) * shockA;
         vec3 gcol = mix(hot, neb, smoothstep(0.2, 0.7, rl));
         gcol = mix(gcol, mix(beamC, hot, 0.4), jetMix * 0.7);
-        vec3 e = gcol * structd * gasK * lit * (1.0 + 0.4 * swell);
-        e += mix(neb, hot, 0.55) * (structd * 4.0 * gasK + halo * 3.0) * sh;
+        vec3 e = gcol * structd * gasK * lit * (1.0 + 0.3 * swell);
+        e += mix(neb, hot, 0.55) * structd * 2.6 * gasK * sh;
         // Beams: light scattered by whatever gas sits in the cone.
         float c = abs(dot(x, M)) / max(rl, 1e-3);
         // Gas inside the cone glows (a wide, smooth term; the crisp shaft is drawn after the march).
@@ -201,12 +207,12 @@ void main() {
 
     // Lighthouse flash when a beam faces us.
     float facing = M.z;
-    float flashG = pow(abs(facing), 10.0) * beams * (0.25 + 0.6 * swell + 0.6 * hitK);
+    float flashG = pow(abs(facing), 6.0) * beams * (0.12 + 0.3 * swell);
 
     // --- The neutron star: a hard point, soft diffraction, bloom. ---
     vec2 q = p * sc;
     float r = length(q);
-    float coreI = 1.0 + 1.4 * hitK + 0.5 * swell + flashG * 2.0;
+    float coreI = 1.0 + 1.8 * hitK + 0.3 * swell + flashG * 1.2;
     float pt = exp(-r * r / 0.000035) * 6.0;
     float bloom = 0.00025 / (r * r + 0.00025) * 0.7 + exp(-r * 30.0) * 0.18 + exp(-r * 6.0) * 0.03;
     float airy = exp(-pow((r - 0.022) / 0.004, 2.0)) * 0.12 + exp(-pow((r - 0.04) / 0.005, 2.0)) * 0.05;

@@ -5,13 +5,13 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "Beads of liquid mercury roll around each other, merging into one mirror-bright pool and pinching apart again, with crisp reflections of a studio sky sliding over their curves. Every hit bursts the pool into flying droplets that slowly gather back together; a held sound sets the surface trembling, and pitch turns the whole cluster.",
+    "DESCRIPTION": "Beads of liquid mercury roll around each other, merging into one mirror-bright pool and pinching apart again, with crisp reflections of a studio sky sliding over their curves. Each surge in the music pushes the beads outward like a pressure wave, flinging small droplets ahead of them, and they flow back together as it fades. A held sound sets the surface trembling and the beads rolling faster.",
     "PASSES": [
         {
-            "TARGET": "clock",
+            "TARGET": "pump",
             "PERSISTENT": true,
             "FLOAT": true,
-            "WIDTH": 1,
+            "WIDTH": 2,
             "HEIGHT": 1
         },
         {}
@@ -27,12 +27,11 @@
         { "NAME": "tint", "LABEL": "Tint", "TYPE": "float", "DEFAULT": 0.35, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Sky", "TYPE": "color", "DEFAULT": [0.75, 0.88, 1.0, 1.0] },
         { "NAME": "accent", "LABEL": "Edge light", "TYPE": "color", "DEFAULT": [1.0, 0.5, 0.25, 1.0] },
-        { "NAME": "vxEnv", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxHit", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxVel", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
         { "NAME": "vxGlide", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
-        { "NAME": "vxCount", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
+        { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxFlow", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
+        { "NAME": "vxMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
         { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 }
     ]
 }*/
@@ -76,38 +75,55 @@ vec3 studio(vec3 r, float t) {
 }
 
 void main() {
-    float n = floor(vxCount + 0.5);
     if (PASSINDEX == 0) {
-        vec4 c = IMG_NORM_PIXEL(clock, vec2(0.5));
-        float dt = clamp(TIMEDELTA, 0.0, 0.1);
-        // An all-zero texel means a fresh buffer (the voice was just added):
-        // start from "no hit for a long time" rather than a fake hit.
-        if (c.a < 0.5) c = vec4(n, 30.0, 0.0, 1.0);
-        bool newHit = abs(n - c.r) > 0.5;
-        float age = newHit ? 0.0 : min(c.g + dt, 30.0);
-        float vel = newHit ? clamp(vxVel, 0.4, 1.0) : c.b;
-        gl_FragColor = vec4(n, age, vel, 1.0);
+        // A spring that follows the music's surges, plus three lagging copies
+        // of it, so motion can trail behind the beat with real follow-through.
+        vec4 s0 = IMG_NORM_PIXEL(pump, vec2(0.25, 0.5));
+        vec4 s1 = IMG_NORM_PIXEL(pump, vec2(0.75, 0.5));
+        if (s0.a < 0.5) {
+            s0 = vec4(0.0, 0.0, 0.0, 1.0);
+            s1 = vec4(0.0, 0.0, 0.0, 1.0);
+        }
+        float dt = clamp(TIMEDELTA, 0.0, 0.05);
+        float tgt = vxPulse * burst * 0.9 + 0.12 * vxSwell;
+        float accel = -32.0 * (s0.x - tgt) - 8.0 * s0.y;
+        s0.y += accel * dt;
+        s0.x += s0.y * dt;
+        s0.z += (s0.x - s0.z) * (1.0 - exp(-dt / 0.12));
+        s1.x += (s0.z - s1.x) * (1.0 - exp(-dt / 0.18));
+        s1.y += (s1.x - s1.y) * (1.0 - exp(-dt / 0.25));
+        // The held level, eased again so big swells build over a few frames.
+        s1.z += (vxSwell - s1.z) * (1.0 - exp(-dt / 0.2));
+        s0.a = 1.0;
+        s1.a = 1.0;
+        gl_FragColor = gl_FragCoord.x < 1.0 ? s0 : s1;
         return;
     }
-
-    vec4 clk = IMG_NORM_PIXEL(clock, vec2(0.5));
-    bool fresh = clk.a < 0.5;
-    float age = fresh ? 30.0 : clk.g;
-    float hv = fresh ? 0.0 : clk.b;
-    if (vxHit > 0.01) {
-        age = min(age, 0.12 + (1.0 - clamp(vxHit, 0.0, 1.0)) * 0.2);
-        hv = max(hv, max(vxVel, 0.5));
+    vec4 pS0 = IMG_NORM_PIXEL(pump, vec2(0.25, 0.5));
+    vec4 pS1 = IMG_NORM_PIXEL(pump, vec2(0.75, 0.5));
+    if (pS0.a < 0.5) {
+        pS0 = vec4(0.0);
+        pS1 = vec4(0.0);
     }
-    // Thrown out fast, gathered back slowly.
-    float spray = hv * burst * (1.0 - exp(-age * 14.0)) * exp(-age * 1.3);
+    float sprX = pS0.x;
+    float sprLagA = pS0.z;
+    float sprLagB = pS1.x;
+    float sprLagC = pS1.y;
+    float swellE = pS1.z;
+    // Outward push: the light droplets lead, the heavy beads follow later.
+    float spray = max(sprX, 0.0);
+    float sprayHeavy = max(sprLagA, 0.0);
+    // The push direction turns a little with each hit, gliding (one full
+    // turn every 64 hits, so the counter's wrap is seamless).
+    float turn = vxMorph * 0.0981748;
 
     vec2 uv = gl_FragCoord.xy / RENDERSIZE;
     float aspect = RENDERSIZE.x / RENDERSIZE.y;
     vec2 p = vec2((uv.x - 0.5) * aspect, uv.y - 0.5);
     p *= max(1.0, 1.4 / aspect);
     bool clearMode = vxClear;
-    float t = vxPhase * 0.12 + TIME * 0.06;
-    float energy = clamp(vxEnv, 0.0, 1.0);
+    float t = vxFlow * 1.6;
+    float energy = clamp(swellE, 0.0, 1.0);
     float spin = (vxGlide - 0.5) * 2.0 + t * 0.1;
 
     float sizeK = mix(0.75, 1.25, amount);
@@ -127,12 +143,12 @@ void main() {
             float rad = (0.1 + 0.32 * h2) * mix(0.5, 1.4, roam);
             c = vec2(cos(a), sin(a) * 0.8) * rad + 0.04 * vec2(sin(t * 1.3 + fi), cos(t * 1.1 + fi * 2.0));
             // Thrown outward on a hit.
-            float sa = fi * 2.3999 + n * 1.7;
-            c += vec2(cos(sa), sin(sa) * 0.75) * spray * (0.34 + 0.24 * h1);
+            float sa = fi * 2.3999 + turn;
+            c += vec2(cos(sa), sin(sa) * 0.75) * sprayHeavy * (0.34 + 0.24 * h1);
             r = (0.045 + 0.05 * h1) * sizeK;
         } else {
             // Small droplets only exist while the pool is burst.
-            float sa = fi * 2.3999 + n * 2.9 + h2;
+            float sa = fi * 2.3999 + turn * 2.0 + h2;
             float reach = (0.55 + 0.7 * h1) * spray;
             c = vec2(cos(sa), sin(sa) * 0.85) * reach;
             r = (0.018 + 0.025 * h2) * sizeK * smoothstep(0.02, 0.15, spray);
@@ -144,8 +160,8 @@ void main() {
         g += -2.0 * k * d / dd;
     }
     // A held sound sets the surface trembling.
-    float shock = hv * exp(-age * 3.0);
-    float trem = tremble * (0.15 + 0.85 * energy) + shock * 0.8;
+    float shock = max(sprLagA, 0.0);
+    float trem = tremble * (0.15 + 0.85 * energy) + shock * 0.4;
     float wob = sin(p.x * 60.0 + t * 9.0) * sin(p.y * 53.0 - t * 7.0);
     f *= 1.0 + 0.06 * trem * wob;
 
@@ -186,8 +202,8 @@ void main() {
             float a = fi * 0.8976 + spin + t * (0.2 + 0.25 * h1) * (h2 > 0.5 ? 1.0 : -1.0);
             float rad = (0.1 + 0.32 * h2) * mix(0.5, 1.4, roam);
             vec2 c = vec2(cos(a), sin(a) * 0.8) * rad + 0.04 * vec2(sin(t * 1.3 + fi), cos(t * 1.1 + fi * 2.0));
-            float sa = fi * 2.3999 + n * 1.7;
-            c += vec2(cos(sa), sin(sa) * 0.75) * spray * (0.34 + 0.24 * h1);
+            float sa = fi * 2.3999 + turn;
+            c += vec2(cos(sa), sin(sa) * 0.75) * sprayHeavy * (0.34 + 0.24 * h1);
             float r = (0.045 + 0.05 * h1) * sizeK * 1.5;
             vec2 d = sp - c;
             fs += r * r / (dot(d, d) + 1e-4);

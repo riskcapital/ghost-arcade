@@ -5,17 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A 3D scan of a human head turning slowly on a turntable, drawn only as thousands of fine points laid in horizontal scan rings. A laser ring sweeps down the face once a bar, lighting the points it passes. Each hit knocks a band of rings loose: they spin out of line and spring outward, smearing the face, then lock back into place. The sound's level brightens and swells the points, and the note's pitch turns the head to look left or right.",
-    "PASSES": [
-        {
-            "TARGET": "clock",
-            "PERSISTENT": true,
-            "FLOAT": true,
-            "WIDTH": 1,
-            "HEIGHT": 1
-        },
-        {}
-    ],
+    "DESCRIPTION": "A 3D scan of a human head turning slowly on a turntable, drawn only as thousands of fine points laid in horizontal scan rings. A laser ring glides up and down the face, lighting the points it passes. Every hit loosens a band of rings: they slide round and ease outward, smearing the face, then settle back into place; the band drifts up and down the head from hit to hit. The sound's level brightens and swells the points, and the note's pitch turns the head to look left or right.",
     "INPUTS": [
         { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 2, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play", "Bowls", "Drone", "XY tone", "Analog synth", "Scan synth", "Echo shots", "Build and drop", "Siren", "Acid line", "Dub bass"] },
         { "NAME": "vxAuto", "LABEL": "Comes and goes with its sound", "TYPE": "bool", "DEFAULT": true },
@@ -27,14 +17,12 @@
         { "NAME": "laser", "LABEL": "Laser", "TYPE": "float", "DEFAULT": 0.7, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Scan", "TYPE": "color", "DEFAULT": [0.8, 0.9, 1.0, 1.0] },
         { "NAME": "accent", "LABEL": "Laser", "TYPE": "color", "DEFAULT": [0.2, 1.0, 0.6, 1.0] },
-        { "NAME": "vxEnv", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxHit", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
         { "NAME": "vxGlide", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
-        { "NAME": "vxCount", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
-        { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxBar", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxEnergy", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 }
+        { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxFlow", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
+        { "NAME": "vxMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
+        { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 }
     ]
 }*/
 
@@ -95,33 +83,18 @@ float headR(vec3 u) {
 }
 
 void main() {
-    float n = floor(vxCount + 0.5);
-
-    // clock (1x1): last count seen, seconds since the last hit.
-    if (PASSINDEX == 0) {
-        vec4 c = IMG_NORM_PIXEL(clock, vec2(0.5));
-        float dt = clamp(TIMEDELTA, 0.0, 0.1);
-        if (FRAMEINDEX < 2) c = vec4(n, 30.0, 0.0, 0.0);
-        float age = abs(n - c.r) > 0.5 ? 0.0 : min(c.g + dt, 30.0);
-        gl_FragColor = vec4(n, age, 0.0, 0.0);
-        return;
-    }
-
-    vec4 clk = IMG_NORM_PIXEL(clock, vec2(0.5));
-    float age = FRAMEINDEX < 2 ? 30.0 : clk.g;
-    if (vxHit > 0.01) age = min(age, (1.0 - clamp(vxHit, 0.0, 1.0)) * 0.1);
-    if (n < 0.5 && vxHit < 0.01) age = 30.0;
-
     vec2 res = RENDERSIZE;
     float px = 1.0 / res.y;
     vec2 p = (gl_FragCoord.xy - 0.5 * res) * px;
-    float env = clamp(vxEnv, 0.0, 1.0);
+    float env = clamp(vxSwell, 0.0, 1.0);
+    float pls = clamp(vxPulse, 0.0, 1.0);
 
     // The head sits a little high so the neck runs off toward the bottom.
     vec3 off = vec3(0.0, 0.08, 0.0);
-    float tclk = TIME * 0.05 + vxPhase * 0.012;
-    float yaw = tclk * mix(0.0, 3.0, turn) + (clamp(vxGlide, 0.0, 1.0) - 0.5) * 1.4 + 0.5 * sin(tclk * 0.9);
-    float nod = 0.12 + 0.06 * sin(tclk * 1.3);
+    // All motion runs on the flow clock, which the music speeds up and slows down.
+    float tclk = vxFlow;
+    float yaw = tclk * mix(0.0, 1.3, turn) + (clamp(vxGlide, 0.0, 1.0) - 0.5) * 1.0 + 0.5 * sin(tclk * 0.5);
+    float nod = 0.12 + 0.07 * sin(tclk * 0.6);
     float cy = cos(yaw);
     float sy = sin(yaw);
     float cn = cos(nod);
@@ -136,11 +109,13 @@ void main() {
 
     float nRows = floor(mix(60.0, 130.0, density));
     // A hit knocks loose a band of rings around a random height.
-    float hitA = scatter * exp(-age * 2.6) * (1.0 - exp(-age * 30.0 - 0.25));
-    float bandC = 0.2 + 0.55 * hash11(n * 3.7 + 0.3);
-    float sizePx = mix(0.9, 2.5, pointSize) * res.y / 1080.0 * (1.0 + 0.3 * env);
+    // Each surge loosens a band of rings: they slide round and push out, then settle back.
+    float hitA = scatter * pls;
+    // The loose band drifts up and down the head as the hits count up.
+    float bandC = 0.47 + 0.25 * sin(vxMorph * 1.3 + tclk * 0.2);
+    float sizePx = max(mix(0.9, 2.5, pointSize) * res.y / 1080.0, 1.2) * (1.0 + 0.3 * env);
     // The laser ring sweeps down once a bar.
-    float laserLat = mix(0.1, 0.78, fract(vxBar + 0.0001));
+    float laserLat = 0.44 + 0.34 * sin(tclk * 0.7);
 
     float alpha = 0.0;
     float shadow = 0.0;
@@ -161,7 +136,7 @@ void main() {
             float lat = acos(clamp(u.y, -1.0, 1.0)) / PI;
             float jj = floor(lat * nRows);
             float bw = exp(-pow((lat - bandC) / 0.12, 2.0));
-            float kRow = 1.0 + hitA * bw * 0.35 * hash11(jj * 1.7 + n);
+            float kRow = 1.0 + hitA * bw * 0.35 * hash11(jj * 1.7);
             float f = lq - headR(u) * kRow;
             if (f < 0.0015) {
                 hitT = t;
@@ -197,9 +172,9 @@ void main() {
                 float latj = (j + 0.5) * PI / nRows;
                 float nIn = max(4.0, floor(2.0 * nRows * sin(latj) + 0.5));
                 float bw = exp(-pow((latj / PI - bandC) / 0.12, 2.0));
-                float hj = hash11(j * 1.7 + n);
+                float hj = hash11(j * 1.7);
                 // Loose rings slide round and push out.
-                float slide = hitA * bw * (hash11(j * 2.9 + n * 1.3) - 0.5) * 2.4;
+                float slide = hitA * bw * (hash11(j * 2.9) - 0.5) * 2.2;
                 float kRow = 1.0 + hitA * bw * 0.35 * hj;
                 float fi = fract((lon - slide) / TAU + 1.0) * nIn - 0.5 * mod(j, 2.0);
                 float i0 = floor(fi);
@@ -224,7 +199,7 @@ void main() {
                     float cut = 1.0 - smoothstep(0.4, NECK_L * 0.9, -ul.y * Rl);
                     cut *= cut;
                     float lz = exp(-pow((latj / PI - laserLat) / 0.018, 2.0)) * laser;
-                    float trail = laser * step(latj / PI, laserLat) * exp(-(laserLat - latj / PI) * 9.0) * 0.5;
+                    float trail = laser * exp(-abs(laserLat - latj / PI) * 9.0) * 0.35;
                     vec3 col = mix(ink.rgb, accent.rgb, clamp(lz + trail * 0.6 + hitA * bw * 0.5, 0.0, 1.0));
                     float op = cov * cut * clamp((vxClear ? 0.7 : 0.3) + shade, 0.0, 1.0);
                     float lum = op * (shade + 2.2 * lz + trail) * (vxClear ? 1.7 : 1.2);
@@ -235,7 +210,7 @@ void main() {
         }
     }
 
-    light *= 0.85 + 0.45 * env + 0.2 * clamp(vxEnergy, 0.0, 1.0);
+    light *= 0.85 + 0.4 * env + 0.15 * pls;
     if (!vxClear) light = min(light, vec3(1.0));
     alpha = clamp(alpha, 0.0, 1.0);
 

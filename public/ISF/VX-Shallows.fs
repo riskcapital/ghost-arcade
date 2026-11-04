@@ -5,35 +5,24 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "Looking up at a rippling water surface from below: a bright round window of sky with a coloured rim, the moving net of sun on the waves, and long shafts of light slanting down into the deep. Each hit drops a ring on the surface and makes the shafts flash; a held sound lengthens and brightens them, and pitch leans the sun. With the background off only the light is left: the bright surface and its rays.",
-    "PASSES": [
-        {
-            "TARGET": "clock",
-            "PERSISTENT": true,
-            "FLOAT": true,
-            "WIDTH": 1,
-            "HEIGHT": 1
-        },
-        {}
-    ],
+    "DESCRIPTION": "Looking up at a rippling water surface from below: a bright round window of sky with a coloured rim, the moving net of sun on the waves, and long shafts of light slanting down into the deep. Each surge in the music heaves the surface in a slow swell that rolls across it, bending the light, and blooms the shafts brighter and longer before they settle; a held sound keeps the water moving faster and the light up, and pitch leans the sun. With the background off only the light is left: the bright surface and its rays.",
     "INPUTS": [
         { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 8, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play", "Bowls", "Drone", "XY tone", "Analog synth", "Scan synth", "Echo shots", "Build and drop", "Siren", "Acid line", "Dub bass"] },
         { "NAME": "vxAuto", "LABEL": "Comes and goes with its sound", "TYPE": "bool", "DEFAULT": true },
         { "NAME": "vxClear", "LABEL": "Transparent background", "TYPE": "bool", "DEFAULT": false },
         { "NAME": "rays", "LABEL": "Light shafts", "TYPE": "float", "DEFAULT": 0.65, "MIN": 0, "MAX": 1 },
         { "NAME": "waves", "LABEL": "Waves", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
-        { "NAME": "drops", "LABEL": "Drop rings", "TYPE": "float", "DEFAULT": 0.7, "MIN": 0, "MAX": 1 },
+        { "NAME": "drops", "LABEL": "Swell", "TYPE": "float", "DEFAULT": 0.7, "MIN": 0, "MAX": 1 },
         { "NAME": "speed", "LABEL": "Speed", "TYPE": "float", "DEFAULT": 0.4, "MIN": 0, "MAX": 1 },
         { "NAME": "depth", "LABEL": "Depth", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
         { "NAME": "lookUp", "LABEL": "Look up", "TYPE": "float", "DEFAULT": 0.75, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Light", "TYPE": "color", "DEFAULT": [0.6, 0.95, 1.0, 1.0] },
         { "NAME": "accent", "LABEL": "Rim", "TYPE": "color", "DEFAULT": [1.0, 0.8, 0.4, 1.0] },
-        { "NAME": "vxEnv", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxHit", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxVel", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
         { "NAME": "vxGlide", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
-        { "NAME": "vxCount", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
+        { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxFlow", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
+        { "NAME": "vxMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
         { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 }
     ]
 }*/
@@ -85,29 +74,16 @@ float waterLight(vec2 p, float t) {
 }
 
 void main() {
-    float n = floor(vxCount + 0.5);
-    if (PASSINDEX == 0) {
-        vec4 c = IMG_NORM_PIXEL(clock, vec2(0.5));
-        float dt = clamp(TIMEDELTA, 0.0, 0.1);
-        // An all-zero texel means a fresh buffer (the voice was just added):
-        // start from "no hit for a long time" rather than a fake hit.
-        if (c.a < 0.5) c = vec4(n, 30.0, 0.0, 1.0);
-        bool newHit = abs(n - c.r) > 0.5;
-        float age = newHit ? 0.0 : min(c.g + dt, 30.0);
-        float vel = newHit ? clamp(vxVel, 0.4, 1.0) : c.b;
-        gl_FragColor = vec4(n, age, vel, 1.0);
-        return;
-    }
-
-    vec4 clk = IMG_NORM_PIXEL(clock, vec2(0.5));
-    bool fresh = clk.a < 0.5;
-    float age = fresh ? 30.0 : clk.g;
-    float hv = fresh ? 0.0 : clk.b;
-    if (vxHit > 0.01) {
-        age = min(age, 0.25 * (1.0 - clamp(vxHit, 0.0, 1.0)) + 0.05);
-        hv = max(hv, max(vxVel, 0.5));
-    }
-    float flash = exp(-age * 4.0) * hv;
+    // The music's surge, straight from the studio: a fast attack with a
+    // smooth, eased release.
+    float sprX = vxPulse;
+    float sprLagA = vxPulse;
+    float sprLagB = vxPulse;
+    float sprLagC = vxPulse;
+    float swellE = vxSwell;
+    // The light blooms with the eased surge; the surface heave follows later.
+    float flash = clamp(sprX, 0.0, 1.3);
+    float heave = sprLagA;
 
     vec2 uv = gl_FragCoord.xy / RENDERSIZE;
     float aspect = RENDERSIZE.x / RENDERSIZE.y;
@@ -115,8 +91,8 @@ void main() {
     p *= max(1.0, 1.5 / aspect);
     bool clearMode = vxClear;
 
-    float t = vxPhase * mix(0.05, 0.4, speed) + TIME * 0.04;
-    float energy = clamp(vxEnv, 0.0, 1.0);
+    float t = vxFlow * mix(0.2, 1.4, speed);
+    float energy = clamp(swellE, 0.0, 1.0);
 
     // Camera under water, tilted up toward the surface.
     float pitch = mix(0.05, 0.35, lookUp);
@@ -142,14 +118,14 @@ void main() {
     float surfMask = smoothstep(0.0, 0.04, cosV);
     vec2 sp = rd.xz / max(cosV, 0.02) * surfH;
 
-    // Drop ring: lands near the middle of the window, a new spot every hit.
-    vec2 dropAt = vec2((hash11(n * 3.7 + 1.0) - 0.5) * 1.8, 1.0 + hash11(n * 5.3 + 2.0) * 0.8);
-    float rr = length(sp - dropAt);
-    float front = age * 2.2 + 0.03;
-    float ringEnv = exp(-age * 1.1) * hv * drops;
-    float ringX = rr - front;
-    float ringWave = sin(ringX * 26.0) * exp(-ringX * ringX / (0.02 + 0.06 * age)) * ringEnv;
-    vec2 bend = (sp - dropAt) / max(rr, 1e-3) * ringWave * 0.12;
+    // A broad swell rolling across the surface: the music's surges heave it,
+    // and it relaxes back. Its crest bends the light and lights up.
+    vec2 swellDir = normalize(vec2(0.8, 0.6));
+    float swellPh = dot(sp, swellDir) * 2.2 - t * 1.6;
+    float swellH = sin(swellPh) * (0.5 + 0.5 * sin(dot(sp, vec2(-0.6, 0.8)) * 1.3 + t * 0.4));
+    float heaveAmt = drops * (0.15 + 1.6 * max(heave, 0.0));
+    vec2 bend = swellDir * cos(swellPh) * heaveAmt * 0.18;
+    float ringWave = swellH * heaveAmt * 0.5;
 
     float wz = mix(1.2, 3.0, waves);
     vec2 wq = (sp + bend) * wz;
@@ -159,8 +135,7 @@ void main() {
     float fw2 = length(fwidth(wq));
     float lines = mix(clamp(wl * 3.0, 0.0, 4.0), 0.3, smoothstep(0.08, 0.35, fw2));
     float facets = smoothstep(0.0, 0.6, wl);
-    float ringX2 = ringX + 0.12 + 0.1 * age;
-    float ringLine = (exp(-ringX * ringX / 0.004) + 0.5 * exp(-ringX2 * ringX2 / 0.003)) * ringEnv;
+    float ringLine = smoothstep(0.55, 1.0, swellH) * heaveAmt * 0.35 * lines;
 
     // Snell's window: straight up you see the bright sky, beyond 48.6 degrees
     // the surface turns into a dark mirror. The edge carries a coloured rim.

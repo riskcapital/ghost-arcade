@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A picture frame holding a smaller frame holding a smaller frame, over and over, each one turned a little further than the last so the stack winds into a spiral. Light glints along the bevelled edges and a bright band runs down through the frames with the beat. Each hit whips the whole stack round, the deepest frames swinging furthest, and lights the frames up; a held sound slowly winds the spiral tighter.",
+    "DESCRIPTION": "A picture frame holding a smaller frame holding a smaller frame, over and over, each one turned a little further than the last so the stack winds into a spiral. Light glints along the bevelled edges and a bright band keeps travelling down through the frames. The music speeds the whole stack's turning; each hit swings it round, the deepest frames swinging furthest, and lights the frames up before they ease back; a held sound winds the spiral tighter.",
     "INPUTS": [
         { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 1, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play", "Bowls", "Drone", "XY tone", "Analog synth", "Scan synth", "Echo shots", "Build and drop", "Siren", "Acid line", "Dub bass"] },
         { "NAME": "vxAuto", "LABEL": "Comes and goes with its sound", "TYPE": "bool", "DEFAULT": true },
@@ -18,12 +18,10 @@
         { "NAME": "size", "LABEL": "Size", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Frames", "TYPE": "color", "DEFAULT": [0.95, 0.7, 0.25, 1.0] },
         { "NAME": "accent", "LABEL": "Alternate frames", "TYPE": "color", "DEFAULT": [0.6, 0.2, 0.95, 1.0] },
-        { "NAME": "vxEnv", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxHit", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxVel", "TYPE": "float", "DEFAULT": 0.7, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxFlow", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
         { "NAME": "vxGlide", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
-        { "NAME": "vxBeat", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
         { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 }
     ]
 }*/
@@ -58,18 +56,20 @@ vec2 ngon(float pa, float pr, float r, float n, float ang) {
 void main() {
     vec2 p = (gl_FragCoord.xy - 0.5 * RENDERSIZE.xy) / RENDERSIZE.y;
     float px = 1.0 / RENDERSIZE.y;
-    float hit = clamp(vxHit, 0.0, 1.0);
-    float env = clamp(vxEnv, 0.0, 1.0);
-    float kick = hit * (0.5 + 0.5 * vxVel);
-    float t = vxPhase + TIME * 0.12;
+    float env = clamp(vxSwell, 0.0, 1.0);
+    float kick = clamp(vxPulse, 0.0, 1.0);
+    // All motion on the flow clock: the music speeds the turning stack.
+    float t = vxFlow;
     float n = float(sides);
 
-    float R0 = mix(0.34, 0.52, size) * (1.0 + 0.035 * kick);
+    float R0 = mix(0.34, 0.52, size) * (1.0 + 0.04 * kick + 0.03 * env);
     float ratio = mix(0.9, 0.78, depth);
-    float tw = mix(0.0, 0.22, twist) * (1.0 + 0.5 * env) + 0.04 * sin(t * 0.23);
-    float base = t * 0.08;
+    float tw = mix(0.0, 0.22, twist) * (1.0 + 0.6 * env) + 0.04 * sin(t * 0.23);
+    float base = t * 0.22;
     float fw = mix(0.12, 0.6, frameWidth);
-    float beatPos = fract(vxBeat + TIME * 0.0) * float(LEVELS) * 0.7;
+    // A band of light travels down through the frames on the flow clock,
+    // entering at the rim and fading into the centre.
+    float beatPos = fract(t * 0.3) * (float(LEVELS) * 0.75 + 4.0) - 2.0;
 
     vec3 c1 = ink.rgb;
     vec3 c2 = accent.rgb;
@@ -85,8 +85,11 @@ void main() {
     float r = R0;
     for (int i = 0; i < LEVELS; i++) {
         float fi = float(i);
-        float ang = base + fi * tw + kick * whip * 0.5 * fi / float(LEVELS) * fi * 0.15
-                  + 0.06 * whip * sin(t * 0.7 - fi * 0.45);
+        // A ripple of twist runs down the stack; hits swing the deeper frames
+        // further round and let them ease back as the pulse fades.
+        float dpth = fi / float(LEVELS);
+        float ang = base + fi * tw + whip * 0.55 * kick * dpth * dpth * 3.0
+                  + 0.09 * whip * sin(t * 1.4 - fi * 0.45);
         vec2 g = ngon(pAng, pRad, r, n, ang);
         float d = g.x;
         if (i == 0) outerD = d;
@@ -107,8 +110,8 @@ void main() {
             float spec = pow(lam, 24.0);
             vec3 fc = mod(fi, 2.0) < 0.5 ? c1 : c2;
             fc = hueShift(fc, (vxGlide - 0.5) * fi * 0.12);
-            float pulse = exp(-pow(fi - beatPos, 2.0) * 0.6) * (0.35 + 0.65 * env);
-            float idle = 0.5 + 0.5 * sin(fi * 0.9 - TIME * 1.5);
+            float pulse = exp(-pow(fi - beatPos, 2.0) * 0.5) * (0.35 + 0.65 * env);
+            float idle = 0.5 + 0.5 * sin(fi * 0.9 - t * 1.5);
             vec3 frameC = fc * (0.25 + 0.85 * lam) + vec3(1.0) * spec * 0.6;
             frameC *= 1.0 + 0.6 * pulse + 0.15 * idle + 0.9 * kick * (0.4 + 0.6 * fi / float(LEVELS));
             // Fine gilt line at the middle of the bevel.

@@ -5,14 +5,19 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A liquid light show: glossy blobs of coloured oil drifting between two glass plates, merging and parting as they slide past each other. Each blob has a dark meniscus rim, rainbow film fringes near its edge and a bright lens of light in its middle, and where blobs meet their dyes mix. Every hit splits the blobs in two and lets them flow back together; the louder the sound, the fatter they swell and the faster they drift.",
+    "DESCRIPTION": "A liquid light show: glossy blobs of coloured oil drifting between two glass plates, merging and parting as they slide past each other. Each blob has a dark meniscus rim, rainbow film fringes near its edge and a bright lens of light in its middle, and where blobs meet their dyes mix. The music stirs the tank: the louder it gets, the fatter the blobs swell and the faster they drift and turn, and each hit stretches every blob into two lobes that flow back together while the oil leaves soft smeared trails as it moves.",
     "PASSES": [
         {
-            "TARGET": "clock",
+            "TARGET": "ease",
             "PERSISTENT": true,
             "FLOAT": true,
-            "WIDTH": 1,
+            "WIDTH": 2,
             "HEIGHT": 1
+        },
+        {
+            "TARGET": "trail",
+            "PERSISTENT": true,
+            "FLOAT": true
         },
         {}
     ],
@@ -26,20 +31,24 @@
         { "NAME": "blobs", "LABEL": "Blobs", "TYPE": "float", "DEFAULT": 6, "MIN": 3, "MAX": 8 },
         { "NAME": "film", "LABEL": "Film fringes", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0, "MAX": 1 },
         { "NAME": "size", "LABEL": "Size", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
+        { "NAME": "trails", "LABEL": "Trails", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Oil", "TYPE": "color", "DEFAULT": [1.0, 0.32, 0.55, 1.0] },
         { "NAME": "accent", "LABEL": "Second dye", "TYPE": "color", "DEFAULT": [1.0, 0.78, 0.18, 1.0] },
-        { "NAME": "vxEnv", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxHit", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxVel", "TYPE": "float", "DEFAULT": 0.7, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
-        { "NAME": "vxCount", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
-        { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxEnergy", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 }
+        { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxFlow", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
+        { "NAME": "vxMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
+        { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 }
     ]
 }*/
 
-// clock (1x1): last count seen (plus 1000), clock time of the last hit, its strength,
-// hits so far.
+// ease (2x1): left texel, the pulse and swell eased once more (about 0.1 s and 0.2 s, and
+// the pulse again over 0.28 s for the lobes), so
+// shapes that move with them glide rather than jump; right texel, the clock
+// time of the last step and the step itself (a redraw at the same time steps 0).
+// trail (full size): the oil as drawn last frame (premultiplied colour and
+// coverage), smeared a little by the current and fading. Pass 0 lays the new
+// oil over it; the last pass puts the result over the water.
 
 const float TAU = 6.2831853;
 const int MAXB = 8;
@@ -72,37 +81,18 @@ void ball(vec2 p, vec2 c, float r, float dye, inout float f, inout vec2 g, inout
     }
 }
 
-void main() {
-    if (PASSINDEX == 0) {
-        vec4 c = IMG_NORM_PIXEL(clock, vec2(0.5));
-        // The count is stored offset by 1000, so an all-zero texel (a voice
-        // added mid-session) reads as fresh and starts with no hit pending.
-        if (c.r < 500.0) c = vec4(vxCount + 1000.0, TIME - 30.0, 0.0, 0.0);
-        if (abs(vxCount + 1000.0 - c.r) > 0.5) {
-            c.g = TIME;
-            c.b = mix(0.55, 1.0, clamp(vxVel, 0.0, 1.0));
-            c.a = mod(c.a + 1.0, 64.0);
-        }
-        c.r = vxCount + 1000.0;
-        gl_FragColor = c;
-        return;
-    }
-
-    vec4 clk = IMG_NORM_PIXEL(clock, vec2(0.5));
-    float age = TIME - clk.g;
-    if (age < 0.0) age = 30.0;
-    // The split snaps open and the halves flow back together with a little overshoot.
-    float sp = clk.b * exp(-age * 2.2) * (1.0 + 0.35 * sin(age * 7.0)) ;
-    sp = max(sp, vxHit * 0.6) * split;
-    float flash = max(clk.b * exp(-age * 9.0), vxHit);
-
+// The oil at a point, premultiplied, with its glints and halo.
+vec4 oilAt(vec2 p, float px, float aspect, float push, float sw, float slow) {
+    // Motion runs on the music's clock: it drifts faster as the sound rises.
+    float t = vxFlow * (0.15 + flow * 0.6);
+    // Hits stretch each blob into two lobes that relax back together.
+    float sp = split * (0.45 * vxPulse + 0.45 * slow + 0.15 * sw);
     float aspect = RENDERSIZE.x / RENDERSIZE.y;
     vec2 p = (gl_FragCoord.xy - 0.5 * RENDERSIZE.xy) / RENDERSIZE.y;
     float px = 1.0 / RENDERSIZE.y;
 
-    float t = vxPhase * 0.05 * (0.4 + flow * 1.6) + TIME * (0.02 + flow * 0.08);
     float n = floor(clamp(blobs, 3.0, 8.0) + 0.5);
-    float grow = (0.75 + 0.5 * size) * (1.0 + swell * (0.35 * vxEnv + 0.12 * vxEnergy));
+    float grow = (0.75 + 0.5 * size) * (1.0 + swell * (0.5 * sw + 0.25 * vxPulse));
     float spreadX = min(0.36 * aspect, 0.56);
 
     float f = 0.0;
@@ -120,9 +110,10 @@ void main() {
         c += 0.05 * vec2(sin(t * 0.31 + fi), cos(t * 0.27 + fi * 1.7));
         float r = (0.11 + 0.08 * h3) * grow;
         // Each blob is a pair that the hits pull apart along a turning axis.
-        float ang = TAU * h1 + clk.a * 1.9 + t * 0.2;
+        // The axis turns a little with every hit, gliding (and wrapping cleanly at 64).
+        float ang = TAU * h1 + vxMorph * (TAU * 5.0 / 64.0) + t * 0.2;
         vec2 ax = vec2(cos(ang), sin(ang));
-        float s = sp * r * 1.25;
+        float s = sp * r * 0.85;
         float rr = r * mix(1.0, 0.8, clamp(sp * 1.5, 0.0, 1.0));
         float dye = fract(h2 + fi * 0.37);
         ball(p, c + ax * s, rr, dye, f, g, dw);
@@ -146,7 +137,7 @@ void main() {
     // A third, deeper dye: the two filtered through each other.
     vec3 c2 = sat3(ink.rgb * accent.rgb + 0.04, 1.5);
     c2 *= 0.85 / max(max(c2.r, c2.g), max(c2.b, 0.08));
-    float dd = fract(dye + 0.08 * sin(f * 6.0 - t * 2.0));
+    float dd = fract(dye + 0.06 * sin(dot(p, vec2(5.0, 3.0)) - t * 1.5));
     vec3 oil = dd < 0.333 ? mix(c0, c2, smoothstep(0.2, 0.333, dd))
              : dd < 0.666 ? mix(c2, c1, smoothstep(0.533, 0.666, dd))
              : mix(c1, c0, smoothstep(0.866, 1.0, dd));
@@ -176,32 +167,83 @@ void main() {
     float spec = pow(max(dot(reflect(-L, nrm), vec3(0.0, 0.0, 1.0)), 0.0), 40.0);
     col += vec3(1.0) * spec * 0.9 * smoothstep(0.02, 0.15, th);
     // A hit pours fresh light into the oil.
-    col += sat3(oil, 0.7) * flash * 0.5 * th;
+    col += sat3(oil, 0.7) * vxPulse * 0.6 * th;
     // Soft shoulder so bright dyes keep their hue instead of clipping to white.
     col = 1.0 - exp(-col * 1.25);
 
     // Outside: a thin bright refraction line on the water side and a soft halo.
     float outd = max(-dpx, 0.0);
     float glint = exp(-pow((outd - 1.5) / 1.3, 2.0)) * (1.0 - cover);
-    float halo = exp(-outd * px / 0.05) * (1.0 - cover);
+    float halo = exp(-outd * px / (0.05 + 0.05 * push)) * (1.0 - cover) * (0.8 + 0.6 * push);
 
+    vec3 gcol = sat3(oil, 1.2);
+    float aG = clamp(glint * 0.85 + halo * 0.28, 0.0, 1.0);
+    vec3 rgbOut = gcol * (glint * 0.9 + halo * 0.35);
+    float a = cover + aG * (1.0 - cover);
+    vec3 rgb = min(col * cover + rgbOut, vec3(a));
+    return vec4(rgb, a);
+}
+
+void main() {
+    float aspect = RENDERSIZE.x / RENDERSIZE.y;
+    vec2 uv = gl_FragCoord.xy / RENDERSIZE.xy;
+    vec2 p = (gl_FragCoord.xy - 0.5 * RENDERSIZE.xy) / RENDERSIZE.y;
+    float px = 1.0 / RENDERSIZE.y;
+
+    if (PASSINDEX == 0) {
+        vec4 tk = IMG_NORM_PIXEL(ease, vec2(0.75, 0.5));
+        float dt = clamp(TIME - tk.x, 0.0, 0.1);
+        if (gl_FragCoord.x > 1.0) {
+            gl_FragColor = vec4(TIME, dt, 0.0, 0.0);
+            return;
+        }
+        vec4 e = IMG_NORM_PIXEL(ease, vec2(0.25, 0.5));
+        e.x += (vxPulse - e.x) * (1.0 - exp(-dt / 0.1));
+        e.y += (vxSwell - e.y) * (1.0 - exp(-dt / 0.2));
+        // A slower push for the lobes, so busy parts hold them apart instead of jiggling.
+        e.z += (vxPulse - e.z) * (1.0 - exp(-dt / 0.28));
+        gl_FragColor = clamp(e, 0.0, 1.0);
+        return;
+    }
+    vec4 ez = IMG_NORM_PIXEL(ease, vec2(0.25, 0.5));
+    float stepT = IMG_NORM_PIXEL(ease, vec2(0.75, 0.5)).y;
+
+    if (PASSINDEX == 1) {
+        vec4 now = oilAt(p, px, aspect, ez.x, ez.y, ez.z);
+        // Last frame, carried by a slow swirl that the music pushes harder.
+        float tt = vxFlow * 0.3;
+        float push = 0.25 * ez.y + 0.75 * ez.x;
+        // Scaled by the time step, so the smear is the same at any frame rate.
+        float fr = stepT * 30.0;
+        float ang = (0.0015 + 0.006 * push) * sin(tt * 0.7) * fr;
+        float zoom = 1.0 + (0.0015 + 0.006 * push) * fr;
+        vec2 q = p / zoom;
+        q = vec2(cos(ang) * q.x - sin(ang) * q.y, sin(ang) * q.x + cos(ang) * q.y);
+        q += (0.0008 + 0.002 * push) * fr * vec2(sin(p.y * 6.0 + tt), cos(p.x * 5.0 - tt * 0.8));
+        vec2 quv = vec2(q.x / aspect, q.y) + 0.5;
+        vec4 prev = IMG_NORM_PIXEL(trail, quv);
+        float inside = step(0.0, quv.x) * step(quv.x, 1.0) * step(0.0, quv.y) * step(quv.y, 1.0);
+        // Fade time in seconds, so the trail does not depend on frame rate.
+        float tau = 0.02 + trails * (0.1 + 0.1 * ez.y);
+        float keep = exp(-stepT / tau) * inside * step(0.5, float(FRAMEINDEX));
+        prev = clamp(prev, 0.0, 1.0) * keep;
+        gl_FragColor = now + prev * (1.0 - now.a);
+        return;
+    }
+
+    vec4 o = IMG_NORM_PIXEL(trail, uv);
+    o.a = clamp(o.a, 0.0, 1.0);
+    o.rgb = min(max(o.rgb, 0.0), vec3(o.a));
     float pres = vxPresence;
     vec4 outc;
     if (vxClear) {
-        vec3 gcol = sat3(oil, 1.2);
-        float aG = clamp(glint * 0.85 + halo * 0.28, 0.0, 1.0);
-        vec3 rgbOut = gcol * (glint * 0.9 + halo * 0.35);
-        float a = cover + aG * (1.0 - cover);
-        vec3 rgb = col * cover + rgbOut;
-        rgb = min(rgb, vec3(a));
-        outc = vec4(rgb, a) * pres;
+        outc = o * pres;
     } else {
-        // Water: dark tinted glass, lit from behind, with the oil's colour bleeding in.
+        // Water: dark tinted glass, lit from behind.
+        float t = vxFlow * (0.15 + flow * 0.6);
         float vig = 1.0 - smoothstep(0.3, 1.1, length(p * vec2(0.8, 1.0)));
-        vec3 water = mix(c1, c0, 0.5 + 0.5 * sin(p.x * 2.0 + t * 0.4)) * (0.05 + 0.07 * vig);
-        water += sat3(oil, 1.2) * (halo * 0.35 + glint * 0.8);
-        vec3 rgb = mix(water, col, cover);
-        outc = vec4(rgb * pres, 1.0);
+        vec3 water = mix(accent.rgb, ink.rgb, 0.5 + 0.5 * sin(p.x * 2.0 + t * 0.4)) * (0.05 + 0.07 * vig);
+        outc = vec4((water * (1.0 - o.a) + o.rgb) * pres, 1.0);
     }
     gl_FragColor = outc;
 }

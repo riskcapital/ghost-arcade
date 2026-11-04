@@ -5,13 +5,13 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A large soap bubble hangs in the dark with two small ones drifting near it. Its skin shimmers with real thin-film colour: almost invisible black film at the crown, then bands of gold, magenta and blue draining downward, stirred into slow swirls, with crisp window reflections on its surface. A held sound stirs the swirls faster; each hit sends a wobble through the bubble and a burst of turbulent colour across its skin.",
+    "DESCRIPTION": "A large soap bubble hangs in the dark with two small ones drifting near it. Its skin shimmers with real thin-film colour: almost invisible black film at the crown, then bands of gold, magenta and blue draining downward, stirred into slow swirls, with crisp window reflections on its surface. The music stirs it: a held sound makes the colours swirl faster, and each surge sets the bubble quivering on its own springy skin while waves of colour roll across it and slowly calm.",
     "PASSES": [
         {
-            "TARGET": "clock",
+            "TARGET": "pump",
             "PERSISTENT": true,
             "FLOAT": true,
-            "WIDTH": 1,
+            "WIDTH": 2,
             "HEIGHT": 1
         },
         {}
@@ -28,12 +28,11 @@
         { "NAME": "exposure", "LABEL": "Brightness", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Studio light", "TYPE": "color", "DEFAULT": [1.0, 0.96, 0.92, 1.0] },
         { "NAME": "accent", "LABEL": "Fill light", "TYPE": "color", "DEFAULT": [0.55, 0.75, 1.0, 1.0] },
-        { "NAME": "vxEnv", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxHit", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxVel", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
         { "NAME": "vxGlide", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
-        { "NAME": "vxCount", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
+        { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxFlow", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
+        { "NAME": "vxMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
         { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 }
     ]
 }*/
@@ -135,7 +134,7 @@ vec3 studio(vec3 d, float glow) {
 
 // Film thickness (nm) over the bubble: drained thin at the crown, thick
 // below, stirred into swirling cells.
-float filmThickness(vec3 nrm, float seed, float t, float stir, float burst, vec3 hitAt, float hitAge, float hitAmp) {
+float filmThickness(vec3 nrm, float seed, float t, float stir, float burst, vec3 hitAt, float waveAmp) {
     float h = (1.0 - nrm.y) * 0.5;
     float tk = mix(0.4, 1.3, thickness);
     float base = 6.0 + 1000.0 * tk * pow(h, 1.8);
@@ -154,37 +153,53 @@ float filmThickness(vec3 nrm, float seed, float t, float stir, float burst, vec3
     float th = base * (1.0 + cells + bands);
     // A ring of thickness rolling out from where the hit landed.
     float dd = acos(clamp(dot(nrm, hitAt), -1.0, 1.0));
-    float ring = sin((dd - hitAge * 1.8) * 18.0) * exp(-pow((dd - hitAge * 1.8) / 0.35, 2.0)) * exp(-hitAge * 1.2) * hitAmp;
-    th += 260.0 * ring;
+    // Waves of thickness rolling out from where the music pushes the skin.
+    float ring = sin(dd * 11.0 - t * 2.4 + 2.0 * (m - 0.5)) * exp(-dd * 1.1) * min(waveAmp, 1.0);
+    th += 170.0 * ring;
     // Keep the crown's black film clean.
     return max(th, 5.0 + 10.0 * h);
 }
 
 void main() {
-    float n = floor(vxCount + 0.5);
     if (PASSINDEX == 0) {
-        vec4 c = IMG_NORM_PIXEL(clock, vec2(0.5));
-        float dt = clamp(TIMEDELTA, 0.0, 0.1);
-        // An all-zero texel means a fresh buffer (the voice was just added):
-        // start from "no hit for a long time" rather than a fake hit.
-        if (c.a < 0.5) c = vec4(n, 30.0, 0.0, 1.0);
-        bool newHit = abs(n - c.r) > 0.5;
-        float age = newHit ? 0.0 : min(c.g + dt, 30.0);
-        float vel = newHit ? clamp(vxVel, 0.4, 1.0) : c.b;
-        gl_FragColor = vec4(n, age, vel, 1.0);
+        // A spring that follows the music's surges, plus three lagging copies
+        // of it, so motion can trail behind the beat with real follow-through.
+        vec4 s0 = IMG_NORM_PIXEL(pump, vec2(0.25, 0.5));
+        vec4 s1 = IMG_NORM_PIXEL(pump, vec2(0.75, 0.5));
+        if (s0.a < 0.5) {
+            s0 = vec4(0.0, 0.0, 0.0, 1.0);
+            s1 = vec4(0.0, 0.0, 0.0, 1.0);
+        }
+        float dt = clamp(TIMEDELTA, 0.0, 0.05);
+        float tgt = vxPulse * wobble;
+        float accel = -70.0 * (s0.x - tgt) - 3.2 * s0.y;
+        s0.y += accel * dt;
+        s0.x += s0.y * dt;
+        s0.z += (s0.x - s0.z) * (1.0 - exp(-dt / 0.12));
+        s1.x += (s0.z - s1.x) * (1.0 - exp(-dt / 0.18));
+        s1.y += (s1.x - s1.y) * (1.0 - exp(-dt / 0.25));
+        // The held level, eased again so big swells build over a few frames.
+        s1.z += (vxSwell - s1.z) * (1.0 - exp(-dt / 0.2));
+        s0.a = 1.0;
+        s1.a = 1.0;
+        gl_FragColor = gl_FragCoord.x < 1.0 ? s0 : s1;
         return;
     }
-
-    vec4 clk = IMG_NORM_PIXEL(clock, vec2(0.5));
-    bool fresh = clk.a < 0.5;
-    float age = fresh ? 30.0 : clk.g;
-    float hv = fresh ? 0.0 : clk.b;
-    if (vxHit > 0.01) {
-        age = min(age, (1.0 - clamp(vxHit, 0.0, 1.0)) * 0.4 + 0.04);
-        hv = max(hv, max(vxVel, 0.5));
+    vec4 pS0 = IMG_NORM_PIXEL(pump, vec2(0.25, 0.5));
+    vec4 pS1 = IMG_NORM_PIXEL(pump, vec2(0.75, 0.5));
+    if (pS0.a < 0.5) {
+        pS0 = vec4(0.0);
+        pS1 = vec4(0.0);
     }
-    float hitAmp = hv * wobble;
-    float burst = exp(-age * 2.0) * hitAmp;
+    float sprX = pS0.x;
+    float sprLagA = pS0.z;
+    float sprLagB = pS1.x;
+    float sprLagC = pS1.y;
+    float swellE = pS1.z;
+    // The skin is a springy membrane: sprX rings and settles after each surge.
+    float quiver = sprX;
+    float burst = max(sprLagA, 0.0) * 1.1;
+    float waveAmp = max(sprLagB, 0.0) * 1.3 + 0.08 * wobble;
 
     vec2 uv = gl_FragCoord.xy / RENDERSIZE;
     float aspect = RENDERSIZE.x / RENDERSIZE.y;
@@ -193,14 +208,16 @@ void main() {
     p *= sc;
     float px = sc / RENDERSIZE.y;
     bool clearMode = vxClear;
-    float t = vxPhase * 0.1 + TIME * 0.2;
-    float energy = clamp(vxEnv, 0.0, 1.0);
+    float t = vxFlow * 0.8;
+    float energy = clamp(swellE + 0.4 * max(sprLagA, 0.0), 0.0, 1.2);
     float stir = mix(0.3, 1.6, swirl) * (0.6 + 1.2 * energy);
     float glow = 0.9 + 0.3 * energy;
 
     // Where the hit lands on the bubble's skin.
-    float ha = hash11(n * 3.1) * 6.2832;
-    vec3 hitAt = normalize(vec3(cos(ha) * 0.8, 0.3 + 0.5 * hash11(n * 7.7), -0.6));
+    // The push point glides round the bubble a little with every hit
+    // (ten turns per 64 hits, so the counter's wrap is seamless).
+    float ha = vxMorph * 0.9817477 + t * 0.05;
+    vec3 hitAt = normalize(vec3(cos(ha) * 0.8, 0.45 + 0.3 * sin(ha * 0.5), -0.6));
 
     // Background, seen through the bubbles almost unbent.
     vec3 refl = vec3(0.0);
@@ -231,8 +248,8 @@ void main() {
         // The skin wobbles after a hit and breathes gently.
         float phi = atan(dv.y, dv.x);
         float wob = 0.006 * sin(phi * 2.0 + t * 0.7 + seed) + 0.004 * sin(phi * 3.0 - t * 0.5);
-        wob += 0.03 * hitAmp * exp(-age * 2.6) * sin(age * 22.0 + fb) * sin(phi * 3.0 + ha);
-        wob += 0.018 * hitAmp * exp(-age * 2.6) * cos(age * 17.0) * sin(phi * 2.0 - ha);
+        wob += 0.035 * quiver * sin(phi * 3.0 + ha + fb);
+        wob += 0.02 * sprLagA * sin(phi * 2.0 - ha);
         float Rw = R * (1.0 + wob);
         float cov = smoothstep(Rw + px, Rw - px, r);
         if (cov <= 0.0) continue;
@@ -244,11 +261,11 @@ void main() {
         vec3 nB = vec3(xy, z);
         vec3 v = vec3(0.0, 0.0, 1.0);
         // Front surface.
-        float thF = filmThickness(nF, seed, t, stir, burst, hitAt, age, hitAmp);
+        float thF = filmThickness(nF, seed, t, stir, burst, hitAt, waveAmp);
         vec3 RF = filmReflect(thF, cosI);
         vec3 eF = studio(reflect(v, nF), glow);
         // Back surface, seen through the front: the reflection is flipped.
-        float thB = filmThickness(vec3(nB.x, nB.y, nB.z), seed + 1.3, t, stir, burst, hitAt, age, hitAmp);
+        float thB = filmThickness(vec3(nB.x, nB.y, nB.z), seed + 1.3, t, stir, burst, hitAt, waveAmp);
         vec3 RB = filmReflect(thB, cosI);
         vec3 eB = studio(reflect(v, -nB), glow);
         vec3 bubbleRefl = RF * eF + RB * eB * (1.0 - RF);

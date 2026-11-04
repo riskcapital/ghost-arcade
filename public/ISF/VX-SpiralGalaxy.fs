@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A spiral galaxy seen at an angle: a hot golden core, curling arms studded with bright star clusters and dark dust lanes, turning slowly. Each hit flares one arm after another so the light runs round the spiral, and the sound's swell widens and brightens the arms. With a transparent background the galaxy floats on its own, its dust lanes darkening whatever sits behind it.",
+    "DESCRIPTION": "A spiral galaxy seen at an angle: a hot golden core, curling arms studded with bright star clusters and dark dust lanes, turning slowly. The music sets its turning speed; each hit sends a surge of light running along the arms and winds them a little tighter before they ease back, and the sound's swell widens and brightens the arms as waves of light ride out through the disk. With a transparent background the galaxy floats on its own, its dust lanes darkening whatever sits behind it.",
     "INPUTS": [
         { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 8, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play", "Bowls", "Drone", "XY tone", "Analog synth", "Scan synth", "Echo shots", "Build and drop", "Siren", "Acid line", "Dub bass"] },
         { "NAME": "vxAuto", "LABEL": "Comes and goes with its sound", "TYPE": "bool", "DEFAULT": true },
@@ -18,11 +18,10 @@
         { "NAME": "dust", "LABEL": "Dust lanes", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Arms", "TYPE": "color", "DEFAULT": [0.45, 0.62, 1.0, 1.0] },
         { "NAME": "accent", "LABEL": "Clusters", "TYPE": "color", "DEFAULT": [1.0, 0.38, 0.62, 1.0] },
-        { "NAME": "vxEnv", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxHit", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxVel", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
-        { "NAME": "vxCount", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
+        { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxFlow", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
+        { "NAME": "vxMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
         { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 },
         { "NAME": "vxEnergy", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 }
     ]
@@ -74,7 +73,9 @@ vec3 tone(vec3 c) {
 void main() {
     vec2 res = RENDERSIZE;
     vec2 p = (gl_FragCoord.xy - 0.5 * res) / res.y;
-    float t = vxPhase * 0.05 + TIME * 0.02;
+    float t = vxFlow * 0.15;
+    float swell = clamp(vxSwell * 0.85 + vxEnergy * 0.15, 0.0, 1.0);
+    float pulse = clamp(vxPulse, 0.0, 1.0) * flare;
 
     // Disk frame: a slight roll, then foreshorten the vertical by the tilt.
     float roll = 0.32;
@@ -86,14 +87,13 @@ void main() {
 
     float nArms = float(arms);
     float rot = t * (0.6 + 2.4 * spin);
-    float wind = 2.6;
-    // Logarithmic spiral phase; rotation is differential (inner turns faster).
+    // Each hit winds the arms a little tighter; they spring back as the pulse dies.
+    float wind = 2.6 + 1.2 * pulse + 0.5 * swell;
+    // Logarithmic spiral phase. The pattern turns rigidly (a density wave), with
+    // a gentle breathing sway so the inner disk seems to lead.
     float lr = log(max(r, 0.02));
-    float arot = rot / (0.35 + r);
+    float arot = rot + 0.12 * sin(t * 1.3) / (0.4 + r);
     float ph = ang * nArms - lr * wind * nArms * 0.5 + arot * nArms;
-    // Which arm this point belongs to (0..nArms-1).
-    float armF = fract((ph / TAU));
-    float armId = mod(floor(ph / TAU + 0.5), nArms);
 
     // Turbulent warp so the arms are ragged, not neat sine bands.
     vec2 wp = vec2(lr * 3.0, ang * 2.0 / PI);
@@ -104,16 +104,25 @@ void main() {
     float n2 = fbm(dr * 7.5 + 11.0);
     float phw = ph + (n1 - 0.5) * 2.2;
 
-    float swell = vxEnv * 0.8 + vxEnergy * 0.2;
     float armSharp = mix(3.6, 2.0, swell);
     float armWave = 0.5 + 0.5 * cos(phw);
     float armD = pow(armWave, armSharp);
 
-    // Flare: the arm whose turn it is (by hit count) lights up hardest.
-    float hitArm = mod(vxCount, nArms);
-    float sameArm = 1.0 - step(0.5, abs(armId - hitArm));
-    float hitK = vxHit * flare * (0.6 + 0.4 * vxVel);
-    float armBoost = 1.35 + hitK * (0.9 + 3.2 * sameArm) + swell * 0.8;
+    // Light travels along the arms: a bright patch whose place glides on with each
+    // hit (a quarter turn of the galaxy per hit), lit by the pulse.
+    float runA = ang + arot - TAU * vxMorph * 0.25;
+    float run = 0.5 + 0.5 * cos(runA);
+    run = run * run * run;
+    // Density waves ride outward through the disk; the pulse lights them.
+    float wv = 0.0;
+    for (int k = 0; k < 2; k++) {
+        float wr = fract(t * 0.9 + float(k) * 0.5) * 1.5;
+        float wa = smoothstep(0.0, 0.25, wr) * smoothstep(1.5, 1.0, wr);
+        wv += exp(-pow((r - wr) / 0.09, 2.0)) * wa;
+    }
+    float pk = pulse * pulse * (3.0 - 2.0 * pulse);
+    float glow = pk * (0.8 + 1.8 * run) + wv * (0.3 * swell + 1.6 * pk);
+    float armBoost = 1.35 + swell * 0.9 + glow;
 
     // Radial falloff of the disk.
     float diskR = exp(-r * 2.1) * smoothstep(1.35, 0.6, r);
@@ -132,7 +141,7 @@ void main() {
     float kon = step(0.62, hash21(kid)) * (0.6 + 0.8 * hash21(kid + 4.4));
     float knotShape = smoothstep(0.16, 0.0, kd) + 0.3 * smoothstep(0.4, 0.0, kd);
     float knots = kon * knotShape * smoothstep(0.35, 0.8, armWave) * inner * smoothstep(1.3, 0.3, r);
-    knots *= (1.0 + hitK * (1.5 + 3.0 * sameArm));
+    knots *= 1.0 + swell * 0.6 + glow * 1.4;
 
     // Dust lanes: sit on the inner (trailing) edge of each arm.
     float dustWave = 0.5 + 0.5 * cos(phw - 0.95);
@@ -144,7 +153,7 @@ void main() {
     vec2 bq = vec2(q.x, q.y / mix(1.0, ci, 0.4)) / (size * 0.62);
     float br = length(bq);
     float bulge = exp(-br * br * 38.0) * 2.6 + exp(-br * 7.5) * 0.65;
-    bulge *= 1.0 + vxHit * flare * 0.6 + swell * 0.4;
+    bulge *= 1.0 + pulse * 0.5 + swell * 0.4;
 
     vec3 armCol = ink.rgb * 1.15 + 0.08;
     vec3 coreCol = mix(vec3(1.0, 0.82, 0.55), accent.rgb, 0.18);
@@ -154,7 +163,7 @@ void main() {
 
     vec3 col = diskCol * (armLum * 1.5 + diskLum) + knotCol * knots * 1.8 + coreCol * bulge;
     // Hot flash on the flaring arm toward white.
-    col += vec3(1.0) * armD * diskR * inner * hitK * sameArm * 0.9;
+    col += vec3(1.0) * armD * diskR * inner * glow * 0.45;
     col *= 1.0 - dustD * 0.85;
 
     // Coverage of the galaxy itself (for the transparent mode).

@@ -5,17 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A glass ball hangs over a dark floor and gathers the sunlight into a blazing pool beneath it, ringed by a sharp bright rim, with the floor seen upside down inside the glass. Each hit snaps the light into focus, flaring the pool and sending a ring of light across the floor; a held sound burns the pool brighter while the note's pitch swings the sun and slides the pool around.",
-    "PASSES": [
-        {
-            "TARGET": "clock",
-            "PERSISTENT": true,
-            "FLOAT": true,
-            "WIDTH": 1,
-            "HEIGHT": 1
-        },
-        {}
-    ],
+    "DESCRIPTION": "A glass ball hangs over a dark floor in a warm column of sunlight and gathers it into a blazing, shimmering pool beneath it, with the floor seen upside down inside the glass and glints of caught light moving within it. The music swells the light: each surge draws the pool into sharper focus and blooms a halo of light out across the floor that slowly settles back; a held sound burns everything brighter, and pitch swings the sun so the pool glides around.",
     "INPUTS": [
         { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 1, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play", "Bowls", "Drone", "XY tone", "Analog synth", "Scan synth", "Echo shots", "Build and drop", "Siren", "Acid line", "Dub bass"] },
         { "NAME": "vxAuto", "LABEL": "Comes and goes with its sound", "TYPE": "bool", "DEFAULT": true },
@@ -29,12 +19,11 @@
         { "NAME": "shadow", "LABEL": "Shadow", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Sunlight", "TYPE": "color", "DEFAULT": [1.0, 0.86, 0.6, 1.0] },
         { "NAME": "accent", "LABEL": "Fringe", "TYPE": "color", "DEFAULT": [0.35, 0.75, 1.0, 1.0] },
-        { "NAME": "vxEnv", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxHit", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxVel", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
         { "NAME": "vxGlide", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
-        { "NAME": "vxCount", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
+        { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxFlow", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
+        { "NAME": "vxMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
         { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 }
     ]
 }*/
@@ -130,9 +119,10 @@ vec4 floorLight(vec3 p, Scene s, float px, bool clearMode, bool cheap) {
     // A ring of light rolls out from the pool on each hit.
     vec2 centre = (s.c - s.L * (s.c.y / s.L.y)).xz;
     float rr = length(p.xz - centre);
-    float front = s.age * 3.2 + s.rad * 0.7;
-    float ring = exp(-pow((rr - front) / (0.05 + 0.08 * s.age), 2.0)) * exp(-s.age * 1.6) * s.boom;
-    hot += mix(ink.rgb, accent.rgb, 0.5) * ring * 1.6;
+    // A halo of light that blooms out across the floor as the music surges.
+    float spreadR = s.rad * (0.5 + 1.6 * s.age);
+    float ring = exp(-rr * rr / (spreadR * spreadR)) * s.age * s.boom;
+    hot += mix(ink.rgb, accent.rgb, 0.35) * ring * 0.55;
     // Faint tiled stone, only where the background is drawn.
     float stone = 0.0;
     if (!clearMode) {
@@ -163,30 +153,19 @@ vec3 sky(vec3 dir, Scene s) {
 }
 
 void main() {
-    float n = floor(vxCount + 0.5);
-    if (PASSINDEX == 0) {
-        vec4 c = IMG_NORM_PIXEL(clock, vec2(0.5));
-        float dt = clamp(TIMEDELTA, 0.0, 0.1);
-        // An all-zero texel means a fresh buffer (the voice was just added):
-        // start from "no hit for a long time" rather than a fake hit.
-        if (c.a < 0.5) c = vec4(n, 30.0, 0.0, 1.0);
-        bool newHit = abs(n - c.r) > 0.5;
-        float age = newHit ? 0.0 : min(c.g + dt, 30.0);
-        float vel = newHit ? clamp(vxVel, 0.35, 1.0) : c.b;
-        gl_FragColor = vec4(n, age, vel, 1.0);
-        return;
-    }
-
-    vec4 clk = IMG_NORM_PIXEL(clock, vec2(0.5));
-    bool fresh = clk.a < 0.5;
-    float age = fresh ? 30.0 : clk.g;
-    float hv = fresh ? 0.0 : clk.b;
-    if (vxHit > 0.01) {
-        age = min(age, (1.0 - clamp(vxHit, 0.0, 1.0)) * 0.1);
-        hv = max(hv, max(vxVel, 0.5));
-    }
-    float kick = exp(-age * 5.0) * hv;
-    float boom = hv * flare;
+    // The music's surge, straight from the studio: a fast attack with a
+    // smooth, eased release.
+    float sprX = vxPulse;
+    float sprLagA = vxPulse;
+    float sprLagB = vxPulse;
+    float sprLagC = vxPulse;
+    float swellE = vxSwell;
+    // Surges of the music, eased once more so the light swells rather than
+    // flashes; the halo trails a little behind.
+    float kick = clamp(sprX, 0.0, 1.2);
+    float haloK = clamp(sprLagB, 0.0, 1.2);
+    float boom = flare;
+    float age = 0.0;
 
     vec2 uv = gl_FragCoord.xy / RENDERSIZE;
     float aspect = RENDERSIZE.x / RENDERSIZE.y;
@@ -195,10 +174,10 @@ void main() {
     float px = 2.0 / RENDERSIZE.y;
     bool clearMode = vxClear;
 
-    float t = vxPhase * 0.12 + TIME * 0.15;
+    float t = vxFlow * 0.5;
     Scene s;
     s.rad = mix(0.55, 0.95, ballSize) * (1.0 + 0.04 * kick);
-    float bob = 0.06 * sin(t * 1.3) - 0.08 * kick;
+    float bob = 0.06 * sin(t * 1.3) - 0.05 * kick;
     s.c = vec3(0.0, s.rad + 0.75 + bob, 0.0);
     float swing = (vxGlide - 0.5) * 1.1 * sunSwing + 0.35 * sin(t * 0.4) * sunSwing;
     s.L = normalize(vec3(sin(swing) * 0.75, 1.0, -0.35 + 0.25 * cos(t * 0.31)));
@@ -209,8 +188,8 @@ void main() {
     s.f0 = dFloor * mix(3.6, 1.12, sharp);
     s.disp = mix(0.0, 0.12, dispersion);
     s.boom = boom;
-    s.age = age;
-    s.pool = (0.95 + 0.6 * vxEnv + 1.8 * kick * flare);
+    s.age = haloK;
+    s.pool = (0.95 + 0.7 * swellE + 1.5 * kick * flare);
     s.tm = t * 3.0;
 
     // Camera looking down on the floor at a slant.
@@ -314,12 +293,12 @@ void main() {
             refrCol += ink.rgb * 0.12 * (0.6 + 0.8 * kick) * smoothstep(-0.2, 1.0, dot(r1, -s.L));
             // Where the gathered light leaves the glass it burns a bright crescent.
             float exitHot = pow(max(dot(-ne, -s.L), 0.0), 18.0);
-            refrCol += mix(ink.rgb, vec3(1.0), 0.4) * exitHot * (1.4 + 1.8 * kick);
+            refrCol += mix(ink.rgb, vec3(1.0), 0.4) * exitHot * (1.4 + 1.6 * kick);
             // Glints of gathered light caught inside the glass.
             vec3 gq = normalize(pe - s.c) * 11.0 + vec3(0.0, t * 1.5, t * 0.7);
             float gl1 = noise2(gq.xy + gq.z) * noise2(gq.zy * 1.3 - gq.x);
             float glints = pow(gl1 * 1.75, 10.0) * smoothstep(-0.2, 0.8, dot(-ne, -s.L));
-            refrCol += mix(ink.rgb, accent.rgb, 0.4) * glints * (1.2 + 2.0 * kick);
+            refrCol += mix(ink.rgb, accent.rgb, 0.4) * glints * (1.2 + 1.8 * kick);
             refrA = max(refrA, min(glints, 1.0));
             refrA = max(refrA, exitHot);
         }

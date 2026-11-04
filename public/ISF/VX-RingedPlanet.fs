@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A banded gas giant inside a wide, finely grooved ring system, with small moons circling it and slipping behind the planet. The sun swings round as the note rises and falls, sweeping the line between day and night across the planet and turning its shadow across the rings. Each hit lights auroras at the poles and sends a bright band rippling through the rings; the sound's swell makes the rings glitter. With a transparent background the planet, rings and moons are a solid cut-out, the ring gaps letting the picture behind show through.",
+    "DESCRIPTION": "A banded gas giant inside a wide, finely grooved ring system, with small moons circling it and slipping behind the planet. The sun swings round as the note rises and falls, sweeping the line between day and night across the planet and turning its shadow across the rings. The music turns the planet and moves the moons faster or slower; the sound's swell brightens the rings and auroras, and each hit makes the polar auroras flare and lights waves of light rolling out across the rings. With a transparent background the planet, rings and moons are a solid cut-out, the ring gaps letting the picture behind show through.",
     "INPUTS": [
         { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 7, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play", "Bowls", "Drone", "XY tone", "Analog synth", "Scan synth", "Echo shots", "Build and drop", "Siren", "Acid line", "Dub bass"] },
         { "NAME": "vxAuto", "LABEL": "Comes and goes with its sound", "TYPE": "bool", "DEFAULT": true },
@@ -18,12 +18,10 @@
         { "NAME": "spin", "LABEL": "Spin", "TYPE": "float", "DEFAULT": 0.4, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Planet", "TYPE": "color", "DEFAULT": [0.95, 0.72, 0.45, 1.0] },
         { "NAME": "accent", "LABEL": "Aurora and bands", "TYPE": "color", "DEFAULT": [0.35, 0.85, 1.0, 1.0] },
-        { "NAME": "vxEnv", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxHit", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxVel", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxFlow", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
         { "NAME": "vxGlide", "TYPE": "float", "DEFAULT": 0.3, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
-        { "NAME": "vxCount", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
         { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 },
         { "NAME": "vxEnergy", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 }
     ]
@@ -73,11 +71,13 @@ float noise1(float x) {
 }
 
 // Ring optical density at a radius in planet radii: many ringlets and a few clean gaps.
-float ringDensity(float rr) {
+// aa: pixel footprint in radius units, so ringlets finer than a pixel fade to their
+// average instead of flickering as the rings rock.
+float ringDensity(float rr, float aa) {
     float inside = smoothstep(RING_IN, RING_IN + 0.04, rr) * smoothstep(RING_OUT, RING_OUT - 0.04, rr);
     float x = (rr - RING_IN) / (RING_OUT - RING_IN);
-    float fine = 0.55 + 0.45 * noise1(rr * 160.0);
-    float mid = 0.5 + 0.5 * noise1(rr * 34.0 + 3.0);
+    float fine = 0.55 + 0.45 * mix(noise1(rr * 160.0), 0.5, smoothstep(0.25, 0.8, aa * 160.0));
+    float mid = 0.5 + 0.5 * mix(noise1(rr * 34.0 + 3.0), 0.5, smoothstep(0.25, 0.8, aa * 34.0));
     // Broad structure: faint inner ring, bright middle ring, gap, outer ring.
     float broad = mix(0.35, 1.0, smoothstep(0.08, 0.3, x));
     broad *= 1.0 - 0.92 * (smoothstep(0.6, 0.62, x) - smoothstep(0.68, 0.7, x));
@@ -100,13 +100,15 @@ void main() {
     vec2 res = RENDERSIZE;
     float R = 0.3 * size;
     vec2 p = (gl_FragCoord.xy - 0.5 * res) / res.y / R;
-    float t = vxPhase * 0.03 + TIME * 0.03;
-    float hitK = vxHit * (0.55 + 0.45 * vxVel);
-    float swell = vxEnv * 0.75 + vxEnergy * 0.25;
+    float t = vxFlow * 0.12;
+    float pls = clamp(vxPulse, 0.0, 1.0);
+    float hitK = pls * pls * (3.0 - 2.0 * pls);
+    float swell = clamp(vxSwell * 0.8 + vxEnergy * 0.2, 0.0, 1.0);
 
     // Planet axis = ring normal: tipped toward us, then rolled a little.
-    float tl = mix(0.06, 0.62, ringTilt);
-    float roll = -0.32;
+    // The whole system rocks slowly as it turns, faster when the music drives it.
+    float tl = mix(0.06, 0.62, ringTilt) + 0.07 * sin(t * 0.9);
+    float roll = -0.32 + 0.05 * sin(t * 0.63 + 1.0);
     vec3 N = normalize(vec3(sin(roll) * cos(tl), cos(roll) * cos(tl), sin(tl)));
     vec3 E1 = normalize(cross(N, vec3(0.0, 0.0, 1.0)));
     vec3 E2 = cross(N, E1);
@@ -155,7 +157,7 @@ void main() {
             float tt = -dot(n, N) / ldn;
             if (tt > 0.0) {
                 vec3 h = n + L * tt;
-                rsh = ringDensity(length(h)) * 0.85;
+                rsh = ringDensity(length(h), 0.02) * 0.85;
             }
         }
         float lit = day * (0.35 + 0.75 * max(ndl, 0.0)) * (1.0 - rsh);
@@ -163,14 +165,16 @@ void main() {
         float mu = zs;
         vec3 c = surf * lit * (0.55 + 0.45 * mu);
         float rim = pow(1.0 - mu, 3.0) * smoothstep(-0.2, 0.4, ndl);
-        c += mix(ink.rgb, vec3(0.7, 0.85, 1.0), 0.5) * rim * 0.7;
+        c += mix(ink.rgb, vec3(0.7, 0.85, 1.0), 0.5) * rim * (0.7 + 1.2 * hitK);
+        // The pulse also lights the upper atmosphere all round the limb.
+        c += mix(accent.rgb, vec3(0.8, 0.9, 1.0), 0.3) * pow(1.0 - mu, 4.0) * hitK * aurora * 0.9;
         // Night side: faint ringshine so the dark disk still has form.
         c += surf * 0.035 * (1.0 - day) * (0.5 + 0.5 * mu);
         // Auroras: rings round both poles, lit by hits and the sound.
         float aurLat = abs(lat);
         float aur = exp(-pow((aurLat - 0.88) / 0.035, 2.0)) * (0.6 + 0.4 * sin(atan(eq.y, eq.x) * 7.0 + t * 6.0));
         aur += exp(-pow((aurLat - 0.9) / 0.06, 2.0)) * 0.3;
-        aur *= aurora * (hitK * 3.0 + swell * 1.0 + 0.08);
+        aur *= aurora * (hitK * 4.0 + swell * 1.4 + 0.08);
         c += (accent.rgb * 1.3 + 0.05) * aur * (0.6 + 0.6 * (1.0 - day));
         zO = zs;
         colO = c;
@@ -204,7 +208,6 @@ void main() {
                 vec3 mcol = mix(vec3(0.8, 0.78, 0.75), ink.rgb, 0.25 + 0.1 * fi);
                 float crater = 0.85 + 0.15 * noise2(dm * 3.0 + fi * 7.0);
                 vec3 c = mcol * crater * (ml * psh * 1.1 + 0.03);
-                c += hotC * hitK * 0.25 * aurora;
                 float ma2 = smoothstep(1.0 + 3.0 * edgeAA / mr, 1.0 - 3.0 * edgeAA / mr, sqrt(d2));
                 colO = mix(colO, c, ma2);
                 aO = max(aO, ma2);
@@ -221,7 +224,7 @@ void main() {
         float zr = -(p.x * N.x + p.y * N.y) / N.z;
         vec3 P = vec3(p, zr);
         float rr = length(P);
-        float dens = ringDensity(rr);
+        float dens = ringDensity(rr, fwidth(rr));
         if (dens > 0.0) {
             // Planet shadow across the rings.
             float along = dot(P, L);
@@ -231,13 +234,22 @@ void main() {
             float x = (rr - RING_IN) / (RING_OUT - RING_IN);
             vec3 rc = mix(ink.rgb * 0.8 + 0.15, vec3(0.95, 0.92, 0.86), 0.45 + 0.35 * x);
             rc = mix(rc, accent.rgb, 0.15 * smoothstep(0.7, 1.0, x));
-            // Hit: a bright band ripples across the rings at a radius picked by the hit count.
-            float bandR = RING_IN + (RING_OUT - RING_IN) * fract(vxCount * 0.382 + 0.15);
-            float band = exp(-pow((rr - bandR) / 0.09, 2.0)) * hitK * aurora * 4.0;
-            // Glitter on the swell.
-            float gl = step(0.993 - swell * 0.012, hash21(floor(P.xy * 110.0) + floor(t * 8.0))) * swell * 1.6;
-            float light = (0.55 + 0.9 * ldn) * sh + 0.05;
-            colR = rc * light * (0.6 + 0.6 * dens) + hotC * (band + gl) * dens * sh;
+            // Waves of light ride outward across the rings; the pulse lights them up.
+            float band = 0.0;
+            for (int k = 0; k < 2; k++) {
+                float fk = fract(t * 1.1 + 0.5 * float(k));
+                float bR = RING_IN - 0.1 + fk * (RING_OUT - RING_IN + 0.2);
+                band += exp(-pow((rr - bR) / 0.12, 2.0)) * sin(PI * fk);
+            }
+            band *= aurora * (hitK * 5.5 + swell * 0.9);
+            // Each hit launches a bright ripple from the inner edge that rolls out
+            // across the rings as the pulse dies away.
+            float hr = RING_IN - 0.05 + (1.0 - pls) * (RING_OUT - RING_IN + 0.3);
+            band += exp(-pow((rr - hr) / 0.07, 2.0)) * pls * aurora * 4.5;
+            // The swell brightens the sunlit sheen of the rings.
+            float gl = swell * 0.5 * smoothstep(0.1, 1.0, x);
+            float light = ((0.55 + 0.9 * ldn) * sh + 0.05) * (1.0 + 0.35 * hitK + 0.2 * swell);
+            colR = rc * light * (0.6 + 0.6 * dens) * (1.0 - 0.35 * min(band, 1.0)) + (accent.rgb * 1.4 + 0.15) * band * dens * (0.35 + 0.65 * sh) + hotC * gl * dens * sh;
             aR = clamp(dens * (1.3 + 0.6 * (1.0 - abs(N.z))), 0.0, 0.97);
             colR *= aR;
             zR = zr;

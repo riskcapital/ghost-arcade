@@ -5,13 +5,13 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A glowing jellyfish hangs in deep water, its glassy bell laced with moving ripples of light and four bright rings at its heart, trailing frilled arms and long fine tentacles. Every hit makes the bell clench and push upward, and the squeeze runs down the tentacles like a whip. A held sound makes the light inside burn brighter; with no sound it breathes slowly on its own.",
+    "DESCRIPTION": "A glowing jellyfish hangs in deep water, its glassy bell laced with moving ripples of light and four bright rings at its heart, trailing frilled arms and long fine tentacles. The music pumps the bell: each surge clenches it and lifts it, it springs back with a soft rebound, and the motion rolls down the tentacles behind it like a wave. A held sound makes the light inside burn brighter and the whole creature swim faster; with no sound it breathes slowly on its own.",
     "PASSES": [
         {
-            "TARGET": "clock",
+            "TARGET": "pump",
             "PERSISTENT": true,
             "FLOAT": true,
-            "WIDTH": 1,
+            "WIDTH": 2,
             "HEIGHT": 1
         },
         {}
@@ -28,12 +28,11 @@
         { "NAME": "snow", "LABEL": "Sea snow", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Body", "TYPE": "color", "DEFAULT": [0.55, 0.85, 1.0, 1.0] },
         { "NAME": "accent", "LABEL": "Heart", "TYPE": "color", "DEFAULT": [1.0, 0.45, 0.8, 1.0] },
-        { "NAME": "vxEnv", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxHit", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxVel", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
         { "NAME": "vxGlide", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
-        { "NAME": "vxCount", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
+        { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxFlow", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
+        { "NAME": "vxMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
         { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 }
     ]
 }*/
@@ -95,34 +94,51 @@ float net(vec2 p, float t) {
     return sqrt(d2) - sqrt(d1);
 }
 
-// How hard the bell is clenched, a given time after a hit.
-float squeeze(float a) {
-    return smoothstep(-0.01, 0.07, a) * exp(-max(a, 0.0) * 2.6);
+// The pump's value partway down a tentacle: the further down, the later.
+float lagChain(float u, vec4 c) {
+    float k = clamp(u, 0.0, 1.0) * 3.0;
+    if (k < 1.0) return mix(c.x, c.y, k);
+    if (k < 2.0) return mix(c.y, c.z, k - 1.0);
+    return mix(c.z, c.w, k - 2.0);
 }
 
 void main() {
-    float n = floor(vxCount + 0.5);
     if (PASSINDEX == 0) {
-        vec4 c = IMG_NORM_PIXEL(clock, vec2(0.5));
-        float dt = clamp(TIMEDELTA, 0.0, 0.1);
-        // An all-zero texel means a fresh buffer (the voice was just added):
-        // start from "no hit for a long time" rather than a fake hit.
-        if (c.a < 0.5) c = vec4(n, 30.0, 0.0, 1.0);
-        bool newHit = abs(n - c.r) > 0.5;
-        float age = newHit ? 0.0 : min(c.g + dt, 30.0);
-        float vel = newHit ? clamp(vxVel, 0.4, 1.0) : c.b;
-        gl_FragColor = vec4(n, age, vel, 1.0);
+        // A spring that follows the music's surges, plus three lagging copies
+        // of it, so motion can trail behind the beat with real follow-through.
+        vec4 s0 = IMG_NORM_PIXEL(pump, vec2(0.25, 0.5));
+        vec4 s1 = IMG_NORM_PIXEL(pump, vec2(0.75, 0.5));
+        if (s0.a < 0.5) {
+            s0 = vec4(0.0, 0.0, 0.0, 1.0);
+            s1 = vec4(0.0, 0.0, 0.0, 1.0);
+        }
+        float dt = clamp(TIMEDELTA, 0.0, 0.05);
+        float tgt = (1.0 - exp(-2.0 * vxPulse * pulse)) * 1.0 + vxSwell * 0.12 + 0.3 * pow(0.5 + 0.5 * sin(vxFlow * 3.0), 3.0);
+        float accel = -60.0 * (s0.x - tgt) - 6.5 * s0.y;
+        s0.y += accel * dt;
+        s0.x += s0.y * dt;
+        s0.z += (s0.x - s0.z) * (1.0 - exp(-dt / 0.12));
+        s1.x += (s0.z - s1.x) * (1.0 - exp(-dt / 0.18));
+        s1.y += (s1.x - s1.y) * (1.0 - exp(-dt / 0.25));
+        // The held level, eased again so big swells build over a few frames.
+        s1.z += (vxSwell - s1.z) * (1.0 - exp(-dt / 0.2));
+        s0.a = 1.0;
+        s1.a = 1.0;
+        gl_FragColor = gl_FragCoord.x < 1.0 ? s0 : s1;
         return;
     }
-
-    vec4 clk = IMG_NORM_PIXEL(clock, vec2(0.5));
-    bool fresh = clk.a < 0.5;
-    float age = fresh ? 30.0 : clk.g;
-    float hv = fresh ? 0.0 : clk.b;
-    if (vxHit > 0.01) {
-        age = min(age, 0.04 + (1.0 - clamp(vxHit, 0.0, 1.0)) * 0.1);
-        hv = max(hv, max(vxVel, 0.5));
+    vec4 pS0 = IMG_NORM_PIXEL(pump, vec2(0.25, 0.5));
+    vec4 pS1 = IMG_NORM_PIXEL(pump, vec2(0.75, 0.5));
+    if (pS0.a < 0.5) {
+        pS0 = vec4(0.0);
+        pS1 = vec4(0.0);
     }
+    float sprX = pS0.x;
+    float sprLagA = pS0.z;
+    float sprLagB = pS1.x;
+    float sprLagC = pS1.y;
+    float swellE = pS1.z;
+    vec4 chain = vec4(sprX, sprLagA, sprLagB, sprLagC);
 
     vec2 uv = gl_FragCoord.xy / RENDERSIZE;
     float aspect = RENDERSIZE.x / RENDERSIZE.y;
@@ -131,15 +147,14 @@ void main() {
     float px = 1.5 / RENDERSIZE.y;
     bool clearMode = vxClear;
 
-    float t = vxPhase * 0.15 + TIME * 0.08;
-    // Slow breathing at rest; hits clench on top of it.
-    float breathe = pow(0.5 + 0.5 * sin(t * 1.7), 3.0) * 0.35;
-    float sq = clamp(breathe + squeeze(age) * hv * pulse * 1.3, 0.0, 1.2);
-    float energy = clamp(0.35 + 0.65 * vxEnv, 0.0, 1.0);
+    float t = vxFlow * 0.55;
+    // The bell's clench: the spring, overshooting a little as it relaxes.
+    float sq = clamp(sprX, -0.25, 1.2);
+    float energy = clamp(0.4 + 0.45 * swellE + 0.2 * max(sprLagA, 0.0), 0.0, 1.0);
 
     float S = mix(0.75, 1.25, bellSize);
     vec2 C = vec2(0.32 * sin(t * 0.23) * drift + (vxGlide - 0.5) * 0.25 * drift,
-                  0.13 + 0.04 * sin(t * 0.41) * drift + 0.05 * squeeze(age - 0.05) * hv * pulse);
+                  0.13 + 0.04 * sin(t * 0.41) * drift + 0.05 * sprLagA);
     C *= vec2(1.0, 1.0);
     float tilt = 0.18 * sin(t * 0.37) * drift;
     vec2 q = p - C;
@@ -166,9 +181,9 @@ void main() {
         float s = Hh * (-0.2 + 0.42 * (1.0 - uu * uu)) - 0.006 - q.y;
         float len = lenT * (0.65 + 0.35 * hash11(fi * 3.1));
         if (s > -0.01 && s < len) {
-            float lag = squeeze(age - s * 0.9) * hv * pulse;
+            float lag = lagChain(s / len, chain);
             float sway = sin(s * (7.0 + 3.0 * hash11(fi)) - t * 2.2 + fi * 1.7) * 0.05 * s / max(len, 0.1) * 2.0;
-            float xt = x0 * (1.0 - 0.45 * lag + 0.15 * s) + sway + 0.12 * sin(t * 0.5 + s * 2.0) * s * drift;
+            float xt = x0 * (1.0 - 0.32 * lag + 0.15 * s) + sway + 0.12 * sin(t * 0.5 + s * 2.0) * s * drift;
             float d = abs(q.x - xt);
             float wdt = 0.0035 * (1.0 - 0.6 * s / len) + px * 0.6;
             float fade = smoothstep(len, len * 0.55, s) * smoothstep(-0.01, 0.02, s);
@@ -188,7 +203,7 @@ void main() {
         float s = Hh * 0.2 - q.y;
         float len = lenT * 0.62 + Hh * 0.4;
         if (s > 0.0 && s < len) {
-            float lag = squeeze(age - s * 1.2) * hv * pulse;
+            float lag = lagChain(s / len, chain);
             float xc = (fk - 1.5) * 0.035 * (1.0 + 0.8 * s) + sin(s * 6.0 - t * 1.4 + fk * 1.3) * 0.035 * s * 2.0 * (1.0 - 0.5 * lag);
             float wdt = (0.022 + 0.014 * sin(s * 45.0 - t * 3.0 + fk)) * (1.0 - 0.7 * s / len);
             float d = abs(q.x - xc) - wdt;
@@ -200,7 +215,7 @@ void main() {
             armC += mix(accent.rgb, ink.rgb, 0.35) * (body * 0.35 + edge * 1.1) * fade;
         }
     }
-    col += tcol * (0.9 + 0.6 * energy) + armC * (0.7 + 0.6 * energy);
+    col += tcol * (0.75 + 0.4 * energy) + armC * (0.6 + 0.4 * energy);
     alpha = max(1.0 - exp(-2.2 * tl), armA);
 
     // ---- The bell.

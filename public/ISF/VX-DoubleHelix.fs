@@ -5,17 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A DNA double helix built from thousands of fine points, slowly turning as it leans across the frame. Two strands of dots spiral round each other, joined by dotted rungs; points in front of and behind the centre blur into larger, softer dots. Each hit unzips the helix from a spot along its length, throwing the strands apart and spraying their points before they wind back together, and the note's pitch winds the helix tighter or looser. A bright scan band runs along it once a bar.",
-    "PASSES": [
-        {
-            "TARGET": "clock",
-            "PERSISTENT": true,
-            "FLOAT": true,
-            "WIDTH": 1,
-            "HEIGHT": 1
-        },
-        {}
-    ],
+    "DESCRIPTION": "A DNA double helix built from thousands of fine points, turning as it leans across the frame. Two strands of dots spiral round each other, joined by dotted rungs; points in front of and behind the centre blur into larger, softer dots. Every hit bursts through it: the strands are flung apart around a spot that wanders along the helix, the rungs split in the middle and the points scatter, then everything winds smoothly back together. The music speeds the turning, the note's pitch winds it tighter or looser, and a scan band glides to and fro along it.",
     "INPUTS": [
         { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 6, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play", "Bowls", "Drone", "XY tone", "Analog synth", "Scan synth", "Echo shots", "Build and drop", "Siren", "Acid line", "Dub bass"] },
         { "NAME": "vxAuto", "LABEL": "Comes and goes with its sound", "TYPE": "bool", "DEFAULT": true },
@@ -28,15 +18,12 @@
         { "NAME": "spin", "LABEL": "Spin", "TYPE": "float", "DEFAULT": 0.35, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Strands", "TYPE": "color", "DEFAULT": [0.55, 0.85, 1.0, 1.0] },
         { "NAME": "accent", "LABEL": "Rungs", "TYPE": "color", "DEFAULT": [1.0, 0.3, 0.55, 1.0] },
-        { "NAME": "vxEnv", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxHit", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxVel", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
         { "NAME": "vxGlide", "TYPE": "float", "DEFAULT": 0.4, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
-        { "NAME": "vxCount", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
-        { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxBar", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxEnergy", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 }
+        { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxFlow", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
+        { "NAME": "vxMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
+        { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 }
     ]
 }*/
 
@@ -75,54 +62,33 @@ void addDot(vec2 q, vec2 c, float z, float sizePx, float px, vec3 col, float glo
 }
 
 void main() {
-    float n = floor(vxCount + 0.5);
-
-    // clock (1x1): last count seen, seconds since the last hit, velocity of that hit.
-    if (PASSINDEX == 0) {
-        vec4 c = IMG_NORM_PIXEL(clock, vec2(0.5));
-        float dt = clamp(TIMEDELTA, 0.0, 0.1);
-        if (FRAMEINDEX < 2) c = vec4(n, 30.0, 0.0, 0.0);
-        bool newHit = abs(n - c.r) > 0.5;
-        float age = newHit ? 0.0 : min(c.g + dt, 30.0);
-        float vel = newHit ? clamp(max(vxVel, vxHit), 0.3, 1.0) : c.b;
-        gl_FragColor = vec4(n, age, vel, 0.0);
-        return;
-    }
-
-    vec4 clk = IMG_NORM_PIXEL(clock, vec2(0.5));
-    float age = FRAMEINDEX < 2 ? 30.0 : clk.g;
-    float hitVel = FRAMEINDEX < 2 ? 0.0 : clk.b;
-    if (vxHit > 0.01) {
-        age = min(age, (1.0 - clamp(vxHit, 0.0, 1.0)) * 0.1);
-        hitVel = max(hitVel, max(vxVel, vxHit));
-    }
-    if (n < 0.5 && vxHit < 0.01) age = 30.0;
-
     vec2 res = RENDERSIZE;
     float px = 1.0 / res.y;
     vec2 p = (gl_FragCoord.xy - 0.5 * res) * px;
 
     // The axis leans across the frame: 0 lies flat, 0.5 stands upright.
-    float ang = lean * 3.14159 + 0.05 * sin(TIME * 0.11);
+    float ang = lean * 3.14159 + 0.05 * sin(vxFlow * 0.4);
     vec2 ax = vec2(cos(ang), sin(ang));
     vec2 pe = vec2(-ax.y, ax.x);
     float s = dot(p, ax);
     float a = dot(p, pe);
 
-    float env = clamp(vxEnv, 0.0, 1.0);
-    float tclk = TIME * 0.08 + vxPhase * 0.02;
-    float spinA = tclk * mix(0.6, 5.0, spin);
+    float env = clamp(vxSwell, 0.0, 1.0);
+    float pulseA = clamp(vxPulse, 0.0, 1.0);
+    // All motion runs on the flow clock, which the music speeds up and slows down.
+    float tclk = vxFlow;
+    float spinA = tclk * mix(0.25, 2.4, spin);
     // Turns per frame height: the pitch winds it tighter or looser.
-    float turns = mix(0.45, 1.9, twist) * mix(1.35, 0.6, clamp(vxGlide, 0.0, 1.0));
+    float turns = mix(0.45, 1.9, twist) * mix(1.15, 0.8, clamp(vxGlide, 0.0, 1.0));
     float twK = turns * TAU;
     // Where the unzip starts and how far it has run.
-    float s0 = (hash11(n * 7.13 + 1.7) - 0.5) * 0.8;
-    float front = 0.05 + age * 1.1;
-    float hitAmt = unzip * mix(0.55, 1.0, hitVel) * exp(-age * 1.6) * (1.0 - exp(-age * 25.0 - 0.3));
-    // A scan band once a bar.
-    float band = (fract(vxBar + 0.0001) - 0.5) * 2.4;
+    // The unzip centre wanders along the helix as the hits count up (a smooth glide, never a jump).
+    float s0 = 0.45 * sin(vxMorph * 0.9 + vxFlow * 0.15);
+    float hitAmt = unzip * pulseA;
+    // A scan band sweeping to and fro along the helix.
+    float band = 1.15 * sin(tclk * 0.6);
     float sizePx = mix(0.9, 2.6, pointSize) * res.y / 1080.0;
-    float sprayBase = scatter * (0.3 + 1.4 * env);
+    float sprayBase = scatter * (0.3 + 1.2 * env);
 
     float alpha = 0.0;
     vec3 light = vec3(0.0);
@@ -134,14 +100,15 @@ void main() {
         float k = k0 + float(kk);
         float sk = k * DS;
         // A gentle bend in the axis.
-        float bend = 0.045 * sin(sk * 2.3 + tclk * 1.7) + 0.025 * sin(sk * 5.1 - tclk * 1.1);
+        float bend = 0.05 * sin(sk * 2.3 + tclk * 0.9) + 0.03 * sin(sk * 5.1 - tclk * 0.6);
         float th = sk * twK + spinA;
-        // Unzip: strands pull apart behind the running front, most near where it started.
+        // Unzip: each hit's surge pulls the strands apart around a wandering centre,
+        // with a slow ripple running along it; it relaxes as the surge dies away.
         float ds0 = abs(sk - s0);
-        float zone = smoothstep(front, front - 0.15, ds0) * exp(-ds0 * 1.1);
+        float zone = exp(-ds0 * ds0 / 0.2) * (0.7 + 0.3 * sin(sk * 5.0 - tclk * 1.2));
         float u = hitAmt * zone;
-        float rr = HR * (1.0 + 1.1 * u);
-        float spray = sprayBase + 3.5 * u;
+        float rr = HR * (1.0 + 1.4 * u);
+        float spray = sprayBase + 4.0 * u;
         float lit = 1.0 + 1.4 * exp(-pow((sk - band) / 0.06, 2.0)) + 1.0 * u;
         vec2 cA = vec2(rr * cos(th), rr * sin(th));
         // The second strand trails by a little less than half a turn (major and minor grooves).
@@ -178,8 +145,8 @@ void main() {
             float aa = a - bend;
             float fz = (aa * (CAMD - cA.y) - CAMD * cA.x) / (CAMD * dAB.x + aa * dAB.y);
             // A faint line joins the rung's dots.
-            if (fz > 0.03 && fz < 0.97 && abs(fz - 0.5) > gap) {
-                float lineCov = exp(-pow((s - sk) / (0.9 * px), 2.0)) * 0.3;
+            if (fz > 0.03 && fz < 0.97) {
+                float lineCov = exp(-pow((s - sk) / (0.9 * px), 2.0)) * 0.3 * smoothstep(gap, gap + 0.08, abs(fz - 0.5) + 0.08 * step(gap, 0.0));
                 alpha = alpha + lineCov * (1.0 - alpha);
                 light += rungCol * lineCov * lit;
             }
@@ -188,14 +155,16 @@ void main() {
                 float j = j0 + float(jj);
                 if (j >= 1.0 && j <= RUNG_PTS - 2.0) {
                     float f = j / (RUNG_PTS - 1.0);
-                    if (abs(f - 0.5) >= gap) {
+                    // Dots near the break shrink away smoothly instead of popping out.
+                    float rf = gap < 0.001 ? 1.0 : smoothstep(gap, gap + 0.08, abs(f - 0.5));
+                    if (rf > 0.0) {
                         vec2 xz = cA + dAB * f;
                         // Broken halves fling outward with the unzip.
                         float side = f < 0.5 ? -1.0 : 1.0;
                         xz += u * 0.08 * side * normalize(dAB + 1e-5) * (0.5 + hash11(k + j * 3.3));
                         float sc = CAMD / (CAMD - xz.y);
                         vec2 c = vec2(bend + xz.x * sc, sk);
-                        addDot(vec2(a, s), c, xz.y, sizePx * 1.05, px, rungCol, lit * 1.2, alpha, light);
+                        addDot(vec2(a, s), c, xz.y, sizePx * 1.05 * rf, px, rungCol, lit * 1.2 * rf, alpha, light);
                     }
                 }
             }
@@ -203,7 +172,7 @@ void main() {
     }
 
     // Brighter overall with the sound.
-    float gain = 0.85 + 0.45 * env + 0.25 * clamp(vxEnergy, 0.0, 1.0);
+    float gain = 0.85 + 0.45 * env + 0.3 * pulseA;
     light *= gain;
     float hA = halo * (vxClear ? 0.3 : 0.22) * gain;
     vec3 hCol = mix(ink.rgb, accent.rgb, 0.25) * hA;

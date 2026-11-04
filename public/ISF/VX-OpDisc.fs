@@ -5,13 +5,13 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "An op-art disc in the style of a sixties gallery print: crisp concentric bands, or a checkerboard of rings and spokes, swelling into a sphere that slides around inside the disc so the flat pattern seems to bulge out of the wall. Every hit sends a shock wave racing out through the bands and off the rim as a thin ring; the louder the sound, the tighter the bands breathe. The note's pitch steers where the bulge sits.",
+    "DESCRIPTION": "An op-art disc in the style of a sixties gallery print: crisp concentric bands, or a checkerboard of rings and spokes, swelling into a sphere that slides around inside the disc so the flat pattern seems to bulge out of the wall. Every hit sends a coloured shock wave gliding out from the middle through the bands and off the rim as a fading ring, and ripples the outline; the louder the sound, the bigger the sphere swells and the faster the bands flow outward. The note's pitch steers where the bulge sits.",
     "PASSES": [
         {
-            "TARGET": "clock",
+            "TARGET": "ease",
             "PERSISTENT": true,
             "FLOAT": true,
-            "WIDTH": 1,
+            "WIDTH": 2,
             "HEIGHT": 1
         },
         {}
@@ -22,62 +22,59 @@
         { "NAME": "vxClear", "LABEL": "Transparent background", "TYPE": "bool", "DEFAULT": false },
         { "NAME": "shock", "LABEL": "Shock", "TYPE": "float", "DEFAULT": 0.7, "MIN": 0, "MAX": 1 },
         { "NAME": "bulge", "LABEL": "Bulge", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0, "MAX": 1 },
-        { "NAME": "rings", "LABEL": "Bands", "TYPE": "float", "DEFAULT": 18, "MIN": 8, "MAX": 40 },
+        { "NAME": "rings", "LABEL": "Bands", "TYPE": "float", "DEFAULT": 16, "MIN": 8, "MAX": 40 },
         { "NAME": "pattern", "LABEL": "Pattern", "TYPE": "long", "DEFAULT": 0, "VALUES": [0, 1, 2], "LABELS": ["Rings", "Checker", "Petal rings"] },
         { "NAME": "rim", "LABEL": "Rim ripple", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
         { "NAME": "gaps", "LABEL": "See-through gaps", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Bands", "TYPE": "color", "DEFAULT": [0.96, 0.94, 0.88, 1.0] },
         { "NAME": "accent", "LABEL": "Sphere and shock", "TYPE": "color", "DEFAULT": [1.0, 0.3, 0.2, 1.0] },
-        { "NAME": "vxEnv", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxHit", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxVel", "TYPE": "float", "DEFAULT": 0.7, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxFlow", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
         { "NAME": "vxGlide", "TYPE": "float", "DEFAULT": 0.3, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
-        { "NAME": "vxCount", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
         { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 }
     ]
 }*/
 
-// clock (1x1): last count seen (plus 1000), clock time of the last hit, its strength,
-// clock time of the hit before it.
-
 const float TAU = 6.2831853;
+
+// ease (2x1): left texel, the pulse eased again (0.12 s) and the swell (0.2 s),
+// so the geometry they move glides; right texel, the clock time of the last
+// step (a redraw at the same time does not step).
 
 void main() {
     if (PASSINDEX == 0) {
-        vec4 c = IMG_NORM_PIXEL(clock, vec2(0.5));
-        // The count is stored offset by 1000, so an all-zero texel (a voice
-        // added mid-session) reads as fresh and starts with no hit pending.
-        if (c.r < 500.0) c = vec4(vxCount + 1000.0, TIME - 30.0, 0.0, TIME - 31.0);
-        if (abs(vxCount + 1000.0 - c.r) > 0.5) {
-            c.a = c.g;
-            c.g = TIME;
-            c.b = mix(0.55, 1.0, clamp(vxVel, 0.0, 1.0));
+        vec4 tk = IMG_NORM_PIXEL(ease, vec2(0.75, 0.5));
+        float dt = clamp(TIME - tk.x, 0.0, 0.1);
+        if (gl_FragCoord.x > 1.0) {
+            gl_FragColor = vec4(TIME, dt, 0.0, 0.0);
+            return;
         }
-        c.r = vxCount + 1000.0;
-        gl_FragColor = c;
+        vec4 e = IMG_NORM_PIXEL(ease, vec2(0.25, 0.5));
+        e.x += (vxPulse - e.x) * (1.0 - exp(-dt / 0.16));
+        e.y += (vxSwell - e.y) * (1.0 - exp(-dt / 0.2));
+        gl_FragColor = clamp(e, 0.0, 1.0);
         return;
     }
-
-    vec4 clk = IMG_NORM_PIXEL(clock, vec2(0.5));
-    float age = TIME - clk.g;
-    if (age < 0.0) age = 30.0;
-    float age2 = TIME - clk.a;
-    if (age2 < 0.0) age2 = 30.0;
-    float amt = clk.b * shock;
+    vec4 ez = IMG_NORM_PIXEL(ease, vec2(0.25, 0.5));
+    // Impact lands on the pulse itself; the eased copy carries the slower geometry.
+    float pu = max(vxPulse, ez.x);
+    float sw = ez.y;
+    float amt = shock * pu;
 
     vec2 p = (gl_FragCoord.xy - 0.5 * RENDERSIZE.xy) / RENDERSIZE.y;
     float px = 1.0 / RENDERSIZE.y;
-    float t = vxPhase * 0.03 + TIME * 0.05;
+    float t = vxFlow * 0.22;
 
     float r = length(p);
     float th = atan(p.y, p.x);
 
-    // The disc's outline: a slow wobble plus a ripple kicked by each hit.
-    float kick = amt * exp(-age * 3.0);
-    float R0 = 0.44 * (1.0 + 0.04 * vxEnv + 0.06 * kick);
+    // The disc's outline: a slow wobble plus a ripple the hits push round.
+    float kick = shock * pu;
+    float Rb = 0.44;
+    float R0 = Rb * (1.0 + 0.03 * sw + 0.03 * kick);
     float wob = rim * (0.012 * sin(3.0 * th + t * 1.3) + 0.008 * sin(5.0 * th - t * 0.9));
-    wob += (0.3 + rim) * kick * 0.045 * sin(14.0 * th - age * 14.0);
+    wob += (0.3 + rim) * kick * 0.03 * sin(9.0 * th - t * 4.0);
     float R = R0 * (1.0 + wob);
     float dEdge = (R - r) / px;
     float cover = clamp(dEdge + 0.5, 0.0, 1.0);
@@ -85,7 +82,7 @@ void main() {
     // The bulge: a sphere sliding about inside the disc, steered by pitch.
     float ba = TAU * vxGlide + t * 0.7;
     vec2 bc = vec2(cos(ba), sin(ba)) * R0 * (0.22 + 0.12 * sin(t * 0.9));
-    float B = R0 * (0.55 + 0.1 * vxEnv);
+    float B = Rb * (0.5 + 0.14 * sw + 0.12 * kick);
     vec2 q = p - bc;
     float lq = length(q);
     float k = clamp(lq / B, 0.0, 1.0);
@@ -101,16 +98,15 @@ void main() {
     float rw = length(pw);
     float tw = atan(pw.y, pw.x);
 
-    // Band coordinate: bands breathe tighter with the sound and drift outwards.
-    float n = clamp(rings, 8.0, 40.0) * (1.0 + 0.18 * vxEnv);
-    float u = rw / R0 * n - t * 2.0;
-    // Shock waves: a crest racing outward that shoves the bands as it passes.
-    float sr = age * 1.1;
-    float sh = amt * exp(-age * 1.6) * exp(-pow((r - sr) / 0.07, 2.0));
-    float sr2 = age2 * 1.1;
-    float sh2 = clk.b * shock * 0.6 * exp(-age2 * 1.6) * exp(-pow((r - sr2) / 0.07, 2.0));
-    u += (sh + sh2) * 1.6;
-    u += vxHit * shock * 0.6 * exp(-r * 4.0);
+    // Band coordinate: fixed spacing (so fine bands never strobe), flowing outward
+    // with the music's clock.
+    float n = clamp(rings, 8.0, 40.0);
+    float u = rw / Rb * n - t * 2.5;
+    // Shock ripples: a train of soft waves always running outward through the
+    // bands; hits swell them (and the clock races them outward), then they settle.
+    float rph = r / Rb * 2.0 - t * 2.5;
+    float sh = amt * pow(0.5 + 0.5 * sin(rph * TAU), 6.0) * smoothstep(0.0, 0.12, r);
+    u += amt * 0.2 * sin(rph * TAU);
 
     float v = 0.0;
     if (pattern == 1) {
@@ -139,7 +135,7 @@ void main() {
     float spec = pow(max(dot(reflect(-Ld, sn), vec3(0.0, 0.0, 1.0)), 0.0), 24.0);
     light += vec3(0.9) * spec * lens;
     // The shock wave paints the bands it passes in the accent colour.
-    float wave = clamp((sh + sh2) * 1.6, 0.0, 1.0);
+    float wave = clamp(sh * 1.1, 0.0, 1.0);
     light = mix(light, accent.rgb * 1.15 + 0.15, wave);
     vec3 dark = mix(ink.rgb, accent.rgb, 0.5) * 0.05 + accent.rgb * shade * 0.12;
     dark = mix(dark, accent.rgb * 0.3, wave * 0.6);
@@ -151,12 +147,14 @@ void main() {
     float rimLine = exp(-pow((dEdge - 3.0) / 1.6, 2.0));
     col = mix(col, accent.rgb * 1.1, rimLine * 0.9);
 
-    // Shock rings that fly off the rim.
-    float out1 = exp(-pow((r - sr) / (0.006 + 0.025 * age), 2.0)) * amt * exp(-age * 1.8) * smoothstep(R0 * 0.9, R0 * 1.1, sr) * 1.4;
-    float out2 = exp(-pow((r - sr2) / (0.006 + 0.025 * age2), 2.0)) * clk.b * shock * exp(-age2 * 1.8) * smoothstep(R0 * 0.9, R0 * 1.1, sr2) * 0.8;
-    float ring = clamp((out1 + out2) * 1.5 * (1.0 - cover), 0.0, 1.0);
+    // The same ripples leave the rim as thin rings that fade as they spread.
+    float od = max(r - R, 0.0);
+    float rq = fract(rph);
+    float rw2 = max(fwidth(rph), 1e-4);
+    float thin = clamp((0.09 - abs(rq - 0.5)) / rw2 + 0.5, 0.0, 1.0);
+    float ring = clamp(thin * amt * 0.95 * exp(-od / 0.12) * smoothstep(0.0, 0.01, od), 0.0, 1.0);
     vec3 ringCol = mix(accent.rgb, vec3(1.0), 0.25) * 1.2;
-    float halo = exp(-max(-dEdge, 0.0) * px / 0.03) * (1.0 - cover);
+    float halo = exp(-max(-dEdge, 0.0) * px / (0.03 + 0.03 * sw)) * (1.0 - cover) * (0.7 + 0.5 * sw + 0.3 * kick);
 
     float pres = vxPresence;
     vec4 outc;
@@ -172,7 +170,7 @@ void main() {
         float vig = 1.0 - smoothstep(0.4, 1.2, r);
         vec3 bg = mix(ink.rgb, accent.rgb, 0.3) * 0.035 * vig;
         // Faint echo bands on the wall around the disc.
-        bg += ink.rgb * 0.025 * smoothstep(0.3, 0.7, sin(r * n / R0 * TAU * 0.5 - t * 6.0)) * vig;
+        bg += ink.rgb * 0.025 * smoothstep(0.3, 0.7, sin(r * n / Rb * TAU * 0.5 - t * 2.5 * TAU * 0.5)) * vig;
         bg += ringCol * ring + accent.rgb * halo * 0.3;
         vec3 rgb = mix(bg, col, cover);
         outc = vec4(rgb * pres, 1.0);

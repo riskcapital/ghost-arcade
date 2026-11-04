@@ -5,17 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A shallow dish of glossy black ferrofluid under a magnet. Where the field is strong the liquid rises into a crown of sharp spikes, each one a black mirror catching coloured studio lights along its sides and a pin of light at its tip. A held sound strengthens the field so the spikes grow taller and pack tighter; each hit snaps them up and sends a wave rolling out across the pool before they slump back. The pitch moves the magnet, so the crown drifts across the dish.",
-    "PASSES": [
-        {
-            "TARGET": "clock",
-            "PERSISTENT": true,
-            "FLOAT": true,
-            "WIDTH": 1,
-            "HEIGHT": 1
-        },
-        {}
-    ],
+    "DESCRIPTION": "A shallow dish of glossy black ferrofluid under a magnet. Where the field is strong the liquid rises into a crown of sharp spikes, each one a black mirror catching coloured studio lights along its sides and a pin of light at its tip. A held sound strengthens the field so the spikes grow taller and pack tighter; each hit surges them upward and sends waves rolling out across the pool, and they settle back with a liquid wobble. The pitch moves the magnet, so the crown drifts across the dish.",
     "INPUTS": [
         { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 5, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play", "Bowls", "Drone", "XY tone", "Analog synth", "Scan synth", "Echo shots", "Build and drop", "Siren", "Acid line", "Dub bass"] },
         { "NAME": "vxAuto", "LABEL": "Comes and goes with its sound", "TYPE": "bool", "DEFAULT": true },
@@ -28,17 +18,13 @@
         { "NAME": "size", "LABEL": "Size", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Left light", "TYPE": "color", "DEFAULT": [0.2, 0.6, 1.0, 1.0] },
         { "NAME": "accent", "LABEL": "Right light", "TYPE": "color", "DEFAULT": [1.0, 0.35, 0.2, 1.0] },
-        { "NAME": "vxEnv", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxHit", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxVel", "TYPE": "float", "DEFAULT": 0.7, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxFlow", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
         { "NAME": "vxGlide", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
-        { "NAME": "vxCount", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
         { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 }
     ]
 }*/
-
-// clock (1x1): r = last hit count seen, g = seconds since the last hit.
 
 const float POOL_R = 1.15;
 const float RIM_R = 0.055;
@@ -56,9 +42,8 @@ struct Field {
     float str;     // overall field strength
     float width;   // radius of the field's influence
     float sp;      // spike spacing
-    float age;     // seconds since the last hit
-    float kick;    // hit strength
-    float waveK;   // how far hits ripple
+    float kick;    // hit surge (fast rise, eased release)
+    float waveK;   // how strongly hits ripple
     float t;
 };
 
@@ -94,20 +79,20 @@ vec3 liquid(vec2 p, Field F) {
     float A = 0.30 * max(fl - 0.16, 0.0);
     // Liquid runs out at the dish edge.
     A *= 1.0 - smoothstep(POOL_R - 0.28, POOL_R - 0.08, length(cell));
-    // Hits: snap up, a ring rolling outward, then a slump.
+    // Hits: the spikes surge up and settle with a damped wobble, while
+    // waves roll outward from the magnet through the crown. The waves travel
+    // continuously; the hit surge sets how tall they stand.
     float dc = length(cell - F.fc);
-    float a = F.age;
-    float snap = 1.0 + 0.75 * F.kick * exp(-a * 7.0);
-    float rw = a * 1.7;
-    float ring = F.waveK * exp(-pow((dc - rw) / 0.13, 2.0)) * exp(-a * 1.8);
-    float slump = 1.0 - 0.28 * F.waveK * exp(-pow((a - 0.38) / 0.16, 2.0));
+    float surge = 1.0 + 0.9 * F.kick;
+    float wob = 1.0 + 0.22 * F.kick * sin(F.t * 7.0 - dc * 9.0);
+    float ring = F.waveK * (0.5 + 0.5 * sin(dc * 11.0 - F.t * 5.0)) * F.kick;
     float idle = 1.0 + 0.07 * sin(F.t * 1.7 + hash21(floor(cell * 40.0)) * 6.283);
-    A *= snap * slump * idle;
+    A *= surge * wob * idle;
     // Real spikes keep their proportions: they get taller only by getting
     // more needle-like up to a limit.
-    float cap = 2.3 * 0.5 * F.sp;
+    float cap = 2.6 * 0.5 * F.sp;
     A = cap * tanh(A / cap);
-    A += 0.12 * ring * step(0.02, fl) * (1.0 - smoothstep(POOL_R - 0.25, POOL_R - 0.08, length(cell)));
+    A += 0.1 * ring * smoothstep(0.0, 0.08, fl) * (1.0 - smoothstep(POOL_R - 0.25, POOL_R - 0.08, length(cell)));
     float rad = mix(0.44, 0.5, clamp(A / cap, 0.0, 1.0)) * F.sp;
     float dd = length(off);
     float v = max(1.0 - dd / rad, 0.0);
@@ -248,38 +233,27 @@ vec4 renderRay(vec3 ro, vec3 rd, float tMin, float tMax, Field F, vec3 c1, vec3 
 }
 
 void main() {
-    float n = floor(vxCount + 0.5);
-    if (PASSINDEX == 0) {
-        vec4 c = IMG_NORM_PIXEL(clock, vec2(0.5));
-        float dt = clamp(TIMEDELTA, 0.0, 0.1);
-        if (FRAMEINDEX < 2) c = vec4(n, 30.0, 0.0, 0.0);
-        bool newHit = abs(n - c.r) > 0.5;
-        float age = newHit ? 0.0 : min(c.g + dt, 30.0);
-        gl_FragColor = vec4(n, age, 0.0, 0.0);
-        return;
-    }
-    vec4 clk = IMG_NORM_PIXEL(clock, vec2(0.5));
-    float age = FRAMEINDEX < 2 ? 30.0 : clk.g;
-    if (vxHit > 0.01) age = min(age, (1.0 - clamp(vxHit, 0.0, 1.0)) * 0.1);
-
     vec2 p = (gl_FragCoord.xy - 0.5 * RENDERSIZE.xy) / RENDERSIZE.y;
     float px = 1.0 / RENDERSIZE.y;
-    float env = clamp(vxEnv, 0.0, 1.0);
-    float kick = clamp(vxVel, 0.0, 1.0) * 0.6 + 0.4;
-    float t = vxPhase * 0.5 + TIME * 0.15;
+    float env = clamp(vxSwell, 0.0, 1.0);
+    float kick = clamp(vxPulse, 0.0, 1.0);
+    // Drift, sway and ripples all run on the flow clock.
+    float t = vxFlow * 0.8;
     vec3 c1 = ink.rgb;
     vec3 c2 = accent.rgb;
 
     Field F;
-    F.t = TIME + vxPhase;
+    F.t = vxFlow * 2.0;
     F.str = mix(0.5, 1.05, field) * (0.62 + 0.38 * env) + 0.08 * sin(t * 0.7);
-    F.width = mix(0.45, 0.95, spread) * (0.9 + 0.2 * env);
-    F.sp = mix(0.25, 0.165, clamp(F.str, 0.0, 1.0));
+    // Spacing follows the field knob and the held sound only, so the crown
+    // packs tighter as the sound swells without the lattice sliding on hits.
+    float strS = mix(0.5, 1.05, field) * (0.62 + 0.38 * env);
+    F.width = mix(0.45, 0.95, spread) * (0.85 + 0.35 * env + 0.15 * kick);
+    F.sp = mix(0.25, 0.165, clamp(strS, 0.0, 1.0));
     F.fc = vec2((vxGlide - 0.5) * 0.9 * drift + 0.18 * drift * sin(t * 0.31),
                 0.15 * drift * sin(t * 0.23 + 1.0));
-    F.age = age;
     F.kick = kick * mix(0.5, 1.2, wave);
-    F.waveK = mix(0.0, 1.0, wave) * kick;
+    F.waveK = mix(0.0, 1.0, wave);
 
     // Camera: three-quarter view from above, swaying gently.
     float ca = 0.35 * orbit * sin(t * 0.17) + 0.15;
@@ -315,7 +289,7 @@ void main() {
         }
     }
 
-    float flash = 0.5 * kick * exp(-age * 5.0);
+    float flash = 0.8 * kick;
     // Two rays per pixel on a rotated grid: smooth silhouettes and smooth
     // streaks down the spike flanks.
     vec4 rA = vec4(0.0);

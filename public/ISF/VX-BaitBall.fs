@@ -5,13 +5,13 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A bait ball: a tight school of silver fish circling as one spinning ring in deep blue water, the scales flashing as they turn toward the light. Each hit is a predator strike: a hole punches through the school and the fish burst outward, then circle back and close ranks. The louder the sound, the faster they swim and the bigger the ball grows.",
+    "DESCRIPTION": "A bait ball: a tight school of silver fish circling as one spinning ring in deep blue water, the scales flashing as they turn toward the light. Each hit is a predator strike: a wave of panic rolls out through the school, flinging the fish outward away from the attack before they circle back and close ranks. The music sets how fast they swim and how big the ball grows.",
     "PASSES": [
         {
-            "TARGET": "clock",
+            "TARGET": "hist",
             "PERSISTENT": true,
             "FLOAT": true,
-            "WIDTH": 1,
+            "WIDTH": 128,
             "HEIGHT": 1
         },
         {}
@@ -27,18 +27,15 @@
         { "NAME": "fishSize", "LABEL": "Fish size", "TYPE": "float", "DEFAULT": 0.45, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Water and fish", "TYPE": "color", "DEFAULT": [0.25, 0.6, 0.95, 1.0] },
         { "NAME": "accent", "LABEL": "Glints", "TYPE": "color", "DEFAULT": [0.6, 1.0, 0.85, 1.0] },
-        { "NAME": "vxEnv", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxHit", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxVel", "TYPE": "float", "DEFAULT": 0.7, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
-        { "NAME": "vxCount", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
         { "NAME": "vxEnergy", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxFlow", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
+        { "NAME": "vxMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
         { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 }
     ]
 }*/
 
-// clock (1x1): last hit count, seconds since that hit plus one (zero = fresh), how far the school
-// has swum round (in turns), and how hard that hit was.
 
 const float TAU = 6.2831853;
 
@@ -65,10 +62,68 @@ float vnoise(vec2 p) {
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) * 2.0 - 1.0;
 }
 
+// hist (128x1): the last ~2.5 s of the music, newest at the left, one texel
+// per HSTEP seconds: the pulse in red, the swell in green. A hit becomes a
+// smooth wave that can travel outward (what is at distance d now is the pulse
+// from d / speed seconds ago), and the swell can be eased over a second.
+const float HSTEP = 0.02;
+const float HN = 128.0;
+
+// A texel never written (a fresh buffer: the voice was just added, or the
+// renderer rebuilt its buffers) reads as a best guess from the signals now,
+// so nothing dips; the record heals itself as it scrolls.
+vec4 histTexel(float i) {
+    i = clamp(i, 0.0, HN - 1.0);
+    vec4 h = IMG_NORM_PIXEL(hist, vec2((i + 0.5) / HN, 0.5));
+    if (h.a < 0.5) h = vec4(vxPulse * exp(-i * HSTEP / 0.1), vxSwell, 0.0, 0.0);
+    return h;
+}
+
+// The pulse as it was a seconds ago (zero beyond the record).
+float histAt(float a) {
+    float x = a / HSTEP;
+    if (x >= HN - 1.0) return 0.0;
+    x = max(x, 0.0);
+    float i = floor(x);
+    return mix(histTexel(i).r, histTexel(i + 1.0).r, x - i);
+}
+
+// The swell averaged over the last second: a slow, rounded breath.
+float slowSwell() {
+    float s = 0.0;
+    for (int k = 0; k < 6; k++) {
+        s += histTexel(float(k) * 10.0).g;
+    }
+    return s / 6.0;
+}
+
+// Pass 0: slide the record along by this frame's time and put the newest
+// values at the front.
+vec4 histUpdate() {
+    float dt = clamp(TIMEDELTA, 0.0, 0.1);
+    float i = floor(gl_FragCoord.x);
+    float sh = dt / HSTEP;
+    float src = i - sh;
+    vec2 v;
+    if (src < 0.0) {
+        v = mix(histTexel(0.0).rg, vec2(vxPulse, vxSwell), clamp(-src / max(sh, 1e-4), 0.0, 1.0));
+    } else {
+        float j = floor(src);
+        v = mix(histTexel(j).rg, histTexel(j + 1.0).rg, src - j);
+    }
+    return vec4(v, 0.0, 1.0);
+}
+
+// The pulse a seconds ago, softened over a fifth of a second so pushes
+// build up over several frames instead of snapping.
+float histSoft(float a) {
+    return 0.25 * (histAt(a) + histAt(a + 0.06) + histAt(a + 0.12) + histAt(a + 0.18));
+}
+
 // One layer of the school: fish laid out on rings round the centre, each
 // ring swimming at its own speed. Returns cover, shine and glint.
-vec3 fishLayer(float r, float th, float R, float push, float burst, float holeA, float turns,
-               float t, float age, float vel, float lenPx, float fill, float seed) {
+vec3 fishLayer(float r, float th, float R, float push, float pushPrev, float holeA, float turns,
+               float t, float turnRate, float lenPx, float fill, float seed) {
     vec2 res = RENDERSIZE;
     vec2 lightDir = normalize(vec2(0.3, 1.0));
     float rh = r / push;
@@ -98,23 +153,30 @@ vec3 fishLayer(float r, float th, float R, float push, float burst, float holeA,
             float j = j0 + float(m);
             float jw = mod(j, nCells);
             vec3 h = hash32(vec2(jw, ring) + 0.37 + seed * 13.1);
-            // The hole: fish near the strike line are gone, and fill back in.
-            float angC = (jw + 0.5) / nCells - turns * spinR;
-            float off = abs(mod(angC * TAU - holeA + 3.14159, TAU) - 3.14159);
-            float hole = smoothstep(0.25 + 0.9 * burst, 0.1 + 0.6 * burst, off) * smoothstep(0.02, 0.4, burst);
-            if (h.x > dens * (1.0 - hole) * fill) continue;
+            if (h.x > dens * fill) continue;
             // Place in the cell, with a small wiggle in and out.
             float wig = sin(t * (3.0 + 2.0 * h.y) + h.z * TAU) * 0.18;
             float along = (a - j - 0.5 - (h.y - 0.5) * 0.4) * TAU * rc / nCells * dir;
             float across = (rh - rc - (h.z - 0.5) * dr * 0.5 - wig * dr) * push;
             vec2 f = vec2(along, across) * res.y / lenPx;
-            // A slim fish: rounded head, tapered body, forked tail.
-            float x = f.x * 2.0;
-            float halfW = x > 0.0 ? 0.12 * sqrt(max(1.0 - x * x, 0.0))
-                                  : 0.12 * (1.0 + x * 0.8) + 0.1 * smoothstep(-0.75, -1.05, x);
-            float tailFork = x < -0.8 ? smoothstep(0.0, 0.06, abs(f.y) - 0.05 * (x + 1.05) * 4.0) : 1.0;
-            float edge = (halfW - abs(f.y)) * lenPx;
-            float cv = clamp(edge + 0.5, 0.0, 1.0) * step(abs(x), 1.05) * mix(1.0, tailFork, step(x, -0.8));
+            // Motion blur: average the fish over the distance it swims in one
+            // frame, so fast swimming smears smoothly instead of strobing.
+            float bl = abs(spinR) * turnRate * TAU * rc * res.y * clamp(TIMEDELTA, 0.008, 0.04) / lenPx * 2.0;
+            float radialBlur = rc * (push - pushPrev) * res.y / lenPx;
+            float cv = 0.0;
+            for (int q = 0; q < 4; q++) {
+                float sq = float(q) / 3.0 - 0.5;
+                float x = (f.x - bl * sq) * 2.0;
+                // ...and over how far the strike pushed it out this frame.
+                vec2 fq = vec2(f.x, f.y + radialBlur * sq);
+                // A slim fish: rounded head, tapered body, forked tail.
+                float halfW = x > 0.0 ? 0.12 * sqrt(max(1.0 - x * x, 0.0))
+                                      : 0.12 * (1.0 + x * 0.8) + 0.1 * smoothstep(-0.75, -1.05, x);
+                float tailFork = x < -0.8 ? smoothstep(0.0, 0.06, abs(fq.y) - 0.05 * (x + 1.05) * 4.0) : 1.0;
+                float edge = (halfW - abs(fq.y)) * lenPx;
+                cv += clamp(edge + 0.5, 0.0, 1.0) * step(abs(x), 1.05) * mix(1.0, tailFork, step(x, -0.8));
+            }
+            cv *= 0.25;
             if (cv > cover) {
                 cover = cv;
                 // Scales catch the light as the body swings to face it.
@@ -122,7 +184,9 @@ vec3 fishLayer(float r, float th, float R, float push, float burst, float holeA,
                 vec2 tang = vec2(cos(ang), sin(ang));
                 float face = abs(dot(tang, lightDir));
                 shine = pow(face, 6.0) * (0.6 + 0.4 * h.z);
-                glint = step(0.96 - 0.1 * vel * exp(-age * 2.0), h.y) * pow(face, 2.0);
+                // A few fish glint; more of them on a strike, fading in and out.
+                float gt = 0.96 - 0.12 * vxPulse;
+                glint = smoothstep(gt - 0.015, gt + 0.015, h.y) * pow(face, 2.0);
                 shine *= 0.35 + 0.65 * smoothstep(-0.05, 0.12, f.y + 0.05);
             }
         }
@@ -132,43 +196,24 @@ vec3 fishLayer(float r, float th, float R, float push, float burst, float holeA,
 }
 
 void main() {
-    float dt = clamp(TIMEDELTA, 0.0, 0.1);
-    float n = floor(vxCount + 0.5);
-
     if (PASSINDEX == 0) {
-        vec4 c = IMG_NORM_PIXEL(clock, vec2(0.5));
-        // An all-zero texel means a fresh buffer (the voice was just added):
-        // start as if the last hit was long ago. The age is stored plus one,
-        // so a live clock never reads zero there.
-        if (FRAMEINDEX < 2 || c.g < 0.5) c = vec4(n, 31.0, 0.0, 0.7);
-        bool newHit = abs(n - c.r) > 0.5;
-        float age = newHit ? 0.0 : min(c.g - 1.0 + dt, 30.0);
-        float vel = newHit ? clamp(vxVel, 0.2, 1.0) : c.a;
-        // Fish sprint for a moment after a strike.
-        float speed = (0.05 + 0.12 * swim) * (1.0 + 0.8 * vxEnv + 1.6 * vel * exp(-age * 2.0));
-        float turns = mod(c.b + speed * dt, 64.0);
-        gl_FragColor = vec4(n, age + 1.0, turns, vel);
+        gl_FragColor = histUpdate();
         return;
     }
 
-    vec4 clk = IMG_NORM_PIXEL(clock, vec2(0.5));
-    bool fresh = clk.g < 0.5;
-    float age = fresh ? 30.0 : clk.g - 1.0;
-    if (vxHit > 0.01) age = min(age, (1.0 - clamp(vxHit, 0.0, 1.0)) * 0.1);
-    float vel = fresh ? 0.7 : clk.a;
-    // Turns swum: the clock's running total plus a little of the phase so a
-    // still frame still moves.
-    float turns = clk.b + vxPhase * 0.004;
+    // How far the school has swum round, on the music's flow clock: it
+    // swims faster as the music swells and sprints on each strike.
+    float turns = vxFlow * (0.06 + 0.1 * swim);
+    // Its speed now, in turns per second (the flow clock's own rate).
+    float turnRate = (0.06 + 0.1 * swim) * (0.25 + 1.4 * vxSwell + 0.9 * vxPulse);
 
     vec2 res = RENDERSIZE;
     float s1080 = res.y / 1080.0;
     vec2 p = (gl_FragCoord.xy - 0.5 * res) / res.y;
-    float t = vxPhase * 0.3 + TIME * 0.05;
+    float t = vxFlow * 0.45;
 
-    // The strike: the school blows outward, fastest right after the hit,
-    // and a hole tears through where the predator went.
-    float burst = scatter * (0.35 + 0.65 * vel) * smoothstep(0.0, 0.15, age + 0.06) * exp(-age * 1.1);
-    float holeA = hash21(vec2(n, 1.7)) * TAU;
+    // Where the strikes come from: drifts round a little with each hit.
+    float holeA = vxMorph * 0.4908739;
     vec2 centre = vec2(0.06 * sin(t * 0.05), 0.03 * sin(t * 0.07 + 1.0));
     vec2 rel = p - centre;
     // Seen a little from the side: the ring is squashed and tilts slowly.
@@ -177,26 +222,29 @@ void main() {
     float st = sin(tilt);
     rel = mat2(ct, st, -st, ct) * rel;
     rel.y /= 0.78;
-    // The strike parts the school along the predator's path: fish either
-    // side are shoved apart, leaving an empty lane that slowly closes.
-    vec2 nrm = vec2(-sin(holeA), cos(holeA));
-    float dl = dot(rel, nrm);
-    float alongL = dot(rel, vec2(nrm.y, -nrm.x));
-    float lane = 0.11 * burst * (0.75 + 0.5 * vnoise(vec2(alongL * 9.0, n)));
-    float ragged = lane * (0.45 + 0.35 * vnoise(vec2(alongL * 40.0, n + 3.0)));
-    float part = lane < 0.001 ? 1.0 : smoothstep(ragged, lane + 0.006, abs(dl));
-    rel -= nrm * sign(dl) * lane;
+    float part = 1.0;
     float r = length(rel);
     float th = atan(rel.y, rel.x);
 
-    float R = (0.27 + 0.16 * school) * (1.0 + 0.12 * vxEnv + 0.05 * sin(t * 0.21));
+    // The panic wave: rolls out from the middle, pushing each ring of fish
+    // outward as it passes and letting them drift back.
+    float burst = scatter * (0.6 * histAt(0.02 + r * 1.4) + 0.4 * histSoft(0.1 + r * 1.4));
+    float R = (0.27 + 0.16 * school) * (1.0 + 0.14 * slowSwell() + 0.05 * sin(t * 0.21));
     // Undo the burst so each fish keeps its place in its ring.
-    float push = 1.0 + burst * (0.9 + 0.5 * vnoise(vec2(th * 2.0, n)));
+    // The fish nearest the strike flee hardest, so the ball bulges away
+    // from it and the near side thins, then everything settles.
+    float away = 0.5 + 0.5 * cos(th - holeA);
+    float pushShape = 0.35 + 0.6 * away * away + 0.12 * vnoise(vec2(cos(th), sin(th)) * 1.5 + 3.0);
+    float push = 1.0 + burst * pushShape;
+    // Where the strike had pushed them a frame ago, for motion blur.
+    float dtF = clamp(TIMEDELTA, 0.008, 0.04);
+    float burstPrev = scatter * (0.6 * histAt(0.02 + r * 1.4 + dtF) + 0.4 * histSoft(0.1 + r * 1.4 + dtF));
+    float pushPrev = 1.0 + burstPrev * pushShape;
 
     float lenPx = (12.0 + 14.0 * fishSize) * s1080;
     // A far layer of smaller, dimmer fish behind, swimming a touch slower.
-    vec3 back = fishLayer(r * 1.04, th + 0.4, R, push, burst, holeA, turns * 0.83, t, age, vel, lenPx * 0.7, 0.85, 1.0);
-    vec3 front = fishLayer(r, th, R, push, burst, holeA, turns, t, age, vel, lenPx, 0.55 + 0.35 * school, 0.0);
+    vec3 back = fishLayer(r * 1.04, th + 0.4, R, push, pushPrev, holeA, turns * 0.83, t, turnRate * 0.83, lenPx * 0.7, 0.85, 1.0);
+    vec3 front = fishLayer(r, th, R, push, pushPrev, holeA, turns, t, turnRate, lenPx, 0.55 + 0.35 * school, 0.0);
     float cover = max(front.x, back.x * 0.85) * part;
     bool isFront = front.x >= back.x * 0.85;
     float shine = isFront ? front.y : back.y * 0.55;
@@ -212,11 +260,15 @@ void main() {
     rays += smoothstep(0.35, 1.0, vnoise(vec2(rx * 7.0, t * 0.08))) * 0.6;
     rays += smoothstep(0.4, 1.0, vnoise(vec2(rx * 15.0 + 4.0, t * 0.11))) * 0.4;
     water += inkC * rays * 0.22 * smoothstep(0.1, 1.0, uv.y);
-    float motes = step(0.996, hash21(floor(gl_FragCoord.xy / (3.0 * s1080)) + floor(t * 0.5)));
-    water += inkC * motes * 0.12;
+        // Drifting motes, each a soft speck that rises slowly.
+    vec2 mp = gl_FragCoord.xy / (14.0 * s1080) + vec2(0.0, -t * 0.4);
+    vec2 mid = floor(mp);
+    vec2 mo = fract(mp) - 0.25 - 0.5 * vec2(hash21(mid), hash21(mid + 7.1));
+    float motes = step(0.9, hash21(mid + 3.3)) * exp(-dot(mo, mo) * 900.0);
+    water += inkC * motes * 0.15;
 
     // Fish: dark backs, silver flanks that flash toward the light.
-    float fl = flash * (0.6 + 0.6 * vxEnv) + 0.25;
+    float fl = flash * (0.6 + 0.5 * vxSwell + 1.1 * vxPulse) + 0.25 + 0.3 * vxPulse;
     vec3 silver = mix(inkC, vec3(0.8), 0.55);
     vec3 fishC = mix(silver * 0.2, mix(inkC, vec3(1.0), 0.75) * 1.1, clamp(0.15 + shine * fl, 0.0, 1.0));
     fishC = mix(fishC, acc * 1.2 + 0.2, glint);
@@ -227,7 +279,7 @@ void main() {
     float outA = 1.0;
     // A silver haze of fish too small to pick out fills the body of the ring.
     float band = smoothstep(1.2, 0.6, r / (R * (1.0 + burst * 0.7))) * smoothstep(0.1, 0.45, r / R);
-    float haze = part * band * (0.16 + 0.1 * vxEnv) * (0.7 + 0.3 * vnoise(vec2(th * 5.0 + turns * 20.0, r * 30.0)));
+    float haze = part * band * (0.16 + 0.1 * vxSwell) * (0.7 + 0.3 * vnoise(vec2(cos(th + turns * 4.0), sin(th + turns * 4.0)) * 4.0 + r * 20.0));
     vec3 hazeC = silver * 0.55;
     vec3 under = mix(water, hazeC, haze);
     vec3 outC = mix(under, fishC, cover);

@@ -5,17 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A seventies poster rainbow that is melting: a fat striped arch with glossy bands and inked outlines, its legs and underside sagging into drips that stretch, swell into drops and let go. Every hit shunts the colours one band along the arch, squashes it like jelly and sends fresh drips racing down; the louder the sound, the more it wobbles and the faster it melts.",
-    "PASSES": [
-        {
-            "TARGET": "clock",
-            "PERSISTENT": true,
-            "FLOAT": true,
-            "WIDTH": 1,
-            "HEIGHT": 1
-        },
-        {}
-    ],
+    "DESCRIPTION": "A seventies poster rainbow that is melting: a fat striped arch with glossy bands and inked outlines, its legs and underside sagging into drips that stretch, swell into drops and let go. Every hit slides the colours a band along the arch, squashes it like jelly and lets it spring back, and sends fresh drips racing down; the louder the sound, the more it wobbles and the faster it melts. Colour shift: off, one band or two bands per hit.",
     "INPUTS": [
         { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 6, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play", "Bowls", "Drone", "XY tone", "Analog synth", "Scan synth", "Echo shots", "Build and drop", "Siren", "Acid line", "Dub bass"] },
         { "NAME": "vxAuto", "LABEL": "Comes and goes with its sound", "TYPE": "bool", "DEFAULT": true },
@@ -28,18 +18,13 @@
         { "NAME": "gloss", "LABEL": "Gloss", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Outer bands", "TYPE": "color", "DEFAULT": [1.0, 0.3, 0.2, 1.0] },
         { "NAME": "accent", "LABEL": "Inner bands", "TYPE": "color", "DEFAULT": [0.25, 0.6, 1.0, 1.0] },
-        { "NAME": "vxEnv", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxHit", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxVel", "TYPE": "float", "DEFAULT": 0.7, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
-        { "NAME": "vxCount", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
-        { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxEnergy", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 }
+        { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxFlow", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
+        { "NAME": "vxMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
+        { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 }
     ]
 }*/
-
-// clock (1x1): last count seen (plus 1000), clock time of the last hit, its strength,
-// hits so far (the colour shift).
 
 const float TAU = 6.2831853;
 const int MAX_BANDS = 9;
@@ -76,8 +61,8 @@ float dripSd(vec2 p, float x0, float y0, float w, float L, float u) {
     // The drop that let go, falling away.
     if (u > 0.78) {
         float f = (u - 0.78) / 0.22;
-        vec2 dc = vec2(x0, y0 - L - 0.02 - f * f * 0.5);
-        float dr = w * 1.4 * (1.0 - 0.3 * f);
+        vec2 dc = vec2(x0, y0 - L - 0.02 - f * f * 0.9);
+        float dr = w * 1.4 * (1.0 - 0.3 * f) * smoothstep(1.0, 0.85, f);
         vec2 e = (p - dc) / vec2(dr * 0.9, dr * 1.15);
         d = min(d, (length(e) - 1.0) * dr);
     }
@@ -98,39 +83,24 @@ vec3 bandColour(float i, vec3 c0, vec3 c1, vec3 mid, vec3 deep) {
 
 
 void main() {
-    if (PASSINDEX == 0) {
-        vec4 c = IMG_NORM_PIXEL(clock, vec2(0.5));
-        // The count is stored offset by 1000, so an all-zero texel (a voice
-        // added mid-session) reads as fresh and starts with no hit pending.
-        if (c.r < 500.0) c = vec4(vxCount + 1000.0, TIME - 30.0, 0.0, 0.0);
-        if (abs(vxCount + 1000.0 - c.r) > 0.5) {
-            c.g = TIME;
-            c.b = mix(0.55, 1.0, clamp(vxVel, 0.0, 1.0));
-            c.a = mod(c.a + 1.0, 600.0);
-        }
-        c.r = vxCount + 1000.0;
-        gl_FragColor = c;
-        return;
-    }
-
-    vec4 clk = IMG_NORM_PIXEL(clock, vec2(0.5));
-    float age = TIME - clk.g;
-    if (age < 0.0) age = 30.0;
-    float kick = clk.b * exp(-age * 5.0);
-    // Jelly: a squash that rings out.
-    float jel = clk.b * squash * exp(-age * 4.0) * cos(age * 18.0);
+    float kick = vxPulse;
+    float swl = vxSwell;
+    // Jelly: each hit squashes the arch down and it relaxes as the pulse fades.
+    float jel = squash * (0.85 * kick + 0.15 * swl);
 
     vec2 p = (gl_FragCoord.xy - 0.5 * RENDERSIZE.xy) / RENDERSIZE.y;
     p *= 0.86;
     float px = 0.86 / RENDERSIZE.y;
-    float t = vxPhase * 0.02 * (0.4 + melt) + TIME * 0.03 * (0.4 + melt);
+    // Wobble and drips run on the music's clock: they quicken as the sound rises.
+    float t = vxFlow * (0.25 + 0.6 * melt);
+    float td = vxFlow * (0.15 + 0.35 * melt);
 
     // The arch stands on a base line; squash about that line.
     float yb = -0.06;
     p.y = yb + (p.y - yb) / (1.0 - 0.12 * jel);
     p.x /= 1.0 + 0.08 * jel;
     // Melting wobble, stronger lower down and with the sound.
-    float wob = (0.004 + 0.012 * melt) * (1.0 + 1.5 * vxEnv);
+    float wob = (0.004 + 0.012 * melt) * (1.0 + 1.2 * swl + 0.8 * kick);
     p.x += wob * sin(p.y * 14.0 + t * 2.3) * (1.0 + smoothstep(0.2, -0.3, p.y) * 1.5);
     p.y += wob * 0.6 * sin(p.x * 11.0 - t * 1.7);
 
@@ -145,8 +115,7 @@ void main() {
 
     // Drips: from the legs' feet, carrying the leg's bands, and from the underside.
     float dl = 0.08 + 0.26 * drip;
-    float rate = 0.12 + 0.35 * melt + 0.25 * vxEnergy;
-    float boost = 1.0 + 0.6 * kick * drip;
+    float boost = 1.0 + 0.5 * kick * drip;
     float bw = (Ro - Ri);
     float dd = 1e3;
     float nb = floor(clamp(bands, 3.0, 9.0) + 0.5);
@@ -159,8 +128,8 @@ void main() {
         float h = hash11(fi * 4.13 + 0.7);
         float x0 = side * (Ri + bw * (j + 0.5 + 0.12 * (h - 0.5)) / nb);
         float w = bw / nb * (0.3 + 0.12 * hash11(fi * 2.9));
-        // Each hit jogs the drips' lives forward, so fresh ones race down.
-        float u = fract(t * rate * (0.7 + 0.6 * h) + h + clk.a * 0.13 * drip);
+        // Each hit glides the drips' lives forward an eighth, so fresh ones race down.
+        float u = fract(td * (0.7 + 0.6 * h) + h + vxMorph * 0.125);
         dd = min(dd, dripSd(p, x0, yb, w, dl * (0.6 + 0.6 * hash11(fi * 7.7)) * boost, u));
     }
     for (int i = 0; i < INNER_DRIPS; i++) {
@@ -169,7 +138,7 @@ void main() {
         float x0 = (float(i) - 2.0) / 2.0 * Ri * 0.75 + (h - 0.5) * 0.02;
         float y0 = cy + sqrt(max(Ri * Ri - x0 * x0, 0.0));
         float w = 0.011 + 0.006 * hash11(fi * 2.9);
-        float u = fract(t * rate * (0.6 + 0.5 * h) + h + clk.a * 0.11 * drip);
+        float u = fract(td * (0.6 + 0.5 * h) + h + vxMorph * 0.125);
         dd = min(dd, dripSd(p, x0, y0, w, dl * 0.6 * (0.6 + 0.6 * hash11(fi * 7.7)) * boost, u));
     }
     d = smin(d, dd, 0.018);
@@ -179,8 +148,9 @@ void main() {
     float s = clamp((rr - Ri) / bw, 0.0, 0.9999) * nb;
     float bi = floor(s);
     float bf = fract(s);
-    // The colours shunt one band per hit, sliding quickly into place.
-    float sh = (clk.a - 1.0 + smoothstep(0.0, 0.18, age)) * shift;
+    // The colours slide along by (nearly) one band per hit, gliding with the hit
+    // count; 64 hits make a whole number of palette turns, so the wrap is seamless.
+    float sh = vxMorph * 0.9375 * floor(shift * 2.0 + 0.5);
     vec3 c0 = sat3(ink.rgb, 1.2);
     vec3 c1 = sat3(accent.rgb, 1.2);
     vec3 mid = sat3(mix(ink.rgb, accent.rgb, 0.5), 1.7);
@@ -206,7 +176,7 @@ void main() {
     col += vec3(1.0) * gloss * 0.25 * dripOnly * smoothstep(0.004, 0.0, abs(dd + 0.009));
     // Outline round the whole shape.
     col = mix(col, inkLine, clamp(1.0 + d / (px * 3.0), 0.0, 1.0) * 0.95);
-    col += mid * kick * 0.25;
+    col += mid * kick * 0.3;
 
     float pres = vxPresence;
     vec4 outc;

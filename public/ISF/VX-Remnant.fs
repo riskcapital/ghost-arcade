@@ -5,13 +5,13 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "The glowing shell left by an exploded star: a ragged ring of gas laced with fine filaments, hot fingers of debris reaching outward from inside it and a small pulsing star at the heart. Each hit blasts the shell outward and sends a bright shock ring racing off into space, and the shell slowly settles back; held sound makes the gas burn brighter and the filaments shimmer.",
+    "DESCRIPTION": "The glowing shell left by an exploded star: a ragged ring of gas laced with fine filaments, hot fingers of debris reaching outward from inside it and a small pulsing star at the heart. Each hit swells the shell outward and sends a bright shock front racing off into space while the shell eases back; held sound makes the gas burn brighter and the whole cloud breathe larger, and the music sets how fast the filaments churn.",
     "PASSES": [
         {
-            "TARGET": "clock",
+            "TARGET": "hist",
             "PERSISTENT": true,
             "FLOAT": true,
-            "WIDTH": 1,
+            "WIDTH": 128,
             "HEIGHT": 1
         },
         {}
@@ -28,19 +28,15 @@
         { "NAME": "stars", "LABEL": "Stars", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Shock front", "TYPE": "color", "DEFAULT": [0.35, 0.65, 1.0, 1.0] },
         { "NAME": "accent", "LABEL": "Hot debris", "TYPE": "color", "DEFAULT": [1.0, 0.4, 0.3, 1.0] },
-        { "NAME": "vxEnv", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxHit", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxVel", "TYPE": "float", "DEFAULT": 0.7, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
-        { "NAME": "vxCount", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
         { "NAME": "vxBeat", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
         { "NAME": "vxEnergy", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxFlow", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
+        { "NAME": "vxMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
         { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 }
     ]
 }*/
-
-// clock (1x1): last hit count, seconds since that hit plus one (zero = fresh), how hard it was,
-// and the shell's extra size, which jumps on hits and eases back.
 
 const float TAU = 6.2831853;
 
@@ -93,6 +89,64 @@ float ridge(vec2 p, int oct) {
     return s;
 }
 
+// hist (128x1): the last ~2.5 s of the music, newest at the left, one texel
+// per HSTEP seconds: the pulse in red, the swell in green. A hit becomes a
+// smooth wave that can travel outward (what is at distance d now is the pulse
+// from d / speed seconds ago), and the swell can be eased over a second.
+const float HSTEP = 0.02;
+const float HN = 128.0;
+
+// A texel never written (a fresh buffer: the voice was just added, or the
+// renderer rebuilt its buffers) reads as a best guess from the signals now,
+// so nothing dips; the record heals itself as it scrolls.
+vec4 histTexel(float i) {
+    i = clamp(i, 0.0, HN - 1.0);
+    vec4 h = IMG_NORM_PIXEL(hist, vec2((i + 0.5) / HN, 0.5));
+    if (h.a < 0.5) h = vec4(vxPulse * exp(-i * HSTEP / 0.1), vxSwell, 0.0, 0.0);
+    return h;
+}
+
+// The pulse as it was a seconds ago (zero beyond the record).
+float histAt(float a) {
+    float x = a / HSTEP;
+    if (x >= HN - 1.0) return 0.0;
+    x = max(x, 0.0);
+    float i = floor(x);
+    return mix(histTexel(i).r, histTexel(i + 1.0).r, x - i);
+}
+
+// The swell averaged over the last second: a slow, rounded breath.
+float slowSwell() {
+    float s = 0.0;
+    for (int k = 0; k < 6; k++) {
+        s += histTexel(float(k) * 10.0).g;
+    }
+    return s / 6.0;
+}
+
+// Pass 0: slide the record along by this frame's time and put the newest
+// values at the front.
+vec4 histUpdate() {
+    float dt = clamp(TIMEDELTA, 0.0, 0.1);
+    float i = floor(gl_FragCoord.x);
+    float sh = dt / HSTEP;
+    float src = i - sh;
+    vec2 v;
+    if (src < 0.0) {
+        v = mix(histTexel(0.0).rg, vec2(vxPulse, vxSwell), clamp(-src / max(sh, 1e-4), 0.0, 1.0));
+    } else {
+        float j = floor(src);
+        v = mix(histTexel(j).rg, histTexel(j + 1.0).rg, src - j);
+    }
+    return vec4(v, 0.0, 1.0);
+}
+
+// The pulse a seconds ago, softened over a fifth of a second so light and
+// size build over several frames instead of snapping.
+float histSoft(float a) {
+    return 0.25 * (histAt(a) + histAt(a + 0.06) + histAt(a + 0.12) + histAt(a + 0.18));
+}
+
 // The remnant's light at q for a shell of radius R0: shock filaments
 // (x), hot debris knots (y), inner haze (z) and the shell mask (w).
 vec4 shellLight(vec2 q, float R0, float t, float seed, float n) {
@@ -127,39 +181,20 @@ vec4 shellLight(vec2 q, float R0, float t, float seed, float n) {
 }
 
 void main() {
-    float dt = clamp(TIMEDELTA, 0.0, 0.1);
-    float n = floor(vxCount + 0.5);
-
     if (PASSINDEX == 0) {
-        vec4 c = IMG_NORM_PIXEL(clock, vec2(0.5));
-        // An all-zero texel means a fresh buffer (the voice was just added):
-        // start as if the last hit was long ago. The age is stored plus one,
-        // so a live clock never reads zero there.
-        if (FRAMEINDEX < 2 || c.g < 0.5) c = vec4(n, 31.0, 0.7, 0.0);
-        bool newHit = abs(n - c.r) > 0.5;
-        float age = newHit ? 0.0 : min(c.g - 1.0 + dt, 30.0);
-        float vel = newHit ? clamp(vxVel, 0.2, 1.0) : c.b;
-        // Extra size: kicked up by each hit, easing back over a few seconds.
-        float grow = c.a;
-        if (newHit) grow = min(grow + blast * vel * 0.22, 0.45);
-        grow *= exp(-dt * 0.6);
-        gl_FragColor = vec4(n, age + 1.0, vel, grow);
+        gl_FragColor = histUpdate();
         return;
     }
 
-    vec4 clk = IMG_NORM_PIXEL(clock, vec2(0.5));
-    bool fresh = clk.g < 0.5;
-    float age = fresh ? 30.0 : clk.g - 1.0;
-    if (vxHit > 0.01) age = min(age, (1.0 - clamp(vxHit, 0.0, 1.0)) * 0.1);
-    float vel = fresh ? 0.7 : clk.b;
-    float grow = clk.a;
-    // The blast itself snaps outward fast before the slow ease takes over.
-    grow += blast * vel * 0.12 * (1.0 - exp(-age * 14.0)) * exp(-age * 1.5);
+    // The shell breathes larger with the music, and each hit swells it
+    // outward before it eases back.
+    float kickBack = (histSoft(0.05) + histSoft(0.3) + histSoft(0.55) + histSoft(0.8)) * 0.25;
+    float grow = blast * (0.16 * slowSwell() + 0.08 * vxPulse + 0.18 * kickBack);
 
     vec2 res = RENDERSIZE;
     float px = 1.0 / res.y;
     vec2 p = (gl_FragCoord.xy - 0.5 * res) / res.y;
-    float t = vxPhase * 0.08 + TIME * 0.02;
+    float t = vxFlow * 0.16;
 
     float R0 = (0.27 + 0.14 * size) * (1.0 + grow);
     vec2 q = p;
@@ -172,14 +207,14 @@ void main() {
         float sa = sin(0.5);
         vec2 qa = mat2(ca, sa, -sa, ca) * q;
         vec2 off = vec2(0.0, R0 * 0.55);
-        vec4 la = shellLight((qa - off) * vec2(1.25, 1.0), R0 * 0.62, t, 0.0, n);
-        vec4 lb = shellLight((qa + off) * vec2(1.25, 1.0), R0 * 0.62, t, 5.0, n);
+        vec4 la = shellLight((qa - off) * vec2(1.25, 1.0), R0 * 0.62, t, 0.0, 0.0);
+        vec4 lb = shellLight((qa + off) * vec2(1.25, 1.0), R0 * 0.62, t, 5.0, 0.0);
         L = max(la, lb);
         r = length(q);
         R = R0;
     } else {
         if (shape == 2) q.y /= 0.6;
-        L = shellLight(q, R0, t, 0.0, n);
+        L = shellLight(q, R0, t, 0.0, 0.0);
         r = length(q);
         R = R0;
     }
@@ -190,19 +225,21 @@ void main() {
     float hot = L.y;
     float fill = L.z;
 
-    // The hit: a shock ring racing off and a flash through the gas.
-    float ringR = R * (1.0 + age * 1.6);
-    float ring = exp(-pow((r - ringR) / (0.006 + 0.02 * age), 2.0)) * exp(-age * 1.6) * vel * blast;
+    // Each hit's shock front races outward from the shell: what is at radius
+    // r now left the shell (r / R - 1) / 1.6 seconds ago. The front is where
+    // the pulse rose, so it is thin and bright, with a faint glow behind it.
+    float ringAge = (x - 1.0) / 1.1;
+    float front = max(histAt(ringAge) - histAt(ringAge + 0.06), 0.0) * 2.0 + 0.08 * histAt(ringAge);
+    float ring = front * exp(-max(ringAge, 0.0) * 1.4) * smoothstep(-0.02, 0.03, ringAge) * blast;
     ring *= 0.6 + 0.4 * fbm(dir * 8.0, 2);
-    float flash = exp(-age * 3.5) * vel * blast;
+    float flash = (0.55 * vxPulse + 0.45 * kickBack) * blast;
 
     float pulse = 0.5 + 0.5 * cos(vxBeat * TAU);
-    float burn = 0.6 + 0.6 * vxEnv + 0.3 * vxEnergy + 0.8 * flash;
-    float shimmer = 1.0 + 0.3 * vxEnv * sin(t * 5.0 + shock * 9.0 + hot * 5.0);
+    float burn = 0.6 + 0.6 * vxSwell + 0.3 * vxEnergy + 0.6 * flash;
 
     vec3 inkC = ink.rgb;
     vec3 acc = accent.rgb;
-    vec3 gas = inkC * shock * burn * shimmer
+    vec3 gas = inkC * shock * burn
              + acc * hot * burn * 1.3
              + mix(inkC, acc, 0.5) * fill * burn
              + mix(inkC, vec3(1.0), 0.5) * ring * 1.6;
@@ -229,8 +266,6 @@ void main() {
     float outA = 1.0;
     vec3 outC = space * (1.0 - min(max(lit.r, max(lit.g, lit.b)) * 1.5, 1.0)) + lit + vec3(starL) * (1.0 - shell * 0.5);
     if (vxClear) {
-        // The gas is light: its brightness is its coverage, softened so faint
-        // haze stays see-through and filaments read solid.
         // On its own the gas burns a little hotter so threads and knots read
         // solid; a thin veil of dark gas behind them keeps the bubble's shape.
         // Coverage follows the light's brightest channel (a little ahead of it),

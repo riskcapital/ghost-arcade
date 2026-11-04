@@ -5,17 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A knot tied from a single tube of streaming points, tumbling slowly in space. The points flow along the knot like particles in a loop; those nearest you are large and soft, the far side small and dim. The sound's level fills the tube in, from a sparse ghost at rest to a dense glowing rope when loud, and every hit sends a bright pulse racing round the knot that bulges the tube as it passes. Knot picks the shape.",
-    "PASSES": [
-        {
-            "TARGET": "clock",
-            "PERSISTENT": true,
-            "FLOAT": true,
-            "WIDTH": 1,
-            "HEIGHT": 1
-        },
-        {}
-    ],
+    "DESCRIPTION": "A knot tied from a single tube of streaming points, tumbling slowly in space. The points flow along the knot like particles in a loop; those nearest you are large and soft, the far side small and dim. The sound's level fills the tube in, from a sparse ghost to a dense glowing rope, and three bright swellings run round the knot, flaring and fattening the tube with every hit. The music speeds the flow and the tumbling. Knot picks the shape.",
     "INPUTS": [
         { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 7, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play", "Bowls", "Drone", "XY tone", "Analog synth", "Scan synth", "Echo shots", "Build and drop", "Siren", "Acid line", "Dub bass"] },
         { "NAME": "vxAuto", "LABEL": "Comes and goes with its sound", "TYPE": "bool", "DEFAULT": true },
@@ -28,12 +18,11 @@
         { "NAME": "knot", "LABEL": "Knot", "TYPE": "long", "DEFAULT": 0, "VALUES": [0, 1, 2], "LABELS": ["Trefoil", "Star", "Coil"] },
         { "NAME": "ink", "LABEL": "Rope", "TYPE": "color", "DEFAULT": [1.0, 0.78, 0.45, 1.0] },
         { "NAME": "accent", "LABEL": "Pulses", "TYPE": "color", "DEFAULT": [0.35, 0.6, 1.0, 1.0] },
-        { "NAME": "vxEnv", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxHit", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
-        { "NAME": "vxCount", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
-        { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxEnergy", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 }
+        { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxFlow", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
+        { "NAME": "vxMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
+        { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 }
     ]
 }*/
 
@@ -64,55 +53,42 @@ vec3 knotPos(float ph, vec2 pq, float RR, float rr) {
 }
 
 void main() {
-    float n = floor(vxCount + 0.5);
-
-    // clock (1x1): last count seen, seconds since each of the last two hits.
-    if (PASSINDEX == 0) {
-        vec4 c = IMG_NORM_PIXEL(clock, vec2(0.5));
-        float dt = clamp(TIMEDELTA, 0.0, 0.1);
-        if (FRAMEINDEX < 2) c = vec4(n, 30.0, 30.0, 0.0);
-        vec2 ages = min(c.gb + dt, vec2(30.0));
-        if (abs(n - c.r) > 0.5) ages = vec2(0.0, ages.x);
-        gl_FragColor = vec4(n, ages, 0.0);
-        return;
-    }
-
-    vec4 clk = IMG_NORM_PIXEL(clock, vec2(0.5));
-    vec2 ages = FRAMEINDEX < 2 ? vec2(30.0) : clk.gb;
-    if (vxHit > 0.01) ages.x = min(ages.x, (1.0 - clamp(vxHit, 0.0, 1.0)) * 0.1);
-    if (n < 0.5 && vxHit < 0.01) ages = vec2(30.0);
-
     vec2 res = RENDERSIZE;
     float px = 1.0 / res.y;
     vec2 p = (gl_FragCoord.xy - 0.5 * res) * px;
-    float env = clamp(vxEnv, 0.0, 1.0);
+    float env = clamp(vxSwell, 0.0, 1.0);
+    float pls = clamp(vxPulse, 0.0, 1.0);
 
     vec2 pq = knot == 1 ? vec2(2.0, 5.0) : (knot == 2 ? vec2(3.0, 7.0) : vec2(2.0, 3.0));
     float RR = knot == 2 ? 0.52 : 0.55;
     float rr = knot == 1 ? 0.24 : (knot == 2 ? 0.2 : 0.27);
     float tube = mix(0.025, 0.075, thickness);
 
-    float tclk = TIME * 0.05 + vxPhase * 0.012;
+    // All motion runs on the flow clock, which the music speeds up and slows down.
+    float tclk = vxFlow;
     // Tumble.
-    float ya = tclk * 1.1;
-    float pa = 0.9 + 0.35 * sin(tclk * 0.7);
+    float ya = tclk * 0.5;
+    float pa = 0.9 + 0.4 * sin(tclk * 0.3);
     float cy = cos(ya);
     float sy = sin(ya);
     float cpa = cos(pa);
     float spa = sin(pa);
     mat3 rot = mat3(1.0, 0.0, 0.0, 0.0, cpa, spa, 0.0, -spa, cpa) * mat3(cy, sy, 0.0, -sy, cy, 0.0, 0.0, 0.0, 1.0);
 
-    float swell = 1.0 + 0.06 * env + 0.05 * exp(-ages.x * 4.0) * pulse;
+    float swell = 1.0 + 0.08 * env + 0.1 * pls * pulse;
     // Points stream along the knot.
-    float flowOff = mod((TIME * 0.4 + vxPhase * 0.1) * mix(0.0, 6.0, flow), NRINGS);
-    // Each hit's pulse starts somewhere new and runs round the knot.
-    float pulseA = mod(hash11(n * 3.1) * TAU + ages.x * 3.2, TAU);
-    float pulseB = mod(hash11((n - 1.0) * 3.1) * TAU + ages.y * 3.2, TAU);
-    float fadeA = pulse * exp(-ages.x * 1.2);
-    float fadeB = pulse * exp(-ages.y * 1.2);
-    // How many of each ring's points are showing.
-    float showFrac = clamp(mix(0.35, 0.85, fill) + (vxClear ? 0.1 : 0.0) + mix(0.15, 0.3, fill) * env + 0.25 * fadeA, 0.0, 1.0);
-    float sizePx = mix(0.9, 2.6, pointSize) * res.y / 1080.0;
+    float flowK = mix(0.0, 25.0, flow);
+    float flowOff = mod(tclk * flowK, NRINGS);
+    // Knot parameter covered in about a frame (the flow clock's rate follows the studio's smoothing).
+    float streamStep = flowK * (TAU / NRINGS) * (0.25 + 1.4 * env + 0.9 * pls) / 24.0;
+    // Three bright swellings run round the knot on the flow clock; every surge lights and fattens them.
+    float pulseA = mod(tclk * 0.9, TAU);
+    float fadeA = pulse * (0.15 + 0.35 * env + 1.3 * pls);
+    float fadeB = fadeA;
+    // How many of each ring's points are showing: the sound fills the rope in.
+    float showFrac = clamp(mix(0.35, 0.85, fill) + (vxClear ? 0.1 : 0.0) + mix(0.15, 0.3, fill) * env + 0.1 * pls, 0.0, 1.0);
+    // Never below about a pixel and a quarter, or moving points strobe on smaller outputs.
+    float sizePx = max(mix(0.9, 2.6, pointSize) * res.y / 1080.0, 1.25);
 
     float alpha = 0.0;
     float shadow = 0.0;
@@ -171,24 +147,35 @@ void main() {
                     vec3 core = vec3(RR * cos(pq.x * phr), RR * sin(pq.x * phr), 0.0);
                     vec3 c2 = knotPos(phr + 0.002, pq, RR, rr);
                     vec3 tg = normalize(c2 - c);
+                    // How far a point streams along the knot in about a frame, for its motion streak.
+                    vec3 back = tg * length(c2 - c) / 0.002 * streamStep;
                     vec3 n1 = normalize(c - core);
                     vec3 n2 = normalize(cross(tg, n1));
                     n1 = cross(n2, tg);
                     // Bulge and glow where a pulse is passing.
-                    float dA = abs(mod(phr - pulseA + PI, TAU) - PI);
-                    float dB = abs(mod(phr - pulseB + PI, TAU) - PI);
-                    float pz = fadeA * exp(-dA * dA / 0.02) + fadeB * exp(-dB * dB / 0.02);
+                    float pz = 0.0;
+                    for (int q = 0; q < 3; q++) {
+                        float dA = abs(mod(phr - pulseA - float(q) * TAU / 3.0 + PI, TAU) - PI);
+                        pz += exp(-dA * dA / 0.05);
+                    }
+                    pz *= fadeA;
                     float ri = mod(i + NRINGS, NRINGS);
                     for (int m = 0; m < PER; m++) {
                         float id = ri * 7.0 + float(m);
                         float h1 = hash11(id * 1.731 + 0.3);
-                        if (h1 > showFrac) continue;
+                        // Points fade in and out as the fill changes, never pop.
+                        float vis = smoothstep(showFrac + 0.02, showFrac - 0.12, h1);
+                        if (vis <= 0.0) continue;
                         float ang = float(m) * 2.39996 + ri * 1.3 + hash11(id * 3.3) * 0.8;
                         float rad = tube * (0.6 + 0.4 * hash11(id * 5.1)) * (1.0 + 0.9 * pz);
                         vec3 P = (c + rad * (cos(ang) * n1 + sin(ang) * n2)) * swell;
                         vec3 w = rot * P;
                         vec2 sp = w.xy * FOC / (CAMD - w.z);
-                        float d = length(sp - p) / px;
+                        vec3 wb = rot * (P - back * swell);
+                        vec2 seg = wb.xy * FOC / (CAMD - wb.z) - sp;
+                        float tt = clamp(dot(p - sp, seg) / max(dot(seg, seg), 1e-10), 0.0, 1.0);
+                        float d = length(sp + seg * tt - p) / px;
+                        float streak = length(seg) / px;
                         float zf = clamp(0.5 + 0.5 * w.z / (RR + rr), 0.0, 1.0);
                         // Depth of field: the near side swells into soft dots, the far side shrinks.
                         float blur = clamp((zf - 0.75) / 0.25, 0.0, 1.0);
@@ -197,7 +184,7 @@ void main() {
                         float cov = clamp((dr - d) / soft + 0.5, 0.0, 1.0);
                         shadow = max(shadow, clamp((dr + 1.3 - d) / 0.9, 0.0, 1.0) * mix(0.4, 1.0, zf));
                         if (cov <= 0.0) continue;
-                        float op = cov * mix(vxClear ? 0.8 : 0.4, 1.0, zf) * mix(1.0, 0.6, blur);
+                        float op = vis * cov * mix(vxClear ? 0.8 : 0.4, 1.0, zf) * mix(1.0, 0.6, blur) * dr / (dr + 0.4 * streak);
                         vec3 col = mix(ink.rgb, mix(accent.rgb, vec3(1.0), 0.3), clamp(pz * 1.3, 0.0, 1.0));
                         alpha = alpha + op * (1.0 - alpha);
                         light += col * op * (1.4 + 1.2 * pz) * (vxClear ? mix(1.0, 1.8, zf) : 1.0);
@@ -209,7 +196,7 @@ void main() {
         }
     }
 
-    float gain = 0.85 + 0.4 * env + 0.2 * clamp(vxEnergy, 0.0, 1.0);
+    float gain = 0.85 + 0.4 * env + 0.15 * pls;
     light *= gain;
     float hA = vxClear ? 0.0 : halo * (0.07 + 0.1 * env);
     alpha = alpha + hA * (1.0 - alpha);

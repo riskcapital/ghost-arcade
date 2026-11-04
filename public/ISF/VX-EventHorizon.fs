@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A black hole: a perfectly black shadow ringed by a razor-thin photon ring, its blazing accretion disk swirling round it with the far side bent up and over the top by gravity. The side spinning toward you burns brighter and bluer. Each hit flares the disk, flashes the ring and fires twin jets from the poles; louder sound feeds the disk hotter and spins it faster. With a transparent background the hole and its disk are a solid cut-out.",
+    "DESCRIPTION": "A black hole: a perfectly black shadow ringed by a razor-thin photon ring, its blazing accretion disk swirling round it with the far side bent up and over the top by gravity. The side spinning toward you burns brighter and bluer. The music sets how fast the gas swirls; louder sound feeds the disk hotter, and each hit sends a surge of light spiralling in through the disk, brightens the ring and blows twin jets out of the poles that fade as the surge dies. With a transparent background the hole and its disk are a solid cut-out.",
     "INPUTS": [
         { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 5, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play", "Bowls", "Drone", "XY tone", "Analog synth", "Scan synth", "Echo shots", "Build and drop", "Siren", "Acid line", "Dub bass"] },
         { "NAME": "vxAuto", "LABEL": "Comes and goes with its sound", "TYPE": "bool", "DEFAULT": true },
@@ -17,10 +17,9 @@
         { "NAME": "size", "LABEL": "Size", "TYPE": "float", "DEFAULT": 0.7, "MIN": 0.25, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Near side", "TYPE": "color", "DEFAULT": [0.5, 0.75, 1.0, 1.0] },
         { "NAME": "accent", "LABEL": "Far side", "TYPE": "color", "DEFAULT": [1.0, 0.5, 0.15, 1.0] },
-        { "NAME": "vxEnv", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxHit", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxVel", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
+        { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxFlow", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
         { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 },
         { "NAME": "vxEnergy", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 }
     ]
@@ -73,16 +72,25 @@ float diskLight(float r, vec2 xy, float t) {
     if (inside <= 0.0) {
         return 0.0;
     }
-    // Keplerian swirl: inner gas turns faster.
-    float om = t * 2.2 / pow(r, 1.5);
-    float c = cos(om);
-    float s = sin(om);
-    vec2 q = mat2(c, s, -s, c) * xy;
-    float warp = fbm3(q * 1.1);
-    float bands = 0.5 + 0.5 * sin(r * 6.0 + warp * 11.0);
-    float grain = fbm3(q * 3.0 + 4.0);
+    // Keplerian swirl (inner gas turns faster). The shear is cross-faded between
+    // two staggered cycles so the gas swirls for ever without winding up into
+    // ever finer (flickering) streaks.
+    float kep = 1.0 / pow(r, 1.5);
+    float tex = 0.0;
+    for (int i = 0; i < 2; i++) {
+        float ph = fract(t * 0.35 + 0.5 * float(i));
+        float w = 1.0 - abs(2.0 * ph - 1.0);
+        float om = t * 0.9 + (ph - 0.5) * 3.2 * kep + float(i) * 1.7;
+        float c = cos(om);
+        float s = sin(om);
+        vec2 q = mat2(c, s, -s, c) * xy;
+        float warp = fbm3(q * 1.1);
+        float bands = 0.5 + 0.5 * sin(r * 6.0 + warp * 11.0);
+        float grain = fbm3(q * 3.0 + 4.0);
+        tex += w * (0.45 + 0.55 * bands) * (0.4 + 1.1 * grain);
+    }
     float prof = pow(R_IN / r, 1.9);
-    return inside * prof * (0.45 + 0.55 * bands) * (0.4 + 1.1 * grain);
+    return inside * prof * tex;
 }
 
 void main() {
@@ -90,15 +98,16 @@ void main() {
     vec2 p = (gl_FragCoord.xy - 0.5 * res) / res.y;
     p.y += 0.02;
     float rs = 0.2 * size;
-    float t = vxPhase * 0.04 * (0.4 + 1.6 * spin) + TIME * 0.05;
+    float t = vxFlow * 0.2 * (0.4 + 1.6 * spin);
 
     float rho = length(p) / rs;
     float th = atan(p.y, p.x);
     float k = mix(0.07, 0.42, tilt);
 
-    float feed = vxEnv * 0.7 + vxEnergy * 0.3;
-    float hitK = vxHit * (0.55 + 0.45 * vxVel);
-    float bright = (1.0 + 1.6 * heat) * (1.0 + feed * 0.7 + hitK * 1.1);
+    float feed = clamp(vxSwell * 0.8 + vxEnergy * 0.2, 0.0, 1.0);
+    float pls = clamp(vxPulse, 0.0, 1.0);
+    float hitK = pls * pls * (3.0 - 2.0 * pls);
+    float bright = (1.0 + 1.6 * heat) * (1.0 + feed * 0.8 + hitK * 0.9);
 
     vec3 hot = vec3(1.0, 0.93, 0.82);
     vec3 nearC = mix(hot, ink.rgb, 0.7);
@@ -111,6 +120,14 @@ void main() {
     vec2 dd = vec2(p.x, p.y / k) / rs;
     float dr = length(dd);
     float dl = diskLight(dr, dd, t);
+    // Bright waves of gas spiral inward toward the hole; the pulse lights them.
+    float rip = 0.0;
+    for (int k = 0; k < 2; k++) {
+        float fk = fract(t * 0.45 + 0.5 * float(k));
+        float rk = R_OUT - fk * (R_OUT - R_IN);
+        rip += exp(-pow((dr - rk) / 0.35, 2.0)) * smoothstep(0.0, 0.2, fk) * smoothstep(1.0, 0.75, fk);
+    }
+    dl *= 1.0 + rip * (0.5 * feed + 2.2 * hitK);
     // Doppler: the left side swings toward us.
     float dop = clamp(-dd.x / max(dr, 0.001), -1.0, 1.0);
     vec3 dcol = mix(farC, nearC, 0.5 + 0.5 * dop) * (1.0 + 0.75 * dop);
@@ -149,10 +166,10 @@ void main() {
     alpha = shadow + alpha * (1.0 - shadow);
 
     // --- Photon ring ---
-    float ringW = 0.022 + 0.03 * hitK + 0.01 * feed;
+    float ringW = 0.022 + 0.03 * hitK + 0.012 * feed;
     float ring = exp(-pow((rho - 1.02) / ringW, 2.0)) + 0.25 * exp(-pow((rho - 1.02) / (ringW * 5.0), 2.0));
     float rdop = 1.0 + 0.5 * hdop;
-    vec3 ringC = mix(hot, nearC, 0.3) * ring * (0.9 + 2.0 * hitK + 0.6 * feed) * rdop;
+    vec3 ringC = mix(hot, nearC, 0.3) * ring * (0.9 + 2.4 * hitK + 0.8 * feed) * rdop;
     col += ringC;
     alpha = max(alpha, clamp(ring * 1.4, 0.0, 1.0));
 
@@ -160,9 +177,10 @@ void main() {
     float jy = abs(p.y) / rs;
     float jw = 0.07 + 0.05 * jy;
     float jcore = exp(-pow(p.x / rs / jw, 2.0));
-    float jlen = smoothstep(0.9, 1.4, jy) * exp(-jy * (0.18 - 0.08 * hitK));
+    // The jets reach further the longer the sound swells.
+    float jlen = smoothstep(0.9, 1.4, jy) * exp(-jy * (0.3 - 0.12 * feed - 0.12 * hitK));
     float jKnots = 0.6 + 0.4 * sin(jy * 3.0 - t * 30.0);
-    float jet = jcore * jlen * jKnots * jets * (hitK * 2.2 + feed * 0.5);
+    float jet = jcore * jlen * jKnots * jets * (hitK * 2.6 + feed * 0.9);
     vec3 jetC = mix(nearC, vec3(1.0), 0.4) * jet;
     col += jetC * (1.0 - shadow);
     alpha = max(alpha, clamp(jet * 1.2, 0.0, 1.0) * (1.0 - shadow) + shadow);

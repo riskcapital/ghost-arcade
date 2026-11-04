@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A hypnotic eye in a crown of rays. Its iris is a turning spiral of coloured bands that winds faster as the sound swells, and the eye glances left and right with the pitch. Each hit snaps the pupil small, shoots the rays outward and sends a jolt round the spiral; now and then the eye blinks.",
+    "DESCRIPTION": "A hypnotic eye in a crown of rays. Its iris is a turning spiral of coloured bands that winds faster as the sound swells, and the eye glances left and right with the pitch. Each hit swings the spiral forward, squeezes the pupil, pushes the rays out and lights the iris, all easing back; now and then the eye slowly blinks.",
     "INPUTS": [
         { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 1, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play", "Bowls", "Drone", "XY tone", "Analog synth", "Scan synth", "Echo shots", "Build and drop", "Siren", "Acid line", "Dub bass"] },
         { "NAME": "vxAuto", "LABEL": "Comes and goes with its sound", "TYPE": "bool", "DEFAULT": true },
@@ -13,17 +13,16 @@
         { "NAME": "swirl", "LABEL": "Swirl", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
         { "NAME": "rays", "LABEL": "Rays", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0, "MAX": 1 },
         { "NAME": "gaze", "LABEL": "Glances", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0, "MAX": 1 },
-        { "NAME": "blinks", "LABEL": "Blinks", "TYPE": "float", "DEFAULT": 0.4, "MIN": 0, "MAX": 1 },
+        { "NAME": "blinks", "LABEL": "Blinks", "TYPE": "float", "DEFAULT": 0.3, "MIN": 0, "MAX": 1 },
         { "NAME": "arms", "LABEL": "Spiral arms", "TYPE": "long", "DEFAULT": 3, "VALUES": [1, 2, 3, 4, 6], "LABELS": ["1", "2", "3", "4", "6"] },
         { "NAME": "size", "LABEL": "Size", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Iris", "TYPE": "color", "DEFAULT": [0.1, 0.85, 0.75, 1.0] },
         { "NAME": "accent", "LABEL": "Rays", "TYPE": "color", "DEFAULT": [1.0, 0.25, 0.6, 1.0] },
-        { "NAME": "vxEnv", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxHit", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxVel", "TYPE": "float", "DEFAULT": 0.7, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxFlow", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
+        { "NAME": "vxMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
         { "NAME": "vxGlide", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
-        { "NAME": "vxCount", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
         { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 }
     ]
 }*/
@@ -64,24 +63,26 @@ float almond(vec2 p, float W, float hu, float hl) {
     return max(d, abs(p.x) - W);
 }
 
+
 void main() {
     vec2 p = (gl_FragCoord.xy - 0.5 * RENDERSIZE.xy) / RENDERSIZE.y;
     float px = 1.0 / RENDERSIZE.y;
-    float hit = clamp(vxHit, 0.0, 1.0);
-    float env = clamp(vxEnv, 0.0, 1.0);
-    float kick = hit * (0.5 + 0.5 * vxVel);
-    float t = vxPhase + TIME * 0.1;
+    float env = clamp(vxSwell, 0.0, 1.0);
+    float kick = clamp(vxPulse, 0.0, 1.0);
+    // Every motion runs on the flow clock: the music winds the spiral faster.
+    float t = vxFlow * 1.2;
+    float mph = vxMorph * TAU / 64.0;
 
-    float S = mix(0.9, 1.6, size) * (1.0 + 0.04 * kick);
+    float S = mix(0.9, 1.6, size) * (1.0 + 0.04 * kick + 0.04 * env);
     p /= S;
     px /= S;
 
-    // ---- Blink: a quick close and open now and then.
-    float period = mix(14.0, 3.5, blinks);
-    float bt = TIME / period;
-    float bph = fract(bt) * period;           // seconds into the cycle
-    float skip = step(blinks, hash11(floor(bt) + 3.0) * 0.6);
-    float closeAmt = blinks > 0.01 ? (1.0 - smoothstep(0.0, 0.09, abs(bph - 0.12))) * (1.0 - skip) : 0.0;
+    // ---- Blink: a slow, heavy-lidded close and open now and then, on the
+    // flow clock so its pace eases with the music instead of ticking.
+    float period = mix(8.0, 2.5, blinks);
+    float bph = mod(vxFlow + 2.0, period);
+    float bl = clamp(1.0 - abs(bph - 0.8) / 0.8, 0.0, 1.0);
+    float closeAmt = blinks > 0.01 ? bl * bl * (3.0 - 2.0 * bl) * 0.8 : 0.0;
     float W = 0.36;
     float H = 0.19;
     float hu = H * (1.0 - closeAmt) + 0.0025;
@@ -90,6 +91,8 @@ void main() {
     hu *= 1.0 + 0.12 * env + 0.1 * kick;
 
     float dEye = almond(p, W, hu, hl);
+    // The crown of rays sits on the open eye, so a blink doesn't move it.
+    float dOpen = almond(p, W, (H + 0.0025) * (1.0 + 0.12 * env + 0.1 * kick), H * 0.82 + 0.0025);
     float aa = 1.5 * px;
 
     // ---- Iris and pupil.
@@ -101,7 +104,8 @@ void main() {
     float a = atan(q.y, q.x);
     float nArms = float(arms);
     float wind = mix(1.5, 7.0, swirl);
-    float spinT = t * (0.9 + 2.2 * swirl) + 0.6 * kick;
+    // Hits swing the spiral forward and let it settle back.
+    float spinT = t * (0.7 + 1.4 * swirl) + 0.35 * kick;
     float sp = a * nArms / TAU + log(max(r, 1e-4)) * wind - spinT;
     float band = fract(sp);
     float bandId = floor(sp);
@@ -113,18 +117,17 @@ void main() {
     vec3 bc = which < 0.5 ? c1 : (which < 1.5 ? c2 : mix(c3, c1, 0.3));
     float seam = smoothstep(0.0, 0.08, band) * smoothstep(1.0, 0.86, band);
     vec3 iris = bc * (0.3 + 0.8 * seam) * (0.75 + 0.35 * sin(band * PI));
-    // A jolt travels out along the spiral on a hit.
-    float jolt = exp(-pow((r / ri - (1.0 - hit) * 1.1) * 7.0, 2.0)) * kick;
-    iris += mix(c2, vec3(1.0), 0.5) * jolt * 1.4;
+    // The iris blooms with light on hits.
+    iris *= 1.0 + 0.6 * kick + 0.3 * env;
     // Darker limbal ring and inner sunburst.
     iris *= mix(0.35, 1.0, smoothstep(ri, ri * 0.8, r));
     iris += c1 * 0.25 * smoothstep(ri * 0.55, ri * 0.25, r);
 
-    float rp = ri * clamp(0.3 + 0.22 * env - 0.18 * kick + 0.03 * sin(TIME * 0.9), 0.12, 0.62);
+    float rp = ri * clamp(0.32 + 0.2 * env - 0.15 * kick + 0.03 * sin(t * 0.9), 0.12, 0.62);
     float pupil = 1.0 - smoothstep(rp - aa, rp + aa, r);
     vec3 pupilC = vec3(0.01) + c2 * 0.15 * smoothstep(rp * 0.4, rp, r);
     // Pupil rim glow.
-    float prim = exp(-abs(r - rp) / (0.006 + 0.01 * kick));
+    float prim = exp(-abs(r - rp) / (0.006 + 0.004 * kick + 0.006 * env));
 
     float irisMask = 1.0 - smoothstep(ri - aa, ri + aa, r);
     // Sclera: pale, tinted, shadowed under the lids.
@@ -164,23 +167,29 @@ void main() {
     float gap = 0.035;
     float baseL = mix(0.06, 0.2, rays) * (alt > 0.5 ? 0.6 : 1.0);
     float wob = 0.5 + 0.5 * sin(rid * 1.7 + t * 2.0);
-    float L = baseL * (0.75 + 0.35 * wob + 0.25 * env) * (1.0 + 1.1 * kick * (0.6 + 0.4 * hash11(rid + floor(vxCount))));
-    float u = (dEye - gap) / L;                    // 0 at ray root, 1 at tip
+    // Each hit reshapes the crown a little (vxMorph) and pushes the rays out.
+    float var = 0.5 + 0.5 * sin(rid * 2.3 + mph * 3.0);
+    float L = baseL * (0.75 + 0.35 * wob) * (1.0 + 0.4 * env * (0.6 + 0.4 * var) + 0.9 * kick * (0.7 + 0.3 * var));
+    float u = (dOpen - gap) / L;                    // 0 at ray root, 1 at tip
     float rWidth = (1.0 - u) * 0.36;               // angular half width in cells
     float rayDist = (abs(rf) - rWidth) * TAU / N * length(p);
     float ray = (1.0 - smoothstep(-aa, aa, rayDist)) * step(0.0, u) * step(u, 1.0);
     ray *= smoothstep(0.0, 0.02, u * L);
     vec3 rayC = alt > 0.5 ? c1 : c2;
-    rayC = mix(rayC, vec3(1.0), 0.25 * (1.0 - u) + 0.4 * kick * (1.0 - u));
+    rayC = mix(rayC, vec3(1.0), 0.25 * (1.0 - u) + 0.45 * kick * (1.0 - u) + 0.15 * env * (1.0 - u));
     rayC *= 0.7 + 0.5 * (1.0 - u);
 
     // Halo glow round the whole figure.
-    float glow = exp(-max(dEye, 0.0) / (0.05 + 0.05 * env + 0.06 * kick)) * (1.0 - inEye);
+    float glow = exp(-max(dOpen, 0.0) / (0.05 + 0.05 * env + 0.06 * kick)) * (1.0 - inEye);
     vec3 glowC = mix(c2, c1, 0.5);
 
     // ---- Compose (premultiplied subject).
     vec4 Sb = vec4(glowC * glow * 0.4, glow * 0.4);
     Sb = vec4(rayC, 1.0) * ray + Sb * (1.0 - ray);
+    // Eyelid skin fills what the closing lids cover.
+    float inOpen = 1.0 - smoothstep(-aa, aa, dOpen);
+    vec3 skin = mix(c1 * 0.18, vec3(0.03), 0.4) * (0.8 + 0.4 * smoothstep(-0.1, 0.1, p.y));
+    Sb = vec4(skin, 1.0) * inOpen + Sb * (1.0 - inOpen);
     Sb = vec4(eyeC, 1.0) * inEye + Sb * (1.0 - inEye);
     Sb = vec4(lidC, 1.0) * lid + Sb * (1.0 - lid);
     Sb.a = clamp(max(Sb.a, max(Sb.r, max(Sb.g, Sb.b))), 0.0, 1.0);

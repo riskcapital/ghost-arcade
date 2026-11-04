@@ -5,13 +5,13 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A mandala flower: three rings of glossy pointed petals around a seed-studded heart, each ring turning its own way, set against a poster sunburst. Every hit snaps the petals wide open from the middle outwards, and every few hits the flower re-folds: it closes and blooms again with a new number of petals in each ring. Swelling sound opens it wider.",
+    "DESCRIPTION": "A mandala flower: three rings of glossy pointed petals around a seed-studded heart, each ring turning its own way, set against a poster sunburst. The music turns the rings faster as it rises; every hit pushes the petals wider, inner ring first, and lets them settle; every few hits the flower re-folds: the old petals draw back into the heart as new ones, in new numbers, grow out over them. Swelling sound opens it wider and lights it up.",
     "PASSES": [
         {
-            "TARGET": "clock",
+            "TARGET": "ease",
             "PERSISTENT": true,
             "FLOAT": true,
-            "WIDTH": 1,
+            "WIDTH": 2,
             "HEIGHT": 1
         },
         {}
@@ -28,19 +28,17 @@
         { "NAME": "size", "LABEL": "Size", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Outer petals", "TYPE": "color", "DEFAULT": [1.0, 0.25, 0.5, 1.0] },
         { "NAME": "accent", "LABEL": "Inner petals", "TYPE": "color", "DEFAULT": [1.0, 0.8, 0.2, 1.0] },
-        { "NAME": "vxEnv", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxHit", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxVel", "TYPE": "float", "DEFAULT": 0.7, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
-        { "NAME": "vxCount", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
-        { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxBar", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 }
+        { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxFlow", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
+        { "NAME": "vxMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
+        { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 }
     ]
 }*/
 
-// clock (1x1): last count seen (plus 1000), clock time of the last hit, its strength,
-// hits so far. A second slot would be overkill: the fold time is derived
-// from the same hit.
+// ease (2x1): left texel, the pulse eased once more (quick and slow) and the
+// swell, and the hit count's glide eased (a), so the shapes they move glide rather than jump; right texel, the clock
+// time of the last step (a redraw at the same time does not step).
 
 const float TAU = 6.2831853;
 const float PI = 3.14159265;
@@ -63,12 +61,6 @@ float countFor(float ring, float fold) {
     if (ring < 0.5) return 8.0 + 2.0 * floor(h * 4.0);        // 8..14
     if (ring < 1.5) return 7.0 + floor(h * 5.0);              // 7..11
     return 5.0 + floor(h * 4.0);                               // 5..8
-}
-
-// A spring that runs from 0 to 1 with a lively overshoot.
-float spring(float a) {
-    if (a <= 0.0) return 0.0;
-    return 1.0 - exp(-a * 7.0) * cos(a * 16.0);
 }
 
 // One ring of petals. Returns coverage in .a and colour in .rgb.
@@ -105,36 +97,47 @@ vec4 petals(float r, float a0, float N, float r0, float L, float W, float rotA, 
 
 void main() {
     if (PASSINDEX == 0) {
-        vec4 c = IMG_NORM_PIXEL(clock, vec2(0.5));
-        // The count is stored offset by 1000, so an all-zero texel (a voice
-        // added mid-session) reads as fresh and starts with no hit pending.
-        if (c.r < 500.0) c = vec4(vxCount + 1000.0, TIME - 30.0, 0.0, 0.0);
-        if (abs(vxCount + 1000.0 - c.r) > 0.5) {
-            c.g = TIME;
-            c.b = mix(0.55, 1.0, clamp(vxVel, 0.0, 1.0));
-            c.a = mod(c.a + 1.0, 960.0);
+        vec4 tk = IMG_NORM_PIXEL(ease, vec2(0.75, 0.5));
+        float dt = clamp(TIME - tk.x, 0.0, 0.1);
+        if (gl_FragCoord.x > 1.0) {
+            gl_FragColor = vec4(TIME, dt, 0.0, 0.0);
+            return;
         }
-        c.r = vxCount + 1000.0;
-        gl_FragColor = c;
+        vec4 e = IMG_NORM_PIXEL(ease, vec2(0.25, 0.5));
+        e.x += (vxPulse - e.x) * (1.0 - exp(-dt / 0.15));
+        e.y += (vxSwell - e.y) * (1.0 - exp(-dt / 0.2));
+        e.z += (vxPulse - e.z) * (1.0 - exp(-dt / 0.3));
+        // The hit count's glide, eased again (wrapping 64 -> 0 the short way), so a re-fold takes its time.
+        float dm = vxMorph - e.w;
+        dm -= 64.0 * floor(dm / 64.0 + 0.5);
+        e.w = mod(e.w + dm * (1.0 - exp(-dt / 0.35)), 64.0);
+        gl_FragColor = vec4(clamp(e.xyz, 0.0, 1.0), e.w);
         return;
     }
-
-    vec4 clk = IMG_NORM_PIXEL(clock, vec2(0.5));
-    float age = TIME - clk.g;
-    if (age < 0.0) age = 30.0;
-    float hits = clk.a;
-
-    // Which fold we are on, and whether this hit started a new one.
+    vec4 ez = IMG_NORM_PIXEL(ease, vec2(0.25, 0.5));
+    // Eased once more: push (pulse, quick), sw (swell), slow (pulse, lingering).
+    float push = ez.x;
+    float sw = ez.y;
+    float slow = ez.z;
+    // Re-folding rides the hit count's glide: as the count glides across a fold
+    // boundary (every 1st, 2nd or 4th hit) the old petals draw back into the heart
+    // while the new ones, in new numbers and at a new angle, grow out over them.
+    float m = ez.w;
     float every = refold == 0 ? 1.0 : (refold == 1 ? 2.0 : 4.0);
-    float fold = refold == 3 ? 0.0 : floor(hits / every);
-    bool newFold = refold != 3 && mod(hits, every) < 0.5 && hits > 0.5;
+    float folds = 64.0 / every;
+    float bnd = every * floor((m - 0.5) / every + 0.5) + 0.5;
+    float foldNew = mod(floor((bnd - 0.5) / every) + 1.0, folds);
+    float foldOld = mod(foldNew - 1.0 + folds, folds);
+    float wNew = refold == 3 ? 1.0 : smoothstep(-0.5, 0.5, m - bnd);
+    if (refold == 3) foldNew = 0.0;
+    float fold = wNew > 0.5 ? foldNew : foldOld;
 
     vec2 p = (gl_FragCoord.xy - 0.5 * RENDERSIZE.xy) / RENDERSIZE.y;
     float px = 1.0 / RENDERSIZE.y;
     float sc = 0.8 + 0.45 * size;
     p /= sc;
     px /= sc;
-    float t = vxPhase * 0.015 * (0.3 + turn * 1.7) + TIME * 0.02 * (0.3 + turn);
+    float t = vxFlow * (0.06 + 0.3 * turn);
 
     vec3 c0 = sat3(ink.rgb, 1.15);
     vec3 c1 = sat3(accent.rgb, 1.15);
@@ -142,7 +145,6 @@ void main() {
     vec3 deep = sat3(ink.rgb * accent.rgb + 0.04, 1.5);
     deep *= 0.5 / max(max(deep.r, deep.g), max(deep.b, 0.08));
 
-    float hitK = clk.b * bloom;
     float wid = 0.6 + 0.8 * petalWidth;
 
     float pr0 = length(p);
@@ -151,39 +153,39 @@ void main() {
     vec3 col = vec3(0.0);
     float cover = 0.0;
     float outerEdge = 0.0;
-    float n0 = 8.0;
-    float rot0 = 0.0;
+    // The bead ring keeps its own count and turns on its own, so re-folds never cut it.
+    float n0 = 16.0;
+    float rot0 = -t * 0.6;
     for (int k = 0; k < 3; k++) {
         float ring = float(k);
-        // Each ring blooms a moment after the one inside it.
-        float delay = (2.0 - ring) * 0.05;
-        float ag = age - delay;
-        float open;
-        if (newFold) {
-            // Re-fold: the new petals grow out of the heart and spring open.
-            open = 0.15 + 0.85 * spring(ag * 1.1);
-        } else {
-            open = 1.0 + 0.22 * hitK * exp(-max(ag, 0.0) * 4.0) * sin(clamp(ag, 0.0, 10.0) * 14.0 + 1.2) * step(0.0, ag);
-            open += 0.18 * hitK * exp(-max(ag, 0.0) * 5.0) * step(0.0, ag);
-        }
-        open *= 1.0 + 0.08 * vxEnv;
-        float N = countFor(ring, fold);
+        // Hits push the petals wider: the inner ring at once, the outer ring lingering.
+        float pk = mix(slow, push, ring * 0.5);
+        float open = 1.0 + bloom * (0.2 * pk + 0.15 * vxPulse * (ring * 0.5)) + 0.1 * sw;
+        // Each ring hands over a touch after the one inside it.
+        float wk = refold == 3 ? 1.0 : smoothstep(-0.5, 0.5, m - bnd - (2.0 - ring) * 0.08);
         float r0 = ring < 0.5 ? 0.07 : (ring < 1.5 ? 0.06 : 0.05);
-        float L = (ring < 0.5 ? 0.36 : (ring < 1.5 ? 0.25 : 0.15)) * open;
-        float W = (ring < 0.5 ? 0.05 : (ring < 1.5 ? 0.042 : 0.032)) * wid * mix(0.7, 1.0, clamp(open, 0.0, 1.0));
         float dir = mod(ring, 2.0) < 0.5 ? 1.0 : -1.0;
-        float rotA = dir * t * (1.0 - 0.25 * ring) + ring * 0.4 + fold * 0.7;
         vec3 tip = ring < 0.5 ? c0 : (ring < 1.5 ? c2 : c1);
         vec3 base = ring < 0.5 ? deep : (ring < 1.5 ? c0 * 0.55 : c2 * 0.6);
-        vec4 pe = petals(pr0, pa0, N, r0, L, W, rotA, tip, base, px);
-        // A hit lights the petals from inside.
-        pe.rgb += tip * 0.35 * clk.b * exp(-max(ag, 0.0) * 8.0) * step(0.0, ag);
-        col = mix(col, pe.rgb, pe.a);
-        cover = max(cover, pe.a);
-        if (k == 0) {
-            outerEdge = r0 + L;
-            n0 = N;
-            rot0 = rotA;
+        for (int j = 0; j < 2; j++) {
+            // j = 0: the outgoing petals, j = 1: the incoming ones (drawn on top).
+            float wj = j == 0 ? 1.0 - wk : wk;
+            if (wj < 0.002) continue;
+            float fj = j == 0 ? foldOld : foldNew;
+            // The new petals grow out first; only then do the old ones draw back,
+            // so the flower never thins out mid-change.
+            float grow = j == 0 ? 1.0 - smoothstep(0.4, 1.0, wk) : smoothstep(0.0, 0.6, wk);
+            float oj = open * mix(0.12, 1.0, grow);
+            float N = countFor(ring, fj);
+            float L = (ring < 0.5 ? 0.36 : (ring < 1.5 ? 0.25 : 0.15)) * oj;
+            float W = (ring < 0.5 ? 0.05 : (ring < 1.5 ? 0.042 : 0.032)) * wid * mix(0.55, 1.0, clamp(oj, 0.0, 1.0));
+            float rotA = dir * t * (1.0 - 0.25 * ring) + ring * 0.4 + fj * 0.7;
+            vec4 pe = petals(pr0, pa0, N, r0, L, W, rotA, tip, base, px);
+            // A hit lights the petals from inside.
+            pe.rgb += tip * 0.35 * vxPulse * bloom;
+            col = mix(col, pe.rgb, pe.a);
+            cover = max(cover, pe.a);
+            if (k == 0) outerEdge = max(outerEdge, r0 + L);
         }
     }
 
@@ -195,7 +197,7 @@ void main() {
         float bp = mod(ba0 + 0.5 * sec, sec) - 0.5 * sec;
         float rb = outerEdge * 0.86;
         vec2 bq = vec2(cos(bp) * rr0 - rb, sin(bp) * rr0);
-        float bs = 0.011 * (1.0 + 0.6 * clk.b * exp(-age * 5.0) + 0.3 * vxEnv);
+        float bs = 0.011 * (1.0 + 0.6 * push + 0.3 * sw);
         float bd = length(bq);
         float bead = clamp((bs - bd) / px + 0.5, 0.0, 1.0);
         vec3 bc = mix(c1, vec3(1.0), 0.35 * smoothstep(bs, 0.0, length(bq - vec2(-0.3, 0.35) * bs)));
@@ -213,7 +215,7 @@ void main() {
 
     // The heart: a disc of seeds in rings, with a bright eye.
     float r = length(p);
-    float hr = 0.085 * (1.0 + 0.1 * vxEnv + 0.15 * clk.b * exp(-age * 6.0));
+    float hr = 0.085 * (1.0 + 0.1 * sw + 0.12 * push);
     float hin = clamp((hr - r) / px + 0.5, 0.0, 1.0);
     float ds = 0.014;
     float ringI = floor(r / ds);
@@ -232,7 +234,7 @@ void main() {
     cover = max(cover, hin);
 
     float aspect = RENDERSIZE.x / RENDERSIZE.y;
-    float glow = exp(-max(r - outerEdge * 0.7, 0.0) * 7.0) * (1.0 - cover) * (0.35 + 0.4 * vxEnv + 0.4 * clk.b * exp(-age * 3.0));
+    float glow = exp(-max(r - outerEdge * 0.7, 0.0) * 7.0) * (1.0 - cover) * (0.35 + 0.4 * sw + 0.4 * push);
 
     float pres = vxPresence;
     vec4 outc;

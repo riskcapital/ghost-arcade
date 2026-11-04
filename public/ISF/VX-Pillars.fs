@@ -5,13 +5,13 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "Pillars of creation: towering columns of dark dust rise through glowing gas, lit from behind by unseen stars so every ragged edge burns bright, with wisps boiling off their tips. Each hit sends a flare of light rolling down the columns and sparks a newborn star at a tip; held sound brightens the gas and lengthens the streaming wisps.",
+    "DESCRIPTION": "Pillars of creation: towering columns of dark dust rise through glowing gas, lit from behind by unseen stars so every ragged edge burns bright, with wisps boiling off their tips. Each hit sends a flare of light rolling down the columns and kindles a newborn star at one of the tips; held sound brightens the gas and lengthens the streaming wisps, and the music sets how fast the gas drifts.",
     "PASSES": [
         {
-            "TARGET": "clock",
+            "TARGET": "hist",
             "PERSISTENT": true,
             "FLOAT": true,
-            "WIDTH": 1,
+            "WIDTH": 128,
             "HEIGHT": 1
         },
         {}
@@ -28,18 +28,15 @@
         { "NAME": "stars", "LABEL": "Stars", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Gas", "TYPE": "color", "DEFAULT": [0.3, 0.75, 0.8, 1.0] },
         { "NAME": "accent", "LABEL": "Burning edges", "TYPE": "color", "DEFAULT": [1.0, 0.72, 0.35, 1.0] },
-        { "NAME": "vxEnv", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxHit", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxVel", "TYPE": "float", "DEFAULT": 0.7, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
-        { "NAME": "vxCount", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
         { "NAME": "vxEnergy", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxFlow", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
+        { "NAME": "vxMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
         { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 }
     ]
 }*/
 
-// clock (1x1): last hit count, seconds since that hit plus one (zero = fresh), how hard it was,
-// and a slowly eased copy of the envelope.
 
 const float TAU = 6.2831853;
 
@@ -78,6 +75,64 @@ float fbm(vec2 p, int oct) {
     return s;
 }
 
+// hist (128x1): the last ~2.5 s of the music, newest at the left, one texel
+// per HSTEP seconds: the pulse in red, the swell in green. A hit becomes a
+// smooth wave that can travel outward (what is at distance d now is the pulse
+// from d / speed seconds ago), and the swell can be eased over a second.
+const float HSTEP = 0.02;
+const float HN = 128.0;
+
+// A texel never written (a fresh buffer: the voice was just added, or the
+// renderer rebuilt its buffers) reads as a best guess from the signals now,
+// so nothing dips; the record heals itself as it scrolls.
+vec4 histTexel(float i) {
+    i = clamp(i, 0.0, HN - 1.0);
+    vec4 h = IMG_NORM_PIXEL(hist, vec2((i + 0.5) / HN, 0.5));
+    if (h.a < 0.5) h = vec4(vxPulse * exp(-i * HSTEP / 0.1), vxSwell, 0.0, 0.0);
+    return h;
+}
+
+// The pulse as it was a seconds ago (zero beyond the record).
+float histAt(float a) {
+    float x = a / HSTEP;
+    if (x >= HN - 1.0) return 0.0;
+    x = max(x, 0.0);
+    float i = floor(x);
+    return mix(histTexel(i).r, histTexel(i + 1.0).r, x - i);
+}
+
+// The swell averaged over the last second: a slow, rounded breath.
+float slowSwell() {
+    float s = 0.0;
+    for (int k = 0; k < 6; k++) {
+        s += histTexel(float(k) * 10.0).g;
+    }
+    return s / 6.0;
+}
+
+// Pass 0: slide the record along by this frame's time and put the newest
+// values at the front.
+vec4 histUpdate() {
+    float dt = clamp(TIMEDELTA, 0.0, 0.1);
+    float i = floor(gl_FragCoord.x);
+    float sh = dt / HSTEP;
+    float src = i - sh;
+    vec2 v;
+    if (src < 0.0) {
+        v = mix(histTexel(0.0).rg, vec2(vxPulse, vxSwell), clamp(-src / max(sh, 1e-4), 0.0, 1.0));
+    } else {
+        float j = floor(src);
+        v = mix(histTexel(j).rg, histTexel(j + 1.0).rg, src - j);
+    }
+    return vec4(v, 0.0, 1.0);
+}
+
+// The pulse a seconds ago, softened over a fifth of a second so light
+// builds over several frames instead of snapping.
+float histSoft(float a) {
+    return 0.25 * (histAt(a) + histAt(a + 0.06) + histAt(a + 0.12) + histAt(a + 0.18));
+}
+
 // A leaning column from base a to tip b, thinning from ra to rb.
 float column(vec2 p, vec2 a, vec2 b, float ra, float rb) {
     vec2 pa = p - a;
@@ -103,7 +158,7 @@ float pillarsRaw(vec2 p) {
 // fine ragged edge.
 vec2 pillars(vec2 p, float t) {
     float e = 0.4 + 0.9 * erosion;
-    vec2 w1 = vec2(fbm(p * 1.6 + vec2(0.0, t * 0.015), 3), fbm(p * 1.6 + vec2(5.2, 1.3 - t * 0.015), 3));
+    vec2 w1 = vec2(fbm(p * 1.6 + vec2(0.0, t * 0.035), 3), fbm(p * 1.6 + vec2(5.2, 1.3 - t * 0.035), 3));
     vec2 q = p + w1 * 0.07 * e;
     vec2 w2 = vec2(fbm(q * 4.0 + vec2(2.0, 7.0), 3), fbm(q * 4.0 + vec2(8.0, 3.0), 3));
     q += w2 * 0.035 * e;
@@ -117,35 +172,19 @@ vec2 pillars(vec2 p, float t) {
 }
 
 void main() {
-    float dt = clamp(TIMEDELTA, 0.0, 0.1);
-    float n = floor(vxCount + 0.5);
-
     if (PASSINDEX == 0) {
-        vec4 c = IMG_NORM_PIXEL(clock, vec2(0.5));
-        // An all-zero texel means a fresh buffer (the voice was just added):
-        // start as if the last hit was long ago. The age is stored plus one,
-        // so a live clock never reads zero there.
-        if (FRAMEINDEX < 2 || c.g < 0.5) c = vec4(n, 31.0, 0.7, 0.0);
-        bool newHit = abs(n - c.r) > 0.5;
-        float age = newHit ? 0.0 : min(c.g - 1.0 + dt, 30.0);
-        float vel = newHit ? clamp(vxVel, 0.2, 1.0) : c.b;
-        float env = mix(c.a, vxEnv, 1.0 - exp(-dt * 2.0));
-        gl_FragColor = vec4(n, age + 1.0, vel, env);
+        gl_FragColor = histUpdate();
         return;
     }
 
-    vec4 clk = IMG_NORM_PIXEL(clock, vec2(0.5));
-    bool fresh = clk.g < 0.5;
-    float age = fresh ? 30.0 : clk.g - 1.0;
-    if (vxHit > 0.01) age = min(age, (1.0 - clamp(vxHit, 0.0, 1.0)) * 0.1);
-    float vel = fresh ? 0.7 : clk.b;
-    float env = max(clk.a, vxEnv * 0.6);
+    // Held sound: the swell, partly eased over a second so the gas breathes.
+    float env = 0.5 * vxSwell + 0.5 * slowSwell();
 
     vec2 res = RENDERSIZE;
     vec2 p0 = (gl_FragCoord.xy - 0.5 * res) / res.y;
-    float t = vxPhase * (0.05 + 0.3 * drift) + TIME * 0.02;
+    float t = vxFlow * (0.2 + 0.8 * drift);
     // A slow drift of the view, the pillars sliding against the far gas.
-    vec2 cam = vec2(0.03 * sin(t * 0.05), 0.015 * sin(t * 0.07));
+    vec2 cam = vec2(0.045 * sin(t * 0.09), 0.02 * sin(t * 0.13));
     vec2 p = p0 + cam;
     float px = 1.0 / res.y;
 
@@ -159,10 +198,16 @@ void main() {
     float facing = clamp(dot(grad / max(length(grad), 1e-6), L) * 1.15, -1.0, 1.0);
 
     // The hit: a flare that rolls down from the top of the frame.
-    float front = 0.55 - age * 0.9;
-    float sweep = exp(-pow((p0.y - front) * 5.0, 2.0)) * exp(-age * 0.8) * (0.5 + 0.7 * vel) * flare * 1.6;
-    float flash = exp(-age * 2.5) * (0.4 + 0.6 * vel) * flare;
-    float gain = 0.7 + 0.8 * glow + 0.6 * env + 2.2 * sweep + 1.4 * flash;
+    // The flare: each hit rolls down from the top of the frame as a band of
+    // light; what is at height y now left the top (0.55 - y) / 0.9 s ago.
+    float flareAge = (0.55 - p0.y) / 0.9;
+    float fa = max(flareAge, 0.0);
+    // A bright leading edge where the pulse rose, and a softer glow behind it.
+    float sweepEdge = max(histAt(fa) - histAt(fa + 0.1), 0.0) * 1.8 + 0.45 * histSoft(fa);
+    float sweep = sweepEdge * exp(-fa * 0.8) * smoothstep(-0.2, 0.05, flareAge) * flare * 1.4;
+    // A fast flare of light on the hit, easing away.
+    float flash = (0.3 * vxPulse + 0.7 * histSoft(0.1)) * flare * 0.9;
+    float gain = 0.7 + 0.8 * glow + 0.45 * env + 2.2 * sweep + 1.4 * flash;
 
     // Inside: dark dust, thinner (lit through) near the edges.
     float inside = smoothstep(px * 1.5, -px * 1.5, d);
@@ -197,24 +242,34 @@ void main() {
     wisp *= (0.6 + 0.9 * wisps) * smoothstep(-0.01, 0.01, d);
     vec3 wispC = mix(ink.rgb, accent.rgb, 0.5) * wisp * gain * 0.8;
 
-    // Newborn stars: a hit lights one at a tip.
-    int which = int(mod(n, 3.0));
-    vec2 tip = which == 0 ? vec2(-0.37, 0.26) : (which == 1 ? vec2(0.11, 0.03) : vec2(0.44, -0.19));
-    float sd = length(p - tip);
-    float born = exp(-age * 0.7) * smoothstep(0.0, 0.05, age + 0.03) * (0.4 + 0.6 * vel) * flare;
-    float starCore = exp(-sd * sd / (px * px * 9.0)) + 0.35 * exp(-sd / 0.03);
-    float spikes = exp(-abs(p.x - tip.x) / (px * 1.5)) * exp(-abs(p.y - tip.y) / 0.06)
-                 + exp(-abs(p.y - tip.y) / (px * 1.5)) * exp(-abs(p.x - tip.x) / 0.06);
-    float newStar = born * (starCore + 0.5 * spikes);
+    // Newborn stars: each hit kindles one, moving on to the next tip as the
+    // hits go by (a smooth handover, never a cut).
+    float turnT = vxMorph * (21.0 / 64.0);
+    vec3 tw = vec3(0.5 + 0.5 * cos(TAU * (turnT - vec3(0.0, 1.0, 2.0) / 3.0)));
+    tw = tw * tw * tw * tw;
+    tw /= max(tw.x + tw.y + tw.z, 1e-4);
+    float born = (0.55 * histSoft(0.0) + 0.45 * histSoft(0.45) + 0.35 * histSoft(0.95)) * flare;
+    float newStar = 0.0;
+    for (int k = 0; k < 3; k++) {
+        vec2 tip = k == 0 ? vec2(-0.37, 0.26) : (k == 1 ? vec2(0.11, 0.03) : vec2(0.44, -0.19));
+        float wk = k == 0 ? tw.x : (k == 1 ? tw.y : tw.z);
+        float sd = length(p - tip);
+        float starCore = exp(-sd * sd / (px * px * 9.0)) + 0.35 * exp(-sd / 0.03);
+        float spikes = exp(-abs(p.x - tip.x) / (px * 1.5)) * exp(-abs(p.y - tip.y) / 0.06)
+                     + exp(-abs(p.y - tip.y) / (px * 1.5)) * exp(-abs(p.x - tip.x) / 0.06);
+        newStar += wk * born * (starCore + 0.5 * spikes);
+    }
 
     // Background gas: brighter toward the light, layered and drifting.
     vec2 gq = p0 * 0.97 + cam * 0.3;
-    float g1 = fbm(gq * 2.2 + vec2(t * 0.02, 0.0), 4);
-    float g2 = fbm(gq * 4.5 + vec2(-t * 0.03, 4.0) + g1, 3);
+    float g1 = fbm(gq * 2.2 + vec2(t * 0.05, 0.0), 4);
+    float g2 = fbm(gq * 4.5 + vec2(-t * 0.07, 4.0) + g1, 3);
     float lightUp = smoothstep(-0.6, 0.6, p0.y + 0.15 * g1);
     float gas = (0.35 + 0.65 * lightUp) * (0.45 + 0.55 * smoothstep(-0.4, 0.5, g1 + 0.4 * g2));
     vec3 gasC = mix(ink.rgb * 0.5, mix(ink.rgb, accent.rgb, 0.35), smoothstep(0.0, 0.6, g2 + 0.2)) * gas;
-    gasC *= (0.35 + 0.4 * glow + 0.3 * env + 0.6 * sweep + 0.5 * flash);
+    gasC *= (0.35 + 0.4 * glow + 0.3 * env + 1.3 * sweep + 0.45 * flash);
+    // The flare as a sheet of light rolling down through the gas.
+    gasC += mix(accent.rgb, vec3(1.0), 0.3) * sweep * 0.22 * (0.5 + 0.5 * gas);
     gasC += ink.rgb * 0.02;
     // A light halo behind the pillars' outline.
     gasC += accent.rgb * 0.25 * exp(-max(d, 0.0) * 14.0) * smoothstep(-0.3, 0.8, facing) * gain;

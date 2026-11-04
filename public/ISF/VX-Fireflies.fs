@@ -5,13 +5,13 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A long-exposure photograph of a firefly swarm come to life: hundreds of tiny lights wheel in a slow whirlpool above a dark meadow, each drawing a curved, fading trail that breaks into dashes where it blinked, with soft out-of-focus lights drifting close to the lens. Alone they blink at random; as the music builds they fall into step and the whole swarm pulses on the beat. Every hit blooms the swarm outward in sweeping arcs that slow, curl and drift back together, and the grass below catches their light.",
+    "DESCRIPTION": "A long-exposure photograph of a firefly swarm come to life: hundreds of tiny lights wheel in a slow whirlpool above a dark meadow, each drawing a curved, fading trail that breaks into dashes where it blinked, with soft out-of-focus lights drifting close to the lens. Alone they blink at random; as the music builds they fall into step and the whole swarm pulses on the beat. Every hit blooms the swarm outward in sweeping arcs that slow and drift back together, the music sets how fast the whirlpool turns and how long the trails grow, and the grass below catches their light.",
     "PASSES": [
         {
-            "TARGET": "clock",
+            "TARGET": "hist",
             "PERSISTENT": true,
             "FLOAT": true,
-            "WIDTH": 1,
+            "WIDTH": 128,
             "HEIGHT": 1
         },
         {}
@@ -28,20 +28,16 @@
         { "NAME": "meadow", "LABEL": "Meadow", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Fireflies", "TYPE": "color", "DEFAULT": [0.72, 1.0, 0.4, 1.0] },
         { "NAME": "accent", "LABEL": "Warm light", "TYPE": "color", "DEFAULT": [1.0, 0.72, 0.3, 1.0] },
-        { "NAME": "vxEnv", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxHit", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxVel", "TYPE": "float", "DEFAULT": 0.7, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
-        { "NAME": "vxCount", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
         { "NAME": "vxBeat", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
         { "NAME": "vxEnergy", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxFlow", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
+        { "NAME": "vxMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
         { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 }
     ]
 }*/
 
-// clock (1x1): last hit count, seconds since that hit plus one (so a fresh,
-// all-zero buffer reads as "no hit yet"), how hard it was, and the swarm's
-// free-running blink clock (in blinks).
 
 const float TAU = 6.2831853;
 const float PI = 3.14159265;
@@ -83,24 +79,67 @@ float armField(float r, float th, float R, float spin) {
     return clamp(body * (0.15 + 0.85 * a) + core * 0.8, 0.0, 1.0);
 }
 
-// The bloom on a hit: how far out the swarm has been flung, a seconds after
-// the hit. Fast out, slowing, then drifting home.
-float pushAt(float a, float B) {
-    a = max(a, 0.0);
-    return 1.0 + B * (1.0 - exp(-a * 7.0)) * exp(-a * 1.1);
+// hist (128x1): the last ~2.5 s of the music, newest at the left, one texel
+// per HSTEP seconds: the pulse in red, the swell in green and the bloom (how
+// far the swarm is flung out, built from the pulses) in blue. Trails read the
+// bloom as it was when they were laid down, so they curve out and back.
+const float HSTEP = 0.02;
+const float HN = 128.0;
+
+// A texel never written (a fresh buffer: the voice was just added, or the
+// renderer rebuilt its buffers) reads as a best guess from the signals now,
+// so nothing dips; the record heals itself as it scrolls.
+vec4 histTexel(float i) {
+    i = clamp(i, 0.0, HN - 1.0);
+    vec4 h = IMG_NORM_PIXEL(hist, vec2((i + 0.5) / HN, 0.5));
+    if (h.a < 0.5) h = vec4(vxPulse * exp(-i * HSTEP / 0.1), vxSwell, 0.0, 0.0);
+    return h;
 }
 
-// ...and the extra turn it picks up on the way, so the arcs curl.
-float curlAt(float a, float B) {
-    a = max(a, 0.0);
-    return B * 0.7 * (1.0 - exp(-a * 2.5));
+vec4 histRead(float a) {
+    float x = clamp(a / HSTEP, 0.0, HN - 1.001);
+    float i = floor(x);
+    return mix(histTexel(i), histTexel(i + 1.0), x - i);
 }
 
-// A firefly's flash at blink phase x: a quick bright pulse, a slow fade and
-// a dim glow in between.
+float histAt(float a) {
+    return a / HSTEP >= HN - 1.0 ? 0.0 : histRead(a).r;
+}
+
+// The bloom a seconds ago (0 at rest, up to about 1).
+float bloomAt(float a) {
+    return histRead(a).b;
+}
+
+// Pass 0: slide the record along by this frame's time and put the newest
+// values at the front. The bloom is the pulses felt through a slow spring:
+// out fast after each hit, then easing home within the beat.
+vec4 histUpdate() {
+    float dt = clamp(TIMEDELTA, 0.0, 0.1);
+    float i = floor(gl_FragCoord.x);
+    float sh = dt / HSTEP;
+    float src = i - sh;
+    float k = 0.0;
+    k += 0.45 * histAt(0.05) + 0.6 * histAt(0.15) + 0.4 * histAt(0.3) + 0.18 * histAt(0.5);
+    k += 0.06 * histAt(0.75);
+    k += 0.3 * vxPulse;
+    float bloom = 1.0 - exp(-k * 0.8);
+    vec3 v;
+    if (src < 0.0) {
+        v = mix(histTexel(0.0).rgb, vec3(vxPulse, vxSwell, bloom), clamp(-src / max(sh, 1e-4), 0.0, 1.0));
+    } else {
+        float j = floor(src);
+        v = mix(histTexel(j).rgb, histTexel(j + 1.0).rgb, src - j);
+    }
+    return vec4(v, 1.0);
+}
+
+// A firefly's flash at blink phase x: a quick bright rise, a slow fade and
+// a dim glow in between; continuous all the way round the cycle.
 float flashAt(float x) {
     x = fract(x);
-    return 0.12 + exp(-x * 6.0) * 1.3 + 0.25 * exp(-pow((x - 0.18) * 9.0, 2.0));
+    return 0.12 + smoothstep(0.0, 0.05, x) * exp(-max(x - 0.05, 0.0) * 6.0) * 1.3
+         + 0.25 * exp(-pow((x - 0.2) * 9.0, 2.0));
 }
 
 // Warm-to-cool light for one firefly, from the two set colours.
@@ -110,43 +149,27 @@ vec3 tintFor(float k) {
 }
 
 void main() {
-    float dt = clamp(TIMEDELTA, 0.0, 0.1);
-    float n = floor(vxCount + 0.5);
-
     if (PASSINDEX == 0) {
-        vec4 c = IMG_NORM_PIXEL(clock, vec2(0.5));
-        // An all-zero texel means a fresh buffer (the voice was just added):
-        // start as if the last hit was long ago.
-        if (FRAMEINDEX < 2 || c.g < 0.5) c = vec4(n, 31.0, 0.7, 0.0);
-        bool newHit = abs(n - c.r) > 0.5;
-        float age = newHit ? 0.0 : min(c.g - 1.0 + dt, 30.0);
-        float vel = newHit ? clamp(vxVel, 0.2, 1.0) : c.b;
-        // Free blinking about once every two seconds.
-        float blink = mod(c.a + dt * 0.55, 256.0);
-        gl_FragColor = vec4(n, age + 1.0, vel, blink);
+        gl_FragColor = histUpdate();
         return;
     }
-
-    vec4 clk = IMG_NORM_PIXEL(clock, vec2(0.5));
-    bool fresh = clk.g < 0.5;
-    float age = fresh ? 30.0 : clk.g - 1.0;
-    if (vxHit > 0.01) age = min(age, (1.0 - clamp(vxHit, 0.0, 1.0)) * 0.1);
-    float vel = fresh ? 0.7 : clk.b;
 
     vec2 res = RENDERSIZE;
     float s1080 = res.y / 1080.0;
     vec2 p = (gl_FragCoord.xy - 0.5 * res) / res.y;
-    float t = vxPhase * 0.4 + TIME * 0.12;
+    // All motion runs on the music's flow clock.
+    float t = vxFlow * 0.9;
+    float flowRate = 0.25 + 1.4 * vxSwell + 0.9 * vxPulse;
 
-    // In step: once the music is going, the beat sets everyone's blink.
-    float s = clamp(sync * (0.3 + 0.9 * vxEnergy + 0.5 * vxEnv), 0.0, 1.0);
-    float blink = clk.a + vxPhase * 0.01;
-    float together = mix(blink, vxBeat + floor(blink), step(0.001, vxEnergy) * s);
-    float pulse = exp(-fract(together) * 4.0) * s;
-    float B = shower * (0.35 + 0.65 * vel) * 0.85;
-    float flash = exp(-age * 4.0) * (0.5 + 0.7 * vel);
-    float pushNow = pushAt(age, B);
-    float curlNow = curlAt(age, B);
+    // In step: as the music builds, the beat takes over everyone's blink.
+    float s = clamp(sync * (0.9 * vxEnergy + 0.6 * vxSwell), 0.0, 1.0);
+    float blink = vxFlow * 2.2;
+    float together = vxBeat;
+    float pulse = flashAt(together) * s;
+    float B = shower * 1.25;
+    // A hit: a fast flare of every light, easing off.
+    float flash = 0.65 * vxPulse + 0.35 * histAt(0.15);
+    float pushNow = 1.0 + B * bloomAt(0.0);
 
     // The swarm floats above the grass, seen a little from the side.
     vec2 centre = vec2(0.08 * sin(t * 0.021), 0.07 + 0.03 * sin(t * 0.017));
@@ -158,7 +181,7 @@ void main() {
     float th = atan(q.y, q.x);
     // Screen pixels per unit of swarm space, roughly, for this direction.
     float pxs = res.y * sqrt(cos(th) * cos(th) + SQUASH * SQUASH * sin(th) * sin(th));
-    float R = (0.34 + 0.2 * swarm) * (1.0 + 0.06 * vxEnv);
+    float R = (0.34 + 0.2 * swarm) * (1.0 + 0.08 * vxSwell);
     float spin = t * 0.04;
 
     vec3 L = vec3(0.0);
@@ -179,20 +202,21 @@ void main() {
             float rc = (ring + 0.5) * dr;
             float nCells = max(floor(TAU * rc / dr), 1.0);
             float omega = (0.6 + 0.5 * trails) / (0.3 + rc / R);
-            float headOff = omega * t * 0.12 + curlNow;
+            float headOff = omega * t * 0.12;
             float a = fract((th - headOff) / TAU) * nCells;
             float j0 = floor(a);
             for (int m = -1; m <= 2; m++) {
                 float jw = mod(j0 + float(m), nCells);
                 vec4 h = hash42(vec2(jw, ring) + 3.7);
                 float thH = (jw + 0.5 + (h.x - 0.5) * 0.7) / nCells * TAU + headOff;
-                float dens = armField(rc, thH - curlNow, R, spin);
+                float dens = armField(rc, thH, R, spin);
                 if (h.z > dens * (0.7 + 0.3 * swarm)) continue;
                 float rj = rc + (h.y - 0.5) * dr * 0.7;
                 // How far behind its head this pixel is, along its path.
                 float d = mod(thH - th + PI, TAU) - PI;
-                float lang = (0.9 + 0.9 * h.w) * (0.4 + 1.6 * trails) * dr / max(rc, dr);
-                lang += curlNow - curlAt(age - TRAIL_S, B);
+                // Trails grow with the speed of the flow: a long exposure of a
+                // faster swarm draws longer streaks.
+                float lang = (0.9 + 0.9 * h.w) * (0.4 + 1.6 * trails) * dr / max(rc, dr) * (0.55 + 0.6 * flowRate);
                 float f = d / max(lang, 1e-4);
                 float size = 0.7 + 0.6 * h.y;
                 float headAng = 6.0 * coreR * size / (max(r, 0.02) * pxs);
@@ -201,20 +225,19 @@ void main() {
                 // Radius at that moment: the bloom flings it out and back.
                 // Each drifts a little in or out as it goes, so trails spiral rather than
                 // ring the centre.
-                float rt = rj * pushAt(age - fc * TRAIL_S, B) * (1.0 + (h.y - 0.5) * 0.35 * fc * lang);
+                float rt = rj * (1.0 + B * bloomAt(fc * TRAIL_S)) * (1.0 + (h.y - 0.5) * 0.35 * fc * lang);
                 float across = (r - rt) * pxs;
                 // The light it gave then: dashes where it blinked.
                 float own = blink * (0.7 + 0.6 * h.y) + h.x;
                 float inStep = together + 0.03 * h.x;
-                float phaseNow = mix(own, inStep, s);
-                float lit = flashAt(phaseNow - fc * 0.9);
+                float lit = mix(flashAt(own - fc * 0.9), flashAt(inStep - fc * 0.9), s);
                 float taper = 1.0 - fc;
                 float w = coreR * size * (0.35 + 0.65 * taper);
                 float trailL = exp(-across * across / (2.0 * w * w)) * lit * taper * taper * step(0.0, f) * (0.55 + 0.6 * trails);
                 // The head: a hot point inside a soft bloom.
                 vec2 hd = vec2(d * r * pxs, (r - rj * pushNow) * pxs);
                 float dh2 = dot(hd, hd);
-                float headI = flashAt(phaseNow) + flash * 1.5;
+                float headI = mix(flashAt(own), flashAt(inStep), s) + flash * 1.5;
                 float sz = coreR * size * (1.0 + 0.25 * flash);
                 float core = exp(-dh2 / (2.0 * sz * sz * 0.5));
                 // Bloom and halo end smoothly inside the window this head is
@@ -244,20 +267,19 @@ void main() {
             float rc = (ring + 0.5) * dr;
             float nCells = max(floor(TAU * rc / dr), 1.0);
             float omega = (0.6 + 0.5 * trails) / (0.3 + rc / R) * 0.8;
-            float headOff = omega * t * 0.12 + curlNow * 0.8;
+            float headOff = omega * t * 0.12;
             float a = fract((th - headOff) / TAU) * nCells;
             float j0 = floor(a);
             for (int m = -1; m <= 1; m++) {
                 float jw = mod(j0 + float(m), nCells);
                 vec4 h = hash42(vec2(jw, ring) + 91.3);
                 float thH = (jw + 0.5 + (h.x - 0.5) * 0.7) / nCells * TAU + headOff;
-                if (h.z > armField(rc, thH - curlNow * 0.8, R * 1.05, spin) * 0.6) continue;
+                if (h.z > armField(rc, thH, R * 1.05, spin) * 0.6) continue;
                 float rj = (rc + (h.y - 0.5) * dr * 0.7) * pushF;
                 float d = mod(thH - th + PI, TAU) - PI;
                 vec2 hd = vec2(d * r, r - rj) * pxs;
                 float dh2 = dot(hd, hd);
-                float phaseNow = mix(blink * (0.7 + 0.6 * h.y) + h.x, together + 0.03 * h.x, s);
-                float I = (flashAt(phaseNow) + flash) * 0.55;
+                float I = (mix(flashAt(blink * (0.7 + 0.6 * h.y) + h.x), flashAt(together + 0.03 * h.x), s) + flash) * 0.55;
                 float core = exp(-dh2 / (2.0 * sz * sz));
                 float bloom = exp(-sqrt(dh2) / (sz * 3.0)) * 0.25;
                 L += tintFor(h.w) * (core + bloom) * I;
@@ -267,8 +289,8 @@ void main() {
     }
 
     // The swarm's shared glow, in the shape of its arms, swelling on the beat.
-    float cloudF = armField(r / (1.0 + (pushNow - 1.0) * 0.9), th - curlNow, R, spin);
-    float cloud = cloudF * (0.025 + 0.05 * glow) * (0.6 + 1.0 * pulse + 0.5 * vxEnv + flash * 0.8) / pushNow;
+    float cloudF = armField(r / (1.0 + (pushNow - 1.0) * 0.9), th, R, spin);
+    float cloud = cloudF * (0.025 + 0.05 * glow) * (0.6 + 1.0 * pulse + 0.5 * vxSwell + flash * 0.8) / pushNow;
     cloud *= 0.8 + 0.2 * vnoise(q * 7.0 + vec2(t * 0.05, 0.0));
     L += mix(ink.rgb, accent.rgb, 0.3) * cloud;
 
@@ -301,8 +323,7 @@ void main() {
                 float disc = smoothstep(rb, rb - soft, d1) * smoothstep(rb, rb - soft, d2);
                 // A real lens: a faint fill with a brighter rim and a little texture.
                 float rim = 0.55 + 0.9 * smoothstep(rb * 0.6, rb - soft * 0.5, d1) + 0.1 * vnoise(dd / (6.0 * s1080) + h.xy * 50.0);
-                float phaseNow = mix(blink * (0.5 + 0.4 * h.y) + h.x, together + 0.05 * h.x, s);
-                float I = (0.25 + 0.6 * exp(-fract(phaseNow) * 3.0) + flash * 0.5) * 0.16;
+                float I = (0.25 + 0.45 * mix(flashAt(blink * (0.5 + 0.4 * h.y) + h.x), flashAt(together + 0.05 * h.x), s) + flash * 0.5) * 0.16;
                 L += tintFor(h.y) * disc * rim * I;
                 cover = max(cover, disc * min(I * 1.2, 0.2));
             }
@@ -310,14 +331,14 @@ void main() {
     }
 
     // Filmic tone curve: highlights roll off instead of clipping.
-    vec3 Lx = L * (2.4 + 0.6 * vxEnv);
+    vec3 Lx = L * (2.4 + 0.6 * vxSwell);
     vec3 lightC = clamp((Lx * (2.51 * Lx + 0.03)) / (Lx * (2.43 * Lx + 0.59) + 0.14), 0.0, 1.0);
 
     // Night meadow, lit by the swarm.
     vec2 uv = fragPx / res;
     vec3 inkC = ink.rgb;
     float swarmX = (fragPx.x - centrePx.x) / res.y;
-    float spill = exp(-swarmX * swarmX / (R * R * 2.2)) * (0.7 + 0.6 * pulse + 0.4 * vxEnv + flash * 0.8);
+    float spill = exp(-swarmX * swarmX / (R * R * 2.2)) * (0.7 + 0.6 * pulse + 0.4 * vxSwell + flash * 0.8);
     vec3 sky = mix(inkC * 0.03 + vec3(0.005, 0.007, 0.02), vec3(0.002, 0.003, 0.01), smoothstep(0.1, 1.0, uv.y));
     // Grass: thin, leaning, curved blades in three rows.
     float gx = fragPx.x / res.y;

@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A glowing fractal coral: each branch splits in two, again and again, swaying as if under water, with bright polyps at every tip. A held sound grows it new generations of branches; each hit flares the branches open and makes the tips burst with light. It can grow up from the floor as a sea fan or out from the centre as a round bloom.",
+    "DESCRIPTION": "A glowing fractal coral: each branch splits in two, again and again, swaying as if under water, with bright polyps at every tip. A held sound grows it new generations of branches and quickens the current; each hit flares the branches open, floods the tips with light and lets them sway back. It can grow up from the floor as a sea fan or out from the centre as a round bloom.",
     "INPUTS": [
         { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 7, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play", "Bowls", "Drone", "XY tone", "Analog synth", "Scan synth", "Echo shots", "Build and drop", "Siren", "Acid line", "Dub bass"] },
         { "NAME": "vxAuto", "LABEL": "Comes and goes with its sound", "TYPE": "bool", "DEFAULT": true },
@@ -18,12 +18,10 @@
         { "NAME": "thickness", "LABEL": "Thickness", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Branches", "TYPE": "color", "DEFAULT": [1.0, 0.35, 0.45, 1.0] },
         { "NAME": "accent", "LABEL": "Tips", "TYPE": "color", "DEFAULT": [0.3, 1.0, 0.85, 1.0] },
-        { "NAME": "vxEnv", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxHit", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxVel", "TYPE": "float", "DEFAULT": 0.7, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxFlow", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
         { "NAME": "vxGlide", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
-        { "NAME": "vxCount", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
         { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 }
     ]
 }*/
@@ -97,14 +95,14 @@ vec4 coral(vec2 q, float len, float wid, float levels, float open, float t, floa
 void main() {
     vec2 p = (gl_FragCoord.xy - 0.5 * RENDERSIZE.xy) / RENDERSIZE.y;
     float px = 1.0 / RENDERSIZE.y;
-    float hit = clamp(vxHit, 0.0, 1.0);
-    float env = clamp(vxEnv, 0.0, 1.0);
-    float kick = hit * (0.5 + 0.5 * vxVel);
-    float t = vxPhase * 0.8 + TIME * 0.35;
+    float env = clamp(vxSwell, 0.0, 1.0);
+    float kick = clamp(vxPulse, 0.0, 1.0);
+    // Sway, sap and drift all run on the flow clock: the music quickens the current.
+    float t = vxFlow * 2.0;
 
-    float levels = mix(4.0, 9.0, growth) + 1.6 * env;
+    float levels = mix(4.0, 9.0, growth) + 1.8 * env;
     levels = min(levels, float(DEPTH));
-    float open = mix(0.28, 0.62, spread) + 0.22 * kick + 0.04 * sin(t * 0.31) + 0.05 * (vxGlide - 0.5);
+    float open = mix(0.28, 0.62, spread) + 0.2 * kick + 0.06 * env + 0.04 * sin(t * 0.31) + 0.05 * (vxGlide - 0.5);
     float swayAmt = mix(0.0, 0.22, sway);
     float wid = mix(0.012, 0.034, thickness);
 
@@ -115,7 +113,7 @@ void main() {
     if (bloom) {
         // Six arms out from a small heart.
         float N = 6.0;
-        float ang = atan(p.y, p.x) + t * 0.05;
+        float ang = atan(p.y, p.x) + t * 0.06;
         float sec = TAU / N;
         float a2 = mod(ang + 0.5 * sec, sec) - 0.5 * sec;
         float r = length(p);
@@ -137,13 +135,13 @@ void main() {
     vec3 wood = mix(c1, mix(c1, c2, 0.6), smoothstep(0.3, 1.0, gdepth));
     wood = hueShift(wood, 0.55 * sin(lvl * 0.9 - t * 0.6));
     // Sap: bands of light flow up every branch, faster with the sound.
-    float sapPh = fract(lvl * 0.8 - t * (0.5 + 0.8 * env));
+    float sapPh = fract(lvl * 0.8 - t * 0.6);
     float sap = smoothstep(0.0, 0.15, sapPh) * smoothstep(0.45, 0.15, sapPh);
     // Tube shading: bright core, darker skin.
     float tube = sqrt(max(1.0 - cr.w * cr.w, 0.0));
     vec3 woodC = wood * (0.3 + 0.6 * tube + 0.45 * sap * tube) + mix(wood, vec3(1.0), 0.6) * pow(tube, 8.0) * 0.4;
-    // A pulse of light climbs the coral after each hit.
-    float climb = exp(-pow((gdepth - (1.0 - hit)) * 5.0, 2.0)) * kick;
+    // Hits flood the outer branches with light, fading as the pulse eases.
+    float climb = kick * smoothstep(0.2, 1.0, gdepth);
     woodC += c2 * climb * 0.8 * tube;
     float woodA = 1.0 - smoothstep(-px, px, d);
 

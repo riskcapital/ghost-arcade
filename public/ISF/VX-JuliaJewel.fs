@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A fractal jewel: a Julia set cut like a gem, its curled lobes filled with nested facets that echo its own outline, ringed by a fine filigree halo. The note's pitch slowly reshapes the whole jewel, rolling its lobes into new spirals. Each hit tightens the curls, punches the jewel outward and sends a flash through the facets; a held sound makes the halo burn brighter.",
+    "DESCRIPTION": "A fractal jewel: a Julia set cut like a gem, its curled lobes filled with nested facets that echo its own outline, ringed by a fine filigree halo. The note's pitch slowly reshapes the whole jewel, rolling its lobes into new spirals. Each hit glides the shape a step further round and swells the jewel with a bloom of light through its facets; a held sound winds the curls tighter and makes the halo burn brighter.",
     "INPUTS": [
         { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 6, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play", "Bowls", "Drone", "XY tone", "Analog synth", "Scan synth", "Echo shots", "Build and drop", "Siren", "Acid line", "Dub bass"] },
         { "NAME": "vxAuto", "LABEL": "Comes and goes with its sound", "TYPE": "bool", "DEFAULT": true },
@@ -17,12 +17,11 @@
         { "NAME": "size", "LABEL": "Size", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Jewel", "TYPE": "color", "DEFAULT": [0.35, 0.2, 1.0, 1.0] },
         { "NAME": "accent", "LABEL": "Facets and halo", "TYPE": "color", "DEFAULT": [1.0, 0.75, 0.2, 1.0] },
-        { "NAME": "vxEnv", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxHit", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxVel", "TYPE": "float", "DEFAULT": 0.7, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxFlow", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
+        { "NAME": "vxMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
         { "NAME": "vxGlide", "TYPE": "float", "DEFAULT": 0.3, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
-        { "NAME": "vxCount", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
         { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 }
     ]
 }*/
@@ -44,27 +43,32 @@ float hash21(vec2 p) {
     return fract((p3.x + p3.y) * p3.z);
 }
 
+
 void main() {
     vec2 p = (gl_FragCoord.xy - 0.5 * RENDERSIZE.xy) / RENDERSIZE.y;
     float px = 1.0 / RENDERSIZE.y;
-    float hit = clamp(vxHit, 0.0, 1.0);
-    float env = clamp(vxEnv, 0.0, 1.0);
-    float t = vxPhase + TIME * 0.12;
-    float kick = hit * (0.5 + 0.5 * vxVel);
+    float env = clamp(vxSwell, 0.0, 1.0);
+    float kick = clamp(vxPulse, 0.0, 1.0);
+    // All motion runs on the flow clock, so the music speeds it and slows it.
+    float t = vxFlow * 0.9;
+    // Each hit glides the shape one step on; period 64 so the wrap is seamless.
+    float mph = vxMorph * TAU / 64.0;
 
-    // Frame: a slow turn, a punch outward on each hit.
-    float sc = mix(0.3, 0.52, size) * (1.0 + 0.07 * kick + 0.03 * env);
-    float ang = t * mix(0.0, 0.5, spin) + 0.15 * sin(t * 0.21);
+    // Frame: a slow turn; the jewel breathes with the sound and swells on hits.
+    float sc = mix(0.3, 0.52, size) * (1.0 + 0.07 * kick + 0.06 * env);
+    float ang = t * mix(0.0, 0.3, spin) + 0.15 * sin(t * 0.21);
     float ca = cos(ang), sa = sin(ang);
     vec2 q = mat2(ca, sa, -sa, ca) * p;
     float zpp = 1.2 / sc;              // set units per screen unit
     vec2 z = q * zpp;
 
     // c rides just inside the main cardioid of the Mandelbrot set, so the
-    // Julia set stays one connected, solid jewel. Pitch picks where; hits
-    // push c to the edge, tightening the curls.
-    float th = TAU * (0.08 + 0.6 * morph * vxGlide) + 0.35 * sin(t * 0.13) + 0.2 * sin(t * 0.05 + 1.3);
-    float rr = 0.955 + 0.04 * kick + 0.012 * sin(t * 0.4);
+    // Julia set stays one connected, solid jewel. Pitch picks where, each
+    // hit glides it a step further round, and the swell and pulses push c
+    // towards the edge, winding the curls tighter, then let them relax.
+    float th = TAU * (0.08 + 0.6 * morph * vxGlide) + 0.35 * sin(t * 0.13) + 0.2 * sin(t * 0.05 + 1.3)
+             + morph * (0.45 * sin(mph) + 0.2 * sin(mph * 2.0 + 1.0));
+    float rr = 0.94 + 0.01 * env + 0.012 * kick + 0.006 * sin(t * 0.4);
     vec2 w = rr * vec2(cos(th), sin(th));
     vec2 c = 0.5 * w - 0.25 * cmul(w, w);
 
@@ -105,11 +109,13 @@ void main() {
         float lv = log(max(length(v), 1e-20)) - float(ITER) * log(max(length(lam), 1e-6));
         float av = atan(v.y, v.x) - float(ITER) * atan(lam.y, lam.x);
         float nb = mix(1.2, 4.0, facets);
-        float ring = -lv * nb * 0.5 + floor(vxCount + 0.5) * 0.37 - t * 0.15;
-        float sect = av / TAU * floor(mix(3.0, 9.0, facets) + 0.5);
+        float ring = -lv * nb * 0.5 + vxMorph * 0.375 - t * 0.15;
+        float nSect = floor(mix(3.0, 9.0, facets) + 0.5);
+        float sect = av / TAU * nSect;
         float fr = fract(ring);
         float fs = fract(sect);
-        float cellId = floor(ring) * 7.0 + floor(sect);
+        // mod keeps the cell's colour when the angle wraps round.
+        float cellId = floor(ring) * 7.0 + mod(floor(sect), nSect);
         float h = hash21(vec2(cellId, 3.1));
         // Facet lines: bright seams between cells.
         float seamR = min(fr, 1.0 - fr);
@@ -121,9 +127,9 @@ void main() {
         vec3 fc = mix(inkC, third, 0.35 * h);
         fc = mix(fc, accC, 0.3 * step(0.72, h));
         body = fc * (0.12 + 0.95 * tilt * tilt) * mix(1.0, 0.5, depthT);
-        // Flash travels inward through the rings after a hit.
-        float wave = exp(-pow((fract(ring * 0.25) - (1.0 - hit)) * 6.0, 2.0)) * hit;
-        body += accC * (seam * (0.3 + 0.5 * env) + wave * 0.9);
+        // The seams glow with the sound and bloom on each hit.
+        body += accC * seam * (0.3 + 0.6 * env + 0.9 * kick);
+        body *= 1.0 + 0.4 * kick + 0.15 * env;
         // Specular glint sweeps across the gem.
         float glint = pow(max(0.0, cos(atan(q.y, q.x) * 1.0 - t * 0.6)), 24.0) * 0.6;
         body += mix(accC, vec3(1.0), 0.5) * glint * tilt * 0.4;
@@ -133,10 +139,10 @@ void main() {
     // ---- Coverage: crisp edge, then a filigree halo of escape bands.
     float core = 1.0 - smoothstep(0.0, 1.2, distPx);
     float rim = exp(-distPx / 2.0) * step(0.001, distPx);
-    float reach = mix(10.0, 70.0, halo) * (1.0 + 0.6 * env + 0.5 * kick);
+    float reach = mix(10.0, 70.0, halo) * (1.0 + 0.7 * env + 0.8 * kick);
     float glow = exp(-distPx / reach);
     // Thin contour lines of the escape count: echoes of the outline.
-    float fm = fract(mu * 0.5 - t * 0.35);
+    float fm = fract(sqrt(distPx) * 0.35 - t * 0.25);
     float lineW = 0.06 + 0.04 * env;
     float band = 1.0 - smoothstep(0.0, lineW, min(fm, 1.0 - fm));
     float haloA = glow * (0.1 + 0.85 * band) * mix(0.35, 1.0, halo) * (0.75 + 0.5 * env + 0.4 * kick);
@@ -146,7 +152,7 @@ void main() {
     // Halo first (behind), then the jewel on top.
     S.rgb = haloC * haloA;
     S.a = haloA;
-    vec3 rimC = mix(accC, vec3(1.0), 0.45) * (1.0 + 0.8 * kick);
+    vec3 rimC = mix(accC, vec3(1.0), 0.45) * (1.0 + 0.9 * kick + 0.3 * env);
     vec3 jewel = esc < 0.0 ? body : rimC;
     float ja = max(core, 0.0);
     S = vec4(jewel * ja, ja) + S * (1.0 - ja);

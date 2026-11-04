@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A meteor shower: white-hot streaks with glowing trails burn across the sky, all fanning out from one point beyond the corner of the frame. The louder the sound, the thicker the shower; every hit makes every meteor flare and launches a big fireball that tears across the sky over the beat. With a transparent background only the streaks remain, raking across whatever is underneath.",
+    "DESCRIPTION": "A meteor shower: white-hot streaks with glowing trails burn across the sky, all fanning out from one point beyond the corner of the frame. The music sets their speed, from a slow drift to a racing storm; the louder the sound, the thicker the shower, every hit makes the meteors flare, and while the sound swells a great fireball burns across the sky, shedding fragments. With a transparent background only the streaks remain, raking across whatever is underneath.",
     "INPUTS": [
         { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 3, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play", "Bowls", "Drone", "XY tone", "Analog synth", "Scan synth", "Echo shots", "Build and drop", "Siren", "Acid line", "Dub bass"] },
         { "NAME": "vxAuto", "LABEL": "Comes and goes with its sound", "TYPE": "bool", "DEFAULT": true },
@@ -18,13 +18,10 @@
         { "NAME": "thickness", "LABEL": "Thickness", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Trails", "TYPE": "color", "DEFAULT": [0.35, 0.7, 1.0, 1.0] },
         { "NAME": "accent", "LABEL": "Fireball", "TYPE": "color", "DEFAULT": [0.55, 1.0, 0.6, 1.0] },
-        { "NAME": "vxEnv", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxHit", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxVel", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
-        { "NAME": "vxCount", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 64 },
+        { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
+        { "NAME": "vxFlow", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
         { "NAME": "vxPresence", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 },
-        { "NAME": "vxBeat", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
         { "NAME": "vxEnergy", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 }
     ]
 }*/
@@ -78,7 +75,8 @@ void main() {
     vec2 res = RENDERSIZE;
     float aspect = res.x / res.y;
     vec2 p = (gl_FragCoord.xy - 0.5 * res) / res.y;
-    float t = vxPhase * 0.02 * (0.5 + speed) + TIME * 0.05 * (0.5 + speed);
+    // The music drives the clock: meteors drift at rest and race when it is loud.
+    float t = vxFlow * 0.7 * (0.5 + speed);
 
     vec2 rad = vec2(0.5 * aspect + 0.25, 0.72);
     if (radiant == 1) {
@@ -90,8 +88,9 @@ void main() {
     float r = length(v);
     float a = atan(v.y, v.x);
 
-    float hitK = vxHit * (0.55 + 0.45 * vxVel);
-    float swell = vxEnv * 0.75 + vxEnergy * 0.25;
+    float pls = clamp(vxPulse, 0.0, 1.0);
+    float hitK = pls * pls * (3.0 - 2.0 * pls);
+    float swell = clamp(vxSwell * 0.8 + vxEnergy * 0.2, 0.0, 1.0);
     float w0 = mix(0.0018, 0.005, thickness);
 
     vec3 headC = mix(vec3(1.0), accent.rgb, 0.3);
@@ -115,10 +114,13 @@ void main() {
         float f = fract(tt);
         // Whether this lane fires on this cycle.
         float chance = 0.18 + 0.5 * amount + 0.32 * swell;
-        float on = step(hash11(cyc * 3.1 + lane * 0.37 + fl * 17.0), chance);
+        // Each meteor has a fixed rank; as the sound swells, more ranks fade in
+        // (never popping mid-flight).
+        float rank = hash11(cyc * 3.1 + lane * 0.37 + fl * 17.0);
+        float on = smoothstep(rank - 0.08, rank + 0.08, chance);
         float duty = mix(0.22, 0.35, h2);
         float life = f / duty;
-        if (on > 0.0 && life < 1.0) {
+        if (on > 0.001 && life < 1.0) {
             float laneC = (lane + 0.2 + 0.6 * hash11(cyc + lane * 4.7)) * dA;
             float startR = mix(0.25, 1.9, hash11(cyc * 1.7 + lane));
             if (radiant == 2) {
@@ -133,16 +135,19 @@ void main() {
             vec2 st = streak(s, dp, w, len);
             float env = sin(PI * life);
             env *= env;
-            float b = env * depth * (1.0 + hitK * 2.5 + swell * 0.6);
+            float b = env * depth * on * (1.0 + hitK * 1.6 + swell * 0.8);
             col += headC * st.x * b * 1.6 + tailC * st.y * b * 0.9;
             cover += (st.x * 1.6 + st.y * 1.4) * b;
         }
     }
 
-    // The fireball: launched by each hit, crosses during the beat.
-    float fbOn = fireball * clamp(max(vxEnv, vxEnergy * 0.7) * 1.4, 0.0, 1.0);
+    // The fireball: a big bolide on its own slow track, which burns in as the
+    // sound swells and flares with each pulse.
+    float fbClock = t * 0.32;
+    float sd = floor(fbClock);
+    float prog = fract(fbClock);
+    float fbOn = fireball * smoothstep(0.05, 0.55, swell + 0.4 * pls);
     if (fbOn > 0.001) {
-        float sd = floor(vxCount + 0.5);
         float fa = mix(-0.2, 0.2, hash11(sd * 3.7 + 1.0));
         // Aim the fireball across the middle of the frame.
         vec2 dir0 = normalize(-rad);
@@ -151,7 +156,6 @@ void main() {
         vec2 dirF = vec2(ca * dir0.x - sa * dir0.y, sa * dir0.x + ca * dir0.y);
         float dist0 = length(rad);
         float startR = dist0 - 0.9;
-        float prog = clamp(vxBeat, 0.0, 1.0);
         float headR = startR + prog * 1.5;
         vec2 hp = rad + dirF * headR;
         vec2 rel = p - hp;
@@ -159,10 +163,10 @@ void main() {
         float dp = dot(rel, vec2(-dirF.y, dirF.x));
         // A slight wobble in the trail, as the rock fragments.
         dp += (noise1(s * 18.0 + sd) - 0.5) * 0.006 * smoothstep(0.0, 0.3, s);
-        float w = w0 * 3.2 * (1.0 + hitK);
-        float len = mix(0.35, 1.1, trail) * smoothstep(0.0, 0.25, prog + 0.1);
+        float w = w0 * 3.2 * (1.0 + 0.6 * hitK + 0.3 * swell);
+        float len = mix(0.35, 1.1, trail) * smoothstep(0.0, 0.25, prog);
         vec2 st = streak(s, dp, w, len);
-        float fade = (1.0 - smoothstep(0.75, 1.0, prog)) * fbOn;
+        float fade = smoothstep(0.0, 0.08, prog) * (1.0 - smoothstep(0.75, 1.0, prog)) * fbOn;
         // Fragments shed along the trail.
         float frag = 0.0;
         for (int k = 0; k < 5; k++) {
@@ -172,7 +176,7 @@ void main() {
             vec2 fr = vec2(s - fs, dp - fo);
             frag += exp(-dot(fr, fr) / (w * w * 0.6)) * (0.8 - fk * 0.12);
         }
-        float flash = exp(-dot(rel, rel) / (0.004 + 0.01 * hitK)) * (0.25 + hitK * 0.9);
+        float flash = exp(-dot(rel, rel) / (0.004 + 0.006 * hitK)) * (0.25 + hitK * 0.6);
         vec3 fbHead = mix(vec3(1.0), accent.rgb, 0.45);
         vec3 fbTail = mix(accent.rgb, ink.rgb, 0.35);
         col += (fbHead * (st.x * 2.4 + frag * 1.5) + fbTail * st.y * 1.6 + accent.rgb * flash * 0.5) * fade;
