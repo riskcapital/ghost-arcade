@@ -137,6 +137,7 @@ export const VOICE_SHADERS: readonly VoiceShader[] = [
   { file: 'VX-Maelstrom.fs', name: 'Maelstrom', family: 'dub', pack: 'cosmos', blurb: 'A whirlpool of light winding down in spiral arms into a dark eye' },
   { file: 'VX-Marbling.fs', name: 'Marbling', family: 'bath', pack: 'cosmos', blurb: 'Living paper marbling: drops of ink folded into veins by slow eddies' },
   { file: 'VX-Inkwell.fs', name: 'Inkwell', family: 'bath', pack: 'cosmos', blurb: 'Coloured ink dropped into milky water, rolling into plumes on slow currents' },
+  { file: 'VX-Riverlight.fs', name: 'Riverlight', family: 'bath', pack: 'cosmos', blurb: 'Threads and veils of light rising through water, merging and parting as they climb' },
 ];
 
 export const voiceShaderByFile = (file: string): VoiceShader | undefined => VOICE_SHADERS.find((v) => v.file === file);
