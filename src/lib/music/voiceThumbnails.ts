@@ -11,6 +11,7 @@
 const PLAYING: Record<string, number> = {
   vxPresence: 1, vxEnergy: 0.75, vxEnv: 0.8, vxHit: 0.9, vxVel: 0.8, vxPitch: 0.55,
   vxGlide: 0.4, vxCount: 6, vxPhase: 3.2, vxBeat: 2.4, vxBar: 1, vxBars: 4,
+  vxSwell: 0.7, vxPulse: 0.45, vxFlow: 3.2, vxMorph: 5.6,
 };
 
 /** The shader's text with its sound inputs' defaults set to a phrase playing. */
@@ -27,8 +28,8 @@ export function voiceRespondsTo(code: string): string {
   const out: string[] = [];
   if (uses('vxPitch')) out.push('pitch');
   if (uses('vxVel')) out.push('velocity');
-  if (uses('vxHit') || uses('vxCount')) out.push('hits');
-  if (uses('vxEnergy') || uses('vxEnv')) out.push('level');
+  if (uses('vxHit') || uses('vxCount') || uses('vxPulse') || uses('vxMorph')) out.push('hits');
+  if (uses('vxEnergy') || uses('vxEnv') || uses('vxSwell')) out.push('level');
   if (uses('vxBeat') || uses('vxBar')) out.push('the beat');
   return out.length ? out.join(', ') : 'the sound';
 }

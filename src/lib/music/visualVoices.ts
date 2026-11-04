@@ -140,6 +140,10 @@ export const VOICE_DRIVEN_INPUTS: readonly string[] = [
   'vxBar',
   'vxBars',
   'vxEnergy',
+  'vxSwell',
+  'vxPulse',
+  'vxFlow',
+  'vxMorph',
 ];
 
 const VOICE_DRIVEN_SET = new Set(VOICE_DRIVEN_INPUTS);
@@ -293,10 +297,21 @@ interface SourceState {
   count: number;
   lastOn: number;
   presence: number;
+  /** The envelope eased: a soft rise and a long, smooth fall. */
+  swell: number;
+  /** Hits as an impulse that decays; `pulse` follows it with a soft attack. */
+  kick: number;
+  pulse: number;
+  /** A clock that runs faster as the sound swells and surges, never jumping. */
+  flow: number;
+  /** Hits counted without wrapping, and a spring easing toward them. */
+  hits: number;
+  morph: number;
+  morphVel: number;
 }
 
 function freshState(): SourceState {
-  return { notes: [], hit: 0, vel: 0, pitch: 0, glide: 0, phase: 0, count: 0, lastOn: -Infinity, presence: 0 };
+  return { notes: [], hit: 0, vel: 0, pitch: 0, glide: 0, phase: 0, count: 0, lastOn: -Infinity, presence: 0, swell: 0, kick: 0, pulse: 0, flow: 0, hits: 0, morph: 0, morphVel: 0 };
 }
 
 /** One note's envelope at `time`. */
@@ -373,7 +388,10 @@ export class VoiceSignals {
     this.state(id);
     const next = Math.max(0, Math.min(1, Number.isFinite(level) ? level : 0));
     // An audio track has no notes: a sharp rise in its level counts as a hit.
-    if (next - (this.levels.get(id) ?? 0) > 0.18) this.onsets++;
+    if (next - (this.levels.get(id) ?? 0) > 0.18) {
+      this.onsets++;
+      surge(this.state(id), next);
+    }
     this.levels.set(id, next);
   }
 
@@ -431,6 +449,10 @@ export class VoiceSignals {
       vxBar: fract(this.beat / 4),
       vxBars: Math.floor(this.beat / 4) % COUNT_WRAP,
       vxEnergy: this.energy,
+      vxSwell: state.swell,
+      vxPulse: state.pulse,
+      vxFlow: state.flow,
+      vxMorph: ((state.morph % COUNT_WRAP) + COUNT_WRAP) % COUNT_WRAP,
     };
     for (let i = 0; i < VOICE_NOTE_SLOTS; i++) {
       out[`vxNote${i}`] = sounding[i] ? sounding[i].note / 127 : 0;
@@ -456,6 +478,7 @@ export class VoiceSignals {
     if (state.count === 0 && state.lastOn === -Infinity) state.glide = state.pitch;
     state.count = (state.count + 1) % COUNT_WRAP;
     state.lastOn = event.time;
+    surge(state, event.velocity);
   }
 
   private integrate(time: number): void {
@@ -477,6 +500,7 @@ export class VoiceSignals {
       state.hit *= hitDecay;
       state.glide += (state.pitch - state.glide) * glideStep;
       state.phase = (state.phase + dt * (0.2 + 1.8 * env)) % PHASE_WRAP;
+      smoothSignals(state, env, dt);
       // A Live audio track has a level, not notes: sounding is "louder than a whisper".
       const held = state.notes.some((n) => n.offTime === null) || (this.levels.get(id) ?? 0) > 0.05;
       const active = held || time - state.lastOn < holdSeconds;
@@ -485,6 +509,49 @@ export class VoiceSignals {
       if (id === 'all' || isLiveSource(id)) loud = Math.max(loud, env);
     }
     this.loudness += (loud - this.loudness) * (1 - Math.exp(-dt / LOUDNESS_SECONDS));
+  }
+}
+
+/**
+ * The smooth signals: what visuals should move with, so nothing snaps.
+ *  - swell: the envelope with a 60 ms rise and a 450 ms fall.
+ *  - pulse: each hit as a surge (velocity, stacking on a busy part) that
+ *    eases in over ~35 ms and dies away over ~0.5 s.
+ *  - flow: a clock running at 0.25/s at rest, faster as swell and pulse rise.
+ *  - morph: the hit count on a critically damped spring, so a visual can
+ *    change something per hit as a glide rather than a cut.
+ */
+const SWELL_RISE = 0.06;
+const SWELL_FALL = 0.45;
+const KICK_DECAY = 0.45;
+const PULSE_RISE = 0.035;
+const MORPH_OMEGA = 7;
+
+function surge(state: SourceState, velocity: number): void {
+  const v = Math.max(0, Math.min(1, velocity));
+  state.kick = Math.min(1.25, state.kick + v * (1 - 0.5 * Math.min(1, state.kick)));
+  state.hits += 1;
+}
+
+function smoothSignals(state: SourceState, env: number, dt: number): void {
+  const k = (tau: number) => 1 - Math.exp(-dt / tau);
+  state.swell += (env - state.swell) * k(env > state.swell ? SWELL_RISE : SWELL_FALL);
+  state.kick *= Math.exp(-dt / KICK_DECAY);
+  state.pulse += (Math.min(1, state.kick) - state.pulse) * k(PULSE_RISE);
+  state.flow = (state.flow + dt * (0.25 + 1.4 * state.swell + 0.9 * state.pulse)) % PHASE_WRAP;
+  // Critically damped spring toward the hit count, in small steps so long frames stay stable.
+  let left = dt;
+  while (left > 0) {
+    const h = Math.min(left, 1 / 120);
+    const accel = MORPH_OMEGA * MORPH_OMEGA * (state.hits - state.morph) - 2 * MORPH_OMEGA * state.morphVel;
+    state.morphVel += accel * h;
+    state.morph += state.morphVel * h;
+    left -= h;
+  }
+  // Keep the pair small without moving the gap between them.
+  if (state.hits > 1e6) {
+    state.hits -= 1e6;
+    state.morph -= 1e6;
   }
 }
 
