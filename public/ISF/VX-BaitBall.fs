@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A bait ball: a tight school of silver fish circling as one spinning ring in deep blue water, the scales flashing as they turn toward the light. Each hit is a predator strike: a wave of panic rolls out through the school, flinging the fish outward away from the attack before they circle back and close ranks. The music sets how fast they swim and how big the ball grows.",
+    "DESCRIPTION": "A bait ball: a tight school of silver fish circling as one spinning body in deep blue water, the scales flashing as they turn toward the light. The school drifts and tilts as a whole and, as the music swells, stretches up into a leaning, twisting funnel before settling back into a ball. Each hit is a predator strike: a wave of panic rolls out through the school, flinging the fish outward away from the attack before they circle back and close ranks. The music sets how fast they swim and how big the ball grows.",
     "PASSES": [
         {
             "TARGET": "hist",
@@ -214,21 +214,41 @@ void main() {
 
     // Where the strikes come from: drifts round a little with each hit.
     float holeA = vxMorph * 0.4908739;
-    vec2 centre = vec2(0.06 * sin(t * 0.05), 0.03 * sin(t * 0.07 + 1.0));
-    vec2 rel = p - centre;
-    // Seen a little from the side: the ring is squashed and tilts slowly.
-    float tilt = 0.12 * sin(t * 0.04);
+    // The school as one body. It drifts round the water on a slow loop,
+    // tilts and turns to show its side or its top, and stretches up into a
+    // spiralling funnel as the music swells: each ring of fish is lifted
+    // and swung sideways by an amount that grows with its radius, so the
+    // rings stack into a leaning, twisting tornado and settle back into a
+    // ball. All of it runs on the flow clock; the size of it on the swell.
+    float sw = slowSwell();
+    float aspect = res.x / res.y;
+    float tour = vxFlow * 0.12 + TIME * 0.07;
+    vec2 centre = vec2(0.24 * aspect * sin(tour), 0.08 * sin(2.0 * tour + 0.8) - 0.1);
+    float tilt = 0.45 * sin(vxFlow * 0.11 + 0.5 + TIME * 0.03) + 0.15 * sin(vxFlow * 0.23);
+    float squash = 0.62 + 0.22 * sin(vxFlow * 0.09 + 1.7);
+    // Kept short of folding the rings over each other.
+    float lift = min((0.3 + 0.45 * sw + 0.15 * vxSwell) * (0.6 + 0.4 * sin(vxFlow * 0.13 + 2.0)), 0.6);
+    float swayA = 0.06 + 0.09 * sw;
     float ct = cos(tilt);
     float st = sin(tilt);
-    rel = mat2(ct, st, -st, ct) * rel;
-    rel.y /= 0.78;
+    vec2 q = mat2(ct, -st, st, ct) * (p - centre);
+    // Invert the funnel: the lift and sway depend on the ring's own radius,
+    // so settle on it in a few steps.
+    float rr = length(vec2(q.x, q.y / squash));
+    vec2 rel = q;
+    for (int k = 0; k < 4; k++) {
+        float liftY = lift * rr * squash;
+        float sway = swayA * sin(rr * 9.0 - vxFlow * 0.9) * smoothstep(0.0, 0.25, rr);
+        rel = vec2(q.x - sway, (q.y - liftY) / squash);
+        rr = mix(rr, length(rel), 0.75);
+    }
     float part = 1.0;
     float r = length(rel);
     float th = atan(rel.y, rel.x);
 
     // The panic wave: rolls out from the middle, pushing each ring of fish
     // outward as it passes and letting them drift back.
-    float burst = scatter * (0.6 * histAt(0.02 + r * 1.4) + 0.4 * histSoft(0.1 + r * 1.4));
+    float burst = scatter * histSoft(0.03 + r * 1.4);
     float R = (0.27 + 0.16 * school) * (1.0 + 0.14 * slowSwell() + 0.05 * sin(t * 0.21));
     // Undo the burst so each fish keeps its place in its ring.
     // The fish nearest the strike flee hardest, so the ball bulges away
@@ -238,7 +258,7 @@ void main() {
     float push = 1.0 + burst * pushShape;
     // Where the strike had pushed them a frame ago, for motion blur.
     float dtF = clamp(TIMEDELTA, 0.008, 0.04);
-    float burstPrev = scatter * (0.6 * histAt(0.02 + r * 1.4 + dtF) + 0.4 * histSoft(0.1 + r * 1.4 + dtF));
+    float burstPrev = scatter * histSoft(0.03 + r * 1.4 + dtF);
     float pushPrev = 1.0 + burstPrev * pushShape;
 
     float lenPx = (12.0 + 14.0 * fishSize) * s1080;
