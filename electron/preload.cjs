@@ -166,6 +166,9 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'native_preview_get_status',
   // Deck A/B confidence monitors — named presenter views beside Program
   'deck_monitor_attach', 'deck_monitor_detach',
+  // Preview monitor — program and decks on a display of the operator's own
+  'preview_monitor_get_state', 'preview_monitor_open', 'preview_monitor_close',
+  'preview_monitor_set_layout', 'preview_monitor_tiles', 'preview_monitor_status',
   // Native output live recording — main-process IOSurface capture
   'native_output_recording_start', 'native_recording_mux_audio', 'native_output_recording_stop',
   'native_recording_codecs', 'native_renderer_set_record_target', 'native_renderer_get_record_target_state',
@@ -214,7 +217,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * Returns a cleanup function that removes the listener.
    */
   on: (channel, callback) => {
-    const allowed = ['app-before-quit', 'app-quit-requested', 'director-stream-chunk', 'director-stream-end', 'demo-download-progress', 'spout-osr-status', 'texshare-atlas-status', 'stage3d-fullscreen-changed', 'projection-sim-fullscreen-changed', 'sim-window-moved', 'video-converter-progress', 'video-loop-progress', 'open-project-file', 'project-package-progress', 'win-maximized-changed'];
+    const allowed = ['app-before-quit', 'app-quit-requested', 'director-stream-chunk', 'director-stream-end', 'demo-download-progress', 'spout-osr-status', 'texshare-atlas-status', 'stage3d-fullscreen-changed', 'projection-sim-fullscreen-changed', 'sim-window-moved', 'video-converter-progress', 'video-loop-progress', 'open-project-file', 'project-package-progress', 'win-maximized-changed', 'preview-monitor-state', 'preview-monitor-status'];
     if (!allowed.includes(channel)) return () => {};
     const handler = (_event, ...args) => callback(...args);
     ipcRenderer.on(channel, handler);

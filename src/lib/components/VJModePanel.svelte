@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PreviewMonitorControl from './PreviewMonitorControl.svelte';
   import VJGroups from './VJGroups.svelte';
   import VJFluxPanel from './VJFluxPanel.svelte';
   import StageFxChaseControls from './StageFxChaseControls.svelte';
@@ -4499,6 +4500,7 @@
             <path d="M21.5 7.5v11" />
           </svg>
         </button>
+        <PreviewMonitorControl recording={vjIsRecording} />
         <!-- Same glyph mapping mode's Stage Sim button uses, so the two
              modes read as the same destination. -->
         <button class="minimize-btn stage-sim-btn" onclick={() => window.dispatchEvent(new CustomEvent('open-stage3d'))} title="Open Stage Simulator" aria-label="Open Stage Simulator">

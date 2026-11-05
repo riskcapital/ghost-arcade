@@ -4681,6 +4681,9 @@ struct App {
     /// The last frame drew at least one deck-tagged layer into a confidence
     /// monitor. Buys exactly one clearing monitor pass when both banks empty.
     deck_monitors_lit: bool,
+    /// Width of the deck confidence monitors' textures. 480 suits the small
+    /// deck panes; a Preview monitor on its own display asks for more.
+    deck_monitor_width: u32,
     output_window_attached: bool,
     /// The composite size set by the project (set_output). While a
     /// fullscreen output window shows it, the window's own size no longer
@@ -5168,6 +5171,7 @@ impl App {
             auto_present_requested: false,
             pending_render_retry: false,
             deck_monitors_lit: false,
+            deck_monitor_width: 480,
             output_window_attached: false,
             output_size_configured: false,
             output_window_fullscreen: false,
@@ -6525,6 +6529,11 @@ impl App {
             }
             "output_shared_texture_snapshot" | "get_output_shared_texture_snapshot" => {
                 self.output_shared_texture_snapshot(&req.params)
+            }
+            "set_deck_monitor_width" => {
+                let width = req.params.get("width").and_then(Value::as_u64).unwrap_or(480);
+                self.deck_monitor_width = deck_monitor_width(width);
+                Ok(json!({ "width": self.deck_monitor_width }))
             }
             "deck_monitor_state" | "get_deck_monitor_state" => Ok(self.tag_presenter_info(
                 self.renderer
@@ -13062,7 +13071,7 @@ impl App {
         // resident in the monitors' own textures. `deck_monitors_lit` buys
         // that one clearing pass and then lets the monitors idle again.
         if render_result.is_ok() && (deck_monitors_have_content || deck_monitors_were_lit) {
-            let monitor_width: u32 = 480;
+            let monitor_width: u32 = self.deck_monitor_width;
             let monitor_height: u32 = ((u64::from(monitor_width)
                 * u64::from(renderer.config.height))
                 / u64::from(renderer.config.width.max(1)))
@@ -26554,6 +26563,12 @@ fn linux_x11_unavailable_reason() -> Option<&'static str> {
     }).as_deref()
 }
 
+/// The deck monitors' texture width a caller may ask for: even, and between a
+/// small pane's 240 and a full-HD tile's 1920.
+fn deck_monitor_width(requested: u64) -> u32 {
+    (requested.clamp(240, 1920) as u32) & !1
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut builder = EventLoop::<UserEvent>::with_user_event();
     #[cfg(target_os = "macos")]
@@ -34676,6 +34691,14 @@ fn completed_gpu_frame_schedule(last: Instant, now: Instant, period: Duration, r
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn deck_monitor_width_is_even_and_bounded() {
+        assert_eq!(super::deck_monitor_width(480), 480);
+        assert_eq!(super::deck_monitor_width(961), 960);
+        assert_eq!(super::deck_monitor_width(10), 240);
+        assert_eq!(super::deck_monitor_width(8000), 1920);
+    }
     #[test]
     fn isf_pass_state_survives_quality_and_size_changes() {
         use super::isf_pass_state_key as key;

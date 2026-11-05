@@ -57,6 +57,10 @@ const isSliceDisplay = mode === 'slice-display';
 // texture that the native addon fans out to per-name senders. See
 // SliceAtlasApp.svelte + docs/multi-slice-zerocopy-plan.md.
 const isSliceAtlas = mode === 'slice-atlas';
+// `preview-monitor` is the operator's own display: the program and the decks
+// drawn by native presenter views under a page that only adds names and
+// status. See PreviewMonitorApp.svelte.
+const isPreviewMonitor = mode === 'preview-monitor';
 // Dev/QA escape hatch: `?mode=mobile-remote` mounts the desktop mobile
 // companion directly in a browser. The native iOS/Android standalone app
 // lives behind src/native-mobile-main.ts + vite.config.native-mobile.ts so
@@ -69,7 +73,7 @@ if (isSpoutOutput && !window.__SPOUT_OSR_MODE__) {
   try { (window as any).__SPOUT_OSR_MODE__ = true; } catch { /* already set by preload */ }
 }
 
-if ((isOutputWindow || isWebRTCDisplay || isWebGPUDisplay || isSliceDisplay || isSliceAtlas || isStage3DWindow || isProjectionSimWindow) && !(window as any).__OUTPUT_WINDOW_MODE__) {
+if ((isOutputWindow || isWebRTCDisplay || isWebGPUDisplay || isSliceDisplay || isSliceAtlas || isStage3DWindow || isProjectionSimWindow || isPreviewMonitor) && !(window as any).__OUTPUT_WINDOW_MODE__) {
   try { (window as any).__OUTPUT_WINDOW_MODE__ = true; } catch { /* already set by preload */ }
 }
 
@@ -151,6 +155,11 @@ async function init() {
     startAudioBroadcastReceiver({ onFrame: (frame) => audioStore.injectBroadcastedFrame(frame) });
     startModulationBroadcastReceiver();
     mount(SliceAtlasApp, {
+      target: document.getElementById('app')!,
+    });
+  } else if (isPreviewMonitor) {
+    const { default: PreviewMonitorApp } = await import('./PreviewMonitorApp.svelte');
+    mount(PreviewMonitorApp, {
       target: document.getElementById('app')!,
     });
   } else if (isStage3DWindow) {

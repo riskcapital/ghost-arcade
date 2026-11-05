@@ -30,6 +30,15 @@ import {
 } from './native-preview-geometry.js';
 import { createJsSourceHost, JS_SOURCE_SCHEME } from './js-source-host.js';
 import { physicalOutputWindowArgs } from './output-window-placement.js';
+import {
+  DEFAULT_DECK_MONITOR_WIDTH,
+  PREVIEW_MONITOR_DECK_WIDTH,
+  PREVIEW_MONITOR_TILES,
+  displayFingerprint,
+  findPreviewMonitorDisplay,
+  previewMonitorTexture,
+  previewMonitorViewName,
+} from './preview-monitor.js';
 // License system removed in OSS build — see src/lib/stores/license.ts.
 
 // The product this build is. Studio and Pro install side by side.
@@ -3891,6 +3900,252 @@ function stopDeckMonitorPump() {
   }
   deckMonitorLastBinding.clear();
   deckMonitorLastFrame.clear();
+}
+
+// ── Preview monitor ─────────────────────────────────────────────────────
+// A display of its own for the operator: the program (what goes out, before
+// any Screen's warp) and, with the crossfader on, Deck A and Deck B, beside
+// the Live Output on the projector. A borderless fullscreen window holds
+// three named presenter views, fed by the same core textures the editor
+// preview and the deck panes use: the pictures never pass through the page.
+// The page around them only draws names and the status line.
+let previewMonitorWindow = null;
+/** Where it was put and how, kept while its display is unplugged so it comes back. */
+let previewMonitorWanted = null; // { displayId, fingerprint, layout }
+let previewMonitorDisplayId = null;
+const previewMonitorAttached = new Set(); // tiles with a presenter view
+const previewMonitorLastBinding = new Map(); // tile -> binding
+let previewMonitorPump = null;
+let previewMonitorPumpInFlight = false;
+let previewMonitorPumpGeneration = 0;
+let previewMonitorDecks = false; // the crossfader is on: there are decks to show
+let previewMonitorAspect = 16 / 9;
+let previewMonitorWidthCore = -1; // the core instance last told the deck width
+let previewMonitorReopenTimer = null;
+
+function previewMonitorSupported() {
+  if (!isMac && !isWin) return { supported: false, reason: 'The Preview monitor needs macOS or Windows.' };
+  const addon = nativePreviewAddon || loadNativePreviewAddon();
+  const setter = isWin ? 'monitorSetSharedTexture' : 'monitorSetIOSurface';
+  if (!addon || typeof addon.monitorAttach !== 'function' || typeof addon[setter] !== 'function') {
+    return { supported: false, reason: 'The native presenter is not available in this build.' };
+  }
+  return { supported: true, reason: null };
+}
+
+function previewMonitorPublicState() {
+  const open = !!previewMonitorWindow && !previewMonitorWindow.isDestroyed();
+  return {
+    ...previewMonitorSupported(),
+    open,
+    displayId: open ? previewMonitorDisplayId : null,
+    // Waiting for its display to come back.
+    waiting: !open && !!previewMonitorWanted,
+    wanted: previewMonitorWanted,
+    layout: previewMonitorWanted?.layout ?? 'multiview',
+  };
+}
+
+/** Tell the main window (its button) and the Preview monitor (its page) what changed. */
+function broadcastPreviewMonitorState() {
+  const state = previewMonitorPublicState();
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('preview-monitor-state', state);
+  if (previewMonitorWindow && !previewMonitorWindow.isDestroyed()) {
+    previewMonitorWindow.webContents.send('preview-monitor-state', { ...state, decks: previewMonitorDecks, aspect: previewMonitorAspect });
+  }
+}
+
+function setCoreDeckMonitorWidth(width) {
+  previewMonitorWidthCore = nativeRendererBroker.coreInstance;
+  void nativeRendererBroker.invoke('native_renderer_set_deck_monitor_width', { width }).catch(() => {});
+}
+
+function detachPreviewMonitorTile(tile) {
+  if (!previewMonitorAttached.has(tile)) return;
+  previewMonitorAttached.delete(tile);
+  previewMonitorLastBinding.delete(tile);
+  try { nativePreviewAddon?.monitorDetach?.(previewMonitorViewName(tile)); } catch { /* teardown best-effort */ }
+}
+
+/** Place each tile's presenter view where the page put the picture, in the units each presenter works in. */
+function placePreviewMonitorTiles(tiles, pixelRatio) {
+  const win = previewMonitorWindow;
+  const addon = nativePreviewAddon || loadNativePreviewAddon();
+  if (!win || win.isDestroyed() || !addon?.monitorAttach) return false;
+  const handle = win.getNativeWindowHandle();
+  if (!Buffer.isBuffer(handle) || handle.length === 0) return false;
+  // macOS places views in points, which CSS pixels are; Windows places a
+  // presenter window in physical pixels.
+  const ratio = isWin ? (Number(pixelRatio) > 0 ? Number(pixelRatio) : screen.getDisplayMatching(win.getBounds())?.scaleFactor || 1) : 1;
+  const wanted = new Set();
+  for (const tile of PREVIEW_MONITOR_TILES) {
+    const rect = tiles?.[tile];
+    if (!rect) continue;
+    wanted.add(tile);
+    const css = normalizeNativePreviewRect({
+      x: rect.x, y: rect.y, width: rect.width, height: rect.height,
+      contentX: 0, contentY: 0, contentWidth: rect.width, contentHeight: rect.height,
+    }, Date.now() & 0x7fffffff);
+    try {
+      if (addon.monitorAttach(previewMonitorViewName(tile), handle, nativePreviewRectToDevicePixels(css, ratio))) {
+        if (!previewMonitorAttached.has(tile)) previewMonitorLastBinding.delete(tile);
+        previewMonitorAttached.add(tile);
+      }
+    } catch (err) {
+      console.warn(`[PreviewMonitor] could not place ${tile}:`, err?.message || err);
+    }
+  }
+  for (const tile of [...previewMonitorAttached]) if (!wanted.has(tile)) detachPreviewMonitorTile(tile);
+  startPreviewMonitorPump();
+  return previewMonitorAttached.size > 0;
+}
+
+/** Bind each tile to its core texture whenever that texture changes (or, on an older Windows presenter, every frame). */
+function startPreviewMonitorPump() {
+  if (previewMonitorPump) return;
+  const addon = nativePreviewAddon || loadNativePreviewAddon();
+  const nativePump = windowsNativeMonitorPump(addon);
+  const generation = ++previewMonitorPumpGeneration;
+  let ticks = 0;
+  previewMonitorPump = setInterval(async () => {
+    if (generation !== previewMonitorPumpGeneration || previewMonitorPumpInFlight || previewMonitorAttached.size === 0) return;
+    previewMonitorPumpInFlight = true;
+    try {
+      const a = nativePreviewAddon;
+      const setter = nativePump ? 'monitorSetSharedTextureSource' : isWin ? 'monitorSetSharedTexture' : 'monitorSetIOSurface';
+      if (!a || typeof a[setter] !== 'function') return;
+      ticks++;
+      // Windows presenter windows sit behind their host; keep them there.
+      if (isWin && ticks % 5 === 0) a.monitorRestack?.();
+      // A restarted core starts again at the small deck size.
+      if (previewMonitorWidthCore !== nativeRendererBroker.coreInstance) setCoreDeckMonitorWidth(PREVIEW_MONITOR_DECK_WIDTH);
+      const output = await getNativeOutputSharedTextureMetadata();
+      const wantsDecks = previewMonitorAttached.has('deck-a') || previewMonitorAttached.has('deck-b');
+      const decks = wantsDecks ? await nativeRendererBroker.invoke('native_renderer_get_deck_monitor_state', {}).catch(() => null) : null;
+      if (generation !== previewMonitorPumpGeneration) return;
+      syncPresenterCore(a, output);
+      const width = Number(output?.width ?? 0);
+      const height = Number(output?.height ?? 0);
+      if (width > 0 && height > 0 && Math.abs(width / height - previewMonitorAspect) > 0.001) {
+        previewMonitorAspect = width / height;
+        broadcastPreviewMonitorState();
+      }
+      for (const tile of previewMonitorAttached) {
+        const texture = previewMonitorTexture(tile, { output, decks, windows: isWin, nativePump });
+        if (!texture || previewMonitorLastBinding.get(tile) === texture.binding) continue;
+        const name = previewMonitorViewName(tile);
+        const presented = nativePump
+          ? a.monitorSetSharedTextureSource(name, texture.sharedName, texture.width, texture.height)
+          : isWin
+            ? a.monitorSetSharedTexture(name, texture.sharedName, texture.width, texture.height)
+            : a.monitorSetIOSurface(name, texture.surfaceId, texture.width, texture.height, false);
+        if (presented) previewMonitorLastBinding.set(tile, texture.binding);
+      }
+    } catch {
+      // A restarting core answers nothing for a moment; the next tick tries again.
+    } finally {
+      if (generation === previewMonitorPumpGeneration) previewMonitorPumpInFlight = false;
+    }
+  }, nativePump ? 100 : isWin ? 1000 / 30 : 250);
+  previewMonitorPump.unref?.();
+}
+
+function stopPreviewMonitorPump() {
+  previewMonitorPumpGeneration++;
+  previewMonitorPumpInFlight = false;
+  if (previewMonitorPump) clearInterval(previewMonitorPump);
+  previewMonitorPump = null;
+  previewMonitorLastBinding.clear();
+}
+
+/** Open the Preview monitor on a display, fullscreen and borderless. */
+function openPreviewMonitor(display, layout) {
+  const support = previewMonitorSupported();
+  if (!support.supported) return { ok: false, error: support.reason };
+  if (!display) return { ok: false, error: 'That display is not connected.' };
+  if (previewMonitorWindow && !previewMonitorWindow.isDestroyed()) {
+    // The views are named by tile, so the new window takes them over: let
+    // the old one go without them.
+    const old = previewMonitorWindow;
+    for (const tile of [...previewMonitorAttached]) detachPreviewMonitorTile(tile);
+    stopPreviewMonitorPump();
+    previewMonitorWindow = null;
+    try { old.close(); } catch { /* already going */ }
+  }
+  previewMonitorWanted = { displayId: display.id, fingerprint: displayFingerprint(display), layout: layout === 'program' ? 'program' : 'multiview' };
+  const bounds = display.bounds;
+  const win = new BrowserWindow({
+    width: bounds.width,
+    height: bounds.height,
+    x: bounds.x,
+    y: bounds.y,
+    title: 'Ghost Arcade Preview monitor',
+    frame: false,
+    show: isMac,
+    fullscreen: false,
+    enableLargerThanScreen: isMac,
+    autoHideMenuBar: true,
+    // The presenter views sit under the page; the page is clear over them.
+    backgroundColor: '#00000000',
+    transparent: true,
+    hasShadow: false,
+    focusable: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false,
+    },
+  });
+  win.setMenuBarVisibility(false);
+  previewMonitorWindow = win;
+  previewMonitorDisplayId = display.id;
+  if (isMac) enterSliceFullscreen(win);
+  else showOnDisplayFullscreen(win, display);
+  setCoreDeckMonitorWidth(PREVIEW_MONITOR_DECK_WIDTH);
+  const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';
+  if (!app.isPackaged) win.loadURL(`${devUrl}?mode=preview-monitor`);
+  else win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), { query: { mode: 'preview-monitor' } });
+  win.webContents.once('did-finish-load', () => broadcastPreviewMonitorState());
+  win.on('closed', () => {
+    if (previewMonitorWindow === win) {
+      for (const tile of [...previewMonitorAttached]) detachPreviewMonitorTile(tile);
+      // Closed while its display is still there (by the operator, not by an
+      // unplug): it stays closed.
+      if (screen.getAllDisplays().some((d) => d.id === previewMonitorDisplayId)) previewMonitorWanted = null;
+      previewMonitorWindow = null;
+      previewMonitorDisplayId = null;
+      stopPreviewMonitorPump();
+      setCoreDeckMonitorWidth(DEFAULT_DECK_MONITOR_WIDTH);
+    }
+    broadcastPreviewMonitorState();
+  });
+  // The operator keeps working in the main window.
+  if (mainWindow && !mainWindow.isDestroyed()) setTimeout(() => { if (!mainWindow.isDestroyed()) mainWindow.focus(); }, 300);
+  broadcastPreviewMonitorState();
+  return { ok: true, displayId: display.id };
+}
+
+function closePreviewMonitorWindow() {
+  const win = previewMonitorWindow;
+  if (win && !win.isDestroyed()) {
+    try { win.close(); } catch { /* already going */ }
+  }
+}
+
+/** Its display came back (under the same or a new id): open it there again. */
+function reopenPreviewMonitorIfItsDisplayReturned() {
+  if (!previewMonitorWanted || (previewMonitorWindow && !previewMonitorWindow.isDestroyed())) return;
+  if (previewMonitorReopenTimer) clearTimeout(previewMonitorReopenTimer);
+  // Let the OS finish arranging the new display first.
+  previewMonitorReopenTimer = setTimeout(() => {
+    previewMonitorReopenTimer = null;
+    const display = findPreviewMonitorDisplay(screen.getAllDisplays(), previewMonitorWanted);
+    if (display && previewMonitorWanted) {
+      console.log(`[PreviewMonitor] its display is back (${display.label || display.id}); reopening`);
+      openPreviewMonitor(display, previewMonitorWanted.layout);
+    }
+  }, 1500);
 }
 
 // The rectangle the platform presenter takes. Windows positions the preview in
@@ -8864,6 +9119,41 @@ function registerIpcHandlers() {
     return { attached: false };
   });
 
+  // ── Preview monitor ──
+  ipcMain.handle('preview_monitor_get_state', () => previewMonitorPublicState());
+  ipcMain.handle('preview_monitor_open', (_event, args = {}) => {
+    const displayId = Number(args?.displayId);
+    const display = screen.getAllDisplays().find((d) => d.id === displayId) || null;
+    return openPreviewMonitor(display, args?.layout);
+  });
+  ipcMain.handle('preview_monitor_close', () => {
+    // Closed on purpose: it does not come back when a display is plugged in.
+    previewMonitorWanted = null;
+    closePreviewMonitorWindow();
+    broadcastPreviewMonitorState();
+    return { ok: true };
+  });
+  ipcMain.handle('preview_monitor_set_layout', (_event, args = {}) => {
+    if (previewMonitorWanted) previewMonitorWanted = { ...previewMonitorWanted, layout: args?.layout === 'program' ? 'program' : 'multiview' };
+    broadcastPreviewMonitorState();
+    return previewMonitorPublicState();
+  });
+  // From the Preview monitor's page: where it drew each picture.
+  ipcMain.handle('preview_monitor_tiles', (event, args = {}) => {
+    if (!previewMonitorWindow || previewMonitorWindow.isDestroyed() || event.sender !== previewMonitorWindow.webContents) return { ok: false };
+    return { ok: placePreviewMonitorTiles(args?.tiles, args?.pixelRatio) };
+  });
+  // From the main window: tempo, beat, block, crossfader, recording.
+  ipcMain.handle('preview_monitor_status', (_event, status = {}) => {
+    const decks = !!status?.decks;
+    if (decks !== previewMonitorDecks) {
+      previewMonitorDecks = decks;
+      broadcastPreviewMonitorState();
+    }
+    if (previewMonitorWindow && !previewMonitorWindow.isDestroyed()) previewMonitorWindow.webContents.send('preview-monitor-status', status);
+    return true;
+  });
+
   // Pointer-rate viewport mutations must never wait behind scene rebuilds,
   // media uploads, readiness probes, or request/response timeouts. Keep only
   // the newest geometry for each layer and write it to the core on the next
@@ -10223,6 +10513,16 @@ app.whenReady().then(async () => {
   // Screen moved to another display): its presenter must cover the new
   // physical client area.
   screen.on('display-metrics-changed', () => refreshSliceNativeLayerRects());
+
+  // The Preview monitor's display unplugged: close it, and remember it so it
+  // comes back when that display does.
+  screen.on('display-removed', (_ev, removedDisplay) => {
+    if (previewMonitorWindow && !previewMonitorWindow.isDestroyed() && removedDisplay?.id === previewMonitorDisplayId) {
+      console.log('[PreviewMonitor] its display was unplugged; it reopens when the display is back');
+      closePreviewMonitorWindow();
+    }
+  });
+  screen.on('display-added', () => reopenPreviewMonitorIfItsDisplayReturned());
 
   screen.on('display-removed', (_ev, removedDisplay) => {
     try {
