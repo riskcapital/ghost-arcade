@@ -8797,6 +8797,9 @@ function registerIpcHandlers() {
           '-i', inputPath, '-map', '0:v:0', '-map', '0:a:0?',
           ...conversionOutputArgs('playback', playback.options), staged.temporaryPath],
       });
+      // The renderer swaps its layers and clips over to the new file: it has to
+      // be readable (ghost-asset://, project media) like a file the user picked.
+      pathGrants.allowRead(outputPath);
       return { ...result, outputPath, hdrSkipped: playback.hdrSkipped, encoder: playback.encoder };
     } catch (error) {
       if (activeVideoConverterJob === reservedJob) activeVideoConverterJob = null;
