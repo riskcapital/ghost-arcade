@@ -33,6 +33,7 @@
   import { createLayer, VJ_MIX_SOURCE_INDEX, type Layer, type Effect, type MappingCompositionState } from '../types';
   import * as THREE from 'three';
   import { createISFShader, updateISFShader, setISFInputValue, setISFInputTexture, type ISFShaderInstance } from '../isf/renderer';
+  import { getMusicTimeOffset, hasMusicTime } from '../audio/musicMotionEngine';
   import { LinesRenderer } from '../lines/renderer';
   import { DrawingRenderer } from '../drawing/renderer';
   import type { SVGLayerRenderer } from '../svg/renderer';
@@ -5839,6 +5840,11 @@
       const rtW = renderTarget.width;
       const rtH = renderTarget.height;
       updateISFShader(shaderInstance, rtW, rtH, undefined, audioState);
+      // Music motion: this shader's time runs on the music's flow clock.
+      if (hasMusicTime(layer.source.id) && shaderInstance.uniforms.TIME) {
+        const _t = shaderInstance.uniforms.TIME.value as number;
+        shaderInstance.uniforms.TIME.value = Math.max(0, _t + getMusicTimeOffset(layer.source.id));
+      }
 
       // ── Phase integration for time-multiplier params with active keyframes ──
       // After updateISFShader set TIME from performance.now(), override it with

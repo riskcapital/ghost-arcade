@@ -77,6 +77,8 @@ import {
   nativeJsCanvasUri,
 } from '$lib/renderer/nativeJsCanvasHosts';
 import { resolveAssetRefForRuntime } from '$lib/storage/assetRegistry';
+import { withMusicTime, MUSIC_TIME_INPUT } from '$lib/audio/musicMotion';
+import { getMusicTimeOffset, hasMusicTime } from '$lib/audio/musicMotionEngine';
 import {
   receiveSpoutTextureInfo,
   type SpoutSharedTextureInfo,
@@ -951,7 +953,7 @@ function sourceSignature(layer: Layer): string {
   const imageInputsSignature = s.shaderImageInputs && Object.keys(s.shaderImageInputs).length
     ? hashString(JSON.stringify(s.shaderImageInputs))
     : 'no-image-inputs';
-  return `${s.type}:${s.id}:${s.src}:${s.name}:${s.shaderCode ? hashString(s.shaderCode) : 'no-shader'}:${javascriptSignature}:${imageInputsSignature}`;
+  return `${s.type}:${s.id}:${s.src}:${s.name}:${s.shaderCode ? hashString(nativeShaderCode(s)!) : 'no-shader'}:${javascriptSignature}:${imageInputsSignature}`;
 }
 
 /** Shader and JS param values. Keyframes, sliders and macros change these
@@ -965,7 +967,25 @@ function sourceValuesSignature(layer: Layer): string {
   const javascriptValuesSignature = s.jsAnimation
     ? hashString(JSON.stringify(s.jsAnimation.paramValues ?? {}))
     : 'no-js';
-  return `${shaderValuesSignature}:${javascriptValuesSignature}`;
+  const musicTime = hasMusicTime(s.id) ? `:mt${getMusicTimeOffset(s.id).toFixed(4)}` : '';
+  return `${shaderValuesSignature}:${javascriptValuesSignature}${musicTime}`;
+}
+
+const musicTimeCodeCache = new Map<string, string>();
+/**
+ * The shader code the core compiles. With Music motion on, the core's TIME is
+ * its own clock, so the code reads TIME plus an offset input the sync sends.
+ */
+function nativeShaderCode(s: Pick<NonNullable<Layer['source']>, 'shaderCode' | 'musicMotion' | 'type'>): string | undefined {
+  const code = s.shaderCode;
+  if (!code || !s.musicMotion?.on || s.type !== 'shader') return code;
+  let out = musicTimeCodeCache.get(code);
+  if (out === undefined) {
+    out = withMusicTime(code);
+    if (musicTimeCodeCache.size > 32) musicTimeCodeCache.clear();
+    musicTimeCodeCache.set(code, out);
+  }
+  return out;
 }
 
 function nativeEffectDescriptors(layer: Layer): string[] {
@@ -10062,15 +10082,16 @@ export class NativeRendererSync {
           if (nativeSource.shouldPreview && !nativeStaticImageDecode && !nativeVideoDecodePump) {
             this.appendSourcePreviewCommand(commands, src, sourceType, now, true, null, previewBudget);
           }
-          if (src.shaderCode) {
-            const shaderId = `${src.id}:${hashString(src.shaderCode)}`;
+          const coreShaderCode = nativeShaderCode(src);
+          if (coreShaderCode) {
+            const shaderId = `${src.id}:${hashString(coreShaderCode)}`;
             if (!this.precompiledShaders.has(shaderId)) {
               this.precompiledShaders.add(shaderId);
               commands.push({
                 type: 'precompile_shader',
                 shader_id: shaderId,
                 stage: 'pixel',
-                source: src.shaderCode,
+                source: coreShaderCode,
                 entry: 'main',
               });
             }
@@ -10530,7 +10551,7 @@ export class NativeRendererSync {
         layer.visible &&
         (!prev || prev.sourceSig !== snap.sourceSig || prev.valuesSig !== snap.valuesSig)
       ) {
-        const shaderId = `${src2.id}:${hashString(src2.shaderCode)}`;
+        const shaderId = `${src2.id}:${hashString(nativeShaderCode(src2)!)}`;
         const shaderTime =
           typeof renderClock.time === 'number' && Number.isFinite(renderClock.time)
             ? renderClock.time
@@ -10572,6 +10593,13 @@ export class NativeRendererSync {
         // displayed frame; media refs bind the media source (decoded on
         // demand for static images). Unresolvable refs are omitted -> the
         // shader falls back to its own input frame.
+        if (hasMusicTime(src2.id) && src2.musicMotion?.on) {
+          // Never earlier than the start: the shader sees TIME + offset >= 0.
+          floatInputs[MUSIC_TIME_INPUT] = Math.max(-shaderTime, getMusicTimeOffset(src2.id));
+        } else if (src2.musicMotion?.on) {
+          floatInputs[MUSIC_TIME_INPUT] = 0;
+        }
+
         const imageInputs: Record<string, string> = {};
         if (src2.shaderImageInputs) {
           for (const [inputName, ref] of Object.entries(src2.shaderImageInputs)) {

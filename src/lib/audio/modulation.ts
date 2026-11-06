@@ -8,6 +8,7 @@ import { writable } from 'svelte/store';
 import { audioStore, type AudioState } from '../stores/audio';
 import { getVisualAudioSnapshot } from './visualAudio';
 import { vjClipLauncher } from '../stores/vjClipLauncher';
+import { musicMotionOwnsParam } from './musicMotionEngine';
 import type { ISFInput } from '../isf/parser';
 
 import { modulationHandlers } from './modulationHandlers';
@@ -1499,6 +1500,8 @@ class ModulationEngine {
         const batch = isMapping
           ? mappingBatch
           : (bank === 'B' ? vjBatchB : vjBatchA);
+        // Music motion drives this param: its audio response replaces the bump.
+        if (musicMotionOwnsParam(isMapping ? 'map' : bank, layerIndex, paramName)) continue;
         let layerBatch = batch.get(layerIndex);
         if (!layerBatch) {
           layerBatch = {};

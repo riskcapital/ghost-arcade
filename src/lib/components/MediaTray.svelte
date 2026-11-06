@@ -7,6 +7,7 @@
   import { vjClipLauncher, type VJClip } from '../stores/vjClipLauncher';
   import { get, writable, type Writable } from 'svelte/store';
   import { project, selectedLayerId, selectedLayer, layers } from '../stores/layers';
+  import MusicMotionControl from './MusicMotionControl.svelte';
   import { activeMediaTargetLayerIds } from '../media/mediaTargeting';
   import PluginIcon from './PluginIcon.svelte';
   import VideoDecodeBadge from './VideoDecodeBadge.svelte';
@@ -4373,6 +4374,13 @@
         <button class="close-params" onclick={() => selectedShader = null}>x</button>
       </div>
       <div class="params-list">
+        {#if $selectedLayerId && $selectedLayer?.source?.type === 'shader'}
+          <MusicMotionControl
+            settings={$selectedLayer.source.musicMotion}
+            inputs={selectedShader.inputs}
+            onchange={(next) => $selectedLayerId && project.setLayerMusicMotion($selectedLayerId, next)}
+          />
+        {/if}
         {#each selectedShader.inputs as input}
           <!-- Inline modulationMap lookup so Svelte tracks the
                template's reactive dependency on the store (function

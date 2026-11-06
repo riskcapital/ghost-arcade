@@ -458,6 +458,7 @@
   import { initLicense, destroyLicense } from './lib/stores/license';
   import { startUpdateChecker, stopUpdateChecker } from './lib/stores/updateChecker';
   import { startAutoEngine, stopAutoEngine } from './lib/audio/autoEngine';
+  import { startMusicMotionEngine, stopMusicMotionEngine } from './lib/audio/musicMotionEngine';
   import { linesStore, linesDrawingModeForTool } from './lib/stores/lines';
   import { startInterfaceScale } from './lib/stores/interfaceScale';
   import { startTranslation } from './lib/i18n';
@@ -2136,6 +2137,8 @@
     // mode switching, layer reorder, and project save/load because
     // the state lives on the layer, not in a side map.
     startAutoEngine();
+    // Music motion: shaders whose time and main params follow the music.
+    startMusicMotionEngine();
 
     // Start preloading shaders in background (non-blocking — don't wait for completion)
     preloadShaderLibrary().catch(() => {});
@@ -2794,6 +2797,7 @@
       destroyLicense();
       stopUpdateChecker();
       stopAutoEngine();
+      stopMusicMotionEngine();
     };
   });
 

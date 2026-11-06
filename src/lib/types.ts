@@ -939,6 +939,8 @@ export interface MediaSource {
   /** Per-param Auto playhead state for shader inputs. Same role as
    *  Effect.paramAuto — see AutoConfig docs above. */
   shaderValueAuto?: Record<string, AutoConfig>;
+  /** Music motion: the music runs this shader's time and moves its main params. */
+  musicMotion?: import('./audio/musicMotion').MusicMotionSettings;
   shaderImageInputs?: Record<string, ImageInputRef>; // References to textures for 'image' type inputs
   isPlaying?: boolean; // For video playback control
   mirrorX?: boolean; // Source-owned horizontal mirror, used for webcam/selfie feeds

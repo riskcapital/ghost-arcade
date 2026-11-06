@@ -1,5 +1,6 @@
 <script lang="ts">
   import PreviewMonitorControl from './PreviewMonitorControl.svelte';
+  import MusicMotionControl from './MusicMotionControl.svelte';
   import VJGroups from './VJGroups.svelte';
   import VJFluxPanel from './VJFluxPanel.svelte';
   import StageFxChaseControls from './StageFxChaseControls.svelte';
@@ -5261,6 +5262,14 @@
                   <div class="audio-warn">This shader doesn't use audio uniforms — modulation controls parameters only, not the shader's internal audio response.</div>
                 {/if}
                 <div class="shader-params-panel-list">
+                  {#if selectedLayerState.activeClip}
+                    {@const _mmClip = selectedLayerState.activeClip}
+                    <MusicMotionControl
+                      settings={_mmClip.musicMotion}
+                      inputs={selectedClipShaderInputs}
+                      onchange={(next) => vjClipLauncher.setClipMusicMotion(_mmClip.id, next)}
+                    />
+                  {/if}
                   {#each selectedClipShaderInputs as input (input.NAME)}
                     <!-- Inline the modulationMap lookup so the @const
                          expression's reactive dependency on the store
