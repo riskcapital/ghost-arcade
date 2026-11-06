@@ -6,6 +6,7 @@
 
 import type { DrumVoice } from '../noteEvents';
 import type { DrumModel, DrumSound, ToneFx } from '../tone/toneTypes';
+import { normalizeMacroFx, type MacroFxInstance } from '../macroFx';
 
 export const PAD_COUNT = 16;
 
@@ -258,4 +259,100 @@ export const PAD_BASE_NOTE = 36;
 export function padForNote(note: number): number {
   const i = note - PAD_BASE_NOTE;
   return i >= 0 && i < PAD_COUNT ? i : -1;
+}
+
+// ── Your kits and swapped sounds ────────────────────────────────────────
+
+/** A kit you made: its pads (sounds), each pad's tune and level, and each pad's insert effects. */
+export interface UserKit extends MachineKit {
+  padTune: number[];
+  padLevel: number[];
+  padFx: MacroFxInstance[][];
+}
+
+export const USER_FAMILY_LABEL = 'Your kits';
+
+/** The engine's sound types, for building a pad's sound from scratch. */
+export const SOUND_MODELS: { id: DrumModel; label: string; role: DrumVoice; sound: DrumSound }[] = [
+  { id: 'kick', label: 'Kick', role: 'kick', sound: kick(52, 0.7, 1.6, 0.4) },
+  { id: 'snare', label: 'Snare', role: 'snare', sound: snare(200, 0.28, 0.65) },
+  { id: 'clap', label: 'Clap', role: 'clap', sound: clap(1200, 0.3) },
+  { id: 'hat', label: 'Hat', role: 'hatClosed', sound: hat(380, 0.08, 0.7) },
+  { id: 'cymbal', label: 'Cymbal', role: 'crash', sound: cym(430, 1.5, 0.6) },
+  { id: 'tom', label: 'Tom', role: 'tom', sound: tom(130, 0.5, 0.6) },
+  { id: 'rim', label: 'Rim', role: 'rim', sound: rim(1700, 0.07) },
+  { id: 'cowbell', label: 'Cowbell', role: 'rim', sound: bellc(560, 0.3) },
+  { id: 'membrane', label: 'Hand drum', role: 'tom', sound: conga(220, 0.35, 0.3) },
+  { id: 'shaker', label: 'Shaker', role: 'hatClosed', sound: shaker(7500, 0.08, 0.6) },
+  { id: 'scrape', label: 'Scrape', role: 'hatOpen', sound: scrape(3000, 0.25, 38) },
+  { id: 'bell', label: 'Bell', role: 'crash', sound: bell(900, 0.6, 0.6) },
+  { id: 'rise', label: 'Friction drum', role: 'tom', sound: rise(400, 0.4, 1.1) },
+  { id: 'zap', label: 'Zap', role: 'kick', sound: zap(60, 0.6, 2.5) },
+  { id: 'blip', label: 'Blip', role: 'rim', sound: blip(800, 0.12, 1) },
+  { id: 'laser', label: 'Laser', role: 'tom', sound: laser(600, 0.4, 2.5, 0.3) },
+  { id: 'fm', label: 'FM metal', role: 'crash', sound: fm(400, 0.4, 1.41, 0.7) },
+  { id: 'glitch', label: 'Glitch', role: 'snare', sound: glitch(300, 0.3, 60, 0.5) },
+];
+
+const MODEL_IDS = new Set(SOUND_MODELS.map((m) => m.id));
+const ROLES: DrumVoice[] = ['kick', 'snare', 'clap', 'hatClosed', 'hatOpen', 'tom', 'rim', 'crash'];
+
+function n(v: unknown, fallback: number, min: number, max: number): number {
+  const x = Number(v);
+  return Number.isFinite(x) ? Math.max(min, Math.min(max, x)) : fallback;
+}
+
+export function normalizeSound(raw: unknown): DrumSound | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const s = raw as Partial<DrumSound>;
+  if (!MODEL_IDS.has(s.model as DrumModel)) return null;
+  const out: DrumSound = {
+    model: s.model as DrumModel,
+    freq: n(s.freq, 200, 20, 16000),
+    decay: n(s.decay, 0.3, 0.005, 6),
+    tone: n(s.tone, 0.5, 0, 1),
+    level: n(s.level, 0.7, 0, 1.5),
+  };
+  if (s.bend !== undefined) out.bend = n(s.bend, 1, -6, 6);
+  if (s.click !== undefined) out.click = n(s.click, 0, 0, 1);
+  if (s.drive !== undefined) out.drive = n(s.drive, 0, 0, 1);
+  if (s.rate !== undefined) out.rate = n(s.rate, 40, 0.1, 4000);
+  if (s.choke) out.choke = true;
+  if (s.cuts) out.cuts = true;
+  return out;
+}
+
+export function normalizePad(raw: unknown): MachinePad | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const p = raw as Partial<MachinePad>;
+  const sound = normalizeSound(p.sound);
+  if (!sound) return null;
+  return { name: typeof p.name === 'string' && p.name ? p.name.slice(0, 24) : 'Pad', role: ROLES.includes(p.role as DrumVoice) ? (p.role as DrumVoice) : 'tom', sound };
+}
+
+export function normalizeUserKit(raw: unknown): UserKit | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const k = raw as Partial<UserKit>;
+  if (typeof k.id !== 'string' || !k.id.startsWith('user.')) return null;
+  const pads = (Array.isArray(k.pads) ? k.pads : []).map(normalizePad);
+  if (pads.length !== PAD_COUNT || pads.some((p) => !p)) return null;
+  const per = (v: unknown) => Array.from({ length: PAD_COUNT }, (_, i) => n(Array.isArray(v) ? v[i] : undefined, 0.5, 0, 1));
+  const fx = Array.isArray(k.padFx) ? k.padFx : [];
+  return {
+    id: k.id,
+    name: typeof k.name === 'string' && k.name ? k.name.slice(0, 40) : 'My kit',
+    family: k.family && k.family in KIT_FAMILY_LABELS ? k.family : 'classic',
+    blurb: typeof k.blurb === 'string' ? k.blurb.slice(0, 200) : 'Your kit',
+    pads: pads as MachinePad[],
+    fx: k.fx && typeof k.fx === 'object' ? (JSON.parse(JSON.stringify(k.fx)) as ToneFx) : undefined,
+    gain: n(k.gain, 0.95, 0.1, 2),
+    padTune: per(k.padTune),
+    padLevel: per(k.padLevel),
+    padFx: Array.from({ length: PAD_COUNT }, (_, i) => normalizeMacroFx({ x: fx[i] }).x ?? []),
+  };
+}
+
+/** The kit by id, among the factory kits and `mine`; the first factory kit when it is not there. */
+export function findKit(id: string | null | undefined, mine: readonly MachineKit[]): MachineKit {
+  return mine.find((k) => k.id === id) ?? machineKitById(id);
 }

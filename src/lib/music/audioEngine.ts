@@ -37,7 +37,7 @@ import { RETURN_IDS, SendReturns, type ReturnId } from './sendReturns';
 const MAX_FADER_GAIN = Math.pow(10, 10 / 20);
 import { DUB_SHOT_NOTE, type DubShot } from './dubShots';
 import { toneById } from './tone/tones';
-import type { DrumKit, DrumTweak } from './tone/toneTypes';
+import type { DrumKit, DrumSound, DrumTweak } from './tone/toneTypes';
 import { kitById } from './tone/kits';
 
 interface SubtractivePatch {
@@ -1223,12 +1223,42 @@ export class MusicAudioEngine {
   private hitMachine(pad: number, velocity: number, time: number, fallback?: DrumVoice): void {
     const m = this.machine;
     if (m && this.tones?.ready) {
-      this.tones.machineHit(pad, velocity, time, m.tweaks[pad] ?? { tune: 0.5, decay: 0.5, tone: 0.5, drive: 0.5, level: 1 });
+      this.tones.machineHit(pad, velocity, time, m.tweaks[pad] ?? { tune: 0.5, decay: 0.5, tone: 0.5, drive: 0.5, level: 1 }, this.padChain(pad)?.input);
       return;
     }
     // Until the tone engine is ready, the set's own drum plays.
     if (this.tones && !this.tones.ready) void this.tones.load();
     if (fallback) this.playDrum(fallback, velocity, time);
+  }
+
+  /** A pad's own effects chain (insert channel "pad:N") when it has any switched on; made on first use. */
+  private padChain(pad: number): MacroFxChain | null {
+    const channel = `pad:${pad}`;
+    if (!(this.insertSettings[channel] ?? []).some((fx) => fx.enabled)) return null;
+    let chain = this.insertChains.get(channel);
+    if (!chain && this.ctx && this.bus) {
+      chain = new MacroFxChain(this.ctx);
+      chain.output.connect(this.bus.drums);
+      this.insertChains.set(channel, chain);
+      this.syncInserts();
+    }
+    return chain ?? null;
+  }
+
+  /** Play a sound on the drum machine's spare slot, to hear it before it goes on a pad. */
+  auditionMachine(sound: DrumSound): void {
+    const ctx = this.ensure();
+    if (!this.tones) return;
+    if (!this.tones.ready) {
+      void this.tones.load();
+      return;
+    }
+    const base = this.machine?.kit;
+    const sounds = [...(base?.sounds ?? []).slice(0, 16)];
+    while (sounds.length < 16) sounds.push(sound);
+    const kit: DrumKit = { id: 'audition', name: 'Audition', blurb: '', sounds: [...sounds, sound], fx: base?.fx, gain: base?.gain ?? 1 };
+    this.tones.setMachineKit(kit);
+    this.tones.machineHit(16, 0.85, ctx.currentTime + 0.03, { tune: 0.5, decay: 0.5, tone: 0.5, drive: 0.5, level: 1 });
   }
 
   /** A hit on the tone engine's kit, with the mixer's tune and level and the drum's own decay, tone and drive. */

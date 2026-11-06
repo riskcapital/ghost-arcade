@@ -45,7 +45,7 @@ import {
   voiceSourceAt,
   type SourceContext,
 } from './visualVoices';
-import type { DrumKit, DrumTweak } from './tone/toneTypes';
+import type { DrumKit, DrumSound, DrumTweak } from './tone/toneTypes';
 import { TakeRecorder, takeEventsBetween, type Take } from './recording';
 import { STEPS_PER_BEAT, patternBeats, patternHasHits, stepAt, stepsBetween, type DrumPattern } from './drumPattern';
 import {
@@ -262,6 +262,12 @@ export function sendMachineHit(pad: number, role: DrumVoice, velocity: number, s
 export function musicNow(): number {
   ensureMusicRuntime();
   return audio.now();
+}
+
+/** Hear a drum sound on the machine's spare slot. */
+export function auditionMachineSound(sound: DrumSound): void {
+  ensureMusicRuntime();
+  audio.auditionMachine(sound);
 }
 
 export function setMachineSound(kit: DrumKit, tweaks: DrumTweak[]): void {

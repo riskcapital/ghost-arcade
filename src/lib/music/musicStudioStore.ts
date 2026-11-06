@@ -559,6 +559,9 @@ function createMusicStudioStore() {
     connectCable: (cable: Cable) =>
       update((s) => ({ ...s, cables: { ...s.cables, [s.set]: connect(s.cables[s.set], cable) } })),
     // ── Insert effects on a channel or the master ──
+    /** Put whole chains on channels at once (a drum kit's pad effects), with the drum machine's beat. */
+    setInsertChains: (chains: Record<string, MacroFxInstance[]>, machine?: Beat) =>
+      update((s) => ({ ...s, inserts: { ...s.inserts, ...chains }, ...(machine ? { machine } : {}) })),
     addInsert: (channel: string, id: string, type: MacroFxType) =>
       update((s) => {
         const fx = createMacroFx(id, type);

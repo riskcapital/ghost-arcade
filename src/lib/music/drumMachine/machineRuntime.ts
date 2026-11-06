@@ -11,14 +11,15 @@
 import { get, writable } from 'svelte/store';
 import { launchClockPosition } from '../../stores/launchClock';
 import { musicStudio } from '../musicStudioStore';
-import { musicNow, sendMachineHit, setMachineHooks, setMachineSound } from '../musicRuntime';
+import { auditionMachineSound, musicNow, sendMachineHit, setMachineHooks, setMachineSound } from '../musicRuntime';
+import type { MacroFxInstance } from '../macroFx';
 import type { NoteSource } from '../noteEvents';
-import type { DrumKit, DrumTweak } from '../tone/toneTypes';
+import type { DrumKit, DrumSound, DrumTweak } from '../tone/toneTypes';
 import {
   STEPS_PER_BEAT, blockAt, normalizeBeat, partHitsBetween, partSteps, setStep, songBars, songHitsBetween, starterBeat,
   type Beat, type Part,
 } from './machineBeat';
-import { PAD_COUNT, machineKitById, padForNote, type MachineKit } from './machineKits';
+import { DEFAULT_MACHINE_KIT, PAD_COUNT, findKit, normalizeUserKit, padForNote, type MachineKit, type MachinePad, type UserKit } from './machineKits';
 
 const LOOKAHEAD_SECONDS = 0.12;
 const TICK_MS = 25;
@@ -65,16 +66,28 @@ const heardLive = new Set<string>();
 
 // ── Sound ───────────────────────────────────────────────────────────────
 
+/** Your kits: the project's own and those saved on this computer (the project's win on a clash). */
+export function userKits(beat: Beat = currentBeat()): UserKit[] {
+  const local = get(savedKits);
+  return [...beat.kits, ...local.filter((k) => !beat.kits.some((b) => b.id === k.id))];
+}
+
+/** The beat's kit with any swapped pads in place: what the pads play now. */
+export function playingKit(beat: Beat = currentBeat()): MachineKit {
+  const kit = findKit(beat.kitId, userKits(beat));
+  return { ...kit, pads: kit.pads.map((p, i) => beat.padSounds[i] ?? p) };
+}
+
 function drumKitFor(kit: MachineKit): DrumKit {
   return { id: kit.id, name: kit.name, blurb: kit.blurb, sounds: kit.pads.map((p) => p.sound), fx: kit.fx, gain: kit.gain };
 }
 
 let soundKey = '';
 function syncSound(beat: Beat): void {
-  const key = `${beat.kitId}|${beat.padLevel.join(',')}|${beat.padTune.join(',')}`;
+  const kit = playingKit(beat);
+  const key = `${kit.id}|${beat.padLevel.join(',')}|${beat.padTune.join(',')}|${JSON.stringify(kit.pads.map((p) => p.sound))}`;
   if (key === soundKey) return;
   soundKey = key;
-  const kit = machineKitById(beat.kitId);
   const tweaks: DrumTweak[] = kit.pads.map((_, i) => ({
     tune: beat.padTune[i] ?? 0.5,
     level: (beat.padLevel[i] ?? 0.5) * 2,
@@ -91,6 +104,7 @@ export function ensureMachine(): void {
   if (started) return;
   started = true;
   musicStudio.subscribe((s) => syncSound(s.machine));
+  savedKits.subscribe(() => syncSound(currentBeat()));
   setMachineHooks({
     midiPad(note, velocity, on) {
       const pad = padForNote(note);
@@ -188,7 +202,7 @@ function tick(): void {
   const t = get(machineTransport);
   if (!t.playing) return;
   const beatState = currentBeat();
-  const kit = machineKitById(beatState.kitId);
+  const kit = playingKit(beatState);
   const now = musicNow();
   const { beat, beatMs } = launchClockPosition();
   // A clock jump (a resync, a new tempo detected) skips ahead rather than firing every step between.
@@ -274,7 +288,7 @@ export function playPad(pad: number, velocity: number, source: NoteSource = 'scr
   ensureMachine();
   if (pad < 0 || pad >= PAD_COUNT) return;
   const b = currentBeat();
-  const kit = machineKitById(b.kitId);
+  const kit = playingKit(b);
   const v = Math.max(0.05, Math.min(1, velocity));
   sendMachineHit(pad, kit.pads[pad].role, v, source);
   markHit(pad, v);
@@ -359,4 +373,105 @@ export function saveBeatAs(name: string): void {
 
 export function deleteSavedBeat(id: string): void {
   savedBeats.update((list) => list.filter((x) => x.id !== id));
+}
+
+// ── Pad sounds and your kits ────────────────────────────────────────────
+
+/** Hear a sound before putting it on a pad. */
+export function auditionSound(sound: DrumSound): void {
+  ensureMachine();
+  auditionMachineSound(sound);
+}
+
+/** Give a pad another sound, or (null) its kit's own back. */
+export function setPadSound(pad: number, sound: MachinePad | null): void {
+  editBeat((b) => ({ ...b, padSounds: b.padSounds.map((x, i) => (i === pad ? sound : x)) }));
+}
+
+/** The pad effects' channel in the mixer's insert effects. */
+export function padChannel(pad: number): string {
+  return `pad:${pad}`;
+}
+
+function padFxChains(fx: MacroFxInstance[][]): Record<string, MacroFxInstance[]> {
+  return Object.fromEntries(Array.from({ length: PAD_COUNT }, (_, i) => [padChannel(i), JSON.parse(JSON.stringify(fx[i] ?? []))]));
+}
+
+/**
+ * Change kit. One of yours brings back its pads' tune, level and effects; a
+ * factory kit keeps the pads' settings and effects as they are. Swapped
+ * sounds go either way: the new kit plays as it is.
+ */
+export function selectKit(id: string): void {
+  const b = currentBeat();
+  const mine = userKits(b).find((k) => k.id === id);
+  const fresh = new Array(PAD_COUNT).fill(null);
+  if (mine) {
+    const kits = b.kits.some((k) => k.id === id) ? b.kits : [...b.kits, mine];
+    musicStudio.setInsertChains(padFxChains(mine.padFx), { ...b, kitId: id, padSounds: fresh, padTune: [...mine.padTune], padLevel: [...mine.padLevel], kits });
+  } else {
+    musicStudio.setMachine({ ...b, kitId: id, padSounds: fresh });
+  }
+}
+
+const KITS_KEY = 'ghostarcade-drum-kits';
+
+function loadKits(): UserKit[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(KITS_KEY) ?? '[]');
+    return Array.isArray(raw) ? raw.map(normalizeUserKit).filter((k): k is UserKit => !!k) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Kits saved on this computer, offered in every project. */
+export const savedKits = writable<UserKit[]>(typeof localStorage === 'undefined' ? [] : loadKits());
+savedKits.subscribe((list) => {
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.setItem(KITS_KEY, JSON.stringify(list));
+  } catch { /* storage full or blocked: the kits last the session */ }
+});
+
+/** Save what the pads play now (sounds, tune, level, effects) as a kit of yours, and switch to it. */
+export function saveKitAs(name: string): string {
+  const b = currentBeat();
+  const kit = playingKit(b);
+  const inserts = get(musicStudio).inserts;
+  const trimmed = name.trim().slice(0, 40) || 'My kit';
+  const existing = userKits(b).find((k) => k.name === trimmed);
+  const id = existing?.id ?? `user.${Date.now().toString(36)}`;
+  const saved: UserKit = {
+    id,
+    name: trimmed,
+    family: kit.family,
+    blurb: `Your kit, made from ${kit.name}`,
+    pads: JSON.parse(JSON.stringify(kit.pads)),
+    fx: kit.fx ? JSON.parse(JSON.stringify(kit.fx)) : undefined,
+    gain: kit.gain,
+    padTune: [...b.padTune],
+    padLevel: [...b.padLevel],
+    padFx: Array.from({ length: PAD_COUNT }, (_, i) => JSON.parse(JSON.stringify(inserts[padChannel(i)] ?? []))),
+  };
+  savedKits.update((list) => (list.some((k) => k.id === id) ? list.map((k) => (k.id === id ? saved : k)) : [...list, saved]));
+  musicStudio.setMachine({ ...b, kitId: id, padSounds: new Array(PAD_COUNT).fill(null), kits: [...b.kits.filter((k) => k.id !== id), saved] });
+  return id;
+}
+
+export function renameKit(id: string, name: string): void {
+  const trimmed = name.trim().slice(0, 40);
+  if (!trimmed) return;
+  savedKits.update((list) => list.map((k) => (k.id === id ? { ...k, name: trimmed } : k)));
+  editBeat((b) => ({ ...b, kits: b.kits.map((k) => (k.id === id ? { ...k, name: trimmed } : k)) }));
+}
+
+/** Delete a kit of yours. A beat playing it goes back to the first factory kit. */
+export function deleteKit(id: string): void {
+  const b = currentBeat();
+  if (b.kitId === id) {
+    musicStudio.setMachine({ ...b, kitId: DEFAULT_MACHINE_KIT, padSounds: new Array(PAD_COUNT).fill(null), kits: b.kits.filter((k) => k.id !== id) });
+  } else {
+    editBeat((x) => ({ ...x, kits: x.kits.filter((k) => k.id !== id) }));
+  }
+  savedKits.update((list) => list.filter((k) => k.id !== id));
 }

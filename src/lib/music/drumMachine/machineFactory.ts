@@ -31,6 +31,8 @@ function beat(name: string, kitId: string, parts: Part[], song: Array<[number, n
     song: song.map(([i, bars]) => ({ id: newId('blk'), partId: parts[i].id, bars })),
     padLevel: new Array(PAD_COUNT).fill(0.5),
     padTune: new Array(PAD_COUNT).fill(0.5),
+    padSounds: new Array(PAD_COUNT).fill(null),
+    kits: [],
   };
 }
 

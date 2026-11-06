@@ -12,7 +12,7 @@
  * scheduler can look ahead and a test can check exactly what lands where.
  */
 
-import { PAD_COUNT } from './machineKits';
+import { PAD_COUNT, normalizePad, normalizeUserKit, type MachinePad, type UserKit } from './machineKits';
 
 export const STEPS_PER_BAR = 16;
 export const STEPS_PER_BEAT = 4;
@@ -72,6 +72,10 @@ export interface Beat {
   /** Per pad: level and tune, 0-1 with 0.5 meaning as the kit has it. */
   padLevel: number[];
   padTune: number[];
+  /** A pad given a different sound than its kit's, or null for the kit's own. */
+  padSounds: (MachinePad | null)[];
+  /** Your kits this project uses, so the file plays the same on another computer. */
+  kits: UserKit[];
 }
 
 export interface MachineHit {
@@ -134,6 +138,8 @@ export function starterBeat(kitId: string): Beat {
     ],
     padLevel: new Array(PAD_COUNT).fill(0.5),
     padTune: new Array(PAD_COUNT).fill(0.5),
+    padSounds: new Array(PAD_COUNT).fill(null),
+    kits: [],
   };
 }
 
@@ -385,6 +391,8 @@ export function normalizeBeat(raw: unknown, fallbackKit: string): Beat {
     song,
     padLevel: pads(b.padLevel),
     padTune: pads(b.padTune),
+    padSounds: Array.from({ length: PAD_COUNT }, (_, i) => (Array.isArray(b.padSounds) ? normalizePad(b.padSounds[i]) : null)),
+    kits: (Array.isArray(b.kits) ? b.kits : []).map(normalizeUserKit).filter((k): k is UserKit => !!k).slice(0, 64),
   };
 }
 
