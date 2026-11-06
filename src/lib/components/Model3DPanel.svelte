@@ -1,3 +1,14 @@
+<script lang="ts" module>
+  import { releaseBlobUrl } from './blobUrlUsers';
+
+  /** Blob URLs this panel made for models, with the file name behind each.
+   *  Keyed by URL rather than by panel, because one panel edits whichever
+   *  layer or clip is selected: the URL it replaces can still be used by
+   *  another layer, a VJ clip in any block or deck, a preset or an undo step,
+   *  so it is freed only once nothing uses it (see blobUrlUsers.ts). */
+  const modelBlobFiles = new Map<string, string>();
+</script>
+
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import { project, selectedLayer, scheduleHistorySnapshot } from '../stores/layers';
@@ -172,13 +183,12 @@
 
     showLoading('Loading 3D model...');
     try {
-      // Revoke previous URL only when replacing it with a new blob — safe
-      // because nothing else references it once we overwrite modelData.
-      if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
+      const previousBlobUrl = currentBlobUrl;
 
       // Capture both runtime URL and durable AssetRef. The blob URL is for
       // immediate three.js loading; the AssetRef is what survives save/reload.
       const { assetRef, runtimeUrl: blobUrl } = createAssetRefFromFile(file);
+      modelBlobFiles.set(blobUrl, file.name);
       currentBlobUrl = blobUrl;
       currentFileName = file.name;
       cachedFile = file;
@@ -191,6 +201,8 @@
         modelName: file.name,
         _assetRef: assetRef,
       } as any);
+      // The model it replaced is freed once nothing uses it any more.
+      releaseBlobUrl(modelBlobFiles, previousBlobUrl);
     } catch (err) {
       console.error('Failed to load 3D model:', err);
     } finally {
