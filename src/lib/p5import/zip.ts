@@ -15,7 +15,12 @@ import {
   type P5SketchFile,
 } from '../p5sketch/files';
 
-export type InflateRaw = (data: Uint8Array) => Promise<Uint8Array>;
+/**
+ * Inflates raw deflate data, giving up (with a ZipError) as soon as the
+ * output would pass `limit` bytes: an archive's sizes are only what it
+ * claims, so the real output is what counts.
+ */
+export type InflateRaw = (data: Uint8Array, limit: number) => Promise<Uint8Array>;
 
 export interface ZipEntry {
   path: string;
@@ -35,10 +40,29 @@ const LOCAL_SIGNATURE = 0x04034b50;
 
 export class ZipError extends Error {}
 
-/** Raw deflate through the platform's DecompressionStream. */
-export const inflateRawWithStreams: InflateRaw = async (data) => {
+/** Raw deflate through the platform's DecompressionStream, read a chunk at a time and stopped past `limit`. */
+export const inflateRawWithStreams: InflateRaw = async (data, limit) => {
   const stream = new Blob([data as BlobPart]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
-  return new Uint8Array(await new Response(stream).arrayBuffer());
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    length += value.byteLength;
+    if (length > limit) {
+      await reader.cancel().catch(() => {});
+      throw new ZipError('unpacks to more than it says');
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(length);
+  let at = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return out;
 };
 
 function findEndOfCentralDirectory(view: DataView): number {
@@ -82,12 +106,18 @@ export function listZipEntries(bytes: Uint8Array): ZipEntry[] {
   return entries;
 }
 
-/** One entry's contents. */
+/**
+ * One entry's contents, at most `limit` bytes (and never more than the
+ * entry says it holds, nor ZIP_MAX_ENTRY_BYTES).
+ */
 export async function readZipEntry(
   bytes: Uint8Array,
   entry: ZipEntry,
   inflateRaw: InflateRaw = inflateRawWithStreams,
+  limit = ZIP_MAX_ENTRY_BYTES,
 ): Promise<Uint8Array> {
+  const cap = Math.min(limit, ZIP_MAX_ENTRY_BYTES);
+  if (entry.size > ZIP_MAX_ENTRY_BYTES) throw new ZipError(`${entry.path} is too large.`);
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const at = entry.localHeaderOffset;
   if (at + 30 > view.byteLength || view.getUint32(at, true) !== LOCAL_SIGNATURE) {
@@ -97,10 +127,24 @@ export async function readZipEntry(
   const end = start + entry.compressedSize;
   if (end > bytes.byteLength) throw new ZipError('This zip archive is damaged.');
   const data = bytes.subarray(start, end);
-  if (entry.method === 0) return data;
+  if (entry.method === 0) {
+    if (data.byteLength > cap) throw new ZipError(`${entry.path} is too large.`);
+    return data;
+  }
   if (entry.method !== 8) throw new ZipError(`${entry.path} is packed in a way this reader does not support.`);
-  const out = await inflateRaw(data);
-  if (out.byteLength > ZIP_MAX_ENTRY_BYTES) throw new ZipError(`${entry.path} is too large.`);
+  // A deflated entry stops where it says it ends; one that unpacks to more is
+  // damaged or hostile, and is not unpacked any further.
+  const allowed = Math.min(cap, entry.size);
+  let out: Uint8Array;
+  try {
+    out = await inflateRaw(data, allowed);
+  } catch (err) {
+    if (err instanceof ZipError) {
+      throw new ZipError(entry.size > cap ? `${entry.path} is too large.` : `${entry.path} unpacks to more than the zip says: the archive is damaged.`);
+    }
+    throw err;
+  }
+  if (out.byteLength > allowed) throw new ZipError(`${entry.path} unpacks to more than the zip says: the archive is damaged.`);
   return out;
 }
 
@@ -143,9 +187,11 @@ export async function sketchFromZip(
   for (const entry of entries) {
     const path = normalizeSketchPath(entry.path.slice(prefix.length));
     if (!path) continue;
-    total += entry.size;
-    if (total > ZIP_MAX_TOTAL_BYTES) throw new ZipError('This zip unpacks to more than a sketch should hold.');
-    const data = await readZipEntry(bytes, entry, inflateRaw);
+    const room = ZIP_MAX_TOTAL_BYTES - total;
+    if (entry.size > room) throw new ZipError('This zip unpacks to more than a sketch should hold.');
+    // What an entry really unpacks to counts, not what the archive claims.
+    const data = await readZipEntry(bytes, entry, inflateRaw, room);
+    total += data.byteLength;
     if (p5LibraryKind(path)) {
       // Not carried; the opening comment says which p5 the sketch was made with.
       const header = decoder.decode(data.subarray(0, LIBRARY_HEADER_CHARS));
