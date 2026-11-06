@@ -115,7 +115,8 @@ describe('paths the renderer may write and read', () => {
     const handler = mainHandler('save_project_file');
     expect(handler).toContain('pathGrants.canWrite(filePath)');
     expect(handler.indexOf('pathGrants.canWrite(')).toBeLessThan(handler.indexOf('fs.writeFileSync('));
-    expect(handler).toContain('fs.renameSync(temp, filePath)');
+    // Renamed over the target (retrying past a brief Windows file hold).
+    expect(handler).toContain('replaceFile(temp, filePath)');
     expect(handler).toContain('climbsUp(filePath)');
   });
 

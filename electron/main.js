@@ -46,6 +46,18 @@ if (app.isPackaged && !app.commandLine.hasSwitch('user-data-dir')) {
   app.setPath('userData', studioUserDataFolder(app.getPath('appData')));
 }
 
+// One copy runs at a time; the lock belongs to the userData folder, so it is
+// taken right after the override above. On Windows, double-clicking a project
+// while the app is open starts a second process. Asking for the lock already
+// hands its arguments to the running copy ('second-instance' below), so it
+// exits here. app.quit() would first run the rest of start-up: rotating the
+// running copy's log, starting servers and addons.
+const isPrimaryInstance = app.requestSingleInstanceLock();
+if (!isPrimaryInstance) {
+  console.log('[Main] Another instance is running — handing over and quitting');
+  app.exit(0);
+}
+
 // Start-at-boot / show mode (electron/show-startup.cjs). The session query is
 // synchronous: the renderer needs to know whether to suppress its first-run
 // prompts before its first frame.
@@ -4398,7 +4410,7 @@ function registerIpcHandlers() {
       const temp = `${filePath}.saving-${process.pid}`;
       try {
         fs.writeFileSync(temp, content, 'utf8');
-        fs.renameSync(temp, filePath);
+        await require('./replace-file.cjs').replaceFile(temp, filePath);
       } catch (err) {
         try { fs.unlinkSync(temp); } catch { /* never written */ }
         throw err;
@@ -6350,13 +6362,6 @@ app.on('open-file', (event, filePath) => {
 });
 queueProjectOpen(projectFileFromArgs(process.argv));
 
-// Ensure only one instance runs at a time
-const gotLock = app.requestSingleInstanceLock();
-if (!gotLock) {
-  console.log('[Main] Another instance is running — quitting');
-  app.quit();
-}
-
 app.on('second-instance', (_event, argv) => {
   // Focus existing window when user tries to launch a second instance
   if (mainWindow) {
@@ -6364,7 +6369,9 @@ app.on('second-instance', (_event, argv) => {
     mainWindow.focus();
   }
   // Launched by double-clicking a project: open it in this window.
-  queueProjectOpen(projectFileFromArgs(argv));
+  const projectFile = projectFileFromArgs(argv);
+  console.log(`[Main] Another launch handed over${projectFile ? ` ${projectFile}` : ''}`);
+  queueProjectOpen(projectFile);
 });
 
 app.whenReady().then(async () => {
