@@ -946,6 +946,7 @@
       if (tex) tex.dispose();
       textureCache.delete(key);
     }
+    if (keysToDelete.length > 0) mediaReleaseDue = true;
 
     if (textureCache.size > targetCount && (window as any).__VIDEO_DEBUG__) {
       console.warn(
@@ -955,6 +956,67 @@
         targetCount,
         '— all entries pinned, allowing growth',
       );
+    }
+  }
+
+  // ── Canvas-made video lifetime ──
+  // A layer whose source carries no video element (an opened project, an
+  // output window) plays in an element made here. It used to outlive its
+  // layer, decoding and holding its buffers for the rest of the session.
+  // It is freed once no live layer plays that file. Elements the stores
+  // made (VJ clips, the media tray) are theirs and never freed here.
+  /** Videos made here, with the src each one plays. */
+  const ownedVideos = new Map<HTMLVideoElement, string>();
+  const releasedVideos = new WeakSet<HTMLVideoElement>();
+  /** Layer id → the source the texture pass last saw for it. */
+  const layerMediaRefs = new Map<string, { src: string; sourceId: string }>();
+  let mediaReleaseDue = false;
+
+  function noteLayerMediaRef(layerId: string, src: string, sourceId: string): void {
+    const ref = layerMediaRefs.get(layerId);
+    if (ref && ref.src === src && ref.sourceId === sourceId) return;
+    if (ref) mediaReleaseDue = true;
+    layerMediaRefs.set(layerId, { src, sourceId });
+  }
+
+  function forgetLayerMediaRef(layerId: string): void {
+    if (layerMediaRefs.delete(layerId)) mediaReleaseDue = true;
+  }
+
+  /** Drop cached textures that match, so a layer that comes back loads
+   *  afresh instead of sampling a freed source. */
+  function dropCachedTextures(match: (texture: THREE.Texture) => boolean): void {
+    for (const [key, texture] of textureCache) {
+      if (!match(texture)) continue;
+      try { texture.dispose(); } catch { /* */ }
+      textureCache.delete(key);
+    }
+  }
+
+  function releaseCanvasVideo(video: HTMLVideoElement): void {
+    ownedVideos.delete(video);
+    releasedVideos.add(video);
+    dropCachedTextures((texture) => texture.image === video);
+    releaseVideoElement(video);
+  }
+
+  function releaseAllCanvasVideos(): void {
+    for (const video of [...ownedVideos.keys()]) releaseCanvasVideo(video);
+  }
+
+  /** Free Canvas-made videos that no live layer plays any more. */
+  function releaseUnusedLayerMedia(): void {
+    mediaReleaseDue = false;
+    if (ownedVideos.size === 0) return;
+    const usedSrcs = new Set<string>();
+    const note = (source: Layer['source'] | null | undefined) => {
+      if (source?.src) usedSrcs.add(source.src);
+    };
+    for (const ref of layerMediaRefs.values()) usedSrcs.add(ref.src);
+    for (const layer of get(layers)) note(layer.source);
+    for (const layer of (get(vjOutputLayers) ?? []) as Layer[]) note(layer?.source);
+    for (const [video, src] of [...ownedVideos]) {
+      if (!usedSrcs.has(src)) releaseCanvasVideo(video);
     }
   }
 
@@ -2834,16 +2896,41 @@
   let _knownLayerIds = new Set<string>();
   $: if (engine && $project) {
     const liveIds = new Set($project.layers.map((l) => l.id));
+    let removedAny = false;
     for (const id of _knownLayerIds) {
       if (!liveIds.has(id)) {
+        removedAny = true;
         try {
           engine.removeLayer(id);
         } catch (e) {
           console.warn('[Canvas] engine.removeLayer failed for', id, e);
         }
+        disposeLayerContentTargets(id);
       }
     }
     _knownLayerIds = liveIds;
+    // A removed layer that the texture pass no longer visits (e.g. during a
+    // VJ set) would otherwise keep its video playing.
+    if (removedAny) releaseUnusedLayerMedia();
+  }
+
+  /** Lines render target and SVG renderer of a layer that left the project. */
+  function disposeLayerContentTargets(layerId: string): void {
+    const linesTarget = linesRenderTargets.get(layerId);
+    if (linesTarget) {
+      try { linesTarget.dispose(); } catch { /* */ }
+      linesRenderTargets.delete(layerId);
+    }
+    const svgRenderer = svgRenderers.get(layerId);
+    if (svgRenderer) {
+      try { svgRenderer.dispose(); } catch { /* */ }
+      svgRenderers.delete(layerId);
+    }
+    const svgTarget = svgRenderTargets.get(layerId);
+    if (svgTarget) {
+      try { svgTarget.dispose(); } catch { /* */ }
+      svgRenderTargets.delete(layerId);
+    }
   }
 
   // Re-resize engine when project dimensions change. Pre-guard the
@@ -3060,6 +3147,12 @@
     }
     textureCache.clear();
     loadingTextures.clear();
+    // Videos made here that no layer source holds would be made again by
+    // the reload below; free them now instead of leaving them playing.
+    const attachedVideos = new Set(get(layers).map((l) => l.source?.videoElement).filter(Boolean));
+    for (const video of [...ownedVideos.keys()]) {
+      if (!attachedVideos.has(video)) releaseCanvasVideo(video);
+    }
 
     // Clear shader instances
     for (const shader of shaderInstances.values()) {
@@ -3185,6 +3278,9 @@
     destroyStateBroadcast();
     stopAudioBroadcast();
     stopModulationBroadcast();
+
+    // Free the videos this component made.
+    releaseAllCanvasVideos();
 
     // Dispose textures
     for (const texture of textureCache.values()) {
@@ -3407,6 +3503,7 @@
           cleanupLayerShader(layer.id, oldSrc);
           activeLayerSources.delete(layer.id);
         }
+        forgetLayerMediaRef(layer.id);
         continue;
       }
 
@@ -3475,6 +3572,7 @@
         }
       }
       activeLayerSources.set(layer.id, textureCacheKey);
+      noteLayerMediaRef(layer.id, layer.source.src, layer.source.id);
 
       // If texture exists in cache, ALWAYS assign it to the source object
       // This handles cases where the store creates new source objects
@@ -3748,13 +3846,16 @@
     // pass) — otherwise we'd dispose the upstream VJ layer's resources every
     // frame, forcing a fresh RT allocation each frame and leaving the Screen
     // layers sampling a never-rendered texture.
-    if (!cleanupStale) return;
-    for (const [layerId, src] of activeLayerSources.entries()) {
-      if (!currentLayerIds.has(layerId)) {
-        cleanupLayerShader(layerId, src);
-        activeLayerSources.delete(layerId);
+    if (cleanupStale) {
+      for (const [layerId, src] of activeLayerSources.entries()) {
+        if (!currentLayerIds.has(layerId)) {
+          cleanupLayerShader(layerId, src);
+          activeLayerSources.delete(layerId);
+          forgetLayerMediaRef(layerId);
+        }
       }
     }
+    if (mediaReleaseDue) releaseUnusedLayerMedia();
   }
 
   // Cleanup shader resources for a layer
@@ -3806,6 +3907,7 @@
   // Async texture loading
   // Takes layerId and source snapshot to avoid stale closure issues
   async function loadTextureAsync(layerId: string, source: import('../types').MediaSource, cacheKey: string) {
+    let createdVideo: HTMLVideoElement | null = null;
     try {
       let texture: THREE.Texture | null = null;
 
@@ -3814,12 +3916,17 @@
           ? await loadAnimatedGifTexture(source)
           : await loadImageTexture(source.src);
       } else if (source.type === 'video') {
-        // Get video element - either from source or create a new one
-        let video = source.videoElement;
+        // Get video element - either from source or create a new one.
+        // One this component already freed has no src left to play.
+        let video = source.videoElement && !releasedVideos.has(source.videoElement)
+          ? source.videoElement
+          : undefined;
 
         // If no video element exists, create one
         if (!video) {
           video = document.createElement('video');
+          createdVideo = video;
+          ownedVideos.set(video, source.src);
           // Only set crossOrigin for remote URLs, not blob: URLs
           if (!source.src.startsWith('blob:')) {
             video.crossOrigin = 'anonymous';
@@ -3844,6 +3951,8 @@
           const loaded = waitForVideoData(video, { timeoutMs: LAYER_VIDEO_TIMEOUT_MS });
           video.load(); // Fresh element only — see big comment above.
           const loadResult = await loaded;
+          // Freed while it loaded (its layer went away): nothing to cache.
+          if (releasedVideos.has(video)) return;
           if (!loadResult.ok) {
             releaseVideoElement(video);
             throw videoLoadError(source, loadResult);
@@ -3862,6 +3971,7 @@
         // video never decoded; it now gives up on an error or a timeout.
         if (video.readyState < 2) {
           const ready = await waitForVideoData(video, { timeoutMs: LAYER_VIDEO_TIMEOUT_MS });
+          if (releasedVideos.has(video)) return;
           if (!ready.ok) throw videoLoadError(source, ready);
         }
 
@@ -3876,6 +3986,7 @@
 
         // Wait one more frame to ensure video has rendered
         await new Promise((resolve) => requestAnimationFrame(resolve));
+        if (releasedVideos.has(video)) return;
 
         texture = createVideoTexture(video);
         source.isPlaying = !video.paused;
@@ -4410,6 +4521,10 @@
         project.updateLayer(layerId, {}, { history: false });
       }
     } catch (err) {
+      // A video made here that was freed mid-load (its layer went) is not a
+      // failure; one that never loaded must not keep fetching.
+      if (createdVideo && releasedVideos.has(createdVideo)) return;
+      if (createdVideo && ownedVideos.has(createdVideo)) releaseCanvasVideo(createdVideo);
       // Permanent failure — mark this cacheKey as poisoned so updateTexturesSync
       // stops re-triggering the load every frame. Previously a single missing
       // video file (stale blob URL, deleted project media, bad path) produced
