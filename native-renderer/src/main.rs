@@ -1786,14 +1786,25 @@ fn effective_native_frame_index(
     }
 }
 
-/// FRAMEINDEX for a shader whose count started at `first`. A clock that went
-/// back past it (a new export starting again at frame 0) starts the count
-/// again there instead of holding it at 0.
-fn isf_frame_index_since(first: &mut u64, frame_index: u64) -> u64 {
-    if frame_index < *first {
-        *first = frame_index;
+/// Where a bound ISF shader's FRAMEINDEX counts from.
+#[derive(Clone, Copy, Debug, Default)]
+struct IsfFrameOrigin {
+    first: u64,
+    /// Set once a layer has actually drawn the shader. Until then (its
+    /// pipeline building on the worker, a pass format still compiling) the
+    /// count stays at 0, so the first frame that really renders sees
+    /// FRAMEINDEX 0 and can seed its buffers.
+    rendered: bool,
+}
+
+/// FRAMEINDEX for a shader this frame. A clock that went back past the first
+/// frame (a new export starting again at frame 0) starts the count again
+/// there instead of holding it at 0.
+fn isf_frame_index_since(origin: &mut IsfFrameOrigin, frame_index: u64) -> u64 {
+    if !origin.rendered || frame_index < origin.first {
+        origin.first = frame_index;
     }
-    frame_index - *first
+    frame_index - origin.first
 }
 
 fn effective_native_frame_delta(
@@ -4858,7 +4869,7 @@ struct App {
     /// from it (ISF semantics: frames this shader has rendered), so a shader
     /// bound mid-session still sees FRAMEINDEX 0 on its first frame and can
     /// initialise its persistent buffers.
-    isf_shader_first_frame: HashMap<String, u64>,
+    isf_shader_first_frame: HashMap<String, IsfFrameOrigin>,
     /// Whether the frames in `isf_shader_first_frame` were counted on the
     /// manual (export) clock. The live and export clocks count from different
     /// places, so a switch starts every shader's count again.
@@ -16185,11 +16196,8 @@ impl App {
         // A shader that stopped rendering starts counting again when it returns.
         self.isf_shader_first_frame.retain(|id, _| shader_ids.contains(id));
         for shader_id in shader_ids {
-            let first = self
-                .isf_shader_first_frame
-                .entry(shader_id.clone())
-                .or_insert(frame_index);
-            let shader_frame_index = isf_frame_index_since(first, frame_index);
+            let origin = self.isf_shader_first_frame.entry(shader_id.clone()).or_default();
+            let shader_frame_index = isf_frame_index_since(origin, frame_index);
             if let Some(used) = self.isf_shader_last_used.get_mut(&shader_id) {
                 *used = self.isf_shader_use_tick;
             }
@@ -16502,6 +16510,10 @@ impl App {
                             self.stats.pipeline_cache_entries =
                                 renderer.native_shader_pipeline_count() as u64;
                             rendered_frame_slot = Some(slot);
+                            // FRAMEINDEX starts counting from this frame.
+                            if let Some(origin) = self.isf_shader_first_frame.get_mut(&shader_id) {
+                                origin.rendered = true;
+                            }
                             self.last_shader_error = None;
                         }
                         // A pipeline still building is not an error: the layer comes in when it lands.
@@ -35556,13 +35568,26 @@ mod tests {
     #[test]
     fn isf_frame_index_counts_from_the_first_frame_and_restarts_on_a_rewound_clock() {
         // Bound mid-session on the live clock.
-        let mut first = 5_000;
-        assert_eq!(isf_frame_index_since(&mut first, 5_000), 0);
-        assert_eq!(isf_frame_index_since(&mut first, 5_003), 3);
+        let mut origin = IsfFrameOrigin { first: 5_000, rendered: true };
+        assert_eq!(isf_frame_index_since(&mut origin, 5_000), 0);
+        assert_eq!(isf_frame_index_since(&mut origin, 5_003), 3);
         // An export starting again at frame 0 counts 0, 1, 2...
-        assert_eq!(isf_frame_index_since(&mut first, 0), 0);
-        assert_eq!(isf_frame_index_since(&mut first, 1), 1);
-        assert_eq!(isf_frame_index_since(&mut first, 2), 2);
+        assert_eq!(isf_frame_index_since(&mut origin, 0), 0);
+        assert_eq!(isf_frame_index_since(&mut origin, 1), 1);
+        assert_eq!(isf_frame_index_since(&mut origin, 2), 2);
+    }
+
+    #[test]
+    fn isf_frame_index_holds_at_zero_until_the_shader_first_renders() {
+        let mut origin = IsfFrameOrigin::default();
+        // Pipeline warming on the worker for two frames.
+        assert_eq!(isf_frame_index_since(&mut origin, 100), 0);
+        assert_eq!(isf_frame_index_since(&mut origin, 101), 0);
+        // The first frame that draws sees 0, then the count runs.
+        assert_eq!(isf_frame_index_since(&mut origin, 102), 0);
+        origin.rendered = true;
+        assert_eq!(isf_frame_index_since(&mut origin, 103), 1);
+        assert_eq!(isf_frame_index_since(&mut origin, 104), 2);
     }
 
     #[test]
