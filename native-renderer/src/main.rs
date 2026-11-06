@@ -1539,6 +1539,42 @@ fn layer_composite_extent(layer: &SceneLayer) -> (f32, f32) {
     (width, height)
 }
 
+/// The share of its source (width, height) a layer shows: its crop (the
+/// `uv_transform` scale), narrowed further on the long side by Fill.
+fn layer_source_span(layer: &SceneLayer) -> (f32, f32) {
+    let mut span_x = layer.uv0[2].abs();
+    let mut span_y = layer.uv0[3].abs();
+    if (layer.uv1[0] + 0.5).floor() as i32 == 1 {
+        let ratio = layer.uv1[1].max(0.0001);
+        if ratio > 1.0 {
+            span_x /= ratio;
+        } else {
+            span_y *= ratio;
+        }
+    }
+    let span = |value: f32| if value.is_finite() { value.clamp(1.0 / 64.0, 1.0) } else { 1.0 };
+    (span(span_x), span(span_y))
+}
+
+/// How much of the full decode size a video needs for the layers showing it
+/// (see `video_decode_scale`). A layer showing part of the clip (a video wall
+/// tile, a crop) needs its on-screen size divided by that part: a quarter-
+/// width tile showing a quarter of the clip needs the full width.
+fn video_decode_scale_for_layers<'a>(layers: impl Iterator<Item = &'a SceneLayer>) -> f32 {
+    let mut needed = 0.0f32;
+    let mut shown = false;
+    for layer in layers {
+        shown = true;
+        let (width, height) = layer_composite_extent(layer);
+        let (span_x, span_y) = layer_source_span(layer);
+        needed = needed.max((width / span_x).max(height / span_y) * 1.25);
+    }
+    if !shown || !needed.is_finite() {
+        return 1.0;
+    }
+    [0.25, 0.375, 0.5, 0.75].into_iter().find(|step| needed <= *step).unwrap_or(1.0)
+}
+
 /// Fill `out` with the tile bins for these cull bounds (see LAYER_TILES).
 /// Pixels outside the 0..1 canvas (a dome, an output warp) are not binned
 /// and walk every layer, so a layer that only reaches there is left out.
@@ -16257,20 +16293,11 @@ impl App {
     /// played at a few frames a second. A video no layer shows directly (an
     /// effect input, a splat texture) decodes in full.
     fn video_decode_scale(&self, source_id: &str) -> f32 {
-        let mut needed = 0.0f32;
-        let mut shown = false;
-        for layer in self.scene_layers.values() {
-            if layer.source_id.as_deref() != Some(source_id) {
-                continue;
-            }
-            shown = true;
-            let (width, height) = layer_composite_extent(layer);
-            needed = needed.max(width.max(height) * 1.25);
-        }
-        if !shown || !needed.is_finite() {
-            return 1.0;
-        }
-        [0.25, 0.375, 0.5, 0.75].into_iter().find(|step| needed <= *step).unwrap_or(1.0)
+        video_decode_scale_for_layers(
+            self.scene_layers
+                .values()
+                .filter(|layer| layer.source_id.as_deref() == Some(source_id)),
+        )
     }
 
     fn apply_render_isf_to_layer(&mut self, command: &Value) {
@@ -34822,6 +34849,38 @@ mod tests {
         assert_eq!(fit_video_long_edge(4096, 16, Some(64)), (64, 16));
         // The floor keeps tiny slices decodable.
         assert_eq!(native_video_slice_edge_cap((1920, 1080), 0.01), Some(64));
+    }
+
+    #[test]
+    fn a_cropped_video_tile_decodes_at_the_size_of_the_part_it_shows() {
+        use super::{SceneLayer, native_video_slice_edge_cap, video_decode_scale_for_layers};
+        let tile = |crop: [f32; 4]| {
+            let mut layer = SceneLayer::new("tile".to_string(), 0);
+            // A quarter of a 1920x1080 output each way.
+            layer.corners = [[0.0, 0.0], [0.25, 0.0], [0.25, 0.25], [0.0, 0.25]];
+            layer.uv0 = crop;
+            layer
+        };
+        // Uncropped, a quarter-size tile decodes small (480 on the long edge).
+        let whole = tile([0.0, 0.0, 1.0, 1.0]);
+        let scale = video_decode_scale_for_layers(std::iter::once(&whole));
+        assert_eq!(native_video_slice_edge_cap((1920, 1080), scale), Some(720));
+        // One tile of a 4x4 wall shows a sixteenth of the clip over a
+        // sixteenth of the output: it needs the full decode, not 720.
+        let wall = tile([0.25, 0.5, 0.25, 0.25]);
+        let scale = video_decode_scale_for_layers(std::iter::once(&wall));
+        assert_eq!(native_video_slice_edge_cap((1920, 1080), scale), None);
+        // Half the clip on that tile needs half again as much as uncropped.
+        let half = tile([0.0, 0.0, 0.5, 0.5]);
+        let scale = video_decode_scale_for_layers(std::iter::once(&half));
+        assert_eq!(native_video_slice_edge_cap((1920, 1080), scale), Some(1440));
+        // Fill on a wide clip crops its sides: the shown width counts.
+        let mut filled = tile([0.0, 0.0, 1.0, 1.0]);
+        filled.uv1 = [1.0, 4.0, 0.0, 0.0];
+        let scale = video_decode_scale_for_layers(std::iter::once(&filled));
+        assert_eq!(native_video_slice_edge_cap((1920, 1080), scale), None);
+        // A video no layer shows decodes in full.
+        assert_eq!(video_decode_scale_for_layers(std::iter::empty()), 1.0);
     }
 
     #[test]
