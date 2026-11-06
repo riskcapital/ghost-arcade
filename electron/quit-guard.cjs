@@ -17,6 +17,10 @@
  *   ask()  sends the request to the editor; false when there is no editor
  *          to ask, in which case the quit is not held.
  *   quit() carries out the quit.
+ *
+ * The editor page that was asked can go away without answering (it crashed,
+ * was reloaded or navigated). Call reset() then: otherwise the guard waits
+ * for an answer that never comes and holds every later quit.
  */
 function createQuitGuard({ ask, quit, ackTimeoutMs = 3000, setTimer = setTimeout, clearTimer = clearTimeout }) {
   let state = 'idle'; // 'idle' | 'asked' | 'deciding' | 'confirmed'
@@ -63,6 +67,13 @@ function createQuitGuard({ ask, quit, ackTimeoutMs = 3000, setTimer = setTimeout
 
     /** The user cancelled; the app keeps running. */
     cancel() {
+      if (state === 'confirmed') return;
+      stopTimer();
+      state = 'idle';
+    },
+
+    /** The editor that was asked is gone: forget the request, the next quit asks again. */
+    reset() {
       if (state === 'confirmed') return;
       stopTimer();
       state = 'idle';

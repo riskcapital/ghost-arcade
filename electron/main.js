@@ -9805,14 +9805,17 @@ function createMainWindow() {
   // JavaScript sources run for the editor that opened them. A crashed or
   // reloaded editor reopens the ones it still uses; until then the hidden
   // windows would keep painting for nobody.
+  // A quit the old page was asked about would never be answered either.
   mainWindow.webContents.on('render-process-gone', () => {
     cancelUnresponsiveReload();
     jsSourceHost.closeAll();
+    quitGuard.reset();
   });
   mainWindow.webContents.on('did-start-navigation', (details) => {
     if (!details?.isMainFrame || details.isSameDocument) return;
     cancelUnresponsiveReload();
     jsSourceHost.closeAll();
+    quitGuard.reset();
   });
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     const now = Date.now();
@@ -9887,6 +9890,7 @@ function createMainWindow() {
 
   mainWindow.on('closed', () => {
     cancelUnresponsiveReload();
+    quitGuard.reset();
     mainWindow = null;
     // Close every performer/display pop-out so the app can actually exit.
     closeAuxiliaryWindows();

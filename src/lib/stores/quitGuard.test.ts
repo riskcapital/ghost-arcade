@@ -64,6 +64,36 @@ describe('quit guard', () => {
     expect(quit).toHaveBeenCalledTimes(1);
   });
 
+  it('stops waiting when the editor that was asked goes away', () => {
+    vi.useFakeTimers();
+    const { g, ask, quit } = guard();
+    g.shouldHoldQuit();
+    g.acknowledged();
+    // The page crashed or reloaded while its Save prompt was up.
+    g.reset();
+    expect(g.state).toBe('idle');
+    // The next Cmd+Q asks the new page instead of being held forever.
+    expect(g.shouldHoldQuit()).toBe(true);
+    expect(ask).toHaveBeenCalledTimes(2);
+    g.acknowledged();
+    g.proceed();
+    expect(quit).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops a pending ask timeout on reset, and never undoes a confirmed quit', () => {
+    vi.useFakeTimers();
+    const { g, quit } = guard();
+    g.shouldHoldQuit();
+    g.reset();
+    vi.advanceTimersByTime(3000);
+    expect(quit).not.toHaveBeenCalled();
+    g.shouldHoldQuit();
+    g.proceed();
+    g.reset();
+    expect(g.state).toBe('confirmed');
+    expect(g.shouldHoldQuit()).toBe(false);
+  });
+
   it('does not hold the quit when there is no editor to ask', () => {
     const { g, quit } = guard(false);
     expect(g.shouldHoldQuit()).toBe(false);
@@ -82,6 +112,16 @@ describe('quit wiring', () => {
     for (const channel of ['app_quit_ack', 'app_quit_proceed', 'app_quit_cancel']) {
       expect(main).toContain(`ipcMain.handle('${channel}'`);
     }
+  });
+
+  it('forgets the request when the editor page crashes, reloads or closes', () => {
+    const create = main.slice(main.indexOf('function createMainWindow'));
+    const gone = create.slice(create.indexOf("mainWindow.webContents.on('render-process-gone'"));
+    expect(gone.slice(0, 300)).toContain('quitGuard.reset()');
+    const nav = create.slice(create.indexOf("mainWindow.webContents.on('did-start-navigation'"));
+    expect(nav.slice(0, 300)).toContain('quitGuard.reset()');
+    const closed = create.slice(create.indexOf("mainWindow.on('closed'"));
+    expect(closed.slice(0, 200)).toContain('quitGuard.reset()');
   });
 
   it('lets the editor hear the request and answer it', () => {
