@@ -838,7 +838,6 @@ html[data-theme] .vj-header .minimize-btn.output-send-btn.active {
 .library-section-label,
 .stage-presets-label,
 .shader-params-overlay-title,
-.amp-popover-title,
 .macro-popover-section-title {
   color: var(--ga-violet, #9b87f5) !important;
   font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace) !important;
@@ -1427,7 +1426,6 @@ html[data-theme="arcade"] :is(
   .library-section-label,
   .stage-presets-label,
   .shader-params-overlay-title,
-  .amp-popover-title,
   .macro-popover-section-title,
   .palette-section,
   .sidebar-category,
@@ -2254,7 +2252,6 @@ html.native-primary-presenter .viewport-content {
   .library-section-label,
   .stage-presets-label,
   .shader-params-overlay-title,
-  .amp-popover-title,
   .macro-popover-section-title,
   .palette-section,
   .sidebar-category,

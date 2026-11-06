@@ -27,7 +27,8 @@
   import { displayFingerprint, resolveSavedDisplay } from './lib/output/displayMatch';
   import { BRIDGE_FALLBACK_MESSAGE } from './lib/renderer/bridgeWatchdog';
   import AudioInputPicker from './lib/components/AudioInputPicker.svelte';
-  import BpmTapWidget from './lib/components/BpmTapWidget.svelte';
+  import AudioMeterPanel from './lib/components/AudioMeterPanel.svelte';
+  import TempoMenu from './lib/components/TempoMenu.svelte';
   import GuidedTour from './lib/components/GuidedTour.svelte';
   import TemplatePicker from './lib/components/TemplatePicker.svelte';
   import { onboarding } from './lib/stores/onboarding';
@@ -6611,10 +6612,18 @@
              mic toggle, device-picker chevron + popover, and system-audio
              toggle. State is wired through the global audioStore so toggling
              in one mode is reflected in every other mode. -->
-        <AudioInputPicker />
+        <AudioInputPicker showWaveform={false} />
 
-        <!-- Tempo stays available for manual performance without an audio input. -->
-        <BpmTapWidget alwaysShow />
+        <!-- Live waveform + beat/kick/snare dots, with the audio-input tweaks
+             popover (sensitivity, smoothing, per-band gain) behind the
+             waveform. The meter VJ mode uses, so tuning audio reactivity
+             doesn't require switching modes. Always shown, so the bar never
+             rearranges when audio starts. -->
+        <AudioMeterPanel alwaysShow tempo={false} />
+
+        <!-- Tap and BPM behind one button that shows the BPM; tempo stays
+             available for manual performance without an audio input. -->
+        <TempoMenu />
 
         <!-- Screenshot Button -->
         <button class="screenshot-btn" onclick={takeScreenshot} title="Take Screenshot">
@@ -6653,7 +6662,7 @@
             class="connection-btn"
             class:connected={mobileConnected}
             class:error={!!connectionError}
-            title={mobileConnected ? `Mobile: ${clientCount - 1} connected` : 'Connect Mobile'}
+            title={mobileConnected ? `Mobile: ${clientCount - 1} connected` : 'Connect a phone or tablet'}
             onclick={async () => {
               showMobileInfo = !showMobileInfo;
               confirmingPairingReset = false;
@@ -6668,12 +6677,8 @@
             }}
           >
             <span class="dot"></span>
-            <!-- Both labels take the same room, so the bar does not rescale
-                 when a phone connects. -->
-            <span class="tb-swap">
-              <span class:tb-swap-off={!mobileConnected}>Mobile: {Math.max(0, clientCount - 1)} connected</span>
-              <span class:tb-swap-off={mobileConnected}>Connect Mobile</span>
-            </span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg>
+            <span>Mobile</span>
           </button>
 
           {#if showMobileInfo}

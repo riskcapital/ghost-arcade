@@ -18,6 +18,15 @@
   import { isMac } from '../bridge';
   import AudioWaveformIndicator from './AudioWaveformIndicator.svelte';
 
+  /** Show the inline oscilloscope. Off where an AudioMeterPanel is mounted
+   *  alongside — that panel hosts the scope as its tweaks trigger, so
+   *  drawing a second one just costs header width. */
+  export let showWaveform: boolean = true;
+
+  /** Open the device list above the button rather than below, for hosts
+   *  near the bottom of the window. Falls back to whichever side has room. */
+  export let openUp: boolean = false;
+
   // Internal popover state. Closes on outside click via window listener.
   let showMicPicker = false;
   let pickerEl: HTMLDivElement | null = null;
@@ -34,8 +43,23 @@
       // Reset before measuring so we always start from a known baseline.
       node.style.left = '';
       node.style.right = '0';
-      const rect = node.getBoundingClientRect();
+      node.style.top = '';
+      node.style.bottom = '';
       const margin = 8;
+
+      // Vertical side first: a list opened near the bottom of the window has to rise.
+      const anchor = node.parentElement?.getBoundingClientRect();
+      const h = node.getBoundingClientRect().height;
+      const viewH = window.innerHeight || document.documentElement.clientHeight || 0;
+      const roomAbove = anchor ? anchor.top - margin : 0;
+      const roomBelow = anchor && viewH ? viewH - anchor.bottom - margin : Infinity;
+      const flipUp = openUp ? roomAbove >= h : roomBelow < h && roomAbove >= h;
+      if (flipUp) {
+        node.style.top = 'auto';
+        node.style.bottom = 'calc(100% + 4px)';
+      }
+
+      const rect = node.getBoundingClientRect();
       if (rect.left < margin) {
         // Right-anchor would overflow left edge → flip to left-anchor.
         node.style.right = '';
@@ -48,6 +72,7 @@
         }
       }
     };
+    adjust();
     requestAnimationFrame(adjust);
     window.addEventListener('resize', adjust);
     return {
@@ -103,7 +128,7 @@
 
 <svelte:window onclick={handleWindowClick} />
 
-<div class="audio-input-picker" bind:this={pickerEl}>
+<div data-help-page="midi-audio" class="audio-input-picker" bind:this={pickerEl}>
   <!-- Mic button + device-picker chevron, grouped as one visual unit -->
   <div class="aip-mic-group">
     <button
@@ -170,7 +195,9 @@
                     Share. Picking a Window returns silent video and
                     we surface a "No audio track" error. There is no
                     per-app capture on macOS via this API. -->
-  <AudioWaveformIndicator />
+  {#if showWaveform}
+    <AudioWaveformIndicator />
+  {/if}
 
   <button
     class="aip-btn"

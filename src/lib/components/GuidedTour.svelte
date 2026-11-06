@@ -331,11 +331,13 @@
           title: 'Set the tempo',
           body: 'Beat-synced launches and effects follow this tempo.',
           bullets: [
+            'The BPM button in the top bar opens the tempo controls',
             'Tap: tap along to set it by hand',
             'Detect tempo: follow the music coming into your audio input',
             'Or let your DAW set it, which is the next step',
           ],
-          targets: ['.bpm-tap-widget'],
+          // In mapping mode Tap lives behind the bar's BPM button.
+          targets: ['.bpm-tap-widget', '.tempo-btn'],
           prepare: closeSettings,
         },
         {

@@ -14,17 +14,23 @@
   import { audioInputType } from '../stores/audio';
 
   // Logical pixel size; canvas backing-store gets devicePixelRatio'd.
-  const W = 92;
-  const H = 28;
+  // Sizable so the header can run a compact scope inside the meter button
+  // while the standalone strip keeps its original footprint.
+  export let width: number = 92;
+  export let height: number = 28;
+  $: W = width;
+  $: H = height;
 
   let canvas: HTMLCanvasElement | null = null;
   let raf = 0;
   let mounted = false;
 
+  let ctx: CanvasRenderingContext2D | null = null;
+  let drewIdle = false;
   let lastDrawAt = 0;
   // Theme colours, re-read once a second rather than on every frame: reading
   // the computed style forces a style pass, and during a VJ set (clip audio
-  // is live input) this meter alone cost more than most of the frame.
+  // is live input) this meter alone cost more than the frame sync.
   let colours = { live: '#ff6f5e', idle: '#3a404a', at: -Infinity };
   function themeColours(now: number) {
     if (now - colours.at > 1000) {
@@ -38,15 +44,21 @@
     return colours;
   }
 
-  function draw() {
+  function draw(now: number = performance.now()) {
     if (!mounted || !canvas) return;
     raf = requestAnimationFrame(draw);
+    // With no audio input the meter is a flat line: draw it once and stop
+    // repainting until input comes back (and never while the window is
+    // hidden), instead of redrawing the same line 60 times a second.
+    if (document.hidden) return;
+    const inputOn = $audioInputType !== 'none';
+    if (!inputOn && drewIdle) return;
     // A thumbnail-sized scope reads the same at 30 fps.
-    const now = performance.now();
-    if (now - lastDrawAt < 32) return;
+    if (inputOn && now - lastDrawAt < 32) return;
     lastDrawAt = now;
+    drewIdle = !inputOn;
 
-    const ctx = canvas.getContext('2d');
+    ctx ??= canvas.getContext('2d');
     if (!ctx) return;
     const dpr = window.devicePixelRatio || 1;
     const w = canvas.width;   // backing-store px
@@ -91,7 +103,11 @@
     canvas.height = Math.round(H * dpr);
     canvas.style.width = `${W}px`;
     canvas.style.height = `${H}px`;
+    drewIdle = false;
+    colours.at = -Infinity;
   }
+
+  $: if (mounted && canvas && (W || H)) resize();
 
   onMount(() => {
     mounted = true;
@@ -105,7 +121,7 @@
   });
 </script>
 
-<canvas
+<canvas data-help-page="midi-audio"
   bind:this={canvas}
   class="awi"
   title="Live audio waveform"

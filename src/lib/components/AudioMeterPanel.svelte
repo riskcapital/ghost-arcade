@@ -4,17 +4,19 @@
    * tap tempo, current BPM, beat indicator, and an expandable "input tweaks"
    * popover with sensitivity / smoothing controls.
    *
-   * Click anywhere on the meter (FFT bars) to open the popover. Used in the
-   * VJ top bar so the user has one consolidated audio-monitoring + tuning
-   * surface alongside the AudioInputPicker.
+   * Click the waveform to open the popover. Used in the mapping bar and the
+   * VJ deck controls, beside the AudioInputPicker, so the user has one
+   * audio-monitoring + tuning surface in both modes.
    *
    * Self-hides when no audio is active. The picker stays visible (it's a
    * separate component) so users can turn audio on without this widget
    * cluttering the header beforehand.
    */
-  export let alwaysShow = false;
+  import { tick } from 'svelte';
   import { audioStore } from '../stores/audio';
   import BpmTapWidget from './BpmTapWidget.svelte';
+  import AudioWaveformIndicator from './AudioWaveformIndicator.svelte';
+  import { portal } from '../utils/portal';
 
   let showEq = false;
   let popoverEl: HTMLDivElement | null = null;
@@ -28,10 +30,30 @@
   let popLeft = 0;
   const POP_WIDTH = 280;
 
+  /** Open the popover above the meter instead of below, for hosts near the
+   *  bottom of the window. Either way it flips to the side that has room. */
+  export let openUp: boolean = false;
+  export let alwaysShow = false;
+  /** Show the meter: waveform, band strip, beat lights and the tweaks
+   *  popover. The mapping bar shows this part on its own. */
+  export let meter = true;
+  /** Show Tap and the BPM. The mapping bar keeps this part in its BPM menu. */
+  export let tempo = true;
+
   function positionPopover() {
-    if (!anchorEl) return;
+    if (!anchorEl || !popoverEl) return;
     const r = anchorEl.getBoundingClientRect();
-    popTop = r.bottom + 6;
+    // Measure first — the popover's height varies with the band count.
+    const popH = popoverEl.getBoundingClientRect().height || 320;
+    const above = r.top - 6 - popH;
+    const below = r.bottom + 6;
+    const viewH = window.innerHeight || document.documentElement.clientHeight || 0;
+    // Honour the caller's preference, but fall back to whichever side
+    // actually has room so the panel is never half off-screen.
+    const wantUp = openUp
+      ? above >= 8
+      : viewH > 0 && below + popH > viewH - 8 && above >= 8;
+    popTop = wantUp ? above : below;
     popLeft = Math.max(8, Math.min(
       r.left + r.width / 2 - POP_WIDTH / 2,
       window.innerWidth - POP_WIDTH - 8,
@@ -40,7 +62,9 @@
 
   function toggleEq() {
     showEq = !showEq;
-    if (showEq) positionPopover();
+    // Render first, then measure + place: the flip decision needs the
+    // popover's real height.
+    if (showEq) tick().then(positionPopover);
   }
 
   function handleWindowClick(e: MouseEvent) {
@@ -58,21 +82,31 @@
 <svelte:window onclick={handleWindowClick} onresize={() => showEq && positionPopover()} />
 
 {#if alwaysShow || $audioStore.isActive}
-  <div class="amp-strip" bind:this={anchorEl}>
+  <div data-help-page="midi-audio" class="amp-strip" bind:this={anchorEl}>
+    {#if meter}
     <!-- FFT bars — clickable to open the EQ popover -->
     <button class="amp-fft-btn" onclick={toggleEq}
-      class:open={showEq} disabled={!$audioStore.isActive}
-      title="Audio input tweaks — click to open EQ / sensitivity / smoothing">
-      <div class="amp-bars">
-        <div class="amp-bar" style="height: {Math.min(100, $audioStore.bands.sub * 100)}%"></div>
-        <div class="amp-bar" style="height: {Math.min(100, $audioStore.bands.bass * 100)}%"></div>
-        <div class="amp-bar" style="height: {Math.min(100, $audioStore.bands.lowMid * 100)}%"></div>
-        <div class="amp-bar" style="height: {Math.min(100, $audioStore.bands.mid * 100)}%"></div>
-        <div class="amp-bar" style="height: {Math.min(100, $audioStore.bands.highMid * 100)}%"></div>
-        <div class="amp-bar" style="height: {Math.min(100, $audioStore.bands.treble * 100)}%"></div>
-        <div class="amp-bar" style="height: {Math.min(100, $audioStore.bands.air * 100)}%"></div>
-        <div class="amp-bar" style="height: {Math.min(100, $audioStore.bands.presence * 100)}%"></div>
-      </div>
+      class:open={showEq}
+      disabled={!$audioStore.isActive}
+      title={$audioStore.isActive ? "Audio input tweaks — EQ / sensitivity / smoothing" : "Connect an audio source to activate monitoring"}>
+      <!-- One audio visualization for the whole header: the oscilloscope
+           doubles as the tweaks trigger, with the 8 band levels drawn as a
+           thin bar strip beneath it. Previously the scope lived in the input
+           picker and a separate 8-bar meter lived here, which cost ~90px of
+           header width for two views of the same signal. -->
+      <span class="amp-scope">
+        <AudioWaveformIndicator width={78} height={22} />
+        <span class="amp-bandstrip" aria-hidden="true">
+          <i style="height: {Math.min(100, $audioStore.bands.sub * 100)}%"></i>
+          <i style="height: {Math.min(100, $audioStore.bands.bass * 100)}%"></i>
+          <i style="height: {Math.min(100, $audioStore.bands.lowMid * 100)}%"></i>
+          <i style="height: {Math.min(100, $audioStore.bands.mid * 100)}%"></i>
+          <i style="height: {Math.min(100, $audioStore.bands.highMid * 100)}%"></i>
+          <i style="height: {Math.min(100, $audioStore.bands.treble * 100)}%"></i>
+          <i style="height: {Math.min(100, $audioStore.bands.air * 100)}%"></i>
+          <i style="height: {Math.min(100, $audioStore.bands.presence * 100)}%"></i>
+        </span>
+      </span>
       <span class="amp-eq-glyph" class:active={showEq}>
         <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round">
           <polyline points="6 9 12 15 18 9"/>
@@ -92,18 +126,24 @@
         <div class="amp-ks-dot amp-snare" class:flash={$audioStore.isActive && $audioStore.kickSnare.isSnare} title="Snare onset (lowMid+highMid)"></div>
       </div>
     {/if}
+    {/if}
 
-    <!-- BPM + TAP -->
-    <BpmTapWidget alwaysShow={true} />
+    {#if tempo}
+      <!-- BPM + TAP -->
+      <BpmTapWidget alwaysShow={true} />
+    {/if}
 
-    {#if $audioStore.error}
+    {#if meter && $audioStore.error}
       <span class="amp-error" title={$audioStore.error}>⚠</span>
     {/if}
 
     <!-- Expandable EQ / input-tweaks popover -->
-    {#if showEq && $audioStore.isActive}
-      <div class="amp-popover" bind:this={popoverEl} style="top:{popTop}px; left:{popLeft}px">
-        <div class="amp-popover-title">AUDIO INPUT TWEAKS</div>
+    {#if meter && showEq && $audioStore.isActive}
+      <!-- The popover moves to <body> (see utils/portal.ts); this wrapper
+           stays here as the block's own node. -->
+      <div class="amp-popover-home">
+      <div class="amp-popover" use:portal bind:this={popoverEl} style="top:{popTop}px; left:{popLeft}px">
+        <div class="amp-popover-title">Audio input tweaks</div>
 
         <div class="amp-row">
           <label class="amp-row-label">Sensitivity</label>
@@ -133,9 +173,9 @@
              user can boost the kick or cut harsh treble while watching
              the band react. -->
         <div class="amp-popover-subhead">
-          <span>PER-BAND GAIN</span>
+          <span>Per-band gain</span>
           <button class="amp-reset-btn" onclick={() => audioStore.resetBandGain()}
-            title="Reset all band gains to 1×">RESET</button>
+            title="Reset all band gains to 1×">Reset</button>
         </div>
         <div class="amp-bands-readout">
           {#each [
@@ -163,6 +203,7 @@
           {/each}
         </div>
       </div>
+      </div>
     {/if}
   </div>
 {/if}
@@ -182,47 +223,59 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 4px;
+    background: var(--ga-card, #16140f);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-hard, 5px);
     padding: 4px 8px;
-    height: 34px;
+    height: var(--ga-bar-control-h, 30px);
+    box-sizing: border-box;
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s;
   }
   .amp-fft-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
-    border-color: rgba(255, 255, 255, 0.18);
+    border-color: var(--ga-line-3);
   }
   .amp-fft-btn.open {
-    background: rgba(187, 134, 252, 0.12);
-    border-color: rgba(187, 134, 252, 0.45);
+    background: var(--ga-selection-bg);
+    border-color: var(--ga-selection-line);
   }
 
-  .amp-bars {
+  /* Scope + band strip stacked in the width one of them used to take. */
+  .amp-scope {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+  }
+  .amp-bandstrip {
     display: flex;
     align-items: flex-end;
-    gap: 3px;
-    height: 24px;
+    gap: 2px;
+    height: 5px;
+    width: 100%;
   }
-  .amp-bar {
-    width: 5px;
+  /* Bands divide the scope's width rather than carrying fixed pixel sizes,
+     so the strip stays exactly as wide as the waveform above it at every
+     responsive tier. */
+  .amp-bandstrip i {
+    flex: 1 1 0;
+    min-width: 1px;
     min-height: 1px;
-    border-radius: 2px;
+    border-radius: 1px;
     transition: height 0.05s ease-out;
   }
   /* 8-band rainbow — matches the per-band readout in the popover */
-  .amp-bar:nth-child(1) { background: #f43f5e; } /* sub */
-  .amp-bar:nth-child(2) { background: #f97316; } /* bass */
-  .amp-bar:nth-child(3) { background: #eab308; } /* lowMid */
-  .amp-bar:nth-child(4) { background: #22c55e; } /* mid */
-  .amp-bar:nth-child(5) { background: #14b8a6; } /* highMid */
-  .amp-bar:nth-child(6) { background: #3b82f6; } /* treble */
-  .amp-bar:nth-child(7) { background: #8b5cf6; } /* air */
-  .amp-bar:nth-child(8) { background: #ec4899; } /* presence */
+  .amp-bandstrip i:nth-child(1) { background: #f43f5e; } /* sub */
+  .amp-bandstrip i:nth-child(2) { background: #f97316; } /* bass */
+  .amp-bandstrip i:nth-child(3) { background: #eab308; } /* lowMid */
+  .amp-bandstrip i:nth-child(4) { background: #22c55e; } /* mid */
+  .amp-bandstrip i:nth-child(5) { background: #14b8a6; } /* highMid */
+  .amp-bandstrip i:nth-child(6) { background: var(--ga-blue-400); } /* treble */
+  .amp-bandstrip i:nth-child(7) { background: #8b5cf6; } /* air */
+  .amp-bandstrip i:nth-child(8) { background: #ec4899; } /* presence */
 
   .amp-eq-glyph {
-    color: var(--text-muted, #888);
+    color: var(--ga-ink-2);
     line-height: 0;
     transition: transform 0.18s, color 0.18s;
   }
@@ -231,7 +284,7 @@
     height: 10px;
   }
   .amp-eq-glyph.active {
-    color: #BB86FC;
+    color: var(--ga-selection-ink);
     transform: rotate(180deg);
   }
 
@@ -239,7 +292,7 @@
     width: 11px;
     height: 11px;
     border-radius: 50%;
-    background: #333;
+    background: var(--ga-line-3);
     transition: background 0.06s, box-shadow 0.06s;
   }
   .amp-beat.flash {
@@ -249,18 +302,27 @@
 
   .amp-error {
     color: #f44;
-    font-size: 15px;
+    font-size: 14px;
     padding: 0 4px;
   }
 
-  /* Popover — fixed so no header overflow/stacking context clips it */
+  .amp-popover-home {
+    display: contents;
+  }
+
+  /* Popover — fixed at <body>, so no host's overflow, filter or zoom moves
+     or clips it. */
   .amp-popover {
     position: fixed;
+    font-family: var(--ga-font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+    font-size: var(--ga-text-body, 13px);
+    color: var(--ga-ink-0);
+    -webkit-app-region: no-drag;
     width: 280px;
     max-width: calc(100vw - 24px);
-    background: var(--bg-tertiary, #1a1a1e);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 8px;
+    background: var(--ga-card, #16140f);
+    border: 1px solid var(--ga-line-2);
+    border-radius: var(--ga-r-soft, 8px);
     padding: 12px 12px 10px;
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
     z-index: 4000;
@@ -269,10 +331,9 @@
     gap: 10px;
   }
   .amp-popover-title {
-    font-size: 12px;
-    font-weight: 700;
-    color: var(--text-muted, #888);
-    letter-spacing: 0.16em;
+    font-size: var(--ga-text-title, 14px);
+    font-weight: 650;
+    color: var(--ga-ink-0);
   }
   .amp-row {
     display: grid;
@@ -281,25 +342,25 @@
     gap: 8px;
   }
   .amp-row-label {
-    font-size: 14px;
-    color: var(--text-primary, #ccc);
+    font-size: var(--ga-text-control, 12px);
+    color: var(--ga-ink-1);
   }
   .amp-slider {
     width: 100%;
-    accent-color: #BB86FC;
+    accent-color: var(--ga-selection-line);
   }
   .amp-row-value {
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    font-size: 13px;
-    color: #BB86FC;
+    font-size: var(--ga-text-control, 12px);
+    color: var(--ga-ink-0);
     text-align: right;
   }
   .amp-popover-hint {
-    font-size: 13px;
-    color: var(--text-muted, #888);
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2);
     line-height: 1.4;
     padding-top: 4px;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    border-top: 1px solid var(--ga-line-1);
   }
 
   /* Per-band readout (horizontal bars showing live levels) */
@@ -308,33 +369,37 @@
     flex-direction: column;
     gap: 4px;
     padding-top: 4px;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    border-top: 1px solid var(--ga-line-1);
   }
   .amp-popover-subhead {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    font-size: 12px;
+    font-size: var(--ga-text-eyebrow, 10px);
     font-weight: 700;
-    color: var(--text-muted, #888);
-    letter-spacing: 0.16em;
-    padding-top: 4px;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    color: var(--ga-ink-2);
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    text-transform: uppercase;
+    padding-top: 8px;
+    border-top: 1px solid var(--ga-line-1);
   }
   .amp-reset-btn {
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: var(--text-secondary, #aaa);
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    padding: 2px 6px;
-    border-radius: 3px;
+    height: var(--ga-control-h-sm, 22px);
+    background: var(--ga-card, #16140f);
+    border: 1px solid var(--ga-line-2);
+    color: var(--ga-ink-1);
+    font: inherit;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+    padding: 0 8px;
+    border-radius: var(--ga-r-hard, 5px);
     cursor: pointer;
   }
   .amp-reset-btn:hover {
-    color: #fff;
-    border-color: rgba(255, 255, 255, 0.25);
+    color: var(--ga-ink-0);
+    border-color: var(--ga-line-3);
   }
 
   .amp-band {
@@ -344,10 +409,10 @@
     gap: 6px;
   }
   .amp-band-name {
-    font-size: 12px;
+    font-size: var(--ga-text-eyebrow, 10px);
     font-weight: 700;
-    color: #999;
-    letter-spacing: 0.08em;
+    color: var(--ga-ink-2);
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
   }
   .amp-band-track {
     height: 4px;
@@ -372,7 +437,7 @@
 
   .amp-band-gain {
     width: 70px;
-    accent-color: #BB86FC;
+    accent-color: var(--ga-selection-line);
     height: 4px;
   }
 

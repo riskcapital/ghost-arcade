@@ -5132,8 +5132,9 @@
             <AudioMeterPanel alwaysShow />
             <VJTempoControls />
             <!-- Same picker component mapping and Performer use; state flows
-                 through audioStore, so toggling here flips every mode. -->
-            <AudioInputPicker />
+                 through audioStore, so toggling here flips every mode. The
+                 meter beside it draws the waveform. -->
+            <AudioInputPicker showWaveform={false} />
             <VJAudioOutput />
             <!-- The Show timeline's soundtrack, when the show has one: its
                  transport keeps running in VJ mode. -->
@@ -6807,13 +6808,6 @@
     height: var(--vj-control-h);
     padding: 0 calc(var(--vj-file-pad-x) - 2px);
     gap: var(--vj-meter-gap);
-  }
-  .vj-dock :global(.amp-bars) {
-    height: calc(var(--vj-control-h) - 10px);
-    gap: var(--vj-amp-bar-gap);
-  }
-  .vj-dock :global(.amp-bar) {
-    width: var(--vj-amp-bar-w);
   }
   .vj-dock :global(.aip-btn) {
     width: calc(var(--vj-icon-btn) + 2px);
