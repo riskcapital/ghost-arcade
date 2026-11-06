@@ -9,6 +9,7 @@
  * stealing; the engine's effects run once on the summed stereo signal.
  */
 
+import { Arpeggiator } from '../arp';
 import type { DrumKit, DrumSound, DrumTweak, Env, Lfo, Osc, TonePatch, ToneFx, ToneMessage, Wave } from './toneTypes';
 
 const TAU = Math.PI * 2;
@@ -499,6 +500,8 @@ class FxChain {
 interface Timed {
   at: number;
   msg: ToneMessage;
+  /** Played by the arpeggiator, so it goes straight to the voices. */
+  arp?: boolean;
 }
 
 /** A polyphonic subtractive and FM tone engine. */
@@ -514,6 +517,7 @@ export class ToneEngine {
   private bpm = 120;
   private queue: Timed[] = [];
   private counter = 0;
+  private arp: Arpeggiator | null = null;
   private L: Float32Array = new Float32Array(128);
   private R: Float32Array = new Float32Array(128);
 
@@ -531,7 +535,11 @@ export class ToneEngine {
     if (msg.t === 'patch') {
       const was = this.patch;
       this.patch = msg.patch;
-      if (!was || !!was.mono !== !!msg.patch.mono) this.panic();
+      if (!was || !!was.mono !== !!msg.patch.mono || !!was.arp !== !!msg.patch.arp) this.panic();
+      if (msg.patch.arp) {
+        if (this.arp) this.arp.settings = msg.patch.arp;
+        else this.arp = new Arpeggiator(msg.patch.arp);
+      } else this.arp = null;
     } else if (msg.t === 'expr') {
       if (msg.wheel !== undefined) this.expr.wheel = msg.wheel;
       if (msg.pressure !== undefined) this.expr.pressure = msg.pressure;
@@ -543,6 +551,7 @@ export class ToneEngine {
   panic(): void {
     this.queue = [];
     this.stack = [];
+    this.arp?.clear();
     for (const v of this.voices) {
       v.amp.stage = 0;
       v.amp.value = 0;
@@ -653,13 +662,18 @@ export class ToneEngine {
     L.fill(0, 0, n);
     R.fill(0, 0, n);
     const p = this.patch;
+    if (this.arp) this.runArp(now, n);
     let i = 0;
     while (i < n) {
       // Events due before the next control step land on their sample.
       const t = now + i / this.sr;
       while (this.queue.length && this.queue[0].at <= t + 0.5 / this.sr) {
-        const { msg } = this.queue.shift()!;
-        if (msg.t === 'on') this.start(msg.note, msg.vel);
+        const { msg, arp } = this.queue.shift()!;
+        if (this.arp && !arp) {
+          // Keys feed the arpeggiator; it plays the voices.
+          if (msg.t === 'on') this.arp.press(msg.note, msg.vel);
+          else if (msg.t === 'off') this.arp.release(msg.note);
+        } else if (msg.t === 'on') this.start(msg.note, msg.vel);
         else if (msg.t === 'off') this.stop(msg.note);
       }
       let end = Math.min(n, i + CONTROL);
@@ -676,6 +690,33 @@ export class ToneEngine {
       outR[j] += R[j];
     }
     this.counter += n;
+  }
+
+  /** Queue the arpeggio's notes for this block, on a grid at the engine's tempo. */
+  private runArp(now: number, n: number): void {
+    const arp = this.arp!;
+    // A key pressed during this block starts the run on its own sample.
+    const end = now + n / this.sr;
+    let from = now;
+    for (const q of this.queue) {
+      if (q.at >= end) break;
+      if (!q.arp && q.msg.t === 'on' && !arp.active) {
+        from = Math.max(now, q.at);
+        // Press it now so the first step lands on the key.
+        arp.press(q.msg.note, q.msg.vel);
+        this.queue.splice(this.queue.indexOf(q), 1);
+        break;
+      }
+    }
+    const spb = 60 / Math.max(1, this.bpm);
+    const steps = arp.advance((end - from) / spb);
+    if (!steps.length) return;
+    for (const s of steps) {
+      const at = from + s.at * spb;
+      this.queue.push({ at, msg: { t: 'on', note: s.note, vel: s.vel, at }, arp: true });
+      this.queue.push({ at: at + s.len * spb, msg: { t: 'off', note: s.note, at: at + s.len * spb }, arp: true });
+    }
+    this.queue.sort((a, b) => a.at - b.at);
   }
 
   private renderSpan(p: TonePatch, L: Float32Array, R: Float32Array, from: number, to: number): void {
@@ -830,6 +871,9 @@ class DrumHit {
   done = true;
   phase = 0;
   phase2 = 0;
+  phase3 = 0;
+  /** The glitch model's current step value. */
+  held = 0;
   metal = new Float64Array(6);
   hp = new Svf();
   bp = new Svf();
@@ -876,7 +920,7 @@ export class DrumEngine {
     const sound = kit?.sounds[slot];
     if (!sound) return;
     // A closed hat cuts an open one.
-    if (slot === 3) for (const h of this.hits) if (!h.done && h.sound.choke) h.choke = Math.exp(-1 / (0.006 * this.sr));
+    if (slot === 3 || sound.cuts) for (const h of this.hits) if (!h.done && h.sound.choke) h.choke = Math.exp(-1 / (0.006 * this.sr));
     let h = this.hits.find((x) => x.done);
     if (!h) h = this.hits.reduce((a, b) => (a.t >= b.t ? a : b));
     // Each hit a hair different, so repeats breathe.
@@ -907,7 +951,13 @@ export class DrumEngine {
     else if (m === 'clap') h.bp.set(h.freq, 0.45, sr);
     else if (m === 'cowbell') h.bp.set(h.freq * 2.1, 0.55, sr);
     else if (m === 'rim') h.bp.set(h.freq * 1.6, 0.7, sr);
+    else if (m === 'shaker' || m === 'scrape') {
+      h.bp.set(h.freq * (0.8 + h.tone * 0.5), m === 'scrape' ? 0.55 : 0.3, sr);
+      h.hp.set(1500, 0.1, sr);
+    } else if (m === 'rise') h.bp.set(h.freq * 3, 0.5, sr);
     else h.hp.set(2500 + h.tone * 4000, 0.1, sr);
+    h.held = 0;
+    h.phase3 = 0;
   }
 
   process(outL: Float32Array, outR: Float32Array, n: number, now: number): void {
@@ -1041,6 +1091,96 @@ export class DrumEngine {
           const env = Math.exp(-t / (h.decay * 0.3));
           y = (h.phase < 0.5 ? 0.6 : -0.6) * env;
           alive = env > 1e-3;
+          break;
+        }
+        case 'membrane': {
+          // A hand drum: the head's two lowest modes, a small drop in pitch as it settles, a slap on top.
+          const hz = h.freq * Math.pow(2, (s.bend ?? 0.15) * Math.exp(-t / 0.018));
+          h.phase += hz * dt;
+          if (h.phase >= 1) h.phase -= 1;
+          h.phase2 += hz * 1.59 * dt;
+          if (h.phase2 >= 1) h.phase2 -= 1;
+          const amp = Math.exp(-t / (h.decay * 0.3));
+          y = (Math.sin(TAU * h.phase) + 0.35 * Math.sin(TAU * h.phase2) * Math.exp(-t / (h.decay * 0.12))) * amp;
+          h.hp.process(whiteNoise());
+          y += h.hp.hp * h.tone * 1.1 * Math.exp(-t / 0.012);
+          alive = amp > 1e-3;
+          break;
+        }
+        case 'shaker': {
+          const rise = Math.min(1, t / Math.max(0.004, h.decay * 0.25));
+          const env = rise * Math.exp(-Math.max(0, t - h.decay * 0.25) / (h.decay * 0.25));
+          h.bp.process(whiteNoise());
+          h.hp.process(h.bp.bp);
+          y = h.hp.hp * env * 2.2;
+          alive = t < h.decay * 0.25 || env > 1e-3;
+          break;
+        }
+        case 'scrape': {
+          // Ridges: a fast swell on each one, the whole stroke dying away.
+          const ridge = (t * (s.rate ?? 38)) % 1;
+          const env = Math.exp(-ridge * 7) * Math.min(1, t / 0.01) * Math.exp(-t / (h.decay * 0.6));
+          h.bp.process(whiteNoise());
+          y = h.bp.bp * env * 2.6;
+          alive = t < h.decay * 3;
+          break;
+        }
+        case 'bell': {
+          h.phase += h.freq * dt;
+          if (h.phase >= 1) h.phase -= 1;
+          h.phase2 += h.freq * 2.76 * dt;
+          if (h.phase2 >= 1) h.phase2 -= 1;
+          h.phase3 += h.freq * 5.4 * dt;
+          if (h.phase3 >= 1) h.phase3 -= 1;
+          const amp = Math.exp(-t / (h.decay * 0.3));
+          const hi = Math.exp(-t / (h.decay * 0.1));
+          y = (Math.sin(TAU * h.phase) + h.tone * 0.6 * Math.sin(TAU * h.phase2) * hi + h.tone * 0.35 * Math.sin(TAU * h.phase3) * hi) * amp * 0.7;
+          alive = amp > 1e-3;
+          break;
+        }
+        case 'rise': {
+          // A friction drum: the stick pulls the pitch up, then lets it fall back.
+          const up = (s.bend ?? 1) * (1 - Math.exp(-t / (h.decay * 0.15))) * Math.exp(-t / (h.decay * 0.6));
+          h.phase += h.freq * Math.pow(2, up) * dt;
+          if (h.phase >= 1) h.phase -= 1;
+          const env = Math.min(1, t / 0.008) * Math.exp(-t / (h.decay * 0.3));
+          h.bp.process(whiteNoise());
+          y = (Math.sin(TAU * h.phase) * 0.9 + h.bp.bp * h.tone * 0.5) * env;
+          alive = t < 0.01 || env > 1e-3;
+          break;
+        }
+        case 'glitch': {
+          h.phase += (s.rate ?? 60) * dt;
+          if (h.phase >= 1) {
+            h.phase -= 1;
+            h.held = Math.random() * 2 - 1;
+          }
+          h.phase2 += h.freq * (1 + h.held * 0.8) * dt;
+          if (h.phase2 >= 1) h.phase2 -= 1;
+          const env = Math.exp(-t / (h.decay * 0.3));
+          const sq = h.phase2 < 0.5 ? 0.5 : -0.5;
+          y = (sq * (1 - h.tone) + h.held * 0.5 * h.tone) * env;
+          alive = env > 1e-3;
+          break;
+        }
+        case 'fm': {
+          h.phase2 += h.freq * (s.rate ?? 1.41) * dt;
+          if (h.phase2 >= 1) h.phase2 -= 1;
+          const index = (1 + h.tone * 6) * Math.exp(-t / (h.decay * 0.15));
+          h.phase += h.freq * dt;
+          if (h.phase >= 1) h.phase -= 1;
+          const amp = Math.exp(-t / (h.decay * 0.3));
+          y = Math.sin(TAU * h.phase + index * Math.sin(TAU * h.phase2)) * amp * 0.8;
+          alive = amp > 1e-3;
+          break;
+        }
+        case 'laser': {
+          const hz = h.freq * Math.pow(2, (s.bend ?? 3) * Math.exp(-t / Math.max(0.01, h.decay * 0.2)));
+          h.phase += hz * dt;
+          if (h.phase >= 1) h.phase -= 1;
+          const amp = Math.exp(-t / (h.decay * 0.3));
+          y = (Math.sin(TAU * h.phase) * (1 - h.tone) + (h.phase < 0.5 ? 0.5 : -0.5) * h.tone) * amp;
+          alive = amp > 1e-3;
           break;
         }
       }

@@ -136,6 +136,24 @@
   --mk-black: #111111;
 }
 
+/* The drum machine: a warm charcoal case with cream legends, the step row's
+   reds, oranges and yellows, and a red-orange for what is on. */
+.studio-tokens.set-machine .face {
+  --studio-panel: #1c1b19;
+  --studio-cell: #272522;
+  --studio-slot: #121110;
+  --studio-edge: rgba(239, 230, 210, 0.22);
+  --studio-edge-soft: rgba(239, 230, 210, 0.1);
+  --studio-ink: #efe6d2;
+  --studio-muted: #a39a88;
+  --studio-accent: #f0592f;
+  --studio-accent-soft: rgba(240, 89, 47, 0.16);
+  --studio-on-accent: #1a0700;
+  --studio-knob-face: radial-gradient(circle at 38% 30%, #4a4741, #1b1a18 70%);
+  --studio-knob-edge: #3a3833;
+  --studio-radius: 3px;
+}
+
 /* On a face, buttons read in the face's own ink. */
 .studio-tokens .face {
   --studio-ink-1: var(--studio-ink);

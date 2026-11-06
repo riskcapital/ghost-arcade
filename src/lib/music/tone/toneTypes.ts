@@ -3,6 +3,8 @@
  * main thread and the audio worklet that plays them.
  */
 
+import type { ArpSettings } from '../arp';
+
 export type Wave = 'saw' | 'square' | 'tri' | 'sine' | 'noise';
 export type FilterMode = 'ladder' | 'lp' | 'bp' | 'hp' | 'notch' | 'formant' | 'off';
 export type LfoShape = 'sine' | 'tri' | 'square' | 'saw' | 'random';
@@ -84,6 +86,8 @@ export interface TonePatch {
   wheel?: 'vibrato' | 'cutoff' | 'wah' | 'vowel';
   bend?: number;
   fx?: ToneFx;
+  /** Held keys play as a tempo-synced arpeggio instead of a chord. */
+  arp?: ArpSettings;
   gain: number;
 }
 
@@ -101,7 +105,16 @@ export interface ToneFx {
 
 // ── Drums ────────────────────────────────────────────────────────────────
 
-export type DrumModel = 'kick' | 'snare' | 'clap' | 'hat' | 'tom' | 'rim' | 'cowbell' | 'cymbal' | 'zap' | 'blip';
+/**
+ * membrane: a hand drum (two modes, a small pitch drop, a slap of noise on `tone`).
+ * shaker: band-passed noise that swells in and out. scrape: noise in ridges, `rate` per second.
+ * bell: three inharmonic sines (agogo, triangle, glass). rise: a friction drum whose pitch climbs by `bend`.
+ * glitch: stepped random values `rate` times a second. fm: a metallic two-operator hit, `tone` sets the index.
+ * laser: a sine falling `bend` octaves over the whole decay.
+ */
+export type DrumModel =
+  | 'kick' | 'snare' | 'clap' | 'hat' | 'tom' | 'rim' | 'cowbell' | 'cymbal' | 'zap' | 'blip'
+  | 'membrane' | 'shaker' | 'scrape' | 'bell' | 'rise' | 'glitch' | 'fm' | 'laser';
 
 /** One drum sound: a model and its settings, each 0-1 unless noted. */
 export interface DrumSound {
@@ -118,6 +131,10 @@ export interface DrumSound {
   level: number;
   /** Open hats are cut by closed ones. */
   choke?: boolean;
+  /** This sound cuts every sounding `choke` sound (a closed hat; a muted conga). Slot 3 always does. */
+  cuts?: boolean;
+  /** Ridges or steps per second (scrape, glitch); the FM ratio for fm. */
+  rate?: number;
 }
 
 export interface DrumKit {

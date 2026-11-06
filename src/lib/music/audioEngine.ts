@@ -37,6 +37,7 @@ import { RETURN_IDS, SendReturns, type ReturnId } from './sendReturns';
 const MAX_FADER_GAIN = Math.pow(10, 10 / 20);
 import { DUB_SHOT_NOTE, type DubShot } from './dubShots';
 import { toneById } from './tone/tones';
+import type { DrumKit, DrumTweak } from './tone/toneTypes';
 import { kitById } from './tone/kits';
 
 interface SubtractivePatch {
@@ -849,6 +850,10 @@ export class MusicAudioEngine {
     const ctx = this.ensure();
     const time = Math.max(ctx.currentTime, Number.isFinite(event.time) ? event.time : 0);
     if (event.instrument === 'drums') {
+      if (event.type === 'on' && event.pad !== undefined) {
+        this.hitMachine(event.pad, event.velocity, time, event.drum);
+        return;
+      }
       if (event.type === 'on' && event.drum) {
         if (this.toneChoice.kit && this.tones?.ready) this.hitKit(event.drum, event.velocity, time);
         else this.playDrum(event.drum, event.velocity, time);
@@ -1031,7 +1036,8 @@ export class MusicAudioEngine {
     this.dubShots = new DubShotBank(ctx, bus.shots, this.noise);
     this.dubShots.setTempo(this.tempo);
     this.dubShots.setShots(this.dubShotSettings);
-    this.tones = new ToneHost(ctx, { synth: bus.synth, keys: bus.keys, drums: bus.drums });
+    this.tones = new ToneHost(ctx, { synth: bus.synth, keys: bus.keys, drums: bus.drums, machine: bus.drums });
+    if (this.machine) this.tones.setMachineKit(this.machine.kit);
     this.tones.setTempo(this.tempo);
     this.applyTones();
     // The band comes in after its EQ and pan, before the monitor gate: its
@@ -1203,6 +1209,26 @@ export class MusicAudioEngine {
         stopAll(at + 0.02);
       },
     };
+  }
+
+  private machine: { kit: DrumKit; tweaks: DrumTweak[] } | null = null;
+
+  /** The drum machine's kit and each pad's tune, level and decay. */
+  setMachine(kit: DrumKit, tweaks: DrumTweak[]): void {
+    this.machine = { kit, tweaks };
+    this.tones?.setMachineKit(kit);
+    if (this.tones && !this.tones.ready) void this.tones.load();
+  }
+
+  private hitMachine(pad: number, velocity: number, time: number, fallback?: DrumVoice): void {
+    const m = this.machine;
+    if (m && this.tones?.ready) {
+      this.tones.machineHit(pad, velocity, time, m.tweaks[pad] ?? { tune: 0.5, decay: 0.5, tone: 0.5, drive: 0.5, level: 1 });
+      return;
+    }
+    // Until the tone engine is ready, the set's own drum plays.
+    if (this.tones && !this.tones.ready) void this.tones.load();
+    if (fallback) this.playDrum(fallback, velocity, time);
   }
 
   /** A hit on the tone engine's kit, with the mixer's tune and level and the drum's own decay, tone and drive. */

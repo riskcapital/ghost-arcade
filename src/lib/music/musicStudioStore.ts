@@ -73,6 +73,8 @@ import { normalizeDress, type DressMap, type InstrumentDress } from './instrumen
 import { DEFAULT_OCTAVE, KEYBOARD_SIZES, clampOctave, type KeyboardSize } from './keyboardLayout';
 import { KEYS_PATCHES, SYNTH_PATCHES, type KeysPatch, type SynthPatch } from './instruments';
 import { toneById } from './tone/tones';
+import { normalizeBeat, starterBeat, type Beat } from './drumMachine/machineBeat';
+import { DEFAULT_MACHINE_KIT } from './drumMachine/machineKits';
 import { KEY_MODES, type KeyMode } from './keyMode';
 import { defaultDubShots, normalizeDubShots, type DubShot } from './dubShots';
 import { normalizeStudioSource } from './studioPlugin';
@@ -134,6 +136,8 @@ export interface MusicStudioProjectState {
   synthTone: string | null;
   keysTone: string | null;
   drumKit: string | null;
+  /** The drum machine's beat: its kit, parts and song. */
+  machine: Beat;
   volumes: Record<InstrumentId, number>;
   masterVolume: number;
   /** The shared returns' levels into the master (sendReturns.ts). */
@@ -295,6 +299,7 @@ export function defaultProjectState(): MusicStudioProjectState {
     synthTone: null,
     keysTone: null,
     drumKit: null,
+    machine: starterBeat(DEFAULT_MACHINE_KIT),
     volumes: { ...DEFAULT_VOLUMES },
     masterVolume: 0.85,
     returns: { reverb: 0.7, echo: 0.7, spring: 0.7 },
@@ -388,6 +393,7 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
     synthTone: toneById(input.synthTone as string) ? (input.synthTone as string) : null,
     keysTone: toneById(input.keysTone as string) ? (input.keysTone as string) : null,
     drumKit: kitById(input.drumKit as string) ? (input.drumKit as string) : null,
+    machine: normalizeBeat((input as { machine?: unknown }).machine, DEFAULT_MACHINE_KIT),
     volumes: perInstrument((id) => clampGain(volumes[id], d.volumes[id])),
     masterVolume: clampGain(input.masterVolume, d.masterVolume),
     returns: Object.fromEntries(RETURN_IDS.map((id) => [id, clamp01((input as { returns?: Record<string, unknown> }).returns?.[id], d.returns[id])])) as Record<ReturnId, number>,
@@ -622,6 +628,7 @@ function createMusicStudioStore() {
     /** A library tone on the synth or keys (null goes back to the built-in patch). */
     setTone: (instrument: 'synth' | 'keys', tone: string | null) => set(instrument === 'synth' ? { synthTone: tone } : { keysTone: tone }),
     setDrumKit: (drumKit: string | null) => set({ drumKit }),
+    setMachine: (machine: Beat) => set({ machine }),
     setVolume: (instrument: InstrumentId, volume: number) =>
       update((s) => ({ ...s, volumes: { ...s.volumes, [instrument]: clampGain(volume, s.volumes[instrument]) } })),
     setReturn: (id: ReturnId, level: number) => update((s) => ({ ...s, returns: { ...s.returns, [id]: clamp01(level, s.returns[id]) } })),
@@ -854,6 +861,7 @@ function createMusicStudioStore() {
         synthTone: s.synthTone,
         keysTone: s.keysTone,
         drumKit: s.drumKit,
+        machine: JSON.parse(JSON.stringify(s.machine)),
         volumes: { ...s.volumes },
         masterVolume: s.masterVolume,
         returns: { ...s.returns },

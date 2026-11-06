@@ -37,6 +37,8 @@
   import BathModules from './BathModules.svelte';
   import BerlinModules from './BerlinModules.svelte';
   import DubModules from './DubModules.svelte';
+  import MachinePads from './MachinePads.svelte';
+  import MachineSequencer from './MachineSequencer.svelte';
   import AnalogModules from './AnalogModules.svelte';
   import RackModules from './RackModules.svelte';
   import VisualRack from './VisualRack.svelte';
@@ -82,6 +84,8 @@
   let tempo = $state(120);
   let scanX = $state(0);
   let mixerOpen = $state(false);
+  /** The drum machine pad last played or picked, shared by its pads and its sequencer. */
+  let machinePad = $state(0);
   let lowerTab = $state<'scenes' | 'session' | 'takes' | 'mixer' | 'band' | 'looper' | 'songs'>('session');
   /** The lower panel can grow down over the bottom row (the keyboard on most sets). */
   const TALL_KEY = 'ga.studio.lowerTall';
@@ -410,6 +414,16 @@
       </div>
       <div class="slot b12 face"><PlayModule size="wide" /></div>
       <div class="slot b3 face"><BeatModule /></div>
+    {:else if s.set === 'machine'}
+      <!-- No keyboard here: the pads are the instrument. -->
+      <div class="rack left face">
+        <MachinePads bind:selected={machinePad} />
+      </div>
+      <div class="rack right face">
+        <VisualRack />
+        <RackModules />
+      </div>
+      <div class="slot b123 face"><MachineSequencer bind:selected={machinePad} /></div>
     {:else}
       <div class="rack left face">
         <PlayModule />
@@ -458,6 +472,8 @@
     user-select: none;
   }
   .set-analog { grid-template-rows: var(--ga-bar-h, 48px) auto minmax(0, 1fr) 214px; }
+  .set-machine { grid-template-rows: var(--ga-bar-h, 48px) auto minmax(0, 1fr) 318px; }
+  .set-machine.lower-tall .b123 { display: none; }
   /* The side racks run from the bar down; this row only spans the output column. */
   .subbar {
     grid-area: sub;

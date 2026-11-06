@@ -45,6 +45,7 @@ import {
   voiceSourceAt,
   type SourceContext,
 } from './visualVoices';
+import type { DrumKit, DrumTweak } from './tone/toneTypes';
 import { TakeRecorder, takeEventsBetween, type Take } from './recording';
 import { STEPS_PER_BEAT, patternBeats, patternHasHits, stepAt, stepsBetween, type DrumPattern } from './drumPattern';
 import {
@@ -235,6 +236,38 @@ export function releaseNote(instrument: InstrumentId, note: number, source: Note
   send(tone ? { ...event, tone } : event);
 }
 
+// ── Drum machine ────────────────────────────────────────────────────────
+
+/** What the drum machine (drumMachine/machineRuntime.ts) gives the runtime: its pads for MIDI, their levels for cables, a stop. */
+export interface MachineHooks {
+  /** A MIDI note in the drum machine set: true when it played a pad. */
+  midiPad(note: number, velocity: number, on: boolean): boolean;
+  padLevel(name: string): number;
+  stop(): void;
+}
+
+let machineHooks: MachineHooks | null = null;
+
+export function setMachineHooks(hooks: MachineHooks): void {
+  machineHooks = hooks;
+}
+
+/** A drum machine pad: its sound on the machine's kit, and a drum event (as `role`) for visuals, cables and takes. */
+export function sendMachineHit(pad: number, role: DrumVoice, velocity: number, source: NoteSource, time?: number): void {
+  ensureMusicRuntime();
+  send({ ...noteOn('drums', DRUM_NOTES[role], velocity, source, time ?? liveTime()), pad });
+}
+
+/** The music clock now, in seconds (the audio context's clock). */
+export function musicNow(): number {
+  ensureMusicRuntime();
+  return audio.now();
+}
+
+export function setMachineSound(kit: DrumKit, tweaks: DrumTweak[]): void {
+  audio.setMachine(kit, tweaks);
+}
+
 export function hitDrum(voice: DrumVoice, velocity: number, source: NoteSource = 'screen'): void {
   playNote('drums', DRUM_NOTES[voice], velocity, source);
 }
@@ -285,6 +318,7 @@ export function stopAll(): void {
   cancelQueuedScene();
   stopAllLoops();
   if (sequencer) stopSequencer();
+  machineHooks?.stop();
   releaseChords();
   setSiren(false);
   panic();
@@ -437,6 +471,8 @@ function onMidi(message: MidiNoteMessage): void {
     audio.expression(message);
     return;
   }
+  // In the drum machine set, a pad controller's notes play the pads.
+  if (get(musicStudio).set === 'machine' && machineHooks?.midiPad(message.note, message.kind === 'on' ? message.velocity : 0, message.kind === 'on')) return;
   // Channel 10 plays the kit, as on any GM device; other channels play the selected instrument.
   const selected = get(musicStudio).instrument;
   const instrument: InstrumentId = message.channel === DRUM_CHANNEL ? 'drums' : selected;
@@ -1944,6 +1980,7 @@ function controlValue(jack: string, params: Record<string, number>): number {
   if (name === 'acid.level') return visuals.instrumentLevel('acid');
   if (name === 'acid.cutoff') return Math.min(1, (params['acid.cutoff'] ?? 0.35) * (0.4 + 0.6 * visuals.instrumentLevel('acid')) * 1.6);
   if (name.startsWith('drum.')) return visuals.drumLevel(name.slice(5) as DrumVoice);
+  if (name.startsWith('pad.')) return machineHooks?.padLevel(name) ?? 0;
   if (name === 'analog.lfo') return audio.analogLfo();
   if (name === 'analog.env' || name === 'analog.vco2' || name === 'analog.level') return visuals.instrumentLevel('analog');
   if (name === 'dubbass.level') return visuals.instrumentLevel('dubbass');

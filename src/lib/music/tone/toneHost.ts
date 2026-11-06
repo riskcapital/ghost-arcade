@@ -7,7 +7,8 @@
 
 import type { DrumKit, DrumTweak, TonePatch, ToneMessage } from './toneTypes';
 
-export type ToneSlot = 'synth' | 'keys' | 'drums';
+/** `machine` is the drum machine's own kit, beside the set's kit, into the same drum channel. */
+export type ToneSlot = 'synth' | 'keys' | 'drums' | 'machine';
 
 export class ToneHost {
   private ctx: AudioContext;
@@ -54,7 +55,7 @@ export class ToneHost {
     if (!this.loaded) return null;
     let node = this.nodes.get(slot);
     if (!node) {
-      node = this.create(slot === 'drums' ? 'drums' : 'tone', this.outputs[slot]);
+      node = this.create(slot === 'drums' || slot === 'machine' ? 'drums' : 'tone', this.outputs[slot]);
       this.nodes.set(slot, node);
     }
     return node;
@@ -108,6 +109,16 @@ export class ToneHost {
     if (this.patches.get('drums') === kit) return;
     this.patches.set('drums', kit);
     this.send('drums', { t: 'kit', kit });
+  }
+
+  setMachineKit(kit: DrumKit): void {
+    if (this.patches.get('machine') === kit) return;
+    this.patches.set('machine', kit);
+    this.send('machine', { t: 'kit', kit });
+  }
+
+  machineHit(slot: number, vel: number, at: number, tweak: DrumTweak): void {
+    this.send('machine', { t: 'hit', slot, vel, at, tweak });
   }
 
   noteOn(slot: 'synth' | 'keys', note: number, vel: number, at: number): void {

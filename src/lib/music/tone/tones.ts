@@ -147,6 +147,53 @@ export const TONES: Tone[] = [
     },
   },
 
+  {
+    id: 'bass.reese-wide', name: 'Wide reese', family: 'bass', blurb: 'Seven detuned saws spread wide over a clean sine sub, slowly phasing and opening with velocity',
+    patch: {
+      osc1: { wave: 'saw', level: 0.6 }, unison: { voices: 7, detune: 34, spread: 0.9 }, osc2: { wave: 'sine', oct: -1, level: 0.55 },
+      filter: { mode: 'ladder', cutoff: 420, res: 0.22, drive: 0.5, env: 1.4, keyTrack: 0.35, vel: 0.7 },
+      fenv: env(0.01, 0.6, 0.4, 0.3), aenv: env(0.005, 0.5, 0.95, 0.2),
+      vel: 0.5, mono: true, legato: true, glide: 0.06, drift: 0.2, lfo1: { rate: 0.15, shape: 'tri', cutoff: 0.7 }, wheel: 'cutoff',
+      fx: { drive: 0.3, phaser: { mix: 0.2, rate: 0.1, depth: 0.5, fb: 0.35 } }, gain: 0.64,
+    },
+  },
+  {
+    id: 'bass.punch', name: 'Punch bass', family: 'bass', blurb: 'A short, hard synth bass with a filter snap and a pitch kick, louder and brighter the harder you play',
+    patch: {
+      osc1: { wave: 'saw', level: 0.55 }, osc2: { wave: 'square', pw: 0.4, detune: -6, level: 0.4 }, sub: 0.5,
+      filter: { mode: 'ladder', cutoff: 150, res: 0.3, drive: 0.6, env: 4.2, keyTrack: 0.4, vel: 1 },
+      fenv: env(0.001, 0.12, 0.08, 0.08), aenv: env(0.001, 0.35, 0.7, 0.06),
+      vel: 0.8, mono: true, glide: 0.02, pitchEnv: { cents: 120, time: 0.015 }, fx: { drive: 0.3 }, gain: 1.1,
+    },
+  },
+  {
+    id: 'bass.growl-sub', name: 'Growl sub', family: 'bass', blurb: 'A deep, clean sine sub that grows a driven, buzzing top only when you dig in',
+    patch: {
+      osc1: { wave: 'sine', level: 0.85 }, osc2: { wave: 'saw', detune: 8, level: 0.3 }, sub: 0.2,
+      filter: { mode: 'ladder', cutoff: 260, res: 0.2, drive: 0.8, env: 1.5, keyTrack: 0.3, vel: 1.8 },
+      fenv: env(0.004, 0.5, 0.6, 0.2), aenv: env(0.004, 0.6, 0.95, 0.15),
+      vel: 0.45, mono: true, glide: 0.04, drift: 0.1, wheel: 'cutoff', fx: { drive: 0.4 }, gain: 0.62,
+    },
+  },
+  {
+    id: 'bass.funk-rubber', name: 'Rubber funk', family: 'bass', blurb: 'A rubbery funk bass that boings into each note, its resonant filter quacking with velocity',
+    patch: {
+      osc1: { wave: 'square', pw: 0.35, level: 0.55 }, osc2: { wave: 'saw', detune: 5, level: 0.35 }, sub: 0.4,
+      filter: { mode: 'ladder', cutoff: 220, res: 0.55, drive: 0.35, env: 3, keyTrack: 0.5, vel: 1.2 },
+      fenv: env(0.002, 0.18, 0.15, 0.08), aenv: env(0.002, 0.3, 0.75, 0.07),
+      vel: 0.7, mono: true, legato: true, glide: 0.05, pitchEnv: { cents: -300, time: 0.06 }, wheel: 'wah', gain: 1.15,
+    },
+  },
+  {
+    id: 'bass.analog-fat', name: 'Fat analog', family: 'bass', blurb: 'Three saws, a square and a sub through a warm, drifting ladder: thick, round and moving',
+    patch: {
+      osc1: { wave: 'saw', level: 0.5 }, unison: { voices: 3, detune: 12, spread: 0.3 }, osc2: { wave: 'square', oct: -1, pw: 0.5, level: 0.45 }, sub: 0.35,
+      filter: { mode: 'ladder', cutoff: 240, res: 0.28, drive: 0.55, env: 2.4, keyTrack: 0.45, vel: 0.8 },
+      fenv: env(0.004, 0.35, 0.3, 0.2), aenv: env(0.003, 0.5, 0.9, 0.12),
+      vel: 0.6, mono: true, glide: 0.035, drift: 0.45, fx: { drive: 0.22 }, gain: 0.75,
+    },
+  },
+
   // ── Pads ──
   {
     id: 'pad.ensemble-strings', name: 'Ensemble strings', family: 'pad', blurb: 'Bright divide-down strings spread wide by a slow ensemble chorus',
@@ -364,6 +411,66 @@ export const TONES: Tone[] = [
       filter: { mode: 'ladder', cutoff: 2200, res: 0.2, env: 1, keyTrack: 0.5 },
       fenv: env(0.005, 0.3, 0.6, 0.2), aenv: env(0.005, 0.3, 0.85, 0.15),
       mono: true, glide: 0.03, wheel: 'vibrato', gain: 0.48,
+    },
+  },
+  {
+    id: 'lead.high-whistle', name: 'High whistle', family: 'lead', blurb: 'A high, smooth sine whistle with a long glide, a slow vibrato that fades in and a breath of air',
+    patch: {
+      osc1: { wave: 'sine', oct: 1, level: 0.75 }, osc2: { wave: 'tri', oct: 1, detune: 4, level: 0.3 }, noise: 0.025,
+      filter: { mode: 'lp', cutoff: 5200, res: 0.05, keyTrack: 0.4 },
+      fenv: env(0.05, 0.5, 1, 0.3), aenv: env(0.06, 0.4, 0.92, 0.35),
+      vel: 0.35, mono: true, legato: true, glide: 0.28, drift: 0.15, lfo1: { rate: 5.4, shape: 'sine', pitch: 22, delay: 0.9 }, wheel: 'vibrato', bend: 2,
+      fx: { chorus: { mix: 0.15, mode: 2 }, delay: { mix: 0.22, beats: 0.75, fb: 0.35, tone: 0.5 } }, gain: 0.32,
+    },
+  },
+  {
+    id: 'lead.glide-whistle', name: 'Glide whistle', family: 'lead', blurb: 'The whistle with a brighter edge, a longer slide and a quicker vibrato',
+    patch: {
+      osc1: { wave: 'tri', oct: 1, level: 0.65 }, osc2: { wave: 'square', oct: 1, pw: 0.5, detune: -3, level: 0.12 }, noise: 0.035,
+      filter: { mode: 'ladder', cutoff: 2600, res: 0.18, env: 0.6, keyTrack: 0.6, vel: 0.4 },
+      fenv: env(0.08, 0.6, 0.7, 0.3), aenv: env(0.04, 0.4, 0.9, 0.3),
+      vel: 0.4, mono: true, legato: true, glide: 0.36, drift: 0.2, lfo1: { rate: 5.9, shape: 'sine', pitch: 26, delay: 0.7 }, wheel: 'vibrato', bend: 2,
+      fx: { delay: { mix: 0.25, beats: 0.75, fb: 0.38, tone: 0.55 } }, gain: 0.6,
+    },
+  },
+  {
+    id: 'arp.pluck-up', name: 'Up arp', family: 'lead', blurb: 'Hold a chord and it runs up two octaves in sixteenths, a bright, short pluck with an echo',
+    patch: {
+      osc1: { wave: 'saw', level: 0.5 }, osc2: { wave: 'square', pw: 0.3, detune: 6, level: 0.35 },
+      filter: { mode: 'ladder', cutoff: 600, res: 0.35, env: 3, keyTrack: 0.5, vel: 0.6 },
+      fenv: env(0.001, 0.12, 0.05, 0.08), aenv: env(0.001, 0.2, 0.2, 0.08),
+      poly: 4, vel: 0.7, arp: { mode: 'up', rate: 0.25, octaves: 2, gate: 0.6 },
+      fx: { delay: { mix: 0.25, beats: 0.75, fb: 0.4, tone: 0.6 } }, gain: 0.7,
+    },
+  },
+  {
+    id: 'arp.bounce', name: 'Bounce arp', family: 'lead', blurb: 'A round square-wave arp that bounces up and down the held chord in eighths',
+    patch: {
+      osc1: { wave: 'square', pw: 0.45, level: 0.55 }, osc2: { wave: 'tri', oct: 1, level: 0.25 },
+      filter: { mode: 'ladder', cutoff: 900, res: 0.25, env: 1.8, keyTrack: 0.5, vel: 0.5 },
+      fenv: env(0.002, 0.18, 0.2, 0.1), aenv: env(0.002, 0.3, 0.4, 0.1),
+      poly: 4, vel: 0.7, arp: { mode: 'updown', rate: 0.5, octaves: 1, gate: 0.7 },
+      fx: { chorus: { mix: 0.2, mode: 2 } }, gain: 0.6,
+    },
+  },
+  {
+    id: 'arp.glass', name: 'Glass arp', family: 'lead', blurb: 'A glassy FM bell picking random notes from three octaves of the chord, latched so it keeps going',
+    patch: {
+      osc1: { wave: 'sine', level: 0.8 }, fm: { ratio: 3.5, index: 2.5, decay: 0.25, sustain: 0.1, vel: 0.8 },
+      filter: { mode: 'lp', cutoff: 6000, res: 0, keyTrack: 0.3 },
+      fenv: env(0.001, 1, 1, 0.3), aenv: env(0.001, 0.6, 0.1, 0.4),
+      poly: 6, vel: 0.8, arp: { mode: 'random', rate: 0.25, octaves: 3, gate: 0.5, latch: true },
+      fx: { delay: { mix: 0.3, beats: 0.75, fb: 0.45, tone: 0.5 }, chorus: { mix: 0.2, mode: 2 } }, gain: 0.4,
+    },
+  },
+  {
+    id: 'arp.trance', name: 'Trance arp', family: 'lead', blurb: 'Wide detuned saws running up and down the chord in quick sixteenths, for driving builds',
+    patch: {
+      osc1: { wave: 'saw', level: 0.6 }, unison: { voices: 3, detune: 18, spread: 0.7 },
+      filter: { mode: 'ladder', cutoff: 1100, res: 0.3, env: 2, keyTrack: 0.5, vel: 0.6 },
+      fenv: env(0.001, 0.1, 0.2, 0.06), aenv: env(0.001, 0.15, 0.5, 0.05),
+      poly: 4, vel: 0.6, arp: { mode: 'updown', rate: 0.25, octaves: 2, gate: 0.45 },
+      fx: { delay: { mix: 0.22, beats: 0.75, fb: 0.35 } }, gain: 0.9,
     },
   },
   {

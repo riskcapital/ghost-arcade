@@ -77,9 +77,10 @@ export const STUDIO_PALETTES: Record<StudioSet, { ink: RGB; accent: RGB }> = {
   berlin: { ink: [0.94, 0.95, 0.97], accent: [1.0, 0.16, 0.1] },
   dub: { ink: [1.0, 0.72, 0.36], accent: [0.25, 0.9, 0.62] },
   analog: { ink: [0.75, 1.0, 0.92], accent: [1.0, 0.45, 0.12] },
+  machine: { ink: [1.0, 0.93, 0.82], accent: [1.0, 0.5, 0.1] },
 };
 
-const SETS: readonly StudioSet[] = ['bath', 'berlin', 'dub', 'analog'];
+const SETS: readonly StudioSet[] = ['bath', 'berlin', 'dub', 'analog', 'machine'];
 
 function clamp01(value: unknown, fallback: number): number {
   const n = Number(value);
