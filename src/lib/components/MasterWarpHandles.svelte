@@ -23,7 +23,6 @@
    */
   import { onDestroy, onMount } from 'svelte';
   import { get } from 'svelte/store';
-  import { project } from '../stores/layers';
   import { settings } from '../stores/settings';
   import { recordDiscreteAction, scheduleHistorySnapshot } from '../stores/historyHooks';
   import type { WarpCorners, MeshWarpGrid, Point2D } from '../types';
@@ -192,12 +191,13 @@
     // Sliders, lists and menus keep their arrow keys.
     if (classifyKeyTarget(e.target as HTMLElement | null) !== 'other'
       || classifyKeyTarget(document.activeElement as HTMLElement | null) !== 'other') return;
-    // One project pixel (Shift ten, Alt a tenth); Alt on a selected tangent
+    // One master-canvas pixel (Shift ten, Alt a tenth); Alt on a selected tangent
     // moves that handle on its own instead. The warp keeps y down.
     const tangentPicked = mode === 'mesh' && !!selectedTangent && !!selectedMeshPoint;
-    const proj = get(project);
+    const out = get(settings).output;
     const stepPx = nudgeStepPixels(get(settings).ui.warpDragGranularity, e.shiftKey, e.altKey && !tangentPicked);
-    const { x: dx, y: dy } = projectPixelOffset(dir.x * stepPx, dir.y * stepPx, proj.width, proj.height, false);
+    // The master warp lives on the master canvas: a step is one of its pixels.
+    const { x: dx, y: dy } = projectPixelOffset(dir.x * stepPx, dir.y * stepPx, out?.masterCanvasWidth ?? 1920, out?.masterCanvasHeight ?? 1080, false);
 
     e.preventDefault();
     e.stopPropagation();
