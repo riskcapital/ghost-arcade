@@ -35,7 +35,7 @@ describe('shaders made for Music motion', () => {
       const body = code.slice(code.indexOf('*/') + 2);
       // Time comes from mmFlow when it is fed, TIME otherwise; only the grain keeps raw TIME.
       expect(body).toMatch(/mmFlow\s*>=\s*0\.0\s*\?\s*mmFlow\s*:\s*TIME/);
-      const stray = body.split('\n').filter((l) => /\bTIME\b/.test(l.replace(/\/\/.*$/, '')) &&!/mmFlow|fract\(TIME\)/.test(l));
+      const stray = body.split(/\r?\n/).filter((l) => /\bTIME\b/.test(l.replace(/\/\/.*$/, '')) &&!/mmFlow|fract\(TIME\)/.test(l));
       expect(stray, `${file} still runs on raw TIME`).toEqual([]);
       expect(parsed.fragmentShader).toContain('uniform float mmFlow');
     });

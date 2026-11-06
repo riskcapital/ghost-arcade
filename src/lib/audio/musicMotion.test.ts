@@ -16,6 +16,8 @@ import {
   stepMusicClock,
   surge,
   withMusicTime,
+  withMusicFlow,
+  relativeSwell,
   isMusicMotionReady,
   shaderIsMusicMotionReady,
   detectOnset,
@@ -261,5 +263,27 @@ describe('beat finding', () => {
     let hum = 0;
     for (let i = 0; i < 600; i++) if (detectOnset(o, 0.5 + 0.01 * Math.sin(i / 3), 0.1, DT) > 0 && i > 60) hum++;
     expect(hum).toBe(0);
+  });
+});
+
+describe('music flow for shaders made for Music motion', () => {
+  const ready = `/*{
+  "INPUTS": [{ "NAME": "mmFlow", "TYPE": "float", "DEFAULT": -1, "MIN": -1, "MAX": 3600 }]
+}*/
+float mmTime() { return mmFlow >= 0.0 ? mmFlow : TIME; }
+void main() { float g = fract(TIME); gl_FragColor = vec4(sin(mmTime()) + g); }`;
+
+  it('runs mmFlow on the clock inputs and leaves TIME alone', () => {
+    const out = withMusicFlow(ready);
+    expect(out).toContain(MUSIC_TIME_RATE_INPUT);
+    expect(out).toContain(`(mmFlow >= 0.0 ? (TIME * ${MUSIC_TIME_RATE_INPUT} + ${MUSIC_TIME_PHASE_INPUT}) : -1.0)`);
+    expect(out).toContain('float g = fract(TIME);');
+  });
+
+  it('moves swell at any input gain', () => {
+    expect(relativeSwell({ att: 0.1, usual: 0.1 })).toBeCloseTo(0.5, 5);
+    expect(relativeSwell({ att: 0.9, usual: 0.9 })).toBeCloseTo(0.5, 5);
+    expect(relativeSwell({ att: 0.2, usual: 0.1 })).toBeGreaterThan(0.8);
+    expect(relativeSwell({ att: 0.02, usual: 0.2 })).toBeLessThan(0.2);
   });
 });

@@ -8,7 +8,7 @@ import { writable } from 'svelte/store';
 import { audioStore, type AudioState } from '../stores/audio';
 import { getVisualAudioSnapshot } from './visualAudio';
 import { vjClipLauncher } from '../stores/vjClipLauncher';
-import { musicMotionOwnsParam } from './musicMotionEngine';
+import { musicMotionOwnsParam } from './musicMotionOwned';
 import type { ISFInput } from '../isf/parser';
 
 import { modulationHandlers } from './modulationHandlers';

@@ -77,7 +77,7 @@ import {
   nativeJsCanvasUri,
 } from '$lib/renderer/nativeJsCanvasHosts';
 import { resolveAssetRefForRuntime } from '$lib/storage/assetRegistry';
-import { shaderIsMusicMotionReady, withMusicTime, musicTimePhase, MUSIC_TIME_PHASE_INPUT, MUSIC_TIME_RATE_INPUT } from '$lib/audio/musicMotion';
+import { shaderIsMusicMotionReady, withMusicFlow, withMusicTime, musicTimePhase, MUSIC_TIME_PHASE_INPUT, MUSIC_TIME_RATE_INPUT } from '$lib/audio/musicMotion';
 import { getMusicTimeOffset, getMusicTimeRate, hasMusicTime } from '$lib/audio/musicMotionEngine';
 import {
   receiveSpoutTextureInfo,
@@ -978,11 +978,11 @@ const musicTimeCodeCache = new Map<string, string>();
  */
 function nativeShaderCode(s: Pick<NonNullable<Layer['source']>, 'shaderCode' | 'musicMotion' | 'type'>): string | undefined {
   const code = s.shaderCode;
-  // A shader made for Music motion keeps its own TIME: it reads the music through its inputs.
-  if (!code || !s.musicMotion?.on || s.type !== 'shader' || shaderIsMusicMotionReady(code)) return code;
+  if (!code || !s.musicMotion?.on || s.type !== 'shader') return code;
   let out = musicTimeCodeCache.get(code);
   if (out === undefined) {
-    out = withMusicTime(code);
+    // A shader made for Music motion keeps its TIME; only its mmFlow runs on the music clock.
+    out = shaderIsMusicMotionReady(code) ? withMusicFlow(code) : withMusicTime(code);
     if (musicTimeCodeCache.size > 32) musicTimeCodeCache.clear();
     musicTimeCodeCache.set(code, out);
   }
@@ -10602,7 +10602,7 @@ export class NativeRendererSync {
           const offset = Math.max(-shaderTime, getMusicTimeOffset(src2.id));
           floatInputs[MUSIC_TIME_RATE_INPUT] = rate;
           floatInputs[MUSIC_TIME_PHASE_INPUT] = musicTimePhase(shaderTime, offset, rate);
-        } else if (src2.musicMotion?.on && !shaderIsMusicMotionReady(src2.shaderCode)) {
+        } else if (src2.musicMotion?.on) {
           floatInputs[MUSIC_TIME_RATE_INPUT] = 1;
           floatInputs[MUSIC_TIME_PHASE_INPUT] = 0;
         }

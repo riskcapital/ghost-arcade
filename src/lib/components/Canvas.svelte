@@ -5843,7 +5843,10 @@
       // Music motion: this shader's time runs on the music's flow clock.
       if (hasMusicTime(layer.source.id) && shaderInstance.uniforms.TIME) {
         const _t = shaderInstance.uniforms.TIME.value as number;
-        shaderInstance.uniforms.TIME.value = Math.max(0, _t + getMusicTimeOffset(layer.source.id));
+        const _music = Math.max(0, _t + getMusicTimeOffset(layer.source.id));
+        // Made for Music motion: TIME stays, mmFlow carries the music clock (every frame drawn).
+        if (shaderInstance.uniforms.mmFlow) shaderInstance.uniforms.mmFlow.value = _music;
+        else shaderInstance.uniforms.TIME.value = _music;
       }
 
       // ── Phase integration for time-multiplier params with active keyframes ──

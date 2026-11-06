@@ -365,3 +365,28 @@ export function detectOnset(o: OnsetState, bassFast: number, high: number, dt: n
   o.since = 0;
   return Math.max(0.35, Math.min(1, (flux - o.mean) / (6 * o.dev + 1e-4)));
 }
+
+/**
+ * For a renderer that keeps its own TIME between updates (the native core):
+ * a shader made for Music motion gets the music clock's rate and phase inputs,
+ * and its mmFlow reads TIME * rate + phase while Music motion is on, so its
+ * time runs smoothly at the music's speed between updates. Off (mmFlow < 0)
+ * it reads -1 as before. Code that cannot be read is left alone.
+ */
+export function withMusicFlow(shaderCode: string): string {
+  const withInputs = withMusicTime(shaderCode);
+  if (withInputs === shaderCode) return shaderCode;
+  const close = withInputs.indexOf('*/');
+  const head = withInputs.slice(0, close + 2);
+  // Undo the TIME rewrite: a ready shader keeps TIME as it is, and only mmFlow follows the music.
+  const timeExpr = `(TIME * ${MUSIC_TIME_RATE_INPUT} + ${MUSIC_TIME_PHASE_INPUT})`;
+  const body = withInputs.slice(close + 2).split(timeExpr).join('TIME');
+  const flow = `(mmFlow >= 0.0 ? ${timeExpr} : -1.0)`;
+  return head + body.split('\n').map((line) => (/^\s*uniform\s+\w+\s+mmFlow\b/.test(line) ? line : line.replace(/\bmmFlow\b/g, flow))).join('\n');
+}
+
+/** The swell a shader made for Music motion sees: against the music's usual level, so it moves at any input gain (0.5 = usual). */
+export function relativeSwell(state: Pick<SmoothSignalState, 'att' | 'usual'>): number {
+  const ratio = (Math.max(0, state.att) + LEVEL_FLOOR) / (Math.max(0, state.usual) + LEVEL_FLOOR);
+  return Math.max(0, Math.min(1, 0.5 * ratio));
+}

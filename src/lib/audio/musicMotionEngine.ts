@@ -18,6 +18,7 @@
  */
 
 import { get } from 'svelte/store';
+import { musicMotionOwned, musicMotionOwnsParam } from './musicMotionOwned';
 import { project } from '../stores/layers';
 import { vjClipLauncher } from '../stores/vjClipLauncher';
 import { runAsLiveControl } from '../stores/historyHooks';
@@ -36,6 +37,8 @@ import {
   detectOnset,
   freshOnsets,
   isMusicMotionReady,
+  attackRelease,
+  relativeSwell,
   type MusicClock,
   type MusicMotionSettings,
 } from './musicMotion';
@@ -51,6 +54,8 @@ interface Target {
   flow: number;
   /** The music inputs a ready shader is fed; when it stops they go back to "not driven". */
   ready?: string[];
+  /** A ready shader's pulse, with a gentler attack so a hit blooms rather than jolts. */
+  pulse?: number;
   params: Map<string, ParamState>;
   seen: boolean;
 }
@@ -60,8 +65,7 @@ const targets = new Map<string, Target>();
 /** Source ids whose time runs on the music clock this frame: the clock, and when (ms) it was read. */
 const clocks = new Map<string, { offset: number; rate: number; at: number }>();
 let audioActive = false;
-/** `map:<layer index>:<param>` and `<A|B>:<layer index>:<param>` driven this frame. */
-const owned = new Set<string>();
+const owned = musicMotionOwned;
 const inputCache = new Map<string, ISFInputDef[]>();
 const onsets = freshOnsets();
 let rafId: number | null = null;
@@ -88,10 +92,7 @@ export function hasMusicTime(sourceId: string | undefined): boolean {
   return !!sourceId && clocks.has(sourceId);
 }
 
-/** True when Music motion drives this shader param, so audio modulation leaves it alone. */
-export function musicMotionOwnsParam(target: 'map' | 'A' | 'B', layerIndex: number, paramName: string): boolean {
-  return owned.size > 0 && owned.has(`${target}:${layerIndex}:${paramName}`);
-}
+export { musicMotionOwnsParam };
 
 function inputsFor(code: string | undefined, known?: ISFInputDef[]): ISFInputDef[] {
   if (known && known.length) return known;
@@ -139,21 +140,23 @@ function driveTarget(
   t.seen = true;
   const amount = settings.amount;
   stepMusicClock(t.clock, musicTimeRate(signals, amount, audioActive), dt);
+  // Both kinds of shader run their time on this clock: the renderers read it (getMusicTimeOffset/Rate).
+  clocks.set(sourceId, { offset: t.clock.offset, rate: t.clock.rate, at: now });
   if (isMusicMotionReady(inputs)) {
     // Made for Music motion: it reads the music itself, smooth every frame. Amount scales how much.
     t.flow = (t.flow + Math.max(0, t.clock.rate) * Math.min(dt, 0.25)) % 3600;
     const has = (n: string) => inputs.some((i) => i.NAME === n);
     const ready: Record<string, number> = {};
-    if (has('mmFlow')) ready.mmFlow = t.flow;
-    if (has('mmSwell')) ready.mmSwell = Math.max(0, Math.min(1, signals.swell * amount * 1.25));
-    if (has('mmPulse')) ready.mmPulse = Math.max(0, Math.min(1, signals.pulse * amount * 1.25));
+    // mmFlow >= 0 marks it on; the renderers put the music clock in it every frame they draw.
+    if (has('mmFlow')) ready.mmFlow = 0;
+    if (has('mmSwell')) ready.mmSwell = relativeSwell(signals) * amount;
+    t.pulse = attackRelease(t.pulse ?? 0, Math.min(1, signals.pulse), dt, 0.07, 0.3);
+    if (has('mmPulse')) ready.mmPulse = Math.max(0, Math.min(1, t.pulse * amount * 1.2));
     if (has('mmMorph')) ready.mmMorph = signals.morph % 1000;
     for (const n of Object.keys(ready)) owned.add(`${ownKey}:${n}`);
     t.ready = Object.keys(ready);
     return ready;
   }
-  clocks.set(sourceId, { offset: t.clock.offset, rate: t.clock.rate, at: now });
-
   const writes: Record<string, number> = {};
   const names = musicMotionParams(settings, inputs).filter((n) => !autoParams?.[n]?.playing);
   const keep = new Set(names);
