@@ -34,6 +34,7 @@
   import { firstSyntaxError, languageOf, lineAt, readSketchFile, saveProblem } from './sketchSource';
   import { cleanErrorMessage, explainSketchError, type SketchError } from './sketchErrors';
   import { readSketchRun, type SketchRunStatus } from './sketchRuntime';
+  import { dropSketchDraft, keepSketchDraft, readSketchDraft } from './sketchDrafts';
   import { layersPlayingSource } from './sketchLayer';
   import { editorFiles, errorInFiles, fileOrder, isTextFile, sketchWithFiles, sketchWrapping, type EditorFile, type SketchWrapping } from './sketchFiles';
   import { SKETCH_AI_ACTIONS, formatReplyText, runSketchAi, type SketchAiAction, type TextBlock } from './sketchAi';
@@ -69,6 +70,10 @@
   let savedTexts = $state<Record<string, string>>({});
   let active = $state('');
   let pushedKey = $state('');
+  /** Where this sketch's unsaved edits are kept (sketchDrafts.ts). */
+  let draftId = '';
+  /** True when the editor opened on edits kept from a session that ended unsaved. */
+  let restoredDraft = false;
 
   function layerSource(layerId: string): MediaSource | null {
     const layer = get(project).layers.find((l) => l.id === layerId);
@@ -80,6 +85,7 @@
     if (target.item) {
       item = target.item;
       name = target.item.name;
+      draftId = `item:${target.item.id}`;
       layerIds = layers.filter((l) => l.source?.jsAnimation && sourceBelongsToItem(l.source.id, target.item!.id)).map((l) => l.id);
       return target.item.jsAnimation;
     }
@@ -90,6 +96,7 @@
       return null;
     }
     name = source.name || layer.name;
+    draftId = `source:${source.id}`;
     // Copies of a duplicated layer play this same source and take the edits too.
     layerIds = layersPlayingSource(layers, layer.id);
     return source.jsAnimation;
@@ -113,7 +120,11 @@
       const initial = Object.fromEntries(editable.map((f) => [f.path, f.text ?? '']));
       savedSource = opened;
       files = all;
-      texts = initial;
+      // Edits that were never saved (the app closed, or code the editor ran
+      // stopped it) come back; the layer keeps the saved code until they run.
+      const draft = readSketchDraft(draftId, initial);
+      restoredDraft = draft !== null;
+      texts = draft ?? initial;
       savedTexts = { ...initial };
       pushedKey = textsKey(initial);
       active = editable[0]?.path ?? '';
@@ -263,6 +274,8 @@
     // version that ran until the code reads again.
     const key = textsKey(texts);
     if (findSyntaxProblem() !== null || key === pushedKey) return;
+    // Kept first: if this code takes the app down, the typing is not lost.
+    keepSketchDraft(draftId, savedTexts, texts);
     writeLayers(currentFiles());
     pushedKey = key;
     run = { status: 'starting', errors: [] };
@@ -319,6 +332,7 @@
       return false;
     }
     const key = textsKey(texts);
+    keepSketchDraft(draftId, savedTexts, texts);
     checking = true;
     let errors: Awaited<ReturnType<typeof trialRunJSAnimation>> = [];
     try {
@@ -408,6 +422,7 @@
     }
     savedSource = jsAnimation;
     savedTexts = { ...texts };
+    dropSketchDraft(draftId);
     flashSaved();
     return true;
   }
@@ -450,6 +465,7 @@
     // The layers go back to the last saved files, outside the undo history:
     // the unsaved edits were never steps of their own.
     writeLayers(currentFiles(savedTexts));
+    dropSketchDraft(draftId);
     closeSketchEditor();
   }
 
@@ -696,6 +712,7 @@
     frame = requestAnimationFrame(previewLoop);
     pollRun();
     pollTimer = setInterval(pollRun, RUN_POLL_MS);
+    if (restoredDraft) showToast('Your unsaved edits to this sketch are back. Save to keep them.', 'info');
     const root = document.documentElement;
     root.addEventListener('keydown', keyGate);
     root.addEventListener('keyup', keyGate);
@@ -725,6 +742,8 @@
   }
 
   onDestroy(() => {
+    // Closed with nothing unsaved: no edits to bring back.
+    if (!dirty) dropSketchDraft(draftId);
     cancelAnimationFrame(frame);
     if (pollTimer) clearInterval(pollTimer);
     if (previewTimer) clearTimeout(previewTimer);
