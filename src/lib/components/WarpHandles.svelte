@@ -397,7 +397,7 @@
     if (!dragging || !$selectedLayer) return;
     const travel = travelTo(clientX, clientY, fine);
     if (dragging === 'corner' && dragTarget && dragStartCorner) {
-      const { point, hit } = dragPoint(snapSession, dragStartCorner, travel.offset, travel.px, bypass, pixelGrid());
+      const { point, hit } = dragPoint(snapSession, dragStartCorner, travel.offset, travel.px, bypass, pixelGrid(), fine);
       activeSnapHit = hit;
       project.setCorner($selectedLayer.id, dragTarget as keyof WarpCorners, point);
     } else if (dragging === 'edge' && dragTarget && initialCorners) {
@@ -406,12 +406,12 @@
         applyBatchEdgeScale(edge, travel.offset.x, travel.offset.y);
         return;
       }
-      const { corners, hit } = dragEdge(snapSession, initialCorners, edge, travel.offset, travel.px, bypass, pixelGrid());
+      const { corners, hit } = dragEdge(snapSession, initialCorners, edge, travel.offset, travel.px, bypass, pixelGrid(), fine);
       activeSnapHit = hit;
       project.setCorners($selectedLayer.id, corners);
     } else if (dragging === 'move' && initialCorners) {
       // The layer moves as one piece; so does the rest of a multi-selection.
-      const { delta, hit } = rigidDragDelta(snapSession, moveSnapPoints, travel.offset, travel.px, bypass, pixelGrid());
+      const { delta, hit } = rigidDragDelta(snapSession, moveSnapPoints, travel.offset, travel.px, bypass, pixelGrid(), fine);
       activeSnapHit = hit;
       project.setCorners($selectedLayer.id, translateCorners(initialCorners, delta));
       applyBatchDelta(delta.x, delta.y);

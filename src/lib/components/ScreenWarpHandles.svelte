@@ -57,7 +57,7 @@
   import { settings, screenMaskIsActive } from '../stores/settings';
   import type { WarpCorners, MeshWarpGrid, Point2D } from '../types';
   import { arrowDirection, classifyKeyTarget, nudgeStepPixels, projectPixelOffset } from '../utils/mappingNudge';
-  import { advanceDragTravel, beginDragTravel, dragTravelNormalized, type DragTravel } from '../utils/mappingSnap';
+  import { FINE_DRAG_FACTOR, advanceDragTravel, beginDragTravel, dragTravelNormalized, type DragTravel } from '../utils/mappingSnap';
   import { noteAltArrow } from '../utils/altArrowGuard';
   import { releaseFormControlFocus } from '../utils/formFocus';
   import { claimWarpKeys, ownsWarpKeys } from '../utils/warpKeyOwner';
@@ -92,8 +92,11 @@
   }
   let { containerWidth, containerHeight, zoom = 1 }: Props = $props();
 
-  // Snap distance — same heuristic as the OutputCanvasPreview drag.
+  // Snap distance — same heuristic as the OutputCanvasPreview drag. A Shift
+  // fine drag moves the crop a tenth as far, so it snaps from a tenth as far
+  // too; otherwise the edge jumps onto a target and will not ease off it.
   const SNAP_FRACTION = 0.015;
+  let snapReach = SNAP_FRACTION;
 
   // ─── Drag state ────────────────────────────────────────────────────
   type DragKind =
@@ -136,7 +139,7 @@
       if (axis === 'x') candidates.push(s.cropX, s.cropX + s.cropW);
       else candidates.push(s.cropY, s.cropY + s.cropH);
     }
-    let best = value, bestD = SNAP_FRACTION;
+    let best = value, bestD = snapReach;
     for (const c of candidates) {
       const d = Math.abs(c - value);
       if (d < bestD) { bestD = d; best = c; }
@@ -371,6 +374,7 @@
     // Screens keep y down.
     dragTravel = advanceDragTravel(dragTravel ?? beginDragTravel(e.clientX, e.clientY), e.clientX, e.clientY, e.shiftKey);
     const { x: dxN, y: dyN } = dragTravelNormalized(dragTravel, { width: containerWidth, height: containerHeight, zoom }, false);
+    snapReach = e.shiftKey ? SNAP_FRACTION * FINE_DRAG_FACTOR : SNAP_FRACTION;
     const k = drag.kind;
     const id = drag.sliceId;
     const init = drag.startSlice;
