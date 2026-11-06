@@ -96,7 +96,7 @@
   import UpdateModal from './lib/components/UpdateModal.svelte';
   import { updateModalOpen, leftSidebarTab } from './lib/stores/uiState';
   import { showToast } from './lib/stores/errorToast';
-  import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, flushPendingHistorySnapshot, resetProjectOwnedStores, isProjectFileData } from './lib/stores/layers';
+  import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, flushPendingHistorySnapshot, resetProjectOwnedStores, isProjectFileData, automatedRecalls } from './lib/stores/layers';
   import { recordDiscreteAction, scheduleHistorySnapshot, hasPendingHistorySnapshot } from './lib/stores/historyHooks';
   import { wireAppHistory, resetHistoryToCurrent, undoHistory, redoHistory } from './lib/stores/appHistory';
   import { keyframeTimeline, keyframeTrayOpen } from './lib/stores/keyframeTimeline';
@@ -179,7 +179,7 @@
   import { installShowControl, showRuntimeHooks } from './lib/show/showControlRuntime';
   import { serializeShowControl } from './lib/show/showControlPersistence';
   import { historyVersion as stage3dHistoryVersion, stage3dScene } from './lib/stage3d/store';
-  import { isProjectDirty, projectSettingsSignature, type ProjectDirtySnapshot } from './lib/stores/projectDirty';
+  import { isProjectDirty, projectSettingsSections, recallSectionSignature, withRecallsAsSaved, type ProjectDirtySnapshot, type RecallSection } from './lib/stores/projectDirty';
   import { cueList } from './lib/show/cueList';
   import {
     installPromptSuppression,
@@ -622,21 +622,49 @@
   }
   let recoveryTimestamp = '';
 
-  function projectDirtySnapshot(): ProjectDirtySnapshot {
+  /**
+   * `asSaved`: the state as it is, for a baseline. Otherwise sections still
+   * as an automated recall left them read as saved (see recallImprint).
+   */
+  function projectDirtySnapshot(asSaved = false): ProjectDirtySnapshot {
+    const sections = projectSettingsSections({
+      exported: project.exportProject() as Record<string, any>,
+      showTimeline: showTimeline.serialize(),
+      showControl: serializeShowControl(),
+      stage3d: get(stage3dScene),
+    });
+    const compared = asSaved ? sections : withRecallsAsSaved(sections, recallImprint, savedProjectState?.sections);
     return {
       stepId: history.currentStepId(),
-      settings: projectSettingsSignature({
-        exported: project.exportProject() as Record<string, any>,
-        showTimeline: showTimeline.serialize(),
-        showControl: serializeShowControl(),
-        stage3d: get(stage3dScene),
-      }),
+      settings: JSON.stringify(compared),
+      sections,
       // Map Sim and Stage 3D edits (saved with the project, with undo of
       // their own), relinked media and VJ clip and deck edits are counted
       // where they happen.
       counters: JSON.stringify([get(projectionSimHistoryVersion), get(stage3dHistoryVersion), get(mediaRelinkVersion), get(vjEditVersion)]),
     };
   }
+
+  // What automated recalls (show cues, VJ clip presets, MIDI- or Live-
+  // triggered stage presets) left in the sections they rewrote. Playing a
+  // show is not editing it; a section changed again after that counts.
+  let recallImprint: Partial<Record<RecallSection, string>> = {};
+  const recallSectionValue: Record<RecallSection, () => unknown> = {
+    sequencer: () => layerSequencer.serialize(),
+    keyframes: () => keyframeTimeline.exportAll(),
+    surfaces: () => {
+      const p = get(project);
+      return { surfaces: p.surfaces || [], activeSurfaceId: p.activeSurfaceId ?? null };
+    },
+    stage3d: () => get(stage3dScene),
+  };
+  const stopRecallWatch = automatedRecalls.subscribe(({ count, sections }) => {
+    if (count === 0) return;
+    const next = { ...recallImprint };
+    for (const section of sections) next[section] = recallSectionSignature(section, recallSectionValue[section]());
+    recallImprint = next;
+  });
+  onDestroy(stopRecallWatch);
 
   /** Work out whether the project has unsaved changes, now. */
   function refreshUnsavedChanges(): boolean {
@@ -657,7 +685,9 @@
     // microtask queued during the import, and the saved step is that one.
     queueMicrotask(() => {
       flushPendingHistorySnapshot();
-      savedProjectState = baseline ?? projectDirtySnapshot();
+      // What the file holds now includes what any recall wrote.
+      recallImprint = {};
+      savedProjectState = baseline ?? projectDirtySnapshot(true);
       hasUnsavedChanges = baseline ? isProjectDirty(baseline, projectDirtySnapshot()) : false;
     });
   }
@@ -666,7 +696,7 @@
   /** Export the project for a save, noting what is being written. */
   async function exportForSave(): Promise<string> {
     flushPendingHistorySnapshot();
-    saveBaseline = projectDirtySnapshot();
+    saveBaseline = projectDirtySnapshot(true);
     return project.exportProjectJSONForSave();
   }
   function takeSaveBaseline(): ProjectDirtySnapshot | null {

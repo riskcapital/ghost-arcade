@@ -9,7 +9,7 @@
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from 'svelte/store';
-import { isProjectDirty, projectSettingsSignature, type ProjectDirtySnapshot } from './projectDirty';
+import { isProjectDirty, projectSettingsSections, projectSettingsSignature, recallSectionSignature, withRecallsAsSaved, type ProjectDirtySnapshot } from './projectDirty';
 
 let layers: typeof import('./layers');
 let types: typeof import('../types');
@@ -155,6 +155,43 @@ describe('projectSettingsSignature', () => {
     };
     expect(surfaces('a', false)).toBe(surfaces('b', true));
   });
+
+  it('reads sections as saved while they are as an automated recall left them', () => {
+    const saved = base() as any;
+    saved.project.surfaces = [{ id: 's', slices: [] }];
+    saved.project.activeSurfaceId = 's';
+    const scene = { schemaVersion: 1, nodes: [] };
+    const savedSections = projectSettingsSections({ exported: saved, stage3d: scene });
+
+    // The recall-side signatures are the same text the full signature holds.
+    expect(recallSectionSignature('sequencer', saved.layerSequencer)).toBe(savedSections.sequencer);
+    expect(recallSectionSignature('keyframes', saved.keyframeTimelines)).toBe(savedSections.keyframes);
+    expect(recallSectionSignature('surfaces', { surfaces: saved.project.surfaces, activeSurfaceId: 's' })).toBe(savedSections.surfaces);
+    expect(recallSectionSignature('stage3d', scene)).toBe(savedSections.stage3d);
+
+    // A show cue recalls a preset with its own pattern and keyframes.
+    const recalled = base() as any;
+    recalled.project.surfaces = saved.project.surfaces;
+    recalled.project.activeSurfaceId = 's';
+    recalled.layerSequencer.pattern = { steps: [{ layers: { a: true } }] };
+    recalled.keyframeTimelines = [{ layerId: 'a', tracks: [{ key: 'opacity' }] }];
+    const imprint = {
+      sequencer: recallSectionSignature('sequencer', recalled.layerSequencer),
+      keyframes: recallSectionSignature('keyframes', recalled.keyframeTimelines),
+    };
+    const nowSections = projectSettingsSections({ exported: recalled, stage3d: scene });
+    expect(JSON.stringify(nowSections)).not.toBe(JSON.stringify(savedSections));
+    expect(JSON.stringify(withRecallsAsSaved(nowSections, imprint, savedSections))).toBe(JSON.stringify(savedSections));
+
+    // An edit after the recall counts again.
+    recalled.layerSequencer.pattern = { steps: [{ layers: { a: false } }] };
+    const edited = projectSettingsSections({ exported: recalled, stage3d: scene });
+    expect(JSON.stringify(withRecallsAsSaved(edited, imprint, savedSections))).not.toBe(JSON.stringify(savedSections));
+    // Other sections are never read as saved.
+    recalled.osc.bindings.push({ address: '/x' });
+    const oscEdit = projectSettingsSections({ exported: recalled, stage3d: scene });
+    expect(withRecallsAsSaved(oscEdit, imprint, savedSections).osc).not.toBe(savedSections.osc);
+  });
 });
 
 describe('with the real stores', () => {
@@ -268,5 +305,25 @@ describe('with the real stores', () => {
     expect(get(historyModule.history).past).toHaveLength(0);
     settingsModule.settings.update((s) => ({ ...s, output: { ...s.output, slices } }));
     expect(dirty(saved)).toBe(false);
+  });
+});
+
+describe('automated stage preset recalls', () => {
+  it('are noted as recalls and are not VJ edits', async () => {
+    vi.useFakeTimers();
+    const vj = await import('./vjClipLauncher');
+    const id = layers.project.saveStagePreset('Look A');
+    const before = get(vj.vjEditVersion);
+    const seen: string[][] = [];
+    const stop = layers.automatedRecalls.subscribe(({ count, sections }) => { if (count) seen.push(sections); });
+    layers.project.loadStagePreset(id, { history: false });
+    vi.runAllTimers();
+    stop();
+    expect(get(vj.vjEditVersion)).toBe(before);
+    // A user's recall of the same preset is an edit.
+    layers.project.loadStagePreset(id);
+    expect(get(vj.vjEditVersion)).toBeGreaterThan(before);
+    vi.useRealTimers();
+    expect(seen.length).toBeLessThanOrEqual(1);
   });
 });
