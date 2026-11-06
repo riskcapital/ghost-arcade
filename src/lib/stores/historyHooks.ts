@@ -9,6 +9,9 @@
  * is the only place that can see every store at once.
  */
 
+import { get } from 'svelte/store';
+import { history } from './history';
+
 /**
  * How App.svelte takes and stores a step. `record` snapshots the live state
  * of every undoable store. `capture` takes the same state cheaply (store
@@ -22,6 +25,9 @@ export interface HistorySnapshotHooks {
   commit: (captured: unknown) => void;
   /** Fold the live state into the latest step instead of adding one. */
   amend?: () => void;
+  /** Fold a state captured earlier into the latest step (see
+   *  noteLiveChange). Without it, live changes are not folded. */
+  amendTo?: (captured: unknown) => void;
 }
 
 // We record SYNCHRONOUSLY (no setTimeout) so each discrete action lands in its
@@ -55,6 +61,7 @@ export function recordDiscreteAction() {
     if (_pending.keys.has(RECORDING_TAKE) || Date.now() - _pending.lastEditAt >= GESTURE_GAP_MS) commitPending();
     else cancelPendingHistorySnapshot();
   }
+  foldLiveIntoLatestStep();
   if (_record) _record();
 }
 
@@ -68,6 +75,8 @@ export function amendLastHistoryStep() {
   if (_liveControlDepth > 0) return;
   if (_snapshotHooks?.amend) _snapshotHooks.amend();
   else if (_record) _record();
+  // The latest step now holds the live state too.
+  _live = null;
 }
 
 // ─── Debounced history for continuous edits (sliders, drags) ──────────────
@@ -96,6 +105,8 @@ interface PendingSnapshot {
   keys: Set<string>;
   lastEditAt: number;
   captured: unknown;
+  /** Order of `captured` among captures (see LiveState.seq). */
+  seq: number;
   timer: ReturnType<typeof setTimeout>;
 }
 let _pending: PendingSnapshot | null = null;
@@ -111,6 +122,12 @@ function commitPending() {
   _pending = null;
   if (_snapshotHooks) _snapshotHooks.commit(pending.captured);
   else if (_record) _record();
+  if (_live) {
+    // A live change made after the edit's last capture sits on top of the
+    // step just recorded; one made before it is already in that step.
+    if (_live.seq > pending.seq) _live.base = get(history);
+    else _live = null;
+  }
 }
 
 /**
@@ -148,12 +165,17 @@ function schedule(key: string) {
   if (_pending) {
     clearTimeout(_pending.timer);
     _pending.keys.add(key);
+  } else {
+    // A new edit starts: the step before it takes in what live control
+    // changed first, so undoing this edit leaves those changes alone.
+    foldLiveIntoLatestStep();
   }
   const timer = setTimeout(commitPending, HISTORY_DEBOUNCE_MS);
   _pending = {
     keys: _pending?.keys ?? new Set([key]),
     lastEditAt: now,
     captured: captureNow(),
+    seq: ++_captureSeq,
     timer,
   };
 }
@@ -166,6 +188,9 @@ export function flushPendingHistorySnapshot() {
 /** Drop a debounced edit without recording it. Used when the whole history
  *  is reset (a project was opened or created), where it no longer applies. */
 export function cancelPendingHistorySnapshot() {
+  // A live change seen before is either part of what is being dropped (an
+  // edit folded into the action recording now) or of a history being reset.
+  _live = null;
   if (!_pending) return;
   clearTimeout(_pending.timer);
   _pending = null;
@@ -191,9 +216,55 @@ export function runAsLiveControl<T>(fn: () => T): T {
     return fn();
   } finally {
     _liveControlDepth -= 1;
+    if (_liveControlDepth === 0) noteLiveChange();
   }
 }
 export function isLiveControl(): boolean { return _liveControlDepth > 0; }
+
+// ─── Live changes and the latest step ───────────────────────────────────
+// Live control writes no step, so the latest step still holds the values
+// from before it. The next edit's step then holds the live values too, and
+// undoing that edit compared the two steps, saw the live change as part of
+// the edit and reverted it: a fader moved by MIDI, a show cue's recall, a
+// clip's preset all snapped back when an edit to another layer was undone.
+// So the state live control leaves is noted (holding references only, which
+// is cheap), and when the next edit begins it is folded into the latest step
+// first. Folding amends the step in place: its id, and so the unsaved-changes
+// check, stay as they are.
+interface LiveState {
+  captured: unknown;
+  /** Order among captures, against an edit's (PendingSnapshot.seq). */
+  seq: number;
+  /** The history it sits on top of. Once the history has moved on (undo,
+   *  redo, another step, a project opened) it no longer applies. */
+  base: unknown;
+}
+let _live: LiveState | null = null;
+let _captureSeq = 0;
+
+/**
+ * Note the state live control or an automated recall has just left. Called
+ * when the outermost runAsLiveControl ends, and by noteAutomatedRecall once a
+ * recall's deferred writes are in.
+ */
+export function noteLiveChange() {
+  if (!_snapshotHooks?.amendTo || _restoreDepth > 0) return;
+  try {
+    _live = { captured: captureNow(), seq: ++_captureSeq, base: get(history) };
+  } catch {
+    _live = null;
+  }
+}
+
+/** Fold the noted live state into the latest step. Only while no edit is
+ *  waiting for its debounce: that edit is in the state too by now. */
+function foldLiveIntoLatestStep() {
+  const live = _live;
+  _live = null;
+  if (!live || _pending || !_snapshotHooks?.amendTo) return;
+  if (get(history) !== live.base) return;
+  _snapshotHooks.amendTo(live.captured);
+}
 
 /**
  * Suppress recording while a snapshot is being restored.

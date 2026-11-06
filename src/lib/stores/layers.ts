@@ -83,6 +83,7 @@ import {
   notifyProjectReplaced,
   amendLastHistoryStep,
   runAsLiveControl,
+  noteLiveChange,
 } from './historyHooks';
 import type { RecallSection } from './projectDirty';
 export {
@@ -101,9 +102,13 @@ const selectedLayerIdsState = writable<string[]>([]);
  */
 export const automatedRecalls = writable<{ count: number; sections: RecallSection[] }>({ count: 0, sections: [] });
 export function noteAutomatedRecall(sections: RecallSection[]) {
-  if (sections.length === 0) return;
   // After the recall's deferred writes (sequencer, 3D scene, the surfaces mirror).
-  setTimeout(() => automatedRecalls.update((r) => ({ count: r.count + 1, sections })), 0);
+  setTimeout(() => {
+    // The latest undo step takes in what the recall changed when the next
+    // edit begins, so undoing that edit does not undo the recall.
+    noteLiveChange();
+    if (sections.length > 0) automatedRecalls.update((r) => ({ count: r.count + 1, sections }));
+  }, 0);
 }
 
 /**
