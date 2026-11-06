@@ -27,10 +27,10 @@ async function waitForPicture(c, baseline, timeoutMs) {
   while (Date.now() < deadline) {
     last = await studioPreview(c);
     if (last.nonBlackFraction > baseline.nonBlackFraction + 0.02 && last.meanLuma > baseline.meanLuma + 0.004) return { ...last, ok: true };
-    // Where the page screenshot includes the preview (Linux), the empty stage
-    // is a flat dark fill that counts as lit everywhere, so a picture shows as
-    // many more colours instead of more lit pixels.
-    if (baseline.nonBlackFraction > 0.9 && last.distinctColours > baseline.distinctColours + 150) return { ...last, ok: true };
+    // A picture also shows as many more colours than the empty stage. That is
+    // the sign to read where the empty stage is a dark fill that counts as lit,
+    // and for dark styles that barely change the mean brightness.
+    if (last.distinctColours > baseline.distinctColours + 150) return { ...last, ok: true };
     await sleep(1500);
   }
   return { ...last, ok: false };

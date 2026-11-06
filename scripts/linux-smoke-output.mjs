@@ -83,7 +83,9 @@ export const stepOutputAndQuit = {
   id: 'h', title: 'Output Window opens, fullscreen toggles, the app quits cleanly',
   async run(t) {
     const { c } = t;
-    if (await c.exists(el.button('Exit VJ'))) { await c.clickElement(el.button('Exit VJ')); await sleep(1500); }
+    // Back to mapping through the VJ header's half of the Mapping | VJ switch.
+    const toMapping = el.byTitle('Switch to mapping (stops the live output)');
+    if (await c.exists(toMapping)) { await c.clickElement(toMapping); await sleep(1500); }
     await c.clickElement(el.byTitle('Open Output Window'));
     let out = null;
     const deadline = Date.now() + 60000;
@@ -133,13 +135,14 @@ export const stepOutputAndQuit = {
       t.check('output stays attached in fullscreen', (await outputStatus(c)).attached);
     }
     // In the native build the Fullscreen button, pressed again, closes the output.
-    // Detaching waits for the core between frames: seconds on a software adapter.
+    // Detaching waits for the core between frames: after the earlier steps a
+    // software adapter takes 20-50 s, so allow two minutes.
     await c.clickElement(el.button('Fullscreen'));
     const leaving = Date.now();
     let closed = false;
     let last = null;
-    while (!closed && Date.now() - leaving < 60000) { await sleep(500); last = await outputStatus(c); closed = !last.attached; }
-    t.number('outputClose', closed ? `${round((Date.now() - leaving) / 1000, 1)} s` : 'still attached after 60 s');
+    while (!closed && Date.now() - leaving < 120000) { await sleep(500); last = await outputStatus(c); closed = !last.attached; }
+    t.number('outputClose', closed ? `${round((Date.now() - leaving) / 1000, 1)} s` : 'still attached after 120 s');
     t.check('leaving fullscreen closes the output', closed, closed ? '' : JSON.stringify(last));
 
     if (t.args.attach || t.args.keepOpen) { t.skip('quit: attached to an app this run did not start'); return; }
