@@ -25,12 +25,14 @@
 // snappier than raw landmarks AND rock-steady when the hand is still.
 // `smoothing` param trades the two (0 = raw, 1 = heavy filtering).
 //
-// We do NOT stop the MediaPipe worker on dispose — other UI (debug
-// overlay, future gesture broadcasters) may be sharing the camera.
+// Each visualizer holds the shared camera while its Camera On toggle is
+// on and lets go on dispose; the camera stops once nothing else holds it.
 
 import * as THREE from 'three';
 import { mediaPipeSource } from '../mediapipe/mediaPipeSource';
 import type { SignalFrame } from '../mediapipe/signals';
+
+let visualizerCount = 0;
 
 export type HandFXMode = 'panel' | 'trails' | 'aurora' | 'skeleton' | 'bursts';
 export type HandFXColorMode = 'rainbow' | 'coral' | 'white' | 'cyan';
@@ -223,14 +225,12 @@ export class HandFXVisualizer {
   // Render-loop clock for the curl-noise flow field.
   private lastFrameTime = 0;
 
-  // Camera state. cameraStarting prevents double-start while the
-  // permission prompt is open or the worker is still initialising.
-  // cameraAttempted gates retry after a failed start: without it, the
-  // setParams call on every render frame would see effectSource's
-  // cameraOn=true and trigger start() → fail → retry forever, which
-  // shows up as the macOS camera indicator strobing on and off.
-  private cameraStarting = false;
-  private cameraAttempted = false;
+  // Camera state. Each visualizer holds the shared camera while its Camera
+  // On toggle is on and lets go when it is turned off or the layer goes;
+  // the camera stops once nothing else (another layer, the MediaPipe panel)
+  // holds it. Only the Off → On edge starts it, so the per-frame setParams
+  // never retries a failed start (the camera light would strobe).
+  private readonly cameraConsumer = `handfx-visualizer-${++visualizerCount}`;
   private cameraError: string | null = null;
 
   constructor(width: number, height: number) {
@@ -280,27 +280,21 @@ export class HandFXVisualizer {
     // Camera On toggle acts as Start/Stop. We compare against the prior
     // value so re-applying the same param block per frame is a no-op.
     if (this.params.cameraOn && !prevCamera) {
-      // Off → On: user activated the camera. Triggers permission prompt
-      // on first activation. cameraAttempted suppresses the implicit
-      // per-frame retry after a failure — the user must toggle off then
-      // on again to retry, which avoids strobing the camera indicator.
-      if (!mediaPipeSource.isRunning() && !this.cameraStarting && !this.cameraAttempted) {
-        this.cameraStarting = true;
-        this.cameraAttempted = true;
+      // Off → On: user activated the camera. Triggers the permission
+      // prompt on first activation; a start already under way is joined.
+      // After a failure the user toggles off and on again to retry.
+      mediaPipeSource.acquire(this.cameraConsumer);
+      if (!mediaPipeSource.isRunning()) {
         this.cameraError = null;
-        mediaPipeSource.start()
-          .then(() => { this.cameraStarting = false; })
-          .catch((e) => {
-            this.cameraStarting = false;
-            this.cameraError = e?.message ?? String(e);
-            console.warn('[HandFX] camera start failed:', e);
-          });
+        mediaPipeSource.start().catch((e) => {
+          this.cameraError = e?.message ?? String(e);
+          console.warn('[HandFX] camera start failed:', e);
+        });
       }
     } else if (!this.params.cameraOn && prevCamera) {
-      // On → Off: release the camera. Clear cameraAttempted so the
-      // next Off → On transition is allowed to start a fresh attempt.
-      this.cameraAttempted = false;
-      mediaPipeSource.stop().catch(() => {});
+      // On → Off: let go of the camera. It stops unless another HandFX
+      // layer or the MediaPipe panel still uses it.
+      mediaPipeSource.release(this.cameraConsumer);
     }
   }
 
@@ -334,6 +328,7 @@ export class HandFXVisualizer {
 
   dispose(): void {
     try { this.unsubscribe?.(); } catch {}
+    mediaPipeSource.release(this.cameraConsumer);
     try { this.canvas.remove(); } catch {}
     this.texture.dispose();
     this.material.dispose();
