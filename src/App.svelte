@@ -4637,7 +4637,7 @@
   }
 
   /* Right-click on the output buttons: which display the Live Output opens on. */
-  type OutputMenuDisplay = { id: number; label: string; width: number; height: number; isPrimary: boolean; scaleFactor: number };
+  type OutputMenuDisplay = { id: number; label: string; name?: string; width: number; height: number; isPrimary: boolean; scaleFactor: number };
   let outputDisplayMenu: { x: number; y: number; displays: OutputMenuDisplay[] } | null = null;
   async function openOutputDisplayMenu(event: MouseEvent) {
     if (!isDesktopApp) return;
@@ -7722,7 +7722,7 @@
         {#each _menu.displays as display (display.id)}
           <button class="display-menu-item" class:checked={_picked && _assigned === display.id} onclick={() => chooseOutputDisplay(display)}>
             <span class="display-menu-check">{_picked && _assigned === display.id ? '✓' : ''}</span>
-            {display.label || `Display ${display.id}`}
+            {display.name || display.label || `Display ${display.id}`}
             <span class="display-menu-dim">{display.width}×{display.height}</span>
           </button>
         {/each}

@@ -24,7 +24,7 @@
   // ─── Display enumeration ─────────────────────────────────────────────
   // Re-fetched each time the panel mounts (operators hot-plug projectors).
   type DisplayInfo = {
-    id: number; label: string; width: number; height: number;
+    id: number; label: string; name?: string; width: number; height: number;
     x: number; y: number; isPrimary: boolean; scaleFactor: number;
   };
   let displays: DisplayInfo[] = [];

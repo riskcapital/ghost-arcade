@@ -118,7 +118,7 @@
       const wanted = out.liveOutputDisplayFingerprint?.label || 'The display picked for the output';
       showToast(
         choice.display
-          ? `${wanted} is not connected, so the output opened on ${choice.display.label || 'another display'}. Right-click Output Window to pick a display.`
+          ? `${wanted} is not connected, so the output opened on ${choice.display.name || choice.display.label || 'another display'}. Right-click Output Window to pick a display.`
           : `${wanted} is not connected. Connect it, or right-click Output Window to pick another display.`,
         'warning',
       );

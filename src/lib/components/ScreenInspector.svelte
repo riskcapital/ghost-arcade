@@ -27,7 +27,7 @@
   import { displayFingerprint, resolveSavedDisplay } from '$lib/output/displayMatch';
 
   type DisplayInfo = {
-    id: number; label: string; width: number; height: number;
+    id: number; label: string; name?: string; width: number; height: number;
     x: number; y: number; isPrimary: boolean; scaleFactor: number;
   };
 
@@ -171,7 +171,7 @@
             <option value={screen.displayId} disabled>{screen.displayFingerprint?.label || `Display ${screen.displayId}`} (not connected)</option>
           {/if}
           {#each displays as d}
-            <option value={d.id}>{d.label || `Display ${d.id}`} ({d.width}×{d.height}{d.isPrimary ? ' · primary' : ''})</option>
+            <option value={d.id}>{d.name || d.label || `Display ${d.id}`} ({d.width}×{d.height}{d.isPrimary ? ' · primary' : ''})</option>
           {/each}
         </select>
         <button class="icon-btn" title="Refresh display list" onclick={onRefreshDisplays}>↻</button>
