@@ -35,6 +35,11 @@
    *  room underneath. */
   export let openUp: boolean = false;
   export let alwaysShow = false;
+  /** Show the meter: waveform, band strip, beat lights and the tweaks
+   *  popover. The mapping bar shows this part on its own. */
+  export let meter = true;
+  /** Show Tap and the BPM. The mapping bar keeps this part in its BPM menu. */
+  export let tempo = true;
 
   function positionPopover() {
     if (!anchorEl || !popoverEl) return;
@@ -79,6 +84,7 @@
 
 {#if alwaysShow || $audioStore.isActive}
   <div data-help-page="midi-audio" class="amp-strip" bind:this={anchorEl}>
+    {#if meter}
     <!-- FFT bars — clickable to open the EQ popover -->
     <button class="amp-fft-btn" onclick={toggleEq}
       class:open={showEq}
@@ -121,16 +127,19 @@
         <div class="amp-ks-dot amp-snare" class:flash={$audioStore.isActive && $audioStore.kickSnare.isSnare} title="Snare onset (lowMid+highMid)"></div>
       </div>
     {/if}
+    {/if}
 
-    <!-- BPM + TAP -->
-    <BpmTapWidget alwaysShow={true} />
+    {#if tempo}
+      <!-- BPM + TAP -->
+      <BpmTapWidget alwaysShow={true} />
+    {/if}
 
-    {#if $audioStore.error}
+    {#if meter && $audioStore.error}
       <span class="amp-error" title={$audioStore.error}>⚠</span>
     {/if}
 
     <!-- Expandable EQ / input-tweaks popover -->
-    {#if showEq && $audioStore.isActive}
+    {#if meter && showEq && $audioStore.isActive}
       <!-- The popover moves to <body> (see utils/portal.ts); this wrapper
            stays here as the block's own node. -->
       <div class="amp-popover-home">

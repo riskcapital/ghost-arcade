@@ -8,6 +8,7 @@
   import WebGPUCanvas from './lib/components/WebGPUCanvas.svelte';
   import AudioInputPicker from './lib/components/AudioInputPicker.svelte';
   import ClipAudioMasterControl from './lib/components/ClipAudioMasterControl.svelte';
+  import AudioMeterPanel from './lib/components/AudioMeterPanel.svelte';
   import TempoMenu from './lib/components/TempoMenu.svelte';
   // The guided tour and starter templates are offered from the welcome
   // screen and the "?" overlay, never opened by themselves: an earlier tour
@@ -7715,12 +7716,14 @@
              never uses the feature sees no change here. -->
         <ClipAudioMasterControl />
 
-        <!-- Live FFT meter + beat/kick/snare dots + TAP tempo + BPM, with the
-             audio-input tweaks popover (sensitivity, smoothing, per-band gain)
-             behind the meter. Same strip VJ mode uses, so tuning audio
-             reactivity doesn't require switching modes. Always shown, so the
-             bar never rearranges when audio starts. -->
-        <!-- Tempo (meter, beat lights, Tap, BPM) behind one button that shows the BPM. -->
+        <!-- Live waveform + beat/kick/snare dots, with the audio-input tweaks
+             popover (sensitivity, smoothing, per-band gain) behind the
+             waveform. The meter VJ mode uses, so tuning audio reactivity
+             doesn't require switching modes. Always shown, so the bar never
+             rearranges when audio starts. -->
+        <AudioMeterPanel alwaysShow tempo={false} />
+
+        <!-- Tap and BPM behind one button that shows the BPM. -->
         <TempoMenu />
 
         <!-- Screenshot Button -->

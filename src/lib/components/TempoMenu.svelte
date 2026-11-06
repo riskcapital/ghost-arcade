@@ -1,9 +1,10 @@
 <script lang="ts">
   /**
-   * The tempo strip (level meter, beat lights, Tap, BPM, audio tempo) behind
-   * one top-bar button that shows the current BPM. The strip stays mounted
-   * while the menu is closed, so tap shortcuts and MIDI on its controls keep
-   * working; the menu moves to <body> so the bar's scaling never shrinks it.
+   * Tap, BPM and audio tempo behind one top-bar button that shows the
+   * current BPM. The waveform and the audio tweaks stay in the bar. The
+   * controls stay mounted while the menu is closed, so tap shortcuts and
+   * MIDI on them keep working; the menu moves to <body> so the bar's
+   * scaling never shrinks it.
    */
   import { audioBpm, audioIsActive, audioManualBpm } from '../stores/audio';
   import { portal } from '../utils/portal';
@@ -32,8 +33,6 @@
     const away = (e: PointerEvent) => {
       const t = e.target as Node;
       if (menu?.contains(t) || button?.contains(t)) return;
-      // The meter's own tweaks popover lives at <body> too.
-      if ((t as HTMLElement).closest?.('.amp-popover')) return;
       open = false;
     };
     const key = (e: KeyboardEvent) => { if (e.key === 'Escape') open = false; };
@@ -56,7 +55,7 @@
 
 <div class="tempo-home">
   <div class="tempo-menu" class:open use:portal bind:this={menu} style="top:{pos.top}px; left:{pos.left}px" role="dialog" aria-label="Tempo">
-    <AudioMeterPanel alwaysShow />
+    <AudioMeterPanel alwaysShow meter={false} />
   </div>
 </div>
 
