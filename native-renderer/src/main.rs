@@ -1891,13 +1891,19 @@ struct NativeIsfPassState {
 /// The key a pass-aware shader's buffers live under: its output source id
 /// without the trailing quality and size parts. Those change with the quality
 /// tier (which moves under load mid-show); keyed on them, every tier change
-/// started the shader again from empty buffers.
-fn isf_pass_state_key(source_id: &str) -> String {
+/// started the shader again from empty buffers. A layer's own quality
+/// override stays in the key: two layers showing the shader at different
+/// qualities render it separately, and sharing one set of buffers stepped
+/// them twice a frame.
+fn isf_pass_state_key(source_id: &str, layer_quality: Option<f32>) -> String {
     let mut parts = source_id.rsplitn(3, ':');
     let size = parts.next();
     let quality = parts.next();
-    match (size, quality, parts.next()) {
-        (Some(size), Some(_), Some(rest)) if size.contains('x') => format!("{rest}:state"),
+    match (size, quality, parts.next(), layer_quality) {
+        (Some(size), Some(_), Some(rest), None) if size.contains('x') => format!("{rest}:state"),
+        (Some(size), Some(_), Some(rest), Some(quality)) if size.contains('x') => {
+            format!("{rest}:q{:08x}:state", quality.to_bits())
+        }
         _ => source_id.to_string(),
     }
 }
@@ -16203,7 +16209,12 @@ impl App {
                     || layers.get(key).is_some_and(|layer| layer.shader_id.is_some())
                     || layers.values().any(|layer| {
                         layer.shader_source_id.as_deref() == Some(key)
-                            || layer.shader_source_id.as_deref().map(isf_pass_state_key).as_deref() == Some(key)
+                            || layer
+                                .shader_source_id
+                                .as_deref()
+                                .map(|source_id| isf_pass_state_key(source_id, layer.render_quality))
+                                .as_deref()
+                                == Some(key)
                     })
             });
         }
@@ -16248,7 +16259,10 @@ impl App {
         }
         let current_frame = self.native_frame_index();
         self.isf_frame_outputs.retain(|_, (_, frame)| *frame == current_frame);
-        let layer_ids = self.isf_layer_bindings.keys().cloned().collect::<Vec<_>>();
+        let mut layer_ids = self.isf_layer_bindings.keys().cloned().collect::<Vec<_>>();
+        // A fixed order: when layers share one render, the same layer draws
+        // it (and steps its pass buffers) every frame.
+        layer_ids.sort_unstable();
         // One encoder and one submit for all single-pass shaders this frame.
         let async_compile = self.render_clock_mode != "manual";
         if let Some(renderer) = self.renderer.as_mut() {
@@ -16451,6 +16465,7 @@ impl App {
                 .get(&layer_id)
                 .and_then(|layer| layer.render_quality)
                 .unwrap_or(self.native_quality.quality_scale);
+            let layer_quality_override = self.scene_layers.get(&layer_id).and_then(|layer| layer.render_quality);
             let pass_host = self.shader_isf_hosts.get(&shader_id).cloned();
             let target_sizes = pass_host
                 .as_ref()
@@ -16483,7 +16498,7 @@ impl App {
                 Some(renderer) => {
                     let result = if let Some((host, generation)) = pass_host.as_ref() {
                         let passes = host.plan.effective_passes();
-                        let state_key = isf_pass_state_key(&source_id);
+                        let state_key = isf_pass_state_key(&source_id, layer_quality_override);
                         let job = NativeIsfPassJob {
                             state_key: &state_key,
                             generation: *generation,
@@ -34795,12 +34810,28 @@ mod tests {
     #[test]
     fn isf_pass_state_survives_quality_and_size_changes() {
         use super::isf_pass_state_key as key;
-        let a = key("native-shader:music-voice:L1:0:VX-Nebula.fs:abc:00000000000000ff:0:3f400000:1024x1024");
-        let b = key("native-shader:music-voice:L1:0:VX-Nebula.fs:abc:00000000000000ff:0:3f800000:2048x2048");
+        let a = key("native-shader:music-voice:L1:0:VX-Nebula.fs:abc:00000000000000ff:0:3f400000:1024x1024", None);
+        let b = key("native-shader:music-voice:L1:0:VX-Nebula.fs:abc:00000000000000ff:0:3f800000:2048x2048", None);
         assert_eq!(a, b);
-        assert_ne!(a, key("native-shader:music-voice:L1:1:VX-Nebula.fs:abc:00000000000000ff:0:3f800000:2048x2048"));
+        assert_ne!(a, key("native-shader:music-voice:L1:1:VX-Nebula.fs:abc:00000000000000ff:0:3f800000:2048x2048", None));
         // Anything not in the output id's shape is its own key.
-        assert_eq!(key("layer-7"), "layer-7");
+        assert_eq!(key("layer-7", None), "layer-7");
+    }
+
+    #[test]
+    fn isf_pass_state_is_separate_per_layer_quality_override() {
+        use super::isf_pass_state_key as key;
+        let half = "native-shader:trails.fs:00000000000000ff:0:3f000000:2048x2048";
+        let full = "native-shader:trails.fs:00000000000000ff:0:3f800000:2048x2048";
+        // Two layers at different overrides keep their own buffers...
+        assert_ne!(key(half, Some(0.5)), key(full, Some(1.0)));
+        // ...and neither shares the buffers of a layer following the tier.
+        assert_ne!(key(half, Some(0.5)), key(full, None));
+        // An override keeps its buffers when the output size changes.
+        assert_eq!(
+            key(half, Some(0.5)),
+            key("native-shader:trails.fs:00000000000000ff:0:3f000000:1024x1024", Some(0.5)),
+        );
     }
 
     #[test]
