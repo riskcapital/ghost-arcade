@@ -2164,9 +2164,14 @@ function createSpoutOsrWindow(width, height) {
       }
     });
 
+    // A restart can open the next window before this one has finished
+    // closing; the shared state and pumps then belong to the new one.
+    const osrWindow = spoutOsrWindow;
+
     // Handle crashes — fall back to CPU path
     spoutOsrWindow.webContents.on('render-process-gone', (event, details) => {
       console.error(`[${textureShareLabel} OSR] Renderer process gone:`, details.reason);
+      if (spoutOsrWindow && spoutOsrWindow !== osrWindow) return;
       osrActive = false;
       osrFailureReason = 'renderer-gone';
       stopOsrPaintPump();
@@ -2176,6 +2181,7 @@ function createSpoutOsrWindow(width, height) {
 
     spoutOsrWindow.on('closed', () => {
       console.log(`[${textureShareLabel} OSR] Window closed`);
+      if (spoutOsrWindow && spoutOsrWindow !== osrWindow) return;
       spoutOsrWindow = null;
       osrActive = false;
       stopOsrPaintPump();
@@ -2531,12 +2537,18 @@ function createAtlasOsrWindow(width, height) {
       startAtlasPaintPump();
     });
 
+    // A restart can open the next window before this one has finished
+    // closing; the shared state and pump then belong to the new one.
+    const osrWindow = atlasOsrWindow;
+
     atlasOsrWindow.webContents.on('render-process-gone', (event, details) => {
       console.error('[Atlas OSR] Renderer process gone:', details.reason);
+      if (atlasOsrWindow && atlasOsrWindow !== osrWindow) return;
       stopAtlasOutput('renderer-gone');
     });
 
     atlasOsrWindow.on('closed', () => {
+      if (atlasOsrWindow && atlasOsrWindow !== osrWindow) return;
       atlasOsrWindow = null;
       stopAtlasPaintPump();
     });
@@ -4392,8 +4404,9 @@ function registerIpcHandlers() {
   // Save a project file. Next to each media file's absolute location the
   // project records where it is from the project's folder, so the show
   // opens after the folder is moved or copied to another computer. The file
-  // is written beside the target and renamed over it: a crash or a full
-  // disk mid-save leaves the previous project intact.
+  // is written beside the target, flushed to disk and renamed over it: a
+  // crash, a power cut or a full disk mid-save leaves the previous project
+  // intact.
   ipcMain.handle('save_project_file', async (_, args) => {
     try {
       const filePath = typeof args?.path === 'string' ? path.normalize(args.path) : '';
@@ -4401,21 +4414,18 @@ function registerIpcHandlers() {
       if (typeof args?.content !== 'string') return { success: false, error: 'Content must be a string' };
       if (!pathGrants.canWrite(filePath)) return PATH_NOT_ALLOWED;
       let content = args.content;
+      // The parsed project, so registering its media need not parse it again.
+      let parsed = null;
       try {
         const data = JSON.parse(content);
         if (data && typeof data === 'object' && !Array.isArray(data)) {
-          content = JSON.stringify(projectMedia.makeProjectPortable(data, path.dirname(filePath)), null, 2);
+          // Registered as written: the portable form, with its media paths.
+          parsed = projectMedia.makeProjectPortable(data, path.dirname(filePath));
+          content = JSON.stringify(parsed, null, 2);
         }
       } catch { /* not JSON: write it as given */ }
-      const temp = `${filePath}.saving-${process.pid}`;
-      try {
-        fs.writeFileSync(temp, content, 'utf8');
-        await require('./replace-file.cjs').replaceFile(temp, filePath);
-      } catch (err) {
-        try { fs.unlinkSync(temp); } catch { /* never written */ }
-        throw err;
-      }
-      pathGrants.registerProjectFile(filePath, content);
+      await require('./atomic-write.cjs').writeFileAtomic(filePath, content);
+      pathGrants.registerProjectFile(filePath, parsed ?? content);
       return { success: true };
     } catch (err) {
       console.error('[Main] save_project_file error:', err?.message || err);
@@ -4475,7 +4485,9 @@ function registerIpcHandlers() {
       fs.mkdirSync(dir, { recursive: true });
       const safeName = safeGeneratedAssetFilename(filename, mime);
       const dest = path.join(dir, safeName);
-      fs.writeFileSync(dest, buffer);
+      // Async: a recording can be gigabytes, and a sync write stalls every
+      // other IPC until it is on disk.
+      await fs.promises.writeFile(dest, buffer);
       return { success: true, path: dest };
     } catch (err) {
       console.error('[Main] save_generated_asset error:', err?.message || err);
@@ -5249,7 +5261,7 @@ function registerIpcHandlers() {
       if (buf.length === 0 && base64Data.length > 0) {
         return { success: false, error: 'base64 decode produced empty buffer (invalid encoding)' };
       }
-      fs.writeFileSync(normalized, buf);
+      await fs.promises.writeFile(normalized, buf);
       return { success: true };
     } catch (err) {
       console.error('[Main] save_file_binary error:', err?.message || err);
@@ -5283,7 +5295,7 @@ function registerIpcHandlers() {
       } else {
         return { success: false, error: 'Invalid bytes payload' };
       }
-      fs.writeFileSync(normalized, buffer);
+      await fs.promises.writeFile(normalized, buffer);
       return { success: true };
     } catch (err) {
       console.error('[Main] save_file_bytes error:', err?.message || err);
@@ -5329,7 +5341,9 @@ function registerIpcHandlers() {
           }
         }
       } catch { /* fall through to the actual copy */ }
-      fs.copyFileSync(normSrc, normDest);
+      // Async: this runs after REC stops and after an offline render, and a
+      // multi-gigabyte sync copy would stall every other IPC for minutes.
+      await fs.promises.copyFile(normSrc, normDest);
       return { success: true };
     } catch (err) {
       console.error('[Main] copy_file_to_project error:', err?.message || err);
@@ -5834,7 +5848,24 @@ function createMainWindow() {
   // short window we give up (prevents a reload-loop eating CPU).
   let _rendererCrashReloads = 0;
   let _lastRendererCrashAt = 0;
+  // At most one reload waits on an unresponsive editor. It is dropped when
+  // the editor answers again, crashes (that reloads on its own) or starts a
+  // new page, and checked once more before it fires.
+  let unresponsiveReloadTimer = null;
+  let editorUnresponsive = false;
+  const cancelUnresponsiveReload = () => {
+    editorUnresponsive = false;
+    if (unresponsiveReloadTimer) {
+      clearTimeout(unresponsiveReloadTimer);
+      unresponsiveReloadTimer = null;
+    }
+  };
+  mainWindow.webContents.on('did-start-navigation', (details) => {
+    if (!details?.isMainFrame || details.isSameDocument) return;
+    cancelUnresponsiveReload();
+  });
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    cancelUnresponsiveReload();
     const now = Date.now();
     const wasRecent = (now - _lastRendererCrashAt) < 30_000;
     _lastRendererCrashAt = now;
@@ -5847,14 +5878,22 @@ function createMainWindow() {
     try { mainWindow.reload(); } catch (e) { console.error('[Main] reload() threw:', e); }
   });
   mainWindow.webContents.on('unresponsive', () => {
+    editorUnresponsive = true;
+    if (unresponsiveReloadTimer) return;
     console.warn('[Main] MAIN renderer unresponsive (>30s). Giving it another 10s before we reload...');
-    setTimeout(() => {
-      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.isLoading() === false) {
-        try { mainWindow.reload(); } catch {}
-      }
+    const win = mainWindow;
+    unresponsiveReloadTimer = setTimeout(() => {
+      unresponsiveReloadTimer = null;
+      if (!editorUnresponsive || !win || win !== mainWindow || win.isDestroyed()) return;
+      const wc = win.webContents;
+      if (wc.isDestroyed() || wc.isCrashed() || wc.isLoading()) return;
+      editorUnresponsive = false;
+      console.warn('[Main] MAIN renderer still unresponsive. Reloading.');
+      try { win.reload(); } catch {}
     }, 10_000);
   });
   mainWindow.webContents.on('responsive', () => {
+    cancelUnresponsiveReload();
     console.log('[Main] MAIN renderer responsive again.');
   });
 
@@ -5896,6 +5935,7 @@ function createMainWindow() {
   });
 
   mainWindow.on('closed', () => {
+    cancelUnresponsiveReload();
     mainWindow = null;
     // Close every performer/display pop-out so the app can actually exit.
     closeAuxiliaryWindows();
@@ -6443,9 +6483,6 @@ app.whenReady().then(async () => {
       if (!pathGrants.canRead(normalized)) {
         return addCorsHeaders(new Response('Forbidden', { status: 403 }));
       }
-      if (!fs.existsSync(normalized)) {
-        return addCorsHeaders(new Response('Not found', { status: 404 }));
-      }
       // Re-emit as file:// for net.fetch — it handles range requests +
       // streaming for us, which <video> needs to seek without buffering
       // the whole file. We can't expose file:// to the renderer directly
@@ -6459,11 +6496,27 @@ app.whenReady().then(async () => {
       const fetchHeaders = new Headers();
       const range = request.headers.get('range');
       if (range) fetchHeaders.set('range', range);
-      const resp = await electronNet.fetch(fileUrl, {
-        method: request.method,
-        headers: fetchHeaders,
-        bypassCustomProtocolHandlers: true,
-      });
+      // No existence check up front: a video asks for every range read, and
+      // a sync stat each time stalls the main thread (badly on a network
+      // drive). A missing file is told apart only when the fetch fails.
+      const notFound = async () => {
+        try { await fs.promises.access(normalized); return false; } catch { return true; }
+      };
+      let resp;
+      try {
+        resp = await electronNet.fetch(fileUrl, {
+          method: request.method,
+          headers: fetchHeaders,
+          bypassCustomProtocolHandlers: true,
+        });
+      } catch (err) {
+        if (await notFound()) return addCorsHeaders(new Response('Not found', { status: 404 }));
+        throw err;
+      }
+      if (!resp.ok && await notFound()) {
+        resp.body?.cancel().catch(() => {});
+        return addCorsHeaders(new Response('Not found', { status: 404 }));
+      }
       return addCorsHeaders(resp);
     } catch (err) {
       console.error('[ghost-asset] handler error:', err?.message || err);

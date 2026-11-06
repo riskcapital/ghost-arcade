@@ -32,6 +32,7 @@ const {
   presentedPairingToken,
 } = require('./pairing.cjs');
 const { HOST_MESSAGES, authorizedHost, permittedSource, scanMessageAllowed, scanMessageEnds } = require('./remote-access.cjs');
+const { writeFileAtomicSync } = require('../electron/atomic-write.cjs');
 
 // Shader library directory - in packaged Electron, extraResources land in resources/
 // while __dirname is inside app.asar/server/, so we need to go up two levels to resources/
@@ -302,6 +303,46 @@ const wss = new WebSocketServer({
 wss.on('error', err => console.error('[Remote] WebSocket listener error:', err.message));
 wsHttpServer.listen(PORT, BIND_HOST);
 
+// A phone that drops off the Wi-Fi without closing leaves a half-open socket
+// that would stay in `clients` for good, queueing every sync sent to it. Ping
+// every client; one not heard from for two rounds is dropped (a phone
+// reconnects by itself and gets the current state again).
+const HEARTBEAT_MS = 10_000;
+const HEARTBEAT_TIMEOUT_MS = 25_000;
+let lastHeartbeatAt = Date.now();
+const heartbeat = setInterval(() => {
+  const now = Date.now();
+  // A stalled event loop has not read the pongs that came in meanwhile, so
+  // after one nobody is judged until the next round.
+  const onTime = now - lastHeartbeatAt < HEARTBEAT_MS * 1.5;
+  lastHeartbeatAt = now;
+  for (const client of clients) {
+    if (client.readyState !== WebSocket.OPEN) continue;
+    if (onTime && now - (client.lastHeardAt ?? now) > HEARTBEAT_TIMEOUT_MS) {
+      console.warn(`[!] No answer from ${client.remoteAddress} for ${Math.round((now - client.lastHeardAt) / 1000)}s, dropping it`);
+      client.terminate();
+      continue;
+    }
+    try { client.ping(); } catch { /* closing */ }
+  }
+}, HEARTBEAT_MS);
+heartbeat.unref?.();
+
+// The most a client may have queued and unsent. Past this it is not keeping
+// up (or not there at all): it is dropped rather than queueing without bound,
+// and reconnects to the current state.
+const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
+
+/** Send to one open client unless it is too far behind. */
+function sendTo(client, data) {
+  if (client.bufferedAmount > MAX_BUFFERED_BYTES) {
+    console.warn(`[!] ${client.remoteAddress} has ${(client.bufferedAmount / 1048576).toFixed(0)}MB unsent, dropping it`);
+    client.terminate();
+    return;
+  }
+  client.send(data);
+}
+
 console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
 ║                      GhostArcade Server                            ║
@@ -402,6 +443,8 @@ wss.on('connection', (ws, req) => {
   ws.studioAddress = String(clientIp || 'unknown').replace(/[^\w.:-]/g, '_').slice(0, 39);
   ws.studioPeers = new Set();
   ws.remoteAddress = clientIp;
+  ws.lastHeardAt = Date.now();
+  ws.on('pong', () => { ws.lastHeardAt = Date.now(); });
 
   // Send current state to new client
   ws.send(JSON.stringify({
@@ -454,6 +497,7 @@ wss.on('connection', (ws, req) => {
     // its peer sends until the closing handshake ends. It no longer speaks
     // for a paired device, so none of that is handled.
     if (ws.readyState !== WebSocket.OPEN) return;
+    ws.lastHeardAt = Date.now();
     try {
       // Rate limit check
       const now = Date.now();
@@ -1052,14 +1096,14 @@ function handleMessage(sender, msg) {
 }
 
 function sendDesktop(msg) {
-  if (desktopClient?.readyState === WebSocket.OPEN) desktopClient.send(JSON.stringify(msg));
+  if (desktopClient?.readyState === WebSocket.OPEN) sendTo(desktopClient, JSON.stringify(msg));
 }
 function relayPrivate(sender, msg, kind, id, mayStart) {
   if (typeof id !== 'string' || !/^[\w.:-]{1,128}$/.test(id)) return;
   const key = `${kind}:${id}`;
   let owner = privateRoutes.get(key);
   if (sender === desktopClient) {
-    if (owner?.readyState === WebSocket.OPEN) owner.send(JSON.stringify(msg));
+    if (owner?.readyState === WebSocket.OPEN) sendTo(owner, JSON.stringify(msg));
   } else {
     // A route whose phone has gone can be claimed again (a scan resumed after
     // the phone reconnected).
@@ -1093,7 +1137,7 @@ function sendToStudioPeer(sender, msg) {
   const data = JSON.stringify(msg);
   for (const client of clients) {
     if (client !== sender && client.readyState === WebSocket.OPEN && client.studioPeers?.has(msg.to)) {
-      client.send(data);
+      sendTo(client, data);
     }
   }
 }
@@ -1103,7 +1147,7 @@ function broadcast(sender, msg) {
   const data = JSON.stringify(msg);
   for (const client of clients) {
     if (client !== sender && client.readyState === WebSocket.OPEN) {
-      client.send(payloadFor(client, msg, data));
+      sendTo(client, payloadFor(client, msg, data));
     }
   }
 }
@@ -1113,7 +1157,7 @@ function broadcastAll(msg) {
   const data = JSON.stringify(msg);
   for (const client of clients) {
     if (client.readyState === WebSocket.OPEN) {
-      client.send(payloadFor(client, msg, data));
+      sendTo(client, payloadFor(client, msg, data));
     }
   }
 }
@@ -1169,27 +1213,44 @@ function loadShadersFromDisk() {
   return shaders;
 }
 
+/**
+ * The shader index, to change and write back. A missing one starts empty.
+ * One that is there but does not parse is moved aside, never overwritten,
+ * so its entries can still be recovered. One that cannot be read at all
+ * (held by another program, say) fails the save.
+ */
+function readShaderIndexForUpdate(indexPath) {
+  let text;
+  try {
+    text = fs.readFileSync(indexPath, 'utf-8');
+  } catch (err) {
+    if (err?.code === 'ENOENT') return { shaders: [] };
+    throw err;
+  }
+  try {
+    const index = JSON.parse(text);
+    if (index && Array.isArray(index.shaders)) return index;
+  } catch { /* moved aside below */ }
+  const aside = `${indexPath}.unreadable-${Date.now()}`;
+  fs.renameSync(indexPath, aside);
+  console.warn(`[!] Shader index could not be parsed; kept it as ${aside} and started a new one`);
+  return { shaders: [] };
+}
+
 // Save shader to disk
 function saveShaderToDisk(shader) {
   ensureShadersDir();
 
   try {
-    // Save the shader code file
     const filename = getShaderFilename(shader);
-    const filepath = path.join(SHADERS_DIR, filename);
-    fs.writeFileSync(filepath, shader.code, 'utf-8');
-
-    // Update index file
+    // Read the index before writing anything: a save must never replace an
+    // index it could not read.
     const indexPath = path.join(SHADERS_DIR, 'index.json');
-    let index = { shaders: [] };
+    const index = readShaderIndexForUpdate(indexPath);
 
-    if (fs.existsSync(indexPath)) {
-      try {
-        index = JSON.parse(fs.readFileSync(indexPath, 'utf-8'));
-      } catch (e) {
-        console.warn('[!] Failed to parse shader index, creating new one');
-      }
-    }
+    // Save the shader code file
+    const filepath = path.join(SHADERS_DIR, filename);
+    writeFileAtomicSync(filepath, shader.code);
 
     // Remove code from index entry (it's in the file)
     const indexEntry = { ...shader, filename };
@@ -1203,7 +1264,7 @@ function saveShaderToDisk(shader) {
       index.shaders.push(indexEntry);
     }
 
-    fs.writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf-8');
+    writeFileAtomicSync(indexPath, JSON.stringify(index, null, 2));
     console.log(`[+] Saved shader: ${filename}`);
 
     return true;
@@ -1233,7 +1294,7 @@ function deleteShaderFromDisk(shaderId) {
 
       // Remove from index
       index.shaders = index.shaders.filter(s => s.id !== shaderId);
-      fs.writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf-8');
+      writeFileAtomicSync(indexPath, JSON.stringify(index, null, 2));
 
       console.log(`[-] Deleted shader: ${shaderEntry.filename}`);
       return true;
@@ -1515,6 +1576,7 @@ export function shutdownServer({ force = false } = {}) {
   serverShuttingDown = true;
 
   console.log('[*] Shutting down GhostArcade server...');
+  clearInterval(heartbeat);
 
   for (const client of Array.from(clients)) {
     try {

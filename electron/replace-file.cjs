@@ -32,11 +32,33 @@ async function replaceFile(temp, target, options = {}) {
         await wait(delays[attempt]);
         continue;
       }
-      fs.copyFileSync(temp, target);
-      try { fs.unlinkSync(temp); } catch { /* the copy is what matters */ }
+      copyOver(fs, temp, target);
       return;
     }
   }
 }
 
-module.exports = { replaceFile, RETRY_CODES };
+function copyOver(fs, temp, target) {
+  fs.copyFileSync(temp, target);
+  try { fs.unlinkSync(temp); } catch { /* the copy is what matters */ }
+}
+
+/**
+ * The same for callers that cannot wait: no retries, a held target on
+ * Windows is copied over straight away.
+ * @param {string} temp
+ * @param {string} target
+ * @param {{ fs?: typeof import('fs'), platform?: string }} [options]
+ */
+function replaceFileSync(temp, target, options = {}) {
+  const fs = options.fs ?? require('fs');
+  const platform = options.platform ?? process.platform;
+  try {
+    fs.renameSync(temp, target);
+  } catch (err) {
+    if (platform !== 'win32' || !RETRY_CODES.has(err?.code)) throw err;
+    copyOver(fs, temp, target);
+  }
+}
+
+module.exports = { replaceFile, replaceFileSync, RETRY_CODES };
