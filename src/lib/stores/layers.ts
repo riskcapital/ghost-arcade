@@ -2482,6 +2482,56 @@ void main() {
       if (options.history !== false) recordDiscreteAction();
     },
 
+    /**
+     * Change a JavaScript sketch wherever the project keeps it: its layers,
+     * and the copies of layers held by saved compositions, VJ-mode
+     * compositions and stage presets. `change` returns the new source for a
+     * source it wants to change, and null for any other. Used by the sketch
+     * editor so a saved edit reaches every copy of the sketch.
+     * `options.history: false` leaves the undo step to the caller.
+     */
+    replaceSketchSources(change: (source: MediaSource) => MediaSource | null, options: { history?: boolean } = {}) {
+      let changed = false;
+      const mapLayers = (layers: Layer[]): Layer[] => {
+        let local = false;
+        const next = layers.map((layer) => {
+          const source = layer.source;
+          if (!source?.jsAnimation) return layer;
+          const replaced = change(source);
+          if (!replaced || replaced === source) return layer;
+          local = true;
+          return { ...layer, source: replaced };
+        });
+        if (local) changed = true;
+        return local ? next : layers;
+      };
+      update((project) => {
+        const layers = mapLayers(project.layers);
+        const compositions = project.compositions?.map((c) => {
+          const next = mapLayers(c.layers);
+          return next === c.layers ? c : { ...c, layers: next };
+        });
+        const vjCompositions = project.vjMode?.compositions.map((c) => {
+          const next = mapLayers(c.layers);
+          return next === c.layers ? c : { ...c, layers: next };
+        });
+        const stagePresets = project.stagePresets?.map((p) => {
+          const next = mapLayers(p.layers);
+          return next === p.layers ? p : { ...p, layers: next };
+        });
+        if (!changed) return project;
+        return {
+          ...project,
+          layers,
+          ...(compositions ? { compositions } : {}),
+          ...(project.vjMode && vjCompositions ? { vjMode: { ...project.vjMode, compositions: vjCompositions } } : {}),
+          ...(stagePresets ? { stagePresets } : {}),
+        };
+      });
+      if (changed && options.history !== false) recordDiscreteAction();
+      return changed;
+    },
+
     /** Lightweight shader value update for per-frame modulation — no history, no dispose checks */
     batchUpdateLayerShaderValues(id: string, values: Record<string, number>) {
       update((project) => ({

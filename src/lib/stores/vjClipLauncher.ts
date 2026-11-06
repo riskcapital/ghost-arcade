@@ -2917,6 +2917,50 @@ function createVJClipLauncherStore() {
       update(state => ({ ...state, crossfaderTransition: transition }));
     },
 
+    /**
+     * Change a JavaScript sketch in every clip that holds it, on both decks,
+     * in every block, and in the clips playing now. `change` returns the new
+     * clip for a clip it wants to change, and null for any other. Used by the
+     * sketch editor so a saved edit reaches every copy of the sketch.
+     */
+    replaceClipSketches(change: (clip: VJClip) => VJClip | null): boolean {
+      let changed = false;
+      // A clip in the grid is often the same object as the one playing: it
+      // stays one object afterwards.
+      const done = new Map<VJClip, VJClip>();
+      const apply = (clip: VJClip | null): VJClip | null => {
+        if (!clip?.jsAnimation) return clip;
+        const known = done.get(clip);
+        if (known) return known;
+        const next = change(clip);
+        const result = next && next !== clip ? next : clip;
+        if (result !== clip) changed = true;
+        done.set(clip, result);
+        return result;
+      };
+      const grid = (rows: (VJClip | null)[][]) => rows.map((row) => row.map(apply));
+      const states = (rows: VJLayerState[]) => rows.map((row) => {
+        const activeClip = apply(row.activeClip);
+        return activeClip === row.activeClip ? row : { ...row, activeClip };
+      });
+      update((state) => {
+        const next: VJClipLauncherState = {
+          ...state,
+          clipGrid: grid(state.clipGrid),
+          layerStates: states(state.layerStates),
+          bankBClipGrid: grid(state.bankBClipGrid),
+          bankBLayerStates: states(state.bankBLayerStates),
+          blocks: state.blocks.map((block) => ({
+            ...block,
+            clipGrid: grid(block.clipGrid),
+            bankBClipGrid: block.bankBClipGrid ? grid(block.bankBClipGrid) : undefined,
+          })),
+        };
+        return changed ? next : state;
+      });
+      return changed;
+    },
+
     setCrossfaderCurve(curve: CrossfaderCurve) {
       update(state => ({ ...state, crossfaderCurve: curve }));
     },
