@@ -13133,11 +13133,10 @@ impl App {
         // resident in the monitors' own textures. `deck_monitors_lit` buys
         // that one clearing pass and then lets the monitors idle again.
         if render_result.is_ok() && (deck_monitors_have_content || deck_monitors_were_lit) {
-            let monitor_width: u32 = self.deck_monitor_width;
-            let monitor_height: u32 = ((u64::from(monitor_width)
-                * u64::from(renderer.config.height))
-                / u64::from(renderer.config.width.max(1)))
-            .clamp(16, 1024) as u32;
+            let (monitor_width, monitor_height) = deck_monitor_size(
+                self.deck_monitor_width,
+                (renderer.config.width, renderer.config.height),
+            );
             renderer.render_deck_monitors(
                 self.command_phase,
                 render_time,
@@ -26633,6 +26632,22 @@ fn deck_monitor_width(requested: u64) -> u32 {
     (requested.clamp(240, 1920) as u32) & !1
 }
 
+/// The deck monitors' texture size for the requested width on an output of
+/// this shape: the output's aspect at that width, scaled down as a whole when
+/// it would be more than 1024 tall (a portrait project), never squashed.
+fn deck_monitor_size(width: u32, output: (u32, u32)) -> (u32, u32) {
+    const MAX_HEIGHT: u64 = 1024;
+    let (out_w, out_h) = (u64::from(output.0.max(1)), u64::from(output.1.max(1)));
+    let width = u64::from(width);
+    let height = width * out_h / out_w;
+    let (width, height) = if height > MAX_HEIGHT {
+        ((MAX_HEIGHT * out_w / out_h) & !1, MAX_HEIGHT)
+    } else {
+        (width, height)
+    };
+    (width.max(16) as u32, height.max(16) as u32)
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut builder = EventLoop::<UserEvent>::with_user_event();
     #[cfg(target_os = "macos")]
@@ -34762,6 +34777,20 @@ mod tests {
         assert_eq!(super::deck_monitor_width(961), 960);
         assert_eq!(super::deck_monitor_width(10), 240);
         assert_eq!(super::deck_monitor_width(8000), 1920);
+    }
+
+    #[test]
+    fn deck_monitors_keep_the_output_shape() {
+        use super::deck_monitor_size as size;
+        assert_eq!(size(960, (1920, 1080)), (960, 540));
+        assert_eq!(size(480, (1920, 1080)), (480, 270));
+        // Portrait: 960 wide would be 1706 tall, so both come down together.
+        assert_eq!(size(960, (1080, 1920)), (576, 1024));
+        assert_eq!(size(480, (1080, 1920)), (480, 853));
+        // Square at the height limit and an extreme strip stay sane.
+        assert_eq!(size(1920, (1000, 1000)), (1024, 1024));
+        assert_eq!(size(1920, (100, 4000)), (24, 1024));
+        assert_eq!(size(240, (4000, 100)), (240, 16));
     }
     #[test]
     fn isf_pass_state_survives_quality_and_size_changes() {
