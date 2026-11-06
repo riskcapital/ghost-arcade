@@ -1,3 +1,7 @@
+# Ghost Arcade Pro 2.1.11 — November 6, 2026
+
+An in-app editor for p5.js sketches, with import from the p5.js Web Editor, checked saves and a learning mode; New Show from Audio, show audio that plays any song and is included in Render to Video; badges that show how each video decodes, with one-click conversion for smooth playback; a Preview monitor for the VJ; saving and undo that catch every edit; mapping points that snap and nudge precisely; Screens that find their projector after displays are renumbered; quantised launches on the beat; a new welcome screen and one Mapping | VJ switch. See [release notes](docs/releases/v2.1.11.md).
+
 # Ghost Arcade Pro 2.1.10 — October 25, 2026
 
 Media that stays linked when a show folder moves or travels to another computer, with relinking a whole folder at once and iCloud files named and downloaded; Export Package and Open Package for a show and all its media in one .zip; mesh warp that fits Custom Shapes; auto-mapped faces that take content; many slices of video and shaders that play smoothly; fullscreen outputs on macOS that leave the menu bar and Dock alone; canvas zoom that is easy to control; a VJ library that opens without compiling every shader. See [release notes](docs/releases/v2.1.10.md).
