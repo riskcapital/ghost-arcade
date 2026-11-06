@@ -15,7 +15,9 @@
  * clip that declares note inputs.
  */
 
-import { get, writable } from 'svelte/store';
+import { derived, get, writable } from 'svelte/store';
+import { project } from '../stores/layers';
+import { hostWatch, studioHosted } from './studioHostWatch';
 import { vjClipLauncher, type VJDeck } from '../stores/vjClipLauncher';
 import { launchClockPosition, launchClockTempo, nextLaunchBoundary } from '../stores/launchClock';
 import { parseISF } from '../isf/parser';
@@ -2268,6 +2270,14 @@ function writeNoteInputs(notes: boolean): void {
  * Closing the studio stops it: a take being recorded is kept, then the beat,
  * replay and every sounding note stop. Minimizing the panel keeps playing.
  */
+/** Everything the studio is doing stops, as Kill does: beat, drum machine, loops, builds, echoes, a count-in or take, held notes. */
+function stopForGoneHost(): void {
+  cancelLoopRecord();
+  if (recorder.recording) stopRecording();
+  stopTake();
+  killAll();
+}
+
 function stopEverything(): void {
   // Also cancels an input still waiting to open (its permission prompt up).
   stopLiveInput();
@@ -2685,6 +2695,9 @@ export function ensureMusicRuntime(): void {
   if (started) return;
   started = true;
   setStudioDriver(drivenForStudio, () => voices.feel());
+  // The music stops with its last host: a studio clip cleared or stopped on the deck, or its mapping layer removed.
+  const hosted = hostWatch(stopForGoneHost);
+  derived([vjClipLauncher, project], ([vj, p]) => studioHosted(vj, p.layers)).subscribe(hosted);
   // The band looper's actions and MIDI controls (looperRuntime.ts).
   attachLooper(audio);
   // Risers land on the next bar line of the launch clock.
