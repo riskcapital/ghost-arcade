@@ -71,6 +71,13 @@
     bend: (built.sound.bend ?? 0) / 8 + 0.5,
   });
 
+  /** Lift the browser to the top of the Studio, over the racks and the patch cables, keeping the set's colours. */
+  function toStudio(node: HTMLElement) {
+    const studio = node.closest('.studio-view');
+    if (studio) studio.appendChild(node);
+    return { destroy: () => node.remove() };
+  }
+
   function onKey(e: KeyboardEvent) {
     if (pick && e.key === 'Escape') {
       e.stopPropagation();
@@ -82,7 +89,7 @@
 <svelte:window onkeydown={onKey} />
 
 {#if pick}
-  <div class="backdrop" role="presentation" onpointerdown={(e) => e.target === e.currentTarget && close()}>
+  <div class="backdrop face" use:toStudio role="presentation" onpointerdown={(e) => e.target === e.currentTarget && close()}>
     <div class="browser" role="dialog" aria-label="Sounds for {padName}">
       <header>
         <h2>Sound for pad {pick.pad + 1}</h2>
@@ -147,7 +154,7 @@
 {/if}
 
 <style>
-  .backdrop { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; background: rgba(0, 0, 0, 0.45); }
+  .backdrop { position: fixed; inset: 0; z-index: 120; display: grid; place-items: center; background: rgba(0, 0, 0, 0.45); }
   .browser {
     width: min(1000px, 94vw);
     height: min(680px, 88vh);
