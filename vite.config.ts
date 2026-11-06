@@ -105,6 +105,23 @@ export default defineConfig({
   // Optimize dependencies
   optimizeDeps: {
     exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util'],
+    // The sketch editor is loaded on first use. Bundling its editor packages
+    // up front stops the dev server from reloading the page (and dropping an
+    // unsaved project) the first time it opens.
+    include: [
+      'codemirror',
+      '@codemirror/commands',
+      '@codemirror/lang-css',
+      '@codemirror/lang-html',
+      '@codemirror/lang-javascript',
+      '@codemirror/language',
+      '@codemirror/lint',
+      '@codemirror/merge',
+      '@codemirror/state',
+      '@codemirror/view',
+      '@lezer/highlight',
+      '@lezer/javascript',
+    ],
   },
   test: {
     globals: true,

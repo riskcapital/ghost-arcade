@@ -98,6 +98,7 @@
   import { showToast } from './lib/stores/errorToast';
   import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, flushPendingHistorySnapshot, resetProjectOwnedStores, isProjectFileData, automatedRecalls } from './lib/stores/layers';
   import { recordDiscreteAction, scheduleHistorySnapshot, hasPendingHistorySnapshot } from './lib/stores/historyHooks';
+  import { sketchEditorTarget } from './lib/sketchEditor/sketchEditorStore';
   import { wireAppHistory, resetHistoryToCurrent, undoHistory, redoHistory } from './lib/stores/appHistory';
   import { keyframeTimeline, keyframeTrayOpen } from './lib/stores/keyframeTimeline';
   import { layerSequencer } from './lib/stores/layerSequencer';
@@ -7765,6 +7766,16 @@
          has to find the installer file themselves. -->
     {#if $updateModalOpen}
       <UpdateModal open={true} onClose={() => updateModalOpen.set(false)} />
+    {/if}
+
+    <!-- The p5.js sketch editor, opened from a sketch layer or a tray item.
+         Loaded on first use, so the code editor is not part of start-up. -->
+    {#if $sketchEditorTarget}
+      {#key $sketchEditorTarget}
+        {#await import('./lib/sketchEditor/SketchEditor.svelte') then { default: SketchEditor }}
+          <SketchEditor target={$sketchEditorTarget} />
+        {/await}
+      {/key}
     {/if}
 
     <!-- Settings Panel — output transforms now read from $settings.output -->

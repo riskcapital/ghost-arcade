@@ -49,6 +49,7 @@
   import { isVideoFile, waitForVideoData, videoLoadFailureMessage, releaseVideoElement } from '$lib/video/videoImport';
   import { showToast } from '../stores/errorToast';
   import { mediaLoadErrors } from '../stores/mediaLoadErrors';
+  import { openSketchEditor } from '../sketchEditor/sketchEditorStore';
 
   // WebGPU capability — reactive store, NOT a snapshot. The probe is
   // async and may not have resolved when this panel first mounts;
@@ -1925,6 +1926,9 @@
               {#if layer.source}
                 <span class="source-name">{layer.source.name}</span>
                 <span class="source-type">({layer.source.type})</span>
+                {#if layer.source.jsAnimation?.animationType === 'p5js'}
+                  <button class="link edit-code-link" onclick={() => openSketchEditor({ layerId: layer.id })}>Edit code</button>
+                {/if}
                 <label class="file-label replace-label">
                   <span class="link">Replace</span>
                   <input
@@ -4185,6 +4189,16 @@
   .link {
     color: #BB86FC;
     text-decoration: underline;
+  }
+
+  /* A link that is a button: the text of a link, none of a button's chrome. */
+  .edit-code-link {
+    background: none;
+    border: none;
+    padding: 0;
+    margin-right: 10px;
+    font: inherit;
+    cursor: pointer;
   }
 
   .property-row {

@@ -30,6 +30,8 @@
   import AIShaderGenerator from './AIShaderGenerator.svelte';
   import AIVideoGenerator from './AIVideoGenerator.svelte';
   import P5SketchImport from './P5SketchImport.svelte';
+  import { BUILT_IN_SKETCH_PREFIX, onSketchSaved, openSketchEditor, sourceBelongsToItem, type SketchSaved } from '../sketchEditor/sketchEditorStore';
+  import { sketchWithFiles } from '../sketchEditor/sketchFiles';
   import { importSketch, type ImportedSketch } from '../p5import/importSketch';
   import { localFilesFromList, looksLikeSketch, sketchFromLocalFiles, takeDroppedFiles, type LocalFile } from '../p5import/localFiles';
   import { sketchFromZip } from '../p5import/zip';
@@ -2139,8 +2141,48 @@
     };
   });
 
+  /**
+   * A sketch saved in the sketch editor: its tray item takes the new code. An
+   * edited shipped sketch arrives as a new item, so the original stays as it
+   * shipped.
+   */
+  function applySketchSave(saved: SketchSaved) {
+    if (saved.newItem) {
+      const { id, name } = saved.newItem;
+      if (!jsAnimations.some((a) => a.id === id)) {
+        jsAnimations = [...jsAnimations, { id, name, type: saved.jsAnimation.animationType, jsAnimation: { ...saved.jsAnimation } }];
+      }
+      fillJSAnimationThumbnail(id, saved.jsAnimation);
+      return;
+    }
+    // The item the editor came from, and any other tile still holding the
+    // sketch as it was before the save, is the same sketch.
+    const matches = (item: JSAnimationItem) => item.id === saved.itemId
+      || item.jsAnimation.htmlCode === saved.previousHtml
+      || (!saved.itemId && saved.sourceIds.some((sourceId) => sourceBelongsToItem(sourceId, item.id)));
+    const updated = new Map<string, JSAnimationSource>();
+    for (const item of jsAnimations) {
+      if (!matches(item) || item.id.startsWith(BUILT_IN_SKETCH_PREFIX)) continue;
+      // Each tile keeps its own control values, as the layers do.
+      updated.set(item.id, sketchWithFiles(item.jsAnimation, saved.files));
+    }
+    if (updated.size === 0) return;
+    jsAnimations = jsAnimations.map((item) => {
+      const jsAnimation = updated.get(item.id);
+      return jsAnimation ? { ...item, type: jsAnimation.animationType, jsAnimation } : item;
+    });
+    for (const [id, jsAnimation] of updated) fillJSAnimationThumbnail(id, jsAnimation);
+  }
+  const stopSketchSaves = onSketchSaved(applySketchSave);
+
+  /** Open the sketch editor on a tray item. */
+  function editSketchItem(item: JSAnimationItem) {
+    openSketchEditor({ item: { id: item.id, name: item.name, jsAnimation: item.jsAnimation } });
+  }
+
   onDestroy(() => {
     mediaTrayDestroyed = true;
+    stopSketchSaves();
     if (shaderCacheWaitInterval) {
       clearInterval(shaderCacheWaitInterval);
       shaderCacheWaitInterval = null;
@@ -4066,6 +4108,9 @@
     <div class="shader-params js-params">
       <div class="params-header">
         <h4>{selectedJSAnimation.name}</h4>
+        {#if selectedJSAnimation.type === 'p5js' && $selectedLayerId}
+          <button class="edit-code-btn" onclick={() => openSketchEditor({ layerId: $selectedLayerId })} title="Edit this layer's sketch code">Edit code</button>
+        {/if}
         <button class="close-params" onclick={() => selectedJSAnimation = null}>x</button>
       </div>
       <div class="params-list">
@@ -4583,6 +4628,18 @@
             <span class="item-name">{item.name}</span>
             <span class="js-type-badge">{item.type === 'threejs' ? '3JS' : 'P5'}</span>
             <div class="item-actions">
+              {#if item.type === 'p5js'}
+                <button
+                  class="edit-btn"
+                  onclick={(e) => { e.stopPropagation(); editSketchItem(item); }}
+                  title="Edit code"
+                  aria-label="Edit code"
+                >
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M8 6l-6 6 6 6M16 6l6 6-6 6"/>
+                  </svg>
+                </button>
+              {/if}
               {#if item.jsAnimation.aiGenerated}
                 <button
                   class="edit-btn"
@@ -5451,6 +5508,22 @@
 
   .close-params:hover {
     color: var(--ga-ink-0, #eef0f4);
+  }
+
+  .edit-code-btn {
+    margin-left: auto;
+    margin-right: 8px;
+    background: none;
+    border: 1px solid var(--ga-violet-line, rgba(155, 135, 245, 0.36));
+    border-radius: var(--ga-r-hard, 3px);
+    color: var(--ga-violet, #9b87f5);
+    font-size: 11.5px;
+    padding: 2px 8px;
+    cursor: pointer;
+  }
+
+  .edit-code-btn:hover {
+    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.12));
   }
 
   .reset-params {
