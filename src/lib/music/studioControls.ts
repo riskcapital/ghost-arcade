@@ -14,6 +14,7 @@
  */
 
 import { writable } from 'svelte/store';
+import { MUSIC_STUDIO } from '../features';
 
 export const STUDIO_SCOPE = 'studio:';
 
@@ -56,6 +57,9 @@ export function studioControlPath(id: string): string {
 
 /** Register controls; returns a function that takes them away again. */
 export function registerStudioControls(list: readonly StudioControl[]): () => void {
+  // A build without the Music Studio offers none of its controls, so no
+  // controller, OSC, DMX or MCP path can reach it.
+  if (!MUSIC_STUDIO) return () => {};
   for (const control of list) {
     if (!ID.test(control.id)) throw new Error(`Bad studio control id: ${control.id}`);
     controls.set(control.id, control);

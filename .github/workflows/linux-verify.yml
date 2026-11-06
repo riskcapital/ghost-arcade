@@ -315,6 +315,10 @@ jobs:
         run: chmod +x native-renderer/target/release/ghost-render-core && mkdir -p linux-package-out
       - name: Build frontend
         run: npm run build
+        # The installers are downloadable: built as a release is, without
+        # the Music Studio (src/lib/features.ts). The tests above keep it.
+        env:
+          VITE_MUSIC_STUDIO: 'off'
       - name: Package (AppImage + deb)
         run: npx electron-builder --linux AppImage deb --publish never
         env:

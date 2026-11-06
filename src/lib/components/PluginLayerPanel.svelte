@@ -35,6 +35,7 @@
   import MilkdropPanel from './MilkdropPanel.svelte';
   import HydraPanel from './HydraPanel.svelte';
   import MusicStudioPanel from './MusicStudioPanel.svelte';
+  import { MUSIC_STUDIO } from '../features';
 
   export let source: MediaSource | null = null;
   export let onUpdateEffectSource: ((next: IntegratedEffectSource) => void) | null = null;
@@ -202,7 +203,9 @@
         onPresetSelect={onUpdateEffectSource ? handleHydraPresetSelect : null}
       />
     {/if}
-    {#if effectSource.effectType === 'music-studio'}
+    {#if effectSource.effectType === 'music-studio' && !MUSIC_STUDIO}
+      <p class="studio-missing">This layer was made with the Music Studio. It keeps its settings, and plays in a version of Ghost Arcade that has the Studio.</p>
+    {:else if effectSource.effectType === 'music-studio'}
       <MusicStudioPanel source={effectSource} onchange={(next, gesture) => commitEffectSource(next as IntegratedEffectSource, gesture)} />
     {/if}
 
@@ -566,4 +569,5 @@
     background: transparent;
     cursor: pointer;
   }
+  .studio-missing { margin: 0; font-size: var(--ga-text-meta, 11px); line-height: 1.4; color: var(--ga-ink-2, #8a93a8); }
 </style>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { MUSIC_STUDIO } from '../features';
   import NdiOutputSettings from './NdiOutputSettings.svelte';
   import { uiLanguage, UI_LANGUAGES } from '../i18n';
   import { isMac } from '$lib/bridge';
@@ -2076,7 +2077,7 @@
             <div class="setting-row">
               <div class="setting-label">
                 <span class="label-text">MIDI inputs</span>
-                <span class="label-hint">Use any number at once: controllers run the app through MIDI Learn, and band keys play a band member's notes into the visuals</span>
+                <span class="label-hint">{MUSIC_STUDIO ? "Use any number at once: controllers run the app through MIDI Learn, and band keys play a band member's notes into the visuals" : 'Use any number at once: controllers run the app through MIDI Learn'}</span>
                 <MidiInputList />
               </div>
             </div>

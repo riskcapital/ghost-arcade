@@ -11,6 +11,7 @@
  * VJ clips live in musicRuntime.ts.
  */
 
+import { MUSIC_STUDIO } from '../features';
 import { get, writable } from 'svelte/store';
 import { INSTRUMENTS, type InstrumentId } from './noteEvents';
 import { DEFAULT_VISUAL_SETTINGS, type NoteVisualMode, type NoteVisualSettings } from './noteVisuals';
@@ -521,11 +522,12 @@ function createMusicStudioStore() {
   return {
     subscribe,
 
-    open: () => set({ isOpen: true }),
+    // A build without the Music Studio never opens it: nothing could close it again.
+    open: () => { if (MUSIC_STUDIO) set({ isOpen: true }); },
     close: () => set({ isOpen: false, studioView: false }),
-    toggleOpen: () => update((s) => ({ ...s, isOpen: !s.isOpen, studioView: false })),
+    toggleOpen: () => { if (MUSIC_STUDIO) update((s) => ({ ...s, isOpen: !s.isOpen, studioView: false })); },
     /** Show the full-screen Studio view, or go back to the tray. The studio stays open either way. */
-    setStudioView: (studioView: boolean) => set({ studioView, isOpen: true }),
+    setStudioView: (studioView: boolean) => { if (MUSIC_STUDIO) set({ studioView, isOpen: true }); },
     // The keys switch to the set's own voice: the dub bass in the dub set, the synth in the analog set.
     setSet: (studioSet: StudioSet) =>
       // The keys keep what they play: a set changes instruments around them, not under them.

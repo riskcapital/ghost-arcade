@@ -11,6 +11,7 @@
  * given a use stands in for one without being saved, as it always has.
  */
 
+import { MUSIC_STUDIO } from '../features';
 import { writable } from 'svelte/store';
 import type { MidiDevice, MidiInputSetup, MidiInputUse, MidiMapping } from './midiTypes';
 
@@ -100,7 +101,11 @@ export const midiInputsInUse = writable<MidiInputsInUse>({ control: [], keys: []
  */
 export function resolveMidiInputs(devices: readonly MidiDevice[], setups: readonly MidiInputSetup[], chosenId: string | null | undefined): MidiInputsInUse & { primary: string | null } {
   const connected = devices.filter((d) => d.state === 'connected');
-  const useOf = (d: MidiDevice): MidiInputUse | undefined => setupFor(setups, d.name)?.use ?? (d.id === chosenId ? 'control' : undefined);
+  const useOf = (d: MidiDevice): MidiInputUse | undefined => {
+    const use = setupFor(setups, d.name)?.use ?? (d.id === chosenId ? 'control' : undefined);
+    // Band keys play the Music Studio; a build without it treats them as a controller.
+    return use === 'keys' && !MUSIC_STUDIO ? 'control' : use;
+  };
   const controllers = connected.filter((d) => useOf(d) === 'control');
   const keys = connected.filter((d) => useOf(d) === 'keys').map((d) => d.id);
   const standIn = controllers.length ? null : connected.find((d) => useOf(d) === undefined) ?? null;

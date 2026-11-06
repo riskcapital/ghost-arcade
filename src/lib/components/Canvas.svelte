@@ -128,9 +128,12 @@
   import { appendNativeVjDeckCrossfade, appendNativeVjMixCarrier, vjStageScreenLayers } from '$lib/renderer/vjCompositionNative';
   import { expandStudioLayers, noteStudioHosts, studioCodeTick, studioRenderInputs, studioVisualTick } from '$lib/music/studioPlugin';
   import { wakeStudioVisuals } from '$lib/music/musicRuntime';
+  import { MUSIC_STUDIO } from '$lib/features';
 
   /** Music Studio clips and layers reach the core as their voices plus a mix (music/studioPlugin.ts). */
   function withStudioVoices(list: Layer[]): Layer[] {
+    // Without the Studio in the build its layers draw nothing and keep their data.
+    if (!MUSIC_STUDIO) return list;
     return expandStudioLayers(list, studioRenderInputs, (count) => {
       noteStudioHosts(count);
       if (count > 0) wakeStudioVisuals();

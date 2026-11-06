@@ -2,7 +2,7 @@
 import { defineConfig, type Plugin } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { resolve } from 'path';
-import { readFileSync, readdirSync, statSync, existsSync } from 'fs';
+import { readFileSync, readdirSync, statSync, existsSync, writeFileSync, rmSync } from 'fs';
 
 const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'));
 
@@ -72,8 +72,37 @@ function wordmarkPlugin(): Plugin {
   };
 }
 
+/** Shader files that belong to the Music Studio: its visual voices (VX-),
+ *  note-reactive visuals (NR-) and its glitch set (BG-). */
+export const STUDIO_SHADER = /^(VX|NR|BG)-.*\.fs$/;
+
+// A build without the Music Studio (VITE_MUSIC_STUDIO=off, as releases are
+// built) leaves out its paid content too: its shaders, their thumbnails and
+// their entries in the shader manifest, so they never reach the library.
+function studioContentPlugin(): Plugin {
+  let outDir = 'dist';
+  return {
+    name: 'ghost-arcade-studio-content',
+    apply: 'build',
+    configResolved(config) { outDir = resolve(config.root, config.build.outDir); },
+    closeBundle() {
+      if ((process.env.VITE_MUSIC_STUDIO ?? 'on') !== 'off') return;
+      const isf = resolve(outDir, 'ISF');
+      if (!existsSync(isf)) return;
+      for (const name of readdirSync(isf)) if (STUDIO_SHADER.test(name)) rmSync(resolve(isf, name));
+      rmSync(resolve(isf, 'voice-thumbs'), { recursive: true, force: true });
+      const manifestPath = resolve(isf, 'manifest.json');
+      if (existsSync(manifestPath)) {
+        const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
+        manifest.shaders = (manifest.shaders ?? []).filter((s: { file?: string }) => !STUDIO_SHADER.test(String(s.file ?? '')));
+        writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+      }
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [svelte(), threejsBundlesPlugin(), wordmarkPlugin()],
+  plugins: [svelte(), threejsBundlesPlugin(), wordmarkPlugin(), studioContentPlugin()],
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
     // Bridge for legacy CJS deps that reference Node's `global` (e.g.
