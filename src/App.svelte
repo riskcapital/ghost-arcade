@@ -2087,9 +2087,16 @@
     // window.close() programmatically when the user makes a choice.
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       if (closeConfirmed || promptsSuppressed()) return;
-      // Only intercept once — if the modal is already open, let the
-      // user finish their decision (and the modal handler will close).
-      if (showCloseModal) return;
+      // The prompt is already up (for an earlier close, an open or a quit):
+      // a second close waits for the user's answer instead of closing the
+      // window with the work unsaved. The answer closes the window itself
+      // (finishClose sets closeConfirmed first) or quits through the main
+      // process, which does not go through beforeunload.
+      if (showCloseModal) {
+        e.preventDefault();
+        e.returnValue = '';
+        return;
+      }
       if (!refreshUnsavedChanges()) return;
       e.preventDefault();
       // Required for some browsers / Electron versions to honor
