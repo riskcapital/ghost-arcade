@@ -10,6 +10,8 @@
 
   import { offlineRender, DEFAULT_OFFLINE_SETTINGS, type OfflineRenderSettings } from '../recording/offlineRender';
   import { project } from '../stores/layers';
+  import { showTimeline } from '../stores/showTimeline';
+  import { showHasSoundtrack } from '../show/showAudioExport';
 
   export let isOpen = false;
   export let onClose: () => void = () => {};
@@ -46,6 +48,8 @@
 
   $: state = $offlineRender;
   $: isFrameOutput = settings.outputMode === 'frames';
+  // A show with audio is rendered as the show, with its soundtrack.
+  $: showHasAudio = showHasSoundtrack($showTimeline.audioTracks);
   $: isRunning = state.status !== 'idle' && state.status !== 'complete' && state.status !== 'cancelled' && state.status !== 'error';
   // Capture and encode report progress from different counters.
   $: progressPct =
@@ -140,6 +144,9 @@
       <h3>Render complete</h3>
       <p class="success-meta">{state.lastOutputName ?? 'render'}.mp4 · {state.totalFrames} frames · {fmtTime(elapsedSec)}</p>
       <video class="preview" src={state.lastOutputUrl} controls muted loop></video>
+      {#if state.lastOutputAudioNote}
+        <p class="success-hint">{state.lastOutputAudioNote}</p>
+      {/if}
       <p class="success-hint">Added to media library + downloaded.</p>
       <div class="actions">
         <button class="btn-primary" onclick={closeAndReset}>Done</button>
@@ -270,6 +277,10 @@
           <strong>{settings.width}×{settings.height}</strong>.
         {/if}
       </div>
+
+      {#if showHasAudio && !isFrameOutput}
+        <p class="audio-note">The render follows the show from its start, and the show's audio is added to the video.</p>
+      {/if}
 
       <div class="actions">
         <button class="btn-secondary" onclick={closeAndReset}>Cancel</button>
@@ -497,6 +508,11 @@
     margin-bottom: 8px;
   }
   .success-hint { color: #4ade80; font-size: 12px; margin: 8px 0 0; }
+  .audio-note {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text-secondary, #a0a0a0);
+  }
 
   .error { text-align: center; }
   .error-icon {

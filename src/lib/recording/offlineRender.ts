@@ -51,6 +51,9 @@ import { setStageEffectsManualTime } from '../stores/stageEffects';
 import { keyframeTimeline } from '../stores/keyframeTimeline';
 import { layerSequencer } from '../stores/layerSequencer';
 import { vjLayerSequencer } from '../stores/vjLayerSequencer';
+import { showTimeline } from '../stores/showTimeline';
+import { buildShowAudioMuxArgs, showHasSoundtrack, showMuxInputName, showMuxTracks } from '../show/showAudioExport';
+import { pumpVisualAudio, setVisualAudioManualTime } from '../audio/visualAudio';
 import { mediaLibrary } from '../stores/media';
 import { generateUUID } from '../utils/uuid';
 import { createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
@@ -126,6 +129,9 @@ export interface OfflineRenderState {
   lastOutputName: string | null;
   lastOutputKind: 'video' | 'frames' | null;
   lastOutputPath: string | null;
+  /** About the show's soundtrack in the last video: included, or why not.
+   *  Null when the show has no audio. */
+  lastOutputAudioNote: string | null;
 }
 
 const INITIAL_STATE: OfflineRenderState = {
@@ -139,6 +145,7 @@ const INITIAL_STATE: OfflineRenderState = {
   lastOutputName: null,
   lastOutputKind: null,
   lastOutputPath: null,
+  lastOutputAudioNote: null,
 };
 
 export interface FrameSequenceTarget {
@@ -524,6 +531,19 @@ function createOfflineRenderStore() {
     }
     if (cancelRequested) { _finish('cancelled'); return false; }
 
+    // A show with a soundtrack is rendered as the show: from its start, on
+    // the render's clock, so the picture lines up with the song added below.
+    // Its own transport would race the render's seeks, so it is paused and
+    // the visual audio follower runs on the render clock too.
+    const showAtStart = get(showTimeline);
+    const driveShow = outputMode === 'mp4' && showHasSoundtrack(showAtStart.audioTracks);
+    let showWasPlaying = false;
+    if (driveShow) {
+      showWasPlaying = showAtStart.isPlaying;
+      if (showWasPlaying) showTimeline.pause();
+      setVisualAudioManualTime(0);
+    }
+
     setStatus('rendering');
     canvas.style.visibility = 'hidden';
     const segmentFrameCount = outputMode === 'frames'
@@ -566,6 +586,12 @@ function createOfflineRenderStore() {
           keyframeTimeline.seek(virtualTime);
           layerSequencer.seek(virtualTime);
           vjLayerSequencer.seek(virtualTime);
+          if (driveShow) {
+            pumpVisualAudio(virtualTime);
+            // After the sub-transport seeks: a preset the show fires here
+            // re-hydrates them without restarting their transports.
+            showTimeline.seek(virtualTime);
+          }
 
         // Wait one RAF so the live render loop picks up the new
         // state. (True offline-rate rendering — where we'd call
@@ -667,11 +693,18 @@ function createOfflineRenderStore() {
       setStatus('encoding');
       readableOutputName = await concatOfflineSegments(ffmpeg, segmentNames, `${settings.filename || 'render'}.mp4`);
       const outputName = `${settings.filename || 'render'}.mp4`;
-      update(s => ({ ...s, encodeProgress: 1 }));
       if (cancelRequested) { _finish('cancelled'); return false; }
+      const soundtrack = await addShowSoundtrack(ffmpeg, readableOutputName, settings.durationSeconds);
+      update(s => ({ ...s, encodeProgress: 1 }));
+      if (cancelRequested) {
+        if (soundtrack?.outputName) { try { await ffmpeg.deleteFile(soundtrack.outputName); } catch { /* best-effort */ } }
+        _finish('cancelled');
+        return false;
+      }
 
       setStatus('saving');
-      const data = await ffmpeg.readFile(readableOutputName);
+      const data = await ffmpeg.readFile(soundtrack?.outputName ?? readableOutputName);
+      if (soundtrack?.outputName) { try { await ffmpeg.deleteFile(soundtrack.outputName); } catch { /* best-effort */ } }
       // ffmpeg.readFile returns Uint8Array; wrap in a Blob for save.
       const u8 = data instanceof Uint8Array ? data : new Uint8Array(data as any);
       const blob = new Blob([u8], { type: 'video/mp4' });
@@ -707,7 +740,7 @@ function createOfflineRenderStore() {
         }
       } catch (e) { /* best-effort */ }
 
-      update(s => ({ ...s, status: 'complete', lastOutputUrl: url, lastOutputName: niceName, lastOutputKind: 'video' }));
+      update(s => ({ ...s, status: 'complete', lastOutputUrl: url, lastOutputName: niceName, lastOutputKind: 'video', lastOutputAudioNote: soundtrack?.note ?? null }));
       return true;
     } catch (err) {
       console.error('[offlineRender] error:', err);
@@ -726,6 +759,14 @@ function createOfflineRenderStore() {
         await cancelNativeJpegSequence(nativeJpegSequence);
       }
       engine.manualTime = restoreManual;
+      if (driveShow) {
+        setVisualAudioManualTime(null);
+        if (showWasPlaying) {
+          // Rewind first: the render left the playhead at its last frame.
+          showTimeline.stop();
+          showTimeline.play();
+        }
+      }
       canvas.style.visibility = restoreCanvasVisibility;
       setISFManualTime(null);
       setStageEffectsManualTime(null);
@@ -764,6 +805,52 @@ function createOfflineRenderStore() {
  *  `.message` empty + the useful text in `.name` or via String(err).
  *  Earlier rev showed a blank red banner when this fired; users
  *  saw "Render failed" with no clue what to do. */
+/**
+ * Mix the show's audio tracks into the rendered video, in ffmpeg.wasm. The
+ * render runs from show time 0, so the soundtrack is the show's own, looped
+ * like the show. Returns the file with sound (to read and then delete) and a
+ * note for the finished render, or null when the show has no audio. A failed
+ * mix leaves the silent video as it was.
+ */
+async function addShowSoundtrack(
+  ffmpeg: FFmpeg,
+  videoName: string,
+  renderSeconds: number,
+): Promise<{ outputName: string | null; note: string } | null> {
+  const show = get(showTimeline);
+  const tracks = showMuxTracks(show.audioTracks);
+  if (tracks.length === 0) return null;
+  const outputName = `${videoName.replace(/\.mp4$/i, '')}.audio.mp4`;
+  const inputs: string[] = [];
+  try {
+    for (const [index, track] of tracks.entries()) {
+      const response = await fetch(track.url);
+      if (!response.ok) throw new Error('a show audio file could not be read');
+      const name = showMuxInputName(index, track.url);
+      await ffmpeg.writeFile(name, new Uint8Array(await response.arrayBuffer()));
+      inputs.push(name);
+    }
+    const code = await ffmpeg.exec(buildShowAudioMuxArgs({
+      videoPath: videoName,
+      outputPath: outputName,
+      tracks: tracks.map((track, index) => ({ ...track, path: inputs[index] })),
+      showDuration: show.duration,
+      renderDuration: renderSeconds,
+      loop: show.loop,
+    }));
+    if (code !== 0) throw new Error('the audio could not be added');
+    return { outputName, note: 'The show audio is in the video.' };
+  } catch (err) {
+    console.warn('[offlineRender] show audio mix failed:', err);
+    try { await ffmpeg.deleteFile(outputName); } catch { /* never written */ }
+    return { outputName: null, note: `Saved without sound: ${formatErr(err)}.` };
+  } finally {
+    for (const name of inputs) {
+      try { await ffmpeg.deleteFile(name); } catch { /* best-effort */ }
+    }
+  }
+}
+
 export function formatErr(err: unknown): string {
   if (err && typeof err === 'object') {
     const e = err as { message?: unknown; name?: unknown; errno?: unknown };
