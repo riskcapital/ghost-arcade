@@ -15,6 +15,8 @@ import './lib/mobile/studio/blueScale.css';
 // visual identity (toolbar chips, layer rows, faders, status bar) so
 // the new design lands without per-component edits.
 import './lib/theming/studio-skin.css';
+// The design system's tokens and shared primitives. See src/lib/theming/system.css.
+import './lib/theming/system.css';
 import { installRangeProgressSync } from './lib/theming/rangeProgress';
 
 installRangeProgressSync();

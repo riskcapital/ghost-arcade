@@ -66,7 +66,7 @@
 
 {#if alwaysShow || $audioIsActive}
   <div data-help-page="midi-audio" class="bpm-tap-widget">
-    <button class="bpm-tap-btn" onclick={handleTap} title="Tap to set tempo manually">TAP</button>
+    <button class="bpm-tap-btn" onclick={handleTap} title="Tap to set tempo manually">Tap</button>
     <label class="bpm-readout" class:confident={!waitingForAudio && $audioBpmConfidence > 0.5}>
       <input class="bpm-input" type="text" inputmode="text" maxlength="256" placeholder="—"
         aria-label="Tempo in BPM: number or expression" aria-invalid={!!error}
@@ -79,7 +79,7 @@
     <button class="bpm-auto-btn" class:active={automatic} aria-pressed={automatic}
       aria-label="Detect tempo from audio" onclick={clearTap} title={`${autoStatus}. ${autoHelp}`}>
       <i class="auto-dot" class:live={automatic && !waitingForAudio} aria-hidden="true"></i>
-      <span class="auto-label">DETECT TEMPO</span>
+      <span class="auto-label">Detect tempo</span>
       <span class="auto-status" aria-live="polite">{autoStatus}</span>
     </button>
   </div>
@@ -91,7 +91,7 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    height: 32px;
+    height: var(--ga-bar-control-h, 30px);
   }
 
   .bpm-tap-btn {
@@ -99,38 +99,35 @@
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     border-radius: var(--ga-r-hard, 2px);
     background: var(--ga-card, #13161c);
-    color: var(--ga-ink-1, #9aa0ac);
-    font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.5px;
+    color: var(--ga-ink-0);
+    font-family: inherit;
+    font-size: var(--ga-text-body, 13px);
+    font-weight: 600;
     cursor: pointer;
     transition: all 0.1s;
-    /* Match the height of the AudioInputPicker buttons (28px) so the row
-       stays visually aligned in mapping mode's top bar. */
-    height: 32px;
-    min-width: 38px;
+    height: var(--ga-bar-control-h, 30px);
+    min-width: 42px;
   }
 
   .bpm-tap-btn:hover {
-    border-color: var(--ga-violet-line, rgba(155, 135, 245, 0.36));
-    color: var(--ga-violet, #9b87f5);
+    border-color: var(--ga-line-3);
   }
 
   .bpm-tap-btn:active {
-    background: var(--ga-violet, #9b87f5);
-    color: var(--ga-blue-800);
+    background: var(--ga-selection-bg);
+    border-color: var(--ga-selection-line);
+    color: var(--ga-selection-ink);
   }
 
-  .bpm-input { width: 48px; min-width: 0; height: 26px; box-sizing: border-box; padding: 2px 3px; border: 1px solid var(--ga-line-2, #34363c); border-radius: 4px; background: #090b0f; color: var(--ga-selection-ink, #e0e8ff); font: inherit; text-align: right; appearance: textfield; }
+  .bpm-input { width: 48px; min-width: 0; height: 26px; box-sizing: border-box; padding: 2px 3px; border: 1px solid var(--ga-line-2, #34363c); border-radius: var(--ga-r-hard, 5px); background: var(--ga-slot, #090b0f); color: var(--ga-ink-0); font: inherit; text-align: right; appearance: textfield; }
   .bpm-input[aria-invalid="true"] { border-color: #c88d74; }
   .tempo-error { position: absolute; top: calc(100% + 6px); right: 0; width: 220px; padding: 8px 10px; border: 1px solid #725447; border-radius: 6px; background: var(--ga-blue-mute-800); color: #e0b29d; font-size: 11px; line-height: 1.4; z-index: 30; pointer-events: none; }
   .bpm-input:focus { outline: 1px solid var(--ga-focus, var(--ga-blue-300)); }
   .bpm-readout {
     display: inline-flex; align-items: center; gap: 4px;
     font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 13px;
-    font-weight: 700;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: 600;
     color: var(--ga-ink-2, #5e6571);
     font-variant-numeric: tabular-nums;
     min-width: 64px;
@@ -146,18 +143,17 @@
     align-items: center;
     justify-content: center;
     flex: 0 0 auto;
-    height: 32px;
+    height: var(--ga-bar-control-h, 30px);
     box-sizing: border-box;
-    padding: 0 10px;
+    padding: 0 12px;
     gap: 7px;
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
-    border-radius: 5px;
-    background: transparent;
-    color: var(--ga-ink-2, #5e6571);
-    font-family: var(--ga-font-mono, ui-monospace, monospace);
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.5px;
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-card, #16140f);
+    color: var(--ga-ink-1);
+    font-family: inherit;
+    font-size: var(--ga-text-body, 13px);
+    font-weight: 600;
     white-space: nowrap;
     cursor: pointer;
   }

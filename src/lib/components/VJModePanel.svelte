@@ -3701,9 +3701,9 @@
               <button class="vj-menu-item" onclick={() => vjFileAction('open')}>Open...<span class="vj-menu-sc">Ctrl+O</span></button>
               <div class="vj-menu-sep"></div>
               <button class="vj-menu-item" onclick={() => vjFileAction('save')}>Save<span class="vj-menu-sc">Ctrl+S</span></button>
-              <button class="vj-menu-item" onclick={() => vjFileAction('saveAs')}>Save As...<span class="vj-menu-sc">Ctrl+Shift+S</span></button>
+              <button class="vj-menu-item" onclick={() => vjFileAction('saveAs')}>Save as...<span class="vj-menu-sc">Ctrl+Shift+S</span></button>
               <div class="vj-menu-sep"></div>
-              <button class="vj-menu-item" onclick={() => vjFileAction('importPresets')}>Import Presets...</button>
+              <button class="vj-menu-item" onclick={() => vjFileAction('importPresets')}>Import presets...</button>
               <div class="vj-menu-sep"></div>
               <button class="vj-menu-item" onclick={() => vjFileAction('undo')}>Undo<span class="vj-menu-sc">Ctrl+Z</span></button>
               <button class="vj-menu-item" onclick={() => vjFileAction('redo')}>Redo<span class="vj-menu-sc">Ctrl+Y</span></button>
@@ -3752,9 +3752,11 @@
       <div class="header-stage-slot">
       {#if $vjClipLauncher.isLive}
         <div class="header-stage">
-          <button class="stage-mix-btn" class:active={!$vjClipLauncher.stageMode && !$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('mix')} title="Raw VJ clip output">MIX</button>
-          <button class="stage-mix-btn" class:active={$vjClipLauncher.stageMode} onclick={() => vjClipLauncher.setSubMode('stage')} title="Route VJ content through the active mapping topology">STAGE</button>
-          <button class="stage-mix-btn" class:active={$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('map')} title="Preset-only mixer — VJ layer slots hold mapping presets that stack with opacity + blend modes">MAP</button>
+          <div class="ga-segmented" role="group" aria-label="Output routing">
+            <button class="stage-mix-btn" class:active={!$vjClipLauncher.stageMode && !$vjClipLauncher.mapMode} aria-pressed={!$vjClipLauncher.stageMode && !$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('mix')} title="Raw VJ clip output">Mix</button>
+            <button class="stage-mix-btn" class:active={$vjClipLauncher.stageMode} aria-pressed={$vjClipLauncher.stageMode} onclick={() => vjClipLauncher.setSubMode('stage')} title="Route VJ content through the active mapping topology">Stage</button>
+            <button class="stage-mix-btn" class:active={$vjClipLauncher.mapMode} aria-pressed={$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('map')} title="Preset-only mixer — VJ layer slots hold mapping presets that stack with opacity + blend modes">Map</button>
+          </div>
         </div>
       {/if}
       </div>
@@ -3793,20 +3795,6 @@
             <path d="M21.5 7.5v11" />
           </svg>
         </button>
-        {#if vjIsRecording}
-          <div class="vj-recording-indicator">
-            <span class="vj-rec-dot"></span>
-            <span class="vj-rec-time">{formatVJRecordingDuration(vjRecordingDuration)}</span>
-          </div>
-          <button class="vj-stop-rec-btn" onclick={vjStopRecording}>
-            Stop Rec
-          </button>
-        {:else}
-          <button class="vj-rec-btn" onclick={vjStartRecording} title="Record Output">
-            ● REC
-          </button>
-        {/if}
-
         <!-- Same glyph mapping mode's Stage Sim button uses, so the two
              modes read as the same destination. -->
         <button class="minimize-btn stage-sim-btn" onclick={() => window.dispatchEvent(new CustomEvent('open-stage3d'))} title="Open Stage Simulator" aria-label="Open Stage Simulator">
@@ -3822,6 +3810,21 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="15" rx="2"/><path d="M7 15 17 8M17 8l-1 4M17 8l-4 1"/></svg>
           Stage Edit
         </button>
+        <span class="vj-divider" aria-hidden="true"></span>
+        {#if vjIsRecording}
+          <div class="vj-recording-indicator">
+            <span class="vj-rec-dot"></span>
+            <span class="vj-rec-time">{formatVJRecordingDuration(vjRecordingDuration)}</span>
+          </div>
+          <button class="vj-stop-rec-btn" onclick={vjStopRecording}>
+            Stop Rec
+          </button>
+        {:else}
+          <!-- The dot alone, as in the mapping bar. -->
+          <button class="vj-rec-btn" onclick={vjStartRecording} title="Record Output" aria-label="Record output">
+            ●
+          </button>
+        {/if}
         <button class="minimize-btn" onclick={() => window.dispatchEvent(new CustomEvent('open-settings'))} title="Settings">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
@@ -6185,12 +6188,14 @@
     display: flex;
     flex-direction: column;
     transition: bottom 0.2s ease-out;
-    --vj-header-h: 58px;
+    /* The design system's top bar (src/lib/theming/system.css): 48px tall,
+       30px controls, the same as the mapping toolbar. */
+    --vj-header-h: 48px;
     --vj-header-pad-x: 12px;
-    --vj-header-gap: 8px;
+    --vj-header-gap: 6px;
     --vj-half-gap: 4px;
     --vj-meter-gap: 6px;
-    --vj-right-gap: 4px;
+    --vj-right-gap: 6px;
     --vj-control-h: 30px;
     --vj-icon-btn: 30px;
     --vj-header-font: 13px;
@@ -6199,9 +6204,9 @@
     --vj-file-pad-x: 10px;
     --vj-master-slider-w: 58px;
     --vj-logo-h: 26px;
-    --vj-macro-slot: 46px;
-    --vj-macro-knob: 34px;
-    --vj-macro-bank-w: 382px;
+    --vj-macro-slot: 44px;
+    --vj-macro-knob: 26px;
+    --vj-macro-bank-w: 368px;
     --vj-macro-gap: 0px;
     --vj-macro-name-font: 9px;
     --vj-snap-font: 12px;
@@ -6214,41 +6219,13 @@
     bottom: 300px;
   }
 
-  /* Header Stage/Mix toggle */
+  /* Header Mix / Stage / Map: the design system's segmented control. */
   .header-stage {
     display: flex;
+    align-items: center;
+    gap: var(--ga-bar-gap, 6px);
     flex: 0 0 auto;
-    border-radius: 6px;
-    overflow: hidden;
-    border: 1px solid #444;
     z-index: 2;
-  }
-
-  .stage-mix-btn {
-    height: var(--vj-control-h);
-    padding: 0 var(--vj-stage-pad-x);
-    background: #1a1a1a;
-    border: none;
-    color: var(--text-muted, #888);
-    font-size: var(--vj-header-font);
-    font-weight: 700;
-    letter-spacing: 1px;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  .stage-mix-btn:first-child {
-    border-right: 1px solid #444;
-  }
-
-  .stage-mix-btn:hover {
-    color: #fff;
-    background: #2a2a2a;
-  }
-
-  .stage-mix-btn.active {
-    background: #f90;
-    color: #000;
   }
 
   /* ===== A/B Crossfader toggle (right cluster) =====
@@ -6696,12 +6673,12 @@
     grid-template-columns: 1fr auto 1fr;
     align-items: center;
     position: relative;
-    gap: var(--vj-header-gap);
+    gap: var(--ga-bar-group-gap, 14px);
     min-height: var(--vj-header-h);
     box-sizing: border-box;
-    padding: 6px var(--vj-header-pad-x);
-    background: #141414;
-    border-bottom: 1px solid #333;
+    padding: 0 var(--vj-header-pad-x);
+    background: var(--ga-bar, #100f0d);
+    border-bottom: 1px solid var(--ga-line-2);
     flex-shrink: 0;
     overflow: visible;
     font-size: var(--vj-header-font);
@@ -6894,25 +6871,25 @@
 
   .vj-file-menu-container { position: relative; margin-right: var(--vj-half-gap); }
   .vj-file-menu-btn {
-    display: flex; align-items: center; gap: 4px;
-    background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
-    color: var(--text-primary, #ddd); font-size: var(--vj-header-font); height: var(--vj-control-h); padding: 0 var(--vj-file-pad-x); border-radius: 4px; cursor: pointer;
+    display: flex; align-items: center; gap: 7px;
+    background: var(--ga-card, #16140f); border: 1px solid var(--ga-line-2);
+    color: var(--ga-ink-0); font-size: var(--vj-header-font); font-weight: 600; height: var(--vj-control-h); padding: 0 12px; border-radius: var(--ga-r-hard, 5px); cursor: pointer;
   }
-  .vj-file-menu-btn:hover, .vj-file-menu-btn.active { background: rgba(255,255,255,0.14); color: #fff; }
+  .vj-file-menu-btn:hover, .vj-file-menu-btn.active { border-color: var(--ga-line-3); color: var(--ga-ink-0); }
   .vj-file-menu-dropdown {
     position: absolute; top: 100%; left: 0; margin-top: 4px;
-    background: var(--bg-tertiary, #1a1a1e); border: 1px solid #333; border-radius: 6px;
+    background: var(--ga-card, #16140f); border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-soft, 8px);
     min-width: 220px; padding: 4px 0; z-index: 10000;
     box-shadow: 0 8px 24px rgba(0,0,0,0.5);
   }
   .vj-menu-item {
     display: flex; justify-content: space-between; align-items: center;
-    width: 100%; background: none; border: none; color: var(--text-primary, #ddd);
-    font-size: 13px; padding: 7px 14px; cursor: pointer; text-align: left;
+    width: 100%; background: none; border: none; color: var(--ga-ink-0);
+    font-size: var(--ga-text-body, 13px); padding: 7px 14px; cursor: pointer; text-align: left;
   }
-  .vj-menu-item:hover { background: rgba(255,255,255,0.08); color: #fff; }
-  .vj-menu-sc { color: #666; font-size: 11px; margin-left: 16px; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); }
-  .vj-menu-sep { height: 1px; background: #333; margin: 4px 0; }
+  .vj-menu-item:hover { background: rgba(255,255,255,0.06); color: var(--ga-ink-0); }
+  .vj-menu-sc { color: var(--ga-ink-2); font-size: var(--ga-text-meta, 11px); margin-left: 16px; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); }
+  .vj-menu-sep { height: 1px; background: var(--ga-line-1); margin: 4px 0; }
 
   @keyframes blink {
     0%, 100% { opacity: 1; }
@@ -6928,13 +6905,13 @@
     align-items: center;
     gap: var(--vj-meter-gap);
     padding-left: var(--vj-file-pad-x);
-    border-left: 1px solid #333;
+    border-left: 1px solid var(--ga-line-2);
   }
 
   .master-label {
     font-size: var(--vj-label-font);
-    font-weight: 800;
-    color: #999;
+    font-weight: 700;
+    color: var(--ga-ink-2);
     width: 10px;
     text-align: center;
   }
@@ -6959,7 +6936,8 @@
 
   .master-value {
     font-size: calc(var(--vj-header-font) - 1px);
-    color: var(--text-muted, #888);
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
+    color: var(--ga-ink-1);
     min-width: 32px;
     font-variant-numeric: tabular-nums;
     text-align: right;
@@ -7013,16 +6991,17 @@
   .vj-rec-btn {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
+    width: var(--vj-icon-btn);
     height: var(--vj-control-h);
-    padding: 0 var(--vj-file-pad-x);
+    padding: 0;
     background: transparent;
     border: 1px solid rgba(255, 68, 56, 0.4);
-    border-radius: var(--ga-r-hard, 2px);
+    border-radius: var(--ga-r-hard, 5px);
     color: var(--ga-rec, #ff4438);
     font-size: var(--vj-header-font);
     font-weight: 700;
-    letter-spacing: 0.04em;
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s;
     white-space: nowrap;
@@ -7104,10 +7083,10 @@
     width: var(--vj-icon-btn);
     height: var(--vj-control-h);
     padding: 0;
-    background: transparent;
-    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.18));
-    color: var(--ga-ink-1, #b8bdc6);
-    border-radius: var(--ga-r-hard, 2px);
+    background: var(--ga-card, #16140f);
+    border: 1px solid var(--ga-line-2);
+    color: var(--ga-ink-0);
+    border-radius: var(--ga-r-hard, 5px);
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s, color 0.15s;
     display: inline-flex;
@@ -7117,9 +7096,13 @@
   }
 
   .minimize-btn:hover {
-    background: rgba(255, 255, 255, 0.06);
-    border-color: rgba(255, 255, 255, 0.30);
-    color: var(--ga-ink-0, #eef0f4);
+    border-color: var(--ga-line-3);
+    color: var(--ga-ink-0);
+  }
+  .minimize-btn.active {
+    background: var(--ga-selection-bg);
+    border-color: var(--ga-selection-line);
+    color: var(--ga-selection-ink);
   }
 
   .exit-btn {
@@ -7151,31 +7134,42 @@
   .vj-header :is(.master-value, .header-quant-select, .header-quant-pending) {
     font-size: calc(var(--vj-header-font) - 1px);
   }
-  .vj-header .stage-mix-btn {
+  .vj-header .ga-segmented {
+    height: var(--vj-control-h);
+  }
+  .vj-header .ga-segmented > button {
     font-size: var(--vj-header-font);
     padding: 0 var(--vj-stage-pad-x);
+  }
+  /* A hairline between groups, as in the mapping toolbar. */
+  .vj-divider {
+    flex: 0 0 auto;
+    width: 1px;
+    height: 18px;
+    margin: 0 4px;
+    background: var(--ga-line-2);
   }
 
   @media (min-width: 1800px) {
     .vj-overlay {
-      --vj-header-h: 64px;
-      --vj-header-pad-x: 18px;
-      --vj-header-gap: 10px;
+      --vj-header-h: 48px;
+      --vj-header-pad-x: 12px;
+      --vj-header-gap: 6px;
       --vj-half-gap: 5px;
       --vj-meter-gap: 8px;
-      --vj-control-h: 34px;
-      --vj-icon-btn: 34px;
-      --vj-header-font: 14px;
-      --vj-label-font: 12px;
-      --vj-stage-pad-x: 16px;
+      --vj-control-h: 30px;
+      --vj-icon-btn: 30px;
+      --vj-header-font: 13px;
+      --vj-label-font: 11px;
+      --vj-stage-pad-x: 14px;
       --vj-file-pad-x: 12px;
       --vj-master-slider-w: 72px;
-      --vj-logo-h: 28px;
-      --vj-macro-slot: 50px;
-      --vj-macro-knob: 36px;
-      --vj-macro-bank-w: 421px;
+      --vj-logo-h: 26px;
+      --vj-macro-slot: 46px;
+      --vj-macro-knob: 28px;
+      --vj-macro-bank-w: 384px;
       --vj-macro-gap: 1px;
-      --vj-macro-name-font: 10px;
+      --vj-macro-name-font: 9px;
       --vj-snap-font: 12px;
       --vj-snap-pad-x: 10px;
       --vj-aip-chevron-w: 16px;
@@ -7186,7 +7180,7 @@
 
   @media (max-width: 1500px) {
     .vj-overlay {
-      --vj-header-h: 54px;
+      --vj-header-h: 48px;
       --vj-header-pad-x: 8px;
       --vj-header-gap: 5px;
       --vj-half-gap: 3px;
@@ -7200,11 +7194,11 @@
       --vj-file-pad-x: 8px;
       --vj-master-slider-w: 44px;
       --vj-logo-h: 24px;
-      --vj-macro-slot: 36px;
-      --vj-macro-knob: 28px;
-      --vj-macro-bank-w: 296px;
+      --vj-macro-slot: 40px;
+      --vj-macro-knob: 24px;
+      --vj-macro-bank-w: 336px;
       --vj-macro-gap: 0px;
-      --vj-macro-name-font: 8px;
+      --vj-macro-name-font: 9px;
       --vj-snap-font: 11px;
       --vj-snap-pad-x: 8px;
       --vj-aip-chevron-w: 13px;
@@ -7234,8 +7228,8 @@
       --vj-stage-pad-x: 7px;
       --vj-file-pad-x: 6px;
       --vj-master-slider-w: 40px;
-      --vj-macro-slot: 34px;
-      --vj-macro-bank-w: 280px;
+      --vj-macro-slot: 38px;
+      --vj-macro-bank-w: 320px;
       --vj-aip-chevron-w: 12px;
       --vj-amp-bar-w: 3px;
     }

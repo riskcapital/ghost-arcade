@@ -6498,6 +6498,7 @@
         >
           Fullscreen
         </button>
+        <span class="tb-divider" aria-hidden="true"></span>
         <button
           class="output-btn sim-launch-btn stage-sim-btn"
           class:active={showStage3D || stage3DWindowOpen}
@@ -6512,6 +6513,20 @@
             <path d="M12 5.5v6" />
           </svg>
           <span class="tb-label">Stage Sim</span>
+        </button>
+        <!-- Mapping and VJ open the same live 2D stage editor, from the same place. -->
+        <button
+          class="output-btn sim-launch-btn stage-edit-btn"
+          class:active={$vjStageEdit}
+          onclick={() => vjStageEdit.set(true)}
+          title="Open Stage Editor"
+          aria-label="Open Stage Editor"
+        >
+          <svg class="sim-launch-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="15" rx="2" />
+            <path d="M7 15 17 8M17 8l-1 4M17 8l-4 1" />
+          </svg>
+          <span class="tb-label">Stage Edit</span>
         </button>
         <button
           class="output-btn sim-launch-btn map-sim-btn"
@@ -6635,25 +6650,6 @@
           data-midi-mode="toggle"
         >
           VJ
-        </button>
-
-        <!-- Stage Designer Button — opens the SVG-import / polygon-slice
-             projection-mapping workspace. Mutually exclusive with VJ
-             mode via the activeWorkspace flag in the workspace store. -->
-        <button
-          class="stage-btn stage-edit-btn"
-          class:active={$vjStageEdit}
-          onclick={() => vjStageEdit.set(true)}
-          title="Open Stage Editor"
-          aria-label="Open Stage Editor"
-        >
-          <svg class="stage-edit-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M4 20l4.1-.9L19.2 8l-3.3-3.3L4.9 15.8 4 20Z" />
-            <path d="M14.8 5.8 18.1 9.1" />
-            <path d="M13.5 19.5h6" />
-            <path d="M16.5 16.5v6" />
-          </svg>
-          <span class="tb-label">Stage</span>
         </button>
 
         <!-- Settings Button -->
@@ -8415,7 +8411,7 @@
     background: var(--ga-bar, var(--bg-secondary));
     backdrop-filter: blur(12px);
     border-bottom: 1px solid var(--ga-line-2, var(--border-secondary));
-    height: 52px;
+    height: var(--ga-bar-h);
     position: relative;
     z-index: 1000;
     font-family: var(--ga-font-ui, inherit);
@@ -8555,13 +8551,13 @@
     display: flex;
     align-items: center;
     gap: 7px;
-    height: 32px;
+    height: var(--ga-bar-control-h);
     padding: 0 12px;
     background: var(--ga-card, #13161c);
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     border-radius: var(--ga-r-hard, 2px);
     color: var(--ga-ink-1, #9aa0ac);
-    font-size: 13.5px;
+    font-size: 13px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
@@ -8646,24 +8642,25 @@
   }
 
   .menu-shortcut {
-    font-size: 11px;
-    color: #555;
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-2);
     margin-left: 16px;
   }
 
   .menu-separator {
     height: 1px;
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--ga-line-1);
     margin: 4px 0;
   }
 
   .menu-section-label {
     padding: 6px 12px 4px;
-    font-size: 11px;
+    font-size: var(--ga-text-eyebrow, 10px);
     text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: rgba(255, 255, 255, 0.45);
-    font-weight: 600;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    color: var(--ga-ink-2);
+    font-weight: 700;
   }
 
   .menu-item-recent .menu-label {
@@ -8798,14 +8795,14 @@
   }
 
   .output-btn {
-    height: 32px;
+    height: var(--ga-bar-control-h);
     background: var(--ga-card, #13161c);
     color: var(--ga-ink-1, #9aa0ac);
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     padding: 0 13px;
     border-radius: var(--ga-r-hard, 2px);
     cursor: pointer;
-    font-size: 13.5px;
+    font-size: 13px;
     font-weight: 600;
     transition: all 0.15s;
     display: inline-flex;
@@ -8831,8 +8828,7 @@
 	    font-weight: 700;
 	  }
 
-	  .sim-launch-icon,
-	  .stage-edit-icon {
+	  .sim-launch-icon {
 	    flex: 0 0 auto;
 	    stroke: currentColor;
 	    stroke-width: 1.8;
@@ -8846,7 +8842,9 @@
 	  }
 
 	  .stage-sim-btn:hover,
-	  .stage-sim-btn.active {
+	  .stage-sim-btn.active,
+	  .stage-edit-btn:hover,
+	  .stage-edit-btn.active {
 	    background: var(--ga-blue-a08);
 	    border-color: var(--ga-blue-a45);
 	    color: var(--ga-blue-200);
@@ -8861,7 +8859,7 @@
 
 	  .output-btn.settings-btn {
 	    padding: 6px 10px;
-	    font-size: 15px;
+	    font-size: 14px;
 	  }
 
   .output-settings-popover {
@@ -9351,16 +9349,15 @@
 
   /* VJ Button in header */
   .vj-btn {
-    height: 32px;
+    height: var(--ga-bar-control-h);
     background: var(--ga-coral, #ff6f5e);
     border: 1px solid var(--ga-coral, #ff6f5e);
     color: #23110c;
     padding: 0 18px;
     border-radius: var(--ga-r-soft, 7px);
-    font-size: 13.5px;
+    font-size: 13px;
     font-weight: 700;
     cursor: pointer;
-    letter-spacing: 0.02em;
     transition: filter 0.14s;
   }
 
@@ -9368,46 +9365,9 @@
     filter: brightness(1.06);
   }
 
-  /* Stage Designer button — sibling to VJ button, distinct cyan
-     gradient so the user reads them as different workspaces at a
-     glance. */
-	  .stage-btn {
-	    height: 32px;
-	    background: var(--ga-card, #13161c);
-	    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
-	    color: var(--ga-ink-1, #9aa0ac);
-	    padding: 0 13px;
-	    border-radius: var(--ga-r-soft, 7px);
-	    font-size: 13.5px;
-	    font-weight: 700;
-	    cursor: pointer;
-	    letter-spacing: 0.02em;
-	    transition: color 0.14s, border-color 0.14s, background 0.14s;
-	    display: inline-flex;
-	    align-items: center;
-	    gap: 7px;
-	  }
-	  .stage-btn:hover,
-	  .stage-btn.active {
-	    background: var(--ga-card, #13161c);
-	    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
-	    color: var(--ga-ink-0, #eef0f4);
-	  }
-
-	  .stage-btn.active {
-	    background: var(--ga-blue-a08);
-	    border-color: var(--ga-blue-a45);
-	    color: var(--ga-blue-200);
-	  }
-
-	  .stage-edit-icon {
-	    width: 15px;
-	    height: 15px;
-	  }
-
   .settings-btn {
-    width: 34px;
-    height: 32px;
+    width: var(--ga-bar-control-h);
+    height: var(--ga-bar-control-h);
     background: var(--ga-card, #13161c);
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     color: var(--ga-ink-1, #9aa0ac);
@@ -9435,8 +9395,8 @@
     display: flex;
     align-items: center;
     gap: 7px;
-    height: 32px;
-    font-size: 13.5px;
+    height: var(--ga-bar-control-h);
+    font-size: 13px;
     font-weight: 600;
     color: var(--ga-ink-1, #9aa0ac);
     background: transparent;

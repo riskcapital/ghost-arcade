@@ -169,8 +169,8 @@
           title: 'Play to the music',
           body: 'Tempo drives launches, beat effects and audio-synced looks.',
           bullets: [
-            'TAP: tap along to set the tempo',
-            'DETECT TEMPO: follow the music coming into your audio input',
+            'Tap: tap along to set the tempo',
+            'Detect tempo: follow the music coming into your audio input',
             'QUANT: set it to 1 BAR and the clips you click wait for the next bar',
             'NUDGE: push the beat earlier or later to line it up with the band',
           ],
@@ -191,7 +191,7 @@
           bullets: [
             'Open the output window with the button below, or with Output Window in the main toolbar',
             'Drag that window onto the projector screen',
-            'STAGE at the top of VJ mode plays the deck across your mapped screens',
+            'Stage at the top of VJ mode plays the deck across your mapped screens',
           ],
           action: { label: 'Open the output window', run: openOutput },
         },
@@ -331,8 +331,8 @@
           title: 'Set the tempo',
           body: 'Beat-synced launches and effects follow this tempo.',
           bullets: [
-            'TAP: tap along to set it by hand',
-            'DETECT TEMPO: follow the music coming into your audio input',
+            'Tap: tap along to set it by hand',
+            'Detect tempo: follow the music coming into your audio input',
             'Or let your DAW set it, which is the next step',
           ],
           targets: ['.bpm-tap-widget'],
