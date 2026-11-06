@@ -75,6 +75,19 @@ function createStore() {
       persist();
     },
 
+    /**
+     * The scene a project opens with (or an empty one for File > New). Its
+     * undo history starts over: undoing must never bring back the previous
+     * project's stage, and its models are let go.
+     */
+    loadForProject(scene: Stage3DScene | null) {
+      past.length = 0;
+      future.length = 0;
+      lastSnapshotAt = 0;
+      set(scene ?? createEmptyScene());
+      historyVersion.update(v => v + 1);
+    },
+
     /** Undo the last mutation. No-op when history is empty. */
     undo() {
       if (past.length === 0) return;

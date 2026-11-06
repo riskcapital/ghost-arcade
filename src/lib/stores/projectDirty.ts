@@ -42,6 +42,8 @@ export interface ProjectSettingsSections {
   showTimeline?: unknown;
   /** serializeShowControl() */
   showControl?: unknown;
+  /** The Stage 3D scene (saved with the project, outside undo). */
+  stage3d?: unknown;
 }
 
 const omit = (value: unknown, keys: readonly string[]) => {
@@ -55,11 +57,31 @@ const clipIdentity = (clip: any) => (clip ? { id: clip.id, type: clip.type, name
 const gridIdentity = (grid: unknown) =>
   Array.isArray(grid) ? grid.map((row) => (Array.isArray(row) ? row.map(clipIdentity) : [])) : [];
 
+/** A Stage 3D scene's fingerprint: embedded models (data URLs of many MB)
+ *  are reduced to their length and ends instead of being copied whole. */
+function stage3dIdentity(scene: unknown): string | null {
+  if (!scene || typeof scene !== 'object') return null;
+  return JSON.stringify(scene, (_key, value) =>
+    typeof value === 'string' && value.length > 65536
+      ? `#${value.length}:${value.slice(0, 96)}:${value.slice(-96)}`
+      : value);
+}
+
+/** Stage Designer surfaces, less what a running effect show moves. */
+const surfacesIdentity = (surfaces: unknown) =>
+  Array.isArray(surfaces)
+    ? surfaces.map((surface: any) => {
+        const out = omit(surface, ['activeEffectId']) as Record<string, unknown> | null;
+        if (out && surface?.effectAutomation) out.effectAutomation = omit(surface.effectAutomation, ['playing']);
+        return out;
+      })
+    : null;
+
 /**
  * A stable signature of the project settings undo does not cover. Equal
  * signatures mean nothing there was edited.
  */
-export function projectSettingsSignature({ exported, showTimeline, showControl }: ProjectSettingsSections): string {
+export function projectSettingsSignature({ exported, showTimeline, showControl, stage3d }: ProjectSettingsSections): string {
   const project = exported?.project ?? {};
   const vj = exported?.vjClipLauncher;
   return JSON.stringify({
@@ -70,7 +92,8 @@ export function projectSettingsSignature({ exported, showTimeline, showControl }
       width: project.outputMasterCanvasWidth ?? null,
       height: project.outputMasterCanvasHeight ?? null,
     },
-    surfaces: { surfaces: project.surfaces ?? null, active: project.activeSurfaceId ?? null },
+    surfaces: { surfaces: surfacesIdentity(project.surfaces), active: project.activeSurfaceId ?? null },
+    stage3d: stage3dIdentity(stage3d),
     mediaFolders: project.mediaFolders ?? null,
     keyframes: exported?.keyframeTimelines ?? null,
     media: Array.isArray(exported?.mediaLibrary)
@@ -100,7 +123,8 @@ export function projectSettingsSignature({ exported, showTimeline, showControl }
     keyboard: exported?.keyboard ?? null,
     mediaPipe: exported?.mediaPipe ?? null,
     snapshots: exported?.snapshots ?? null,
-    audio: exported?.audio ?? null,
+    // The tempo follows MIDI clock, Link and tap while performing.
+    audio: omit(exported?.audio ?? null, ['manualBPM']),
     sequencer: exported?.layerSequencer
       ? { pattern: exported.layerSequencer.pattern, config: exported.layerSequencer.config }
       : null,
