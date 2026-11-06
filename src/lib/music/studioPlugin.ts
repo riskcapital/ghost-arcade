@@ -67,6 +67,8 @@ export interface StudioPluginSource {
   musicVoices?: StudioVoice[];
   /** Auto-mix: the visuals taking turns on the bar (studioMix.ts). */
   musicMix?: StudioMix;
+  /** A deck cell's own studio setup (studioCells.ts), kept as it is; null when it has none. */
+  musicSetup?: unknown;
 }
 
 type RGB = [number, number, number];
@@ -138,6 +140,7 @@ export function normalizeStudioSource(raw: unknown): Required<StudioPluginSource
     musicSceneId: typeof r.musicSceneId === 'string' ? r.musicSceneId : null,
     musicVoices: voices,
     musicMix: normalizeMix(r.musicMix),
+    musicSetup: r.musicSetup && typeof r.musicSetup === 'object' ? r.musicSetup : null,
   };
 }
 

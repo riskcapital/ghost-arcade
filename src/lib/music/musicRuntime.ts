@@ -18,6 +18,7 @@
 import { derived, get, writable } from 'svelte/store';
 import { project } from '../stores/layers';
 import { hostWatch, studioHosted } from './studioHostWatch';
+import { watchStudioCells } from './studioCells';
 import { vjClipLauncher, type VJDeck } from '../stores/vjClipLauncher';
 import { launchClockPosition, launchClockTempo, nextLaunchBoundary } from '../stores/launchClock';
 import { parseISF } from '../isf/parser';
@@ -2697,6 +2698,8 @@ export function ensureMusicRuntime(): void {
   setStudioDriver(drivenForStudio, () => voices.feel());
   // The music stops with its last host: a studio clip cleared or stopped on the deck, or its mapping layer removed.
   const hosted = hostWatch(stopForGoneHost);
+  // One studio cell plays at a time, each with its own setup.
+  watchStudioCells();
   derived([vjClipLauncher, project], ([vj, p]) => studioHosted(vj, p.layers)).subscribe(hosted);
   // The band looper's actions and MIDI controls (looperRuntime.ts).
   attachLooper(audio);
