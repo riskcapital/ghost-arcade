@@ -6640,18 +6640,6 @@
           </button>
         {/if}
 
-        <!-- VJ Mixer Button -->
-        <button
-          class="vj-btn"
-          onclick={openVJMode}
-          title="Open VJ Mixer"
-          data-midi-path="vj:mode"
-          data-midi-label="VJ Mode"
-          data-midi-mode="toggle"
-        >
-          VJ
-        </button>
-
         <!-- Settings Button -->
         <button class="settings-btn" onclick={() => showSettings = true} title="Settings">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -6781,7 +6769,23 @@
           </div>
           {/if}
         </div>
+      </div>
 
+      <!-- Pinned to the right at full size (data-tb-fixed: never scaled), so
+           the mode switch sits in the same place as in the VJ header. -->
+      <div class="toolbar-mode" data-tb-fixed>
+        <div class="ga-mode-switch" role="group" aria-label="Mode">
+          <button class="active" aria-pressed="true" title="Mapping">Mapping</button>
+          <button
+            class="mode-vj"
+            aria-pressed="false"
+            onclick={openVJMode}
+            title="Switch to VJ"
+            data-midi-path="vj:mode"
+            data-midi-label="VJ Mode"
+            data-midi-mode="toggle"
+          >VJ</button>
+        </div>
       </div>
     </header>
 
@@ -9002,6 +9006,15 @@
     position: relative;
   }
 
+  /* The mode switch at the far right, never scaled, at the same place as in
+     the VJ header. */
+  .toolbar-mode {
+    display: flex;
+    align-items: center;
+    flex: 0 0 auto;
+    margin-left: var(--ga-bar-group-gap, 14px);
+  }
+
   /* Recording button in header */
   .rec-btn {
     display: flex;
@@ -9345,24 +9358,6 @@
   @keyframes mic-pulse {
     0%, 100% { opacity: 1; box-shadow: 0 0 6px #2ED57380; }
     50% { opacity: 0.6; box-shadow: 0 0 3px #2ED57340; }
-  }
-
-  /* VJ Button in header */
-  .vj-btn {
-    height: var(--ga-bar-control-h);
-    background: var(--ga-coral, #ff6f5e);
-    border: 1px solid var(--ga-coral, #ff6f5e);
-    color: #23110c;
-    padding: 0 18px;
-    border-radius: var(--ga-r-soft, 7px);
-    font-size: 13px;
-    font-weight: 700;
-    cursor: pointer;
-    transition: filter 0.14s;
-  }
-
-  .vj-btn:hover {
-    filter: brightness(1.06);
   }
 
   .settings-btn {
@@ -10764,7 +10759,7 @@
     flex: 1 1 auto;
     justify-content: center;
   }
-  .toolbar :is(.toolbar-left, .toolbar-center, .toolbar-right) > * {
+  .toolbar :is(.toolbar-left, .toolbar-center, .toolbar-right, .toolbar-mode) > * {
     flex-shrink: 0;
   }
   .toolbar :is(button, .tb-label, .tb-swap) {

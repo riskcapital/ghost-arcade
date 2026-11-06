@@ -1,7 +1,8 @@
 /* Ghost Arcade design system: the shared scale every surface draws from.
 
    Loaded after studio-skin.css, for every theme. This file holds the tokens
-   and the few shared primitives (eyebrow labels, segmented controls). */
+   and the few shared primitives (eyebrow labels, the mode switch, segmented
+   controls). */
 
 :root {
   /* ── Type scale ────────────────────────────────────────────────────
@@ -69,6 +70,61 @@
   text-transform: uppercase;
   color: var(--ga-ink-2, #89857e);
   line-height: 1.2;
+}
+
+/* ── Mode switch ────────────────────────────────────────────────────
+   One two-state toggle at the right end of the mapping toolbar and the VJ
+   header, the same size in both, so it never jumps when the mode changes.
+   The mode you are in wears the silver primary fill; the other is deep blue,
+   and clicking it flips them. Specific enough to win over each bar's general
+   button rules. */
+.ga-mode-switch {
+  display: inline-grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: stretch;
+  width: 148px;
+  height: var(--ga-bar-control-h);
+  padding: 2px;
+  gap: 2px;
+  box-sizing: border-box;
+  background: var(--ga-blue-900, #0a1020);
+  border: 1px solid var(--ga-line-2, var(--ga-line2, rgba(245, 236, 222, 0.13)));
+  border-radius: var(--ga-r-soft, 8px);
+  flex: 0 0 auto;
+}
+html .ga-mode-switch.ga-mode-switch > button {
+  min-width: 0 !important;
+  width: auto !important;
+  height: auto !important;
+  margin: 0 !important;
+  padding: 0 8px !important;
+  border: 0 !important;
+  border-radius: calc(var(--ga-r-soft, 8px) - 2px) !important;
+  background: var(--ga-blue-800, #101830) !important;
+  color: var(--ga-ink-0, #f2ede4) !important;
+  box-shadow: none !important;
+  filter: none !important;
+  font: inherit;
+  font-size: var(--ga-text-body) !important;
+  font-weight: var(--ga-weight-control) !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.16s, color 0.16s;
+}
+html .ga-mode-switch.ga-mode-switch > button:hover:not(.active) {
+  background: var(--ga-selection-bg, #1c2a5c) !important;
+}
+html .ga-mode-switch.ga-mode-switch > button.active {
+  background: var(--ga-accent-gradient, var(--ga-violet, #e7eef5)) !important;
+  color: var(--ga-blue-800, #0b1020) !important;
+  font-weight: 700 !important;
+  cursor: default;
+}
+.ga-mode-switch > button:focus-visible {
+  outline: 2px solid var(--ga-focus, #8aa4ff);
+  outline-offset: 1px;
 }
 
 /* ── Segmented control (Mix / Stage / Map and the like) ─────────────── */

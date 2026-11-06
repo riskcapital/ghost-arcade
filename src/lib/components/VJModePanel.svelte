@@ -3830,7 +3830,11 @@
             <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
           </svg>
         </button>
-        <button class="exit-btn" onclick={handleExitVJClick} title="Exit VJ and stop live output">Exit VJ</button>
+        <!-- Mode switch: the same control, in the same place, as in mapping mode. -->
+        <div class="ga-mode-switch" role="group" aria-label="Mode">
+          <button onclick={handleExitVJClick} aria-pressed="false" title="Switch to mapping (stops the live output)">Mapping</button>
+          <button class="active" aria-pressed="true" title="VJ">VJ</button>
+        </div>
       </div>
     </div>
 
@@ -6676,7 +6680,9 @@
     gap: var(--ga-bar-group-gap, 14px);
     min-height: var(--vj-header-h);
     box-sizing: border-box;
-    padding: 0 var(--vj-header-pad-x);
+    /* The right edge matches the mapping toolbar's, so the mode switch sits
+       at the same place in both modes. */
+    padding: 0 12px 0 var(--vj-header-pad-x);
     background: var(--ga-bar, #100f0d);
     border-bottom: 1px solid var(--ga-line-2);
     flex-shrink: 0;
@@ -6701,8 +6707,8 @@
     gap: var(--vj-right-gap);
     margin-left: 0;
     z-index: 3;
-    /* Right column, pinned to the end. Never wraps — Exit VJ has to stay
-       reachable. */
+    /* Right column, pinned to the end. Never wraps — the mode switch has to
+       stay reachable. */
     justify-self: end;
     flex-wrap: nowrap;
     background: transparent;
@@ -7105,26 +7111,6 @@
     color: var(--ga-selection-ink);
   }
 
-  .exit-btn {
-    height: var(--vj-control-h);
-    background: transparent;
-    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.18));
-    color: var(--ga-ink-1, #b8bdc6);
-    padding: 0 calc(var(--vj-file-pad-x) + 2px);
-    border-radius: var(--ga-r-hard, 2px);
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s, color 0.15s;
-    font-size: var(--vj-header-font);
-    font-weight: 600;
-    flex: 0 0 auto;
-  }
-
-  .exit-btn:hover {
-    background: rgba(255, 255, 255, 0.06);
-    border-color: rgba(255, 255, 255, 0.30);
-    color: var(--ga-ink-0, #eef0f4);
-  }
-
   .vj-header :is(button, select) {
     font-size: var(--vj-header-font);
   }
@@ -7211,10 +7197,6 @@
     }
 
     .header-quant-label {
-      display: none;
-    }
-
-    .exit-btn {
       display: none;
     }
   }

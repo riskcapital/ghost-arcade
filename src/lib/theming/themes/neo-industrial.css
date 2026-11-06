@@ -79,7 +79,7 @@ html[data-theme="neo-industrial"] :is(.fx-tab.active, .library-tab.active, .side
 
 /* Primary action is solid and legible, never a flashing hazard stripe.
    Record, blackout, mute and live-state buttons keep their semantic styles. */
-html[data-theme="neo-industrial"] :is(.vj-btn, .primary-btn, .btn-save, .apply-stage-btn, .library-load-btn) {
+html[data-theme="neo-industrial"] :is(.primary-btn, .btn-save, .apply-stage-btn, .library-load-btn) {
   background: #ff975a !important;
   color: #171b15 !important;
   border-color: #ffb17f !important;
