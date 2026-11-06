@@ -43,6 +43,7 @@ import {
   resolveSketchReference,
   type P5SketchFile,
 } from './files';
+import { guardLoops, guardPageLoops, isInlineJavaScript, LOOP_GUARD_RUNTIME, withLoopGuardRuntime } from './loopGuard';
 
 /** The p5.js Ghost Arcade plays sketches on (public/lib/p5.min.js). */
 export const BUNDLED_P5_VERSION = '1.11.0';
@@ -82,6 +83,14 @@ export interface P5CanvasPlan {
 export interface WrapOptions {
   /** Who made the sketch and where it lives, for the page's credit line and its p5 version. */
   origin?: Pick<JSAnimationOrigin, 'sketchName' | 'author' | 'url' | 'p5Version'> | null;
+}
+
+export interface DocumentOptions extends WrapOptions {
+  /**
+   * Stop any loop of the author's that runs for more than half a second
+   * (see loopGuard.ts), for pages that play in the app's own process.
+   */
+  guardLoops?: boolean;
 }
 
 export interface WrappedSketch {
@@ -950,7 +959,8 @@ function tracePlaces(before: string, html: string, edits: Edit[], anchors: Ancho
  * iframe. Each folded script keeps its lines, starting on a line of its
  * own, so `place` can name the file and line behind any line of the page.
  */
-export function singleSketchDocument(sketch: JSAnimationSketch, options: WrapOptions = {}): SingleDocument {
+export function singleSketchDocument(sketch: JSAnimationSketch, options: DocumentOptions = {}): SingleDocument {
+  const guard = options.guardLoops === true ? guardLoops : (code: string) => code;
   const reading = cachedReading(sketch, options.origin?.p5Version ?? null);
   const byPath = new Map<string, SketchFile>();
   for (const file of sketch.files) byPath.set(file.path, file);
@@ -1037,15 +1047,17 @@ export function singleSketchDocument(sketch: JSAnimationSketch, options: WrapOpt
       anchors.push({ at: out.length, file: indexFile, line: indexLine(part.start) });
       out += `<script${part.attrs}>`;
       anchors.push({ at: out.length, file: indexFile, line: indexLine(reading.indexText.indexOf('>', part.start) + 1) });
-      out += `${part.body}</script>`;
+      out += `${isInlineJavaScript(part.attrs) ? guard(part.body) : part.body}</script>`;
       continue;
     }
     out += `<script${plan.module ? ' type="module"' : ''}>\n`;
     anchors.push({ at: out.length, file: plan.path!, line: 1 });
-    out += `${escapeScript(plan.code ?? '')}\n</script>`;
+    out += `${escapeScript(guard(plan.code ?? ''))}\n</script>`;
   }
   const parts = splitHtml(out);
-  const edits = [headEdit(parts, `\n${headPieces(reading, options, table).join('\n')}\n`)];
+  const pieces = headPieces(reading, options, table);
+  if (options.guardLoops) pieces.unshift(`<script>${LOOP_GUARD_RUNTIME}</script>`);
+  const edits = [headEdit(parts, `\n${pieces.join('\n')}\n`)];
   const controls = controlsPiece(reading);
   if (controls) edits.push(bodyEndEdit(parts, out.length, `${controls}\n`));
   const html = applyEdits(out, edits);
@@ -1112,9 +1124,14 @@ export function playablePage(source: Pick<JSAnimationSource, 'htmlCode' | 'sketc
  * The same page as one document, for an iframe, with where its lines came
  * from. A page that is not kept as files is its own index.html.
  */
-export function singlePlayableDocument(source: Pick<JSAnimationSource, 'htmlCode' | 'sketch' | 'origin'>): SingleDocument {
-  if (source.sketch) return singleSketchDocument(source.sketch, { origin: source.origin });
-  return { html: source.htmlCode, place: (line) => (line >= 1 ? { file: 'index.html', line } : null) };
+export function singlePlayableDocument(
+  source: Pick<JSAnimationSource, 'htmlCode' | 'sketch' | 'origin'>,
+  options: { guardLoops?: boolean } = {},
+): SingleDocument {
+  if (source.sketch) return singleSketchDocument(source.sketch, { origin: source.origin, guardLoops: options.guardLoops });
+  // Guarding keeps every line where it was, so a line is still its own.
+  const html = options.guardLoops ? withLoopGuardRuntime(guardPageLoops(source.htmlCode)) : source.htmlCode;
+  return { html, place: (line) => (line >= 1 ? { file: 'index.html', line } : null) };
 }
 
 /** The same page as one document, for an iframe. */

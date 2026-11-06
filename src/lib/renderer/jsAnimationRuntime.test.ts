@@ -56,6 +56,18 @@ describe('the page an iframe plays', () => {
     expect(page.html).not.toContain('importmap');
   });
 
+  it('stops a loop that never ends in a sandboxed page, keeping its lines', () => {
+    const looping = p5Page.replace('function draw() { background(0); }', 'function draw() { while (true) {} }');
+    const page = iframePage({ animationType: 'p5js', htmlCode: looping });
+    expect(page.html).toContain('window.__ghostLoopGuard=');
+    const line = lastLineOf(page.html, 'function draw()');
+    expect(page.html.split('\n')[line - 1]).toContain('__ghostLoopGuard.c(');
+    expect(page.place(line)).toEqual({ file: 'index.html', line: lineOf(looping, 'function draw()') });
+    // three.js pages play as they always have.
+    const three = iframePage({ animationType: 'threejs', htmlCode: '<html><head></head><body><script>while (go()) {}</script></body></html>' });
+    expect(three.html).not.toContain('__ghostLoopGuard');
+  });
+
   it('keeps every page silent', () => {
     for (const html of [jsAnimationIframeHtml(p5Page), jsAnimationIframeHtml('<html><head></head><body></body></html>')]) {
       expect(html).toContain('AudioNode.prototype.connect');

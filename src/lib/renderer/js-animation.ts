@@ -284,8 +284,10 @@ export interface IframePage {
  * (loadPageLibraries); every caller in the app waits for them.
  */
 export function iframePage(jsAnimation: JSAnimationSource): IframePage {
-  const document = singlePlayableDocument(jsAnimation);
   const sandboxed = playsSandboxed(jsAnimation);
+  // A sandboxed page shares the app's process: a loop of its own that never
+  // ends is stopped after half a second (p5sketch/loopGuard.ts).
+  const document = singlePlayableDocument(jsAnimation, { guardLoops: sandboxed });
   const { html, layout } = injectIframeRuntimeShims(document.html, sandboxed);
   return {
     html,
