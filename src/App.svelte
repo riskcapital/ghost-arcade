@@ -96,7 +96,7 @@
   import UpdateModal from './lib/components/UpdateModal.svelte';
   import { updateModalOpen, leftSidebarTab } from './lib/stores/uiState';
   import { showToast } from './lib/stores/errorToast';
-  import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, flushPendingHistorySnapshot, resetProjectOwnedStores } from './lib/stores/layers';
+  import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, flushPendingHistorySnapshot, resetProjectOwnedStores, isProjectFileData, automatedRecalls } from './lib/stores/layers';
   import { recordDiscreteAction, scheduleHistorySnapshot, hasPendingHistorySnapshot } from './lib/stores/historyHooks';
   import { wireAppHistory, resetHistoryToCurrent, undoHistory, redoHistory } from './lib/stores/appHistory';
   import { keyframeTimeline, keyframeTrayOpen } from './lib/stores/keyframeTimeline';
@@ -114,7 +114,7 @@
   import { fitToolbar } from './lib/utils/toolbarFit';
   import { fitMenuHeight } from './lib/utils/menuFit';
   import { startRecording as startRec, formatRecordingDuration, type RecorderHandle } from './lib/recording/recorder';
-  import { vjClipLauncher } from './lib/stores/vjClipLauncher';
+  import { vjClipLauncher, vjEditVersion } from './lib/stores/vjClipLauncher';
   import { mediaRelinkVersion, noteMediaRelinked } from './lib/stores/missingMedia';
   import { projectionSimHistoryVersion } from './lib/projectionSim/store';
   import { startProjectionSimSceneSync } from './lib/projectionSim/sceneSync';
@@ -178,8 +178,8 @@
   import { showTimeline, setShowTransitionSink } from './lib/stores/showTimeline';
   import { installShowControl, showRuntimeHooks } from './lib/show/showControlRuntime';
   import { serializeShowControl } from './lib/show/showControlPersistence';
-  import { historyVersion as stage3dHistoryVersion } from './lib/stage3d/store';
-  import { isProjectDirty, projectSettingsSignature, type ProjectDirtySnapshot } from './lib/stores/projectDirty';
+  import { historyVersion as stage3dHistoryVersion, stage3dScene } from './lib/stage3d/store';
+  import { isProjectDirty, projectSettingsSections, recallSectionSignature, withRecallsAsSaved, type ProjectDirtySnapshot, type RecallSection } from './lib/stores/projectDirty';
   import { cueList } from './lib/show/cueList';
   import {
     installPromptSuppression,
@@ -592,6 +592,12 @@
   let closeModalForQuit = false;
   // The user chose Save or Don't Save: let the window close without asking.
   let closeConfirmed = false;
+  // The modal is asking about opening another project: its answer resolves
+  // confirmLeaveProject() instead of closing anything.
+  let openGuardResolve: ((go: boolean) => void) | null = null;
+  // A project double-clicked while the recovery offer was up: it opens once
+  // the offer is answered, so the earlier session's work is never passed over.
+  let deferredProjectOpen: string | null = null;
 
   // Auto-save & crash recovery state
   let autosaveInterval: ReturnType<typeof setInterval> | null = null;
@@ -616,19 +622,49 @@
   }
   let recoveryTimestamp = '';
 
-  function projectDirtySnapshot(): ProjectDirtySnapshot {
+  /**
+   * `asSaved`: the state as it is, for a baseline. Otherwise sections still
+   * as an automated recall left them read as saved (see recallImprint).
+   */
+  function projectDirtySnapshot(asSaved = false): ProjectDirtySnapshot {
+    const sections = projectSettingsSections({
+      exported: project.exportProject() as Record<string, any>,
+      showTimeline: showTimeline.serialize(),
+      showControl: serializeShowControl(),
+      stage3d: get(stage3dScene),
+    });
+    const compared = asSaved ? sections : withRecallsAsSaved(sections, recallImprint, savedProjectState?.sections);
     return {
       stepId: history.currentStepId(),
-      settings: projectSettingsSignature({
-        exported: project.exportProject() as Record<string, any>,
-        showTimeline: showTimeline.serialize(),
-        showControl: serializeShowControl(),
-      }),
+      settings: JSON.stringify(compared),
+      sections,
       // Map Sim and Stage 3D edits (saved with the project, with undo of
-      // their own) and relinked media are counted where they happen.
-      counters: JSON.stringify([get(projectionSimHistoryVersion), get(stage3dHistoryVersion), get(mediaRelinkVersion)]),
+      // their own), relinked media and VJ clip and deck edits are counted
+      // where they happen.
+      counters: JSON.stringify([get(projectionSimHistoryVersion), get(stage3dHistoryVersion), get(mediaRelinkVersion), get(vjEditVersion)]),
     };
   }
+
+  // What automated recalls (show cues, VJ clip presets, MIDI- or Live-
+  // triggered stage presets) left in the sections they rewrote. Playing a
+  // show is not editing it; a section changed again after that counts.
+  let recallImprint: Partial<Record<RecallSection, string>> = {};
+  const recallSectionValue: Record<RecallSection, () => unknown> = {
+    sequencer: () => layerSequencer.serialize(),
+    keyframes: () => keyframeTimeline.exportAll(),
+    surfaces: () => {
+      const p = get(project);
+      return { surfaces: p.surfaces || [], activeSurfaceId: p.activeSurfaceId ?? null };
+    },
+    stage3d: () => get(stage3dScene),
+  };
+  const stopRecallWatch = automatedRecalls.subscribe(({ count, sections }) => {
+    if (count === 0) return;
+    const next = { ...recallImprint };
+    for (const section of sections) next[section] = recallSectionSignature(section, recallSectionValue[section]());
+    recallImprint = next;
+  });
+  onDestroy(stopRecallWatch);
 
   /** Work out whether the project has unsaved changes, now. */
   function refreshUnsavedChanges(): boolean {
@@ -638,15 +674,35 @@
     return hasUnsavedChanges;
   }
 
-  function markAsSaved() {
+  /**
+   * `baseline` is the state that was written (taken when the save exported
+   * it): an edit made while the file was being written is not in it, so it
+   * still counts as unsaved.
+   */
+  function markAsSaved(baseline: ProjectDirtySnapshot | null = null) {
     hasUnsavedChanges = false;
     // Taken a moment later: opening a project resets the undo history in a
     // microtask queued during the import, and the saved step is that one.
     queueMicrotask(() => {
       flushPendingHistorySnapshot();
-      savedProjectState = projectDirtySnapshot();
-      hasUnsavedChanges = false;
+      // What the file holds now includes what any recall wrote.
+      recallImprint = {};
+      savedProjectState = baseline ?? projectDirtySnapshot(true);
+      hasUnsavedChanges = baseline ? isProjectDirty(baseline, projectDirtySnapshot()) : false;
     });
+  }
+
+  let saveBaseline: ProjectDirtySnapshot | null = null;
+  /** Export the project for a save, noting what is being written. */
+  async function exportForSave(): Promise<string> {
+    flushPendingHistorySnapshot();
+    saveBaseline = projectDirtySnapshot(true);
+    return project.exportProjectJSONForSave();
+  }
+  function takeSaveBaseline(): ProjectDirtySnapshot | null {
+    const baseline = saveBaseline;
+    saveBaseline = null;
+    return baseline;
   }
 
   /** The project is not on disk as it stands (a recovered autosave). */
@@ -697,7 +753,14 @@
           console.warn('[Recovery] Could not check the media of the recovered project:', err);
         }
       }
-      project.importProjectJSON(savedData!, projectDir);
+      if (!project.importProjectJSON(savedData!, projectDir)) {
+        // Keep the snapshot: it may open in a later version, and it is the
+        // only copy of that work.
+        showRecoveryModal = false;
+        alert('The recovered project could not be opened. Its snapshot is kept and will be offered again next time.');
+        openDeferredProject();
+        return;
+      }
       // Recovered work is not in any file yet: it stays unsaved (and keeps
       // being autosaved) until it is saved.
       markAsUnsaved();
@@ -710,6 +773,7 @@
     showRecoveryModal = false;
     // Back in their own project: no need for the welcome screen this time.
     showWelcome = false;
+    openDeferredProject();
   }
 
   function discardAutosave() {
@@ -717,6 +781,43 @@
     localStorage.removeItem('ghostarcade-autosave-timestamp');
     autosaveFromEarlierSession = false;
     showRecoveryModal = false;
+    openDeferredProject();
+  }
+
+  /** Open the project double-clicked while the recovery offer was up. */
+  function openDeferredProject() {
+    const path = deferredProjectOpen;
+    deferredProjectOpen = null;
+    if (path) void openProjectFromUser(path);
+  }
+
+  /** Open a project the user picked by path, asking about unsaved changes first. */
+  async function openProjectFromUser(path: string, name?: string): Promise<void> {
+    if (!(await confirmLeaveProject())) return;
+    try {
+      if (!(await openProjectAtPath(path, name))) alert('Failed to load project. The file may be corrupted or invalid.');
+    } catch (err: any) {
+      alert(`Failed to load project: ${err?.message || err}`);
+    }
+  }
+
+  /**
+   * Before another project replaces this one: ask about unsaved changes, as
+   * closing does. Resolves true to go ahead (saved, or the changes were
+   * let go), false to stay.
+   */
+  function confirmLeaveProject(): Promise<boolean> {
+    if (promptsSuppressed() || !refreshUnsavedChanges()) return Promise.resolve(true);
+    // Already asking about something: this open waits for another try.
+    if (showCloseModal) return Promise.resolve(false);
+    showCloseModal = true;
+    return new Promise((resolve) => (openGuardResolve = resolve));
+  }
+
+  function answerOpenGuard(go: boolean) {
+    const resolve = openGuardResolve;
+    openGuardResolve = null;
+    resolve?.(go);
   }
 
   function clearAutosave() {
@@ -750,9 +851,11 @@
   // Close modal actions
   async function closeModalSave() {
     showCloseModal = false;
-    // Only close once the project is really saved: a cancelled Save As or a
-    // failed write keeps the app open with the work still in it.
-    if (!(await saveComposition())) {
+    // Only go on once the project is really saved: a cancelled Save As or a
+    // failed write keeps the work where it is.
+    const saved = await saveComposition();
+    if (openGuardResolve) return answerOpenGuard(saved);
+    if (!saved) {
       abandonClose();
       return;
     }
@@ -764,11 +867,13 @@
     hasUnsavedChanges = false;
     // The user chose to throw the changes away; do not offer them back.
     if (!autosaveFromEarlierSession) clearAutosave();
+    if (openGuardResolve) return answerOpenGuard(true);
     finishClose();
   }
 
   function closeModalCancel() {
     showCloseModal = false;
+    if (openGuardResolve) return answerOpenGuard(false);
     abandonClose();
   }
 
@@ -777,7 +882,8 @@
   function handleQuitRequest() {
     void invoke('app_quit_ack').catch(() => {});
     if (showCloseModal) {
-      // Already asking about a window close; answer for the quit instead.
+      // Already asking about a window close (or an open); answer for the quit instead.
+      answerOpenGuard(false);
       closeModalForQuit = true;
       return;
     }
@@ -1327,11 +1433,13 @@
         try {
           const pending: string | null = await desktopApi.invoke('take_pending_project_open');
           if (!pending) return;
-          showRecoveryModal = false;
-          // Opening another project passes over the recovery offer.
-          autosaveFromEarlierSession = false;
+          // The recovery offer is answered first; the file opens after it.
+          if (showRecoveryModal) {
+            deferredProjectOpen = pending;
+            return;
+          }
           showWelcome = false;
-          if (!(await openProjectAtPath(pending))) alert('Failed to load project. The file may be corrupted or invalid.');
+          await openProjectFromUser(pending);
         } catch (err: any) {
           alert(`Failed to load project: ${err?.message || err}`);
         }
@@ -4543,15 +4651,34 @@
     await toggleFullscreen();
   }
 
-  /** Open a project file from disk without a dialog (show mode). */
-  async function openProjectAtPath(path: string, name = path.split(/[\\/]/).pop() || path): Promise<boolean> {
-    const { invoke } = await import('$lib/bridge');
-    const result = await invoke<{ content: string; dir: string; media?: { moved?: string[]; missing?: string[] } | null }>('read_project_file', { path });
+  /** A project file's content, parsed, or null when it is not a project. */
+  function readProjectFileData(content: string): unknown | null {
+    try {
+      const data = JSON.parse(content);
+      return isProjectFileData(data) ? data : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Runtime caches an opened project must not inherit from the last one. */
+  function clearProjectRuntimeCaches() {
     try { synthVisionStore.reset(); } catch {}
     try { sessionClipCache.clear(); } catch {}
     try { isfShaderCache.clear(); } catch {}
     try { modulationStore.clearAll(); } catch {}
-    const success = project.importProjectJSON(result.content, result.dir);
+  }
+
+  /** Open a project file from disk without a dialog (show mode). */
+  async function openProjectAtPath(path: string, name = path.split(/[\\/]/).pop() || path): Promise<boolean> {
+    const { invoke } = await import('$lib/bridge');
+    const result = await invoke<{ content: string; dir: string; media?: { moved?: string[]; missing?: string[] } | null }>('read_project_file', { path });
+    // Checked before anything is cleared: a file that is not a project
+    // leaves the open one exactly as it was.
+    const data = readProjectFileData(result.content);
+    if (!data) return false;
+    clearProjectRuntimeCaches();
+    const success = project.importProject(data, result.dir);
     if (success) {
       currentFileHandle = null;
       currentProjectPath = path;
@@ -4891,7 +5018,7 @@
     saveInFlight = true;
     fileMenuOpen = false;
     try {
-      const jsonStr = await project.exportProjectJSONForSave();
+      const jsonStr = await exportForSave();
 
       // Electron path: re-save to the previously-chosen filesystem path,
       // re-materializing any new blob assets to the same project dir.
@@ -4913,7 +5040,7 @@
             // file picker. Without this an in-place Electron save never
             // refreshes the recent-files entry.
             recentFiles.add(currentProjectPath.split(sep).pop() || 'project.gha', currentProjectPath);
-            markAsSaved();
+            markAsSaved(takeSaveBaseline());
             clearAutosave();
             return true;
           } catch (err: any) {
@@ -4941,7 +5068,7 @@
           // Access handles don't expose a disk path → currentProjectPath
           // stays null in that case, which is the expected web behaviour.
           recentFiles.add(currentFileHandle.name, currentProjectPath);
-          markAsSaved();
+          markAsSaved(takeSaveBaseline());
           clearAutosave();
           return true;
         } catch (err: any) {
@@ -4977,7 +5104,7 @@
   // The actual Save As work. Always shows a file picker. Caller owns the
   // mutex — split out so saveComposition can re-use it without lock thrash.
   async function saveCompositionAsInner(): Promise<boolean> {
-    const jsonStr = await project.exportProjectJSONForSave();
+    const jsonStr = await exportForSave();
     const suggestedName = `${$project.name.replace(/[^a-z0-9]/gi, '_')}_${new Date().toISOString().split('T')[0]}.gha`;
 
     // In Electron: use the native save dialog so we get a real filesystem
@@ -5009,7 +5136,7 @@
           // Store the absolute path so clicking this entry in Recent
           // Files loads it directly instead of re-prompting the picker.
           recentFiles.add(filePath.split(sep).pop() || 'project.gha', filePath);
-          markAsSaved();
+          markAsSaved(takeSaveBaseline());
           clearAutosave();
           return true;
         } catch (err: any) {
@@ -5042,7 +5169,7 @@
         currentFileHandle = handle; // Remember for future saves
         console.log('Project saved successfully');
         recentFiles.add(handle.name, null);
-        markAsSaved();
+        markAsSaved(takeSaveBaseline());
         clearAutosave();
         return true;
       } catch (err: any) {
@@ -5066,13 +5193,14 @@
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    markAsSaved();
+    markAsSaved(takeSaveBaseline());
     clearAutosave();
     return true;
   }
 
-  function loadComposition() {
+  async function loadComposition() {
     fileMenuOpen = false;
+    if (!(await confirmLeaveProject())) return;
     fileInput?.click();
   }
 
@@ -5118,14 +5246,12 @@
     reader.onload = (e) => {
       const content = e.target?.result as string;
       if (content) {
+        const data = readProjectFileData(content);
         // Clear stale performer / session / runtime caches before loading so
-        // older project files can't carry legacy clip bindings into the new build.
-        try { synthVisionStore.reset(); } catch {}
-        try { sessionClipCache.clear(); } catch {}
-        try { isfShaderCache.clear(); } catch {}
-        try { modulationStore.clearAll(); } catch {}
-
-        const success = project.importProjectJSON(content, projectDir);
+        // older project files can't carry legacy clip bindings into the new
+        // build (only once the file is known to be a project).
+        if (data) clearProjectRuntimeCaches();
+        const success = !!data && project.importProject(data, projectDir);
         if (success) {
           console.log('Project loaded successfully', projectDir ? `(projectDir=${projectDir})` : '(no projectDir)');
           currentFileHandle = null; // Clear file handle since we loaded via file input
@@ -5194,6 +5320,7 @@
   // =========================================================================
   async function openRecentFile(entry: { name: string; path: string | null; timestamp: number }) {
     fileMenuOpen = false;
+    if (!(await confirmLeaveProject())) return;
 
     // Electron: read the file directly from disk via IPC
     if (isDesktopApp && entry.path) {
@@ -5216,8 +5343,8 @@
       return;
     }
 
-    // Web / no path: fall back to the file picker
-    loadComposition();
+    // Web / no path: fall back to the file picker (already asked above).
+    fileInput?.click();
   }
 
   // =========================================================================
@@ -6250,7 +6377,7 @@
                 <button class="menu-item" onclick={() => { fileMenuOpen = false; showProjectPackage = true; }}>
                   <span class="menu-icon">⇪</span><span class="menu-label">Export Package...</span>
                 </button>
-                <button class="menu-item" onclick={() => openProjectPackage()}>
+                <button class="menu-item" onclick={async () => { if (await confirmLeaveProject()) void openProjectPackage(); }}>
                   <span class="menu-icon">⇩</span><span class="menu-label">Open Package...</span>
                 </button>
               {/if}
@@ -7842,7 +7969,9 @@
         </svg>
       </div>
       <h2 class="close-modal-title">Unsaved Changes</h2>
-      <p class="close-modal-desc">{closeModalForQuit
+      <p class="close-modal-desc">{openGuardResolve
+        ? 'Your project has unsaved changes that will be lost if you open another project without saving.'
+        : closeModalForQuit
         ? 'Your project has unsaved changes that will be lost if you quit without saving.'
         : 'Your project has unsaved changes that will be lost if you close without saving.'}</p>
       <div class="close-modal-actions">
@@ -7852,14 +7981,14 @@
             <polyline points="17 21 17 13 7 13 7 21"/>
             <polyline points="7 3 7 8 15 8"/>
           </svg>
-          {closeModalForQuit ? 'Save & Quit' : 'Save & Close'}
+          {openGuardResolve ? 'Save & Open' : closeModalForQuit ? 'Save & Quit' : 'Save & Close'}
         </button>
         <button class="close-modal-btn btn-discard" onclick={closeModalDiscard}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="3 6 5 6 21 6"/>
             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
           </svg>
-          {closeModalForQuit ? 'Quit Without Saving' : 'Close Without Saving'}
+          {openGuardResolve ? 'Open Without Saving' : closeModalForQuit ? 'Quit Without Saving' : 'Close Without Saving'}
         </button>
         <button class="close-modal-btn btn-cancel" onclick={closeModalCancel}>
           Cancel
@@ -8252,9 +8381,10 @@
   }
 
   /* fitToolbar (lib/utils/toolbarFit.ts) measures the groups at full size
-     with this class on: no transitions, and the centre buttons at their own
-     width rather than stretched over the spare room. */
-  .toolbar:global(.tb-measuring) :global(*) {
+     with tb-measuring on (the centre buttons at their own width rather than
+     stretched over the spare room) and holds transitions with tb-still until
+     the buttons are stretched again. */
+  .toolbar:global(.tb-still) :global(*) {
     transition: none !important;
   }
   .toolbar:global(.tb-measuring) .toolbar-center > :global(*) {

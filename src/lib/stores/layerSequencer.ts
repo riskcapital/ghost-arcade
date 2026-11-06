@@ -129,6 +129,15 @@ function createLayerSequencerStore() {
     return overrides;
   }
 
+  function sameOverrides(a: Record<string, number>, b: Record<string, number>): boolean {
+    const keys = Object.keys(a);
+    if (keys.length !== Object.keys(b).length) return false;
+    for (const key of keys) {
+      if (!(key in b) || Math.abs(a[key]! - b[key]!) > 0.0005) return false;
+    }
+    return true;
+  }
+
   // Get next step index (respecting loop)
   function nextStepIndex(state: LayerSequencerState): number {
     const next = state.currentStep + 1;
@@ -184,10 +193,17 @@ function createLayerSequencerStore() {
         return;
       }
 
-      lastStepTime = now;
+      // The next step starts where this one ended, not at this frame:
+      // `lastStepTime = now` lost up to a frame every step, and the pattern
+      // drifted off the beat it was set to. After a stall (a hidden window,
+      // a long frame) it rebases instead of bursting through the missed steps.
+      const stepMs = stepDuration * 1000;
+      lastStepTime = now - lastStepTime >= 2 * stepMs ? now : lastStepTime + stepMs;
       newOverrides = applyStepOpacities(state, nextIdx);
       update(s => ({ ...s, currentStep: nextIdx, opacityOverrides: newOverrides }));
-    } else {
+    } else if (!sameOverrides(newOverrides, state.opacityOverrides)) {
+      // Only a change is published: every subscriber (the canvas, the state
+      // sync to the outputs) used to get a new object every frame.
       update(s => ({ ...s, opacityOverrides: newOverrides }));
     }
 

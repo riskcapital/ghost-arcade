@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
+  import { vjClipLauncher, type VJClip } from '../stores/vjClipLauncher';
   import { project, selectedLayerId, selectedLayer, selectedLayerIds, layers, scheduleHistorySnapshot } from '../stores/layers';
   import PluginIcon from './PluginIcon.svelte';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
@@ -183,17 +184,105 @@
 
   function liveSourceIsUsedByLayer(source: LiveSource): boolean {
     if (vjMode && isVJLiveSourceInUse?.(source.id)) return true;
+    return liveSourceInUse(source);
+  }
+
+  /** Whether a mapping layer or any VJ clip (any block, either deck, playing
+   *  or in a cell) shows this source. Reads only the stores, so it still
+   *  answers after every tray has unmounted. */
+  function liveSourceInUse(source: LiveSource): boolean {
     const candidates = new Set([
       `live://${source.type}/${source.id}`,
       `live://spout/${source.id}`,
       `live://ndi/${source.id}`,
     ]);
-    return get(layers).some(layer => {
+    const usedByLayer = get(layers).some(layer => {
       const layerSource = layer.source;
       if (!layerSource) return false;
       if (layerSource.videoElement && source.videoEl && layerSource.videoElement === source.videoEl) return true;
       return candidates.has(layerSource.src);
     });
+    if (usedByLayer) return true;
+    // VJ Spout and NDI clips name the sender rather than the source.
+    const sender = source.spoutSenderName || source.ndiSourceName;
+    if (sender) candidates.add(sender);
+    const usedByClip = (clip: VJClip | null | undefined) => !!clip && (
+      (!!source.videoEl && clip.videoElement === source.videoEl)
+      || candidates.has(clip.src)
+      || (!!clip.spoutSource && candidates.has(clip.spoutSource))
+      || (!!clip.ndiSource?.senderName && candidates.has(clip.ndiSource.senderName)));
+    const vj = get(vjClipLauncher);
+    const grids = [vj.clipGrid, vj.bankBClipGrid, ...vj.blocks.flatMap(block => [block.clipGrid, block.bankBClipGrid ?? []])];
+    return grids.some(grid => grid.some(row => row.some(usedByClip)))
+      || [...vj.layerStates, ...vj.bankBLayerStates].some(layer => usedByClip(layer.activeClip));
+  }
+
+  // A capture that a layer or VJ clip still shows keeps running when its tray
+  // unmounts (the editor sidebar swaps this tray out; VJ's copy goes when VJ
+  // closes). It waits here, on the window, until a tray of the same kind
+  // mounts and takes it back, or until nothing uses it and it is stopped. A
+  // list inside the unmounted tray could never stop it.
+  type ParkedLiveSource = { source: LiveSource; vjMode: boolean };
+  const liveSourceShared: {
+    parked: ParkedLiveSource[];
+    check: ReturnType<typeof setTimeout> | null;
+    unwatch: (() => void) | null;
+  } = (_win.__mediaTrayLiveSources ??= { parked: [], check: null, unwatch: null });
+
+  function parkLiveSources(sources: LiveSource[]) {
+    if (!sources.length) return;
+    const ids = new Set(sources.map(source => source.id));
+    liveSourceShared.parked = [
+      ...liveSourceShared.parked.filter(entry => !ids.has(entry.source.id)),
+      ...sources.map(source => ({ source, vjMode })),
+    ];
+    watchParkedLiveSources();
+  }
+
+  function adoptParkedLiveSources() {
+    const mine = liveSourceShared.parked.filter(entry => entry.vjMode === vjMode);
+    if (!mine.length) return;
+    liveSourceShared.parked = liveSourceShared.parked.filter(entry => entry.vjMode !== vjMode);
+    if (!liveSourceShared.parked.length) unwatchParkedLiveSources();
+    const adopted = mine.map(entry => entry.source).filter(source => !liveSources.some(existing => existing.id === source.id));
+    if (adopted.length) {
+      liveSources = [...liveSources, ...adopted];
+      notifyVJLiveSourcesChanged();
+    }
+  }
+
+  // Check a moment after a change rather than on every write: the project is
+  // written every frame while modulation runs.
+  function watchParkedLiveSources() {
+    if (liveSourceShared.unwatch || !liveSourceShared.parked.length) return;
+    const schedule = () => {
+      if (liveSourceShared.check === null) liveSourceShared.check = setTimeout(checkParkedLiveSources, 250);
+    };
+    const stops = [layers.subscribe(schedule), vjClipLauncher.subscribe(schedule)];
+    liveSourceShared.unwatch = () => stops.forEach(stop => stop());
+  }
+
+  function unwatchParkedLiveSources() {
+    liveSourceShared.unwatch?.();
+    liveSourceShared.unwatch = null;
+    if (liveSourceShared.check !== null) clearTimeout(liveSourceShared.check);
+    liveSourceShared.check = null;
+  }
+
+  function checkParkedLiveSources() {
+    liveSourceShared.check = null;
+    const stopped = new Set<string>();
+    liveSourceShared.parked = liveSourceShared.parked.filter(({ source }) => {
+      if (liveSourceInUse(source)) return true;
+      disposeLiveSource(source);
+      stopped.add(source.id);
+      return false;
+    });
+    const listed = _win.__ghostVJMediaTrayLiveSources;
+    if (stopped.size && Array.isArray(listed)) {
+      _win.__ghostVJMediaTrayLiveSources = listed.filter((payload: { id: string }) => !stopped.has(payload.id));
+    }
+    if (!liveSourceShared.parked.length) unwatchParkedLiveSources();
   }
 
   function disposeLiveSource(source: LiveSource) {
@@ -2014,6 +2103,8 @@
 
   // Register/cleanup global click listener
   onMount(() => {
+    // Take back the captures an earlier tray left running for a layer or clip.
+    adoptParkedLiveSources();
     // Use setTimeout to avoid registering during the same click that opens a popover
     const id = setTimeout(() => {
       document.addEventListener('click', handleGlobalClick);
@@ -2046,6 +2137,7 @@
     document.removeEventListener('click', handleGlobalClick);
     stopNdiScan();
     disposeUnusedLiveSources();
+    parkLiveSources(liveSources);
     if (timelapseTimerId) clearInterval(timelapseTimerId);
   });
 
@@ -2732,11 +2824,18 @@
   }
 
   $: currentItems = activeTab === 'videos' ? videos : activeTab === 'images' ? images : activeTab === 'js' ? filteredJSAnimations : filteredByCategory;
-  $: mediaFolders = Array.isArray($project.mediaFolders)
-    ? $project.mediaFolders
-      .filter((f) => FOLDER_TABS.includes(f.tab as FolderTab))
-      .map((f) => ({ ...f, itemIds: Array.from(new Set(f.itemIds || [])) }))
-    : [];
+  // The project is written every frame while modulation runs. Rebuild the
+  // folders only when the saved folder list itself is replaced, so the
+  // folder views below keep their identity in between.
+  let mediaFoldersSource: unknown;
+  $: if ($project.mediaFolders !== mediaFoldersSource) {
+    mediaFoldersSource = $project.mediaFolders;
+    mediaFolders = Array.isArray($project.mediaFolders)
+      ? $project.mediaFolders
+        .filter((f) => FOLDER_TABS.includes(f.tab as FolderTab))
+        .map((f) => ({ ...f, itemIds: Array.from(new Set(f.itemIds || [])) }))
+      : [];
+  }
   $: activeTabFolders = FOLDER_TABS.includes(activeTab as FolderTab)
     ? mediaFolders.filter(f => f.tab === activeTab)
     : [];
@@ -2746,8 +2845,9 @@
   $: activeFolder = activeFolderId
     ? activeTabFolders.find(f => f.id === activeFolderId) || null
     : null;
+  $: activeFolderIds = new Set(activeFolder?.itemIds ?? []);
   $: activeFolderItems = activeFolder
-    ? currentItems.filter(item => activeFolder.itemIds.includes(item.id))
+    ? currentItems.filter(item => activeFolderIds.has(item.id))
     : [];
   $: isFolderTab = FOLDER_TABS.includes(activeTab as FolderTab);
   $: mediaSections = (() => {

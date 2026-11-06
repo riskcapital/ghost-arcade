@@ -20,6 +20,7 @@
 
   $: state = $mediaPipeStore;
   $: frame = state.frame;
+  $: usedByHandFx = state.consumers.some(c => c.startsWith('handfx'));
 
   // ── Camera preview + landmark overlay ──────────────────────────────
   let previewWrap: HTMLDivElement | null = null;
@@ -106,10 +107,12 @@
 
   // ── Actions ────────────────────────────────────────────────────────
   async function start() {
-    await mediaPipeStore.start({
-      deviceId: pickedDeviceId || undefined,
-      useGesture, mirror, numHands,
-    });
+    try {
+      await mediaPipeStore.start({
+        deviceId: pickedDeviceId || undefined,
+        useGesture, mirror, numHands,
+      });
+    } catch { /* shown through state.error */ }
   }
   async function stop() { await mediaPipeStore.stop(); }
   function removeBinding(id: string) { mediaPipeBus.remove(id); }
@@ -172,6 +175,9 @@
         {state.starting ? 'Starting…' : 'Enable MediaPipe'}
       </button>
     </div>
+    {#if state.heldOff && usedByHandFx}
+      <div class="mp-hint">The camera is off. HandFX layers wait until you enable it again.</div>
+    {/if}
     <div class="mp-hint">
       Hand Landmarker + Gesture Recognizer run in a Web Worker. Models load from Google's MediaPipe CDN on first start (~5 MB).
     </div>
@@ -181,6 +187,9 @@
       <span class="mp-active-name">Running</span>
       <button class="mp-btn small" onclick={stop}>Stop</button>
     </div>
+    {#if usedByHandFx}
+      <div class="mp-hint">In use by HandFX. Stop turns the camera off for HandFX layers too.</div>
+    {/if}
 
     <!-- Camera preview + landmark overlay -->
     <div class="mp-preview" bind:this={previewWrap}>

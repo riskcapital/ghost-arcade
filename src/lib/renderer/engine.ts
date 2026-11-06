@@ -183,8 +183,9 @@ export class RenderEngine {
   private edgeEffectTarget: THREE.WebGLRenderTarget | null = null;
 
   // Group layer render targets (lazy-allocated per group ID)
+  // Group layer render targets (lazy-allocated per group ID, full output
+  // size). Freed in removeLayer and dispose, resized in resize.
   private groupTargets: Map<string, THREE.WebGLRenderTarget> = new Map();
-  private groupShaderTargets: Map<string, THREE.WebGLRenderTarget> = new Map();
 
   // Cached copy objects — reused every frame to avoid per-frame allocations
   private _copyGeometry: THREE.PlaneGeometry;
@@ -1004,6 +1005,12 @@ export class RenderEngine {
     if (maskMat) {
       maskMat.dispose();
       this.maskMaterials.delete(layerId);
+    }
+    // A group layer's own render target
+    const groupTarget = this.groupTargets.get(layerId);
+    if (groupTarget) {
+      groupTarget.dispose();
+      this.groupTargets.delete(layerId);
     }
   }
 
@@ -2881,6 +2888,9 @@ export class RenderEngine {
     for (const obj of this.layerObjects.values()) {
       obj.renderTarget?.setSize(projectW, projectH);
     }
+    for (const groupTarget of this.groupTargets.values()) {
+      groupTarget.setSize(projectW, projectH);
+    }
 
     // Bank crossfade FBOs (full-canvas resolution) — resize in place if
     // they exist so the dual-deck composite still maps 1:1.
@@ -2919,6 +2929,8 @@ export class RenderEngine {
       this.effectFeedbackTargets.forEach((rt) => { try { rt.dispose(); } catch {} });
       this.effectFeedbackTargets.clear();
       this.effectFeedbackHasPrior.clear();
+      // Group targets are made again on their next use.
+      this.disposeGroupTargets();
 
       // Recreate render targets at current project dimensions.
       this.compositeTarget = this.createRenderTarget();
@@ -3173,6 +3185,13 @@ export class RenderEngine {
     return { width: w, height: h, data: flipped };
   }
 
+  private disposeGroupTargets(): void {
+    for (const groupTarget of this.groupTargets.values()) {
+      try { groupTarget.dispose(); } catch {}
+    }
+    this.groupTargets.clear();
+  }
+
   public dispose(): void {
     this.compositeTarget.dispose();
     this.tempTarget.dispose();
@@ -3213,6 +3232,7 @@ export class RenderEngine {
       obj.material.dispose();
       this.releaseLayerTargets(obj);
     }
+    this.disposeGroupTargets();
 
     // Dispose color textures
     for (const texture of this.colorTextures.values()) {

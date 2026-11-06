@@ -89,9 +89,14 @@
     }
   }
 
+  // The tray below is the only thing that uses the discovered params. The
+  // project and the VJ output change every frame while modulation or
+  // playback runs, so skip the discovery while the tray is not shown.
+  $: trayVisible = isOpen && !hiddenInVJ;
+
   // Discover params for the selected layer (VJ or mapping)
   $: targetLayer = (() => {
-    if (!layerId) return null;
+    if (!trayVisible || !layerId) return null;
     if (layerId.startsWith('vj-')) {
       // VJ clip: find the output layer whose source.id matches the clip id
       const clipId = layerId.slice(3);
@@ -119,7 +124,7 @@
   // record (time, value, easing, type + label) for the inspector panel. ──
   $: selectedKf = (() => {
     const sel = $keyframeTimeline.selectedKeyframe;
-    if (!sel) return null;
+    if (!trayVisible || !sel) return null;
     const timeline = $keyframeTimeline.timelines[sel.layerId];
     if (!timeline) return null;
     const track = timeline.tracks.find(t => t.key === sel.trackKey);
@@ -244,7 +249,7 @@
 {/if}
 
 <!-- Slide-up panel -->
-{#if isOpen && !hiddenInVJ}
+{#if trayVisible}
   <div class="kf-tray">
     <div class="kf-header-btns">
       <button class="kf-clear" onclick={() => { console.log('[KF Timeline] Clear All clicked'); showClearConfirm = true; }} title="Clear all keyframes">

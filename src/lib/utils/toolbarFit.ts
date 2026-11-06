@@ -114,9 +114,10 @@ export function fitToolbar(header: HTMLElement) {
     frame = null;
     const parent = header.parentElement;
     if (!parent || getComputedStyle(header).display === 'none') return;
-    // Measure at full size, then set the scale, all before the next paint.
+    // Measure at full size, then set the scale, all before the next paint,
+    // with transitions held (tb-still) so nothing animates between the two.
     const before = scale;
-    header.classList.add('tb-measuring');
+    header.classList.add('tb-still', 'tb-measuring');
     apply(1);
     const style = getComputedStyle(header);
     const padding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
@@ -131,8 +132,13 @@ export function fitToolbar(header: HTMLElement) {
     }
     const room = parent.getBoundingClientRect().width;
     apply(toolbarScale({ room, fixed, scalable }, before));
-    void header.offsetWidth;
+    // Stretch the centre buttons back while transitions are still held, and
+    // let that settle before they return. Animated back in, the stretch
+    // resized the buttons, the observer saw that as a change and fitted
+    // again, and the bar jiggled for as long as it had room to spare.
     header.classList.remove('tb-measuring');
+    void header.offsetWidth;
+    header.classList.remove('tb-still');
   };
 
   const schedule = () => {

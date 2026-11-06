@@ -23,6 +23,8 @@ const WHITE = new THREE.Vector3(1, 1, 1);
 const DEPTH_BIAS = 0.0018;
 const SCRATCH_COLOR = new THREE.Color();
 const LOOK_AT_MATRIX = new THREE.Matrix4();
+/** Parsed imports kept per renderer; unused ones past this are freed. */
+const MAX_CACHED_ASSETS = 6;
 
 type ProjectionMaterial = THREE.MeshStandardMaterial & {
   userData: THREE.MeshStandardMaterial['userData'] & {
@@ -97,11 +99,13 @@ function resolveSurfaceColor(object: ProjectionSimObject, style: ProjectionSimSc
   }
 }
 
-function objectStructureHash(scene: ProjectionSimScene): string {
+/** What needs the meshes rebuilt (and imports re-attached). Visibility is
+ *  applied each frame, and looks are patched in place (objectAppearanceHash),
+ *  so dragging a colour or point-size slider no longer rebuilds the scene
+ *  and re-reads every imported model and point cloud. */
+export function objectStructureHash(scene: ProjectionSimScene): string {
   return JSON.stringify({
     env: {
-      ambient: scene.environment.ambient,
-      floorColor: scene.environment.floorColor,
       showGrid: scene.environment.showGrid,
       surfaceStyle: scene.environment.surfaceStyle,
     },
@@ -109,24 +113,78 @@ function objectStructureHash(scene: ProjectionSimScene): string {
       id: obj.id,
       type: obj.type,
       primitive: obj.primitive,
-      color: obj.color,
-      roughness: obj.roughness,
-      visible: obj.visible,
       receiveProjection: obj.receiveProjection,
       castShadow: obj.castShadow,
       assetUrl: obj.assetUrl,
       assetName: obj.assetName,
       assetFormat: obj.assetFormat,
-      pointSize: obj.pointSize,
     })),
     projectors: scene.projectors.map((p) => ({
       id: p.id,
-      color: p.color,
-      fov: p.fov,
-      aspect: p.aspect,
       showFrustum: p.showFrustum,
     })),
   });
+}
+
+/** Looks the panel sliders change; applied to the built scene in place. */
+export function objectAppearanceHash(scene: ProjectionSimScene): string {
+  return JSON.stringify({
+    ambient: scene.environment.ambient,
+    floorColor: scene.environment.floorColor,
+    objects: scene.objects.map((obj) => [obj.id, obj.color, obj.roughness, obj.pointSize]),
+    projectors: scene.projectors.map((p) => [p.id, projectorBeamKey(p)]),
+  });
+}
+
+/** Projector looks that are drawn into its lens and beam. */
+function projectorBeamKey(projector: ProjectionSimProjector): string {
+  return JSON.stringify([projector.color, projector.fov, projector.aspect]);
+}
+
+function modelCacheKey(object: ProjectionSimObject): string {
+  return `${object.assetFormat ?? 'gltf'}:${object.assetUrl}`;
+}
+
+const MATERIAL_TEXTURE_KEYS = [
+  'map', 'lightMap', 'aoMap', 'emissiveMap', 'bumpMap', 'normalMap', 'displacementMap',
+  'roughnessMap', 'metalnessMap', 'alphaMap', 'envMap', 'specularMap', 'gradientMap',
+  'clearcoatMap', 'clearcoatNormalMap', 'clearcoatRoughnessMap', 'sheenColorMap',
+  'sheenRoughnessMap', 'transmissionMap', 'thicknessMap', 'iridescenceMap',
+  'iridescenceThicknessMap', 'specularColorMap', 'specularIntensityMap', 'anisotropyMap',
+] as const;
+
+/** Free a cached import: its geometry, materials and their textures. */
+function disposeObjectDeep(root: THREE.Object3D): void {
+  const textures = new Set<THREE.Texture>();
+  root.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    mesh.geometry?.dispose?.();
+    const mats = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
+    for (const mat of mats) {
+      for (const key of MATERIAL_TEXTURE_KEYS) {
+        const tex = (mat as unknown as Record<string, unknown>)[key];
+        if (tex && (tex as THREE.Texture).isTexture) textures.add(tex as THREE.Texture);
+      }
+      mat.dispose();
+    }
+  });
+  for (const tex of textures) tex.dispose();
+}
+
+/** Drop least recently used entries past the limit, skipping ones in use. */
+export function trimAssetCache<T>(
+  cache: Map<string, Promise<T>>,
+  inUse: ReadonlySet<string>,
+  limit: number,
+  free: (value: T) => void,
+): void {
+  for (const key of [...cache.keys()]) {
+    if (cache.size <= limit) return;
+    if (inUse.has(key)) continue;
+    const promise = cache.get(key)!;
+    cache.delete(key);
+    promise.then(free, () => {});
+  }
 }
 
 function projectorDepthHash(scene: ProjectionSimScene): string {
@@ -172,6 +230,8 @@ function makeProjectionMaterial(
     roughness: sourceStandard && useOriginal ? sourceStandard.roughness : object.roughness ?? 0.82,
     metalness: sourceStandard && useOriginal ? sourceStandard.metalness : 0.02,
   }) as ProjectionMaterial;
+  // Colour and roughness follow the object unless they come from the file.
+  material.userData.psimFollowsObject = !(sourceStandard && useOriginal);
 
   if (sourceStandard) {
     if (useOriginal || sourceStandard.transparent || sourceStandard.alphaTest > 0) {
@@ -323,6 +383,11 @@ export class ProjectionSimulatorRenderer {
   private sourceTexture: THREE.CanvasTexture | null = null;
   private sourceCanvas: HTMLCanvasElement | null = null;
   private lastHash = '';
+  private lastAppearanceHash = '';
+  private ambientLight: THREE.AmbientLight | null = null;
+  private floorMaterial: THREE.MeshStandardMaterial | null = null;
+  private projectorParts = new Map<string, { lens: THREE.Mesh; beam: THREE.Object3D | null; beamKey: string }>();
+  private disposed = false;
   private lastDepthHash = '';
   private lastShadowHash = '';
   private selectable = new Map<string, THREE.Object3D>();
@@ -346,6 +411,8 @@ export class ProjectionSimulatorRenderer {
   private currentGizmoMode: ProjectionSimGizmoMode = 'translate';
   private currentScene: ProjectionSimScene | null = null;
   private modelCache = new Map<string, Promise<LoadedModelData>>();
+  /** Point cloud geometry by file, shared by every object using it. */
+  private plyCache = new Map<string, Promise<THREE.BufferGeometry>>();
   private animationMixers: THREE.AnimationMixer[] = [];
   private animationClock = new THREE.Clock();
   private lastAnimationDepthRefresh = 0;
@@ -419,6 +486,7 @@ export class ProjectionSimulatorRenderer {
   }
 
   dispose(): void {
+    this.disposed = true;
     cancelAnimationFrame(this.raf);
     this.canvas.removeEventListener('pointerdown', this.handlePointerDown);
     this.canvas.removeEventListener('pointerup', this.handlePointerUp);
@@ -436,7 +504,34 @@ export class ProjectionSimulatorRenderer {
     (this.multiSelectionBox.material as THREE.Material).dispose();
     for (const target of this.depthTargets) target.dispose();
     this.whiteDepthTexture.dispose();
+    this.projectorParts.clear();
+    this.freeAssetCaches();
     this.renderer.dispose();
+    // Give the context back now instead of waiting for GC.
+    this.renderer.forceContextLoss();
+  }
+
+  private freeAssetCaches(): void {
+    for (const promise of this.modelCache.values()) promise.then((data) => disposeObjectDeep(data.scene), () => {});
+    for (const promise of this.plyCache.values()) promise.then((geometry) => geometry.dispose(), () => {});
+    this.modelCache.clear();
+    this.plyCache.clear();
+  }
+
+  /** Keep the import caches bounded; imports the scene still uses stay. */
+  private trimAssetCaches(): void {
+    const inUse = new Set<string>();
+    for (const object of this.currentScene?.objects ?? []) {
+      if (!object.assetUrl) continue;
+      inUse.add(object.type === 'pointcloud' ? object.assetUrl : modelCacheKey(object));
+    }
+    trimAssetCache(this.plyCache, inUse, MAX_CACHED_ASSETS, (geometry) => geometry.dispose());
+    trimAssetCache(this.modelCache, inUse, MAX_CACHED_ASSETS, (data) => disposeObjectDeep(data.scene));
+  }
+
+  /** The current scene entry for an object, so late loads use live values. */
+  private latestObject(object: ProjectionSimObject): ProjectionSimObject {
+    return this.currentScene?.objects.find((entry) => entry.id === object.id) ?? object;
   }
 
   setGizmoMode(mode: ProjectionSimGizmoMode): void {
@@ -602,9 +697,14 @@ export class ProjectionSimulatorRenderer {
     this.updateSourceTexture(sourceCanvas);
 
     const hash = objectStructureHash(sceneState);
+    const appearance = objectAppearanceHash(sceneState);
     if (hash !== this.lastHash) {
       this.lastHash = hash;
+      this.lastAppearanceHash = appearance;
       this.rebuild(sceneState);
+    } else if (appearance !== this.lastAppearanceHash) {
+      this.lastAppearanceHash = appearance;
+      this.applyAppearance(sceneState);
     }
 
     const depthHash = projectorDepthHash(sceneState);
@@ -694,6 +794,7 @@ export class ProjectionSimulatorRenderer {
     this.clearGroup(this.root);
     this.clearGroup(this.projectorRoot);
     this.selectable.clear();
+    this.projectorParts.clear();
     this.projectionMaterials = [];
     this.animationMixers = [];
     this.animationClock.getDelta();
@@ -702,6 +803,7 @@ export class ProjectionSimulatorRenderer {
 
     const ambient = new THREE.AmbientLight('#ffffff', sceneState.environment.ambient);
     this.root.add(ambient);
+    this.ambientLight = ambient;
 
     const floorReceiver: ProjectionSimObject = {
       id: 'projection-floor',
@@ -718,10 +820,9 @@ export class ProjectionSimulatorRenderer {
       castShadow: false,
       receiveProjection: true,
     };
-    const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(80, 80),
-      makeProjectionMaterial(floorReceiver, 'original'),
-    );
+    const floorMaterial = makeProjectionMaterial(floorReceiver, 'original');
+    this.floorMaterial = floorMaterial;
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), floorMaterial);
     floor.name = 'Projection floor';
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
@@ -749,7 +850,74 @@ export class ProjectionSimulatorRenderer {
       this.selectable.set(`projector:${projector.id}`, built);
     }
 
+    this.trimAssetCaches();
     this.setSelection(this.selected);
+  }
+
+  /** Patch colours, roughness, point size, ambient and projector beams on
+   *  the built scene, so slider drags do not rebuild or reload imports. */
+  private applyAppearance(sceneState: ProjectionSimScene): void {
+    const surfaceStyle = sceneState.environment.surfaceStyle;
+    if (this.ambientLight) this.ambientLight.intensity = sceneState.environment.ambient;
+    this.floorMaterial?.color.set(sceneState.environment.floorColor);
+    for (const object of sceneState.objects) {
+      const group = this.selectable.get(`object:${object.id}`);
+      if (group) this.applyObjectLook(group, object, surfaceStyle);
+    }
+    for (const projector of sceneState.projectors) {
+      const group = this.selectable.get(`projector:${projector.id}`);
+      if (group) this.applyProjectorLook(group, projector);
+    }
+  }
+
+  private applyObjectLook(
+    group: THREE.Object3D,
+    object: ProjectionSimObject,
+    surfaceStyle: ProjectionSimScene['environment']['surfaceStyle'] | undefined,
+  ): void {
+    group.traverse((child) => {
+      const mats = (child as THREE.Mesh).material;
+      for (const mat of Array.isArray(mats) ? mats : mats ? [mats] : []) {
+        const data = mat.userData;
+        if ((mat as THREE.PointsMaterial).isPointsMaterial && typeof data.psimDefaultPointSize === 'number') {
+          (mat as THREE.PointsMaterial).size = object.pointSize ?? data.psimDefaultPointSize;
+          continue;
+        }
+        const standard = mat as THREE.MeshStandardMaterial;
+        if (!standard.isMeshStandardMaterial) continue;
+        if (data.psimPlaceholder) {
+          standard.color.set(object.color);
+        } else if (data.psimFollowsObject) {
+          const tint = data.psimTint as string | undefined;
+          standard.color.set(resolveSurfaceColor(tint ? { ...object, color: tint } : object, surfaceStyle));
+          standard.roughness = object.roughness ?? 0.82;
+        }
+      }
+    });
+  }
+
+  private applyProjectorLook(group: THREE.Object3D, projector: ProjectionSimProjector): void {
+    const parts = this.projectorParts.get(projector.id);
+    if (!parts) return;
+    const lensMaterial = parts.lens.material as THREE.MeshStandardMaterial;
+    lensMaterial.color.set(projector.color);
+    lensMaterial.emissive.set(projector.color);
+    const beamKey = projectorBeamKey(projector);
+    if (beamKey === parts.beamKey) return;
+    parts.beamKey = beamKey;
+    if (parts.beam) {
+      group.remove(parts.beam);
+      parts.beam.traverse((child) => {
+        const mesh = child as THREE.Mesh;
+        mesh.geometry?.dispose();
+        (mesh.material as THREE.Material | undefined)?.dispose?.();
+      });
+      parts.beam = null;
+    }
+    if (projector.showFrustum) {
+      parts.beam = this.buildProjectorBeam(projector);
+      group.add(parts.beam);
+    }
   }
 
   private buildObject(object: ProjectionSimObject): THREE.Object3D {
@@ -777,7 +945,9 @@ export class ProjectionSimulatorRenderer {
     if (kind === 'column') {
       const column = new THREE.Group();
       const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 1, 32), makeProjectionMaterial(object, surfaceStyle));
-      const capTop = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.16, 1.05), makeProjectionMaterial({ ...object, color: '#ded8c8' }, surfaceStyle));
+      const capMaterial = makeProjectionMaterial({ ...object, color: '#ded8c8' }, surfaceStyle);
+      capMaterial.userData.psimTint = '#ded8c8';
+      const capTop = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.16, 1.05), capMaterial);
       const capBottom = capTop.clone();
       shaft.position.y = 0;
       capTop.position.y = 0.58;
@@ -832,10 +1002,9 @@ export class ProjectionSimulatorRenderer {
 
   private buildImportPlaceholder(object: ProjectionSimObject, label: string): THREE.Object3D {
     const group = new THREE.Group();
-    const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(1.4, 1.4, 1.4),
-      new THREE.MeshStandardMaterial({ color: object.color, roughness: 0.9, wireframe: true }),
-    );
+    const material = new THREE.MeshStandardMaterial({ color: object.color, roughness: 0.9, wireframe: true });
+    material.userData.psimPlaceholder = true;
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.4, 1.4), material);
     mesh.name = label;
     mesh.castShadow = object.castShadow;
     mesh.receiveShadow = true;
@@ -843,17 +1012,26 @@ export class ProjectionSimulatorRenderer {
     return group;
   }
 
-  private async loadModel(object: ProjectionSimObject, holder: THREE.Group): Promise<void> {
-    if (!object.assetUrl) return;
-    const key = `${object.assetFormat ?? 'gltf'}:${object.assetUrl}`;
+  private async loadModel(buildObject: ProjectionSimObject, holder: THREE.Group): Promise<void> {
+    if (!buildObject.assetUrl) return;
+    const key = modelCacheKey(buildObject);
     let promise = this.modelCache.get(key);
-    if (!promise) {
-      promise = this.loadModelObject(object);
-      this.modelCache.set(key, promise);
+    if (promise) {
+      // Most recently used goes last.
+      this.modelCache.delete(key);
+    } else {
+      promise = this.loadModelObject(buildObject);
+      const pending = promise;
+      pending.catch(() => {
+        if (this.modelCache.get(key) === pending) this.modelCache.delete(key);
+      });
     }
+    this.modelCache.set(key, promise);
     try {
       const loadedModel = await promise;
-      if (!holder.parent) return;
+      // The scene was rebuilt or closed while this loaded.
+      if (this.disposed || !holder.parent) return;
+      const object = this.latestObject(buildObject);
       const loaded = SkeletonUtils.clone(loadedModel.scene);
       this.clearGroup(holder);
       this.normalizeImportedObject(loaded);
@@ -871,8 +1049,7 @@ export class ProjectionSimulatorRenderer {
         this.projectionMaterials.push(...projectionMaterials);
       });
       holder.add(loaded);
-      this.lastDepthHash = '';
-      this.lastShadowHash = '';
+      this.markImportLoaded();
       if (loadedModel.animations.length) {
         const mixer = new THREE.AnimationMixer(loaded);
         for (const clip of loadedModel.animations) {
@@ -899,43 +1076,73 @@ export class ProjectionSimulatorRenderer {
     return { scene: gltf.scene, animations: gltf.animations ?? [] };
   }
 
-  private async loadPointCloud(object: ProjectionSimObject, holder: THREE.Group): Promise<void> {
-    if (!object.assetUrl) return;
+  private markImportLoaded(): void {
+    this.lastDepthHash = '';
+    this.lastShadowHash = '';
+  }
+
+  /** Point cloud geometry for a file, parsed once and shared by every object
+   *  using it (a rebuild used to parse the whole file again). */
+  private loadPly(url: string): Promise<THREE.BufferGeometry> {
+    let promise = this.plyCache.get(url);
+    if (promise) {
+      this.plyCache.delete(url);
+    } else {
+      promise = this.parsePointCloud(url);
+      const pending = promise;
+      pending.catch(() => {
+        if (this.plyCache.get(url) === pending) this.plyCache.delete(url);
+      });
+    }
+    this.plyCache.set(url, promise);
+    return promise;
+  }
+
+  private async parsePointCloud(url: string): Promise<THREE.BufferGeometry> {
+    const ply = await loadPLY(url);
+    const geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(ply.vertices.length * 3);
+    const colors = new Float32Array(ply.vertices.length * 3);
+    const sx = ply.boundingBox.max.x - ply.boundingBox.min.x || 1;
+    const sy = ply.boundingBox.max.y - ply.boundingBox.min.y || 1;
+    const sz = ply.boundingBox.max.z - ply.boundingBox.min.z || 1;
+    const maxDim = Math.max(sx, sy, sz);
+    for (let i = 0; i < ply.vertices.length; i++) {
+      const v = ply.vertices[i];
+      positions[i * 3] = (v.x - ply.center.x) / maxDim;
+      positions[i * 3 + 1] = (v.y - ply.center.y) / maxDim;
+      positions[i * 3 + 2] = (v.z - ply.center.z) / maxDim;
+      colors[i * 3] = (v.r ?? 255) / 255;
+      colors[i * 3 + 1] = (v.g ?? 255) / 255;
+      colors[i * 3 + 2] = (v.b ?? 255) / 255;
+    }
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.computeBoundingSphere();
+    return geometry;
+  }
+
+  private async loadPointCloud(buildObject: ProjectionSimObject, holder: THREE.Group): Promise<void> {
+    if (!buildObject.assetUrl) return;
     try {
-      const ply = await loadPLY(object.assetUrl);
-      const geometry = new THREE.BufferGeometry();
-      const positions = new Float32Array(ply.vertices.length * 3);
-      const colors = new Float32Array(ply.vertices.length * 3);
-      const sx = ply.boundingBox.max.x - ply.boundingBox.min.x || 1;
-      const sy = ply.boundingBox.max.y - ply.boundingBox.min.y || 1;
-      const sz = ply.boundingBox.max.z - ply.boundingBox.min.z || 1;
-      const maxDim = Math.max(sx, sy, sz);
-      for (let i = 0; i < ply.vertices.length; i++) {
-        const v = ply.vertices[i];
-        positions[i * 3] = (v.x - ply.center.x) / maxDim;
-        positions[i * 3 + 1] = (v.y - ply.center.y) / maxDim;
-        positions[i * 3 + 2] = (v.z - ply.center.z) / maxDim;
-        colors[i * 3] = (v.r ?? 255) / 255;
-        colors[i * 3 + 1] = (v.g ?? 255) / 255;
-        colors[i * 3 + 2] = (v.b ?? 255) / 255;
-      }
-      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-      geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-      geometry.computeBoundingSphere();
-      const points = new THREE.Points(
-        geometry,
-        new THREE.PointsMaterial({
-          size: object.pointSize ?? 0.035,
-          vertexColors: true,
-          transparent: true,
-          opacity: 0.92,
-          sizeAttenuation: true,
-        }),
-      );
+      const geometry = await this.loadPly(buildObject.assetUrl);
+      // The scene was rebuilt or closed while this parsed.
+      if (this.disposed || !holder.parent) return;
+      const object = this.latestObject(buildObject);
+      const defaultPointSize = 0.035;
+      const pointsMaterial = new THREE.PointsMaterial({
+        size: object.pointSize ?? defaultPointSize,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.92,
+        sizeAttenuation: true,
+      });
+      pointsMaterial.userData.psimDefaultPointSize = defaultPointSize;
+      const points = new THREE.Points(geometry, pointsMaterial);
+      points.userData.projectionSimSharedGeometry = true;
       this.clearGroup(holder);
       holder.add(points);
-      this.lastDepthHash = '';
-      this.lastShadowHash = '';
+      this.markImportLoaded();
     } catch (err) {
       console.warn('[ProjectionSim] point cloud import failed:', err);
     }
@@ -971,9 +1178,9 @@ export class ProjectionSimulatorRenderer {
     lens.position.z = -0.4;
     group.add(lens);
 
-    if (projector.showFrustum) {
-      group.add(this.buildProjectorBeam(projector));
-    }
+    const beam = projector.showFrustum ? this.buildProjectorBeam(projector) : null;
+    if (beam) group.add(beam);
+    this.projectorParts.set(projector.id, { lens, beam, beamKey: projectorBeamKey(projector) });
 
     this.applyProjectorTransform(group, projector);
     return group;

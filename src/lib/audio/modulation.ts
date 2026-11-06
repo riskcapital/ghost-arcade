@@ -416,6 +416,39 @@ const lastModulatedValues = new Map<string, number>();
 // Key format: "layerIndex:paramName"
 const baseValues = new Map<string, number>();
 
+// ─── Mapping layers that move ──────────────────────────────────────────
+// Mapping modulation is keyed by layer position (`map:<index>:…`). When
+// layers are added, removed or reordered the keys move with their layers,
+// so a modulation stays on the layer it was put on. A removed layer's
+// entries are parked by layer id and come back if the layer does (undo).
+
+const MAP_KEY = /^map:(\d+):/;
+const parkedMappingMods = new Map<string, Array<[string, ParamModulation]>>();
+
+/** Old index → new index (null: the layer is gone), for the layers that moved. */
+function mappingMoves(before: readonly string[], after: readonly string[]): Map<number, number | null> {
+  const at = new Map(after.map((id, i) => [id, i]));
+  const moves = new Map<number, number | null>();
+  before.forEach((id, i) => {
+    const j = at.get(id);
+    if (j !== i) moves.set(i, j ?? null);
+  });
+  return moves;
+}
+
+/** Move `map:<index>:` keys of a cache along with their layers. */
+function moveMappingCacheKeys<T>(cache: Map<string, T>, moves: Map<number, number | null>) {
+  const moved: Array<[string, T]> = [];
+  for (const [key, value] of cache) {
+    const m = MAP_KEY.exec(key);
+    if (!m || !moves.has(Number(m[1]))) continue;
+    cache.delete(key);
+    const to = moves.get(Number(m[1]));
+    if (to !== null && to !== undefined) moved.push([`map:${to}:${key.slice(m[0].length)}`, value]);
+  }
+  for (const [key, value] of moved) cache.set(key, value);
+}
+
 /** Register ISF parameter ranges for a layer so modulation can clamp correctly */
 /** Register the ISF min/max for a shader's params under a namespaced
  *  key so VJ + mapping ranges don't clobber each other on mode
@@ -816,8 +849,45 @@ function createModulationStore() {
       clearModulatedValues(layerIndex);
     },
 
+    /** Mapping layers were added, removed or reordered (`before` and
+     *  `after` are the layer ids in order): their modulations move with them. */
+    followMappingLayers(before: readonly string[], after: readonly string[]) {
+      const moves = mappingMoves(before, after);
+      const returning = after.filter((id) => parkedMappingMods.has(id));
+      if (moves.size === 0 && returning.length === 0) return;
+      update(map => {
+        const next = new Map<string, ParamModulation>();
+        for (const [key, mod] of map) {
+          const m = MAP_KEY.exec(key);
+          const from = m ? Number(m[1]) : -1;
+          if (!m || !moves.has(from)) {
+            next.set(key, mod);
+            continue;
+          }
+          const to = moves.get(from);
+          const rest = key.slice(m[0].length);
+          if (to === null || to === undefined) {
+            const id = before[from];
+            parkedMappingMods.set(id, [...(parkedMappingMods.get(id) ?? []), [rest, mod]]);
+          } else {
+            next.set(`map:${to}:${rest}`, mod);
+          }
+        }
+        for (const id of returning) {
+          const index = after.indexOf(id);
+          for (const [rest, mod] of parkedMappingMods.get(id) ?? []) next.set(`map:${index}:${rest}`, mod);
+          parkedMappingMods.delete(id);
+        }
+        return next;
+      });
+      moveMappingCacheKeys(baseValues, moves);
+      moveMappingCacheKeys(lastModulatedValues, moves);
+      moveMappingCacheKeys(paramRanges, moves);
+    },
+
     /** Clear everything — including the crossfader entry. */
     clearAll() {
+      parkedMappingMods.clear();
       set(new Map());
     },
 
@@ -828,6 +898,7 @@ function createModulationStore() {
      *  would re-encode and mangle multi-prefix keys like
      *  `B:N:fx:eff:param` or `xfade:value`). */
     bulkLoad(entries: Array<{ key: string; mod: ParamModulation }>) {
+      parkedMappingMods.clear();
       const m = new Map<string, ParamModulation>();
       for (const { key, mod } of entries) {
         if (typeof key === 'string' && key.length > 0 && mod) m.set(key, mod);

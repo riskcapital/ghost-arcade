@@ -1,3 +1,14 @@
+<script lang="ts" module>
+  import { releaseBlobUrl } from './blobUrlUsers';
+
+  /** Blob URLs this panel made (splat files and video textures), with the
+   *  file name behind each. Keyed by URL rather than by panel: one panel
+   *  edits whichever layer or clip is selected, and the URL it replaces can
+   *  still be used by another layer, a VJ clip in any block or deck, a preset
+   *  or an undo step, so it is freed only once nothing uses it. */
+  const splatBlobNames = new Map<string, string>();
+</script>
+
 <script lang="ts">
   import { project, selectedLayer, scheduleHistorySnapshot } from '../stores/layers';
   import type {
@@ -341,8 +352,9 @@
     try {
       if (ext === 'splat') {
         // Native .splat format — create blob URL, Canvas will detect by extension
-        if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
+        const previousBlobUrl = currentBlobUrl;
         const { assetRef, runtimeUrl: blobUrl } = createAssetRefFromFile(file);
+        splatBlobNames.set(blobUrl, file.name);
         currentBlobUrl = blobUrl;
         currentFileName = file.name;
         // Store the original filename so Canvas can detect .splat format
@@ -353,11 +365,14 @@
           _originalFileName: file.name,
           _assetRef: assetRef,
         } as any);
+        // The file it replaced is freed once nothing uses it any more.
+        releaseBlobUrl(splatBlobNames, previousBlobUrl);
       } else {
         // PLY parsing and GPU upload are owned by Canvas. Parsing here used to
         // load every large file twice and dismissed the loader before upload.
-        if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
+        const previousBlobUrl = currentBlobUrl;
         const { assetRef, runtimeUrl: blobUrl } = createAssetRefFromFile(file);
+        splatBlobNames.set(blobUrl, file.name);
         currentBlobUrl = blobUrl;
         currentFileName = file.name;
 
@@ -370,6 +385,7 @@
         };
 
         doUpdate(updates);
+        releaseBlobUrl(splatBlobNames, previousBlobUrl);
       }
     } catch (err) {
       console.error('Failed to load splat file:', err);
@@ -501,10 +517,12 @@
                       // For video, use blob URL for better performance, plus
                       // capture an AssetRef so the texture survives reload
                       // (blob URLs die at session end).
-                      if (currentTextureBlobUrl) URL.revokeObjectURL(currentTextureBlobUrl);
+                      const previousTextureUrl = currentTextureBlobUrl;
                       const { assetRef, runtimeUrl: blobUrl } = createAssetRefFromFile(file);
+                      splatBlobNames.set(blobUrl, file.name);
                       currentTextureBlobUrl = blobUrl;
                       doUpdate({ texturePath: blobUrl, _textureAssetRef: assetRef } as any);
+                      releaseBlobUrl(splatBlobNames, previousTextureUrl);
                     } else {
                       // For images, embed as data URL (small assets) AND keep
                       // the AssetRef so the original disk path is recoverable

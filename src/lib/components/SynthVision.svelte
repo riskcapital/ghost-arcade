@@ -4042,7 +4042,7 @@ void main() {
     const active = svGet(vjClipLauncher).layerStates[assignedVJLayer]?.activeClip;
     if (active?.type === 'synthvision') {
       if (active.synthVisionCanvas !== outputCanvas) {
-        vjClipLauncher.updateActiveClipInPlace(assignedVJLayer, 'A', (clip) => ({ ...clip, synthVisionCanvas: outputCanvas }));
+        vjClipLauncher.updateActiveClipInPlace(assignedVJLayer, 'A', (clip) => ({ ...clip, synthVisionCanvas: outputCanvas }), false);
       }
       return;
     }

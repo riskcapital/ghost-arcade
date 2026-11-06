@@ -698,6 +698,21 @@ type SourceMorphUniforms = {
   morphAxis: THREE.IUniform<number>;
 };
 
+/** Add every texture a material holds (its maps and any texture uniforms). */
+export function collectMaterialTextures(material: THREE.Material, into: Set<THREE.Texture>): Set<THREE.Texture> {
+  for (const value of Object.values(material as unknown as Record<string, unknown>)) {
+    if (value && (value as THREE.Texture).isTexture) into.add(value as THREE.Texture);
+  }
+  const uniforms = (material as THREE.ShaderMaterial).uniforms;
+  if (uniforms) {
+    for (const uniform of Object.values(uniforms)) {
+      const value = uniform?.value as THREE.Texture | undefined;
+      if (value && value.isTexture) into.add(value);
+    }
+  }
+  return into;
+}
+
 export function getModel3DMorphTypeIndex(type: Model3DDeformationType): number {
   const shaderMap: Record<Model3DDeformationType, number> = {
     'none': 0,
@@ -3318,8 +3333,9 @@ export class Model3DRenderer {
     }
   }
 
-  // Dispose of Three.js object
+  // Dispose of Three.js object, including the model's own textures.
   private disposeObject(obj: THREE.Object3D) {
+    const textures = new Set<THREE.Texture>();
     obj.traverse((child) => {
       if (child instanceof THREE.Mesh) {
         child.geometry?.dispose();
@@ -3327,7 +3343,10 @@ export class Model3DRenderer {
           ...this.materialList(child.material),
           ...this.materialList(child.userData.sourceMaterial),
         ]);
-        materials.forEach((material) => material.dispose());
+        materials.forEach((material) => {
+          collectMaterialTextures(material, textures);
+          material.dispose();
+        });
         delete child.userData.sourceMaterial;
       }
       if (child instanceof THREE.LineSegments) {
@@ -3335,6 +3354,9 @@ export class Model3DRenderer {
         (child.material as THREE.Material)?.dispose();
       }
     });
+    // The environment map belongs to the renderer, not the model.
+    if (this.environmentMap) textures.delete(this.environmentMap);
+    textures.forEach((texture) => texture.dispose());
   }
 
   // Full cleanup
@@ -3382,7 +3404,12 @@ export class Model3DRenderer {
     this.scene.background = null;
     this.originalPositions.clear();
     this.originalNormals.clear();
-    if (this.renderer) this.renderer.dispose();
+    if (this.renderer) {
+      this.renderer.dispose();
+      // Release the context now; otherwise it lingers until GC.
+      this.renderer.forceContextLoss();
+      this.renderer = null;
+    }
   }
 
   // Get WebGL context

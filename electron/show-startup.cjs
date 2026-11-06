@@ -25,6 +25,7 @@
 const nodeFs = require('fs');
 const nodeOs = require('os');
 const nodePath = require('path');
+const { writeFileAtomicSync } = require('./atomic-write.cjs');
 
 const AUTO_START = ['none', 'go', 'timeline'];
 
@@ -140,7 +141,7 @@ function createShowStartup({
   function save() {
     try {
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, JSON.stringify(config, null, 2));
+      writeFileAtomicSync(file, JSON.stringify(config, null, 2), { fs });
     } catch (err) {
       console.warn('[ShowStartup] could not save config:', err && err.message);
     }

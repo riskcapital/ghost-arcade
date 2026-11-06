@@ -11,6 +11,7 @@
    * topbar. Drag-and-drop: template cards drop onto the strip to create
    * a shot from the CURRENT camera; shots drag to reorder.
    */
+  import { onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import {
     demoReel, MOVE_TEMPLATES, moveTemplate, sequenceDuration, shotAtTime,
@@ -18,6 +19,7 @@
   } from '../../stage3d/demoReel';
   import { stage3dScene, stage3DRendererControls } from '../../stage3d/store';
   import { stageReelRender } from '../../recording/stageReelRender';
+  import type { Stage3DScene } from '../../stage3d/types';
 
   export let onClose: () => void = () => {};
 
@@ -105,10 +107,13 @@
 
   let previewing = false;
   let previewRaf = 0;
+  /** Stage as it was when the preview started. */
+  let previewRestoreScene: Stage3DScene | null = null;
 
   function stopPreview() {
     previewing = false;
     cancelAnimationFrame(previewRaf);
+    previewRestoreScene = null;
     get(stage3DRendererControls)?.releaseCamera();
   }
 
@@ -116,7 +121,8 @@
     if (shots.length === 0) return;
     const controls = get(stage3DRendererControls);
     if (!controls) return;
-    const restoreScene = JSON.parse(JSON.stringify(get(stage3dScene)));
+    const restoreScene: Stage3DScene = JSON.parse(JSON.stringify(get(stage3dScene)));
+    previewRestoreScene = restoreScene;
     previewing = true;
     const t0 = performance.now();
     let lastIndex = -1;
@@ -141,6 +147,17 @@
     };
     previewRaf = requestAnimationFrame(tick);
   }
+
+  // Closing the panel mid-preview: stop the loop, hand the camera back and
+  // put the stage back now, so nothing swaps or restores it later.
+  onDestroy(() => {
+    if (!previewing) return;
+    const restoreScene = previewRestoreScene;
+    stopPreview();
+    if (restoreScene) {
+      try { stage3dScene.loadScene(restoreScene); } catch { /* keep */ }
+    }
+  });
 
   // ── Render ───────────────────────────────────────────────────────────
 

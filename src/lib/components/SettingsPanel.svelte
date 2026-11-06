@@ -118,6 +118,7 @@
   import { isDesktopApp, getTextureShareLabel, invoke } from '$lib/bridge';
   import { interfaceScale } from '../stores/interfaceScale';
   import { getErrorLog, clearErrorLog, type ErrorEntry } from '../utils/errorReporter';
+  import { openLogFolder, DEBUG_LOG_NAME } from '../utils/logFolder';
   import { isWebGPUSupported, probeWebGPU, getWebGPUInfo, type WebGPUInfo } from '../renderer/webgpuCapability';
 
   // GPU Acceleration panel state — populated by the WebGPU capability probe.
@@ -3096,6 +3097,13 @@
           </h3>
           {#if diagnosticsOpen}
             <div class="diagnostics">
+              {#if isDesktopApp}
+                <div class="diag-actions">
+                  <button class="text-btn" onclick={() => { void openLogFolder(); }} title="Shows {DEBUG_LOG_NAME}. The last three launches are kept.">
+                    Open log folder
+                  </button>
+                </div>
+              {/if}
               <p class="hint">{errorLog.length} captured error{errorLog.length !== 1 ? 's' : ''}</p>
               {#if errorLog.length > 0}
                 <div class="error-log">

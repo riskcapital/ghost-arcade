@@ -9,7 +9,7 @@
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from 'svelte/store';
-import { isProjectDirty, projectSettingsSignature, type ProjectDirtySnapshot } from './projectDirty';
+import { isProjectDirty, projectSettingsSections, projectSettingsSignature, recallSectionSignature, withRecallsAsSaved, type ProjectDirtySnapshot } from './projectDirty';
 
 let layers: typeof import('./layers');
 let types: typeof import('../types');
@@ -96,6 +96,7 @@ describe('projectSettingsSignature', () => {
     layerSequencer: { isOpen: false, pattern: { steps: [] }, config: { rate: 1 } },
     geoDeck: { scale: 0.5, sceneSlots: [], modRoutes: [] },
   });
+  const sig3d = (stage3d: unknown) => projectSettingsSignature({ exported: base(), stage3d });
   const sig = (exported: any, showTimeline: unknown = { isOpen: false, zoom: 1, loop: false, audioTracks: [{ id: 't', url: 'blob:a' }], presetClips: [] }, showControl: unknown = { cues: { cues: [] } }) =>
     projectSettingsSignature({ exported, showTimeline, showControl });
 
@@ -110,6 +111,7 @@ describe('projectSettingsSignature', () => {
     played.layerSequencer.isOpen = true;
     played.geoDeck.scale = 0.9;
     played.mediaLibrary[0].src = 'ghost-asset://clip.mp4';
+    played.audio.manualBPM = 128 as any;
     expect(sig(played, { isOpen: true, zoom: 3, loop: false, audioTracks: [{ id: 't', url: 'ghost-asset://a' }], presetClips: [] })).toBe(before);
   });
 
@@ -123,7 +125,7 @@ describe('projectSettingsSignature', () => {
       (p) => { p.modulation[0].mod.amount = 0.9; },
       (p) => { p.macros.macros[0].assignments.push({ path: 'map:layer:x:opacity' }); },
       (p) => { p.osc.bindings.push({ address: '/x' }); },
-      (p) => { p.audio.manualBPM = 128; },
+      (p) => { p.audio.sensitivity = 2; },
       (p) => { p.layerSequencer.pattern.steps.push({ layers: { a: true } }); },
       (p) => { p.keyframeTimelines.push({ layerId: 'a', tracks: [] }); },
       (p) => { p.project.outputSlices.push({ id: 's1' }); },
@@ -137,6 +139,58 @@ describe('projectSettingsSignature', () => {
       expect(sig(changed), edit.toString()).not.toBe(before);
     }
     expect(sig(base(), undefined, { cues: { cues: [{ id: 'q1' }] } })).not.toBe(before);
+  });
+
+  it('counts Stage 3D edits without copying its models, and not a running stage effect show', () => {
+    const model = 'data:model/gltf-binary;base64,' + 'A'.repeat(200_000);
+    const scene = (x: number) => ({ schemaVersion: 1, nodes: [{ id: 'truss', x }], venueModel: model });
+    expect(sig3d(scene(1))).toBe(sig3d(scene(1)));
+    expect(sig3d(scene(1))).not.toBe(sig3d(scene(2)));
+    expect(sig3d(scene(1)).length).toBeLessThan(20_000);
+
+    const surfaces = (active: string, playing: boolean) => {
+      const p = base() as any;
+      p.project.surfaces = [{ id: 's', slices: [], activeEffectId: active, effectAutomation: { playing, steps: [1] } }];
+      return sig(p);
+    };
+    expect(surfaces('a', false)).toBe(surfaces('b', true));
+  });
+
+  it('reads sections as saved while they are as an automated recall left them', () => {
+    const saved = base() as any;
+    saved.project.surfaces = [{ id: 's', slices: [] }];
+    saved.project.activeSurfaceId = 's';
+    const scene = { schemaVersion: 1, nodes: [] };
+    const savedSections = projectSettingsSections({ exported: saved, stage3d: scene });
+
+    // The recall-side signatures are the same text the full signature holds.
+    expect(recallSectionSignature('sequencer', saved.layerSequencer)).toBe(savedSections.sequencer);
+    expect(recallSectionSignature('keyframes', saved.keyframeTimelines)).toBe(savedSections.keyframes);
+    expect(recallSectionSignature('surfaces', { surfaces: saved.project.surfaces, activeSurfaceId: 's' })).toBe(savedSections.surfaces);
+    expect(recallSectionSignature('stage3d', scene)).toBe(savedSections.stage3d);
+
+    // A show cue recalls a preset with its own pattern and keyframes.
+    const recalled = base() as any;
+    recalled.project.surfaces = saved.project.surfaces;
+    recalled.project.activeSurfaceId = 's';
+    recalled.layerSequencer.pattern = { steps: [{ layers: { a: true } }] };
+    recalled.keyframeTimelines = [{ layerId: 'a', tracks: [{ key: 'opacity' }] }];
+    const imprint = {
+      sequencer: recallSectionSignature('sequencer', recalled.layerSequencer),
+      keyframes: recallSectionSignature('keyframes', recalled.keyframeTimelines),
+    };
+    const nowSections = projectSettingsSections({ exported: recalled, stage3d: scene });
+    expect(JSON.stringify(nowSections)).not.toBe(JSON.stringify(savedSections));
+    expect(JSON.stringify(withRecallsAsSaved(nowSections, imprint, savedSections))).toBe(JSON.stringify(savedSections));
+
+    // An edit after the recall counts again.
+    recalled.layerSequencer.pattern = { steps: [{ layers: { a: false } }] };
+    const edited = projectSettingsSections({ exported: recalled, stage3d: scene });
+    expect(JSON.stringify(withRecallsAsSaved(edited, imprint, savedSections))).not.toBe(JSON.stringify(savedSections));
+    // Other sections are never read as saved.
+    recalled.osc.bindings.push({ address: '/x' });
+    const oscEdit = projectSettingsSections({ exported: recalled, stage3d: scene });
+    expect(withRecallsAsSaved(oscEdit, imprint, savedSections).osc).not.toBe(savedSections.osc);
   });
 });
 
@@ -251,5 +305,25 @@ describe('with the real stores', () => {
     expect(get(historyModule.history).past).toHaveLength(0);
     settingsModule.settings.update((s) => ({ ...s, output: { ...s.output, slices } }));
     expect(dirty(saved)).toBe(false);
+  });
+});
+
+describe('automated stage preset recalls', () => {
+  it('are noted as recalls and are not VJ edits', async () => {
+    vi.useFakeTimers();
+    const vj = await import('./vjClipLauncher');
+    const id = layers.project.saveStagePreset('Look A');
+    const before = get(vj.vjEditVersion);
+    const seen: string[][] = [];
+    const stop = layers.automatedRecalls.subscribe(({ count, sections }) => { if (count) seen.push(sections); });
+    layers.project.loadStagePreset(id, { history: false });
+    vi.runAllTimers();
+    stop();
+    expect(get(vj.vjEditVersion)).toBe(before);
+    // A user's recall of the same preset is an edit.
+    layers.project.loadStagePreset(id);
+    expect(get(vj.vjEditVersion)).toBeGreaterThan(before);
+    vi.useRealTimers();
+    expect(seen.length).toBeLessThanOrEqual(1);
   });
 });
