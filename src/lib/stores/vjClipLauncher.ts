@@ -479,6 +479,39 @@ function blocksWithDeckGrid(
   });
 }
 
+// Put an edited copy of a deck's playing clip back into the cells of its row
+// that hold it, so the edit is saved and is there when its block is shown.
+// The shown block first (live grid and saved block). A clip still playing
+// after the user browsed to another block is written into the block(s) it
+// came from instead, and the live grid is left alone (`grid` undefined).
+// Null when no block holds it (a Performer launch): the edit stays live only.
+function placeActiveClipEdit(
+  state: VJClipLauncherState,
+  deck: VJDeck,
+  layerIndex: number,
+  clipId: string,
+  edited: VJClip,
+): { grid?: (VJClip | null)[][]; blocks: VJBlock[] } | null {
+  const withEdit = (grid: (VJClip | null)[][] | undefined) => {
+    const row = grid?.[layerIndex];
+    if (!grid || !row?.some(cell => cell?.id === clipId)) return null;
+    const next = [...grid];
+    next[layerIndex] = row.map(cell => cell?.id === clipId ? edited : cell);
+    return next;
+  };
+  const shown = withEdit(pickGrid(state, deck));
+  if (shown) return { grid: shown, blocks: blocksWithDeckGrid(state, deck, shown) };
+  let found = false;
+  const blocks = state.blocks.map(block => {
+    if (block.id === state.activeBlockId) return block;
+    const grid = withEdit(deck === 'A' ? block.clipGrid : block.bankBClipGrid);
+    if (!grid) return block;
+    found = true;
+    return deck === 'A' ? { ...block, clipGrid: grid } : { ...block, bankBClipGrid: grid };
+  });
+  return found ? { blocks } : null;
+}
+
 // ─── Quantization clock ──────────────────────────────────────────────────
 //
 // Quantized launches land on the shared launch clock (launchClock.ts), the
@@ -1737,7 +1770,6 @@ function createVJClipLauncherStore() {
     updateActiveClipShaderValue(layerIndex: number, paramName: string, value: any, deck: VJDeck = 'A') {
       update(state => {
         const targetLayerStates = pickLayerStates(state, deck);
-        const targetGrid = pickGrid(state, deck);
         const newLayerStates = [...targetLayerStates];
         const activeClip = newLayerStates[layerIndex]?.activeClip;
         if (!activeClip) return state;
@@ -1748,16 +1780,11 @@ function createVJClipLauncherStore() {
         };
         newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], activeClip: newClip };
 
-        // Also update the clip in the deck's grid if it exists there
-        const newGrid = targetGrid.map(row => [...row]);
-        for (let col = 0; col < state.numColumns; col++) {
-          const gridClip = newGrid[layerIndex]?.[col];
-          if (gridClip && gridClip.id === activeClip.id) {
-            newGrid[layerIndex][col] = newClip;
-          }
-        }
-
-        return withDeck(state, deck, newLayerStates, newGrid);
+        // Into every cell of the row that holds this clip and its saved
+        // block: the shown one, or the one it is still playing from.
+        const placed = placeActiveClipEdit(state, deck, layerIndex, activeClip.id, newClip);
+        const next = withDeck(state, deck, newLayerStates, placed?.grid);
+        return placed ? { ...next, blocks: placed.blocks } : next;
       });
       // Auto-record keyframe if track is armed (keyed per-clip so switching clips shows independent keyframes)
       const s = get({ subscribe });
@@ -1809,7 +1836,6 @@ function createVJClipLauncherStore() {
     updateActiveClipSplatContent(layerIndex: number, updates: Partial<SplatContent>, deck: VJDeck = 'A') {
       update(state => {
         const targetLayerStates = pickLayerStates(state, deck);
-        const targetGrid = pickGrid(state, deck);
         const newLayerStates = [...targetLayerStates];
         if (layerIndex < 0 || layerIndex >= newLayerStates.length) return state;
         const activeClip = newLayerStates[layerIndex]?.activeClip;
@@ -1821,15 +1847,9 @@ function createVJClipLauncherStore() {
         };
         newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], activeClip: newClip };
 
-        const newGrid = targetGrid.map(row => [...row]);
-        for (let col = 0; col < state.numColumns; col++) {
-          const gridClip = newGrid[layerIndex]?.[col];
-          if (gridClip && gridClip.id === activeClip.id) {
-            newGrid[layerIndex][col] = newClip;
-          }
-        }
-
-        return withDeck(state, deck, newLayerStates, newGrid);
+        const placed = placeActiveClipEdit(state, deck, layerIndex, activeClip.id, newClip);
+        const next = withDeck(state, deck, newLayerStates, placed?.grid);
+        return placed ? { ...next, blocks: placed.blocks } : next;
       });
     },
 
@@ -1837,7 +1857,6 @@ function createVJClipLauncherStore() {
     updateActiveClipModel3DContent(layerIndex: number, updates: Partial<Model3DContent>, deck: VJDeck = 'A') {
       update(state => {
         const targetLayerStates = pickLayerStates(state, deck);
-        const targetGrid = pickGrid(state, deck);
         const newLayerStates = [...targetLayerStates];
         if (layerIndex < 0 || layerIndex >= newLayerStates.length) return state;
         const activeClip = newLayerStates[layerIndex]?.activeClip;
@@ -1849,22 +1868,15 @@ function createVJClipLauncherStore() {
         };
         newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], activeClip: newClip };
 
-        const newGrid = targetGrid.map(row => [...row]);
-        for (let col = 0; col < state.numColumns; col++) {
-          const gridClip = newGrid[layerIndex]?.[col];
-          if (gridClip && gridClip.id === activeClip.id) {
-            newGrid[layerIndex][col] = newClip;
-          }
-        }
-
-        return withDeck(state, deck, newLayerStates, newGrid);
+        const placed = placeActiveClipEdit(state, deck, layerIndex, activeClip.id, newClip);
+        const next = withDeck(state, deck, newLayerStates, placed?.grid);
+        return placed ? { ...next, blocks: placed.blocks } : next;
       });
     },
 
     updateActiveClipGPUContent(layerIndex: number, updates: Partial<GPULayerContent>, deck: VJDeck = 'A') {
       update(state => {
         const targetLayerStates = pickLayerStates(state, deck);
-        const targetGrid = pickGrid(state, deck);
         const newLayerStates = [...targetLayerStates];
         if (layerIndex < 0 || layerIndex >= newLayerStates.length) return state;
         const activeClip = newLayerStates[layerIndex]?.activeClip;
@@ -1876,21 +1888,15 @@ function createVJClipLauncherStore() {
         };
         newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], activeClip: newClip };
 
-        const newGrid = targetGrid.map(row => [...row]);
-        for (let col = 0; col < state.numColumns; col++) {
-          const gridClip = newGrid[layerIndex]?.[col];
-          if (gridClip?.id === activeClip.id) newGrid[layerIndex][col] = newClip;
-        }
-
-        const next = withDeck(state, deck, newLayerStates, newGrid);
-        return { ...next, blocks: blocksWithDeckGrid(state, deck, newGrid) };
+        const placed = placeActiveClipEdit(state, deck, layerIndex, activeClip.id, newClip);
+        const next = withDeck(state, deck, newLayerStates, placed?.grid);
+        return placed ? { ...next, blocks: placed.blocks } : next;
       });
     },
 
     updateActiveClipTextContent(layerIndex: number, updates: Partial<TextContent>, deck: VJDeck = 'A') {
       update(state => {
         const targetLayerStates = pickLayerStates(state, deck);
-        const targetGrid = pickGrid(state, deck);
         const newLayerStates = [...targetLayerStates];
         if (layerIndex < 0 || layerIndex >= newLayerStates.length) return state;
         const activeClip = newLayerStates[layerIndex]?.activeClip;
@@ -1902,14 +1908,9 @@ function createVJClipLauncherStore() {
         };
         newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], activeClip: newClip };
 
-        const newGrid = targetGrid.map(row => [...row]);
-        for (let col = 0; col < state.numColumns; col++) {
-          const gridClip = newGrid[layerIndex]?.[col];
-          if (gridClip?.id === activeClip.id) newGrid[layerIndex][col] = newClip;
-        }
-
-        const next = withDeck(state, deck, newLayerStates, newGrid);
-        return { ...next, blocks: blocksWithDeckGrid(state, deck, newGrid) };
+        const placed = placeActiveClipEdit(state, deck, layerIndex, activeClip.id, newClip);
+        const next = withDeck(state, deck, newLayerStates, placed?.grid);
+        return placed ? { ...next, blocks: placed.blocks } : next;
       });
     },
 
@@ -1919,7 +1920,6 @@ function createVJClipLauncherStore() {
     updateActiveClipVideoProps(layerIndex: number, updates: Partial<VJVideoPlaybackProps & VJTransformProps>, deck: VJDeck = 'A') {
       update(state => {
         const targetLayerStates = pickLayerStates(state, deck);
-        const targetGrid = pickGrid(state, deck);
         const newLayerStates = [...targetLayerStates];
         if (layerIndex < 0 || layerIndex >= newLayerStates.length) return state;
         const activeClip = newLayerStates[layerIndex]?.activeClip;
@@ -1943,21 +1943,9 @@ function createVJClipLauncherStore() {
         }
         newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], activeClip: newClip };
 
-        // Mirror the change into the grid for any cells whose clip.id matches
-        // (handles the case where the same source has been triggered into
-        // multiple columns of the same row).
-        const newGrid = targetGrid.map(row => [...row]);
-        for (let col = 0; col < state.numColumns; col++) {
-          const gridClip = newGrid[layerIndex]?.[col];
-          if (gridClip && gridClip.id === activeClip.id) {
-            newGrid[layerIndex][col] = newClip;
-          }
-        }
-
-        // Persist into the active block too.
-        const newBlocks = blocksWithDeckGrid(state, deck, newGrid);
-        const next = withDeck(state, deck, newLayerStates, newGrid);
-        return { ...next, blocks: newBlocks };
+        const placed = placeActiveClipEdit(state, deck, layerIndex, activeClip.id, newClip);
+        const next = withDeck(state, deck, newLayerStates, placed?.grid);
+        return placed ? { ...next, blocks: placed.blocks } : next;
       });
     },
 
@@ -2233,19 +2221,15 @@ function createVJClipLauncherStore() {
     updateActiveClipInPlace(layerIndex: number, deck: VJDeck, mutate: (clip: VJClip) => VJClip) {
       update(state => {
         const targetLayerStates = pickLayerStates(state, deck);
-        const targetGrid = pickGrid(state, deck);
         const activeClip = targetLayerStates[layerIndex]?.activeClip;
         if (!activeClip) return state;
         const newClip = mutate(activeClip);
         if (newClip === activeClip) return state;
         const newLayerStates = [...targetLayerStates];
         newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], activeClip: newClip };
-        const newGrid = targetGrid.map(row => [...row]);
-        for (let col = 0; col < state.numColumns; col++) {
-          const gridClip = newGrid[layerIndex]?.[col];
-          if (gridClip && gridClip.id === activeClip.id) newGrid[layerIndex][col] = newClip;
-        }
-        return withDeck(state, deck, newLayerStates, newGrid);
+        const placed = placeActiveClipEdit(state, deck, layerIndex, activeClip.id, newClip);
+        const next = withDeck(state, deck, newLayerStates, placed?.grid);
+        return placed ? { ...next, blocks: placed.blocks } : next;
       });
     },
 
