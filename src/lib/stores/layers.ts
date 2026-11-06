@@ -6011,7 +6011,7 @@ void main() {
           // An Interactive scene is validated on the way in: a damaged one
           // would otherwise stop the native sync for every layer.
           effectSource: sanitizeStoredInteractive(layer.source.effectSource, noteUnreadableInteractive),
-          musicMotion: normalizeMusicMotion(layer.source.musicMotion),
+          musicMotion: layer.source.musicMotion && typeof layer.source.musicMotion === 'object' ? normalizeMusicMotion(layer.source.musicMotion) : layer.source.musicMotion,
           texture: undefined,
           videoElement: undefined,
           isPlaying: false,
