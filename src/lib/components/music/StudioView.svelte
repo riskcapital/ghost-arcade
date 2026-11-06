@@ -472,7 +472,7 @@
     user-select: none;
   }
   .set-analog { grid-template-rows: var(--ga-bar-h, 48px) auto minmax(0, 1fr) 214px; }
-  .set-machine { grid-template-rows: var(--ga-bar-h, 48px) auto minmax(0, 1fr) 318px; }
+  .set-machine { grid-template-rows: var(--ga-bar-h, 48px) auto minmax(0, 1fr) 356px; }
   .set-machine.lower-tall .b123 { display: none; }
   /* The side racks run from the bar down; this row only spans the output column. */
   .subbar {
