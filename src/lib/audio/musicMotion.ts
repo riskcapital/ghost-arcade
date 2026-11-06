@@ -301,3 +301,62 @@ export function withMusicTime(shaderCode: string): string {
     .join('\n');
   return `${shaderCode.slice(0, open)}/*${JSON.stringify(header, null, 2)}*/${body}`;
 }
+
+// ── Shaders made for Music motion ───────────────────────────────────────
+
+/**
+ * Inputs a shader made for Music motion reads directly, each fed every frame
+ * (all smooth, none steps):
+ *  - mmFlow: its own time, seconds, running faster and slower with the music;
+ *  - mmSwell: the music's energy, 0-1, rising quickly and falling slowly;
+ *  - mmPulse: a hit, 0-1, jumping on each beat and dying away;
+ *  - mmMorph: a count of hits, gliding from one whole number to the next.
+ * A shader with any of them is "ready": it gets these instead of the wrapper
+ * (its TIME and sliders are left alone).
+ */
+export const MUSIC_MOTION_INPUTS = ['mmFlow', 'mmSwell', 'mmPulse', 'mmMorph'] as const;
+
+export function isMusicMotionReady(inputs: ReadonlyArray<{ NAME?: string }> | null | undefined): boolean {
+  return !!inputs?.some((i) => (MUSIC_MOTION_INPUTS as readonly string[]).includes(i?.NAME ?? ''));
+}
+
+/** Ready-made inputs from shader code (header only), for library badges. */
+export function shaderIsMusicMotionReady(code: string | null | undefined): boolean {
+  if (!code) return false;
+  const close = code.indexOf('*/');
+  const header = close > 0 ? code.slice(0, close) : code.slice(0, 4000);
+  return MUSIC_MOTION_INPUTS.some((n) => header.includes(`"${n}"`));
+}
+
+/**
+ * Hits from the audio follower's fast and slow bass and its highs: a rise
+ * well above the recent run of rises is a hit. Adaptive, so it finds the
+ * beat at any input gain.
+ */
+export interface OnsetState {
+  prevBass: number;
+  prevHigh: number;
+  mean: number;
+  dev: number;
+  since: number;
+}
+
+export function freshOnsets(): OnsetState {
+  return { prevBass: 0, prevHigh: 0, mean: 0, dev: 0.02, since: 1 };
+}
+
+/** Returns a hit's strength 0-1 when this frame is a hit, else 0. */
+export function detectOnset(o: OnsetState, bassFast: number, high: number, dt: number): number {
+  const flux = Math.max(0, bassFast - o.prevBass) + 0.5 * Math.max(0, high - o.prevHigh);
+  o.prevBass = bassFast;
+  o.prevHigh = high;
+  o.since += dt;
+  const k = 1 - Math.exp(-dt / 1.2);
+  const threshold = o.mean + 2.2 * o.dev + 0.004;
+  const hit = flux > threshold && o.since > 0.11;
+  o.mean += (flux - o.mean) * k;
+  o.dev += (Math.abs(flux - o.mean) - o.dev) * k;
+  if (!hit) return 0;
+  o.since = 0;
+  return Math.max(0.35, Math.min(1, (flux - o.mean) / (6 * o.dev + 1e-4)));
+}

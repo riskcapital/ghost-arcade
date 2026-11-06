@@ -16,6 +16,10 @@ import {
   stepMusicClock,
   surge,
   withMusicTime,
+  isMusicMotionReady,
+  shaderIsMusicMotionReady,
+  detectOnset,
+  freshOnsets,
   type MusicClock,
 } from './musicMotion';
 import type { ISFInputDef } from '../types';
@@ -226,5 +230,36 @@ void main() { float t = TIME * speed; gl_FragColor = vec4(sin(t)); }`;
   it('leaves code it cannot read alone', () => {
     expect(withMusicTime('void main() {}')).toBe('void main() {}');
     expect(withMusicTime('/* not json */ void main() {}')).toBe('/* not json */ void main() {}');
+  });
+});
+
+describe('shaders made for Music motion', () => {
+  it('knows them by their inputs', () => {
+    expect(isMusicMotionReady([{ NAME: 'speed' }, { NAME: 'mmFlow' }])).toBe(true);
+    expect(isMusicMotionReady([{ NAME: 'speed' }])).toBe(false);
+    expect(shaderIsMusicMotionReady('/*{"INPUTS":[{"NAME":"mmPulse","TYPE":"float"}]}*/ void main(){}')).toBe(true);
+    expect(shaderIsMusicMotionReady('/*{"INPUTS":[]}*/ void main(){ float mmPulse; }')).toBe(false);
+  });
+});
+
+describe('beat finding', () => {
+  it('finds each kick of a steady beat at a low and a high input gain, and nothing in a steady hum', () => {
+    for (const gain of [0.15, 1]) {
+      const o = freshOnsets();
+      let hits = 0;
+      for (let i = 0; i < 600; i++) {
+        const t = i * DT;
+        const beat = t % 0.5;
+        const bass = gain * (0.2 + 0.8 * Math.exp(-beat * 10));
+        if (detectOnset(o, bass, 0.1 * gain, DT) > 0 && t > 1) hits++;
+      }
+      // 9 seconds at 120 BPM after the first second.
+      expect(hits, `gain ${gain}`).toBeGreaterThanOrEqual(16);
+      expect(hits, `gain ${gain}`).toBeLessThanOrEqual(19);
+    }
+    const o = freshOnsets();
+    let hum = 0;
+    for (let i = 0; i < 600; i++) if (detectOnset(o, 0.5 + 0.01 * Math.sin(i / 3), 0.1, DT) > 0 && i > 60) hum++;
+    expect(hum).toBe(0);
   });
 });

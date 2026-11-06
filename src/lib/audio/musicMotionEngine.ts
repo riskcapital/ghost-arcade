@@ -33,6 +33,9 @@ import {
   smoothSignals,
   stepMusicClock,
   surge,
+  detectOnset,
+  freshOnsets,
+  isMusicMotionReady,
   type MusicClock,
   type MusicMotionSettings,
 } from './musicMotion';
@@ -44,6 +47,10 @@ interface ParamState {
 
 interface Target {
   clock: MusicClock;
+  /** A ready shader's own music time (mmFlow), seconds. */
+  flow: number;
+  /** The music inputs a ready shader is fed; when it stops they go back to "not driven". */
+  ready?: string[];
   params: Map<string, ParamState>;
   seen: boolean;
 }
@@ -56,9 +63,7 @@ let audioActive = false;
 /** `map:<layer index>:<param>` and `<A|B>:<layer index>:<param>` driven this frame. */
 const owned = new Set<string>();
 const inputCache = new Map<string, ISFInputDef[]>();
-let prevKick = 0;
-let prevSnare = 0;
-let prevBeat = 0;
+const onsets = freshOnsets();
 let rafId: number | null = null;
 let lastTime = 0;
 
@@ -104,19 +109,13 @@ function inputsFor(code: string | undefined, known?: ISFInputDef[]): ISFInputDef
   return inputs;
 }
 
-/** Hits from the follower's kick, snare and beat signals: a sharp rise is a hit. */
-function readAudio(): number {
+/** The show's audio this frame: hits found in it go into the signals; returns the level. */
+function readAudio(dt: number): number {
   const a = getVisualAudioSnapshot();
   audioActive = !!a.isActive;
-  if (!a.isActive) {
-    prevKick = prevSnare = prevBeat = 0;
-    return 0;
-  }
-  const rise = Math.max(a.kick - prevKick, a.snare - prevSnare, a.beat - prevBeat);
-  prevKick = a.kick;
-  prevSnare = a.snare;
-  prevBeat = a.beat;
-  if (rise > 0.25) surge(signals, Math.min(1, 0.4 + rise));
+  if (!a.isActive) return 0;
+  const hit = detectOnset(onsets, a.bassFast, a.high, dt);
+  if (hit > 0) surge(signals, hit);
   return Math.max(0, Math.min(1, Math.max(a.level, a.energy)));
 }
 
@@ -134,12 +133,25 @@ function driveTarget(
 ): Record<string, number> {
   let t = targets.get(key);
   if (!t) {
-    t = { clock: { offset: 0, rate: 1 }, params: new Map(), seen: true };
+    t = { clock: { offset: 0, rate: 1 }, params: new Map(), seen: true, flow: 0 };
     targets.set(key, t);
   }
   t.seen = true;
   const amount = settings.amount;
   stepMusicClock(t.clock, musicTimeRate(signals, amount, audioActive), dt);
+  if (isMusicMotionReady(inputs)) {
+    // Made for Music motion: it reads the music itself, smooth every frame. Amount scales how much.
+    t.flow = (t.flow + Math.max(0, t.clock.rate) * Math.min(dt, 0.25)) % 3600;
+    const has = (n: string) => inputs.some((i) => i.NAME === n);
+    const ready: Record<string, number> = {};
+    if (has('mmFlow')) ready.mmFlow = t.flow;
+    if (has('mmSwell')) ready.mmSwell = Math.max(0, Math.min(1, signals.swell * amount * 1.25));
+    if (has('mmPulse')) ready.mmPulse = Math.max(0, Math.min(1, signals.pulse * amount * 1.25));
+    if (has('mmMorph')) ready.mmMorph = signals.morph % 1000;
+    for (const n of Object.keys(ready)) owned.add(`${ownKey}:${n}`);
+    t.ready = Object.keys(ready);
+    return ready;
+  }
   clocks.set(sourceId, { offset: t.clock.offset, rate: t.clock.rate, at: now });
 
   const writes: Record<string, number> = {};
@@ -185,6 +197,8 @@ function releaseTargets(restore: (key: string, values: Record<string, number>) =
     }
     const values: Record<string, number> = {};
     for (const [name, ps] of t.params) values[name] = ps.base;
+    // Not driven any more: mmFlow -1 hands the shader back its own TIME; the signals rest at 0.
+    for (const name of t.ready ?? []) values[name] = name === 'mmFlow' ? -1 : 0;
     if (Object.keys(values).length) restore(key, values);
     targets.delete(key);
   }
@@ -195,7 +209,7 @@ function step(now: number): void {
   lastTime = now;
   if (!(dt > 0) || !Number.isFinite(dt)) return;
   const frameDt = Math.min(dt, 0.25);
-  const env = readAudio();
+  const env = readAudio(frameDt);
   smoothSignals(signals, env, frameDt);
 
   clocks.clear();

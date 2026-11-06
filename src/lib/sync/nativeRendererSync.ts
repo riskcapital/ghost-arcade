@@ -77,7 +77,7 @@ import {
   nativeJsCanvasUri,
 } from '$lib/renderer/nativeJsCanvasHosts';
 import { resolveAssetRefForRuntime } from '$lib/storage/assetRegistry';
-import { withMusicTime, musicTimePhase, MUSIC_TIME_PHASE_INPUT, MUSIC_TIME_RATE_INPUT } from '$lib/audio/musicMotion';
+import { shaderIsMusicMotionReady, withMusicTime, musicTimePhase, MUSIC_TIME_PHASE_INPUT, MUSIC_TIME_RATE_INPUT } from '$lib/audio/musicMotion';
 import { getMusicTimeOffset, getMusicTimeRate, hasMusicTime } from '$lib/audio/musicMotionEngine';
 import {
   receiveSpoutTextureInfo,
@@ -978,7 +978,8 @@ const musicTimeCodeCache = new Map<string, string>();
  */
 function nativeShaderCode(s: Pick<NonNullable<Layer['source']>, 'shaderCode' | 'musicMotion' | 'type'>): string | undefined {
   const code = s.shaderCode;
-  if (!code || !s.musicMotion?.on || s.type !== 'shader') return code;
+  // A shader made for Music motion keeps its own TIME: it reads the music through its inputs.
+  if (!code || !s.musicMotion?.on || s.type !== 'shader' || shaderIsMusicMotionReady(code)) return code;
   let out = musicTimeCodeCache.get(code);
   if (out === undefined) {
     out = withMusicTime(code);
@@ -10601,7 +10602,7 @@ export class NativeRendererSync {
           const offset = Math.max(-shaderTime, getMusicTimeOffset(src2.id));
           floatInputs[MUSIC_TIME_RATE_INPUT] = rate;
           floatInputs[MUSIC_TIME_PHASE_INPUT] = musicTimePhase(shaderTime, offset, rate);
-        } else if (src2.musicMotion?.on) {
+        } else if (src2.musicMotion?.on && !shaderIsMusicMotionReady(src2.shaderCode)) {
           floatInputs[MUSIC_TIME_RATE_INPUT] = 1;
           floatInputs[MUSIC_TIME_PHASE_INPUT] = 0;
         }
