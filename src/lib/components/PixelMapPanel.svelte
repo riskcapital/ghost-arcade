@@ -143,7 +143,10 @@
       updateFixture({ type, mapping: { ...fixtureMappingConfig(selected), mode: 'custom', points } });
       return;
     }
-    updateFixture({ type, mapping: { ...fixtureMappingConfig(selected), mode: type } });
+    // Drop custom points: a strip or matrix does not use them, and keeping
+    // thousands of them makes every save and copy of the project pay for them.
+    const { points: _unused, ...layout } = fixtureMappingConfig(selected);
+    updateFixture({ type, mapping: { ...layout, mode: type } });
   }
 
   function makeCustomFromCurrent() {
