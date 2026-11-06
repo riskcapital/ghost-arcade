@@ -28,6 +28,7 @@ import {
   flushPendingHistorySnapshot,
   beginHistoryRestore,
   endHistoryRestore,
+  noteLiveChange,
 } from './historyHooks';
 
 interface CapturedHistoryState {
@@ -79,7 +80,7 @@ export function wireAppHistory() {
     },
     amendTo: (captured) => {
       const state = captured as CapturedHistoryState;
-      history.amend(state.project, state.keyframes, state.output);
+      history.amend(state.project, state.keyframes, state.output, { live: true });
     },
   });
   // Opening a project (any path: File, Open Recent, recovery, relink,
@@ -129,7 +130,12 @@ function moveHistory(direction: 'undo' | 'redo'): boolean {
   const step = direction === 'undo'
     ? history.undo(live.project, live.keyframes, live.output)
     : history.redo(live.project, live.keyframes, live.output);
-  if (step) applyHistorySnapshot(step);
+  if (step) {
+    applyHistorySnapshot(step);
+    // Live changes the move kept go into the step it moved to when the
+    // next edit begins.
+    noteLiveChange();
+  }
   history.unsuppress();
   return !!step;
 }
