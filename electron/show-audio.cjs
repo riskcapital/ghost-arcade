@@ -117,7 +117,7 @@ function runFfmpeg(spawn, ffmpegPath, args) {
 /**
  * Registers the two IPC handlers. Every path the renderer names must be one
  * it may read (picked, dropped or in a project), and the video must be a
- * rendered .mp4 / .mov that exists.
+ * rendered .mp4 / .mov that exists and that it may write (it is replaced).
  */
 function registerShowAudioIpc({ ipcMain, spawn, fs, path, ffmpegPath, pathGrants, convertDir, audioCodecArgs }) {
   ipcMain.handle('show_audio_prepare', async (_event, args = {}) => {
@@ -149,8 +149,9 @@ function registerShowAudioIpc({ ipcMain, spawn, fs, path, ffmpegPath, pathGrants
 
   ipcMain.handle('show_audio_mux', async (_event, args = {}) => {
     const videoPath = typeof args.videoPath === 'string' ? args.videoPath : '';
-    // Renders land in the app's own asset folder, which the grants cover.
-    if (!videoPath || !path.isAbsolute(videoPath) || !/\.(mp4|mov)$/i.test(videoPath) || !pathGrants.canRead(videoPath) || !fs.existsSync(videoPath)) {
+    // The file is replaced, so it has to be writable, not just readable:
+    // renders land in the encoder's own temp folder, which the grants cover.
+    if (!videoPath || !path.isAbsolute(videoPath) || !/\.(mp4|mov)$/i.test(videoPath) || !pathGrants.canWrite(videoPath) || !fs.existsSync(videoPath)) {
       return { success: false, error: 'Rendered video not found.' };
     }
     const tracks = (Array.isArray(args.tracks) ? args.tracks : [])

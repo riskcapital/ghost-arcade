@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const require = createRequire(import.meta.url);
-const { buildShowAudioConvertArgs, buildShowAudioMuxArgs, convertedAudioPath } = require('../../../electron/show-audio.cjs');
+const { buildShowAudioConvertArgs, buildShowAudioMuxArgs, convertedAudioPath, registerShowAudioIpc } = require('../../../electron/show-audio.cjs');
 
 function bundledFfmpeg(): string | null {
   try {
@@ -143,5 +143,40 @@ describe.runIf(bundledFfmpeg() !== null)('with the bundled ffmpeg', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('show_audio_mux permissions', () => {
+  function register(grants: { canRead: (p: string) => boolean; canWrite: (p: string) => boolean }) {
+    const handlers = new Map<string, (event: unknown, args: unknown) => Promise<{ success: boolean; error?: string }>>();
+    let spawned = 0;
+    registerShowAudioIpc({
+      ipcMain: { handle: (name: string, fn: (event: unknown, args: unknown) => Promise<{ success: boolean }>) => handlers.set(name, fn) },
+      spawn: () => { spawned++; throw new Error('not in this test'); },
+      fs: { existsSync: () => true, rmSync: () => {} },
+      path,
+      ffmpegPath: () => 'ffmpeg',
+      pathGrants: { allowRead: () => true, ...grants },
+      convertDir: path.join(tmpdir(), 'unused'),
+      audioCodecArgs: () => ['-c:a', 'aac'],
+    });
+    return { mux: handlers.get('show_audio_mux')!, spawned: () => spawned };
+  }
+  const video = path.resolve('/renders/show.mp4');
+  const song = path.resolve('/music/song.wav');
+
+  it('will not replace a video it may only read', async () => {
+    const ipc = register({ canRead: () => true, canWrite: () => false });
+    const result = await ipc.mux(null, { videoPath: video, tracks: [{ path: song, duration: 2 }], showDuration: 2, renderDuration: 2 });
+    expect(result.success).toBe(false);
+    expect(ipc.spawned()).toBe(0);
+  });
+
+  it('mixes into a video it may write', async () => {
+    const ipc = register({ canRead: () => true, canWrite: (p) => p === video });
+    const result = await ipc.mux(null, { videoPath: video, tracks: [{ path: song, duration: 2 }], showDuration: 2, renderDuration: 2 });
+    // Reaches ffmpeg (the stub throws), so the permission check passed.
+    expect(ipc.spawned()).toBe(1);
+    expect(result.success).toBe(false);
   });
 });
