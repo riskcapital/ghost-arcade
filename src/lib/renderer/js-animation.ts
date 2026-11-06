@@ -395,6 +395,9 @@ function iframeStyle(sandboxed: boolean, width: number, height: number): string 
 
 function prepareIframe(iframe: HTMLIFrameElement, sandboxed: boolean, width: number, height: number): void {
   iframe.style.cssText = iframeStyle(sandboxed, width, height);
+  // A picture source, never part of the interface: no focus, nothing to read out.
+  iframe.setAttribute('aria-hidden', 'true');
+  iframe.setAttribute('tabindex', '-1');
   if (sandboxed) {
     // Scripts only: no same origin, no popups, no navigating the app.
     iframe.setAttribute('sandbox', 'allow-scripts');
