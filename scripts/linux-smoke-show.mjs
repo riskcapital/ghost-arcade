@@ -46,7 +46,7 @@ export const stepRecording = {
     // Stopping a take otherwise opens the OS save dialog, which input cannot reach.
     await c.clickElement(el.byTitle('Settings'));
     await c.clickElement(el.button('Recording'));
-    const row = "[...document.querySelectorAll('.setting-row')].find(r=>r.querySelector('.label-text')?.textContent.trim()==='Auto-Download')";
+    const row = "[...document.querySelectorAll('.setting-row')].find(r=>/^auto-download$/i.test(r.querySelector('.label-text')?.textContent.trim() ?? ''))";
     if (await c.eval(`${row}.querySelector('input').checked`)) await c.clickElement(`${row}.querySelector('.toggle')`);
     t.check('Auto-Download switched off in Settings', (await c.eval(`${row}.querySelector('input').checked`)) === false);
     await c.clickElement(el.button('Done'));
@@ -115,7 +115,7 @@ export const stepVj = {
   id: 'g', title: 'VJ mode: launch clips, crossfade, play a clip with sound',
   async run(t) {
     const { c } = t;
-    await c.clickElement(el.byTitle('Open VJ Mixer'));
+    await c.clickElement(el.byTitle('Switch to VJ'));
     await c.waitFor("document.querySelectorAll('.clip-cell').length>0 && document.querySelectorAll('.media-item').length>3", 60000, 'VJ grid and media library');
     await c.clickElement(trayItem('TestBars'));
     await c.waitFor(`!!(${clipCell('TestBars')})`, 15000, 'TestBars clip in the grid');

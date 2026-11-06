@@ -21,7 +21,7 @@ export const stepClipAudio = {
     execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000',
       '-t', '6', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', clip], { timeout: 120000 });
     if (!(await c.exists("document.querySelector('.clip-cell')"))) {
-      await c.clickElement(el.byTitle('Open VJ Mixer'));
+      await c.clickElement(el.byTitle('Switch to VJ'));
       await c.waitFor("document.querySelectorAll('.clip-cell').length>0", 60000, 'VJ grid');
     }
     const before = corePids(t);
