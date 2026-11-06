@@ -25,14 +25,15 @@ import { getVisualAudioSnapshot } from './visualAudio';
 import { parseISF } from '../isf/parser';
 import type { ISFInputDef } from '../types';
 import {
-  advanceFlowOffset,
   drivenParamValue,
   freshSmoothSignals,
   musicMotionParams,
   musicMotionRole,
   musicTimeRate,
   smoothSignals,
+  stepMusicClock,
   surge,
+  type MusicClock,
   type MusicMotionSettings,
 } from './musicMotion';
 
@@ -42,15 +43,16 @@ interface ParamState {
 }
 
 interface Target {
-  offset: number;
+  clock: MusicClock;
   params: Map<string, ParamState>;
   seen: boolean;
 }
 
 const signals = freshSmoothSignals();
 const targets = new Map<string, Target>();
-/** Source ids whose time runs on the music clock this frame. */
-const timeOffsets = new Map<string, number>();
+/** Source ids whose time runs on the music clock this frame: the clock, and when (ms) it was read. */
+const clocks = new Map<string, { offset: number; rate: number; at: number }>();
+let audioActive = false;
 /** `map:<layer index>:<param>` and `<A|B>:<layer index>:<param>` driven this frame. */
 const owned = new Set<string>();
 const inputCache = new Map<string, ISFInputDef[]>();
@@ -60,14 +62,25 @@ let prevBeat = 0;
 let rafId: number | null = null;
 let lastTime = 0;
 
-/** The flow clock offset (seconds) to add to this shader source's TIME, or 0. */
-export function getMusicTimeOffset(sourceId: string | undefined): number {
-  return sourceId ? timeOffsets.get(sourceId) ?? 0 : 0;
+/**
+ * The music clock's offset (seconds) to add to this shader source's TIME at
+ * `now` (ms), or 0. Read between frames it runs on at the clock's speed, so a
+ * renderer drawing between the engine's steps never sees it hold or jump.
+ */
+export function getMusicTimeOffset(sourceId: string | undefined, now = performance.now()): number {
+  const c = sourceId ? clocks.get(sourceId) : undefined;
+  if (!c) return 0;
+  return c.offset + (c.rate - 1) * Math.max(0, Math.min(0.25, (now - c.at) / 1000));
+}
+
+/** How fast this source's music clock runs now (1 = normal time). */
+export function getMusicTimeRate(sourceId: string | undefined): number {
+  return (sourceId && clocks.get(sourceId)?.rate) || 1;
 }
 
 /** True when Music motion is running on this source's time. */
 export function hasMusicTime(sourceId: string | undefined): boolean {
-  return !!sourceId && timeOffsets.has(sourceId);
+  return !!sourceId && clocks.has(sourceId);
 }
 
 /** True when Music motion drives this shader param, so audio modulation leaves it alone. */
@@ -94,6 +107,7 @@ function inputsFor(code: string | undefined, known?: ISFInputDef[]): ISFInputDef
 /** Hits from the follower's kick, snare and beat signals: a sharp rise is a hit. */
 function readAudio(): number {
   const a = getVisualAudioSnapshot();
+  audioActive = !!a.isActive;
   if (!a.isActive) {
     prevKick = prevSnare = prevBeat = 0;
     return 0;
@@ -116,16 +130,17 @@ function driveTarget(
   autoParams: Record<string, { playing?: boolean } | undefined> | undefined,
   dt: number,
   ownKey: string,
+  now: number,
 ): Record<string, number> {
   let t = targets.get(key);
   if (!t) {
-    t = { offset: 0, params: new Map(), seen: true };
+    t = { clock: { offset: 0, rate: 1 }, params: new Map(), seen: true };
     targets.set(key, t);
   }
   t.seen = true;
   const amount = settings.amount;
-  t.offset = advanceFlowOffset(t.offset, musicTimeRate(signals.swell, signals.pulse, amount), dt);
-  timeOffsets.set(sourceId, t.offset);
+  stepMusicClock(t.clock, musicTimeRate(signals, amount, audioActive), dt);
+  clocks.set(sourceId, { offset: t.clock.offset, rate: t.clock.rate, at: now });
 
   const writes: Record<string, number> = {};
   const names = musicMotionParams(settings, inputs).filter((n) => !autoParams?.[n]?.playing);
@@ -183,7 +198,7 @@ function step(now: number): void {
   const env = readAudio();
   smoothSignals(signals, env, frameDt);
 
-  timeOffsets.clear();
+  clocks.clear();
   owned.clear();
   for (const t of targets.values()) t.seen = false;
 
@@ -201,6 +216,7 @@ function step(now: number): void {
       src.shaderValueAuto,
       frameDt,
       `map:${index}`,
+      now,
     );
     if (Object.keys(writes).length && src.shaderValues) project.batchUpdateLayerShaderValues(layer.id, writes);
   });
@@ -224,6 +240,7 @@ function step(now: number): void {
         clip.shaderValueAuto,
         frameDt,
         `${bank}:${index}`,
+        now,
       );
       if (Object.keys(writes).length) vjClipLauncher.batchUpdateShaderValues(index, writes, bank);
     });

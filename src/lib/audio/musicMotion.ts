@@ -127,32 +127,60 @@ export function normalizeMusicMotion(raw: unknown): MusicMotionSettings | undefi
 }
 
 /** The slowest the music clock runs, as a share of normal time: it never stops. */
-export const MIN_TIME_RATE = 0.1;
-export const MAX_TIME_RATE = 4;
+export const MIN_TIME_RATE = 0.5;
+export const MAX_TIME_RATE = 2;
 
 /**
  * How fast a shader's time runs: 1 at Amount 0; at full Amount about a third
  * in quiet passages and up to about three times when the music is loud and busy.
  */
-export function musicTimeRate(swell: number, pulse: number, amount: number): number {
+/**
+ * How fast a shader's time runs: 1 at Amount 0, and with no music. Against
+ * the music's own usual level, so ordinary playing runs at about 1x whatever
+ * the input gain; busier and louder up to 2x, quiet passages down to 0.5x.
+ */
+export function musicTimeRate(state: Pick<SmoothSignalState, 'att' | 'usual' | 'pulse'>, amount: number, active = true): number {
+  if (!active) return 1;
   const a = Math.max(0, Math.min(1, amount));
-  const music = 0.35 + 1.6 * Math.max(0, swell) + 1.0 * Math.max(0, Math.min(1, pulse));
+  const ratio = (Math.max(0, state.att) + LEVEL_FLOOR) / (Math.max(0, state.usual) + LEVEL_FLOOR);
+  const music = Math.pow(Math.max(0.25, Math.min(4, ratio)), 0.8) + 0.45 * (Math.max(0, Math.min(1, state.pulse)) - 0.25);
   const rate = 1 + a * (music - 1);
   return Math.max(MIN_TIME_RATE, Math.min(MAX_TIME_RATE, rate));
 }
 
+/** How quickly the clock's speed follows the music, in seconds (up, down): changes of speed glide, never step. */
+export const RATE_RISE = 0.25;
+export const RATE_FALL = 0.6;
+
 /**
- * The flow clock as an offset from the renderer's own time: the shader sees
- * TIME + offset, which then runs at `rate`. Since rate > 0 the shader's time
- * only ever moves forward.
+ * The music clock of one shader: the speed it runs at (gliding toward the
+ * music's), and how far it has drifted from the renderer's own time. The
+ * shader sees TIME + offset, which runs at `rate`; since rate > 0 it only
+ * ever moves forward.
  */
-export function advanceFlowOffset(offset: number, rate: number, dt: number): number {
-  if (!(dt > 0) || !Number.isFinite(dt)) return offset;
-  const next = offset + (Math.max(MIN_TIME_RATE, rate) - 1) * Math.min(dt, 0.25);
-  // Keep the offset bounded (a long quiet set would otherwise drift far below
-  // zero); the jump of a whole wrap is a shader's ordinary TIME range, and
-  // happens at most once every few hours.
-  return next < -1e5 ? next + 1e5 : next > 1e5 ? next - 1e5 : next;
+export interface MusicClock {
+  offset: number;
+  rate: number;
+}
+
+export function stepMusicClock(clock: MusicClock, targetRate: number, dt: number): void {
+  if (!(dt > 0) || !Number.isFinite(dt)) return;
+  const step = Math.min(dt, 0.25);
+  clock.rate = attackRelease(clock.rate, targetRate, step, RATE_RISE, RATE_FALL);
+  clock.offset += (Math.max(MIN_TIME_RATE, clock.rate) - 1) * step;
+  // Bounded; a whole wrap is an ordinary shader TIME range and happens at most every few hours.
+  if (clock.offset < -1e5) clock.offset += 1e5;
+  else if (clock.offset > 1e5) clock.offset -= 1e5;
+}
+
+/**
+ * For a renderer that keeps its own TIME between updates (the native core):
+ * the phase that makes TIME * rate + phase equal the music clock at the
+ * renderer's time `time`. Between updates the renderer runs the clock at
+ * `rate` itself, so it glides rather than holding and catching up.
+ */
+export function musicTimePhase(time: number, offset: number, rate: number): number {
+  return time + offset - time * rate;
 }
 
 /** The parts of a shader input Music motion looks at. */
@@ -236,12 +264,13 @@ export function drivenParamValue(base: number, min: number, max: number, role: M
   return Math.max(lo, Math.min(hi, value));
 }
 
-/** The ISF input that carries the flow clock offset on renderers that own TIME. */
-export const MUSIC_TIME_INPUT = 'gaMusicTimeOffset';
+/** The ISF inputs that carry the music clock to renderers that own TIME: its speed and its phase. */
+export const MUSIC_TIME_RATE_INPUT = 'gaMusicTimeRate';
+export const MUSIC_TIME_PHASE_INPUT = 'gaMusicTimePhase';
 
 /**
  * A copy of an ISF shader whose time runs on the music clock: it gains a float
- * input `gaMusicTimeOffset`, and TIME in its code reads TIME + that offset.
+ * rate and phase inputs, and TIME in its code reads TIME * rate + phase.
  * Returns the code unchanged when it cannot be rewritten safely.
  */
 export function withMusicTime(shaderCode: string): string {
@@ -256,12 +285,19 @@ export function withMusicTime(shaderCode: string): string {
   }
   if (!header || typeof header !== 'object') return shaderCode;
   const inputs = Array.isArray(header.INPUTS) ? header.INPUTS : [];
-  if (inputs.some((i: any) => i?.NAME === MUSIC_TIME_INPUT)) return shaderCode;
-  header = { ...header, INPUTS: [...inputs, { NAME: MUSIC_TIME_INPUT, TYPE: 'float', DEFAULT: 0, MIN: -1e6, MAX: 1e6 }] };
+  if (inputs.some((i: any) => i?.NAME === MUSIC_TIME_RATE_INPUT)) return shaderCode;
+  header = {
+    ...header,
+    INPUTS: [
+      ...inputs,
+      { NAME: MUSIC_TIME_RATE_INPUT, TYPE: 'float', DEFAULT: 1, MIN: 0, MAX: 10 },
+      { NAME: MUSIC_TIME_PHASE_INPUT, TYPE: 'float', DEFAULT: 0, MIN: -1e7, MAX: 1e7 },
+    ],
+  };
   const body = shaderCode
     .slice(close + 2)
     .split('\n')
-    .map((line) => (/^\s*uniform\s+\w+\s+TIME\b/.test(line) ? line : line.replace(/\bTIME\b/g, `(TIME + ${MUSIC_TIME_INPUT})`)))
+    .map((line) => (/^\s*uniform\s+\w+\s+TIME\b/.test(line) ? line : line.replace(/\bTIME\b/g, `(TIME * ${MUSIC_TIME_RATE_INPUT} + ${MUSIC_TIME_PHASE_INPUT})`)))
     .join('\n');
   return `${shaderCode.slice(0, open)}/*${JSON.stringify(header, null, 2)}*/${body}`;
 }

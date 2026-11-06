@@ -1,61 +1,95 @@
 import { describe, expect, it } from 'vitest';
 import {
-  advanceFlowOffset,
   attackRelease,
   drivenParamValue,
   freshSmoothSignals,
   musicMotionParams,
+  musicTimePhase,
   musicTimeRate,
+  MAX_TIME_RATE,
   MIN_TIME_RATE,
-  MUSIC_TIME_INPUT,
+  MUSIC_TIME_PHASE_INPUT,
+  MUSIC_TIME_RATE_INPUT,
   normalizeMusicMotion,
   pickMusicMotionParams,
   smoothSignals,
+  stepMusicClock,
   surge,
   withMusicTime,
+  type MusicClock,
 } from './musicMotion';
 import type { ISFInputDef } from '../types';
 
 const DT = 1 / 60;
 
-/** Shader time over `seconds` with the swell held at `swell`. */
-function flowTimeAfter(swell: number, seconds: number, amount = 1): number {
-  let offset = 0;
-  let t = 0;
-  for (let i = 0; i < seconds / DT; i++) {
-    offset = advanceFlowOffset(offset, musicTimeRate(swell, 0, amount), DT);
-    t += DT;
+/** Play `seconds` of music: a level (with a hit each beat at 120 BPM when `beats`). Returns the clock and the signals. */
+function play(clock: MusicClock, s: ReturnType<typeof freshSmoothSignals>, seconds: number, level: number, beats = true, amount = 1) {
+  const rates: number[] = [];
+  for (let i = 0; i < Math.round(seconds / DT); i++) {
+    if (beats && i % 30 === 0) surge(s, 0.9);
+    smoothSignals(s, level, DT);
+    stepMusicClock(clock, musicTimeRate(s, amount, true), DT);
+    rates.push(clock.rate);
   }
-  return t + offset;
+  return rates;
 }
 
-describe('flow clock', () => {
-  it('only moves forward, and never stops dead', () => {
-    let offset = 0;
-    let prev = -Infinity;
-    const s = freshSmoothSignals();
-    for (let i = 0; i < 600; i++) {
-      const env = i % 120 < 30 ? 1 : 0;
-      if (i % 30 === 0) surge(s, 1);
-      smoothSignals(s, env, DT);
-      offset = advanceFlowOffset(offset, musicTimeRate(s.swell, s.pulse, 1), DT);
-      const time = (i + 1) * DT + offset;
-      expect(time - prev).toBeGreaterThan(DT * MIN_TIME_RATE * 0.99);
-      prev = time;
+describe('music clock', () => {
+  it('runs at about normal speed while the music plays at its usual level, whatever the input gain', () => {
+    for (const level of [0.08, 0.3, 0.9]) {
+      const s = freshSmoothSignals();
+      const clock = { offset: 0, rate: 1 };
+      const rates = play(clock, s, 20, level);
+      const last = rates.slice(-120);
+      const mean = last.reduce((a, b) => a + b, 0) / last.length;
+      expect(mean, `level ${level}`).toBeGreaterThan(0.85);
+      expect(mean, `level ${level}`).toBeLessThan(1.25);
     }
   });
 
-  it('runs faster when the music is louder', () => {
-    const quiet = flowTimeAfter(0, 4);
-    const loud = flowTimeAfter(1, 4);
-    expect(loud).toBeGreaterThan(quiet * 3);
-    expect(quiet).toBeLessThan(4);
-    expect(loud).toBeGreaterThan(4);
+  it('speeds up when the music gets louder and busier, and eases down when it gets quiet', () => {
+    const s = freshSmoothSignals();
+    const clock = { offset: 0, rate: 1 };
+    play(clock, s, 15, 0.3);
+    const lift = play(clock, s, 2, 0.9);
+    expect(Math.max(...lift)).toBeGreaterThan(1.4);
+    expect(Math.max(...lift)).toBeLessThanOrEqual(MAX_TIME_RATE);
+    play(clock, s, 15, 0.3);
+    const drop = play(clock, s, 2, 0.05, false);
+    expect(Math.min(...drop)).toBeLessThan(0.8);
+    expect(Math.min(...drop)).toBeGreaterThanOrEqual(MIN_TIME_RATE);
   });
 
-  it('keeps normal time at Amount 0', () => {
-    expect(flowTimeAfter(1, 2, 0)).toBeCloseTo(2, 6);
-    expect(musicTimeRate(0, 0, 0)).toBe(1);
+  it('never crawls, never stops, never jumps', () => {
+    const s = freshSmoothSignals();
+    const clock = { offset: 0, rate: 1 };
+    let prevRate = clock.rate;
+    for (let i = 0; i < 1200; i++) {
+      const level = i % 240 < 60 ? 1 : 0.02;
+      if (i % 30 === 0) surge(s, 1);
+      smoothSignals(s, level, DT);
+      stepMusicClock(clock, musicTimeRate(s, 1, true), DT);
+      expect(clock.rate).toBeGreaterThanOrEqual(MIN_TIME_RATE);
+      // The speed glides: no frame changes it by more than a few percent.
+      expect(Math.abs(clock.rate - prevRate)).toBeLessThan(0.08);
+      prevRate = clock.rate;
+    }
+  });
+
+  it('keeps normal time at Amount 0 and with no music', () => {
+    const s = freshSmoothSignals();
+    expect(musicTimeRate(s, 0, true)).toBe(1);
+    expect(musicTimeRate({ att: 0.9, usual: 0.1, pulse: 1 }, 1, false)).toBe(1);
+  });
+
+  it('gives a renderer that keeps its own time a phase that lands on the clock and runs on at its speed', () => {
+    const time = 100;
+    const offset = -3;
+    const rate = 1.5;
+    const phase = musicTimePhase(time, offset, rate);
+    expect(time * rate + phase).toBeCloseTo(time + offset, 9);
+    // A tenth of a second later the renderer is a tenth further at the clock's speed.
+    expect((time + 0.1) * rate + phase).toBeCloseTo(time + offset + 0.15, 9);
   });
 });
 
@@ -180,12 +214,12 @@ describe('music time in shader code', () => {
 uniform float TIME;
 void main() { float t = TIME * speed; gl_FragColor = vec4(sin(t)); }`;
 
-  it('adds an offset input and reads TIME through it', () => {
+  it('adds rate and phase inputs and reads TIME through them', () => {
     const out = withMusicTime(code);
     const header = JSON.parse(out.slice(out.indexOf('/*') + 2, out.indexOf('*/')));
-    expect(header.INPUTS.map((i: any) => i.NAME)).toEqual(['speed', MUSIC_TIME_INPUT]);
+    expect(header.INPUTS.map((i: any) => i.NAME)).toEqual(['speed', MUSIC_TIME_RATE_INPUT, MUSIC_TIME_PHASE_INPUT]);
     expect(out).toContain('uniform float TIME;');
-    expect(out).toContain(`float t = (TIME + ${MUSIC_TIME_INPUT}) * speed;`);
+    expect(out).toContain(`float t = (TIME * ${MUSIC_TIME_RATE_INPUT} + ${MUSIC_TIME_PHASE_INPUT}) * speed;`);
     expect(withMusicTime(out)).toBe(out);
   });
 

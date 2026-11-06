@@ -77,8 +77,8 @@ import {
   nativeJsCanvasUri,
 } from '$lib/renderer/nativeJsCanvasHosts';
 import { resolveAssetRefForRuntime } from '$lib/storage/assetRegistry';
-import { withMusicTime, MUSIC_TIME_INPUT } from '$lib/audio/musicMotion';
-import { getMusicTimeOffset, hasMusicTime } from '$lib/audio/musicMotionEngine';
+import { withMusicTime, musicTimePhase, MUSIC_TIME_PHASE_INPUT, MUSIC_TIME_RATE_INPUT } from '$lib/audio/musicMotion';
+import { getMusicTimeOffset, getMusicTimeRate, hasMusicTime } from '$lib/audio/musicMotionEngine';
 import {
   receiveSpoutTextureInfo,
   type SpoutSharedTextureInfo,
@@ -967,7 +967,7 @@ function sourceValuesSignature(layer: Layer): string {
   const javascriptValuesSignature = s.jsAnimation
     ? hashString(JSON.stringify(s.jsAnimation.paramValues ?? {}))
     : 'no-js';
-  const musicTime = hasMusicTime(s.id) ? `:mt${getMusicTimeOffset(s.id).toFixed(4)}` : '';
+  const musicTime = hasMusicTime(s.id) ? `:mt${getMusicTimeOffset(s.id).toFixed(4)}:${getMusicTimeRate(s.id).toFixed(4)}` : '';
   return `${shaderValuesSignature}:${javascriptValuesSignature}${musicTime}`;
 }
 
@@ -10594,10 +10594,16 @@ export class NativeRendererSync {
         // demand for static images). Unresolvable refs are omitted -> the
         // shader falls back to its own input frame.
         if (hasMusicTime(src2.id) && src2.musicMotion?.on) {
-          // Never earlier than the start: the shader sees TIME + offset >= 0.
-          floatInputs[MUSIC_TIME_INPUT] = Math.max(-shaderTime, getMusicTimeOffset(src2.id));
+          // The core keeps its own TIME between updates, so it gets the clock's
+          // speed and a phase: TIME * rate + phase is the music clock now, and
+          // keeps running at the music's speed until the next update.
+          const rate = getMusicTimeRate(src2.id);
+          const offset = Math.max(-shaderTime, getMusicTimeOffset(src2.id));
+          floatInputs[MUSIC_TIME_RATE_INPUT] = rate;
+          floatInputs[MUSIC_TIME_PHASE_INPUT] = musicTimePhase(shaderTime, offset, rate);
         } else if (src2.musicMotion?.on) {
-          floatInputs[MUSIC_TIME_INPUT] = 0;
+          floatInputs[MUSIC_TIME_RATE_INPUT] = 1;
+          floatInputs[MUSIC_TIME_PHASE_INPUT] = 0;
         }
 
         const imageInputs: Record<string, string> = {};
