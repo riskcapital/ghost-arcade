@@ -12,13 +12,12 @@
   import {
     MAX_PARTS, PART_BARS, PART_KINDS, STEPS_PER_BAR, addBlock, clearTrack, duplicatePart, emptyPart, moveBlock,
     nudgeTrack, partSteps, removeBlock, resizeBlock, resizePart, setStep, setTrackLength, songBars, spreadHits,
-    toggleMute, toggleStep, type PartBars, type PartKind,
+    toggleMute, toggleStep, trackOf, type PartBars, type PartKind,
   } from '../../music/drumMachine/machineBeat';
-  import { machineKitById } from '../../music/drumMachine/machineKits';
   import { factoryBeats } from '../../music/drumMachine/machineFactory';
   import {
-    deleteSavedBeat, editBeat, editPart, loadBeat, machineTransport, newBeat, playPad, saveBeatAs, savedBeats,
-    selectPart, setMachineMode, toggleMachine,
+    addPad, addTrack, deleteSavedBeat, editBeat, editPart, loadBeat, machinePicker, machineTransport, moveTrack, newBeat, playPad,
+    playingKit, removeTrack, saveBeatAs, savedBeats, savedKits, selectPart, setMachineMode, toggleMachine,
   } from '../../music/drumMachine/machineRuntime';
   import { audioBpm } from '../../stores/audio';
   import StudioModule from './StudioModule.svelte';
@@ -28,7 +27,8 @@
 
   const beat = $derived($musicStudio.machine);
   const t = $derived($machineTransport);
-  const kit = $derived(machineKitById(beat.kitId));
+  const kit = $derived.by(() => { void $savedKits; return playingKit(beat); });
+  const spare = $derived(kit.pads.map((p, i) => ({ p, i })).filter(({ i }) => !beat.trackPads.includes(i)));
   const partIndex = $derived(Math.min(t.part, beat.parts.length - 1));
   const part = $derived(beat.parts[partIndex]);
   const steps = $derived(part ? partSteps(part) : 16);
@@ -49,12 +49,12 @@
     selected = pad;
     if (e.button === 2) return;
     if (e.altKey) {
-      const c = part.tracks[pad].chance[step];
+      const c = trackOf(part, pad).chance[step];
       const next = c > 0.8 ? 0.75 : c > 0.6 ? 0.5 : c > 0.3 ? 0.25 : 1;
-      editPart((p) => setStep(p, pad, step, { chance: next, vel: p.tracks[pad].vel[step] || 0.85 }));
+      editPart((p) => setStep(p, pad, step, { chance: next, vel: trackOf(p, pad).vel[step] || 0.85 }));
       return;
     }
-    const vel = part.tracks[pad].vel[step];
+    const vel = trackOf(part, pad).vel[step];
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     drag = { pad, step, y: e.clientY, vel, moved: false };
   }
@@ -82,9 +82,38 @@
   function stepRoll(e: MouseEvent, pad: number, step: number) {
     e.preventDefault();
     if (!part) return;
-    const tr = part.tracks[pad];
+    const tr = trackOf(part, pad);
     const roll = tr.vel[step] > 0 ? (tr.roll[step] % 4) + 1 : 2;
-    editPart((p) => setStep(p, pad, step, { roll, vel: p.tracks[pad].vel[step] || 0.85 }));
+    editPart((p) => setStep(p, pad, step, { roll, vel: trackOf(p, pad).vel[step] || 0.85 }));
+  }
+
+  // ── Tracks: add, reorder ──
+  function onAddTrack(value: string) {
+    if (value === 'new') {
+      const pad = addPad();
+      if (pad < 0) return;
+      addTrack(pad);
+      selected = pad;
+      machinePicker.set(pad);
+    } else if (value) {
+      addTrack(Number(value));
+      selected = Number(value);
+    }
+  }
+  const ROW_PX = 14;
+  let moving = $state<{ from: number; to: number; y: number } | null>(null);
+  function gripDown(e: PointerEvent, row: number) {
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    moving = { from: row, to: row, y: e.clientY };
+  }
+  function gripMove(e: PointerEvent) {
+    if (!moving) return;
+    const to = Math.max(0, Math.min(beat.trackPads.length - 1, moving.from + Math.round((e.clientY - moving.y) / ROW_PX)));
+    if (to !== moving.to) moving = { ...moving, to };
+  }
+  function gripUp() {
+    if (moving && moving.to !== moving.from) moveTrack(moving.from, moving.to);
+    moving = null;
   }
 
   // ── Track length handle ──
@@ -317,10 +346,12 @@
         </div>
 
         <div class="rows" role="grid" aria-label="Steps">
-          {#each part.tracks as tr, pad (pad)}
+          {#each beat.trackPads as pad, row (pad)}
+            {@const tr = trackOf(part, pad)}
             {@const solo = t.solo === pad}
-            <div class="row" class:sel={selected === pad} class:muted={tr.mute || (t.solo !== null && !solo)} role="row">
-              <button class="rname" onclick={() => { selected = pad; playPad(pad, 0.85); }} title="Play {kit.pads[pad].name}">{kit.pads[pad].name}</button>
+            <div class="row" class:sel={selected === pad} class:muted={tr.mute || (t.solo !== null && !solo)} class:moving={moving?.from === row} class:drop={moving && moving.to === row && moving.from !== row} role="row">
+              <span class="grip" onpointerdown={(e) => gripDown(e, row)} onpointermove={gripMove} onpointerup={gripUp} role="button" tabindex="-1" aria-label="Drag to reorder" title="Drag to move this track">⋮</span>
+              <button class="rname" onclick={() => { selected = pad; playPad(pad, 0.85); }} title="Play {kit.pads[pad]?.name}">{kit.pads[pad]?.name ?? `Pad ${pad + 1}`}</button>
               <button class="tiny" class:on={tr.mute} aria-pressed={tr.mute} onclick={() => editPart((p) => toggleMute(p, pad))} title="Mute this track">M</button>
               <button class="tiny" class:on={solo} aria-pressed={solo} onclick={() => machineTransport.update((x) => ({ ...x, solo: x.solo === pad ? null : pad }))} title="Hear only this track">S</button>
               <div class="cells" role="presentation">
@@ -339,7 +370,7 @@
                     onpointerup={stepUp}
                     oncontextmenu={(e) => stepRoll(e, pad, st)}
                     role="gridcell"
-                    aria-label="{kit.pads[pad].name} step {st + 1}{vel > 0 ? `, on at ${Math.round(vel * 100)}%` : ', off'}"
+                    aria-label="{kit.pads[pad]?.name} step {st + 1}{vel > 0 ? `, on at ${Math.round(vel * 100)}%` : ', off'}"
                     title={vel > 0 ? `${Math.round(vel * 100)}%${tr.roll[st] > 1 ? `, roll of ${tr.roll[st]}` : ''}${tr.chance[st] < 1 ? `, plays ${Math.round(tr.chance[st] * 100)}% of the time` : ''}` : ''}
                   >{#if vel > 0 && tr.roll[st] > 1}<span class="roll">{tr.roll[st]}</span>{/if}</button>
                 {/each}
@@ -350,11 +381,17 @@
               <span class="lenval" title="Steps before this track loops; drag the handle on the right of a step to set">
                 <button class="tiny" onclick={() => editPart((p) => setTrackLength(p, pad, tr.length - 1))} aria-label="Shorter track">−</button>{tr.length}<button class="tiny" onclick={() => editPart((p) => setTrackLength(p, pad, tr.length + 1))} aria-label="Longer track">+</button>
               </span>
+              <button class="tiny x" onclick={() => removeTrack(pad)} title="Take this track out of the sequencer (its steps go with it; the pad stays)" aria-label="Remove track">×</button>
             </div>
           {/each}
         </div>
         <div class="track-tools">
-          <span class="ga-eyebrow">{kit.pads[selected].name}</span>
+          <select class="add-track" value="" onchange={(e) => { const el = e.target as HTMLSelectElement; onAddTrack(el.value); el.value = ''; }} aria-label="Add a track" title="Add any pad, or a new sound, as a track">
+            <option value="" disabled>+ Track…</option>
+            <option value="new">New sound…</option>
+            {#if spare.length}<optgroup label="Pads">{#each spare as { p, i } (i)}<option value={String(i)}>{p.name}</option>{/each}</optgroup>{/if}
+          </select>
+          <span class="ga-eyebrow">{kit.pads[selected]?.name}</span>
           <button class="studio-btn" onclick={() => editPart((p) => nudgeTrack(p, selected, -1))} title="Move this track's hits a step earlier">← Shift</button>
           <button class="studio-btn" onclick={() => editPart((p) => nudgeTrack(p, selected, 1))} title="Move this track's hits a step later">Shift →</button>
           <span class="ga-eyebrow legend">Spread</span>
@@ -453,6 +490,11 @@
   .rows { display: flex; flex-direction: column; gap: 1px; flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
   .row { display: flex; align-items: center; gap: 3px; height: 13px; flex: 0 0 auto; }
   .row.muted { opacity: 0.4; }
+  .row.moving { opacity: 0.5; }
+  .row.drop { box-shadow: 0 -2px 0 var(--studio-accent); }
+  .grip { flex: 0 0 8px; font-size: 10px; line-height: 13px; color: var(--studio-muted); cursor: grab; text-align: center; touch-action: none; }
+  .tiny.x { border-color: transparent; }
+  .add-track { max-width: 110px; }
   .rname { flex: 0 0 76px; height: 13px; padding: 0 4px; border: 0; background: transparent; color: var(--studio-ink-1); font: inherit; font-size: 10px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
   .row.sel .rname { color: var(--studio-accent); }
   .tiny { flex: 0 0 auto; width: 15px; height: 13px; padding: 0; border: 1px solid var(--studio-edge-soft); border-radius: 2px; background: transparent; color: var(--studio-muted); font: inherit; font-size: 8px; cursor: pointer; line-height: 1; }

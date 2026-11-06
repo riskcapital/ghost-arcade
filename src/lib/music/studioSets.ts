@@ -275,7 +275,7 @@ export function controlSources(set: StudioSet): string[] {
     berlin: [...drums, 'cv:acid.cutoff', 'cv:acid.level'],
     dub: ['cv:dubbass.level', 'cv:siren.level', 'cv:shots.level', ...drums],
     analog: ['cv:analog.lfo', 'cv:analog.env', 'cv:analog.vco2', 'cv:analog.level'],
-    machine: [...Array.from({ length: 16 }, (_, i) => `cv:pad.${i}`), 'cv:pad.any', ...drums],
+    machine: [...Array.from({ length: 32 }, (_, i) => `cv:pad.${i}`), 'cv:pad.any', ...drums],
   };
   return [...bySet[set], 'cv:scan.level', 'cv:build.progress', 'cv:keys.level'];
 }

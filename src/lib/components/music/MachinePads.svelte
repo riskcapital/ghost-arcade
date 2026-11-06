@@ -19,7 +19,7 @@
     type KitFamily, type MachinePad,
   } from '../../music/drumMachine/machineKits';
   import {
-    auditionSound, deleteKit, editBeat, ensureMachine, machinePadFlash, padChannel, playPad, playingKit, renameKit,
+    addPad, addTrack, auditionSound, deleteKit, editBeat, ensureMachine, machinePadFlash, machinePicker, padChannel, playPad, playingKit, renameKit,
     saveKitAs, savedKits, selectKit, setPadSound, userKits,
   } from '../../music/drumMachine/machineRuntime';
   import type { DrumSound } from '../../music/tone/toneTypes';
@@ -52,6 +52,7 @@
     const share = 1 - (e.clientY - r.top) / r.height;
     playPad(pad, 0.4 + 0.6 * Math.max(0, Math.min(1, share)));
     selected = pad;
+    if (picking) machinePicker.set(pad);
   }
 
   function onKeyDown(e: KeyboardEvent) {
@@ -106,8 +107,33 @@
     naming = null;
   }
 
+  // ── More slots: as many rows of pads as the column has room for ──
+  const PAD_MIN = 64;
+  let gridEl = $state<HTMLElement | null>(null);
+  let fitRows = $state(8);
+  $effect(() => {
+    if (!gridEl) return;
+    const ro = new ResizeObserver(([e]) => {
+      const w = e.contentRect.width;
+      const size = Math.max(PAD_MIN, (w - 3 * 6) / 4);
+      fitRows = Math.max(4, Math.floor((e.contentRect.height + 6) / (size + 6)));
+    });
+    ro.observe(gridEl);
+    return () => ro.disconnect();
+  });
+  /** Empty slots after the pads, up to the rows that fit: click one to add a pad there. */
+  const emptySlots = $derived(Math.max(0, fitRows * 4 - kit.pads.length));
+
+  function newPadAt() {
+    const index = addPad();
+    if (index < 0) return;
+    selected = index;
+    newPad = index;
+    openPicker();
+  }
+
   // ── Sound picker ──
-  let picking = $state(false);
+  const picking = $derived($machinePicker !== null);
   let browseKit = $state('');
   let tab = $state<'kits' | 'build'>('kits');
   const browsed = $derived(allKits.find((k) => k.id === (browseKit || kit.id)) ?? kit);
@@ -115,11 +141,22 @@
 
   function openPicker() {
     browseKit = kit.id;
-    picking = true;
+    machinePicker.set(selected);
   }
+  /** A pad just added: once it has its sound, it goes into the sequencer too. */
+  let newPad = -1;
+  function closePicker() {
+    machinePicker.set(null);
+    newPad = -1;
+  }
+  // The sequencer can open the picker on a pad too.
+  $effect(() => {
+    if ($machinePicker !== null && $machinePicker !== selected) selected = $machinePicker;
+  });
   function usePad(p: MachinePad) {
     setPadSound(selected, JSON.parse(JSON.stringify(p)));
-    picking = false;
+    if (newPad === selected) addTrack(selected);
+    closePicker();
   }
   function pickModel(id: string) {
     const m = SOUND_MODELS.find((x) => x.id === id)!;
@@ -183,23 +220,26 @@
       <p class="blurb">{kit.blurb}</p>
     {/if}
 
-    <div class="pads" role="group" aria-label="Drum pads">
+    <div class="pads" role="group" aria-label="Drum pads" bind:this={gridEl}>
       {#each kit.pads as p, i (i)}
         <button
           class="pad"
           class:sel={selected === i}
           class:swapped={beat.padSounds[i] !== null}
           onpointerdown={(e) => down(e, i)}
-          title="{p.name}: key {PAD_KEYS[i].toUpperCase()}, note {36 + i}. Hit near the top for louder."
+          title="{p.name}: {PAD_KEYS[i] ? `key ${PAD_KEYS[i].toUpperCase()}, ` : ''}note {36 + i}. Hit near the top for louder."
           aria-label="{p.name} pad"
         >
           {#key $machinePadFlash[i]}<span class="flash" class:go={$machinePadFlash[i] > 0}></span>{/key}
           <span class="name">{p.name}</span>
           <span class="foot">
-            <span class="key">{PAD_KEYS[i].toUpperCase()}</span>
+            <span class="key">{PAD_KEYS[i]?.toUpperCase() ?? i + 1}</span>
             {#if ($musicStudio.inserts[padChannel(i)] ?? []).some((f) => f.enabled)}<span class="fx-dot" title="Has effects">FX</span>{/if}
           </span>
         </button>
+      {/each}
+      {#each Array.from({ length: emptySlots }, (_, i) => i) as i (i)}
+        <button class="pad empty" onclick={newPadAt} title="Add a pad here and pick its sound" aria-label="Add a pad">+</button>
       {/each}
     </div>
 
@@ -207,7 +247,7 @@
       <div class="sel-col">
         <span class="ga-eyebrow sel-name">{kit.pads[selected]?.name}{swapped ? ' ·' : ''}</span>
         <div class="sel-btns">
-          <button class="studio-btn" class:on={picking} onclick={() => (picking ? (picking = false) : openPicker())} title="Pick another sound for this pad">Sound</button>
+          <button class="studio-btn" class:on={picking} onclick={() => (picking ? closePicker() : openPicker())} title="Pick another sound for this pad">Sound</button>
           <button class="studio-btn" class:on={padFx > 0} onclick={() => insertEditorChannel.set(padChannel(selected))} title="This pad's own effects">FX{padFx ? ` ${padFx}` : ''}</button>
         </div>
       </div>
@@ -224,7 +264,7 @@
             <button class:on={tab === 'kits'} onclick={() => (tab = 'kits')}>From kits</button>
             <button class:on={tab === 'build'} onclick={() => (tab = 'build')}>Build one</button>
           </div>
-          <button class="studio-btn" onclick={() => (picking = false)} aria-label="Close">Done</button>
+          <button class="studio-btn" onclick={closePicker} aria-label="Close">Done</button>
         </header>
         {#if tab === 'kits'}
           <select bind:value={browseKit} aria-label="Kit to pick from">
@@ -242,7 +282,7 @@
               </div>
             {/each}
           </div>
-          {#if swapped}<button class="studio-btn wide" onclick={() => { setPadSound(selected, null); picking = false; }}>Put back the kit's own sound</button>{/if}
+          {#if swapped}<button class="studio-btn wide" onclick={() => { setPadSound(selected, null); closePicker(); }}>Put back the kit's own sound</button>{/if}
         {:else}
           <div class="models">
             {#each SOUND_MODELS as m (m.id)}
@@ -276,9 +316,11 @@
   .name-row { display: flex; gap: 4px; margin: 4px 0 8px; min-height: 2.6em; align-items: center; }
   .name-row input, .build-row input { flex: 1; min-width: 0; height: 22px; border: 1px solid var(--studio-edge); background: var(--studio-slot); color: var(--studio-ink); border-radius: var(--studio-radius); padding: 0 6px; font: inherit; font-size: 11px; }
   /* The pads take whatever height the column has. */
-  .pads { flex: 1 1 auto; min-height: 200px; display: grid; grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(4, 1fr); gap: 6px; }
+  /* Square pads, four across; the column shows as many rows as fit, and scrolls past that. */
+  .pads { flex: 1 1 0; min-height: 200px; display: grid; grid-template-columns: repeat(4, 1fr); grid-auto-rows: max-content; align-content: start; gap: 6px; overflow-y: auto; scrollbar-width: thin; }
   .pad {
     position: relative;
+    aspect-ratio: 1;
     min-height: 0;
     border: 1px solid var(--studio-edge);
     border-radius: var(--studio-radius);
@@ -294,6 +336,7 @@
     touch-action: none;
   }
   .pad:hover { border-color: var(--studio-muted); }
+  .pad.empty { justify-content: center; align-items: center; background: transparent; border-style: dashed; border-color: var(--studio-edge-soft); color: var(--studio-muted); font-size: 16px; }
   .pad.sel { border-color: var(--studio-accent); }
   .pad .name { position: relative; font-size: 11px; line-height: 1.15; text-align: left; }
   .pad.swapped .name { font-style: italic; }

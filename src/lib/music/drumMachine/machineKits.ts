@@ -8,7 +8,12 @@ import type { DrumVoice } from '../noteEvents';
 import type { DrumModel, DrumSound, ToneFx } from '../tone/toneTypes';
 import { normalizeMacroFx, type MacroFxInstance } from '../macroFx';
 
+/** Pads in a kit of its own. */
 export const PAD_COUNT = 16;
+/** Pad slots a beat starts with: the kit's sixteen and sixteen more from the other kits. */
+export const BASE_PADS = 32;
+/** The most pads a beat can have (MIDI notes 36 up). */
+export const MAX_PADS = 92;
 
 export type KitFamily = 'classic' | 'latin' | 'electronic' | 'weird';
 
@@ -256,9 +261,30 @@ export function padForKey(key: string): number {
 /** MIDI notes for the pads: a pad controller's usual sixteen from C1 (36). */
 export const PAD_BASE_NOTE = 36;
 
-export function padForNote(note: number): number {
+export function padForNote(note: number, count = PAD_COUNT): number {
   const i = note - PAD_BASE_NOTE;
-  return i >= 0 && i < PAD_COUNT ? i : -1;
+  return i >= 0 && i < count ? i : -1;
+}
+
+/**
+ * A kit's pads, then more to fill `count` slots: sounds from the kits of the
+ * same family first, then the rest, each name once. Always the same for a kit.
+ */
+export function extendedPads(kit: MachineKit, count = BASE_PADS): MachinePad[] {
+  const out = kit.pads.slice(0, count);
+  const names = new Set(out.map((p) => p.name));
+  const pool = [...MACHINE_KITS.filter((k) => k.family === kit.family && k.id !== kit.id), ...MACHINE_KITS.filter((k) => k.family !== kit.family)];
+  // Take one sound from each kit in turn, so the extra pads are a spread, not one kit's leftovers.
+  for (let i = 0; out.length < count && i < PAD_COUNT; i++) {
+    for (const k of pool) {
+      const p = k.pads[i];
+      if (!p || names.has(p.name)) continue;
+      names.add(p.name);
+      out.push(p);
+      if (out.length >= count) break;
+    }
+  }
+  return out;
 }
 
 // ── Your kits and swapped sounds ────────────────────────────────────────
@@ -335,8 +361,9 @@ export function normalizeUserKit(raw: unknown): UserKit | null {
   const k = raw as Partial<UserKit>;
   if (typeof k.id !== 'string' || !k.id.startsWith('user.')) return null;
   const pads = (Array.isArray(k.pads) ? k.pads : []).map(normalizePad);
-  if (pads.length !== PAD_COUNT || pads.some((p) => !p)) return null;
-  const per = (v: unknown) => Array.from({ length: PAD_COUNT }, (_, i) => n(Array.isArray(v) ? v[i] : undefined, 0.5, 0, 1));
+  if (pads.length < PAD_COUNT || pads.length > MAX_PADS || pads.some((p) => !p)) return null;
+  const count = pads.length;
+  const per = (v: unknown) => Array.from({ length: count }, (_, i) => n(Array.isArray(v) ? v[i] : undefined, 0.5, 0, 1));
   const fx = Array.isArray(k.padFx) ? k.padFx : [];
   return {
     id: k.id,
@@ -348,7 +375,7 @@ export function normalizeUserKit(raw: unknown): UserKit | null {
     gain: n(k.gain, 0.95, 0.1, 2),
     padTune: per(k.padTune),
     padLevel: per(k.padLevel),
-    padFx: Array.from({ length: PAD_COUNT }, (_, i) => normalizeMacroFx({ x: fx[i] }).x ?? []),
+    padFx: Array.from({ length: count }, (_, i) => normalizeMacroFx({ x: fx[i] }).x ?? []),
   };
 }
 

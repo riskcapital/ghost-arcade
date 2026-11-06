@@ -23,8 +23,8 @@
   const fxCount = $derived(s.inserts[instrument]?.length ?? 0);
   let open = $state<'sound' | 'visual' | null>(null);
 
-  const families = ['pad', 'lead', 'bass'] as const;
-  const FAMILY_LABEL: Record<string, string> = { pad: 'Pads', lead: 'Leads and keys', bass: 'Basses' };
+  const families = ['pad', 'lead', 'arp', 'bass'] as const;
+  const FAMILY_LABEL: Record<string, string> = { pad: 'Pads', lead: 'Leads and keys', arp: 'Arps (hold a chord)', bass: 'Basses' };
 
   function setVisual(patch: Partial<ClipVisual>) {
     const base: ClipVisual = dress.visual ?? { file: patch.file ?? '', source: instrument, blend: 'screen', level: 0.9 };

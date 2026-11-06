@@ -16,10 +16,10 @@ import type { MacroFxInstance } from '../macroFx';
 import type { NoteSource } from '../noteEvents';
 import type { DrumKit, DrumSound, DrumTweak } from '../tone/toneTypes';
 import {
-  STEPS_PER_BEAT, blockAt, normalizeBeat, partHitsBetween, partSteps, setStep, songBars, songHitsBetween, starterBeat,
+  STEPS_PER_BEAT, blockAt, clearPadEverywhere, normalizeBeat, trackOf, partHitsBetween, partSteps, setStep, songBars, songHitsBetween, starterBeat,
   type Beat, type Part,
 } from './machineBeat';
-import { DEFAULT_MACHINE_KIT, PAD_COUNT, findKit, normalizeUserKit, padForNote, type MachineKit, type MachinePad, type UserKit } from './machineKits';
+import { BASE_PADS, DEFAULT_MACHINE_KIT, MAX_PADS, SOUND_MODELS, extendedPads, findKit, normalizeUserKit, padForNote, type MachineKit, type MachinePad, type UserKit } from './machineKits';
 
 const LOOKAHEAD_SECONDS = 0.12;
 const TICK_MS = 25;
@@ -52,10 +52,13 @@ export const machineTransport = writable<MachineTransport>({
 });
 
 /** The pads lit by a hit: pad -> when (ms), for the screen. */
-export const machinePadFlash = writable<number[]>(new Array(PAD_COUNT).fill(0));
+export const machinePadFlash = writable<number[]>(new Array(MAX_PADS).fill(0));
 
-const padHitAt = new Float64Array(PAD_COUNT);
-const padHitVel = new Float64Array(PAD_COUNT);
+/** The pad whose sound picker is open, or null. */
+export const machinePicker = writable<number | null>(null);
+
+const padHitAt = new Float64Array(MAX_PADS);
+const padHitVel = new Float64Array(MAX_PADS);
 
 let origin = 0;
 let scheduled = 0;
@@ -75,7 +78,9 @@ export function userKits(beat: Beat = currentBeat()): UserKit[] {
 /** The beat's kit with any swapped pads in place: what the pads play now. */
 export function playingKit(beat: Beat = currentBeat()): MachineKit {
   const kit = findKit(beat.kitId, userKits(beat));
-  return { ...kit, pads: kit.pads.map((p, i) => beat.padSounds[i] ?? p) };
+  const base = extendedPads(kit, Math.max(BASE_PADS, kit.pads.length));
+  const blank: MachinePad = { name: 'Empty', role: 'tom', sound: { ...SOUND_MODELS[0].sound, level: 0 } };
+  return { ...kit, pads: Array.from({ length: beat.padCount }, (_, i) => beat.padSounds[i] ?? base[i] ?? blank) };
 }
 
 function drumKitFor(kit: MachineKit): DrumKit {
@@ -107,7 +112,7 @@ export function ensureMachine(): void {
   savedKits.subscribe(() => syncSound(currentBeat()));
   setMachineHooks({
     midiPad(note, velocity, on) {
-      const pad = padForNote(note);
+      const pad = padForNote(note, currentBeat().padCount);
       if (pad < 0) return false;
       if (on) playPad(pad, velocity, 'midi');
       return true;
@@ -286,8 +291,8 @@ function markHit(pad: number, velocity: number, delayMs = 0): void {
 /** A pad played now. While recording, it also goes onto the part on its nearest step. */
 export function playPad(pad: number, velocity: number, source: NoteSource = 'screen'): void {
   ensureMachine();
-  if (pad < 0 || pad >= PAD_COUNT) return;
   const b = currentBeat();
+  if (pad < 0 || pad >= b.padCount) return;
   const kit = playingKit(b);
   const v = Math.max(0.05, Math.min(1, velocity));
   sendMachineHit(pad, kit.pads[pad].role, v, source);
@@ -310,7 +315,7 @@ export function playPad(pad: number, velocity: number, source: NoteSource = 'scr
   }
   const part = b.parts[partIndex];
   if (!part) return;
-  const track = part.tracks[pad];
+  const track = trackOf(part, pad);
   const step = gInPart % track.length;
   editPart((p) => setStep(p, pad, step, { vel: v }), partIndex);
   // Hit a little early: the step has not been played yet, and should not sound twice.
@@ -323,11 +328,11 @@ export function padLevel(name: string): number {
   const level = (i: number) => (padHitAt[i] ? padHitVel[i] * Math.exp(-(now - padHitAt[i]) / PAD_FALL_MS) : 0);
   if (name === 'pad.any') {
     let max = 0;
-    for (let i = 0; i < PAD_COUNT; i++) max = Math.max(max, level(i));
+    for (let i = 0; i < MAX_PADS; i++) max = Math.max(max, level(i));
     return max;
   }
   const i = Number(name.slice(4));
-  return Number.isInteger(i) && i >= 0 && i < PAD_COUNT ? level(i) : 0;
+  return Number.isInteger(i) && i >= 0 && i < MAX_PADS ? level(i) : 0;
 }
 
 // ── Saved beats ─────────────────────────────────────────────────────────
@@ -394,7 +399,7 @@ export function padChannel(pad: number): string {
 }
 
 function padFxChains(fx: MacroFxInstance[][]): Record<string, MacroFxInstance[]> {
-  return Object.fromEntries(Array.from({ length: PAD_COUNT }, (_, i) => [padChannel(i), JSON.parse(JSON.stringify(fx[i] ?? []))]));
+  return Object.fromEntries(Array.from({ length: Math.max(fx.length, BASE_PADS) }, (_, i) => [padChannel(i), JSON.parse(JSON.stringify(fx[i] ?? []))]));
 }
 
 /**
@@ -405,11 +410,15 @@ function padFxChains(fx: MacroFxInstance[][]): Record<string, MacroFxInstance[]>
 export function selectKit(id: string): void {
   const b = currentBeat();
   const mine = userKits(b).find((k) => k.id === id);
-  const fresh = new Array(PAD_COUNT).fill(null);
   if (mine) {
     const kits = b.kits.some((k) => k.id === id) ? b.kits : [...b.kits, mine];
-    musicStudio.setInsertChains(padFxChains(mine.padFx), { ...b, kitId: id, padSounds: fresh, padTune: [...mine.padTune], padLevel: [...mine.padLevel], kits });
+    const count = Math.max(b.padCount, mine.pads.length);
+    const per = (list: number[]) => Array.from({ length: count }, (_, i) => list[i] ?? 0.5);
+    musicStudio.setInsertChains(padFxChains(mine.padFx), {
+      ...b, kitId: id, kits, padCount: count, padSounds: new Array(count).fill(null), padTune: per(mine.padTune), padLevel: per(mine.padLevel),
+    });
   } else {
+    const fresh = new Array(b.padCount).fill(null);
     musicStudio.setMachine({ ...b, kitId: id, padSounds: fresh });
   }
 }
@@ -451,10 +460,10 @@ export function saveKitAs(name: string): string {
     gain: kit.gain,
     padTune: [...b.padTune],
     padLevel: [...b.padLevel],
-    padFx: Array.from({ length: PAD_COUNT }, (_, i) => JSON.parse(JSON.stringify(inserts[padChannel(i)] ?? []))),
+    padFx: Array.from({ length: b.padCount }, (_, i) => JSON.parse(JSON.stringify(inserts[padChannel(i)] ?? []))),
   };
   savedKits.update((list) => (list.some((k) => k.id === id) ? list.map((k) => (k.id === id ? saved : k)) : [...list, saved]));
-  musicStudio.setMachine({ ...b, kitId: id, padSounds: new Array(PAD_COUNT).fill(null), kits: [...b.kits.filter((k) => k.id !== id), saved] });
+  musicStudio.setMachine({ ...b, kitId: id, padSounds: new Array(b.padCount).fill(null), kits: [...b.kits.filter((k) => k.id !== id), saved] });
   return id;
 }
 
@@ -469,9 +478,48 @@ export function renameKit(id: string, name: string): void {
 export function deleteKit(id: string): void {
   const b = currentBeat();
   if (b.kitId === id) {
-    musicStudio.setMachine({ ...b, kitId: DEFAULT_MACHINE_KIT, padSounds: new Array(PAD_COUNT).fill(null), kits: b.kits.filter((k) => k.id !== id) });
+    musicStudio.setMachine({ ...b, kitId: DEFAULT_MACHINE_KIT, padSounds: new Array(b.padCount).fill(null), kits: b.kits.filter((k) => k.id !== id) });
   } else {
     editBeat((x) => ({ ...x, kits: x.kits.filter((k) => k.id !== id) }));
   }
   savedKits.update((list) => list.filter((k) => k.id !== id));
+}
+
+// ── More pads, and the sequencer's tracks ───────────────────────────────
+
+/** A new pad slot with `sound` (a plain kick to start from), its own picker open. Returns its index, or -1 when full. */
+export function addPad(sound?: MachinePad): number {
+  const b = currentBeat();
+  if (b.padCount >= MAX_PADS) return -1;
+  const index = b.padCount;
+  const pad = sound ?? { name: 'New pad', role: SOUND_MODELS[0].role, sound: { ...SOUND_MODELS[0].sound } };
+  musicStudio.setMachine({
+    ...b,
+    padCount: index + 1,
+    padSounds: [...b.padSounds, pad],
+    padTune: [...b.padTune, 0.5],
+    padLevel: [...b.padLevel, 0.5],
+  });
+  return index;
+}
+
+/** Put a pad in the sequencer (at the end), if it is not there. */
+export function addTrack(pad: number): void {
+  editBeat((b) => (b.trackPads.includes(pad) || pad < 0 || pad >= b.padCount ? b : { ...b, trackPads: [...b.trackPads, pad] }));
+}
+
+/** Take a pad out of the sequencer; its steps go too. */
+export function removeTrack(pad: number): void {
+  editBeat((b) => ({ ...b, trackPads: b.trackPads.filter((p) => p !== pad), parts: clearPadEverywhere(b.parts, pad) }));
+}
+
+/** Move a track to position `to` in the sequencer. */
+export function moveTrack(from: number, to: number): void {
+  editBeat((b) => {
+    if (from < 0 || from >= b.trackPads.length) return b;
+    const list = [...b.trackPads];
+    const [p] = list.splice(from, 1);
+    list.splice(Math.max(0, Math.min(list.length, to)), 0, p);
+    return { ...b, trackPads: list };
+  });
 }

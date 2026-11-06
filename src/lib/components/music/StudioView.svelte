@@ -423,7 +423,7 @@
         <VisualRack />
         <RackModules />
       </div>
-      <div class="slot b123 face"><MachineSequencer bind:selected={machinePad} /></div>
+      <div class="slot seq face"><MachineSequencer bind:selected={machinePad} /></div>
     {:else}
       <div class="rack left face">
         <PlayModule />
@@ -473,7 +473,10 @@
   }
   .set-analog { grid-template-rows: var(--ga-bar-h, 48px) auto minmax(0, 1fr) 214px; }
   .set-machine { grid-template-rows: var(--ga-bar-h, 48px) auto minmax(0, 1fr) 356px; }
-  .set-machine.lower-tall .b123 { display: none; }
+  /* The drum machine: the pads run the whole left side; the sequencer sits under the output and the rack. */
+  .set-machine .rack.left { grid-row: 2 / 5; }
+  .seq { grid-column: 2 / -1; grid-row: 4; }
+  .set-machine.lower-tall .seq { display: none; }
   /* The side racks run from the bar down; this row only spans the output column. */
   .subbar {
     grid-area: sub;

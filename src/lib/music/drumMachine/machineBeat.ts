@@ -12,7 +12,7 @@
  * scheduler can look ahead and a test can check exactly what lands where.
  */
 
-import { PAD_COUNT, normalizePad, normalizeUserKit, type MachinePad, type UserKit } from './machineKits';
+import { BASE_PADS, MAX_PADS, PAD_COUNT, normalizePad, normalizeUserKit, type MachinePad, type UserKit } from './machineKits';
 
 export const STEPS_PER_BAR = 16;
 export const STEPS_PER_BEAT = 4;
@@ -76,6 +76,10 @@ export interface Beat {
   padSounds: (MachinePad | null)[];
   /** Your kits this project uses, so the file plays the same on another computer. */
   kits: UserKit[];
+  /** Pad slots: the kit's pads, more from the other kits, and any you add. */
+  padCount: number;
+  /** The pads the sequencer shows, in its order. Any pad, as many as you like. */
+  trackPads: number[];
 }
 
 export interface MachineHit {
@@ -136,18 +140,29 @@ export function starterBeat(kitId: string): Beat {
       { id: 'blk-3', partId: brk.id, bars: 2 },
       { id: 'blk-4', partId: loop.id, bars: 4 },
     ],
-    padLevel: new Array(PAD_COUNT).fill(0.5),
-    padTune: new Array(PAD_COUNT).fill(0.5),
-    padSounds: new Array(PAD_COUNT).fill(null),
+    padLevel: new Array(BASE_PADS).fill(0.5),
+    padTune: new Array(BASE_PADS).fill(0.5),
+    padSounds: new Array(BASE_PADS).fill(null),
     kits: [],
+    padCount: BASE_PADS,
+    trackPads: Array.from({ length: PAD_COUNT }, (_, i) => i),
   };
 }
 
 // ── Editing (each returns a new part) ───────────────────────────────────
 
 function mapTrack(part: Part, pad: number, fn: (t: Track) => Track): Part {
-  if (pad < 0 || pad >= part.tracks.length) return part;
-  return { ...part, tracks: part.tracks.map((t, i) => (i === pad ? fn(t) : t)) };
+  if (pad < 0 || pad >= MAX_PADS) return part;
+  const tracks = [...part.tracks];
+  // A pad the part has no track for yet gets one.
+  while (tracks.length <= pad) tracks.push(emptyTrack(partSteps(part)));
+  tracks[pad] = fn(tracks[pad]);
+  return { ...part, tracks };
+}
+
+/** A pad's track in a part: an empty one if the part has none for it yet. */
+export function trackOf(part: Part, pad: number): Track {
+  return part.tracks[pad] ?? emptyTrack(partSteps(part));
 }
 
 export function setStep(part: Part, pad: number, step: number, change: { vel?: number; roll?: number; chance?: number }): Part {
@@ -163,7 +178,7 @@ export function setStep(part: Part, pad: number, step: number, change: { vel?: n
 
 /** Off turns on at `vel`; on turns off. */
 export function toggleStep(part: Part, pad: number, step: number, vel = 0.85): Part {
-  const on = (part.tracks[pad]?.vel[step] ?? 0) > 0;
+  const on = (trackOf(part, pad).vel[step] ?? 0) > 0;
   return setStep(part, pad, step, on ? { vel: 0, roll: 1, chance: 1 } : { vel });
 }
 
@@ -205,6 +220,11 @@ export function nudgeTrack(part: Part, pad: number, by: number): Part {
     const rot = (row: number[]) => row.map((v, i) => (i < n ? row[(((i - by) % n) + n) % n] : v));
     return { ...t, vel: rot(t.vel), roll: rot(t.roll), chance: rot(t.chance) };
   });
+}
+
+/** Clear a pad's steps in every part (its track leaves the sequencer). */
+export function clearPadEverywhere(parts: Part[], pad: number): Part[] {
+  return parts.map((p) => (p.tracks[pad] ? { ...p, tracks: p.tracks.map((t, i) => (i === pad ? { ...emptyTrack(partSteps(p)) } : t)) } : p));
 }
 
 /** Spread `hits` evenly over the track's length (the even-spacing rhythms of many traditions). */
@@ -369,7 +389,7 @@ export function normalizePart(raw: unknown): Part | null {
     kind: PART_KINDS.some((k) => k.id === p.kind) ? (p.kind as PartKind) : 'loop',
     bars,
     swing: num(p.swing, 0, 0, 0.5),
-    tracks: Array.from({ length: PAD_COUNT }, (_, i) => normalizeTrack(tracks[i], steps)),
+    tracks: Array.from({ length: Math.max(PAD_COUNT, Math.min(MAX_PADS, tracks.length)) }, (_, i) => normalizeTrack(tracks[i], steps)),
   };
 }
 
@@ -383,7 +403,10 @@ export function normalizeBeat(raw: unknown, fallbackKit: string): Beat {
     .filter((x): x is Partial<Block> => !!x && typeof x.partId === 'string' && ids.has(x.partId))
     .slice(0, MAX_BLOCKS)
     .map((x) => ({ id: typeof x.id === 'string' && x.id ? x.id : newId('blk'), partId: x.partId!, bars: Math.round(num(x.bars, 1, 1, MAX_BLOCK_BARS)) }));
-  const pads = (v: unknown) => Array.from({ length: PAD_COUNT }, (_, i) => num(Array.isArray(v) ? v[i] : undefined, 0.5, 0, 1));
+  const padCount = Math.round(num(b.padCount, BASE_PADS, BASE_PADS, MAX_PADS));
+  const pads = (v: unknown) => Array.from({ length: padCount }, (_, i) => num(Array.isArray(v) ? v[i] : undefined, 0.5, 0, 1));
+  const tracksIn = Array.isArray(b.trackPads) ? b.trackPads : Array.from({ length: PAD_COUNT }, (_, i) => i);
+  const trackPads = [...new Set(tracksIn.map(Number).filter((x) => Number.isInteger(x) && x >= 0 && x < padCount))];
   return {
     name: typeof b.name === 'string' && b.name ? b.name.slice(0, 60) : 'Beat',
     kitId: typeof b.kitId === 'string' ? b.kitId : fallbackKit,
@@ -391,8 +414,10 @@ export function normalizeBeat(raw: unknown, fallbackKit: string): Beat {
     song,
     padLevel: pads(b.padLevel),
     padTune: pads(b.padTune),
-    padSounds: Array.from({ length: PAD_COUNT }, (_, i) => (Array.isArray(b.padSounds) ? normalizePad(b.padSounds[i]) : null)),
+    padSounds: Array.from({ length: padCount }, (_, i) => (Array.isArray(b.padSounds) ? normalizePad(b.padSounds[i]) : null)),
     kits: (Array.isArray(b.kits) ? b.kits : []).map(normalizeUserKit).filter((k): k is UserKit => !!k).slice(0, 64),
+    padCount,
+    trackPads,
   };
 }
 

@@ -5,7 +5,7 @@
  */
 
 import { emptyPart, newId, type Beat, type Part, type PartBars, type PartKind } from './machineBeat';
-import { PAD_COUNT } from './machineKits';
+import { BASE_PADS, PAD_COUNT } from './machineKits';
 
 function part(name: string, kind: PartKind, rows: Record<number, string>, opts: { bars?: PartBars; swing?: number } = {}): Part {
   const p = emptyPart(name, kind, opts.bars ?? 1);
@@ -29,10 +29,12 @@ function beat(name: string, kitId: string, parts: Part[], song: Array<[number, n
     kitId,
     parts,
     song: song.map(([i, bars]) => ({ id: newId('blk'), partId: parts[i].id, bars })),
-    padLevel: new Array(PAD_COUNT).fill(0.5),
-    padTune: new Array(PAD_COUNT).fill(0.5),
-    padSounds: new Array(PAD_COUNT).fill(null),
+    padLevel: new Array(BASE_PADS).fill(0.5),
+    padTune: new Array(BASE_PADS).fill(0.5),
+    padSounds: new Array(BASE_PADS).fill(null),
     kits: [],
+    padCount: BASE_PADS,
+    trackPads: Array.from({ length: PAD_COUNT }, (_, i) => i),
   };
 }
 

@@ -18,7 +18,7 @@
   import { ROLE_INSTRUMENTS } from '../../music/loops';
   import { INSTRUMENT_LABELS } from '../../music/instruments';
   import { TONES, TONE_FAMILY_LABELS, toneById, type ToneFamily } from '../../music/tone/tones';
-  const TONE_FAMILIES: ToneFamily[] = ['bass', 'pad', 'lead'];
+  const TONE_FAMILIES: ToneFamily[] = ['bass', 'lead', 'arp', 'pad'];
   import { SCALES, keyLabel } from '../../music/studioSets';
   import { DRUM_LABELS, DRUM_VOICES, isBlackKey, noteName, type InstrumentId } from '../../music/noteEvents';
   import { PATTERN_LENGTHS, STEPS_PER_BEAT, normalizePattern, resizePattern, type DrumPattern, type PatternLength } from '../../music/drumPattern';

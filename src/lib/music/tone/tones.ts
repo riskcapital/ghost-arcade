@@ -5,7 +5,7 @@
 
 import type { Env, TonePatch } from './toneTypes';
 
-export type ToneFamily = 'bass' | 'pad' | 'lead';
+export type ToneFamily = 'bass' | 'pad' | 'lead' | 'arp';
 
 export interface Tone {
   id: string;
@@ -434,7 +434,7 @@ export const TONES: Tone[] = [
     },
   },
   {
-    id: 'arp.pluck-up', name: 'Up arp', family: 'lead', blurb: 'Hold a chord and it runs up two octaves in sixteenths, a bright, short pluck with an echo',
+    id: 'arp.pluck-up', name: 'Up arp', family: 'arp', blurb: 'Hold a chord and it runs up two octaves in sixteenths, a bright, short pluck with an echo',
     patch: {
       osc1: { wave: 'saw', level: 0.5 }, osc2: { wave: 'square', pw: 0.3, detune: 6, level: 0.35 },
       filter: { mode: 'ladder', cutoff: 600, res: 0.35, env: 3, keyTrack: 0.5, vel: 0.6 },
@@ -444,7 +444,7 @@ export const TONES: Tone[] = [
     },
   },
   {
-    id: 'arp.bounce', name: 'Bounce arp', family: 'lead', blurb: 'A round square-wave arp that bounces up and down the held chord in eighths',
+    id: 'arp.bounce', name: 'Bounce arp', family: 'arp', blurb: 'A round square-wave arp that bounces up and down the held chord in eighths',
     patch: {
       osc1: { wave: 'square', pw: 0.45, level: 0.55 }, osc2: { wave: 'tri', oct: 1, level: 0.25 },
       filter: { mode: 'ladder', cutoff: 900, res: 0.25, env: 1.8, keyTrack: 0.5, vel: 0.5 },
@@ -454,7 +454,7 @@ export const TONES: Tone[] = [
     },
   },
   {
-    id: 'arp.glass', name: 'Glass arp', family: 'lead', blurb: 'A glassy FM bell picking random notes from three octaves of the chord, latched so it keeps going',
+    id: 'arp.glass', name: 'Glass arp', family: 'arp', blurb: 'A glassy FM bell picking random notes from three octaves of the chord, latched so it keeps going',
     patch: {
       osc1: { wave: 'sine', level: 0.8 }, fm: { ratio: 3.5, index: 2.5, decay: 0.25, sustain: 0.1, vel: 0.8 },
       filter: { mode: 'lp', cutoff: 6000, res: 0, keyTrack: 0.3 },
@@ -464,7 +464,7 @@ export const TONES: Tone[] = [
     },
   },
   {
-    id: 'arp.trance', name: 'Trance arp', family: 'lead', blurb: 'Wide detuned saws running up and down the chord in quick sixteenths, for driving builds',
+    id: 'arp.trance', name: 'Trance arp', family: 'arp', blurb: 'Wide detuned saws running up and down the chord in quick sixteenths, for driving builds',
     patch: {
       osc1: { wave: 'saw', level: 0.6 }, unison: { voices: 3, detune: 18, spread: 0.7 },
       filter: { mode: 'ladder', cutoff: 1100, res: 0.3, env: 2, keyTrack: 0.5, vel: 0.6 },
@@ -563,4 +563,4 @@ export function toneById(id: string | null | undefined): Tone | undefined {
   return id ? BY_ID.get(id) : undefined;
 }
 
-export const TONE_FAMILY_LABELS: Record<ToneFamily, string> = { bass: 'Basses', pad: 'Pads', lead: 'Leads and keys' };
+export const TONE_FAMILY_LABELS: Record<ToneFamily, string> = { bass: 'Basses', pad: 'Pads', lead: 'Leads and keys', arp: 'Arps (hold a chord)' };

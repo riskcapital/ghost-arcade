@@ -1254,11 +1254,11 @@ export class MusicAudioEngine {
       return;
     }
     const base = this.machine?.kit;
-    const sounds = [...(base?.sounds ?? []).slice(0, 16)];
-    while (sounds.length < 16) sounds.push(sound);
+    const sounds = [...(base?.sounds ?? [])];
+    const slot = sounds.length;
     const kit: DrumKit = { id: 'audition', name: 'Audition', blurb: '', sounds: [...sounds, sound], fx: base?.fx, gain: base?.gain ?? 1 };
     this.tones.setMachineKit(kit);
-    this.tones.machineHit(16, 0.85, ctx.currentTime + 0.03, { tune: 0.5, decay: 0.5, tone: 0.5, drive: 0.5, level: 1 });
+    this.tones.machineHit(slot, 0.85, ctx.currentTime + 0.03, { tune: 0.5, decay: 0.5, tone: 0.5, drive: 0.5, level: 1 });
   }
 
   /** A hit on the tone engine's kit, with the mixer's tune and level and the drum's own decay, tone and drive. */
