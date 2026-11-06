@@ -41,6 +41,34 @@ describe('resolveSavedDisplay', () => {
     expect(resolveSavedDisplay([laptop], 42)).toEqual({ status: 'missing', display: null });
   });
 
+  it('reports the projector missing when its old id now names the laptop and it is unplugged', () => {
+    // Opening on the laptop would cover the editor and save the laptop over
+    // the projector the Screen was set up for.
+    const swapped = [{ ...laptop, id: epson.id }, monitor];
+    expect(resolveSavedDisplay(swapped, epson.id, displayFingerprint(epson))).toEqual({ status: 'missing', display: null });
+  });
+
+  it('without OS names, matches on size and scale', () => {
+    const bare = (display: DisplayLike) => ({ ...display, label: '' });
+    const stored = displayFingerprint(bare(epson));
+    expect(stored.label).toBe('');
+    // Ids swapped, projector present: found by size.
+    const swapped = [{ ...bare(laptop), id: epson.id }, bare(monitor), { ...bare(epson), id: 7 }];
+    expect(resolveSavedDisplay(swapped, epson.id, stored).display?.id).toBe(7);
+    // Ids swapped, projector absent: the laptop under its old id is not it.
+    expect(resolveSavedDisplay(swapped.slice(0, 2), epson.id, stored).status).toBe('missing');
+    // Same id, same size: still it.
+    expect(resolveSavedDisplay([bare(laptop), bare(epson)], epson.id, stored).display?.id).toBe(epson.id);
+  });
+
+  it('treats an old generated "Display N" label as no name', () => {
+    expect(displayFingerprint({ ...epson, label: 'Display 2' }).label).toBe('');
+    const old = { ...displayFingerprint(epson), label: `Display ${epson.id}` };
+    const renamed = [{ ...laptop, id: epson.id }, monitor, { ...epson, id: 7, label: '' }];
+    expect(resolveSavedDisplay(renamed, epson.id, old).display?.id).toBe(7);
+    expect(resolveSavedDisplay(renamed.slice(0, 2), epson.id, old).status).toBe('missing');
+  });
+
   it('does not guess between two identical projectors', () => {
     const a = { ...epson, id: 10 };
     const b = { ...epson, id: 11 };

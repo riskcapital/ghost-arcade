@@ -14,7 +14,10 @@
 
 export type DisplayLike = {
   id: number;
+  /** The OS's own name for the display; may be empty. */
   label: string;
+  /** What the interface shows: the label, or "Display N" without one. */
+  name?: string;
   width: number;
   height: number;
   isPrimary?: boolean;
@@ -39,9 +42,19 @@ export type DisplayResolution<D extends DisplayLike> =
   /** Nothing was saved. */
   | { status: 'unset'; display: null };
 
+/**
+ * The name the OS gives a display, or '' when it gives none. Older builds
+ * filled a missing name with "Display <id>", and that id is exactly what
+ * Windows renumbers, so such a stored label says nothing about the display.
+ */
+function osLabel(label: unknown): string {
+  const trimmed = String(label ?? '').trim();
+  return /^Display \d+$/.test(trimmed) ? '' : trimmed;
+}
+
 export function displayFingerprint(display: DisplayLike): DisplayFingerprint {
   return {
-    label: String(display.label ?? ''),
+    label: osLabel(display.label),
     width: Math.round(Number(display.width) || 0),
     height: Math.round(Number(display.height) || 0),
     scaleFactor: Number(display.scaleFactor) || 1,
@@ -49,7 +62,8 @@ export function displayFingerprint(display: DisplayLike): DisplayFingerprint {
 }
 
 function sameLabel(display: DisplayLike, fp: DisplayFingerprint): boolean {
-  return !!fp.label && String(display.label ?? '') === fp.label;
+  const label = osLabel(fp.label);
+  return !!label && osLabel(display.label) === label;
 }
 
 function sameShape(display: DisplayLike, fp: DisplayFingerprint): boolean {
@@ -58,15 +72,11 @@ function sameShape(display: DisplayLike, fp: DisplayFingerprint): boolean {
     && Math.abs((Number(display.scaleFactor) || 1) - fp.scaleFactor) < 0.01;
 }
 
-/** The single display that is the fingerprinted one, or null if none or several are. */
-function findByFingerprint<D extends DisplayLike>(displays: D[], fp: DisplayFingerprint): D | null {
-  const exact = displays.filter((d) => sameLabel(d, fp) && sameShape(d, fp));
-  if (exact.length === 1) return exact[0];
-  if (exact.length > 1) return null;
-  // The same projector after its resolution was changed.
-  const byLabel = displays.filter((d) => sameLabel(d, fp));
-  if (byLabel.length === 1) return byLabel[0];
-  return null;
+/** Looks like the saved display: its name (when one was saved), size and
+ *  scale. Without a saved name, size and scale are all there is to go on. */
+function matchesFingerprint(display: DisplayLike, fp: DisplayFingerprint): boolean {
+  if (osLabel(fp.label) && !sameLabel(display, fp)) return false;
+  return sameShape(display, fp);
 }
 
 /**
@@ -74,11 +84,15 @@ function findByFingerprint<D extends DisplayLike>(displays: D[], fp: DisplayFing
  *
  * - The id is connected and looks like the saved display (or no fingerprint
  *   was saved): that display.
- * - The id is connected but now names a different screen, and exactly one
- *   other display looks like the saved one: that one (ids were reshuffled).
- * - The id is gone and exactly one display looks like the saved one: that one.
- * - Otherwise missing. An empty display list (enumeration failed) is not
- *   treated as missing: callers cannot tell, so they keep the saved id.
+ * - Otherwise the one display that looks like the saved one (ids were
+ *   reshuffled, or the id is gone).
+ * - Otherwise the one display with the saved name: a projector whose
+ *   resolution or scale was changed on purpose. The id decides while it
+ *   still names it.
+ * - Otherwise missing, also when the id now names a display with another
+ *   name (the laptop panel that inherited the projector's id): opening there
+ *   would cover the editor. An empty display list (enumeration failed) is
+ *   not treated as missing: callers cannot tell, so they keep the saved id.
  */
 export function resolveSavedDisplay<D extends DisplayLike>(
   displays: D[],
@@ -87,15 +101,16 @@ export function resolveSavedDisplay<D extends DisplayLike>(
 ): DisplayResolution<D> {
   if (id == null && !fingerprint) return { status: 'unset', display: null };
   const byId = id == null ? null : displays.find((d) => d.id === id) ?? null;
-  // The id still names the same screen (a resolution change keeps its name).
-  if (byId && (!fingerprint || !fingerprint.label || sameLabel(byId, fingerprint))) {
-    return { status: 'found', display: byId };
-  }
-  const match = fingerprint ? findByFingerprint(displays, fingerprint) : null;
-  if (match) return { status: match === byId ? 'found' : 'renumbered', display: match };
-  // The id names a screen with another name and nothing else matches: most
-  // likely the same screen reporting a new name, so keep it.
-  if (byId) return { status: 'found', display: byId };
+  if (!fingerprint) return byId ? { status: 'found', display: byId } : { status: 'missing', display: null };
+  if (byId && matchesFingerprint(byId, fingerprint)) return { status: 'found', display: byId };
+  const matching = displays.filter((d) => matchesFingerprint(d, fingerprint));
+  if (matching.length === 1) return { status: 'renumbered', display: matching[0] };
+  // No name saved: a display of another size under the old id is not it.
+  if (!osLabel(fingerprint.label)) return { status: 'missing', display: null };
+  // The same name under the id: its resolution or scale was changed.
+  if (byId && sameLabel(byId, fingerprint)) return { status: 'found', display: byId };
+  const named = displays.filter((d) => sameLabel(d, fingerprint));
+  if (named.length === 1) return { status: 'renumbered', display: named[0] };
   return { status: 'missing', display: null };
 }
 
