@@ -108,8 +108,6 @@ let started = false;
 export function ensureMachine(): void {
   if (started) return;
   started = true;
-  musicStudio.subscribe((s) => syncSound(s.machine));
-  savedKits.subscribe(() => syncSound(currentBeat()));
   setMachineHooks({
     midiPad(note, velocity, on) {
       const pad = padForNote(note, currentBeat().padCount);
@@ -120,6 +118,8 @@ export function ensureMachine(): void {
     padLevel,
     stop: stopMachine,
   });
+  musicStudio.subscribe((s) => syncSound(s.machine));
+  savedKits.subscribe(() => syncSound(currentBeat()));
 }
 
 // ── The beat ────────────────────────────────────────────────────────────
