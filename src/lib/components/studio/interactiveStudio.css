@@ -409,7 +409,7 @@
   min-height: var(--ga-control-h-sm, 22px);
   padding: 0 7px;
 }
-/* Eyebrow (docs/DESIGN-SYSTEM.md). */
+/* Eyebrow. */
 .interactive-workspace .group-label {
   font-size: var(--ga-text-eyebrow, 10px);
   font-weight: 700;

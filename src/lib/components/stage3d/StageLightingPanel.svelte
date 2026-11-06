@@ -339,7 +339,7 @@
     box-sizing: border-box;
   }
   .lighting * { box-sizing: border-box; min-width: 0; }
-  /* Eyebrows (docs/DESIGN-SYSTEM.md). */
+  /* Eyebrows. */
   .head, .sub-head {
     display: flex;
     align-items: center;

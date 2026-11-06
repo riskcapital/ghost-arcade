@@ -73,7 +73,7 @@
   .chase-controls { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
   .param-row { display: flex; align-items: center; gap: 6px; min-height: var(--ga-control-h-sm, 22px); }
   .param-label { flex: 0 0 64px; font-size: var(--ga-text-meta, 11px); color: var(--ga-ink-2); }
-  /* One-of-few choice: a segmented track (docs/DESIGN-SYSTEM.md). */
+  /* One-of-few choice: a segmented track. */
   .chase-seg { flex: 1; display: flex; gap: 2px; min-width: 0; padding: 2px; background: var(--ga-slot); border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard, 5px); }
   .chase-seg button { flex: 1; min-height: 18px; background: transparent; color: var(--ga-ink-1); border: 0; border-radius: calc(var(--ga-r-hard, 5px) - 1px); font: inherit; font-size: var(--ga-text-meta, 11px); font-weight: var(--ga-weight-control, 600); padding: 0 4px; cursor: pointer; white-space: nowrap; }
   .chase-seg button:hover:not(.active) { color: var(--ga-ink-0); }

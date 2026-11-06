@@ -1325,7 +1325,7 @@
     overflow-x: hidden;
     scrollbar-gutter: stable;
   }
-  /* Eyebrows (docs/DESIGN-SYSTEM.md). */
+  /* Eyebrows. */
   .lib h3,
   .props h3,
   .ghd {

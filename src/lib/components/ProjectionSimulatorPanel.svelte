@@ -1966,7 +1966,7 @@
   section + section {
     margin-top: 18px;
   }
-  /* Eyebrows (docs/DESIGN-SYSTEM.md). */
+  /* Eyebrows. */
   h3 {
     margin: 0 0 8px;
     font-size: var(--ga-text-eyebrow, 10px);

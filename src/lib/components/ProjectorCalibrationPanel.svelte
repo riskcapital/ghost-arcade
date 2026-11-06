@@ -232,7 +232,7 @@
 </section>
 <style>
   .calibration{padding:14px 0;border-top:1px solid var(--ga-line-2);min-width:0}
-  /* Eyebrow (docs/DESIGN-SYSTEM.md). */
+  /* Eyebrow. */
   h4{font-size:var(--ga-text-eyebrow,10px);font-weight:700;letter-spacing:var(--ga-eyebrow-tracking,.08em);text-transform:uppercase;color:var(--ga-ink-2);margin:12px 0 8px}
   p{font-size:var(--ga-text-meta,11px);line-height:1.5;color:var(--ga-ink-2)}label{display:flex;align-items:center;gap:8px;font-size:var(--ga-text-control,12px);color:var(--ga-ink-1);margin:10px 0;flex-wrap:wrap}
   svg{display:block;width:100%;max-height:260px;margin:0 auto;touch-action:none;border-radius:var(--ga-r-hard,5px);outline:none}svg.large{max-height:620px}svg:focus-visible{box-shadow:0 0 0 1px var(--ga-selection-line)}circle{cursor:grab}

@@ -1,8 +1,8 @@
 /* Ghost Arcade design system: the shared scale every surface draws from.
 
-   Loaded after studio-skin.css, for every theme. The rules are written up in
-   docs/DESIGN-SYSTEM.md; this file holds the tokens and the few shared
-   primitives (eyebrow labels, the mode switch, top-bar controls). */
+   Loaded after studio-skin.css, for every theme. This file holds the tokens
+   and the few shared primitives (eyebrow labels, the mode switch, top-bar
+   controls). */
 
 :root {
   /* ── Type scale ────────────────────────────────────────────────────

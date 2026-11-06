@@ -7596,7 +7596,7 @@ void main() {
     border-color: var(--ga-blue-a28) !important;
   }
 
-  /* ── Shared type roles (docs/DESIGN-SYSTEM.md) ─────────────────────────
+  /* ── Shared type roles ─────────────────────────
      The instrument keeps its colour coding (worlds, media, ISF); type, sizes
      and the selected state follow the rest of the app. */
   .sv-root { font-size: var(--ga-text-control, 12px); color: var(--ga-ink-0); }

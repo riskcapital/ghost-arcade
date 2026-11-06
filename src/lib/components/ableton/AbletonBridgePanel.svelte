@@ -842,7 +842,7 @@
     border-bottom: 1px solid var(--ga-line-2);
     flex: 0 0 auto;
   }
-  /* Eyebrow (docs/DESIGN-SYSTEM.md). */
+  /* Eyebrow. */
   .brand { display: flex; align-items: center; gap: 6px; font-weight: 700; letter-spacing: var(--ga-eyebrow-tracking, 0.08em); font-size: var(--ga-text-eyebrow, 10px); color: var(--ga-ink-2, #8a909b); margin-right: 4px; }
   .brand .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ga-ink-3, #555); }
   .brand.on { color: var(--ga-ink-0, #eef0f4); }

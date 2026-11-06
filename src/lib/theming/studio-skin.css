@@ -86,7 +86,7 @@ html[data-theme="arcade"] body {
 /* ============================================================
    TOP TOOLBAR
    One spec for the mapping toolbar and the VJ header (see
-   docs/DESIGN-SYSTEM.md): a 48px bar, 30px controls, 13px/600 sentence
+   src/lib/theming/system.css): a 48px bar, 30px controls, 13px/600 sentence
    case, 6px between controls and a hairline between groups.
    ============================================================ */
 .toolbar {
@@ -1410,7 +1410,7 @@ html[data-theme="arcade"] :is(
   .stage3d-root .props h3,
   .stage3d-root .ghd
 ) {
-  /* Eyebrows (docs/DESIGN-SYSTEM.md): the one uppercase style. */
+  /* Eyebrows: the one uppercase style. */
   font-family: var(--ga-font-ui, 'Satoshi', system-ui, sans-serif) !important;
   font-weight: 700 !important;
   color: var(--ga-ink-2, #5e564a) !important;
