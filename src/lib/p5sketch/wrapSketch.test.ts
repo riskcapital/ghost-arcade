@@ -542,11 +542,12 @@ describe('the file loader in a single-document page', () => {
     const HTMLSourceElement = srcProperty();
     const XMLHttpRequest = function () {} as unknown as { prototype: { open: (...args: unknown[]) => void } };
     XMLHttpRequest.prototype.open = (_method: unknown, url: unknown) => { opened.push(url); };
-    const fakeWindow = { fetch: (input: unknown) => { fetched.push(input); return Promise.resolve(); } };
+    class Request { url: string; constructor(input: unknown) { this.url = String(input); } }
+    const fakeWindow = { fetch: (input: unknown) => { fetched.push(input); return Promise.resolve(); }, Request };
     new Function('window', 'location', 'XMLHttpRequest', 'HTMLImageElement', 'HTMLMediaElement', 'HTMLSourceElement', 'Element', code)(
       fakeWindow, { origin: 'ghost-js://s1' }, XMLHttpRequest, HTMLImageElement, HTMLMediaElement, HTMLSourceElement, FakeElement,
     );
-    return { fakeWindow, fetched, opened, HTMLImageElement, HTMLSourceElement, XMLHttpRequest };
+    return { fakeWindow, fetched, opened, HTMLImageElement, HTMLSourceElement, XMLHttpRequest, NativeRequest: Request };
   }
 
   it('answers sketch paths with the carried file, by any spelling p5 uses', async () => {
@@ -571,6 +572,15 @@ describe('the file loader in a single-document page', () => {
       await fakeWindow.fetch(url);
     }
     expect(fetched).toEqual(['https://example.com/assets/dot.png', 'data:text/plain,x', 'other.png', 'ghost-js://s2/assets/dot.png']);
+  });
+
+  it('builds a Request for a sketch path from the carried file, as p5 does before it fetches', async () => {
+    const { fakeWindow, NativeRequest } = loader([{ path: 'data/words.txt', text: 'hello' }]);
+    const SketchRequest = fakeWindow.Request as unknown as new (input: unknown) => { url: string };
+    const request = new SketchRequest('data/words.txt');
+    expect(request).toBeInstanceOf(NativeRequest);
+    expect(await resolveObjectURL(request.url)?.text()).toBe('hello');
+    expect(new SketchRequest('https://example.com/data/words.txt').url).toBe('https://example.com/data/words.txt');
   });
 
   it('resolves XMLHttpRequest, image src and media source attributes', () => {

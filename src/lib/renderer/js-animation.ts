@@ -214,15 +214,24 @@ interface ShimLayout {
 
 /**
  * Keeps the page's uncaught errors on `window.__ghostSketchErrors` and sends
- * them to the app a few times a second at most.
+ * them to the app a few times a second at most. Promise rejections count
+ * too: p5 runs setup() inside one once a preload has finished. Each error
+ * keeps the lines of the page on its stack, innermost first, so one raised
+ * inside p5 by a call from the sketch can point at that call.
  */
 const ERROR_CAPTURE_SHIM = '<script>(function(){var list=window.__ghostSketchErrors=[];var due=0;'
   + 'function send(){due=0;try{parent.postMessage({ghost:"errors",errors:list.slice()},"*");}catch(x){}}'
-  + 'addEventListener("error",function(e){var m=String(e.message||"Error");'
-  + 'var line=typeof e.filename==="string"&&e.filename.indexOf("blob:")===0?e.lineno:null;'
+  + 'function stackLines(err,first){var out=[];if(first>0)out.push(first);var st=err&&typeof err.stack==="string"?err.stack:"";'
+  + 'var re=/blob:[^\\s)]*?:(\\d+):\\d+/g,m;while((m=re.exec(st))&&out.length<10){var n=+m[1];if(out.indexOf(n)<0)out.push(n);}return out;}'
+  + 'function report(m,lines){var line=lines.length?lines[0]:null;'
   + 'var known=false;for(var i=0;i<list.length;i++){if(list[i].message===m&&list[i].line===line){list[i].count++;known=true;break;}}'
-  + 'if(!known&&list.length<12)list.push({message:m,line:line,count:1});'
-  + 'if(!due)due=setTimeout(send,known?250:0);});})();</script>';
+  + 'if(!known&&list.length<12)list.push({message:m,line:line,lines:lines,count:1});'
+  + 'if(!due)due=setTimeout(send,known?250:0);}'
+  + 'addEventListener("error",function(e){var inPage=typeof e.filename==="string"&&e.filename.indexOf("blob:")===0;'
+  + 'report(String(e.message||"Error"),stackLines(e.error,inPage?e.lineno:0));});'
+  + 'addEventListener("unhandledrejection",function(e){var r=e.reason;'
+  + 'report("Uncaught (in promise) "+(r&&typeof r==="object"&&"message" in r?String(r.name||"Error")+": "+String(r.message):String(r)),stackLines(r,0));});'
+  + '})();</script>';
 
 /** Web Audio reaches the speakers through a silent gain; media elements stay muted. */
 const MUTE_SHIM = '<script>(function(){try{'
@@ -320,6 +329,8 @@ export interface JSAnimationPageError {
 interface RawPageError {
   message: string;
   line: number | null;
+  /** Lines of the page on the error's stack, innermost first. */
+  lines: number[];
   count: number;
 }
 
@@ -329,10 +340,13 @@ function cleanErrors(value: unknown): RawPageError[] {
   const out: RawPageError[] = [];
   for (const item of value.slice(0, 12)) {
     if (!item || typeof item !== 'object') continue;
-    const { message, line, count } = item as Record<string, unknown>;
+    const { message, line, lines, count } = item as Record<string, unknown>;
+    const isLine = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n) && n > 0;
+    const first = isLine(line) ? line : null;
     out.push({
       message: String(message ?? 'Error').slice(0, 1000),
-      line: typeof line === 'number' && Number.isInteger(line) && line > 0 ? line : null,
+      line: first,
+      lines: Array.isArray(lines) ? lines.filter(isLine).slice(0, 10) : first !== null ? [first] : [],
       count: typeof count === 'number' && Number.isFinite(count) && count > 0 ? Math.floor(count) : 1,
     });
   }
@@ -341,7 +355,13 @@ function cleanErrors(value: unknown): RawPageError[] {
 
 function placedErrors(page: IframePage, raw: RawPageError[]): JSAnimationPageError[] {
   return raw.map((e) => {
-    const place = page.place(e.line);
+    // The innermost line of the author's own code: an error raised inside
+    // p5 by a call from the sketch points at that call.
+    let place: SketchPlace | null = null;
+    for (const line of e.lines.length ? e.lines : [e.line]) {
+      place = page.place(line);
+      if (place) break;
+    }
     return { message: e.message, file: place?.file ?? null, line: place?.line ?? null, count: e.count };
   });
 }

@@ -182,6 +182,17 @@ const FILES_RUNTIME = String.raw`(function (files) {
       return url ? nativeFetch.call(this, url, init) : nativeFetch.call(this, input, init);
     };
   }
+  /* p5 builds a Request from the path before it fetches; in a page served
+     from a blob: URL a relative path cannot even become one. */
+  var NativeRequest = window.Request;
+  if (NativeRequest) {
+    var SketchRequest = function (input, init) {
+      var url = typeof input === 'string' || input instanceof URL ? resolve(String(input)) : null;
+      return new NativeRequest(url || input, init);
+    };
+    SketchRequest.prototype = NativeRequest.prototype;
+    window.Request = SketchRequest;
+  }
   var open = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function (method, target) {
     var url = resolve(target);

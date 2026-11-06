@@ -95,6 +95,32 @@ describe('the page an iframe plays', () => {
     expect(page.place(null)).toBeNull();
   });
 
+  it('keeps promise rejections too, with the page lines on their stack, innermost first', () => {
+    const page = iframePage({ animationType: 'p5js', htmlCode: p5Page });
+    const shim = page.html.split('\n').find((l) => l.includes('__ghostSketchErrors'))!;
+    const code = shim.replace(/^<script>/, '').replace(/<\/script>$/, '');
+    const listeners: Record<string, (event: unknown) => void> = {};
+    const fakeWindow: { __ghostSketchErrors?: Array<{ message: string; line: number | null; lines: number[]; count: number }> } = {};
+    new Function('window', 'addEventListener', 'parent', 'setTimeout', code)(
+      fakeWindow, (type: string, listener: (event: unknown) => void) => { listeners[type] = listener; }, { postMessage() {} }, () => 1,
+    );
+    const sketchLine = lastLineOf(page.html, 'createCanvas');
+    const p5Line = lineOf(page.html, 'data-ghost-lib="p5"');
+    const error = new ReferenceError('asdfgh is not defined');
+    error.stack = `ReferenceError: asdfgh is not defined\n    at e.default.createCanvas (blob:http://localhost:1431/1f2e:${p5Line}:120)\n    at setup (blob:http://localhost:1431/1f2e:${sketchLine}:20)`;
+    listeners.unhandledrejection({ reason: error });
+    listeners.unhandledrejection({ reason: 'plain' });
+    listeners.error({ message: 'Uncaught TypeError: x is not a function', filename: `blob:http://localhost:1431/1f2e`, lineno: sketchLine, error: null });
+    expect(fakeWindow.__ghostSketchErrors).toEqual([
+      { message: 'Uncaught (in promise) ReferenceError: asdfgh is not defined', line: p5Line, lines: [p5Line, sketchLine], count: 1 },
+      { message: 'Uncaught (in promise) plain', line: null, lines: [], count: 1 },
+      { message: 'Uncaught TypeError: x is not a function', line: sketchLine, lines: [sketchLine], count: 1 },
+    ]);
+    // Inside p5 there is no place of the author's; the call from setup() is one.
+    expect(page.place(p5Line)).toBeNull();
+    expect(page.place(sketchLine)).toEqual({ file: 'index.html', line: lineOf(p5Page, 'createCanvas') });
+  });
+
   it('maps lines of a fragment with no head or body', () => {
     const fragment = ['<canvas></canvas>', '<script>', 'boom();', '</script>'].join('\n');
     const page = iframePage({ animationType: 'threejs', htmlCode: fragment });
