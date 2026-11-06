@@ -390,7 +390,7 @@
   import { automatedRecalls, project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback, flushPendingHistorySnapshot, isProjectFileData } from './lib/stores/layers';
   import { keyframeTimeline, keyframeTrayOpen } from './lib/stores/keyframeTimeline';
   import ChaseOrderBadges from './lib/components/ChaseOrderBadges.svelte';
-  import { beginHistoryRestore, endHistoryRestore, cancelPendingHistorySnapshot, setProjectReplacedCallback, amendLastHistoryStep, hasPendingHistorySnapshot } from './lib/stores/historyHooks';
+  import { beginHistoryRestore, endHistoryRestore, cancelPendingHistorySnapshot, setProjectReplacedCallback, amendLastHistoryStep, hasPendingHistorySnapshot, noteLiveChange } from './lib/stores/historyHooks';
   import { isProjectDirty, projectSettingsSections, recallSectionSignature, withRecallsAsSaved, type ProjectDirtySnapshot, type RecallSection } from './lib/stores/projectDirty';
   import { musicStudio } from './lib/music/musicStudioStore';
   import { stage3dScene } from './lib/stage3d/store';
@@ -2173,7 +2173,7 @@
       },
       amendTo: (captured) => {
         const state = captured as CapturedHistoryState;
-        history.amend(state.project, state.keyframes, state.output);
+        history.amend(state.project, state.keyframes, state.output, { live: true });
       },
     });
     // Opening a project (any path: File, Open Recent, recovery, relink,
@@ -6508,6 +6508,9 @@
     const previousState = history.undo(get(project));
     if (previousState) {
       applyHistorySnapshot(previousState);
+      // Live changes the undo kept go into the step it went back to when
+      // the next edit begins.
+      noteLiveChange();
     }
     history.unsuppress();
   }
@@ -6520,6 +6523,7 @@
     const nextState = history.redo(get(project));
     if (nextState) {
       applyHistorySnapshot(nextState);
+      noteLiveChange();
     }
     history.unsuppress();
   }

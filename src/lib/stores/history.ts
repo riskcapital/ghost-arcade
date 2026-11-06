@@ -92,7 +92,10 @@ function restoreLarge(value: unknown): unknown {
 function pruneLarge(entries: Iterable<HistoryEntry | null>): void {
   if (largeById.size === 0) return;
   const keep = new Set<number>();
-  for (const entry of entries) for (const id of entry?.large ?? []) keep.add(id);
+  for (const entry of entries) {
+    for (const id of entry?.large ?? []) keep.add(id);
+    for (const id of entry?.recorded?.large ?? []) keep.add(id);
+  }
   for (const [id, value] of largeById) {
     if (keep.has(id)) continue;
     largeById.delete(id);
@@ -343,7 +346,15 @@ interface HistoryEntry {
   selectedLayerId: string | null;
   /** Large strings this step refers to (see internLarge). */
   large: number[];
+  /** The step as its edit recorded it, before live changes made later were
+   *  folded into `json` (amend with `live`); absent when the same. What the
+   *  edit itself changed is this against the step before's `json`, so an
+   *  undo or redo of it leaves the live changes alone. */
+  recorded?: { json: string; large: number[] };
 }
+
+/** The step as its edit recorded it (see HistoryEntry.recorded). */
+const recordedJson = (entry: HistoryEntry) => entry.recorded?.json ?? entry.json;
 
 interface HistoryState {
   past: HistoryEntry[];       // previous steps, oldest first
@@ -380,8 +391,11 @@ function createHistoryStore() {
       const leaving = state.current;
       // Compared with large strings still as references (equal strings
       // share one), then put back in what is restored.
-      const parsed = parseSnapshot(target.json, false);
-      const left = leaving ? parseSnapshot(leaving.json, false) : null;
+      // An undo goes back from the edit as recorded to the step before;
+      // a redo from the step before to the edit as recorded. Live changes
+      // folded into a step later are then the same on both sides and kept.
+      const parsed = parseSnapshot(direction < 0 ? target.json : recordedJson(target), false);
+      const left = leaving ? parseSnapshot(direction < 0 ? recordedJson(leaving) : leaving.json, false) : null;
       const project = mergeProjectStep(liveProject, parsed.project, left?.project ?? null, target.selectedLayerId);
       result = {
         project: restoreLarge(project) as Project,
@@ -441,14 +455,18 @@ function createHistoryStore() {
     },
 
     /** Replace the latest step with this state, without adding a step
-     *  (see amendLastHistoryStep). */
-    amend(project: Project, keyframes: unknown = null, output: OutputHistoryState | null = null) {
+     *  (see amendLastHistoryStep). `live`: the state adds only live changes
+     *  made since (see noteLiveChange in historyHooks), which are not part
+     *  of the step's own edit. */
+    amend(project: Project, keyframes: unknown = null, output: OutputHistoryState | null = null, options: { live?: boolean } = {}) {
       if (suppressCount > 0) return;
       const serialized = serializeSnapshot(project, keyframes, output);
       let kept: HistoryState | null = null;
       update((state) => {
-        if (!state.current || state.current.json === serialized.json) return state;
-        kept = { ...state, current: { ...state.current, json: serialized.json, large: serialized.large } };
+        const current = state.current;
+        if (!current || current.json === serialized.json) return state;
+        const recorded = options.live ? (current.recorded ?? { json: current.json, large: current.large }) : undefined;
+        kept = { ...state, current: { ...current, json: serialized.json, large: serialized.large, recorded } };
         return kept;
       });
       if (kept) pruneLarge(entriesOf(kept));
@@ -459,12 +477,18 @@ function createHistoryStore() {
      * names it), so undo must not take it back to the old name.
      */
     renameSteps(name: string) {
+      const renamed = (json: string): string => {
+        const parsed = JSON.parse(json) as { project?: { name?: string } };
+        if (!parsed.project || parsed.project.name === name) return json;
+        parsed.project.name = name;
+        return JSON.stringify(parsed);
+      };
       const rename = (entry: HistoryEntry | null): HistoryEntry | null => {
         if (!entry) return entry;
-        const parsed = JSON.parse(entry.json) as { project?: { name?: string } };
-        if (!parsed.project || parsed.project.name === name) return entry;
-        parsed.project.name = name;
-        return { ...entry, json: JSON.stringify(parsed) };
+        const json = renamed(entry.json);
+        const recorded = entry.recorded ? { ...entry.recorded, json: renamed(entry.recorded.json) } : undefined;
+        if (json === entry.json && recorded?.json === entry.recorded?.json) return entry;
+        return { ...entry, json, recorded };
       };
       update((state) => ({
         past: state.past.map((e) => rename(e)!),

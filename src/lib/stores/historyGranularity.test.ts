@@ -105,7 +105,7 @@ function wireHistory() {
     },
     amendTo: (c: unknown) => {
       const state = c as Captured;
-      historyModule.history.amend(state.project, state.keyframes, state.output);
+      historyModule.history.amend(state.project, state.keyframes, state.output, { live: true });
     },
   });
   hooks.setProjectReplacedCallback(() => queueMicrotask(resetHistory));
@@ -123,11 +123,15 @@ function apply(step: import('./history').HistorySnapshot | null) {
 }
 function undo() {
   hooks.flushPendingHistorySnapshot();
-  return apply(historyModule.history.undo(get(layers.project)));
+  const moved = apply(historyModule.history.undo(get(layers.project)));
+  if (moved) hooks.noteLiveChange();
+  return moved;
 }
 function redo() {
   hooks.flushPendingHistorySnapshot();
-  return apply(historyModule.history.redo(get(layers.project)));
+  const moved = apply(historyModule.history.redo(get(layers.project)));
+  if (moved) hooks.noteLiveChange();
+  return moved;
 }
 const steps = () => get(historyModule.history).past.length;
 const layerById = (id: string) => get(layers.project).layers.find((l) => l.id === id);
@@ -302,7 +306,7 @@ describe('a live change made before an edit', () => {
     expect(layerById('b')!.opacity).toBe(0.3);
   });
 
-  it.skip('made while a slider edit waits is not undone with the next edit', () => {
+  it('made while a slider edit waits is not undone with the next edit', () => {
     vi.useFakeTimers();
     layers.project.updateLayer('a', { opacity: 0.6 });
     vi.advanceTimersByTime(100);
@@ -338,7 +342,31 @@ describe('a live change made before an edit', () => {
     expect(historyModule.history.currentStepId()).toBe(id);
   });
 
-  it.skip('is not folded into a step an undo went back to', () => {
+  it('is kept by undoing past the step it was folded into', () => {
+    layers.project.setLayerBlendMode('a', 'multiply');
+    live(() => layers.project.updateLayer('b', { opacity: 0.3 }, { history: false }));
+    layers.project.setLayerBlendMode('a', 'screen');
+    undo();
+    expect(layerById('a')!.blendMode).toBe('multiply');
+    undo();
+    expect(layerById('a')!.blendMode).toBe('normal');
+    expect(layerById('b')!.opacity).toBe(0.3);
+    redo();
+    redo();
+    expect(layerById('a')!.blendMode).toBe('screen');
+    expect(layerById('b')!.opacity).toBe(0.3);
+  });
+
+  it('is kept when a redo follows it', () => {
+    layers.project.setLayerBlendMode('a', 'multiply');
+    undo();
+    live(() => layers.project.updateLayer('b', { opacity: 0.3 }, { history: false }));
+    redo();
+    expect(layerById('a')!.blendMode).toBe('multiply');
+    expect(layerById('b')!.opacity).toBe(0.3);
+  });
+
+  it('is not folded into a step an undo went back to', () => {
     layers.project.setLayerBlendMode('a', 'multiply');
     live(() => layers.project.updateLayer('b', { opacity: 0.3 }, { history: false }));
     undo();
