@@ -224,6 +224,80 @@ describe('live control is not an edit', () => {
   });
 });
 
+describe('a live change made before an edit', () => {
+  const live = (fn: () => void) => hooks.runAsLiveControl(fn);
+
+  it('is not undone with a one-shot edit to another layer', () => {
+    live(() => layers.project.updateLayer('b', { opacity: 0.3 }, { history: false }));
+    layers.project.setLayerBlendMode('a', 'multiply');
+    expect(steps()).toBe(1);
+    undo();
+    expect(layerById('a')!.blendMode).toBe('normal');
+    expect(layerById('b')!.opacity).toBe(0.3);
+    redo();
+    expect(layerById('a')!.blendMode).toBe('multiply');
+    expect(layerById('b')!.opacity).toBe(0.3);
+  });
+
+  it('is not undone with a slider edit to another layer', () => {
+    vi.useFakeTimers();
+    live(() => layers.project.updateLayer('b', { opacity: 0.3 }, { history: false }));
+    vi.advanceTimersByTime(16);
+    layers.project.updateLayer('a', { opacity: 0.6 });
+    vi.advanceTimersByTime(700);
+    expect(steps()).toBe(1);
+    undo();
+    expect(layerById('a')!.opacity).toBe(1);
+    expect(layerById('b')!.opacity).toBe(0.3);
+  });
+
+  it.skip('made while a slider edit waits is not undone with the next edit', () => {
+    vi.useFakeTimers();
+    layers.project.updateLayer('a', { opacity: 0.6 });
+    vi.advanceTimersByTime(100);
+    live(() => layers.project.updateLayer('b', { opacity: 0.3 }, { history: false }));
+    vi.advanceTimersByTime(700);
+    layers.project.setLayerBlendMode('a', 'multiply');
+    expect(steps()).toBe(2);
+    undo();
+    expect(layerById('a')!.blendMode).toBe('normal');
+    expect(layerById('a')!.opacity).toBe(0.6);
+    expect(layerById('b')!.opacity).toBe(0.3);
+    undo();
+    expect(layerById('a')!.opacity).toBe(1);
+    expect(layerById('b')!.opacity).toBe(0.3);
+  });
+
+  it('after an automated preset recall is not undone with the next edit', async () => {
+    vi.useFakeTimers();
+    live(() => layers.project.updateLayer('b', { opacity: 0.25 }, { history: false }));
+    layers.noteAutomatedRecall([]);
+    vi.advanceTimersByTime(1);
+    layers.project.setLayerBlendMode('a', 'screen');
+    undo();
+    expect(layerById('a')!.blendMode).toBe('normal');
+    expect(layerById('b')!.opacity).toBe(0.25);
+  });
+
+  it('does not change the step the project is at, so saved stays saved', () => {
+    const id = historyModule.history.currentStepId();
+    live(() => layers.project.updateLayer('b', { opacity: 0.3 }, { history: false }));
+    layers.project.setLayerBlendMode('a', 'multiply');
+    undo();
+    expect(historyModule.history.currentStepId()).toBe(id);
+  });
+
+  it.skip('is not folded into a step an undo went back to', () => {
+    layers.project.setLayerBlendMode('a', 'multiply');
+    live(() => layers.project.updateLayer('b', { opacity: 0.3 }, { history: false }));
+    undo();
+    layers.project.setLayerBlendMode('a', 'screen');
+    undo();
+    expect(layerById('a')!.blendMode).toBe('normal');
+    expect(layerById('b')!.opacity).toBe(0.3);
+  });
+});
+
 describe('the view is not part of a step', () => {
   it('keeps the live selection through undo, and moves it off a layer the undo removed', () => {
     layers.project.addColorLayer('Added');

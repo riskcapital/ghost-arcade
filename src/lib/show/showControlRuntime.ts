@@ -27,6 +27,7 @@ import { vjClipLauncher } from '../stores/vjClipLauncher';
 import { settings } from '../stores/settings';
 import { launchClockTempo } from '../stores/launchClock';
 import { midiRouter, registerShowControl } from '../midi/midiRouter';
+import { runAsLiveControl } from '../stores/historyHooks';
 
 /** Hooks App.svelte fills in: things only the app shell can do. */
 export const showRuntimeHooks: {
@@ -79,7 +80,7 @@ export const appCueExecutor: CueExecutor = {
   },
   writeValue(target, value) {
     if (target.kind === 'macro') macros.setMacroValue(`macro-${target.macro}`, value);
-    else if (target.kind === 'layerOpacity') project.updateLayer(target.layerId, { opacity: Math.max(0, Math.min(1, value)) }, { history: false });
+    else if (target.kind === 'layerOpacity') runAsLiveControl(() => project.updateLayer(target.layerId, { opacity: Math.max(0, Math.min(1, value)) }, { history: false }));
     else midiRouter.dispatchPath(target.path, value, { inputId: `show:${target.path}` });
   },
   timeline,

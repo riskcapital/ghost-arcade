@@ -77,6 +77,10 @@ export function wireAppHistory() {
       const state = captureHistoryState();
       history.amend(state.project, state.keyframes, state.output);
     },
+    amendTo: (captured) => {
+      const state = captured as CapturedHistoryState;
+      history.amend(state.project, state.keyframes, state.output);
+    },
   });
   // Opening a project (any path: File, Open Recent, recovery, relink,
   // package) starts its history over. Deferred to a microtask so what the
