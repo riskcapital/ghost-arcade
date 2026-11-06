@@ -114,7 +114,7 @@
   import { fitToolbar } from './lib/utils/toolbarFit';
   import { fitMenuHeight } from './lib/utils/menuFit';
   import { startRecording as startRec, formatRecordingDuration, type RecorderHandle } from './lib/recording/recorder';
-  import { vjClipLauncher } from './lib/stores/vjClipLauncher';
+  import { vjClipLauncher, vjEditVersion } from './lib/stores/vjClipLauncher';
   import { mediaRelinkVersion, noteMediaRelinked } from './lib/stores/missingMedia';
   import { projectionSimHistoryVersion } from './lib/projectionSim/store';
   import { startProjectionSimSceneSync } from './lib/projectionSim/sceneSync';
@@ -632,8 +632,9 @@
         stage3d: get(stage3dScene),
       }),
       // Map Sim and Stage 3D edits (saved with the project, with undo of
-      // their own) and relinked media are counted where they happen.
-      counters: JSON.stringify([get(projectionSimHistoryVersion), get(stage3dHistoryVersion), get(mediaRelinkVersion)]),
+      // their own), relinked media and VJ clip and deck edits are counted
+      // where they happen.
+      counters: JSON.stringify([get(projectionSimHistoryVersion), get(stage3dHistoryVersion), get(mediaRelinkVersion), get(vjEditVersion)]),
     };
   }
 

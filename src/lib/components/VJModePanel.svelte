@@ -1419,7 +1419,8 @@
       vjDetectedNdiSources = [];
       vjNdiStatusHint = 'Install NDI and restart Ghost Arcade';
     }
-    if (!vjNdiAvailable) return;
+    // VJ may have closed while availability was being checked.
+    if (!vjNdiAvailable || !vjPanelOpen) return;
     if (vjNdiScanInterval) return;
     const tick = async () => {
       vjNdiScanning = true;
@@ -1444,6 +1445,11 @@
   function vjStopNdiScan() {
     if (vjNdiScanInterval) { clearInterval(vjNdiScanInterval); vjNdiScanInterval = null; }
   }
+  // The panel stays mounted while VJ is closed. Poll for NDI senders (so the
+  // Sources tab follows senders coming and going) only while it is open.
+  let vjPanelOpen = false;
+  $: vjPanelOpen = $vjClipLauncher.isOpen;
+  $: if (vjPanelOpen) void vjStartNdiScan(); else vjStopNdiScan();
   function vjAddNdiSource(sourceName: string) {
     const senderName = sourceName.trim();
     if (!senderName) return;
@@ -1707,11 +1713,6 @@
 
   // Load shaders on mount
   onMount(() => {
-    // Start the NDI source scan loop. Polls findSources() every 2s
-    // so the Sources tab reflects new senders as they come/go on the
-    // network. No-ops cleanly when NDI isn't available.
-    void vjStartNdiScan();
-
     window.addEventListener('midi-stage-preset', stagePresetHandler);
     window.addEventListener('vj-stage-effect-hold', stageEffectHoldHandler);
 
@@ -1920,7 +1921,8 @@
         if ((inp.TYPE === 'float' || inp.TYPE === 'long') && inp.DEFAULT !== undefined) {
           const current = clip.shaderValues?.[inp.NAME];
           if (current === undefined) {
-            vjClipLauncher.updateActiveClipShaderValue(layerIndex, inp.NAME, inp.DEFAULT as number);
+            // Showing the params is not an edit to the project.
+            vjClipLauncher.updateActiveClipShaderValue(layerIndex, inp.NAME, inp.DEFAULT as number, undefined, false);
           }
         }
       }
@@ -2289,7 +2291,7 @@
   function startModGhostLoop() {
     if (modGhostRaf !== null) return;
     const tick = () => {
-      if (selectedLayerIndex === null || !showShaderParams) {
+      if (!vjPanelOpen || selectedLayerIndex === null || !showShaderParams) {
         modGhostValues = {};
         modGhostRaf = null;
         return;
@@ -2314,7 +2316,7 @@
   }
 
   // Start/stop ghost loop when shader params panel is visible
-  $: if (showShaderParams && selectedLayerIndex !== null) {
+  $: if (vjPanelOpen && showShaderParams && selectedLayerIndex !== null) {
     startModGhostLoop();
   } else {
     stopModGhostLoop();
