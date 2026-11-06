@@ -38,11 +38,20 @@
         { "NAME": "contrast",       "TYPE": "float", "DEFAULT": 1.05, "MIN": 0.50,  "MAX": 2.0,  "LABEL": "Contrast" },
         { "NAME": "gamma",          "TYPE": "float", "DEFAULT": 0.95, "MIN": 0.50,  "MAX": 2.0,  "LABEL": "Gamma" },
         { "NAME": "vignette",       "TYPE": "float", "DEFAULT": 0.30, "MIN": 0.0,   "MAX": 1.5,  "LABEL": "Vignette" },
-        { "NAME": "grain",          "TYPE": "float", "DEFAULT": 0.020,"MIN": 0.0,   "MAX": 0.30, "LABEL": "Film Grain" }
+        { "NAME": "grain",          "TYPE": "float", "DEFAULT": 0.020,"MIN": 0.0,   "MAX": 0.30, "LABEL": "Film Grain" },
+        { "NAME": "mmFlow",  "TYPE": "float", "DEFAULT": -1, "MIN": -1, "MAX": 3600, "LABEL": "Music flow" },
+        { "NAME": "mmSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1, "LABEL": "Music swell" },
+        { "NAME": "mmPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1, "LABEL": "Music pulse" },
+        { "NAME": "mmMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000, "LABEL": "Music morph" }
     ]
 }*/
 
 precision highp float;
+
+// Made for Music motion: mmFlow is the music's time (-1 when Music motion is off,
+// then the shader runs on TIME as before); mmSwell, mmPulse and mmMorph are 0 when
+// off, which is the original look.
+float mmTime() { return mmFlow >= 0.0 ? mmFlow : TIME; }
 
 #define PI  3.14159265359
 #define TAU 6.28318530718
@@ -131,15 +140,15 @@ void main() {
     vec2 R = RENDERSIZE;
     vec2 uv = (gl_FragCoord.xy - 0.5 * R) / min(R.x, R.y);
 
-    // Continuous evolution from TIME alone; audio modulates RATES.
-    float flowT = TIME * flowSpeed * (1.0 + midToFlow * mid);
-    float palT  = TIME * paletteSpeed * (1.0 + trebToPalette * treb);
-    float warpDilate = 1.0 + energyToWarp * energy;
+    // Continuous evolution from mmTime() alone; audio modulates RATES.
+    float flowT = mmTime() * flowSpeed * (1.0 + midToFlow * mid);
+    float palT  = mmTime() * paletteSpeed * (1.0 + trebToPalette * treb) + 0.07 * sin(mmMorph * 1.3);
+    float warpDilate = 1.0 + energyToWarp * energy + 0.35 * mmSwell;
 
     // Camera — gentle yaw, slight tilt, quiet forward drift in z.
     vec3 ro = vec3(0.0, 0.0, 0.0);
     vec3 rd = normalize(vec3(uv * fov, 1.0));
-    rd.xz *= rot(TIME * orbitSpeed);
+    rd.xz *= rot(mmTime() * orbitSpeed);
     rd.yz *= rot(camTilt);
 
     // Volumetric emission march.
@@ -151,9 +160,9 @@ void main() {
     for (int i = 0; i < STEPS; i++) {
         vec3 p = (ro + rd * t) * fieldScale;
         // smooth forward drift -> "you're drifting through the cosmic field"
-        p += vec3(0.0, 0.0, TIME * worldDrift);
+        p += vec3(0.0, 0.0, mmTime() * worldDrift);
         vec3 e = nebula(p, flowT, warpDilate);
-        e *= emissionAmount * (1.0 + bassToBloom * bass) * stepSize;
+        e *= emissionAmount * (1.0 + bassToBloom * bass + 0.5 * mmPulse) * stepSize;
         acc += trans * e;
         // mild self-absorption so crests in front gently shadow the ones behind
         float dens = (e.r + e.g + e.b) * absorption;

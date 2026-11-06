@@ -36,11 +36,20 @@
         { "NAME": "saturation",    "TYPE": "float", "DEFAULT": 1.25, "MIN": 0.0,   "MAX": 2.0,   "LABEL": "Saturation" },
         { "NAME": "contrast",      "TYPE": "float", "DEFAULT": 1.10, "MIN": 0.50,  "MAX": 2.0,   "LABEL": "Contrast" },
         { "NAME": "gamma",         "TYPE": "float", "DEFAULT": 0.90, "MIN": 0.50,  "MAX": 2.0,   "LABEL": "Gamma" },
-        { "NAME": "grain",         "TYPE": "float", "DEFAULT": 0.025,"MIN": 0.0,   "MAX": 0.30,  "LABEL": "Film Grain" }
+        { "NAME": "grain",         "TYPE": "float", "DEFAULT": 0.025,"MIN": 0.0,   "MAX": 0.30,  "LABEL": "Film Grain" },
+        { "NAME": "mmFlow",  "TYPE": "float", "DEFAULT": -1, "MIN": -1, "MAX": 3600, "LABEL": "Music flow" },
+        { "NAME": "mmSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1, "LABEL": "Music swell" },
+        { "NAME": "mmPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1, "LABEL": "Music pulse" },
+        { "NAME": "mmMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000, "LABEL": "Music morph" }
     ]
 }*/
 
 precision highp float;
+
+// Made for Music motion: mmFlow is the music's time (-1 when Music motion is off,
+// then the shader runs on TIME as before); mmSwell, mmPulse and mmMorph are 0 when
+// off, which is the original look.
+float mmTime() { return mmFlow >= 0.0 ? mmFlow : TIME; }
 
 #define PI  3.14159265359
 #define TAU 6.28318530718
@@ -69,7 +78,7 @@ float curveX(float z, float t, float idx) {
 // shaped like vertical sheets that follow the wandering curve in xz.
 vec3 emission(vec3 p) {
     vec3 e = vec3(0.0);
-    float t = TIME * driftSpeed;
+    float t = mmTime() * driftSpeed;
 
     float h = clamp((p.y - curtainBase) / max(curtainHeight, 0.01), 0.0, 1.0);
     // vertical profile — soft bottom, longer top decay (classic aurora shape)
@@ -77,11 +86,11 @@ vec3 emission(vec3 p) {
     if (vert < 0.001) return e;
 
     // colour gradient along altitude: low -> mid -> high
-    vec3 col = mix(hue2rgb(lowHue), hue2rgb(midHue), smoothstep(0.0, 0.5, h));
-    col      = mix(col, hue2rgb(highHue),                 smoothstep(0.55, 1.0, h));
+    vec3 col = mix(hue2rgb(lowHue + 0.07 * sin(mmMorph * 1.3)), hue2rgb(midHue + 0.07 * sin(mmMorph * 1.3)), smoothstep(0.0, 0.5, h));
+    col      = mix(col, hue2rgb(highHue + 0.07 * sin(mmMorph * 1.3)),                 smoothstep(0.55, 1.0, h));
 
     // pulse multiplier
-    float pulse = 1.0 + pulseAmt * sin(p.z * 0.15 + TIME * pulseSpeed);
+    float pulse = 1.0 + pulseAmt * sin(p.z * 0.15 + mmTime() * pulseSpeed) + 0.45 * mmPulse;
 
     for (int i = 0; i < 4; i++) {
         if (float(i) >= curtainCount) break;
@@ -103,7 +112,7 @@ vec3 emission(vec3 p) {
                            exp(-dg * dg * curtainSharp),
                            exp(-db * db * curtainSharp));
 
-        e += col * chroma * vert * pulse * intensity * 0.7;
+        e += col * chroma * vert * pulse * intensity * (1.0 + 0.4 * mmSwell) * 0.7;
     }
     return e;
 }
@@ -123,7 +132,7 @@ vec3 stars(vec3 rd) {
     float h = hash21(id);
     float bright = smoothstep(starsDensity, starsDensity + 0.004, h);
     // a hint of twinkle
-    float tw = 0.6 + 0.4 * sin(TIME * 2.0 + h * 30.0);
+    float tw = 0.6 + 0.4 * sin(mmTime() * 2.0 + h * 30.0);
     return vec3(bright) * starsBright * tw;
 }
 
@@ -161,7 +170,7 @@ void main() {
 
     // camera at water level, looking up + forward
     vec3 ro = vec3(0.0, 0.05, 0.0);
-    vec2 sway = vec2(sin(TIME * 0.13), cos(TIME * 0.17)) * swayAmt * 0.05;
+    vec2 sway = vec2(sin(mmTime() * 0.13), cos(mmTime() * 0.17)) * swayAmt * 0.05;
     vec3 rd = normalize(vec3(uv.x + sway.x, uv.y + lookUp + sway.y, 1.0 / max(fov, 0.05)));
     rd.xz *= rot(yaw);
 
@@ -176,8 +185,8 @@ void main() {
         vec3 rrd = vec3(rd.x, -rd.y, rd.z);
         // ripple perturbation — a couple of detuned sines fake wind chop
         float rp = rippleAmt * (
-              sin(rd.z * rippleFreq        + TIME * 1.3)
-            + sin(rd.x * rippleFreq * 0.7  + TIME * 0.9) * 0.7);
+              sin(rd.z * rippleFreq        + mmTime() * 1.3)
+            + sin(rd.x * rippleFreq * 0.7  + mmTime() * 0.9) * 0.7);
         rrd.x += rp;
         rrd.y += rp * 0.4;
         rrd = normalize(rrd);

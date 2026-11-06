@@ -320,6 +320,11 @@ export function isMusicMotionReady(inputs: ReadonlyArray<{ NAME?: string }> | nu
   return !!inputs?.some((i) => (MUSIC_MOTION_INPUTS as readonly string[]).includes(i?.NAME ?? ''));
 }
 
+/** An input Music motion feeds (kept out of the hand-set param lists). */
+export function isMusicMotionInput(name: string | null | undefined): boolean {
+  return (MUSIC_MOTION_INPUTS as readonly string[]).includes(name ?? '');
+}
+
 /** Ready-made inputs from shader code (header only), for library badges. */
 export function shaderIsMusicMotionReady(code: string | null | undefined): boolean {
   if (!code) return false;

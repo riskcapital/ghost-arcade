@@ -4,8 +4,11 @@
   picked for you; "Params" opens a checklist of the shader's float params.
 -->
 <script lang="ts">
+  import MusicMotionMark from './MusicMotionMark.svelte';
   import {
     isDrivableInput,
+    isMusicMotionInput,
+    isMusicMotionReady,
     musicMotionParams,
     MUSIC_MOTION_DEFAULT_AMOUNT,
     type MotionInput,
@@ -23,7 +26,9 @@
   let showParams = $state(false);
 
   const current = $derived<MusicMotionSettings>(settings ?? { on: false, amount: MUSIC_MOTION_DEFAULT_AMOUNT });
-  const floats = $derived(inputs.filter(isDrivableInput));
+  const ready = $derived(isMusicMotionReady(inputs));
+  // A shader made for Music motion reads the music itself; its sliders stay put.
+  const floats = $derived(ready ? [] : inputs.filter((i) => isDrivableInput(i) && !isMusicMotionInput(i.NAME)));
   const driven = $derived(new Set(musicMotionParams(current, inputs)));
 
   function toggle() {
@@ -53,9 +58,14 @@
       class="mm-toggle"
       class:on={current.on}
       aria-pressed={current.on}
-      title="The music runs this shader's time and moves its main params, in place of per-param audio"
+      title={ready
+        ? "The music runs this shader's own motion, in place of per-param audio"
+        : "The music runs this shader's time and moves its main params, in place of per-param audio. Works on any shader; shaders with the mark respond best"}
       onclick={toggle}
     >Music motion</button>
+    {#if ready}
+      <MusicMotionMark title="Made for Music motion: smooth, full response" />
+    {/if}
     <input
       class="mm-amount"
       type="range"
@@ -64,7 +74,7 @@
       step="0.01"
       value={current.amount}
       disabled={!current.on}
-      title="Amount: how far the music pushes time and params"
+      title={ready ? "Amount: how strongly the music moves it" : "Amount: how far the music pushes time and params"}
       aria-label="Music motion amount"
       oninput={(e) => setAmount(parseFloat((e.target as HTMLInputElement).value))}
     />

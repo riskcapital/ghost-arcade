@@ -38,11 +38,20 @@
         { "NAME": "saturation",   "TYPE": "float", "DEFAULT": 1.15, "MIN": 0.0,   "MAX": 2.0,  "LABEL": "Saturation" },
         { "NAME": "contrast",     "TYPE": "float", "DEFAULT": 1.15, "MIN": 0.50,  "MAX": 2.0,  "LABEL": "Contrast" },
         { "NAME": "gamma",        "TYPE": "float", "DEFAULT": 0.90, "MIN": 0.50,  "MAX": 2.0,  "LABEL": "Gamma" },
-        { "NAME": "grain",        "TYPE": "float", "DEFAULT": 0.02, "MIN": 0.0,   "MAX": 0.30, "LABEL": "Film Grain" }
+        { "NAME": "grain",        "TYPE": "float", "DEFAULT": 0.02, "MIN": 0.0,   "MAX": 0.30, "LABEL": "Film Grain" },
+        { "NAME": "mmFlow",  "TYPE": "float", "DEFAULT": -1, "MIN": -1, "MAX": 3600, "LABEL": "Music flow" },
+        { "NAME": "mmSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1, "LABEL": "Music swell" },
+        { "NAME": "mmPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1, "LABEL": "Music pulse" },
+        { "NAME": "mmMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000, "LABEL": "Music morph" }
     ]
 }*/
 
 precision highp float;
+
+// Made for Music motion: mmFlow is the music's time (-1 when Music motion is off,
+// then the shader runs on TIME as before); mmSwell, mmPulse and mmMorph are 0 when
+// off, which is the original look.
+float mmTime() { return mmFlow >= 0.0 ? mmFlow : TIME; }
 
 #define PI  3.14159265359
 #define TAU 6.28318530718
@@ -68,8 +77,8 @@ float map(vec3 P) {
     vec3 p = P;
     float scale = 1.0;
     vec3 off = vec3(offsetX, offsetY, offsetZ);
-    float ra = rotA + spin * 0.4 * sin(TIME * 0.30);
-    float rb = rotB + spin * 0.4 * cos(TIME * 0.27);
+    float ra = rotA + spin * 0.4 * sin(mmTime() * 0.30) + 0.12 * sin(mmMorph * 1.7);
+    float rb = rotB + spin * 0.4 * cos(mmTime() * 0.27) + 0.10 * sin(mmMorph * 1.1);
 
     for (int i = 0; i < 8; i++) {
         if (float(i) >= iterations) break;
@@ -142,7 +151,7 @@ vec3 shadeSurface(vec3 pos, vec3 n, vec3 rd, out float fresO) {
     vec2 ky = vec2(0.6, -0.6) * rot(lightYaw);
     vec3 keyDir = normalize(vec3(ky.x, 0.5, ky.y));
     c += pow(max(dot(reflDir, keyDir), 0.0), specPower) * specular * mix(vec3(1.0), hue2rgb(keyHue), 0.3);
-    c += fres * rimGlow * (0.5 + 0.5 * cos(TAU * (ndv * 1.5 + vec3(0.0, 0.33, 0.67))));
+    c += fres * rimGlow * (1.0 + 0.6 * mmSwell + 0.8 * mmPulse) * (0.5 + 0.5 * cos(TAU * (ndv * 1.5 + vec3(0.0, 0.33, 0.67))));
     return c;
 }
 
@@ -152,7 +161,7 @@ void main() {
 
     vec3 ro = vec3(0.0, 0.0, -camDist);
     vec3 rd = normalize(vec3(uv, fov));
-    float yaw = TIME * orbitSpeed;
+    float yaw = mmTime() * orbitSpeed;
     ro.xz *= rot(yaw); rd.xz *= rot(yaw);
     ro.yz *= rot(camTilt); rd.yz *= rot(camTilt);
 

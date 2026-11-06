@@ -1,6 +1,8 @@
 <script lang="ts">
   import PreviewMonitorControl from './PreviewMonitorControl.svelte';
   import MusicMotionControl from './MusicMotionControl.svelte';
+  import MusicMotionMark from './MusicMotionMark.svelte';
+  import { isMusicMotionInput, shaderIsMusicMotionReady } from '../audio/musicMotion';
   import VJGroups from './VJGroups.svelte';
   import VJFluxPanel from './VJFluxPanel.svelte';
   import StageFxChaseControls from './StageFxChaseControls.svelte';
@@ -1497,7 +1499,14 @@
     // Reference activeClipId to make this reactive to clip changes
     void activeClipId;
     // Note and visual voice inputs are played by the music studio every frame, not set by hand.
-    return getActiveShaderInputs(selectedLayerIndex).filter((input) => !isNoteDrivenInput(input.NAME) && !isVoiceDrivenInput(input.NAME));
+    // Music motion inputs are fed by Music motion, not set by hand.
+    return getActiveShaderInputs(selectedLayerIndex).filter((input) => !isNoteDrivenInput(input.NAME) && !isVoiceDrivenInput(input.NAME) && !isMusicMotionInput(input.NAME));
+  })();
+  // Music motion sees every input, so it knows a shader made for it.
+  $: selectedClipMotionInputs = (() => {
+    if (selectedLayerIndex === null) return [];
+    void activeClipId;
+    return getActiveShaderInputs(selectedLayerIndex);
   })();
 
   // Audio-ready badge: true if current shader uses audio uniforms
@@ -5266,7 +5275,7 @@
                     {@const _mmClip = selectedLayerState.activeClip}
                     <MusicMotionControl
                       settings={_mmClip.musicMotion}
-                      inputs={selectedClipShaderInputs}
+                      inputs={selectedClipMotionInputs}
                       onchange={(next) => vjClipLauncher.setClipMusicMotion(_mmClip.id, next)}
                     />
                   {/if}
@@ -6347,7 +6356,7 @@
                           {clip.type === 'shader' ? 'ISF' : clip.type === 'video' ? 'VID' : clip.type === 'spout' ? 'SPT' : clip.type === 'threejs' ? '3JS' : clip.type === 'splat' ? 'PLY' : clip.type === 'model3d' ? '3DM' : clip.type === 'gpu' ? 'GPU' : clip.type === 'text' ? 'TXT' : clip.type === 'effect' ? 'FX' : clip.type === 'preset' ? 'MAP' : clip.type === 'synthvision' ? 'PERF' : 'IMG'}
                         </div>
                       {/if}
-                      <span class="clip-name">{clip.name}</span>
+                      <span class="clip-name">{#if clip.type === 'shader' && shaderIsMusicMotionReady(clip.shaderCode)}<MusicMotionMark size={10} /> {/if}{clip.name}</span>
                       {#if isFileMissing}
                         <button
                           class="missing-badge"

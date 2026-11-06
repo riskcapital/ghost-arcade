@@ -36,11 +36,20 @@
         { "NAME": "contrast",       "TYPE": "float", "DEFAULT": 1.05, "MIN": 0.50,  "MAX": 2.0,  "LABEL": "Contrast" },
         { "NAME": "gamma",          "TYPE": "float", "DEFAULT": 0.95, "MIN": 0.50,  "MAX": 2.0,  "LABEL": "Gamma" },
         { "NAME": "vignette",       "TYPE": "float", "DEFAULT": 0.30, "MIN": 0.0,   "MAX": 1.5,  "LABEL": "Vignette" },
-        { "NAME": "grain",          "TYPE": "float", "DEFAULT": 0.015,"MIN": 0.0,   "MAX": 0.30, "LABEL": "Film Grain" }
+        { "NAME": "grain",          "TYPE": "float", "DEFAULT": 0.015,"MIN": 0.0,   "MAX": 0.30, "LABEL": "Film Grain" },
+        { "NAME": "mmFlow",  "TYPE": "float", "DEFAULT": -1, "MIN": -1, "MAX": 3600, "LABEL": "Music flow" },
+        { "NAME": "mmSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1, "LABEL": "Music swell" },
+        { "NAME": "mmPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1, "LABEL": "Music pulse" },
+        { "NAME": "mmMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000, "LABEL": "Music morph" }
     ]
 }*/
 
 precision highp float;
+
+// Made for Music motion: mmFlow is the music's time (-1 when Music motion is off,
+// then the shader runs on TIME as before); mmSwell, mmPulse and mmMorph are 0 when
+// off, which is the original look.
+float mmTime() { return mmFlow >= 0.0 ? mmFlow : TIME; }
 
 #define PI  3.14159265359
 #define TAU 6.28318530718
@@ -118,10 +127,10 @@ void main() {
     vec2 uv = (gl_FragCoord.xy - 0.5 * R) / min(R.x, R.y);
 
     // Always-evolving time; audio modulates the rate gently.
-    float t   = TIME * flowSpeed * (1.0 + energyToFlow * energy);
-    float palT = TIME * paletteSpeed;
-    float cohesion = clamp(midToCohesion * mid, 0.0, 1.0);
-    float orbitYaw = TIME * orbitSpeed;
+    float t   = mmTime() * flowSpeed * (1.0 + energyToFlow * energy);
+    float palT = mmTime() * paletteSpeed + 0.07 * sin(mmMorph * 1.3);
+    float cohesion = clamp(midToCohesion * mid + 0.35 * mmSwell, 0.0, 1.0);
+    float orbitYaw = mmTime() * orbitSpeed;
 
     vec3 col = vec3(0.0);
 
@@ -167,7 +176,7 @@ void main() {
         float sparkleBoost = isSparkle * trebToSparkle * treb * 1.6;
         vec3 sparkleCol = mix(mc, hue2rgb(sparkleHue), 0.7);
 
-        col += (mc * glow + sparkleCol * glow * sparkleBoost) * brightness * fade;
+        col += (mc * glow + sparkleCol * glow * sparkleBoost) * brightness * (1.0 + 0.5 * mmPulse) * fade;
     }
 
     // Bass-driven gentle global bloom on the brightest regions (lifts the

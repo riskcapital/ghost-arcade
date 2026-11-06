@@ -23,11 +23,20 @@
         { "NAME": "background",    "TYPE": "float", "DEFAULT": 0.04,  "MIN": 0.0,   "MAX": 0.50,  "LABEL": "Background" },
         { "NAME": "vignette",      "TYPE": "float", "DEFAULT": 0.30,  "MIN": 0.0,   "MAX": 1.5,   "LABEL": "Vignette" },
         { "NAME": "contrast",      "TYPE": "float", "DEFAULT": 1.10,  "MIN": 0.5,   "MAX": 2.0,   "LABEL": "Contrast" },
-        { "NAME": "grain",         "TYPE": "float", "DEFAULT": 0.04,  "MIN": 0.0,   "MAX": 0.30,  "LABEL": "Film Grain" }
+        { "NAME": "grain",         "TYPE": "float", "DEFAULT": 0.04,  "MIN": 0.0,   "MAX": 0.30,  "LABEL": "Film Grain" },
+        { "NAME": "mmFlow",  "TYPE": "float", "DEFAULT": -1, "MIN": -1, "MAX": 3600, "LABEL": "Music flow" },
+        { "NAME": "mmSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1, "LABEL": "Music swell" },
+        { "NAME": "mmPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1, "LABEL": "Music pulse" },
+        { "NAME": "mmMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000, "LABEL": "Music morph" }
     ]
 }*/
 
 precision highp float;
+
+// Made for Music motion: mmFlow is the music's time (-1 when Music motion is off,
+// then the shader runs on TIME as before); mmSwell, mmPulse and mmMorph are 0 when
+// off, which is the original look.
+float mmTime() { return mmFlow >= 0.0 ? mmFlow : TIME; }
 
 // ── helpers ─────────────────────────────────────────────────────────
 vec3 hsv2rgb(vec3 c) {
@@ -84,36 +93,37 @@ void main() {
     // Breathing — two incommensurate sines so the pulse never lines up
     // exactly with itself: the frame keeps "breathing" without a loop.
     float breath = 1.0
-        + breatheAmount * sin(TIME * breatheSpeed)
-        + breatheAmount * 0.4 * sin(TIME * breatheSpeed * 0.37 + 1.7);
+        + breatheAmount * sin(mmTime() * breatheSpeed)
+        + breatheAmount * 0.4 * sin(mmTime() * breatheSpeed * 0.37 + 1.7)
+        + 0.06 * mmSwell;
 
     vec2 halfSize = vec2(boxWidth, boxHeight) * breath;
     float rad = clamp(cornerRadius * breath, 0.0, min(halfSize.x, halfSize.y) - 0.001);
 
     // Slow lissajous drift (irrational-ish freq ratio -> non-repeating).
-    vec2 drift = driftAmount * vec2(sin(TIME * 0.13), cos(TIME * 0.11 + 0.5));
+    vec2 drift = driftAmount * vec2(sin(mmTime() * 0.13), cos(mmTime() * 0.11 + 0.5));
     vec2 p = uv - drift;
 
     // Optional organic domain warp.
     if (warp > 0.0) {
-        p += warp * 0.08 * vec2(sin(p.y * 3.1 + TIME * 0.6),
-                                sin(p.x * 2.7 - TIME * 0.5));
+        p += warp * 0.08 * vec2(sin(p.y * 3.1 + mmTime() * 0.6),
+                                sin(p.x * 2.7 - mmTime() * 0.5));
     }
 
     // Nested rounded-rect outlines = level sets of the SDF, flowing inward.
     float sd = sdRoundedBox(p, halfSize, rad);
-    float rings = sd * ringDensity - TIME * speed;
+    float rings = sd * ringDensity - mmTime() * speed;
     float f = fract(rings);
     float dline = min(f, 1.0 - f);                 // 0 at a ring, 0.5 between
     float core = 1.0 - smoothstep(0.0, max(strokeWidth, 0.001), dline);
     float glowv = exp(-dline * glowFalloff) * glow;
-    float lum = core + glowv;
+    float lum = (core + glowv) * (1.0 + 0.5 * mmPulse);
 
     // Colour from the vertical gradient, with a slow continuous hue drift.
     float gpos = clamp(vy + hueShift, 0.0, 1.0);
     vec3 base = grad(gpos);
     vec3 hsv = rgb2hsv(base);
-    hsv.x = fract(hsv.x + TIME * hueDrift);
+    hsv.x = fract(hsv.x + mmTime() * hueDrift + 0.07 * sin(mmMorph * 1.3));
     hsv.y *= saturation;
     vec3 col = hsv2rgb(hsv);
 
