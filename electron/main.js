@@ -5887,12 +5887,16 @@ function createMainWindow() {
       unresponsiveReloadTimer = null;
     }
   };
+  // A reloaded or crashed editor never answers a quit its old page was
+  // asked about, so the quit guard forgets it (quitGuard.reset).
   mainWindow.webContents.on('did-start-navigation', (details) => {
     if (!details?.isMainFrame || details.isSameDocument) return;
     cancelUnresponsiveReload();
+    quitGuard.reset();
   });
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     cancelUnresponsiveReload();
+    quitGuard.reset();
     const now = Date.now();
     const wasRecent = (now - _lastRendererCrashAt) < 30_000;
     _lastRendererCrashAt = now;
@@ -5963,6 +5967,7 @@ function createMainWindow() {
 
   mainWindow.on('closed', () => {
     cancelUnresponsiveReload();
+    quitGuard.reset();
     mainWindow = null;
     // Close every performer/display pop-out so the app can actually exit.
     closeAuxiliaryWindows();
