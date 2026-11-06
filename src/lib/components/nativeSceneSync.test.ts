@@ -65,6 +65,28 @@ describe('NativeLayerInteractionTracker', () => {
     expect(out[0].mesh_grid).toEqual(meshGrid);
   });
 
+  it('hit-tests a Custom Shape by its outline, which a mesh warp leaves in place', () => {
+    const tracker = new NativeLayerInteractionTracker();
+    const meshGrid = {
+      rows: 2,
+      cols: 2,
+      points: [
+        [{ x: 0.2, y: 1 }, { x: 1, y: 1 }],
+        [{ x: 0, y: 0 }, { x: 1, y: 0 }],
+      ],
+    };
+    const customShape = { enabled: true, type: 'custom', params: {} };
+    const a = layer('a', { meshGrid, warpMode: 'mesh', layerShape: customShape } as unknown as Partial<Layer>);
+    expect(tracker.collect([a])[0].mesh_grid).toBeNull();
+    // Turning the shape off makes the mesh the outline again.
+    const plain = tracker.collect([{ ...a, layerShape: { ...customShape, enabled: false } } as unknown as Layer]);
+    expect(plain).toHaveLength(1);
+    expect(plain[0].mesh_grid).toEqual(meshGrid);
+    // A round shape bends with the surface, so it follows the mesh.
+    const round = layer('b', { meshGrid, warpMode: 'mesh', layerShape: { enabled: true, type: 'circle', params: {} } } as unknown as Partial<Layer>);
+    expect(tracker.collect([round])[0].mesh_grid).toEqual(meshGrid);
+  });
+
   it('forgets removed layers and reports them again if they return', () => {
     const tracker = new NativeLayerInteractionTracker();
     const a = layer('a');

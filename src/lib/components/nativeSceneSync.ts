@@ -1,7 +1,11 @@
 import type { Layer, MeshWarpGrid, WarpCorners } from '../types';
-import { layerRenderMeshGrid } from '../utils/meshWarp';
+import { layerOutlineMeshGrid } from '../utils/meshWarp';
 
-/** The warp the native viewport needs for one layer's hit testing. */
+/**
+ * The warp the native viewport needs for one layer's hit testing: the
+ * layer's outline as drawn. A Custom Shape keeps its outline when a mesh
+ * warp moves the content inside it, so its clickable area does too.
+ */
 export interface NativeLayerInteractionPayload {
   layer_id: string;
   corners: WarpCorners;
@@ -12,6 +16,7 @@ interface TrackedLayerWarp {
   corners: unknown;
   meshGrid: unknown;
   warpMode: unknown;
+  customShape: boolean;
   signature: string;
   seen: number;
 }
@@ -30,21 +35,24 @@ export class NativeLayerInteractionTracker {
     const changed: NativeLayerInteractionPayload[] = [];
     for (const layer of projectLayers) {
       const tracked = this.layers.get(layer.id);
+      const customShape = !!layer.layerShape?.enabled && layer.layerShape.type === 'custom';
       if (
         tracked
         && tracked.corners === layer.corners
         && tracked.meshGrid === layer.meshGrid
         && tracked.warpMode === layer.warpMode
+        && tracked.customShape === customShape
       ) {
         tracked.seen = pass;
         continue;
       }
-      const meshGrid = layerRenderMeshGrid(layer);
+      const meshGrid = layerOutlineMeshGrid(layer);
       const signature = JSON.stringify([layer.corners, meshGrid]);
       this.layers.set(layer.id, {
         corners: layer.corners,
         meshGrid: layer.meshGrid,
         warpMode: layer.warpMode,
+        customShape,
         signature,
         seen: pass,
       });
