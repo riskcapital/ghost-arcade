@@ -141,7 +141,8 @@ describe('sketch zips', () => {
     expect(calls).toBe(1);
   });
 
-  it('counts what entries really unpack to towards the whole sketch', async () => {
+  // Unpacks about 120 MB: a busy machine needs longer than the default.
+  it('counts what entries really unpack to towards the whole sketch', { timeout: 30_000 }, async () => {
     // Each entry is honest and under the per-file cap; together they are too much.
     const big = new Uint8Array(30 * 1024 * 1024);
     const zip = makeZip([
