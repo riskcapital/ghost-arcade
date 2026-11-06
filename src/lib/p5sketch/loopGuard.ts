@@ -59,7 +59,7 @@ function readCode(code: string): AnyNode | null {
         sourceType,
         allowHashBang: true,
         allowAwaitOutsideFunction: sourceType === 'module',
-      }) as AnyNode;
+      }) as unknown as AnyNode;
     } catch {
       // Try the other kind, then give up.
     }
