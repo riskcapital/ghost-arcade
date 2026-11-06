@@ -41,3 +41,22 @@ export function sketchWithCode(current: JSAnimationSource, code: string): JSAnim
     paramValues: parsed.params ? paramValues : undefined,
   };
 }
+
+interface LayerLike {
+  id: string;
+  source?: { id: string; jsAnimation?: unknown } | null;
+}
+
+/**
+ * The layers the editor changes when it opens on `layerId`: that layer
+ * first, then every other layer playing the same source. A duplicated layer
+ * keeps its source's id, and whatever plays a source follows the code the
+ * source holds, so copies left with the old code would swap the page back
+ * and forth every frame.
+ */
+export function layersPlayingSource(layers: LayerLike[], layerId: string): string[] {
+  const layer = layers.find((l) => l.id === layerId);
+  const sourceId = layer?.source?.jsAnimation ? layer.source.id : null;
+  if (!layer || !sourceId) return [];
+  return [layer.id, ...layers.filter((l) => l.id !== layer.id && l.source?.jsAnimation && l.source.id === sourceId).map((l) => l.id)];
+}

@@ -34,6 +34,7 @@
   import { firstSyntaxError, languageOf, lineAt, readSketchFile, saveProblem } from './sketchSource';
   import { cleanErrorMessage, explainSketchError, type SketchError } from './sketchErrors';
   import { readSketchRun, type SketchRunStatus } from './sketchRuntime';
+  import { layersPlayingSource } from './sketchLayer';
   import { editorFiles, errorInFiles, fileOrder, isTextFile, sketchWithFiles, sketchWrapping, type EditorFile, type SketchWrapping } from './sketchFiles';
   import { SKETCH_AI_ACTIONS, formatReplyText, runSketchAi, type SketchAiAction, type TextBlock } from './sketchAi';
   import { createProposalView, createSketchCodeEditor, type SketchCodeEditor } from './sketchCodeMirror';
@@ -89,7 +90,8 @@
       return null;
     }
     name = source.name || layer.name;
-    layerIds = [layer.id];
+    // Copies of a duplicated layer play this same source and take the edits too.
+    layerIds = layersPlayingSource(layers, layer.id);
     return source.jsAnimation;
   }
 
