@@ -52,6 +52,31 @@ const omit = (value: unknown, keys: readonly string[]) => {
   return out;
 };
 
+/** Shortest show-timeline audio track (showTimeline.ts SHOW_MIN_CLIP_SECONDS):
+ *  a track added before its length is known has this placeholder length. */
+const SHOW_PLACEHOLDER_SECONDS = 0.25;
+
+/**
+ * A show-timeline audio track as the user set it. The URL is a session's,
+ * and what decoding the file measures (its waveform, its length, and a
+ * placeholder length growing to that) is not an edit: opening an older
+ * project decodes its tracks in the background after the saved baseline is
+ * taken, and the project read as unsaved straight away. A track at its full
+ * length, measured or still to be, reads the same; a trimmed one by its
+ * length.
+ */
+function audioTrackIdentity(track: any) {
+  const out = omit(track, ['url', 'peaks', 'sourceDuration']) as Record<string, unknown> | null;
+  if (!out || typeof out !== 'object') return out;
+  const duration = Number(track.duration);
+  const source = Number(track.sourceDuration) || 0;
+  const full = source > 0
+    ? Math.abs(duration - Math.max(SHOW_PLACEHOLDER_SECONDS, source)) < 1e-6
+    : duration <= SHOW_PLACEHOLDER_SECONDS + 1e-9;
+  if (full) out.duration = 'full';
+  return out;
+}
+
 // A clip's identity. Edits to a clip's settings (a Music Studio clip's
 // voices among them) are counted where they happen (vjEditVersion), so live
 // control moving them (a controller, a song called up) is not an edit.
@@ -202,7 +227,7 @@ export function projectSettingsSections({ exported, showTimeline, showControl, s
       ? {
           ...(omit(showTimeline, ['isOpen', 'zoom', 'audioTracks']) as object),
           audioTracks: Array.isArray((showTimeline as any).audioTracks)
-            ? (showTimeline as any).audioTracks.map((track: any) => omit(track, ['url']))
+            ? (showTimeline as any).audioTracks.map(audioTrackIdentity)
             : [],
         }
       : null,
