@@ -493,7 +493,10 @@ async function shippedLibraryThumbnail(key: string): Promise<string | null> {
 
 /** The key a shader's thumbnail is cached and shipped under. */
 export function shaderThumbnailKey(shaderCode: string): string {
-  return hashCode(shaderCode);
+  // Line endings don't change a shader, and a Windows checkout (or an edit
+  // in a Windows editor) turns the library's LF files into CRLF: hash the
+  // LF form so both find the same shipped thumbnail.
+  return hashCode(shaderCode.replace(/\r\n?/g, '\n'));
 }
 
 // One render per shader at a time: a project with the same shader on many
@@ -505,7 +508,7 @@ export async function generateCachedThumbnail(
   shaderCode: string,
   time: number = 0.5
 ): Promise<string> {
-  const key = hashCode(shaderCode);
+  const key = shaderThumbnailKey(shaderCode);
   const flightKey = `${key}@${time}`;
   const pending = thumbnailsInFlight.get(flightKey);
   if (pending) return pending;
