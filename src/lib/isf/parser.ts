@@ -388,6 +388,33 @@ float sampleWaveform(float u) {
 `;
   }
 
+  // GLSL ES 1.0 (WebGL1) has no tanh, round or transpose; shaders written for
+  // desktop GLSL use them, and then failed to compile and played black.
+  if (/\btanh\s*\(/.test(glsl) && !/\bfloat\s+tanh\s*\(/.test(glsl)) {
+    uniformDeclarations += `
+float tanh(float x) { x = clamp(x, -10.0, 10.0); float e = exp(2.0 * x); return (e - 1.0) / (e + 1.0); }
+vec2 tanh(vec2 x) { return vec2(tanh(x.x), tanh(x.y)); }
+vec3 tanh(vec3 x) { return vec3(tanh(x.x), tanh(x.y), tanh(x.z)); }
+vec4 tanh(vec4 x) { return vec4(tanh(x.x), tanh(x.y), tanh(x.z), tanh(x.w)); }
+`;
+  }
+  if (/\bround\s*\(/.test(glsl) && !/\bfloat\s+round\s*\(/.test(glsl)) {
+    uniformDeclarations += `
+float round(float x) { return floor(x + 0.5); }
+vec2 round(vec2 x) { return floor(x + 0.5); }
+vec3 round(vec3 x) { return floor(x + 0.5); }
+vec4 round(vec4 x) { return floor(x + 0.5); }
+`;
+  }
+  // Nor transpose, which a rotation's inverse often uses.
+  if (/\btranspose\s*\(/.test(glsl) && !/\bmat\d\s+transpose\s*\(/.test(glsl)) {
+    uniformDeclarations += `
+mat2 transpose(mat2 m) { return mat2(m[0][0], m[1][0], m[0][1], m[1][1]); }
+mat3 transpose(mat3 m) { return mat3(m[0][0], m[1][0], m[2][0], m[0][1], m[1][1], m[2][1], m[0][2], m[1][2], m[2][2]); }
+mat4 transpose(mat4 m) { return mat4(m[0][0], m[1][0], m[2][0], m[3][0], m[0][1], m[1][1], m[2][1], m[3][1], m[0][2], m[1][2], m[2][2], m[3][2], m[0][3], m[1][3], m[2][3], m[3][3]); }
+`;
+  }
+
   // Add isf_FragNormCoord helper (convert gl_FragCoord to normalized coords)
   uniformDeclarations += `
 #define isf_FragNormCoord (gl_FragCoord.xy / RENDERSIZE)
