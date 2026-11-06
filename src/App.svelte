@@ -916,7 +916,13 @@
       namePrefix: 'Recording',
       onDurationUpdate: (s) => { recordingDuration = s; },
       onComplete: () => { isRecording = false; recorderHandle = null; },
-      onError: (err) => { alert('Failed to start recording: ' + err.message); },
+      // A take refused when the recorder starts (a moment after the button
+      // flipped to Stop Rec) puts the button back before saying why.
+      onError: (err) => {
+        isRecording = false;
+        recorderHandle = null;
+        alert('Failed to start recording: ' + err.message);
+      },
     });
     if (recorderHandle) {
       isRecording = true;
