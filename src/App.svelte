@@ -151,6 +151,7 @@
     type PhoneVisionSegmentationPipeline,
   } from './lib/stores/phoneVision';
   import { history, canUndo, canRedo } from './lib/stores/history';
+  import { clearAutosaveSnapshot, findAutosave, hasAutosave, readAutosave, writeAutosave } from './lib/storage/autosaveStore';
   import { recentFiles } from './lib/stores/recentFiles';
   import { initLicense, destroyLicense } from './lib/stores/license';
   import { startUpdateChecker, stopUpdateChecker, updateInfo } from './lib/stores/updateChecker';
@@ -676,7 +677,7 @@
 
   // Recovery modal actions
   async function recoverAutosave() {
-    let savedData = localStorage.getItem('ghostarcade-autosave');
+    let savedData = await readAutosave();
     if (savedData) {
       // Recover against the project file the snapshot was taken from, so its
       // media resolves the way Open resolves it and Save goes back there.
@@ -703,7 +704,7 @@
       markAsUnsaved();
       reportOpenedMedia(media);
     }
-    localStorage.removeItem('ghostarcade-autosave');
+    clearAutosaveSnapshot();
     localStorage.removeItem('ghostarcade-autosave-timestamp');
     localStorage.removeItem('ghostarcade-autosave-path');
     autosaveFromEarlierSession = false;
@@ -713,14 +714,14 @@
   }
 
   function discardAutosave() {
-    localStorage.removeItem('ghostarcade-autosave');
+    clearAutosaveSnapshot();
     localStorage.removeItem('ghostarcade-autosave-timestamp');
     autosaveFromEarlierSession = false;
     showRecoveryModal = false;
   }
 
   function clearAutosave() {
-    localStorage.removeItem('ghostarcade-autosave');
+    clearAutosaveSnapshot();
     localStorage.removeItem('ghostarcade-autosave-timestamp');
   }
 
@@ -1310,12 +1311,23 @@
     markAsSaved();
 
     // --- Crash recovery: check for auto-saved project ---
-    const savedAutosave = localStorage.getItem('ghostarcade-autosave');
-    autosaveFromEarlierSession = !!savedAutosave;
+    const savedAutosave = hasAutosave();
+    autosaveFromEarlierSession = savedAutosave;
     if (savedAutosave && !promptsSuppressed()) {
       const ts = localStorage.getItem('ghostarcade-autosave-timestamp');
       recoveryTimestamp = ts ? new Date(parseInt(ts, 10)).toLocaleString() : 'unknown time';
       showRecoveryModal = true;
+    } else if (!savedAutosave && !promptsSuppressed()) {
+      // A large snapshot lives in IndexedDB, which keeps it through a crash
+      // even when localStorage lost the marker pointing at it. Offer it only
+      // while nothing has been opened or started in the meantime.
+      void findAutosave().then((found) => {
+        if (!found || showRecoveryModal || currentProjectPath || get(project).layers.length > 0) return;
+        autosaveFromEarlierSession = true;
+        const ts = localStorage.getItem('ghostarcade-autosave-timestamp');
+        recoveryTimestamp = ts ? new Date(parseInt(ts, 10)).toLocaleString() : 'unknown time';
+        showRecoveryModal = true;
+      });
     }
 
     // --- A project double-clicked in the Finder / Explorer ---
@@ -1378,16 +1390,27 @@
       const proj = get(project);
       if (proj.layers.length > 0 || hasVjClips()) {
         autosaveFromEarlierSession = false;
+        // A project too large for localStorage (a p5.js sketch carrying its
+        // sounds and images) is kept whole in IndexedDB instead
+        // (lib/storage/autosaveStore).
+        const pathAtSnapshot = currentProjectPath ?? '';
+        let jsonStr: string;
         try {
-          const jsonStr = project.exportProjectJSON();
-          localStorage.setItem('ghostarcade-autosave', jsonStr);
-          localStorage.setItem('ghostarcade-autosave-timestamp', Date.now().toString());
-          // Remember which file this snapshot belongs to so recovery can
-          // resolve its media the same way Open does.
-          localStorage.setItem('ghostarcade-autosave-path', currentProjectPath ?? '');
+          jsonStr = project.exportProjectJSON();
         } catch (e) {
           console.warn('[AutoSave] Failed to auto-save project:', e);
+          return;
         }
+        writeAutosave(jsonStr)
+          .then((where) => {
+            // Saved (or New) while it was being written: nothing to recover.
+            if (where === 'cleared') return;
+            localStorage.setItem('ghostarcade-autosave-timestamp', Date.now().toString());
+            // Remember which file this snapshot belongs to so recovery can
+            // resolve its media the same way Open does.
+            localStorage.setItem('ghostarcade-autosave-path', pathAtSnapshot);
+          })
+          .catch((e) => console.warn('[AutoSave] Failed to auto-save project:', e));
       }
     }, 30000);
 

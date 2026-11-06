@@ -1,9 +1,11 @@
 // Global Presets Store — localStorage-backed two-tier preset system
-// Global presets persist across all projects (localStorage)
+// Global presets persist across all projects (localStorage; stage presets
+// too large for it go to IndexedDB, see storage/spilloverStorage)
 // Project presets are saved inside .ghost-arcade files (project store)
 
 import { writable } from 'svelte/store';
 import type { StagePreset, SVKeyboardPreset } from '../types';
+import { spilloverValue } from '../storage/spilloverStorage';
 
 const GLOBAL_STAGE_PRESETS_KEY = 'ghost-arcade_global_stage_presets';
 const GLOBAL_SV_KEYBOARD_PRESETS_KEY = 'ghost-arcade_global_sv_keyboard_presets';
@@ -53,15 +55,35 @@ function migrateOldSVPresets(): SVKeyboardPreset[] {
 // ──── Global Stage Presets ────
 
 function createGlobalStagePresetsStore() {
-  const initial = loadFromStorage<StagePreset>(GLOBAL_STAGE_PRESETS_KEY);
+  // A stage preset holds whole layers, a p5.js sketch with its sounds
+  // included, so the list may outgrow localStorage; it then lives in
+  // IndexedDB (spilloverStorage) and arrives a moment after launch.
+  const stored = spilloverValue(GLOBAL_STAGE_PRESETS_KEY);
+  // Also when localStorage has nothing: a crash may have lost its marker.
+  const spilled = stored.isSpilled() || !stored.has();
+  const initial = spilled ? [] : loadFromStorage<StagePreset>(GLOBAL_STAGE_PRESETS_KEY);
   const { subscribe, update } = writable<StagePreset[]>(initial);
+  let ready = !spilled;
 
-  // Auto-persist on every change
+  // Auto-persist on every change, once the stored list is in.
   let skipFirst = true;
   subscribe(value => {
     if (skipFirst) { skipFirst = false; return; }
-    saveToStorage(GLOBAL_STAGE_PRESETS_KEY, value);
+    if (!ready) return;
+    stored.write(JSON.stringify(value)).catch((e) => {
+      console.warn(`[GlobalPresets] Failed to save '${GLOBAL_STAGE_PRESETS_KEY}':`, e);
+    });
   });
+
+  if (spilled) {
+    void stored.read().then((text) => {
+      let saved: StagePreset[] = [];
+      try { saved = text ? JSON.parse(text) : []; } catch { /* unreadable: start empty */ }
+      ready = true;
+      // Presets added while the list was loading go after the stored ones.
+      update(list => [...saved, ...list.filter(p => !saved.some(s => s.id === p.id))]);
+    });
+  }
 
   return {
     subscribe,
