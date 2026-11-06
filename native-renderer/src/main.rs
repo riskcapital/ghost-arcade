@@ -1786,6 +1786,16 @@ fn effective_native_frame_index(
     }
 }
 
+/// FRAMEINDEX for a shader whose count started at `first`. A clock that went
+/// back past it (a new export starting again at frame 0) starts the count
+/// again there instead of holding it at 0.
+fn isf_frame_index_since(first: &mut u64, frame_index: u64) -> u64 {
+    if frame_index < *first {
+        *first = frame_index;
+    }
+    frame_index - *first
+}
+
 fn effective_native_frame_delta(
     render_clock_mode: &str,
     render_clock_delta: f32,
@@ -4849,6 +4859,10 @@ struct App {
     /// bound mid-session still sees FRAMEINDEX 0 on its first frame and can
     /// initialise its persistent buffers.
     isf_shader_first_frame: HashMap<String, u64>,
+    /// Whether the frames in `isf_shader_first_frame` were counted on the
+    /// manual (export) clock. The live and export clocks count from different
+    /// places, so a switch starts every shader's count again.
+    isf_first_frame_manual_clock: bool,
     isf_shader_use_tick: u64,
     /// Hashed ids of shaders dropped at the cap. A layer bound to one is
     /// reported in `layers_snapshot` so the editor sends the source again.
@@ -5267,6 +5281,7 @@ impl App {
             shader_reads_inputs: HashMap::new(),
             isf_shader_last_used: HashMap::new(),
             isf_shader_first_frame: HashMap::new(),
+            isf_first_frame_manual_clock: false,
             isf_shader_use_tick: 0,
             evicted_shader_ids: HashSet::new(),
             isf_shader_generation: 0,
@@ -16147,7 +16162,16 @@ impl App {
             });
         }
         if self.isf_layer_bindings.is_empty() {
+            self.isf_shader_first_frame.clear();
             return;
+        }
+        // The export clock counts 0, 1, 2... while the live one counts every
+        // submitted frame: a first frame taken on one clock is meaningless on
+        // the other (an export would see FRAMEINDEX 0 on every frame).
+        let manual_clock = self.render_clock_mode == "manual";
+        if manual_clock != self.isf_first_frame_manual_clock {
+            self.isf_first_frame_manual_clock = manual_clock;
+            self.isf_shader_first_frame.clear();
         }
         let time = self.native_graph_time_seconds();
         let frame_index = self.native_frame_index();
@@ -16161,17 +16185,18 @@ impl App {
         // A shader that stopped rendering starts counting again when it returns.
         self.isf_shader_first_frame.retain(|id, _| shader_ids.contains(id));
         for shader_id in shader_ids {
-            let first = *self
+            let first = self
                 .isf_shader_first_frame
                 .entry(shader_id.clone())
                 .or_insert(frame_index);
+            let shader_frame_index = isf_frame_index_since(first, frame_index);
             if let Some(used) = self.isf_shader_last_used.get_mut(&shader_id) {
                 *used = self.isf_shader_use_tick;
             }
             if let Some(state) = self.isf_uniforms.get_mut(&shader_id) {
                 state.time = time;
                 state.time_delta = frame_delta;
-                state.frame_index = frame_index.saturating_sub(first);
+                state.frame_index = shader_frame_index;
                 state.audio0 = self.audio0;
                 state.audio1 = self.audio1;
                 state.audio2 = self.audio2;
@@ -35526,6 +35551,18 @@ mod tests {
     fn manual_native_cadence_honors_external_render_clock_values() {
         assert_eq!(effective_native_frame_index("manual", Some(7), 42), 7);
         assert_eq!(effective_native_frame_delta("manual", 0.5, 60), 0.5);
+    }
+
+    #[test]
+    fn isf_frame_index_counts_from_the_first_frame_and_restarts_on_a_rewound_clock() {
+        // Bound mid-session on the live clock.
+        let mut first = 5_000;
+        assert_eq!(isf_frame_index_since(&mut first, 5_000), 0);
+        assert_eq!(isf_frame_index_since(&mut first, 5_003), 3);
+        // An export starting again at frame 0 counts 0, 1, 2...
+        assert_eq!(isf_frame_index_since(&mut first, 0), 0);
+        assert_eq!(isf_frame_index_since(&mut first, 1), 1);
+        assert_eq!(isf_frame_index_since(&mut first, 2), 2);
     }
 
     #[test]
