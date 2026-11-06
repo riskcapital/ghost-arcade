@@ -223,6 +223,12 @@ if (PROJECTION_SAFE_MODE) {
   }
 }
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+// Sketch pages the editor plays itself run in sandboxed iframes
+// (src/lib/renderer/sandboxPage.ts). Each gets a renderer process of its
+// own, so a page stuck in a loop is ended when its frame goes, instead of
+// stalling every other sandboxed page sharing one process with it.
+// Like disable-features, this switch replaces on repeat calls: add to it.
+app.commandLine.appendSwitch('enable-features', 'IsolateSandboxedIframes:grouping/per-document');
 // Disable pinch-to-zoom at the browser level (we handle zoom ourselves)
 app.commandLine.appendSwitch('disable-pinch');
 // High-DPI. `high-dpi-support` stays on; the forced device scale factor does
@@ -9269,6 +9275,7 @@ function registerIpcHandlers() {
   ipcMain.handle('js_source_audio', (_event, args = {}) => jsSourceHost.setAudio(args?.fields));
   ipcMain.handle('js_source_status', () => jsSourceHost.status());
   ipcMain.handle('js_source_thumbnail', (_event, args = {}) => jsSourceHost.thumbnail(args));
+  ipcMain.handle('js_source_trial', (_event, args = {}) => jsSourceHost.trial(args));
   // Public sketches from the p5.js Web Editor. The renderer passes only a
   // username and a sketch id; the URLs are built in p5-editor-import.cjs.
   const p5EditorImport = require('./p5-editor-import.cjs');

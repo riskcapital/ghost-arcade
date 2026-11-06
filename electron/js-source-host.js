@@ -20,7 +20,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { buildHostHtml, wantsTransparentBackground } from './js-source-page.js';
+import { buildHostHtml, buildHostPage, hostLineToPageLine, uncaughtErrorMessage, wantsTransparentBackground } from './js-source-page.js';
 
 export const JS_SOURCE_SCHEME = 'ghost-js';
 const PARTITION = 'ghost-js-sources';
@@ -33,7 +33,16 @@ const MAX_FRAMES_IN_FLIGHT = 2;
 const FIRST_FRAME_WAIT_MS = 400;
 // Thumbnails: how long a page gets to draw after loading, and the hard stop.
 const THUMBNAIL_SETTLE_MS = 1500;
+const THUMBNAIL_MAX_SETTLE_MS = 4000;
 const THUMBNAIL_TIMEOUT_MS = 8000;
+// Trials before a sketch is saved: how long the page runs after loading, the
+// hard stop, and how long a page has to answer before it counts as stuck.
+const TRIAL_RUN_MS = 1500;
+const TRIAL_MAX_RUN_MS = 5000;
+const TRIAL_TIMEOUT_MS = 10000;
+const TRIAL_ANSWER_MS = 1000;
+const TRIAL_LOAD_ALLOWANCE_MS = 3000;
+const MAX_TRIAL_ERRORS = 12;
 const MAX_LOGGED_PAGE_ERRORS = 20;
 // A page that keeps crashing its renderer is not reopened every frame.
 const CRASH_LIMIT = 3;
@@ -399,6 +408,9 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
   function thumbnail(args = {}) {
     const html = typeof args.html === 'string' ? args.html : '';
     if (!html) return Promise.resolve({ ok: false, reason: 'html is required' });
+    const outWidth = Math.max(16, Math.min(960, Math.round(Number(args.width) || 320)));
+    const outHeight = Math.max(16, Math.min(540, Math.round(Number(args.height) || 180)));
+    const settleMs = Math.max(200, Math.min(THUMBNAIL_MAX_SETTLE_MS, Math.round(Number(args.settle_ms) || THUMBNAIL_SETTLE_MS)));
     ensureProtocol();
     const token = `t${(++tokenSerial).toString(36)}`;
     byToken.set(token, { token, html: buildHostHtml(html) });
@@ -435,7 +447,7 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
         let dataUrl = null;
         try {
           if (lastImage && !lastImage.isEmpty()) {
-            const jpeg = lastImage.resize({ width: 320, height: 180, quality: 'good' }).toJPEG(75);
+            const jpeg = lastImage.resize({ width: outWidth, height: outHeight, quality: 'good' }).toJPEG(75);
             dataUrl = `data:image/jpeg;base64,${jpeg.toString('base64')}`;
           }
         } catch {
@@ -449,16 +461,112 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
         resolve(dataUrl ? { ok: true, data_url: dataUrl } : { ok: false, reason: 'no frame' });
       };
       const wc = win.webContents;
+      // A picture nobody should hear: sketches that play sound stay silent.
+      wc.setAudioMuted(true);
       wc.setFrameRate(30);
       wc.setWindowOpenHandler(() => ({ action: 'deny' }));
       wc.on('will-navigate', (event) => event.preventDefault());
       wc.on('paint', (_event, _dirty, image) => {
         lastImage = image;
       });
-      wc.on('did-finish-load', () => setTimeout(finish, THUMBNAIL_SETTLE_MS));
+      wc.on('did-finish-load', () => setTimeout(finish, settleMs));
       wc.on('render-process-gone', finish);
       timer = setTimeout(finish, THUMBNAIL_TIMEOUT_MS);
       win.loadURL(`${JS_SOURCE_SCHEME}://${token}/index.html`).catch(finish);
+    });
+  }
+
+  /**
+   * Runs a page for a moment in a muted host of its own, out of the editor's
+   * process, and reports the uncaught errors it throws while it starts and
+   * draws, with the line of the page as given. A page stuck in a loop keeps
+   * only this host busy; it is reported as not responding and closed.
+   */
+  function trial(args = {}) {
+    const html = typeof args.html === 'string' ? args.html : '';
+    if (!html) return Promise.resolve({ ok: false, reason: 'html is required' });
+    const runMs = Math.max(200, Math.min(TRIAL_MAX_RUN_MS, Math.round(Number(args.ms) || TRIAL_RUN_MS)));
+    ensureProtocol();
+    const { html: served, layout } = buildHostPage(html);
+    const token = `r${(++tokenSerial).toString(36)}`;
+    const pageUrl = `${JS_SOURCE_SCHEME}://${token}/index.html`;
+    byToken.set(token, { token, html: served });
+    const win = new BrowserWindow({
+      width: 640,
+      height: 360,
+      useContentSize: true,
+      show: false,
+      frame: false,
+      backgroundColor: '#000000',
+      paintWhenInitiallyHidden: true,
+      webPreferences: {
+        offscreen: true,
+        partition: PARTITION,
+        preload: preloadPath,
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+        backgroundThrottling: false,
+        webgl: true,
+        spellcheck: false,
+        devTools: false,
+      },
+    });
+    return new Promise((resolve) => {
+      const errors = [];
+      let settled = false;
+      let timer = null;
+      const close = () => {
+        byToken.delete(token);
+        try {
+          if (!win.isDestroyed()) {
+            // A renderer stuck in a loop does not unload; end it outright.
+            try { win.webContents.forcefullyCrashRenderer(); } catch { /* already gone */ }
+            win.destroy();
+          }
+        } catch {
+          /* already gone */
+        }
+      };
+      const finish = (responding) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        close();
+        resolve({ ok: true, errors, responding });
+      };
+      const wc = win.webContents;
+      wc.setAudioMuted(true);
+      wc.setFrameRate(30);
+      wc.setWindowOpenHandler(() => ({ action: 'deny' }));
+      wc.on('will-navigate', (event) => event.preventDefault());
+      wc.on('console-message', (...consoleArgs) => {
+        const details = consoleArgs[0] && typeof consoleArgs[0] === 'object' && 'message' in consoleArgs[0] ? consoleArgs[0] : null;
+        const message = uncaughtErrorMessage(details ? details.message : consoleArgs[2]);
+        if (message === null) return;
+        const sourceId = String((details ? details.sourceId : consoleArgs[4]) ?? '');
+        const rawLine = Number(details ? details.lineNumber : consoleArgs[3]);
+        // Lines count only inside the page itself, not inside a library it loads.
+        const line = sourceId === pageUrl ? hostLineToPageLine(layout, rawLine) : null;
+        const known = errors.find((e) => e.message === message && e.line === line);
+        if (known) known.count += 1;
+        else if (errors.length < MAX_TRIAL_ERRORS) errors.push({ message: message.slice(0, 1000), line, count: 1 });
+      });
+      let probing = false;
+      const probe = () => {
+        if (settled || probing) return;
+        probing = true;
+        // A page that answers is not stuck; one that does not answer in time is.
+        const answered = wc.executeJavaScript('1', false).then(() => true, () => false);
+        const timeout = new Promise((done) => setTimeout(() => done(false), TRIAL_ANSWER_MS));
+        void Promise.race([answered, timeout]).then((responding) => finish(responding));
+      };
+      wc.on('did-finish-load', () => setTimeout(probe, runMs));
+      // A page stuck while it loads never finishes loading.
+      setTimeout(probe, runMs + TRIAL_LOAD_ALLOWANCE_MS);
+      wc.on('render-process-gone', () => finish(false));
+      timer = setTimeout(() => finish(false), TRIAL_TIMEOUT_MS);
+      win.loadURL(pageUrl).catch(() => {});
     });
   }
 
@@ -494,5 +602,5 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
     for (const entry of Array.from(hosts.values())) closeEntry(entry);
   }
 
-  return { open, close, setParams, setAudio, status, closeAll, thumbnail };
+  return { open, close, setParams, setAudio, status, closeAll, thumbnail, trial };
 }

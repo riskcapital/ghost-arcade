@@ -1,7 +1,10 @@
 /**
  * JavaScript Animation Renderer
- * Handles rendering of AI-generated or custom Three.js and p5.js animations
- * by creating iframes from HTML code and capturing to texture
+ * Plays three.js and p5.js pages inside the editor window (layers when the
+ * native core is not drawing them, thumbnails, previews, the check before a
+ * sketch is saved), each in a sandboxed iframe that only talks to the editor
+ * through messages (see sandboxPage.ts), and turns its pictures into a
+ * texture.
  */
 
 import * as THREE from 'three';
@@ -9,69 +12,83 @@ import type { JSAnimationSource } from '../types';
 import { singlePlayableDocument, type SketchPlace } from '../p5sketch/wrapSketch';
 import { getVisualAudioSnapshot, type VisualAudioState } from '../audio/visualAudio';
 import { ghostAudioCommandFieldsFromVisualAudio } from '../audio/ghostAudioUniform';
+import { invoke, isDesktopApp } from '../bridge';
+import {
+  createSandboxedFrame,
+  inlineScriptText,
+  listenToFrame,
+  loadPageLibraries,
+  newNonce,
+  NO_LIBRARIES,
+  pageRuntimeScript,
+  postToFrame,
+  THREE_CORE_SPECIFIER,
+  type PageLibraries,
+  type PageMessage,
+} from './sandboxPage';
+
+/** How a page is put together for a sandboxed iframe. */
+export interface IframePageOptions {
+  /** The bundled libraries, carried inside the page (an opaque origin cannot fetch the app's files). */
+  libraries?: PageLibraries;
+  /** Stamped on the page's messages; see sandboxPage.ts. */
+  nonce?: string;
+  /** No sound: for previews, thumbnails and checks nobody should hear. */
+  muted?: boolean;
+  /** The page says it is still running every 250 ms. */
+  heartbeat?: boolean;
+}
 
 /**
- * Inject runtime shims into user-supplied Three.js / p5.js HTML before
- * loading it into the offscreen iframe.
+ * Inject the runtime into user-supplied Three.js / p5.js HTML before loading
+ * it into the sandboxed iframe.
  *
- * 1) Local bundled Three.js — an importmap pointing `three` at the copy
- *    we ship in /public/lib/. Otherwise every layer's first frame stalls
- *    100–500ms while it fetches three from a public CDN, and the app
- *    refuses to work offline at all.
+ * 1) The page runtime (sandboxPage.ts): errors, pictures of the canvas, the
+ *    show's audio as window.ghostAudio and slider values all go through
+ *    messages; devicePixelRatio is 1, since the host samples the canvas at 1x.
  *
- * 2) Local bundled p5.js — a <script> tag pointing at our copy. Only
- *    injected when the user HTML actually references p5; cheap detect
- *    via a regex against the source. A remote p5 tag in the page goes, so
- *    only one global-mode sketch starts, and a p5.sound tag loads our copy
- *    of the add-on instead.
+ * 2) Bundled p5.js (and p5.sound when the page loads it), inline. A remote
+ *    p5 tag in the page goes, so only one global-mode sketch starts.
  *
- * 3) devicePixelRatio = 1 — the iframe canvas is sampled by the host
- *    at 1x regardless of physical DPR, so any iframe that calls
- *    `renderer.setPixelRatio(window.devicePixelRatio)` (the typical
- *    Three.js boilerplate) over-allocates 4x GPU memory on a Retina
- *    display for nothing. Forcing the global to 1 before the user's
- *    code reads it cuts that waste without requiring the LLM to know.
+ * 3) Bundled three.js through an import map, as data: URLs, when the page
+ *    imports `three`. Otherwise every layer's first frame stalls while it
+ *    fetches three from a public CDN, and the app refuses to work offline.
  *
- * 4) Error capture — uncaught errors are kept on the page, so the sketch
- *    editor can show them with the file and line the author wrote.
- *
- * 5) window.ghostAudio — the show's audio, all 0 until the layer plays and
- *    the first analysis arrives (see pageAudioFrom).
- *
- * Shims are inserted as early as possible — first inside <head> if it
- * exists, else first inside <body>, else prepended to the document.
- * This guarantees ordering: shims run before any user <script>.
+ * Shims are inserted as early as possible: first inside <head> if it
+ * exists, else first inside <body>, else prepended to the document. Tags
+ * that go keep their line breaks, so every line of the page keeps its
+ * number for error reports.
  */
-function injectIframeRuntimeShims(html: string): { html: string; layout: ShimLayout } {
-  // Absolute URLs based on the editor window's origin. Blob iframes
-  // inherit the creator's origin, so same-origin fetches against the
-  // app's /lib/ assets bypass CORS regardless of dev (http://localhost)
-  // vs prod (file:///).
-  const origin = typeof window !== 'undefined' ? window.location.origin : '';
-  const base = typeof window !== 'undefined'
-    ? window.location.pathname.replace(/\/[^/]*$/, '/')
-    : '/';
-  const threeUrl = origin + base + 'lib/three.module.min.js';
-  const p5Url = origin + base + 'lib/p5.min.js';
-  const p5SoundUrl = origin + base + 'lib/p5.sound.min.js';
-
+function injectIframeRuntimeShims(html: string, options: IframePageOptions): { html: string; layout: ShimLayout } {
+  const libraries = options.libraries ?? NO_LIBRARIES;
   const wantsP5 = /p5\.(min\.)?js|new\s+p5\s*\(/i.test(html);
+  let wantsSound = false;
   if (wantsP5) {
-    // A tag that goes keeps its line breaks, so the lines after it keep
-    // their numbers for error reports.
     const breaks = (tag: string) => tag.replace(/[^\n]/g, '');
     html = html
       .replace(/<script\b[^>]*\bsrc\s*=\s*["']https?:\/\/[^"']*\/p5(?:\.min)?\.js["'][^>]*>\s*<\/script>/gi, breaks)
-      .replace(/<script\b[^>]*\bsrc\s*=\s*["'][^"']*\bp5\.sound(?:\.min)?\.js["'][^>]*>\s*<\/script>/gi, (tag) => `<script src="${p5SoundUrl}"></script>${breaks(tag)}`);
+      .replace(/<script\b[^>]*\bsrc\s*=\s*["'][^"']*\bp5\.sound(?:\.min)?\.js["'][^>]*>\s*<\/script>/gi, (tag) => {
+        wantsSound = true;
+        return breaks(tag);
+      });
   }
+  const wantsThree = /["']three(?:\/[^"']*)?["']/.test(html) && !!libraries.threeModuleUrl;
 
-  // Build the shim block. Importmap MUST come before any <script type="module">
-  // that imports 'three', so injecting at the very start of <head> is correct.
+  // The import map MUST come before any <script type="module"> that imports
+  // 'three', so injecting at the very start of <head> is correct.
+  const importMap = wantsThree
+    ? { imports: { three: libraries.threeModuleUrl, [THREE_CORE_SPECIFIER]: libraries.threeCoreUrl } }
+    : null;
   const shims = [
-    ERROR_CAPTURE_SHIM,
-    `<script>(function(){try{Object.defineProperty(window,"devicePixelRatio",{value:1,configurable:true});}catch(e){}window.ghostAudio=${JSON.stringify(SILENT_PAGE_AUDIO)};})();</script>`,
-    `<script type="importmap">{"imports":{"three":"${threeUrl}","three/":"${threeUrl.replace(/three\.module\.min\.js$/, '')}"}}</script>`,
-    wantsP5 ? `<script src="${p5Url}"></script>` : '',
+    `<script>${pageRuntimeScript({
+      nonce: options.nonce ?? '',
+      muted: options.muted,
+      heartbeat: options.heartbeat,
+      silentAudio: SILENT_PAGE_AUDIO as unknown as Record<string, number | boolean>,
+    })}</script>`,
+    importMap ? `<script type="importmap">${JSON.stringify(importMap)}</script>` : '',
+    wantsP5 ? `<script data-ghost-lib="p5">${inlineScriptText(libraries.p5)}</script>` : '',
+    wantsSound ? `<script data-ghost-lib="p5.sound">${inlineScriptText(libraries.p5Sound)}</script>` : '',
   ].filter(Boolean).join('\n');
 
   // Insert position priority: inside <head>, else inside <body>, else prepend.
@@ -138,12 +155,6 @@ interface ShimLayout {
   shimLines: number;
 }
 
-const ERROR_CAPTURE_SHIM = '<script>(function(){var list=window.__ghostSketchErrors=[];'
-  + 'addEventListener("error",function(e){var m=String(e.message||"Error");'
-  + 'var line=typeof e.filename==="string"&&e.filename.indexOf("blob:")===0?e.lineno:null;'
-  + 'for(var i=0;i<list.length;i++){if(list[i].message===m&&list[i].line===line){list[i].count++;return;}}'
-  + 'if(list.length<12)list.push({message:m,line:line,count:1});});})();</script>';
-
 /** The page's own line for a line of the page with shims, or null inside the shims. */
 function writtenLine(layout: ShimLayout, line: number | null): number | null {
   if (line === null || !(line >= 1)) return null;
@@ -160,9 +171,14 @@ export interface IframePage {
   place(line: number | null): SketchPlace | null;
 }
 
-export function iframePage(jsAnimation: JSAnimationSource): IframePage {
-  const document = singlePlayableDocument(jsAnimation);
-  const { html, layout } = injectIframeRuntimeShims(document.html);
+/**
+ * The page an iframe plays for a source, its loops guarded (see
+ * p5sketch/loopGuard.ts) so a loop that never ends stops with an error
+ * instead of keeping the page busy.
+ */
+export function iframePage(jsAnimation: JSAnimationSource, options: IframePageOptions = {}): IframePage {
+  const document = singlePlayableDocument(jsAnimation, { guardLoops: true });
+  const { html, layout } = injectIframeRuntimeShims(document.html, options);
   return {
     html,
     place(line) {
@@ -173,9 +189,12 @@ export function iframePage(jsAnimation: JSAnimationSource): IframePage {
 }
 
 /** The document an iframe plays for a source (or a page's HTML), with the bundled libraries. */
-export function jsAnimationIframeHtml(page: string | JSAnimationSource): string {
-  const source: JSAnimationSource = typeof page === 'string' ? { animationType: 'threejs', htmlCode: page } : page;
-  return iframePage(source).html;
+export function jsAnimationIframeHtml(page: string | JSAnimationSource, options: IframePageOptions = {}): string {
+  return iframePage(asSource(page), options).html;
+}
+
+function asSource(page: string | JSAnimationSource): JSAnimationSource {
+  return typeof page === 'string' ? { animationType: 'threejs', htmlCode: page } : page;
 }
 
 export interface JSAnimationPageError {
@@ -190,14 +209,12 @@ export interface JSAnimationPageError {
 export interface JSAnimationContext {
   id: string;
   iframe: HTMLIFrameElement;
-  /** Stable HTMLCanvasElement reference. Starts as a 1×1 placeholder
-   *  and is hot-swapped to the iframe's WebGL canvas the first time
-   *  `updateTexture()` finds it. The texture's `.image` property is
-   *  rebound at the same time so consumers that grabbed `texture`
-   *  early keep a valid reference throughout. */
-  canvas: HTMLCanvasElement;
-  /** Stable CanvasTexture. Source canvas swaps from placeholder to
-   *  the live iframe canvas inside `updateTexture()`. */
+  /**
+   * The page's latest picture, drawn here as it arrives. A stable canvas: a
+   * 1×1 black placeholder until the first picture, then the canvas's size.
+   */
+  readonly canvas: HTMLCanvasElement;
+  /** Stable CanvasTexture of `canvas`. */
   texture: THREE.CanvasTexture;
   animationType: 'threejs' | 'p5js';
   updateTexture: () => void;
@@ -220,6 +237,43 @@ export interface JSAnimationContext {
   dispose: () => void;
 }
 
+/** Pictures a layer's page sends at most this often. */
+const LAYER_FPS = 60;
+/** A page whose pictures nobody has looked at for this long waits before sending the next. */
+const IDLE_MS = 1000;
+const MAX_ERRORS = 12;
+
+type ParamValue = number | boolean | number[] | string;
+
+/** Uncaught errors as a page reports them, counted, traced through `page`. */
+class PageErrors {
+  private list: Array<{ message: string; line: number | null; lines: number[]; count: number }> = [];
+
+  add(data: PageMessage): void {
+    const message = String(data.message ?? 'Error').slice(0, 1000);
+    const line = typeof data.line === 'number' && Number.isFinite(data.line) ? data.line : null;
+    const lines = Array.isArray(data.lines)
+      ? data.lines.filter((n): n is number => typeof n === 'number' && Number.isFinite(n)).slice(0, 10)
+      : line !== null ? [line] : [];
+    const known = this.list.find((e) => e.message === message && e.line === line);
+    if (known) known.count++;
+    else if (this.list.length < MAX_ERRORS) this.list.push({ message, line, lines, count: 1 });
+  }
+
+  read(page: IframePage | null): JSAnimationPageError[] {
+    return this.list.map((e) => {
+      // The innermost line of the author's own code: an error raised inside
+      // p5 by a call from the sketch points at that call.
+      let place: SketchPlace | null = null;
+      for (const line of e.lines) {
+        place = page?.place(line) ?? null;
+        if (place) break;
+      }
+      return { message: e.message, file: place?.file ?? null, line: place?.line ?? null, count: e.count };
+    });
+  }
+}
+
 const jsAnimationCache = new Map<string, JSAnimationContext>();
 
 /**
@@ -237,116 +291,137 @@ export function createJSAnimationContext(
     return cached;
   }
 
-  // Create hidden iframe — runs the JS animation HTML in its own
-  // WebGL context. The iframe is same-origin (blob:) so we can read
-  // its DOM and source its canvas directly into a CanvasTexture.
-  const iframe = document.createElement('iframe');
-  iframe.style.cssText = `
-    position: fixed;
-    left: -9999px;
-    top: -9999px;
-    width: ${width}px;
-    height: ${height}px;
-    border: none;
-    pointer-events: none;
-  `;
-
-  // Inject local bundled libs + a pixel-ratio clamp BEFORE the user's
-  // script runs. This is the difference between "every Three.js layer
-  // stalls for 100–500ms fetching three from a CDN" and "loads instantly
-  // even offline" — plus the iframe stops over-allocating GPU on Retina
-  // displays since the host samples its canvas at 1x anyway.
-  // A sketch kept as files plays here as one document built from them.
-  let page = iframePage(jsAnimation);
-  let runningHtml = jsAnimation.htmlCode;
-  let blobUrl = URL.createObjectURL(new Blob([page.html], { type: 'text/html' }));
-  let loadedUrl = '';
-  iframe.addEventListener('load', () => { loadedUrl = iframe.src; });
-  iframe.src = blobUrl;
+  // The page plays in a sandboxed iframe of its own (see sandboxPage.ts)
+  // and sends pictures of its canvas, which are drawn into `output`; the
+  // texture samples `output`, so it and the canvas stay the same objects
+  // however often the page restarts.
+  const iframe = createSandboxedFrame(width, height);
   document.body.appendChild(iframe);
 
-  // Stable placeholder canvas — 1×1 black pixel. Sampling this gives
-  // a black layer until the iframe loads, which is fine (it would
-  // have been black anyway). Once `updateTexture()` finds the iframe's
-  // real canvas, we point `texture.image` at it. The texture object
-  // and the `context.canvas`/`context.texture` references stay stable,
-  // so consumers that grabbed them at layer setup don't need to
-  // re-read.
-  const placeholder = document.createElement('canvas');
-  placeholder.width = 1;
-  placeholder.height = 1;
-  const phCtx = placeholder.getContext('2d');
-  if (phCtx) { phCtx.fillStyle = '#000'; phCtx.fillRect(0, 0, 1, 1); }
+  // Stable 1×1 black picture until the page's first one arrives.
+  const output = document.createElement('canvas');
+  output.width = 1;
+  output.height = 1;
+  const outputContext = output.getContext('2d');
+  if (outputContext) { outputContext.fillStyle = '#000'; outputContext.fillRect(0, 0, 1, 1); }
 
-  const texture = new THREE.CanvasTexture(placeholder);
+  const texture = new THREE.CanvasTexture(output);
   texture.minFilter = THREE.LinearFilter;
   texture.magFilter = THREE.LinearFilter;
   texture.colorSpace = THREE.SRGBColorSpace;
 
-  // Track the iframe canvas we last bound so we can detect when the
-  // iframe replaces its canvas (rare — happens on resize in some
-  // demos). On change, rebind `texture.image` to the new one.
-  let lastBoundIframeCanvas: HTMLCanvasElement | null = null;
-  let lastAudio: { page: Window; value: Readonly<PageAudio> } | null = null;
+  let disposed = false;
+  let page: IframePage | null = null;
+  let runningHtml = jsAnimation.htmlCode;
+  let nonce = '';
+  let blobUrl = '';
+  let loaded = false;
+  let errors = new PageErrors();
+  let params: Record<string, ParamValue> = { ...(jsAnimation.paramValues ?? {}) };
+  let lastAudio: Readonly<PageAudio> | null = null;
+  let freshPicture = false;
+  let ackOwed = false;
+  let lookedAt = performance.now();
+  let startSerial = 0;
+
+  const post = (message: PageMessage) => {
+    if (nonce) postToFrame(iframe, nonce, message);
+  };
+
+  const takeAck = () => {
+    if (!ackOwed) return;
+    ackOwed = false;
+    post({ type: 'ack' });
+  };
+
+  const onPicture = (data: PageMessage) => {
+    const bitmap = data.bitmap as ImageBitmap | undefined;
+    if (!bitmap || typeof bitmap !== 'object') return;
+    try {
+      if (disposed || !outputContext) return;
+      if (output.width !== bitmap.width || output.height !== bitmap.height) {
+        output.width = bitmap.width;
+        output.height = bitmap.height;
+      }
+      outputContext.clearRect(0, 0, output.width, output.height);
+      outputContext.drawImage(bitmap, 0, 0);
+      freshPicture = true;
+    } catch {
+      /* a picture that cannot be drawn is skipped */
+    } finally {
+      bitmap.close?.();
+    }
+    // The next picture comes once this one is taken; nobody looking for a
+    // while means the page waits until someone does.
+    ackOwed = true;
+    if (performance.now() - lookedAt < IDLE_MS) takeAck();
+  };
+
+  const stopListening = listenToFrame(iframe, (data) => {
+    if (data.ghost !== nonce || disposed) return;
+    switch (data.type) {
+      case 'hello':
+        ackOwed = false;
+        lastAudio = null;
+        post({ type: 'frames', on: true, fps: LAYER_FPS });
+        if (Object.keys(params).length > 0) post({ type: 'params', values: params });
+        break;
+      case 'loaded':
+        loaded = true;
+        break;
+      case 'error':
+        errors.add(data);
+        break;
+      case 'frame':
+        onPicture(data);
+        break;
+    }
+  });
+
+  const start = (next: JSAnimationSource) => {
+    const serial = ++startSerial;
+    runningHtml = next.htmlCode;
+    loaded = false;
+    errors = new PageErrors();
+    params = { ...(next.paramValues ?? {}), ...params };
+    void loadPageLibraries().then((libraries) => {
+      if (disposed || serial !== startSerial) return;
+      nonce = newNonce();
+      try {
+        page = iframePage(next, { libraries, nonce });
+      } catch (err) {
+        page = null;
+        errors.add({ type: 'error', message: err instanceof Error ? err.message : String(err), line: null });
+        return;
+      }
+      const previousUrl = blobUrl;
+      blobUrl = URL.createObjectURL(new Blob([page.html], { type: 'text/html' }));
+      iframe.src = blobUrl;
+      if (previousUrl) URL.revokeObjectURL(previousUrl);
+    });
+  };
 
   const updateTexture = () => {
-    try {
-      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-      if (!iframeDoc) return;
-
-      const pageWindow = iframe.contentWindow as (Window & { ghostAudio?: Readonly<PageAudio> }) | null;
-      if (pageWindow) {
-        const audio = currentPageAudio(performance.now());
-        if (lastAudio?.page !== pageWindow || lastAudio.value !== audio) {
-          pageWindow.ghostAudio = audio;
-          lastAudio = { page: pageWindow, value: audio };
-        }
-      }
-
-      const iframeCanvas = iframeDoc.querySelector('canvas') as HTMLCanvasElement | null;
-      if (!iframeCanvas || iframeCanvas.width <= 0 || iframeCanvas.height <= 0) return;
-
-      if (lastBoundIframeCanvas !== iframeCanvas) {
-        // First frame OR iframe swapped canvases. Repoint the texture
-        // at the live iframe canvas. CanvasTexture is happy to source
-        // from any HTMLCanvasElement, including one belonging to a
-        // different WebGL context — the browser handles the GPU-side
-        // blit on `texImage2D` upload, which is hardware-accelerated
-        // and avoids the GPU→CPU→GPU round trip the old `drawImage`
-        // version paid every single frame.
-        texture.image = iframeCanvas;
-        context.canvas = iframeCanvas;
-        lastBoundIframeCanvas = iframeCanvas;
-      }
-
+    lookedAt = performance.now();
+    takeAck();
+    const audio = currentPageAudio(lookedAt);
+    if (audio !== lastAudio) {
+      lastAudio = audio;
+      post({ type: 'audio', value: audio });
+    }
+    if (freshPicture) {
+      freshPicture = false;
       texture.needsUpdate = true;
-    } catch {
-      // Cross-origin or not ready yet — ignore.
     }
   };
 
-  const updateParams = (params: Record<string, number | boolean | number[] | string>) => {
-    try {
-      const iframeWindow = iframe.contentWindow as Window & { shaderParams?: Record<string, unknown> };
-      if (iframeWindow?.shaderParams) {
-        Object.assign(iframeWindow.shaderParams, params);
-      }
-    } catch {
-      // Cross-origin — ignore.
-    }
+  const updateParams = (values: Record<string, ParamValue>) => {
+    params = { ...params, ...values };
+    post({ type: 'params', values });
   };
 
-  // Safe to call more than once; only drops the cache entry if it is
-  // still this context (the id may have been reused since).
-  let disposed = false;
   const restart = (next: JSAnimationSource) => {
-    page = iframePage(next);
-    runningHtml = next.htmlCode;
-    const previousUrl = blobUrl;
-    blobUrl = URL.createObjectURL(new Blob([page.html], { type: 'text/html' }));
-    loadedUrl = '';
-    iframe.src = blobUrl;
-    URL.revokeObjectURL(previousUrl);
+    start(next);
     context.animationType = next.animationType;
   };
 
@@ -354,33 +429,31 @@ export function createJSAnimationContext(
     if (next.htmlCode !== runningHtml) restart(next);
   };
 
-  const runs = (htmlCode: string) => htmlCode === runningHtml && loadedUrl === blobUrl;
+  const runs = (htmlCode: string) => htmlCode === runningHtml && loaded;
 
-  const readErrors = (): JSAnimationPageError[] => {
-    try {
-      const pageWindow = iframe.contentWindow as (Window & { __ghostSketchErrors?: Array<{ message: string; line: number | null; count: number }> }) | null;
-      return (pageWindow?.__ghostSketchErrors ?? []).map((e) => {
-        const place = page.place(e.line);
-        return { message: e.message, file: place?.file ?? null, line: place?.line ?? null, count: e.count };
-      });
-    } catch {
-      return [];
-    }
-  };
+  const readErrors = (): JSAnimationPageError[] => errors.read(page);
 
+  // Safe to call more than once; only drops the cache entry if it is
+  // still this context (the id may have been reused since).
   const dispose = () => {
     if (disposed) return;
     disposed = true;
+    stopListening();
     texture.dispose();
     iframe.remove();
-    URL.revokeObjectURL(blobUrl);
+    if (blobUrl) URL.revokeObjectURL(blobUrl);
     if (jsAnimationCache.get(id) === context) jsAnimationCache.delete(id);
   };
 
   const context: JSAnimationContext = {
     id,
     iframe,
-    canvas: placeholder,
+    get canvas() {
+      // Whoever reads the picture is looking at it.
+      lookedAt = performance.now();
+      takeAck();
+      return output;
+    },
     texture,
     animationType: jsAnimation.animationType,
     updateTexture,
@@ -392,6 +465,7 @@ export function createJSAnimationContext(
     dispose
   };
 
+  start(jsAnimation);
   jsAnimationCache.set(id, context);
   return context;
 }
@@ -480,6 +554,48 @@ export function disposeAllJSAnimationContexts(): void {
 }
 
 /**
+ * Plays a page for a moment in a hidden, muted, sandboxed frame and lets
+ * `finish` read what it sent. The frame goes when `finish` returns.
+ */
+async function playBriefly<T>(
+  page: string | JSAnimationSource,
+  options: { width: number; height: number; heartbeat?: boolean },
+  run: (session: {
+    page: IframePage;
+    iframe: HTMLIFrameElement;
+    post: (message: PageMessage) => void;
+    onMessage: (listener: (data: PageMessage) => void) => void;
+  }) => Promise<T>,
+): Promise<T> {
+  const libraries = await loadPageLibraries();
+  const nonce = newNonce();
+  const built = iframePage(asSource(page), { libraries, nonce, muted: true, heartbeat: options.heartbeat });
+  const iframe = createSandboxedFrame(options.width, options.height);
+  const url = URL.createObjectURL(new Blob([built.html], { type: 'text/html' }));
+  const listeners: Array<(data: PageMessage) => void> = [];
+  const stop = listenToFrame(iframe, (data) => {
+    if (data.ghost !== nonce) return;
+    for (const listener of listeners) listener(data);
+  });
+  iframe.src = url;
+  document.body.appendChild(iframe);
+  try {
+    return await run({
+      page: built,
+      iframe,
+      post: (message) => postToFrame(iframe, nonce, message),
+      onMessage: (listener) => listeners.push(listener),
+    });
+  } finally {
+    stop();
+    iframe.remove();
+    URL.revokeObjectURL(url);
+  }
+}
+
+const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
  * Plays a page in a hidden iframe for a moment and keeps a picture of its
  * canvas as a JPEG data URL. For tray thumbnails and import previews; gives
  * up quietly when the page draws nothing in time.
@@ -489,72 +605,118 @@ export function captureJSAnimationThumbnail(
   options: { width?: number; height?: number; waitMs?: number } = {},
 ): Promise<string | undefined> {
   const { width = 160, height = 90, waitMs = 2000 } = options;
-  return new Promise((resolve) => {
-    const url = URL.createObjectURL(new Blob([jsAnimationIframeHtml(page)], { type: 'text/html' }));
-    const iframe = document.createElement('iframe');
-    iframe.style.cssText = `position:absolute;left:-9999px;top:-9999px;width:${width * 2}px;height:${height * 2}px;border:none;`;
-    iframe.src = url;
-    document.body.appendChild(iframe);
-
-    const finish = (out: string | undefined) => {
-      try { document.body.removeChild(iframe); } catch { /* already gone */ }
-      URL.revokeObjectURL(url);
-      resolve(out);
-    };
-
+  return playBriefly(page, { width: width * 2, height: height * 2 }, async ({ post, onMessage }) => {
     // Most Three.js / p5 sketches paint within 100ms; raymarchers can take
     // longer. Capped so an import doesn't wait on a page that never draws.
-    setTimeout(() => {
-      try {
-        const doc = iframe.contentDocument || iframe.contentWindow?.document;
-        const canvasEl = doc?.querySelector('canvas') as HTMLCanvasElement | null;
-        if (!canvasEl || canvasEl.width === 0) return finish(undefined);
-        const thumb = document.createElement('canvas');
-        thumb.width = width; thumb.height = height;
-        const ctx = thumb.getContext('2d');
-        if (!ctx) return finish(undefined);
-        ctx.drawImage(canvasEl, 0, 0, thumb.width, thumb.height);
-        finish(thumb.toDataURL('image/jpeg', 0.7));
-      } catch {
-        finish(undefined);
-      }
-    }, waitMs);
-  });
+    let answer: ((bitmap: ImageBitmap | null) => void) | null = null;
+    onMessage((data) => {
+      if (data.type !== 'still' || !answer) return;
+      const bitmap = data.bitmap && typeof data.bitmap === 'object' ? data.bitmap as ImageBitmap : null;
+      answer(bitmap);
+      answer = null;
+    });
+    await delay(waitMs);
+    const bitmap = await new Promise<ImageBitmap | null>((resolve) => {
+      answer = resolve;
+      post({ type: 'still', width, height });
+      // A page that stopped responding sends nothing.
+      setTimeout(() => { answer?.(null); answer = null; }, 1000);
+    });
+    if (!bitmap) return undefined;
+    try {
+      const thumb = document.createElement('canvas');
+      thumb.width = width; thumb.height = height;
+      const ctx = thumb.getContext('2d');
+      if (!ctx) return undefined;
+      ctx.drawImage(bitmap, 0, 0, thumb.width, thumb.height);
+      return thumb.toDataURL('image/jpeg', 0.7);
+    } catch {
+      return undefined;
+    } finally {
+      bitmap.close?.();
+    }
+  }).catch(() => undefined);
 }
 
 /**
- * Run a page for a moment in a hidden frame and report the errors it throws
+ * A picture of a page for the media library or an import preview. On
+ * desktop it is drawn by a short-lived, muted offscreen host outside the
+ * editor (electron/js-source-host.js); elsewhere in a sandboxed iframe.
+ */
+export async function captureJSAnimationPicture(
+  page: string | JSAnimationSource,
+  options: { width?: number; height?: number; waitMs?: number } = {},
+): Promise<string | undefined> {
+  if (isDesktopApp) {
+    const html = singlePlayableDocument(asSource(page)).html;
+    const result = await invoke<{ ok: boolean; data_url?: string }>('js_source_thumbnail', {
+      html,
+      width: options.width,
+      height: options.height,
+      settle_ms: options.waitMs,
+    }).catch(() => null);
+    return result?.ok ? result.data_url : undefined;
+  }
+  return captureJSAnimationThumbnail(page, options);
+}
+
+/** What a trial run says when the page stopped answering. */
+export const PAGE_STOPPED_RESPONDING = 'The code stopped responding while it ran: it may be stuck in a loop that never ends.';
+
+/**
+ * Run a page for a moment out of sight and report the errors it throws
  * while it starts and draws its first frames: what a layer playing it would
  * hit. Used before saving edited code, so code that throws is not saved.
+ *
+ * Its loops are guarded, so one that never ends is reported on its line.
+ * On desktop it runs in an offscreen host of its own, outside the editor's
+ * process; elsewhere in a sandboxed iframe. Either way it is muted, and a
+ * page that stops answering is reported too.
  */
-export function trialRunJSAnimation(jsAnimation: JSAnimationSource, ms = 1500): Promise<JSAnimationPageError[]> {
-  return new Promise((resolve) => {
-    let page: IframePage;
-    try {
-      page = iframePage(jsAnimation);
-    } catch (err) {
-      resolve([{ message: err instanceof Error ? err.message : String(err), file: null, line: null, count: 1 }]);
-      return;
+export async function trialRunJSAnimation(jsAnimation: JSAnimationSource, ms = 1500): Promise<JSAnimationPageError[]> {
+  if (isDesktopApp) {
+    const hosted = await trialRunInHost(jsAnimation, ms);
+    if (hosted) return hosted;
+  }
+  return playBriefly(jsAnimation, { width: 320, height: 180, heartbeat: true }, async ({ page, onMessage }) => {
+    const errors = new PageErrors();
+    let lastHeard = 0;
+    onMessage((data) => {
+      if (data.type === 'error') errors.add(data);
+      lastHeard = performance.now();
+    });
+    await delay(ms);
+    const found = errors.read(page);
+    // Quiet for a second: the page is busy and not coming back.
+    if (found.length === 0 && performance.now() - lastHeard > 1000) {
+      return [{ message: PAGE_STOPPED_RESPONDING, file: null, line: null, count: 1 }];
     }
-    const iframe = document.createElement('iframe');
-    iframe.style.cssText = 'position: fixed; left: -9999px; top: -9999px; width: 320px; height: 180px; border: none; pointer-events: none;';
-    const url = URL.createObjectURL(new Blob([page.html], { type: 'text/html' }));
-    iframe.src = url;
-    document.body.appendChild(iframe);
-    setTimeout(() => {
-      let errors: JSAnimationPageError[] = [];
-      try {
-        const pageWindow = iframe.contentWindow as (Window & { __ghostSketchErrors?: Array<{ message: string; line: number | null; count: number }> }) | null;
-        errors = (pageWindow?.__ghostSketchErrors ?? []).map((e) => {
-          const place = page.place(e.line);
-          return { message: e.message, file: place?.file ?? null, line: place?.line ?? null, count: e.count };
-        });
-      } catch {
-        errors = [];
-      }
-      iframe.remove();
-      URL.revokeObjectURL(url);
-      resolve(errors);
-    }, ms);
+    return found;
+  }).catch((err) => [{ message: err instanceof Error ? err.message : String(err), file: null, line: null, count: 1 }]);
+}
+
+interface HostTrialResult {
+  ok: boolean;
+  errors?: Array<{ message: string; line: number | null; count: number }>;
+  responding?: boolean;
+}
+
+/** The trial in a desktop host, or null when there is none to run it. */
+async function trialRunInHost(jsAnimation: JSAnimationSource, ms: number): Promise<JSAnimationPageError[] | null> {
+  let document: ReturnType<typeof singlePlayableDocument>;
+  try {
+    document = singlePlayableDocument(jsAnimation, { guardLoops: true });
+  } catch (err) {
+    return [{ message: err instanceof Error ? err.message : String(err), file: null, line: null, count: 1 }];
+  }
+  const result = await invoke<HostTrialResult>('js_source_trial', { html: document.html, ms }).catch(() => null);
+  if (!result?.ok) return null;
+  const errors: JSAnimationPageError[] = (result.errors ?? []).map((e) => {
+    const place = typeof e.line === 'number' ? document.place(e.line) : null;
+    return { message: String(e.message), file: place?.file ?? null, line: place?.line ?? null, count: e.count || 1 };
   });
+  if (errors.length === 0 && result.responding === false) {
+    errors.push({ message: PAGE_STOPPED_RESPONDING, file: null, line: null, count: 1 });
+  }
+  return errors;
 }

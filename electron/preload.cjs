@@ -122,7 +122,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'native_renderer_upload_source_gpu_shared_texture',
   // Offscreen hosts for three.js / p5.js sources (js-source-host.js)
   'js_source_open', 'js_source_close', 'js_source_params', 'js_source_audio', 'js_source_status',
-  'js_source_thumbnail',
+  'js_source_thumbnail', 'js_source_trial',
   'native_renderer_prefetch_media', 'native_renderer_clear_prefetch_cache',
   'native_renderer_probe_video',
   'native_renderer_clear_decode_preview_cache', 'native_renderer_clear_runtime_caches',

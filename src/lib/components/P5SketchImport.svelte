@@ -5,7 +5,7 @@
   // written; each is reviewed before it is added: whether it can run, how its
   // canvas meets the output, and a preview of the page as it will play.
   import { isDesktopApp, openExternalUrl } from '$lib/bridge';
-  import { captureJSAnimationThumbnail } from '$lib/renderer/js-animation';
+  import { captureJSAnimationPicture } from '$lib/renderer/js-animation';
   import type { P5CanvasMode } from '$lib/p5sketch/wrapSketch';
   import type { P5Sketch } from '$lib/p5sketch/files';
   import { fetchEditorSketch, listEditorSketches, summaryP5Version, type P5SketchSummary } from '$lib/p5import/editorClient';
@@ -170,8 +170,10 @@
       return;
     }
     previewLoading = true;
-    // Drawn by the same iframe runtime the layers play it in.
-    const picture = await captureJSAnimationThumbnail(imported.source, { width: 480, height: 270, waitMs: 2500 })
+    // A stranger's sketch runs before it is added, so never inside the
+    // editor: on desktop in a muted offscreen host of its own, elsewhere in a
+    // muted sandboxed frame that can only send back the picture.
+    const picture = await captureJSAnimationPicture(imported.source, { width: 480, height: 270, waitMs: 2500 })
       .catch(() => undefined);
     if (token !== previewToken) return;
     previewLoading = false;

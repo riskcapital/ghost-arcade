@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { resolveObjectURL } from 'node:buffer';
 
 import { iframePage, jsAnimationIframeHtml } from '../renderer/js-animation';
+import type { PageLibraries } from '../renderer/sandboxPage';
+
+const LIBRARIES: PageLibraries = { p5: 'window.p5 = function () {};', p5Sound: 'window.p5sound = 1;', threeModuleUrl: '', threeCoreUrl: '' };
 import { isP5Page } from '../renderer/jsAnimationPage';
 import type { JSAnimationOrigin, JSAnimationSketch, JSAnimationSource, SketchFile } from '../types';
 import {
@@ -106,9 +109,9 @@ describe('the wrapped page', () => {
   it('leaves p5 to the bundled copy, loaded once and before the page pieces', () => {
     expect(wrapped.html).not.toContain('cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4');
     expect(isP5Page(wrapped.html)).toBe(true);
-    const hosted = jsAnimationIframeHtml(wrapped.html);
-    expect(hosted.match(/<script src="\/lib\/p5\.min\.js"><\/script>/g)).toHaveLength(1);
-    expect(hosted.indexOf('/lib/p5.min.js')).toBeLessThan(hosted.indexOf('data-ghost-canvas'));
+    const hosted = jsAnimationIframeHtml(wrapped.html, { libraries: LIBRARIES });
+    expect(hosted.match(/<script data-ghost-lib="p5">/g)).toHaveLength(1);
+    expect(hosted.indexOf('data-ghost-lib="p5"')).toBeLessThan(hosted.indexOf("setAttribute('data-ghost-canvas'"));
     expect(hosted).not.toContain('p5.sound');
   });
 
@@ -131,9 +134,10 @@ function preload() { song = loadSound('assets/beat.mp3'); }
 function setup() { createCanvas(windowWidth, windowHeight); song.loop(); }`, [{ path: 'assets/beat.mp3', base64: 'SUQz', mime: 'audio/mpeg' }]));
     expect(sound.html.match(/p5\.sound/g)).toHaveLength(1);
     expect(sound.html).toContain(`<script src="${P5_SOUND_CDN}"></script>`);
-    const hosted = jsAnimationIframeHtml(sound.html);
-    expect(hosted.indexOf('/lib/p5.min.js')).toBeLessThan(hosted.indexOf('/lib/p5.sound.min.js'));
-    expect(hosted.indexOf('/lib/p5.sound.min.js')).toBeLessThan(hosted.indexOf('src="sketch.js"'));
+    const hosted = jsAnimationIframeHtml(sound.html, { libraries: LIBRARIES });
+    expect(hosted.indexOf('data-ghost-lib="p5"')).toBeLessThan(hosted.indexOf('data-ghost-lib="p5.sound"'));
+    expect(hosted.indexOf('data-ghost-lib="p5.sound"')).toBeLessThan(hosted.indexOf('src="sketch.js"'));
+    expect(hosted).not.toContain(P5_SOUND_CDN);
     expect(sound.notes.join(' ')).toMatch(/p5\.sound/);
   });
 
@@ -261,6 +265,21 @@ function draw() {
     expect(played.html).toContain('__ghostSketchErrors');
     expect(played.place(lineOf(played.html, 'nothing.size'))).toEqual({ file: 'sketch.js', line: 7 });
     expect(played.place(lineOf(played.html, '__ghostSketchErrors'))).toBeNull();
+  });
+
+  it('guards the sketch\'s loops where it plays next to the editor, and only there', () => {
+    const looping = editorSketch('function setup() { createCanvas(400, 400); }\nfunction draw() {\n  let y = 0;\n  while (y < height) {\n    line(0, y, width, y);\n  }\n}');
+    const source = sketchSource(looping, { origin: ORIGIN });
+    const played = iframePage(source);
+    const line = lineOf(played.html, 'while (y < height)');
+    expect(played.html.split('\n')[line - 1]).toContain('__ghostLoopGuard.c(');
+    expect(played.place(line)).toEqual({ file: 'sketch.js', line: 4 });
+    expect(played.html.indexOf('window.__ghostLoopGuard=')).toBeLessThan(played.html.indexOf('while (y < height)'));
+    // What a sketch stores, and what the desktop hosts play, stays as written.
+    const wrapped = wrapSketch(looping, { origin: ORIGIN });
+    expect(wrapped.html).not.toContain('__ghostLoopGuard');
+    expect(wrapped.files.map((f) => f.text ?? '').join('')).not.toContain('__ghostLoopGuard');
+    expect(singleSketchDocument(looping).html).not.toContain('__ghostLoopGuard');
   });
 
   it('gives a page kept whole its own lines, as index.html', () => {

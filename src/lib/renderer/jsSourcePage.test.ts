@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 // @ts-ignore plain JS module shared with the Electron main process
-import { buildHostHtml, wantsTransparentBackground } from '../../../electron/js-source-page.js';
+import { buildHostHtml, buildHostPage, hostLineToPageLine, uncaughtErrorMessage, wantsTransparentBackground } from '../../../electron/js-source-page.js';
 
 const threePage = `<!DOCTYPE html>
 <html>
@@ -76,5 +76,31 @@ describe('see-through pages', () => {
     const html = buildHostHtml(transparentPage);
     expect(html).toContain('background:transparent!important');
     expect(buildHostHtml('<html><head></head><body></body></html>')).toContain('background:#000');
+  });
+});
+
+describe('tracing a trial run back to the page', () => {
+  const lineOf = (text: string, needle: string) => text.split('\n').findIndex((l) => l.includes(needle)) + 1;
+
+  it('names the line of the page as given behind a line of the served page, and none for the host\'s own', () => {
+    const { html, layout } = buildHostPage(p5Page);
+    for (const needle of ['createCanvas', '<html>', '</html>']) {
+      expect(hostLineToPageLine(layout, lineOf(html, needle)), needle).toBe(lineOf(p5Page, needle));
+    }
+    expect(hostLineToPageLine(layout, lineOf(html, 'window.ghostAudio'))).toBeNull();
+    expect(hostLineToPageLine(layout, null)).toBeNull();
+  });
+
+  it('keeps the line breaks of the CDN tags it takes out', () => {
+    const tall = p5Page.replace('<script src="https://cdnjs', '<script\n  src="https://cdnjs');
+    const { html, layout } = buildHostPage(tall);
+    expect(hostLineToPageLine(layout, lineOf(html, 'createCanvas'))).toBe(lineOf(tall, 'createCanvas'));
+  });
+
+  it('counts uncaught errors and rejections, not logs', () => {
+    expect(uncaughtErrorMessage('Uncaught ReferenceError: x is not defined')).toBe('Uncaught ReferenceError: x is not defined');
+    expect(uncaughtErrorMessage('Uncaught (in promise) TypeError: boom')).toBe('Uncaught (in promise) TypeError: boom');
+    expect(uncaughtErrorMessage('🌸 p5.js says: hello')).toBeNull();
+    expect(uncaughtErrorMessage(undefined)).toBeNull();
   });
 });
