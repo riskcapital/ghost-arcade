@@ -141,6 +141,21 @@ describe('projectSettingsSignature', () => {
     expect(sig(base(), undefined, { cues: { cues: [{ id: 'q1' }] } })).not.toBe(before);
   });
 
+  it('does not count what decoding a show audio track measures', () => {
+    const show = (track: Record<string, unknown>) => ({ isOpen: false, zoom: 1, loop: false, presetClips: [], audioTracks: [{ id: 't', url: '', startTime: 2, offset: 0, volume: 1, muted: false, lane: 0, ...track }] });
+    // An older save: no waveform, length still the placeholder.
+    const saved = sig(base(), show({ duration: 0.25, sourceDuration: 0 }));
+    expect(sig(base(), show({ duration: 184.5, sourceDuration: 184.5, peaks: [1, 9, 4], url: 'blob:x' }))).toBe(saved);
+    // Saved without its waveform; the decode adds it.
+    const trimmed = sig(base(), show({ duration: 30, sourceDuration: 184.5 }));
+    expect(sig(base(), show({ duration: 30, sourceDuration: 184.5, peaks: [1, 9, 4] }))).toBe(trimmed);
+    // Trimming, moving and the volume still count.
+    const full = sig(base(), show({ duration: 184.5, sourceDuration: 184.5, peaks: [1] }));
+    expect(sig(base(), show({ duration: 90, sourceDuration: 184.5, peaks: [1] }))).not.toBe(full);
+    expect(sig(base(), show({ duration: 184.5, sourceDuration: 184.5, peaks: [1], startTime: 4 }))).not.toBe(full);
+    expect(sig(base(), show({ duration: 184.5, sourceDuration: 184.5, peaks: [1], volume: 0.5 }))).not.toBe(full);
+  });
+
   it('counts Stage 3D edits without copying its models, and not a running stage effect show', () => {
     const model = 'data:model/gltf-binary;base64,' + 'A'.repeat(200_000);
     const scene = (x: number) => ({ schemaVersion: 1, nodes: [{ id: 'truss', x }], venueModel: model });
