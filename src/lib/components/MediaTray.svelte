@@ -23,11 +23,17 @@
     type VeoModel,
   } from '../api/ai-client';
   import { settings } from '../stores/settings';
-  import { updateJSAnimationParams } from '../renderer/js-animation';
+  import { captureJSAnimationThumbnail as captureJSAnimationThumbnailInIframe, updateJSAnimationParams } from '../renderer/js-animation';
   import { confirmDeleteIfSafeMode } from '../utils/safeMode';
   // Tier-related imports removed — FluidGen plugin always available.
   import AIShaderGenerator from './AIShaderGenerator.svelte';
   import AIVideoGenerator from './AIVideoGenerator.svelte';
+  import P5SketchImport from './P5SketchImport.svelte';
+  import { importSketch, type ImportedSketch } from '../p5import/importSketch';
+  import { localFilesFromList, looksLikeSketch, sketchFromLocalFiles, takeDroppedFiles, type LocalFile } from '../p5import/localFiles';
+  import { sketchFromZip } from '../p5import/zip';
+  import type { P5Sketch } from '../p5sketch/files';
+  import { loadSketches, removeSketch, saveSketch, updateSketch } from '../stores/sketchLibrary';
   import ShaderLibrary from './ShaderLibrary.svelte';
   import * as THREE from 'three';
   import { modulationStore, setParamModSource, setParamModAmount, updateParamMod, setBaseValue, registerParamRanges, modKeyShader, type ModSource, type ParamModulation } from '../audio/modulation';
@@ -890,6 +896,9 @@
   }
   let jsAnimations: JSAnimationItem[] = [];
 
+  // The p5.js sketch import panel.
+  let showP5Import = false;
+
   // Media library items (local reference to store)
   $: videos = $mediaLibrary.filter(m => m.type === 'video');
   $: images = $mediaLibrary.filter(m => m.type === 'image');
@@ -1204,13 +1213,15 @@
    * Capture a first-frame thumbnail for a JS animation in the background, so
    * the tile appears at once and its picture fills in a moment later.
    */
-  function fillJSAnimationThumbnail(id: string, htmlCode: string) {
-    captureJSAnimationThumbnail(htmlCode).then((thumb) => {
+  function fillJSAnimationThumbnail(id: string, page: string | JSAnimationSource) {
+    captureJSAnimationThumbnail(page).then((thumb) => {
       if (!thumb) return;
       const idx = jsAnimations.findIndex((a) => a.id === id);
       if (idx < 0) return;
       jsAnimations[idx] = { ...jsAnimations[idx], thumbnail: thumb };
       jsAnimations = [...jsAnimations];
+      // An imported sketch keeps its picture in the library too.
+      void updateSketch(id, { thumbnail: thumb });
     }).catch(() => { /* no thumbnail; the tile keeps its icon */ });
   }
 
@@ -1256,6 +1267,7 @@
     // Seed built-in Three.js / p5 animations in the background so the JS
     // tab is never empty out of the box. Doesn't block shader loading.
     seedBuiltInThreeJSItems();
+    void restoreImportedSketches();
 
     // If shaders are already cached, use them instantly (filter out hidden)
     if (shaderCache.shaders) {
@@ -1403,9 +1415,42 @@
 
   async function handleDrop(e: DragEvent) {
     e.preventDefault();
-    const files = e.dataTransfer?.files;
-    if (!files) return;
-    await addMediaFiles(files);
+    // Taken while the drop is handled; folders are read afterwards.
+    await addLocalFiles(await takeDroppedFiles(e.dataTransfer));
+  }
+
+  /**
+   * Files dropped or picked together. A p5.js sketch, as the zip from the
+   * p5.js Web Editor or as its folder or files (sketch.js, index.html, ...),
+   * becomes one JS item, kept as written; everything else is added file by
+   * file.
+   */
+  async function addLocalFiles(files: LocalFile[]) {
+    const zips = files.filter((f) => /\.zip$/i.test(f.path));
+    const rest = files.filter((f) => !/\.zip$/i.test(f.path));
+    for (const zip of zips) {
+      await addSketch(async () => sketchFromZip(zip.file.name, new Uint8Array(await zip.file.arrayBuffer())));
+    }
+    if (looksLikeSketch(rest.map((f) => f.path))) {
+      await addSketch(() => sketchFromLocalFiles(rest));
+      return;
+    }
+    await addMediaFiles(rest.map((f) => f.file));
+  }
+
+  async function addSketch(read: () => Promise<P5Sketch>) {
+    try {
+      const imported = importSketch(await read());
+      const compatibility = imported.wrapped.compatibility;
+      if (compatibility.level === 'blocked') {
+        showToast(`${imported.name}: ${compatibility.message}`, 'error');
+        return;
+      }
+      handleP5Imported(imported);
+      showToast(`Added “${imported.name}” to the JS tab.`, 'info');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : String(err), 'error');
+    }
   }
 
   function handleDragOver(e: DragEvent) {
@@ -1639,44 +1684,12 @@
   }
 
   /**
-   * Mount the HTML in a hidden iframe long enough to capture the first
-   * frame as a 160×90 JPEG thumbnail. Cleans up the iframe after. Fails
-   * silently on cross-origin / no-canvas / slow-load.
+   * Capture the first frame of a page, or of a sketch kept as files, as a
+   * 160×90 JPEG thumbnail. Fails silently on no-canvas / slow-load. A p5.js
+   * page plays sandboxed for it, and silent.
    */
-  async function captureJSAnimationThumbnail(html: string): Promise<string | undefined> {
-    return new Promise((resolve) => {
-      const blob = new Blob([html], { type: 'text/html' });
-      const url = URL.createObjectURL(blob);
-      const iframe = document.createElement('iframe');
-      iframe.style.cssText = 'position:absolute;left:-9999px;top:-9999px;width:320px;height:180px;border:none;';
-      iframe.src = url;
-      document.body.appendChild(iframe);
-
-      const finish = (out: string | undefined) => {
-        try { document.body.removeChild(iframe); } catch {}
-        URL.revokeObjectURL(url);
-        resolve(out);
-      };
-
-      // Give the scene up to 2.5s to produce its first frame. Most
-      // Three.js / p5 sketches paint within 100ms; raymarchers can take
-      // longer. Capped so import doesn't stall the UI thread.
-      setTimeout(() => {
-        try {
-          const doc = iframe.contentDocument || iframe.contentWindow?.document;
-          const canvasEl = doc?.querySelector('canvas') as HTMLCanvasElement | null;
-          if (!canvasEl || canvasEl.width === 0) return finish(undefined);
-          const thumb = document.createElement('canvas');
-          thumb.width = 160; thumb.height = 90;
-          const ctx = thumb.getContext('2d');
-          if (!ctx) return finish(undefined);
-          ctx.drawImage(canvasEl, 0, 0, thumb.width, thumb.height);
-          finish(thumb.toDataURL('image/jpeg', 0.7));
-        } catch {
-          finish(undefined);
-        }
-      }, 2000);
-    });
+  async function captureJSAnimationThumbnail(page: string | JSAnimationSource): Promise<string | undefined> {
+    return captureJSAnimationThumbnailInIframe(page);
   }
 
   async function captureVideoThumbnail(video: HTMLVideoElement): Promise<string> {
@@ -3111,6 +3124,40 @@
     }
   }
 
+  function openP5Import() {
+    showP5Import = true;
+    showAIGenerator = false;
+    showVideoGenerator = false;
+    activeTab = 'js';
+  }
+
+  // A sketch imported from the p5.js Web Editor or from its files joins the
+  // JS tab like any other page; its origin (author, name, link) travels in
+  // its jsAnimation.
+  function handleP5Imported(imported: ImportedSketch) {
+    const jsItem: JSAnimationItem = {
+      id: generateUUID(),
+      name: imported.name,
+      type: 'p5js',
+      jsAnimation: imported.source,
+    };
+    jsAnimations = [...jsAnimations, jsItem];
+    // Kept in the library, so it is still here next time without importing it again.
+    void saveSketch({ id: jsItem.id, name: jsItem.name, jsAnimation: jsItem.jsAnimation, addedAt: Date.now() })
+      .then(() => fillJSAnimationThumbnail(jsItem.id, jsItem.jsAnimation));
+    activeTab = 'js';
+  }
+
+  /** "Name by author, from the p5.js Web Editor" for an imported page's tile. */
+  function jsItemCredit(item: JSAnimationItem): string {
+    const origin = item.jsAnimation.origin;
+    if (!origin) return '';
+    const by = origin.author ? ` by ${origin.author}` : '';
+    return origin.kind === 'p5-editor'
+      ? `${origin.sketchName}${by}, from the p5.js Web Editor\n`
+      : `${origin.sketchName}${by}, a p5.js sketch\n`;
+  }
+
   // Handle AI-generated video
   async function handleAIVideoGenerated(event: CustomEvent<{ id: string; name: string; src: string; blob: Blob }>) {
     const { id, name, src, blob } = event.detail;
@@ -3255,6 +3302,21 @@
   // Remove JS animation
   function removeJSAnimation(id: string) {
     jsAnimations = jsAnimations.filter(a => a.id !== id);
+    // An imported sketch leaves the library with it. Layers, clips and
+    // projects that use it keep their own copy.
+    void removeSketch(id);
+  }
+
+  /** Imported p5.js sketches from earlier sessions, back in the JS tab under their own ids. */
+  async function restoreImportedSketches() {
+    const stored = await loadSketches();
+    const fresh = stored.filter((s) => !jsAnimations.some((a) => a.id === s.id));
+    if (fresh.length === 0) return;
+    jsAnimations = [
+      ...jsAnimations,
+      ...fresh.map((s) => ({ id: s.id, name: s.name, type: 'p5js' as const, jsAnimation: s.jsAnimation, thumbnail: s.thumbnail })),
+    ];
+    for (const s of fresh) if (!s.thumbnail) fillJSAnimationThumbnail(s.id, s.jsAnimation);
   }
 
   // Load a saved shader from the library and add it to the active list
@@ -3620,13 +3682,13 @@
 
   <!-- AI Generator Buttons -->
   <div class="ai-generator-section">
-    <button class="ai-generate-btn" onclick={() => { showAIGenerator = !showAIGenerator; if (showAIGenerator) showVideoGenerator = false; }}>
+    <button class="ai-generate-btn" onclick={() => { showAIGenerator = !showAIGenerator; if (showAIGenerator) { showVideoGenerator = false; showP5Import = false; } }}>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
       </svg>
       {showAIGenerator ? 'Hide AI Generator' : 'AI Generate'}
     </button>
-    <button class="ai-generate-btn ai-video-btn" onclick={() => { showVideoGenerator = !showVideoGenerator; if (showVideoGenerator) showAIGenerator = false; }}>
+    <button class="ai-generate-btn ai-video-btn" onclick={() => { showVideoGenerator = !showVideoGenerator; if (showVideoGenerator) { showAIGenerator = false; showP5Import = false; } }}>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <polygon points="5 3 19 12 5 21 5 3"/>
       </svg>
@@ -3657,6 +3719,15 @@
     </div>
   {/if}
 
+  {#if showP5Import}
+    <div class="ai-generator-container p5-import-container">
+      <P5SketchImport
+        onImport={handleP5Imported}
+        onClose={() => { showP5Import = false; }}
+      />
+    </div>
+  {/if}
+
   <!-- JS Filter (only show on JS tab) -->
   {#if activeTab === 'js'}
     <div class="js-filter-row">
@@ -3670,6 +3741,16 @@
         p5.js
       </button>
     </div>
+    {#if !showP5Import}
+      <div class="js-import-row">
+        <button class="js-import-btn" onclick={() => openP5Import()}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 20h14"/>
+          </svg>
+          Import p5.js sketch
+        </button>
+      </div>
+    {/if}
   {/if}
 
   <!-- Global loading progress bar -->
@@ -4379,7 +4460,7 @@
             role="button"
             tabindex="0"
             onkeypress={(e) => e.key === 'Enter' && addTrayItemToCurrentMode(item)}
-            title={trayItemActionTitle()}
+            title={jsItemCredit(item) + trayItemActionTitle()}
           >
             <div class="js-icon" class:threejs={item.type === 'threejs'} class:p5js={item.type === 'p5js'}>
               {#if item.thumbnail}
@@ -4763,14 +4844,13 @@
       Add Files
       <input
         type="file"
-        accept="image/*,video/*,.fs,.isf,.html,.htm"
+        accept="image/*,video/*,.fs,.isf,.html,.htm,.zip,.js,.css"
         multiple
         onchange={async (e) => {
           const input = e.target as HTMLInputElement;
-          if (input.files) {
-            await addMediaFiles(Array.from(input.files));
-          }
+          const files = localFilesFromList(input.files);
           input.value = '';
+          await addLocalFiles(files);
         }}
         style="display: none;"
       />
@@ -6579,6 +6659,36 @@
     background: #333;
     border-color: #BB86FC;
     color: #BB86FC;
+  }
+
+  .js-import-row {
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  }
+
+  .js-import-btn {
+    width: 100%;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    background: transparent;
+    border: 1px dashed rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    color: #9aa0ac;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .js-import-btn:hover {
+    border-color: rgba(255, 255, 255, 0.35);
+    color: #eef0f4;
+  }
+
+  .p5-import-container {
+    max-height: 640px;
   }
 
   /* JS Animation Items */

@@ -5375,6 +5375,12 @@ function registerIpcHandlers() {
     ipcMain.handle(cmd, () => { throw new Error('Native renderer not available in Electron mode'); });
   }
 
+  // Public sketches from the p5.js Web Editor. The renderer passes only a
+  // username and a sketch id; the URLs are built in p5-editor-import.cjs.
+  const p5EditorImport = require('./p5-editor-import.cjs');
+  ipcMain.handle('p5_editor_list_sketches', (_event, args = {}) => p5EditorImport.listSketches(args?.username));
+  ipcMain.handle('p5_editor_get_sketch', (_event, args = {}) => p5EditorImport.getSketch(args?.username, args?.id));
+
   // License IPC removed in OSS build — every install is unlocked, no
   // activation, no machine fingerprinting, no online validation.
 
