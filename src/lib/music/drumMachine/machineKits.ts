@@ -318,6 +318,7 @@ export const SOUND_MODELS: { id: DrumModel; label: string; role: DrumVoice; soun
   { id: 'laser', label: 'Laser', role: 'tom', sound: laser(600, 0.4, 2.5, 0.3) },
   { id: 'fm', label: 'FM metal', role: 'crash', sound: fm(400, 0.4, 1.41, 0.7) },
   { id: 'glitch', label: 'Glitch', role: 'snare', sound: glitch(300, 0.3, 60, 0.5) },
+  { id: 'rattle', label: 'Rattle', role: 'hatOpen', sound: snd('rattle', 2400, 1.2, 0.5, 0.6, { rate: 28 }) },
 ];
 
 const MODEL_IDS = new Set(SOUND_MODELS.map((m) => m.id));
@@ -382,4 +383,76 @@ export function normalizeUserKit(raw: unknown): UserKit | null {
 /** The kit by id, among the factory kits and `mine`; the first factory kit when it is not there. */
 export function findKit(id: string | null | undefined, mine: readonly MachineKit[]): MachineKit {
   return mine.find((k) => k.id === id) ?? machineKitById(id);
+}
+
+// ── The sound library ───────────────────────────────────────────────────
+
+const rattle = (freq: number, decay: number, rate: number, tone = 0.5, e: Extra = {}) => snd('rattle', freq, decay, tone, 0.6, { rate, ...e });
+
+/** Sounds that live only in the library, not in a kit: lasers, the vibraslap and other hits. */
+export const EXTRA_SOUNDS: MachinePad[] = [
+  pad('Pew', 'tom', laser(1400, 0.18, 2.2, 0.3)),
+  pad('Pew pew', 'tom', laser(2200, 0.12, 1.6, 0.6)),
+  pad('Blaster', 'snare', laser(900, 0.35, 3, 0.8, { drive: 0.4 })),
+  pad('Ray', 'tom', fm(1200, 0.5, 0.51, 1)),
+  pad('Sweep down', 'crash', laser(3000, 1.4, 4, 0.1, { level: 0.45 })),
+  pad('Sweep up', 'crash', laser(150, 0.9, -4, 0.2, { level: 0.45 })),
+  pad('Zap up', 'tom', laser(300, 0.25, -2.5, 0.5)),
+  pad('Ricochet', 'rim', laser(4000, 0.3, 1.2, 0.2, { level: 0.4 })),
+  pad('Phaser shot', 'snare', fm(700, 0.3, 3.3, 0.8)),
+  pad('Ion burst', 'clap', glitch(1200, 0.25, 900, 0.8)),
+  pad('Vibraslap', 'hatOpen', rattle(2400, 1.4, 26)),
+  pad('Short slap', 'hatClosed', rattle(2800, 0.6, 34, 0.6)),
+  pad('Low rattle', 'hatOpen', rattle(1400, 1.6, 18, 0.4)),
+  pad('Boing', 'tom', snd('membrane', 160, 0.8, 0.1, 0.8, { bend: -1.2 })),
+  pad('Coin', 'rim', blip(1400, 0.25, 0.6)),
+  pad('Drop', 'tom', laser(900, 0.2, 1.2, 0)),
+  pad('Pop', 'rim', conga(700, 0.04, 0.8)),
+  pad('Whip', 'clap', shaker(5500, 0.07, 0.9, { level: 0.6 })),
+  pad('Air horn hit', 'crash', fm(440, 0.6, 1.005, 0.9, { drive: 0.5 })),
+  pad('Clang', 'crash', fm(320, 0.8, 2.76, 1)),
+];
+
+export type LibraryGroup = 'kicks' | 'snares' | 'hats' | 'toms' | 'perc' | 'latin' | 'lasers' | 'weird';
+
+export const LIBRARY_GROUPS: { id: LibraryGroup; label: string }[] = [
+  { id: 'kicks', label: 'Kicks' },
+  { id: 'snares', label: 'Snares and claps' },
+  { id: 'hats', label: 'Hats and cymbals' },
+  { id: 'toms', label: 'Toms' },
+  { id: 'perc', label: 'Percussion' },
+  { id: 'latin', label: 'Latin' },
+  { id: 'lasers', label: 'Lasers and FX' },
+  { id: 'weird', label: 'Weird' },
+];
+
+export interface LibrarySound {
+  id: string;
+  pad: MachinePad;
+  group: LibraryGroup;
+  /** Where it is from: a kit's name, or "Library". */
+  from: string;
+}
+
+const FX_MODELS = new Set<DrumModel>(['laser', 'zap', 'blip', 'glitch']);
+
+function groupOf(p: MachinePad, family: KitFamily | null): LibraryGroup {
+  if (FX_MODELS.has(p.sound.model) || /laser|pew|zap|ray|sweep/i.test(p.name)) return 'lasers';
+  if (family === 'latin') return 'latin';
+  if (family === 'weird') return 'weird';
+  if (p.role === 'kick') return 'kicks';
+  if (p.role === 'snare' || p.role === 'clap') return 'snares';
+  if (p.role === 'hatClosed' || p.role === 'hatOpen' || p.role === 'crash') return 'hats';
+  if (p.role === 'tom') return p.sound.model === 'tom' ? 'toms' : 'perc';
+  return 'perc';
+}
+
+/** Every sound: each kit's pads and the library's own, grouped. */
+export function soundLibrary(mine: readonly MachineKit[] = []): LibrarySound[] {
+  const out: LibrarySound[] = [];
+  for (const kit of [...mine, ...MACHINE_KITS]) {
+    kit.pads.forEach((p, i) => out.push({ id: `${kit.id}#${i}`, pad: p, group: groupOf(p, kit.family), from: kit.name }));
+  }
+  EXTRA_SOUNDS.forEach((p, i) => out.push({ id: `lib#${i}`, pad: p, group: p.sound.model === 'rattle' ? 'perc' : groupOf(p, null), from: 'Library' }));
+  return out;
 }

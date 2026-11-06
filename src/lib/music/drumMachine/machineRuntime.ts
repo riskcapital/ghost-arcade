@@ -12,7 +12,7 @@ import { get, writable } from 'svelte/store';
 import { launchClockPosition } from '../../stores/launchClock';
 import { musicStudio } from '../musicStudioStore';
 import { auditionMachineSound, musicNow, sendMachineHit, setMachineHooks, setMachineSound } from '../musicRuntime';
-import type { MacroFxInstance } from '../macroFx';
+import { normalizeMacroFx, type MacroFxInstance } from '../macroFx';
 import type { NoteSource } from '../noteEvents';
 import type { DrumKit, DrumSound, DrumTweak } from '../tone/toneTypes';
 import {
@@ -55,7 +55,7 @@ export const machineTransport = writable<MachineTransport>({
 export const machinePadFlash = writable<number[]>(new Array(MAX_PADS).fill(0));
 
 /** The pad whose sound picker is open, or null. */
-export const machinePicker = writable<number | null>(null);
+export const machinePicker = writable<{ pad: number; addTrack: boolean } | null>(null);
 
 const padHitAt = new Float64Array(MAX_PADS);
 const padHitVel = new Float64Array(MAX_PADS);
@@ -343,13 +343,15 @@ export interface SavedBeat {
   id: string;
   name: string;
   beat: Beat;
+  /** Each pad's insert effects when it was saved. */
+  padFx?: MacroFxInstance[][];
 }
 
 function loadSaved(): SavedBeat[] {
   try {
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]');
     return Array.isArray(raw)
-      ? raw.filter((x) => x && typeof x.id === 'string' && typeof x.name === 'string').map((x) => ({ id: x.id, name: x.name, beat: normalizeBeat(x.beat, 'mk.boom-box') }))
+      ? raw.filter((x) => x && typeof x.id === 'string' && typeof x.name === 'string').map((x) => ({ id: x.id, name: x.name, beat: normalizeBeat(x.beat, 'mk.boom-box'), padFx: Array.isArray(x.padFx) ? x.padFx.map((f: unknown) => normalizeMacroFx({ x: f }).x ?? []) : undefined }))
       : [];
   } catch {
     return [];
@@ -369,11 +371,19 @@ export function saveBeatAs(name: string): void {
   const trimmed = name.trim().slice(0, 60) || 'Beat';
   const beat = { ...JSON.parse(JSON.stringify(currentBeat())), name: trimmed } as Beat;
   musicStudio.setMachine(beat);
+  const inserts = get(musicStudio).inserts;
+  const padFx = Array.from({ length: beat.padCount }, (_, i) => JSON.parse(JSON.stringify(inserts[padChannel(i)] ?? [])));
   savedBeats.update((list) => {
     const existing = list.find((x) => x.name === trimmed);
-    if (existing) return list.map((x) => (x === existing ? { ...x, beat } : x));
-    return [...list, { id: `beat-${Date.now().toString(36)}`, name: trimmed, beat }];
+    if (existing) return list.map((x) => (x === existing ? { ...x, beat, padFx } : x));
+    return [...list, { id: `beat-${Date.now().toString(36)}`, name: trimmed, beat, padFx }];
   });
+}
+
+/** A beat saved on this computer, with its pads' effects. */
+export function loadSavedBeat(saved: SavedBeat): void {
+  loadBeat(saved.beat);
+  if (saved.padFx) musicStudio.setInsertChains(padFxChains(saved.padFx));
 }
 
 export function deleteSavedBeat(id: string): void {

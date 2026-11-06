@@ -955,6 +955,7 @@ export class DrumEngine {
       h.bp.set(h.freq * (0.8 + h.tone * 0.5), m === 'scrape' ? 0.55 : 0.3, sr);
       h.hp.set(1500, 0.1, sr);
     } else if (m === 'rise') h.bp.set(h.freq * 3, 0.5, sr);
+    else if (m === 'rattle') h.bp.set(h.freq, 0.85, sr);
     else h.hp.set(2500 + h.tone * 4000, 0.1, sr);
     h.held = 0;
     h.phase3 = 0;
@@ -1172,6 +1173,22 @@ export class DrumEngine {
           const amp = Math.exp(-t / (h.decay * 0.3));
           y = Math.sin(TAU * h.phase + index * Math.sin(TAU * h.phase2)) * amp * 0.8;
           alive = amp > 1e-3;
+          break;
+        }
+        case 'rattle': {
+          // The teeth rattle in the box: clicks that come quick and slow down as it dies away.
+          const rate = (s.rate ?? 28) * (0.6 + 0.4 * Math.exp(-t / (h.decay * 0.5)));
+          h.phase += rate * dt;
+          let x = whiteNoise() * 0.04;
+          if (h.phase >= 1) {
+            h.phase -= 1;
+            x += 1;
+          }
+          if (t < 0.004) x += whiteNoise();
+          h.bp.process(x);
+          const env = Math.exp(-t / (h.decay * 0.4));
+          y = h.bp.bp * env * (1 + h.tone);
+          alive = env > 1e-3;
           break;
         }
         case 'laser': {

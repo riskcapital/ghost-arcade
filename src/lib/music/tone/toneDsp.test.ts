@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { DrumEngine, Ladder, ToneEngine } from './toneDsp';
 import { TONES } from './tones';
 import { DRUM_KITS } from './kits';
-import { MACHINE_KITS } from '../drumMachine/machineKits';
+import { EXTRA_SOUNDS, MACHINE_KITS } from '../drumMachine/machineKits';
 
 const SR = 48000;
 const BLOCK = 128;
@@ -131,6 +131,18 @@ describe('drum kits', () => {
 
 describe('drum machine kits', () => {
   const tweak = { tune: 0.5, decay: 0.5, tone: 0.5, drive: 0.5, level: 1 };
+  it('every library sound sounds, and none clips', () => {
+    const kit = { id: 'lib', name: 'Library', blurb: '', sounds: EXTRA_SOUNDS.map((p) => p.sound), gain: 1 };
+    for (let slot = 0; slot < EXTRA_SOUNDS.length; slot++) {
+      const e = new DrumEngine(SR);
+      e.message({ t: 'kit', kit }, 0);
+      e.message({ t: 'hit', slot, vel: 1, at: 0, tweak }, 0);
+      const { peak, finite } = render(e, 0.8);
+      expect(finite).toBe(true);
+      expect(peak, EXTRA_SOUNDS[slot].name).toBeGreaterThan(0.03);
+      expect(peak, EXTRA_SOUNDS[slot].name).toBeLessThan(1.6);
+    }
+  });
   for (const mk of MACHINE_KITS) {
     it(`${mk.name}: every pad sounds, and none clips`, () => {
       const kit = { id: mk.id, name: mk.name, blurb: mk.blurb, sounds: mk.pads.map((p) => p.sound), fx: mk.fx, gain: mk.gain };

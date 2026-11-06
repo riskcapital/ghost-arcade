@@ -16,10 +16,11 @@
   } from '../../music/drumMachine/machineBeat';
   import { factoryBeats } from '../../music/drumMachine/machineFactory';
   import {
-    addPad, addTrack, deleteSavedBeat, editBeat, editPart, loadBeat, machinePicker, machineTransport, moveTrack, newBeat, playPad,
+    addPad, addTrack, deleteSavedBeat, loadSavedBeat, padChannel, editBeat, editPart, loadBeat, machinePicker, machineTransport, moveTrack, newBeat, playPad,
     playingKit, removeTrack, saveBeatAs, savedBeats, savedKits, selectPart, setMachineMode, toggleMachine,
   } from '../../music/drumMachine/machineRuntime';
   import { audioBpm } from '../../stores/audio';
+  import { insertEditorChannel } from '../../music/studioUi';
   import StudioModule from './StudioModule.svelte';
   import StudioKnob from './StudioKnob.svelte';
 
@@ -94,7 +95,7 @@
       if (pad < 0) return;
       addTrack(pad);
       selected = pad;
-      machinePicker.set(pad);
+      machinePicker.set({ pad, addTrack: false });
     } else if (value) {
       addTrack(Number(value));
       selected = Number(value);
@@ -175,7 +176,7 @@
     } else if (value.startsWith('f:')) loadBeat(factory[Number(value.slice(2))]);
     else if (value.startsWith('s:')) {
       const saved = $savedBeats.find((x) => x.id === value.slice(2));
-      if (saved) loadBeat(saved.beat);
+      if (saved) loadSavedBeat(saved);
     } else if (value.startsWith('d:')) {
       const saved = $savedBeats.find((x) => x.id === value.slice(2));
       if (saved) deleteSavedBeat(saved.id);
@@ -381,16 +382,19 @@
               <span class="lenval" title="Steps before this track loops; drag the handle on the right of a step to set">
                 <button class="tiny" onclick={() => editPart((p) => setTrackLength(p, pad, tr.length - 1))} aria-label="Shorter track">−</button>{tr.length}<button class="tiny" onclick={() => editPart((p) => setTrackLength(p, pad, tr.length + 1))} aria-label="Longer track">+</button>
               </span>
+              <button class="tiny fx" class:on={($musicStudio.inserts[padChannel(pad)] ?? []).some((f) => f.enabled)} onclick={() => insertEditorChannel.set(padChannel(pad))} title="This track's own effects (only this pad goes through them)">FX</button>
               <button class="tiny x" onclick={() => removeTrack(pad)} title="Take this track out of the sequencer (its steps go with it; the pad stays)" aria-label="Remove track">×</button>
             </div>
           {/each}
         </div>
         <div class="track-tools">
-          <select class="add-track" value="" onchange={(e) => { const el = e.target as HTMLSelectElement; onAddTrack(el.value); el.value = ''; }} aria-label="Add a track" title="Add any pad, or a new sound, as a track">
-            <option value="" disabled>+ Track…</option>
-            <option value="new">New sound…</option>
-            {#if spare.length}<optgroup label="Pads">{#each spare as { p, i } (i)}<option value={String(i)}>{p.name}</option>{/each}</optgroup>{/if}
-          </select>
+          <button class="studio-btn add-track" onclick={() => onAddTrack('new')} title="Add a track: pick its sound from the whole library">+ Track</button>
+          {#if spare.length}
+            <select class="add-track" value="" onchange={(e) => { const el = e.target as HTMLSelectElement; onAddTrack(el.value); el.value = ''; }} aria-label="Add a pad you already have" title="Add a pad you already have as a track">
+              <option value="" disabled>Pad…</option>
+              {#each spare as { p, i } (i)}<option value={String(i)}>{p.name}</option>{/each}
+            </select>
+          {/if}
           <span class="ga-eyebrow">{kit.pads[selected]?.name}</span>
           <button class="studio-btn" onclick={() => editPart((p) => nudgeTrack(p, selected, -1))} title="Move this track's hits a step earlier">← Shift</button>
           <button class="studio-btn" onclick={() => editPart((p) => nudgeTrack(p, selected, 1))} title="Move this track's hits a step later">Shift →</button>
@@ -494,6 +498,7 @@
   .row.drop { box-shadow: 0 -2px 0 var(--studio-accent); }
   .grip { flex: 0 0 8px; font-size: 10px; line-height: 13px; color: var(--studio-muted); cursor: grab; text-align: center; touch-action: none; }
   .tiny.x { border-color: transparent; }
+  .tiny.fx { width: 20px; }
   .add-track { max-width: 110px; }
   .rname { flex: 0 0 76px; height: 13px; padding: 0 4px; border: 0; background: transparent; color: var(--studio-ink-1); font: inherit; font-size: 10px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
   .row.sel .rname { color: var(--studio-accent); }

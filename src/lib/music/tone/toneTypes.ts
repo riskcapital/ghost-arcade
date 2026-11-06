@@ -111,10 +111,11 @@ export interface ToneFx {
  * bell: three inharmonic sines (agogo, triangle, glass). rise: a friction drum whose pitch climbs by `bend`.
  * glitch: stepped random values `rate` times a second. fm: a metallic two-operator hit, `tone` sets the index.
  * laser: a sine falling `bend` octaves over the whole decay.
+ * rattle: a struck rattle (a vibraslap): clicks `rate` a second, slowing, ringing a wooden box at `freq`.
  */
 export type DrumModel =
   | 'kick' | 'snare' | 'clap' | 'hat' | 'tom' | 'rim' | 'cowbell' | 'cymbal' | 'zap' | 'blip'
-  | 'membrane' | 'shaker' | 'scrape' | 'bell' | 'rise' | 'glitch' | 'fm' | 'laser';
+  | 'membrane' | 'shaker' | 'scrape' | 'bell' | 'rise' | 'glitch' | 'fm' | 'laser' | 'rattle';
 
 /** One drum sound: a model and its settings, each 0-1 unless noted. */
 export interface DrumSound {
