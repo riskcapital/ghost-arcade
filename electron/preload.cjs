@@ -119,6 +119,8 @@ const ALLOWED_IPC_COMMANDS = new Set([
   // Ableton Link — LAN tempo/beat sync (session lives in main; the
   // renderer polls state and bridges tempo into the master BPM).
   'link_enable', 'link_disable', 'link_set_tempo', 'link_get_state',
+  // Public sketches from the p5.js Web Editor (p5-editor-import.cjs)
+  'p5_editor_list_sketches', 'p5_editor_get_sketch',
 ]);
 
 // Expose a bridge that mirrors Tauri's invoke() API

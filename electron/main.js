@@ -213,11 +213,19 @@ if (process.platform === 'linux') {
 // stack windows constantly; never let occlusion stop a render loop.
 // NOTE: appendSwitch('disable-features') REPLACES on repeat calls — the
 // safe-mode branch below must merge its flag into one list.
+//
+// IsolateSandboxedIframes: p5.js pages play in sandboxed iframes (an origin
+// of their own, no access to the app). Left to its default, Chromium moves
+// each into a process of its own, and in the offscreen windows that feed
+// Spout and the slice atlas such a frame gets almost no animation frames,
+// so sketches crawled at a couple of frames a second there. In the page's
+// own process they keep the full frame rate; the sandbox still keeps their
+// code away from the app's window, storage and bridge.
 if (PROJECTION_SAFE_MODE) {
   app.commandLine.appendSwitch('disable-zero-copy');
-  app.commandLine.appendSwitch('disable-features', 'HardwareOverlays,CalculateNativeWinOcclusion');
+  app.commandLine.appendSwitch('disable-features', 'HardwareOverlays,CalculateNativeWinOcclusion,IsolateSandboxedIframes');
 } else {
-  app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+  app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion,IsolateSandboxedIframes');
   app.commandLine.appendSwitch('enable-gpu-rasterization');
   if (EXPERIMENTAL_GPU_PRESENT) {
     app.commandLine.appendSwitch('enable-zero-copy');
@@ -5401,6 +5409,12 @@ function registerIpcHandlers() {
     ipcMain.handle(cmd, () => { throw new Error('Native renderer not available in Electron mode'); });
   }
 
+  // Public sketches from the p5.js Web Editor. The renderer passes only a
+  // username and a sketch id; the URLs are built in p5-editor-import.cjs.
+  const p5EditorImport = require('./p5-editor-import.cjs');
+  ipcMain.handle('p5_editor_list_sketches', (_event, args = {}) => p5EditorImport.listSketches(args?.username));
+  ipcMain.handle('p5_editor_get_sketch', (_event, args = {}) => p5EditorImport.getSketch(args?.username, args?.id));
+
   // License IPC removed in OSS build — every install is unlocked, no
   // activation, no machine fingerprinting, no online validation.
 
@@ -5524,6 +5538,19 @@ function setupPermissions() {
 
   session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
     return SAFE_PERMISSIONS.has(permission);
+  });
+
+  // p5.js sketches, which can come from anyone, play in sandboxed iframes
+  // with an origin of their own ("null"). The app's files are not theirs to
+  // read: ghost-asset:// answers only the app's own pages.
+  session.defaultSession.webRequest.onBeforeRequest({ urls: ['ghost-asset://*/*'] }, (details, callback) => {
+    let sandboxed = false;
+    try {
+      sandboxed = details.frame?.origin === 'null';
+    } catch {
+      sandboxed = false;
+    }
+    callback(sandboxed ? { cancel: true } : {});
   });
 
   // System audio capture: getDisplayMedia() needs an explicit handler in
