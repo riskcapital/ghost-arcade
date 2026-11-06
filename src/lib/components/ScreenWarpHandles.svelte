@@ -46,13 +46,12 @@
    * point, once a point is clicked; Escape goes back to moving the screen).
    *
    * Arrow keys: the corner, mesh point or tangent clicked last moves one
-   * project pixel (Shift ten, Alt a tenth; Alt moves a selected tangent on
+   * master-canvas pixel (Shift ten, Alt a tenth; Alt moves a selected tangent on
    * its own); with none the whole screen moves. A held key is one undo step.
    */
   import { onDestroy, onMount } from 'svelte';
   import { get } from 'svelte/store';
   import type { OutputSlice, ScreenMask } from '../stores/settings';
-  import { project } from '../stores/layers';
   import { recordDiscreteAction, scheduleHistorySnapshot } from '../stores/historyHooks';
   import { settings, screenMaskIsActive } from '../stores/settings';
   import type { WarpCorners, MeshWarpGrid, Point2D } from '../types';
@@ -331,10 +330,11 @@
     const slice = $screens.find(sc => sc.id === $selectedScreenId);
     const tangentPicked = !!selectedTangent && slice?.warpMode === 'mesh' && !!slice.meshGrid?.bezier
       && selectedMeshPoint?.sliceId === slice.id;
-    const proj = get(project);
+    const out = get(settings).output;
     const stepPx = nudgeStepPixels(get(settings).ui.warpDragGranularity, e.shiftKey, e.altKey && !tangentPicked);
-    // Screens keep y down: screen-up is -y.
-    const offset = projectPixelOffset(dir.x * stepPx, dir.y * stepPx, proj.width, proj.height, false);
+    // Crops and screen warps live on the master canvas, so a step is a
+    // master-canvas pixel. Screens keep y down: screen-up is -y.
+    const offset = projectPixelOffset(dir.x * stepPx, dir.y * stepPx, out?.masterCanvasWidth ?? 1920, out?.masterCanvasHeight ?? 1080, false);
 
     e.preventDefault();
     e.stopPropagation();
