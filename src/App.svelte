@@ -2171,6 +2171,10 @@
         const state = captureHistoryState();
         history.amend(state.project, state.keyframes, state.output);
       },
+      amendTo: (captured) => {
+        const state = captured as CapturedHistoryState;
+        history.amend(state.project, state.keyframes, state.output);
+      },
     });
     // Opening a project (any path: File, Open Recent, recovery, relink,
     // package) starts its history over. Deferred to a microtask so the steps
@@ -8897,7 +8901,7 @@
             <button class="display-menu-item" class:checked={_assigned === display.id}
               onclick={() => chooseSurfaceTarget(_menu.surface, display.id)}>
               <span class="display-menu-check">{_assigned === display.id ? '✓' : ''}</span>
-              {display.label}{display.isPrimary ? ' (main)' : ''}
+              {display.name || display.label}{display.isPrimary ? ' (main)' : ''}
               <span class="display-menu-dim">{display.width}×{display.height}</span>
             </button>
           {/each}

@@ -7134,9 +7134,13 @@ function registerIpcHandlers() {
   ipcMain.handle('get_displays', () => {
     const primary = screen.getPrimaryDisplay();
     const all = screen.getAllDisplays();
+    // `label` is the OS's own name, possibly empty, for matching a display
+    // again later; `name` is what the interface shows. A "Display <id>"
+    // fallback must not be stored as the label: Windows renumbers the ids.
     return all.map(d => ({
       id: d.id,
-      label: d.label || `Display ${d.id}`,
+      label: d.label || '',
+      name: d.label || `Display ${d.id}`,
       width: d.bounds.width,
       height: d.bounds.height,
       x: d.bounds.x,

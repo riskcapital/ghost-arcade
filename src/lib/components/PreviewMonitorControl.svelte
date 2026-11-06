@@ -14,7 +14,7 @@
 
   let { recording = false }: { recording?: boolean } = $props();
 
-  interface Display { id: number; label: string; width: number; height: number; isPrimary: boolean; scaleFactor: number }
+  interface Display { id: number; label: string; name?: string; width: number; height: number; isPrimary: boolean; scaleFactor: number }
   interface MonitorState { supported: boolean; reason: string | null; open: boolean; waiting: boolean; displayId: number | null; layout: PreviewMonitorLayout }
 
   const STORAGE_KEY = 'ga.previewMonitor';
@@ -39,7 +39,7 @@
     const r = remembered();
     if (chosen === null || !displays.some((d) => d.id === chosen)) {
       // The display it went on last time, else the first one that is not this screen.
-      chosen = displays.find((d) => d.label === r.displayLabel)?.id
+      chosen = (r.displayLabel ? displays.find((d) => d.label === r.displayLabel)?.id : undefined)
         ?? displays.find((d) => !d.isPrimary)?.id
         ?? displays[0]?.id
         ?? null;
@@ -81,7 +81,7 @@
   }
 
   function displayName(d: Display): string {
-    return `${d.label || `Display ${d.id}`} · ${Math.round(d.width * d.scaleFactor)}×${Math.round(d.height * d.scaleFactor)}${d.isPrimary ? ' · this screen' : ''}`;
+    return `${d.name || d.label || `Display ${d.id}`} · ${Math.round(d.width * d.scaleFactor)}×${Math.round(d.height * d.scaleFactor)}${d.isPrimary ? ' · this screen' : ''}`;
   }
 
   // The status line, sent only when something on it changed. Read on a timer
