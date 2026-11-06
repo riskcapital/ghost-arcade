@@ -385,10 +385,47 @@ export interface NdiSource {
 // JavaScript animation types (Three.js or p5.js)
 export type JSAnimationType = 'threejs' | 'p5js';
 
+/** A page control's value: a number, a switch, a colour, or text (a text
+ *  box, or the chosen option of a dropdown). */
+export type JSAnimationParamValue = number | boolean | number[] | string;
+
+/** One file of a p5.js sketch, exactly as its author wrote it. */
+export interface SketchFile {
+  /** Path inside the sketch: `sketch.js`, `index.html`, `assets/moon.png`. */
+  path: string;
+  /** A text file's contents. */
+  text?: string;
+  /** A binary file's contents. */
+  base64?: string;
+  mime?: string;
+  /** Where a file that is not carried lives online. */
+  url?: string;
+}
+
+/**
+ * A p5.js sketch kept as its own files. The page that plays is built from
+ * them when the sketch runs (src/lib/p5sketch/wrapSketch.ts); the files
+ * themselves are never rewritten.
+ */
+export interface JSAnimationSketch {
+  files: SketchFile[];
+  /**
+   * 'fill': the canvas takes the output's size. 'fit': it keeps the size the
+   * sketch asks for and is scaled to fit. Unset: the wrapper's suggestion.
+   */
+  canvas?: 'fill' | 'fit';
+}
+
 // JavaScript animation source (for user-created/AI-generated animations)
 export interface JSAnimationSource {
   animationType: JSAnimationType;
-  htmlCode: string;  // Complete HTML file content
+  /**
+   * Complete HTML file content. For a sketch kept as files, the wrapped
+   * index.html the wrapper last built from them.
+   */
+  htmlCode: string;
+  /** The sketch's own files, for a p5.js sketch kept as written. */
+  sketch?: JSAnimationSketch;
   params?: Array<{
     name: string;
     type: 'number' | 'boolean' | 'color' | 'text' | 'select';
@@ -402,6 +439,22 @@ export interface JSAnimationSource {
   paramValues?: Record<string, number | boolean | number[] | string>;
   aiGenerated?: boolean;
   aiPrompt?: string;  // Original prompt used to generate
+  /** Where an imported page came from, for credit and a link back. */
+  origin?: JSAnimationOrigin;
+}
+
+/** An imported p5.js sketch: from the p5.js Web Editor, or files dropped on the app. */
+export interface JSAnimationOrigin {
+  kind: 'p5-editor' | 'p5-files';
+  sketchName: string;
+  author?: string;
+  /** The sketch in the p5.js Web Editor. */
+  url?: string;
+  sketchId?: string;
+  /** The p5.js version the sketch was written for. */
+  p5Version?: string;
+  importedFrom: 'account' | 'link' | 'zip' | 'files';
+  importedAt: number;
 }
 
 // Content fit modes for how source content maps to the layer quad
