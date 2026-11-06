@@ -2113,6 +2113,12 @@ function closeAuxiliaryWindows() {
     spoutOsrWindow = null;
   }
 
+  // The Preview monitor is a window too: left open, it keeps the app (and the
+  // single-instance lock) alive with no editor. It must not come back either.
+  previewMonitorWanted = null;
+  clearPreviewMonitorReopenTimer();
+  closePreviewMonitorWindow();
+
   try { stopAtlasOutput('shutdown'); } catch {}
 }
 
@@ -4121,9 +4127,15 @@ function openPreviewMonitor(display, layout) {
     broadcastPreviewMonitorState();
   });
   // The operator keeps working in the main window.
-  if (mainWindow && !mainWindow.isDestroyed()) setTimeout(() => { if (!mainWindow.isDestroyed()) mainWindow.focus(); }, 300);
+  const editor = mainWindow;
+  if (editor && !editor.isDestroyed()) setTimeout(() => { if (editor && !editor.isDestroyed()) editor.focus(); }, 300);
   broadcastPreviewMonitorState();
   return { ok: true, displayId: display.id };
+}
+
+function clearPreviewMonitorReopenTimer() {
+  if (previewMonitorReopenTimer) clearTimeout(previewMonitorReopenTimer);
+  previewMonitorReopenTimer = null;
 }
 
 function closePreviewMonitorWindow() {
@@ -4140,6 +4152,7 @@ function reopenPreviewMonitorIfItsDisplayReturned() {
   // Let the OS finish arranging the new display first.
   previewMonitorReopenTimer = setTimeout(() => {
     previewMonitorReopenTimer = null;
+    if (previewMonitorWindow && !previewMonitorWindow.isDestroyed()) return;
     const display = findPreviewMonitorDisplay(screen.getAllDisplays(), previewMonitorWanted);
     if (display && previewMonitorWanted) {
       console.log(`[PreviewMonitor] its display is back (${display.label || display.id}); reopening`);
@@ -9122,6 +9135,7 @@ function registerIpcHandlers() {
   // ── Preview monitor ──
   ipcMain.handle('preview_monitor_get_state', () => previewMonitorPublicState());
   ipcMain.handle('preview_monitor_open', (_event, args = {}) => {
+    clearPreviewMonitorReopenTimer();
     const displayId = Number(args?.displayId);
     const display = screen.getAllDisplays().find((d) => d.id === displayId) || null;
     return openPreviewMonitor(display, args?.layout);
@@ -9129,6 +9143,7 @@ function registerIpcHandlers() {
   ipcMain.handle('preview_monitor_close', () => {
     // Closed on purpose: it does not come back when a display is plugged in.
     previewMonitorWanted = null;
+    clearPreviewMonitorReopenTimer();
     closePreviewMonitorWindow();
     broadcastPreviewMonitorState();
     return { ok: true };
