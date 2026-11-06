@@ -8047,6 +8047,9 @@
     };
   }
 
+  let nativePreviewRetryMs = 0;
+  let nativePreviewRetryTimer: ReturnType<typeof setTimeout> | null = null;
+
   function scheduleNativePreviewWindowSync(reason = 'schedule'): void {
     nativePreviewSyncQueuedReason = reason;
     if (nativePreviewSyncInFlight) {
@@ -8124,10 +8127,18 @@
         if (nativeEmbeddedPresenterAttached && status?.geometryMatches === true) {
           nativePreviewLastSignature = signature;
           nativePreviewLastVerifiedAt = performance.now();
+          nativePreviewRetryMs = 0;
         } else {
           nativePreviewLastSignature = '';
           nativePreviewLastVerifiedAt = 0;
-          scheduleNativePreviewWindowSync('geometry-retry');
+          // Try again, backing off: retrying every frame forced a layout per frame
+          // for as long as the preview could not attach.
+          nativePreviewRetryMs = Math.min(2000, nativePreviewRetryMs ? nativePreviewRetryMs * 2 : 50);
+          if (nativePreviewRetryTimer) clearTimeout(nativePreviewRetryTimer);
+          nativePreviewRetryTimer = setTimeout(() => {
+            nativePreviewRetryTimer = null;
+            scheduleNativePreviewWindowSync('geometry-retry');
+          }, nativePreviewRetryMs);
         }
       } catch (err) {
         nativeEmbeddedPresenterAttached = false;
