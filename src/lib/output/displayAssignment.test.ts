@@ -195,6 +195,33 @@ describe('resolveStoredDisplay', () => {
     expect(resolveStoredDisplay([laptop, monitor, changed], projector.id, fingerprint)?.id).toBe(projector.id);
   });
 
+  it('reports the projector missing when its old id now names the laptop and it is unplugged', () => {
+    // Opening on the laptop would cover the editor and save the laptop over
+    // the projector the Screen was set up for.
+    const swapped = [{ ...laptop, id: projector.id }, monitor];
+    expect(resolveStoredDisplay(swapped, projector.id, fingerprint)).toBeNull();
+  });
+
+  it('without OS names, matches on size and scale', () => {
+    const bare = (display: DisplayInfo) => ({ ...display, label: '' });
+    const stored = displayFingerprint(bare(projector));
+    expect(stored.label).toBe('');
+    // Ids swapped, projector present: found by size.
+    const swapped = [{ ...bare(laptop), id: projector.id }, bare(monitor), { ...bare(projector), id: 7 }];
+    expect(resolveStoredDisplay(swapped, projector.id, stored)?.id).toBe(7);
+    // Ids swapped, projector absent: the laptop under its old id is not it.
+    expect(resolveStoredDisplay(swapped.slice(0, 2), projector.id, stored)).toBeNull();
+    // Same id, same size: still it.
+    expect(resolveStoredDisplay([bare(laptop), bare(projector)], projector.id, stored)?.id).toBe(projector.id);
+  });
+
+  it('treats an old generated "Display N" label as no name', () => {
+    const old = { ...fingerprint, label: `Display ${projector.id}` };
+    const renamed = [{ ...laptop, id: projector.id }, monitor, { ...projector, id: 7, label: '' }];
+    expect(resolveStoredDisplay(renamed, projector.id, old)?.id).toBe(7);
+    expect(resolveStoredDisplay(renamed.slice(0, 2), projector.id, old)).toBeNull();
+  });
+
   it('lets the id decide between two identical projectors', () => {
     const twin = { ...projector, id: 11, x: 6000 };
     expect(resolveStoredDisplay([laptop, projector, twin], twin.id, displayFingerprint(twin))?.id).toBe(11);

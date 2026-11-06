@@ -24,7 +24,7 @@
   // ─── Display enumeration ─────────────────────────────────────────────
   // Re-fetched each time the panel mounts (operators hot-plug projectors).
   type DisplayInfo = {
-    id: number; label: string; width: number; height: number;
+    id: number; label: string; name?: string; width: number; height: number;
     x: number; y: number; isPrimary: boolean; scaleFactor: number;
   };
   let displays: DisplayInfo[] = [];
@@ -76,6 +76,10 @@
     // and keep the Screen pointed at the display it was set up for.
     await refreshDisplays();
     const target = resolveStoredDisplay(displays, s.displayId, s.displayFingerprint);
+    // Its display is not connected. The stored id may name another display
+    // now (the laptop panel), and opening there would cover the editor; the
+    // inspector says so and asks for a pick instead.
+    if (!target && displays.length > 0) return;
     if (target && (target.id !== s.displayId || !s.displayFingerprint)) {
       screenActions.update(s.id, { displayId: target.id, displayFingerprint: displayFingerprint(target) });
     }

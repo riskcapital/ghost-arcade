@@ -16,7 +16,10 @@ export type OutputSurface = 'liveOutput' | 'stageSim' | 'mapSim';
 
 export type DisplayInfo = {
   id: number;
+  /** The OS's own name for the display; may be empty. */
   label: string;
+  /** What the interface shows: the label, or "Display N" without one. */
+  name?: string;
   width: number;
   height: number;
   x: number;
@@ -218,31 +221,50 @@ export type DisplayFingerprint = {
   scaleFactor: number;
 };
 
+/**
+ * The name the OS gives a display, or '' when it gives none. Older builds
+ * filled a missing name with "Display <id>", and that id is exactly what
+ * Windows renumbers, so such a stored label says nothing about the display.
+ */
+function osLabel(label: string | null | undefined): string {
+  const trimmed = (label ?? '').trim();
+  return /^Display \d+$/.test(trimmed) ? '' : trimmed;
+}
+
 export function displayFingerprint(display: DisplayInfo): DisplayFingerprint {
   const scaleFactor = display.scaleFactor ?? 1;
   return {
-    label: display.label,
+    label: osLabel(display.label),
     width: Math.round(display.width * scaleFactor),
     height: Math.round(display.height * scaleFactor),
     scaleFactor,
   };
 }
 
-function matchesFingerprint(display: DisplayInfo, fingerprint: DisplayFingerprint): boolean {
+function sameSizeAndScale(display: DisplayInfo, fingerprint: DisplayFingerprint): boolean {
   const own = displayFingerprint(display);
-  return own.label === fingerprint.label
-    && own.width === fingerprint.width
+  return own.width === fingerprint.width
     && own.height === fingerprint.height
     && Math.abs(own.scaleFactor - fingerprint.scaleFactor) < 0.01;
+}
+
+/** Without a stored name, size and scale are all there is to go on. */
+function matchesFingerprint(display: DisplayInfo, fingerprint: DisplayFingerprint): boolean {
+  const label = osLabel(fingerprint.label);
+  if (label && osLabel(display.label) !== label) return false;
+  return sameSizeAndScale(display, fingerprint);
 }
 
 /**
  * The display a stored id and fingerprint mean now. The id wins while it
  * still names the same display. If it names another one (ids swapped) or none
  * (renumbered), the one display that matches the fingerprint is it. A display
- * whose resolution or scale was changed on purpose no longer matches, and
- * then the id is still the best guess. Two identical projectors match each
- * other, so for those the id decides too.
+ * whose resolution or scale was changed on purpose keeps its name, so the id
+ * still stands while the name agrees. When the id now names a display with
+ * another name -- the laptop panel that inherited the projector's id, say --
+ * and nothing connected matches, the display is missing: opening there would
+ * cover the editor and overwrite the stored projector. Two identical
+ * projectors match each other, so for those the id decides too.
  */
 export function resolveStoredDisplay(
   displays: DisplayInfo[],
@@ -254,7 +276,10 @@ export function resolveStoredDisplay(
   if (byId && matchesFingerprint(byId, fingerprint)) return byId;
   const matching = displays.filter((display) => matchesFingerprint(display, fingerprint));
   if (matching.length === 1) return matching[0]!;
-  if (byId) return byId;
-  const sameLabel = displays.filter((display) => display.label === fingerprint.label);
+  const label = osLabel(fingerprint.label);
+  // No name stored: a display of another size under the old id is not it.
+  if (!label) return null;
+  if (byId && osLabel(byId.label) === label) return byId;
+  const sameLabel = displays.filter((display) => osLabel(display.label) === label);
   return sameLabel.length === 1 ? sameLabel[0]! : null;
 }

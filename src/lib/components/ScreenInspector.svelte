@@ -42,7 +42,7 @@
   });
 
   type DisplayInfo = {
-    id: number; label: string; width: number; height: number;
+    id: number; label: string; name?: string; width: number; height: number;
     x: number; y: number; isPrimary: boolean; scaleFactor: number;
   };
 
@@ -237,7 +237,7 @@
       <label class="field">
         <span class="lbl">Display</span>
         <select
-          value={routedDisplay?.id ?? screen.displayId ?? ''}
+          value={routedDisplay?.id ?? (displayMissing ? '' : screen.displayId ?? '')}
           onchange={(e) => {
             const v = (e.target as HTMLSelectElement).value;
             const picked = v === '' ? null : displays.find((d) => d.id === parseInt(v)) ?? null;
@@ -249,7 +249,7 @@
         >
           <option value="">— pick —</option>
           {#each displays as d}
-            <option value={d.id}>{d.label || `Display ${d.id}`} ({d.width}×{d.height}{d.isPrimary ? ' · primary' : ''})</option>
+            <option value={d.id}>{d.name || d.label || `Display ${d.id}`} ({d.width}×{d.height}{d.isPrimary ? ' · primary' : ''})</option>
           {/each}
         </select>
         <button class="icon-btn" title="Refresh display list" onclick={onRefreshDisplays}>↻</button>
