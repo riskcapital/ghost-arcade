@@ -29,6 +29,13 @@ export const GRID_SNAP_CELL_FRACTION = 0.25;
 /** Shift-drag moves the point this much per pixel of pointer travel. */
 export const FINE_DRAG_FACTOR = 0.1;
 
+/** The snap radius for a move: during a Shift fine drag it shrinks with the
+ *  point's speed, so a target pulls from as far as the pointer, not ten times
+ *  farther, and the point can be eased off it. */
+export function snapRadiusPx(fine = false): number {
+  return fine ? SNAP_RADIUS_PX * FINE_DRAG_FACTOR : SNAP_RADIUS_PX;
+}
+
 /** The canvas container: unzoomed CSS size and the canvas zoom. */
 export interface SnapView {
   width: number;
@@ -288,17 +295,17 @@ function release(session: SnapSession, index: number, p: Point2D): Set<string> {
 interface PointCandidate { kind: 'corner' | 'edge'; target: Point2D; distance: number }
 interface LineCandidate { value: number; distance: number }
 
-function pointCandidate(session: SnapSession, p: Point2D, ignored: Set<string>): PointCandidate | null {
+function pointCandidate(session: SnapSession, p: Point2D, ignored: Set<string>, radius: number): PointCandidate | null {
   let corner: PointCandidate | null = null;
   let edge: PointCandidate | null = null;
   for (const t of session.targets) {
     if (ignored.has(t.key)) continue;
     if (t.kind === 'corner') {
       const d = screenDistancePx(session.view, p, t.p);
-      if (d <= SNAP_RADIUS_PX && (!corner || d < corner.distance)) corner = { kind: 'corner', target: t.p, distance: d };
+      if (d <= radius && (!corner || d < corner.distance)) corner = { kind: 'corner', target: t.p, distance: d };
     } else if (t.kind === 'edge' && !corner) {
       const hit = projectOnSegment(session.view, p, t.a, t.b);
-      if (hit.distance <= SNAP_RADIUS_PX && (!edge || hit.distance < edge.distance)) {
+      if (hit.distance <= radius && (!edge || hit.distance < edge.distance)) {
         edge = { kind: 'edge', target: hit.point, distance: hit.distance };
       }
     }
@@ -306,7 +313,7 @@ function pointCandidate(session: SnapSession, p: Point2D, ignored: Set<string>):
   return corner ?? edge;
 }
 
-function lineCandidate(session: SnapSession, p: Point2D, ignored: Set<string>, axis: 'x' | 'y'): LineCandidate | null {
+function lineCandidate(session: SnapSession, p: Point2D, ignored: Set<string>, axis: 'x' | 'y', radius: number): LineCandidate | null {
   const { sx, sy } = pxScale(session.view);
   const s = axis === 'x' ? sx : sy;
   const value = axis === 'x' ? p.x : p.y;
@@ -314,21 +321,21 @@ function lineCandidate(session: SnapSession, p: Point2D, ignored: Set<string>, a
   for (const t of session.targets) {
     if (t.kind !== 'line' || t.axis !== axis || ignored.has(t.key)) continue;
     const d = Math.abs(value - t.value) * s;
-    if (d <= SNAP_RADIUS_PX && (!best || d < best.distance)) best = { value: t.value, distance: d };
+    if (d <= radius && (!best || d < best.distance)) best = { value: t.value, distance: d };
   }
   const grid = session.config.grid;
   const divisions = grid ? Math.round(axis === 'x' ? grid.columns : grid.rows) : 0;
   if (divisions > 0) {
     const line = Math.round(value * divisions) / divisions;
     const d = Math.abs(value - line) * s;
-    const threshold = Math.min(SNAP_RADIUS_PX, (GRID_SNAP_CELL_FRACTION * s) / divisions);
+    const threshold = Math.min(radius, (GRID_SNAP_CELL_FRACTION * s) / divisions);
     if (d <= threshold && (!best || d < best.distance)) best = { value: line, distance: d };
   }
   return best;
 }
 
-function arm(session: SnapSession, travelPx: number): boolean {
-  if (!session.armed && travelPx > SNAP_RADIUS_PX) session.armed = true;
+function arm(session: SnapSession, travelPx: number, radius: number): boolean {
+  if (!session.armed && travelPx > radius) session.armed = true;
   return session.armed;
 }
 
@@ -338,15 +345,17 @@ function arm(session: SnapSession, travelPx: number): boolean {
  * keeps its size. A corner target beats an edge, an edge beats a canvas or
  * grid line; along lines each axis snaps on its own.
  *
- * `travelPx` is how far the pointer has moved since the press, on screen.
- * `bypass` (Cmd or Ctrl held) turns snapping off for this move.
+ * `travelPx` is how far the point has moved since the press, on screen.
+ * `bypass` (Cmd or Ctrl held) turns snapping off for this move. `fine`
+ * (Shift held) shrinks the snap radius with the slowed point.
  */
-export function snapPoints(session: SnapSession, points: Point2D[], travelPx: number, bypass = false): SnapResult {
+export function snapPoints(session: SnapSession, points: Point2D[], travelPx: number, bypass = false, fine = false): SnapResult {
   const ignored = points.map((p, i) => release(session, i, p));
-  if (bypass || !arm(session, travelPx)) return NO_SNAP;
+  const radius = snapRadiusPx(fine);
+  if (bypass || !arm(session, travelPx, radius)) return NO_SNAP;
   let best: { candidate: PointCandidate; from: Point2D } | null = null;
   points.forEach((p, i) => {
-    const c = pointCandidate(session, p, ignored[i]);
+    const c = pointCandidate(session, p, ignored[i], radius);
     if (!c) return;
     const better = !best
       || (c.kind === 'corner' && best.candidate.kind === 'edge')
@@ -365,9 +374,9 @@ export function snapPoints(session: SnapSession, points: Point2D[], travelPx: nu
   let bx: { line: LineCandidate; from: Point2D } | null = null;
   let by: { line: LineCandidate; from: Point2D } | null = null;
   points.forEach((p, i) => {
-    const lx = lineCandidate(session, p, ignored[i], 'x');
+    const lx = lineCandidate(session, p, ignored[i], 'x', radius);
     if (lx && (!bx || lx.distance < bx.line.distance)) bx = { line: lx, from: p };
-    const ly = lineCandidate(session, p, ignored[i], 'y');
+    const ly = lineCandidate(session, p, ignored[i], 'y', radius);
     if (ly && (!by || ly.distance < by.line.distance)) by = { line: ly, from: p };
   });
   if (!bx && !by) return NO_SNAP;
@@ -392,8 +401,8 @@ export function snapPoints(session: SnapSession, points: Point2D[], travelPx: nu
 }
 
 /** Snap one dragged point. A snapped axis lands exactly on its target. */
-export function snapPoint(session: SnapSession, point: Point2D, travelPx: number, bypass = false): { point: Point2D } & SnapResult {
-  const result = snapPoints(session, [point], travelPx, bypass);
+export function snapPoint(session: SnapSession, point: Point2D, travelPx: number, bypass = false, fine = false): { point: Point2D } & SnapResult {
+  const result = snapPoints(session, [point], travelPx, bypass, fine);
   const hit = result.hit;
   if (hit && hit.kind !== 'axis') return { ...result, point: { x: hit.point.x, y: hit.point.y } };
   return {

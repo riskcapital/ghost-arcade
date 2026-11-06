@@ -114,6 +114,36 @@ describe('mapping snap: a point that starts on a target', () => {
   });
 });
 
+describe('mapping snap: Shift fine drag', () => {
+  const v = view(1000, 1000);
+  const outlines = collectSnapOutlines([layer('b', rect(0.5, 0.5, 0.7, 0.7))], new Set());
+  const corner = { x: 0.5, y: 0.5 };
+  const session = () => beginSnapSession([{ x: 0.2, y: 0.2 }], outlines, { ...LAYERS_ONLY, canvasEdges: false }, v);
+
+  it('snaps from a tenth of the radius, as the point moves a tenth as far', () => {
+    const near = offset(v, corner, -5, 0);
+    expect(snapPoint(session(), near, FAR).point).toEqual(corner);
+    expect(snapPoint(session(), near, FAR, false, true).point).toEqual(near);
+    const onTop = offset(v, corner, -0.5, 0);
+    expect(snapPoint(session(), onTop, FAR, false, true).point).toEqual(corner);
+  });
+
+  it('lets a point be eased off a target it was pulled onto', () => {
+    const s = session();
+    expect(snapPoint(s, offset(v, corner, -3, 0), FAR).point).toEqual(corner);
+    // Shift held: 30 px of pointer travel moves the point 3 px, and it stays there.
+    const eased = offset(v, corner, -3, 0);
+    expect(snapPoint(s, eased, FAR, false, true).point).toEqual(eased);
+  });
+
+  it('shrinks the grid pull too', () => {
+    const grid = beginSnapSession([{ x: 0.21, y: 0.21 }], [], { layers: false, canvasEdges: false, grid: { columns: 10, rows: 10 } }, v);
+    const p = offset(v, { x: 0.3, y: 0.33 }, 4, 0);
+    expect(snapPoint(grid, p, FAR).point.x).toBeCloseTo(0.3, 12);
+    expect(snapPoint(grid, p, FAR, false, true).point.x).toBeCloseTo(p.x, 12);
+  });
+});
+
 describe('mapping snap: targets', () => {
   it('leaves out the layers being moved, their groups and their children', () => {
     const layers = [

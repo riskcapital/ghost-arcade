@@ -182,7 +182,7 @@
     const travel = travelTo(clientX, clientY, fine);
     let target = add(dragStart, travel.offset);
     if (snapSession) {
-      const snapped = snapPoint(snapSession, target, travel.px, bypass);
+      const snapped = snapPoint(snapSession, target, travel.px, bypass, fine);
       target = snapped.point;
       activeSnapHit = snapped.hit;
     }

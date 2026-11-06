@@ -46,9 +46,10 @@ export function rigidDragDelta(
   travelPx: number,
   bypass: boolean,
   pixels: PixelGrid,
+  fine = false,
 ): DragOutcome & { delta: Point2D } {
   const snap = session && startPoints.length > 0
-    ? snapPoints(session, startPoints.map((p) => add(p, travel)), travelPx, bypass)
+    ? snapPoints(session, startPoints.map((p) => add(p, travel)), travelPx, bypass, fine)
     : null;
   return {
     delta: {
@@ -59,7 +60,8 @@ export function rigidDragDelta(
   };
 }
 
-/** A single point (a corner): snapped, otherwise on the pixel grid. */
+/** A single point (a corner): snapped, otherwise on the pixel grid. `fine`
+ *  (Shift) shrinks the snap radius with the slowed point. */
 export function dragPoint(
   session: SnapSession | null,
   start: Point2D,
@@ -67,9 +69,10 @@ export function dragPoint(
   travelPx: number,
   bypass: boolean,
   pixels: PixelGrid,
+  fine = false,
 ): DragOutcome & { point: Point2D } {
   const raw = add(start, travel);
-  const snap = session ? snapPoint(session, raw, travelPx, bypass) : null;
+  const snap = session ? snapPoint(session, raw, travelPx, bypass, fine) : null;
   return {
     point: {
       x: snap?.snappedX ? snap.point.x : quantizeNormalized(raw.x, pixels.width, pixels.stepPx),
@@ -89,9 +92,10 @@ export function dragEdge(
   travelPx: number,
   bypass: boolean,
   pixels: PixelGrid,
+  fine = false,
 ): DragOutcome & { corners: WarpCorners } {
   const [a, b] = EDGE_CORNERS[edge];
-  const { delta, hit } = rigidDragDelta(session, [initial[a], initial[b]], travel, travelPx, bypass, pixels);
+  const { delta, hit } = rigidDragDelta(session, [initial[a], initial[b]], travel, travelPx, bypass, pixels, fine);
   return {
     corners: { ...initial, [a]: add(initial[a], delta), [b]: add(initial[b], delta) },
     hit,

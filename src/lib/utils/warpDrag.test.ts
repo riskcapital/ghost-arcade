@@ -198,4 +198,23 @@ describe('Cmd or Ctrl on a drag that snaps', () => {
     expect(screenPx(VIEW, start, free.point).x).toBeCloseTo(97, 9);
     expect(free.hit).toBeNull();
   });
+
+  it('Shift shrinks the pull with the point, so a fine drag can stop short of a corner', () => {
+    const outlines = collectSnapOutlines([{
+      id: 'other',
+      type: 'media',
+      visible: true,
+      corners: { topLeft: { x: 0.6, y: 0.8 }, topRight: { x: 0.9, y: 0.8 }, bottomLeft: { x: 0.6, y: 0.2 }, bottomRight: { x: 0.9, y: 0.2 } },
+    } as Parameters<typeof collectSnapOutlines>[0][number]], new Set());
+    const start = { x: 0.5, y: 0.8 };
+    const session = beginSnapSession([start], outlines, { layers: true, canvasEdges: false, grid: null }, VIEW);
+    const pixels = { width: 1920, height: 1080, stepPx: null };
+    // 90 px, then 70 px with Shift (7 px): 3 px short of the corner.
+    let t = beginDragTravel(500, 100);
+    t = advanceDragTravel(t, 590, 100, false);
+    t = advanceDragTravel(t, 660, 100, true);
+    const fine = dragPoint(session, start, dragTravelNormalized(t, VIEW, true), dragTravelPx(t), false, pixels, true);
+    expect(screenPx(VIEW, start, fine.point).x).toBeCloseTo(97, 9);
+    expect(fine.hit).toBeNull();
+  });
 });
