@@ -6,6 +6,18 @@ import type { AssetRef } from '../storage/assetRegistry';
 
 export type ClipFileSource = { src?: string; name?: string; type?: string; shaderCode?: string; _assetRef?: AssetRef } | null | undefined;
 
+/**
+ * One spelling for a Windows path. A file picked this session is named
+ * "C:\Shows\a.mov" (from the file dialog), the same file reopened from a
+ * project "C:/Shows/a.mov" (from its URL); anything that compares or keys
+ * paths would count them as two files. Backslashes and an upper-case drive
+ * letter, as Windows writes them. Other paths are returned as they are.
+ */
+export function canonicalLocalPath(filePath: string): string {
+  if (!/^[a-zA-Z]:[\\/]/.test(filePath)) return filePath;
+  return filePath[0].toUpperCase() + filePath.slice(1).replace(/\//g, '\\');
+}
+
 /** The absolute path a `ghost-asset://` or `file://` URL points at. */
 export function localPathFromUrl(src: string | undefined | null): string | null {
   if (!src) return null;
@@ -18,7 +30,7 @@ export function localPathFromUrl(src: string | undefined | null): string | null 
     return null;
   }
   // "/C:/shows/a.mov" is a Windows path with the URL's leading slash.
-  return /^\/[a-zA-Z]:\//.test(decoded) ? decoded.slice(1) : decoded;
+  return /^\/[a-zA-Z]:\//.test(decoded) ? canonicalLocalPath(decoded.slice(1)) : decoded;
 }
 
 /** The file a clip plays from, or null for a clip that is not a local file. */
@@ -32,7 +44,8 @@ export function clipFilePath(clip: ClipFileSource): string | null {
   // A file picked in this session plays from a blob: URL; where it came from
   // is only in the asset reference.
   if (clip.src && !clip.src.startsWith('blob:')) return null;
-  return clip._assetRef?.originalPath || null;
+  const original = clip._assetRef?.originalPath;
+  return original ? canonicalLocalPath(original) : null;
 }
 
 export function fileNameOf(filePath: string): string {
