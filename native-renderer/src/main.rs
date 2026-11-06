@@ -4693,6 +4693,10 @@ struct App {
     /// Refresh rate of the display the attached output window is on, which
     /// paces the frames while it is attached (see `paced_frame_rate`).
     output_refresh_hz: Option<f64>,
+    /// The display `output_refresh_hz` was read from. Moving the window
+    /// re-reads the rate only when this changes: on Windows the read is a
+    /// display-configuration query, and a drag sends a move event per step.
+    output_refresh_monitor: Option<MonitorHandle>,
     running: bool,
     pending_width: u32,
     pending_height: u32,
@@ -5202,6 +5206,7 @@ impl App {
             redraw_requested_at: None,
             present_pending: false,
             output_refresh_hz: None,
+            output_refresh_monitor: None,
             running: false,
             pending_width: 1280,
             pending_height: 720,
@@ -14956,11 +14961,9 @@ impl App {
 
     /// Re-read the refresh rate of the display the output window is on.
     fn refresh_output_display_rate(&mut self) {
-        self.output_refresh_hz = self
-            .renderer
-            .as_ref()
-            .and_then(|renderer| renderer.window.current_monitor())
-            .and_then(|monitor| monitor_refresh_hz(&monitor));
+        let monitor = self.renderer.as_ref().and_then(|renderer| renderer.window.current_monitor());
+        self.output_refresh_hz = monitor.as_ref().and_then(monitor_refresh_hz);
+        self.output_refresh_monitor = monitor;
     }
 
     /// Frames are wanted on a clock right now: the output window is shown,
@@ -20435,9 +20438,19 @@ impl ApplicationHandler<UserEvent> for App {
                 self.redraw_requested_at = None;
                 self.render();
             }
-            // On another display now, possibly at another refresh rate.
-            WindowEvent::Moved(_) | WindowEvent::ScaleFactorChanged { .. } => {
-                self.output_refresh_hz = renderer.window.current_monitor().and_then(|monitor| monitor_refresh_hz(&monitor));
+            // On another display now, possibly at another refresh rate. A
+            // move within the same display keeps the rate already read.
+            WindowEvent::Moved(_) => {
+                let monitor = renderer.window.current_monitor();
+                if monitor != self.output_refresh_monitor {
+                    self.output_refresh_hz = monitor.as_ref().and_then(monitor_refresh_hz);
+                    self.output_refresh_monitor = monitor;
+                }
+            }
+            WindowEvent::ScaleFactorChanged { .. } => {
+                let monitor = renderer.window.current_monitor();
+                self.output_refresh_hz = monitor.as_ref().and_then(monitor_refresh_hz);
+                self.output_refresh_monitor = monitor;
             }
             _ => {}
         }
