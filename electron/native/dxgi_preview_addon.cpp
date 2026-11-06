@@ -277,6 +277,20 @@ void RefreshBackdropRegion(HWND host) {
   // On success Windows owns the region.
 }
 
+// True when only our own underlays sit between `host` and `behind` in the
+// z-order. Any other visible window there, from another app or this one,
+// shows through the editor's transparent pixels.
+bool OnlyUnderlaysBetween(HWND host, HWND behind) {
+  for (HWND h = GetWindow(host, GW_HWNDNEXT); h; h = GetWindow(h, GW_HWNDNEXT)) {
+    if (h == behind) return true;
+    if (!IsWindowVisible(h)) continue;
+    wchar_t cls[64] = {};
+    GetClassNameW(h, cls, 64);
+    if (wcscmp(cls, kWindowClass) != 0) return false;
+  }
+  return false;
+}
+
 // The render core's adapter. The core creates its shared textures on the
 // adapter it renders with (high-performance on a two-GPU laptop), and a texture
 // opened by name only opens on that same adapter. A device made on the default
@@ -465,6 +479,24 @@ class PreviewSurface {
     if (attached_) PositionBehind();
   }
 
+  // Another window can come between the editor and this one without the
+  // editor being focused (raised without activation, or the editor moved or
+  // resized), and an idle preview never re-stacks on its own. Run on a timer;
+  // it only re-stacks when one of those has happened.
+  void RestackIfDisplaced() {
+    if (!child_ || !IsWindow(host_)) return;
+    if (!IsWindowVisible(host_) || IsIconic(host_)) {
+      if (IsWindowVisible(child_)) PositionBehind();
+      return;
+    }
+    RECT client = {};
+    POINT origin = {0, 0};
+    if (!GetClientRect(host_, &client) || !ClientToScreen(host_, &origin)) return;
+    const bool moved = origin.x != placedOrigin_.x || origin.y != placedOrigin_.y ||
+                       client.right != placedClient_.right || client.bottom != placedClient_.bottom;
+    if (moved || !IsWindowVisible(child_) || !OnlyUnderlaysBetween(host_, child_)) PositionBehind();
+  }
+
   // The underlay spans the host's ENTIRE client area, not just the canvas rect.
   // macOS gets an opaque backdrop for free (the NSWindow stays opaque and only
   // Chromium's surface is alpha-capable), but a Windows `transparent: true`
@@ -492,6 +524,8 @@ class PreviewSurface {
     hostClientH_ = fullHostBackdrop_ ? (uint32_t)(std::max)(1L, client.bottom - client.top) : (uint32_t)(std::max)(1, rect_.height);
     POINT origin = {0, 0};
     ClientToScreen(host_, &origin);
+    placedOrigin_ = origin;
+    placedClient_ = client;
     if (fullHostBackdrop_) {
       g_backdropWindows[host_] = child_;
     } else {
@@ -1096,6 +1130,9 @@ class PreviewSurface {
   ID3D11ShaderResourceView* sampleSRV_ = nullptr;
   uint32_t hostClientW_ = 0;
   uint32_t hostClientH_ = 0;
+  // Where the host's client area was when this window was last placed.
+  POINT placedOrigin_ = {0, 0};
+  RECT placedClient_ = {};
   uint32_t swapWidth_ = 0;
   uint32_t swapHeight_ = 0;
   uint64_t presentedCoreFrame_ = 0;
@@ -1831,6 +1868,24 @@ Napi::Value MonitorRestack(const Napi::CallbackInfo& info) {
   return Napi::Boolean::New(info.Env(), true);
 }
 
+// restackIfDisplaced() — the timer check behind every underlay: put the
+// editor's backdrop and the monitors back directly behind their hosts if
+// another window came between them or a host moved. A surface whose lock is
+// busy this tick is checked on the next one.
+Napi::Value RestackIfDisplaced(const Napi::CallbackInfo& info) {
+  {
+    std::unique_lock<std::mutex> lock(g_surfaceMutex, std::try_to_lock);
+    if (lock.owns_lock()) g_primary.RestackIfDisplaced();
+  }
+  {
+    std::unique_lock<std::mutex> lock(g_monitorMutex, std::try_to_lock);
+    if (lock.owns_lock()) {
+      for (auto& entry : g_monitors) entry.second->RestackIfDisplaced();
+    }
+  }
+  return Napi::Boolean::New(info.Env(), true);
+}
+
 Napi::Value MonitorDetach(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   if (info.Length() < 1 || !info[0].IsString()) return Napi::Boolean::New(env, false);
@@ -1879,6 +1934,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("monitorPumpStatus", Napi::Function::New(env, MonitorPumpStatus));
   exports.Set("monitorDetach", Napi::Function::New(env, MonitorDetach));
   exports.Set("monitorRestack", Napi::Function::New(env, MonitorRestack));
+  exports.Set("restackIfDisplaced", Napi::Function::New(env, RestackIfDisplaced));
   exports.Set("setAdapterLuid", Napi::Function::New(env, SetAdapterLuid));
   exports.Set("setFrameCounter", Napi::Function::New(env, SetFrameCounter));
   env.AddCleanupHook([]() {
