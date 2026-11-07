@@ -137,12 +137,20 @@
     align-items: center;
     gap: 5px;
   }
-  /* On: solid icon blue, so it reads at a glance. */
+  /* Off: plainly off, dim. */
+  .mm-toggle:not(.on) {
+    background: transparent;
+    color: var(--ga-ink-2, #5e6571);
+  }
+  /* On: lit, solid icon blue with a glow, so it reads at a glance. */
   .mm-toggle.on,
   .mm-toggle.on:hover {
     border-color: var(--ga-icon, #5278ff);
     background: var(--ga-icon, #5278ff);
     color: #fff;
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--ga-icon, #5278ff) 45%, transparent),
+      0 0 12px 2px color-mix(in srgb, var(--ga-icon, #5278ff) 60%, transparent);
   }
   .mm-toggle.on :global(.mm-mark) {
     color: #fff;
