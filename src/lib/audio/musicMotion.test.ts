@@ -17,7 +17,7 @@ import {
   surge,
   withMusicTime,
   withMusicFlow,
-  relativeSwell,
+  musicSwell,
   isMusicMotionReady,
   shaderIsMusicMotionReady,
   detectOnset,
@@ -280,10 +280,11 @@ void main() { float g = fract(TIME); gl_FragColor = vec4(sin(mmTime()) + g); }`;
     expect(out).toContain('float g = fract(TIME);');
   });
 
-  it('moves swell at any input gain', () => {
-    expect(relativeSwell({ att: 0.1, usual: 0.1 })).toBeCloseTo(0.5, 5);
-    expect(relativeSwell({ att: 0.9, usual: 0.9 })).toBeCloseTo(0.5, 5);
-    expect(relativeSwell({ att: 0.2, usual: 0.1 })).toBeGreaterThan(0.8);
-    expect(relativeSwell({ att: 0.02, usual: 0.2 })).toBeLessThan(0.2);
+  it('measures swell against the loudest of late, at any input gain', () => {
+    expect(musicSwell(0.1, 0.1)).toBeCloseTo(1, 5);
+    expect(musicSwell(0.9, 0.9)).toBeCloseTo(1, 5);
+    expect(musicSwell(0.05, 0.1)).toBeCloseTo(0.5, 5);
+    expect(musicSwell(0, 0.5)).toBe(0);
+    expect(musicSwell(0.01, 0)).toBeLessThan(0.5);
   });
 });

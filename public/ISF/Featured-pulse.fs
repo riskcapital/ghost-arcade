@@ -38,20 +38,11 @@
         { "NAME": "saturation",   "TYPE": "float", "DEFAULT": 1.20, "MIN": 0.0,   "MAX": 2.0,  "LABEL": "Saturation" },
         { "NAME": "contrast",     "TYPE": "float", "DEFAULT": 1.10, "MIN": 0.50,  "MAX": 2.0,  "LABEL": "Contrast" },
         { "NAME": "gamma",        "TYPE": "float", "DEFAULT": 0.90, "MIN": 0.50,  "MAX": 2.0,  "LABEL": "Gamma" },
-        { "NAME": "grain",        "TYPE": "float", "DEFAULT": 0.025,"MIN": 0.0,   "MAX": 0.30, "LABEL": "Film Grain" },
-        { "NAME": "mmFlow",  "TYPE": "float", "DEFAULT": -1, "MIN": -1, "MAX": 3600, "LABEL": "Music flow" },
-        { "NAME": "mmSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1, "LABEL": "Music swell" },
-        { "NAME": "mmPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1, "LABEL": "Music pulse" },
-        { "NAME": "mmMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000, "LABEL": "Music morph" }
+        { "NAME": "grain",        "TYPE": "float", "DEFAULT": 0.025,"MIN": 0.0,   "MAX": 0.30, "LABEL": "Film Grain" }
     ]
 }*/
 
 precision highp float;
-
-// Made for Music motion: mmFlow is the music's time (-1 when Music motion is off,
-// then the shader runs on TIME as before); mmSwell, mmPulse and mmMorph are 0 when
-// off, which is the original look.
-float mmTime() { return mmFlow >= 0.0 ? mmFlow : TIME; }
 
 #define PI  3.14159265359
 #define TAU 6.28318530718
@@ -87,7 +78,7 @@ float audioBand(float lo, float hi) {
 // ── Bell SDF: an ellipsoid squashed flat at the bottom. The whole thing
 // pulses (radius modulates) with bass.
 float bellSDF(vec3 p, float bass) {
-    float scale = 1.0 + bassReact * bass + 0.08 * mmSwell;
+    float scale = 1.0 + bassReact * bass;
     // squash bottom -> teardrop bell
     float yMod = p.y + bellSquash * 0.4 * (p.y * p.y - 0.3);
     vec3 q = vec3(p.x, yMod, p.z) / vec3(bellWidth, bellHeight, bellWidth);
@@ -109,14 +100,14 @@ vec3 calcNormal(vec3 p, float bass) {
 vec3 organEmission(vec3 p, float mid) {
     float r2D = length(p.xz);
     float ang = atan(p.z, p.x);
-    float vein = pow(max(sin(ang * organCount + mmTime() * 0.3), 0.0), organSharp);
+    float vein = pow(max(sin(ang * organCount + TIME * 0.3), 0.0), organSharp);
     float vert = clamp(1.0 - p.y * p.y * 2.0, 0.0, 1.0);
     float radial = exp(-r2D * r2D * 3.5);
-    float pulse = 0.6 + 0.4 * sin(mmTime() * organSpeed);
-    vec3 col = mix(hue2rgb(organHueA + 0.07 * sin(mmMorph * 1.3)), hue2rgb(organHueB),
-                   0.5 + 0.5 * sin(p.y * 4.0 + mmTime() * organSpeed * 0.7));
+    float pulse = 0.6 + 0.4 * sin(TIME * organSpeed);
+    vec3 col = mix(hue2rgb(organHueA), hue2rgb(organHueB),
+                   0.5 + 0.5 * sin(p.y * 4.0 + TIME * organSpeed * 0.7));
     float strength = radial * vein * vert * pulse;
-    return col * strength * (0.4 + midReact * mid + 0.6 * mmPulse);
+    return col * strength * (0.4 + midReact * mid);
 }
 
 // ── Studio softbox env (re-used pattern).
@@ -142,7 +133,7 @@ vec3 shadeGlass(vec3 p, vec3 n, vec3 rd, float treb, out float fresO) {
     fresO = fres;
 
     float dispActual = dispersion * (1.0 + trebReact * treb * 0.7);
-    float rimActual  = rimGlow    * (1.0 + trebReact * treb * 0.6 + 0.5 * mmPulse);
+    float rimActual  = rimGlow    * (1.0 + trebReact * treb * 0.6);
 
     vec3 reflDir = reflect(rd, n);
     vec3 reflCol = envLight(reflDir);
@@ -175,7 +166,7 @@ void main() {
     // Camera orbits the bell. Pitch carries a tiny bass bob.
     vec3 ro = vec3(0.0, 0.0, -camDist);
     vec3 rd = normalize(vec3(uv, fov));
-    float yaw = mmTime() * orbitSpeed;
+    float yaw = TIME * orbitSpeed;
     ro.xz *= rot(yaw); rd.xz *= rot(yaw);
     float pitch = camTilt + bass * bassReact * 0.04;
     ro.yz *= rot(pitch); rd.yz *= rot(pitch);

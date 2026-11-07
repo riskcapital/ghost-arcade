@@ -32,20 +32,11 @@
         { "NAME": "contrast",       "TYPE": "float", "DEFAULT": 1.05, "MIN": 0.50,  "MAX": 2.0,  "LABEL": "Contrast" },
         { "NAME": "gamma",          "TYPE": "float", "DEFAULT": 0.95, "MIN": 0.50,  "MAX": 2.0,  "LABEL": "Gamma" },
         { "NAME": "vignette",       "TYPE": "float", "DEFAULT": 0.25, "MIN": 0.0,   "MAX": 1.5,  "LABEL": "Vignette" },
-        { "NAME": "grain",          "TYPE": "float", "DEFAULT": 0.018,"MIN": 0.0,   "MAX": 0.30, "LABEL": "Film Grain" },
-        { "NAME": "mmFlow",  "TYPE": "float", "DEFAULT": -1, "MIN": -1, "MAX": 3600, "LABEL": "Music flow" },
-        { "NAME": "mmSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1, "LABEL": "Music swell" },
-        { "NAME": "mmPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1, "LABEL": "Music pulse" },
-        { "NAME": "mmMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000, "LABEL": "Music morph" }
+        { "NAME": "grain",          "TYPE": "float", "DEFAULT": 0.018,"MIN": 0.0,   "MAX": 0.30, "LABEL": "Film Grain" }
     ]
 }*/
 
 precision highp float;
-
-// Made for Music motion: mmFlow is the music's time (-1 when Music motion is off,
-// then the shader runs on TIME as before); mmSwell, mmPulse and mmMorph are 0 when
-// off, which is the original look.
-float mmTime() { return mmFlow >= 0.0 ? mmFlow : TIME; }
 
 #define PI  3.14159265359
 #define TAU 6.28318530718
@@ -126,11 +117,11 @@ void main() {
     vec2 R = RENDERSIZE;
     vec2 uv = (gl_FragCoord.xy - 0.5 * R) / min(R.x, R.y);
 
-    // The system is ALWAYS evolving from mmTime() alone; audio modulates the
+    // The system is ALWAYS evolving from TIME alone; audio modulates the
     // rate. So if music drops, the field keeps drifting — it just paces
     // differently. No "lunging" anything to a static state.
-    float flowT = mmTime() * flowSpeed * (1.0 + midToFlow * mid);
-    float palT  = mmTime() * paletteSpeed * (1.0 + trebToPalette * treb) + 0.07 * sin(mmMorph * 1.3);
+    float flowT = TIME * flowSpeed * (1.0 + midToFlow * mid);
+    float palT  = TIME * paletteSpeed * (1.0 + trebToPalette * treb);
 
     vec2 p = uv * zoom;
     // slow lissajous drift on top of warp -> ensures continuous motion
@@ -138,7 +129,7 @@ void main() {
 
     // domain-warped position. Energy gently dilates the warp magnitude
     // (more music = the plasma flows further, but the geometry doesn't snap).
-    float wAmt = warpAmount * (1.0 + energyToWarp * energy + 0.35 * mmSwell);
+    float wAmt = warpAmount * (1.0 + energyToWarp * energy);
     vec2 wp = warp(p * (warpAmount / max(wAmt, 0.001)), flowT);
     // (kept the warp loop using global warpAmount; here we just re-scale p
     // so the *effective* amount tracks energy without changing the loop.)
@@ -152,7 +143,7 @@ void main() {
     // Bass gently brightens it. Threshold/feathering keeps it from clipping.
     float bright = smoothstep(bloomThreshold, bloomThreshold + 0.4 + softness,
                               max(col.r, max(col.g, col.b)));
-    float bloomGain = bloomAmount * (1.0 + bassToBloom * bass + 0.6 * mmPulse);
+    float bloomGain = bloomAmount * (1.0 + bassToBloom * bass);
     col += bright * bloomGain * pal(palT * 0.7 + bloomTint);
 
     // A second softer "atmosphere" layer — adds depth, never sharp.

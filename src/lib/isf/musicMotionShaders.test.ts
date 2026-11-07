@@ -15,8 +15,8 @@ describe('shaders made for Music motion', () => {
   });
 
   it('looks files up by base name or path', () => {
-    expect(isMusicMotionShaderFile('Featured-tide.fs')).toBe(true);
-    expect(isMusicMotionShaderFile('sub/Featured-tide.fs')).toBe(true);
+    expect(isMusicMotionShaderFile('Featured-prism.fs')).toBe(true);
+    expect(isMusicMotionShaderFile('sub/Featured-prism.fs')).toBe(true);
     expect(isMusicMotionShaderFile('DM-SolidColor.fs')).toBe(false);
     expect(isMusicMotionShaderFile(undefined)).toBe(false);
   });
@@ -33,10 +33,20 @@ describe('shaders made for Music motion', () => {
         expect(input!.DEFAULT).toBe(name === 'mmFlow' ? -1 : 0);
       }
       const body = code.slice(code.indexOf('*/') + 2);
-      // Time comes from mmFlow when it is fed, TIME otherwise; only the grain keeps raw TIME.
-      expect(body).toMatch(/mmFlow\s*>=\s*0\.0\s*\?\s*mmFlow\s*:\s*TIME/);
-      const stray = body.split(/\r?\n/).filter((l) => /\bTIME\b/.test(l.replace(/\/\/.*$/, '')) &&!/mmFlow|fract\(TIME\)/.test(l));
+      // The ease pass keeps the music's state between frames and runs the clock.
+      const ease = (parsed.metadata.PASSES ?? []).find((pass) => pass.TARGET === 'mmEase');
+      expect(ease, `${file} has the mmEase pass`).toMatchObject({ PERSISTENT: true, FLOAT: true, WIDTH: 2, HEIGHT: 1 });
+      expect(body).toMatch(/if \(PASSINDEX == 0\) \{ mmEaseStep\(\); return; \}/);
+      // Off, the clock runs at normal speed.
+      expect(body).toMatch(/on \? MM_REST \+ MM_BY_SWELL \* e\.y \+ MM_BY_HIT \* e\.x : 1\.0/);
+      // Motion runs on the music clock: raw TIME only in the ease pass and the film grain.
+      const outsideEase = body.replace(/void mmEaseStep\(\) \{[\s\S]*?\r?\n\}\r?\n/, '');
+      const lines = outsideEase.split(/\r?\n/).map((l) => l.replace(/\/\/.*$/, ''));
+      const stray = lines.filter((l) => /\bTIME\b/.test(l) && !/fract\(TIME\)/.test(l));
       expect(stray, `${file} still runs on raw TIME`).toEqual([]);
+      // The body reads the eased values, not the raw inputs.
+      const raw = lines.filter((l) => /\bmm(Pulse|Swell|Morph)\b/.test(l));
+      expect(raw, `${file} reads raw music inputs`).toEqual([]);
       expect(parsed.fragmentShader).toContain('uniform float mmFlow');
     });
   }

@@ -32,20 +32,11 @@
         { "NAME": "saturation",  "TYPE": "float", "DEFAULT": 1.20, "MIN": 0.0,   "MAX": 2.0,  "LABEL": "Saturation" },
         { "NAME": "contrast",    "TYPE": "float", "DEFAULT": 1.10, "MIN": 0.50,  "MAX": 2.0,  "LABEL": "Contrast" },
         { "NAME": "gamma",       "TYPE": "float", "DEFAULT": 0.85, "MIN": 0.50,  "MAX": 2.0,  "LABEL": "Gamma" },
-        { "NAME": "grain",       "TYPE": "float", "DEFAULT": 0.025,"MIN": 0.0,   "MAX": 0.30, "LABEL": "Film Grain" },
-        { "NAME": "mmFlow",  "TYPE": "float", "DEFAULT": -1, "MIN": -1, "MAX": 3600, "LABEL": "Music flow" },
-        { "NAME": "mmSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1, "LABEL": "Music swell" },
-        { "NAME": "mmPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1, "LABEL": "Music pulse" },
-        { "NAME": "mmMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000, "LABEL": "Music morph" }
+        { "NAME": "grain",       "TYPE": "float", "DEFAULT": 0.025,"MIN": 0.0,   "MAX": 0.30, "LABEL": "Film Grain" }
     ]
 }*/
 
 precision highp float;
-
-// Made for Music motion: mmFlow is the music's time (-1 when Music motion is off,
-// then the shader runs on TIME as before); mmSwell, mmPulse and mmMorph are 0 when
-// off, which is the original look.
-float mmTime() { return mmFlow >= 0.0 ? mmFlow : TIME; }
 
 #define PI  3.14159265359
 #define TAU 6.28318530718
@@ -69,10 +60,10 @@ float hash21(vec2 p) {
 // SDF: kaleidoscopically-folded bundle of coiling tubes, bounded by a sphere.
 float map(vec3 p) {
     // Global coil: twist the cross-section by height + time.
-    p.xz *= rot(p.y * (twist + 0.15 * sin(mmMorph * 1.3)) + mmTime() * flow);
+    p.xz *= rot(p.y * twist + TIME * flow);
 
     // Organic domain warp (kept gentle; raymarch steps are under-relaxed).
-    p += warp * sin(p.yzx * warpFreq + mmTime() * warpEvolve);
+    p += warp * sin(p.yzx * warpFreq + TIME * warpEvolve);
 
     // Kaleidoscope fold around the Y axis -> mirrored radial wedges.
     float r = length(p.xz);
@@ -82,7 +73,7 @@ float map(vec3 p) {
     vec2 fp = vec2(cos(a), sin(a)) * r;
 
     // Tube centreline radius bulges with height -> coiling tendrils.
-    float cR = coilRadius + coilAmp * (1.0 + 0.4 * mmSwell) * sin(p.y * coilFreq + mmTime() * flow * 0.7);
+    float cR = coilRadius + coilAmp * sin(p.y * coilFreq + TIME * flow * 0.7);
 
     // Distance to a tube running along Y at (cR, 0) in the folded frame.
     float dTube = length(fp - vec2(cR, 0.0)) - tubeRadius;
@@ -109,7 +100,7 @@ void main() {
     // Camera: orbit + tilt around the bundle.
     vec3 ro = vec3(0.0, 0.0, -camDist);
     vec3 rd = normalize(vec3(uv, fov));
-    float yaw = mmTime() * orbitSpeed;
+    float yaw = TIME * orbitSpeed;
     ro.xz *= rot(yaw); rd.xz *= rot(yaw);
     ro.yz *= rot(camTilt); rd.yz *= rot(camTilt);
 
@@ -144,19 +135,19 @@ void main() {
                       + dot(n, v) * iridescence
                       + pos.y * hueByHeight
                       + length(pos) * hueByRadius
-                      + mmTime() * hueDrift;
+                      + TIME * hueDrift;
         vec3 base = pal(irPhase);
 
         col = base * (0.12 + 0.9 * diff);
         col += spec * mix(vec3(1.0), pal(irPhase + 0.25), 0.6);
-        col += fres * fresnelStr * (1.0 + 1.2 * mmPulse) * pal(irPhase + 0.4);
+        col += fres * fresnelStr * pal(irPhase + 0.4);
 
         // Fade into the black with depth.
         col *= exp(-t * fog);
     } else {
         // Faint central halo so the void isn't dead flat.
         float halo = exp(-length(uv) * 2.2) * 0.05;
-        col += halo * pal(mmTime() * hueDrift + 0.5);
+        col += halo * pal(TIME * hueDrift + 0.5);
     }
 
     // Saturation.

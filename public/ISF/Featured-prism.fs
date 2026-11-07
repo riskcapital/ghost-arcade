@@ -43,15 +43,56 @@
         { "NAME": "mmSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1, "LABEL": "Music swell" },
         { "NAME": "mmPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1, "LABEL": "Music pulse" },
         { "NAME": "mmMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000, "LABEL": "Music morph" }
+    ],
+    "PASSES": [
+        { "TARGET": "mmEase", "PERSISTENT": true, "FLOAT": true, "WIDTH": 2, "HEIGHT": 1 },
+        {}
     ]
 }*/
 
 precision highp float;
 
-// Made for Music motion: mmFlow is the music's time (-1 when Music motion is off,
-// then the shader runs on TIME as before); mmSwell, mmPulse and mmMorph are 0 when
-// off, which is the original look.
-float mmTime() { return mmFlow >= 0.0 ? mmFlow : TIME; }
+// Made for Music motion. mmFlow >= 0 means it is on (-1 when off: the shader
+// runs at its normal speed and looks as it always did). mmSwell, mmPulse and
+// mmMorph arrive a few dozen times a second; the mmEase pass (2x1, kept between
+// frames) eases them every frame drawn, so nothing steps.
+//   left texel:  x pulse (a hit, ~60 ms), y swell (~0.25 s), z morph (the hit
+//                count, gliding), w slow pulse (~0.35 s)
+//   right texel: x last TIME, y this frame's step, z the music clock
+// The music clock is the shader's time: slow in quiet parts, quicker as the
+// music swells, surging on each hit. It always moves forward, never jumps.
+const float MM_REST = 0.25;    // clock speed with the music quiet
+const float MM_BY_SWELL = 1.1; // added at full swell
+const float MM_BY_HIT = 0.8;   // added at the top of a hit
+
+vec4 mmE;    // eased pulse, swell, morph, slow pulse (set at the top of main)
+float mmT;   // the music clock
+
+float mmTime() { return mmT; }
+
+void mmEaseStep() {
+    vec4 tk = IMG_NORM_PIXEL(mmEase, vec2(0.75, 0.5));
+    vec4 e = IMG_NORM_PIXEL(mmEase, vec2(0.25, 0.5));
+    bool fresh = tk.x <= 0.0 && tk.z <= 0.0;
+    float dt = fresh ? 0.0 : clamp(TIME - tk.x, 0.0, 0.1);
+    bool on = mmFlow >= 0.0;
+    if (gl_FragCoord.x > 1.0) {
+        float rate = on ? MM_REST + MM_BY_SWELL * e.y + MM_BY_HIT * e.x : 1.0;
+        gl_FragColor = vec4(TIME, dt, fresh ? TIME : tk.z + dt * rate, 0.0);
+        return;
+    }
+    if (fresh || abs(mmMorph - e.z) > 8.0) e.z = mmMorph;
+    e.x += (mmPulse - e.x) * (1.0 - exp(-dt / 0.06));
+    e.y += (mmSwell - e.y) * (1.0 - exp(-dt / 0.25));
+    e.z += (mmMorph - e.z) * (1.0 - exp(-dt / 0.1));
+    e.w += (mmPulse - e.w) * (1.0 - exp(-dt / 0.35));
+    gl_FragColor = e;
+}
+
+void mmBegin() {
+    mmE = IMG_NORM_PIXEL(mmEase, vec2(0.25, 0.5));
+    mmT = IMG_NORM_PIXEL(mmEase, vec2(0.75, 0.5)).z;
+}
 
 #define PI  3.14159265359
 #define TAU 6.28318530718
@@ -76,9 +117,12 @@ float hash21(vec2 p) {
 float map(vec3 P) {
     vec3 p = P;
     float scale = 1.0;
-    vec3 off = vec3(offsetX, offsetY, offsetZ);
-    float ra = rotA + spin * 0.4 * sin(mmTime() * 0.30) + 0.12 * sin(mmMorph * 1.7);
-    float rb = rotB + spin * 0.4 * cos(mmTime() * 0.27) + 0.10 * sin(mmMorph * 1.1);
+    // The crystal opens out as the music swells.
+    vec3 off = vec3(offsetX, offsetY, offsetZ) * (1.0 + 0.12 * mmE.y);
+    // The folds walk to a new shape and back over every 40 hits, gliding, and
+    // flex a little on each hit.
+    float ra = rotA + spin * 0.4 * sin(mmTime() * 0.30) + 0.14 * sin(TAU * mmE.z / 40.0);
+    float rb = rotB + spin * 0.4 * cos(mmTime() * 0.27) + 0.10 * cos(TAU * mmE.z / 40.0) + 0.05 * mmE.w;
 
     for (int i = 0; i < 8; i++) {
         if (float(i) >= iterations) break;
@@ -151,11 +195,13 @@ vec3 shadeSurface(vec3 pos, vec3 n, vec3 rd, out float fresO) {
     vec2 ky = vec2(0.6, -0.6) * rot(lightYaw);
     vec3 keyDir = normalize(vec3(ky.x, 0.5, ky.y));
     c += pow(max(dot(reflDir, keyDir), 0.0), specPower) * specular * mix(vec3(1.0), hue2rgb(keyHue), 0.3);
-    c += fres * rimGlow * (1.0 + 0.6 * mmSwell + 0.8 * mmPulse) * (0.5 + 0.5 * cos(TAU * (ndv * 1.5 + vec3(0.0, 0.33, 0.67))));
+    c += fres * rimGlow * (1.0 + 0.6 * mmE.y + 0.8 * mmE.x) * (0.5 + 0.5 * cos(TAU * (ndv * 1.5 + vec3(0.0, 0.33, 0.67))));
     return c;
 }
 
 void main() {
+    if (PASSINDEX == 0) { mmEaseStep(); return; }
+    mmBegin();
     vec2 R = RENDERSIZE;
     vec2 uv = (gl_FragCoord.xy - 0.5 * R) / min(R.x, R.y);
 

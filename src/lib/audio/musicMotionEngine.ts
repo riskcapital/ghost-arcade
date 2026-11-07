@@ -38,7 +38,8 @@ import {
   freshOnsets,
   isMusicMotionReady,
   attackRelease,
-  relativeSwell,
+  musicSwell,
+  MUSIC_SWELL_PEAK_SECONDS,
   type MusicClock,
   type MusicMotionSettings,
 } from './musicMotion';
@@ -50,8 +51,6 @@ interface ParamState {
 
 interface Target {
   clock: MusicClock;
-  /** A ready shader's own music time (mmFlow), seconds. */
-  flow: number;
   /** The music inputs a ready shader is fed; when it stops they go back to "not driven". */
   ready?: string[];
   /** A ready shader's pulse, with a gentler attack so a hit blooms rather than jolts. */
@@ -65,6 +64,8 @@ const targets = new Map<string, Target>();
 /** Source ids whose time runs on the music clock this frame: the clock, and when (ms) it was read. */
 const clocks = new Map<string, { offset: number; rate: number; at: number }>();
 let audioActive = false;
+/** The loudest swell of the last ~20 s, falling slowly: what a ready shader's swell is measured against. */
+let swellPeak = 0;
 const owned = musicMotionOwned;
 const inputCache = new Map<string, ISFInputDef[]>();
 const onsets = freshOnsets();
@@ -134,29 +135,30 @@ function driveTarget(
 ): Record<string, number> {
   let t = targets.get(key);
   if (!t) {
-    t = { clock: { offset: 0, rate: 1 }, params: new Map(), seen: true, flow: 0 };
+    t = { clock: { offset: 0, rate: 1 }, params: new Map(), seen: true };
     targets.set(key, t);
   }
   t.seen = true;
   const amount = settings.amount;
-  stepMusicClock(t.clock, musicTimeRate(signals, amount, audioActive), dt);
-  // Both kinds of shader run their time on this clock: the renderers read it (getMusicTimeOffset/Rate).
-  clocks.set(sourceId, { offset: t.clock.offset, rate: t.clock.rate, at: now });
   if (isMusicMotionReady(inputs)) {
-    // Made for Music motion: it reads the music itself, smooth every frame. Amount scales how much.
-    t.flow = (t.flow + Math.max(0, t.clock.rate) * Math.min(dt, 0.25)) % 3600;
+    // Made for Music motion: the shader eases these every frame it draws and
+    // runs its own clock from them. With no audio, mmFlow -1 gives it back its
+    // normal speed (and no music clock is published, so the renderers leave it).
     const has = (n: string) => inputs.some((i) => i.NAME === n);
     const ready: Record<string, number> = {};
-    // mmFlow >= 0 marks it on; the renderers put the music clock in it every frame they draw.
-    if (has('mmFlow')) ready.mmFlow = 0;
-    if (has('mmSwell')) ready.mmSwell = relativeSwell(signals) * amount;
-    t.pulse = attackRelease(t.pulse ?? 0, Math.min(1, signals.pulse), dt, 0.07, 0.3);
-    if (has('mmPulse')) ready.mmPulse = Math.max(0, Math.min(1, t.pulse * amount * 1.2));
+    t.pulse = attackRelease(t.pulse ?? 0, Math.min(1, signals.pulse), dt, 0.04, 0.3);
+    if (has('mmFlow')) ready.mmFlow = audioActive ? 0 : -1;
+    if (has('mmSwell')) ready.mmSwell = audioActive ? musicSwell(signals.swell, swellPeak) * amount : 0;
+    if (has('mmPulse')) ready.mmPulse = audioActive ? Math.max(0, Math.min(1, t.pulse * amount * 1.1)) : 0;
     if (has('mmMorph')) ready.mmMorph = signals.morph % 1000;
+    if (audioActive) clocks.set(sourceId, { offset: 0, rate: 1, at: now });
     for (const n of Object.keys(ready)) owned.add(`${ownKey}:${n}`);
     t.ready = Object.keys(ready);
     return ready;
   }
+  stepMusicClock(t.clock, musicTimeRate(signals, amount, audioActive), dt);
+  // The renderers read this clock for the shader's TIME (getMusicTimeOffset/Rate).
+  clocks.set(sourceId, { offset: t.clock.offset, rate: t.clock.rate, at: now });
   const writes: Record<string, number> = {};
   const names = musicMotionParams(settings, inputs).filter((n) => !autoParams?.[n]?.playing);
   const keep = new Set(names);
@@ -214,6 +216,7 @@ function step(now: number): void {
   const frameDt = Math.min(dt, 0.25);
   const env = readAudio(frameDt);
   smoothSignals(signals, env, frameDt);
+  swellPeak = Math.max(signals.swell, swellPeak * Math.exp(-frameDt / MUSIC_SWELL_PEAK_SECONDS));
 
   clocks.clear();
   owned.clear();

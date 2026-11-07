@@ -7,13 +7,8 @@
  */
 export const MUSIC_MOTION_SHADER_FILES: readonly string[] = [
   'Featured-aurora.fs',
-  'Featured-drift.fs',
   'Featured-lumenveil.fs',
-  'Featured-murmur.fs',
   'Featured-prism.fs',
-  'Featured-pulse.fs',
-  'Featured-tendril.fs',
-  'Featured-tide.fs',
 ];
 
 const READY = new Set(MUSIC_MOTION_SHADER_FILES);

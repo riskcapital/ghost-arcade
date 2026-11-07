@@ -41,15 +41,56 @@
         { "NAME": "mmSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1, "LABEL": "Music swell" },
         { "NAME": "mmPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1, "LABEL": "Music pulse" },
         { "NAME": "mmMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000, "LABEL": "Music morph" }
+    ],
+    "PASSES": [
+        { "TARGET": "mmEase", "PERSISTENT": true, "FLOAT": true, "WIDTH": 2, "HEIGHT": 1 },
+        {}
     ]
 }*/
 
 precision highp float;
 
-// Made for Music motion: mmFlow is the music's time (-1 when Music motion is off,
-// then the shader runs on TIME as before); mmSwell, mmPulse and mmMorph are 0 when
-// off, which is the original look.
-float mmTime() { return mmFlow >= 0.0 ? mmFlow : TIME; }
+// Made for Music motion. mmFlow >= 0 means it is on (-1 when off: the shader
+// runs at its normal speed and looks as it always did). mmSwell, mmPulse and
+// mmMorph arrive a few dozen times a second; the mmEase pass (2x1, kept between
+// frames) eases them every frame drawn, so nothing steps.
+//   left texel:  x pulse (a hit, ~60 ms), y swell (~0.25 s), z morph (the hit
+//                count, gliding), w slow pulse (~0.35 s)
+//   right texel: x last TIME, y this frame's step, z the music clock
+// The music clock is the shader's time: slow in quiet parts, quicker as the
+// music swells, surging on each hit. It always moves forward, never jumps.
+const float MM_REST = 0.25;    // clock speed with the music quiet
+const float MM_BY_SWELL = 1.1; // added at full swell
+const float MM_BY_HIT = 0.8;   // added at the top of a hit
+
+vec4 mmE;    // eased pulse, swell, morph, slow pulse (set at the top of main)
+float mmT;   // the music clock
+
+float mmTime() { return mmT; }
+
+void mmEaseStep() {
+    vec4 tk = IMG_NORM_PIXEL(mmEase, vec2(0.75, 0.5));
+    vec4 e = IMG_NORM_PIXEL(mmEase, vec2(0.25, 0.5));
+    bool fresh = tk.x <= 0.0 && tk.z <= 0.0;
+    float dt = fresh ? 0.0 : clamp(TIME - tk.x, 0.0, 0.1);
+    bool on = mmFlow >= 0.0;
+    if (gl_FragCoord.x > 1.0) {
+        float rate = on ? MM_REST + MM_BY_SWELL * e.y + MM_BY_HIT * e.x : 1.0;
+        gl_FragColor = vec4(TIME, dt, fresh ? TIME : tk.z + dt * rate, 0.0);
+        return;
+    }
+    if (fresh || abs(mmMorph - e.z) > 8.0) e.z = mmMorph;
+    e.x += (mmPulse - e.x) * (1.0 - exp(-dt / 0.06));
+    e.y += (mmSwell - e.y) * (1.0 - exp(-dt / 0.25));
+    e.z += (mmMorph - e.z) * (1.0 - exp(-dt / 0.1));
+    e.w += (mmPulse - e.w) * (1.0 - exp(-dt / 0.35));
+    gl_FragColor = e;
+}
+
+void mmBegin() {
+    mmE = IMG_NORM_PIXEL(mmEase, vec2(0.25, 0.5));
+    mmT = IMG_NORM_PIXEL(mmEase, vec2(0.75, 0.5)).z;
+}
 
 #define PI  3.14159265359
 #define TAU 6.28318530718
@@ -80,17 +121,24 @@ vec3 emission(vec3 p) {
     vec3 e = vec3(0.0);
     float t = mmTime() * driftSpeed;
 
-    float h = clamp((p.y - curtainBase) / max(curtainHeight, 0.01), 0.0, 1.0);
+    // The curtains rise as the music swells.
+    float h = clamp((p.y - curtainBase) / max(curtainHeight * (1.0 + 0.35 * mmE.y), 0.01), 0.0, 1.0);
     // vertical profile — soft bottom, longer top decay (classic aurora shape)
     float vert = smoothstep(0.0, 0.15, h) * (1.0 - smoothstep(0.55, 1.0, h));
     if (vert < 0.001) return e;
 
     // colour gradient along altitude: low -> mid -> high
-    vec3 col = mix(hue2rgb(lowHue + 0.07 * sin(mmMorph * 1.3)), hue2rgb(midHue + 0.07 * sin(mmMorph * 1.3)), smoothstep(0.0, 0.5, h));
-    col      = mix(col, hue2rgb(highHue + 0.07 * sin(mmMorph * 1.3)),                 smoothstep(0.55, 1.0, h));
+    // The colours lean one way and back over every 40 hits.
+    float hueLean = 0.08 * sin(TAU * mmE.z / 40.0);
+    vec3 col = mix(hue2rgb(lowHue + hueLean), hue2rgb(midHue + hueLean), smoothstep(0.0, 0.5, h));
+    col      = mix(col, hue2rgb(highHue + hueLean),                 smoothstep(0.55, 1.0, h));
+    // Each hit sends a band of light climbing the curtains (the hit count glides
+    // up by one per hit, so its fraction runs from the base to the top).
+    float climb = fract(mmE.z);
+    float climbBand = exp(-pow((h - climb) * 6.0, 2.0)) * sin(PI * climb);
 
     // pulse multiplier
-    float pulse = 1.0 + pulseAmt * sin(p.z * 0.15 + mmTime() * pulseSpeed) + 0.45 * mmPulse;
+    float pulse = 1.0 + pulseAmt * sin(p.z * 0.15 + mmTime() * pulseSpeed) + 0.35 * mmE.x;
 
     for (int i = 0; i < 4; i++) {
         if (float(i) >= curtainCount) break;
@@ -112,7 +160,7 @@ vec3 emission(vec3 p) {
                            exp(-dg * dg * curtainSharp),
                            exp(-db * db * curtainSharp));
 
-        e += col * chroma * vert * pulse * intensity * (1.0 + 0.4 * mmSwell) * 0.7;
+        e += col * chroma * vert * pulse * intensity * (1.0 + 0.4 * mmE.y + 1.4 * climbBand) * 0.7;
     }
     return e;
 }
@@ -147,7 +195,7 @@ vec3 marchSky(vec3 ro, vec3 rd) {
     for (int i = 0; i < STEPS; i++) {
         vec3 p = ro + rd * t;
         // only march where the curtains live (between base and base+height)
-        if (p.y > curtainBase - 0.5 && p.y < curtainBase + curtainHeight + 0.5) {
+        if (p.y > curtainBase - 0.5 && p.y < curtainBase + curtainHeight * (1.0 + 0.35 * mmE.y) + 0.5) {
             vec3 e = emission(p);
             float dens = max(max(e.r, e.g), e.b) * 0.5;
             vec3 stepT = exp(-vec3(dens) * stepSize);
@@ -165,6 +213,8 @@ vec3 marchSky(vec3 ro, vec3 rd) {
 }
 
 void main() {
+    if (PASSINDEX == 0) { mmEaseStep(); return; }
+    mmBegin();
     vec2 R = RENDERSIZE;
     vec2 uv = (gl_FragCoord.xy - 0.5 * R) / min(R.x, R.y);
 

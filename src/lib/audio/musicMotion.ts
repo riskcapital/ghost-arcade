@@ -385,8 +385,15 @@ export function withMusicFlow(shaderCode: string): string {
   return head + body.split('\n').map((line) => (/^\s*uniform\s+\w+\s+mmFlow\b/.test(line) ? line : line.replace(/\bmmFlow\b/g, flow))).join('\n');
 }
 
-/** The swell a shader made for Music motion sees: against the music's usual level, so it moves at any input gain (0.5 = usual). */
-export function relativeSwell(state: Pick<SmoothSignalState, 'att' | 'usual'>): number {
-  const ratio = (Math.max(0, state.att) + LEVEL_FLOOR) / (Math.max(0, state.usual) + LEVEL_FLOOR);
-  return Math.max(0, Math.min(1, 0.5 * ratio));
+/** How long the loudest recent swell takes to fall away (seconds). */
+export const MUSIC_SWELL_PEAK_SECONDS = 20;
+
+/**
+ * The swell a shader made for Music motion sees, 0-1: the music's swell
+ * against its loudest of the last ~20 s. It pumps within each bar and sits
+ * lower in a breakdown than in a drop, at any input gain.
+ */
+export function musicSwell(swell: number, peak: number): number {
+  if (!(swell > 0)) return 0;
+  return Math.max(0, Math.min(1, swell / Math.max(peak, 0.03)));
 }
