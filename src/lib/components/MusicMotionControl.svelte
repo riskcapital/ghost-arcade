@@ -62,8 +62,8 @@
         ? "The music runs this shader's own motion, in place of per-param audio"
         : "The music runs this shader's time and moves its main params, in place of per-param audio. Works on any shader; shaders with the mark respond best"}
       onclick={toggle}
-    >Music motion</button>
-    {#if ready}
+    >{#if current.on}<MusicMotionMark size={11} live title="" />{/if}{current.on ? 'Music motion on' : 'Music motion'}</button>
+    {#if ready && !current.on}
       <MusicMotionMark title="Made for Music motion: smooth, full response" />
     {/if}
     <input
@@ -132,10 +132,20 @@
     border-color: var(--ga-line-3, rgba(255, 255, 255, 0.25));
     color: var(--ga-ink-0, #e6e9ee);
   }
-  .mm-toggle.on {
-    border-color: var(--ga-violet-line, rgba(155, 135, 245, 0.36));
-    color: var(--ga-violet, #9b87f5);
-    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.1));
+  .mm-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  /* On: solid icon blue, so it reads at a glance. */
+  .mm-toggle.on,
+  .mm-toggle.on:hover {
+    border-color: var(--ga-icon, #5278ff);
+    background: var(--ga-icon, #5278ff);
+    color: #fff;
+  }
+  .mm-toggle.on :global(.mm-mark) {
+    color: #fff;
   }
   .mm-params-btn.open {
     border-color: var(--ga-line-3, rgba(255, 255, 255, 0.25));

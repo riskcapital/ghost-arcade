@@ -1,4 +1,5 @@
 <script lang="ts">
+  import MusicMotionMark from './MusicMotionMark.svelte';
   import VideoPlaybackDirection from './VideoPlaybackDirection.svelte';
   import VideoPlaybackModes from './VideoPlaybackModes.svelte';
   import { nativeVideoTransportSnapshot, nativeVideoLaunchTime } from '../media/nativeTransport';
@@ -1688,6 +1689,9 @@
             ondblclick={(e) => { e.stopPropagation(); renamingLayerId = layer.id; }}
             title="Double-click to rename"
           >{layer.name}</span>
+        {/if}
+        {#if layer.source?.type === 'shader' && layer.source.musicMotion?.on}
+          <MusicMotionMark size={11} live title="Music motion is on" />
         {/if}
 
         <button

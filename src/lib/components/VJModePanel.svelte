@@ -6348,7 +6348,7 @@
                   data-midi-mode="toggle"
                 >
                   {#if clip}
-                    <div class="clip-content">
+                    <div class="clip-content" class:mm-on={clip.type === 'shader' && clip.musicMotion?.on}>
                       {#if clip.thumbnail}
                         <img src={clip.thumbnail} alt={clip.name} class="clip-thumb" draggable="false" />
                       {:else}
@@ -6356,7 +6356,7 @@
                           {clip.type === 'shader' ? 'ISF' : clip.type === 'video' ? 'VID' : clip.type === 'spout' ? 'SPT' : clip.type === 'threejs' ? '3JS' : clip.type === 'splat' ? 'PLY' : clip.type === 'model3d' ? '3DM' : clip.type === 'gpu' ? 'GPU' : clip.type === 'text' ? 'TXT' : clip.type === 'effect' ? 'FX' : clip.type === 'preset' ? 'MAP' : clip.type === 'synthvision' ? 'PERF' : 'IMG'}
                         </div>
                       {/if}
-                      <span class="clip-name">{#if clip.type === 'shader' && shaderIsMusicMotionReady(clip.shaderCode)}<MusicMotionMark size={10} /> {/if}{clip.name}</span>
+                      <span class="clip-name">{#if clip.type === 'shader' && clip.musicMotion?.on}<MusicMotionMark size={11} live title="Music motion is on" /> {:else if clip.type === 'shader' && shaderIsMusicMotionReady(clip.shaderCode)}<MusicMotionMark size={10} /> {/if}{clip.name}</span>
                       {#if isFileMissing}
                         <button
                           class="missing-badge"
@@ -9917,6 +9917,15 @@
     position: relative;
     min-width: 0;
     overflow: hidden;
+  }
+  /* Music motion on: an even ring in the icon blue, all the way round. */
+  .clip-content.mm-on::after {
+    content: '';
+    position: absolute;
+    inset: 2px;
+    border: 2px solid var(--ga-icon, #5278ff);
+    border-radius: var(--ga-r-hard, 3px);
+    pointer-events: none;
   }
 
   .clip-thumb {
