@@ -62,7 +62,7 @@
         ? "The music runs this shader's own motion, in place of per-param audio"
         : "The music runs this shader's time and moves its main params, in place of per-param audio. Works on any shader; shaders with the mark respond best"}
       onclick={toggle}
-    >{#if current.on}<MusicMotionMark size={11} live title="" />{/if}{current.on ? 'Music motion on' : 'Music motion'}</button>
+    >{#if current.on}<MusicMotionMark size={11} live decorative />{/if}{current.on ? 'Music motion on' : 'Music motion'}</button>
     {#if ready && !current.on}
       <MusicMotionMark title="Made for Music motion: smooth, full response" />
     {/if}
