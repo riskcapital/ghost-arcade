@@ -7,6 +7,8 @@
 import { writable, derived, get } from 'svelte/store';
 import type { GenerationType } from '../api/ai-client';
 import { localServerFetch } from '../remote/remotePairing';
+import { fetchCommunityCatalog, syncCommunityCatalog, type CommunitySyncResult } from '../community/communitySync';
+import { loadSketches, saveSketch, removeSketch, announceSketchChanges } from './sketchLibrary';
 
 export interface SavedShader {
   id: string;
@@ -21,6 +23,10 @@ export interface SavedShader {
   source?: 'user' | 'cloud' | 'ai'; // Where it came from
   version?: number; // Catalog version (cloud shaders) — used for update diffing
   author?: string;
+  /** The author's artist profile on ghostarcade.live (community shaders). */
+  authorUrl?: string;
+  /** The licence a community shader was shared under. */
+  licence?: 'MIT' | 'CC0';
   params?: Array<{
     name: string;
     type: string;
@@ -48,6 +54,10 @@ export interface SyncResult {
   updated: number;
   skipped: number;
   total: number;
+  /** Community items taken down since they were published, now removed here. */
+  removed?: number;
+  /** Items left out because they failed the signature or hash check. */
+  rejected?: string[];
 }
 
 export interface ShaderLibraryState {
@@ -277,8 +287,67 @@ function createShaderLibraryStore() {
       if (typeof navigator !== 'undefined' && navigator.onLine === false) {
         throw new Error('offline');
       }
-
       const base = getCatalogUrl().replace(/\/+$/, '');
+
+      // The signed community catalog (shaders, p5.js sketches, three.js
+      // pages) when the site offers one; otherwise the shader-only feed.
+      // A catalog that comes back but fails its signature check throws:
+      // it is never quietly swapped for the unsigned feed.
+      const community = await fetchCommunityCatalog(base, fetch);
+      if (community) return syncCommunity(community);
+      return syncShaderFeed(base);
+    },
+  };
+
+  async function syncCommunity(catalog: Parameters<typeof syncCommunityCatalog>[0]): Promise<CommunitySyncResult> {
+    return syncCommunityCatalog(catalog, {
+      fetch,
+      shaderVersions: () => new Map(
+        get({ subscribe }).shaders.filter((s) => s.source === 'cloud').map((s) => [s.id, s.version ?? 0]),
+      ),
+      putShader: async (record, isNew) => {
+        update((state) => {
+          const existing = state.shaders.find((s) => s.id === record.id);
+          const next: SavedShader = {
+            ...(existing ?? {}),
+            id: record.id,
+            name: record.name,
+            description: record.description,
+            type: 'shader-isf',
+            code: record.code,
+            thumbnail: record.thumbnail ?? existing?.thumbnail,
+            createdAt: existing?.createdAt ?? record.createdAt,
+            updatedAt: Date.now(),
+            tags: record.tags,
+            source: 'cloud',
+            version: record.version,
+            author: record.author,
+            authorUrl: record.authorUrl,
+            licence: record.licence,
+          };
+          const shaders = isNew || !existing ? [...state.shaders, next] : state.shaders.map((s) => (s.id === record.id ? next : s));
+          saveToStorage(shaders);
+          return { ...state, shaders };
+        });
+        await persistShaderToDisk(record.id, record.code);
+      },
+      removeShader: async (id) => {
+        update((state) => {
+          const shaders = state.shaders.filter((s) => !(s.id === id && s.source === 'cloud'));
+          saveToStorage(shaders);
+          return { ...state, shaders };
+        });
+        await deleteShaderFromDisk(id);
+      },
+      loadSketches: async () => (await loadSketches()).filter((s) => s.jsAnimation.origin?.kind === 'community'),
+      putSketch: saveSketch,
+      removeSketch,
+      sketchesChanged: announceSketchChanges,
+    });
+  }
+
+  /** Find latest against the v1 feed: ISF shaders only, unsigned. */
+  async function syncShaderFeed(base: string): Promise<SyncResult> {
       let catalog: CatalogEntry[];
       try {
         const resp = await fetch(`${base}/catalog`, { cache: 'no-store' });
@@ -378,8 +447,7 @@ function createShaderLibraryStore() {
       }
 
       return { added, updated, skipped, total: catalog.length };
-    },
-  };
+  }
 }
 
 export const shaderLibrary = createShaderLibraryStore();

@@ -516,9 +516,13 @@ export interface JSAnimationSource {
   origin?: JSAnimationOrigin;
 }
 
-/** An imported p5.js sketch: from the p5.js Web Editor, or files dropped on the app. */
+/**
+ * An imported page: a p5.js sketch from the p5.js Web Editor or dropped
+ * files, or a sketch or three.js page from the Ghost Arcade community
+ * (Find latest).
+ */
 export interface JSAnimationOrigin {
-  kind: 'p5-editor' | 'p5-files';
+  kind: 'p5-editor' | 'p5-files' | 'community';
   sketchName: string;
   author?: string;
   /** The sketch in the p5.js Web Editor. */
@@ -526,8 +530,10 @@ export interface JSAnimationOrigin {
   sketchId?: string;
   /** The p5.js version the sketch was written for. */
   p5Version?: string;
-  importedFrom: 'account' | 'link' | 'zip' | 'files';
+  importedFrom: 'account' | 'link' | 'zip' | 'files' | 'community';
   importedAt: number;
+  /** A community item: its catalog id and version (for updates and take-downs) and licence. */
+  community?: { id: string; version: number; licence: 'MIT' | 'CC0' | null };
 }
 
 // Content fit modes for how source content maps to the layer quad
