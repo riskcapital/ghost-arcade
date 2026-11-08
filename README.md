@@ -105,12 +105,11 @@ Key directories:
 
 ## Contributing
 
-Pull requests welcome. Please:
+Pull requests welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), and the [contributor guides](https://ghostarcade.live/docs/contribute) on the website. In short:
 
 1. Sign your commits with `git commit -s` (DCO).
-2. Run `npm run check` (svelte-check) before submitting.
-3. Add a brief note to `CHANGELOG.md` describing user-visible changes.
-4. For new effects: include a default preset in `src/lib/effects/effectUX.ts`, a catalog entry in `effectCatalog.ts`, and ParamMeta with sensible min/max/step defaults.
+2. Run `npm test`, `npm run check` and `npm run lint` before submitting.
+3. For new effects: include a default preset in `src/lib/effects/effectUX.ts`, a catalog entry in `effectCatalog.ts`, and ParamMeta with sensible min/max/step defaults.
 
 By contributing, you agree your contributions are licensed under AGPL-3.0.
 
@@ -147,6 +146,6 @@ Logo design + visual identity: Risk Capital Media LLC.
 ## Links
 
 - **Website:** [ghostarcade.live](https://ghostarcade.live)
-- **Website source:** [`riskcapital/ghostarcade-web`](https://github.com/riskcapital/ghostarcade-web) — separate Next.js repo. Download links live in `src/lib/release.ts` (`RELEASE_VERSION`); see its `UPDATING.md`. Details in [CANONICAL.md](CANONICAL.md#website).
+- **Contributor guides:** [ghostarcade.live/docs/contribute](https://ghostarcade.live/docs/contribute)
 - **Community forum:** [Ghost Arcade forums](https://ghostarcade.live/forums)
 - **Issues:** [GitHub Issues](https://github.com/riskcapital/ghost-arcade/issues)
