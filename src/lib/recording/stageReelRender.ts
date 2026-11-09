@@ -41,8 +41,6 @@ import {
   cancelNativeJpegSequence,
   startNativeMp4FrameEncoder,
   writeNativeMp4Frame,
-  writeNativeRendererJpegSequenceFrame,
-  writeNativeRendererMp4Frame,
   finishNativeMp4FrameEncoder,
   cancelNativeMp4FrameEncoder,
   frameSequenceManifest,
@@ -58,23 +56,15 @@ import { keyframeTimeline } from '../stores/keyframeTimeline';
 import { layerSequencer } from '../stores/layerSequencer';
 import { vjLayerSequencer } from '../stores/vjLayerSequencer';
 import { showTimeline } from '../stores/showTimeline';
-import { project } from '../stores/layers';
 import { mediaLibrary } from '../stores/media';
 import { generateUUID } from '../utils/uuid';
 import { createAssetRefFromGeneratedBlob, pathToFileUrl, type AssetRef } from '../storage/assetRegistry';
 import { isElectron } from '../bridge';
-import {
-  getNativeRendererCapabilities,
-  getNativeRendererStatus,
-  setNativeRendererStage3DScene,
-  submitNativeRendererCommands,
-} from '../api/native-renderer';
 import { stage3DRendererControls, stage3dScene } from '../stage3d/store';
 import {
   evaluateShotCamera, sequenceDuration, shotAtTime,
   type DemoShot, type DemoReelSettings,
 } from '../stage3d/demoReel';
-import { buildNativeStage3DScene } from '../stage3d/nativeSceneBridge';
 
 export type ReelRenderStatus =
   | 'idle' | 'choosing-folder' | 'loading-ffmpeg' | 'rendering' | 'encoding' | 'saving'
@@ -198,10 +188,6 @@ function blendFrames(a: CapturedFrame, b: CapturedFrame, amount: number): Captur
   return { data: out, width: a.width, height: a.height };
 }
 
-function nativePixelFormatForOutput(format: string | null | undefined): 'rgba' | 'bgra' {
-  return /bgra/i.test(String(format ?? '')) ? 'bgra' : 'rgba';
-}
-
 interface ShotSpan {
   index: number;
   shot: DemoShot;
@@ -287,10 +273,6 @@ function createReelRenderStore() {
     let nativeMp4FrameEncoder: NativeMp4FrameEncoderSession | null = null;
     let nativeJpegSequenceFinished = false;
     let nativeMp4FrameEncoderFinished = false;
-    let nativeStageCaptureActive = false;
-    let nativeOutputNeedsRestore = false;
-    let nativeCapturePixelFormat: 'rgba' | 'bgra' = 'rgba';
-    const nativeStageCaptureEligible = isElectron && (settings.transition ?? 'cut') !== 'cross-dissolve';
     const frameBaseName = frameSequenceBaseName(settings.filename, 'stage-reel');
     if (outputMode === 'frames') {
       try {
@@ -325,60 +307,42 @@ function createReelRenderStore() {
       engine.resize(settings.width, settings.height);
       canvas.width = settings.width;
       canvas.height = settings.height;
-      if (nativeStageCaptureEligible) {
-        try {
-          const caps = await getNativeRendererCapabilities();
-          const canCaptureNativeStage = !!(
-            caps?.core_capabilities_confirmed &&
-            caps?.features?.frame_snapshot_export &&
-            caps?.features?.native_frame_export &&
-            caps?.features?.native_stage3d &&
-            caps?.features?.native_stage3d_recording_parity &&
-            caps?.implemented_methods?.includes('export_frame_snapshot') &&
-            caps?.implemented_methods?.includes('set_stage3d_scene')
-          );
-          if (canCaptureNativeStage) {
-            await submitNativeRendererCommands([
-              { type: 'set_output', width: settings.width, height: settings.height, refresh_hz: settings.fps },
-            ]);
-            nativeOutputNeedsRestore = true;
-            const nativeStatus = await getNativeRendererStatus().catch(() => null);
-            nativeCapturePixelFormat = nativePixelFormatForOutput(nativeStatus?.output_format);
-            nativeStageCaptureActive = true;
-          }
-        } catch (err) {
-          console.warn('[stageReelRender] native Stage3D capture unavailable; using live viewport capture:', err);
-          nativeStageCaptureActive = false;
-        }
-      }
+      // Every frame comes from the WebGL stage view (shot camera applied,
+      // editor gizmo and outlines left out), the same picture the user
+      // sees. The render core's own stage3d scene is not used: it draws
+      // the venue as a flat overlay on the core's 2D output, which is also
+      // the picture this view maps onto its screens, so the reel came out
+      // dim with grey venue shapes and the overlay stayed on the output.
       if (outputMode === 'frames' && frameTarget) {
         nativeJpegSequence = await startNativeJpegSequence(
           frameTarget,
           settings,
           frameBaseName,
           totalFrames,
-          nativeStageCaptureActive ? nativeCapturePixelFormat : 'rgba',
+          'rgba',
         );
-        if (nativeStageCaptureActive && !nativeJpegSequence) nativeStageCaptureActive = false;
       } else if (outputMode === 'mp4' && useNativeMp4Encoder) {
         nativeMp4FrameEncoder = await startNativeMp4FrameEncoder(
           settings,
           totalFrames,
-          nativeStageCaptureActive ? nativeCapturePixelFormat : 'rgba',
+          'rgba',
         );
       }
       await nextFrame();
-      const nativeSceneLayers = get(project).layers;
 
       async function captureShotFrame(index: number, shot: DemoShot, progress: number): Promise<CapturedFrame> {
+        let shotChanged = false;
         if (index !== lastShotIndex) {
           lastShotIndex = index;
+          shotChanged = true;
           stage3dScene.loadScene(JSON.parse(JSON.stringify(shot.stage)));
         }
+        // The driven camera is applied at the start of the render that
+        // fulfils the capture, so only a new shot's stage needs a frame.
         controls.setCameraState(evaluateShotCamera(shot, progress));
         let frame: CapturedFrame | null = null;
         for (let attempt = 0; attempt < 3; attempt++) {
-          await nextFrame();
+          if (shotChanged || attempt > 0) await nextFrame();
           if (controls.captureFrameAt) {
             frame = await controls.captureFrameAt(settings.width, settings.height);
           } else {
@@ -392,11 +356,42 @@ function createReelRenderStore() {
         throw new Error(`Stage reel captured a black frame (${frame ? frameStats(frame) : 'no frame'}). Make sure the Stage 3D window is open and visible, then try again.`);
       }
 
+      // Desktop: the stage's screens show the render core's LIVE picture
+      // (it runs on its own clock), so the reel is captured in real time —
+      // each frame waits for its moment, and when a capture runs late the
+      // previous picture holds over the slots it missed. Camera moves and
+      // screen content then stay in step, and the file plays at the speed
+      // the reel was designed for. Elsewhere the content renders in this
+      // window on the virtual clock and the reel renders offline.
+      const livePaced = !!(nativeMp4FrameEncoder || nativeJpegSequence);
+      const paceStart = performance.now();
+      let lastFrame: CapturedFrame | null = null;
+      const writeNativeFrames = async (index: number, frame: CapturedFrame, count: number) => {
+        if (nativeMp4FrameEncoder) {
+          await writeNativeMp4Frame(nativeMp4FrameEncoder, index, frame, count);
+        } else if (nativeJpegSequence) {
+          for (let i = 0; i < count; i++) await writeNativeJpegSequenceFrame(nativeJpegSequence, index + i, frame);
+        }
+      };
+
       for (let segmentStart = 0; segmentStart < totalFrames; segmentStart += segmentFrameCount) {
         currentSegmentFrames = Math.min(segmentFrameCount, totalFrames - segmentStart);
         for (let localFrame = 0; localFrame < currentSegmentFrames; localFrame++) {
           if (cancelRequested) { setStatus('cancelled'); return false; }
-          const globalFrame = segmentStart + localFrame;
+          let globalFrame = segmentStart + localFrame;
+          if (livePaced) {
+            const dueAt = paceStart + (globalFrame * 1000) / settings.fps;
+            while (performance.now() < dueAt) await nextFrame();
+            const nowSlot = Math.min(
+              segmentStart + currentSegmentFrames - 1,
+              Math.floor(((performance.now() - paceStart) * settings.fps) / 1000),
+            );
+            if (lastFrame && nowSlot > globalFrame) {
+              await writeNativeFrames(globalFrame, lastFrame, nowSlot - globalFrame);
+              localFrame += nowSlot - globalFrame;
+              globalFrame = nowSlot;
+            }
+          }
           const virtualTime = globalFrame / settings.fps;
 
           // Content clock — identical to the 2D offline pipeline so LED
@@ -412,26 +407,6 @@ function createReelRenderStore() {
           // does. No-op when the timeline is empty.
           showTimeline.seek(virtualTime);
 
-          if (nativeStageCaptureActive) {
-            const at = shotAtTime(shots, virtualTime);
-            if (!at) throw new Error('Could not evaluate Stage 3D reel shot for native capture');
-            const camera = evaluateShotCamera(at.shot, at.progress);
-            await nextFrame();
-            await setNativeRendererStage3DScene(
-              buildNativeStage3DScene(at.shot.stage, nativeSceneLayers, { camera }),
-            );
-
-            if (outputMode === 'frames') {
-              if (!nativeJpegSequence) throw new Error('Native Stage 3D frame export folder is not ready');
-              await writeNativeRendererJpegSequenceFrame(nativeJpegSequence, globalFrame, virtualTime);
-            } else {
-              if (!nativeMp4FrameEncoder) throw new Error('Native Stage 3D MP4 encoder is not ready');
-              await writeNativeRendererMp4Frame(nativeMp4FrameEncoder, globalFrame, virtualTime);
-            }
-            update(s => ({ ...s, currentFrame: globalFrame + 1 }));
-            continue;
-          }
-
           // Shot clock — camera every frame, stage snapshot on entry.
           let frame: CapturedFrame | null = null;
           const transition = (settings.transition ?? 'cut') === 'cross-dissolve'
@@ -446,11 +421,12 @@ function createReelRenderStore() {
             if (at) frame = await captureShotFrame(at.index, at.shot, at.progress);
           }
           if (!frame) throw new Error('Could not capture Stage 3D frame');
+          lastFrame = frame;
 
           if (outputMode === 'frames') {
             if (!frameTarget) throw new Error('Frame export folder not ready');
             if (nativeJpegSequence) {
-              await writeNativeJpegSequenceFrame(nativeJpegSequence, globalFrame, frame);
+              await writeNativeFrames(globalFrame, frame, 1);
             } else {
               const jpegBytes = await rgbaToJpeg(frame.data, frame.width, frame.height, 0.92);
               const frameName = `${frameBaseName}_${String(globalFrame).padStart(6, '0')}.jpg`;
@@ -458,7 +434,7 @@ function createReelRenderStore() {
             }
           } else {
             if (nativeMp4FrameEncoder) {
-              await writeNativeMp4Frame(nativeMp4FrameEncoder, globalFrame, frame);
+              await writeNativeFrames(globalFrame, frame, 1);
             } else {
               if (!ffmpeg) throw new Error('FFmpeg encoder not ready');
               const jpegBytes = await rgbaToJpeg(frame.data, frame.width, frame.height, 0.92);
@@ -630,21 +606,11 @@ function createReelRenderStore() {
       if (nativeMp4FrameEncoder && !nativeMp4FrameEncoderFinished) {
         await cancelNativeMp4FrameEncoder(nativeMp4FrameEncoder).catch(() => {});
       }
-      if (nativeOutputNeedsRestore) {
-        await submitNativeRendererCommands([
-          { type: 'set_output', width: restoreWidth, height: restoreHeight, refresh_hz: settings.fps },
-        ]).catch(() => {});
-      }
       controls.releaseCamera();
       engine.manualTime = restoreManual;
       setISFManualTime(null);
       setStageEffectsManualTime(null);
       try { stage3dScene.loadScene(restoreScene); } catch { /* keep last shot's scene */ }
-      if (nativeStageCaptureActive || nativeOutputNeedsRestore) {
-        await setNativeRendererStage3DScene(
-          buildNativeStage3DScene(restoreScene, get(project).layers),
-        ).catch(() => {});
-      }
       try { engine.resize(restoreWidth, restoreHeight); } catch { /* nothing we can do */ }
     }
   }
