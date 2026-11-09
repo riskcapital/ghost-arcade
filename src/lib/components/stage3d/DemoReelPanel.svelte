@@ -214,6 +214,10 @@
       {:else if render.status === 'complete'}
         {#if render.lastOutputKind === 'frames'}
           <span>✓ Saved “{render.lastOutputName}” frames to {render.lastOutputPath ?? 'the selected folder'}.</span>
+        {:else if render.lastSavedPath}
+          <span>✓ Saved “{render.lastOutputName}” to {render.lastSavedPath} and the media library.</span>
+        {:else if render.lastOutputPath}
+          <span>✓ Saved “{render.lastOutputName}” to the media library.</span>
         {:else}
           <span>✓ Saved “{render.lastOutputName}” to the media library + downloads.</span>
         {/if}

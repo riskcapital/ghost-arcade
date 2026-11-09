@@ -27,6 +27,7 @@ import {
   downloadBlob,
   thumbnailFromBlob,
   thumbnailFromVideoUrl,
+  promptSaveMp4,
   offlineRender,
   getOfflineSegmentFrameCount,
   encodeOfflineJpegSegment,
@@ -57,6 +58,7 @@ import { layerSequencer } from '../stores/layerSequencer';
 import { vjLayerSequencer } from '../stores/vjLayerSequencer';
 import { showTimeline } from '../stores/showTimeline';
 import { mediaLibrary } from '../stores/media';
+import { settings as appSettings } from '../stores/settings';
 import { generateUUID } from '../utils/uuid';
 import { createAssetRefFromGeneratedBlob, pathToFileUrl, type AssetRef } from '../storage/assetRegistry';
 import { isElectron } from '../bridge';
@@ -81,6 +83,9 @@ export interface ReelRenderState {
   lastOutputName: string | null;
   lastOutputKind: 'video' | 'frames' | null;
   lastOutputPath: string | null;
+  /** Where the Save dialog copied the reel; null when it was not shown or
+   *  was cancelled (the reel is still in the media library). */
+  lastSavedPath: string | null;
 }
 
 const INITIAL: ReelRenderState = {
@@ -94,6 +99,7 @@ const INITIAL: ReelRenderState = {
   lastOutputName: null,
   lastOutputKind: null,
   lastOutputPath: null,
+  lastSavedPath: null,
 };
 
 function nextFrame(): Promise<void> {
@@ -532,6 +538,11 @@ function createReelRenderStore() {
           thumbnail,
           _assetRef: assetRef,
         });
+        // Same rule as Rec and the main recorder: with the Auto-download
+        // recording setting on (the default) ask where to save a copy.
+        const savedPath = get(appSettings).recording?.autoDownload
+          ? await promptSaveMp4(encoded.outputPath, niceName, 'Save Reel', 'mp4')
+          : null;
         update(s => ({
           ...s,
           status: 'complete',
@@ -539,6 +550,7 @@ function createReelRenderStore() {
           lastOutputName: niceName,
           lastOutputKind: 'video',
           lastOutputPath: encoded.outputPath,
+          lastSavedPath: savedPath,
         }));
         return true;
       }
