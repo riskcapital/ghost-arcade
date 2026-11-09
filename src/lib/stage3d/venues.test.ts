@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { buildVenue } from './venues';
+import { SPHERE_STAGE, buildVenue } from './venues';
 
 describe('venue scenery', () => {
   it('keeps both festival PA cabinet envelopes clear of every tower and overhead truss', () => {
@@ -59,5 +59,30 @@ describe('venue scenery', () => {
     expect(meshes).toBeLessThan(50);
     expect(venue.ledDome).toBeDefined();
     expect(venue.defaultScreenTransform).toBeDefined();
+  });
+
+  it('gives the sphere a modest stage on the floor in front of the bowl', () => {
+    const venue = buildVenue('sphere');
+    venue.group.updateMatrixWorld(true);
+    const stage = venue.group.children.find(o => o.userData.sceneryId === 'stage')!;
+    expect(stage).toBeDefined();
+    const box = new THREE.Box3().setFromObject(stage);
+    // Sits on the floor, about deck height, a fraction of the dome's width.
+    expect(box.min.y).toBeCloseTo(0, 3);
+    expect(box.max.y).toBeGreaterThan(1.2);
+    expect(box.max.y).toBeLessThan(2);
+    expect(box.max.x - box.min.x).toBeLessThan(20);
+    // Faces the seats: front edge well short of the first row (z = -32),
+    // back edge inside the dome's base (radius ≈ 80 around z = 7).
+    expect(box.max.z).toBeLessThan(-40);
+    expect(box.min.z).toBeGreaterThan(7 - 80);
+    expect(venue.frontZ).toBeCloseTo(SPHERE_STAGE.backZ + SPHERE_STAGE.depth, 6);
+    // The front is bowed toward the audience: the centre reaches further
+    // than the corners.
+    const ray = new THREE.Raycaster(new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0, 0, -1));
+    const centreHit = ray.intersectObject(stage, true)[0];
+    ray.set(new THREE.Vector3(SPHERE_STAGE.width / 2 - 0.3, 0.5, 0), new THREE.Vector3(0, 0, -1));
+    const cornerHit = ray.intersectObject(stage, true)[0];
+    expect(centreHit.point.z).toBeGreaterThan(cornerHit.point.z + 1);
   });
 });

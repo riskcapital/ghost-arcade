@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
-type Box = { size: [number, number, number]; at: [number, number, number]; yaw?: number };
+export type Box = { size: [number, number, number]; at: [number, number, number]; yaw?: number };
 
 /** Static scenery is batched by finish, not one draw call per seat or slat. */
-function boxes(items: Box[], color: number, glow = false): THREE.Mesh {
+export function boxes(items: Box[], color: number, glow = false): THREE.Mesh {
   const rotation = new THREE.Quaternion();
   const matrix = new THREE.Matrix4();
   const parts = items.map(item => {

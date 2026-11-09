@@ -11,7 +11,7 @@
 
 import * as THREE from 'three';
 import type { Stage3DVenue } from './types';
-import { arenaArchitecture, bowlSeats, roomDetails, stageDetails } from './venueDetails';
+import { arenaArchitecture, bowlSeats, boxes, roomDetails, stageDetails, type Box } from './venueDetails';
 
 export interface VenueBuild {
   /** Root group — added to scene; removed on venue swap. */
@@ -1252,6 +1252,120 @@ function buildArcBand(
   return band;
 }
 
+/** Sphere stage platform, in metres (the venue is built at real scale:
+ *  dome ≈ 160 m across, seat rows 1.45 m deep). Back edge sits ~13 m in
+ *  front of the screen's base; the curved front faces the bowl across the
+ *  standing floor, ~20 m short of the first seat row. */
+export const SPHERE_STAGE = {
+  width: 16,
+  /** Back edge to the centre of the curved front. */
+  depth: 8,
+  /** Extra depth the front curve adds at the centre over the corners. */
+  frontBow: 1.6,
+  height: 1.5,
+  backZ: -60,
+} as const;
+
+/** Stage outline in floor coordinates (x, z relative to the back edge,
+ *  +z toward the audience): straight back, straight sides, bowed front. */
+function sphereStageOutline(): THREE.Vector2[] {
+  const { width, depth, frontBow } = SPHERE_STAGE;
+  const half = width / 2;
+  const sideDepth = depth - frontBow;
+  const pts: THREE.Vector2[] = [new THREE.Vector2(-half, 0), new THREE.Vector2(half, 0), new THREE.Vector2(half, sideDepth)];
+  // Circular arc through both front corners and the centre apex.
+  const radius = (half * half + frontBow * frontBow) / (2 * frontBow);
+  const centreZ = depth - radius;
+  const span = Math.asin(half / radius);
+  const segs = 24;
+  for (let i = 1; i < segs; i++) {
+    const a = span - (2 * span * i) / segs;
+    pts.push(new THREE.Vector2(radius * Math.sin(a), centreZ + radius * Math.cos(a)));
+  }
+  pts.push(new THREE.Vector2(-half, sideDepth));
+  return pts;
+}
+
+/** Grow (d > 0) or shrink a closed counter-clockwise-in-(x, z) outline by
+ *  `d` metres along its mitred vertex normals. */
+function offsetOutline(pts: THREE.Vector2[], d: number): THREE.Vector2[] {
+  const n = pts.length;
+  // Signed area tells which side is outside regardless of winding.
+  let area = 0;
+  for (let i = 0; i < n; i++) {
+    const a = pts[i], b = pts[(i + 1) % n];
+    area += a.x * b.y - b.x * a.y;
+  }
+  const outward = area > 0 ? 1 : -1;
+  return pts.map((p, i) => {
+    const prev = pts[(i - 1 + n) % n], next = pts[(i + 1) % n];
+    const e0 = p.clone().sub(prev).normalize();
+    const e1 = next.clone().sub(p).normalize();
+    // Right-hand normals of both edges, averaged into a mitre.
+    const n0 = new THREE.Vector2(e0.y, -e0.x).multiplyScalar(outward);
+    const n1 = new THREE.Vector2(e1.y, -e1.x).multiplyScalar(outward);
+    const m = n0.clone().add(n1);
+    const len = m.length();
+    if (len < 1e-6) return p.clone();
+    m.divideScalar(len);
+    const scale = d / Math.max(0.2, m.dot(n0));
+    return p.clone().add(m.multiplyScalar(scale));
+  });
+}
+
+function sphereStagePlatform(): THREE.Group {
+  const { height } = SPHERE_STAGE;
+  const outline = sphereStageOutline();
+  const stageGroup = new THREE.Group();
+  stageGroup.userData.sceneryId = 'stage';
+
+  // Shape space (x, y) → floor (x, -z) once laid flat; extrude up = +y.
+  const toShapePts = (pts: THREE.Vector2[]) => pts.map(p => new THREE.Vector2(p.x, -p.y));
+  const bodyGeo = new THREE.ExtrudeGeometry(new THREE.Shape(toShapePts(outline)), {
+    depth: height, bevelEnabled: false, curveSegments: 1,
+  });
+  bodyGeo.rotateX(-Math.PI / 2);
+  // Group 0 = caps (deck top / underside), group 1 = the skirt around it.
+  const deckTop = new THREE.MeshStandardMaterial({ color: 0x1b1f27, roughness: 0.62, metalness: 0.12 });
+  const skirt = new THREE.MeshStandardMaterial({ color: 0x050609, roughness: 0.9, metalness: 0.05 });
+  const body = new THREE.Mesh(bodyGeo, [deckTop, skirt]);
+  body.castShadow = true;
+  body.receiveShadow = true;
+  stageGroup.add(body);
+
+  // Satin nosing round the top edge (a 15 cm band, proud of the skirt by
+  // 2 cm): the one line that outlines the stage in a dark room.
+  const lipH = 0.07;
+  const lipShape = new THREE.Shape(toShapePts(offsetOutline(outline, 0.02)));
+  lipShape.holes.push(new THREE.Path(toShapePts(offsetOutline(outline, -0.13))));
+  const lipGeo = new THREE.ExtrudeGeometry(lipShape, { depth: lipH, bevelEnabled: false, curveSegments: 1 });
+  lipGeo.rotateX(-Math.PI / 2);
+  lipGeo.translate(0, height - lipH + 0.004, 0);
+  const lip = mesh(lipGeo, new THREE.MeshStandardMaterial({
+    color: 0x2b313b, roughness: 0.35, metalness: 0.75,
+    emissive: 0x13202e, emissiveIntensity: 0.5,
+  }));
+  lip.castShadow = false;
+  stageGroup.add(lip);
+
+  // Glow-tape edge markers along the front, the same warm finish as the
+  // bowl's aisle lights, so the stage edge reads from the seats.
+  const { width, depth, frontBow } = SPHERE_STAGE;
+  const half = width / 2;
+  const radius = (half * half + frontBow * frontBow) / (2 * frontBow);
+  const centreZ = depth - radius;
+  const span = Math.asin(half / radius);
+  const markers: Box[] = [];
+  const count = 9;
+  for (let i = 0; i < count; i++) {
+    const a = span - (2 * span * (i + 0.5)) / count;
+    const r = radius - 0.2;
+    markers.push({ size: [0.42, 0.02, 0.06], at: [r * Math.sin(a), height + 0.012, centreZ + r * Math.cos(a)], yaw: a });
+  }
+  stageGroup.add(boxes(markers, 0x9d7744, true));
+  return stageGroup;
+}
+
 function buildSphere(): VenueBuild {
   const group = new THREE.Group();
 
@@ -1264,8 +1378,6 @@ function buildSphere(): VenueBuild {
     rotation: [0, 0, 0] as [number, number, number],
     scale: [1.3762535407255738, 1.3762535407255738, 1.3762535407255738] as [number, number, number],
   };
-  const STAGE_Z = -48;       // low stage island tight to the dome's -Z rim
-  const STAGE_OFFSET_Z = -14.800079437966918;
   const BOWL_ARC_Z = -58;    // seating radiates from the stage, inside the media shell
 
   // ── Floor — dark disk under the whole bowl ──
@@ -1277,22 +1389,13 @@ function buildSphere(): VenueBuild {
   floor.receiveShadow = true;
   group.add(floor);
 
-  // ── Stage — wide low platform, deliberately understated (the screen
-  //    is the scenery; the real venue's stage reads as an island) ──
-  const deckMat = new THREE.MeshStandardMaterial({ color: 0x101319, roughness: 0.7, metalness: 0.2 });
-  const stageGroup = new THREE.Group();
-  stageGroup.userData.sceneryId = 'stage';
-  const deck = mesh(new THREE.BoxGeometry(22, 1.1, 9.5), deckMat);
-  deck.position.set(0, 0.62, STAGE_Z);
-  stageGroup.add(deck);
-  const deckEdge = mesh(
-    new THREE.BoxGeometry(22.2, 0.12, 9.7),
-    new THREE.MeshStandardMaterial({ color: 0x262c36, roughness: 0.4, metalness: 0.8 }),
-  );
-  deckEdge.position.set(0, 1.2, STAGE_Z);
-  stageGroup.add(deckEdge);
-  stageGroup.position.set(0, 0, STAGE_OFFSET_Z);
-  group.add(stageGroup);
+  // ── Stage — a modest platform on the floor at the front of the bowl,
+  //    below the screen and facing the seats, like the real venue's.
+  //    The screen is the scenery, so it stays dark and low; the lighter
+  //    deck top and a thin edge lip let it read against the black floor.
+  const stage = sphereStagePlatform();
+  stage.position.set(0, 0, SPHERE_STAGE.backZ);
+  group.add(stage);
 
   // ── Seating bowl — 4 steeply-raked one-directional tiers (~26° rake,
   //    everyone faces the stage; NOT 360°), widening as they climb so
@@ -1395,8 +1498,8 @@ function buildSphere(): VenueBuild {
     // ledDome below.
     ledWall: { centerX: 0, centerY: 15.5, centerZ: -48, width: 52, height: 30 },
     ledDome: DOME,
-    stageW: 22,
-    frontZ: STAGE_OFFSET_Z + STAGE_Z + 5.5,
+    stageW: SPHERE_STAGE.width,
+    frontZ: SPHERE_STAGE.backZ + SPHERE_STAGE.depth,
     bloomStrength: 0.12,
     exposure: 1.0,
   };
