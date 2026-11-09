@@ -1354,6 +1354,55 @@ describe('native renderer sync native video pump routing', () => {
 });
 
 describe('native renderer sync effect-pass descriptors', () => {
+  it('carries Glitch intensity into the pass amount and the glitch family params into the uniforms', async () => {
+    const { packNativeEffectPassUniforms } = await import('../renderer/nativeEffectPass');
+    const glitch = nativeEffectPassFromDescriptor(effectToNativeDescriptor({
+      type: 'glitch',
+      params: {
+        glitchIntensity: 0.7, glitchSpeed: 1.5, glitchBlockSize: 0.4, glitchRGBSplit: 0.6, glitchJitter: 0.2,
+        glitchTriggerMode: 2, glitchBlockHold: 0.5, glitchVerticalSlice: 0.3, glitchFreezeBurst: 0.1, glitchTearChance: 0.8,
+      },
+    }));
+    expect(glitch).toMatchObject({
+      effect: 'glitch',
+      amount: 0.7,
+      params: { speed: 1.5, blockSize: 0.4, rgbSplit: 0.6, jitter: 0.2, verticalSlice: 0.3, blockHold: 0.5, tearChance: 0.8, triggerMode: 2, freezeBurst: 0.1 },
+    });
+    // The per-frame rebuild adds the live level and beat; Beat snap reads them.
+    const glitchUniforms = packNativeEffectPassUniforms({
+      sourceId: 's', targetSourceId: 't', effect: 'glitch', amount: glitch!.amount,
+      params: { ...glitch!.params, audioLevel: 0.4, audioBeat: 0.9 },
+    });
+    expect(glitchUniforms[5]).toBeCloseTo(0.7);
+    expect(glitchUniforms.slice(8, 19)).toEqual([1.5, 0.4, 0.6, 0.2, 0.3, 0.5, 0.8, 2, 0.1, 0.4, 0.9]);
+
+    const corrupt = nativeEffectPassFromDescriptor(effectToNativeDescriptor({
+      type: 'blockCorrupt',
+      params: { bcIntensity: 0.8, bcSpeed: 1.2, bcBlockSize: 48, bcSmear: 0.3, bcRun: 0.7, bcColorFault: 0.9, bcMotion: 0.6, bcAudioReact: 0.5, bcMix: 0.75 },
+    }));
+    expect(corrupt?.effect).toBe('block-corrupt');
+    const corruptUniforms = packNativeEffectPassUniforms({
+      sourceId: 's', targetSourceId: 't', effect: 'block-corrupt',
+      params: { ...corrupt!.params, audioLevel: 0.6 },
+    });
+    expect(corruptUniforms[4]).toBe(187);
+    expect(corruptUniforms[5]).toBeCloseTo(0.8);
+    expect(corruptUniforms.slice(8, 16).map((v) => Number(v.toFixed(4)))).toEqual([1.2, 48, 0.3, 0.7, 0.9, 0.6, 0.3, 0.75]);
+
+    const bend = nativeEffectPassFromDescriptor(effectToNativeDescriptor({
+      type: 'dataBend',
+      params: { dbIntensity: 0.5, dbSpeed: 0.9, dbStride: 0.8, dbBandSize: 0.2, dbChannelSlip: 0.4, dbBitCrush: 0.6, dbAudioReact: 1, dbMix: 1 },
+    }));
+    expect(bend?.effect).toBe('data-bend');
+    const bendUniforms = packNativeEffectPassUniforms({
+      sourceId: 's', targetSourceId: 't', effect: 'data-bend',
+      params: { ...bend!.params, audioLevel: 0.25 },
+    });
+    expect(bendUniforms[4]).toBe(188);
+    expect(bendUniforms[5]).toBeCloseTo(0.5);
+    expect(bendUniforms.slice(8, 15).map((v) => Number(v.toFixed(4)))).toEqual([0.9, 0.8, 0.2, 0.4, 0.6, 0.25, 1]);
+  });
+
   it('identifies enabled non-native effects so native-only output cannot silently drop them', () => {
     expect(nativeUnsupportedEffectTypes({
       effects: [

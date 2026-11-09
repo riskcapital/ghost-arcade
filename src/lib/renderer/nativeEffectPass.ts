@@ -181,6 +181,8 @@ export type NativeEffectPassId =
   | 'flow-field-trails'
   | 'paint-drip'
   | 'ink-flow'
+  | 'block-corrupt'
+  | 'data-bend'
   | 'reaction-diffusion'
   | 'feedback-zoom'
   | 'motion-trails'
@@ -940,6 +942,7 @@ export interface NativeEffectPassOptions {
     phaseLabAudioReactive: number;
     phaseLabAudioDrive: number;
     audioLevel: number;
+    audioBeat: number;
     vignetteColorR: number;
     vignetteColorG: number;
     vignetteColorB: number;
@@ -1369,6 +1372,23 @@ export interface NativeEffectPassOptions {
     inkBleed: number;
     inkPigment: number;
     inkMix: number;
+    bcIntensity: number;
+    bcSpeed: number;
+    bcBlockSize: number;
+    bcSmear: number;
+    bcRun: number;
+    bcColorFault: number;
+    bcMotion: number;
+    bcAudioReact: number;
+    bcMix: number;
+    dbIntensity: number;
+    dbSpeed: number;
+    dbStride: number;
+    dbBandSize: number;
+    dbChannelSlip: number;
+    dbBitCrush: number;
+    dbAudioReact: number;
+    dbMix: number;
     fftFlowScale: number;
     fftTrailLength: number;
     fftSamples: number;
@@ -1611,6 +1631,8 @@ export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
   { id: 'cube-lut', code: 184, defaultAmount: 1, amountMin: 0, amountMax: 1 },
   { id: 'paint-drip', code: 185, defaultAmount: 0.35, amountMin: 0, amountMax: 1 },
   { id: 'ink-flow', code: 186, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'block-corrupt', code: 187, defaultAmount: 0.55, amountMin: 0, amountMax: 1 },
+  { id: 'data-bend', code: 188, defaultAmount: 0.6, amountMin: 0, amountMax: 1 },
 ];
 
 const NATIVE_EFFECT_PASS_BY_ID = new Map(
@@ -1663,13 +1685,52 @@ fn hash21(p: vec2<f32>) -> f32 {
   return fract1(sin(q.x + q.y) * 43758.5453123);
 }
 
+// Integer hashes for patterns keyed on cells and clock ticks. hash21 works
+// on floats and loses its fraction once row * 311.7 + tick grows past a few
+// million, which a seconds-since-launch clock reaches within minutes; these
+// stay random however long the show runs.
+fn fx_pcg(v: u32) -> u32 {
+  let state = v * 747796405u + 2891336453u;
+  let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+  return (word >> 22u) ^ word;
+}
+
+fn fx_hash2u(a: u32, b: u32) -> f32 {
+  return f32(fx_pcg(a ^ fx_pcg(b)) >> 8u) * (1.0 / 16777216.0);
+}
+
+fn fx_hash3u(a: u32, b: u32, c: u32) -> f32 {
+  return f32(fx_pcg(a ^ fx_pcg(b ^ fx_pcg(c))) >> 8u) * (1.0 / 16777216.0);
+}
+
+// Clock ticks as an integer: whole ticks of time * rate, never negative.
+fn fx_tick(time: f32, rate: f32) -> u32 {
+  return u32(max(0.0, floor(time * rate)));
+}
+
+// A random value for a cell (any float key) at a clock count n. Effects that
+// re-roll on a clock tick use this instead of hash21(cell + tick): that float
+// hash runs out of precision once the tick is a few thousand, which the
+// seconds-since-launch clock reaches within minutes to hours, and the effect
+// freezes. salt keeps separate streams apart.
+fn fx_hash_key(key: vec2<f32>, n: f32, salt: u32) -> f32 {
+  return fx_hash3u(bitcast<u32>(key.x) ^ salt, bitcast<u32>(key.y), u32(clamp(n, 0.0, 4294967040.0)));
+}
+
+// Value-noise lattice wrapped to a 1024-cell period. Below 1024 it is the
+// same lattice as before; past it (noise drifting with the clock for hours)
+// it repeats instead of collapsing into flat blocks.
+fn fx_lattice(i: vec2<f32>) -> vec2<f32> {
+  return i - floor(i / 1024.0) * 1024.0;
+}
+
 fn value_noise2d(p: vec2<f32>) -> f32 {
   let i = floor(p);
   let f = fract(p);
-  let a = hash21(i);
-  let b = hash21(i + vec2<f32>(1.0, 0.0));
-  let c = hash21(i + vec2<f32>(0.0, 1.0));
-  let d = hash21(i + vec2<f32>(1.0, 1.0));
+  let a = hash21(fx_lattice(i));
+  let b = hash21(fx_lattice(i + vec2<f32>(1.0, 0.0)));
+  let c = hash21(fx_lattice(i + vec2<f32>(0.0, 1.0)));
+  let d = hash21(fx_lattice(i + vec2<f32>(1.0, 1.0)));
   let v = f * f * (3.0 - 2.0 * f);
   return mix(mix(a, b, v.x), mix(c, d, v.x), v.y);
 }
@@ -1694,8 +1755,8 @@ fn cellular2d(p: vec2<f32>) -> f32 {
     for (var xx = -1i; xx <= 1i; xx = xx + 1i) {
       let g = vec2<f32>(f32(xx), f32(yy));
       let o = vec2<f32>(
-        hash21(i + g),
-        hash21(i + g + vec2<f32>(13.0)),
+        hash21(fx_lattice(i + g)),
+        hash21(fx_lattice(i + g) + vec2<f32>(13.0)),
       );
       let r = g + o - f;
       min_d = min(min_d, dot(r, r));
@@ -1775,10 +1836,10 @@ fn vhs_random(st: vec2<f32>) -> f32 {
 fn vhs_noise(st: vec2<f32>) -> f32 {
   let i = floor(st);
   let f = fract(st);
-  let a = vhs_random(i);
-  let b = vhs_random(i + vec2<f32>(1.0, 0.0));
-  let c = vhs_random(i + vec2<f32>(0.0, 1.0));
-  let d = vhs_random(i + vec2<f32>(1.0, 1.0));
+  let a = vhs_random(fx_lattice(i));
+  let b = vhs_random(fx_lattice(i + vec2<f32>(1.0, 0.0)));
+  let c = vhs_random(fx_lattice(i + vec2<f32>(0.0, 1.0)));
+  let d = vhs_random(fx_lattice(i + vec2<f32>(1.0, 1.0)));
   let u2 = f * f * (3.0 - 2.0 * f);
   return mix(a, b, u2.x) + (c - a) * u2.y * (1.0 - u2.x) + (d - b) * u2.x * u2.y;
 }
@@ -2398,32 +2459,33 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     if (anim_speed > 0.001) {
       t = floor(u.resolution_time.z * anim_speed * 24.0) / 24.0;
     }
-    let ts = t * 61.7 + seed * 19.0;
+    // The 24 fps frame count for the white and blue grain (see fx_hash_key).
+    let tick = floor(t * 24.0 + 0.5);
     let p = uv * u.resolution_time.xy / max(0.5, 64.0 / pattern_scale)
       + vec2<f32>(seed * 13.7, seed * 7.19);
     let pd = p + vec2<f32>(u.resolution_time.z * anim_speed * 0.6, -u.resolution_time.z * anim_speed * 0.37);
     var n = vec3<f32>(0.0);
     if (noise_type == 0u) {
       if (mono) {
-        n = vec3<f32>(hash21(p + vec2<f32>(ts * 1.13, ts * 2.71)) - 0.5);
+        n = vec3<f32>(fx_hash_key(p, tick, 0x40u) - 0.5);
       } else {
         n = vec3<f32>(
-          hash21(p + vec2<f32>(ts * 1.13, ts * 2.71)),
-          hash21(p + vec2<f32>(7.0 + ts * 3.31, ts * 1.97)),
-          hash21(p + vec2<f32>(ts * 2.17, 17.0 + ts * 4.41))
+          fx_hash_key(p, tick, 0x40u),
+          fx_hash_key(p, tick, 0x41u),
+          fx_hash_key(p, tick, 0x42u)
         ) - vec3<f32>(0.5);
       }
     } else if (noise_type == 1u) {
       // Blue-style: triangular distribution from two whites.
       if (mono) {
-        let a = hash21(p + vec2<f32>(ts, ts * 1.7));
-        let b = hash21(p + vec2<f32>(1.0 + ts * 0.5, 1.0 + ts * 0.9));
+        let a = fx_hash_key(p, tick, 0x43u);
+        let b = fx_hash_key(p, tick, 0x44u);
         n = vec3<f32>((a + b) * 0.5 - 0.5);
       } else {
         n = vec3<f32>(
-          (hash21(p + vec2<f32>(ts, ts * 1.7)) + hash21(p + vec2<f32>(1.0 + ts * 0.5, 1.0 + ts * 0.9))) * 0.5,
-          (hash21(p + vec2<f32>(7.0 + ts * 0.31, 7.0)) + hash21(p + vec2<f32>(8.0, 8.0 + ts * 0.81))) * 0.5,
-          (hash21(p + vec2<f32>(17.0 + ts * 0.71, 17.0)) + hash21(p + vec2<f32>(18.0, 18.0 + ts * 0.91))) * 0.5
+          (fx_hash_key(p, tick, 0x43u) + fx_hash_key(p, tick, 0x44u)) * 0.5,
+          (fx_hash_key(p, tick, 0x45u) + fx_hash_key(p, tick, 0x46u)) * 0.5,
+          (fx_hash_key(p, tick, 0x47u) + fx_hash_key(p, tick, 0x48u)) * 0.5
         ) - vec3<f32>(0.5);
       }
     } else if (noise_type == 2u) {
@@ -2650,18 +2712,18 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let saturation = clamp(u.params2.z, 0.0, 1.5);
     let t = u.resolution_time.z;
     var tape_uv = uv;
-    let jump_trigger = step(0.985, vhs_hash11(floor(t * 1.3))) * tracking_jump;
+    let jump_trigger = step(0.985, fx_hash_key(vec2<f32>(0.0), floor(t * 1.3), 0x33u)) * tracking_jump;
     let jump_amount = tracking_jump * 0.08 * (sin(t * 0.7) * 0.5 + 0.5);
     tape_uv.y = fract1(tape_uv.y + jump_amount + jump_trigger * 0.4);
     let wobble = sin(tape_uv.y * 4.0 + t * 1.5) * 0.6 + sin(tape_uv.y * 11.0 + t * 0.7) * 0.4;
     tape_uv.x += wobble * tape_wobble * 0.012;
     var tracking_offset = sin(tape_uv.y * 10.0 + t * 3.0) * tracking * 0.02;
-    tracking_offset += step(0.99, vhs_random(vec2<f32>(t * 0.1, tape_uv.y))) * tracking * 0.1;
+    tracking_offset += step(0.99, fx_hash_key(vec2<f32>(floor(tape_uv.y * u.resolution_time.y), 0.0), floor(t * 60.0), 0x34u)) * tracking * 0.1;
     tape_uv.x += tracking_offset;
     tape_uv.x += sin(tape_uv.y * 50.0 + t * 10.0) * distortion * 0.003;
     tape_uv.y += sin(tape_uv.x * 30.0 + t * 8.0) * distortion * 0.002;
     let head_band = smoothstep(0.06, 0.0, tape_uv.y);
-    let head_tear = (vhs_random(vec2<f32>(floor(tape_uv.y * 200.0), floor(t * 30.0))) - 0.5) * head_band * head_switch * 0.06;
+    let head_tear = (fx_hash_key(vec2<f32>(floor(tape_uv.y * 200.0), 0.0), floor(t * 30.0), 0x35u) - 0.5) * head_band * head_switch * 0.06;
     tape_uv.x += head_tear;
     let bleed_amount = color_bleed * 0.005;
     let chroma_lag = chroma_delay * 0.012;
@@ -2672,9 +2734,9 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     );
     let tape_alpha = sample_clamped(tape_uv).a;
     let dropout_seed = floor(tape_uv.y * u.resolution_time.y * 0.5) + floor(t * 4.0);
-    let dropout_hit = step(1.0 - dropout * 0.04, vhs_hash11(dropout_seed));
+    let dropout_hit = step(1.0 - dropout * 0.04, fx_hash_key(vec2<f32>(dropout_seed, 0.0), 0.0, 0x31u));
     if (dropout_hit > 0.5) {
-      let dropout_kind = vhs_hash11(dropout_seed + 7.3);
+      let dropout_kind = fx_hash_key(vec2<f32>(dropout_seed, 0.0), 0.0, 0x32u);
       tape_rgb = mix(tape_rgb, select(vec3<f32>(0.0), vec3<f32>(1.0), dropout_kind > 0.5), 0.85);
     }
     let n = vhs_noise(tape_uv * u.resolution_time.xy * 0.5 + vec2<f32>(t * 100.0));
@@ -2953,39 +3015,87 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     return vec4<f32>(mix(color, shifted, wet), src.a);
   }
   if (code == 16u) {
-    let intensity = clamp(amount, 0.0, 1.0);
-    let speed = max(0.0, u.params0.x);
+    // glitch: bands of the picture jump sideways, tear, split into RGB and
+    // break into wrong-coloured blocks. Every random choice is an integer
+    // hash of a band and a clock tick (see fx_pcg), so it keeps moving however
+    // long the live clock has been running.
+    let speed = clamp(u.params0.x, 0.0, 4.0);
     let block_size = clamp(u.params0.y, 0.0, 1.0);
     let rgb_split = clamp(u.params0.z, 0.0, 1.0);
     let jitter = clamp(u.params0.w, 0.0, 1.0);
     let vertical_slice = clamp(u.params1.x, 0.0, 1.0);
     let block_hold = clamp(u.params1.y, 0.0, 1.0);
     let tear_chance = clamp(u.params1.z, 0.0, 1.0);
+    let trigger = u32(round(clamp(u.params1.w, 0.0, 3.0)));
     let freeze_burst = clamp(u.params2.x, 0.0, 1.0);
-    var t = floor(u.resolution_time.z * mix(8.0, 28.0, speed) / max(0.08, block_hold + 0.08));
-    if (freeze_burst > 0.001) {
-      // Burst gate: whole stretches reuse one glitch pattern, then release.
-      let gate = step(1.0 - freeze_burst * 0.65, hash21(vec2<f32>(floor(u.resolution_time.z * 0.9), 3.7)));
-      t = mix(t, floor(t / 7.0) * 7.0, gate);
+    let audio = clamp(u.params2.y, 0.0, 1.5);
+    let beat = clamp(u.params2.z, 0.0, 1.0);
+    // Trigger: 0 always on, 1 follows the music's level, 2 fires on beats.
+    var drive = 1.0;
+    if (trigger == 1u) {
+      drive = 0.06 + 0.94 * smoothstep(0.03, 0.5, audio);
+    } else if (trigger == 2u) {
+      drive = 0.06 + 0.94 * beat;
     }
-    let row_count = mix(12.0, 96.0, 1.0 - block_size);
-    let row = floor(uv.y * row_count);
-    let block = vec2<f32>(row, t);
-    let row_hit = step(1.0 - intensity * 0.45, hash21(block));
-    let tear_hit = step(1.0 - tear_chance * intensity, hash21(block + vec2<f32>(19.1, 4.7)));
-    let slice_gate = mix(1.0, step(0.5, hash21(vec2<f32>(floor(uv.x * 10.0), t + 3.0))), vertical_slice);
-    let shift = (hash21(block + vec2<f32>(2.7, 8.3)) - 0.5) * 0.18 * intensity * row_hit * slice_gate;
-    let fine = (value_noise2d(vec2<f32>(uv.y * 160.0, t)) - 0.5) * 0.025 * jitter * intensity;
-    let tear = tear_hit * intensity * 0.08 * sign(hash21(block + vec2<f32>(7.0, 11.0)) - 0.5);
-    let warped_uv = uv + vec2<f32>(shift + fine + tear, 0.0);
-    let split = rgb_split * intensity * (0.004 + row_hit * 0.018 + tear_hit * 0.04);
-    let r = sample_rgb(warped_uv + vec2<f32>(split, 0.0)).r;
-    let g = sample_rgb(warped_uv).g;
-    let b = sample_rgb(warped_uv - vec2<f32>(split, 0.0)).b;
-    var rgb = vec3<f32>(r, g, b);
-    let block_noise = (hash21(floor(warped_uv * vec2<f32>(24.0, row_count)) + vec2<f32>(t)) - 0.5) * intensity * row_hit;
-    rgb += block_noise * vec3<f32>(0.22, -0.04, 0.18);
-    return vec4<f32>(mix(color, rgb, intensity), src.a);
+    let intensity = clamp(amount, 0.0, 1.0) * drive;
+    if (intensity <= 0.0001) {
+      return src;
+    }
+    let time = max(0.0, u.resolution_time.z);
+    // Speed 1 changes the pattern about 12 times a second; Block hold keeps
+    // each band in place up to six times longer; Speed 0 holds it still.
+    let rate = speed * 12.0 * mix(1.0, 0.16, block_hold);
+    var tick_time = time * rate;
+    if (freeze_burst > 0.001) {
+      // Burst gate: some half-second windows hold one pattern, then release.
+      let window = fx_tick(time, 2.0);
+      if (fx_hash2u(window, 0x5bd1e995u) < freeze_burst * 0.7) {
+        tick_time = f32(window % 4096u) * 5.0;
+      }
+    }
+    let row_count = mix(72.0, 9.0, block_size);
+    let y = clamp(uv.y, 0.0, 0.99999);
+    let row = u32(floor(y * row_count));
+    // Bands step at their own moments, so the frame never flips all at once.
+    let tick = u32(floor(tick_time + fx_hash2u(row, 0x68e31da4u) * 3.0));
+    let row_hit = step(1.0 - intensity * 0.5, fx_hash2u(row, tick));
+    let col = u32(floor(clamp(uv.x, 0.0, 0.99999) * 12.0));
+    let slice_gate = mix(1.0, step(0.5, fx_hash3u(col, row, tick ^ 0x2545f491u)), vertical_slice);
+    let shift = (fx_hash2u(row ^ 0x27d4eb2du, tick) - 0.5) * 0.24 * intensity * row_hit * slice_gate;
+    // Tear bands: three bands at a time leap much further and split harder.
+    let band = row / 3u;
+    let tear_tick = tick / 2u;
+    let tear_hit = step(1.0 - tear_chance * intensity * 0.6, fx_hash2u(band ^ 0x9e3779b9u, tear_tick));
+    let tear_dir = select(-1.0, 1.0, fx_hash2u(band ^ 0x85ebca6bu, tear_tick) > 0.5);
+    let tear = tear_hit * tear_dir * (0.05 + 0.12 * fx_hash2u(band ^ 0xc2b2ae35u, tear_tick));
+    // Jitter: a fine horizontal shake that rolls down the picture.
+    let line_pos = y * 160.0;
+    let line = u32(floor(line_pos));
+    let shake_tick = fx_tick(time, speed * 16.0);
+    let a = fx_hash2u(line, shake_tick);
+    let b = fx_hash2u(line + 1u, shake_tick);
+    let lf = fract(line_pos);
+    let fine = (mix(a, b, lf * lf * (3.0 - 2.0 * lf)) - 0.5) * 0.02 * jitter * intensity;
+    let moved = row_hit * slice_gate + tear_hit;
+    var warped_uv = vec2<f32>(uv.x + shift + fine + tear, uv.y);
+    // Displaced bands wrap round like a broken line buffer.
+    warped_uv.x = select(warped_uv.x, fract(warped_uv.x), moved > 0.0);
+    let split = rgb_split * intensity * (0.003 + row_hit * 0.02 + tear_hit * 0.035);
+    var rgb = vec3<f32>(
+      sample_rgb(warped_uv + vec2<f32>(split, 0.0)).r,
+      sample_rgb(warped_uv).g,
+      sample_rgb(warped_uv - vec2<f32>(split, 0.0)).b,
+    );
+    // Broken blocks on the moved bands: crushed, channel-swapped colour.
+    let block_x = u32(floor(fract(warped_uv.x) * mix(32.0, 8.0, block_size)));
+    let fault = fx_hash3u(block_x, row, tick ^ 0x1b873593u);
+    if (moved > 0.0 && fault < intensity * 0.3) {
+      let levels = 3.0 + floor(fault * 10.0);
+      let crushed = floor(rgb * levels + vec3<f32>(0.5)) / levels;
+      let swapped = select(crushed.brg, crushed.gbr, fault < intensity * 0.15);
+      rgb = mix(rgb, swapped, 0.85);
+    }
+    return vec4<f32>(rgb, src.a);
   }
   if (code == 17u) {
     let rolloff = clamp(u.params0.x, 0.0, 1.0);
@@ -3507,23 +3617,23 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let tonal_weight = max(0.0, shadow_mask * shadow_weight + mid_mask * mid_weight + high_mask * high_weight);
     let frame_seed = floor(u.effect.w + u.resolution_time.z * anim_speed * 24.0);
     let cell = floor(uv * u.resolution_time.xy / grain_size);
-    let n0 = hash21(cell + vec2<f32>(frame_seed * 1.71, frame_seed * 0.37));
+    let n0 = fx_hash_key(cell, frame_seed, 0x1u);
     var grain = n0 - 0.5;
     if (stock == 1u) {
-      let fine = hash21(cell * 1.73 + vec2<f32>(frame_seed * 2.11, 19.0)) - 0.5;
+      let fine = fx_hash_key(cell, frame_seed, 0x2u) - 0.5;
       grain = grain * 0.62 + fine * 0.38;
     } else if (stock == 2u) {
       grain = sign(grain) * pow(abs(grain) * 2.0, 1.35) * 0.5;
     } else if (stock == 3u) {
-      let coarse = hash21(floor(cell * 0.42) + vec2<f32>(frame_seed, 31.0)) - 0.5;
+      let coarse = fx_hash_key(floor(cell * 0.42), frame_seed, 0x3u) - 0.5;
       grain = grain * 0.48 + coarse * 0.52;
     }
     let strength = grain_amount * tonal_weight * 0.42;
     var grain_rgb = vec3<f32>(grain);
     if (!mono) {
-      let nr = hash21(cell + vec2<f32>(frame_seed * 3.1, 7.0)) - 0.5;
-      let ng = hash21(cell + vec2<f32>(frame_seed * 4.7, 13.0)) - 0.5;
-      let nb = hash21(cell + vec2<f32>(frame_seed * 5.3, 23.0)) - 0.5;
+      let nr = fx_hash_key(cell, frame_seed, 0x4u) - 0.5;
+      let ng = fx_hash_key(cell, frame_seed, 0x5u) - 0.5;
+      let nb = fx_hash_key(cell, frame_seed, 0x6u) - 0.5;
       grain_rgb = mix(vec3<f32>(grain), vec3<f32>(nr, ng, nb), color_jitter);
     }
     let grained = color + grain_rgb * strength;
@@ -3801,7 +3911,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let thermal_src = sample_clamped(thermal_uv);
     var temp = pow(luma(thermal_src.rgb), 1.0 / max(amount, 0.05));
     if (sensor_noise > 0.001) {
-      let band = hash21(vec2<f32>(floor(uv.y * u.resolution_time.y * 0.5), floor(u.resolution_time.z * 8.0)));
+      let band = fx_hash_key(vec2<f32>(floor(uv.y * u.resolution_time.y * 0.5), 0.0), floor(u.resolution_time.z * 8.0), 0x7u);
       temp = clamp(temp + (band - 0.5) * sensor_noise * 0.18, 0.0, 1.0);
     }
     return vec4<f32>(thermal_palette_native(temp, palette), thermal_src.a);
@@ -3819,11 +3929,11 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     nv *= 0.95 + scanline * 0.05;
     if (rolling_noise > 0.001) {
       let band_y = floor((uv.y + u.resolution_time.z * 0.15) * 80.0);
-      let band_rand = hash21(vec2<f32>(band_y, floor(u.resolution_time.z * 4.0)));
+      let band_rand = fx_hash_key(vec2<f32>(band_y, 0.0), floor(u.resolution_time.z * 4.0), 0x8u);
       nv += vec3<f32>(band_rand - 0.5) * rolling_noise * 0.4 * vec3<f32>(0.0, 1.0, 0.0);
     }
     if (noise_amount > 0.001) {
-      let n = hash21(uv * u.resolution_time.xy + vec2<f32>(u.resolution_time.z * 1000.0));
+      let n = fx_hash_key(floor(uv * u.resolution_time.xy), floor(u.resolution_time.z * 60.0), 0x9u);
       nv += vec3<f32>(n - 0.5) * noise_amount * 0.2;
     }
     if (bloom > 0.001) {
@@ -4065,7 +4175,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     }
     var heat = blob_heat_color(intensity, palette);
     if (style >= 2u) {
-      heat += vec3<f32>(hash21(uv * u.resolution_time.xy + vec2<f32>(u.resolution_time.z)) * 0.05);
+      heat += vec3<f32>(fx_hash_key(floor(uv * u.resolution_time.xy), floor(u.resolution_time.z * 60.0), 0xau) * 0.05);
     }
     heat *= intensity;
     let cell_uv = fract(uv * grid_res);
@@ -4830,10 +4940,10 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     var intensity = 0.0;
     if (dist > 0.0 && dist < trail_len) {
       intensity = (1.0 - dist / trail_len)
-        * step(1.0 - density, hash21(cellid + vec2<f32>(floor(t * fall_speed * 0.05))));
+        * step(1.0 - density, fx_hash_key(cellid, floor(t * fall_speed * 0.05), 0xbu));
     }
     if (dist >= 0.0 && dist < 1.0) { intensity = 1.5; }
-    let glyph_seed = hash21(cellid + vec2<f32>(floor(t * fall_speed * 0.5 + cellid.y * 0.1)));
+    let glyph_seed = fx_hash_key(cellid, floor(t * fall_speed * 0.5 + cellid.y * 0.1), 0xcu);
     let g_mask = step(0.55, hash21(floor(cuv * 5.0) + vec2<f32>(glyph_seed * 13.0)));
     let rain = rain_tint * intensity * g_mask * clamp(amount / 0.6, 0.0, 2.5);
     return vec4<f32>(mix(rain, color + rain, bg_mix), src.a);
@@ -4853,14 +4963,14 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let cuv = fract(gridp) - vec2<f32>(0.5);
     let col_seed = hash21(vec2<f32>(cellid.x, 0.0));
     let y_off = floor(u.resolution_time.z * scroll_speed + col_seed * 50.0);
-    let bit = step(0.5, hash21(vec2<f32>(cellid.x, cellid.y + y_off)));
+    let bit = step(0.5, fx_hash_key(vec2<f32>(cellid.x, cellid.y + y_off), 0.0, 0xdu));
     // '0' is an elliptical ring; '1' is a bar with a serif foot.
     let ring_r = length(cuv * vec2<f32>(1.0, 0.7));
     let zero_glyph = smoothstep(0.42, 0.38, ring_r) - smoothstep(0.30, 0.26, ring_r);
     let one_glyph = max(step(abs(cuv.x + 0.05), 0.05) * step(abs(cuv.y), 0.4),
                         step(abs(cuv.y + 0.4), 0.05) * step(abs(cuv.x), 0.2));
     var char_mask = select(zero_glyph, one_glyph, bit > 0.5);
-    char_mask *= step(1.0 - density, hash21(cellid + vec2<f32>(y_off * 0.137)));
+    char_mask *= step(1.0 - density, fx_hash_key(cellid, y_off, 0xeu));
     let src_l = luma(sample_rgb((cellid + vec2<f32>(0.5)) * cell / u.resolution_time.xy));
     char_mask *= mix(1.0, src_l, contrast * 0.5);
     let char_rgb = bin_color * char_mask * clamp(amount / 8.0, 0.0, 2.0);
@@ -5398,7 +5508,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
       let fringe = 1.0 * mix(vec3<f32>(1.0), clamp(hp - vec3<f32>(1.0), vec3<f32>(0.0), vec3<f32>(1.0)), 0.86);
       let contour = 1.0 - smoothstep(0.0, 0.055, abs(wrapped - 0.5));
       let speckle_cell = floor(uv * res / max(1.0, pl_scale * 0.25));
-      let speckle = pow(hash21(speckle_cell + floor(time * 12.0)), 1.8);
+      let speckle = pow(fx_hash_key(speckle_cell, floor(time * 12.0), 0xfu), 1.8);
       col = clamp((fringe * (0.62 + speckle * 0.55) + contour * vec3<f32>(0.9, 1.0, 1.0) * 0.35) * color_gain, vec3<f32>(0.0), vec3<f32>(1.0));
     } else if (mode == 4u || mode == 5u) {
       // Catoptric anamorphic mirror
@@ -5463,7 +5573,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     }
     var scratches = 0.0;
     if (scratches_amt > 0.001) {
-      let xn = hash21(vec2<f32>(floor(drift_uv.x * res.x * 0.05), 0.0));
+      let xn = fx_hash_key(vec2<f32>(floor(drift_uv.x * res.x * 0.05), 0.0), 0.0, 0x10u);
       scratches = step(0.97, xn) * scratches_amt * 0.7;
     }
     var dirt = clamp(spots + scratches, 0.0, 1.0);
@@ -5576,7 +5686,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let l = dot(src.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
     let band = floor(l * band_width) / band_width;
     let sort_offset = (band - 0.5) * intensity * 0.15;
-    let jitter = hash21(vec2<f32>(floor(uv.y * res.y * 0.5), floor(time * 3.0))) * 0.02 * intensity;
+    let jitter = fx_hash_key(vec2<f32>(floor(uv.y * res.y * 0.5), 0.0), floor(time * 3.0), 0x11u) * 0.02 * intensity;
     let sample_uv = uv + vec2<f32>(sort_offset + jitter, 0.0);
     var col = sample_rgb(sample_uv);
     if (color_shift > 0.01) {
@@ -5604,7 +5714,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     if (waveform == 0u) {
       drift = sin(y_line * frequency + t);
     } else if (waveform == 1u) {
-      drift = (hash21(vec2<f32>(floor(y_line * frequency) + floor(t * 8.0), 0.0)) - 0.5) * 2.0;
+      drift = (fx_hash_key(vec2<f32>(floor(y_line * frequency) + floor(t * 8.0), 0.0), 0.0, 0x12u) - 0.5) * 2.0;
     } else {
       drift = fract(y_line * frequency + t) * 2.0 - 1.0;
     }
@@ -5627,20 +5737,20 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let color_mode = u32(round(u.params0.y));
     let speed = u.params0.z;
     let noise_amp = u.params0.w;
-    let t = floor(time * speed * 8.0) / 8.0;
+    let tick = floor(time * speed * 8.0);
     let y_bucket = floor(uv.y * 80.0);
-    let trigger = hash21(vec2<f32>(y_bucket, t));
-    let len_h = hash21(vec2<f32>(y_bucket + 13.0, t));
-    let start_x = hash21(vec2<f32>(y_bucket + 27.0, t));
+    let trigger = fx_hash_key(vec2<f32>(y_bucket, 0.0), tick, 0x13u);
+    let len_h = fx_hash_key(vec2<f32>(y_bucket, 0.0), tick, 0x14u);
+    let start_x = fx_hash_key(vec2<f32>(y_bucket, 0.0), tick, 0x15u);
     let seg_len = stripe_len * mix(0.05, 0.5, len_h);
     let in_stripe = step(1.0 - amount * 0.4, trigger) * step(start_x, uv.x) * step(uv.x, start_x + seg_len);
     if (in_stripe < 0.5) { return src; }
-    let n = hash21(vec2<f32>(uv.x * res.x, t * 100.0));
+    let n = fx_hash_key(vec2<f32>(floor(uv.x * res.x), 0.0), tick, 0x16u);
     var stripe = vec3<f32>(n);
     if (color_mode == 1u) {
       stripe = vec3<f32>(n * 0.6 + 0.2);
     } else if (color_mode >= 2u) {
-      let hue = hash21(vec2<f32>(y_bucket, t * 13.0));
+      let hue = fx_hash_key(vec2<f32>(y_bucket, 0.0), tick, 0x17u);
       stripe = mix(vec3<f32>(1.0, 0.0, 0.4), vec3<f32>(0.0, 1.0, 0.6), hue);
       stripe = mix(stripe, vec3<f32>(0.4, 0.4, 1.0), n);
     }
@@ -5778,7 +5888,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
       if (pattern == 1u) {
         p = sin(coord * 8.0 + t * 2.0);
       } else if (pattern >= 2u) {
-        p = (hash21(vec2<f32>(floor(coord * 50.0) + floor(t * 8.0), 0.0)) - 0.5) * 2.0;
+        p = (fx_hash_key(vec2<f32>(floor(coord * 50.0) + floor(t * 8.0), 0.0), 0.0, 0x18u) - 0.5) * 2.0;
       }
       var off = vec2<f32>(0.0);
       if (s_mode == 0u) {
@@ -5935,12 +6045,12 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     var s_uv = uv;
     s_uv.x = s_uv.x + sin(uv.y * 30.0 + time * 2.0) * 0.005 * amount * mode_boost;
     if (tracking_jump > 0.001) {
-      let jump = step(0.97, hash21(vec2<f32>(floor(time * 4.0), 0.0))) * tracking_jump;
+      let jump = step(0.97, fx_hash_key(vec2<f32>(0.0), floor(time * 4.0), 0x19u)) * tracking_jump;
       if (s_uv.y < 0.4) { s_uv.x = s_uv.x + jump * 0.05; }
     }
     let head_band = smoothstep(0.05, 0.0, s_uv.y) * head_switch * mode_boost;
     if (head_band > 0.01) {
-      s_uv.x = s_uv.x + (hash21(vec2<f32>(s_uv.y * 100.0, floor(time * 8.0))) - 0.5) * 0.04;
+      s_uv.x = s_uv.x + (fx_hash_key(vec2<f32>(floor(s_uv.y * res.y), 0.0), floor(time * 8.0), 0x1au) - 0.5) * 0.04;
     }
     let cb = chroma_bleed * mode_boost * 0.04;
     var col = vec3<f32>(
@@ -5955,7 +6065,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let l = luma(col);
     col = mix(vec3<f32>(l), col, saturation);
     if (tape_noise > 0.001) {
-      let n = (hash21(uv * res + vec2<f32>(time * 60.0)) - 0.5) * tape_noise * mode_boost * 0.4;
+      let n = (fx_hash_key(floor(uv * res), floor(time * 60.0), 0x1bu) - 0.5) * tape_noise * mode_boost * 0.4;
       col = col + vec3<f32>(n);
     }
     if (scanlines_amt > 0.001) {
@@ -5964,7 +6074,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     }
     if (dropouts > 0.001) {
       let y_b = floor(s_uv.y * 60.0);
-      let drop = step(0.93, hash21(vec2<f32>(y_b, floor(time * 6.0))));
+      let drop = step(0.93, fx_hash_key(vec2<f32>(y_b, 0.0), floor(time * 6.0), 0x1cu));
       col = col + vec3<f32>(drop * dropouts * mode_boost * 0.6);
     }
     col = col + vec3<f32>(head_band * 0.5);
@@ -6137,28 +6247,28 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let cell_size = vec2<f32>(tile_size) / res;
     let cell_uv = (uv - cell_origin) / cell_size;
     let t = floor(time * trigger_rate * 2.0);
-    let h = hash21(cell + vec2<f32>(t));
-    let h2 = hash21(cell + vec2<f32>(t + 13.7));
+    let h = fx_hash_key(cell, t, 0x20u);
+    let h2 = fx_hash_key(cell, t, 0x21u);
     var src_cell = cell;
     if (gq_mode == 1u) {
       // swap: adjacent tile pairs exchange places
       let pair_base = vec2<f32>(floor(cell.x / 2.0), cell.y);
-      if (hash21(pair_base + vec2<f32>(t + 3.1)) < amount) {
+      if (fx_hash_key(pair_base, t, 0x25u) < amount) {
         src_cell.x = cell.x + select(-1.0, 1.0, (cell.x - 2.0 * floor(cell.x / 2.0)) < 0.5);
       }
     } else if (gq_mode == 2u) {
       // mosh: tiles drift by a small random offset instead of teleporting
       if (h < amount) {
-        let drift = (vec2<f32>(hash21(cell + vec2<f32>(t + 7.3)), hash21(cell + vec2<f32>(t + 17.5))) - vec2<f32>(0.5)) * 5.0;
+        let drift = (vec2<f32>(fx_hash_key(cell, t, 0x22u), fx_hash_key(cell, t, 0x23u)) - vec2<f32>(0.5)) * 5.0;
         src_cell = cell + floor(drift);
       }
     } else if (h < amount) {
-      src_cell.x = floor(hash21(cell + vec2<f32>(t + 7.3)) * res.x / tile_size);
-      src_cell.y = floor(hash21(cell + vec2<f32>(t + 17.5)) * res.y / tile_size);
+      src_cell.x = floor(fx_hash_key(cell, t, 0x22u) * res.x / tile_size);
+      src_cell.y = floor(fx_hash_key(cell, t, 0x23u) * res.y / tile_size);
     }
     var s_uv = cell_uv;
     if (h2 < rotate_amount) {
-      let rot = u32(hash21(cell + vec2<f32>(t + 27.3)) * 4.0);
+      let rot = u32(fx_hash_key(cell, t, 0x24u) * 4.0);
       if (rot == 1u) { s_uv = vec2<f32>(s_uv.y, 1.0 - s_uv.x); }
       else if (rot == 2u) { s_uv = vec2<f32>(1.0 - s_uv.x, 1.0 - s_uv.y); }
       else if (rot == 3u) { s_uv = vec2<f32>(1.0 - s_uv.y, s_uv.x); }
@@ -6177,9 +6287,9 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
       // ghost of the previous shuffle step
       let tp = t - 1.0;
       var prev_cell = cell;
-      if (hash21(cell + vec2<f32>(tp)) < amount) {
-        prev_cell.x = floor(hash21(cell + vec2<f32>(tp + 7.3)) * res.x / tile_size);
-        prev_cell.y = floor(hash21(cell + vec2<f32>(tp + 17.5)) * res.y / tile_size);
+      if (fx_hash_key(cell, tp, 0x20u) < amount) {
+        prev_cell.x = floor(fx_hash_key(cell, tp, 0x22u) * res.x / tile_size);
+        prev_cell.y = floor(fx_hash_key(cell, tp, 0x23u) * res.y / tile_size);
       }
       let prev_uv = clamp((prev_cell * tile_size + cell_uv * tile_size) / res, vec2<f32>(0.0), vec2<f32>(1.0));
       col = mix(col, sample_rgb(prev_uv), gq_delay * 0.5);
@@ -6511,7 +6621,10 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let spawn = step(1.0 - amount, hash21(cell_id));
     if (spawn < 0.5) { return src; }
     let t = time * speed;
-    let drift = vec2<f32>(hash21(cell_id + vec2<f32>(7.3)) - 0.5, hash21(cell_id + vec2<f32>(13.7)) - 0.5) * t * 0.05;
+    // Each particle drifts round its own cell; it used to drift out of the
+    // cell for good, so the field emptied within a minute or two.
+    let travel = vec2<f32>(hash21(cell_id + vec2<f32>(7.3)) - 0.5, hash21(cell_id + vec2<f32>(13.7)) - 0.5) * t * 0.05;
+    let drift = fract(travel + vec2<f32>(0.5)) - vec2<f32>(0.5);
     cell_uv = cell_uv - drift;
     let d = length(cell_uv);
     var particle = smoothstep(0.05, 0.0, d)
@@ -6678,7 +6791,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
       tube = tube * mix(0.5, 1.0 + chase_v * 0.6, chase);
     }
     if (flicker > 0.001) {
-      let f = step(0.92, hash21(vec2<f32>(floor(time * 12.0), floor(time * 12.0))));
+      let f = step(0.92, fx_hash_key(vec2<f32>(0.0), floor(time * 12.0), 0x26u));
       tube = tube * (1.0 - f * flicker * 0.4);
     }
     let neon = tint * (tube * 1.8 + halo);
@@ -6703,9 +6816,9 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     var col = src.rgb;
     if (rgb_flicker > 0.001) {
       let t = floor(time * 30.0);
-      let r = (hash21(vec2<f32>(t, 0.0)) - 0.5) * rgb_flicker * 0.04;
-      let g = (hash21(vec2<f32>(t, 1.0)) - 0.5) * rgb_flicker * 0.04;
-      let b = (hash21(vec2<f32>(t, 2.0)) - 0.5) * rgb_flicker * 0.04;
+      let r = (fx_hash_key(vec2<f32>(0.0), t, 0x27u) - 0.5) * rgb_flicker * 0.04;
+      let g = (fx_hash_key(vec2<f32>(0.0), t, 0x28u) - 0.5) * rgb_flicker * 0.04;
+      let b = (fx_hash_key(vec2<f32>(0.0), t, 0x29u) - 0.5) * rgb_flicker * 0.04;
       col = vec3<f32>(
         sample_rgb(uv + vec2<f32>(r, 0.0)).r,
         sample_rgb(uv + vec2<f32>(g, 0.0)).g,
@@ -6724,7 +6837,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     }
     if (broken_bands > 0.001) {
       let band_y = floor(uv.y * 60.0 + time * 2.0);
-      let dropout = step(0.94, hash21(vec2<f32>(band_y, floor(time * 4.0))));
+      let dropout = step(0.94, fx_hash_key(vec2<f32>(band_y, 0.0), floor(time * 4.0), 0x2au));
       col = col * (1.0 - dropout * broken_bands * 0.6);
     }
     col = mix(col, col * tint + tint * 0.15, amount * 0.5);
@@ -6779,7 +6892,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
       result = result + tint * trail * amount * 0.35;
     }
     if (sparks > 0.001 && beam > 0.001) {
-      let sp = step(0.97, hash21(floor(uv * 300.0) + vec2<f32>(floor(time * 30.0))));
+      let sp = step(0.97, fx_hash_key(floor(uv * 300.0), floor(time * 30.0), 0x2bu));
       result = result + sp * tint * 2.0 * sparks;
     }
     return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
@@ -7286,7 +7399,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     if (s_mode == 1u) { dir = vec2<f32>(0.0, 1.0); }
     if (s_mode >= 2u) { dir = vec2<f32>(sin(time * 0.4 + grain_center.y * 6.28), 0.6); }
     if (turbulence > 0.001) {
-      let jit = vec2<f32>(hash21(grain + vec2<f32>(time * 0.05)), hash21(grain * 1.3 + vec2<f32>(time * 0.05 + 7.3))) - vec2<f32>(0.5);
+      let jit = vec2<f32>(fx_hash_key(grain, floor(time * 60.0), 0x2cu), fx_hash_key(grain, floor(time * 60.0), 0x2du)) - vec2<f32>(0.5);
       dir = dir + jit * turbulence;
     }
     // fall distance grows with time per grain (looping)
@@ -7939,7 +8052,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let chase = sin(time * chase_speed + facet_idx.x * 1.7 + facet_idx.y * 2.3) * 0.5 + 0.5;
     let chase_tint = w4_hsv2rgb(vec3<f32>(fract(time * 0.05 + chase * chase_hue_width), 0.8, 1.0));
     var col = mix(tex, tex * chase_tint, chase * 0.5);
-    let spark = step(1.0 - sparkle * 0.3, w4_hash13(vec3<f32>(facet_idx, floor(time * 4.0))));
+    let spark = step(1.0 - sparkle * 0.3, fx_hash_key(facet_idx, floor(time * 4.0), 0x2eu));
     col = col + highlight * spark * 1.5 + highlight * edge * 0.5;
     col = col * amount;
     let rim = w4_fresnel(n, rd, 2.5);
@@ -8783,8 +8896,8 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     var flow = vec2<f32>(l_r - l_l, l_u - l_d) * motion_scale;
     // temporal jitter per block, like drifting mosh vectors
     let jit = vec2<f32>(
-      hash21(block_id + vec2<f32>(floor(time * 3.0))) - 0.5,
-      hash21(block_id + vec2<f32>(floor(time * 3.0) + 13.7)) - 0.5
+      fx_hash_key(block_id, floor(time * 3.0), 0x2fu) - 0.5,
+      fx_hash_key(block_id, floor(time * 3.0), 0x30u) - 0.5
     ) * 0.35 * (1.0 - freeze);
     flow = (flow + jit * length(flow + vec2<f32>(0.05))) * amount * persistence;
     var col = vec3<f32>(0.0);
@@ -9100,6 +9213,190 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let stained = exp(dye / total) - vec3<f32>(0.02);
     let result = mix(mixed, stained, pigment);
     return vec4<f32>(clamp(mix(src.rgb, result, blend), vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 187u) {
+    // block-corrupt: a damaged compressed video stream. A slice of
+    // macroblocks fails at a random block and stays broken to the end of the
+    // slice: the run smears the last good pixels across, copies picture from
+    // the wrong place, or decodes to flat blocks with wrong colour and stray
+    // DCT stripes. Healthy slices stay clean.
+    let res = max(u.resolution_time.xy, vec2<f32>(1.0));
+    let time = max(0.0, u.resolution_time.z);
+    let speed = clamp(u.params0.x, 0.0, 3.0);
+    // Block size is in 1080p pixels so a look holds at 4K.
+    let bs = max(4.0, clamp(u.params0.y, 4.0, 128.0) * max(res.y / 1080.0, 0.25));
+    let smear = clamp(u.params0.z, 0.0, 1.0);
+    let run = clamp(u.params0.w, 0.0, 1.0);
+    let color_fault = clamp(u.params1.x, 0.0, 1.0);
+    let motion = clamp(u.params1.y, 0.0, 1.0);
+    let audio = clamp(u.params1.z, 0.0, 1.5);
+    let wet = clamp(u.params1.w, 0.0, 1.0);
+    let intensity = clamp(amount + audio * 0.75, 0.0, 1.0);
+    if (intensity <= 0.0001 || wet <= 0.0001) {
+      return src;
+    }
+    let px = clamp(uv, vec2<f32>(0.0), vec2<f32>(0.99999)) * res;
+    let cols = max(1u, u32(ceil(res.x / bs)));
+    let cell = vec2<u32>(u32(px.x / bs), u32(px.y / bs));
+    let in_block = (px - vec2<f32>(cell) * bs) / bs;
+    // Slices run in raster order, Slice length sets how far a failure
+    // spreads (half a row to six rows); each slice re-rolls on its own moment.
+    let slice_len = max(2u, u32(f32(cols) * mix(0.5, 6.0, run)));
+    let index = cell.y * cols + cell.x;
+    let slice = index / slice_len;
+    let pos = index % slice_len;
+    let tick = u32(floor(time * speed * 5.0 + fx_hash2u(slice, 0x51ed27u) * 4.0));
+    let failed = fx_hash2u(slice, tick) < intensity * 0.75;
+    // Breaks come early more often than late, so most runs spill onto the
+    // block rows below.
+    let start_roll = fx_hash2u(slice ^ 0xa511e9b3u, tick);
+    let start = u32(start_roll * start_roll * f32(slice_len) * 0.7);
+    let in_run = failed && pos >= start;
+    let lone = fx_hash3u(cell.x, cell.y, tick ^ 0x2545f491u) < intensity * 0.012;
+    if (!in_run && !lone) {
+      return src;
+    }
+    let start_index = select(index, slice * slice_len + start, in_run);
+    let start_cell = vec2<u32>(start_index % cols, start_index / cols);
+    let block_roll = fx_hash3u(cell.x, cell.y, tick ^ 0x1b873593u);
+    // One failure kind per run (a decoder fails the same way along a
+    // slice), picked by the Smear and Motion weights against flat blocks.
+    let kind_roll = fx_hash2u(slice ^ 0x68bc21ebu, tick) * (smear + motion + 0.25);
+    var result_rgb = color;
+    if (kind_roll < smear) {
+      if (cell.y == start_cell.y) {
+        // The last good column, dragged across the run.
+        let edge_x = max(0.0, f32(start_cell.x) * bs - 1.0);
+        result_rgb = sample_rgb(vec2<f32>(edge_x + 0.5, px.y) / res);
+      } else {
+        // Wrapped onto the next block row: the line above drips down.
+        let edge_y = max(0.0, f32(cell.y) * bs - 1.0);
+        result_rgb = sample_rgb(vec2<f32>(px.x, edge_y + 0.5) / res);
+      }
+      result_rgb = result_rgb * (0.92 + 0.16 * block_roll);
+    } else if (kind_roll < smear + motion) {
+      // Wrong motion vector: the whole run shows picture from elsewhere,
+      // a few blocks away, in half-block steps.
+      let mv = vec2<f32>(
+        floor((fx_hash2u(slice ^ 0x3c6ef372u, tick) - 0.5) * 12.0),
+        floor((fx_hash2u(slice ^ 0xbb67ae85u, tick) - 0.5) * 6.0),
+      ) * bs * 0.5 * (0.4 + motion);
+      let jitter = (vec2<f32>(fx_hash2u(index, tick ^ 0x7f4a7c15u), fx_hash2u(index ^ 0x6a09e667u, tick)) - vec2<f32>(0.5)) * bs * 0.25;
+      let src_at = clamp(px + mv + jitter, vec2<f32>(0.5), res - vec2<f32>(0.5));
+      result_rgb = sample_rgb(src_at / res);
+    } else {
+      // Stuck DC: the run decodes to one flat colour, the average of the
+      // block where it broke, with a small step at each block edge.
+      let base = vec2<f32>(start_cell) * bs;
+      result_rgb = (
+        sample_rgb((base + vec2<f32>(0.25, 0.25) * bs) / res) +
+        sample_rgb((base + vec2<f32>(0.75, 0.25) * bs) / res) +
+        sample_rgb((base + vec2<f32>(0.25, 0.75) * bs) / res) +
+        sample_rgb((base + vec2<f32>(0.75, 0.75) * bs) / res)
+      ) * 0.25 * (0.95 + 0.1 * block_roll);
+    }
+    // Colour faults hit whole runs; stripes land on some of their blocks.
+    let fault_roll = select(block_roll, fx_hash2u(slice ^ 0x9b05688cu, tick), in_run);
+    if (fault_roll < color_fault * 0.8) {
+      // Colour faults in YCbCr: lost chroma turns green or magenta, and a
+      // wrong coefficient leaves cosine stripes across the block.
+      var ycc = vec3<f32>(
+        dot(result_rgb, vec3<f32>(0.299, 0.587, 0.114)),
+        dot(result_rgb, vec3<f32>(-0.169, -0.331, 0.5)),
+        dot(result_rgb, vec3<f32>(0.5, -0.419, -0.081)),
+      );
+      let fault_kind = fault_roll / max(color_fault * 0.8, 0.001);
+      if (fault_kind < 0.4) {
+        ycc = vec3<f32>(ycc.x * 0.9, -0.16, -0.2);
+      } else if (fault_kind < 0.7) {
+        ycc = vec3<f32>(ycc.x, ycc.y * 0.3 + 0.17, ycc.z * 0.3 + 0.2);
+      } else {
+        ycc = vec3<f32>(ycc.x, ycc.z * 1.6, ycc.y * 1.6);
+      }
+      let fu = 1.0 + floor(fx_hash2u(index, tick ^ 0x510e527fu) * 7.0);
+      let fv = floor(fx_hash2u(index ^ 0x1f83d9abu, tick) * 8.0);
+      let dct = cos(3.14159265 * (2.0 * floor(in_block.x * 8.0) + 1.0) * fu / 16.0) *
+        cos(3.14159265 * (2.0 * floor(in_block.y * 8.0) + 1.0) * fv / 16.0);
+      ycc.x = ycc.x + dct * 0.24 * step(block_roll, 0.25 + color_fault * 0.5);
+      result_rgb = vec3<f32>(
+        ycc.x + 1.402 * ycc.z,
+        ycc.x - 0.344 * ycc.y - 0.714 * ycc.z,
+        ycc.x + 1.772 * ycc.y,
+      );
+    }
+    return vec4<f32>(mix(color, clamp(result_rgb, vec3<f32>(0.0), vec3<f32>(1.0)), wet), src.a);
+  }
+  if (code == 188u) {
+    // data-bend: the picture read back as raw bytes with the wrong numbers.
+    // Bands of lines are read with the wrong row length (the image slants
+    // and wraps round), channels slip onto their neighbours' bytes, and bit
+    // damage crushes and flips colour. Some bands repeat one line downward,
+    // like a buffer that ran dry.
+    let res = max(u.resolution_time.xy, vec2<f32>(1.0));
+    let time = max(0.0, u.resolution_time.z);
+    let speed = clamp(u.params0.x, 0.0, 3.0);
+    let stride = clamp(u.params0.y, 0.0, 1.0);
+    let band_size = clamp(u.params0.z, 0.0, 1.0);
+    let slip = clamp(u.params0.w, 0.0, 1.0);
+    let crush = clamp(u.params1.x, 0.0, 1.0);
+    let audio = clamp(u.params1.y, 0.0, 1.5);
+    let wet = clamp(u.params1.z, 0.0, 1.0);
+    let intensity = clamp(amount + audio * 0.75, 0.0, 1.0);
+    if (intensity <= 0.0001 || wet <= 0.0001) {
+      return src;
+    }
+    let px = clamp(uv, vec2<f32>(0.0), vec2<f32>(0.99999)) * res;
+    let band_h = max(2.0, mix(res.y / 40.0, res.y / 3.0, band_size));
+    let band = u32(px.y / band_h);
+    let tick = u32(floor(time * speed * 2.5 + fx_hash2u(band, 0x3c6ef372u) * 3.0));
+    if (fx_hash2u(band, tick) >= intensity * 0.65) {
+      return src;
+    }
+    let ly = px.y - f32(band) * band_h;
+    // Stride error: each line is read d pixels further on than the last.
+    // It slides slowly while the band holds.
+    let d_seed = fx_hash2u(band ^ 0xb5297a4du, tick) - 0.5;
+    let slide = sin(time * (0.35 + speed * 0.9) + f32(band % 64u) * 1.7) * 0.18;
+    let d = (d_seed * 2.0 + slide) * stride * 3.5;
+    let read_x = px.x + ly * d;
+    // Running off the end of a line continues on the next one.
+    let wraps = floor(read_x / res.x);
+    var src_px = vec2<f32>(read_x - wraps * res.x, px.y + wraps);
+    // Buffer ran dry: below a cut, one line repeats.
+    let dry_roll = fx_hash2u(band ^ 0x68e31da4u, tick);
+    if (dry_roll < 0.22) {
+      let cut = band_h * (0.2 + 0.6 * fx_hash2u(band ^ 0x1b56c4e9u, tick));
+      if (ly > cut) {
+        src_px.y = f32(band) * band_h + cut;
+      }
+    }
+    src_px.y = clamp(src_px.y, 0.5, res.y - 0.5);
+    // Channel slip: red and blue read a few bytes off, wrapping round the
+    // line; sometimes the bytes land a whole channel over.
+    let slip_px = slip * res.x * 0.03 * (0.25 + fx_hash2u(band ^ 0x2545f491u, tick));
+    let r_x = fract((src_px.x + slip_px) / res.x);
+    let b_x = fract((src_px.x - slip_px) / res.x);
+    var rgb = vec3<f32>(
+      sample_rgb(vec2<f32>(r_x, src_px.y / res.y)).r,
+      sample_rgb(src_px / res).g,
+      sample_rgb(vec2<f32>(b_x, src_px.y / res.y)).b,
+    );
+    let rotate_roll = fx_hash2u(band ^ 0x7f4a7c15u, tick);
+    if (rotate_roll < slip * 0.5) {
+      rgb = select(rgb.brg, rgb.gbr, rotate_roll < slip * 0.25);
+    }
+    // Bit damage: drop low bits and flip high ones, one mask per band.
+    let crush_roll = fx_hash2u(band ^ 0x9e3779b9u, tick);
+    if (crush_roll < crush * 0.8) {
+      let drop_bits = 1u + u32(crush * 4.0 * fx_hash2u(band ^ 0xc2b2ae35u, tick));
+      let keep = 0xffu << drop_bits;
+      let flips = fx_pcg(band ^ (tick * 2654435761u));
+      let flip = vec3<u32>(flips & 0xe0u, (flips >> 8u) & 0xe0u, (flips >> 16u) & 0xe0u);
+      let bytes = vec3<u32>(clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0)) * 255.0 + vec3<f32>(0.5));
+      let damaged = (bytes & vec3<u32>(keep)) ^ select(vec3<u32>(0u), flip, vec3<bool>(crush_roll < crush * 0.45));
+      rgb = vec3<f32>(damaged) / 255.0;
+    }
+    return vec4<f32>(mix(color, rgb, wet), src.a);
   }
   if (code == 183u) {
     // recursive-echo: zoom+rotate+translate echo stack
@@ -9486,6 +9783,10 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param6 = clampNumber(params.tearChance ?? params.param6, 0, 1, 0);
     param7 = clampNumber(params.triggerMode ?? params.param7, 0, 3, 0);
     param8 = clampNumber(params.freezeBurst ?? params.glitchFreezeBurst ?? params.param8, 0, 1, 0);
+    // Live audio for the Audio reactive and Beat snap triggers (injected by
+    // the per-frame graph rebuild; silence packs 0).
+    param9 = clampNumber(params.audioLevel, 0, 1.5, 0);
+    param10 = clampNumber(params.audioBeat, 0, 1, 0);
   } else if (options.effect === 'exposure') {
     param0 = clampNumber(params.rollOff ?? params.param0, 0, 1, 0);
     param1 = clampNumber(params.highlightProtect ?? params.param1, 0, 1, 0);
@@ -10861,6 +11162,29 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param4 = clampNumber(params.inkBleed ?? params.param4, 0, 1, 0.6);
     param5 = clampNumber(params.inkPigment ?? params.param5, 0, 1, 0.5);
     param6 = clampNumber(params.inkMix ?? params.param6, 0, 1, 1);
+    param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'block-corrupt') {
+    amount = clampNumber(options.amount ?? params.bcIntensity ?? params.amount, 0, 1, 0.55);
+    param0 = clampNumber(params.bcSpeed ?? params.param0, 0, 3, 0.8);
+    param1 = clampNumber(params.bcBlockSize ?? params.param1, 8, 96, 32);
+    param2 = clampNumber(params.bcSmear ?? params.param2, 0, 1, 0.6);
+    param3 = clampNumber(params.bcRun ?? params.param3, 0, 1, 0.5);
+    param4 = clampNumber(params.bcColorFault ?? params.param4, 0, 1, 0.45);
+    param5 = clampNumber(params.bcMotion ?? params.param5, 0, 1, 0.5);
+    // Audio react folds the live level (params.audioLevel, injected by the
+    // per-frame rebuild) into one number; silence or react 0 packs 0.
+    param6 = clampNumber(params.bcAudioReact ?? 0, 0, 1, 0) * clampNumber(params.audioLevel, 0, 1.5, 0);
+    param7 = clampNumber(params.bcMix ?? params.param7, 0, 1, 1);
+    param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'data-bend') {
+    amount = clampNumber(options.amount ?? params.dbIntensity ?? params.amount, 0, 1, 0.6);
+    param0 = clampNumber(params.dbSpeed ?? params.param0, 0, 3, 0.6);
+    param1 = clampNumber(params.dbStride ?? params.param1, 0, 1, 0.4);
+    param2 = clampNumber(params.dbBandSize ?? params.param2, 0, 1, 0.45);
+    param3 = clampNumber(params.dbChannelSlip ?? params.param3, 0, 1, 0.5);
+    param4 = clampNumber(params.dbBitCrush ?? params.param4, 0, 1, 0.35);
+    param5 = clampNumber(params.dbAudioReact ?? 0, 0, 1, 0) * clampNumber(params.audioLevel, 0, 1.5, 0);
+    param6 = clampNumber(params.dbMix ?? params.param6, 0, 1, 1);
     param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
   } else if (options.effect === 'flow-field-trails') {
     amount = clampNumber(options.amount ?? params.fftTrailLength ?? params.amount, 0, 1, 0.4);

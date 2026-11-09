@@ -648,6 +648,8 @@ type NativeGraphRouteState = {
   lastVJCrossfadeUniformSig?: string;
   lastVJMixTopologySig?: string;
   lastVJMixUniformSig?: string;
+  /** Group effect uniforms last sent with the live audio (VJ Mix groups). */
+  lastVJGroupFxUniformSig?: string;
   lastQueuedClockFrame?: number;
   queuedThisClockFrame?: number;
   lastQueuedAtMs?: number;
@@ -966,6 +968,13 @@ function sourceValuesSignature(layer: Layer): string {
     ? hashString(JSON.stringify(s.jsAnimation.paramValues ?? {}))
     : 'no-js';
   return `${shaderValuesSignature}:${javascriptValuesSignature}`;
+}
+
+/** The live audio the effect packers read each frame: the level for audio
+ *  react, the beat pulse for Glitch's Beat snap trigger. */
+function liveEffectAudioParams(): { audioLevel: number; audioBeat: number } {
+  const audio = getVisualAudioSnapshot();
+  return { audioLevel: audio.level, audioBeat: audio.beat };
 }
 
 function nativeEffectDescriptors(layer: Layer): string[] {
@@ -6759,7 +6768,7 @@ export class NativeRendererSync {
         effect: effectPass.effect,
         amount: effectPass.amount,
         mix: effectPass.mix ?? 1,
-        params: { ...effectPass.params, audioLevel: getVisualAudioSnapshot().level },
+        params: { ...effectPass.params, ...liveEffectAudioParams() },
       })),
       width,
       height,
@@ -7546,7 +7555,7 @@ export class NativeRendererSync {
               effect: effectPass.effect,
               amount: effectPass.amount,
               mix: effectPass.mix ?? 1,
-              params: { ...effectPass.params, audioLevel: getVisualAudioSnapshot().level },
+              params: { ...effectPass.params, ...liveEffectAudioParams() },
             })),
             width,
             height,
@@ -8068,7 +8077,7 @@ export class NativeRendererSync {
               effect: effectPass.effect,
               amount: effectPass.amount,
               mix: effectPass.mix ?? 1,
-              params: { ...effectPass.params, audioLevel: getVisualAudioSnapshot().level },
+              params: { ...effectPass.params, ...liveEffectAudioParams() },
             })),
             width,
             height,
@@ -8477,7 +8486,7 @@ export class NativeRendererSync {
           effect: entry.pass!.effect,
           amount: entry.pass!.amount,
           mix: Math.max(0, Math.min(1, entry.mix)),
-          params: { ...entry.pass!.params, audioLevel: getVisualAudioSnapshot().level },
+          params: { ...entry.pass!.params, ...liveEffectAudioParams() },
         })),
         width,
         height,
@@ -10219,6 +10228,7 @@ export class NativeRendererSync {
           routeState.lastVJCrossfadeUniformSig = uniform.signature;
         }
         let groupedMixGraph: ReturnType<typeof buildVJGroupedMixGraph> | null = null;
+        let groupedMixStructure: ReturnType<typeof buildVJGroupedMixGraph> | null = null;
         let vjMixGraphOptions: Parameters<typeof buildVJMixGraph>[0] | null = null;
         if (nativeGraphRoute.kind === 'vj-mix') {
           const rawRows = Array.isArray(nativeGraphScaledParams?.vjmixRows)
@@ -10252,9 +10262,21 @@ export class NativeRendererSync {
                   return pass ? { ...pass, mix: Number(fx.opacity ?? 1) } : null;
                 }).filter((pass: any) => pass && this.nativeEffectPassDescriptorIds.has(pass.effect)).slice(0, NATIVE_EFFECT_PASS_LIMIT),
               }));
-              groupedMixGraph = buildVJGroupedMixGraph({ ...vjMixGraphOptions, rows, groups, time: 0, frameIndex: 0 } as VJGroupedMixOptions);
+              // The core writes the render clock into these uniforms every
+              // frame; the live audio level and beat (audio reactivity,
+              // Glitch's Audio and Beat triggers) come from here. The graph is
+              // keyed on a build without audio so it is only reinstalled when
+              // the groups change; between reinstalls the effect uniforms are
+              // refreshed in place when the audio moves them.
+              groupedMixStructure = buildVJGroupedMixGraph({ ...vjMixGraphOptions, rows, groups, time: 0, frameIndex: 0 } as VJGroupedMixOptions);
+              const liveAudio = liveEffectAudioParams();
+              const liveGroups = groups.map(group => ({
+                ...group,
+                effects: group.effects.map((pass: any) => ({ ...pass, params: { ...pass.params, ...liveAudio } })),
+              }));
+              groupedMixGraph = buildVJGroupedMixGraph({ ...vjMixGraphOptions, rows, groups: liveGroups, time: 0, frameIndex: 0 } as VJGroupedMixOptions);
             }
-            const topologySig = JSON.stringify([nativeGraphRoute.source.id, nativeGraphRoute.effectPasses ?? []]) + ':' + (groupedMixGraph ? JSON.stringify(groupedMixGraph.config) : [
+            const topologySig = JSON.stringify([nativeGraphRoute.source.id, nativeGraphRoute.effectPasses ?? []]) + ':' + (groupedMixStructure ? JSON.stringify(groupedMixStructure.config) : [
               vjMixGraphOptions.outputSourceId,
               ...rows.map((row) => row.frameId),
               width,
@@ -10262,6 +10284,26 @@ export class NativeRendererSync {
             ].join(':'));
             const uniform = buildVJMixUniformUpdate(vjMixGraphOptions);
             installPluginGraph = routeState.lastVJMixTopologySig !== topologySig;
+            if (groupedMixGraph) {
+              const updates: Array<{ bufferId: string; initialB64: string }> = [];
+              for (const buffer of groupedMixGraph.config.buffers) {
+                if (buffer.kind !== 'uniform' || !String(buffer.id).startsWith('effect-pass:')) continue;
+                const initialB64 = nativeGraphBufferBase64(buffer);
+                if (initialB64) updates.push({ bufferId: String(buffer.id), initialB64 });
+              }
+              const signature = updates.map((entry) => entry.initialB64).join('|');
+              if (!installPluginGraph && routeState.lastVJGroupFxUniformSig !== signature) {
+                for (const entry of updates) {
+                  commands.push({
+                    type: 'update_native_graph_buffer',
+                    layer_id: layer.id,
+                    buffer_id: entry.bufferId,
+                    initial_b64: entry.initialB64,
+                  });
+                }
+              }
+              routeState.lastVJGroupFxUniformSig = signature;
+            }
             if (!groupedMixGraph && !installPluginGraph && routeState.lastVJMixUniformSig !== uniform.signature) {
               for (const entry of uniform.buffers) {
                 commands.push({
