@@ -227,6 +227,8 @@ const NATIVE_EFFECT_PASS_DESCRIPTORS = [
   { id: 'cube-lut', code: 184 },
   { id: 'paint-drip', code: 185 },
   { id: 'ink-flow', code: 186 },
+  { id: 'block-corrupt', code: 187 },
+  { id: 'data-bend', code: 188 },
 ];
 
 function nativeGraphReadinessId(id) {

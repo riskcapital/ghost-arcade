@@ -181,6 +181,8 @@ export type NativeEffectPassId =
   | 'flow-field-trails'
   | 'paint-drip'
   | 'ink-flow'
+  | 'block-corrupt'
+  | 'data-bend'
   | 'reaction-diffusion'
   | 'feedback-zoom'
   | 'motion-trails'
@@ -940,6 +942,7 @@ export interface NativeEffectPassOptions {
     phaseLabAudioReactive: number;
     phaseLabAudioDrive: number;
     audioLevel: number;
+    audioBeat: number;
     vignetteColorR: number;
     vignetteColorG: number;
     vignetteColorB: number;
@@ -1369,6 +1372,23 @@ export interface NativeEffectPassOptions {
     inkBleed: number;
     inkPigment: number;
     inkMix: number;
+    bcIntensity: number;
+    bcSpeed: number;
+    bcBlockSize: number;
+    bcSmear: number;
+    bcRun: number;
+    bcColorFault: number;
+    bcMotion: number;
+    bcAudioReact: number;
+    bcMix: number;
+    dbIntensity: number;
+    dbSpeed: number;
+    dbStride: number;
+    dbBandSize: number;
+    dbChannelSlip: number;
+    dbBitCrush: number;
+    dbAudioReact: number;
+    dbMix: number;
     fftFlowScale: number;
     fftTrailLength: number;
     fftSamples: number;
@@ -1611,6 +1631,8 @@ export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
   { id: 'cube-lut', code: 184, defaultAmount: 1, amountMin: 0, amountMax: 1 },
   { id: 'paint-drip', code: 185, defaultAmount: 0.35, amountMin: 0, amountMax: 1 },
   { id: 'ink-flow', code: 186, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'block-corrupt', code: 187, defaultAmount: 0.55, amountMin: 0, amountMax: 1 },
+  { id: 'data-bend', code: 188, defaultAmount: 0.6, amountMin: 0, amountMax: 1 },
 ];
 
 const NATIVE_EFFECT_PASS_BY_ID = new Map(
@@ -1661,6 +1683,29 @@ fn hash21(p: vec2<f32>) -> f32 {
     p.x * 269.5 + p.y * 183.3,
   ));
   return fract1(sin(q.x + q.y) * 43758.5453123);
+}
+
+// Integer hashes for patterns keyed on cells and clock ticks. hash21 works
+// on floats and loses its fraction once row * 311.7 + tick grows past a few
+// million, which a seconds-since-launch clock reaches within minutes; these
+// stay random however long the show runs.
+fn fx_pcg(v: u32) -> u32 {
+  let state = v * 747796405u + 2891336453u;
+  let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+  return (word >> 22u) ^ word;
+}
+
+fn fx_hash2u(a: u32, b: u32) -> f32 {
+  return f32(fx_pcg(a ^ fx_pcg(b)) >> 8u) * (1.0 / 16777216.0);
+}
+
+fn fx_hash3u(a: u32, b: u32, c: u32) -> f32 {
+  return f32(fx_pcg(a ^ fx_pcg(b ^ fx_pcg(c))) >> 8u) * (1.0 / 16777216.0);
+}
+
+// Clock ticks as an integer: whole ticks of time * rate, never negative.
+fn fx_tick(time: f32, rate: f32) -> u32 {
+  return u32(max(0.0, floor(time * rate)));
 }
 
 fn value_noise2d(p: vec2<f32>) -> f32 {
@@ -2953,39 +2998,87 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     return vec4<f32>(mix(color, shifted, wet), src.a);
   }
   if (code == 16u) {
-    let intensity = clamp(amount, 0.0, 1.0);
-    let speed = max(0.0, u.params0.x);
+    // glitch: bands of the picture jump sideways, tear, split into RGB and
+    // break into wrong-coloured blocks. Every random choice is an integer
+    // hash of a band and a clock tick (see fx_pcg), so it keeps moving however
+    // long the live clock has been running.
+    let speed = clamp(u.params0.x, 0.0, 4.0);
     let block_size = clamp(u.params0.y, 0.0, 1.0);
     let rgb_split = clamp(u.params0.z, 0.0, 1.0);
     let jitter = clamp(u.params0.w, 0.0, 1.0);
     let vertical_slice = clamp(u.params1.x, 0.0, 1.0);
     let block_hold = clamp(u.params1.y, 0.0, 1.0);
     let tear_chance = clamp(u.params1.z, 0.0, 1.0);
+    let trigger = u32(round(clamp(u.params1.w, 0.0, 3.0)));
     let freeze_burst = clamp(u.params2.x, 0.0, 1.0);
-    var t = floor(u.resolution_time.z * mix(8.0, 28.0, speed) / max(0.08, block_hold + 0.08));
-    if (freeze_burst > 0.001) {
-      // Burst gate: whole stretches reuse one glitch pattern, then release.
-      let gate = step(1.0 - freeze_burst * 0.65, hash21(vec2<f32>(floor(u.resolution_time.z * 0.9), 3.7)));
-      t = mix(t, floor(t / 7.0) * 7.0, gate);
+    let audio = clamp(u.params2.y, 0.0, 1.5);
+    let beat = clamp(u.params2.z, 0.0, 1.0);
+    // Trigger: 0 always on, 1 follows the music's level, 2 fires on beats.
+    var drive = 1.0;
+    if (trigger == 1u) {
+      drive = 0.06 + 0.94 * smoothstep(0.03, 0.5, audio);
+    } else if (trigger == 2u) {
+      drive = 0.06 + 0.94 * beat;
     }
-    let row_count = mix(12.0, 96.0, 1.0 - block_size);
-    let row = floor(uv.y * row_count);
-    let block = vec2<f32>(row, t);
-    let row_hit = step(1.0 - intensity * 0.45, hash21(block));
-    let tear_hit = step(1.0 - tear_chance * intensity, hash21(block + vec2<f32>(19.1, 4.7)));
-    let slice_gate = mix(1.0, step(0.5, hash21(vec2<f32>(floor(uv.x * 10.0), t + 3.0))), vertical_slice);
-    let shift = (hash21(block + vec2<f32>(2.7, 8.3)) - 0.5) * 0.18 * intensity * row_hit * slice_gate;
-    let fine = (value_noise2d(vec2<f32>(uv.y * 160.0, t)) - 0.5) * 0.025 * jitter * intensity;
-    let tear = tear_hit * intensity * 0.08 * sign(hash21(block + vec2<f32>(7.0, 11.0)) - 0.5);
-    let warped_uv = uv + vec2<f32>(shift + fine + tear, 0.0);
-    let split = rgb_split * intensity * (0.004 + row_hit * 0.018 + tear_hit * 0.04);
-    let r = sample_rgb(warped_uv + vec2<f32>(split, 0.0)).r;
-    let g = sample_rgb(warped_uv).g;
-    let b = sample_rgb(warped_uv - vec2<f32>(split, 0.0)).b;
-    var rgb = vec3<f32>(r, g, b);
-    let block_noise = (hash21(floor(warped_uv * vec2<f32>(24.0, row_count)) + vec2<f32>(t)) - 0.5) * intensity * row_hit;
-    rgb += block_noise * vec3<f32>(0.22, -0.04, 0.18);
-    return vec4<f32>(mix(color, rgb, intensity), src.a);
+    let intensity = clamp(amount, 0.0, 1.0) * drive;
+    if (intensity <= 0.0001) {
+      return src;
+    }
+    let time = max(0.0, u.resolution_time.z);
+    // Speed 1 changes the pattern about 12 times a second; Block hold keeps
+    // each band in place up to six times longer; Speed 0 holds it still.
+    let rate = speed * 12.0 * mix(1.0, 0.16, block_hold);
+    var tick_time = time * rate;
+    if (freeze_burst > 0.001) {
+      // Burst gate: some half-second windows hold one pattern, then release.
+      let window = fx_tick(time, 2.0);
+      if (fx_hash2u(window, 0x5bd1e995u) < freeze_burst * 0.7) {
+        tick_time = f32(window % 4096u) * 5.0;
+      }
+    }
+    let row_count = mix(72.0, 9.0, block_size);
+    let y = clamp(uv.y, 0.0, 0.99999);
+    let row = u32(floor(y * row_count));
+    // Bands step at their own moments, so the frame never flips all at once.
+    let tick = u32(floor(tick_time + fx_hash2u(row, 0x68e31da4u) * 3.0));
+    let row_hit = step(1.0 - intensity * 0.5, fx_hash2u(row, tick));
+    let col = u32(floor(clamp(uv.x, 0.0, 0.99999) * 12.0));
+    let slice_gate = mix(1.0, step(0.5, fx_hash3u(col, row, tick ^ 0x2545f491u)), vertical_slice);
+    let shift = (fx_hash2u(row ^ 0x27d4eb2du, tick) - 0.5) * 0.24 * intensity * row_hit * slice_gate;
+    // Tear bands: three bands at a time leap much further and split harder.
+    let band = row / 3u;
+    let tear_tick = tick / 2u;
+    let tear_hit = step(1.0 - tear_chance * intensity * 0.6, fx_hash2u(band ^ 0x9e3779b9u, tear_tick));
+    let tear_dir = select(-1.0, 1.0, fx_hash2u(band ^ 0x85ebca6bu, tear_tick) > 0.5);
+    let tear = tear_hit * tear_dir * (0.05 + 0.12 * fx_hash2u(band ^ 0xc2b2ae35u, tear_tick));
+    // Jitter: a fine horizontal shake that rolls down the picture.
+    let line_pos = y * 160.0;
+    let line = u32(floor(line_pos));
+    let shake_tick = fx_tick(time, speed * 16.0);
+    let a = fx_hash2u(line, shake_tick);
+    let b = fx_hash2u(line + 1u, shake_tick);
+    let lf = fract(line_pos);
+    let fine = (mix(a, b, lf * lf * (3.0 - 2.0 * lf)) - 0.5) * 0.02 * jitter * intensity;
+    let moved = row_hit * slice_gate + tear_hit;
+    var warped_uv = vec2<f32>(uv.x + shift + fine + tear, uv.y);
+    // Displaced bands wrap round like a broken line buffer.
+    warped_uv.x = select(warped_uv.x, fract(warped_uv.x), moved > 0.0);
+    let split = rgb_split * intensity * (0.003 + row_hit * 0.02 + tear_hit * 0.035);
+    var rgb = vec3<f32>(
+      sample_rgb(warped_uv + vec2<f32>(split, 0.0)).r,
+      sample_rgb(warped_uv).g,
+      sample_rgb(warped_uv - vec2<f32>(split, 0.0)).b,
+    );
+    // Broken blocks on the moved bands: crushed, channel-swapped colour.
+    let block_x = u32(floor(fract(warped_uv.x) * mix(32.0, 8.0, block_size)));
+    let fault = fx_hash3u(block_x, row, tick ^ 0x1b873593u);
+    if (moved > 0.0 && fault < intensity * 0.3) {
+      let levels = 3.0 + floor(fault * 10.0);
+      let crushed = floor(rgb * levels + vec3<f32>(0.5)) / levels;
+      let swapped = select(crushed.brg, crushed.gbr, fault < intensity * 0.15);
+      rgb = mix(rgb, swapped, 0.85);
+    }
+    return vec4<f32>(rgb, src.a);
   }
   if (code == 17u) {
     let rolloff = clamp(u.params0.x, 0.0, 1.0);
@@ -9101,6 +9194,190 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let result = mix(mixed, stained, pigment);
     return vec4<f32>(clamp(mix(src.rgb, result, blend), vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
   }
+  if (code == 187u) {
+    // block-corrupt: a damaged compressed video stream. A slice of
+    // macroblocks fails at a random block and stays broken to the end of the
+    // slice: the run smears the last good pixels across, copies picture from
+    // the wrong place, or decodes to flat blocks with wrong colour and stray
+    // DCT stripes. Healthy slices stay clean.
+    let res = max(u.resolution_time.xy, vec2<f32>(1.0));
+    let time = max(0.0, u.resolution_time.z);
+    let speed = clamp(u.params0.x, 0.0, 3.0);
+    // Block size is in 1080p pixels so a look holds at 4K.
+    let bs = max(4.0, clamp(u.params0.y, 4.0, 128.0) * max(res.y / 1080.0, 0.25));
+    let smear = clamp(u.params0.z, 0.0, 1.0);
+    let run = clamp(u.params0.w, 0.0, 1.0);
+    let color_fault = clamp(u.params1.x, 0.0, 1.0);
+    let motion = clamp(u.params1.y, 0.0, 1.0);
+    let audio = clamp(u.params1.z, 0.0, 1.5);
+    let wet = clamp(u.params1.w, 0.0, 1.0);
+    let intensity = clamp(amount + audio * 0.75, 0.0, 1.0);
+    if (intensity <= 0.0001 || wet <= 0.0001) {
+      return src;
+    }
+    let px = clamp(uv, vec2<f32>(0.0), vec2<f32>(0.99999)) * res;
+    let cols = max(1u, u32(ceil(res.x / bs)));
+    let cell = vec2<u32>(u32(px.x / bs), u32(px.y / bs));
+    let in_block = (px - vec2<f32>(cell) * bs) / bs;
+    // Slices run in raster order, Slice length sets how far a failure
+    // spreads (half a row to six rows); each slice re-rolls on its own moment.
+    let slice_len = max(2u, u32(f32(cols) * mix(0.5, 6.0, run)));
+    let index = cell.y * cols + cell.x;
+    let slice = index / slice_len;
+    let pos = index % slice_len;
+    let tick = u32(floor(time * speed * 5.0 + fx_hash2u(slice, 0x51ed27u) * 4.0));
+    let failed = fx_hash2u(slice, tick) < intensity * 0.75;
+    // Breaks come early more often than late, so most runs spill onto the
+    // block rows below.
+    let start_roll = fx_hash2u(slice ^ 0xa511e9b3u, tick);
+    let start = u32(start_roll * start_roll * f32(slice_len) * 0.7);
+    let in_run = failed && pos >= start;
+    let lone = fx_hash3u(cell.x, cell.y, tick ^ 0x2545f491u) < intensity * 0.012;
+    if (!in_run && !lone) {
+      return src;
+    }
+    let start_index = select(index, slice * slice_len + start, in_run);
+    let start_cell = vec2<u32>(start_index % cols, start_index / cols);
+    let block_roll = fx_hash3u(cell.x, cell.y, tick ^ 0x1b873593u);
+    // One failure kind per run (a decoder fails the same way along a
+    // slice), picked by the Smear and Motion weights against flat blocks.
+    let kind_roll = fx_hash2u(slice ^ 0x68bc21ebu, tick) * (smear + motion + 0.25);
+    var result_rgb = color;
+    if (kind_roll < smear) {
+      if (cell.y == start_cell.y) {
+        // The last good column, dragged across the run.
+        let edge_x = max(0.0, f32(start_cell.x) * bs - 1.0);
+        result_rgb = sample_rgb(vec2<f32>(edge_x + 0.5, px.y) / res);
+      } else {
+        // Wrapped onto the next block row: the line above drips down.
+        let edge_y = max(0.0, f32(cell.y) * bs - 1.0);
+        result_rgb = sample_rgb(vec2<f32>(px.x, edge_y + 0.5) / res);
+      }
+      result_rgb = result_rgb * (0.92 + 0.16 * block_roll);
+    } else if (kind_roll < smear + motion) {
+      // Wrong motion vector: the whole run shows picture from elsewhere,
+      // a few blocks away, in half-block steps.
+      let mv = vec2<f32>(
+        floor((fx_hash2u(slice ^ 0x3c6ef372u, tick) - 0.5) * 12.0),
+        floor((fx_hash2u(slice ^ 0xbb67ae85u, tick) - 0.5) * 6.0),
+      ) * bs * 0.5 * (0.4 + motion);
+      let jitter = (vec2<f32>(fx_hash2u(index, tick ^ 0x7f4a7c15u), fx_hash2u(index ^ 0x6a09e667u, tick)) - vec2<f32>(0.5)) * bs * 0.25;
+      let src_at = clamp(px + mv + jitter, vec2<f32>(0.5), res - vec2<f32>(0.5));
+      result_rgb = sample_rgb(src_at / res);
+    } else {
+      // Stuck DC: the run decodes to one flat colour, the average of the
+      // block where it broke, with a small step at each block edge.
+      let base = vec2<f32>(start_cell) * bs;
+      result_rgb = (
+        sample_rgb((base + vec2<f32>(0.25, 0.25) * bs) / res) +
+        sample_rgb((base + vec2<f32>(0.75, 0.25) * bs) / res) +
+        sample_rgb((base + vec2<f32>(0.25, 0.75) * bs) / res) +
+        sample_rgb((base + vec2<f32>(0.75, 0.75) * bs) / res)
+      ) * 0.25 * (0.95 + 0.1 * block_roll);
+    }
+    // Colour faults hit whole runs; stripes land on some of their blocks.
+    let fault_roll = select(block_roll, fx_hash2u(slice ^ 0x9b05688cu, tick), in_run);
+    if (fault_roll < color_fault * 0.8) {
+      // Colour faults in YCbCr: lost chroma turns green or magenta, and a
+      // wrong coefficient leaves cosine stripes across the block.
+      var ycc = vec3<f32>(
+        dot(result_rgb, vec3<f32>(0.299, 0.587, 0.114)),
+        dot(result_rgb, vec3<f32>(-0.169, -0.331, 0.5)),
+        dot(result_rgb, vec3<f32>(0.5, -0.419, -0.081)),
+      );
+      let fault_kind = fault_roll / max(color_fault * 0.8, 0.001);
+      if (fault_kind < 0.4) {
+        ycc = vec3<f32>(ycc.x * 0.9, -0.16, -0.2);
+      } else if (fault_kind < 0.7) {
+        ycc = vec3<f32>(ycc.x, ycc.y * 0.3 + 0.17, ycc.z * 0.3 + 0.2);
+      } else {
+        ycc = vec3<f32>(ycc.x, ycc.z * 1.6, ycc.y * 1.6);
+      }
+      let fu = 1.0 + floor(fx_hash2u(index, tick ^ 0x510e527fu) * 7.0);
+      let fv = floor(fx_hash2u(index ^ 0x1f83d9abu, tick) * 8.0);
+      let dct = cos(3.14159265 * (2.0 * floor(in_block.x * 8.0) + 1.0) * fu / 16.0) *
+        cos(3.14159265 * (2.0 * floor(in_block.y * 8.0) + 1.0) * fv / 16.0);
+      ycc.x = ycc.x + dct * 0.24 * step(block_roll, 0.25 + color_fault * 0.5);
+      result_rgb = vec3<f32>(
+        ycc.x + 1.402 * ycc.z,
+        ycc.x - 0.344 * ycc.y - 0.714 * ycc.z,
+        ycc.x + 1.772 * ycc.y,
+      );
+    }
+    return vec4<f32>(mix(color, clamp(result_rgb, vec3<f32>(0.0), vec3<f32>(1.0)), wet), src.a);
+  }
+  if (code == 188u) {
+    // data-bend: the picture read back as raw bytes with the wrong numbers.
+    // Bands of lines are read with the wrong row length (the image slants
+    // and wraps round), channels slip onto their neighbours' bytes, and bit
+    // damage crushes and flips colour. Some bands repeat one line downward,
+    // like a buffer that ran dry.
+    let res = max(u.resolution_time.xy, vec2<f32>(1.0));
+    let time = max(0.0, u.resolution_time.z);
+    let speed = clamp(u.params0.x, 0.0, 3.0);
+    let stride = clamp(u.params0.y, 0.0, 1.0);
+    let band_size = clamp(u.params0.z, 0.0, 1.0);
+    let slip = clamp(u.params0.w, 0.0, 1.0);
+    let crush = clamp(u.params1.x, 0.0, 1.0);
+    let audio = clamp(u.params1.y, 0.0, 1.5);
+    let wet = clamp(u.params1.z, 0.0, 1.0);
+    let intensity = clamp(amount + audio * 0.75, 0.0, 1.0);
+    if (intensity <= 0.0001 || wet <= 0.0001) {
+      return src;
+    }
+    let px = clamp(uv, vec2<f32>(0.0), vec2<f32>(0.99999)) * res;
+    let band_h = max(2.0, mix(res.y / 40.0, res.y / 3.0, band_size));
+    let band = u32(px.y / band_h);
+    let tick = u32(floor(time * speed * 2.5 + fx_hash2u(band, 0x3c6ef372u) * 3.0));
+    if (fx_hash2u(band, tick) >= intensity * 0.65) {
+      return src;
+    }
+    let ly = px.y - f32(band) * band_h;
+    // Stride error: each line is read d pixels further on than the last.
+    // It slides slowly while the band holds.
+    let d_seed = fx_hash2u(band ^ 0xb5297a4du, tick) - 0.5;
+    let slide = sin(time * (0.35 + speed * 0.9) + f32(band % 64u) * 1.7) * 0.18;
+    let d = (d_seed * 2.0 + slide) * stride * 3.5;
+    let read_x = px.x + ly * d;
+    // Running off the end of a line continues on the next one.
+    let wraps = floor(read_x / res.x);
+    var src_px = vec2<f32>(read_x - wraps * res.x, px.y + wraps);
+    // Buffer ran dry: below a cut, one line repeats.
+    let dry_roll = fx_hash2u(band ^ 0x68e31da4u, tick);
+    if (dry_roll < 0.22) {
+      let cut = band_h * (0.2 + 0.6 * fx_hash2u(band ^ 0x1b56c4e9u, tick));
+      if (ly > cut) {
+        src_px.y = f32(band) * band_h + cut;
+      }
+    }
+    src_px.y = clamp(src_px.y, 0.5, res.y - 0.5);
+    // Channel slip: red and blue read a few bytes off, wrapping round the
+    // line; sometimes the bytes land a whole channel over.
+    let slip_px = slip * res.x * 0.03 * (0.25 + fx_hash2u(band ^ 0x2545f491u, tick));
+    let r_x = fract((src_px.x + slip_px) / res.x);
+    let b_x = fract((src_px.x - slip_px) / res.x);
+    var rgb = vec3<f32>(
+      sample_rgb(vec2<f32>(r_x, src_px.y / res.y)).r,
+      sample_rgb(src_px / res).g,
+      sample_rgb(vec2<f32>(b_x, src_px.y / res.y)).b,
+    );
+    let rotate_roll = fx_hash2u(band ^ 0x7f4a7c15u, tick);
+    if (rotate_roll < slip * 0.5) {
+      rgb = select(rgb.brg, rgb.gbr, rotate_roll < slip * 0.25);
+    }
+    // Bit damage: drop low bits and flip high ones, one mask per band.
+    let crush_roll = fx_hash2u(band ^ 0x9e3779b9u, tick);
+    if (crush_roll < crush * 0.8) {
+      let drop_bits = 1u + u32(crush * 4.0 * fx_hash2u(band ^ 0xc2b2ae35u, tick));
+      let keep = 0xffu << drop_bits;
+      let flips = fx_pcg(band ^ (tick * 2654435761u));
+      let flip = vec3<u32>(flips & 0xe0u, (flips >> 8u) & 0xe0u, (flips >> 16u) & 0xe0u);
+      let bytes = vec3<u32>(clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0)) * 255.0 + vec3<f32>(0.5));
+      let damaged = (bytes & vec3<u32>(keep)) ^ select(vec3<u32>(0u), flip, vec3<bool>(crush_roll < crush * 0.45));
+      rgb = vec3<f32>(damaged) / 255.0;
+    }
+    return vec4<f32>(mix(color, rgb, wet), src.a);
+  }
   if (code == 183u) {
     // recursive-echo: zoom+rotate+translate echo stack
     let depth = clamp(round(u.params0.x), 2.0, 16.0);
@@ -9486,6 +9763,10 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param6 = clampNumber(params.tearChance ?? params.param6, 0, 1, 0);
     param7 = clampNumber(params.triggerMode ?? params.param7, 0, 3, 0);
     param8 = clampNumber(params.freezeBurst ?? params.glitchFreezeBurst ?? params.param8, 0, 1, 0);
+    // Live audio for the Audio reactive and Beat snap triggers (injected by
+    // the per-frame graph rebuild; silence packs 0).
+    param9 = clampNumber(params.audioLevel, 0, 1.5, 0);
+    param10 = clampNumber(params.audioBeat, 0, 1, 0);
   } else if (options.effect === 'exposure') {
     param0 = clampNumber(params.rollOff ?? params.param0, 0, 1, 0);
     param1 = clampNumber(params.highlightProtect ?? params.param1, 0, 1, 0);
@@ -10861,6 +11142,29 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param4 = clampNumber(params.inkBleed ?? params.param4, 0, 1, 0.6);
     param5 = clampNumber(params.inkPigment ?? params.param5, 0, 1, 0.5);
     param6 = clampNumber(params.inkMix ?? params.param6, 0, 1, 1);
+    param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'block-corrupt') {
+    amount = clampNumber(options.amount ?? params.bcIntensity ?? params.amount, 0, 1, 0.55);
+    param0 = clampNumber(params.bcSpeed ?? params.param0, 0, 3, 0.8);
+    param1 = clampNumber(params.bcBlockSize ?? params.param1, 8, 96, 32);
+    param2 = clampNumber(params.bcSmear ?? params.param2, 0, 1, 0.6);
+    param3 = clampNumber(params.bcRun ?? params.param3, 0, 1, 0.5);
+    param4 = clampNumber(params.bcColorFault ?? params.param4, 0, 1, 0.45);
+    param5 = clampNumber(params.bcMotion ?? params.param5, 0, 1, 0.5);
+    // Audio react folds the live level (params.audioLevel, injected by the
+    // per-frame rebuild) into one number; silence or react 0 packs 0.
+    param6 = clampNumber(params.bcAudioReact ?? 0, 0, 1, 0) * clampNumber(params.audioLevel, 0, 1.5, 0);
+    param7 = clampNumber(params.bcMix ?? params.param7, 0, 1, 1);
+    param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'data-bend') {
+    amount = clampNumber(options.amount ?? params.dbIntensity ?? params.amount, 0, 1, 0.6);
+    param0 = clampNumber(params.dbSpeed ?? params.param0, 0, 3, 0.6);
+    param1 = clampNumber(params.dbStride ?? params.param1, 0, 1, 0.4);
+    param2 = clampNumber(params.dbBandSize ?? params.param2, 0, 1, 0.45);
+    param3 = clampNumber(params.dbChannelSlip ?? params.param3, 0, 1, 0.5);
+    param4 = clampNumber(params.dbBitCrush ?? params.param4, 0, 1, 0.35);
+    param5 = clampNumber(params.dbAudioReact ?? 0, 0, 1, 0) * clampNumber(params.audioLevel, 0, 1.5, 0);
+    param6 = clampNumber(params.dbMix ?? params.param6, 0, 1, 1);
     param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
   } else if (options.effect === 'flow-field-trails') {
     amount = clampNumber(options.amount ?? params.fftTrailLength ?? params.amount, 0, 1, 0.4);

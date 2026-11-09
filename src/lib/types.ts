@@ -3282,6 +3282,8 @@ export type EffectType =
   | 'emboss'
   | 'vhs'
   | 'glitch'
+  | 'blockCorrupt'   // Compressed-stream macroblock corruption
+  | 'dataBend'       // Wrong-stride, channel-slip, bit-damage bands
   | 'rgbShift'
   | 'scanlines'
   | 'fmScanlines'
@@ -4463,6 +4465,27 @@ export interface EffectParams {
   inkBleed?: number;               // 0-1
   inkPigment?: number;             // 0-1
   inkMix?: number;                 // 0-1
+
+  // Block Corrupt: a damaged compressed video stream
+  bcIntensity?: number;            // 0-1
+  bcSpeed?: number;                // 0-3
+  bcBlockSize?: number;            // 8-96 px at 1080p
+  bcSmear?: number;                // 0-1
+  bcRun?: number;                  // 0-1
+  bcColorFault?: number;           // 0-1
+  bcMotion?: number;               // 0-1
+  bcAudioReact?: number;           // 0-1
+  bcMix?: number;                  // 0-1
+
+  // Data Bend: the picture misread as raw bytes
+  dbIntensity?: number;            // 0-1
+  dbSpeed?: number;                // 0-3
+  dbStride?: number;               // 0-1
+  dbBandSize?: number;             // 0-1
+  dbChannelSlip?: number;          // 0-1
+  dbBitCrush?: number;             // 0-1
+  dbAudioReact?: number;           // 0-1
+  dbMix?: number;                  // 0-1
 
   // Flow Field Trails (hero)
   fftFlowScale?: number;           // 0.5-16

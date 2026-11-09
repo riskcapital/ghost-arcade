@@ -380,6 +380,8 @@ describe('Native effect-pass template', () => {
       ['cube-lut', 184],
       ['paint-drip', 185],
       ['ink-flow', 186],
+      ['block-corrupt', 187],
+      ['data-bend', 188],
     ]);
     expect(nativeEffectPassManifestEntry('posterize')).toMatchObject({
       code: 8,

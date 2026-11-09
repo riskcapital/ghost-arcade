@@ -968,6 +968,13 @@ function sourceValuesSignature(layer: Layer): string {
   return `${shaderValuesSignature}:${javascriptValuesSignature}`;
 }
 
+/** The live audio the effect packers read each frame: the level for audio
+ *  react, the beat pulse for Glitch's Beat snap trigger. */
+function liveEffectAudioParams(): { audioLevel: number; audioBeat: number } {
+  const audio = getVisualAudioSnapshot();
+  return { audioLevel: audio.level, audioBeat: audio.beat };
+}
+
 function nativeEffectDescriptors(layer: Layer): string[] {
   const effects = layer.effects || [];
   if (!effects.length) return [];
@@ -6759,7 +6766,7 @@ export class NativeRendererSync {
         effect: effectPass.effect,
         amount: effectPass.amount,
         mix: effectPass.mix ?? 1,
-        params: { ...effectPass.params, audioLevel: getVisualAudioSnapshot().level },
+        params: { ...effectPass.params, ...liveEffectAudioParams() },
       })),
       width,
       height,
@@ -7546,7 +7553,7 @@ export class NativeRendererSync {
               effect: effectPass.effect,
               amount: effectPass.amount,
               mix: effectPass.mix ?? 1,
-              params: { ...effectPass.params, audioLevel: getVisualAudioSnapshot().level },
+              params: { ...effectPass.params, ...liveEffectAudioParams() },
             })),
             width,
             height,
@@ -8068,7 +8075,7 @@ export class NativeRendererSync {
               effect: effectPass.effect,
               amount: effectPass.amount,
               mix: effectPass.mix ?? 1,
-              params: { ...effectPass.params, audioLevel: getVisualAudioSnapshot().level },
+              params: { ...effectPass.params, ...liveEffectAudioParams() },
             })),
             width,
             height,
@@ -8477,7 +8484,7 @@ export class NativeRendererSync {
           effect: entry.pass!.effect,
           amount: entry.pass!.amount,
           mix: Math.max(0, Math.min(1, entry.mix)),
-          params: { ...entry.pass!.params, audioLevel: getVisualAudioSnapshot().level },
+          params: { ...entry.pass!.params, ...liveEffectAudioParams() },
         })),
         width,
         height,
