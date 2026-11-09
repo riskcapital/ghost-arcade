@@ -216,6 +216,26 @@ describe('Glitch effects', () => {
       // Slant alone (no slip, no bit damage) still bends the bars.
       const slanted = await render('data-bend', HOUR, { ...bend, dbIntensity: 1, dbStride: 1, dbChannelSlip: 0, dbBitCrush: 0 });
       expect(changedShare(slanted, plain)).toBeGreaterThan(0.1);
+
+      // Effects that re-roll their grain, dropouts or tiles on a clock tick
+      // keep doing it an hour, and ten, into a show. With float hashes of
+      // cell + tick these froze once the tick count ran into the thousands.
+      const ticking: Array<[NativeEffectPassId, Record<string, number>]> = [
+        ['film-grain', { grainSize: 1, grainShadow: 0.7, grainMid: 1, grainHigh: 0.5, grainMono: 0, grainStock: 1, grainColorJitter: 0.3, grainAnimSpeed: 1 }],
+        ['tape-dropout', { tapeDropoutDensity: 0.8, tapeDropoutLength: 0.5, tapeDropoutColor: 0, tapeDropoutSpeed: 1, tapeDropoutNoise: 0.7 }],
+        ['datamosh-lite', { amount: 0.6, amount2: 0.3, amount3: 0.4 }],
+        ['night-vision', { nightVisionNoise: 0.6, nightVisionRollingNoise: 0.6 }],
+        ['vhs-full-deck', { vhsFdTracking: 0.5, vhsFdHeadSwitch: 0.4, vhsFdDropouts: 0.6, vhsFdTapeNoise: 0.6, vhsFdTrackingJump: 0.1 }],
+        ['noise', { noiseAnimSpeed: 1 }],
+      ];
+      for (const [effect, params] of ticking) {
+        for (const start of [HOUR, 10 * HOUR]) {
+          const now = await render(effect, start + 0.1, params);
+          const later = await render(effect, start + 0.7, params);
+          if (process.env.GA_GLITCH_LOG) console.log(effect, start, changedShare(now, later));
+          expect(changedShare(now, later), `${effect} at ${start} s`).toBeGreaterThan(0.01);
+        }
+      }
     } finally {
       const log = await rpc.close();
       if (process.env.GA_GLITCH_LOG) console.log(String(log).slice(-3000));
