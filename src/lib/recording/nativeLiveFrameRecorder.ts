@@ -9,6 +9,7 @@ import {
   submitNativeRendererCommands,
 } from '../api/native-renderer';
 import type { OfflineRenderSettings } from './offlineRender';
+import { liveFrameRepeat } from './liveFramePacing';
 import type { RecorderHandle } from './recorder';
 import {
   recordingRequest,
@@ -38,8 +39,13 @@ export interface NativeLiveFrameRecorderOptions {
   quality?: OfflineRenderSettings['quality'];
   namePrefix?: string;
   unavailableMessage?: string;
+  /** After saving to the media library, show a Save dialog and copy the
+   *  MP4 to the chosen path (same as the main recorder's Auto-download). */
+  promptSave?: boolean;
   onDurationUpdate?: (seconds: number) => void;
-  onComplete?: () => void;
+  /** `savedPath` is where the Save dialog copied the file, or null when
+   *  it was cancelled / not shown (the recording is in the media library). */
+  onComplete?: (savedPath?: string | null) => void;
   onError?: (error: Error) => void;
   /** Runs after the MP4 is finalized on disk but before it is registered
    *  in the media library — the hook the audio-sidecar mux uses so the
@@ -90,6 +96,7 @@ export interface NativeRendererLiveFrameRecorderOptions {
   finalizeOutput?: (outputPath: string, result?: { nativeAudio: boolean }) => Promise<void> | void;
 }
 
+const MAX_WRITES_IN_FLIGHT = 2;
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => window.setTimeout(resolve, ms));
 }
@@ -215,9 +222,15 @@ export async function startNativeLiveFrameRecording(
   let active = true;
   let finishing = false;
   let duration = 0;
+  /** Frames handed to the encoder queue (written or in flight). */
   let frameIndex = 0;
   let rafId = 0;
   let pumpPromise: Promise<void> | null = null;
+  // Writes stay in order on one chain; a capture may run while the
+  // previous frame is still crossing IPC, at most MAX_WRITES_IN_FLIGHT deep.
+  let writeChain: Promise<void> = Promise.resolve();
+  let writesInFlight = 0;
+  let writeError: unknown = null;
   const startedAt = performance.now();
   const frameMs = 1000 / fps;
   let nextFrameAt = startedAt;
@@ -245,10 +258,21 @@ export async function startNativeLiveFrameRecording(
 
   const captureAndWrite = async () => {
     try {
+      if (writeError) throw writeError;
+      if (writesInFlight >= MAX_WRITES_IN_FLIGHT) await writeChain;
       const frame = await options.captureFrame(width, height);
       if (!active || finishing) return;
-      await writeNativeMp4Frame(session, frameIndex, frame);
-      frameIndex++;
+      // Wall-clock pacing: a capture that arrives late also covers the
+      // frame slots it missed, so the file plays back in real time instead
+      // of sped up when the view renders slower than the recording rate.
+      const repeat = liveFrameRepeat(frameIndex, performance.now() - startedAt, fps);
+      const first = frameIndex;
+      frameIndex += repeat;
+      writesInFlight++;
+      writeChain = writeChain
+        .then(() => writeNativeMp4Frame(session, first, frame, repeat))
+        .catch((err) => { writeError ??= err; })
+        .finally(() => { writesInFlight--; });
     } catch (err) {
       if (!active || finishing) return;
       await fail(err);
@@ -281,12 +305,17 @@ export async function startNativeLiveFrameRecording(
       await Promise.race([pumpPromise.catch(() => {}), delay(1500)]);
     }
     try {
+      await writeChain;
+      if (writeError) throw writeError;
       if (frameIndex <= 0) {
         await cancelNativeMp4FrameEncoder(session);
         throw new Error('Recording stopped before any frames were captured.');
       }
-      await saveMp4ToLibrary(session, frameIndex, namePrefix, options.finalizeOutput);
-      options.onComplete?.();
+      const saved = await saveMp4ToLibrary(session, frameIndex, namePrefix, options.finalizeOutput);
+      const savedPath = options.promptSave
+        ? await promptSaveMp4(saved.outputPath, saved.name, 'Save Recording', saved.extension)
+        : null;
+      options.onComplete?.(savedPath);
     } catch (err) {
       await cancelNativeMp4FrameEncoder(session);
       options.onError?.(toError(err));

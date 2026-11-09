@@ -2668,10 +2668,13 @@
       // Conflicts checked before claiming it: VJ mode's own shortcuts are
       // 1-9/0 and F1-F8 (above); SynthVision/Performer binds its keys on its
       // own capture-phase document handler and is only live in VJ mode,
-      // where the show tray force-closes itself; nothing else in the app
-      // binds Space.
+      // where the show tray force-closes itself; the Stage 3D Designer uses
+      // Space as its hand tool and is skipped below.
       if (e.code === 'Space' && !e.repeat) {
         if (inInput || e.ctrlKey || e.metaKey || e.altKey) return;
+        // The Stage 3D Designer owns Space while it is open: hold it to
+        // grab and pan the stage camera (Stage3DRenderer).
+        if (showStage3D) return;
         // SELECT is not covered by `inInput` and Space opens a native
         // dropdown — never steal it from one.
         if (target.tagName === 'SELECT') return;

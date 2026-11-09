@@ -1311,8 +1311,14 @@ async function writeMp4FrameEncoderFrame(args = {}) {
     throw new Error(`MP4 frame order mismatch: got ${frameIndex}, expected ${job.writtenFrames}.`);
   }
 
-  await writeEncoderStdin(job, buffer, frameIndex, 'MP4 frame');
-  job.writtenFrames++;
+  // Live recorders pass `repeat` when a capture arrived late: the same
+  // picture fills every slot it covers, so the file keeps wall-clock time
+  // without sending the pixels over IPC again.
+  const repeat = Math.round(clampNumber(args.repeat, 1, 600, 1));
+  for (let i = 0; i < repeat; i++) {
+    await writeEncoderStdin(job, buffer, frameIndex + i, 'MP4 frame');
+    job.writtenFrames++;
+  }
   return { success: true, writtenFrames: job.writtenFrames };
 }
 
@@ -7787,9 +7793,14 @@ function registerIpcHandlers() {
   // Returns the user-chosen file path (absolute) or null if cancelled.
   // Renderer uses this to save .gha files to a known directory so we can
   // materialize blob URLs alongside as portable sibling files.
-  ipcMain.handle('save_project_dialog', async (_, args) => {
+  ipcMain.handle('save_project_dialog', async (event, args) => {
     const { defaultPath, title, filters } = args || {};
-    const win = mainWindow || BrowserWindow.getFocusedWindow();
+    // Attach the sheet to the window that asked (e.g. the Stage Simulator
+    // window saving a recording) so it opens where the user is looking,
+    // not behind it on the main window. Hidden helper windows fall back.
+    const sender = BrowserWindow.fromWebContents(event.sender);
+    const win = (sender && !sender.isDestroyed() && sender.isVisible() ? sender : null)
+      || mainWindow || BrowserWindow.getFocusedWindow();
     if (!win) return { canceled: true, filePath: null };
     const result = await dialog.showSaveDialog(win, {
       title: title || 'Save Project As',

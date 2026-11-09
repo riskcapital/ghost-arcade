@@ -589,6 +589,8 @@ export async function writeNativeMp4Frame(
   session: NativeMp4FrameEncoderSession,
   frameIndex: number,
   pixels: { width: number; height: number; data: Uint8Array },
+  /** Write the frame into this many consecutive slots (live pacing). */
+  repeat = 1,
 ): Promise<void> {
   if (pixels.width !== session.width || pixels.height !== session.height) {
     throw new Error(
@@ -600,6 +602,7 @@ export async function writeNativeMp4Frame(
     frameIndex,
     bytes: pixels.data,
     pixelFormat: session.pixelFormat,
+    ...(repeat > 1 ? { repeat } : {}),
   });
   if (!result?.success) {
     throw new Error(result?.error || `Could not write MP4 frame ${frameIndex}`);

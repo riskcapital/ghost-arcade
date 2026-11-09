@@ -551,6 +551,28 @@ function domeScreenPlacement(layer: Layer, dome: LedDome):
   return { u0, u1, yTop, yBottom, chordW, chordH };
 }
 
+/** Source rectangle (in backing-store pixels) of a capture: the centred
+ *  part of the displayed view whose aspect matches the requested frame.
+ *  The backing store holds the view squeezed or stretched to its own
+ *  aspect, so a displayed width maps to backing pixels by bw/dw. */
+export function captureSourceCrop(
+  backingW: number, backingH: number,
+  displayW: number, displayH: number,
+  outW: number, outH: number,
+): { x: number; y: number; w: number; h: number } {
+  const displayAspect = displayW / Math.max(1, displayH);
+  const outAspect = outW / Math.max(1, outH);
+  if (!Number.isFinite(displayAspect) || !Number.isFinite(outAspect) || Math.abs(displayAspect - outAspect) < 1e-3) {
+    return { x: 0, y: 0, w: backingW, h: backingH };
+  }
+  if (displayAspect > outAspect) {
+    const w = backingW * (outAspect / displayAspect);
+    return { x: (backingW - w) / 2, y: 0, w, h: backingH };
+  }
+  const h = backingH * (displayAspect / outAspect);
+  return { x: 0, y: (backingH - h) / 2, w: backingW, h };
+}
+
 function textureForLayer(layer: Layer | undefined, masterTexture: THREE.Texture | null): THREE.Texture | null {
   if (!layer) return masterTexture;
   // Direct texture on the layer's source (set by VJ injection in
@@ -716,11 +738,17 @@ export class Stage3DRenderer {
     pointerMove: this.onPointerMove.bind(this),
     pointerUp: this.onPointerUp.bind(this),
     keyDown: this.onKeyDown.bind(this),
+    keyUp: this.onKeyUp.bind(this),
+    windowBlur: () => this.setSpacePan(false),
     wheel: this.onWheel.bind(this),
     transformDraggingChanged: this.onTransformDraggingChanged.bind(this),
     transformChange: this.onTransformChange.bind(this),
   };
   private pointerDownPos: { x: number; y: number } | null = null;
+  /** Hold-Space hand tool: while Space is down a left drag pans the camera
+   *  in screen X/Y instead of orbiting, picking or moving the selection. */
+  private spacePan = false;
+  private spacePanPointerUpCleanup: (() => void) | null = null;
   private directDrag: DirectDragState | null = null;
   private pendingClickPointerUpCleanup: (() => void) | null = null;
   private selectionUnsub: (() => void) | null = null;
@@ -827,6 +855,8 @@ export class Stage3DRenderer {
 
     canvas.addEventListener('pointerdown', this.bound.pointerDown);
     window.addEventListener('keydown', this.bound.keyDown);
+    window.addEventListener('keyup', this.bound.keyUp);
+    window.addEventListener('blur', this.bound.windowBlur);
     // Shift+scroll = FOV (capture phase so OrbitControls' own wheel
     // listener doesn't also dolly on the same gesture).
     canvas.addEventListener('wheel', this.bound.wheel, { capture: true, passive: false });
@@ -1369,7 +1399,19 @@ export class Stage3DRenderer {
     }
     this.frameTick++;
 
-    this.renderScene(renderer, width, height);
+    if (this.pendingCapture) {
+      // A frame is being captured (recording, Demo Reel): draw it without
+      // the editor's gizmo and selection outlines, then draw the on-screen
+      // frame again with them so the live view keeps its helpers.
+      const hidden = this.hideEditorHelpers();
+      this.renderScene(renderer, width, height);
+      if (hidden.length > 0) {
+        for (const obj of hidden) obj.visible = true;
+        this.renderScene(renderer, width, height);
+      }
+    } else {
+      this.renderScene(renderer, width, height);
+    }
 
     // Recording/reel preview copy: sample the live canvas immediately
     // after render so the encoded frame matches the on-screen lighting.
@@ -1558,6 +1600,11 @@ export class Stage3DRenderer {
     window.removeEventListener('pointermove', this.bound.pointerMove);
     window.removeEventListener('pointerup', this.bound.pointerUp);
     window.removeEventListener('keydown', this.bound.keyDown);
+    window.removeEventListener('keyup', this.bound.keyUp);
+    window.removeEventListener('blur', this.bound.windowBlur);
+    this.spacePanPointerUpCleanup?.();
+    this.spacePanPointerUpCleanup = null;
+    this.setSpacePan(false);
     this.canvas.removeEventListener('wheel', this.bound.wheel, { capture: true } as EventListenerOptions);
     this.atmosphereRig?.dispose();
     this.atmosphereRig = null;
@@ -1671,6 +1718,20 @@ export class Stage3DRenderer {
     this.fulfillCapture(renderer, width, height);
   }
 
+  /** Hide the editor-only overlays (transform gizmo, selection outlines)
+   *  and return the ones that were visible so the caller can restore them. */
+  private hideEditorHelpers(): THREE.Object3D[] {
+    const helper = ((this.transformControls as any).getHelper?.() ?? this.transformControls) as THREE.Object3D;
+    const hidden: THREE.Object3D[] = [];
+    for (const obj of [helper, ...this.selectionOutlines.values()]) {
+      if (obj?.visible) {
+        obj.visible = false;
+        hidden.push(obj);
+      }
+    }
+    return hidden;
+  }
+
   private frameLooksBlankRgb(data: Uint8Array): boolean {
     if (data.length === 0) return true;
     const pixels = data.length >> 2;
@@ -1713,7 +1774,17 @@ export class Stage3DRenderer {
       if (!this.captureCtx) throw new Error('Stage capture 2D context unavailable');
     }
     this.captureCtx.clearRect(0, 0, w, h);
-    this.captureCtx.drawImage(this.canvas, 0, 0, w, h);
+    // The backing store is sized to the project output while the picture is
+    // projected at the window's DISPLAYED aspect (see render()), so it is
+    // anamorphic whenever the two differ. Take the centred region of the
+    // displayed view that matches the requested aspect: the capture keeps
+    // the live view's proportions instead of stretching it.
+    const crop = captureSourceCrop(
+      sourceW, sourceH,
+      this.canvas.clientWidth || sourceW, this.canvas.clientHeight || sourceH,
+      w, h,
+    );
+    this.captureCtx.drawImage(this.canvas, crop.x, crop.y, crop.w, crop.h, 0, 0, w, h);
     const image = this.captureCtx.getImageData(0, 0, w, h);
     const data = new Uint8Array(image.data.buffer.slice(0));
     for (let i = 3; i < data.length; i += 4) data[i] = 255;
@@ -2686,6 +2757,19 @@ export class Stage3DRenderer {
 
   private onPointerDown(event: PointerEvent): void {
     if (event.button !== 0) return;
+    if (this.spacePan) {
+      // OrbitControls (mapped to pan) owns the drag; no pick, no move.
+      this.canvas.style.cursor = 'grabbing';
+      this.spacePanPointerUpCleanup?.();
+      const onUp = () => {
+        window.removeEventListener('pointerup', onUp);
+        this.spacePanPointerUpCleanup = null;
+        this.canvas.style.cursor = this.spacePan ? 'grab' : '';
+      };
+      this.spacePanPointerUpCleanup = () => window.removeEventListener('pointerup', onUp);
+      window.addEventListener('pointerup', onUp);
+      return;
+    }
     if ((this.transformControls as any).dragging) return;
     if ((this.transformControls as any).axis) return;
     this.pointerDownPos = { x: event.clientX, y: event.clientY };
@@ -2866,6 +2950,14 @@ export class Stage3DRenderer {
     const tag = (event.target as HTMLElement | null)?.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
     if ((event.target as HTMLElement | null)?.isContentEditable) return;
+    if (event.code === 'Space' || event.key === ' ') {
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      // Ours while the stage is showing: also keeps a focused toolbar
+      // button (Rec, Top…) from being pressed by the Space bar.
+      event.preventDefault();
+      if (!event.repeat) this.setSpacePan(true);
+      return;
+    }
     const k = event.key.toLowerCase();
     if (k === 'w' || k === 'g') { this.setGizmoMode('translate'); }
     else if (k === 'e' || k === 'r') { this.setGizmoMode('rotate'); }
@@ -2882,6 +2974,23 @@ export class Stage3DRenderer {
       event.preventDefault();
       this.truck(event.key === 'ArrowLeft' ? -1 : 1);
     }
+  }
+
+  private onKeyUp(event: KeyboardEvent): void {
+    if (event.code !== 'Space' && event.key !== ' ') return;
+    if (!this.spacePan) return;
+    event.preventDefault();
+    this.setSpacePan(false);
+  }
+
+  /** Hand tool on/off: left drag pans (screen-space, so X/Y on screen)
+   *  while it is on; the gizmo is disabled so it cannot grab the drag. */
+  private setSpacePan(on: boolean): void {
+    if (this.spacePan === on) return;
+    this.spacePan = on;
+    this.controls.mouseButtons.LEFT = on ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
+    (this.transformControls as any).enabled = !on;
+    if (!this.spacePanPointerUpCleanup) this.canvas.style.cursor = on ? 'grab' : '';
   }
 
   /** Camera FOV in degrees — clamped to a usable creative range. Wide

@@ -34,11 +34,9 @@
   import { DEFAULT_ATMOSPHERE, DEFAULT_LIGHTING, type Stage3DScene, type Stage3DVenue, type UserStageElement } from '../../stage3d/types';
   import type { Layer } from '../../types';
   import { startRecording as startCanvasRecording, formatRecordingDuration, type RecorderHandle } from '../../recording/recorder';
-  import {
-    startNativeLiveFrameRecording,
-    startNativeRendererLiveFrameRecording,
-  } from '../../recording/nativeLiveFrameRecorder';
-  import { getNativeRendererCapabilities, setNativeRendererStage3DScene } from '../../api/native-renderer';
+  import { startNativeLiveFrameRecording } from '../../recording/nativeLiveFrameRecorder';
+  import { setNativeRendererStage3DScene } from '../../api/native-renderer';
+  import { settings } from '../../stores/settings';
   import { invoke, isDesktopApp } from '../../bridge';
   import StageNodeProperties from './StageNodeProperties.svelte';
   import StageElementProperties from './StageElementProperties.svelte';
@@ -362,56 +360,16 @@
     if (!controls) { toast('Stage renderer not ready'); return; }
 
     if (isDesktopApp) {
+      // Record exactly what the stage view shows: frames come from the
+      // WebGL view (minus gizmo and selection outlines) and go straight to
+      // the native FFmpeg encoder.
+      //
+      // Not the render core's own stage3d scene: publishing the scene into
+      // the core draws the venue over the core's 2D output — which is the
+      // picture this view maps onto its screens — so the live dome went dim
+      // with grey venue shapes on it, the file recorded that flat overlay,
+      // and the projector output was resized to the recording size.
       recordingDuration = 0;
-      try {
-        const caps = await getNativeRendererCapabilities();
-        const nativeStageReady = !!(
-          caps?.core_capabilities_confirmed &&
-          caps?.features?.native_stage3d &&
-          caps?.features?.native_stage3d_recording_parity &&
-          caps?.features?.native_recording &&
-          caps?.features?.frame_snapshot_export &&
-          caps?.implemented_methods?.includes('set_stage3d_scene') &&
-          caps?.implemented_methods?.includes('export_frame_snapshot')
-        );
-        if (nativeStageReady) {
-          recorderHandle = await startNativeRendererLiveFrameRecording({
-            width: res.w,
-            height: res.h,
-            fps: 30,
-            quality: 'high',
-            namePrefix: 'Stage Recording',
-            prepareFrame: async () => {
-              const nativeScene = buildNativeStage3DScene(get(stage3dScene), get(project).layers, {
-                camera: controls.getCameraState(),
-              });
-              await setNativeRendererStage3DScene(nativeScene);
-            },
-            restore: async () => {
-              await setNativeRendererStage3DScene(null);
-            },
-            onDurationUpdate: (s) => { recordingDuration = s; },
-            onComplete: () => {
-              isRecording = false;
-              recorderHandle = null;
-              toast('Stage recording saved');
-            },
-            onError: (err) => {
-              isRecording = false;
-              recorderHandle = null;
-              toast(err.message || 'Recording failed');
-            },
-          });
-          if (recorderHandle) {
-            isRecording = true;
-            toast(`Stage recording started · ${res.label} native renderer`);
-            return;
-          }
-        }
-      } catch (err) {
-        console.warn('[Stage3D] Native renderer recording unavailable, falling back to live canvas capture:', err);
-      }
-
       try {
         recorderHandle = await startNativeLiveFrameRecording({
           captureFrame: (width, height) => controls.captureFrameAt(width, height),
@@ -420,11 +378,15 @@
           fps: 30,
           quality: 'high',
           namePrefix: 'Stage Recording',
+          // Same rule as the main recorder: the "Auto-download" recording
+          // setting (on by default) asks where to save when it stops.
+          promptSave: !!get(settings).recording?.autoDownload,
           onDurationUpdate: (s) => { recordingDuration = s; },
-          onComplete: () => {
+          onComplete: (savedPath) => {
             isRecording = false;
             recorderHandle = null;
-            toast('Stage recording saved');
+            if (savedPath) toast('Stage recording saved');
+            else toast('Stage recording saved to the media library');
           },
           onError: (err) => {
             isRecording = false;
@@ -434,7 +396,7 @@
         });
         if (recorderHandle) {
           isRecording = true;
-          toast(`Stage recording started · ${res.label} native`);
+          toast(`Stage recording started · ${res.label}`);
           return;
         }
       } catch (err) {
@@ -475,6 +437,7 @@
 
   function stopStageRecording() {
     if (!recorderHandle) return;
+    toast('Finishing stage recording…');
     recorderHandle.stop();
     recorderHandle = null;
     isRecording = false;
