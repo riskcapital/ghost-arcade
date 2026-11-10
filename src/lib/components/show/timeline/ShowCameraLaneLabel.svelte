@@ -3,18 +3,21 @@
    * Label of the Stage camera lane: add a Demo Reel shot at the playhead,
    * or hide the lane while it is empty.
    */
+  import { get } from 'svelte/store';
   import { showTimeline } from '../../../stores/showTimeline';
+  import { showSlice } from './timelineSlices';
   import { demoReel } from '../../../stage3d/demoReel';
   import { CAMERA_LANE_HEIGHT, cameraLaneShown, placeCameraShot } from './cameraLaneUi';
 
   const shots = $derived($demoReel.shots);
-  const empty = $derived($showTimeline.cameraLane.length === 0);
+  const cameraLaneStore = showSlice('cameraLane');
+  const empty = $derived($cameraLaneStore.length === 0);
 
   function onPick(e: Event) {
     const el = e.currentTarget as HTMLSelectElement;
     const id = el.value;
     el.value = '';
-    if (id) placeCameraShot(id, $showTimeline.currentTime);
+    if (id) placeCameraShot(id, get(showTimeline).currentTime);
   }
 </script>
 

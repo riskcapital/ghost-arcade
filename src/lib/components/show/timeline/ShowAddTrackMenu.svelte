@@ -5,7 +5,7 @@
    * default), so it stays on stage through the whole show; that is one
    * undo step with the track.
    */
-  import { showTimeline } from '../../../stores/showTimeline';
+  import { showSlice } from './timelineSlices';
   import { layers as liveLayersStore } from '../../../stores/layers';
   import { addTrackForLayer, addTrackForNewLayer } from '../../../show/tracks/showTrackActions';
   import { focusedTrackId, portal } from './trackLayout';
@@ -19,11 +19,14 @@
 
   let { x, y, onclose }: Props = $props();
 
-  const tracked = $derived(new Set($showTimeline.layerTracks.map((t) => t.layerId)));
+  const layerTracksStore = showSlice('layerTracks');
+  const presetClipsStore = showSlice('presetClips');
+  const cameraLaneStore = showSlice('cameraLane');
+  const tracked = $derived(new Set($layerTracksStore.map((t) => t.layerId)));
   const untracked = $derived($liveLayersStore.filter((l) => !tracked.has(l.id)));
-  const presetCount = $derived(new Set($showTimeline.presetClips.map((c) => c.compositionId)).size);
+  const presetCount = $derived(new Set($presetClipsStore.map((c) => c.compositionId)).size);
 
-  let name = $state(`Track ${$showTimeline.layerTracks.length + 1}`);
+  let name = $state(`Track ${$layerTracksStore.length + 1}`);
   let addToPresets = $state(true);
 
   function pickLayer(id: string) {
@@ -77,7 +80,7 @@
       <span>Add to the presets this show uses</span>
     </label>
   {/if}
-  {#if $showTimeline.cameraLane.length === 0 && !$cameraLaneShown}
+  {#if $cameraLaneStore.length === 0 && !$cameraLaneShown}
     <div class="atm-sep"></div>
     <button class="atm-item" onclick={() => { cameraLaneShown.set(true); onclose(); }} title="Shots from the Stage Sim's Demo reel that its camera follows while the show plays" data-add-camera-lane>
       Stage camera lane

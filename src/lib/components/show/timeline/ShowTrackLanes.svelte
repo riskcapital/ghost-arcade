@@ -37,6 +37,8 @@
     type TrackLaneController,
   } from './trackLayout';
   import { trackLaneInfo } from './trackParams';
+  import { showSlice } from './timelineSlices';
+  import { dragSnapper } from './dragSnap';
   import { liveTakeover } from '../../../show/takeover/liveTakeover';
   import ShowTakeoverHatch from './ShowTakeoverHatch.svelte';
 
@@ -49,8 +51,12 @@
 
   let { zoom, viewStart, viewEnd, width }: Props = $props();
 
-  const tracks = $derived($showTimeline.layerTracks);
-  const selectedArr = $derived($showTimeline.selectedClipIds);
+  // Slices, not $showTimeline: the store publishes every playhead frame.
+  const layerTracksStore = showSlice('layerTracks');
+  const selectedClipIdsStore = showSlice('selectedClipIds');
+  const currentTimeStore = showSlice('currentTime');
+  const tracks = $derived($layerTracksStore);
+  const selectedArr = $derived($selectedClipIdsStore);
   const selectedIds = $derived(new Set(selectedArr));
   const keySel = $derived($laneKeySelection);
   const thumbs = $derived($clipThumbnails);
@@ -72,13 +78,54 @@
   const menuTrack = $derived(menu ? tracks.find((t) => t.id === menu!.trackId) ?? null : null);
   const menuClip = $derived(menu && menuTrack ? menuTrack.clips.find((c) => c.id === menu!.clipId) ?? null : null);
 
+  /**
+   * Where the stack sits on screen during a drag: measured once when the
+   * drag starts and moved by the grid's scroll since, so a pointer move does
+   * not force a layout right after the last move's DOM writes. Null outside
+   * a drag (and after a window resize), when it is measured live.
+   */
+  let dragOrigin: { left: number; top: number; scrollLeft: number; scrollTop: number; scroller: HTMLElement | null } | null = null;
+  function stackOrigin(): { left: number; top: number } {
+    if (!stackEl) return { left: 0, top: 0 };
+    if (dragOrigin) {
+      const sc = dragOrigin.scroller;
+      return sc
+        ? { left: dragOrigin.left - (dragScroll.left - dragOrigin.scrollLeft), top: dragOrigin.top - (dragScroll.top - dragOrigin.scrollTop) }
+        : dragOrigin;
+    }
+    const r = stackEl.getBoundingClientRect();
+    return { left: r.left, top: r.top };
+  }
+  /** The grid's scroll position, kept from its scroll events during a drag. */
+  const dragScroll = { left: 0, top: 0 };
+  function beginDragGeometry(): () => void {
+    if (!stackEl) return () => {};
+    const scroller = stackEl.closest<HTMLElement>('.show-grid');
+    const r = stackEl.getBoundingClientRect();
+    dragScroll.left = scroller?.scrollLeft ?? 0;
+    dragScroll.top = scroller?.scrollTop ?? 0;
+    dragOrigin = { left: r.left, top: r.top, scrollLeft: dragScroll.left, scrollTop: dragScroll.top, scroller };
+    const onScroll = () => {
+      dragScroll.left = scroller!.scrollLeft;
+      dragScroll.top = scroller!.scrollTop;
+    };
+    const onResize = () => { dragOrigin = null; };
+    scroller?.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onResize);
+    return () => {
+      dragOrigin = null;
+      scroller?.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onResize);
+    };
+  }
+
   function timeAt(clientX: number): number {
     if (!stackEl) return 0;
-    return Math.max(0, (clientX - stackEl.getBoundingClientRect().left) / zoom);
+    return Math.max(0, (clientX - stackOrigin().left) / zoom);
   }
   function yInStack(clientY: number): number {
     if (!stackEl) return 0;
-    return clientY - stackEl.getBoundingClientRect().top;
+    return clientY - stackOrigin().top;
   }
   function currentTracks(): ShowLayerTrack[] {
     return get(showTimeline).layerTracks;
@@ -106,6 +153,7 @@
     const sx = e.clientX;
     const sy = e.clientY;
     let moved = false;
+    const endGeometry = beginDragGeometry();
     const move = (ev: MouseEvent) => {
       if (!moved && Math.abs(ev.clientX - sx) < threshold && Math.abs(ev.clientY - sy) < threshold) return;
       moved = true;
@@ -114,6 +162,7 @@
     const up = (ev: MouseEvent) => {
       window.removeEventListener('mousemove', move);
       window.removeEventListener('mouseup', up);
+      endGeometry();
       showSnapGuide.set(null);
       if (moved) swallowClick();
       onUp(moved, ev);
@@ -153,11 +202,14 @@
 
   function dragClips(e: MouseEvent, tr: ShowLayerTrack, clip: ShowLayerClip, onClick: 'only' | 'remove' | null) {
     const ids = [...get(showTimeline).selectedClipIds];
+    const idSet = new Set(ids);
     const startIndex = trackIndexOf(tr.id);
     const origStart = clip.startTime;
     const duration = clip.duration;
     const grab = timeAt(e.clientX) - origStart;
-    const selectedClips = currentTracks().flatMap((t) => t.clips.filter((c) => ids.includes(c.id)));
+    const selectedClips = currentTracks().flatMap((t) => t.clips.filter((c) => idSet.has(c.id)));
+    // The edges a moving selection snaps to do not move with it.
+    const snapper = dragSnapper(ids);
     const minStart = Math.min(...selectedClips.map((c) => c.startTime));
     let applied = { delta: 0, offset: 0 };
     follow(e, (ev) => {
@@ -167,8 +219,8 @@
       const raw = Math.max(0, timeAt(ev.clientX) - grab);
       let start = raw;
       if (!(ev.metaKey || ev.ctrlKey)) {
-        const a = showTimeline.snapTime(raw, ids);
-        const b = showTimeline.snapTime(raw + duration, ids) - duration;
+        const a = snapper.snap(raw);
+        const b = snapper.snap(raw + duration) - duration;
         const pull = (v: number) => (Math.abs(v - raw) < 1e-9 ? Number.POSITIVE_INFINITY : Math.abs(v - raw));
         start = pull(b) < pull(a) ? b : a;
       }
@@ -177,7 +229,7 @@
         // One clip on its own track slides into the free space it is
         // pushed against rather than refusing.
         const own = list[startIndex];
-        const placed = own ? placeOnTrack(own.clips, origStart + delta, duration, new Set(ids)) : null;
+        const placed = own ? placeOnTrack(own.clips, origStart + delta, duration, idSet) : null;
         if (placed === null) return;
         delta = placed - origStart;
       }
@@ -188,7 +240,7 @@
         }
       }
       const s = origStart + applied.delta;
-      showSnapGuide.set(ev.metaKey || ev.ctrlKey ? null : snapGuideAt({ start: s, end: s + duration }, showTimeline.snapTargets(ids), raw, s));
+      showSnapGuide.set(ev.metaKey || ev.ctrlKey ? null : snapGuideAt({ start: s, end: s + duration }, snapper.edges(), raw, s));
     }, (moved) => {
       if (moved) return;
       if (onClick === 'only' && ids.length > 1) showTimeline.selectLayerClips([clip.id]);
@@ -208,12 +260,15 @@
     const origStart = clip.startTime;
     const duration = clip.duration;
     const grab = timeAt(e.clientX) - origStart;
-    const picked = list0.flatMap((t, i) => t.clips.filter((c) => ids.includes(c.id)).map((c) => ({ c, i, trackId: t.id })));
+    const idSet = new Set(ids);
+    const picked = list0.flatMap((t, i) => t.clips.filter((c) => idSet.has(c.id)).map((c) => ({ c, i, trackId: t.id })));
     if (!picked.length) return;
     const minStart = Math.min(...picked.map((p) => p.c.startTime));
     const minIndex = Math.min(...picked.map((p) => p.i));
     const maxIndex = Math.max(...picked.map((p) => p.i));
     let drop = { delta: 0, offset: 0 };
+    // The originals stay put until the drop, so their edges hold still.
+    const snapper = dragSnapper();
     const place = () => {
       const tops = trackTops(currentTracks());
       ghosts = picked.map((p) => ({
@@ -229,15 +284,15 @@
       const raw = Math.max(0, timeAt(ev.clientX) - grab);
       let start = raw;
       if (!(ev.metaKey || ev.ctrlKey)) {
-        const a = showTimeline.snapTime(raw);
-        const b = showTimeline.snapTime(raw + duration) - duration;
+        const a = snapper.snap(raw);
+        const b = snapper.snap(raw + duration) - duration;
         const pull = (v: number) => (Math.abs(v - raw) < 1e-9 ? Number.POSITIVE_INFINITY : Math.abs(v - raw));
         start = pull(b) < pull(a) ? b : a;
       }
       drop = { delta: Math.max(start - origStart, -minStart), offset };
       place();
       const s0 = origStart + drop.delta;
-      showSnapGuide.set(ev.metaKey || ev.ctrlKey ? null : snapGuideAt({ start: s0, end: s0 + duration }, showTimeline.snapTargets(), raw, s0));
+      showSnapGuide.set(ev.metaKey || ev.ctrlKey ? null : snapGuideAt({ start: s0, end: s0 + duration }, snapper.edges(), raw, s0));
     }, (moved) => {
       ghosts = [];
       if (!moved) return;
@@ -266,23 +321,28 @@
   }
 
   function dragTrim(e: MouseEvent, clip: ShowLayerClip, edge: 'start' | 'end') {
+    // Trimming one clip moves only its own edge, which is left out.
+    const snapper = dragSnapper([clip.id]);
     follow(e, (ev) => {
       const raw = timeAt(ev.clientX);
       const free = ev.metaKey || ev.ctrlKey;
-      showTimeline.trimLayerClip(clip.id, edge, raw, { snap: !free });
+      // Snapped here against the edges held for the drag: the same answer
+      // the store's own snap gives, without rebuilding them per move.
+      showTimeline.trimLayerClip(clip.id, edge, free ? raw : snapper.snap(raw), { snap: false });
       const now = liveClip(clip.id);
       if (!now || free) return showSnapGuide.set(null);
       const at = edge === 'start' ? now.startTime : clipEnd(now);
-      showSnapGuide.set(snapGuideAt({ start: at }, showTimeline.snapTargets([clip.id]), raw, at));
+      showSnapGuide.set(snapGuideAt({ start: at }, snapper.edges(), raw, at));
     }, () => {}, 1);
   }
 
   function dragFade(e: MouseEvent, clip: ShowLayerClip, which: 'fadeIn' | 'fadeOut') {
+    const snapper = dragSnapper([clip.id]);
     follow(e, (ev) => {
       const now = liveClip(clip.id);
       if (!now) return;
       let t = timeAt(ev.clientX);
-      if (!(ev.metaKey || ev.ctrlKey)) t = showTimeline.snapTime(t, [clip.id]);
+      if (!(ev.metaKey || ev.ctrlKey)) t = snapper.snap(t);
       const value = which === 'fadeIn' ? t - now.startTime : clipEnd(now) - t;
       const clamped = Math.max(0, Math.min(now.duration, Math.round(value * 1000) / 1000));
       showTimeline.updateLayerClip(clip.id, { [which]: clamped });
@@ -490,7 +550,7 @@
     track={menuTrack}
     clip={menuClip}
     ids={menu.ids}
-    playhead={$showTimeline.currentTime}
+    playhead={$currentTimeStore}
     onclose={() => (menu = null)}
   />
 {/if}

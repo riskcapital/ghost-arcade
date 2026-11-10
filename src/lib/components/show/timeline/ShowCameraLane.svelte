@@ -7,7 +7,9 @@
    * one to pick its shot or delete it (Delete).
    */
   import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
   import { showTimeline } from '../../../stores/showTimeline';
+  import { showSlice } from './timelineSlices';
   import { demoReel, DEMO_REEL_STORAGE_KEY, moveTemplate } from '../../../stage3d/demoReel';
   import {
     moveCameraClip,
@@ -23,7 +25,12 @@
   }
   let { zoom }: Props = $props();
 
-  const lane = $derived($showTimeline.cameraLane);
+
+  // Slices, not $showTimeline: the store publishes every playhead frame.
+  const cameraLaneStore = showSlice('cameraLane');
+  const selectionStore = showSlice('selection');
+  const selectedClipIdsStore = showSlice('selectedClipIds');
+  const lane = $derived($cameraLaneStore);
   const shots = $derived($demoReel.shots);
   const shotById = $derived(new Map(shots.map((s) => [s.id, s])));
   const selected = $derived(lane.find((c) => c.id === $selectedCameraClipId) ?? null);
@@ -56,8 +63,7 @@
 
   // Selecting anything else in the show drops the camera clip selection.
   $effect(() => {
-    const s = $showTimeline;
-    if ((s.selection || s.selectedClipIds.length > 0) && $selectedCameraClipId) selectedCameraClipId.set(null);
+    if (($selectionStore || $selectedClipIdsStore.length > 0) && $selectedCameraClipId) selectedCameraClipId.set(null);
   });
 
   function onLaneDblClick(e: MouseEvent) {
@@ -82,7 +88,7 @@
       moved = true;
       const raw = origin + dx / zoom;
       const t = ev.metaKey || ev.ctrlKey ? raw : showTimeline.snapTime(raw);
-      const current = $showTimeline.cameraLane;
+      const current = get(showTimeline).cameraLane;
       const next = mode === 'move' ? moveCameraClip(current, id, t) : trimCameraClip(current, id, mode, t);
       if (next !== current) showTimeline.setCameraLane(next, key);
     };

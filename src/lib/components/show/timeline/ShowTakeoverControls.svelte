@@ -11,7 +11,7 @@
    * arrow only. The LIVE pill and Return are always there.
    */
   import { onDestroy } from 'svelte';
-  import { showTimeline } from '../../../stores/showTimeline';
+  import { showSlice } from './timelineSlices';
   import { liveTakeover, takeoverSummary, TAKEOVER_RELEASE_MODES, type TakeoverReleaseMode } from '../../../show/takeover/liveTakeover';
   import { RELEASE_MODE_LABELS, pendingReleaseSeconds, takeoverPadsOpen } from './takeoverUi';
 
@@ -29,7 +29,8 @@
     if (!ticking && timer) { clearInterval(timer); timer = null; }
   });
   onDestroy(() => { if (timer) clearInterval(timer); });
-  const countdown = $derived(pendingReleaseSeconds(summary.surfaces, $showTimeline.currentTime, nowMs));
+  const currentTimeStore = showSlice('currentTime');
+  const countdown = $derived(pendingReleaseSeconds(summary.surfaces, $currentTimeStore, nowMs));
 
   function returnAll(e: MouseEvent) {
     liveTakeover.release('all', e.shiftKey ? { mode: 'instant' } : undefined);

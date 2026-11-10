@@ -12,10 +12,15 @@
   import { ADD_TRACK_ROW_HEIGHT, reorderGapAt, reorderIndexForGap, trackHeight, trackTops } from './trackLayout';
   import { trackLaneInfo } from './trackParams';
   import { liveTakeover } from '../../../show/takeover/liveTakeover';
+  import { showSlice } from './timelineSlices';
 
-  const tracks = $derived($showTimeline.layerTracks);
-  const solo = $derived($showTimeline.soloTrackId);
-  const selection = $derived($showTimeline.selection);
+  // Slices, not $showTimeline: the store publishes every playhead frame.
+  const layerTracksStore = showSlice('layerTracks');
+  const soloStore = showSlice('soloTrackId');
+  const selectionStore = showSlice('selection');
+  const tracks = $derived($layerTracksStore);
+  const solo = $derived($soloStore);
+  const selection = $derived($selectionStore);
   const selectedTrackId = $derived(selection?.kind === 'track' ? selection.id : null);
   const liveLayers = $derived($liveLayersStore);
   const liveById = $derived(new Map(liveLayers.map((l) => [l.id, l])));

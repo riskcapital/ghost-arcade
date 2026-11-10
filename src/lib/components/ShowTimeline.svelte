@@ -31,6 +31,7 @@
    * stop. `showTimeline.pause()` is the way to stop it.
    */
   import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
   import {
     showTimeline,
     setShowTransportSink,
@@ -44,7 +45,7 @@
     showTransitionWindow,
   } from '../stores/showTimeline';
   import { TRANSITION_OPTIONS } from '../stores/presetTransition';
-  import type { CompositionTransitionStyle, ShowPresetClip } from '../types';
+  import type { CompositionTransitionStyle, ShowAudioTrack, ShowLayerClip, ShowLayerTrack, ShowPresetClip } from '../types';
   import { compositions } from '../stores/layers';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
   import { clipAudioBus, clipAudioMaster, CLIP_AUDIO_BLOCK_TEXT } from '../audio/clipAudioBus';
@@ -67,6 +68,8 @@
   import ShowRuler from './show/timeline/ShowRuler.svelte';
   import ShowTempoInspector from './show/timeline/ShowTempoInspector.svelte';
   import ShowTakeoverControls from './show/timeline/ShowTakeoverControls.svelte';
+  import ShowPresetLane from './show/timeline/ShowPresetLane.svelte';
+  import ShowAudioLane from './show/timeline/ShowAudioLane.svelte';
   import { transportFit } from './show/timeline/transportFit';
   import TakeoverPads from './show/TakeoverPads.svelte';
   import { takeoverPadsOpen, toggleTakeoverOnTarget } from './show/timeline/takeoverUi';
@@ -78,6 +81,9 @@
   import { CAMERA_LANE_HEIGHT, cameraLaneShown } from './show/timeline/cameraLaneUi';
   import { TRACK_HEADER_WIDTH, laneKeySelection, showSnapGuide, tracksStackHeight } from './show/timeline/trackLayout';
   import { carriesTrackMedia, dropTrackMedia } from './show/timeline/trackDrops';
+  import { presetJunctions, type PresetJunction } from './show/timeline/laneJunctions';
+  import { distinct, showSlice } from './show/timeline/timelineSlices';
+  import { devicePixel, formatPrecise } from './show/timeline/timeFormat';
   import {
     canPasteClips,
     clearTrackSelection,
@@ -90,6 +96,52 @@
     pasteAtPlayhead,
     splitAtPlayhead,
   } from './show/timeline/trackCommands';
+
+  // ── Show state, field by field ──────────────────────────────────────────
+  // The store publishes a new state object on every playhead frame. Reading
+  // it through slices means each value below changes only when its own
+  // field does, so a playing show updates the playhead and the time
+  // readouts and nothing else (see timelineSlices.ts).
+  const isOpenStore = showSlice('isOpen');
+  const isPlayingStore = showSlice('isPlaying');
+  const currentTimeStore = showSlice('currentTime');
+  const durationStore = showSlice('duration');
+  const loopStore = showSlice('loop');
+  const audioTracksStore = showSlice('audioTracks');
+  const presetClipsStore = showSlice('presetClips');
+  const activeClipIdStore = showSlice('activeClipId');
+  const zoomStore = showSlice('zoom');
+  const snapEnabledStore = showSlice('snapEnabled');
+  const selectionStore = showSlice('selection');
+  const endActionStore = showSlice('endAction');
+  const layerTracksStore = showSlice('layerTracks');
+  const tempoStore = showSlice('tempo');
+  const rulerModeStore = showSlice('rulerMode');
+  const snapGridStore = showSlice('snapGrid');
+  const selectedClipIdsStore = showSlice('selectedClipIds');
+  const cameraLaneStore = showSlice('cameraLane');
+  // A derived of the project: it re-publishes on every project update.
+  const compositionsStore = distinct(compositions);
+
+  const isOpen = $derived($isOpenStore);
+  const isPlaying = $derived($isPlayingStore);
+  const currentTime = $derived($currentTimeStore);
+  const duration = $derived($durationStore);
+  const loop = $derived($loopStore);
+  const audioTracks = $derived($audioTracksStore);
+  const presetClips = $derived($presetClipsStore);
+  const activeClipId = $derived($activeClipIdStore);
+  const zoom = $derived($zoomStore);
+  const snapEnabled = $derived($snapEnabledStore);
+  const selection = $derived($selectionStore);
+  const endAction = $derived($endActionStore);
+  const layerTracks = $derived($layerTracksStore);
+  const tempo = $derived($tempoStore);
+  const rulerMode = $derived($rulerModeStore);
+  const snapGrid = $derived($snapGridStore);
+  const selectedClipIds = $derived($selectedClipIdsStore);
+  const cameraLane = $derived($cameraLaneStore);
+  const comps = $derived($compositionsStore);
 
   // ── End of show + output device ─────────────────────────────────────────
   // The transport lives in the store and keeps running with this panel
@@ -117,30 +169,57 @@
     blackout: 'At end: blackout',
   };
 
-  $: state = $showTimeline;
-  $: isOpen = state.isOpen;
-
   // ── Cue list + markers ───────────────────────────────────────────────────
   // The cue list sits beside the lanes; whether it is showing is a per-user
   // view preference, not part of the show.
   const CUES_OPEN_KEY = 'ghostarcade-show-cues-open';
-  let cuesOpen = (() => {
+  let cuesOpen = $state((() => {
     try { return localStorage.getItem(CUES_OPEN_KEY) === '1'; } catch { return false; }
-  })();
+  })());
   function toggleCues() {
     cuesOpen = !cuesOpen;
     try { localStorage.setItem(CUES_OPEN_KEY, cuesOpen ? '1' : '0'); } catch { /* private mode */ }
   }
-  $: cues = $cueList;
+  const cues = $derived($cueList);
   const chaseStatus = timecodeChase.status;
-  $: tc = $chaseStatus;
-  let selectedMarkerId: string | null = null;
-  $: selectedMarker = cues.markers.find((m) => m.id === selectedMarkerId) ?? null;
+  const tc = $derived($chaseStatus);
+  let selectedMarkerId: string | null = $state(null);
+  const selectedMarker = $derived(cues.markers.find((m) => m.id === selectedMarkerId) ?? null);
   // Selecting a clip or transition hands the inspector back to it.
   function clearMarkerSelection() { selectedMarkerId = null; }
-  // Keys on a lane stay selected only alongside track clips.
-  $: if (state.selection && state.selection.kind !== 'layerClip') laneKeySelection.set(null);
-  $: if (state.selection) clearMarkerSelection();
+
+  // ── Checks made on every store update ───────────────────────────────────
+  // These three ran as `$:` statements on the whole store state, i.e. after
+  // every store update (each playhead frame included), reading the state as
+  // it is then. They still do, from one plain subscription and a microtask,
+  // so their timing is unchanged without pulling the store into the render
+  // graph:
+  //  - keys on a lane stay selected only alongside track clips;
+  //  - selecting a clip or transition hands the inspector back to it;
+  //  - the tempo note belongs to the audio inspector.
+  let storeChecksQueued = false;
+  function runStoreChecks() {
+    storeChecksQueued = false;
+    const sel = get(showTimeline).selection;
+    if (sel && sel.kind !== 'layerClip') laneKeySelection.set(null);
+    if (sel) clearMarkerSelection();
+    if (sel?.kind !== 'audio') tempoNote = null;
+  }
+  onMount(() => {
+    runStoreChecks();
+    return showTimeline.subscribe(() => {
+      if (storeChecksQueued) return;
+      storeChecksQueued = true;
+      queueMicrotask(runStoreChecks);
+    });
+  });
+
+  // Markers drawn: the ones near the visible stretch. A flag's label runs to
+  // the right of its time, so the left edge keeps a wider margin.
+  const visibleMarkers = $derived(cues.markers.filter((m) => {
+    const x = m.time * zoom;
+    return x >= viewStart * zoom - 400 && x <= viewEnd * zoom + 24;
+  }));
 
   function markerCueLabel(cueId: string | null): string {
     const cue = cues.cues.find((c) => c.id === cueId);
@@ -151,7 +230,7 @@
    *  selected (or standing by), so "mark here, fire that" is one click. */
   function addMarkerAtPlayhead() {
     const cueId = cues.selectedCueId ?? cues.standbyCueId ?? cues.cues[0]?.id ?? null;
-    const id = cueList.addMarker(state.currentTime, cueId);
+    const id = cueList.addMarker(get(showTimeline).currentTime, cueId);
     showTimeline.select(null);
     selectedMarkerId = id;
   }
@@ -167,7 +246,7 @@
     const onMove = (ev: MouseEvent) => {
       moved = true;
       let t = Math.max(0, timeAt(ev) - grab);
-      if (state.snapEnabled) t = Math.round(t / 0.25) * 0.25;
+      if (get(showTimeline).snapEnabled) t = Math.round(t / 0.25) * 0.25;
       cueList.updateMarker(id, { time: t });
     };
     const onUp = () => {
@@ -191,12 +270,12 @@
     midiClock: { searching: 'Clock searching', locked: 'Clock', freewheel: 'Clock freewheel', lost: 'Clock lost' },
   };
   const chaseSettings = timecodeChase.settings;
-  $: tcSource = $chaseSettings.source;
-  $: tcText = (BEAT_LOCK_TEXT[tcSource] ?? LOCK_TEXT)[tc.lock] ?? tc.lock;
-  $: tcSourceName = tcSource === 'link' ? 'Link' : 'MIDI clock';
-  $: tcMismatchText = tc.mismatch && tc.sourceBpm !== null && tc.showBpm !== null
+  const tcSource = $derived($chaseSettings.source);
+  const tcText = $derived((BEAT_LOCK_TEXT[tcSource] ?? LOCK_TEXT)[tc.lock] ?? tc.lock);
+  const tcSourceName = $derived(tcSource === 'link' ? 'Link' : 'MIDI clock');
+  const tcMismatchText = $derived(tc.mismatch && tc.sourceBpm !== null && tc.showBpm !== null
     ? `${tcSourceName} is at ${tc.sourceBpm.toFixed(1)} BPM, the show's map at ${tc.showBpm.toFixed(1)} BPM. Still following; the audio re-syncs as it drifts.`
-    : '';
+    : '');
 
   // ── Audio output state ───────────────────────────────────────────────────
   // The clip-audio master is a persisted, APP-WIDE control whose only other UI
@@ -205,12 +284,12 @@
   // the recording mixdown with it. Surface it here, where the audio is being
   // authored, so a silent show always names its own reason and is one click
   // from fixed.
-  $: audioBlocked = state.audioTracks.length > 0 ? $clipAudioMaster.blocked : null;
-  $: audioMuted = $clipAudioMaster.muted;
-  $: audioVolumePct = Math.round($clipAudioMaster.volume * 100);
-  $: audioTitle = audioBlocked
+  const audioBlocked = $derived(audioTracks.length > 0 ? $clipAudioMaster.blocked : null);
+  const audioMuted = $derived($clipAudioMaster.muted);
+  const audioVolumePct = $derived(Math.round($clipAudioMaster.volume * 100));
+  const audioTitle = $derived(audioBlocked
     ? `${CLIP_AUDIO_BLOCK_TEXT[audioBlocked]} — click to fix`
-    : `Show audio output — ${audioVolumePct}%`;
+    : `Show audio output — ${audioVolumePct}%`);
 
   /** One click clears whatever is silencing the show, in the order a user
    *  would try them by hand. */
@@ -227,8 +306,10 @@
 
   // Content-creation tool: hide + auto-close in VJ mode, exactly like the
   // keyframe timeline does.
-  $: hiddenInVJ = $vjClipLauncher.isOpen;
-  $: if (hiddenInVJ && isOpen) showTimeline.setOpen(false);
+  const hiddenInVJ = $derived($vjClipLauncher.isOpen);
+  $effect.pre(() => {
+    if (hiddenInVJ && isOpen) showTimeline.setOpen(false);
+  });
 
   const PRESET_LANE_HEIGHT = 46;
   const AUDIO_LANE_HEIGHT = 52;
@@ -285,27 +366,34 @@
     }
   }
 
-  let viewportH = typeof window !== 'undefined' ? window.innerHeight : 900;
-  let userHeight: number | null = loadUserHeight();
+  let viewportH = $state(typeof window !== 'undefined' ? window.innerHeight : 900);
+  let userHeight: number | null = $state(loadUserHeight());
   /** Measured, not assumed: both bars wrap at narrow widths, and a wrapped
    *  transport that the height maths did not know about is exactly how the
    *  inspector ends up hanging out of the bottom of the tray. */
-  let transportH = 36;
-  let inspectorH = 0;
+  let transportH = $state(36);
+  let inspectorH = $state(0);
 
-  $: tracksH = tracksStackHeight(state.layerTracks);
+  const tracksH = $derived(tracksStackHeight(layerTracks));
   // The Stage camera lane sits under the audio lanes once it has shots (or was asked for).
-  $: cameraLaneH = state.cameraLane.length > 0 || $cameraLaneShown ? CAMERA_LANE_HEIGHT : 0;
-  $: laneStackH = RULER_HEIGHT + PRESET_LANE_HEIGHT + tracksH + audioLaneCount * AUDIO_LANE_HEIGHT + cameraLaneH;
-  $: hasTracks = state.layerTracks.length > 0;
-  $: labelWidth = hasTracks ? TRACK_HEADER_WIDTH : 108;
+  const cameraLaneH = $derived(cameraLane.length > 0 || $cameraLaneShown ? CAMERA_LANE_HEIGHT : 0);
+  const audioLaneCount = $derived(Math.max(1, audioTracks.reduce((m, t) => Math.max(m, t.lane + 1), 0)));
+  const audioLanes = $derived(Array.from({ length: audioLaneCount }, (_, i) => i));
+  /** Each audio lane's tracks, in show order. */
+  const audioByLane = $derived.by(() => {
+    const out: ShowAudioTrack[][] = audioLanes.map(() => []);
+    for (const t of audioTracks) out[t.lane]?.push(t);
+    return out;
+  });
+  const laneStackH = $derived(RULER_HEIGHT + PRESET_LANE_HEIGHT + tracksH + audioLaneCount * AUDIO_LANE_HEIGHT + cameraLaneH);
+  const hasTracks = $derived(layerTracks.length > 0);
+  const labelWidth = $derived(hasTracks ? TRACK_HEADER_WIDTH : 108);
   // The bound clientHeight keeps its last value after the inspector
   // unmounts, so gate it on the selection rather than trusting the binding.
-  $: selectedTempo = state.selection?.kind === 'tempo';
+  const selectedTempo = $derived(selection?.kind === 'tempo');
   // "Detect tempo" on an audio track.
-  let detectingTempo = false;
-  let tempoNote: { ok: true; bpm: number } | { ok: false; reason: string } | null = null;
-  $: if (state.selection?.kind !== 'audio') tempoNote = null;
+  let detectingTempo = $state(false);
+  let tempoNote: { ok: true; bpm: number } | { ok: false; reason: string } | null = $state(null);
   async function detectTempoFrom(trackId: string) {
     detectingTempo = true;
     tempoNote = null;
@@ -313,28 +401,7 @@
     detectingTempo = false;
     tempoNote = result.ok ? { ok: true, bpm: Math.round(result.bpm * 10) / 10 } : { ok: false, reason: result.reason };
   }
-  // Bars ruler: bar lines (and beats, when they are far enough apart) run
-  // down through the lanes, so clips can be lined up by eye.
-  $: barLines = state.rulerMode === 'bars' && state.tempo
-    ? rulerTicks(state.tempo, Math.max(0, viewStart), Math.min(rulerSeconds, viewEnd), zoom, 18).map((t) => ({ x: Math.round(t.time * zoom), bar: t.kind === 'bar' }))
-    : [];
-  $: inspectorVisible = !!(selectedPreset || selectedAudio || selectedTransitionClip || selectedMarker || layerClipInspector || selectedTrack || selectedTempo);
-  // With layer tracks the inspector strip is always there (a hint when
-  // nothing is selected) and its room is reserved: selecting a clip must not
-  // grow the tray, or the lanes jump under the pointer mid-drag.
-  const TRACK_INSPECTOR_RESERVE = 72;
-  $: inspectorRoom = hasTracks ? TRACK_INSPECTOR_RESERVE : inspectorVisible ? inspectorH : 0;
-  $: contentH = Math.max(
-    transportH + laneStackH + inspectorRoom + GRID_SCROLLBAR_ALLOWANCE + 1 /* top border */,
-    // The cue list needs room for its status, a few rows and the editor.
-    cuesOpen ? transportH + CUE_PANEL_MIN_HEIGHT : 0,
-  );
-  $: autoH = Math.max(TRAY_MIN_HEIGHT, Math.min(contentH, cuesOpen ? cueCeiling(viewportH) : autoCeiling(viewportH, hasTracks)));
-  $: trayHeight = userHeight === null
-    ? autoH
-    : Math.max(TRAY_MIN_HEIGHT, Math.min(userHeight, dragCeiling(viewportH)));
-
-  let resizingTray = false;
+  let resizingTray = $state(false);
 
   function startTrayResize(e: MouseEvent) {
     if (e.button !== 0) return;
@@ -369,49 +436,43 @@
   // panels. Those three hard-code a constant because their heights are
   // constant; this one is content-sized and resizable, so it has to be a
   // variable. Cleared on close so the viewport springs straight back.
-  $: if (typeof document !== 'undefined') {
-    document.documentElement.style.setProperty(
-      '--ga-show-tray-height',
-      isOpen && !hiddenInVJ ? `${trayHeight}px` : '0px',
-    );
-  }
+  $effect.pre(() => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.style.setProperty(
+        '--ga-show-tray-height',
+        isOpen && !hiddenInVJ ? `${trayHeight}px` : '0px',
+      );
+    }
+  });
 
-  $: zoom = state.zoom;
-  $: rulerSeconds = Math.max(state.duration, SHOW_MIN_RULER_SECONDS);
-  $: totalWidth = rulerSeconds * zoom;
-  $: playheadX = state.currentTime * zoom;
-  $: audioLaneCount = Math.max(1, state.audioTracks.reduce((m, t) => Math.max(m, t.lane + 1), 0));
-  $: audioLanes = Array.from({ length: audioLaneCount }, (_, i) => i);
+  const rulerSeconds = $derived(Math.max(duration, SHOW_MIN_RULER_SECONDS));
+  const totalWidth = $derived(rulerSeconds * zoom);
+  // Moved with a transform (on its own compositor layer), so a playing show
+  // repaints nothing under it. Snapped to device pixels as `left` was.
+  const playheadX = $derived(devicePixel(currentTime * zoom));
 
   // Visible stretch of the grid, for the ruler and the tracks (they draw
   // only what is on screen).
-  let gridScrollLeft = 0;
-  let gridWidth = 800;
-  $: viewStart = Math.max(0, gridScrollLeft / zoom - 2);
-  $: viewEnd = (gridScrollLeft + gridWidth) / zoom + 2;
+  let gridScrollLeft = $state(0);
+  let gridWidth = $state(800);
+  const viewStart = $derived(Math.max(0, gridScrollLeft / zoom - 2));
+  const viewEnd = $derived((gridScrollLeft + gridWidth) / zoom + 2);
 
-  function formatTime(t: number): string {
-    const safe = Math.max(0, t);
-    const m = Math.floor(safe / 60);
-    const s = Math.floor(safe % 60);
-    return `${m}:${String(s).padStart(2, '0')}`;
-  }
-  function formatPrecise(t: number): string {
-    const safe = Math.max(0, t);
-    const m = Math.floor(safe / 60);
-    const s = Math.floor(safe % 60);
-    const d = Math.floor((safe % 1) * 10);
-    return `${m}:${String(s).padStart(2, '0')}.${d}`;
-  }
-
+  /** Composition names by id (the first composition with an id wins, as a
+   *  `find` would). */
+  const compositionNames = $derived.by(() => {
+    const map = new Map<string, string | undefined>();
+    for (const c of comps) if (!map.has(c.id)) map.set(c.id, c.name);
+    return map;
+  });
   function compositionName(id: string, fallback?: string): string {
-    return $compositions.find((c) => c.id === id)?.name ?? fallback ?? 'Missing preset';
+    return compositionNames.get(id) ?? fallback ?? 'Missing preset';
   }
 
   // ── Grid geometry ──────────────────────────────────────────────────────
-  let gridEl: HTMLDivElement | undefined;
+  let gridEl: HTMLDivElement | undefined = $state();
   /** Grid scrollTop, mirrored onto the lane-label column. */
-  let laneScrollTop = 0;
+  let laneScrollTop = $state(0);
 
   function timeAt(e: MouseEvent | DragEvent): number {
     if (!gridEl) return 0;
@@ -514,7 +575,7 @@
   }
 
   // ── Drops: audio files + preset tray cards ─────────────────────────────
-  let dragHover = false;
+  let dragHover = $state(false);
 
   function handleDragOver(e: DragEvent) {
     e.preventDefault();
@@ -571,7 +632,8 @@
     const lane = laneAt(e);
     const files = Array.from(dt.files ?? []).filter((f) => isShowAudioFile(f.name, f.type));
     // A song dropped on an empty show builds a show around it.
-    if (files.length === 1 && state.audioTracks.length === 0 && state.presetClips.length === 0) {
+    const s = get(showTimeline);
+    if (files.length === 1 && s.audioTracks.length === 0 && s.presetClips.length === 0) {
       offerShowFromAudio(files[0]);
       return;
     }
@@ -582,18 +644,18 @@
     }
   }
 
-  let audioInput: HTMLInputElement | undefined;
+  let audioInput: HTMLInputElement | undefined = $state();
   async function handleAudioPick(e: Event) {
     const input = e.target as HTMLInputElement;
     const files = Array.from(input.files ?? []);
     for (const file of files) {
-      await showTimeline.addAudioTrackFromFile(file, { startTime: state.currentTime });
+      await showTimeline.addAudioTrackFromFile(file, { startTime: get(showTimeline).currentTime });
     }
     input.value = '';
   }
 
   // ── Add preset ─────────────────────────────────────────────────────────
-  let addPresetId = '';
+  let addPresetId = $state('');
   function addPreset() {
     const comp = $compositions.find((c) => c.id === addPresetId) ?? $compositions[0];
     if (!comp) return;
@@ -601,29 +663,59 @@
   }
 
   // ── Selection inspector ────────────────────────────────────────────────
-  $: selectedPreset = state.selection?.kind === 'preset'
-    ? state.presetClips.find((c) => c.id === state.selection!.id) ?? null
-    : null;
-  $: selectedAudio = state.selection?.kind === 'audio'
-    ? state.audioTracks.find((t) => t.id === state.selection!.id) ?? null
-    : null;
+  const selectedPreset = $derived(selection?.kind === 'preset'
+    ? presetClips.find((c) => c.id === selection!.id) ?? null
+    : null);
+  const selectedAudio = $derived(selection?.kind === 'audio'
+    ? audioTracks.find((t) => t.id === selection!.id) ?? null
+    : null);
+  /** Where a layer clip lives (showTimeline.findLayerClip, over the
+   *  tracks this component already follows). */
+  function findLayerClip(tracks: ShowLayerTrack[], clipId: string): { track: ShowLayerTrack; clip: ShowLayerClip } | null {
+    for (const track of tracks) {
+      const clip = track.clips.find((c) => c.id === clipId);
+      if (clip) return { track, clip };
+    }
+    return null;
+  }
   /** Layer-track clips: one selected shows its inspector, several a count. */
-  $: selectedLayerClipCount = state.selectedClipIds.length;
-  $: selectedLayerClipFound = state.selection?.kind === 'layerClip'
-    ? showTimeline.findLayerClip(state.selection.id)
+  const selectedLayerClipCount = $derived(selectedClipIds.length);
+  const selectedLayerClipFound = $derived(selection?.kind === 'layerClip'
+    ? findLayerClip(layerTracks, selection.id)
     : selectedLayerClipCount === 1
-      ? showTimeline.findLayerClip(state.selectedClipIds[0])
-      : null;
-  $: layerClipInspector = selectedLayerClipCount > 0 || !!selectedLayerClipFound;
-  $: selectedTrack = state.selection?.kind === 'track'
-    ? state.layerTracks.find((t) => t.id === state.selection!.id) ?? null
-    : null;
-  $: selectedTrackOnStage = !!selectedTrack && $liveLayersStore.some((l) => l.id === selectedTrack!.layerId);
+      ? findLayerClip(layerTracks, selectedClipIds[0])
+      : null);
+  const layerClipInspector = $derived(selectedLayerClipCount > 0 || !!selectedLayerClipFound);
+  const selectedTrack = $derived(selection?.kind === 'track'
+    ? layerTracks.find((t) => t.id === selection!.id) ?? null
+    : null);
+  const selectedTrackOnStage = $derived(!!selectedTrack && $liveLayersStore.some((l) => l.id === selectedTrack!.layerId));
 
   /** The clip whose LEFT junction carries the selected transition. */
-  $: selectedTransitionClip = state.selection?.kind === 'transition'
-    ? state.presetClips.find((c) => c.id === state.selection!.id) ?? null
-    : null;
+  const selectedTransitionClip = $derived(selection?.kind === 'transition'
+    ? presetClips.find((c) => c.id === selection!.id) ?? null
+    : null);
+
+  // Bars ruler: bar lines (and beats, when they are far enough apart) run
+  // down through the lanes, so clips can be lined up by eye.
+  const barLines = $derived(rulerMode === 'bars' && tempo
+    ? rulerTicks(tempo, Math.max(0, viewStart), Math.min(rulerSeconds, viewEnd), zoom, 18).map((t) => ({ x: Math.round(t.time * zoom), bar: t.kind === 'bar' }))
+    : []);
+  const inspectorVisible = $derived(!!(selectedPreset || selectedAudio || selectedTransitionClip || selectedMarker || layerClipInspector || selectedTrack || selectedTempo));
+  // With layer tracks the inspector strip is always there (a hint when
+  // nothing is selected) and its room is reserved: selecting a clip must not
+  // grow the tray, or the lanes jump under the pointer mid-drag.
+  const TRACK_INSPECTOR_RESERVE = 72;
+  const inspectorRoom = $derived(hasTracks ? TRACK_INSPECTOR_RESERVE : inspectorVisible ? inspectorH : 0);
+  const contentH = $derived(Math.max(
+    transportH + laneStackH + inspectorRoom + GRID_SCROLLBAR_ALLOWANCE + 1 /* top border */,
+    // The cue list needs room for its status, a few rows and the editor.
+    cuesOpen ? transportH + CUE_PANEL_MIN_HEIGHT : 0,
+  ));
+  const autoH = $derived(Math.max(TRAY_MIN_HEIGHT, Math.min(contentH, cuesOpen ? cueCeiling(viewportH) : autoCeiling(viewportH, hasTracks))));
+  const trayHeight = $derived(userHeight === null
+    ? autoH
+    : Math.max(TRAY_MIN_HEIGHT, Math.min(userHeight, dragCeiling(viewportH))));
 
   function deleteSelected() {
     if (selectedMarker) {
@@ -649,56 +741,12 @@
   // The geometry drawn here is EXACTLY what the renderer runs:
   // `showTransitionWindow()` is the same function `resolveShowTransition()`
   // uses to decide what is on screen, so the element can never lie about
-  // when the blend happens or how long it really lasts.
-  interface Junction {
-    clipId: string;
-    /** Show time the two clips meet. */
-    boundary: number;
-    /** Ceiling a resize clamps against (shorter neighbour). */
-    max: number;
-    /** null when this junction is currently a hard cut. */
-    window: ReturnType<typeof showTransitionWindow>;
-  }
-
-  $: junctions = state.presetClips
-    .map((clip): Junction | null => {
-      const max = maxShowTransitionDuration(state.presetClips, clip);
-      if (max <= 0) return null; // nothing adjacent on the left — not a junction
-      return {
-        clipId: clip.id,
-        boundary: clip.startTime,
-        max,
-        window: showTransitionWindow(state.presetClips, clip),
-      };
-    })
-    .filter((j): j is Junction => j !== null);
-
-  /**
-   * How far a transition eats into each end of a clip, in pixels.
-   *
-   * The element is drawn ON TOP of the two clips it straddles, so without
-   * this the clip's own name (left-aligned at its head) and its duration
-   * (right-aligned at its tail) end up underneath the bowtie and read as
-   * "e Grid" / a half-covered number. Pushing the text clear of the overlap
-   * keeps both legible without moving the transition off the boundary it is
-   * describing.
-   */
-  $: clipTextInsets = (() => {
-    const map = new Map<string, { head: number; tail: number }>();
-    for (const j of junctions) {
-      if (!j.window) continue;
-      const half = (j.window.duration / 2) * zoom;
-      const incoming = map.get(j.clipId) ?? { head: 0, tail: 0 };
-      map.set(j.clipId, { ...incoming, head: half });
-      const outgoing = map.get(j.window.prev.id) ?? { head: 0, tail: 0 };
-      map.set(j.window.prev.id, { ...outgoing, tail: half });
-    }
-    return map;
-  })();
+  // when the blend happens or how long it really lasts (see laneJunctions.ts).
+  const junctions = $derived(presetJunctions(presetClips));
 
   /** Nearest junction to a dropped/clicked time, inside a zoom-aware reach. */
-  function junctionNear(time: number): Junction | null {
-    let best: Junction | null = null;
+  function junctionNear(time: number): PresetJunction | null {
+    let best: PresetJunction | null = null;
     let bestDelta = Math.max(0.4, 44 / zoom);
     for (const j of junctions) {
       const delta = Math.abs(j.boundary - time);
@@ -746,8 +794,8 @@
 
   /** Palette chip → junction. Mirrors the preset-card drag contract. */
   const TRANSITION_DRAG_TYPE = 'application/x-ghost-show-transition';
-  let transitionDragActive = false;
-  let transitionDropTarget: string | null = null;
+  let transitionDragActive = $state(false);
+  let transitionDropTarget: string | null = $state(null);
 
   function handleTransitionDragStart(e: DragEvent) {
     if (!e.dataTransfer) return;
@@ -761,53 +809,22 @@
     transitionDropTarget = null;
   }
 
-  function transitionStyleLabel(style: CompositionTransitionStyle | null | undefined): string {
-    return TRANSITION_OPTIONS.find((o) => o.value === style)?.label ?? 'Dissolve';
-  }
-
   /** Effective vs requested, so a clamp that actually bites is visible
    *  rather than something you discover mid-show. */
   function requestedTransitionDuration(clip: ShowPresetClip): number {
     const raw = Number(clip.transitionDuration);
     return Number.isFinite(raw) ? Math.max(0, raw) : 0;
   }
-  $: selectedTransitionWindow = selectedTransitionClip
-    ? showTransitionWindow(state.presetClips, selectedTransitionClip)
-    : null;
-  $: selectedTransitionMax = selectedTransitionClip
-    ? maxShowTransitionDuration(state.presetClips, selectedTransitionClip)
-    : 0;
-  $: selectedTransitionClamped =
+  const selectedTransitionWindow = $derived(selectedTransitionClip
+    ? showTransitionWindow(presetClips, selectedTransitionClip)
+    : null);
+  const selectedTransitionMax = $derived(selectedTransitionClip
+    ? maxShowTransitionDuration(presetClips, selectedTransitionClip)
+    : 0);
+  const selectedTransitionClamped = $derived(
     !!selectedTransitionClip &&
     !!selectedTransitionWindow &&
-    requestedTransitionDuration(selectedTransitionClip) - selectedTransitionWindow.duration > 0.01;
-
-  // ── Waveform path ──────────────────────────────────────────────────────
-  const WAVE_VIEW_H = 40;
-
-  /** Mirror the peak envelope around the lane's midline. Only the visible
-   *  [offset, offset+duration] slice of the source is drawn, so trimming a
-   *  track scrolls the waveform rather than squashing it. */
-  function wavePath(peaks: number[] | undefined, offset: number, duration: number, sourceDuration: number): string {
-    if (!peaks || peaks.length === 0) return '';
-    const total = sourceDuration > 0 ? sourceDuration : duration;
-    if (total <= 0) return '';
-    const from = Math.max(0, Math.floor((offset / total) * peaks.length));
-    const to = Math.min(peaks.length, Math.max(from + 1, Math.ceil(((offset + duration) / total) * peaks.length)));
-    const slice = peaks.slice(from, to);
-    if (slice.length === 0) return '';
-    const n = slice.length;
-    const mid = WAVE_VIEW_H / 2;
-    let top = '';
-    let bottom = '';
-    for (let i = 0; i < n; i++) {
-      const x = (i / Math.max(1, n - 1)) * 1000;
-      const amp = (slice[i] / 255) * (WAVE_VIEW_H / 2);
-      top += `${i === 0 ? 'M' : 'L'}${x.toFixed(2)},${(mid - amp).toFixed(2)}`;
-      bottom = `L${x.toFixed(2)},${(mid + amp).toFixed(2)}` + bottom;
-    }
-    return `${top}${bottom}Z`;
-  }
+    requestedTransitionDuration(selectedTransitionClip) - selectedTransitionWindow.duration > 0.01);
 
   // ── Keyboard (gated on pointer-over so it can't fight other panels) ────
   //
@@ -823,14 +840,15 @@
   let pointerInTray = false;
   let focusInTray = false;
   function handleShowKey(e: KeyboardEvent): boolean {
+    const s = get(showTimeline);
     const clipSel = hasClipSelection();
     const action = classifyShowKey(e, {
       open: isOpen && !hiddenInVJ,
       engaged: pointerInTray || focusInTray,
-      hasSelection: !!(state.selection || selectedMarker) || clipSel,
+      hasSelection: !!(s.selection || selectedMarker) || clipSel,
       hasClipSelection: clipSel,
-      canPaste: canPasteClips() && state.layerTracks.length > 0,
-      hasTracks: state.layerTracks.length > 0,
+      canPaste: canPasteClips() && s.layerTracks.length > 0,
+      hasTracks: s.layerTracks.length > 0,
       takeoverActive: Object.keys(liveTakeover.state.surfaces).length > 0 || !!liveTakeover.state.overlay,
     });
     if (!action) return false;
@@ -864,7 +882,7 @@
       case 'nudgeBarRight':
         return nudgeSelection(action === 'nudgeLeft' || action === 'nudgeBarLeft' ? -1 : 1, action === 'nudgeBarLeft' || action === 'nudgeBarRight');
       case 'toggleSnap':
-        showTimeline.setSnapEnabled(!state.snapEnabled);
+        showTimeline.setSnapEnabled(!s.snapEnabled);
         return true;
       case 'marker':
         addMarkerAtPlayhead();
@@ -873,7 +891,7 @@
         showTimeline.seek(0);
         return true;
       case 'end':
-        showTimeline.seek(state.duration);
+        showTimeline.seek(s.duration);
         return true;
       case 'clearSelection':
         clearTrackSelection();
@@ -921,9 +939,9 @@
   // chips, narrower pickers; 3: no dividers or total length, closer packing;
   // 4: Return as its arrow alone.
   const TRANSPORT_FIT_MAX = 4;
-  let transportFitLevel = 0;
+  let transportFitLevel = $state(0);
 
-  let showClearConfirm = false;
+  let showClearConfirm = $state(false);
   function confirmClear() {
     showTimeline.clear();
     showClearConfirm = false;
@@ -991,12 +1009,12 @@
     >
       <button
         class="t-btn"
-        class:active={state.isPlaying}
-        disabled={state.duration <= 0}
+        class:active={isPlaying}
+        disabled={duration <= 0}
         onclick={() => showTimeline.togglePlay()}
-        title={state.isPlaying ? 'Pause show' : 'Play show'}
+        title={isPlaying ? 'Pause show' : 'Play show'}
       >
-        {#if state.isPlaying}
+        {#if isPlaying}
           <svg width="12" height="12" viewBox="0 0 12 12"><rect x="1" y="1" width="3.5" height="10" fill="currentColor"/><rect x="7.5" y="1" width="3.5" height="10" fill="currentColor"/></svg>
         {:else}
           <svg width="12" height="12" viewBox="0 0 12 12"><polygon points="2,0 12,6 2,12" fill="currentColor"/></svg>
@@ -1005,16 +1023,16 @@
       <button class="t-btn" onclick={() => showTimeline.stop()} title="Stop and rewind">
         <svg width="12" height="12" viewBox="0 0 12 12"><rect x="1" y="1" width="10" height="10" fill="currentColor"/></svg>
       </button>
-      <button class="t-btn" class:active={state.loop} onclick={() => showTimeline.setLoop(!state.loop)} title="Loop the show">
+      <button class="t-btn" class:active={loop} onclick={() => showTimeline.setLoop(!loop)} title="Loop the show">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
           <path d="M17 2l4 4-4 4"/><path d="M3 11V9a4 4 0 014-4h14"/>
           <path d="M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/>
         </svg>
       </button>
-      {#if !state.loop}
+      {#if !loop}
         <select
           class="t-select t-end"
-          value={state.endAction}
+          value={endAction}
           onchange={(e) => showTimeline.setEndAction((e.currentTarget as HTMLSelectElement).value as ShowEndAction)}
           title="What happens when the show reaches its end"
           aria-label="At the end of the show"
@@ -1025,16 +1043,16 @@
         </select>
       {/if}
 
-      <span class="t-time">{formatPrecise(state.currentTime)}</span>
+      <span class="t-time">{formatPrecise(currentTime)}</span>
       <span class="t-sep t-fit-hide">/</span>
-      <span class="t-total t-fit-hide" title="Total programmed show length">{formatPrecise(state.duration)}</span>
-      {#if state.tempo}
-        <span class="t-bars" title="Bar, beat and sixteenth at the playhead" data-show-bars-readout>{formatBarsBeats(state.tempo, state.currentTime, true)}</span>
+      <span class="t-total t-fit-hide" title="Total programmed show length">{formatPrecise(duration)}</span>
+      {#if tempo}
+        <span class="t-bars" title="Bar, beat and sixteenth at the playhead" data-show-bars-readout>{formatBarsBeats(tempo, currentTime, true)}</span>
       {/if}
 
       <!-- Show audio output. Never hidden while the show has audio: a muted
            or blocked bus is exactly the state the user needs to SEE. -->
-      {#if state.audioTracks.length > 0}
+      {#if audioTracks.length > 0}
         <span class="t-divider"></span>
         <button
           class="t-btn t-audio"
@@ -1106,20 +1124,20 @@
       <button
         class="t-chip t-tempo"
         class:active={selectedTempo}
-        class:has-map={!!state.tempo}
+        class:has-map={!!tempo}
         onclick={() => showTimeline.select(selectedTempo ? null : { kind: 'tempo', id: 'tempo' })}
         title="The show's tempo map: BPM, time signature and where bar 1 is"
         data-show-tempo
       >
-        {state.tempo ? `♩ ${Math.round(state.tempo.segments[0].bpm * 10) / 10}` : 'Tempo'}
+        {tempo ? `♩ ${Math.round(tempo.segments[0].bpm * 10) / 10}` : 'Tempo'}
       </button>
-      <button class="t-chip" class:active={state.snapEnabled} onclick={() => showTimeline.setSnapEnabled(!state.snapEnabled)} title="Snap to the grid, clip edges, the playhead and markers (N). Hold {MOD_KEY} while dragging to move freely." data-show-snap>
+      <button class="t-chip" class:active={snapEnabled} onclick={() => showTimeline.setSnapEnabled(!snapEnabled)} title="Snap to the grid, clip edges, the playhead and markers (N). Hold {MOD_KEY} while dragging to move freely." data-show-snap>
         Snap
       </button>
-      {#if state.tempo}
+      {#if tempo}
         <select
           class="t-select t-grid"
-          value={state.snapGrid}
+          value={snapGrid}
           onchange={(e) => showTimeline.setSnapGrid((e.currentTarget as HTMLSelectElement).value as ShowSnapGrid)}
           title="Snap grid"
           aria-label="Snap grid"
@@ -1129,8 +1147,8 @@
           {/each}
         </select>
         <span class="t-seg" role="group" aria-label="Ruler">
-          <button class="t-seg-btn" class:active={state.rulerMode === 'time'} onclick={() => showTimeline.setRulerMode('time')} title="Ruler in minutes and seconds">Time</button>
-          <button class="t-seg-btn" class:active={state.rulerMode === 'bars'} onclick={() => showTimeline.setRulerMode('bars')} title="Ruler in bars and beats" data-show-ruler-bars>Bars</button>
+          <button class="t-seg-btn" class:active={rulerMode === 'time'} onclick={() => showTimeline.setRulerMode('time')} title="Ruler in minutes and seconds">Time</button>
+          <button class="t-seg-btn" class:active={rulerMode === 'bars'} onclick={() => showTimeline.setRulerMode('bars')} title="Ruler in bars and beats" data-show-ruler-bars>Bars</button>
         </span>
       {/if}
 
@@ -1138,11 +1156,11 @@
 
       <select class="t-select t-preset" bind:value={addPresetId} title="Preset to add">
         <option value="">Choose preset…</option>
-        {#each $compositions as comp}
+        {#each comps as comp}
           <option value={comp.id}>{comp.name}</option>
         {/each}
       </select>
-      <button class="t-chip" onclick={addPreset} disabled={$compositions.length === 0} title="Append this preset to the end of the show">
+      <button class="t-chip" onclick={addPreset} disabled={comps.length === 0} title="Append this preset to the end of the show">
         + Preset
       </button>
       <button class="t-chip t-iconable" onclick={() => audioInput?.click()} title="Add an audio file" aria-label="Add an audio file">
@@ -1173,7 +1191,7 @@
         </svg>
         <span class="t-label">Transition</span>
       </span>
-      <button class="t-chip t-iconable" onclick={() => showTimeline.compactPresetClips()} disabled={state.presetClips.length < 2} title="Close every gap on the preset lane" aria-label="Close every gap on the preset lane">
+      <button class="t-chip t-iconable" onclick={() => showTimeline.compactPresetClips()} disabled={presetClips.length < 2} title="Close every gap on the preset lane" aria-label="Close every gap on the preset lane">
         <span class="t-label">Compact</span>
         <svg class="t-icon" width="16" height="12" viewBox="0 0 16 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M1 6h4.5M3.5 3.5L6 6 3.5 8.5M15 6h-4.5M12.5 3.5L10 6l2.5 2.5M8 1v10"/>
@@ -1254,8 +1272,8 @@
         ondrop={handleDrop}
       >
         <div class="show-ruler" style="width: {totalWidth}px; height: {RULER_HEIGHT}px" onmousedown={startScrub}>
-          <ShowRuler {zoom} {rulerSeconds} {viewStart} {viewEnd} mode={state.rulerMode} tempo={state.tempo} />
-          {#each cues.markers as marker (marker.id)}
+          <ShowRuler {zoom} {rulerSeconds} {viewStart} {viewEnd} mode={rulerMode} tempo={tempo} />
+          {#each visibleMarkers as marker (marker.id)}
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div
               class="show-marker"
@@ -1272,119 +1290,41 @@
         </div>
 
         <div class="lanes" style="width: {totalWidth}px">
-          <div class="lane preset-lane" style="height: {PRESET_LANE_HEIGHT}px">
-            {#each state.presetClips as clip (clip.id)}
-              <!-- svelte-ignore a11y_no_static_element_interactions -->
-              <div
-                class="show-block preset-block"
-                class:selected={state.selection?.kind === 'preset' && state.selection.id === clip.id}
-                class:live={state.activeClipId === clip.id}
-                style="left: {clip.startTime * zoom}px; width: {Math.max(6, clip.duration * zoom)}px"
-                onmousedown={(e) => startBlockDrag(e, 'preset', clip.id, clip.startTime)}
-                title={`${compositionName(clip.compositionId, clip.label)} — ${formatPrecise(clip.duration)}`}
-              >
-                <div class="handle left" onmousedown={(e) => startBlockResize(e, 'preset', clip.id, 'start')}></div>
-                <span
-                  class="block-label"
-                  style="margin-left: {clipTextInsets.get(clip.id)?.head ?? 0}px"
-                >{compositionName(clip.compositionId, clip.label)}</span>
-                <span
-                  class="block-dur"
-                  style="margin-right: {clipTextInsets.get(clip.id)?.tail ?? 0}px"
-                >{formatPrecise(clip.duration)}</span>
-                <div class="handle right" onmousedown={(e) => startBlockResize(e, 'preset', clip.id, 'end')}></div>
-              </div>
-            {/each}
-            <!-- Transitions. Drawn AFTER the clips so they sit on top of the
-                 two blocks they straddle — the element's left/right edges
-                 are literally where the blend starts and ends. -->
-            {#each junctions as junction (junction.clipId)}
-              {#if junction.window}
-                <!-- svelte-ignore a11y_no_static_element_interactions -->
-                <!-- svelte-ignore a11y_click_events_have_key_events -->
-                <div
-                  class="show-transition"
-                  class:selected={state.selection?.kind === 'transition' && state.selection.id === junction.clipId}
-                  style="left: {junction.window.start * zoom}px; width: {Math.max(10, junction.window.duration * zoom)}px"
-                  onmousedown={(e) => {
-                    e.stopPropagation();
-                    showTimeline.select({ kind: 'transition', id: junction.clipId });
-                  }}
-                  ondblclick={() => showTimeline.removeTransitionAt(junction.clipId)}
-                  title={`${transitionStyleLabel(junction.window.style)} — ${junction.window.duration.toFixed(2)}s centred on ${formatPrecise(junction.boundary)}. Drag an edge to retime, double-click to remove.`}
-                >
-                  <div
-                    class="xf-handle left"
-                    onmousedown={(e) => startTransitionResize(e, junction.clipId, junction.boundary)}
-                  ></div>
-                  <svg class="xf-bowtie" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                    <path d="M0 0 L100 100 M0 100 L100 0" vector-effect="non-scaling-stroke" />
-                  </svg>
-                  {#if junction.window.duration * zoom > 44}
-                    <span class="xf-dur">{junction.window.duration.toFixed(2)}s</span>
-                  {/if}
-                  <div
-                    class="xf-handle right"
-                    onmousedown={(e) => startTransitionResize(e, junction.clipId, junction.boundary)}
-                  ></div>
-                </div>
-              {:else}
-                <!-- Hard cut: a ghost marker on the junction. Appears on
-                     hover, and lights up while a Transition chip is being
-                     dragged over it. One click adds the transition. -->
-                <button
-                  class="junction-add"
-                  class:targeted={transitionDropTarget === junction.clipId}
-                  class:arming={transitionDragActive}
-                  style="left: {junction.boundary * zoom}px"
-                  onclick={(e) => { e.stopPropagation(); createTransitionAt(junction.clipId); }}
-                  title="Add a transition at this junction"
-                  aria-label="Add a transition at this junction"
-                >
-                  <svg width="13" height="9" viewBox="0 0 15 10" aria-hidden="true">
-                    <path d="M0.5 0.5 L7.5 5 L0.5 9.5 Z M14.5 0.5 L7.5 5 L14.5 9.5 Z"
-                          fill="currentColor" fill-opacity="0.3" stroke="currentColor" stroke-width="1"/>
-                  </svg>
-                </button>
-              {/if}
-            {/each}
-            {#if state.presetClips.length === 0}
-              <span class="lane-empty">Drop a preset card here, or use “+ Preset”.</span>
-            {/if}
-          </div>
-        
+          <ShowPresetLane
+            clips={presetClips}
+            {junctions}
+            height={PRESET_LANE_HEIGHT}
+            {zoom}
+            {viewStart}
+            {viewEnd}
+            {selection}
+            {activeClipId}
+            names={compositionNames}
+            {transitionDragActive}
+            {transitionDropTarget}
+            onblockdrag={(e, id, start) => startBlockDrag(e, 'preset', id, start)}
+            onblockresize={(e, id, edge) => startBlockResize(e, 'preset', id, edge)}
+            ontransitionresize={startTransitionResize}
+            oncreatetransition={createTransitionAt}
+            onselecttransition={(clipId) => showTimeline.select({ kind: 'transition', id: clipId })}
+            onremovetransition={(clipId) => showTimeline.removeTransitionAt(clipId)}
+          />
+
           <ShowTrackLanes {zoom} {viewStart} {viewEnd} width={totalWidth} />
 
           {#each audioLanes as lane}
-            <div class="lane audio-lane" style="height: {AUDIO_LANE_HEIGHT}px">
-              {#if lane === 0 && state.audioTracks.length === 0}
-                <span class="lane-empty lane-empty-audio">
-                  Drop a song here, or
-                  <button class="lane-empty-btn" onclick={(e) => { e.stopPropagation(); pickSongForShow(); }}>build a show from a song…</button>
-                </span>
-              {/if}
-              {#each state.audioTracks.filter((t) => t.lane === lane) as track (track.id)}
-                <!-- svelte-ignore a11y_no_static_element_interactions -->
-                <div
-                  class="show-block audio-block"
-                  class:selected={state.selection?.kind === 'audio' && state.selection.id === track.id}
-                  class:missing={!track.url}
-                  class:muted={track.muted}
-                  style="left: {track.startTime * zoom}px; width: {Math.max(6, track.duration * zoom)}px"
-                  onmousedown={(e) => startBlockDrag(e, 'audio', track.id, track.startTime)}
-                  title={`${track.name} — ${formatPrecise(track.duration)}${track.url ? '' : ' (media missing)'}`}
-                >
-                  <div class="handle left" onmousedown={(e) => startBlockResize(e, 'audio', track.id, 'start')}></div>
-                  <svg class="wave" viewBox="0 0 1000 {WAVE_VIEW_H}" preserveAspectRatio="none" aria-hidden="true">
-                    <path d={wavePath(track.peaks, track.offset, track.duration, track.sourceDuration)} />
-                  </svg>
-                  <span class="block-label">
-                    {track.muted ? '🔇 ' : ''}{track.name}
-                  </span>
-                  <div class="handle right" onmousedown={(e) => startBlockResize(e, 'audio', track.id, 'end')}></div>
-                </div>
-              {/each}
-            </div>
+            <ShowAudioLane
+              tracks={audioByLane[lane]}
+              height={AUDIO_LANE_HEIGHT}
+              {zoom}
+              {viewStart}
+              {viewEnd}
+              {selection}
+              empty={lane === 0 && audioTracks.length === 0}
+              onpicksong={pickSongForShow}
+              onblockdrag={(e, id, start) => startBlockDrag(e, 'audio', id, start)}
+              onblockresize={(e, id, edge) => startBlockResize(e, 'audio', id, edge)}
+            />
           {/each}
           {#if cameraLaneH > 0}<ShowCameraLane {zoom} />{/if}
         </div>
@@ -1393,7 +1333,7 @@
           <div class="show-bar-line" class:beat={!line.bar} style="left: {line.x}px; top: {RULER_HEIGHT}px; height: {laneStackH - RULER_HEIGHT}px"></div>
         {/each}
 
-        {#each cues.markers as marker (marker.id)}
+        {#each visibleMarkers as marker (marker.id)}
           <div class="show-marker-line" class:selected={marker.id === selectedMarkerId} style="left: {marker.time * zoom}px; height: {laneStackH}px"></div>
         {/each}
 
@@ -1401,7 +1341,7 @@
           <div class="show-snap-guide" style="left: {$showSnapGuide * zoom}px; height: {laneStackH}px" data-show-snap-guide></div>
         {/if}
 
-        <div class="show-playhead" style="left: {playheadX}px" onmousedown={startScrub}>
+        <div class="show-playhead" style="transform: translateX({playheadX}px)" onmousedown={startScrub}>
           <div class="playhead-handle"></div>
           <div class="playhead-line"></div>
         </div>
@@ -1449,9 +1389,9 @@
     {:else if selectedTempo}
       <div class="insp-wrap" bind:clientHeight={inspectorH}>
         <ShowTempoInspector
-          tempo={state.tempo}
-          playhead={state.currentTime}
-          audioTracks={state.audioTracks}
+          tempo={tempo}
+          playhead={currentTime}
+          audioTracks={audioTracks}
           onclose={() => showTimeline.select(null)}
         />
       </div>
@@ -1478,13 +1418,13 @@
             value={selectedPreset.compositionId}
             onchange={(e) => showTimeline.updatePresetClip(selectedPreset.id, {
               compositionId: (e.target as HTMLSelectElement).value,
-              label: $compositions.find((c) => c.id === (e.target as HTMLSelectElement).value)?.name,
+              label: comps.find((c) => c.id === (e.target as HTMLSelectElement).value)?.name,
             })}
           >
-            {#each $compositions as comp}
+            {#each comps as comp}
               <option value={comp.id}>{comp.name}</option>
             {/each}
-            {#if !$compositions.some((c) => c.id === selectedPreset.compositionId)}
+            {#if !comps.some((c) => c.id === selectedPreset.compositionId)}
               <option value={selectedPreset.compositionId}>{selectedPreset.label ?? 'Missing preset'}</option>
             {/if}
           </select>
@@ -2050,34 +1990,6 @@
   /* Ruler ticks: ShowRuler.svelte. */
 
   .lanes { position: relative; }
-  .lane {
-    position: relative;
-    border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
-    box-sizing: border-box;
-  }
-  .audio-lane { background: rgba(255, 255, 255, 0.012); }
-  .preset-lane { background: rgba(255, 111, 94, 0.04); }
-  .lane-empty {
-    position: absolute;
-    left: 12px;
-    top: 50%;
-    transform: translateY(-50%);
-    font-size: var(--ga-text-meta, 11px);
-    color: var(--ga-ink-2, #55555f);
-    pointer-events: none;
-  }
-  .lane-empty-audio { pointer-events: auto; color: var(--ga-ink-2, #6b6b76); }
-  .lane-empty-btn {
-    background: none;
-    border: 0;
-    padding: 0;
-    font: inherit;
-    color: var(--ga-ink-0, #fff);
-    cursor: pointer;
-    text-decoration: underline;
-    text-decoration-color: var(--ga-line-3, rgba(255, 255, 255, 0.24));
-    text-underline-offset: 2px;
-  }
   .t-end { max-width: 160px; }
   .t-out { max-width: 150px; }
   /* Tighter, step by step, until the transport fits on one line. */
@@ -2092,177 +2004,6 @@
   .fit3 .t-divider, .fit3 .t-fit-hide { display: none; }
   .fit3 .t-end, .fit3 .t-out, .fit3 .t-preset { max-width: 80px; }
   .t-out.missing { border-color: rgba(251, 191, 36, 0.6); color: #fbbf24; }
-
-  .show-block {
-    position: absolute;
-    top: 4px;
-    bottom: 4px;
-    border-radius: 4px;
-    overflow: hidden;
-    cursor: grab;
-    box-sizing: border-box;
-    display: flex;
-    align-items: center;
-    user-select: none;
-  }
-  .show-block:active { cursor: grabbing; }
-  .audio-block {
-    background: linear-gradient(180deg, rgba(92, 225, 230, 0.16), rgba(92, 225, 230, 0.07));
-    border: 1px solid rgba(92, 225, 230, 0.45);
-  }
-  .audio-block.muted { opacity: 0.45; }
-  .audio-block.missing {
-    background: rgba(255, 71, 87, 0.12);
-    border-color: rgba(255, 71, 87, 0.5);
-  }
-  .preset-block {
-    background: linear-gradient(180deg, color-mix(in srgb, var(--ga-coral, #ff6f5e) 24%, transparent), color-mix(in srgb, var(--ga-coral, #ff6f5e) 10%, transparent));
-    border: 1px solid color-mix(in srgb, var(--ga-coral, #ff6f5e) 50%, transparent);
-    justify-content: space-between;
-    padding: 0 8px;
-  }
-  .preset-block.live {
-    border-color: #FFD96B;
-    box-shadow: 0 0 0 1px rgba(255, 217, 107, 0.5), 0 0 12px rgba(255, 217, 107, 0.25);
-  }
-  .show-block.selected {
-    box-shadow: 0 0 0 1px #FFD96B, 0 0 10px rgba(255, 217, 107, 0.3);
-    z-index: 3;
-  }
-
-  .wave {
-    position: absolute;
-    inset: 4px 0;
-    width: 100%;
-    height: calc(100% - 8px);
-    pointer-events: none;
-  }
-  .wave path { fill: rgba(92, 225, 230, 0.55); }
-
-  .block-label {
-    position: relative;
-    z-index: 1;
-    font-size: 11px;
-    font-weight: 600;
-    color: #e8e8ee;
-    padding: 0 8px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
-    pointer-events: none;
-  }
-  .preset-block .block-label { padding: 0; }
-  .block-dur {
-    position: relative;
-    z-index: 1;
-    font-size: var(--ga-text-eyebrow, 10px);
-    color: rgba(255, 255, 255, 0.55);
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    white-space: nowrap;
-    pointer-events: none;
-  }
-
-  /* ── Junction transitions ──────────────────────────────────────────────
-     The element straddles the boundary: its left edge IS the show time the
-     blend starts and its right edge IS where it ends, so the picture on the
-     timeline and what the renderer does cannot drift apart. Amber to match
-     the playhead/live-clip language; the clip blocks are coral. */
-  .show-transition {
-    position: absolute;
-    top: 3px;
-    bottom: 3px;
-    z-index: 4;
-    border-radius: 3px;
-    box-sizing: border-box;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: linear-gradient(180deg, rgba(255, 217, 107, 0.28), rgba(255, 217, 107, 0.12));
-    border: 1px solid rgba(255, 217, 107, 0.75);
-    cursor: pointer;
-    overflow: hidden;
-    user-select: none;
-  }
-  .show-transition:hover { background: linear-gradient(180deg, rgba(255, 217, 107, 0.4), rgba(255, 217, 107, 0.18)); }
-  .show-transition.selected {
-    border-color: #FFD96B;
-    box-shadow: 0 0 0 1px #FFD96B, 0 0 12px rgba(255, 217, 107, 0.45);
-    z-index: 5;
-  }
-  /* The classic bowtie/X. `preserveAspectRatio: none` + non-scaling-stroke
-     keeps the crossing lines spanning the whole element at any duration or
-     zoom without the stroke smearing. */
-  .xf-bowtie {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    pointer-events: none;
-  }
-  .xf-bowtie path {
-    stroke: rgba(255, 217, 107, 0.85);
-    stroke-width: 1;
-    fill: none;
-  }
-  .xf-dur {
-    position: relative;
-    z-index: 1;
-    font-size: var(--ga-text-eyebrow, 10px);
-    font-weight: 700;
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    color: #1a1408;
-    background: rgba(255, 217, 107, 0.92);
-    border-radius: 2px;
-    padding: 1px 4px;
-    pointer-events: none;
-    white-space: nowrap;
-  }
-  .xf-handle {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    width: 6px;
-    z-index: 2;
-    cursor: ew-resize;
-  }
-  .xf-handle.left { left: 0; }
-  .xf-handle.right { right: 0; }
-  .xf-handle:hover { background: rgba(255, 255, 255, 0.35); }
-
-  /* Ghost marker on a junction that is currently a hard cut. Invisible
-     until the lane is hovered (or a transition chip is in flight) so a
-     dense arrangement is not covered in permanent buttons. */
-  .junction-add {
-    position: absolute;
-    top: 50%;
-    width: 19px;
-    height: 15px;
-    margin-left: -9.5px;
-    transform: translateY(-50%);
-    z-index: 4;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    border-radius: 3px;
-    background: rgba(10, 10, 14, 0.85);
-    border: 1px dashed rgba(255, 217, 107, 0.45);
-    color: rgba(255, 217, 107, 0.75);
-    cursor: pointer;
-    opacity: 0;
-    transition: opacity 0.12s ease;
-  }
-  .preset-lane:hover .junction-add,
-  .junction-add.arming { opacity: 1; }
-  .junction-add:hover,
-  .junction-add.targeted {
-    opacity: 1;
-    border-style: solid;
-    border-color: #FFD96B;
-    color: #FFD96B;
-    box-shadow: 0 0 10px rgba(255, 217, 107, 0.5);
-  }
 
   .t-transition-chip {
     display: inline-flex;
@@ -2280,18 +2021,6 @@
     color: var(--ga-ink-1, #aaa);
     border-color: var(--ga-line-2, rgba(255, 255, 255, 0.12));
   }
-
-  .handle {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    width: 7px;
-    z-index: 2;
-    cursor: ew-resize;
-  }
-  .handle.left { left: 0; }
-  .handle.right { right: 0; }
-  .handle:hover { background: rgba(255, 255, 255, 0.25); }
 
   .show-snap-guide {
     position: absolute;
@@ -2326,14 +2055,18 @@
      that lands under the pointer must not swallow the second click of a
      double-click (adding a key) or a press on a clip edge. The ruler and
      the handle still scrub. */
+  /* Placed by `transform` on its own layer: moving it every frame of a
+     playing show must not repaint the lanes underneath. */
   .show-playhead {
     position: absolute;
     top: 0;
     bottom: 0;
+    left: 0;
     width: 1px;
     z-index: 6;
     cursor: col-resize;
     pointer-events: none;
+    will-change: transform;
   }
   .playhead-handle { pointer-events: auto; cursor: col-resize; }
   .playhead-handle {
