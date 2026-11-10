@@ -972,7 +972,9 @@ function sourceValuesSignature(layer: Layer): string {
   const javascriptValuesSignature = s.jsAnimation
     ? hashString(JSON.stringify(s.jsAnimation.paramValues ?? {}))
     : 'no-js';
-  return `${shaderValuesSignature}:${javascriptValuesSignature}`;
+  // A show clip's shader time: a new anchor goes out with the uniforms.
+  const shaderTime = s._nativeShaderTime ? `:t${s._nativeShaderTime.seq}` : '';
+  return `${shaderValuesSignature}:${javascriptValuesSignature}${shaderTime}`;
 }
 
 /** The live audio the effect packers read each frame: the level for audio
@@ -10677,6 +10679,19 @@ export class NativeRendererSync {
         }
 
         const audioFields = ghostAudioCommandFieldsFromVisualAudio(visual);
+        // A show clip's shader runs on its own time (its time in the clip,
+        // still while the show is paused), not the render clock.
+        const shaderTimeAnchor = src2._nativeShaderTime;
+        if (shaderTimeAnchor) {
+          commands.push({
+            type: 'set_isf_time_anchor',
+            shader_id: shaderId,
+            time_seconds: Math.max(0, shaderTimeAnchor.seconds),
+            clock_time_seconds: shaderTime,
+            rate: shaderTimeAnchor.rate,
+            paused: shaderTimeAnchor.paused,
+          });
+        }
         commands.push({
           type: 'update_isf_uniforms',
           shader_id: shaderId,

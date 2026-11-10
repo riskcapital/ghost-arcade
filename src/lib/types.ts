@@ -967,6 +967,9 @@ export interface MediaSource {
   _nativePlaybackTimeSeconds?: number; // Runtime anchor for the native decoder clock
   _nativePlaybackUpdatedAtMs?: number; // performance.now() corresponding to the native time anchor
   _nativePlaybackSeekSeq?: number; // Incremented for every explicit native seek/restart
+  /** Runtime: a shader's TIME follows this anchor instead of the render
+   *  clock (a show clip's own time). `seq` changes with every new anchor. */
+  _nativeShaderTime?: { seconds: number; rate: number; paused: boolean; seq: number };
   _lastFrameTime?: number; // Internal: timestamp for manual frame stepping
   // Timelapse mode properties
   timelapseInterval?: number; // Seconds between frames (1-30)

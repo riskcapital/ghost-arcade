@@ -96,7 +96,13 @@ describe('building the scene from layer tracks', () => {
     const warm = before.find((l) => l.id === SHOW_WARM_LAYER_PREFIX + 'A')!;
     expect(warm.opacity).toBe(0);
     const after = build(live, frameAt(tracks, 5.1), sources);
-    expect(after.find((l) => l.id === 'A')!.source).toBe(warm.source);
+    // The same program (source id and code: the core's shader id) goes live,
+    // now on the clip's own time.
+    const goesLive = after.find((l) => l.id === 'A')!.source!;
+    expect(goesLive.id).toBe(warm.source!.id);
+    expect(goesLive.shaderCode).toBe(warm.source!.shaderCode);
+    expect(goesLive._nativeShaderTime).toMatchObject({ paused: false, rate: 1 });
+    expect(goesLive._nativeShaderTime!.seconds).toBeCloseTo(0.1, 9);
     expect(after.some((l) => l.id.startsWith(SHOW_WARM_LAYER_PREFIX))).toBe(false);
     // Too early to warm.
     expect(build(live, frameAt(tracks, 3), sources)).toBe(live);

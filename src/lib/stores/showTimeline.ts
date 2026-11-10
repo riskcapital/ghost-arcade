@@ -665,6 +665,7 @@ function publishTrackFrame(s: ShowTimelineState, evalTime: number, force = false
     manualClock: isManualClock(),
     laneValues: (track, t) => (track.lanes.length ? evaluateLanes(track.lanes, t) : null),
     evaluatedAtMs: typeof performance !== 'undefined' ? performance.now() : undefined,
+    wrap: lastLoopWrap && lastLoopWrap.generation === seekGeneration ? lastLoopWrap.wrap : null,
   });
   lastTrackFrame = frame;
   const signature = showTrackFrameSignature(frame);
@@ -707,6 +708,9 @@ const CLIP_AUDIO_PREFIX = 'show-audio:';
 const trackElements = new Map<string, HTMLAudioElement>();
 /** Bumped on every explicit seek so the bus hard-seeks instead of nudging. */
 let seekGeneration = 0;
+/** The last loop wrap, and the seek generation it began (see
+ *  ShowTrackFrame.wrap). */
+let lastLoopWrap: { generation: number; wrap: { fromGeneration: number; shift: number } } | null = null;
 
 function busIdFor(trackId: string): string {
   return CLIP_AUDIO_PREFIX + trackId;
@@ -1018,6 +1022,7 @@ function tick(now: number): void {
       const wrapped = ((next % dur) + dur) % dur;
       // Keep the clock anchor: only the show time moves back by whole passes.
       transportClock.shift(wrapped - next);
+      lastLoopWrap = { generation: seekGeneration + 1, wrap: { fromGeneration: seekGeneration, shift: next - wrapped } };
       next = wrapped;
       applyTime(next, true); // wrap is a discontinuity for the audio bus
       ticker.request();
@@ -1228,19 +1233,51 @@ export function normalizeSnapGrid(raw: unknown, hasTempo: boolean): ShowSnapGrid
   return SNAP_GRIDS.has(raw as ShowSnapGrid) ? (raw as ShowSnapGrid) : hasTempo ? 'beat' : 'seconds';
 }
 
+/** Underscore fields a track's copy of its layer keeps: the AssetRefs of
+ *  its media (a splat's texture and a PixelFX source too), so the copy's
+ *  own content survives save and reload and the project packager finds it. */
+const TEMPLATE_KEPT_FIELDS = new Set(['_assetRef', '_textureAssetRef', '_sourceAssetRef']);
+
 /**
  * A clean copy of a layer to keep on its track, for when the layer is not on
- * stage. Runtime handles go; the media's AssetRef stays so the copy's own
+ * stage. Runtime handles go; the media's AssetRefs stay so the copy's own
  * content survives save and reload.
  */
 export function trackTemplateFromLayer(layer: Layer): Layer {
   const clean = JSON.parse(JSON.stringify(layer, (key, value) => {
     if (key === 'texture' || key === 'videoElement' || key === 'renderTarget' || key === 'iframeElement' || key === 'synthVisionCanvas') return undefined;
-    if (typeof key === 'string' && key.startsWith('_') && key !== '_assetRef') return undefined;
+    if (typeof key === 'string' && key.startsWith('_') && !TEMPLATE_KEPT_FIELDS.has(key)) return undefined;
     return value;
   })) as Layer;
   // Geometry is resolved live from the shared surface map it belongs to.
   return { ...clean, surfaceId: layer.surfaceId || layer.id };
+}
+
+/** Track copies of their layers, refreshed where they changed. */
+function refreshTemplates(pairs: ReadonlyArray<readonly [ShowLayerTrack, Layer]>): void {
+  if (!pairs.length) return;
+  const next = new Map<string, { template: Layer; layerName: string }>();
+  for (const [track, layer] of pairs) {
+    const template = trackTemplateFromLayer(layer);
+    if (track.template && track.layerName === layer.name && sameJson(track.template, template)) continue;
+    next.set(track.id, { template, layerName: layer.name });
+  }
+  if (!next.size) return;
+  store.update((s) => ({
+    ...s,
+    layerTracks: s.layerTracks.map((t) => {
+      const fresh = next.get(t.id);
+      return fresh ? { ...t, ...fresh } : t;
+    }),
+  }));
+  republishTracks();
+}
+
+/** The project's live layers, for refreshing track templates before a save
+ *  (installed by the show-track runtime). */
+let templateLayerSource: (() => readonly Layer[]) | null = null;
+export function setShowTemplateLayerSource(source: (() => readonly Layer[]) | null): void {
+  templateLayerSource = source;
 }
 
 /** True when the AssetRef alone can rebuild the runtime URL on load. */
@@ -2086,18 +2123,20 @@ export const showTimeline = {
    * may have been edited). Not an edit of the show: no undo step.
    */
   refreshTrackTemplate(trackId: string, layer: Layer) {
-    const template = trackTemplateFromLayer(layer);
-    let changed = false;
-    store.update((s) => ({
-      ...s,
-      layerTracks: s.layerTracks.map((t) => {
-        if (t.id !== trackId) return t;
-        if (t.template && t.layerName === layer.name && sameJson(t.template, template)) return t;
-        changed = true;
-        return { ...t, template, layerName: layer.name };
-      }),
-    }));
-    if (changed) republishTracks();
+    const track = get(store).layerTracks.find((t) => t.id === trackId);
+    if (track) refreshTemplates([[track, layer]]);
+  },
+
+  /** Refresh every track whose layer is in `layers` (the project's live
+   *  layers) at once. */
+  refreshTrackTemplates(layers: readonly Layer[]) {
+    const byId = new Map(layers.map((l) => [l.id, l]));
+    const pairs: Array<[ShowLayerTrack, Layer]> = [];
+    for (const track of get(store).layerTracks) {
+      const layer = byId.get(track.layerId);
+      if (layer) pairs.push([track, layer]);
+    }
+    refreshTemplates(pairs);
   },
 
   /**
@@ -2143,6 +2182,36 @@ export const showTimeline = {
     recordShowEdit();
     republishTracks();
     return clip.id;
+  },
+
+  /**
+   * The length of a video file clips were placed without (see
+   * show/tracks/showClipLength.ts): every video clip whose media reads from
+   * `uri` and has no length gets it. Measuring a file is not an edit: the
+   * length goes into the step the clips are already in.
+   */
+  applyClipMediaLength(uri: string, seconds: number, uriOf: (media: ShowClipMedia) => string) {
+    if (!(Number.isFinite(seconds) && seconds > 0)) return;
+    let changed = false;
+    const lengthen = (media: ShowClipMedia): ShowClipMedia => {
+      if (media.kind !== 'video' || Number(media.sourceDuration) > 0 || uriOf(media) !== uri) return media;
+      changed = true;
+      return { ...media, sourceDuration: seconds };
+    };
+    const layerTracks = get(store).layerTracks.map((track) => {
+      let touched = false;
+      const clips = track.clips.map((clip) => {
+        const media = lengthen(clip.media);
+        if (media === clip.media) return clip;
+        touched = true;
+        return { ...clip, media };
+      });
+      return touched ? { ...track, clips } : track;
+    });
+    if (!changed) return;
+    store.update((s) => ({ ...s, layerTracks }));
+    if (!isRestoringHistory()) amendLastHistoryStep();
+    republishTracks();
   },
 
   /** Where a layer clip lives. */
@@ -2508,6 +2577,8 @@ export const showTimeline = {
     releaseAllTrackElements();
     publishTransition(null);
     transportClock.reset();
+    // A new show: no video may carry on from where the old one left it.
+    seekGeneration++;
     store.update((s) => ({
       ...createInitialState(),
       isOpen: s.isOpen,
@@ -2636,6 +2707,13 @@ export const showTimeline = {
    * `activeClipId` are session state and never travel.
    */
   serialize(): ShowTimelineSnapshot {
+    // A save carries each track's copy of its layer as the layer is now,
+    // not as the last refresh left it.
+    if (templateLayerSource && get(store).layerTracks.length) {
+      try { this.refreshTrackTemplates(templateLayerSource()); } catch (err) {
+        console.warn('[ShowTimeline] template refresh before save failed:', err);
+      }
+    }
     const s = get(store);
     return {
       version: 2,
@@ -2671,6 +2749,9 @@ export const showTimeline = {
     cancelRaf();
     releaseAllTrackElements();
     publishTransition(null);
+    // Another show (or the same one reopened): its videos start from their
+    // own anchors, never from where the last show left a decoder.
+    seekGeneration++;
     notifyReset();
 
     if (!payload || typeof payload !== 'object') {
@@ -2769,6 +2850,8 @@ export const showTimeline = {
     publishTransition(null);
     lastPublishedTransition = null;
     seekGeneration = 0;
+    lastLoopWrap = null;
+    templateLayerSource = null;
     trackFrameSink = null;
     lastTrackFrame = null;
     lastTrackFrameSignature = null;

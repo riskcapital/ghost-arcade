@@ -6,24 +6,44 @@
  * - paces scrubs of paused video clips through the native scrubber;
  * - runs the phase follower (showVideoPhase.ts) while the show plays;
  * - pre-rolls clips about to start (showPreloader.ts);
+ * - re-anchors a video whose decoder drifted more than two frames off;
+ * - finds the length of video clips whose media did not say;
  * - keeps each track's copy of its layer current while the layer is on stage.
  */
 import { get, type Readable } from 'svelte/store';
 import type { MediaSource, Project } from '../../types';
-import { showTimeline, setShowTrackFrameSink, currentShowTrackFrame } from '../../stores/showTimeline';
+import {
+  showTimeline,
+  setShowTrackFrameSink,
+  currentShowTrackFrame,
+  onShowTimelineReset,
+  setShowTemplateLayerSource,
+} from '../../stores/showTimeline';
 import { showTrackFrame, showClipSources } from '../../stores/showTrackFrame';
 import { createNativeVideoScrubber } from '../../renderer/nativeVideoScrubber';
-import { prefetchNativeRendererMedia, submitNativeRendererCommands, type RendererCommand } from '../../api/native-renderer';
+import {
+  getNativeRendererStatus,
+  prefetchNativeRendererMedia,
+  probeNativeVideo,
+  submitNativeRendererCommands,
+  type RendererCommand,
+} from '../../api/native-renderer';
 import { getActiveNativeRendererSync } from '../../sync/nativeRendererSync';
 import { SHOW_PHASE_INTERVAL_MS, showPhaseCommands, showPhaseTargets } from './showVideoPhase';
 import { selectShowPreloads } from './showPreloader';
 import { readableClipUri, showSourceId } from './showClipSources';
 import { addTrackForLayer, addTrackForNewLayer } from './showTrackActions';
+import { SHOW_DRIFT_CHECK_MS, ShowDriftWatch } from './showVideoDrift';
+import { unknownLengthVideoUris, probeVideoDuration } from './showClipLength';
 
 const PRELOAD_INTERVAL_MS = 250;
 /** A pre-roll is not repeated for the same clip within this long. */
 const PRELOAD_REPEAT_MS = 8000;
+/** Track templates follow their layer at most this often while it changes
+ *  (and always right before a save). */
 const TEMPLATE_REFRESH_MS = 400;
+/** A length probe the core could not answer yet is asked again after this. */
+const PROBE_RETRY_MS = 3000;
 
 export interface ShowTrackRuntimeDeps {
   project: Readable<Project>;
@@ -36,6 +56,12 @@ export function installShowTrackRuntime(deps: ShowTrackRuntimeDeps): () => void 
   // ── Frames → scene ───────────────────────────────────────────────────
   setShowTrackFrameSink((frame) => showTrackFrame.set(frame));
   disposers.push(() => setShowTrackFrameSink(null));
+  // Anchors live as long as the frame uses them: a track's own, and its
+  // crossfade helper's only inside the crossfade.
+  disposers.push(showTrackFrame.subscribe((frame) => showClipSources.retainFrame(frame)));
+  // Another show loaded, or this one cleared: no video carries on from the
+  // decoder the old one left.
+  disposers.push(onShowTimelineReset(() => showClipSources.clear()));
   // A scrub commit changed a source: rebuild the scene from the same frame.
   showClipSources.onSourceChanged = () => showTrackFrame.update((f) => (f ? { ...f } : f));
 
@@ -89,11 +115,15 @@ export function installShowTrackRuntime(deps: ShowTrackRuntimeDeps): () => void 
     const sync = getActiveNativeRendererSync();
     if (!sync) return;
     const now = performance.now();
-    for (const pick of selectShowPreloads(s.layerTracks, s.currentTime, { soloTrackId: s.soloTrackId })) {
+    const loopDuration = s.loop ? s.duration : undefined;
+    for (const pick of selectShowPreloads(s.layerTracks, s.currentTime, { soloTrackId: s.soloTrackId, loopDuration })) {
       const media = pick.clip.media;
       const sourceId = showSourceId(pick.runId);
       const uri = readableClipUri(media);
-      const key = `${sourceId}|${uri}|${pick.clip.inPoint}`;
+      const seekGeneration = showClipSources.nextSeekSeqFor(sourceId);
+      // Once per generation: after the clip has played (a looping show comes
+      // back to it), its next pre-roll is a new one.
+      const key = `${sourceId}|${uri}|${pick.clip.inPoint}|${seekGeneration}`;
       if (now - (preloaded.get(key) ?? -Infinity) < PRELOAD_REPEAT_MS) continue;
       preloaded.set(key, now);
       if (pick.kind === 'image') {
@@ -101,7 +131,6 @@ export function installShowTrackRuntime(deps: ShowTrackRuntimeDeps): () => void 
         continue;
       }
       const duration = Number(media.sourceDuration);
-      const seekGeneration = showClipSources.nextSeekSeqFor(sourceId);
       showClipSources.notePreroll(sourceId, seekGeneration, pick.clip.inPoint);
       const synthetic = {
         id: sourceId,
@@ -141,20 +170,83 @@ export function installShowTrackRuntime(deps: ShowTrackRuntimeDeps): () => void 
     queueMicrotask(preload);
   }));
 
-  // ── Track templates follow their layer while it is on stage ──────────
-  let templateTimer: ReturnType<typeof setTimeout> | null = null;
-  const refreshTemplates = () => {
-    templateTimer = null;
-    const layers = get(deps.project).layers ?? [];
-    const byId = new Map(layers.map((l) => [l.id, l]));
-    for (const track of get(showTimeline).layerTracks) {
-      const layer = byId.get(track.layerId);
-      if (layer) showTimeline.refreshTrackTemplate(track.id, layer);
+  // ── Drift: a hard re-anchor past two frames ──────────────────────────
+  // The phase follower above only steers hardware-decoded clips, and only
+  // the incoming side of a crossfade. Twice a second the decoders' real
+  // positions are compared with the show; one that stays more than two
+  // frames off is re-anchored (a seek, under a new generation).
+  const drift = new ShowDriftWatch();
+  let driftBusy = false;
+  const driftTimer = desktop
+    ? setInterval(() => {
+        if (driftBusy) return;
+        const frame = currentShowTrackFrame();
+        if (!frame || !frame.playing || frame.manualClock) { drift.reset(); return; }
+        if (!showClipSources.anchorEntries().some(([, a]) => !a.paused)) return;
+        driftBusy = true;
+        const sentAt = performance.now();
+        getNativeRendererStatus()
+          .then((status) => {
+            const at = (sentAt + performance.now()) / 2;
+            const latest = currentShowTrackFrame();
+            if (!status || !latest) return;
+            const keys = drift.check(latest, showClipSources.anchorEntries(), status.native_video_sessions ?? [], at, (performance.now() - sentAt) / 2000);
+            if (!keys.length) return;
+            for (const key of keys) showClipSources.reanchor(key);
+            // Rebuild the scene from the newest evaluation, so the new
+            // anchors name the media time of now.
+            showTrackFrame.set({ ...latest });
+          })
+          .catch(() => { /* no status: try again next time */ })
+          .finally(() => { driftBusy = false; });
+      }, SHOW_DRIFT_CHECK_MS)
+    : null;
+  disposers.push(() => { if (driftTimer) clearInterval(driftTimer); });
+
+  // ── Video clips of unknown length ────────────────────────────────────
+  // A clip dropped before its media's length was known would loop forever
+  // and stretch without limit: the core (or the file's metadata) tells.
+  const lengths = new Map<string, number | 'pending' | 'failed'>();
+  let probeTracks: unknown = null;
+  let probeRetry: ReturnType<typeof setTimeout> | null = null;
+  const probeLengths = () => {
+    const tracks = get(showTimeline).layerTracks;
+    if (tracks === probeTracks) return;
+    probeTracks = tracks;
+    for (const uri of unknownLengthVideoUris(tracks, readableClipUri)) {
+      const known = lengths.get(uri);
+      if (typeof known === 'number') { showTimeline.applyClipMediaLength(uri, known, readableClipUri); continue; }
+      if (known === 'pending' || known === 'failed') continue;
+      lengths.set(uri, 'pending');
+      void probeVideoDuration(uri, desktop ? probeNativeVideo : null).then((seconds) => {
+        if (seconds === null) {
+          // No answer yet (the core is busy or not up): ask again shortly.
+          lengths.delete(uri);
+          probeRetry ??= setTimeout(() => { probeRetry = null; probeTracks = null; probeLengths(); }, PROBE_RETRY_MS);
+          return;
+        }
+        if (!(seconds > 0)) { lengths.set(uri, 'failed'); return; }
+        lengths.set(uri, seconds);
+        showTimeline.applyClipMediaLength(uri, seconds, readableClipUri);
+      });
     }
   };
-  disposers.push(deps.project.subscribe(() => {
-    if (!get(showTimeline).layerTracks.length) return;
+  disposers.push(showTimeline.subscribe(() => probeLengths()));
+  disposers.push(() => { if (probeRetry) clearTimeout(probeRetry); });
+
+  // ── Track templates follow their layer while it is on stage ──────────
+  // Throttled, not debounced: modulation changes the project every frame,
+  // and a debounce restarted on every change never fired while it ran.
+  let templateTimer: ReturnType<typeof setTimeout> | null = null;
+  const refreshTemplates = () => {
     if (templateTimer) clearTimeout(templateTimer);
+    templateTimer = null;
+    showTimeline.refreshTrackTemplates(get(deps.project).layers ?? []);
+  };
+  setShowTemplateLayerSource(() => get(deps.project).layers ?? []);
+  disposers.push(() => setShowTemplateLayerSource(null));
+  disposers.push(deps.project.subscribe(() => {
+    if (templateTimer || !get(showTimeline).layerTracks.length) return;
     templateTimer = setTimeout(refreshTemplates, TEMPLATE_REFRESH_MS);
   }));
   disposers.push(() => { if (templateTimer) clearTimeout(templateTimer); });

@@ -21,8 +21,8 @@
  * The core reports how far off each followed session is as
  * `phase_error_seconds` in the status's `native_video_sessions`.
  */
-import type { ShowTrackFrame } from './showTrackEval';
-import type { ShowClipSources } from './showClipSources';
+import type { ShowTrackClipState, ShowTrackFrame } from './showTrackEval';
+import type { ShowClipAnchor, ShowClipSources } from './showClipSources';
 
 export const SHOW_PHASE_INTERVAL_MS = 100;
 
@@ -56,15 +56,21 @@ export function showPhaseTargets(frame: ShowTrackFrame | null, sources: ShowClip
     ? Math.min(SHOW_PHASE_MAX_PROJECTION_SECONDS, Math.max(0, (nowMs! - frame.evaluatedAtMs!) / 1000))
     : 0;
   const targets: ShowPhaseTarget[] = [];
-  for (const state of frame.tracks) {
-    const clip = state.clip;
-    if (!clip || clip.media.kind !== 'video' || clip.paused) continue;
-    const anchor = sources.anchorFor(state.trackId);
-    if (!anchor || anchor.runId !== clip.runId || anchor.paused) continue;
+  const follow = (clip: ShowTrackClipState | null | undefined, anchor: Readonly<ShowClipAnchor> | null) => {
+    if (!clip || clip.media.kind !== 'video' || clip.paused) return;
+    if (!anchor || anchor.runId !== clip.runId || anchor.paused) return;
+    // One target per decoder (a crossfade's two sides never share one).
+    if (targets.some((t) => t.sourceId === anchor.sourceId)) return;
     const timeSeconds = age > 0
       ? projectMediaTime(clip.mediaTime, age, clip.rate, clip.loopStart, clip.media.sourceDuration)
       : clip.mediaTime;
     targets.push({ sourceId: anchor.sourceId, uri: anchor.src, seekGeneration: anchor.nativeSeekSeq, timeSeconds });
+  };
+  for (const state of frame.tracks) {
+    follow(state.clip, sources.anchorFor(state.trackId));
+    // The outgoing clip of a crossfade plays on its own decoder: follow it
+    // too, or it drifts for the length of the crossfade.
+    if (state.xfade) follow(state.xfade.clip, sources.xfadeAnchorFor(state.trackId));
   }
   return targets;
 }
