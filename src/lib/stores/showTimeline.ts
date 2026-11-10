@@ -62,8 +62,17 @@ import { writable, derived, get } from 'svelte/store';
 import type {
   ClipTransitionIn,
   CompositionTransitionStyle,
+  KeyframeTrack,
+  Layer,
   ShowAudioTrack,
+  ShowCameraClip,
+  ShowClipEndBehaviour,
+  ShowClipMedia,
+  ShowLayerClip,
+  ShowLayerTrack,
   ShowPresetClip,
+  ShowSnapGrid,
+  ShowTempoMap,
 } from '../types';
 // Type-only: keeps this store loadable in vitest's node environment without
 // dragging the renderer (and three.js behind it) into an arrangement test.
@@ -91,6 +100,32 @@ import {
 } from '../audio/showAudioImport';
 import { ShowTransportClock, readAudioClock, type AudioClockContext } from '../show/showTransportClock';
 import { showToast } from './errorToast';
+import {
+  placeOnLane,
+  maxDurationAt,
+  type Placeable,
+  SHOW_MIN_TRACK_CLIP_SECONDS,
+  deleteClips,
+  duplicateClips,
+  insertClip,
+  maxClipDurationForMedia,
+  moveClipTo,
+  moveClips,
+  pasteClips,
+  rippleDelete,
+  shiftLaneKeys,
+  splitClip,
+  trimClip,
+} from '../show/tracks/showTrackEdit';
+import {
+  clipEnd,
+  evaluateShowTracks,
+  findClipAt,
+  showTrackFrameSignature,
+  type ShowTrackFrame,
+} from '../show/tracks/showTrackEval';
+import { nearestGridTime, normalizeTempoMap } from '../show/tempoMap';
+import { resolveAssetTreeInPlace } from '../storage/assetRegistry';
 import {
   amendLastHistoryStep,
   isRestoringHistory,
@@ -126,7 +161,7 @@ export interface ShowTimelineSelection {
   /** 'transition' selects the junction element sitting on `id`'s LEFT edge —
    *  the transition is stored on that clip, but it is a separate selectable
    *  object on the timeline with its own inspector. */
-  kind: 'audio' | 'preset' | 'transition';
+  kind: 'audio' | 'preset' | 'transition' | 'layerClip' | 'track' | 'keyframe';
   id: string;
 }
 
@@ -150,6 +185,18 @@ export interface ShowTimelineState {
   selection: ShowTimelineSelection | null;
   /** What happens when a show that does not loop reaches its end. */
   endAction: ShowEndAction;
+  /** Layer tracks, top to bottom. */
+  layerTracks: ShowLayerTrack[];
+  /** The beat grid, or null for a show measured in seconds only. */
+  tempo: ShowTempoMap | null;
+  rulerMode: 'time' | 'bars';
+  snapGrid: ShowSnapGrid;
+  /** Selected layer clips (multi-select). */
+  selectedClipIds: string[];
+  /** Session only: the one track left visible. */
+  soloTrackId: string | null;
+  /** Stage-camera shots along the show. */
+  cameraLane: ShowCameraClip[];
 }
 
 /**
@@ -179,6 +226,13 @@ function createInitialState(): ShowTimelineState {
     snapEnabled: true,
     selection: null,
     endAction: 'hold',
+    layerTracks: [],
+    tempo: null,
+    rulerMode: 'time',
+    snapGrid: 'seconds',
+    selectedClipIds: [],
+    soloTrackId: null,
+    cameraLane: [],
   };
 }
 
@@ -194,10 +248,14 @@ export function fitShowZoom(duration: number, width: number): number {
 export function computeShowDuration(
   clips: Pick<ShowPresetClip, 'startTime' | 'duration'>[],
   tracks: Pick<ShowAudioTrack, 'startTime' | 'duration'>[],
+  layerTracks: Pick<ShowLayerTrack, 'clips'>[] = [],
+  cameraLane: Pick<ShowCameraClip, 'startTime' | 'duration'>[] = [],
 ): number {
   let end = 0;
   for (const c of clips) end = Math.max(end, c.startTime + c.duration);
   for (const t of tracks) end = Math.max(end, t.startTime + t.duration);
+  for (const lt of layerTracks) for (const c of lt.clips) end = Math.max(end, c.startTime + c.duration);
+  for (const c of cameraLane) end = Math.max(end, c.startTime + c.duration);
   return Number.isFinite(end) && end > 0 ? end : 0;
 }
 
@@ -266,67 +324,8 @@ export function snapShowTime(
   return Math.max(0, Math.round(best * 1e6) / 1e6);
 }
 
-export interface Placeable {
-  id: string;
-  startTime: number;
-  duration: number;
-}
-
-/**
- * Place `duration` seconds starting at `desiredStart` on a single-occupancy
- * lane, given the other items already on it.
- *
- * Returns the clamped start, or null when the free window under
- * `desiredStart` is too narrow to hold the item — the caller then leaves it
- * where it was. Refusing beats silently resizing: an operator dragging a
- * 60 s preset into a 10 s hole did not ask for a 10 s preset.
- */
-export function placeOnLane(
-  others: Placeable[],
-  desiredStart: number,
-  duration: number,
-): number | null {
-  const start = Math.max(0, desiredStart);
-  const sorted = [...others].sort((a, b) => a.startTime - b.startTime);
-
-  // If the requested start lands inside an existing item, push out to the
-  // nearer edge before measuring the window.
-  let probe = start;
-  for (const o of sorted) {
-    const s = o.startTime;
-    const e = o.startTime + o.duration;
-    if (probe > s && probe < e) {
-      probe = probe - s < e - probe ? Math.max(0, s - duration) : e;
-    }
-  }
-
-  let left = 0;
-  let right = Number.POSITIVE_INFINITY;
-  for (const o of sorted) {
-    const s = o.startTime;
-    const e = o.startTime + o.duration;
-    if (e <= probe) left = Math.max(left, e);
-    else if (s >= probe) right = Math.min(right, s);
-    else {
-      // Still straddling after the push-out (items overlap each other in a
-      // hand-edited file). Treat it as blocked.
-      return null;
-    }
-  }
-
-  if (right - left < duration - 1e-9) return null;
-  const upper = right === Number.POSITIVE_INFINITY ? probe : right - duration;
-  return Math.max(left, Math.min(probe, Math.max(left, upper)));
-}
-
-/** How much room an item has to grow to the right before hitting a neighbour. */
-export function maxDurationAt(others: Placeable[], startTime: number): number {
-  let right = Number.POSITIVE_INFINITY;
-  for (const o of others) {
-    if (o.startTime >= startTime) right = Math.min(right, o.startTime);
-  }
-  return right === Number.POSITIVE_INFINITY ? Number.POSITIVE_INFINITY : right - startTime;
-}
+// Lane placement is shared with the layer tracks.
+export { placeOnLane, maxDurationAt, type Placeable } from '../show/tracks/showTrackEdit';
 
 /**
  * Time inside the preset that is showing at show time `time`: show time minus
@@ -646,6 +645,63 @@ function publishTransition(plan: ShowTransitionPlan | null): void {
   }
 }
 
+/**
+ * Publishes the layer tracks' state for the current instant (see
+ * show/tracks/showTrackEval.ts). Injected for the same reason as the
+ * transition sink; App.svelte points it at the `showTrackFrame` store that
+ * Canvas builds the native scene from. Called on every evaluation, but only
+ * a frame that differs in what the scene needs is handed on.
+ */
+export type ShowTrackFrameSink = (frame: ShowTrackFrame | null) => void;
+let trackFrameSink: ShowTrackFrameSink | null = null;
+let lastTrackFrameSignature: string | null = null;
+let lastTrackFrame: ShowTrackFrame | null = null;
+
+export function setShowTrackFrameSink(sink: ShowTrackFrameSink | null): void {
+  trackFrameSink = sink;
+  lastTrackFrameSignature = null;
+  if (sink) sink(lastTrackFrame);
+}
+
+/** The most recent layer-track frame, whether or not it was published. */
+export function currentShowTrackFrame(): ShowTrackFrame | null {
+  return lastTrackFrame;
+}
+
+function publishTrackFrame(s: ShowTimelineState, evalTime: number, force = false): void {
+  if (!s.layerTracks.length) {
+    if (lastTrackFrame !== null || force) {
+      lastTrackFrame = null;
+      lastTrackFrameSignature = null;
+      try { trackFrameSink?.(null); } catch (err) { console.warn('[ShowTimeline] track frame publish failed:', err); }
+    }
+    return;
+  }
+  const frame = evaluateShowTracks(s.layerTracks, evalTime, {
+    playing: s.isPlaying,
+    seekGeneration,
+    soloTrackId: s.soloTrackId,
+    manualClock: isManualClock(),
+  });
+  lastTrackFrame = frame;
+  const signature = showTrackFrameSignature(frame);
+  if (!force && signature === lastTrackFrameSignature) return;
+  lastTrackFrameSignature = signature;
+  try {
+    trackFrameSink?.(frame);
+  } catch (err) {
+    console.warn('[ShowTimeline] track frame publish failed:', err);
+  }
+}
+
+/** Re-publish the tracks after an edit, at the playhead. */
+function republishTracks(): void {
+  const s = get(store);
+  const dur = s.duration;
+  const evalTime = !s.loop && dur > 0 && s.currentTime >= dur ? Math.max(0, dur - 1e-6) : s.currentTime;
+  publishTrackFrame(s, evalTime, true);
+}
+
 function requestLazyLoader(): void {
   // Safety net for an exotic import order where something drives the
   // timeline before layers.ts has evaluated. Never runs under vitest's
@@ -908,6 +964,7 @@ function applyTime(time: number, bumpSeek: boolean): void {
   // blend is the transient clone by comparing against the project's active
   // composition id.
   publishTransition(resolveShowTransitionAt(s.presetClips, evalTime));
+  publishTrackFrame(get(store), evalTime);
 }
 
 function tick(now: number): void {
@@ -932,6 +989,7 @@ function tick(now: number): void {
     applyTime(dur, true);
     store.update((x) => ({ ...x, isPlaying: false }));
     transportClock.reset();
+    republishTracks();
     finishShow(s.endAction);
     return;
   }
@@ -954,7 +1012,7 @@ function finishShow(action: ShowEndAction): void {
 
 /** Recompute duration + reselect after any structural mutation. */
 function withDuration(s: ShowTimelineState): ShowTimelineState {
-  return { ...s, duration: computeShowDuration(s.presetClips, s.audioTracks) };
+  return { ...s, duration: computeShowDuration(s.presetClips, s.audioTracks, s.layerTracks, s.cameraLane) };
 }
 
 function normalizeTrack(raw: unknown, index: number): ShowAudioTrack | null {
@@ -1015,6 +1073,139 @@ function normalizeClip(raw: unknown): ShowPresetClip | null {
   };
 }
 
+const CLIP_MEDIA_KINDS = new Set(['video', 'image', 'shader', 'sketch', 'layer']);
+const END_BEHAVIOURS = new Set(['stop', 'loop', 'hold']);
+const SNAP_GRIDS = new Set<ShowSnapGrid>(['off', 'bar', 'beat', 'half', 'quarter', 'sixteenth', 'seconds']);
+
+function finiteOr(value: unknown, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+export function normalizeClipMedia(raw: unknown): ShowClipMedia | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const m = raw as Record<string, unknown>;
+  const kind = String(m.kind);
+  if (!CLIP_MEDIA_KINDS.has(kind)) return null;
+  const media: ShowClipMedia = {
+    ...(m as unknown as ShowClipMedia),
+    kind: kind as ShowClipMedia['kind'],
+    name: typeof m.name === 'string' ? m.name : kind,
+    src: typeof m.src === 'string' ? m.src : '',
+  };
+  const d = Number(m.sourceDuration);
+  if (Number.isFinite(d) && d > 0) media.sourceDuration = d;
+  else delete media.sourceDuration;
+  return media;
+}
+
+export function normalizeLayerClip(raw: unknown): ShowLayerClip | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const c = raw as Record<string, unknown>;
+  const media = normalizeClipMedia(c.media);
+  if (!media) return null;
+  const clip: ShowLayerClip = {
+    id: typeof c.id === 'string' && c.id ? c.id : generateUUID(),
+    startTime: Math.max(0, finiteOr(c.startTime, 0)),
+    duration: Math.max(SHOW_MIN_TRACK_CLIP_SECONDS, finiteOr(c.duration, SHOW_DEFAULT_PRESET_SECONDS)),
+    media,
+    inPoint: Math.max(0, finiteOr(c.inPoint, 0)),
+    endBehaviour: END_BEHAVIOURS.has(String(c.endBehaviour)) ? (c.endBehaviour as ShowClipEndBehaviour) : 'loop',
+    fadeIn: Math.max(0, finiteOr(c.fadeIn, 0)),
+    fadeOut: Math.max(0, finiteOr(c.fadeOut, 0)),
+  };
+  const rate = Number(c.rate);
+  if (Number.isFinite(rate) && rate > 0 && rate !== 1) clip.rate = Math.max(0.25, Math.min(4, rate));
+  const loopStart = Number(c.loopStart);
+  if (c.loopStart !== undefined && Number.isFinite(loopStart) && loopStart >= 0) clip.loopStart = loopStart;
+  const opacity = Number(c.opacity);
+  if (c.opacity !== undefined && Number.isFinite(opacity)) clip.opacity = Math.max(0, Math.min(1, opacity));
+  if (c.transitionIn === 'dissolve' || c.transitionIn === 'cut') clip.transitionIn = c.transitionIn;
+  const td = Number(c.transitionDuration);
+  if (c.transitionDuration !== undefined && Number.isFinite(td) && td >= 0) clip.transitionDuration = td;
+  if (typeof c.label === 'string') clip.label = c.label;
+  if (typeof c.color === 'string') clip.color = c.color;
+  return clip;
+}
+
+function normalizeLane(raw: unknown): KeyframeTrack | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const l = raw as Record<string, unknown>;
+  if (typeof l.key !== 'string' || !l.key) return null;
+  return {
+    key: l.key,
+    label: typeof l.label === 'string' ? l.label : l.key,
+    type: l.type === 'boolean' ? 'boolean' : 'number',
+    keyframes: Array.isArray(l.keyframes) ? (l.keyframes as KeyframeTrack['keyframes']).filter((k) => k && Number.isFinite(Number(k.time))) : [],
+    boolKeyframes: Array.isArray(l.boolKeyframes) ? (l.boolKeyframes as KeyframeTrack['boolKeyframes']).filter((k) => k && Number.isFinite(Number(k.time))) : [],
+  };
+}
+
+/** Clips sorted, overlaps from a hand-edited file dropped (earlier wins). */
+function cleanTrackClips(clips: ShowLayerClip[]): ShowLayerClip[] {
+  const sorted = [...clips].sort((a, b) => a.startTime - b.startTime);
+  const out: ShowLayerClip[] = [];
+  for (const c of sorted) {
+    const prev = out[out.length - 1];
+    if (prev && c.startTime < clipEnd(prev) - 1e-9) continue;
+    out.push(c);
+  }
+  return out;
+}
+
+export function normalizeLayerTrack(raw: unknown, index: number): ShowLayerTrack | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const t = raw as Record<string, unknown>;
+  if (typeof t.layerId !== 'string' || !t.layerId) return null;
+  const clips = (Array.isArray(t.clips) ? t.clips : [])
+    .map(normalizeLayerClip)
+    .filter((c): c is ShowLayerClip => c !== null);
+  return {
+    id: typeof t.id === 'string' && t.id ? t.id : generateUUID(),
+    layerId: t.layerId,
+    layerName: typeof t.layerName === 'string' && t.layerName ? t.layerName : `Layer ${index + 1}`,
+    color: typeof t.color === 'string' ? t.color : undefined,
+    template: t.template && typeof t.template === 'object' ? (t.template as Layer) : null,
+    clips: cleanTrackClips(clips),
+    lanes: (Array.isArray(t.lanes) ? t.lanes : []).map(normalizeLane).filter((l): l is KeyframeTrack => l !== null),
+    gap: t.gap === 'hide' ? 'hide' : 'layer',
+    muted: t.muted === true,
+    locked: t.locked === true,
+    collapsed: t.collapsed === true,
+  };
+}
+
+function normalizeCameraClip(raw: unknown): ShowCameraClip | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const c = raw as Record<string, unknown>;
+  if (typeof c.shotId !== 'string' || !c.shotId) return null;
+  return {
+    id: typeof c.id === 'string' && c.id ? c.id : generateUUID(),
+    startTime: Math.max(0, finiteOr(c.startTime, 0)),
+    duration: Math.max(SHOW_MIN_TRACK_CLIP_SECONDS, finiteOr(c.duration, 1)),
+    shotId: c.shotId,
+  };
+}
+
+export function normalizeSnapGrid(raw: unknown, hasTempo: boolean): ShowSnapGrid {
+  return SNAP_GRIDS.has(raw as ShowSnapGrid) ? (raw as ShowSnapGrid) : hasTempo ? 'beat' : 'seconds';
+}
+
+/**
+ * A clean copy of a layer to keep on its track, for when the layer is not on
+ * stage. Runtime handles go; the media's AssetRef stays so the copy's own
+ * content survives save and reload.
+ */
+export function trackTemplateFromLayer(layer: Layer): Layer {
+  const clean = JSON.parse(JSON.stringify(layer, (key, value) => {
+    if (key === 'texture' || key === 'videoElement' || key === 'renderTarget' || key === 'iframeElement' || key === 'synthVisionCanvas') return undefined;
+    if (typeof key === 'string' && key.startsWith('_') && key !== '_assetRef') return undefined;
+    return value;
+  })) as Layer;
+  // Geometry is resolved live from the shared surface map it belongs to.
+  return { ...clean, surfaceId: layer.surfaceId || layer.id };
+}
+
 /** True when the AssetRef alone can rebuild the runtime URL on load. */
 function refIsDurable(ref: AssetRef | undefined): boolean {
   return !!(ref && (ref.originalPath || ref.projectPath || ref.dataUrl || ref.url));
@@ -1026,6 +1217,9 @@ export interface ShowArrangement {
   presetClips: ShowPresetClip[];
   loop: boolean;
   endAction: ShowEndAction;
+  layerTracks?: ShowLayerTrack[];
+  tempo?: ShowTempoMap | null;
+  cameraLane?: ShowCameraClip[];
 }
 
 export interface ShowTimelineSnapshot {
@@ -1037,6 +1231,26 @@ export interface ShowTimelineSnapshot {
   snapEnabled: boolean;
   audioTracks: ShowAudioTrack[];
   presetClips: ShowPresetClip[];
+  /** Version 2 and later. Missing means empty, so version 1 shows open as
+   *  they always did. */
+  layerTracks?: ShowLayerTrack[];
+  tempo?: ShowTempoMap | null;
+  rulerMode?: 'time' | 'bars';
+  snapGrid?: ShowSnapGrid;
+  cameraLane?: ShowCameraClip[];
+}
+
+/** Clip media for a file: the runtime URL is blanked when the AssetRef can
+ *  rebuild it (same contract as the audio tracks). */
+function serializeClipMedia(media: ShowClipMedia): ShowClipMedia {
+  return { ...media, src: refIsDurable(media._assetRef) ? '' : media.src };
+}
+
+function serializeTemplate(template: Layer | null): Layer | null {
+  if (!template) return null;
+  const source = template.source;
+  if (!source || !refIsDurable(source._assetRef)) return template;
+  return { ...template, source: { ...source, src: '' } };
 }
 
 export const showTimeline = {
@@ -1110,6 +1324,7 @@ export const showTimeline = {
     store.update((s) => ({ ...s, isPlaying: false }));
     seekGeneration++;
     transportClock.reset();
+    republishTracks();
   },
 
   stop() {
@@ -1122,6 +1337,7 @@ export const showTimeline = {
     // A stop mid-blend must not leave the outgoing composition's layers
     // resident in the scene forever.
     publishTransition(null);
+    republishTracks();
   },
 
   togglePlay() {
@@ -1165,6 +1381,7 @@ export const showTimeline = {
     if (get(store).isPlaying) {
       store.update((x) => ({ ...x, isPlaying: false }));
       seekGeneration++;
+      republishTracks();
     }
   },
 
@@ -1688,6 +1905,393 @@ export const showTimeline = {
     recordShowEdit();
   },
 
+  // ── Layer tracks ───────────────────────────────────────────────────────
+  //
+  // A layer track drives one mapping layer along the show. Clips never
+  // touch the project: the scene is built from show time (see
+  // show/tracks/showTrackScene.ts), so presets swapping layers underneath,
+  // undo and autosave never see a clip's picture.
+
+  /**
+   * Add a track for a layer. One track per layer: asking again selects the
+   * existing one. Returns the track id.
+   */
+  addLayerTrack(layer: Layer, opts: { color?: string; index?: number } = {}): string {
+    const existing = get(store).layerTracks.find((t) => t.layerId === layer.id);
+    if (existing) {
+      store.update((s) => ({ ...s, selection: { kind: 'track', id: existing.id } }));
+      return existing.id;
+    }
+    const id = generateUUID();
+    const track: ShowLayerTrack = {
+      id,
+      layerId: layer.id,
+      layerName: layer.name,
+      color: opts.color,
+      template: trackTemplateFromLayer(layer),
+      clips: [],
+      lanes: [],
+      gap: 'layer',
+      muted: false,
+      locked: false,
+      collapsed: false,
+    };
+    store.update((s) => {
+      const layerTracks = [...s.layerTracks];
+      const at = opts.index === undefined ? layerTracks.length : Math.max(0, Math.min(layerTracks.length, opts.index));
+      layerTracks.splice(at, 0, track);
+      return { ...s, layerTracks, selection: { kind: 'track', id } };
+    });
+    recordShowEdit();
+    republishTracks();
+    return id;
+  },
+
+  removeLayerTrack(trackId: string) {
+    const track = get(store).layerTracks.find((t) => t.id === trackId);
+    if (!track) return;
+    const clipIds = new Set(track.clips.map((c) => c.id));
+    store.update((s) => withDuration({
+      ...s,
+      layerTracks: s.layerTracks.filter((t) => t.id !== trackId),
+      soloTrackId: s.soloTrackId === trackId ? null : s.soloTrackId,
+      selectedClipIds: s.selectedClipIds.filter((id) => !clipIds.has(id)),
+      selection: s.selection && (s.selection.id === trackId || clipIds.has(s.selection.id)) ? null : s.selection,
+    }));
+    recordShowEdit();
+    republishTracks();
+  },
+
+  /** Move a track to another row. */
+  reorderLayerTrack(trackId: string, toIndex: number) {
+    const tracks = get(store).layerTracks;
+    const from = tracks.findIndex((t) => t.id === trackId);
+    if (from < 0) return;
+    const to = Math.max(0, Math.min(tracks.length - 1, Math.floor(toIndex)));
+    if (to === from) return;
+    store.update((s) => {
+      const layerTracks = [...s.layerTracks];
+      const [moved] = layerTracks.splice(from, 1);
+      layerTracks.splice(to, 0, moved);
+      return { ...s, layerTracks };
+    });
+    recordShowEdit();
+    republishTracks();
+  },
+
+  /** Track settings: gap mode, mute, lock, fold, colour, name. */
+  updateLayerTrack(trackId: string, patch: Partial<Pick<ShowLayerTrack, 'gap' | 'muted' | 'locked' | 'collapsed' | 'color' | 'layerName'>>) {
+    let changed = false;
+    store.update((s) => ({
+      ...s,
+      layerTracks: s.layerTracks.map((t) => {
+        if (t.id !== trackId) return t;
+        const next = { ...t, ...patch };
+        changed = JSON.stringify(next) !== JSON.stringify(t);
+        return next;
+      }),
+    }));
+    if (!changed) return;
+    // Folding a track is how it is viewed, not an edit.
+    const keys = Object.keys(patch);
+    if (!(keys.length === 1 && keys[0] === 'collapsed')) recordShowEdit();
+    republishTracks();
+  },
+
+  /** Solo one track (null clears). Session only: never saved or undone. */
+  setSoloTrack(trackId: string | null) {
+    store.update((s) => ({ ...s, soloTrackId: trackId && s.layerTracks.some((t) => t.id === trackId) ? trackId : null }));
+    republishTracks();
+  },
+
+  /**
+   * Keep a track's copy of its layer up to date (the layer is on stage and
+   * may have been edited). Not an edit of the show: no undo step.
+   */
+  refreshTrackTemplate(trackId: string, layer: Layer) {
+    const template = trackTemplateFromLayer(layer);
+    let changed = false;
+    store.update((s) => ({
+      ...s,
+      layerTracks: s.layerTracks.map((t) => {
+        if (t.id !== trackId) return t;
+        if (t.template && JSON.stringify(t.template) === JSON.stringify(template) && t.layerName === layer.name) return t;
+        changed = true;
+        return { ...t, template, layerName: layer.name };
+      }),
+    }));
+    if (changed) republishTracks();
+  },
+
+  /**
+   * Put media on a track at `startTime`. Placed into the free window there;
+   * returns null when it does not fit. Video clips default to their media's
+   * length (or the rest of it from `inPoint`), anything else to 10 s.
+   */
+  addLayerClip(
+    trackId: string,
+    media: ShowClipMedia,
+    startTime: number,
+    opts: Partial<Omit<ShowLayerClip, 'id' | 'media' | 'startTime'>> = {},
+  ): string | null {
+    const track = get(store).layerTracks.find((t) => t.id === trackId);
+    if (!track || track.locked) return null;
+    const normalizedMedia = normalizeClipMedia(media);
+    if (!normalizedMedia) return null;
+    const inPoint = Math.max(0, opts.inPoint ?? 0);
+    const sourceLeft = normalizedMedia.kind === 'video' && normalizedMedia.sourceDuration
+      ? Math.max(SHOW_MIN_TRACK_CLIP_SECONDS, normalizedMedia.sourceDuration - inPoint)
+      : 10;
+    const clip: ShowLayerClip = {
+      id: generateUUID(),
+      startTime: Math.max(0, startTime),
+      duration: Math.max(SHOW_MIN_TRACK_CLIP_SECONDS, opts.duration ?? sourceLeft),
+      media: normalizedMedia,
+      inPoint,
+      endBehaviour: opts.endBehaviour ?? (normalizedMedia.kind === 'video' ? 'stop' : 'loop'),
+      fadeIn: Math.max(0, opts.fadeIn ?? 0),
+      fadeOut: Math.max(0, opts.fadeOut ?? 0),
+    };
+    for (const key of ['rate', 'opacity', 'label', 'color', 'loopStart', 'transitionIn', 'transitionDuration'] as const) {
+      if (opts[key] !== undefined) (clip as unknown as Record<string, unknown>)[key] = opts[key];
+    }
+    const clips = insertClip(track.clips, clip);
+    if (!clips) return null;
+    store.update((s) => withDuration({
+      ...s,
+      layerTracks: s.layerTracks.map((t) => (t.id === trackId ? { ...t, clips } : t)),
+      selectedClipIds: [clip.id],
+      selection: { kind: 'layerClip', id: clip.id },
+    }));
+    recordShowEdit();
+    republishTracks();
+    return clip.id;
+  },
+
+  /** Where a layer clip lives. */
+  findLayerClip(clipId: string): { track: ShowLayerTrack; clip: ShowLayerClip } | null {
+    for (const track of get(store).layerTracks) {
+      const clip = track.clips.find((c) => c.id === clipId);
+      if (clip) return { track, clip };
+    }
+    return null;
+  },
+
+  /** Change a clip's fields (inspector). Timing changes go through
+   *  move/trim; this clamps fades and a 'stop' clip's length. */
+  updateLayerClip(clipId: string, patch: Partial<Omit<ShowLayerClip, 'id' | 'startTime'>>) {
+    const found = this.findLayerClip(clipId);
+    if (!found || found.track.locked) return;
+    const others = found.track.clips.filter((c) => c.id !== clipId);
+    let next: ShowLayerClip = { ...found.clip, ...patch };
+    const room = Math.min(maxDurationAt(others, next.startTime), maxClipDurationForMedia(next));
+    next.duration = Math.max(SHOW_MIN_TRACK_CLIP_SECONDS, Math.min(next.duration, room));
+    next = normalizeLayerClip(next) ?? found.clip;
+    this._setTrackClips(found.track.id, found.track.clips.map((c) => (c.id === clipId ? next : c)));
+    recordShowEdit(`layer-clip:${clipId}`);
+  },
+
+  /** Drag one clip to a new start (snapped), carrying its lane keys. */
+  moveLayerClip(clipId: string, startTime: number) {
+    const found = this.findLayerClip(clipId);
+    if (!found || found.track.locked) return;
+    const snapped = snapShowTime(startTime, this._snapEdges(new Set([clipId])), this._snapOptions());
+    // Snap the clip's end too: whichever edge lands nearer a target wins.
+    const endSnapped = snapShowTime(startTime + found.clip.duration, this._snapEdges(new Set([clipId])), this._snapOptions()) - found.clip.duration;
+    // An edge that found nothing to snap to does not compete.
+    const pull = (v: number) => (Math.abs(v - startTime) < 1e-9 ? Number.POSITIVE_INFINITY : Math.abs(v - startTime));
+    const want = pull(endSnapped) < pull(snapped) ? endSnapped : snapped;
+    const clips = moveClipTo(found.track.clips, clipId, want);
+    if (!clips) return;
+    const moved = clips.find((c) => c.id === clipId)!;
+    const delta = moved.startTime - found.clip.startTime;
+    const lanes = shiftLaneKeys(found.track.lanes, found.clip.startTime, clipEnd(found.clip), delta);
+    this._setTrackClips(found.track.id, clips, lanes);
+    recordShowEdit(`layer-move:${clipId}`);
+  },
+
+  /** Move several clips on one track together (multi-select drag). */
+  moveLayerClips(trackId: string, clipIds: string[], delta: number) {
+    const track = get(store).layerTracks.find((t) => t.id === trackId);
+    if (!track || track.locked) return;
+    const ids = new Set(clipIds);
+    const clips = moveClips(track.clips, ids, delta);
+    if (!clips) return;
+    let lanes = track.lanes;
+    for (const c of track.clips.filter((x) => ids.has(x.id))) lanes = shiftLaneKeys(lanes, c.startTime, clipEnd(c), delta);
+    this._setTrackClips(trackId, clips, lanes);
+    recordShowEdit(`layer-move:${[...ids].sort().join(',')}`);
+  },
+
+  /** Drag a clip edge (snapped). The left edge moves the in-point with it. */
+  trimLayerClip(clipId: string, edge: 'start' | 'end', time: number) {
+    const found = this.findLayerClip(clipId);
+    if (!found || found.track.locked) return;
+    const snapped = snapShowTime(time, this._snapEdges(new Set([clipId])), this._snapOptions());
+    const clips = trimClip(found.track.clips, clipId, edge, snapped);
+    if (!clips) return;
+    this._setTrackClips(found.track.id, clips);
+    recordShowEdit(`layer-trim:${clipId}:${edge}`);
+  },
+
+  /**
+   * Split at show time `t`: the given clips, or with none given the selected
+   * clips under `t`, or failing that every clip under `t` on an unlocked
+   * track. Returns the ids of the new right-hand halves.
+   */
+  splitLayerClips(t: number, clipIds?: string[]): string[] {
+    const s = get(store);
+    const wanted = clipIds ? new Set(clipIds) : null;
+    const selected = new Set(s.selectedClipIds);
+    const created: string[] = [];
+    const layerTracks = s.layerTracks.map((track) => {
+      if (track.locked) return track;
+      const clip = findClipAt(track.clips, t);
+      if (!clip) return track;
+      const eligible = wanted ? wanted.has(clip.id) : selected.size ? selected.has(clip.id) : true;
+      if (!eligible) return track;
+      const halves = splitClip(clip, t);
+      if (!halves) return track;
+      created.push(halves[1].id);
+      return { ...track, clips: track.clips.flatMap((c) => (c.id === clip.id ? halves : [c])) };
+    });
+    // Nothing selected under the playhead: split every track instead.
+    if (!created.length && !wanted && selected.size) return this.splitLayerClips(t, s.layerTracks.flatMap((tr) => {
+      const c = tr.locked ? null : findClipAt(tr.clips, t);
+      return c ? [c.id] : [];
+    }));
+    if (!created.length) return created;
+    store.update((x) => ({ ...x, layerTracks }));
+    recordShowEdit();
+    republishTracks();
+    return created;
+  },
+
+  /** Delete clips; `ripple` closes the space they leave on their tracks. */
+  removeLayerClips(clipIds: string[], opts: { ripple?: boolean } = {}) {
+    const ids = new Set(clipIds);
+    let changed = false;
+    store.update((s) => withDuration({
+      ...s,
+      layerTracks: s.layerTracks.map((track) => {
+        if (track.locked || !track.clips.some((c) => ids.has(c.id))) return track;
+        changed = true;
+        if (!opts.ripple) return { ...track, clips: deleteClips(track.clips, ids) };
+        const result = rippleDelete(track.clips, ids);
+        let lanes = track.lanes;
+        for (const shift of result.shifts) lanes = shiftLaneKeys(lanes, shift.from, Number.POSITIVE_INFINITY, shift.delta);
+        return { ...track, clips: result.clips, lanes };
+      }),
+      selectedClipIds: s.selectedClipIds.filter((id) => !ids.has(id)),
+      selection: s.selection && ids.has(s.selection.id) ? null : s.selection,
+    }));
+    if (!changed) return;
+    recordShowEdit();
+    republishTracks();
+  },
+
+  /** Duplicate clips on their own tracks. Returns the new clip ids. */
+  duplicateLayerClips(clipIds: string[]): string[] {
+    const ids = new Set(clipIds);
+    const created: string[] = [];
+    const layerTracks = get(store).layerTracks.map((track) => {
+      if (track.locked || !track.clips.some((c) => ids.has(c.id))) return track;
+      const result = duplicateClips(track.clips, ids);
+      if (!result) return track;
+      created.push(...result.ids);
+      return { ...track, clips: result.clips };
+    });
+    if (!created.length) return created;
+    store.update((s) => withDuration({ ...s, layerTracks, selectedClipIds: created }));
+    recordShowEdit();
+    republishTracks();
+    return created;
+  },
+
+  /** Copies of clips for the clipboard (ids are replaced on paste). */
+  copyLayerClips(clipIds: string[]): ShowLayerClip[] {
+    const ids = new Set(clipIds);
+    return get(store).layerTracks.flatMap((t) => t.clips.filter((c) => ids.has(c.id))).map((c) => structuredCloneSafe(c));
+  },
+
+  /** Paste copied clips onto a track with the earliest at `at`. */
+  pasteLayerClips(trackId: string, copied: ShowLayerClip[], at: number): string[] {
+    const track = get(store).layerTracks.find((t) => t.id === trackId);
+    if (!track || track.locked) return [];
+    const result = pasteClips(track.clips, copied, at);
+    if (!result) return [];
+    this._setTrackClips(trackId, result.clips);
+    store.update((s) => ({ ...s, selectedClipIds: result.ids }));
+    recordShowEdit();
+    return result.ids;
+  },
+
+  selectLayerClips(clipIds: string[]) {
+    store.update((s) => ({
+      ...s,
+      selectedClipIds: [...clipIds],
+      selection: clipIds.length === 1 ? { kind: 'layerClip', id: clipIds[0] } : clipIds.length ? s.selection : null,
+    }));
+  },
+
+  // ── Beat grid ──────────────────────────────────────────────────────────
+
+  /** Set (or with null, clear) the show's tempo map. */
+  setTempo(map: ShowTempoMap | null) {
+    const tempo = map ? normalizeTempoMap(map) : null;
+    store.update((s) => {
+      // Switching a grid on picks the beat; switching it off goes back to seconds.
+      const musical = s.snapGrid !== 'off' && s.snapGrid !== 'seconds';
+      const snapGrid = tempo && s.snapGrid === 'seconds' && !s.tempo ? 'beat' : !tempo && musical ? 'seconds' : s.snapGrid;
+      return { ...s, tempo, snapGrid, rulerMode: tempo ? s.rulerMode : 'time' };
+    });
+    recordShowEdit('tempo');
+  },
+
+  setSnapGrid(grid: ShowSnapGrid) {
+    store.update((s) => ({ ...s, snapGrid: normalizeSnapGrid(grid, !!s.tempo) }));
+  },
+
+  setRulerMode(mode: 'time' | 'bars') {
+    store.update((s) => ({ ...s, rulerMode: mode === 'bars' && s.tempo ? 'bars' : 'time' }));
+  },
+
+  // ── Stage camera lane ──────────────────────────────────────────────────
+
+  setCameraLane(clips: ShowCameraClip[]) {
+    const cameraLane = clips.map(normalizeCameraClip).filter((c): c is ShowCameraClip => c !== null).sort((a, b) => a.startTime - b.startTime);
+    store.update((s) => withDuration({ ...s, cameraLane }));
+    recordShowEdit();
+  },
+
+  // ── Track helpers (internal) ───────────────────────────────────────────
+
+  _setTrackClips(trackId: string, clips: ShowLayerClip[], lanes?: KeyframeTrack[]) {
+    store.update((s) => withDuration({
+      ...s,
+      layerTracks: s.layerTracks.map((t) => (t.id === trackId ? { ...t, clips, ...(lanes ? { lanes } : {}) } : t)),
+    }));
+    republishTracks();
+  },
+
+  /** Every edge a dragged layer clip can snap to: clip edges on every lane,
+   *  the playhead and 0. */
+  _snapEdges(exclude: ReadonlySet<string>): number[] {
+    const s = get(store);
+    const edges = [s.currentTime];
+    for (const c of s.presetClips) edges.push(c.startTime, c.startTime + c.duration);
+    for (const t of s.audioTracks) edges.push(t.startTime, t.startTime + t.duration);
+    for (const track of s.layerTracks) {
+      for (const c of track.clips) if (!exclude.has(c.id)) edges.push(c.startTime, clipEnd(c));
+    }
+    return edges;
+  },
+
+  _snapOptions(): { enabled: boolean; tolerance: number; nearestGrid?: (t: number) => number } {
+    const s = get(store);
+    return { enabled: s.snapEnabled && s.snapGrid !== 'off', tolerance: snapTolerance(s.zoom), nearestGrid: gridFunction(s) };
+  },
+
   // ── Whole-show ─────────────────────────────────────────────────────────
 
   clear() {
@@ -1702,6 +2306,7 @@ export const showTimeline = {
       snapEnabled: s.snapEnabled,
       endAction: s.endAction,
     }));
+    republishTracks();
     recordShowEdit();
   },
 
@@ -1712,7 +2317,7 @@ export const showTimeline = {
 
   hasContent(): boolean {
     const s = get(store);
-    return s.presetClips.length > 0 || s.audioTracks.length > 0;
+    return s.presetClips.length > 0 || s.audioTracks.length > 0 || s.layerTracks.length > 0;
   },
 
   /** See `presetLocalTimeAt`. */
@@ -1745,6 +2350,11 @@ export const showTimeline = {
       presetClips: s.presetClips.map((c) => ({ ...c })),
       loop: s.loop,
       endAction: s.endAction,
+      // Track and clip objects are replaced on every edit, never mutated,
+      // so holding them is a complete capture.
+      layerTracks: s.layerTracks,
+      tempo: s.tempo,
+      cameraLane: s.cameraLane,
     };
   },
 
@@ -1763,14 +2373,34 @@ export const showTimeline = {
       .map((c) => normalizeClip(c))
       .filter((c): c is ShowPresetClip => c !== null)
       .sort((x, y) => x.startTime - y.startTime);
+    const layerTracks = (Array.isArray(a.layerTracks) ? a.layerTracks : [])
+      .map((t, i) => normalizeLayerTrack(t, i))
+      .filter((t): t is ShowLayerTrack => t !== null);
+    const cameraLane = (Array.isArray(a.cameraLane) ? a.cameraLane : [])
+      .map(normalizeCameraClip)
+      .filter((c): c is ShowCameraClip => c !== null);
+    const tempo = normalizeTempoMap(a.tempo);
     store.update((s) => {
-      const ids = new Set([...audioTracks.map((t) => t.id), ...presetClips.map((c) => c.id)]);
+      const clipIds = new Set(layerTracks.flatMap((t) => t.clips.map((c) => c.id)));
+      const ids = new Set([
+        ...audioTracks.map((t) => t.id),
+        ...presetClips.map((c) => c.id),
+        ...layerTracks.map((t) => t.id),
+        ...clipIds,
+      ]);
       return withDuration({
         ...s,
         audioTracks,
         presetClips,
         loop: a.loop === true,
         endAction: normalizeShowEndAction(a.endAction),
+        layerTracks,
+        tempo,
+        snapGrid: normalizeSnapGrid(s.snapGrid, !!tempo),
+        rulerMode: tempo ? s.rulerMode : 'time',
+        cameraLane,
+        soloTrackId: s.soloTrackId && layerTracks.some((t) => t.id === s.soloTrackId) ? s.soloTrackId : null,
+        selectedClipIds: s.selectedClipIds.filter((id) => clipIds.has(id)),
         selection: s.selection && ids.has(s.selection.id) ? s.selection : null,
       });
     });
@@ -1780,9 +2410,11 @@ export const showTimeline = {
       if (s.isPlaying) this.pause();
       store.update((x) => ({ ...x, currentTime: 0, activeClipId: null }));
       publishTransition(null);
+      republishTracks();
       return;
     }
     applyTime(s.currentTime, true);
+    republishTracks();
   },
 
   // ── Persistence ────────────────────────────────────────────────────────
@@ -1796,7 +2428,7 @@ export const showTimeline = {
   serialize(): ShowTimelineSnapshot {
     const s = get(store);
     return {
-      version: 1,
+      version: 2,
       isOpen: s.isOpen,
       loop: s.loop,
       endAction: s.endAction,
@@ -1807,6 +2439,15 @@ export const showTimeline = {
         url: refIsDurable(t.assetRef) ? '' : t.url,
       })),
       presetClips: s.presetClips.map((c) => ({ ...c })),
+      layerTracks: s.layerTracks.map((t) => ({
+        ...t,
+        template: serializeTemplate(t.template),
+        clips: t.clips.map((c) => ({ ...c, media: serializeClipMedia(c.media) })),
+      })),
+      tempo: s.tempo,
+      rulerMode: s.rulerMode,
+      snapGrid: s.snapGrid,
+      cameraLane: s.cameraLane.map((c) => ({ ...c })),
     };
   },
 
@@ -1823,6 +2464,7 @@ export const showTimeline = {
 
     if (!payload || typeof payload !== 'object') {
       store.set(createInitialState());
+      republishTracks();
       return;
     }
     const p = payload as Record<string, unknown>;
@@ -1845,12 +2487,38 @@ export const showTimeline = {
       .filter((c): c is ShowPresetClip => c !== null)
       .sort((a, b) => a.startTime - b.startTime);
 
+    // Layer tracks (version 2). Clip media and each track's copy of its
+    // layer resolve like the audio does.
+    const resolveField = (ref: unknown, current: string) =>
+      resolveAssetRefForRuntime(ref as AssetRef, projectDir, current) ?? current;
+    const layerTracks = (Array.isArray(p.layerTracks) ? p.layerTracks : [])
+      .map((raw, i) => normalizeLayerTrack(raw, i))
+      .filter((t): t is ShowLayerTrack => t !== null)
+      .map((track) => {
+        if (track.template) resolveAssetTreeInPlace(track.template, resolveField);
+        const clips = track.clips.map((clip) => {
+          const media = clip.media;
+          if (media.kind === 'layer' || media.kind === 'shader' && !media._assetRef) return clip;
+          const resolved = resolveAssetRefForRuntime(media._assetRef, projectDir, media.src) ?? '';
+          if (!resolved && media._assetRef) {
+            recordMissingAsset({ assetRef: media._assetRef, fieldHint: 'show timeline clip' });
+          }
+          return { ...clip, media: { ...media, src: resolved } };
+        });
+        return { ...track, clips };
+      });
+    const tempo = normalizeTempoMap(p.tempo);
+    const cameraLane = (Array.isArray(p.cameraLane) ? p.cameraLane : [])
+      .map(normalizeCameraClip)
+      .filter((c): c is ShowCameraClip => c !== null)
+      .sort((a, b) => a.startTime - b.startTime);
+
     const zoom = Number(p.zoom);
     store.set({
       isOpen: p.isOpen === true,
       isPlaying: false,
       currentTime: 0,
-      duration: computeShowDuration(presetClips, audioTracks),
+      duration: computeShowDuration(presetClips, audioTracks, layerTracks, cameraLane),
       loop: p.loop === true,
       audioTracks,
       presetClips,
@@ -1859,8 +2527,16 @@ export const showTimeline = {
       snapEnabled: p.snapEnabled !== false,
       selection: null,
       endAction: normalizeShowEndAction(p.endAction),
+      layerTracks,
+      tempo,
+      rulerMode: p.rulerMode === 'bars' && tempo ? 'bars' : 'time',
+      snapGrid: normalizeSnapGrid(p.snapGrid, !!tempo),
+      selectedClipIds: [],
+      soloTrackId: null,
+      cameraLane,
     });
     transportClock.reset();
+    republishTracks();
 
     syncAudioWiring(audioTracks);
     // Waveforms for tracks whose peaks did not travel (older saves).
@@ -1880,11 +2556,32 @@ export const showTimeline = {
     publishTransition(null);
     lastPublishedTransition = null;
     seekGeneration = 0;
+    trackFrameSink = null;
+    lastTrackFrame = null;
+    lastTrackFrameSignature = null;
+    tracksAwaitingFirstStep.clear();
     store.set(createInitialState());
+  },
+
+  /** The show's current seek generation (bumped on every discontinuity). */
+  seekGeneration(): number {
+    return seekGeneration;
   },
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
+
+function structuredCloneSafe<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+/** The musical grid snapping uses, or undefined for the seconds grid. */
+function gridFunction(s: Pick<ShowTimelineState, 'tempo' | 'snapGrid'>): ((t: number) => number) | undefined {
+  const tempo = s.tempo;
+  if (!tempo || s.snapGrid === 'off' || s.snapGrid === 'seconds') return undefined;
+  const grid = s.snapGrid;
+  return (t: number) => nearestGridTime(tempo, t, grid);
+}
 
 function removeAudioTrackNow(trackId: string): void {
   const track = get(store).audioTracks.find((t) => t.id === trackId);

@@ -5719,6 +5719,9 @@ void main() {
 
       // Deep clone and strip out non-serializable data
       const exportData = {
+        // 1.9.6 = show timeline v2: layer tracks (clips driving mapping
+        //         layers, media riding AssetRefs), the beat grid and the
+        //         stage-camera lane. Older builds drop them on re-save.
         // 1.9.5 = added project.showTimeline (mapping-mode show arrangement:
         //         audio tracks riding AssetRefs + preset clip lane). Save-only
         //         section, added by exportProjectJSON / exportProjectForSave —
@@ -5735,7 +5738,7 @@ void main() {
         //         outside this vjClipLauncher payload but versioned together).
         // 1.8.0 = moved bankBClipGrid INSIDE each VJBlock.
         // 1.7.0 = added Bank B deck + crossfader state at launcher root.
-        version: '1.9.5',
+        version: '1.9.6',
         exportedAt: new Date().toISOString(),
         project: {
           id: currentProject.id,
@@ -5889,6 +5892,7 @@ void main() {
       }
 
       // Keep in lockstep with exportProject() above.
+      // 1.9.6 bump: show timeline v2 (layer tracks, beat grid, camera lane).
       // 1.9.5 bump: project.showTimeline (mapping-mode show arrangement;
       // audio tracks ride AssetRefs, runtime URLs are blanked at save).
       // 1.9.4 bump: project.projectionSim (Map Sim scene; imported models
@@ -5897,7 +5901,7 @@ void main() {
       // 1.9.2 bump: AssetRef capture on every File-import site, plus
       // pixelFXContent / gpuLayerContent now actually export. Older saves
       // (1.9.x and earlier) still load via the legacy resolveSrc fallback.
-      syncExport.version = '1.9.5';
+      syncExport.version = '1.9.6';
       try {
         syncExport.project.stage3d = JSON.parse(JSON.stringify(get(stage3dScene)));
       } catch (err) {

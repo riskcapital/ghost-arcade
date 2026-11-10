@@ -3226,6 +3226,13 @@ export interface Layer {
   /** Screen FX colour chase multiplier (r, g, b 0..1), set per frame on the
    *  native scene copies; never saved. */
   _stageTint?: [number, number, number];
+  /** Show layer tracks, set on the native scene copies; never saved.
+   *  Opacity multiplier (clip opacity × fades × gap hide), applied after
+   *  every keyframe value. */
+  _showOpacityMul?: number;
+  /** Show keyframe-lane values (applyParamOverrides keys), applied after the
+   *  preset's own keyframes and the sequencer, so the show wins. */
+  _showParams?: Record<string, number | boolean>;
 
   // ── Group nesting ──────────────────────────────────────────────────────
   /** ID of parent group layer (undefined/null = top-level layer) */
@@ -5426,6 +5433,88 @@ export interface ShowTempoMap {
  *  signature's beat: 'half' and 'quarter' split that beat, 'sixteenth' is a
  *  sixteenth note. 'seconds' is the plain 0.25 s grid used without a map. */
 export type ShowSnapGrid = 'off' | 'bar' | 'beat' | 'half' | 'quarter' | 'sixteenth' | 'seconds';
+
+// ── Layer tracks ──────────────────────────────────────────────────────────
+// A layer track drives one mapping layer (a surface) along the show: clips
+// say what the layer shows and when. See show/tracks/ for the evaluation
+// and editing rules.
+
+/** What a show clip plays. 'layer' means "the layer's own content", which
+ *  makes start, end and fades available to any layer type. */
+export type ShowClipMediaKind = 'video' | 'image' | 'shader' | 'sketch' | 'layer';
+
+export interface ShowClipMedia {
+  kind: ShowClipMediaKind;
+  name: string;
+  libraryId?: string;
+  /** Runtime URL. Blanked at save whenever `_assetRef` can rebuild it. */
+  src: string;
+  _assetRef?: import('./storage/assetRegistry').AssetRef;
+  /** Length of the source file, seconds (video). */
+  sourceDuration?: number;
+  videoWidth?: number;
+  videoHeight?: number;
+  shaderCode?: string;
+  shaderInputs?: ISFInputDef[];
+  shaderValues?: Record<string, number | boolean | number[]>;
+  shaderImageInputs?: Record<string, ImageInputRef>;
+  jsAnimation?: JSAnimationSource;
+}
+
+/** What a video clip does when its media runs out before the clip ends. */
+export type ShowClipEndBehaviour = 'stop' | 'loop' | 'hold';
+
+export interface ShowLayerClip {
+  id: string;
+  /** Show time the clip starts, seconds. */
+  startTime: number;
+  duration: number;
+  media: ShowClipMedia;
+  /** Media time at the clip's start, seconds. */
+  inPoint: number;
+  /** Where a looping clip wraps back to, seconds (default `inPoint`). A
+   *  split keeps the original's, so the right half loops exactly as the
+   *  whole clip did. */
+  loopStart?: number;
+  /** Playback speed, 0.25..4 (default 1). */
+  rate?: number;
+  endBehaviour: ShowClipEndBehaviour;
+  fadeIn: number;
+  fadeOut: number;
+  /** 0..1, multiplies the layer's own opacity (default 1). */
+  opacity?: number;
+  transitionIn?: 'cut' | 'dissolve';
+  transitionDuration?: number;
+  label?: string;
+  color?: string;
+}
+
+export interface ShowLayerTrack {
+  id: string;
+  /** The surface the track drives: the id of the layer it was made from. */
+  layerId: string;
+  layerName: string;
+  color?: string;
+  /** A clean copy of the layer, injected when the layer is not on stage. */
+  template: Layer | null;
+  /** Sorted by start time; never overlapping. */
+  clips: ShowLayerClip[];
+  /** Keyframe lanes in show seconds. */
+  lanes: KeyframeTrack[];
+  /** Between clips: show the layer's own content, or hide the layer. */
+  gap: 'layer' | 'hide';
+  muted: boolean;
+  locked: boolean;
+  collapsed: boolean;
+}
+
+/** A shot on the stage-camera lane, referencing a Demo Reel shot. */
+export interface ShowCameraClip {
+  id: string;
+  startTime: number;
+  duration: number;
+  shotId: string;
+}
 
 // ═══════════════════════════════════════════════════
 // Layer Sequencer Types

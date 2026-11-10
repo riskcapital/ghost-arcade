@@ -229,6 +229,10 @@ export function projectSettingsSections({ exported, showTimeline, showControl, s
           audioTracks: Array.isArray((showTimeline as any).audioTracks)
             ? (showTimeline as any).audioTracks.map(audioTrackIdentity)
             : [],
+          // Folding a layer track open or shut is how it is viewed.
+          ...(Array.isArray((showTimeline as any).layerTracks)
+            ? { layerTracks: (showTimeline as any).layerTracks.map((t: Record<string, unknown>) => omit(t, ['collapsed'])) }
+            : {}),
         }
       : null,
     showControl: showControl ?? null,

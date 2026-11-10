@@ -121,7 +121,7 @@ describe('show timeline project persistence', () => {
 
     // The section must land on the project, and the save must have blanked
     // the dead blob URLs (the AssetRefs can rebuild them).
-    expect(saved.version).toBe('1.9.5');
+    expect(saved.version).toBe('1.9.6');
     expect(saved.project.showTimeline).toBeTruthy();
     expect(saved.project.showTimeline.presetClips).toHaveLength(3);
     expect(saved.project.showTimeline.audioTracks).toHaveLength(2);
@@ -166,13 +166,72 @@ describe('show timeline project persistence', () => {
     expect(after.activeClipId).toBeNull();
   });
 
+  it('saves layer tracks (version 2) and brings them back with their media', async () => {
+    const { project } = layers;
+    const { showTimeline } = showTimelineStore;
+    await buildShow();
+    const trackId = showTimeline.addLayerTrack({ id: 'wall', name: 'Wall', type: 'media', opacity: 1, source: null } as any);
+    showTimeline.addLayerClip(trackId, {
+      kind: 'video',
+      name: 'ramp.mp4',
+      src: 'blob:http://localhost:1420/ramp-runtime',
+      _assetRef: { kind: 'local-file', originalPath: '/Users/x/clips/ramp.mp4', name: 'ramp.mp4' },
+      sourceDuration: 10,
+    }, 5, { endBehaviour: 'loop', duration: 30, fadeOut: 2 });
+    showTimeline.setTempo({ offset: 0.5, segments: [{ bar: 1, bpm: 124, beatsPerBar: 4, beatUnit: 4 }], source: 'manual' });
+
+    const saved = JSON.parse(JSON.stringify(await project.exportProjectForSave())) as any;
+    expect(saved.project.showTimeline.version).toBe(2);
+    const savedClip = saved.project.showTimeline.layerTracks[0].clips[0];
+    expect(savedClip.media.src).toBe('');
+    expect(savedClip.media._assetRef.originalPath).toBe('/Users/x/clips/ramp.mp4');
+
+    showTimeline._resetForTest();
+    expect(project.importProject(saved, '/Users/x/projects/show1')).toBe(true);
+    await flushMicrotasks();
+    const after = get(showTimeline);
+    expect(after.layerTracks).toHaveLength(1);
+    expect(after.layerTracks[0]).toMatchObject({ layerId: 'wall', layerName: 'Wall', gap: 'layer' });
+    const clip = after.layerTracks[0].clips[0];
+    expect(clip).toMatchObject({ startTime: 5, duration: 30, endBehaviour: 'loop', fadeOut: 2 });
+    expect(clip.media.src).toContain('ramp.mp4');
+    expect(clip.media.src).not.toContain('blob:');
+    expect(after.tempo?.segments[0].bpm).toBe(124);
+    expect(after.duration).toBe(135);
+  });
+
+  it('opens a version 1 show as it was, with no tracks and no grid', async () => {
+    const { project } = layers;
+    const { showTimeline } = showTimelineStore;
+    const v1 = {
+      version: '1.9.5',
+      project: {
+        id: 'p', name: 'v1', width: 1920, height: 1080, layers: [],
+        showTimeline: {
+          version: 1, isOpen: true, loop: true, zoom: 12, snapEnabled: true,
+          audioTracks: [],
+          presetClips: [{ id: 'c1', compositionId: 'comp', startTime: 0, duration: 20, transitionIn: 'cut', transitionDuration: 1 }],
+        },
+      },
+    };
+    expect(project.importProject(v1, '/Users/x/projects/v1')).toBe(true);
+    await flushMicrotasks();
+    const after = get(showTimeline);
+    expect(after.presetClips.map((c) => [c.id, c.startTime, c.duration, c.transitionIn])).toEqual([['c1', 0, 20, 'cut']]);
+    expect(after.layerTracks).toEqual([]);
+    expect(after.tempo).toBeNull();
+    expect(after.cameraLane).toEqual([]);
+    expect(after.duration).toBe(20);
+    expect(after.loop).toBe(true);
+  });
+
   it('keeps the show out of the live sync export (save-only section)', async () => {
     const { project } = layers;
     await buildShow();
     const sync = project.exportProject() as any;
     // Same treatment as stage3d / projectionSim: the relay must not carry it.
     expect(sync.project.showTimeline).toBeUndefined();
-    expect(sync.version).toBe('1.9.5');
+    expect(sync.version).toBe('1.9.6');
   });
 
   it('includes the show in the autosave JSON export', async () => {
