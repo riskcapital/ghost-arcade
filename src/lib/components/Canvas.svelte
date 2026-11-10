@@ -7,6 +7,9 @@
   import { compositionTransition } from '../stores/compositionTransition';
   import { buildCompositionTransitionLayers } from '../renderer/compositionTransitionLayers';
   import { showTrackFrame, showClipSources } from '../stores/showTrackFrame';
+  import { takeoverFrame, takeoverMediaSources } from '../stores/takeoverFrame';
+  import { buildTakeoverScene } from '../show/takeover/takeoverScene';
+  import { showTimeline as showTimelineStore } from '../stores/showTimeline';
   import { buildShowTrackScene } from '../show/tracks/showTrackScene';
   import { nativePreviewHostEl } from '../stores/nativePreviewHost';
   import { watchLayout } from '../utils/layoutWatch';
@@ -2153,7 +2156,7 @@
         // the copy only has to cover the pass-through case.
         const mappingLive = get(layers) as Layer[];
         const xfade = get(compositionTransition).active;
-        if (!xfade) return withShowTracks(mappingLive.map((l) => ({ ...l })));
+        if (!xfade) return withTakeover(withShowTracks(mappingLive.map((l) => ({ ...l }))));
         const comps = get(compositions);
         const effective = buildCompositionTransitionLayers({
           liveLayers: mappingLive,
@@ -2161,7 +2164,7 @@
           transition: xfade,
           compositionLayers: (id) => comps.find((c) => c.id === id)?.layers ?? null,
         });
-        return withShowTracks(effective === mappingLive ? mappingLive.map((l) => ({ ...l })) : effective);
+        return withTakeover(withShowTracks(effective === mappingLive ? mappingLive.map((l) => ({ ...l })) : effective));
       };
       // Show layer tracks: clips drive their layers (or inject copies of
       // them) in the scene only, from show time — see
@@ -2174,6 +2177,23 @@
           xfadeSourceFor: (state) => showClipSources.xfadeSourceFor(state, frame),
           warmSourceFor: (warm) => showClipSources.warmSourceFor(warm),
           surfaces: get(project).mapSurfaces,
+        });
+      };
+      // Live takeover: a VJ row, the deck mix, a group, dropped media or black
+      // drawn over show surfaces, after the tracks (show/takeover/
+      // takeoverScene.ts). The VJ feeds come into the scene invisibly, as in
+      // MAP mode, only while something samples them. VJ mode's own Live
+      // output (above) is untouched.
+      const withTakeover = (list: Layer[]): Layer[] | null => {
+        const frame = get(takeoverFrame);
+        if (!frame) return list;
+        const vjState = vjClipLauncherNow();
+        return buildTakeoverScene(list, frame, {
+          feeds: () => buildNativeVjFeedLayers(vjState, false),
+          crossfaderEnabled: !!vjState.crossfaderEnabled,
+          templateFor: (surfaceId) => get(showTimelineStore).layerTracks.find((t) => t.layerId === surfaceId)?.template ?? null,
+          surfaces: get(project).mapSurfaces,
+          mediaSourceFor: (surface) => takeoverMediaSources.sourceFor(surface),
         });
       };
       // Stage FX opacity for the native scene: layerId → multiplier, refreshed
@@ -2500,6 +2520,8 @@
       // (a cut, a fade step, a pause, a seek), and an offline render once per
       // virtual frame.
       const nativeShowTrackUnsub = showTrackFrame.subscribe(() => scheduleNativeLayersSync());
+      // A takeover publishes on engage / release and every fade step.
+      const nativeTakeoverUnsub = takeoverFrame.subscribe(() => scheduleNativeLayersSync());
       const handleVjLayersSyncEvent = (event: Event) => {
         const detail = (event as CustomEvent<NativeVjLayersSyncDetail>).detail;
         scheduleNativeLayersSync(
@@ -2531,6 +2553,7 @@
         nativeCompositionXfadeUnsub();
         nativePerformerWorldUnsub();
         nativeShowTrackUnsub();
+        nativeTakeoverUnsub();
         studioFrameUnsub();
         studioCodeUnsub();
         // No scene is showing a studio now, so its frame loop can rest.

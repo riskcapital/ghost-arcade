@@ -398,6 +398,7 @@
   import { showTimeline, setShowTransitionSink } from './lib/stores/showTimeline';
   import { handleShowKeydown } from './lib/show/showKeyboard';
   import { installShowTrackRuntime } from './lib/show/tracks/showTrackRuntime';
+  import { installTakeoverRuntime } from './lib/show/takeover/takeoverRuntime';
   import { installShowControl, showRuntimeHooks } from './lib/show/showControlRuntime';
   import { hydrateShowControl, serializeShowControl } from './lib/show/showControlPersistence';
   import { cueList } from './lib/show/cueList';
@@ -1945,6 +1946,9 @@
     // Show layer tracks: track frames into the scene, scrubbing, the video
     // phase follower, pre-rolls and track templates.
     const stopShowTracks = installShowTrackRuntime({ project });
+    // Live takeover: VJ rows, the mix or media over show tracks, handed back
+    // on a beat, bar, phrase or marker.
+    const stopTakeover = installTakeoverRuntime();
     showRuntimeHooks.ensureOutputs = ensureOutputsFullscreen;
     // Show mode (start at boot): nothing modal may stand between a machine
     // booting in an empty room and the show starting.
@@ -2758,6 +2762,7 @@
       appMounted = false;
       stopShowControl();
       stopShowTracks();
+      stopTakeover();
       showRuntimeHooks.ensureOutputs = null;
       restorePrompts();
       stopInterfaceScale();

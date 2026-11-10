@@ -295,6 +295,31 @@ const ACTIONS = {
     ctx.vars.exportFps = s.fps ?? 30;
     await sleep(500);
   },
+  async 'show.tempo'(ctx, s) {
+    // A one-segment tempo map: { bpm, offset (show s of bar 1), beatsPerBar }.
+    await ctx.eval(`__show.g().showTimeline.setTempo({ offset: ${s.offset ?? 0}, segments: [{ bar: 1, bpm: ${s.bpm ?? 120}, beatsPerBar: ${s.beatsPerBar ?? 4}, beatUnit: 4 }], source: 'manual' })`);
+    await sleep(200);
+  },
+  // ── Live takeover ────────────────────────────────────────────────────
+  async 'takeover.engage'(ctx, s) {
+    // { track, deck, row (0-based) } a VJ row, or { track, kind: 'vjMix' | 'black' }.
+    const source = s.kind ? { kind: s.kind } : { kind: 'vjRow', deck: s.deck ?? 'A', row: s.row ?? 0 };
+    const ok = await ctx.eval(`__show.g().takeover.takeOverTrack(__show.vars['track:' + ${J(s.track)}], ${J(source)}, ${J({ fadeIn: s.fadeIn ?? 0 })})`);
+    if (!ok) throw new Error(`could not take ${s.track} over`);
+    await sleep(s.settle ?? 800);
+  },
+  async 'takeover.release'(ctx, s) {
+    // { track } or all; { mode, fade } (default: the takeover's own setting).
+    const spec = s.mode ? J({ mode: s.mode, fadeSeconds: s.fade ?? 0 }) : 'undefined';
+    await ctx.eval(s.track
+      ? `__show.g().takeover.returnTrack(__show.vars['track:' + ${J(s.track)}], ${spec})`
+      : `__show.g().takeover.store.release('all', ${spec})`);
+    if (s.settle) await sleep(s.settle);
+  },
+  async 'takeover.underneath'(ctx, s) {
+    const ok = await ctx.eval(`__show.g().takeover.store.setUnderneath(${J(s.mode ?? 'run')})`);
+    if (!ok) throw new Error(`underneath ${s.mode} was refused`);
+  },
   async wait(_ctx, s) { await sleep((s.seconds ?? 1) * 1000); },
   async eval(ctx, s) { ctx.vars.last = await ctx.eval(s.js, 60000); },
 };
@@ -510,6 +535,36 @@ const CHECKS = {
     }
     const got = colourName(rgb);
     return { pass: got.name === s.is && got.distance < (s.tolerance ?? 0.25), detail: `${label} is ${got.name} (${rgb.map((v) => v.toFixed(2)).join(', ')})` };
+  },
+  async 'takeover.count'(ctx, s) {
+    const sum = await ctx.eval('__show.g().takeover.summary()');
+    return { pass: sum.count === s.is, detail: `${sum.count} surface(s) taken over${sum.surfaces.length ? `: ${sum.surfaces.map((x) => `${x.label} ${x.phase}`).join(', ')}` : ''}` };
+  },
+  async 'takeover.barRelease'(ctx, s) {
+    // Plays the show, takes `track` over, asks for the hand-back on the next
+    // bar and records the show evaluations around it: the takeover must be
+    // gone on the first evaluation at or past the bar (within one frame).
+    const r = await ctx.eval(`(async () => {
+      const g = __show.g(); const T = g.takeover; const st = g.showTimeline;
+      const id = __show.vars['track:' + ${J(s.track)}];
+      st.seek(${s.from ?? 1}); await new Promise((r) => setTimeout(r, 300));
+      st.play(); await new Promise((r) => setTimeout(r, 300));
+      T.takeOverTrack(id, ${J(s.source ?? { kind: 'vjRow', deck: 'A', row: 0 })});
+      while (__show.show().currentTime < ${s.askAt ?? 2.6}) await new Promise((r) => setTimeout(r, 10));
+      const evals = [];
+      const un = st.subscribe((x) => evals.push({ t: x.currentTime, active: !!T.frame() }));
+      T.returnTrack(id, { mode: 'bar', fadeSeconds: 0 });
+      const at = T.summary().surfaces[0]?.releaseAtShowTime ?? null;
+      while (__show.show().currentTime < ${s.until ?? 4.6}) await new Promise((r) => setTimeout(r, 10));
+      un(); st.pause();
+      const i = evals.findIndex((e) => !e.active);
+      const gaps = evals.slice(1).map((e, k) => e.t - evals[k].t).filter((x) => x > 0).sort((a, b) => a - b);
+      return { at, last: evals[i - 1]?.t ?? null, first: evals[i]?.t ?? null, frame: gaps[Math.floor(gaps.length / 2)] ?? null };
+    })()`, 30000);
+    if (r.at === null || r.first === null || r.last === null) return { pass: false, detail: `no release seen: ${JSON.stringify(r)}` };
+    const late = r.first - r.at;
+    const pass = r.last < r.at && late >= -1e-6 && late <= (r.frame ?? 1 / 60) * 1.5;
+    return { pass, detail: `bar at ${r.at.toFixed(3)} s: still taken over at ${r.last.toFixed(3)}, handed back at ${r.first.toFixed(3)} (${(late * 1000).toFixed(1)} ms past the bar; frames ${((r.frame ?? 0) * 1000).toFixed(1)} ms)` };
   },
   async noErrors(ctx) {
     const errs = ctx.session.errors.filter((e) => e.at >= ctx.startedAt && !/ResizeObserver loop|favicon/.test(e.text));

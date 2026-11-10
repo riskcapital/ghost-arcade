@@ -855,6 +855,19 @@ function recordShowEdit(continuousKey?: string): void {
   else recordDiscreteAction();
 }
 
+/** Told when the whole show is cleared or another one is loaded (a live
+ *  takeover of the old show's surfaces ends there). */
+const resetListeners = new Set<() => void>();
+export function onShowTimelineReset(listener: () => void): () => void {
+  resetListeners.add(listener);
+  return () => resetListeners.delete(listener);
+}
+function notifyReset(): void {
+  for (const listener of resetListeners) {
+    try { listener(); } catch (err) { console.warn('[ShowTimeline] reset listener failed:', err); }
+  }
+}
+
 /** Extra snap targets from outside the store: the cue list's markers. */
 let snapEdgeProvider: (() => number[]) | null = null;
 export function setShowSnapEdgeProvider(provider: (() => number[]) | null): void {
@@ -2443,6 +2456,7 @@ export const showTimeline = {
     }));
     republishTracks();
     recordShowEdit();
+    notifyReset();
   },
 
   /** Total programmed length, seconds. The render modal seeds from this. */
@@ -2596,6 +2610,7 @@ export const showTimeline = {
     cancelRaf();
     releaseAllTrackElements();
     publishTransition(null);
+    notifyReset();
 
     if (!payload || typeof payload !== 'object') {
       store.set(createInitialState());

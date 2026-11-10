@@ -364,6 +364,10 @@ export interface VJClipLauncherState {
   isOpen: boolean;
   // Whether VJ mode is driving the output (live)
   isLive: boolean;
+  // A show takeover samples VJ rows, the mix or a group while the show owns
+  // the output: the feeds must run although VJ mode is not live. Session
+  // only, never saved (see show/takeover/liveTakeover.ts).
+  takeoverLive?: boolean;
   // Composition-level effects (applied to final composite output)
   compositionEffects: Effect[];
   groups?: VJGroup[];
@@ -471,6 +475,7 @@ function createDefaultState(): VJClipLauncherState {
     masterOpacity: 1,
     isOpen: false,
     isLive: false,
+    takeoverLive: false,
     compositionEffects: [],
     groups: [],
     stageMode: false,
@@ -1207,10 +1212,26 @@ function pruneOrphanedClipRuntimes(state: VJClipLauncherState): void {
   }
 }
 
+/**
+ * The VJ rows' feeds are running: VJ mode is live, or a show takeover is
+ * sampling them. Feed work (clip layers, clip transitions, beat-synced video,
+ * autopilot, queued native cuts) follows this; choosing the output follows
+ * `isLive` alone.
+ */
+export function vjFeedsRunning(s: Pick<VJClipLauncherState, 'isLive' | 'takeoverLive'>): boolean {
+  return s.isLive || !!s.takeoverLive;
+}
+
+/** Feeds that also needed the VJ workspace open: a takeover runs them with
+ *  the workspace closed. */
+function vjFeedsActive(s: Pick<VJClipLauncherState, 'isLive' | 'isOpen' | 'takeoverLive'>): boolean {
+  return (s.isLive && s.isOpen) || !!s.takeoverLive;
+}
+
 function vjTransitionRowIsVisible(state: VJClipLauncherState, deck: VJDeck, layerIndex: number): boolean {
   // MAP rows play ordinary clips too (surfaces bound to a row show them),
   // so their clip transitions run exactly as in MIX and STAGE.
-  if (!state.isLive || (deck === 'B' && !state.crossfaderEnabled)) return false;
+  if (!vjFeedsRunning(state) || (deck === 'B' && !state.crossfaderEnabled)) return false;
   const states = pickLayerStates(state, deck);
   const layer = states[layerIndex];
   return !!layer && !layer.mute && (!states.some(entry => entry.solo) || layer.solo);
@@ -1332,14 +1353,14 @@ function createVJClipLauncherStore() {
       }) };
     }
     if (before.activeBlockId !== next.activeBlockId || before.mapMode !== next.mapMode
-      || (before.isLive && !next.isLive) || (before.isOpen && !next.isOpen)) holds.clear();
+      || (vjFeedsRunning(before) && !vjFeedsRunning(next)) || (before.isOpen && !next.isOpen && !next.takeoverLive)) holds.clear();
     for (const [key, hold] of holds) {
       const [deck, row] = key.split(':');
       if (pickGrid(next, deck as VJDeck)[Number(row)]?.[hold.column]?.id !== hold.clipId
         || (deck === 'B' && before.crossfaderEnabled && !next.crossfaderEnabled)) holds.delete(key);
     }
     if (!next.pendingTriggers.length) return next;
-    const leaveLive = (before.isLive && !next.isLive) || (before.isOpen && !next.isOpen);
+    const leaveLive = (vjFeedsRunning(before) && !vjFeedsRunning(next)) || (before.isOpen && !next.isOpen && !next.takeoverLive);
     const changedContext = before.activeBlockId !== next.activeBlockId || before.mapMode !== next.mapMode;
     const pendingTriggers = leaveLive || changedContext ? [] : next.pendingTriggers.filter(trigger =>
       !(trigger.bank === 'B' && before.crossfaderEnabled && !next.crossfaderEnabled)
@@ -1552,7 +1573,7 @@ function createVJClipLauncherStore() {
     // avoid bouncing back through workspace and double-firing.
     setOpen(isOpen: boolean, opts?: { fromWorkspace?: boolean }) {
       if (!isOpen) releaseTempoNudgeInputs('');
-      if (!isOpen) vjClipTransitions.clear();
+      if (!isOpen && !get({ subscribe }).takeoverLive) vjClipTransitions.clear();
       // Closing or leaving the VJ workspace relinquishes output ownership in
       // the same notification. Otherwise Canvas can keep presenting VJ while
       // its transports have already stopped, leaving a frozen frame in Mapping.
@@ -1944,7 +1965,7 @@ function createVJClipLauncherStore() {
 
     resyncBeatClips() {
       const state = get({ subscribe });
-      if (!state.isLive || !state.isOpen) return;
+      if (!vjFeedsActive(state)) return;
       for (const deck of ['A', 'B'] as const) {
         if (deck === 'B' && !state.crossfaderEnabled) continue;
         pickLayerStates(state, deck).forEach((row, index) => {
@@ -2370,14 +2391,24 @@ function createVJClipLauncherStore() {
 
     // Toggle live mode
     toggleLive() {
-      if (get({ subscribe }).isLive) vjClipTransitions.clear();
+      const now = get({ subscribe });
+      if (now.isLive && !now.takeoverLive) vjClipTransitions.clear();
       update(state => ({ ...state, isLive: !state.isLive }));
     },
 
     // Set live mode
     setLive(isLive: boolean) {
-      if (!isLive) vjClipTransitions.clear();
+      if (!isLive && !get({ subscribe }).takeoverLive) vjClipTransitions.clear();
       update(state => ({ ...state, isLive }));
+    },
+
+    /** A show takeover needs the VJ feeds (or no longer does). Not an edit,
+     *  not saved; VJ mode's own Live is untouched. */
+    setTakeoverLive(on: boolean) {
+      const state = get({ subscribe });
+      if (!!state.takeoverLive === on) return;
+      if (!on && !state.isLive) vjClipTransitions.clear();
+      update(s => ({ ...s, takeoverLive: on }));
     },
 
     /** Apply a complete preset in one store notification, including the saved block. */
@@ -3946,7 +3977,7 @@ let autopilotFrame: number | null = null;
 function autopilotSamples(state: VJClipLauncherState): AutopilotSample[] {
   // Mirrored simulator/output windows must never become another show clock.
   if (typeof window !== 'undefined' && new URLSearchParams(window.location?.search ?? '').has('mode')) return [];
-  if (!state.isLive || !state.isOpen || state.stoppedAll) return [];
+  if (!vjFeedsActive(state) || state.stoppedAll) return [];
   const bpm = launchClockTempo();
   const samples: AutopilotSample[] = [];
   for (const deck of ['A', 'B'] as const) {
@@ -4208,7 +4239,7 @@ if (typeof window !== 'undefined') {
   let phaseSources = new Set<string>();
   const eligible = () => {
     const state = get(vjClipLauncher);
-    if (!isDesktopApp || !state.isOpen || !state.isLive || state.stoppedAll
+    if (!isDesktopApp || !vjFeedsActive(state) || state.stoppedAll
       || new URLSearchParams(window.location?.search ?? '').has('mode')) return [];
     return (['A', 'B'] as const).flatMap(deck => deck === 'B' && !state.crossfaderEnabled ? [] :
       pickLayerStates(state, deck).flatMap((row, index) => {
@@ -4645,7 +4676,7 @@ export function buildVJClipLayer(activeLayer: ActiveVJLayer, launcherState: VJCl
 export const vjOutputLayers = derived(
   [vjClipLauncher, activeVJLayers, vjLayerSequencer, vjClipTransitions],
   ([state, active, sequencer, transitions]) => {
-    if (!state.isLive) return null;
+    if (!vjFeedsRunning(state)) return null;
     const output = active.map(entry => {
       const prepared=transitions.get(`${entry.bank??'A'}:${entry.layerIndex}`);
       if (prepared?.queuedTriggerId && prepared.preparedIncoming && prepared.outgoingClip.id===entry.clip.id
@@ -4662,7 +4693,7 @@ export const vjOutputLayers = derived(
 export const vjTransitionOutputLayers = derived(
   [vjClipLauncher, vjClipTransitions, vjLayerSequencer],
   ([state, transitions, sequencer]) => {
-    if (!state.isLive) return [];
+    if (!vjFeedsRunning(state)) return [];
     return Array.from(transitions.values()).flatMap(transition => {
       const layerState = pickLayerStates(state, transition.deck)[transition.layerIndex];
       if (!layerState || (transition.deck === 'B' && !state.crossfaderEnabled)) return [];
@@ -4693,7 +4724,7 @@ type NativeCutRow = { layerIndex: number; incoming: VJClip; outgoing: VJClip; la
 type NativeCutPlan = { trigger: PendingTrigger; rows: NativeCutRow[]; lane: string; dualDeck: boolean; signature: string };
 export function buildNativeQueuedCutPlan(trigger: PendingTrigger, state: VJClipLauncherState): NativeCutPlan | null {
   if (trigger.autopilotSource || (trigger.bank === 'B' && !state.crossfaderEnabled)
-    || !state.isLive || !state.isOpen || state.stoppedAll || !queuedTriggerStillMatches(trigger,state)
+    || !vjFeedsActive(state) || state.stoppedAll || !queuedTriggerStillMatches(trigger,state)
     || !get(nativeRendererRuntime).running || get(vjLayerSequencer).isPlaying
     || Object.values(get(keyframeTimeline).timelines).some(timeline=>timeline.tracks.length>0)) return null;
   if (!launchClockFollowsLink() && (get(audioStore).isActive || get(launchClock).nudge !== 0)) return null;
@@ -4857,7 +4888,7 @@ if (typeof window !== 'undefined' && isDesktopApp && !new URLSearchParams(window
         const grid=pickGrid(state,plan.trigger.bank);
         for (const cut of plan.rows) {
           const current=rows[cut.layerIndex]?.activeClip;
-          if (!state.isLive || !state.isOpen || state.stoppedAll || state.crossfaderEnabled!==plan.dualDeck
+          if (!vjFeedsActive(state) || state.stoppedAll || state.crossfaderEnabled!==plan.dualDeck
             || state.activeBlockId!==plan.trigger.blockId || current?.id!==cut.outgoing.id
             || current?.src!==cut.outgoing.src || current?._nativePlaybackSeekSeq!==cut.outgoing._nativePlaybackSeekSeq
             || grid[cut.layerIndex]?.[plan.trigger.columnIndex]?.id!==cut.incoming.id) {
