@@ -135,6 +135,14 @@ describe('showDropEffect', () => {
     expect(classifyShowKey({ key: 'l' }, { ...ctx, engaged: false })).toBeNull();
   });
 
+  it('a held L or R (key repeat) is taken but does nothing more', () => {
+    const ctx = { open: true, engaged: true, hasSelection: false, hasTracks: true, takeoverActive: true };
+    expect(classifyShowKey({ key: 'l', repeat: true }, ctx)).toBe('heldTakeoverKey');
+    expect(classifyShowKey({ key: 'r', repeat: true }, ctx)).toBe('heldTakeoverKey');
+    expect(classifyShowKey({ key: 'R', shiftKey: true, repeat: true }, ctx)).toBe('heldTakeoverKey');
+    expect(classifyShowKey({ key: 'l', repeat: true }, { ...ctx, hasTracks: false })).toBeNull();
+  });
+
   it('takes its keys ahead of every other window listener', () => {
     const listeners: Array<{ fn: (e: Event) => void; capture: boolean }> = [];
     const target = {

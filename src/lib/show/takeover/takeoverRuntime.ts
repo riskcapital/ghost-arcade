@@ -110,27 +110,61 @@ export function returnTrack(track: ShowLayerTrack, spec?: Partial<ReleaseSpec>):
   return liveTakeover.release(track.layerId, spec);
 }
 
+// ── Inputs on show:live ─────────────────────────────────────────────────
+
+/** Inputs whose last show:live value was on. A controller (MIDI, OSC, DMX…)
+ *  sends a position or a release after every press, so only its edges act:
+ *  a CC knob turned up takes over once instead of toggling on every step. */
+const liveInputsDown = new Set<string>();
+
+/** Does this input get edge detection? A path fired without an input of its
+ *  own (a cue's value, MCP, a gesture trigger) may never send a 0, so every
+ *  press of it acts. */
+export function liveInputHasEdges(inputId: string): boolean {
+  return !inputId.startsWith('path') && !inputId.startsWith('show:');
+}
+
+/** The momentary takeovers `inputId` holds let go, wherever their tracks are
+ *  now (a track can be moved while it is held). */
+function releaseHeldBy(inputId: string): void {
+  for (const o of Object.values(liveTakeover.state.surfaces)) {
+    if (o.momentaryInputs.includes(inputId)) liveTakeover.releaseInput(o.surfaceId, inputId);
+  }
+}
+
+/** Every input under `prefix` lets go (a controller was unplugged). */
+export function releaseTakeoverInputs(prefix: string): void {
+  for (const id of [...liveInputsDown]) if (id.startsWith(prefix)) liveInputsDown.delete(id);
+  liveTakeover.releaseInputs(prefix);
+}
+
 /** The show's `show:live`/`show:release`… paths. */
 export function handleTakeoverControl(action: ShowControlAction, value: number, inputId = 'path'): boolean {
   if (typeof action !== 'object') return false;
   if ('live' in action) {
+    const on = value > 0;
+    if (liveInputHasEdges(inputId)) {
+      if (on === liveInputsDown.has(inputId)) return true;
+      if (on) liveInputsDown.add(inputId);
+      else liveInputsDown.delete(inputId);
+    }
+    if (!on) {
+      releaseHeldBy(inputId);
+      return true;
+    }
     const track = trackAt(action.live.track);
     if (!track) return true;
     const momentary = action.live.hold || liveTakeover.state.padMode === 'momentary';
-    if (value > 0) {
-      const source = sourceFromSpec(action.live.source);
-      if (!source) return true;
-      const current = liveTakeover.state.surfaces[track.layerId];
-      // A latched pad pressed again on the same source hands back.
-      if (!momentary && current && current.phase !== 'releasing' && current.phase !== 'pendingRelease'
-        && JSON.stringify(current.source) === JSON.stringify(source)) {
-        returnTrack(track);
-        return true;
-      }
-      takeOverTrack(track, source, momentary ? { inputId, momentary: true } : {});
-    } else if (momentary) {
-      liveTakeover.releaseInput(track.layerId, inputId);
+    const source = sourceFromSpec(action.live.source);
+    if (!source) return true;
+    const current = liveTakeover.state.surfaces[track.layerId];
+    // A latched pad pressed again on the same source hands back.
+    if (!momentary && current && current.phase !== 'releasing' && current.phase !== 'pendingRelease'
+      && JSON.stringify(current.source) === JSON.stringify(source)) {
+      returnTrack(track);
+      return true;
     }
+    takeOverTrack(track, source, momentary ? { inputId, momentary: true } : {});
     return true;
   }
   if ('release' in action) {
@@ -268,6 +302,19 @@ export function installTakeoverRuntime(): () => void {
     raf = null;
     timer = null;
   });
+
+  // A track deleted (or undone) while taken over: its override goes too. A
+  // track whose surface changed hands back the old surface.
+  let lastTracks: unknown = null;
+  disposers.push(showTimeline.subscribe((s) => {
+    if (s.layerTracks === lastTracks) return;
+    lastTracks = s.layerTracks;
+    for (const o of Object.values(liveTakeover.state.surfaces)) {
+      if (!o.trackId) continue;
+      const track = s.layerTracks.find((t) => t.id === o.trackId);
+      if (!track || track.layerId !== o.surfaceId) liveTakeover.release(o.surfaceId, { mode: 'instant' });
+    }
+  }));
 
   // A cleared show or another project: the old takeover is over.
   disposers.push(onShowTimelineReset(() => {

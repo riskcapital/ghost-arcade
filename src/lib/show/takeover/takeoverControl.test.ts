@@ -381,3 +381,67 @@ describe('stop all during a takeover', () => {
     expect(active()).toEqual([null, null]);
   });
 });
+
+describe('controllers on show:live', () => {
+  it('a CC knob takes over once on its way up and hands back on its next way up, instead of toggling on every step', () => {
+    const knob = 'midi:dev1:map1:0:21';
+    for (const v of [0.05, 0.2, 0.4, 0.8, 1]) path('show:live:1:vja:2', v, knob);
+    expect(surfaces().wall?.phase).toBe('live');
+    path('show:live:1:vja:2', 0, knob);
+    expect(surfaces().wall?.phase).toBe('live');
+    for (const v of [0.1, 0.3]) path('show:live:1:vja:2', v, knob);
+    expect(surfaces().wall).toBeUndefined();
+  });
+
+  it('a held pad lets go of its track even after the tracks were reordered under it', () => {
+    const pad = 'midi:dev1:map2:0:36';
+    path('show:live:1:mix:hold', 1, pad);
+    expect(surfaces().wall?.momentaryInputs).toEqual([pad]);
+    // Wall moves below Logo while held: track 1 is now Logo.
+    timeline.showTimeline.reorderLayerTrack(wall, 1);
+    expect(get(timeline.showTimeline).layerTracks[0].id).toBe(logo);
+    path('show:live:1:mix:hold', 0, pad);
+    expect(surfaces().wall).toBeUndefined();
+    expect(surfaces().logo).toBeUndefined();
+  });
+
+  it('a note-off that learn or identify mode keeps from the mappings still lets go of a held takeover', async () => {
+    const { midiStore } = await import('../../midi/midiStore');
+    midiStore.startLearn('show:live:1:mix:hold', 'Wall live', 0, 1, 0, 'absolute');
+    midiStore.completeLearn(0, 'note', 36);
+    try {
+      router.midiRouter.routeMessage(0, 'note', 36, 100, { id: 'dev1', name: 'Pads' });
+      expect(surfaces().wall?.phase).toBe('live');
+      router.midiRouter.routeShowReleases(0, 'note', 36, { id: 'dev1', name: 'Pads' });
+      expect(surfaces().wall).toBeUndefined();
+      // The pad's next press takes over again (its release was seen).
+      router.midiRouter.routeMessage(0, 'note', 36, 100, { id: 'dev1', name: 'Pads' });
+      expect(surfaces().wall?.phase).toBe('live');
+      router.midiRouter.routeMessage(0, 'note', 36, 0, { id: 'dev1', name: 'Pads' });
+      expect(surfaces().wall).toBeUndefined();
+    } finally {
+      midiStore.clearAllMappings();
+    }
+  });
+});
+
+describe('an override whose track is gone', () => {
+  it('ends when the track is deleted', () => {
+    path('show:live:1:vja:1', 1);
+    path('show:live:2:black', 1);
+    timeline.showTimeline.removeLayerTrack(wall);
+    expect(Object.keys(surfaces())).toEqual(['logo']);
+  });
+
+  it('ends when an undo takes the track away (the arrangement is restored without it)', () => {
+    const before = timeline.showTimeline.exportArrangement();
+    timeline.showTimeline.addLayerTrack(types.createLayer('extra', 'Extra', 'media'));
+    const trackId = get(timeline.showTimeline).layerTracks.find((t) => t.layerId === 'extra')!.id;
+    takeoverRt.takeOverTrack(takeoverRt.trackById(trackId)!, { kind: 'black' });
+    path('show:live:1:black', 1);
+    expect(Object.keys(surfaces()).sort()).toEqual(['extra', 'wall']);
+    // What undo does: put the arrangement from before the track back.
+    timeline.showTimeline.restoreArrangement(before);
+    expect(Object.keys(surfaces())).toEqual(['wall']);
+  });
+});

@@ -30,8 +30,7 @@ import { settings } from '../stores/settings';
 import { launchClockTempo, launchClockPosition, launchClockFollowsShow } from '../stores/launchClock';
 import { midiRouter, registerShowControl, registerShowInputRelease } from '../midi/midiRouter';
 import { runAsLiveControl } from '../stores/historyHooks';
-import { handleTakeoverControl, runTakeoverCue, runTakeoverReleaseCue } from './takeover/takeoverRuntime';
-import { liveTakeover } from './takeover/liveTakeover';
+import { handleTakeoverControl, releaseTakeoverInputs, runTakeoverCue, runTakeoverReleaseCue } from './takeover/takeoverRuntime';
 
 /** Hooks App.svelte fills in: things only the app shell can do. */
 export const showRuntimeHooks: {
@@ -129,7 +128,7 @@ export function installShowControl(): () => void {
   cleanups.push(() => registerShowControl(null));
   // A controller that disconnects lets go of the takeovers it holds (with
   // the default release), and only those.
-  registerShowInputRelease((prefix) => liveTakeover.releaseInputs(prefix));
+  registerShowInputRelease((prefix) => releaseTakeoverInputs(prefix));
   cleanups.push(() => registerShowInputRelease(null));
 
   // ── Timeline markers ───────────────────────────────────────────────
