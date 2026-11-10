@@ -1,0 +1,122 @@
+<script lang="ts">
+  /**
+   * The selected layer track: what the layer shows between clips, its
+   * colour, and removing the track (the layer itself stays).
+   */
+  import type { ShowLayerTrack } from '../../../types';
+  import { showTimeline } from '../../../stores/showTimeline';
+
+  interface Props {
+    track: ShowLayerTrack;
+    onStage: boolean;
+    onclose: () => void;
+  }
+
+  let { track, onStage, onclose }: Props = $props();
+
+  const SWATCHES = ['#8b7cff', '#ff6f5e', '#f0c674', '#5fdc76', '#5ce1e6', '#5278ff', '#c77dff'];
+</script>
+
+<div class="show-inspector" data-track-inspector>
+  <span class="insp-title">Track</span>
+  <span class="insp-name layer-name">{track.layerName}</span>
+  {#if !onStage}
+    <span class="insp-hint">Not in the current preset: the track plays its own copy of the layer.</span>
+  {/if}
+  <label class="insp-field">
+    <span>Between clips</span>
+    <select
+      value={track.gap}
+      onchange={(e) => showTimeline.updateLayerTrack(track.id, { gap: (e.currentTarget as HTMLSelectElement).value as 'layer' | 'hide' })}
+      data-track-gap
+    >
+      <option value="layer">Show the layer</option>
+      <option value="hide">Hide the layer</option>
+    </select>
+  </label>
+  <span class="insp-swatches" role="group" aria-label="Track colour">
+    {#each SWATCHES as sw}
+      <button
+        class="insp-swatch"
+        class:on={(track.color ?? SWATCHES[0]) === sw}
+        style:background={sw}
+        onclick={() => showTimeline.updateLayerTrack(track.id, { color: sw === SWATCHES[0] ? undefined : sw })}
+        title="Track colour"
+        aria-label="Track colour"
+      ></button>
+    {/each}
+  </span>
+  <button class="insp-delete" onclick={() => showTimeline.removeLayerTrack(track.id)} title="Remove the track and its clips. The layer stays." data-track-remove>Remove track</button>
+  <button aria-label="Close track inspector" class="insp-close" onclick={onclose}>×</button>
+</div>
+
+<style>
+  .show-inspector {
+    display: flex;
+    align-items: center;
+    gap: 10px 12px;
+    min-height: 36px;
+    padding: 4px 12px;
+    background: var(--ga-card, #121217);
+    border-top: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
+    font-size: var(--ga-text-control, 12px);
+    color: var(--ga-ink-1, #bbb);
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+  }
+  .insp-title {
+    color: #FFD96B;
+    font-weight: var(--ga-weight-control, 600);
+    padding-right: 12px;
+    border-right: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
+  }
+  .insp-name { color: var(--ga-ink-0, #ddd); font-weight: 600; }
+  .insp-hint { font-size: var(--ga-text-meta, 11px); color: #f0c674; }
+  .insp-field { display: flex; align-items: center; gap: 6px; }
+  .insp-field > span { color: var(--ga-ink-2, #888); }
+  .insp-field select {
+    height: var(--ga-control-h-sm, 22px);
+    background: var(--ga-slot, rgba(255, 255, 255, 0.04));
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: var(--ga-r-hard, 3px);
+    color: var(--ga-ink-0, #e8e8e8);
+    font-size: var(--ga-text-control, 12px);
+    padding: 0 6px;
+    outline: none;
+    font-family: inherit;
+  }
+  .insp-swatches { display: flex; gap: 3px; }
+  .insp-swatch {
+    width: 14px;
+    height: 14px;
+    padding: 0;
+    border-radius: 3px;
+    border: 1px solid var(--ga-line-3, rgba(255, 255, 255, 0.24));
+    cursor: pointer;
+  }
+  .insp-swatch.on { box-shadow: 0 0 0 1px #FFD96B; }
+  .insp-delete {
+    margin-left: auto;
+    height: var(--ga-control-h-sm, 22px);
+    background: transparent;
+    border: 1px solid color-mix(in srgb, var(--ga-rec, #ff4757) 40%, transparent);
+    color: var(--ga-rec, #FF4757);
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    padding: 0 10px;
+    border-radius: var(--ga-r-hard, 3px);
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .insp-delete:hover { background: color-mix(in srgb, var(--ga-rec, #ff4757) 14%, transparent); }
+  .insp-close {
+    background: none;
+    border: none;
+    color: var(--ga-ink-2, #888);
+    font-size: 16px;
+    cursor: pointer;
+    padding: 2px 6px;
+    line-height: 1;
+  }
+  .insp-close:hover { color: var(--ga-ink-0, #fff); }
+</style>

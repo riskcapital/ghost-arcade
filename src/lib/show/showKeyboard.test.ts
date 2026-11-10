@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { classifyShowKey, handleShowKeydown, setShowKeyHandler } from './showKeyboard';
+import { classifyShowKey, handleShowKeydown, installShowKeyCapture, setShowKeyHandler } from './showKeyboard';
 import { showDropEffect } from './showDrop';
 
 const engaged = { open: true, engaged: true, hasSelection: true };
@@ -81,5 +81,65 @@ describe('showDropEffect', () => {
     expect(showDropEffect('link')).toBe('link');
     expect(showDropEffect('none')).toBe('none');
     expect(showDropEffect(undefined)).toBe('copy');
+  });
+
+  it('maps the timeline edit keys while the tray is engaged', () => {
+    const full = { open: true, engaged: true, hasSelection: true, hasClipSelection: true, canPaste: true, hasTracks: true };
+    const cases: Array<[Record<string, unknown>, string | null]> = [
+      [{ key: 's' }, 'split'],
+      [{ key: 'k', metaKey: true }, 'split'],
+      [{ key: 'k', ctrlKey: true }, 'split'],
+      [{ key: 'd', metaKey: true }, 'duplicate'],
+      [{ key: 'c', metaKey: true }, 'copy'],
+      [{ key: 'x', metaKey: true }, 'cut'],
+      [{ key: 'v', metaKey: true }, 'paste'],
+      [{ key: 'a', metaKey: true }, 'selectAll'],
+      [{ key: 'Delete', shiftKey: true }, 'rippleDelete'],
+      [{ key: 'Backspace', shiftKey: true }, 'rippleDelete'],
+      [{ key: 'ArrowLeft' }, 'nudgeLeft'],
+      [{ key: 'ArrowRight', shiftKey: true }, 'nudgeBarRight'],
+      [{ key: 'n' }, 'toggleSnap'],
+      [{ key: 'M' }, 'marker'],
+      [{ key: 'Home' }, 'home'],
+      [{ key: 'End' }, 'end'],
+      [{ key: 'Escape' }, 'clearSelection'],
+      [{ key: 'b' }, null],
+      [{ key: 't' }, null],
+      [{ key: ' ' }, null],
+      [{ key: 'z', metaKey: true }, null],
+      [{ key: 's', metaKey: true }, null],
+      [{ key: 's', altKey: true }, null],
+    ];
+    for (const [e, want] of cases) expect(classifyShowKey(e as { key: string }, full), JSON.stringify(e)).toBe(want);
+  });
+
+  it('only offers clip actions when there is something to act on', () => {
+    const bare = { open: true, engaged: true, hasSelection: false };
+    expect(classifyShowKey({ key: 's' }, bare)).toBeNull();
+    expect(classifyShowKey({ key: 'd', metaKey: true }, bare)).toBeNull();
+    expect(classifyShowKey({ key: 'v', metaKey: true }, bare)).toBeNull();
+    expect(classifyShowKey({ key: 'ArrowLeft' }, bare)).toBeNull();
+    expect(classifyShowKey({ key: 'Escape' }, bare)).toBeNull();
+    expect(classifyShowKey({ key: 's' }, { ...bare, hasTracks: true, engaged: false })).toBeNull();
+  });
+
+  it('takes its keys ahead of every other window listener', () => {
+    const listeners: Array<{ fn: (e: Event) => void; capture: boolean }> = [];
+    const target = {
+      addEventListener: (_: string, fn: (e: Event) => void, capture: boolean) => listeners.push({ fn, capture }),
+      removeEventListener: () => { listeners.length = 0; },
+    };
+    const uninstall = installShowKeyCapture(target as unknown as Window);
+    expect(listeners[0].capture).toBe(true);
+    setShowKeyHandler((e) => e.key === 'k');
+    const stop = vi.fn();
+    const taken = { ...keyEvent('k', { metaKey: true }), stopPropagation: stop } as unknown as KeyboardEvent;
+    listeners[0].fn(taken);
+    expect(stop).toHaveBeenCalledTimes(1);
+    const other = { ...keyEvent('j'), stopPropagation: stop } as unknown as KeyboardEvent;
+    listeners[0].fn(other);
+    expect(stop).toHaveBeenCalledTimes(1);
+    uninstall();
+    expect(listeners).toHaveLength(0);
   });
 });

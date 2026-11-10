@@ -55,8 +55,30 @@
   import { audioOutput, selectAudioOutput, startAudioOutputSelection } from '../audio/audioOutputDevice';
   import { isShowAudioFile } from '../audio/showAudioImport';
   import { offerShowFromAudio, pickSongForShow } from '../show/showFromAudio';
-  import { classifyShowKey, setShowKeyHandler } from '../show/showKeyboard';
+  import { classifyShowKey, installShowKeyCapture, setShowKeyHandler } from '../show/showKeyboard';
   import { showDropEffect } from '../show/showDrop';
+  import { setShowSnapEdgeProvider } from '../stores/showTimeline';
+  import { layers as liveLayersStore } from '../stores/layers';
+  import type { ShowSnapGrid } from '../types';
+  import ShowTrackLanes from './show/timeline/ShowTrackLanes.svelte';
+  import ShowTrackHeaders from './show/timeline/ShowTrackHeaders.svelte';
+  import ShowClipInspector from './show/timeline/ShowClipInspector.svelte';
+  import ShowTrackInspector from './show/timeline/ShowTrackInspector.svelte';
+  import ShowRuler from './show/timeline/ShowRuler.svelte';
+  import { TRACK_HEADER_WIDTH, laneKeySelection, showSnapGuide, tracksStackHeight } from './show/timeline/trackLayout';
+  import { carriesTrackMedia, dropTrackMedia } from './show/timeline/trackDrops';
+  import {
+    canPasteClips,
+    clearTrackSelection,
+    copySelection,
+    cutSelection,
+    deleteSelection as deleteTrackSelection,
+    duplicateSelection,
+    hasClipSelection,
+    nudgeSelection,
+    pasteAtPlayhead,
+    splitAtPlayhead,
+  } from './show/timeline/trackCommands';
 
   // ── End of show + output device ─────────────────────────────────────────
   // The transport lives in the store and keeps running with this panel
@@ -105,6 +127,8 @@
   $: selectedMarker = cues.markers.find((m) => m.id === selectedMarkerId) ?? null;
   // Selecting a clip or transition hands the inspector back to it.
   function clearMarkerSelection() { selectedMarkerId = null; }
+  // Keys on a lane stay selected only alongside track clips.
+  $: if (state.selection && state.selection.kind !== 'layerClip') laneKeySelection.set(null);
   $: if (state.selection) clearMarkerSelection();
 
   function markerCueLabel(cueId: string | null): string {
@@ -203,7 +227,9 @@
    *  Zero on macOS overlay scrollbars, ~8–15 px on Windows. */
   const GRID_SCROLLBAR_ALLOWANCE = 10;
 
-  function autoCeiling(vh: number): number {
+  function autoCeiling(vh: number, withTracks = false): number {
+    // Layer tracks need the room: up to about half the window with them.
+    if (withTracks) return Math.max(TRAY_MIN_HEIGHT, Math.round(Math.min(400, vh * 0.48)));
     return Math.max(TRAY_MIN_HEIGHT, Math.round(Math.min(260, vh * 0.38)));
   }
   const CUE_PANEL_MIN_HEIGHT = 300;
@@ -244,16 +270,24 @@
   let transportH = 36;
   let inspectorH = 0;
 
-  $: laneStackH = RULER_HEIGHT + audioLaneCount * AUDIO_LANE_HEIGHT + PRESET_LANE_HEIGHT;
+  $: tracksH = tracksStackHeight(state.layerTracks);
+  $: laneStackH = RULER_HEIGHT + PRESET_LANE_HEIGHT + tracksH + audioLaneCount * AUDIO_LANE_HEIGHT;
+  $: hasTracks = state.layerTracks.length > 0;
+  $: labelWidth = hasTracks ? TRACK_HEADER_WIDTH : 108;
   // The bound clientHeight keeps its last value after the inspector
   // unmounts, so gate it on the selection rather than trusting the binding.
-  $: inspectorVisible = !!(selectedPreset || selectedAudio || selectedTransitionClip || selectedMarker);
+  $: inspectorVisible = !!(selectedPreset || selectedAudio || selectedTransitionClip || selectedMarker || layerClipInspector || selectedTrack);
+  // With layer tracks the inspector strip is always there (a hint when
+  // nothing is selected) and its room is reserved: selecting a clip must not
+  // grow the tray, or the lanes jump under the pointer mid-drag.
+  const TRACK_INSPECTOR_RESERVE = 72;
+  $: inspectorRoom = hasTracks ? TRACK_INSPECTOR_RESERVE : inspectorVisible ? inspectorH : 0;
   $: contentH = Math.max(
-    transportH + laneStackH + (inspectorVisible ? inspectorH : 0) + GRID_SCROLLBAR_ALLOWANCE + 1 /* top border */,
+    transportH + laneStackH + inspectorRoom + GRID_SCROLLBAR_ALLOWANCE + 1 /* top border */,
     // The cue list needs room for its status, a few rows and the editor.
     cuesOpen ? transportH + CUE_PANEL_MIN_HEIGHT : 0,
   );
-  $: autoH = Math.max(TRAY_MIN_HEIGHT, Math.min(contentH, cuesOpen ? cueCeiling(viewportH) : autoCeiling(viewportH)));
+  $: autoH = Math.max(TRAY_MIN_HEIGHT, Math.min(contentH, cuesOpen ? cueCeiling(viewportH) : autoCeiling(viewportH, hasTracks)));
   $: trayHeight = userHeight === null
     ? autoH
     : Math.max(TRAY_MIN_HEIGHT, Math.min(userHeight, dragCeiling(viewportH)));
@@ -307,16 +341,12 @@
   $: audioLaneCount = Math.max(1, state.audioTracks.reduce((m, t) => Math.max(m, t.lane + 1), 0));
   $: audioLanes = Array.from({ length: audioLaneCount }, (_, i) => i);
 
-  $: rulerTicks = (() => {
-    const ticks: { x: number; label: string; major: boolean }[] = [];
-    // Pick a step that keeps labels ~60px apart at any zoom.
-    const candidates = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
-    const step = candidates.find((c) => c * zoom >= 60) ?? 600;
-    for (let t = 0; t <= rulerSeconds + 1e-6; t += step) {
-      ticks.push({ x: t * zoom, label: formatTime(t), major: t % (step * 4) === 0 });
-    }
-    return ticks;
-  })();
+  // Visible stretch of the grid, for the ruler and the tracks (they draw
+  // only what is on screen).
+  let gridScrollLeft = 0;
+  let gridWidth = 800;
+  $: viewStart = Math.max(0, gridScrollLeft / zoom - 2);
+  $: viewEnd = (gridScrollLeft + gridWidth) / zoom + 2;
 
   function formatTime(t: number): string {
     const safe = Math.max(0, t);
@@ -350,7 +380,8 @@
   function laneAt(e: DragEvent): number {
     if (!gridEl) return 0;
     const rect = gridEl.getBoundingClientRect();
-    const y = e.clientY - rect.top + gridEl.scrollTop - RULER_HEIGHT;
+    // Lane order: ruler, presets, layer tracks, then the audio lanes.
+    const y = e.clientY - rect.top + gridEl.scrollTop - RULER_HEIGHT - PRESET_LANE_HEIGHT - tracksH;
     if (y < 0) return 0;
     return Math.max(0, Math.min(audioLaneCount, Math.floor(y / AUDIO_LANE_HEIGHT)));
   }
@@ -366,7 +397,11 @@
       target.closest('.show-playhead') ||
       target.closest('.show-transition') ||
       target.closest('.junction-add') ||
-      target.closest('.show-marker')
+      target.closest('.show-marker') ||
+      target.closest('.lc-block') ||
+      target.closest('.tx') ||
+      target.closest('.tx-add') ||
+      target.closest('.kl-key')
     ) {
       return;
     }
@@ -484,6 +519,13 @@
       return;
     }
 
+    // A media-tray card or a video / image file dropped off the tracks makes
+    // a new layer track for it.
+    if (carriesTrackMedia(dt) && !Array.from(dt.files ?? []).some((f) => isShowAudioFile(f.name, f.type))) {
+      void dropTrackMedia(dt, null, showTimeline.snapTime(dropTime));
+      return;
+    }
+
     const lane = laneAt(e);
     const files = Array.from(dt.files ?? []).filter((f) => isShowAudioFile(f.name, f.type));
     // A song dropped on an empty show builds a show around it.
@@ -523,6 +565,19 @@
   $: selectedAudio = state.selection?.kind === 'audio'
     ? state.audioTracks.find((t) => t.id === state.selection!.id) ?? null
     : null;
+  /** Layer-track clips: one selected shows its inspector, several a count. */
+  $: selectedLayerClipCount = state.selectedClipIds.length;
+  $: selectedLayerClipFound = state.selection?.kind === 'layerClip'
+    ? showTimeline.findLayerClip(state.selection.id)
+    : selectedLayerClipCount === 1
+      ? showTimeline.findLayerClip(state.selectedClipIds[0])
+      : null;
+  $: layerClipInspector = selectedLayerClipCount > 0 || !!selectedLayerClipFound;
+  $: selectedTrack = state.selection?.kind === 'track'
+    ? state.layerTracks.find((t) => t.id === state.selection!.id) ?? null
+    : null;
+  $: selectedTrackOnStage = !!selectedTrack && $liveLayersStore.some((l) => l.id === selectedTrack!.layerId);
+
   /** The clip whose LEFT junction carries the selected transition. */
   $: selectedTransitionClip = state.selection?.kind === 'transition'
     ? state.presetClips.find((c) => c.id === state.selection!.id) ?? null
@@ -724,19 +779,86 @@
   // takes the key. With two independent listeners, Delete on a show clip
   // also deleted the selected mapping layer.
   let pointerInTray = false;
+  let focusInTray = false;
   function handleShowKey(e: KeyboardEvent): boolean {
+    const clipSel = hasClipSelection();
     const action = classifyShowKey(e, {
       open: isOpen && !hiddenInVJ,
-      engaged: pointerInTray,
-      hasSelection: !!(state.selection || selectedMarker),
+      engaged: pointerInTray || focusInTray,
+      hasSelection: !!(state.selection || selectedMarker) || clipSel,
+      hasClipSelection: clipSel,
+      canPaste: canPasteClips() && state.layerTracks.length > 0,
+      hasTracks: state.layerTracks.length > 0,
     });
-    if (action === 'delete') {
-      deleteSelected();
-      return true;
+    if (!action) return false;
+    switch (action) {
+      case 'delete':
+        if (deleteTrackSelection(false)) return true;
+        deleteSelected();
+        return true;
+      case 'rippleDelete':
+        return deleteTrackSelection(true);
+      case 'split':
+        splitAtPlayhead();
+        return true;
+      case 'duplicate':
+        duplicateSelection();
+        return true;
+      case 'copy':
+        return copySelection();
+      case 'cut':
+        return cutSelection();
+      case 'paste':
+        pasteAtPlayhead();
+        return true;
+      case 'selectAll':
+        showTimeline.selectAllLayerClips();
+        laneKeySelection.set(null);
+        return true;
+      case 'nudgeLeft':
+      case 'nudgeRight':
+      case 'nudgeBarLeft':
+      case 'nudgeBarRight':
+        return nudgeSelection(action === 'nudgeLeft' || action === 'nudgeBarLeft' ? -1 : 1, action === 'nudgeBarLeft' || action === 'nudgeBarRight');
+      case 'toggleSnap':
+        showTimeline.setSnapEnabled(!state.snapEnabled);
+        return true;
+      case 'marker':
+        addMarkerAtPlayhead();
+        return true;
+      case 'home':
+        showTimeline.seek(0);
+        return true;
+      case 'end':
+        showTimeline.seek(state.duration);
+        return true;
+      case 'clearSelection':
+        clearTrackSelection();
+        showTimeline.select(null);
+        selectedMarkerId = null;
+        return true;
     }
     return false;
   }
   onMount(() => setShowKeyHandler(handleShowKey));
+  // Taken ahead of every other window listener (see installShowKeyCapture).
+  onMount(() => installShowKeyCapture());
+  // Markers are snap targets for clips and keys.
+  onMount(() => {
+    setShowSnapEdgeProvider(() => cues.markers.map((m) => m.time));
+    return () => setShowSnapEdgeProvider(null);
+  });
+
+  const MOD_KEY = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform) ? 'Cmd' : 'Ctrl';
+  // Without a tempo map the grid is a quarter second: nothing to choose.
+  const SNAP_GRID_CHOICES: Array<{ value: ShowSnapGrid; label: string }> = [
+    { value: 'bar', label: 'Bar' },
+    { value: 'beat', label: 'Beat' },
+    { value: 'half', label: '½ beat' },
+    { value: 'quarter', label: '¼ beat' },
+    { value: 'sixteenth', label: '1/16' },
+    { value: 'seconds', label: '¼ second' },
+  ];
 
   function handleWheel(e: WheelEvent) {
     if (!(e.ctrlKey || e.metaKey)) return;
@@ -778,6 +900,8 @@
     aria-label="Show timeline"
     onmouseenter={() => pointerInTray = true}
     onmouseleave={() => pointerInTray = false}
+    onfocusin={() => focusInTray = true}
+    onfocusout={() => focusInTray = false}
   >
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
@@ -912,9 +1036,26 @@
 
       <button class="t-btn" onclick={() => showTimeline.setZoom(zoom / 1.4)} disabled={zoom <= SHOW_MIN_ZOOM} title="Zoom out">−</button>
       <button class="t-btn" onclick={() => showTimeline.setZoom(zoom * 1.4)} disabled={zoom >= SHOW_MAX_ZOOM} title="Zoom in">+</button>
-      <button class="t-chip" class:active={state.snapEnabled} onclick={() => showTimeline.setSnapEnabled(!state.snapEnabled)} title="Snap to the 0.25s grid and to clip edges">
+      <button class="t-chip" class:active={state.snapEnabled} onclick={() => showTimeline.setSnapEnabled(!state.snapEnabled)} title="Snap to the grid, clip edges, the playhead and markers (N). Hold {MOD_KEY} while dragging to move freely." data-show-snap>
         Snap
       </button>
+      {#if state.tempo}
+        <select
+          class="t-select t-grid"
+          value={state.snapGrid}
+          onchange={(e) => showTimeline.setSnapGrid((e.currentTarget as HTMLSelectElement).value as ShowSnapGrid)}
+          title="Snap grid"
+          aria-label="Snap grid"
+        >
+          {#each SNAP_GRID_CHOICES as grid}
+            <option value={grid.value}>{grid.label}</option>
+          {/each}
+        </select>
+        <span class="t-seg" role="group" aria-label="Ruler">
+          <button class="t-seg-btn" class:active={state.rulerMode === 'time'} onclick={() => showTimeline.setRulerMode('time')} title="Ruler in minutes and seconds">Time</button>
+          <button class="t-seg-btn" class:active={state.rulerMode === 'bars'} onclick={() => showTimeline.setRulerMode('bars')} title="Ruler in bars and beats" data-show-ruler-bars>Bars</button>
+        </span>
+      {/if}
 
       <span class="t-divider"></span>
 
@@ -981,20 +1122,22 @@
     <div class="show-main-col">
     <!-- Body: lane labels + scrolling grid -->
     <div class="show-body">
-      <div class="lane-labels">
+      <div class="lane-labels" style="width: {labelWidth}px; flex-basis: {labelWidth}px">
         <div class="label-ruler-spacer" style="height: {RULER_HEIGHT}px"></div>
         <!-- Translated, not scrolled: the grid owns the scroll and the ruler
              spacer above has to stay pinned the way the sticky ruler does.
-             Matters now that a short tray really can clip the lane stack. -->
+             Matters now that a short tray really can clip the lane stack.
+             Order: presets, layer tracks, audio. -->
         <div class="label-rows" style="transform: translateY({-laneScrollTop}px)">
+          <div class="lane-label preset" style="height: {PRESET_LANE_HEIGHT}px">
+            <span class="lane-name">Presets</span>
+          </div>
+          <ShowTrackHeaders />
           {#each audioLanes as lane}
             <div class="lane-label audio" style="height: {AUDIO_LANE_HEIGHT}px">
               <span class="lane-name">Audio {lane + 1}</span>
             </div>
           {/each}
-          <div class="lane-label preset" style="height: {PRESET_LANE_HEIGHT}px">
-            <span class="lane-name">Presets</span>
-          </div>
         </div>
       </div>
 
@@ -1004,19 +1147,16 @@
         class="show-grid"
         class:drag-hover={dragHover}
         bind:this={gridEl}
+        bind:clientWidth={gridWidth}
         onclick={seekFromClick}
-        onscroll={() => laneScrollTop = gridEl?.scrollTop ?? 0}
+        onscroll={() => { laneScrollTop = gridEl?.scrollTop ?? 0; gridScrollLeft = gridEl?.scrollLeft ?? 0; }}
         onwheel={handleWheel}
         ondragover={handleDragOver}
         ondragleave={() => dragHover = false}
         ondrop={handleDrop}
       >
         <div class="show-ruler" style="width: {totalWidth}px; height: {RULER_HEIGHT}px" onmousedown={startScrub}>
-          {#each rulerTicks as tick}
-            <div class="ruler-tick" class:major={tick.major} style="left: {tick.x}px">
-              <span class="ruler-label">{tick.label}</span>
-            </div>
-          {/each}
+          <ShowRuler {zoom} {rulerSeconds} {viewStart} {viewEnd} mode={state.rulerMode} tempo={state.tempo} />
           {#each cues.markers as marker (marker.id)}
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div
@@ -1034,38 +1174,6 @@
         </div>
 
         <div class="lanes" style="width: {totalWidth}px">
-          {#each audioLanes as lane}
-            <div class="lane audio-lane" style="height: {AUDIO_LANE_HEIGHT}px">
-              {#if lane === 0 && state.audioTracks.length === 0}
-                <span class="lane-empty lane-empty-audio">
-                  Drop a song here, or
-                  <button class="lane-empty-btn" onclick={(e) => { e.stopPropagation(); pickSongForShow(); }}>build a show from a song…</button>
-                </span>
-              {/if}
-              {#each state.audioTracks.filter((t) => t.lane === lane) as track (track.id)}
-                <!-- svelte-ignore a11y_no_static_element_interactions -->
-                <div
-                  class="show-block audio-block"
-                  class:selected={state.selection?.kind === 'audio' && state.selection.id === track.id}
-                  class:missing={!track.url}
-                  class:muted={track.muted}
-                  style="left: {track.startTime * zoom}px; width: {Math.max(6, track.duration * zoom)}px"
-                  onmousedown={(e) => startBlockDrag(e, 'audio', track.id, track.startTime)}
-                  title={`${track.name} — ${formatPrecise(track.duration)}${track.url ? '' : ' (media missing)'}`}
-                >
-                  <div class="handle left" onmousedown={(e) => startBlockResize(e, 'audio', track.id, 'start')}></div>
-                  <svg class="wave" viewBox="0 0 1000 {WAVE_VIEW_H}" preserveAspectRatio="none" aria-hidden="true">
-                    <path d={wavePath(track.peaks, track.offset, track.duration, track.sourceDuration)} />
-                  </svg>
-                  <span class="block-label">
-                    {track.muted ? '🔇 ' : ''}{track.name}
-                  </span>
-                  <div class="handle right" onmousedown={(e) => startBlockResize(e, 'audio', track.id, 'end')}></div>
-                </div>
-              {/each}
-            </div>
-          {/each}
-
           <div class="lane preset-lane" style="height: {PRESET_LANE_HEIGHT}px">
             {#each state.presetClips as clip (clip.id)}
               <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1146,11 +1254,49 @@
               <span class="lane-empty">Drop a preset card here, or use “+ Preset”.</span>
             {/if}
           </div>
+        
+          <ShowTrackLanes {zoom} {viewStart} {viewEnd} width={totalWidth} />
+
+          {#each audioLanes as lane}
+            <div class="lane audio-lane" style="height: {AUDIO_LANE_HEIGHT}px">
+              {#if lane === 0 && state.audioTracks.length === 0}
+                <span class="lane-empty lane-empty-audio">
+                  Drop a song here, or
+                  <button class="lane-empty-btn" onclick={(e) => { e.stopPropagation(); pickSongForShow(); }}>build a show from a song…</button>
+                </span>
+              {/if}
+              {#each state.audioTracks.filter((t) => t.lane === lane) as track (track.id)}
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <div
+                  class="show-block audio-block"
+                  class:selected={state.selection?.kind === 'audio' && state.selection.id === track.id}
+                  class:missing={!track.url}
+                  class:muted={track.muted}
+                  style="left: {track.startTime * zoom}px; width: {Math.max(6, track.duration * zoom)}px"
+                  onmousedown={(e) => startBlockDrag(e, 'audio', track.id, track.startTime)}
+                  title={`${track.name} — ${formatPrecise(track.duration)}${track.url ? '' : ' (media missing)'}`}
+                >
+                  <div class="handle left" onmousedown={(e) => startBlockResize(e, 'audio', track.id, 'start')}></div>
+                  <svg class="wave" viewBox="0 0 1000 {WAVE_VIEW_H}" preserveAspectRatio="none" aria-hidden="true">
+                    <path d={wavePath(track.peaks, track.offset, track.duration, track.sourceDuration)} />
+                  </svg>
+                  <span class="block-label">
+                    {track.muted ? '🔇 ' : ''}{track.name}
+                  </span>
+                  <div class="handle right" onmousedown={(e) => startBlockResize(e, 'audio', track.id, 'end')}></div>
+                </div>
+              {/each}
+            </div>
+          {/each}
         </div>
 
         {#each cues.markers as marker (marker.id)}
           <div class="show-marker-line" class:selected={marker.id === selectedMarkerId} style="left: {marker.time * zoom}px; height: {laneStackH}px"></div>
         {/each}
+
+        {#if $showSnapGuide !== null}
+          <div class="show-snap-guide" style="left: {$showSnapGuide * zoom}px; height: {laneStackH}px" data-show-snap-guide></div>
+        {/if}
 
         <div class="show-playhead" style="left: {playheadX}px" onmousedown={startScrub}>
           <div class="playhead-handle"></div>
@@ -1196,6 +1342,24 @@
         </label>
         <button class="insp-delete" onclick={deleteSelected}>Delete</button>
         <button aria-label="Close marker inspector" class="insp-close" onclick={() => (selectedMarkerId = null)}>×</button>
+      </div>
+    {:else if layerClipInspector}
+      <div class="insp-wrap" bind:clientHeight={inspectorH}>
+        <ShowClipInspector
+          clip={selectedLayerClipFound?.clip ?? null}
+          track={selectedLayerClipFound?.track ?? null}
+          count={Math.max(selectedLayerClipCount, selectedLayerClipFound ? 1 : 0)}
+          ondelete={() => deleteTrackSelection(false)}
+          onclose={() => { clearTrackSelection(); showTimeline.select(null); }}
+        />
+      </div>
+    {:else if selectedTrack}
+      <div class="insp-wrap" bind:clientHeight={inspectorH}>
+        <ShowTrackInspector track={selectedTrack} onStage={selectedTrackOnStage} onclose={() => showTimeline.select(null)} />
+      </div>
+    {:else if hasTracks}
+      <div class="show-inspector insp-idle">
+        <span class="insp-hint">Click a clip to edit it, or a track name for its settings. S splits at the playhead, Shift+Delete closes the gap, ? lists every key.</span>
       </div>
     {:else if selectedPreset}
       <div class="show-inspector" bind:clientHeight={inspectorH}>
@@ -1693,7 +1857,7 @@
   .t-tc.lost .t-tc-dot { background: #f87171; }
   .lane-labels {
     width: 108px;
-    flex: 0 0 108px;
+    flex: 0 0 auto;
     background: var(--ga-card, #0e0e12);
     border-right: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
     overflow: hidden;
@@ -1735,22 +1899,7 @@
     border-bottom: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     cursor: col-resize;
   }
-  .ruler-tick {
-    position: absolute;
-    top: 0;
-    height: 100%;
-    border-left: 1px solid rgba(255, 255, 255, 0.08);
-  }
-  .ruler-tick.major { border-left-color: rgba(255, 255, 255, 0.2); }
-  .ruler-label {
-    position: absolute;
-    top: 4px;
-    left: 3px;
-    font-size: 9px;
-    color: var(--ga-ink-2, #666);
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    white-space: nowrap;
-  }
+  /* Ruler ticks: ShowRuler.svelte. */
 
   .lanes { position: relative; }
   .lane {
@@ -1985,6 +2134,39 @@
   .handle.right { right: 0; }
   .handle:hover { background: rgba(255, 255, 255, 0.25); }
 
+  .show-snap-guide {
+    position: absolute;
+    top: 0;
+    width: 1px;
+    margin-left: -0.5px;
+    background: #5ce1e6;
+    box-shadow: 0 0 6px rgba(92, 225, 230, 0.8);
+    pointer-events: none;
+    z-index: 7;
+  }
+  .insp-wrap { flex: 0 0 auto; }
+  .insp-idle { min-height: 36px; }
+  .t-grid { max-width: 96px; }
+  .t-seg { display: inline-flex; }
+  .t-seg-btn {
+    height: var(--ga-control-h, 26px);
+    padding: 0 8px;
+    font: inherit;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: var(--ga-weight-control, 600);
+    color: var(--ga-ink-1, #aaa);
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    cursor: pointer;
+  }
+  .t-seg-btn:first-child { border-radius: var(--ga-r-hard, 4px) 0 0 var(--ga-r-hard, 4px); }
+  .t-seg-btn:last-child { border-radius: 0 var(--ga-r-hard, 4px) var(--ga-r-hard, 4px) 0; border-left: 0; }
+  .t-seg-btn.active { color: var(--ga-selection-ink, #e0e8ff); background: var(--ga-selection-bg, #1f3170); border-color: var(--ga-selection-line, #5278ff); }
+
+  /* Click-through below the ruler: a click in a lane seeks, and the line
+     that lands under the pointer must not swallow the second click of a
+     double-click (adding a key) or a press on a clip edge. The ruler and
+     the handle still scrub. */
   .show-playhead {
     position: absolute;
     top: 0;
@@ -1992,7 +2174,9 @@
     width: 1px;
     z-index: 6;
     cursor: col-resize;
+    pointer-events: none;
   }
+  .playhead-handle { pointer-events: auto; cursor: col-resize; }
   .playhead-handle {
     position: absolute;
     top: 0;

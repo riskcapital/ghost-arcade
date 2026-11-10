@@ -13,7 +13,24 @@
  * decides which keys are the show's (`classifyShowKey`, pure) and routes them.
  */
 
-export type ShowKeyAction = 'delete';
+export type ShowKeyAction =
+  | 'delete'
+  | 'rippleDelete'
+  | 'split'
+  | 'duplicate'
+  | 'copy'
+  | 'cut'
+  | 'paste'
+  | 'selectAll'
+  | 'nudgeLeft'
+  | 'nudgeRight'
+  | 'nudgeBarLeft'
+  | 'nudgeBarRight'
+  | 'toggleSnap'
+  | 'marker'
+  | 'home'
+  | 'end'
+  | 'clearSelection';
 
 export interface ShowKeyContext {
   /** The tray is open and visible. */
@@ -22,6 +39,12 @@ export interface ShowKeyContext {
   engaged: boolean;
   /** Something in the show is selected that a key could act on. */
   hasSelection: boolean;
+  /** Clips on layer tracks (or keys on their lanes) are selected. */
+  hasClipSelection?: boolean;
+  /** The clipboard holds track clips. */
+  canPaste?: boolean;
+  /** The show has layer tracks (split, select all). */
+  hasTracks?: boolean;
 }
 
 interface KeyLike {
@@ -40,13 +63,45 @@ function isTextEntry(target: EventTarget | null | undefined): boolean {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable === true;
 }
 
-/** Which show action, if any, this key is while the tray is in `ctx`. */
+/**
+ * Which show action, if any, this key is while the tray is in `ctx`.
+ *
+ * Space stays with the app (it is the transport there too); B and T stay
+ * global (blackout, test pattern).
+ */
 export function classifyShowKey(e: KeyLike, ctx: ShowKeyContext): ShowKeyAction | null {
   if (!ctx.open || !ctx.engaged) return null;
   if (isTextEntry(e.target)) return null;
-  if ((e.key === 'Delete' || e.key === 'Backspace') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+  const mod = !!(e.metaKey || e.ctrlKey);
+  const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  if (e.altKey) return null;
+  if (key === 'Delete' || key === 'Backspace') {
+    if (mod) return null;
+    if (e.shiftKey && ctx.hasClipSelection) return 'rippleDelete';
     return ctx.hasSelection ? 'delete' : null;
   }
+  if (mod) {
+    if (e.shiftKey) return null;
+    if (key === 'k') return ctx.hasTracks ? 'split' : null;
+    if (key === 'd') return ctx.hasClipSelection ? 'duplicate' : null;
+    if (key === 'c') return ctx.hasClipSelection ? 'copy' : null;
+    if (key === 'x') return ctx.hasClipSelection ? 'cut' : null;
+    if (key === 'v') return ctx.canPaste ? 'paste' : null;
+    if (key === 'a') return ctx.hasTracks ? 'selectAll' : null;
+    return null;
+  }
+  if (key === 'ArrowLeft' || key === 'ArrowRight') {
+    if (!ctx.hasClipSelection) return null;
+    if (key === 'ArrowLeft') return e.shiftKey ? 'nudgeBarLeft' : 'nudgeLeft';
+    return e.shiftKey ? 'nudgeBarRight' : 'nudgeRight';
+  }
+  if (e.shiftKey) return null;
+  if (key === 's') return ctx.hasTracks ? 'split' : null;
+  if (key === 'n') return 'toggleSnap';
+  if (key === 'm') return 'marker';
+  if (key === 'Home') return 'home';
+  if (key === 'End') return 'end';
+  if (key === 'Escape') return ctx.hasSelection || ctx.hasClipSelection ? 'clearSelection' : null;
   return null;
 }
 
@@ -77,4 +132,20 @@ export function handleShowKeydown(e: KeyboardEvent): boolean {
   }
   if (taken && !e.defaultPrevented) e.preventDefault();
   return taken;
+}
+
+/**
+ * While the tray is mounted, the show's keys are taken before any other
+ * window listener sees them: a capture listener on the window runs ahead of
+ * the app's own shortcuts and of panels with listeners of their own (the
+ * dock's Cmd+K, the mapping canvas's arrow nudges). A key the show takes is
+ * stopped there; every other key goes on as before. Returns the uninstall.
+ */
+export function installShowKeyCapture(target: Pick<Window, 'addEventListener' | 'removeEventListener'> = window): () => void {
+  const listener = (e: Event) => {
+    const ke = e as KeyboardEvent;
+    if (handleShowKeydown(ke)) ke.stopPropagation();
+  };
+  target.addEventListener('keydown', listener, true);
+  return () => target.removeEventListener('keydown', listener, true);
 }
