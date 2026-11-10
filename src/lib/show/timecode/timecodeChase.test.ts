@@ -286,6 +286,21 @@ describe('following a musical clock', () => {
     expect(get(showTimeline).currentTime).toBeCloseTo(8.5, 9);
   });
 
+  it('a chased time before 0 or past a looping show\'s end is not a jump every tick', () => {
+    showTimeline.hydrate({ loop: true, presetClips: [{ id: 'a', compositionId: 'A', startTime: 0, duration: 10, transitionIn: 'cut', transitionDuration: 0 }] });
+    expect(get(showTimeline).loop).toBe(true);
+    // Link locked on bar 0 of a map with a pickup: show time starts negative.
+    showTimeline.chase(-1, true);
+    const gen = showTimeline.seekGeneration();
+    for (let t = -1; t < 0; t += 0.016) showTimeline.chase(t, true);
+    expect(showTimeline.seekGeneration()).toBe(gen);
+    // A source that runs on past the loop end (show time unwrapped).
+    for (let t = 0; t < 14; t += 0.016) showTimeline.chase(t, true);
+    // One wrap is one jump at most, not one per tick.
+    expect(showTimeline.seekGeneration() - gen).toBeLessThanOrEqual(1);
+    expect(get(showTimeline).currentTime).toBeCloseTo(14 - 10, 1);
+  });
+
   it('at another tempo the song plays at source / map tempo with no seek storm', () => {
     // A fake document: the show wires one element per audio track to the bus.
     (globalThis as { document?: unknown }).document = {
