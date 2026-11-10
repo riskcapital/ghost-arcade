@@ -1,0 +1,247 @@
+{
+  "name": "Timeline: control lines on pieces and a look block",
+  "description": "Control lines drive the Timeline on the render core's real pixels: a drawn opacity line fades a piece in, a beat-locked LFO line moves another piece off and back every half second, and a look block's intensity line brings its Look in on a third piece. Checked at three times, then scrubbed back: the same times give the same pictures. The mapping layers are never written.",
+  "steps": [
+    {
+      "do": "app.start",
+      "choice": "blank"
+    },
+    {
+      "do": "project.layer",
+      "name": "Left",
+      "colour": "red",
+      "x0": 0,
+      "x1": 0.33
+    },
+    {
+      "do": "project.layer",
+      "name": "Right",
+      "colour": "green",
+      "x0": 0.33,
+      "x1": 0.66
+    },
+    {
+      "do": "project.layer",
+      "name": "Band",
+      "colour": "black",
+      "x0": 0.7,
+      "x1": 0.95,
+      "wait": 1
+    },
+    {
+      "do": "show.open",
+      "doc": "timeline"
+    },
+    {
+      "do": "show.look",
+      "look": "stripe-sweep",
+      "palette": "acid",
+      "at": 6,
+      "duration": 4,
+      "var": "sweep",
+      "pieces": [
+        "Band"
+      ]
+    },
+    {
+      "do": "show.line",
+      "layer": "Left",
+      "key": "layer:opacity",
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          4,
+          1
+        ]
+      ]
+    },
+    {
+      "do": "show.line",
+      "layer": "Right",
+      "key": "transform:x",
+      "min": -1,
+      "max": 1,
+      "points": [
+        [
+          0,
+          0
+        ]
+      ],
+      "follow": {
+        "source": {
+          "kind": "beat",
+          "shape": "square",
+          "beats": 2
+        },
+        "depth": 0.25
+      }
+    },
+    {
+      "do": "show.line",
+      "look": "sweep",
+      "key": "look:intensity",
+      "max": 2,
+      "points": [
+        [
+          6,
+          0,
+          "hold"
+        ],
+        [
+          8,
+          1
+        ]
+      ]
+    },
+    {
+      "do": "show.seek",
+      "t": 1,
+      "settle": 1500,
+      "label": "t=1: Left fades in (a quarter of the way up the drawn line)",
+      "expect": {
+        "output.region": {
+          "x0": 0.04,
+          "x1": 0.29,
+          "rgb": [
+            0.25,
+            0,
+            0
+          ],
+          "within": 0.08
+        }
+      }
+    },
+    {
+      "do": "show.seek",
+      "t": 1.25,
+      "settle": 1500,
+      "label": "t=1.25: the LFO has moved Right off the stage",
+      "expect": {
+        "output.region": {
+          "x0": 0.37,
+          "x1": 0.62,
+          "max": 0.02
+        }
+      }
+    },
+    {
+      "do": "show.seek",
+      "t": 1.75,
+      "settle": 1500,
+      "label": "t=1.75: the LFO has brought Right back",
+      "expect": {
+        "output.region": {
+          "x0": 0.37,
+          "x1": 0.62,
+          "rgb": [
+            0,
+            1,
+            0
+          ],
+          "within": 0.08
+        }
+      }
+    },
+    {
+      "do": "show.seek",
+      "t": 3,
+      "settle": 1500,
+      "label": "t=3: Left three quarters up",
+      "expect": {
+        "output.region": {
+          "x0": 0.04,
+          "x1": 0.29,
+          "rgb": [
+            0.75,
+            0,
+            0
+          ],
+          "within": 0.08
+        }
+      }
+    },
+    {
+      "do": "show.seek",
+      "t": 7.75,
+      "settle": 1500,
+      "label": "t=7.75: inside the look block its intensity line is still at zero: Band stays dark",
+      "expect": {
+        "output.region": {
+          "x0": 0.74,
+          "x1": 0.91,
+          "max": 0.02
+        }
+      }
+    },
+    {
+      "do": "show.seek",
+      "t": 9.75,
+      "settle": 1500,
+      "label": "t=9.75: the intensity line is up: Band wears the look",
+      "expect": {
+        "output.region": {
+          "x0": 0.74,
+          "x1": 0.91,
+          "min": 0.06
+        },
+        "eval.true": {
+          "js": "__show.project().layers.every((l) => !l.edgeEffects && (l.opacity ?? 1) === 1 && !l._transformBase)",
+          "label": "the mapping layers are untouched"
+        }
+      }
+    },
+    {
+      "do": "show.seek",
+      "t": 3,
+      "settle": 1500,
+      "label": "Scrubbed back to t=3: the same picture",
+      "expect": {
+        "output.region": {
+          "x0": 0.04,
+          "x1": 0.29,
+          "rgb": [
+            0.75,
+            0,
+            0
+          ],
+          "within": 0.08
+        }
+      }
+    },
+    {
+      "do": "show.seek",
+      "t": 1.25,
+      "settle": 1500,
+      "label": "Scrubbed back to t=1.25: Right off the stage again",
+      "expect": {
+        "output.region": {
+          "x0": 0.37,
+          "x1": 0.62,
+          "max": 0.02
+        }
+      }
+    },
+    {
+      "do": "show.seek",
+      "t": 1,
+      "settle": 1500,
+      "label": "Scrubbed back to t=1: the same fade",
+      "expect": {
+        "output.region": {
+          "x0": 0.04,
+          "x1": 0.29,
+          "rgb": [
+            0.25,
+            0,
+            0
+          ],
+          "within": 0.08
+        },
+        "noErrors": true
+      }
+    }
+  ]
+}

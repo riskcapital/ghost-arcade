@@ -308,6 +308,18 @@ const ACTIONS = {
     })()`);
     await sleep(300);
   },
+  async 'show.line'(ctx, s) {
+    // A Timeline control line: { layer (name) | look (var) | stage: true, key, min, max, kind,
+    // points: [[t, v, curve?], ...], follow: { source, depth, ... } }. One undo step, like the UI.
+    await ctx.eval(`(() => {
+      const st = __show.g().showTimeline;
+      const target = ${J(s.stage ? { scope: 'stage' } : null)} ?? (${J(s.look ?? null)} ? { scope: 'look', id: __show.vars['look:' + ${J(s.look ?? '')}] } : { scope: 'layer', id: __show.layerByName(${J(s.layer ?? '')}).id });
+      const points = ${J(s.points ?? [])}.map(([t, v, c]) => (c ? { t, v, c } : { t, v }));
+      const line = { id: crypto.randomUUID(), target, key: ${J(s.key)}, kind: ${J(s.kind ?? 'continuous')}, min: ${s.min ?? 0}, max: ${s.max ?? 1}, points, follow: ${J(s.follow ?? null)}, label: ${J(s.label ?? s.key)} };
+      st.editLines((list) => [...list, line]);
+    })()`);
+    await sleep(300);
+  },
   async 'show.split'(ctx, s) { await ctx.eval(`__show.g().showTimeline.splitLayerClips(${s.at})`); await sleep(300); },
   async 'show.seek'(ctx, s) { await ctx.eval(`__show.g().showTimeline.seek(${s.t})`); await sleep(s.settle ?? 600); },
   async 'show.play'(ctx, s) {
