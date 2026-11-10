@@ -17,9 +17,10 @@ import {
   soundRowsFor,
   trimSoundBlock,
   updateSoundRow,
+  type MovableAudio,
 } from './soundModel';
 
-const block = (id: string, startTime: number, duration: number, extra: Record<string, unknown> = {}) => ({
+const block = (id: string, startTime: number, duration: number, extra: Partial<MovableAudio> = {}): MovableAudio => ({
   id, startTime, duration, lane: 0, offset: 0, sourceDuration: 60, ...extra,
 });
 

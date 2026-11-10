@@ -31,7 +31,7 @@ import {
   type SoundRowKind,
 } from './soundModel';
 import { renderLibrarySound, renderedWav } from './soundRender';
-import { bpmAt } from './soundEngine';
+import { bpmAt } from './rowBus';
 
 const state = () => get(showTimeline);
 

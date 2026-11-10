@@ -70,6 +70,11 @@
   import ShowTakeoverControls from './show/timeline/ShowTakeoverControls.svelte';
   import ShowPresetLane from './show/timeline/ShowPresetLane.svelte';
   import ShowAudioLane from './show/timeline/ShowAudioLane.svelte';
+  import SoundRowHeaders from './show/timeline/sound/SoundRowHeaders.svelte';
+  import SoundRowLanes from './show/timeline/sound/SoundRowLanes.svelte';
+  import SoundInspector from './show/timeline/sound/SoundInspector.svelte';
+  import { soundLayout } from './show/timeline/sound/soundRowLayout';
+  import { removeBuildBlock, removeLiveBlock } from '../timeline/sound/soundCommands';
   import { transportFit } from './show/timeline/transportFit';
   import TakeoverPads from './show/TakeoverPads.svelte';
   import { takeoverPadsOpen, toggleTakeoverOnTarget } from './show/timeline/takeoverUi';
@@ -451,9 +456,11 @@
     for (const t of audioTracks) out[t.lane]?.push(t);
     return out;
   });
-  const laneStackH = $derived(RULER_HEIGHT + topLaneH + looksLinesH + tracksH + stageRowH + audioLaneCount * AUDIO_LANE_HEIGHT + cameraLaneH);
+  // The Timeline's audio is its sound rows (their own heights, lines and footer).
+  const audioStackH = $derived(isTimeline ? $soundLayout.total : audioLaneCount * AUDIO_LANE_HEIGHT);
+  const laneStackH = $derived(RULER_HEIGHT + topLaneH + looksLinesH + tracksH + stageRowH + audioStackH + cameraLaneH);
   const hasTracks = $derived(isTimeline && layerTracks.length > 0);
-  const labelWidth = $derived(hasTracks ? TRACK_HEADER_WIDTH : 108);
+  const labelWidth = $derived(isTimeline ? TRACK_HEADER_WIDTH : 108);
   // The bound clientHeight keeps its last value after the inspector
   // unmounts, so gate it on the selection rather than trusting the binding.
   const selectedTempo = $derived(selection?.kind === 'tempo');
@@ -782,7 +789,9 @@
   const barLines = $derived(rulerMode === 'bars' && tempo
     ? rulerTicks(tempo, Math.max(0, viewStart), Math.min(rulerSeconds, viewEnd), zoom, 18).map((t) => ({ x: Math.round(t.time * zoom), bar: t.kind === 'bar' }))
     : []);
-  const inspectorVisible = $derived(!!(selectedPreset || selectedAudio || selectedTransitionClip || selectedMarker || layerClipInspector || selectedTrack || selectedTempo || selectedLookClip));
+  /** A sound row, audio block, Live clip or build selected on the Timeline. */
+  const soundSelection = $derived(isTimeline && selection && (selection.kind === 'soundRow' || selection.kind === 'liveClip' || selection.kind === 'build' || selection.kind === 'audio') ? selection : null);
+  const inspectorVisible = $derived(!!(selectedPreset || selectedAudio || selectedTransitionClip || selectedMarker || layerClipInspector || selectedTrack || selectedTempo || selectedLookClip || soundSelection));
   // With layer tracks the inspector strip is always there (a hint when
   // nothing is selected) and its room is reserved: selecting a clip must not
   // grow the tray, or the lanes jump under the pointer mid-drag.
@@ -848,6 +857,8 @@
       return;
     }
     if (selectedLookClip) showTimeline.removeLookClip(selectedLookClip.id);
+    else if (selection?.kind === 'liveClip') removeLiveBlock(selection.id);
+    else if (selection?.kind === 'build') removeBuildBlock(selection.id);
     else if (selectedTransitionClip) showTimeline.removeTransitionAt(selectedTransitionClip.id);
     else if (selectedPreset) showTimeline.removePresetClip(selectedPreset.id);
     else if (selectedAudio) showTimeline.removeAudioTrack(selectedAudio.id);
@@ -1477,11 +1488,15 @@
             <span class="lane-name" title="Presets launched along the show, with transitions between them.">Presets</span>
           </div>
           {/if}
+          {#if isTimeline}
+            <SoundRowHeaders />
+          {:else}
           {#each audioLanes as lane}
             <div class="lane-label audio" style="height: {AUDIO_LANE_HEIGHT}px">
               <span class="lane-name">Audio {lane + 1}</span>
             </div>
           {/each}
+          {/if}
           {#if cameraLaneH > 0}<ShowCameraLaneLabel />{/if}
         </div>
       </div>
@@ -1562,6 +1577,9 @@
           />
           {/if}
 
+          {#if isTimeline}
+            <SoundRowLanes {zoom} {viewStart} {viewEnd} />
+          {:else}
           {#each audioLanes as lane}
             <ShowAudioLane
               tracks={audioByLane[lane]}
@@ -1576,6 +1594,7 @@
               onblockresize={(e, id, edge) => startBlockResize(e, 'audio', id, edge)}
             />
           {/each}
+          {/if}
           {#if cameraLaneH > 0}<ShowCameraLane {zoom} />{/if}
         </div>
 
@@ -1644,6 +1663,10 @@
           audioTracks={audioTracks}
           onclose={() => showTimeline.select(null)}
         />
+      </div>
+    {:else if soundSelection}
+      <div class="insp-wrap" bind:clientHeight={inspectorH}>
+        <SoundInspector selection={soundSelection} onclose={() => showTimeline.select(null)} />
       </div>
     {:else if selectedLookClip}
       <div class="insp-wrap" bind:clientHeight={inspectorH}>
