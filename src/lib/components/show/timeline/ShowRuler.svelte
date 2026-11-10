@@ -55,7 +55,7 @@
   });
 </script>
 
-{#each ticks as tick}
+{#each ticks as tick (tick.x)}
   <div class="ruler-tick" class:major={tick.major} class:minor={tick.minor} class:first={tick.first} style:left="{tick.x}px" data-ruler-bar={tick.first ? '1' : undefined}>
     {#if tick.label}<span class="ruler-label">{tick.label}</span>{/if}
     {#if tick.beatLabel}<span class="ruler-beat">{tick.beatLabel}</span>{/if}

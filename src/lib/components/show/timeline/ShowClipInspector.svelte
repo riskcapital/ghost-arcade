@@ -5,7 +5,7 @@
    * media's end, fades, opacity, the crossfade from the clip before, and
    * colour. With several clips selected it says how many and offers Delete.
    */
-  import type { ShowClipEndBehaviour, ShowLayerClip, ShowLayerTrack } from '../../../types';
+  import type { ShowClipEndBehaviour, ShowClipMedia, ShowLayerClip, ShowLayerTrack } from '../../../types';
   import { showTimeline } from '../../../stores/showTimeline';
   import { showToast } from '../../../stores/errorToast';
   import { findJunctionPredecessor } from '../../../show/showJunctions';
@@ -99,7 +99,7 @@
     if (!raw) return;
     e.preventDefault();
     e.stopPropagation();
-    let media = null;
+    let media: ShowClipMedia | null;
     try { media = clipMediaFromTrayPayload(JSON.parse(raw)); } catch { media = null; }
     if (media) patch({ media });
   }
@@ -162,7 +162,7 @@
       <label class="insp-field">
         <span>At end</span>
         <select value={clip.endBehaviour} disabled={locked} onchange={(e) => setEnd((e.currentTarget as HTMLSelectElement).value as ShowClipEndBehaviour)} data-clip-end>
-          {#each END_OPTIONS as opt}
+          {#each END_OPTIONS as opt (opt.value)}
             <option value={opt.value} title={opt.hint}>{opt.label}</option>
           {/each}
         </select>
@@ -193,7 +193,7 @@
       </label>
     {/if}
     <span class="insp-swatches" role="group" aria-label="Clip colour">
-      {#each SWATCHES as sw}
+      {#each SWATCHES as sw (sw)}
         <button
           class="insp-swatch"
           class:on={(clip.color ?? '') === sw}

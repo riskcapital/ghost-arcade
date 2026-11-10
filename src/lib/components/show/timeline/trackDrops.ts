@@ -55,7 +55,7 @@ export function placeClipMedia(trackId: string | null, media: ShowClipMedia, at:
 export async function dropTrackMedia(dt: DataTransfer, trackId: string | null, at: number): Promise<void> {
   const raw = dt.getData(MEDIA_SOURCE_DRAG_TYPE);
   if (raw) {
-    let media: ShowClipMedia | null = null;
+    let media: ShowClipMedia | null;
     try { media = clipMediaFromTrayPayload(JSON.parse(raw)); } catch { media = null; }
     if (!media) {
       showToast('That card cannot go on a track. Use a video, an image, a shader or a sketch.', 'warning');

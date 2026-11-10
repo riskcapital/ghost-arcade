@@ -35,7 +35,7 @@
     </select>
   </label>
   <span class="insp-swatches" role="group" aria-label="Track colour">
-    {#each SWATCHES as sw}
+    {#each SWATCHES as sw (sw)}
       <button
         class="insp-swatch"
         class:on={(track.color ?? SWATCHES[0]) === sw}

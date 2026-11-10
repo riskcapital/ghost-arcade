@@ -102,7 +102,7 @@
   {#if holdFrom !== null}
     <div class="lc-hold" style:left="{holdFrom * zoom}px" title="Holds the last frame from here"></div>
   {/if}
-  {#each loopNotches as notch}
+  {#each loopNotches as notch (notch)}
     <div class="lc-notch" style:left="{notch * zoom}px"></div>
   {/each}
 

@@ -110,7 +110,7 @@
   <div class="ccm-sep"></div>
   <div class="ccm-head">At the end of the media</div>
   <div class="ccm-row" role="group" aria-label="At the end of the media">
-    {#each [['stop', 'Stop'], ['loop', 'Loop'], ['hold', 'Hold']] as [value, label]}
+    {#each [['stop', 'Stop'], ['loop', 'Loop'], ['hold', 'Hold']] as [value, label] (value)}
       <button
         class="ccm-seg"
         class:on={clip.endBehaviour === value}
@@ -124,7 +124,7 @@
   <div class="ccm-head">Colour</div>
   <div class="ccm-row" role="group" aria-label="Clip colour">
     <button class="ccm-swatch track" class:on={!clip.color} disabled={locked} onclick={() => setColor(undefined)} title="Use the track's colour" aria-label="Use the track's colour"></button>
-    {#each CLIP_SWATCHES as sw}
+    {#each CLIP_SWATCHES as sw (sw)}
       <button class="ccm-swatch" class:on={clip.color === sw} style:background={sw} disabled={locked} onclick={() => setColor(sw)} title="Clip colour" aria-label="Clip colour" data-clip-menu-colour={sw}></button>
     {/each}
   </div>

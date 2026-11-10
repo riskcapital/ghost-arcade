@@ -220,7 +220,7 @@
   <div class="kl-menu" use:portal style:left="{menu.x}px" style:top="{menu.y}px" onmousedown={(e) => e.stopPropagation()}>
     {#if !isBool}
       <div class="kl-menu-head">Easing to the next key</div>
-      {#each KEYFRAME_EASINGS as opt}
+      {#each KEYFRAME_EASINGS as opt (opt.value)}
         <button class="kl-menu-item" title={opt.hint} onclick={() => { oneasing(menuTimes(), opt.value); menu = null; }}>{opt.label}</button>
       {/each}
       <div class="kl-menu-sep"></div>

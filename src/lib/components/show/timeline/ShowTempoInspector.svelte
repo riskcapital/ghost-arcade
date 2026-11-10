@@ -142,7 +142,7 @@
         aria-label="The note that counts as one beat"
         data-tempo-unit
       >
-        {#each [2, 4, 8, 16] as unit}
+        {#each [2, 4, 8, 16] as unit (unit)}
           <option value={String(unit)}>{unit}</option>
         {/each}
       </select>

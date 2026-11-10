@@ -535,7 +535,7 @@
       {tracks.length ? 'Drop media here for a new track' : 'Drop video, images or shaders here to make a layer track'}
     </span>
   </div>
-  {#each ghosts as g}
+  {#each ghosts as g, i (i)}
     <div class="tl-ghost" style:left="{g.left}px" style:top="{g.top}px" style:width="{g.width}px" style:height="{TRACK_ROW_HEIGHT - 8}px" data-show-copy-ghost></div>
   {/each}
   {#if marquee}
