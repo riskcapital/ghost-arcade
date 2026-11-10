@@ -408,11 +408,29 @@ export function evaluateShowTracks(
   };
 }
 
+/** An opacity as the 8-bit output can show it, and whether it is at either
+ *  end (the scene adds and drops layers there). */
+function visibleOpacity(value: number): string {
+  return `${Math.round(value * 255)}${value <= 0 ? 'z' : value < 1 ? '' : 'f'}`;
+}
+
+/** Lane values at the precision they take effect: opacity in 8-bit steps
+ *  like the clip's, every other number as the 32-bit float a uniform holds. */
+function laneValuesSignature(params: Record<string, number | boolean>): string {
+  const parts: string[] = [];
+  for (const key in params) {
+    const value = params[key];
+    parts.push(`${key}=${typeof value !== 'number' ? String(value) : key === 'layer:opacity' ? visibleOpacity(value) : String(Math.fround(value))}`);
+  }
+  return parts.join(',');
+}
+
 /**
  * What decides whether a new frame has to reach the scene. Media time is
  * left out while playing: the decoder free-runs from its anchor, so a
- * playing video needs no new scene every frame. Opacity is rounded so a
- * fade publishes at a useful rate, not on every float wiggle.
+ * playing video needs no new scene every frame. Opacity is rounded to what
+ * the output can show, so a slow fade publishes once per visible step, not
+ * on every frame.
  */
 export function showTrackFrameSignature(frame: ShowTrackFrame): string {
   const parts: string[] = [frame.playing ? 'p' : 's', String(frame.seekGeneration), frame.manualClock ? 'm' : ''];
@@ -422,14 +440,14 @@ export function showTrackFrameSignature(frame: ShowTrackFrame): string {
       [
         tr.trackId,
         tr.layerId,
-        tr.opacity.toFixed(4),
+        visibleOpacity(tr.opacity),
         tr.gap,
         c ? `${c.clipId}/${c.runId}/${c.paused ? 'P' : ''}${c.held ? 'H' : ''}` : '-',
         c && c.paused ? c.mediaTime.toFixed(4) : '',
-        tr.params ? JSON.stringify(tr.params) : '',
+        tr.params ? laneValuesSignature(tr.params) : '',
         tr.template ? tr.template.id : '',
         tr.warm ? `w:${tr.warm.clipId}` : '',
-        tr.xfade ? `x:${tr.xfade.clip.clipId}/${tr.xfade.clip.runId}/${tr.xfade.clip.paused ? 'P' : ''}${tr.xfade.opacity.toFixed(4)}` : '',
+        tr.xfade ? `x:${tr.xfade.clip.clipId}/${tr.xfade.clip.runId}/${tr.xfade.clip.paused ? 'P' : ''}${visibleOpacity(tr.xfade.opacity)}` : '',
       ].join('|'),
     );
   }

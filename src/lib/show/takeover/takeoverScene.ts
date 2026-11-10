@@ -8,11 +8,14 @@
  *   is left exactly as the timeline drives it, so handing back is only the
  *   copy fading away. A surface the scene does not have (an off-stage track
  *   between clips) is drawn from the track's template.
- * - A VJ row, the deck mix or a VJ group: the VJ feed layers are put at the
- *   top of the scene at opacity 0, as MAP mode does. The core keeps
- *   rendering their frames and the copy samples one of them. Saved row
- *   assignments on other layers are left out while the feeds are in the
- *   scene, so only the taken-over surfaces change.
+ * - A VJ row, the deck mix or a VJ group: the VJ feed layers it samples are
+ *   put at the top of the scene at opacity 0, as MAP mode does. The core
+ *   keeps rendering their frames and the copy samples one of them. Only the
+ *   feeds a source reaches are brought in (a row: that row's feed; the mix
+ *   or a group: the mix carrier and every row it mixes), plus any the caller
+ *   asks to keep, because the core renders every layer in the scene whatever
+ *   its opacity. Saved row assignments on other layers are left out while
+ *   the VJ has feeds, so only the taken-over surfaces change.
  * - Dropped media plays from the moment of the engage; black is black.
  * - Temporary effects are appended to the copy (or, with no source, to the
  *   surface itself).
@@ -61,6 +64,9 @@ export interface TakeoverSceneContext {
   /** The VJ row feeds (clip layers, crossfade carriers, the mix carrier).
    *  null: the launcher's derived layers are a tick behind; skip this sync. */
   feeds?: () => Layer[] | null;
+  /** Feed layers to keep in the scene although no source samples them (a
+   *  row whose clip transition is still running, so it finishes as before). */
+  keepFeedIds?: Iterable<string>;
   /** Deck B rows exist only with the crossfader on (ids end in -A / -B). */
   crossfaderEnabled?: boolean;
   /** A surface's own copy when the scene does not have it (a track template). */
@@ -140,6 +146,60 @@ function applySource(
   }
 }
 
+/** The feed layers a feed samples: crossfade inputs and mix rows. */
+function feedReferences(feed: Layer): string[] {
+  const fx = (feed.source as { effectSource?: Record<string, unknown> } | undefined)?.effectSource;
+  if (!fx) return [];
+  const out: string[] = [];
+  for (const key of ['vjxfadeLayerA', 'vjxfadeLayerB'] as const) {
+    if (typeof fx[key] === 'string') out.push(fx[key] as string);
+  }
+  if (Array.isArray(fx.vjmixRows)) {
+    for (const row of fx.vjmixRows as Array<{ layerId?: unknown; frameId?: unknown }>) {
+      if (typeof row?.layerId === 'string') out.push(row.layerId);
+      else if (typeof row?.frameId === 'string' && row.frameId.startsWith('layer-frame:')) out.push(row.frameId.slice('layer-frame:'.length));
+    }
+  }
+  return out;
+}
+
+/**
+ * The feeds a takeover frame needs, in their scene order: the feed each VJ
+ * source samples (a row's own feed; the mix carrier for the mix and for a
+ * group, whose picture the core cuts from the mix), every feed those sample
+ * in turn, and `keep`. Every VJ source counts, at any level, so a fade-in
+ * starting from 0 has its feed running from the first frame.
+ */
+export function sampledVjFeeds(
+  feeds: readonly Layer[],
+  frame: TakeoverFrame,
+  crossfaderEnabled: boolean,
+  keep: Iterable<string> = [],
+): Layer[] {
+  const byId = new Map(feeds.map((f) => [f.id, f]));
+  const pending: string[] = [...keep];
+  const add = (source: TakeoverSource | null | undefined) => {
+    if (!source) return;
+    if (source.kind === 'vjRow') {
+      const id = vjRowFeedId(source, feeds, crossfaderEnabled);
+      if (id) pending.push(id);
+    } else if (source.kind === 'vjMix' || source.kind === 'vjGroup') {
+      pending.push(VJ_MIX_LAYER_ID);
+    }
+  };
+  for (const surface of frame.surfaces) add(surface.source);
+  add(frame.overlay?.source);
+  const needed = new Set<string>();
+  while (pending.length) {
+    const id = pending.pop()!;
+    const feed = byId.get(id);
+    if (!feed || needed.has(id)) continue;
+    needed.add(id);
+    pending.push(...feedReferences(feed));
+  }
+  return needed.size === feeds.length ? [...feeds] : feeds.filter((f) => needed.has(f.id));
+}
+
 function isShowHelper(id: string): boolean {
   return id.startsWith(SHOW_WARM_LAYER_PREFIX) || id.startsWith(SHOW_XFADE_LAYER_PREFIX) || id.startsWith(SHOW_TRACK_LAYER_PREFIX);
 }
@@ -181,16 +241,18 @@ export function buildTakeoverScene(list: Layer[], frame: TakeoverFrame | null, c
   if (!frame || (!frame.surfaces.length && !frame.overlay)) return list;
 
   let feeds: Layer[] = [];
+  let vjHasFeeds = false;
   if (frame.needsVjFeeds && ctx.feeds) {
     const built = ctx.feeds();
     if (built === null) return null;
-    feeds = built.map((l) => ({ ...l, opacity: 0 }));
+    vjHasFeeds = built.length > 0;
+    feeds = sampledVjFeeds(built, frame, !!ctx.crossfaderEnabled, ctx.keepFeedIds).map((l) => ({ ...l, opacity: 0 }));
   }
   const feedIds = new Set(feeds.map((l) => l.id));
 
-  // While feeds are in the scene, a saved row assignment on any other layer
-  // would start sampling them: only the takeover's own layers may.
-  let stage = feeds.length
+  // While the VJ has feeds, a saved row assignment on any other layer would
+  // start sampling them: only the takeover's own layers may.
+  let stage = vjHasFeeds
     ? list.map((l) => (l.vjLayerIndex != null || l.vjGroupId ? { ...l, vjLayerIndex: undefined, vjGroupId: undefined } : l))
     : list;
 

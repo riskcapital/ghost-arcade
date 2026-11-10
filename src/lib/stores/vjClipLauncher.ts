@@ -1248,6 +1248,9 @@ export function vjTakeoverRows(
 
 // What the show's takeover is showing (session only, set with takeoverLive).
 let takeoverSamples: VJTakeoverSample[] = [];
+let takeoverSamplesKey = '[]';
+// Told when the rows a takeover shows change (the beat phase follower).
+let takeoverSamplesChanged: (() => void) | null = null;
 // VJ mode was left while a takeover kept rows playing: they stop when the
 // takeover no longer needs them (unless VJ mode is back by then).
 let stopWhenTakeoverEnds = false;
@@ -2454,6 +2457,11 @@ function createVJClipLauncherStore() {
      *  (leaving VJ mode keeps those rows playing); left out = the mix. */
     setTakeoverLive(on: boolean, samples?: readonly VJTakeoverSample[]) {
       takeoverSamples = on ? [...(samples ?? [{ kind: 'mix' }])] : [];
+      const key = JSON.stringify(takeoverSamples);
+      if (key !== takeoverSamplesKey) {
+        takeoverSamplesKey = key;
+        takeoverSamplesChanged?.();
+      }
       const state = get({ subscribe });
       if (!!state.takeoverLive === on) return;
       if (!on && !state.isLive) vjClipTransitions.clear();
@@ -4329,8 +4337,12 @@ if (typeof window !== 'undefined') {
     const state = get(vjClipLauncher);
     if (!isDesktopApp || !vjFeedsActive(state) || state.stoppedAll
       || new URLSearchParams(window.location?.search ?? '').has('mode')) return [];
+    // A show takeover with VJ mode not live renders only the rows it shows;
+    // the others have no picture to keep in phase.
+    const shown = !state.isLive && state.takeoverLive ? vjTakeoverRows(state, takeoverSamples) : null;
     return (['A', 'B'] as const).flatMap(deck => deck === 'B' && !state.crossfaderEnabled ? [] :
       pickLayerStates(state, deck).flatMap((row, index) => {
+        if (shown && !shown[deck].has(index)) return [];
         const clip = row.activeClip;
         return clip?.type === 'video' && !clip.src.startsWith('live://') && clip.isPlaying !== false
           && clip.playbackMode !== 'once' && Number(clip.playbackSyncBeats) > 0
@@ -4382,6 +4394,7 @@ if (typeof window !== 'undefined') {
     if (phaseTimer === null && !sending) phaseTimer = setTimeout(publish, 100);
   };
   vjClipLauncher.subscribe(schedule);
+  takeoverSamplesChanged = schedule;
 }
 
 // Derived store: Get the active clip for each layer.

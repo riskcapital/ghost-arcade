@@ -21,6 +21,11 @@
  *   clip at its dissolve weight.
  *
  * Returns the input array itself when no track changes anything.
+ *
+ * While a show plays, most frames change only the opacities and lane values
+ * the layers carry (a fade, a crossfade, a lane). `ShowTrackSceneCache` keeps
+ * the last scene and, when nothing else changed, hands it back with the new
+ * values on the layers the tracks drive instead of building it again.
  */
 import type { Layer, MapSurface, MediaSource } from '../../types';
 import { createSurfaceLookup, resolvePresetLayer } from '../../stores/mapSurfaces';
@@ -78,22 +83,68 @@ function xfadeHelper(base: Layer, state: ShowTrackState, source: MediaSource | n
   return helper;
 }
 
-export function buildShowTrackScene(
-  liveLayers: Layer[],
-  frame: ShowTrackFrame | null,
+/**
+ * The sources a frame's scene uses, asked for once per build in the order
+ * the build has always asked for them (the video sources keep playback
+ * anchors, so the calls are part of the result).
+ */
+interface ResolvedShowSources {
+  /** Per track (frame order): the warm source, when asked for. */
+  warm: Array<MediaSource | null | undefined>;
+  /** By layer id: the outgoing source of a crossfade. */
+  xfade: Map<string, MediaSource | null>;
+  /** Per track (frame order): the source of an injected copy, when asked for. */
+  injected: Array<MediaSource | null | undefined>;
+  /** By layer id: the source of a layer driven on stage. */
+  stage: Map<string, MediaSource | null>;
+  /** Tracks driving a layer on stage, by layer id (the last track wins). */
+  onStage: Map<string, ShowTrackState>;
+  /** Every answer, in call order, for comparing two resolutions. */
+  calls: Array<MediaSource | null>;
+}
+
+function resolveShowTrackSources(
+  ids: ReadonlyMap<string, number>,
+  frame: ShowTrackFrame,
   ctx: ShowTrackSceneContext,
+): ResolvedShowSources {
+  const out: ResolvedShowSources = { warm: [], xfade: new Map(), injected: [], stage: new Map(), onStage: new Map(), calls: [] };
+  const ask = (source: MediaSource | null) => {
+    out.calls.push(source);
+    return source;
+  };
+  for (const state of frame.tracks) {
+    out.warm.push(state.warm && ctx.warmSourceFor ? ask(ctx.warmSourceFor(state.warm)) : undefined);
+    const xfSource = state.xfade && ctx.xfadeSourceFor ? ask(ctx.xfadeSourceFor(state)) : null;
+    if (state.xfade) out.xfade.set(state.layerId, xfSource);
+    if (ids.has(state.layerId)) {
+      if (affects(state)) out.onStage.set(state.layerId, state);
+      out.injected.push(undefined);
+      continue;
+    }
+    out.injected.push(state.clip && state.template && state.opacity > 0 ? ask(ctx.sourceFor(state)) : undefined);
+  }
+  if (out.onStage.size) {
+    // In the order of the live layers, as the build draws them.
+    const order = [...out.onStage.keys()].sort((a, b) => ids.get(a)! - ids.get(b)!);
+    for (const id of order) out.stage.set(id, ask(ctx.sourceFor(out.onStage.get(id)!)));
+  }
+  return out;
+}
+
+function buildFromSources(
+  liveLayers: Layer[],
+  ids: ReadonlyMap<string, number>,
+  frame: ShowTrackFrame,
+  ctx: ShowTrackSceneContext,
+  sources: ResolvedShowSources,
 ): Layer[] {
-  if (!frame || frame.tracks.length === 0) return liveLayers;
-  const onStage = new Map<string, ShowTrackState>();
   const injected: Layer[] = [];
   let lookup: ReturnType<typeof createSurfaceLookup> | null = null;
-  const ids = new Set(liveLayers.map((l) => l.id));
-
   const warmLayers: Layer[] = [];
-  const xfSources = new Map<string, MediaSource | null>();
-  for (const state of frame.tracks) {
+  frame.tracks.forEach((state, index) => {
     if (state.warm && ctx.warmSourceFor) {
-      const source = ctx.warmSourceFor(state.warm);
+      const source = sources.warm[index] ?? null;
       const base = liveLayers.find((l) => l.id === state.layerId) ?? state.template;
       if (source && base) {
         lookup ??= createSurfaceLookup(liveLayers, ctx.surfaces as MapSurface[] | undefined);
@@ -110,38 +161,206 @@ export function buildShowTrackScene(
         });
       }
     }
-    const xfSource = state.xfade && ctx.xfadeSourceFor ? ctx.xfadeSourceFor(state) : null;
-    if (state.xfade) xfSources.set(state.layerId, xfSource);
-    if (ids.has(state.layerId)) {
-      if (affects(state)) onStage.set(state.layerId, state);
-      continue;
-    }
+    if (ids.has(state.layerId)) return;
     // Off stage: an injected copy, only while a clip plays and the layer is
     // not hidden outright.
-    if (!state.clip || !state.template || state.opacity <= 0) continue;
+    if (!state.clip || !state.template || state.opacity <= 0) return;
     lookup ??= createSurfaceLookup(liveLayers, ctx.surfaces as MapSurface[] | undefined);
     const template = resolvePresetLayer({ ...state.template, surfaceId: state.template.surfaceId || state.layerId }, lookup);
     const copy = drive(
       { ...template, id: showTrackLayerId(state.layerId), visible: true, parentGroupId: null },
       state,
-      ctx.sourceFor(state),
+      sources.injected[index] ?? null,
     );
     injected.push(copy);
-    const helper = xfadeHelper(copy, state, xfSources.get(state.layerId) ?? null, template.source);
+    const helper = xfadeHelper(copy, state, sources.xfade.get(state.layerId) ?? null, template.source);
     if (helper) injected.push(helper);
-  }
+  });
 
+  const onStage = sources.onStage;
   if (!onStage.size && !injected.length && !warmLayers.length) return liveLayers;
   const stage = onStage.size
     ? liveLayers.flatMap((layer) => {
         const state = onStage.get(layer.id);
         if (!state) return [layer];
-        const driven = drive(layer, state, ctx.sourceFor(state));
-        const helper = xfadeHelper(driven, state, xfSources.get(layer.id) ?? null, layer.source);
+        const driven = drive(layer, state, sources.stage.get(layer.id) ?? null);
+        const helper = xfadeHelper(driven, state, sources.xfade.get(layer.id) ?? null, layer.source);
         return helper ? [driven, helper] : [driven];
       })
     : liveLayers;
   const room = Math.max(0, (ctx.maxLayers ?? SHOW_SCENE_LAYER_LIMIT) - stage.length);
   const extra = [...injected, ...warmLayers].slice(0, room);
   return extra.length ? [...extra, ...stage] : stage;
+}
+
+export function buildShowTrackScene(
+  liveLayers: Layer[],
+  frame: ShowTrackFrame | null,
+  ctx: ShowTrackSceneContext,
+): Layer[] {
+  if (!frame || frame.tracks.length === 0) return liveLayers;
+  const ids = layerIndex(liveLayers);
+  return buildFromSources(liveLayers, ids, frame, ctx, resolveShowTrackSources(ids, frame, ctx));
+}
+
+/** Layer id → position in the list (the first, when an id repeats). */
+function layerIndex(layers: readonly Layer[]): Map<string, number> {
+  const ids = new Map<string, number>();
+  layers.forEach((l, i) => { if (!ids.has(l.id)) ids.set(l.id, i); });
+  return ids;
+}
+
+/**
+ * What a frame's scene is shaped by, apart from the values the driven layers
+ * carry: which layers are driven, injected or hidden, which crossfade helpers
+ * and warm copies exist, and which lane keys are set. Two frames with the
+ * same shape (and the same sources and templates) build the same scene but
+ * for `_showOpacityMul` and `_showParams`.
+ */
+export function showTrackSceneShape(frame: ShowTrackFrame): string {
+  const parts: string[] = [];
+  for (const state of frame.tracks) {
+    const xf = state.xfade;
+    parts.push([
+      state.trackId,
+      state.layerId,
+      state.clip ? 'c' : '-',
+      state.opacity > 0 ? '+' : '0',
+      state.opacity < 1 ? '<' : '1',
+      state.params ? Object.keys(state.params).join(',') : '',
+      state.warm ? 'w' : '',
+      xf ? `x${xf.clip.media.kind === 'layer' ? 'L' : ''}${xf.opacity > 0 ? '+' : '0'}${xf.opacity < 1 ? '<' : '1'}` : '',
+    ].join('|'));
+  }
+  return parts.join(';');
+}
+
+/** The show's own fields of a driven layer (what `drive` puts on it). */
+function withShowValues(layer: Layer, opacity: number, params: ShowTrackState['params']): Layer {
+  const next: Layer = { ...layer };
+  if (opacity < 1) next._showOpacityMul = Math.max(0, opacity);
+  else delete next._showOpacityMul;
+  if (params && Object.keys(params).length) next._showParams = params;
+  else delete next._showParams;
+  return next;
+}
+
+interface ShowValuePatch {
+  index: number;
+  track: number;
+  /** The layer itself or its injected copy; or its crossfade helper. */
+  kind: 'drive' | 'xfade';
+}
+
+interface CachedShowScene {
+  deps: readonly unknown[];
+  shape: string;
+  templates: Array<Layer | null>;
+  calls: Array<MediaSource | null>;
+  scene: Layer[];
+  patches: ShowValuePatch[];
+}
+
+/**
+ * One frame's scene build, prepared: its sources are resolved, and it either
+ * reuses the cached scene (same inputs, same shape, same sources) or builds.
+ */
+export interface PreparedShowTrackScene {
+  /** The cached scene can be reused with this frame's values. */
+  readonly reusable: boolean;
+  /** The cached scene with this frame's opacities and lane values. */
+  reuse(): Layer[];
+  /** Build the tracks into `list` (a copy of the live layers, same ids and
+   *  order); the sources are the ones already resolved. */
+  build(list: Layer[]): Layer[];
+  /** Remember the finished scene: the build's output after whatever the
+   *  caller did to it, as long as that left the show's own fields alone. */
+  commit(scene: Layer[]): void;
+}
+
+/**
+ * The last scene built from the show's layer tracks, reused while a show
+ * plays and only the values the driven layers carry move. `deps` are the
+ * caller's other inputs (the live layer list, map surfaces, anything applied
+ * after the tracks), compared by identity: any change builds afresh.
+ */
+export class ShowTrackSceneCache {
+  private cached: CachedShowScene | null = null;
+  private idsFor: { live: readonly Layer[]; ids: Map<string, number> } | null = null;
+
+  /** Forget the cached scene. */
+  clear(): void {
+    this.cached = null;
+  }
+
+  prepare(
+    liveLayers: Layer[],
+    frame: ShowTrackFrame | null,
+    ctx: ShowTrackSceneContext,
+    deps: readonly unknown[],
+  ): PreparedShowTrackScene {
+    const self = this;
+    if (!frame || frame.tracks.length === 0) {
+      return {
+        reusable: false,
+        reuse: () => { throw new Error('nothing to reuse'); },
+        build: (list) => list,
+        commit: () => { self.cached = null; },
+      };
+    }
+    if (this.idsFor?.live !== liveLayers) this.idsFor = { live: liveLayers, ids: layerIndex(liveLayers) };
+    const ids = this.idsFor.ids;
+    const sources = resolveShowTrackSources(ids, frame, ctx);
+    const shape = showTrackSceneShape(frame);
+    const templates = frame.tracks.map((t) => t.template);
+    const cached = this.cached;
+    const reusable = !!cached
+      && cached.shape === shape
+      && sameItems(cached.deps, deps)
+      && sameItems(cached.templates, templates)
+      && sameItems(cached.calls, sources.calls);
+    return {
+      reusable,
+      reuse: () => {
+        if (!reusable || !cached) throw new Error('the cached scene does not fit this frame');
+        const scene = cached.scene.slice();
+        for (const patch of cached.patches) {
+          const state = frame.tracks[patch.track];
+          const layer = scene[patch.index];
+          scene[patch.index] = patch.kind === 'drive'
+            ? withShowValues(layer, state.opacity, state.params)
+            : withShowValues(layer, state.xfade?.opacity ?? 1, state.params);
+        }
+        cached.scene = scene;
+        return scene;
+      },
+      build: (list) => buildFromSources(list, ids, frame, ctx, sources),
+      commit: (scene) => {
+        self.cached = { deps: [...deps], shape, templates, calls: sources.calls, scene, patches: showValuePatches(scene, frame) };
+      },
+    };
+  }
+}
+
+function sameItems(a: readonly unknown[], b: readonly unknown[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+/** Where a scene's driven layers are: the layer a track drives on stage
+ *  (when it drives it at all), its injected copy, its crossfade helper. */
+function showValuePatches(scene: readonly Layer[], frame: ShowTrackFrame): ShowValuePatch[] {
+  const wanted = new Map<string, { track: number; kind: ShowValuePatch['kind'] }>();
+  frame.tracks.forEach((state, track) => {
+    if (affects(state)) wanted.set(state.layerId, { track, kind: 'drive' });
+    wanted.set(showTrackLayerId(state.layerId), { track, kind: 'drive' });
+    wanted.set(SHOW_XFADE_LAYER_PREFIX + state.layerId, { track, kind: 'xfade' });
+  });
+  const patches: ShowValuePatch[] = [];
+  scene.forEach((layer, index) => {
+    const hit = wanted.get(layer.id);
+    if (hit) patches.push({ index, ...hit });
+  });
+  return patches;
 }
