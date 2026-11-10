@@ -10,6 +10,8 @@
  *   splat:<path>             a field of the splat content
  *   model3d:<path>           a field of the 3D model content
  * Interactive scenes take the whole set through their own applier.
+ * Transform, corners, mesh, visibility, blend, sketch, video speed, GPU and
+ * whole-Look keys are described in layerParamKeys.ts.
  *
  * `target` must already be a shallow copy of the layer; it is written in
  * place. Nested objects on the way to a value are copied, never mutated, so
@@ -19,6 +21,7 @@
  */
 import type { Layer } from '../types';
 import { applyInteractiveOverrides } from '../mobile/studio/interactiveEffects';
+import { applyLayerExtra, isLayerExtraKey } from './layerParamKeys';
 
 export type ParamOverrideSet = Record<string, number | boolean>;
 
@@ -52,7 +55,9 @@ export function applyParamOverrides(target: Layer, overrides: ParamOverrideSet):
   }
   let shaderValues: Record<string, any> | null = null;
   let effects: any[] | null = null;
-  for (const [key, value] of Object.entries(overrides)) {
+  let copied: Set<string> | null = null;
+  for (const key in overrides) {
+    const value = overrides[key];
     if (key === 'layer:opacity') {
       next.opacity = value as number;
     } else if (key.startsWith('shader:') && next.source?.shaderValues) {
@@ -70,6 +75,9 @@ export function applyParamOverrides(target: Layer, overrides: ParamOverrideSet):
       const effect = effects!.find((e: any) => e.id === fxId);
       if (effect) {
         if (prop === 'enabled') effect.enabled = !!value;
+        // The effect's mix, as the editor's own keyframe path writes it
+        // (it used to land in params.opacity, which nothing reads).
+        else if (prop === 'opacity') effect.opacity = value as number;
         else effect.params[prop] = value;
       }
     } else if (key.startsWith('edge:') && next.edgeEffects?.effects?.length) {
@@ -89,6 +97,8 @@ export function applyParamOverrides(target: Layer, overrides: ParamOverrideSet):
       next.splatContent = setDotPathClone(next.splatContent, key.slice('splat:'.length), value);
     } else if (key.startsWith('model3d:') && next.model3dContent) {
       next.model3dContent = setDotPathClone(next.model3dContent, key.slice('model3d:'.length), value);
+    } else if (isLayerExtraKey(key)) {
+      applyLayerExtra(next, key, value, (copied ??= new Set()));
     }
   }
 }
