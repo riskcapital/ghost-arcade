@@ -12,6 +12,9 @@
   import { edgeLook } from '../../../looks/edgeLookCatalog';
   import { lookPalette, type Rgba } from '../../../looks/edgeLooks';
   import { formatPrecise } from './timeFormat';
+  import WhereBand from './WhereBand.svelte';
+  import { lookPieces } from './whereUi';
+  import { project } from '../../../stores/layers';
 
   interface Props {
     clips: ShowLookClip[];
@@ -72,6 +75,9 @@
       data-look-clip={clip.id}
     >
       <span class="look-swatch"></span>
+      {#if clip.where}
+        <WhereBand info={{ target: { scope: 'look', id: clip.id }, where: clip.where, start: clip.startTime, duration: clip.duration, pieces: lookPieces($project.layers ?? [], clip.scope, clip.layerIds) }} {zoom} />
+      {/if}
       <div class="handle left" onmousedown={(e) => onblockresize(e, clip.id, 'start')}></div>
       <span class="block-label">{lookName(clip)}</span>
       {#if w > 120}<span class="block-dur">{scopeText(clip)}</span>{/if}

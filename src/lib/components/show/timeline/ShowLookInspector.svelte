@@ -9,6 +9,8 @@
   import { LOOK_PALETTES, isLookTarget, type Rgba } from '../../../looks/edgeLooks';
   import { addLineAtPlayhead } from '../../../timeline/lines/timelineLines';
   import { lookBlockParams } from '../../../timeline/lines/paramRegistry';
+  import WhereEditor from './WhereEditor.svelte';
+  import { lookPieces } from './whereUi';
 
   interface Props {
     clip: ShowLookClip;
@@ -84,6 +86,8 @@
         title={`◆ ${p.label}: a point at the playhead on this look block's ${p.label.toLowerCase()} line`} data-line-key={p.key} data-line-scope="look" data-line-target={clip.id} data-look-line={p.key}>◆ {p.label}</button>
     {/each}
   </span>
+  <WhereEditor where={clip.where} target={{ scope: 'look', id: clip.id }} members={['pieces', 'leds', 'both']}
+    pieces={lookPieces(layers, clip.scope, clip.layerIds)} onchange={(where) => patch({ where })} />
   <label class="insp-field">
     <span>Start</span>
     <input type="number" min="0" step="0.1" value={clip.startTime.toFixed(2)}

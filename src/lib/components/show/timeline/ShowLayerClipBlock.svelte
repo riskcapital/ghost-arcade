@@ -16,6 +16,7 @@
   import { blendModeLabel, type ShowLayerClip } from '../../../types';
   import { clipFades, clipLoopStart, clipRate, mediaEnd, SHOW_CLIP_END_GUARD_SECONDS } from '../../../show/tracks/showTrackEval';
   import { trimEdgeWidth, type ClipPart } from './trackLayout';
+  import WhereBand from './WhereBand.svelte';
 
   interface Props {
     clip: ShowLayerClip;
@@ -96,6 +97,9 @@
     <div class="lc-thumb" style:background-image={`url("${thumb}")`}></div>
   {:else}
     <span class="lc-kind" aria-hidden="true">{KIND_ICON[clip.media.kind] ?? '▣'}</span>
+  {/if}
+  {#if clip.where}
+    <WhereBand info={{ target: { scope: 'block', id: clip.id }, where: clip.where, start: clip.startTime, duration: clip.duration }} {zoom} tint={[92, 225, 230]} />
   {/if}
   <span class="lc-name clip-name">{name}</span>
   {#if clip.blendMode && clip.blendMode !== 'normal' && width > 60}

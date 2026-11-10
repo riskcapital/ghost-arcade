@@ -127,7 +127,7 @@ describe('LED rows', () => {
   it('an LED block with a where line lights only the fixtures in its window', () => {
     const a = strip({ id: 'a' });
     const b = strip({ id: 'b' });
-    const c = block({ id: 'w', rowId: 'led:a', kind: 'colour', color: '#00ff00', where: { motion: { kind: 'drawn' } } });
+    const c = block({ id: 'w', rowId: 'led:a', kind: 'colour', color: '#00ff00', where: { motion: { kind: 'drawn' } } as never });
     const where = new Map([['w', new Map([['led:b', 1]])]]);
     expect(render(a, [c], ctx(1, { where, allDriven: true })).out.every((v) => v === 0)).toBe(true);
     expect(pixel(render(b, [c], ctx(1, { where, allDriven: true })).out, 0)).toEqual([0, 255, 0]);

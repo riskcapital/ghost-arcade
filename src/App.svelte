@@ -391,6 +391,7 @@
   import { automatedRecalls, project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback, flushPendingHistorySnapshot, isProjectFileData } from './lib/stores/layers';
   import { keyframeTimeline, keyframeTrayOpen } from './lib/stores/keyframeTimeline';
   import ChaseOrderBadges from './lib/components/ChaseOrderBadges.svelte';
+  import WhereStageHighlight from './lib/components/show/timeline/WhereStageHighlight.svelte';
   import { beginHistoryRestore, endHistoryRestore, cancelPendingHistorySnapshot, setProjectReplacedCallback, amendLastHistoryStep, hasPendingHistorySnapshot, noteLiveChange } from './lib/stores/historyHooks';
   import { isProjectDirty, projectSettingsSections, recallSectionSignature, withRecallsAsSaved, type ProjectDirtySnapshot, type RecallSection } from './lib/stores/projectDirty';
   import { musicStudio } from './lib/music/musicStudioStore';
@@ -8082,6 +8083,7 @@
         {/if}
         <div class="chase-badges-offset" style="position: absolute; pointer-events: none; left: {canvasOffsetX}px; top: {canvasOffsetY}px;">
           <ChaseOrderBadges containerWidth={canvasWidth} containerHeight={canvasHeight} />
+          <WhereStageHighlight containerWidth={canvasWidth} containerHeight={canvasHeight} />
         </div>
         {#if $selectedLayer && $selectedLayer.type !== 'mask' && $leftSidebarTab !== 'screens'}
           <!-- Warp handles positioned to match the aspect-ratio-constrained canvas -->

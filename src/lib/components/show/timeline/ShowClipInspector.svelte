@@ -14,6 +14,7 @@
   import { mediaEnd, SHOW_MAX_RATE, SHOW_MIN_RATE } from '../../../show/tracks/showTrackEval';
   import { maxClipDurationForMedia } from '../../../show/tracks/showTrackEdit';
   import { clipMediaFromFile, clipMediaFromTrayPayload, MEDIA_SOURCE_DRAG_TYPE } from './clipMedia';
+  import WhereEditor from './WhereEditor.svelte';
 
   interface Props {
     clip: ShowLayerClip | null;
@@ -203,6 +204,9 @@
           <span class="insp-unit">s</span>
         {/if}
       </label>
+    {/if}
+    {#if !locked}
+      <WhereEditor where={clip.where} target={{ scope: 'block', id: clip.id }} members={['pieces']} onchange={(where) => patch({ where })} />
     {/if}
     <span class="insp-swatches" role="group" aria-label="Block colour">
       {#each SWATCHES as sw (sw)}

@@ -26,6 +26,8 @@ export const STAGE_ROW_HEIGHT = 24;
 /** Group ids that are not rows. */
 export const LOOKS_GROUP = 'looks';
 export const STAGE_GROUP = 'stage';
+/** The LEDs group: lines of the blocks on LED rows. */
+export const LEDS_GROUP = 'leds';
 
 // ── Which lines go where ───────────────────────────────────────────────────
 
@@ -42,6 +44,11 @@ export function linesForLooks(lines: readonly ControlLine[]): ControlLine[] {
 
 export function linesForStage(lines: readonly ControlLine[]): ControlLine[] {
   return lines.filter((l) => l.target.scope === 'stage' || l.target.scope === 'led');
+}
+
+/** Lines of blocks on the LED rows. */
+export function linesForLeds(lines: readonly ControlLine[], ledClipIds: ReadonlySet<string>): ControlLine[] {
+  return ledClipIds.size ? lines.filter((l) => l.target.scope === 'block' && ledClipIds.has(l.target.id)) : [];
 }
 
 /** Height of a group's lines. */
@@ -72,7 +79,7 @@ export interface LineLayout {
   expanded: ReadonlySet<string>;
 }
 
-export function computeLineLayout(tracks: readonly ShowLayerTrack[], lines: readonly ControlLine[], expanded: ReadonlySet<string>): LineLayout {
+export function computeLineLayout(tracks: readonly ShowLayerTrack[], lines: readonly ControlLine[], expanded: ReadonlySet<string>, ledClipIds: ReadonlySet<string> = new Set()): LineLayout {
   const out: LineLayout = { lines: new Map(), heights: new Map(), expanded };
   const put = (id: string, list: ControlLine[]) => {
     if (!list.length) return;
@@ -83,6 +90,7 @@ export function computeLineLayout(tracks: readonly ShowLayerTrack[], lines: read
     for (const t of tracks) put(t.id, linesForTrack(t, lines));
     put(LOOKS_GROUP, linesForLooks(lines));
     put(STAGE_GROUP, linesForStage(lines));
+    put(LEDS_GROUP, linesForLeds(lines, ledClipIds));
   }
   return out;
 }
@@ -92,8 +100,8 @@ let currentLayout: LineLayout = EMPTY_LAYOUT;
 
 /** The tray's line layout. Rows read their heights from it. */
 export const lineLayout: Readable<LineLayout> = derived(
-  [showSlice('lines'), showSlice('layerTracks'), expandedLineGroups],
-  ([lines, tracks, expanded]) => computeLineLayout(tracks, lines, expanded),
+  [showSlice('lines'), showSlice('layerTracks'), expandedLineGroups, showSlice('ledClips')],
+  ([lines, tracks, expanded, ledClips]) => computeLineLayout(tracks, lines, expanded, new Set(ledClips.map((c) => c.id))),
 );
 lineLayout.subscribe((layout) => { currentLayout = layout; });
 
