@@ -52,7 +52,7 @@ import { serializeShowControl, hydrateShowControl } from '../show/showControlPer
 // Catalog of per-effect default params. Used by resetEffectParams to
 // snap an effect back to its baseline values when the user hits the
 // per-effect reset button in LayerPanel.
-import { getDefaultEffectParams } from '../renderer/effects';
+import { getDefaultEffectParams, reseedEffectCopies } from '../renderer/effects';
 import { isNativeSelectableEffect } from '../renderer/nativeEffectCoverage';
 import { oscStore } from '../osc/oscStore';
 import { abletonBridge } from '../ableton/abletonBridge';
@@ -2722,6 +2722,7 @@ void main() {
           ...cloned,
           id: newId,
           name: `${layer.name} Copy`,
+          effects: reseedEffectCopies(cloned.effects) ?? cloned.effects,
         };
 
         const index = project.layers.findIndex((l) => l.id === id);
@@ -2732,10 +2733,12 @@ void main() {
           const clonedChildren: Layer[] = [];
           for (const child of children) {
             try {
+              const childClone = safeCloneLayer(child);
               clonedChildren.push({
-                ...safeCloneLayer(child),
+                ...childClone,
                 id: generateUUID(),
                 parentGroupId: newId,
+                effects: reseedEffectCopies(childClone.effects) ?? childClone.effects,
               });
             } catch (err) {
               console.warn('[duplicateLayer] failed to clone child', child.id, err);

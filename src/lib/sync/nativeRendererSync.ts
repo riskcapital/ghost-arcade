@@ -180,6 +180,7 @@ import {
   buildCompositeEffectPassChainGraph,
   buildNativeEffectPassPrecompileCommands,
   packNativeEffectPassUniforms,
+  nativeEffectSeed,
   type NativeEffectPassId,
   type NativeEffectPassOptions,
 } from '$lib/renderer/nativeEffectPass';
@@ -2076,6 +2077,8 @@ export function effectToNativeDescriptor(effect: any): string | null {
       Math.max(0, Math.min(1, tearRaw)).toFixed(4),
       Math.max(0, Math.min(3, Math.round(triggerRaw))).toFixed(0),
       Math.max(0, Math.min(1, firstFiniteParam(params, ['glitchFreezeBurst', 'freezeBurst'], 0))).toFixed(4),
+      // Per-instance seed (0 = the pattern instances had before seeds).
+      nativeEffectSeed(params.glitchSeed).toFixed(0),
     ].join(':');
   }
   if (type === 'pixelate') {
@@ -3078,6 +3081,7 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       tearChance: Number(rawParam6 ?? 0),
       triggerMode: Number(rawParam7 ?? 0),
       freezeBurst: Number(rawParam8 ?? 0),
+      glitchSeed: nativeEffectSeed(rawParam9),
     };
   } else if (effect === 'exposure') {
     params = {
