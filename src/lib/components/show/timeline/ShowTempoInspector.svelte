@@ -54,6 +54,22 @@
     setSegment({ bpm: Math.round(Math.max(SHOW_MIN_BPM, Math.min(SHOW_MAX_BPM, value)) * 100) / 100 });
   }
 
+  /**
+   * Double or halve the tempo (detection read half or double time). Every
+   * segment scales, unrounded, so a detected 87.19 becomes exactly 174.38
+   * and the grid stays on the music; bar 1 stays where it is.
+   */
+  function scaleTempo(factor: 2 | 0.5) {
+    if (!tempo) return;
+    const scaled = tempo.segments.map((s) => s.bpm * factor);
+    if (scaled.some((b) => b < SHOW_MIN_BPM || b > SHOW_MAX_BPM)) return;
+    showTimeline.setTempo({ ...tempo, segments: tempo.segments.map((s, i) => ({ ...s, bpm: scaled[i] })) });
+  }
+  const canDouble = $derived(!!tempo && tempo.segments.every((s) => s.bpm * 2 <= SHOW_MAX_BPM));
+  const canHalve = $derived(!!tempo && tempo.segments.every((s) => s.bpm / 2 >= SHOW_MIN_BPM));
+  /** A detected tempo keeps its full precision; the field shows it to 0.01. */
+  const bpmShown = $derived(seg ? Math.round(seg.bpm * 100) / 100 : SHOW_DEFAULT_BPM);
+
   function setOffset(offset: number) {
     if (!tempo) return;
     showTimeline.setTempo({ ...tempo, offset: Math.round(offset * 1e6) / 1e6 });
@@ -108,12 +124,16 @@
         min={SHOW_MIN_BPM}
         max={SHOW_MAX_BPM}
         step="0.1"
-        value={seg.bpm}
+        value={bpmShown}
         onchange={(e) => setBpm(parseFloat((e.currentTarget as HTMLInputElement).value))}
         title="Tempo in quarter notes per minute"
         data-tempo-bpm
       />
     </label>
+    <span class="insp-group" role="group" aria-label="Double or halve the tempo">
+      <button class="insp-chip" onclick={() => scaleTempo(0.5)} disabled={!canHalve} title="Halve the tempo (the detection read double time)" aria-label="Halve the tempo" data-tempo-scale="0.5">÷2</button>
+      <button class="insp-chip" onclick={() => scaleTempo(2)} disabled={!canDouble} title="Double the tempo (the detection read half time, as drum and bass often is)" aria-label="Double the tempo" data-tempo-scale="2">×2</button>
+    </span>
     <button class="insp-chip" onclick={tap} title="Tap along with the music: three taps or more set the tempo" data-tempo-tap>
       Tap{tapCount >= 2 ? ` ×${tapCount}` : ''}
     </button>
@@ -175,7 +195,7 @@
   {/if}
   {#if message && !detecting}
     <span class="insp-meta" class:warn={message.kind !== 'ok'} data-tempo-message>
-      {#if message.kind === 'ok'}{message.bpm} BPM from <span class="layer-name">{message.name}</span>. Check where bar 1 is.
+      {#if message.kind === 'ok'}{message.bpm} BPM from <span class="layer-name">{message.name}</span>. Check where bar 1 is, and ×2 or ÷2 if it reads half or double time.
       {:else if message.kind === 'no-pulse'}No steady beat found in that track.
       {:else if message.kind === 'undecodable'}That track could not be read.
       {:else}Add a song to the show first.{/if}

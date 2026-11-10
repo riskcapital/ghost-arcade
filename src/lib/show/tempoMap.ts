@@ -271,6 +271,30 @@ export function rulerTicks(map: ShowTempoMap, t0: number, t1: number, pxPerSecon
 }
 
 /**
+ * The tempo of a detected beat grid, unrounded. The analysis reports its
+ * tempo to 0.1 BPM for display; a map at that rounded tempo drifts off a
+ * 127.37 BPM song by half a beat in ten minutes. The beats themselves are
+ * the exact grid, so the tempo comes from their spacing (a least-squares
+ * line, so a beat clamped to 0 at the start does not bend it). Falls back to
+ * `reported` when there are too few beats or they disagree with it.
+ */
+export function gridTempo(beats: readonly number[], reported: number): number {
+  const ts = beats.filter((b) => b > 0 && Number.isFinite(b));
+  const n = ts.length;
+  if (n < 8) return reported;
+  let sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (let i = 0; i < n; i++) {
+    sx += i;
+    sy += ts[i];
+    sxx += i * i;
+    sxy += i * ts[i];
+  }
+  const period = (n * sxy - sx * sy) / (n * sxx - sx * sx);
+  const bpm = 60 / period;
+  return Number.isFinite(bpm) && Math.abs(bpm / reported - 1) < 0.01 ? clampBpm(bpm) : reported;
+}
+
+/**
  * A map seeded from audio analysis of a track placed on the show.
  *
  * `beats` are times inside the audio file. The first detected beat at or
@@ -285,7 +309,7 @@ export function tempoFromAnalysis(
   if (!analysis.tempo || !(analysis.tempo > 0)) return null;
   const firstBeat = analysis.beats.find((b) => b >= track.offset - 1e-6);
   const fileTime = firstBeat ?? track.offset;
-  const map = createTempoMap(analysis.tempo, track.startTime + (fileTime - track.offset));
+  const map = createTempoMap(gridTempo(analysis.beats, analysis.tempo), track.startTime + (fileTime - track.offset));
   map.source = 'analysis';
   if (track.id) map.analysedTrackId = track.id;
   return map;

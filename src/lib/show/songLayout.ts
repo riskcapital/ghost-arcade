@@ -136,6 +136,10 @@ export interface Envelope {
    *  than an off-beat bass note or hi-hat, which pull a log-energy grid
    *  half a beat off in most dance music. */
   beatOnset: Float32Array;
+  /** The two halves of beatOnset: the low band's rise (kicks) and the mid
+   *  band's (snares), each over its own mean. */
+  lowOnset: Float32Array;
+  midOnset: Float32Array;
   /** Log energy per frame and band: low, mid, high. */
   bands: [Float32Array, Float32Array, Float32Array];
   frameRate: number;
@@ -236,8 +240,12 @@ export class SongEnvelopeBuilder {
     const beatOnset = new Float32Array(frames);
     const lowScale = lowSum > 0 ? frames / lowSum : 0;
     const midScale = midSum > 0 ? frames / midSum : 0;
-    for (let f = 0; f < frames; f++) beatOnset[f] = lowJump[f] * lowScale + midJump[f] * midScale;
-    return { onset: this.onset, beatOnset, bands: this.bands, frameRate: this.sampleRate / HOP };
+    for (let f = 0; f < frames; f++) {
+      lowJump[f] *= lowScale;
+      midJump[f] *= midScale;
+      beatOnset[f] = lowJump[f] + midJump[f];
+    }
+    return { onset: this.onset, beatOnset, lowOnset: lowJump, midOnset: midJump, bands: this.bands, frameRate: this.sampleRate / HOP };
   }
 }
 
@@ -297,28 +305,173 @@ function estimateTempo(onset: Float32Array, frameRate: number): { bpm: number; p
 }
 
 /** Onset strength the grid `phase + k * period` lands on, frames. */
-function gridScore(onset: Float32Array, period: number, phase: number): number {
+function gridScore(onset: Float32Array, period: number, phase: number, end = onset.length): number {
   let sum = 0;
-  for (let t = phase; t < onset.length; t += period) {
+  for (let t = phase; t < end; t += period) {
     const i = Math.round(t);
     sum += onset[i] ?? 0;
   }
   return sum;
 }
 
+/** The phase (frames) that lands the most onset strength on a grid of `period`. */
+function bestPhase(onset: Float32Array, period: number): number {
+  const steps = Math.max(1, Math.round(period * 2));
+  let best = 0, bestSum = -Infinity;
+  for (let s = 0; s < steps; s++) {
+    const phase = (s / steps) * period;
+    const sum = gridScore(onset, period, phase);
+    if (sum > bestSum) {
+      bestSum = sum;
+      best = phase;
+    }
+  }
+  return best;
+}
+
+/** The strongest onset within a couple of frames of `t`. */
+function peakNear(onset: Float32Array, t: number): number {
+  const i = Math.round(t);
+  let m = 0;
+  for (let d = -2; d <= 2; d++) {
+    const v = onset[i + d];
+    if (v !== undefined && v > m) m = v;
+  }
+  return m;
+}
+
+/** Mean onset at each of four beats in turn: beats `phase + (4k + j) * period`. */
+function slotMeans(onset: Float32Array, period: number, phase: number): number[] {
+  const sums = [0, 0, 0, 0];
+  const counts = [0, 0, 0, 0];
+  let j = 0;
+  for (let t = phase; t < onset.length; t += period, j = (j + 1) % 4) {
+    sums[j] += peakNear(onset, t);
+    counts[j]++;
+  }
+  return sums.map((v, i) => (counts[i] ? v / counts[i] : 0));
+}
+
+/**
+ * A backbeat on the grid `phase + k * period`: a snare on every other beat
+ * (2 and 4) and the kick strongest on the beats between (1 and 3). A snare
+ * is told from a kick by its mix: more mid band against low band than the
+ * kick beats have (a kick's click reaches the mid band too). Returns which
+ * beats carry the snare (0: even, 1: odd), or null without a backbeat.
+ */
+function backbeat(env: Envelope, period: number, phase: number): 0 | 1 | null {
+  const mid = slotMeans(env.midOnset, period, phase);
+  const low = slotMeans(env.lowOnset, period, phase);
+  // Mid over low, smoothed by the bands' mean rise (1): an empty beat is 0.
+  const ratio = mid.map((m, j) => m / (low[j] + 1));
+  const loudestMid = Math.max(...mid);
+  for (const p of [0, 1] as const) {
+    const q = (1 - p) as 0 | 1;
+    const snareRatio = Math.min(ratio[p], ratio[p + 2]);
+    const otherRatio = Math.max(ratio[q], ratio[q + 2]);
+    const snareHit = Math.min(mid[p], mid[p + 2]);
+    const kickOn = Math.max(low[q], low[q + 2]);
+    const kickOff = Math.max(low[p], low[p + 2]);
+    if (snareHit > 0.5 && snareHit > 0.3 * loudestMid && snareRatio > 2.5 * otherRatio && kickOn > kickOff) return p;
+  }
+  return null;
+}
+
+/** Tempo range the backbeat check may move a reading into. */
+const CHECK_MIN_BPM = 60;
+const CHECK_MAX_BPM = 200;
+
+/**
+ * Octave and 4/3 check. The autocorrelation cannot tell a half-time reading
+ * (drum and bass at 174 read as 87) or a dotted figure (hip-hop at 88 read
+ * as 117) from the beat. A backbeat can: at the true tempo the snare lands
+ * on every other beat. When the reading shows no backbeat and double, half,
+ * 3/4, 4/3, 3/2 or 2/3 of it does, that is the tempo. Returns the period
+ * in frames.
+ */
+function checkTempo(env: Envelope, period: number): number {
+  const bpmOf = (p: number) => (60 * env.frameRate) / p;
+  // Each reading on its own best grid: the estimate can be a percent off,
+  // which smears the beats into each other over a minute.
+  const fitted = (p: number) => beatGrid(env.beatOnset, env.frameRate, p);
+  const own = fitted(period);
+  if (backbeat(env, own.period, own.phase) !== null) return own.period;
+  // Periods, so 0.5 is double the tempo; 4/3 and 3/4 undo a dotted
+  // figure read as the beat (the 3-beat term), 2/3 and 3/2 the same on top
+  // of a half or double reading.
+  for (const factor of [0.5, 2, 4 / 3, 3 / 4, 2 / 3, 3 / 2]) {
+    const bpm = bpmOf(period * factor);
+    if (bpm < CHECK_MIN_BPM || bpm > CHECK_MAX_BPM) continue;
+    const grid = fitted(period * factor);
+    if (backbeat(env, grid.period, grid.phase) !== null) return grid.period;
+  }
+  return period;
+}
+
+/**
+ * The grid's period and phase fitted to the onsets themselves: each beat's
+ * nearest onset peak (to a fraction of a frame), weighted by its strength,
+ * on a least-squares line. The coarse search steps the period by 0.1%,
+ * which is a beat out every 1000 beats; the fit is limited only by how
+ * steady the music is.
+ */
+function refineGrid(onset: Float32Array, period: number, phase: number, end = onset.length): { period: number; phase: number } {
+  let p = period, ph = phase;
+  for (let pass = 0; pass < 3; pass++) {
+    const half = Math.max(1, Math.floor(p * 0.15));
+    let sw = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
+    let k = 0;
+    for (let t = ph; t < end; t += p, k++) {
+      const c = Math.round(t);
+      let best = -1, bestV = 0;
+      for (let i = Math.max(1, c - half); i <= Math.min(onset.length - 2, c + half); i++) {
+        if (onset[i] > bestV && onset[i] >= onset[i - 1] && onset[i] >= onset[i + 1]) {
+          bestV = onset[i];
+          best = i;
+        }
+      }
+      if (best < 0 || !(bestV > 0)) continue;
+      // Parabolic peak between frames.
+      const a = onset[best - 1], b = onset[best], cc = onset[best + 1];
+      const den = a - 2 * b + cc;
+      const y = best + (den < 0 ? Math.max(-0.5, Math.min(0.5, (0.5 * (a - cc)) / den)) : 0);
+      const w = bestV;
+      sw += w; sx += w * k; sy += w * y; sxx += w * k * k; sxy += w * k * y;
+    }
+    const det = sw * sxx - sx * sx;
+    if (!(sw > 0) || !(det > 1e-9)) break;
+    const slope = (sw * sxy - sx * sy) / det;
+    const intercept = (sy - slope * sx) / sw;
+    // Only a refinement: a fit far from the search's period found something else.
+    if (!(Math.abs(slope / period - 1) < 0.005)) break;
+    p = slope;
+    ph = intercept;
+  }
+  return { period: p, phase: ph };
+}
+
+/** Seconds of the song the coarse grid search looks at. */
+const GRID_SEARCH_SECONDS = 90;
+
 /**
  * Beat grid: the period (within 2% of the estimate) and phase that land the
  * most onset strength on the beats. Searching the period as well matters:
  * a period off by a fraction of a frame is a beat off by the end of a song.
+ *
+ * The search looks at the first minute and a half: over a long mix no step
+ * of a 0.1% search stays on the beat to the end, and the best score is then
+ * a wrong tempo (a 30-minute track at 127.4 read as 131.4). The fit then
+ * follows the beats over a window that doubles until it covers the song.
  */
-function beatGrid(onset: Float32Array, frameRate: number, estimate: number): { beats: number[]; period: number } {
+function beatGrid(onset: Float32Array, frameRate: number, estimate: number): { beats: number[]; period: number; phase: number } {
   const n = onset.length;
+  const searchEnd = Math.min(n, Math.round(GRID_SEARCH_SECONDS * frameRate));
   let bestPeriod = estimate, bestPhase = 0, bestSum = -Infinity;
   const search = (period: number) => {
     const steps = Math.max(1, Math.round(period * 2));
     for (let s = 0; s < steps; s++) {
       const phase = (s / steps) * period;
-      const sum = gridScore(onset, period, phase);
+      const sum = gridScore(onset, period, phase, searchEnd);
       if (sum > bestSum) {
         bestSum = sum;
         bestPeriod = period;
@@ -327,13 +480,28 @@ function beatGrid(onset: Float32Array, frameRate: number, estimate: number): { b
     }
   };
   for (let k = -20; k <= 20; k++) search(estimate * (1 + k * 0.001));
+  let fit = { period: bestPeriod, phase: bestPhase };
+  for (let end = searchEnd; ; end = Math.min(n, end * 2)) {
+    fit = refineGrid(onset, fit.period, fit.phase, end);
+    if (end >= n) break;
+  }
+  return { ...gridBeats(n, frameRate, fit.period, fit.phase), period: fit.period, phase: fit.phase };
+}
+
+/** Beat times for a grid, from the first beat at or just before the start. */
+function gridBeats(n: number, frameRate: number, period: number, phase: number): { beats: number[] } {
   // A beat a frame or two before the start (the song's first downbeat at
   // 0, detected a hair late) still counts, at 0.
-  let first = bestPhase;
-  while (first - bestPeriod >= -2) first -= bestPeriod;
+  let first = phase;
+  while (first - period >= -2) first -= period;
+  while (first < -2) first += period;
   const beats: number[] = [];
-  for (let t = first; t < n; t += bestPeriod) beats.push(Math.max(0, t) / frameRate);
-  return { beats, period: bestPeriod };
+  for (let k = 0; ; k++) {
+    const t = first + k * period;
+    if (t >= n) break;
+    beats.push(Math.max(0, t) / frameRate);
+  }
+  return { beats };
 }
 
 function meanStd(values: Float32Array | number[]): { mean: number; std: number } {
@@ -472,7 +640,23 @@ export function analyzeSongEnvelope(env: Envelope | null, length: number, sample
   const estimate = estimateTempo(env.onset, env.frameRate);
   let beatEnergy = 0;
   for (let i = 0; i < env.beatOnset.length; i++) beatEnergy += env.beatOnset[i];
-  const grid = estimate ? beatGrid(beatEnergy > 1e-6 ? env.beatOnset : env.onset, env.frameRate, estimate.period) : null;
+  const beatOnset = beatEnergy > 1e-6 ? env.beatOnset : env.onset;
+  let grid = estimate ? beatGrid(beatOnset, env.frameRate, beatEnergy > 1e-6 ? checkTempo(env, estimate.period) : estimate.period) : null;
+  // With a backbeat, the first beat is a kick beat (1 or 3), never the
+  // snare: bar 1 then starts on a beat that can be a downbeat.
+  if (grid && beatEnergy > 1e-6) {
+    const snareBeats = backbeat(env, grid.period, grid.phase);
+    if (snareBeats !== null) {
+      const firstIndex = Math.round((grid.beats[0] * env.frameRate - grid.phase) / grid.period);
+      if (((firstIndex % 2) + 2) % 2 === snareBeats) {
+        const phase = grid.phase + grid.period;
+        grid = { ...gridBeats(env.beatOnset.length, env.frameRate, grid.period, phase), period: grid.period, phase };
+        // gridBeats starts from the earliest beat; drop the snare beat before it.
+        const idx = Math.round((grid.beats[0] * env.frameRate - grid.phase) / grid.period);
+        if (((idx % 2) + 2) % 2 === snareBeats) grid.beats.shift();
+      }
+    }
+  }
   const beats = grid?.beats ?? [];
   const bpm = grid ? (60 * env.frameRate) / grid.period : null;
   const beatSeconds = bpm ? 60 / bpm : null;
