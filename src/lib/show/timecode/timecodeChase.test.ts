@@ -10,7 +10,9 @@ import { ChaseClock, normalizeTimecodeSettings, timecodeChase, type ChaseSample 
 import { LtcDecoder, generateLtc } from './ltc';
 import { MtcParser, mtcFullFrame, mtcQuarterFrameStream } from './mtc';
 import { actualFps, timecodeToSeconds, type Timecode, type TimecodeRate } from './timecode';
-import { showTimeline, setShowCompositionLoader } from '../../stores/showTimeline';
+import { showTimeline, setShowCompositionLoader, setShowChaseTransportHandler } from '../../stores/showTimeline';
+import { MidiClockParser, showSecondsForSourceQuarters } from '../sync/beatChase';
+import { createTempoMap } from '../tempoMap';
 
 function tc(h: number, m: number, s: number, f: number, rate: TimecodeRate): Timecode {
   return { hours: h, minutes: m, seconds: s, frames: f, rate, dropFrame: rate === 29.97 };
@@ -173,5 +175,62 @@ describe('controller and show timeline', () => {
     expect(get(showTimeline)).toMatchObject({ isPlaying: false, currentTime: 12.5 });
     showTimeline.releaseChase();
     expect(showTimeline.isChasing()).toBe(false);
+  });
+
+  it('keeps the musical-clock settings and refuses junk', () => {
+    expect(normalizeTimecodeSettings({ source: 'link', linkMode: 'quantisedStart', barOffset: 4.4 })).toMatchObject({ source: 'link', linkMode: 'quantisedStart', barOffset: 4 });
+    expect(normalizeTimecodeSettings({ source: 'midiClock' })).toMatchObject({ source: 'midiClock', linkMode: 'startStop', barOffset: 0 });
+    expect(normalizeTimecodeSettings({ source: 'osc', linkMode: 'x', barOffset: 'y' })).toMatchObject({ source: 'off', linkMode: 'startStop', barOffset: 0 });
+  });
+
+  it('MIDI clock + Song Position chase the show through its map, and name both tempos when they differ', () => {
+    const map = createTempoMap(120, 0.5);
+    showTimeline.hydrate({ presetClips: [{ id: 'a', compositionId: 'A', startTime: 0, duration: 60, transitionIn: 'cut', transitionDuration: 0 }] });
+    timecodeChase.setShowContext(() => ({ map, playhead: get(showTimeline).currentTime, playing: get(showTimeline).isPlaying }));
+    timecodeChase.setSink((sample) => {
+      if (sample.showTime !== null && (sample.lock === 'locked' || sample.lock === 'freewheel')) showTimeline.chase(sample.showTime, sample.running);
+    });
+    timecodeChase.settings.set(normalizeTimecodeSettings({ source: 'midiClock' }));
+    const parser = new MidiClockParser();
+    const feed = (bytes: number[], at: number) => {
+      const ev = parser.feed(bytes, at);
+      if (ev) timecodeChase.feedBeats(showSecondsForSourceQuarters(map, ev.quarters, 0), ev.atMs, ev.kind === 'tick', parser.bpm);
+    };
+    // Locate to bar 3 (32 sixteenths = 8 quarters): parked at 0.5 + 4 s.
+    feed([0xf2, 32, 0], 0);
+    timecodeChase.step(5);
+    expect(get(showTimeline)).toMatchObject({ isPlaying: false, currentTime: 4.5 });
+    // Continue at 126 BPM against the map's 120.
+    feed([0xfb], 10);
+    const tick = 60000 / (126 * 24);
+    let at = 20;
+    for (let i = 0; i < 96; i++, at += tick) feed([0xf8], at);
+    // Read at the last tick.
+    timecodeChase.step(at - tick);
+    const st = get(showTimeline);
+    expect(st.isPlaying).toBe(true);
+    // 95 ticks after the position = 95/24 quarters, at the map's 0.5 s a quarter.
+    expect(st.currentTime).toBeCloseTo(4.5 + (95 / 24) * 0.5, 2);
+    const status = get(timecodeChase.status);
+    expect(status.sourceBpm).toBeCloseTo(126, 0);
+    expect(status.showBpm).toBe(120);
+    expect(status.mismatch).toBe(true);
+    expect(status.label).toBe('3.4');
+    timecodeChase.setShowContext(null);
+  });
+
+  it('while chasing, the show transport asks the source first (Link quantised start)', () => {
+    const ops: string[] = [];
+    setShowChaseTransportHandler((op) => { ops.push(op); return true; });
+    showTimeline.hydrate({ presetClips: [{ id: 'a', compositionId: 'A', startTime: 0, duration: 20, transitionIn: 'cut', transitionDuration: 0 }] });
+    showTimeline.play();
+    expect(ops).toEqual([]);
+    showTimeline.pause();
+    showTimeline.chase(3, false);
+    showTimeline.play();
+    showTimeline.pause();
+    showTimeline.stop();
+    expect(ops).toEqual(['play', 'pause', 'stop']);
+    setShowChaseTransportHandler(null);
   });
 });

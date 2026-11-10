@@ -17,11 +17,30 @@
  *
  * Show time is timecode minus the per-show offset, so a show that starts at
  * 01:00:00:00 on the house clock is programmed from zero.
+ *
+ * MUSICAL CLOCKS
+ * --------------
+ * MIDI clock (with Song Position) and Ableton Link carry beats, not
+ * timecode. They are turned into show time through the show's tempo map
+ * (show/sync/beatChase.ts) and fed to the same chase clock, so a show with a
+ * map can follow a DAW or a Link session the way it follows timecode.
  */
 
 import { writable, get } from 'svelte/store';
 import { LtcDecoder, ltcFrameToTimecode, type LtcFrame } from './ltc';
 import { MtcParser } from './mtc';
+import { invoke } from '../../bridge';
+import { abletonLink } from '../../sync/abletonLink';
+import type { ShowTempoMap } from '../../types';
+import { formatBarsBeats } from '../tempoMap';
+import {
+  LinkFollower,
+  MidiClockParser,
+  showSecondsForSourceQuarters,
+  showTempoAt,
+  tempoMismatch,
+  type LinkFollowMode,
+} from '../sync/beatChase';
 import {
   actualFps,
   formatTimecode,
@@ -34,7 +53,13 @@ import {
 
 // ─── Settings (saved with the project) ───────────────────────────────────
 
-export type TimecodeSource = 'off' | 'ltc' | 'mtc';
+export type TimecodeSource = 'off' | 'ltc' | 'mtc' | 'midiClock' | 'link';
+const TIMECODE_SOURCES: readonly TimecodeSource[] = ['off', 'ltc', 'mtc', 'midiClock', 'link'];
+
+/** Sources that carry beats and need the show's tempo map. */
+export function isBeatSource(source: TimecodeSource): source is 'midiClock' | 'link' {
+  return source === 'midiClock' || source === 'link';
+}
 
 export interface TimecodeSettings {
   source: TimecodeSource;
@@ -49,8 +74,12 @@ export interface TimecodeSettings {
   ltcDeviceId: string;
   /** 0 = left / mono, 1 = right. */
   ltcChannel: number;
-  /** MIDI input id for MTC; '' listens to every input. */
+  /** MIDI input id for MTC and MIDI clock; '' listens to every input. */
   mtcInputId: string;
+  /** MIDI clock / Link: the source's bar 1 lands on show bar 1 + barOffset. */
+  barOffset: number;
+  /** Link: follow the session's start/stop, or start on the show's Play at the next Link bar. */
+  linkMode: LinkFollowMode;
 }
 
 export function defaultTimecodeSettings(): TimecodeSettings {
@@ -64,6 +93,8 @@ export function defaultTimecodeSettings(): TimecodeSettings {
     ltcDeviceId: '',
     ltcChannel: 0,
     mtcInputId: '',
+    barOffset: 0,
+    linkMode: 'startStop',
   };
 }
 
@@ -73,8 +104,9 @@ export function normalizeTimecodeSettings(raw: unknown): TimecodeSettings {
   const r = raw as Record<string, unknown>;
   const offset = Number(r.offset);
   const freewheel = Number(r.freewheelSeconds);
+  const barOffset = Math.round(Number(r.barOffset));
   return {
-    source: r.source === 'ltc' || r.source === 'mtc' ? r.source : 'off',
+    source: TIMECODE_SOURCES.includes(r.source as TimecodeSource) ? (r.source as TimecodeSource) : 'off',
     rate: isTimecodeRate(r.rate) ? r.rate : 'auto',
     offset: Number.isFinite(offset) ? offset : 0,
     freewheelSeconds: Number.isFinite(freewheel) ? Math.max(0, Math.min(60, freewheel)) : d.freewheelSeconds,
@@ -83,6 +115,8 @@ export function normalizeTimecodeSettings(raw: unknown): TimecodeSettings {
     ltcDeviceId: typeof r.ltcDeviceId === 'string' ? r.ltcDeviceId : '',
     ltcChannel: r.ltcChannel === 1 ? 1 : 0,
     mtcInputId: typeof r.mtcInputId === 'string' ? r.mtcInputId : '',
+    barOffset: Number.isFinite(barOffset) ? Math.max(-64, Math.min(9999, barOffset)) : 0,
+    linkMode: r.linkMode === 'quantisedStart' ? 'quantisedStart' : 'startStop',
   };
 }
 
@@ -183,6 +217,14 @@ export interface ChaseStatus {
   /** LTC input peak, 0..1, for the level meter. */
   inputPeak: number;
   error: string | null;
+  /** MIDI clock / Link: the source's tempo, quarter-note BPM. */
+  sourceBpm: number | null;
+  /** The show map's tempo at the chased position. */
+  showBpm: number | null;
+  /** Rolling at a tempo the map does not have (kept following; audio re-syncs). */
+  mismatch: boolean;
+  /** Link quantised start: Play pressed, waiting for the next Link bar. */
+  waiting: boolean;
 }
 
 export interface ChaseSample extends ChaseReading {
@@ -192,12 +234,20 @@ export interface ChaseSample extends ChaseReading {
 export type ChaseSink = (sample: ChaseSample, settings: TimecodeSettings) => void;
 
 function initialStatus(): ChaseStatus {
-  return { lock: 'off', label: null, rate: null, dropFrame: false, showTime: null, running: false, framesReceived: 0, inputPeak: 0, error: null };
+  return {
+    lock: 'off', label: null, rate: null, dropFrame: false, showTime: null, running: false, framesReceived: 0, inputPeak: 0, error: null,
+    sourceBpm: null, showBpm: null, mismatch: false, waiting: false,
+  };
 }
 
 interface SourceHandle {
   stop(): void;
+  /** Link quantised start: the show's transport. True when handled. */
+  transport?(op: 'play' | 'pause' | 'stop'): boolean;
 }
+
+/** What a musical clock needs from the show: its map and its playhead. */
+export type ShowClockContext = () => { map: ShowTempoMap | null; playhead: number; playing: boolean };
 
 class TimecodeChaseController {
   readonly settings = writable<TimecodeSettings>(defaultTimecodeSettings());
@@ -212,9 +262,44 @@ class TimecodeChaseController {
   private frames = 0;
   private peak = 0;
   private startToken = 0;
+  private showContext: ShowClockContext | null = null;
+  private sourceBpm: number | null = null;
+  private waiting = false;
 
   setSink(sink: ChaseSink | null): void {
     this.sink = sink;
+  }
+
+  /** The show's map and playhead, for MIDI clock and Link. */
+  setShowContext(context: ShowClockContext | null): void {
+    this.showContext = context;
+  }
+
+  showClock(): ReturnType<ShowClockContext> {
+    return this.showContext?.() ?? { map: null, playhead: 0, playing: false };
+  }
+
+  /**
+   * The show's own Play / Pause / Stop while it follows a clock. Only Link's
+   * quantised start uses it (Play waits for the next Link bar); the other
+   * sources own the transport. True when the source handled it.
+   */
+  transport(op: 'play' | 'pause' | 'stop'): boolean {
+    try {
+      return this.source?.transport?.(op) ?? false;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Feed a position from a musical clock: show seconds at `atMs`. */
+  feedBeats(showSeconds: number, atMs: number, running: boolean, sourceBpm: number | null, waiting = false): void {
+    // The chase clock works in source seconds; beats arrive as show time.
+    this.clock.onFrame(showSeconds + this.current.offset, atMs, running);
+    this.lastLabel = null;
+    this.frames++;
+    this.sourceBpm = sourceBpm;
+    this.waiting = waiting;
   }
 
   get current(): TimecodeSettings {
@@ -287,12 +372,22 @@ class TimecodeChaseController {
     if (nowMs - this.lastStatusAt >= 100 || get(this.status).lock !== reading.lock) {
       this.lastStatusAt = nowMs;
       const label = this.lastLabel;
+      const beats = isBeatSource(s.source);
+      const map = beats ? this.showClock().map : null;
+      const showBpm = map && sample.showTime !== null ? showTempoAt(map, sample.showTime) : null;
       this.status.update((st) => ({
         ...st,
         lock: s.source === 'off' ? 'off' : reading.lock,
-        label: reading.seconds !== null && label
-          ? formatTimecode(secondsToTimecode(reading.seconds, label.rate, label.dropFrame))
-          : label ? formatTimecode(label) : null,
+        label: beats
+          ? (map && sample.showTime !== null ? formatBarsBeats(map, sample.showTime) : null)
+          : reading.seconds !== null && label
+            ? formatTimecode(secondsToTimecode(reading.seconds, label.rate, label.dropFrame))
+            : label ? formatTimecode(label) : null,
+        sourceBpm: beats ? this.sourceBpm : null,
+        showBpm,
+        // Only while the source rolls: a parked session's tempo is no warning.
+        mismatch: beats && reading.running && tempoMismatch(showBpm, this.sourceBpm),
+        waiting: beats && this.waiting,
         rate: label?.rate ?? null,
         dropFrame: label?.dropFrame ?? false,
         showTime: sample.showTime,
@@ -306,7 +401,11 @@ class TimecodeChaseController {
 
   private async applySource(): Promise<void> {
     const s = this.current;
-    const key = s.source === 'ltc' ? `ltc:${s.ltcDeviceId}:${s.ltcChannel}` : s.source === 'mtc' ? `mtc:${s.mtcInputId}` : 'off';
+    const key = s.source === 'ltc' ? `ltc:${s.ltcDeviceId}:${s.ltcChannel}`
+      : s.source === 'mtc' ? `mtc:${s.mtcInputId}`
+      : s.source === 'midiClock' ? `midiClock:${s.mtcInputId}`
+      : s.source === 'link' ? 'link'
+      : 'off';
     if (key === this.sourceKey) return;
     this.stopSource();
     this.sourceKey = key;
@@ -320,7 +419,11 @@ class TimecodeChaseController {
     try {
       const handle = s.source === 'ltc'
         ? await startLtcInput(this, s.ltcDeviceId, s.ltcChannel)
-        : await startMtcInput(this, s.mtcInputId);
+        : s.source === 'midiClock'
+          ? await startMidiClockInput(this, s.mtcInputId)
+          : s.source === 'link'
+            ? await startLinkFollow(this)
+            : await startMtcInput(this, s.mtcInputId);
       if (token !== this.startToken) {
         handle.stop();
         return;
@@ -344,6 +447,8 @@ class TimecodeChaseController {
     this.lastLabel = null;
     this.frames = 0;
     this.peak = 0;
+    this.sourceBpm = null;
+    this.waiting = false;
   }
 
   /** Stop listening (app teardown). Settings are kept. */
@@ -476,6 +581,100 @@ async function startMtcInput(chase: TimecodeChaseController, inputId: string): P
       access.removeEventListener('statechange', onState);
       for (const input of listening) input.removeEventListener('midimessage', onMessage);
       listening.clear();
+    },
+  };
+}
+
+/** MIDI clock + Song Position on Web MIDI (its own access, like MTC). */
+async function startMidiClockInput(chase: TimecodeChaseController, inputId: string): Promise<SourceHandle> {
+  if (typeof navigator === 'undefined' || !navigator.requestMIDIAccess) throw new Error('Web MIDI is not available');
+  const access = await navigator.requestMIDIAccess({ sysex: false });
+  const parser = new MidiClockParser();
+  const listening = new Set<MIDIInput>();
+  const onMessage = (e: Event) => {
+    const m = e as MIDIMessageEvent;
+    const data = m.data;
+    if (!data || !data.length) return;
+    const status = data[0];
+    if (status !== 0xf2 && status !== 0xf8 && status !== 0xfa && status !== 0xfb && status !== 0xfc) return;
+    const atMs = m.timeStamp || performance.now();
+    const ev = parser.feed(data, atMs);
+    if (!ev) return;
+    const { map } = chase.showClock();
+    if (!map) return;
+    const s = chase.current;
+    const seconds = showSecondsForSourceQuarters(map, ev.quarters, s.barOffset);
+    chase.feedBeats(seconds, ev.atMs, ev.kind === 'tick', parser.bpm);
+  };
+  const attach = () => {
+    access.inputs.forEach((input) => {
+      if (inputId && input.id !== inputId) return;
+      if (listening.has(input)) return;
+      input.addEventListener('midimessage', onMessage);
+      listening.add(input);
+    });
+  };
+  attach();
+  const onState = () => attach();
+  access.addEventListener('statechange', onState);
+  return {
+    stop() {
+      access.removeEventListener('statechange', onState);
+      for (const input of listening) input.removeEventListener('midimessage', onMessage);
+      listening.clear();
+    },
+  };
+}
+
+/** Link polls while following: start detection is at most one poll late. */
+export const LINK_FOLLOW_POLL_MS = 60;
+
+/** Ableton Link: start/stop + phase lock, or quantised start (beatChase.ts). */
+async function startLinkFollow(chase: TimecodeChaseController): Promise<SourceHandle> {
+  if (!get(abletonLink).enabled) {
+    const ok = await abletonLink.enable();
+    if (!ok) throw new Error(get(abletonLink).error || 'Ableton Link is not available');
+  }
+  const follower = new LinkFollower();
+  let stopped = false;
+  let busy = false;
+  const poll = async () => {
+    if (stopped || busy) return;
+    busy = true;
+    try {
+      const sentAt = performance.now();
+      const st = (await invoke('link_get_state')) as { enabled?: boolean; beat?: number; tempo?: number; playing?: boolean } | null;
+      if (stopped || !st?.enabled || !Number.isFinite(st.beat) || !(Number(st.tempo) > 0)) return;
+      const now = performance.now();
+      // The state was captured about half way through the round trip.
+      const atMs = sentAt + (now - sentAt) / 2;
+      const show = chase.showClock();
+      if (!show.map) return;
+      const s = chase.current;
+      const reading = follower.update(
+        { beat: Number(st.beat), tempo: Number(st.tempo), playing: !!st.playing, atMs },
+        { map: show.map, playhead: show.playhead, mode: s.linkMode },
+      );
+      chase.feedBeats(reading.seconds, atMs, reading.running, Math.round(Number(st.tempo) * 10) / 10, reading.waiting);
+    } catch {
+      /* main not ready: the chase clock rides out the gap */
+    } finally {
+      busy = false;
+    }
+  };
+  const timer = setInterval(() => void poll(), LINK_FOLLOW_POLL_MS);
+  void poll();
+  return {
+    stop() {
+      stopped = true;
+      clearInterval(timer);
+    },
+    transport(op) {
+      if (chase.current.linkMode !== 'quantisedStart') return false;
+      if (op === 'play') follower.request(!(follower.requested && !chase.showClock().playing));
+      else follower.request(false);
+      void poll();
+      return true;
     },
   };
 }

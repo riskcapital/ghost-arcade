@@ -111,7 +111,81 @@ function addTone(out: Float32Array, from: number, to: number, freq: number, leve
   }
 }
 
+/** A short burst of a low tone (an off-beat bass note) at each listed beat. */
+function addBass(out: Float32Array, beats: number[], bpm: number, level: number) {
+  for (const b of beats) {
+    const start = Math.round(((b * 60) / bpm) * RATE);
+    for (let i = 0; i < 0.2 * RATE && start + i < out.length; i++) {
+      const env = Math.min(1, i / (0.005 * RATE)) * Math.exp(-i / (0.12 * RATE));
+      out[start + i] += level * env * Math.sin((2 * Math.PI * 55 * i) / RATE);
+    }
+  }
+}
+
+/** Noise bursts (hats, or with a lower cut a snare) at each listed beat. */
+function addHits(out: Float32Array, beats: number[], bpm: number, level: number, decay: number, seed: number) {
+  const r = rng(seed);
+  for (const b of beats) {
+    const start = Math.round(((b * 60) / bpm) * RATE);
+    let prev = 0;
+    for (let i = 0; i < decay * 5 * RATE && start + i < out.length; i++) {
+      const n = r();
+      out[start + i] += level * Math.exp(-i / (decay * RATE)) * (n - prev);
+      prev = n;
+    }
+  }
+}
+
+function addKicks(out: Float32Array, beats: number[], bpm: number, level: number) {
+  for (const b of beats) {
+    const start = Math.round(((b * 60) / bpm) * RATE);
+    for (let i = 0; i < 0.06 * RATE && start + i < out.length; i++) {
+      out[start + i] += level * Math.exp(-i / (0.012 * RATE)) * Math.sin((2 * Math.PI * 70 * i) / RATE);
+    }
+  }
+}
+
+/** Distance of each beat from the nearest true beat `k * 60 / bpm`, seconds. */
+function beatErrors(beats: number[], bpm: number): number[] {
+  const period = 60 / bpm;
+  return beats.map((b) => {
+    const d = b / period;
+    return Math.abs(d - Math.round(d)) * period;
+  });
+}
+
 describe('analyzeSong', () => {
+  it('house: the grid sits on the kicks, not the off-beat bass and hats', () => {
+    const bpm = 124;
+    const song = new Float32Array(40 * RATE);
+    const n = Math.floor((40 * bpm) / 60);
+    const on = Array.from({ length: n }, (_, i) => i);
+    const off = on.map((b) => b + 0.5);
+    addKicks(song, on, bpm, 0.9);
+    addBass(song, off, bpm, 0.5);
+    addHits(song, off, bpm, 0.5, 0.02, 7);
+    const result = analyzeSong(song, RATE);
+    expect(Math.abs(result.tempo! - bpm)).toBeLessThan(1);
+    const errors = beatErrors(result.beats.slice(1, 60), bpm);
+    expect(Math.max(...errors)).toBeLessThan(0.04);
+  });
+
+  it('half-time breakbeat at 100: the beat, not the dotted-eighth figure (133)', () => {
+    const bpm = 100;
+    const song = new Float32Array(48 * RATE);
+    const kicks: number[] = [];
+    const snares: number[] = [];
+    for (let bar = 0; bar < 20; bar += 2) {
+      const b = bar * 4;
+      kicks.push(b, b + 1.5, b + 2.5, b + 4, b + 5.5, b + 6.5, b + 7.25);
+      snares.push(b + 2, b + 6);
+    }
+    addKicks(song, kicks, bpm, 0.9);
+    addHits(song, snares, bpm, 0.6, 0.06, 3);
+    const result = analyzeSong(song, RATE);
+    expect(Math.abs(result.tempo! - bpm)).toBeLessThan(1);
+  });
+
   it('finds the tempo and the beat of a steady kick', () => {
     const song = new Float32Array(30 * RATE);
     addClicks(song, 0, 30, 120, 0.8, 0.1);

@@ -11,6 +11,7 @@
   import { get } from 'svelte/store';
   import { showFromAudioRequest } from '../show/showFromAudio';
   import { layoutSong, analyzeSong, type SongAnalysis, type SongLayoutMode } from '../show/songLayout';
+  import { tempoMapForTrack } from '../show/tempoDetect';
   import { showTimeline } from '../stores/showTimeline';
   import { compositions } from '../stores/layers';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
@@ -143,6 +144,19 @@
       return;
     }
     showTimeline.setPresetClips(clips);
+    // The song's beat grid, when the show has none: bars on the ruler, beat snap.
+    if (!get(showTimeline).tempo && decoded) {
+      let songAnalysis = analysis;
+      if (!songAnalysis) {
+        try {
+          songAnalysis = analyzeSong(decoded.mono, decoded.sampleRate);
+        } catch (err) {
+          console.warn('[ShowFromAudio] analysis failed:', err);
+        }
+      }
+      const map = songAnalysis ? tempoMapForTrack(songAnalysis, { id, startTime: 0, offset: 0 }) : null;
+      if (map) showTimeline.setTempo(map);
+    }
     showTimeline.select(null);
     showTimeline.setOpen(true);
     // The lane labels take ~90 px of the tray, the margins a little more.

@@ -10,7 +10,7 @@ vi.mock('../sync/abletonLink', async () => {
   harness.link = writable({ enabled: false, peers: 0, tempo: 120 });
   return { abletonLink: { ...harness.link, beatNow: () => harness.beat } };
 });
-import { launchClockPosition, launchClockTempo, resyncLaunchClock, setTempoNudgeInput, releaseTempoNudgeInputs, nextLaunchBoundary } from './launchClock';
+import { launchClockPosition, launchClockTempo, resyncLaunchClock, setTempoNudgeInput, releaseTempoNudgeInputs, nextLaunchBoundary, setShowBeatSource, launchClockFollowsShow } from './launchClock';
 describe('shared launch clock', () => {
   let now = 10000;
   beforeEach(() => {
@@ -62,5 +62,43 @@ describe('shared launch clock', () => {
     expect(nextLaunchBoundary(8)).toBe(now + 3500);
     harness.link.set({ enabled: false, peers: 0, tempo: 120 });
     expect(launchClockTempo()).toBe(120);
+  });
+  it('takes beats from the playing show below Link and above the local clock', () => {
+    // Show at 90 BPM, 13.25 beats in, running on with the wall clock.
+    const start = now;
+    setShowBeatSource((at) => ({ beat: 13.25 + ((at - start) * 90) / 60000, bpm: 90 }));
+    try {
+      expect(launchClockFollowsShow()).toBe(true);
+      expect(launchClockTempo()).toBe(90);
+      expect(launchClockPosition().beat).toBeCloseTo(13.25);
+      now += 1000;
+      expect(launchClockPosition().beat).toBeCloseTo(14.75);
+      expect(launchClockPosition().beatMs).toBeCloseTo(60000 / 90);
+      // The next bar (beat 16) is 1.25 beats away at 90 BPM.
+      expect(nextLaunchBoundary(4)).toBeCloseTo(now + (1.25 * 60000) / 90);
+      // The show owns the phase: resync steps aside.
+      expect(resyncLaunchClock()).toBe(false);
+      // Link with peers outranks the show.
+      harness.beat = 40;
+      harness.link.set({ enabled: true, peers: 2, tempo: 128 });
+      expect(launchClockFollowsShow()).toBe(false);
+      expect(launchClockTempo()).toBe(128);
+      expect(launchClockPosition().beat).toBe(40);
+      harness.link.set({ enabled: false, peers: 0, tempo: 120 });
+      // A paused show (source answers null) hands back to the local clock.
+      setShowBeatSource(() => null);
+      expect(launchClockFollowsShow()).toBe(false);
+      expect(launchClockTempo()).toBe(120);
+    } finally {
+      setShowBeatSource(null);
+    }
+  });
+  it('anchors to detected audio beats, counting the time since the last one in ms', () => {
+    harness.audio.set({ manualBPM: null, bpm: 120, isActive: true, beat: { beatCount: 40, timeSinceLastBeat: 0 } });
+    const onBeat = launchClockPosition().beat;
+    harness.audio.set({ manualBPM: null, bpm: 120, isActive: true, beat: { beatCount: 40, timeSinceLastBeat: 250 } });
+    // 250 ms at 120 BPM is half a beat past the detected beat.
+    expect(launchClockPosition().beat - onBeat).toBeCloseTo(0.5, 6);
+    harness.audio.set({ manualBPM: 120, bpm: 120, isActive: false });
   });
 });

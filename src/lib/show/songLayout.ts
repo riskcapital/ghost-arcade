@@ -131,6 +131,11 @@ const BLOCK_SECONDS = 0.5;
 interface Envelope {
   /** Onset strength per frame. */
   onset: Float32Array;
+  /** Where the beat is: the rise in plain (not log) energy of the low and
+   *  mid bands, each scaled to its own mean. Kicks and snares rise far more
+   *  than an off-beat bass note or hi-hat, which pull a log-energy grid
+   *  half a beat off in most dance music. */
+  beatOnset: Float32Array;
   /** Log energy per frame and band: low, mid, high. */
   bands: [Float32Array, Float32Array, Float32Array];
   frameRate: number;
@@ -150,6 +155,8 @@ function envelope(mono: Float32Array, sampleRate: number): Envelope {
     new Float32Array(frames),
   ];
   const onset = new Float32Array(frames);
+  const lowJump = new Float32Array(frames);
+  const midJump = new Float32Array(frames);
   const lowCoef = 1 - Math.exp((-2 * Math.PI * 200) / sampleRate);
   const highCoef = 1 - Math.exp((-2 * Math.PI * 3000) / sampleRate);
   let low = 0, belowHigh = 0;
@@ -168,6 +175,8 @@ function envelope(mono: Float32Array, sampleRate: number): Envelope {
     }
     bands[0][f] = Math.log10(1e-10 + eLow / HOP);
     bands[1][f] = Math.log10(1e-10 + eMid / HOP);
+    lowJump[f] = eLow;
+    midJump[f] = eMid;
     bands[2][f] = Math.log10(1e-10 + eHigh / HOP);
     if (f > 0) {
       let rise = 0;
@@ -175,10 +184,29 @@ function envelope(mono: Float32Array, sampleRate: number): Envelope {
       onset[f] = rise;
     }
   }
-  return { onset, bands, frameRate: sampleRate / HOP };
+  // Energy rises (frame to frame), then each band over its mean rise.
+  let lowSum = 0, midSum = 0;
+  for (let f = frames - 1; f > 0; f--) {
+    lowJump[f] = Math.max(0, lowJump[f] - lowJump[f - 1]);
+    midJump[f] = Math.max(0, midJump[f] - midJump[f - 1]);
+    lowSum += lowJump[f];
+    midSum += midJump[f];
+  }
+  if (frames) { lowJump[0] = 0; midJump[0] = 0; }
+  const beatOnset = new Float32Array(frames);
+  const lowScale = lowSum > 0 ? frames / lowSum : 0;
+  const midScale = midSum > 0 ? frames / midSum : 0;
+  for (let f = 0; f < frames; f++) beatOnset[f] = lowJump[f] * lowScale + midJump[f] * midScale;
+  return { onset, beatOnset, bands, frameRate: sampleRate / HOP };
 }
 
-/** Tempo from the onset envelope's autocorrelation, leaning towards 120 BPM so a half or double tempo does not win by a hair. */
+/**
+ * Tempo from the onset envelope's autocorrelation, leaning towards 120 BPM so
+ * a half or double tempo does not win by a hair. A candidate beat is scored
+ * on how well the music repeats one, two and four beats later: the true beat
+ * lines up with the bar, while a rhythm inside the bar (the dotted-eighth
+ * figure of a breakbeat, say) repeats one step later but not a bar later.
+ */
 function estimateTempo(onset: Float32Array, frameRate: number): { bpm: number; period: number } | null {
   const n = onset.length;
   if (n < frameRate * 4) return null;
@@ -194,32 +222,36 @@ function estimateTempo(onset: Float32Array, frameRate: number): { bpm: number; p
   if (energy <= 1e-9) return null;
   const minLag = Math.max(2, Math.floor((60 * frameRate) / MAX_BPM));
   const maxLag = Math.min(n - 1, Math.ceil((60 * frameRate) / MIN_BPM));
-  const corr = new Float64Array(maxLag + 2);
-  for (let lag = minLag - 1; lag <= maxLag + 1; lag++) {
+  const corr = new Float64Array(4 * maxLag + 2);
+  for (let lag = minLag - 1; lag <= 4 * maxLag + 1; lag++) {
     if (lag < 1 || lag >= n) continue;
     let sum = 0;
     for (let i = lag; i < n; i++) sum += centred[i] * centred[i - lag];
     corr[lag] = sum / energy;
   }
+  // Correlation at a fractional lag, and its peak within a frame of it (a
+  // beat that is not a whole number of frames drifts a frame by the bar).
+  const at = (lag: number) => {
+    const i = Math.floor(lag);
+    const f = lag - i;
+    return (corr[i] ?? 0) * (1 - f) + (corr[i + 1] ?? 0) * f;
+  };
+  const near = (lag: number) => Math.max(at(lag - 1), at(lag - 0.5), at(lag), at(lag + 0.5), at(lag + 1));
   let best = -1, bestScore = -Infinity;
-  for (let lag = minLag; lag <= maxLag; lag++) {
+  for (let lag = minLag; lag <= maxLag; lag += 0.1) {
     const bpm = (60 * frameRate) / lag;
     const prior = Math.exp(-0.5 * Math.pow(Math.log2(bpm / 120) / 0.9, 2));
-    const score = corr[lag] * prior;
+    const score = ((at(lag) + near(2 * lag) + near(4 * lag)) / 3) * prior;
     if (score > bestScore) {
       bestScore = score;
       best = lag;
     }
   }
   // A steady pulse correlates clearly with itself one beat later.
-  if (best < 0 || corr[best] < 0.08) return null;
-  // Parabolic interpolation for a fractional period.
-  const a = corr[best - 1] ?? corr[best];
-  const b = corr[best];
-  const c = corr[best + 1] ?? corr[best];
-  const denom = a - 2 * b + c;
-  const shift = Math.abs(denom) > 1e-12 ? Math.max(-0.5, Math.min(0.5, (0.5 * (a - c)) / denom)) : 0;
-  const period = best + shift;
+  if (best < 0 || near(best) < 0.08) return null;
+  // Settle on the correlation peak next to the chosen lag.
+  let period = best;
+  for (let lag = best - 1; lag <= best + 1; lag += 0.05) if (at(lag) > at(period)) period = lag;
   return { bpm: (60 * frameRate) / period, period };
 }
 
@@ -254,8 +286,12 @@ function beatGrid(onset: Float32Array, frameRate: number, estimate: number): { b
     }
   };
   for (let k = -20; k <= 20; k++) search(estimate * (1 + k * 0.001));
+  // A beat a frame or two before the start (the song's first downbeat at
+  // 0, detected a hair late) still counts, at 0.
+  let first = bestPhase;
+  while (first - bestPeriod >= -2) first -= bestPeriod;
   const beats: number[] = [];
-  for (let t = bestPhase; t < n; t += bestPeriod) beats.push(t / frameRate);
+  for (let t = first; t < n; t += bestPeriod) beats.push(Math.max(0, t) / frameRate);
   return { beats, period: bestPeriod };
 }
 
@@ -377,7 +413,9 @@ export function analyzeSong(mono: Float32Array, sampleRate: number, options: Son
 
   const env = envelope(mono, sampleRate);
   const estimate = estimateTempo(env.onset, env.frameRate);
-  const grid = estimate ? beatGrid(env.onset, env.frameRate, estimate.period) : null;
+  let beatEnergy = 0;
+  for (let i = 0; i < env.beatOnset.length; i++) beatEnergy += env.beatOnset[i];
+  const grid = estimate ? beatGrid(beatEnergy > 1e-6 ? env.beatOnset : env.onset, env.frameRate, estimate.period) : null;
   const beats = grid?.beats ?? [];
   const bpm = grid ? (60 * env.frameRate) / grid.period : null;
   const beatSeconds = bpm ? 60 / bpm : null;

@@ -7,10 +7,13 @@
  *   1) An Ableton Link session with peers owns tempo and phase. It is what
  *      the other apps on the network already agree on, so nudge and resync
  *      step aside while it runs.
- *   2) Audio with detected beats anchors to the most recent detected beat.
- *   3) Otherwise a local clock runs at the manual / detected BPM, so a tapped
+ *   2) The show timeline, while it plays with a tempo map: its bars are the
+ *      grid, so beat-reactive effects land on the show's beats. Resync steps
+ *      aside while it drives.
+ *   3) Audio with detected beats anchors to the most recent detected beat.
+ *   4) Otherwise a local clock runs at the manual / detected BPM, so a tapped
  *      tempo with audio off still gives usable quantization.
- * Resync and nudge move the phase of (2) and (3).
+ * Resync and nudge move the phase of (3) and (4).
  */
 
 import { writable, get } from 'svelte/store';
@@ -58,7 +61,7 @@ type AudioClockInput = {
   manualBPM?: number | null;
   bpm?: number;
   isActive?: boolean;
-  beat?: { beatCount?: number; timeSinceLastBeat?: number };
+  beat?: { beatCount?: number; /** ms */ timeSinceLastBeat?: number };
 };
 
 function setTempo(audio: AudioClockInput | null | undefined): number {
@@ -73,12 +76,37 @@ function audioBeatPosition(audio: AudioClockInput | null | undefined): number | 
   const count = Number(audio.beat?.beatCount);
   const since = Number(audio.beat?.timeSinceLastBeat);
   if (!(count > 0) || !(since >= 0)) return null;
-  return count + (since * setTempo(audio)) / 60;
+  // The analyzer reports the time since the last beat in milliseconds.
+  return count + (since * setTempo(audio)) / 60000;
 }
 
 function linkTempo(): number | null {
   const link = get(abletonLink);
   return link.enabled && link.peers > 0 && link.tempo > 0 ? link.tempo : null;
+}
+
+/** Beat position and tempo from the playing show, or null when it is not
+ *  driving (paused, or no tempo map). Set by show/sync/showLaunchClock.ts. */
+export type ShowBeatSource = (nowMs: number) => { beat: number; bpm: number } | null;
+let showBeatSource: ShowBeatSource | null = null;
+
+export function setShowBeatSource(source: ShowBeatSource | null): void {
+  showBeatSource = source;
+}
+
+function showBeat(nowMs: number): { beat: number; bpm: number } | null {
+  if (!showBeatSource) return null;
+  try {
+    const b = showBeatSource(nowMs);
+    return b && Number.isFinite(b.beat) && b.bpm > 0 ? b : null;
+  } catch {
+    return null;
+  }
+}
+
+/** True while the playing show (and not Link) gives the clock its beats. */
+export function launchClockFollowsShow(nowMs = performance.now()): boolean {
+  return linkTempo() === null && showBeat(nowMs) !== null;
 }
 
 const CLOCK_EPOCH = performance.now();
@@ -133,6 +161,8 @@ export function launchClockFollowsLink(): boolean {
 export function launchClockTempo(): number {
   const link = linkTempo();
   if (link !== null) return link;
+  const show = showBeat(performance.now());
+  if (show) return show.bpm;
   return setTempo(get(audioStore)) * nudgeFactor();
 }
 
@@ -144,6 +174,8 @@ export function launchClockPosition(nowMs = performance.now()): { beat: number; 
     // Continuous session beats retain two/four-bar phrase boundaries.
     return { beat: abletonLink.beatNow(), beatMs: 60000 / link };
   }
+  const show = showBeat(nowMs);
+  if (show) return { beat: show.beat, beatMs: 60000 / show.bpm };
   const audio = get(audioStore) as AudioClockInput;
   const tempo = setTempo(audio);
   const audioBeat = audioBeatPosition(audio);
@@ -198,10 +230,10 @@ export function onLaunchClockResync(listener: ResyncListener): () => void {
 /**
  * Phrase resync: make now the downbeat. The grid realigns so boundaries fall
  * on whole bars from this moment, then listeners restart what is synced to it.
- * Returns false (and does nothing) while Link owns the phase.
+ * Returns false (and does nothing) while Link or the playing show owns the phase.
  */
 export function resyncLaunchClock(nowMs = performance.now()): boolean {
-  if (linkTempo() !== null) return false;
+  if (linkTempo() !== null || showBeat(nowMs) !== null) return false;
   settleNudge(nowMs);
   const audio = get(audioStore) as AudioClockInput;
   const audioBeat = audioBeatPosition(audio);

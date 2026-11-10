@@ -23,7 +23,7 @@ import { writable, get, derived } from 'svelte/store';
 import type { Layer, StageEffect, StageEffectType, Surface } from '../types';
 import { generateUUID } from '../utils/uuid';
 import { audioStore } from './audio';
-import { launchClockPosition, launchClockFollowsLink } from './launchClock';
+import { launchClockPosition, launchClockFollowsLink, launchClockFollowsShow } from './launchClock';
 import { getVisualAudioSnapshot } from '../audio/visualAudio';
 
 // ─── Per-effect-type catalog (UI + default params) ──────────────────
@@ -698,7 +698,7 @@ function evalBeatPulse(eff: StageEffect, _cx: number, _cy: number, tSec: number,
   const decay = Math.max(0.01, eff.params.decay ?? 0.25);
   const threshold = eff.params.threshold ?? 0.08;
   const audio = get(audioStore);
-  if (!audio?.isActive || (audio.manualBPM ?? 0) > 0 || launchClockFollowsLink()) {
+  if (!audio?.isActive || (audio.manualBPM ?? 0) > 0 || launchClockFollowsLink() || launchClockFollowsShow()) {
     const { beat, beatMs } = launchClockPosition();
     const phase = ((beat % 1) + 1) % 1;
     return Math.max(0, 1 - (phase * beatMs / 1000) / decay);

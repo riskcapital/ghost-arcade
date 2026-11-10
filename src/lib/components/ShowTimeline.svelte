@@ -65,6 +65,9 @@
   import ShowClipInspector from './show/timeline/ShowClipInspector.svelte';
   import ShowTrackInspector from './show/timeline/ShowTrackInspector.svelte';
   import ShowRuler from './show/timeline/ShowRuler.svelte';
+  import ShowTempoInspector from './show/timeline/ShowTempoInspector.svelte';
+  import { detectShowTempo } from '../show/tempoDetect';
+  import { formatBarsBeats, rulerTicks } from '../show/tempoMap';
   import { TRACK_HEADER_WIDTH, laneKeySelection, showSnapGuide, tracksStackHeight } from './show/timeline/trackLayout';
   import { carriesTrackMedia, dropTrackMedia } from './show/timeline/trackDrops';
   import {
@@ -174,6 +177,18 @@
     freewheel: 'TC freewheel',
     lost: 'TC lost',
   };
+  // MIDI clock and Link: the badge names the source, not timecode.
+  const BEAT_LOCK_TEXT: Record<string, Record<string, string>> = {
+    link: { searching: 'Link searching', locked: 'Link', freewheel: 'Link freewheel', lost: 'Link lost' },
+    midiClock: { searching: 'Clock searching', locked: 'Clock', freewheel: 'Clock freewheel', lost: 'Clock lost' },
+  };
+  const chaseSettings = timecodeChase.settings;
+  $: tcSource = $chaseSettings.source;
+  $: tcText = (BEAT_LOCK_TEXT[tcSource] ?? LOCK_TEXT)[tc.lock] ?? tc.lock;
+  $: tcSourceName = tcSource === 'link' ? 'Link' : 'MIDI clock';
+  $: tcMismatchText = tc.mismatch && tc.sourceBpm !== null && tc.showBpm !== null
+    ? `${tcSourceName} is at ${tc.sourceBpm.toFixed(1)} BPM, the show's map at ${tc.showBpm.toFixed(1)} BPM. Still following; the audio re-syncs as it drifts.`
+    : '';
 
   // ── Audio output state ───────────────────────────────────────────────────
   // The clip-audio master is a persisted, APP-WIDE control whose only other UI
@@ -276,7 +291,24 @@
   $: labelWidth = hasTracks ? TRACK_HEADER_WIDTH : 108;
   // The bound clientHeight keeps its last value after the inspector
   // unmounts, so gate it on the selection rather than trusting the binding.
-  $: inspectorVisible = !!(selectedPreset || selectedAudio || selectedTransitionClip || selectedMarker || layerClipInspector || selectedTrack);
+  $: selectedTempo = state.selection?.kind === 'tempo';
+  // "Detect tempo" on an audio track.
+  let detectingTempo = false;
+  let tempoNote: { ok: true; bpm: number } | { ok: false; reason: string } | null = null;
+  $: if (state.selection?.kind !== 'audio') tempoNote = null;
+  async function detectTempoFrom(trackId: string) {
+    detectingTempo = true;
+    tempoNote = null;
+    const result = await detectShowTempo(trackId);
+    detectingTempo = false;
+    tempoNote = result.ok ? { ok: true, bpm: Math.round(result.bpm * 10) / 10 } : { ok: false, reason: result.reason };
+  }
+  // Bars ruler: bar lines (and beats, when they are far enough apart) run
+  // down through the lanes, so clips can be lined up by eye.
+  $: barLines = state.rulerMode === 'bars' && state.tempo
+    ? rulerTicks(state.tempo, Math.max(0, viewStart), Math.min(rulerSeconds, viewEnd), zoom, 18).map((t) => ({ x: Math.round(t.time * zoom), bar: t.kind === 'bar' }))
+    : [];
+  $: inspectorVisible = !!(selectedPreset || selectedAudio || selectedTransitionClip || selectedMarker || layerClipInspector || selectedTrack || selectedTempo);
   // With layer tracks the inspector strip is always there (a hint when
   // nothing is selected) and its room is reserved: selecting a clip must not
   // grow the tray, or the lanes jump under the pointer mid-drag.
@@ -963,6 +995,9 @@
       <span class="t-time">{formatPrecise(state.currentTime)}</span>
       <span class="t-sep">/</span>
       <span class="t-total" title="Total programmed show length">{formatPrecise(state.duration)}</span>
+      {#if state.tempo}
+        <span class="t-bars" title="Bar, beat and sixteenth at the playhead" data-show-bars-readout>{formatBarsBeats(state.tempo, state.currentTime, true)}</span>
+      {/if}
 
       <span class="t-divider"></span>
 
@@ -1036,6 +1071,16 @@
 
       <button class="t-btn" onclick={() => showTimeline.setZoom(zoom / 1.4)} disabled={zoom <= SHOW_MIN_ZOOM} title="Zoom out">−</button>
       <button class="t-btn" onclick={() => showTimeline.setZoom(zoom * 1.4)} disabled={zoom >= SHOW_MAX_ZOOM} title="Zoom in">+</button>
+      <button
+        class="t-chip t-tempo"
+        class:active={selectedTempo}
+        class:has-map={!!state.tempo}
+        onclick={() => showTimeline.select(selectedTempo ? null : { kind: 'tempo', id: 'tempo' })}
+        title="The show's tempo map: BPM, time signature and where bar 1 is"
+        data-show-tempo
+      >
+        {state.tempo ? `♩ ${Math.round(state.tempo.segments[0].bpm * 10) / 10}` : 'Tempo'}
+      </button>
       <button class="t-chip" class:active={state.snapEnabled} onclick={() => showTimeline.setSnapEnabled(!state.snapEnabled)} title="Snap to the grid, clip edges, the playhead and markers (N). Hold {MOD_KEY} while dragging to move freely." data-show-snap>
         Snap
       </button>
@@ -1105,8 +1150,11 @@
       </button>
       {#if tc.lock !== 'off'}
         <span class="t-tc" class:locked={tc.lock === 'locked'} class:freewheel={tc.lock === 'freewheel'} class:lost={tc.lock === 'lost'} title={tc.error ?? `Timecode ${tc.lock}${tc.rate ? `, ${tc.rate} fps` : ''}`} data-show-tc-badge>
-          <span class="t-tc-dot"></span>{LOCK_TEXT[tc.lock] ?? tc.lock}{tc.label ? ` ${tc.label}` : ''}
+          <span class="t-tc-dot"></span>{tcText}{tc.label ? ` ${tc.label}` : ''}{tc.waiting ? ' · next bar' : ''}
         </span>
+        {#if tcMismatchText}
+          <span class="t-tc-warn" title={tcMismatchText} data-show-tempo-mismatch>⚠ {tcSourceName} {tc.sourceBpm?.toFixed(1)} · show {tc.showBpm?.toFixed(1)} BPM</span>
+        {/if}
       {/if}
       <input
         class="hidden-file"
@@ -1290,6 +1338,10 @@
           {/each}
         </div>
 
+        {#each barLines as line}
+          <div class="show-bar-line" class:beat={!line.bar} style="left: {line.x}px; top: {RULER_HEIGHT}px; height: {laneStackH - RULER_HEIGHT}px"></div>
+        {/each}
+
         {#each cues.markers as marker (marker.id)}
           <div class="show-marker-line" class:selected={marker.id === selectedMarkerId} style="left: {marker.time * zoom}px; height: {laneStackH}px"></div>
         {/each}
@@ -1343,6 +1395,15 @@
         <button class="insp-delete" onclick={deleteSelected}>Delete</button>
         <button aria-label="Close marker inspector" class="insp-close" onclick={() => (selectedMarkerId = null)}>×</button>
       </div>
+    {:else if selectedTempo}
+      <div class="insp-wrap" bind:clientHeight={inspectorH}>
+        <ShowTempoInspector
+          tempo={state.tempo}
+          playhead={state.currentTime}
+          audioTracks={state.audioTracks}
+          onclose={() => showTimeline.select(null)}
+        />
+      </div>
     {:else if layerClipInspector}
       <div class="insp-wrap" bind:clientHeight={inspectorH}>
         <ShowClipInspector
@@ -1356,10 +1417,6 @@
     {:else if selectedTrack}
       <div class="insp-wrap" bind:clientHeight={inspectorH}>
         <ShowTrackInspector track={selectedTrack} onStage={selectedTrackOnStage} onclose={() => showTimeline.select(null)} />
-      </div>
-    {:else if hasTracks}
-      <div class="show-inspector insp-idle">
-        <span class="insp-hint">Click a clip to edit it, or a track name for its settings. S splits at the playhead, Shift+Delete closes the gap, ? lists every key.</span>
       </div>
     {:else if selectedPreset}
       <div class="show-inspector" bind:clientHeight={inspectorH}>
@@ -1508,9 +1565,22 @@
         >{selectedAudio.muted ? 'Muted' : 'Mute'}</button>
         {#if !selectedAudio.url}
           <span class="insp-warn">Media missing — re-add the file</span>
+        {:else}
+          <button
+            class="insp-chip"
+            disabled={detectingTempo}
+            onclick={() => detectTempoFrom(selectedAudio.id)}
+            title="Find this song's tempo and beats and make them the show's grid"
+            data-audio-detect-tempo
+          >{detectingTempo ? 'Listening…' : 'Detect tempo'}</button>
+          {#if tempoNote}<span class="insp-tempo-note" class:warn={!tempoNote.ok} data-audio-tempo-note>{#if tempoNote.ok}{tempoNote.bpm} BPM: the grid follows the song{:else if tempoNote.reason === 'no-pulse'}No steady beat found{:else}This track could not be read{/if}</span>{/if}
         {/if}
         <button class="insp-delete" onclick={deleteSelected}>Delete</button>
         <button aria-label="Close selected timeline item" class="insp-close" onclick={() => showTimeline.select(null)}>×</button>
+      </div>
+    {:else if hasTracks}
+      <div class="show-inspector insp-idle">
+        <span class="insp-hint">Click a clip to edit it, or a track name for its settings. S splits at the playhead, Shift+Delete closes the gap, ? lists every key.</span>
       </div>
     {/if}
 
@@ -1836,6 +1906,33 @@
     z-index: 3;
   }
   .show-marker-line.selected { background: #f0c674; }
+  .show-bar-line {
+    position: absolute;
+    width: 1px;
+    background: rgba(255, 255, 255, 0.07);
+    pointer-events: none;
+    z-index: 2;
+  }
+  .show-bar-line.beat { background: rgba(255, 255, 255, 0.03); }
+  .t-bars {
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
+    font-size: var(--ga-text-meta, 11px);
+    color: #FFD96B;
+    min-width: 52px;
+  }
+  .t-tempo.has-map { font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); }
+  .t-tc-warn {
+    display: inline-flex;
+    align-items: center;
+    height: var(--ga-control-h, 26px);
+    box-sizing: border-box;
+    padding: 0 8px;
+    font-size: var(--ga-text-meta, 11px);
+    color: #f0c674;
+    border: 1px solid rgba(240, 198, 116, 0.45);
+    border-radius: var(--ga-r-hard, 4px);
+    background: rgba(240, 198, 116, 0.08);
+  }
 
   /* Timecode lock badge in the transport. */
   .t-tc {
@@ -2281,6 +2378,8 @@
   .insp-chip:hover:not(.on) { border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24)); color: var(--ga-ink-0, #fff); }
   .insp-chip.on { color: var(--ga-selection-ink, #e0e8ff); background: var(--ga-selection-bg, #1f3170); border-color: var(--ga-selection-line, #5278ff); }
   .insp-warn { color: var(--ga-rec, #FF6B6B); font-size: var(--ga-text-meta, 11px); }
+  .insp-tempo-note { color: var(--ga-ink-2, #888); font-size: var(--ga-text-meta, 11px); }
+  .insp-tempo-note.warn { color: #f0c674; }
   .insp-delete {
     margin-left: auto;
     height: var(--ga-control-h-sm, 22px);

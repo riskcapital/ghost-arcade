@@ -1,9 +1,14 @@
 <script lang="ts">
   /**
    * Settings > Show Control > Timecode. Saved with the project.
+   *
+   * "Follow" picks what the show chases: timecode (LTC, MTC), or a musical
+   * clock (Ableton Link, MIDI clock with Song Position). The musical clocks
+   * count bars, so they are offered once the show has a tempo map.
    */
   import { onMount } from 'svelte';
-  import { timecodeChase, type TimecodeSettings } from '../../show/timecode/timecodeChase';
+  import { isBeatSource, timecodeChase, type TimecodeSettings } from '../../show/timecode/timecodeChase';
+  import { showTimeline } from '../../stores/showTimeline';
   import {
     TIMECODE_RATES,
     formatSecondsAsTimecode,
@@ -17,6 +22,9 @@
   $: s = $settings;
   $: st = $status;
   $: displayRate = (s.rate === 'auto' ? st.rate ?? 25 : s.rate) as TimecodeRate;
+  $: hasMap = !!$showTimeline.tempo;
+  $: beats = isBeatSource(s.source);
+  $: sourceName = s.source === 'link' ? 'Link' : 'MIDI clock';
 
   let audioInputs: MediaDeviceInfo[] = [];
   let midiInputs: Array<{ id: string; name: string }> = [];
@@ -75,25 +83,40 @@
   <div class="tc-status" class:locked={st.lock === 'locked'} class:freewheel={st.lock === 'freewheel'} class:lost={st.lock === 'lost'} data-tc-status={st.lock}>
     <span class="tc-dot"></span>
     <span class="tc-lock">{LOCK_LABEL[st.lock] ?? st.lock}{st.lock === 'locked' && !st.running ? ' (parked)' : ''}</span>
-    <span class="tc-label">{st.label ?? '--:--:--:--'}</span>
-    {#if st.rate}<span class="tc-rate">{rateLabel(st.rate, st.dropFrame)}</span>{/if}
-    <span class="tc-show">show {st.showTime === null ? '--' : formatSecondsAsTimecode(st.showTime, displayRate)}</span>
-    <span class="tc-frames">{st.framesReceived} frames</span>
+    {#if beats}
+      <span class="tc-label">{st.label ? `bar ${st.label}` : '--.--'}</span>
+      {#if st.sourceBpm !== null}<span class="tc-rate" data-tc-source-bpm>{sourceName} {st.sourceBpm.toFixed(1)} BPM</span>{/if}
+      {#if st.showBpm !== null}<span class="tc-show">show map {st.showBpm.toFixed(1)} BPM</span>{/if}
+      {#if st.waiting}<span class="tc-show">starts on the next Link bar</span>{/if}
+    {:else}
+      <span class="tc-label">{st.label ?? '--:--:--:--'}</span>
+      {#if st.rate}<span class="tc-rate">{rateLabel(st.rate, st.dropFrame)}</span>{/if}
+      <span class="tc-show">show {st.showTime === null ? '--' : formatSecondsAsTimecode(st.showTime, displayRate)}</span>
+      <span class="tc-frames">{st.framesReceived} frames</span>
+    {/if}
     {#if s.source === 'ltc'}
       <span class="tc-meter" title="LTC input level"><span style="width: {Math.min(100, st.inputPeak * 100)}%"></span></span>
     {/if}
   </div>
   {#if st.error}<p class="tc-error">{st.error}</p>{/if}
+  {#if beats && !hasMap}
+    <p class="tc-error">The show has no tempo map, so there are no bars to follow. Add one with the show's Tempo button.</p>
+  {/if}
+  {#if st.mismatch && st.sourceBpm !== null && st.showBpm !== null}
+    <p class="tc-warn" data-tc-mismatch>{sourceName} is at {st.sourceBpm.toFixed(1)} BPM and the show's map at {st.showBpm.toFixed(1)} BPM. The show keeps following; its audio re-syncs as it drifts.</p>
+  {/if}
 
   <div class="sc-row">
     <div class="sc-label">
-      <span class="sc-title">Source</span>
-      <span class="sc-hint">LTC is SMPTE timecode on an audio input. MTC arrives over MIDI.</span>
+      <span class="sc-title">Follow</span>
+      <span class="sc-hint">LTC is SMPTE timecode on an audio input; MTC arrives over MIDI. Link and MIDI clock follow bars and beats, so they need the show's tempo map.</span>
     </div>
     <select value={s.source} onchange={(e) => patch({ source: e.currentTarget.value as TimecodeSettings['source'] })} data-tc-source>
       <option value="off">Off</option>
       <option value="ltc">LTC (audio input)</option>
       <option value="mtc">MTC (MIDI)</option>
+      <option value="link" disabled={!hasMap && s.source !== 'link'}>Ableton Link</option>
+      <option value="midiClock" disabled={!hasMap && s.source !== 'midiClock'}>MIDI clock</option>
     </select>
   </div>
 
@@ -114,7 +137,7 @@
         <option value="1">Right</option>
       </select>
     </div>
-  {:else if s.source === 'mtc'}
+  {:else if s.source === 'mtc' || s.source === 'midiClock'}
     <div class="sc-row">
       <div class="sc-label"><span class="sc-title">MIDI input</span></div>
       <select value={s.mtcInputId} onchange={(e) => patch({ mtcInputId: e.currentTarget.value })}>
@@ -126,6 +149,32 @@
     </div>
   {/if}
 
+  {#if beats}
+    <div class="sc-row">
+      <div class="sc-label">
+        <span class="sc-title">Bar 1 of the source</span>
+        <span class="sc-hint">The show bar where the {sourceName === 'Link' ? 'Link start' : 'song start of the DAW'} lands.</span>
+      </div>
+      <div class="tc-inline">
+        <span>show bar</span>
+        <input type="number" step="1" value={s.barOffset + 1} onchange={(e) => patch({ barOffset: Math.round(parseFloat(e.currentTarget.value) || 1) - 1 })} data-tc-bar-offset />
+      </div>
+    </div>
+    {#if s.source === 'link'}
+      <div class="sc-row">
+        <div class="sc-label">
+          <span class="sc-title">Start</span>
+          <span class="sc-hint">Follow the session's start and stop, or start on the show's own Play at the next Link bar.</span>
+        </div>
+        <select value={s.linkMode} onchange={(e) => patch({ linkMode: e.currentTarget.value as TimecodeSettings['linkMode'] })} data-tc-link-mode>
+          <option value="startStop">With the Link session</option>
+          <option value="quantisedStart">Play waits for the next bar</option>
+        </select>
+      </div>
+    {/if}
+  {/if}
+
+  {#if !beats}
   <div class="sc-row">
     <div class="sc-label">
       <span class="sc-title">Frame rate</span>
@@ -156,6 +205,7 @@
       {#if offsetError}<span class="tc-error">{offsetError}</span>{/if}
     </div>
   </div>
+  {/if}
 
   <div class="sc-row">
     <div class="sc-label">
@@ -208,6 +258,7 @@
   .tc-meter { width: 80px; height: 6px; background: rgba(255, 255, 255, 0.08); border-radius: 3px; overflow: hidden; }
   .tc-meter span { display: block; height: 100%; background: #5fdc76; }
   .tc-error { color: #ff8a80; font-size: var(--ga-text-meta, 11px); margin: 0; }
+  .tc-warn { color: #f0c674; font-size: var(--ga-text-meta, 11px); margin: 0; }
   .tc-offset input { width: 110px; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); }
   .tc-inline { display: flex; align-items: center; gap: 6px; }
   .tc-inline input { width: 64px; }

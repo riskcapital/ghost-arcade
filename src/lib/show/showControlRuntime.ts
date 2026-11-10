@@ -8,7 +8,8 @@
  * - Timeline markers: the playing show timeline fires the cues its markers
  *   name as the playhead crosses them.
  * - The timecode chase sink: drives the show timeline and fires cues that
- *   carry a timecode.
+ *   carry a timecode. MIDI clock and Link follow the show's tempo map.
+ * - The playing show drives the launch clock (beat-reactive effects).
  * - The schedule runner, ticking once a second on the wall clock.
  * - Projector status polling while any projector is configured.
  */
@@ -19,13 +20,14 @@ import { projectors } from './projectors';
 import { timecodeChase } from './timecode/timecodeChase';
 import { ScheduleRunner, createScheduleHooks, showSchedule } from './scheduler';
 import { onShowControlHydrate } from './showControlPersistence';
-import { showTimeline } from '../stores/showTimeline';
+import { showTimeline, setShowChaseTransportHandler } from '../stores/showTimeline';
+import { installShowLaunchClock } from './sync/showLaunchClock';
 import { project, compositions } from '../stores/layers';
 import { snapshots } from '../stores/snapshots';
 import { macros } from '../stores/macros';
 import { vjClipLauncher } from '../stores/vjClipLauncher';
 import { settings } from '../stores/settings';
-import { launchClockTempo } from '../stores/launchClock';
+import { launchClockTempo, launchClockPosition, launchClockFollowsShow } from '../stores/launchClock';
 import { midiRouter, registerShowControl } from '../midi/midiRouter';
 import { runAsLiveControl } from '../stores/historyHooks';
 
@@ -163,6 +165,17 @@ export function installShowControl(): () => void {
     }
   });
   cleanups.push(() => timecodeChase.setSink(null));
+  // MIDI clock and Link need the show's map and playhead.
+  timecodeChase.setShowContext(() => {
+    const s = get(showTimeline);
+    return { map: s.tempo, playhead: s.currentTime, playing: s.isPlaying };
+  });
+  cleanups.push(() => timecodeChase.setShowContext(null));
+  setShowChaseTransportHandler((op) => timecodeChase.transport(op));
+  cleanups.push(() => setShowChaseTransportHandler(null));
+
+  // ── Show drives the launch clock ───────────────────────────────────
+  cleanups.push(installShowLaunchClock());
   cleanups.push(timecodeChase.settings.subscribe((s) => {
     if (s.source === 'off' || !s.chaseTimeline) showTimeline.releaseChase();
   }));
@@ -196,7 +209,7 @@ export function installShowControl(): () => void {
     const w = window as unknown as { __ghostArcade?: Record<string, unknown> };
     w.__ghostArcade = {
       ...(w.__ghostArcade ?? {}),
-      showControl: { cueList, projectors, timecodeChase, showSchedule, getScheduleRunner },
+      showControl: { cueList, projectors, timecodeChase, showSchedule, getScheduleRunner, launchClock: { launchClockPosition, launchClockFollowsShow } },
     };
   } catch { /* sealed */ }
 

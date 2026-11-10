@@ -3025,7 +3025,7 @@
         <section class="settings-section">
           <h3>Timecode</h3>
           <p class="settings-hint">
-            Chase SMPTE timecode from LTC on an audio input or MTC over MIDI. The show timeline follows it and its markers fire their cues; cues with a timecode fire as it passes. Saved with the project.
+            Chase SMPTE timecode from LTC on an audio input or MTC over MIDI, or follow Ableton Link or MIDI clock once the show has a tempo map. The show timeline follows it and its markers fire their cues; cues with a timecode fire as it passes. Saved with the project.
           </p>
           <ShowControlSettings section="timecode" />
         </section>

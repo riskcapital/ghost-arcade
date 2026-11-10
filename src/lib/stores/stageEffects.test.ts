@@ -6,7 +6,7 @@ vi.mock('./audio', async () => {
   harness.audio = writable({ isActive: false });
   return { audioStore: harness.audio };
 });
-vi.mock('./launchClock', () => ({ launchClockPosition: () => ({ beat: harness.beat, beatMs: 500 }), launchClockFollowsLink: () => false }));
+vi.mock('./launchClock', () => ({ launchClockPosition: () => ({ beat: harness.beat, beatMs: 500 }), launchClockFollowsLink: () => false, launchClockFollowsShow: () => false }));
 vi.mock('../audio/visualAudio', () => ({ getVisualAudioSnapshot: () => ({ level: 0 }) }));
 import { evaluateStageEffectForScreen, clearScreenStageEffectState, syncStageEffectsFromSurfaces,
   setStageEffectsManualTime, stageEffectsRuntime } from './stageEffects';

@@ -182,6 +182,13 @@ describe('snapShowTime', () => {
     expect(snapShowTime(10.26, [], { enabled: true, tolerance: 0.1, nearestGrid: thirds })).toBeCloseTo(10.333333, 5);
     // Edges still win when nearer.
     expect(snapShowTime(10.3, [10.31], { enabled: true, tolerance: 0.1, nearestGrid: thirds })).toBeCloseTo(10.31, 6);
+    // A musical grid is not magnetic: far from any line it still lands on the nearest.
+    const beats = (t: number) => Math.round(t / 0.5) * 0.5;
+    expect(snapShowTime(8.2, [], { enabled: true, tolerance: 0.05, nearestGrid: beats })).toBe(8);
+    // An edge out of reach does not beat the grid; one in reach and nearer does.
+    expect(snapShowTime(8.2, [8.3], { enabled: true, tolerance: 0.05, nearestGrid: beats })).toBe(8);
+    expect(snapShowTime(8.2, [8.22], { enabled: true, tolerance: 0.05, nearestGrid: beats })).toBe(8.22);
+    expect(snapShowTime(8.2, [], { enabled: false, tolerance: 0.05, nearestGrid: beats })).toBe(8.2);
   });
 });
 

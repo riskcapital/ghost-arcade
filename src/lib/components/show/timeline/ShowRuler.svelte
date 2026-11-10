@@ -1,7 +1,8 @@
 <script lang="ts">
   /**
    * The show ruler's ticks, in time (m:ss) or, with a tempo map, in bars and
-   * beats. Only the visible stretch is drawn.
+   * beats. Only the visible stretch is drawn. In bars, bar 1 is marked (it is
+   * what "Bar 1 here" moves) and beats carry their number once there is room.
    */
   import type { ShowTempoMap } from '../../../types';
   import { rulerTicks } from '../../../show/tempoMap';
@@ -27,10 +28,20 @@
   const ticks = $derived.by(() => {
     const t0 = Math.max(0, viewStart);
     const t1 = Math.min(rulerSeconds, viewEnd);
-    const out: { x: number; label?: string; major: boolean; minor?: boolean }[] = [];
+    const out: { x: number; label?: string; major: boolean; minor?: boolean; first?: boolean; beatLabel?: string }[] = [];
     if (mode === 'bars' && tempo) {
-      for (const tick of rulerTicks(tempo, t0, t1, zoom)) {
-        out.push({ x: tick.time * zoom, label: tick.label, major: tick.kind === 'bar', minor: tick.kind !== 'bar' });
+      const ticks = rulerTicks(tempo, t0, t1, zoom);
+      // Beat numbers once beats are ~30 px apart.
+      const beatPx = ticks.length > 1 ? Math.min(...ticks.slice(1).map((t, i) => t.time - ticks[i].time)) * zoom : 0;
+      for (const tick of ticks) {
+        out.push({
+          x: tick.time * zoom,
+          label: tick.label,
+          major: tick.kind === 'bar',
+          minor: tick.kind !== 'bar',
+          first: tick.kind === 'bar' && tick.bar === 1,
+          beatLabel: tick.kind === 'beat' && beatPx >= 30 ? String(tick.beat) : undefined,
+        });
       }
       return out;
     }
@@ -45,8 +56,9 @@
 </script>
 
 {#each ticks as tick}
-  <div class="ruler-tick" class:major={tick.major} class:minor={tick.minor} style:left="{tick.x}px">
+  <div class="ruler-tick" class:major={tick.major} class:minor={tick.minor} class:first={tick.first} style:left="{tick.x}px" data-ruler-bar={tick.first ? '1' : undefined}>
     {#if tick.label}<span class="ruler-label">{tick.label}</span>{/if}
+    {#if tick.beatLabel}<span class="ruler-beat">{tick.beatLabel}</span>{/if}
   </div>
 {/each}
 
@@ -60,6 +72,17 @@
   }
   .ruler-tick.major { border-left-color: rgba(255, 255, 255, 0.2); }
   .ruler-tick.minor { top: 55%; height: 45%; }
+  .ruler-tick.first { border-left-color: rgba(255, 217, 107, 0.75); }
+  .ruler-tick.first .ruler-label { color: #FFD96B; font-weight: 700; }
+  .ruler-beat {
+    position: absolute;
+    top: -1px;
+    left: 2px;
+    font-size: 8px;
+    line-height: 1;
+    color: var(--ga-ink-3, #4c4c56);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
+  }
   .ruler-label {
     position: absolute;
     top: 4px;

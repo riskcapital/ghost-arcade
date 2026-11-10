@@ -175,7 +175,7 @@ export interface ShowTimelineSelection {
   /** 'transition' selects the junction element sitting on `id`'s LEFT edge —
    *  the transition is stored on that clip, but it is a separate selectable
    *  object on the timeline with its own inspector. */
-  kind: 'audio' | 'preset' | 'transition' | 'layerClip' | 'track' | 'keyframe';
+  kind: 'audio' | 'preset' | 'transition' | 'layerClip' | 'track' | 'keyframe' | 'tempo';
   id: string;
 }
 
@@ -311,7 +311,7 @@ export function snapShowTime(
     grid?: number;
     tolerance: number;
     /** The nearest line of a musical grid (the tempo map). When given it
-     *  replaces the plain seconds grid. */
+     *  replaces the plain (magnetic) seconds grid, and always applies. */
     nearestGrid?: (time: number) => number;
   },
 ): number {
@@ -329,8 +329,14 @@ export function snapShowTime(
     }
   };
   if (opts.nearestGrid) {
+    // A musical grid is not magnetic: with snap on, things land on the
+    // nearest line wherever they are dropped, as in a DAW. Edges, the
+    // playhead and markers still win when they are within reach and nearer.
     const line = Number(opts.nearestGrid(t));
-    if (Number.isFinite(line)) consider(line);
+    if (Number.isFinite(line) && line >= 0) {
+      best = line;
+      bestDelta = Math.min(opts.tolerance, Math.abs(line - t));
+    }
   } else if (grid > 0) consider(Math.round(t / grid) * grid);
   consider(0);
   for (const e of edges) consider(e);
@@ -858,6 +864,14 @@ export function setShowSnapEdgeProvider(provider: (() => number[]) | null): void
 /** True while an external clock (timecode chase) owns the playhead. The
  *  RAF transport stays off and play() defers to it. */
 let externalClock = false;
+
+/** Play / Pause / Stop while an external clock owns the playhead go here
+ *  first (Link's quantised start waits for the next Link bar). */
+export type ShowChaseTransportHandler = (op: 'play' | 'pause' | 'stop') => boolean;
+let chaseTransportHandler: ShowChaseTransportHandler | null = null;
+export function setShowChaseTransportHandler(handler: ShowChaseTransportHandler | null): void {
+  chaseTransportHandler = handler;
+}
 /** A chased position further than this from the playhead is a jump: the
  *  audio bus hard-seeks instead of rate-nudging toward it. */
 export const SHOW_CHASE_RESEEK_SECONDS = 0.25;
@@ -1283,7 +1297,11 @@ export const showTimeline = {
 
   play() {
     const s = get(store);
-    if (s.isPlaying || externalClock) return;
+    if (externalClock) {
+      chaseTransportHandler?.('play');
+      return;
+    }
+    if (s.isPlaying) return;
     // An empty show has nothing to play — stay completely inert.
     if (s.duration <= 0) return;
     syncAudioWiring(s.audioTracks);
@@ -1307,6 +1325,7 @@ export const showTimeline = {
   },
 
   pause() {
+    if (externalClock) chaseTransportHandler?.('pause');
     cancelRaf();
     store.update((s) => ({ ...s, isPlaying: false }));
     seekGeneration++;
@@ -1315,6 +1334,7 @@ export const showTimeline = {
   },
 
   stop() {
+    if (externalClock) chaseTransportHandler?.('stop');
     cancelRaf();
     // Clearing activeClipId is what makes the next play() re-fire the
     // opening preset even if the operator hand-loaded something else.
