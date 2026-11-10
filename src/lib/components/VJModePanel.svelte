@@ -42,6 +42,7 @@
   import { STAGE_EFFECT_CATALOG, getEffectDef } from '../stores/stageEffects';
   import { surfaceStore, activeSurface } from '../stores/surface';
   import { synthVisionStore } from '../stores/synthVision';
+  import { liveSourceIdsInUse } from '../vj/liveSourcesInUse';
   import type { StageEffectType, IntegratedEffectType, IntegratedEffectSource, MediaSource } from '../types';
 
   // Stage Effects tab UX state — which effect type the user has
@@ -1558,6 +1559,33 @@
     vjLiveSources = [];
   }
 
+  /** Close every live input except those a playing clip still shows. */
+  function stopUnusedVjLiveSources(playing: (VJClip | null | undefined)[]) {
+    const used = liveSourceIdsInUse(vjLiveSources, playing);
+    for (const source of vjLiveSources) if (!used.has(source.id)) disposeVjLiveSource(source);
+    vjLiveSources = vjLiveSources.filter((source) => used.has(source.id));
+  }
+
+  /** Clips still playing on either deck. */
+  function playingVjClips(): VJClip[] {
+    const state = get(vjClipLauncher);
+    return [...state.layerStates, ...state.bankBLayerStates].map((ls) => ls.activeClip).filter((c): c is VJClip => !!c);
+  }
+
+  // VJ mode was left while a show takeover kept rows playing: their live
+  // inputs and Performer stay until the takeover no longer needs the VJ
+  // (the launcher stops the rows then), unless VJ mode is open again.
+  let leaveCleanupPending = false;
+  $: if (leaveCleanupPending && ($vjClipLauncher.isOpen || !$vjClipLauncher.takeoverLive)) finishLeaveCleanup($vjClipLauncher.isOpen);
+  function finishLeaveCleanup(reopened: boolean) {
+    leaveCleanupPending = false;
+    if (reopened) return;
+    try { stopUnusedVjLiveSources(playingVjClips()); } catch (err) { console.warn('[VJPanel] live source cleanup failed:', err); }
+    try { vjClipLauncher.clearSynthVisionClips(); } catch (err) { console.warn('[VJPanel] synthvision cleanup failed:', err); }
+    showPerformer = false;
+    performerStarted = false;
+  }
+
   function closeVjScreenPicker() {
     vjScreenPickerOpen = false;
     vjScreenPickerSources = [];
@@ -2339,19 +2367,30 @@
     try { modulationEngine.stop(); } catch (err) { console.warn('[VJPanel] modulation stop failed:', err); }
     try { performanceStore.stop(); } catch (err) { console.warn('[VJPanel] performance stop failed:', err); }
     try { releaseAllStageEffectHolds(); } catch (err) { console.warn('[VJPanel] stage effect hold cleanup failed:', err); }
-    try { stopAllVjLiveSources(); } catch (err) { console.warn('[VJPanel] live source cleanup failed:', err); }
+    // Only rows a show takeover is showing are still playing now. Their
+    // live inputs (camera, screen, NDI, Spout) and, on Performer's row,
+    // Performer itself keep running until the takeover hands them back.
+    const kept = playingVjClips();
+    const performerRow = $synthVisionStore.assignedLayer;
+    const state = get(vjClipLauncher);
+    const keepPerformer = performerStarted && performerRow !== null
+      && (!!state.layerStates[performerRow]?.activeClip || !!state.bankBLayerStates[performerRow]?.activeClip);
+    try { stopUnusedVjLiveSources(kept); } catch (err) { console.warn('[VJPanel] live source cleanup failed:', err); }
     try { vjClipLauncher.clearRuntimeSourceCache(); } catch (err) { console.warn('[VJPanel] runtime source cache cleanup failed:', err); }
-    try {
-      // Clear synthvision clips after VJ is no longer live so stale
-      // performer textures cannot keep feeding the renderer.
-      vjClipLauncher.clearSynthVisionClips();
-      console.log('[VJPanel] closeVJMode: synthvision clips cleared');
-    } catch (err) {
-      console.warn('[VJPanel] synthvision cleanup failed:', err);
+    if (!keepPerformer) {
+      try {
+        // Clear synthvision clips after VJ is no longer live so stale
+        // performer textures cannot keep feeding the renderer.
+        vjClipLauncher.clearSynthVisionClips();
+        console.log('[VJPanel] closeVJMode: synthvision clips cleared');
+      } catch (err) {
+        console.warn('[VJPanel] synthvision cleanup failed:', err);
+      }
     }
     showPerformer = false;
-    performerStarted = false;
-    console.log('[VJPanel] closeVJMode: performer destroyed');
+    if (!keepPerformer) performerStarted = false;
+    leaveCleanupPending = kept.length > 0;
+    console.log(`[VJPanel] closeVJMode: performer ${keepPerformer ? 'kept for a show takeover' : 'destroyed'}`);
     console.log('[VJPanel] closeVJMode: VJ closed');
   }
 
@@ -3689,9 +3728,11 @@
     vjClipLauncher.stopLayer(layerIndex, bank);
   }
 
-  // Stop all (always sweeps both decks — store-side stopAll handles both banks)
+  // Stop all (always sweeps both decks — store-side stopAll handles both
+  // banks). The same as vj:stopall: rows a show takeover is showing keep
+  // playing until it hands them back, unless VJ output is live.
   function handleStopAll() {
-    vjClipLauncher.stopAll();
+    vjClipLauncher.stopAllKeepingTakeover();
   }
 
   // Context menu for clip cells

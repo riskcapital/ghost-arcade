@@ -70,7 +70,8 @@ export const appCueExecutor: CueExecutor = {
   recallSnapshot: (slot) => snapshots.recall(slot - 1),
   triggerClip: (deck, layer, column) => vjClipLauncher.triggerClip(layer, column, deck),
   triggerColumn: (deck, column) => vjClipLauncher.triggerColumn(column, deck),
-  stopAllClips: () => vjClipLauncher.stopAll(),
+  // Rows a show takeover is showing keep playing until it hands them back.
+  stopAllClips: () => vjClipLauncher.stopAllKeepingTakeover(),
   setBlackout,
   readValue(target) {
     if (target.kind === 'macro') {

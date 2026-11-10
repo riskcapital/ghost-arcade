@@ -867,7 +867,8 @@ class MidiRouter {
     }
 
     if (layerPart === 'stopall') {
-      if (value > 0) vjClipLauncher.stopAll();
+      // Rows a show takeover is showing keep playing until it hands them back.
+      if (value > 0) vjClipLauncher.stopAllKeepingTakeover();
       return;
     }
 

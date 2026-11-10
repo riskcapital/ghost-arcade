@@ -349,3 +349,35 @@ describe('an offline render', () => {
     timeline.showTimeline.pause();
   });
 });
+
+describe('stop all during a takeover', () => {
+  const shader = (id: string) => ({ id, type: 'shader', name: id, src: `./ISF/${id}.fs`, shaderCode: 'void main(){}' }) as any;
+  const active = () => get(launcher.vjClipLauncher).layerStates.slice(0, 2).map((ls) => ls.activeClip?.id ?? null);
+  const twoRows = () => {
+    launcher.vjClipLauncher.reset();
+    launcher.vjClipLauncher.setClip(0, 0, shader('red'));
+    launcher.vjClipLauncher.setClip(1, 0, shader('blue'));
+    launcher.vjClipLauncher.triggerClipNow(0, 0, 'A');
+    launcher.vjClipLauncher.triggerClipNow(1, 0, 'A');
+  };
+
+  it('vj:stopall keeps the taken-over row until the hand-back', () => {
+    twoRows();
+    path('show:live:1:vja:2', 1);
+    path('vj:stopall', 1);
+    expect(active()).toEqual([null, 'blue']);
+    path('show:release', 1);
+    expect(active()).toEqual([null, null]);
+  });
+
+  it("a cue's Stop all VJ clips keeps the taken-over row until the hand-back", () => {
+    twoRows();
+    const cue = cues.cueList.addCue({ name: 'stop' });
+    cues.cueList.addAction(cue, 'vjStopAll');
+    path('show:live:1:vja:2', 1);
+    cues.cueList.fire(cue, 'go');
+    expect(active()).toEqual([null, 'blue']);
+    path('show:release', 1);
+    expect(active()).toEqual([null, null]);
+  });
+});

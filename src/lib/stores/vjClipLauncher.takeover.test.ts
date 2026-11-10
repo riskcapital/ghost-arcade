@@ -219,3 +219,47 @@ describe('leaving VJ mode during a takeover', () => {
     expect(rows([{ kind: 'group', groupId: 'g' }, { kind: 'group', groupId: 'gone' }])).toEqual({ A: [0, 1], B: [0, 1] });
   });
 });
+
+describe('stop all during a takeover', () => {
+  const playing = () => state().layerStates.slice(0, 3).map((ls) => ls.activeClip?.id ?? null);
+  const threeRows = () => {
+    vjClipLauncher.setClip(0, 0, shader('red'));
+    vjClipLauncher.setClip(1, 0, shader('blue'));
+    vjClipLauncher.setClip(2, 0, shader('green'));
+    for (const row of [0, 1, 2]) vjClipLauncher.triggerClipNow(row, 0, 'A');
+  };
+
+  it('keeps the row a takeover shows and stops it once the takeover no longer shows it', () => {
+    threeRows();
+    vjClipLauncher.setTakeoverLive(true, [{ kind: 'row', deck: 'A', row: 1 }]);
+    vjClipLauncher.stopAllKeepingTakeover();
+    expect(playing()).toEqual([null, 'blue', null]);
+    expect(state().stoppedAll).toBe(false);
+    // The takeover moves to row 3 (nothing playing there): row 2 stops now.
+    vjClipLauncher.setTakeoverLive(true, [{ kind: 'row', deck: 'A', row: 2 }]);
+    expect(playing()).toEqual([null, null, null]);
+    expect(state().stoppedAll).toBe(true);
+  });
+
+  it('at the hand-back, a clip launched on the kept row since keeps playing', () => {
+    threeRows();
+    vjClipLauncher.setClip(1, 1, shader('cyan'));
+    vjClipLauncher.setTakeoverLive(true, [{ kind: 'row', deck: 'A', row: 1 }]);
+    vjClipLauncher.stopAllKeepingTakeover();
+    vjClipLauncher.triggerClipNow(1, 1, 'A');
+    vjClipLauncher.setTakeoverLive(false);
+    expect(playing()).toEqual([null, 'cyan', null]);
+  });
+
+  it("is stopAll with nothing taken over, or with VJ mode's own output live", () => {
+    threeRows();
+    vjClipLauncher.stopAllKeepingTakeover();
+    expect(playing()).toEqual([null, null, null]);
+    expect(state().stoppedAll).toBe(true);
+    threeRows();
+    vjClipLauncher.setLive(true);
+    vjClipLauncher.setTakeoverLive(true, [{ kind: 'row', deck: 'A', row: 1 }]);
+    vjClipLauncher.stopAllKeepingTakeover();
+    expect(playing()).toEqual([null, null, null]);
+  });
+});
