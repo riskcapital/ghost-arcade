@@ -323,3 +323,29 @@ describe('a controller that disconnects', () => {
   });
 });
 
+
+describe('an offline render', () => {
+  it('does not move a pending release on with its own playhead', async () => {
+    const audio = await import('../../audio/visualAudio');
+    cues.cueList.addMarker(3);
+    timeline.showTimeline.addLayerClip(wall, { kind: 'layer', name: 'layer', src: '' } as any, 0, { duration: 30 });
+    timeline.showTimeline.seek(1);
+    timeline.showTimeline.play();
+    path('show:live:1:vja:1', 1);
+    takeover.liveTakeover.release('all', { mode: 'marker', fadeSeconds: 0 });
+    expect(surfaces().wall?.phase).toBe('pendingRelease');
+    expect(surfaces().wall?.release?.at.showTime).toBe(3);
+    audio.setVisualAudioManualTime(0);
+    try {
+      // The render seeks the show past the marker on its own clock.
+      timeline.showTimeline.seek(5);
+      expect(surfaces().wall?.phase).toBe('pendingRelease');
+    } finally {
+      audio.setVisualAudioManualTime(null);
+    }
+    // Back on the live clock, the show past the marker hands back.
+    timeline.showTimeline.seek(5.1);
+    expect(surfaces().wall).toBeUndefined();
+    timeline.showTimeline.pause();
+  });
+});

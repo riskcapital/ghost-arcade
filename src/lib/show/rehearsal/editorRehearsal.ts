@@ -12,6 +12,7 @@ import { showTimeline } from '../../stores/showTimeline';
 import { project } from '../../stores/layers';
 import { cueList } from '../cueList';
 import { liveTakeover, takeoverSummary } from '../takeover/liveTakeover';
+import { holdTakeoverForRender, releaseTakeoverRenderHolds } from '../../stores/takeoverFrame';
 import { clipAudioBus } from '../../audio/clipAudioBus';
 import { invoke } from '../../bridge';
 import { showMuxTracks } from '../showAudioExport';
@@ -216,9 +217,13 @@ export function installEditorRehearsal(): () => void {
     clipAudioBus.setOutputDelay(alive && audioDelay.enabled ? audioDelay.seconds : 0);
   };
 
+  // A Render rehearsal's recording leaves a live takeover out of the
+  // picture while it runs (one hold per recording; all go with the window).
+  const RENDER_HOLD = 'rehearsal-render:';
   const setAlive = (next: boolean) => {
     if (next === alive) return;
     alive = next;
+    if (!alive) releaseTakeoverRenderHolds(RENDER_HOLD);
     if (alive) {
       publisher.reset();
       publishTimer = setInterval(() => {
@@ -311,6 +316,7 @@ export function installEditorRehearsal(): () => void {
         break;
       }
       case 'rec-audio-start': {
+        if (msg.render) holdTakeoverForRender(RENDER_HOLD + msg.id, true);
         const sidecar = startRecordingAudioSidecar();
         const s = get(showTimeline);
         sessions.set(msg.id, {
@@ -321,11 +327,13 @@ export function installEditorRehearsal(): () => void {
         break;
       }
       case 'rec-audio-cancel': {
+        holdTakeoverForRender(RENDER_HOLD + msg.id, false);
         sessions.get(msg.id)?.sidecar?.discard();
         sessions.delete(msg.id);
         break;
       }
       case 'rec-audio-finish':
+        holdTakeoverForRender(RENDER_HOLD + msg.id, false);
         void finishRecording(msg).then((result) => {
           console.info(`[Rehearsal] stage recording sound: ${result.mode}${result.error ? ` (${result.error})` : ''}`);
           post({ type: 'rec-audio-result', id: msg.id, result });
@@ -363,10 +371,16 @@ export function installEditorRehearsal(): () => void {
     }
   }
   const unsubCues = cueList.subscribe(() => publish());
+  // The stage's LIVE pill and Return follow a takeover at once, not on the
+  // next 20 Hz publish. The store changes only on an engage, a release or a
+  // phase change (not per fade frame), so this is cheap.
+  const unsubTakeover = liveTakeover.subscribe(() => publish());
 
   return () => {
     unsubShow();
     unsubCues();
+    unsubTakeover();
+    releaseTakeoverRenderHolds(RENDER_HOLD);
     for (const session of sessions.values()) session.sidecar?.discard();
     sessions.clear();
     if (publishTimer) clearInterval(publishTimer);

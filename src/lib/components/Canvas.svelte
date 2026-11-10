@@ -7,7 +7,7 @@
   import { compositionTransition } from '../stores/compositionTransition';
   import { buildCompositionTransitionLayers } from '../renderer/compositionTransitionLayers';
   import { showTrackFrame, showClipSources } from '../stores/showTrackFrame';
-  import { takeoverFrame, takeoverMediaSources } from '../stores/takeoverFrame';
+  import { takeoverFrame, takeoverMediaSources, takeoverRenderHeld } from '../stores/takeoverFrame';
   import { buildTakeoverScene } from '../show/takeover/takeoverScene';
   import { showTimeline as showTimelineStore } from '../stores/showTimeline';
   import { buildShowTrackScene, ShowTrackSceneCache } from '../show/tracks/showTrackScene';
@@ -94,7 +94,7 @@
   import { audioAnalyzer } from '../audio/analyzer';
   import { multiStemAnalyzer } from '../audio/multiStemAnalyzer';
   import { StemRouter } from '../audio/stemRouter';
-  import { getVisualAudioSnapshot } from '../audio/visualAudio';
+  import { getVisualAudioSnapshot, isVisualAudioManualClock } from '../audio/visualAudio';
   import { milkdropStore } from '../stores/milkdrop';
   import { hydraStore } from '../stores/hydra';
   import { initStateBroadcast, destroyStateBroadcast } from '$lib/sync/stateBroadcast';
@@ -2215,9 +2215,14 @@
           surfaces: get(project).mapSurfaces,
         };
       };
+      // The live takeover as the scene uses it: none while a render owns the
+      // show (an offline export, or the Stage Sim's Render rehearsal), which
+      // renders the show itself.
+      const sceneTakeoverFrame = () =>
+        isVisualAudioManualClock() || get(takeoverRenderHeld) ? null : get(takeoverFrame);
       // Everything the mapping scene is built from besides the show frame.
       const showSceneDeps = (mappingLive: Layer[]): unknown[] => {
-        const frame = get(takeoverFrame);
+        const frame = sceneTakeoverFrame();
         const deps: unknown[] = [mappingLive, get(project).mapSurfaces, frame];
         if (frame) {
           deps.push(get(showTimelineStore).layerTracks);
@@ -2259,7 +2264,7 @@
         Array.from(get(vjClipTransitions).values(), (entry) =>
           `vj-layer-${entry.layerIndex}${vjState.crossfaderEnabled ? `-${entry.deck}` : ''}`);
       const withTakeover = (list: Layer[]): Layer[] | null => {
-        const frame = get(takeoverFrame);
+        const frame = sceneTakeoverFrame();
         if (!frame) return list;
         const vjState = vjClipLauncherNow();
         return buildTakeoverScene(list, frame, {
@@ -2604,6 +2609,7 @@
       const nativeShowTrackUnsub = showTrackFrame.subscribe(() => scheduleNativeLayersSync());
       // A takeover publishes on engage / release and every fade step.
       const nativeTakeoverUnsub = takeoverFrame.subscribe(() => scheduleNativeLayersSync());
+      const nativeTakeoverHoldUnsub = takeoverRenderHeld.subscribe(() => scheduleNativeLayersSync());
       const handleVjLayersSyncEvent = (event: Event) => {
         const detail = (event as CustomEvent<NativeVjLayersSyncDetail>).detail;
         scheduleNativeLayersSync(
@@ -2636,6 +2642,7 @@
         nativePerformerWorldUnsub();
         nativeShowTrackUnsub();
         nativeTakeoverUnsub();
+        nativeTakeoverHoldUnsub();
         studioFrameUnsub();
         studioCodeUnsub();
         // No scene is showing a studio now, so its frame loop can rest.

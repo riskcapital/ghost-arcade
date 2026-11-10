@@ -125,7 +125,9 @@ export type RehearsalMessage =
   /** `stateVersion`: the arrangement the stage window has (the editor resends a different one). */
   | { type: 'stage-hello'; at: number; stateVersion?: string | null }
   | { type: 'stage-bye' }
-  | { type: 'rec-audio-start'; id: string; at: number }
+  /** `render`: a Render rehearsal; the editor leaves a live takeover out of
+   *  the picture until the recording is finished or cancelled. */
+  | { type: 'rec-audio-start'; id: string; at: number; render?: boolean }
   | { type: 'rec-audio-finish'; id: string; videoPath: string; startedAt: number; durationSeconds: number; latencySeconds: number }
   | { type: 'rec-audio-cancel'; id: string }
   | { type: 'rec-audio-result'; id: string; result: RecAudioResult };

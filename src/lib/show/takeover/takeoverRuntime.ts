@@ -19,6 +19,7 @@ import type { ShowLayerTrack } from '../../types';
 import { showTimeline, onShowTimelineReset } from '../../stores/showTimeline';
 import { vjClipLauncher, type VJTakeoverSample } from '../../stores/vjClipLauncher';
 import { nextLaunchBoundary } from '../../stores/launchClock';
+import { isVisualAudioManualClock } from '../../audio/visualAudio';
 import { takeoverFrame, takeoverMediaSources } from '../../stores/takeoverFrame';
 import { cueList, type CueAction, type CueFireSource } from '../cueList';
 import type { ShowControlAction, ShowTakeoverSourceSpec } from '../../control/showControlPaths';
@@ -255,8 +256,11 @@ export function installTakeoverRuntime(): () => void {
   // Any change to the takeover (engage, release, overlay…).
   disposers.push(liveTakeover.subscribe(() => step()));
   // Every evaluation of the show (inside applyTime: frame-exact boundaries).
+  // Not while an offline render drives the show on its own clock: its
+  // playhead is not where the live show is, and the scene leaves the
+  // takeover out of the render anyway.
   disposers.push(showTimeline.subscribe(() => {
-    if (Object.keys(liveTakeover.state.surfaces).length) step();
+    if (Object.keys(liveTakeover.state.surfaces).length && !isVisualAudioManualClock()) step();
   }));
   disposers.push(() => {
     if (raf !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(raf);
