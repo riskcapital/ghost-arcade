@@ -606,6 +606,11 @@ export class MidiManager {
     // A held pad must release its original deck/page even after navigation.
     if (this.routeControllerGrid(channel, type, number, value, from)) return;
 
+    // Learn, edit and identify mode keep messages from the mappings, but a
+    // release still lets go of a held show takeover.
+    const swallowed = (state.learn.active && !!state.learn.targetPath) || state.editMode || state.identifyMode;
+    if (swallowed && value === 0 && type !== 'pitchbend') midiRouter.routeShowReleases(channel, type, number, from);
+
     // Check if we're in learn mode
     if (state.learn.active && state.learn.targetPath) {
       // For note messages, only learn on Note On (velocity > 0)

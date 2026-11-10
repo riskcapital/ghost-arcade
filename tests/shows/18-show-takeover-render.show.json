@@ -1,0 +1,148 @@
+{
+  "name": "Show timeline: an export leaves a live takeover out",
+  "description": "A track taken over live by a VJ deck row stays on the live output, but an offline render of the show is the show itself: the exported frames show the track's own picture, and the takeover is still live afterwards.",
+  "steps": [
+    {
+      "do": "app.start",
+      "choice": "blank"
+    },
+    {
+      "do": "project.layer",
+      "name": "Wall",
+      "colour": "red"
+    },
+    {
+      "do": "show.open"
+    },
+    {
+      "do": "show.track",
+      "name": "wall",
+      "layer": "Wall"
+    },
+    {
+      "do": "show.clip",
+      "track": "wall",
+      "layerContent": true,
+      "at": 0,
+      "duration": 30
+    },
+    {
+      "do": "deck.shader",
+      "row": 1,
+      "col": 0,
+      "shader": "DM-SolidColor",
+      "values": {
+        "baseColor": [
+          0,
+          0,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "do": "deck.trigger",
+      "row": 1,
+      "col": 0
+    },
+    {
+      "do": "show.seek",
+      "t": 1,
+      "settle": 1200,
+      "label": "The show's track plays the red layer",
+      "expect": {
+        "output.rgb": {
+          "rgb": [
+            1,
+            0,
+            0
+          ],
+          "within": 0.03
+        }
+      }
+    },
+    {
+      "do": "takeover.engage",
+      "track": "wall",
+      "deck": "A",
+      "row": 1,
+      "settle": 2000,
+      "label": "Take the track over with deck A row 2 (blue): the output is blue",
+      "expect": {
+        "output.rgb": {
+          "rgb": [
+            0,
+            0,
+            1
+          ],
+          "within": 0.03
+        },
+        "takeover.count": {
+          "is": 1
+        }
+      }
+    },
+    {
+      "do": "show.export",
+      "seconds": 2,
+      "fps": 10,
+      "label": "Render the show with the takeover live"
+    },
+    {
+      "label": "Exported frame at 0.5 s is the show's red, not the takeover's blue",
+      "expect": {
+        "export.frame": {
+          "frame": 5,
+          "is": "red"
+        }
+      }
+    },
+    {
+      "label": "Exported frame at 1.5 s is the show's red",
+      "expect": {
+        "export.frame": {
+          "frame": 15,
+          "is": "red"
+        }
+      }
+    },
+    {
+      "do": "wait",
+      "seconds": 1,
+      "label": "After the render the takeover is still live on the output",
+      "expect": {
+        "output.rgb": {
+          "rgb": [
+            0,
+            0,
+            1
+          ],
+          "within": 0.03
+        },
+        "takeover.count": {
+          "is": 1
+        }
+      }
+    },
+    {
+      "do": "takeover.release",
+      "mode": "instant",
+      "settle": 1200,
+      "label": "Hand back: red again, no errors",
+      "expect": {
+        "output.rgb": {
+          "rgb": [
+            1,
+            0,
+            0
+          ],
+          "within": 0.03
+        },
+        "takeover.count": {
+          "is": 0
+        },
+        "noErrors": true
+      }
+    }
+  ]
+}

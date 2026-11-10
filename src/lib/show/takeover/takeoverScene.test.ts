@@ -69,6 +69,25 @@ describe('buildTakeoverScene', () => {
     expect(out.find((l) => l.id === 'slice')?.vjGroupId).toBeUndefined();
   });
 
+  it("the deck mix wears the VJ's composition FX before the surface's own; a row and black do not", () => {
+    const feeds = [feed('vj-layer-0'), feed('vj-layer-1'), mixOf('vj-layer-0', 'vj-layer-1')];
+    const comp = [{ id: 'comp-blur', type: 'blur' } as any];
+    const own = { id: 'own', type: 'invert' } as any;
+    const ctx = { feeds: () => feeds, mixEffects: comp };
+    const ids = (l: Layer | undefined) => (l?.effects ?? []).map((e) => e.id);
+    const mix = buildTakeoverScene([layer('wall', { effects: [own] })], frame([surface({ source: { kind: 'vjMix' } })]), ctx)!;
+    const mixCopy = mix.find((l) => l.id === takeoverLayerId('wall'));
+    expect(ids(mixCopy)).toEqual(['comp-blur', 'own']);
+    // Its effects run as a chain after the feed (neighbour-sampling ones too).
+    expect((mixCopy?.source as any)?.effectSource?.vjmixLayerEffectChain).toBe(true);
+    const row = buildTakeoverScene([layer('wall', { effects: [own] })], frame([surface({ source: { kind: 'vjRow', deck: 'A', row: 1 } })]), ctx)!;
+    expect(ids(row.find((l) => l.id === takeoverLayerId('wall')))).toEqual(['own']);
+    const black = buildTakeoverScene([layer('wall')], frame([surface({ source: { kind: 'black' } })]), ctx)!;
+    expect(ids(black.find((l) => l.id === takeoverLayerId('wall')))).toEqual([]);
+    const overlay = buildTakeoverScene([layer('wall')], frame([], { overlay: { source: { kind: 'vjMix' }, level: 1, blend: 'normal' }, needsVjFeeds: true }), ctx)!;
+    expect(ids(overlay.find((l) => l.id === TAKEOVER_OVERLAY_ID))).toEqual(['comp-blur']);
+  });
+
   it('an empty row shows black with no feed in, and saved assignments still stay out while the VJ has feeds', () => {
     const feeds = [feed('vj-layer-0'), mixOf('vj-layer-0')];
     const out = buildTakeoverScene([layer('wall'), layer('screen', { vjLayerIndex: 0 })], frame([surface({ source: { kind: 'vjRow', deck: 'A', row: 5 } })]), { feeds: () => feeds })!;

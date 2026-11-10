@@ -714,6 +714,40 @@ describe('native renderer sync graph effect routing', () => {
     expect(nativeGraphCompositeSourceId(withoutDescriptor)).toBe('gpu:gpu-layer-a:planet');
   });
 
+  it("chains a takeover feed copy's effects after the VJ feed; other VJ feed layers keep per-pixel effects", async () => {
+    const { createLayer } = await import('../types');
+    const sync = new NativeRendererSyncCtor() as any;
+    sync.nativeComputeGraphSourceFrames = true;
+    sync.nativeWgslStdlibWarmed = true;
+    sync.nativeGraphReadyKinds = new Set(['vj-mix']);
+    sync.nativeFeatureFlags = {
+      native_effect_pass_manifest: true,
+      compute_graph_texture_sampling: true,
+      compute_graph_source_frame_target: true,
+    };
+    sync.nativeEffectPassDescriptorIds = new Set(['invert', 'blur']);
+    const feedSource = (chain: boolean) => ({
+      id: 'vj-shared-feed:x', type: 'effect', name: 'Mix', src: 'plugin://vj-mix',
+      effectSource: { effectType: 'vj-mix', vjmixSharedFeed: true, ...(chain ? { vjmixLayerEffectChain: true } : {}), vjmixRows: [{ layerId: '__vj-mix__', opacity: 1, blendMode: 'normal' }] },
+    }) as any;
+    const copy = createLayer('takeover::wall', 'Wall', 'media');
+    copy.source = feedSource(true);
+    copy.effects = [{ id: 'comp', type: 'blur', enabled: true, params: { blurRadius: 5 } }] as any;
+    const route = sync.nativeGraphRouteForLayer(copy);
+    expect(route?.kind).toBe('vj-mix');
+    expect(route?.baseSource?.id).toBe(nativeGraphInstrumentSourceId(route));
+    expect(route?.source.id).toBe('effect-pass:takeover::wall');
+    expect(route?.effectPasses?.map((entry: any) => entry.effect)).toEqual(['blur']);
+    // A saved row assignment (no chain flag) stays as it was.
+    const screen = createLayer('screen', 'Screen', 'media');
+    screen.source = feedSource(false);
+    screen.effects = copy.effects;
+    const plain = sync.nativeGraphRouteForLayer(screen);
+    expect(plain?.kind).toBe('vj-mix');
+    expect(plain?.baseSource).toBeUndefined();
+    expect(plain?.effectPasses).toBeUndefined();
+  });
+
   it('recovers a failed GPU effect route when its effect changes or retry time elapses', async () => {
     const { createLayer } = await import('../types');
     const sync = new NativeRendererSyncCtor() as any;

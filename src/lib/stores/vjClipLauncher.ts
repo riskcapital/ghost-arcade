@@ -1254,6 +1254,9 @@ let takeoverSamplesChanged: (() => void) | null = null;
 // VJ mode was left while a takeover kept rows playing: they stop when the
 // takeover no longer needs them (unless VJ mode is back by then).
 let stopWhenTakeoverEnds = false;
+// A stop-all kept rows a takeover shows: 'A:1' → the clip it kept there. Each
+// stops when the takeover no longer shows its row, if that clip still plays.
+const stopWhenUnsampled = new Map<string, string>();
 
 /** Feeds that also needed the VJ workspace open: a takeover runs them with
  *  the workspace closed. */
@@ -1570,6 +1573,7 @@ function createVJClipLauncherStore() {
     reset() {
       holds.clear();
       stopWhenTakeoverEnds = false;
+      stopWhenUnsampled.clear();
       releaseTempoNudgeInputs('');
       vjClipTransitions.clear();
       // Cleanup video elements
@@ -2461,6 +2465,7 @@ function createVJClipLauncherStore() {
       if (key !== takeoverSamplesKey) {
         takeoverSamplesKey = key;
         takeoverSamplesChanged?.();
+        if (stopWhenUnsampled.size) this.stopUnsampledRows();
       }
       const state = get({ subscribe });
       if (!!state.takeoverLive === on) return;
@@ -2480,15 +2485,65 @@ function createVJClipLauncherStore() {
      * With nothing taken over this is `stopAll()`.
      */
     stopAllForLeave() {
-      const state = get({ subscribe });
-      const keep = state.takeoverLive ? vjTakeoverRows(state, takeoverSamples) : null;
-      const kept = (deck: VJDeck, row: number) => !!keep?.[deck].has(row) && !!pickLayerStates(state, deck)[row]?.activeClip;
-      const keepsAny = !!keep && (['A', 'B'] as const).some(deck => pickLayerStates(state, deck).some((_, row) => kept(deck, row)));
-      if (!keepsAny) {
+      if (this.stopAllExceptTakeover()) stopWhenTakeoverEnds = true;
+    },
+
+    /**
+     * Stop all (vj:stopall, the stop-all button, the cue action): every clip
+     * stops except on the rows a show takeover is showing right now, so the
+     * taken-over surface keeps its picture. Each of those stops once the
+     * takeover no longer shows its row, if the same clip is still playing
+     * there. While VJ mode's own output is live the takeover is not on the
+     * output, so this is `stopAll()`, as it is with nothing taken over.
+     */
+    stopAllKeepingTakeover() {
+      if (get({ subscribe }).isLive) {
         this.stopAll();
         return;
       }
-      stopWhenTakeoverEnds = true;
+      const kept = this.stopAllExceptTakeover();
+      if (!kept) return;
+      for (const [key, clipId] of kept) stopWhenUnsampled.set(key, clipId);
+    },
+
+    /** Rows a stop-all kept that the takeover no longer shows stop now (if
+     *  the same clip still plays there; one launched since stays). */
+    stopUnsampledRows() {
+      const keep = vjTakeoverRows(get({ subscribe }), takeoverSamples);
+      let stopped = false;
+      for (const [key, clipId] of [...stopWhenUnsampled]) {
+        const [deck, row] = key.split(':') as [VJDeck, string];
+        if (keep[deck].has(Number(row))) continue;
+        stopWhenUnsampled.delete(key);
+        if (pickLayerStates(get({ subscribe }), deck)[Number(row)]?.activeClip?.id !== clipId) continue;
+        this.stopLayer(Number(row), deck);
+        stopped = true;
+      }
+      const now = get({ subscribe });
+      if (stopped && !now.layerStates.some(ls => ls.activeClip) && !now.bankBLayerStates.some(ls => ls.activeClip)) {
+        update(x => ({ ...x, stoppedAll: true }));
+      }
+    },
+
+    /**
+     * Stop every clip except on the rows a show takeover shows right now.
+     * Returns the kept rows ('A:1' → clip id), or null when there were none
+     * and this was a plain `stopAll()`.
+     */
+    stopAllExceptTakeover(): Map<string, string> | null {
+      const state = get({ subscribe });
+      const keep = state.takeoverLive ? vjTakeoverRows(state, takeoverSamples) : null;
+      const kept = (deck: VJDeck, row: number) => !!keep?.[deck].has(row) && !!pickLayerStates(state, deck)[row]?.activeClip;
+      const keptRows = new Map<string, string>();
+      for (const deck of ['A', 'B'] as const) {
+        pickLayerStates(state, deck).forEach((ls, row) => {
+          if (kept(deck, row)) keptRows.set(rowKey(deck, row), ls.activeClip!.id);
+        });
+      }
+      if (!keptRows.size) {
+        this.stopAll();
+        return null;
+      }
       for (const key of [...holds.keys()]) {
         const [deck, row] = key.split(':');
         if (!kept(deck as VJDeck, Number(row))) holds.delete(key);
@@ -2505,6 +2560,7 @@ function createVJClipLauncherStore() {
         });
         return { ...s, layerStates: stop('A'), bankBLayerStates: stop('B'), pendingTriggers: [] };
       });
+      return keptRows;
     },
 
     /** Apply a complete preset in one store notification, including the saved block. */

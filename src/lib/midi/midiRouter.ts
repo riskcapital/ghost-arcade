@@ -206,10 +206,13 @@ class MidiRouter {
       const isLayerFader = /^(vj|vj-b):\d+:opacity$/.test(path);
       // Every press and release of a studio pad or button counts (two fast hits are two hits).
       const isStudioPress = isStudioButton(path);
+      // A show takeover pad: a press and its release both act (a fast tap's
+      // release must not be dropped behind a second press).
+      const isShowLive = path.startsWith('show:live:');
       const inputId = `${inputPrefix}${mapping.id}:${channel}:${number}`;
       // Preserve fader zero crossings, pad releases and final scratch targets.
       // The native scrubber coalesces pending targets without dropping it.
-      if (!isVideoScratchPath(mapping.path) && !isClipTrigger && !isLayerFader && !isVideoCue && !isTempoNudge && !isStudioPress) {
+      if (!isVideoScratchPath(mapping.path) && !isClipTrigger && !isLayerFader && !isVideoCue && !isTempoNudge && !isStudioPress && !isShowLive) {
         const wait = THROTTLE_MS - (now - (lastUpdateTime.get(mapping.path) || 0));
         clearTimeout(trailingUpdates.get(mapping.path));
         trailingUpdates.delete(mapping.path);
@@ -235,6 +238,23 @@ class MidiRouter {
 
       // Dispatch to correct store
       this.dispatch(mapping.path, (isClipTrigger || isVideoCue || isTempoNudge || isStudioPress) && type === 'note' && value === 0 ? 0 : targetValue, mapping, inputId);
+    }
+  }
+
+  /**
+   * A release (a note-off, or a control back at 0) that MIDI learn, edit or
+   * identify mode keeps from the mappings: the show takeovers it holds still
+   * let go, so a held takeover cannot get stuck on.
+   */
+  routeShowReleases(channel: number, type: MidiMessageType, number: number, from?: MidiMessageSource) {
+    const mappings = lookupMap.get(`${type}:${number}`);
+    if (!mappings) return;
+    const inputPrefix = from?.id ? `midi:${from.id}:` : 'midi:';
+    for (const mapping of mappings) {
+      if (mapping.channel !== -1 && mapping.channel !== channel) continue;
+      if (!mappingHearsDevice(mapping, from?.name, controlNames)) continue;
+      if (!normalizeControlPath(mapping.path).startsWith('show:live:')) continue;
+      this.dispatch(mapping.path, 0, mapping, `${inputPrefix}${mapping.id}:${channel}:${number}`);
     }
   }
 
@@ -867,7 +887,8 @@ class MidiRouter {
     }
 
     if (layerPart === 'stopall') {
-      if (value > 0) vjClipLauncher.stopAll();
+      // Rows a show takeover is showing keep playing until it hands them back.
+      if (value > 0) vjClipLauncher.stopAllKeepingTakeover();
       return;
     }
 

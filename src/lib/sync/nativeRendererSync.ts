@@ -6981,12 +6981,24 @@ export class NativeRendererSync {
     if (pluginKind) {
       if (!this.supportsNativeGraphRoute(pluginKind)) return null;
       if (nativePluginUnavailableReason(layer.source?.effectSource)) return null;
-      const source = nativeGraphOutputSource(layer, pluginKind);
-      const key = this.nativeGraphRouteKey(pluginKind, source.id);
-      if (this.nativeGraphRouteSuppressed(key, layer, null, null, includeWarningDisabled)) return null;
+      const baseSource = nativeGraphOutputSource(layer, pluginKind);
+      // A live takeover's copy of a VJ feed (the deck mix wears the VJ's
+      // composition FX) runs its effects as a pass chain after the feed, as
+      // the GPU kinds do, so blur, kaleidoscope… work and not only the
+      // per-pixel ones.
+      const candidateEffectPasses = pluginKind === 'vj-mix' && layer.source?.effectSource?.vjmixLayerEffectChain === true
+        ? nativeEffectPassesForLayer(layer)
+        : null;
+      const effectPasses = candidateEffectPasses?.length && this.supportsNativeEffectPassRoute(candidateEffectPasses)
+        ? candidateEffectPasses
+        : null;
+      const source = effectPasses ? nativeEffectPassOutputSource(layer, baseSource) : baseSource;
+      const key = this.nativeGraphRouteKey(pluginKind, baseSource.id);
+      if (this.nativeGraphRouteSuppressed(key, layer, null, effectPasses, includeWarningDisabled)) return null;
       const params = nativeGraphParamsForLayer(layer, pluginKind);
       const inputSource = pluginKind === 'handfx' && params.handfxInput !== 'demo'
         ? cameraNativeLayerSource('') : null;
+      if (effectPasses) return { kind: pluginKind, key, baseSource, source, inputSource, effectPasses };
       return { kind: pluginKind, key, source, inputSource };
     }
     const effectPassRoute = this.nativeEffectPassRouteForLayer(layer, includeWarningDisabled);

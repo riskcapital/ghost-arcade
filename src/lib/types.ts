@@ -429,6 +429,9 @@ export interface IntegratedEffectSource {
   // ordered bottom→top, post-crossfade, with per-row opacity + blend.
   vjmixRows?: Array<{ layerId?: string; frameId?: string; groupId?: string; opacity: number; blendMode: string }>;
   vjmixSharedFeed?: boolean;
+  /** Session only (a live takeover's copy of a feed): the layer's effects run
+   *  as a pass chain after the feed instead of per pixel in the compositor. */
+  vjmixLayerEffectChain?: boolean;
   // Music Studio plugin (music/studioPlugin.ts): the set its palette comes
   // from, the scene it was loaded from, and its stack of visual voices.
   musicSet?: import('./music/studioSets').StudioSet;

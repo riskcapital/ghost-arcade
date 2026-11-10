@@ -33,7 +33,9 @@ export type ShowKeyAction =
   | 'clearSelection'
   | 'takeover'
   | 'returnAll'
-  | 'returnAllInstant';
+  | 'returnAllInstant'
+  /** L or R held down (key repeat): the show takes the key and does nothing. */
+  | 'heldTakeoverKey';
 
 export interface ShowKeyContext {
   /** The tray is open and visible. */
@@ -58,6 +60,8 @@ interface KeyLike {
   ctrlKey?: boolean;
   altKey?: boolean;
   shiftKey?: boolean;
+  /** The key is held down and repeating. */
+  repeat?: boolean;
   target?: EventTarget | null;
 }
 
@@ -102,9 +106,11 @@ export function classifyShowKey(e: KeyLike, ctx: ShowKeyContext): ShowKeyAction 
   }
   // L takes the focused track over live (or hands it back); R returns
   // every taken-over track, Shift+R instantly.
-  if (key === 'r') return ctx.takeoverActive ? (e.shiftKey ? 'returnAllInstant' : 'returnAll') : null;
+  // Holding either down acts once: a repeating L would toggle the takeover
+  // about 30 times a second.
+  if (key === 'r') return ctx.takeoverActive ? (e.repeat ? 'heldTakeoverKey' : e.shiftKey ? 'returnAllInstant' : 'returnAll') : null;
   if (e.shiftKey) return null;
-  if (key === 'l') return ctx.hasTracks ? 'takeover' : null;
+  if (key === 'l') return ctx.hasTracks ? (e.repeat ? 'heldTakeoverKey' : 'takeover') : null;
   if (key === 's') return ctx.hasTracks ? 'split' : null;
   if (key === 'n') return 'toggleSnap';
   if (key === 'm') return 'marker';

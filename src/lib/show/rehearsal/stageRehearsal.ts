@@ -240,11 +240,11 @@ export interface StageRecAudio {
  * Ask the editor to collect the show's sound for a recording made here.
  * Null when no editor is listening.
  */
-export function startStageRecAudio(): StageRecAudio | null {
+export function startStageRecAudio(opts: { render?: boolean } = {}): StageRecAudio | null {
   const show = get(stageShow);
   if (!channel || !show || epochNow() - lastStateAt > REHEARSAL_ALIVE_MS) return null;
   const id = `rec-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
-  post({ type: 'rec-audio-start', id, at: epochNow() });
+  post({ type: 'rec-audio-start', id, at: epochNow(), ...(opts.render ? { render: true } : {}) });
   let startedAt = epochNow();
   let done = false;
   const lags: number[] = [];
@@ -396,7 +396,8 @@ export function createStageRehearsalRender(): {
 } | null {
   const show = get(stageShow);
   if (!show?.hasShow || show.duration <= 0) return null;
-  const audio = startStageRecAudio();
+  // A render of the show: the editor leaves a live takeover out of it.
+  const audio = startStageRecAudio({ render: true });
   const durationSeconds = show.duration;
   let ended = false;
   return {

@@ -17,7 +17,7 @@ vi.mock('../stores/vjClipLauncher', async () => {
   const { writable } = await import('svelte/store');
   return { vjClipLauncher: writable({ isOpen: false, pendingTriggers: [] }) };
 });
-vi.mock('./midiRouter', () => ({ midiRouter: { dispatchPath: vi.fn(), routeMessage: vi.fn(), releaseInputs: vi.fn() } }));
+vi.mock('./midiRouter', () => ({ midiRouter: { dispatchPath: vi.fn(), routeMessage: vi.fn(), releaseInputs: vi.fn(), routeShowReleases: vi.fn() } }));
 vi.mock('../stores/audio', () => ({ audioStore: { setManualBPM: vi.fn(), subscribe: () => () => {} } }));
 
 import { ClockTempoTracker, MidiManager } from './midiManager';
@@ -230,6 +230,31 @@ describe('several MIDI inputs at once', () => {
     send(knobs, [0xB0, 21, 64]);
     expect(get(midiStore).mappings.find((m) => m.path === 'vj:0:opacity')).toMatchObject({ type: 'cc', number: 21, device: 'Knobs' });
     midiStore.clearAllMappings();
+  });
+
+  it('learn, edit and identify mode keep messages from the mappings, but a release still lets go of a held takeover', () => {
+    const from = { id: 'pads', name: 'Pads' };
+    midiStore.setIdentifyMode(true);
+    send(pads, [0x90, 36, 100]);
+    send(pads, [0x80, 36, 0]);
+    expect(midiRouter.routeMessage).not.toHaveBeenCalled();
+    expect(midiRouter.routeShowReleases).toHaveBeenCalledTimes(1);
+    expect(midiRouter.routeShowReleases).toHaveBeenLastCalledWith(0, 'note', 36, from);
+    midiStore.setIdentifyMode(false);
+    midiStore.setEditMode(true);
+    send(pads, [0x90, 37, 0]);
+    expect(midiRouter.routeShowReleases).toHaveBeenLastCalledWith(0, 'note', 37, from);
+    midiStore.setEditMode(false);
+    midiStore.startLearn('vj:0:opacity', 'Opacity', 0, 1, 0, 'absolute');
+    send(pads, [0x80, 38, 0]);
+    expect(midiRouter.routeShowReleases).toHaveBeenLastCalledWith(0, 'note', 38, from);
+    expect(midiRouter.routeShowReleases).toHaveBeenCalledTimes(3);
+    midiStore.cancelLearn();
+    midiStore.clearAllMappings();
+    // Outside those modes the router gets the release as usual.
+    send(pads, [0x80, 36, 0]);
+    expect(midiRouter.routeShowReleases).toHaveBeenCalledTimes(3);
+    expect(midiRouter.routeMessage).toHaveBeenLastCalledWith(0, 'note', 36, 0, from);
   });
 
   it('lets go of only what an unplugged controller held', () => {

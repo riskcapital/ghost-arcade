@@ -16,6 +16,9 @@
  *   asks to keep, because the core renders every layer in the scene whatever
  *   its opacity. Saved row assignments on other layers are left out while
  *   the VJ has feeds, so only the taken-over surfaces change.
+ * - The deck mix carries the VJ's composition FX (`mixEffects`), as the VJ's
+ *   own output does: they run first on a mix copy or overlay, before the
+ *   surface's own effects.
  * - Dropped media plays from the moment of the engage; black is black.
  * - Temporary effects are appended to the copy (or, with no source, to the
  *   surface itself).
@@ -24,7 +27,7 @@
  *
  * Returns the input array itself when no takeover is active.
  */
-import { createLayer, type Layer, type MapSurface, type MediaSource } from '../../types';
+import { createLayer, type Effect, type Layer, type MapSurface, type MediaSource } from '../../types';
 import { createSurfaceLookup, resolvePresetLayer } from '../../stores/mapSurfaces';
 import { staticClipSource, readableClipUri } from '../tracks/showClipSources';
 import {
@@ -75,6 +78,9 @@ export interface TakeoverSceneContext {
   surfaces?: readonly MapSurface[];
   /** Source for dropped media (cached per engage so it is stable). */
   mediaSourceFor?: (surface: TakeoverSurfaceFrame) => MediaSource | null;
+  /** The VJ's composition FX: the mix's picture is graded by them. The VJ's
+   *  own output runs them on the final composite, which a takeover is not. */
+  mixEffects?: readonly Effect[];
   maxLayers?: number;
 }
 
@@ -89,6 +95,9 @@ function sharedFeedSource(ownerId: string, feed: Layer): MediaSource {
     effectSource: {
       effectType: 'vj-mix',
       vjmixSharedFeed: true,
+      // The copy's effects (the VJ's composition FX on the mix, the
+      // surface's own, temporary ones) run as a pass chain after the feed.
+      vjmixLayerEffectChain: true,
       vjmixRows: [{ layerId: feed.id, opacity: 1, blendMode: 'normal' }],
     },
   } as unknown as MediaSource;
@@ -131,6 +140,7 @@ function applySource(
     case 'vjMix': {
       const mix = feeds.find((f) => f.id === VJ_MIX_LAYER_ID);
       layer.source = mix ? sharedFeedSource(layer.id, mix) : blackSource;
+      if (mix && ctx.mixEffects?.length) layer.effects = [...ctx.mixEffects, ...(layer.effects ?? [])];
       return;
     }
     case 'vjGroup':

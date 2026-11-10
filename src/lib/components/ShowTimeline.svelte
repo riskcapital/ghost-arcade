@@ -904,6 +904,8 @@
       case 'returnAllInstant':
         liveTakeover.release('all', action === 'returnAllInstant' ? { mode: 'instant' } : undefined);
         return true;
+      case 'heldTakeoverKey':
+        return true;
     }
     return false;
   }
