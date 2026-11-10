@@ -3575,6 +3575,9 @@ export interface EffectParams {
   glitchVerticalSlice?: number;
   glitchFreezeBurst?: number;
   glitchTearChance?: number;
+  /** Per-instance random seed (whole number); 0 or missing = the pattern
+   *  instances had before seeds existed. */
+  glitchSeed?: number;
 
   // RGB Shift (hero — directional/radial/prism/luma/edge modes)
   rgbShiftAmount?: number;        // 0-50 pixels
@@ -4489,6 +4492,7 @@ export interface EffectParams {
   bcMotion?: number;               // 0-1
   bcAudioReact?: number;           // 0-1
   bcMix?: number;                  // 0-1
+  bcSeed?: number;                 // per-instance seed, 0/missing = pre-seed pattern
 
   // Data Bend: the picture misread as raw bytes
   dbIntensity?: number;            // 0-1
@@ -4499,6 +4503,7 @@ export interface EffectParams {
   dbBitCrush?: number;             // 0-1
   dbAudioReact?: number;           // 0-1
   dbMix?: number;                  // 0-1
+  dbSeed?: number;                 // per-instance seed, 0/missing = pre-seed pattern
 
   // Flow Field Trails (hero)
   fftFlowScale?: number;           // 0.5-16

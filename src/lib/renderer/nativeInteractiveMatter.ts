@@ -36,7 +36,16 @@ fn ix(p:vec2<i32>)->u32{return u32(clamp(p.y,0,143)*256+clamp(p.x,0,255));}
 fn cell(p:vec2<f32>)->u32{return ix(vec2<i32>(p*vec2<f32>(256.,144.)));}
 fn point(s:u32,i:u32)->vec2<f32>{return shapes[s*66u+2u+i].xy;}
 fn inside(s:u32,p:vec2<f32>)->bool{let n=u32(shapes[s*66u+1u].z);var hit=false;for(var j=0u;j<n;j++){let a=point(s,j);let b=point(s,(j+1u)%n);if((a.y>p.y)!=(b.y>p.y)){if(p.x<(b.x-a.x)*(p.y-a.y)/(b.y-a.y)+a.x){hit=!hit;}}}return hit;}
-fn noise(p:vec3<f32>)->f32{let i=floor(p);let f=fract(p);let w=f*f*(3.-2.*f);let n=dot(i,vec3<f32>(1.,57.,113.));return mix(mix(mix(hash(n),hash(n+1.),w.x),mix(hash(n+57.),hash(n+58.),w.x),w.y),mix(mix(hash(n+113.),hash(n+114.),w.x),mix(hash(n+170.),hash(n+171.),w.x),w.y),w.z);}
+// Long uptime: the clock (u.view.z, every fbm call) and the emission ticket's age feed these
+// hashes. sin() of a huge argument keeps no fraction in f32 and differs per GPU, so grain, flame
+// tongues and birth spots freeze or pattern after hours. Below the bound the old sin hash is kept
+// bit-for-bit (the look is unchanged); above it an integer PCG hash takes over. The noise lattice
+// alone peaks ~2.2e6 at t=10 s, so its bound is 2^22; a birth seed is dominated by the particle
+// index, so its bound is on the ticket's share (32768, ~23 s of emission).
+fn pcg(v:u32)->u32{let s=v*747796405u+2891336453u;let w=((s>>((s>>28u)+4u))^s)*277803737u;return (w>>22u)^w;}
+fn noiseHash(n:f32)->f32{let a=n*127.1+311.7;return select(f32(pcg(bitcast<u32>(i32(n)))>>8u)*(1./16777216.),fract(sin(a)*43758.5453),abs(a)<4194304.);}
+fn birthHash(i:u32,tick:f32)->f32{return select(f32(pcg(i^pcg(bitcast<u32>(i32(tick))))>>8u)*(1./16777216.),hash(f32(i)*3.17+tick),abs(tick*127.1)<32768.);}
+fn noise(p:vec3<f32>)->f32{let i=floor(p);let f=fract(p);let w=f*f*(3.-2.*f);let n=dot(i,vec3<f32>(1.,57.,113.));return mix(mix(mix(noiseHash(n),noiseHash(n+1.),w.x),mix(noiseHash(n+57.),noiseHash(n+58.),w.x),w.y),mix(mix(noiseHash(n+113.),noiseHash(n+114.),w.x),mix(noiseHash(n+170.),noiseHash(n+171.),w.x),w.y),w.z);}
 fn fbm(p:vec3<f32>)->f32{return noise(p)*.57+noise(p*2.03+4.1)*.28+noise(p*4.13+7.2)*.15;}
 `;
 export const MATTER_EMISSION=MATTER_COMMON.replace('var<storage,read> emissionState','var<storage,read_write> emissionState')+/* wgsl */`
@@ -46,7 +55,9 @@ export const MATTER_EMISSION=MATTER_COMMON.replace('var<storage,read> emissionSt
  if(u.params.w>.5){return;}var state=emissionState[0];var births=emissionState[1];state.w=0.;
  if(state.z!=u.flags.x){state=vec4<f32>(m.clock.z,0.,u.flags.x,1.);births=vec4<f32>(0.);}
  let dt=clamp(u.view.w,0.,.05);if(state.x!=m.clock.z){state.x=m.clock.z;state.y=ctrl(23u,m.emission.w);}else{state.y=max(0.,state.y-dt);}
- births.w+=dt;emissionState[0]=state;emissionState[1]=births;
+ // births.w (emission pulse time, birth tick) wraps with the shader clock (2^15 s): accumulated
+ // forever as an f32 its step outgrew dt after ~3 days (pulses ran double speed) and froze at ~6.
+ births.w=(births.w+dt)%32768.;emissionState[0]=state;emissionState[1]=births;
  let count=f32(particleCount());let limit=select(select(200.,2200.,u.style.x==9.),select(1500.,12.,u.style.x==7.),u.style.x==10.||u.style.x==7.);
  // Bound occupancy so long lifetimes keep emitting instead of filling the pool.
  let rate=min(limit,count/(lifetime()+.1))*max(0.,ctrl(7u,m.physics.w));
@@ -124,7 +135,7 @@ fn density(p:vec2<f32>)->f32{return f32(mass[cell(p)])/4096.;}
  if(p.life.x>=lifetime()||p.state.x<-.1||p.state.x>1.1||p.state.y<-.15||p.state.y>1.15){p.life.x=0.;}
  let ticket=emissionState[1];let offset=(i+count-u32(ticket.x))%count;
  if(offset<u32(ticket.y)){
-  let birthSeed=hash(f32(i)*3.17+floor(ticket.w*11.));var origin=vec2<f32>(.06+birthSeed*.88,.01);var emitted=false;
+  let birthSeed=birthHash(i,floor(ticket.w*11.));var origin=vec2<f32>(.06+birthSeed*.88,.01);var emitted=false;
   for(var s=0u;s<u32(u.style.y)&&m.grid.w<.5;s++){let base=s*66u;let mat=shapes[base+2u].z;if((mat==3.&&liquid)||(mat==4.&&cloud)||(mat==1.&&!ball&&!liquid&&!cloud)||shapes[base+1u].w==1.){let n=u32(shapes[base+1u].z);let j=u32(hash(f32(i)*11.7+f32(s))*f32(n));let a=point(s,j);let b=point(s,(j+1u)%n);origin=mix(a,b,birthSeed);let outward=normalize((origin-shapes[base+1u].xy)*asp+vec2<f32>(.00001));origin+=outward*(radius+.016)/asp;emitted=true;break;}}
   if(cloud&&!emitted){origin=vec2<f32>(hash(f32(i)*2.4),hash(f32(i)*3.9));}
   if(!ball&&!cloud&&!liquid&&!emitted){origin.y=.97;}

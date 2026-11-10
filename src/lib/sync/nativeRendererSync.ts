@@ -180,6 +180,7 @@ import {
   buildCompositeEffectPassChainGraph,
   buildNativeEffectPassPrecompileCommands,
   packNativeEffectPassUniforms,
+  nativeEffectSeed,
   type NativeEffectPassId,
   type NativeEffectPassOptions,
 } from '$lib/renderer/nativeEffectPass';
@@ -977,6 +978,22 @@ function sourceValuesSignature(layer: Layer): string {
   return `${shaderValuesSignature}:${javascriptValuesSignature}${shaderTime}`;
 }
 
+/** Shader clocks wrap here (about 9 h 6 min). A uniform holds time as an
+ *  f32, whose step grows with the value: 2 ms at 9 h, 4 ms at 12 h, 62 ms
+ *  after a week, so animation stuttered on long installs and ran at about
+ *  16 fps after a week. Below the wrap the value is exactly the live clock,
+ *  so nothing changes in a show shorter than that; past it time restarts
+ *  from 0 (the step never exceeds 2 ms). The render core wraps its own
+ *  shader time at the same value. Bookkeeping (video anchors, beat clock,
+ *  manual export seeks) keeps the unwrapped clock. */
+export const NATIVE_SHADER_CLOCK_WRAP_SECONDS = 32768;
+
+/** The clock time a shader uniform is given: see NATIVE_SHADER_CLOCK_WRAP_SECONDS. */
+export function nativeShaderClockSeconds(time: number): number {
+  if (!Number.isFinite(time) || time <= 0) return 0;
+  return time < NATIVE_SHADER_CLOCK_WRAP_SECONDS ? time : time % NATIVE_SHADER_CLOCK_WRAP_SECONDS;
+}
+
 /** The live audio the effect packers read each frame: the level for audio
  *  react, the beat pulse for Glitch's Beat snap trigger. */
 function liveEffectAudioParams(): { audioLevel: number; audioBeat: number } {
@@ -994,6 +1011,31 @@ export function nativeEffectPassReadsAudio(pass: { effect: string; params?: Reco
   const raw = Number(pass.params?.triggerMode ?? pass.params?.param7);
   const trigger = Number.isFinite(raw) ? Math.max(0, Math.min(3, raw)) : 0;
   return trigger >= 0.5 && trigger <= 2.5;
+}
+
+/** Per pass of a chain, the uniform values its live audio can move, as the
+ *  shader's f32 sees them ('' for a pass that reads no audio). A core-owned
+ *  graph layer's effect uniforms are installed with the graph; comparing
+ *  these keys frame to frame tells when the audio actually moved one, so
+ *  only then is that pass's buffer re-sent. */
+export function nativeEffectPassAudioKeys(
+  passes: ReadonlyArray<{ effect: string; amount?: number; mix?: number; params?: Record<string, any> }>,
+  audio: { audioLevel: number; audioBeat: number },
+): string[] {
+  return passes.map((pass) => {
+    if (!NATIVE_EFFECT_PASS_IDS.has(pass.effect as NativeEffectPassId) || !nativeEffectPassReadsAudio(pass)) return '';
+    const u = packNativeEffectPassUniforms({
+      effect: pass.effect as NativeEffectPassId,
+      amount: pass.amount,
+      mix: pass.mix ?? 1,
+      params: { ...pass.params, ...audio },
+      width: 1,
+      height: 1,
+    } as NativeEffectPassOptions);
+    let key = '';
+    for (let i = 4; i < 24; i += 1) key += `${Math.fround(u[i])},`;
+    return key;
+  });
 }
 
 /** A pass of the standard effect shader whose output is its input pixel for
@@ -2078,6 +2120,8 @@ export function effectToNativeDescriptor(effect: any): string | null {
       Math.max(0, Math.min(1, tearRaw)).toFixed(4),
       Math.max(0, Math.min(3, Math.round(triggerRaw))).toFixed(0),
       Math.max(0, Math.min(1, firstFiniteParam(params, ['glitchFreezeBurst', 'freezeBurst'], 0))).toFixed(4),
+      // Per-instance seed (0 = the pattern instances had before seeds).
+      nativeEffectSeed(params.glitchSeed).toFixed(0),
     ].join(':');
   }
   if (type === 'pixelate') {
@@ -3080,6 +3124,7 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       tearChance: Number(rawParam6 ?? 0),
       triggerMode: Number(rawParam7 ?? 0),
       freezeBurst: Number(rawParam8 ?? 0),
+      glitchSeed: nativeEffectSeed(rawParam9),
     };
   } else if (effect === 'exposure') {
     params = {
@@ -5735,6 +5780,7 @@ export class NativeRendererSync {
     const text = this.nativeTextState.get(layerId);
     if (text) text.atlasUploaded = false;
     this.nativePointCloudUploadSignatures.delete(layerId);
+    this.coreOwnedFxAudioKeys.delete(layerId);
   }
 
   private nativeSplatStateFor(layerId: string) {
@@ -6025,6 +6071,9 @@ export class NativeRendererSync {
   private nativeGraphReadyKinds = new Set<NativeGraphRouteKind>();
   private nativeEffectPassDescriptorIds = new Set<string>();
   private nativeGraphRoutes = new Map<string, NativeGraphRouteState>();
+  /** Per core-owned graph layer: the audio keys (nativeEffectPassAudioKeys)
+   *  of its effect chain as last sent to the core. */
+  private coreOwnedFxAudioKeys = new Map<string, string[]>();
   /** LUT table buffers each graph owner (a route key, or composite FX) last
    *  used, so the table of a replaced LUT can be freed. */
   private nativeLutTables = new Map<string, string[]>();
@@ -6817,7 +6866,7 @@ export class NativeRendererSync {
       })),
       width,
       height,
-      time: typeof clock.time === 'number' ? clock.time : 0,
+      time: nativeShaderClockSeconds(typeof clock.time === 'number' ? clock.time : 0),
       frameDelta: typeof clock.time_delta === 'number' ? clock.time_delta : 1 / this.targetFps,
       frameIndex,
       seq: frameIndex * 16 + 8,
@@ -7455,9 +7504,9 @@ export class NativeRendererSync {
           // Refresh the small input buffers even when tracking/audio stops so
           // the GPU receives silence and Camera Off instead of stale input.
           {
-            const graphTime = typeof clock.time === 'number'
+            const graphTime = nativeShaderClockSeconds(typeof clock.time === 'number'
               ? clock.time
-              : Math.max(0, (performance.now() - this.liveClockOriginMs) / 1000);
+              : Math.max(0, (performance.now() - this.liveClockOriginMs) / 1000));
             const graphDelta = typeof clock.time_delta === 'number' ? clock.time_delta : 1 / this.targetFps;
             const graphFrameIndex = typeof clock.frame_index === 'number' && Number.isFinite(clock.frame_index)
               ? Math.max(0, Math.round(clock.frame_index))
@@ -7520,9 +7569,9 @@ export class NativeRendererSync {
         bufferPrefixes: nativeGraphBufferPrefixesForRoute(route),
       };
       this.nativeGraphRoutes.set(route.key, routeState);
-      const graphTime = typeof clock.time === 'number'
+      const graphTime = nativeShaderClockSeconds(typeof clock.time === 'number'
         ? clock.time
-        : Math.max(0, (performance.now() - this.liveClockOriginMs) / 1000);
+        : Math.max(0, (performance.now() - this.liveClockOriginMs) / 1000));
       const graphDelta = typeof clock.time_delta === 'number' ? clock.time_delta : 1 / this.targetFps;
       const graphFrameIndex = typeof clock.frame_index === 'number' && Number.isFinite(clock.frame_index)
         ? Math.max(0, Math.round(clock.frame_index))
@@ -8533,8 +8582,9 @@ export class NativeRendererSync {
       return noChain();
     }
 
-    const graphTime = Math.max(0, (performance.now() - this.liveClockOriginMs) / 1000);
-    const frameIndex = Math.max(0, Math.round(graphTime * this.targetFps));
+    const liveSeconds = Math.max(0, (performance.now() - this.liveClockOriginMs) / 1000);
+    const graphTime = nativeShaderClockSeconds(liveSeconds);
+    const frameIndex = Math.max(0, Math.round(liveSeconds * this.targetFps));
     try {
       const graph = buildCompositeEffectPassChainGraph({
         sourceId: 'composite-frame:0',
@@ -10133,6 +10183,8 @@ export class NativeRendererSync {
         });
       }
 
+      // Set when this frame sends a core-owned layer's effect uniforms.
+      let coreOwnedFxSent = false;
       if (
         nativeGraphRoute &&
         NATIVE_CORE_OWNED_GRAPH_KINDS.has(nativeGraphRoute.kind) &&
@@ -10148,7 +10200,7 @@ export class NativeRendererSync {
         )
       ) {
         const graphSource = nativeGraphRenderSource(nativeGraphRoute);
-        const graphTime = typeof renderClock.time === 'number' ? renderClock.time : 0;
+        const graphTime = nativeShaderClockSeconds(typeof renderClock.time === 'number' ? renderClock.time : 0);
         const graphDelta = typeof renderClock.time_delta === 'number' ? renderClock.time_delta : 1 / this.targetFps;
         const graphFrameIndex = typeof renderClock.frame_index === 'number' ? renderClock.frame_index : 0;
         const pluginRoute = nativeGraphRoute.kind === 'ghostfx'
@@ -10450,6 +10502,7 @@ export class NativeRendererSync {
           ? this.coreOwnedEffectGraph(nativeGraphRoute, width, height, renderClock)
           : null;
         if (!skipInstall && ((nativeGraphRoute.kind !== 'vj-crossfade' && nativeGraphRoute.kind !== 'vj-mix') || installPluginGraph)) {
+          coreOwnedFxSent = true;
           const installedGraph = composeNativeGraphs(pluginGraph?.config, effectGraph?.config);
           commands.push({
             type: 'set_native_graph_layer',
@@ -10475,6 +10528,7 @@ export class NativeRendererSync {
         // Only effect param values changed, so the installed chain has the
         // same passes and buffers: rewrite its uniforms in place instead of
         // re-installing the graph. LUT tables are left as they are.
+        coreOwnedFxSent = true;
         const effectGraph = this.coreOwnedEffectGraph(nativeGraphRoute, width, height, renderClock);
         for (const buffer of (effectGraph?.config.buffers ?? []) as Array<Record<string, any>>) {
           if (buffer.immutable_lut === true) continue;
@@ -10493,6 +10547,35 @@ export class NativeRendererSync {
           layer_id: layer.id,
         });
         this.forgetNativeGraphUploads(layer.id);
+      }
+      // The effect chain a core-owned graph layer carries (and a VJ crossfade
+      // or mix layer's own effects) is sent with the graph, so audio-driven
+      // passes (Glitch's Audio and Beat triggers, Block Corrupt and Data
+      // Bend audio reactivity, ...) held the level they were installed with.
+      // Re-send a pass's uniforms whenever the live audio moves them.
+      if (nativeGraphRoute && NATIVE_CORE_OWNED_GRAPH_KINDS.has(nativeGraphRoute.kind) && nativeGraphRoute.effectPasses?.length) {
+        const audioKeys = nativeEffectPassAudioKeys(nativeGraphRoute.effectPasses, liveEffectAudioParams());
+        const sentKeys = this.coreOwnedFxAudioKeys.get(layer.id);
+        if (coreOwnedFxSent) {
+          this.coreOwnedFxAudioKeys.set(layer.id, audioKeys);
+        } else if (sentKeys && audioKeys.some((key, i) => key !== sentKeys[i])) {
+          const effectGraph = this.coreOwnedEffectGraph(nativeGraphRoute, width, height, renderClock);
+          const uniforms = ((effectGraph?.config.buffers ?? []) as Array<Record<string, any>>)
+            .filter((buffer) => buffer.kind === 'uniform' && buffer.immutable_lut !== true);
+          const byPass = uniforms.length === audioKeys.length;
+          uniforms.forEach((buffer, i) => {
+            if (byPass && audioKeys[i] === sentKeys[i]) return;
+            const data = nativeGraphBufferBase64(buffer);
+            if (!data) return;
+            commands.push({
+              type: 'update_native_graph_buffer',
+              layer_id: layer.id,
+              buffer_id: String(buffer.id),
+              initial_b64: data,
+            });
+          });
+          this.coreOwnedFxAudioKeys.set(layer.id, audioKeys);
+        }
       }
 
       const src = nativeSource.source;
@@ -10607,10 +10690,10 @@ export class NativeRendererSync {
         (!prev || prev.sourceSig !== snap.sourceSig || prev.valuesSig !== snap.valuesSig)
       ) {
         const shaderId = `${src2.id}:${hashString(src2.shaderCode)}`;
-        const shaderTime =
+        const shaderTime = nativeShaderClockSeconds(
           typeof renderClock.time === 'number' && Number.isFinite(renderClock.time)
             ? renderClock.time
-            : now / 1000;
+            : now / 1000);
         const shaderDelta =
           typeof renderClock.time_delta === 'number' && Number.isFinite(renderClock.time_delta)
             ? renderClock.time_delta

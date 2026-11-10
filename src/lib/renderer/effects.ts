@@ -4168,6 +4168,34 @@ export function updateEffectUniforms(
 /**
  * Get default params for an effect type
  */
+/** The saved per-instance seed param of the effects that break the picture
+ *  up at random (Glitch, Block Corrupt, Data Bend). Two instances with the
+ *  same settings but different seeds break up differently; 0 or missing
+ *  (instances saved before seeds) keeps the pattern they always had. */
+export const EFFECT_SEED_PARAM: Partial<Record<EffectType, string>> = {
+  glitch: 'glitchSeed',
+  blockCorrupt: 'bcSeed',
+  dataBend: 'dbSeed',
+};
+
+/** A fresh seed: a whole number 1..2^24-1 (exact in the shader's f32). */
+export function newEffectSeed(): number {
+  return 1 + Math.floor(Math.random() * 16777214);
+}
+
+/** A copied layer's effects with fresh seeds, so a duplicate does not break
+ *  up in lockstep with its original (the original keeps its seed, or its
+ *  seedless pattern). Effects without a seed param are returned unchanged. */
+export function reseedEffectCopies<T extends { type: EffectType; params?: EffectParams }>(effects: readonly T[] | undefined): T[] | undefined {
+  if (!effects) return effects as undefined;
+  return effects.map((effect) => {
+    const key = EFFECT_SEED_PARAM[effect.type];
+    const params = effect.params as Record<string, unknown> | undefined;
+    if (!key) return effect;
+    return { ...effect, params: { ...(params ?? {}), [key]: newEffectSeed() } as EffectParams };
+  });
+}
+
 export function getDefaultEffectParams(type: EffectType): EffectParams {
   if (type === 'cubeLut') return { lutStrength: 1 };
   // Custom effects: return their stored defaults (scalars keyed by uniform name;
@@ -4246,6 +4274,7 @@ export function getDefaultEffectParams(type: EffectType): EffectParams {
         glitchRGBSplit: 0.5, glitchJitter: 0.3,
         glitchTriggerMode: 0, glitchBlockHold: 0.3,
         glitchVerticalSlice: 0, glitchFreezeBurst: 0, glitchTearChance: 0,
+        glitchSeed: newEffectSeed(),
       };
     case 'rgbShift':
       return {
@@ -4952,9 +4981,9 @@ export function getDefaultEffectParams(type: EffectType): EffectParams {
     case 'paintDrip':
       return { dripLength: 0.35, dripColumns: 22, dripSpeed: 0.6, dripWobble: 0.4, dripGloss: 0.35, dripStreak: 0.6 };
     case 'blockCorrupt':
-      return { bcIntensity: 0.55, bcSpeed: 0.8, bcBlockSize: 32, bcSmear: 0.6, bcRun: 0.5, bcColorFault: 0.45, bcMotion: 0.5, bcAudioReact: 0, bcMix: 1 };
+      return { bcIntensity: 0.55, bcSpeed: 0.8, bcBlockSize: 32, bcSmear: 0.6, bcRun: 0.5, bcColorFault: 0.45, bcMotion: 0.5, bcAudioReact: 0, bcMix: 1, bcSeed: newEffectSeed() };
     case 'dataBend':
-      return { dbIntensity: 0.6, dbSpeed: 0.6, dbStride: 0.4, dbBandSize: 0.45, dbChannelSlip: 0.5, dbBitCrush: 0.35, dbAudioReact: 0, dbMix: 1 };
+      return { dbIntensity: 0.6, dbSpeed: 0.6, dbStride: 0.4, dbBandSize: 0.45, dbChannelSlip: 0.5, dbBitCrush: 0.35, dbAudioReact: 0, dbMix: 1, dbSeed: newEffectSeed() };
     case 'inkFlow':
       return { inkAmount: 0.5, inkScale: 3, inkSpeed: 0.5, inkAngle: 90, inkStream: 0.35, inkBleed: 0.6, inkPigment: 0.5, inkMix: 1 };
     case 'flowFieldTrails':

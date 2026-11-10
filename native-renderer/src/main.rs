@@ -1113,7 +1113,7 @@ struct CoreStatus {
     compute_graph_readback_bytes: u64,
     compute_graph_persistent_buffers: u32,
     render_clock_mode: String,
-    render_clock_time: f32,
+    render_clock_time: f64,
     render_clock_frame_index: u64,
     render_clock_updates: u64,
     /// Renders that recomposited an already-stepped manual clock frame
@@ -1759,23 +1759,23 @@ struct NativeMediaSourceState {
 }
 
 impl NativeMediaSourceState {
-    fn current_playback_rate(&self, render_clock_time: Option<f32>) -> f64 {
+    fn current_playback_rate(&self, render_clock_time: Option<f64>) -> f64 {
         if !self.bounce_enabled || self.paused { return self.playback_rate; }
         let Some(duration) = self.duration_seconds.filter(|duration| *duration > 0.0) else {
             return self.playback_rate;
         };
         let lo = duration * self.trim_start;
         let span = (duration * self.trim_end - lo).max(f64::EPSILON);
-        let elapsed = render_clock_time.map_or(0.0, |clock| (clock as f64 - self.clock_time_seconds).max(0.0));
+        let elapsed = render_clock_time.map_or(0.0, |clock| (clock - self.clock_time_seconds).max(0.0));
         let phase = (self.playback_time_seconds + elapsed * self.playback_rate - lo).rem_euclid(2.0 * span);
         if phase.abs() < 1e-9 { self.playback_rate.abs() }
         else if (phase - span).abs() < 1e-9 { -self.playback_rate.abs() }
         else if phase < span { self.playback_rate } else { -self.playback_rate }
     }
 
-    fn current_time_seconds(&self, render_clock_time: Option<f32>) -> f64 {
+    fn current_time_seconds(&self, render_clock_time: Option<f64>) -> f64 {
         let clock_delta = render_clock_time
-            .map(|clock| clock as f64 - self.clock_time_seconds)
+            .map(|clock| clock - self.clock_time_seconds)
             .unwrap_or(0.0);
         let mut time = if self.paused {
             self.playback_time_seconds
@@ -4120,6 +4120,24 @@ fn set_scene_layer_color(layer: &mut SceneLayer, rgba: [f32; 4]) {
 /// step chase does not skip a member when the count wraps.
 const BEAT_CLOCK_WRAP: f64 = 65520.0;
 
+/// Shader time wraps here (2^15 s, about 9 h 6 min). Uniforms carry time as
+/// an f32, whose step grows with the value: 2 ms at 9 h, 4 ms at 12 h,
+/// 62 ms after a week, so animation micro-stuttered on long installs and
+/// ran at ~16 fps after a week. Below the wrap shader time is exactly the
+/// live clock (nothing changes in a show shorter than that); past it time
+/// restarts from 0, so the f32 step never exceeds 2 ms (the precision the
+/// beat clock above already settles for). A power of two keeps whole-second
+/// and dyadic periods (fract(t), t * 0.5, clock ticks) seamless across the
+/// wrap. Bookkeeping that needs the real clock (video anchors, the beat
+/// clock, manual export seeks) keeps the unwrapped f64. The editor wraps the
+/// shader time it packs at the same value (NATIVE_SHADER_CLOCK_WRAP_SECONDS).
+const SHADER_CLOCK_WRAP_SECONDS: f64 = 32768.0;
+
+fn shader_clock_seconds(clock_seconds: f64) -> f32 {
+    if !clock_seconds.is_finite() || clock_seconds <= 0.0 { return 0.0; }
+    if clock_seconds < SHADER_CLOCK_WRAP_SECONDS { clock_seconds as f32 } else { clock_seconds.rem_euclid(SHADER_CLOCK_WRAP_SECONDS) as f32 }
+}
+
 /// Strength of an empty layer's placeholder colour. Colour layers draw at 1.0.
 const SOURCELESS_PLACEHOLDER_ALPHA: f32 = 0.56;
 
@@ -4129,14 +4147,14 @@ const SOURCELESS_PLACEHOLDER_ALPHA: f32 = 0.56;
 struct BeatClockAnchor {
     beat: f64,
     bpm: f32,
-    time: Option<f32>,
+    time: Option<f64>,
 }
 
 impl BeatClockAnchor {
     fn from_command(command: &Value) -> Option<Self> {
         let beat = number_at(command, &["beat"]).filter(|value| value.is_finite())?;
         let bpm = number_at(command, &["bpm"]).filter(|value| value.is_finite() && *value > 0.0)?;
-        let time = number_at(command, &["time"]).filter(|value| value.is_finite()).map(|value| value as f32);
+        let time = number_at(command, &["time"]).filter(|value| value.is_finite());
         Some(Self { beat, bpm: (bpm as f32).clamp(20.0, 400.0), time })
     }
 }
@@ -4147,7 +4165,7 @@ impl BeatClockAnchor {
 /// anchored tempo, so it keeps time between editor updates.
 #[derive(Clone, Copy, Debug)]
 struct BeatClock {
-    anchor_time: Option<f32>,
+    anchor_time: Option<f64>,
     anchor_beat: f64,
     bpm: f32,
     pending: Option<BeatClockAnchor>,
@@ -4165,14 +4183,14 @@ impl BeatClock {
     }
 
     /// (beat position, bpm, _, _) at render time `time`.
-    fn uniform(&mut self, time: f32) -> [f32; 4] {
+    fn uniform(&mut self, time: f64) -> [f32; 4] {
         if let Some(anchor) = self.pending.take() {
             self.anchor_time = Some(anchor.time.unwrap_or(time));
             self.anchor_beat = anchor.beat;
             self.bpm = anchor.bpm;
         }
         let anchor_time = *self.anchor_time.get_or_insert(time);
-        let beat = self.anchor_beat + f64::from(time - anchor_time) * f64::from(self.bpm) / 60.0;
+        let beat = self.anchor_beat + (time - anchor_time) * f64::from(self.bpm) / 60.0;
         [beat.rem_euclid(BEAT_CLOCK_WRAP) as f32, self.bpm, 0.0, 0.0]
     }
 }
@@ -4889,7 +4907,7 @@ struct App {
     /// Source the recorder asked for besides the program output, if any.
     record_target: Option<RecordTargetSpec>,
     render_clock_mode: String,
-    render_clock_time: Option<f32>,
+    render_clock_time: Option<f64>,
     render_clock_delta: f32,
     render_clock_frame_index: Option<u64>,
     /// Manual-clock (offline render) simulation lock. Every native graph
@@ -4902,7 +4920,7 @@ struct App {
     /// Remembering the clock value the graphs last advanced on makes
     /// repeated renders at the same virtual time idempotent: the world
     /// clock and the render clock advance together, one step per frame.
-    last_native_graph_step_clock: Option<f32>,
+    last_native_graph_step_clock: Option<f64>,
     /// The delta `run_native_graph_layers` claimed for the render in
     /// flight — `render_clock_delta` on the first render of a virtual
     /// frame, 0 on every repeat of it. Every graph builder reads this
@@ -6176,7 +6194,7 @@ impl App {
                 .map(RenderState::native_compute_graph_buffer_count)
                 .unwrap_or(0),
             render_clock_mode: self.render_clock_mode.clone(),
-            render_clock_time: self.native_graph_time_seconds(),
+            render_clock_time: self.native_clock_seconds(),
             render_clock_frame_index: self.native_frame_index(),
             render_clock_updates: self.stats.render_clock_updates,
             manual_clock_graph_steps_skipped: self.stats.manual_clock_graph_steps_skipped,
@@ -7624,7 +7642,7 @@ impl App {
         self.render_clock_time = number_at(params, &["time"])
             .or_else(|| number_at(params, &["time_seconds"]))
             .or_else(|| number_at(params, &["clock_time"]))
-            .map(|value| value.clamp(0.0, 1.0e9) as f32);
+            .map(|value| value.clamp(0.0, 1.0e9));
         self.render_clock_delta = number_at(params, &["time_delta"])
             .or_else(|| number_at(params, &["delta"]))
             .unwrap_or(1.0 / self.target_fps.max(1) as f64)
@@ -7937,11 +7955,18 @@ impl App {
         Ok(json!(self.status()))
     }
 
-    fn native_graph_time_seconds(&self) -> f32 {
+    /// The render clock in seconds, unwrapped and in f64: video anchors and
+    /// other bookkeeping. Shaders get native_graph_time_seconds().
+    fn native_clock_seconds(&self) -> f64 {
         if self.render_clock_mode == "manual" {
             return self.render_clock_time.unwrap_or(0.0).max(0.0);
         }
-        self.start_time.elapsed().as_secs_f32().max(0.0)
+        self.start_time.elapsed().as_secs_f64().max(0.0)
+    }
+
+    /// Shader time: the render clock wrapped at SHADER_CLOCK_WRAP_SECONDS.
+    fn native_graph_time_seconds(&self) -> f32 {
+        shader_clock_seconds(self.native_clock_seconds())
     }
 
     fn native_frame_index(&self) -> u64 {
@@ -13034,7 +13059,7 @@ impl App {
             self.pending_composite_graph_jobs.clone();
         let composite_output_index = self.pending_composite_output_index;
         let render_time = if self.render_clock_mode == "manual" {
-            self.render_clock_time
+            self.render_clock_time.map(shader_clock_seconds)
         } else {
             None
         };
@@ -13454,11 +13479,11 @@ impl App {
         }
     }
 
-    fn snapshot_clock_from_params(&self, params: &Value) -> (Option<f32>, u64) {
+    fn snapshot_clock_from_params(&self, params: &Value) -> (Option<f64>, u64) {
         let snapshot_time = number_at(params, &["time"])
             .or_else(|| number_at(params, &["time_seconds"]))
             .or_else(|| number_at(params, &["clock_time"]))
-            .map(|value| value.clamp(0.0, 1.0e9) as f32)
+            .map(|value| value.clamp(0.0, 1.0e9))
             .or(self.render_clock_time);
         let snapshot_frame_index = number_at(params, &["frame_index"])
             .or_else(|| number_at(params, &["frame"]))
@@ -13470,7 +13495,7 @@ impl App {
     fn render_frame_snapshot_texture(
         &mut self,
         params: &Value,
-    ) -> Result<(Option<f32>, u64), String> {
+    ) -> Result<(Option<f64>, u64), String> {
         let (snapshot_time, snapshot_frame_index) = self.snapshot_clock_from_params(params);
         self.sync_paint_masks_to_gpu();
         let gpu_layers = self.gpu_layer_data();
@@ -13502,7 +13527,7 @@ impl App {
         if let Err(err) = renderer.render_snapshot(
             self.command_phase,
             gpu_layers.len() as u32,
-            snapshot_time,
+            snapshot_time.map(shader_clock_seconds),
             snapshot_frame_index,
             &gpu_layers,
             source_preview_pixels.as_deref(),
@@ -17231,7 +17256,7 @@ impl App {
         if source_id.trim().is_empty() || uri.trim().is_empty() || source_type == "none" {
             return;
         }
-        let render_clock_time = self.native_graph_time_seconds() as f64;
+        let render_clock_time = self.native_clock_seconds();
         self.media_sources
             .entry(source_id.to_string())
             .and_modify(|state| {
@@ -17292,10 +17317,10 @@ impl App {
         if uri.trim().is_empty() || source_type == "none" {
             return;
         }
-        let render_clock_time = self.native_graph_time_seconds() as f64;
+        let render_clock_time = self.native_clock_seconds();
         let mut playback_time_seconds = number_at(command, &["time_seconds"])
             .or_else(|| number_at(command, &["time"]))
-            .or_else(|| existing.as_ref().map(|state| state.current_time_seconds(Some(render_clock_time as f32))))
+            .or_else(|| existing.as_ref().map(|state| state.current_time_seconds(Some(render_clock_time))))
             .unwrap_or(0.0)
             .clamp(0.0, 3600.0);
         let mut seek_generation = number_at(command, &["seek_generation"])
@@ -17306,7 +17331,7 @@ impl App {
             .max(0.0) as u64;
         let playback_rate = number_at(command, &["playback_rate"])
             .or_else(|| number_at(command, &["rate"]))
-            .or_else(|| existing.as_ref().map(|state| state.current_playback_rate(Some(render_clock_time as f32))))
+            .or_else(|| existing.as_ref().map(|state| state.current_playback_rate(Some(render_clock_time))))
             .unwrap_or(1.0)
             .clamp(-16.0, 16.0);
         let duration_seconds = number_at(command, &["duration_seconds"])
@@ -17494,7 +17519,7 @@ impl App {
             let time_seconds = explicit_time_seconds
                 .or_else(|| {
                     self.media_sources.get(&source_id).map(|state| {
-                        state.current_time_seconds(Some(self.native_graph_time_seconds()))
+                        state.current_time_seconds(Some(self.native_clock_seconds()))
                     })
                 })
                 .unwrap_or(0.0)
@@ -17768,7 +17793,7 @@ impl App {
         let height = number_at(params, &["decode_height"]).or_else(|| number_at(params, &["decodeHeight"])).or_else(|| number_at(params, &["height"]))
             .unwrap_or(width as f64).clamp(16.0, 4096.0) as usize;
         let explicit = number_at(params, &["time_seconds"]).or_else(|| number_at(params, &["timeSeconds"])).or_else(|| number_at(params, &["time"]));
-        let time = explicit.or_else(|| self.media_sources.get(&source_id).map(|state| state.current_time_seconds(Some(self.native_graph_time_seconds()))))
+        let time = explicit.or_else(|| self.media_sources.get(&source_id).map(|state| state.current_time_seconds(Some(self.native_clock_seconds()))))
             .unwrap_or(0.0).clamp(0.0, 3600.0);
         let seq = number_at(params, &["seq"]).unwrap_or(req.id as f64).max(1.0) as u64;
         let extra = number_at(params, &["prefetch_window_frames"]).unwrap_or(0.0).clamp(0.0, 4.0) as u32;
@@ -17896,7 +17921,7 @@ impl App {
             let time_seconds = explicit_time_seconds
                 .or_else(|| {
                     self.media_sources.get(&source_id).map(|state| {
-                        state.current_time_seconds(Some(self.native_graph_time_seconds()))
+                        state.current_time_seconds(Some(self.native_clock_seconds()))
                     })
                 })
                 .unwrap_or(0.0)
@@ -17905,7 +17930,7 @@ impl App {
                 .unwrap_or((time_seconds * 1000.0).round())
                 .round()
                 .max(1.0) as u64;
-            let render_clock_time = self.native_graph_time_seconds() as f64;
+            let render_clock_time = self.native_clock_seconds();
             let state = NativeMediaSourceState {
                 uri: uri.clone(),
                 source_type: "video".to_string(),
@@ -18813,7 +18838,7 @@ impl App {
             self.stats.native_video_frame_decode_last_error = "video session limit reached; active sessions preserved".to_string();
             return;
         }
-        let start_time = state.current_time_seconds(Some(self.native_graph_time_seconds()));
+        let start_time = state.current_time_seconds(Some(self.native_clock_seconds()));
         // Optional scratch history can yield to this decoder. Estimate only
         // mandatory resident bytes here, so history cannot reject a session
         // before its worker registers the required admission request. The
@@ -18862,7 +18887,7 @@ impl App {
             decode_width,
             decode_height,
             start_time,
-            state.current_playback_rate(Some(self.native_graph_time_seconds())),
+            state.current_playback_rate(Some(self.native_clock_seconds())),
             state.loop_enabled,
             state.bounce_enabled,
             state.duration_seconds,
@@ -18882,7 +18907,7 @@ impl App {
             NativeVideoStreamState {
                 signature,
                 transport_rate: state.playback_rate,
-                start_reverse: state.current_playback_rate(Some(self.native_graph_time_seconds())) < 0.0,
+                start_reverse: state.current_playback_rate(Some(self.native_clock_seconds())) < 0.0,
                 phase_until: None,
                 phase_error_seconds: None,
                 start_time_seconds: start_time,
@@ -19085,9 +19110,9 @@ impl App {
     /// 10 s limit) and caches by exact timestamp, so the export waits for
     /// the right picture instead of capturing whatever the async pump last
     /// uploaded. A frame that cannot be decoded fails the export loudly.
-    fn settle_manual_video_frames(&mut self, clock_seconds: Option<f32>) -> Result<u32, String> {
+    fn settle_manual_video_frames(&mut self, clock_seconds: Option<f64>) -> Result<u32, String> {
         if self.render_clock_mode != "manual" || self.renderer.is_none() { return Ok(0); }
-        let clock = clock_seconds.unwrap_or_else(|| self.native_graph_time_seconds());
+        let clock = clock_seconds.unwrap_or_else(|| self.native_clock_seconds());
         let (width, height) = self.native_video_decode_dimensions();
         let mut settled = 0u32;
         for source_id in self.active_video_source_ids() {
@@ -19205,7 +19230,7 @@ impl App {
         let Some(path) = local_media_path_from_uri(&state.uri) else {
             return false;
         };
-        let time_seconds = state.current_time_seconds(Some(self.native_graph_time_seconds()));
+        let time_seconds = state.current_time_seconds(Some(self.native_clock_seconds()));
         let frame_bucket = native_video_frame_bucket(time_seconds);
         let signature = match native_video_frame_file_signature(&path, width, height, frame_bucket)
         {
@@ -19431,7 +19456,7 @@ impl App {
                         .get(&result.source_id)
                         .map(|state| {
                             native_video_frame_bucket(
-                                state.current_time_seconds(Some(self.native_graph_time_seconds())),
+                                state.current_time_seconds(Some(self.native_clock_seconds())),
                             )
                         })
                         .unwrap_or(result.frame_bucket)
@@ -26027,8 +26052,11 @@ impl RenderState {
         post_effects: &[[f32; 4]],
         stage: OutputStage,
     ) {
-        let time = time_seconds.unwrap_or_else(|| self.start_time.elapsed().as_secs_f32());
-        let clock = self.beat_clock.uniform(time);
+        // The beat clock runs on the unwrapped clock; shaders get it wrapped
+        // (see SHADER_CLOCK_WRAP_SECONDS). A manual clock arrives wrapped.
+        let clock_seconds = time_seconds.map(f64::from).unwrap_or_else(|| self.start_time.elapsed().as_secs_f64());
+        let time = shader_clock_seconds(clock_seconds);
+        let clock = self.beat_clock.uniform(clock_seconds);
         self.output_presenter.clock = clock;
         self.output_presenter.live_time = time;
         self.output_presenter.flux = self.output_flux;
@@ -26243,7 +26271,7 @@ impl RenderState {
             bytemuck::bytes_of(&Stage3DOverlayUniforms {
                 resolution: [self.config.width as f32, self.config.height as f32],
                 item_count: item_count as f32,
-                time: time_seconds.unwrap_or_else(|| self.start_time.elapsed().as_secs_f32()),
+                time: time_seconds.unwrap_or_else(|| shader_clock_seconds(self.start_time.elapsed().as_secs_f64())),
             }),
         );
         self.queue.write_buffer(
@@ -26295,7 +26323,7 @@ impl RenderState {
             bytemuck::bytes_of(&Stage3DMeshUniforms {
                 resolution: [self.config.width as f32, self.config.height as f32],
                 item_count: item_count as f32,
-                time: time_seconds.unwrap_or_else(|| self.start_time.elapsed().as_secs_f32()),
+                time: time_seconds.unwrap_or_else(|| shader_clock_seconds(self.start_time.elapsed().as_secs_f64())),
                 camera_pos: [
                     frame.camera_pos[0],
                     frame.camera_pos[1],
@@ -35152,6 +35180,66 @@ mod tests {
         let parsed = BeatClockAnchor::from_command(&json!({ "beat": 3.5, "bpm": 1000.0 })).unwrap();
         assert_eq!((parsed.beat, parsed.bpm, parsed.time), (3.5, 400.0, None));
         assert!(BeatClockAnchor::from_command(&json!({ "beat": 1.0 })).is_none());
+    }
+
+    #[test]
+    fn shader_clock_is_the_live_clock_in_a_show_and_stays_fine_grained_for_weeks() {
+        // Below the wrap, exactly the old f32 clock: nothing changes in a show.
+        for t in [0.0, 1.0 / 60.0, 10.0, 3600.25, 4.0 * 3600.0 + 0.1, 9.0 * 3600.0] {
+            assert_eq!(shader_clock_seconds(t), t as f32, "{t}");
+        }
+        assert_eq!(shader_clock_seconds(-1.0), 0.0);
+        assert_eq!(shader_clock_seconds(f64::NAN), 0.0);
+        // Past it, consecutive 60 fps frames (and 120 fps frames) always
+        // step forward by close to a frame. With the old f32 clock a frame at
+        // 12 h stepped 0 or 2 f32 ulps (3.9 ms each) and after a week
+        // 62.5 ms, so most 60 fps frames repeated the last time.
+        for hours in [12.0_f64, 24.0, 7.0 * 24.0, 30.0 * 24.0, 365.0 * 24.0] {
+            for fps in [60.0_f64, 120.0] {
+                let start = hours * 3600.0 + 0.123;
+                let mut worst = 0.0_f64;
+                let mut moves = 0;
+                for frame in 0..240 {
+                    let a = start + frame as f64 / fps;
+                    let b = a + 1.0 / fps;
+                    let step = shader_clock_seconds(b) as f64 - shader_clock_seconds(a) as f64;
+                    if step < 0.0 { continue; } // the one wrap moment
+                    moves += 1;
+                    worst = worst.max((step - 1.0 / fps).abs());
+                }
+                assert!(moves >= 239, "{hours} h {fps} fps");
+                assert!(worst <= 0.002, "{hours} h at {fps} fps: frame step off by {worst} s");
+                let old_step = (start + 1.0 / fps) as f32 - start as f32;
+                if hours >= 24.0 * 7.0 { assert!((old_step as f64 - 1.0 / fps).abs() > 0.004, "the old clock was coarse"); }
+            }
+        }
+        // Whole and dyadic periods are seamless across the wrap.
+        let before = SHADER_CLOCK_WRAP_SECONDS - 0.25;
+        let after = SHADER_CLOCK_WRAP_SECONDS + 0.25;
+        assert_eq!(shader_clock_seconds(after), 0.25);
+        assert_eq!((shader_clock_seconds(before) * 2.0).fract(), (shader_clock_seconds(after) * 2.0).fract());
+    }
+
+    #[test]
+    fn beat_clock_and_video_time_keep_the_unwrapped_clock() {
+        // The beat clock is fed the unwrapped f64 clock: across the shader
+        // wrap it keeps counting.
+        let mut clock = BeatClock::default();
+        let t0 = SHADER_CLOCK_WRAP_SECONDS - 1.0;
+        clock.rebase(BeatClockAnchor { beat: 8.0, bpm: 120.0, time: Some(t0) });
+        assert!((clock.uniform(t0 + 2.0)[0] - 12.0).abs() < 1e-3);
+        // A week in, video time still moves by the frame step.
+        let state = NativeMediaSourceState {
+            uri: "week://clip".to_string(), source_type: "video".to_string(),
+            playback_time_seconds: 1.0, seek_generation: 0, playback_rate: 1.0,
+            paused: false, loop_enabled: true, bounce_enabled: false,
+            duration_seconds: Some(10.0), trim_start: 0.0, trim_end: 1.0,
+            decode_width: None, decode_height: None,
+            clock_time_seconds: 7.0 * 86400.0, seq: 0,
+        };
+        let a = state.current_time_seconds(Some(7.0 * 86400.0 + 0.5));
+        let b = state.current_time_seconds(Some(7.0 * 86400.0 + 0.5 + 1.0 / 60.0));
+        assert!((a - 1.5).abs() < 1e-6 && (b - a - 1.0 / 60.0).abs() < 1e-6, "{a} {b}");
     }
 
     #[test]

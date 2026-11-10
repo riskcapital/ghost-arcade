@@ -771,18 +771,45 @@ fn m_noise3(p: vec3<f32>) -> f32 {
   let d = mix(m_hash3(i + vec3<f32>(0.0, 1.0, 1.0)), m_hash3(i + vec3<f32>(1.0, 1.0, 1.0)), u.x);
   return mix(mix(a, b, u.y), mix(c, d, u.y), u.z) * 2.0 - 1.0;
 }
+// Time-driven variants for the sites that feed the clock into the hash
+// (deform noise, lava flow, hologram/glitch bands). sin() of a huge argument
+// keeps no fraction in f32 and differs per GPU, so after hours of uptime they
+// freeze or pattern. Below |argument| 2^20 the old sin hash is kept
+// bit-for-bit (the look is unchanged; t = 10 s peaks ~190k at max speed and
+// scale); above it an integer PCG hash of the lattice point takes over.
+// Static callers (dissolve, explode, fracture, ...) keep m_hash3/m_noise3.
+fn m_pcg(v: u32) -> u32 {
+  let state = v * 747796405u + 2891336453u;
+  let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+  return (word >> 22u) ^ word;
+}
+fn m_hash3_t(p: vec3<f32>) -> f32 {
+  let a = dot(p, vec3<f32>(127.1, 311.7, 74.7));
+  let k = m_pcg(bitcast<u32>(i32(p.x)) ^ m_pcg(bitcast<u32>(i32(p.y)) ^ m_pcg(bitcast<u32>(i32(p.z)))));
+  return select(f32(k >> 8u) * (1.0 / 16777216.0), fract(sin(a) * 43758.5453), abs(a) < 1048576.0);
+}
+fn m_noise3_t(p: vec3<f32>) -> f32 {
+  let i = floor(p); let f = fract(p);
+  let u = f * f * (3.0 - 2.0 * f);
+  let a = mix(m_hash3_t(i), m_hash3_t(i + vec3<f32>(1.0, 0.0, 0.0)), u.x);
+  let b = mix(m_hash3_t(i + vec3<f32>(0.0, 1.0, 0.0)), m_hash3_t(i + vec3<f32>(1.0, 1.0, 0.0)), u.x);
+  let c = mix(m_hash3_t(i + vec3<f32>(0.0, 0.0, 1.0)), m_hash3_t(i + vec3<f32>(1.0, 0.0, 1.0)), u.x);
+  let d = mix(m_hash3_t(i + vec3<f32>(0.0, 1.0, 1.0)), m_hash3_t(i + vec3<f32>(1.0, 1.0, 1.0)), u.x);
+  return mix(mix(a, b, u.y), mix(c, d, u.y), u.z) * 2.0 - 1.0;
+}
 fn m_hsv2rgb(c: vec3<f32>) -> vec3<f32> {
   let k = vec4<f32>(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
   let p = abs(fract(c.xxx + k.xyz) * 6.0 - k.www);
   return c.z * mix(vec3<f32>(1.0), clamp(p - vec3<f32>(1.0), vec3<f32>(0.0), vec3<f32>(1.0)), c.y);
 }
 
+// Only the noise deform calls this, always with the clock: time-driven hash.
 fn m_fbm3(p0: vec3<f32>) -> f32 {
   var p = p0;
-  var f = 0.5 * m_noise3(p); p = p * 2.01;
-  f = f + 0.25 * m_noise3(p); p = p * 2.02;
-  f = f + 0.125 * m_noise3(p); p = p * 2.03;
-  f = f + 0.0625 * m_noise3(p);
+  var f = 0.5 * m_noise3_t(p); p = p * 2.01;
+  f = f + 0.25 * m_noise3_t(p); p = p * 2.02;
+  f = f + 0.125 * m_noise3_t(p); p = p * 2.03;
+  f = f + 0.0625 * m_noise3_t(p);
   return f / 0.9375;
 }
 fn m_safe_norm(v: vec3<f32>) -> vec3<f32> {
@@ -826,7 +853,7 @@ fn m_deform(p: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
     off = (m_safe_norm(cp) * dspr - cp) * di;
   } else if (dt == 7) { // inflate
     let b = pow(sin(tt * 2.0) * 0.5 + 0.5, 0.7);
-    let v = 1.0 + m_noise3(cp * dsc * 2.0 + vec3<f32>(tt * 0.5)) * 0.2;
+    let v = 1.0 + m_noise3_t(cp * dsc * 2.0 + vec3<f32>(tt * 0.5)) * 0.2;
     off = nrm * b * di * v * dspr;
   } else if (dt == 8) { // explode
     let n = m_noise3(cp * 10.0) * 0.3 + 0.7;
@@ -845,7 +872,7 @@ fn m_deform(p: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
   } else if (dt == 11) { // melt
     let h = clamp((cp.y + 1.0) * 0.5, 0.0, 1.0);
     let m = h * h * di * dspr;
-    let n = m_noise3(cp * dsc + vec3<f32>(tt * 0.6));
+    let n = m_noise3_t(cp * dsc + vec3<f32>(tt * 0.6));
     off = vec3<f32>(n * m * 0.3, -m * 0.5, n * m * 0.3);
   } else if (dt == 12) { // voxelize
     let vs = max(0.04, 0.5 / max(dsc, 0.1));
@@ -1077,7 +1104,7 @@ struct VsOut {
     lit = mix(vec3<f32>(0.1, 0.6, 1.0), albedo, 0.3) * scan + mp.light2.rgb * fres * 1.5;
     alpha = alpha * (0.35 + fres * 0.5) * scan;
     // Glitch: random horizontal bands flicker with channel-swapped color.
-    let gband = step(1.0 - clamp(mp.mat2.z, 0.0, 2.0) * 0.12, m_hash3(vec3<f32>(floor(in.world.y * 26.0), floor(t * 18.0), 7.0)));
+    let gband = step(1.0 - clamp(mp.mat2.z, 0.0, 2.0) * 0.12, m_hash3_t(vec3<f32>(floor(in.world.y * 26.0), floor(t * 18.0), 7.0)));
     lit = mix(lit, vec3<f32>(lit.b, lit.g, lit.r) * 1.6, gband * 0.8);
     alpha = alpha * (1.0 - gband * 0.5);
   } else if (mat == 9) { // xray
@@ -1095,7 +1122,7 @@ struct VsOut {
     lit = albedo * (0.1 + thick * 0.15) + vec3<f32>(0.8, 0.9, 1.0) * ior_f * 1.2 + vec3<f32>(1.0) * pow(key, 32.0);
     alpha = alpha * clamp(0.12 + thick * 0.08 + ior_f * 0.6, 0.0, 1.0);
   } else if (mat == 6) { // lava
-    let flow = m_noise3(in.world * 2.5 + vec3<f32>(0.0, -t * mp.mat3.x * 0.5, 0.0));
+    let flow = m_noise3_t(in.world * 2.5 + vec3<f32>(0.0, -t * mp.mat3.x * 0.5, 0.0));
     let heat = clamp(flow * 0.5 + 0.5, 0.0, 1.0);
     let crack = clamp(mp.mat3.y, 0.0, 3.0);
     lit = mix(vec3<f32>(0.15, 0.02, 0.0), vec3<f32>(1.0, 0.5, 0.05), pow(heat, 1.6)) + vec3<f32>(1.0, 0.8, 0.2) * pow(heat, 5.0) * (0.4 + crack * 0.6);
@@ -1110,7 +1137,7 @@ struct VsOut {
     if (h < mp.fx0.z) { discard; }
     if (h < mp.fx0.z + max(mp.wire1.w, 0.005)) { lit = mp.light2.rgb * 2.0; }
   } else if (mat == 14) { // glitch
-    let band = step(0.92, m_hash3(vec3<f32>(floor(in.world.y * 20.0), floor(t * 12.0), 1.0)));
+    let band = step(0.92, m_hash3_t(vec3<f32>(floor(in.world.y * 20.0), floor(t * 12.0), 1.0)));
     lit = mix(lit, vec3<f32>(lit.b, lit.r, lit.g), band);
   } else if (mat == 2) { // wireframe material — edges only
     lit = mp.wire1.rgb * (0.5 + 0.5 * key) + mp.mat1.rgb * mp.mat1.w;

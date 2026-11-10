@@ -742,7 +742,15 @@ struct VertexOutput { @builtin(position) position: vec4<f32>, @location(0) uv: v
   let x = f32((i << 1u) & 2u); let y = f32(i & 2u); var o: VertexOutput;
   o.position = vec4<f32>(x * 2.0 - 1.0, 1.0 - y * 2.0, 0.0, 1.0); o.uv = vec2<f32>(x, y); return o;
 }
-fn hash2(p: vec2<f32>) -> f32 { return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453); }
+// Every hash2/noise2 caller feeds in the clock, and sin() of a huge argument keeps no fraction in f32
+// and differs per GPU (warp, noise fill, particles, lightning freeze or pattern after hours). Below
+// |argument| 2^20 the old sin hash is kept bit-for-bit (the look is unchanged; t = 10 s peaks ~400k on a
+// 4K canvas); above it an integer PCG hash of the lattice point takes over.
+fn svg_pcg(v: u32) -> u32 { let s = v * 747796405u + 2891336453u; let w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u; return (w >> 22u) ^ w; }
+fn hash2(p: vec2<f32>) -> f32 {
+  let a = dot(p, vec2<f32>(127.1, 311.7)); let k = svg_pcg(bitcast<u32>(i32(p.x)) ^ svg_pcg(bitcast<u32>(i32(p.y))));
+  return select(f32(k >> 8u) * (1.0 / 16777216.0), fract(sin(a) * 43758.5453), abs(a) < 1048576.0);
+}
 fn noise2(p: vec2<f32>) -> f32 {
   let i = floor(p); let f = fract(p); let u = f*f*(3.0-2.0*f);
   return mix(mix(hash2(i), hash2(i+vec2<f32>(1.0,0.0)), u.x), mix(hash2(i+vec2<f32>(0.0,1.0)), hash2(i+vec2<f32>(1.0,1.0)), u.x), u.y);

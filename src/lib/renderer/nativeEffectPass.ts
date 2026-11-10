@@ -970,6 +970,7 @@ export interface NativeEffectPassOptions {
     outlineGlowFalloff: number;
     freezeBurst: number;
     glitchFreezeBurst: number;
+    glitchSeed: number;
     gammaShadows: number;
     gammaMids: number;
     gammaHighlights: number;
@@ -1381,6 +1382,7 @@ export interface NativeEffectPassOptions {
     bcMotion: number;
     bcAudioReact: number;
     bcMix: number;
+    bcSeed: number;
     dbIntensity: number;
     dbSpeed: number;
     dbStride: number;
@@ -1389,6 +1391,7 @@ export interface NativeEffectPassOptions {
     dbBitCrush: number;
     dbAudioReact: number;
     dbMix: number;
+    dbSeed: number;
     fftFlowScale: number;
     fftTrailLength: number;
     fftSamples: number;
@@ -1706,6 +1709,15 @@ fn fx_hash3u(a: u32, b: u32, c: u32) -> f32 {
 // Clock ticks as an integer: whole ticks of time * rate, never negative.
 fn fx_tick(time: f32, rate: f32) -> u32 {
   return u32(max(0.0, floor(time * rate)));
+}
+
+// A per-instance seed (a saved effect param) as a salt XORed into clock
+// ticks, so two otherwise identical instances break up differently. Seed 0,
+// which every instance saved before seeds existed has, salts nothing and
+// keeps its old pattern exactly.
+fn fx_seed_salt(seed: f32) -> u32 {
+  let s = u32(clamp(round(seed), 0.0, 16777215.0));
+  return select(0u, fx_pcg(s ^ 0x6d2b79f5u) | 1u, s != 0u);
 }
 
 // A random value for a cell (any float key) at a clock count n. Effects that
@@ -2739,7 +2751,13 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
       let dropout_kind = fx_hash_key(vec2<f32>(dropout_seed, 0.0), 0.0, 0x32u);
       tape_rgb = mix(tape_rgb, select(vec3<f32>(0.0), vec3<f32>(1.0), dropout_kind > 0.5), 0.85);
     }
-    let n = vhs_noise(tape_uv * u.resolution_time.xy * 0.5 + vec2<f32>(t * 100.0));
+    // Snow drifts 100 lattice cells a second; the lattice repeats every
+    // 1024 cells (fx_lattice), so the drift is taken over a 10.24 s period
+    // first. Added to the pixel position as t * 100 it outgrew the f32
+    // fraction after ~11.6 h and the snow turned into blocks. Below 10.24 s
+    // the value is unchanged.
+    let snow_t = t - floor(t / 10.24) * 10.24;
+    let n = vhs_noise(tape_uv * u.resolution_time.xy * 0.5 + vec2<f32>(snow_t * 100.0));
     tape_rgb += (n - 0.5) * noise_amount * 0.3;
     let scanline = sin(uv.y * u.resolution_time.y * 2.0) * 0.5 + 0.5;
     tape_rgb *= 1.0 - scanline_amount * 0.3 * scanline;
@@ -3030,6 +3048,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let freeze_burst = clamp(u.params2.x, 0.0, 1.0);
     let audio = clamp(u.params2.y, 0.0, 1.5);
     let beat = clamp(u.params2.z, 0.0, 1.0);
+    let salt = fx_seed_salt(u.params2.w);
     // Trigger: 0 always on, 1 follows the music's level, 2 fires on beats.
     var drive = 1.0;
     if (trigger == 1u) {
@@ -3046,10 +3065,12 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     // each band in place up to six times longer; Speed 0 holds it still.
     let rate = speed * 12.0 * mix(1.0, 0.16, block_hold);
     var tick_time = time * rate;
-    if (freeze_burst > 0.001) {
+    // Speed 0 already holds one pattern; the burst gate would swap it
+    // every half second.
+    if (freeze_burst > 0.001 && rate > 0.0) {
       // Burst gate: some half-second windows hold one pattern, then release.
       let window = fx_tick(time, 2.0);
-      if (fx_hash2u(window, 0x5bd1e995u) < freeze_burst * 0.7) {
+      if (fx_hash2u(window ^ salt, 0x5bd1e995u) < freeze_burst * 0.7) {
         tick_time = f32(window % 4096u) * 5.0;
       }
     }
@@ -3057,21 +3078,21 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let y = clamp(uv.y, 0.0, 0.99999);
     let row = u32(floor(y * row_count));
     // Bands step at their own moments, so the frame never flips all at once.
-    let tick = u32(floor(tick_time + fx_hash2u(row, 0x68e31da4u) * 3.0));
+    let tick = u32(floor(tick_time + fx_hash2u(row ^ salt, 0x68e31da4u) * 3.0)) ^ salt;
     let row_hit = step(1.0 - intensity * 0.5, fx_hash2u(row, tick));
     let col = u32(floor(clamp(uv.x, 0.0, 0.99999) * 12.0));
     let slice_gate = mix(1.0, step(0.5, fx_hash3u(col, row, tick ^ 0x2545f491u)), vertical_slice);
     let shift = (fx_hash2u(row ^ 0x27d4eb2du, tick) - 0.5) * 0.24 * intensity * row_hit * slice_gate;
     // Tear bands: three bands at a time leap much further and split harder.
     let band = row / 3u;
-    let tear_tick = tick / 2u;
+    let tear_tick = ((tick ^ salt) / 2u) ^ salt;
     let tear_hit = step(1.0 - tear_chance * intensity * 0.6, fx_hash2u(band ^ 0x9e3779b9u, tear_tick));
     let tear_dir = select(-1.0, 1.0, fx_hash2u(band ^ 0x85ebca6bu, tear_tick) > 0.5);
     let tear = tear_hit * tear_dir * (0.05 + 0.12 * fx_hash2u(band ^ 0xc2b2ae35u, tear_tick));
     // Jitter: a fine horizontal shake that rolls down the picture.
     let line_pos = y * 160.0;
     let line = u32(floor(line_pos));
-    let shake_tick = fx_tick(time, speed * 16.0);
+    let shake_tick = fx_tick(time, speed * 16.0) ^ salt;
     let a = fx_hash2u(line, shake_tick);
     let b = fx_hash2u(line + 1u, shake_tick);
     let lf = fract(line_pos);
@@ -3081,11 +3102,13 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     // Displaced bands wrap round like a broken line buffer.
     warped_uv.x = select(warped_uv.x, fract(warped_uv.x), moved > 0.0);
     let split = rgb_split * intensity * (0.003 + row_hit * 0.02 + tear_hit * 0.035);
-    var rgb = vec3<f32>(
-      sample_rgb(warped_uv + vec2<f32>(split, 0.0)).r,
-      sample_rgb(warped_uv).g,
-      sample_rgb(warped_uv - vec2<f32>(split, 0.0)).b,
-    );
+    // Alpha moves with the picture: a moved band over a transparent area
+    // takes its own coverage along, and split fringes stay visible.
+    let tap_r = sample_clamped(warped_uv + vec2<f32>(split, 0.0));
+    let tap_g = sample_clamped(warped_uv);
+    let tap_b = sample_clamped(warped_uv - vec2<f32>(split, 0.0));
+    let moved_alpha = max(tap_g.a, max(tap_r.a, tap_b.a));
+    var rgb = vec3<f32>(tap_r.r, tap_g.g, tap_b.b);
     // Broken blocks on the moved bands: crushed, channel-swapped colour.
     let block_x = u32(floor(fract(warped_uv.x) * mix(32.0, 8.0, block_size)));
     let fault = fx_hash3u(block_x, row, tick ^ 0x1b873593u);
@@ -3095,7 +3118,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
       let swapped = select(crushed.brg, crushed.gbr, fault < intensity * 0.15);
       rgb = mix(rgb, swapped, 0.85);
     }
-    return vec4<f32>(rgb, src.a);
+    return vec4<f32>(rgb, moved_alpha);
   }
   if (code == 17u) {
     let rolloff = clamp(u.params0.x, 0.0, 1.0);
@@ -9231,6 +9254,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let motion = clamp(u.params1.y, 0.0, 1.0);
     let audio = clamp(u.params1.z, 0.0, 1.5);
     let wet = clamp(u.params1.w, 0.0, 1.0);
+    let salt = fx_seed_salt(u.params2.x);
     let intensity = clamp(amount + audio * 0.75, 0.0, 1.0);
     if (intensity <= 0.0001 || wet <= 0.0001) {
       return src;
@@ -9245,7 +9269,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let index = cell.y * cols + cell.x;
     let slice = index / slice_len;
     let pos = index % slice_len;
-    let tick = u32(floor(time * speed * 5.0 + fx_hash2u(slice, 0x51ed27u) * 4.0));
+    let tick = u32(floor(time * speed * 5.0 + fx_hash2u(slice ^ salt, 0x51ed27u) * 4.0)) ^ salt;
     let failed = fx_hash2u(slice, tick) < intensity * 0.75;
     // Breaks come early more often than late, so most runs spill onto the
     // block rows below.
@@ -9263,17 +9287,22 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     // slice), picked by the Smear and Motion weights against flat blocks.
     let kind_roll = fx_hash2u(slice ^ 0x68bc21ebu, tick) * (smear + motion + 0.25);
     var result_rgb = color;
+    // Coverage comes from wherever the broken block reads its picture, so a
+    // run over a transparent area shows what it copied.
+    var result_a = src.a;
     if (kind_roll < smear) {
+      var smeared = src;
       if (cell.y == start_cell.y) {
         // The last good column, dragged across the run.
         let edge_x = max(0.0, f32(start_cell.x) * bs - 1.0);
-        result_rgb = sample_rgb(vec2<f32>(edge_x + 0.5, px.y) / res);
+        smeared = sample_clamped(vec2<f32>(edge_x + 0.5, px.y) / res);
       } else {
         // Wrapped onto the next block row: the line above drips down.
         let edge_y = max(0.0, f32(cell.y) * bs - 1.0);
-        result_rgb = sample_rgb(vec2<f32>(px.x, edge_y + 0.5) / res);
+        smeared = sample_clamped(vec2<f32>(px.x, edge_y + 0.5) / res);
       }
-      result_rgb = result_rgb * (0.92 + 0.16 * block_roll);
+      result_a = smeared.a;
+      result_rgb = smeared.rgb * (0.92 + 0.16 * block_roll);
     } else if (kind_roll < smear + motion) {
       // Wrong motion vector: the whole run shows picture from elsewhere,
       // a few blocks away, in half-block steps.
@@ -9283,17 +9312,21 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
       ) * bs * 0.5 * (0.4 + motion);
       let jitter = (vec2<f32>(fx_hash2u(index, tick ^ 0x7f4a7c15u), fx_hash2u(index ^ 0x6a09e667u, tick)) - vec2<f32>(0.5)) * bs * 0.25;
       let src_at = clamp(px + mv + jitter, vec2<f32>(0.5), res - vec2<f32>(0.5));
-      result_rgb = sample_rgb(src_at / res);
+      let moved = sample_clamped(src_at / res);
+      result_rgb = moved.rgb;
+      result_a = moved.a;
     } else {
       // Stuck DC: the run decodes to one flat colour, the average of the
       // block where it broke, with a small step at each block edge.
       let base = vec2<f32>(start_cell) * bs;
-      result_rgb = (
-        sample_rgb((base + vec2<f32>(0.25, 0.25) * bs) / res) +
-        sample_rgb((base + vec2<f32>(0.75, 0.25) * bs) / res) +
-        sample_rgb((base + vec2<f32>(0.25, 0.75) * bs) / res) +
-        sample_rgb((base + vec2<f32>(0.75, 0.75) * bs) / res)
-      ) * 0.25 * (0.95 + 0.1 * block_roll);
+      let dc = (
+        sample_clamped((base + vec2<f32>(0.25, 0.25) * bs) / res) +
+        sample_clamped((base + vec2<f32>(0.75, 0.25) * bs) / res) +
+        sample_clamped((base + vec2<f32>(0.25, 0.75) * bs) / res) +
+        sample_clamped((base + vec2<f32>(0.75, 0.75) * bs) / res)
+      ) * 0.25;
+      result_rgb = dc.rgb * (0.95 + 0.1 * block_roll);
+      result_a = dc.a;
     }
     // Colour faults hit whole runs; stripes land on some of their blocks.
     let fault_roll = select(block_roll, fx_hash2u(slice ^ 0x9b05688cu, tick), in_run);
@@ -9324,7 +9357,10 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
         ycc.x + 1.772 * ycc.y,
       );
     }
-    return vec4<f32>(mix(color, clamp(result_rgb, vec3<f32>(0.0), vec3<f32>(1.0)), wet), src.a);
+    return vec4<f32>(
+      mix(color, clamp(result_rgb, vec3<f32>(0.0), vec3<f32>(1.0)), wet),
+      mix(src.a, result_a, wet),
+    );
   }
   if (code == 188u) {
     // data-bend: the picture read back as raw bytes with the wrong numbers.
@@ -9341,6 +9377,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let crush = clamp(u.params1.x, 0.0, 1.0);
     let audio = clamp(u.params1.y, 0.0, 1.5);
     let wet = clamp(u.params1.z, 0.0, 1.0);
+    let salt = fx_seed_salt(u.params1.w);
     let intensity = clamp(amount + audio * 0.75, 0.0, 1.0);
     if (intensity <= 0.0001 || wet <= 0.0001) {
       return src;
@@ -9348,7 +9385,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let px = clamp(uv, vec2<f32>(0.0), vec2<f32>(0.99999)) * res;
     let band_h = max(2.0, mix(res.y / 40.0, res.y / 3.0, band_size));
     let band = u32(px.y / band_h);
-    let tick = u32(floor(time * speed * 2.5 + fx_hash2u(band, 0x3c6ef372u) * 3.0));
+    let tick = u32(floor(time * speed * 2.5 + fx_hash2u(band ^ salt, 0x3c6ef372u) * 3.0)) ^ salt;
     if (fx_hash2u(band, tick) >= intensity * 0.65) {
       return src;
     }
@@ -9356,7 +9393,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     // Stride error: each line is read d pixels further on than the last.
     // It slides slowly while the band holds.
     let d_seed = fx_hash2u(band ^ 0xb5297a4du, tick) - 0.5;
-    let slide = sin(time * (0.35 + speed * 0.9) + f32(band % 64u) * 1.7) * 0.18;
+    let slide = sin(time * (0.35 + speed * 0.9) + f32((band + salt) % 64u) * 1.7) * 0.18;
     let d = (d_seed * 2.0 + slide) * stride * 3.5;
     let read_x = px.x + ly * d;
     // Running off the end of a line continues on the next one.
@@ -9376,11 +9413,13 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let slip_px = slip * res.x * 0.03 * (0.25 + fx_hash2u(band ^ 0x2545f491u, tick));
     let r_x = fract((src_px.x + slip_px) / res.x);
     let b_x = fract((src_px.x - slip_px) / res.x);
-    var rgb = vec3<f32>(
-      sample_rgb(vec2<f32>(r_x, src_px.y / res.y)).r,
-      sample_rgb(src_px / res).g,
-      sample_rgb(vec2<f32>(b_x, src_px.y / res.y)).b,
-    );
+    // Alpha is read with the picture, so a slanted band over a transparent
+    // area keeps its coverage.
+    let tap_r = sample_clamped(vec2<f32>(r_x, src_px.y / res.y));
+    let tap_g = sample_clamped(src_px / res);
+    let tap_b = sample_clamped(vec2<f32>(b_x, src_px.y / res.y));
+    let bent_a = max(tap_g.a, max(tap_r.a, tap_b.a));
+    var rgb = vec3<f32>(tap_r.r, tap_g.g, tap_b.b);
     let rotate_roll = fx_hash2u(band ^ 0x7f4a7c15u, tick);
     if (rotate_roll < slip * 0.5) {
       rgb = select(rgb.brg, rgb.gbr, rotate_roll < slip * 0.25);
@@ -9396,7 +9435,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
       let damaged = (bytes & vec3<u32>(keep)) ^ select(vec3<u32>(0u), flip, vec3<bool>(crush_roll < crush * 0.45));
       rgb = vec3<f32>(damaged) / 255.0;
     }
-    return vec4<f32>(mix(color, rgb, wet), src.a);
+    return vec4<f32>(mix(color, rgb, wet), mix(src.a, bent_a, wet));
   }
   if (code == 183u) {
     // recursive-echo: zoom+rotate+translate echo stack
@@ -9492,6 +9531,14 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number)
   const n = Number(value);
   if (!Number.isFinite(n)) return fallback;
   return Math.max(min, Math.min(max, n));
+}
+
+/** A per-instance effect seed as the shader reads it: a whole number
+ *  0..2^24-1 (exact in f32); missing or invalid is 0. */
+export function nativeEffectSeed(value: unknown): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(16777215, Math.round(n));
 }
 
 function safeGraphId(value: string): string {
@@ -9787,6 +9834,8 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     // the per-frame graph rebuild; silence packs 0).
     param9 = clampNumber(params.audioLevel, 0, 1.5, 0);
     param10 = clampNumber(params.audioBeat, 0, 1, 0);
+    // Per-instance seed; 0 (instances saved before seeds) keeps the old pattern.
+    param11 = nativeEffectSeed(params.glitchSeed ?? params.seed);
   } else if (options.effect === 'exposure') {
     param0 = clampNumber(params.rollOff ?? params.param0, 0, 1, 0);
     param1 = clampNumber(params.highlightProtect ?? params.param1, 0, 1, 0);
@@ -11175,7 +11224,8 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     // per-frame rebuild) into one number; silence or react 0 packs 0.
     param6 = clampNumber(params.bcAudioReact ?? 0, 0, 1, 0) * clampNumber(params.audioLevel, 0, 1.5, 0);
     param7 = clampNumber(params.bcMix ?? params.param7, 0, 1, 1);
-    param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+    param8 = nativeEffectSeed(params.bcSeed);
+    param9 = 0; param10 = 0; param11 = 0;
   } else if (options.effect === 'data-bend') {
     amount = clampNumber(options.amount ?? params.dbIntensity ?? params.amount, 0, 1, 0.6);
     param0 = clampNumber(params.dbSpeed ?? params.param0, 0, 3, 0.6);
@@ -11185,7 +11235,8 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param4 = clampNumber(params.dbBitCrush ?? params.param4, 0, 1, 0.35);
     param5 = clampNumber(params.dbAudioReact ?? 0, 0, 1, 0) * clampNumber(params.audioLevel, 0, 1.5, 0);
     param6 = clampNumber(params.dbMix ?? params.param6, 0, 1, 1);
-    param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+    param7 = nativeEffectSeed(params.dbSeed);
+    param8 = 0; param9 = 0; param10 = 0; param11 = 0;
   } else if (options.effect === 'flow-field-trails') {
     amount = clampNumber(options.amount ?? params.fftTrailLength ?? params.amount, 0, 1, 0.4);
     param0 = clampNumber(params.fftFlowScale ?? params.param0, 0.5, 16, 4);

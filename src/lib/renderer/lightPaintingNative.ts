@@ -568,6 +568,46 @@ fn lp_fbm(p0: vec2<f32>) -> f32 {
   for (var i = 0; i < 3; i = i + 1) { v = v + lp_noise(p) * a; p = p * 2.1; a = a * 0.5; }
   return v;
 }
+// Time-driven variants for the call sites that feed the clock into the hash.
+// sin() of a huge argument keeps no fraction in f32 and differs per GPU, so
+// after hours of uptime flicker, sparks and flame noise freeze or pattern.
+// Below the bound the old sin hash is kept bit-for-bit (the look is
+// unchanged); above it an integer PCG hash of the tick / lattice point takes
+// over. Bounds clear the largest t = 10 s argument at speed 5 (1D ~60k, 2D
+// ~860k with an 8k px stroke). Static brush hashes keep lp_hash/lp_hash2.
+fn lp_pcg(v: u32) -> u32 {
+  let state = v * 747796405u + 2891336453u;
+  let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+  return (word >> 22u) ^ word;
+}
+fn lp_pcg01(a: u32, b: u32) -> f32 { return f32(lp_pcg(a ^ lp_pcg(b)) >> 8u) * (1.0 / 16777216.0); }
+// lp_hash(tick + seed), keyed on the raw tick and the stroke seed.
+fn lp_hash_t(tick: f32, seed: f32) -> f32 {
+  let n = tick + seed;
+  return select(lp_pcg01(bitcast<u32>(i32(tick)), bitcast<u32>(seed)), fract(sin(n * 127.1) * 43758.5453), abs(n * 127.1) < 131072.0);
+}
+fn lp_hash2_t(p: vec2<f32>) -> f32 {
+  let a = dot(p, vec2<f32>(127.1, 311.7));
+  return select(lp_pcg01(bitcast<u32>(i32(p.x)), bitcast<u32>(i32(p.y))), fract(sin(a) * 43758.5453), abs(a) < 1048576.0);
+}
+fn lp_noise_t(p: vec2<f32>) -> f32 {
+  let i = floor(p); let f = fract(p); let u = f * f * (3.0 - 2.0 * f);
+  return mix(
+    mix(lp_hash2_t(i), lp_hash2_t(i + vec2<f32>(1.0, 0.0)), u.x),
+    mix(lp_hash2_t(i + vec2<f32>(0.0, 1.0)), lp_hash2_t(i + vec2<f32>(1.0, 1.0)), u.x), u.y);
+}
+fn lp_fbm_t(p0: vec2<f32>) -> f32 {
+  var p = p0; var v = 0.0; var a = 0.5;
+  for (var i = 0; i < 3; i = i + 1) { v = v + lp_noise_t(p) * a; p = p * 2.1; a = a * 0.5; }
+  return v;
+}
+// Sparkle overlay: lp_hash2(cell + vec2(tick * 13.7, seed)), keyed on the raw
+// cell, tick and seed (the summed float collides and loses precision).
+fn lp_sparkle_hash(cell: vec2<f32>, tick: f32, seed: f32) -> f32 {
+  let a = dot(cell + vec2<f32>(tick * 13.7, seed), vec2<f32>(127.1, 311.7));
+  let k = lp_pcg(bitcast<u32>(i32(tick)) ^ lp_pcg(bitcast<u32>(seed)));
+  return select(lp_pcg01(bitcast<u32>(i32(cell.x)), bitcast<u32>(i32(cell.y)) ^ k), fract(sin(a) * 43758.5453), abs(a) < 1048576.0);
+}
 fn lp_hsv(h: f32, s: f32, v: f32) -> vec3<f32> {
   let q = abs(fract(vec3<f32>(h) + vec3<f32>(1.0, 0.6666667, 0.3333333)) * 6.0 - vec3<f32>(3.0));
   return v * mix(vec3<f32>(1.0), clamp(q - vec3<f32>(1.0), vec3<f32>(0.0), vec3<f32>(1.0)), s);
@@ -625,7 +665,7 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
     global_mult = global_mult * select(0.05, 1.0, sin(t * paint.fx0.w * 20.0 * 6.28318) > 0.0);
   }
   if (paint.fx1.x > 0.001) {
-    global_mult = global_mult * (1.0 - paint.fx1.x * lp_hash(floor(t * 24.0)) * 0.6);
+    global_mult = global_mult * (1.0 - paint.fx1.x * lp_hash_t(floor(t * 24.0), 0.0) * 0.6);
   }
   let hue_shift_base = select(0.0, fract(t / 3.0 * paint.fx0.x), paint.fx0.x > 0.001);
   let echo_n = i32(paint.fx4.x + 0.5);
@@ -821,7 +861,7 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
       out_rgb = mix(color.rgb, vec3<f32>(1.0), core * 0.55) + color2.rgb * halo * 0.3;
       out_a = core + halo;
     } else if (brush == 1) { // neon — glass tube, reflection line, flicker
-      let flick = 1.0 - 0.12 * step(0.86, lp_hash(floor(t * speed * 9.0) + seed));
+      let flick = 1.0 - 0.12 * step(0.86, lp_hash_t(floor(t * speed * 9.0), seed));
       let tube = 1.0 - smoothstep(w * 0.55, w * 0.75, d);
       let core = lp_gauss(d, w * 0.22);
       let halo = lp_gauss(d, w * (1.6 + glow * 1.4)) * 0.55;
@@ -830,22 +870,22 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
       out_a = (tube * 0.85 + core + halo) * flick;
     } else if (brush == 2) { // flame — licking fire with sparks (bass-fed)
       let rise = t * speed * 3.0;
-      let n1 = lp_fbm(vec2<f32>(s * 0.025 + seed, d * 0.05 - rise));
-      let n2 = lp_noise(vec2<f32>(s * 0.09, d * 0.11 - rise * 1.8));
+      let n1 = lp_fbm_t(vec2<f32>(s * 0.025 + seed, d * 0.05 - rise));
+      let n2 = lp_noise_t(vec2<f32>(s * 0.09, d * 0.11 - rise * 1.8));
       let env = w * (2.2 + glow * 2.0) * (0.55 + n1 * 0.8 + n2 * 0.3) * (1.0 + bass * 0.5);
       let flame = clamp(1.0 - d / max(env, 1.0), 0.0, 1.0);
       let heat = flame * flame;
-      let spark = step(0.985, lp_hash2(floor(vec2<f32>(s * 0.4, sd * 0.4) + vec2<f32>(0.0, -rise * 8.0)))) * heat;
+      let spark = step(0.985, lp_hash2_t(floor(vec2<f32>(s * 0.4, sd * 0.4) + vec2<f32>(0.0, -rise * 8.0)))) * heat;
       out_rgb = mix(vec3<f32>(1.0, 0.85, 0.3), color.rgb, clamp(1.0 - heat * 1.2, 0.0, 1.0)) + vec3<f32>(spark);
       out_a = heat + lp_gauss(d, w * 0.4) * 0.8 + spark;
     } else if (brush == 3) { // electric — jittered filaments + spurs (treble)
       var energy = 0.0;
       let amp = w * (2.0 + jitter * 6.0) * (1.0 + treble * 0.7);
       for (var k = 0; k < 3; k = k + 1) {
-        let off = (lp_fbm(vec2<f32>(s * 0.03 + f32(k) * 13.7 + seed, t * speed * 2.6)) - 0.5) * amp;
+        let off = (lp_fbm_t(vec2<f32>(s * 0.03 + f32(k) * 13.7 + seed, t * speed * 2.6)) - 0.5) * amp;
         energy = energy + lp_gauss(abs(sd - off), max(0.7, w * 0.16));
       }
-      let spur = step(0.94, lp_hash2(vec2<f32>(floor(s * 0.08), floor(t * speed * 6.0)))) *
+      let spur = step(0.94, lp_hash2_t(vec2<f32>(floor(s * 0.08), floor(t * speed * 6.0)))) *
         lp_gauss(abs(sd) - w * 1.6, w * 0.5) * 0.6;
       out_rgb = mix(color.rgb, vec3<f32>(1.0), clamp(energy * 0.5, 0.0, 0.75));
       out_a = energy + spur;
@@ -877,17 +917,17 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
       additive = brush == 5;
     } else if (brush == 6) { // smoke — curling wisps
       let drift = t * speed * 1.4 * clamp(e8.w, 0.05, 1.5); // gpuSmokeRise (0.5 default => legacy 0.7 rate)
-      let n = lp_fbm(vec2<f32>(s * 0.012 + drift * 0.3, sd * 0.02 - drift));
-      let n2 = lp_fbm(vec2<f32>(s * 0.03 - drift * 0.2, sd * 0.05 - drift * 1.7) + vec2<f32>(seed));
+      let n = lp_fbm_t(vec2<f32>(s * 0.012 + drift * 0.3, sd * 0.02 - drift));
+      let n2 = lp_fbm_t(vec2<f32>(s * 0.03 - drift * 0.2, sd * 0.05 - drift * 1.7) + vec2<f32>(seed));
       let env = w * (2.5 + softness * 3.5);
       let wisp = clamp(1.0 - d / env, 0.0, 1.0) * (0.35 + n * 0.5 + n2 * 0.3);
       out_rgb = mix(color.rgb, color2.rgb, n);
       out_a = wisp * wisp * (0.5 + glow * 0.3);
     } else if (brush == 7) { // laser — surgical core + speckled scatter
-      let flick = 1.0 - 0.1 * lp_hash(floor(t * 30.0) + seed);
+      let flick = 1.0 - 0.1 * lp_hash_t(floor(t * 30.0), seed);
       let core = lp_gauss(d, max(0.5, w * 0.14)) * (1.6 + glow) * flick * (1.0 + beat * 0.4);
       let mid = lp_gauss(d, w * 0.5) * 0.5;
-      let speck = lp_noise(vec2<f32>(s * 0.2, t * 14.0)) * 0.4 + 0.6;
+      let speck = lp_noise_t(vec2<f32>(s * 0.2, t * 14.0)) * 0.4 + 0.6;
       let scatter = exp(-d / max(3.0, w * 3.2)) * 0.3 * speck;
       out_rgb = mix(color.rgb, vec3<f32>(1.0), clamp(core, 0.0, 0.85));
       out_a = core + mid + scatter;
@@ -996,7 +1036,7 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
       out_rgb = mix(color.rgb, vec3<f32>(1.0), energy * 0.6);
       out_a = energy;
     } else if (brush == 18) { // plasma — living energy blob
-      let n = lp_fbm(vec2<f32>(s * 0.02, sd * 0.03) + vec2<f32>(t * speed * 0.5, seed));
+      let n = lp_fbm_t(vec2<f32>(s * 0.02, sd * 0.03) + vec2<f32>(t * speed * 0.5, seed));
       let env = w * (1.8 + glow);
       let body = clamp(1.0 - d / env, 0.0, 1.0);
       let iso = pow(0.5 + 0.5 * sin(n * 12.0 - t * speed * 3.0), 2.0);
@@ -1011,13 +1051,13 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
       out_rgb = mix(color.rgb, color2.rgb, arms) + vec3<f32>(stars);
       out_a = coreg * 0.7 + arms * exp(-d / (w * 3.0)) * 0.7 + stars * exp(-d / (w * 4.0));
     } else if (brush == 20) { // lightning — branching bolt with strikes
-      let strike = 0.35 + 0.65 * step(0.55, lp_hash(floor(t * speed * 3.0) + seed));
+      let strike = 0.35 + 0.65 * step(0.55, lp_hash_t(floor(t * speed * 3.0), seed));
       let amp = w * (3.0 + jitter * 8.0);
-      let off1 = (lp_fbm(vec2<f32>(s * 0.02 + seed, floor(t * speed * 8.0))) - 0.5) * amp;
-      let off2 = off1 + (lp_noise(vec2<f32>(s * 0.09, floor(t * speed * 8.0) + 3.0)) - 0.5) * amp * 0.5;
+      let off1 = (lp_fbm_t(vec2<f32>(s * 0.02 + seed, floor(t * speed * 8.0))) - 0.5) * amp;
+      let off2 = off1 + (lp_noise_t(vec2<f32>(s * 0.09, floor(t * speed * 8.0) + 3.0)) - 0.5) * amp * 0.5;
       var energy = lp_gauss(abs(sd - off1), max(0.8, w * 0.14)) * 1.3;
       energy = max(energy, lp_gauss(abs(sd - off2), max(0.6, w * 0.09)));
-      let branch_gate = step(0.9, lp_hash2(vec2<f32>(floor(s * 0.05), floor(t * speed * 8.0))));
+      let branch_gate = step(0.9, lp_hash2_t(vec2<f32>(floor(s * 0.05), floor(t * speed * 8.0))));
       energy = max(energy, branch_gate * lp_gauss(abs(abs(sd) - amp * 0.5), w * 0.3) * 0.7);
       out_rgb = mix(color.rgb, vec3<f32>(0.9, 0.95, 1.0), clamp(energy, 0.0, 0.8));
       out_a = energy * strike + lp_gauss(d, w * 2.4) * 0.12 * strike;
@@ -1029,8 +1069,8 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
       out_a = body * (0.25 + swirl * 0.9);
     } else if (brush == 22) { // nebula — deep space clouds + star dust
       let drift = t * speed * 0.12;
-      let n = lp_fbm(vec2<f32>(s * 0.008 + drift, sd * 0.012) + vec2<f32>(seed));
-      let n2 = lp_fbm(vec2<f32>(s * 0.02 - drift * 0.6, sd * 0.03) + vec2<f32>(9.0));
+      let n = lp_fbm_t(vec2<f32>(s * 0.008 + drift, sd * 0.012) + vec2<f32>(seed));
+      let n2 = lp_fbm_t(vec2<f32>(s * 0.02 - drift * 0.6, sd * 0.03) + vec2<f32>(9.0));
       let env = w * (3.2 + softness * 3.0);
       let cloud = clamp(1.0 - d / env, 0.0, 1.0) * (0.3 + n * 0.6 + n2 * 0.3);
       let dust = step(0.975, lp_hash2(floor(vec2<f32>(s * 0.6, sd * 0.6)))) * cloud;
@@ -1072,7 +1112,7 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
         energy = max(energy, band);
       }
       let rays = pow(0.5 + 0.5 * sin(s * 0.25 + t * speed), 3.0) *
-        (0.5 + 0.5 * lp_noise(vec2<f32>(s * 0.03, t * 0.5)));
+        (0.5 + 0.5 * lp_noise_t(vec2<f32>(s * 0.03, t * 0.5)));
       out_rgb = mix(color.rgb, color2.rgb, hue_mix) * (0.7 + rays * 0.6);
       out_a = energy * (0.5 + rays * 0.5);
     } else if (brush == 27) { // bubbles — rising rings with specular pops
@@ -1155,7 +1195,7 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
     // Sparkle overlay — white glints scattered across the visible stroke.
     if (paint.fx2.z > 0.001 && d < w * 3.0) {
       let sp_uv = vec2<f32>(s, sd) / max(5.0, w * 0.7);
-      let sp_h = lp_hash2(floor(sp_uv) + vec2<f32>(floor(t * 8.0) * 13.7, seed));
+      let sp_h = lp_sparkle_hash(floor(sp_uv), floor(t * 8.0), seed);
       if (sp_h > 1.0 - paint.fx2.z * 0.1) {
         let glint = lp_gauss(length((fract(sp_uv) - 0.5) * max(5.0, w * 0.7)), 1.6);
         out_rgb = mix(out_rgb, vec3<f32>(1.0), clamp(glint, 0.0, 0.85));

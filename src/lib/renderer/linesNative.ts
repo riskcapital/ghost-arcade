@@ -464,12 +464,29 @@ struct LinesData {
 
 @group(0) @binding(0) var<uniform> lines: LinesData;
 
+// Every caller feeds these hashes the clock (flicker ticks, Light Up and
+// electric/fire/sparkle noise). sin() of a huge argument keeps no fraction in
+// f32 and differs per GPU, so after hours of uptime they freeze or pattern.
+// Below the bound the old sin hash is kept bit-for-bit, so the look is
+// unchanged; above it an integer PCG hash of the tick / lattice point takes
+// over. The bounds clear the largest argument at t = 10 s with max speeds
+// (ln_hash ~51k, ln_hash2 ~210k with an 8k px path).
+fn ln_pcg(v: u32) -> u32 {
+  let state = v * 747796405u + 2891336453u;
+  let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+  return (word >> 22u) ^ word;
+}
+
 fn ln_hash(n: f32) -> f32 {
-  return fract(sin(n * 127.1) * 43758.5453);
+  let a = n * 127.1;
+  let k = ln_pcg(bitcast<u32>(i32(n)));
+  return select(f32(k >> 8u) * (1.0 / 16777216.0), fract(sin(a) * 43758.5453), abs(a) < 131072.0);
 }
 
 fn ln_hash2(p: vec2<f32>) -> f32 {
-  return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453);
+  let a = dot(p, vec2<f32>(127.1, 311.7));
+  let k = ln_pcg(bitcast<u32>(i32(p.x)) ^ ln_pcg(bitcast<u32>(i32(p.y))));
+  return select(f32(k >> 8u) * (1.0 / 16777216.0), fract(sin(a) * 43758.5453), abs(a) < 1048576.0);
 }
 
 fn ln_noise(p: vec2<f32>) -> f32 {

@@ -85,6 +85,23 @@ function testCard(): Uint8Array {
   return bytes;
 }
 
+/** The test card on the right half only; the left half is transparent. */
+function halfCard(): Uint8Array {
+  const bytes = testCard();
+  for (let y = 0; y < SIZE; y += 1) for (let x = 0; x < SIZE / 2; x += 1) bytes.fill(0, (y * SIZE + x) * 4, (y * SIZE + x) * 4 + 4);
+  return bytes;
+}
+
+/** Share of the left (transparent) half that shows picture. */
+function leftCoverage(a: Uint8Array): number {
+  let lit = 0;
+  for (let y = 0; y < SIZE; y += 1) for (let x = 0; x < SIZE / 2 - 8; x += 1) {
+    const o = (y * SIZE + x) * 4;
+    if (a[o] + a[o + 1] + a[o + 2] > 60) lit += 1;
+  }
+  return lit / (SIZE * (SIZE / 2 - 8));
+}
+
 type Picture = Uint8Array;
 
 function pixelsOf(snapshot: any): Picture {
@@ -126,9 +143,9 @@ describe('Glitch effects', () => {
 
       let frame = 2;
       let stale = String(plainShot.checksum);
-      const render = async (effect: NativeEffectPassId, time: number, params: Record<string, number>, amount?: number) => {
+      const render = async (effect: NativeEffectPassId, time: number, params: Record<string, number>, amount?: number, picture: string = card) => {
         const targetSourceId = 'glitch-output';
-        await rpc.send('submit_commands', { commands: [{ type: 'upload_source_frame', source_id: sourceId, width: SIZE, height: SIZE, rgba_b64: card, seq: frame }] }, 5000);
+        await rpc.send('submit_commands', { commands: [{ type: 'upload_source_frame', source_id: sourceId, width: SIZE, height: SIZE, rgba_b64: picture, seq: frame }] }, 5000);
         const graph = buildNativeEffectPassGraph({ sourceId, targetSourceId, effect, width: SIZE, height: SIZE, time, frameDelta: 1 / 30, frameIndex: frame, mix: 1, amount, params });
         const result = await rpc.send('compute_graph', graph.config, 8000);
         expect(result?.render).toMatchObject({ target: 'source_frame', source_id: targetSourceId });
@@ -139,8 +156,11 @@ describe('Glitch effects', () => {
         while (shot.checksum === stale && Date.now() < deadline) { await delay(25); shot = await rpc.send('frame_snapshot', { include_pixels: true, time, frame_index: frame }, 8000); }
         stale = String(shot.checksum);
         frame += 1;
-        return pixelsOf(shot);
+        const pixels = pixelsOf(shot);
+        if (process.env.GA_GLITCH_DUMP) dumps.push(Buffer.from(pixels).toString('base64'));
+        return pixels;
       };
+      const dumps: string[] = [];
 
       // Glitch, as added from the effect list. The shipped shader hashed
       // row * 311.7 + tick in floats: once the live clock passed a few
@@ -153,11 +173,44 @@ describe('Glitch effects', () => {
         expect(changedShare(now, plain)).toBeGreaterThan(0.05);
         expect(changedShare(now, later)).toBeGreaterThan(0.05);
       }
-      // Speed 0 holds one broken frame still.
+      // Speed 0 holds one broken frame still, with a Freeze burst too (the
+      // burst gate used to swap patterns every half second).
       const held = await render('glitch', HOUR, { ...glitch, speed: 0 }, 0.5);
       const heldLater = await render('glitch', HOUR + 0.5, { ...glitch, speed: 0 }, 0.5);
       expect(changedShare(held, plain)).toBeGreaterThan(0.05);
       expect(changedShare(held, heldLater)).toBe(0);
+      const frozen = [];
+      for (const t of [HOUR, HOUR + 0.6, HOUR + 1.3, HOUR + 2.7, HOUR + 4.1]) frozen.push(await render('glitch', t, { ...glitch, speed: 0, freezeBurst: 0.8 }, 0.5));
+      expect(changedShare(frozen[0], plain)).toBeGreaterThan(0.05);
+      for (const later of frozen.slice(1)) expect(changedShare(frozen[0], later)).toBe(0);
+
+      // Seeds: seed 0 is the pattern instances had before seeds; two
+      // instances with different seeds break up differently.
+      const seeded = await render('glitch', HOUR, { ...glitch, glitchSeed: 12345 }, 0.5);
+      const seededOther = await render('glitch', HOUR, { ...glitch, glitchSeed: 777 }, 0.5);
+      const unseeded = await render('glitch', HOUR, glitch, 0.5);
+      expect(changedShare(seeded, plain)).toBeGreaterThan(0.05);
+      expect(changedShare(seeded, unseeded)).toBeGreaterThan(0.05);
+      expect(changedShare(seeded, seededOther)).toBeGreaterThan(0.05);
+      expect(changedShare(unseeded, await render('glitch', HOUR, { ...glitch, glitchSeed: 0 }, 0.5))).toBe(0);
+      // Speed 0 + seed still holds still.
+      expect(changedShare(await render('glitch', HOUR, { ...glitch, speed: 0, glitchSeed: 9 }, 0.5), await render('glitch', HOUR + 3, { ...glitch, speed: 0, glitchSeed: 9 }, 0.5))).toBe(0);
+
+      // Alpha moves with the picture: over a transparent left half, moved
+      // bands and tears bring their picture along instead of vanishing.
+      const half = Buffer.from(halfCard()).toString('base64');
+      const torn = { ...glitch, blockSize: 0.6, tearChance: 1, jitter: 1 };
+      let coverage = 0;
+      for (let step = 0; step < 4; step += 1) coverage = Math.max(coverage, leftCoverage(await render('glitch', HOUR + step * 0.37, torn, 1, half)));
+      if (process.env.GA_GLITCH_LOG) console.log('glitch alpha coverage', coverage);
+      expect(coverage).toBeGreaterThan(0.02);
+      let bendCoverage = 0;
+      for (let step = 0; step < 4; step += 1) bendCoverage = Math.max(bendCoverage, leftCoverage(await render('data-bend', HOUR + step * 0.9, { dbSpeed: 0.6, dbStride: 1, dbBandSize: 0.45, dbChannelSlip: 0.5, dbBitCrush: 0, dbMix: 1, dbIntensity: 1 }, undefined, half)));
+      let corruptCoverage = 0;
+      for (let step = 0; step < 4; step += 1) corruptCoverage = Math.max(corruptCoverage, leftCoverage(await render('block-corrupt', HOUR + step * 0.8, { bcSpeed: 0.8, bcBlockSize: 32, bcSmear: 0, bcRun: 0.8, bcColorFault: 0, bcMotion: 1, bcMix: 1, bcIntensity: 1 }, undefined, half)));
+      if (process.env.GA_GLITCH_LOG) console.log('bend alpha coverage', bendCoverage, 'corrupt alpha coverage', corruptCoverage);
+      expect(bendCoverage).toBeGreaterThan(0.01);
+      expect(corruptCoverage).toBeGreaterThan(0.01);
       // Each control changes the picture.
       const base = await render('glitch', HOUR, glitch, 0.5);
       for (const change of [{ blockSize: 0.9 }, { rgbSplit: 0 }, { jitter: 1 }, { verticalSlice: 1 }, { blockHold: 1 }, { tearChance: 1 }]) {
@@ -193,6 +246,10 @@ describe('Glitch effects', () => {
       expect(Math.max(...corruptShares)).toBeLessThan(0.8);
       expect(moved).toBeGreaterThan(0.03);
       expect(changedShare(await render('block-corrupt', HOUR, { ...corrupt, bcIntensity: 0 }), plain)).toBe(0);
+      // Seeds split identical Block Corrupt instances; seed 0 is unchanged.
+      const corruptBase = await render('block-corrupt', HOUR, { ...corrupt, bcIntensity: 0.6 });
+      expect(changedShare(corruptBase, await render('block-corrupt', HOUR, { ...corrupt, bcIntensity: 0.6, bcSeed: 0 }))).toBe(0);
+      expect(changedShare(corruptBase, await render('block-corrupt', HOUR, { ...corrupt, bcIntensity: 0.6, bcSeed: 4242 }))).toBeGreaterThan(0.02);
       // Audio reactivity alone breaks the stream when the music is loud.
       const corruptLoud = await render('block-corrupt', HOUR, { ...corrupt, bcIntensity: 0, bcAudioReact: 1, audioLevel: 1 });
       expect(changedShare(corruptLoud, plain)).toBeGreaterThan(0.01);
@@ -213,6 +270,9 @@ describe('Glitch effects', () => {
       expect(Math.min(...bendShares)).toBeLessThan(0.95);
       expect(moved).toBeGreaterThan(0.05);
       expect(changedShare(await render('data-bend', HOUR, { ...bend, dbIntensity: 0 }), plain)).toBe(0);
+      const bendBase = await render('data-bend', HOUR, { ...bend, dbIntensity: 0.6 });
+      expect(changedShare(bendBase, await render('data-bend', HOUR, { ...bend, dbIntensity: 0.6, dbSeed: 0 }))).toBe(0);
+      expect(changedShare(bendBase, await render('data-bend', HOUR, { ...bend, dbIntensity: 0.6, dbSeed: 4242 }))).toBeGreaterThan(0.02);
       // Slant alone (no slip, no bit damage) still bends the bars.
       const slanted = await render('data-bend', HOUR, { ...bend, dbIntensity: 1, dbStride: 1, dbChannelSlip: 0, dbBitCrush: 0 });
       expect(changedShare(slanted, plain)).toBeGreaterThan(0.1);
@@ -236,6 +296,25 @@ describe('Glitch effects', () => {
           expect(changedShare(now, later), `${effect} at ${start} s`).toBeGreaterThan(0.01);
         }
       }
+      // VHS snow stays fine-grained a day into a show: its drift (t * 100
+      // cells) used to swamp the f32 pixel position, so neighbouring pixels
+      // read the same noise and the snow turned into blocks.
+      const snowOnly = { tracking: 0, noise: 1, distortion: 0, colorBleed: 0, scanlines: 0, saturation: 1 };
+      const equalNeighbours = (a: Picture) => {
+        let same = 0, pairs = 0;
+        for (let y = 0; y < SIZE; y += 2) for (let x = 0; x < SIZE - 1; x += 1) {
+          const o = (y * SIZE + x) * 4;
+          if (a[o] === a[o + 4] && a[o + 1] === a[o + 5] && a[o + 2] === a[o + 6]) same += 1;
+          pairs += 1;
+        }
+        return same / pairs;
+      };
+      const snowShow = equalNeighbours(await render('vhs', 10, snowOnly, 1));
+      const snowDay = equalNeighbours(await render('vhs', 30 * HOUR + 0.3, snowOnly, 1));
+      if (process.env.GA_GLITCH_LOG) console.log('vhs equal neighbours', snowShow, snowDay);
+      expect(snowDay).toBeLessThan(snowShow + 0.1);
+
+      if (process.env.GA_GLITCH_DUMP) (await import('node:fs')).writeFileSync(process.env.GA_GLITCH_DUMP, JSON.stringify(dumps));
     } finally {
       const log = await rpc.close();
       if (process.env.GA_GLITCH_LOG) console.log(String(log).slice(-3000));
