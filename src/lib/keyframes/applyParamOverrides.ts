@@ -21,7 +21,7 @@
  */
 import type { Layer } from '../types';
 import { applyInteractiveOverrides } from '../mobile/studio/interactiveEffects';
-import { applyLayerExtra, isLayerExtraKey } from './layerParamKeys';
+import { applyLayerExtra, extraApplyState, finishLayerExtras, isLayerExtraKey, type ExtraApplyState } from './layerParamKeys';
 
 export type ParamOverrideSet = Record<string, number | boolean>;
 
@@ -55,7 +55,7 @@ export function applyParamOverrides(target: Layer, overrides: ParamOverrideSet):
   }
   let shaderValues: Record<string, any> | null = null;
   let effects: any[] | null = null;
-  let copied: Set<string> | null = null;
+  let extras: ExtraApplyState | null = null;
   for (const key in overrides) {
     const value = overrides[key];
     if (key === 'layer:opacity') {
@@ -98,7 +98,8 @@ export function applyParamOverrides(target: Layer, overrides: ParamOverrideSet):
     } else if (key.startsWith('model3d:') && next.model3dContent) {
       next.model3dContent = setDotPathClone(next.model3dContent, key.slice('model3d:'.length), value);
     } else if (isLayerExtraKey(key)) {
-      applyLayerExtra(next, key, value, (copied ??= new Set()));
+      applyLayerExtra(next, key, value, (extras ??= extraApplyState()));
     }
   }
+  if (extras) finishLayerExtras(next, extras);
 }

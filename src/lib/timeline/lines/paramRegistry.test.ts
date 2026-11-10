@@ -66,6 +66,11 @@ describe('parameter registry', () => {
         const next = { ...layer };
         applyParamOverrides(next, { [p.key]: value });
         const read = readLayerParam(next, p.key);
+        if (p.key.startsWith('transform:')) {
+          // Relative keys move the piece's corners; the layer reads at rest.
+          expect(next.corners, p.key).not.toEqual(layer.corners);
+          continue;
+        }
         if (p.key === 'look:intensity') {
           // Intensity scales the effects' own opacity.
           expect((next as any).edgeEffects.effects[0].opacity).toBeCloseTo(0.8 * Number(value));
@@ -118,14 +123,43 @@ describe('parameter registry', () => {
   it('copies each nested object once and keeps the source id', () => {
     const layer = richLayer();
     const next = { ...layer };
-    applyParamOverrides(next, { 'corner:tl:x': 0.3, 'corner:tl:y': 0.4, 'mesh:0:0:x': 0.5, 'sketch:size': 50, 'transform:scaleX': 2 });
+    applyParamOverrides(next, { 'corner:tl:x': 0.3, 'corner:tl:y': 0.4, 'mesh:0:0:x': 0.5, 'sketch:size': 50 });
     expect(next.corners).not.toBe(layer.corners);
     expect(next.corners.topRight).toBe(layer.corners.topRight);
     expect(next.corners.topLeft).toEqual({ x: 0.3, y: 0.4 });
     expect(next.meshGrid!.points[1]).toBe(layer.meshGrid!.points[1]);
     expect(next.source!.id).toBe('src');
     expect(next.source!.jsAnimation!.paramValues).toEqual({ size: 50 });
-    expect(next.scale).toEqual({ x: 2, y: 1.5 });
+  });
+
+  it('transform keys move, scale and turn the piece about its centre, after corner keys', () => {
+    const layer = { ...richLayer(), corners: { topLeft: { x: 0, y: 1 }, topRight: { x: 0.5, y: 1 }, bottomLeft: { x: 0, y: 0 }, bottomRight: { x: 0.5, y: 0 } } } as Layer;
+    const moved = { ...layer };
+    applyParamOverrides(moved, { 'transform:x': 0.5 });
+    expect(moved.corners.topLeft).toEqual({ x: 0.5, y: 1 });
+    expect(moved.corners.bottomRight).toEqual({ x: 1, y: 0 });
+    const scaled = { ...layer };
+    applyParamOverrides(scaled, { 'transform:scale': 0.5 });
+    expect(scaled.corners.topLeft.x).toBeCloseTo(0.125);
+    expect(scaled.corners.topLeft.y).toBeCloseTo(0.75);
+    const turned = { ...layer };
+    applyParamOverrides(turned, { 'transform:rotation': 90 });
+    // A quarter turn on a 16:9 output: the 0.5-wide piece stands up, about its centre.
+    const w = Math.abs(turned.corners.topRight.x - turned.corners.topLeft.x);
+    const h = Math.abs(turned.corners.topRight.y - turned.corners.topLeft.y);
+    expect(w).toBeCloseTo(0);
+    expect(h).toBeCloseTo(0.5 * 16 / 9);
+    // A corner key and a move in one set: the corner first, then the move.
+    const both = { ...layer };
+    applyParamOverrides(both, { 'transform:y': 0.1, 'corner:tl:x': 0.2 });
+    expect(both.corners.topLeft.x).toBeCloseTo(0.2);
+    expect(both.corners.topLeft.y).toBeCloseTo(1.1);
+    expect(layer.corners.topLeft).toEqual({ x: 0, y: 1 });
+    // Applied again to its own output (a re-flushed scene), it does not add up.
+    applyParamOverrides(moved, { 'transform:x': 0.5 });
+    expect(moved.corners.topLeft).toEqual({ x: 0.5, y: 1 });
+    // Mesh points move with the corners.
+    expect(moved.meshGrid!.points[0][0].x).toBeCloseTo(layer.meshGrid!.points[0][0].x + 0.5);
   });
 
   it('Stage FX and LED keys discover, apply and read back', () => {

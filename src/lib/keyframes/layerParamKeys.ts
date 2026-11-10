@@ -7,10 +7,16 @@
  *
  *   layer:visible              shown / hidden (bool)
  *   layer:blend                blend mode, an index into BLEND_MODE_ORDER (stepped)
- *   transform:x | y            position offset
- *   transform:scale            uniform scale (sets x and y)
+ *   transform:x | y            move the piece (output UV, y up), 0 = where it is
+ *   transform:scale            uniform scale about the piece's centre, 1 = as is
  *   transform:scaleX | scaleY  scale per axis
- *   transform:rotation         degrees
+ *   transform:rotation         degrees about the centre (counter-clockwise)
+ *
+ * A mapping piece is drawn by its corner pins (or mesh), not by the layer's
+ * old position/scale/rotation fields, so the transform keys are relative:
+ * they move, scale and turn the piece's corners and mesh points together,
+ * after any corner or mesh key. Rotation is measured on the output (it uses
+ * the output's aspect, setTransformAspect) so a piece does not shear.
  *   corner:<tl|tr|bl|br>:<x|y> a corner pin
  *   mesh:<row>:<col>:<x|y>     a mesh warp point
  *   sketch:<param>             a p5 / three.js sketch control
@@ -31,6 +37,23 @@ export type LookField = (typeof LOOK_FIELDS)[number];
 
 /** Meshes larger than this are left out of discovery (a 16×16 mesh would be 512 lanes). */
 export const MESH_DISCOVERY_MAX_POINTS = 100;
+
+let outputAspect = 16 / 9;
+/** The output's width / height, for rotating pieces without shearing them. */
+export function setTransformAspect(aspect: number): void {
+  if (Number.isFinite(aspect) && aspect > 0) outputAspect = Math.max(0.05, Math.min(20, aspect));
+}
+
+/** Per-call state of applyLayerExtra: objects already copied, and the
+ *  transform gathered so it is applied once, after corner and mesh keys. */
+export interface ExtraApplyState {
+  copied: Set<string>;
+  transform: { x: number; y: number; sx: number; sy: number; rot: number } | null;
+}
+
+export function extraApplyState(): ExtraApplyState {
+  return { copied: new Set(), transform: null };
+}
 
 export function blendIndex(mode: BlendMode | string | undefined): number {
   const index = BLEND_MODE_ORDER.indexOf((mode ?? 'normal') as BlendMode);
@@ -59,13 +82,11 @@ export function readLayerExtra(layer: Layer, key: string): number | boolean | un
   if (key === 'layer:blend') return blendIndex(l.blendMode);
   if (key === 'video:rate') return l.source?.type === 'video' ? Number(l.source.playbackRate ?? 1) : undefined;
   if (key.startsWith('transform:')) {
+    // Relative: a piece at rest is not moved, scaled or turned.
     const f = key.slice(10);
-    if (f === 'x') return Number(l.position?.x ?? 0);
-    if (f === 'y') return Number(l.position?.y ?? 0);
-    if (f === 'scale') return Number(l.scale?.x ?? 1);
-    if (f === 'scaleX') return Number(l.scale?.x ?? 1);
-    if (f === 'scaleY') return Number(l.scale?.y ?? 1);
-    if (f === 'rotation') return Number(l.rotation ?? 0);
+    if (!l.corners) return undefined;
+    if (f === 'x' || f === 'y' || f === 'rotation') return 0;
+    if (f === 'scale' || f === 'scaleX' || f === 'scaleY') return 1;
     return undefined;
   }
   if (key.startsWith('corner:')) {
@@ -111,7 +132,8 @@ export function readLayerExtra(layer: Layer, key: string): number | boolean | un
  * Nested objects are copied on the way (once per object per call, tracked in
  * `copied`), never mutated. Returns false for a key it does not own.
  */
-export function applyLayerExtra(next: any, key: string, value: number | boolean, copied: Set<string>): boolean {
+export function applyLayerExtra(next: any, key: string, value: number | boolean, state: ExtraApplyState): boolean {
+  const copied = state.copied;
   const once = (name: string, make: () => void) => {
     if (copied.has(name)) return;
     copied.add(name);
@@ -129,16 +151,13 @@ export function applyLayerExtra(next: any, key: string, value: number | boolean,
   if (key.startsWith('transform:')) {
     const f = key.slice(10);
     const v = num(value);
-    if (f === 'x' || f === 'y') {
-      once('position', () => { next.position = { x: 0, y: 0, ...(next.position ?? {}) }; });
-      next.position[f] = v;
-    } else if (f === 'scale' || f === 'scaleX' || f === 'scaleY') {
-      once('scale', () => { next.scale = { x: 1, y: 1, ...(next.scale ?? {}) }; });
-      if (f !== 'scaleY') next.scale.x = v;
-      if (f !== 'scaleX') next.scale.y = v;
-    } else if (f === 'rotation') {
-      next.rotation = v;
-    }
+    const t = (state.transform ??= { x: 0, y: 0, sx: 1, sy: 1, rot: 0 });
+    if (f === 'x') t.x = v;
+    else if (f === 'y') t.y = v;
+    else if (f === 'scale') { t.sx = v; t.sy = v; }
+    else if (f === 'scaleX') t.sx = v;
+    else if (f === 'scaleY') t.sy = v;
+    else if (f === 'rotation') t.rot = v;
     return true;
   }
   if (key.startsWith('corner:')) {
@@ -207,4 +226,43 @@ export function applyLayerExtra(next: any, key: string, value: number | boolean,
     return true;
   }
   return false;
+}
+
+/**
+ * After all keys: move, scale and turn the piece's corners and mesh points
+ * about the corners' centre (copies, as the other writers).
+ */
+export function finishLayerExtras(next: any, state: ExtraApplyState): void {
+  const t = state.transform;
+  if (!t || !next.corners) return;
+  // A list that has been through here can come back (the native sync
+  // re-flushes what it last sent): start from the untransformed geometry
+  // kept on the copy, or the move would add up frame after frame.
+  const base = next._transformBase ?? { corners: next.corners, meshGrid: next.meshGrid };
+  next._transformBase = base;
+  next.corners = base.corners;
+  next.meshGrid = base.meshGrid;
+  if (t.x === 0 && t.y === 0 && t.sx === 1 && t.sy === 1 && t.rot === 0) return;
+  const c = next.corners;
+  const cx = (c.topLeft.x + c.topRight.x + c.bottomLeft.x + c.bottomRight.x) / 4;
+  const cy = (c.topLeft.y + c.topRight.y + c.bottomLeft.y + c.bottomRight.y) / 4;
+  const a = (t.rot * Math.PI) / 180;
+  const cos = Math.cos(a);
+  const sin = Math.sin(a);
+  const k = outputAspect;
+  const move = (p: { x: number; y: number }) => {
+    // Scale in UV, rotate in output pixels (x × aspect), then shift.
+    const dx = (p.x - cx) * t.sx * k;
+    const dy = (p.y - cy) * t.sy;
+    return { ...p, x: cx + (dx * cos - dy * sin) / k + t.x, y: cy + (dx * sin + dy * cos) + t.y };
+  };
+  next.corners = {
+    topLeft: move(c.topLeft),
+    topRight: move(c.topRight),
+    bottomLeft: move(c.bottomLeft),
+    bottomRight: move(c.bottomRight),
+  };
+  if (next.meshGrid?.points) {
+    next.meshGrid = { ...next.meshGrid, points: next.meshGrid.points.map((row: any[]) => row.map(move)) };
+  }
 }

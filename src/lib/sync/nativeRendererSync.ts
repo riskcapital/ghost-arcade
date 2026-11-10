@@ -1,6 +1,7 @@
 import { applyParamOverrides, type ParamOverrideSet } from '../keyframes/applyParamOverrides';
 import { currentLineFrame } from '../timeline/lines/lineRuntime';
 import { applyStageOverrides } from '../timeline/lines/stageLedParams';
+import { setTransformAspect } from '../keyframes/layerParamKeys';
 import type {InteractiveGraphBuildResult} from '../renderer/nativeInteractiveGraph';
 import {showToast} from '../stores/errorToast';
 import { projectorCalibrationUniforms } from '../output/projectorCalibration';
@@ -9669,6 +9670,7 @@ export class NativeRendererSync {
   }
 
   async flush(width: number, height: number, layers: Layer[]) {
+    if (width > 0 && height > 0) setTransformAspect(width / height);
     this.desiredWidth = width;
     this.desiredHeight = height;
     this.latestLayers = layers;

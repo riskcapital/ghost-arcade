@@ -276,15 +276,18 @@ function pushLayerExtras(layer: Layer, params: KeyframeableParam[]): void {
     { key: 'layer:visible', label: 'Visible', type: 'boolean', kind: 'bool', defaultValue: l.visible !== false, group: 'Layer' },
     { key: 'layer:blend', label: 'Blend mode', type: 'number', kind: 'stepped', min: 0, max: BLEND_MODE_ORDER.length - 1, step: 1, defaultValue: blendIndex(l.blendMode), group: 'Layer' },
   );
-  const transform = 'Transform';
-  params.push(
-    { key: 'transform:x', label: 'Position X', type: 'number', min: -1, max: 1, step: 0.001, defaultValue: Number(l.position?.x ?? 0), group: transform },
-    { key: 'transform:y', label: 'Position Y', type: 'number', min: -1, max: 1, step: 0.001, defaultValue: Number(l.position?.y ?? 0), group: transform },
-    { key: 'transform:scale', label: 'Scale', type: 'number', min: 0, max: 4, step: 0.01, defaultValue: Number(l.scale?.x ?? 1), group: transform },
-    { key: 'transform:scaleX', label: 'Scale X', type: 'number', min: 0, max: 4, step: 0.01, defaultValue: Number(l.scale?.x ?? 1), group: transform },
-    { key: 'transform:scaleY', label: 'Scale Y', type: 'number', min: 0, max: 4, step: 0.01, defaultValue: Number(l.scale?.y ?? 1), group: transform },
-    { key: 'transform:rotation', label: 'Rotation', type: 'number', min: -180, max: 180, step: 0.1, defaultValue: Number(l.rotation ?? 0), group: transform },
-  );
+  if (l.corners) {
+    // Relative to where the piece is mapped (see layerParamKeys.ts).
+    const transform = 'Transform';
+    params.push(
+      { key: 'transform:x', label: 'Move X', type: 'number', min: -1, max: 1, step: 0.001, defaultValue: 0, group: transform },
+      { key: 'transform:y', label: 'Move Y', type: 'number', min: -1, max: 1, step: 0.001, defaultValue: 0, group: transform },
+      { key: 'transform:scale', label: 'Scale', type: 'number', min: 0, max: 4, step: 0.01, defaultValue: 1, group: transform },
+      { key: 'transform:scaleX', label: 'Scale X', type: 'number', min: 0, max: 4, step: 0.01, defaultValue: 1, group: transform },
+      { key: 'transform:scaleY', label: 'Scale Y', type: 'number', min: 0, max: 4, step: 0.01, defaultValue: 1, group: transform },
+      { key: 'transform:rotation', label: 'Rotation', type: 'number', min: -360, max: 360, step: 0.1, defaultValue: 0, group: transform },
+    );
+  }
   if (l.corners) {
     const names: Record<string, string> = { tl: 'Top left', tr: 'Top right', bl: 'Bottom left', br: 'Bottom right' };
     for (const [short, field] of Object.entries(CORNER_KEYS)) {
