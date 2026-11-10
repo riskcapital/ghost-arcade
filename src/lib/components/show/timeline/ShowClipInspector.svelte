@@ -41,6 +41,20 @@
     return parseFloat((e.currentTarget as HTMLInputElement).value);
   }
 
+  /**
+   * Apply a typed number, then show what the clip really has. When the show
+   * refuses the value (an overlap) or clamps it, the clip's value does not
+   * change, so Svelte would leave the refused number standing in the box.
+   */
+  function commit(e: Event, apply: (v: number) => void, shown: (c: ShowLayerClip) => number | undefined) {
+    const input = e.currentTarget as HTMLInputElement;
+    apply(num(e));
+    const id = clip?.id;
+    const live = id ? showTimeline.findLayerClip(id)?.clip : undefined;
+    const v = live ? shown(live) : undefined;
+    if (v !== undefined && Number.isFinite(v)) input.value = v.toFixed(2);
+  }
+
   function setStart(v: number) {
     if (!clip || !Number.isFinite(v)) return;
     showTimeline.moveLayerClipsAcross([clip.id], Math.max(0, v) - clip.startTime, 0);
@@ -140,23 +154,23 @@
     </span>
     <label class="insp-field">
       <span>Start</span>
-      <input type="number" min="0" step="0.1" value={clip.startTime.toFixed(2)} disabled={locked} onchange={(e) => setStart(num(e))} data-clip-start />
+      <input type="number" min="0" step="0.1" value={clip.startTime.toFixed(2)} disabled={locked} onchange={(e) => commit(e, setStart, (c) => c.startTime)} data-clip-start />
       <span class="insp-unit">s</span>
     </label>
     <label class="insp-field">
       <span>Duration</span>
-      <input type="number" min="0.1" step="0.1" value={clip.duration.toFixed(2)} disabled={locked} onchange={(e) => setDuration(num(e))} data-clip-duration />
+      <input type="number" min="0.1" step="0.1" value={clip.duration.toFixed(2)} disabled={locked} onchange={(e) => commit(e, setDuration, (c) => c.duration)} data-clip-duration />
       <span class="insp-unit">s</span>
     </label>
     {#if isVideo}
       <label class="insp-field" title={Number.isFinite(mediaLength) ? `The media is ${mediaLength.toFixed(2)} s long` : ''}>
         <span>In</span>
-        <input type="number" min="0" step="0.1" value={clip.inPoint.toFixed(2)} disabled={locked} onchange={(e) => patch({ inPoint: Math.max(0, num(e) || 0) })} data-clip-in />
+        <input type="number" min="0" step="0.1" value={clip.inPoint.toFixed(2)} disabled={locked} onchange={(e) => commit(e, (v) => patch({ inPoint: Math.max(0, v || 0) }), (c) => c.inPoint)} data-clip-in />
         <span class="insp-unit">s</span>
       </label>
       <label class="insp-field">
         <span>Speed</span>
-        <input type="number" min={SHOW_MIN_RATE} max={SHOW_MAX_RATE} step="0.05" value={(clip.rate ?? 1).toFixed(2)} disabled={locked} onchange={(e) => patch({ rate: Math.max(SHOW_MIN_RATE, Math.min(SHOW_MAX_RATE, num(e) || 1)) })} data-clip-rate />
+        <input type="number" min={SHOW_MIN_RATE} max={SHOW_MAX_RATE} step="0.05" value={(clip.rate ?? 1).toFixed(2)} disabled={locked} onchange={(e) => commit(e, (v) => patch({ rate: Math.max(SHOW_MIN_RATE, Math.min(SHOW_MAX_RATE, v || 1)) }), (c) => c.rate ?? 1)} data-clip-rate />
         <span class="insp-unit">×</span>
       </label>
       <label class="insp-field">
@@ -170,12 +184,12 @@
     {/if}
     <label class="insp-field">
       <span>Fade in</span>
-      <input type="number" min="0" step="0.1" value={clip.fadeIn.toFixed(2)} disabled={locked} onchange={(e) => patch({ fadeIn: Math.max(0, num(e) || 0) })} data-clip-fade-in />
+      <input type="number" min="0" step="0.1" value={clip.fadeIn.toFixed(2)} disabled={locked} onchange={(e) => commit(e, (v) => patch({ fadeIn: Math.max(0, v || 0) }), (c) => c.fadeIn)} data-clip-fade-in />
       <span class="insp-unit">s</span>
     </label>
     <label class="insp-field">
       <span>Fade out</span>
-      <input type="number" min="0" step="0.1" value={clip.fadeOut.toFixed(2)} disabled={locked} onchange={(e) => patch({ fadeOut: Math.max(0, num(e) || 0) })} data-clip-fade-out />
+      <input type="number" min="0" step="0.1" value={clip.fadeOut.toFixed(2)} disabled={locked} onchange={(e) => commit(e, (v) => patch({ fadeOut: Math.max(0, v || 0) }), (c) => c.fadeOut)} data-clip-fade-out />
       <span class="insp-unit">s</span>
     </label>
     <label class="insp-field">
@@ -187,7 +201,7 @@
         <span>Crossfade</span>
         <input type="checkbox" checked={xfadeOn} disabled={locked} onchange={(e) => setXfade((e.currentTarget as HTMLInputElement).checked)} data-clip-xfade />
         {#if xfadeOn}
-          <input class="insp-short" type="number" min="0.1" max={maxXfade} step="0.1" value={Math.min(maxXfade, clip.transitionDuration ?? 1).toFixed(2)} disabled={locked} onchange={(e) => setXfade(true, num(e))} data-clip-xfade-duration />
+          <input class="insp-short" type="number" min="0.1" max={maxXfade} step="0.1" value={Math.min(maxXfade, clip.transitionDuration ?? 1).toFixed(2)} disabled={locked} onchange={(e) => commit(e, (v) => setXfade(true, v), (c) => Math.min(maxXfade, c.transitionDuration ?? 1))} data-clip-xfade-duration />
           <span class="insp-unit">s</span>
         {/if}
       </label>
