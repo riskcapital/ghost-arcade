@@ -320,7 +320,7 @@ describe('the show store with layer tracks', () => {
     showTimeline.addLayerClip(t, video(), 1, { fadeIn: 0.5, rate: 2, duration: 3 });
     showTimeline.setTempo({ offset: 0.2, segments: [{ bar: 1, bpm: 128, beatsPerBar: 4, beatUnit: 4 }], source: 'analysis' });
     const saved = JSON.parse(JSON.stringify(showTimeline.serialize()));
-    expect(saved.version).toBe(7);
+    expect(saved.version).toBe(8);
     // The runtime URL is blanked: the AssetRef rebuilds it.
     expect(saved.layerTracks[0].clips[0].media.src).toBe('');
     showTimeline._resetForTest();

@@ -167,6 +167,17 @@ import { linesEnd, normalizeBindings, removeLinesForBlocks, shiftLinesOnTarget, 
 import { normalizeLedClip, normalizeLedClips, type TimelineLedClip } from '../timeline/leds/ledClips';
 import { normalizeNamedOrders, normalizeWhere, type WhereNamedOrder } from '../timeline/where/whereModel';
 import { EMPTY_SOUND_DOC, normalizeSoundDoc, soundDocIsEmpty, type SoundDoc } from '../timeline/sound/soundModel';
+import { normalizeSections, sectionsEnd, tidySections, type TimelineSection } from '../timeline/sections/sectionModel';
+import {
+  createSectionPlayerState,
+  freeRunOffset,
+  goSections,
+  resetSections,
+  stepSections,
+  type GoResult,
+  type SectionEvent,
+  type SectionPlayerState,
+} from '../timeline/sections/sectionPlayer';
 
 // ─── Tunables ────────────────────────────────────────────────────────────
 
@@ -198,7 +209,7 @@ export interface ShowTimelineSelection {
   /** 'transition' selects the junction element sitting on `id`'s LEFT edge —
    *  the transition is stored on that clip, but it is a separate selectable
    *  object on the timeline with its own inspector. */
-  kind: 'audio' | 'preset' | 'transition' | 'layerClip' | 'track' | 'keyframe' | 'tempo' | 'lookClip' | 'ledClip' | 'soundRow' | 'liveClip' | 'build';
+  kind: 'audio' | 'preset' | 'transition' | 'layerClip' | 'track' | 'keyframe' | 'tempo' | 'lookClip' | 'ledClip' | 'soundRow' | 'liveClip' | 'build' | 'section';
   id: string;
 }
 
@@ -258,6 +269,8 @@ export interface ShowTimelineState {
   whereOrders: WhereNamedOrder[];
   /** Sound rows (Timeline): what each audio lane is, Live clip and build blocks. */
   sound: SoundDoc;
+  /** Sections (Timeline): named spans with an end action (hold, vamp, jump, live). */
+  sections: TimelineSection[];
 }
 
 /**
@@ -301,6 +314,7 @@ function createInitialState(): ShowTimelineState {
     ledClips: [],
     whereOrders: [],
     sound: EMPTY_SOUND_DOC,
+    sections: [],
   };
 }
 
@@ -765,10 +779,26 @@ export function onShowFrame(listener: (tick: ShowFrameTick) => void): () => void
   return () => frameListeners.delete(listener);
 }
 
+/** Blocks' media through holds, loops and jumps (live Timeline only). */
+function freeRunFor(s: ShowTimelineState): ((clip: ShowLayerClip) => { offset: number; paused: boolean } | null) | undefined {
+  if (s.doc !== 'timeline' || isManualClock()) return undefined;
+  const p = sectionPlayer;
+  if (!p.hold && !p.freeRun.length) return undefined;
+  const now = sectionClock();
+  return (clip) => {
+    if (clip.holdStops) return p.hold ? { offset: 0, paused: true } : null;
+    const offset = freeRunOffset(p, clip.startTime, clipEnd(clip), now);
+    return offset ? { offset, paused: false } : null;
+  };
+}
+
 function publishTrackFrame(s: ShowTimelineState, evalTime: number, force = false): void {
+  // Holding at a section's end: the song and everything that follows it
+  // (sound rows, Live clips, line recording) stands still with the playhead.
+  const rolling = s.isPlaying && !sectionHolding(s);
   if (lineTicker) {
     try {
-      lineTicker({ doc: s.doc, time: evalTime, playing: s.isPlaying, tempo: s.tempo, manual: isManualClock() });
+      lineTicker({ doc: s.doc, time: evalTime, playing: rolling, tempo: s.tempo, manual: isManualClock() });
     } catch (err) {
       console.warn('[ShowTimeline] line tick failed:', err);
     }
@@ -776,7 +806,7 @@ function publishTrackFrame(s: ShowTimelineState, evalTime: number, force = false
   const deco = whereDecorator;
   try { deco?.begin(s, evalTime); } catch (err) { console.warn('[ShowTimeline] where tick failed:', err); }
   if (frameListeners.size) {
-    const tick: ShowFrameTick = { doc: s.doc, time: evalTime, playing: s.isPlaying, tempo: s.tempo, manual: isManualClock(), seek: seekGeneration, loop: s.loop, duration: s.duration };
+    const tick: ShowFrameTick = { doc: s.doc, time: evalTime, playing: rolling, tempo: s.tempo, manual: isManualClock(), seek: seekGeneration, loop: s.loop, duration: s.duration };
     for (const listener of frameListeners) {
       try { listener(tick); } catch (err) { console.warn('[ShowTimeline] frame listener failed:', err); }
     }
@@ -802,6 +832,7 @@ function publishTrackFrame(s: ShowTimelineState, evalTime: number, force = false
     laneValues: (track, t) => (track.lanes.length ? evaluateLanes(track.lanes, t) : null),
     evaluatedAtMs: typeof performance !== 'undefined' ? performance.now() : undefined,
     wrap: lastLoopWrap && lastLoopWrap.generation === seekGeneration ? lastLoopWrap.wrap : null,
+    freeRun: freeRunFor(s),
   });
   if (looks.length) frame.looks = looks;
   if (deco) {
@@ -883,7 +914,7 @@ function transportProviderFor(trackId: string): () => ClipAudioTransport | null 
       // runs at that ratio: the song has to as well, or it drifts out and
       // the bus warbles and hard-seeks to catch it.
       playbackRate: externalClock && s.isPlaying ? chaseAudioRate() : 1,
-      paused: !s.isPlaying || !inWindow,
+      paused: !s.isPlaying || !inWindow || sectionHolding(s),
       loop: false,
       trimStartSeconds: track.offset,
       trimEndSeconds: track.offset + track.duration,
@@ -1116,6 +1147,89 @@ function fireComposition(clip: ShowPresetClip): void {
   }
 }
 
+// ─── Sections (Timeline) ─────────────────────────────────────────────────
+//
+// While the Timeline plays, its sections may hold the playhead, loop a
+// section or jump (timeline/sections/sectionPlayer.ts). Session state only:
+// a seek, Stop or another document forgets it, and an offline render (manual
+// clock) and a followed clock (timecode, Link, MIDI clock) never use it, so
+// a render always plays the Timeline straight through.
+
+const sectionPlayer: SectionPlayerState = createSectionPlayerState();
+
+/** What the sections are doing now, for the transport and the cue list. */
+export interface ShowSectionStatus {
+  /** The section the playhead holds at the end of (hold / live), waiting for GO. */
+  holdId: string | null;
+  /** Sections GO armed to play on at their end. */
+  armed: string[];
+  /** A vamp told to leave (at its end, or at `vampExitAt`). */
+  vampExitId: string | null;
+  vampExitAt: number | null;
+  /** The Live section whose pieces are with the VJ decks. */
+  liveId: string | null;
+  /** Passes played of each jump section. */
+  passes: Record<string, number>;
+}
+const sectionStatusStore = writable<ShowSectionStatus>({ holdId: null, armed: [], vampExitId: null, vampExitAt: null, liveId: null, passes: {} });
+export const showSectionStatus = { subscribe: sectionStatusStore.subscribe };
+
+function publishSectionStatus(): void {
+  const p = sectionPlayer;
+  sectionStatusStore.set({
+    holdId: p.hold?.sectionId ?? null,
+    armed: [...p.armed],
+    vampExitId: p.vampExit?.sectionId ?? null,
+    vampExitAt: p.vampExit?.at ?? null,
+    liveId: p.live,
+    passes: { ...p.passes },
+  });
+}
+
+/** Carries out what the sections asked for (the Live takeover). */
+export type ShowSectionEffects = (event: SectionEvent) => void;
+let sectionEffects: ShowSectionEffects | null = null;
+export function setShowSectionEffects(effects: ShowSectionEffects | null): void {
+  sectionEffects = effects;
+}
+
+function runSectionEvents(events: readonly SectionEvent[]): void {
+  for (const e of events) {
+    try { sectionEffects?.(e); } catch (err) { console.warn('[ShowTimeline] section effect failed:', err); }
+  }
+  publishSectionStatus();
+}
+
+/** Clock for holds (seconds). Test seam: `_setSectionClock`. */
+let sectionClock: () => number = () => (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
+
+function sectionsRun(s: Pick<ShowTimelineState, 'doc' | 'sections'>): boolean {
+  return s.doc === 'timeline' && s.sections.length > 0 && !externalClock && !isManualClock();
+}
+
+/** The Timeline is holding at a section's end (the song holds too). */
+function sectionHolding(s: Pick<ShowTimelineState, 'doc'>): boolean {
+  return s.doc === 'timeline' && sectionPlayer.hold !== null;
+}
+
+function forgetSections(): void {
+  const hadState = sectionPlayer.hold || sectionPlayer.live || sectionPlayer.armed.length || sectionPlayer.vampExit
+    || sectionPlayer.freeRun.length || Object.keys(sectionPlayer.passes).length;
+  if (!hadState) return;
+  runSectionEvents(resetSections(sectionPlayer, get(store).sections));
+}
+
+/**
+ * How far ahead a Timeline block's media runs (free-running content through
+ * holds, loops and jumps), for the LED rows. 0 outside a live session.
+ */
+export function showFreeRunOffset(start: number, end: number): number {
+  const s = get(store);
+  if (s.doc !== 'timeline' || isManualClock()) return 0;
+  if (!sectionPlayer.hold && !sectionPlayer.freeRun.length) return 0;
+  return freeRunOffset(sectionPlayer, start, end, sectionClock());
+}
+
 /**
  * The single evaluation path. Everything that moves the playhead ends here.
  *
@@ -1170,6 +1284,29 @@ function tick(now: number): void {
   const audio = audioClockReader && showHasAudibleTracks(s) ? audioClockReader(now) : null;
   let next = transportClock.advance({ frame: now / 1000, audio }, s.currentTime);
 
+  if (sectionsRun(s)) {
+    const step = stepSections(sectionPlayer, s.sections, s.tempo, s.currentTime, next, sectionClock());
+    if (step.events.length) runSectionEvents(step.events);
+    if (step.kind === 'hold') {
+      // The playhead stays; the clock re-anchors when GO lets it go.
+      transportClock.reset();
+      applyTime(step.time, false);
+      ticker.request();
+      return;
+    }
+    if (step.kind === 'wrap') {
+      // A loop or a jump: like the show's own loop wrap, the clock keeps its
+      // anchor and the evaluation knows by how much show time moved.
+      transportClock.shift(step.time - next);
+      lastLoopWrap = { generation: seekGeneration + 1, wrap: { fromGeneration: seekGeneration, shift: step.shift } };
+      applyTime(step.time, true);
+      ticker.request();
+      return;
+    }
+  } else if (sectionPlayer.hold) {
+    forgetSections();
+  }
+
   const dur = s.duration;
   if (dur > 0 && next >= dur) {
     if (s.loop) {
@@ -1209,7 +1346,8 @@ function finishShow(action: ShowEndAction): void {
 /** Recompute duration + reselect after any structural mutation. */
 function withDuration(s: ShowTimelineState): ShowTimelineState {
   const tracks = soundDocIsEmpty(s.sound) ? s.audioTracks : [...s.audioTracks, ...s.sound.live, ...s.sound.builds];
-  return { ...s, duration: computeShowDuration(s.presetClips, tracks, s.layerTracks, s.cameraLane, s.lookClips, s.lines, s.ledClips) };
+  const duration = computeShowDuration(s.presetClips, tracks, s.layerTracks, s.cameraLane, s.lookClips, s.lines, s.ledClips);
+  return { ...s, duration: s.sections.length ? Math.max(duration, sectionsEnd(s.sections)) : duration };
 }
 
 function normalizeTrack(raw: unknown, index: number): ShowAudioTrack | null {
@@ -1330,6 +1468,7 @@ export function normalizeLayerClip(raw: unknown): ShowLayerClip | null {
   if (typeof c.color === 'string') clip.color = c.color;
   const where = normalizeWhere(c.where);
   if (where) clip.where = { ...where, members: 'pieces' };
+  if (c.holdStops === true) clip.holdStops = true;
   return clip;
 }
 
@@ -1502,6 +1641,7 @@ export interface ShowArrangement {
   ledClips?: TimelineLedClip[];
   whereOrders?: WhereNamedOrder[];
   sound?: SoundDoc;
+  sections?: TimelineSection[];
   /** The Timeline document's arrangement; the fields above are the Show's.
    *  Missing in steps made before the two were separate: such a step is
    *  the active document's. */
@@ -1537,6 +1677,8 @@ export interface ShowTimelineSnapshot {
   whereOrders?: WhereNamedOrder[];
   /** Version 7: the Timeline's sound rows, Live clip and build blocks (missing = default rows). */
   sound?: SoundDoc;
+  /** Version 8: the Timeline's sections (hold / vamp / jump / live, GO). */
+  sections?: TimelineSection[];
   /** Version 4: the Timeline document (the fields above are the Show's). */
   timeline?: ShowTimelineSnapshot;
   /** Version 4: the document that was active when saved. */
@@ -1554,7 +1696,7 @@ export interface ShowTimelineSnapshot {
 
 /** What a document owns. Everything else in the state is the engine's. */
 const DOC_KEYS = [
-  'audioTracks', 'presetClips', 'layerTracks', 'lookClips', 'lines', 'lineBindings', 'ledClips', 'whereOrders', 'sound', 'cameraLane', 'tempo', 'loop', 'endAction',
+  'audioTracks', 'presetClips', 'layerTracks', 'lookClips', 'lines', 'lineBindings', 'ledClips', 'whereOrders', 'sound', 'sections', 'cameraLane', 'tempo', 'loop', 'endAction',
   'rulerMode', 'snapGrid', 'zoom', 'snapEnabled', 'currentTime', 'selection', 'selectedClipIds', 'soloTrackId',
 ] as const;
 export type ShowDocFields = Pick<ShowTimelineState, (typeof DOC_KEYS)[number]>;
@@ -1579,8 +1721,9 @@ function setParked(doc: ShowDocFields): void {
 export const parkedShowDoc = { subscribe: parkedStore.subscribe };
 
 /** A document has something on it. */
-export function docHasContent(d: Pick<ShowDocFields, 'presetClips' | 'audioTracks' | 'layerTracks' | 'lookClips' | 'cameraLane'> & { lines?: readonly ControlLine[]; ledClips?: readonly TimelineLedClip[]; sound?: SoundDoc }): boolean {
+export function docHasContent(d: Pick<ShowDocFields, 'presetClips' | 'audioTracks' | 'layerTracks' | 'lookClips' | 'cameraLane'> & { lines?: readonly ControlLine[]; ledClips?: readonly TimelineLedClip[]; sound?: SoundDoc; sections?: readonly TimelineSection[] }): boolean {
   return d.presetClips.length > 0 || d.audioTracks.length > 0 || d.lookClips.length > 0 || d.cameraLane.length > 0
+    || (d.sections?.length ?? 0) > 0
     || (d.ledClips?.length ?? 0) > 0
     || (d.lines?.length ?? 0) > 0 || (d.sound?.live.length ?? 0) > 0 || (d.sound?.builds.length ?? 0) > 0
     || d.layerTracks.some((t) => !isBareRow(t));
@@ -1619,6 +1762,7 @@ function arrangementOf(d: ShowDocFields): ShowArrangement {
     whereOrders: d.whereOrders,
     // So is the sound doc.
     sound: d.sound,
+    sections: d.sections,
   };
 }
 
@@ -1643,6 +1787,7 @@ function docWithArrangement(base: ShowDocFields, a: Partial<ShowArrangement>): S
   const ledClips = Array.isArray(a.ledClips) ? normalizeLedClips(a.ledClips) : base.ledClips;
   const whereOrders = Array.isArray(a.whereOrders) ? normalizeNamedOrders(a.whereOrders) : base.whereOrders;
   const sound = a.sound !== undefined ? normalizeSoundDoc(a.sound) : base.sound;
+  const sections = Array.isArray(a.sections) ? normalizeSections(a.sections) : base.sections;
   const tempo = normalizeTempoMap(a.tempo);
   const clipIds = new Set(layerTracks.flatMap((t) => t.clips.map((c) => c.id)));
   const ids = new Set([
@@ -1655,6 +1800,7 @@ function docWithArrangement(base: ShowDocFields, a: Partial<ShowArrangement>): S
     ...sound.rows.map((r) => r.id),
     ...sound.live.map((b) => b.id),
     ...sound.builds.map((b) => b.id),
+    ...sections.map((x) => x.id),
   ]);
   return {
     ...base,
@@ -1672,6 +1818,7 @@ function docWithArrangement(base: ShowDocFields, a: Partial<ShowArrangement>): S
     ledClips,
     whereOrders,
     sound,
+    sections,
     soloTrackId: base.soloTrackId && layerTracks.some((t) => t.id === base.soloTrackId) ? base.soloTrackId : null,
     selectedClipIds: base.selectedClipIds.filter((id) => clipIds.has(id)),
     selection: base.selection && ids.has(base.selection.id) ? base.selection : null,
@@ -1720,6 +1867,7 @@ function docSnapshot(d: ShowDocFields): Omit<ShowTimelineSnapshot, 'version' | '
     ...(d.ledClips.length > 0 ? { ledClips: d.ledClips.map((c) => ({ ...c })) } : {}),
     ...(d.whereOrders.length > 0 ? { whereOrders: d.whereOrders } : {}),
     ...(!soundDocIsEmpty(d.sound) ? { sound: d.sound } : {}),
+    ...(d.sections.length > 0 ? { sections: d.sections.map((x) => ({ ...x })) } : {}),
   };
 }
 
@@ -1789,6 +1937,7 @@ function hydrateDoc(p: Record<string, unknown>, projectDir?: string): ShowDocFie
     ledClips: normalizeLedClips(p.ledClips),
     whereOrders: normalizeNamedOrders(p.whereOrders),
     sound: normalizeSoundDoc(p.sound),
+    sections: normalizeSections(p.sections),
     cameraLane,
     tempo,
     loop: p.loop === true,
@@ -1898,6 +2047,7 @@ export const showTimeline = {
       if (!chaseTransportHandler?.('stop') && get(store).isPlaying) return;
     }
     cancelRaf();
+    forgetSections();
     // Clearing activeClipId is what makes the next play() re-fire the
     // opening preset even if the operator hand-loaded something else.
     store.update((s) => ({ ...s, isPlaying: false, currentTime: 0, activeClipId: null }));
@@ -1984,6 +2134,7 @@ export const showTimeline = {
    * with the pointer position.
    */
   seek(seconds: number) {
+    forgetSections();
     applyTime(seconds, true);
     // A seek while playing carries on from the new position.
     transportClock.reset();
@@ -3301,6 +3452,94 @@ export const showTimeline = {
     if (!opts.quiet) recordShowEdit(opts.continuousKey ? `lines:${opts.continuousKey}` : undefined);
   },
 
+  // ── Sections (Timeline) ───────────────────────────────────────────────
+
+  /** Replace the sections (sorted, overlaps trimmed). One undo step; a drag
+   *  passes `continuousKey` so its many updates make one. */
+  setSections(sections: TimelineSection[], opts: { continuousKey?: string; quiet?: boolean } = {}) {
+    const next = tidySections(sections);
+    store.update((x) => withDuration({
+      ...x,
+      sections: next,
+      selection: x.selection?.kind === 'section' && !next.some((n) => n.id === x.selection!.id) ? null : x.selection,
+    }));
+    publishSectionStatus();
+    if (!opts.quiet) recordShowEdit(opts.continuousKey ? `sections:${opts.continuousKey}` : undefined);
+  },
+
+  addSection(section: TimelineSection): string {
+    this.setSections([...get(store).sections, section]);
+    store.update((x) => ({ ...x, selection: { kind: 'section', id: section.id } }));
+    return section.id;
+  },
+
+  updateSection(id: string, patch: Partial<Omit<TimelineSection, 'id'>>, opts: { continuousKey?: string } = {}) {
+    const s = get(store);
+    if (!s.sections.some((x) => x.id === id)) return;
+    this.setSections(s.sections.map((x) => (x.id === id ? { ...x, ...patch } : x)), opts);
+  },
+
+  removeSection(id: string) {
+    const s = get(store);
+    if (!s.sections.some((x) => x.id === id)) return;
+    if (sectionPlayer.hold?.sectionId === id || sectionPlayer.live === id) forgetSections();
+    this.setSections(s.sections.filter((x) => x.id !== id));
+  },
+
+  /**
+   * GO. On the Timeline with sections: a hold lets go, a vamp leaves at the
+   * end of its pass (or the next bar), a hold or Live section ahead plays
+   * on; stopped, it plays. Returns what it did ('none' when nothing waits).
+   */
+  go(): GoResult {
+    const s = get(store);
+    if (!sectionsRun(s)) {
+      if (!s.isPlaying) {
+        this.play();
+        return { kind: 'play' };
+      }
+      return { kind: 'none' };
+    }
+    const result = goSections(sectionPlayer, s.sections, s.tempo, s.currentTime, s.isPlaying, sectionClock());
+    if (result.kind === 'resume') {
+      runSectionEvents(result.events);
+      transportClock.reset();
+      if (!s.isPlaying) this.play();
+      // Re-evaluate: free-running blocks take the time they ran while held.
+      republishTracks();
+    } else if (result.kind === 'play') {
+      this.play();
+    } else {
+      publishSectionStatus();
+    }
+    return result;
+  },
+
+  /**
+   * Several parts of the Timeline replaced at once, as one undo step (Score
+   * the song lays down sections, looks, lines and LED blocks together).
+   */
+  replaceTimelineParts(parts: Partial<Pick<ShowTimelineState, 'sections' | 'lookClips' | 'lines' | 'ledClips' | 'tempo'>>) {
+    store.update((x) => withDuration({
+      ...x,
+      ...(parts.tempo !== undefined && !x.tempo && parts.tempo
+        ? { tempo: normalizeTempoMap(parts.tempo), snapGrid: x.snapGrid === 'seconds' ? 'bar' as const : x.snapGrid, rulerMode: 'bars' as const }
+        : {}),
+      ...(parts.sections ? { sections: tidySections(parts.sections) } : {}),
+      ...(parts.lookClips ? { lookClips: [...parts.lookClips].sort((a, b) => a.startTime - b.startTime) } : {}),
+      ...(parts.lines ? { lines: parts.lines } : {}),
+      ...(parts.ledClips ? { ledClips: normalizeLedClips(parts.ledClips) } : {}),
+    }));
+    republishTracks();
+    publishSectionStatus();
+    recordShowEdit();
+  },
+
+  /** The section state, for tests and the debug surface. */
+  sectionState(): Readonly<SectionPlayerState> {
+    return sectionPlayer;
+  },
+
   // ── Sound rows (Timeline) ─────────────────────────────────────────────
 
   /** Replace the sound doc (rows, Live clip and build blocks). */
@@ -3395,6 +3634,7 @@ export const showTimeline = {
 
   clear() {
     cancelRaf();
+    forgetSections();
     releaseAllTrackElements();
     publishTransition(null);
     transportClock.reset();
@@ -3510,6 +3750,7 @@ export const showTimeline = {
     const wasPlaying = s.isPlaying;
     if (wasPlaying && !externalClock) this.pause();
     cancelRaf();
+    forgetSections();
     const outgoing = docFieldsOf(get(store));
     const incoming = parkedDoc;
     setParked({ ...outgoing, selection: null, selectedClipIds: [] });
@@ -3576,11 +3817,12 @@ export const showTimeline = {
       // are under `timeline`, and the Looks row is new.
       // 5: the Timeline has control lines (the ◆ lanes became lines).
       // 6: the Timeline has LED rows and where lines (blocks carry `where`).
-      version: 7,
+      // 7: sound rows. 8: sections.
+      version: 8,
       isOpen: s.isOpen,
       ...show,
       activeDoc: s.doc,
-      timeline: { version: 7, isOpen: false, ...timeline },
+      timeline: { version: 8, isOpen: false, ...timeline },
     };
   },
 
@@ -3597,6 +3839,7 @@ export const showTimeline = {
    */
   hydrate(payload: unknown, projectDir?: string): void {
     cancelRaf();
+    forgetSections();
     releaseAllTrackElements();
     publishTransition(null);
     // Another show (or the same one reopened): its videos start from their
@@ -3690,8 +3933,17 @@ export const showTimeline = {
     lastTrackFrameSignature = null;
     activeTracksMemo = null;
     tracksAwaitingFirstStep.clear();
+    Object.assign(sectionPlayer, createSectionPlayerState());
+    sectionEffects = null;
+    sectionClock = () => (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
+    publishSectionStatus();
     setParked(emptyDocFields());
     store.set(createInitialState());
+  },
+
+  /** Test seam: the clock holds are counted on (seconds). */
+  _setSectionClock(clock: () => number) {
+    sectionClock = clock;
   },
 
   /** The show's current seek generation (bumped on every discontinuity). */

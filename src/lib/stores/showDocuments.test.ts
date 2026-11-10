@@ -113,7 +113,7 @@ describe('saving both documents', () => {
     showTimeline.addLayerClip(rowTrackId('A'), image(), 2, { duration: 3 });
     showTimeline.addLookClip('neon-pulse', 'ice', 1, { duration: 5 });
     const saved = JSON.parse(JSON.stringify(showTimeline.serialize()));
-    expect(saved.version).toBe(7);
+    expect(saved.version).toBe(8);
     expect(saved.activeDoc).toBe('timeline');
     expect(saved.presetClips).toHaveLength(1);
     expect(saved.layerTracks).toEqual([]);

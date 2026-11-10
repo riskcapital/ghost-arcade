@@ -283,6 +283,10 @@ export interface EvaluateShowTracksOptions {
   wrap?: ShowLoopWrap | null;
   /** Lane evaluation (phase 4); null/absent means no lanes. */
   laneValues?: (track: ShowLayerTrack, t: number) => Record<string, number | boolean> | null;
+  /** Timeline sections (live only): a block's media runs `offset` seconds
+   *  ahead after the holds, loops and jumps it lived through, or is
+   *  `paused` while a section holds (a block marked to stop on a hold). */
+  freeRun?: (clip: ShowLayerClip) => { offset: number; paused: boolean } | null;
 }
 
 /** The first clip starting after `t`. */
@@ -389,15 +393,17 @@ function clipStateAt(
   clips: readonly ShowLayerClip[],
   clip: ShowLayerClip,
   t: number,
-  opts: Pick<EvaluateShowTracksOptions, 'playing' | 'manualClock'>,
+  opts: Pick<EvaluateShowTracksOptions, 'playing' | 'manualClock' | 'freeRun'>,
 ): ShowTrackClipState {
   const index = clipIndex(clips);
   const runId = index.runs.get(clip.id) ?? clip.id;
   const runFirst = index.byId.get(runId) ?? clip;
+  const free = opts.freeRun?.(clip) ?? null;
+  const mt = t + (free?.offset ?? 0);
   // Before its start (the first half of a crossfade) a clip with no media
   // before its in-point waits on its first frame; a shader's time waits at 0.
-  const waiting = (clip.media.kind === 'video' || clip.media.kind === 'shader') && rawMediaTime(clip, t) < 0;
-  const position = clipMediaTime(clip, t);
+  const waiting = (clip.media.kind === 'video' || clip.media.kind === 'shader') && rawMediaTime(clip, mt) < 0;
+  const position = clipMediaTime(clip, mt);
   return {
     clipId: clip.id,
     runId,
@@ -406,7 +412,7 @@ function clipStateAt(
     mediaTime: position.time,
     // An offline render seeks frame by frame without "playing": its
     // clips run on the render clock all the same.
-    paused: (!opts.playing && !opts.manualClock) || position.held || waiting,
+    paused: (!opts.playing && !opts.manualClock) || position.held || waiting || free?.paused === true,
     held: position.held,
     rate: clipRate(clip),
     loopStart: clipLoopStart(runFirst),

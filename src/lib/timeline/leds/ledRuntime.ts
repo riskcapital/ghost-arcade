@@ -19,6 +19,8 @@ export interface LedTimelineState {
   looks: readonly LedLookOnStrips[];
   /** A where line on the LEDs exists: every controller is the Timeline's. */
   allDriven: boolean;
+  /** Free-running LED effects through section holds and loops. */
+  freeRun?: (start: number, end: number) => number;
 }
 
 let current: LedTimelineState | null = null;

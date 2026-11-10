@@ -18,7 +18,7 @@
  */
 import { get } from 'svelte/store';
 import type { Layer, ShowLayerTrack, ShowLookClip, ShowTempoMap, WLEDController } from '../../types';
-import { setShowWhereDecorator, type ShowTimelineState } from '../../stores/showTimeline';
+import { setShowWhereDecorator, showFreeRunOffset, type ShowTimelineState } from '../../stores/showTimeline';
 import type { ShowLookState } from '../../show/tracks/showLooks';
 import { evaluateShowLooks } from '../../show/tracks/showLooks';
 import type { ShowTrackFrame } from '../../show/tracks/showTrackEval';
@@ -256,7 +256,7 @@ export function installWhereRuntime(): () => void {
       lastStage = { time, stage, aspect };
       publishLedTimeline({
         time, bpm: bpmAt(s.tempo, time), clips: s.ledClips, lines: blockLines(lines, s.ledClips),
-        where: stage.ledWhere, looks: stage.lookStrips, allDriven: stage.allDriven,
+        where: stage.ledWhere, looks: stage.lookStrips, allDriven: stage.allDriven, freeRun: showFreeRunOffset,
       });
     },
     looks(_s, time, looks) {

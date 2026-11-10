@@ -31,6 +31,7 @@ import { launchClockTempo, launchClockPosition, launchClockFollowsShow } from '.
 import { midiRouter, registerShowControl, registerShowInputRelease } from '../midi/midiRouter';
 import { runAsLiveControl } from '../stores/historyHooks';
 import { handleTakeoverControl, releaseTakeoverInputs, runTakeoverCue, runTakeoverReleaseCue } from './takeover/takeoverRuntime';
+import { installSectionRuntime, timelineTakesGo } from '../timeline/sections/sectionRuntime';
 
 /** Hooks App.svelte fills in: things only the app shell can do. */
 export const showRuntimeHooks: {
@@ -113,10 +114,15 @@ export function installShowControl(): () => void {
 
   cueList.setExecutor(appCueExecutor);
   cleanups.push(() => cueList.setExecutor(null));
+  cleanups.push(installSectionRuntime());
 
   // ── MIDI / OSC / keyboard ──────────────────────────────────────────
   registerShowControl((action, value = 1, inputId) => {
-    if (action === 'go') cueList.go('remote');
+    // On the Timeline with sections, GO is the sections' (hold, vamp, Live).
+    if (action === 'go') {
+      if (timelineTakesGo()) showTimeline.go();
+      else cueList.go('remote');
+    }
     else if (action === 'back') cueList.back();
     else if (action === 'stop') cueList.stop();
     else if (action === 'reset') cueList.reset();
