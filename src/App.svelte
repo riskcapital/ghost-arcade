@@ -399,6 +399,7 @@
   import { handleShowKeydown } from './lib/show/showKeyboard';
   import { installShowTrackRuntime } from './lib/show/tracks/showTrackRuntime';
   import { installTimelineLines } from './lib/timeline/lines/timelineLines';
+  import { installTimelineSound } from './lib/timeline/sound/soundEngine';
   import { installTakeoverRuntime } from './lib/show/takeover/takeoverRuntime';
   import { installEditorRehearsal } from './lib/show/rehearsal/editorRehearsal';
   import { installShowControl, showRuntimeHooks } from './lib/show/showControlRuntime';
@@ -1951,6 +1952,8 @@
     const stopShowTracks = installShowTrackRuntime({ project });
     // Timeline control lines: ticked with the show, saved with the Timeline.
     const stopTimelineLines = installTimelineLines();
+    // Timeline sound rows (effects, fades, ducking, builds) and Live clip blocks.
+    const stopTimelineSound = installTimelineSound();
     // Live takeover: VJ rows, the mix or media over show tracks, handed back
     // on a beat, bar, phrase or marker.
     const stopTakeover = installTakeoverRuntime();
@@ -2770,6 +2773,7 @@
       stopShowControl();
       stopShowTracks();
       stopTimelineLines();
+      stopTimelineSound();
       stopTakeover();
       stopRehearsal();
       stopInstallRuntime?.();

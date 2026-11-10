@@ -28,7 +28,40 @@ export interface PlacedSong {
   rate?: number;
   /** Show seconds the track plays for (the clip length); unset: the file's. */
   length?: number;
+  /** Fades at its edges (show seconds): a Timeline sound block. */
+  fadeIn?: number;
+  fadeOut?: number;
+  /** Its level (0..1): a sound row source scales by it. */
+  gain?: number;
   features: SongFeatures;
+}
+
+/** Sources with `track: 'row:<id>'` read a Timeline sound row: every block on it, as loud as it plays there. */
+export const SOUND_ROW_TRACK_PREFIX = 'row:';
+
+function placedGain(song: PlacedSong, local: number): number {
+  const len = song.length ?? Infinity;
+  let g = song.gain ?? 1;
+  if (song.fadeIn && local < song.fadeIn) g *= Math.sin((Math.max(0, local) / song.fadeIn) * (Math.PI / 2));
+  const left = len - local;
+  if (song.fadeOut && left < song.fadeOut) g *= Math.sin((Math.max(0, left) / song.fadeOut) * (Math.PI / 2));
+  return g;
+}
+
+/** A sound row's value: the loudest of its blocks playing at `time`, each at its fade. */
+function soundRowValue(songs: readonly PlacedSong[] | undefined, trackId: string, time: number, sample: (features: SongFeatures, at: number) => number): number | null {
+  if (!songs?.length) return null;
+  let best: number | null = null;
+  for (const song of songs) {
+    if (song.trackId !== trackId) continue;
+    const local = time - song.startTime;
+    if (local < 0 || (song.length !== undefined && local >= song.length)) continue;
+    const at = song.offset + local * (song.rate ?? 1);
+    if (at > song.features.duration) continue;
+    const v = sample(song.features, at) * placedGain(song, local);
+    best = best === null ? v : Math.max(best, v);
+  }
+  return best === null ? 0 : best;
 }
 
 export interface LineContext {
@@ -61,6 +94,8 @@ export interface LineFrame {
   blocks?: Map<string, OverrideRecord>;
   /** By look block (clip id): applied to that block's effects on the shapes. */
   looks?: Map<string, OverrideRecord>;
+  /** By Timeline sound row (row id): its level and effects. */
+  sounds?: Map<string, OverrideRecord>;
 }
 
 // ── Curves ───────────────────────────────────────────────────────────────
@@ -220,10 +255,12 @@ function songAt(songs: readonly PlacedSong[] | undefined, trackId: string | unde
 export function sourceValue(source: FollowSource, time: number, ctx: LineContext, smooth = 0): number | null {
   switch (source.kind) {
     case 'audio': {
+      if (source.track?.startsWith(SOUND_ROW_TRACK_PREFIX)) return soundRowValue(ctx.songs, source.track, time, (f, at) => sampleFeature(f, source.feature, at, smooth));
       const hit = songAt(ctx.songs, source.track, time);
       return hit ? sampleFeature(hit.song.features, source.feature, hit.at, smooth) : null;
     }
     case 'stem': {
+      if (source.track?.startsWith(SOUND_ROW_TRACK_PREFIX)) return soundRowValue(ctx.songs, source.track, time, (f, at) => sampleStem(f, source.stem, at, smooth));
       const hit = songAt(ctx.songs, source.track, time);
       return hit ? sampleStem(hit.song.features, source.stem, hit.at, smooth) : null;
     }
@@ -343,7 +380,7 @@ export function createLineEvaluator() {
   let lastLines: readonly ControlLine[] | null = null;
   let compiled: CompiledLine[] = [];
   const byLine = new Map<ControlLine, CompiledLine>();
-  const frame: LineFrame = { time: 0, layers: new Map(), stage: null, leds: null, blocks: new Map(), looks: new Map() };
+  const frame: LineFrame = { time: 0, layers: new Map(), stage: null, leds: null, blocks: new Map(), looks: new Map(), sounds: new Map() };
 
   function recompile(lines: readonly ControlLine[]) {
     const keep = new Set<ControlLine>();
@@ -352,13 +389,14 @@ export function createLineEvaluator() {
     frame.leds = null;
     frame.blocks = new Map();
     frame.looks = new Map();
+    frame.sounds = new Map();
     compiled = [];
     for (const line of lines) {
       if (line.enabled === false) continue;
       if (!line.points.length && !line.follow) continue;
       let out: OverrideRecord;
-      if (line.target.scope === 'layer' || line.target.scope === 'block' || line.target.scope === 'look') {
-        const map = line.target.scope === 'layer' ? frame.layers : line.target.scope === 'block' ? frame.blocks! : frame.looks!;
+      if (line.target.scope === 'layer' || line.target.scope === 'block' || line.target.scope === 'look' || line.target.scope === 'sound') {
+        const map = line.target.scope === 'layer' ? frame.layers : line.target.scope === 'block' ? frame.blocks! : line.target.scope === 'sound' ? frame.sounds! : frame.looks!;
         out = map.get(line.target.id) ?? {};
         map.set(line.target.id, out);
       } else if (line.target.scope === 'stage') {
@@ -418,12 +456,13 @@ export function snapshotFrame(frame: LineFrame): LineFrame {
     leds: frame.leds && Object.keys(frame.leds).length ? { ...frame.leds } : null,
     blocks: copyRecords(frame.blocks),
     looks: copyRecords(frame.looks),
+    sounds: copyRecords(frame.sounds),
   };
 }
 
 /** No values at all. */
 export function frameIsEmpty(frame: LineFrame | null): boolean {
-  return !frame || (!frame.layers.size && !frame.stage && !frame.leds && !frame.blocks?.size && !frame.looks?.size);
+  return !frame || (!frame.layers.size && !frame.stage && !frame.leds && !frame.blocks?.size && !frame.looks?.size && !frame.sounds?.size);
 }
 
 /** Same values to the precision they take effect (32-bit float). */
@@ -447,7 +486,7 @@ export function sameFrameValues(a: LineFrame | null, b: LineFrame | null): boole
     if (x) for (const [id, rec] of x) if (!same(rec, y?.get(id))) return false;
     return true;
   };
-  return sameMap(a.layers, b.layers) && sameMap(a.blocks, b.blocks) && sameMap(a.looks, b.looks) && same(a.stage, b.stage) && same(a.leds, b.leds);
+  return sameMap(a.layers, b.layers) && sameMap(a.blocks, b.blocks) && sameMap(a.looks, b.looks) && sameMap(a.sounds, b.sounds) && same(a.stage, b.stage) && same(a.leds, b.leds);
 }
 
 /**

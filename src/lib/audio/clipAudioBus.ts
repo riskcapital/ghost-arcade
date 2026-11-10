@@ -167,6 +167,10 @@ export interface ClipAudioAttachOptions {
   volume?: number;
   muted?: boolean;
   provider?: ClipAudioTransportProvider;
+  /** Where the clip's gain goes instead of the master (a Timeline sound
+   *  row's own chain). Asked on every (re)connect; null = the master. The
+   *  node must end up at `masterNode()` for the clip to be heard. */
+  output?: (ctx: AudioContext, master: AudioNode) => AudioNode | null;
 }
 
 /**
@@ -257,6 +261,7 @@ interface ClipEntry {
   lastSeekGeneration: number;
   /** True once the element has been un-muted by us. */
   unmuted: boolean;
+  output: ClipAudioAttachOptions['output'] | null;
 }
 
 type ContextProvider = () => AudioContext;
@@ -501,9 +506,11 @@ export class ClipAudioBus {
         muted: options.muted === true,
         lastSeekGeneration: Number.NaN,
         unmuted: false,
+        output: options.output ?? null,
       };
       this.clips.set(id, entry);
     } else {
+      if (options.output !== undefined) entry.output = options.output ?? null;
       if (options.provider) entry.provider = options.provider;
       if (options.volume !== undefined) entry.volume = clamp01(options.volume);
       if (options.muted !== undefined) entry.muted = options.muted === true;
@@ -535,7 +542,7 @@ export class ClipAudioBus {
     try {
       source.connect(entry.gain);
       entry.gain.disconnect();
-      entry.gain.connect(master);
+      entry.gain.connect(this.clipDestination(entry, ctx, master));
     } catch (err) {
       console.warn(`[ClipAudioBus] Failed to wire clip "${id}":`, err);
       this.clips.delete(id);
@@ -620,10 +627,35 @@ export class ClipAudioBus {
         source.disconnect();
         source.connect(entry.gain);
         entry.gain.disconnect();
-        entry.gain.connect(master);
+        entry.gain.connect(this.clipDestination(entry, ctx, master));
       } catch (err) {
         console.warn(`[ClipAudioBus] Reconnect failed for "${entry.id}":`, err);
       }
+    }
+  }
+
+  /** Connect a clip's gain again (its output moved, e.g. to another sound row). */
+  rewireClip(id: string): void {
+    const entry = this.clips.get(id);
+    const ctx = this.ctx;
+    const master = this.masterGain;
+    if (!entry?.gain || !ctx || !master) return;
+    try {
+      entry.gain.disconnect();
+      entry.gain.connect(this.clipDestination(entry, ctx, master));
+    } catch (err) {
+      console.warn(`[ClipAudioBus] Rewire failed for "${id}":`, err);
+    }
+  }
+
+  /** The clip's own output when it has one (a Timeline sound row), else the master. */
+  private clipDestination(entry: ClipEntry, ctx: AudioContext, master: GainNode): AudioNode {
+    if (!entry.output) return master;
+    try {
+      return entry.output(ctx, master) ?? master;
+    } catch (err) {
+      console.warn(`[ClipAudioBus] Output for "${entry.id}" failed, using the master:`, err);
+      return master;
     }
   }
 

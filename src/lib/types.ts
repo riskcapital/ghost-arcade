@@ -5410,6 +5410,12 @@ export interface ShowAudioTrack {
    *  whole source. Persisted so reopening a project doesn't have to decode
    *  every track again. */
   peaks?: number[];
+  /** Timeline sound rows: fade in / out at the block's edges, seconds. */
+  fadeIn?: number;
+  fadeOut?: number;
+  /** Timeline sound rows: a sound from the Music Studio library (rendered
+   *  to a file once; `url`/`assetRef` are that file). */
+  sound?: { id: string; note?: number };
 }
 
 /** A mapping preset (Composition) block on the show timeline's preset lane.

@@ -1,0 +1,451 @@
+/**
+ * Playing the Timeline's sound rows and Live rows.
+ *
+ * Audio blocks keep their own media elements on the clip audio bus (so
+ * tempo following, drift correction, the audio clock and the analyser all
+ * work as on the Show). The bus hands each Timeline block's sound to this
+ * module (`setShowAudioRouter`), which runs it through:
+ *
+ *   block fade gain → row: build FX → Music Studio effects → duck → level → bus master
+ *
+ * The effects are the studio's own units (`MacroFxChain`, `BuildFx`,
+ * `Ducker`), not copies, driven by the row's settings with the control
+ * lines' values on top (`controlLineFrame`, scope 'sound').
+ *
+ * Live rows: `LiveClipScheduler` turns the playhead into fire / stop
+ * requests for the Ghost Arcade script in Live.
+ *
+ * Everything is evaluated from the show's own evaluation (`onShowFrame`):
+ * every frame while playing, every seek, nothing during an offline render
+ * (which uses the Timeline's own audio, never Live).
+ */
+import { get } from 'svelte/store';
+import {
+  onShowFrame,
+  onShowDocChange,
+  setShowAudioRouter,
+  showTimeline,
+  type ShowFrameTick,
+  type ShowTimelineState,
+} from '../../stores/showTimeline';
+import { MacroFxChain } from '../../music/macroFxAudio';
+import type { MacroFxInstance } from '../../music/macroFx';
+import { BuildFx } from '../../music/buildFx';
+import { Ducker } from '../../music/ducking';
+import { defaultBuildSettings, rollHits, type BuildSettings } from '../../music/buildDrop';
+import { barBeatAt, beatAtSeconds, secondsAtBeat } from '../../show/tempoMap';
+import { cachedShowAudioDecode, decodeShowAudio } from '../../audio/showAudio';
+import { abletonBridge, type AbletonBridgeState } from '../../ableton/abletonBridge';
+import { currentLineFrame } from '../lines/lineRuntime';
+import { songFeaturesFor } from '../lines/songFeatures';
+import type { ShowAudioTrack, ShowTempoMap } from '../../types';
+import { blockGainAt, effectiveFades, rowAudible, soundRowsFor, type BuildBlock, type SoundDoc, type SoundRow } from './soundModel';
+import { rowValues } from './soundParams';
+import { beatHitsBetween, kickHitsInFeatures, rowKickTimes, timesBetween } from './soundDuck';
+import { LiveClipScheduler, resolveLiveSlot, resolveLiveTrack, type LiveCommand, type LiveSchedBlock, type LiveSchedRow } from './liveSchedule';
+
+const GAIN_TC = 0.012;
+const DUCK_LOOKAHEAD = 0.15;
+
+function makeNoise(ctx: BaseAudioContext): AudioBuffer {
+  const buffer = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  // A fixed sequence, so a build sounds the same on every run.
+  let seed = 0x9e3779b9;
+  for (let i = 0; i < data.length; i++) {
+    seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5;
+    data[i] = ((seed >>> 0) / 0xffffffff) * 2 - 1;
+  }
+  return buffer;
+}
+
+export function bpmAt(tempo: ShowTempoMap | null, t: number): number {
+  return tempo ? barBeatAt(tempo, t).bpm : 120;
+}
+
+/** A build block's settings for the studio's BuildFx. */
+export function buildSettingsFor(b: BuildBlock): BuildSettings {
+  return { ...defaultBuildSettings(), style: b.style, roll: b.roll, filter: b.filter, riser: b.riser, sends: b.sends, gap: b.gap, impact: b.impact, kickOut: false };
+}
+
+/** The roll's hits for a build block, in show seconds. */
+export function buildHitTimes(b: BuildBlock, tempo: ShowTempoMap | null): Array<{ time: number; velocity: number; pitch: number }> {
+  const q = (t: number) => (tempo ? beatAtSeconds(tempo, t) : t * 2);
+  const s = (beat: number) => (tempo ? secondsAtBeat(tempo, beat) : beat / 2);
+  return rollHits(q(b.startTime), q(b.startTime + b.duration), b.gap).map((h) => ({ time: s(h.beat), velocity: h.velocity, pitch: h.pitch }));
+}
+
+/** One sound row's chain on the audio graph. */
+class RowBus {
+  readonly input: GainNode;
+  private buildFx: BuildFx | null = null;
+  readonly chain: MacroFxChain;
+  readonly ducker: Ducker;
+  readonly level: GainNode;
+  private fxSignature = '';
+  private lastLevel = -1;
+
+  constructor(private readonly ctx: AudioContext, master: AudioNode) {
+    this.input = ctx.createGain();
+    this.chain = new MacroFxChain(ctx);
+    this.ducker = new Ducker(ctx);
+    this.level = ctx.createGain();
+    this.input.connect(this.chain.input);
+    const ducked = this.ducker.after(this.chain.output);
+    ducked.connect(this.level);
+    this.level.connect(master);
+  }
+
+  /** The studio's build FX, put in front of the effects the first time a build plays here. */
+  get build(): BuildFx {
+    if (!this.buildFx) {
+      this.buildFx = new BuildFx(this.ctx, makeNoise(this.ctx));
+      try { this.input.disconnect(this.chain.input); } catch { /* none */ }
+      this.input.connect(this.buildFx.input);
+      this.buildFx.output.connect(this.chain.input);
+    }
+    return this.buildFx;
+  }
+
+  hasBuild(): boolean {
+    return this.buildFx !== null;
+  }
+
+  setLevel(v: number): void {
+    if (Math.abs(v - this.lastLevel) < 1e-4) return;
+    this.lastLevel = v;
+    this.level.gain.setTargetAtTime(v, this.ctx.currentTime, GAIN_TC);
+  }
+
+  setFx(row: SoundRow, values: Map<string, Record<string, number>>, bpm: number): void {
+    let sig = `${Math.round(bpm * 100)}|`;
+    for (const f of row.fx) {
+      const v = values.get(f.id);
+      sig += `${f.id}:${f.type}:${v ? Object.values(v).map((x) => Math.round(x * 1000)).join(',') : 'off'};`;
+    }
+    if (sig === this.fxSignature) return;
+    this.fxSignature = sig;
+    const effects: MacroFxInstance[] = row.fx.filter((f) => values.has(f.id)).map((f) => {
+      const v = values.get(f.id)!;
+      return { ...f, params: Object.fromEntries(Object.keys(f.params).map((k) => [k, { value: v[k] ?? f.params[k].value, depth: 0 }])) };
+    });
+    this.chain.sync([{ macroValue: 0, effects }], bpm);
+  }
+
+  dispose(): void {
+    this.buildFx?.cancel();
+    this.ducker.dispose();
+    for (const n of [this.input, this.chain.input, this.chain.output, this.level, ...(this.buildFx ? [this.buildFx.output] : [])]) {
+      try { n.disconnect(); } catch { /* gone */ }
+    }
+  }
+}
+
+interface EngineState {
+  ctx: AudioContext | null;
+  master: AudioNode | null;
+  buses: Map<string, RowBus>;
+  blockGains: Map<string, { node: GainNode; rowId: string; last: number }>;
+  /** Show time up to which each row's ducks are scheduled. */
+  duckedTo: Map<string, number>;
+  /** Build blocks started this pass. */
+  buildsStarted: Set<string>;
+  lastSeek: number;
+  wasPlaying: boolean;
+  /** Kick times per source row (show seconds), by placement signature. */
+  kicks: Map<string, { sig: string; times: number[] | null }>;
+}
+
+const engine: EngineState = {
+  ctx: null,
+  master: null,
+  buses: new Map(),
+  blockGains: new Map(),
+  duckedTo: new Map(),
+  buildsStarted: new Set(),
+  lastSeek: Number.NaN,
+  wasPlaying: false,
+  kicks: new Map(),
+};
+
+/** Sent to the Live script (the bridge; tests replace it). */
+let liveSend: (cmd: LiveCommand) => void = (cmd) => {
+  if (cmd.t === 'fire_clip') abletonBridge.launchClip(cmd.i, cmd.s, { ...(cmd.q !== undefined ? { q: cmd.q } : {}), ...(cmd.pos !== undefined ? { pos: cmd.pos } : {}) });
+  else if (cmd.t === 'stop_track') abletonBridge.stopTrack(cmd.i, cmd.q !== undefined ? { q: cmd.q } : {});
+  else abletonBridge.stopAllClips(cmd.q !== undefined ? { q: cmd.q } : {});
+};
+const liveScheduler = new LiveClipScheduler({ send: (cmd) => liveSend(cmd) });
+
+/** Test seam: where Live requests go. */
+export function setLiveSender(send: ((cmd: LiveCommand) => void) | null): void {
+  liveSend = send ?? ((cmd) => {
+    if (cmd.t === 'fire_clip') abletonBridge.launchClip(cmd.i, cmd.s, { ...(cmd.q !== undefined ? { q: cmd.q } : {}), ...(cmd.pos !== undefined ? { pos: cmd.pos } : {}) });
+    else if (cmd.t === 'stop_track') abletonBridge.stopTrack(cmd.i, cmd.q !== undefined ? { q: cmd.q } : {});
+    else abletonBridge.stopAllClips(cmd.q !== undefined ? { q: cmd.q } : {});
+  });
+}
+
+function rowsOf(s: Pick<ShowTimelineState, 'sound' | 'audioTracks'>): SoundRow[] {
+  return soundRowsFor(s.sound, s.audioTracks);
+}
+
+function busFor(rowId: string): RowBus | null {
+  const ctx = engine.ctx;
+  const master = engine.master;
+  if (!ctx || !master) return null;
+  let bus = engine.buses.get(rowId);
+  if (!bus) {
+    bus = new RowBus(ctx, master);
+    engine.buses.set(rowId, bus);
+  }
+  return bus;
+}
+
+/** The clip bus asks where a Timeline track's sound goes. */
+function route(trackId: string, ctx: AudioContext, master: AudioNode): AudioNode | null {
+  const s = get(showTimeline);
+  if (s.doc !== 'timeline') return null;
+  const track = s.audioTracks.find((t) => t.id === trackId);
+  if (!track) return null;
+  if (engine.ctx !== ctx || engine.master !== master) {
+    releaseGraph();
+    engine.ctx = ctx;
+    engine.master = master;
+  }
+  const row = rowsOf(s)[track.lane];
+  if (!row) return null;
+  const bus = busFor(row.id);
+  if (!bus) return null;
+  let entry = engine.blockGains.get(trackId);
+  if (!entry) {
+    entry = { node: ctx.createGain(), rowId: row.id, last: -1 };
+    entry.node.gain.value = 0;
+    engine.blockGains.set(trackId, entry);
+  } else {
+    try { entry.node.disconnect(); } catch { /* none */ }
+    entry.rowId = row.id;
+  }
+  entry.node.connect(bus.input);
+  return entry.node;
+}
+
+function releaseGraph(): void {
+  for (const bus of engine.buses.values()) bus.dispose();
+  engine.buses.clear();
+  for (const e of engine.blockGains.values()) {
+    try { e.node.disconnect(); } catch { /* gone */ }
+  }
+  engine.blockGains.clear();
+  engine.duckedTo.clear();
+  engine.buildsStarted.clear();
+}
+
+// ── Ducking ────────────────────────────────────────────────────────────────
+
+function kickTimesFor(s: ShowTimelineState, rowIndex: number, rowId: string): number[] | null {
+  const blocks = s.audioTracks.filter((t) => t.lane === rowIndex && t.url && !t.muted);
+  const sig = blocks.map((b) => `${b.url}@${b.startTime}:${b.duration}:${b.offset}`).join('|');
+  const cached = engine.kicks.get(rowId);
+  if (cached && cached.sig === sig) return cached.times;
+  engine.kicks.set(rowId, { sig, times: null });
+  void (async () => {
+    const placements = [];
+    for (const b of blocks) {
+      const features = await songFeaturesFor(b.url, async () => cachedShowAudioDecode(b.url) ?? (await decodeShowAudio(b.url)));
+      if (features) placements.push({ startTime: b.startTime, duration: b.duration, offset: b.offset, hits: kickHitsInFeatures(features) });
+    }
+    const entry = engine.kicks.get(rowId);
+    if (entry && entry.sig === sig) entry.times = rowKickTimes(placements);
+  })();
+  return null;
+}
+
+function scheduleDucks(s: ShowTimelineState, rows: SoundRow[], t: number, tempo: ShowTempoMap | null): void {
+  const ctx = engine.ctx;
+  if (!ctx) return;
+  const frame = currentLineFrame();
+  rows.forEach((row) => {
+    if (!row.duck) return;
+    const bus = engine.buses.get(row.id);
+    if (!bus) return;
+    const from = Math.max(t, engine.duckedTo.get(row.id) ?? t);
+    const to = t + DUCK_LOOKAHEAD;
+    if (to <= from) return;
+    engine.duckedTo.set(row.id, to);
+    let hits: number[];
+    if (row.duck.source === 'beat') hits = beatHitsBetween(tempo, from, to);
+    else {
+      const index = rows.findIndex((r) => r.id === row.duck!.source);
+      const times = index >= 0 ? kickTimesFor(s, index, row.duck.source) : null;
+      hits = times ? timesBetween(times, from, to) : [];
+    }
+    const depth = rowValues(row, frame?.sounds?.get(row.id)).duckDepth;
+    for (const h of hits) bus.ducker.duck(depth, 1, row.duck.release, ctx.currentTime + Math.max(0, h - t));
+  });
+}
+
+// ── Builds ─────────────────────────────────────────────────────────────────
+
+function runBuilds(doc: SoundDoc, rows: SoundRow[], t: number, tempo: ShowTempoMap | null): void {
+  const ctx = engine.ctx;
+  if (!ctx) return;
+  for (const b of doc.builds) {
+    if (engine.buildsStarted.has(b.id)) continue;
+    const end = b.startTime + b.duration;
+    if (t < b.startTime - 0.1 || t >= end - 0.05) continue;
+    const row = rows[b.lane];
+    const bus = row ? busFor(row.id) : null;
+    if (!bus) continue;
+    engine.buildsStarted.add(b.id);
+    const now = ctx.currentTime;
+    const at = (x: number) => now + (x - t);
+    bus.build.start({
+      start: at(b.startTime),
+      land: at(end),
+      beatSeconds: 60 / bpmAt(tempo, b.startTime),
+      hits: buildHitTimes(b, tempo).map((h) => ({ ...h, time: at(h.time) })),
+      settings: buildSettingsFor(b),
+    });
+  }
+}
+
+function cancelBuilds(): void {
+  for (const bus of engine.buses.values()) if (bus.hasBuild()) bus.build.cancel();
+  engine.buildsStarted.clear();
+}
+
+// ── Live ───────────────────────────────────────────────────────────────────
+
+/** The Live rows and blocks as the scheduler wants them, from the doc and the mirrored set. */
+export function liveSchedInputs(s: Pick<ShowTimelineState, 'sound' | 'audioTracks'>, rows: SoundRow[], bridge: Pick<AbletonBridgeState, 'tracks'>, mutes: (row: SoundRow) => boolean = (r) => r.muted): { rows: LiveSchedRow[]; blocks: LiveSchedBlock[] } {
+  {
+    const schedRows: LiveSchedRow[] = [];
+    rows.forEach((row) => {
+      if (row.kind !== 'live') return;
+      const mute = mutes(row);
+      schedRows.push({
+        rowId: row.id,
+        track: resolveLiveTrack(row.live, bridge.tracks),
+        launch: row.live?.launch ?? 'beat',
+        latency: (row.live?.latencyMs ?? 20) / 1000,
+        audible: rowAudible({ muted: mute, solo: row.solo }, rows),
+      });
+    });
+    const blocks: LiveSchedBlock[] = [];
+    for (const b of s.sound.live) {
+      const row = rows[b.lane];
+      if (!row || row.kind !== 'live') continue;
+      const ti = resolveLiveTrack(row.live, bridge.tracks);
+      blocks.push({ id: b.id, rowId: row.id, start: b.startTime, end: b.startTime + b.duration, slot: ti === null ? null : resolveLiveSlot(b, bridge.tracks[ti]) });
+    }
+    return { rows: schedRows, blocks };
+  }
+}
+
+function syncLive(s: ShowTimelineState, rows: SoundRow[], tick: ShowFrameTick): void {
+  const bridge = get(abletonBridge);
+  const frame = currentLineFrame();
+  const inputs = liveSchedInputs(s, rows, bridge, (row) => rowValues(row, frame?.sounds?.get(row.id)).muted);
+  liveScheduler.setBlocks(inputs.rows, inputs.blocks);
+  liveScheduler.setEnv({
+    tempo: tick.tempo,
+    setQuantize: bridge.quantize,
+    numerator: bridge.numerator,
+    denominator: bridge.denominator,
+    protocol: bridge.protocol,
+    loop: tick.loop,
+    duration: tick.duration,
+  });
+  liveScheduler.tick(tick.time, tick.playing, tick.seek);
+}
+
+// ── The frame ──────────────────────────────────────────────────────────────
+
+function onFrame(tick: ShowFrameTick): void {
+  if (tick.doc !== 'timeline') {
+    if (engine.wasPlaying) {
+      cancelBuilds();
+      liveScheduler.tick(tick.time, false, tick.seek);
+    }
+    engine.wasPlaying = false;
+    return;
+  }
+  // An offline render plays the Timeline's own audio only, never Live.
+  if (tick.manual) return;
+  const s = get(showTimeline);
+  const rows = rowsOf(s);
+  const t = tick.time;
+  const jump = tick.seek !== engine.lastSeek || tick.playing !== engine.wasPlaying;
+  engine.lastSeek = tick.seek;
+  if (jump) {
+    engine.duckedTo.clear();
+    cancelBuilds();
+  }
+  engine.wasPlaying = tick.playing;
+
+  if (engine.ctx) {
+    const frame = currentLineFrame();
+    const values = rows.map((row) => rowValues(row, frame?.sounds?.get(row.id)));
+    const bpm = bpmAt(tick.tempo, t);
+    rows.forEach((row, i) => {
+      const bus = engine.buses.get(row.id);
+      if (!bus) return;
+      const v = values[i];
+      const audible = rowAudible({ muted: v.muted, solo: row.solo }, rows);
+      bus.setLevel(audible ? v.volume : 0);
+      bus.setFx(row, v.fx, bpm);
+    });
+    const byLane = new Map<number, ShowAudioTrack[]>();
+    for (const tr of s.audioTracks) {
+      const list = byLane.get(tr.lane);
+      if (list) list.push(tr);
+      else byLane.set(tr.lane, [tr]);
+    }
+    for (const tr of s.audioTracks) {
+      const entry = engine.blockGains.get(tr.id);
+      if (!entry) continue;
+      const g = blockGainAt(tr, t, effectiveFades(tr, byLane.get(tr.lane) ?? []));
+      if (Math.abs(g - entry.last) > 1e-3) {
+        entry.last = g;
+        entry.node.gain.setTargetAtTime(g, engine.ctx.currentTime, GAIN_TC);
+      }
+    }
+    if (tick.playing) {
+      scheduleDucks(s, rows, t, tick.tempo);
+      runBuilds(s.sound, rows, t, tick.tempo);
+    }
+  }
+  if (s.sound.live.length || rows.some((r) => r.kind === 'live') || engine.wasPlaying) syncLive(s, rows, tick);
+}
+
+let installed: (() => void) | null = null;
+
+/** Wire the sound rows into the app (once, at start). */
+export function installTimelineSound(): () => void {
+  if (installed) return installed;
+  setShowAudioRouter(route);
+  const offFrame = onShowFrame(onFrame);
+  const offDoc = onShowDocChange(() => {
+    liveScheduler.reset();
+    cancelBuilds();
+  });
+  installed = () => {
+    offFrame();
+    offDoc();
+    setShowAudioRouter(null);
+    releaseGraph();
+    liveScheduler.reset();
+    installed = null;
+  };
+  return installed;
+}
+
+/** Test seam: the engine's graph state. */
+export function _soundEngineState(): Readonly<EngineState> {
+  return engine;
+}
+
+export { liveScheduler as _liveScheduler };
+
+/** Test seam: one row's chain. */
+export { RowBus as _RowBus };

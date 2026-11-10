@@ -1254,8 +1254,10 @@ function createAbletonBridge() {
         send({ t: 'setup', id, ...plan });
       });
     },
-    launchClip(track: number, slot: number) {
-      send({ t: 'fire_clip', i: track, s: slot });
+    /** Fire a clip. Script protocol 5: `q` launch quantise for this launch
+     *  (Live's numbering), `pos` beats into the clip (the Timeline). */
+    launchClip(track: number, slot: number, opts: { q?: number; pos?: number } = {}) {
+      send({ t: 'fire_clip', i: track, s: slot, ...opts });
     },
     play() {
       send({ t: read().clockBeat > 0 ? 'continue' : 'play' });
@@ -1263,11 +1265,11 @@ function createAbletonBridge() {
     stop() {
       send({ t: 'stop' });
     },
-    stopAllClips() {
-      send({ t: 'stop_all' });
+    stopAllClips(opts: { q?: number } = {}) {
+      send({ t: 'stop_all', ...opts });
     },
-    stopTrack(track: number) {
-      send({ t: 'stop_track', i: track });
+    stopTrack(track: number, opts: { q?: number } = {}) {
+      send({ t: 'stop_track', i: track, ...opts });
     },
     /** Move Live's song position (arrangement locators). */
     jump(beat: number) {

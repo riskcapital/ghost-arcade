@@ -33,7 +33,9 @@ export type ParamTarget =
   | { scope: 'stage' }
   | { scope: 'led' }
   | { scope: 'block'; id: string }
-  | { scope: 'look'; id: string };
+  | { scope: 'look'; id: string }
+  /** A Timeline sound row (row id): its level and Music Studio effects. */
+  | { scope: 'sound'; id: string };
 
 export interface ParamEntry {
   key: string;
@@ -59,6 +61,9 @@ export interface RegistrySource {
   pieceLayer?: (layerId: string) => Layer | null;
   /** A look block exists. */
   hasLookBlock?: (clipId: string) => boolean;
+  /** A Timeline sound row's parameters, and its stored value for one. */
+  soundParams?: (rowId: string) => ParamEntry[];
+  readSound?: (rowId: string, key: string) => number | undefined;
 }
 
 export function targetId(target: ParamTarget): string {
@@ -66,6 +71,7 @@ export function targetId(target: ParamTarget): string {
     case 'layer': return `layer:${target.id}`;
     case 'block': return `block:${target.id}`;
     case 'look': return `look:${target.id}`;
+    case 'sound': return `sound:${target.id}`;
     default: return target.scope;
   }
 }
@@ -138,6 +144,7 @@ export function paramsFor(source: RegistrySource, target: ParamTarget): ParamEnt
   if (target.scope === 'stage') return stageParams(source);
   if (target.scope === 'led') return ledParams(source);
   if (target.scope === 'look') return source.hasLookBlock && !source.hasLookBlock(target.id) ? [] : lookBlockParams();
+  if (target.scope === 'sound') return source.soundParams?.(target.id) ?? [];
   if (target.scope === 'block') {
     const layer = source.blockLayer?.(target.id);
     return layer ? layerParams(layer).filter((p) => isBlockKey(p.key)) : [];
@@ -193,5 +200,6 @@ export function readParam(source: RegistrySource, target: ParamTarget, key: stri
     const p = lookBlockParams().find((x) => x.key === key);
     return p ? (p.default as number) : undefined;
   }
+  if (target.scope === 'sound') return source.readSound?.(target.id, key);
   return readStageLedParam(key, source.mappingComposition, source.wledControllers, source.wledEffects);
 }

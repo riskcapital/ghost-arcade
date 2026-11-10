@@ -28,7 +28,9 @@ import type { ControlLine, LinePoint } from './lineModel';
 import type { RecordMode } from './lineRecorder';
 import { fitLineRanges } from './laneConversion';
 import { generateUUID } from '../../utils/uuid';
-import { pointsValueAt } from './lineEvaluator';
+import { pointsValueAt, SOUND_ROW_TRACK_PREFIX } from './lineEvaluator';
+import { soundRowsFor } from '../sound/soundModel';
+import { readSoundRowParam, soundRowParams } from '../sound/soundParams';
 
 // ── Registry over the Timeline ─────────────────────────────────────────────
 
@@ -87,6 +89,14 @@ export function timelineRegistrySource(): RegistrySource {
       return found ? blockAsLayer(pieceLayer(found.track.layerId), found.clip) : null;
     },
     hasLookBlock: (clipId) => s.lookClips.some((c) => c.id === clipId),
+    soundParams: (rowId) => {
+      const row = soundRowsFor(s.sound, s.audioTracks).find((r) => r.id === rowId);
+      return row ? soundRowParams(row) : [];
+    },
+    readSound: (rowId, key) => {
+      const row = soundRowsFor(s.sound, s.audioTracks).find((r) => r.id === rowId);
+      return row ? readSoundRowParam(row, key) : undefined;
+    },
   };
 }
 
@@ -200,8 +210,17 @@ async function refreshSongs(force = false): Promise<void> {
   const s = get(showTimeline);
   if (!session) return;
   const follows = s.lines.some((l) => l.follow && (l.follow.source.kind === 'audio' || l.follow.source.kind === 'stem'));
+  const audible = s.audioTracks.filter((t) => t.url && !t.muted);
+  const rows = soundRowsFor(s.sound, s.audioTracks);
   const placements = follows
-    ? s.audioTracks.filter((t) => t.url && !t.muted).map((t) => ({ trackId: t.id, url: t.url, startTime: t.startTime, offset: t.offset ?? 0, length: t.duration }))
+    ? [
+        ...audible.map((t) => ({ trackId: t.id, url: t.url, startTime: t.startTime, offset: t.offset ?? 0, length: t.duration })),
+        // Each Timeline sound row as a source: every block on it, at its fades and level.
+        ...audible.filter((t) => rows[t.lane]).map((t) => ({
+          trackId: `${SOUND_ROW_TRACK_PREFIX}${rows[t.lane].id}`, url: t.url, startTime: t.startTime, offset: t.offset ?? 0, length: t.duration,
+          fadeIn: t.fadeIn, fadeOut: t.fadeOut, gain: t.volume,
+        })),
+      ]
     : [];
   const key = JSON.stringify(placements);
   if (!force && key === lastSongsKey) return;
@@ -272,6 +291,7 @@ export function installTimelineLines(): () => void {
   let lastLines = get(showTimeline).lines;
   let lastBindings = get(showTimeline).lineBindings;
   let lastAudio = get(showTimeline).audioTracks;
+  let lastSound = get(showTimeline).sound;
   let lastTracks = get(showTimeline).layerTracks;
   let lastLooks = get(showTimeline).lookClips;
   const unsub = showTimeline.subscribe((s) => {
@@ -286,8 +306,9 @@ export function installTimelineLines(): () => void {
       lastBindings = s.lineBindings;
       if (session.controls.bindings() !== s.lineBindings) session.controls.setBindings(s.lineBindings);
     }
-    if (s.audioTracks !== lastAudio) {
+    if (s.audioTracks !== lastAudio || s.sound !== lastSound) {
       lastAudio = s.audioTracks;
+      lastSound = s.sound;
       void refreshSongs();
     }
     if (s.layerTracks !== lastTracks || s.lookClips !== lastLooks) {
