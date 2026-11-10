@@ -682,6 +682,7 @@ function publishTrackFrame(s: ShowTimelineState, evalTime: number, force = false
     seekGeneration,
     soloTrackId: s.soloTrackId,
     manualClock: isManualClock(),
+    evaluatedAtMs: typeof performance !== 'undefined' ? performance.now() : undefined,
   });
   lastTrackFrame = frame;
   const signature = showTrackFrameSignature(frame);

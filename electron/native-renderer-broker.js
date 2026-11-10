@@ -3042,7 +3042,7 @@ function hasNativeFrameExport(capabilities) {
   );
 }
 
-function normalizeStatus(status, previous = makeDefaultStatus()) {
+export function normalizeStatus(status, previous = makeDefaultStatus()) {
   if (!status || typeof status !== 'object') return previous;
   const backend = status.backend || previous.backend || null;
   return {
@@ -3184,6 +3184,8 @@ function normalizeStatus(status, previous = makeDefaultStatus()) {
     ),
     native_video_sessions: Array.isArray(status.native_video_sessions)
       ? status.native_video_sessions.map((session) => ({
+          // Set while a phase target is steering this session's speed.
+          phase_error_seconds: Number.isFinite(session?.phase_error_seconds) ? Number(session.phase_error_seconds) : null,
           source_id: String(session?.source_id ?? ''),
           signature: String(session?.signature ?? ''),
           frames_dropped: Number(session?.frames_dropped ?? 0),
@@ -3208,6 +3210,8 @@ function normalizeStatus(status, previous = makeDefaultStatus()) {
           waiting_for_memory_bytes: Number(session?.waiting_for_memory_bytes ?? 0),
           backend: String(session?.backend ?? 'unknown'),
           fallback_reason: String(session?.fallback_reason ?? ''),
+          uri: String(session?.uri ?? ''),
+          decode_max_edge: Number.isFinite(session?.decode_max_edge) ? Number(session.decode_max_edge) : null,
         }))
       : (previous.native_video_sessions ?? []),
     native_video_sessions_armed: Number(

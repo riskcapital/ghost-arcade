@@ -70,7 +70,7 @@ export function installShowTrackRuntime(deps: ShowTrackRuntimeDeps): () => void 
   const phaseTimer = desktop
     ? setInterval(() => {
         if (phaseBusy) return;
-        const { commands, following: next } = showPhaseCommands(showPhaseTargets(currentShowTrackFrame(), showClipSources), following);
+        const { commands, following: next } = showPhaseCommands(showPhaseTargets(currentShowTrackFrame(), showClipSources, performance.now()), following);
         following = next;
         if (!commands.length) return;
         phaseBusy = true;
