@@ -467,8 +467,10 @@ export interface StageFrameSink {
    *  Return a tag to capture this render, or null to let it pass. It may
    *  drive the camera: the render that follows uses it. */
   beforeRender(nowMs: number): unknown;
-  /** A kept frame (top-down RGBA at the stream size) with its tag. */
-  frame(frame: { data: Uint8Array; width: number; height: number }, tag: unknown): void;
+  /** A kept frame (top-down RGBA at the stream size) with its tag. Call
+   *  `release` once its bytes are no longer read (written out), so the view
+   *  can reuse the buffer for a later frame. */
+  frame(frame: { data: Uint8Array; width: number; height: number; release?: () => void }, tag: unknown): void;
   /** The capture failed; no more frames will come. */
   error?(err: Error): void;
 }

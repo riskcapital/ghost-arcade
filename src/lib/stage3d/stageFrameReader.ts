@@ -15,6 +15,10 @@ export interface StageReadback {
   data: Uint8Array;
   width: number;
   height: number;
+  /** Hand `data` back for a later frame once nothing reads it any more
+   *  (after the encoder write has gone out). Optional: a frame that is
+   *  never released is simply collected. */
+  release?: () => void;
 }
 
 interface Slot {
@@ -30,6 +34,9 @@ interface Slot {
 const MAX_PENDING = 4;
 /** How often pending reads are checked between renders (ms). */
 const POLL_MS = 3;
+/** Released frame buffers kept for reuse. A 1080p frame is 8 MB; a fresh
+ *  one per frame was ~240 MB/s of garbage at 30 fps. */
+const MAX_POOLED = 4;
 
 export class StageFrameReader {
   private gl: WebGL2RenderingContext;
@@ -48,6 +55,14 @@ export class StageFrameReader {
   /** Sizes whose first copy was checked for GL errors. getError waits for
    *  the GPU process, so later copies at a checked size skip it. */
   private checked = new Set<string>();
+  /** Frame buffers handed back by the consumer, all of `pooledBytes` length. */
+  private pool: Uint8Array[] = [];
+  private pooledBytes = 0;
+  /** Bumped when the GPU objects and the pool are let go: buffers released
+   *  from before then are not kept. */
+  private generation = 0;
+  /** Let go of everything once the reads still queued have arrived. */
+  private releaseWhenDone = false;
 
   constructor(gl: WebGL2RenderingContext) {
     this.gl = gl;
@@ -84,6 +99,7 @@ export class StageFrameReader {
     const sy0 = clampInt(canvasH - (crop.y + crop.h), 0, canvasH);
     const sy1 = clampInt(canvasH - crop.y, 0, canvasH);
     if (sx1 <= sx0 || sy1 <= sy0) return false;
+    this.releaseWhenDone = false;
     while (this.pending.length >= MAX_PENDING) this.finishOldest(true);
     const key = `${canvasW}x${canvasH}>${w}x${h}`;
     const check = !this.checked.has(key);
@@ -150,6 +166,70 @@ export class StageFrameReader {
     while (this.pending.length > 0) this.finishOldest(true);
   }
 
+  /** GPU and frame-buffer bytes held right now (for checks). */
+  get heldBytes(): { gpu: number; pooled: number } {
+    let gpu = 0;
+    for (const bytes of this.bufferBytes.values()) gpu += bytes;
+    if (this.fbo) gpu += this.size.w * this.size.h * 4;
+    if (this.resolveFbo) gpu += this.resolveSize.w * this.resolveSize.h * 4;
+    return { gpu, pooled: this.pool.length * this.pooledBytes };
+  }
+
+  /**
+   * Free the copy target, the pixel buffers and the pooled frame buffers
+   * (up to ~200 MB at 4K) once the reads still queued have arrived. The
+   * reader stays usable: the next `read` builds what it needs again.
+   */
+  releaseWhenIdle(): void {
+    if (this.disposed) return;
+    this.releaseWhenDone = true;
+    if (this.pending.length === 0) this.releaseNow();
+  }
+
+  private releaseNow(): void {
+    this.releaseWhenDone = false;
+    this.generation++;
+    const gl = this.gl;
+    for (const b of this.free.splice(0)) {
+      gl.deleteBuffer(b);
+      this.bufferBytes.delete(b);
+    }
+    if (this.fbo) gl.deleteFramebuffer(this.fbo);
+    if (this.colour) gl.deleteRenderbuffer(this.colour);
+    if (this.resolveFbo) gl.deleteFramebuffer(this.resolveFbo);
+    if (this.resolveColour) gl.deleteRenderbuffer(this.resolveColour);
+    this.fbo = this.colour = this.resolveFbo = this.resolveColour = null;
+    this.size = { w: 0, h: 0 };
+    this.resolveSize = { w: 0, h: 0 };
+    this.pool = [];
+    this.pooledBytes = 0;
+    // New objects: their first copy is checked again.
+    this.checked.clear();
+  }
+
+  private takeData(bytes: number): Uint8Array {
+    if (this.pooledBytes === bytes) {
+      const data = this.pool.pop();
+      if (data) return data;
+    }
+    return new Uint8Array(bytes);
+  }
+
+  private releaser(data: Uint8Array): () => void {
+    const generation = this.generation;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      if (this.disposed || generation !== this.generation) return;
+      if (this.pooledBytes !== data.length) {
+        this.pool = [];
+        this.pooledBytes = data.length;
+      }
+      if (this.pool.length < MAX_POOLED) this.pool.push(data);
+    };
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -164,6 +244,7 @@ export class StageFrameReader {
     }
     for (const b of this.free.splice(0)) gl.deleteBuffer(b);
     this.bufferBytes.clear();
+    this.pool = [];
     if (this.fbo) gl.deleteFramebuffer(this.fbo);
     if (this.colour) gl.deleteRenderbuffer(this.colour);
     if (this.resolveFbo) gl.deleteFramebuffer(this.resolveFbo);
@@ -180,18 +261,21 @@ export class StageFrameReader {
         this.pending.unshift(slot);
         return;
       }
-      const data = new Uint8Array(slot.width * slot.height * 4);
+      const data = this.takeData(slot.width * slot.height * 4);
       gl.bindBuffer(gl.PIXEL_PACK_BUFFER, slot.pbo);
       gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, data);
       gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
       if (slot.sync) gl.deleteSync(slot.sync);
       this.free.push(slot.pbo);
-      slot.done?.({ data, width: slot.width, height: slot.height });
+      const release = this.releaser(data);
+      if (this.releaseWhenDone && this.pending.length === 0) this.releaseNow();
+      slot.done?.({ data, width: slot.width, height: slot.height, release });
     } catch (err) {
       gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
       if (slot.sync) gl.deleteSync(slot.sync);
       gl.deleteBuffer(slot.pbo);
       this.bufferBytes.delete(slot.pbo);
+      if (this.releaseWhenDone && this.pending.length === 0) this.releaseNow();
       slot.fail?.(err instanceof Error ? err : new Error(String(err)));
     }
   }

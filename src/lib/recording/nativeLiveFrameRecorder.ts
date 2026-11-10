@@ -340,6 +340,8 @@ export async function startNativeLiveFrameRecording(
         .then(() => (writeError ? undefined : writeNativeMp4Frame(session, slot.first, frame, slot.repeat)))
         .catch((err) => { writeError ??= err; })
         .finally(() => {
+          // The bytes have gone to the encoder: the view may reuse them.
+          frame.release?.();
           framesInFlight--;
           if (framesInFlight <= 0) streamIdle?.();
         });
