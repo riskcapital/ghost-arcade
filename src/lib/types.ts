@@ -3239,6 +3239,8 @@ export interface Layer {
   /** Show keyframe-lane values (applyParamOverrides keys), applied after the
    *  preset's own keyframes and the sequencer, so the show wins. */
   _showParams?: Record<string, number | boolean>;
+  /** The Timeline block this scene copy shows right now (its lines apply). */
+  _showClipId?: string;
 
   // ── Group nesting ──────────────────────────────────────────────────────
   /** ID of parent group layer (undefined/null = top-level layer) */

@@ -13,7 +13,7 @@
  * last published one is published.
  */
 import { writable, get } from 'svelte/store';
-import { createLineEvaluator, sameFrameValues, snapshotFrame, type LineContext, type LineFrame, type OverrideRecord } from './lineEvaluator';
+import { createLineEvaluator, frameIsEmpty, sameFrameValues, snapshotFrame, type LineContext, type LineFrame, type OverrideRecord } from './lineEvaluator';
 import type { ControlLine } from './lineModel';
 
 export const controlLineFrame = writable<LineFrame | null>(null);
@@ -22,8 +22,7 @@ let current: LineFrame | null = null;
 
 export function publishLineFrame(frame: LineFrame | null): boolean {
   const next = frame ? snapshotFrame(frame) : null;
-  const empty = !next || (!next.layers.size && !next.stage && !next.leds);
-  const value = empty ? null : next;
+  const value = frameIsEmpty(next) ? null : next;
   if (sameFrameValues(current, value)) return false;
   current = value;
   controlLineFrame.set(value);

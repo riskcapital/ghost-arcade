@@ -1,5 +1,6 @@
 import { applyParamOverrides, type ParamOverrideSet } from '../keyframes/applyParamOverrides';
 import { currentLineFrame } from '../timeline/lines/lineRuntime';
+import { applyLookLines, lineBlockValues, lineLayerValues, wearsLookWithLines } from '../timeline/lines/lineTargets';
 import { applyStageOverrides } from '../timeline/lines/stageLedParams';
 import { setTransformAspect } from '../keyframes/layerParamKeys';
 import type {InteractiveGraphBuildResult} from '../renderer/nativeInteractiveGraph';
@@ -9636,8 +9637,11 @@ export class NativeRendererSync {
     const hasShow = layers.some((layer) => layer._showParams !== undefined || layer._showOpacityMul !== undefined);
     // Timeline control lines (timeline/lines/lineRuntime.ts) go on last, by
     // layer id: a line wins over keyframes and lanes on the same key.
-    const lineLayers = currentLineFrame()?.layers;
-    const hasLines = !!lineLayers && lineLayers.size > 0;
+    // Lines on a piece also reach the Timeline's copies of it, a block's
+    // lines the layer showing that block, a look block's lines its effects
+    // (timeline/lines/lineTargets.ts).
+    const lineFrame = currentLineFrame();
+    const hasLines = !!lineFrame && (lineFrame.layers.size > 0 || !!lineFrame.blocks?.size || !!lineFrame.looks?.size);
     if (!kfOverrides && !seqOverrides && !hasShow && !hasLines) return layers;
 
     let changed = false;
@@ -9646,8 +9650,10 @@ export class NativeRendererSync {
       const seqMult = seqOverrides?.[layer.id];
       const showParams = layer._showParams;
       const showMul = layer._showOpacityMul;
-      const lineParams = hasLines ? lineLayers!.get(layer.id) : undefined;
-      if (!kf && seqMult === undefined && !showParams && showMul === undefined && !lineParams) return layer;
+      const lineParams = hasLines ? lineLayerValues(lineFrame, layer.id) : undefined;
+      const blockParams = hasLines ? lineBlockValues(lineFrame, layer) : undefined;
+      const lookLines = hasLines && wearsLookWithLines(lineFrame, layer);
+      if (!kf && seqMult === undefined && !showParams && showMul === undefined && !lineParams && !blockParams && !lookLines) return layer;
 
       changed = true;
       const next: any = { ...layer };
@@ -9657,6 +9663,8 @@ export class NativeRendererSync {
       if (kf) applyParamOverrides(next as Layer, kf as ParamOverrideSet);
       if (showParams) applyParamOverrides(next as Layer, showParams);
       if (lineParams) applyParamOverrides(next as Layer, lineParams);
+      if (blockParams) applyParamOverrides(next as Layer, blockParams);
+      if (lookLines) applyLookLines(next as Layer, lineFrame);
       if (showMul !== undefined) next.opacity = (next.opacity ?? 1) * Math.max(0, Math.min(1, showMul));
       // Applied once. A list that has been through here can come back (a
       // paused scene is re-flushed from what was last sent), and a second

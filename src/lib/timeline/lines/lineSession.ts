@@ -46,7 +46,11 @@ export function createLineSession(opts: {
   initial?: ControlLine[];
   bindings?: LineBinding[];
   onBindingsChange?: (bindings: LineBinding[]) => void;
+  /** What the registry reads (default: the project). The Timeline adds its
+   *  blocks, look blocks and off-stage pieces. */
+  registry?: () => RegistrySource;
 } = {}) {
+  const source = opts.registry ?? registrySource;
   const store = createLineStore(opts.initial ?? []);
   const evaluator = createLineEvaluator();
   let showTime = 0;
@@ -55,7 +59,7 @@ export function createLineSession(opts: {
   let songs: PlacedSong[] = [];
   let lastTick = Number.NaN;
   let lastTickMs = 0;
-  const describe = (target: ParamTarget, key: string) => findParam(registrySource(), target, key);
+  const describe = (target: ParamTarget, key: string) => findParam(source(), target, key);
 
   const recorder = createLineRecorder({
     lines: () => store.lines(),
@@ -75,7 +79,7 @@ export function createLineSession(opts: {
   }, opts.bindings ?? []);
 
   const removeTap = addMidiTap((channel, type, number, value, from) => controls.onMidi(channel, type, number, value, from));
-  const unsubProject = project.subscribe(() => controls.observe(registrySource()));
+  const unsubProject = project.subscribe(() => controls.observe(source()));
   let watchedLive = '';
 
   function context(dtSeconds: number): LineContext {
@@ -111,6 +115,13 @@ export function createLineSession(opts: {
     store,
     recorder,
     controls,
+    /** Songs placed for music-following lines (offline features). */
+    songs: (): readonly PlacedSong[] => songs,
+    /** The context the last tick used (for drawing a source's trace). */
+    traceContext: (): LineContext => ({ tempo, songs, liveInputs: false }),
+    /** Check bound parameters against the registry now (the Timeline's
+     *  own values changed: a block's, a look block's). */
+    observe(): void { controls.observe(source()); },
 
     /** Evaluate and publish at show time `t`. Call every frame while playing and on every seek. */
     tick(t: number, isPlaying: boolean, tempoMap: ShowTempoMap | null = tempo): void {

@@ -8,6 +8,15 @@
  *                                  keyframes/layerParamKeys.ts)
  *   target { scope: 'stage' }      Stage FX (stage:fx:…)
  *   target { scope: 'led' }        WLED controllers and LED effects (led:…, ledfx:…)
+ *   target { scope: 'block', id }  a Timeline block (clip id): its media's own
+ *                                  values (shader:, sketch:, video:rate), only
+ *                                  while that block plays
+ *   target { scope: 'look', id }   a look block on the Looks row (clip id):
+ *                                  look:intensity / react / hue / chase / speed
+ *
+ * A layer target may also be one of the Timeline's copies of a piece: an
+ * added layer (sub-row) `showsub::<pieceId>::<trackId>`; its parameters are
+ * the piece's.
  *
  * Every entry carries key, label, group, range, step, default and kind
  * (continuous / stepped / bool / colour).
@@ -22,7 +31,9 @@ export type { ParamKind } from '../../keyframes/layerParamKeys';
 export type ParamTarget =
   | { scope: 'layer'; id: string }
   | { scope: 'stage' }
-  | { scope: 'led' };
+  | { scope: 'led' }
+  | { scope: 'block'; id: string }
+  | { scope: 'look'; id: string };
 
 export interface ParamEntry {
   key: string;
@@ -41,10 +52,59 @@ export interface RegistrySource {
   mappingComposition?: MappingCompositionState | null;
   wledControllers?: readonly WLEDController[];
   wledEffects?: readonly WLEDEffect[];
+  /** A Timeline block as a layer: the piece with the block's media as its
+   *  source (for a block target's parameters). */
+  blockLayer?: (clipId: string) => Layer | null;
+  /** A piece's layer when it is not on the stage (its row's own copy). */
+  pieceLayer?: (layerId: string) => Layer | null;
+  /** A look block exists. */
+  hasLookBlock?: (clipId: string) => boolean;
 }
 
 export function targetId(target: ParamTarget): string {
-  return target.scope === 'layer' ? `layer:${target.id}` : target.scope;
+  switch (target.scope) {
+    case 'layer': return `layer:${target.id}`;
+    case 'block': return `block:${target.id}`;
+    case 'look': return `look:${target.id}`;
+    default: return target.scope;
+  }
+}
+
+export function sameTarget(a: ParamTarget, b: ParamTarget): boolean {
+  return targetId(a) === targetId(b);
+}
+
+const SUB_PREFIX = 'showsub::';
+/** The piece of a sub-row copy id (`showsub::<pieceId>::<trackId>`), else null. */
+export function subRowPieceId(id: string): string | null {
+  if (!id.startsWith(SUB_PREFIX)) return null;
+  const rest = id.slice(SUB_PREFIX.length);
+  const cut = rest.lastIndexOf('::');
+  return cut > 0 ? rest.slice(0, cut) : null;
+}
+
+/** The parameters of a look block. Each applies to that block's effects only. */
+export function lookBlockParams(): ParamEntry[] {
+  const group = 'Look block';
+  return [
+    { key: 'look:intensity', label: 'Look intensity', group, min: 0, max: 2, step: 0.01, default: 1, kind: 'continuous' },
+    { key: 'look:speed', label: 'Look speed', group, min: 0, max: 4, step: 0.01, default: 1, kind: 'continuous' },
+    { key: 'look:hue', label: 'Colour step per beat', group, min: 0, max: 1, step: 0.01, default: 0, kind: 'continuous' },
+    { key: 'look:react', label: 'Beat reaction', group, min: 0, max: 1, step: 0.01, default: 0, kind: 'continuous' },
+    { key: 'look:chase', label: 'Chase delay', group, min: 0, max: 4, step: 0.05, default: 0.5, kind: 'continuous' },
+  ];
+}
+
+/** Keys a block target offers: the block's media, not the piece around it. */
+export function isBlockKey(key: string): boolean {
+  return key.startsWith('shader:') || key.startsWith('sketch:') || key === 'video:rate';
+}
+
+function layerFor(source: RegistrySource, id: string): Layer | null {
+  const direct = source.layers.find((l) => l.id === id);
+  if (direct) return direct;
+  const piece = subRowPieceId(id) ?? id;
+  return source.layers.find((l) => l.id === piece) ?? source.pieceLayer?.(piece) ?? null;
 }
 
 export function toEntry(p: KeyframeableParam): ParamEntry {
@@ -77,7 +137,12 @@ export function ledParams(source: Pick<RegistrySource, 'wledControllers' | 'wled
 export function paramsFor(source: RegistrySource, target: ParamTarget): ParamEntry[] {
   if (target.scope === 'stage') return stageParams(source);
   if (target.scope === 'led') return ledParams(source);
-  const layer = source.layers.find((l) => l.id === target.id);
+  if (target.scope === 'look') return source.hasLookBlock && !source.hasLookBlock(target.id) ? [] : lookBlockParams();
+  if (target.scope === 'block') {
+    const layer = source.blockLayer?.(target.id);
+    return layer ? layerParams(layer).filter((p) => isBlockKey(p.key)) : [];
+  }
+  const layer = layerFor(source, target.id);
   return layer ? layerParams(layer) : [];
 }
 
@@ -117,8 +182,16 @@ export function readLayerParam(layer: Layer, key: string): number | boolean | un
 /** The project's own value for (target, key). */
 export function readParam(source: RegistrySource, target: ParamTarget, key: string): number | boolean | undefined {
   if (target.scope === 'layer') {
-    const layer = source.layers.find((l) => l.id === target.id);
+    const layer = layerFor(source, target.id);
     return layer ? readLayerParam(layer, key) : undefined;
+  }
+  if (target.scope === 'block') {
+    const layer = source.blockLayer?.(target.id);
+    return layer ? readLayerParam(layer, key) : undefined;
+  }
+  if (target.scope === 'look') {
+    const p = lookBlockParams().find((x) => x.key === key);
+    return p ? (p.default as number) : undefined;
   }
   return readStageLedParam(key, source.mappingComposition, source.wledControllers, source.wledEffects);
 }

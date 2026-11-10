@@ -102,6 +102,8 @@ function drive(layer: Layer, state: ShowTrackState, source: MediaSource | null):
   const next: Layer = { ...layer };
   if (source) next.source = source;
   if (state.clip?.blendMode) next.blendMode = state.clip.blendMode;
+  if (state.clip) next._showClipId = state.clip.clipId;
+  else delete next._showClipId;
   if (state.opacity < 1) next._showOpacityMul = Math.max(0, state.opacity);
   if (state.params && Object.keys(state.params).length) next._showParams = state.params;
   return next;
@@ -123,6 +125,7 @@ function xfadeHelper(base: Layer, layerId: string, state: ShowTrackState, source
   if (!xf || xf.opacity <= 0) return null;
   const helper: Layer = { ...base, id: SHOW_XFADE_LAYER_PREFIX + layerId, visible: true, parentGroupId: null };
   if (source) helper.source = source;
+  helper._showClipId = xf.clip.clipId;
   const blend = xf.clip.blendMode ?? ownBlend;
   if (blend) helper.blendMode = blend;
   else if (xf.clip.media.kind === 'layer') helper.source = ownSource;

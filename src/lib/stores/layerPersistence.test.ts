@@ -316,6 +316,7 @@ const RUNTIME_ONLY_LAYER_FIELDS = new Set([
   '_stageTint',          // Screen FX colour chase, set per frame
   '_showOpacityMul',     // show layer tracks, set on the scene copies
   '_showParams',
+  '_showClipId',
   'bank',                // assigned by vjOutputLayers when the crossfader is on
   'texture',             // live GPU/DOM object
   'videoElement',        // live DOM element

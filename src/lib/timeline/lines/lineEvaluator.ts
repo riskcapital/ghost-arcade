@@ -57,6 +57,10 @@ export interface LineFrame {
   layers: Map<string, OverrideRecord>;
   stage: OverrideRecord | null;
   leds: OverrideRecord | null;
+  /** By Timeline block (clip id): applied to the layer showing that block. */
+  blocks?: Map<string, OverrideRecord>;
+  /** By look block (clip id): applied to that block's effects on the shapes. */
+  looks?: Map<string, OverrideRecord>;
 }
 
 // ── Curves ───────────────────────────────────────────────────────────────
@@ -339,21 +343,24 @@ export function createLineEvaluator() {
   let lastLines: readonly ControlLine[] | null = null;
   let compiled: CompiledLine[] = [];
   const byLine = new Map<ControlLine, CompiledLine>();
-  const frame: LineFrame = { time: 0, layers: new Map(), stage: null, leds: null };
+  const frame: LineFrame = { time: 0, layers: new Map(), stage: null, leds: null, blocks: new Map(), looks: new Map() };
 
   function recompile(lines: readonly ControlLine[]) {
     const keep = new Set<ControlLine>();
     frame.layers = new Map();
     frame.stage = null;
     frame.leds = null;
+    frame.blocks = new Map();
+    frame.looks = new Map();
     compiled = [];
     for (const line of lines) {
       if (line.enabled === false) continue;
       if (!line.points.length && !line.follow) continue;
       let out: OverrideRecord;
-      if (line.target.scope === 'layer') {
-        out = frame.layers.get(line.target.id) ?? {};
-        frame.layers.set(line.target.id, out);
+      if (line.target.scope === 'layer' || line.target.scope === 'block' || line.target.scope === 'look') {
+        const map = line.target.scope === 'layer' ? frame.layers : line.target.scope === 'block' ? frame.blocks! : frame.looks!;
+        out = map.get(line.target.id) ?? {};
+        map.set(line.target.id, out);
       } else if (line.target.scope === 'stage') {
         out = frame.stage ??= {};
       } else {
@@ -397,15 +404,26 @@ export function createLineEvaluator() {
 export type LineEvaluator = ReturnType<typeof createLineEvaluator>;
 
 /** A deep copy of a frame's values (for publishing or keeping). */
+function copyRecords(map: Map<string, OverrideRecord> | undefined): Map<string, OverrideRecord> {
+  const out = new Map<string, OverrideRecord>();
+  if (map) for (const [id, rec] of map) if (Object.keys(rec).length) out.set(id, { ...rec });
+  return out;
+}
+
 export function snapshotFrame(frame: LineFrame): LineFrame {
-  const layers = new Map<string, OverrideRecord>();
-  for (const [id, rec] of frame.layers) if (Object.keys(rec).length) layers.set(id, { ...rec });
   return {
     time: frame.time,
-    layers,
+    layers: copyRecords(frame.layers),
     stage: frame.stage && Object.keys(frame.stage).length ? { ...frame.stage } : null,
     leds: frame.leds && Object.keys(frame.leds).length ? { ...frame.leds } : null,
+    blocks: copyRecords(frame.blocks),
+    looks: copyRecords(frame.looks),
   };
+}
+
+/** No values at all. */
+export function frameIsEmpty(frame: LineFrame | null): boolean {
+  return !frame || (!frame.layers.size && !frame.stage && !frame.leds && !frame.blocks?.size && !frame.looks?.size);
 }
 
 /** Same values to the precision they take effect (32-bit float). */
@@ -424,9 +442,12 @@ export function sameFrameValues(a: LineFrame | null, b: LineFrame | null): boole
     for (const _ in y) n--;
     return n === 0;
   };
-  if (a.layers.size !== b.layers.size) return false;
-  for (const [id, rec] of a.layers) if (!same(rec, b.layers.get(id))) return false;
-  return same(a.stage, b.stage) && same(a.leds, b.leds);
+  const sameMap = (x: Map<string, OverrideRecord> | undefined, y: Map<string, OverrideRecord> | undefined) => {
+    if ((x?.size ?? 0) !== (y?.size ?? 0)) return false;
+    if (x) for (const [id, rec] of x) if (!same(rec, y?.get(id))) return false;
+    return true;
+  };
+  return sameMap(a.layers, b.layers) && sameMap(a.blocks, b.blocks) && sameMap(a.looks, b.looks) && same(a.stage, b.stage) && same(a.leds, b.leds);
 }
 
 /**

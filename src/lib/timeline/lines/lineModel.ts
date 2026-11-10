@@ -93,6 +93,10 @@ export interface ControlLine {
   follow?: LineFollow | null;
   /** Off: the line is kept but drives nothing. */
   enabled?: boolean;
+  /** The name shown on the Timeline (the parameter's label when it was added). */
+  label?: string;
+  /** The curve's colour on the Timeline (#rrggbb); unset: one picked from the key. */
+  color?: string;
 }
 
 export function isLiveOnlySource(source: FollowSource): boolean {
@@ -138,6 +142,8 @@ export function normalizeLines(raw: unknown): ControlLine[] {
     if (!r || typeof r !== 'object' || typeof r.id !== 'string' || typeof r.key !== 'string') continue;
     const t = r.target;
     const target: ParamTarget | null = t?.scope === 'layer' && typeof t.id === 'string' ? { scope: 'layer', id: t.id }
+      : t?.scope === 'block' && typeof t.id === 'string' ? { scope: 'block', id: t.id }
+      : t?.scope === 'look' && typeof t.id === 'string' ? { scope: 'look', id: t.id }
       : t?.scope === 'stage' ? { scope: 'stage' } : t?.scope === 'led' ? { scope: 'led' } : null;
     if (!target) continue;
     const kind: ParamKind = ['continuous', 'stepped', 'bool', 'colour'].includes(r.kind) ? r.kind : 'continuous';
@@ -165,6 +171,8 @@ export function normalizeLines(raw: unknown): ControlLine[] {
         ...(Number.isFinite(r.follow.color) ? { color: r.follow.color } : {}),
       } : null,
       ...(r.enabled === false ? { enabled: false } : {}),
+      ...(typeof r.label === 'string' && r.label ? { label: r.label } : {}),
+      ...(typeof r.color === 'string' && /^#[0-9a-f]{6}$/i.test(r.color) ? { color: r.color } : {}),
     });
   }
   return out;
