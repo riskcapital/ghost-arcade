@@ -1,6 +1,6 @@
 {
   "name": "Show timeline: export matches playback",
-  "description": "An offline render drives each preset's keyframes from the preset's own start, as live playback does, and renders a layer track's video on exactly the frame the show says (a frame-coded clip, across a split).",
+  "description": "On the Show, an offline render drives each preset's keyframes from the preset's own start, as live playback does. On the Timeline, it renders a row's video on exactly the frame the show says (a frame-coded clip, across a split).",
   "steps": [
     {
       "do": "app.start",
@@ -103,6 +103,11 @@
       "do": "project.layerColour",
       "name": "Wall",
       "colour": "red"
+    },
+    {
+      "do": "show.open",
+      "doc": "timeline",
+      "label": "The track part is on the Timeline (the presets part was the Show)"
     },
     {
       "do": "show.track",

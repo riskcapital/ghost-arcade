@@ -12,7 +12,8 @@
       "colour": "red"
     },
     {
-      "do": "show.open"
+      "do": "show.open",
+      "doc": "timeline"
     },
     {
       "do": "show.track",

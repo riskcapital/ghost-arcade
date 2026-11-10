@@ -5,7 +5,7 @@
     { "do": "app.start", "choice": "blank" },
     { "do": "project.layer", "name": "Left", "colour": "white", "x0": 0, "x1": 0.5 },
     { "do": "project.layer", "name": "Right", "colour": "white", "x0": 0.5, "x1": 1, "wait": 1 },
-    { "do": "show.open" },
+    { "do": "show.open", "doc": "timeline" },
     { "do": "show.track", "name": "left", "layer": "Left" },
     { "do": "show.track", "name": "right", "layer": "Right" },
     { "do": "show.seek", "t": 1, "settle": 1200, "label": "No blocks yet: both pieces show their look (white)",

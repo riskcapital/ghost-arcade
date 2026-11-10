@@ -206,7 +206,35 @@ const ACTIONS = {
     await ctx.eval(`(() => { __show.vars['preset:' + ${J(s.name)}] = __show.g().project.saveComposition(${J(s.name)}); })()`);
     await sleep(300);
   },
-  async 'show.open'(ctx, s) { await ctx.eval(`__show.g().showTimeline.setOpen(${s.open !== false})`); await sleep(500); },
+  async 'show.open'(ctx, s) {
+    // { doc: 'show' (presets and music, the default) | 'timeline' (rows, blocks, looks) }
+    if (s.open === false) await ctx.eval('__show.g().showTimeline.setOpen(false)');
+    else await ctx.eval(`__show.tracks().openDoc(${J(s.doc ?? 'show')})`);
+    await sleep(500);
+  },
+  async 'show.look'(ctx, s) {
+    // A block on the Timeline's Looks row: { look, palette, at, duration, pieces: [layer names] }.
+    const id = await ctx.eval(`(() => {
+      const pieces = ${J(s.pieces ?? null)};
+      const layerIds = pieces ? pieces.map((n) => __show.layerByName(n)?.id).filter(Boolean) : undefined;
+      const id = __show.tracks().addLookClip(${J(s.look)}, ${J(s.palette ?? '')}, ${s.at ?? 0}, { duration: ${s.duration ?? 8}, ...(layerIds ? { scope: 'pieces', layerIds } : {}) });
+      if (id && ${J(s.var ?? null)}) __show.vars['look:' + ${J(s.var ?? '')}] = id;
+      return id;
+    })()`);
+    if (!id) throw new Error(`look ${s.look} was not placed`);
+    await sleep(300);
+  },
+  async 'show.replaceBlock'(ctx, s) {
+    // A Media Library card clicked with the block selected: { clip (var), colour | shader }.
+    const ok = await ctx.eval(`(async () => {
+      const t = __show.tracks();
+      const id = __show.vars['clip:' + ${J(s.clip)}];
+      const c = await __show.shaderClip(${J(s.shader ?? 'DM-SolidColor')}, ${J(s.colour ? { baseColor: [...(NAMED_RGB[s.colour] ?? [1, 1, 1]), 1] } : (s.values ?? {}))});
+      return t.replaceBlockMedia(id, { id: 'card', type: 'shader', name: c.name, src: c.src, shaderCode: c.shaderCode, shaderInputs: [], shaderValues: c.shaderValues });
+    })()`);
+    if (!ok) throw new Error(`could not replace block ${s.clip}`);
+    await sleep(400);
+  },
   async 'show.preset'(ctx, s) {
     const id = await ctx.eval(`__show.g().showTimeline.insertPresetClipAt(__show.vars['preset:' + ${J(s.name)}], ${s.at ?? 0}, ${s.duration ?? 10}, ${J(s.name)})`);
     if (!id) throw new Error(`preset clip ${s.name} was not placed`);
@@ -214,6 +242,8 @@ const ACTIONS = {
   },
   async 'show.track'(ctx, s) {
     // { name, layer } tracks an existing layer; { name, newLayer } makes one.
+    // Rows live in the Timeline: open it first ({ do: 'show.open', doc: 'timeline' }).
+    if (await ctx.eval('__show.tracks().activeDoc()') !== 'timeline') throw new Error('rows are on the Timeline: open it before show.track');
     const id = await ctx.eval(`(() => {
       const t = __show.tracks();
       const id = ${s.newLayer ? `t.addTrackForNewLayer(${J(s.newLayer)}, { addToPresets: ${s.addToPresets !== false} })` : `t.addTrackForLayer(__show.layerByName(${J(s.layer ?? s.name)})?.id)`};
@@ -458,6 +488,11 @@ const CHECKS = {
       return sum.map((v) => v / Math.max(1, n) / 255);
     })()`);
     if (!got) return { pass: false, detail: 'no output pixels' };
+    if (!s.rgb) {
+      // { min, max }: the strip's mean brightness.
+      const mean = (got[0] + got[1] + got[2]) / 3;
+      return { pass: mean >= (s.min ?? 0) && mean <= (s.max ?? 1), detail: `x ${s.x0 ?? 0}..${s.x1 ?? 1}: ${got.map((v) => v.toFixed(3)).join(', ')} (mean ${mean.toFixed(3)}, wanted ${s.min ?? 0}..${s.max ?? 1})` };
+    }
     const off = Math.max(...got.map((v, i) => Math.abs(v - s.rgb[i])));
     return { pass: off <= (s.within ?? 0.05), detail: `x ${s.x0 ?? 0}..${s.x1 ?? 1}: ${got.map((v) => v.toFixed(3)).join(', ')} vs ${s.rgb.map((v) => v.toFixed(3)).join(', ')}` };
   },

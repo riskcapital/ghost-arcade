@@ -5,7 +5,7 @@
     { "do": "app.start", "choice": "blank" },
     { "do": "eval", "js": "__show.g().settings.setAutoDownload(false)" },
     { "do": "project.layer", "name": "Wall", "colour": "red" },
-    { "do": "show.open" },
+    { "do": "show.open", "doc": "timeline" },
     { "do": "show.track", "name": "wall", "layer": "Wall" },
     { "do": "show.clip", "track": "wall", "layerContent": true, "at": 0, "duration": 4 },
     { "do": "show.seek", "t": 0, "settle": 600 },

@@ -1,0 +1,32 @@
+{
+  "name": "Timeline: a Looks row block across two shapes",
+  "description": "A block on the Timeline's Looks row dresses both shapes with a one-click Look for its span, on the render core's real pixels, and is gone outside it; a block scoped to one piece dresses only that one; the mapping layers' own Edge Effects are never written. A Media Library card replaces a row block's media.",
+  "steps": [
+    { "do": "app.start", "choice": "blank" },
+    { "do": "project.layer", "name": "Left", "colour": "black", "x0": 0.05, "x1": 0.45 },
+    { "do": "project.layer", "name": "Right", "colour": "black", "x0": 0.55, "x1": 0.95, "wait": 1 },
+    { "do": "show.open", "doc": "timeline" },
+    { "do": "show.look", "look": "stripe-sweep", "palette": "acid", "at": 2, "duration": 4 },
+    { "do": "show.look", "look": "stripe-sweep", "palette": "fire", "at": 8, "duration": 4, "pieces": ["Right"] },
+    { "do": "show.seek", "t": 1, "settle": 1500, "label": "Before the look block: both shapes black",
+      "expect": { "output.region": { "x0": 0, "x1": 0.5, "max": 0.02 } } },
+    { "label": "Right black too", "expect": { "output.region": { "x0": 0.5, "x1": 1, "max": 0.02 } } },
+    { "do": "show.seek", "t": 4, "settle": 1500, "label": "Inside the block: the left shape wears the look",
+      "expect": { "output.region": { "x0": 0, "x1": 0.5, "min": 0.06 } } },
+    { "label": "and the right shape wears it too", "expect": { "output.region": { "x0": 0.5, "x1": 1, "min": 0.06 },
+        "eval.true": { "js": "__show.project().layers.every((l) => !l.edgeEffects)", "label": "the mapping layers' Edge Effects are untouched" } } },
+    { "do": "show.seek", "t": 7, "settle": 1500, "label": "Between blocks: no look",
+      "expect": { "output.region": { "x0": 0, "x1": 0.5, "max": 0.02 } } },
+    { "do": "show.seek", "t": 10, "settle": 1500, "label": "A block scoped to Right: the left shape stays black",
+      "expect": { "output.region": { "x0": 0, "x1": 0.5, "max": 0.02 } } },
+    { "label": "and the right shape wears it", "expect": { "output.region": { "x0": 0.5, "x1": 1, "min": 0.06 } } },
+    { "do": "show.track", "name": "left", "layer": "Left" },
+    { "do": "show.clip", "track": "left", "colour": "blue", "at": 14, "duration": 4, "var": "leftBlock" },
+    { "do": "show.seek", "t": 15, "settle": 1500, "label": "A blue block on Left",
+      "expect": { "output.region": { "x0": 0.1, "x1": 0.4, "rgb": [0, 0, 1], "within": 0.08 } } },
+    { "do": "show.replaceBlock", "clip": "leftBlock" },
+    { "do": "show.seek", "t": 15.02, "settle": 1500, "label": "A library card replaced the block's media (a solid colour at its defaults), timing kept",
+      "expect": { "eval.true": { "js": "(() => { const c = __show.show().layerTracks.flatMap((t) => t.clips).find((c) => c.id === __show.vars['clip:leftBlock']); return c.startTime === 14 && c.duration === 4 && !('baseColor' in (c.media.shaderValues || {})); })()", "label": "same block, new media, timing kept" },
+        "noErrors": true } }
+  ]
+}
