@@ -163,6 +163,72 @@ describe('Link follower (fake session anchors)', () => {
   });
 });
 
+describe('Link follower: show bars on Link bars', () => {
+  // Bar 1 at 0.37 s (a detected map: the music starts on a pickup).
+  const map = createTempoMap(120, 0.37);
+  const barTimes = Array.from({ length: 40 }, (_, i) => secondsAtBar(map, i - 2));
+  /** How far show time `t` is from the nearest show bar line, seconds. */
+  const offBar = (t: number) => Math.min(...barTimes.map((b) => Math.abs(b - t)));
+
+  it('start/stop from the stopped show (playhead 0, before bar 1): the session bar is show bar 1', () => {
+    const f = new LinkFollower();
+    const ctx = { map, playhead: 0, mode: 'startStop' as const };
+    const r = f.update({ beat: 40.1, tempo: 120, playing: true, atMs: 0 }, ctx);
+    // 0.1 beats into Link's bar = 0.05 s into show bar 1.
+    expect(r.seconds).toBeCloseTo(0.37 + 0.05, 9);
+    // Every later Link bar line is a show bar line.
+    for (let beat = 44; beat <= 120; beat += 4) {
+      expect(offBar(f.update({ beat, tempo: 120, playing: true, atMs: 0 }, ctx).seconds)).toBeLessThan(1e-9);
+    }
+  });
+
+  it('start/stop from a playhead off the bar line locks the bar it is in', () => {
+    const f = new LinkFollower();
+    // Bar 3 beat 2 and a half: 0.37 + 2 bars (4 s) + 0.75 s.
+    const playhead = 0.37 + 4 + 0.75;
+    const r = f.update({ beat: 80, tempo: 120, playing: true, atMs: 0 }, { map, playhead, mode: 'startStop' });
+    expect(r.seconds).toBeCloseTo(0.37 + 4, 9);
+    expect(offBar(f.update({ beat: 84, tempo: 120, playing: true, atMs: 0 }, { map, playhead, mode: 'startStop' }).seconds)).toBeLessThan(1e-9);
+  });
+
+  it('"Bar 1 of the source" moves where a start from the top lands', () => {
+    const f = new LinkFollower();
+    const r = f.update({ beat: 8, tempo: 120, playing: true, atMs: 0 }, { map, playhead: 0, mode: 'startStop', barOffset: 4 });
+    expect(r.seconds).toBeCloseTo(secondsAtBar(map, 5), 9);
+    // A playhead already past it keeps its own bar.
+    const g = new LinkFollower();
+    const later = secondsAtBar(map, 9) + 0.2;
+    expect(g.update({ beat: 8, tempo: 120, playing: true, atMs: 0 }, { map, playhead: later, mode: 'startStop', barOffset: 4 }).seconds).toBeCloseTo(secondsAtBar(map, 9), 9);
+  });
+
+  it('a playhead a hair before a bar line counts as on it', () => {
+    const f = new LinkFollower();
+    const r = f.update({ beat: 4, tempo: 120, playing: true, atMs: 0 }, { map, playhead: secondsAtBar(map, 7) - 0.01, mode: 'startStop' });
+    expect(r.seconds).toBeCloseTo(secondsAtBar(map, 7), 9);
+  });
+
+  it('quantised start from an off-bar playhead starts on a show bar at the next Link bar', () => {
+    const f = new LinkFollower();
+    const ctx = { map, playhead: 0, mode: 'quantisedStart' as const };
+    f.request(true);
+    expect(f.update({ beat: 21.3, tempo: 120, playing: true, atMs: 0 }, ctx).waiting).toBe(true);
+    const go = f.update({ beat: 24.06, tempo: 120, playing: true, atMs: 0 }, ctx);
+    expect(go.running).toBe(true);
+    expect(go.seconds).toBeCloseTo(0.37 + 0.03, 9);
+  });
+
+  it('reads Link against the show bar length (6/8 = 3 quarters), and keeps the locked quantum', () => {
+    const six8 = createTempoMap(120, 0, 6, 8);
+    const f = new LinkFollower();
+    const ctx = { map: six8, playhead: 0, mode: 'startStop' as const };
+    expect(f.quantum(ctx)).toBe(3);
+    // Beat 31 read against quantum 3: the bar started at beat 30.
+    const r = f.update({ beat: 31, tempo: 120, playing: true, atMs: 0, quantum: 3 }, ctx);
+    expect(r.seconds).toBeCloseTo(0.5, 9);
+    expect(f.quantum({ ...ctx, playhead: 99 })).toBe(3);
+  });
+});
+
 describe('show beats for the launch clock', () => {
   it('runs on from the last published playhead, at most a quarter second', () => {
     const map = createTempoMap(100, 0.3);

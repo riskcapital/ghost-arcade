@@ -722,7 +722,10 @@ function transportProviderFor(trackId: string): () => ClipAudioTransport | null 
     const local = s.currentTime - track.startTime + track.offset;
     return {
       timeSeconds: Math.max(0, local),
-      playbackRate: 1,
+      // Following a musical clock at another tempo than the map, show time
+      // runs at that ratio: the song has to as well, or it drifts out and
+      // the bus warbles and hard-seeks to catch it.
+      playbackRate: externalClock && s.isPlaying ? chaseAudioRate() : 1,
       paused: !s.isPlaying || !inWindow,
       loop: false,
       trimStartSeconds: track.offset,
@@ -891,6 +894,31 @@ export function setShowChaseTransportHandler(handler: ShowChaseTransportHandler 
 /** A chased position further than this from the playhead is a jump: the
  *  audio bus hard-seeks instead of rate-nudging toward it. */
 export const SHOW_CHASE_RESEEK_SECONDS = 0.25;
+
+/** The chased source's speed against show time, smoothed (1 = the map's
+ *  tempo). Smoothed over about a quarter second, so a MIDI clock's tempo
+ *  jitter does not wobble the song. */
+let chaseRate = 1;
+const CHASE_RATE_SMOOTHING = 0.08;
+/** The last parked position the chase applied. A parked source re-sends the
+ *  same position every tick; re-applying it would pin the playhead and the
+ *  user could not move it. Only a new position (a locate) moves it. */
+let lastParkedChase: number | null = null;
+
+/** The song's playback rate while following: the smoothed chase rate on a
+ *  1/2000 grid, so it settles instead of changing every frame. */
+function chaseAudioRate(): number {
+  return Math.round(chaseRate * 2000) / 2000;
+}
+
+/** Where `applyTime` would put the playhead for `time`. */
+function settledShowTime(s: ShowTimelineState, time: number): number {
+  const dur = s.duration;
+  const t = Number.isFinite(time) ? Math.max(0, time) : 0;
+  if (dur <= 0) return 0;
+  if (s.loop) return ((t % dur) + dur) % dur;
+  return Math.min(t, dur);
+}
 
 function isManualClock(): boolean {
   try {
@@ -1339,7 +1367,11 @@ export const showTimeline = {
   },
 
   pause() {
-    if (externalClock) chaseTransportHandler?.('pause');
+    if (externalClock) {
+      // A rolling clock owns the transport: pausing would only last until
+      // its next position restarted the show with a hard seek.
+      if (!chaseTransportHandler?.('pause') && get(store).isPlaying) return;
+    }
     cancelRaf();
     store.update((s) => ({ ...s, isPlaying: false }));
     seekGeneration++;
@@ -1348,7 +1380,9 @@ export const showTimeline = {
   },
 
   stop() {
-    if (externalClock) chaseTransportHandler?.('stop');
+    if (externalClock) {
+      if (!chaseTransportHandler?.('stop') && get(store).isPlaying) return;
+    }
     cancelRaf();
     // Clearing activeClipId is what makes the next play() re-fire the
     // opening preset even if the operator hand-loaded something else.
@@ -1372,12 +1406,20 @@ export const showTimeline = {
    * show with the source, never runs the internal RAF transport while
    * chasing, and hard-seeks only on a real jump so audio follows smoothly.
    */
-  chase(seconds: number, running: boolean) {
+  chase(seconds: number, running: boolean, rate = 1) {
     externalClock = true;
     cancelRaf();
     const s = get(store);
     const target = Number.isFinite(seconds) ? seconds : 0;
-    const jump = Math.abs(target - s.currentTime) > SHOW_CHASE_RESEEK_SECONDS;
+    // Compared where the playhead would land: past the end of a looping
+    // show, or before 0, the raw target is never "here" and every tick
+    // would be a jump that hard-seeks the audio and every video.
+    const jump = Math.abs(settledShowTime(s, target) - s.currentTime) > SHOW_CHASE_RESEEK_SECONDS;
+    const r = Number.isFinite(rate) && rate > 0 ? Math.max(0.25, Math.min(4, rate)) : 1;
+    if (running) {
+      lastParkedChase = null;
+      chaseRate = s.isPlaying ? chaseRate + (r - chaseRate) * CHASE_RATE_SMOOTHING : r;
+    }
     if (running && !s.isPlaying) {
       if (s.duration <= 0) return;
       syncAudioWiring(s.audioTracks);
@@ -1387,18 +1429,30 @@ export const showTimeline = {
       return;
     }
     if (!running && s.isPlaying) {
+      lastParkedChase = target;
+      chaseRate = 1;
       store.update((x) => ({ ...x, isPlaying: false }));
       applyTime(target, true);
       return;
     }
-    if (!running && Math.abs(target - s.currentTime) < 1e-6) return;
-    applyTime(target, jump || !running);
+    if (!running) {
+      // Parked: only a new position from the source moves the playhead, so
+      // the user can still scrub or Stop while the source sits still.
+      if (lastParkedChase !== null && Math.abs(target - lastParkedChase) < 1e-6) return;
+      lastParkedChase = target;
+      if (Math.abs(settledShowTime(s, target) - s.currentTime) < 1e-6) return;
+      applyTime(target, true);
+      return;
+    }
+    applyTime(target, jump);
   },
 
   /** Hand the playhead back to the internal transport. */
   releaseChase() {
     if (!externalClock) return;
     externalClock = false;
+    chaseRate = 1;
+    lastParkedChase = null;
     if (get(store).isPlaying) {
       store.update((x) => ({ ...x, isPlaying: false }));
       seekGeneration++;
@@ -2705,6 +2759,8 @@ export const showTimeline = {
   /** Test seam — tears the transport and audio elements down completely. */
   _resetForTest() {
     externalClock = false;
+    chaseRate = 1;
+    lastParkedChase = null;
     transportClock.reset();
     audioClockReader = defaultAudioClockReader;
     transportSink = null;

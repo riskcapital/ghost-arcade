@@ -158,7 +158,7 @@ export function installShowControl(): () => void {
     const live = sample.lock === 'locked' || sample.lock === 'freewheel';
     if (live && sample.showTime !== null) {
       lostHandled = false;
-      if (s.chaseTimeline) showTimeline.chase(sample.showTime, sample.running);
+      if (s.chaseTimeline) showTimeline.chase(sample.showTime, sample.running, sample.rate);
       if (s.chaseCues && sample.running && prevChase !== null) {
         const d = sample.showTime - prevChase;
         if (d > 0 && d < 1) cueList.timecodeAdvanced(prevChase, sample.showTime);
