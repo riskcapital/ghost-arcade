@@ -65,6 +65,28 @@ export function timelineTakesGo(): boolean {
 
 export function installSectionRuntime(): () => void {
   setShowSectionEffects(handleSectionEvent);
+  // Debug/automation surface (Show Runner), like window.__ghostArcade's others.
+  try {
+    const w = window as unknown as { __ghostArcade?: Record<string, unknown> };
+    w.__ghostArcade = {
+      ...(w.__ghostArcade ?? {}),
+      timelineScore: {
+        /** Score the song as the dialog's confirm does; returns what it added. */
+        async score() {
+          const { prepareScore, commitScore } = await import('../score/scoreRuntime');
+          const r = await prepareScore();
+          if (!r.ok) return { ok: false, reason: r.reason };
+          commitScore(r.prep);
+          return { ok: true, adds: r.prep.draft.adds, plan: r.prep.draft.plan.map((p) => ({ name: p.name, kind: p.kind, start: p.start, end: p.end, looks: p.lookIds })) };
+        },
+        async shuffle() {
+          const { shuffleScore } = await import('../score/scoreRuntime');
+          const r = await shuffleScore();
+          return r.ok ? { ok: true } : { ok: false, reason: r.reason };
+        },
+      },
+    };
+  } catch { /* sealed */ }
   return () => {
     setShowSectionEffects(null);
     for (const ids of engaged.values()) for (const id of ids) liveTakeover.release(id);

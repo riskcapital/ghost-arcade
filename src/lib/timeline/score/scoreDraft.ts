@@ -33,9 +33,10 @@ import type { DetectedSection, SongStructure } from './songStructure';
 import { beatAtSeconds, secondsAtBeat } from '../../show/tempoMap';
 
 export const CALM_LOOKS = ['gradient-glow', 'halftone-breathe', 'wireframe-origami', 'radar-scan', 'clock-wipe', 'hypno-rings', 'marching-ants'] as const;
-export const MID_LOOKS = ['mosaic-shimmer', 'flip-cards', 'echo-rings', 'electric-nodes', 'beat-step', 'stripe-sweep', 'twin-snakes'] as const;
+export const MID_LOOKS = ['mosaic-shimmer', 'flip-cards', 'echo-rings', 'electric-nodes', 'beat-step', 'stripe-sweep', 'twin-snakes', 'neon-pulse'] as const;
 export const BUILD_LOOKS = ['comet-chase', 'stripe-sweep', 'zigzag', 'twin-snakes', 'beat-step', 'electric-nodes'] as const;
-export const DROP_LOOKS = ['kick-strobe', 'neon-pulse', 'laser-grid', 'hue-hop', 'iris-pop', 'rush-hour'] as const;
+/** Drops: looks that fill the faces (they read big on the stage), plus the laser grid. */
+export const DROP_LOOKS = ['kick-strobe', 'hue-hop', 'iris-pop', 'rush-hour', 'laser-grid'] as const;
 
 const PALETTES: Record<SectionKind, readonly string[]> = {
   intro: ['ice', 'ocean', 'mono'],
@@ -155,11 +156,11 @@ function whereFor(kind: SectionKind, energy: number, barsLong: number): WhereSpe
 
 /** Look intensity at a section's start and end (builds ramp up). */
 function intensityAt(kind: SectionKind, energy: number): [number, number] {
-  const v = 0.45 + 0.65 * energy;
+  const v = 0.6 + 0.55 * energy;
   if (kind === 'build') return [Math.max(0.35, v - 0.25), Math.min(1.3, v + 0.35)];
   if (kind === 'drop') return [Math.max(1, v), Math.max(1, v)];
   if (kind === 'outro') return [v, 0.15];
-  if (kind === 'intro') return [Math.max(0.2, v - 0.2), v];
+  if (kind === 'intro') return [Math.max(0.4, v - 0.15), v];
   return [v, v];
 }
 
@@ -263,7 +264,7 @@ export function draftScore(
   if (looksFree && lookClips.length) {
     const drops = plan.filter((p) => p.kind === 'drop').length;
     adds.push(`${lookClips.length} look blocks on the Looks row: a look per section${drops ? ', drops cut on the beat then every bar' : ''}`);
-    if (motions.size) adds.push(`Where motions: ${[...motions].map((m) => MOTION_NAMES[m] ?? m).join(', ')} (sweep on builds, burst on drops)`);
+    if (motions.size) adds.push(`Where motions across the pieces: ${[...motions].map((m) => MOTION_NAMES[m] ?? m).join(', ')}`);
   } else if (!looksFree) {
     skips.push('Looks row: it has blocks under the song already.');
   }
