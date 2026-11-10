@@ -160,6 +160,10 @@ import {
   stagePieces,
 } from '../show/tracks/showStageRows';
 import { evaluateShowLooks } from '../show/tracks/showLooks';
+import { normalizeLines, type ControlLine } from '../timeline/lines/lineModel';
+import type { LineBinding } from '../timeline/lines/lineControls';
+import { lanesToLines, rowLineTarget } from '../timeline/lines/laneConversion';
+import { linesEnd, normalizeBindings, removeLinesForBlocks, shiftLinesOnTarget, shiftLinesWithBlock } from '../timeline/lines/lineDocOps';
 
 // ─── Tunables ────────────────────────────────────────────────────────────
 
@@ -241,6 +245,10 @@ export interface ShowTimelineState {
   cameraLane: ShowCameraClip[];
   /** The Looks row (Timeline): shape Looks worn for a span. */
   lookClips: ShowLookClip[];
+  /** Control lines (Timeline): every drawn or following parameter line. */
+  lines: ControlLine[];
+  /** Controllers bound to lines (a MIDI CC, a Live knob, an OSC address). */
+  lineBindings: LineBinding[];
 }
 
 /**
@@ -279,6 +287,8 @@ function createInitialState(): ShowTimelineState {
     soloTrackId: null,
     cameraLane: [],
     lookClips: [],
+    lines: [],
+    lineBindings: [],
   };
 }
 
@@ -297,8 +307,9 @@ export function computeShowDuration(
   layerTracks: Pick<ShowLayerTrack, 'clips'>[] = [],
   cameraLane: Pick<ShowCameraClip, 'startTime' | 'duration'>[] = [],
   lookClips: Pick<ShowLookClip, 'startTime' | 'duration'>[] = [],
+  lines: readonly ControlLine[] = [],
 ): number {
-  let end = 0;
+  let end = lines.length ? linesEnd(lines) : 0;
   for (const c of lookClips) end = Math.max(end, c.startTime + c.duration);
   for (const c of clips) end = Math.max(end, c.startTime + c.duration);
   for (const t of tracks) end = Math.max(end, t.startTime + t.duration);
@@ -693,7 +704,31 @@ function evaluatedTracks(s: ShowTimelineState): ShowLayerTrack[] {
   return out;
 }
 
+/** The Timeline's control lines, ticked with the show (see setShowLineTicker). */
+export interface ShowLineTick {
+  doc: ShowDocKind;
+  time: number;
+  playing: boolean;
+  tempo: ShowTempoMap | null;
+  /** An offline render's virtual clock (live-only sources add nothing). */
+  manual: boolean;
+}
+let lineTicker: ((tick: ShowLineTick) => void) | null = null;
+/** Called on every evaluation of the show (each frame, every seek, an
+ *  export's every frame), before its frame is published, so the lines'
+ *  values reach the same flush as the rows'. */
+export function setShowLineTicker(ticker: ((tick: ShowLineTick) => void) | null): void {
+  lineTicker = ticker;
+}
+
 function publishTrackFrame(s: ShowTimelineState, evalTime: number, force = false): void {
+  if (lineTicker) {
+    try {
+      lineTicker({ doc: s.doc, time: evalTime, playing: s.isPlaying, tempo: s.tempo, manual: isManualClock() });
+    } catch (err) {
+      console.warn('[ShowTimeline] line tick failed:', err);
+    }
+  }
   const tracks = evaluatedTracks(s);
   const looks = s.lookClips.length ? evaluateShowLooks(s.lookClips, evalTime) : [];
   if (!tracks.length && !looks.length) {
@@ -1101,7 +1136,7 @@ function finishShow(action: ShowEndAction): void {
 
 /** Recompute duration + reselect after any structural mutation. */
 function withDuration(s: ShowTimelineState): ShowTimelineState {
-  return { ...s, duration: computeShowDuration(s.presetClips, s.audioTracks, s.layerTracks, s.cameraLane, s.lookClips) };
+  return { ...s, duration: computeShowDuration(s.presetClips, s.audioTracks, s.layerTracks, s.cameraLane, s.lookClips, s.lines) };
 }
 
 function normalizeTrack(raw: unknown, index: number): ShowAudioTrack | null {
@@ -1376,6 +1411,7 @@ export interface ShowArrangement {
   tempo?: ShowTempoMap | null;
   cameraLane?: ShowCameraClip[];
   lookClips?: ShowLookClip[];
+  lines?: ControlLine[];
   /** The Timeline document's arrangement; the fields above are the Show's.
    *  Missing in steps made before the two were separate: such a step is
    *  the active document's. */
@@ -1403,6 +1439,9 @@ export interface ShowTimelineSnapshot {
   cameraShots?: DemoShot[];
   /** Version 4: the Timeline's Looks row. */
   lookClips?: ShowLookClip[];
+  /** Version 5: the Timeline's control lines and their controllers. */
+  lines?: ControlLine[];
+  lineBindings?: LineBinding[];
   /** Version 4: the Timeline document (the fields above are the Show's). */
   timeline?: ShowTimelineSnapshot;
   /** Version 4: the document that was active when saved. */
@@ -1420,7 +1459,7 @@ export interface ShowTimelineSnapshot {
 
 /** What a document owns. Everything else in the state is the engine's. */
 const DOC_KEYS = [
-  'audioTracks', 'presetClips', 'layerTracks', 'lookClips', 'cameraLane', 'tempo', 'loop', 'endAction',
+  'audioTracks', 'presetClips', 'layerTracks', 'lookClips', 'lines', 'lineBindings', 'cameraLane', 'tempo', 'loop', 'endAction',
   'rulerMode', 'snapGrid', 'zoom', 'snapEnabled', 'currentTime', 'selection', 'selectedClipIds', 'soloTrackId',
 ] as const;
 export type ShowDocFields = Pick<ShowTimelineState, (typeof DOC_KEYS)[number]>;
@@ -1445,8 +1484,9 @@ function setParked(doc: ShowDocFields): void {
 export const parkedShowDoc = { subscribe: parkedStore.subscribe };
 
 /** A document has something on it. */
-export function docHasContent(d: Pick<ShowDocFields, 'presetClips' | 'audioTracks' | 'layerTracks' | 'lookClips' | 'cameraLane'>): boolean {
+export function docHasContent(d: Pick<ShowDocFields, 'presetClips' | 'audioTracks' | 'layerTracks' | 'lookClips' | 'cameraLane'> & { lines?: readonly ControlLine[] }): boolean {
   return d.presetClips.length > 0 || d.audioTracks.length > 0 || d.lookClips.length > 0 || d.cameraLane.length > 0
+    || (d.lines?.length ?? 0) > 0
     || d.layerTracks.some((t) => !isBareRow(t));
 }
 
@@ -1477,6 +1517,8 @@ function arrangementOf(d: ShowDocFields): ShowArrangement {
     tempo: d.tempo,
     cameraLane: d.cameraLane,
     lookClips: d.lookClips,
+    // Lines are replaced on every edit, never mutated.
+    lines: d.lines,
   };
 }
 
@@ -1497,6 +1539,7 @@ function docWithArrangement(base: ShowDocFields, a: Partial<ShowArrangement>): S
     .map(normalizeCameraClip)
     .filter((c): c is ShowCameraClip => c !== null);
   const lookClips = normalizeLookClips(a.lookClips);
+  const lines = Array.isArray(a.lines) ? a.lines : base.lines;
   const tempo = normalizeTempoMap(a.tempo);
   const clipIds = new Set(layerTracks.flatMap((t) => t.clips.map((c) => c.id)));
   const ids = new Set([
@@ -1518,6 +1561,7 @@ function docWithArrangement(base: ShowDocFields, a: Partial<ShowArrangement>): S
     rulerMode: tempo ? base.rulerMode : 'time',
     cameraLane,
     lookClips,
+    lines,
     soloTrackId: base.soloTrackId && layerTracks.some((t) => t.id === base.soloTrackId) ? base.soloTrackId : null,
     selectedClipIds: base.selectedClipIds.filter((id) => clipIds.has(id)),
     selection: base.selection && ids.has(base.selection.id) ? base.selection : null,
@@ -1561,6 +1605,8 @@ function docSnapshot(d: ShowDocFields): Omit<ShowTimelineSnapshot, 'version' | '
     cameraLane: d.cameraLane.map((c) => ({ ...c })),
     ...(d.cameraLane.length > 0 ? { cameraShots: cameraShotTable(d.cameraLane, get(demoReel).shots) } : {}),
     ...(d.lookClips.length > 0 ? { lookClips: d.lookClips.map((c) => ({ ...c, ...(c.layerIds ? { layerIds: [...c.layerIds] } : {}) })) } : {}),
+    ...(d.lines.length > 0 ? { lines: d.lines } : {}),
+    ...(d.lineBindings.length > 0 ? { lineBindings: d.lineBindings } : {}),
   };
 }
 
@@ -1617,11 +1663,16 @@ function hydrateDoc(p: Record<string, unknown>, projectDir?: string): ShowDocFie
   }
 
   const zoom = Number(p.zoom);
+  // The ◆ keyframe lanes of step 1 are control lines now (same keys).
+  const savedLines = normalizeLines(p.lines);
+  const converted = lanesToLines(layerTracks, savedLines);
   return {
     audioTracks,
     presetClips,
-    layerTracks,
+    layerTracks: converted.tracks,
     lookClips: normalizeLookClips(p.lookClips),
+    lines: converted.lines.length ? [...savedLines, ...converted.lines] : savedLines,
+    lineBindings: normalizeBindings(p.lineBindings),
     cameraLane,
     tempo,
     loop: p.loop === true,
@@ -2634,6 +2685,7 @@ export const showTimeline = {
     const delta = moved.startTime - found.clip.startTime;
     const lanes = shiftLaneKeys(found.track.lanes, found.clip.startTime, clipEnd(found.clip), delta);
     this._setTrackClips(found.track.id, clips, lanes);
+    this._carryLines(found.track, [found.clip], delta);
     recordShowEdit(`layer-move:${clipId}`);
   },
 
@@ -2647,6 +2699,7 @@ export const showTimeline = {
     let lanes = track.lanes;
     for (const c of track.clips.filter((x) => ids.has(x.id))) lanes = shiftLaneKeys(lanes, c.startTime, clipEnd(c), delta);
     this._setTrackClips(trackId, clips, lanes);
+    this._carryLines(track, track.clips.filter((x) => ids.has(x.id)), delta);
     recordShowEdit(`layer-move:${[...ids].sort().join(',')}`);
   },
 
@@ -2715,6 +2768,10 @@ export const showTimeline = {
       selection: s.selection && ids.has(s.selection.id) ? null : s.selection,
     }));
     if (!changed) return;
+    store.update((s) => {
+      const lines = removeLinesForBlocks(s.lines, ids);
+      return lines === s.lines ? s : withDuration({ ...s, lines });
+    });
     recordShowEdit();
     republishTracks();
   },
@@ -2970,6 +3027,10 @@ export const showTimeline = {
     const pull = (v: number) => (Math.abs(v - startTime) < 1e-9 ? Number.POSITIVE_INFINITY : Math.abs(v - startTime));
     const at = Math.max(0, pull(byEnd) < pull(byStart) ? byEnd : byStart);
     if (Math.abs(at - found.startTime) < 1e-9) return;
+    store.update((s) => {
+      const lines = shiftLinesOnTarget(s.lines, { scope: 'look', id: clipId }, at - found.startTime);
+      return lines === s.lines ? s : { ...s, lines };
+    });
     this._setLookClips(get(store).lookClips.map((c) => (c.id === clipId ? { ...c, startTime: at } : c)));
     recordShowEdit(`look-clip:${clipId}`);
   },
@@ -2996,6 +3057,10 @@ export const showTimeline = {
   removeLookClip(clipId: string) {
     const s = get(store);
     if (!s.lookClips.some((c) => c.id === clipId)) return;
+    store.update((x) => {
+      const lines = removeLinesForBlocks(x.lines, [clipId]);
+      return lines === x.lines ? x : { ...x, lines };
+    });
     this._setLookClips(s.lookClips.filter((c) => c.id !== clipId));
     if (s.selection?.kind === 'lookClip' && s.selection.id === clipId) store.update((x) => ({ ...x, selection: null }));
     recordShowEdit();
@@ -3005,6 +3070,46 @@ export const showTimeline = {
     const lookClips = [...clips].sort((a, b) => a.startTime - b.startTime);
     store.update((s) => withDuration({ ...s, lookClips }));
     republishTracks();
+  },
+
+  // ── Control lines ──────────────────────────────────────────────────────
+
+  /**
+   * Replace the document's lines. One undo step; a drag passes
+   * `continuousKey` so its many updates make one. `quiet`: not an edit
+   * (fitting ranges to the registry), no undo step.
+   */
+  setLines(lines: ControlLine[], opts: { continuousKey?: string; quiet?: boolean } = {}) {
+    const s = get(store);
+    if (lines === s.lines) return;
+    store.update((x) => withDuration({ ...x, lines }));
+    if (!opts.quiet) recordShowEdit(opts.continuousKey ? `lines:${opts.continuousKey}` : undefined);
+  },
+
+  /** Edit the lines: `edit` returns the new list (or the same to do nothing). */
+  editLines(edit: (lines: ControlLine[]) => ControlLine[], continuousKey?: string): boolean {
+    const s = get(store);
+    const next = edit(s.lines);
+    if (next === s.lines) return false;
+    this.setLines(next, { continuousKey });
+    return true;
+  },
+
+  /** Controllers bound to lines. Not an edit of the show (no undo step). */
+  setLineBindings(bindings: LineBinding[]) {
+    store.update((x) => (x.lineBindings === bindings ? x : { ...x, lineBindings: bindings }));
+  },
+
+  /** A block moved by `delta`: its lines and the row's points under it go along. */
+  _carryLines(track: ShowLayerTrack, clips: readonly ShowLayerClip[], delta: number) {
+    if (!clips.length || Math.abs(delta) < 1e-9) return;
+    store.update((s) => {
+      let lines = s.lines;
+      for (const c of clips) {
+        lines = shiftLinesWithBlock(lines, { clipId: c.id, rowTarget: rowLineTarget(track), from: c.startTime, to: clipEnd(c), delta });
+      }
+      return lines === s.lines ? s : withDuration({ ...s, lines });
+    });
   },
 
   // ── Track helpers (internal) ───────────────────────────────────────────
@@ -3222,11 +3327,12 @@ export const showTimeline = {
       // 4: the Show and the Timeline are two documents; the Show's fields
       // stay at the top (an older build opens the Show), the Timeline's
       // are under `timeline`, and the Looks row is new.
-      version: 4,
+      // 5: the Timeline has control lines (the ◆ lanes became lines).
+      version: 5,
       isOpen: s.isOpen,
       ...show,
       activeDoc: s.doc,
-      timeline: { version: 4, isOpen: false, ...timeline },
+      timeline: { version: 5, isOpen: false, ...timeline },
     };
   },
 
@@ -3286,7 +3392,7 @@ export const showTimeline = {
       const toShow = hasPresets || !hasRows;
       showDoc = toShow ? { ...empty, ...shared, presetClips: whole.presetClips } : { ...empty, zoom: whole.zoom, snapEnabled: whole.snapEnabled };
       timelineDoc = hasRows
-        ? { ...empty, ...shared, layerTracks: whole.layerTracks, lookClips: whole.lookClips }
+        ? { ...empty, ...shared, layerTracks: whole.layerTracks, lookClips: whole.lookClips, lines: whole.lines, lineBindings: whole.lineBindings }
         : { ...empty, zoom: whole.zoom, snapEnabled: whole.snapEnabled };
       if (hasRows && hasPresets) {
         // Both carry the song: give the Timeline's copy its own track ids,

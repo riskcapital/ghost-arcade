@@ -398,6 +398,7 @@
   import { showTimeline, setShowTransitionSink } from './lib/stores/showTimeline';
   import { handleShowKeydown } from './lib/show/showKeyboard';
   import { installShowTrackRuntime } from './lib/show/tracks/showTrackRuntime';
+  import { installTimelineLines } from './lib/timeline/lines/timelineLines';
   import { installTakeoverRuntime } from './lib/show/takeover/takeoverRuntime';
   import { installEditorRehearsal } from './lib/show/rehearsal/editorRehearsal';
   import { installShowControl, showRuntimeHooks } from './lib/show/showControlRuntime';
@@ -1948,6 +1949,8 @@
     // Show layer tracks: track frames into the scene, scrubbing, the video
     // phase follower, pre-rolls and track templates.
     const stopShowTracks = installShowTrackRuntime({ project });
+    // Timeline control lines: ticked with the show, saved with the Timeline.
+    const stopTimelineLines = installTimelineLines();
     // Live takeover: VJ rows, the mix or media over show tracks, handed back
     // on a beat, bar, phrase or marker.
     const stopTakeover = installTakeoverRuntime();
@@ -2766,6 +2769,7 @@
       appMounted = false;
       stopShowControl();
       stopShowTracks();
+      stopTimelineLines();
       stopTakeover();
       stopRehearsal();
       stopInstallRuntime?.();
