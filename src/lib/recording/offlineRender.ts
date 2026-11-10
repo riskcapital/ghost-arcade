@@ -1222,7 +1222,6 @@ function createOfflineRenderStore() {
             );
           }
           pumpVisualAudio(virtualTime);
-          keyframeTimeline.seek(virtualTime);
           layerSequencer.seek(virtualTime);
           vjLayerSequencer.seek(virtualTime);
           // Show timeline: evaluates which preset clip owns this instant and
@@ -1232,6 +1231,12 @@ function createOfflineRenderStore() {
           // show timeline passes under a manual clock) it will not fight the
           // next frame's seeks. A show with no clips is a no-op.
           showTimeline.seek(virtualTime);
+          // The keyframe tray runs on preset time, not show time: live, each
+          // preset's keyframes restart at 0 on its boundary. The preset swap above
+          // imports the incoming keyframes a microtask later, so let that land
+          // first, then evaluate them at the same instant live playback would.
+          await Promise.resolve();
+          keyframeTimeline.seek(showTimeline.keyframeTimeFor(virtualTime));
           // Native graphs (splat, model3d, text, GPU instruments…)
           // animate from the render clock the sync sends — pin it to
           // the virtual time and flush so this frame's compute lands

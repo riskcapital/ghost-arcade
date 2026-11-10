@@ -396,6 +396,7 @@
   import { musicStudio } from './lib/music/musicStudioStore';
   import { stage3dScene } from './lib/stage3d/store';
   import { showTimeline, setShowTransitionSink } from './lib/stores/showTimeline';
+  import { handleShowKeydown } from './lib/show/showKeyboard';
   import { installShowControl, showRuntimeHooks } from './lib/show/showControlRuntime';
   import { hydrateShowControl, serializeShowControl } from './lib/show/showControlPersistence';
   import { cueList } from './lib/show/cueList';
@@ -451,7 +452,7 @@
     type PhoneVisionPointCloudPreset,
     type PhoneVisionSegmentationPipeline,
   } from './lib/stores/phoneVision';
-  import { history, canUndo, canRedo, outputHistoryPatch, type HistorySnapshot } from './lib/stores/history';
+  import { history, canUndo, canRedo, outputHistoryPatch, showHistoryRestore, type HistorySnapshot } from './lib/stores/history';
   import { selectedScreenId, selectedScreenMaskId, screenMaskPlacing } from './lib/stores/screens';
   import { clearAutosaveSnapshot, findAutosave, hasAutosave, readAutosave, writeAutosave } from './lib/storage/autosaveStore';
   import { recentFiles } from './lib/stores/recentFiles';
@@ -2170,11 +2171,11 @@
       commit: commitHistoryState,
       amend: () => {
         const state = captureHistoryState();
-        history.amend(state.project, state.keyframes, state.output);
+        history.amend(state.project, state.keyframes, state.output, {}, state.show);
       },
       amendTo: (captured) => {
         const state = captured as CapturedHistoryState;
-        history.amend(state.project, state.keyframes, state.output, { live: true });
+        history.amend(state.project, state.keyframes, state.output, { live: true }, state.show);
       },
     });
     // Opening a project (any path: File, Open Recent, recovery, relink,
@@ -2563,6 +2564,11 @@
         return;
       }
 
+      // The show timeline's own keys come first while the pointer is over
+      // its tray: Delete on a show clip must not also delete the selected
+      // mapping layer below.
+      if (handleShowKeydown(e)) return;
+
       // Copy: Ctrl+C (supports multi-selection)
       if ((e.ctrlKey || e.metaKey) && e.key === 'c' && !e.shiftKey) {
         if (inInput) return;
@@ -2640,7 +2646,7 @@
       // a kf bubble and hits Delete (on macOS Backspace too —
       // there's no separate forward-delete on most Mac keyboards).
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (inInput) return;
+        if (inInput || e.defaultPrevented) return;
         const kfSel = get(keyframeTimeline).selectedKeyframe;
         if (kfSel) {
           e.preventDefault();
@@ -6444,13 +6450,15 @@
   // alongside it; this is the only place that can see all three. Each store
   // replaces its value on every edit rather than mutating it, so holding the
   // three references is a complete, cheap capture.
-  type CapturedHistoryState = { project: Project; keyframes: unknown; output: ReturnType<typeof settings.captureOutputHistory> };
+  // The show timeline's arrangement rides along the same way (its edits were
+  // outside undo before).
+  type CapturedHistoryState = { project: Project; keyframes: unknown; output: ReturnType<typeof settings.captureOutputHistory>; show: unknown };
   function captureHistoryState(): CapturedHistoryState {
-    return { project: get(project), keyframes: keyframeTimeline.exportAll(), output: settings.captureOutputHistory() };
+    return { project: get(project), keyframes: keyframeTimeline.exportAll(), output: settings.captureOutputHistory(), show: showTimeline.exportArrangement() };
   }
   function commitHistoryState(captured: unknown) {
     const state = captured as CapturedHistoryState;
-    history.record(state.project, state.keyframes, state.output);
+    history.record(state.project, state.keyframes, state.output, state.show);
   }
 
   // Record a snapshot — call this AFTER discrete user actions (warp end, layer
@@ -6466,7 +6474,7 @@
   function resetHistoryToCurrent() {
     cancelPendingHistorySnapshot();
     const state = captureHistoryState();
-    history.init(state.project, state.keyframes, state.output);
+    history.init(state.project, state.keyframes, state.output, state.show);
   }
 
   /** Restore a snapshot into every store it spans. */
@@ -6494,6 +6502,10 @@
           screenMaskPlacing.set(false);
         }
       }
+      // Only a step that changed the show puts its arrangement back; the
+      // transport keeps running either way.
+      const show = showHistoryRestore(snapshot.show, snapshot.leavingShow);
+      if (show !== undefined) showTimeline.restoreArrangement(show);
     } finally {
       endHistoryRestore();
     }

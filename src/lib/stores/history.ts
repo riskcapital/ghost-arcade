@@ -175,6 +175,13 @@ export interface HistorySnapshot {
    *  keys that differ between the two, so a step that never touched the
    *  screens leaves them exactly as they are live. */
   leavingOutput: OutputHistoryState | null;
+  /** The show timeline's arrangement at this step (showTimeline
+   *  .exportArrangement()); undefined when the step was recorded without
+   *  one. Like the output stage, the caller restores it only when it
+   *  differs from `leavingShow`, so a step that never touched the show
+   *  leaves the live show (and its transport) alone. */
+  show?: unknown;
+  leavingShow?: unknown;
 }
 
 /**
@@ -183,10 +190,12 @@ export interface HistorySnapshot {
  * hooks run — avoiding the "Unable to serialize Texture." flood that
  * otherwise starves the renderer when VJ clips hold live textures.
  */
-function serializeSnapshot(project: Project, keyframes: unknown, output: OutputHistoryState | null): { json: string; large: number[] } {
+function serializeSnapshot(project: Project, keyframes: unknown, output: OutputHistoryState | null, show?: unknown): { json: string; large: number[] } {
   largeInUse = new Set();
   try {
-    const json = JSON.stringify({ project: sanitize(withoutViewState(project)), keyframes: sanitize(keyframes), output: sanitize(output) });
+    const step: Record<string, unknown> = { project: sanitize(withoutViewState(project)), keyframes: sanitize(keyframes), output: sanitize(output) };
+    if (show !== undefined) step.show = sanitize(show);
+    const json = JSON.stringify(step);
     return { json, large: [...largeInUse] };
   } finally {
     largeInUse = null;
@@ -242,10 +251,10 @@ const SOURCE_TRANSPORT_KEYS = [
 
 /** A step's state. `withLarge: false` leaves large strings as references
  *  (enough to compare two steps, and much cheaper). */
-function parseSnapshot(json: string, withLarge = true): { project: Project; keyframes: unknown; output: OutputHistoryState | null } {
-  const parsed = JSON.parse(json) as { project: Project; keyframes: unknown; output?: OutputHistoryState | null };
+function parseSnapshot(json: string, withLarge = true): { project: Project; keyframes: unknown; output: OutputHistoryState | null; show: unknown } {
+  const parsed = JSON.parse(json) as { project: Project; keyframes: unknown; output?: OutputHistoryState | null; show?: unknown };
   if (withLarge && json.includes('\\u0000ga-large:')) restoreLarge(parsed);
-  return { project: parsed.project, keyframes: parsed.keyframes ?? null, output: parsed.output ?? null };
+  return { project: parsed.project, keyframes: parsed.keyframes ?? null, output: parsed.output ?? null, show: parsed.show };
 }
 
 /** Re-attach the runtime references (textures, video elements) of the live
@@ -402,6 +411,8 @@ function createHistoryStore() {
         keyframes: restoreLarge(parsed.keyframes),
         output: restoreLarge(parsed.output) as OutputHistoryState | null,
         leavingOutput: restoreLarge(left?.output ?? null) as OutputHistoryState | null,
+        show: restoreLarge(parsed.show),
+        leavingShow: restoreLarge(left?.show),
       };
       if (direction < 0) {
         return {
@@ -423,17 +434,17 @@ function createHistoryStore() {
     subscribe,
 
     // Initialize with a project state
-    init(project: Project, keyframes: unknown = null, output: OutputHistoryState | null = null) {
-      const current = makeEntry(serializeSnapshot(project, keyframes, output), project);
+    init(project: Project, keyframes: unknown = null, output: OutputHistoryState | null = null, show?: unknown) {
+      const current = makeEntry(serializeSnapshot(project, keyframes, output, show), project);
       set({ past: [], future: [], current });
       pruneLarge([current]);
     },
 
     // Record a new state (called after discrete user actions)
-    record(project: Project, keyframes: unknown = null, output: OutputHistoryState | null = null) {
+    record(project: Project, keyframes: unknown = null, output: OutputHistoryState | null = null, show?: unknown) {
       if (suppressCount > 0) return;
 
-      const serialized = serializeSnapshot(project, keyframes, output);
+      const serialized = serializeSnapshot(project, keyframes, output, show);
 
       let kept: HistoryState | null = null;
       update((state) => {
@@ -458,9 +469,9 @@ function createHistoryStore() {
      *  (see amendLastHistoryStep). `live`: the state adds only live changes
      *  made since (see noteLiveChange in historyHooks), which are not part
      *  of the step's own edit. */
-    amend(project: Project, keyframes: unknown = null, output: OutputHistoryState | null = null, options: { live?: boolean } = {}) {
+    amend(project: Project, keyframes: unknown = null, output: OutputHistoryState | null = null, options: { live?: boolean } = {}, show?: unknown) {
       if (suppressCount > 0) return;
-      const serialized = serializeSnapshot(project, keyframes, output);
+      const serialized = serializeSnapshot(project, keyframes, output, show);
       let kept: HistoryState | null = null;
       update((state) => {
         const current = state.current;
@@ -538,6 +549,16 @@ export const history = createHistoryStore();
  * is what keeps undo from reverting anything that changed without being
  * recorded, such as a live control or another window's edit.
  */
+/**
+ * The show arrangement an undo or redo should restore, or undefined when the
+ * step did not change it (same rule as outputHistoryPatch: compare the two
+ * recorded steps, never the live show).
+ */
+export function showHistoryRestore(to: unknown, from: unknown): unknown {
+  if (to === undefined || to === null) return undefined;
+  return JSON.stringify(to) === JSON.stringify(from) ? undefined : to;
+}
+
 export function outputHistoryPatch(
   to: OutputHistoryState | null,
   from: OutputHistoryState | null,

@@ -91,6 +91,12 @@ import {
 } from '../audio/showAudioImport';
 import { ShowTransportClock, readAudioClock, type AudioClockContext } from '../show/showTransportClock';
 import { showToast } from './errorToast';
+import {
+  amendLastHistoryStep,
+  isRestoringHistory,
+  recordDiscreteAction,
+  scheduleHistorySnapshot,
+} from './historyHooks';
 
 // ─── Tunables ────────────────────────────────────────────────────────────
 
@@ -228,11 +234,18 @@ export function findActiveShowClip(
 export function snapShowTime(
   time: number,
   edges: number[],
-  opts: { enabled: boolean; grid?: number; tolerance: number },
+  opts: {
+    enabled: boolean;
+    grid?: number;
+    tolerance: number;
+    /** The nearest line of a musical grid (the tempo map). When given it
+     *  replaces the plain seconds grid. */
+    nearestGrid?: (time: number) => number;
+  },
 ): number {
   const t = Math.max(0, Number.isFinite(time) ? time : 0);
   if (!opts.enabled) return t;
-  const grid = opts.grid ?? SHOW_SNAP_SECONDS;
+  const grid = opts.nearestGrid ? 0 : (opts.grid ?? SHOW_SNAP_SECONDS);
   let best = t;
   let bestDelta = opts.tolerance;
   const consider = (candidate: number) => {
@@ -243,7 +256,10 @@ export function snapShowTime(
       best = candidate;
     }
   };
-  if (grid > 0) consider(Math.round(t / grid) * grid);
+  if (opts.nearestGrid) {
+    const line = Number(opts.nearestGrid(t));
+    if (Number.isFinite(line)) consider(line);
+  } else if (grid > 0) consider(Math.round(t / grid) * grid);
   consider(0);
   for (const e of edges) consider(e);
   // Kill float dust from the grid multiply so saved values stay readable.
@@ -310,6 +326,27 @@ export function maxDurationAt(others: Placeable[], startTime: number): number {
     if (o.startTime >= startTime) right = Math.min(right, o.startTime);
   }
   return right === Number.POSITIVE_INFINITY ? Number.POSITIVE_INFINITY : right - startTime;
+}
+
+/**
+ * Time inside the preset that is showing at show time `time`: show time minus
+ * the start of the preset clip that is live (or, in a gap, of the last clip
+ * that ended before it, whose look is being held). Before the first clip it
+ * is show time itself.
+ *
+ * Live playback restarts each preset's own keyframes at 0 on its boundary
+ * (loadComposition), so an offline render has to drive them with this, not
+ * with show time, to land on the same frame.
+ */
+export function presetLocalTimeAt(clips: ShowPresetClip[], time: number): number {
+  const t = Number.isFinite(time) ? Math.max(0, time) : 0;
+  const active = findActiveShowClip(clips, t);
+  if (active) return Math.max(0, t - active.startTime);
+  let held: ShowPresetClip | null = null;
+  for (const c of clips) {
+    if (c.startTime + c.duration <= t && (!held || c.startTime > held.startTime)) held = c;
+  }
+  return held ? Math.max(0, t - held.startTime) : t;
 }
 
 // ─── Clip transitions ────────────────────────────────────────────────────
@@ -763,6 +800,24 @@ function notifyTransport(event: ShowTransportEvent): void {
     console.warn('[ShowTimeline] transport sink failed:', err);
   }
 }
+// ─── Undo ────────────────────────────────────────────────────────────────
+//
+// Show edits are undoable like any other edit: every step App.svelte records
+// carries `exportArrangement()`, and undo hands it back through
+// `restoreArrangement()`. A one-shot edit records its own step; a drag or a
+// slider, which calls the same method many times, coalesces into one step
+// keyed on what is being edited.
+
+/** Ids of audio tracks still being measured right after they were added;
+ *  their step is recorded once the length is known. */
+const tracksAwaitingFirstStep = new Set<string>();
+
+function recordShowEdit(continuousKey?: string): void {
+  if (isRestoringHistory()) return;
+  if (continuousKey) scheduleHistorySnapshot(`show:${continuousKey}`);
+  else recordDiscreteAction();
+}
+
 /** True while an external clock (timecode chase) owns the playhead. The
  *  RAF transport stays off and play() defers to it. */
 let externalClock = false;
@@ -965,6 +1020,14 @@ function refIsDurable(ref: AssetRef | undefined): boolean {
   return !!(ref && (ref.originalPath || ref.projectPath || ref.dataUrl || ref.url));
 }
 
+/** What one undo step holds of the show (see exportArrangement). */
+export interface ShowArrangement {
+  audioTracks: ShowAudioTrack[];
+  presetClips: ShowPresetClip[];
+  loop: boolean;
+  endAction: ShowEndAction;
+}
+
 export interface ShowTimelineSnapshot {
   version: number;
   isOpen: boolean;
@@ -1000,10 +1063,15 @@ export const showTimeline = {
     store.update((s) => ({ ...s, snapEnabled: enabled }));
   },
   setLoop(loop: boolean) {
+    if (get(store).loop === loop) return;
     store.update((s) => ({ ...s, loop }));
+    recordShowEdit();
   },
   setEndAction(action: ShowEndAction) {
-    store.update((s) => ({ ...s, endAction: normalizeShowEndAction(action) }));
+    const next = normalizeShowEndAction(action);
+    if (get(store).endAction === next) return;
+    store.update((s) => ({ ...s, endAction: next }));
+    recordShowEdit();
   },
   /** Zoom so the whole show fits `width` pixels. */
   zoomToFit(width: number) {
@@ -1136,6 +1204,7 @@ export const showTimeline = {
         selection: { kind: 'preset', id },
       });
     });
+    recordShowEdit();
     return id;
   },
 
@@ -1162,13 +1231,16 @@ export const showTimeline = {
         selection: { kind: 'preset', id },
       });
     });
+    if (inserted) recordShowEdit();
     return inserted ? id : null;
   },
 
   removePresetClip(clipId: string) {
+    let removed = false;
     store.update((s) => {
       const presetClips = s.presetClips.filter((c) => c.id !== clipId);
       if (presetClips.length === s.presetClips.length) return s;
+      removed = true;
       return withDuration({
         ...s,
         presetClips,
@@ -1176,6 +1248,7 @@ export const showTimeline = {
         selection: s.selection?.id === clipId ? null : s.selection,
       });
     });
+    if (removed) recordShowEdit();
   },
 
   /** Move a clip's start. Clamped into the free window; refused if it will
@@ -1198,6 +1271,7 @@ export const showTimeline = {
           .sort((a, b) => a.startTime - b.startTime),
       });
     });
+    recordShowEdit(`move:${clipId}`);
   },
 
   /** Resize a clip. `edge: 'end'` drags the right handle; `'start'` drags
@@ -1233,6 +1307,7 @@ export const showTimeline = {
           .sort((a, b) => a.startTime - b.startTime),
       });
     });
+    recordShowEdit(`resize:${clipId}`);
   },
 
   updatePresetClip(clipId: string, updates: Partial<ShowPresetClip>) {
@@ -1240,6 +1315,7 @@ export const showTimeline = {
       const presetClips = s.presetClips.map((c) => (c.id === clipId ? { ...c, ...updates } : c));
       return withDuration({ ...s, presetClips });
     });
+    recordShowEdit(`clip:${clipId}`);
   },
 
   // ── Junction transitions ───────────────────────────────────────────────
@@ -1280,6 +1356,7 @@ export const showTimeline = {
         selection: { kind: 'transition', id: clipId },
       };
     });
+    if (created) recordShowEdit();
     return created;
   },
 
@@ -1292,6 +1369,7 @@ export const showTimeline = {
       ),
       selection: s.selection?.kind === 'transition' && s.selection.id === clipId ? null : s.selection,
     }));
+    recordShowEdit();
   },
 
   /** Set the length of an existing junction transition, clamped against both
@@ -1314,6 +1392,7 @@ export const showTimeline = {
         presetClips: s.presetClips.map((c) => (c.id === clipId ? { ...c, transitionDuration: next } : c)),
       };
     });
+    recordShowEdit(`transition:${clipId}`);
   },
 
   setTransitionStyle(clipId: string, style: CompositionTransitionStyle) {
@@ -1321,6 +1400,7 @@ export const showTimeline = {
       ...s,
       presetClips: s.presetClips.map((c) => (c.id === clipId ? { ...c, transitionIn: style } : c)),
     }));
+    recordShowEdit();
   },
 
   /**
@@ -1342,6 +1422,7 @@ export const showTimeline = {
         .sort((a, b) => a.startTime - b.startTime);
       return withDuration({ ...s, presetClips, activeClipId: null, selection: null });
     });
+    recordShowEdit();
   },
 
   /** Re-flow every preset clip back-to-back from 0, keeping durations. */
@@ -1357,6 +1438,7 @@ export const showTimeline = {
         });
       return withDuration({ ...s, presetClips });
     });
+    recordShowEdit();
   },
 
   // ── Audio tracks ───────────────────────────────────────────────────────
@@ -1409,12 +1491,21 @@ export const showTimeline = {
     };
     store.update((s) => withDuration({ ...s, audioTracks: [...s.audioTracks, track], selection: { kind: 'audio', id } }));
     ensureTrackElement(track);
-    const playable = await this.analyzeAudioTrack(id);
+    // The step is recorded once the track has its real length, so undo and
+    // redo never bring back the placeholder.
+    tracksAwaitingFirstStep.add(id);
+    let playable = false;
+    try {
+      playable = await this.analyzeAudioTrack(id);
+    } finally {
+      tracksAwaitingFirstStep.delete(id);
+    }
     if (!playable && opts.removeIfUnplayable) {
-      this.removeAudioTrack(id);
+      removeAudioTrackNow(id);
       showToast(unplayableAudioMessage(track.name), 'error');
       return null;
     }
+    if (get(store).audioTracks.some((t) => t.id === id)) recordShowEdit();
     return id;
   },
 
@@ -1484,19 +1575,16 @@ export const showTimeline = {
       });
       return withDuration({ ...s, audioTracks });
     });
+    // Measuring a file is not an edit: the length belongs in the step that
+    // added the track (recorded by addAudioTrack once this is known) or, for
+    // a track that arrived with the project, in the step it is already in.
+    if (!tracksAwaitingFirstStep.has(trackId) && !isRestoringHistory()) amendLastHistoryStep();
   },
 
   removeAudioTrack(trackId: string) {
-    const track = get(store).audioTracks.find((t) => t.id === trackId);
-    releaseTrackElement(trackId);
-    if (track?.url) forgetShowAudioDecode(track.url);
-    store.update((s) =>
-      withDuration({
-        ...s,
-        audioTracks: s.audioTracks.filter((t) => t.id !== trackId),
-        selection: s.selection?.id === trackId ? null : s.selection,
-      }),
-    );
+    if (!get(store).audioTracks.some((t) => t.id === trackId)) return;
+    removeAudioTrackNow(trackId);
+    recordShowEdit();
   },
 
   moveAudioTrack(trackId: string, startTime: number, lane?: number) {
@@ -1519,6 +1607,7 @@ export const showTimeline = {
         ),
       });
     });
+    recordShowEdit(`audio-move:${trackId}`);
   },
 
   /**
@@ -1569,6 +1658,7 @@ export const showTimeline = {
         audioTracks: s.audioTracks.map((t) => (t.id === trackId ? { ...t, startTime, duration, offset } : t)),
       });
     });
+    recordShowEdit(`audio-resize:${trackId}`);
   },
 
   setAudioTrackVolume(trackId: string, volume: number) {
@@ -1578,6 +1668,7 @@ export const showTimeline = {
       audioTracks: s.audioTracks.map((t) => (t.id === trackId ? { ...t, volume: v } : t)),
     }));
     clipAudioBus.setClipVolume(busIdFor(trackId), v);
+    recordShowEdit(`volume:${trackId}`);
   },
 
   setAudioTrackMuted(trackId: string, muted: boolean) {
@@ -1586,6 +1677,7 @@ export const showTimeline = {
       audioTracks: s.audioTracks.map((t) => (t.id === trackId ? { ...t, muted } : t)),
     }));
     clipAudioBus.setClipMuted(busIdFor(trackId), muted);
+    recordShowEdit();
   },
 
   renameAudioTrack(trackId: string, name: string) {
@@ -1593,6 +1685,7 @@ export const showTimeline = {
       ...s,
       audioTracks: s.audioTracks.map((t) => (t.id === trackId ? { ...t, name } : t)),
     }));
+    recordShowEdit();
   },
 
   // ── Whole-show ─────────────────────────────────────────────────────────
@@ -1609,6 +1702,7 @@ export const showTimeline = {
       snapEnabled: s.snapEnabled,
       endAction: s.endAction,
     }));
+    recordShowEdit();
   },
 
   /** Total programmed length, seconds. The render modal seeds from this. */
@@ -1619,6 +1713,76 @@ export const showTimeline = {
   hasContent(): boolean {
     const s = get(store);
     return s.presetClips.length > 0 || s.audioTracks.length > 0;
+  },
+
+  /** See `presetLocalTimeAt`. */
+  presetLocalTime(seconds: number): number {
+    return presetLocalTimeAt(get(store).presetClips, seconds);
+  },
+
+  /**
+   * The time an offline render should drive the keyframe tray with for show
+   * time `seconds`: preset-local when the show lays out presets (each
+   * preset's keyframes restart on its boundary, as they do live), show time
+   * otherwise.
+   */
+  keyframeTimeFor(seconds: number): number {
+    const clips = get(store).presetClips;
+    return clips.length ? presetLocalTimeAt(clips, seconds) : seconds;
+  },
+
+  // ── Undo ───────────────────────────────────────────────────────────────
+
+  /**
+   * The arrangement as one undo step holds it: everything the user edits,
+   * nothing about where the playhead is or how the panel is being viewed.
+   * Runtime URLs stay in (the step lives in this session only).
+   */
+  exportArrangement(): ShowArrangement {
+    const s = get(store);
+    return {
+      audioTracks: s.audioTracks.map((t) => ({ ...t })),
+      presetClips: s.presetClips.map((c) => ({ ...c })),
+      loop: s.loop,
+      endAction: s.endAction,
+    };
+  },
+
+  /**
+   * Put an arrangement from an undo step back. The transport keeps going
+   * from where it is, and the show is re-evaluated there, so a preset clip
+   * that undo moved under the playhead takes over at once.
+   */
+  restoreArrangement(raw: unknown): void {
+    if (!raw || typeof raw !== 'object') return;
+    const a = raw as Partial<ShowArrangement>;
+    const audioTracks = (Array.isArray(a.audioTracks) ? a.audioTracks : [])
+      .map((t, i) => normalizeTrack(t, i))
+      .filter((t): t is ShowAudioTrack => t !== null);
+    const presetClips = (Array.isArray(a.presetClips) ? a.presetClips : [])
+      .map((c) => normalizeClip(c))
+      .filter((c): c is ShowPresetClip => c !== null)
+      .sort((x, y) => x.startTime - y.startTime);
+    store.update((s) => {
+      const ids = new Set([...audioTracks.map((t) => t.id), ...presetClips.map((c) => c.id)]);
+      return withDuration({
+        ...s,
+        audioTracks,
+        presetClips,
+        loop: a.loop === true,
+        endAction: normalizeShowEndAction(a.endAction),
+        selection: s.selection && ids.has(s.selection.id) ? s.selection : null,
+      });
+    });
+    syncAudioWiring(audioTracks);
+    const s = get(store);
+    if (s.duration <= 0) {
+      if (s.isPlaying) this.pause();
+      store.update((x) => ({ ...x, currentTime: 0, activeClipId: null }));
+      publishTransition(null);
+      return;
+    }
+    applyTime(s.currentTime, true);
   },
 
   // ── Persistence ────────────────────────────────────────────────────────
@@ -1721,6 +1885,19 @@ export const showTimeline = {
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
+
+function removeAudioTrackNow(trackId: string): void {
+  const track = get(store).audioTracks.find((t) => t.id === trackId);
+  releaseTrackElement(trackId);
+  if (track?.url) forgetShowAudioDecode(track.url);
+  store.update((s) =>
+    withDuration({
+      ...s,
+      audioTracks: s.audioTracks.filter((t) => t.id !== trackId),
+      selection: s.selection?.id === trackId ? null : s.selection,
+    }),
+  );
+}
 
 function laneEdges(items: Placeable[]): number[] {
   const edges: number[] = [];

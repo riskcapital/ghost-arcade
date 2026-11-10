@@ -1,4 +1,4 @@
-import {applyInteractiveOverrides} from '../mobile/studio/interactiveEffects';
+import { applyParamOverrides, type ParamOverrideSet } from '../keyframes/applyParamOverrides';
 import type {InteractiveGraphBuildResult} from '../renderer/nativeInteractiveGraph';
 import {showToast} from '../stores/errorToast';
 import { projectorCalibrationUniforms } from '../output/projectorCalibration';
@@ -9493,27 +9493,6 @@ export class NativeRendererSync {
    *  rows here: the native core re-renders content every frame regardless
    *  of opacity, so the WebGL-side `_seqGate` distinction (kept to avoid
    *  shader-state resets) has no native equivalent to preserve. */
-  /** Shallow-clone `root` and any intermediate dot-path segments, then set
-   *  the leaf value. Never mutates the original object graph — `root` (and
-   *  any nested object along `dotPath`) may still be referenced by the
-   *  persistent layer store, and `applyTimelineOverrides` only shallow-copies
-   *  the top-level layer, not its `splatContent`/`model3dContent`. */
-  private setDotPathClone(root: Record<string, any>, dotPath: string, value: unknown): Record<string, any> {
-    const parts = dotPath.split('.');
-    const last = parts.pop()!;
-    const clone: Record<string, any> = { ...root };
-    let cursor = clone;
-    let source = root;
-    for (const part of parts) {
-      const childClone = { ...(source?.[part] ?? {}) };
-      cursor[part] = childClone;
-      cursor = childClone;
-      source = source?.[part];
-    }
-    cursor[last] = value;
-    return clone;
-  }
-
   private applyTimelineOverrides(layers: Layer[]): Layer[] {
     const kfState = get(keyframeTimeline);
     // Overrides apply in three situations, all of which recompute
@@ -9551,50 +9530,7 @@ export class NativeRendererSync {
       if (seqMult !== undefined && seqMult < 1) {
         next.opacity = (next.opacity ?? 1) * seqMult;
       }
-      if (kf) {
-        if(next.source?.effectSource?.interactiveScene)next.source={...next.source,effectSource:{...next.source.effectSource,interactiveScene:applyInteractiveOverrides(next.source.effectSource.interactiveScene,kf)}};
-        let shaderValues: Record<string, any> | null = null;
-        let effects: any[] | null = null;
-        for (const [key, value] of Object.entries(kf)) {
-          if (key === 'layer:opacity') {
-            next.opacity = value as number;
-          } else if (key.startsWith('shader:') && next.source?.shaderValues) {
-            if (shaderValues === null) {
-              shaderValues = { ...next.source.shaderValues };
-              next.source = { ...next.source, shaderValues };
-            }
-            shaderValues![key.slice(7)] = value;
-          } else if (key.startsWith('fx:') && next.effects?.length) {
-            const [, fxId, prop] = key.split(':');
-            if (effects === null) {
-              effects = next.effects.map((e: any) => ({ ...e, params: { ...e.params } }));
-              next.effects = effects;
-            }
-            const effect = effects!.find((e: any) => e.id === fxId);
-            if (effect) {
-              if (prop === 'enabled') effect.enabled = !!value;
-              else effect.params[prop] = value;
-            }
-          } else if (key.startsWith('edge:') && next.edgeEffects?.effects?.length) {
-            // edge:<effectId>:<path>, path either top level (enabled,
-            // opacity) or one level deep (stroke.width, fill.speed).
-            const [, edgeId, path] = key.split(':');
-            const edgeIndex = next.edgeEffects.effects.findIndex((e: any) => e.id === edgeId);
-            if (edgeIndex >= 0 && path) {
-              const effects = [...next.edgeEffects.effects];
-              const edited = path === 'enabled'
-                ? { ...effects[edgeIndex], enabled: !!value }
-                : this.setDotPathClone(effects[edgeIndex], path, value);
-              effects[edgeIndex] = edited as any;
-              next.edgeEffects = { ...next.edgeEffects, effects };
-            }
-          } else if (key.startsWith('splat:') && next.splatContent) {
-            next.splatContent = this.setDotPathClone(next.splatContent, key.slice('splat:'.length), value);
-          } else if (key.startsWith('model3d:') && next.model3dContent) {
-            next.model3dContent = this.setDotPathClone(next.model3dContent, key.slice('model3d:'.length), value);
-          }
-        }
-      }
+      if (kf) applyParamOverrides(next as Layer, kf as ParamOverrideSet);
       return next as Layer;
     });
     return changed ? mapped : layers;

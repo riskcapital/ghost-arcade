@@ -5401,6 +5401,32 @@ export interface ShowPresetClip extends TimelineClip {
   label?: string;
 }
 
+/**
+ * One stretch of constant tempo on the show's beat grid, starting at `bar`
+ * (1 = the bar that starts at the map's offset). BPM counts quarter notes,
+ * as Live, Link and MIDI clock do, whatever the time signature.
+ */
+export interface ShowTempoSegment {
+  bar: number;
+  bpm: number;
+  beatsPerBar: number;
+  beatUnit: 2 | 4 | 8 | 16;
+}
+
+/** The show's beat grid. `offset` is the show time, seconds, of bar 1 beat 1. */
+export interface ShowTempoMap {
+  offset: number;
+  segments: ShowTempoSegment[];
+  source: 'manual' | 'analysis';
+  /** The audio track the grid was detected from, when it was. */
+  analysedTrackId?: string;
+}
+
+/** What the show's edits snap to. Beat-relative steps follow the time
+ *  signature's beat: 'half' and 'quarter' split that beat, 'sixteenth' is a
+ *  sixteenth note. 'seconds' is the plain 0.25 s grid used without a map. */
+export type ShowSnapGrid = 'off' | 'bar' | 'beat' | 'half' | 'quarter' | 'sixteenth' | 'seconds';
+
 // ═══════════════════════════════════════════════════
 // Layer Sequencer Types
 // ═══════════════════════════════════════════════════

@@ -405,13 +405,18 @@ function createReelRenderStore() {
           engine.manualTime = virtualTime;
           setISFManualTime(virtualTime);
           setStageEffectsManualTime(virtualTime);
-          keyframeTimeline.seek(virtualTime);
           layerSequencer.seek(virtualTime);
           vjLayerSequencer.seek(virtualTime);
           // Show timeline drives the LED content's preset arrangement too,
           // so a Demo Reel of a programmed show cuts presets where the show
           // does. No-op when the timeline is empty.
           showTimeline.seek(virtualTime);
+          // The keyframe tray runs on preset time, not show time: live, each
+          // preset's keyframes restart at 0 on its boundary. The preset swap above
+          // imports the incoming keyframes a microtask later, so let that land
+          // first, then evaluate them at the same instant live playback would.
+          await Promise.resolve();
+          keyframeTimeline.seek(showTimeline.keyframeTimeFor(virtualTime));
 
           // Shot clock — camera every frame, stage snapshot on entry.
           let frame: CapturedFrame | null = null;

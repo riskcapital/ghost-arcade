@@ -39,6 +39,7 @@ import {
   resolveTransitionStyle,
   showTransitionWindow,
   defaultClipTransition,
+  presetLocalTimeAt,
   SHOW_SNAP_SECONDS,
 } from './showTimeline';
 import type { ActiveCompositionTransition } from '../renderer/compositionTransitionLayers';
@@ -171,6 +172,51 @@ describe('snapShowTime', () => {
 
   it('never returns a negative time', () => {
     expect(snapShowTime(-5, [], { enabled: true, tolerance: SHOW_SNAP_SECONDS })).toBe(0);
+  });
+
+  it('snaps to a musical grid when one is supplied, instead of the seconds grid', () => {
+    // A grid with a line every third of a second.
+    const thirds = (t: number) => Math.round(t * 3) / 3;
+    expect(snapShowTime(10.3, [], { enabled: true, tolerance: 0.1, nearestGrid: thirds })).toBeCloseTo(10.333333, 5);
+    // The 0.25 s grid no longer applies: 10.26 is 0.01 from 10.25 but 0.07 from 10.333.
+    expect(snapShowTime(10.26, [], { enabled: true, tolerance: 0.1, nearestGrid: thirds })).toBeCloseTo(10.333333, 5);
+    // Edges still win when nearer.
+    expect(snapShowTime(10.3, [10.31], { enabled: true, tolerance: 0.1, nearestGrid: thirds })).toBeCloseTo(10.31, 6);
+  });
+});
+
+describe('presetLocalTimeAt', () => {
+  const clip = (id: string, startTime: number, duration: number) =>
+    ({ id, compositionId: id, startTime, duration }) as ShowPresetClip;
+  const clips = [clip('a', 0, 10), clip('b', 10, 5), clip('c', 20, 10)];
+
+  it('is time since the live preset clip started', () => {
+    expect(presetLocalTimeAt(clips, 3)).toBe(3);
+    // Half-open: at the boundary the incoming clip is live and starts at 0.
+    expect(presetLocalTimeAt(clips, 10)).toBe(0);
+    expect(presetLocalTimeAt(clips, 12.5)).toBe(2.5);
+    expect(presetLocalTimeAt(clips, 25)).toBe(5);
+  });
+
+  it('keeps counting through a gap, where the last look is held', () => {
+    expect(presetLocalTimeAt(clips, 17)).toBe(7);
+  });
+
+  it('is show time before the first clip and with no clips', () => {
+    expect(presetLocalTimeAt([clip('late', 5, 5)], 2)).toBe(2);
+    expect(presetLocalTimeAt([], 42)).toBe(42);
+  });
+
+  it('is what the store reports for the keyframe clock', () => {
+    showTimeline._resetForTest();
+    expect(showTimeline.keyframeTimeFor(7)).toBe(7);
+    showTimeline.setPresetClips([
+      { compositionId: 'a', startTime: 0, duration: 4 },
+      { compositionId: 'b', startTime: 4, duration: 4 },
+    ]);
+    expect(showTimeline.keyframeTimeFor(5.5)).toBe(1.5);
+    expect(showTimeline.presetLocalTime(3)).toBe(3);
+    showTimeline._resetForTest();
   });
 });
 

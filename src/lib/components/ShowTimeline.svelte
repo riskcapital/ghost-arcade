@@ -55,6 +55,8 @@
   import { audioOutput, selectAudioOutput, startAudioOutputSelection } from '../audio/audioOutputDevice';
   import { isShowAudioFile } from '../audio/showAudioImport';
   import { offerShowFromAudio, pickSongForShow } from '../show/showFromAudio';
+  import { classifyShowKey, setShowKeyHandler } from '../show/showKeyboard';
+  import { showDropEffect } from '../show/showDrop';
 
   // ── End of show + output device ─────────────────────────────────────────
   // The transport lives in the store and keeps running with this panel
@@ -447,7 +449,9 @@
       return;
     }
     dragHover = true;
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    // The media tray drags with effectAllowed 'move' in mapping mode; a
+    // dropEffect it does not allow makes the browser refuse the drop.
+    if (e.dataTransfer) e.dataTransfer.dropEffect = showDropEffect(e.dataTransfer.effectAllowed);
   }
 
   async function handleDrop(e: DragEvent) {
@@ -712,21 +716,27 @@
   //
   // SPACE IS NOT HERE. Transport play/pause lives in App.svelte's global
   // keydown handler next to every other app-wide shortcut, gated on
-  // `showTransportOwnsSpace()`. It used to be handled here too, which meant
-  // that with the pointer over the tray BOTH handlers fired and the show
-  // played and paused in the same event — Space appeared to do nothing.
-  // Delete/Backspace stays local because it acts on this panel's selection.
+  // `showTransportOwnsSpace()`.
+  //
+  // The keys this panel does own are not a window listener of their own
+  // either: App.svelte asks `handleShowKeydown` (show/showKeyboard.ts)
+  // before its Copy / Paste / Delete shortcuts, and stops when the show
+  // takes the key. With two independent listeners, Delete on a show clip
+  // also deleted the selected mapping layer.
   let pointerInTray = false;
-  function handleKeydown(e: KeyboardEvent) {
-    if (!isOpen || hiddenInVJ || !pointerInTray) return;
-    const target = e.target as HTMLElement | null;
-    const tag = target?.tagName;
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) return;
-    if ((e.key === 'Delete' || e.key === 'Backspace') && (state.selection || selectedMarker)) {
-      e.preventDefault();
+  function handleShowKey(e: KeyboardEvent): boolean {
+    const action = classifyShowKey(e, {
+      open: isOpen && !hiddenInVJ,
+      engaged: pointerInTray,
+      hasSelection: !!(state.selection || selectedMarker),
+    });
+    if (action === 'delete') {
       deleteSelected();
+      return true;
     }
+    return false;
   }
+  onMount(() => setShowKeyHandler(handleShowKey));
 
   function handleWheel(e: WheelEvent) {
     if (!(e.ctrlKey || e.metaKey)) return;
@@ -741,7 +751,7 @@
   }
 </script>
 
-<svelte:window onkeydown={handleKeydown} bind:innerHeight={viewportH} />
+<svelte:window bind:innerHeight={viewportH} />
 
 {#if !hiddenInVJ}
   <button data-help-page="show-timeline"
