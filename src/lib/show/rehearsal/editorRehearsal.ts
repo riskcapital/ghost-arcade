@@ -149,6 +149,7 @@ export function installEditorRehearsal(): () => void {
     sessions.delete(msg.id);
     if (!session) return { ok: false, mode: 'none', error: 'No audio was captured for this recording.' };
     const plan = rehearsalAudioPlan(session.samples, msg.startedAt, msg.durationSeconds, msg.latencySeconds);
+    if (plan.kind === 'discontinuous') console.info(`[Rehearsal] live sound capture: ${plan.reason}`);
     const s = get(showTimeline);
     if (plan.kind === 'exact') {
       const tracks = planMuxTracks(showMuxTracks(s.audioTracks), plan);
@@ -213,7 +214,10 @@ export function installEditorRehearsal(): () => void {
         break;
       }
       case 'rec-audio-finish':
-        void finishRecording(msg).then((result) => post({ type: 'rec-audio-result', id: msg.id, result }));
+        void finishRecording(msg).then((result) => {
+          console.info(`[Rehearsal] stage recording sound: ${result.mode}${result.error ? ` (${result.error})` : ''}`);
+          post({ type: 'rec-audio-result', id: msg.id, result });
+        });
         break;
     }
   };

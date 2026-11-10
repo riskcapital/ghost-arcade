@@ -51,6 +51,9 @@ export interface NativeLiveFrameRecorderOptions {
    *  in the media library — the hook the audio-sidecar mux uses so the
    *  library entry already carries its audio track. */
   finalizeOutput?: (outputPath: string, result?: { nativeAudio: boolean }) => Promise<void> | void;
+  /** Frame 0 of the file stands for this wall-clock instant (epoch ms,
+   *  `performance.timeOrigin + performance.now()`); frames are paced from it. */
+  onStart?: (startedAtEpochMs: number) => void;
 }
 
 export interface NativeRendererLiveFrameRecorderOptions {
@@ -232,6 +235,7 @@ export async function startNativeLiveFrameRecording(
   let writesInFlight = 0;
   let writeError: unknown = null;
   const startedAt = performance.now();
+  options.onStart?.(performance.timeOrigin + startedAt);
   const frameMs = 1000 / fps;
   let nextFrameAt = startedAt;
 

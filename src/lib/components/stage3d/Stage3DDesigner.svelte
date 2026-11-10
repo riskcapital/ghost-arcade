@@ -43,6 +43,8 @@
   import StageLightingPanel from './StageLightingPanel.svelte';
   import DemoReelPanel from './DemoReelPanel.svelte';
   import StageShowTransport from './StageShowTransport.svelte';
+  import { epochNow, type RecAudioResult } from '../../show/rehearsal/rehearsalBridge';
+  import { startStageRecAudio, stageRecordingMaxDim, type StageRecAudio } from '../../show/rehearsal/stageRehearsal';
 
   /** When false, this component renders only the floating UI overlay;
    *  the viewport comes from Canvas.svelte's stage3DOutput mode. */
@@ -69,6 +71,18 @@
     '4k':   { w: 3840, h: 2160, label: '4K' },
   } as const;
   let recRes: keyof typeof REC_RES = '1080';
+  /** The editor's show sound for the recording in progress (null: no show). */
+  let recAudio: StageRecAudio | null = null;
+  let recStoppedAt = 0;
+
+  function toastRecordingSaved(result: RecAudioResult | null, savedPath?: string | null): void {
+    const sound = !!result && result.mode !== 'none';
+    if (result && !result.ok && result.error) console.warn('[Stage3D] recording sound:', result.error);
+    if (savedPath && sound) toast("Stage recording saved with the show's sound");
+    else if (savedPath) toast('Stage recording saved');
+    else if (sound) toast("Stage recording saved to the media library with the show's sound");
+    else toast('Stage recording saved to the media library');
+  }
   let nativeScenePublishTimer: ReturnType<typeof setTimeout> | null = null;
   let nativeScenePublishWarnings = 0;
   let screenLayers: Layer[] = [];
@@ -371,9 +385,19 @@
       // with grey venue shapes on it, the file recorded that flat overlay,
       // and the projector output was resized to the recording size.
       recordingDuration = 0;
+      // The show plays in the editor: it puts its sound into this file.
+      recStoppedAt = 0;
+      recAudio = startStageRecAudio();
+      let recAudioResult: RecAudioResult | null = null;
+      stageRecordingMaxDim.set(res.w >= 3840 ? 2048 : 1920);
       try {
         recorderHandle = await startNativeLiveFrameRecording({
-          captureFrame: (width, height) => controls.captureFrameAt(width, height),
+          captureFrame: async (width, height) => {
+            const dueAt = epochNow();
+            const frame = await controls.captureFrameAt(width, height);
+            recAudio?.noteFrame(dueAt);
+            return frame;
+          },
           width: res.w,
           height: res.h,
           fps: 30,
@@ -383,15 +407,24 @@
           // setting (on by default) asks where to save when it stops.
           promptSave: !!get(settings).recording?.autoDownload,
           onDurationUpdate: (s) => { recordingDuration = s; },
+          onStart: (at) => recAudio?.begin(at),
+          finalizeOutput: async (outputPath) => {
+            const audio = recAudio;
+            recAudio = null;
+            if (audio) recAudioResult = await audio.finish(outputPath, recStoppedAt || epochNow());
+          },
           onComplete: (savedPath) => {
             isRecording = false;
             recorderHandle = null;
-            if (savedPath) toast('Stage recording saved');
-            else toast('Stage recording saved to the media library');
+            stageRecordingMaxDim.set(null);
+            toastRecordingSaved(recAudioResult, savedPath);
           },
           onError: (err) => {
             isRecording = false;
             recorderHandle = null;
+            stageRecordingMaxDim.set(null);
+            recAudio?.cancel();
+            recAudio = null;
             toast(err.message || 'Recording failed');
           },
         });
@@ -403,6 +436,9 @@
       } catch (err) {
         console.warn('[Stage3D] Native recording unavailable, falling back to MediaRecorder:', err);
       }
+      recAudio?.cancel();
+      recAudio = null;
+      stageRecordingMaxDim.set(null);
     }
 
     // Render into a fixed 16:9 offscreen canvas (decoupled from the
@@ -438,6 +474,7 @@
 
   function stopStageRecording() {
     if (!recorderHandle) return;
+    recStoppedAt = epochNow();
     toast('Finishing stage recording…');
     recorderHandle.stop();
     recorderHandle = null;
@@ -640,6 +677,7 @@
     if (isDesktopApp) {
       void setNativeRendererStage3DScene(null).catch(() => { /* core without stage3d */ });
     }
+    recStoppedAt = epochNow();
     recorderHandle?.stop();
     recorderHandle = null;
   });
@@ -1004,7 +1042,6 @@
   .stage3d-root.external .lib,
   .stage3d-root.external .props,
   .stage3d-root.external .hud,
-  .stage3d-root.external .reel-host,
   .stage3d-root.external .toast { pointer-events: auto; }
   .reel-host { position: absolute; inset: 0; pointer-events: none; z-index: 25; }
   .reel-host :global(.reel-panel) { pointer-events: auto; }

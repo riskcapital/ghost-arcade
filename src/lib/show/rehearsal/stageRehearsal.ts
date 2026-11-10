@@ -181,6 +181,9 @@ export function pauseCameraFollow(): void {
 export interface StageRecAudio {
   /** Frame 0 of the recording is at `startedAt` (epoch ms). */
   begin(startedAt: number): void;
+  /** A frame due at `dueAt` (epoch ms) was just captured: how old the
+   *  stage picture in it was sets where the sound goes. */
+  noteFrame(dueAt: number): void;
   /** Put the show's sound into the finished file. */
   finish(videoPath: string, stoppedAt?: number): Promise<RecAudioResult>;
   cancel(): void;
@@ -197,9 +200,16 @@ export function startStageRecAudio(): StageRecAudio | null {
   post({ type: 'rec-audio-start', id, at: epochNow() });
   let startedAt = epochNow();
   let done = false;
+  const lags: number[] = [];
   return {
     begin(at) {
       startedAt = at;
+    },
+    noteFrame(dueAt) {
+      const info = compositeMirrorFrameInfo();
+      if (!info) return;
+      const lag = (dueAt - info.requestedAt) / 1000;
+      if (lag > -0.1 && lag < 1) lags.push(lag);
     },
     finish(videoPath, stoppedAt = epochNow()) {
       if (done) return Promise.resolve({ ok: false, mode: 'none' as const, error: 'finished' });
@@ -219,7 +229,9 @@ export function startStageRecAudio(): StageRecAudio | null {
           videoPath,
           startedAt,
           durationSeconds: Math.max(0.1, (stoppedAt - startedAt) / 1000),
-          latencySeconds: stageViewLatencySeconds(),
+          latencySeconds: lags.length >= 5
+            ? STAGE_CORE_LEAD_SECONDS + [...lags].sort((a, b) => a - b)[Math.floor(lags.length / 2)]
+            : stageViewLatencySeconds(),
         });
       });
     },
@@ -274,6 +286,7 @@ export function installStageRehearsal(): () => void {
       mirrorCanvas: compositeMirrorCanvas,
       controls: () => get(stage3DRendererControls),
       render: () => get(stageRehearsalRender),
+      laneCamera: () => stageLaneCameraAt(),
     };
   } catch {
     /* sealed window */
@@ -297,5 +310,51 @@ export function installStageRehearsal(): () => void {
     channel.close();
     channel = null;
     stageShow.set(null);
+  };
+}
+
+// ── Render rehearsal ───────────────────────────────────────────────────
+
+/** What the Demo Reel's "Render rehearsal" needs from the show; null without a show. */
+export function createStageRehearsalRender(): {
+  durationSeconds: number;
+  begin(): Promise<void>;
+  cameraAt(epochMs: number): ReturnType<typeof stageLaneCameraAt>;
+  noteFrame(dueAtEpochMs: number): void;
+  addSound(outputPath: string, startedAtEpochMs: number, durationSeconds: number): Promise<RecAudioResult>;
+  end(): void;
+} | null {
+  const show = get(stageShow);
+  if (!show?.hasShow || show.duration <= 0) return null;
+  const audio = startStageRecAudio();
+  const durationSeconds = show.duration;
+  let ended = false;
+  return {
+    durationSeconds,
+    async begin() {
+      const before = get(stageShow)?.seekGeneration ?? -1;
+      sendRehearsalCommand({ op: 'playFrom', seconds: 0 });
+      // Wait for the editor to say it is playing from the top.
+      const deadline = epochNow() + 4000;
+      while (epochNow() < deadline) {
+        const s = get(stageShow);
+        if (s?.isPlaying && s.seekGeneration !== before && s.currentTime < 1) return;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      throw new Error('The show did not start playing in the editor.');
+    },
+    cameraAt: (epochMs) => stageLaneCameraAt(epochMs),
+    noteFrame: (dueAt) => audio?.noteFrame(dueAt),
+    async addSound(outputPath, startedAtEpochMs, seconds) {
+      if (!audio) return { ok: false, mode: 'none', error: 'No editor is listening.' };
+      audio.begin(startedAtEpochMs);
+      return audio.finish(outputPath, startedAtEpochMs + seconds * 1000);
+    },
+    end() {
+      if (ended) return;
+      ended = true;
+      audio?.cancel();
+      if (get(stageShow)?.isPlaying) sendRehearsalCommand({ op: 'pause' });
+    },
   };
 }

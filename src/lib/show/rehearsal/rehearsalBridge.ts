@@ -262,6 +262,8 @@ export type RecAudioPlan =
 
 /** Show time running ahead of the wall clock by more than this inside one play is a jump. */
 const CONTINUITY_TOLERANCE = 0.12;
+/** A show time read this far behind the clock is a jump back, not a late read. */
+const STALE_TOLERANCE = 0.5;
 
 /**
  * Can the recording get the show's soundtrack straight from its files?
@@ -309,11 +311,13 @@ export function rehearsalAudioPlan(
   if (overlapping.length === 0) return { kind: 'silent' };
   if (overlapping.length > 1) return { kind: 'discontinuous', reason: 'the show was paused and played again, or jumped' };
   const span = overlapping[0];
-  // Show time minus wall time is constant while the show plays.
+  // Show time minus wall time is constant while the show plays. A sample
+  // taken between transport ticks reads a slightly stale show time (lower),
+  // so the reference is taken from the freshest samples.
   const offsets = span.map((s) => s.showTime - s.at / 1000).sort((a, b) => a - b);
-  const offset = offsets[Math.floor(offsets.length / 2)];
-  for (const o of offsets) {
-    if (Math.abs(o - offset) > CONTINUITY_TOLERANCE) return { kind: 'discontinuous', reason: 'the show jumped while it played' };
+  const offset = offsets[Math.min(offsets.length - 1, Math.floor(offsets.length * 0.9))];
+  if (offsets[offsets.length - 1] - offset > CONTINUITY_TOLERANCE || offset - offsets[0] > STALE_TOLERANCE) {
+    return { kind: 'discontinuous', reason: 'the show jumped while it played' };
   }
   const playFrom = span[0].showTime;
   const playStartAt = (playFrom - offset) * 1000;

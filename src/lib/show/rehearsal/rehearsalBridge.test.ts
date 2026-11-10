@@ -182,6 +182,14 @@ describe('recording soundtrack plan', () => {
     expect(rehearsalAudioPlan(jump, 0, 2).kind).toBe('discontinuous');
   });
 
+  it('a show time read late (between ticks, a busy editor) is not a jump', () => {
+    const samples = play(0, 0, 3, 1);
+    samples[60] = { ...samples[60], showTime: samples[60].showTime - 0.2 };
+    const plan = rehearsalAudioPlan(samples, 500, 2);
+    expect(plan.kind).toBe('exact');
+    if (plan.kind === 'exact') expect(plan.showFrom).toBeCloseTo(0.5, 2);
+  });
+
   it('a show that never played during the recording is silent', () => {
     expect(rehearsalAudioPlan([{ at: 0, showTime: 2, playing: false, seekGeneration: 1 }], 0, 5).kind).toBe('silent');
     // Played and stopped before the recording started.

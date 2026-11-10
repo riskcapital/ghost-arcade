@@ -255,7 +255,8 @@ interface DemoReelState {
   settings: DemoReelSettings;
 }
 
-const STORAGE_KEY = 'ghost-arcade-demo-reel-v1';
+export const DEMO_REEL_STORAGE_KEY = 'ghost-arcade-demo-reel-v1';
+const STORAGE_KEY = DEMO_REEL_STORAGE_KEY;
 
 function loadReel(): DemoReelState {
   try {
@@ -379,6 +380,11 @@ function createDemoReelStore() {
     clear() {
       update(s => ({ ...s, shots: [] }));
       persist();
+    },
+
+    /** Pick up shots another window (the Stage Sim) saved. */
+    syncFromStorage() {
+      set(loadReel());
     },
   };
 }

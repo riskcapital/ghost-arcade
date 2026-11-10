@@ -9,6 +9,7 @@
   import { layers as liveLayersStore } from '../../../stores/layers';
   import { addTrackForLayer, addTrackForNewLayer } from '../../../show/tracks/showTrackActions';
   import { focusedTrackId, portal } from './trackLayout';
+  import { cameraLaneShown } from './cameraLaneUi';
 
   interface Props {
     x: number;
@@ -75,6 +76,12 @@
       <input type="checkbox" bind:checked={addToPresets} data-new-layer-presets />
       <span>Add to the presets this show uses</span>
     </label>
+  {/if}
+  {#if $showTimeline.cameraLane.length === 0 && !$cameraLaneShown}
+    <div class="atm-sep"></div>
+    <button class="atm-item" onclick={() => { cameraLaneShown.set(true); onclose(); }} title="Shots from the Stage Sim's Demo reel that its camera follows while the show plays" data-add-camera-lane>
+      Stage camera lane
+    </button>
   {/if}
 </div>
 

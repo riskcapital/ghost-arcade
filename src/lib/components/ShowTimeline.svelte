@@ -65,6 +65,9 @@
   import ShowClipInspector from './show/timeline/ShowClipInspector.svelte';
   import ShowTrackInspector from './show/timeline/ShowTrackInspector.svelte';
   import ShowRuler from './show/timeline/ShowRuler.svelte';
+  import ShowCameraLane from './show/timeline/ShowCameraLane.svelte';
+  import ShowCameraLaneLabel from './show/timeline/ShowCameraLaneLabel.svelte';
+  import { CAMERA_LANE_HEIGHT, cameraLaneShown } from './show/timeline/cameraLaneUi';
   import { TRACK_HEADER_WIDTH, laneKeySelection, showSnapGuide, tracksStackHeight } from './show/timeline/trackLayout';
   import { carriesTrackMedia, dropTrackMedia } from './show/timeline/trackDrops';
   import {
@@ -271,7 +274,9 @@
   let inspectorH = 0;
 
   $: tracksH = tracksStackHeight(state.layerTracks);
-  $: laneStackH = RULER_HEIGHT + PRESET_LANE_HEIGHT + tracksH + audioLaneCount * AUDIO_LANE_HEIGHT;
+  // The Stage camera lane sits under the audio lanes once it has shots (or was asked for).
+  $: cameraLaneH = state.cameraLane.length > 0 || $cameraLaneShown ? CAMERA_LANE_HEIGHT : 0;
+  $: laneStackH = RULER_HEIGHT + PRESET_LANE_HEIGHT + tracksH + audioLaneCount * AUDIO_LANE_HEIGHT + cameraLaneH;
   $: hasTracks = state.layerTracks.length > 0;
   $: labelWidth = hasTracks ? TRACK_HEADER_WIDTH : 108;
   // The bound clientHeight keeps its last value after the inspector
@@ -1138,6 +1143,7 @@
               <span class="lane-name">Audio {lane + 1}</span>
             </div>
           {/each}
+          {#if cameraLaneH > 0}<ShowCameraLaneLabel />{/if}
         </div>
       </div>
 
@@ -1288,6 +1294,7 @@
               {/each}
             </div>
           {/each}
+          {#if cameraLaneH > 0}<ShowCameraLane {zoom} />{/if}
         </div>
 
         {#each cues.markers as marker (marker.id)}

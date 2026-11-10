@@ -22,7 +22,8 @@ export function fixtureDir() {
 /** Path to a fixture clip, generating it the first time. Names:
  *  `<colour>.mp4`, `<colour>.mov` (HAP), `bars.mp4` (moving test bars),
  *  `ramp.mp4` (10 s grey ramp, brightness = time / 10), `framecode.mp4`
- *  (10 s, the frame number in binary bars). */
+ *  (10 s, the frame number in binary bars), `flash.mp4` + `click.wav`
+ *  (a white flash and a click at every whole second, for sync checks). */
 export function fixture(name) {
   // An absolute path is a clip of the user's own (real-world decks).
   if (path.isAbsolute(name)) return name;
@@ -46,6 +47,20 @@ export function fixture(name) {
     execFileSync(process.env.GA_FFMPEG_PATH || require('ffmpeg-static'), ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=black:size=288x64:rate=30',
       '-vf', "geq=lum='if(mod(floor(N/pow(2,floor(X/32))),2),235,16)':cb=128:cr=128", '-t', '10',
       '-c:v', 'libx264', '-qp', '0', '-pix_fmt', 'yuv420p', '-g', '15', '-an', file]);
+    return file;
+  }
+  if (base === 'flash') {
+    // 10 s at 30 fps: black, white for the first two frames of every second.
+    // With click.wav on the same start, picture and sound line up exactly.
+    execFileSync(ffmpeg, ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=black:size=320x180:rate=30',
+      '-vf', "geq=lum='if(lt(mod(N,30),2),235,16)':cb=128:cr=128", '-t', '10',
+      '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-g', '15', '-an', file]);
+    return file;
+  }
+  if (base === 'click') {
+    // 10 s, 48 kHz: a 10 ms 1 kHz click at the start of every second.
+    execFileSync(ffmpeg, ['-y', '-loglevel', 'error', '-f', 'lavfi',
+      '-i', "aevalsrc='if(lt(mod(t,1),0.01),0.8*sin(2*PI*1000*t),0)':s=48000:d=10", '-ac', '2', file]);
     return file;
   }
   if (base === 'bars') input = ['-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30'];

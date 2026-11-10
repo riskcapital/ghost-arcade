@@ -65,8 +65,29 @@ import { isElectron } from '../bridge';
 import { stage3DRendererControls, stage3dScene } from '../stage3d/store';
 import {
   evaluateShotCamera, sequenceDuration, shotAtTime,
-  type DemoShot, type DemoReelSettings,
+  type DemoShot, type DemoReelSettings, type ReelCameraState,
 } from '../stage3d/demoReel';
+import { borrowStageCamera } from '../show/rehearsal/stageRehearsal';
+import type { RecAudioMode, RecAudioResult } from '../show/rehearsal/rehearsalBridge';
+
+/**
+ * "Render rehearsal": the reel filmed while the editor PLAYS the show from
+ * its start, at the show's length, with the camera on the show's Stage
+ * camera lane and the show's soundtrack added afterwards.
+ */
+export interface ReelRehearsal {
+  durationSeconds: number;
+  /** Start the show from the top; resolves once it is playing. */
+  begin(): Promise<void>;
+  /** The camera lane's camera at this instant (epoch ms), or null between shots. */
+  cameraAt(epochMs: number): ReelCameraState | null;
+  /** The frame due at this instant (epoch ms) was just captured. */
+  noteFrame(dueAtEpochMs: number): void;
+  /** Add the show's soundtrack to the finished file. */
+  addSound(outputPath: string, startedAtEpochMs: number, durationSeconds: number): Promise<RecAudioResult>;
+  /** Called once the render is over, whatever happened. */
+  end(): void;
+}
 
 export type ReelRenderStatus =
   | 'idle' | 'choosing-folder' | 'loading-ffmpeg' | 'rendering' | 'encoding' | 'saving'
@@ -86,6 +107,8 @@ export interface ReelRenderState {
   /** Where the Save dialog copied the reel; null when it was not shown or
    *  was cancelled (the reel is still in the media library). */
   lastSavedPath: string | null;
+  /** A rehearsal render: how the show's sound got into the file. */
+  lastAudioMode: RecAudioMode | null;
 }
 
 const INITIAL: ReelRenderState = {
@@ -100,6 +123,7 @@ const INITIAL: ReelRenderState = {
   lastOutputKind: null,
   lastOutputPath: null,
   lastSavedPath: null,
+  lastAudioMode: null,
 };
 
 function nextFrame(): Promise<void> {
@@ -241,7 +265,9 @@ function createReelRenderStore() {
     update(s => ({ ...s, status, errorMessage: msg ?? null }));
   }
 
-  async function start(shots: DemoShot[], settings: DemoReelSettings): Promise<boolean> {
+  async function start(shots: DemoShot[], requestedSettings: DemoReelSettings, rehearsal: ReelRehearsal | null = null): Promise<boolean> {
+    // A rehearsal is filmed live into an MP4: the show plays in the editor.
+    const settings: DemoReelSettings = rehearsal ? { ...requestedSettings, outputMode: 'mp4' } : requestedSettings;
     const rendererControls = get(stage3DRendererControls);
     const engineReg = offlineRender.getEngine();
     if (!rendererControls || !engineReg) {
@@ -249,12 +275,16 @@ function createReelRenderStore() {
       return false;
     }
     const controls = rendererControls;
-    if (shots.length === 0) {
+    if (rehearsal && !isElectron) {
+      setStatus('error', 'Render rehearsal needs the desktop app');
+      return false;
+    }
+    if (shots.length === 0 && !rehearsal) {
       setStatus('error', 'No shots in the sequence');
       return false;
     }
     const { engine, canvas } = engineReg;
-    const durationSeconds = sequenceDuration(shots);
+    const durationSeconds = rehearsal ? rehearsal.durationSeconds : sequenceDuration(shots);
     const totalFrames = Math.max(1, Math.round(durationSeconds * settings.fps));
     const outputMode = settings.outputMode ?? 'mp4';
     const useNativeMp4Encoder = outputMode === 'mp4' && isElectron;
@@ -299,6 +329,8 @@ function createReelRenderStore() {
     if (cancelRequested) { setStatus('cancelled'); return false; }
 
     setStatus('rendering');
+    // The show's camera lane must not drive the camera under the reel.
+    const returnCamera = borrowStageCamera();
     let lastShotIndex = -1;
     const spans = shotTimeline(shots);
     const segmentFrameCount = outputMode === 'frames' || useNativeMp4Encoder
@@ -336,6 +368,22 @@ function createReelRenderStore() {
       }
       await nextFrame();
 
+      // A rehearsal films whatever the show shows, dark moments included;
+      // only its first frame is checked for a view that is not drawing.
+      let checkedFirstFrame = false;
+      async function captureCurrentFrame(): Promise<CapturedFrame> {
+        let frame: CapturedFrame | null = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          if (attempt > 0) await nextFrame();
+          frame = await controls.captureFrameAt(settings.width, settings.height);
+          if (checkedFirstFrame || !frameLooksBlank(frame)) {
+            checkedFirstFrame = true;
+            return frame;
+          }
+        }
+        throw new Error(`Stage reel captured a black frame (${frame ? frameStats(frame) : 'no frame'}). Make sure the Stage 3D window is open and visible, then try again.`);
+      }
+
       async function captureShotFrame(index: number, shot: DemoShot, progress: number): Promise<CapturedFrame> {
         let shotChanged = false;
         if (index !== lastShotIndex) {
@@ -370,7 +418,12 @@ function createReelRenderStore() {
       // the reel was designed for. Elsewhere the content renders in this
       // window on the virtual clock and the reel renders offline.
       const livePaced = !!(nativeMp4FrameEncoder || nativeJpegSequence);
+      if (rehearsal) {
+        if (!livePaced) throw new Error('Render rehearsal needs the desktop MP4 encoder');
+        await rehearsal.begin();
+      }
       const paceStart = performance.now();
+      const paceStartEpoch = performance.timeOrigin + paceStart;
       let lastFrame: CapturedFrame | null = null;
       const writeNativeFrames = async (index: number, frame: CapturedFrame, count: number) => {
         if (nativeMp4FrameEncoder) {
@@ -407,23 +460,35 @@ function createReelRenderStore() {
           setStageEffectsManualTime(virtualTime);
           layerSequencer.seek(virtualTime);
           vjLayerSequencer.seek(virtualTime);
-          // Show timeline drives the LED content's preset arrangement too,
-          // so a Demo Reel of a programmed show cuts presets where the show
-          // does. No-op when the timeline is empty.
-          showTimeline.seek(virtualTime);
-          // The keyframe tray runs on preset time, not show time: live, each
-          // preset's keyframes restart at 0 on its boundary. The preset swap above
-          // imports the incoming keyframes a microtask later, so let that land
-          // first, then evaluate them at the same instant live playback would.
-          await Promise.resolve();
-          keyframeTimeline.seek(showTimeline.keyframeTimeFor(virtualTime));
+          if (!livePaced) {
+            // Show timeline drives the LED content's preset arrangement too,
+            // so a Demo Reel of a programmed show cuts presets where the show
+            // does. No-op when the timeline is empty.
+            //
+            // Not when filming live: the screens show the render core's
+            // picture, which the editor's own (playing) show drives. Seeking
+            // every frame hard-seeked its audio and video every frame.
+            showTimeline.seek(virtualTime);
+            // The keyframe tray runs on preset time, not show time: live, each
+            // preset's keyframes restart at 0 on its boundary. The preset swap above
+            // imports the incoming keyframes a microtask later, so let that land
+            // first, then evaluate them at the same instant live playback would.
+            await Promise.resolve();
+            keyframeTimeline.seek(showTimeline.keyframeTimeFor(virtualTime));
+          }
 
           // Shot clock — camera every frame, stage snapshot on entry.
           let frame: CapturedFrame | null = null;
-          const transition = (settings.transition ?? 'cut') === 'cross-dissolve'
+          const laneCamera = rehearsal ? rehearsal.cameraAt(performance.timeOrigin + performance.now()) : null;
+          const transition = !rehearsal && (settings.transition ?? 'cut') === 'cross-dissolve'
             ? transitionAtTime(spans, virtualTime, settings.transitionDurationSec ?? 0.75)
             : null;
-          if (transition) {
+          if (rehearsal && (laneCamera || shots.length === 0)) {
+            // The show's camera lane (or, between its shots, the camera as it is).
+            if (laneCamera) controls.setCameraState(laneCamera);
+            else controls.releaseCamera();
+            frame = await captureCurrentFrame();
+          } else if (transition) {
             const outgoing = await captureShotFrame(transition.prev.index, transition.prev.shot, transition.prevProgress);
             const incoming = await captureShotFrame(transition.next.index, transition.next.shot, transition.nextProgress);
             frame = blendFrames(outgoing, incoming, transition.alpha);
@@ -432,6 +497,7 @@ function createReelRenderStore() {
             if (at) frame = await captureShotFrame(at.index, at.shot, at.progress);
           }
           if (!frame) throw new Error('Could not capture Stage 3D frame');
+          rehearsal?.noteFrame(paceStartEpoch + (globalFrame * 1000) / settings.fps);
           lastFrame = frame;
 
           if (outputMode === 'frames') {
@@ -522,6 +588,12 @@ function createReelRenderStore() {
         nativeMp4FrameEncoderFinished = true;
         update(s => ({ ...s, encodeProgress: 1 }));
         if (cancelRequested) { setStatus('cancelled'); return false; }
+        if (rehearsal) {
+          // The show's soundtrack, lined up with the filmed picture.
+          const sound = await rehearsal.addSound(encoded.outputPath, paceStartEpoch, durationSeconds);
+          if (!sound.ok && sound.error) console.warn('[stageReelRender] rehearsal sound:', sound.error);
+          update(s => ({ ...s, lastAudioMode: sound.mode }));
+        }
 
         setStatus('saving');
         const url = pathToFileUrl(encoded.outputPath);
@@ -624,6 +696,8 @@ function createReelRenderStore() {
         await cancelNativeMp4FrameEncoder(nativeMp4FrameEncoder).catch(() => {});
       }
       controls.releaseCamera();
+      returnCamera();
+      rehearsal?.end();
       engine.manualTime = restoreManual;
       setISFManualTime(null);
       setStageEffectsManualTime(null);

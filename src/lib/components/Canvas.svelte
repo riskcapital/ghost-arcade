@@ -194,6 +194,7 @@
   let stage3DMirrorRequested = false;
   let stage3DMirrorUsedAt = 0;
   let stage3DMirrorRequestKey = '';
+  let stage3DMirrorTextureSize = '';
   // Let go of the core picture feed once Stage Sim stops drawing, so a
   // closed Stage view does not keep a 1280px/30fps readback running.
   const stage3DMirrorIdle = setInterval(() => {
@@ -226,7 +227,11 @@
     }
     const source = stage3DMirror.canvas;
     if (source.width <= 16) return null;
-    if (!stage3DMirrorTexture || stage3DMirrorTexture.image !== source) {
+    // A new size needs a new texture: the GPU copy is allocated at one size
+    // (the feed grows while Stage Sim records, and shrinks while a show plays).
+    const mirrorSize = `${source.width}x${source.height}`;
+    if (!stage3DMirrorTexture || stage3DMirrorTexture.image !== source || mirrorSize !== stage3DMirrorTextureSize) {
+      stage3DMirrorTextureSize = mirrorSize;
       stage3DMirrorTexture?.dispose();
       stage3DMirrorTexture = new THREE.CanvasTexture(source);
       stage3DMirrorTexture.colorSpace = THREE.SRGBColorSpace;

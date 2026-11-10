@@ -2370,10 +2370,12 @@ export const showTimeline = {
 
   // ── Stage camera lane ──────────────────────────────────────────────────
 
-  setCameraLane(clips: ShowCameraClip[]) {
+  /** Replace the stage-camera lane. A drag passes `continuousKey` so its
+   *  many updates make one undo step. */
+  setCameraLane(clips: ShowCameraClip[], continuousKey?: string) {
     const cameraLane = clips.map(normalizeCameraClip).filter((c): c is ShowCameraClip => c !== null).sort((a, b) => a.startTime - b.startTime);
     store.update((s) => withDuration({ ...s, cameraLane }));
-    recordShowEdit();
+    recordShowEdit(continuousKey ? `camera:${continuousKey}` : undefined);
   },
 
   // ── Track helpers (internal) ───────────────────────────────────────────
