@@ -67,6 +67,7 @@
   import ShowRuler from './show/timeline/ShowRuler.svelte';
   import ShowTempoInspector from './show/timeline/ShowTempoInspector.svelte';
   import ShowTakeoverControls from './show/timeline/ShowTakeoverControls.svelte';
+  import { transportFit } from './show/timeline/transportFit';
   import TakeoverPads from './show/TakeoverPads.svelte';
   import { takeoverPadsOpen, toggleTakeoverOnTarget } from './show/timeline/takeoverUi';
   import { liveTakeover } from '../show/takeover/liveTakeover';
@@ -914,6 +915,14 @@
     showTimeline.setZoom(zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15));
   }
 
+  // How tight the transport is (0 roomy … 4 tightest): stepped up by
+  // `transportFit` until the controls fit on one line. 1: the takeover's
+  // return mode in a popover, shorter labels; 2: icons for the add/edit
+  // chips, narrower pickers; 3: no dividers or total length, closer packing;
+  // 4: Return as its arrow alone.
+  const TRANSPORT_FIT_MAX = 4;
+  let transportFitLevel = 0;
+
   let showClearConfirm = false;
   function confirmClear() {
     showTimeline.clear();
@@ -971,7 +980,15 @@
     </div>
 
     <!-- Transport -->
-    <div class="show-transport" bind:clientHeight={transportH}>
+    <div
+      class="show-transport"
+      class:fit1={transportFitLevel >= 1}
+      class:fit2={transportFitLevel >= 2}
+      class:fit3={transportFitLevel >= 3}
+      bind:clientHeight={transportH}
+      use:transportFit={{ max: TRANSPORT_FIT_MAX, set: (level) => (transportFitLevel = level) }}
+      data-transport-fit={transportFitLevel}
+    >
       <button
         class="t-btn"
         class:active={state.isPlaying}
@@ -1009,17 +1026,16 @@
       {/if}
 
       <span class="t-time">{formatPrecise(state.currentTime)}</span>
-      <span class="t-sep">/</span>
-      <span class="t-total" title="Total programmed show length">{formatPrecise(state.duration)}</span>
+      <span class="t-sep t-fit-hide">/</span>
+      <span class="t-total t-fit-hide" title="Total programmed show length">{formatPrecise(state.duration)}</span>
       {#if state.tempo}
         <span class="t-bars" title="Bar, beat and sixteenth at the playhead" data-show-bars-readout>{formatBarsBeats(state.tempo, state.currentTime, true)}</span>
       {/if}
 
-      <span class="t-divider"></span>
-
       <!-- Show audio output. Never hidden while the show has audio: a muted
            or blocked bus is exactly the state the user needs to SEE. -->
       {#if state.audioTracks.length > 0}
+        <span class="t-divider"></span>
         <button
           class="t-btn t-audio"
           class:blocked={audioBlocked !== null}
@@ -1120,7 +1136,7 @@
 
       <span class="t-divider"></span>
 
-      <select class="t-select" bind:value={addPresetId} title="Preset to add">
+      <select class="t-select t-preset" bind:value={addPresetId} title="Preset to add">
         <option value="">Choose preset…</option>
         {#each $compositions as comp}
           <option value={comp.id}>{comp.name}</option>
@@ -1129,7 +1145,12 @@
       <button class="t-chip" onclick={addPreset} disabled={$compositions.length === 0} title="Append this preset to the end of the show">
         + Preset
       </button>
-      <button class="t-chip" onclick={() => audioInput?.click()} title="Add an audio file">+ Audio</button>
+      <button class="t-chip t-iconable" onclick={() => audioInput?.click()} title="Add an audio file" aria-label="Add an audio file">
+        <span class="t-label">+ Audio</span>
+        <svg class="t-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+          <path d="M5 2v8M1 6h8"/><path d="M14 18V6l8-2v12"/><circle cx="11.5" cy="18" r="2.5"/><circle cx="19.5" cy="16" r="2.5"/>
+        </svg>
+      </button>
       <!-- Transition palette. Drag onto the junction between two touching
            preset clips; the junction highlights as you pass over it. -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1150,10 +1171,13 @@
           <path d="M0.5 0.5 L7.5 5 L0.5 9.5 Z M14.5 0.5 L7.5 5 L14.5 9.5 Z"
                 fill="currentColor" fill-opacity="0.35" stroke="currentColor" stroke-width="1"/>
         </svg>
-        Transition
+        <span class="t-label">Transition</span>
       </span>
-      <button class="t-chip" onclick={() => showTimeline.compactPresetClips()} disabled={state.presetClips.length < 2} title="Close every gap on the preset lane">
-        Compact
+      <button class="t-chip t-iconable" onclick={() => showTimeline.compactPresetClips()} disabled={state.presetClips.length < 2} title="Close every gap on the preset lane" aria-label="Close every gap on the preset lane">
+        <span class="t-label">Compact</span>
+        <svg class="t-icon" width="16" height="12" viewBox="0 0 16 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M1 6h4.5M3.5 3.5L6 6 3.5 8.5M15 6h-4.5M12.5 3.5L10 6l2.5 2.5M8 1v10"/>
+        </svg>
       </button>
 
       <span class="t-divider"></span>
@@ -1161,8 +1185,11 @@
       <button class="t-chip" class:active={cuesOpen} onclick={toggleCues} title="Show the cue list beside the timeline" data-show-cues-toggle>
         Cues
       </button>
-      <button class="t-chip" onclick={addMarkerAtPlayhead} title="Add a marker at the playhead. It fires the selected cue when the timeline plays across it." data-show-add-marker>
-        + Marker
+      <button class="t-chip t-iconable" onclick={addMarkerAtPlayhead} title="Add a marker at the playhead. It fires the selected cue when the timeline plays across it." aria-label="Add a marker at the playhead. It fires the selected cue when the timeline plays across it." data-show-add-marker>
+        <span class="t-label">+ Marker</span>
+        <svg class="t-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M5 2v8M1 6h8"/><path d="M13 5h8v9l-4 5-4-5z"/>
+        </svg>
       </button>
       {#if tc.lock !== 'off'}
         <span class="t-tc" class:locked={tc.lock === 'locked'} class:freewheel={tc.lock === 'freewheel'} class:lost={tc.lock === 'lost'} title={tc.error ?? `Timecode ${tc.lock}${tc.rate ? `, ${tc.rate} fps` : ''}`} data-show-tc-badge>
@@ -1173,7 +1200,7 @@
         {/if}
       {/if}
       <span class="t-divider"></span>
-      <ShowTakeoverControls />
+      <ShowTakeoverControls fit={transportFitLevel} />
       <input
         class="hidden-file"
         type="file"
@@ -1761,7 +1788,7 @@
     /* 7px of top padding clears the resize strip so the transport buttons
        are not sitting under an ns-resize cursor. */
     padding: 7px 12px 5px;
-    padding-right: 130px;
+    padding-right: 110px;
     border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
     background: var(--ga-bar, #0a0a0e);
     flex-shrink: 0;
@@ -2053,6 +2080,17 @@
   }
   .t-end { max-width: 160px; }
   .t-out { max-width: 150px; }
+  /* Tighter, step by step, until the transport fits on one line. */
+  .t-icon { display: none; }
+  .fit2 .t-iconable { padding: 0 8px; }
+  .fit2 .t-iconable .t-label, .fit2 .t-transition-chip .t-label { display: none; }
+  .fit2 .t-icon { display: block; }
+  .fit2 .t-end { max-width: 104px; }
+  .fit2 .t-out { max-width: 104px; }
+  .fit2 .t-preset { max-width: 104px; }
+  .fit3.show-transport { gap: 4px; }
+  .fit3 .t-divider, .fit3 .t-fit-hide { display: none; }
+  .fit3 .t-end, .fit3 .t-out, .fit3 .t-preset { max-width: 80px; }
   .t-out.missing { border-color: rgba(251, 191, 36, 0.6); color: #fbbf24; }
 
   .show-block {
