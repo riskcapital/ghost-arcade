@@ -226,6 +226,9 @@ export function nearestGridTime(map: ShowTempoMap, t: number, grid: ShowSnapGrid
   return Math.round(best * 1e9) / 1e9;
 }
 
+/** Bars closer than this (px) only get a tick when they carry a number. */
+const RULER_MIN_BAR_PX = 3;
+
 export interface RulerTick {
   time: number;
   bar: number;
@@ -245,7 +248,8 @@ export function rulerTicks(map: ShowTempoMap, t0: number, t1: number, pxPerSecon
   if (!(t1 > t0) || !(pxPerSecond > 0)) return ticks;
   const segs = resolve(map);
   let bar = barBeatAt(map, t0).bar;
-  // Hard cap: a ruler never needs more than a few thousand ticks.
+  // Hard cap: a ruler never needs more than a few thousand ticks (bars too
+  // close to see are skipped below, so this is only a safety net).
   for (let guard = 0; guard < 20000; guard++) {
     const start = secondsAtBar(map, bar);
     if (start > t1) break;
@@ -265,7 +269,16 @@ export function rulerTicks(map: ShowTempoMap, t0: number, t1: number, pxPerSecon
         if (time >= t0 - 1e-9 && time <= t1) ticks.push({ time, bar, beat: b, kind: 'beat' });
       }
     }
-    bar++;
+    if (barPx < RULER_MIN_BAR_PX && every > 1) {
+      // Bars under a few pixels apart are a smear: go straight to the next
+      // numbered bar (or the next segment). Stepping one bar at a time ran
+      // out of the tick cap and cut the ruler off at extreme zoom.
+      const into = (((bar - 1) % every) + every) % every;
+      const next = segs.find((seg) => seg.bar > bar)?.bar ?? Infinity;
+      bar = Math.min(bar + every - into, next);
+    } else {
+      bar++;
+    }
   }
   return ticks;
 }

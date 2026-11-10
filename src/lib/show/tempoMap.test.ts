@@ -109,3 +109,24 @@ describe('tempo map', () => {
     expect(tempoFromAnalysis({ tempo: null, beats: [] }, { startTime: 0, offset: 0 })).toBeNull();
   });
 });
+
+describe('ruler at extreme zoom', () => {
+  it('reaches the end of a long view when bars are under a pixel apart', () => {
+    // 400 BPM, one sixteenth a bar: 26.7 bars a second, 96 000 in an hour.
+    const map = createTempoMap(400, 0, 1, 16);
+    const ticks = rulerTicks(map, 0, 3600, 0.5);
+    // Labels are at most 1024 bars (38 s) apart here.
+    expect(ticks[ticks.length - 1].time).toBeGreaterThan(3600 - 40);
+    expect(ticks.length).toBeLessThan(20000);
+    // Every tick there carries a number, and numbered bars stay where they were.
+    expect(ticks.every((t) => t.label !== undefined)).toBe(true);
+    const labelled = rulerTicks(map, 0, 60, 0.5).filter((t) => t.label);
+    expect(rulerTicks(map, 0, 60, 0.5).map((t) => t.bar)).toEqual(labelled.map((t) => t.bar));
+  });
+
+  it('draws every bar as before when bars are a few pixels apart', () => {
+    const map = createTempoMap(120, 0);
+    const ticks = rulerTicks(map, 0, 60, 2);
+    expect(ticks.filter((t) => t.kind === 'bar')).toHaveLength(31);
+  });
+});
