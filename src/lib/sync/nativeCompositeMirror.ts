@@ -23,6 +23,23 @@ import { invoke } from '$lib/bridge';
 export interface CompositeMirrorHandle {
   canvas: HTMLCanvasElement;
   release(): void;
+  /** Change this consumer's rate or size. `highRate` lets a large mirror run
+   *  past 30 fps (Stage Sim rehearsing a playing show). */
+  update(options: { fps?: number; maxDim?: number; highRate?: boolean }): void;
+}
+
+/** When the frame on the mirror canvas was asked for and arrived (epoch ms),
+ *  so a consumer can tell how old the picture it draws is. */
+export interface CompositeMirrorFrameInfo {
+  seq: number;
+  requestedAt: number;
+  receivedAt: number;
+}
+
+function epochMs(): number {
+  return typeof performance !== 'undefined' && Number.isFinite(performance.timeOrigin)
+    ? performance.timeOrigin + performance.now()
+    : Date.now();
 }
 
 const DEFAULT_MAX_DIM = 512;
@@ -36,6 +53,25 @@ let pumpMaxDim = DEFAULT_MAX_DIM;
 let pumpFps = 0;
 // Each consumer's requested rate; the pump runs at the fastest one.
 const fpsRequests = new Map<object, number>();
+// Sizes asked for later through `update()`; the pump reads at the largest of
+// those and the size it started with.
+const dimRequests = new Map<object, number>();
+let basePumpMaxDim = DEFAULT_MAX_DIM;
+/** The consumer whose size the pump started at; its own `update()` replaces it. */
+let baseOwner: object | null = null;
+// Consumers allowed past the 30 fps cap of large frames.
+const highRateRequests = new Set<object>();
+let frameInfo: CompositeMirrorFrameInfo | null = null;
+
+/** The shared mirror canvas, or null before anyone asked for it. */
+export function compositeMirrorCanvas(): HTMLCanvasElement | null {
+  return mirrorCanvas;
+}
+
+/** Timing of the picture currently on the mirror canvas, or null before the first. */
+export function compositeMirrorFrameInfo(): CompositeMirrorFrameInfo | null {
+  return frameInfo;
+}
 let inFlight = false;
 let failureStreak = 0;
 let scratch: ImageData | null = null;
@@ -116,10 +152,15 @@ function base64Bytes(b64: string): Uint8Array {
   return bytes;
 }
 
-/** JPEG frames decode off the main thread and draw in one call. */
-async function decodeJpegInto(snap: { jpeg_b64?: string }): Promise<boolean> {
+/** JPEG frames decode off the main thread and draw in one call (unless a
+ *  newer frame was drawn while this one decoded). */
+async function decodeJpegIntoIfNewer(snap: { jpeg_b64?: string }, requestSeq: number): Promise<boolean> {
   if (!mirrorCanvas || !mirrorCtx || !snap.jpeg_b64) return false;
   const bitmap = await createImageBitmap(new Blob([base64Bytes(snap.jpeg_b64) as BlobPart], { type: 'image/jpeg' }));
+  if (requestSeq <= drawnRequestSeq || !mirrorCanvas || !mirrorCtx) {
+    bitmap.close();
+    return false;
+  }
   try {
     if (mirrorCanvas.width !== bitmap.width) mirrorCanvas.width = bitmap.width;
     if (mirrorCanvas.height !== bitmap.height) mirrorCanvas.height = bitmap.height;
@@ -138,30 +179,31 @@ function decodeSnapshotInto(snap: SnapshotPixels): boolean {
   return true;
 }
 
+/** Start of the last snapshot request (performance ms). */
+let lastPumpStart = 0;
+/** Request counter: a JPEG that finishes decoding after a newer frame was
+ *  drawn is dropped, so frames never go backwards. */
+let pumpRequestSeq = 0;
+let drawnRequestSeq = 0;
+
 async function pumpOnce(maxDim: number): Promise<void> {
   if (inFlight) return;
   inFlight = true;
+  lastPumpStart = performance.now();
+  const requestedAt = epochMs();
+  const requestSeq = ++pumpRequestSeq;
+  let snap: (Parameters<typeof decodeSnapshotInto>[0] & { jpeg_b64?: string }) | null = null;
   try {
     // Large frames travel as JPEG: raw pixels at 30 fps were ~150 MB/s of
     // base64 through the broker and slowed every window. Small ones (LED
     // and pixel-map sampling) stay raw, since they need exact colours.
     const useJpeg = maxDim > 512;
-    const snap = await invoke('native_renderer_get_frame_snapshot', {
+    snap = await invoke('native_renderer_get_frame_snapshot', {
       include_pixels: true,
       max_dim: maxDim,
       live_output: true,
       ...(useJpeg ? { encoding: 'jpeg', quality: 82 } : {}),
     }) as (Parameters<typeof decodeSnapshotInto>[0] & { jpeg_b64?: string }) | null;
-    const decoded = snap?.jpeg_b64 ? await decodeJpegInto(snap) : !!snap && decodeSnapshotInto(snap);
-    if (snap && decoded) {
-      failureStreak = 0;
-      // Lets a consumer that draws every animation frame skip re-uploading
-      // a picture it already has (the pump runs slower than the display).
-      if (mirrorCanvas) (mirrorCanvas as any).__gaFrameSeq = ((mirrorCanvas as any).__gaFrameSeq ?? 0) + 1;
-      for (const listener of frameListeners) {
-        try { listener(); } catch (error) { console.warn('[CompositeMirror] consumer failed:', error); }
-      }
-    }
   } catch (err) {
     failureStreak += 1;
     // Transient during core restarts; only worth a log line early on.
@@ -169,7 +211,36 @@ async function pumpOnce(maxDim: number): Promise<void> {
       console.warn('[CompositeMirror] snapshot unavailable:', err);
     }
   } finally {
+    // The next request may start while this frame decodes.
     inFlight = false;
+    // A large frame can take longer than one tick at a high rate; then the
+    // next one starts as soon as this lands instead of waiting a whole tick.
+    if (timer && highRateRequests.size > 0 && pumpFps > 30 && performance.now() - lastPumpStart >= 1000 / pumpFps) {
+      setTimeout(() => { if (timer) void pumpOnce(pumpMaxDim); }, 0);
+    }
+  }
+  if (!snap) return;
+  try {
+    let decoded: boolean;
+    if (snap.jpeg_b64) {
+      decoded = await decodeJpegIntoIfNewer(snap, requestSeq);
+    } else {
+      decoded = requestSeq > drawnRequestSeq && decodeSnapshotInto(snap);
+    }
+    if (decoded) {
+      drawnRequestSeq = requestSeq;
+      failureStreak = 0;
+      // Lets a consumer that draws every animation frame skip re-uploading
+      // a picture it already has (the pump runs slower than the display).
+      if (mirrorCanvas) (mirrorCanvas as any).__gaFrameSeq = ((mirrorCanvas as any).__gaFrameSeq ?? 0) + 1;
+      frameInfo = { seq: (mirrorCanvas as any)?.__gaFrameSeq ?? 0, requestedAt, receivedAt: epochMs() };
+      for (const listener of frameListeners) {
+        try { listener(); } catch (error) { console.warn('[CompositeMirror] consumer failed:', error); }
+      }
+    }
+  } catch (err) {
+    failureStreak += 1;
+    if (failureStreak <= 2) console.warn('[CompositeMirror] frame decode failed:', err);
   }
 }
 
@@ -177,7 +248,10 @@ async function pumpOnce(maxDim: number): Promise<void> {
  *  pixel-map sampling) may run up to 60fps; large ones stay at 30. */
 function rearmPump(): void {
   if (fpsRequests.size === 0) return;
-  const cap = pumpMaxDim > 512 ? 30 : 60;
+  const base = (baseOwner && dimRequests.get(baseOwner)) || basePumpMaxDim;
+  const others = [...dimRequests.entries()].filter(([owner]) => owner !== baseOwner).map(([, dim]) => dim);
+  pumpMaxDim = Math.max(base, ...others);
+  const cap = pumpMaxDim > 512 && highRateRequests.size === 0 ? 30 : 60;
   const fps = Math.min(cap, Math.max(...fpsRequests.values()));
   if (timer && fps === pumpFps) return;
   if (timer) clearInterval(timer);
@@ -203,6 +277,8 @@ export function acquireNativeCompositeMirror(
   const request = {};
   if (!timer) {
     pumpMaxDim = maxDim;
+    basePumpMaxDim = maxDim;
+    baseOwner = request;
     void pumpOnce(maxDim);
   }
   fpsRequests.set(request, fps);
@@ -210,11 +286,23 @@ export function acquireNativeCompositeMirror(
   let released = false;
   return {
     canvas: mirrorCanvas,
+    update(next) {
+      if (released) return;
+      if (next.fps !== undefined) fpsRequests.set(request, Math.max(1, Math.min(60, Math.round(next.fps))));
+      if (next.maxDim !== undefined) dimRequests.set(request, Math.max(64, Math.min(2048, Math.round(next.maxDim))));
+      if (next.highRate !== undefined) {
+        if (next.highRate) highRateRequests.add(request);
+        else highRateRequests.delete(request);
+      }
+      rearmPump();
+    },
     release() {
       if (released) return;
       released = true;
       if (options.onFrame) frameListeners.delete(options.onFrame);
       fpsRequests.delete(request);
+      dimRequests.delete(request);
+      highRateRequests.delete(request);
       consumers = Math.max(0, consumers - 1);
       if (consumers === 0 && timer) {
         clearInterval(timer);

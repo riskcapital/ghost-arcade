@@ -42,6 +42,7 @@
   import StageElementProperties from './StageElementProperties.svelte';
   import StageLightingPanel from './StageLightingPanel.svelte';
   import DemoReelPanel from './DemoReelPanel.svelte';
+  import StageShowTransport from './StageShowTransport.svelte';
 
   /** When false, this component renders only the floating UI overlay;
    *  the viewport comes from Canvas.svelte's stage3DOutput mode. */
@@ -970,6 +971,8 @@
       <button class="show-panels-btn" onclick={togglePanels} title="Show panels (H)">Show panels</button>
     {/if}
   {/if}
+
+  <StageShowTransport />
 
   {#if reelOpen}
     <div class="reel-host">

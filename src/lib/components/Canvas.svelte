@@ -95,6 +95,7 @@
   import { milkdropStore } from '../stores/milkdrop';
   import { hydraStore } from '../stores/hydra';
   import { initStateBroadcast, destroyStateBroadcast } from '$lib/sync/stateBroadcast';
+  import { stageRehearsalRender } from '$lib/show/rehearsal/stageRehearsal';
   import { startAudioBroadcast, stopAudioBroadcast, broadcastAudioFrame } from '$lib/sync/audioBroadcast';
   import { startWLEDSenders, stopWLEDSenders, tickWLEDSenders } from '$lib/wled/sender';
   import { startPixelMapOutput } from '$lib/pixelmap/sender';
@@ -192,6 +193,7 @@
   let stage3DMirrorSeq = -1;
   let stage3DMirrorRequested = false;
   let stage3DMirrorUsedAt = 0;
+  let stage3DMirrorRequestKey = '';
   // Let go of the core picture feed once Stage Sim stops drawing, so a
   // closed Stage view does not keep a 1280px/30fps readback running.
   const stage3DMirrorIdle = setInterval(() => {
@@ -210,9 +212,17 @@
         void import('$lib/sync/nativeCompositeMirror').then(({ acquireNativeCompositeMirror }) => {
           if (canvasDestroyed) return;
           stage3DMirror = acquireNativeCompositeMirror({ maxDim: 1280, fps: 30 });
+          stage3DMirrorRequestKey = '';
         });
       }
       return null;
+    }
+    // Rehearsing a playing show (or recording) wants a faster, larger feed.
+    const want = $stageRehearsalRender;
+    const wantKey = `${want.fps}|${want.maxDim}|${want.boost}`;
+    if (wantKey !== stage3DMirrorRequestKey) {
+      stage3DMirrorRequestKey = wantKey;
+      stage3DMirror.update({ fps: want.fps, maxDim: want.maxDim, highRate: want.boost });
     }
     const source = stage3DMirror.canvas;
     if (source.width <= 16) return null;
@@ -3173,9 +3183,13 @@
 
       // Render-rate gate. Reschedule rAF unconditionally so input
       // handlers stay responsive; bypass render body when early.
-      const _stage3DFpsCap = stage3DOutput && isOutputMode
+      const _stage3DFpsSetting = stage3DOutput && isOutputMode
         ? (($settings as any)?.performance?.stage3DFrameRate ?? 30)
         : 0;
+      // A show playing in the Stage Sim draws at 60 so cuts land on time.
+      const _stage3DFpsCap = _stage3DFpsSetting > 0 && $stageRehearsalRender.boost
+        ? Math.max(_stage3DFpsSetting, 60)
+        : _stage3DFpsSetting;
       const _editorFpsCap = ($settings as any)?.performance?.editorMaxFps ?? 0;
       const _fpsCap = _stage3DFpsCap > 0 ? _stage3DFpsCap : _editorFpsCap;
       if (_fpsCap > 0 && engine?.manualTime === null) {

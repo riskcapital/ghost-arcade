@@ -266,6 +266,12 @@ export class ClipAudioBus {
 
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
+  /** Opt-in delay between the clip mix and the speakers (Stage Sim rehearsal:
+   *  lines the sound up with the stage view, which runs behind the output).
+   *  Built the first time a delay is asked for; recordings tap the master
+   *  before it. */
+  private delayNode: DelayNode | null = null;
+  private outputDelaySeconds = 0;
   private mixDest: MediaStreamAudioDestinationNode | null = null;
 
   private readonly clips = new Map<string, ClipEntry>();
@@ -352,6 +358,7 @@ export class ClipAudioBus {
       this.masterToDestination = false;
       this.tappedAnalyser = null;
     }
+    if (this.outputDelaySeconds > 0) this.ensureDelayNode();
 
     this.wireMasterOutputs();
     // A context built outside a user gesture starts SUSPENDED in Chromium
@@ -389,6 +396,8 @@ export class ClipAudioBus {
     const ctx = this.ctx;
     const master = this.masterGain;
     if (!ctx || !master) return;
+    // The speakers (and the analyser on their path) hear the delayed mix.
+    const out: AudioNode = this.delayNode ?? master;
 
     // Only the clip-follow analyser takes the bus: a live input is
     // authoritative and already hears the clips through the room / system mix.
@@ -396,12 +405,12 @@ export class ClipAudioBus {
     const analyserReachesSpeakers = audioAnalyzer.analyserFeedsDestination();
 
     if (this.tappedAnalyser && this.tappedAnalyser !== analyser) {
-      try { master.disconnect(this.tappedAnalyser); } catch { /* already gone */ }
+      try { out.disconnect(this.tappedAnalyser); } catch { /* already gone */ }
       this.tappedAnalyser = null;
     }
     if (analyser && this.tappedAnalyser !== analyser) {
       try {
-        master.connect(analyser);
+        out.connect(analyser);
         this.tappedAnalyser = analyser;
       } catch (err) {
         console.warn('[ClipAudioBus] Analyzer tap failed:', err);
@@ -412,13 +421,13 @@ export class ClipAudioBus {
     const wantDirect = !(analyser && analyserReachesSpeakers && this.tappedAnalyser === analyser);
     if (wantDirect && !this.masterToDestination) {
       try {
-        master.connect(ctx.destination);
+        out.connect(ctx.destination);
         this.masterToDestination = true;
       } catch (err) {
         console.warn('[ClipAudioBus] Master output connect failed:', err);
       }
     } else if (!wantDirect && this.masterToDestination) {
-      try { master.disconnect(ctx.destination); } catch { /* already gone */ }
+      try { out.disconnect(ctx.destination); } catch { /* already gone */ }
       this.masterToDestination = false;
     }
   }
@@ -441,6 +450,10 @@ export class ClipAudioBus {
       entry.gain = null;
       entry.source = null;
     }
+    if (this.delayNode) {
+      try { this.delayNode.disconnect(); } catch { /* ignore */ }
+    }
+    this.delayNode = null;
     if (this.masterGain) {
       try { this.masterGain.disconnect(); } catch { /* ignore */ }
     }
@@ -607,6 +620,49 @@ export class ClipAudioBus {
         console.warn(`[ClipAudioBus] Reconnect failed for "${entry.id}":`, err);
       }
     }
+  }
+
+  /**
+   * Delay what the speakers play by `seconds` (0 = none, at most 1 s). The
+   * show clock, the recording taps and the mix stream are not delayed.
+   */
+  setOutputDelay(seconds: number): void {
+    const next = Number.isFinite(seconds) ? Math.max(0, Math.min(1, seconds)) : 0;
+    this.outputDelaySeconds = next;
+    if (next > 0) this.ensureDelayNode();
+    if (this.delayNode) this.delayNode.delayTime.value = next;
+  }
+
+  outputDelay(): number {
+    return this.outputDelaySeconds;
+  }
+
+  /** Put the delay between the master and its speaker / analyser edges. */
+  private ensureDelayNode(): void {
+    const ctx = this.ctx;
+    const master = this.masterGain;
+    if (this.delayNode || !ctx || !master) return;
+    let delay: DelayNode;
+    try {
+      delay = ctx.createDelay(1);
+    } catch (err) {
+      console.warn('[ClipAudioBus] Output delay unavailable:', err);
+      return;
+    }
+    delay.delayTime.value = this.outputDelaySeconds;
+    // Move the master's outgoing edges onto the delay; mix-stream and
+    // recording taps stay on the master.
+    if (this.tappedAnalyser) {
+      try { master.disconnect(this.tappedAnalyser); } catch { /* already gone */ }
+      this.tappedAnalyser = null;
+    }
+    if (this.masterToDestination) {
+      try { master.disconnect(ctx.destination); } catch { /* already gone */ }
+      this.masterToDestination = false;
+    }
+    master.connect(delay);
+    this.delayNode = delay;
+    this.wireMasterOutputs();
   }
 
   // ── Levels ───────────────────────────────────────────────────────────────

@@ -131,9 +131,9 @@ function resolveCanvas(source: RecorderOptions['canvas']): HTMLCanvasElement | n
  *  transcoded to AAC). Returns null when audio is disabled in settings or
  *  no audio source is active — recording then stays video-only exactly as
  *  before. */
-type AudioSidecar = { stop(): Promise<Uint8Array | null>; discard(): void };
+export type AudioSidecar = { stop(): Promise<Uint8Array | null>; discard(): void };
 
-function startRecordingAudioSidecar(externalAudio: string | null = null): AudioSidecar | null {
+export function startRecordingAudioSidecar(externalAudio: string | null = null): AudioSidecar | null {
   const recSettings = settings.get().recording;
   // Deliberate setting, not a fault — log, don't warn.
   if (recSettings.includeAudio === false) {
@@ -210,7 +210,7 @@ function wantsNativeClipAudio(): boolean {
 /** Mux the sidecar's audio, the native clip audio tap, or both into a
  *  finished MP4. Returns true only when the file on disk now carries the
  *  audio track; a failed mux leaves the video-only file untouched. */
-async function muxSidecarAudio(outputPath: string, sidecar: AudioSidecar | null, nativeAudio = false): Promise<boolean> {
+export async function muxSidecarAudio(outputPath: string, sidecar: AudioSidecar | null, nativeAudio = false): Promise<boolean> {
   if (!sidecar && !nativeAudio) return false;
   let audio: Uint8Array | null = null;
   try {

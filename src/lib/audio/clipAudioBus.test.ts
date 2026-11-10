@@ -49,8 +49,11 @@ class FakeStreamDestinationNode extends FakeNode {
   stream = { getAudioTracks: () => [{ kind: 'audio' }] };
 }
 
+class FakeDelayNode extends FakeNode { delayTime = { value: 0 }; }
+
 class FakeAudioContext {
   state = 'running';
+  createDelay() { return new FakeDelayNode(); }
   destination = new FakeNode();
   gainCount = 0;
   mediaElementSourceCount = 0;
@@ -216,6 +219,32 @@ describe('attach/detach lifecycle', () => {
 
     const master = bus.masterNode() as unknown as FakeNode;
     expect(master.outputs.has(ctx.destination)).toBe(true);
+  });
+
+  it('an output delay moves the speaker edge onto a delay node and keeps the master tap', () => {
+    const ctx = new FakeAudioContext();
+    const bus = makeBus(ctx);
+    bus.attachClip('clip-a', fakeMediaElement());
+    const master = bus.masterNode() as unknown as FakeNode;
+    bus.setOutputDelay(0.08);
+    const delay = [...master.outputs].find((n) => n instanceof FakeDelayNode) as FakeDelayNode | undefined;
+    expect(delay).toBeTruthy();
+    expect(delay!.delayTime.value).toBeCloseTo(0.08);
+    expect(master.outputs.has(ctx.destination)).toBe(false);
+    expect(delay!.outputs.has(ctx.destination)).toBe(true);
+    expect(bus.masterNode()).toBe(master as unknown as AudioNode);
+    bus.setOutputDelay(0);
+    expect(delay!.delayTime.value).toBe(0);
+    expect(bus.outputDelay()).toBe(0);
+  });
+
+  it('no output delay asked for: no delay node at all', () => {
+    const ctx = new FakeAudioContext();
+    const bus = makeBus(ctx);
+    bus.attachClip('clip-a', fakeMediaElement());
+    bus.setOutputDelay(0);
+    const master = bus.masterNode() as unknown as FakeNode;
+    expect([...master.outputs].some((n) => n instanceof FakeDelayNode)).toBe(false);
   });
 
   it('attaching the SAME element twice does not throw and does not double-wire', () => {
