@@ -17,7 +17,7 @@
 /** A disagreement larger than this is a jump (sleep, clock set), not jitter. */
 const JUMP_MS = 4;
 /** How much of the difference one reading takes while they agree. */
-const FOLLOW = 0.02;
+const FOLLOW = 0.002;
 
 export interface EpochClockSources {
   /** Monotonic milliseconds (performance.now). */
