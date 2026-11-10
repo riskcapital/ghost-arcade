@@ -23,6 +23,9 @@ import type { Layer, ShowClipMedia, ShowLayerClip, ShowLayerTrack } from '../../
 /** One frame at the rate stop/hold clips park before the media end. */
 export const SHOW_CLIP_END_GUARD_SECONDS = 1 / 30;
 export const SHOW_MIN_RATE = 0.25;
+/** A shader or sketch clip is warmed (compiled / booted, invisible) for this
+ *  long before it starts, so the cut does not hitch. */
+export const SHOW_WARM_SECONDS = 1;
 export const SHOW_MAX_RATE = 4;
 const EPS = 1e-6;
 
@@ -200,6 +203,9 @@ export interface ShowTrackState {
   gap: 'layer' | 'hide';
   /** Keyframe-lane values at this instant (applyParamOverrides keys). */
   params: Record<string, number | boolean> | null;
+  /** A shader or sketch clip about to start: its source is warmed
+   *  invisibly ahead of the cut. */
+  warm: { clipId: string; runId: string; media: ShowClipMedia } | null;
 }
 
 export interface ShowTrackFrame {
@@ -219,6 +225,29 @@ export interface EvaluateShowTracksOptions {
   manualClock?: boolean;
   /** Lane evaluation (phase 4); null/absent means no lanes. */
   laneValues?: (track: ShowLayerTrack, t: number) => Record<string, number | boolean> | null;
+}
+
+/** The first clip starting after `t`. */
+export function nextClipAfter<T extends Pick<ShowLayerClip, 'startTime'>>(clips: readonly T[], t: number): T | null {
+  let lo = 0;
+  let hi = clips.length - 1;
+  let found: T | null = null;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (clips[mid].startTime > t) {
+      found = clips[mid];
+      hi = mid - 1;
+    } else lo = mid + 1;
+  }
+  return found;
+}
+
+function warmFor(track: ShowLayerTrack, t: number, silenced: boolean): ShowTrackState['warm'] {
+  if (silenced) return null;
+  const next = nextClipAfter(track.clips, t);
+  if (!next || next.startTime - t > SHOW_WARM_SECONDS) return null;
+  if (next.media.kind !== 'shader' && next.media.kind !== 'sketch') return null;
+  return { clipId: next.id, runId: runsOf(track.clips).get(next.id) ?? next.id, media: next.media };
 }
 
 /** Cache of run maps per clip list (clip arrays are replaced on every edit). */
@@ -252,6 +281,7 @@ export function evaluateShowTracks(
         opacity: silenced || track.gap === 'hide' ? 0 : 1,
         gap: track.gap,
         params,
+        warm: warmFor(track, t, silenced),
       };
     }
     const runs = runsOf(track.clips);
@@ -272,7 +302,9 @@ export function evaluateShowTracks(
         runStart: runFirst.startTime,
         media: clip.media,
         mediaTime: position.time,
-        paused: !opts.playing || position.held,
+        // An offline render seeks frame by frame without "playing": its
+        // clips run on the render clock all the same.
+        paused: (!opts.playing && !opts.manualClock) || position.held,
         held: position.held,
         rate: clipRate(clip),
         loopStart: clipLoopStart(runFirst),
@@ -281,6 +313,7 @@ export function evaluateShowTracks(
       opacity,
       gap: track.gap,
       params,
+      warm: warmFor(track, t, silenced),
     };
   });
   return {
@@ -312,6 +345,7 @@ export function showTrackFrameSignature(frame: ShowTrackFrame): string {
         c && c.paused ? c.mediaTime.toFixed(4) : '',
         tr.params ? JSON.stringify(tr.params) : '',
         tr.template ? tr.template.id : '',
+        tr.warm ? `w:${tr.warm.clipId}` : '',
       ].join('|'),
     );
   }

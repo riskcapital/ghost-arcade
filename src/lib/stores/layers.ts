@@ -734,6 +734,44 @@ void main() {
       return id;
     },
 
+    /**
+     * A new, empty media layer for a show layer track ("+ Track → New
+     * layer"). It goes into the editor and, on top of their stacks, into the
+     * presets named in `addToCompositionIds` (the ones the show uses), with
+     * its shared surface registered, so the track drives it in place under
+     * every preset. Records no undo step itself: the caller records one
+     * step once the track exists too.
+     */
+    addLayerForShowTrack(name: string, opts: { addToCompositionIds?: string[] } = {}): Layer | null {
+      if (blockNativePendingLayerType('media')) return null;
+      const currentProject = get({ subscribe });
+      if (currentProject.layers.length >= get(maxLayers)) return null;
+      const id = generateUUID();
+      const layer = createLayer(id, name || `Layer ${currentProject.layers.filter((l) => l.type === 'media').length + 1}`, 'media');
+      const targets = new Set(opts.addToCompositionIds ?? []);
+      update((project) => {
+        const presetCopy = { ...(JSON.parse(JSON.stringify(layer)) as Layer), surfaceId: id };
+        const vjMode = project.vjMode;
+        return {
+          ...project,
+          layers: placeNewLayer(project.layers, layer, project.selectedLayerId),
+          selectedLayerId: id,
+          mapSurfaces: registerMapSurfaces(project.mapSurfaces, [presetCopy]),
+          ...(vjMode && targets.size
+            ? {
+                vjMode: {
+                  ...vjMode,
+                  compositions: vjMode.compositions.map((c) =>
+                    targets.has(c.id) ? { ...c, layers: [{ ...presetCopy }, ...(c.layers ?? [])] } : c,
+                  ),
+                },
+              }
+            : {}),
+        };
+      });
+      return layer;
+    },
+
     addLinesLayer(name?: string) {
       if (blockNativePendingLayerType('lines')) return;
       update((project) => {

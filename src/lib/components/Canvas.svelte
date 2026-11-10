@@ -6,6 +6,8 @@
   import { project, layers, compositions } from '../stores/layers';
   import { compositionTransition } from '../stores/compositionTransition';
   import { buildCompositionTransitionLayers } from '../renderer/compositionTransitionLayers';
+  import { showTrackFrame, showClipSources } from '../stores/showTrackFrame';
+  import { buildShowTrackScene } from '../show/tracks/showTrackScene';
   import { nativePreviewHostEl } from '../stores/nativePreviewHost';
   import { watchLayout } from '../utils/layoutWatch';
   import { splatPointer } from '../stores/splatPointer';
@@ -2151,7 +2153,7 @@
         // the copy only has to cover the pass-through case.
         const mappingLive = get(layers) as Layer[];
         const xfade = get(compositionTransition).active;
-        if (!xfade) return mappingLive.map((l) => ({ ...l }));
+        if (!xfade) return withShowTracks(mappingLive.map((l) => ({ ...l })));
         const comps = get(compositions);
         const effective = buildCompositionTransitionLayers({
           liveLayers: mappingLive,
@@ -2159,7 +2161,19 @@
           transition: xfade,
           compositionLayers: (id) => comps.find((c) => c.id === id)?.layers ?? null,
         });
-        return effective === mappingLive ? mappingLive.map((l) => ({ ...l })) : effective;
+        return withShowTracks(effective === mappingLive ? mappingLive.map((l) => ({ ...l })) : effective);
+      };
+      // Show layer tracks: clips drive their layers (or inject copies of
+      // them) in the scene only, from show time — see
+      // show/tracks/showTrackScene.ts. Nothing changes without a track.
+      const withShowTracks = (list: Layer[]): Layer[] => {
+        const frame = get(showTrackFrame);
+        if (!frame) return list;
+        return buildShowTrackScene(list, frame, {
+          sourceFor: (state) => showClipSources.sourceFor(state, frame),
+          warmSourceFor: (warm) => showClipSources.warmSourceFor(warm),
+          surfaces: get(project).mapSurfaces,
+        });
       };
       // Stage FX opacity for the native scene: layerId → multiplier, refreshed
       // once per frame by the Stage FX driver below. It is applied to EVERY
@@ -2481,6 +2495,10 @@
       const nativePerformerWorldUnsub = nativePerformerWorldOverlays.subscribe(() =>
         scheduleNativeLayersSync(),
       );
+      // The show's layer tracks publish only when the scene they need changes
+      // (a cut, a fade step, a pause, a seek), and an offline render once per
+      // virtual frame.
+      const nativeShowTrackUnsub = showTrackFrame.subscribe(() => scheduleNativeLayersSync());
       const handleVjLayersSyncEvent = (event: Event) => {
         const detail = (event as CustomEvent<NativeVjLayersSyncDetail>).detail;
         scheduleNativeLayersSync(
@@ -2511,6 +2529,7 @@
         nativeKeyframeUnsub();
         nativeCompositionXfadeUnsub();
         nativePerformerWorldUnsub();
+        nativeShowTrackUnsub();
         studioFrameUnsub();
         studioCodeUnsub();
         // No scene is showing a studio now, so its frame loop can rest.

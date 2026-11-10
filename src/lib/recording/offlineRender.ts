@@ -969,7 +969,10 @@ function createOfflineRenderStore() {
     return new Promise(resolve => requestAnimationFrame(() => resolve()));
   }
 
-  async function start(settings: OfflineRenderSettings): Promise<boolean> {
+  /** `opts.promptSave: false` keeps a finished MP4 where the encoder wrote
+   *  it (the media library has it either way) instead of asking where to
+   *  save a copy: for automation that reads the file itself. */
+  async function start(settings: OfflineRenderSettings, opts: { promptSave?: boolean } = {}): Promise<boolean> {
     // The WebGL engine only exists in non-native builds. Native capture
     // renders + reads frames entirely in the core, so it must not require it.
     if ((!engineRef || !canvasRef) && settings.captureBackend !== 'native') {
@@ -1394,7 +1397,9 @@ function createOfflineRenderStore() {
         // Ask where the user wants their copy. The library entry above is
         // already committed, so cancelling just means "leave it in the
         // app folder" — the completion panel surfaces that path either way.
-        const savedPath = await promptSaveMp4(encoded.outputPath, niceName, 'Save Video', nativeMp4FrameEncoder.extension);
+        const savedPath = opts.promptSave === false
+          ? null
+          : await promptSaveMp4(encoded.outputPath, niceName, 'Save Video', nativeMp4FrameEncoder.extension);
         update(s => ({
           ...s,
           status: 'complete',

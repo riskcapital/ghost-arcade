@@ -1,0 +1,248 @@
+{
+  "name": "Show timeline: export matches playback",
+  "description": "An offline render drives each preset's keyframes from the preset's own start, as live playback does, and renders a layer track's video on exactly the frame the show says (a frame-coded clip, across a split).",
+  "steps": [
+    {
+      "do": "app.start",
+      "choice": "blank"
+    },
+    {
+      "do": "project.layer",
+      "name": "Wall",
+      "colour": "white",
+      "wait": 1
+    },
+    {
+      "do": "show.open"
+    },
+    {
+      "do": "preset.save",
+      "name": "A"
+    },
+    {
+      "do": "eval",
+      "label": "Preset B fades Wall from 20% to full over 4 s with keyframes",
+      "js": "(() => { const g = __show.g(); const kf = g.keyframeTimeline; const id = __show.layerByName('Wall').id; kf.setDuration(20); kf.addKeyframe(id, 'layer:opacity', 0, 0.2, 'linear', 'Opacity', 'number'); kf.addKeyframe(id, 'layer:opacity', 4, 1, 'linear', 'Opacity', 'number'); kf.play(); __show.vars['preset:B'] = g.project.saveComposition('B'); kf.stop(); return true; })()"
+    },
+    {
+      "do": "show.preset",
+      "name": "A",
+      "at": 0,
+      "duration": 2
+    },
+    {
+      "do": "show.preset",
+      "name": "B",
+      "at": 2,
+      "duration": 4
+    },
+    {
+      "do": "show.play",
+      "from": 1.5,
+      "wait": 2.5,
+      "label": "Live: 2 s into preset B the fade is half way",
+      "expect": {
+        "output.notBlack": true,
+        "eval.true": {
+          "js": "(async () => { const s = await __show.snapshot(); const m = (s.mean_rgba[0] + s.mean_rgba[1] + s.mean_rgba[2]) / 3; return m > 0.45 && m < 0.75 ? m : false; })()",
+          "label": "live output brightness is mid-fade"
+        }
+      }
+    },
+    {
+      "do": "show.pause"
+    },
+    {
+      "do": "show.export",
+      "seconds": 6,
+      "fps": 10,
+      "label": "Render the show"
+    },
+    {
+      "label": "Exported frame at show 4 s (preset B, 2 s in) is half way through the fade, as live",
+      "expect": {
+        "export.frame": {
+          "frame": 40,
+          "brightness": [
+            0.6,
+            0.06
+          ]
+        }
+      }
+    },
+    {
+      "label": "Exported frame at show 1 s (preset A) is full white",
+      "expect": {
+        "export.frame": {
+          "frame": 10,
+          "brightness": [
+            1,
+            0.05
+          ]
+        }
+      }
+    },
+    {
+      "label": "Exported frame at show 2.5 s (preset B just started) is near the start of the fade",
+      "expect": {
+        "export.frame": {
+          "frame": 25,
+          "brightness": [
+            0.3,
+            0.06
+          ]
+        }
+      }
+    },
+    {
+      "do": "eval",
+      "label": "Clear the show and the keyframes",
+      "js": "(() => { const g = __show.g(); g.showTimeline.clear(); g.keyframeTimeline.clearAll(); g.keyframeTimeline.stop(); return true; })()"
+    },
+    {
+      "do": "project.layerColour",
+      "name": "Wall",
+      "colour": "red"
+    },
+    {
+      "do": "show.track",
+      "name": "wall",
+      "layer": "Wall"
+    },
+    {
+      "do": "show.clip",
+      "track": "wall",
+      "clip": "ramp.mp4",
+      "at": 0,
+      "duration": 6,
+      "endBehaviour": "stop",
+      "inPoint": 1
+    },
+    {
+      "do": "show.seek",
+      "t": 3,
+      "settle": 1500,
+      "label": "Paused at 3 s the ramp shows media time 4 s (in-point 1 s)",
+      "expect": {
+        "layer.colour": {
+          "track": "wall",
+          "brightness": [
+            0.4,
+            0.04
+          ],
+          "within": 10
+        }
+      }
+    },
+    {
+      "do": "show.export",
+      "seconds": 5,
+      "fps": 10,
+      "label": "Render the track"
+    },
+    {
+      "label": "Exported frame at 1 s shows media time 2 s",
+      "expect": {
+        "export.frame": {
+          "frame": 10,
+          "brightness": [
+            0.2,
+            0.04
+          ]
+        }
+      }
+    },
+    {
+      "label": "Exported frame at 3 s shows media time 4 s, as playback paused there did",
+      "expect": {
+        "export.frame": {
+          "frame": 30,
+          "brightness": [
+            0.4,
+            0.04
+          ]
+        }
+      }
+    },
+    {
+      "label": "Exported frame at 4.5 s shows media time 5.5 s",
+      "expect": {
+        "export.frame": {
+          "frame": 45,
+          "brightness": [
+            0.55,
+            0.04
+          ]
+        }
+      }
+    },
+    {
+      "do": "eval",
+      "label": "Clear the show",
+      "js": "(() => { __show.g().showTimeline.clear(); return true; })()"
+    },
+    {
+      "do": "show.track",
+      "name": "wall2",
+      "layer": "Wall"
+    },
+    {
+      "do": "show.clip",
+      "track": "wall2",
+      "clip": "framecode.mp4",
+      "seconds": 10,
+      "at": 0,
+      "duration": 5,
+      "inPoint": 1,
+      "endBehaviour": "stop"
+    },
+    {
+      "do": "show.split",
+      "at": 1.5,
+      "label": "Split the clip at 1.5 s"
+    },
+    {
+      "do": "show.export",
+      "seconds": 3,
+      "fps": 30,
+      "label": "Render the frame-coded track at 30 fps"
+    },
+    {
+      "label": "Export frame 0 is clip frame 30 (in-point 1 s)",
+      "expect": {
+        "export.frame": {
+          "frame": 0,
+          "frameCode": 30
+        }
+      }
+    },
+    {
+      "label": "Export frame 15 is clip frame 45",
+      "expect": {
+        "export.frame": {
+          "frame": 15,
+          "frameCode": 45
+        }
+      }
+    },
+    {
+      "label": "Export frame 45 (after the split) is clip frame 75",
+      "expect": {
+        "export.frame": {
+          "frame": 45,
+          "frameCode": 75
+        }
+      }
+    },
+    {
+      "label": "Export frame 89 is clip frame 119",
+      "expect": {
+        "export.frame": {
+          "frame": 89,
+          "frameCode": 119
+        },
+        "noErrors": true
+      }
+    }
+  ]
+}

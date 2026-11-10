@@ -224,6 +224,11 @@ describe('evaluating tracks', () => {
     expect(evaluateShowTracks([track([clip('a', 0, 20, { endBehaviour: 'hold' })])], 15, opts).tracks[0].clip!.paused).toBe(true);
   });
 
+  it('runs video under an offline render even though the show is not playing', () => {
+    const frame = evaluateShowTracks([track([clip('a', 0, 5)])], 1, { playing: false, seekGeneration: 9, manualClock: true });
+    expect(frame.tracks[0].clip!.paused).toBe(false);
+  });
+
   it('signature ignores media time while playing but not while paused', () => {
     const tr = [track([clip('a', 0, 5)])];
     const a = showTrackFrameSignature(evaluateShowTracks(tr, 1, opts));

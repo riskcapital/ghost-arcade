@@ -397,6 +397,7 @@
   import { stage3dScene } from './lib/stage3d/store';
   import { showTimeline, setShowTransitionSink } from './lib/stores/showTimeline';
   import { handleShowKeydown } from './lib/show/showKeyboard';
+  import { installShowTrackRuntime } from './lib/show/tracks/showTrackRuntime';
   import { installShowControl, showRuntimeHooks } from './lib/show/showControlRuntime';
   import { hydrateShowControl, serializeShowControl } from './lib/show/showControlPersistence';
   import { cueList } from './lib/show/cueList';
@@ -1931,12 +1932,19 @@
         onboarding,
         modulationStore,
         getEngine: () => canvasComponent?.getEngine() ?? null,
+        // A show render checked against live playback needs the keyframe
+        // tray and the offline renderer the export path uses.
+        keyframeTimeline,
+        offlineRender: () => import('./lib/recording/offlineRender').then((m) => m.offlineRender),
       };
     } catch { /* sealed */ }
 
     // Show control: cue list executor, show:* control paths, timeline
     // markers, timecode chase, the scheduler and projector polling.
     const stopShowControl = installShowControl();
+    // Show layer tracks: track frames into the scene, scrubbing, the video
+    // phase follower, pre-rolls and track templates.
+    const stopShowTracks = installShowTrackRuntime({ project });
     showRuntimeHooks.ensureOutputs = ensureOutputsFullscreen;
     // Show mode (start at boot): nothing modal may stand between a machine
     // booting in an empty room and the show starting.
@@ -2749,6 +2757,7 @@
     return () => {
       appMounted = false;
       stopShowControl();
+      stopShowTracks();
       showRuntimeHooks.ensureOutputs = null;
       restorePrompts();
       stopInterfaceScale();

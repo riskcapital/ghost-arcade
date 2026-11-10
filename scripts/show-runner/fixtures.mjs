@@ -20,15 +20,34 @@ export function fixtureDir() {
 }
 
 /** Path to a fixture clip, generating it the first time. Names:
- *  `<colour>.mp4`, `<colour>.mov` (HAP), `bars.mp4` (moving test bars). */
+ *  `<colour>.mp4`, `<colour>.mov` (HAP), `bars.mp4` (moving test bars),
+ *  `ramp.mp4` (10 s grey ramp, brightness = time / 10), `framecode.mp4`
+ *  (10 s, the frame number in binary bars). */
 export function fixture(name) {
   // An absolute path is a clip of the user's own (real-world decks).
   if (path.isAbsolute(name)) return name;
   const file = path.join(fixtureDir(), name);
   if (fs.existsSync(file)) return file;
   const ffmpeg = process.env.GA_FFMPEG_PATH || require('ffmpeg-static');
-  const [base, ext] = name.split('.');
   let input;
+  const [base, ext] = name.split('.');
+  if (base === 'ramp') {
+    // 10 s grey ramp: brightness = media time / 10, so a frame's mean says
+    // which moment of the clip it is.
+    execFileSync(process.env.GA_FFMPEG_PATH || require('ffmpeg-static'), ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=black:size=320x180:rate=30',
+      '-vf', "geq=r='255*T/10':g='255*T/10':b='255*T/10'", '-t', '10',
+      ...(ext === 'mov' ? ['-c:v', 'hap'] : ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-g', '15']), '-an', file]);
+    return file;
+  }
+  if (base === 'framecode') {
+    // 10 s at 30 fps; nine black/white bars spell the frame number in
+    // binary (left = lowest bit), so a decoded frame says exactly which
+    // frame of the clip it is.
+    execFileSync(process.env.GA_FFMPEG_PATH || require('ffmpeg-static'), ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=black:size=288x64:rate=30',
+      '-vf', "geq=lum='if(mod(floor(N/pow(2,floor(X/32))),2),235,16)':cb=128:cr=128", '-t', '10',
+      '-c:v', 'libx264', '-qp', '0', '-pix_fmt', 'yuv420p', '-g', '15', '-an', file]);
+    return file;
+  }
   if (base === 'bars') input = ['-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30'];
   else if (FIXTURE_COLOURS[base]) input = ['-f', 'lavfi', '-i', `color=c=${FIXTURE_COLOURS[base]}:size=640x360:rate=30`];
   else throw new Error(`unknown fixture ${name}`);

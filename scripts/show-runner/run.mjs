@@ -14,8 +14,9 @@
 //   "wait":   seconds to wait after the action,
 //   "expect": { checkName: spec, ... } (see CHECK_NAMES in steps.mjs),
 //   "label":  how the step reads in the report.
-// Clips named like "red.mp4", "white.mov" (HAP) or "bars.mp4" are generated
-// on first use into ~/.ghost-arcade/show-runner/fixtures. Golden frames live
+// Clips named like "red.mp4", "white.mov" (HAP), "bars.mp4", "ramp.mp4" or
+// "framecode.mp4" are generated on first use into
+// ~/.ghost-arcade/show-runner/fixtures. Golden frames live
 // in ~/.ghost-arcade/show-runner/goldens/<show>/ (a missing one is recorded;
 // --update-goldens re-records them) and reports in .../reports/<time>/.
 // Any GA_* variable set for the runner reaches the app, e.g.

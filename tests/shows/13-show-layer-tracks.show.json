@@ -1,0 +1,181 @@
+{
+  "name": "Show timeline: a layer track plays clips on a mapping layer",
+  "description": "A red layer with a track: its own content in gaps, a grey-ramp video clip on the right frame while playing, paused and scrubbed, a split that keeps one decoder, a hidden gap, and Delete on a show clip that leaves the layers alone.",
+  "steps": [
+    {
+      "do": "app.start",
+      "choice": "blank"
+    },
+    {
+      "do": "project.layer",
+      "name": "Wall",
+      "colour": "red",
+      "wait": 1
+    },
+    {
+      "do": "show.open"
+    },
+    {
+      "do": "show.track",
+      "name": "wall",
+      "layer": "Wall"
+    },
+    {
+      "do": "show.clip",
+      "track": "wall",
+      "clip": "ramp.mp4",
+      "at": 2,
+      "duration": 6,
+      "endBehaviour": "stop",
+      "var": "ramp"
+    },
+    {
+      "do": "show.seek",
+      "t": 1,
+      "settle": 1500,
+      "label": "In the gap before the clip the layer shows its own content",
+      "expect": {
+        "layer.colour": {
+          "track": "wall",
+          "is": "red",
+          "within": 10
+        }
+      }
+    },
+    {
+      "do": "show.seek",
+      "t": 6,
+      "settle": 1500,
+      "label": "Paused 4 s into the clip: the ramp shows media time 4 s",
+      "expect": {
+        "layer.colour": {
+          "track": "wall",
+          "brightness": [
+            0.4,
+            0.05
+          ],
+          "within": 10
+        },
+        "layer.mediaTime": {
+          "track": "wall",
+          "within": 5
+        }
+      }
+    },
+    {
+      "do": "show.seek",
+      "t": 3,
+      "settle": 1500,
+      "label": "Scrubbed back to 1 s into the clip",
+      "expect": {
+        "layer.colour": {
+          "track": "wall",
+          "brightness": [
+            0.1,
+            0.05
+          ],
+          "within": 10
+        },
+        "layer.mediaTime": {
+          "track": "wall",
+          "within": 5
+        }
+      }
+    },
+    {
+      "do": "show.play",
+      "from": 2.5,
+      "wait": 2.5,
+      "label": "Playing: the decoder stays within a frame of the show",
+      "expect": {
+        "layer.mediaTime": {
+          "track": "wall"
+        },
+        "video.sessions": {
+          "min": 1,
+          "max": 2
+        }
+      }
+    },
+    {
+      "wait": 1.5,
+      "label": "Still within a frame a moment later",
+      "expect": {
+        "layer.mediaTime": {
+          "track": "wall"
+        }
+      }
+    },
+    {
+      "do": "show.pause"
+    },
+    {
+      "do": "show.split",
+      "at": 5,
+      "label": "Split the clip at 5 s"
+    },
+    {
+      "do": "show.play",
+      "from": 4,
+      "wait": 2,
+      "label": "Across the split: same decoder, still on time",
+      "expect": {
+        "layer.mediaTime": {
+          "track": "wall"
+        },
+        "video.sessions": {
+          "max": 2
+        },
+        "eval.true": {
+          "js": "__show.trackState('wall').clip.runId === __show.show().layerTracks[0].clips[0].id",
+          "label": "the right half plays on the left half's decoder"
+        }
+      }
+    },
+    {
+      "do": "show.pause",
+      "wait": 0.5
+    },
+    {
+      "do": "show.trackSet",
+      "track": "wall",
+      "gap": "hide"
+    },
+    {
+      "do": "show.seek",
+      "t": 1,
+      "settle": 1500,
+      "label": "Gap set to hide: the layer is not drawn before the clip",
+      "expect": {
+        "output.colour": {
+          "is": "black",
+          "within": 10
+        }
+      }
+    },
+    {
+      "do": "project.select",
+      "name": "Wall"
+    },
+    {
+      "do": "eval",
+      "js": "(() => { const g = __show.g(); const comp = g.project.saveComposition('P1'); g.showTimeline.insertPresetClipAt(comp, 20, 5, 'P1'); g.showTimeline.select({ kind: 'preset', id: __show.show().presetClips[0].id }); return true; })()"
+    },
+    {
+      "do": "ui.hover",
+      "selector": ".show-tray"
+    },
+    {
+      "do": "ui.key",
+      "key": "Delete",
+      "label": "Delete with a show clip selected and the pointer over the tray",
+      "expect": {
+        "eval.true": {
+          "js": "__show.show().presetClips.length === 0 && __show.project().layers.some((l) => l.name === 'Wall')",
+          "label": "the show clip is gone and the Wall layer is still there"
+        },
+        "noErrors": true
+      }
+    }
+  ]
+}

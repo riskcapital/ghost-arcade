@@ -9517,13 +9517,20 @@ export class NativeRendererSync {
     const seqOverrides = (seqState.isPlaying || Object.keys(seqState.opacityOverrides ?? {}).length > 0)
       ? seqState.opacityOverrides
       : null;
-    if (!kfOverrides && !seqOverrides) return layers;
+    // Show layer tracks ride on the scene copies (showTrackScene.ts): their
+    // lane values go on after the preset's keyframes and the sequencer, so
+    // the show wins on the same key, and their clip opacity and fades
+    // multiply whatever opacity that leaves.
+    const hasShow = layers.some((layer) => layer._showParams !== undefined || layer._showOpacityMul !== undefined);
+    if (!kfOverrides && !seqOverrides && !hasShow) return layers;
 
     let changed = false;
     const mapped = layers.map((layer) => {
       const kf = kfOverrides?.[layer.id.startsWith('vj-layer-')&&layer.source?.id?`vj-${layer.source.id}`:layer.id];
       const seqMult = seqOverrides?.[layer.id];
-      if (!kf && seqMult === undefined) return layer;
+      const showParams = layer._showParams;
+      const showMul = layer._showOpacityMul;
+      if (!kf && seqMult === undefined && !showParams && showMul === undefined) return layer;
 
       changed = true;
       const next: any = { ...layer };
@@ -9531,6 +9538,8 @@ export class NativeRendererSync {
         next.opacity = (next.opacity ?? 1) * seqMult;
       }
       if (kf) applyParamOverrides(next as Layer, kf as ParamOverrideSet);
+      if (showParams) applyParamOverrides(next as Layer, showParams);
+      if (showMul !== undefined) next.opacity = (next.opacity ?? 1) * Math.max(0, Math.min(1, showMul));
       return next as Layer;
     });
     return changed ? mapped : layers;
