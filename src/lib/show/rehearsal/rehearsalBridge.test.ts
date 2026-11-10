@@ -29,6 +29,7 @@ function fakeTransport(init: { t?: number; playing?: boolean; duration?: number;
     seek: (x) => { calls.push(`seek:${x}`); st.currentTime = x; },
     setLoop: (on) => { calls.push(`loop:${on}`); st.loop = on; },
     setAudioDelay: vi.fn(),
+    returnTakeover: (instant) => { calls.push(`return:${instant}`); },
   };
   return t;
 }
@@ -79,6 +80,13 @@ describe('show transport mirror', () => {
     expect(t.calls).toEqual([]);
     expect(executeRehearsalCommand({ op: 'audioDelay', enabled: true, seconds: 2 }, t).ok).toBe(true);
     expect(t.setAudioDelay).toHaveBeenCalledWith({ enabled: true, seconds: 0.5 });
+  });
+
+  it('Return hands tracks back even while a clock drives the show', () => {
+    const t = fakeTransport({ chasing: true });
+    expect(executeRehearsalCommand({ op: 'takeoverReturn', instant: false }, t).ok).toBe(true);
+    expect(executeRehearsalCommand({ op: 'takeoverReturn', instant: true }, t).ok).toBe(true);
+    expect(t.calls).toEqual(['return:false', 'return:true']);
   });
 
   it('an empty show ignores commands', () => {

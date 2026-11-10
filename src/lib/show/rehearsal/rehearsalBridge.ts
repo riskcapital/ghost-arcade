@@ -12,6 +12,7 @@
  * (`performance.timeOrigin + performance.now()`), which two renderer
  * processes on one machine agree on.
  */
+import type { TakeoverSummary } from '../takeover/liveTakeover';
 import type { ShowCameraClip, ShowTempoMap } from '../../types';
 import type { DemoShot, ReelCameraState } from '../../stage3d/demoReel';
 import { evaluateShotCamera } from '../../stage3d/demoReel';
@@ -68,8 +69,8 @@ export interface RehearsalShowState {
   markers: RehearsalMarker[];
   cameraLane: ShowCameraClip[];
   audioDelay: RehearsalAudioDelay;
-  /** Reserved for the live takeover summary (LIVE pill, Return). */
-  takeover: null;
+  /** Live takeover in the editor (LIVE pill, Return); null when nothing is taken over. */
+  takeover: TakeoverSummary | null;
 }
 
 export type RehearsalCommand =
@@ -82,7 +83,9 @@ export type RehearsalCommand =
   | { op: 'marker'; dir: 1 | -1 }
   | { op: 'home' }
   | { op: 'loop'; on: boolean }
-  | { op: 'audioDelay'; enabled: boolean; seconds: number };
+  | { op: 'audioDelay'; enabled: boolean; seconds: number }
+  /** Hand every taken-over track back to the timeline; allowed while chasing. */
+  | { op: 'takeoverReturn'; instant: boolean };
 
 export type RecAudioMode = 'exact' | 'sidecar' | 'none';
 export interface RecAudioResult {
@@ -146,6 +149,8 @@ export interface RehearsalTransport {
   seek(seconds: number): void;
   setLoop(on: boolean): void;
   setAudioDelay(delay: RehearsalAudioDelay): void;
+  /** Hand every taken-over track back to the timeline. */
+  returnTakeover?(instant: boolean): void;
 }
 
 export interface CommandOutcome {
@@ -157,6 +162,11 @@ export interface CommandOutcome {
 export function executeRehearsalCommand(cmd: RehearsalCommand, transport: RehearsalTransport): CommandOutcome {
   if (cmd.op === 'audioDelay') {
     transport.setAudioDelay(normalizeAudioDelay(cmd));
+    return { ok: true };
+  }
+  if (cmd.op === 'takeoverReturn') {
+    // A takeover is not the transport: Return works while a clock owns the show.
+    transport.returnTakeover?.(cmd.instant);
     return { ok: true };
   }
   if (transport.isChasing()) return { ok: false, reason: 'chasing' };

@@ -11,6 +11,7 @@ import { get } from 'svelte/store';
 import { showTimeline } from '../../stores/showTimeline';
 import { project } from '../../stores/layers';
 import { cueList } from '../cueList';
+import { liveTakeover, takeoverSummary } from '../takeover/liveTakeover';
 import { clipAudioBus } from '../../audio/clipAudioBus';
 import { invoke } from '../../bridge';
 import { showMuxTracks } from '../showAudioExport';
@@ -75,7 +76,10 @@ export function buildRehearsalShowState(audioDelay: RehearsalAudioDelay, at = ep
     markers: cueList.state.markers.map((m) => ({ time: m.time, label: m.label })),
     cameraLane: s.cameraLane.map((c) => ({ ...c })),
     audioDelay: { ...audioDelay },
-    takeover: null,
+    takeover: (() => {
+      const summary = takeoverSummary(liveTakeover.state);
+      return summary.active ? summary : null;
+    })(),
   };
 }
 
@@ -141,6 +145,9 @@ export function installEditorRehearsal(): () => void {
       audioDelay = delay;
       saveAudioDelay(delay);
       applyAudioDelay();
+    },
+    returnTakeover: (instant) => {
+      liveTakeover.release('all', instant ? { mode: 'instant' } : undefined);
     },
   };
 

@@ -6,9 +6,10 @@
    * transport and sends it commands, so rehearsing never starts a second
    * audio clock. Keys while the stage view is up: Enter or Shift+Space play
    * and pause (Space alone stays the hand tool), ← / → jump between markers,
-   * Home goes to the start.
+   * Home goes to the start. While tracks are taken over live in the editor,
+   * a LIVE pill and Return hand them back from here.
    */
-  import { onDestroy, onMount, type Snippet } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import {
     pauseCameraFollow,
     sendRehearsalCommand,
@@ -18,12 +19,6 @@
   } from '../../show/rehearsal/stageRehearsal';
   import { REHEARSAL_MAX_AUDIO_DELAY, epochNow, formatShowClock, showTimeAt } from '../../show/rehearsal/rehearsalBridge';
   import { formatBarsBeats } from '../../show/tempoMap';
-
-  interface Props {
-    /** Reserved for the live takeover pill and Return button. */
-    live?: Snippet;
-  }
-  let { live }: Props = $props();
 
   const show = $derived($stageShow);
   const duration = $derived(show?.duration ?? 0);
@@ -51,6 +46,8 @@
   function toggle() { sendRehearsalCommand({ op: 'toggle' }); }
   function stop() { sendRehearsalCommand({ op: 'stop' }); }
   function home() { sendRehearsalCommand({ op: 'home' }); }
+  const takeover = $derived(show?.takeover ?? null);
+  function returnTakeover(e: MouseEvent) { sendRehearsalCommand({ op: 'takeoverReturn', instant: e.shiftKey }); }
   function toggleLoop() { if (show) sendRehearsalCommand({ op: 'loop', on: !show.loop }); }
 
   // ── Scrubber ───────────────────────────────────────────────────────────
@@ -279,7 +276,10 @@
           </div>
         {/if}
       </div>
-      <div class="sst-live-slot" data-stage-live-slot>{#if live}{@render live()}{/if}</div>
+      {#if takeover}
+        <span class="sst-live" title="Surfaces taken over live; the show runs on underneath" data-stage-takeover-pill>LIVE {takeover.count}</span>
+        <button class="sst-chip sst-return" onclick={returnTakeover} title="Hand every taken-over track back to the timeline (Shift: instantly)" data-stage-takeover-return>Return to timeline</button>
+      {/if}
     </div>
   </div>
 {/if}
@@ -371,7 +371,23 @@
   .sst-row input[type='range'] { flex: 1; }
   .sst-ms { min-width: 48px; text-align: right; font-variant-numeric: tabular-nums; }
   .sst-note { margin: 0; color: var(--ga-ink-2, #999); font-size: 11px; line-height: 1.35; }
-  .sst-live-slot:empty { display: none; }
+  .sst-live {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    color: #1a0d02;
+    background: #ff8c28;
+    border-radius: 10px;
+    padding: 2px 8px;
+    white-space: nowrap;
+    animation: sst-live-pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes sst-live-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255, 140, 40, 0.65); }
+    50% { box-shadow: 0 0 0 5px rgba(255, 140, 40, 0); }
+  }
+  .sst-return { border-color: rgba(255, 140, 40, 0.6); color: #ffb070; white-space: nowrap; }
+  @media (prefers-reduced-motion: reduce) { .sst-live { animation: none; } }
   @media (max-width: 720px) {
     .sst { flex-wrap: wrap; bottom: 12px; }
     .sst-bar { order: 10; flex-basis: 100%; }
