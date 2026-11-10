@@ -129,7 +129,10 @@ describe('install mode (main process)', () => {
   it('is off unless this launch is in show mode, and --no-show-mode skips it', () => {
     expect(setup({ showMode: false }).im.active()).toBe(false);
     expect(setup({ argv: ['--no-show-mode'] }).im.active()).toBe(false);
-    expect(setup().im.active()).toBe(true);
+    expect(setup().im.active()).toBe(false); // not started yet
+    const h = setup();
+    h.im.start();
+    expect(h.im.active()).toBe(true);
   });
 
   it('starts: health log, guardian with the same command line, exit key combo', () => {
@@ -178,6 +181,14 @@ describe('install mode (main process)', () => {
     expect(h.im.holdQuit()).toBe(false);
   });
 
+  it('switching install mode on mid-session does not hold quits until the next launch', () => {
+    const h = setup({ showMode: false });
+    h.startup.set({ showMode: true });
+    expect(h.im.start()).toBe(false);
+    expect(h.im.active()).toBe(false);
+    expect(h.im.holdQuit()).toBe(false);
+  });
+
   it('in combo mode refuses a quit outright', () => {
     const h = setup({ config: { quitProtection: 'combo' } });
     h.im.start();
@@ -199,9 +210,13 @@ describe('install mode (main process)', () => {
       h.advance(15_000);
       h.im._checkHeartbeat();
       expect(h.wc.forcefullyCrashRenderer).toHaveBeenCalled();
+      // Ending the hung page fires its crash event: not a second fault.
+      expect(h.im.rendererGone({ reason: 'killed', exitCode: 2 })).toBe(true);
       vi.advanceTimersByTime(600);
-      expect(h.wc.reload).toHaveBeenCalled();
-      expect(readFileSync(h.im.logFile, 'utf8')).toMatch(/restart\s+the editor has not answered/);
+      expect(h.wc.reload).toHaveBeenCalledTimes(1);
+      const log = readFileSync(h.im.logFile, 'utf8');
+      expect(log).toMatch(/restart\s+the editor has not answered/);
+      expect(log).not.toMatch(/editor crashed/);
     } finally {
       vi.useRealTimers();
     }

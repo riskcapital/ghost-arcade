@@ -78,6 +78,8 @@ function createInstallMode({
   let coreGoneSince = 0;
   let pendingCooldownLogged = 0;
   let guardianPid = null;
+  /** When the watchdog itself ended a hung editor (its crash is not a new fault). */
+  let intentionalCrashAt = 0;
   const stall = createFrameStallDetector();
   const startedAt = now();
 
@@ -113,11 +115,15 @@ function createInstallMode({
     try { return showStartup.get().config; } catch { return {}; }
   }
 
+  // Whether THIS launch is in show mode is fixed when it starts: switching
+  // the setting on later takes effect at the next launch.
+  let launchSession = null;
+  try { launchSession = showStartup.get().session; } catch { launchSession = null; }
+  const launchedInShowMode = !!(launchSession && launchSession.showMode);
+
   /** Install mode is running for this launch. */
   function active() {
-    let session = null;
-    try { session = showStartup.get().session; } catch { session = null; }
-    return !!(session && session.showMode) && !paused;
+    return launchedInShowMode && started && !paused;
   }
 
   function log(kind, message) {
@@ -161,6 +167,7 @@ function createInstallMode({
       try {
         // A hung page may not unload on its own: end its process first.
         if (!wc.isCrashed() && lastHeartbeat && typeof wc.forcefullyCrashRenderer === 'function') {
+          intentionalCrashAt = now();
           wc.forcefullyCrashRenderer();
         }
         setTimeout(() => {
@@ -277,7 +284,7 @@ function createInstallMode({
 
   // ── Lifecycle ───────────────────────────────────────────────────────
   function start() {
-    if (started || !active()) return false;
+    if (started || !launchedInShowMode || paused) return false;
     started = true;
     const cfg = config();
     const crashed = state.cleanExit === false && state.lastStartAt;
@@ -414,6 +421,10 @@ function createInstallMode({
     if (!active() || config().watchdog === false) return false;
     lastHeartbeatAt = 0;
     pageLoadedAt = 0;
+    if (intentionalCrashAt && now() - intentionalCrashAt < 10_000) {
+      intentionalCrashAt = 0;
+      return true; // the reload is already on its way
+    }
     const reason = `the editor crashed (${details && details.reason}, exit code ${details && details.exitCode})`;
     const d = fault('renderer-crash', reason);
     return !!d;
