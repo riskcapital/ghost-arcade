@@ -25,7 +25,7 @@ except ImportError:
 
 APP_ADDRESS = ("127.0.0.1", 11050)
 SCRIPT_ADDRESS = ("127.0.0.1", 11051)
-PROTOCOL = 4
+PROTOCOL = 5
 NAME_LIMIT = 64
 # update_display runs roughly ten times a second.
 HEARTBEAT_TICKS = 10
@@ -35,6 +35,9 @@ SCENE_TICKS = 5
 TRACKS_PER_TICK = 4
 # Track levels go out at most this often per track (seconds).
 LEVEL_INTERVAL = 0.02
+# A clip fired with a start position is jumped there once it plays; a
+# request still waiting after this long (seconds) is dropped.
+JUMP_TIMEOUT = 8.0
 # Notes beyond this many per clip are left out of a score.
 NOTE_LIMIT = 512
 # Every datagram stays under this size: macOS drops UDP sends over 9216
@@ -117,6 +120,9 @@ class GhostArcade(ControlSurface):
         self._notes_cache = {}
         self._note_listeners = {}
         self._rebuild = True
+        # Clips fired from a Timeline block part way through: jumped to
+        # their place once Live has started them.
+        self._pending_jumps = []
         self._song = Live.Application.get_application().get_document()
         self._open_socket()
         self._song.add_tracks_listener(self._structure_changed)
@@ -171,6 +177,8 @@ class GhostArcade(ControlSurface):
         if self._ticks % SCENE_TICKS == 0:
             self._send_scenes()
         self._scan_tracks()
+        if self._pending_jumps:
+            self._run_jumps()
         if self._ticks % HEARTBEAT_TICKS == 0:
             self._send_hello()
         self._flush_levels()
@@ -240,9 +248,12 @@ class GhostArcade(ControlSurface):
             track = self._track(int(message.get("i", -2)))
             slot = int(message.get("s", -1))
             if track is not None and 0 <= slot < len(track.clip_slots):
-                track.clip_slots[slot].fire()
+                self._fire_slot(track.clip_slots[slot], message)
         elif kind == "stop_all":
-            song.stop_all_clips()
+            if message.get("q") is not None:
+                self._quantized_call(int(message["q"]), song.stop_all_clips)
+            else:
+                song.stop_all_clips()
         elif kind == "play":
             song.start_playing()
         elif kind == "continue":
@@ -252,7 +263,10 @@ class GhostArcade(ControlSurface):
         elif kind == "stop_track":
             track = self._track(int(message.get("i", -2)))
             if track is not None and track != song.master_track:
-                track.stop_all_clips()
+                if message.get("q") is not None:
+                    self._quantized_call(int(message["q"]), track.stop_all_clips)
+                else:
+                    track.stop_all_clips()
         elif kind == "jump":
             song.current_song_time = max(0.0, float(message.get("time", 0)))
         elif kind == "crossfader":
@@ -286,6 +300,85 @@ class GhostArcade(ControlSurface):
             self._forget_notes()
             self._apply_watch()
             self._send_structure(force=True)
+
+    # Timeline launches (protocol 5)
+
+    def _quantized_call(self, quantize, call):
+        """Run a launch or stop with its own launch quantise (Live's
+        numbering, 0 = none) instead of the set's, then put the set's back.
+        Stops with 0 also try Live's unquantized form first."""
+        song = self._song
+        if quantize == 0:
+            try:
+                call(False)
+                return
+            except Exception:
+                pass
+        previous = song.clip_trigger_quantization
+        try:
+            song.clip_trigger_quantization = self._quantization(quantize)
+        except Exception:
+            call()
+            return
+        try:
+            call()
+        finally:
+            try:
+                song.clip_trigger_quantization = previous
+            except Exception:
+                pass
+
+    def _quantization(self, value):
+        try:
+            return Live.Song.Quantization.values[int(value)]
+        except Exception:
+            return int(value)
+
+    def _fire_slot(self, slot, message):
+        """Fire a clip slot. `q`: launch quantise for this launch only.
+        `pos`: beats into the clip it should be at (jumped once it plays)."""
+        quantize = message.get("q")
+        if quantize is None:
+            slot.fire()
+        else:
+            fired = False
+            try:
+                slot.fire(launch_quantization=self._quantization(quantize))
+                fired = True
+            except Exception:
+                fired = False
+            if not fired:
+                self._quantized_call(int(quantize), slot.fire)
+        position = message.get("pos")
+        try:
+            position = float(position) if position is not None else 0.0
+        except (TypeError, ValueError):
+            position = 0.0
+        if position > 0 and slot.has_clip:
+            self._pending_jumps = [j for j in self._pending_jumps if j["slot"] != slot]
+            self._pending_jumps.append({"slot": slot, "clip": slot.clip, "pos": position, "until": time.time() + JUMP_TIMEOUT})
+
+    def _run_jumps(self):
+        """Jump clips that have started to where the Timeline is in them. A
+        clip has run as far from its start as the Timeline has, so the jump
+        is the start position itself."""
+        now = time.time()
+        waiting = []
+        for job in self._pending_jumps:
+            clip = job["clip"]
+            try:
+                if job["slot"].clip != clip or now > job["until"]:
+                    continue
+                # A clip already playing that was fired again is triggered
+                # until its relaunch: wait for that.
+                if clip.is_playing and not clip.is_triggered:
+                    self._quantized_call(0, lambda: clip.jump(job["pos"]))
+                    continue
+                if clip.is_triggered:
+                    waiting.append(job)
+            except Exception as error:
+                self._log("Ghost Arcade: jump failed (%s)" % error)
+        self._pending_jumps = waiting
 
     def _setup(self, message):
         """Lay the set out for the Music Studio: name and colour tracks and
