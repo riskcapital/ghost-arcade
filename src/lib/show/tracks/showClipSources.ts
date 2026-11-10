@@ -7,9 +7,14 @@
  * only when the picture really has to jump:
  *   - a run starts (a run is a chain of clips sharing one decoder: a split
  *     plays straight through);
- *   - the show's seek generation changes (a scrub, a jump, a loop wrap);
- *   - playback pauses or resumes (a held end pauses too). Pause/resume does
- *     not bump the core's seek generation, the convention midiRouter uses.
+ *   - the show's seek generation changes (a scrub, a jump); a loop wrap
+ *     that leaves the video where its decoder already is keeps the anchor;
+ *   - playback pauses or resumes (a held end pauses too). A pause seeks the
+ *     decoder to the exact paused frame. A resume from where the decoder
+ *     was paused keeps its seek generation, the convention midiRouter uses:
+ *     the core then carries on decoding instead of seeking, which on a
+ *     long-GOP file means no hitch.
+ *   - the decoder drifted more than two frames off (see `reanchor`).
  * Between those the anchor is left alone and the phase follower
  * (showVideoPhase.ts) absorbs drift with tiny speed corrections.
  *
@@ -38,9 +43,17 @@ export const SHOW_MANUAL_REANCHOR_SECONDS = 0.5 / 60;
  *  anything else is a real seek and needs a generation of its own, or the
  *  core keeps showing the pre-rolled frame. */
 export const SHOW_PREROLL_CONTINUE_SECONDS = 0.1;
+/** A loop wrap keeps a video's anchor when its decoder, carried on through
+ *  the wrap, lands this close to where the clip is after it. */
+export const SHOW_WRAP_CONTINUE_SECONDS = 1e-3;
 
 export function showSourceId(runId: string): string {
   return SHOW_SOURCE_PREFIX + runId;
+}
+
+/** Anchor key of a track's crossfade helper. */
+export function xfadeAnchorKey(trackId: string): string {
+  return trackId + XFADE_KEY_SUFFIX;
 }
 
 /**
@@ -140,6 +153,8 @@ export class ShowClipSources {
   onReanchor: ((trackId: string) => void) | null = null;
   /** Pre-rolls sent per source id: the generation and media time. */
   private readonly prerolls = new Map<string, { generation: number; time: number }>();
+  /** Anchor keys whose decoder drifted off: re-anchored on their next ask. */
+  private readonly stale = new Set<string>();
 
   constructor(opts: ShowClipSourceOptions = {}) {
     this.now = opts.now ?? (() => performance.now());
@@ -148,6 +163,9 @@ export class ShowClipSources {
   /** The source for a track's clip in `frame`, or null when the clip shows
    *  the layer's own content (or there is no clip). */
   sourceFor(state: ShowTrackState, frame: ShowTrackFrame): MediaSource | null {
+    // A crossfade that ended leaves no helper anchor behind: the next pass
+    // through it hands the playing run over again instead of seeking.
+    if (!state.xfade) this.anchors.delete(state.trackId + XFADE_KEY_SUFFIX);
     const clip = state.clip;
     if (!clip || clip.media.kind === 'layer') {
       this.anchors.delete(state.trackId);
@@ -209,17 +227,38 @@ export class ShowClipSources {
       }
     }
     const sameRun = !!prev && prev.sourceId === sourceId && prev.src === uri;
-    let reanchor = !sameRun || prev!.paused !== clip.paused || Math.abs(prev!.rate - clip.rate) > 1e-9;
+    const drifted = this.stale.delete(trackId);
+    const sameRate = sameRun && Math.abs(prev!.rate - clip.rate) <= 1e-9;
+    // A length found after the clip started (see showClipLength) re-trims it.
+    let reanchor = !sameRun || drifted || prev!.paused !== clip.paused || !sameRate || prev!.duration !== duration;
     if (!reanchor && prev!.showSeekGeneration !== frame.seekGeneration) {
       if (frame.manualClock) {
         const predicted = predictedMediaTime(prev!, frame.time);
         reanchor = Math.abs(predicted - clip.mediaTime) > SHOW_MANUAL_REANCHOR_SECONDS;
         if (!reanchor) prev!.showSeekGeneration = frame.seekGeneration;
+      } else if (frame.wrap && frame.wrap.fromGeneration === prev!.showSeekGeneration && !clip.paused) {
+        // A loop wrap: show time went back by `shift`, the decoder did not.
+        // When it lands where the clip is after the wrap, carry on.
+        const predicted = predictedMediaTime(prev!, frame.time + frame.wrap.shift);
+        reanchor = Math.abs(predicted - clip.mediaTime) > SHOW_WRAP_CONTINUE_SECONDS;
+        if (!reanchor) {
+          prev!.showTime -= frame.wrap.shift;
+          prev!.showSeekGeneration = frame.seekGeneration;
+        }
       } else {
         reanchor = true;
       }
     }
     if (!reanchor) return prev!.source;
+
+    // A resume from where the decoder was paused: same generation, so the
+    // core carries on decoding from its paused frame instead of seeking.
+    if (sameRate && !drifted && prev!.paused && !clip.paused
+      && (this.seekSeq.get(sourceId) ?? 0) === prev!.nativeSeekSeq
+      && Math.abs(clip.mediaTime - prev!.mediaTime) <= SHOW_PREROLL_CONTINUE_SECONDS) {
+      this.onReanchor?.(trackId);
+      return this.anchorSource(trackId, clip, frame, prev!.nativeSeekSeq, duration, uri);
+    }
 
     // A scrub while paused: let the native scrubber pace the seeks (one in
     // flight, latest wins) instead of a new anchor on every pointer move.
@@ -249,6 +288,19 @@ export class ShowClipSources {
     this.prerolls.delete(sourceId);
     this.seekSeq.set(sourceId, nativeSeekSeq);
     this.onReanchor?.(trackId);
+    return this.anchorSource(trackId, clip, frame, nativeSeekSeq, duration, uri);
+  }
+
+  /** A new anchor (and source) for `trackId` at the clip's media time. */
+  private anchorSource(
+    trackId: string,
+    clip: ShowTrackClipState,
+    frame: ShowTrackFrame,
+    nativeSeekSeq: number,
+    duration: number | undefined,
+    uri: string,
+  ): MediaSource {
+    const sourceId = showSourceId(clip.runId);
     const trimStart = duration && duration > 0 ? Math.max(0, Math.min(1, clip.loopStart / duration)) : 0;
     const source = {
       id: sourceId,
@@ -308,14 +360,49 @@ export class ShowClipSources {
     return a ? predictedMediaTime(a, t) : null;
   }
 
+  /** The anchor of a crossfade's outgoing clip on a track. */
+  xfadeAnchorFor(trackId: string): Readonly<ShowClipAnchor> | null {
+    return this.anchors.get(trackId + XFADE_KEY_SUFFIX) ?? null;
+  }
+
+  /**
+   * The decoder behind an anchor (`trackId`, or `xfadeKey(trackId)` for a
+   * crossfade's outgoing clip) drifted off: its next source is a fresh
+   * anchor at the clip's media time, under a new seek generation.
+   */
+  reanchor(key: string): void {
+    if (this.anchors.has(key)) this.stale.add(key);
+  }
+
+  /** Every anchor, by key (the drift check). */
+  anchorEntries(): Array<[string, Readonly<ShowClipAnchor>]> {
+    return [...this.anchors.entries()];
+  }
+
   /** Forget tracks that are gone. */
   retain(trackIds: ReadonlySet<string>): void {
     for (const id of [...this.anchors.keys()]) if (!trackIds.has(id)) this.anchors.delete(id);
+    for (const id of [...this.stale]) if (!this.anchors.has(id)) this.stale.delete(id);
     if (this.statics.size > 256) this.statics.clear();
   }
 
+  /** Keep the anchors `frame` still uses: one per track, and a helper's
+   *  only while its track is inside a crossfade. */
+  retainFrame(frame: ShowTrackFrame | null): void {
+    const keep = new Set<string>();
+    for (const state of frame?.tracks ?? []) {
+      keep.add(state.trackId);
+      if (state.xfade) keep.add(state.trackId + XFADE_KEY_SUFFIX);
+    }
+    this.retain(keep);
+  }
+
+  /** Forget every anchor and source (another show was loaded or the show
+   *  was cleared). Seek generations are kept, so a source that comes back
+   *  still moves forward. */
   clear(): void {
     this.anchors.clear();
     this.statics.clear();
+    this.stale.clear();
   }
 }
