@@ -223,6 +223,25 @@ describe('quantised release', () => {
     expect(store.state.surfaces.wall.release?.at.showTime).toBeCloseTo(2.25, 9);
   });
 
+  it('a seek far past a pending release still fades (it starts at the seek, not long before)', () => {
+    const { t, store } = harness({ showTime: 3.0, playing: true, tempo: map });
+    store.engage('wall', blueRow);
+    store.release('wall', { mode: 'bar', fadeSeconds: 1 });
+    expect(store.state.surfaces.wall.release?.at.showTime).toBeCloseTo(4.25, 9);
+    // The operator seeks forward to 30 s.
+    t.show = { ...t.show, showTime: 30 };
+    t.now += 20;
+    let f = store.tick();
+    expect(store.state.surfaces.wall.phase).toBe('releasing');
+    expect(f.frame.surfaces[0].level).toBeGreaterThan(0.7);
+    t.now += 500;
+    f = store.tick();
+    expect(f.frame.surfaces[0].level).toBeGreaterThan(0.2);
+    expect(f.frame.surfaces[0].level).toBeLessThan(0.8);
+    t.now += 600;
+    expect(store.tick().frame.surfaces).toEqual([]);
+  });
+
   it('an instant release overrides a pending one; cancelRelease goes back to live', () => {
     const { store } = harness({ showTime: 3.0, playing: true, tempo: map });
     store.engage('a', blueRow);
@@ -269,6 +288,45 @@ describe('underneath', () => {
     t.chasing = true;
     store.engage('a', blueRow);
     expect(t.paused).toBe(0);
+  });
+
+  it("'pause': the user's Stop while taken over wins; Return does not start the show from 0", () => {
+    const { t, store } = harness({ showTime: 10, playing: true });
+    store.setUnderneath('pause');
+    store.engage('a', blueRow);
+    expect(t.paused).toBe(1);
+    // The operator stops the show (it goes to 0), then hands back.
+    t.show = { ...t.show, showTime: 0, playing: false };
+    store.release('a', { mode: 'instant' });
+    expect(t.played).toBe(0);
+    expect(t.show).toMatchObject({ showTime: 0, playing: false });
+    expect(store.state.pausedAt).toBeUndefined();
+  });
+
+  it("'pause': a show the user already started again is left running at the hand-back", () => {
+    const { t, store } = harness({ showTime: 10, playing: true });
+    store.setUnderneath('pause');
+    store.engage('a', blueRow);
+    t.show = { ...t.show, showTime: 12, playing: true };
+    store.release('a', { mode: 'fade', fadeSeconds: 1 });
+    expect(t.played).toBe(0);
+    expect(store.state.pausedAt).toBeUndefined();
+  });
+
+  it("'pause': engaging B while A fades out pauses the show again", () => {
+    const { t, store } = harness({ showTime: 10, playing: true });
+    store.setUnderneath('pause');
+    store.engage('a', blueRow);
+    store.release('a', { mode: 'fade', fadeSeconds: 1 });
+    expect(t.played).toBe(1);
+    t.now += 200;
+    t.show = { ...t.show, showTime: 10.2 };
+    store.engage('b', blueRow);
+    expect(t.paused).toBe(2);
+    expect(t.show.playing).toBe(false);
+    expect(store.state.pausedAt).toBe(10.2);
+    store.release('b', { mode: 'instant' });
+    expect(t.played).toBe(2);
   });
 
   it("switching to 'run' mid-takeover resumes a paused show", () => {

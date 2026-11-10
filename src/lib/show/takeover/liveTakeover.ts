@@ -159,6 +159,14 @@ export interface TakeoverShowContext {
 }
 
 export const DEFAULT_TAKEOVER_RELEASE: ReleaseSpec = { mode: 'fade', fadeSeconds: 1 };
+/** A release that waits for a show-time boundary starts this much before the
+ *  frame that sees the boundary at most. A frame is late by a few ms; a show
+ *  that is further past the boundary was seeked there, and its fade starts
+ *  now instead of having (nearly) finished already. */
+export const TAKEOVER_RELEASE_MAX_LATE_SECONDS = 0.25;
+/** 'pause' resumes the show only while it is still where the takeover paused
+ *  it: a Stop, a seek or a Play of the operator's own since then wins. */
+const PAUSED_AT_TOLERANCE_SECONDS = 0.05;
 /** Bars in a phrase. */
 export const TAKEOVER_PHRASE_BARS = 4;
 
@@ -345,8 +353,10 @@ export function evaluateTakeover(
       }
       let startAt: number | null = null;
       if (at.showTime !== undefined && show.playing && show.showTime >= at.showTime - 1e-6) {
-        // Started exactly on the boundary: as many ms ago as the show is past it.
-        startAt = nowMs - Math.max(0, show.showTime - at.showTime) * 1000;
+        // Started exactly on the boundary: as many ms ago as the show is past
+        // it (a frame or so). Far past it, the show was seeked: start now.
+        const late = Math.max(0, show.showTime - at.showTime);
+        startAt = nowMs - (late > TAKEOVER_RELEASE_MAX_LATE_SECONDS ? 0 : late) * 1000;
       } else if (at.wallMs !== undefined && nowMs >= at.wallMs) {
         startAt = at.wallMs;
       }
@@ -524,15 +534,24 @@ export function createLiveTakeover(initialDeps: Partial<TakeoverDeps> = {}): Liv
     return evaluateTakeover(cur(), deps.show(), nowMs, deps.launchBoundary);
   }
 
+  /** Resume the show the takeover paused at `pausedAt`, unless the operator
+   *  has moved it since (stopped it, seeked, or played it again). */
+  function resumePausedShow(pausedAt: number): void {
+    const show = deps.show();
+    if (show.playing || Math.abs(show.showTime - pausedAt) > PAUSED_AT_TOLERANCE_SECONDS) return;
+    deps.playShow();
+  }
+
   /** After phases moved: resume a paused show when the last release starts,
    *  and tell the runtime when everything is handed back. */
   function afterEvaluation(prev: TakeoverState, ev: TakeoverEvaluation): void {
     let next = ev.next;
     const live = Object.values(next.surfaces).filter((o) => o.phase !== 'releasing');
     if (next.pausedAt !== undefined && live.length === 0) {
+      const pausedAt = next.pausedAt;
       next = { ...next, pausedAt: undefined };
       if (next !== prev) set(next);
-      deps.playShow();
+      resumePausedShow(pausedAt);
     } else if (next !== prev) {
       set(next);
     }
@@ -591,7 +610,9 @@ export function createLiveTakeover(initialDeps: Partial<TakeoverDeps> = {}): Liv
       };
       let next: TakeoverState = { ...s, surfaces: { ...s.surfaces, [surfaceId]: override } };
       if (source) next.lastSource = source;
-      const first = Object.keys(s.surfaces).length === 0;
+      // The first live one: surfaces still fading out do not count (their
+      // release already resumed a paused show).
+      const first = !Object.values(s.surfaces).some((o) => o.phase !== 'releasing');
       let pause = false;
       if (first && s.underneath === 'pause' && s.pausedAt === undefined && show.playing && !deps.chasing()) {
         next = { ...next, pausedAt: show.showTime };
@@ -714,17 +735,17 @@ export function createLiveTakeover(initialDeps: Partial<TakeoverDeps> = {}): Liv
       const show = deps.show();
       const active = Object.values(s.surfaces).some((o) => o.phase !== 'releasing');
       let pause = false;
-      let play = false;
+      let resumeFrom: number | null = null;
       if (mode === 'pause' && active && show.playing) {
         next = { ...next, pausedAt: show.showTime };
         pause = true;
       } else if (mode === 'run' && s.pausedAt !== undefined) {
         next = { ...next, pausedAt: undefined };
-        play = true;
+        resumeFrom = s.pausedAt;
       }
       set(next);
       if (pause) deps.pauseShow();
-      if (play) deps.playShow();
+      if (resumeFrom !== null) resumePausedShow(resumeFrom);
       return true;
     },
 
