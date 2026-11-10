@@ -128,7 +128,7 @@ const MAX_BPM = 180;
 /** Seconds per feature block for the section search. */
 const BLOCK_SECONDS = 0.5;
 
-interface Envelope {
+export interface Envelope {
   /** Onset strength per frame. */
   onset: Float32Array;
   /** Where the beat is: the rise in plain (not log) energy of the low and
@@ -146,58 +146,99 @@ interface Envelope {
  * the samples) and an onset strength: how much the band energies rose since
  * the previous frame. Kicks show in the low band, snares in the mid, hats
  * in the high; summing the rises catches all three.
+ *
+ * Built incrementally: the samples can arrive in pieces (a worker is fed a
+ * long song a slice at a time), with the filters carried across the cuts,
+ * so the result is the same as one pass over the whole song.
  */
-function envelope(mono: Float32Array, sampleRate: number): Envelope {
-  const frames = Math.floor(mono.length / HOP);
-  const bands: [Float32Array, Float32Array, Float32Array] = [
-    new Float32Array(frames),
-    new Float32Array(frames),
-    new Float32Array(frames),
-  ];
-  const onset = new Float32Array(frames);
-  const lowJump = new Float32Array(frames);
-  const midJump = new Float32Array(frames);
-  const lowCoef = 1 - Math.exp((-2 * Math.PI * 200) / sampleRate);
-  const highCoef = 1 - Math.exp((-2 * Math.PI * 3000) / sampleRate);
-  let low = 0, belowHigh = 0;
-  let index = 0;
-  for (let f = 0; f < frames; f++) {
-    let eLow = 0, eMid = 0, eHigh = 0;
-    for (let i = 0; i < HOP; i++, index++) {
-      const x = mono[index] || 0;
-      low += lowCoef * (x - low);
-      belowHigh += highCoef * (x - belowHigh);
-      const mid = belowHigh - low;
-      const high = x - belowHigh;
-      eLow += low * low;
-      eMid += mid * mid;
-      eHigh += high * high;
-    }
-    bands[0][f] = Math.log10(1e-10 + eLow / HOP);
-    bands[1][f] = Math.log10(1e-10 + eMid / HOP);
-    lowJump[f] = eLow;
-    midJump[f] = eMid;
-    bands[2][f] = Math.log10(1e-10 + eHigh / HOP);
-    if (f > 0) {
-      let rise = 0;
-      for (let b = 0; b < 3; b++) rise += Math.max(0, bands[b][f] - bands[b][f - 1]);
-      onset[f] = rise;
-    }
+export class SongEnvelopeBuilder {
+  readonly frames: number;
+  private readonly sampleRate: number;
+  private readonly bands: [Float32Array, Float32Array, Float32Array];
+  private readonly onset: Float32Array;
+  private readonly lowJump: Float32Array;
+  private readonly midJump: Float32Array;
+  private readonly lowCoef: number;
+  private readonly highCoef: number;
+  private low = 0;
+  private belowHigh = 0;
+  /** Next frame to fill, and the samples of it seen so far. */
+  private f = 0;
+  private i = 0;
+  private eLow = 0;
+  private eMid = 0;
+  private eHigh = 0;
+
+  /** `length`: the song's sample count (only whole HOP frames are used). */
+  constructor(length: number, sampleRate: number) {
+    const frames = Math.floor(length / HOP);
+    this.frames = frames;
+    this.sampleRate = sampleRate;
+    this.bands = [new Float32Array(frames), new Float32Array(frames), new Float32Array(frames)];
+    this.onset = new Float32Array(frames);
+    this.lowJump = new Float32Array(frames);
+    this.midJump = new Float32Array(frames);
+    this.lowCoef = 1 - Math.exp((-2 * Math.PI * 200) / sampleRate);
+    this.highCoef = 1 - Math.exp((-2 * Math.PI * 3000) / sampleRate);
   }
-  // Energy rises (frame to frame), then each band over its mean rise.
-  let lowSum = 0, midSum = 0;
-  for (let f = frames - 1; f > 0; f--) {
-    lowJump[f] = Math.max(0, lowJump[f] - lowJump[f - 1]);
-    midJump[f] = Math.max(0, midJump[f] - midJump[f - 1]);
-    lowSum += lowJump[f];
-    midSum += midJump[f];
+
+  /** The next samples of the song, in order. */
+  push(samples: Float32Array): void {
+    const { frames, lowCoef, highCoef, bands, onset, lowJump, midJump } = this;
+    let { low, belowHigh, f, i, eLow, eMid, eHigh } = this;
+    const n = samples.length;
+    let index = 0;
+    while (index < n && f < frames) {
+      // The rest of the frame in progress, or as much of it as is here.
+      const take = Math.min(HOP - i, n - index);
+      for (let k = 0; k < take; k++, index++) {
+        const x = samples[index] || 0;
+        low += lowCoef * (x - low);
+        belowHigh += highCoef * (x - belowHigh);
+        const mid = belowHigh - low;
+        const high = x - belowHigh;
+        eLow += low * low;
+        eMid += mid * mid;
+        eHigh += high * high;
+      }
+      i += take;
+      if (i < HOP) break;
+      bands[0][f] = Math.log10(1e-10 + eLow / HOP);
+      bands[1][f] = Math.log10(1e-10 + eMid / HOP);
+      lowJump[f] = eLow;
+      midJump[f] = eMid;
+      bands[2][f] = Math.log10(1e-10 + eHigh / HOP);
+      if (f > 0) {
+        let rise = 0;
+        for (let b = 0; b < 3; b++) rise += Math.max(0, bands[b][f] - bands[b][f - 1]);
+        onset[f] = rise;
+      }
+      f++;
+      i = 0;
+      eLow = 0;
+      eMid = 0;
+      eHigh = 0;
+    }
+    Object.assign(this, { low, belowHigh, f, i, eLow, eMid, eHigh });
   }
-  if (frames) { lowJump[0] = 0; midJump[0] = 0; }
-  const beatOnset = new Float32Array(frames);
-  const lowScale = lowSum > 0 ? frames / lowSum : 0;
-  const midScale = midSum > 0 ? frames / midSum : 0;
-  for (let f = 0; f < frames; f++) beatOnset[f] = lowJump[f] * lowScale + midJump[f] * midScale;
-  return { onset, beatOnset, bands, frameRate: sampleRate / HOP };
+
+  finish(): Envelope {
+    const { frames, lowJump, midJump } = this;
+    // Energy rises (frame to frame), then each band over its mean rise.
+    let lowSum = 0, midSum = 0;
+    for (let f = frames - 1; f > 0; f--) {
+      lowJump[f] = Math.max(0, lowJump[f] - lowJump[f - 1]);
+      midJump[f] = Math.max(0, midJump[f] - midJump[f - 1]);
+      lowSum += lowJump[f];
+      midSum += midJump[f];
+    }
+    if (frames) { lowJump[0] = 0; midJump[0] = 0; }
+    const beatOnset = new Float32Array(frames);
+    const lowScale = lowSum > 0 ? frames / lowSum : 0;
+    const midScale = midSum > 0 ? frames / midSum : 0;
+    for (let f = 0; f < frames; f++) beatOnset[f] = lowJump[f] * lowScale + midJump[f] * midScale;
+    return { onset: this.onset, beatOnset, bands: this.bands, frameRate: this.sampleRate / HOP };
+  }
 }
 
 /**
@@ -405,13 +446,29 @@ function splitLongSections(cuts: number[], duration: number, maxSection: number,
  * (default 45 s): longer stretches are split on an eight-bar phrase grid.
  */
 export function analyzeSong(mono: Float32Array, sampleRate: number, options: SongAnalysisOptions = {}): SongAnalysis {
-  const duration = sampleRate > 0 ? mono.length / sampleRate : 0;
+  if (!songIsAnalysable(mono.length, sampleRate)) return analyzeSongEnvelope(null, mono.length, sampleRate, options);
+  const builder = new SongEnvelopeBuilder(mono.length, sampleRate);
+  builder.push(mono);
+  return analyzeSongEnvelope(builder.finish(), mono.length, sampleRate, options);
+}
+
+/** False for a song too short (or with no rate) to analyse: no envelope is needed then. */
+export function songIsAnalysable(length: number, sampleRate: number): boolean {
+  const duration = sampleRate > 0 ? length / sampleRate : 0;
+  return duration > 0 && length >= HOP * 4;
+}
+
+/**
+ * The analysis of a song of `length` samples from its envelope (see
+ * SongEnvelopeBuilder); `env` may be null when !songIsAnalysable.
+ */
+export function analyzeSongEnvelope(env: Envelope | null, length: number, sampleRate: number, options: SongAnalysisOptions = {}): SongAnalysis {
+  const duration = sampleRate > 0 ? length / sampleRate : 0;
   const minSection = Math.max(1, options.minSection ?? 8);
   const maxSection = Math.max(minSection * 2, options.maxSection ?? 45);
   const targetSection = Math.max(minSection, options.targetSection ?? 24);
-  if (!(duration > 0) || mono.length < HOP * 4) return { tempo: null, beats: [], sections: [], duration };
+  if (!env || !songIsAnalysable(length, sampleRate)) return { tempo: null, beats: [], sections: [], duration };
 
-  const env = envelope(mono, sampleRate);
   const estimate = estimateTempo(env.onset, env.frameRate);
   let beatEnergy = 0;
   for (let i = 0; i < env.beatOnset.length; i++) beatEnergy += env.beatOnset[i];

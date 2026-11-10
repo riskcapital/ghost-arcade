@@ -10,7 +10,8 @@ import { get } from 'svelte/store';
 import type { ShowAudioTrack, ShowTempoMap } from '../types';
 import { showTimeline } from '../stores/showTimeline';
 import { cachedShowAudioDecode, decodeShowAudio } from '../audio/showAudio';
-import { analyzeSong, type SongAnalysis } from './songLayout';
+import type { SongAnalysis } from './songLayout';
+import { analyzeSongOffThread } from './songAnalysisClient';
 import { tempoFromAnalysis } from './tempoMap';
 
 export type TempoDetectResult =
@@ -32,18 +33,17 @@ export function tempoMapForTrack(analysis: Pick<SongAnalysis, 'tempo' | 'beats'>
 
 /**
  * Analyse an audio track and, when it has a pulse, make its map the show's
- * (one undo step). The analysis runs on the main thread after a paint, as
- * New show from audio does.
+ * (one undo step). The analysis runs in a worker (songAnalysisClient.ts),
+ * as New show from audio's does, so a long mix does not freeze the app.
  */
 export async function detectShowTempo(trackId?: string, opts: { apply?: boolean } = {}): Promise<TempoDetectResult> {
   const track = tempoSourceTrack(get(showTimeline).audioTracks, trackId);
   if (!track?.url) return { ok: false, reason: 'no-audio' };
   const decoded = cachedShowAudioDecode(track.url) ?? (await decodeShowAudio(track.url));
   if (!decoded) return { ok: false, reason: 'undecodable' };
-  await new Promise((r) => setTimeout(r, 30));
   let analysis: SongAnalysis;
   try {
-    analysis = analyzeSong(decoded.mono, decoded.sampleRate);
+    analysis = await analyzeSongOffThread(decoded.mono, decoded.sampleRate);
   } catch (err) {
     console.warn('[ShowTempo] analysis failed:', err);
     return { ok: false, reason: 'no-pulse' };
