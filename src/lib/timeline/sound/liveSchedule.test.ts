@@ -28,13 +28,16 @@ const blk = (id: string, rowId: string, start: number, end: number, slot: number
 function run(s: LiveClipScheduler, out: Array<{ t: number; cmd: LiveCommand }>, from: number, to: number, seek = 0, record = (t: number) => (cur = t)) {
   for (let t = from; t <= to + 1e-9; t += 1 / 60) {
     record(t);
+    clock += 1000 / 60;
     s.tick(t, true, seek);
   }
 }
 let cur = 0;
+/** The wall clock the scheduler sees (ms): runs with the frames. */
+let clock = 0;
 function scheduler(e = env()) {
   const out: Array<{ t: number; cmd: LiveCommand }> = [];
-  const s = new LiveClipScheduler({ send: (cmd) => out.push({ t: cur, cmd }) });
+  const s = new LiveClipScheduler({ send: (cmd) => out.push({ t: cur, cmd }), now: () => clock });
   s.setEnv(e);
   return { s, out };
 }
@@ -106,7 +109,31 @@ describe('Live clip blocks: when Live is told', () => {
     out.length = 0;
     cur = 8;
     s.tick(8, true, 2);
+    // Live is told once the playhead has rested (a drag would be many seeks).
+    expect(out).toHaveLength(0);
+    run(s, out, 8 + 1 / 60, 8.3, 2);
     expect(out.map((o) => o.cmd)).toEqual([{ t: 'stop_track', i: 2, q: LIVE_Q_NONE }]);
+  });
+
+  it('dragging the playhead while playing sends nothing until it rests, then one fire at the place', () => {
+    const { s, out } = scheduler();
+    s.setBlocks([row('r', 2)], [blk('a', 'r', 2, 20, 4)]);
+    run(s, out, 0, 0.5);
+    // A drag: a new seek every frame from 4 s to 9 s.
+    let seek = 1;
+    for (let t = 4; t < 9; t += 0.1) {
+      cur = t;
+      clock += 1000 / 60;
+      s.tick(t, true, seek++);
+    }
+    expect(out).toHaveLength(0);
+    run(s, out, 9, 9.4, seek - 1);
+    expect(out.map((o) => o.cmd)).toEqual([{ t: 'fire_clip', i: 2, s: 4, q: LIVE_Q_QUARTER, pos: expect.any(Number) }]);
+    // At the place the playhead rested: the next beat Live can make after the settle.
+    const pos = (out[0].cmd as { pos: number }).pos;
+    expect(pos).toBeGreaterThan(14);
+    expect(pos).toBeLessThan(16);
+    expect(Number.isInteger(pos)).toBe(true);
   });
 
   it('Stop stops everything in Live, once', () => {
@@ -143,6 +170,7 @@ describe('Live clip blocks: when Live is told', () => {
     out.length = 0;
     cur = 5;
     s.tick(5, true, 9);
+    run(s, out, 5, 5.5, 9);
     expect(out.filter((o) => o.cmd.t === 'fire_clip')).toHaveLength(0);
   });
 

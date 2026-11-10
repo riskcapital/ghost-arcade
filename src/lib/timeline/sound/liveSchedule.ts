@@ -135,7 +135,13 @@ function nextStep(env: LiveEnv, quarters: number, t: number): number {
 
 export interface LiveSchedulerOptions {
   send: (cmd: LiveCommand) => void;
+  /** Wall clock, ms (tests pass their own). */
+  now?: () => number;
 }
+
+/** A jump while playing waits this long (ms) for the playhead to settle, so
+ *  dragging it does not fire a clip in Live on every frame. */
+export const SCRUB_SETTLE_MS = 120;
 
 export class LiveClipScheduler {
   private rows = new Map<string, LiveSchedRow>();
@@ -149,8 +155,14 @@ export class LiveClipScheduler {
   private owned = new Set<number>();
   private wasPlaying = false;
   private lastSeek = Number.NaN;
+  /** A jump waiting for the playhead to settle (wall ms it may run at). */
+  private settleAt: number | null = null;
 
   constructor(private readonly opts: LiveSchedulerOptions) {}
+
+  private now(): number {
+    return this.opts.now ? this.opts.now() : typeof performance !== 'undefined' ? performance.now() : Date.now();
+  }
 
   setEnv(env: LiveEnv): void {
     this.env = env;
@@ -317,11 +329,27 @@ export class LiveClipScheduler {
       this.lastSeek = seek;
       return;
     }
-    const jump = !this.wasPlaying || seek !== this.lastSeek;
+    const start = !this.wasPlaying;
+    const jump = !start && seek !== this.lastSeek;
     this.wasPlaying = true;
     this.lastSeek = seek;
-    if (jump) this.resync(t);
-    else this.regular(t);
+    if (start) {
+      this.settleAt = null;
+      this.resync(t);
+      return;
+    }
+    if (jump) {
+      // Scrubbing while playing: Live keeps what it plays until the playhead rests.
+      this.settleAt = this.now() + SCRUB_SETTLE_MS;
+      return;
+    }
+    if (this.settleAt !== null) {
+      if (this.now() < this.settleAt) return;
+      this.settleAt = null;
+      this.resync(t);
+      return;
+    }
+    this.regular(t);
   }
 
   /** Transport stop: everything in Live stops. */
@@ -343,6 +371,7 @@ export class LiveClipScheduler {
     this.owned.clear();
     this.wasPlaying = false;
     this.lastSeek = Number.NaN;
+    this.settleAt = null;
   }
 }
 
