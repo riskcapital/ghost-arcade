@@ -29,8 +29,17 @@ export function showBeatAt(anchor: Anchor | null, nowMs: number): { beat: number
 
 export function installShowLaunchClock(now: () => number = () => performance.now()): () => void {
   let anchor: Anchor | null = null;
+  // Re-anchored only when the playhead, play state or tempo map changes.
+  // Other updates (selection, zoom) carry no new position: re-anchoring on
+  // them moved `at` without moving `t`, so the beat stepped back by up to a
+  // frame each time.
   const unsubscribe = showTimeline.subscribe((s) => {
-    anchor = s.isPlaying && s.tempo ? { t: s.currentTime, at: now(), map: s.tempo } : null;
+    if (!(s.isPlaying && s.tempo)) {
+      anchor = null;
+      return;
+    }
+    if (anchor && anchor.t === s.currentTime && anchor.map === s.tempo) return;
+    anchor = { t: s.currentTime, at: now(), map: s.tempo };
   });
   setShowBeatSource((nowMs) => showBeatAt(anchor, nowMs));
   return () => {
