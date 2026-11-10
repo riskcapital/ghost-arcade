@@ -322,7 +322,46 @@ const ACTIONS = {
   },
   async wait(_ctx, s) { await sleep((s.seconds ?? 1) * 1000); },
   async eval(ctx, s) { ctx.vars.last = await ctx.eval(s.js, 60000); },
+  // ── Stage Sim window (rehearsal, Rec, Render rehearsal) ─────────────
+  async 'stage.open'(ctx) {
+    await ctx.eval(`window.electronAPI.invoke('open_stage3d_window', { displayId: null })`);
+    ctx.stage = await ctx.openPage((t) => t.url.includes('mode=stage-3d'));
+    await waitIn(ctx.stage, `!!document.querySelector('[data-stage-show-transport]')`, 30000, 'the Stage Sim transport');
+    await sleep(1500);
+  },
+  async 'stage.click'(ctx, s) {
+    const r = await ctx.stage.eval(`(() => { const r = document.querySelector(${J(s.selector)})?.getBoundingClientRect(); return r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null; })()`);
+    if (!r) throw new Error(`nothing at ${s.selector}`);
+    for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) {
+      await ctx.stage.call('Input.dispatchMouseEvent', { type, x: r.x, y: r.y, button: type === 'mouseMoved' ? 'none' : 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1 });
+    }
+    await sleep(s.settle ?? 400);
+  },
+  async 'stage.key'(ctx, s) {
+    const codes = { Enter: 13, Home: 36, ArrowLeft: 37, ArrowRight: 39, Escape: 27 };
+    const text = s.key === 'Enter' ? '\r' : undefined;
+    await ctx.stage.call('Input.dispatchKeyEvent', { type: text ? 'keyDown' : 'rawKeyDown', key: s.key, code: s.key, windowsVirtualKeyCode: codes[s.key] ?? 0, ...(text ? { text } : {}) });
+    await ctx.stage.call('Input.dispatchKeyEvent', { type: 'keyUp', key: s.key, code: s.key, windowsVirtualKeyCode: codes[s.key] ?? 0 });
+    await sleep(s.settle ?? 500);
+  },
+  async 'stage.eval'(ctx, s) { ctx.vars.last = await ctx.stage.eval(s.js, 60000); },
+  async 'stage.waitFor'(ctx, s) { await waitIn(ctx.stage, s.js, (s.seconds ?? 30) * 1000, s.what ?? s.js); },
+  async 'stage.close'(ctx) {
+    await ctx.stage?.eval(`window.electronAPI.invoke('stage3d_window_closing')`).catch(() => {});
+    ctx.stage = null;
+    await sleep(1500);
+  },
 };
+
+/** Poll `js` in a page until it is true. */
+async function waitIn(page, js, ms, what) {
+  const until = Date.now() + ms;
+  for (;;) {
+    if (await page.eval(js).catch(() => false)) return;
+    if (Date.now() > until) throw new Error(`timed out waiting for ${what}`);
+    await sleep(250);
+  }
+}
 
 function nameRgb(name) {
   const key = String(name ?? '').toLowerCase().replace(/\.(mp4|mov)$/, '');
@@ -512,6 +551,10 @@ const CHECKS = {
     const sessions = await ctx.eval(`window.electronAPI.invoke('native_renderer_get_status').then((st) => st.native_video_sessions.filter((v) => v.source_id.startsWith(${J(s.prefix ?? 'show:')})).map((v) => v.source_id + ':' + v.state))`);
     const n = sessions.length;
     return { pass: n >= (s.min ?? 0) && n <= (s.max ?? Infinity), detail: `${n} session(s): ${sessions.join(', ') || 'none'}` };
+  },
+  async 'stage.true'(ctx, s) {
+    const v = await ctx.stage.eval(s.js);
+    return { pass: !!v, detail: `${s.label ?? s.js} → ${JSON.stringify(v)?.slice(0, 160)}` };
   },
   async 'eval.true'(ctx, s) {
     const v = await ctx.eval(s.js);

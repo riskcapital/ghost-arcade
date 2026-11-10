@@ -1,0 +1,57 @@
+{
+  "name": "Stage Sim: Rec and Render rehearsal",
+  "description": "A Rec of the Stage Sim while the show plays is saved; the reel and rehearsal buttons are off while it runs. Render rehearsal films the 4 s show from its start (Loop on is turned off for the take and given back) and Rec is off meanwhile.",
+  "steps": [
+    { "do": "app.start", "choice": "blank" },
+    { "do": "eval", "js": "__show.g().settings.setAutoDownload(false)" },
+    { "do": "project.layer", "name": "Wall", "colour": "red" },
+    { "do": "show.open" },
+    { "do": "show.track", "name": "wall", "layer": "Wall" },
+    { "do": "show.clip", "track": "wall", "layerContent": true, "at": 0, "duration": 4 },
+    { "do": "show.seek", "t": 0, "settle": 600 },
+    { "do": "stage.open" },
+    { "do": "stage.key", "key": "Enter", "settle": 600 },
+    { "do": "stage.click", "selector": ".rec-btn", "settle": 1500 },
+    { "do": "stage.eval", "js": "(() => { if (!document.querySelector('[data-reel-render-rehearsal]')) [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Reel').click(); return true; })()" },
+    {
+      "do": "wait",
+      "seconds": 1,
+      "label": "While Rec runs, Render reel and Render rehearsal are off",
+      "expect": {
+        "stage.true": { "js": "document.querySelector('.rec-btn').textContent.includes('■') && document.querySelector('[data-reel-render]').disabled && document.querySelector('[data-reel-render-rehearsal]').disabled", "label": "recording; reel buttons disabled" }
+      }
+    },
+    { "do": "stage.click", "selector": ".rec-btn", "settle": 300 },
+    {
+      "do": "stage.waitFor",
+      "js": "/saved/.test(document.querySelector('.toast')?.textContent ?? '')",
+      "what": "the Rec to be saved",
+      "seconds": 60,
+      "label": "Rec saved"
+    },
+    { "do": "show.pause" },
+    { "do": "eval", "js": "__show.g().showTimeline.setLoop(true)" },
+    { "do": "stage.click", "selector": "[data-reel-render-rehearsal]", "settle": 1500 },
+    {
+      "do": "wait",
+      "seconds": 0.5,
+      "label": "While the rehearsal renders, Rec is off and the show plays once (Loop off)",
+      "expect": {
+        "stage.true": { "js": "document.querySelector('.rec-btn').disabled === true", "label": "Rec disabled" },
+        "eval.true": { "js": "__show.show().isPlaying && __show.show().loop === false", "label": "playing, Loop off for the take" }
+      }
+    },
+    {
+      "do": "stage.waitFor",
+      "js": "/Saved/.test(document.querySelector('.reel-progress')?.innerText ?? '')",
+      "what": "the rehearsal to be saved",
+      "seconds": 90,
+      "label": "Render rehearsal saved, Loop given back",
+      "expect": {
+        "stage.true": { "js": "/Saved/.test(document.querySelector('.reel-progress')?.innerText ?? '') && document.querySelector('.rec-btn').disabled === false", "label": "saved; Rec on again" },
+        "eval.true": { "js": "__show.show().loop === true", "label": "Loop back on" }
+      }
+    },
+    { "do": "stage.close" }
+  ]
+}

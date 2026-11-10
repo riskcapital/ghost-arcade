@@ -118,12 +118,11 @@
     if (!el || typeof el.closest !== 'function') return false;
     const control = el.closest('button, a[href], summary, [role="button"], [role="menuitem"], [role="tab"], [role="checkbox"], [role="switch"]');
     if (!control) return false;
-    try {
-      return control.matches(':focus-visible');
-    } catch {
-      return true;
-    }
+    // Focus that came from a pointer press on it is not the keyboard's.
+    return !(lastPressed && control.contains(lastPressed));
   }
+  /** The element the last pointer press landed on. */
+  let lastPressed: Element | null = null;
   /** This is the Stage Sim window (the editor's show arrives over the bridge). */
   const inStageWindow = typeof location !== 'undefined' && new URLSearchParams(location.search).get('mode') === 'stage-3d';
   function take(e: KeyboardEvent) {
@@ -173,6 +172,7 @@
   // ── Grabbing the camera pauses "Follow show camera" ────────────────────
   let grab: { x: number; y: number } | null = null;
   function onPointerDown(e: PointerEvent) {
+    lastPressed = e.target instanceof Element ? e.target : null;
     grab = e.target instanceof HTMLCanvasElement ? { x: e.clientX, y: e.clientY } : null;
   }
   function onPointerMove(e: PointerEvent) {
