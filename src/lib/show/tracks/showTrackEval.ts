@@ -240,6 +240,10 @@ export interface ShowTrackState {
   /** Inside a crossfade: the outgoing clip, drawn by a helper copy of the
    *  layer just beneath it at `opacity`. `clip` is then the incoming one. */
   xfade?: { clip: ShowTrackClipState; opacity: number; progress: number } | null;
+  /** The block has a where line: it is also drawn over these other pieces
+   *  (`showwhere::<piece>::<clip>`) at these opacities. Its own piece is
+   *  scaled in `opacity`. */
+  whereCopies?: Array<{ pieceId: string; opacity: number }> | null;
 }
 
 export interface ShowTrackFrame {
@@ -547,6 +551,7 @@ export function showTrackFrameSignature(frame: ShowTrackFrame): string {
         tr.template ? tr.template.id : '',
         tr.warm ? `w:${tr.warm.clipId}` : '',
         tr.xfade ? `x:${tr.xfade.clip.clipId}/${tr.xfade.clip.runId}/${tr.xfade.clip.paused ? 'P' : ''}${visibleOpacity(tr.xfade.opacity)}/${mediaToken(tr.xfade.clip.media)}/${tr.xfade.clip.blendMode ?? ''}` : '',
+        tr.whereCopies?.length ? `W:${tr.whereCopies.map((w) => `${w.pieceId}=${visibleOpacity(w.opacity)}`).join(',')}` : '',
       ].join('|'),
     );
   }

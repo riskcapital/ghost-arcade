@@ -44,6 +44,10 @@ export function setTransformAspect(aspect: number): void {
   if (Number.isFinite(aspect) && aspect > 0) outputAspect = Math.max(0.05, Math.min(20, aspect));
 }
 
+export function getTransformAspect(): number {
+  return outputAspect;
+}
+
 /** Per-call state of applyLayerExtra: objects already copied, and the
  *  transform gathered so it is applied once, after corner and mesh keys. */
 export interface ExtraApplyState {

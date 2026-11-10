@@ -159,11 +159,13 @@ import {
   rowTrackId,
   stagePieces,
 } from '../show/tracks/showStageRows';
-import { evaluateShowLooks } from '../show/tracks/showLooks';
+import { evaluateShowLooks, type ShowLookState } from '../show/tracks/showLooks';
 import { normalizeLines, type ControlLine } from '../timeline/lines/lineModel';
 import type { LineBinding } from '../timeline/lines/lineControls';
 import { lanesToLines, rowLineTarget } from '../timeline/lines/laneConversion';
 import { linesEnd, normalizeBindings, removeLinesForBlocks, shiftLinesOnTarget, shiftLinesWithBlock } from '../timeline/lines/lineDocOps';
+import { normalizeLedClip, normalizeLedClips, type TimelineLedClip } from '../timeline/leds/ledClips';
+import { normalizeNamedOrders, normalizeWhere, type WhereNamedOrder } from '../timeline/where/whereModel';
 
 // ─── Tunables ────────────────────────────────────────────────────────────
 
@@ -195,7 +197,7 @@ export interface ShowTimelineSelection {
   /** 'transition' selects the junction element sitting on `id`'s LEFT edge —
    *  the transition is stored on that clip, but it is a separate selectable
    *  object on the timeline with its own inspector. */
-  kind: 'audio' | 'preset' | 'transition' | 'layerClip' | 'track' | 'keyframe' | 'tempo' | 'lookClip';
+  kind: 'audio' | 'preset' | 'transition' | 'layerClip' | 'track' | 'keyframe' | 'tempo' | 'lookClip' | 'ledClip';
   id: string;
 }
 
@@ -249,6 +251,10 @@ export interface ShowTimelineState {
   lines: ControlLine[];
   /** Controllers bound to lines (a MIDI CC, a Live knob, an OSC address). */
   lineBindings: LineBinding[];
+  /** LED rows (Timeline): blocks on the WLED controllers and their ranges. */
+  ledClips: TimelineLedClip[];
+  /** Named spatial orders for where lines (Timeline). */
+  whereOrders: WhereNamedOrder[];
 }
 
 /**
@@ -289,6 +295,8 @@ function createInitialState(): ShowTimelineState {
     lookClips: [],
     lines: [],
     lineBindings: [],
+    ledClips: [],
+    whereOrders: [],
   };
 }
 
@@ -308,8 +316,10 @@ export function computeShowDuration(
   cameraLane: Pick<ShowCameraClip, 'startTime' | 'duration'>[] = [],
   lookClips: Pick<ShowLookClip, 'startTime' | 'duration'>[] = [],
   lines: readonly ControlLine[] = [],
+  ledClips: readonly Pick<TimelineLedClip, 'startTime' | 'duration'>[] = [],
 ): number {
   let end = lines.length ? linesEnd(lines) : 0;
+  for (const c of ledClips) end = Math.max(end, c.startTime + c.duration);
   for (const c of lookClips) end = Math.max(end, c.startTime + c.duration);
   for (const c of clips) end = Math.max(end, c.startTime + c.duration);
   for (const t of tracks) end = Math.max(end, t.startTime + t.duration);
@@ -721,6 +731,22 @@ export function setShowLineTicker(ticker: ((tick: ShowLineTick) => void) | null)
   lineTicker = ticker;
 }
 
+/**
+ * Where lines and LED rows (Timeline, see timeline/where/whereRuntime.ts):
+ * called on every evaluation, after the lines were ticked, so a where line's
+ * position at this instant is known. `begin` publishes the LED rows; `looks`
+ * and `frame` say which pieces wear a block with a where line.
+ */
+export interface ShowWhereDecorator {
+  begin(s: ShowTimelineState, time: number): void;
+  looks(s: ShowTimelineState, time: number, looks: ShowLookState[]): void;
+  frame(s: ShowTimelineState, time: number, frame: ShowTrackFrame): void;
+}
+let whereDecorator: ShowWhereDecorator | null = null;
+export function setShowWhereDecorator(decorator: ShowWhereDecorator | null): void {
+  whereDecorator = decorator;
+}
+
 function publishTrackFrame(s: ShowTimelineState, evalTime: number, force = false): void {
   if (lineTicker) {
     try {
@@ -729,8 +755,13 @@ function publishTrackFrame(s: ShowTimelineState, evalTime: number, force = false
       console.warn('[ShowTimeline] line tick failed:', err);
     }
   }
+  const deco = whereDecorator;
+  try { deco?.begin(s, evalTime); } catch (err) { console.warn('[ShowTimeline] where tick failed:', err); }
   const tracks = evaluatedTracks(s);
   const looks = s.lookClips.length ? evaluateShowLooks(s.lookClips, evalTime) : [];
+  if (deco && looks.length) {
+    try { deco.looks(s, evalTime, looks); } catch (err) { console.warn('[ShowTimeline] where looks failed:', err); }
+  }
   if (!tracks.length && !looks.length) {
     if (lastTrackFrame !== null || force) {
       lastTrackFrame = null;
@@ -749,6 +780,9 @@ function publishTrackFrame(s: ShowTimelineState, evalTime: number, force = false
     wrap: lastLoopWrap && lastLoopWrap.generation === seekGeneration ? lastLoopWrap.wrap : null,
   });
   if (looks.length) frame.looks = looks;
+  if (deco) {
+    try { deco.frame(s, evalTime, frame); } catch (err) { console.warn('[ShowTimeline] where frame failed:', err); }
+  }
   lastTrackFrame = frame;
   const signature = showTrackFrameSignature(frame);
   if (!force && signature === lastTrackFrameSignature) return;
@@ -1136,7 +1170,7 @@ function finishShow(action: ShowEndAction): void {
 
 /** Recompute duration + reselect after any structural mutation. */
 function withDuration(s: ShowTimelineState): ShowTimelineState {
-  return { ...s, duration: computeShowDuration(s.presetClips, s.audioTracks, s.layerTracks, s.cameraLane, s.lookClips, s.lines) };
+  return { ...s, duration: computeShowDuration(s.presetClips, s.audioTracks, s.layerTracks, s.cameraLane, s.lookClips, s.lines, s.ledClips) };
 }
 
 function normalizeTrack(raw: unknown, index: number): ShowAudioTrack | null {
@@ -1250,6 +1284,8 @@ export function normalizeLayerClip(raw: unknown): ShowLayerClip | null {
   if (typeof c.blendMode === 'string' && c.blendMode) clip.blendMode = c.blendMode as ShowLayerClip['blendMode'];
   if (typeof c.label === 'string') clip.label = c.label;
   if (typeof c.color === 'string') clip.color = c.color;
+  const where = normalizeWhere(c.where);
+  if (where) clip.where = { ...where, members: 'pieces' };
   return clip;
 }
 
@@ -1333,7 +1369,14 @@ export function normalizeLookClip(raw: unknown): ShowLookClip | null {
     ...(c.scope === 'pieces' ? { layerIds } : {}),
     fadeIn: Math.max(0, Math.min(duration, finiteOr(c.fadeIn, 0))),
     fadeOut: Math.max(0, Math.min(duration, finiteOr(c.fadeOut, 0))),
+    ...whereField(c.where),
   };
+}
+
+/** A block's where line, when it has one. */
+function whereField(raw: unknown): { where?: NonNullable<ReturnType<typeof normalizeWhere>> } {
+  const where = normalizeWhere(raw);
+  return where ? { where } : {};
 }
 
 function normalizeLookClips(raw: unknown): ShowLookClip[] {
@@ -1412,6 +1455,8 @@ export interface ShowArrangement {
   cameraLane?: ShowCameraClip[];
   lookClips?: ShowLookClip[];
   lines?: ControlLine[];
+  ledClips?: TimelineLedClip[];
+  whereOrders?: WhereNamedOrder[];
   /** The Timeline document's arrangement; the fields above are the Show's.
    *  Missing in steps made before the two were separate: such a step is
    *  the active document's. */
@@ -1442,6 +1487,9 @@ export interface ShowTimelineSnapshot {
   /** Version 5: the Timeline's control lines and their controllers. */
   lines?: ControlLine[];
   lineBindings?: LineBinding[];
+  /** Version 6: the Timeline's LED rows and named where orders. */
+  ledClips?: TimelineLedClip[];
+  whereOrders?: WhereNamedOrder[];
   /** Version 4: the Timeline document (the fields above are the Show's). */
   timeline?: ShowTimelineSnapshot;
   /** Version 4: the document that was active when saved. */
@@ -1459,7 +1507,7 @@ export interface ShowTimelineSnapshot {
 
 /** What a document owns. Everything else in the state is the engine's. */
 const DOC_KEYS = [
-  'audioTracks', 'presetClips', 'layerTracks', 'lookClips', 'lines', 'lineBindings', 'cameraLane', 'tempo', 'loop', 'endAction',
+  'audioTracks', 'presetClips', 'layerTracks', 'lookClips', 'lines', 'lineBindings', 'ledClips', 'whereOrders', 'cameraLane', 'tempo', 'loop', 'endAction',
   'rulerMode', 'snapGrid', 'zoom', 'snapEnabled', 'currentTime', 'selection', 'selectedClipIds', 'soloTrackId',
 ] as const;
 export type ShowDocFields = Pick<ShowTimelineState, (typeof DOC_KEYS)[number]>;
@@ -1484,8 +1532,9 @@ function setParked(doc: ShowDocFields): void {
 export const parkedShowDoc = { subscribe: parkedStore.subscribe };
 
 /** A document has something on it. */
-export function docHasContent(d: Pick<ShowDocFields, 'presetClips' | 'audioTracks' | 'layerTracks' | 'lookClips' | 'cameraLane'> & { lines?: readonly ControlLine[] }): boolean {
+export function docHasContent(d: Pick<ShowDocFields, 'presetClips' | 'audioTracks' | 'layerTracks' | 'lookClips' | 'cameraLane'> & { lines?: readonly ControlLine[]; ledClips?: readonly TimelineLedClip[] }): boolean {
   return d.presetClips.length > 0 || d.audioTracks.length > 0 || d.lookClips.length > 0 || d.cameraLane.length > 0
+    || (d.ledClips?.length ?? 0) > 0
     || (d.lines?.length ?? 0) > 0
     || d.layerTracks.some((t) => !isBareRow(t));
 }
@@ -1519,6 +1568,8 @@ function arrangementOf(d: ShowDocFields): ShowArrangement {
     lookClips: d.lookClips,
     // Lines are replaced on every edit, never mutated.
     lines: d.lines,
+    ledClips: d.ledClips,
+    whereOrders: d.whereOrders,
   };
 }
 
@@ -1540,6 +1591,8 @@ function docWithArrangement(base: ShowDocFields, a: Partial<ShowArrangement>): S
     .filter((c): c is ShowCameraClip => c !== null);
   const lookClips = normalizeLookClips(a.lookClips);
   const lines = Array.isArray(a.lines) ? a.lines : base.lines;
+  const ledClips = Array.isArray(a.ledClips) ? normalizeLedClips(a.ledClips) : base.ledClips;
+  const whereOrders = Array.isArray(a.whereOrders) ? normalizeNamedOrders(a.whereOrders) : base.whereOrders;
   const tempo = normalizeTempoMap(a.tempo);
   const clipIds = new Set(layerTracks.flatMap((t) => t.clips.map((c) => c.id)));
   const ids = new Set([
@@ -1547,6 +1600,7 @@ function docWithArrangement(base: ShowDocFields, a: Partial<ShowArrangement>): S
     ...presetClips.map((c) => c.id),
     ...layerTracks.map((t) => t.id),
     ...lookClips.map((c) => c.id),
+    ...ledClips.map((c) => c.id),
     ...clipIds,
   ]);
   return {
@@ -1562,6 +1616,8 @@ function docWithArrangement(base: ShowDocFields, a: Partial<ShowArrangement>): S
     cameraLane,
     lookClips,
     lines,
+    ledClips,
+    whereOrders,
     soloTrackId: base.soloTrackId && layerTracks.some((t) => t.id === base.soloTrackId) ? base.soloTrackId : null,
     selectedClipIds: base.selectedClipIds.filter((id) => clipIds.has(id)),
     selection: base.selection && ids.has(base.selection.id) ? base.selection : null,
@@ -1607,6 +1663,8 @@ function docSnapshot(d: ShowDocFields): Omit<ShowTimelineSnapshot, 'version' | '
     ...(d.lookClips.length > 0 ? { lookClips: d.lookClips.map((c) => ({ ...c, ...(c.layerIds ? { layerIds: [...c.layerIds] } : {}) })) } : {}),
     ...(d.lines.length > 0 ? { lines: d.lines } : {}),
     ...(d.lineBindings.length > 0 ? { lineBindings: d.lineBindings } : {}),
+    ...(d.ledClips.length > 0 ? { ledClips: d.ledClips.map((c) => ({ ...c })) } : {}),
+    ...(d.whereOrders.length > 0 ? { whereOrders: d.whereOrders } : {}),
   };
 }
 
@@ -1673,6 +1731,8 @@ function hydrateDoc(p: Record<string, unknown>, projectDir?: string): ShowDocFie
     lookClips: normalizeLookClips(p.lookClips),
     lines: converted.lines.length ? [...savedLines, ...converted.lines] : savedLines,
     lineBindings: normalizeBindings(p.lineBindings),
+    ledClips: normalizeLedClips(p.ledClips),
+    whereOrders: normalizeNamedOrders(p.whereOrders),
     cameraLane,
     tempo,
     loop: p.loop === true,
@@ -3072,6 +3132,102 @@ export const showTimeline = {
     republishTracks();
   },
 
+  // ── LED rows (Timeline) ────────────────────────────────────────────────
+  //
+  // One row per WLED controller and per named range (row id = its spot id).
+  // Blocks on a row may overlap: the later one draws over the earlier.
+
+  findLedClip(clipId: string): TimelineLedClip | null {
+    return get(store).ledClips.find((c) => c.id === clipId) ?? null;
+  },
+
+  /** A block on an LED row at `startTime` (snapped). Returns its id. */
+  addLedClip(rowId: string, startTime: number, fields: Partial<Omit<TimelineLedClip, 'id' | 'rowId' | 'startTime'>> = {}): string | null {
+    const id = generateUUID();
+    const at = Math.max(0, snapShowTime(startTime, this._snapEdges(new Set()), this._snapOptions()));
+    const clip = normalizeLedClip({ ...fields, id, rowId, startTime: at });
+    if (!clip) return null;
+    this._setLedClips([...get(store).ledClips, clip]);
+    store.update((s) => ({ ...s, selection: { kind: 'ledClip', id }, selectedClipIds: [] }));
+    recordShowEdit();
+    return id;
+  },
+
+  /** Change an LED block's kind, colours, pattern, fades or where line. */
+  updateLedClip(clipId: string, patch: Partial<Omit<TimelineLedClip, 'id'>>, opts: { discrete?: boolean } = {}) {
+    const found = this.findLedClip(clipId);
+    if (!found) return;
+    const next = normalizeLedClip({ ...found, ...patch, id: clipId });
+    if (!next) return;
+    this._setLedClips(get(store).ledClips.map((c) => (c.id === clipId ? next : c)));
+    recordShowEdit(opts.discrete ? undefined : `led-clip:${clipId}`);
+  },
+
+  /** Drag an LED block to a new start (snapped by either edge), and to another LED row. */
+  moveLedClip(clipId: string, startTime: number, rowId?: string) {
+    const found = this.findLedClip(clipId);
+    if (!found) return;
+    const edges = this._snapEdges(new Set([clipId]));
+    const opts = this._snapOptions();
+    const byStart = snapShowTime(startTime, edges, opts);
+    const byEnd = snapShowTime(startTime + found.duration, edges, opts) - found.duration;
+    const pull = (v: number) => (Math.abs(v - startTime) < 1e-9 ? Number.POSITIVE_INFINITY : Math.abs(v - startTime));
+    const at = Math.max(0, pull(byEnd) < pull(byStart) ? byEnd : byStart);
+    const row = rowId && rowId.startsWith('led:') ? rowId : found.rowId;
+    if (Math.abs(at - found.startTime) < 1e-9 && row === found.rowId) return;
+    store.update((s) => {
+      const lines = shiftLinesOnTarget(s.lines, { scope: 'block', id: clipId }, at - found.startTime);
+      return lines === s.lines ? s : { ...s, lines };
+    });
+    this._setLedClips(get(store).ledClips.map((c) => (c.id === clipId ? { ...c, startTime: at, rowId: row } : c)));
+    recordShowEdit(`led-clip:${clipId}`);
+  },
+
+  /** Drag an LED block's edge. */
+  resizeLedClip(clipId: string, edge: 'start' | 'end', time: number) {
+    const found = this.findLedClip(clipId);
+    if (!found) return;
+    const t = snapShowTime(time, this._snapEdges(new Set([clipId])), this._snapOptions());
+    const end = found.startTime + found.duration;
+    let next: TimelineLedClip;
+    if (edge === 'start') {
+      const start = Math.max(0, Math.min(t, end - SHOW_MIN_TRACK_CLIP_SECONDS));
+      next = { ...found, startTime: start, duration: end - start };
+    } else {
+      next = { ...found, duration: Math.max(SHOW_MIN_TRACK_CLIP_SECONDS, t - found.startTime) };
+    }
+    next.fadeIn = Math.min(next.fadeIn, next.duration);
+    next.fadeOut = Math.min(next.fadeOut, next.duration);
+    this._setLedClips(get(store).ledClips.map((c) => (c.id === clipId ? next : c)));
+    recordShowEdit(`led-clip:${clipId}`);
+  },
+
+  removeLedClip(clipId: string) {
+    const s = get(store);
+    if (!s.ledClips.some((c) => c.id === clipId)) return;
+    store.update((x) => {
+      const lines = removeLinesForBlocks(x.lines, [clipId]);
+      return lines === x.lines ? x : { ...x, lines };
+    });
+    this._setLedClips(s.ledClips.filter((c) => c.id !== clipId));
+    if (s.selection?.kind === 'ledClip' && s.selection.id === clipId) store.update((x) => ({ ...x, selection: null }));
+    recordShowEdit();
+  },
+
+  _setLedClips(clips: TimelineLedClip[]) {
+    const ledClips = [...clips].sort((a, b) => a.startTime - b.startTime || (a.id < b.id ? -1 : 1));
+    store.update((s) => withDuration({ ...s, ledClips }));
+    republishTracks();
+  },
+
+  /** The Timeline's named where orders (one undo step). */
+  setWhereOrders(orders: WhereNamedOrder[]) {
+    const whereOrders = normalizeNamedOrders(orders);
+    store.update((s) => ({ ...s, whereOrders }));
+    republishTracks();
+    recordShowEdit();
+  },
+
   // ── Control lines ──────────────────────────────────────────────────────
 
   /**
@@ -3133,6 +3289,7 @@ export const showTimeline = {
     for (const c of s.presetClips) edges.push(c.startTime, c.startTime + c.duration);
     for (const t of s.audioTracks) edges.push(t.startTime, t.startTime + t.duration);
     for (const c of s.lookClips) if (!exclude.has(c.id)) edges.push(c.startTime, c.startTime + c.duration);
+    for (const c of s.ledClips) if (!exclude.has(c.id)) edges.push(c.startTime, c.startTime + c.duration);
     for (const track of s.layerTracks) {
       for (const c of track.clips) if (!exclude.has(c.id)) edges.push(c.startTime, clipEnd(c));
     }
@@ -3328,11 +3485,12 @@ export const showTimeline = {
       // stay at the top (an older build opens the Show), the Timeline's
       // are under `timeline`, and the Looks row is new.
       // 5: the Timeline has control lines (the ◆ lanes became lines).
-      version: 5,
+      // 6: the Timeline has LED rows and where lines (blocks carry `where`).
+      version: 6,
       isOpen: s.isOpen,
       ...show,
       activeDoc: s.doc,
-      timeline: { version: 5, isOpen: false, ...timeline },
+      timeline: { version: 6, isOpen: false, ...timeline },
     };
   },
 

@@ -52,6 +52,9 @@
   $: matrixRows = Math.ceil(Math.max(1, controller.ledCount) / Math.max(1, mapping.columns ?? 8));
   $: telemetry = $wledTelemetry[controller.id];
   $: if (mapCanvas && controller) scheduleDraw();
+  // While the Timeline's LED rows drive this controller, the map shows what is sent.
+  $: timelineColors = telemetry?.timeline ? telemetry.pixels : undefined;
+  $: if (mapCanvas && timelineColors) scheduleDraw();
 
   function clamp(value: number, min = 0, max = 1): number {
     if (!Number.isFinite(value)) return min;
@@ -182,6 +185,7 @@
       points: resolved.points,
       sourceRegion: resolved.sourceRegion,
       selectedPoint,
+      colors: timelineColors,
     });
   }
 

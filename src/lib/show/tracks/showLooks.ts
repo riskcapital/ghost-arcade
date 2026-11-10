@@ -33,6 +33,9 @@ export interface ShowLookState {
   layerIds: readonly string[];
   /** 0..1: fades × crossfade ramps. */
   weight: number;
+  /** The block's where line at this instant: shape id → 0..1. Shapes not in
+   *  it do not wear the block. Unset: no where line. */
+  where?: ReadonlyMap<string, number>;
 }
 
 const EPS = 1e-6;
@@ -99,7 +102,17 @@ function weightStep(weight: number): number {
 /** What decides whether the scene must be rebuilt for the looks. */
 export function showLooksSignature(looks: readonly ShowLookState[] | undefined): string {
   if (!looks?.length) return '';
-  return looks.map((l) => `${l.clipId}/${l.lookId}/${l.paletteId}/${l.scope}/${l.layerIds.join(',')}/${weightStep(l.weight)}`).join(';');
+  return looks.map((l) => `${l.clipId}/${l.lookId}/${l.paletteId}/${l.scope}/${l.layerIds.join(',')}/${weightStep(l.weight)}${whereSignature(l.where)}`).join(';');
+}
+
+function whereSignature(where: ReadonlyMap<string, number> | undefined): string {
+  if (!where) return '';
+  let out = '/w';
+  for (const [id, w] of where) {
+    const step = weightStep(w);
+    if (step > 0) out += `:${id}=${step}`;
+  }
+  return out;
 }
 
 // ─── Building the stacks ────────────────────────────────────────────────
@@ -172,7 +185,11 @@ export function applyShowLooks(layers: Layer[], looks: readonly ShowLookState[] 
   let changed = false;
   const out = layers.map((layer) => {
     if (!all.has(layer.id)) return layer;
-    const wearing = looks.filter((l) => l.scope === 'all' || scoped.get(l.clipId)?.has(layer.id));
+    const wearing = looks
+      .filter((l) => l.scope === 'all' || scoped.get(l.clipId)?.has(layer.id))
+      // A where line: only the shapes in its window, by how lit they are.
+      .map((l) => (l.where ? { ...l, weight: l.weight * (l.where.get(layer.id) ?? 0) } : l))
+      .filter((l) => weightStep(l.weight) > 0);
     if (!wearing.length) return layer;
     const config = mixedStack(layer, wearing);
     if (!config) return layer;

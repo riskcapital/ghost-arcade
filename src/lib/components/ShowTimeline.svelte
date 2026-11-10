@@ -95,7 +95,12 @@
   import LinePicker from './show/timeline/LinePicker.svelte';
   import LineRecordControls from './show/timeline/LineRecordControls.svelte';
   import LineDiamondOverlay from './show/timeline/LineDiamondOverlay.svelte';
-  import { LOOKS_GROUP, STAGE_GROUP, STAGE_ROW_HEIGHT, lineLayout } from './show/timeline/lineUi';
+  import { LOOKS_GROUP, STAGE_GROUP, STAGE_ROW_HEIGHT, LEDS_GROUP, lineLayout } from './show/timeline/lineUi';
+  import LedRowHeaders from './show/timeline/LedRowHeaders.svelte';
+  import LedRowLanes from './show/timeline/LedRowLanes.svelte';
+  import LedBlockInspector from './show/timeline/LedBlockInspector.svelte';
+  import { ledRows, ledGroupFolded, ledGroupHeight } from './show/timeline/ledRowsUi';
+  import { ledClipName } from '../timeline/leds/ledClips';
   import { edgeLook } from '../looks/edgeLookCatalog';
   import ShowLookInspector from './show/timeline/ShowLookInspector.svelte';
   import { carriesEdgeLook, readEdgeLookDrag } from '../looks/edgeLookDrag';
@@ -165,6 +170,8 @@
   const doc = $derived<ShowDocKind>($docStore);
   const isTimeline = $derived(doc === 'timeline');
   const lookClips = $derived($lookClipsStore);
+  const ledClipsStore = showSlice('ledClips');
+  const ledClipsAll = $derived($ledClipsStore);
   const comps = $derived($compositionsStore);
 
   // ── End of show + output device ─────────────────────────────────────────
@@ -423,6 +430,11 @@
   const stageLines = $derived(isTimeline ? $lineLayout.lines.get(STAGE_GROUP) ?? [] : []);
   const looksLinesH = $derived(isTimeline ? ($lineLayout.heights.get(LOOKS_GROUP) ?? 0) : 0);
   const stageRowH = $derived(isTimeline ? STAGE_ROW_HEIGHT + ($lineLayout.heights.get(STAGE_GROUP) ?? 0) : 0);
+  // The LEDs group (one row per WLED controller and range) and its blocks' lines.
+  const ledLines = $derived(isTimeline ? $lineLayout.lines.get(LEDS_GROUP) ?? [] : []);
+  const ledRowsH = $derived(isTimeline ? ledGroupHeight($ledRows, $ledGroupFolded) + ($ledRows.length ? $lineLayout.heights.get(LEDS_GROUP) ?? 0 : 0) : 0);
+  const ledNames = $derived(Object.fromEntries(ledClipsAll.map((c) => [c.id, ledClipName(c)])));
+  const ledSpans = $derived(Object.fromEntries(ledClipsAll.map((c) => [c.id, { start: c.startTime, end: c.startTime + c.duration }])));
   const lookSpans = $derived(Object.fromEntries(lookClips.map((c) => [c.id, { start: c.startTime, end: c.startTime + c.duration }])));
   const lookNames = $derived(Object.fromEntries(lookClips.map((c) => [c.id, edgeLook(c.lookId)?.name ?? 'Look'])));
   let linePicker: { x: number; y: number; group: 'looks' | 'stage' } | null = $state(null);
@@ -451,7 +463,7 @@
     for (const t of audioTracks) out[t.lane]?.push(t);
     return out;
   });
-  const laneStackH = $derived(RULER_HEIGHT + topLaneH + looksLinesH + tracksH + stageRowH + audioLaneCount * AUDIO_LANE_HEIGHT + cameraLaneH);
+  const laneStackH = $derived(RULER_HEIGHT + topLaneH + looksLinesH + tracksH + stageRowH + ledRowsH + audioLaneCount * AUDIO_LANE_HEIGHT + cameraLaneH);
   const hasTracks = $derived(isTimeline && layerTracks.length > 0);
   const labelWidth = $derived(hasTracks ? TRACK_HEADER_WIDTH : 108);
   // The bound clientHeight keeps its last value after the inspector
@@ -541,7 +553,7 @@
     if (!gridEl) return 0;
     const rect = gridEl.getBoundingClientRect();
     // Lane order: ruler, presets, layer tracks, then the audio lanes.
-    const y = e.clientY - rect.top + gridEl.scrollTop - RULER_HEIGHT - topLaneH - tracksH;
+    const y = e.clientY - rect.top + gridEl.scrollTop - RULER_HEIGHT - topLaneH - looksLinesH - tracksH - stageRowH - ledRowsH;
     if (y < 0) return 0;
     return Math.max(0, Math.min(audioLaneCount, Math.floor(y / AUDIO_LANE_HEIGHT)));
   }
@@ -747,6 +759,9 @@
   const selectedLookClip = $derived(selection?.kind === 'lookClip'
     ? lookClips.find((c) => c.id === selection!.id) ?? null
     : null);
+  const selectedLedClip = $derived(selection?.kind === 'ledClip'
+    ? ledClipsAll.find((c) => c.id === selection!.id) ?? null
+    : null);
   const selectedAudio = $derived(selection?.kind === 'audio'
     ? audioTracks.find((t) => t.id === selection!.id) ?? null
     : null);
@@ -782,7 +797,7 @@
   const barLines = $derived(rulerMode === 'bars' && tempo
     ? rulerTicks(tempo, Math.max(0, viewStart), Math.min(rulerSeconds, viewEnd), zoom, 18).map((t) => ({ x: Math.round(t.time * zoom), bar: t.kind === 'bar' }))
     : []);
-  const inspectorVisible = $derived(!!(selectedPreset || selectedAudio || selectedTransitionClip || selectedMarker || layerClipInspector || selectedTrack || selectedTempo || selectedLookClip));
+  const inspectorVisible = $derived(!!(selectedPreset || selectedAudio || selectedTransitionClip || selectedMarker || layerClipInspector || selectedTrack || selectedTempo || selectedLookClip || selectedLedClip));
   // With layer tracks the inspector strip is always there (a hint when
   // nothing is selected) and its room is reserved: selecting a clip must not
   // grow the tray, or the lanes jump under the pointer mid-drag.
@@ -848,6 +863,7 @@
       return;
     }
     if (selectedLookClip) showTimeline.removeLookClip(selectedLookClip.id);
+    else if (selectedLedClip) showTimeline.removeLedClip(selectedLedClip.id);
     else if (selectedTransitionClip) showTimeline.removeTransitionAt(selectedTransitionClip.id);
     else if (selectedPreset) showTimeline.removePresetClip(selectedPreset.id);
     else if (selectedAudio) showTimeline.removeAudioTrack(selectedAudio.id);
@@ -1472,6 +1488,10 @@
           {#if stageLines.length}
             <LineHeaders groupId={STAGE_GROUP} lines={stageLines} expanded={$lineLayout.expanded.has(STAGE_GROUP)} />
           {/if}
+          <LedRowHeaders />
+          {#if ledLines.length && $ledRows.length}
+            <LineHeaders groupId={LEDS_GROUP} lines={ledLines} expanded={$lineLayout.expanded.has(LEDS_GROUP)} blockNames={ledNames} />
+          {/if}
           {:else}
           <div class="lane-label preset" style="height: {PRESET_LANE_HEIGHT}px">
             <span class="lane-name" title="Presets launched along the show, with transitions between them.">Presets</span>
@@ -1539,6 +1559,10 @@
           <div class="stage-row-strip" style="height: {STAGE_ROW_HEIGHT}px"></div>
           {#if stageLines.length}
             <LineLanes groupId={STAGE_GROUP} lines={stageLines} expanded={$lineLayout.expanded.has(STAGE_GROUP)} {zoom} {viewStart} {viewEnd} />
+          {/if}
+          <LedRowLanes {zoom} {viewStart} {viewEnd} width={totalWidth} {selection} />
+          {#if ledLines.length && $ledRows.length}
+            <LineLanes groupId={LEDS_GROUP} lines={ledLines} expanded={$lineLayout.expanded.has(LEDS_GROUP)} {zoom} {viewStart} {viewEnd} blockSpans={ledSpans} />
           {/if}
           {:else}
           <ShowPresetLane
@@ -1644,6 +1668,10 @@
           audioTracks={audioTracks}
           onclose={() => showTimeline.select(null)}
         />
+      </div>
+    {:else if selectedLedClip}
+      <div class="insp-wrap" bind:clientHeight={inspectorH}>
+        <LedBlockInspector clip={selectedLedClip} onclose={() => showTimeline.select(null)} />
       </div>
     {:else if selectedLookClip}
       <div class="insp-wrap" bind:clientHeight={inspectorH}>
