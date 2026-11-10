@@ -11,6 +11,7 @@
   import { EDGE_LOOKS } from '../looks/edgeLookCatalog';
   import { LOOK_PALETTES, lookTargetLayerIds, isLookTarget, type LookScope, type Rgba } from '../looks/edgeLooks';
   import { mapLookSurfaceIds } from '../stores/mapSurfaces';
+  import { EDGE_LOOK_DRAG_TYPE, type EdgeLookDragPayload } from '../looks/edgeLookDrag';
 
   let { onClose = () => {}, mapSurfaces = false }: { onClose?: () => void; mapSurfaces?: boolean } = $props();
 
@@ -72,6 +73,22 @@
     return { destroy() { if (lift) node.remove(); } };
   }
 
+  // A card dragged onto the Timeline's Looks row becomes a look block there
+  // (the palette and scope picked here go with it), instead of dressing the
+  // shapes now.
+  function dragLook(e: DragEvent, id: string) {
+    if (!e.dataTransfer || mapSurfaces) return;
+    const look = EDGE_LOOKS.find((item) => item.id === id)!;
+    const payload: EdgeLookDragPayload = {
+      lookId: id,
+      paletteId: paletteChoice ?? look.palette,
+      ...(scope === 'selected' && selectedTargets.length ? { scope: 'pieces', layerIds: selectedTargets } : { scope: 'all' }),
+    };
+    e.dataTransfer.setData(EDGE_LOOK_DRAG_TYPE, JSON.stringify(payload));
+    e.dataTransfer.setData('text/plain', look.name);
+    e.dataTransfer.effectAllowed = 'copy';
+  }
+
   function removeLook() {
     const count = mapSurfaces ? project.clearSurfaceLooks() : project.clearLook(targets);
     message = count
@@ -84,7 +101,7 @@
   <header class="looks-head">
     <div>
       <h3>Looks</h3>
-      <p>{mapSurfaces ? 'One click dresses the map\'s surfaces, whichever preset is playing.' : 'One click dresses your shapes.'} They move to the beat: tap a tempo or turn on the mic.</p>
+      <p>{mapSurfaces ? 'One click dresses the map\'s surfaces, whichever preset is playing.' : 'One click dresses your shapes, or drag a card onto the Timeline\'s Looks row.'} They move to the beat: tap a tempo or turn on the mic.</p>
     </div>
     <button class="looks-close" type="button" aria-label="Close Looks" onclick={onClose}>×</button>
   </header>
@@ -115,7 +132,8 @@
   <div class="looks-grid">
     {#each EDGE_LOOKS as look (look.id)}
       <button type="button" class="look-card" class:active={wearing?.id === look.id} title={look.blurb}
-        aria-label={`Apply ${look.name}`} data-look-id={look.id} onclick={() => pickLook(look.id)}>
+        aria-label={`Apply ${look.name}`} data-look-id={look.id} onclick={() => pickLook(look.id)}
+        draggable={!mapSurfaces} ondragstart={(e) => dragLook(e, look.id)}>
         <span class="look-thumb"><img class="look-strip" src={thumb(look.id)} alt="" draggable="false" /></span>
         <span class="look-name">{look.name}</span>
       </button>

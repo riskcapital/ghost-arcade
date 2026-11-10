@@ -89,6 +89,11 @@
   import { anchoredScrollLeft, followScrollLeft, wheelPixels, wheelZoomFactor } from './show/timeline/gridView';
   import { devicePixel, formatPrecise } from './show/timeline/timeFormat';
   import ShowAudioDelayBadge from './show/timeline/ShowAudioDelayBadge.svelte';
+  import ShowLookLane from './show/timeline/ShowLookLane.svelte';
+  import ShowLookInspector from './show/timeline/ShowLookInspector.svelte';
+  import { carriesEdgeLook, readEdgeLookDrag } from '../looks/edgeLookDrag';
+  import { showToast } from '../stores/errorToast';
+  import type { ShowDocKind } from '../stores/showTimeline';
   import {
     canPasteClips,
     clearTrackSelection,
@@ -125,6 +130,8 @@
   const snapGridStore = showSlice('snapGrid');
   const selectedClipIdsStore = showSlice('selectedClipIds');
   const cameraLaneStore = showSlice('cameraLane');
+  const docStore = showSlice('doc');
+  const lookClipsStore = showSlice('lookClips');
   // A derived of the project: it re-publishes on every project update.
   const compositionsStore = distinct(compositions);
 
@@ -146,6 +153,11 @@
   const snapGrid = $derived($snapGridStore);
   const selectedClipIds = $derived($selectedClipIdsStore);
   const cameraLane = $derived($cameraLaneStore);
+  /** Which document the tray shows: the Show (presets and music) or the
+   *  Timeline (rows, blocks, lanes, looks). One tray, two tabs. */
+  const doc = $derived<ShowDocKind>($docStore);
+  const isTimeline = $derived(doc === 'timeline');
+  const lookClips = $derived($lookClipsStore);
   const comps = $derived($compositionsStore);
 
   // ── End of show + output device ─────────────────────────────────────────
@@ -209,7 +221,9 @@
 
   // Markers drawn: the ones near the visible stretch. A flag's label runs to
   // the right of its time, so the left edge keeps a wider margin.
-  const visibleMarkers = $derived(cues.markers.filter((m) => {
+  /** The active document's markers (each document has its own). */
+  const docMarkers = $derived(cues.markers.filter((m) => (m.doc ?? 'show') === doc));
+  const visibleMarkers = $derived(docMarkers.filter((m) => {
     const x = m.time * zoom;
     return x >= viewStart * zoom - 400 && x <= viewEnd * zoom + 24;
   }));
@@ -223,7 +237,7 @@
    *  selected (or standing by), so "mark here, fire that" is one click. */
   function addMarkerAtPlayhead() {
     const cueId = cues.selectedCueId ?? cues.standbyCueId ?? cues.cues[0]?.id ?? null;
-    const id = cueList.addMarker(get(showTimeline).currentTime, cueId);
+    const id = cueList.addMarker(get(showTimeline).currentTime, cueId, '', doc);
     showTimeline.select(null);
     selectedMarkerId = id;
   }
@@ -308,6 +322,8 @@
   });
 
   const PRESET_LANE_HEIGHT = 46;
+  /** The Timeline's Looks row. */
+  const LOOK_LANE_HEIGHT = 40;
   const AUDIO_LANE_HEIGHT = 52;
   const RULER_HEIGHT = 20;
 
@@ -321,7 +337,8 @@
   // The ceiling is `min(260px, 38vh)` so a 13" laptop does not lose a third
   // of its screen to it. Dragging the top edge overrides the height (up to a
   // larger but still sane ceiling) and that override persists.
-  const TRAY_HEIGHT_KEY = 'ghostarcade-show-tray-height';
+  /** Each tab keeps its own hand-set height. */
+  const trayHeightKey = (d: ShowDocKind) => (d === 'timeline' ? 'ghostarcade-timeline-tray-height' : 'ghostarcade-show-tray-height');
   const TRAY_MIN_HEIGHT = 150;
   /** Space an always-on horizontal scrollbar would eat inside the grid.
    *  Zero on macOS overlay scrollbars, ~8–15 px on Windows. */
@@ -354,10 +371,10 @@
     return Math.max(TRAY_MIN_HEIGHT, Math.round(Math.min(720, vh * 0.62)));
   }
 
-  function loadUserHeight(): number | null {
+  function loadUserHeight(d: ShowDocKind = get(showTimeline).doc): number | null {
     if (typeof localStorage === 'undefined') return null;
     try {
-      const raw = parseFloat(localStorage.getItem(TRAY_HEIGHT_KEY) || '');
+      const raw = parseFloat(localStorage.getItem(trayHeightKey(d)) || '');
       return Number.isFinite(raw) && raw > 0 ? raw : null;
     } catch {
       return null;
@@ -366,8 +383,9 @@
   function saveUserHeight(h: number | null): void {
     if (typeof localStorage === 'undefined') return;
     try {
-      if (h === null) localStorage.removeItem(TRAY_HEIGHT_KEY);
-      else localStorage.setItem(TRAY_HEIGHT_KEY, String(Math.round(h)));
+      const key = trayHeightKey(get(showTimeline).doc);
+      if (h === null) localStorage.removeItem(key);
+      else localStorage.setItem(key, String(Math.round(h)));
     } catch {
       /* private mode — the session still resizes fine */
     }
@@ -375,6 +393,15 @@
 
   let viewportH = $state(typeof window !== 'undefined' ? window.innerHeight : 900);
   let userHeight: number | null = $state(loadUserHeight());
+  // The other tab: its own height.
+  let heightDoc: ShowDocKind | null = null;
+  $effect.pre(() => {
+    const d = doc;
+    untrack(() => {
+      if (heightDoc !== null && heightDoc !== d) userHeight = loadUserHeight(d);
+      heightDoc = d;
+    });
+  });
   /** Measured, not assumed: both bars wrap at narrow widths, and a wrapped
    *  transport that the height maths did not know about is exactly how the
    *  inspector ends up hanging out of the bottom of the tray. */
@@ -383,7 +410,9 @@
   /** The takeover pads' own height, when they are open. */
   let padsH = $state(0);
 
-  const tracksH = $derived(tracksStackHeight(layerTracks));
+  const tracksH = $derived(isTimeline ? tracksStackHeight(layerTracks) : 0);
+  /** The lane under the ruler: Presets on the Show, Looks on the Timeline. */
+  const topLaneH = $derived(isTimeline ? LOOK_LANE_HEIGHT : PRESET_LANE_HEIGHT);
   // The Stage camera lane sits under the audio lanes once it has shots (or was asked for).
   const cameraLaneH = $derived(cameraLane.length > 0 || $cameraLaneShown ? CAMERA_LANE_HEIGHT : 0);
   const audioLaneCount = $derived(Math.max(1, audioTracks.reduce((m, t) => Math.max(m, t.lane + 1), 0)));
@@ -394,8 +423,8 @@
     for (const t of audioTracks) out[t.lane]?.push(t);
     return out;
   });
-  const laneStackH = $derived(RULER_HEIGHT + PRESET_LANE_HEIGHT + tracksH + audioLaneCount * AUDIO_LANE_HEIGHT + cameraLaneH);
-  const hasTracks = $derived(layerTracks.length > 0);
+  const laneStackH = $derived(RULER_HEIGHT + topLaneH + tracksH + audioLaneCount * AUDIO_LANE_HEIGHT + cameraLaneH);
+  const hasTracks = $derived(isTimeline && layerTracks.length > 0);
   const labelWidth = $derived(hasTracks ? TRACK_HEADER_WIDTH : 108);
   // The bound clientHeight keeps its last value after the inspector
   // unmounts, so gate it on the selection rather than trusting the binding.
@@ -484,7 +513,7 @@
     if (!gridEl) return 0;
     const rect = gridEl.getBoundingClientRect();
     // Lane order: ruler, presets, layer tracks, then the audio lanes.
-    const y = e.clientY - rect.top + gridEl.scrollTop - RULER_HEIGHT - PRESET_LANE_HEIGHT - tracksH;
+    const y = e.clientY - rect.top + gridEl.scrollTop - RULER_HEIGHT - topLaneH - tracksH;
     if (y < 0) return 0;
     return Math.max(0, Math.min(audioLaneCount, Math.floor(y / AUDIO_LANE_HEIGHT)));
   }
@@ -528,13 +557,14 @@
   }
 
   // ── Block drag / resize ────────────────────────────────────────────────
-  type BlockKind = 'preset' | 'audio';
+  type BlockKind = 'preset' | 'audio' | 'look';
+  const selectionKind = (kind: BlockKind) => (kind === 'look' ? 'lookClip' : kind);
 
   function startBlockDrag(e: MouseEvent, kind: BlockKind, id: string, startTime: number) {
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
-    showTimeline.select({ kind, id });
+    showTimeline.select({ kind: selectionKind(kind), id });
     const grabOffset = timeAt(e) - startTime;
     const before = showTimeline.exportArrangement();
     let moved = false;
@@ -543,6 +573,7 @@
         moved = true;
         const next = timeAt(ev) - grabOffset;
         if (kind === 'preset') showTimeline.movePresetClip(id, next);
+        else if (kind === 'look') showTimeline.moveLookClip(id, next);
         else showTimeline.moveAudioTrack(id, next);
       },
       end: () => { if (moved) suppressNextClick = true; },
@@ -554,7 +585,7 @@
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
-    showTimeline.select({ kind, id });
+    showTimeline.select({ kind: selectionKind(kind), id });
     const before = showTimeline.exportArrangement();
     let moved = false;
     followPointer({
@@ -562,6 +593,7 @@
         moved = true;
         const t = timeAt(ev);
         if (kind === 'preset') showTimeline.resizePresetClip(id, edge, t);
+        else if (kind === 'look') showTimeline.resizeLookClip(id, edge, t);
         else showTimeline.resizeAudioTrack(id, edge, t);
       },
       end: () => { if (moved) suppressNextClick = true; },
@@ -571,6 +603,8 @@
 
   // ── Drops: audio files + preset tray cards ─────────────────────────────
   let dragHover = $state(false);
+  /** A Look card from the Looks gallery is over the Timeline. */
+  let lookDropActive = $state(false);
 
   function handleDragOver(e: DragEvent) {
     e.preventDefault();
@@ -582,6 +616,7 @@
       return;
     }
     dragHover = true;
+    lookDropActive = isTimeline && !!e.dataTransfer && carriesEdgeLook(e.dataTransfer);
     // The media tray drags with effectAllowed 'move' in mapping mode; a
     // dropEffect it does not allow makes the browser refuse the drop.
     if (e.dataTransfer) e.dataTransfer.dropEffect = showDropEffect(e.dataTransfer.effectAllowed);
@@ -590,9 +625,21 @@
   async function handleDrop(e: DragEvent) {
     e.preventDefault();
     dragHover = false;
+    lookDropActive = false;
     const dt = e.dataTransfer;
     if (!dt) return;
     const dropTime = timeAt(e);
+
+    // A Look card from the Looks gallery: a block on the Looks row.
+    const look = readEdgeLookDrag(dt);
+    if (look) {
+      if (!isTimeline) {
+        showToast('Looks go on the Timeline\'s Looks row: open Timeline and drop it there.', 'info');
+        return;
+      }
+      showTimeline.addLookClip(look.lookId, look.paletteId, dropTime, { scope: look.scope, layerIds: look.layerIds });
+      return;
+    }
 
     // Transition chip dropped on (or near) a junction. A junction only
     // exists where two clips actually touch, so a drop into a gap or onto
@@ -609,6 +656,10 @@
     // A card dragged out of the Preset Tray carries its index into the
     // current compositions list (PresetTray.handlePresetDragStart).
     const presetIndex = dt.getData('application/x-ghost-mapping-preset');
+    if (presetIndex && isTimeline) {
+      showToast('Presets go on the Show: the Timeline has rows for the pieces instead.', 'info');
+      return;
+    }
     if (presetIndex) {
       const comp = $compositions[Number(presetIndex)];
       if (comp) {
@@ -620,6 +671,10 @@
     // A media-tray card or a video / image file dropped off the rows: it has
     // to go on a piece (rows are the mapping layers), which says so.
     if (carriesTrackMedia(dt) && !Array.from(dt.files ?? []).some((f) => isShowAudioFile(f.name, f.type))) {
+      if (!isTimeline) {
+        showToast('Media blocks go on the Timeline: open Timeline and drop it on a piece\'s row.', 'info');
+        return;
+      }
       void dropTrackMedia(dt, null, showTimeline.snapTime(dropTime));
       return;
     }
@@ -628,7 +683,7 @@
     const files = Array.from(dt.files ?? []).filter((f) => isShowAudioFile(f.name, f.type));
     // A song dropped on an empty show builds a show around it.
     const s = get(showTimeline);
-    if (files.length === 1 && s.audioTracks.length === 0 && s.presetClips.length === 0) {
+    if (files.length === 1 && !isTimeline && s.audioTracks.length === 0 && s.presetClips.length === 0) {
       offerShowFromAudio(files[0]);
       return;
     }
@@ -660,6 +715,9 @@
   // ── Selection inspector ────────────────────────────────────────────────
   const selectedPreset = $derived(selection?.kind === 'preset'
     ? presetClips.find((c) => c.id === selection!.id) ?? null
+    : null);
+  const selectedLookClip = $derived(selection?.kind === 'lookClip'
+    ? lookClips.find((c) => c.id === selection!.id) ?? null
     : null);
   const selectedAudio = $derived(selection?.kind === 'audio'
     ? audioTracks.find((t) => t.id === selection!.id) ?? null
@@ -696,7 +754,7 @@
   const barLines = $derived(rulerMode === 'bars' && tempo
     ? rulerTicks(tempo, Math.max(0, viewStart), Math.min(rulerSeconds, viewEnd), zoom, 18).map((t) => ({ x: Math.round(t.time * zoom), bar: t.kind === 'bar' }))
     : []);
-  const inspectorVisible = $derived(!!(selectedPreset || selectedAudio || selectedTransitionClip || selectedMarker || layerClipInspector || selectedTrack || selectedTempo));
+  const inspectorVisible = $derived(!!(selectedPreset || selectedAudio || selectedTransitionClip || selectedMarker || layerClipInspector || selectedTrack || selectedTempo || selectedLookClip));
   // With layer tracks the inspector strip is always there (a hint when
   // nothing is selected) and its room is reserved: selecting a clip must not
   // grow the tray, or the lanes jump under the pointer mid-drag.
@@ -713,7 +771,7 @@
   // Lanes always get room for the ruler, the presets and a couple of tracks
   // (as far as the tray's hard limit allows), however much of the tray the
   // rest needs at this window size and interface scale.
-  const lanesMin = $derived(Math.min(lanesH, RULER_HEIGHT + PRESET_LANE_HEIGHT + GRID_SCROLLBAR_ALLOWANCE
+  const lanesMin = $derived(Math.min(lanesH, RULER_HEIGHT + topLaneH + GRID_SCROLLBAR_ALLOWANCE
     + (hasTracks ? Math.min(2, layerTracks.length) * TRACK_ROW_HEIGHT : AUDIO_LANE_HEIGHT)));
   const trayLimits = $derived(trayHeightLimits(viewportH, chromeH, lanesMin));
   const contentH = $derived(Math.max(
@@ -733,12 +791,14 @@
   // variable. Cleared on close so the viewport springs straight back.
   // Declared after `trayHeight`: a pre-effect runs as soon as it is created,
   // and with the tray already open at mount it reads the height at once.
+  // Each tab publishes its own (`--ga-show-tray-height`,
+  // `--ga-timeline-tray-height`); the one not showing is 0.
   $effect.pre(() => {
     if (typeof document !== 'undefined') {
-      document.documentElement.style.setProperty(
-        '--ga-show-tray-height',
-        isOpen && !hiddenInVJ ? `${trayHeight}px` : '0px',
-      );
+      const open = isOpen && !hiddenInVJ;
+      const root = document.documentElement.style;
+      root.setProperty('--ga-show-tray-height', open && !isTimeline ? `${trayHeight}px` : '0px');
+      root.setProperty('--ga-timeline-tray-height', open && isTimeline ? `${trayHeight}px` : '0px');
     }
   });
 
@@ -759,7 +819,8 @@
       selectedMarkerId = null;
       return;
     }
-    if (selectedTransitionClip) showTimeline.removeTransitionAt(selectedTransitionClip.id);
+    if (selectedLookClip) showTimeline.removeLookClip(selectedLookClip.id);
+    else if (selectedTransitionClip) showTimeline.removeTransitionAt(selectedTransitionClip.id);
     else if (selectedPreset) showTimeline.removePresetClip(selectedPreset.id);
     else if (selectedAudio) showTimeline.removeAudioTrack(selectedAudio.id);
   }
@@ -886,9 +947,9 @@
       engaged: pointerInTray || focusInTray,
       hasSelection: !!(s.selection || selectedMarker) || clipSel,
       hasClipSelection: clipSel,
-      canPaste: canPasteClips() && s.layerTracks.length > 0,
-      hasTracks: s.layerTracks.length > 0,
-      takeoverActive: Object.keys(liveTakeover.state.surfaces).length > 0 || !!liveTakeover.state.overlay,
+      canPaste: canPasteClips() && s.doc === 'timeline' && s.layerTracks.length > 0,
+      hasTracks: s.doc === 'timeline' && s.layerTracks.length > 0,
+      takeoverActive: s.doc === 'timeline' && (Object.keys(liveTakeover.state.surfaces).length > 0 || !!liveTakeover.state.overlay),
     });
     if (!action) return false;
     switch (action) {
@@ -938,7 +999,7 @@
         selectedMarkerId = null;
         return true;
       case 'takeover':
-        return toggleTakeoverOnTarget();
+        return s.doc === 'timeline' && toggleTakeoverOnTarget();
       case 'returnAll':
       case 'returnAllInstant':
         liveTakeover.release('all', action === 'returnAllInstant' ? { mode: 'instant' } : undefined);
@@ -953,7 +1014,7 @@
   onMount(() => installShowKeyCapture());
   // Markers are snap targets for clips and keys.
   onMount(() => {
-    setShowSnapEdgeProvider(() => cues.markers.map((m) => m.time));
+    setShowSnapEdgeProvider(() => cues.markers.filter((m) => (m.doc ?? 'show') === get(showTimeline).doc).map((m) => m.time));
     return () => setShowSnapEdgeProvider(null);
   });
 
@@ -1058,7 +1119,7 @@
   <button data-help-page="show-timeline"
     class="show-toggle"
     class:active={isOpen}
-    onclick={() => showTimeline.toggleOpen()}
+    onclick={() => showTimeline.toggleDoc('show')}
     title="Show timeline"
   >
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1074,9 +1135,11 @@
   <div data-help-page="show-timeline"
     class="show-tray"
     class:resizing={resizingTray}
+    class:timeline-doc={isTimeline}
     style="height: {trayHeight}px"
     role="region"
-    aria-label="Show timeline"
+    aria-label={isTimeline ? 'Timeline' : 'Show timeline'}
+    data-show-doc={doc}
     onmouseenter={() => pointerInTray = true}
     onmouseleave={() => pointerInTray = false}
     onfocusin={() => focusInTray = true}
@@ -1087,14 +1150,15 @@
       class="tray-resize"
       onmousedown={startTrayResize}
       ondblclick={resetTrayHeight}
-      title="Drag to resize the show panel — double-click to fit its contents"
+      title={isTimeline ? 'Drag to resize the Timeline panel — double-click to fit its contents' : 'Drag to resize the show panel — double-click to fit its contents'}
     >
       <div class="resize-grip"></div>
     </div>
 
     <div class="show-header-btns">
-      <button class="show-clear" onclick={() => showClearConfirm = true} title="Clear the whole show">Clear</button>
-      <button class="show-close" onclick={() => showTimeline.setOpen(false)} title="Close show timeline">
+      <span class="show-doc-name" data-show-doc-name>{isTimeline ? 'Timeline' : 'Show'}</span>
+      <button class="show-clear" onclick={() => showClearConfirm = true} title={isTimeline ? 'Clear the whole Timeline' : 'Clear the whole show'}>Clear</button>
+      <button class="show-close" onclick={() => showTimeline.setOpen(false)} title={isTimeline ? 'Close the Timeline' : 'Close show timeline'}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
           <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
         </svg>
@@ -1259,6 +1323,7 @@
 
       <span class="t-divider"></span>
 
+      {#if !isTimeline}
       <select class="t-select t-preset" bind:value={addPresetId} title="Preset to add">
         <option value="">Choose preset…</option>
         {#each comps as comp}
@@ -1268,12 +1333,14 @@
       <button class="t-chip" onclick={addPreset} disabled={comps.length === 0} title="Append this preset to the end of the show">
         + Preset
       </button>
+      {/if}
       <button class="t-chip t-iconable" onclick={() => audioInput?.click()} title="Add an audio file" aria-label="Add an audio file">
         <span class="t-label">+ Audio</span>
         <svg class="t-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
           <path d="M5 2v8M1 6h8"/><path d="M14 18V6l8-2v12"/><circle cx="11.5" cy="18" r="2.5"/><circle cx="19.5" cy="16" r="2.5"/>
         </svg>
       </button>
+      {#if !isTimeline}
       <!-- Transition palette. Drag onto the junction between two touching
            preset clips; the junction highlights as you pass over it. -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1302,6 +1369,7 @@
           <path d="M1 6h4.5M3.5 3.5L6 6 3.5 8.5M15 6h-4.5M12.5 3.5L10 6l2.5 2.5M8 1v10"/>
         </svg>
       </button>
+      {/if}
 
       <span class="t-divider"></span>
 
@@ -1325,8 +1393,10 @@
           <span class="t-tc-warn" title={tcMismatchText} data-show-tempo-mismatch>⚠ {tcSourceName} {tc.sourceBpm?.toFixed(1)} · show {tc.showBpm?.toFixed(1)} BPM</span>
         {/if}
       {/if}
+      {#if isTimeline}
       <span class="t-divider"></span>
       <ShowTakeoverControls fit={transportFitLevel} />
+      {/if}
       <input
         class="hidden-file"
         type="file"
@@ -1337,7 +1407,7 @@
       />
     </div>
 
-    {#if $takeoverPadsOpen}
+    {#if $takeoverPadsOpen && isTimeline}
       <!-- The outer box may give way in a tight tray; the inner one reports
            the pads' own height, which the tray grows by. -->
       <div class="pads-wrap"><div bind:clientHeight={padsH}><TakeoverPads /></div></div>
@@ -1354,10 +1424,16 @@
              Matters now that a short tray really can clip the lane stack.
              Order: presets, layer tracks, audio. -->
         <div class="label-rows" style="transform: translateY({-laneScrollTop}px)">
-          <div class="lane-label preset" style="height: {PRESET_LANE_HEIGHT}px">
-            <span class="lane-name" title="Looks (presets) launched along the show. Rows below override the look on their piece while they have a block.">Looks</span>
+          {#if isTimeline}
+          <div class="lane-label look" style="height: {LOOK_LANE_HEIGHT}px">
+            <span class="lane-name" title="Shape Looks along the Timeline: drag a Look card from the Looks gallery here. The shapes wear it for the block's span; overlapping blocks crossfade.">Looks</span>
           </div>
           <ShowTrackHeaders />
+          {:else}
+          <div class="lane-label preset" style="height: {PRESET_LANE_HEIGHT}px">
+            <span class="lane-name" title="Presets launched along the show, with transitions between them.">Presets</span>
+          </div>
+          {/if}
           {#each audioLanes as lane}
             <div class="lane-label audio" style="height: {AUDIO_LANE_HEIGHT}px">
               <span class="lane-name">Audio {lane + 1}</span>
@@ -1378,7 +1454,7 @@
         onscroll={() => { laneScrollTop = gridEl?.scrollTop ?? 0; gridScrollLeft = gridEl?.scrollLeft ?? 0; }}
         onwheel={handleWheel}
         ondragover={handleDragOver}
-        ondragleave={() => dragHover = false}
+        ondragleave={() => { dragHover = false; lookDropActive = false; }}
         ondrop={handleDrop}
       >
         <div class="show-ruler" style="width: {totalWidth}px; height: {RULER_HEIGHT}px" onmousedown={startScrub}>
@@ -1400,6 +1476,21 @@
         </div>
 
         <div class="lanes" style="width: {totalWidth}px">
+          {#if isTimeline}
+          <ShowLookLane
+            clips={lookClips}
+            height={LOOK_LANE_HEIGHT}
+            {zoom}
+            {viewStart}
+            {viewEnd}
+            {selection}
+            dropActive={lookDropActive}
+            onblockdrag={(e, id, start) => startBlockDrag(e, 'look', id, start)}
+            onblockresize={(e, id, edge) => startBlockResize(e, 'look', id, edge)}
+          />
+
+          <ShowTrackLanes {zoom} {viewStart} {viewEnd} width={totalWidth} />
+          {:else}
           <ShowPresetLane
             clips={presetClips}
             {junctions}
@@ -1419,8 +1510,7 @@
             onselecttransition={(clipId) => showTimeline.select({ kind: 'transition', id: clipId })}
             onremovetransition={(clipId) => showTimeline.removeTransitionAt(clipId)}
           />
-
-          <ShowTrackLanes {zoom} {viewStart} {viewEnd} width={totalWidth} />
+          {/if}
 
           {#each audioLanes as lane}
             <ShowAudioLane
@@ -1504,6 +1594,10 @@
           audioTracks={audioTracks}
           onclose={() => showTimeline.select(null)}
         />
+      </div>
+    {:else if selectedLookClip}
+      <div class="insp-wrap" bind:clientHeight={inspectorH}>
+        <ShowLookInspector clip={selectedLookClip} layers={$liveLayersStore} onclose={() => showTimeline.select(null)} />
       </div>
     {:else if layerClipInspector}
       <div class="insp-wrap" bind:clientHeight={inspectorH}>
@@ -1675,7 +1769,7 @@
       </div>
     {:else if hasTracks}
       <div class="show-inspector insp-idle" bind:clientHeight={inspectorH}>
-        <span class="insp-hint">Each row is a mapping layer. Drop media on a row; click a block to edit it in Properties and Shader Parameters; click a row name for its settings. S splits at the playhead, Shift+Delete closes the gap, ? lists every key.</span>
+        <span class="insp-hint">Each row is a mapping layer. Drop media on a row; click a block to edit it in Properties and Shader Parameters, or click a Media Library card to replace its media; click a row name for its settings. S splits at the playhead, Shift+Delete closes the gap, ? lists every key.</span>
       </div>
     {/if}
 
@@ -1692,11 +1786,16 @@
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <div class="show-modal" onclick={(e) => e.stopPropagation()}>
+          {#if isTimeline}
+          <h3>Clear the Timeline?</h3>
+          <p>This removes every block, lane, look and audio track from the Timeline. The Show, your presets and media files are not touched.</p>
+          {:else}
           <h3>Clear the show?</h3>
-          <p>This removes every audio track and preset clip from the timeline. Your presets and media files are not touched.</p>
+          <p>This removes every audio track and preset clip from the timeline. The Timeline, your presets and media files are not touched.</p>
+          {/if}
           <div class="show-modal-btns">
             <button class="modal-cancel" onclick={() => showClearConfirm = false}>Cancel</button>
-            <button class="modal-confirm" onclick={confirmClear}>Clear show</button>
+            <button class="modal-confirm" onclick={confirmClear}>{isTimeline ? 'Clear Timeline' : 'Clear show'}</button>
           </div>
         </div>
       </div>
@@ -1798,6 +1897,16 @@
     gap: 6px;
     align-items: center;
   }
+  /* Which tab the tray is showing: the Show or the Timeline. */
+  .show-doc-name {
+    font-size: var(--ga-text-eyebrow, 10px);
+    text-transform: uppercase;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    font-weight: 700;
+    color: color-mix(in srgb, var(--ga-coral, #ff6f5e) 75%, #ffffff);
+    padding-right: 4px;
+  }
+  .show-tray.timeline-doc .show-doc-name { color: color-mix(in srgb, #8c78ff 75%, #ffffff); }
   .show-clear {
     height: var(--ga-control-h, 26px);
     background: transparent;
@@ -1832,7 +1941,7 @@
     /* 7px of top padding clears the resize strip so the transport buttons
        are not sitting under an ns-resize cursor. */
     padding: 7px 12px 5px;
-    padding-right: 110px;
+    padding-right: 180px;
     border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
     background: var(--ga-bar, #0a0a0e);
     flex-shrink: 0;
@@ -2072,6 +2181,7 @@
     font-weight: 700;
   }
   .lane-label.preset .lane-name { color: color-mix(in srgb, var(--ga-coral, #ff6f5e) 75%, #ffffff); }
+  .lane-label.look .lane-name { color: color-mix(in srgb, #8c78ff 75%, #ffffff); }
 
   .show-grid {
     flex: 1;

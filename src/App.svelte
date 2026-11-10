@@ -7964,7 +7964,8 @@
       class:preset-tray-open={presetTrayOpen}
       class:seq-tray-open={$layerSequencer.isOpen}
       class:kf-tray-open={$keyframeTrayOpen}
-      class:show-tray-open={$showTimeline.isOpen}
+      class:show-tray-open={$showTimeline.isOpen && $showTimeline.doc !== 'timeline'}
+      class:timeline-tray-open={$showTimeline.isOpen && $showTimeline.doc === 'timeline'}
     >
       <!-- Left sidebar — Layers / Screens tabs.
            LeftSidebar swaps LayerPanel ↔ ScreenPanel based on the
@@ -9153,9 +9154,10 @@
       </button>
       <button
         class="status-pill"
-        class:on={$showTimeline.isOpen}
-        onclick={() => showTimeline.toggleOpen()}
-        title="Show Timeline — audio tracks + preset arrangement"
+        class:on={$showTimeline.isOpen && $showTimeline.doc !== 'timeline'}
+        onclick={() => showTimeline.toggleDoc('show')}
+        title="Show: presets along a timeline with music and transitions"
+        data-doc-pill="show"
       >
         <svg class="status-pill-icon show-icon" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
           <path class="ga-neon-fill" d="M2.8 4.4h8v5.2h-8zM13.2 4.4h8v5.2h-8z"/>
@@ -9163,6 +9165,20 @@
           <path class="ga-neon-stroke ga-neon-thin" d="M2.8 16.4h2.4l1.4-3.4 1.8 7 1.6-5 1.2 3.2h2.2l1.3-3 1.5 5.4 1.4-4.2h2.2"/>
         </svg>
         Show
+      </button>
+      <button
+        class="status-pill"
+        class:on={$showTimeline.isOpen && $showTimeline.doc === 'timeline'}
+        onclick={() => showTimeline.toggleDoc('timeline')}
+        title="Timeline: every mapping piece on its own row, blocks, keyframes and looks"
+        data-doc-pill="timeline"
+      >
+        <svg class="status-pill-icon timeline-icon" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
+          <path class="ga-neon-fill" d="M7 5.2h9v3.2H7zM4 10.4h7v3.2H4zM10 15.6h10v3.2H10z"/>
+          <path class="ga-neon-stroke" d="M7 5.2h9v3.2H7zM4 10.4h7v3.2H4zM10 15.6h10v3.2H10z"/>
+          <path class="ga-neon-stroke ga-neon-thin" d="M2.5 3v18"/>
+        </svg>
+        Timeline
       </button>
 
       <span class="spacer"></span>
@@ -11093,6 +11109,10 @@
      hard-coding a number here. */
   .main-content.show-tray-open {
     margin-bottom: var(--ga-show-tray-height, 220px);
+  }
+  /* The Timeline tab: the same tray, its own height. */
+  .main-content.timeline-tray-open {
+    margin-bottom: var(--ga-timeline-tray-height, 220px);
   }
 
   .viewport {
