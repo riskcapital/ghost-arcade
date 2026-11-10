@@ -8,8 +8,7 @@
  * the position through this interface, and whoever owns the documents
  * installs an adapter with setInstallTransport().
  *
- * Until a document-aware adapter is installed, both documents map to the
- * one show timeline the app has today (defaultInstallTransport below).
+ * The default adapter (below) drives the show engine's two documents.
  */
 
 import { get } from 'svelte/store';
@@ -45,16 +44,30 @@ export function setInstallTransport(next: InstallTransport | null): void {
 }
 
 export async function defaultInstallTransport(): Promise<InstallTransport> {
-  const { showTimeline } = await import('../stores/showTimeline');
+  const { showTimeline, parkedShowDoc, computeShowDuration } = await import('../stores/showTimeline');
+  // One engine plays the active document; the other is parked with its own
+  // playhead. Acting on a document makes it the active one (quietly).
+  const use = (doc: InstallDocument) => {
+    if (showTimeline.activeDoc() !== doc) showTimeline.activateDoc(doc, { quiet: true });
+  };
   return {
-    setActiveDocument() { /* one document today */ },
-    play: () => showTimeline.play(),
-    stop: () => showTimeline.stop(),
-    seek: (_doc, seconds) => showTimeline.seek(seconds),
-    setLoop: (_doc, loop) => showTimeline.setLoop(loop),
-    state: () => {
-      const s = get(showTimeline);
-      return { playing: s.isPlaying, time: s.currentTime, duration: s.duration, loop: s.loop };
+    setActiveDocument: (doc) => use(doc),
+    play: (doc) => { use(doc); showTimeline.play(); },
+    stop: (doc) => { if (showTimeline.activeDoc() === doc) showTimeline.stop(); },
+    seek: (doc, seconds) => { use(doc); showTimeline.seek(seconds); },
+    setLoop: (doc, loop) => { use(doc); showTimeline.setLoop(loop); },
+    state: (doc) => {
+      if (showTimeline.activeDoc() === doc) {
+        const s = get(showTimeline);
+        return { playing: s.isPlaying, time: s.currentTime, duration: s.duration, loop: s.loop };
+      }
+      const p = get(parkedShowDoc);
+      return {
+        playing: false,
+        time: p.currentTime ?? 0,
+        duration: computeShowDuration(p.presetClips ?? [], p.audioTracks ?? [], p.layerTracks ?? [], p.cameraLane ?? [], p.lookClips ?? []),
+        loop: !!p.loop,
+      };
     },
     controllable: () => !showTimeline.isChasing(),
   };
