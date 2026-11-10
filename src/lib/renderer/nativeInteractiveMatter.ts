@@ -55,7 +55,9 @@ export const MATTER_EMISSION=MATTER_COMMON.replace('var<storage,read> emissionSt
  if(u.params.w>.5){return;}var state=emissionState[0];var births=emissionState[1];state.w=0.;
  if(state.z!=u.flags.x){state=vec4<f32>(m.clock.z,0.,u.flags.x,1.);births=vec4<f32>(0.);}
  let dt=clamp(u.view.w,0.,.05);if(state.x!=m.clock.z){state.x=m.clock.z;state.y=ctrl(23u,m.emission.w);}else{state.y=max(0.,state.y-dt);}
- births.w+=dt;emissionState[0]=state;emissionState[1]=births;
+ // births.w (emission pulse time, birth tick) wraps with the shader clock (2^15 s): accumulated
+ // forever as an f32 its step outgrew dt after ~3 days (pulses ran double speed) and froze at ~6.
+ births.w=(births.w+dt)%32768.;emissionState[0]=state;emissionState[1]=births;
  let count=f32(particleCount());let limit=select(select(200.,2200.,u.style.x==9.),select(1500.,12.,u.style.x==7.),u.style.x==10.||u.style.x==7.);
  // Bound occupancy so long lifetimes keep emitting instead of filling the pool.
  let rate=min(limit,count/(lifetime()+.1))*max(0.,ctrl(7u,m.physics.w));
