@@ -180,6 +180,23 @@ export function recallSectionSignature(section: RecallSection, value: unknown): 
  * The project settings undo does not cover, section by section (each the
  * JSON of what counts in it). Equal sections mean nothing there was edited.
  */
+/** A show document as the user set it (the Show, with the Timeline under
+ *  `timeline`). Which tab is open, the zoom and how rows are folded are how
+ *  it is viewed. */
+function showDocIdentity(doc: unknown): unknown {
+  if (!doc || typeof doc !== 'object') return null;
+  const d = doc as any;
+  return {
+    ...(omit(d, ['isOpen', 'zoom', 'audioTracks', 'activeDoc', 'timeline']) as object),
+    audioTracks: Array.isArray(d.audioTracks) ? d.audioTracks.map(audioTrackIdentity) : [],
+    // Folding a layer track open or shut is how it is viewed.
+    ...(Array.isArray(d.layerTracks)
+      ? { layerTracks: d.layerTracks.map((t: Record<string, unknown>) => omit(t, ['collapsed'])) }
+      : {}),
+    ...(d.timeline && typeof d.timeline === 'object' ? { timeline: showDocIdentity(d.timeline) } : {}),
+  };
+}
+
 export function projectSettingsSections({ exported, showTimeline, showControl, stage3d }: ProjectSettingsSections): Record<string, string> {
   const project = exported?.project ?? {};
   const vj = exported?.vjClipLauncher;
@@ -223,18 +240,7 @@ export function projectSettingsSections({ exported, showTimeline, showControl, s
     geoDeck: exported?.geoDeck
       ? { sceneSlots: exported.geoDeck.sceneSlots ?? null, modRoutes: exported.geoDeck.modRoutes ?? null }
       : null,
-    showTimeline: showTimeline && typeof showTimeline === 'object'
-      ? {
-          ...(omit(showTimeline, ['isOpen', 'zoom', 'audioTracks']) as object),
-          audioTracks: Array.isArray((showTimeline as any).audioTracks)
-            ? (showTimeline as any).audioTracks.map(audioTrackIdentity)
-            : [],
-          // Folding a layer track open or shut is how it is viewed.
-          ...(Array.isArray((showTimeline as any).layerTracks)
-            ? { layerTracks: (showTimeline as any).layerTracks.map((t: Record<string, unknown>) => omit(t, ['collapsed'])) }
-            : {}),
-        }
-      : null,
+    showTimeline: showDocIdentity(showTimeline),
     showControl: showControl ?? null,
   };
   const out: Record<string, string> = {};

@@ -265,9 +265,11 @@ export function installShowTrackRuntime(deps: ShowTrackRuntimeDeps): () => void 
     const p = get(deps.project);
     const show = get(showTimeline);
     const comps = p.vjMode?.compositions ?? [];
-    const key: unknown[] = [p.layers, comps, show.presetClips, show.layerTracks];
+    const key: unknown[] = [p.layers, comps, show.presetClips, show.layerTracks, show.doc];
     if (key.length === rowsKey.length && key.every((k, i) => k === rowsKey[i])) return;
     rowsKey = key;
+    // Only the Timeline has rows: the Show is presets and music.
+    if (show.doc !== 'timeline') return;
     const looks: Layer[][] = [];
     for (const id of showTimeline.usedCompositionIds()) {
       const look = comps.find((c) => c.id === id)?.layers;
@@ -276,7 +278,7 @@ export function installShowTrackRuntime(deps: ShowTrackRuntimeDeps): () => void 
     setStagePieceLayers(p.layers ?? [], looks);
     showTimeline.syncStageRows(p.layers ?? [], looks);
     // The sync may have written the rows: remember that state as seen.
-    rowsKey = [p.layers, comps, get(showTimeline).presetClips, get(showTimeline).layerTracks];
+    rowsKey = [p.layers, comps, get(showTimeline).presetClips, get(showTimeline).layerTracks, get(showTimeline).doc];
   };
   const queueRows = () => {
     if (rowsQueued) return;
@@ -287,8 +289,8 @@ export function installShowTrackRuntime(deps: ShowTrackRuntimeDeps): () => void 
   // The show store publishes every playhead frame: only its rows and looks matter.
   let rowsShowKey: unknown[] = [];
   disposers.push(showTimeline.subscribe((s) => {
-    if (s.layerTracks === rowsShowKey[0] && s.presetClips === rowsShowKey[1]) return;
-    rowsShowKey = [s.layerTracks, s.presetClips];
+    if (s.layerTracks === rowsShowKey[0] && s.presetClips === rowsShowKey[1] && s.doc === rowsShowKey[2]) return;
+    rowsShowKey = [s.layerTracks, s.presetClips, s.doc];
     queueRows();
   }));
 
@@ -320,6 +322,15 @@ export function installShowTrackRuntime(deps: ShowTrackRuntimeDeps): () => void 
         setBlockShaderValue: async (name: string, value: number | boolean | number[], continuous?: boolean) =>
           (await import('./showBlockEdit')).setBlockShaderValue(name, value, continuous),
         syncRows,
+        /** Open a document's tab: 'show' or 'timeline'. */
+        openDoc: (doc: 'show' | 'timeline') => { showTimeline.openDoc(doc); syncRows(); return showTimeline.activeDoc(); },
+        activeDoc: () => showTimeline.activeDoc(),
+        /** A look block on the Timeline's Looks row. */
+        addLookClip: (lookId: string, paletteId: string, start: number, opts?: { duration?: number; scope?: 'all' | 'pieces'; layerIds?: string[] }) =>
+          showTimeline.addLookClip(lookId, paletteId, start, opts),
+        /** What a library card click does with a block selected. */
+        replaceBlockMedia: async (clipId: string, payload: unknown) =>
+          (await import('./showBlockEdit')).replaceBlockMediaFromPayload(clipId, payload),
       },
     };
   } catch { /* sealed */ }

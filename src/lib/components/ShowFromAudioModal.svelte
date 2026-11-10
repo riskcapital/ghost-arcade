@@ -13,7 +13,7 @@
   import { layoutSong, type SongAnalysis, type SongLayoutMode } from '../show/songLayout';
   import { analyzeSongOffThread } from '../show/songAnalysisClient';
   import { tempoMapForTrack } from '../show/tempoDetect';
-  import { showTimeline } from '../stores/showTimeline';
+  import { showTimeline, parkedShowDoc } from '../stores/showTimeline';
   import { compositions } from '../stores/layers';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
   import { workspace } from '../stores/workspace';
@@ -52,7 +52,9 @@
 
   $: presetList = $compositions;
   $: chosenPresets = presetList.filter((c) => chosen.has(c.id)).map((c) => ({ id: c.id, name: c.name }));
-  $: replacing = $showTimeline.audioTracks.length > 0 || $showTimeline.presetClips.length > 0;
+  // A show from audio is a Show (presets along the song), whichever tab is open.
+  $: showDoc = $showTimeline.doc === 'timeline' ? $parkedShowDoc : $showTimeline;
+  $: replacing = showDoc.audioTracks.length > 0 || showDoc.presetClips.length > 0;
   $: preview = songDuration > 0 ? layoutSong(mode, chosenPresets, songDuration, analysis?.sections ?? []) : [];
   $: needsPresets = mode !== 'keep' && chosenPresets.length === 0;
   $: if (phase === 'ready' && mode === 'sections' && !analysis && !analyzing && decoded) runAnalysis();
@@ -133,6 +135,7 @@
     phase = 'creating';
     const song = prepared;
     const clips = preview;
+    showTimeline.activateDoc('show');
     showTimeline.stop();
     showTimeline.clear();
     const id = await showTimeline.addAudioTrack(

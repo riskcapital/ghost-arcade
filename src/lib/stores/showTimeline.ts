@@ -71,6 +71,7 @@ import type {
   ShowClipMedia,
   ShowLayerClip,
   ShowLayerTrack,
+  ShowLookClip,
   ShowPresetClip,
   ShowSnapGrid,
   ShowTempoMap,
@@ -158,6 +159,7 @@ import {
   rowTrackId,
   stagePieces,
 } from '../show/tracks/showStageRows';
+import { evaluateShowLooks } from '../show/tracks/showLooks';
 
 // ─── Tunables ────────────────────────────────────────────────────────────
 
@@ -174,6 +176,8 @@ export const SHOW_MIN_TRANSITION_SECONDS = 0.25;
 export const SHOW_DEFAULT_TRANSITION_SECONDS = 1;
 /** Default length for a preset clip dropped without one. */
 export const SHOW_DEFAULT_PRESET_SECONDS = 30;
+/** Default length of a look dropped on the Looks row, seconds. */
+export const SHOW_DEFAULT_LOOK_SECONDS = 8;
 /** Pixels-per-second bounds for the ruler. */
 export const SHOW_MIN_ZOOM = 2;
 export const SHOW_MAX_ZOOM = 120;
@@ -187,11 +191,23 @@ export interface ShowTimelineSelection {
   /** 'transition' selects the junction element sitting on `id`'s LEFT edge —
    *  the transition is stored on that clip, but it is a separate selectable
    *  object on the timeline with its own inspector. */
-  kind: 'audio' | 'preset' | 'transition' | 'layerClip' | 'track' | 'keyframe' | 'tempo';
+  kind: 'audio' | 'preset' | 'transition' | 'layerClip' | 'track' | 'keyframe' | 'tempo' | 'lookClip';
   id: string;
 }
 
+/**
+ * The two documents a project carries, each with its own song and tempo:
+ * - 'show': presets along a timeline with music and transitions (the Show tab);
+ * - 'timeline': the deep controller, rows for the mapping pieces, blocks,
+ *   keyframe lanes and the Looks row (the Timeline tab).
+ * One engine plays one of them at a time: the active document is in the
+ * store, the other waits parked (see `activateDoc`).
+ */
+export type ShowDocKind = 'show' | 'timeline';
+
 export interface ShowTimelineState {
+  /** The document in the engine (and the tray that shows it). */
+  doc: ShowDocKind;
   isOpen: boolean;
   isPlaying: boolean;
   /** Playhead, seconds. */
@@ -223,6 +239,8 @@ export interface ShowTimelineState {
   soloTrackId: string | null;
   /** Stage-camera shots along the show. */
   cameraLane: ShowCameraClip[];
+  /** The Looks row (Timeline): shape Looks worn for a span. */
+  lookClips: ShowLookClip[];
 }
 
 /**
@@ -240,6 +258,7 @@ export function normalizeShowEndAction(value: unknown): ShowEndAction {
 
 function createInitialState(): ShowTimelineState {
   return {
+    doc: 'show',
     isOpen: false,
     isPlaying: false,
     currentTime: 0,
@@ -259,6 +278,7 @@ function createInitialState(): ShowTimelineState {
     selectedClipIds: [],
     soloTrackId: null,
     cameraLane: [],
+    lookClips: [],
   };
 }
 
@@ -276,8 +296,10 @@ export function computeShowDuration(
   tracks: Pick<ShowAudioTrack, 'startTime' | 'duration'>[],
   layerTracks: Pick<ShowLayerTrack, 'clips'>[] = [],
   cameraLane: Pick<ShowCameraClip, 'startTime' | 'duration'>[] = [],
+  lookClips: Pick<ShowLookClip, 'startTime' | 'duration'>[] = [],
 ): number {
   let end = 0;
+  for (const c of lookClips) end = Math.max(end, c.startTime + c.duration);
   for (const c of clips) end = Math.max(end, c.startTime + c.duration);
   for (const t of tracks) end = Math.max(end, t.startTime + t.duration);
   for (const lt of layerTracks) for (const c of lt.clips) end = Math.max(end, c.startTime + c.duration);
@@ -673,7 +695,8 @@ function evaluatedTracks(s: ShowTimelineState): ShowLayerTrack[] {
 
 function publishTrackFrame(s: ShowTimelineState, evalTime: number, force = false): void {
   const tracks = evaluatedTracks(s);
-  if (!tracks.length) {
+  const looks = s.lookClips.length ? evaluateShowLooks(s.lookClips, evalTime) : [];
+  if (!tracks.length && !looks.length) {
     if (lastTrackFrame !== null || force) {
       lastTrackFrame = null;
       lastTrackFrameSignature = null;
@@ -690,6 +713,7 @@ function publishTrackFrame(s: ShowTimelineState, evalTime: number, force = false
     evaluatedAtMs: typeof performance !== 'undefined' ? performance.now() : undefined,
     wrap: lastLoopWrap && lastLoopWrap.generation === seekGeneration ? lastLoopWrap.wrap : null,
   });
+  if (looks.length) frame.looks = looks;
   lastTrackFrame = frame;
   const signature = showTrackFrameSignature(frame);
   if (!force && signature === lastTrackFrameSignature) return;
@@ -1077,7 +1101,7 @@ function finishShow(action: ShowEndAction): void {
 
 /** Recompute duration + reselect after any structural mutation. */
 function withDuration(s: ShowTimelineState): ShowTimelineState {
-  return { ...s, duration: computeShowDuration(s.presetClips, s.audioTracks, s.layerTracks, s.cameraLane) };
+  return { ...s, duration: computeShowDuration(s.presetClips, s.audioTracks, s.layerTracks, s.cameraLane, s.lookClips) };
 }
 
 function normalizeTrack(raw: unknown, index: number): ShowAudioTrack | null {
@@ -1257,6 +1281,33 @@ function normalizeCameraClip(raw: unknown): ShowCameraClip | null {
   };
 }
 
+/** A block on the Looks row from a file or an undo step (null: unusable). */
+export function normalizeLookClip(raw: unknown): ShowLookClip | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const c = raw as Record<string, unknown>;
+  if (typeof c.lookId !== 'string' || !c.lookId) return null;
+  const layerIds = Array.isArray(c.layerIds) ? c.layerIds.filter((id): id is string => typeof id === 'string' && !!id) : [];
+  const duration = Math.max(SHOW_MIN_TRACK_CLIP_SECONDS, finiteOr(c.duration, SHOW_DEFAULT_LOOK_SECONDS));
+  return {
+    id: typeof c.id === 'string' && c.id ? c.id : generateUUID(),
+    startTime: Math.max(0, finiteOr(c.startTime, 0)),
+    duration,
+    lookId: c.lookId,
+    paletteId: typeof c.paletteId === 'string' && c.paletteId ? c.paletteId : '',
+    scope: c.scope === 'pieces' ? 'pieces' : 'all',
+    ...(c.scope === 'pieces' ? { layerIds } : {}),
+    fadeIn: Math.max(0, Math.min(duration, finiteOr(c.fadeIn, 0))),
+    fadeOut: Math.max(0, Math.min(duration, finiteOr(c.fadeOut, 0))),
+  };
+}
+
+function normalizeLookClips(raw: unknown): ShowLookClip[] {
+  return (Array.isArray(raw) ? raw : [])
+    .map(normalizeLookClip)
+    .filter((c): c is ShowLookClip => c !== null)
+    .sort((a, b) => a.startTime - b.startTime);
+}
+
 export function normalizeSnapGrid(raw: unknown, hasTempo: boolean): ShowSnapGrid {
   return SNAP_GRIDS.has(raw as ShowSnapGrid) ? (raw as ShowSnapGrid) : hasTempo ? 'beat' : 'seconds';
 }
@@ -1324,6 +1375,11 @@ export interface ShowArrangement {
   layerTracks?: ShowLayerTrack[];
   tempo?: ShowTempoMap | null;
   cameraLane?: ShowCameraClip[];
+  lookClips?: ShowLookClip[];
+  /** The Timeline document's arrangement; the fields above are the Show's.
+   *  Missing in steps made before the two were separate: such a step is
+   *  the active document's. */
+  timeline?: ShowArrangement;
 }
 
 export interface ShowTimelineSnapshot {
@@ -1345,7 +1401,129 @@ export interface ShowTimelineSnapshot {
   /** The Demo Reel shots the camera lane uses (shots are kept per machine;
    *  the show carries its own). Missing in older files. */
   cameraShots?: DemoShot[];
+  /** Version 4: the Timeline's Looks row. */
+  lookClips?: ShowLookClip[];
+  /** Version 4: the Timeline document (the fields above are the Show's). */
+  timeline?: ShowTimelineSnapshot;
+  /** Version 4: the document that was active when saved. */
+  activeDoc?: ShowDocKind;
 }
+
+// ─── Two documents ───────────────────────────────────────────────────────
+//
+// The Show and the Timeline are separate documents with the same shape. One
+// engine (this store: transport, audio, evaluation) holds the active one;
+// the other waits here, untouched, until its tab is opened. So only one can
+// play, every consumer of the store (cues, following, Stage Sim, Rec,
+// export, show control) acts on the active one, and none of them had to
+// learn about two documents.
+
+/** What a document owns. Everything else in the state is the engine's. */
+const DOC_KEYS = [
+  'audioTracks', 'presetClips', 'layerTracks', 'lookClips', 'cameraLane', 'tempo', 'loop', 'endAction',
+  'rulerMode', 'snapGrid', 'zoom', 'snapEnabled', 'currentTime', 'selection', 'selectedClipIds', 'soloTrackId',
+] as const;
+export type ShowDocFields = Pick<ShowTimelineState, (typeof DOC_KEYS)[number]>;
+
+function docFieldsOf(s: ShowDocFields): ShowDocFields {
+  const out = {} as Record<string, unknown>;
+  for (const key of DOC_KEYS) out[key] = s[key];
+  return out as unknown as ShowDocFields;
+}
+
+function emptyDocFields(): ShowDocFields {
+  return docFieldsOf(createInitialState());
+}
+
+let parkedDoc: ShowDocFields = emptyDocFields();
+const parkedStore = writable<ShowDocFields>(parkedDoc);
+function setParked(doc: ShowDocFields): void {
+  parkedDoc = doc;
+  parkedStore.set(doc);
+}
+/** The document that is not active (read only). */
+export const parkedShowDoc = { subscribe: parkedStore.subscribe };
+
+/** A document has something on it. */
+export function docHasContent(d: Pick<ShowDocFields, 'presetClips' | 'audioTracks' | 'layerTracks' | 'lookClips' | 'cameraLane'>): boolean {
+  return d.presetClips.length > 0 || d.audioTracks.length > 0 || d.lookClips.length > 0 || d.cameraLane.length > 0
+    || d.layerTracks.some((t) => !isBareRow(t));
+}
+
+const docListeners = new Set<(doc: ShowDocKind) => void>();
+/** Told after the active document changed (a tab was opened, a project loaded). */
+export function onShowDocChange(listener: (doc: ShowDocKind) => void): () => void {
+  docListeners.add(listener);
+  return () => docListeners.delete(listener);
+}
+function notifyDocChange(doc: ShowDocKind): void {
+  for (const listener of docListeners) {
+    try { listener(doc); } catch (err) { console.warn('[ShowTimeline] document listener failed:', err); }
+  }
+}
+
+export const SHOW_DOC_NAMES: Record<ShowDocKind, string> = { show: 'Show', timeline: 'Timeline' };
+
+/** An arrangement (one undo step's view) of a document. */
+function arrangementOf(d: ShowDocFields): ShowArrangement {
+  return {
+    audioTracks: d.audioTracks.map((t) => ({ ...t })),
+    presetClips: d.presetClips.map((c) => ({ ...c })),
+    loop: d.loop,
+    endAction: d.endAction,
+    // Track and clip objects are replaced on every edit, never mutated,
+    // so holding them is a complete capture.
+    layerTracks: d.layerTracks,
+    tempo: d.tempo,
+    cameraLane: d.cameraLane,
+    lookClips: d.lookClips,
+  };
+}
+
+/** A document with an arrangement put back into it (selection kept where
+ *  it still points at something). */
+function docWithArrangement(base: ShowDocFields, a: Partial<ShowArrangement>): ShowDocFields {
+  const audioTracks = (Array.isArray(a.audioTracks) ? a.audioTracks : [])
+    .map((t, i) => normalizeTrack(t, i))
+    .filter((t): t is ShowAudioTrack => t !== null);
+  const presetClips = (Array.isArray(a.presetClips) ? a.presetClips : [])
+    .map((c) => normalizeClip(c))
+    .filter((c): c is ShowPresetClip => c !== null)
+    .sort((x, y) => x.startTime - y.startTime);
+  const layerTracks = (Array.isArray(a.layerTracks) ? a.layerTracks : [])
+    .map((t, i) => normalizeLayerTrack(t, i))
+    .filter((t): t is ShowLayerTrack => t !== null);
+  const cameraLane = (Array.isArray(a.cameraLane) ? a.cameraLane : [])
+    .map(normalizeCameraClip)
+    .filter((c): c is ShowCameraClip => c !== null);
+  const lookClips = normalizeLookClips(a.lookClips);
+  const tempo = normalizeTempoMap(a.tempo);
+  const clipIds = new Set(layerTracks.flatMap((t) => t.clips.map((c) => c.id)));
+  const ids = new Set([
+    ...audioTracks.map((t) => t.id),
+    ...presetClips.map((c) => c.id),
+    ...layerTracks.map((t) => t.id),
+    ...lookClips.map((c) => c.id),
+    ...clipIds,
+  ]);
+  return {
+    ...base,
+    audioTracks,
+    presetClips,
+    loop: a.loop === true,
+    endAction: normalizeShowEndAction(a.endAction),
+    layerTracks,
+    tempo,
+    snapGrid: normalizeSnapGrid(base.snapGrid, !!tempo),
+    rulerMode: tempo ? base.rulerMode : 'time',
+    cameraLane,
+    lookClips,
+    soloTrackId: base.soloTrackId && layerTracks.some((t) => t.id === base.soloTrackId) ? base.soloTrackId : null,
+    selectedClipIds: base.selectedClipIds.filter((id) => clipIds.has(id)),
+    selection: base.selection && ids.has(base.selection.id) ? base.selection : null,
+  };
+}
+
 
 /** Clip media for a file: the runtime URL is blanked when the AssetRef can
  *  rebuild it (same contract as the audio tracks). */
@@ -1358,6 +1536,105 @@ function serializeTemplate(template: Layer | null): Layer | null {
   const source = template.source;
   if (!source || !refIsDurable(source._assetRef)) return template;
   return { ...template, source: { ...source, src: '' } };
+}
+
+/** A document as it is saved (see `serialize`). */
+function docSnapshot(d: ShowDocFields): Omit<ShowTimelineSnapshot, 'version' | 'isOpen'> {
+  return {
+    loop: d.loop,
+    endAction: d.endAction,
+    zoom: d.zoom,
+    snapEnabled: d.snapEnabled,
+    audioTracks: d.audioTracks.map((t) => ({
+      ...t,
+      url: refIsDurable(t.assetRef) ? '' : t.url,
+    })),
+    presetClips: d.presetClips.map((c) => ({ ...c })),
+    layerTracks: d.layerTracks.filter((t) => !isBareRow(t)).map(({ row: _row, ...t }) => ({
+      ...t,
+      template: serializeTemplate(t.template),
+      clips: t.clips.map((c) => ({ ...c, media: serializeClipMedia(c.media) })),
+    })),
+    tempo: d.tempo,
+    rulerMode: d.rulerMode,
+    snapGrid: d.snapGrid,
+    cameraLane: d.cameraLane.map((c) => ({ ...c })),
+    ...(d.cameraLane.length > 0 ? { cameraShots: cameraShotTable(d.cameraLane, get(demoReel).shots) } : {}),
+    ...(d.lookClips.length > 0 ? { lookClips: d.lookClips.map((c) => ({ ...c, ...(c.layerIds ? { layerIds: [...c.layerIds] } : {}) })) } : {}),
+  };
+}
+
+/** A saved document read back, its media resolved for this machine. */
+function hydrateDoc(p: Record<string, unknown>, projectDir?: string): ShowDocFields {
+  const rawTracks = Array.isArray(p.audioTracks) ? p.audioTracks : [];
+  const rawClips = Array.isArray(p.presetClips) ? p.presetClips : [];
+
+  const audioTracks: ShowAudioTrack[] = [];
+  rawTracks.forEach((raw, i) => {
+    const track = normalizeTrack(raw, i);
+    if (!track) return;
+    const resolved = resolveAssetRefForRuntime(track.assetRef, projectDir, track.url) ?? '';
+    if (!resolved && track.assetRef) {
+      recordMissingAsset({ assetRef: track.assetRef, fieldHint: 'show timeline audio' });
+    }
+    audioTracks.push({ ...track, url: resolved });
+  });
+
+  const presetClips = rawClips
+    .map((raw) => normalizeClip(raw))
+    .filter((c): c is ShowPresetClip => c !== null)
+    .sort((a, b) => a.startTime - b.startTime);
+
+  // Layer tracks (version 2). Clip media and each track's copy of its
+  // layer resolve like the audio does.
+  const resolveField = (ref: unknown, current: string) =>
+    resolveAssetRefForRuntime(ref as AssetRef, projectDir, current) ?? current;
+  const layerTracks = (Array.isArray(p.layerTracks) ? p.layerTracks : [])
+    .map((raw, i) => normalizeLayerTrack(raw, i))
+    .filter((t): t is ShowLayerTrack => t !== null)
+    .map((track) => {
+      if (track.template) resolveAssetTreeInPlace(track.template, resolveField);
+      const clips = track.clips.map((clip) => {
+        const media = clip.media;
+        if (media.kind === 'layer' || media.kind === 'shader' && !media._assetRef) return clip;
+        const resolved = resolveAssetRefForRuntime(media._assetRef, projectDir, media.src) ?? '';
+        if (!resolved && media._assetRef) {
+          recordMissingAsset({ assetRef: media._assetRef, fieldHint: 'show timeline clip' });
+        }
+        return { ...clip, media: { ...media, src: resolved } };
+      });
+      return { ...track, clips };
+    });
+  const tempo = normalizeTempoMap(p.tempo);
+  const cameraLane = (Array.isArray(p.cameraLane) ? p.cameraLane : [])
+    .map(normalizeCameraClip)
+    .filter((c): c is ShowCameraClip => c !== null)
+    .sort((a, b) => a.startTime - b.startTime);
+  // Shots the lane uses that this machine's Demo Reel lacks come with the show.
+  if (cameraLane.length > 0) {
+    const shots = readCameraShotTable(p.cameraShots);
+    if (shots.length > 0) demoReel.adoptShots(shots);
+  }
+
+  const zoom = Number(p.zoom);
+  return {
+    audioTracks,
+    presetClips,
+    layerTracks,
+    lookClips: normalizeLookClips(p.lookClips),
+    cameraLane,
+    tempo,
+    loop: p.loop === true,
+    endAction: normalizeShowEndAction(p.endAction),
+    rulerMode: p.rulerMode === 'bars' && tempo ? 'bars' : 'time',
+    snapGrid: normalizeSnapGrid(p.snapGrid, !!tempo),
+    zoom: Number.isFinite(zoom) ? Math.max(SHOW_MIN_ZOOM, Math.min(SHOW_MAX_ZOOM, zoom)) : SHOW_DEFAULT_ZOOM,
+    snapEnabled: p.snapEnabled !== false,
+    currentTime: 0,
+    selection: null,
+    selectedClipIds: [],
+    soloTrackId: null,
+  };
 }
 
 export const showTimeline = {
@@ -2329,6 +2606,18 @@ export const showTimeline = {
     recordShowEdit(opts.discrete ? undefined : `layer-clip:${clipId}`);
   },
 
+  /**
+   * Swap a block's media for another (a library card clicked or dropped on
+   * it), keeping its timing, fades, blend mode and opacity. The new media
+   * plays from its start. One undo step.
+   */
+  replaceLayerClipMedia(clipId: string, media: ShowClipMedia): boolean {
+    const found = this.findLayerClip(clipId);
+    if (!found || found.track.locked) return false;
+    this.updateLayerClip(clipId, { media, inPoint: 0, loopStart: undefined }, { discrete: true });
+    return true;
+  },
+
   /** Drag one clip to a new start (snapped), carrying its lane keys. */
   moveLayerClip(clipId: string, startTime: number) {
     const found = this.findLayerClip(clipId);
@@ -2630,6 +2919,94 @@ export const showTimeline = {
     recordShowEdit(continuousKey ? `camera:${continuousKey}` : undefined);
   },
 
+  // ── Looks row (Timeline) ───────────────────────────────────────────────
+  //
+  // Blocks may overlap: the overlap is a crossfade (see showLooks.ts).
+
+  findLookClip(clipId: string): ShowLookClip | null {
+    return get(store).lookClips.find((c) => c.id === clipId) ?? null;
+  },
+
+  /** A Look dropped on the Looks row at `startTime` (snapped). Returns its id. */
+  addLookClip(lookId: string, paletteId: string, startTime: number, opts: { duration?: number; scope?: ShowLookClip['scope']; layerIds?: string[] } = {}): string | null {
+    const id = generateUUID();
+    const at = Math.max(0, snapShowTime(startTime, this._snapEdges(new Set()), this._snapOptions()));
+    const clip = normalizeLookClip({
+      id,
+      lookId,
+      paletteId,
+      startTime: at,
+      duration: opts.duration ?? SHOW_DEFAULT_LOOK_SECONDS,
+      scope: opts.scope ?? 'all',
+      layerIds: opts.layerIds,
+      fadeIn: 0,
+      fadeOut: 0,
+    });
+    if (!clip) return null;
+    this._setLookClips([...get(store).lookClips, clip]);
+    store.update((s) => ({ ...s, selection: { kind: 'lookClip', id }, selectedClipIds: [] }));
+    recordShowEdit();
+    return id;
+  },
+
+  /** Change a look block's look, colours, scope or fades. */
+  updateLookClip(clipId: string, patch: Partial<Omit<ShowLookClip, 'id'>>, opts: { discrete?: boolean } = {}) {
+    const found = this.findLookClip(clipId);
+    if (!found) return;
+    const next = normalizeLookClip({ ...found, ...patch, id: clipId });
+    if (!next) return;
+    this._setLookClips(get(store).lookClips.map((c) => (c.id === clipId ? next : c)));
+    recordShowEdit(opts.discrete ? undefined : `look-clip:${clipId}`);
+  },
+
+  /** Drag a look block to a new start (snapped by either edge). */
+  moveLookClip(clipId: string, startTime: number) {
+    const found = this.findLookClip(clipId);
+    if (!found) return;
+    const edges = this._snapEdges(new Set([clipId]));
+    const opts = this._snapOptions();
+    const byStart = snapShowTime(startTime, edges, opts);
+    const byEnd = snapShowTime(startTime + found.duration, edges, opts) - found.duration;
+    const pull = (v: number) => (Math.abs(v - startTime) < 1e-9 ? Number.POSITIVE_INFINITY : Math.abs(v - startTime));
+    const at = Math.max(0, pull(byEnd) < pull(byStart) ? byEnd : byStart);
+    if (Math.abs(at - found.startTime) < 1e-9) return;
+    this._setLookClips(get(store).lookClips.map((c) => (c.id === clipId ? { ...c, startTime: at } : c)));
+    recordShowEdit(`look-clip:${clipId}`);
+  },
+
+  /** Drag a look block's edge. */
+  resizeLookClip(clipId: string, edge: 'start' | 'end', time: number) {
+    const found = this.findLookClip(clipId);
+    if (!found) return;
+    const t = snapShowTime(time, this._snapEdges(new Set([clipId])), this._snapOptions());
+    const end = found.startTime + found.duration;
+    let next: ShowLookClip;
+    if (edge === 'start') {
+      const start = Math.max(0, Math.min(t, end - SHOW_MIN_TRACK_CLIP_SECONDS));
+      next = { ...found, startTime: start, duration: end - start };
+    } else {
+      next = { ...found, duration: Math.max(SHOW_MIN_TRACK_CLIP_SECONDS, t - found.startTime) };
+    }
+    next.fadeIn = Math.min(next.fadeIn, next.duration);
+    next.fadeOut = Math.min(next.fadeOut, next.duration);
+    this._setLookClips(get(store).lookClips.map((c) => (c.id === clipId ? next : c)));
+    recordShowEdit(`look-clip:${clipId}`);
+  },
+
+  removeLookClip(clipId: string) {
+    const s = get(store);
+    if (!s.lookClips.some((c) => c.id === clipId)) return;
+    this._setLookClips(s.lookClips.filter((c) => c.id !== clipId));
+    if (s.selection?.kind === 'lookClip' && s.selection.id === clipId) store.update((x) => ({ ...x, selection: null }));
+    recordShowEdit();
+  },
+
+  _setLookClips(clips: ShowLookClip[]) {
+    const lookClips = [...clips].sort((a, b) => a.startTime - b.startTime);
+    store.update((s) => withDuration({ ...s, lookClips }));
+    republishTracks();
+  },
+
   // ── Track helpers (internal) ───────────────────────────────────────────
 
   _setTrackClips(trackId: string, clips: ShowLayerClip[], lanes?: KeyframeTrack[]) {
@@ -2650,6 +3027,7 @@ export const showTimeline = {
     }
     for (const c of s.presetClips) edges.push(c.startTime, c.startTime + c.duration);
     for (const t of s.audioTracks) edges.push(t.startTime, t.startTime + t.duration);
+    for (const c of s.lookClips) if (!exclude.has(c.id)) edges.push(c.startTime, c.startTime + c.duration);
     for (const track of s.layerTracks) {
       for (const c of track.clips) if (!exclude.has(c.id)) edges.push(c.startTime, clipEnd(c));
     }
@@ -2672,6 +3050,7 @@ export const showTimeline = {
     seekGeneration++;
     store.update((s) => ({
       ...createInitialState(),
+      doc: s.doc,
       isOpen: s.isOpen,
       zoom: s.zoom,
       snapEnabled: s.snapEnabled,
@@ -2687,9 +3066,14 @@ export const showTimeline = {
     return get(store).duration;
   },
 
+  /** The active document has something on it. */
   hasContent(): boolean {
-    const s = get(store);
-    return s.presetClips.length > 0 || s.audioTracks.length > 0 || s.layerTracks.some((t) => !isBareRow(t));
+    return docHasContent(get(store));
+  },
+
+  /** Either document has something on it. */
+  anyContent(): boolean {
+    return docHasContent(get(store)) || docHasContent(parkedDoc);
   },
 
   /** See `presetLocalTimeAt`. */
@@ -2717,66 +3101,29 @@ export const showTimeline = {
    */
   exportArrangement(): ShowArrangement {
     const s = get(store);
-    return {
-      audioTracks: s.audioTracks.map((t) => ({ ...t })),
-      presetClips: s.presetClips.map((c) => ({ ...c })),
-      loop: s.loop,
-      endAction: s.endAction,
-      // Track and clip objects are replaced on every edit, never mutated,
-      // so holding them is a complete capture.
-      layerTracks: s.layerTracks,
-      tempo: s.tempo,
-      cameraLane: s.cameraLane,
-    };
+    const active = arrangementOf(s);
+    const parked = arrangementOf(parkedDoc);
+    return s.doc === 'show' ? { ...active, timeline: parked } : { ...parked, timeline: active };
   },
 
   /**
    * Put an arrangement from an undo step back. The transport keeps going
    * from where it is, and the show is re-evaluated there, so a preset clip
-   * that undo moved under the playhead takes over at once.
+   * that undo moved under the playhead takes over at once. A step carries
+   * both documents; the one that is not active is put back quietly.
    */
   restoreArrangement(raw: unknown): void {
     if (!raw || typeof raw !== 'object') return;
     const a = raw as Partial<ShowArrangement>;
-    const audioTracks = (Array.isArray(a.audioTracks) ? a.audioTracks : [])
-      .map((t, i) => normalizeTrack(t, i))
-      .filter((t): t is ShowAudioTrack => t !== null);
-    const presetClips = (Array.isArray(a.presetClips) ? a.presetClips : [])
-      .map((c) => normalizeClip(c))
-      .filter((c): c is ShowPresetClip => c !== null)
-      .sort((x, y) => x.startTime - y.startTime);
-    const layerTracks = (Array.isArray(a.layerTracks) ? a.layerTracks : [])
-      .map((t, i) => normalizeLayerTrack(t, i))
-      .filter((t): t is ShowLayerTrack => t !== null);
-    const cameraLane = (Array.isArray(a.cameraLane) ? a.cameraLane : [])
-      .map(normalizeCameraClip)
-      .filter((c): c is ShowCameraClip => c !== null);
-    const tempo = normalizeTempoMap(a.tempo);
-    store.update((s) => {
-      const clipIds = new Set(layerTracks.flatMap((t) => t.clips.map((c) => c.id)));
-      const ids = new Set([
-        ...audioTracks.map((t) => t.id),
-        ...presetClips.map((c) => c.id),
-        ...layerTracks.map((t) => t.id),
-        ...clipIds,
-      ]);
-      return withDuration({
-        ...s,
-        audioTracks,
-        presetClips,
-        loop: a.loop === true,
-        endAction: normalizeShowEndAction(a.endAction),
-        layerTracks,
-        tempo,
-        snapGrid: normalizeSnapGrid(s.snapGrid, !!tempo),
-        rulerMode: tempo ? s.rulerMode : 'time',
-        cameraLane,
-        soloTrackId: s.soloTrackId && layerTracks.some((t) => t.id === s.soloTrackId) ? s.soloTrackId : null,
-        selectedClipIds: s.selectedClipIds.filter((id) => clipIds.has(id)),
-        selection: s.selection && ids.has(s.selection.id) ? s.selection : null,
-      });
-    });
-    syncAudioWiring(audioTracks);
+    let activePart: Partial<ShowArrangement> = a;
+    if (a.timeline && typeof a.timeline === 'object') {
+      const { timeline, ...showPart } = a;
+      const doc = get(store).doc;
+      activePart = doc === 'show' ? showPart : timeline;
+      setParked(docWithArrangement(parkedDoc, doc === 'show' ? timeline : showPart));
+    }
+    store.update((s) => withDuration({ ...s, ...docWithArrangement(docFieldsOf(s), activePart) }));
+    syncAudioWiring(get(store).audioTracks);
     const s = get(store);
     if (s.duration <= 0) {
       if (s.isPlaying) this.pause();
@@ -2787,6 +3134,66 @@ export const showTimeline = {
     }
     applyTime(s.currentTime, true);
     republishTracks();
+  },
+
+  // ── Two documents ──────────────────────────────────────────────────────
+
+  /** The document in the engine. */
+  activeDoc(): ShowDocKind {
+    return get(store).doc;
+  },
+
+  /**
+   * Make `doc` the active document (its tab was opened). The other one is
+   * parked as it is, playhead included. If it was playing it stops first,
+   * and a toast says so: only one plays at a time. Nothing is fired on the
+   * way in (a preset loads when the show plays or the playhead moves), so
+   * opening a tab never changes the stage by itself, except that a
+   * Timeline's rows and looks show at its playhead, as they would paused.
+   * Returns false when `doc` was already active.
+   */
+  activateDoc(doc: ShowDocKind, opts: { quiet?: boolean } = {}): boolean {
+    const s = get(store);
+    if (s.doc === doc) return false;
+    const wasPlaying = s.isPlaying;
+    if (wasPlaying && !externalClock) this.pause();
+    cancelRaf();
+    const outgoing = docFieldsOf(get(store));
+    const incoming = parkedDoc;
+    setParked({ ...outgoing, selection: null, selectedClipIds: [] });
+    releaseAllTrackElements();
+    publishTransition(null);
+    seekGeneration++;
+    transportClock.reset();
+    activeTracksMemo = null;
+    store.update((x) => withDuration({ ...x, ...incoming, doc, isPlaying: false, activeClipId: null }));
+    syncAudioWiring(get(store).audioTracks);
+    notifyDocChange(doc);
+    republishTracks();
+    // Waveforms the parked document had not measured yet.
+    for (const t of get(store).audioTracks) {
+      if (!t.peaks?.length && t.url) void this.analyzeAudioTrack(t.id);
+    }
+    if (externalClock) {
+      if (!opts.quiet) showToast(`Following now drives the ${SHOW_DOC_NAMES[doc]}.`, 'info');
+    } else if (wasPlaying && !opts.quiet) {
+      showToast(`${SHOW_DOC_NAMES[s.doc]} stopped: only one plays at a time, and the ${SHOW_DOC_NAMES[doc]} is active now.`, 'info');
+    }
+    return true;
+  },
+
+  /** Open a document's tray (making it the active document). */
+  openDoc(doc: ShowDocKind) {
+    this.activateDoc(doc);
+    store.update((s) => (s.isOpen ? s : { ...s, isOpen: true }));
+  },
+
+  /** The bottom-bar pill: open that document's tray, or close it if it is
+   *  the one showing. */
+  toggleDoc(doc: ShowDocKind) {
+    const s = get(store);
+    if (s.isOpen && s.doc === doc) this.setOpen(false);
+    else this.openDoc(doc);
   },
 
   // ── Persistence ────────────────────────────────────────────────────────
@@ -2806,30 +3213,20 @@ export const showTimeline = {
       }
     }
     const s = get(store);
+    const active = docSnapshot(s);
+    const parked = docSnapshot(parkedDoc);
+    const [show, timeline] = s.doc === 'show' ? [active, parked] : [parked, active];
     return {
       // 3: rows come from the mapping layers; empty rows are not saved,
       // blocks have their own blend mode, layers can be added on a piece.
-      version: 3,
+      // 4: the Show and the Timeline are two documents; the Show's fields
+      // stay at the top (an older build opens the Show), the Timeline's
+      // are under `timeline`, and the Looks row is new.
+      version: 4,
       isOpen: s.isOpen,
-      loop: s.loop,
-      endAction: s.endAction,
-      zoom: s.zoom,
-      snapEnabled: s.snapEnabled,
-      audioTracks: s.audioTracks.map((t) => ({
-        ...t,
-        url: refIsDurable(t.assetRef) ? '' : t.url,
-      })),
-      presetClips: s.presetClips.map((c) => ({ ...c })),
-      layerTracks: s.layerTracks.filter((t) => !isBareRow(t)).map(({ row: _row, ...t }) => ({
-        ...t,
-        template: serializeTemplate(t.template),
-        clips: t.clips.map((c) => ({ ...c, media: serializeClipMedia(c.media) })),
-      })),
-      tempo: s.tempo,
-      rulerMode: s.rulerMode,
-      snapGrid: s.snapGrid,
-      cameraLane: s.cameraLane.map((c) => ({ ...c })),
-      ...(s.cameraLane.length > 0 ? { cameraShots: cameraShotTable(s.cameraLane, get(demoReel).shots) } : {}),
+      ...show,
+      activeDoc: s.doc,
+      timeline: { version: 4, isOpen: false, ...timeline },
     };
   },
 
@@ -2838,6 +3235,11 @@ export const showTimeline = {
    * (project-dir aware, so a .gha handed to another machine still finds its
    * siblings) and reports anything that could not be found through the
    * standard missing-asset repair flow. Never auto-plays.
+   *
+   * A file from before the two documents (no `timeline`) is split: presets
+   * go to the Show, rows with blocks and their lanes to the Timeline, the
+   * music, tempo and camera lane to whichever has content (both, if both
+   * do). The Show is active unless only the Timeline has anything.
    */
   hydrate(payload: unknown, projectDir?: string): void {
     cancelRaf();
@@ -2847,91 +3249,69 @@ export const showTimeline = {
     // own anchors, never from where the last show left a decoder.
     seekGeneration++;
     notifyReset();
+    activeTracksMemo = null;
 
     if (!payload || typeof payload !== 'object') {
+      setParked(emptyDocFields());
       store.set(createInitialState());
+      notifyDocChange('show');
       republishTracks();
       return;
     }
     const p = payload as Record<string, unknown>;
-    const rawTracks = Array.isArray(p.audioTracks) ? p.audioTracks : [];
-    const rawClips = Array.isArray(p.presetClips) ? p.presetClips : [];
-
-    const audioTracks: ShowAudioTrack[] = [];
-    rawTracks.forEach((raw, i) => {
-      const track = normalizeTrack(raw, i);
-      if (!track) return;
-      const resolved = resolveAssetRefForRuntime(track.assetRef, projectDir, track.url) ?? '';
-      if (!resolved && track.assetRef) {
-        recordMissingAsset({ assetRef: track.assetRef, fieldHint: 'show timeline audio' });
+    let showDoc: ShowDocFields;
+    let timelineDoc: ShowDocFields;
+    let active: ShowDocKind;
+    if (p.timeline && typeof p.timeline === 'object') {
+      showDoc = hydrateDoc(p, projectDir);
+      timelineDoc = hydrateDoc(p.timeline as Record<string, unknown>, projectDir);
+      active = p.activeDoc === 'timeline' ? 'timeline' : 'show';
+    } else {
+      const whole = hydrateDoc(p, projectDir);
+      const empty = emptyDocFields();
+      const hasPresets = whole.presetClips.length > 0;
+      const hasRows = whole.layerTracks.some((t) => !isBareRow(t));
+      const shared = {
+        audioTracks: whole.audioTracks,
+        tempo: whole.tempo,
+        loop: whole.loop,
+        endAction: whole.endAction,
+        rulerMode: whole.rulerMode,
+        snapGrid: whole.snapGrid,
+        zoom: whole.zoom,
+        snapEnabled: whole.snapEnabled,
+        cameraLane: whole.cameraLane,
+      };
+      // Nothing but music (or nothing at all): it was a Show.
+      const toShow = hasPresets || !hasRows;
+      showDoc = toShow ? { ...empty, ...shared, presetClips: whole.presetClips } : { ...empty, zoom: whole.zoom, snapEnabled: whole.snapEnabled };
+      timelineDoc = hasRows
+        ? { ...empty, ...shared, layerTracks: whole.layerTracks, lookClips: whole.lookClips }
+        : { ...empty, zoom: whole.zoom, snapEnabled: whole.snapEnabled };
+      if (hasRows && hasPresets) {
+        // Both carry the song: give the Timeline's copy its own track ids,
+        // so the two never share an audio element.
+        timelineDoc.audioTracks = timelineDoc.audioTracks.map((t) => ({ ...t, id: generateUUID() }));
+        timelineDoc.cameraLane = timelineDoc.cameraLane.map((c) => ({ ...c, id: generateUUID() }));
       }
-      audioTracks.push({ ...track, url: resolved });
-    });
-
-    const presetClips = rawClips
-      .map((raw) => normalizeClip(raw))
-      .filter((c): c is ShowPresetClip => c !== null)
-      .sort((a, b) => a.startTime - b.startTime);
-
-    // Layer tracks (version 2). Clip media and each track's copy of its
-    // layer resolve like the audio does.
-    const resolveField = (ref: unknown, current: string) =>
-      resolveAssetRefForRuntime(ref as AssetRef, projectDir, current) ?? current;
-    const layerTracks = (Array.isArray(p.layerTracks) ? p.layerTracks : [])
-      .map((raw, i) => normalizeLayerTrack(raw, i))
-      .filter((t): t is ShowLayerTrack => t !== null)
-      .map((track) => {
-        if (track.template) resolveAssetTreeInPlace(track.template, resolveField);
-        const clips = track.clips.map((clip) => {
-          const media = clip.media;
-          if (media.kind === 'layer' || media.kind === 'shader' && !media._assetRef) return clip;
-          const resolved = resolveAssetRefForRuntime(media._assetRef, projectDir, media.src) ?? '';
-          if (!resolved && media._assetRef) {
-            recordMissingAsset({ assetRef: media._assetRef, fieldHint: 'show timeline clip' });
-          }
-          return { ...clip, media: { ...media, src: resolved } };
-        });
-        return { ...track, clips };
-      });
-    const tempo = normalizeTempoMap(p.tempo);
-    const cameraLane = (Array.isArray(p.cameraLane) ? p.cameraLane : [])
-      .map(normalizeCameraClip)
-      .filter((c): c is ShowCameraClip => c !== null)
-      .sort((a, b) => a.startTime - b.startTime);
-    // Shots the lane uses that this machine's Demo Reel lacks come with the show.
-    if (cameraLane.length > 0) {
-      const shots = readCameraShotTable(p.cameraShots);
-      if (shots.length > 0) demoReel.adoptShots(shots);
+      active = toShow ? 'show' : 'timeline';
     }
-
-    const zoom = Number(p.zoom);
-    store.set({
+    const [activeDoc, parked] = active === 'show' ? [showDoc, timelineDoc] : [timelineDoc, showDoc];
+    setParked(parked);
+    store.set(withDuration({
+      ...createInitialState(),
+      ...activeDoc,
+      doc: active,
       isOpen: p.isOpen === true,
-      isPlaying: false,
-      currentTime: 0,
-      duration: computeShowDuration(presetClips, audioTracks, layerTracks, cameraLane),
-      loop: p.loop === true,
-      audioTracks,
-      presetClips,
-      activeClipId: null,
-      zoom: Number.isFinite(zoom) ? Math.max(SHOW_MIN_ZOOM, Math.min(SHOW_MAX_ZOOM, zoom)) : SHOW_DEFAULT_ZOOM,
-      snapEnabled: p.snapEnabled !== false,
-      selection: null,
-      endAction: normalizeShowEndAction(p.endAction),
-      layerTracks,
-      tempo,
-      rulerMode: p.rulerMode === 'bars' && tempo ? 'bars' : 'time',
-      snapGrid: normalizeSnapGrid(p.snapGrid, !!tempo),
-      selectedClipIds: [],
-      soloTrackId: null,
-      cameraLane,
-    });
+    }));
     transportClock.reset();
+    notifyDocChange(active);
     republishTracks();
 
-    syncAudioWiring(audioTracks);
-    // Waveforms for tracks whose peaks did not travel (older saves).
-    for (const t of audioTracks) {
+    syncAudioWiring(activeDoc.audioTracks);
+    // Waveforms for tracks whose peaks did not travel (older saves). The
+    // parked document's are measured when its tab is opened.
+    for (const t of activeDoc.audioTracks) {
       if (!t.peaks?.length && t.url) void this.analyzeAudioTrack(t.id);
     }
   },
@@ -2956,6 +3336,7 @@ export const showTimeline = {
     lastTrackFrameSignature = null;
     activeTracksMemo = null;
     tracksAwaitingFirstStep.clear();
+    setParked(emptyDocFields());
     store.set(createInitialState());
   },
 

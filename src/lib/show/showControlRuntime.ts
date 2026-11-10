@@ -132,20 +132,28 @@ export function installShowControl(): () => void {
   cleanups.push(() => registerShowInputRelease(null));
 
   // ── Timeline markers ───────────────────────────────────────────────
+  // Markers belong to a document: the active one's fire.
   let prevTime: number | null = null;
   let prevPlaying = false;
+  let prevDoc: string | null = null;
   cleanups.push(showTimeline.subscribe((s) => {
     const t = s.currentTime;
+    const doc = s.doc ?? 'show';
+    if (doc !== prevDoc) {
+      prevDoc = doc;
+      prevTime = null;
+      prevPlaying = false;
+    }
     if (s.isPlaying && prevPlaying && prevTime !== null) {
       const delta = t - prevTime;
       if (delta > 0 && delta <= 1) {
-        cueList.timelineAdvanced(prevTime, t);
+        cueList.timelineAdvanced(prevTime, t, null, doc);
       } else if (delta < 0 && s.loop && s.duration > 0 && prevTime - t > s.duration - 1) {
-        cueList.timelineAdvanced(prevTime, t, s.duration);
+        cueList.timelineAdvanced(prevTime, t, s.duration, doc);
       }
     } else if (s.isPlaying && !prevPlaying) {
       // Transport just started: a marker exactly under the playhead fires.
-      cueList.timelineAdvanced(t - 1e-6, t);
+      cueList.timelineAdvanced(t - 1e-6, t, null, doc);
     }
     prevTime = t;
     prevPlaying = s.isPlaying;

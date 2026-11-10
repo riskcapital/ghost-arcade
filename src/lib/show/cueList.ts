@@ -100,6 +100,9 @@ export interface CueMarker {
   time: number;
   cueId: string | null;
   label: string;
+  /** The document the marker sits on: the Timeline's own, or (unset) the
+   *  Show's. Each fires only while its document plays. */
+  doc?: 'timeline';
 }
 
 export type CueFireSource = 'go' | 'back' | 'follow' | 'marker' | 'timecode' | 'schedule' | 'remote' | 'manual';
@@ -307,6 +310,7 @@ export function normalizeMarker(raw: unknown): CueMarker | null {
     time,
     cueId: typeof r.cueId === 'string' && r.cueId ? r.cueId : null,
     label: str(r.label),
+    ...(r.doc === 'timeline' ? { doc: 'timeline' as const } : {}),
   };
 }
 
@@ -556,9 +560,9 @@ export class CueEngine {
     this.store.update((s) => ({ ...s, standbyCueId: cueId, selectedCueId: cueId ?? s.selectedCueId }));
   }
 
-  addMarker(time: number, cueId: string | null = null, label = ''): string {
+  addMarker(time: number, cueId: string | null = null, label = '', doc: 'show' | 'timeline' = 'show'): string {
     const id = generateUUID();
-    const marker: CueMarker = { id, time: Math.max(0, Number(time) || 0), cueId, label };
+    const marker: CueMarker = { id, time: Math.max(0, Number(time) || 0), cueId, label, ...(doc === 'timeline' ? { doc } : {}) };
     this.store.update((s) => ({ ...s, markers: [...s.markers, marker].sort((a, b) => a.time - b.time) }));
     return id;
   }
@@ -669,9 +673,10 @@ export class CueEngine {
   // ── Clock-driven firing ─────────────────────────────────────────────
 
   /** Timeline playhead advanced: fire every marker it crossed, in order. */
-  timelineAdvanced(prev: number, curr: number, wrapAt: number | null = null): string[] {
+  timelineAdvanced(prev: number, curr: number, wrapAt: number | null = null, doc: 'show' | 'timeline' = 'show'): string[] {
     const s = this.state;
-    const crossed = crossedTimes(s.markers, (m) => (m.cueId ? m.time : null), prev, curr, wrapAt);
+    const markers = s.markers.filter((m) => (m.doc ?? 'show') === doc);
+    const crossed = crossedTimes(markers, (m) => (m.cueId ? m.time : null), prev, curr, wrapAt);
     const fired: string[] = [];
     for (const m of crossed) {
       if (m.cueId && this.fire(m.cueId, 'marker')) fired.push(m.cueId);
