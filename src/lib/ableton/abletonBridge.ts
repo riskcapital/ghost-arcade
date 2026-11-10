@@ -357,6 +357,8 @@ function createAbletonBridge() {
   const levelValues = new Map<number, number>();
   const levelRanges = new Map<number, LevelRange>();
   const colorValues = new Map<number, number>();
+  /** Knobs and levels the Timeline's lines follow, watched on top of the signals'. */
+  let extraWatch: { params: number[][]; levels: number[] } = { params: [], levels: [] };
   const signalState = new Map<string, { value: number; sent: number }>();
   /** Elapsed beats each playing score clip has been scheduled up to. */
   const scorePlayhead = new Map<string, number>();
@@ -805,8 +807,8 @@ function createAbletonBridge() {
   function syncWatch(force = false) {
     const s = read();
     if (!s.connected) return;
-    const params = s.signals.flatMap(l => l.source.kind === 'param' ? [[l.source.track, l.source.device, l.source.param]] : []);
-    const levels = [...new Set([...s.signals.flatMap(l => l.source.kind === 'level' ? [l.source.track] : []), ...(studioFeed?.levelTracks ?? [])])];
+    const params = [...s.signals.flatMap(l => l.source.kind === 'param' ? [[l.source.track, l.source.device, l.source.param]] : []), ...extraWatch.params];
+    const levels = [...new Set([...s.signals.flatMap(l => l.source.kind === 'level' ? [l.source.track] : []), ...(studioFeed?.levelTracks ?? []), ...extraWatch.levels])];
     const score = [...new Set([...scoreTrackIndices(s), ...(studioFeed?.noteTracks ?? [])])];
     const watch = JSON.stringify({ params, levels, score });
     if (!force && watch === sentWatch) return;
@@ -1546,6 +1548,22 @@ function createAbletonBridge() {
     },
 
     // ── Signals ─────────────────────────────────────────────────────
+
+    /** A Live knob's latest value (0..1), or null before Live has sent one. */
+    liveParamValue(track: number, device: number, param: number): number | null {
+      return paramValues.get(`${track}:${device}:${param}`) ?? null;
+    },
+
+    /** A Live track's latest level (auto-ranged 0..1), or null. */
+    liveLevelValue(track: number): number | null {
+      return levelValues.get(track) ?? null;
+    },
+
+    /** Ask Live to stream these knobs and levels too (Timeline lines). */
+    watchLiveSources(params: [number, number, number][], levels: number[]) {
+      extraWatch = { params: params.map((p) => [...p]), levels: [...new Set(levels)] };
+      syncWatch();
+    },
 
     addSignal(source: SignalSource, target: SignalTarget) {
       const link: SignalLink = { id: generateUUID(), source, target, invert: false, smooth: source.kind === 'level' ? 0.15 : 0 };

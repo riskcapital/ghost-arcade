@@ -1,4 +1,5 @@
 // MIDI Manager - Web MIDI API wrapper with device detection and hot-plug
+import { runMidiTaps } from './midiTaps';
 import { MUSIC_STUDIO } from '../features';
 import { midiStore } from './midiStore';
 import { midiRouter } from './midiRouter';
@@ -618,6 +619,9 @@ export class MidiManager {
       midiStore.completeLearn(channel, type, number, from.name);
       return;
     }
+
+    // Timeline line bindings see it next; a knob touched to bind is used up.
+    if (!state.editMode && !state.identifyMode && runMidiTaps(channel, type, number, value, from)) return;
 
     // Route to parameter updates. Suppressed in edit mode to avoid
     // unintended changes while mapping, and in identify mode, where the user
