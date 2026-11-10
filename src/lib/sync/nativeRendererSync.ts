@@ -995,6 +995,31 @@ export function nativeEffectPassReadsAudio(pass: { effect: string; params?: Reco
   return trigger >= 0.5 && trigger <= 2.5;
 }
 
+/** Per pass of a chain, the uniform values its live audio can move, as the
+ *  shader's f32 sees them ('' for a pass that reads no audio). A core-owned
+ *  graph layer's effect uniforms are installed with the graph; comparing
+ *  these keys frame to frame tells when the audio actually moved one, so
+ *  only then is that pass's buffer re-sent. */
+export function nativeEffectPassAudioKeys(
+  passes: ReadonlyArray<{ effect: string; amount?: number; mix?: number; params?: Record<string, any> }>,
+  audio: { audioLevel: number; audioBeat: number },
+): string[] {
+  return passes.map((pass) => {
+    if (!NATIVE_EFFECT_PASS_IDS.has(pass.effect as NativeEffectPassId) || !nativeEffectPassReadsAudio(pass)) return '';
+    const u = packNativeEffectPassUniforms({
+      effect: pass.effect as NativeEffectPassId,
+      amount: pass.amount,
+      mix: pass.mix ?? 1,
+      params: { ...pass.params, ...audio },
+      width: 1,
+      height: 1,
+    } as NativeEffectPassOptions);
+    let key = '';
+    for (let i = 4; i < 24; i += 1) key += `${Math.fround(u[i])},`;
+    return key;
+  });
+}
+
 /** A pass of the standard effect shader whose output is its input pixel for
  *  pixel: one mixed in at 0 (the shader returns mix(src, effect, 0)), or a
  *  Glitch at no intensity (its shader hands the source straight back).
@@ -5737,6 +5762,7 @@ export class NativeRendererSync {
     const text = this.nativeTextState.get(layerId);
     if (text) text.atlasUploaded = false;
     this.nativePointCloudUploadSignatures.delete(layerId);
+    this.coreOwnedFxAudioKeys.delete(layerId);
   }
 
   private nativeSplatStateFor(layerId: string) {
@@ -6027,6 +6053,9 @@ export class NativeRendererSync {
   private nativeGraphReadyKinds = new Set<NativeGraphRouteKind>();
   private nativeEffectPassDescriptorIds = new Set<string>();
   private nativeGraphRoutes = new Map<string, NativeGraphRouteState>();
+  /** Per core-owned graph layer: the audio keys (nativeEffectPassAudioKeys)
+   *  of its effect chain as last sent to the core. */
+  private coreOwnedFxAudioKeys = new Map<string, string[]>();
   /** LUT table buffers each graph owner (a route key, or composite FX) last
    *  used, so the table of a replaced LUT can be freed. */
   private nativeLutTables = new Map<string, string[]>();
@@ -10123,6 +10152,8 @@ export class NativeRendererSync {
         });
       }
 
+      // Set when this frame sends a core-owned layer's effect uniforms.
+      let coreOwnedFxSent = false;
       if (
         nativeGraphRoute &&
         NATIVE_CORE_OWNED_GRAPH_KINDS.has(nativeGraphRoute.kind) &&
@@ -10440,6 +10471,7 @@ export class NativeRendererSync {
           ? this.coreOwnedEffectGraph(nativeGraphRoute, width, height, renderClock)
           : null;
         if (!skipInstall && ((nativeGraphRoute.kind !== 'vj-crossfade' && nativeGraphRoute.kind !== 'vj-mix') || installPluginGraph)) {
+          coreOwnedFxSent = true;
           const installedGraph = composeNativeGraphs(pluginGraph?.config, effectGraph?.config);
           commands.push({
             type: 'set_native_graph_layer',
@@ -10465,6 +10497,7 @@ export class NativeRendererSync {
         // Only effect param values changed, so the installed chain has the
         // same passes and buffers: rewrite its uniforms in place instead of
         // re-installing the graph. LUT tables are left as they are.
+        coreOwnedFxSent = true;
         const effectGraph = this.coreOwnedEffectGraph(nativeGraphRoute, width, height, renderClock);
         for (const buffer of (effectGraph?.config.buffers ?? []) as Array<Record<string, any>>) {
           if (buffer.immutable_lut === true) continue;
@@ -10483,6 +10516,35 @@ export class NativeRendererSync {
           layer_id: layer.id,
         });
         this.forgetNativeGraphUploads(layer.id);
+      }
+      // The effect chain a core-owned graph layer carries (and a VJ crossfade
+      // or mix layer's own effects) is sent with the graph, so audio-driven
+      // passes (Glitch's Audio and Beat triggers, Block Corrupt and Data
+      // Bend audio reactivity, ...) held the level they were installed with.
+      // Re-send a pass's uniforms whenever the live audio moves them.
+      if (nativeGraphRoute && NATIVE_CORE_OWNED_GRAPH_KINDS.has(nativeGraphRoute.kind) && nativeGraphRoute.effectPasses?.length) {
+        const audioKeys = nativeEffectPassAudioKeys(nativeGraphRoute.effectPasses, liveEffectAudioParams());
+        const sentKeys = this.coreOwnedFxAudioKeys.get(layer.id);
+        if (coreOwnedFxSent) {
+          this.coreOwnedFxAudioKeys.set(layer.id, audioKeys);
+        } else if (sentKeys && audioKeys.some((key, i) => key !== sentKeys[i])) {
+          const effectGraph = this.coreOwnedEffectGraph(nativeGraphRoute, width, height, renderClock);
+          const uniforms = ((effectGraph?.config.buffers ?? []) as Array<Record<string, any>>)
+            .filter((buffer) => buffer.kind === 'uniform' && buffer.immutable_lut !== true);
+          const byPass = uniforms.length === audioKeys.length;
+          uniforms.forEach((buffer, i) => {
+            if (byPass && audioKeys[i] === sentKeys[i]) return;
+            const data = nativeGraphBufferBase64(buffer);
+            if (!data) return;
+            commands.push({
+              type: 'update_native_graph_buffer',
+              layer_id: layer.id,
+              buffer_id: String(buffer.id),
+              initial_b64: data,
+            });
+          });
+          this.coreOwnedFxAudioKeys.set(layer.id, audioKeys);
+        }
       }
 
       const src = nativeSource.source;
