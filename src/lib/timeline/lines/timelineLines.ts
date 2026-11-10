@@ -29,6 +29,7 @@ import type { RecordMode } from './lineRecorder';
 import { fitLineRanges } from './laneConversion';
 import { generateUUID } from '../../utils/uuid';
 import { pointsValueAt } from './lineEvaluator';
+import { installWhereRuntime } from '../where/whereRuntime';
 
 // ── Registry over the Timeline ─────────────────────────────────────────────
 
@@ -87,6 +88,11 @@ export function timelineRegistrySource(): RegistrySource {
       return found ? blockAsLayer(pieceLayer(found.track.layerId), found.clip) : null;
     },
     hasLookBlock: (clipId) => s.lookClips.some((c) => c.id === clipId),
+    ledBlock: (clipId) => s.ledClips.find((c) => c.id === clipId) ?? null,
+    whereOf: (clipId) => s.lookClips.find((c) => c.id === clipId)?.where
+      ?? s.ledClips.find((c) => c.id === clipId)?.where
+      ?? findClip(s.layerTracks, clipId)?.clip.where
+      ?? null,
   };
 }
 
@@ -258,6 +264,8 @@ function recordTraces(time: number): void {
 /** Wire the lines into the app (once, at start). */
 export function installTimelineLines(): () => void {
   setShowLineTicker(onTick);
+  // Where lines and LED rows evaluate right after the lines, on the same tick.
+  const stopWhere = installWhereRuntime();
   if (get(showTimeline).doc === 'timeline') startSession();
   const offDoc = onShowDocChange((doc) => {
     if (doc === 'timeline') startSession();
@@ -302,6 +310,7 @@ export function installTimelineLines(): () => void {
     offDoc();
     offReset();
     setShowLineTicker(null);
+    stopWhere();
     stopSession();
   };
 }

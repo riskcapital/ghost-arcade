@@ -25,6 +25,9 @@ import type { Layer, MappingCompositionState, WLEDController, WLEDEffect } from 
 import { discoverKeyframeableParams, paramKind, type KeyframeableParam } from '../../keyframes/paramDiscovery';
 import { isLayerExtraKey, readLayerExtra, type ParamKind } from '../../keyframes/layerParamKeys';
 import { discoverLedParams, discoverStageParams, readStageLedParam } from './stageLedParams';
+import type { WhereSpec } from '../where/whereModel';
+import type { TimelineLedClip } from '../leds/ledClips';
+import { getWLEDPatternDefinition } from '../../wled/effects';
 
 export type { ParamKind } from '../../keyframes/layerParamKeys';
 
@@ -59,6 +62,10 @@ export interface RegistrySource {
   pieceLayer?: (layerId: string) => Layer | null;
   /** A look block exists. */
   hasLookBlock?: (clipId: string) => boolean;
+  /** A block on an LED row (Timeline). */
+  ledBlock?: (clipId: string) => TimelineLedClip | null;
+  /** A block's or look block's where line, when it has one. */
+  whereOf?: (clipId: string) => WhereSpec | null;
 }
 
 export function targetId(target: ParamTarget): string {
@@ -93,6 +100,44 @@ export function lookBlockParams(): ParamEntry[] {
     { key: 'look:react', label: 'Beat reaction', group, min: 0, max: 1, step: 0.01, default: 0, kind: 'continuous' },
     { key: 'look:chase', label: 'Chase delay', group, min: 0, max: 4, step: 0.05, default: 0.5, kind: 'continuous' },
   ];
+}
+
+/** A where line's values, on the block's own target (block or look). */
+export function whereParams(spec: Pick<WhereSpec, 'position' | 'spread' | 'soft'> | null): ParamEntry[] {
+  const group = 'Where';
+  return [
+    { key: 'where:position', label: 'Where: position', group, min: 0, max: 1, step: 0.001, default: spec?.position ?? 0, kind: 'continuous' },
+    { key: 'where:spread', label: 'Where: spread', group, min: 0, max: 1, step: 0.01, default: spec?.spread ?? 0, kind: 'continuous' },
+    { key: 'where:soft', label: 'Where: soft edge', group, min: 0, max: 1, step: 0.01, default: spec?.soft ?? 0.5, kind: 'continuous' },
+  ];
+}
+
+const hexToInt = (hex: string) => Number.parseInt(hex.replace('#', ''), 16) || 0;
+
+/** The parameters of a block on an LED row. */
+export function ledBlockParams(clip: TimelineLedClip): ParamEntry[] {
+  const group = 'LED block';
+  const out: ParamEntry[] = [
+    { key: 'ledblock:brightness', label: 'LED brightness', group, min: 0, max: 1, step: 0.01, default: clip.brightness, kind: 'continuous' },
+  ];
+  if (clip.kind !== 'follow') {
+    out.push({ key: 'ledblock:color', label: 'LED colour', group, min: 0, max: 0xffffff, step: 1, default: hexToInt(clip.color), kind: 'colour' });
+  }
+  if (clip.kind === 'gradient' || clip.kind === 'effect') {
+    out.push({ key: 'ledblock:color2', label: 'LED second colour', group, min: 0, max: 0xffffff, step: 1, default: hexToInt(clip.color2), kind: 'colour' });
+  }
+  if (clip.kind !== 'follow' && clip.kind !== 'colour') {
+    out.push({ key: 'ledblock:speed', label: 'LED speed', group, min: 0, max: 4, step: 0.01, default: clip.speed, kind: 'continuous' });
+  }
+  if (clip.kind === 'chase') out.push({ key: 'ledblock:width', label: 'Chase width', group, min: 0.01, max: 1, step: 0.01, default: clip.width, kind: 'continuous' });
+  if (clip.kind === 'effect') {
+    out.push({ key: 'ledblock:amount', label: 'LED effect amount', group, min: 0, max: 1, step: 0.01, default: clip.amount, kind: 'continuous' });
+    const def = getWLEDPatternDefinition(clip.pattern ?? 'chase');
+    for (const [name, value] of Object.entries({ ...def.params, ...(clip.params ?? {}) })) {
+      out.push({ key: `ledblock:param:${name}`, label: `LED ${name}`, group, min: 0, max: name === 'colorCount' ? 4 : 1, step: 0.01, default: value, kind: 'continuous' });
+    }
+  }
+  return out;
 }
 
 /** Keys a block target offers: the block's media, not the piece around it. */
@@ -137,10 +182,18 @@ export function ledParams(source: Pick<RegistrySource, 'wledControllers' | 'wled
 export function paramsFor(source: RegistrySource, target: ParamTarget): ParamEntry[] {
   if (target.scope === 'stage') return stageParams(source);
   if (target.scope === 'led') return ledParams(source);
-  if (target.scope === 'look') return source.hasLookBlock && !source.hasLookBlock(target.id) ? [] : lookBlockParams();
+  if (target.scope === 'look') {
+    if (source.hasLookBlock && !source.hasLookBlock(target.id)) return [];
+    const where = source.whereOf?.(target.id);
+    return where ? [...lookBlockParams(), ...whereParams(where)] : lookBlockParams();
+  }
   if (target.scope === 'block') {
+    const where = source.whereOf?.(target.id);
+    const led = source.ledBlock?.(target.id);
+    if (led) return where ? [...ledBlockParams(led), ...whereParams(where)] : ledBlockParams(led);
     const layer = source.blockLayer?.(target.id);
-    return layer ? layerParams(layer).filter((p) => isBlockKey(p.key)) : [];
+    const own = layer ? layerParams(layer).filter((p) => isBlockKey(p.key)) : [];
+    return where ? [...own, ...whereParams(where)] : own;
   }
   const layer = layerFor(source, target.id);
   return layer ? layerParams(layer) : [];
@@ -181,6 +234,10 @@ export function readLayerParam(layer: Layer, key: string): number | boolean | un
 
 /** The project's own value for (target, key). */
 export function readParam(source: RegistrySource, target: ParamTarget, key: string): number | boolean | undefined {
+  if ((target.scope === 'block' || target.scope === 'look') && (key.startsWith('where:') || key.startsWith('ledblock:'))) {
+    const entry = findParam(source, target, key);
+    return entry ? (entry.default as number) : undefined;
+  }
   if (target.scope === 'layer') {
     const layer = layerFor(source, target.id);
     return layer ? readLayerParam(layer, key) : undefined;

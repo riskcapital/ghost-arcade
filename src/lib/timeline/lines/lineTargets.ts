@@ -17,6 +17,8 @@ import type { Layer } from '../../types';
 import type { LineFrame, OverrideRecord } from './lineEvaluator';
 
 const COPY_PREFIXES = ['showtrack::', 'showfade::'];
+/** A block with a where line drawn over another piece: `showwhere::<piece>::<clip>`. */
+const WHERE_PREFIX = 'showwhere::';
 
 /** The piece-level line values for a scene layer id. */
 export function lineLayerValues(frame: LineFrame | null, layerId: string): OverrideRecord | undefined {
@@ -26,6 +28,11 @@ export function lineLayerValues(frame: LineFrame | null, layerId: string): Overr
   if (own) return own;
   for (const prefix of COPY_PREFIXES) {
     if (layerId.startsWith(prefix)) return layers.get(layerId.slice(prefix.length));
+  }
+  if (layerId.startsWith(WHERE_PREFIX)) {
+    const rest = layerId.slice(WHERE_PREFIX.length);
+    const cut = rest.lastIndexOf('::');
+    return cut > 0 ? layers.get(rest.slice(0, cut)) : undefined;
   }
   return undefined;
 }

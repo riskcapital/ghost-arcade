@@ -5503,6 +5503,8 @@ export interface ShowLayerClip {
   transitionDuration?: number;
   label?: string;
   color?: string;
+  /** A where line: the block travels across the pieces (Timeline). */
+  where?: import('./timeline/where/whereModel').WhereSpec | null;
 }
 
 /** Where a row sits in the show's row list (worked out from the mapping
@@ -5570,6 +5572,8 @@ export interface ShowLookClip {
   layerIds?: string[];
   fadeIn: number;
   fadeOut: number;
+  /** A where line: which shapes (and LED fixtures) wear it, over time. */
+  where?: import('./timeline/where/whereModel').WhereSpec | null;
 }
 
 export interface ShowCameraClip {

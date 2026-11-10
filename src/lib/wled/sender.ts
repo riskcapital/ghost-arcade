@@ -50,6 +50,8 @@ import {
 import { applyWLEDEffects, ledEffectBpm } from './effects';
 import { lineLedOverrides } from '../timeline/lines/lineRuntime';
 import { applyLedControllerOverrides, applyLedEffectOverrides } from '../timeline/lines/stageLedParams';
+import { currentLedTimeline } from '../timeline/leds/ledRuntime';
+import { renderTimelineLeds } from '../timeline/leds/ledRender';
 
 /** Per-controller runtime state. */
 interface SenderState {
@@ -78,6 +80,10 @@ export interface WLEDTelemetry {
   sourceColor: string;
   outputColor: string;
   updatedAt: number;
+  /** The Timeline's LED rows drive the controller. */
+  timeline?: boolean;
+  /** The last frame sent, per LED (for the map preview). */
+  pixels?: Uint8Array;
 }
 
 export const wledTelemetry = writable<Record<string, WLEDTelemetry>>({});
@@ -257,6 +263,7 @@ function packRGB(state: SenderState, imageData: ImageData | null, nowMs: number)
     calibration: state.controller.calibration,
   };
   const testPattern = state.controller.testPattern ?? 'off';
+  let timelineDriven = false;
   if (testPattern !== 'off') {
     fillWLEDTestPattern(
       testPattern,
@@ -266,26 +273,37 @@ function packRGB(state: SenderState, imageData: ImageData | null, nowMs: number)
       options,
       state.previousBuffer
     );
-  } else if (imageData) {
-    sampleWLEDSourcePixels(
-      imageData.data,
-      imageData.width,
-      imageData.height,
-      state.samplePoints,
-      state.sampleRadius,
-      state.sourceBuffer,
-      state.controller.samplingMode ?? 'dominant'
-    );
-    applyWLEDEffects(
-      state.sourceBuffer,
-      state.effectBuffer,
-      state.controller,
-      currentProject?.wledGroups ?? [],
-      applyLedEffectOverrides(currentProject?.wledEffects ?? [], ledLines) as WLEDEffect[],
-      currentProject?.wledEffectAutomation,
-      nowMs,
-      currentBpm
-    );
+  } else if (imageData || currentLedTimeline()) {
+    // The Timeline's colour blocks need no picture; following the stage does.
+    if (imageData) {
+      sampleWLEDSourcePixels(
+        imageData.data,
+        imageData.width,
+        imageData.height,
+        state.samplePoints,
+        state.sampleRadius,
+        state.sourceBuffer,
+        state.controller.samplingMode ?? 'dominant'
+      );
+    } else {
+      state.sourceBuffer.fill(0);
+    }
+    // The Timeline's LED rows, when they reach this controller; else the
+    // project's own LED FX over the sampled picture.
+    const timeline = currentLedTimeline();
+    timelineDriven = !!timeline && renderTimelineLeds(state.controller, timeline.clips, { ...timeline, lines: (id) => timeline.lines.get(id), source: state.sourceBuffer }, state.effectBuffer);
+    if (!timelineDriven) {
+      applyWLEDEffects(
+        state.sourceBuffer,
+        state.effectBuffer,
+        state.controller,
+        currentProject?.wledGroups ?? [],
+        applyLedEffectOverrides(currentProject?.wledEffects ?? [], ledLines) as WLEDEffect[],
+        currentProject?.wledEffectAutomation,
+        nowMs,
+        currentBpm
+      );
+    }
     calibrateWLEDPixels(
       state.effectBuffer,
       state.rgbBuffer,
@@ -303,6 +321,8 @@ function packRGB(state: SenderState, imageData: ImageData | null, nowMs: number)
         sourceColor: averageColorHex(testPattern === 'off' ? state.sourceBuffer : state.rgbBuffer),
         outputColor: averageColorHex(state.rgbBuffer),
         updatedAt: Date.now(),
+        timeline: timelineDriven,
+        pixels: state.rgbBuffer.slice(),
       },
     }));
   }
@@ -338,7 +358,13 @@ export function tickWLEDSenders(canvas: HTMLCanvasElement) {
 
     try {
       if (imageData === undefined && !forceBlack && (state.controller.testPattern ?? 'off') === 'off') {
-        imageData = captureComposite(canvas, activeSource()?.role !== 'native');
+        try {
+          imageData = captureComposite(canvas, activeSource()?.role !== 'native');
+        } catch (err) {
+          // No picture this frame: the Timeline's own colours still go out.
+          if (!currentLedTimeline()) throw err;
+          imageData = null;
+        }
       }
       packRGB(state, imageData ?? null, now);
     } catch (err) {

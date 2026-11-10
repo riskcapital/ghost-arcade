@@ -51,6 +51,8 @@ export const SHOW_TRACK_LAYER_PREFIX = 'showtrack::';
 export const SHOW_SUB_LAYER_PREFIX = 'showsub::';
 /** Invisible copies that compile a shader or boot a sketch before its cut. */
 export const SHOW_WARM_LAYER_PREFIX = 'showwarm::';
+/** A block with a where line, drawn over another piece: `showwhere::<pieceId>::<clipId>`. */
+export const SHOW_WHERE_LAYER_PREFIX = 'showwhere::';
 /** The outgoing side of a crossfade between two clips on one track. */
 export const SHOW_XFADE_LAYER_PREFIX = 'showxf::';
 /** Source-cache key of a track's crossfade helper (see ShowClipSources). */
@@ -64,6 +66,10 @@ export function showTrackLayerId(layerId: string): string {
 
 export function showSubLayerId(layerId: string, trackId: string): string {
   return `${SHOW_SUB_LAYER_PREFIX}${layerId}::${trackId}`;
+}
+
+export function showWhereLayerId(pieceId: string, clipId: string): string {
+  return `${SHOW_WHERE_LAYER_PREFIX}${pieceId}::${clipId}`;
 }
 
 /** The piece a scene layer id belongs to when it is one of the show's own
@@ -306,6 +312,25 @@ function buildTracks(
     if (helper) injected.push(helper);
   });
 
+  // Blocks with a where line, over the other pieces it reaches (like an
+  // added layer: directly over the piece, Normal, the block's picture).
+  frame.tracks.forEach((state, index) => {
+    if (!state.clip || !state.whereCopies?.length) return;
+    const source = state.sub || !isOnStage(ids, state.layerId) ? sources.injected[index] ?? null : sources.stage.get(state.layerId) ?? null;
+    if (!source && state.clip.media.kind !== 'layer') return;
+    for (const c of state.whereCopies) {
+      if (c.opacity <= 0) continue;
+      const base = liveLayers.find((l) => l.id === c.pieceId);
+      if (!base) continue;
+      const plain: Layer = { ...base, id: showWhereLayerId(c.pieceId, state.clip.clipId), visible: true, parentGroupId: null, blendMode: 'normal' };
+      delete plain._showOpacityMul;
+      delete plain._showParams;
+      const copy = drive(plain, { ...state, opacity: c.opacity }, source);
+      if (!state.clip.blendMode) copy.blendMode = 'normal';
+      subsByPiece.set(c.pieceId, [copy, ...(subsByPiece.get(c.pieceId) ?? [])]);
+    }
+  });
+
   const onStage = sources.onStage;
   if (!onStage.size && !injected.length && !warmLayers.length && !subsByPiece.size) return liveLayers;
   // Added layers go directly over their piece: where it first appears on
@@ -380,6 +405,7 @@ export function showTrackSceneShape(frame: ShowTrackFrame): string {
       state.params ? Object.keys(state.params).join(',') : '',
       state.warm ? 'w' : '',
       xf ? `x${xf.clip.media.kind === 'layer' ? 'L' : ''}${xf.opacity > 0 ? '+' : '0'}${xf.opacity < 1 ? '<' : '1'}${xf.clip.blendMode ?? ''}` : '',
+      state.whereCopies?.length ? `W${state.whereCopies.filter((c) => c.opacity > 0).map((c) => `${c.pieceId}${c.opacity < 1 ? '<' : '1'}`).join(',')}` : '',
     ].join('|'));
   }
   return parts.join(';');
@@ -398,8 +424,10 @@ function withShowValues(layer: Layer, opacity: number, params: ShowTrackState['p
 interface ShowValuePatch {
   index: number;
   track: number;
-  /** The layer itself or its injected copy; or its crossfade helper. */
-  kind: 'drive' | 'xfade';
+  /** The layer itself or its injected copy; or its crossfade helper; or a
+   *  where copy over another piece. */
+  kind: 'drive' | 'xfade' | 'where';
+  pieceId?: string;
 }
 
 interface CachedShowScene {
@@ -479,7 +507,9 @@ export class ShowTrackSceneCache {
           const layer = scene[patch.index];
           scene[patch.index] = patch.kind === 'drive'
             ? withShowValues(layer, state.opacity, state.params)
-            : withShowValues(layer, state.xfade?.opacity ?? 1, state.params);
+            : patch.kind === 'where'
+              ? withShowValues(layer, state.whereCopies?.find((c) => c.pieceId === patch.pieceId)?.opacity ?? 0, state.params)
+              : withShowValues(layer, state.xfade?.opacity ?? 1, state.params);
         }
         cached.scene = scene;
         return scene;
@@ -501,8 +531,11 @@ function sameItems(a: readonly unknown[], b: readonly unknown[]): boolean {
 /** Where a scene's driven layers are: the layer a track drives on stage
  *  (when it drives it at all), its injected copy, its crossfade helper. */
 function showValuePatches(scene: readonly Layer[], frame: ShowTrackFrame): ShowValuePatch[] {
-  const wanted = new Map<string, { track: number; kind: ShowValuePatch['kind'] }>();
+  const wanted = new Map<string, { track: number; kind: ShowValuePatch['kind']; pieceId?: string }>();
   frame.tracks.forEach((state, track) => {
+    if (state.clip && state.whereCopies?.length) {
+      for (const c of state.whereCopies) wanted.set(showWhereLayerId(c.pieceId, state.clip.clipId), { track, kind: 'where', pieceId: c.pieceId });
+    }
     if (state.sub) {
       wanted.set(showSubLayerId(state.layerId, state.trackId), { track, kind: 'drive' });
       wanted.set(SHOW_XFADE_LAYER_PREFIX + helperKey(state), { track, kind: 'xfade' });
