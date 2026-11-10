@@ -222,6 +222,10 @@ export interface ShowTrackFrame {
   seekGeneration: number;
   /** An offline render's virtual clock is driving the show. */
   manualClock: boolean;
+  /** performance.now() when the show was at `time`, if known. Lets a
+   *  reader that runs later (the phase follower) project media times to its
+   *  own instant. */
+  evaluatedAtMs?: number;
   tracks: ShowTrackState[];
 }
 
@@ -230,6 +234,8 @@ export interface EvaluateShowTracksOptions {
   seekGeneration: number;
   soloTrackId?: string | null;
   manualClock?: boolean;
+  /** performance.now() at which the show was at `t` (see ShowTrackFrame). */
+  evaluatedAtMs?: number;
   /** Lane evaluation (phase 4); null/absent means no lanes. */
   laneValues?: (track: ShowLayerTrack, t: number) => Record<string, number | boolean> | null;
 }
@@ -397,6 +403,7 @@ export function evaluateShowTracks(
     playing: opts.playing,
     seekGeneration: opts.seekGeneration,
     manualClock: opts.manualClock === true,
+    ...(Number.isFinite(opts.evaluatedAtMs) ? { evaluatedAtMs: opts.evaluatedAtMs } : {}),
     tracks: states,
   };
 }

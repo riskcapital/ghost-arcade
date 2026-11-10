@@ -11,6 +11,15 @@
  *
  * The core only phase-follows looping sources, which is why clip sources
  * always go out looping (see showClipSources.ts).
+ *
+ * A target is compared with the decoder's position when the core receives
+ * it, so it has to name the media time for that instant, not for the show
+ * frame it was read from (up to a display frame older). Targets are
+ * projected from the frame's evaluation time to the moment they are sent;
+ * otherwise the follower settles the picture that much behind the show.
+ *
+ * The core reports how far off each followed session is as
+ * `phase_error_seconds` in the status's `native_video_sessions`.
  */
 import type { ShowTrackFrame } from './showTrackEval';
 import type { ShowClipSources } from './showClipSources';
@@ -24,16 +33,38 @@ export interface ShowPhaseTarget {
   timeSeconds: number;
 }
 
-/** Phase targets for every playing video clip in `frame`. */
-export function showPhaseTargets(frame: ShowTrackFrame | null, sources: ShowClipSources): ShowPhaseTarget[] {
+/** A target is never projected further than this past its frame: a show
+ *  that stopped publishing is stalled, not running on. */
+export const SHOW_PHASE_MAX_PROJECTION_SECONDS = 0.1;
+
+/** `mediaTime` moved on by `seconds` of show time, wrapped past the end
+ *  like the core loops a source trimmed to [loopStart, duration). */
+export function projectMediaTime(mediaTime: number, seconds: number, rate: number, loopStart: number, duration?: number): number {
+  const t = mediaTime + seconds * rate;
+  const end = Number(duration);
+  if (!(end > 0)) return t;
+  const span = end - loopStart;
+  if (!(span > 0) || t < end) return t;
+  return loopStart + ((t - loopStart) % span);
+}
+
+/** Phase targets for every playing video clip in `frame`, projected to
+ *  `nowMs` (performance.now()) when the frame says when it was evaluated. */
+export function showPhaseTargets(frame: ShowTrackFrame | null, sources: ShowClipSources, nowMs?: number): ShowPhaseTarget[] {
   if (!frame || !frame.playing || frame.manualClock) return [];
+  const age = Number.isFinite(nowMs) && Number.isFinite(frame.evaluatedAtMs)
+    ? Math.min(SHOW_PHASE_MAX_PROJECTION_SECONDS, Math.max(0, (nowMs! - frame.evaluatedAtMs!) / 1000))
+    : 0;
   const targets: ShowPhaseTarget[] = [];
   for (const state of frame.tracks) {
     const clip = state.clip;
     if (!clip || clip.media.kind !== 'video' || clip.paused) continue;
     const anchor = sources.anchorFor(state.trackId);
     if (!anchor || anchor.runId !== clip.runId || anchor.paused) continue;
-    targets.push({ sourceId: anchor.sourceId, uri: anchor.src, seekGeneration: anchor.nativeSeekSeq, timeSeconds: clip.mediaTime });
+    const timeSeconds = age > 0
+      ? projectMediaTime(clip.mediaTime, age, clip.rate, clip.loopStart, clip.media.sourceDuration)
+      : clip.mediaTime;
+    targets.push({ sourceId: anchor.sourceId, uri: anchor.src, seekGeneration: anchor.nativeSeekSeq, timeSeconds });
   }
   return targets;
 }

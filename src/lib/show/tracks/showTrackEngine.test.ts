@@ -4,7 +4,7 @@ import { evaluateShowTracks, type ShowTrackFrame } from './showTrackEval';
 import { buildShowTrackScene, SHOW_WARM_LAYER_PREFIX, showTrackLayerId } from './showTrackScene';
 import { predictedMediaTime, ShowClipSources, SHOW_MANUAL_REANCHOR_SECONDS } from './showClipSources';
 import { selectShowPreloads } from './showPreloader';
-import { showPhaseCommands, showPhaseTargets } from './showVideoPhase';
+import { projectMediaTime, showPhaseCommands, showPhaseTargets, SHOW_PHASE_MAX_PROJECTION_SECONDS } from './showVideoPhase';
 
 const video = (name = 'ramp.mp4', sourceDuration = 10): ShowClipMedia => ({
   kind: 'video', name, src: `ghost-asset://localhost/clips/${name}`, sourceDuration,
@@ -225,5 +225,27 @@ describe('phase follower and preloader', () => {
     expect(picks.map((p) => p.clip.id)).toEqual(['img']);
     expect(selectShowPreloads(tracks, 3.5).map((p) => p.clip.id)).toEqual(['c']);
     expect(selectShowPreloads(tracks, 1, { horizonSeconds: 10 }).map((p) => p.clip.id)).toEqual(['img', 'c']);
+  });
+});
+
+describe('phase targets are projected to when they are sent', () => {
+  it('moves the target on by the frame age, at the clip rate, wrapping past the end', () => {
+    const s = new ShowClipSources({ now: () => 0 });
+    const tracks = [track('t', 'A', [clip('c', 0, 60, { rate: 2 })])];
+    const f = evaluateShowTracks(tracks, 2, { playing: true, seekGeneration: 1, evaluatedAtMs: 1000 });
+    expect(f.evaluatedAtMs).toBe(1000);
+    s.sourceFor(f.tracks[0], f);
+    expect(showPhaseTargets(f, s, 1016)[0].timeSeconds).toBeCloseTo(4.032, 9);
+    // No clock to project with, or a reader that is behind the frame: as is.
+    expect(showPhaseTargets(f, s)[0].timeSeconds).toBe(4);
+    expect(showPhaseTargets(f, s, 990)[0].timeSeconds).toBe(4);
+    // A stalled show is not projected further than SHOW_PHASE_MAX_PROJECTION_SECONDS.
+    expect(showPhaseTargets(f, s, 6000)[0].timeSeconds).toBeCloseTo(4 + 2 * SHOW_PHASE_MAX_PROJECTION_SECONDS, 9);
+  });
+
+  it('wraps like the core loops a trimmed source', () => {
+    expect(projectMediaTime(9.99, 0.02, 1, 2, 10)).toBeCloseTo(2.01, 9);
+    expect(projectMediaTime(5, 0.02, 1, 2, 10)).toBeCloseTo(5.02, 9);
+    expect(projectMediaTime(9.99, 0.02, 1, 0)).toBeCloseTo(10.01, 9);
   });
 });

@@ -656,6 +656,7 @@ function publishTrackFrame(s: ShowTimelineState, evalTime: number, force = false
     soloTrackId: s.soloTrackId,
     manualClock: isManualClock(),
     laneValues: (track, t) => (track.lanes.length ? evaluateLanes(track.lanes, t) : null),
+    evaluatedAtMs: typeof performance !== 'undefined' ? performance.now() : undefined,
   });
   lastTrackFrame = frame;
   const signature = showTrackFrameSignature(frame);
