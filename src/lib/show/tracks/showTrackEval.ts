@@ -16,7 +16,8 @@
  * - Fades multiply opacity: no extra layers.
  * - A run is a chain of touching clips with the same media whose media time
  *   carries on across each cut (what a split leaves behind). A run keeps one
- *   decoder, named after its first clip, so a split plays with no seek.
+ *   decoder, named after its first clip, so a split plays with no seek. A
+ *   shader or sketch split the same way keeps its one program running.
  */
 import type { Layer, ShowClipMedia, ShowLayerClip, ShowLayerTrack } from '../../types';
 import { compositionTransitionWeights } from '../../renderer/compositionTransitionLayers';
@@ -135,6 +136,19 @@ export function sameMedia(a: ShowClipMedia, b: ShowClipMedia): boolean {
   return !!a.src && a.src === b.src;
 }
 
+/** Two shader or sketch clips run the same program. */
+function sameProgram(a: ShowClipMedia, b: ShowClipMedia): boolean {
+  if (a === b) return true;
+  if (a.kind !== b.kind || a.name !== b.name) return false;
+  if (a.kind === 'shader') return !!a.shaderCode && a.shaderCode === b.shaderCode;
+  if (a.kind === 'sketch') {
+    const ja = a.jsAnimation;
+    const jb = b.jsAnimation;
+    return !!ja && !!jb && ja.animationType === jb.animationType && !!ja.htmlCode && ja.htmlCode === jb.htmlCode;
+  }
+  return false;
+}
+
 /**
  * True when `next` carries on exactly where `prev` leaves off: touching,
  * same media, same speed and end behaviour, and the media time continuous
@@ -142,11 +156,16 @@ export function sameMedia(a: ShowClipMedia, b: ShowClipMedia): boolean {
  */
 export function continuesRun(prev: ShowLayerClip, next: ShowLayerClip): boolean {
   if (Math.abs(clipEnd(prev) - next.startTime) > EPS) return false;
-  if (prev.media.kind !== 'video' || !sameMedia(prev.media, next.media)) return false;
-  if (Math.abs(clipRate(prev) - clipRate(next)) > EPS) return false;
-  if (prev.endBehaviour !== next.endBehaviour) return false;
   // A crossfade shows both clips at once: they need a decoder each.
   if (next.transitionIn === 'dissolve') return false;
+  if (Math.abs(clipRate(prev) - clipRate(next)) > EPS) return false;
+  if (prev.media.kind === 'shader' || prev.media.kind === 'sketch') {
+    // One program carries on when its time does (what a split leaves).
+    return sameProgram(prev.media, next.media)
+      && Math.abs(rawMediaTime(prev, clipEnd(prev)) - next.inPoint) < 1e-4;
+  }
+  if (prev.media.kind !== 'video' || !sameMedia(prev.media, next.media)) return false;
+  if (prev.endBehaviour !== next.endBehaviour) return false;
   if (prev.endBehaviour === 'loop' && Math.abs(clipLoopStart(prev) - clipLoopStart(next)) > EPS) return false;
   const carried = clipMediaTime(prev, clipEnd(prev));
   if (carried.held) return false;
@@ -226,7 +245,17 @@ export interface ShowTrackFrame {
    *  reader that runs later (the phase follower) project media times to its
    *  own instant. */
   evaluatedAtMs?: number;
+  /** The seek generation began with a loop wrap: show time moved back by
+   *  `shift` seconds from generation `fromGeneration`, and nothing else
+   *  jumped. A video whose media carries on through the wrap keeps its
+   *  decoder (see ShowClipSources). */
+  wrap?: ShowLoopWrap;
   tracks: ShowTrackState[];
+}
+
+export interface ShowLoopWrap {
+  fromGeneration: number;
+  shift: number;
 }
 
 export interface EvaluateShowTracksOptions {
@@ -236,6 +265,8 @@ export interface EvaluateShowTracksOptions {
   manualClock?: boolean;
   /** performance.now() at which the show was at `t` (see ShowTrackFrame). */
   evaluatedAtMs?: number;
+  /** See ShowTrackFrame.wrap. */
+  wrap?: ShowLoopWrap | null;
   /** Lane evaluation (phase 4); null/absent means no lanes. */
   laneValues?: (track: ShowLayerTrack, t: number) => Record<string, number | boolean> | null;
 }
@@ -260,7 +291,12 @@ function warmFor(track: ShowLayerTrack, t: number, silenced: boolean): ShowTrack
   const next = nextClipAfter(track.clips, t);
   if (!next || next.startTime - t > SHOW_WARM_SECONDS) return null;
   if (next.media.kind !== 'shader' && next.media.kind !== 'sketch') return null;
-  return { clipId: next.id, runId: clipIndex(track.clips).runs.get(next.id) ?? next.id, media: next.media };
+  const runs = clipIndex(track.clips).runs;
+  const runId = runs.get(next.id) ?? next.id;
+  // The rest of a run already playing needs no warming: its program runs.
+  const playing = findClipAt(track.clips, t);
+  if (playing && (runs.get(playing.id) ?? playing.id) === runId) return null;
+  return { clipId: next.id, runId, media: next.media };
 }
 
 /**
@@ -434,6 +470,7 @@ export function evaluateShowTracks(
     seekGeneration: opts.seekGeneration,
     manualClock: opts.manualClock === true,
     ...(Number.isFinite(opts.evaluatedAtMs) ? { evaluatedAtMs: opts.evaluatedAtMs } : {}),
+    ...(opts.wrap ? { wrap: opts.wrap } : {}),
     tracks: states,
   };
 }
