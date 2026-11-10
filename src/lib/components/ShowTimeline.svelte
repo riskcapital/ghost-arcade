@@ -1355,7 +1355,7 @@
              Order: presets, layer tracks, audio. -->
         <div class="label-rows" style="transform: translateY({-laneScrollTop}px)">
           <div class="lane-label preset" style="height: {PRESET_LANE_HEIGHT}px">
-            <span class="lane-name">Presets</span>
+            <span class="lane-name" title="Looks (presets) launched along the show. Rows below override the look on their piece while they have a block.">Looks</span>
           </div>
           <ShowTrackHeaders />
           {#each audioLanes as lane}
@@ -1675,7 +1675,7 @@
       </div>
     {:else if hasTracks}
       <div class="show-inspector insp-idle" bind:clientHeight={inspectorH}>
-        <span class="insp-hint">Click a clip to edit it, or a track name for its settings. S splits at the playhead, Shift+Delete closes the gap, ? lists every key.</span>
+        <span class="insp-hint">Each row is a mapping layer. Drop media on a row; click a block to edit it in Properties and Shader Parameters; click a row name for its settings. S splits at the playhead, Shift+Delete closes the gap, ? lists every key.</span>
       </div>
     {/if}
 

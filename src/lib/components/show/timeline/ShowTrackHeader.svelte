@@ -263,7 +263,7 @@
         >L</button>
         <button class="th-btn lanes" onmousedown={(e) => e.stopPropagation()} onclick={openPicker} title="Add a keyframe lane under this row" data-lane-picker>◆+</button>
         {#if kind === 'piece' || kind === 'group'}
-          <button class="th-btn th-addsub" onmousedown={(e) => e.stopPropagation()} onclick={addLayerOnPiece} title="Add a layer on this piece: a row of its own whose blocks draw over the piece (same shape), each with its own blend mode" data-add-sub-row>+ layer</button>
+          <button class="th-btn th-addsub" onmousedown={(e) => e.stopPropagation()} onclick={addLayerOnPiece} title="Add a layer on this piece: a row of its own whose blocks draw over the piece (same shape), each with its own blend mode" data-add-sub-row>+ Layer</button>
         {:else}
           <button class="th-btn th-remove" onmousedown={(e) => e.stopPropagation()} onclick={removeRow} title={kind === 'sub' ? 'Remove this layer and its blocks' : 'Delete this row and its blocks'} aria-label={kind === 'sub' ? 'Remove this layer and its blocks' : 'Delete this row and its blocks'} data-remove-row>×</button>
         {/if}
@@ -362,6 +362,7 @@
   .th-sub-mark { color: var(--ga-ink-2, #666); font-size: 10px; margin-right: -2px; }
   .th-btn.th-eye { display: inline-flex; align-items: center; justify-content: center; }
   .th-btn.th-eye.on { color: #1a1204; background: #9aa0aa; border-color: #9aa0aa; }
+  .th-btn { white-space: nowrap; }
   .th-btn.th-addsub { color: color-mix(in srgb, var(--track-color) 70%, #ffffff); }
   .th-btn.th-remove { font-size: 12px; line-height: 1; }
   .th-col {
