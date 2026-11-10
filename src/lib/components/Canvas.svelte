@@ -132,6 +132,7 @@
     type NativeCoreFailure,
   } from '$lib/sync/nativeCoreSupervisor';
   import { openLogFolder } from '$lib/utils/logFolder';
+  import { installModeRunning } from '$lib/install/installSession';
   import { appendNativeVjDeckCrossfade, appendNativeVjMixCarrier, vjStageScreenLayers } from '$lib/renderer/vjCompositionNative';
   import { expandStudioLayers, noteStudioHosts, studioCodeTick, studioRenderInputs, studioVisualTick } from '$lib/music/studioPlugin';
   import { wakeStudioVisuals } from '$lib/music/musicRuntime';
@@ -369,7 +370,7 @@
     if (nativeRendererSync !== sync || canvasDestroyed) return;
     retireNativeRendererSync(sync);
     if (nativeCoreStableTimer) { clearTimeout(nativeCoreStableTimer); nativeCoreStableTimer = null; }
-    const delay = nativeCoreRestartDelay(nativeCoreRestartAttempt);
+    const delay = nativeCoreRestartDelay(nativeCoreRestartAttempt, { persistent: installModeRunning() });
     if (delay === null) {
       nativeCoreRestarting = false;
       void getNativeRendererStatus().catch(() => null).then((status) => {

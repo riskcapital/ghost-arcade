@@ -99,6 +99,7 @@
   import PixelMapPanel from './PixelMapPanel.svelte';
   import DmxInputPanel from './DmxInputPanel.svelte';
   import ShowControlSettings from './show/ShowControlSettings.svelte';
+  import InstallSettings from './install/InstallSettings.svelte';
 
   // ── MIDI mappings table ──
   // Grouped by the control rather than by the parameter, because a parameter
@@ -366,7 +367,7 @@
     | 'performance:gpu' | 'performance:render-quality' | 'performance:video-decoding'
     | 'recording'
     | 'integrations:midi' | 'integrations:osc' | 'integrations:keyboard' | 'integrations:wled' | 'integrations:pixelmap' | 'integrations:dmxinput' | 'integrations:mediapipe'
-    | 'show:timecode' | 'show:schedule' | 'show:startup' | 'show:projectors'
+    | 'show:timecode' | 'show:schedule' | 'show:startup' | 'show:install' | 'show:projectors'
     | 'ai';
   interface SidebarSection { id: SectionId; label: string; advanced?: boolean }
   interface SidebarCategory { id: string; label: string; sections: SidebarSection[] }
@@ -404,7 +405,7 @@
     { id: 'show', label: 'Show control', sections: [
       { id: 'show:timecode', label: 'Timecode' },
       { id: 'show:schedule', label: 'Schedule' },
-      { id: 'show:startup', label: 'Start at boot' },
+      { id: 'show:install', label: 'Installation' },
       { id: 'show:projectors', label: 'Projectors' },
     ]},
     { id: 'ai', label: 'AI', sections: [
@@ -429,7 +430,8 @@
     mediapipe: 'integrations:mediapipe',
     timecode: 'show:timecode',
     schedule: 'show:schedule',
-    startup: 'show:startup',
+    startup: 'show:install',
+    install: 'show:install',
     projectors: 'show:projectors',
     ai: 'ai',
   };
@@ -3039,13 +3041,13 @@
           <ShowControlSettings section="schedule" />
         </section>
         {/if}
-        {#if selectedSection === 'show:startup'}
+        {#if selectedSection === 'show:install' || selectedSection === 'show:startup'}
         <section class="settings-section">
-          <h3>Start at boot</h3>
+          <h3>Installation</h3>
           <p class="settings-hint">
-            For installs: start with the computer, open a show and run it without anyone at the machine. These settings belong to this computer, not the project.
+            Run an installation with nobody at the machine: start with the computer, open a project, put the outputs on their displays, play the show on a daily schedule, and restart whatever stops. These settings belong to this computer, not the project.
           </p>
-          <ShowControlSettings section="startup" />
+          <InstallSettings />
         </section>
         {/if}
         {#if selectedSection === 'show:projectors'}

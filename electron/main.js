@@ -13,7 +13,7 @@
  * No pixels touch CPU memory in the send path.
  */
 
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, net as electronNet, powerSaveBlocker, protocol, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, net as electronNet, powerMonitor, powerSaveBlocker, protocol, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from 'electron';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { spawn, fork, execSync } from 'child_process';
@@ -170,6 +170,28 @@ const nativeRendererBroker = createNativeRendererBroker({
   canWritePath: target => pathGrants.canWrite(target),
   onCoreStarted: coreInstance => reattachLinuxSlicesToCore(coreInstance),
 });
+
+// Install mode: watchdog, guardian, health log and quit protection for an
+// unattended installation (electron/install-mode.cjs). Active when this
+// launch runs in show mode.
+const { createInstallMode } = require('./install-mode.cjs');
+const installMode = createInstallMode({
+  app,
+  showStartup,
+  getMainWindow: () => mainWindow,
+  broker: nativeRendererBroker,
+  dialog,
+  globalShortcut,
+  powerMonitor,
+  isPowerBlockerActive: () => powerSaveBlockerId !== null && powerSaveBlocker.isStarted(powerSaveBlockerId),
+  getOutputWindows: () => [outputWindow, ...sliceWindows.values()].filter(Boolean),
+});
+ipcMain.handle('install_status', () => ({ ...installMode.status(), wled: wledLinks.list() }));
+ipcMain.handle('install_heartbeat', (_, payload) => installMode.heartbeat(payload));
+ipcMain.handle('install_log', (_, { kind, message } = {}) => { installMode.log(String(kind || 'info').slice(0, 16), String(message ?? '').slice(0, 2000)); return true; });
+ipcMain.handle('install_leave', () => installMode.pause('settings'));
+ipcMain.handle('install_anchor', () => installMode.anchor());
+ipcMain.handle('install_reveal_log', () => { try { shell.showItemInFolder(installMode.logFile); } catch {} return installMode.logFile; });
 
 // three.js / p5.js media sources render in offscreen windows and send their
 // frames to the core through the broker above (see js-source-host.js).
@@ -461,7 +483,20 @@ let pendingOutputWindowConfigTimer = null;
 let sidecarProcess = null;
 let embeddedServerModule = null;
 const { buildWLEDRealtimePacket } = require('./wled-packet.cjs');
-const wledSockets = new Map();  // controllerId -> dgram.Socket
+// One connected UDP socket per controller, reconnecting on its own
+// (electron/wled-link.cjs). Drops and returns go to the install health log.
+const wledLinks = require('./wled-link.cjs').createWledLinks({
+  onChange: (info) => {
+    const who = `${info.name || info.controllerId} (${info.ip}:${info.port})`;
+    if (info.state === 'down') {
+      console.warn(`[WLED] ${who} dropped: ${info.error}`);
+      if (installMode.active()) installMode.log('wled', `${who} dropped (${info.error})`);
+    } else if (info.state === 'up' && info.previous === 'down') {
+      console.log(`[WLED] ${who} back after ${Math.round((info.downForMs || 0) / 1000)} s`);
+      if (installMode.active()) installMode.log('wled', `${who} back after ${Math.round((info.downForMs || 0) / 1000)} s`);
+    }
+  },
+});
 const { createPixelMapOutput } = require('./pixelmap-output.cjs');
 // Art-Net / sACN pixel mapping. One socket for every fixture and node.
 const pixelMapOutput = createPixelMapOutput({ dgram });
@@ -2176,10 +2211,7 @@ function closeAuxiliaryWindows() {
 }
 
 function closeAllWledSockets() {
-  for (const [controllerId, sock] of wledSockets.entries()) {
-    try { sock.close(); } catch {}
-    wledSockets.delete(controllerId);
-  }
+  wledLinks.closeAll();
 }
 
 function publishStage3DFullscreenState(fullScreen) {
@@ -6265,24 +6297,8 @@ function registerIpcHandlers() {
   //
   // For >490 LEDs we'd need DNRGB (protocol 4) with a 16-bit start
   // index — v1 doesn't bother since most installs are under that.
-  ipcMain.handle('wled_send_frame', async (_, { controllerId, ip, port, pixels }) => {
+  ipcMain.handle('wled_send_frame', async (_, { controllerId, ip, port, pixels, name }) => {
     if (!ip || !pixels || pixels.length === 0) return { ok: false, error: 'missing ip or pixels' };
-    let sock = wledSockets.get(controllerId);
-    if (!sock) {
-      sock = dgram.createSocket('udp4');
-      sock.on('error', (err) => {
-        console.warn('[WLED] socket error for', controllerId, err.message);
-      });
-      sock._gaInFlight = 0;
-      wledSockets.set(controllerId, sock);
-    }
-    // Backpressure: UDP sends complete async. If the renderer pushes
-    // frames faster than the network stack drains (controller offline,
-    // congested Wi-Fi), the send queue grows without bound. Dropping a
-    // realtime LED frame is invisible; a multi-second backlog is not.
-    if (sock._gaInFlight >= 2) {
-      return { ok: false, dropped: true };
-    }
     // pixels arrives as a Buffer (Node serializes Uint8Array → Buffer
     // across IPC). Either way the bytes are R,G,B triples already
     // packed by the renderer.
@@ -6291,23 +6307,16 @@ function registerIpcHandlers() {
     catch (error) { return { ok: false, error: error.message }; }
     const udpPort = port ?? 21324;
     if (!Number.isInteger(udpPort) || udpPort < 1 || udpPort > 65535) return { ok: false, error: 'Invalid WLED UDP port' };
-    sock._gaInFlight = (sock._gaInFlight || 0) + 1;
-    return new Promise((resolve) => {
-      sock.send(packet, 0, packet.length, udpPort, ip, (err) => {
-        sock._gaInFlight = Math.max(0, (sock._gaInFlight || 1) - 1);
-        resolve({ ok: !err, error: err?.message });
-      });
-    });
+    // Backpressure, reconnection and drop detection live in wled-link.cjs.
+    return wledLinks.send({ controllerId: String(controllerId), ip: String(ip), port: udpPort, name: typeof name === 'string' ? name : undefined, packet });
   });
 
   ipcMain.handle('wled_close_socket', async (_, { controllerId }) => {
-    const sock = wledSockets.get(controllerId);
-    if (sock) {
-      try { sock.close(); } catch {}
-      wledSockets.delete(controllerId);
-    }
+    wledLinks.close(String(controllerId));
     return { ok: true };
   });
+
+  ipcMain.handle('wled_link_status', () => wledLinks.list());
 
   // --- Art-Net / sACN pixel mapping ---
   // The renderer packs whole DMX universes; pixelmap-output.cjs validates
@@ -9920,6 +9929,9 @@ function createMainWindow() {
     quitGuard.reset();
   });
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    // Install mode restarts it under its own rate limit, escalating to a
+    // relaunch instead of giving up after three crashes.
+    if (installMode.rendererGone(details)) return;
     const now = Date.now();
     const wasRecent = (now - _lastRendererCrashAt) < 30_000;
     _lastRendererCrashAt = now;
@@ -9932,6 +9944,8 @@ function createMainWindow() {
     try { mainWindow.reload(); } catch (e) { console.error('[Main] reload() threw:', e); }
   });
   mainWindow.webContents.on('unresponsive', () => {
+    // Install mode's heartbeat watchdog handles a hung editor.
+    if (installMode.ownsRendererRecovery()) return;
     editorUnresponsive = true;
     if (unresponsiveReloadTimer) return;
     console.warn('[Main] MAIN renderer unresponsive (>30s). Giving it another 10s before we reload...');
@@ -9977,6 +9991,7 @@ function createMainWindow() {
 
   mainWindow.webContents.on('did-finish-load', () => {
     console.log('[Main] Main window loaded');
+    installMode.pageLoaded();
 
     // Hot-reload: recreate OSR window when main window reloads (Vite HMR)
     if (spoutOsrWindow && spoutSendActive) {
@@ -9990,6 +10005,12 @@ function createMainWindow() {
     }
   });
 
+  // Install mode: closing the editor window would end the show. It goes
+  // through the same protection as a quit.
+  mainWindow.on('close', (event) => {
+    if (isQuitting) return;
+    if (installMode.holdQuit()) event.preventDefault();
+  });
   mainWindow.on('closed', () => {
     cancelUnresponsiveReload();
     quitGuard.reset();
@@ -10636,6 +10657,16 @@ app.whenReady().then(async () => {
 
   // Create window after server is ready
   createMainWindow();
+  installMode.start();
+  // Output windows (the output and every Screen) hide the mouse pointer in
+  // install mode.
+  app.on('browser-window-created', (_e, win) => {
+    win.webContents.on('did-finish-load', () => {
+      if (win !== mainWindow && (win === outputWindow || [...sliceWindows.values()].includes(win))) {
+        installMode.outputWindowLoaded(win);
+      }
+    });
+  });
 
   // macOS: the old "Ghost-Arcade.app" stays beside the renamed app after a
   // drag install. Offer once to move it to the Trash, never during a show.
@@ -10730,6 +10761,8 @@ const quitGuard = createQuitGuard({
 app.on('before-quit', (event) => {
   if (!isQuitting) {
     event.preventDefault();
+    // Install mode: confirm, or only through the exit key combo.
+    if (installMode.holdQuit()) return;
     if (quitGuard.shouldHoldQuit()) return;
     cleanupAndQuit();
     return;
@@ -10789,6 +10822,7 @@ function cleanupAndQuit() {
   }
   isQuitting = true;
   console.log('[Main] Cleaning up before quit...');
+  runCleanupStep('installMode', () => installMode.markCleanExit());
   // app.exit skips renderer beforeunload. Notify MIDI owners explicitly so
   // Cmd+Q also clears pads and releases controller modes before exiting.
   runCleanupStep('notifyRendererQuit', () => {

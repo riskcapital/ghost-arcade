@@ -23,9 +23,14 @@ export const NATIVE_CORE_RESTART_DELAYS_MS = [1000, 3000, 8000] as const;
  *  automatic restarts: faults far apart are separate incidents, not a loop. */
 export const NATIVE_CORE_STABLE_RUN_MS = 60_000;
 
-export function nativeCoreRestartDelay(attempt: number): number | null {
+/** Install mode never gives up on the core: after the quick restarts it
+ *  keeps trying at this interval (the install watchdog in the main process
+ *  escalates to a reload or relaunch if the core still will not run). */
+export const NATIVE_CORE_PERSISTENT_RESTART_MS = 15_000;
+
+export function nativeCoreRestartDelay(attempt: number, options: { persistent?: boolean } = {}): number | null {
   if (!Number.isFinite(attempt) || attempt < 0) return NATIVE_CORE_RESTART_DELAYS_MS[0];
-  return NATIVE_CORE_RESTART_DELAYS_MS[Math.floor(attempt)] ?? null;
+  return NATIVE_CORE_RESTART_DELAYS_MS[Math.floor(attempt)] ?? (options.persistent ? NATIVE_CORE_PERSISTENT_RESTART_MS : null);
 }
 
 type CoreStatus = Pick<RendererStatus, 'running' | 'last_frame_error'>
