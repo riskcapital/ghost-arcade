@@ -5551,6 +5551,25 @@ export interface ShowLayerTrack {
 }
 
 /** A shot on the stage-camera lane, referencing a Demo Reel shot. */
+/**
+ * A block on the Timeline's Looks row: a one-click shape Look (see
+ * looks/edgeLookCatalog.ts) worn by the shapes for its span. Applied when
+ * the scene is built, never written into the project. Overlapping blocks
+ * crossfade over the overlap; touching blocks cut.
+ */
+export interface ShowLookClip {
+  id: string;
+  startTime: number;
+  duration: number;
+  lookId: string;
+  paletteId: string;
+  /** Every shape, or only `layerIds` (a group brings its members). */
+  scope: 'all' | 'pieces';
+  layerIds?: string[];
+  fadeIn: number;
+  fadeOut: number;
+}
+
 export interface ShowCameraClip {
   id: string;
   startTime: number;

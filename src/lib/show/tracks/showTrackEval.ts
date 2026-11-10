@@ -25,6 +25,7 @@
 import type { BlendMode, Layer, ShowClipMedia, ShowLayerClip, ShowLayerTrack } from '../../types';
 import { compositionTransitionWeights } from '../../renderer/compositionTransitionLayers';
 import { clampShowTransitionDuration, findJunctionPredecessor } from '../showJunctions';
+import { showLooksSignature, type ShowLookState } from './showLooks';
 
 /** One frame at the rate stop/hold clips park before the media end. */
 export const SHOW_CLIP_END_GUARD_SECONDS = 1 / 30;
@@ -258,6 +259,8 @@ export interface ShowTrackFrame {
    *  decoder (see ShowClipSources). */
   wrap?: ShowLoopWrap;
   tracks: ShowTrackState[];
+  /** The Looks row: look blocks under the playhead (see showLooks.ts). */
+  looks?: ShowLookState[];
 }
 
 export interface ShowLoopWrap {
@@ -528,7 +531,7 @@ export function mediaToken(media: ShowClipMedia): number {
 }
 
 export function showTrackFrameSignature(frame: ShowTrackFrame): string {
-  const parts: string[] = [frame.playing ? 'p' : 's', String(frame.seekGeneration), frame.manualClock ? 'm' : ''];
+  const parts: string[] = [frame.playing ? 'p' : 's', String(frame.seekGeneration), frame.manualClock ? 'm' : '', showLooksSignature(frame.looks)];
   for (const tr of frame.tracks) {
     const c = tr.clip;
     parts.push(

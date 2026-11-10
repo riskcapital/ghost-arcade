@@ -44,6 +44,7 @@ import type { Layer, MapSurface, MediaSource } from '../../types';
 import { createSurfaceLookup, resolvePresetLayer } from '../../stores/mapSurfaces';
 import { TRANSITION_LAYER_PREFIX } from '../../renderer/compositionTransitionLayers';
 import type { ShowTrackFrame, ShowTrackState } from './showTrackEval';
+import { applyShowLooks, showLooksSignature } from './showLooks';
 
 export const SHOW_TRACK_LAYER_PREFIX = 'showtrack::';
 /** A layer the show adds on a piece: `showsub::<layerId>::<trackId>`. */
@@ -220,6 +221,23 @@ function buildFromSources(
   ctx: ShowTrackSceneContext,
   sources: ResolvedShowSources,
 ): Layer[] {
+  const scene = buildTracks(liveLayers, ids, frame, ctx, sources);
+  // The Looks row dresses the shapes last, over whatever the rows did.
+  return frame.looks?.length ? applyShowLooks(scene, frame.looks, liveLayers) : scene;
+}
+
+/** Nothing in the frame changes the scene: no rows and no looks. */
+function emptyFrame(frame: ShowTrackFrame | null): frame is null {
+  return !frame || (frame.tracks.length === 0 && !frame.looks?.length);
+}
+
+function buildTracks(
+  liveLayers: Layer[],
+  ids: ReadonlyMap<string, number>,
+  frame: ShowTrackFrame,
+  ctx: ShowTrackSceneContext,
+  sources: ResolvedShowSources,
+): Layer[] {
   const injected: Layer[] = [];
   let lookup: ReturnType<typeof createSurfaceLookup> | null = null;
   const warmLayers: Layer[] = [];
@@ -326,7 +344,7 @@ export function buildShowTrackScene(
   frame: ShowTrackFrame | null,
   ctx: ShowTrackSceneContext,
 ): Layer[] {
-  if (!frame || frame.tracks.length === 0) return liveLayers;
+  if (emptyFrame(frame)) return liveLayers;
   const ids = layerIndex(liveLayers);
   return buildFromSources(liveLayers, ids, frame, ctx, resolveShowTrackSources(ids, frame, ctx));
 }
@@ -346,7 +364,7 @@ function layerIndex(layers: readonly Layer[]): Map<string, number> {
  * for `_showOpacityMul` and `_showParams`.
  */
 export function showTrackSceneShape(frame: ShowTrackFrame): string {
-  const parts: string[] = [];
+  const parts: string[] = [showLooksSignature(frame.looks)];
   for (const state of frame.tracks) {
     const xf = state.xfade;
     parts.push([
@@ -429,7 +447,7 @@ export class ShowTrackSceneCache {
     deps: readonly unknown[],
   ): PreparedShowTrackScene {
     const self = this;
-    if (!frame || frame.tracks.length === 0) {
+    if (emptyFrame(frame)) {
       return {
         reusable: false,
         reuse: () => { throw new Error('nothing to reuse'); },
