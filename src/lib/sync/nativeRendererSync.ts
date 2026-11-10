@@ -976,6 +976,22 @@ function sourceValuesSignature(layer: Layer): string {
   return `${shaderValuesSignature}:${javascriptValuesSignature}`;
 }
 
+/** Shader clocks wrap here (about 9 h 6 min). A uniform holds time as an
+ *  f32, whose step grows with the value: 2 ms at 9 h, 4 ms at 12 h, 62 ms
+ *  after a week, so animation stuttered on long installs and ran at about
+ *  16 fps after a week. Below the wrap the value is exactly the live clock,
+ *  so nothing changes in a show shorter than that; past it time restarts
+ *  from 0 (the step never exceeds 2 ms). The render core wraps its own
+ *  shader time at the same value. Bookkeeping (video anchors, beat clock,
+ *  manual export seeks) keeps the unwrapped clock. */
+export const NATIVE_SHADER_CLOCK_WRAP_SECONDS = 32768;
+
+/** The clock time a shader uniform is given: see NATIVE_SHADER_CLOCK_WRAP_SECONDS. */
+export function nativeShaderClockSeconds(time: number): number {
+  if (!Number.isFinite(time) || time <= 0) return 0;
+  return time < NATIVE_SHADER_CLOCK_WRAP_SECONDS ? time : time % NATIVE_SHADER_CLOCK_WRAP_SECONDS;
+}
+
 /** The live audio the effect packers read each frame: the level for audio
  *  react, the beat pulse for Glitch's Beat snap trigger. */
 function liveEffectAudioParams(): { audioLevel: number; audioBeat: number } {
@@ -6848,7 +6864,7 @@ export class NativeRendererSync {
       })),
       width,
       height,
-      time: typeof clock.time === 'number' ? clock.time : 0,
+      time: nativeShaderClockSeconds(typeof clock.time === 'number' ? clock.time : 0),
       frameDelta: typeof clock.time_delta === 'number' ? clock.time_delta : 1 / this.targetFps,
       frameIndex,
       seq: frameIndex * 16 + 8,
@@ -7474,9 +7490,9 @@ export class NativeRendererSync {
           // Refresh the small input buffers even when tracking/audio stops so
           // the GPU receives silence and Camera Off instead of stale input.
           {
-            const graphTime = typeof clock.time === 'number'
+            const graphTime = nativeShaderClockSeconds(typeof clock.time === 'number'
               ? clock.time
-              : Math.max(0, (performance.now() - this.liveClockOriginMs) / 1000);
+              : Math.max(0, (performance.now() - this.liveClockOriginMs) / 1000));
             const graphDelta = typeof clock.time_delta === 'number' ? clock.time_delta : 1 / this.targetFps;
             const graphFrameIndex = typeof clock.frame_index === 'number' && Number.isFinite(clock.frame_index)
               ? Math.max(0, Math.round(clock.frame_index))
@@ -7539,9 +7555,9 @@ export class NativeRendererSync {
         bufferPrefixes: nativeGraphBufferPrefixesForRoute(route),
       };
       this.nativeGraphRoutes.set(route.key, routeState);
-      const graphTime = typeof clock.time === 'number'
+      const graphTime = nativeShaderClockSeconds(typeof clock.time === 'number'
         ? clock.time
-        : Math.max(0, (performance.now() - this.liveClockOriginMs) / 1000);
+        : Math.max(0, (performance.now() - this.liveClockOriginMs) / 1000));
       const graphDelta = typeof clock.time_delta === 'number' ? clock.time_delta : 1 / this.targetFps;
       const graphFrameIndex = typeof clock.frame_index === 'number' && Number.isFinite(clock.frame_index)
         ? Math.max(0, Math.round(clock.frame_index))
@@ -8552,8 +8568,9 @@ export class NativeRendererSync {
       return noChain();
     }
 
-    const graphTime = Math.max(0, (performance.now() - this.liveClockOriginMs) / 1000);
-    const frameIndex = Math.max(0, Math.round(graphTime * this.targetFps));
+    const liveSeconds = Math.max(0, (performance.now() - this.liveClockOriginMs) / 1000);
+    const graphTime = nativeShaderClockSeconds(liveSeconds);
+    const frameIndex = Math.max(0, Math.round(liveSeconds * this.targetFps));
     try {
       const graph = buildCompositeEffectPassChainGraph({
         sourceId: 'composite-frame:0',
@@ -10169,7 +10186,7 @@ export class NativeRendererSync {
         )
       ) {
         const graphSource = nativeGraphRenderSource(nativeGraphRoute);
-        const graphTime = typeof renderClock.time === 'number' ? renderClock.time : 0;
+        const graphTime = nativeShaderClockSeconds(typeof renderClock.time === 'number' ? renderClock.time : 0);
         const graphDelta = typeof renderClock.time_delta === 'number' ? renderClock.time_delta : 1 / this.targetFps;
         const graphFrameIndex = typeof renderClock.frame_index === 'number' ? renderClock.frame_index : 0;
         const pluginRoute = nativeGraphRoute.kind === 'ghostfx'
@@ -10659,10 +10676,10 @@ export class NativeRendererSync {
         (!prev || prev.sourceSig !== snap.sourceSig || prev.valuesSig !== snap.valuesSig)
       ) {
         const shaderId = `${src2.id}:${hashString(src2.shaderCode)}`;
-        const shaderTime =
+        const shaderTime = nativeShaderClockSeconds(
           typeof renderClock.time === 'number' && Number.isFinite(renderClock.time)
             ? renderClock.time
-            : now / 1000;
+            : now / 1000);
         const shaderDelta =
           typeof renderClock.time_delta === 'number' && Number.isFinite(renderClock.time_delta)
             ? renderClock.time_delta
