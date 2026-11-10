@@ -38,7 +38,7 @@
 import { writable } from 'svelte/store';
 import { project } from '../stores/layers';
 import { audioStore } from '../stores/audio';
-import type { Project, WLEDController, WLEDNormalizedPoint } from '../types';
+import type { Project, WLEDController, WLEDEffect, WLEDNormalizedPoint } from '../types';
 import { invoke } from '../bridge';
 import {
   calibrateWLEDPixels,
@@ -48,6 +48,8 @@ import {
   sanitizeWLEDCount,
 } from './mapping';
 import { applyWLEDEffects, ledEffectBpm } from './effects';
+import { lineLedOverrides } from '../timeline/lines/lineRuntime';
+import { applyLedControllerOverrides, applyLedEffectOverrides } from '../timeline/lines/stageLedParams';
 
 /** Per-controller runtime state. */
 interface SenderState {
@@ -228,9 +230,13 @@ function captureComposite(sourceCanvas: HTMLCanvasElement, flipY: boolean): Imag
 }
 
 function packRGB(state: SenderState, imageData: ImageData | null, nowMs: number) {
+  // Timeline control lines on the LEDs (brightness, gamma, effect values),
+  // never written to the project.
+  const ledLines = lineLedOverrides();
+  const controller = applyLedControllerOverrides(state.controller, ledLines);
   const options = {
-    brightness: state.controller.brightness,
-    gamma: state.controller.gamma,
+    brightness: controller.brightness,
+    gamma: controller.gamma,
     calibration: state.controller.calibration,
   };
   const testPattern = state.controller.testPattern ?? 'off';
@@ -258,7 +264,7 @@ function packRGB(state: SenderState, imageData: ImageData | null, nowMs: number)
       state.effectBuffer,
       state.controller,
       currentProject?.wledGroups ?? [],
-      currentProject?.wledEffects ?? [],
+      applyLedEffectOverrides(currentProject?.wledEffects ?? [], ledLines) as WLEDEffect[],
       currentProject?.wledEffectAutomation,
       nowMs,
       currentBpm

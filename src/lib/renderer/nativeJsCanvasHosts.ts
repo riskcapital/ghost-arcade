@@ -99,6 +99,8 @@ interface HostRecord {
   ready: boolean;
   opening: boolean;
   failedAt: number;
+  /** The control values the page last received (open or setParams). */
+  params: string;
 }
 
 export class NativeJsCanvasHosts {
@@ -122,11 +124,20 @@ export class NativeJsCanvasHosts {
       record.lastUsedAt = now;
       if (record.opening) return false;
       if (record.signature === signature) {
-        if (record.ready) return true;
+        if (record.ready) {
+          // Values that change without an edit in the panel (timeline lines,
+          // keyframes) reach an open page here.
+          const params = JSON.stringify(jsAnimation.paramValues ?? {});
+          if (params !== record.params) {
+            record.params = params;
+            void this.call('js_source_params', { id: src.id, values: initialParams(jsAnimation) }).catch(() => {});
+          }
+          return true;
+        }
         if (now - record.failedAt < RETRY_MS) return false;
       }
     }
-    const next: HostRecord = { signature, lastUsedAt: now, ready: false, opening: true, failedAt: 0 };
+    const next: HostRecord = { signature, lastUsedAt: now, ready: false, opening: true, failedAt: 0, params: JSON.stringify(jsAnimation.paramValues ?? {}) };
     this.records.set(src.id, next);
     this.call('js_source_open', {
       id: src.id,
@@ -207,7 +218,9 @@ export class NativeJsCanvasHosts {
   }
 
   setParams(id: string, values: Record<string, ParamValue>): void {
-    if (!this.records.has(id)) return;
+    const record = this.records.get(id);
+    if (!record) return;
+    record.params = '';
     void this.call('js_source_params', { id, values }).catch(() => {});
   }
 

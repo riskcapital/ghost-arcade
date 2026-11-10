@@ -36,6 +36,7 @@
   import { layerSequencer } from '../stores/layerSequencer';
   import { evaluateStageEffectOutputForScreen, chaseOrderIndices, stageEffectsRuntime, resolveStageEffectForLayer } from '../stores/stageEffects';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
+  import { controlLineFrame } from '../timeline/lines/lineRuntime';
   import { createLayer, VJ_MIX_SOURCE_INDEX, type Layer, type Effect, type MappingCompositionState } from '../types';
   import * as THREE from 'three';
   import { createISFShader, updateISFShader, setISFInputValue, setISFInputTexture, type ISFShaderInstance } from '../isf/renderer';
@@ -2595,6 +2596,7 @@
       // sequenced layer would go dark and never come back.
       const nativeSequencerUnsub = layerSequencer.subscribe(() => scheduleNativeLayersSync());
       const nativeKeyframeUnsub = keyframeTimeline.subscribe(() => scheduleNativeLayersSync());
+      const nativeLineUnsub = controlLineFrame.subscribe(() => scheduleNativeLayersSync());
       // Composition crossfade: `progress` moves every frame of the window and
       // it IS the layer opacities, so every publish has to reach the core.
       // The store only emits on a real change, so a settled scene costs
@@ -2641,6 +2643,7 @@
         clipTransitionCoordinator.destroy();
         nativeSequencerUnsub();
         nativeKeyframeUnsub();
+        nativeLineUnsub();
         nativeCompositionXfadeUnsub();
         nativePerformerWorldUnsub();
         nativeShowTrackUnsub();

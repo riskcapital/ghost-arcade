@@ -1,4 +1,6 @@
 import { applyParamOverrides, type ParamOverrideSet } from '../keyframes/applyParamOverrides';
+import { currentLineFrame } from '../timeline/lines/lineRuntime';
+import { applyStageOverrides } from '../timeline/lines/stageLedParams';
 import type {InteractiveGraphBuildResult} from '../renderer/nativeInteractiveGraph';
 import {showToast} from '../stores/errorToast';
 import { projectorCalibrationUniforms } from '../output/projectorCalibration';
@@ -8551,7 +8553,9 @@ export class NativeRendererSync {
     // (ASCII, blur, kaleidoscope), which did not come through on the mix
     // carrier. Mapping FX belong to Mapping and to the mapped STAGE output,
     // where they run first.
-    const mappingEffects = mappingComposition?.enabled ? mappingComposition.effects ?? [] : [];
+    const mappingEffects = mappingComposition?.enabled
+      ? applyStageOverrides(mappingComposition.effects ?? [], currentLineFrame()?.stage)
+      : [];
     const outputEffects = vjState.isLive
       ? [...(vjState.stageMode ? mappingEffects : []), ...(vjState.compositionEffects ?? [])]
       : mappingEffects;
@@ -9629,7 +9633,11 @@ export class NativeRendererSync {
     // the show wins on the same key, and their clip opacity and fades
     // multiply whatever opacity that leaves.
     const hasShow = layers.some((layer) => layer._showParams !== undefined || layer._showOpacityMul !== undefined);
-    if (!kfOverrides && !seqOverrides && !hasShow) return layers;
+    // Timeline control lines (timeline/lines/lineRuntime.ts) go on last, by
+    // layer id: a line wins over keyframes and lanes on the same key.
+    const lineLayers = currentLineFrame()?.layers;
+    const hasLines = !!lineLayers && lineLayers.size > 0;
+    if (!kfOverrides && !seqOverrides && !hasShow && !hasLines) return layers;
 
     let changed = false;
     const mapped = layers.map((layer) => {
@@ -9637,7 +9645,8 @@ export class NativeRendererSync {
       const seqMult = seqOverrides?.[layer.id];
       const showParams = layer._showParams;
       const showMul = layer._showOpacityMul;
-      if (!kf && seqMult === undefined && !showParams && showMul === undefined) return layer;
+      const lineParams = hasLines ? lineLayers!.get(layer.id) : undefined;
+      if (!kf && seqMult === undefined && !showParams && showMul === undefined && !lineParams) return layer;
 
       changed = true;
       const next: any = { ...layer };
@@ -9646,6 +9655,7 @@ export class NativeRendererSync {
       }
       if (kf) applyParamOverrides(next as Layer, kf as ParamOverrideSet);
       if (showParams) applyParamOverrides(next as Layer, showParams);
+      if (lineParams) applyParamOverrides(next as Layer, lineParams);
       if (showMul !== undefined) next.opacity = (next.opacity ?? 1) * Math.max(0, Math.min(1, showMul));
       // Applied once. A list that has been through here can come back (a
       // paused scene is re-flushed from what was last sent), and a second
