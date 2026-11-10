@@ -91,6 +91,21 @@ describe('line targets', () => {
     expect(again.edgeEffects.effects[0].opacity).toBeCloseTo(0.4);
   });
 
+  it('an All looks line scales every look block, times a block\'s own intensity line', () => {
+    const f = frameOf([line({ id: 'all', target: { scope: 'look', id: '*' }, key: 'look:intensity', max: 2, points: [{ t: 0, v: 0.5 }] }),
+      line({ id: 'own', target: { scope: 'look', id: 'L1' }, key: 'look:intensity', max: 2, points: [{ t: 0, v: 1.5 }] })], 1);
+    const layer: any = {
+      ...shape('A'),
+      edgeEffects: { enabled: true, effects: [{ id: 'showlook:L1:A:0', opacity: 0.8 }, { id: 'showlook:L2:A:0', opacity: 0.8 }, { id: 'own', opacity: 1 }] },
+    };
+    expect(wearsLookWithLines(f, layer)).toBe(true);
+    const next: any = { ...layer };
+    applyLookLines(next, f);
+    expect(next.edgeEffects.effects[0].opacity).toBeCloseTo(0.8 * 0.75);
+    expect(next.edgeEffects.effects[1].opacity).toBeCloseTo(0.4);
+    expect(next.edgeEffects.effects[2].opacity).toBe(1);
+  });
+
   it('the registry knows block, look and sub-row targets', () => {
     const blockLayer = { ...shape('A'), source: { id: 'b', type: 'shader', src: 'g.fs', name: 'g', shaderInputs: [{ NAME: 'glow', TYPE: 'float', MIN: 0, MAX: 2, DEFAULT: 1 }], shaderValues: { glow: 1.5 } } } as unknown as Layer;
     const src: RegistrySource = {

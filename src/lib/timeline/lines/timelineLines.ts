@@ -23,7 +23,7 @@ import {
 import { project } from '../../stores/layers';
 import type { Layer, MediaSource, ShowLayerClip, ShowLayerTrack } from '../../types';
 import { createLineSession, type LineSession } from './lineSession';
-import { findParam, paramsFor, readParam, sameTarget, type ParamEntry, type ParamTarget, type RegistrySource } from './paramRegistry';
+import { ALL_LOOKS_ID, findParam, paramsFor, readParam, sameTarget, type ParamEntry, type ParamTarget, type RegistrySource } from './paramRegistry';
 import type { ControlLine, LinePoint } from './lineModel';
 import type { RecordMode } from './lineRecorder';
 import { fitLineRanges } from './laneConversion';
@@ -89,7 +89,7 @@ export function timelineRegistrySource(): RegistrySource {
       const found = findClip(s.layerTracks, clipId);
       return found ? blockAsLayer(pieceLayer(found.track.layerId), found.clip) : null;
     },
-    hasLookBlock: (clipId) => s.lookClips.some((c) => c.id === clipId),
+    hasLookBlock: (clipId) => (clipId === ALL_LOOKS_ID ? s.lookClips.length > 0 : s.lookClips.some((c) => c.id === clipId)),
     ledBlock: (clipId) => s.ledClips.find((c) => c.id === clipId) ?? null,
     whereOf: (clipId) => s.lookClips.find((c) => c.id === clipId)?.where
       ?? s.ledClips.find((c) => c.id === clipId)?.where

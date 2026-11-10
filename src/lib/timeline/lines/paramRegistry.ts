@@ -73,6 +73,10 @@ export interface RegistrySource {
   readSound?: (rowId: string, key: string) => number | undefined;
 }
 
+/** The look target that means every look block on the Looks row (a line on
+ *  it scales them all: Score the song's energy line). */
+export const ALL_LOOKS_ID = '*';
+
 export function targetId(target: ParamTarget): string {
   switch (target.scope) {
     case 'layer': return `layer:${target.id}`;

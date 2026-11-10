@@ -15,6 +15,7 @@
  */
 import type { Layer } from '../../types';
 import type { LineFrame, OverrideRecord } from './lineEvaluator';
+import { ALL_LOOKS_ID } from './paramRegistry';
 
 const COPY_PREFIXES = ['showtrack::', 'showfade::'];
 /** A block with a where line drawn over another piece: `showwhere::<piece>::<clip>`. */
@@ -58,11 +59,26 @@ export function wearsLookWithLines(frame: LineFrame | null, layer: Pick<Layer, '
   if (!looks?.size) return false;
   const effects = layer.edgeEffects?.effects;
   if (!effects?.length) return false;
+  const all = looks.has(ALL_LOOKS_ID);
   for (const e of effects) {
     const clip = lookClipOf(e.id);
-    if (clip && looks.has(clip)) return true;
+    if (clip && (all || looks.has(clip))) return true;
   }
   return false;
+}
+
+/** A look block's line values with the "All looks" line's under them
+ *  (intensities multiply; for anything else the block's own line wins). */
+function lookRecord(looks: ReadonlyMap<string, OverrideRecord>, clip: string): OverrideRecord | undefined {
+  const own = looks.get(clip);
+  const all = looks.get(ALL_LOOKS_ID);
+  if (!all) return own;
+  if (!own) return all;
+  const out: OverrideRecord = { ...all, ...own };
+  if (all['look:intensity'] !== undefined && own['look:intensity'] !== undefined) {
+    out['look:intensity'] = num(all['look:intensity']) * num(own['look:intensity']);
+  }
+  return out;
 }
 
 interface LookBase {
@@ -87,7 +103,7 @@ export function applyLookLines(next: Layer, frame: LineFrame | null): boolean {
   let changed = false;
   const effects = edge.effects.map((effect) => {
     const clip = lookClipOf(effect.id);
-    const rec = clip ? looks.get(clip) : undefined;
+    const rec = clip ? lookRecord(looks, clip) : undefined;
     if (!rec || !Object.keys(rec).length) return effect;
     changed = true;
     const e: any = { ...effect };
