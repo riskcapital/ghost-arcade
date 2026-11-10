@@ -8,7 +8,9 @@
  * where each playing decoder really is (the core's last presented frame)
  * with where the show says it should be. A decoder that is more than two
  * frames off on two checks in a row is re-anchored: a seek, under a new
- * seek generation (see ShowClipSources.reanchor).
+ * seek generation (see ShowClipSources.reanchor). A decoder that cannot keep
+ * up falls behind again: it is re-anchored less and less often (every 2 s,
+ * then 4, 8... up to 30), so the fallback never turns into a seek storm.
  */
 import type { ShowTrackFrame } from './showTrackEval';
 import { predictedMediaTime, type ShowClipAnchor } from './showClipSources';
@@ -24,6 +26,12 @@ const SETTLE_FRAMES = 3;
 const FALLBACK_FRAME_SECONDS = 1 / 30;
 /** A frame older than this is not projected to now (the show stalled). */
 const MAX_FRAME_AGE_SECONDS = 0.25;
+/** After a re-anchor the same decoder waits this long before the next one,
+ *  doubling each time it drifts off again, up to the cap. */
+const BACKOFF_FIRST_MS = 2000;
+const BACKOFF_MAX_MS = 30000;
+/** A decoder back on time this long starts its backoff afresh. */
+const BACKOFF_RESET_MS = 10000;
 
 /** What the check reads from the core's status for one decoder. */
 export interface ShowDriftSession {
@@ -47,9 +55,12 @@ function loopError(expected: number, actual: number, span: number): number {
 
 export class ShowDriftWatch {
   private readonly strikes = new Map<string, { seq: number; count: number }>();
+  /** Per anchor key: no re-anchor before `until`; `wait` is the next pause. */
+  private readonly backoff = new Map<string, { until: number; wait: number; okSince: number | null }>();
 
   reset(): void {
     this.strikes.clear();
+    this.backoff.clear();
   }
 
   /**
@@ -97,20 +108,30 @@ export class ShowDriftWatch {
       const span = Number(anchor.duration) > 0 ? Number(anchor.duration) - anchor.loopStart : 0;
       const error = loopError(expected, pts + frameSeconds / 2, span);
       const limit = SHOW_DRIFT_MAX_FRAMES * frameSeconds + frameSeconds / 2 + Math.abs(uncertaintySeconds * anchor.rate);
+      const backoff = this.backoff.get(key);
       if (Math.abs(error) <= limit) {
         this.strikes.delete(key);
+        if (backoff) {
+          backoff.okSince ??= atMs;
+          if (atMs - backoff.okSince >= BACKOFF_RESET_MS) this.backoff.delete(key);
+        }
         continue;
       }
+      if (backoff) backoff.okSince = null;
+      if (backoff && atMs < backoff.until) continue;
       const prev = this.strikes.get(key);
       const count = prev && prev.seq === anchor.nativeSeekSeq ? prev.count + 1 : 1;
       if (count >= SHOW_DRIFT_STRIKES) {
         this.strikes.delete(key);
+        const wait = backoff ? Math.min(BACKOFF_MAX_MS, backoff.wait * 2) : BACKOFF_FIRST_MS;
+        this.backoff.set(key, { until: atMs + (backoff ? backoff.wait : BACKOFF_FIRST_MS), wait, okSince: null });
         out.push(key);
       } else {
         this.strikes.set(key, { seq: anchor.nativeSeekSeq, count });
       }
     }
     for (const key of [...this.strikes.keys()]) if (!seen.has(key)) this.strikes.delete(key);
+    for (const key of [...this.backoff.keys()]) if (!seen.has(key)) this.backoff.delete(key);
     return out;
   }
 }
