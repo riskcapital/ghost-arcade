@@ -10,6 +10,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runShowModeLaunch, installPromptSuppression, type ShowStartupConfig } from './showStartup';
+import { defaultInstallSchedule } from '../install/installSchedule';
 
 const require = createRequire(import.meta.url);
 const { createShowStartup, defaultConfig } = require('../../../electron/show-startup.cjs');
@@ -87,7 +88,9 @@ describe('show startup config (main process)', () => {
 
 describe('show-mode launch sequence', () => {
   const config = (patch: Partial<ShowStartupConfig>): ShowStartupConfig => ({
-    launchAtLogin: false, showMode: true, projectPath: '/shows/a.gha', openOutputs: true, autoStart: 'go', suppressPrompts: true, ...patch,
+    launchAtLogin: false, showMode: true, projectPath: '/shows/a.gha', openOutputs: true, autoStart: 'go', suppressPrompts: true,
+    document: 'show', playlist: [], loopShow: true, schedule: defaultInstallSchedule(), watchdog: true, relaunchOnCrash: true,
+    resume: 'clock', hideCursor: true, quitProtection: 'confirm', ...patch,
   });
 
   it('opens the project, then the outputs, then presses GO', async () => {

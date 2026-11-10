@@ -103,6 +103,23 @@ const MIN_SEND_INTERVAL_MS = 16;
 // mode when no packet arrives for the 2 s timeout set in each packet.
 export const WLED_KEEPALIVE_MS = 1000;
 
+/**
+ * Install mode's off periods: every controller sends black and keeps
+ * sending it (the once-a-second keepalive), so the strips stay dark instead
+ * of falling back to the controller's own effect after its two-second
+ * realtime timeout.
+ */
+let forceBlack = false;
+export function setWLEDForceBlack(on: boolean): void {
+  if (forceBlack === on) return;
+  forceBlack = on;
+  // Send the change at once rather than at the next keepalive.
+  for (const state of senders.values()) state.lastWireMs = -Infinity;
+}
+export function wledForceBlack(): boolean {
+  return forceBlack;
+}
+
 const SOURCE_ROLE_PRIORITY: Record<WLEDSourceRole, number> = {
   native: 4,
   editor: 3,
@@ -270,6 +287,7 @@ function packRGB(state: SenderState, imageData: ImageData | null, nowMs: number)
       state.previousBuffer
     );
   }
+  if (forceBlack) state.rgbBuffer.fill(0);
   state.previousBuffer.set(state.rgbBuffer);
   if (nowMs - state.lastTelemetryAt >= 100) {
     state.lastTelemetryAt = nowMs;
@@ -313,7 +331,7 @@ export function tickWLEDSenders(canvas: HTMLCanvasElement) {
     ensureSamplePoints(state, canvas);
 
     try {
-      if (imageData === undefined && (state.controller.testPattern ?? 'off') === 'off') {
+      if (imageData === undefined && !forceBlack && (state.controller.testPattern ?? 'off') === 'off') {
         imageData = captureComposite(canvas, activeSource()?.role !== 'native');
       }
       packRGB(state, imageData ?? null, now);
@@ -333,6 +351,7 @@ export function tickWLEDSenders(canvas: HTMLCanvasElement) {
       controllerId: state.controller.id,
       ip: state.controller.ipAddr,
       port: state.controller.port,
+      name: state.controller.name,
       pixels: state.rgbBuffer,
     }).then((res: any) => {
       state.inFlight = false;

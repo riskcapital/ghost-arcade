@@ -15,20 +15,41 @@
 
 import { writable } from 'svelte/store';
 
-export type ShowAutoStart = 'none' | 'go' | 'timeline';
+import type { InstallSchedule } from '../install/installSchedule';
+import type { InstallDocument } from '../install/installTransport';
+
+/** 'timeline' plays the chosen `document` of the project; 'playlist' plays
+ *  each playlist item's document once, in turn. */
+export type ShowAutoStart = 'none' | 'go' | 'timeline' | 'playlist';
+
+export interface InstallPlaylistItem {
+  path: string;
+  document: InstallDocument;
+}
 
 export interface ShowStartupConfig {
   launchAtLogin: boolean;
+  /** Install mode: run this launch unattended. */
   showMode: boolean;
   projectPath: string;
   openOutputs: boolean;
   autoStart: ShowAutoStart;
   suppressPrompts: boolean;
+  /** Which document 'timeline' plays. */
+  document: InstallDocument;
+  playlist: InstallPlaylistItem[];
+  loopShow: boolean;
+  schedule: InstallSchedule;
+  watchdog: boolean;
+  relaunchOnCrash: boolean;
+  resume: 'clock' | 'start';
+  hideCursor: boolean;
+  quitProtection: 'confirm' | 'combo';
 }
 
 export interface ShowStartupInfo {
   config: ShowStartupConfig;
-  loginItem: { enabled: boolean; simulated: boolean };
+  loginItem: { enabled: boolean; simulated: boolean; file?: string };
   session: { showMode: boolean; skipped: boolean };
 }
 

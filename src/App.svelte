@@ -408,8 +408,8 @@
     isShowModeLaunch,
     launchConfig,
     promptsSuppressed,
-    runShowModeLaunch,
   } from './lib/show/showStartup';
+  import { startInstallRuntime } from './lib/install/installRuntime';
   import { compositionTransition } from './lib/stores/compositionTransition';
   import { layerSequencer } from './lib/stores/layerSequencer';
   import { NATIVE_ENGINE_ONLY, settings, outputFrozen } from './lib/stores/settings';
@@ -1342,6 +1342,7 @@
   let autosaveFromEarlierSession = false;
   // Projects double-clicked in the Finder / Explorer while the app runs.
   let stopProjectOpenListener: (() => void) | null = null;
+  let stopInstallRuntime: (() => void) | null = null;
   let showRecoveryModal = false;
   let recoveryTimestamp = '';
 
@@ -2362,18 +2363,17 @@
       if (typeof stop === 'function') stopProjectOpenListener = stop;
     }
 
-    // --- Show mode: open the show project, the outputs, and start ---
+    // --- Install mode: open the project, run the schedule, the outputs,
+    // the show and the watchdog heartbeat (lib/install/installRuntime) ---
     if (isShowModeLaunch()) {
       const config = launchConfig();
       if (config) {
         // Give the render core a moment to come up before driving outputs.
         scheduleBridgeTimeout(() => {
-          void runShowModeLaunch(config, {
+          stopInstallRuntime = startInstallRuntime(config, {
             openProject: (path) => openProjectAtPath(path),
-            openOutputs: ensureOutputsFullscreen,
-            go: () => cueList.go(),
-            playTimeline: () => showTimeline.play(),
-            log: (message) => console.log('[ShowMode]', message),
+            openMainOutput: ensureOutputsFullscreen,
+            notify: (message) => showToast(message, 'info'),
           });
         }, 1500);
       }
@@ -2768,6 +2768,7 @@
       stopShowTracks();
       stopTakeover();
       stopRehearsal();
+      stopInstallRuntime?.();
       showRuntimeHooks.ensureOutputs = null;
       restorePrompts();
       stopInterfaceScale();
