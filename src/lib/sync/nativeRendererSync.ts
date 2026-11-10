@@ -1,6 +1,7 @@
 import { applyParamOverrides, type ParamOverrideSet } from '../keyframes/applyParamOverrides';
 import { currentLineFrame } from '../timeline/lines/lineRuntime';
 import { applyLookLines, lineBlockValues, lineLayerValues, wearsLookWithLines } from '../timeline/lines/lineTargets';
+import { IsfAnchorResend } from './isfAnchorResend';
 import { applyStageOverrides } from '../timeline/lines/stageLedParams';
 import { setTransformAspect } from '../keyframes/layerParamKeys';
 import type {InteractiveGraphBuildResult} from '../renderer/nativeInteractiveGraph';
@@ -5685,6 +5686,9 @@ export class NativeRendererSync {
   private sentWidth = 0;
   private sentHeight = 0;
   private lastLayers = new Map<string, LayerSnapshot>();
+  /** Show-clip shader anchors already sent: a resend (a value edit, a core
+   *  restart) carries the time the clip has run to since (isfAnchorResend.ts). */
+  private isfAnchors = new IsfAnchorResend();
   // Scene ownership survives geometry-cache invalidation. The core also
   // survives editor remounts, so a new synchronizer must adopt its old IDs.
   private nativeSceneLayerIds = new Set<string>();
@@ -10786,11 +10790,12 @@ export class NativeRendererSync {
         // still while the show is paused), not the render clock.
         const shaderTimeAnchor = src2._nativeShaderTime;
         if (shaderTimeAnchor) {
+          const anchor = this.isfAnchors.resolve(shaderTimeAnchor, shaderTime, this.manualClockExportDepth > 0);
           commands.push({
             type: 'set_isf_time_anchor',
             shader_id: shaderId,
-            time_seconds: Math.max(0, shaderTimeAnchor.seconds),
-            clock_time_seconds: shaderTime,
+            time_seconds: anchor.time_seconds,
+            clock_time_seconds: anchor.clock_time_seconds,
             rate: shaderTimeAnchor.rate,
             paused: shaderTimeAnchor.paused,
           });
