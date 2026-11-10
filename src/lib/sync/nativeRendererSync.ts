@@ -2,6 +2,8 @@ import { applyParamOverrides, type ParamOverrideSet } from '../keyframes/applyPa
 import { currentLineFrame } from '../timeline/lines/lineRuntime';
 import { applyLookLines, lineBlockValues, lineLayerValues, wearsLookWithLines } from '../timeline/lines/lineTargets';
 import { IsfAnchorResend } from './isfAnchorResend';
+
+const sharedIsfAnchors = new IsfAnchorResend();
 import { applyStageOverrides } from '../timeline/lines/stageLedParams';
 import { setTransformAspect } from '../keyframes/layerParamKeys';
 import type {InteractiveGraphBuildResult} from '../renderer/nativeInteractiveGraph';
@@ -5687,8 +5689,10 @@ export class NativeRendererSync {
   private sentHeight = 0;
   private lastLayers = new Map<string, LayerSnapshot>();
   /** Show-clip shader anchors already sent: a resend (a value edit, a core
-   *  restart) carries the time the clip has run to since (isfAnchorResend.ts). */
-  private isfAnchors = new IsfAnchorResend();
+   *  restart) carries the time the clip has run to since (isfAnchorResend.ts).
+   *  Shared by every sync: a core restart retires this sync and boots a new
+   *  one, which must still know when each anchor first went out. */
+  private isfAnchors = sharedIsfAnchors;
   // Scene ownership survives geometry-cache invalidation. The core also
   // survives editor remounts, so a new synchronizer must adopt its old IDs.
   private nativeSceneLayerIds = new Set<string>();
