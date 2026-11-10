@@ -234,9 +234,18 @@ describe('show beats for the launch clock', () => {
     const map = createTempoMap(100, 0.3);
     const anchor = { t: 3.3, at: 1000, map };
     // 3 s after bar 1 at 100 BPM = 5 quarters.
-    expect(showBeatAt(anchor, 1000)).toEqual({ beat: 5, bpm: 100 });
+    expect(showBeatAt(anchor, 1000)).toMatchObject({ beat: 5, bpm: 100, barQuarters: 4 });
     expect(showBeatAt(anchor, 1060)!.beat).toBeCloseTo(5.1, 9);
     expect(showBeatAt(anchor, 5000)!.beat).toBeCloseTo(5 + (0.25 * 100) / 60, 9);
     expect(showBeatAt(null, 1000)).toBeNull();
+  });
+
+  it('names the bar length and a bar line, so bar launches follow 3/4', () => {
+    const map = createTempoMap(120, 0.5, 3, 4);
+    // 4 s in: bar 3 beat 2 (quarter 7).
+    const b = showBeatAt({ t: 4, at: 0, map }, 0)!;
+    expect(b.beat).toBeCloseTo(7, 9);
+    expect(b.barQuarters).toBe(3);
+    expect(((b.beat - b.barOrigin) % 3 + 3) % 3).toBeCloseTo(1, 9);
   });
 });

@@ -111,6 +111,21 @@ describe('shared launch clock', () => {
     expect(launchClockTempo()).toBe(120);
     expect(launchClockPosition().beat).toBeCloseTo(0.5 * 2 * 1.04 + 4 * 2, 6);
   });
+  it('a bar grid is the show\'s own bar in 3/4, counted from its bar line', () => {
+    const start = now;
+    // 3/4 at 120 BPM: quarter 7 is bar 3 beat 2 (bars start on 0, 3, 6, 9...).
+    setShowBeatSource((at) => ({ beat: 7 + ((at - start) * 120) / 60000, bpm: 120, barQuarters: 3, barOrigin: 0 }));
+    try {
+      // Next bar line is quarter 9: two quarters, 1 s away.
+      expect(nextLaunchBoundary(4)).toBeCloseTo(now + 1000, 6);
+      // Two bars: quarter 12.
+      expect(nextLaunchBoundary(8)).toBeCloseTo(now + 2500, 6);
+      // Beat grids are unchanged.
+      expect(nextLaunchBoundary(1)).toBeCloseTo(now + 500, 6);
+    } finally {
+      setShowBeatSource(null);
+    }
+  });
   it('anchors to detected audio beats, counting the time since the last one in ms', () => {
     harness.audio.set({ manualBPM: null, bpm: 120, isActive: true, beat: { beatCount: 40, timeSinceLastBeat: 0 } });
     const onBeat = launchClockPosition().beat;

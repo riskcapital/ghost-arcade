@@ -21,7 +21,7 @@ import type { BlendMode, Layer, MediaSource, Effect, JSAnimationSource, Integrat
 import { createDefaultSplatContent, createDefaultModel3DContent, createDefaultGPULayerContent, createDefaultTextContent } from '../types';
 import { createThreeJSIframeContext, getThreeJSIframeContext, disposeThreeJSIframeContext, createJSAnimationContext, disposeJSAnimationContext, updateJSAnimationParams } from '../renderer/engine';
 import { isLiveControl, runAsLiveControl } from './historyHooks';
-import { launchClock, launchClockPosition, launchClockTempo, launchClockFollowsLink, nextLaunchBoundary, onLaunchClockResync, releaseTempoNudgeInputs } from './launchClock';
+import { launchClock, launchClockPosition, launchClockTempo, launchClockFollowsLink, launchGrid, nextLaunchBoundary, onLaunchClockResync, releaseTempoNudgeInputs } from './launchClock';
 import { normalizeCuePoints, validCueIndex, VJ_CUE_POINT_COUNT } from './vjCuePoints';
 import { seekNativeVideoImmediately } from '../renderer/nativeVideoScrubber';
 import { VJAutopilotClock, normalizeAutopilot, type VJAutopilot, type AutopilotSample } from './vjAutopilot';
@@ -695,8 +695,9 @@ export function nextQuantumWallTime(grid: QuantizationGrid): number {
 function launchDeadline(grid: QuantizationGrid) {
   const now = performance.now();
   const { beat, beatMs } = launchClockPosition(now);
-  const size = gridToBeats(grid);
-  const fireBeat = size > 0 ? Math.ceil((beat + 0.001) / size) * size : beat;
+  // Bars are the playing show's own bars (3 quarters in 3/4).
+  const { size, origin } = launchGrid(gridToBeats(grid), now);
+  const fireBeat = size > 0 ? origin + Math.ceil((beat - origin + 0.001) / size) * size : beat;
   return { fireBeat, fireAt: now + (fireBeat - beat) * beatMs };
 }
 

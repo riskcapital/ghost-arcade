@@ -87,14 +87,22 @@ function linkTempo(): number | null {
 
 /** Beat position and tempo from the playing show, or null when it is not
  *  driving (paused, or no tempo map). Set by show/sync/showLaunchClock.ts. */
-export type ShowBeatSource = (nowMs: number) => { beat: number; bpm: number } | null;
+export type ShowBeatSource = (nowMs: number) => ShowBeat | null;
+export interface ShowBeat {
+  beat: number;
+  bpm: number;
+  /** Quarters in the show's bar here (3 in 3/4 or 6/8); 4 when absent. */
+  barQuarters?: number;
+  /** A beat where a bar starts (the current metre's first bar). */
+  barOrigin?: number;
+}
 let showBeatSource: ShowBeatSource | null = null;
 
 export function setShowBeatSource(source: ShowBeatSource | null): void {
   showBeatSource = source;
 }
 
-function showBeat(nowMs: number): { beat: number; bpm: number } | null {
+function showBeat(nowMs: number): ShowBeat | null {
   if (!showBeatSource) return null;
   try {
     const b = showBeatSource(nowMs);
@@ -197,11 +205,26 @@ export function launchClockPosition(nowMs = performance.now()): { beat: number; 
   return { beat: segmentBeatAt(local, nowMs), beatMs: 60000 / local.bpm };
 }
 
+/**
+ * The grid a launch waits for. Callers count bars as 4 beats (4/4): a grid
+ * of whole bars (4, 8, 16 beats) is that many of the playing show's own bars
+ * when its metre is another (3 quarters in 3/4), counted from a bar line of
+ * the show. Beat grids, and every grid off the show, are as given.
+ */
+export function launchGrid(gridBeats: number, nowMs = performance.now()): { size: number; origin: number } {
+  if (!(gridBeats >= 4) || gridBeats % 4 !== 0 || linkTempo() !== null) return { size: gridBeats, origin: 0 };
+  const show = showBeat(nowMs);
+  const q = Number(show?.barQuarters);
+  if (!show || !(q > 0) || q === 4) return { size: gridBeats, origin: 0 };
+  return { size: (gridBeats / 4) * q, origin: Number.isFinite(show.barOrigin) ? show.barOrigin! : 0 };
+}
+
 /** Wall-clock time of the next boundary of a grid `gridBeats` long. */
 export function nextLaunchBoundary(gridBeats: number, nowMs = performance.now()): number {
   if (!(gridBeats > 0)) return nowMs;
   const { beat, beatMs } = launchClockPosition(nowMs);
-  return nextGridWallTime(nowMs, beat, beatMs, gridBeats);
+  const grid = launchGrid(gridBeats, nowMs);
+  return nextGridWallTime(nowMs, beat - grid.origin, beatMs, grid.size);
 }
 
 /** True while Link or the playing show owns tempo and phase: nudge and
