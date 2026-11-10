@@ -2274,6 +2274,8 @@
           templateFor: (surfaceId) => get(showTimelineStore).layerTracks.find((t) => t.layerId === surfaceId)?.template ?? null,
           surfaces: get(project).mapSurfaces,
           mediaSourceFor: (surface) => takeoverMediaSources.sourceFor(surface),
+          // The mix as the VJ sees it: graded by the composition FX.
+          mixEffects: nativeCompositionEffects(vjState.compositionEffects),
         });
       };
       // Stage FX opacity for the native scene: layerId → multiplier, refreshed
