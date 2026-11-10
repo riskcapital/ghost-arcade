@@ -53,6 +53,10 @@ export async function launchApp({ root, devUrl, cdpPort, log }) {
     VITE_DEV_SERVER_URL: devUrl.replace(/\/$/, ''),
     WS_PORT: String(cdpPort + 1),
     HTTP_PORT: String(cdpPort + 2),
+    // The Live bridge on ports of its own (UDP), so a show never talks to a
+    // Live set open on this machine; a show can fake Live there (live.fake).
+    GA_ABLETON_APP_PORT: process.env.GA_ABLETON_APP_PORT ?? String(cdpPort + 20000),
+    GA_ABLETON_SCRIPT_PORT: process.env.GA_ABLETON_SCRIPT_PORT ?? String(cdpPort + 20001),
   };
   const electronBinary = require(path.join(root, 'node_modules', 'electron'));
   let child = null;
@@ -61,7 +65,7 @@ export async function launchApp({ root, devUrl, cdpPort, log }) {
     const appBundle = path.resolve(electronBinary, '..', '..', '..');
     // Any GA_* setting in the runner's environment reaches the app too
     // (e.g. GA_NATIVE_RENDER_CORE_PATH to test against another core build).
-    const keys = new Set(['GA_USER_DATA_DIR', 'VITE_DEV_SERVER_URL', 'WS_PORT', 'HTTP_PORT',
+    const keys = new Set(['GA_USER_DATA_DIR', 'VITE_DEV_SERVER_URL', 'WS_PORT', 'HTTP_PORT', 'GA_ABLETON_APP_PORT', 'GA_ABLETON_SCRIPT_PORT',
       ...Object.keys(process.env).filter((k) => k.startsWith('GA_'))]);
     const envArgs = [...keys].flatMap((k) => ['--env', `${k}=${env[k]}`]);
     execFileSync('open', ['-g', '-j', '-n', ...envArgs, '-a', appBundle, '--args', root, `--remote-debugging-port=${cdpPort}`]);
@@ -86,6 +90,7 @@ export async function launchApp({ root, devUrl, cdpPort, log }) {
   return {
     session,
     profile,
+    livePorts: { app: Number(env.GA_ABLETON_APP_PORT), script: Number(env.GA_ABLETON_SCRIPT_PORT) },
     rehide() {
       if (process.platform === 'darwin') { const pid = pidForPort(cdpPort); if (pid) hideMacProcess(pid); }
     },

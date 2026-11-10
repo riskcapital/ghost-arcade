@@ -107,7 +107,7 @@ describe('the Timeline document holds its lines', () => {
     showTimeline.setLines([opacity([{ t: 0, v: 0 }, { t: 2, v: 1, c: 'smooth' }])]);
     showTimeline.setLineBindings([{ id: 'b1', source: { kind: 'midi', channel: 0, cc: 21 }, target: { scope: 'layer', id: 'A' }, key: 'layer:opacity' }]);
     const saved = JSON.parse(JSON.stringify(showTimeline.serialize()));
-    expect(saved.version).toBe(6);
+    expect(saved.version).toBe(7);
     expect(saved.timeline.lines).toHaveLength(1);
     showTimeline._resetForTest();
     showTimeline.hydrate(saved);

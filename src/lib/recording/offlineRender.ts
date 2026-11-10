@@ -63,6 +63,7 @@ import { layerSequencer } from '../stores/layerSequencer';
 import { vjLayerSequencer } from '../stores/vjLayerSequencer';
 import { showTimeline } from '../stores/showTimeline';
 import { showMuxTracks } from '../show/showAudioExport';
+import { timelineSoundtrackFile } from '../timeline/sound/soundExport';
 import { mediaLibrary } from '../stores/media';
 import { generateUUID } from '../utils/uuid';
 import { createAssetRefFromGeneratedBlob, pathToFileUrl, type AssetRef } from '../storage/assetRegistry';
@@ -1580,7 +1581,17 @@ function createOfflineRenderStore() {
 async function addShowSoundtrack(videoPath: string, renderSeconds: number): Promise<string | null> {
   const show = get(showTimeline);
   if (!show.audioTracks.some(t => !t.muted && t.volume > 0)) return null;
-  const tracks = showMuxTracks(show.audioTracks);
+  // The Timeline: its sound rows rendered as they play (effects, fades,
+  // levels, lines). Live clips are not in it; they play in Live.
+  let tracks = showMuxTracks(show.audioTracks);
+  if (show.doc === 'timeline') {
+    try {
+      const path = await timelineSoundtrackFile(show, show.duration);
+      if (path) tracks = [{ path, startTime: 0, offset: 0, duration: show.duration, volume: 1 }];
+    } catch (err) {
+      console.warn('[offlineRender] Timeline soundtrack render failed, mixing the files instead:', err);
+    }
+  }
   if (tracks.length === 0) return 'Saved without sound: the show audio is not in a file on this computer.';
   try {
     const result = await invoke<{ success?: boolean; error?: string }>('show_audio_mux', {

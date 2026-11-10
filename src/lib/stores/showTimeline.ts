@@ -166,6 +166,7 @@ import { lanesToLines, rowLineTarget } from '../timeline/lines/laneConversion';
 import { linesEnd, normalizeBindings, removeLinesForBlocks, shiftLinesOnTarget, shiftLinesWithBlock } from '../timeline/lines/lineDocOps';
 import { normalizeLedClip, normalizeLedClips, type TimelineLedClip } from '../timeline/leds/ledClips';
 import { normalizeNamedOrders, normalizeWhere, type WhereNamedOrder } from '../timeline/where/whereModel';
+import { EMPTY_SOUND_DOC, normalizeSoundDoc, soundDocIsEmpty, type SoundDoc } from '../timeline/sound/soundModel';
 
 // ─── Tunables ────────────────────────────────────────────────────────────
 
@@ -197,7 +198,7 @@ export interface ShowTimelineSelection {
   /** 'transition' selects the junction element sitting on `id`'s LEFT edge —
    *  the transition is stored on that clip, but it is a separate selectable
    *  object on the timeline with its own inspector. */
-  kind: 'audio' | 'preset' | 'transition' | 'layerClip' | 'track' | 'keyframe' | 'tempo' | 'lookClip' | 'ledClip';
+  kind: 'audio' | 'preset' | 'transition' | 'layerClip' | 'track' | 'keyframe' | 'tempo' | 'lookClip' | 'ledClip' | 'soundRow' | 'liveClip' | 'build';
   id: string;
 }
 
@@ -255,6 +256,8 @@ export interface ShowTimelineState {
   ledClips: TimelineLedClip[];
   /** Named spatial orders for where lines (Timeline). */
   whereOrders: WhereNamedOrder[];
+  /** Sound rows (Timeline): what each audio lane is, Live clip and build blocks. */
+  sound: SoundDoc;
 }
 
 /**
@@ -297,6 +300,7 @@ function createInitialState(): ShowTimelineState {
     lineBindings: [],
     ledClips: [],
     whereOrders: [],
+    sound: EMPTY_SOUND_DOC,
   };
 }
 
@@ -747,6 +751,20 @@ export function setShowWhereDecorator(decorator: ShowWhereDecorator | null): voi
   whereDecorator = decorator;
 }
 
+/** One evaluation of the show, for the Timeline's sound rows and Live clips. */
+export interface ShowFrameTick extends ShowLineTick {
+  /** Changes on every jump of the playhead (seek, scrub, loop wrap, start). */
+  seek: number;
+  loop: boolean;
+  duration: number;
+}
+const frameListeners = new Set<(tick: ShowFrameTick) => void>();
+/** Called on every evaluation of the show, after the lines. */
+export function onShowFrame(listener: (tick: ShowFrameTick) => void): () => void {
+  frameListeners.add(listener);
+  return () => frameListeners.delete(listener);
+}
+
 function publishTrackFrame(s: ShowTimelineState, evalTime: number, force = false): void {
   if (lineTicker) {
     try {
@@ -757,6 +775,12 @@ function publishTrackFrame(s: ShowTimelineState, evalTime: number, force = false
   }
   const deco = whereDecorator;
   try { deco?.begin(s, evalTime); } catch (err) { console.warn('[ShowTimeline] where tick failed:', err); }
+  if (frameListeners.size) {
+    const tick: ShowFrameTick = { doc: s.doc, time: evalTime, playing: s.isPlaying, tempo: s.tempo, manual: isManualClock(), seek: seekGeneration, loop: s.loop, duration: s.duration };
+    for (const listener of frameListeners) {
+      try { listener(tick); } catch (err) { console.warn('[ShowTimeline] frame listener failed:', err); }
+    }
+  }
   const tracks = evaluatedTracks(s);
   const looks = s.lookClips.length ? evaluateShowLooks(s.lookClips, evalTime) : [];
   if (deco && looks.length) {
@@ -832,6 +856,19 @@ function busIdFor(trackId: string): string {
   return CLIP_AUDIO_PREFIX + trackId;
 }
 
+/** Where a track's sound goes instead of the master (the Timeline's sound
+ *  rows). Null: the master, as on the Show. */
+export type ShowAudioRouter = (trackId: string, ctx: AudioContext, master: AudioNode) => AudioNode | null;
+let audioRouter: ShowAudioRouter | null = null;
+export function setShowAudioRouter(router: ShowAudioRouter | null): void {
+  audioRouter = router;
+  for (const id of trackElements.keys()) clipAudioBus.rewireClip(busIdFor(id));
+}
+/** A track's output moved (another row): connect it again. */
+export function rewireShowAudioTrack(trackId: string): void {
+  clipAudioBus.rewireClip(busIdFor(trackId));
+}
+
 function transportProviderFor(trackId: string): () => ClipAudioTransport | null {
   return () => {
     const s = get(store);
@@ -889,6 +926,7 @@ function ensureTrackElement(track: ShowAudioTrack): void {
     volume: track.volume,
     muted: track.muted,
     provider: transportProviderFor(track.id),
+    output: (ctx, master) => audioRouter?.(track.id, ctx, master) ?? null,
   });
 }
 
@@ -1170,7 +1208,8 @@ function finishShow(action: ShowEndAction): void {
 
 /** Recompute duration + reselect after any structural mutation. */
 function withDuration(s: ShowTimelineState): ShowTimelineState {
-  return { ...s, duration: computeShowDuration(s.presetClips, s.audioTracks, s.layerTracks, s.cameraLane, s.lookClips, s.lines, s.ledClips) };
+  const tracks = soundDocIsEmpty(s.sound) ? s.audioTracks : [...s.audioTracks, ...s.sound.live, ...s.sound.builds];
+  return { ...s, duration: computeShowDuration(s.presetClips, tracks, s.layerTracks, s.cameraLane, s.lookClips, s.lines, s.ledClips) };
 }
 
 function normalizeTrack(raw: unknown, index: number): ShowAudioTrack | null {
@@ -1191,6 +1230,11 @@ function normalizeTrack(raw: unknown, index: number): ShowAudioTrack | null {
     muted: t.muted === true,
     lane: Number.isFinite(Number(t.lane)) ? Math.max(0, Math.floor(Number(t.lane))) : 0,
     peaks: Array.isArray(t.peaks) ? (t.peaks as number[]).map((n) => Number(n) || 0) : undefined,
+    ...(Number(t.fadeIn) > 0 ? { fadeIn: Number(t.fadeIn) } : {}),
+    ...(Number(t.fadeOut) > 0 ? { fadeOut: Number(t.fadeOut) } : {}),
+    ...(t.sound && typeof (t.sound as { id?: unknown }).id === 'string'
+      ? { sound: { id: (t.sound as { id: string }).id, ...(Number.isFinite(Number((t.sound as { note?: unknown }).note)) ? { note: Number((t.sound as { note: number }).note) } : {}) } }
+      : {}),
   };
 }
 
@@ -1457,6 +1501,7 @@ export interface ShowArrangement {
   lines?: ControlLine[];
   ledClips?: TimelineLedClip[];
   whereOrders?: WhereNamedOrder[];
+  sound?: SoundDoc;
   /** The Timeline document's arrangement; the fields above are the Show's.
    *  Missing in steps made before the two were separate: such a step is
    *  the active document's. */
@@ -1490,6 +1535,8 @@ export interface ShowTimelineSnapshot {
   /** Version 6: the Timeline's LED rows and named where orders. */
   ledClips?: TimelineLedClip[];
   whereOrders?: WhereNamedOrder[];
+  /** Version 7: the Timeline's sound rows, Live clip and build blocks (missing = default rows). */
+  sound?: SoundDoc;
   /** Version 4: the Timeline document (the fields above are the Show's). */
   timeline?: ShowTimelineSnapshot;
   /** Version 4: the document that was active when saved. */
@@ -1507,7 +1554,7 @@ export interface ShowTimelineSnapshot {
 
 /** What a document owns. Everything else in the state is the engine's. */
 const DOC_KEYS = [
-  'audioTracks', 'presetClips', 'layerTracks', 'lookClips', 'lines', 'lineBindings', 'ledClips', 'whereOrders', 'cameraLane', 'tempo', 'loop', 'endAction',
+  'audioTracks', 'presetClips', 'layerTracks', 'lookClips', 'lines', 'lineBindings', 'ledClips', 'whereOrders', 'sound', 'cameraLane', 'tempo', 'loop', 'endAction',
   'rulerMode', 'snapGrid', 'zoom', 'snapEnabled', 'currentTime', 'selection', 'selectedClipIds', 'soloTrackId',
 ] as const;
 export type ShowDocFields = Pick<ShowTimelineState, (typeof DOC_KEYS)[number]>;
@@ -1532,10 +1579,10 @@ function setParked(doc: ShowDocFields): void {
 export const parkedShowDoc = { subscribe: parkedStore.subscribe };
 
 /** A document has something on it. */
-export function docHasContent(d: Pick<ShowDocFields, 'presetClips' | 'audioTracks' | 'layerTracks' | 'lookClips' | 'cameraLane'> & { lines?: readonly ControlLine[]; ledClips?: readonly TimelineLedClip[] }): boolean {
+export function docHasContent(d: Pick<ShowDocFields, 'presetClips' | 'audioTracks' | 'layerTracks' | 'lookClips' | 'cameraLane'> & { lines?: readonly ControlLine[]; ledClips?: readonly TimelineLedClip[]; sound?: SoundDoc }): boolean {
   return d.presetClips.length > 0 || d.audioTracks.length > 0 || d.lookClips.length > 0 || d.cameraLane.length > 0
     || (d.ledClips?.length ?? 0) > 0
-    || (d.lines?.length ?? 0) > 0
+    || (d.lines?.length ?? 0) > 0 || (d.sound?.live.length ?? 0) > 0 || (d.sound?.builds.length ?? 0) > 0
     || d.layerTracks.some((t) => !isBareRow(t));
 }
 
@@ -1570,6 +1617,8 @@ function arrangementOf(d: ShowDocFields): ShowArrangement {
     lines: d.lines,
     ledClips: d.ledClips,
     whereOrders: d.whereOrders,
+    // So is the sound doc.
+    sound: d.sound,
   };
 }
 
@@ -1593,6 +1642,7 @@ function docWithArrangement(base: ShowDocFields, a: Partial<ShowArrangement>): S
   const lines = Array.isArray(a.lines) ? a.lines : base.lines;
   const ledClips = Array.isArray(a.ledClips) ? normalizeLedClips(a.ledClips) : base.ledClips;
   const whereOrders = Array.isArray(a.whereOrders) ? normalizeNamedOrders(a.whereOrders) : base.whereOrders;
+  const sound = a.sound !== undefined ? normalizeSoundDoc(a.sound) : base.sound;
   const tempo = normalizeTempoMap(a.tempo);
   const clipIds = new Set(layerTracks.flatMap((t) => t.clips.map((c) => c.id)));
   const ids = new Set([
@@ -1602,6 +1652,9 @@ function docWithArrangement(base: ShowDocFields, a: Partial<ShowArrangement>): S
     ...lookClips.map((c) => c.id),
     ...ledClips.map((c) => c.id),
     ...clipIds,
+    ...sound.rows.map((r) => r.id),
+    ...sound.live.map((b) => b.id),
+    ...sound.builds.map((b) => b.id),
   ]);
   return {
     ...base,
@@ -1618,6 +1671,7 @@ function docWithArrangement(base: ShowDocFields, a: Partial<ShowArrangement>): S
     lines,
     ledClips,
     whereOrders,
+    sound,
     soloTrackId: base.soloTrackId && layerTracks.some((t) => t.id === base.soloTrackId) ? base.soloTrackId : null,
     selectedClipIds: base.selectedClipIds.filter((id) => clipIds.has(id)),
     selection: base.selection && ids.has(base.selection.id) ? base.selection : null,
@@ -1665,6 +1719,7 @@ function docSnapshot(d: ShowDocFields): Omit<ShowTimelineSnapshot, 'version' | '
     ...(d.lineBindings.length > 0 ? { lineBindings: d.lineBindings } : {}),
     ...(d.ledClips.length > 0 ? { ledClips: d.ledClips.map((c) => ({ ...c })) } : {}),
     ...(d.whereOrders.length > 0 ? { whereOrders: d.whereOrders } : {}),
+    ...(!soundDocIsEmpty(d.sound) ? { sound: d.sound } : {}),
   };
 }
 
@@ -1733,6 +1788,7 @@ function hydrateDoc(p: Record<string, unknown>, projectDir?: string): ShowDocFie
     lineBindings: normalizeBindings(p.lineBindings),
     ledClips: normalizeLedClips(p.ledClips),
     whereOrders: normalizeNamedOrders(p.whereOrders),
+    sound: normalizeSoundDoc(p.sound),
     cameraLane,
     tempo,
     loop: p.loop === true,
@@ -2222,6 +2278,8 @@ export const showTimeline = {
     startTime?: number;
     duration?: number;
     lane?: number;
+    /** Timeline sound blocks: fades, the library sound it was rendered from. */
+    extra?: Partial<Pick<ShowAudioTrack, 'fadeIn' | 'fadeOut' | 'sound' | 'peaks' | 'sourceDuration'>>;
   }, opts: { removeIfUnplayable?: boolean } = {}): Promise<string | null> {
     const id = generateUUID();
     const state = get(store);
@@ -2238,6 +2296,7 @@ export const showTimeline = {
       volume: 1,
       muted: false,
       lane,
+      ...(init.extra ?? {}),
     };
     store.update((s) => withDuration({ ...s, audioTracks: [...s.audioTracks, track], selection: { kind: 'audio', id } }));
     ensureTrackElement(track);
@@ -3242,6 +3301,35 @@ export const showTimeline = {
     if (!opts.quiet) recordShowEdit(opts.continuousKey ? `lines:${opts.continuousKey}` : undefined);
   },
 
+  // ── Sound rows (Timeline) ─────────────────────────────────────────────
+
+  /** Replace the sound doc (rows, Live clip and build blocks). */
+  setSound(sound: SoundDoc, opts: { continuousKey?: string; quiet?: boolean } = {}) {
+    if (sound === get(store).sound) return;
+    store.update((x) => withDuration({ ...x, sound }));
+    if (!opts.quiet) recordShowEdit(opts.continuousKey ? `sound:${opts.continuousKey}` : undefined);
+  },
+
+  /**
+   * Replace the audio blocks and the sound doc in one step (a sound row's
+   * blocks moved, trimmed, faded, a row removed). Elements follow.
+   */
+  setSoundBlocks(audioTracks: ShowAudioTrack[], sound: SoundDoc = get(store).sound, opts: { continuousKey?: string; quiet?: boolean } = {}) {
+    const s = get(store);
+    if (audioTracks === s.audioTracks && sound === s.sound) return;
+    const lanesBefore = new Map(s.audioTracks.map((t) => [t.id, t.lane]));
+    store.update((x) => withDuration({
+      ...x,
+      audioTracks,
+      sound,
+      selection: x.selection && x.selection.kind === 'audio' && !audioTracks.some((t) => t.id === x.selection!.id) ? null : x.selection,
+    }));
+    syncAudioWiring(audioTracks);
+    for (const t of audioTracks) if (lanesBefore.has(t.id) && lanesBefore.get(t.id) !== t.lane) rewireShowAudioTrack(t.id);
+    republishTracks();
+    if (!opts.quiet) recordShowEdit(opts.continuousKey ? `sound:${opts.continuousKey}` : undefined);
+  },
+
   /** Edit the lines: `edit` returns the new list (or the same to do nothing). */
   editLines(edit: (lines: ControlLine[]) => ControlLine[], continuousKey?: string): boolean {
     const s = get(store);
@@ -3287,7 +3375,9 @@ export const showTimeline = {
       try { edges.push(...snapEdgeProvider()); } catch { /* provider gone */ }
     }
     for (const c of s.presetClips) edges.push(c.startTime, c.startTime + c.duration);
-    for (const t of s.audioTracks) edges.push(t.startTime, t.startTime + t.duration);
+    for (const t of s.audioTracks) if (!exclude.has(t.id)) edges.push(t.startTime, t.startTime + t.duration);
+    for (const b of s.sound.live) if (!exclude.has(b.id)) edges.push(b.startTime, b.startTime + b.duration);
+    for (const b of s.sound.builds) if (!exclude.has(b.id)) edges.push(b.startTime, b.startTime + b.duration);
     for (const c of s.lookClips) if (!exclude.has(c.id)) edges.push(c.startTime, c.startTime + c.duration);
     for (const c of s.ledClips) if (!exclude.has(c.id)) edges.push(c.startTime, c.startTime + c.duration);
     for (const track of s.layerTracks) {
@@ -3486,11 +3576,11 @@ export const showTimeline = {
       // are under `timeline`, and the Looks row is new.
       // 5: the Timeline has control lines (the ◆ lanes became lines).
       // 6: the Timeline has LED rows and where lines (blocks carry `where`).
-      version: 6,
+      version: 7,
       isOpen: s.isOpen,
       ...show,
       activeDoc: s.doc,
-      timeline: { version: 6, isOpen: false, ...timeline },
+      timeline: { version: 7, isOpen: false, ...timeline },
     };
   },
 

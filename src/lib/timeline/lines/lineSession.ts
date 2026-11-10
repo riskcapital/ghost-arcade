@@ -35,6 +35,9 @@ export interface SongPlacement {
   offset: number;
   rate?: number;
   length?: number;
+  fadeIn?: number;
+  fadeOut?: number;
+  gain?: number;
 }
 
 function registrySource(): RegistrySource {
@@ -154,7 +157,7 @@ export function createLineSession(opts: {
       const placed: PlacedSong[] = [];
       for (const p of placements) {
         const features = await songFeaturesFor(p.url, async () => cachedShowAudioDecode(p.url) ?? (await decodeShowAudio(p.url)));
-        if (features) placed.push({ trackId: p.trackId, startTime: p.startTime, offset: p.offset, rate: p.rate, length: p.length, features });
+        if (features) placed.push({ trackId: p.trackId, startTime: p.startTime, offset: p.offset, rate: p.rate, length: p.length, fadeIn: p.fadeIn, fadeOut: p.fadeOut, gain: p.gain, features });
       }
       songs = placed;
     },

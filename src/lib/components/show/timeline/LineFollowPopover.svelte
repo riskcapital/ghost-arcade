@@ -13,6 +13,8 @@
   import { addMidiTap } from '../../../midi/midiTaps';
   import { FOLLOW_CHOICES, followChoiceId } from './lineUi';
   import { portal } from './trackLayout';
+  import { soundLayout } from './sound/soundRowLayout';
+  import { SOUND_ROW_TRACK_PREFIX } from '../../../timeline/lines/lineEvaluator';
 
   interface Props {
     line: ControlLine;
@@ -34,7 +36,11 @@
   function setSource(id: string) {
     const c = FOLLOW_CHOICES.find((x) => x.id === id);
     if (!c?.source) { put(null); return; }
-    put({ depth: follow?.depth ?? 0.5, ...(follow ?? {}), source: { ...c.source } as FollowSource });
+    // Song sources keep the sound row they read.
+    const prev = follow?.source;
+    const track = prev && (prev.kind === 'audio' || prev.kind === 'stem') ? prev.track : undefined;
+    const keep = track && (c.source.kind === 'audio' || c.source.kind === 'stem') ? { track } : {};
+    put({ depth: follow?.depth ?? 0.5, ...(follow ?? {}), source: { ...c.source, ...keep } as FollowSource });
   }
   function patchSource(patch: Partial<Record<string, number | string>>) {
     if (!follow) return;
@@ -93,6 +99,15 @@
     </select>
   </label>
   {#if follow}
+    {#if (follow.source.kind === 'audio' || follow.source.kind === 'stem') && $soundLayout.rows.length}
+      <label class="lf-row">
+        <span>From</span>
+        <select value={follow.source.track ?? ''} onchange={(e) => { const v = (e.currentTarget as HTMLSelectElement).value; patchSource({ track: v }); }} data-line-follow-row>
+          <option value="">The song</option>
+          {#each $soundLayout.rows.filter((r) => r.kind === 'audio') as r (r.id)}<option value={`${SOUND_ROW_TRACK_PREFIX}${r.id}`}>Sound row: {r.name}</option>{/each}
+        </select>
+      </label>
+    {/if}
     {#if follow.source.kind === 'beat'}
       <label class="lf-row">
         <span>Shape</span>

@@ -36,7 +36,9 @@ export type ParamTarget =
   | { scope: 'stage' }
   | { scope: 'led' }
   | { scope: 'block'; id: string }
-  | { scope: 'look'; id: string };
+  | { scope: 'look'; id: string }
+  /** A Timeline sound row (row id): its level and Music Studio effects. */
+  | { scope: 'sound'; id: string };
 
 export interface ParamEntry {
   key: string;
@@ -66,6 +68,9 @@ export interface RegistrySource {
   ledBlock?: (clipId: string) => TimelineLedClip | null;
   /** A block's or look block's where line, when it has one. */
   whereOf?: (clipId: string) => WhereSpec | null;
+  /** A Timeline sound row's parameters, and its stored value for one. */
+  soundParams?: (rowId: string) => ParamEntry[];
+  readSound?: (rowId: string, key: string) => number | undefined;
 }
 
 export function targetId(target: ParamTarget): string {
@@ -73,6 +78,7 @@ export function targetId(target: ParamTarget): string {
     case 'layer': return `layer:${target.id}`;
     case 'block': return `block:${target.id}`;
     case 'look': return `look:${target.id}`;
+    case 'sound': return `sound:${target.id}`;
     default: return target.scope;
   }
 }
@@ -187,6 +193,7 @@ export function paramsFor(source: RegistrySource, target: ParamTarget): ParamEnt
     const where = source.whereOf?.(target.id);
     return where ? [...lookBlockParams(), ...whereParams(where)] : lookBlockParams();
   }
+  if (target.scope === 'sound') return source.soundParams?.(target.id) ?? [];
   if (target.scope === 'block') {
     const where = source.whereOf?.(target.id);
     const led = source.ledBlock?.(target.id);
@@ -250,5 +257,6 @@ export function readParam(source: RegistrySource, target: ParamTarget, key: stri
     const p = lookBlockParams().find((x) => x.key === key);
     return p ? (p.default as number) : undefined;
   }
+  if (target.scope === 'sound') return source.readSound?.(target.id, key);
   return readStageLedParam(key, source.mappingComposition, source.wledControllers, source.wledEffects);
 }

@@ -9,8 +9,14 @@ const fs = require('fs');
 const path = require('path');
 const { writeFileAtomicSync } = require('./atomic-write.cjs');
 
-const APP_PORT = 11050;
-const SCRIPT_PORT = 11051;
+// GA_ABLETON_APP_PORT / GA_ABLETON_SCRIPT_PORT move both ends for a test
+// copy (a fake Live peer), so it never talks to the Live set on this machine.
+function portFromEnv(name, fallback) {
+  const value = Number(process.env[name]);
+  return Number.isInteger(value) && value > 0 && value < 65536 ? value : fallback;
+}
+const APP_PORT = portFromEnv('GA_ABLETON_APP_PORT', 11050);
+const SCRIPT_PORT = portFromEnv('GA_ABLETON_SCRIPT_PORT', 11051);
 const HOST = '127.0.0.1';
 const SCRIPT_FOLDER = 'GhostArcade';
 const REMOTE_SCRIPTS = 'Remote Scripts';

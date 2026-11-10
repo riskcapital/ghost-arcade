@@ -51,6 +51,13 @@ export function linesForLeds(lines: readonly ControlLine[], ledClipIds: Readonly
   return ledClipIds.size ? lines.filter((l) => l.target.scope === 'block' && ledClipIds.has(l.target.id)) : [];
 }
 
+/** A Timeline sound row's lines are grouped under `sound:<row id>`. */
+export const soundLineGroup = (rowId: string) => `sound:${rowId}`;
+
+export function linesForSoundRow(rowId: string, lines: readonly ControlLine[]): ControlLine[] {
+  return lines.filter((l) => l.target.scope === 'sound' && l.target.id === rowId);
+}
+
 /** Height of a group's lines. */
 export function lineGroupHeight(lines: readonly ControlLine[], expanded: boolean): number {
   if (!lines.length) return 0;
@@ -91,6 +98,9 @@ export function computeLineLayout(tracks: readonly ShowLayerTrack[], lines: read
     put(LOOKS_GROUP, linesForLooks(lines));
     put(STAGE_GROUP, linesForStage(lines));
     put(LEDS_GROUP, linesForLeds(lines, ledClipIds));
+    // Sound rows: every row id that has lines (rows draw only their own group).
+    const soundRows = new Set(lines.flatMap((l) => (l.target.scope === 'sound' ? [l.target.id] : [])));
+    for (const id of soundRows) put(soundLineGroup(id), linesForSoundRow(id, lines));
   }
   return out;
 }
@@ -394,7 +404,8 @@ export function frameValue(frame: import('../../../timeline/lines/lineEvaluator'
   const rec = t.scope === 'layer' ? frame.layers.get(t.id)
     : t.scope === 'block' ? frame.blocks?.get(t.id)
       : t.scope === 'look' ? frame.looks?.get(t.id)
-        : t.scope === 'stage' ? frame.stage : frame.leds;
+        : t.scope === 'sound' ? frame.sounds?.get(t.id)
+          : t.scope === 'stage' ? frame.stage : frame.leds;
   return rec?.[line.key];
 }
 

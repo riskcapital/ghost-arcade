@@ -181,7 +181,7 @@ describe('show timeline project persistence', () => {
     showTimeline.setTempo({ offset: 0.5, segments: [{ bar: 1, bpm: 124, beatsPerBar: 4, beatUnit: 4 }], source: 'manual' });
 
     const saved = JSON.parse(JSON.stringify(await project.exportProjectForSave())) as any;
-    expect(saved.project.showTimeline.version).toBe(6);
+    expect(saved.project.showTimeline.version).toBe(7);
     const savedClip = saved.project.showTimeline.layerTracks[0].clips[0];
     expect(savedClip.media.src).toBe('');
     expect(savedClip.media._assetRef.originalPath).toBe('/Users/x/clips/ramp.mp4');

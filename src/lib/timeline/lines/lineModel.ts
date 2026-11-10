@@ -144,6 +144,7 @@ export function normalizeLines(raw: unknown): ControlLine[] {
     const target: ParamTarget | null = t?.scope === 'layer' && typeof t.id === 'string' ? { scope: 'layer', id: t.id }
       : t?.scope === 'block' && typeof t.id === 'string' ? { scope: 'block', id: t.id }
       : t?.scope === 'look' && typeof t.id === 'string' ? { scope: 'look', id: t.id }
+      : t?.scope === 'sound' && typeof t.id === 'string' ? { scope: 'sound', id: t.id }
       : t?.scope === 'stage' ? { scope: 'stage' } : t?.scope === 'led' ? { scope: 'led' } : null;
     if (!target) continue;
     const kind: ParamKind = ['continuous', 'stepped', 'bool', 'colour'].includes(r.kind) ? r.kind : 'continuous';

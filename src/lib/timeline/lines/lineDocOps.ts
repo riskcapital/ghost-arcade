@@ -83,7 +83,7 @@ export function normalizeBindings(raw: unknown): import('./lineControls').LineBi
   for (const b of raw as any[]) {
     if (!b || typeof b.id !== 'string' || typeof b.key !== 'string' || !b.target || !b.source) continue;
     const t = b.target;
-    const target: ParamTarget | null = (t.scope === 'layer' || t.scope === 'block' || t.scope === 'look') && typeof t.id === 'string'
+    const target: ParamTarget | null = (t.scope === 'layer' || t.scope === 'block' || t.scope === 'look' || t.scope === 'sound') && typeof t.id === 'string'
       ? { scope: t.scope, id: t.id }
       : t.scope === 'stage' || t.scope === 'led' ? { scope: t.scope } : null;
     if (!target) continue;
