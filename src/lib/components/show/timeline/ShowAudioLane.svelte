@@ -7,6 +7,7 @@
    * view are drawn, and a waveform path is built once per track slice
    * (moving a track or zooming reuses it).
    */
+  import { trimEdgeWidth } from './trackLayout';
   import type { ShowAudioTrack } from '../../../types';
   import type { ShowTimelineSelection } from '../../../stores/showTimeline';
   import { cachedWavePath, WAVE_VIEW_H } from './waveform';
@@ -54,7 +55,7 @@
       class:selected={selection?.kind === 'audio' && selection.id === track.id}
       class:missing={!track.url}
       class:muted={track.muted}
-      style="left: {track.startTime * zoom}px; width: {Math.max(6, track.duration * zoom)}px"
+      style="left: {track.startTime * zoom}px; width: {Math.max(6, track.duration * zoom)}px; --edge-w: {trimEdgeWidth(Math.max(6, track.duration * zoom))}px"
       onmousedown={(e) => onblockdrag(e, track.id, track.startTime)}
       title={`${track.name} — ${formatPrecise(track.duration)}${track.url ? '' : ' (media missing)'}`}
     >
@@ -156,7 +157,7 @@
     position: absolute;
     top: 0;
     bottom: 0;
-    width: 7px;
+    width: var(--edge-w, 7px);
     z-index: 2;
     cursor: ew-resize;
   }

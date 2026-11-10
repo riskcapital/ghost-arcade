@@ -15,7 +15,7 @@
    */
   import type { ShowLayerClip } from '../../../types';
   import { clipFades, clipLoopStart, clipRate, mediaEnd, SHOW_CLIP_END_GUARD_SECONDS } from '../../../show/tracks/showTrackEval';
-  import type { ClipPart } from './trackLayout';
+  import { trimEdgeWidth, type ClipPart } from './trackLayout';
 
   interface Props {
     clip: ShowLayerClip;
@@ -33,6 +33,8 @@
 
   const left = $derived(clip.startTime * zoom);
   const width = $derived(Math.max(4, clip.duration * zoom));
+  // Narrower handles on a short clip, so its middle can still be grabbed.
+  const edgeW = $derived(trimEdgeWidth(width));
   const fades = $derived(clipFades(clip));
   const fadeInPx = $derived(fades.fadeIn * zoom);
   const fadeOutPx = $derived(fades.fadeOut * zoom);
@@ -83,6 +85,7 @@
   style:left="{left}px"
   style:width="{width}px"
   style:--clip-color={clip.color || color}
+  style:--edge-w="{edgeW}px"
   data-clip-id={clip.id}
   onmousedown={(e) => press(e, 'body')}
   ondblclick={() => ondoubleclick?.(clip)}
@@ -232,7 +235,7 @@
     position: absolute;
     top: 0;
     bottom: 0;
-    width: 7px;
+    width: var(--edge-w, 7px);
     z-index: 2;
     cursor: ew-resize;
   }

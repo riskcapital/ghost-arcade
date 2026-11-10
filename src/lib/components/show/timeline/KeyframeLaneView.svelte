@@ -10,12 +10,15 @@
    * - Double-click: add a key there (value from the height you clicked).
    * - Drag a key: move it in time and value (several selected keys move in
    *   time together). Hold Cmd/Ctrl to move without snapping.
-   * - Shift-click: add to the selection. Right-click: easing and delete.
+   * - Shift-click: add to the selection (Cmd/Ctrl only means "no snap").
+   *   Right-click: easing and delete.
+   * - Esc while dragging puts the keys back.
    */
   import type { KeyframeEasing, KeyframeTrack } from '../../../types';
   import { evaluateTrack, KEYFRAME_EASINGS } from '../../../keyframes/easing';
   import { LANE_KEY_EPSILON } from '../../../show/tracks/showTrackLanes';
-  import { laneValueToY, laneYToValue, portal } from './trackLayout';
+  import { addsToSelection, laneValueToY, laneYToValue, movesFreely, portal } from './trackLayout';
+  import { followPointer } from './dragSession';
 
   interface Props {
     lane: KeyframeTrack;
@@ -36,11 +39,14 @@
     onselectkeys: (times: number[], additive: boolean) => void;
     ondeletekeys: (times: number[]) => void;
     oneasing: (times: number[], easing: KeyframeEasing) => void;
+    /** At the start of a drag: returns what puts the show back if the drag
+     *  is cancelled. Without it, the drag is moved back by hand. */
+    snapshot?: () => () => void;
   }
 
   let {
     lane, zoom, viewStart, viewEnd, height, min, max, inactive = false, locked = false,
-    selectedTimes, snap, onaddkey, onmovekey, onshiftkeys, onselectkeys, ondeletekeys, oneasing,
+    selectedTimes, snap, onaddkey, onmovekey, onshiftkeys, onselectkeys, ondeletekeys, oneasing, snapshot,
   }: Props = $props();
 
   let el: HTMLDivElement | undefined = $state();
@@ -88,8 +94,9 @@
     e.preventDefault();
     e.stopPropagation();
     menu = null;
-    const additive = e.shiftKey || e.metaKey || e.ctrlKey;
+    const additive = addsToSelection(e);
     const already = isSelected(key.time);
+    const selectedBefore = [...selectedTimes];
     if (additive) onselectkeys(already ? selectedTimes.filter((t) => Math.abs(t - key.time) >= LANE_KEY_EPSILON) : [...selectedTimes, key.time], false);
     else if (!already) onselectkeys([key.time], false);
     if (locked || (additive && already)) return;
@@ -100,11 +107,12 @@
     let moved = false;
     const startX = e.clientX;
     const startY = e.clientY;
+    const restore = snapshot?.() ?? null;
     const onMove = (ev: MouseEvent) => {
       if (!moved && Math.abs(ev.clientX - startX) < 3 && Math.abs(ev.clientY - startY) < 3) return;
       moved = true;
       let t = Math.max(0, timeAt(ev.clientX) - grab);
-      if (!(ev.metaKey || ev.ctrlKey)) t = snap(t);
+      if (!movesFreely(ev)) t = snap(t);
       if (group.length > 1) {
         const delta = t - current;
         if (Math.abs(delta) < 1e-9) return;
@@ -117,16 +125,20 @@
       current = t;
     };
     const onUp = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
       if (moved) {
         if (group.length > 1) onselectkeys(group.map((g) => g + (current - key.time)), false);
         else onselectkeys([current], false);
         swallowClick();
       }
     };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    const onCancel = () => {
+      if (!moved) return;
+      if (restore) restore();
+      else if (group.length > 1) onshiftkeys(group.map((g) => g + (current - key.time)), key.time - current, dragId);
+      else onmovekey(current, key.time, isBool ? undefined : key.value, dragId);
+      onselectkeys(selectedBefore.length ? selectedBefore : [key.time], false);
+    };
+    followPointer({ move: onMove, end: onUp, cancel: onCancel });
   }
 
   /** The grid seeks on click; a drag that ends here is not a click. */
@@ -139,7 +151,7 @@
   function addAt(e: MouseEvent) {
     if (locked) return;
     e.stopPropagation();
-    const t = e.metaKey || e.ctrlKey ? timeAt(e.clientX) : snap(timeAt(e.clientX));
+    const t = movesFreely(e) ? timeAt(e.clientX) : snap(timeAt(e.clientX));
     if (isBool) {
       const now = evaluateTrack(lane, t);
       onaddkey(t, !(now === true));
@@ -167,9 +179,12 @@
     if (!menu) return;
     const close = () => { menu = null; };
     const t = setTimeout(() => window.addEventListener('mousedown', close), 0);
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    window.addEventListener('keydown', key);
     return () => {
       clearTimeout(t);
       window.removeEventListener('mousedown', close);
+      window.removeEventListener('keydown', key);
     };
   });
 

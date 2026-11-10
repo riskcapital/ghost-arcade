@@ -8,6 +8,7 @@
    * the blocks and junctions in view are drawn, so a playing show re-renders
    * none of this.
    */
+  import { trimEdgeWidth } from './trackLayout';
   import type { CompositionTransitionStyle, ShowPresetClip } from '../../../types';
   import type { ShowTimelineSelection } from '../../../stores/showTimeline';
   import { TRANSITION_OPTIONS } from '../../../stores/presetTransition';
@@ -93,7 +94,7 @@
       class="show-block preset-block"
       class:selected={selection?.kind === 'preset' && selection.id === clip.id}
       class:live={activeClipId === clip.id}
-      style="left: {clip.startTime * zoom}px; width: {Math.max(6, clip.duration * zoom)}px"
+      style="left: {clip.startTime * zoom}px; width: {Math.max(6, clip.duration * zoom)}px; --edge-w: {trimEdgeWidth(Math.max(6, clip.duration * zoom))}px"
       onmousedown={(e) => onblockdrag(e, clip.id, clip.startTime)}
       title={`${compositionName(clip.compositionId, clip.label)} — ${formatPrecise(clip.duration)}`}
     >
@@ -344,7 +345,7 @@
     position: absolute;
     top: 0;
     bottom: 0;
-    width: 7px;
+    width: var(--edge-w, 7px);
     z-index: 2;
     cursor: ew-resize;
   }

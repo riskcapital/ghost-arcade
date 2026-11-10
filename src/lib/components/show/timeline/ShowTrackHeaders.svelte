@@ -13,6 +13,7 @@
   import { trackLaneInfo } from './trackParams';
   import { liveTakeover } from '../../../show/takeover/liveTakeover';
   import { showSlice } from './timelineSlices';
+  import { followPointer } from './dragSession';
 
   // Slices, not $showTimeline: the store publishes every playhead frame.
   const layerTracksStore = showSlice('layerTracks');
@@ -50,9 +51,9 @@
       const gap = reorderGapAt(trackTops(now), now.map(trackHeight), ev.clientY - top);
       reorder = { trackId, gap, from };
     };
-    const up = () => {
-      window.removeEventListener('mousemove', move);
-      window.removeEventListener('mouseup', up);
+    // Esc or focus lost: nothing has moved yet, the gap marker just goes.
+    followPointer({ move, end: () => up(), cancel: () => { reorder = null; } });
+    function up() {
       const r = reorder;
       reorder = null;
       if (!moved || !r) return;
@@ -62,9 +63,7 @@
       setTimeout(() => window.removeEventListener('click', stop, { capture: true }), 0);
       const to = reorderIndexForGap(r.from, r.gap);
       if (to !== r.from) showTimeline.reorderLayerTrack(r.trackId, to);
-    };
-    window.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', up);
+    }
   }
 
   function openMenu(e: MouseEvent) {
