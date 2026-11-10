@@ -8,8 +8,14 @@
    * and pause (Space alone stays the hand tool), ← / → jump between markers,
    * Home goes to the start. While tracks are taken over live in the editor,
    * a LIVE pill and Return hand them back from here.
+   *
+   * In the editor's own Stage 3D view there is no bar (the show tray is
+   * there), but Enter / Shift+Space still play and pause the show: Space is
+   * the hand tool in this view, so the show had no play key there.
    */
   import { onDestroy, onMount } from 'svelte';
+  import { get } from 'svelte/store';
+  import { showTimeline } from '../../stores/showTimeline';
   import {
     pauseCameraFollow,
     sendRehearsalCommand,
@@ -104,15 +110,43 @@
     const tag = el.tagName;
     return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable === true;
   }
+  /** Enter on a button or link reached with the keyboard (Tab) presses that,
+   *  not the show's play. A button that only has focus because it was
+   *  clicked (Rec, then Enter to play) still leaves Enter to the show. */
+  function pressesFocusedControl(e: KeyboardEvent): boolean {
+    const el = e.target as HTMLElement | null;
+    if (!el || typeof el.closest !== 'function') return false;
+    const control = el.closest('button, a[href], summary, [role="button"], [role="menuitem"], [role="tab"], [role="checkbox"], [role="switch"]');
+    if (!control) return false;
+    // Focus that came from a pointer press on it is not the keyboard's.
+    return !(lastPressed && control.contains(lastPressed));
+  }
+  /** The element the last pointer press landed on. */
+  let lastPressed: Element | null = null;
+  /** This is the Stage Sim window (the editor's show arrives over the bridge). */
+  const inStageWindow = typeof location !== 'undefined' && new URLSearchParams(location.search).get('mode') === 'stage-3d';
   function take(e: KeyboardEvent) {
     e.preventDefault();
     e.stopPropagation();
   }
   function onKeydown(e: KeyboardEvent) {
-    if (!show?.hasShow || isTextEntry(e.target)) return;
+    if (isTextEntry(e.target)) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const space = e.code === 'Space' || e.key === ' ';
-    if ((e.key === 'Enter' && !e.shiftKey) || (space && e.shiftKey)) {
+    const playKey = (e.key === 'Enter' && !e.shiftKey && !pressesFocusedControl(e)) || (space && e.shiftKey);
+    if (!show?.hasShow) {
+      // The editor's Stage 3D view: play the show here directly, when no
+      // control has the keyboard (the tray and panels keep their keys).
+      if (inStageWindow || !playKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && t !== document.body && t !== document.documentElement && t.tagName !== 'CANVAS') return;
+      const s = get(showTimeline);
+      if (s.duration <= 0 || showTimeline.isChasing()) return;
+      take(e);
+      if (!e.repeat) showTimeline.togglePlay();
+      return;
+    }
+    if (playKey) {
       take(e);
       if (!e.repeat) toggle();
       return;
@@ -138,6 +172,7 @@
   // ── Grabbing the camera pauses "Follow show camera" ────────────────────
   let grab: { x: number; y: number } | null = null;
   function onPointerDown(e: PointerEvent) {
+    lastPressed = e.target instanceof Element ? e.target : null;
     grab = e.target instanceof HTMLCanvasElement ? { x: e.clientX, y: e.clientY } : null;
   }
   function onPointerMove(e: PointerEvent) {
@@ -250,7 +285,7 @@
           onclick={openSync}
           title="Delay the show's sound so it lines up with this view"
           data-stage-audio-sync
-        >Audio sync</button>
+        >{show.audioDelay.enabled && show.audioDelay.seconds > 0 ? `Audio +${Math.round(show.audioDelay.seconds * 1000)} ms` : 'Audio sync'}</button>
         {#if syncOpen}
           <div class="sst-pop" data-stage-audio-sync-panel>
             <label class="sst-row">
@@ -276,7 +311,7 @@
             {#if measuredMs !== null}
               <button class="sst-chip" onclick={() => setDelay(true, (measuredMs ?? 0) / 1000)} title="This view runs about this far behind the output">Use measured: {measuredMs} ms</button>
             {/if}
-            <p class="sst-note">The stage view runs a little behind the output. Only the speakers are delayed, and only while this window is open.</p>
+            <p class="sst-note">The stage view runs a little behind the output. Only the speakers are delayed, only while this window is open, and it is not saved. Clip sound the render core plays itself is not delayed.</p>
           </div>
         {/if}
       </div>

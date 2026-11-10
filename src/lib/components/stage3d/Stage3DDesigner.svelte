@@ -44,7 +44,8 @@
   import DemoReelPanel from './DemoReelPanel.svelte';
   import StageShowTransport from './StageShowTransport.svelte';
   import { epochNow, type RecAudioResult } from '../../show/rehearsal/rehearsalBridge';
-  import { holdStageCapture, startStageRecAudio, stageRecordingMaxDim, stageRecordingMirrorDim, type StageRecAudio } from '../../show/rehearsal/stageRehearsal';
+  import { holdStageCapture, startStageRecAudio, stageRecActive, stageRecordingMaxDim, stageRecordingMirrorDim, type StageRecAudio } from '../../show/rehearsal/stageRehearsal';
+  import { reelRenderBusy, stageReelRender } from '../../recording/stageReelRender';
 
   /** When false, this component renders only the floating UI overlay;
    *  the viewport comes from Canvas.svelte's stage3DOutput mode. */
@@ -368,11 +369,17 @@
     toastTimer = setTimeout(() => (toastMessage = ''), 1600);
   }
 
+  // The stage view feeds one capture at a time: a Rec started during a reel
+  // (or the other way round) ended the first one and deleted its file.
+  $: reelBusy = reelRenderBusy($stageReelRender.status);
+
   async function startStageRecording() {
-    if (recorderHandle) return;
+    if (recorderHandle || get(stageRecActive)) return;
+    if (reelRenderBusy(get(stageReelRender).status)) { toast('Wait for the reel to finish rendering'); return; }
     const controls = $stage3DRendererControls;
     const res = REC_RES[recRes];
     if (!controls) { toast('Stage renderer not ready'); return; }
+    stageRecActive.set(true);
 
     if (isDesktopApp) {
       // Record exactly what the stage view shows: frames come from the
@@ -421,12 +428,14 @@
             isRecording = false;
             recorderHandle = null;
             stageRecordingMaxDim.set(null);
+            stageRecActive.set(false);
             toastRecordingSaved(recAudioResult, savedPath);
           },
           onError: (err) => {
             isRecording = false;
             recorderHandle = null;
             stageRecordingMaxDim.set(null);
+            stageRecActive.set(false);
             recAudio?.cancel();
             recAudio = null;
             toast(err.message || 'Recording failed');
@@ -449,7 +458,7 @@
     // project's output resolution) and record THAT — so a wide comp
     // still produces a clean 1080p / 4K file.
     const recordCanvas = controls.beginRecording(res.w, res.h) ?? null;
-    if (!recordCanvas) { toast('Stage renderer not ready'); return; }
+    if (!recordCanvas) { stageRecActive.set(false); toast('Stage renderer not ready'); return; }
     recordingDuration = 0;
     // Drawn at the working rate even if the window is minimised.
     const releaseCaptureHold = holdStageCapture();
@@ -462,6 +471,7 @@
         recorderHandle = null;
         controls?.endRecording();
         releaseCaptureHold();
+        stageRecActive.set(false);
         toast('Stage recording saved');
       },
       onError: (err) => {
@@ -469,6 +479,7 @@
         recorderHandle = null;
         controls?.endRecording();
         releaseCaptureHold();
+        stageRecActive.set(false);
         toast(err.message || 'Recording failed');
       },
     });
@@ -478,6 +489,7 @@
     } else {
       controls?.endRecording();
       releaseCaptureHold();
+      stageRecActive.set(false);
     }
   }
 
@@ -778,7 +790,8 @@
       class="tbtn rec-btn"
       class:recording={isRecording}
       onclick={toggleStageRecording}
-      title={isRecording ? 'Stop stage recording' : `Record stage scene (${REC_RES[recRes].label}, 16:9)`}
+      disabled={!isRecording && reelBusy}
+      title={isRecording ? 'Stop stage recording' : reelBusy ? 'Wait for the reel to finish rendering' : `Record stage scene (${REC_RES[recRes].label}, 16:9)`}
     >
       {isRecording ? `■ ${formatRecordingDuration(recordingDuration)}` : '● Rec'}
     </button>

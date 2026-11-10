@@ -1,0 +1,67 @@
+{
+  "name": "Stage Sim: rehearsal transport",
+  "description": "The Stage Sim window plays the editor's show: Enter plays and pauses it (also after clicking a button), Home goes to the start. The audio-sync delay shows in the editor's show transport and in the Stage Sim, is not saved, and ends when the Stage Sim window closes.",
+  "steps": [
+    { "do": "app.start", "choice": "blank" },
+    { "do": "project.layer", "name": "Wall", "colour": "red" },
+    { "do": "show.open" },
+    { "do": "show.track", "name": "wall", "layer": "Wall" },
+    { "do": "show.clip", "track": "wall", "layerContent": true, "at": 0, "duration": 20 },
+    { "do": "show.seek", "t": 1, "settle": 600 },
+    {
+      "do": "stage.open",
+      "label": "The Stage Sim window mirrors the show",
+      "expect": {
+        "stage.true": { "js": "!!document.querySelector('[data-stage-show-transport]') && window.__ghostStageRehearsal.show()?.duration === 20", "label": "transport with the 20 s show" }
+      }
+    },
+    {
+      "do": "stage.key",
+      "key": "Enter",
+      "settle": 800,
+      "label": "Enter in the Stage Sim plays the editor's show",
+      "expect": { "eval.true": { "js": "__show.show().isPlaying === true", "label": "editor playing" } }
+    },
+    {
+      "do": "stage.key",
+      "key": "Enter",
+      "settle": 800,
+      "label": "Enter again pauses it",
+      "expect": { "eval.true": { "js": "__show.show().isPlaying === false", "label": "editor paused" } }
+    },
+    { "do": "stage.click", "selector": "[data-stage-audio-sync]", "settle": 300 },
+    {
+      "do": "stage.key",
+      "key": "Enter",
+      "settle": 800,
+      "label": "After a mouse click on a button, Enter still plays the show (it does not press the button)",
+      "expect": { "eval.true": { "js": "__show.show().isPlaying === true", "label": "editor playing" } }
+    },
+    {
+      "do": "stage.key",
+      "key": "Home",
+      "settle": 300,
+      "label": "Home goes back to the start",
+      "expect": { "eval.true": { "js": "__show.show().currentTime < 0.6", "label": "editor near 0" } }
+    },
+    { "do": "show.pause" },
+    {
+      "do": "stage.eval",
+      "js": "(() => { const box = document.querySelector('[data-stage-audio-sync-panel] input[type=checkbox]'); if (!box.checked) box.click(); const r = document.querySelector('[data-stage-audio-sync-panel] input[type=range]'); r.value = '120'; r.dispatchEvent(new Event('input', { bubbles: true })); return true; })()"
+    },
+    {
+      "do": "wait",
+      "seconds": 0.8,
+      "label": "A 120 ms audio-sync delay shows in the editor and in the Stage Sim, and is not saved",
+      "expect": {
+        "eval.true": { "js": "document.querySelector('[data-show-audio-delay]')?.textContent.trim() === 'Audio +120 ms' && !localStorage.getItem('ghostarcade-stage-audio-delay')", "label": "editor badge, nothing saved" },
+        "stage.true": { "js": "document.querySelector('[data-stage-audio-sync]')?.textContent.trim() === 'Audio +120 ms'", "label": "Stage Sim chip" }
+      }
+    },
+    {
+      "do": "stage.close",
+      "label": "Closing the Stage Sim ends the delay",
+      "expect": { "eval.true": { "js": "!document.querySelector('[data-show-audio-delay]')", "label": "badge gone" } }
+    }
+  ]
+}

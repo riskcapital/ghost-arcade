@@ -7,7 +7,7 @@
  * recordings: straight from the song files when the show played through
  * without a jump, otherwise from a live capture of what the editor played.
  */
-import { get } from 'svelte/store';
+import { get, writable } from 'svelte/store';
 import { showTimeline } from '../../stores/showTimeline';
 import { project } from '../../stores/layers';
 import { cueList } from '../cueList';
@@ -21,6 +21,8 @@ import {
   REHEARSAL_ALIVE_MS,
   REHEARSAL_CHANNEL,
   REHEARSAL_STATE_HZ,
+  clockSkewAllowsExact,
+  createClockSkewEstimator,
   epochNow,
   executeRehearsalCommand,
   normalizeAudioDelay,
@@ -36,28 +38,31 @@ import {
   type TransportSample,
 } from './rehearsalBridge';
 
-const AUDIO_DELAY_KEY = 'ghostarcade-stage-audio-delay';
+/** Where older builds saved the audio-sync delay. It is session-only now (a
+ *  saved delay ran the house speakers late in a later show with nothing on
+ *  screen to say so); the old value is dropped, not applied. */
+const LEGACY_AUDIO_DELAY_KEY = 'ghostarcade-stage-audio-delay';
 
-function loadAudioDelay(): RehearsalAudioDelay {
+function dropLegacyAudioDelay(): void {
   try {
-    return normalizeAudioDelay(JSON.parse(globalThis.localStorage?.getItem(AUDIO_DELAY_KEY) || 'null'));
-  } catch {
-    return normalizeAudioDelay(null);
-  }
-}
-
-function saveAudioDelay(delay: RehearsalAudioDelay): void {
-  try {
-    globalThis.localStorage?.setItem(AUDIO_DELAY_KEY, JSON.stringify(delay));
+    globalThis.localStorage?.removeItem(LEGACY_AUDIO_DELAY_KEY);
   } catch {
     /* private mode */
   }
 }
 
+/** The speakers' audio-sync delay in force right now (seconds; 0 = none).
+ *  The editor shows an indicator whenever it is not 0. */
+export const rehearsalAudioDelayActive = writable(0);
+
 interface RecAudioSession {
   id: string;
   samples: TransportSample[];
   sidecar: AudioSidecar | null;
+  /** Clock difference measured from this recording's own start message. */
+  skewMs: number | null;
+  /** The stage page that asked for it. */
+  instance: string | null;
 }
 
 /** Build the state the stage window mirrors. */
@@ -197,8 +202,13 @@ export function installEditorRehearsal(): () => void {
   let lastHelloAt = 0;
   let alive = false;
   let publishTimer: ReturnType<typeof setInterval> | null = null;
-  let audioDelay = loadAudioDelay();
+  dropLegacyAudioDelay();
+  let audioDelay = normalizeAudioDelay(null);
   const sessions = new Map<string, RecAudioSession>();
+  // How far the stage window's clock is from ours (see finishRecording).
+  const skew = createClockSkewEstimator();
+  /** The stage page we are talking to (it changes when the window reloads). */
+  let stageInstance: string | null = null;
 
   const post = (msg: RehearsalMessage) => {
     try {
@@ -214,12 +224,27 @@ export function installEditorRehearsal(): () => void {
   };
 
   const applyAudioDelay = () => {
-    clipAudioBus.setOutputDelay(alive && audioDelay.enabled ? audioDelay.seconds : 0);
+    const seconds = alive && audioDelay.enabled ? audioDelay.seconds : 0;
+    clipAudioBus.setOutputDelay(seconds);
+    rehearsalAudioDelayActive.set(seconds);
   };
 
   // A Render rehearsal's recording leaves a live takeover out of the
   // picture while it runs (one hold per recording; all go with the window).
   const RENDER_HOLD = 'rehearsal-render:';
+
+  /** Drop every recording's sound capture: the stage window that asked for
+   *  them is gone (closed, reloaded, crashed), so no finish will come. */
+  const dropSessions = (why: string) => {
+    if (sessions.size === 0) return;
+    console.info(`[Rehearsal] ${why}: dropping ${sessions.size} recording sound capture(s)`);
+    for (const session of sessions.values()) {
+      session.sidecar?.discard();
+      holdTakeoverForRender(RENDER_HOLD + session.id, false);
+    }
+    sessions.clear();
+  };
+
   const setAlive = (next: boolean) => {
     if (next === alive) return;
     alive = next;
@@ -231,9 +256,13 @@ export function installEditorRehearsal(): () => void {
         else publish();
       }, Math.round(1000 / REHEARSAL_STATE_HZ));
       publish();
-    } else if (publishTimer) {
-      clearInterval(publishTimer);
+    } else {
+      if (publishTimer) clearInterval(publishTimer);
       publishTimer = null;
+      skew.reset();
+      dropSessions('the Stage Sim window went away');
+      // Session-only: a delay never outlives the window it lines up with.
+      audioDelay = normalizeAudioDelay(null);
     }
     applyAudioDelay();
   };
@@ -252,7 +281,6 @@ export function installEditorRehearsal(): () => void {
     setLoop: (on) => showTimeline.setLoop(on),
     setAudioDelay: (delay) => {
       audioDelay = delay;
-      saveAudioDelay(delay);
       applyAudioDelay();
     },
     returnTakeover: (instant) => {
@@ -264,7 +292,14 @@ export function installEditorRehearsal(): () => void {
     const session = sessions.get(msg.id);
     sessions.delete(msg.id);
     if (!session) return { ok: false, mode: 'none', error: 'No audio was captured for this recording.' };
-    const plan = rehearsalAudioPlan(session.samples, msg.startedAt, msg.durationSeconds, msg.latencySeconds);
+    let plan = rehearsalAudioPlan(session.samples, msg.startedAt, msg.durationSeconds, msg.latencySeconds);
+    // The plan places the song by the two windows' clocks: only trust it
+    // when they agree (a clock that went wrong put the wrong part of the
+    // song under the picture, minutes off).
+    const skewMs = session.skewMs ?? skew.value();
+    if (plan.kind === 'exact' && !clockSkewAllowsExact(skewMs)) {
+      plan = { kind: 'discontinuous', reason: `the windows' clocks disagree (${skewMs === null ? 'unknown' : `${Math.round(skewMs)} ms`})` };
+    }
     if (plan.kind === 'discontinuous') console.info(`[Rehearsal] live sound capture: ${plan.reason}`);
     const s = get(showTimeline);
     if (plan.kind === 'exact') {
@@ -303,11 +338,27 @@ export function installEditorRehearsal(): () => void {
     switch (msg.type) {
       case 'stage-hello':
         lastHelloAt = epochNow();
+        if (msg.instance && msg.instance !== stageInstance) {
+          // A reloaded (or new) stage page: what the old one recorded never finishes.
+          if (stageInstance) {
+            skew.reset();
+            for (const [id, session] of sessions) {
+              if (session.instance !== msg.instance) {
+                session.sidecar?.discard();
+                holdTakeoverForRender(RENDER_HOLD + id, false);
+                sessions.delete(id);
+              }
+            }
+          }
+          stageInstance = msg.instance;
+        }
+        skew.note(msg.at, lastHelloAt);
         if (!alive) setAlive(true);
         else if (publisher.stageHas(msg.stateVersion)) publish();
         break;
       case 'stage-bye':
         setAlive(false);
+        stageInstance = null;
         break;
       case 'show-command': {
         const outcome = executeRehearsalCommand(msg.command, transport);
@@ -317,12 +368,20 @@ export function installEditorRehearsal(): () => void {
       }
       case 'rec-audio-start': {
         if (msg.render) holdTakeoverForRender(RENDER_HOLD + msg.id, true);
-        const sidecar = startRecordingAudioSidecar();
+        const receivedAt = epochNow();
+        skew.note(msg.at, receivedAt);
         const s = get(showTimeline);
+        // No show, no show sound: a live capture would only hold the mic.
+        const sidecar = s.duration > 0 ? startRecordingAudioSidecar() : null;
+        const startSkew = Number.isFinite(msg.at) ? receivedAt - msg.at : null;
         sessions.set(msg.id, {
           id: msg.id,
           sidecar,
-          samples: [{ at: epochNow(), showTime: s.currentTime, playing: s.isPlaying, seekGeneration: showTimeline.seekGeneration() }],
+          // This message's own transit says the most about this recording;
+          // the hellos' best guess covers a slow delivery.
+          skewMs: startSkew !== null && clockSkewAllowsExact(startSkew) ? startSkew : skew.value(),
+          instance: msg.instance ?? null,
+          samples: [{ at: receivedAt, showTime: s.currentTime, playing: s.isPlaying, seekGeneration: showTimeline.seekGeneration() }],
         });
         break;
       }
@@ -381,8 +440,7 @@ export function installEditorRehearsal(): () => void {
     unsubCues();
     unsubTakeover();
     releaseTakeoverRenderHolds(RENDER_HOLD);
-    for (const session of sessions.values()) session.sidecar?.discard();
-    sessions.clear();
+    dropSessions('the editor closed its rehearsal channel');
     if (publishTimer) clearInterval(publishTimer);
     publishTimer = null;
     alive = false;

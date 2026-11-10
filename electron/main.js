@@ -441,6 +441,8 @@ let mainWindow = null;
 let outputWindow = null;
 let spoutOsrWindow = null;  // Hidden OSR window for zero-copy Spout output
 let stage3dWindow = null;   // 3D Stage Designer pop-out (?mode=stage-3d)
+/** The Stage Sim page has a recording or reel running or saving. */
+let stage3dCaptureBusy = false;
 let projectionSimWindow = null; // Projection Simulator pop-out (?mode=projection-sim)
 // Per-slice multi-output windows. Keyed by sliceId; each entry is a
 // borderless fullscreen BrowserWindow opened on a specific physical
@@ -1184,6 +1186,42 @@ async function cancelJpegFrameEncoderJob(jobIdInput) {
   return { success: true };
 }
 
+/**
+ * A frame-encoder job fed by one renderer (the Stage Sim's Rec and reels, an
+ * export) has no one to finish it once that page is gone: closed, reloaded
+ * or crashed. Without this, ffmpeg kept running and a partial file stayed
+ * in the generated-video folder. `cancel` runs once when the page goes; the
+ * returned detach stops watching (the job finished or was cancelled).
+ */
+function watchEncoderJobOwner(owner, label, shouldCancel, cancel) {
+  if (!owner || typeof owner.once !== 'function') return () => {};
+  let done = false;
+  const gone = (why) => {
+    if (done) return;
+    detach();
+    if (!shouldCancel()) return;
+    console.warn(`[Encoder] ${label}: the page that fed it ${why}; cancelling.`);
+    void Promise.resolve().then(cancel).catch(() => {});
+  };
+  const onDestroyed = () => gone('closed');
+  const onCrashed = () => gone('crashed');
+  const onNavigate = (details) => {
+    if (details?.isMainFrame && !details.isSameDocument) gone('reloaded');
+  };
+  const detach = () => {
+    if (done) return;
+    done = true;
+    owner.removeListener('destroyed', onDestroyed);
+    owner.removeListener('render-process-gone', onCrashed);
+    owner.removeListener('did-start-navigation', onNavigate);
+  };
+  owner.once('destroyed', onDestroyed);
+  owner.once('render-process-gone', onCrashed);
+  owner.on('did-start-navigation', onNavigate);
+  if (owner.isDestroyed?.()) onDestroyed();
+  return detach;
+}
+
 function startMp4FrameEncoderJob(args = {}) {
   const jobId = String(args.jobId || '').trim();
   if (!jobId) throw new Error('Missing MP4 frame encoder job id.');
@@ -1416,6 +1454,7 @@ async function finishMp4FrameEncoderJob(jobIdInput) {
   const job = activeMp4FrameEncoderJobs.get(jobId);
   if (!job) return { success: true, alreadyFinished: true };
   job.detachCaptureOwner?.();
+  job.detachEncoderOwner?.();
   await job.liveClock?.stop();
   job.closing = true;
   await job.frameSink?.close();
@@ -1470,6 +1509,7 @@ async function cancelMp4FrameEncoderJob(jobIdInput) {
   if (!job) return { success: true };
   job.cancelled = true;
   job.detachCaptureOwner?.();
+  job.detachEncoderOwner?.();
   job.liveClock?.cancel();
   await job.frameSink?.close();
   const audioTap = job.audioTap;
@@ -2091,6 +2131,7 @@ function closeAuxiliaryWindows() {
   if (stage3dWindow && !stage3dWindow.isDestroyed()) {
     const win = stage3dWindow;
     stage3dWindow = null;
+    win.__gaForceClose = true;
     try { win.close(); } catch {}
   } else {
     stage3dWindow = null;
@@ -6971,6 +7012,14 @@ function registerIpcHandlers() {
   // The renderer pings this when the user clicks the in-app close
   // button so we can dispose the window from the main process side
   // (renderer-initiated `window.close()` doesn't always fire on macOS).
+  // The Stage Sim page reports while a recording or reel runs or saves.
+  ipcMain.handle('stage3d_capture_state', (event, args = {}) => {
+    if (stage3dWindow && !stage3dWindow.isDestroyed() && event.sender === stage3dWindow.webContents) {
+      stage3dCaptureBusy = args?.busy === true;
+    }
+    return { ok: true };
+  });
+
   ipcMain.handle('stage3d_window_closing', () => {
     if (stage3dWindow && !stage3dWindow.isDestroyed()) {
       stage3dWindow.close();
@@ -8352,7 +8401,7 @@ function registerIpcHandlers() {
     }
   });
 
-  ipcMain.handle('mp4_frame_encoder_start', async (_, args = {}) => {
+  ipcMain.handle('mp4_frame_encoder_start', async (event, args = {}) => {
     try {
       const { recordingCodec } = require('./recording-formats.cjs');
       const codec = recordingCodec(args.codec);
@@ -8364,8 +8413,16 @@ function registerIpcHandlers() {
         }
         hardwareProRes = probed.hardwareProRes;
       }
-      const job = startMp4FrameEncoderJob({ ...args, hardwareProRes });
-      return { success: true, ...job };
+      const started = startMp4FrameEncoderJob({ ...args, hardwareProRes });
+      const job = activeMp4FrameEncoderJobs.get(started.jobId);
+      if (job) {
+        // Live REC from the editor keeps its own owner watch (it finishes
+        // the take to keep the footage); every other job is cancelled.
+        job.detachEncoderOwner = watchEncoderJobOwner(event?.sender, `MP4 job ${started.jobId}`,
+          () => activeMp4FrameEncoderJobs.get(started.jobId) === job && !job.liveClock && !job.detachCaptureOwner,
+          () => cancelMp4FrameEncoderJob(started.jobId));
+      }
+      return { success: true, ...started };
     } catch (err) {
       console.error('[Main] mp4_frame_encoder_start error:', err?.message || err);
       return { success: false, error: err?.message || String(err) };
@@ -10025,6 +10082,32 @@ function createStage3DWindow(targetDisplayId = null) {
     },
   });
   stage3dWindow.setMenuBarVisibility(false);
+  // While a stage recording or reel is still running or saving (the page
+  // says so), closing the window asks before throwing it away. Quitting the
+  // app (closeAuxiliaryWindows) does not ask.
+  stage3dCaptureBusy = false;
+  {
+    const win = stage3dWindow;
+    let allowClose = false;
+    win.on('close', (event) => {
+      if (!stage3dCaptureBusy || allowClose || win.__gaForceClose) return;
+      event.preventDefault();
+      const choice = dialog.showMessageBoxSync(win, {
+        type: 'warning',
+        buttons: ['Keep recording', 'Close anyway'],
+        defaultId: 0,
+        cancelId: 0,
+        message: 'A stage recording is still running.',
+        detail: 'Closing the Stage Sim now loses it. Stop the recording (or let the reel finish) to keep it.',
+      });
+      if (choice !== 1) return;
+      allowClose = true;
+      setImmediate(() => { if (!win.isDestroyed()) win.close(); });
+    });
+    win.webContents.on('did-start-navigation', (details) => {
+      if (details?.isMainFrame && !details.isSameDocument) stage3dCaptureBusy = false;
+    });
+  }
 
 
   // Forward this window's console to the terminal. Only the main window was

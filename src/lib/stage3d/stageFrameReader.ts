@@ -28,6 +28,7 @@ interface Slot {
   height: number;
   done: ((frame: StageReadback) => void) | null;
   fail: ((err: Error) => void) | null;
+  lost: (() => void) | null;
 }
 
 /** Reads queued at once before the oldest is copied out without waiting. */
@@ -86,9 +87,13 @@ export class StageFrameReader {
     height: number,
     done: (frame: StageReadback) => void,
     fail: (err: Error) => void,
+    /** The read was dropped without a result (`abandon`). */
+    lost?: () => void,
   ): boolean {
     if (this.disposed) return false;
     const gl = this.gl;
+    // A lost context reads back nothing (all zeros): never queue there.
+    if (gl.isContextLost?.()) return false;
     const w = Math.max(1, Math.round(width));
     const h = Math.max(1, Math.round(height));
     const canvasH = gl.drawingBufferHeight;
@@ -137,7 +142,7 @@ export class StageFrameReader {
         return false;
       }
       if (check) this.checked.add(key);
-      this.pending.push({ pbo, sync, width: w, height: h, done, fail });
+      this.pending.push({ pbo, sync, width: w, height: h, done, fail, lost: lost ?? null });
       this.schedulePoll();
       return true;
     } catch {
@@ -228,6 +233,25 @@ export class StageFrameReader {
       }
       if (this.pool.length < MAX_POOLED) this.pool.push(data);
     };
+  }
+
+  /**
+   * The WebGL context was lost: every GPU object this reader holds is dead
+   * (and stays dead after a restore). Drop them without touching GL, tell
+   * each queued read it was lost, and refuse further reads. Make a new
+   * reader once the context is back.
+   */
+  abandon(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    const pending = this.pending.splice(0);
+    this.free = [];
+    this.bufferBytes.clear();
+    this.pool = [];
+    this.fbo = this.colour = this.resolveFbo = this.resolveColour = null;
+    for (const slot of pending) slot.lost?.();
   }
 
   dispose(): void {

@@ -69,6 +69,7 @@ import {
 } from '../stage3d/demoReel';
 import { borrowStageCamera, holdStageCapture, stageRecordingMaxDim, stageRecordingMirrorDim } from '../show/rehearsal/stageRehearsal';
 import type { RecAudioMode, RecAudioResult } from '../show/rehearsal/rehearsalBridge';
+import { epochFromPerformance, epochNow } from '../utils/epochClock';
 import { createLiveFramePacer, streamFramesInFlight } from './liveFramePacing';
 
 /**
@@ -78,8 +79,15 @@ import { createLiveFramePacer, streamFramesInFlight } from './liveFramePacing';
  */
 export interface ReelRehearsal {
   durationSeconds: number;
-  /** Start the show from the top; resolves once it is playing. */
-  begin(): Promise<void>;
+  /** Start the show from the top; resolves once it is playing, with the
+   *  epoch (ms) at which the editor was at show time 0. */
+  begin(): Promise<number>;
+  /** Epoch (ms) frame 0 is due: when the stage view shows show time 0. */
+  firstFrameAt(playStartEpochMs: number): number;
+  /** The screens drawn now already show the show playing from the top. */
+  screensCaughtUp(playStartEpochMs: number): boolean;
+  /** The screens drawn now show the show past its end. */
+  screensPastEnd(playStartEpochMs: number): boolean;
   /** The camera lane's camera at this instant (epoch ms), or null between shots. */
   cameraAt(epochMs: number): ReelCameraState | null;
   /** The frame due at this instant (epoch ms) was just captured. */
@@ -445,12 +453,18 @@ function createReelRenderStore() {
           await nextFrame();
         }
       }
+      let paceStart = performance.now();
+      let playStart: number | null = null;
       if (rehearsal) {
         if (!livePaced) throw new Error('Render rehearsal needs the desktop MP4 encoder');
-        await rehearsal.begin();
+        playStart = await rehearsal.begin();
+        // Frame 0 is when the stage view reaches show time 0 (its screens
+        // run the view's latency behind the editor), not when the editor
+        // said it was playing: the file then holds the show from its first
+        // picture to its last, and the soundtrack lines up with it.
+        paceStart = performance.now() + (rehearsal.firstFrameAt(playStart) - epochNow());
       }
-      const paceStart = performance.now();
-      const paceStartEpoch = performance.timeOrigin + paceStart;
+      const paceStartEpoch = epochFromPerformance(paceStart);
       let lastFrame: CapturedFrame | null = null;
       const writeNativeFrames = async (index: number, frame: CapturedFrame, count: number) => {
         if (nativeMp4FrameEncoder) {
@@ -470,14 +484,35 @@ function createReelRenderStore() {
         let firstChecked = false;
         let writeChain: Promise<void> = Promise.resolve();
         let stop: () => void = () => {};
+        /** Frames written so far: a frame whose render was lost before it
+         *  leaves a gap that the next frame fills (the picture holds). */
+        let written = 0;
+        /** The last frame written, kept to fill the end if its last slots were lost. */
+        let held: CapturedFrame | null = null;
+        const hold = (frame: CapturedFrame | null) => {
+          if (held && held !== frame) (held as { release?: () => void }).release?.();
+          held = frame;
+        };
         const settle = () => {
           // A failure ends it at once: frames still being read back may
           // never arrive (the stage window closed).
           if (settled || !(ended || failed) || (!failed && inFlight > 0)) return;
           settled = true;
           stop();
-          if (failed) reject(failed);
-          else resolve();
+          if (failed) {
+            hold(null);
+            reject(failed);
+            return;
+          }
+          // Fill to the end of the reel with the last picture if the last
+          // kept renders never arrived (the encoder expects every frame).
+          writeChain = writeChain.then(async () => {
+            if (!cancelRequested && held && written < totalFrames) {
+              await writeNativeFrames(written, held, totalFrames - written);
+              written = totalFrames;
+            }
+          });
+          writeChain.then(() => { hold(null); resolve(); }, (err) => { hold(null); reject(err); });
         };
         const fail = (err: unknown) => {
           failed ??= err instanceof Error ? err : new Error(formatErr(err));
@@ -493,6 +528,19 @@ function createReelRenderStore() {
               return null;
             }
             if (inFlight >= maxInFlight) return null;
+            // Until the screens show the show from its top, the picture is
+            // the one from before the jump to the start: let it pass (the
+            // first fresh render fills the slots it missed).
+            if (rehearsal && playStart !== null && !rehearsal.screensCaughtUp(playStart)) return null;
+            // Past the show's end (the view's latency is an estimate): the
+            // picture is the stopped show or its start again. The take ends;
+            // its last slots hold the last picture of the show.
+            if (rehearsal && playStart !== null && rehearsal.screensPastEnd(playStart)) {
+              console.info(`[stageReelRender] rehearsal: the screens reached the show's end at frame ${pacer.queued} of ${totalFrames}`);
+              ended = true;
+              queueMicrotask(settle);
+              return null;
+            }
             const slot = pacer.peek(nowMs);
             if (!slot) return null;
             if (slot.first >= totalFrames) {
@@ -506,7 +554,7 @@ function createReelRenderStore() {
             setStageEffectsManualTime(virtualTime);
             layerSequencer.seek(virtualTime);
             vjLayerSequencer.seek(virtualTime);
-            const laneCamera = rehearsal ? rehearsal.cameraAt(performance.timeOrigin + nowMs) : null;
+            const laneCamera = rehearsal ? rehearsal.cameraAt(epochFromPerformance(nowMs)) : null;
             if (rehearsal && (laneCamera || shots.length === 0)) {
               // The show's camera lane (or, between its shots, the camera as it is).
               if (laneCamera) controls.setCameraState(laneCamera);
@@ -546,16 +594,28 @@ function createReelRenderStore() {
                     throw new Error(`Stage reel captured a black frame (${frameStats(frame)}). Make sure the Stage 3D window is open and visible, then try again.`);
                   }
                 }
-                await writeNativeFrames(first, frame, repeat);
-                update(s => ({ ...s, currentFrame: first + repeat }));
+                // Slots of a render that was lost before this one are filled
+                // with this picture, so the frame order holds.
+                const end = Math.min(totalFrames, first + repeat);
+                if (end > written) {
+                  await writeNativeFrames(written, frame, end - written);
+                  written = end;
+                }
+                update(s => ({ ...s, currentFrame: written }));
+                hold(frame);
               })
               .catch(fail)
               .finally(() => {
-                // Written (or given up): the view may reuse the bytes.
-                captured.release?.();
+                // Written (or given up): the view may reuse the bytes, except
+                // the last frame, held to fill a lost tail.
+                if (held !== captured) captured.release?.();
                 inFlight--;
                 settle();
               });
+          },
+          lost() {
+            inFlight--;
+            settle();
           },
           error: fail,
         });
@@ -608,7 +668,7 @@ function createReelRenderStore() {
 
           // Shot clock — camera every frame, stage snapshot on entry.
           let frame: CapturedFrame | null = null;
-          const laneCamera = rehearsal ? rehearsal.cameraAt(performance.timeOrigin + performance.now()) : null;
+          const laneCamera = rehearsal ? rehearsal.cameraAt(epochNow()) : null;
           const transition = !rehearsal && (settings.transition ?? 'cut') === 'cross-dissolve'
             ? transitionAtTime(spans, virtualTime, settings.transitionDurationSec ?? 0.75)
             : null;
@@ -846,3 +906,9 @@ function createReelRenderStore() {
 }
 
 export const stageReelRender = createReelRenderStore();
+
+/** A reel or rehearsal render is running (from folder choice to save). */
+export function reelRenderBusy(status: ReelRenderStatus): boolean {
+  return status === 'choosing-folder' || status === 'loading-ffmpeg' || status === 'rendering'
+    || status === 'encoding' || status === 'saving';
+}

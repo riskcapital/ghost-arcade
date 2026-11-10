@@ -148,6 +148,8 @@ import {
   recordDiscreteAction,
   scheduleHistorySnapshot,
 } from './historyHooks';
+import { demoReel, type DemoShot } from '../stage3d/demoReel';
+import { cameraShotTable, readCameraShotTable } from '../show/rehearsal/cameraShotTable';
 
 // ─── Tunables ────────────────────────────────────────────────────────────
 
@@ -1312,6 +1314,9 @@ export interface ShowTimelineSnapshot {
   rulerMode?: 'time' | 'bars';
   snapGrid?: ShowSnapGrid;
   cameraLane?: ShowCameraClip[];
+  /** The Demo Reel shots the camera lane uses (shots are kept per machine;
+   *  the show carries its own). Missing in older files. */
+  cameraShots?: DemoShot[];
 }
 
 /** Clip media for a file: the runtime URL is blanked when the AssetRef can
@@ -2736,6 +2741,7 @@ export const showTimeline = {
       rulerMode: s.rulerMode,
       snapGrid: s.snapGrid,
       cameraLane: s.cameraLane.map((c) => ({ ...c })),
+      ...(s.cameraLane.length > 0 ? { cameraShots: cameraShotTable(s.cameraLane, get(demoReel).shots) } : {}),
     };
   },
 
@@ -2804,6 +2810,11 @@ export const showTimeline = {
       .map(normalizeCameraClip)
       .filter((c): c is ShowCameraClip => c !== null)
       .sort((a, b) => a.startTime - b.startTime);
+    // Shots the lane uses that this machine's Demo Reel lacks come with the show.
+    if (cameraLane.length > 0) {
+      const shots = readCameraShotTable(p.cameraShots);
+      if (shots.length > 0) demoReel.adoptShots(shots);
+    }
 
     const zoom = Number(p.zoom);
     store.set({

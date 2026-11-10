@@ -386,7 +386,29 @@ function createDemoReelStore() {
     syncFromStorage() {
       set(loadReel());
     },
+
+    /** Add shots this machine does not have (a show file's own shot table),
+     *  after the reel's current list (read fresh: another window may have
+     *  saved shots since this one loaded). Returns how many were added. */
+    adoptShots(incoming: DemoShot[]): number {
+      set(loadReel());
+      const have = new Set(get({ subscribe }).shots.map(sh => sh.id));
+      const added = incoming.filter(sh => sh && typeof sh.id === 'string' && !have.has(sh.id));
+      if (added.length === 0) return 0;
+      update(s => ({ ...s, shots: [...s.shots, ...added] }));
+      persist();
+      return added.length;
+    },
   };
 }
 
 export const demoReel = createDemoReelStore();
+
+// Every window keeps its reel in step with the others' saves: the editor
+// carries the shots its show's camera lane uses into the project file, and a
+// show opened in the editor adds its shots for the Stage Sim to move along.
+try {
+  globalThis.addEventListener?.('storage', (e: StorageEvent) => {
+    if (e.key === STORAGE_KEY) demoReel.syncFromStorage();
+  });
+} catch { /* no window (tests, workers) */ }

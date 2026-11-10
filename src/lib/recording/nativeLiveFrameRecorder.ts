@@ -12,6 +12,7 @@ import type { OfflineRenderSettings } from './offlineRender';
 import { createLiveFramePacer, liveFrameRepeat, streamFramesInFlight, type LiveFrameSlot } from './liveFramePacing';
 import type { StageFrameSink } from '../stage3d/store';
 import type { RecorderHandle } from './recorder';
+import { epochFromPerformance } from '../utils/epochClock';
 import {
   recordingRequest,
   recordTargetParams,
@@ -59,8 +60,8 @@ export interface NativeLiveFrameRecorderOptions {
    *  in the media library — the hook the audio-sidecar mux uses so the
    *  library entry already carries its audio track. */
   finalizeOutput?: (outputPath: string, result?: { nativeAudio: boolean }) => Promise<void> | void;
-  /** Frame 0 of the file stands for this wall-clock instant (epoch ms,
-   *  `performance.timeOrigin + performance.now()`); frames are paced from it. */
+  /** Frame 0 of the file stands for this wall-clock instant (epoch ms, see
+   *  utils/epochClock); frames are paced from it. */
   onStart?: (startedAtEpochMs: number) => void;
 }
 
@@ -108,6 +109,9 @@ export interface NativeRendererLiveFrameRecorderOptions {
 }
 
 const MAX_WRITES_IN_FLIGHT = 2;
+/** Stop waits for queued stage frames as long as one arrives or is written
+ *  at least this often. */
+const STREAM_STALL_MS = 5000;
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => window.setTimeout(resolve, ms));
 }
@@ -243,7 +247,7 @@ export async function startNativeLiveFrameRecording(
   let writesInFlight = 0;
   let writeError: unknown = null;
   const startedAt = performance.now();
-  options.onStart?.(performance.timeOrigin + startedAt);
+  options.onStart?.(epochFromPerformance(startedAt));
   const frameMs = 1000 / fps;
   let nextFrameAt = startedAt;
 
@@ -314,7 +318,15 @@ export async function startNativeLiveFrameRecording(
   // nearest each frame slot. Pixels arrive a frame or two later, in order.
   let stopStream: (() => void) | null = null;
   let framesInFlight = 0;
-  let streamIdle: (() => void) | null = null;
+  /** Frames the encoder has taken (stream mode). */
+  let framesWritten = 0;
+  /** Stop gave up waiting for the view: frames still queued are dropped. */
+  let abandonWrites = false;
+  let streamProgress: (() => void) | null = null;
+  const frameSettled = () => {
+    framesInFlight--;
+    streamProgress?.();
+  };
   const pacer = createLiveFramePacer(fps, startedAt);
   const maxFramesInFlight = streamFramesInFlight(width, height, fps);
   const streamSink: StageFrameSink = {
@@ -331,20 +343,30 @@ export async function startNativeLiveFrameRecording(
       if (!slot) return null;
       framesInFlight++;
       frameIndex = pacer.queued;
-      options.onFrameDue?.(performance.timeOrigin + slot.dueAtMs);
+      options.onFrameDue?.(epochFromPerformance(slot.dueAtMs));
       return slot;
     },
     frame(frame, tag) {
       const slot = tag as LiveFrameSlot;
       writeChain = writeChain
-        .then(() => (writeError ? undefined : writeNativeMp4Frame(session, slot.first, frame, slot.repeat)))
+        .then(async () => {
+          if (writeError || abandonWrites) return;
+          // A kept render that never arrived (lost) left its slots open:
+          // this picture fills them, so the encoder's frame order holds.
+          const end = slot.first + slot.repeat;
+          if (end <= framesWritten) return;
+          await writeNativeMp4Frame(session, framesWritten, frame, end - framesWritten);
+          framesWritten = end;
+        })
         .catch((err) => { writeError ??= err; })
         .finally(() => {
           // The bytes have gone to the encoder: the view may reuse them.
           frame.release?.();
-          framesInFlight--;
-          if (framesInFlight <= 0) streamIdle?.();
+          frameSettled();
         });
+    },
+    lost() {
+      frameSettled();
     },
     error(err) {
       if (!active || finishing) {
@@ -354,10 +376,22 @@ export async function startNativeLiveFrameRecording(
       void fail(err);
     },
   };
+  // Waits while frames keep arriving and being written, however many are
+  // queued (a loaded machine can have seconds of footage waiting for the
+  // encoder); gives up only when nothing moves for STREAM_STALL_MS.
   const waitStreamIdle = () => new Promise<void>((resolve) => {
     if (framesInFlight <= 0) { resolve(); return; }
-    const timer = window.setTimeout(() => { streamIdle = null; resolve(); }, 3000);
-    streamIdle = () => { window.clearTimeout(timer); streamIdle = null; resolve(); };
+    let timer = 0;
+    const done = () => { window.clearTimeout(timer); streamProgress = null; resolve(); };
+    const arm = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(done, STREAM_STALL_MS);
+    };
+    streamProgress = () => {
+      if (framesInFlight <= 0) done();
+      else arm();
+    };
+    arm();
   });
 
   const finish = async () => {
@@ -369,17 +403,27 @@ export async function startNativeLiveFrameRecording(
       await Promise.race([pumpPromise.catch(() => {}), delay(1500)]);
     }
     try {
+      const streamed = !!stopStream;
       if (stopStream) {
         stopStream();
         stopStream = null;
         await waitStreamIdle();
-        if (framesInFlight > 0) throw new Error('The stage view stopped handing over frames.');
+        if (framesInFlight > 0) {
+          // The view stopped handing frames over (window hidden, context
+          // lost). Keep what the encoder has rather than losing the take.
+          console.warn(`[NativeLiveRec] ${framesInFlight} frame(s) never arrived; saving the ${framesWritten} written.`);
+          abandonWrites = true;
+        }
       }
       await writeChain;
-      if (writeError) throw writeError;
+      if (streamed) frameIndex = framesWritten;
+      if (writeError) {
+        // A failed write leaves the frames before it intact: save those.
+        console.warn('[NativeLiveRec] a frame write failed; saving the frames before it:', writeError);
+      }
       if (frameIndex <= 0) {
         await cancelNativeMp4FrameEncoder(session);
-        throw new Error('Recording stopped before any frames were captured.');
+        throw writeError ?? new Error('Recording stopped before any frames were captured.');
       }
       const saved = await saveMp4ToLibrary(session, frameIndex, namePrefix, options.finalizeOutput);
       const savedPath = options.promptSave

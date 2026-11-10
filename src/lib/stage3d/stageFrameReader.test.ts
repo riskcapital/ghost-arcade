@@ -226,4 +226,44 @@ describe('stage frame reader', () => {
     expect(reader.heldBytes.gpu).toBeGreaterThan(0);
     reader.dispose();
   });
+
+  it('across a WebGL context loss: its objects die, so reused it reads back black; abandon() drops them', () => {
+    const f = fakeGl();
+    const reader = new StageFrameReader(f.gl);
+    const got: number[] = [];
+    reader.read({ x: 0, y: 0, w: 1920, h: 1080 }, 4, 2, (fr) => got.push(fr.data[0]), () => {});
+    f.syncs[0].signalled = true;
+    reader.poll();
+    expect(got).toEqual([1]);
+    // Lost, then restored: every object made before is dead. Binding one is
+    // an error that leaves nothing bound, so the read lands nowhere.
+    const dead = new Set<unknown>();
+    const raw = f.raw as Record<string, unknown>;
+    const bindBuffer = raw.bindBuffer as (t: number, b: unknown) => void;
+    raw.bindBuffer = (t: number, b: unknown) => bindBuffer(t, dead.has(b) ? null : b);
+    for (const b of (reader as unknown as { free: unknown[] }).free) dead.add(b);
+    // Reused as it was (the bug): the copy "succeeds" and the frame is black.
+    let lostFrame: number | null = null;
+    expect(reader.read({ x: 0, y: 0, w: 1920, h: 1080 }, 4, 2, (fr) => { lostFrame = fr.data[0]; }, () => {})).toBe(true);
+    f.syncs[1].signalled = true;
+    reader.poll();
+    expect(lostFrame).toBe(0);
+    // What the renderer does now: abandon on the loss. Queued reads are
+    // reported lost (no GL calls), and the reader takes no more.
+    const lostReads: number[] = [];
+    reader.read({ x: 0, y: 0, w: 1920, h: 1080 }, 4, 2, () => {}, () => {}, () => lostReads.push(1));
+    const calls = (f.raw.deleteBuffer as ReturnType<typeof vi.fn>).mock.calls.length;
+    reader.abandon();
+    expect(lostReads).toEqual([1]);
+    expect((f.raw.deleteBuffer as ReturnType<typeof vi.fn>).mock.calls.length).toBe(calls);
+    expect(reader.read({ x: 0, y: 0, w: 1920, h: 1080 }, 4, 2, () => {}, () => {})).toBe(false);
+  });
+
+  it('refuses to queue a read while the context is lost (it would read zeros)', () => {
+    const f = fakeGl();
+    (f.raw as Record<string, unknown>).isContextLost = () => true;
+    const reader = new StageFrameReader(f.gl);
+    expect(reader.read({ x: 0, y: 0, w: 1920, h: 1080 }, 4, 2, () => {}, () => {})).toBe(false);
+    expect(f.blits.length).toBe(0);
+  });
 });

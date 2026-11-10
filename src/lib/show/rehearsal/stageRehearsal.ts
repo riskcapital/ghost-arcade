@@ -33,6 +33,11 @@ export const stageCameraFollow = writable(true);
 /** The picture size a running recording wants from the core mirror, or null. */
 export const stageRecordingMaxDim = writable<number | null>(null);
 
+/** A Stage Sim Rec is running or still being saved. The reel and the
+ *  rehearsal render are refused meanwhile (the stage view feeds one capture
+ *  at a time), and closing the window asks first. */
+export const stageRecActive = writable(false);
+
 /** The Stage Sim window is on screen (not minimised or hidden). Set from the
  *  main process: with background throttling off, the page never sees it. */
 export const stageWindowVisible = writable(true);
@@ -110,6 +115,15 @@ const pendingResults = new Map<string, (result: RecAudioResult) => void>();
 const mirrorAges: number[] = [];
 const MAX_AGES = 240;
 let cameraDriven = false;
+/** This stage page; the editor drops what an older page (before a reload) started. */
+const pageInstance = `stage-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+/** Recordings whose sound the editor is collecting for this page. */
+const openRecAudio = new Set<string>();
+
+/** The editor page whose state `stageShow` holds (the prefix of its versions). */
+function editorInstance(): string | null {
+  return stateVersion ? stateVersion.split('.')[0] : null;
+}
 
 function post(msg: RehearsalMessage): boolean {
   if (!channel) return false;
@@ -190,7 +204,9 @@ function cameraTick(): void {
     return;
   }
   const controls = get(stage3DRendererControls);
-  const t = showTimeAt(show, epochNow());
+  // The screens show the editor's picture from `latency` ago: move the
+  // camera with them, not with the editor's playhead.
+  const t = showTimeAt(show, epochNow() - stageViewLatencySeconds() * 1000);
   const sample = evaluateCameraLane(show.cameraLane, get(demoReel).shots, t);
   if (controls && sample) {
     controls.setCameraState(sample.camera);
@@ -207,11 +223,14 @@ function ensureCameraLoop(): void {
   cameraRaf = requestAnimationFrame(cameraTick);
 }
 
-/** The camera lane's camera at an instant, for the rehearsal render. */
+/** The camera lane's camera for a stage render drawn at `at` (epoch ms):
+ *  the lane at the show time the screens in that render show, which is the
+ *  view's latency behind the editor's playhead. */
 export function stageLaneCameraAt(at = epochNow()) {
   const show = get(stageShow);
   if (!show || show.cameraLane.length === 0) return null;
-  return evaluateCameraLane(show.cameraLane, get(demoReel).shots, showTimeAt(show, at))?.camera ?? null;
+  const t = showTimeAt(show, at - stageViewLatencySeconds() * 1000);
+  return evaluateCameraLane(show.cameraLane, get(demoReel).shots, t)?.camera ?? null;
 }
 
 /** The user grabbed the camera: stop following until they turn it back on. */
@@ -242,9 +261,12 @@ export interface StageRecAudio {
  */
 export function startStageRecAudio(opts: { render?: boolean } = {}): StageRecAudio | null {
   const show = get(stageShow);
-  if (!channel || !show || epochNow() - lastStateAt > REHEARSAL_ALIVE_MS) return null;
+  // An empty show has no sound to add (a live capture would hold the mic).
+  if (!channel || !show?.hasShow || epochNow() - lastStateAt > REHEARSAL_ALIVE_MS) return null;
   const id = `rec-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
-  post({ type: 'rec-audio-start', id, at: epochNow(), ...(opts.render ? { render: true } : {}) });
+  const editorAtStart = editorInstance();
+  openRecAudio.add(id);
+  post({ type: 'rec-audio-start', id, at: epochNow(), instance: pageInstance, ...(opts.render ? { render: true } : {}) });
   let startedAt = epochNow();
   let done = false;
   const lags: number[] = [];
@@ -261,15 +283,27 @@ export function startStageRecAudio(opts: { render?: boolean } = {}): StageRecAud
     finish(videoPath, stoppedAt = epochNow()) {
       if (done) return Promise.resolve({ ok: false, mode: 'none' as const, error: 'finished' });
       done = true;
+      openRecAudio.delete(id);
       return new Promise<RecAudioResult>((resolve) => {
-        const timer = setTimeout(() => {
-          pendingResults.delete(id);
-          resolve({ ok: false, mode: 'none', error: 'The editor did not answer.' });
-        }, 60_000);
-        pendingResults.set(id, (result) => {
+        let settled = false;
+        const settle = (result: RecAudioResult) => {
+          if (settled) return;
+          settled = true;
           clearTimeout(timer);
+          clearInterval(watch);
+          pendingResults.delete(id);
           resolve(result);
-        });
+        };
+        // A long mux may take a while; an editor that is gone never answers.
+        const timer = setTimeout(() => settle({ ok: false, mode: 'none', error: 'The editor did not answer.' }), 60_000);
+        const watch = setInterval(() => {
+          if (epochNow() - lastStateAt > REHEARSAL_ALIVE_MS) {
+            settle({ ok: false, mode: 'none', error: 'The editor went away before adding the sound.' });
+          } else if (editorAtStart && editorInstance() && editorInstance() !== editorAtStart) {
+            settle({ ok: false, mode: 'none', error: 'The editor was reloaded during the recording.' });
+          }
+        }, 250);
+        pendingResults.set(id, settle);
         post({
           type: 'rec-audio-finish',
           id,
@@ -285,6 +319,7 @@ export function startStageRecAudio(opts: { render?: boolean } = {}): StageRecAud
     cancel() {
       if (done) return;
       done = true;
+      openRecAudio.delete(id);
       post({ type: 'rec-audio-cancel', id });
     },
   };
@@ -326,7 +361,7 @@ export function installStageRehearsal(): () => void {
         resolve?.(msg.result);
       }
     };
-    const hello = () => post({ type: 'stage-hello', at: epochNow(), stateVersion: get(stageShow) ? stateVersion : null });
+    const hello = () => post({ type: 'stage-hello', at: epochNow(), stateVersion: get(stageShow) ? stateVersion : null, instance: pageInstance });
     hello();
     helloTimer = setInterval(hello, REHEARSAL_HELLO_MS);
     // The editor went away (closed, crashed): drop the mirror.
@@ -337,6 +372,14 @@ export function installStageRehearsal(): () => void {
       }
     }, 1000);
   }
+  // Closing or reloading the window: the editor stops collecting sound for
+  // recordings that will never finish (the main process cancels their files).
+  const onUnload = () => {
+    for (const id of openRecAudio) post({ type: 'rec-audio-cancel', id });
+    openRecAudio.clear();
+    post({ type: 'stage-bye', instance: pageInstance });
+  };
+  globalThis.addEventListener?.('pagehide', onUnload);
   // Minimised / restored (main process).
   const offVisibility = (globalThis as unknown as { electronAPI?: { on?: (channel: string, cb: (p: { visible?: boolean }) => void) => () => void } })
     .electronAPI?.on?.('stage3d-visibility-changed', (payload) => {
@@ -366,9 +409,10 @@ export function installStageRehearsal(): () => void {
   return () => {
     unsubFollow();
     offVisibility();
+    globalThis.removeEventListener?.('pagehide', onUnload);
     installs = Math.max(0, installs - 1);
     if (installs > 0 || !channel) return;
-    post({ type: 'stage-bye' });
+    post({ type: 'stage-bye', instance: pageInstance });
     if (helloTimer) clearInterval(helloTimer);
     if (staleTimer) clearInterval(staleTimer);
     helloTimer = staleTimer = null;
@@ -388,7 +432,18 @@ export function installStageRehearsal(): () => void {
 /** What the Demo Reel's "Render rehearsal" needs from the show; null without a show. */
 export function createStageRehearsalRender(): {
   durationSeconds: number;
-  begin(): Promise<void>;
+  /** Play the show from its start (Loop off for the take). Resolves with the
+   *  epoch (ms) at which the editor was at show time 0. */
+  begin(): Promise<number>;
+  /** When frame 0 is due (epoch ms): the screens reach show time 0 the
+   *  view's latency after the editor does. */
+  firstFrameAt(playStartEpochMs: number): number;
+  /** The screens in a render drawn now show the show playing from the top
+   *  (not the picture from before the jump to the start). */
+  screensCaughtUp(playStartEpochMs: number): boolean;
+  /** The screens drawn now already show the show past its end (stopped or
+   *  back at the start): the take has everything. */
+  screensPastEnd(playStartEpochMs: number): boolean;
   cameraAt(epochMs: number): ReturnType<typeof stageLaneCameraAt>;
   noteFrame(dueAtEpochMs: number): void;
   addSound(outputPath: string, startedAtEpochMs: number, durationSeconds: number): Promise<RecAudioResult>;
@@ -399,20 +454,36 @@ export function createStageRehearsalRender(): {
   // A render of the show: the editor leaves a live takeover out of it.
   const audio = startStageRecAudio({ render: true });
   const durationSeconds = show.duration;
+  // A looping show wraps to its start at the end of the take: the last
+  // frames showed the start and the soundtrack could never come from the
+  // song files. The take plays it once; Loop comes back afterwards.
+  const restoreLoop = show.loop;
   let ended = false;
   return {
     durationSeconds,
     async begin() {
+      if (restoreLoop) sendRehearsalCommand({ op: 'loop', on: false });
       const before = get(stageShow)?.seekGeneration ?? -1;
       sendRehearsalCommand({ op: 'playFrom', seconds: 0 });
       // Wait for the editor to say it is playing from the top.
       const deadline = epochNow() + 4000;
       while (epochNow() < deadline) {
         const s = get(stageShow);
-        if (s?.isPlaying && s.seekGeneration !== before && s.currentTime < 1) return;
+        if (s?.isPlaying && s.seekGeneration !== before && s.currentTime < 1 && !(restoreLoop && s.loop)) {
+          return s.at - s.currentTime * 1000;
+        }
         await new Promise((r) => setTimeout(r, 10));
       }
       throw new Error('The show did not start playing in the editor.');
+    },
+    firstFrameAt: (playStart) => playStart + stageViewLatencySeconds() * 1000,
+    screensCaughtUp(playStart) {
+      const info = compositeMirrorFrameInfo();
+      return !info || info.requestedAt >= playStart + STAGE_CORE_LEAD_SECONDS * 1000;
+    },
+    screensPastEnd(playStart) {
+      const info = compositeMirrorFrameInfo();
+      return !!info && info.requestedAt >= playStart + (durationSeconds + STAGE_CORE_LEAD_SECONDS) * 1000;
     },
     cameraAt: (epochMs) => stageLaneCameraAt(epochMs),
     noteFrame: (dueAt) => audio?.noteFrame(dueAt),
@@ -426,6 +497,7 @@ export function createStageRehearsalRender(): {
       ended = true;
       audio?.cancel();
       if (get(stageShow)?.isPlaying) sendRehearsalCommand({ op: 'pause' });
+      if (restoreLoop) sendRehearsalCommand({ op: 'loop', on: true });
     },
   };
 }

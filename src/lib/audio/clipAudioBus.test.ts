@@ -238,6 +238,51 @@ describe('attach/detach lifecycle', () => {
     expect(bus.outputDelay()).toBe(0);
   });
 
+  it('the analyser hears the mix before the output delay (visuals stay on the show clock)', async () => {
+    const { audioAnalyzer } = await import('./analyzer');
+    const analyser = new FakeNode();
+    const nodeSpy = vi.spyOn(audioAnalyzer, 'clipAudioAnalyserNode').mockReturnValue(analyser as unknown as AnalyserNode);
+    const feedSpy = vi.spyOn(audioAnalyzer, 'analyserFeedsDestination').mockReturnValue(false);
+    try {
+      const ctx = new FakeAudioContext();
+      const bus = makeBus(ctx);
+      bus.attachClip('clip-a', fakeMediaElement());
+      const master = bus.masterNode() as unknown as FakeNode;
+      expect(master.outputs.has(analyser)).toBe(true);
+      bus.setOutputDelay(0.2);
+      const delay = [...master.outputs].find((n) => n instanceof FakeDelayNode) as FakeDelayNode;
+      // Speakers after the delay, analyser still straight off the master.
+      expect(delay.outputs.has(ctx.destination)).toBe(true);
+      expect(master.outputs.has(analyser)).toBe(true);
+      expect(delay.outputs.has(analyser)).toBe(false);
+    } finally {
+      nodeSpy.mockRestore();
+      feedSpy.mockRestore();
+    }
+  });
+
+  it('a new output delay glides there instead of jumping (no click per slider step)', () => {
+    const ctx = new FakeAudioContext();
+    const bus = makeBus(ctx);
+    bus.attachClip('clip-a', fakeMediaElement());
+    bus.setOutputDelay(0.1);
+    const master = bus.masterNode() as unknown as FakeNode;
+    const delay = [...master.outputs].find((n) => n instanceof FakeDelayNode) as FakeDelayNode & { context?: unknown };
+    const calls: string[] = [];
+    const param = {
+      value: 0.1,
+      cancelScheduledValues: (t: number) => calls.push(`cancel@${t}`),
+      setValueAtTime: (v: number, t: number) => calls.push(`hold ${v}@${t}`),
+      setTargetAtTime: (v: number, t: number, k: number) => calls.push(`glide ${v}@${t}/${k}`),
+    };
+    (delay as unknown as { delayTime: unknown }).delayTime = param;
+    delay.context = { currentTime: 3 };
+    bus.setOutputDelay(0.25);
+    expect(calls).toEqual(['cancel@3', 'hold 0.1@3', 'glide 0.25@3/0.05']);
+    expect(param.value).toBe(0.1); // not set directly
+    expect(bus.outputDelay()).toBe(0.25);
+  });
+
   it('no output delay asked for: no delay node at all', () => {
     const ctx = new FakeAudioContext();
     const bus = makeBus(ctx);
