@@ -51,6 +51,15 @@ export const stageRehearsalRender = derived(
 /** Mirror size while a show plays in the stage view (paused: 1280). */
 export const STAGE_PLAYING_MAX_DIM = 960;
 
+/** Mirror size while the stage view records (Rec, demo reel, rehearsal).
+ *  The core's 1920 px JPEG snapshot takes ~80 ms, so the screens in a 1080p
+ *  file changed only ~15 times a second and two-frame flashes went missing;
+ *  1280 px arrives in ~35 ms and keeps up with a 30 fps file. 4K files keep
+ *  the sharper (slower) picture. */
+export function stageRecordingMirrorDim(recordingWidth: number): number {
+  return recordingWidth >= 3840 ? 2048 : 1280;
+}
+
 /** The render core shows the editor's show time this much later than the
  *  editor reaches it (scene sync, one core frame, video presentation). */
 export const STAGE_CORE_LEAD_SECONDS = 0.035;

@@ -3200,7 +3200,11 @@
       if (_fpsCap > 0 && engine?.manualTime === null) {
         const now = performance.now();
         const interval = 1000 / _fpsCap;
-        if (now - _lastEditorRenderTime < interval) {
+        // The Stage Sim allows a few ms of frame-timing jitter: at a cap
+        // equal to the display rate, a frame landing a hair early skipped
+        // the render, so "60" drew at ~35-40 and recordings lost frames.
+        const slack = _stage3DFpsCap > 0 ? Math.min(4, interval * 0.25) : 0;
+        if (now - _lastEditorRenderTime < interval - slack) {
           animationId = requestAnimationFrame(animate);
           return;
         }

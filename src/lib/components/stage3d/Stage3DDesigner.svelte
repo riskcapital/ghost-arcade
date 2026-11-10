@@ -44,7 +44,7 @@
   import DemoReelPanel from './DemoReelPanel.svelte';
   import StageShowTransport from './StageShowTransport.svelte';
   import { epochNow, type RecAudioResult } from '../../show/rehearsal/rehearsalBridge';
-  import { startStageRecAudio, stageRecordingMaxDim, type StageRecAudio } from '../../show/rehearsal/stageRehearsal';
+  import { startStageRecAudio, stageRecordingMaxDim, stageRecordingMirrorDim, type StageRecAudio } from '../../show/rehearsal/stageRehearsal';
 
   /** When false, this component renders only the floating UI overlay;
    *  the viewport comes from Canvas.svelte's stage3DOutput mode. */
@@ -389,7 +389,7 @@
       recStoppedAt = 0;
       recAudio = startStageRecAudio();
       let recAudioResult: RecAudioResult | null = null;
-      stageRecordingMaxDim.set(res.w >= 3840 ? 2048 : 1920);
+      stageRecordingMaxDim.set(stageRecordingMirrorDim(res.w));
       try {
         recorderHandle = await startNativeLiveFrameRecording({
           captureFrame: async (width, height) => {
@@ -398,6 +398,10 @@
             recAudio?.noteFrame(dueAt);
             return frame;
           },
+          // Every frame slot gets its own render, read back without
+          // stalling the view (falls back to captureFrame without it).
+          streamFrames: controls.streamFrames,
+          onFrameDue: (dueAt) => recAudio?.noteFrame(dueAt),
           width: res.w,
           height: res.h,
           fps: 30,

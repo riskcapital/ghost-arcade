@@ -438,6 +438,11 @@ export interface Stage3DRendererControls {
    *  offline Demo Reel export after the live frame has advanced to the
    *  desired world-clock time. */
   captureFrameAt: (width: number, height: number) => Promise<{ data: Uint8Array; width: number; height: number }>;
+  /** Live capture for recordings: the sink is asked at every stage render
+   *  whether to keep that frame. Kept frames are read back asynchronously
+   *  (no stall on the render thread) and arrive in order a frame or two
+   *  later. Returns the stop function. */
+  streamFrames?: (width: number, height: number, sink: StageFrameSink) => () => void;
   /** Set the camera field of view in degrees (clamped 15–120). Wide
    *  FOVs are how you get the full drama of the Sphere dome in frame. */
   setFov: (fov: number) => void;
@@ -455,6 +460,18 @@ export interface Stage3DRendererControls {
   endRecording: () => void;
 }
 export const stage3DRendererControls = writable<Stage3DRendererControls | null>(null);
+
+/** Receiver of a live stage capture (see `streamFrames`). */
+export interface StageFrameSink {
+  /** Runs at the start of every stage render (`nowMs` = performance.now()).
+   *  Return a tag to capture this render, or null to let it pass. It may
+   *  drive the camera: the render that follows uses it. */
+  beforeRender(nowMs: number): unknown;
+  /** A kept frame (top-down RGBA at the stream size) with its tag. */
+  frame(frame: { data: Uint8Array; width: number; height: number }, tag: unknown): void;
+  /** The capture failed; no more frames will come. */
+  error?(err: Error): void;
+}
 
 /** Live camera FOV in degrees — written by the renderer whenever the
  *  FOV changes (toolbar slider, Shift+scroll, Demo Reel drive) so the
