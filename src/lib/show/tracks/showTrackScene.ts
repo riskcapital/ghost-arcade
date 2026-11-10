@@ -18,7 +18,13 @@
  * - Muted tracks hide their layer; a solo hides every other tracked layer.
  * - Crossfade between two clips on a track: a helper copy of the layer,
  *   `showxf::<layerId>`, sits directly beneath it carrying the outgoing
- *   clip at its dissolve weight.
+ *   clip at its dissolve weight. The incoming copy stays in the scene while
+ *   the helper shows, even at no opacity of its own (a faded-in clip, or
+ *   the first frame of the window), so an off-stage track never blanks.
+ * - A preset dissolve puts the other preset's copy of a layer in the scene
+ *   as `showfade::<layerId>` when the two presets share layer ids (see
+ *   compositionTransitionLayers.ts). The track drives that copy too, so the
+ *   clip stays on both sides of the dissolve.
  *
  * Returns the input array itself when no track changes anything.
  *
@@ -29,6 +35,7 @@
  */
 import type { Layer, MapSurface, MediaSource } from '../../types';
 import { createSurfaceLookup, resolvePresetLayer } from '../../stores/mapSurfaces';
+import { TRANSITION_LAYER_PREFIX } from '../../renderer/compositionTransitionLayers';
 import type { ShowTrackFrame, ShowTrackState } from './showTrackEval';
 
 export const SHOW_TRACK_LAYER_PREFIX = 'showtrack::';
@@ -71,11 +78,17 @@ function affects(state: ShowTrackState): boolean {
   return state.clip !== null || state.opacity < 1 || !!(state.params && Object.keys(state.params).length);
 }
 
-/** The crossfade helper for `layer` (already driven or injected). */
-function xfadeHelper(base: Layer, state: ShowTrackState, source: MediaSource | null, ownSource: Layer['source']): Layer | null {
+/** A crossfade's outgoing clip is showing. */
+function xfadeShows(state: ShowTrackState): boolean {
+  return !!state.xfade && state.xfade.opacity > 0;
+}
+
+/** The crossfade helper for `base` (a driven layer or an injected copy),
+ *  named after the layer it sits beneath. */
+function xfadeHelper(base: Layer, layerId: string, state: ShowTrackState, source: MediaSource | null, ownSource: Layer['source']): Layer | null {
   const xf = state.xfade;
   if (!xf || xf.opacity <= 0) return null;
-  const helper: Layer = { ...base, id: SHOW_XFADE_LAYER_PREFIX + state.layerId, visible: true, parentGroupId: null };
+  const helper: Layer = { ...base, id: SHOW_XFADE_LAYER_PREFIX + layerId, visible: true, parentGroupId: null };
   if (source) helper.source = source;
   else if (xf.clip.media.kind === 'layer') helper.source = ownSource;
   if (xf.opacity < 1) helper._showOpacityMul = Math.max(0, xf.opacity);
@@ -95,9 +108,11 @@ interface ResolvedShowSources {
   xfade: Map<string, MediaSource | null>;
   /** Per track (frame order): the source of an injected copy, when asked for. */
   injected: Array<MediaSource | null | undefined>;
-  /** By layer id: the source of a layer driven on stage. */
+  /** By track layer id: the source of a layer driven on stage. */
   stage: Map<string, MediaSource | null>;
-  /** Tracks driving a layer on stage, by layer id (the last track wins). */
+  /** Tracks driving a layer on stage, by track layer id (the last track
+   *  wins). The layer may be in the scene as itself or as the other side
+   *  of a preset dissolve (`showfade::<layerId>`), or both. */
   onStage: Map<string, ShowTrackState>;
   /** Every answer, in call order, for comparing two resolutions. */
   calls: Array<MediaSource | null>;
@@ -117,19 +132,41 @@ function resolveShowTrackSources(
     out.warm.push(state.warm && ctx.warmSourceFor ? ask(ctx.warmSourceFor(state.warm)) : undefined);
     const xfSource = state.xfade && ctx.xfadeSourceFor ? ask(ctx.xfadeSourceFor(state)) : null;
     if (state.xfade) out.xfade.set(state.layerId, xfSource);
-    if (ids.has(state.layerId)) {
+    if (isOnStage(ids, state.layerId)) {
       if (affects(state)) out.onStage.set(state.layerId, state);
       out.injected.push(undefined);
       continue;
     }
-    out.injected.push(state.clip && state.template && state.opacity > 0 ? ask(ctx.sourceFor(state)) : undefined);
+    out.injected.push(injects(state) ? ask(ctx.sourceFor(state)) : undefined);
   }
   if (out.onStage.size) {
     // In the order of the live layers, as the build draws them.
-    const order = [...out.onStage.keys()].sort((a, b) => ids.get(a)! - ids.get(b)!);
+    const order = [...out.onStage.keys()].sort((a, b) => stageIndex(ids, a) - stageIndex(ids, b));
     for (const id of order) out.stage.set(id, ask(ctx.sourceFor(out.onStage.get(id)!)));
   }
   return out;
+}
+
+/** The layer, or the other side of a preset dissolve, is in the scene. */
+function isOnStage(ids: ReadonlyMap<string, number>, layerId: string): boolean {
+  return ids.has(layerId) || ids.has(TRANSITION_LAYER_PREFIX + layerId);
+}
+
+/** Where a track's layer first appears in the scene. */
+function stageIndex(ids: ReadonlyMap<string, number>, layerId: string): number {
+  return Math.min(ids.get(layerId) ?? Infinity, ids.get(TRANSITION_LAYER_PREFIX + layerId) ?? Infinity);
+}
+
+/** The track the live layer `id` is driven by: its own, or for a preset
+ *  dissolve's copy of a layer, that layer's. */
+function stageState(onStage: ReadonlyMap<string, ShowTrackState>, id: string): ShowTrackState | undefined {
+  return onStage.get(id) ?? (id.startsWith(TRANSITION_LAYER_PREFIX) ? onStage.get(id.slice(TRANSITION_LAYER_PREFIX.length)) : undefined);
+}
+
+/** An off-stage track injects its copy: a clip plays and either it or the
+ *  outgoing side of its crossfade shows. */
+function injects(state: ShowTrackState): boolean {
+  return !!state.clip && !!state.template && (state.opacity > 0 || xfadeShows(state));
 }
 
 function buildFromSources(
@@ -161,19 +198,24 @@ function buildFromSources(
         });
       }
     }
-    if (ids.has(state.layerId)) return;
+    if (isOnStage(ids, state.layerId)) return;
     // Off stage: an injected copy, only while a clip plays and the layer is
-    // not hidden outright.
-    if (!state.clip || !state.template || state.opacity <= 0) return;
-    lookup ??= createSurfaceLookup(liveLayers, ctx.surfaces as MapSurface[] | undefined);
-    const template = resolvePresetLayer({ ...state.template, surfaceId: state.template.surfaceId || state.layerId }, lookup);
+    // not hidden outright. Inside a crossfade the copy stays while the
+    // outgoing clip shows, even when the incoming one is not visible yet
+    // (it fades in, or the window has just begun): the helper beneath it
+    // is made from it.
+    if (!injects(state)) return;
+    const template = resolvePresetLayer(
+      { ...state.template!, surfaceId: state.template!.surfaceId || state.layerId },
+      lookup ??= createSurfaceLookup(liveLayers, ctx.surfaces as MapSurface[] | undefined),
+    );
     const copy = drive(
       { ...template, id: showTrackLayerId(state.layerId), visible: true, parentGroupId: null },
       state,
       sources.injected[index] ?? null,
     );
     injected.push(copy);
-    const helper = xfadeHelper(copy, state, sources.xfade.get(state.layerId) ?? null, template.source);
+    const helper = xfadeHelper(copy, state.layerId, state, sources.xfade.get(state.layerId) ?? null, template.source);
     if (helper) injected.push(helper);
   });
 
@@ -181,10 +223,10 @@ function buildFromSources(
   if (!onStage.size && !injected.length && !warmLayers.length) return liveLayers;
   const stage = onStage.size
     ? liveLayers.flatMap((layer) => {
-        const state = onStage.get(layer.id);
+        const state = stageState(onStage, layer.id);
         if (!state) return [layer];
-        const driven = drive(layer, state, sources.stage.get(layer.id) ?? null);
-        const helper = xfadeHelper(driven, state, sources.xfade.get(layer.id) ?? null, layer.source);
+        const driven = drive(layer, state, sources.stage.get(state.layerId) ?? null);
+        const helper = xfadeHelper(driven, layer.id, state, sources.xfade.get(state.layerId) ?? null, layer.source);
         return helper ? [driven, helper] : [driven];
       })
     : liveLayers;
