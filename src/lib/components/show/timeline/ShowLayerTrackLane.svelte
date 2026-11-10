@@ -1,7 +1,8 @@
 <script lang="ts">
   /**
-   * One layer track in the grid: its clip row, the crossfades between
-   * touching clips, and (unfolded) its keyframe lanes.
+   * One row in the grid: its blocks, the crossfades between touching
+   * blocks, the stretches where its piece is hidden (hatched), and
+   * (unfolded) its keyframe lanes.
    *
    * Only clips in the visible window are drawn. Props are the track object
    * itself (replaced on every edit, never mutated) and plain numbers, so the
@@ -13,7 +14,7 @@
   import ShowLayerClipBlock from './ShowLayerClipBlock.svelte';
   import KeyframeLaneView from './KeyframeLaneView.svelte';
   import { thumbnailFor } from './clipMedia';
-  import { clipsInView, LANE_ROW_HEIGHT, TRACK_ROW_HEIGHT, type LaneKeySelection, type TrackLaneController } from './trackLayout';
+  import { clipsInView, hiddenSpans, LANE_ROW_HEIGHT, rowColor, TRACK_ROW_HEIGHT, type LaneKeySelection, type TrackLaneController } from './trackLayout';
 
   interface Props {
     track: ShowLayerTrack;
@@ -38,9 +39,12 @@
     track, index, zoom, viewStart, viewEnd, selectedIds, keySelection, thumbs, dropTime, inactiveLanes, laneRanges, ctl, live = false,
   }: Props = $props();
 
-  const DEFAULT_COLOR = '#8b7cff';
-  const color = $derived(track.color || DEFAULT_COLOR);
+  const color = $derived(rowColor(track));
   const visible = $derived(clipsInView(track.clips, viewStart, viewEnd));
+  /** Where the piece is hidden (only rows that hide: a row with no blocks
+   *  follows the look). */
+  const hidden = $derived(hiddenSpans(track, viewStart, viewEnd));
+  const kind = $derived(track.row?.kind ?? (track.subRow ? 'sub' : 'piece'));
 
   /** Each clip's junction predecessor, worked out once per edit of the
    *  track (not per clip in view, and not again on every scroll). */
@@ -67,7 +71,7 @@
   }
 </script>
 
-<div class="lt" data-track-id={track.id} data-track-index={index}>
+<div class="lt" data-track-id={track.id} data-track-index={index} data-row-kind={kind}>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="lt-clips"
@@ -75,6 +79,7 @@
     class:muted={track.muted}
     class:drop={dropTime !== null}
     class:live
+    class:sub={kind === 'sub'}
     style:height="{TRACK_ROW_HEIGHT}px"
     style:--track-color={color}
     onmousedown={pressRow}
@@ -82,6 +87,15 @@
     ondragleave={(e) => ctl.dragLeave(e)}
     ondrop={(e) => ctl.drop(e, track)}
   >
+    {#each hidden as span (span.start)}
+      <div
+        class="lt-hidden"
+        style:left="{span.start * zoom}px"
+        style:width="{Math.max(0, (span.end - span.start) * zoom)}px"
+        title={track.muted ? 'Hidden for the whole show (the eye)' : 'Hidden here: no block on this row'}
+        data-hidden-span
+      ></div>
+    {/each}
     {#each visible as clip (clip.id)}
       <ShowLayerClipBlock
         {clip}
@@ -137,7 +151,7 @@
       <div class="lt-drop" style:left="{dropTime * zoom}px"></div>
     {/if}
     {#if track.clips.length === 0 && dropTime === null}
-      <span class="lt-empty">Drop media from the tray or your computer here</span>
+      <span class="lt-empty">{kind === 'sub' ? 'Drop media here: it draws over the piece' : kind === 'missing' ? 'This layer is gone from the stage' : 'Shows its look. Drop media here to play it on this piece'}</span>
     {/if}
   </div>
   {#if !track.collapsed}
@@ -176,6 +190,15 @@
     background: color-mix(in srgb, var(--track-color) 4%, transparent);
   }
   .lt-clips.muted { opacity: 0.5; }
+  .lt-clips.sub { background: color-mix(in srgb, var(--track-color) 2%, rgba(0, 0, 0, 0.18)); }
+  .lt-hidden {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(135deg, rgba(0, 0, 0, 0.42) 0 5px, rgba(255, 255, 255, 0.035) 5px 10px);
+  }
   .lt-clips.live {
     background: color-mix(in srgb, #ff8c28 7%, transparent);
     box-shadow: inset 0 1px 0 rgba(255, 140, 40, 0.55), inset 0 -1px 0 rgba(255, 140, 40, 0.55);

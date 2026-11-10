@@ -166,7 +166,7 @@ describe('show timeline project persistence', () => {
     expect(after.activeClipId).toBeNull();
   });
 
-  it('saves layer tracks (version 2) and brings them back with their media', async () => {
+  it('saves layer tracks (version 3) and brings them back with their media', async () => {
     const { project } = layers;
     const { showTimeline } = showTimelineStore;
     await buildShow();
@@ -181,7 +181,7 @@ describe('show timeline project persistence', () => {
     showTimeline.setTempo({ offset: 0.5, segments: [{ bar: 1, bpm: 124, beatsPerBar: 4, beatUnit: 4 }], source: 'manual' });
 
     const saved = JSON.parse(JSON.stringify(await project.exportProjectForSave())) as any;
-    expect(saved.project.showTimeline.version).toBe(2);
+    expect(saved.project.showTimeline.version).toBe(3);
     const savedClip = saved.project.showTimeline.layerTracks[0].clips[0];
     expect(savedClip.media.src).toBe('');
     expect(savedClip.media._assetRef.originalPath).toBe('/Users/x/clips/ramp.mp4');
@@ -191,7 +191,7 @@ describe('show timeline project persistence', () => {
     await flushMicrotasks();
     const after = get(showTimeline);
     expect(after.layerTracks).toHaveLength(1);
-    expect(after.layerTracks[0]).toMatchObject({ layerId: 'wall', layerName: 'Wall', gap: 'layer' });
+    expect(after.layerTracks[0]).toMatchObject({ layerId: 'wall', layerName: 'Wall', gap: 'hide' });
     const clip = after.layerTracks[0].clips[0];
     expect(clip).toMatchObject({ startTime: 5, duration: 30, endBehaviour: 'loop', fadeOut: 2 });
     expect(clip.media.src).toContain('ramp.mp4');

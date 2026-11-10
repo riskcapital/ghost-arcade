@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
-   * The show's layer tracks in the grid, between the preset lane and the
-   * audio lanes.
+   * The show's rows in the grid (one per mapping layer, and the layers the
+   * show adds on a piece), between the Looks lane and the audio lanes.
    *
    * Owns every pointer edit on tracks: moving clips (also onto other
    * tracks; Alt-drag drops copies), trimming, fades, crossfades, marquee
@@ -45,6 +45,7 @@
   import { followPointer } from './dragSession';
   import { liveTakeover } from '../../../show/takeover/liveTakeover';
   import ShowTakeoverHatch from './ShowTakeoverHatch.svelte';
+  import { editBlock } from '../../../show/tracks/showBlockEdit';
 
   interface Props {
     zoom: number;
@@ -216,6 +217,9 @@
     } else if (!wasSelected) {
       showTimeline.selectLayerClips([clip.id]);
     }
+    // A block is edited in the normal panels: its piece is selected and
+    // they show the block's own values.
+    if (!additive) editBlock(tr, clip);
     if (tr.locked) {
       if (additive && wasSelected) showTimeline.selectLayerClips(before.filter((id) => id !== clip.id));
       return;
@@ -461,8 +465,14 @@
       drop = null;
       return;
     }
+    if (!tr) {
+      // Off the rows: nothing lands here (a drop says where to put it).
+      dt.dropEffect = 'none';
+      drop = null;
+      return;
+    }
     dt.dropEffect = showDropEffect(dt.effectAllowed);
-    drop = { trackId: tr?.id ?? '', time: showTimeline.snapTime(timeAt(e.clientX)) };
+    drop = { trackId: tr.id, time: showTimeline.snapTime(timeAt(e.clientX)) };
   }
 
   function dragLeave(e: DragEvent) {
@@ -541,6 +551,7 @@
      handles; the blocks keep their plain tooltips. -->
 <div class="tl-stack" bind:this={stackEl} style:width="{width}px" data-show-tracks data-help-disabled>
   {#each tracks as tr, index (tr.id)}
+    {#if !tr.row?.hidden}
     <ShowLayerTrackLane
       track={tr}
       {index}
@@ -556,20 +567,20 @@
       {ctl}
       live={!!$liveTakeover.surfaces[tr.layerId]}
     />
+    {/if}
   {/each}
   <ShowTakeoverHatch {tracks} {zoom} />
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="tl-new"
-    class:drop={drop !== null && drop.trackId === ''}
     style:height="{ADD_TRACK_ROW_HEIGHT}px"
     ondragover={(e) => dragOver(e, null)}
     ondragleave={dragLeave}
     ondrop={(e) => dropOn(e, null)}
-    data-show-new-track-drop
+    data-show-rows-foot
   >
     <span class="tl-new-hint">
-      {tracks.length ? 'Drop media here for a new track' : 'Drop video, images or shaders here to make a layer track'}
+      {tracks.length ? 'Drop video, images, shaders or sketches on a piece\'s row' : 'Add layers in Mapping: each one gets a row here'}
     </span>
   </div>
   {#each ghosts as g, i (i)}

@@ -1,9 +1,11 @@
 <script lang="ts">
   /**
-   * The exact numbers for the selected clip on a layer track: name, media
-   * (with Replace), start, duration, in point, speed, what happens at the
-   * media's end, fades, opacity, the crossfade from the clip before, and
-   * colour. With several clips selected it says how many and offers Delete.
+   * The selected block's timing: name, media (with Replace), start, length,
+   * in point, speed, what happens at the media's end, fades, the crossfade
+   * from the block before, and colour. What the block looks like (shader
+   * parameters, sketch controls, opacity, blend mode) is edited in the normal
+   * panels, which show the block while it is selected (see showBlockEdit).
+   * With several blocks selected it says how many and offers Delete.
    */
   import type { ShowClipEndBehaviour, ShowClipMedia, ShowLayerClip, ShowLayerTrack } from '../../../types';
   import { showTimeline } from '../../../stores/showTimeline';
@@ -121,12 +123,12 @@
 
 <div class="show-inspector" data-clip-inspector>
   {#if count > 1 || !clip}
-    <span class="insp-title">Clips</span>
+    <span class="insp-title">Blocks</span>
     <span class="insp-hint">{count} selected</span>
     <button class="insp-delete" onclick={ondelete}>Delete</button>
-    <button aria-label="Close clip inspector" class="insp-close" onclick={onclose}>×</button>
+    <button aria-label="Close block inspector" class="insp-close" onclick={onclose}>×</button>
   {:else}
-    <span class="insp-title">Clip</span>
+    <span class="insp-title">Block timing</span>
     <label class="insp-field">
       <span>Name</span>
       <input
@@ -158,7 +160,7 @@
       <span class="insp-unit">s</span>
     </label>
     <label class="insp-field">
-      <span>Duration</span>
+      <span>Length</span>
       <input type="number" min="0.1" step="0.1" value={clip.duration.toFixed(2)} disabled={locked} onchange={(e) => commit(e, setDuration, (c) => c.duration)} data-clip-duration />
       <span class="insp-unit">s</span>
     </label>
@@ -192,10 +194,6 @@
       <input type="number" min="0" step="0.1" value={clip.fadeOut.toFixed(2)} disabled={locked} onchange={(e) => commit(e, (v) => patch({ fadeOut: Math.max(0, v || 0) }), (c) => c.fadeOut)} data-clip-fade-out />
       <span class="insp-unit">s</span>
     </label>
-    <label class="insp-field">
-      <span>Opacity</span>
-      <input class="insp-range" type="range" min="0" max="1" step="0.01" value={clip.opacity ?? 1} disabled={locked} oninput={(e) => patch({ opacity: num(e) }, true)} data-clip-opacity />
-    </label>
     {#if prev}
       <label class="insp-field" title="Crossfade from the clip before, centred on the cut">
         <span>Crossfade</span>
@@ -206,7 +204,7 @@
         {/if}
       </label>
     {/if}
-    <span class="insp-swatches" role="group" aria-label="Clip colour">
+    <span class="insp-swatches" role="group" aria-label="Block colour">
       {#each SWATCHES as sw (sw)}
         <button
           class="insp-swatch"
@@ -214,16 +212,17 @@
           style:background={sw || 'transparent'}
           disabled={locked}
           onclick={() => patch({ color: sw || undefined })}
-          title={sw ? 'Clip colour' : 'Track colour'}
-          aria-label={sw ? 'Clip colour' : 'Track colour'}
+          title={sw ? 'Block colour' : 'Row colour'}
+          aria-label={sw ? 'Block colour' : 'Row colour'}
         ></button>
       {/each}
     </span>
+    <span class="insp-hint" title="Click a block to edit it: the Properties and Shader Parameters panels show the block's own values while it is selected.">Look, opacity and blend: in Properties and Shader Parameters</span>
     {#if locked}
-      <span class="insp-warn">Track locked</span>
+      <span class="insp-warn">Row locked</span>
     {/if}
     <button class="insp-delete" disabled={locked} onclick={ondelete}>Delete</button>
-    <button aria-label="Close clip inspector" class="insp-close" onclick={onclose}>×</button>
+    <button aria-label="Close block inspector" class="insp-close" onclick={onclose}>×</button>
   {/if}
 </div>
 

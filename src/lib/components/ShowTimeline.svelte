@@ -617,8 +617,8 @@
       return;
     }
 
-    // A media-tray card or a video / image file dropped off the tracks makes
-    // a new layer track for it.
+    // A media-tray card or a video / image file dropped off the rows: it has
+    // to go on a piece (rows are the mapping layers), which says so.
     if (carriesTrackMedia(dt) && !Array.from(dt.files ?? []).some((f) => isShowAudioFile(f.name, f.type))) {
       void dropTrackMedia(dt, null, showTimeline.snapTime(dropTime));
       return;

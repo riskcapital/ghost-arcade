@@ -1,19 +1,22 @@
 <script lang="ts">
   /**
-   * The layer tracks' headers in the show's label column, row for row with
-   * ShowTrackLanes in the grid, and the "+ Track" row under them. Dragging a
-   * header up or down moves its track (one undo step on release).
+   * The rows' headers in the show's label column, row for row with
+   * ShowTrackLanes in the grid. Rows are the mapping layers (in the Layers
+   * panel's order; groups fold their children) and the layers the show adds
+   * on a piece. An added layer can be dragged up or down among its piece's
+   * added layers (that is its drawing order; one undo step on release); a
+   * piece's row moves when its layer moves in the Layers panel.
    */
   import { get } from 'svelte/store';
   import { showTimeline } from '../../../stores/showTimeline';
   import { layers as liveLayersStore } from '../../../stores/layers';
   import ShowTrackHeader from './ShowTrackHeader.svelte';
-  import ShowAddTrackMenu from './ShowAddTrackMenu.svelte';
   import { ADD_TRACK_ROW_HEIGHT, reorderGapAt, reorderIndexForGap, trackHeight, trackTops } from './trackLayout';
   import { trackLaneInfo } from './trackParams';
   import { liveTakeover } from '../../../show/takeover/liveTakeover';
   import { showSlice } from './timelineSlices';
   import { followPointer } from './dragSession';
+  import { cameraLaneShown } from './cameraLaneUi';
 
   // Slices, not $showTimeline: the store publishes every playhead frame.
   const layerTracksStore = showSlice('layerTracks');
@@ -26,7 +29,7 @@
   const liveLayers = $derived($liveLayersStore);
   const liveById = $derived(new Map(liveLayers.map((l) => [l.id, l])));
 
-  let menu: { x: number; y: number } | null = $state(null);
+  const cameraLaneStore = showSlice('cameraLane');
 
   // ── Reorder ──────────────────────────────────────────────────────────
   let listEl: HTMLDivElement | undefined = $state();
@@ -41,6 +44,13 @@
     const list = get(showTimeline).layerTracks;
     const from = list.findIndex((t) => t.id === trackId);
     if (from < 0 || list.length < 2) return;
+    // Only the layers added on a piece move here, among themselves.
+    const moving = list[from];
+    if (!moving.subRow) return;
+    const siblings = list.map((t, i) => (t.subRow && t.layerId === moving.layerId ? i : -1)).filter((i) => i >= 0);
+    const lo = siblings[0];
+    const hi = siblings[siblings.length - 1] + 1;
+    if (siblings.length < 2) return;
     const sy = e.clientY;
     let moved = false;
     const move = (ev: MouseEvent) => {
@@ -48,7 +58,7 @@
       moved = true;
       const now = get(showTimeline).layerTracks;
       const top = listEl?.getBoundingClientRect().top ?? 0;
-      const gap = reorderGapAt(trackTops(now), now.map(trackHeight), ev.clientY - top);
+      const gap = Math.max(lo, Math.min(hi, reorderGapAt(trackTops(now), now.map(trackHeight), ev.clientY - top)));
       reorder = { trackId, gap, from };
     };
     // Esc or focus lost: nothing has moved yet, the gap marker just goes.
@@ -66,18 +76,15 @@
     }
   }
 
-  function openMenu(e: MouseEvent) {
-    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    menu = menu ? null : { x: r.left, y: r.top - 4 };
-  }
   const EMPTY: ReadonlySet<string> = new Set();
 </script>
 
 <div class="thl" bind:this={listEl} data-track-headers>
 {#each tracks as tr (tr.id)}
+  {#if !tr.row?.hidden}
   <ShowTrackHeader
     track={tr}
-    onStage={liveById.has(tr.layerId)}
+    onStage={tr.row ? tr.row.onStage : liveById.has(tr.layerId)}
     soloed={solo === tr.id}
     otherSoloed={solo !== null && solo !== tr.id}
     selected={selectedTrackId === tr.id}
@@ -87,17 +94,19 @@
     dragging={reorder?.trackId === tr.id}
     takeover={$liveTakeover.surfaces[tr.layerId] ?? null}
   />
+  {/if}
 {/each}
 {#if reorder}
   <div class="thl-gap" style:top="{gapY - 1}px" data-track-reorder-gap={reorder.gap}></div>
 {/if}
 </div>
 <div class="tha" style:height="{ADD_TRACK_ROW_HEIGHT}px">
-  <button class="tha-btn" class:open={menu !== null} onmousedown={(e) => e.stopPropagation()} onclick={openMenu} title="Add a layer track" data-show-add-track>+ Track</button>
+  {#if $cameraLaneStore.length === 0 && !$cameraLaneShown}
+    <button class="tha-btn" onmousedown={(e) => e.stopPropagation()} onclick={() => cameraLaneShown.set(true)} title="Shots from the Stage Sim's Demo reel that its camera follows while the show plays" data-add-camera-lane>+ Stage camera lane</button>
+  {:else}
+    <span class="tha-hint">Rows follow the mapping layers</span>
+  {/if}
 </div>
-{#if menu}
-  <ShowAddTrackMenu x={menu.x} y={menu.y} onclose={() => (menu = null)} />
-{/if}
 
 <style>
   .thl { position: relative; }
@@ -130,5 +139,6 @@
     border-radius: var(--ga-r-hard, 3px);
     cursor: pointer;
   }
-  .tha-btn:hover, .tha-btn.open { border-color: rgba(139, 124, 255, 0.8); color: #fff; }
+  .tha-btn:hover { border-color: rgba(139, 124, 255, 0.8); color: #fff; }
+  .tha-hint { font-size: var(--ga-text-meta, 11px); color: var(--ga-ink-2, #55555f); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 </style>

@@ -145,8 +145,10 @@ describe('track templates', () => {
     expect(template.pixelFXContent._runtime).toBeUndefined();
     expect(template.splatContent._textureAssetRef).toEqual(textureRef);
     expect(template.pixelFXContent._sourceAssetRef).toEqual(sourceRef);
-    // And they survive a save and reopen, resolved to the files again.
-    showTimeline.addLayerTrack(layer);
+    // And they survive a save and reopen, resolved to the files again (a
+    // row with a block on it is saved; an empty one is made afresh).
+    const rowId = showTimeline.addLayerTrack(layer);
+    showTimeline.addLayerClip(rowId, { kind: 'image', name: 'a.png', src: 'a.png' }, 0);
     const saved = JSON.parse(JSON.stringify(showTimeline.serialize()));
     showTimeline._resetForTest();
     showTimeline.hydrate(saved, '/project');
@@ -157,7 +159,8 @@ describe('track templates', () => {
   });
 
   it('are saved as the layer is now, not as the last refresh left them', () => {
-    showTimeline.addLayerTrack(wall);
+    const rowId = showTimeline.addLayerTrack(wall);
+    showTimeline.addLayerClip(rowId, { kind: 'image', name: 'a.png', src: 'a.png' }, 0);
     const edited = { ...wall, opacity: 0.4, name: 'Wall left' } as Layer;
     setShowTemplateLayerSource(() => [edited]);
     const saved = showTimeline.serialize();

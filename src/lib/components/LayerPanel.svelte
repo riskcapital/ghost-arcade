@@ -26,6 +26,8 @@
     recordDiscreteAction();
   }
   import { confirmDeleteIfSafeMode } from '../utils/safeMode';
+  import ShowBlockBanner from './show/ShowBlockBanner.svelte';
+  import { activeBlock, setBlockBlendMode, setBlockOpacity } from '../show/tracks/showBlockEdit';
   import { layerRenderMeshGrid } from '../utils/meshWarp';
   import { fittableShapeOutline } from '../utils/meshShapeFit';
   // import AutoMapPanel from './AutoMapPanel.svelte';
@@ -1814,12 +1816,19 @@
   </div>
   <!-- End of Layers Section -->
 
+  {#if $activeBlock && !$activeBlock.onStage}
+    <!-- A show block on a piece the current look does not have: no layer to
+         show, so the block's own opacity and blend mode are here. -->
+    <div class="properties-effects-panel"><div class="properties-effects-content"><ShowBlockBanner /></div></div>
+  {/if}
   {#if $selectedLayerId}
     {@const layer = $layers.find((l) => l.id === $selectedLayerId)}
+    {@const editBlock = $activeBlock && $activeBlock.layerId === layer?.id ? $activeBlock : null}
     {#if layer}
       <!-- Properties & Effects Panel (bottom section, scrollable) -->
       <div class="properties-effects-panel">
         <div class="properties-effects-content">
+          {#if editBlock}<ShowBlockBanner />{/if}
 
           {#if layer.type === 'group'}
           <!-- ── Group Properties ── (same compact inspector rows as media) -->
@@ -2443,28 +2452,36 @@
         </div>
 
 
-        <!-- Opacity -->
-        <div class="property-row">
-          <label>Opacity</label>
+        <!-- Opacity (a show block's own while one is being edited) -->
+        <div class="property-row" class:block-row={!!editBlock}>
+          <label title={editBlock ? 'The show block\'s opacity' : undefined}>{editBlock ? 'Block opacity' : 'Opacity'}</label>
           <input
             type="range"
             min="0"
             max="1"
             step="0.01"
-            value={layer.opacity}
-            oninput={(e) =>
-              project.setLayerOpacity(layer.id, parseFloat((e.target as HTMLInputElement).value))}
+            value={editBlock ? editBlock.layer.opacity : layer.opacity}
+            oninput={(e) => {
+              const v = parseFloat((e.target as HTMLInputElement).value);
+              if (editBlock) setBlockOpacity(v);
+              else project.setLayerOpacity(layer.id, v);
+            }}
+            data-block-opacity={editBlock ? '' : undefined}
           />
-          <span class="value">{Math.round(layer.opacity * 100)}%</span>
+          <span class="value">{Math.round((editBlock ? editBlock.layer.opacity : layer.opacity) * 100)}%</span>
         </div>
 
         <!-- Blend Mode -->
-        <div class="property-row">
-          <label>Blend mode</label>
+        <div class="property-row" class:block-row={!!editBlock}>
+          <label title={editBlock ? 'How the show block draws over what is beneath it' : undefined}>{editBlock ? 'Block blend' : 'Blend mode'}</label>
           <select
-            value={layer.blendMode}
-            onchange={(e) =>
-              project.setLayerBlendMode(layer.id, (e.target as HTMLSelectElement).value as BlendMode)}
+            value={editBlock ? editBlock.layer.blendMode : layer.blendMode}
+            onchange={(e) => {
+              const mode = (e.target as HTMLSelectElement).value as BlendMode;
+              if (editBlock) setBlockBlendMode(mode);
+              else project.setLayerBlendMode(layer.id, mode);
+            }}
+            data-block-blend={editBlock ? '' : undefined}
           >
             {#each blendModes as mode}
               <option value={mode}>{blendModeName(mode)}</option>
@@ -4768,6 +4785,7 @@
     cursor: pointer;
   }
 
+  .property-row.block-row label { color: #FFD96B; }
   .property-row {
     display: grid;
     grid-template-columns: 84px minmax(0, 1fr) auto;

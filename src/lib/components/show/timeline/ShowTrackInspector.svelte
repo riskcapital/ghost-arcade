@@ -1,7 +1,9 @@
 <script lang="ts">
   /**
-   * The selected layer track: what the layer shows between clips, its
-   * colour, and removing the track (the layer itself stays).
+   * The selected row: what its piece shows between blocks, its colour, and
+   * clearing it (a piece's row: its blocks and lanes go, the row stays as
+   * long as the mapping layer does) or removing it (a layer added on a
+   * piece, or a row whose piece is gone).
    */
   import type { ShowLayerTrack } from '../../../types';
   import { showTimeline } from '../../../stores/showTimeline';
@@ -15,39 +17,45 @@
   let { track, onStage, onclose }: Props = $props();
 
   const SWATCHES = ['#8b7cff', '#ff6f5e', '#f0c674', '#5fdc76', '#5ce1e6', '#5278ff', '#c77dff'];
+  const kind = $derived(track.row?.kind ?? (track.subRow ? 'sub' : 'piece'));
+  const title = $derived(kind === 'sub' ? 'Layer on a piece' : kind === 'missing' ? 'Missing piece' : kind === 'group' ? 'Group row' : 'Row');
 </script>
 
 <div class="show-inspector" data-track-inspector>
-  <span class="insp-title">Track</span>
+  <span class="insp-title">{title}</span>
   <span class="insp-name layer-name">{track.layerName}</span>
-  {#if !onStage}
-    <span class="insp-hint">Not in the current preset: the track plays its own copy of the layer.</span>
+  {#if kind === 'missing'}
+    <span class="insp-hint">This mapping layer is gone from the stage and every look the show uses.</span>
   {/if}
-  <label class="insp-field">
-    <span>Between clips</span>
+  <label class="insp-field" title="A row with no blocks always shows what the current look gives its piece">
+    <span>Between blocks</span>
     <select
       value={track.gap}
       onchange={(e) => showTimeline.updateLayerTrack(track.id, { gap: (e.currentTarget as HTMLSelectElement).value as 'layer' | 'hide' })}
       data-track-gap
     >
-      <option value="layer">Show the layer</option>
-      <option value="hide">Hide the layer</option>
+      <option value="hide">Hide the piece</option>
+      <option value="layer">Show the look</option>
     </select>
   </label>
-  <span class="insp-swatches" role="group" aria-label="Track colour">
+  <span class="insp-swatches" role="group" aria-label="Row colour">
     {#each SWATCHES as sw (sw)}
       <button
         class="insp-swatch"
         class:on={(track.color ?? SWATCHES[0]) === sw}
         style:background={sw}
         onclick={() => showTimeline.updateLayerTrack(track.id, { color: sw === SWATCHES[0] ? undefined : sw })}
-        title="Track colour"
-        aria-label="Track colour"
+        title="Row colour"
+        aria-label="Row colour"
       ></button>
     {/each}
   </span>
-  <button class="insp-delete" onclick={() => showTimeline.removeLayerTrack(track.id)} title="Remove the track and its clips. The layer stays." data-track-remove>Remove track</button>
-  <button aria-label="Close track inspector" class="insp-close" onclick={onclose}>×</button>
+  {#if kind === 'sub' || kind === 'missing'}
+    <button class="insp-delete" onclick={() => showTimeline.removeLayerTrack(track.id)} title="Remove this row and its blocks" data-track-remove>Remove row</button>
+  {:else}
+    <button class="insp-delete" disabled={!track.clips.length && !track.lanes.length} onclick={() => showTimeline.removeLayerTrack(track.id)} title="Take every block and lane off this row. The mapping layer and its row stay." data-track-remove>Clear row</button>
+  {/if}
+  <button aria-label="Close row inspector" class="insp-close" onclick={onclose}>×</button>
 </div>
 
 <style>

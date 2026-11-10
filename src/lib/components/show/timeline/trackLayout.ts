@@ -11,24 +11,58 @@ export type ClipPart = 'body' | 'start' | 'end' | 'fadeIn' | 'fadeOut';
 
 export const TRACK_ROW_HEIGHT = 44;
 export const LANE_ROW_HEIGHT = 30;
-/** The "+ Track" row under the tracks (and drop target for a new track). */
+/** The row under the rows (the stage camera lane button, a hint). */
 export const ADD_TRACK_ROW_HEIGHT = 28;
 /** Label column width once the show has tracks (headers need the room). */
 export const TRACK_HEADER_WIDTH = 204;
 
-/** Height of one track: its clip row, plus its lanes when unfolded. */
-export function trackHeight(track: Pick<ShowLayerTrack, 'collapsed' | 'lanes'>): number {
+type RowShape = Pick<ShowLayerTrack, 'collapsed' | 'lanes' | 'row'>;
+
+/** Height of one track: its clip row, plus its lanes when unfolded; nothing
+ *  inside a folded group. */
+export function trackHeight(track: RowShape): number {
+  if (track.row?.hidden) return 0;
   return TRACK_ROW_HEIGHT + (track.collapsed ? 0 : track.lanes.length * LANE_ROW_HEIGHT);
 }
 
-export function tracksStackHeight(tracks: readonly Pick<ShowLayerTrack, 'collapsed' | 'lanes'>[]): number {
+/** A row's colour: its own, or one picked from the piece's id so a piece
+ *  keeps its colour wherever it shows. */
+const ROW_COLORS = ['#8b7cff', '#5ce1e6', '#f0c674', '#5fdc76', '#ff6f5e', '#c77dff', '#5278ff', '#ff9f43'];
+export function rowColor(track: Pick<ShowLayerTrack, 'color' | 'layerId'>): string {
+  if (track.color) return track.color;
+  let h = 0;
+  for (let i = 0; i < track.layerId.length; i++) h = (h * 31 + track.layerId.charCodeAt(i)) | 0;
+  return ROW_COLORS[Math.abs(h) % ROW_COLORS.length];
+}
+
+/** Stretches of [from, to) where a row shows nothing: its piece is hidden
+ *  there (between blocks, or the whole row when its eye is closed). Only
+ *  rows that hide do; a row without blocks follows the look. */
+export function hiddenSpans(track: Pick<ShowLayerTrack, 'clips' | 'gap' | 'muted'>, from: number, to: number): Array<{ start: number; end: number }> {
+  if (to <= from) return [];
+  if (track.muted) return [{ start: from, end: to }];
+  if (track.gap !== 'hide' || track.clips.length === 0) return [];
+  const out: Array<{ start: number; end: number }> = [];
+  let cursor = from;
+  for (const c of track.clips) {
+    const end = c.startTime + c.duration;
+    if (end <= cursor) continue;
+    if (c.startTime >= to) break;
+    if (c.startTime > cursor) out.push({ start: cursor, end: Math.min(c.startTime, to) });
+    cursor = Math.max(cursor, end);
+  }
+  if (cursor < to) out.push({ start: cursor, end: to });
+  return out;
+}
+
+export function tracksStackHeight(tracks: readonly RowShape[]): number {
   let h = ADD_TRACK_ROW_HEIGHT;
   for (const t of tracks) h += trackHeight(t);
   return h;
 }
 
 /** Top of each track inside the stack. */
-export function trackTops(tracks: readonly Pick<ShowLayerTrack, 'collapsed' | 'lanes'>[]): number[] {
+export function trackTops(tracks: readonly RowShape[]): number[] {
   const tops: number[] = [];
   let y = 0;
   for (const t of tracks) {
@@ -40,15 +74,17 @@ export function trackTops(tracks: readonly Pick<ShowLayerTrack, 'collapsed' | 'l
 
 /** Index of the track whose rows contain `y` (stack coordinates), clamped
  *  to the list; -1 for an empty list. */
-export function trackIndexAt(tracks: readonly Pick<ShowLayerTrack, 'collapsed' | 'lanes'>[], y: number): number {
+export function trackIndexAt(tracks: readonly RowShape[], y: number): number {
   if (!tracks.length) return -1;
   let top = 0;
+  let last = -1;
   for (let i = 0; i < tracks.length; i++) {
     const h = trackHeight(tracks[i]);
+    if (h > 0) last = i;
     if (y < top + h) return i;
     top += h;
   }
-  return tracks.length - 1;
+  return last >= 0 ? last : tracks.length - 1;
 }
 
 /**

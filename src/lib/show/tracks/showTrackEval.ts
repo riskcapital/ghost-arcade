@@ -14,12 +14,15 @@
  *     (a 'stop' clip cannot be longer than its media; a hand-edited one
  *     simply holds).
  * - Fades multiply opacity: no extra layers.
+ * - Between blocks a row hides its piece (or, set to, shows the look's
+ *   content there). A row with no blocks at all leaves the piece to the
+ *   current look, so the Looks lane works on pieces the show never touches.
  * - A run is a chain of touching clips with the same media whose media time
  *   carries on across each cut (what a split leaves behind). A run keeps one
  *   decoder, named after its first clip, so a split plays with no seek. A
  *   shader or sketch split the same way keeps its one program running.
  */
-import type { Layer, ShowClipMedia, ShowLayerClip, ShowLayerTrack } from '../../types';
+import type { BlendMode, Layer, ShowClipMedia, ShowLayerClip, ShowLayerTrack } from '../../types';
 import { compositionTransitionWeights } from '../../renderer/compositionTransitionLayers';
 import { clampShowTransitionDuration, findJunctionPredecessor } from '../showJunctions';
 
@@ -207,6 +210,8 @@ export interface ShowTrackClipState {
   loopStart: number;
   /** Seconds since the clip started. */
   localTime: number;
+  /** The block's own blend mode (unset: the piece's). */
+  blendMode?: BlendMode;
 }
 
 /** One track at one instant. */
@@ -215,6 +220,8 @@ export interface ShowTrackState {
   layerId: string;
   layerName: string;
   template: Layer | null;
+  /** A layer the show adds on the piece (drawn over it as its own copy). */
+  sub?: boolean;
   /** The clip under the playhead; null in a gap. */
   clip: ShowTrackClipState | null;
   /**
@@ -397,6 +404,7 @@ function clipStateAt(
     rate: clipRate(clip),
     loopStart: clipLoopStart(runFirst),
     localTime: t - clip.startTime,
+    ...(clip.blendMode ? { blendMode: clip.blendMode } : {}),
   };
 }
 
@@ -413,17 +421,22 @@ export function evaluateShowTracks(
 ): ShowTrackFrame {
   const solo = opts.soloTrackId ? tracks.find((tr) => tr.id === opts.soloTrackId) ?? null : null;
   const states: ShowTrackState[] = tracks.map((track) => {
-    const silenced = track.muted || (solo !== null && solo.id !== track.id);
+    // A solo keeps every row of its piece (the piece and the layers on it).
+    const silenced = track.muted || (solo !== null && solo.id !== track.id && solo.layerId !== track.layerId);
     const clip = findClipAt(track.clips, t);
     const params = opts.laneValues ? opts.laneValues(track, t) : null;
+    const sub = track.subRow ? { sub: true } : {};
     if (!clip) {
+      // No blocks anywhere: the piece follows the look.
+      const hides = track.gap === 'hide' && track.clips.length > 0;
       return {
         trackId: track.id,
         layerId: track.layerId,
         layerName: track.layerName,
         template: track.template,
+        ...sub,
         clip: null,
-        opacity: silenced || track.gap === 'hide' ? 0 : 1,
+        opacity: silenced || hides ? 0 : 1,
         gap: track.gap,
         params,
         warm: warmFor(track, t, silenced),
@@ -437,6 +450,7 @@ export function evaluateShowTracks(
         layerId: track.layerId,
         layerName: track.layerName,
         template: track.template,
+        ...sub,
         clip: clipStateAt(track.clips, xf.incoming, t, opts),
         opacity: clipGain(xf.incoming, t) * weights.incoming,
         gap: track.gap,
@@ -457,6 +471,7 @@ export function evaluateShowTracks(
       layerId: track.layerId,
       layerName: track.layerName,
       template: track.template,
+      ...sub,
       clip: clipStateAt(track.clips, clip, t, opts),
       opacity,
       gap: track.gap,
@@ -499,6 +514,19 @@ function laneValuesSignature(params: Record<string, number | boolean>): string {
  * the output can show, so a slow fade publishes once per visible step, not
  * on every frame.
  */
+/** A number per media object: block edits replace a clip's media, so a new
+ *  number means its values changed and the scene must be rebuilt. */
+const mediaTokens = new WeakMap<ShowClipMedia, number>();
+let nextMediaToken = 1;
+export function mediaToken(media: ShowClipMedia): number {
+  let token = mediaTokens.get(media);
+  if (token === undefined) {
+    token = nextMediaToken++;
+    mediaTokens.set(media, token);
+  }
+  return token;
+}
+
 export function showTrackFrameSignature(frame: ShowTrackFrame): string {
   const parts: string[] = [frame.playing ? 'p' : 's', String(frame.seekGeneration), frame.manualClock ? 'm' : ''];
   for (const tr of frame.tracks) {
@@ -509,12 +537,13 @@ export function showTrackFrameSignature(frame: ShowTrackFrame): string {
         tr.layerId,
         visibleOpacity(tr.opacity),
         tr.gap,
-        c ? `${c.clipId}/${c.runId}/${c.paused ? 'P' : ''}${c.held ? 'H' : ''}` : '-',
+        c ? `${c.clipId}/${c.runId}/${c.paused ? 'P' : ''}${c.held ? 'H' : ''}/${mediaToken(c.media)}/${c.blendMode ?? ''}` : '-',
+        tr.sub ? 's' : '',
         c && c.paused ? c.mediaTime.toFixed(4) : '',
         tr.params ? laneValuesSignature(tr.params) : '',
         tr.template ? tr.template.id : '',
         tr.warm ? `w:${tr.warm.clipId}` : '',
-        tr.xfade ? `x:${tr.xfade.clip.clipId}/${tr.xfade.clip.runId}/${tr.xfade.clip.paused ? 'P' : ''}${visibleOpacity(tr.xfade.opacity)}` : '',
+        tr.xfade ? `x:${tr.xfade.clip.clipId}/${tr.xfade.clip.runId}/${tr.xfade.clip.paused ? 'P' : ''}${visibleOpacity(tr.xfade.opacity)}/${mediaToken(tr.xfade.clip.media)}/${tr.xfade.clip.blendMode ?? ''}` : '',
       ].join('|'),
     );
   }

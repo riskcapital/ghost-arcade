@@ -17,6 +17,7 @@
 import { get } from 'svelte/store';
 import type { ShowLayerTrack } from '../../types';
 import { showTimeline, onShowTimelineReset } from '../../stores/showTimeline';
+import { numberedRows } from '../tracks/showStageRows';
 import { vjClipLauncher, type VJTakeoverSample } from '../../stores/vjClipLauncher';
 import { nextLaunchBoundary } from '../../stores/launchClock';
 import { isVisualAudioManualClock } from '../../audio/visualAudio';
@@ -79,8 +80,10 @@ export function takeoverVjSamples(frame: TakeoverFrame | null): VJTakeoverSample
 
 // ── Tracks and sources ──────────────────────────────────────────────────
 
+/** The row `show:live:<n>` names (0-based here): rows count as the show
+ *  draws them, without the layers added on a piece (those go with it). */
 export function trackAt(index: number): ShowLayerTrack | null {
-  return get(showTimeline).layerTracks[index] ?? null;
+  return numberedRows(get(showTimeline).layerTracks)[index] ?? null;
 }
 
 export function trackById(trackId: string): ShowLayerTrack | null {

@@ -1,14 +1,13 @@
 /**
  * Media dropped on the show: a media-tray card or files from the computer,
- * onto a track (at the drop time) or anywhere else on the grid (a new layer
- * track, added to the presets the show uses, like "+ Track → New layer").
+ * onto a piece's row (at the drop time): a block on that piece. Rows are the
+ * mapping layers, so media dropped anywhere else is turned away with a hint.
  * Audio files are left to the audio lanes.
  */
 import { get } from 'svelte/store';
 import type { ShowClipMedia } from '../../../types';
 import { showTimeline } from '../../../stores/showTimeline';
 import { showToast } from '../../../stores/errorToast';
-import { addTrackForNewLayer } from '../../../show/tracks/showTrackActions';
 import { clipEnd } from '../../../show/tracks/showTrackEval';
 import { clipMediaFromFile, clipMediaFromTrayPayload, isTrackMediaFile, MEDIA_SOURCE_DRAG_TYPE } from './clipMedia';
 import { focusedTrackId } from './trackLayout';
@@ -29,20 +28,23 @@ function stem(name: string): string {
   return name.replace(/\.[a-z0-9]{1,5}$/i, '') || name;
 }
 
-/** Put media on a track (or a new one) at `at`; after the last clip when
- *  there is no room there. */
+/** Put media on a row at `at`; after the last block when there is no room
+ *  there. */
 export function placeClipMedia(trackId: string | null, media: ShowClipMedia, at: number): { trackId: string; clipId: string | null } | null {
-  let id = trackId;
+  const id = trackId;
   if (!id) {
-    id = addTrackForNewLayer(stem(media.name), { addToPresets: true });
-    if (!id) return null;
+    const rows = get(showTimeline).layerTracks.length;
+    showToast(rows
+      ? `Drop ${stem(media.name)} on a piece's row: each row is a mapping layer.`
+      : 'Add a layer in Mapping first: each mapping layer gets a row here.', 'info');
+    return null;
   }
   let clipId = showTimeline.addLayerClip(id, media, at);
   if (!clipId) {
     const track = get(showTimeline).layerTracks.find((t) => t.id === id);
     const end = track?.clips.length ? Math.max(...track.clips.map(clipEnd)) : 0;
     clipId = showTimeline.addLayerClip(id, media, end);
-    if (clipId) showToast('No room there: the clip went after the last one on the track.', 'info');
+    if (clipId) showToast('No room there: the block went after the last one on the row.', 'info');
   }
   focusedTrackId.set(id);
   return { trackId: id, clipId };

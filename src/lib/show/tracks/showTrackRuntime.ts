@@ -8,7 +8,8 @@
  * - pre-rolls clips about to start (showPreloader.ts);
  * - re-anchors a video whose decoder drifted more than two frames off;
  * - finds the length of video clips whose media did not say;
- * - keeps each track's copy of its layer current while the layer is on stage.
+ * - keeps each track's copy of its layer current while the layer is on stage;
+ * - keeps the show's rows in step with the mapping layers (showStageRows.ts).
  */
 import { get, type Readable } from 'svelte/store';
 import type { MediaSource, Project } from '../../types';
@@ -33,6 +34,8 @@ import { SHOW_PHASE_INTERVAL_MS, showPhaseCommands, showPhaseTargets } from './s
 import { selectShowPreloads } from './showPreloader';
 import { readableClipUri, showSourceId } from './showClipSources';
 import { addTrackForLayer, addTrackForNewLayer } from './showTrackActions';
+import { setStagePieceLayers } from './showStagePieces';
+import type { Layer } from '../../types';
 import { SHOW_DRIFT_CHECK_MS, ShowDriftWatch } from './showVideoDrift';
 import { unknownLengthVideoUris, probeVideoDuration } from './showClipLength';
 
@@ -251,6 +254,44 @@ export function installShowTrackRuntime(deps: ShowTrackRuntimeDeps): () => void 
   }));
   disposers.push(() => { if (templateTimer) clearTimeout(templateTimer); });
 
+  // ── Rows follow the mapping layers ───────────────────────────────────
+  // The stage's layers and those of every look the show uses. Checked on a
+  // microtask (the project changes many times a frame while a slider moves)
+  // and only when something rows are made from changed.
+  let rowsKey: unknown[] = [];
+  let rowsQueued = false;
+  const syncRows = () => {
+    rowsQueued = false;
+    const p = get(deps.project);
+    const show = get(showTimeline);
+    const comps = p.vjMode?.compositions ?? [];
+    const key: unknown[] = [p.layers, comps, show.presetClips, show.layerTracks];
+    if (key.length === rowsKey.length && key.every((k, i) => k === rowsKey[i])) return;
+    rowsKey = key;
+    const looks: Layer[][] = [];
+    for (const id of showTimeline.usedCompositionIds()) {
+      const look = comps.find((c) => c.id === id)?.layers;
+      if (look?.length) looks.push(look);
+    }
+    setStagePieceLayers(p.layers ?? [], looks);
+    showTimeline.syncStageRows(p.layers ?? [], looks);
+    // The sync may have written the rows: remember that state as seen.
+    rowsKey = [p.layers, comps, get(showTimeline).presetClips, get(showTimeline).layerTracks];
+  };
+  const queueRows = () => {
+    if (rowsQueued) return;
+    rowsQueued = true;
+    queueMicrotask(syncRows);
+  };
+  disposers.push(deps.project.subscribe(queueRows));
+  // The show store publishes every playhead frame: only its rows and looks matter.
+  let rowsShowKey: unknown[] = [];
+  disposers.push(showTimeline.subscribe((s) => {
+    if (s.layerTracks === rowsShowKey[0] && s.presetClips === rowsShowKey[1]) return;
+    rowsShowKey = [s.layerTracks, s.presetClips];
+    queueRows();
+  }));
+
   // ── Automation / test surface ────────────────────────────────────────
   try {
     const w = window as unknown as { __ghostArcade?: Record<string, unknown> };
@@ -264,6 +305,10 @@ export function installShowTrackRuntime(deps: ShowTrackRuntimeDeps): () => void 
         refreshTemplates,
         addTrackForLayer,
         addTrackForNewLayer,
+        /** The row of a piece, by layer id (rows are made from the layers). */
+        rowForLayer: (layerId: string) => { syncRows(); return showTimeline.rowFor(layerId)?.id ?? null; },
+        addSubRow: (layerId: string, name?: string) => showTimeline.addSubRow(layerId, name),
+        syncRows,
       },
     };
   } catch { /* sealed */ }

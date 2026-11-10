@@ -5494,12 +5494,34 @@ export interface ShowLayerClip {
   fadeOut: number;
   /** 0..1, multiplies the layer's own opacity (default 1). */
   opacity?: number;
+  /** How the block draws over what is beneath it. Unset: the piece's own
+   *  blend mode on its row, 'normal' on a layer added to the piece. */
+  blendMode?: BlendMode;
   transitionIn?: 'cut' | 'dissolve';
   transitionDuration?: number;
   label?: string;
   color?: string;
 }
 
+/** Where a row sits in the show's row list (worked out from the mapping
+ *  layers every time they change; never saved). */
+export interface ShowRowInfo {
+  /** A mapping layer ('piece'), a group of them, a layer the show adds on a
+   *  piece ('sub'), or a row whose piece no longer exists anywhere. */
+  kind: 'piece' | 'group' | 'sub' | 'missing';
+  /** Nesting under groups (0 = top level). */
+  depth: number;
+  /** Inside a folded group: not drawn. */
+  hidden: boolean;
+  /** The piece is in the current look (on stage now). */
+  onStage: boolean;
+}
+
+/**
+ * A row of the show: one mapping layer (a piece of the stage), or a layer the
+ * show adds on top of a piece (`subRow`). Rows for pieces are made from the
+ * mapping layers automatically, in the Layers panel's order.
+ */
 export interface ShowLayerTrack {
   id: string;
   /** The surface the track drives: the id of the layer it was made from. */
@@ -5512,11 +5534,20 @@ export interface ShowLayerTrack {
   clips: ShowLayerClip[];
   /** Keyframe lanes in show seconds. */
   lanes: KeyframeTrack[];
-  /** Between clips: show the layer's own content, or hide the layer. */
+  /** Between blocks: hide the piece (the default), or show what the current
+   *  look gives it. A row with no blocks at all always shows the look. */
   gap: 'layer' | 'hide';
+  /** Hidden for the whole show (the row's eye). */
   muted: boolean;
   locked: boolean;
   collapsed: boolean;
+  /** A layer the show adds on the piece `layerId`: it shares the piece's
+   *  shape and draws over it, in row order. Never in the Layers panel. */
+  subRow?: boolean;
+  /** A group's row: its children's rows are folded away. */
+  foldChildren?: boolean;
+  /** Runtime only (see ShowRowInfo). */
+  row?: ShowRowInfo;
 }
 
 /** A shot on the stage-camera lane, referencing a Demo Reel shot. */

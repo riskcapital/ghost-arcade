@@ -13,7 +13,7 @@
    * - Loop notches: where a looping video wraps back.
    * - Hatched: where a 'hold' clip sits on its last frame.
    */
-  import type { ShowLayerClip } from '../../../types';
+  import { blendModeLabel, type ShowLayerClip } from '../../../types';
   import { clipFades, clipLoopStart, clipRate, mediaEnd, SHOW_CLIP_END_GUARD_SECONDS } from '../../../show/tracks/showTrackEval';
   import { trimEdgeWidth, type ClipPart } from './trackLayout';
 
@@ -98,6 +98,9 @@
     <span class="lc-kind" aria-hidden="true">{KIND_ICON[clip.media.kind] ?? '▣'}</span>
   {/if}
   <span class="lc-name clip-name">{name}</span>
+  {#if clip.blendMode && clip.blendMode !== 'normal' && width > 60}
+    <span class="lc-blend" title={`Blend: ${blendModeLabel(clip.blendMode)}`}>{blendModeLabel(clip.blendMode)}</span>
+  {/if}
   {#if width > 90}
     <span class="lc-dur">{fmt(clip.duration)}</span>
   {/if}
@@ -133,6 +136,17 @@
 </div>
 
 <style>
+  .lc-blend {
+    flex: 0 0 auto;
+    font-size: 9px;
+    font-weight: 700;
+    padding: 0 3px;
+    border-radius: 2px;
+    color: #1a1204;
+    background: rgba(255, 217, 107, 0.85);
+    position: relative;
+    z-index: 1;
+  }
   .lc-block {
     --clip-color: #8b7cff;
     position: absolute;

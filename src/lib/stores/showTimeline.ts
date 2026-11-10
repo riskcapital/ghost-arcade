@@ -150,6 +150,14 @@ import {
 } from './historyHooks';
 import { demoReel, type DemoShot } from '../stage3d/demoReel';
 import { cameraShotTable, readCameraShotTable } from '../show/rehearsal/cameraShotTable';
+import {
+  bareRowFor,
+  isBareRow,
+  reconcileStageRows,
+  rowHasContent,
+  rowTrackId,
+  stagePieces,
+} from '../show/tracks/showStageRows';
 
 // ─── Tunables ────────────────────────────────────────────────────────────
 
@@ -651,8 +659,21 @@ export function currentShowTrackFrame(): ShowTrackFrame | null {
   return lastTrackFrame;
 }
 
+/** The rows the show evaluates: those with blocks, lanes or a setting that
+ *  changes the picture. A row with nothing on it leaves its piece to the
+ *  current look, so it is left out (with a solo, every row counts: the
+ *  others hide). */
+let activeTracksMemo: { tracks: ShowLayerTrack[]; solo: string | null; out: ShowLayerTrack[] } | null = null;
+function evaluatedTracks(s: ShowTimelineState): ShowLayerTrack[] {
+  if (activeTracksMemo && activeTracksMemo.tracks === s.layerTracks && activeTracksMemo.solo === s.soloTrackId) return activeTracksMemo.out;
+  const out = s.soloTrackId ? s.layerTracks : s.layerTracks.filter((t) => rowHasContent(t) || t.muted);
+  activeTracksMemo = { tracks: s.layerTracks, solo: s.soloTrackId, out };
+  return out;
+}
+
 function publishTrackFrame(s: ShowTimelineState, evalTime: number, force = false): void {
-  if (!s.layerTracks.length) {
+  const tracks = evaluatedTracks(s);
+  if (!tracks.length) {
     if (lastTrackFrame !== null || force) {
       lastTrackFrame = null;
       lastTrackFrameSignature = null;
@@ -660,7 +681,7 @@ function publishTrackFrame(s: ShowTimelineState, evalTime: number, force = false
     }
     return;
   }
-  const frame = evaluateShowTracks(s.layerTracks, evalTime, {
+  const frame = evaluateShowTracks(tracks, evalTime, {
     playing: s.isPlaying,
     seekGeneration,
     soloTrackId: s.soloTrackId,
@@ -1167,6 +1188,7 @@ export function normalizeLayerClip(raw: unknown): ShowLayerClip | null {
   if (c.transitionIn === 'dissolve' || c.transitionIn === 'cut') clip.transitionIn = c.transitionIn;
   const td = Number(c.transitionDuration);
   if (c.transitionDuration !== undefined && Number.isFinite(td) && td >= 0) clip.transitionDuration = td;
+  if (typeof c.blendMode === 'string' && c.blendMode) clip.blendMode = c.blendMode as ShowLayerClip['blendMode'];
   if (typeof c.label === 'string') clip.label = c.label;
   if (typeof c.color === 'string') clip.color = c.color;
   return clip;
@@ -1212,10 +1234,14 @@ export function normalizeLayerTrack(raw: unknown, index: number): ShowLayerTrack
     template: t.template && typeof t.template === 'object' ? (t.template as Layer) : null,
     clips: cleanTrackClips(clips),
     lanes: (Array.isArray(t.lanes) ? t.lanes : []).map(normalizeLane).filter((l): l is KeyframeTrack => l !== null),
-    gap: t.gap === 'hide' ? 'hide' : 'layer',
+    // Rows hide their piece between blocks unless they say otherwise (files
+    // before rows came from the stage always said).
+    gap: t.gap === 'layer' ? 'layer' : 'hide',
     muted: t.muted === true,
     locked: t.locked === true,
     collapsed: t.collapsed === true,
+    ...(t.subRow === true ? { subRow: true } : {}),
+    ...(t.foldChildren === true ? { foldChildren: true } : {}),
   };
 }
 
@@ -1261,8 +1287,10 @@ function refreshTemplates(pairs: ReadonlyArray<readonly [ShowLayerTrack, Layer]>
   const next = new Map<string, { template: Layer; layerName: string }>();
   for (const [track, layer] of pairs) {
     const template = trackTemplateFromLayer(layer);
-    if (track.template && track.layerName === layer.name && sameJson(track.template, template)) continue;
-    next.set(track.id, { template, layerName: layer.name });
+    // A layer the show added on a piece keeps its own name.
+    const layerName = track.subRow ? track.layerName : layer.name;
+    if (track.template && track.layerName === layerName && sameJson(track.template, template)) continue;
+    next.set(track.id, { template, layerName });
   }
   if (!next.size) return;
   store.update((s) => ({
@@ -2034,24 +2062,16 @@ export const showTimeline = {
    * existing one. Returns the track id.
    */
   addLayerTrack(layer: Layer, opts: { color?: string; index?: number } = {}): string {
-    const existing = get(store).layerTracks.find((t) => t.layerId === layer.id);
+    const existing = get(store).layerTracks.find((t) => t.layerId === layer.id && !t.subRow);
     if (existing) {
       store.update((s) => ({ ...s, selection: { kind: 'track', id: existing.id } }));
       return existing.id;
     }
-    const id = generateUUID();
+    const id = rowTrackId(layer.id);
     const track: ShowLayerTrack = {
-      id,
-      layerId: layer.id,
-      layerName: layer.name,
+      ...bareRowFor({ id: layer.id, name: layer.name }),
       color: opts.color,
       template: trackTemplateFromLayer(layer),
-      clips: [],
-      lanes: [],
-      gap: 'layer',
-      muted: false,
-      locked: false,
-      collapsed: false,
     };
     store.update((s) => {
       const layerTracks = [...s.layerTracks];
@@ -2079,6 +2099,70 @@ export const showTimeline = {
     republishTracks();
   },
 
+  /**
+   * Rows from the mapping stage (see show/tracks/showStageRows.ts): the
+   * layers on stage now and those of the looks the show uses. Rows are
+   * added, named, ordered and folded to match; nothing is recorded as an
+   * edit (a row with nothing on it is not part of the show).
+   */
+  syncStageRows(stage: readonly Layer[], looks: ReadonlyArray<readonly Layer[]>) {
+    const pieces = stagePieces(stage, looks);
+    const next = reconcileStageRows(get(store).layerTracks, pieces, { templateOf: trackTemplateFromLayer });
+    if (!next) return;
+    store.update((s) => ({
+      ...s,
+      layerTracks: next,
+      soloTrackId: s.soloTrackId && next.some((t) => t.id === s.soloTrackId) ? s.soloTrackId : null,
+    }));
+    republishTracks();
+  },
+
+  /** The looks (preset ids) the show uses, in the order it first uses them. */
+  usedCompositionIds(): string[] {
+    return [...new Set(get(store).presetClips.map((c) => c.compositionId))];
+  },
+
+  /**
+   * "+ Layer on this piece": a row whose blocks draw over the piece, sharing
+   * its shape, under the piece's other added layers. Never added to the
+   * mapping Layers panel. Returns the new row's id.
+   */
+  addSubRow(layerId: string, name?: string): string | null {
+    const tracks = get(store).layerTracks;
+    const main = tracks.find((t) => t.layerId === layerId && !t.subRow);
+    if (!main) return null;
+    const own = tracks.filter((t) => t.layerId === layerId && t.subRow);
+    const id = generateUUID();
+    const track: ShowLayerTrack = {
+      id,
+      layerId,
+      layerName: name?.trim() || `${main.layerName} · layer ${own.length + 2}`,
+      template: main.template,
+      clips: [],
+      lanes: [],
+      gap: 'hide',
+      muted: false,
+      locked: false,
+      collapsed: false,
+      subRow: true,
+      ...(main.row ? { row: { ...main.row, kind: 'sub' as const, depth: main.row.depth + 1 } } : {}),
+    };
+    const last = own.length ? tracks.indexOf(own[own.length - 1]) : tracks.indexOf(main);
+    store.update((s) => {
+      const layerTracks = [...s.layerTracks];
+      layerTracks.splice(last + 1, 0, track);
+      return { ...s, layerTracks, selection: { kind: 'track', id } };
+    });
+    recordShowEdit();
+    republishTracks();
+    return id;
+  },
+
+  /** The row of a piece (made on the fly when it has nothing on it yet). */
+  rowFor(layerId: string): ShowLayerTrack | null {
+    return get(store).layerTracks.find((t) => t.layerId === layerId && !t.subRow) ?? null;
+  },
+
   /** Move a track to another row. */
   reorderLayerTrack(trackId: string, toIndex: number) {
     const tracks = get(store).layerTracks;
@@ -2097,7 +2181,7 @@ export const showTimeline = {
   },
 
   /** Track settings: gap mode, mute, lock, fold, colour, name. */
-  updateLayerTrack(trackId: string, patch: Partial<Pick<ShowLayerTrack, 'gap' | 'muted' | 'locked' | 'collapsed' | 'color' | 'layerName'>>) {
+  updateLayerTrack(trackId: string, patch: Partial<Pick<ShowLayerTrack, 'gap' | 'muted' | 'locked' | 'collapsed' | 'color' | 'layerName' | 'foldChildren'>>) {
     let changed = false;
     store.update((s) => ({
       ...s,
@@ -2111,9 +2195,9 @@ export const showTimeline = {
       }),
     }));
     if (!changed) return;
-    // Folding a track is how it is viewed, not an edit.
+    // Folding a track (or a group's children) is how it is viewed, not an edit.
     const keys = Object.keys(patch);
-    if (!(keys.length === 1 && keys[0] === 'collapsed')) recordShowEdit();
+    if (!keys.every((k) => k === 'collapsed' || k === 'foldChildren')) recordShowEdit();
     republishTracks();
   },
 
@@ -2138,6 +2222,8 @@ export const showTimeline = {
     const byId = new Map(layers.map((l) => [l.id, l]));
     const pairs: Array<[ShowLayerTrack, Layer]> = [];
     for (const track of get(store).layerTracks) {
+      // A row with nothing on it never draws a copy of its piece.
+      if (!track.template && !rowHasContent(track)) continue;
       const layer = byId.get(track.layerId);
       if (layer) pairs.push([track, layer]);
     }
@@ -2173,7 +2259,7 @@ export const showTimeline = {
       fadeIn: Math.max(0, opts.fadeIn ?? 0),
       fadeOut: Math.max(0, opts.fadeOut ?? 0),
     };
-    for (const key of ['rate', 'opacity', 'label', 'color', 'loopStart', 'transitionIn', 'transitionDuration'] as const) {
+    for (const key of ['rate', 'opacity', 'blendMode', 'label', 'color', 'loopStart', 'transitionIn', 'transitionDuration'] as const) {
       if (opts[key] !== undefined) (clip as unknown as Record<string, unknown>)[key] = opts[key];
     }
     const clips = insertClip(track.clips, clip);
@@ -2603,7 +2689,7 @@ export const showTimeline = {
 
   hasContent(): boolean {
     const s = get(store);
-    return s.presetClips.length > 0 || s.audioTracks.length > 0 || s.layerTracks.length > 0;
+    return s.presetClips.length > 0 || s.audioTracks.length > 0 || s.layerTracks.some((t) => !isBareRow(t));
   },
 
   /** See `presetLocalTimeAt`. */
@@ -2721,7 +2807,9 @@ export const showTimeline = {
     }
     const s = get(store);
     return {
-      version: 2,
+      // 3: rows come from the mapping layers; empty rows are not saved,
+      // blocks have their own blend mode, layers can be added on a piece.
+      version: 3,
       isOpen: s.isOpen,
       loop: s.loop,
       endAction: s.endAction,
@@ -2732,7 +2820,7 @@ export const showTimeline = {
         url: refIsDurable(t.assetRef) ? '' : t.url,
       })),
       presetClips: s.presetClips.map((c) => ({ ...c })),
-      layerTracks: s.layerTracks.map((t) => ({
+      layerTracks: s.layerTracks.filter((t) => !isBareRow(t)).map(({ row: _row, ...t }) => ({
         ...t,
         template: serializeTemplate(t.template),
         clips: t.clips.map((c) => ({ ...c, media: serializeClipMedia(c.media) })),
@@ -2866,6 +2954,7 @@ export const showTimeline = {
     trackFrameSink = null;
     lastTrackFrame = null;
     lastTrackFrameSignature = null;
+    activeTracksMemo = null;
     tracksAwaitingFirstStep.clear();
     store.set(createInitialState());
   },

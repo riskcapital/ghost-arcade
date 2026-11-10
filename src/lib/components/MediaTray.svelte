@@ -35,6 +35,7 @@
   import { settings } from '../stores/settings';
   import { TRAY_TAB_ORDER, TRAY_TAB_ALIASES, type TrayTab } from '../control/trayTabs';
   import { MEDIA_TRAY_REVEAL_EVENT, type MediaTrayRevealDetail } from './show/timeline/clipMenuActions';
+  import { activeBlock, setBlockShaderValue, setBlockShaderValues, setBlockShaderImageInput, setBlockSketchParam } from '../show/tracks/showBlockEdit';
   import { captureJSAnimationThumbnail as captureJSAnimationThumbnailInIframe, updateJSAnimationParams } from '../renderer/js-animation';
   import { singlePlayablePage } from '../p5sketch/wrapSketch';
   import { jsAnimationFromHtml } from '../renderer/jsAnimationPage';
@@ -2829,6 +2830,15 @@
    *  modulation engine doesn't immediately overwrite the values
    *  we just snapped back. */
   function resetMappingShaderToDefaults() {
+    if (selectedShader && $activeBlock) {
+      const defaults: Record<string, number | boolean> = {};
+      for (const input of selectedShader.inputs) {
+        if ((input.TYPE === 'float' || input.TYPE === 'long') && typeof input.DEFAULT === 'number') defaults[input.NAME] = input.DEFAULT;
+        else if (input.TYPE === 'bool' && typeof input.DEFAULT === 'boolean') defaults[input.NAME] = input.DEFAULT;
+      }
+      setBlockShaderValues(defaults);
+      return;
+    }
     if (!selectedShader || selectedLayerIdx < 0) return;
     for (const input of selectedShader.inputs) {
       const existingMod = modulationStore.getModulation(selectedLayerIdx, input.NAME, 'A', 'mapping');
@@ -2855,6 +2865,12 @@
 
   // Update shader parameter value
   function updateShaderParam(inputName: string, value: number | boolean | number[]) {
+    // A show block being edited: the value is the block's, not the layer's.
+    if (selectedShader && $activeBlock) {
+      selectedShader.values[inputName] = value;
+      setBlockShaderValue(inputName, value);
+      return;
+    }
     if (!selectedShader || !$selectedLayerId || !$selectedLayer?.source) return;
 
     selectedShader.values[inputName] = value;
@@ -2889,6 +2905,11 @@
 
   // Update shader image input reference
   function updateShaderImageInput(inputName: string, ref: ImageInputRef | null) {
+    if (selectedShader && $activeBlock) {
+      selectedShader.imageInputRefs[inputName] = ref;
+      setBlockShaderImageInput(inputName, ref);
+      return;
+    }
     if (!selectedShader || !$selectedLayerId || !$selectedLayer?.source) return;
 
     selectedShader.imageInputRefs[inputName] = ref;
@@ -4082,9 +4103,31 @@
   // Saved video library state
   $: savedVideos = $videoLibrary.videos;
 
+  // What the parameter panels show: the selected layer, or a show block
+  // being edited (its piece with the block's picture; see showBlockEdit).
+  $: panelLayer = $activeBlock ? $activeBlock.layer : $selectedLayer;
+
   // Check if current layer has a shader with the selected shader's id
   $: {
-    if ($selectedLayer?.source?.type === 'shader') {
+    const block = $activeBlock;
+    if (block && block.clip.media.kind === 'shader') {
+      // A block's own values, in a panel item of its own: the tray's
+      // shader card is never written to.
+      const media = block.clip.media;
+      const found = shaders.find(s => s.src === media.src) || shaders.find(s => !!media.libraryId && s.id === media.libraryId);
+      const inputs = media.shaderInputs?.length ? media.shaderInputs : (found?.inputs ?? []);
+      const imageInputRefs: Record<string, ImageInputRef | null> = {};
+      for (const [name, ref] of Object.entries(media.shaderImageInputs ?? {})) imageInputRefs[name] = ref;
+      selectedShader = {
+        ...(found ?? { id: media.libraryId || `show-block:${block.clipId}`, src: media.src, shaderCode: media.shaderCode ?? '' }),
+        name: media.name,
+        inputs,
+        values: { ...(media.shaderValues ?? {}) },
+        imageInputRefs,
+      } as ShaderItem;
+    } else if (block) {
+      selectedShader = null;
+    } else if ($selectedLayer?.source?.type === 'shader') {
       // Try exact ID match first, then fall back to matching by src path
       // Source IDs are formatted as "${shaderItem.id}-${layerId}-${timestamp}"
       // while shader item IDs are "isf:filename" - so also try matching by src
@@ -4125,8 +4168,21 @@
   // a name-based lookup for built-in items where the source.id may have
   // been generated differently.
   $: {
-    const layerSrc = $selectedLayer?.source;
-    if (layerSrc?.jsAnimation) {
+    const layerSrc = panelLayer?.source;
+    if ($activeBlock && layerSrc?.jsAnimation) {
+      // A sketch block: its own parameter values, in a panel item of its own.
+      const sid = String(($activeBlock.clip.media.libraryId ?? '') || '');
+      const found = jsAnimations.find(a => !!sid && (sid === a.id || sid.startsWith(a.id + '-')))
+        ?? jsAnimations.find(a => a.name === layerSrc.name);
+      const params = layerSrc.jsAnimation.params?.length ? layerSrc.jsAnimation.params : found?.jsAnimation.params;
+      selectedJSAnimation = {
+        ...(found ?? { id: `show-block:${$activeBlock.clipId}`, name: layerSrc.name, type: (layerSrc as any).type }),
+        name: $activeBlock.clip.media.name,
+        jsAnimation: { ...(found?.jsAnimation ?? {}), ...layerSrc.jsAnimation, params, paramValues: { ...(layerSrc.jsAnimation.paramValues ?? {}) } },
+      } as any;
+    } else if ($activeBlock) {
+      selectedJSAnimation = null;
+    } else if (layerSrc?.jsAnimation) {
       const sid = layerSrc.id || '';
       let found = jsAnimations.find(a => sid === a.id || sid.startsWith(a.id + '-'));
       if (!found) found = jsAnimations.find(a => a.name === layerSrc.name && a.type === (layerSrc as any).type);
@@ -4159,6 +4215,12 @@
   }
 
   function updateJSAnimationParam(paramName: string, value: number | boolean | string | number[]) {
+    if (selectedJSAnimation && $activeBlock) {
+      if (!selectedJSAnimation.jsAnimation.paramValues) selectedJSAnimation.jsAnimation.paramValues = {};
+      selectedJSAnimation.jsAnimation.paramValues[paramName] = value;
+      setBlockSketchParam(paramName, value, typeof value === 'number');
+      return;
+    }
     if (!selectedJSAnimation || !$selectedLayerId) return;
 
     // Update local state
@@ -4383,8 +4445,9 @@
 
   <!-- Shader Parameters Panel (when shader is selected) -->
   {#if !vjMode && selectedShader && selectedShader.inputs.length > 0}
-    <div class="shader-params">
+    <div class="shader-params" class:block-params={!!$activeBlock} data-shader-params>
       <div class="params-header">
+        {#if $activeBlock}<span class="block-badge" title="These are the values of the show block selected on the timeline. They change that block only, not the mapping layer.">Show block</span>{/if}
         <h4>{selectedShader.name}</h4>
         <!-- ↺ Reset all params + clear modulation. Cyan to read as
              recoverable, matching the VJ Mode shader-params reset. -->
@@ -4410,10 +4473,12 @@
             <div class="shader-param" class:modulated={isModulated}>
               <div class="shader-param-header">
                 <span class="shader-param-name">{input.LABEL || input.NAME}</span>
+                {#if !$activeBlock}
                 <button class="mod-source-chip" class:active={isModulated} class:open={mapModTrayParam === input.NAME}
                   title="Modulation — audio bands, LFO with BPM sync, auto playhead"
                   onclick={(e) => toggleMapModTray(input.NAME, e.currentTarget as HTMLElement)}
                 >{modSourceLabel(_currentSrc, !!_mapAuto)}</button>
+                {/if}
               </div>
               <div class="shader-param-slider">
                 <div class="slider-track-wrap">
@@ -4596,10 +4661,11 @@
 
   <!-- JS Animation Parameters Panel (when JS animation is selected) -->
   {#if !vjMode && selectedJSAnimation && selectedJSAnimation.jsAnimation.params && selectedJSAnimation.jsAnimation.params.length > 0}
-    <div class="shader-params js-params">
+    <div class="shader-params js-params" class:block-params={!!$activeBlock}>
       <div class="params-header">
+        {#if $activeBlock}<span class="block-badge" title="These are the values of the show block selected on the timeline. They change that block only, not the mapping layer.">Show block</span>{/if}
         <h4>{selectedJSAnimation.name}</h4>
-        {#if selectedJSAnimation.type === 'p5js' && $selectedLayerId}
+        {#if selectedJSAnimation.type === 'p5js' && $selectedLayerId && !$activeBlock}
           <button class="edit-code-btn" onclick={() => openSketchEditor({ layerId: $selectedLayerId })} title="Edit this layer's sketch code">Edit code</button>
         {/if}
         <button class="close-params" onclick={() => selectedJSAnimation = null}>x</button>
@@ -6030,6 +6096,19 @@
     border-bottom: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     max-height: 250px;
     overflow-y: auto;
+  }
+
+  .shader-params.block-params { box-shadow: inset 3px 0 0 #FFD96B; }
+  .block-badge {
+    flex: 0 0 auto;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #1a1204;
+    background: #FFD96B;
+    border-radius: 3px;
+    padding: 1px 5px;
   }
 
   .params-header {

@@ -32,7 +32,9 @@ import { createSurfaceLookup, resolvePresetLayer } from '../../stores/mapSurface
 import { staticClipSource, readableClipUri } from '../tracks/showClipSources';
 import {
   SHOW_SCENE_LAYER_LIMIT,
+  SHOW_SUB_LAYER_PREFIX,
   SHOW_TRACK_LAYER_PREFIX,
+  showCopyPieceId,
   SHOW_WARM_LAYER_PREFIX,
   SHOW_XFADE_LAYER_PREFIX,
 } from '../tracks/showTrackScene';
@@ -211,7 +213,7 @@ export function sampledVjFeeds(
 }
 
 function isShowHelper(id: string): boolean {
-  return id.startsWith(SHOW_WARM_LAYER_PREFIX) || id.startsWith(SHOW_XFADE_LAYER_PREFIX) || id.startsWith(SHOW_TRACK_LAYER_PREFIX);
+  return id.startsWith(SHOW_WARM_LAYER_PREFIX) || id.startsWith(SHOW_XFADE_LAYER_PREFIX) || id.startsWith(SHOW_TRACK_LAYER_PREFIX) || id.startsWith(SHOW_SUB_LAYER_PREFIX);
 }
 
 /**
@@ -243,6 +245,7 @@ export function capTakeoverScene(list: Layer[], feedIds: ReadonlySet<string>, ma
   }
   dropWhere((l) => l.id.startsWith(SHOW_WARM_LAYER_PREFIX));
   dropWhere((l) => l.id.startsWith(SHOW_XFADE_LAYER_PREFIX));
+  dropWhere((l) => l.id.startsWith(SHOW_SUB_LAYER_PREFIX));
   dropWhere((l) => l.id.startsWith(SHOW_TRACK_LAYER_PREFIX));
   return out.length > maxLayers ? out.slice(0, maxLayers) : out;
 }
@@ -282,6 +285,17 @@ export function buildTakeoverScene(list: Layer[], frame: TakeoverFrame | null, c
     let index = stage.findIndex((l) => l.id === surface.surfaceId);
     if (index < 0) index = stage.findIndex((l) => l.id === SHOW_TRACK_LAYER_PREFIX + surface.surfaceId);
     let base: Layer | null = index >= 0 ? stage[index] : null;
+    // Over the layers the show added on the piece too (they sit just above it).
+    const over = stage.findIndex((l) => l.id.startsWith(SHOW_SUB_LAYER_PREFIX) && showCopyPieceId(l.id) === surface.surfaceId);
+    if (over >= 0 && (index < 0 || over < index)) {
+      if (!base) {
+        // Only an added layer is drawn: the copy takes its shape (the piece's).
+        base = { ...stage[over], blendMode: 'normal' };
+        delete base._showOpacityMul;
+        delete base._showParams;
+      }
+      index = over;
+    }
     if (!base) {
       const template = ctx.templateFor?.(surface.surfaceId) ?? null;
       if (!template) continue;

@@ -26,6 +26,13 @@
  *   compositionTransitionLayers.ts). The track drives that copy too, so the
  *   clip stays on both sides of the dissolve.
  *
+ * - A layer the show adds on a piece (a sub-row) is a copy of the piece,
+ *   `showsub::<layerId>::<trackId>`, drawn directly over it (over the
+ *   piece's earlier added layers), only while one of its blocks plays. It
+ *   shares the piece's shape, warp and effects; its block brings the
+ *   picture, the blend mode ('normal' unless the block says) and opacity.
+ * - A block's own blend mode replaces the piece's while it plays.
+ *
  * Returns the input array itself when no track changes anything.
  *
  * While a show plays, most frames change only the opacities and lane values
@@ -39,6 +46,8 @@ import { TRANSITION_LAYER_PREFIX } from '../../renderer/compositionTransitionLay
 import type { ShowTrackFrame, ShowTrackState } from './showTrackEval';
 
 export const SHOW_TRACK_LAYER_PREFIX = 'showtrack::';
+/** A layer the show adds on a piece: `showsub::<layerId>::<trackId>`. */
+export const SHOW_SUB_LAYER_PREFIX = 'showsub::';
 /** Invisible copies that compile a shader or boot a sketch before its cut. */
 export const SHOW_WARM_LAYER_PREFIX = 'showwarm::';
 /** The outgoing side of a crossfade between two clips on one track. */
@@ -50,6 +59,28 @@ export const SHOW_SCENE_LAYER_LIMIT = 1024;
 
 export function showTrackLayerId(layerId: string): string {
   return SHOW_TRACK_LAYER_PREFIX + layerId;
+}
+
+export function showSubLayerId(layerId: string, trackId: string): string {
+  return `${SHOW_SUB_LAYER_PREFIX}${layerId}::${trackId}`;
+}
+
+/** The piece a scene layer id belongs to when it is one of the show's own
+ *  copies of it (an injected copy or an added layer), else null. */
+export function showCopyPieceId(id: string): string | null {
+  if (id.startsWith(SHOW_TRACK_LAYER_PREFIX)) return id.slice(SHOW_TRACK_LAYER_PREFIX.length);
+  if (id.startsWith(SHOW_SUB_LAYER_PREFIX)) {
+    const rest = id.slice(SHOW_SUB_LAYER_PREFIX.length);
+    const cut = rest.lastIndexOf('::');
+    return cut > 0 ? rest.slice(0, cut) : null;
+  }
+  return null;
+}
+
+/** What a state's helpers are named after: the piece for its own row, the
+ *  row for a layer added on it. */
+function helperKey(state: Pick<ShowTrackState, 'sub' | 'layerId' | 'trackId'>): string {
+  return state.sub ? `sub:${state.trackId}` : state.layerId;
 }
 
 export interface ShowTrackSceneContext {
@@ -69,6 +100,7 @@ export interface ShowTrackSceneContext {
 function drive(layer: Layer, state: ShowTrackState, source: MediaSource | null): Layer {
   const next: Layer = { ...layer };
   if (source) next.source = source;
+  if (state.clip?.blendMode) next.blendMode = state.clip.blendMode;
   if (state.opacity < 1) next._showOpacityMul = Math.max(0, state.opacity);
   if (state.params && Object.keys(state.params).length) next._showParams = state.params;
   return next;
@@ -85,11 +117,13 @@ function xfadeShows(state: ShowTrackState): boolean {
 
 /** The crossfade helper for `base` (a driven layer or an injected copy),
  *  named after the layer it sits beneath. */
-function xfadeHelper(base: Layer, layerId: string, state: ShowTrackState, source: MediaSource | null, ownSource: Layer['source']): Layer | null {
+function xfadeHelper(base: Layer, layerId: string, state: ShowTrackState, source: MediaSource | null, ownSource: Layer['source'], ownBlend?: Layer['blendMode']): Layer | null {
   const xf = state.xfade;
   if (!xf || xf.opacity <= 0) return null;
   const helper: Layer = { ...base, id: SHOW_XFADE_LAYER_PREFIX + layerId, visible: true, parentGroupId: null };
   if (source) helper.source = source;
+  const blend = xf.clip.blendMode ?? ownBlend;
+  if (blend) helper.blendMode = blend;
   else if (xf.clip.media.kind === 'layer') helper.source = ownSource;
   if (xf.opacity < 1) helper._showOpacityMul = Math.max(0, xf.opacity);
   else delete helper._showOpacityMul;
@@ -131,7 +165,12 @@ function resolveShowTrackSources(
   for (const state of frame.tracks) {
     out.warm.push(state.warm && ctx.warmSourceFor ? ask(ctx.warmSourceFor(state.warm)) : undefined);
     const xfSource = state.xfade && ctx.xfadeSourceFor ? ask(ctx.xfadeSourceFor(state)) : null;
-    if (state.xfade) out.xfade.set(state.layerId, xfSource);
+    if (state.xfade) out.xfade.set(helperKey(state), xfSource);
+    if (state.sub) {
+      // A layer added on a piece is always the show's own copy.
+      out.injected.push(subShows(state) ? ask(ctx.sourceFor(state)) : undefined);
+      continue;
+    }
     if (isOnStage(ids, state.layerId)) {
       if (affects(state)) out.onStage.set(state.layerId, state);
       out.injected.push(undefined);
@@ -169,6 +208,11 @@ function injects(state: ShowTrackState): boolean {
   return !!state.clip && !!state.template && (state.opacity > 0 || xfadeShows(state));
 }
 
+/** A layer added on a piece is drawn: one of its blocks plays and shows. */
+function subShows(state: ShowTrackState): boolean {
+  return !!state.clip && (state.opacity > 0 || xfadeShows(state));
+}
+
 function buildFromSources(
   liveLayers: Layer[],
   ids: ReadonlyMap<string, number>,
@@ -179,6 +223,8 @@ function buildFromSources(
   const injected: Layer[] = [];
   let lookup: ReturnType<typeof createSurfaceLookup> | null = null;
   const warmLayers: Layer[] = [];
+  /** Layers added on each piece, top first, each with its crossfade helper. */
+  const subsByPiece = new Map<string, Layer[]>();
   frame.tracks.forEach((state, index) => {
     if (state.warm && ctx.warmSourceFor) {
       const source = sources.warm[index] ?? null;
@@ -190,13 +236,33 @@ function buildFromSources(
           : base;
         warmLayers.push({
           ...resolved,
-          id: SHOW_WARM_LAYER_PREFIX + state.layerId,
+          id: SHOW_WARM_LAYER_PREFIX + (state.sub ? state.trackId : state.layerId),
           visible: true,
           parentGroupId: null,
           source,
           opacity: 0,
         });
       }
+    }
+    if (state.sub) {
+      if (!subShows(state)) return;
+      const live = liveLayers.find((l) => l.id === state.layerId);
+      let base: Layer | null = live ?? null;
+      if (!base && state.template) {
+        base = resolvePresetLayer(
+          { ...state.template, surfaceId: state.template.surfaceId || state.layerId },
+          lookup ??= createSurfaceLookup(liveLayers, ctx.surfaces as MapSurface[] | undefined),
+        );
+      }
+      if (!base) return;
+      const plain: Layer = { ...base, id: showSubLayerId(state.layerId, state.trackId), visible: true, parentGroupId: null, blendMode: 'normal' };
+      delete plain._showOpacityMul;
+      delete plain._showParams;
+      const copy = drive(plain, state, sources.injected[index] ?? null);
+      const helper = xfadeHelper(copy, helperKey(state), state, sources.xfade.get(helperKey(state)) ?? null, base.source, 'normal');
+      // Later rows draw over earlier ones: the newest goes first (on top).
+      subsByPiece.set(state.layerId, [copy, ...(helper ? [helper] : []), ...(subsByPiece.get(state.layerId) ?? [])]);
+      return;
     }
     if (isOnStage(ids, state.layerId)) return;
     // Off stage: an injected copy, only while a clip plays and the layer is
@@ -215,21 +281,41 @@ function buildFromSources(
       sources.injected[index] ?? null,
     );
     injected.push(copy);
-    const helper = xfadeHelper(copy, state.layerId, state, sources.xfade.get(state.layerId) ?? null, template.source);
+    const helper = xfadeHelper(copy, state.layerId, state, sources.xfade.get(state.layerId) ?? null, template.source, template.blendMode);
     if (helper) injected.push(helper);
   });
 
   const onStage = sources.onStage;
-  if (!onStage.size && !injected.length && !warmLayers.length) return liveLayers;
-  const stage = onStage.size
+  if (!onStage.size && !injected.length && !warmLayers.length && !subsByPiece.size) return liveLayers;
+  // Added layers go directly over their piece: where it first appears on
+  // stage, over its injected copy, or at the top.
+  const pendingSubs = new Map(subsByPiece);
+  const subsOver = (id: string): Layer[] => {
+    const pieceId = id.startsWith(TRANSITION_LAYER_PREFIX) ? id.slice(TRANSITION_LAYER_PREFIX.length) : id;
+    const subs = pendingSubs.get(pieceId);
+    if (!subs) return [];
+    pendingSubs.delete(pieceId);
+    return subs;
+  };
+  const stage = onStage.size || subsByPiece.size
     ? liveLayers.flatMap((layer) => {
+        const over = subsByPiece.size ? subsOver(layer.id) : [];
         const state = stageState(onStage, layer.id);
-        if (!state) return [layer];
+        if (!state) return over.length ? [...over, layer] : [layer];
         const driven = drive(layer, state, sources.stage.get(state.layerId) ?? null);
-        const helper = xfadeHelper(driven, layer.id, state, sources.xfade.get(state.layerId) ?? null, layer.source);
-        return helper ? [driven, helper] : [driven];
+        const helper = xfadeHelper(driven, layer.id, state, sources.xfade.get(state.layerId) ?? null, layer.source, layer.blendMode);
+        return [...over, driven, ...(helper ? [helper] : [])];
       })
     : liveLayers;
+  if (pendingSubs.size) {
+    for (const [pieceId, subs] of [...pendingSubs]) {
+      const at = injected.findIndex((l) => l.id === showTrackLayerId(pieceId));
+      if (at < 0) continue;
+      injected.splice(at, 0, ...subs);
+      pendingSubs.delete(pieceId);
+    }
+    if (pendingSubs.size) injected.unshift(...[...pendingSubs.values()].flat());
+  }
   const room = Math.max(0, (ctx.maxLayers ?? SHOW_SCENE_LAYER_LIMIT) - stage.length);
   const extra = [...injected, ...warmLayers].slice(0, room);
   return extra.length ? [...extra, ...stage] : stage;
@@ -266,12 +352,13 @@ export function showTrackSceneShape(frame: ShowTrackFrame): string {
     parts.push([
       state.trackId,
       state.layerId,
-      state.clip ? 'c' : '-',
+      state.sub ? 's' : '',
+      state.clip ? `c${state.clip.blendMode ?? ''}` : '-',
       state.opacity > 0 ? '+' : '0',
       state.opacity < 1 ? '<' : '1',
       state.params ? Object.keys(state.params).join(',') : '',
       state.warm ? 'w' : '',
-      xf ? `x${xf.clip.media.kind === 'layer' ? 'L' : ''}${xf.opacity > 0 ? '+' : '0'}${xf.opacity < 1 ? '<' : '1'}` : '',
+      xf ? `x${xf.clip.media.kind === 'layer' ? 'L' : ''}${xf.opacity > 0 ? '+' : '0'}${xf.opacity < 1 ? '<' : '1'}${xf.clip.blendMode ?? ''}` : '',
     ].join('|'));
   }
   return parts.join(';');
@@ -395,6 +482,11 @@ function sameItems(a: readonly unknown[], b: readonly unknown[]): boolean {
 function showValuePatches(scene: readonly Layer[], frame: ShowTrackFrame): ShowValuePatch[] {
   const wanted = new Map<string, { track: number; kind: ShowValuePatch['kind'] }>();
   frame.tracks.forEach((state, track) => {
+    if (state.sub) {
+      wanted.set(showSubLayerId(state.layerId, state.trackId), { track, kind: 'drive' });
+      wanted.set(SHOW_XFADE_LAYER_PREFIX + helperKey(state), { track, kind: 'xfade' });
+      return;
+    }
     if (affects(state)) wanted.set(state.layerId, { track, kind: 'drive' });
     wanted.set(showTrackLayerId(state.layerId), { track, kind: 'drive' });
     wanted.set(SHOW_XFADE_LAYER_PREFIX + state.layerId, { track, kind: 'xfade' });

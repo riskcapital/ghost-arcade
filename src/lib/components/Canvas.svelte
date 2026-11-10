@@ -11,6 +11,7 @@
   import { buildTakeoverScene } from '../show/takeover/takeoverScene';
   import { showTimeline as showTimelineStore } from '../stores/showTimeline';
   import { buildShowTrackScene, ShowTrackSceneCache } from '../show/tracks/showTrackScene';
+  import { stagePieceLayer } from '../show/tracks/showStagePieces';
   import { nativePreviewHostEl } from '../stores/nativePreviewHost';
   import { watchLayout } from '../utils/layoutWatch';
   import { splatPointer } from '../stores/splatPointer';
@@ -2271,7 +2272,7 @@
           feeds: () => takeoverFeeds(vjState),
           keepFeedIds: takeoverTransitionFeedIds(vjState),
           crossfaderEnabled: !!vjState.crossfaderEnabled,
-          templateFor: (surfaceId) => get(showTimelineStore).layerTracks.find((t) => t.layerId === surfaceId)?.template ?? null,
+          templateFor: (surfaceId) => get(showTimelineStore).layerTracks.find((t) => t.layerId === surfaceId && !t.subRow)?.template ?? stagePieceLayer(surfaceId),
           surfaces: get(project).mapSurfaces,
           mediaSourceFor: (surface) => takeoverMediaSources.sourceFor(surface),
           // The mix as the VJ sees it: graded by the composition FX.

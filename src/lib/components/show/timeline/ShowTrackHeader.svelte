@@ -1,11 +1,12 @@
 <script lang="ts">
   /**
-   * A layer track's header in the show's label column: colour, fold, name
-   * (with an "off stage" badge when the current preset has no such layer
-   * and the track injects its own copy), Mute / Solo / Lock and the "◆+"
-   * picker that folds a keyframe lane open under the track. Lane headers
-   * follow underneath when the track is unfolded. Double-click the name to
-   * rename it; drag the header up or down to move the track.
+   * A row's header in the show's label column: colour, the piece's name
+   * (indented under its group; a group folds its children), the eye (hide
+   * the piece for the whole show), Solo / Lock, "+ layer" (a layer of the
+   * show's own on this piece, drawn over it) and the "◆+" picker that folds a
+   * keyframe lane open under the row. Lane headers follow underneath when the
+   * row is unfolded. Double-click the name to rename the piece (or an added
+   * layer); an added layer can be dragged up or down among its piece's.
    *
    * LIVE takes the track's surface over (a VJ row, the mix, a group, black,
    * or media dropped on the button). While it is taken over the header is
@@ -15,7 +16,7 @@
   import type { Layer, ShowLayerTrack } from '../../../types';
   import { showTimeline } from '../../../stores/showTimeline';
   import { evaluateTrack } from '../../../keyframes/easing';
-  import { LANE_ROW_HEIGHT, TRACK_ROW_HEIGHT, laneKeySelection, portal } from './trackLayout';
+  import { LANE_ROW_HEIGHT, TRACK_ROW_HEIGHT, laneKeySelection, portal, rowColor } from './trackLayout';
   import { trackLaneParams } from './trackParams';
   import { renameShowTrack } from './trackHeaderActions';
   import { liveTakeover, takeoverSourceLabel, type SurfaceOverride } from '../../../show/takeover/liveTakeover';
@@ -76,6 +77,7 @@
   let draft = $state('');
   function startRename(e: MouseEvent) {
     e.stopPropagation();
+    if (!canRename) return;
     draft = track.layerName;
     editing = true;
   }
@@ -86,10 +88,21 @@
   function commitRename() {
     if (!editing) return;
     editing = false;
-    renameShowTrack(track, draft, live);
+    renameShowTrack(track, draft, kind === 'sub' ? null : live);
   }
 
-  const color = $derived(track.color || '#8b7cff');
+  const color = $derived(rowColor(track));
+  const kind = $derived(track.row?.kind ?? (track.subRow ? 'sub' : 'piece'));
+  const depth = $derived(track.row?.depth ?? 0);
+  const canRename = $derived(kind === 'sub' || !!live);
+  function addLayerOnPiece(e: MouseEvent) {
+    e.stopPropagation();
+    showTimeline.addSubRow(track.layerId);
+  }
+  function removeRow(e: MouseEvent) {
+    e.stopPropagation();
+    showTimeline.removeLayerTrack(track.id);
+  }
 
   function selectTrack() {
     showTimeline.select({ kind: 'track', id: track.id });
@@ -146,7 +159,7 @@
   }
 </script>
 
-<div class="th" class:selected class:dragging class:live={taken} class:returning={takeover?.phase === 'pendingRelease'} style:--track-color={color} data-track-header={track.id}>
+<div class="th" class:selected class:dragging class:live={taken} class:returning={takeover?.phase === 'pendingRelease'} class:sub={kind === 'sub'} class:missing={kind === 'missing'} class:hidden-row={track.muted} style:--track-color={color} style:--row-indent="{depth * 10}px" data-track-header={track.id} data-row-kind={kind} data-row-layer={track.layerId}>
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
@@ -162,14 +175,26 @@
     <span class="th-color" aria-hidden="true"></span>
     <div class="th-col">
       <div class="th-line">
-        <button
-          class="th-fold"
-          class:open={!track.collapsed}
-          disabled={!track.lanes.length}
-          onclick={(e) => { e.stopPropagation(); showTimeline.updateLayerTrack(track.id, { collapsed: !track.collapsed }); }}
-          title={track.collapsed ? 'Show keyframe lanes' : 'Hide keyframe lanes'}
-          aria-label={track.collapsed ? 'Show keyframe lanes' : 'Hide keyframe lanes'}
-        >▸</button>
+        {#if kind === 'group'}
+          <button
+            class="th-fold th-group"
+            class:open={!track.foldChildren}
+            onclick={(e) => { e.stopPropagation(); showTimeline.updateLayerTrack(track.id, { foldChildren: !track.foldChildren }); }}
+            title={track.foldChildren ? 'Show the rows of the layers in this group' : 'Fold the rows of the layers in this group'}
+            aria-label={track.foldChildren ? 'Show the rows of the layers in this group' : 'Fold the rows of the layers in this group'}
+            data-group-fold
+          >▸</button>
+        {:else}
+          <button
+            class="th-fold"
+            class:open={!track.collapsed}
+            disabled={!track.lanes.length}
+            onclick={(e) => { e.stopPropagation(); showTimeline.updateLayerTrack(track.id, { collapsed: !track.collapsed }); }}
+            title={track.collapsed ? 'Show keyframe lanes' : 'Hide keyframe lanes'}
+            aria-label={track.collapsed ? 'Show keyframe lanes' : 'Hide keyframe lanes'}
+          >▸</button>
+        {/if}
+        {#if kind === 'sub'}<span class="th-sub-mark" aria-hidden="true">└</span>{/if}
         {#if editing}
           <input
             class="th-rename"
@@ -189,22 +214,38 @@
           />
         {:else}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <span class="th-name layer-name" title={`${track.layerName}: double-click to rename`} ondblclick={startRename} data-track-name>{track.layerName}</span>
+          <span
+            class="th-name layer-name"
+            title={kind === 'sub'
+              ? `${track.layerName}: a layer of the show's own on this piece, drawn over it. Double-click to rename.`
+              : kind === 'missing'
+                ? `${track.layerName}: this mapping layer is gone from the stage and from every look the show uses.`
+                : canRename ? `${track.layerName}: double-click to rename the layer` : `${track.layerName}: rename it in the look it belongs to`}
+            ondblclick={startRename}
+            data-track-name
+          >{track.layerName}</span>
         {/if}
         {#if taken}
           <span class="th-live-badge" title={takeover?.phase === 'pendingRelease' ? 'Taken over live: returning to the timeline' : 'Taken over live: the timeline plays on underneath'} data-takeover-badge>{liveText}</span>
-        {:else if !onStage}
-          <span class="th-badge" title="The current preset has no such layer: the track plays its own copy of it above the stage.">off stage</span>
+        {:else if kind === 'missing'}
+          <span class="th-badge" title="This mapping layer is gone. Its blocks are kept until you delete the row.">missing piece</span>
         {/if}
       </div>
       <div class="th-line th-buttons">
         <button
-          class="th-btn"
+          class="th-btn th-eye"
           class:on={track.muted}
           onclick={(e) => { e.stopPropagation(); showTimeline.updateLayerTrack(track.id, { muted: !track.muted }); }}
-          title="Mute: hide this layer for the whole show"
+          title={track.muted ? 'Hidden for the whole show: click to show it again' : 'Visible: click to hide this piece for the whole show'}
+          aria-label={track.muted ? 'Show this piece' : 'Hide this piece for the whole show'}
           aria-pressed={track.muted}
-        >M</button>
+          data-row-eye
+        >
+          <svg width="13" height="10" viewBox="0 0 24 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M1 8s4-7 11-7 11 7 11 7-4 7-11 7S1 8 1 8z" />
+            {#if track.muted}<path d="M3 15L21 1" />{:else}<circle cx="12" cy="8" r="3" />{/if}
+          </svg>
+        </button>
         <button
           class="th-btn solo"
           class:on={soloed}
@@ -220,7 +261,12 @@
           title="Lock: no edits on this track"
           aria-pressed={track.locked}
         >L</button>
-        <button class="th-btn lanes" onmousedown={(e) => e.stopPropagation()} onclick={openPicker} title="Add a keyframe lane under this track" data-lane-picker>◆+</button>
+        <button class="th-btn lanes" onmousedown={(e) => e.stopPropagation()} onclick={openPicker} title="Add a keyframe lane under this row" data-lane-picker>◆+</button>
+        {#if kind === 'piece' || kind === 'group'}
+          <button class="th-btn th-addsub" onmousedown={(e) => e.stopPropagation()} onclick={addLayerOnPiece} title="Add a layer on this piece: a row of its own whose blocks draw over the piece (same shape), each with its own blend mode" data-add-sub-row>+ layer</button>
+        {:else}
+          <button class="th-btn th-remove" onmousedown={(e) => e.stopPropagation()} onclick={removeRow} title={kind === 'sub' ? 'Remove this layer and its blocks' : 'Delete this row and its blocks'} aria-label={kind === 'sub' ? 'Remove this layer and its blocks' : 'Delete this row and its blocks'} data-remove-row>×</button>
+        {/if}
         {#if taken}
           <button
             class="th-btn th-return"
@@ -230,6 +276,7 @@
             data-takeover-return
           >↩</button>
         {/if}
+        {#if kind !== 'sub'}
         <button
           class="th-btn th-live"
           class:on={taken}
@@ -243,8 +290,9 @@
           aria-pressed={taken}
           data-takeover-live
         >LIVE</button>
-        {#if track.gap === 'hide'}
-          <span class="th-gap" title="Between clips the layer is hidden">gaps hidden</span>
+        {/if}
+        {#if track.gap === 'layer' && track.clips.length > 0}
+          <span class="th-gap" title="Between blocks this piece shows what the current look gives it (the row's settings)">look between</span>
         {/if}
       </div>
     </div>
@@ -306,7 +354,16 @@
     border-radius: 3px;
     outline: none;
   }
-  .th-color { flex: 0 0 4px; background: var(--track-color); }
+  .th-color { flex: 0 0 4px; background: var(--track-color); margin-left: var(--row-indent, 0px); }
+  .th.sub .th-color { opacity: 0.55; }
+  .th.sub .th-name { font-weight: 500; color: var(--ga-ink-1, #bbb); }
+  .th.missing .th-name { color: var(--ga-ink-2, #888); text-decoration: line-through; }
+  .th.hidden-row .th-name { opacity: 0.5; }
+  .th-sub-mark { color: var(--ga-ink-2, #666); font-size: 10px; margin-right: -2px; }
+  .th-btn.th-eye { display: inline-flex; align-items: center; justify-content: center; }
+  .th-btn.th-eye.on { color: #1a1204; background: #9aa0aa; border-color: #9aa0aa; }
+  .th-btn.th-addsub { color: color-mix(in srgb, var(--track-color) 70%, #ffffff); }
+  .th-btn.th-remove { font-size: 12px; line-height: 1; }
   .th-col {
     flex: 1 1 auto;
     min-width: 0;

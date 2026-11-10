@@ -40,7 +40,8 @@ describe('track templates while the project keeps changing', () => {
   it('refreshes at a steady pace, and saves the layer as it is', () => {
     const project = writable({ layers: [wall(1)] } as unknown as Project);
     dispose = installShowTrackRuntime({ project });
-    showTimeline.addLayerTrack(wall(1));
+    const rowId = showTimeline.addLayerTrack(wall(1));
+    showTimeline.addLayerClip(rowId, { kind: 'image', name: 'a.png', src: 'a.png' }, 0);
     // Sixty changes a second for two seconds (an LFO on the layer).
     let opacity = 1;
     for (let i = 0; i < 120; i++) {
