@@ -35,7 +35,6 @@ import { selectShowPreloads } from './showPreloader';
 import { readableClipUri, showSourceId } from './showClipSources';
 import { addTrackForLayer, addTrackForNewLayer } from './showTrackActions';
 import { setStagePieceLayers } from './showStagePieces';
-import { editBlock, setBlockShaderValue } from './showBlockEdit';
 import type { Layer } from '../../types';
 import { SHOW_DRIFT_CHECK_MS, ShowDriftWatch } from './showVideoDrift';
 import { unknownLengthVideoUris, probeVideoDuration } from './showClipLength';
@@ -310,15 +309,16 @@ export function installShowTrackRuntime(deps: ShowTrackRuntimeDeps): () => void 
         rowForLayer: (layerId: string) => { syncRows(); return showTimeline.rowFor(layerId)?.id ?? null; },
         addSubRow: (layerId: string, name?: string) => showTimeline.addSubRow(layerId, name),
         /** What a click on a block does: the panels edit it. */
-        editBlock: (clipId: string) => {
+        editBlock: async (clipId: string) => {
           const found = showTimeline.findLayerClip(clipId);
           if (!found) return false;
           showTimeline.selectLayerClips([clipId]);
-          editBlock(found.track, found.clip);
+          (await import('./showBlockEdit')).editBlock(found.track, found.clip);
           return true;
         },
         /** What the Shader Parameters panel does to a block being edited. */
-        setBlockShaderValue,
+        setBlockShaderValue: async (name: string, value: number | boolean | number[], continuous?: boolean) =>
+          (await import('./showBlockEdit')).setBlockShaderValue(name, value, continuous),
         syncRows,
       },
     };

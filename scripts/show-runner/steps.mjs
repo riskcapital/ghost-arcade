@@ -237,9 +237,9 @@ const ACTIONS = {
   async 'show.blockParam'(ctx, s) {
     // Click a block, then move one of its shader inputs as the Shader
     // Parameters panel does: { clip (var), name, value }.
-    const ok = await ctx.eval(`(() => {
+    const ok = await ctx.eval(`(async () => {
       const t = __show.tracks();
-      return t.editBlock(__show.vars['clip:' + ${J(s.clip)}]) && t.setBlockShaderValue(${J(s.name)}, ${J(s.value)}, false);
+      return (await t.editBlock(__show.vars['clip:' + ${J(s.clip)}])) && (await t.setBlockShaderValue(${J(s.name)}, ${J(s.value)}, false));
     })()`);
     if (!ok) throw new Error(`could not edit block ${s.clip}`);
     await sleep(400);
