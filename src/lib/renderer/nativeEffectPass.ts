@@ -2751,7 +2751,13 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
       let dropout_kind = fx_hash_key(vec2<f32>(dropout_seed, 0.0), 0.0, 0x32u);
       tape_rgb = mix(tape_rgb, select(vec3<f32>(0.0), vec3<f32>(1.0), dropout_kind > 0.5), 0.85);
     }
-    let n = vhs_noise(tape_uv * u.resolution_time.xy * 0.5 + vec2<f32>(t * 100.0));
+    // Snow drifts 100 lattice cells a second; the lattice repeats every
+    // 1024 cells (fx_lattice), so the drift is taken over a 10.24 s period
+    // first. Added to the pixel position as t * 100 it outgrew the f32
+    // fraction after ~11.6 h and the snow turned into blocks. Below 10.24 s
+    // the value is unchanged.
+    let snow_t = t - floor(t / 10.24) * 10.24;
+    let n = vhs_noise(tape_uv * u.resolution_time.xy * 0.5 + vec2<f32>(snow_t * 100.0));
     tape_rgb += (n - 0.5) * noise_amount * 0.3;
     let scanline = sin(uv.y * u.resolution_time.y * 2.0) * 0.5 + 0.5;
     tape_rgb *= 1.0 - scanline_amount * 0.3 * scanline;

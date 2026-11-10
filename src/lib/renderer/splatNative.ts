@@ -990,6 +990,55 @@ fn sp_noise3(p: vec3<f32>) -> f32 {
   let nx01 = mix(n001, n101, u.x); let nx11 = mix(n011, n111, u.x);
   return mix(mix(nx00, nx10, u.y), mix(nx01, nx11, u.y), u.z) * 2.0 - 1.0;
 }
+// Time-driven variants for the call sites that feed the clock (or the
+// animation phase, which is time * speed) into the hash. sin() of a huge
+// argument keeps no fraction in f32 and differs per GPU, so after hours of
+// uptime noise, glitches and dither freeze or pattern. Below the bound the
+// old sin hash is kept bit-for-bit (the look is unchanged); above it an
+// integer PCG hash takes over. 2D bound 2^20 (t = 10 s peaks ~115k); noise3
+// folds z into a 57x offset, so its static offsets alone reach ~1e7 and its
+// bound is 2^25. Static callers keep sp_hash/sp_hash2/sp_noise2/sp_noise3.
+fn sp_pcg(v: u32) -> u32 {
+  let state = v * 747796405u + 2891336453u;
+  let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+  return (word >> 22u) ^ word;
+}
+fn sp_pcg01(a: u32, b: u32) -> f32 { return f32(sp_pcg(a ^ sp_pcg(b)) >> 8u) * (1.0 / 16777216.0); }
+fn sp_hash2_t(p: vec2<f32>, bound: f32) -> f32 {
+  let a = dot(p, vec2<f32>(127.1, 311.7));
+  return select(sp_pcg01(bitcast<u32>(p.x), bitcast<u32>(p.y)), fract(sin(a) * 43758.5453), abs(a) < bound);
+}
+fn sp_noise2_t(p: vec2<f32>) -> f32 {
+  let i = floor(p); let f = fract(p);
+  let u = f * f * (3.0 - 2.0 * f);
+  let a = sp_hash2_t(i, 1048576.0);
+  let b = sp_hash2_t(i + vec2<f32>(1.0, 0.0), 1048576.0);
+  let c = sp_hash2_t(i + vec2<f32>(0.0, 1.0), 1048576.0);
+  let d = sp_hash2_t(i + vec2<f32>(1.0, 1.0), 1048576.0);
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+fn sp_noise3_t(p: vec3<f32>) -> f32 {
+  let i = floor(p); let f = fract(p);
+  let u = f * f * (3.0 - 2.0 * f);
+  let lim = 33554432.0;
+  let n000 = sp_hash2_t(i.xy + i.z * 57.0, lim);
+  let n100 = sp_hash2_t(i.xy + vec2<f32>(1.0, 0.0) + i.z * 57.0, lim);
+  let n010 = sp_hash2_t(i.xy + vec2<f32>(0.0, 1.0) + i.z * 57.0, lim);
+  let n110 = sp_hash2_t(i.xy + vec2<f32>(1.0, 1.0) + i.z * 57.0, lim);
+  let n001 = sp_hash2_t(i.xy + (i.z + 1.0) * 57.0, lim);
+  let n101 = sp_hash2_t(i.xy + vec2<f32>(1.0, 0.0) + (i.z + 1.0) * 57.0, lim);
+  let n011 = sp_hash2_t(i.xy + vec2<f32>(0.0, 1.0) + (i.z + 1.0) * 57.0, lim);
+  let n111 = sp_hash2_t(i.xy + vec2<f32>(1.0, 1.0) + (i.z + 1.0) * 57.0, lim);
+  let nx00 = mix(n000, n100, u.x); let nx10 = mix(n010, n110, u.x);
+  let nx01 = mix(n001, n101, u.x); let nx11 = mix(n011, n111, u.x);
+  return mix(mix(nx00, nx10, u.y), mix(nx01, nx11, u.y), u.z) * 2.0 - 1.0;
+}
+// Glitch displacement: fract(sin(arg) * 43758.5453), where the vertex index
+// dominates arg (already huge at t = 0), so the bound is on tpart, the
+// clock's share of arg. Keyed on the vertex, the clock bits and a salt.
+fn sp_glitch_hash(arg: f32, tpart: f32, vidx: f32, salt: u32) -> f32 {
+  return select(sp_pcg01(sp_pcg(u32(max(vidx, 0.0))) + salt, bitcast<u32>(tpart)), fract(sin(arg) * 43758.5453), abs(tpart) < 32768.0);
+}
 fn sp_hsv2rgb(c: vec3<f32>) -> vec3<f32> {
   let k = vec4<f32>(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
   let p = abs(fract(c.xxx + k.xyz) * 6.0 - k.www);
@@ -1020,9 +1069,9 @@ fn apply_animation(pos_in: vec3<f32>, orig: vec3<f32>, vidx: f32, t: f32, kill: 
 
   if (anim == 1) { // explode
     let breakup = vec3<f32>(
-      sp_noise3(orig * 2.7 + vec3<f32>(19.0, 0.0, phase * 0.12)),
-      sp_noise3(orig * 2.7 + vec3<f32>(0.0, 43.0, phase * 0.15)),
-      sp_noise3(orig * 2.7 + vec3<f32>(phase * 0.1, 0.0, 71.0)));
+      sp_noise3_t(orig * 2.7 + vec3<f32>(19.0, 0.0, phase * 0.12)),
+      sp_noise3_t(orig * 2.7 + vec3<f32>(0.0, 43.0, phase * 0.15)),
+      sp_noise3_t(orig * 2.7 + vec3<f32>(phase * 0.1, 0.0, 71.0)));
     return pos + (radial + breakup * sp.anim1.y) * at * sp.anim1.x;
   }
   if (anim == 2) { // implode
@@ -1068,8 +1117,8 @@ fn apply_animation(pos_in: vec3<f32>, orig: vec3<f32>, vidx: f32, t: f32, kill: 
     let delay = sp_hash(vidx * 12.9898) * 0.35;
     let fall = max(0.0, progress - delay) * inten;
     let spread = vec2<f32>(
-      sp_noise3(orig * 2.0 + vec3<f32>(13.0, phase * 0.08, 0.0)),
-      sp_noise3(orig * 2.0 + vec3<f32>(0.0, phase * 0.08, 37.0))) * sp.anim7.x;
+      sp_noise3_t(orig * 2.0 + vec3<f32>(13.0, phase * 0.08, 0.0)),
+      sp_noise3_t(orig * 2.0 + vec3<f32>(0.0, phase * 0.08, 37.0))) * sp.anim7.x;
     var fallen = pos + vec3<f32>(spread.x, -sp.anim6.w * fall * fall, spread.y) * at;
     fallen.y = max(fallen.y, sp.anim7.y);
     return fallen;
@@ -1078,13 +1127,13 @@ fn apply_animation(pos_in: vec3<f32>, orig: vec3<f32>, vidx: f32, t: f32, kill: 
     let gp = floor(sp_noise3(orig * 0.5) * 4.0) * 1.57;
     let center = vec3<f32>(sin(t * 0.7 + gp) * 0.8, cos(t * 0.5 + gp * 0.7) * 0.5, sin(t * 0.6 + gp * 1.3) * 0.8);
     let sep = vec3<f32>(
-      sp_noise3(orig * 3.0 + t * 1.5),
-      sp_noise3(orig * 3.0 + t * 1.5 + 50.0),
-      sp_noise3(orig * 3.0 + t * 1.5 + 100.0)) * 0.4;
+      sp_noise3_t(orig * 3.0 + t * 1.5),
+      sp_noise3_t(orig * 3.0 + t * 1.5 + 50.0),
+      sp_noise3_t(orig * 3.0 + t * 1.5 + 100.0)) * 0.4;
     let flow = vec3<f32>(
-      sp_noise3(orig * 0.8 + t * 0.8 + 200.0),
-      sp_noise3(orig * 0.8 + t * 0.6 + 300.0) * 0.5,
-      sp_noise3(orig * 0.8 + t * 0.8 + 400.0)) * 0.6;
+      sp_noise3_t(orig * 0.8 + t * 0.8 + 200.0),
+      sp_noise3_t(orig * 0.8 + t * 0.6 + 300.0) * 0.5,
+      sp_noise3_t(orig * 0.8 + t * 0.8 + 400.0)) * 0.6;
     let offset = ((center - orig) * sp.anim6.x + sep * sp.anim6.y + flow * sp.anim6.z) * at * max(sp.phys.y, 0.1);
     return pos + offset;
   }
@@ -1147,9 +1196,9 @@ fn apply_animation(pos_in: vec3<f32>, orig: vec3<f32>, vidx: f32, t: f32, kill: 
   if (anim == 15) { // drift
     let sPos = orig * 0.7;
     let drift = vec3<f32>(
-      sp_noise3(sPos + vec3<f32>(phase * 0.10, 17.0, 0.0)),
-      sp_noise3(sPos + vec3<f32>(0.0, phase * 0.08, 41.0)),
-      sp_noise3(sPos + vec3<f32>(73.0, 0.0, phase * 0.09)));
+      sp_noise3_t(sPos + vec3<f32>(phase * 0.10, 17.0, 0.0)),
+      sp_noise3_t(sPos + vec3<f32>(0.0, phase * 0.08, 41.0)),
+      sp_noise3_t(sPos + vec3<f32>(73.0, 0.0, phase * 0.09)));
     return pos + drift * sp.anim8.y * inten;
   }
   if (anim == 16) { // vortex
@@ -1172,9 +1221,9 @@ fn apply_displacement(pos_in: vec3<f32>, vidx: f32, t: f32) -> vec3<f32> {
   if (dtp == 1) { // noise
     let nt = t * dSpeed;
     return pos + vec3<f32>(
-      sp_noise3(pos * dScale + vec3<f32>(100.0, 0.0, 0.0) + nt),
-      sp_noise3(pos * dScale + vec3<f32>(0.0, 100.0, 0.0) + nt),
-      sp_noise3(pos * dScale + vec3<f32>(0.0, 0.0, 100.0) + nt)) * amount;
+      sp_noise3_t(pos * dScale + vec3<f32>(100.0, 0.0, 0.0) + nt),
+      sp_noise3_t(pos * dScale + vec3<f32>(0.0, 100.0, 0.0) + nt),
+      sp_noise3_t(pos * dScale + vec3<f32>(0.0, 0.0, 100.0) + nt)) * amount;
   }
   if (dtp == 2) { // audio reactive
     if (sp.aud0.x < 0.5) { return pos; }
@@ -1189,16 +1238,16 @@ fn apply_displacement(pos_in: vec3<f32>, vidx: f32, t: f32) -> vec3<f32> {
     return pos + vec3<f32>(0.0, w * amount, 0.0);
   }
   if (dtp == 4) { // glitch
-    let g = step(0.99 - sp.disp1.x * 0.1, fract(sin(t * 100.0 + vidx) * 43758.5453));
+    let g = step(0.99 - sp.disp1.x * 0.1, sp_glitch_hash(t * 100.0 + vidx, t * 100.0, vidx, 0u));
     let offset = vec3<f32>(
-      fract(sin(vidx * 12.9898 + t) * 43758.5453) - 0.5,
-      fract(sin(vidx * 78.233 + t) * 43758.5453) - 0.5,
-      fract(sin(vidx * 45.164 + t) * 43758.5453) - 0.5);
+      sp_glitch_hash(vidx * 12.9898 + t, t, vidx, 1u) - 0.5,
+      sp_glitch_hash(vidx * 78.233 + t, t, vidx, 2u) - 0.5,
+      sp_glitch_hash(vidx * 45.164 + t, t, vidx, 3u) - 0.5);
     return pos + offset * g * amount;
   }
   if (dtp == 5) { // wind
     let wind = sp.disp1.yzw;
-    let w = sp_noise3(pos * dScale + wind * t * dSpeed);
+    let w = sp_noise3_t(pos * dScale + wind * t * dSpeed);
     return pos + wind * w * amount * max(sp.xf0.x, 0.0);
   }
   if (dtp == 6) { // magnetic — attract toward mouse (or origin)
@@ -1219,9 +1268,9 @@ fn apply_displacement(pos_in: vec3<f32>, vidx: f32, t: f32) -> vec3<f32> {
     let p = pos * dScale;
     let ph = t * dSpeed;
     var flow = vec3<f32>(
-      sp_noise3(p + vec3<f32>(ph, 31.7, 12.1)),
-      sp_noise3(p + vec3<f32>(47.3, ph * 0.83, 5.9)),
-      sp_noise3(p + vec3<f32>(8.2, 19.4, ph * 1.13)));
+      sp_noise3_t(p + vec3<f32>(ph, 31.7, 12.1)),
+      sp_noise3_t(p + vec3<f32>(47.3, ph * 0.83, 5.9)),
+      sp_noise3_t(p + vec3<f32>(8.2, 19.4, ph * 1.13)));
     flow = normalize(flow + vec3<f32>(1e-4));
     return pos + flow * amount;
   }
@@ -1239,9 +1288,9 @@ fn apply_displacement(pos_in: vec3<f32>, vidx: f32, t: f32) -> vec3<f32> {
     let plane = sin((pos.y + t * dSpeed) * dScale * 4.0);
     let gate = smoothstep(0.65, 1.0, plane);
     let offset = vec3<f32>(
-      sp_noise3(pos * dScale + t * dSpeed),
+      sp_noise3_t(pos * dScale + t * dSpeed),
       0.0,
-      sp_noise3(pos * dScale + t * dSpeed + 50.0));
+      sp_noise3_t(pos * dScale + t * dSpeed + 50.0));
     return pos + offset * gate * amount;
   }
   return pos;
@@ -1581,13 +1630,13 @@ fn apply_color_effect(color_in: vec3<f32>, wp: vec3<f32>, t: f32) -> vec3<f32> {
     return mix(color, mix(vec3<f32>(1.0, 0.0, 0.8), vec3<f32>(0.0, 1.0, 1.0), m), fi);
   }
   if (fx == 11) { // fire
-    let f = sp_noise2(wp.xy * 3.0 + vec2<f32>(0.0, -t * 2.0));
+    let f = sp_noise2_t(wp.xy * 3.0 + vec2<f32>(0.0, -t * 2.0));
     var fc = mix(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(1.0, 1.0, 0.0), f);
     fc = mix(fc, vec3<f32>(1.0, 0.5, 0.0), sin(f * 3.14));
     return mix(color, fc, fi);
   }
   if (fx == 12) { // ice
-    let f = sp_noise2(wp.xy * 2.0 + t * 0.2);
+    let f = sp_noise2_t(wp.xy * 2.0 + t * 0.2);
     return mix(color, mix(vec3<f32>(0.7, 0.9, 1.0), vec3<f32>(0.3, 0.6, 0.9), f), fi);
   }
   return color;
@@ -1721,7 +1770,7 @@ fn apply_color_effect(color_in: vec3<f32>, wp: vec3<f32>, t: f32) -> vec3<f32> {
   var atmosphereMix = 0.0;
   if (sp.li4.w > 0.5 && sp.at0.x > 0.0) {
     let fogUV = wp.xz * max(sp.at0.y, 0.01);
-    let fogNoise = sp_noise2(
+    let fogNoise = sp_noise2_t(
       fogUV
       + vec2<f32>(t * sp.at0.w, -t * sp.at0.w * 0.63)
       + sp_noise2(fogUV * 0.47) * sp.at0.z);
@@ -1804,9 +1853,9 @@ fn apply_color_effect(color_in: vec3<f32>, wp: vec3<f32>, t: f32) -> vec3<f32> {
     // Flicker rate scales with datamoshSpeed (cfx0.x); 1.0 reproduces the
     // original hardcoded 10Hz re-roll.
     let dms = sp.cfx0.x;
-    let glitch = step(0.95, sp_hash2(vec2<f32>(floor(t * 10.0 * dms), wp.y)));
+    let glitch = step(0.95, sp_hash2_t(vec2<f32>(floor(t * 10.0 * dms), wp.y), 1048576.0));
     if (glitch > 0.5) { frag = vec4<f32>(frag.bgr, frag.a); }
-    let shift = sp_hash2(vec2<f32>(t * dms, wp.x)) * ci * 0.1;
+    let shift = sp_hash2_t(vec2<f32>(t * dms, wp.x), 1048576.0) * ci * 0.1;
     frag.r = frag.r + shift;
     frag.b = frag.b - shift;
   } else if (cfx == 5) { // pixel sort
@@ -1886,8 +1935,8 @@ struct BgOut {
   if (sp.li4.w > 0.5 && sp.at0.x > 0.0) {
     let aspect = sp.screen.x / max(sp.screen.y, 1.0);
     let uv = vec2<f32>((in.uv.x - 0.5) * aspect, in.uv.y - 0.5) * 6.0 * max(sp.at0.y, 0.01);
-    var haze = sp_noise2(uv + vec2<f32>(t * sp.at0.w, -t * sp.at0.w * 0.63) + sp_noise2(uv * 0.47) * sp.at0.z);
-    haze = haze * 0.65 + sp_noise2(uv * 2.3 - vec2<f32>(t * sp.at0.w * 0.41, t * sp.at0.w * 0.29)) * 0.35;
+    var haze = sp_noise2_t(uv + vec2<f32>(t * sp.at0.w, -t * sp.at0.w * 0.63) + sp_noise2(uv * 0.47) * sp.at0.z);
+    haze = haze * 0.65 + sp_noise2_t(uv * 2.3 - vec2<f32>(t * sp.at0.w * 0.41, t * sp.at0.w * 0.29)) * 0.35;
     // Denser toward the lower half like ground fog, thinning upward.
     let vertical = mix(1.0, 0.45, in.uv.y);
     let fogAmount = clamp(sp.at0.x * (0.3 + haze * 0.7) * vertical, 0.0, 0.85);
@@ -1957,7 +2006,13 @@ struct GodOut {
   // hides banding but repeats the same error every frame, which reads as
   // fixed-pattern grain. Advancing by phi^-1 each frame lets the eye
   // integrate successive frames, so the march affords fewer steps.
-  let dither = fract(sp_hash2(in.position.xy) + 0.61803398875 * floor(sp.screen.z * 60.0));
+  // The frame count grows with the clock: past 2^16 frames (~18 min) the
+  // f32 product 0.618 * frame keeps too little fraction and the dither
+  // coarsens into bands, so the golden step then comes from integer math
+  // (the same sequence, 2^32 / phi); below it the old value is kept exactly.
+  let frame = floor(sp.screen.z * 60.0);
+  let golden = select(f32((u32(max(frame, 0.0)) * 2654435769u) >> 8u) * (1.0 / 16777216.0), 0.61803398875 * frame, frame < 65536.0);
+  let dither = fract(sp_hash2(in.position.xy) + golden);
   let keyDir = normalize(sp.li2.xyz);
   let g = clamp(sp.sh9.x, -0.95, 0.95);
   let phase = sp_hg(dot(rd, keyDir), g);

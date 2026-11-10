@@ -2359,8 +2359,14 @@ fn edge_smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
 }
 
 /// The drawing shader's hash, kept for the classic types' flicker timing.
+/// Every caller feeds it the clock, and sin() of a huge argument keeps no
+/// fraction in f32 and differs per GPU (flicker freezes or patterns after
+/// hours of uptime). Below |argument| 32768 the old sin hash is kept
+/// bit-for-bit, so the look is unchanged; above it an integer hash takes over.
 fn edge_random(st: vec2<f32>) -> f32 {
-  return fract(sin(dot(st, vec2<f32>(12.9898, 78.233))) * 43758.5453123);
+  let a = dot(st, vec2<f32>(12.9898, 78.233));
+  let k = edge_hash_u(bitcast<u32>(st.x) ^ edge_hash_u(bitcast<u32>(st.y)));
+  return select(f32(k >> 8u) * (1.0 / 16777216.0), fract(sin(a) * 43758.5453123), abs(a) < 32768.0);
 }
 
 /// Integer hash for the new types: identical on every GPU.
@@ -4004,6 +4010,16 @@ fn flux_tap(q: vec2<f32>) -> vec3<f32> {
   let c = flux_box.xy + w * (flux_box.zw - flux_box.xy);
   return textureSampleLevel(creative_master, creative_sampler, vec2<f32>(c.x, 1.0 - c.y), 0.0).rgb;
 }
+/// Glitch band hash. `tick` grows with the clock, and sin() of a huge
+/// argument keeps no fraction in f32 and differs per GPU (the bands freeze or
+/// pattern after hours of uptime). Below |argument| 32768 the old sin hash is
+/// kept bit-for-bit, so the look is unchanged; above it an integer hash keyed
+/// on the band and tick takes over.
+fn flux_glitch_hash(band: f32, tick: f32) -> f32 {
+  let a = band * 91.7 + tick * 13.3;
+  let k = edge_hash_u(bitcast<u32>(i32(band)) ^ edge_hash_u(bitcast<u32>(i32(tick))));
+  return select(f32(k >> 8u) * (1.0 / 16777216.0), fract(sin(a) * 43758.5), abs(a) < 32768.0);
+}
 fn flux_apply(dry: vec3<f32>, uv_frame: vec2<f32>) -> vec3<f32> {
   // Each screen plays Flux in its own space, so a Fold or Tile repeats
   // inside every screen instead of across the whole stage.
@@ -4072,7 +4088,7 @@ fn flux_apply(dry: vec3<f32>, uv_frame: vec2<f32>) -> vec3<f32> {
   if (glitch) {
     let tick = floor(clock * 8.0);
     let band = floor(uv_in.y * (6.0 + y * 30.0));
-    let h = fract(sin(band * 91.7 + tick * 13.3) * 43758.5);
+    let h = flux_glitch_hash(band, tick);
     let on = step(1.0 - (0.15 + min(y, 1.0) * 0.5), h);
     let g = vec2<f32>((h - 0.5) * (0.05 + y * 0.3) * on, 0.0);
     let split = vec2<f32>(0.006 + 0.01 * abs(x), 0.0);

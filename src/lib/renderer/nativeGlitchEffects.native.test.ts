@@ -296,6 +296,25 @@ describe('Glitch effects', () => {
           expect(changedShare(now, later), `${effect} at ${start} s`).toBeGreaterThan(0.01);
         }
       }
+      // VHS snow stays fine-grained a day into a show: its drift (t * 100
+      // cells) used to swamp the f32 pixel position, so neighbouring pixels
+      // read the same noise and the snow turned into blocks.
+      const snowOnly = { tracking: 0, noise: 1, distortion: 0, colorBleed: 0, scanlines: 0, saturation: 1 };
+      const equalNeighbours = (a: Picture) => {
+        let same = 0, pairs = 0;
+        for (let y = 0; y < SIZE; y += 2) for (let x = 0; x < SIZE - 1; x += 1) {
+          const o = (y * SIZE + x) * 4;
+          if (a[o] === a[o + 4] && a[o + 1] === a[o + 5] && a[o + 2] === a[o + 6]) same += 1;
+          pairs += 1;
+        }
+        return same / pairs;
+      };
+      const snowShow = equalNeighbours(await render('vhs', 10, snowOnly, 1));
+      const snowDay = equalNeighbours(await render('vhs', 30 * HOUR + 0.3, snowOnly, 1));
+      if (process.env.GA_GLITCH_LOG) console.log('vhs equal neighbours', snowShow, snowDay);
+      expect(snowDay).toBeLessThan(snowShow + 0.1);
+
+      if (process.env.GA_GLITCH_DUMP) (await import('node:fs')).writeFileSync(process.env.GA_GLITCH_DUMP, JSON.stringify(dumps));
     } finally {
       const log = await rpc.close();
       if (process.env.GA_GLITCH_LOG) console.log(String(log).slice(-3000));
