@@ -10,6 +10,7 @@ import { createLayer, type Layer } from '../../types';
 import {
   buildTakeoverScene,
   capTakeoverScene,
+  sampledVjFeeds,
   takeoverLayerId,
   TakeoverMediaSources,
   TAKEOVER_OVERLAY_ID,
@@ -28,6 +29,10 @@ const frame = (surfaces: TakeoverSurfaceFrame[], extra: Partial<TakeoverFrame> =
   ...extra,
 });
 const feed = (id: string) => layer(id, { opacity: 0.8 });
+/** A feed that samples other feeds, as the launcher builds them. */
+const effectFeed = (id: string, effectSource: Record<string, unknown>) =>
+  layer(id, { opacity: 0.8, source: { id: `${id}-src`, type: 'effect', name: id, src: 'plugin://x', effectSource } as any });
+const mixOf = (...rows: string[]) => effectFeed('__vj-mix__', { effectType: 'vj-mix', vjmixRows: rows.map((layerId) => ({ layerId, opacity: 1, blendMode: 'normal' })) });
 const sampled = (l: Layer | undefined) => (l?.source as any)?.effectSource?.vjmixRows?.[0]?.layerId ?? null;
 
 describe('buildTakeoverScene', () => {
@@ -51,16 +56,57 @@ describe('buildTakeoverScene', () => {
     expect(out[2]).toBe(wall);
   });
 
-  it('samples a deck row: the feeds come in at opacity 0 and saved row assignments are left out', () => {
-    const feeds = [feed('vj-layer-0'), feed('vj-layer-1'), feed('__vj-mix__')];
+  it("samples a deck row: only that row's feed comes in, at opacity 0, and saved row assignments are left out", () => {
+    const feeds = [feed('vj-layer-0'), feed('vj-layer-1'), mixOf('vj-layer-0', 'vj-layer-1')];
     const list = [layer('wall'), layer('screen', { vjLayerIndex: 0 }), layer('slice', { vjGroupId: 'g' })];
     const out = buildTakeoverScene(list, frame([surface({ source: { kind: 'vjRow', deck: 'A', row: 1 } })]), { feeds: () => feeds })!;
-    expect(out.slice(0, 3).map((l) => [l.id, l.opacity])).toEqual([['vj-layer-0', 0], ['vj-layer-1', 0], ['__vj-mix__', 0]]);
+    expect(out.slice(0, 1).map((l) => [l.id, l.opacity])).toEqual([['vj-layer-1', 0]]);
+    expect(out.some((l) => l.id === 'vj-layer-0' || l.id === '__vj-mix__')).toBe(false);
     const copy = out.find((l) => l.id === takeoverLayerId('wall'));
     expect(sampled(copy)).toBe('vj-layer-1');
     expect(copy?.vjLayerIndex).toBeUndefined();
     expect(out.find((l) => l.id === 'screen')?.vjLayerIndex).toBeUndefined();
     expect(out.find((l) => l.id === 'slice')?.vjGroupId).toBeUndefined();
+  });
+
+  it('an empty row shows black with no feed in, and saved assignments still stay out while the VJ has feeds', () => {
+    const feeds = [feed('vj-layer-0'), mixOf('vj-layer-0')];
+    const out = buildTakeoverScene([layer('wall'), layer('screen', { vjLayerIndex: 0 })], frame([surface({ source: { kind: 'vjRow', deck: 'A', row: 5 } })]), { feeds: () => feeds })!;
+    expect(out.map((l) => l.id)).toEqual([takeoverLayerId('wall'), 'wall', 'screen']);
+    expect(out[0].source?.id).toBe('takeover:black');
+    expect(out[2].vjLayerIndex).toBeUndefined();
+  });
+
+  it('keeps a row the caller asks for (a clip transition still running) and what it samples', () => {
+    const feeds = [
+      feed('__vj-clip:vj-layer-0:steady:in'),
+      effectFeed('vj-layer-0', { effectType: 'vj-crossfade', vjxfadeLayerA: '__vj-clip:vj-layer-0:steady:in', vjxfadeLayerB: '__vj-clip:vj-layer-0:steady:in' }),
+      feed('__vj-clip:vj-layer-1:3:out'), feed('__vj-clip:vj-layer-1:3:in'),
+      effectFeed('vj-layer-1', { effectType: 'vj-crossfade', vjxfadeLayerA: '__vj-clip:vj-layer-1:3:out', vjxfadeLayerB: '__vj-clip:vj-layer-1:3:in' }),
+      mixOf('vj-layer-0', 'vj-layer-1'),
+    ];
+    const f = frame([surface({ source: { kind: 'vjRow', deck: 'A', row: 0 } })]);
+    expect(sampledVjFeeds(feeds, f, false).map((l) => l.id)).toEqual(['__vj-clip:vj-layer-0:steady:in', 'vj-layer-0']);
+    expect(sampledVjFeeds(feeds, f, false, ['vj-layer-1']).map((l) => l.id)).toEqual([
+      '__vj-clip:vj-layer-0:steady:in', 'vj-layer-0', '__vj-clip:vj-layer-1:3:out', '__vj-clip:vj-layer-1:3:in', 'vj-layer-1',
+    ]);
+  });
+
+  it('the mix and a group bring in the mix carrier and every feed it mixes, through deck crossfades', () => {
+    const feeds = [
+      feed('vj-layer-0-A'), feed('vj-layer-0-B'), feed('vj-layer-1-B'), feed('unrelated'),
+      effectFeed('__vj-deck-mix-A__', { effectType: 'vj-mix', vjmixRows: [{ layerId: 'vj-layer-0-A' }] }),
+      effectFeed('__vj-deck-mix-B__', { effectType: 'vj-mix', vjmixRows: [{ frameId: 'layer-frame:vj-layer-0-B' }, { layerId: 'vj-layer-1-B' }] }),
+      effectFeed('__vj-deck-xfade__', { effectType: 'vj-crossfade', vjxfadeLayerA: '__vj-deck-mix-A__', vjxfadeLayerB: '__vj-deck-mix-B__' }),
+      effectFeed('__vj-mix__', { effectType: 'vj-mix', vjmixRows: [{ layerId: '__vj-deck-xfade__' }] }),
+    ];
+    const all = feeds.filter((f) => f.id !== 'unrelated').map((f) => f.id);
+    expect(sampledVjFeeds(feeds, frame([surface({ source: { kind: 'vjMix' } })]), true).map((l) => l.id)).toEqual(all);
+    expect(sampledVjFeeds(feeds, frame([surface({ source: { kind: 'vjGroup', groupId: 'g' } })]), true).map((l) => l.id)).toEqual(all);
+    // A row at level 0 (a fade-in about to start) still has its feed running.
+    expect(sampledVjFeeds(feeds, frame([surface({ level: 0, source: { kind: 'vjRow', deck: 'B', row: 1 } })]), true).map((l) => l.id)).toEqual(['vj-layer-1-B']);
+    // The overlay counts too.
+    expect(sampledVjFeeds(feeds, frame([], { overlay: { source: { kind: 'vjRow', deck: 'A', row: 0 }, level: 1, blend: 'normal' }, needsVjFeeds: true }), true).map((l) => l.id)).toEqual(['vj-layer-0-A']);
   });
 
   it('does not touch saved assignments when no feeds are needed', () => {
@@ -79,7 +125,7 @@ describe('buildTakeoverScene', () => {
   });
 
   it('samples the mix carrier; a group goes through the core routing by group id', () => {
-    const feeds = [feed('vj-layer-0'), feed('__vj-mix__')];
+    const feeds = [feed('vj-layer-0'), mixOf('vj-layer-0')];
     const out = buildTakeoverScene(
       [layer('a'), layer('b')],
       frame([surface({ surfaceId: 'a', source: { kind: 'vjMix' } }), surface({ surfaceId: 'b', key: 'b:1', source: { kind: 'vjGroup', groupId: 'g1' } })]),
@@ -119,7 +165,7 @@ describe('buildTakeoverScene', () => {
   });
 
   it('the overlay goes over everything at its level and blend', () => {
-    const feeds = [feed('vj-layer-0'), feed('__vj-mix__')];
+    const feeds = [feed('vj-layer-0'), mixOf('vj-layer-0')];
     const out = buildTakeoverScene([layer('wall')], frame([], { overlay: { source: { kind: 'vjMix' }, level: 0.3, blend: 'screen' }, needsVjFeeds: true }), { feeds: () => feeds })!;
     expect(out.map((l) => l.id)).toEqual(['vj-layer-0', '__vj-mix__', TAKEOVER_OVERLAY_ID, 'wall']);
     expect(out[2]).toMatchObject({ opacity: 0.3, blendMode: 'screen' });

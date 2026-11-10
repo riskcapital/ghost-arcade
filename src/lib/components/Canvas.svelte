@@ -10,7 +10,7 @@
   import { takeoverFrame, takeoverMediaSources } from '../stores/takeoverFrame';
   import { buildTakeoverScene } from '../show/takeover/takeoverScene';
   import { showTimeline as showTimelineStore } from '../stores/showTimeline';
-  import { buildShowTrackScene } from '../show/tracks/showTrackScene';
+  import { buildShowTrackScene, ShowTrackSceneCache } from '../show/tracks/showTrackScene';
   import { nativePreviewHostEl } from '../stores/nativePreviewHost';
   import { watchLayout } from '../utils/layoutWatch';
   import { splatPointer } from '../stores/splatPointer';
@@ -2171,7 +2171,20 @@
         // the copy only has to cover the pass-through case.
         const mappingLive = get(layers) as Layer[];
         const xfade = get(compositionTransition).active;
-        if (!xfade) return withTakeover(withShowTracks(mappingLive.map((l) => ({ ...l }))));
+        if (!xfade) {
+          // While the show plays, a frame that only moves the values the
+          // driven layers carry reuses the last scene (see
+          // ShowTrackSceneCache): same live layers, same takeover, same
+          // sources, same shape.
+          const prepared = showTrackScenes.prepare(mappingLive, get(showTrackFrame), showTrackSceneContext(), showSceneDeps(mappingLive));
+          if (reuseShowScene && prepared.reusable) return prepared.reuse();
+          const scene = withTakeover(prepared.build(mappingLive.map((l) => ({ ...l }))));
+          // Only a coalesced build is kept: an immediate one may have copied
+          // values the render loop is riding in place for this one frame.
+          if (scene && reuseShowScene) prepared.commit(scene);
+          else showTrackScenes.clear();
+          return scene;
+        }
         const comps = get(compositions);
         const effective = buildCompositionTransitionLayers({
           liveLayers: mappingLive,
@@ -2179,32 +2192,79 @@
           transition: xfade,
           compositionLayers: (id) => comps.find((c) => c.id === id)?.layers ?? null,
         });
-        return withTakeover(withShowTracks(effective === mappingLive ? mappingLive.map((l) => ({ ...l })) : effective));
+        return withTakeover(buildShowTrackScene(
+          effective === mappingLive ? mappingLive.map((l) => ({ ...l })) : effective,
+          get(showTrackFrame),
+          showTrackSceneContext(),
+        ));
       };
       // Show layer tracks: clips drive their layers (or inject copies of
       // them) in the scene only, from show time — see
       // show/tracks/showTrackScene.ts. Nothing changes without a track.
-      const withShowTracks = (list: Layer[]): Layer[] => {
+      const showTrackScenes = new ShowTrackSceneCache();
+      // Set while the coalesced build runs: only it may reuse the last show
+      // scene. The immediate builds (an urgent trigger, the browser render
+      // loop's in-place stage FX, a forced resync) always build afresh.
+      let reuseShowScene = false;
+      const showTrackSceneContext = () => {
         const frame = get(showTrackFrame);
-        if (!frame) return list;
-        return buildShowTrackScene(list, frame, {
-          sourceFor: (state) => showClipSources.sourceFor(state, frame),
-          xfadeSourceFor: (state) => showClipSources.xfadeSourceFor(state, frame),
-          warmSourceFor: (warm) => showClipSources.warmSourceFor(warm),
+        return {
+          sourceFor: (state: Parameters<typeof showClipSources.sourceFor>[0]) => showClipSources.sourceFor(state, frame!),
+          xfadeSourceFor: (state: Parameters<typeof showClipSources.xfadeSourceFor>[0]) => showClipSources.xfadeSourceFor(state, frame!),
+          warmSourceFor: (warm: Parameters<typeof showClipSources.warmSourceFor>[0]) => showClipSources.warmSourceFor(warm),
           surfaces: get(project).mapSurfaces,
-        });
+        };
+      };
+      // Everything the mapping scene is built from besides the show frame.
+      const showSceneDeps = (mappingLive: Layer[]): unknown[] => {
+        const frame = get(takeoverFrame);
+        const deps: unknown[] = [mappingLive, get(project).mapSurfaces, frame];
+        if (frame) {
+          deps.push(get(showTimelineStore).layerTracks);
+          if (frame.needsVjFeeds) {
+            const vjState = vjClipLauncherNow();
+            const transitions = get(vjClipTransitions);
+            // A running clip transition moves with the clock: never reused.
+            deps.push(transitions.size ? {} : transitions, ...takeoverFeedDeps(vjState));
+          }
+        }
+        return deps;
       };
       // Live takeover: a VJ row, the deck mix, a group, dropped media or black
       // drawn over show surfaces, after the tracks (show/takeover/
       // takeoverScene.ts). The VJ feeds come into the scene invisibly, as in
       // MAP mode, only while something samples them. VJ mode's own Live
       // output (above) is untouched.
+      // The feeds are rebuilt only when something they are built from
+      // changed. A running clip transition moves with the clock, so it is
+      // never reused.
+      let takeoverFeedsMemo: { key: unknown[]; feeds: Layer[] | null } | null = null;
+      const takeoverFeedDeps = (vjState: VJClipLauncherState): unknown[] => [
+        get(vjClipLauncher), vjState.crossfaderValue, get(vjOutputLayers), get(vjClipTransitions),
+        get(vjTransitionOutputLayers), get(nativePerformerWorldOverlays),
+      ];
+      const takeoverFeeds = (vjState: VJClipLauncherState): Layer[] | null => {
+        const transitions = get(vjClipTransitions);
+        const key = takeoverFeedDeps(vjState);
+        if (transitions.size === 0 && takeoverFeedsMemo && key.every((part, i) => part === takeoverFeedsMemo!.key[i])) {
+          return takeoverFeedsMemo.feeds;
+        }
+        const feeds = buildNativeVjFeedLayers(vjState, false);
+        takeoverFeedsMemo = transitions.size === 0 ? { key, feeds } : null;
+        return feeds;
+      };
+      // Rows whose clip transition has not finished stay in the scene while
+      // a takeover samples other rows, so it runs out as it did before.
+      const takeoverTransitionFeedIds = (vjState: VJClipLauncherState): string[] =>
+        Array.from(get(vjClipTransitions).values(), (entry) =>
+          `vj-layer-${entry.layerIndex}${vjState.crossfaderEnabled ? `-${entry.deck}` : ''}`);
       const withTakeover = (list: Layer[]): Layer[] | null => {
         const frame = get(takeoverFrame);
         if (!frame) return list;
         const vjState = vjClipLauncherNow();
         return buildTakeoverScene(list, frame, {
-          feeds: () => buildNativeVjFeedLayers(vjState, false),
+          feeds: () => takeoverFeeds(vjState),
+          keepFeedIds: takeoverTransitionFeedIds(vjState),
           crossfaderEnabled: !!vjState.crossfaderEnabled,
           templateFor: (surfaceId) => get(showTimelineStore).layerTracks.find((t) => t.layerId === surfaceId)?.template ?? null,
           surfaces: get(project).mapSurfaces,
@@ -2349,7 +2409,14 @@
       // Many stores emit within one task (modulation writes the project once
       // per target per frame). scheduleSync keeps only the newest list and
       // flushes on its own frame timer, so one build per microtask is enough.
-      const queuedNativeLayersSync = coalesceToMicrotask(() => runNativeLayersSync());
+      const queuedNativeLayersSync = coalesceToMicrotask(() => {
+        reuseShowScene = true;
+        try {
+          runNativeLayersSync();
+        } finally {
+          reuseShowScene = false;
+        }
+      });
       const scheduleNativeLayersSync = (
         urgent = false,
         retry = true,

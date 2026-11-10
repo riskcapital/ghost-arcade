@@ -189,11 +189,20 @@ export function installTakeoverRuntime(): () => void {
   const disposers: Array<() => void> = [];
   const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
+  // Marker times, kept until the cue list's markers change (the takeover
+  // asks on every evaluation while it is live).
+  let markerSource: unknown = null;
+  let markerTimes: readonly number[] = [];
   liveTakeover.configure({
     now,
     show: () => {
       const s = get(showTimeline);
-      return { showTime: s.currentTime, playing: s.isPlaying, tempo: s.tempo, markers: cueList.state.markers.map((m) => m.time) };
+      const markers = cueList.state.markers;
+      if (markers !== markerSource) {
+        markerSource = markers;
+        markerTimes = markers.map((m) => m.time);
+      }
+      return { showTime: s.currentTime, playing: s.isPlaying, tempo: s.tempo, markers: markerTimes };
     },
     chasing: () => showTimeline.isChasing(),
     pauseShow: () => showTimeline.pause(),
