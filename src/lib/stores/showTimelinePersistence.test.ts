@@ -225,6 +225,46 @@ describe('show timeline project persistence', () => {
     expect(after.loop).toBe(true);
   });
 
+  it('carries the camera lane\'s shots, so another machine finds them (they said "Missing shot")', async () => {
+    const { project } = layers;
+    const { showTimeline } = showTimelineStore;
+    const { demoReel } = await import('../stage3d/demoReel');
+    demoReel.clear();
+    const cam = { position: [0, 2, 12] as [number, number, number], target: [0, 1, 0] as [number, number, number], fov: 45 };
+    const shot = demoReel.addShot(cam, { schemaVersion: 1, nodes: [] } as never, 'orbit');
+    const unused = demoReel.addShot(cam, { schemaVersion: 1, nodes: [] } as never, 'static');
+    showTimeline.setCameraLane([{ id: 'cc1', startTime: 2, duration: 6, shotId: shot.id }]);
+    const saved = JSON.parse(JSON.stringify(await project.exportProjectForSave())) as any;
+    const table = saved.project.showTimeline.cameraShots;
+    // Only the shots the lane uses.
+    expect(table.map((s: { id: string }) => s.id)).toEqual([shot.id]);
+    expect(table[0]).toMatchObject({ moveId: 'orbit', from: shot.from, to: shot.to });
+
+    // Another machine: its Demo Reel has none of these shots.
+    demoReel.clear();
+    expect(get(demoReel).shots).toEqual([]);
+    expect(project.importProject(saved, '/Users/y/projects')).toBe(true);
+    await flushMicrotasks();
+    expect(get(showTimeline).cameraLane.map((c) => c.shotId)).toEqual([shot.id]);
+    const adopted = get(demoReel).shots;
+    expect(adopted.map((s) => s.id)).toEqual([shot.id]);
+    expect(adopted[0].from).toEqual(shot.from);
+    expect(adopted.some((s) => s.id === unused.id)).toBe(false);
+    // Opening it again adds nothing twice; a local shot of the same id wins.
+    demoReel.updateShot(shot.id, { name: 'Edited here' });
+    expect(project.importProject(saved, '/Users/y/projects')).toBe(true);
+    await flushMicrotasks();
+    expect(get(demoReel).shots.map((s) => [s.id, s.name])).toEqual([[shot.id, 'Edited here']]);
+    // A file from before the table: the lane loads, the reel is left alone.
+    delete saved.project.showTimeline.cameraShots;
+    demoReel.clear();
+    expect(project.importProject(saved, '/Users/y/projects')).toBe(true);
+    await flushMicrotasks();
+    expect(get(showTimeline).cameraLane).toHaveLength(1);
+    expect(get(demoReel).shots).toEqual([]);
+    demoReel.clear();
+  });
+
   it('keeps the show out of the live sync export (save-only section)', async () => {
     const { project } = layers;
     await buildShow();
