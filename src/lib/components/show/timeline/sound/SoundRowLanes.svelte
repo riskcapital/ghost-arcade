@@ -449,10 +449,16 @@
     border: 1px solid color-mix(in srgb, var(--clip) 85%, white 0%);
   }
   .live-block.playing { box-shadow: inset 0 0 0 1px #fff, 0 0 8px color-mix(in srgb, var(--clip) 70%, transparent); }
-  .build-block {
-    background: rgba(255, 209, 102, 0.08);
-    border: 1px solid rgba(255, 209, 102, 0.5);
+  /* A band along the bottom of the row: the row's own sound stays visible above it. */
+  .show-block.build-block {
+    top: auto;
+    height: 18px;
+    bottom: 3px;
+    background: rgba(255, 209, 102, 0.1);
+    border: 1px solid rgba(255, 209, 102, 0.55);
+    z-index: 2;
   }
+  .build-block .block-label { font-size: 10px; }
   .rise { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
   .rise path { fill: rgba(255, 209, 102, 0.22); }
   .wave { position: absolute; inset: 4px 0; width: 100%; height: calc(100% - 8px); pointer-events: none; }

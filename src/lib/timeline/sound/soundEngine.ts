@@ -258,6 +258,15 @@ function onFrame(tick: ShowFrameTick): void {
   engine.wasPlaying = tick.playing;
 
   if (engine.ctx) {
+    // Blocks gone from the document (deleted, the other tab's) let go of their gains.
+    if (engine.blockGains.size > s.audioTracks.length) {
+      const live = new Set(s.audioTracks.map((x) => x.id));
+      for (const [id, e] of engine.blockGains) {
+        if (live.has(id)) continue;
+        try { e.node.disconnect(); } catch { /* gone */ }
+        engine.blockGains.delete(id);
+      }
+    }
     const frame = currentLineFrame();
     const values = rows.map((row) => rowValues(row, frame?.sounds?.get(row.id)));
     const bpm = bpmAt(tick.tempo, t);
