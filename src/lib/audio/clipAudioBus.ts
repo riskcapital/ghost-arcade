@@ -261,6 +261,9 @@ interface ClipEntry {
 
 type ContextProvider = () => AudioContext;
 
+/** Time constant of the glide to a new output delay (s): ~95% there in 0.15 s. */
+const OUTPUT_DELAY_GLIDE_SECONDS = 0.05;
+
 export class ClipAudioBus {
   private readonly getContext: ContextProvider;
 
@@ -268,8 +271,8 @@ export class ClipAudioBus {
   private masterGain: GainNode | null = null;
   /** Opt-in delay between the clip mix and the speakers (Stage Sim rehearsal:
    *  lines the sound up with the stage view, which runs behind the output).
-   *  Built the first time a delay is asked for; recordings tap the master
-   *  before it. */
+   *  Built the first time a delay is asked for; recordings and the analyser
+   *  tap the master before it. */
   private delayNode: DelayNode | null = null;
   private outputDelaySeconds = 0;
   private mixDest: MediaStreamAudioDestinationNode | null = null;
@@ -396,7 +399,9 @@ export class ClipAudioBus {
     const ctx = this.ctx;
     const master = this.masterGain;
     if (!ctx || !master) return;
-    // The speakers (and the analyser on their path) hear the delayed mix.
+    // The speakers hear the delayed mix. The analyser hears it undelayed:
+    // audio-reactive visuals belong to the show clock, not to the speakers
+    // held back for the Stage Sim (they were late by the whole delay).
     const out: AudioNode = this.delayNode ?? master;
 
     // Only the clip-follow analyser takes the bus: a live input is
@@ -405,12 +410,12 @@ export class ClipAudioBus {
     const analyserReachesSpeakers = audioAnalyzer.analyserFeedsDestination();
 
     if (this.tappedAnalyser && this.tappedAnalyser !== analyser) {
-      try { out.disconnect(this.tappedAnalyser); } catch { /* already gone */ }
+      try { master.disconnect(this.tappedAnalyser); } catch { /* already gone */ }
       this.tappedAnalyser = null;
     }
     if (analyser && this.tappedAnalyser !== analyser) {
       try {
-        out.connect(analyser);
+        master.connect(analyser);
         this.tappedAnalyser = analyser;
       } catch (err) {
         console.warn('[ClipAudioBus] Analyzer tap failed:', err);
@@ -630,7 +635,19 @@ export class ClipAudioBus {
     const next = Number.isFinite(seconds) ? Math.max(0, Math.min(1, seconds)) : 0;
     this.outputDelaySeconds = next;
     if (next > 0) this.ensureDelayNode();
-    if (this.delayNode) this.delayNode.delayTime.value = next;
+    const delay = this.delayNode;
+    if (!delay) return;
+    // A jump in delay time is a jump in the played signal: a click on every
+    // slider step. Glide there instead (a short pitch bend, no click).
+    const param = delay.delayTime;
+    try {
+      const now = delay.context.currentTime;
+      param.cancelScheduledValues(now);
+      param.setValueAtTime(param.value, now);
+      param.setTargetAtTime(next, now, OUTPUT_DELAY_GLIDE_SECONDS);
+    } catch {
+      param.value = next;
+    }
   }
 
   outputDelay(): number {
@@ -650,12 +667,8 @@ export class ClipAudioBus {
       return;
     }
     delay.delayTime.value = this.outputDelaySeconds;
-    // Move the master's outgoing edges onto the delay; mix-stream and
-    // recording taps stay on the master.
-    if (this.tappedAnalyser) {
-      try { master.disconnect(this.tappedAnalyser); } catch { /* already gone */ }
-      this.tappedAnalyser = null;
-    }
+    // Move the master's speaker edge onto the delay; the analyser, mix-stream
+    // and recording taps stay on the master.
     if (this.masterToDestination) {
       try { master.disconnect(ctx.destination); } catch { /* already gone */ }
       this.masterToDestination = false;

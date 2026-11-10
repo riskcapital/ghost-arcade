@@ -84,6 +84,7 @@
   import { presetJunctions, type PresetJunction } from './show/timeline/laneJunctions';
   import { distinct, showSlice } from './show/timeline/timelineSlices';
   import { devicePixel, formatPrecise } from './show/timeline/timeFormat';
+  import ShowAudioDelayBadge from './show/timeline/ShowAudioDelayBadge.svelte';
   import {
     canPasteClips,
     clearTrackSelection,
@@ -1116,6 +1117,7 @@
           </button>
         {/if}
       {/if}
+      <ShowAudioDelayBadge />
 
       <span class="t-divider"></span>
 
