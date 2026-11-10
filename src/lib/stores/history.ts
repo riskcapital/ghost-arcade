@@ -179,27 +179,33 @@ export function historyTableStats(): { strings: number; fragments: number; fragm
  * JSON.stringify writes, and the native stringify is much faster.
  */
 function isLeaf(value: object, depth: number): boolean {
-  const isArray = Array.isArray(value);
-  if (!isArray) {
-    const proto = Object.getPrototypeOf(value);
-    if (proto !== Object.prototype && proto !== null) return false;
+  if (Array.isArray(value)) {
+    if (typeof (value as unknown as { toJSON?: unknown }).toJSON === 'function') return false;
+    for (let i = 0; i < value.length; i++) if (!isLeafValue(value[i], depth)) return false;
+    return true;
   }
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) return false;
   const record = value as Record<string, unknown>;
   if (typeof record.toJSON === 'function') return false;
-  for (const key in record) {
-    if (!Object.prototype.hasOwnProperty.call(record, key)) return false;
-    if (!isArray && RUNTIME_KEYS.has(key)) return false;
-    const v = record[key];
-    const t = typeof v;
-    if (t === 'string') {
-      if ((v as string).length >= SHOW_STRING_MIN) return false;
-    } else if (t === 'object' && v !== null) {
-      if (depth <= 1 || isRuntimeRef(v) || !isLeaf(v as object, depth - 1)) return false;
-    } else if (t === 'bigint') {
-      return false;
-    }
+  const keys = Object.keys(record);
+  for (let i = 0; i < keys.length; i++) {
+    if (RUNTIME_KEYS.has(keys[i]) || !isLeafValue(record[keys[i]], depth)) return false;
   }
   return true;
+}
+
+function isLeafValue(v: unknown, depth: number): boolean {
+  switch (typeof v) {
+    case 'string':
+      return v.length < SHOW_STRING_MIN;
+    case 'object':
+      return v === null || (depth > 1 && !isRuntimeRef(v) && isLeaf(v, depth - 1));
+    case 'bigint':
+      return false;
+    default:
+      return true;
+  }
 }
 
 /**
