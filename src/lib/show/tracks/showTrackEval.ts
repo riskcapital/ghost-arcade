@@ -381,8 +381,8 @@ function clipStateAt(
   const runId = index.runs.get(clip.id) ?? clip.id;
   const runFirst = index.byId.get(runId) ?? clip;
   // Before its start (the first half of a crossfade) a clip with no media
-  // before its in-point waits on its first frame.
-  const waiting = clip.media.kind === 'video' && rawMediaTime(clip, t) < 0;
+  // before its in-point waits on its first frame; a shader's time waits at 0.
+  const waiting = (clip.media.kind === 'video' || clip.media.kind === 'shader') && rawMediaTime(clip, t) < 0;
   const position = clipMediaTime(clip, t);
   return {
     clipId: clip.id,

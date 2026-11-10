@@ -387,6 +387,29 @@ describe('the drift fallback', () => {
     expect(source._nativePlaybackTimeSeconds).toBeCloseTo(10.1, 9);
   });
 
+  it('backs off a decoder that keeps falling behind', () => {
+    const watch = new ShowDriftWatch();
+    const reanchors: number[] = [];
+    // A decoder that cannot keep up: always 200 ms behind, checked every
+    // 500 ms for a minute; each re-anchor starts a new generation.
+    const { sources, session } = playing(10);
+    for (let at = 1100; at < 61100; at += 500) {
+      const anchor = sources.anchorFor('t')!;
+      const frame = { ...frameAt([tr], 10 + (at - 1100) / 1000), evaluatedAtMs: at, seekGeneration: anchor.showSeekGeneration };
+      const pts = frame.time - 0.2;
+      const keys = watch.check(frame, sources.anchorEntries(), [{ ...session(pts), seek_generation: anchor.nativeSeekSeq }], at);
+      if (keys.length) {
+        reanchors.push(at);
+        sources.reanchor('t');
+        sources.sourceFor(frame.tracks[0], frame);
+      }
+    }
+    const gaps = reanchors.slice(1).map((t, i) => t - reanchors[i]);
+    expect(reanchors.length).toBeLessThan(8);
+    for (let i = 1; i < gaps.length; i++) expect(gaps[i]).toBeGreaterThanOrEqual(gaps[i - 1]);
+    expect(gaps.at(-1)).toBeGreaterThanOrEqual(16000);
+  });
+
   it('ignores a single bad read and a decoder still settling after a seek', () => {
     const { sources, frame, session } = playing(10);
     const watch = new ShowDriftWatch();
@@ -463,5 +486,46 @@ describe('the anchors a frame keeps', () => {
     expect(sources.xfadeAnchorFor('t')).toBeNull();
     expect(sources.anchorFor('u')).toBeNull();
     expect(sources.anchorFor('t')).not.toBeNull();
+  });
+});
+
+describe('a shader clip\'s own time', () => {
+  const tr = track('t', 'A', [clip('s', 10, 20, { media: shader(), inPoint: 3 })]);
+  const at = (sources: ShowClipSources, t: number, playing: boolean, generation: number, extra: Partial<Parameters<typeof frameAt>[2]> = {}) => {
+    const frame = frameAt([tr], t, { playing, generation, ...extra });
+    return sources.sourceFor(frame.tracks[0], frame)!;
+  };
+
+  it('is the clip\'s media time, held while the show is paused (a scrub is exact)', () => {
+    const sources = new ShowClipSources({ now: () => 0 });
+    expect(at(sources, 12, false, 1)._nativeShaderTime).toMatchObject({ seconds: 5, paused: true });
+    expect(at(sources, 17.5, false, 2)._nativeShaderTime).toMatchObject({ seconds: 10.5, paused: true });
+    const playing = at(sources, 17.5, true, 3)._nativeShaderTime!;
+    expect(playing).toMatchObject({ seconds: 10.5, paused: false, rate: 1 });
+    // Playing on: the anchor is left alone (the core runs the time on).
+    expect(at(sources, 19, true, 3)._nativeShaderTime).toBe(playing);
+  });
+
+  it('a seek re-anchors it; an export frame that lands where it runs to does not', () => {
+    const sources = new ShowClipSources({ now: () => 0 });
+    const a = at(sources, 12, true, 1, { });
+    expect(at(sources, 25, true, 2)._nativeShaderTime!.seconds).toBe(18);
+    const manual = (t: number, g: number) => {
+      const frame = evaluateShowTracks([tr], t, { playing: false, seekGeneration: g, manualClock: true });
+      return sources.sourceFor(frame.tracks[0], frame)!;
+    };
+    const first = manual(11, 10);
+    expect(first._nativeShaderTime).toMatchObject({ seconds: 4, paused: false });
+    expect(manual(11 + 1 / 30, 11)).toBe(first);
+    expect(a._nativeShaderTime!.seq).toBeLessThan(first._nativeShaderTime!.seq);
+  });
+
+  it('waits at 0 before the clip starts inside a crossfade, and runs from its start', () => {
+    const xt = track('t', 'A', [clip('r', 0, 4, { media: image('red.png') }), clip('s', 4, 4, { media: shader(), transitionIn: 'dissolve', transitionDuration: 2 })]);
+    const sources = new ShowClipSources({ now: () => 0 });
+    const before = frameAt([xt], 3.5);
+    expect(sources.sourceFor(before.tracks[0], before)!._nativeShaderTime).toMatchObject({ seconds: 0, paused: true });
+    const started = frameAt([xt], 4.02);
+    expect(sources.sourceFor(started.tracks[0], started)!._nativeShaderTime!.seconds).toBeCloseTo(0.02, 9);
   });
 });

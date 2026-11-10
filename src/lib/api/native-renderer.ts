@@ -495,6 +495,7 @@ export type RendererCommand =
   | { type: 'precompile_shader'; shader_id: string; stage: string; source: string; entry: string }
   | { type: 'set_effect_chain'; layer_id: string; effect_ids: string[] }
   | { type: 'bind_isf_shader'; layer_id: string; shader_id: string; input_source_id?: string | null }
+  | { type: 'set_isf_time_anchor'; shader_id: string; time_seconds: number; clock_time_seconds: number; rate: number; paused: boolean }
   | {
       type: 'update_isf_uniforms';
       shader_id: string;

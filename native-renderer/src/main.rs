@@ -2639,6 +2639,24 @@ struct IsfUniformState {
     seq: u64,
 }
 
+/// A shader whose TIME follows a clock of its own (a show clip: its time
+/// in the clip, paused with the show) instead of the render clock: TIME was
+/// `time` when the render clock read `clock`, and runs at `rate` from there.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct IsfTimeAnchor {
+    time: f64,
+    clock: f64,
+    rate: f64,
+    paused: bool,
+}
+
+impl IsfTimeAnchor {
+    fn time_at(&self, clock: f32) -> f32 {
+        let time = if self.paused { self.time } else { self.time + (clock as f64 - self.clock) * self.rate };
+        time.clamp(0.0, 1.0e9) as f32
+    }
+}
+
 impl IsfUniformState {
     fn native_params(&self, shader_id: &str) -> [f32; MAX_NATIVE_ISF_PARAM_FLOATS] {
         let seed = unit_from_hash(stable_hash64(shader_id));
@@ -4898,6 +4916,9 @@ struct App {
     /// which ran out of slots and left faces blank.
     isf_frame_outputs: HashMap<String, (usize, u64)>,
     isf_uniforms: HashMap<String, IsfUniformState>,
+    /// Shaders whose TIME follows an anchor (`set_isf_time_anchor`) instead
+    /// of the render clock, by shader id.
+    isf_time_anchors: HashMap<String, IsfTimeAnchor>,
     shader_registry: HashMap<String, ShaderRecord>,
     shader_sources: HashMap<String, Arc<str>>,
     shader_isf_inputs: HashMap<String, Vec<NativeIsfInputBinding>>,
@@ -5332,6 +5353,7 @@ impl App {
             isf_layer_bindings: HashMap::new(),
             isf_frame_outputs: HashMap::new(),
             isf_uniforms: HashMap::new(),
+            isf_time_anchors: HashMap::new(),
             shader_registry: HashMap::new(),
             shader_sources: HashMap::new(),
             shader_isf_inputs: HashMap::new(),
@@ -7856,6 +7878,7 @@ impl App {
                 "precompile_shader" => self.apply_precompile_shader(command),
                 "bind_isf_shader" => self.apply_bind_isf_shader(command),
                 "update_isf_uniforms" => self.apply_isf_uniforms(command),
+                "set_isf_time_anchor" => self.apply_isf_time_anchor(command),
                 "render_isf_to_layer" => self.apply_render_isf_to_layer(command),
                 "remove_layer" => self.apply_remove_layer(command),
                 _ => {
@@ -15346,6 +15369,7 @@ impl App {
             self.shader_isf_inputs.remove(id);
             self.shader_isf_hosts.remove(id);
             self.isf_uniforms.remove(id);
+            self.isf_time_anchors.remove(id);
             self.isf_shader_last_used.remove(id);
             self.evicted_shader_ids.insert(stable_hash64(id));
         }
@@ -15353,6 +15377,7 @@ impl App {
         // error) have no other removal path.
         let registry = &self.shader_registry;
         self.isf_uniforms.retain(|id, _| registry.contains_key(id) || bound.contains(id));
+        self.isf_time_anchors.retain(|id, _| registry.contains_key(id) || bound.contains(id));
         self.isf_shader_last_used.retain(|id, _| registry.contains_key(id) || bound.contains(id));
         let hashes: HashSet<u64> = registry.values().map(|record| record.source_hash).collect();
         self.shader_reads_inputs.retain(|hash, _| hashes.contains(hash));
@@ -16130,6 +16155,30 @@ impl App {
         self.source_frame_slots.get(trimmed).copied()
     }
 
+    /// Anchor a shader's TIME: `time_seconds` now (or, on the export clock,
+    /// at `clock_time_seconds`), running at `rate` unless `paused`.
+    /// `enabled: false` hands it back to the render clock.
+    fn apply_isf_time_anchor(&mut self, command: &Value) {
+        let Some(shader_id) = string_at(command, &["shader_id"]) else { return; };
+        if bool_at(command, &["enabled"]) == Some(false) {
+            self.isf_time_anchors.remove(&shader_id);
+            return;
+        }
+        let Some(time) = number_at(command, &["time_seconds"]).filter(|time| time.is_finite()) else { return; };
+        let now = self.native_graph_time_seconds() as f64;
+        let clock = if self.render_clock_mode == "manual" {
+            number_at(command, &["clock_time_seconds"]).filter(|clock| clock.is_finite()).unwrap_or(now)
+        } else {
+            now
+        };
+        let rate = number_at(command, &["rate"]).filter(|rate| rate.is_finite()).unwrap_or(1.0).clamp(-16.0, 16.0);
+        let paused = bool_at(command, &["paused"]).unwrap_or(false);
+        if self.isf_time_anchors.len() >= 4096 && !self.isf_time_anchors.contains_key(&shader_id) {
+            self.isf_time_anchors.clear();
+        }
+        self.isf_time_anchors.insert(shader_id, IsfTimeAnchor { time: time.max(0.0), clock, rate, paused });
+    }
+
     fn apply_isf_uniforms(&mut self, command: &Value) {
         let Some(shader_id) = string_at(command, &["shader_id"]) else {
             return;
@@ -16250,8 +16299,9 @@ impl App {
             if let Some(used) = self.isf_shader_last_used.get_mut(&shader_id) {
                 *used = self.isf_shader_use_tick;
             }
+            let shader_time = self.isf_time_anchors.get(&shader_id).map_or(time, |anchor| anchor.time_at(time));
             if let Some(state) = self.isf_uniforms.get_mut(&shader_id) {
-                state.time = time;
+                state.time = shader_time;
                 state.time_delta = frame_delta;
                 state.frame_index = shader_frame_index;
                 state.audio0 = self.audio0;
@@ -35707,6 +35757,18 @@ mod tests {
         assert_eq!(isf_frame_index_since(&mut origin, 0), 0);
         assert_eq!(isf_frame_index_since(&mut origin, 1), 1);
         assert_eq!(isf_frame_index_since(&mut origin, 2), 2);
+    }
+
+    #[test]
+    fn isf_time_anchor_runs_from_its_clock_and_holds_when_paused() {
+        // A show clip 2 s in when the render clock read 100, at half speed.
+        let anchor = IsfTimeAnchor { time: 2.0, clock: 100.0, rate: 0.5, paused: false };
+        assert_eq!(anchor.time_at(100.0), 2.0);
+        assert_eq!(anchor.time_at(104.0), 4.0);
+        let paused = IsfTimeAnchor { paused: true, ..anchor };
+        assert_eq!(paused.time_at(1000.0), 2.0);
+        // Never before the start of the clip.
+        assert_eq!(anchor.time_at(0.0), 0.0);
     }
 
     #[test]

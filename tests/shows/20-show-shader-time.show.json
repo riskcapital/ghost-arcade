@@ -1,0 +1,158 @@
+{
+  "name": "Show timeline: a shader clip runs on its own time",
+  "description": "A shader clip's TIME is its time in the clip: a paused scrub shows the same picture every time and holds still, playback carries on from it, and an export renders the same moments. The shader's brightness is TIME / 4, so the output says which moment it is. Before the clip the layer shows its own white (an export refuses a blank first frame).",
+  "steps": [
+    {
+      "do": "app.start",
+      "choice": "blank"
+    },
+    {
+      "do": "project.layer",
+      "name": "Wall",
+      "colour": "white",
+      "wait": 1
+    },
+    {
+      "do": "show.open"
+    },
+    {
+      "do": "show.track",
+      "name": "wall",
+      "layer": "Wall"
+    },
+    {
+      "do": "eval",
+      "label": "A 20 s time-ramp shader clip at 2 s, in point 1 s",
+      "js": "(() => { const media = { kind: 'shader', name: 'time ramp', src: '', shaderCode: \"/*{ \\\"DESCRIPTION\\\": \\\"Brightness is TIME / 4, wrapping\\\", \\\"INPUTS\\\": [] }*/\\nvoid main() {\\n  float v = fract(TIME / 4.0);\\n  gl_FragColor = vec4(v, v, v, 1.0);\\n}\\n\", shaderInputs: [], shaderValues: {} }; return !!__show.g().showTimeline.addLayerClip(__show.vars['track:wall'], media, 2, { duration: 20, inPoint: 1 }); })()"
+    },
+    {
+      "do": "show.seek",
+      "t": 7,
+      "settle": 2000,
+      "label": "Paused at 7 s: the clip is 6 s in (brightness 0.5)",
+      "expect": {
+        "output.rgb": {
+          "rgb": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "within": 0.03
+        }
+      }
+    },
+    {
+      "do": "wait",
+      "seconds": 1.5
+    },
+    {
+      "label": "Still 6 s in after a second and a half: a paused shader holds",
+      "expect": {
+        "output.rgb": {
+          "rgb": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "within": 0.03
+        }
+      }
+    },
+    {
+      "do": "show.seek",
+      "t": 9.4,
+      "settle": 1500,
+      "label": "Scrub to 9.4 s: 8.4 s in (0.1)",
+      "expect": {
+        "output.rgb": {
+          "rgb": [
+            0.1,
+            0.1,
+            0.1
+          ],
+          "within": 0.03
+        }
+      }
+    },
+    {
+      "do": "show.seek",
+      "t": 4.2,
+      "settle": 1500,
+      "label": "Scrub back to 4.2 s: 3.2 s in (0.8)",
+      "expect": {
+        "output.rgb": {
+          "rgb": [
+            0.8,
+            0.8,
+            0.8
+          ],
+          "within": 0.03
+        }
+      }
+    },
+    {
+      "do": "show.play",
+      "from": 3
+    },
+    {
+      "do": "wait",
+      "seconds": 1
+    },
+    {
+      "label": "Playing: the picture follows the playhead",
+      "expect": {
+        "eval.true": {
+          "js": "(async () => { const s = await __show.snapshot(); const t = __show.show().currentTime; const got = (s.mean_rgba[0] + s.mean_rgba[1] + s.mean_rgba[2]) / 3; const want = ((t - 1) / 4) % 1; return Math.abs(got - want) < 0.06 ? { got: +got.toFixed(3), want: +want.toFixed(3), t: +t.toFixed(2) } : false; })()",
+          "label": "brightness matches the clip time"
+        }
+      }
+    },
+    {
+      "do": "show.pause"
+    },
+    {
+      "do": "wait",
+      "seconds": 0.8
+    },
+    {
+      "label": "Paused again: still on the playhead",
+      "expect": {
+        "eval.true": {
+          "js": "(async () => { const s = await __show.snapshot(); const t = __show.show().currentTime; const got = (s.mean_rgba[0] + s.mean_rgba[1] + s.mean_rgba[2]) / 3; const want = ((t - 1) / 4) % 1; return Math.abs(got - want) < 0.06 ? { got: +got.toFixed(3), want: +want.toFixed(3), t: +t.toFixed(2) } : false; })()",
+          "label": "brightness matches the clip time"
+        }
+      }
+    },
+    {
+      "do": "show.export",
+      "seconds": 4,
+      "fps": 10,
+      "label": "Render the show"
+    },
+    {
+      "label": "Export at 2.5 s: 1.5 s into the clip",
+      "expect": {
+        "export.frame": {
+          "frame": 25,
+          "brightness": [
+            0.375,
+            0.04
+          ]
+        }
+      }
+    },
+    {
+      "label": "Export at 3.5 s: 2.5 s into the clip",
+      "expect": {
+        "export.frame": {
+          "frame": 35,
+          "brightness": [
+            0.625,
+            0.04
+          ]
+        },
+        "noErrors": true
+      }
+    }
+  ]
+}

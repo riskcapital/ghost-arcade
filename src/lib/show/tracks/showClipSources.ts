@@ -22,6 +22,12 @@
  * there the anchor is replaced only when the decoder's predicted position
  * would be more than half a frame off.
  *
+ * A shader clip runs on its own time too: its TIME is the clip's media time
+ * (`inPoint + (t - start) × rate`), still while the show is paused, so a
+ * scrub, live play and an export show the same picture. Its anchor goes out
+ * as `_nativeShaderTime` and is replaced on the same occasions as a video's
+ * (a shader has no decoder to seek, so that costs nothing).
+ *
  * Sources always go out looping, trimmed to [loop start, media end), because
  * the core's phase follower only works on looping sources. 'stop' and 'hold'
  * clips pause one frame before the end instead (see showTrackEval).
@@ -95,6 +101,20 @@ export interface ShowClipAnchor {
   source: MediaSource;
 }
 
+interface ShowShaderAnchor {
+  /** The clip's source without the anchor (the static source). */
+  base: MediaSource;
+  /** The shader's time at show time `showTime`. */
+  seconds: number;
+  showTime: number;
+  rate: number;
+  paused: boolean;
+  generation: number;
+  /** Anchored on the export clock. */
+  manual: boolean;
+  source: MediaSource;
+}
+
 export interface ShowClipSourceOptions {
   /** performance.now() replacement for tests. */
   now?: () => number;
@@ -155,6 +175,9 @@ export class ShowClipSources {
   private readonly prerolls = new Map<string, { generation: number; time: number }>();
   /** Anchor keys whose decoder drifted off: re-anchored on their next ask. */
   private readonly stale = new Set<string>();
+  /** Shader clips' time anchors, by the same keys as `anchors`. */
+  private readonly shaderAnchors = new Map<string, ShowShaderAnchor>();
+  private shaderAnchorSeq = 0;
 
   constructor(opts: ShowClipSourceOptions = {}) {
     this.now = opts.now ?? (() => performance.now());
@@ -169,8 +192,14 @@ export class ShowClipSources {
     const clip = state.clip;
     if (!clip || clip.media.kind === 'layer') {
       this.anchors.delete(state.trackId);
+      this.shaderAnchors.delete(state.trackId);
       return null;
     }
+    if (clip.media.kind === 'shader') {
+      this.anchors.delete(state.trackId);
+      return this.shaderSource(state.trackId, clip, frame);
+    }
+    this.shaderAnchors.delete(state.trackId);
     if (clip.media.kind !== 'video') {
       this.anchors.delete(state.trackId);
       return this.staticSource(clip.runId, clip.media);
@@ -190,8 +219,14 @@ export class ShowClipSources {
     const key = state.trackId + XFADE_KEY_SUFFIX;
     if (!xf || xf.clip.media.kind === 'layer') {
       this.anchors.delete(key);
+      this.shaderAnchors.delete(key);
       return null;
     }
+    if (xf.clip.media.kind === 'shader') {
+      this.anchors.delete(key);
+      return this.shaderSource(key, xf.clip, frame, state.trackId);
+    }
+    this.shaderAnchors.delete(key);
     if (xf.clip.media.kind !== 'video') {
       this.anchors.delete(key);
       return this.staticSource(xf.clip.runId, xf.clip.media);
@@ -203,6 +238,53 @@ export class ShowClipSources {
    *  the same object, so the warmed program is the one that goes live. */
   warmSourceFor(warm: { runId: string; media: ShowClipMedia }): MediaSource | null {
     return this.staticSource(warm.runId, warm.media);
+  }
+
+  /**
+   * A shader clip's source with its time anchor. Kept while the shader's
+   * time carries on as predicted; replaced (a new anchor) when the run, the
+   * pause state or the speed changes, or a seek moved the clip's time.
+   */
+  private shaderSource(key: string, clip: ShowTrackClipState, frame: ShowTrackFrame, handOverFrom?: string): MediaSource | null {
+    const base = this.staticSource(clip.runId, clip.media);
+    if (!base) return null;
+    let prev = this.shaderAnchors.get(key);
+    if (handOverFrom && (!prev || prev.base !== base)) {
+      const playing = this.shaderAnchors.get(handOverFrom);
+      if (playing && playing.base === base) {
+        prev = playing;
+        this.shaderAnchors.set(key, playing);
+      }
+    }
+    // An anchor on the live clock means nothing on the export clock (and
+    // back): a render starting or ending re-anchors.
+    const same = !!prev && prev.base === base && prev.paused === clip.paused && Math.abs(prev.rate - clip.rate) <= 1e-9
+      && prev.manual === frame.manualClock;
+    let reanchor = !same;
+    if (!reanchor && prev!.generation !== frame.seekGeneration) {
+      // The core runs a shader's time on from its anchor by its own clock.
+      // That follows the show through an export frame (the render clock is
+      // show time there) and through a loop wrap; any other jump re-anchors.
+      const wrap = frame.wrap && frame.wrap.fromGeneration === prev!.generation ? frame.wrap : null;
+      const shift = wrap ? wrap.shift : 0;
+      const predicted = prev!.paused ? prev!.seconds : prev!.seconds + (frame.time + shift - prev!.showTime) * prev!.rate;
+      reanchor = !(frame.manualClock || wrap) || Math.abs(predicted - clip.mediaTime) > SHOW_MANUAL_REANCHOR_SECONDS;
+      if (!reanchor) {
+        prev!.showTime -= shift;
+        prev!.generation = frame.seekGeneration;
+      }
+    }
+    if (!reanchor) return prev!.source;
+    const seconds = Math.max(0, clip.mediaTime);
+    const source = {
+      ...base,
+      _nativeShaderTime: { seconds, rate: clip.rate, paused: clip.paused, seq: ++this.shaderAnchorSeq },
+    } as MediaSource;
+    this.shaderAnchors.set(key, {
+      base, seconds, showTime: frame.time, rate: clip.rate, paused: clip.paused, generation: frame.seekGeneration,
+      manual: frame.manualClock, source,
+    });
+    return source;
   }
 
   private staticSource(runId: string, media: ShowClipMedia): MediaSource | null {
@@ -382,6 +464,7 @@ export class ShowClipSources {
   /** Forget tracks that are gone. */
   retain(trackIds: ReadonlySet<string>): void {
     for (const id of [...this.anchors.keys()]) if (!trackIds.has(id)) this.anchors.delete(id);
+    for (const id of [...this.shaderAnchors.keys()]) if (!trackIds.has(id)) this.shaderAnchors.delete(id);
     for (const id of [...this.stale]) if (!this.anchors.has(id)) this.stale.delete(id);
     if (this.statics.size > 256) this.statics.clear();
   }
@@ -402,6 +485,7 @@ export class ShowClipSources {
    *  still moves forward. */
   clear(): void {
     this.anchors.clear();
+    this.shaderAnchors.clear();
     this.statics.clear();
     this.stale.clear();
   }
