@@ -9,7 +9,8 @@ import {
   submitNativeRendererCommands,
 } from '../api/native-renderer';
 import type { OfflineRenderSettings } from './offlineRender';
-import { liveFrameRepeat } from './liveFramePacing';
+import { createLiveFramePacer, liveFrameRepeat, streamFramesInFlight, type LiveFrameSlot } from './liveFramePacing';
+import type { StageFrameSink } from '../stage3d/store';
 import type { RecorderHandle } from './recorder';
 import {
   recordingRequest,
@@ -33,6 +34,13 @@ export type NativeLiveFrame = { data: Uint8Array; width: number; height: number 
 
 export interface NativeLiveFrameRecorderOptions {
   captureFrame: (width: number, height: number) => Promise<NativeLiveFrame>;
+  /** A live view that can hand over its renders as they are drawn (the
+   *  Stage Sim): used instead of `captureFrame`, so every frame slot gets
+   *  its own render and the read-back never stalls the view. */
+  streamFrames?: (width: number, height: number, sink: StageFrameSink) => () => void;
+  /** Stream only: a render was kept for the frame due at this instant
+   *  (epoch ms). Runs in that render, before its pixels arrive. */
+  onFrameDue?: (dueAtEpochMs: number) => void;
   width: number;
   height: number;
   fps?: number;
@@ -51,6 +59,9 @@ export interface NativeLiveFrameRecorderOptions {
    *  in the media library — the hook the audio-sidecar mux uses so the
    *  library entry already carries its audio track. */
   finalizeOutput?: (outputPath: string, result?: { nativeAudio: boolean }) => Promise<void> | void;
+  /** Frame 0 of the file stands for this wall-clock instant (epoch ms,
+   *  `performance.timeOrigin + performance.now()`); frames are paced from it. */
+  onStart?: (startedAtEpochMs: number) => void;
 }
 
 export interface NativeRendererLiveFrameRecorderOptions {
@@ -232,6 +243,7 @@ export async function startNativeLiveFrameRecording(
   let writesInFlight = 0;
   let writeError: unknown = null;
   const startedAt = performance.now();
+  options.onStart?.(performance.timeOrigin + startedAt);
   const frameMs = 1000 / fps;
   let nextFrameAt = startedAt;
 
@@ -252,6 +264,8 @@ export async function startNativeLiveFrameRecording(
     active = false;
     finishing = false;
     cleanupTimers();
+    stopStream?.();
+    stopStream = null;
     await cancelNativeMp4FrameEncoder(session);
     options.onError?.(toError(err));
   };
@@ -296,6 +310,54 @@ export async function startNativeLiveFrameRecording(
     });
   };
 
+  // ── Stream mode: the view offers every render; the pacer keeps the one
+  // nearest each frame slot. Pixels arrive a frame or two later, in order.
+  let stopStream: (() => void) | null = null;
+  let framesInFlight = 0;
+  let streamIdle: (() => void) | null = null;
+  const pacer = createLiveFramePacer(fps, startedAt);
+  const maxFramesInFlight = streamFramesInFlight(width, height, fps);
+  const streamSink: StageFrameSink = {
+    beforeRender(nowMs) {
+      if (!active || finishing) return null;
+      if (writeError) {
+        void fail(writeError);
+        return null;
+      }
+      // Backed up (encoder or IPC slower than real time): let this render
+      // pass; a later one fills the slots with its picture.
+      if (framesInFlight >= maxFramesInFlight) return null;
+      const slot = pacer.take(nowMs);
+      if (!slot) return null;
+      framesInFlight++;
+      frameIndex = pacer.queued;
+      options.onFrameDue?.(performance.timeOrigin + slot.dueAtMs);
+      return slot;
+    },
+    frame(frame, tag) {
+      const slot = tag as LiveFrameSlot;
+      writeChain = writeChain
+        .then(() => (writeError ? undefined : writeNativeMp4Frame(session, slot.first, frame, slot.repeat)))
+        .catch((err) => { writeError ??= err; })
+        .finally(() => {
+          framesInFlight--;
+          if (framesInFlight <= 0) streamIdle?.();
+        });
+    },
+    error(err) {
+      if (!active || finishing) {
+        writeError ??= err;
+        return;
+      }
+      void fail(err);
+    },
+  };
+  const waitStreamIdle = () => new Promise<void>((resolve) => {
+    if (framesInFlight <= 0) { resolve(); return; }
+    const timer = window.setTimeout(() => { streamIdle = null; resolve(); }, 3000);
+    streamIdle = () => { window.clearTimeout(timer); streamIdle = null; resolve(); };
+  });
+
   const finish = async () => {
     if (finishing || !active) return;
     active = false;
@@ -305,6 +367,12 @@ export async function startNativeLiveFrameRecording(
       await Promise.race([pumpPromise.catch(() => {}), delay(1500)]);
     }
     try {
+      if (stopStream) {
+        stopStream();
+        stopStream = null;
+        await waitStreamIdle();
+        if (framesInFlight > 0) throw new Error('The stage view stopped handing over frames.');
+      }
       await writeChain;
       if (writeError) throw writeError;
       if (frameIndex <= 0) {
@@ -324,7 +392,8 @@ export async function startNativeLiveFrameRecording(
     }
   };
 
-  schedule();
+  if (options.streamFrames) stopStream = options.streamFrames(width, height, streamSink);
+  else schedule();
 
   return {
     stop() {

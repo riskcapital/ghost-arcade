@@ -399,6 +399,7 @@
   import { handleShowKeydown } from './lib/show/showKeyboard';
   import { installShowTrackRuntime } from './lib/show/tracks/showTrackRuntime';
   import { installTakeoverRuntime } from './lib/show/takeover/takeoverRuntime';
+  import { installEditorRehearsal } from './lib/show/rehearsal/editorRehearsal';
   import { installShowControl, showRuntimeHooks } from './lib/show/showControlRuntime';
   import { hydrateShowControl, serializeShowControl } from './lib/show/showControlPersistence';
   import { cueList } from './lib/show/cueList';
@@ -1949,6 +1950,9 @@
     // Live takeover: VJ rows, the mix or media over show tracks, handed back
     // on a beat, bar, phrase or marker.
     const stopTakeover = installTakeoverRuntime();
+    // Rehearsing in the Stage Sim window: its transport, camera lane and
+    // recordings talk to the show here.
+    const stopRehearsal = installEditorRehearsal();
     showRuntimeHooks.ensureOutputs = ensureOutputsFullscreen;
     // Show mode (start at boot): nothing modal may stand between a machine
     // booting in an empty room and the show starting.
@@ -2763,6 +2767,7 @@
       stopShowControl();
       stopShowTracks();
       stopTakeover();
+      stopRehearsal();
       showRuntimeHooks.ensureOutputs = null;
       restorePrompts();
       stopInterfaceScale();

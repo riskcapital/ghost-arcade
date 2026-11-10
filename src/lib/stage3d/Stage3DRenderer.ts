@@ -23,7 +23,8 @@ import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLigh
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { get } from 'svelte/store';
-import { stage3dScene, selectedStage3DNodeId, selectedStage3DTargets, stage3DGizmoMode, parseSelection, stage3DRendererControls, stage3DSceneryList, sceneryLabel, stage3DCameraFov } from './store';
+import { stage3dScene, selectedStage3DNodeId, selectedStage3DTargets, stage3DGizmoMode, parseSelection, stage3DRendererControls, stage3DSceneryList, sceneryLabel, stage3DCameraFov, type StageFrameSink } from './store';
+import { StageFrameReader } from './stageFrameReader';
 import { buildVenue, type VenueBuild } from './venues';
 import { AtmosphereRig, type UserStripAnim } from './atmosphere';
 import { DEFAULT_ATMOSPHERE } from './types';
@@ -787,6 +788,12 @@ export class Stage3DRenderer {
   } | null = null;
   private captureCanvas: HTMLCanvasElement | null = null;
   private captureCtx: CanvasRenderingContext2D | null = null;
+  /** Live capture (recordings): asked at every render, read back async. */
+  private frameStream: { width: number; height: number; sink: StageFrameSink; failed: boolean } | null = null;
+  /** This render is kept by the frame stream: its tag, else undefined. */
+  private streamTag: unknown = undefined;
+  private frameReader: StageFrameReader | null = null;
+  private frameReaderGl: WebGL2RenderingContext | null = null;
   private frameCaptureRig: {
     renderer: THREE.WebGLRenderer;
     width: number;
@@ -885,6 +892,7 @@ export class Stage3DRenderer {
         this.pendingCapture = { resolve, reject };
       }),
       captureFrameAt: (w, h) => this.captureFrameAt(w, h),
+      streamFrames:   (w, h, sink) => this.streamFrames(w, h, sink),
       beginRecording: (w, h) => this.beginRecording(w, h),
       endRecording:   () => this.endRecording(),
     });
@@ -948,6 +956,17 @@ export class Stage3DRenderer {
   ): void {
     this.lastRenderAt = performance.now();
     this.ensureRenderTargets(renderer);
+    this.frameReader?.poll();
+    this.streamTag = undefined;
+    const stream = this.frameStream;
+    if (stream && !stream.failed) {
+      try {
+        const tag = stream.sink.beforeRender(this.lastRenderAt);
+        if (tag !== null && tag !== undefined) this.streamTag = tag;
+      } catch (err) {
+        this.failStream(stream, err);
+      }
+    }
     const clockIsManual = typeof clockTimeSeconds === 'number' && Number.isFinite(clockTimeSeconds);
     const renderClockTime = clockIsManual ? Math.max(0, clockTimeSeconds) : performance.now() * 0.001;
     const venue = stage.venue ?? 'festival';
@@ -1399,7 +1418,7 @@ export class Stage3DRenderer {
     }
     this.frameTick++;
 
-    if (this.pendingCapture) {
+    if (this.pendingCapture || this.streamTag !== undefined) {
       // A frame is being captured (recording, Demo Reel): draw it without
       // the editor's gizmo and selection outlines, then draw the on-screen
       // frame again with them so the live view keeps its helpers.
@@ -1579,6 +1598,11 @@ export class Stage3DRenderer {
       this.pendingCapture.reject(new Error('renderer disposed'));
       this.pendingCapture = null;
     }
+    if (this.frameStream) this.failStream(this.frameStream, new Error('renderer disposed'));
+    this.frameStream = null;
+    this.frameReader?.dispose();
+    this.frameReader = null;
+    this.frameReaderGl = null;
     for (const entry of this.ledEntries) entry.averageRT.dispose();
     this.downsampleMaterial?.dispose();
     disposeObject(this.scene);
@@ -1851,6 +1875,11 @@ export class Stage3DRenderer {
    *  bottom-up rows; flip to top-down so consumers (putImageData /
    *  JPEG encode) get a normal image. */
   private fulfillCapture(renderer: THREE.WebGLRenderer, width: number, height: number): void {
+    if (this.streamTag !== undefined) {
+      const tag = this.streamTag;
+      this.streamTag = undefined;
+      this.fulfillStreamFrame(renderer, tag);
+    }
     if (!this.pendingCapture) return;
     const pending = this.pendingCapture;
     this.pendingCapture = null;
@@ -1868,6 +1897,72 @@ export class Stage3DRenderer {
       pending.resolve(this.captureOffscreenFrame(renderer, pending.width ?? width, pending.height ?? height));
     } catch (err) {
       pending.reject(err instanceof Error ? err : new Error(String(err)));
+    }
+  }
+
+  // ── Live frame stream (recordings) ───────────────────────────────────
+
+  private streamFrames(width: number, height: number, sink: StageFrameSink): () => void {
+    if (this.frameStream) this.failStream(this.frameStream, new Error('superseded'));
+    const stream = {
+      width: Math.max(2, Math.round(width)),
+      height: Math.max(2, Math.round(height)),
+      sink,
+      failed: false,
+    };
+    this.frameStream = stream;
+    return () => {
+      // Frames already read back still arrive; no new ones are taken.
+      if (this.frameStream === stream) this.frameStream = null;
+    };
+  }
+
+  private failStream(stream: { sink: StageFrameSink; failed: boolean }, err: unknown): void {
+    if (stream.failed) return;
+    stream.failed = true;
+    if (this.frameStream === stream) this.frameStream = null;
+    try {
+      stream.sink.error?.(err instanceof Error ? err : new Error(String(err)));
+    } catch { /* the sink's own problem */ }
+  }
+
+  /** Read the frame just drawn for the stream, without waiting for the GPU.
+   *  Runs in the render task, like the one-shot capture. */
+  private fulfillStreamFrame(renderer: THREE.WebGLRenderer, tag: unknown): void {
+    const stream = this.frameStream;
+    if (!stream || stream.failed) return;
+    const { width: w, height: h, sink } = stream;
+    const deliver = (frame: { data: Uint8Array; width: number; height: number }) => {
+      try {
+        sink.frame(frame, tag);
+      } catch (err) {
+        this.failStream(stream, err);
+      }
+    };
+    const gl = renderer.getContext() as WebGL2RenderingContext;
+    if (this.frameReaderGl !== gl) {
+      this.frameReader?.dispose();
+      this.frameReader = typeof WebGL2RenderingContext !== 'undefined' && gl instanceof WebGL2RenderingContext
+        ? new StageFrameReader(gl)
+        : null;
+      this.frameReaderGl = gl;
+    }
+    const sourceW = Math.max(1, Math.round(this.canvas.width || this.canvas.clientWidth || 1));
+    const sourceH = Math.max(1, Math.round(this.canvas.height || this.canvas.clientHeight || 1));
+    // Same framing as the one-shot capture: the live view's proportions.
+    const crop = captureSourceCrop(
+      sourceW, sourceH,
+      this.canvas.clientWidth || sourceW, this.canvas.clientHeight || sourceH,
+      w, h,
+    );
+    if (this.frameReader?.read(crop, w, h, deliver, (err) => this.failStream(stream, err))) return;
+    // The GPU would not take the async copy: read this frame synchronously,
+    // after any frames still queued so the order holds.
+    try {
+      this.frameReader?.flush();
+      deliver(this.captureCanvasFrame(w, h));
+    } catch (err) {
+      this.failStream(stream, err);
     }
   }
 

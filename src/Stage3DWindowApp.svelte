@@ -18,6 +18,10 @@
   import { startModulationBroadcastReceiver } from './lib/sync/modulationBroadcast';
   import { initLicense } from './lib/stores/license';
   import { invoke } from '$lib/bridge';
+  import { installStageRehearsal } from './lib/show/rehearsal/stageRehearsal';
+
+  // Rehearse the editor's show here: its transport, camera lane and sound.
+  let stopRehearsal: (() => void) | null = null;
 
   onMount(() => {
     const splash = document.getElementById('splash');
@@ -30,12 +34,15 @@
     startAudioBroadcastReceiver({ onFrame: (frame) => audioStore.injectBroadcastedFrame(frame) });
     startModulationBroadcastReceiver();
     initLicense().catch((e) => console.warn('[Stage3DWindow] License init:', e));
+    stopRehearsal = installStageRehearsal();
 
     window.addEventListener('beforeunload', notifyClosing);
   });
 
   onDestroy(() => {
     window.removeEventListener('beforeunload', notifyClosing);
+    stopRehearsal?.();
+    stopRehearsal = null;
     destroyStateBroadcast();
   });
 

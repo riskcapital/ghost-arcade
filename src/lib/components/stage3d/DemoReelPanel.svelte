@@ -20,6 +20,7 @@
   import { stage3dScene, stage3DRendererControls } from '../../stage3d/store';
   import { stageReelRender } from '../../recording/stageReelRender';
   import type { Stage3DScene } from '../../stage3d/types';
+  import { borrowStageCamera, createStageRehearsalRender, stageShow } from '../../show/rehearsal/stageRehearsal';
 
   export let onClose: () => void = () => {};
 
@@ -110,11 +111,14 @@
   /** Stage as it was when the preview started. */
   let previewRestoreScene: Stage3DScene | null = null;
 
+  let returnPreviewCamera: (() => void) | null = null;
   function stopPreview() {
     previewing = false;
     cancelAnimationFrame(previewRaf);
     previewRestoreScene = null;
     get(stage3DRendererControls)?.releaseCamera();
+    returnPreviewCamera?.();
+    returnPreviewCamera = null;
   }
 
   function startPreview() {
@@ -124,6 +128,7 @@
     const restoreScene: Stage3DScene = JSON.parse(JSON.stringify(get(stage3dScene)));
     previewRestoreScene = restoreScene;
     previewing = true;
+    returnPreviewCamera = borrowStageCamera();
     const t0 = performance.now();
     let lastIndex = -1;
     const tick = () => {
@@ -167,6 +172,18 @@
     await stageReelRender.start(get(demoReel).shots, get(demoReel).settings);
   }
 
+  /** Film the show playing from its start: the camera on the show's Stage
+   *  camera lane (or these shots where it has none), with its soundtrack. */
+  async function renderRehearsal() {
+    if (rendering) return;
+    stopPreview();
+    const rehearsal = createStageRehearsalRender();
+    if (!rehearsal) return;
+    const lane = get(stageShow)?.cameraLane ?? [];
+    await stageReelRender.start(lane.length > 0 ? [] : get(demoReel).shots, get(demoReel).settings, rehearsal);
+  }
+  $: canRehearse = !!$stageShow?.hasShow;
+
   const RESOLUTIONS = [
     { label: '1080p', w: 1920, h: 1080 },
     { label: '1440p', w: 2560, h: 1440 },
@@ -191,6 +208,15 @@
     <button class="rbtn primary" onclick={renderReel} disabled={shots.length === 0 || rendering}>
       {rendering ? 'Rendering…' : 'Render reel'}
     </button>
+    {#if canRehearse}
+      <button
+        class="rbtn"
+        onclick={renderRehearsal}
+        disabled={rendering}
+        title="Play the show from its start and film it here, with the show's sound. The camera follows the show's Stage camera lane."
+        data-reel-render-rehearsal
+      >Render rehearsal</button>
+    {/if}
     <button class="rbtn" onclick={onClose} title="Close panel">✕</button>
   </div>
 
@@ -214,6 +240,8 @@
       {:else if render.status === 'complete'}
         {#if render.lastOutputKind === 'frames'}
           <span>✓ Saved “{render.lastOutputName}” frames to {render.lastOutputPath ?? 'the selected folder'}.</span>
+        {:else if render.lastAudioMode && render.lastAudioMode !== 'none'}
+          <span>✓ Saved “{render.lastOutputName}” with the show's sound.</span>
         {:else if render.lastSavedPath}
           <span>✓ Saved “{render.lastOutputName}” to {render.lastSavedPath} and the media library.</span>
         {:else if render.lastOutputPath}

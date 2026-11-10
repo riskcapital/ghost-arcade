@@ -81,6 +81,7 @@ import type { ActiveCompositionTransition } from '../renderer/compositionTransit
 import { generateUUID } from '../utils/uuid';
 import { getPresetTransitionSettings, isTransitionStyle } from './presetTransition';
 import { clipAudioBus, type ClipAudioTransport } from '../audio/clipAudioBus';
+import { createShowTicker } from '../show/showTicker';
 import { isVisualAudioManualClock } from '../audio/visualAudio';
 import {
   recordMissingAsset,
@@ -802,7 +803,8 @@ function syncAudioWiring(tracks: ShowAudioTrack[]): void {
 
 const store = writable<ShowTimelineState>(createInitialState());
 
-let rafId: number | null = null;
+/** Animation frames while the editor is on screen, a timer while it is minimised. */
+const ticker = createShowTicker((now) => tick(now));
 /** The playhead's clock: the sound card while the show has audio, animation frames otherwise. */
 const transportClock = new ShowTransportClock();
 type AudioClockReader = (performanceNowMs: number) => number | null;
@@ -898,8 +900,7 @@ function isManualClock(): boolean {
 }
 
 function cancelRaf(): void {
-  if (rafId !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(rafId);
-  rafId = null;
+  ticker.cancel();
 }
 
 function fireComposition(clip: ShowPresetClip): void {
@@ -976,7 +977,6 @@ function applyTime(time: number, bumpSeek: boolean): void {
 }
 
 function tick(now: number): void {
-  rafId = null;
   const s = get(store);
   if (!s.isPlaying) return;
 
@@ -991,7 +991,7 @@ function tick(now: number): void {
       transportClock.shift(wrapped - next);
       next = wrapped;
       applyTime(next, true); // wrap is a discontinuity for the audio bus
-      rafId = requestAnimationFrame(tick);
+      ticker.request();
       return;
     }
     applyTime(dur, true);
@@ -1003,7 +1003,7 @@ function tick(now: number): void {
   }
 
   applyTime(next, false);
-  rafId = requestAnimationFrame(tick);
+  ticker.request();
 }
 
 /** The end of a show that does not loop. */
@@ -1334,7 +1334,7 @@ export const showTimeline = {
     applyTime(from, true);
     transportClock.reset();
     notifyTransport({ type: 'start' });
-    if (typeof requestAnimationFrame === 'function') rafId = requestAnimationFrame(tick);
+    if (typeof requestAnimationFrame === 'function') ticker.request();
   },
 
   pause() {
@@ -2403,10 +2403,12 @@ export const showTimeline = {
 
   // ── Stage camera lane ──────────────────────────────────────────────────
 
-  setCameraLane(clips: ShowCameraClip[]) {
+  /** Replace the stage-camera lane. A drag passes `continuousKey` so its
+   *  many updates make one undo step. */
+  setCameraLane(clips: ShowCameraClip[], continuousKey?: string) {
     const cameraLane = clips.map(normalizeCameraClip).filter((c): c is ShowCameraClip => c !== null).sort((a, b) => a.startTime - b.startTime);
     store.update((s) => withDuration({ ...s, cameraLane }));
-    recordShowEdit();
+    recordShowEdit(continuousKey ? `camera:${continuousKey}` : undefined);
   },
 
   // ── Track helpers (internal) ───────────────────────────────────────────
