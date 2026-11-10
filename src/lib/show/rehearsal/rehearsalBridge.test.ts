@@ -12,6 +12,9 @@ import {
   createSeekThrottle,
   rehearsalArrangementKey,
   rehearsalTransportTick,
+  createClockSkewEstimator,
+  clockSkewAllowsExact,
+  playRate,
   type RecAudioPlan,
   type RehearsalShowState,
   type RehearsalTransport,
@@ -270,8 +273,10 @@ describe('recording soundtrack plan, long takes', () => {
       const r = rnd();
       if (r < 0.05) playing = !playing;
       else if (r < 0.1) { gen++; show = rnd() * 100; }
-      at += r < 0.15 ? 0 : 16 + rnd() * 4;
-      if (playing) show += 0.0167;
+      // Shows play at normal speed here (show time follows the clock).
+      const dt = r < 0.15 ? 0 : 16 + rnd() * 4;
+      at += dt;
+      if (playing) show += dt / 1000;
       out.push({ at, showTime: show, playing, seekGeneration: gen });
     }
     return out;
@@ -348,3 +353,51 @@ describe('show state publish split', () => {
   });
 });
 
+
+describe('recording soundtrack plan: show speed', () => {
+  /** 10 s of play logged at 60 Hz with a little read jitter, at `rate` show seconds per second. */
+  function take(rate: number, from = 20): TransportSample[] {
+    const out: TransportSample[] = [];
+    let x = 7;
+    const rnd = () => { x = (x * 1103515245 + 12345) % 2147483648; return x / 2147483648; };
+    for (let i = 0; i <= 600; i++) {
+      const at = 1_000_000 + (i * 1000) / 60;
+      out.push({ at, showTime: from + ((at - 1_000_000) / 1000) * rate - rnd() * 0.012, playing: true, seekGeneration: 3 });
+    }
+    return out;
+  }
+
+  it('takes the song files when the show plays at normal speed', () => {
+    const plan = rehearsalAudioPlan(take(1), 1_000_000, 10, 0.1);
+    expect(plan.kind).toBe('exact');
+    expect(playRate(take(1), 0, 600)).toBeCloseTo(1, 3);
+  });
+
+  it('refuses them while chasing at another tempo (it accepted ~0.5 s of drift)', () => {
+    // 95% speed: the show falls 0.5 s behind the song file over 10 s.
+    const plan = rehearsalAudioPlan(take(0.95), 1_000_000, 10, 0.1);
+    expect(plan).toMatchObject({ kind: 'discontinuous' });
+    expect((plan as { reason: string }).reason).toMatch(/95\.0% speed/);
+    expect(rehearsalAudioPlan(take(1.03), 1_000_000, 10, 0.1).kind).toBe('discontinuous');
+    // A drift smaller than a frame over the take is fine.
+    expect(rehearsalAudioPlan(take(1.002), 1_000_000, 10, 0.1).kind).toBe('exact');
+  });
+});
+
+describe('clock skew between the two windows', () => {
+  it('estimates from the quickest message and judges whether the plan can be trusted', () => {
+    const est = createClockSkewEstimator(4);
+    expect(est.value()).toBeNull();
+    expect(clockSkewAllowsExact(est.value())).toBe(false);
+    // Stage clock 2 ms behind; transit 3-40 ms.
+    for (const transit of [40, 3, 12, 25]) est.note(1000, 1000 + 2 + transit);
+    expect(est.value()).toBe(5);
+    expect(clockSkewAllowsExact(est.value())).toBe(true);
+    // After a sleep the stage window runs 120 s behind.
+    est.reset();
+    for (const transit of [4, 9]) est.note(1000, 1000 + 120_000 + transit);
+    expect(est.value()).toBe(120_004);
+    expect(clockSkewAllowsExact(est.value())).toBe(false);
+    expect(clockSkewAllowsExact(-300)).toBe(false);
+  });
+});

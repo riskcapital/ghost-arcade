@@ -19,6 +19,7 @@
  * snapshot texture the screenshot path uses.
  */
 import { invoke } from '$lib/bridge';
+import { epochNow } from '$lib/utils/epochClock';
 
 export interface CompositeMirrorHandle {
   canvas: HTMLCanvasElement;
@@ -36,11 +37,8 @@ export interface CompositeMirrorFrameInfo {
   receivedAt: number;
 }
 
-function epochMs(): number {
-  return typeof performance !== 'undefined' && Number.isFinite(performance.timeOrigin)
-    ? performance.timeOrigin + performance.now()
-    : Date.now();
-}
+/** Same clock as the Stage Sim's rehearsal messages (see utils/epochClock). */
+const epochMs = epochNow;
 
 const DEFAULT_MAX_DIM = 512;
 const DEFAULT_FPS = 15;

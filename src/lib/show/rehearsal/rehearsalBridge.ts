@@ -10,9 +10,9 @@
  * It never plays show audio of its own, so there is only ever one audio
  * clock and one soundtrack.
  *
- * Times that cross windows are wall-clock epoch milliseconds
- * (`performance.timeOrigin + performance.now()`), which two renderer
- * processes on one machine agree on.
+ * Times that cross windows are wall-clock epoch milliseconds from
+ * `epochNow()` (utils/epochClock), which two renderer processes on one
+ * machine agree on, also after the laptop slept.
  */
 import type { TakeoverSummary } from '../takeover/liveTakeover';
 import type { ShowCameraClip, ShowTempoMap } from '../../types';
@@ -30,12 +30,7 @@ export const REHEARSAL_ALIVE_MS = 3500;
 /** Upper bound of the manual audio-sync delay. */
 export const REHEARSAL_MAX_AUDIO_DELAY = 0.5;
 
-export function epochNow(): number {
-  if (typeof performance !== 'undefined' && Number.isFinite(performance.timeOrigin)) {
-    return performance.timeOrigin + performance.now();
-  }
-  return Date.now();
-}
+export { epochNow, epochFromPerformance } from '../../utils/epochClock';
 
 export interface RehearsalMarker {
   id: string;
@@ -123,9 +118,10 @@ export type RehearsalMessage =
   | { type: 'show-tick'; tick: RehearsalTransportTick; version: string }
   | { type: 'show-command'; command: RehearsalCommand }
   /** `stateVersion`: the arrangement the stage window has (the editor resends a different one). */
-  | { type: 'stage-hello'; at: number; stateVersion?: string | null }
-  | { type: 'stage-bye' }
-  | { type: 'rec-audio-start'; id: string; at: number }
+  /** `instance` names the stage page: a new one (reloaded) drops what the old one started. */
+  | { type: 'stage-hello'; at: number; stateVersion?: string | null; instance?: string }
+  | { type: 'stage-bye'; instance?: string }
+  | { type: 'rec-audio-start'; id: string; at: number; instance?: string }
   | { type: 'rec-audio-finish'; id: string; videoPath: string; startedAt: number; durationSeconds: number; latencySeconds: number }
   | { type: 'rec-audio-cancel'; id: string }
   | { type: 'rec-audio-result'; id: string; result: RecAudioResult };
@@ -136,12 +132,15 @@ export type RehearsalMessage =
 export function showTimeAt(state: Pick<RehearsalShowState, 'currentTime' | 'at' | 'isPlaying' | 'duration' | 'loop'>, epochMs: number): number {
   if (!state.isPlaying) return state.currentTime;
   // Never extrapolate far: a stalled editor must not run the stage ahead.
-  const elapsed = Math.max(0, Math.min(0.5, (epochMs - state.at) / 1000));
+  // Looking back (the stage view's screens run behind the editor) is fine.
+  const elapsed = Math.max(-1, Math.min(0.5, (epochMs - state.at) / 1000));
   let t = state.currentTime + elapsed;
   const dur = state.duration;
   if (dur > 0) {
     if (state.loop) t = ((t % dur) + dur) % dur;
-    else t = Math.min(t, dur);
+    else t = Math.max(0, Math.min(t, dur));
+  } else {
+    t = Math.max(0, t);
   }
   return t;
 }
@@ -341,6 +340,32 @@ export type RecAudioPlan =
   | { kind: 'silent' }
   | { kind: 'discontinuous'; reason: string };
 
+/** How far (s) a show playing off normal speed may drift from its song files
+ *  over a recording before the soundtrack is not taken from them. */
+const RATE_DRIFT_TOLERANCE = 0.04;
+
+/** Show seconds per wall second over samples `from..to` (least squares), or
+ *  null when they span too little time to tell. */
+export function playRate(ordered: readonly TransportSample[], from: number, to: number): number | null {
+  const n = to - from + 1;
+  if (n < 3) return null;
+  const x0 = ordered[from].at;
+  if (ordered[to].at - x0 < 250) return null;
+  let sx = 0, sy = 0;
+  for (let i = from; i <= to; i++) {
+    sx += (ordered[i].at - x0) / 1000;
+    sy += ordered[i].showTime;
+  }
+  const mx = sx / n, my = sy / n;
+  let sxx = 0, sxy = 0;
+  for (let i = from; i <= to; i++) {
+    const dx = (ordered[i].at - x0) / 1000 - mx;
+    sxx += dx * dx;
+    sxy += dx * (ordered[i].showTime - my);
+  }
+  return sxx > 0 ? sxy / sxx : null;
+}
+
 /** Show time running ahead of the wall clock by more than this inside one play is a jump. */
 const CONTINUITY_TOLERANCE = 0.12;
 /** A show time read this far behind the clock is a jump back, not a late read. */
@@ -417,6 +442,15 @@ export function rehearsalAudioPlan(
   if (offsets[offsets.length - 1] - offset > CONTINUITY_TOLERANCE || offset - offsets[0] > STALE_TOLERANCE) {
     return { kind: 'discontinuous', reason: 'the show jumped while it played' };
   }
+  // The song files play at normal speed. A show that ran faster or slower
+  // (chasing a clock at another tempo) drifts away from them, by up to the
+  // stale tolerance above before that notices: fit the rate and refuse.
+  const lastAt = Math.min(ordered[to].at, playEndAt, endAt);
+  const firstAt = Math.max(ordered[from].at, startedAt - 1000);
+  const rate = playRate(ordered, from, to);
+  if (rate !== null && Math.abs(rate - 1) * Math.max(0, (lastAt - firstAt) / 1000) > RATE_DRIFT_TOLERANCE) {
+    return { kind: 'discontinuous', reason: `the show played at ${(rate * 100).toFixed(1)}% speed` };
+  }
   const playFrom = ordered[from].showTime;
   const playStartAt = (playFrom - offset) * 1000;
 
@@ -454,6 +488,42 @@ export function planMuxTracks(tracks: readonly ShowMuxTrack[], plan: Extract<Rec
     });
   }
   return out;
+}
+
+/** The two windows' clocks may disagree by this much before the soundtrack
+ *  is no longer placed from the editor's transport log. Message transit is
+ *  a few milliseconds; a clock that went wrong is off by seconds or more. */
+export const REHEARSAL_MAX_CLOCK_SKEW_MS = 250;
+
+/**
+ * How far the stage window's clock is from the editor's, from messages that
+ * carry the time they were sent: the smallest `received - sent` of recent
+ * ones (transit only ever adds). Null before any arrived.
+ */
+export function createClockSkewEstimator(keep = 12) {
+  const samples: number[] = [];
+  return {
+    note(sentAt: number, receivedAt: number): void {
+      const d = receivedAt - sentAt;
+      if (!Number.isFinite(d)) return;
+      samples.push(d);
+      if (samples.length > keep) samples.shift();
+    },
+    value(): number | null {
+      if (samples.length === 0) return null;
+      let best = samples[0];
+      for (const d of samples) if (Math.abs(d) < Math.abs(best)) best = d;
+      return best;
+    },
+    reset(): void {
+      samples.length = 0;
+    },
+  };
+}
+
+/** Can the soundtrack be placed from the transport log, given the clocks? */
+export function clockSkewAllowsExact(skewMs: number | null): boolean {
+  return skewMs !== null && Math.abs(skewMs) <= REHEARSAL_MAX_CLOCK_SKEW_MS;
 }
 
 // ─── Display helpers ────────────────────────────────────────────────────
