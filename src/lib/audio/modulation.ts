@@ -15,6 +15,7 @@ import { runAsLiveControl } from '../stores/historyHooks';
 export { registerCompositionModulationHandlers, registerMappingLayerCallbacks } from './modulationHandlers';
 
 import { DEFAULT_MOD, defaultModRange, hasModRange, computeModulatedValue, isAudioDrivenMod, clamp01, legacySignal, type ModSource, type ModTarget, type ParamModulation } from './modulationControls';
+import { lfoValue, type LfoShape } from './lfoShape';
 export { DEFAULT_MOD, defaultModRange, hasModRange, computeModulatedValue, isAudioDrivenMod, type ModSource, type ModTarget, type ParamModulation } from './modulationControls';
 
 // Pre-parsed key for hot-path use (avoids split(':') per frame)
@@ -1570,26 +1571,13 @@ class ModulationEngine {
       case 'snare':     return band(visual.snare);
       // Synced LFOs use shared continuous beat phase, so tempo changes
       // preserve phase and Resync aligns every beat division to the downbeat.
-      case 'lfo-sine': {
-        const rate = speed;
-        if (bpmSync) time = frameBeat ?? launchClockPosition().beat;
-        return (Math.sin(time * rate * Math.PI * 2) + 1) / 2;
-      }
-      case 'lfo-saw': {
-        const rate = speed;
-        if (bpmSync) time = frameBeat ?? launchClockPosition().beat;
-        return (time * rate) % 1;
-      }
-      case 'lfo-square': {
-        const rate = speed;
-        if (bpmSync) time = frameBeat ?? launchClockPosition().beat;
-        return (Math.sin(time * rate * Math.PI * 2) > 0) ? 1 : 0;
-      }
+      // Beats go negative before a show's bar 1: lfoValue wraps them.
+      case 'lfo-sine':
+      case 'lfo-saw':
+      case 'lfo-square':
       case 'lfo-tri': {
-        const rate = speed;
         if (bpmSync) time = frameBeat ?? launchClockPosition().beat;
-        const phase = (time * rate) % 1;
-        return phase < 0.5 ? phase * 2 : 2 - phase * 2;
+        return lfoValue(source.slice(4) as LfoShape, time * speed);
       }
       // Per-param playhead automation. Phase advancement happens
       // in applyModulations() (so it can use frame dt and respect
