@@ -9,7 +9,7 @@
    */
   import type { ShowLayerClip, ShowLayerTrack } from '../../../types';
   import { trackTransitionWindow } from '../../../show/tracks/showTrackEval';
-  import { findJunctionPredecessor } from '../../../show/showJunctions';
+  import { junctionPredecessors, predecessorList } from './laneJunctions';
   import ShowLayerClipBlock from './ShowLayerClipBlock.svelte';
   import KeyframeLaneView from './KeyframeLaneView.svelte';
   import { thumbnailFor } from './clipMedia';
@@ -42,11 +42,14 @@
   const color = $derived(track.color || DEFAULT_COLOR);
   const visible = $derived(clipsInView(track.clips, viewStart, viewEnd));
 
+  /** Each clip's junction predecessor, worked out once per edit of the
+   *  track (not per clip in view, and not again on every scroll). */
+  const predecessors = $derived(junctionPredecessors(track.clips));
   /** Junctions between touching clips in view: drawn transitions or a
    *  ghost "add crossfade" button. */
   const junctions = $derived(visible
-    .filter((c) => findJunctionPredecessor(track.clips, c))
-    .map((c) => ({ clip: c, window: trackTransitionWindow(track.clips, c) })));
+    .filter((c) => predecessors.has(c))
+    .map((c) => ({ clip: c, window: trackTransitionWindow(predecessorList(predecessors.get(c), c), c) })));
 
   const NO_TIMES: number[] = [];
   function selectedTimes(key: string): readonly number[] {

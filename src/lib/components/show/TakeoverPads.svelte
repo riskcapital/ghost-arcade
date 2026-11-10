@@ -6,7 +6,7 @@
    * takeover settings (pads latch or hold, the show underneath, markers).
    */
   import { vjClipLauncher } from '../../stores/vjClipLauncher';
-  import { showTimeline } from '../../stores/showTimeline';
+  import { showSlice } from './timeline/timelineSlices';
   import { BLEND_MODE_ORDER, type BlendMode } from '../../types';
   import { liveTakeover } from '../../show/takeover/liveTakeover';
   import { takeOverTrack } from '../../show/takeover/takeoverRuntime';
@@ -22,12 +22,16 @@
   const overlayLevel = $derived(tk.overlay?.level ?? 0);
   const overlayBlend = $derived(tk.overlay?.blend ?? 'normal');
 
+  // Slices, not $showTimeline: the store publishes every playhead frame.
+  const selectionStore = showSlice('selection');
+  const layerTracksStore = showSlice('layerTracks');
   const target = $derived.by(() => {
-    const s = $showTimeline;
-    const selectedId = s.selection?.kind === 'track' ? s.selection.id : null;
-    return s.layerTracks.find((t) => t.id === $focusedTrackId)
-      ?? s.layerTracks.find((t) => t.id === selectedId)
-      ?? (s.layerTracks.length === 1 ? s.layerTracks[0] : null);
+    const selection = $selectionStore;
+    const layerTracks = $layerTracksStore;
+    const selectedId = selection?.kind === 'track' ? selection.id : null;
+    return layerTracks.find((t) => t.id === $focusedTrackId)
+      ?? layerTracks.find((t) => t.id === selectedId)
+      ?? (layerTracks.length === 1 ? layerTracks[0] : null);
   });
 
   function liveRow(row: number) {

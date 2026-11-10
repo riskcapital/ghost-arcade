@@ -110,7 +110,8 @@ export function nudgeSelection(direction: -1 | 1, bar: boolean): boolean {
   }
   const ids = s.selectedClipIds;
   if (!ids.length) return false;
-  const clips = s.layerTracks.flatMap((t) => t.clips.filter((c) => ids.includes(c.id)));
+  const idSet = new Set(ids);
+  const clips = s.layerTracks.flatMap((t) => t.clips.filter((c) => idSet.has(c.id)));
   if (!clips.length) return false;
   const at = Math.min(...clips.map((c) => c.startTime));
   const delta = direction * (bar ? barStep(at) : gridStep(at));

@@ -5,7 +5,7 @@
    * apart from the lanes, so the playhead moving re-renders only this.
    */
   import type { ShowLayerTrack } from '../../../types';
-  import { showTimeline } from '../../../stores/showTimeline';
+  import { showSlice } from './timelineSlices';
   import { liveTakeover } from '../../../show/takeover/liveTakeover';
   import { TRACK_ROW_HEIGHT, trackTops } from './trackLayout';
 
@@ -17,7 +17,8 @@
   let { tracks, zoom }: Props = $props();
 
   const tops = $derived(trackTops(tracks));
-  const playhead = $derived($showTimeline.currentTime);
+  const currentTimeStore = showSlice('currentTime');
+  const playhead = $derived($currentTimeStore);
   const spans = $derived.by(() => {
     const out: Array<{ trackId: string; top: number; left: number; width: number; returning: boolean }> = [];
     tracks.forEach((t, i) => {
