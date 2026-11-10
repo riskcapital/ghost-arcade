@@ -24,6 +24,13 @@
  * timecode. They are turned into show time through the show's tempo map
  * (show/sync/beatChase.ts) and fed to the same chase clock, so a show with a
  * map can follow a DAW or a Link session the way it follows timecode.
+ *
+ * SWITCHING SOURCES
+ * -----------------
+ * A new source starts searching from nothing, so the show re-locks to it:
+ * the playhead (and the launch clock, LFOs and quantised launches that read
+ * the show's beat) jump to wherever the new clock is. That is by design: two
+ * clocks have no shared phase to carry over. The settings panel says so.
  */
 
 import { writable, get } from 'svelte/store';

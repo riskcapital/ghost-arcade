@@ -114,7 +114,7 @@
   <div class="sc-row">
     <div class="sc-label">
       <span class="sc-title">Follow</span>
-      <span class="sc-hint">LTC is SMPTE timecode on an audio input; MTC arrives over MIDI. Link and MIDI clock follow bars and beats, so they need the show's tempo map.</span>
+      <span class="sc-hint">LTC is SMPTE timecode on an audio input; MTC arrives over MIDI. Link and MIDI clock follow bars and beats, so they need the show's tempo map. Changing what the show follows re-locks it: the playhead, and anything synced to the beat, jumps to the new clock's position.</span>
     </div>
     <select value={s.source} onchange={(e) => patch({ source: e.currentTarget.value as TimecodeSettings['source'] })} data-tc-source>
       <option value="off">Off</option>
