@@ -793,6 +793,9 @@ export class Stage3DRenderer {
   /** This render is kept by the frame stream: its tag, else undefined. */
   private streamTag: unknown = undefined;
   private frameReader: StageFrameReader | null = null;
+  /** Where the last renderScene drew the picture before its output pass:
+   *  the bloom composer's buffer, or null for straight to the screen. */
+  private lastSceneTarget: THREE.WebGLRenderTarget | null = null;
   private frameReaderGl: WebGL2RenderingContext | null = null;
   private frameCaptureRig: {
     renderer: THREE.WebGLRenderer;
@@ -1418,19 +1421,7 @@ export class Stage3DRenderer {
     }
     this.frameTick++;
 
-    if (this.pendingCapture || this.streamTag !== undefined) {
-      // A frame is being captured (recording, Demo Reel): draw it without
-      // the editor's gizmo and selection outlines, then draw the on-screen
-      // frame again with them so the live view keeps its helpers.
-      const hidden = this.hideEditorHelpers();
-      this.renderScene(renderer, width, height);
-      if (hidden.length > 0) {
-        for (const obj of hidden) obj.visible = true;
-        this.renderScene(renderer, width, height);
-      }
-    } else {
-      this.renderScene(renderer, width, height);
-    }
+    this.drawFrame(renderer, width, height);
 
     // Recording/reel preview copy: sample the live canvas immediately
     // after render so the encoded frame matches the on-screen lighting.
@@ -1722,6 +1713,7 @@ export class Stage3DRenderer {
   private renderScene(renderer: THREE.WebGLRenderer, width: number, height: number): void {
     const bloomActive = (this.bloomPass?.strength ?? 0) > 0.001;
     const useComposer = !!this.composer && bloomActive && !this.composerFailed;
+    this.lastSceneTarget = null;
     if (!useComposer) {
       this.renderSceneDirect(renderer, width, height);
       this.forceOpaqueAlpha(renderer);
@@ -1732,7 +1724,11 @@ export class Stage3DRenderer {
       this.composer!.setSize(width, height);
       this.bloomPass?.setSize(width, height);
       this.prepareFinalRender(renderer, width, height);
+      // The scene pass draws into the read buffer and bloom adds onto it in
+      // place; the output pass then copies it to the screen.
+      const sceneTarget = this.composer!.readBuffer;
       this.composer!.render();
+      this.lastSceneTarget = sceneTarget;
     } catch (err) {
       this.composerFailed = true;
       console.warn('[Stage3D] Postprocessing disabled after GPU error:', err);
@@ -1740,6 +1736,66 @@ export class Stage3DRenderer {
     }
     this.forceOpaqueAlpha(renderer);
     this.fulfillCapture(renderer, width, height);
+  }
+
+  /** Draw the view once, as captured when a capture wants this render. */
+  private drawFrame(renderer: THREE.WebGLRenderer, width: number, height: number): void {
+    if (this.pendingCapture || this.streamTag !== undefined) {
+      // A frame is being captured (recording, Demo Reel): draw it without
+      // the editor's gizmo and selection outlines (the capture copies it
+      // right there), then draw just those helpers over it so the live view
+      // keeps them. Not a second full render through the bloom chain.
+      const hidden = this.hideEditorHelpers();
+      this.renderScene(renderer, width, height);
+      if (hidden.length > 0) {
+        for (const obj of hidden) obj.visible = true;
+        this.renderEditorHelpersOver(renderer, width, height, hidden);
+      }
+    } else {
+      this.renderScene(renderer, width, height);
+    }
+  }
+
+  /**
+   * Draw the editor helpers (gizmo, selection outlines) over the frame
+   * renderScene just drew, against its depth, as one render of the scene
+   * with them would. Without bloom: into the picture before the output
+   * pass, which then runs again (a full-screen copy). Direct: onto the
+   * screen, whose depth buffer still holds the scene.
+   */
+  private renderEditorHelpersOver(renderer: THREE.WebGLRenderer, width: number, height: number, helpers: THREE.Object3D[]): void {
+    const target = this.lastSceneTarget;
+    if (target && !this.outputPass) {
+      this.renderScene(renderer, width, height);
+      return;
+    }
+    const previousAutoClear = renderer.autoClear;
+    try {
+      renderer.setRenderTarget(target);
+      if (!target) renderer.setViewport(0, 0, width, height);
+      renderer.autoClear = false;
+      for (const obj of helpers) {
+        // Rendered on its own, an object is drawn with the fog of the root
+        // passed in: give it the scene's (same look, same shader).
+        const root = obj as THREE.Object3D & { fog?: THREE.Scene['fog'] };
+        root.fog = this.scene.fog;
+        try {
+          renderer.render(obj, this.camera);
+        } finally {
+          delete root.fog;
+        }
+      }
+    } catch (err) {
+      console.warn('[Stage3D] Helper overlay failed, drawing the frame again:', err);
+      renderer.autoClear = previousAutoClear;
+      this.renderScene(renderer, width, height);
+      return;
+    } finally {
+      renderer.autoClear = previousAutoClear;
+    }
+    if (target) this.outputPass!.render(renderer, null as unknown as THREE.WebGLRenderTarget, target, 0, false);
+    renderer.setRenderTarget(null);
+    this.forceOpaqueAlpha(renderer);
   }
 
   /** Hide the editor-only overlays (transform gizmo, selection outlines)
@@ -1913,14 +1969,26 @@ export class Stage3DRenderer {
     this.frameStream = stream;
     return () => {
       // Frames already read back still arrive; no new ones are taken.
-      if (this.frameStream === stream) this.frameStream = null;
+      if (this.frameStream === stream) {
+        this.frameStream = null;
+        this.releaseFrameReader();
+      }
     };
+  }
+
+  /** No stream is running: let the reader's GPU buffers and pooled frames go
+   *  once its last reads arrive (50–200 MB). The next stream builds them again. */
+  private releaseFrameReader(): void {
+    if (!this.frameStream) this.frameReader?.releaseWhenIdle();
   }
 
   private failStream(stream: { sink: StageFrameSink; failed: boolean }, err: unknown): void {
     if (stream.failed) return;
     stream.failed = true;
-    if (this.frameStream === stream) this.frameStream = null;
+    if (this.frameStream === stream) {
+      this.frameStream = null;
+      this.releaseFrameReader();
+    }
     try {
       stream.sink.error?.(err instanceof Error ? err : new Error(String(err)));
     } catch { /* the sink's own problem */ }

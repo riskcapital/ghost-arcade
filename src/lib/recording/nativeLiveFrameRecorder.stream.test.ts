@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StageFrameSink } from '../stage3d/store';
 
 const writes: { index: number; repeat: number; tag: number }[] = [];
+/** Frame tags released by the recorder, and the writes done at that moment. */
+const releases: { tag: number; writesDone: number }[] = [];
 let writeDelayMs = 0;
 
 vi.mock('../bridge', () => ({ isElectron: true, invoke: vi.fn() }));
@@ -45,7 +47,9 @@ function fakeStage(intervalMs: number, delayMs: number) {
       const tag = sink.beforeRender(performance.now());
       if (tag === null || tag === undefined) return;
       const own = sink;
-      setTimeout(() => own.frame({ data: new Uint8Array([n % 256, 0, 0, 255]), width: 1, height: 1 }, tag), delayMs);
+      const data = new Uint8Array([n % 256, 0, 0, 255]);
+      const release = () => releases.push({ tag: data[0], writesDone: writes.length });
+      setTimeout(() => own.frame({ data, width: 1, height: 1, release }, tag), delayMs);
     }, intervalMs);
     return () => { sink = null; };
   };
@@ -55,6 +59,7 @@ function fakeStage(intervalMs: number, delayMs: number) {
 describe('native live recorder, stream mode', () => {
   beforeEach(() => {
     writes.length = 0;
+    releases.length = 0;
     writeDelayMs = 0;
     vi.stubGlobal('window', {
       setInterval, clearInterval, setTimeout, clearTimeout,
@@ -122,4 +127,29 @@ describe('native live recorder, stream mode', () => {
     expect(next).toBeGreaterThanOrEqual(20);
     expect(writes.some((w) => w.repeat > 1)).toBe(true);
   });
+
+  it('hands each frame buffer back only after its write is done', async () => {
+    writeDelayMs = 30;
+    const stage = fakeStage(1000 / 60, 5);
+    let complete = false;
+    const handle = await startNativeLiveFrameRecording({
+      captureFrame: async () => { throw new Error('unused'); },
+      streamFrames: stage.streamFrames,
+      width: 1, height: 1, fps: 30,
+      onComplete: () => { complete = true; },
+      onError: (e) => { throw e; },
+    });
+    await new Promise((r) => setTimeout(r, 400));
+    handle!.stop();
+    for (let i = 0; i < 100 && !complete; i++) await new Promise((r) => setTimeout(r, 20));
+    stage.stop();
+    expect(complete).toBe(true);
+    // Every written frame was released once, after its own write.
+    expect(releases.length).toBe(writes.length);
+    releases.forEach((r, i) => {
+      expect(r.tag).toBe(writes[i].tag);
+      expect(r.writesDone).toBe(i + 1);
+    });
+  });
 });
+

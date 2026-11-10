@@ -16,6 +16,7 @@ import {
   REHEARSAL_ALIVE_MS,
   epochNow,
   evaluateCameraLane,
+  rehearsalTransportTick,
   showTimeAt,
   type RecAudioResult,
   type RehearsalCommand,
@@ -32,11 +33,41 @@ export const stageCameraFollow = writable(true);
 /** The picture size a running recording wants from the core mirror, or null. */
 export const stageRecordingMaxDim = writable<number | null>(null);
 
+/** The Stage Sim window is on screen (not minimised or hidden). Set from the
+ *  main process: with background throttling off, the page never sees it. */
+export const stageWindowVisible = writable(true);
+
+/** Captures of the stage view running without a recording mirror size (a
+ *  cross-dissolve reel, the canvas recorder): they need the view drawn even
+ *  when no one looks at it. */
+const stageCaptureHolds = writable(0);
+
+/** Keep the stage view at its working rate while hidden; returns the release. */
+export function holdStageCapture(): () => void {
+  stageCaptureHolds.update((n) => n + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    stageCaptureHolds.update((n) => Math.max(0, n - 1));
+  };
+}
+
+/** Core picture feed while the window is minimised and nothing records: about
+ *  none (the screens are drawn for no one). */
+export const STAGE_HIDDEN_MIRROR_FPS = 1;
+
 /** Render rate and mirror request for the stage view (read by Canvas). */
 export const stageRehearsalRender = derived(
-  [stageShow, stageRecordingMaxDim],
-  ([$show, $rec]) => {
+  [stageShow, stageRecordingMaxDim, stageWindowVisible, stageCaptureHolds],
+  ([$show, $rec, $visible, $holds]) => {
     const playing = !!$show?.isPlaying;
+    if (!$visible && $rec === null && $holds === 0) {
+      // Minimised, not recording: no 60 fps boost (the view draws at its
+      // normal rate) and next to no core snapshots. Same size as paused, so
+      // the screens' texture is not rebuilt when the window comes back.
+      return { boost: false, fps: STAGE_HIDDEN_MIRROR_FPS, maxDim: 1280, hidden: true };
+    }
     const boost = playing || $rec !== null;
     return {
       boost,
@@ -44,6 +75,7 @@ export const stageRehearsalRender = derived(
       // A playing show reads a smaller picture so the feed keeps up at 60;
       // a recording reads a larger one (it runs at the recording's rate).
       maxDim: $rec !== null ? Math.max(1280, $rec) : playing ? STAGE_PLAYING_MAX_DIM : 1280,
+      hidden: false,
     };
   },
 );
@@ -71,6 +103,8 @@ let staleTimer: ReturnType<typeof setInterval> | null = null;
 let latencyRaf = 0;
 let cameraRaf = 0;
 let lastStateAt = 0;
+/** The arrangement `stageShow` holds (see the editor's publisher). */
+let stateVersion: string | null = null;
 const pendingResults = new Map<string, (result: RecAudioResult) => void>();
 /** Recent ages (s) of the mirror picture the stage view was drawing. */
 const mirrorAges: number[] = [];
@@ -109,10 +143,14 @@ export function resetStageLatency(): void {
   mirrorAges.length = 0;
 }
 
+/** Epoch ms the window last came back on screen: older mirror frames came
+ *  from the slow hidden feed and say nothing about the view's latency. */
+let visibleSince = 0;
+
 function sampleMirrorAge(): void {
   latencyRaf = 0;
   const info = compositeMirrorFrameInfo();
-  if (info) {
+  if (info && get(stageWindowVisible) && info.requestedAt >= visibleSince) {
     const age = (epochNow() - info.requestedAt) / 1000;
     if (age >= 0 && age < 1) {
       mirrorAges.push(age);
@@ -263,28 +301,49 @@ export function installStageRehearsal(): () => void {
     channel.onmessage = (event: MessageEvent<RehearsalMessage>) => {
       const msg = event.data;
       if (!msg || typeof msg !== 'object') return;
-      if (msg.type === 'show-state') {
-        lastStateAt = epochNow();
+      if (msg.type === 'show-state' || msg.type === 'show-tick') {
         const prev = get(stageShow);
-        stageShow.set(msg.state);
-        if (msg.state.isPlaying && !prev?.isPlaying && !latencyRaf && typeof requestAnimationFrame === 'function') {
+        let next: RehearsalShowState;
+        if (msg.type === 'show-state' && (msg.version !== stateVersion || !prev)) {
+          next = msg.state;
+          stateVersion = msg.version;
+        } else if (prev && msg.version === stateVersion) {
+          // Same arrangement: only the playhead moves, and the presets,
+          // markers and lane keep their identity (nothing redraws them).
+          next = { ...prev, ...rehearsalTransportTick(msg.type === 'show-state' ? msg.state : msg.tick) };
+        } else {
+          return; // A tick for an arrangement this window does not have yet.
+        }
+        lastStateAt = epochNow();
+        stageShow.set(next);
+        if (next.isPlaying && !prev?.isPlaying && !latencyRaf && typeof requestAnimationFrame === 'function') {
           latencyRaf = requestAnimationFrame(sampleMirrorAge);
         }
-        if (msg.state.cameraLane.length > 0) ensureCameraLoop();
+        if (next.cameraLane.length > 0) ensureCameraLoop();
       } else if (msg.type === 'rec-audio-result') {
         const resolve = pendingResults.get(msg.id);
         pendingResults.delete(msg.id);
         resolve?.(msg.result);
       }
     };
-    const hello = () => post({ type: 'stage-hello', at: epochNow() });
+    const hello = () => post({ type: 'stage-hello', at: epochNow(), stateVersion: get(stageShow) ? stateVersion : null });
     hello();
     helloTimer = setInterval(hello, REHEARSAL_HELLO_MS);
     // The editor went away (closed, crashed): drop the mirror.
     staleTimer = setInterval(() => {
-      if (get(stageShow) && epochNow() - lastStateAt > REHEARSAL_ALIVE_MS) stageShow.set(null);
+      if (get(stageShow) && epochNow() - lastStateAt > REHEARSAL_ALIVE_MS) {
+        stageShow.set(null);
+        stateVersion = null;
+      }
     }, 1000);
   }
+  // Minimised / restored (main process).
+  const offVisibility = (globalThis as unknown as { electronAPI?: { on?: (channel: string, cb: (p: { visible?: boolean }) => void) => () => void } })
+    .electronAPI?.on?.('stage3d-visibility-changed', (payload) => {
+      const visible = payload?.visible !== false;
+      if (visible && !get(stageWindowVisible)) visibleSince = epochNow();
+      stageWindowVisible.set(visible);
+    }) ?? (() => {});
   // Read by the real-app checks (scripts drive the window over CDP).
   try {
     (window as unknown as Record<string, unknown>).__ghostStageRehearsal = {
@@ -306,6 +365,7 @@ export function installStageRehearsal(): () => void {
   });
   return () => {
     unsubFollow();
+    offVisibility();
     installs = Math.max(0, installs - 1);
     if (installs > 0 || !channel) return;
     post({ type: 'stage-bye' });
@@ -319,6 +379,7 @@ export function installStageRehearsal(): () => void {
     channel.close();
     channel = null;
     stageShow.set(null);
+    stateVersion = null;
   };
 }
 

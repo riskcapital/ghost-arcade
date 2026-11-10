@@ -46,9 +46,9 @@ function fakeGl(opts: { antialias?: boolean; error?: number; scissor?: boolean }
     getSyncParameter: (s: { signalled: boolean }) => (s.signalled ? GL.SIGNALED : GL.UNSIGNALED),
     deleteSync: () => {},
     getBufferSubData: (_t: number, _o: number, dst: Uint8Array) => { dst.fill(bufferTag.get(packBuffer!) ?? 0); },
-    deleteBuffer: () => {},
-    deleteFramebuffer: () => {},
-    deleteRenderbuffer: () => {},
+    deleteBuffer: vi.fn(),
+    deleteFramebuffer: vi.fn(),
+    deleteRenderbuffer: vi.fn(),
   };
   return { gl: gl as unknown as WebGL2RenderingContext, raw: gl, blits, syncs, scissor };
 }
@@ -135,6 +135,95 @@ describe('stage frame reader', () => {
     expect(f.blits[1]).toEqual([0, 0, 1920, 1080, 0, 540, 960, 0]);
     expect(f.raw.disable).toHaveBeenCalledWith(GL.SCISSOR_TEST);
     expect(f.scissor.on).toBe(true);
+    reader.dispose();
+  });
+
+  it('reuses a frame buffer the consumer released, and only that', () => {
+    const f = fakeGl();
+    const reader = new StageFrameReader(f.gl);
+    const frames: { data: Uint8Array; release?: () => void }[] = [];
+    const next = () => {
+      reader.read({ x: 0, y: 0, w: 1920, h: 1080 }, 4, 2, (fr) => frames.push(fr), () => {});
+      f.syncs[f.syncs.length - 1].signalled = true;
+      reader.poll();
+      return frames[frames.length - 1];
+    };
+    const a = next();
+    const b = next();
+    expect(b.data).not.toBe(a.data); // a still held: not reused
+    a.release!();
+    a.release!(); // twice is once
+    const c = next();
+    expect(c.data).toBe(a.data);
+    expect(c.data[0]).toBe(3); // and it holds the new frame's pixels
+    const d = next();
+    expect(d.data).not.toBe(a.data);
+    expect(d.data).not.toBe(b.data);
+    // A different size never gets an old buffer.
+    d.release!();
+    reader.read({ x: 0, y: 0, w: 1920, h: 1080 }, 8, 2, (fr) => frames.push(fr), () => {});
+    f.syncs[f.syncs.length - 1].signalled = true;
+    reader.poll();
+    expect(frames[frames.length - 1].data.length).toBe(64);
+    expect(frames[frames.length - 1].data).not.toBe(d.data);
+    reader.dispose();
+  });
+
+  it('pooled bytes stay bounded however many frames are released', () => {
+    const f = fakeGl();
+    const reader = new StageFrameReader(f.gl);
+    const frames: { release?: () => void }[] = [];
+    for (let i = 0; i < 4; i++) reader.read({ x: 0, y: 0, w: 1920, h: 1080 }, 4, 2, (fr) => frames.push(fr), () => {});
+    reader.flush();
+    for (let i = 0; i < 4; i++) reader.read({ x: 0, y: 0, w: 1920, h: 1080 }, 4, 2, (fr) => frames.push(fr), () => {});
+    reader.flush();
+    for (const fr of frames) fr.release!();
+    expect(reader.heldBytes.pooled).toBe(4 * 32);
+    reader.dispose();
+  });
+
+  it('lets its GPU objects and pooled frames go when idle, and builds them again on the next read', () => {
+    const f = fakeGl({ antialias: true });
+    const reader = new StageFrameReader(f.gl);
+    const frames: { data: Uint8Array; release?: () => void }[] = [];
+    reader.read({ x: 0, y: 0, w: 1920, h: 1080 }, 4, 2, (fr) => frames.push(fr), () => {});
+    reader.read({ x: 0, y: 0, w: 1920, h: 1080 }, 4, 2, (fr) => frames.push(fr), () => {});
+    expect(reader.heldBytes.gpu).toBe(2 * 32 + 4 * 2 * 4 + 1920 * 1080 * 4);
+    // Asked while reads are queued: they still arrive, then everything goes.
+    reader.releaseWhenIdle();
+    expect(f.raw.deleteFramebuffer).not.toHaveBeenCalled();
+    f.syncs[0].signalled = true;
+    reader.poll();
+    expect(f.raw.deleteFramebuffer).not.toHaveBeenCalled();
+    f.syncs[1].signalled = true;
+    reader.poll();
+    expect(frames.length).toBe(2);
+    expect(f.raw.deleteFramebuffer).toHaveBeenCalledTimes(2); // copy target + resolve
+    expect(f.raw.deleteRenderbuffer).toHaveBeenCalledTimes(2);
+    expect(f.raw.deleteBuffer).toHaveBeenCalledTimes(2);
+    expect(reader.heldBytes).toEqual({ gpu: 0, pooled: 0 });
+    // Frames from before the release are not pooled afterwards.
+    for (const fr of frames) fr.release!();
+    expect(reader.heldBytes.pooled).toBe(0);
+    // The next stream reads as before.
+    const got: number[] = [];
+    expect(reader.read({ x: 0, y: 0, w: 1920, h: 1080 }, 4, 2, (fr) => got.push(fr.data[0]), () => {})).toBe(true);
+    f.syncs[2].signalled = true;
+    reader.poll();
+    expect(got).toEqual([3]);
+    expect(reader.heldBytes.gpu).toBeGreaterThan(0);
+    reader.dispose();
+  });
+
+  it('a read after asking for the release keeps the reader', () => {
+    const f = fakeGl();
+    const reader = new StageFrameReader(f.gl);
+    reader.read({ x: 0, y: 0, w: 1920, h: 1080 }, 4, 2, () => {}, () => {});
+    reader.releaseWhenIdle();
+    reader.read({ x: 0, y: 0, w: 1920, h: 1080 }, 4, 2, () => {}, () => {});
+    reader.flush();
+    expect(f.raw.deleteFramebuffer).not.toHaveBeenCalled();
+    expect(reader.heldBytes.gpu).toBeGreaterThan(0);
     reader.dispose();
   });
 });

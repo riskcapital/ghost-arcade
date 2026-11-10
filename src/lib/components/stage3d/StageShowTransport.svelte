@@ -17,12 +17,17 @@
     stageShow,
     stageViewLatencySeconds,
   } from '../../show/rehearsal/stageRehearsal';
-  import { REHEARSAL_MAX_AUDIO_DELAY, epochNow, formatShowClock, showTimeAt } from '../../show/rehearsal/rehearsalBridge';
+  import { REHEARSAL_MAX_AUDIO_DELAY, createSeekThrottle, epochNow, formatShowClock, showTimeAt } from '../../show/rehearsal/rehearsalBridge';
   import { formatBarsBeats } from '../../show/tempoMap';
 
   const show = $derived($stageShow);
   const duration = $derived(show?.duration ?? 0);
   const hasLane = $derived((show?.cameraLane.length ?? 0) > 0);
+  // The playhead ticks ~20 times a second; these keep their identity until
+  // the arrangement changes, so the blocks below are not redrawn per tick.
+  const presets = $derived(show?.presets ?? []);
+  const cameraLane = $derived(show?.cameraLane ?? []);
+  const markers = $derived(show?.markers ?? []);
 
   // ── Smooth clock: extrapolated between the editor's 20 Hz states ──────
   let now = $state(epochNow());
@@ -52,7 +57,9 @@
 
   // ── Scrubber ───────────────────────────────────────────────────────────
   let barEl = $state<HTMLDivElement | undefined>();
-  let lastSeekSent = 0;
+  // A drag sends at most ~10 seeks a second (each hard-seeks the editor's
+  // audio and video); pressing and letting go land exactly.
+  const seeks = createSeekThrottle((seconds) => sendRehearsalCommand({ op: 'seek', seconds }));
   function timeAtPointer(e: PointerEvent): number {
     if (!barEl || duration <= 0) return 0;
     const r = barEl.getBoundingClientRect();
@@ -60,11 +67,7 @@
   }
   function scrubTo(t: number, force = false) {
     scrubTime = t;
-    const at = performance.now();
-    if (force || at - lastSeekSent > 33) {
-      lastSeekSent = at;
-      sendRehearsalCommand({ op: 'seek', seconds: t });
-    }
+    seeks.seek(t, force);
   }
   function onBarDown(e: PointerEvent) {
     if (e.button !== 0 || !show?.hasShow) return;
@@ -119,7 +122,7 @@
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') pauseCameraFollow();
       return;
     }
-    if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && show.markers.length > 0) {
+    if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && markers.length > 0) {
       take(e);
       sendRehearsalCommand({ op: 'marker', dir: e.key === 'ArrowLeft' ? -1 : 1 });
       return;
@@ -157,6 +160,7 @@
     window.addEventListener('wheel', onWheel, { capture: true, passive: true });
   });
   onDestroy(() => {
+    seeks.cancel();
     window.removeEventListener('keydown', onKeydown, { capture: true });
     window.removeEventListener('pointerdown', onPointerDown, { capture: true });
     window.removeEventListener('pointermove', onPointerMove, { capture: true });
@@ -198,7 +202,7 @@
       title="Drag to move through the show"
       data-stage-show-scrubber
     >
-      {#each show.presets as preset, i (i)}
+      {#each presets as preset, i (preset.id)}
         <div
           class="sst-preset"
           class:odd={i % 2 === 1}
@@ -207,14 +211,14 @@
           title={preset.label}
         ></div>
       {/each}
-      {#each show.cameraLane as clip (clip.id)}
+      {#each cameraLane as clip (clip.id)}
         <div
           class="sst-shot"
           style:left="{pct(clip.startTime)}%"
           style:width="{Math.max(0.3, pct(clip.startTime + clip.duration) - pct(clip.startTime))}%"
         ></div>
       {/each}
-      {#each show.markers as marker, i (i)}
+      {#each markers as marker (marker.id)}
         <div class="sst-marker" style:left="{pct(marker.time)}%" title={marker.label || 'Marker'}></div>
       {/each}
       <div class="sst-head" style:left="{pct(time)}%"></div>

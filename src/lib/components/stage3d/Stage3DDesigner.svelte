@@ -44,7 +44,7 @@
   import DemoReelPanel from './DemoReelPanel.svelte';
   import StageShowTransport from './StageShowTransport.svelte';
   import { epochNow, type RecAudioResult } from '../../show/rehearsal/rehearsalBridge';
-  import { startStageRecAudio, stageRecordingMaxDim, stageRecordingMirrorDim, type StageRecAudio } from '../../show/rehearsal/stageRehearsal';
+  import { holdStageCapture, startStageRecAudio, stageRecordingMaxDim, stageRecordingMirrorDim, type StageRecAudio } from '../../show/rehearsal/stageRehearsal';
 
   /** When false, this component renders only the floating UI overlay;
    *  the viewport comes from Canvas.svelte's stage3DOutput mode. */
@@ -451,6 +451,8 @@
     const recordCanvas = controls.beginRecording(res.w, res.h) ?? null;
     if (!recordCanvas) { toast('Stage renderer not ready'); return; }
     recordingDuration = 0;
+    // Drawn at the working rate even if the window is minimised.
+    const releaseCaptureHold = holdStageCapture();
     recorderHandle = startCanvasRecording({
       namePrefix: 'Stage Recording',
       canvas: recordCanvas,
@@ -459,12 +461,14 @@
         isRecording = false;
         recorderHandle = null;
         controls?.endRecording();
+        releaseCaptureHold();
         toast('Stage recording saved');
       },
       onError: (err) => {
         isRecording = false;
         recorderHandle = null;
         controls?.endRecording();
+        releaseCaptureHold();
         toast(err.message || 'Recording failed');
       },
     });
@@ -473,6 +477,7 @@
       toast(`Stage recording started · ${res.label}`);
     } else {
       controls?.endRecording();
+      releaseCaptureHold();
     }
   }
 
