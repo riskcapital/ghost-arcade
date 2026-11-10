@@ -100,6 +100,18 @@ export function clipMediaFromTrayPayload(raw: unknown): ShowClipMedia | null {
   return media;
 }
 
+/** Shader media with every input at the shader's own default (a block whose
+ *  media was replaced starts from the new shader's defaults). */
+export function withShaderDefaults(media: ShowClipMedia): ShowClipMedia {
+  if (media.kind !== 'shader') return media;
+  const values: Record<string, number | boolean | number[]> = {};
+  for (const input of media.shaderInputs ?? []) {
+    if (input.TYPE === 'image') continue;
+    values[input.NAME] = getInputDefault(input) as number | boolean | number[];
+  }
+  return { ...media, shaderValues: values };
+}
+
 // ── Files from the computer ────────────────────────────────────────────
 
 /** Files a track can take (video, image, .fs shader). */

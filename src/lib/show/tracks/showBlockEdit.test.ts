@@ -17,7 +17,7 @@ vi.mock('../../stores/layers', () => ({
 }));
 
 const { showTimeline, setShowCompositionLoader } = await import('../../stores/showTimeline');
-const { activeBlock, editBlock, setBlockShaderValue, setBlockBlendMode, setBlockOpacity, setBlockSketchParam, stopEditingBlock } = await import('./showBlockEdit');
+const { activeBlock, editBlock, replaceActiveBlockMedia, setBlockShaderValue, setBlockBlendMode, setBlockOpacity, setBlockSketchParam, stopEditingBlock } = await import('./showBlockEdit');
 const { rowTrackId } = await import('./showStageRows');
 
 function layer(id: string, extra: Partial<Layer> = {}): Layer {
@@ -97,5 +97,27 @@ describe('editing a block in the normal panels', () => {
     const clipId = showTimeline.addLayerClip(sub, shader, 0)!;
     pick(sub, clipId);
     expect(get(activeBlock)!.layer.blendMode).toBe('normal');
+  });
+  it('a library card clicked with a block selected replaces the block\'s media, keeping its timing; undo puts it back', () => {
+    const clipId = showTimeline.addLayerClip(rowTrackId('A'), shader, 2, { duration: 5, fadeIn: 1, blendMode: 'add', opacity: 0.6 })!;
+    // Nothing being edited: the click is the layer's, as before.
+    expect(replaceActiveBlockMedia({ id: 'card', type: 'image', name: 'b.png', src: '/media/b.png' })).toBe(false);
+    pick(rowTrackId('A'), clipId);
+    const before = showTimeline.exportArrangement();
+    const card = {
+      id: 'lib-wave', type: 'shader', name: 'Wave', src: 'ISF/Wave.fs', shaderCode: 'void main(){}',
+      shaderInputs: [{ NAME: 'speed', TYPE: 'float', MIN: 0, MAX: 4, DEFAULT: 1.5 }],
+      // The card's own tweaked values are not carried: the block starts from defaults.
+      shaderValues: { speed: 3.9 },
+    };
+    expect(replaceActiveBlockMedia(card)).toBe(true);
+    const clip = showTimeline.findLayerClip(clipId)!.clip;
+    expect(clip.media).toMatchObject({ kind: 'shader', name: 'Wave', src: 'ISF/Wave.fs', shaderValues: { speed: 1.5 } });
+    expect(clip).toMatchObject({ startTime: 2, duration: 5, fadeIn: 1, blendMode: 'add', opacity: 0.6 });
+    // The panels follow the block's new picture; the mapping layer is untouched.
+    expect(get(activeBlock)!.layer.source?.src).toBe('ISF/Wave.fs');
+    expect(get(state).layers[0].source?.src).toBe('ISF/Own.fs');
+    showTimeline.restoreArrangement(before);
+    expect(showTimeline.findLayerClip(clipId)!.clip.media.name).toBe('Glow');
   });
 });

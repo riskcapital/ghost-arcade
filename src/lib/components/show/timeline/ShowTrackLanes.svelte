@@ -490,7 +490,7 @@
     e.preventDefault();
     e.stopPropagation();
     if (tr?.locked) return;
-    void dropTrackMedia(dt, tr?.id ?? null, at);
+    void dropTrackMedia(dt, tr?.id ?? null, at, { pointerAt: timeAt(e.clientX) });
   }
 
   // ── Keys on lanes ────────────────────────────────────────────────────

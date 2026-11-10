@@ -22,6 +22,8 @@ import { project, layers as liveLayers, selectedLayerId } from '../../stores/lay
 import { showSlice, distinct } from '../../components/show/timeline/timelineSlices';
 import { staticClipSource, readableClipUri } from './showClipSources';
 import { stagePieceLayer } from './showStagePieces';
+import { clipMediaFromTrayPayload, withShaderDefaults } from '../../components/show/timeline/clipMedia';
+import { showToast } from '../../stores/errorToast';
 
 export interface BlockEditTarget {
   trackId: string;
@@ -155,5 +157,32 @@ export function setBlockBlendMode(mode: BlendMode): boolean {
   const block = current();
   if (!block) return false;
   showTimeline.updateLayerClip(block.clipId, { blendMode: mode }, { discrete: true });
+  return true;
+}
+
+// ── Replacing a block's media from the library ─────────────────────────
+
+/**
+ * A Media Library card (its drag payload) replaces the block's media: the
+ * block keeps its timing, fades, blend mode and opacity; a shader starts
+ * from its own defaults. One undo step. False when the card cannot go on a
+ * block (a live source, a plugin) or the block is gone or locked.
+ */
+export function replaceBlockMediaFromPayload(clipId: string, payload: unknown): boolean {
+  const media = clipMediaFromTrayPayload(payload);
+  if (!media) {
+    showToast('That card cannot go on a block. Use a video, an image, a shader or a sketch.', 'warning');
+    return false;
+  }
+  return showTimeline.replaceLayerClipMedia(clipId, withShaderDefaults(media));
+}
+
+/** A library card clicked while a block is being edited: it replaces that
+ *  block's media. True when the click was the block's (even if the card
+ *  could not go on it); false when no block is being edited. */
+export function replaceActiveBlockMedia(payload: unknown): boolean {
+  const block = current();
+  if (!block) return false;
+  replaceBlockMediaFromPayload(block.clipId, payload);
   return true;
 }

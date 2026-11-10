@@ -35,7 +35,7 @@
   import { settings } from '../stores/settings';
   import { TRAY_TAB_ORDER, TRAY_TAB_ALIASES, type TrayTab } from '../control/trayTabs';
   import { MEDIA_TRAY_REVEAL_EVENT, type MediaTrayRevealDetail } from './show/timeline/clipMenuActions';
-  import { activeBlock, setBlockShaderValue, setBlockShaderValues, setBlockShaderImageInput, setBlockSketchParam } from '../show/tracks/showBlockEdit';
+  import { activeBlock, replaceActiveBlockMedia, setBlockShaderValue, setBlockShaderValues, setBlockShaderImageInput, setBlockSketchParam } from '../show/tracks/showBlockEdit';
   import { captureJSAnimationThumbnail as captureJSAnimationThumbnailInIframe, updateJSAnimationParams } from '../renderer/js-animation';
   import { singlePlayablePage } from '../p5sketch/wrapSketch';
   import { jsAnimationFromHtml } from '../renderer/jsAnimationPage';
@@ -3657,6 +3657,9 @@
 
   function addTrayItemToCurrentMode(item: MediaItem | ShaderItem | JSAnimationItem) {
     if (!vjMode) {
+      // A Timeline block is being edited: the card replaces its media
+      // (timing, fades, blend and opacity stay), not the mapping layer's.
+      if ($activeBlock && replaceActiveBlockMedia(mediaTrayDragPayload(item))) return;
       applyToLayer(item);
       return;
     }
@@ -3664,7 +3667,7 @@
   }
 
   function trayItemActionTitle(): string {
-    return vjMode ? 'Click to add to VJ deck' : 'Click to apply to selected layer';
+    return vjMode ? 'Click to add to VJ deck' : $activeBlock ? 'Click to replace the selected Timeline block' : 'Click to apply to selected layer';
   }
 
   function onFolderDrop(folderId: string, e: DragEvent) {

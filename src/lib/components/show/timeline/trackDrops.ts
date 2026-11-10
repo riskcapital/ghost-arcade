@@ -9,7 +9,7 @@ import type { ShowClipMedia } from '../../../types';
 import { showTimeline } from '../../../stores/showTimeline';
 import { showToast } from '../../../stores/errorToast';
 import { clipEnd } from '../../../show/tracks/showTrackEval';
-import { clipMediaFromFile, clipMediaFromTrayPayload, isTrackMediaFile, MEDIA_SOURCE_DRAG_TYPE } from './clipMedia';
+import { clipMediaFromFile, clipMediaFromTrayPayload, isTrackMediaFile, MEDIA_SOURCE_DRAG_TYPE, withShaderDefaults } from './clipMedia';
 import { focusedTrackId } from './trackLayout';
 
 /** The drag may carry something a track can take (types only: dragover). */
@@ -26,6 +26,13 @@ export function carriesTrackMedia(dt: DataTransfer): boolean {
 
 function stem(name: string): string {
   return name.replace(/\.[a-z0-9]{1,5}$/i, '') || name;
+}
+
+/** The block on a row under show time `t`, if any. */
+export function blockUnder(trackId: string, t: number): string | null {
+  const track = get(showTimeline).layerTracks.find((tr) => tr.id === trackId);
+  const clip = track?.clips.find((c) => t >= c.startTime && t < clipEnd(c));
+  return clip?.id ?? null;
 }
 
 /** Put media on a row at `at`; after the last block when there is no room
@@ -54,13 +61,19 @@ export function placeClipMedia(trackId: string | null, media: ShowClipMedia, at:
  * Handle a drop of tray cards or files. Several files go one after another
  * on the same track. Resolves when every file is placed.
  */
-export async function dropTrackMedia(dt: DataTransfer, trackId: string | null, at: number): Promise<void> {
+export async function dropTrackMedia(dt: DataTransfer, trackId: string | null, at: number, opts: { pointerAt?: number } = {}): Promise<void> {
   const raw = dt.getData(MEDIA_SOURCE_DRAG_TYPE);
   if (raw) {
     let media: ShowClipMedia | null;
     try { media = clipMediaFromTrayPayload(JSON.parse(raw)); } catch { media = null; }
     if (!media) {
       showToast('That card cannot go on a track. Use a video, an image, a shader or a sketch.', 'warning');
+      return;
+    }
+    // Dropped on a block: the card replaces that block's media.
+    const hit = trackId ? blockUnder(trackId, opts.pointerAt ?? at) : null;
+    if (hit) {
+      if (showTimeline.replaceLayerClipMedia(hit, withShaderDefaults(media))) showTimeline.selectLayerClips([hit]);
       return;
     }
     placeClipMedia(trackId, media, at);
