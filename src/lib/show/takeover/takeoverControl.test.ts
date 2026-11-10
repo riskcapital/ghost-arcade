@@ -301,3 +301,25 @@ describe('leaving VJ mode with vj:mode', () => {
     }
   });
 });
+
+describe('a controller that disconnects', () => {
+  it("hands back the takeovers it holds, with the default release, and only those", () => {
+    takeover.liveTakeover.setDefaultRelease({ mode: 'fade', fadeSeconds: 1 });
+    path('show:live:1:vja:1:hold', 1, 'midi:dev-1:m1:0:36');
+    path('show:live:2:vja:2:hold', 1, 'midi:dev-10:m2:0:37');
+    expect(surfaces().wall?.momentaryInputs).toEqual(['midi:dev-1:m1:0:36']);
+    router.midiRouter.releaseInputs('midi:dev-1:');
+    expect(surfaces().wall?.phase).toBe('releasing');
+    expect(surfaces().wall?.release?.spec).toEqual({ mode: 'fade', fadeSeconds: 1 });
+    expect(surfaces().logo?.phase).toBe('live');
+    router.midiRouter.releaseInputs('midi:dev-10:');
+    expect(surfaces().logo?.phase).toBe('releasing');
+  });
+
+  it('leaves latched takeovers alone', () => {
+    path('show:live:1:vja:1', 1, 'midi:dev-1:m1:0:36');
+    router.midiRouter.releaseInputs('midi:dev-1:');
+    expect(surfaces().wall?.phase).toBe('live');
+  });
+});
+

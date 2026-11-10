@@ -28,9 +28,10 @@ import { macros } from '../stores/macros';
 import { vjClipLauncher } from '../stores/vjClipLauncher';
 import { settings } from '../stores/settings';
 import { launchClockTempo, launchClockPosition, launchClockFollowsShow } from '../stores/launchClock';
-import { midiRouter, registerShowControl } from '../midi/midiRouter';
+import { midiRouter, registerShowControl, registerShowInputRelease } from '../midi/midiRouter';
 import { runAsLiveControl } from '../stores/historyHooks';
 import { handleTakeoverControl, runTakeoverCue, runTakeoverReleaseCue } from './takeover/takeoverRuntime';
+import { liveTakeover } from './takeover/liveTakeover';
 
 /** Hooks App.svelte fills in: things only the app shell can do. */
 export const showRuntimeHooks: {
@@ -125,6 +126,10 @@ export function installShowControl(): () => void {
     } else handleTakeoverControl(action, value, inputId);
   });
   cleanups.push(() => registerShowControl(null));
+  // A controller that disconnects lets go of the takeovers it holds (with
+  // the default release), and only those.
+  registerShowInputRelease((prefix) => liveTakeover.releaseInputs(prefix));
+  cleanups.push(() => registerShowInputRelease(null));
 
   // ── Timeline markers ───────────────────────────────────────────────
   let prevTime: number | null = null;

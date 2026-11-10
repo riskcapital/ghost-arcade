@@ -174,6 +174,13 @@ export function registerShowControl(handler: ShowControlHandler | null) {
   _showControl = handler;
 }
 
+/** Lets go of what the inputs under a prefix hold in the show (momentary
+ *  takeovers), when a controller disconnects. Registered with the above. */
+let _showInputRelease: ((prefix: string) => void) | null = null;
+export function registerShowInputRelease(handler: ((prefix: string) => void) | null) {
+  _showInputRelease = handler;
+}
+
 
 
 class MidiRouter {
@@ -286,6 +293,7 @@ class MidiRouter {
       studioHeld.delete(inputId);
       runAsLiveControl(() => runStudioControl(id, 0));
     }
+    if (_showInputRelease) runAsLiveControl(() => _showInputRelease?.(prefix));
   }
 
   /**
