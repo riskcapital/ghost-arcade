@@ -175,7 +175,15 @@ export function launchClockPosition(nowMs = performance.now()): { beat: number; 
     return { beat: abletonLink.beatNow(), beatMs: 60000 / link };
   }
   const show = showBeat(nowMs);
-  if (show) return { beat: show.beat, beatMs: 60000 / show.bpm };
+  if (show) {
+    // The show owns tempo and phase: a nudge held from before it started
+    // stops here, so it does not keep moving the local phase underneath.
+    if (nudge !== 0) {
+      nudgeInputs.clear();
+      stopTempoNudge(undefined, nowMs);
+    }
+    return { beat: show.beat, beatMs: 60000 / show.bpm };
+  }
   const audio = get(audioStore) as AudioClockInput;
   const tempo = setTempo(audio);
   const audioBeat = audioBeatPosition(audio);
@@ -196,10 +204,18 @@ export function nextLaunchBoundary(gridBeats: number, nowMs = performance.now())
   return nextGridWallTime(nowMs, beat, beatMs, gridBeats);
 }
 
+/** True while Link or the playing show owns tempo and phase: nudge and
+ *  resync do nothing then. */
+export function launchClockFollowsExternal(nowMs = performance.now()): boolean {
+  return linkTempo() !== null || showBeat(nowMs) !== null;
+}
+
 /** Hold-to-nudge: run the clock a few percent fast (1) or slow (-1) until
- *  released. Ignored while Link owns the tempo. */
+ *  released. Ignored while Link or the playing show owns the tempo (a nudge
+ *  then only shifted the hidden local phase, which jumped when the show
+ *  stopped). */
 export function startTempoNudge(direction: -1 | 1, nowMs = performance.now()): void {
-  if (linkTempo() !== null || nudge === direction) return;
+  if (launchClockFollowsExternal(nowMs) || nudge === direction) return;
   settleNudge(nowMs);
   nudge = direction;
   nudgeSince = nowMs;
@@ -265,7 +281,7 @@ audioStore.subscribe((audio) => {
 /** Independent ownership prevents one released pad from canceling another. */
 export function setTempoNudgeInput(id: string, direction: -1 | 0 | 1): void {
   if (direction === 0) nudgeInputs.delete(id);
-  else if (!launchClockFollowsLink()) { nudgeInputs.delete(id); nudgeInputs.set(id, direction); }
+  else if (!launchClockFollowsExternal()) { nudgeInputs.delete(id); nudgeInputs.set(id, direction); }
   const latest = [...nudgeInputs.values()].at(-1);
   if (latest) startTempoNudge(latest);
   else stopTempoNudge();

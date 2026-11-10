@@ -93,6 +93,24 @@ describe('shared launch clock', () => {
       setShowBeatSource(null);
     }
   });
+  it('while the show drives the clock, nudge does nothing and a held nudge stops', () => {
+    setTempoNudgeInput('key', 1);
+    now += 500;
+    const start = now;
+    setShowBeatSource((at) => ({ beat: 4 + ((at - start) * 120) / 60000, bpm: 120 }));
+    try {
+      expect(launchClockPosition().beat).toBeCloseTo(4);
+      setTempoNudgeInput('pointer', -1);
+      expect(resyncLaunchClock()).toBe(false);
+      now += 4000;
+    } finally {
+      setShowBeatSource(null);
+    }
+    // Back on the local clock: only the half second nudged before the show
+    // started moved the phase (0.04 * 0.5 s * 2 beats/s), not the 4 s under it.
+    expect(launchClockTempo()).toBe(120);
+    expect(launchClockPosition().beat).toBeCloseTo(0.5 * 2 * 1.04 + 4 * 2, 6);
+  });
   it('anchors to detected audio beats, counting the time since the last one in ms', () => {
     harness.audio.set({ manualBPM: null, bpm: 120, isActive: true, beat: { beatCount: 40, timeSinceLastBeat: 0 } });
     const onBeat = launchClockPosition().beat;

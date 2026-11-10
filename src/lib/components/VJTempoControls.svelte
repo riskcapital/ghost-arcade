@@ -1,8 +1,14 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import { abletonLink } from '../sync/abletonLink';
+  import { showTimeline } from '../stores/showTimeline';
   import { launchClock, setTempoNudgeInput, releaseTempoNudgeInputs, resyncLaunchClock } from '../stores/launchClock';
-  $: following = $abletonLink.enabled && $abletonLink.peers > 0;
+  $: followingLink = $abletonLink.enabled && $abletonLink.peers > 0;
+  // The playing show with a tempo map drives the clock too (below Link).
+  $: followingShow = !followingLink && $showTimeline.isPlaying && !!$showTimeline.tempo;
+  $: following = followingLink || followingShow;
+  $: owner = followingLink ? 'Ableton Link' : 'the playing show';
+  $: if (following) release();
   const release = () => releaseTempoNudgeInputs('panel-tempo:');
   onDestroy(release);
   function down(event: PointerEvent, direction: -1 | 1) {
@@ -17,13 +23,13 @@
   }
 </script>
 <svelte:window onblur={release} onkeyup={(e) => setTempoNudgeInput(`panel-tempo:key:${e.code}`, 0)} />
-<div data-help-page="midi-audio" class="tempo-controls" title={following ? 'Ableton Link controls tempo and phase' : 'Bend the local beat clock or set a new downbeat'}>
+<div data-help-page="midi-audio" class="tempo-controls" title={following ? `${followingLink ? 'Ableton Link controls' : 'The playing show controls'} tempo and phase` : 'Bend the local beat clock or set a new downbeat'}>
   <div class="nudge-group">
   <span class="nudge-label">Nudge</span>
   {#each [-1, 1] as direction}
     <button disabled={following} class:active={$launchClock.nudge === direction}
       aria-label={direction < 0 ? 'Hold to slow tempo' : 'Hold to speed up tempo'}
-      title={following ? 'Disabled while following Ableton Link' : direction < 0 ? 'Hold to slow the beat clock by 4%' : 'Hold to speed up the beat clock by 4%'}
+      title={following ? `Disabled while following ${owner}` : direction < 0 ? 'Hold to slow the beat clock by 4%' : 'Hold to speed up the beat clock by 4%'}
       onpointerdown={(e) => down(e, direction as -1 | 1)}
       onpointerup={(e) => setTempoNudgeInput(`panel-tempo:pointer:${e.pointerId}`, 0)}
       onlostpointercapture={(e) => setTempoNudgeInput(`panel-tempo:pointer:${e.pointerId}`, 0)}
@@ -34,7 +40,7 @@
   {/each}
   </div>
   <button disabled={following} onclick={() => resyncLaunchClock()}
-    aria-label="Resync phrase" title={following ? 'Disabled while following Ableton Link' : 'Make now the downbeat; restart BPM-synced video and align synced LFOs'}
+    aria-label="Resync phrase" title={following ? `Disabled while following ${owner}` : 'Make now the downbeat; restart BPM-synced video and align synced LFOs'}
     data-midi-path="vj:tempo:resync" data-midi-label="Phrase resync" data-midi-mode="toggle">Resync</button>
 </div>
 <style>
