@@ -260,18 +260,48 @@ function warmFor(track: ShowLayerTrack, t: number, silenced: boolean): ShowTrack
   const next = nextClipAfter(track.clips, t);
   if (!next || next.startTime - t > SHOW_WARM_SECONDS) return null;
   if (next.media.kind !== 'shader' && next.media.kind !== 'sketch') return null;
-  return { clipId: next.id, runId: runsOf(track.clips).get(next.id) ?? next.id, media: next.media };
+  return { clipId: next.id, runId: clipIndex(track.clips).runs.get(next.id) ?? next.id, media: next.media };
 }
 
-/** Cache of run maps per clip list (clip arrays are replaced on every edit). */
-const runCache = new WeakMap<readonly ShowLayerClip[], Map<string, string>>();
-function runsOf(clips: readonly ShowLayerClip[]): Map<string, string> {
-  let runs = runCache.get(clips);
-  if (!runs) {
-    runs = clipRuns(clips);
-    runCache.set(clips, runs);
+/**
+ * What the evaluation looks up per clip, worked out once per clip list
+ * (clip arrays are replaced on every edit, never changed in place): the run
+ * of every clip, the first clip of every run, and each clip's junction
+ * predecessor as it is asked for. Without it every frame scanned each
+ * track's clips to find them.
+ */
+interface ClipIndex {
+  runs: Map<string, string>;
+  /** First clip with each id, as clips.find(id) gives it. */
+  byId: Map<string, ShowLayerClip>;
+  /** findJunctionPredecessor per clip, filled on first ask. */
+  junctions: Map<ShowLayerClip, { id: string; startTime: number; prev: ShowLayerClip | null }>;
+}
+
+const clipIndexCache = new WeakMap<readonly ShowLayerClip[], ClipIndex>();
+function clipIndex(clips: readonly ShowLayerClip[]): ClipIndex {
+  let index = clipIndexCache.get(clips);
+  if (!index) {
+    const byId = new Map<string, ShowLayerClip>();
+    for (const clip of clips) if (!byId.has(clip.id)) byId.set(clip.id, clip);
+    index = { runs: clipRuns(clips), byId, junctions: new Map() };
+    clipIndexCache.set(clips, index);
   }
-  return runs;
+  return index;
+}
+
+/** clipRuns(clips), computed once per clip list. Treat the map as read-only. */
+export function cachedClipRuns(clips: readonly ShowLayerClip[]): ReadonlyMap<string, string> {
+  return clipIndex(clips).runs;
+}
+
+function junctionPredecessor(clips: readonly ShowLayerClip[], clip: ShowLayerClip): ShowLayerClip | null {
+  const junctions = clipIndex(clips).junctions;
+  const known = junctions.get(clip);
+  if (known && known.id === clip.id && known.startTime === clip.startTime) return known.prev;
+  const prev = findJunctionPredecessor(clips, clip);
+  junctions.set(clip, { id: clip.id, startTime: clip.startTime, prev });
+  return prev;
 }
 
 /** The centred window of a clip's crossfade, or null for a cut. */
@@ -280,7 +310,7 @@ export function trackTransitionWindow(
   clip: ShowLayerClip,
 ): { start: number; end: number; duration: number; prev: ShowLayerClip } | null {
   if (clip.transitionIn !== 'dissolve') return null;
-  const prev = findJunctionPredecessor(clips, clip);
+  const prev = junctionPredecessor(clips, clip);
   if (!prev) return null;
   const duration = clampShowTransitionDuration(clip.transitionDuration, clip, prev);
   if (duration <= 0) return null;
@@ -311,9 +341,9 @@ function clipStateAt(
   t: number,
   opts: Pick<EvaluateShowTracksOptions, 'playing' | 'manualClock'>,
 ): ShowTrackClipState {
-  const runs = runsOf(clips);
-  const runId = runs.get(clip.id) ?? clip.id;
-  const runFirst = clips.find((c) => c.id === runId) ?? clip;
+  const index = clipIndex(clips);
+  const runId = index.runs.get(clip.id) ?? clip.id;
+  const runFirst = index.byId.get(runId) ?? clip;
   // Before its start (the first half of a crossfade) a clip with no media
   // before its in-point waits on its first frame.
   const waiting = clip.media.kind === 'video' && rawMediaTime(clip, t) < 0;

@@ -10,7 +10,8 @@
   import { onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import { showFromAudioRequest } from '../show/showFromAudio';
-  import { layoutSong, analyzeSong, type SongAnalysis, type SongLayoutMode } from '../show/songLayout';
+  import { layoutSong, type SongAnalysis, type SongLayoutMode } from '../show/songLayout';
+  import { analyzeSongOffThread } from '../show/songAnalysisClient';
   import { tempoMapForTrack } from '../show/tempoDetect';
   import { showTimeline } from '../stores/showTimeline';
   import { compositions } from '../stores/layers';
@@ -98,17 +99,17 @@
     const mine = generation;
     const pcm = decoded;
     analyzing = true;
-    // Let the dialog paint "Listening…" first; the analysis takes a moment on a long song.
-    setTimeout(() => {
-      if (mine !== generation) return;
-      try {
-        analysis = analyzeSong(pcm.mono, pcm.sampleRate);
-      } catch (err) {
+    // In a worker: the dialog keeps painting "Listening…" on a long song.
+    analyzeSongOffThread(pcm.mono, pcm.sampleRate)
+      .catch((err) => {
         console.warn('[ShowFromAudio] analysis failed:', err);
-        analysis = { tempo: null, beats: [], sections: [], duration: pcm.duration };
-      }
-      analyzing = false;
-    }, 30);
+        return { tempo: null, beats: [], sections: [], duration: pcm.duration } as SongAnalysis;
+      })
+      .then((result) => {
+        if (mine !== generation) return;
+        analysis = result;
+        analyzing = false;
+      });
   }
 
   function close() {
@@ -149,7 +150,7 @@
       let songAnalysis = analysis;
       if (!songAnalysis) {
         try {
-          songAnalysis = analyzeSong(decoded.mono, decoded.sampleRate);
+          songAnalysis = await analyzeSongOffThread(decoded.mono, decoded.sampleRate);
         } catch (err) {
           console.warn('[ShowFromAudio] analysis failed:', err);
         }

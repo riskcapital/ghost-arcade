@@ -62,21 +62,67 @@ let nextLargeId = 1;
 /** Ids interned by the serialisation in progress. */
 let largeInUse: Set<number> | null = null;
 
-function internLarge(value: string): string {
+/** `inUse: false` for a string inside a show fragment, which keeps it itself. */
+function internLarge(value: string, inUse = true): string {
   let id = idByLarge.get(value);
   if (id === undefined) {
     id = nextLargeId++;
     idByLarge.set(value, id);
     largeById.set(id, value);
   }
-  largeInUse?.add(id);
+  if (inUse) largeInUse?.add(id);
   return LARGE_REF + id;
 }
 
-/** Put the large strings back into a parsed step, in place. */
+// ============================================================================
+// SHOW FRAGMENTS — the show arrangement is most of a step when the show is
+// big (300 shader clips carry 300 shader sources and a template per track),
+// and nearly all of it is the same from one step to the next. In the show
+// part of a step every object or array whose JSON is at least
+// SHOW_FRAGMENT_MIN long (a list of plain values, like a lane's keys, as
+// one) is stored once in a shared table, by content, and the step (or the
+// fragment holding it) refers to it by id; strings of
+// SHOW_STRING_MIN or more are kept once like the large strings above. An
+// edit to one clip then adds that clip, its track's clip list and the few
+// containers above it; everything else is shared with the steps around it.
+// Equal content always gets the same id, so two steps' shows are compared
+// by their ids alone, and a restored show is exactly what was recorded.
+// ============================================================================
+
+const SHOW_STRING_MIN = 1024;
+const SHOW_FRAGMENT_MIN = 256;
+const FRAGMENT_REF = '\u0000ga-frag:';
+/** Fragment JSON by id; ids share the large strings' counter. */
+const fragmentById = new Map<number, string>();
+const idByFragment = new Map<string, number>();
+/** The ids a fragment refers to (fragments and large strings). */
+const fragmentRefs = new Map<number, number[]>();
+
+function internFragment(json: string, refs: number[]): number {
+  let id = idByFragment.get(json);
+  if (id === undefined) {
+    id = nextLargeId++;
+    idByFragment.set(json, id);
+    fragmentById.set(id, json);
+    if (refs.length) fragmentRefs.set(id, refs);
+  }
+  return id;
+}
+
+function refId(value: string, prefix: string): number {
+  return Number(value.slice(prefix.length));
+}
+
+/** Put the large strings and show fragments back into a parsed step, in place. */
 function restoreLarge(value: unknown): unknown {
   if (typeof value === 'string') {
-    return value.startsWith(LARGE_REF) ? (largeById.get(Number(value.slice(LARGE_REF.length))) ?? value) : value;
+    if (value.charCodeAt(0) !== 0) return value;
+    if (value.startsWith(LARGE_REF)) return largeById.get(refId(value, LARGE_REF)) ?? value;
+    if (value.startsWith(FRAGMENT_REF)) {
+      const json = fragmentById.get(refId(value, FRAGMENT_REF));
+      return json === undefined ? value : restoreLarge(JSON.parse(json));
+    }
+    return value;
   }
   if (!value || typeof value !== 'object') return value;
   if (Array.isArray(value)) {
@@ -88,19 +134,139 @@ function restoreLarge(value: unknown): unknown {
   return value;
 }
 
-/** Forget large strings no step refers to any more. */
+/** Forget large strings and fragments no step refers to any more. */
 function pruneLarge(entries: Iterable<HistoryEntry | null>): void {
-  if (largeById.size === 0) return;
+  if (largeById.size === 0 && fragmentById.size === 0) return;
   const keep = new Set<number>();
+  const pending: number[] = [];
+  const add = (id: number) => {
+    if (keep.has(id)) return;
+    keep.add(id);
+    pending.push(id);
+  };
   for (const entry of entries) {
-    for (const id of entry?.large ?? []) keep.add(id);
-    for (const id of entry?.recorded?.large ?? []) keep.add(id);
+    for (const id of entry?.large ?? []) add(id);
+    for (const id of entry?.recorded?.large ?? []) add(id);
+  }
+  // A kept fragment keeps everything it refers to.
+  while (pending.length) {
+    for (const id of fragmentRefs.get(pending.pop()!) ?? []) add(id);
   }
   for (const [id, value] of largeById) {
     if (keep.has(id)) continue;
     largeById.delete(id);
     idByLarge.delete(value);
   }
+  for (const [id, json] of fragmentById) {
+    if (keep.has(id)) continue;
+    fragmentById.delete(id);
+    idByFragment.delete(json);
+    fragmentRefs.delete(id);
+  }
+}
+
+/** Sizes of the shared tables, for tests. */
+export function historyTableStats(): { strings: number; fragments: number; fragmentChars: number } {
+  let fragmentChars = 0;
+  for (const json of fragmentById.values()) fragmentChars += json.length;
+  return { strings: largeById.size, fragments: fragmentById.size, fragmentChars };
+}
+
+/**
+ * True for a plain object or array holding only numbers, booleans, null,
+ * short strings, what JSON leaves out and (to `depth`) more of the same: a
+ * keyframe, or a lane's list of them. There showJson() would write what
+ * JSON.stringify writes, and the native stringify is much faster.
+ */
+function isLeaf(value: object, depth: number): boolean {
+  if (Array.isArray(value)) {
+    if (typeof (value as unknown as { toJSON?: unknown }).toJSON === 'function') return false;
+    for (let i = 0; i < value.length; i++) if (!isLeafValue(value[i], depth)) return false;
+    return true;
+  }
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) return false;
+  const record = value as Record<string, unknown>;
+  if (typeof record.toJSON === 'function') return false;
+  const keys = Object.keys(record);
+  for (let i = 0; i < keys.length; i++) {
+    if (RUNTIME_KEYS.has(keys[i]) || !isLeafValue(record[keys[i]], depth)) return false;
+  }
+  return true;
+}
+
+function isLeafValue(v: unknown, depth: number): boolean {
+  switch (typeof v) {
+    case 'string':
+      return v.length < SHOW_STRING_MIN;
+    case 'object':
+      return v === null || (depth > 1 && !isRuntimeRef(v) && isLeaf(v, depth - 1));
+    case 'bigint':
+      return false;
+    default:
+      return true;
+  }
+}
+
+/**
+ * The show part of a step as JSON text: sanitize() and JSON.stringify() in
+ * one pass, storing fragments and long strings in the shared tables (see
+ * SHOW FRAGMENTS). Each node is written once and its text reused by the
+ * node above it. Leaves out exactly what sanitize() leaves out, and writes
+ * what JSON.stringify would, so a restored show is the same as an inline
+ * copy. undefined when JSON would leave the value out. The ids the text
+ * refers to directly are added to `refs`.
+ */
+function showJson(value: unknown, ancestors: WeakSet<object>, refs: number[]): string | undefined {
+  if (value === null) return 'null';
+  switch (typeof value) {
+    case 'string': {
+      if (value.length < SHOW_STRING_MIN) return JSON.stringify(value);
+      const ref = internLarge(value, false);
+      refs.push(refId(ref, LARGE_REF));
+      return JSON.stringify(ref);
+    }
+    case 'number':
+      return JSON.stringify(value);
+    case 'boolean':
+      return value ? 'true' : 'false';
+    case 'object':
+      break;
+    default:
+      return undefined;
+  }
+  if (isRuntimeRef(value)) return undefined;
+  const obj = value as object;
+  if (ancestors.has(obj)) return undefined;
+  ancestors.add(obj);
+
+  const inner: number[] = [];
+  let json: string;
+  if (isLeaf(obj, 2)) {
+    json = JSON.stringify(obj);
+  } else if (Array.isArray(value)) {
+    const parts: string[] = new Array(value.length);
+    for (let i = 0; i < value.length; i++) parts[i] = showJson(value[i], ancestors, inner) ?? 'null';
+    json = '[' + parts.join(',') + ']';
+  } else {
+    const src = value as Record<string, unknown>;
+    const parts: string[] = [];
+    for (const key of Object.keys(src)) {
+      if (RUNTIME_KEYS.has(key)) continue;
+      const text = showJson(src[key], ancestors, inner);
+      if (text !== undefined) parts.push(JSON.stringify(key) + ':' + text);
+    }
+    json = '{' + parts.join(',') + '}';
+  }
+  ancestors.delete(obj);
+
+  if (json.length < SHOW_FRAGMENT_MIN) {
+    for (const id of inner) refs.push(id);
+    return json;
+  }
+  const id = internFragment(json, inner);
+  refs.push(id);
+  return JSON.stringify(FRAGMENT_REF + id);
 }
 
 function sanitize(value: unknown, ancestors: WeakSet<object> = new WeakSet()): unknown {
@@ -182,6 +348,10 @@ export interface HistorySnapshot {
    *  leaves the live show (and its transport) alone. */
   show?: unknown;
   leavingShow?: unknown;
+  /** Whether `show` differs from `leavingShow` (see showHistoryRestore);
+   *  set by undo and redo, which can tell from the recorded steps without
+   *  comparing the two arrangements in full. */
+  showChanged?: boolean;
 }
 
 /**
@@ -194,8 +364,14 @@ function serializeSnapshot(project: Project, keyframes: unknown, output: OutputH
   largeInUse = new Set();
   try {
     const step: Record<string, unknown> = { project: sanitize(withoutViewState(project)), keyframes: sanitize(keyframes), output: sanitize(output) };
-    if (show !== undefined) step.show = sanitize(show);
-    const json = JSON.stringify(step);
+    let json = JSON.stringify(step);
+    if (show !== undefined) {
+      // The show goes last, as `step.show = …` would have put it.
+      const refs: number[] = [];
+      const text = showJson(show, new WeakSet(), refs);
+      for (const id of refs) largeInUse.add(id);
+      if (text !== undefined) json = json.slice(0, -1) + ',"show":' + text + '}';
+    }
     return { json, large: [...largeInUse] };
   } finally {
     largeInUse = null;
@@ -253,7 +429,7 @@ const SOURCE_TRANSPORT_KEYS = [
  *  (enough to compare two steps, and much cheaper). */
 function parseSnapshot(json: string, withLarge = true): { project: Project; keyframes: unknown; output: OutputHistoryState | null; show: unknown } {
   const parsed = JSON.parse(json) as { project: Project; keyframes: unknown; output?: OutputHistoryState | null; show?: unknown };
-  if (withLarge && json.includes('\\u0000ga-large:')) restoreLarge(parsed);
+  if (withLarge && (json.includes('\\u0000ga-large:') || json.includes('\\u0000ga-frag:'))) restoreLarge(parsed);
   return { project: parsed.project, keyframes: parsed.keyframes ?? null, output: parsed.output ?? null, show: parsed.show };
 }
 
@@ -406,13 +582,20 @@ function createHistoryStore() {
       const parsed = parseSnapshot(direction < 0 ? target.json : recordedJson(target), false);
       const left = leaving ? parseSnapshot(direction < 0 ? recordedJson(leaving) : leaving.json, false) : null;
       const project = mergeProjectStep(liveProject, parsed.project, left?.project ?? null, target.selectedLayerId);
+      // The shows are compared as recorded (fragment ids): equal content
+      // has equal ids, so this is the full comparison, at the cost of a
+      // few ids. An unchanged show is restored once and stands for both.
+      const showChanged = parsed.show !== undefined && parsed.show !== null
+        && JSON.stringify(parsed.show) !== JSON.stringify(left?.show);
+      const show = restoreLarge(parsed.show);
       result = {
         project: restoreLarge(project) as Project,
         keyframes: restoreLarge(parsed.keyframes),
         output: restoreLarge(parsed.output) as OutputHistoryState | null,
         leavingOutput: restoreLarge(left?.output ?? null) as OutputHistoryState | null,
-        show: restoreLarge(parsed.show),
-        leavingShow: restoreLarge(left?.show),
+        show,
+        leavingShow: showChanged || show === undefined || show === null ? restoreLarge(left?.show) : show,
+        showChanged,
       };
       if (direction < 0) {
         return {
@@ -554,8 +737,10 @@ export const history = createHistoryStore();
  * step did not change it (same rule as outputHistoryPatch: compare the two
  * recorded steps, never the live show).
  */
-export function showHistoryRestore(to: unknown, from: unknown): unknown {
+export function showHistoryRestore(to: unknown, from: unknown, changed?: boolean): unknown {
   if (to === undefined || to === null) return undefined;
+  if (changed !== undefined) return changed ? to : undefined;
+  if (to === from) return undefined;
   return JSON.stringify(to) === JSON.stringify(from) ? undefined : to;
 }
 

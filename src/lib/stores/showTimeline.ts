@@ -141,6 +141,7 @@ import {
 } from '../show/tracks/showTrackLanes';
 import { clampShowTransitionDuration, findJunctionPredecessor } from '../show/showJunctions';
 import { resolveAssetTreeInPlace } from '../storage/assetRegistry';
+import { sameJson } from '../show/jsonEqual';
 import {
   amendLastHistoryStep,
   isRestoringHistory,
@@ -2006,9 +2007,11 @@ export const showTimeline = {
       ...s,
       layerTracks: s.layerTracks.map((t) => {
         if (t.id !== trackId) return t;
-        const next = { ...t, ...patch };
-        changed = JSON.stringify(next) !== JSON.stringify(t);
-        return next;
+        // Changed when any patched field reads differently (what comparing
+        // the whole track as JSON answered, without stringifying it).
+        const current = t as unknown as Record<string, unknown>;
+        changed = (Object.keys(patch) as Array<keyof typeof patch>).some((key) => !sameJson(current[key], patch[key]));
+        return { ...t, ...patch };
       }),
     }));
     if (!changed) return;
@@ -2035,7 +2038,7 @@ export const showTimeline = {
       ...s,
       layerTracks: s.layerTracks.map((t) => {
         if (t.id !== trackId) return t;
-        if (t.template && JSON.stringify(t.template) === JSON.stringify(template) && t.layerName === layer.name) return t;
+        if (t.template && t.layerName === layer.name && sameJson(t.template, template)) return t;
         changed = true;
         return { ...t, template, layerName: layer.name };
       }),
@@ -2335,7 +2338,9 @@ export const showTimeline = {
     const track = get(store).layerTracks.find((t) => t.id === trackId);
     if (!track || track.locked) return false;
     const lanes = edit(track.lanes);
-    if (lanes === track.lanes || JSON.stringify(lanes) === JSON.stringify(track.lanes)) return false;
+    // Untouched lanes are the same objects, so only the edited lane is
+    // compared (this runs on every pointer move of a key drag).
+    if (lanes === track.lanes || sameJson(lanes, track.lanes)) return false;
     store.update((s) => ({
       ...s,
       layerTracks: s.layerTracks.map((t) => (t.id === trackId ? { ...t, lanes } : t)),

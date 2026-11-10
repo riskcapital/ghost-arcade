@@ -12,7 +12,7 @@
  * nothing: that decoder is already running.
  */
 import type { ShowLayerClip, ShowLayerTrack } from '../../types';
-import { clipLoopStart, clipRate, clipRuns } from './showTrackEval';
+import { cachedClipRuns, clipLoopStart, clipRate } from './showTrackEval';
 
 export const SHOW_PRELOAD_HORIZON_SECONDS = 4;
 export const SHOW_PRELOAD_MAX_RUNS = 6;
@@ -38,8 +38,12 @@ export function selectShowPreloads(
   const picks: ShowPreload[] = [];
   for (const track of tracks) {
     if (track.muted || (opts.soloTrackId && opts.soloTrackId !== track.id)) continue;
-    const runs = clipRuns(track.clips);
-    for (const clip of track.clips) {
+    // Runs are worked out once per clip list (this runs 4 times a second),
+    // and the walk starts at the first clip after `t`.
+    const runs = cachedClipRuns(track.clips);
+    const clips = track.clips;
+    for (let i = firstStartingAfter(clips, t); i < clips.length; i++) {
+      const clip = clips[i];
       const startsIn = clip.startTime - t;
       if (startsIn <= 0) continue;
       if (startsIn > horizon) break;
@@ -50,4 +54,16 @@ export function selectShowPreloads(
     }
   }
   return picks.sort((a, b) => a.startsIn - b.startsIn).slice(0, max);
+}
+
+/** Index of the first clip starting after `t` (clips are sorted by start). */
+function firstStartingAfter(clips: readonly ShowLayerClip[], t: number): number {
+  let lo = 0;
+  let hi = clips.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (clips[mid].startTime - t <= 0) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
 }
