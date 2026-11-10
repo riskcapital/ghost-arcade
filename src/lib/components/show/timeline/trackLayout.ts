@@ -5,6 +5,7 @@
  */
 import { writable } from 'svelte/store';
 import type { KeyframeTrack, ShowLayerClip, ShowLayerTrack } from '../../../types';
+import { lineRowsHeight, type LineLayout } from './lineUi';
 
 /** The part of a clip block a press grabbed. */
 export type ClipPart = 'body' | 'start' | 'end' | 'fadeIn' | 'fadeOut';
@@ -16,13 +17,15 @@ export const ADD_TRACK_ROW_HEIGHT = 28;
 /** Label column width once the show has tracks (headers need the room). */
 export const TRACK_HEADER_WIDTH = 204;
 
-type RowShape = Pick<ShowLayerTrack, 'collapsed' | 'lanes' | 'row'>;
+type RowShape = Pick<ShowLayerTrack, 'collapsed' | 'lanes' | 'row'> & { id?: string };
 
-/** Height of one track: its clip row, plus its lanes when unfolded; nothing
- *  inside a folded group. */
-export function trackHeight(track: RowShape): number {
+/** Height of one track: its clip row, plus its control lines when unfolded;
+ *  nothing inside a folded group. */
+export function trackHeight(track: RowShape, layout?: LineLayout): number {
   if (track.row?.hidden) return 0;
-  return TRACK_ROW_HEIGHT + (track.collapsed ? 0 : track.lanes.length * LANE_ROW_HEIGHT);
+  if (track.collapsed) return TRACK_ROW_HEIGHT;
+  const lines = track.id ? (layout ? layout.heights.get(track.id) ?? 0 : lineRowsHeight(track.id)) : 0;
+  return TRACK_ROW_HEIGHT + track.lanes.length * LANE_ROW_HEIGHT + lines;
 }
 
 /** A row's colour: its own, or one picked from the piece's id so a piece
@@ -55,19 +58,19 @@ export function hiddenSpans(track: Pick<ShowLayerTrack, 'clips' | 'gap' | 'muted
   return out;
 }
 
-export function tracksStackHeight(tracks: readonly RowShape[]): number {
+export function tracksStackHeight(tracks: readonly RowShape[], layout?: LineLayout): number {
   let h = ADD_TRACK_ROW_HEIGHT;
-  for (const t of tracks) h += trackHeight(t);
+  for (const t of tracks) h += trackHeight(t, layout);
   return h;
 }
 
 /** Top of each track inside the stack. */
-export function trackTops(tracks: readonly RowShape[]): number[] {
+export function trackTops(tracks: readonly RowShape[], layout?: LineLayout): number[] {
   const tops: number[] = [];
   let y = 0;
   for (const t of tracks) {
     tops.push(y);
-    y += trackHeight(t);
+    y += trackHeight(t, layout);
   }
   return tops;
 }

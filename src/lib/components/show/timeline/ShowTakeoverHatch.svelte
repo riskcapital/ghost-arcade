@@ -8,6 +8,7 @@
   import { showSlice } from './timelineSlices';
   import { liveTakeover } from '../../../show/takeover/liveTakeover';
   import { TRACK_ROW_HEIGHT, trackTops } from './trackLayout';
+  import { lineLayout } from './lineUi';
 
   interface Props {
     tracks: ShowLayerTrack[];
@@ -16,7 +17,7 @@
 
   let { tracks, zoom }: Props = $props();
 
-  const tops = $derived(trackTops(tracks));
+  const tops = $derived(trackTops(tracks, $lineLayout));
   const currentTimeStore = showSlice('currentTime');
   const playhead = $derived($currentTimeStore);
   const spans = $derived.by(() => {

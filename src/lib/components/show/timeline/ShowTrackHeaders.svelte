@@ -58,7 +58,7 @@
       moved = true;
       const now = get(showTimeline).layerTracks;
       const top = listEl?.getBoundingClientRect().top ?? 0;
-      const gap = Math.max(lo, Math.min(hi, reorderGapAt(trackTops(now), now.map(trackHeight), ev.clientY - top)));
+      const gap = Math.max(lo, Math.min(hi, reorderGapAt(trackTops(now), now.map((t) => trackHeight(t)), ev.clientY - top)));
       reorder = { trackId, gap, from };
     };
     // Esc or focus lost: nothing has moved yet, the gap marker just goes.

@@ -2453,7 +2453,7 @@
 
 
         <!-- Opacity (a show block's own while one is being edited) -->
-        <div class="property-row" class:block-row={!!editBlock}>
+        <div class="property-row" class:block-row={!!editBlock} data-line-key={editBlock ? undefined : 'layer:opacity'}>
           <label title={editBlock ? 'The show block\'s opacity' : undefined}>{editBlock ? 'Block opacity' : 'Opacity'}</label>
           <input
             type="range"

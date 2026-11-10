@@ -62,7 +62,7 @@ describe('rows are the mapping layers', () => {
     const folded = first.map((r) => (r.layerId === 'Arch' ? { ...r, foldChildren: true } : r));
     const rows = reconcileStageRows(folded, stagePieces(stage, []), opts)!;
     expect(rows.map((r) => r.row?.hidden)).toEqual([false, true, false]);
-    expect(rows.map(trackHeight)[1]).toBe(0);
+    expect(rows.map((t) => trackHeight(t))[1]).toBe(0);
   });
 
   it('merges the pieces of every look the show uses, by layer id', () => {

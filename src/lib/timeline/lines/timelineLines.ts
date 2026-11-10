@@ -124,6 +124,8 @@ export const lineSelection = writable<LineSelection | null>(null);
 /** Live values of lines that follow a live source (for the faint trace). */
 export const liveTraces = new Map<string, Array<{ t: number; v: number }>>();
 export const liveTraceVersion = writable(0);
+/** Record passes being written right now, by line id (drawn as they grow). */
+export const recordingPasses = writable<ReadonlyMap<string, ReadonlyArray<{ t: number; v: number }>>>(new Map());
 const TRACE_SECONDS = 30;
 
 // ── Session ────────────────────────────────────────────────────────────────
@@ -227,6 +229,12 @@ function onTick(tick: ShowLineTick): void {
   session.tick(tick.time, tick.playing, tick.tempo);
   if (tick.playing) recordTraces(tick.time);
   if (session.recorder.armed || get(lineRecordState).bindPending) syncRecordUi();
+  const open = session.recorder.openPasses();
+  if (open > 0) {
+    if (++traceTick % 3 === 0) recordingPasses.set(new Map([...session.recorder.passSamples()].map(([id, s]) => [id, s.slice()])));
+  } else if (get(recordingPasses).size) {
+    recordingPasses.set(new Map());
+  }
 }
 
 function recordTraces(time: number): void {

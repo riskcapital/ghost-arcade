@@ -3,21 +3,23 @@
    * A row's header in the show's label column: colour, the piece's name
    * (indented under its group; a group folds its children), the eye (hide
    * the piece for the whole show), Solo / Lock, "+ layer" (a layer of the
-   * show's own on this piece, drawn over it) and the "◆+" picker that folds a
-   * keyframe lane open under the row. Lane headers follow underneath when the
-   * row is unfolded. Double-click the name to rename the piece (or an added
+   * show's own on this piece, drawn over it) and the "⌇+" picker that adds a
+   * control line under the row (for the piece, or a block on it). The lines'
+   * headers follow underneath when the row is unfolded. Double-click the name to rename the piece (or an added
    * layer); an added layer can be dragged up or down among its piece's.
    *
    * LIVE takes the track's surface over (a VJ row, the mix, a group, black,
    * or media dropped on the button). While it is taken over the header is
    * orange, says what is playing, and ↩ hands it back (Shift: instantly).
    */
-  import { get } from 'svelte/store';
   import type { Layer, ShowLayerTrack } from '../../../types';
   import { showTimeline } from '../../../stores/showTimeline';
-  import { evaluateTrack } from '../../../keyframes/easing';
-  import { LANE_ROW_HEIGHT, TRACK_ROW_HEIGHT, laneKeySelection, portal, rowColor } from './trackLayout';
-  import { trackLaneParams } from './trackParams';
+  import { TRACK_ROW_HEIGHT, rowColor } from './trackLayout';
+  import { lineLayout } from './lineUi';
+  import { rowLineTarget } from '../../../timeline/lines/laneConversion';
+  import { activeBlock } from '../../../show/tracks/showBlockEdit';
+  import LineHeaders from './LineHeaders.svelte';
+  import LinePicker from './LinePicker.svelte';
   import { renameShowTrack } from './trackHeaderActions';
   import { liveTakeover, takeoverSourceLabel, type SurfaceOverride } from '../../../show/takeover/liveTakeover';
   import { takeOverTrack } from '../../../show/takeover/takeoverRuntime';
@@ -108,54 +110,28 @@
     showTimeline.select({ kind: 'track', id: track.id });
   }
 
-  // ── Lane picker ──────────────────────────────────────────────────────
+  // ── Control lines ────────────────────────────────────────────────────
+  const rowLines = $derived($lineLayout.lines.get(track.id) ?? []);
+  const linesExpanded = $derived($lineLayout.expanded.has(track.id));
+  const blockNames = $derived(Object.fromEntries(track.clips.map((c) => [c.id, c.media.name || 'Block'])));
   let picker: { x: number; y: number } | null = $state(null);
-  const params = $derived(picker ? trackLaneParams(track, live) : []);
-  const groups = $derived.by(() => {
-    const used = new Set(track.lanes.map((l) => l.key));
-    const out = new Map<string, typeof params>();
-    for (const p of params) {
-      if (used.has(p.key)) continue;
-      const list = out.get(p.group) ?? [];
-      list.push(p);
-      out.set(p.group, list);
-    }
-    return [...out.entries()];
+  /** What the picker offers: the piece (or this added layer), then the
+   *  blocks on the row, the selected block first. */
+  const pickerTargets = $derived.by(() => {
+    if (!picker) return [];
+    const selectedClip = $activeBlock?.clipId;
+    const blocks = track.clips
+      .filter((c) => c.media.kind === 'shader' || c.media.kind === 'video' || !!c.media.jsAnimation)
+      .sort((a, b) => (a.id === selectedClip ? -1 : b.id === selectedClip ? 1 : a.startTime - b.startTime))
+      .map((c) => ({ target: { scope: 'block' as const, id: c.id }, label: `Block: ${c.media.name || 'block'}` }));
+    const own = { target: rowLineTarget(track), label: kind === 'sub' ? track.layerName : `Piece: ${track.layerName}` };
+    return selectedClip && blocks[0]?.target.id === selectedClip ? [blocks[0], own, ...blocks.slice(1)] : [own, ...blocks];
   });
 
   function openPicker(e: MouseEvent) {
     e.stopPropagation();
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     picker = picker ? null : { x: r.left, y: r.top - 4 };
-  }
-
-  $effect(() => {
-    if (!picker) return;
-    const close = () => { picker = null; };
-    const t = setTimeout(() => window.addEventListener('mousedown', close), 0);
-    return () => {
-      clearTimeout(t);
-      window.removeEventListener('mousedown', close);
-    };
-  });
-
-  function addLane(p: { key: string; label: string; type: 'number' | 'boolean' }) {
-    showTimeline.addTrackLane(track.id, { key: p.key, label: p.label, type: p.type });
-    picker = null;
-  }
-
-  /** "◆": a key at the playhead holding the value the lane has there (or the layer's own). */
-  function keyAtPlayhead(key: string) {
-    const lane = track.lanes.find((l) => l.key === key);
-    if (!lane) return;
-    const t = get(showTimeline).currentTime;
-    let value = evaluateTrack(lane, t);
-    if (value === undefined) {
-      const p = trackLaneParams(track, live).find((x) => x.key === key);
-      value = p ? p.defaultValue : lane.type === 'boolean' ? true : 1;
-    }
-    showTimeline.setLaneKey(track.id, key, t, value);
-    laneKeySelection.set({ trackId: track.id, key, times: [t] });
   }
 </script>
 
@@ -188,10 +164,10 @@
           <button
             class="th-fold"
             class:open={!track.collapsed}
-            disabled={!track.lanes.length}
+            disabled={!rowLines.length}
             onclick={(e) => { e.stopPropagation(); showTimeline.updateLayerTrack(track.id, { collapsed: !track.collapsed }); }}
-            title={track.collapsed ? 'Show keyframe lanes' : 'Hide keyframe lanes'}
-            aria-label={track.collapsed ? 'Show keyframe lanes' : 'Hide keyframe lanes'}
+            title={track.collapsed ? 'Show the control lines' : 'Hide the control lines'}
+            aria-label={track.collapsed ? 'Show the control lines' : 'Hide the control lines'}
           >▸</button>
         {/if}
         {#if kind === 'sub'}<span class="th-sub-mark" aria-hidden="true">└</span>{/if}
@@ -261,7 +237,7 @@
           title="Lock: no edits on this track"
           aria-pressed={track.locked}
         >L</button>
-        <button class="th-btn lanes" onmousedown={(e) => e.stopPropagation()} onclick={openPicker} title="Add a keyframe lane under this row" data-lane-picker>◆+</button>
+        <button class="th-btn lanes" onmousedown={(e) => e.stopPropagation()} onclick={openPicker} title="Add a control line under this row: any parameter of the piece or of a block on it" data-line-picker>⌇+</button>
         {#if kind === 'piece' || kind === 'group'}
           <button class="th-btn th-addsub" onmousedown={(e) => e.stopPropagation()} onclick={addLayerOnPiece} title="Add a layer on this piece: a row of its own whose blocks draw over the piece (same shape), each with its own blend mode" data-add-sub-row>+ Layer</button>
         {:else}
@@ -297,14 +273,8 @@
       </div>
     </div>
   </div>
-  {#if !track.collapsed}
-    {#each track.lanes as lane (lane.key)}
-      <div class="th-lane" class:inactive={inactiveLanes.has(lane.key)} style:height="{LANE_ROW_HEIGHT}px" data-lane-header={lane.key}>
-        <span class="th-lane-name" title={inactiveLanes.has(lane.key) ? `${lane.label}: not on this layer right now` : lane.label}>{lane.label}</span>
-        <button class="th-lane-btn" disabled={track.locked} onclick={() => keyAtPlayhead(lane.key)} title="Add a key at the playhead" data-lane-key-here>◆</button>
-        <button class="th-lane-btn" disabled={track.locked} onclick={() => showTimeline.removeTrackLane(track.id, lane.key)} title="Remove this lane and its keys" aria-label="Remove this lane and its keys">×</button>
-      </div>
-    {/each}
+  {#if !track.collapsed && rowLines.length}
+    <LineHeaders groupId={track.id} lines={rowLines} expanded={linesExpanded} locked={track.locked} {blockNames} />
   {/if}
 </div>
 
@@ -313,19 +283,7 @@
 {/if}
 
 {#if picker}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="th-picker" use:portal style:left="{picker.x}px" style:top="{picker.y}px" onmousedown={(e) => e.stopPropagation()} data-lane-picker-menu>
-    <div class="th-picker-head">Keyframe lane</div>
-    {#if groups.length === 0}
-      <div class="th-picker-empty">Every parameter already has a lane.</div>
-    {/if}
-    {#each groups as [group, list] (group)}
-      <div class="th-picker-group">{group}</div>
-      {#each list as p (p.key)}
-        <button class="th-picker-item" onclick={() => addLane(p)} data-param-key={p.key}>{p.label}</button>
-      {/each}
-    {/each}
-  </div>
+  <LinePicker targets={pickerTargets} x={picker.x} y={picker.y} onclose={() => (picker = null)} />
 {/if}
 
 <style>
@@ -458,74 +416,4 @@
   .th.returning .th-live-badge { animation: th-live-blink 0.6s ease-in-out infinite alternate; }
   @keyframes th-live-blink { from { opacity: 1; } to { opacity: 0.45; } }
   .th-gap { font-size: 9px; color: var(--ga-ink-2, #7a7a86); white-space: nowrap; margin-left: 2px; }
-  .th-lane {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 0 6px 0 26px;
-    box-sizing: border-box;
-    border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.05));
-    background: rgba(255, 255, 255, 0.015);
-  }
-  .th-lane.inactive { opacity: 0.45; }
-  .th-lane-name {
-    flex: 1 1 auto;
-    min-width: 0;
-    font-size: var(--ga-text-meta, 11px);
-    color: var(--ga-ink-1, #aaa);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .th-lane-btn {
-    width: 18px;
-    height: 18px;
-    padding: 0;
-    font: inherit;
-    font-size: 11px;
-    color: var(--ga-ink-2, #888);
-    background: none;
-    border: 1px solid transparent;
-    border-radius: 3px;
-    cursor: pointer;
-  }
-  .th-lane-btn:first-of-type { color: var(--ga-coral, #ff6f5e); }
-  .th-lane-btn:hover:not(:disabled) { border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24)); color: var(--ga-ink-0, #fff); }
-  .th-lane-btn:disabled { opacity: 0.3; cursor: default; }
-  .th-picker {
-    position: fixed;
-    z-index: 10000;
-    min-width: 190px;
-    max-height: 320px;
-    overflow-y: auto;
-    padding: 4px;
-    transform: translateY(-100%);
-    background: var(--ga-raise, #14141a);
-    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
-    border-radius: var(--ga-r-soft, 6px);
-    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6);
-  }
-  .th-picker-head, .th-picker-group {
-    font-size: var(--ga-text-eyebrow, 10px);
-    text-transform: uppercase;
-    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
-    color: var(--ga-ink-2, #7a7a86);
-    padding: 6px 8px 2px;
-  }
-  .th-picker-head { color: var(--ga-coral, #ff6f5e); }
-  .th-picker-empty { font-size: var(--ga-text-meta, 11px); color: var(--ga-ink-2, #888); padding: 4px 8px; }
-  .th-picker-item {
-    display: block;
-    width: 100%;
-    text-align: left;
-    background: none;
-    border: 0;
-    color: var(--ga-ink-0, #ddd);
-    font: inherit;
-    font-size: var(--ga-text-control, 12px);
-    padding: 4px 8px;
-    border-radius: 3px;
-    cursor: pointer;
-  }
-  .th-picker-item:hover { background: var(--ga-selection-bg, #1f3170); color: var(--ga-selection-ink, #e0e8ff); }
 </style>

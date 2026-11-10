@@ -4676,7 +4676,7 @@
       <div class="params-list">
         {#each selectedJSAnimation.jsAnimation.params as param}
           {#if param.type === 'number'}
-            <div class="param-row">
+            <div class="param-row" data-line-key={`sketch:${param.name}`}>
               <label>{param.label || param.name}</label>
               <input
                 type="range"
@@ -4691,7 +4691,7 @@
               </span>
             </div>
           {:else if param.type === 'boolean'}
-            <div class="param-row">
+            <div class="param-row" data-line-key={`sketch:${param.name}`}>
               <label>{param.label || param.name}</label>
               <input
                 type="checkbox"

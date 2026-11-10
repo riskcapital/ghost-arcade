@@ -203,6 +203,13 @@ export function createLineRecorder(host: RecorderHost, opts: { now?: () => numbe
     openPasses(): number {
       return passes.size;
     },
+
+    /** What open passes have written so far, by line id (drawn live). */
+    passSamples(): Map<string, readonly Sample[]> {
+      const out = new Map<string, readonly Sample[]>();
+      for (const pass of passes.values()) out.set(pass.lineId, pass.samples);
+      return out;
+    },
   };
 }
 

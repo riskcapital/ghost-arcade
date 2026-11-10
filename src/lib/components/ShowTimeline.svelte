@@ -90,6 +90,13 @@
   import { devicePixel, formatPrecise } from './show/timeline/timeFormat';
   import ShowAudioDelayBadge from './show/timeline/ShowAudioDelayBadge.svelte';
   import ShowLookLane from './show/timeline/ShowLookLane.svelte';
+  import LineLanes from './show/timeline/LineLanes.svelte';
+  import LineHeaders from './show/timeline/LineHeaders.svelte';
+  import LinePicker from './show/timeline/LinePicker.svelte';
+  import LineRecordControls from './show/timeline/LineRecordControls.svelte';
+  import LineDiamondOverlay from './show/timeline/LineDiamondOverlay.svelte';
+  import { LOOKS_GROUP, STAGE_GROUP, STAGE_ROW_HEIGHT, lineLayout } from './show/timeline/lineUi';
+  import { edgeLook } from '../looks/edgeLookCatalog';
   import ShowLookInspector from './show/timeline/ShowLookInspector.svelte';
   import { carriesEdgeLook, readEdgeLookDrag } from '../looks/edgeLookDrag';
   import { showToast } from '../stores/errorToast';
@@ -410,7 +417,28 @@
   /** The takeover pads' own height, when they are open. */
   let padsH = $state(0);
 
-  const tracksH = $derived(isTimeline ? tracksStackHeight(layerTracks) : 0);
+  const tracksH = $derived(isTimeline ? tracksStackHeight(layerTracks, $lineLayout) : 0);
+  // Control lines of the Looks row and the Stage row (Timeline only).
+  const looksLines = $derived(isTimeline ? $lineLayout.lines.get(LOOKS_GROUP) ?? [] : []);
+  const stageLines = $derived(isTimeline ? $lineLayout.lines.get(STAGE_GROUP) ?? [] : []);
+  const looksLinesH = $derived(isTimeline ? ($lineLayout.heights.get(LOOKS_GROUP) ?? 0) : 0);
+  const stageRowH = $derived(isTimeline ? STAGE_ROW_HEIGHT + ($lineLayout.heights.get(STAGE_GROUP) ?? 0) : 0);
+  const lookSpans = $derived(Object.fromEntries(lookClips.map((c) => [c.id, { start: c.startTime, end: c.startTime + c.duration }])));
+  const lookNames = $derived(Object.fromEntries(lookClips.map((c) => [c.id, edgeLook(c.lookId)?.name ?? 'Look'])));
+  let linePicker: { x: number; y: number; group: 'looks' | 'stage' } | null = $state(null);
+  const linePickerTargets = $derived.by(() => {
+    if (!linePicker) return [];
+    if (linePicker.group === 'stage') return [{ target: { scope: 'stage' as const }, label: 'Stage FX' }, { target: { scope: 'led' as const }, label: 'LEDs' }];
+    const sel = selection?.kind === 'lookClip' ? selection.id : null;
+    return [...lookClips]
+      .sort((a, b) => (a.id === sel ? -1 : b.id === sel ? 1 : a.startTime - b.startTime))
+      .map((c) => ({ target: { scope: 'look' as const, id: c.id }, label: `${lookNames[c.id]} @ ${formatPrecise(c.startTime)}` }));
+  });
+  function openLinePicker(e: MouseEvent, group: 'looks' | 'stage') {
+    e.stopPropagation();
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    linePicker = linePicker ? null : { x: r.left, y: r.top - 4, group };
+  }
   /** The lane under the ruler: Presets on the Show, Looks on the Timeline. */
   const topLaneH = $derived(isTimeline ? LOOK_LANE_HEIGHT : PRESET_LANE_HEIGHT);
   // The Stage camera lane sits under the audio lanes once it has shots (or was asked for).
@@ -423,7 +451,7 @@
     for (const t of audioTracks) out[t.lane]?.push(t);
     return out;
   });
-  const laneStackH = $derived(RULER_HEIGHT + topLaneH + tracksH + audioLaneCount * AUDIO_LANE_HEIGHT + cameraLaneH);
+  const laneStackH = $derived(RULER_HEIGHT + topLaneH + looksLinesH + tracksH + stageRowH + audioLaneCount * AUDIO_LANE_HEIGHT + cameraLaneH);
   const hasTracks = $derived(isTimeline && layerTracks.length > 0);
   const labelWidth = $derived(hasTracks ? TRACK_HEADER_WIDTH : 108);
   // The bound clientHeight keeps its last value after the inspector
@@ -1395,6 +1423,8 @@
       {/if}
       {#if isTimeline}
       <span class="t-divider"></span>
+      <LineRecordControls />
+      <span class="t-divider"></span>
       <ShowTakeoverControls fit={transportFitLevel} />
       {/if}
       <input
@@ -1427,8 +1457,21 @@
           {#if isTimeline}
           <div class="lane-label look" style="height: {LOOK_LANE_HEIGHT}px">
             <span class="lane-name" title="Shape Looks along the Timeline: drag a Look card from the Looks gallery here. The shapes wear it for the block's span; overlapping blocks crossfade.">Looks</span>
+            {#if lookClips.length > 0}
+              <button class="lane-line-add" onclick={(e) => openLinePicker(e, 'looks')} title="Add a control line for a look block: intensity, speed, colour step, beat reaction, chase" data-line-picker-looks>⌇+</button>
+            {/if}
           </div>
+          {#if looksLines.length}
+            <LineHeaders groupId={LOOKS_GROUP} lines={looksLines} expanded={$lineLayout.expanded.has(LOOKS_GROUP)} blockNames={lookNames} />
+          {/if}
           <ShowTrackHeaders />
+          <div class="lane-label stage" style="height: {STAGE_ROW_HEIGHT}px" data-stage-row>
+            <span class="lane-name" title="The whole stage: Stage FX and LEDs. Lines here drive them along the Timeline.">Stage</span>
+            <button class="lane-line-add" onclick={(e) => openLinePicker(e, 'stage')} title="Add a control line for a Stage FX or LED parameter" data-line-picker-stage>⌇+</button>
+          </div>
+          {#if stageLines.length}
+            <LineHeaders groupId={STAGE_GROUP} lines={stageLines} expanded={$lineLayout.expanded.has(STAGE_GROUP)} />
+          {/if}
           {:else}
           <div class="lane-label preset" style="height: {PRESET_LANE_HEIGHT}px">
             <span class="lane-name" title="Presets launched along the show, with transitions between them.">Presets</span>
@@ -1489,7 +1532,14 @@
             onblockresize={(e, id, edge) => startBlockResize(e, 'look', id, edge)}
           />
 
+          {#if looksLines.length}
+            <LineLanes groupId={LOOKS_GROUP} lines={looksLines} expanded={$lineLayout.expanded.has(LOOKS_GROUP)} {zoom} {viewStart} {viewEnd} blockSpans={lookSpans} />
+          {/if}
           <ShowTrackLanes {zoom} {viewStart} {viewEnd} width={totalWidth} />
+          <div class="stage-row-strip" style="height: {STAGE_ROW_HEIGHT}px"></div>
+          {#if stageLines.length}
+            <LineLanes groupId={STAGE_GROUP} lines={stageLines} expanded={$lineLayout.expanded.has(STAGE_GROUP)} {zoom} {viewStart} {viewEnd} />
+          {/if}
           {:else}
           <ShowPresetLane
             clips={presetClips}
@@ -1801,6 +1851,11 @@
       </div>
     {/if}
   </div>
+  {#if isTimeline}<LineDiamondOverlay />{/if}
+{/if}
+
+{#if linePicker}
+  <LinePicker targets={linePickerTargets} x={linePicker.x} y={linePicker.y} onclose={() => (linePicker = null)} />
 {/if}
 
 <style>
@@ -2182,6 +2237,22 @@
   }
   .lane-label.preset .lane-name { color: color-mix(in srgb, var(--ga-coral, #ff6f5e) 75%, #ffffff); }
   .lane-label.look .lane-name { color: color-mix(in srgb, #8c78ff 75%, #ffffff); }
+  .lane-label.stage .lane-name { color: color-mix(in srgb, #5ce1e6 75%, #ffffff); }
+  .lane-label.stage { background: rgba(92, 225, 230, 0.03); }
+  .lane-line-add {
+    margin-left: auto;
+    background: var(--ga-sunk, #0c0c10);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #aaa);
+    border-radius: 3px;
+    font: inherit;
+    font-size: 11px;
+    padding: 0 6px;
+    height: 18px;
+    cursor: pointer;
+  }
+  .lane-line-add:hover { color: var(--ga-ink-0, #fff); border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24)); }
+  .stage-row-strip { border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07)); background: rgba(92, 225, 230, 0.03); box-sizing: border-box; }
 
   .show-grid {
     flex: 1;

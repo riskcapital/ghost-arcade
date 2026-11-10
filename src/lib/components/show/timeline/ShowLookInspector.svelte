@@ -7,6 +7,8 @@
   import { showTimeline } from '../../../stores/showTimeline';
   import { EDGE_LOOKS } from '../../../looks/edgeLookCatalog';
   import { LOOK_PALETTES, isLookTarget, type Rgba } from '../../../looks/edgeLooks';
+  import { addLineAtPlayhead } from '../../../timeline/lines/timelineLines';
+  import { lookBlockParams } from '../../../timeline/lines/paramRegistry';
 
   interface Props {
     clip: ShowLookClip;
@@ -76,6 +78,12 @@
       {/each}
     </span>
   {/if}
+  <span class="insp-lines" role="group" aria-label="Control lines for this look block">
+    {#each lookBlockParams() as p (p.key)}
+      <button type="button" class="insp-line" onclick={() => addLineAtPlayhead({ scope: 'look', id: clip.id }, p.key)}
+        title={`◆ ${p.label}: a point at the playhead on this look block's ${p.label.toLowerCase()} line`} data-line-key={p.key} data-line-scope="look" data-line-target={clip.id} data-look-line={p.key}>◆ {p.label}</button>
+    {/each}
+  </span>
   <label class="insp-field">
     <span>Start</span>
     <input type="number" min="0" step="0.1" value={clip.startTime.toFixed(2)}
@@ -186,4 +194,16 @@
     line-height: 1;
   }
   .insp-close:hover { color: var(--ga-ink-0, #fff); }
+  .insp-lines { display: inline-flex; flex-wrap: wrap; gap: 3px; }
+  .insp-line {
+    background: var(--ga-sunk, #0c0c10);
+    border: 1px solid rgba(255, 217, 107, 0.4);
+    color: rgba(255, 217, 107, 0.85);
+    border-radius: 3px;
+    font: inherit;
+    font-size: 11px;
+    padding: 1px 6px;
+    cursor: pointer;
+  }
+  .insp-line:hover { border-color: #FFD96B; color: #FFD96B; }
 </style>

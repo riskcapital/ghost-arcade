@@ -2,7 +2,7 @@
   /**
    * One row in the grid: its blocks, the crossfades between touching
    * blocks, the stretches where its piece is hidden (hatched), and
-   * (unfolded) its keyframe lanes.
+   * (unfolded) its control lines.
    *
    * Only clips in the visible window are drawn. Props are the track object
    * itself (replaced on every edit, never mutated) and plain numbers, so the
@@ -12,9 +12,10 @@
   import { trackTransitionWindow } from '../../../show/tracks/showTrackEval';
   import { junctionPredecessors, predecessorList } from './laneJunctions';
   import ShowLayerClipBlock from './ShowLayerClipBlock.svelte';
-  import KeyframeLaneView from './KeyframeLaneView.svelte';
+  import LineLanes from './LineLanes.svelte';
+  import { lineLayout } from './lineUi';
   import { thumbnailFor } from './clipMedia';
-  import { clipsInView, hiddenSpans, LANE_ROW_HEIGHT, rowColor, TRACK_ROW_HEIGHT, type LaneKeySelection, type TrackLaneController } from './trackLayout';
+  import { clipsInView, hiddenSpans, rowColor, TRACK_ROW_HEIGHT, type LaneKeySelection, type TrackLaneController } from './trackLayout';
 
   interface Props {
     track: ShowLayerTrack;
@@ -36,7 +37,7 @@
   }
 
   let {
-    track, index, zoom, viewStart, viewEnd, selectedIds, keySelection, thumbs, dropTime, inactiveLanes, laneRanges, ctl, live = false,
+    track, index, zoom, viewStart, viewEnd, selectedIds, thumbs, dropTime, ctl, live = false,
   }: Props = $props();
 
   const color = $derived(rowColor(track));
@@ -55,10 +56,9 @@
     .filter((c) => predecessors.has(c))
     .map((c) => ({ clip: c, window: trackTransitionWindow(predecessorList(predecessors.get(c), c), c) })));
 
-  const NO_TIMES: number[] = [];
-  function selectedTimes(key: string): readonly number[] {
-    return keySelection && keySelection.trackId === track.id && keySelection.key === key ? keySelection.times : NO_TIMES;
-  }
+  const rowLines = $derived($lineLayout.lines.get(track.id) ?? []);
+  const linesExpanded = $derived($lineLayout.expanded.has(track.id));
+  const blockSpans = $derived(Object.fromEntries(track.clips.map((c) => [c.id, { start: c.startTime, end: c.startTime + c.duration }])));
 
   function onpress(e: MouseEvent, clip: ShowLayerClip, part: import('./trackLayout').ClipPart) {
     ctl.pressClip(e, track, clip, part);
@@ -154,29 +154,8 @@
       <span class="lt-empty">{kind === 'sub' ? 'Drop media here: it draws over the piece' : kind === 'missing' ? 'This layer is gone from the stage' : 'Shows its look. Drop media here to play it on this piece'}</span>
     {/if}
   </div>
-  {#if !track.collapsed}
-    {#each track.lanes as lane (lane.key)}
-      <KeyframeLaneView
-        {lane}
-        {zoom}
-        {viewStart}
-        {viewEnd}
-        height={LANE_ROW_HEIGHT}
-        min={laneRanges[lane.key]?.min ?? 0}
-        max={laneRanges[lane.key]?.max ?? 1}
-        inactive={inactiveLanes.has(lane.key)}
-        locked={track.locked}
-        selectedTimes={selectedTimes(lane.key)}
-        snap={ctl.snap}
-        onaddkey={(time, value) => ctl.laneAddKey(track, lane.key, time, value)}
-        onmovekey={(from, to, value, dragId) => ctl.laneMoveKey(track, lane.key, from, to, value, dragId)}
-        onshiftkeys={(times, delta, dragId) => ctl.laneShiftKeys(track, lane.key, times, delta, dragId)}
-        onselectkeys={(times, additive) => ctl.laneSelectKeys(track, lane.key, times, additive)}
-        ondeletekeys={(times) => ctl.laneDeleteKeys(track, lane.key, times)}
-        oneasing={(times, easing) => ctl.laneEasing(track, lane.key, times, easing)}
-        snapshot={ctl.snapshot}
-      />
-    {/each}
+  {#if !track.collapsed && rowLines.length}
+    <LineLanes groupId={track.id} lines={rowLines} expanded={linesExpanded} {zoom} {viewStart} {viewEnd} locked={track.locked} {blockSpans} />
   {/if}
 </div>
 
