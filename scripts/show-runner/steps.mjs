@@ -233,7 +233,7 @@ const ACTIONS = {
     const file = s.clip ? fixture(s.clip) : null;
     const seconds = s.seconds ?? (s.clip && /^ramp/.test(s.clip) ? 10 : s.clip ? 4 : undefined);
     const opts = {};
-    for (const k of ['duration', 'inPoint', 'endBehaviour', 'fadeIn', 'fadeOut', 'rate', 'opacity']) if (s[k] !== undefined) opts[k] = s[k];
+    for (const k of ['duration', 'inPoint', 'endBehaviour', 'fadeIn', 'fadeOut', 'rate', 'opacity', 'transitionIn', 'transitionDuration']) if (s[k] !== undefined) opts[k] = s[k];
     const id = await ctx.eval(`(async () => {
       let media;
       ${file ? `media = __show.fileMedia(${J(file)}, ${seconds ?? 'undefined'});` : ''}
@@ -244,6 +244,16 @@ const ACTIONS = {
       return id;
     })()`);
     if (!id) throw new Error(`clip on ${s.track} was not placed`);
+    await sleep(300);
+  },
+  async 'show.lane'(ctx, s) {
+    // A keyframe lane under a track: { track, key, label, type, keys: [[t, v], ...] }.
+    await ctx.eval(`(() => {
+      const st = __show.g().showTimeline;
+      const id = __show.vars['track:' + ${J(s.track)}];
+      st.addTrackLane(id, { key: ${J(s.key ?? 'layer:opacity')}, label: ${J(s.label ?? 'Opacity')}, type: ${J(s.type ?? 'number')} });
+      for (const [t, v] of ${J(s.keys ?? [])}) st.setLaneKey(id, ${J(s.key ?? 'layer:opacity')}, t, v);
+    })()`);
     await sleep(300);
   },
   async 'show.split'(ctx, s) { await ctx.eval(`__show.g().showTimeline.splitLayerClips(${s.at})`); await sleep(300); },
@@ -337,6 +347,14 @@ const CHECKS = {
     if (!snap) return { pass: false, detail: 'no output frame' };
     const got = colourName(snap.mean_rgba);
     return { pass: got.name === s.is && got.distance < (s.tolerance ?? 0.25), detail: `output is ${got.name} (${snap.mean_rgba.slice(0, 3).map((v) => v.toFixed(2)).join(', ')})` };
+  },
+  async 'output.rgb'(ctx, s) {
+    // The output's mean colour, numerically: { rgb: [r, g, b], within }.
+    const snap = await ctx.eval('__show.snapshot()');
+    if (!snap) return { pass: false, detail: 'no output frame' };
+    const got = snap.mean_rgba.slice(0, 3);
+    const off = Math.max(...got.map((v, i) => Math.abs(v - s.rgb[i])));
+    return { pass: off <= (s.within ?? 0.03), detail: `output ${got.map((v) => v.toFixed(3)).join(', ')} vs ${s.rgb.map((v) => v.toFixed(3)).join(', ')}` };
   },
   async 'output.notBlack'(ctx, s) {
     const snap = await ctx.eval('__show.snapshot()');

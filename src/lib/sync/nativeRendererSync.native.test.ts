@@ -1104,6 +1104,19 @@ describe('native renderer sync graph effect routing', () => {
       keyframeTimeline.clearAll();
     }
   });
+  it('applies a show clip\'s fade once, even when an applied list comes back', () => {
+    const sync = new NativeRendererSyncCtor() as any;
+    const layer = { id: 'show-fade', visible: true, opacity: 0.8, _showOpacityMul: 0.5 } as any;
+    const [once] = sync.applyTimelineOverrides([layer]);
+    expect(once.opacity).toBeCloseTo(0.4, 9);
+    // A paused scene is re-flushed from what was last sent: no second fade.
+    const [twice] = sync.applyTimelineOverrides([once]);
+    expect(twice.opacity).toBeCloseTo(0.4, 9);
+    expect(layer.opacity).toBe(0.8);
+    const [lane] = sync.applyTimelineOverrides([{ ...layer, _showParams: { 'layer:opacity': 0.6 } }]);
+    expect(lane.opacity).toBeCloseTo(0.3, 9);
+    expect(lane._showParams).toBeUndefined();
+  });
 });
 
 describe('native renderer sync native video pump routing', () => {

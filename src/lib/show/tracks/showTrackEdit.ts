@@ -10,6 +10,7 @@
 import type { KeyframeTrack, ShowLayerClip } from '../../types';
 import { generateUUID } from '../../utils/uuid';
 import { clipEnd, clipFades, clipLoopStart, clipMediaTime, clipRate, mediaEnd } from './showTrackEval';
+import { carryKeysAcross } from './showTrackLanes';
 
 /** Nothing on a track may be shorter than this. */
 export const SHOW_MIN_TRACK_CLIP_SECONDS = 0.1;
@@ -298,4 +299,78 @@ export function shiftLaneKeys(lanes: readonly KeyframeTrack[], from: number, to:
       .map((k) => (inside(k.time) ? { ...k, time: Math.max(0, k.time + delta) } : k))
       .sort((a, b) => a.time - b.time),
   }));
+}
+
+export interface EditableTrack {
+  id: string;
+  locked: boolean;
+  clips: ShowLayerClip[];
+  lanes: KeyframeTrack[];
+}
+
+/**
+ * Move the clips in `ids` by `delta` seconds and `trackOffset` rows, as one
+ * drag of a multi-track selection. Every clip moves the same way. Refused
+ * (null) when a clip would leave the track list, land on (or come from) a
+ * locked track, start before 0 or overlap a clip that stays. Keys inside a
+ * moving clip's span go with it, onto the target track's lane with the same
+ * key. Returns the whole track list, with unchanged tracks kept as they were.
+ */
+export function moveClipsAcrossTracks<T extends EditableTrack>(
+  tracks: readonly T[],
+  ids: ReadonlySet<string>,
+  delta: number,
+  trackOffset: number,
+): T[] | null {
+  const offset = Math.round(trackOffset);
+  if (!Number.isFinite(delta)) return null;
+  if (Math.abs(delta) < EPS && offset === 0) return null;
+  const sources = tracks
+    .map((track, index) => ({ track, index, moving: track.clips.filter((c) => ids.has(c.id)) }))
+    .filter((s) => s.moving.length > 0);
+  if (!sources.length) return null;
+  if (offset === 0) {
+    const next = [...tracks];
+    for (const { track, index, moving } of sources) {
+      if (track.locked) return null;
+      const clips = moveClips(track.clips, ids, delta);
+      if (!clips) return null;
+      let lanes = track.lanes;
+      for (const c of moving) lanes = shiftLaneKeys(lanes, c.startTime, clipEnd(c), delta);
+      next[index] = { ...track, clips, lanes };
+    }
+    return next;
+  }
+  const staying = new Map<number, ShowLayerClip[]>();
+  const arriving = new Map<number, ShowLayerClip[]>();
+  for (const { track, index, moving } of sources) {
+    const target = index + offset;
+    if (track.locked || target < 0 || target >= tracks.length || tracks[target].locked) return null;
+    staying.set(index, track.clips.filter((c) => !ids.has(c.id)));
+    arriving.set(target, moving.map((c) => ({ ...c, startTime: c.startTime + delta })));
+  }
+  for (const [target, added] of arriving) {
+    const base = staying.get(target) ?? tracks[target].clips.filter((c) => !ids.has(c.id));
+    if (!fits(base, added)) return null;
+  }
+  const clipsOf = (index: number): ShowLayerClip[] => {
+    const base = staying.get(index) ?? tracks[index].clips;
+    const added = arriving.get(index);
+    return added ? sortClips([...base, ...added.map((c) => ({ ...c, startTime: Math.max(0, c.startTime) }))]) : base;
+  };
+  const lanes = tracks.map((t) => t.lanes);
+  // Empty each target before it receives keys, so keys carried onto a track
+  // are never picked up again by that track's own moving clips.
+  const order = offset > 0 ? [...sources].reverse() : sources;
+  for (const { index, moving } of order) {
+    for (const c of moving) {
+      const carried = carryKeysAcross(lanes[index], lanes[index + offset], c.startTime, clipEnd(c), delta);
+      lanes[index] = carried.source;
+      lanes[index + offset] = carried.target;
+    }
+  }
+  return tracks.map((track, index) => {
+    if (!staying.has(index) && !arriving.has(index)) return track;
+    return { ...track, clips: clipsOf(index), lanes: lanes[index] };
+  });
 }

@@ -60,6 +60,7 @@
 
 import { writable, derived, get } from 'svelte/store';
 import type {
+  KeyframeEasing,
   ClipTransitionIn,
   CompositionTransitionStyle,
   KeyframeTrack,
@@ -111,6 +112,7 @@ import {
   maxClipDurationForMedia,
   moveClipTo,
   moveClips,
+  moveClipsAcrossTracks,
   pasteClips,
   rippleDelete,
   shiftLaneKeys,
@@ -125,6 +127,18 @@ import {
   type ShowTrackFrame,
 } from '../show/tracks/showTrackEval';
 import { nearestGridTime, normalizeTempoMap } from '../show/tempoMap';
+import {
+  addLane,
+  evaluateLanes,
+  moveLaneKey,
+  removeLane,
+  removeLaneKeys,
+  setLaneKey,
+  setLaneKeyEasing,
+  shiftKeysOnLane,
+  type LaneParam,
+} from '../show/tracks/showTrackLanes';
+import { clampShowTransitionDuration, findJunctionPredecessor } from '../show/showJunctions';
 import { resolveAssetTreeInPlace } from '../storage/assetRegistry';
 import {
   amendLastHistoryStep,
@@ -435,49 +449,8 @@ export function resolveTransitionStyle(
   return isTransitionStyle(value) ? value : null;
 }
 
-/**
- * Longest transition the junction on `next`'s left edge can actually hold:
- * never longer than `next` itself, and never longer than the clip before it.
- *
- * The window is centred, so a `D`-second transition only ever spends `D/2`
- * inside each neighbour — clamping `D` to the shorter neighbour's FULL
- * length therefore leaves both halves comfortably inside their clips AND
- * guarantees two adjacent junctions can touch but never overlap (each takes
- * at most half of the clip they share).
- */
-export function clampShowTransitionDuration(
-  requested: number | undefined,
-  next: Pick<ShowPresetClip, 'duration'>,
-  prev: Pick<ShowPresetClip, 'duration'> | null,
-): number {
-  const want = Number(requested);
-  if (!Number.isFinite(want) || want <= 0) return 0;
-  let limit = Math.max(0, next.duration);
-  if (prev) limit = Math.min(limit, Math.max(0, prev.duration));
-  return Math.max(0, Math.min(want, limit));
-}
-
-/**
- * The clip on the other side of `next`'s left junction: the one whose end
- * meets `next.startTime`.
- *
- * ADJACENCY IS REQUIRED. An earlier version of this reached back across a
- * gap, on the reasoning that the last-fired composition is still on screen
- * through a hole. A centred transition cannot use that: it would start
- * mid-gap, where nothing is playing, and the timeline would have to draw a
- * transition element straddling a boundary that is not a junction. Premiere
- * does not put a transition on a gap either — so neither does this.
- */
-export function findJunctionPredecessor(
-  clips: ShowPresetClip[],
-  next: Pick<ShowPresetClip, 'id' | 'startTime'>,
-): ShowPresetClip | null {
-  for (const c of clips) {
-    if (c.id === next.id) continue;
-    if (Math.abs(c.startTime + c.duration - next.startTime) <= 1e-6) return c;
-  }
-  return null;
-}
+// The junction rules are shared with the layer tracks' crossfades.
+export { clampShowTransitionDuration, findJunctionPredecessor } from '../show/showJunctions';
 
 /** The centred window a clip's transition occupies, or null for a hard cut.
  *  Exported for the timeline UI, which draws the element from exactly this. */
@@ -682,6 +655,7 @@ function publishTrackFrame(s: ShowTimelineState, evalTime: number, force = false
     seekGeneration,
     soloTrackId: s.soloTrackId,
     manualClock: isManualClock(),
+    laneValues: (track, t) => (track.lanes.length ? evaluateLanes(track.lanes, t) : null),
   });
   lastTrackFrame = frame;
   const signature = showTrackFrameSignature(frame);
@@ -872,6 +846,12 @@ function recordShowEdit(continuousKey?: string): void {
   if (isRestoringHistory()) return;
   if (continuousKey) scheduleHistorySnapshot(`show:${continuousKey}`);
   else recordDiscreteAction();
+}
+
+/** Extra snap targets from outside the store: the cue list's markers. */
+let snapEdgeProvider: (() => number[]) | null = null;
+export function setShowSnapEdgeProvider(provider: (() => number[]) | null): void {
+  snapEdgeProvider = provider;
 }
 
 /** True while an external clock (timecode chase) owns the playhead. The
@@ -1265,7 +1245,13 @@ export const showTimeline = {
     store.update((s) => ({ ...s, isOpen: open }));
   },
   select(selection: ShowTimelineSelection | null) {
-    store.update((s) => ({ ...s, selection }));
+    // One selection at a time: picking a preset clip, an audio track, a
+    // transition or a track (or nothing) lets go of selected layer clips,
+    // or Delete would remove those instead of what was just clicked.
+    store.update((s) => {
+      const keepClips = selection?.kind === 'layerClip' && s.selectedClipIds.includes(selection.id);
+      return { ...s, selection, selectedClipIds: keepClips ? s.selectedClipIds : selection?.kind === 'layerClip' ? [selection.id] : [] };
+    });
   },
   setZoom(zoom: number) {
     store.update((s) => ({
@@ -2079,7 +2065,7 @@ export const showTimeline = {
 
   /** Change a clip's fields (inspector). Timing changes go through
    *  move/trim; this clamps fades and a 'stop' clip's length. */
-  updateLayerClip(clipId: string, patch: Partial<Omit<ShowLayerClip, 'id' | 'startTime'>>) {
+  updateLayerClip(clipId: string, patch: Partial<Omit<ShowLayerClip, 'id' | 'startTime'>>, opts: { discrete?: boolean } = {}) {
     const found = this.findLayerClip(clipId);
     if (!found || found.track.locked) return;
     const others = found.track.clips.filter((c) => c.id !== clipId);
@@ -2088,7 +2074,8 @@ export const showTimeline = {
     next.duration = Math.max(SHOW_MIN_TRACK_CLIP_SECONDS, Math.min(next.duration, room));
     next = normalizeLayerClip(next) ?? found.clip;
     this._setTrackClips(found.track.id, found.track.clips.map((c) => (c.id === clipId ? next : c)));
-    recordShowEdit(`layer-clip:${clipId}`);
+    // Drags and sliders coalesce into one step; a one-shot change is its own.
+    recordShowEdit(opts.discrete ? undefined : `layer-clip:${clipId}`);
   },
 
   /** Drag one clip to a new start (snapped), carrying its lane keys. */
@@ -2124,10 +2111,12 @@ export const showTimeline = {
   },
 
   /** Drag a clip edge (snapped). The left edge moves the in-point with it. */
-  trimLayerClip(clipId: string, edge: 'start' | 'end', time: number) {
+  trimLayerClip(clipId: string, edge: 'start' | 'end', time: number, opts: { snap?: boolean } = {}) {
     const found = this.findLayerClip(clipId);
     if (!found || found.track.locked) return;
-    const snapped = snapShowTime(time, this._snapEdges(new Set([clipId])), this._snapOptions());
+    const snapped = opts.snap === false
+      ? Math.max(0, time)
+      : snapShowTime(time, this._snapEdges(new Set([clipId])), this._snapOptions());
     const clips = trimClip(found.track.clips, clipId, edge, snapped);
     if (!clips) return;
     this._setTrackClips(found.track.id, clips);
@@ -2230,8 +2219,130 @@ export const showTimeline = {
     store.update((s) => ({
       ...s,
       selectedClipIds: [...clipIds],
-      selection: clipIds.length === 1 ? { kind: 'layerClip', id: clipIds[0] } : clipIds.length ? s.selection : null,
+      // Several clips: no single item is "the" selection (and never a
+      // preset clip left over from before). None: drop only a clip selection.
+      selection: clipIds.length === 1
+        ? { kind: 'layerClip', id: clipIds[0] }
+        : clipIds.length
+          ? null
+          : s.selection?.kind === 'layerClip' ? null : s.selection,
     }));
+  },
+
+  /** Select every clip on every track. */
+  selectAllLayerClips() {
+    const ids = get(store).layerTracks.flatMap((t) => t.clips.map((c) => c.id));
+    this.selectLayerClips(ids);
+  },
+
+  /**
+   * Move clips together by `delta` seconds and `trackOffset` rows (a drag of
+   * a selection, possibly onto other tracks). Keys inside each clip go with
+   * it. Returns false when the move is refused (overlap, locked, off the
+   * track list) and nothing changed.
+   */
+  moveLayerClipsAcross(clipIds: string[], delta: number, trackOffset: number): boolean {
+    const ids = new Set(clipIds);
+    const layerTracks = moveClipsAcrossTracks(get(store).layerTracks, ids, delta, trackOffset);
+    if (!layerTracks) return false;
+    store.update((s) => withDuration({ ...s, layerTracks }));
+    recordShowEdit(`layer-move:${[...ids].sort().join(',')}`);
+    republishTracks();
+    return true;
+  },
+
+  /**
+   * Paste copied clips, each group onto its own track, keeping their spacing
+   * with the earliest clip at `at`. All or nothing; one undo step. Returns
+   * the new clip ids (empty when it would overlap or a track is locked).
+   */
+  pasteLayerClipGroups(groups: Array<{ trackId: string; clips: ShowLayerClip[] }>, at: number): string[] {
+    const usable = groups.filter((g) => g.clips.length);
+    if (!usable.length) return [];
+    const first = Math.min(...usable.flatMap((g) => g.clips.map((c) => c.startTime)));
+    const s = get(store);
+    const created: string[] = [];
+    const next = new Map<string, ShowLayerClip[]>();
+    for (const g of usable) {
+      const track = s.layerTracks.find((t) => t.id === g.trackId);
+      if (!track || track.locked) return [];
+      const base = next.get(g.trackId) ?? track.clips;
+      const groupFirst = Math.min(...g.clips.map((c) => c.startTime));
+      const result = pasteClips(base, g.clips, Math.max(0, at + (groupFirst - first)));
+      if (!result) return [];
+      next.set(g.trackId, result.clips);
+      created.push(...result.ids);
+    }
+    store.update((x) => withDuration({
+      ...x,
+      layerTracks: x.layerTracks.map((t) => (next.has(t.id) ? { ...t, clips: next.get(t.id)! } : t)),
+      selectedClipIds: created,
+      selection: created.length === 1 ? { kind: 'layerClip', id: created[0] } : x.selection?.kind === 'layerClip' ? null : x.selection,
+    }));
+    recordShowEdit();
+    republishTracks();
+    return created;
+  },
+
+  /** A show time snapped like a dragged clip edge would be (UI drags of
+   *  several clips, keys, the drop position). */
+  snapTime(t: number, excludeClipIds: Iterable<string> = []): number {
+    return snapShowTime(t, this._snapEdges(new Set(excludeClipIds)), this._snapOptions());
+  },
+
+  /** The magnetic targets (not the grid) for a drag, for snap guides. */
+  snapTargets(excludeClipIds: Iterable<string> = []): number[] {
+    return this._snapEdges(new Set(excludeClipIds));
+  },
+
+  // ── Keyframe lanes ─────────────────────────────────────────────────────
+
+  _editLanes(trackId: string, edit: (lanes: KeyframeTrack[]) => KeyframeTrack[], continuousKey?: string): boolean {
+    const track = get(store).layerTracks.find((t) => t.id === trackId);
+    if (!track || track.locked) return false;
+    const lanes = edit(track.lanes);
+    if (lanes === track.lanes || JSON.stringify(lanes) === JSON.stringify(track.lanes)) return false;
+    store.update((s) => ({
+      ...s,
+      layerTracks: s.layerTracks.map((t) => (t.id === trackId ? { ...t, lanes } : t)),
+    }));
+    recordShowEdit(continuousKey);
+    republishTracks();
+    return true;
+  },
+
+  /** Fold a keyframe lane open under a track for `param`. */
+  addTrackLane(trackId: string, param: LaneParam): boolean {
+    const added = this._editLanes(trackId, (lanes) => addLane(lanes, param));
+    this.updateLayerTrack(trackId, { collapsed: false });
+    return added;
+  },
+
+  removeTrackLane(trackId: string, key: string): boolean {
+    return this._editLanes(trackId, (lanes) => removeLane(lanes, key));
+  },
+
+  /** Add or change the key at `time` (show seconds). */
+  setLaneKey(trackId: string, key: string, time: number, value: number | boolean, easing?: KeyframeEasing): boolean {
+    return this._editLanes(trackId, (lanes) => setLaneKey(lanes, key, time, value, easing), `lane:${trackId}:${key}:set:${time.toFixed(4)}`);
+  },
+
+  /** Drag a key (one undo step per drag: pass the key's time at grab). */
+  moveLaneKey(trackId: string, key: string, from: number, to: number, value?: number | boolean, dragId?: string): boolean {
+    return this._editLanes(trackId, (lanes) => moveLaneKey(lanes, key, from, to, value), `lane:${trackId}:${key}:move:${dragId ?? from.toFixed(4)}`);
+  },
+
+  /** Move several keys on one lane together. */
+  shiftLaneKeys(trackId: string, key: string, times: number[], delta: number, dragId?: string): boolean {
+    return this._editLanes(trackId, (lanes) => shiftKeysOnLane(lanes, key, times, delta), `lane:${trackId}:${key}:shift:${dragId ?? ''}`);
+  },
+
+  removeLaneKeys(trackId: string, key: string, times: number[]): boolean {
+    return this._editLanes(trackId, (lanes) => removeLaneKeys(lanes, key, times));
+  },
+
+  setLaneKeyEasing(trackId: string, key: string, times: number[], easing: KeyframeEasing): boolean {
+    return this._editLanes(trackId, (lanes) => setLaneKeyEasing(lanes, key, times, easing));
   },
 
   // ── Beat grid ──────────────────────────────────────────────────────────
@@ -2275,10 +2386,13 @@ export const showTimeline = {
   },
 
   /** Every edge a dragged layer clip can snap to: clip edges on every lane,
-   *  the playhead and 0. */
+   *  the playhead, markers and 0. */
   _snapEdges(exclude: ReadonlySet<string>): number[] {
     const s = get(store);
     const edges = [s.currentTime];
+    if (snapEdgeProvider) {
+      try { edges.push(...snapEdgeProvider()); } catch { /* provider gone */ }
+    }
     for (const c of s.presetClips) edges.push(c.startTime, c.startTime + c.duration);
     for (const t of s.audioTracks) edges.push(t.startTime, t.startTime + t.duration);
     for (const track of s.layerTracks) {

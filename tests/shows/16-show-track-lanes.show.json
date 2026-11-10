@@ -1,0 +1,203 @@
+{
+  "name": "Show timeline: keyframe lanes and crossfades on a layer track",
+  "description": "An opacity lane drives the layer's opacity in the native output, and a crossfade between two clips on one track blends them through a helper copy, paused and playing.",
+  "steps": [
+    {
+      "do": "app.start",
+      "choice": "blank"
+    },
+    {
+      "do": "project.layer",
+      "name": "Wall",
+      "colour": "red",
+      "wait": 1
+    },
+    {
+      "do": "show.open"
+    },
+    {
+      "do": "show.track",
+      "name": "wall",
+      "layer": "Wall"
+    },
+    {
+      "do": "show.lane",
+      "track": "wall",
+      "keys": [
+        [
+          0,
+          0
+        ],
+        [
+          4,
+          1
+        ]
+      ]
+    },
+    {
+      "do": "show.clip",
+      "track": "wall",
+      "layerContent": true,
+      "at": 0,
+      "duration": 6,
+      "var": "own"
+    },
+    {
+      "do": "show.seek",
+      "t": 1,
+      "settle": 1500,
+      "label": "Opacity lane at a quarter: the layer is a quarter visible",
+      "expect": {
+        "output.rgb": {
+          "rgb": [
+            0.25,
+            0,
+            0
+          ],
+          "within": 0.03
+        }
+      }
+    },
+    {
+      "do": "show.seek",
+      "t": 2,
+      "settle": 1500,
+      "label": "Opacity lane half way",
+      "expect": {
+        "output.rgb": {
+          "rgb": [
+            0.5,
+            0,
+            0
+          ],
+          "within": 0.03
+        }
+      }
+    },
+    {
+      "do": "show.seek",
+      "t": 5,
+      "settle": 1500,
+      "label": "Past the last key the lane holds its value",
+      "expect": {
+        "output.rgb": {
+          "rgb": [
+            1,
+            0,
+            0
+          ],
+          "within": 0.03
+        }
+      }
+    },
+    {
+      "do": "show.clip",
+      "track": "wall",
+      "clip": "red.mp4",
+      "at": 8,
+      "duration": 4,
+      "endBehaviour": "hold",
+      "var": "red"
+    },
+    {
+      "do": "show.clip",
+      "track": "wall",
+      "clip": "blue.mp4",
+      "at": 12,
+      "duration": 4,
+      "endBehaviour": "hold",
+      "transitionIn": "dissolve",
+      "transitionDuration": 2,
+      "var": "blue"
+    },
+    {
+      "do": "show.seek",
+      "t": 10.8,
+      "settle": 1500,
+      "label": "Before the crossfade: the outgoing clip only",
+      "expect": {
+        "output.rgb": {
+          "rgb": [
+            1,
+            0,
+            0
+          ],
+          "within": 0.03
+        }
+      }
+    },
+    {
+      "do": "show.seek",
+      "t": 11.5,
+      "settle": 1500,
+      "label": "A quarter into the crossfade: constant-power dissolve",
+      "expect": {
+        "output.rgb": {
+          "rgb": [
+            0.57,
+            0,
+            0.383
+          ],
+          "within": 0.03
+        }
+      }
+    },
+    {
+      "do": "show.seek",
+      "t": 12,
+      "settle": 1500,
+      "label": "Half way: the helper copy beneath carries the outgoing clip",
+      "expect": {
+        "output.rgb": {
+          "rgb": [
+            0.207,
+            0,
+            0.707
+          ],
+          "within": 0.03
+        }
+      }
+    },
+    {
+      "do": "show.seek",
+      "t": 12.5,
+      "settle": 1500,
+      "label": "Three quarters in",
+      "expect": {
+        "output.rgb": {
+          "rgb": [
+            0.029,
+            0,
+            0.924
+          ],
+          "within": 0.03
+        }
+      }
+    },
+    {
+      "do": "show.seek",
+      "t": 13.3,
+      "settle": 1500,
+      "label": "After the crossfade: the incoming clip only",
+      "expect": {
+        "output.rgb": {
+          "rgb": [
+            0,
+            0,
+            1
+          ],
+          "within": 0.03
+        }
+      }
+    },
+    {
+      "do": "show.seek",
+      "t": 13.3,
+      "settle": 300,
+      "label": "No errors along the way",
+      "expect": {
+        "noErrors": true
+      }
+    }
+  ]
+}

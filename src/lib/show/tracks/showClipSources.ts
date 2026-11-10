@@ -29,6 +29,8 @@ import { resolveAssetRefForRuntime } from '../../storage/assetRegistry';
 import type { ShowTrackClipState, ShowTrackFrame, ShowTrackState } from './showTrackEval';
 
 export const SHOW_SOURCE_PREFIX = 'show:';
+/** Anchor key of a track's crossfade helper (showTrackScene's suffix). */
+const XFADE_KEY_SUFFIX = '::xf';
 /** Manual clock: re-anchor past half of a 60 fps frame. */
 export const SHOW_MANUAL_REANCHOR_SECONDS = 0.5 / 60;
 /** A pre-rolled session is taken over as it is when the clip binds this
@@ -158,6 +160,27 @@ export class ShowClipSources {
     return this.videoSource(state.trackId, clip, frame);
   }
 
+  /**
+   * The outgoing clip's source in a crossfade, for the helper copy beneath
+   * the layer. Its anchor is kept under its own key; when the crossfade
+   * begins, the run that was playing on the track is handed over as it is,
+   * so the outgoing video carries on without a seek. Call it before
+   * `sourceFor` for the same frame.
+   */
+  xfadeSourceFor(state: ShowTrackState, frame: ShowTrackFrame): MediaSource | null {
+    const xf = state.xfade;
+    const key = state.trackId + XFADE_KEY_SUFFIX;
+    if (!xf || xf.clip.media.kind === 'layer') {
+      this.anchors.delete(key);
+      return null;
+    }
+    if (xf.clip.media.kind !== 'video') {
+      this.anchors.delete(key);
+      return this.staticSource(xf.clip.runId, xf.clip.media);
+    }
+    return this.videoSource(key, xf.clip, frame, state.trackId);
+  }
+
   /** The source an upcoming shader or sketch clip will have once it starts:
    *  the same object, so the warmed program is the one that goes live. */
   warmSourceFor(warm: { runId: string; media: ShowClipMedia }): MediaSource | null {
@@ -173,11 +196,18 @@ export class ShowClipSources {
     return source;
   }
 
-  private videoSource(trackId: string, clip: ShowTrackClipState, frame: ShowTrackFrame): MediaSource {
+  private videoSource(trackId: string, clip: ShowTrackClipState, frame: ShowTrackFrame, handOverFrom?: string): MediaSource {
     const sourceId = showSourceId(clip.runId);
-    const prev = this.anchors.get(trackId);
+    let prev = this.anchors.get(trackId);
     const duration = clip.media.sourceDuration;
     const uri = readableClipUri(clip.media);
+    if (handOverFrom && (!prev || prev.sourceId !== sourceId || prev.src !== uri)) {
+      const playing = this.anchors.get(handOverFrom);
+      if (playing && playing.sourceId === sourceId && playing.src === uri) {
+        prev = playing;
+        this.anchors.set(trackId, playing);
+      }
+    }
     const sameRun = !!prev && prev.sourceId === sourceId && prev.src === uri;
     let reanchor = !sameRun || prev!.paused !== clip.paused || Math.abs(prev!.rate - clip.rate) > 1e-9;
     if (!reanchor && prev!.showSeekGeneration !== frame.seekGeneration) {

@@ -9540,6 +9540,12 @@ export class NativeRendererSync {
       if (kf) applyParamOverrides(next as Layer, kf as ParamOverrideSet);
       if (showParams) applyParamOverrides(next as Layer, showParams);
       if (showMul !== undefined) next.opacity = (next.opacity ?? 1) * Math.max(0, Math.min(1, showMul));
+      // Applied once. A list that has been through here can come back (a
+      // paused scene is re-flushed from what was last sent), and a second
+      // pass multiplied the clip's fade in again, frame after frame, until
+      // a paused fade or crossfade read as black.
+      delete next._showOpacityMul;
+      delete next._showParams;
       return next as Layer;
     });
     return changed ? mapped : layers;

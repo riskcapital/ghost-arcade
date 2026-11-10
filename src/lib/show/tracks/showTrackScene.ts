@@ -16,6 +16,9 @@
  *   only there while a clip is playing.
  * - Gaps: the layer shows its own content ('layer') or is hidden ('hide').
  * - Muted tracks hide their layer; a solo hides every other tracked layer.
+ * - Crossfade between two clips on a track: a helper copy of the layer,
+ *   `showxf::<layerId>`, sits directly beneath it carrying the outgoing
+ *   clip at its dissolve weight.
  *
  * Returns the input array itself when no track changes anything.
  */
@@ -26,6 +29,10 @@ import type { ShowTrackFrame, ShowTrackState } from './showTrackEval';
 export const SHOW_TRACK_LAYER_PREFIX = 'showtrack::';
 /** Invisible copies that compile a shader or boot a sketch before its cut. */
 export const SHOW_WARM_LAYER_PREFIX = 'showwarm::';
+/** The outgoing side of a crossfade between two clips on one track. */
+export const SHOW_XFADE_LAYER_PREFIX = 'showxf::';
+/** Source-cache key of a track's crossfade helper (see ShowClipSources). */
+export const SHOW_XFADE_SOURCE_SUFFIX = '::xf';
 /** The core's scene limit (MAX_SCENE_LAYERS in native-renderer/src/main.rs). */
 export const SHOW_SCENE_LAYER_LIMIT = 1024;
 
@@ -36,6 +43,9 @@ export function showTrackLayerId(layerId: string): string {
 export interface ShowTrackSceneContext {
   /** The clip's source for a track (null: keep the layer's own content). */
   sourceFor: (state: ShowTrackState) => MediaSource | null;
+  /** The outgoing clip's source for a crossfade helper. Asked before the
+   *  incoming clip's `sourceFor`, so the outgoing decoder can carry on. */
+  xfadeSourceFor?: (state: ShowTrackState) => MediaSource | null;
   /** The source a warmed (upcoming) shader or sketch clip will use. */
   warmSourceFor?: (warm: NonNullable<ShowTrackState['warm']>) => MediaSource | null;
   /** Stored map surfaces, for an injected copy's geometry. */
@@ -56,6 +66,18 @@ function affects(state: ShowTrackState): boolean {
   return state.clip !== null || state.opacity < 1 || !!(state.params && Object.keys(state.params).length);
 }
 
+/** The crossfade helper for `layer` (already driven or injected). */
+function xfadeHelper(base: Layer, state: ShowTrackState, source: MediaSource | null, ownSource: Layer['source']): Layer | null {
+  const xf = state.xfade;
+  if (!xf || xf.opacity <= 0) return null;
+  const helper: Layer = { ...base, id: SHOW_XFADE_LAYER_PREFIX + state.layerId, visible: true, parentGroupId: null };
+  if (source) helper.source = source;
+  else if (xf.clip.media.kind === 'layer') helper.source = ownSource;
+  if (xf.opacity < 1) helper._showOpacityMul = Math.max(0, xf.opacity);
+  else delete helper._showOpacityMul;
+  return helper;
+}
+
 export function buildShowTrackScene(
   liveLayers: Layer[],
   frame: ShowTrackFrame | null,
@@ -68,6 +90,7 @@ export function buildShowTrackScene(
   const ids = new Set(liveLayers.map((l) => l.id));
 
   const warmLayers: Layer[] = [];
+  const xfSources = new Map<string, MediaSource | null>();
   for (const state of frame.tracks) {
     if (state.warm && ctx.warmSourceFor) {
       const source = ctx.warmSourceFor(state.warm);
@@ -87,6 +110,8 @@ export function buildShowTrackScene(
         });
       }
     }
+    const xfSource = state.xfade && ctx.xfadeSourceFor ? ctx.xfadeSourceFor(state) : null;
+    if (state.xfade) xfSources.set(state.layerId, xfSource);
     if (ids.has(state.layerId)) {
       if (affects(state)) onStage.set(state.layerId, state);
       continue;
@@ -102,13 +127,18 @@ export function buildShowTrackScene(
       ctx.sourceFor(state),
     );
     injected.push(copy);
+    const helper = xfadeHelper(copy, state, xfSources.get(state.layerId) ?? null, template.source);
+    if (helper) injected.push(helper);
   }
 
   if (!onStage.size && !injected.length && !warmLayers.length) return liveLayers;
   const stage = onStage.size
-    ? liveLayers.map((layer) => {
+    ? liveLayers.flatMap((layer) => {
         const state = onStage.get(layer.id);
-        return state ? drive(layer, state, ctx.sourceFor(state)) : layer;
+        if (!state) return [layer];
+        const driven = drive(layer, state, ctx.sourceFor(state));
+        const helper = xfadeHelper(driven, state, xfSources.get(layer.id) ?? null, layer.source);
+        return helper ? [driven, helper] : [driven];
       })
     : liveLayers;
   const room = Math.max(0, (ctx.maxLayers ?? SHOW_SCENE_LAYER_LIMIT) - stage.length);

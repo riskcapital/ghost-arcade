@@ -2171,6 +2171,7 @@
         if (!frame) return list;
         return buildShowTrackScene(list, frame, {
           sourceFor: (state) => showClipSources.sourceFor(state, frame),
+          xfadeSourceFor: (state) => showClipSources.xfadeSourceFor(state, frame),
           warmSourceFor: (warm) => showClipSources.warmSourceFor(warm),
           surfaces: get(project).mapSurfaces,
         });

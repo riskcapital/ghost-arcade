@@ -19,6 +19,8 @@
  *   decoder, named after its first clip, so a split plays with no seek.
  */
 import type { Layer, ShowClipMedia, ShowLayerClip, ShowLayerTrack } from '../../types';
+import { compositionTransitionWeights } from '../../renderer/compositionTransitionLayers';
+import { clampShowTransitionDuration, findJunctionPredecessor } from '../showJunctions';
 
 /** One frame at the rate stop/hold clips park before the media end. */
 export const SHOW_CLIP_END_GUARD_SECONDS = 1 / 30;
@@ -143,6 +145,8 @@ export function continuesRun(prev: ShowLayerClip, next: ShowLayerClip): boolean 
   if (prev.media.kind !== 'video' || !sameMedia(prev.media, next.media)) return false;
   if (Math.abs(clipRate(prev) - clipRate(next)) > EPS) return false;
   if (prev.endBehaviour !== next.endBehaviour) return false;
+  // A crossfade shows both clips at once: they need a decoder each.
+  if (next.transitionIn === 'dissolve') return false;
   if (prev.endBehaviour === 'loop' && Math.abs(clipLoopStart(prev) - clipLoopStart(next)) > EPS) return false;
   const carried = clipMediaTime(prev, clipEnd(prev));
   if (carried.held) return false;
@@ -206,6 +210,9 @@ export interface ShowTrackState {
   /** A shader or sketch clip about to start: its source is warmed
    *  invisibly ahead of the cut. */
   warm: { clipId: string; runId: string; media: ShowClipMedia } | null;
+  /** Inside a crossfade: the outgoing clip, drawn by a helper copy of the
+   *  layer just beneath it at `opacity`. `clip` is then the incoming one. */
+  xfade?: { clip: ShowTrackClipState; opacity: number; progress: number } | null;
 }
 
 export interface ShowTrackFrame {
@@ -261,6 +268,72 @@ function runsOf(clips: readonly ShowLayerClip[]): Map<string, string> {
   return runs;
 }
 
+/** The centred window of a clip's crossfade, or null for a cut. */
+export function trackTransitionWindow(
+  clips: readonly ShowLayerClip[],
+  clip: ShowLayerClip,
+): { start: number; end: number; duration: number; prev: ShowLayerClip } | null {
+  if (clip.transitionIn !== 'dissolve') return null;
+  const prev = findJunctionPredecessor(clips, clip);
+  if (!prev) return null;
+  const duration = clampShowTransitionDuration(clip.transitionDuration, clip, prev);
+  if (duration <= 0) return null;
+  const half = duration / 2;
+  return { start: clip.startTime - half, end: clip.startTime + half, duration, prev };
+}
+
+/** The crossfade under show time `t` on a track, if any. */
+export function crossfadeAt(
+  clips: readonly ShowLayerClip[],
+  t: number,
+): { incoming: ShowLayerClip; outgoing: ShowLayerClip; progress: number } | null {
+  const at = findClipAt(clips, t);
+  const candidates = [nextClipAfter(clips, t), at];
+  for (const c of candidates) {
+    if (!c) continue;
+    const w = trackTransitionWindow(clips, c);
+    if (w && t >= w.start - 1e-9 && t < w.end) {
+      return { incoming: c, outgoing: w.prev, progress: Math.max(0, Math.min(1, (t - w.start) / w.duration)) };
+    }
+  }
+  return null;
+}
+
+function clipStateAt(
+  clips: readonly ShowLayerClip[],
+  clip: ShowLayerClip,
+  t: number,
+  opts: Pick<EvaluateShowTracksOptions, 'playing' | 'manualClock'>,
+): ShowTrackClipState {
+  const runs = runsOf(clips);
+  const runId = runs.get(clip.id) ?? clip.id;
+  const runFirst = clips.find((c) => c.id === runId) ?? clip;
+  // Before its start (the first half of a crossfade) a clip with no media
+  // before its in-point waits on its first frame.
+  const waiting = clip.media.kind === 'video' && rawMediaTime(clip, t) < 0;
+  const position = clipMediaTime(clip, t);
+  return {
+    clipId: clip.id,
+    runId,
+    runStart: runFirst.startTime,
+    media: clip.media,
+    mediaTime: position.time,
+    // An offline render seeks frame by frame without "playing": its
+    // clips run on the render clock all the same.
+    paused: (!opts.playing && !opts.manualClock) || position.held || waiting,
+    held: position.held,
+    rate: clipRate(clip),
+    loopStart: clipLoopStart(runFirst),
+    localTime: t - clip.startTime,
+  };
+}
+
+/** Opacity a clip contributes at `t`: its own opacity times its fades. */
+function clipGain(clip: ShowLayerClip, t: number): number {
+  const inside = Math.max(clip.startTime, Math.min(clipEnd(clip) - 1e-6, t));
+  return Math.max(0, Math.min(1, clip.opacity ?? 1)) * clipFadeGain(clip, inside);
+}
+
 export function evaluateShowTracks(
   tracks: readonly ShowLayerTrack[],
   t: number,
@@ -284,10 +357,26 @@ export function evaluateShowTracks(
         warm: warmFor(track, t, silenced),
       };
     }
-    const runs = runsOf(track.clips);
-    const runId = runs.get(clip.id) ?? clip.id;
-    const runFirst = track.clips.find((c) => c.id === runId) ?? clip;
-    const position = clipMediaTime(clip, t);
+    const xf = silenced ? null : crossfadeAt(track.clips, t);
+    if (xf) {
+      const weights = compositionTransitionWeights('dissolve', xf.progress);
+      return {
+        trackId: track.id,
+        layerId: track.layerId,
+        layerName: track.layerName,
+        template: track.template,
+        clip: clipStateAt(track.clips, xf.incoming, t, opts),
+        opacity: clipGain(xf.incoming, t) * weights.incoming,
+        gap: track.gap,
+        params,
+        warm: warmFor(track, t, silenced),
+        xfade: {
+          clip: clipStateAt(track.clips, xf.outgoing, t, opts),
+          opacity: clipGain(xf.outgoing, t) * weights.outgoing,
+          progress: xf.progress,
+        },
+      };
+    }
     const opacity = silenced
       ? 0
       : Math.max(0, Math.min(1, clip.opacity ?? 1)) * clipFadeGain(clip, t);
@@ -296,20 +385,7 @@ export function evaluateShowTracks(
       layerId: track.layerId,
       layerName: track.layerName,
       template: track.template,
-      clip: {
-        clipId: clip.id,
-        runId,
-        runStart: runFirst.startTime,
-        media: clip.media,
-        mediaTime: position.time,
-        // An offline render seeks frame by frame without "playing": its
-        // clips run on the render clock all the same.
-        paused: (!opts.playing && !opts.manualClock) || position.held,
-        held: position.held,
-        rate: clipRate(clip),
-        loopStart: clipLoopStart(runFirst),
-        localTime: t - clip.startTime,
-      },
+      clip: clipStateAt(track.clips, clip, t, opts),
       opacity,
       gap: track.gap,
       params,
@@ -346,6 +422,7 @@ export function showTrackFrameSignature(frame: ShowTrackFrame): string {
         tr.params ? JSON.stringify(tr.params) : '',
         tr.template ? tr.template.id : '',
         tr.warm ? `w:${tr.warm.clipId}` : '',
+        tr.xfade ? `x:${tr.xfade.clip.clipId}/${tr.xfade.clip.runId}/${tr.xfade.clip.paused ? 'P' : ''}${tr.xfade.opacity.toFixed(4)}` : '',
       ].join('|'),
     );
   }
