@@ -18,9 +18,9 @@
     evaluateShotCamera, type DemoShot, type ReelEasing,
   } from '../../stage3d/demoReel';
   import { stage3dScene, stage3DRendererControls } from '../../stage3d/store';
-  import { stageReelRender } from '../../recording/stageReelRender';
+  import { reelRenderBusy, stageReelRender } from '../../recording/stageReelRender';
   import type { Stage3DScene } from '../../stage3d/types';
-  import { borrowStageCamera, createStageRehearsalRender, stageShow } from '../../show/rehearsal/stageRehearsal';
+  import { borrowStageCamera, createStageRehearsalRender, stageRecActive, stageShow } from '../../show/rehearsal/stageRehearsal';
 
   export let onClose: () => void = () => {};
 
@@ -28,8 +28,10 @@
   $: settings = $demoReel.settings;
   $: totalSec = sequenceDuration(shots);
   $: render = $stageReelRender;
-  $: rendering = render.status === 'choosing-folder' || render.status === 'loading-ffmpeg' || render.status === 'rendering'
-    || render.status === 'encoding' || render.status === 'saving';
+  $: rendering = reelRenderBusy(render.status);
+  // The stage view feeds one capture at a time: a second one ended the first
+  // and deleted its file.
+  $: recBusy = $stageRecActive;
 
   let selectedShotId: string | null = null;
   $: selectedShot = shots.find(s => s.id === selectedShotId) ?? null;
@@ -167,7 +169,7 @@
   // ── Render ───────────────────────────────────────────────────────────
 
   async function renderReel() {
-    if (rendering) return;
+    if (rendering || get(stageRecActive)) return;
     stopPreview();
     await stageReelRender.start(get(demoReel).shots, get(demoReel).settings);
   }
@@ -175,7 +177,7 @@
   /** Film the show playing from its start: the camera on the show's Stage
    *  camera lane (or these shots where it has none), with its soundtrack. */
   async function renderRehearsal() {
-    if (rendering) return;
+    if (rendering || get(stageRecActive)) return;
     stopPreview();
     const rehearsal = createStageRehearsalRender();
     if (!rehearsal) return;
@@ -205,15 +207,15 @@
     {:else}
       <button class="rbtn" onclick={startPreview} disabled={shots.length === 0 || rendering}>▶ Preview</button>
     {/if}
-    <button class="rbtn primary" onclick={renderReel} disabled={shots.length === 0 || rendering}>
+    <button class="rbtn primary" onclick={renderReel} disabled={shots.length === 0 || rendering || recBusy} title={recBusy ? 'Stop the stage recording (Rec) first' : undefined} data-reel-render>
       {rendering ? 'Rendering…' : 'Render reel'}
     </button>
     {#if canRehearse}
       <button
         class="rbtn"
         onclick={renderRehearsal}
-        disabled={rendering}
-        title="Play the show from its start and film it here, with the show's sound. The camera follows the show's Stage camera lane."
+        disabled={rendering || recBusy}
+        title={recBusy ? 'Stop the stage recording (Rec) first' : "Play the show from its start and film it here, with the show's sound. The camera follows the show's Stage camera lane."}
         data-reel-render-rehearsal
       >Render rehearsal</button>
     {/if}

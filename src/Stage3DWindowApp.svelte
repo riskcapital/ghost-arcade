@@ -10,6 +10,7 @@
    * the stage surface itself.
    */
   import { onMount, onDestroy } from 'svelte';
+  import { get } from 'svelte/store';
   import Canvas from './lib/components/Canvas.svelte';
   import Stage3DDesigner from './lib/components/stage3d/Stage3DDesigner.svelte';
   import { initStateBroadcast, destroyStateBroadcast } from './lib/sync/stateBroadcast';
@@ -18,7 +19,8 @@
   import { startModulationBroadcastReceiver } from './lib/sync/modulationBroadcast';
   import { initLicense } from './lib/stores/license';
   import { invoke } from '$lib/bridge';
-  import { installStageRehearsal } from './lib/show/rehearsal/stageRehearsal';
+  import { installStageRehearsal, stageRecActive } from './lib/show/rehearsal/stageRehearsal';
+  import { reelRenderBusy, stageReelRender } from './lib/recording/stageReelRender';
 
   // Rehearse the editor's show here: its transport, camera lane and sound.
   let stopRehearsal: (() => void) | null = null;
@@ -36,17 +38,33 @@
     initLicense().catch((e) => console.warn('[Stage3DWindow] License init:', e));
     stopRehearsal = installStageRehearsal();
 
+    window.addEventListener('beforeunload', guardCapture);
     window.addEventListener('beforeunload', notifyClosing);
   });
 
   onDestroy(() => {
+    window.removeEventListener('beforeunload', guardCapture);
     window.removeEventListener('beforeunload', notifyClosing);
     stopRehearsal?.();
     stopRehearsal = null;
     destroyStateBroadcast();
   });
 
+  /** A Rec, reel or rehearsal render is running or saving here. */
+  function captureRunning(): boolean {
+    return get(stageRecActive) || reelRenderBusy(get(stageReelRender).status);
+  }
+
+  // Closing or reloading mid-recording lost the take with no warning. Hold
+  // the unload; the main process asks whether to throw the recording away.
+  function guardCapture(e: BeforeUnloadEvent) {
+    if (!captureRunning()) return;
+    e.preventDefault();
+    e.returnValue = '';
+  }
+
   function notifyClosing() {
+    if (captureRunning()) return;
     invoke('stage3d_window_closing').catch(() => { /* main window may already be gone */ });
   }
 

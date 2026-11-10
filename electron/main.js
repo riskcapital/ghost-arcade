@@ -1184,6 +1184,42 @@ async function cancelJpegFrameEncoderJob(jobIdInput) {
   return { success: true };
 }
 
+/**
+ * A frame-encoder job fed by one renderer (the Stage Sim's Rec and reels, an
+ * export) has no one to finish it once that page is gone: closed, reloaded
+ * or crashed. Without this, ffmpeg kept running and a partial file stayed
+ * in the generated-video folder. `cancel` runs once when the page goes; the
+ * returned detach stops watching (the job finished or was cancelled).
+ */
+function watchEncoderJobOwner(owner, label, shouldCancel, cancel) {
+  if (!owner || typeof owner.once !== 'function') return () => {};
+  let done = false;
+  const gone = (why) => {
+    if (done) return;
+    detach();
+    if (!shouldCancel()) return;
+    console.warn(`[Encoder] ${label}: the page that fed it ${why}; cancelling.`);
+    void Promise.resolve().then(cancel).catch(() => {});
+  };
+  const onDestroyed = () => gone('closed');
+  const onCrashed = () => gone('crashed');
+  const onNavigate = (details) => {
+    if (details?.isMainFrame && !details.isSameDocument) gone('reloaded');
+  };
+  const detach = () => {
+    if (done) return;
+    done = true;
+    owner.removeListener('destroyed', onDestroyed);
+    owner.removeListener('render-process-gone', onCrashed);
+    owner.removeListener('did-start-navigation', onNavigate);
+  };
+  owner.once('destroyed', onDestroyed);
+  owner.once('render-process-gone', onCrashed);
+  owner.on('did-start-navigation', onNavigate);
+  if (owner.isDestroyed?.()) onDestroyed();
+  return detach;
+}
+
 function startMp4FrameEncoderJob(args = {}) {
   const jobId = String(args.jobId || '').trim();
   if (!jobId) throw new Error('Missing MP4 frame encoder job id.');
@@ -1416,6 +1452,7 @@ async function finishMp4FrameEncoderJob(jobIdInput) {
   const job = activeMp4FrameEncoderJobs.get(jobId);
   if (!job) return { success: true, alreadyFinished: true };
   job.detachCaptureOwner?.();
+  job.detachEncoderOwner?.();
   await job.liveClock?.stop();
   job.closing = true;
   await job.frameSink?.close();
@@ -1470,6 +1507,7 @@ async function cancelMp4FrameEncoderJob(jobIdInput) {
   if (!job) return { success: true };
   job.cancelled = true;
   job.detachCaptureOwner?.();
+  job.detachEncoderOwner?.();
   job.liveClock?.cancel();
   await job.frameSink?.close();
   const audioTap = job.audioTap;
@@ -8341,7 +8379,7 @@ function registerIpcHandlers() {
     }
   });
 
-  ipcMain.handle('mp4_frame_encoder_start', async (_, args = {}) => {
+  ipcMain.handle('mp4_frame_encoder_start', async (event, args = {}) => {
     try {
       const { recordingCodec } = require('./recording-formats.cjs');
       const codec = recordingCodec(args.codec);
@@ -8353,8 +8391,16 @@ function registerIpcHandlers() {
         }
         hardwareProRes = probed.hardwareProRes;
       }
-      const job = startMp4FrameEncoderJob({ ...args, hardwareProRes });
-      return { success: true, ...job };
+      const started = startMp4FrameEncoderJob({ ...args, hardwareProRes });
+      const job = activeMp4FrameEncoderJobs.get(started.jobId);
+      if (job) {
+        // Live REC from the editor keeps its own owner watch (it finishes
+        // the take to keep the footage); every other job is cancelled.
+        job.detachEncoderOwner = watchEncoderJobOwner(event?.sender, `MP4 job ${started.jobId}`,
+          () => activeMp4FrameEncoderJobs.get(started.jobId) === job && !job.liveClock && !job.detachCaptureOwner,
+          () => cancelMp4FrameEncoderJob(started.jobId));
+      }
+      return { success: true, ...started };
     } catch (err) {
       console.error('[Main] mp4_frame_encoder_start error:', err?.message || err);
       return { success: false, error: err?.message || String(err) };
@@ -10014,6 +10060,20 @@ function createStage3DWindow(targetDisplayId = null) {
     },
   });
   stage3dWindow.setMenuBarVisibility(false);
+  // The page holds the unload while a stage recording or reel is still
+  // running or saving: ask before throwing it away.
+  stage3dWindow.webContents.on('will-prevent-unload', (event) => {
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const choice = dialog.showMessageBoxSync(owner ?? undefined, {
+      type: 'warning',
+      buttons: ['Keep recording', 'Close anyway'],
+      defaultId: 0,
+      cancelId: 0,
+      message: 'A stage recording is still running.',
+      detail: 'Closing the Stage Sim now loses it. Stop the recording (or let the reel finish) to keep it.',
+    });
+    if (choice === 1) event.preventDefault();
+  });
 
 
   // Forward this window's console to the terminal. Only the main window was
