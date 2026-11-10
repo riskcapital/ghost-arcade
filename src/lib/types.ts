@@ -5511,6 +5511,8 @@ export interface ShowLayerClip {
   color?: string;
   /** A where line: the block travels across the pieces (Timeline). */
   where?: import('./timeline/where/whereModel').WhereSpec | null;
+  /** Its media stops while a section holds or loops (default: it runs on). */
+  holdStops?: boolean;
 }
 
 /** Where a row sits in the show's row list (worked out from the mapping

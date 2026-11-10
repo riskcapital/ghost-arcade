@@ -28,6 +28,14 @@ describe('show keyboard', () => {
     expect(classifyShowKey({ key: 'c', metaKey: true }, engaged)).toBeNull();
   });
 
+  it('Enter is GO on a Timeline with sections (once per press), nothing otherwise', () => {
+    const ctx = { open: true, engaged: true, hasSelection: false, hasSections: true };
+    expect(classifyShowKey({ key: 'Enter' }, ctx)).toBe('go');
+    expect(classifyShowKey({ key: 'Enter', repeat: true }, ctx)).toBeNull();
+    expect(classifyShowKey({ key: 'Enter' }, { ...ctx, hasSections: false })).toBeNull();
+    expect(classifyShowKey({ key: 'Enter', target: { tagName: 'INPUT' } as unknown as EventTarget }, ctx)).toBeNull();
+  });
+
   it('leaves keys typed into a field alone', () => {
     expect(classifyShowKey({ key: 'Delete', target: { tagName: 'INPUT' } as unknown as EventTarget }, engaged)).toBeNull();
     expect(classifyShowKey({ key: 'Backspace', target: { isContentEditable: true } as unknown as EventTarget }, engaged)).toBeNull();

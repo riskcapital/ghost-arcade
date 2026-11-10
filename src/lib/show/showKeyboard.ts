@@ -35,7 +35,9 @@ export type ShowKeyAction =
   | 'returnAll'
   | 'returnAllInstant'
   /** L or R held down (key repeat): the show takes the key and does nothing. */
-  | 'heldTakeoverKey';
+  | 'heldTakeoverKey'
+  /** Enter on a Timeline with sections: GO (hold, vamp, Live). */
+  | 'go';
 
 export interface ShowKeyContext {
   /** The tray is open and visible. */
@@ -52,6 +54,8 @@ export interface ShowKeyContext {
   hasTracks?: boolean;
   /** A live takeover is on (R hands everything back). */
   takeoverActive?: boolean;
+  /** The Timeline has sections: Enter is GO. */
+  hasSections?: boolean;
 }
 
 interface KeyLike {
@@ -114,6 +118,7 @@ export function classifyShowKey(e: KeyLike, ctx: ShowKeyContext): ShowKeyAction 
   if (key === 's') return ctx.hasTracks ? 'split' : null;
   if (key === 'n') return 'toggleSnap';
   if (key === 'm') return 'marker';
+  if (key === 'Enter') return ctx.hasSections && !e.repeat ? 'go' : null;
   if (key === 'Home') return 'home';
   if (key === 'End') return 'end';
   if (key === 'Escape') return ctx.hasSelection || ctx.hasClipSelection ? 'clearSelection' : null;

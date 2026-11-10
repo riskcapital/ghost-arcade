@@ -366,6 +366,48 @@ const ACTIONS = {
     if (!id) throw new Error('LED block was not placed');
     await sleep(300);
   },
+  async 'show.song'(ctx, s) {
+    // A song on the Timeline's Song row: { file (fixture, e.g. sections.wav), at }.
+    // Copied into the app's own project-assets folder (a path it may read).
+    const src = fixture(s.file ?? 'sections.wav');
+    const dir = path.join(ctx.profile, 'project-assets');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, path.basename(src));
+    fs.copyFileSync(src, file);
+    const id = await ctx.eval(`(async () => {
+      const url = 'ghost-asset://localhost' + ${J(file)}.replace(/%/g, '%25').replace(/ /g, '%20').replace(/#/g, '%23');
+      return await __show.g().showTimeline.addAudioTrack({ name: ${J(path.basename(file))}, url, assetRef: { kind: 'local-file', originalPath: ${J(file)}, name: ${J(path.basename(file))} }, startTime: ${s.at ?? 0}, lane: 0 });
+    })()`, 60000);
+    if (!id) throw new Error('the song was not added');
+    await sleep(500);
+  },
+  async 'show.score'(ctx, s) {
+    // Score this song (the dialog's confirm); { shuffle: n } shuffles n times after.
+    const r = await ctx.eval('__show.g().timelineScore.score()', 120000);
+    if (!r?.ok) throw new Error(`score failed: ${r?.reason}`);
+    ctx.vars.score = r;
+    for (let i = 0; i < (s.shuffle ?? 0); i++) await ctx.eval('__show.g().timelineScore.shuffle()', 120000);
+    await sleep(800);
+  },
+  async 'show.section'(ctx, s) {
+    // Change a section: { name, action, exit, jumpTo (name), passes }.
+    const ok = await ctx.eval(`(() => {
+      const t = __show.g().showTimeline;
+      const list = __show.show().sections;
+      const sec = list.find((x) => x.name === ${J(s.name)});
+      if (!sec) return false;
+      const patch = {};
+      ${s.action ? `patch.action = ${J(s.action)};` : ''}
+      ${s.exit ? `patch.exit = ${J(s.exit)};` : ''}
+      ${s.passes ? `patch.passes = ${s.passes};` : ''}
+      ${s.jumpTo ? `patch.jumpTo = list.find((x) => x.name === ${J(s.jumpTo)})?.id ?? null;` : ''}
+      t.updateSection(sec.id, patch);
+      return true;
+    })()`);
+    if (!ok) throw new Error(`no section ${s.name}`);
+    await sleep(200);
+  },
+  async 'show.go'(ctx, s) { await ctx.eval('__show.g().showTimeline.go()'); await sleep(s.settle ?? 300); },
   async 'show.split'(ctx, s) { await ctx.eval(`__show.g().showTimeline.splitLayerClips(${s.at})`); await sleep(300); },
   async 'show.seek'(ctx, s) { await ctx.eval(`__show.g().showTimeline.seek(${s.t})`); await sleep(s.settle ?? 600); },
   async 'show.play'(ctx, s) {
@@ -638,6 +680,54 @@ const CHECKS = {
     }
     const off = Math.max(...got.map((v, i) => Math.abs(v - s.rgb[i])));
     return { pass: off <= (s.within ?? 0.05), detail: `x ${s.x0 ?? 0}..${s.x1 ?? 1}: ${got.map((v) => v.toFixed(3)).join(', ')} vs ${s.rgb.map((v) => v.toFixed(3)).join(', ')}` };
+  },
+  async 'output.tint'(ctx, s) {
+    // Warm (red over blue) or cool (blue over red) output: { warm | cool, by }.
+    const snap = await ctx.eval('__show.snapshot()');
+    if (!snap) return { pass: false, detail: 'no output frame' };
+    const [r, , b] = snap.mean_rgba;
+    const by = s.by ?? 0.03;
+    const pass = s.warm ? r - b >= by : b - r >= by;
+    return { pass, detail: `output r ${r.toFixed(3)} b ${b.toFixed(3)}: wanted ${s.warm ? 'warm' : 'cool'} by ${by}` };
+  },
+  async 'output.changesAt'(ctx, s) {
+    // The picture changes across show time `t` (a cut between looks): just
+    // before and just after (± `gap` s) the mean colour of a vertical third
+    // moves by at least `by`, or the pixels change clearly more than they do
+    // between two moments of the same stretch before it: { t, gap, by, settle }.
+    const grab = async (time) => {
+      await ctx.eval(`__show.g().showTimeline.seek(${time})`);
+      await sleep(s.settle ?? 1500);
+      return ctx.eval(`(async () => {
+        const snap = await __show.snapshot({ include_pixels: true, max_dim: 192 });
+        if (!snap || !snap.rgba_b64) return null;
+        const bin = atob(snap.rgba_b64);
+        const px = new Array(snap.width * snap.height * 3);
+        const strips = [];
+        for (let k = 0; k < 3; k++) strips.push([0, 0, 0, 0]);
+        for (let y = 0; y < snap.height; y++) for (let x = 0; x < snap.width; x++) {
+          const i = (y * snap.width + x) * 4, o = (y * snap.width + x) * 3;
+          const r = bin.charCodeAt(i + 2) / 255, g = bin.charCodeAt(i + 1) / 255, b = bin.charCodeAt(i) / 255;
+          px[o] = r; px[o + 1] = g; px[o + 2] = b;
+          const st = strips[Math.min(2, Math.floor((x * 3) / snap.width))];
+          st[0] += r; st[1] += g; st[2] += b; st[3]++;
+        }
+        return { px, strips: strips.map((st) => [st[0] / st[3], st[1] / st[3], st[2] / st[3]]) };
+      })()`);
+    };
+    const gap = s.gap ?? 0.4;
+    const base = await grab(s.t - 2 * gap);
+    const a = await grab(s.t - gap);
+    const b = await grab(s.t + gap);
+    if (!a || !b || !base) return { pass: false, detail: 'no output pixels' };
+    let meanDiff = 0;
+    for (let k = 0; k < 3; k++) for (let c = 0; c < 3; c++) meanDiff = Math.max(meanDiff, Math.abs(a.strips[k][c] - b.strips[k][c]));
+    const pixDiff = (p, q) => { let d = 0; for (let i = 0; i < p.length; i++) d += Math.abs(p[i] - q[i]); return d / p.length; };
+    const across = pixDiff(a.px, b.px);
+    const within = pixDiff(base.px, a.px);
+    const pass = meanDiff >= (s.by ?? 0.03) || across > Math.max(0.004, 1.5 * within);
+    const fmt = (x) => x.map((v) => v.map((c) => c.toFixed(2)).join('/')).join(' | ');
+    return { pass, detail: `before ${fmt(a.strips)} · after ${fmt(b.strips)} · colour change ${meanDiff.toFixed(3)} (≥ ${s.by ?? 0.03}) · pixels across ${across.toFixed(4)} vs within the stretch before ${within.toFixed(4)}` };
   },
   async 'output.notBlack'(ctx, s) {
     const snap = await ctx.eval('__show.snapshot()');

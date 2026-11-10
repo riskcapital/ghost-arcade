@@ -58,7 +58,13 @@
   import { offerShowFromAudio, pickSongForShow } from '../show/showFromAudio';
   import { classifyShowKey, installShowKeyCapture, setShowKeyHandler } from '../show/showKeyboard';
   import { showDropEffect } from '../show/showDrop';
-  import { setShowSnapEdgeProvider } from '../stores/showTimeline';
+  import { setShowSnapEdgeProvider, showSectionStatus } from '../stores/showTimeline';
+  import SectionLane from './show/timeline/sections/SectionLane.svelte';
+  import SectionInspector from './show/timeline/sections/SectionInspector.svelte';
+  import SectionCueList from './show/timeline/sections/SectionCueList.svelte';
+  import ScoreDialog from './show/timeline/sections/ScoreDialog.svelte';
+  import { goLabel, sectionStatusText } from './show/timeline/sections/sectionGoUi';
+  import { makeSection, placeNewSection } from '../timeline/sections/sectionModel';
   import { layers as liveLayersStore } from '../stores/layers';
   import type { ShowSnapGrid } from '../types';
   import ShowTrackLanes from './show/timeline/ShowTrackLanes.svelte';
@@ -149,6 +155,7 @@
   const cameraLaneStore = showSlice('cameraLane');
   const docStore = showSlice('doc');
   const lookClipsStore = showSlice('lookClips');
+  const sectionsStore = showSlice('sections');
   // A derived of the project: it re-publishes on every project update.
   const compositionsStore = distinct(compositions);
 
@@ -175,6 +182,29 @@
   const doc = $derived<ShowDocKind>($docStore);
   const isTimeline = $derived(doc === 'timeline');
   const lookClips = $derived($lookClipsStore);
+  const sections = $derived($sectionsStore);
+  const selectedSection = $derived(selection?.kind === 'section' ? sections.find((x) => x.id === selection!.id) ?? null : null);
+  const goText = $derived(isTimeline && sections.length ? goLabel(sections, $showSectionStatus, currentTime, isPlaying) : '');
+  const sectionText = $derived(isTimeline && sections.length ? sectionStatusText(sections, $showSectionStatus, currentTime, isPlaying) : '');
+  /** The sections' cue list beside the Timeline (a view preference). */
+  const SECTION_CUES_KEY = 'ghostarcade-timeline-section-cues-open';
+  let sectionCuesOpen = $state((() => {
+    try { return localStorage.getItem(SECTION_CUES_KEY) === '1'; } catch { return false; }
+  })());
+  function toggleSectionCues() {
+    sectionCuesOpen = !sectionCuesOpen;
+    try { localStorage.setItem(SECTION_CUES_KEY, sectionCuesOpen ? '1' : '0'); } catch { /* private mode */ }
+  }
+  let scoreOpen = $state(false);
+  function addSectionAtPlayhead() {
+    const s = get(showTimeline);
+    const span = placeNewSection(s.sections, s.tempo, s.currentTime);
+    if (!span) {
+      showToast('The playhead is inside a section already: move it to an empty stretch first.', 'info');
+      return;
+    }
+    showTimeline.addSection(makeSection(s.sections, span.start, span.end));
+  }
   const ledClipsStore = showSlice('ledClips');
   const ledClipsAll = $derived($ledClipsStore);
   const comps = $derived($compositionsStore);
@@ -343,6 +373,7 @@
   const PRESET_LANE_HEIGHT = 46;
   /** The Timeline's Looks row. */
   const LOOK_LANE_HEIGHT = 40;
+  const SECTION_LANE_HEIGHT = 28;
   const AUDIO_LANE_HEIGHT = 52;
   const RULER_HEIGHT = 20;
 
@@ -441,15 +472,18 @@
   const ledNames = $derived(Object.fromEntries(ledClipsAll.map((c) => [c.id, ledClipName(c)])));
   const ledSpans = $derived(Object.fromEntries(ledClipsAll.map((c) => [c.id, { start: c.startTime, end: c.startTime + c.duration }])));
   const lookSpans = $derived(Object.fromEntries(lookClips.map((c) => [c.id, { start: c.startTime, end: c.startTime + c.duration }])));
-  const lookNames = $derived(Object.fromEntries(lookClips.map((c) => [c.id, edgeLook(c.lookId)?.name ?? 'Look'])));
+  const lookNames = $derived<Record<string, string>>({ '*': 'All looks', ...Object.fromEntries(lookClips.map((c) => [c.id, edgeLook(c.lookId)?.name ?? 'Look'])) });
   let linePicker: { x: number; y: number; group: 'looks' | 'stage' } | null = $state(null);
   const linePickerTargets = $derived.by(() => {
     if (!linePicker) return [];
     if (linePicker.group === 'stage') return [{ target: { scope: 'stage' as const }, label: 'Stage FX' }, { target: { scope: 'led' as const }, label: 'LEDs' }];
     const sel = selection?.kind === 'lookClip' ? selection.id : null;
-    return [...lookClips]
-      .sort((a, b) => (a.id === sel ? -1 : b.id === sel ? 1 : a.startTime - b.startTime))
-      .map((c) => ({ target: { scope: 'look' as const, id: c.id }, label: `${lookNames[c.id]} @ ${formatPrecise(c.startTime)}` }));
+    return [
+      ...[...lookClips]
+        .sort((a, b) => (a.id === sel ? -1 : b.id === sel ? 1 : a.startTime - b.startTime))
+        .map((c) => ({ target: { scope: 'look' as const, id: c.id }, label: `${lookNames[c.id]} @ ${formatPrecise(c.startTime)}` })),
+      { target: { scope: 'look' as const, id: '*' }, label: 'All looks' },
+    ];
   });
   function openLinePicker(e: MouseEvent, group: 'looks' | 'stage') {
     e.stopPropagation();
@@ -457,7 +491,7 @@
     linePicker = linePicker ? null : { x: r.left, y: r.top - 4, group };
   }
   /** The lane under the ruler: Presets on the Show, Looks on the Timeline. */
-  const topLaneH = $derived(isTimeline ? LOOK_LANE_HEIGHT : PRESET_LANE_HEIGHT);
+  const topLaneH = $derived(isTimeline ? SECTION_LANE_HEIGHT + LOOK_LANE_HEIGHT : PRESET_LANE_HEIGHT);
   // The Stage camera lane sits under the audio lanes once it has shots (or was asked for).
   const cameraLaneH = $derived(cameraLane.length > 0 || $cameraLaneShown ? CAMERA_LANE_HEIGHT : 0);
   const audioLaneCount = $derived(Math.max(1, audioTracks.reduce((m, t) => Math.max(m, t.lane + 1), 0)));
@@ -582,7 +616,8 @@
       target.closest('.lc-block') ||
       target.closest('.tx') ||
       target.closest('.tx-add') ||
-      target.closest('.kl-key')
+      target.closest('.kl-key') ||
+      target.closest('.sec-block')
     ) {
       return;
     }
@@ -808,7 +843,7 @@
     : []);
   /** A sound row, audio block, Live clip or build selected on the Timeline. */
   const soundSelection = $derived(isTimeline && selection && (selection.kind === 'soundRow' || selection.kind === 'liveClip' || selection.kind === 'build' || selection.kind === 'audio') ? selection : null);
-  const inspectorVisible = $derived(!!(selectedPreset || selectedAudio || selectedTransitionClip || selectedMarker || layerClipInspector || selectedTrack || selectedTempo || selectedLookClip || selectedLedClip || soundSelection));
+  const inspectorVisible = $derived(!!(selectedPreset || selectedAudio || selectedTransitionClip || selectedMarker || layerClipInspector || selectedTrack || selectedTempo || selectedLookClip || selectedLedClip || soundSelection || selectedSection));
   // With layer tracks the inspector strip is always there (a hint when
   // nothing is selected) and its room is reserved: selecting a clip must not
   // grow the tray, or the lanes jump under the pointer mid-drag.
@@ -873,7 +908,8 @@
       selectedMarkerId = null;
       return;
     }
-    if (selectedLookClip) showTimeline.removeLookClip(selectedLookClip.id);
+    if (selectedSection) showTimeline.removeSection(selectedSection.id);
+    else if (selectedLookClip) showTimeline.removeLookClip(selectedLookClip.id);
     else if (selectedLedClip) showTimeline.removeLedClip(selectedLedClip.id);
     else if (selection?.kind === 'liveClip') removeLiveBlock(selection.id);
     else if (selection?.kind === 'build') removeBuildBlock(selection.id);
@@ -1007,6 +1043,7 @@
       canPaste: canPasteClips() && s.doc === 'timeline' && s.layerTracks.length > 0,
       hasTracks: s.doc === 'timeline' && s.layerTracks.length > 0,
       takeoverActive: s.doc === 'timeline' && (Object.keys(liveTakeover.state.surfaces).length > 0 || !!liveTakeover.state.overlay),
+      hasSections: s.doc === 'timeline' && s.sections.length > 0,
     });
     if (!action) return false;
     switch (action) {
@@ -1062,6 +1099,9 @@
         liveTakeover.release('all', action === 'returnAllInstant' ? { mode: 'instant' } : undefined);
         return true;
       case 'heldTakeoverKey':
+        return true;
+      case 'go':
+        showTimeline.go();
         return true;
     }
     return false;
@@ -1274,6 +1314,10 @@
       {#if tempo}
         <span class="t-bars" title="Bar, beat and sixteenth at the playhead" data-show-bars-readout>{formatBarsBeats(tempo, currentTime, true)}</span>
       {/if}
+      {#if isTimeline && sections.length}
+        <button class="t-go" class:waiting={!!$showSectionStatus.holdId} onclick={() => showTimeline.go()} title={`GO: ${goText}. Enter while the pointer is over the Timeline; MIDI/OSC show/go.`} data-midi-path="show:go" data-section-go>GO</button>
+        {#if sectionText}<span class="t-section" class:hold={!!$showSectionStatus.holdId} data-section-status>{sectionText}</span>{/if}
+      {/if}
 
       <!-- Show audio output. Never hidden while the show has audio: a muted
            or blocked bus is exactly the state the user needs to SEE. -->
@@ -1433,6 +1477,11 @@
       <button class="t-chip" class:active={cuesOpen} onclick={toggleCues} title="Show the cue list beside the timeline" data-show-cues-toggle>
         Cues
       </button>
+      {#if isTimeline}
+        <button class="t-chip" class:active={sectionCuesOpen} onclick={toggleSectionCues} title="The Timeline's sections and markers as a cue list, with a big GO" data-section-cues-toggle>
+          Sections
+        </button>
+      {/if}
       <button class="t-chip t-iconable" onclick={addMarkerAtPlayhead} title="Add a marker at the playhead. It fires the selected cue when the timeline plays across it." aria-label="Add a marker at the playhead. It fires the selected cue when the timeline plays across it." data-show-add-marker>
         <span class="t-label">+ Marker</span>
         <svg class="t-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -1484,6 +1533,11 @@
              Order: presets, layer tracks, audio. -->
         <div class="label-rows" style="transform: translateY({-laneScrollTop}px)">
           {#if isTimeline}
+          <div class="lane-label sections" style="height: {SECTION_LANE_HEIGHT}px" data-sections-label>
+            <span class="lane-name" title="Named spans of the Timeline with what happens at their end: play through, hold for GO, loop until GO, jump, or Live (pieces to the VJ decks until GO).">Sections</span>
+            <button class="lane-line-add" onclick={addSectionAtPlayhead} title="Add a section at the playhead (8 bars, or up to the next section)" data-section-add>+</button>
+            <button class="lane-line-add score" onclick={() => (scoreOpen = true)} disabled={!audioTracks.length} title={audioTracks.length ? 'Score this song: sections, looks, energy and where lines from the song on the Song row' : 'Put a song on the Song row first'} data-score-open>✦ Score</button>
+          </div>
           <div class="lane-label look" style="height: {LOOK_LANE_HEIGHT}px">
             <span class="lane-name" title="Shape Looks along the Timeline: drag a Look card from the Looks gallery here. The shapes wear it for the block's span; overlapping blocks crossfade.">Looks</span>
             {#if lookClips.length > 0}
@@ -1557,6 +1611,7 @@
 
         <div class="lanes" style="width: {totalWidth}px">
           {#if isTimeline}
+          <SectionLane {sections} {tempo} height={SECTION_LANE_HEIGHT} {zoom} {viewStart} {viewEnd} {selection} snap={snapEnabled} />
           <ShowLookLane
             clips={lookClips}
             height={LOOK_LANE_HEIGHT}
@@ -1680,6 +1735,10 @@
         </label>
         <button class="insp-delete" onclick={deleteSelected}>Delete</button>
         <button aria-label="Close marker inspector" class="insp-close" onclick={() => (selectedMarkerId = null)}>×</button>
+      </div>
+    {:else if selectedSection}
+      <div class="insp-wrap" bind:clientHeight={inspectorH}>
+        <SectionInspector section={selectedSection} {sections} rows={layerTracks} {tempo} onclose={() => showTimeline.select(null)} />
       </div>
     {:else if selectedTempo}
       <div class="insp-wrap" bind:clientHeight={inspectorH}>
@@ -1877,10 +1936,16 @@
     {/if}
 
     </div>
+    {#if isTimeline && sectionCuesOpen}
+      <SectionCueList {sections} {currentTime} playing={isPlaying} />
+    {/if}
     {#if cuesOpen}
       <CueListPanel />
     {/if}
     </div>
+    {#if scoreOpen}
+      <ScoreDialog onclose={() => (scoreOpen = false)} />
+    {/if}
 
     {#if showClearConfirm}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -2232,6 +2297,23 @@
     color: #FFD96B;
     min-width: 52px;
   }
+  .t-go {
+    height: 24px;
+    min-width: 52px;
+    padding: 0 12px;
+    border-radius: 4px;
+    border: 1px solid #2fa35a;
+    background: #1d6b3a;
+    color: #eaffef;
+    font: inherit;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+  }
+  .t-go.waiting { background: #2fa35a; box-shadow: 0 0 0 2px rgba(47, 163, 90, 0.45); }
+  .t-go:hover { filter: brightness(1.1); }
+  .t-section { font-size: var(--ga-text-meta, 11px); color: var(--ga-ink-1, #bbb); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .t-section.hold { color: #ffd36b; font-weight: 600; }
   .t-tempo.has-map { font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); }
   .t-tc-warn {
     display: inline-flex;
@@ -2305,6 +2387,9 @@
     cursor: pointer;
   }
   .lane-line-add:hover { color: var(--ga-ink-0, #fff); border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24)); }
+  .lane-label.sections .lane-line-add + .lane-line-add { margin-left: 4px; }
+  .lane-line-add.score { color: #ffd36b; border-color: rgba(255, 211, 107, 0.45); }
+  .lane-line-add:disabled { opacity: 0.4; cursor: default; }
   .stage-row-strip { border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07)); background: rgba(92, 225, 230, 0.03); box-sizing: border-box; }
 
   .show-grid {

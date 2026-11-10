@@ -47,6 +47,9 @@ export interface LedRenderContext {
   /** Something on the Timeline can reach every LED fixture (a where line on
    *  LEDs exists), so every controller is the Timeline's. */
   allDriven?: boolean;
+  /** Seconds a block spanning [start, end) runs ahead through section holds
+   *  and loops (free-running effects; live only). */
+  freeRun?: (start: number, end: number) => number;
 }
 
 /** Line keys of an LED block (absolute values, the line wins). */
@@ -101,7 +104,7 @@ function seedOf(id: string): number {
 export function renderLedBlock(clip: TimelineLedClip, span: { start: number; count: number }, ctx: LedRenderContext, px: Uint8Array): void {
   const n = span.count;
   const lines = ctx.lines?.(clip.id) ?? {};
-  const local = Math.max(0, ctx.time - clip.startTime);
+  const local = Math.max(0, ctx.time + (ctx.freeRun?.(clip.startTime, clip.startTime + clip.duration) ?? 0) - clip.startTime);
   const brightness = clamp01(num(lines[LED_BLOCK_KEYS.brightness], clip.brightness));
   const speed = Math.max(0, num(lines[LED_BLOCK_KEYS.speed], clip.speed));
   const c1: [number, number, number] = lines[LED_BLOCK_KEYS.color] !== undefined ? unpack(num(lines[LED_BLOCK_KEYS.color], 0)) : parseWLEDHexColor(clip.color);
