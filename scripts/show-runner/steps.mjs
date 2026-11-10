@@ -320,6 +320,51 @@ const ACTIONS = {
     })()`);
     await sleep(300);
   },
+  async 'show.where'(ctx, s) {
+    // A where line on a look block (look var) or an LED block (led var): { look | led, where: {...} }.
+    const ok = await ctx.eval(`(() => {
+      const st = __show.g().showTimeline;
+      const look = ${J(s.look ?? null)}, led = ${J(s.led ?? null)};
+      if (look) { const id = __show.vars['look:' + look]; if (!id) return false; st.updateLookClip(id, { where: ${J(s.where ?? {})} }, { discrete: true }); return true; }
+      const id = __show.vars['led:' + led]; if (!id) return false;
+      st.updateLedClip(id, { where: ${J(s.where ?? {})} }, { discrete: true }); return true;
+    })()`);
+    if (!ok) throw new Error('where: no such block');
+    await sleep(300);
+  },
+  async 'wled.listen'(ctx, s) {
+    // A fake WLED controller in the runner: a UDP listener keeping every packet.
+    const dgram = await import('node:dgram');
+    const sock = dgram.createSocket('udp4');
+    ctx.wledPackets = [];
+    sock.on('message', (m) => ctx.wledPackets.push({ at: Date.now(), m }));
+    await new Promise((r) => sock.bind(s.port ?? 0, '127.0.0.1', () => r()));
+    sock.unref();
+    ctx.wledPort = sock.address().port;
+    ctx.wledSocket?.close();
+    ctx.wledSocket = sock;
+  },
+  async 'wled.controller'(ctx, s) {
+    // A WLED controller sending to the fake listener: { id, name, leds, region: {x,y,width,height}, ranges: [[name, start, count]] }.
+    await ctx.eval(`(() => {
+      const ranges = ${J(s.ranges ?? [])}.map(([name, start, count], i) => ({ id: 'r' + i, name, start, count }));
+      __show.g().project.addWLEDController({ id: ${J(s.id ?? 'strip')}, name: ${J(s.name ?? 'Strip')}, ipAddr: '127.0.0.1', port: ${ctx.wledPort ?? 21324},
+        ledCount: ${s.leds ?? 30}, enabled: true, brightness: 1, gamma: 1, samplingMode: 'average', calibration: { smoothing: 0 },
+        mapping: { mode: 'strip', axis: 'horizontal', sourceRegion: ${J(s.region ?? { x: 0, y: 0.45, width: 1, height: 0.1 })}, sampleRadius: 0.01 }, ranges });
+    })()`);
+    await sleep(800);
+  },
+  async 'show.led'(ctx, s) {
+    // A block on an LED row: { row: 'led:<id>[#<range>]', at, duration, kind, color, ..., var }.
+    const id = await ctx.eval(`(() => {
+      const { row, at, var: v, do: _d, ...fields } = ${J(s)};
+      const id = __show.g().showTimeline.addLedClip(row, at ?? 0, fields);
+      if (id && v) __show.vars['led:' + v] = id;
+      return id;
+    })()`);
+    if (!id) throw new Error('LED block was not placed');
+    await sleep(300);
+  },
   async 'show.split'(ctx, s) { await ctx.eval(`__show.g().showTimeline.splitLayerClips(${s.at})`); await sleep(300); },
   async 'show.seek'(ctx, s) { await ctx.eval(`__show.g().showTimeline.seek(${s.t})`); await sleep(s.settle ?? 600); },
   async 'show.play'(ctx, s) {
@@ -696,6 +741,47 @@ const CHECKS = {
     const late = r.first - r.at;
     const pass = r.last < r.at && late >= -1e-6 && late <= (r.frame ?? 1 / 60) * 1.5;
     return { pass, detail: `bar at ${r.at.toFixed(3)} s: still taken over at ${r.last.toFixed(3)}, handed back at ${r.first.toFixed(3)} (${(late * 1000).toFixed(1)} ms past the bar; frames ${((r.frame ?? 0) * 1000).toFixed(1)} ms)` };
+  },
+  async 'wled.packet'(ctx, s) {
+    // The last packet the fake listener got (after `fresh` ms of quiet use): { from, to (LED indices),
+    // rgb: [0..255 x3], tolerance } or { black: true }, or { output: true } = the LEDs show the
+    // stage picture (a strip across the middle of the output, within tolerance).
+    await sleep(s.wait ?? 1300);
+    const last = ctx.wledPackets?.[ctx.wledPackets.length - 1];
+    if (!last) return { pass: false, detail: 'no packet arrived' };
+    const m = last.m;
+    if (m[0] !== 2) return { pass: false, detail: 'not a DRGB packet' };
+    const leds = [];
+    for (let i = 2; i + 2 < m.length; i += 3) leds.push([m[i], m[i + 1], m[i + 2]]);
+    const from = s.from ?? 0, to = Math.min(leds.length, s.to ?? leds.length);
+    const span = leds.slice(from, to);
+    const fmt = (c) => c.join(',');
+    if (s.black) {
+      const lit = span.filter((c) => c.some((v) => v > (s.tolerance ?? 2)));
+      return { pass: lit.length === 0, detail: `LEDs ${from}..${to - 1}: ${lit.length ? `${lit.length} lit, e.g. ${fmt(lit[0])}` : 'all black'}` };
+    }
+    if (s.rgb) {
+      const off = Math.max(...span.map((c) => Math.max(...c.map((v, i) => Math.abs(v - s.rgb[i])))));
+      return { pass: off <= (s.tolerance ?? 6), detail: `LEDs ${from}..${to - 1}: ${fmt(span[0])} … ${fmt(span[span.length - 1])} vs ${fmt(s.rgb)} (off ${off})` };
+    }
+    if (s.output) {
+      const got = await ctx.eval(`(async () => {
+        const snap = await __show.snapshot({ include_pixels: true, max_dim: 96 });
+        const bin = atob(snap.rgba_b64);
+        const out = [];
+        for (const u of ${J(s.at ?? [0.1, 0.5, 0.9])}) {
+          const x = Math.min(snap.width - 1, Math.floor(u * snap.width)), y = Math.floor(snap.height / 2);
+          const i = (y * snap.width + x) * 4;
+          out.push([bin.charCodeAt(i + 2), bin.charCodeAt(i + 1), bin.charCodeAt(i)]);
+        }
+        return out;
+      })()`);
+      const at = s.at ?? [0.1, 0.5, 0.9];
+      const pairs = at.map((u, k) => [leds[Math.min(leds.length - 1, Math.round(u * (leds.length - 1)))], got[k]]);
+      const off = Math.max(...pairs.map(([a, b]) => Math.max(...a.map((v, i) => Math.abs(v - b[i])))));
+      return { pass: off <= (s.tolerance ?? 24), detail: pairs.map(([a, b]) => `${fmt(a)} vs picture ${fmt(b)}`).join(' | ') };
+    }
+    return { pass: true, detail: `${leds.length} LEDs` };
   },
   async noErrors(ctx) {
     const errs = ctx.session.errors.filter((e) => e.at >= ctx.startedAt && !/ResizeObserver loop|favicon/.test(e.text));

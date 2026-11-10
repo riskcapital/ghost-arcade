@@ -123,7 +123,7 @@
             {#each WHERE_MOTIONS as m (m)}<option value={m}>{WHERE_MOTION_LABELS[m]}</option>{/each}
           </select>
           {#if where.motion.kind === 'sweep' || where.motion.kind === 'pingpong' || where.motion.kind === 'burst'}
-            <label class="num"><input type="number" min="0.25" step="0.25" value={bars}
+            <label class="num"><input type="number" min="0.25" step="0.25" value={bars} onkeydown={(e) => { if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur(); }}
               onchange={(e) => { const b = Math.max(0.0625, parseFloat((e.currentTarget as HTMLInputElement).value) || 1); set({ motion: { ...(where!.motion as any), bars: b } }); }} data-where-bars /> bars a pass</label>
           {/if}
           {#if where.motion.kind === 'sweep'}
