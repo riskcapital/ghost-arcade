@@ -6523,7 +6523,7 @@
       }
       // Only a step that changed the show puts its arrangement back; the
       // transport keeps running either way.
-      const show = showHistoryRestore(snapshot.show, snapshot.leavingShow);
+      const show = showHistoryRestore(snapshot.show, snapshot.leavingShow, snapshot.showChanged);
       if (show !== undefined) showTimeline.restoreArrangement(show);
     } finally {
       endHistoryRestore();
