@@ -67,7 +67,7 @@ import {
   evaluateShotCamera, sequenceDuration, shotAtTime,
   type DemoShot, type DemoReelSettings, type ReelCameraState,
 } from '../stage3d/demoReel';
-import { borrowStageCamera, stageRecordingMaxDim, stageRecordingMirrorDim } from '../show/rehearsal/stageRehearsal';
+import { borrowStageCamera, holdStageCapture, stageRecordingMaxDim, stageRecordingMirrorDim } from '../show/rehearsal/stageRehearsal';
 import type { RecAudioMode, RecAudioResult } from '../show/rehearsal/rehearsalBridge';
 import { createLiveFramePacer, streamFramesInFlight } from './liveFramePacing';
 
@@ -341,6 +341,8 @@ function createReelRenderStore() {
     let currentSegmentFrames = 0;
     let readableOutputName = '';
     let boostedMirror = false;
+    // The reel needs the view drawn even if the Stage Sim gets minimised.
+    const releaseCaptureHold = holdStageCapture();
     try {
       // Resize the engine (and therefore the shared canvas the Stage3D
       // scene renders into) to the reel resolution.
@@ -549,6 +551,8 @@ function createReelRenderStore() {
               })
               .catch(fail)
               .finally(() => {
+                // Written (or given up): the view may reuse the bytes.
+                captured.release?.();
                 inFlight--;
                 settle();
               });
@@ -821,6 +825,7 @@ function createReelRenderStore() {
         await cancelNativeMp4FrameEncoder(nativeMp4FrameEncoder).catch(() => {});
       }
       if (boostedMirror) stageRecordingMaxDim.set(null);
+      releaseCaptureHold();
       controls.releaseCamera();
       returnCamera();
       rehearsal?.end();

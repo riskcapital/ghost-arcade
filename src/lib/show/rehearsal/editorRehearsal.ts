@@ -24,7 +24,9 @@ import {
   executeRehearsalCommand,
   normalizeAudioDelay,
   planMuxTracks,
+  rehearsalArrangementKey,
   rehearsalAudioPlan,
+  rehearsalTransportTick,
   type RecAudioResult,
   type RehearsalAudioDelay,
   type RehearsalMessage,
@@ -72,14 +74,115 @@ export function buildRehearsalShowState(audioDelay: RehearsalAudioDelay, at = ep
     chasing: showTimeline.isChasing(),
     tempo: s.tempo ? JSON.parse(JSON.stringify(s.tempo)) : null,
     hasAudio: s.audioTracks.some((t) => !t.muted && !!t.url && t.volume > 0),
-    presets: s.presetClips.map((c) => ({ start: c.startTime, duration: c.duration, label: c.label ?? comps.get(c.compositionId) ?? '' })),
-    markers: cueList.state.markers.map((m) => ({ time: m.time, label: m.label })),
+    presets: s.presetClips.map((c) => ({ id: c.id, start: c.startTime, duration: c.duration, label: c.label ?? comps.get(c.compositionId) ?? '' })),
+    markers: cueList.state.markers.map((m) => ({ id: m.id, time: m.time, label: m.label })),
     cameraLane: s.cameraLane.map((c) => ({ ...c })),
     audioDelay: { ...audioDelay },
     takeover: (() => {
       const summary = takeoverSummary(liveTakeover.state);
       return summary.active ? summary : null;
     })(),
+  };
+}
+
+/** The arrangement is rebuilt and compared at least this often, so a change
+ *  the inputs below do not show (an edit in place) still reaches the stage. */
+const ARRANGEMENT_RECHECK_MS = 1000;
+
+/** What the arrangement is built from. When none of these changed (by
+ *  reference: the stores replace what they change), it did not change. */
+function arrangementInputs(audioDelay: RehearsalAudioDelay): unknown[] {
+  const s = get(showTimeline);
+  return [
+    s.duration,
+    s.loop,
+    s.tempo,
+    s.audioTracks,
+    s.presetClips,
+    s.cameraLane,
+    (get(project) as { compositions?: unknown }).compositions,
+    cueList.state.markers,
+    liveTakeover.state,
+    audioDelay,
+  ];
+}
+
+function sameInputs(a: readonly unknown[], b: readonly unknown[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (!Object.is(a[i], b[i])) return false;
+  return true;
+}
+
+/**
+ * Publishes the show to the stage window: the whole state when its
+ * arrangement changed (or the stage window lacks it), otherwise only the
+ * playhead. Calls in one task go out as one message.
+ */
+export function createRehearsalPublisher(
+  post: (msg: RehearsalMessage) => void,
+  audioDelay: () => RehearsalAudioDelay,
+  now: () => number = epochNow,
+) {
+  const instance = Math.random().toString(36).slice(2, 8);
+  let serial = 0;
+  let version = '';
+  let lastKey = '';
+  let lastInputs: unknown[] = [];
+  let lastBuiltAt = -Infinity;
+  let sendWhole = true;
+  let queued = false;
+
+  const flush = () => {
+    queued = false;
+    const at = now();
+    const delay = audioDelay();
+    const inputs = arrangementInputs(delay);
+    if (sendWhole || !sameInputs(inputs, lastInputs) || at - lastBuiltAt >= ARRANGEMENT_RECHECK_MS) {
+      lastInputs = inputs;
+      lastBuiltAt = at;
+      const state = buildRehearsalShowState(delay, at);
+      const key = rehearsalArrangementKey(state);
+      if (key !== lastKey || !version) {
+        lastKey = key;
+        version = `${instance}.${++serial}`;
+        sendWhole = true;
+      }
+      if (sendWhole) {
+        sendWhole = false;
+        post({ type: 'show-state', state, version });
+        return;
+      }
+      post({ type: 'show-tick', tick: rehearsalTransportTick(state), version });
+      return;
+    }
+    const s = get(showTimeline);
+    post({
+      type: 'show-tick',
+      tick: { currentTime: s.currentTime, at, isPlaying: s.isPlaying, seekGeneration: showTimeline.seekGeneration(), chasing: showTimeline.isChasing() },
+      version,
+    });
+  };
+
+  return {
+    /** Send the transport (and the arrangement if it changed) at the end of this task. */
+    publish(): void {
+      if (queued) return;
+      queued = true;
+      queueMicrotask(flush);
+    },
+    /** The stage window has this arrangement (or none): resend it if it differs. */
+    stageHas(stateVersion: string | null | undefined): boolean {
+      if (stateVersion && stateVersion === version) return false;
+      sendWhole = true;
+      return true;
+    },
+    /** A stage window (re)joined: its first message is the whole state. */
+    reset(): void {
+      sendWhole = true;
+    },
+    get version(): string {
+      return version;
+    },
   };
 }
 
@@ -104,9 +207,9 @@ export function installEditorRehearsal(): () => void {
     }
   };
 
+  const publisher = createRehearsalPublisher(post, () => audioDelay);
   const publish = () => {
-    if (!alive) return;
-    post({ type: 'show-state', state: buildRehearsalShowState(audioDelay) });
+    if (alive) publisher.publish();
   };
 
   const applyAudioDelay = () => {
@@ -117,6 +220,7 @@ export function installEditorRehearsal(): () => void {
     if (next === alive) return;
     alive = next;
     if (alive) {
+      publisher.reset();
       publishTimer = setInterval(() => {
         if (epochNow() - lastHelloAt > REHEARSAL_ALIVE_MS) setAlive(false);
         else publish();
@@ -195,6 +299,7 @@ export function installEditorRehearsal(): () => void {
       case 'stage-hello':
         lastHelloAt = epochNow();
         if (!alive) setAlive(true);
+        else if (publisher.stageHas(msg.stateVersion)) publish();
         break;
       case 'stage-bye':
         setAlive(false);

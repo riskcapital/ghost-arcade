@@ -9,6 +9,11 @@ import {
   evaluateCameraLane,
   cameraClipAt,
   formatShowClock,
+  createSeekThrottle,
+  rehearsalArrangementKey,
+  rehearsalTransportTick,
+  type RecAudioPlan,
+  type RehearsalShowState,
   type RehearsalTransport,
   type TransportSample,
 } from './rehearsalBridge';
@@ -218,3 +223,128 @@ describe('recording soundtrack plan', () => {
     ]);
   });
 });
+
+/** The plan as first written (a span's end searched over the whole take):
+ *  the one-pass version must agree with it exactly. */
+function referencePlan(samples: readonly TransportSample[], startedAt: number, durationSeconds: number, latency = 0): RecAudioPlan {
+  const endAt = startedAt + durationSeconds * 1000;
+  const ordered = [...samples].sort((a, b) => a.at - b.at);
+  const spans: TransportSample[][] = [];
+  let current: TransportSample[] | null = null;
+  for (const s of ordered) {
+    if (!s.playing) { current = null; continue; }
+    if (!current || current[current.length - 1].seekGeneration !== s.seekGeneration) { current = [s]; spans.push(current); } else current.push(s);
+  }
+  const spanEnd = (span: TransportSample[]): number => {
+    const last = span[span.length - 1];
+    const next = ordered.find((s) => s.at > last.at && (!s.playing || s.seekGeneration !== last.seekGeneration));
+    return next ? next.at : Number.POSITIVE_INFINITY;
+  };
+  const overlapping = spans.filter((span) => span[0].at < endAt && spanEnd(span) > startedAt);
+  if (overlapping.length === 0) return { kind: 'silent' };
+  if (overlapping.length > 1) return { kind: 'discontinuous', reason: 'the show was paused and played again, or jumped' };
+  const span = overlapping[0];
+  const offsets = span.map((s) => s.showTime - s.at / 1000).sort((a, b) => a - b);
+  const offset = offsets[Math.min(offsets.length - 1, Math.floor(offsets.length * 0.9))];
+  if (offsets[offsets.length - 1] - offset > 0.12 || offset - offsets[0] > 0.5) return { kind: 'discontinuous', reason: 'the show jumped while it played' };
+  const playFrom = span[0].showTime;
+  const playStartAt = (playFrom - offset) * 1000;
+  const playEndAt = spanEnd(span);
+  let videoAt = (playStartAt - startedAt) / 1000 + latency;
+  let showFrom = playFrom;
+  if (videoAt < 0) { showFrom -= videoAt; videoAt = 0; }
+  const videoEnd = Math.min(durationSeconds, (playEndAt - startedAt) / 1000 + latency);
+  const length = videoEnd - videoAt;
+  if (!(length > 0)) return { kind: 'silent' };
+  return { kind: 'exact', showFrom, videoAt, length };
+}
+
+describe('recording soundtrack plan, long takes', () => {
+  /** A take of play runs, pauses and seeks, with equal timestamps now and then. */
+  function randomTake(seed: number, n: number): TransportSample[] {
+    let x = seed;
+    const rnd = () => { x = (x * 1103515245 + 12345) % 2147483648; return x / 2147483648; };
+    const out: TransportSample[] = [];
+    let at = 1000, show = 0, gen = 0, playing = false;
+    for (let i = 0; i < n; i++) {
+      const r = rnd();
+      if (r < 0.05) playing = !playing;
+      else if (r < 0.1) { gen++; show = rnd() * 100; }
+      at += r < 0.15 ? 0 : 16 + rnd() * 4;
+      if (playing) show += 0.0167;
+      out.push({ at, showTime: show, playing, seekGeneration: gen });
+    }
+    return out;
+  }
+
+  it('agrees with the plan as first written, on many random takes', () => {
+    for (let seed = 1; seed <= 300; seed++) {
+      const take = randomTake(seed, 40 + (seed % 7) * 30);
+      const first = take[0].at, last = take[take.length - 1].at;
+      for (const [from, dur] of [[first, (last - first) / 1000], [first + (last - first) * 0.5, 0.4], [first + (last - first) * 0.8, 3], [last + 10, 1]]) {
+        expect(rehearsalAudioPlan(take, from, dur, 0.05)).toEqual(referencePlan(take, from, dur, 0.05));
+      }
+    }
+  });
+
+  it('plans an hour of scrubbing at once (it took ~20 s at Stop)', () => {
+    const samples: TransportSample[] = [];
+    let gen = 0, show = 0, at = 1_700_000_000_000;
+    for (let i = 0; i < 216_000; i++) {
+      if (i % 180 < 60) { gen++; show = (show + 0.3) % 3000; } else show += 1 / 60;
+      samples.push({ at, showTime: show, playing: true, seekGeneration: gen });
+      at += 1000 / 60;
+    }
+    const recStart = at;
+    gen++;
+    for (let i = 0; i < 600; i++) { samples.push({ at, showTime: 100 + i / 60, playing: true, seekGeneration: gen }); at += 1000 / 60; }
+    const t0 = performance.now();
+    expect(rehearsalAudioPlan(samples, samples[0].at, 3610, 0).kind).toBe('discontinuous');
+    const plan = rehearsalAudioPlan(samples, recStart, 10, 0);
+    expect(performance.now() - t0).toBeLessThan(1000);
+    expect(plan.kind).toBe('exact');
+  });
+});
+
+describe('scrub seeks', () => {
+  it('a drag sends the latest position at most every interval; press and release go out at once', () => {
+    vi.useFakeTimers();
+    let now = 0;
+    const sent: number[] = [];
+    const th = createSeekThrottle((t) => sent.push(t), 100, () => now);
+    th.seek(1, true); // press
+    for (let i = 1; i <= 30; i++) { now += 10; vi.advanceTimersByTime(10); th.seek(1 + i); } // 300 ms of moves
+    expect(sent).toEqual([1, 10, 20, 30]);
+    now += 40; vi.advanceTimersByTime(40);
+    th.seek(40); now += 5; vi.advanceTimersByTime(5);
+    th.seek(41, true); // release: exact, and the pending one is dropped
+    now += 200; vi.advanceTimersByTime(200);
+    expect(sent).toEqual([1, 10, 20, 30, 41]);
+    th.seek(50, true);
+    th.seek(51); // a pointer that stops right after: its last position still goes out
+    expect(sent[sent.length - 1]).toBe(50);
+    now += 100; vi.advanceTimersByTime(100);
+    expect(sent[sent.length - 1]).toBe(51);
+    th.seek(60); th.seek(61); // pending…
+    th.cancel(); // …and dropped (the bar went away)
+    now += 200; vi.advanceTimersByTime(200);
+    expect(sent[sent.length - 1]).toBe(51);
+    vi.useRealTimers();
+  });
+});
+
+describe('show state publish split', () => {
+  const state: RehearsalShowState = {
+    hasShow: true, currentTime: 3, at: 1000, isPlaying: true, duration: 20, loop: false, seekGeneration: 2, chasing: false,
+    tempo: null, hasAudio: true, presets: [{ id: 'p', start: 0, duration: 4, label: 'A' }], markers: [{ id: 'm', time: 2, label: '' }],
+    cameraLane: [], audioDelay: { enabled: false, seconds: 0 }, takeover: null,
+  };
+  it('the tick carries the playhead; the arrangement key ignores it', () => {
+    expect(rehearsalTransportTick(state)).toEqual({ currentTime: 3, at: 1000, isPlaying: true, seekGeneration: 2, chasing: false });
+    const moved = { ...state, currentTime: 9, at: 5000, isPlaying: false, seekGeneration: 7, chasing: true };
+    expect(rehearsalArrangementKey(moved)).toBe(rehearsalArrangementKey(state));
+    expect(rehearsalArrangementKey({ ...state, presets: [{ ...state.presets[0], label: 'B' }] })).not.toBe(rehearsalArrangementKey(state));
+    expect(rehearsalArrangementKey({ ...state, loop: true })).not.toBe(rehearsalArrangementKey(state));
+  });
+});
+

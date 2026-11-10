@@ -2148,6 +2148,18 @@ function publishStage3DFullscreenState(fullScreen) {
   } catch {}
 }
 
+// Minimised or hidden, the Stage Sim is drawn for no one: its page then drops
+// the 60 fps show boost and the core's fast picture feed unless it is
+// recording. backgroundThrottling is off for this window, so the page's own
+// visibility state never changes.
+function publishStage3DVisibility(goingAway = false) {
+  if (!stage3dWindow || stage3dWindow.isDestroyed()) return;
+  try {
+    const visible = !goingAway && stage3dWindow.isVisible() && !stage3dWindow.isMinimized();
+    stage3dWindow.webContents.send('stage3d-visibility-changed', { visible });
+  } catch {}
+}
+
 function publishProjectionSimFullscreenState(fullScreen) {
   if (!projectionSimWindow || projectionSimWindow.isDestroyed()) return;
   try {
@@ -10036,6 +10048,9 @@ function createStage3DWindow(targetDisplayId = null) {
         .catch(() => {});
     } catch {}
   });
+  for (const event of ['minimize', 'restore', 'hide', 'show']) {
+    stage3dWindow.on(event, () => publishStage3DVisibility(event === 'minimize' || event === 'hide'));
+  }
   stage3dWindow.on('enter-full-screen', () => publishStage3DFullscreenState(true));
   stage3dWindow.on('leave-full-screen', () => publishStage3DFullscreenState(false));
 }

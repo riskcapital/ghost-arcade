@@ -3,8 +3,10 @@
  * and the stage window, and the pure maths both sides share.
  *
  * The editor owns the show transport and its audio. The stage window only
- * mirrors the transport (a `show-state` about 20 times a second, plus one on
- * every play / pause / seek) and asks the editor to act (`show-command`).
+ * mirrors the transport and asks the editor to act (`show-command`). The
+ * mirror is a `show-state` (the whole state, sent when its arrangement
+ * changes) plus a small `show-tick` with the playhead about 20 times a
+ * second and on every play / pause / seek.
  * It never plays show audio of its own, so there is only ever one audio
  * clock and one soundtrack.
  *
@@ -36,11 +38,13 @@ export function epochNow(): number {
 }
 
 export interface RehearsalMarker {
+  id: string;
   time: number;
   label: string;
 }
 
 export interface RehearsalPresetBlock {
+  id: string;
   start: number;
   duration: number;
   label: string;
@@ -73,6 +77,25 @@ export interface RehearsalShowState {
   takeover: TakeoverSummary | null;
 }
 
+/** The part of the state that moves every tick. */
+export type RehearsalTransportTick = Pick<RehearsalShowState, 'currentTime' | 'at' | 'isPlaying' | 'seekGeneration' | 'chasing'>;
+
+export function rehearsalTransportTick(state: RehearsalTransportTick): RehearsalTransportTick {
+  return {
+    currentTime: state.currentTime,
+    at: state.at,
+    isPlaying: state.isPlaying,
+    seekGeneration: state.seekGeneration,
+    chasing: state.chasing,
+  };
+}
+
+/** Everything but the tick, for telling whether the arrangement changed. */
+export function rehearsalArrangementKey(state: RehearsalShowState): string {
+  const { currentTime: _t, at: _a, isPlaying: _p, seekGeneration: _g, chasing: _c, ...rest } = state;
+  return JSON.stringify(rest);
+}
+
 export type RehearsalCommand =
   | { op: 'play' }
   | { op: 'pause' }
@@ -95,9 +118,12 @@ export interface RecAudioResult {
 }
 
 export type RehearsalMessage =
-  | { type: 'show-state'; state: RehearsalShowState }
+  /** `version` names this arrangement; ticks carry the version they belong to. */
+  | { type: 'show-state'; state: RehearsalShowState; version: string }
+  | { type: 'show-tick'; tick: RehearsalTransportTick; version: string }
   | { type: 'show-command'; command: RehearsalCommand }
-  | { type: 'stage-hello'; at: number }
+  /** `stateVersion`: the arrangement the stage window has (the editor resends a different one). */
+  | { type: 'stage-hello'; at: number; stateVersion?: string | null }
   | { type: 'stage-bye' }
   | { type: 'rec-audio-start'; id: string; at: number }
   | { type: 'rec-audio-finish'; id: string; videoPath: string; startedAt: number; durationSeconds: number; latencySeconds: number }
@@ -219,6 +245,51 @@ export function normalizeAudioDelay(raw: Partial<RehearsalAudioDelay> | null | u
   };
 }
 
+/** Scrub seeks while dragging go out at most this often: each one hard-seeks
+ *  the editor's audio and video. */
+export const SCRUB_SEEK_MS = 100;
+
+/**
+ * Throttle for scrub seeks: a drag sends the latest position at most every
+ * `intervalMs` (trailing, so a resting pointer's position still goes out);
+ * `force` sends at once (press and release land exactly).
+ */
+export function createSeekThrottle(
+  send: (seconds: number) => void,
+  intervalMs = SCRUB_SEEK_MS,
+  now: () => number = () => performance.now(),
+) {
+  let lastSent = -Infinity;
+  let pending: number | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const fire = (t: number) => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    pending = null;
+    lastSent = now();
+    send(t);
+  };
+  return {
+    seek(t: number, force = false): void {
+      const wait = intervalMs - (now() - lastSent);
+      if (force || wait <= 0) {
+        fire(t);
+        return;
+      }
+      pending = t;
+      timer ??= setTimeout(() => {
+        timer = null;
+        if (pending !== null) fire(pending);
+      }, wait);
+    },
+    cancel(): void {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      pending = null;
+    },
+  };
+}
+
 // ─── Stage camera lane ──────────────────────────────────────────────────
 
 export interface CameraLaneSample {
@@ -295,43 +366,59 @@ export function rehearsalAudioPlan(
 ): RecAudioPlan {
   const endAt = startedAt + durationSeconds * 1000;
   const ordered = [...samples].sort((a, b) => a.at - b.at);
-  // Play spans: runs of playing samples on one seek generation.
-  const spans: TransportSample[][] = [];
-  let current: TransportSample[] | null = null;
-  for (const s of ordered) {
+  // Play spans: runs of playing samples on one seek generation, as index
+  // ranges into `ordered` (a long take holds a sample per frame).
+  const spans: { from: number; to: number }[] = [];
+  let current: { from: number; to: number } | null = null;
+  for (let i = 0; i < ordered.length; i++) {
+    const s = ordered[i];
     if (!s.playing) {
       current = null;
       continue;
     }
-    if (!current || current[current.length - 1].seekGeneration !== s.seekGeneration) {
-      current = [s];
+    if (!current || ordered[current.to].seekGeneration !== s.seekGeneration) {
+      current = { from: i, to: i };
       spans.push(current);
     } else {
-      current.push(s);
+      current.to = i;
     }
   }
-  // Each span lasts until the next sample that is paused or on another generation.
-  const spanEnd = (span: TransportSample[]): number => {
-    const last = span[span.length - 1];
-    const next = ordered.find((s) => s.at > last.at && (!s.playing || s.seekGeneration !== last.seekGeneration));
-    return next ? next.at : Number.POSITIVE_INFINITY;
+  // Each span lasts until the next sample that is paused or on another
+  // generation. That sample normally closes the span, so the search starts
+  // there and stops at once: one pass over the take, not one per span.
+  const spanEnd = (span: { from: number; to: number }): number => {
+    const last = ordered[span.to];
+    for (let i = span.to + 1; i < ordered.length; i++) {
+      const s = ordered[i];
+      if (s.at > last.at && (!s.playing || s.seekGeneration !== last.seekGeneration)) return s.at;
+    }
+    return Number.POSITIVE_INFINITY;
   };
   // Only spans that overlap the recording matter.
-  const overlapping = spans.filter((span) => span[0].at < endAt && spanEnd(span) > startedAt);
+  const overlapping: { from: number; to: number; end: number }[] = [];
+  for (const span of spans) {
+    if (ordered[span.from].at >= endAt) break;
+    const end = spanEnd(span);
+    if (end > startedAt) {
+      overlapping.push({ ...span, end });
+      if (overlapping.length > 1) break;
+    }
+  }
   if (overlapping.length === 0) return { kind: 'silent' };
   if (overlapping.length > 1) return { kind: 'discontinuous', reason: 'the show was paused and played again, or jumped' };
-  const span = overlapping[0];
+  const { from, to, end: playEndAt } = overlapping[0];
   // Show time minus wall time is constant while the show plays. A sample
   // taken between transport ticks reads a slightly stale show time (lower),
   // so the reference is taken from the freshest samples.
-  const offsets = span.map((s) => s.showTime - s.at / 1000).sort((a, b) => a - b);
+  const offsets = new Float64Array(to - from + 1);
+  for (let i = from; i <= to; i++) offsets[i - from] = ordered[i].showTime - ordered[i].at / 1000;
+  offsets.sort();
   const offset = offsets[Math.min(offsets.length - 1, Math.floor(offsets.length * 0.9))];
   if (offsets[offsets.length - 1] - offset > CONTINUITY_TOLERANCE || offset - offsets[0] > STALE_TOLERANCE) {
     return { kind: 'discontinuous', reason: 'the show jumped while it played' };
   }
-  const playFrom = span[0].showTime;
+  const playFrom = ordered[from].showTime;
   const playStartAt = (playFrom - offset) * 1000;
-  const playEndAt = spanEnd(span);
 
   let videoAt = (playStartAt - startedAt) / 1000 + latency;
   let showFrom = playFrom;
