@@ -52,6 +52,34 @@ export function trackIndexAt(tracks: readonly Pick<ShowLayerTrack, 'collapsed' |
 }
 
 /**
+ * How many rows a dragged selection moves: the row under the pointer less
+ * the grabbed clip's row, held so every selected clip (rows `minIndex` to
+ * `maxIndex`) stays on the track list. A selection spread over several
+ * tracks stops at the edge instead of being refused there, which froze the
+ * whole drag (sideways too).
+ */
+export function dragRowOffset(row: number, grabbedIndex: number, minIndex: number, maxIndex: number, count: number): number {
+  return Math.max(-minIndex, Math.min(count - 1 - maxIndex, row - grabbedIndex));
+}
+
+/** The modifier that adds to (or takes from) a selection. Cmd/Ctrl is
+ *  "move without snapping" across the app, so it never also selects. */
+export function addsToSelection(e: Pick<MouseEvent, 'shiftKey'>): boolean {
+  return e.shiftKey;
+}
+
+/** Cmd/Ctrl held: move or trim without snapping. */
+export function movesFreely(e: Pick<MouseEvent, 'metaKey' | 'ctrlKey'>): boolean {
+  return e.metaKey || e.ctrlKey;
+}
+
+/** Width of a clip's trim handles. The middle half of a short clip is
+ *  always its body, so a clip of a few pixels can still be moved. */
+export function trimEdgeWidth(clipWidth: number): number {
+  return Math.max(1, Math.min(7, Math.floor(clipWidth / 4)));
+}
+
+/**
  * Clips overlapping [t0, t1] in a start-sorted, non-overlapping list. Only
  * these are drawn, so a long show costs what is on screen.
  */
@@ -154,6 +182,8 @@ export interface TrackLaneController {
   laneSelectKeys(track: ShowLayerTrack, key: string, times: number[], additive: boolean): void;
   laneDeleteKeys(track: ShowLayerTrack, key: string, times: number[]): void;
   laneEasing(track: ShowLayerTrack, key: string, times: number[], easing: import('../../../types').KeyframeEasing): void;
+  /** At the start of a drag: what puts the show back if it is cancelled. */
+  snapshot(): () => void;
 }
 
 /**

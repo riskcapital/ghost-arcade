@@ -64,7 +64,7 @@
     aria-label="Return"
     data-takeover-release-mode
   >
-    {#each TAKEOVER_RELEASE_MODES as mode}
+    {#each TAKEOVER_RELEASE_MODES as mode (mode)}
       <option value={mode}>{RELEASE_MODE_LABELS[mode]}</option>
     {/each}
   </select>

@@ -9,6 +9,7 @@
   import { clipEnd } from '../../../show/tracks/showTrackEval';
   import { portal } from './trackLayout';
   import { CLIP_SWATCHES, revealClipInMediaTray } from './clipMenuActions';
+  import { shortcutLabels } from './keyLabels';
 
   interface Props {
     x: number;
@@ -22,6 +23,9 @@
   }
 
   let { x, y, track, clip, ids, playhead, onclose }: Props = $props();
+
+  // Mac glyphs on a Mac, key names elsewhere.
+  const KEYS = shortcutLabels();
 
   const locked = $derived(track.locked);
   const canSplit = $derived(!locked && playhead > clip.startTime + 1e-6 && playhead < clipEnd(clip) - 1e-6);
@@ -99,18 +103,18 @@
     <span>Split at the playhead</span><kbd>S</kbd>
   </button>
   <button class="ccm-item" role="menuitem" disabled={locked} onclick={() => run(() => showTimeline.duplicateLayerClips(ids))} data-clip-menu="duplicate">
-    <span>Duplicate</span><kbd>⌘D</kbd>
+    <span>Duplicate</span><kbd>{KEYS.duplicate}</kbd>
   </button>
   <button class="ccm-item" role="menuitem" disabled={locked} onclick={() => run(() => showTimeline.removeLayerClips(ids))} data-clip-menu="delete">
-    <span>Delete</span><kbd>⌫</kbd>
+    <span>Delete</span><kbd>{KEYS.delete}</kbd>
   </button>
   <button class="ccm-item" role="menuitem" disabled={locked} onclick={() => run(() => showTimeline.removeLayerClips(ids, { ripple: true }))} data-clip-menu="ripple">
-    <span>Delete and close the gap</span><kbd>⇧⌫</kbd>
+    <span>Delete and close the gap</span><kbd>{KEYS.rippleDelete}</kbd>
   </button>
   <div class="ccm-sep"></div>
   <div class="ccm-head">At the end of the media</div>
   <div class="ccm-row" role="group" aria-label="At the end of the media">
-    {#each [['stop', 'Stop'], ['loop', 'Loop'], ['hold', 'Hold']] as [value, label]}
+    {#each [['stop', 'Stop'], ['loop', 'Loop'], ['hold', 'Hold']] as [value, label] (value)}
       <button
         class="ccm-seg"
         class:on={clip.endBehaviour === value}
@@ -124,7 +128,7 @@
   <div class="ccm-head">Colour</div>
   <div class="ccm-row" role="group" aria-label="Clip colour">
     <button class="ccm-swatch track" class:on={!clip.color} disabled={locked} onclick={() => setColor(undefined)} title="Use the track's colour" aria-label="Use the track's colour"></button>
-    {#each CLIP_SWATCHES as sw}
+    {#each CLIP_SWATCHES as sw (sw)}
       <button class="ccm-swatch" class:on={clip.color === sw} style:background={sw} disabled={locked} onclick={() => setColor(sw)} title="Clip colour" aria-label="Clip colour" data-clip-menu-colour={sw}></button>
     {/each}
   </div>

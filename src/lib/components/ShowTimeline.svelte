@@ -30,7 +30,7 @@
    * just collapses the tray to see the canvas, does not expect the show to
    * stop. `showTimeline.pause()` is the way to stop it.
    */
-  import { onMount } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { get } from 'svelte/store';
   import {
     showTimeline,
@@ -79,10 +79,14 @@
   import ShowCameraLane from './show/timeline/ShowCameraLane.svelte';
   import ShowCameraLaneLabel from './show/timeline/ShowCameraLaneLabel.svelte';
   import { CAMERA_LANE_HEIGHT, cameraLaneShown } from './show/timeline/cameraLaneUi';
-  import { TRACK_HEADER_WIDTH, laneKeySelection, showSnapGuide, tracksStackHeight } from './show/timeline/trackLayout';
+  import { TRACK_HEADER_WIDTH, TRACK_ROW_HEIGHT, laneKeySelection, showSnapGuide, tracksStackHeight } from './show/timeline/trackLayout';
   import { carriesTrackMedia, dropTrackMedia } from './show/timeline/trackDrops';
   import { presetJunctions, type PresetJunction } from './show/timeline/laneJunctions';
   import { distinct, showSlice } from './show/timeline/timelineSlices';
+  import { watchShowSelection } from './show/timeline/selectionChecks';
+  import { cancelActiveDrag, followPointer } from './show/timeline/dragSession';
+  import { showPopoverOpen } from './show/timeline/keyLabels';
+  import { anchoredScrollLeft, followScrollLeft, wheelPixels, wheelZoomFactor } from './show/timeline/gridView';
   import { devicePixel, formatPrecise } from './show/timeline/timeFormat';
   import ShowAudioDelayBadge from './show/timeline/ShowAudioDelayBadge.svelte';
   import {
@@ -189,31 +193,19 @@
   // Selecting a clip or transition hands the inspector back to it.
   function clearMarkerSelection() { selectedMarkerId = null; }
 
-  // ── Checks made on every store update ───────────────────────────────────
-  // These three ran as `$:` statements on the whole store state, i.e. after
-  // every store update (each playhead frame included), reading the state as
-  // it is then. They still do, from one plain subscription and a microtask,
-  // so their timing is unchanged without pulling the store into the render
-  // graph:
-  //  - keys on a lane stay selected only alongside track clips;
+  // ── Checks made after store updates ─────────────────────────────────────
+  // From one plain subscription and a microtask (see selectionChecks.ts),
+  // so they stay out of the render graph:
+  //  - keys on a lane are let go when something else is selected (only when
+  //    the selection changes, not on every update);
   //  - selecting a clip or transition hands the inspector back to it;
   //  - the tempo note belongs to the audio inspector.
-  let storeChecksQueued = false;
-  function runStoreChecks() {
-    storeChecksQueued = false;
-    const sel = get(showTimeline).selection;
-    if (sel && sel.kind !== 'layerClip') laneKeySelection.set(null);
-    if (sel) clearMarkerSelection();
-    if (sel?.kind !== 'audio') tempoNote = null;
-  }
-  onMount(() => {
-    runStoreChecks();
-    return showTimeline.subscribe(() => {
-      if (storeChecksQueued) return;
-      storeChecksQueued = true;
-      queueMicrotask(runStoreChecks);
-    });
-  });
+  onMount(() => watchShowSelection(showTimeline, laneKeySelection, {
+    onUpdate: (sel) => {
+      if (sel) clearMarkerSelection();
+      if (sel?.kind !== 'audio') tempoNote = null;
+    },
+  }));
 
   // Markers drawn: the ones near the visible stretch. A flag's label runs to
   // the right of its time, so the left edge keeps a wider margin.
@@ -244,19 +236,16 @@
     selectedMarkerId = id;
     const grab = timeAt(e) - time;
     let moved = false;
-    const onMove = (ev: MouseEvent) => {
-      moved = true;
-      let t = Math.max(0, timeAt(ev) - grab);
-      if (get(showTimeline).snapEnabled) t = Math.round(t / 0.25) * 0.25;
-      cueList.updateMarker(id, { time: t });
-    };
-    const onUp = () => {
-      if (moved) suppressNextClick = true;
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    followPointer({
+      move: (ev) => {
+        moved = true;
+        let t = Math.max(0, timeAt(ev) - grab);
+        if (get(showTimeline).snapEnabled) t = Math.round(t / 0.25) * 0.25;
+        cueList.updateMarker(id, { time: t });
+      },
+      end: () => { if (moved) suppressNextClick = true; },
+      cancel: () => { if (moved) cueList.updateMarker(id, { time }); },
+    });
   }
 
   const LOCK_TEXT: Record<string, string> = {
@@ -338,6 +327,17 @@
    *  Zero on macOS overlay scrollbars, ~8–15 px on Windows. */
   const GRID_SCROLLBAR_ALLOWANCE = 10;
 
+  /** The tray never goes past this share of the window, whatever it holds. */
+  const TRAY_MAX_SHARE = 0.72;
+  interface TrayLimits { floor: number; cap: number }
+  function trayHeightLimits(vh: number, chrome: number, lanesMin: number): TrayLimits {
+    const cap = Math.max(TRAY_MIN_HEIGHT, Math.round(vh * TRAY_MAX_SHARE));
+    return { cap, floor: Math.min(cap, Math.max(TRAY_MIN_HEIGHT, Math.ceil(chrome + lanesMin))) };
+  }
+  function clampTray(h: number, limits: TrayLimits, ceiling: number): number {
+    return Math.min(limits.cap, Math.max(limits.floor, Math.min(h, Math.max(ceiling, limits.floor))));
+  }
+
   function autoCeiling(vh: number, withTracks = false): number {
     // Layer tracks need the room: up to about half the window with them.
     if (withTracks) return Math.max(TRAY_MIN_HEIGHT, Math.round(Math.min(400, vh * 0.48)));
@@ -380,6 +380,8 @@
    *  inspector ends up hanging out of the bottom of the tray. */
   let transportH = $state(36);
   let inspectorH = $state(0);
+  /** The takeover pads' own height, when they are open. */
+  let padsH = $state(0);
 
   const tracksH = $derived(tracksStackHeight(layerTracks));
   // The Stage camera lane sits under the audio lanes once it has shots (or was asked for).
@@ -416,20 +418,24 @@
     e.stopPropagation();
     const startY = e.clientY;
     const startH = trayHeight;
+    const startUser = userHeight;
     resizingTray = true;
-    const onMove = (ev: MouseEvent) => {
-      // Top edge: dragging UP (a negative delta) makes the tray taller.
-      const next = startH - (ev.clientY - startY);
-      userHeight = Math.max(TRAY_MIN_HEIGHT, Math.min(Math.round(next), dragCeiling(viewportH)));
-    };
-    const onUp = () => {
-      resizingTray = false;
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-      saveUserHeight(userHeight);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    followPointer({
+      move: (ev) => {
+        // Top edge: dragging UP (a negative delta) makes the tray taller.
+        // The pads are on top of the tray's own height, not part of it.
+        const next = startH - (ev.clientY - startY) - padsRoom;
+        userHeight = Math.max(TRAY_MIN_HEIGHT, Math.min(Math.round(next), dragCeiling(viewportH)));
+      },
+      end: () => {
+        resizingTray = false;
+        saveUserHeight(userHeight);
+      },
+      cancel: () => {
+        resizingTray = false;
+        userHeight = startUser;
+      },
+    });
   }
 
   /** Double-click the grip to go back to auto-fit. */
@@ -438,19 +444,6 @@
     saveUserHeight(null);
   }
 
-  // Publish the live height so App.svelte can reserve viewport space for the
-  // tray, the way it already does for the Presets / Sequencer / Keyframes
-  // panels. Those three hard-code a constant because their heights are
-  // constant; this one is content-sized and resizable, so it has to be a
-  // variable. Cleared on close so the viewport springs straight back.
-  $effect.pre(() => {
-    if (typeof document !== 'undefined') {
-      document.documentElement.style.setProperty(
-        '--ga-show-tray-height',
-        isOpen && !hiddenInVJ ? `${trayHeight}px` : '0px',
-      );
-    }
-  });
 
   const rulerSeconds = $derived(Math.max(duration, SHOW_MIN_RULER_SECONDS));
   const totalWidth = $derived(rulerSeconds * zoom);
@@ -524,15 +517,14 @@
     e.stopPropagation();
     // Seek on press, not only on the first move: a plain click on the ruler
     // places the playhead (the grid's own click handler is suppressed below).
+    const from = get(showTimeline).currentTime;
     showTimeline.seek(timeAt(e));
-    const onMove = (ev: MouseEvent) => showTimeline.seek(timeAt(ev));
-    const onUp = () => {
-      suppressNextClick = true;
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    followPointer({
+      move: (ev) => showTimeline.seek(timeAt(ev)),
+      end: () => { suppressNextClick = true; },
+      // Esc: the playhead goes back to where it was before the press.
+      cancel: () => showTimeline.seek(from),
+    });
   }
 
   // ── Block drag / resize ────────────────────────────────────────────────
@@ -544,20 +536,18 @@
     e.stopPropagation();
     showTimeline.select({ kind, id });
     const grabOffset = timeAt(e) - startTime;
+    const before = showTimeline.exportArrangement();
     let moved = false;
-    const onMove = (ev: MouseEvent) => {
-      moved = true;
-      const next = timeAt(ev) - grabOffset;
-      if (kind === 'preset') showTimeline.movePresetClip(id, next);
-      else showTimeline.moveAudioTrack(id, next);
-    };
-    const onUp = () => {
-      if (moved) suppressNextClick = true;
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    followPointer({
+      move: (ev) => {
+        moved = true;
+        const next = timeAt(ev) - grabOffset;
+        if (kind === 'preset') showTimeline.movePresetClip(id, next);
+        else showTimeline.moveAudioTrack(id, next);
+      },
+      end: () => { if (moved) suppressNextClick = true; },
+      cancel: () => { if (moved) showTimeline.restoreArrangement(before); },
+    });
   }
 
   function startBlockResize(e: MouseEvent, kind: BlockKind, id: string, edge: 'start' | 'end') {
@@ -565,20 +555,18 @@
     e.preventDefault();
     e.stopPropagation();
     showTimeline.select({ kind, id });
+    const before = showTimeline.exportArrangement();
     let moved = false;
-    const onMove = (ev: MouseEvent) => {
-      moved = true;
-      const t = timeAt(ev);
-      if (kind === 'preset') showTimeline.resizePresetClip(id, edge, t);
-      else showTimeline.resizeAudioTrack(id, edge, t);
-    };
-    const onUp = () => {
-      if (moved) suppressNextClick = true;
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    followPointer({
+      move: (ev) => {
+        moved = true;
+        const t = timeAt(ev);
+        if (kind === 'preset') showTimeline.resizePresetClip(id, edge, t);
+        else showTimeline.resizeAudioTrack(id, edge, t);
+      },
+      end: () => { if (moved) suppressNextClick = true; },
+      cancel: () => { if (moved) showTimeline.restoreArrangement(before); },
+    });
   }
 
   // ── Drops: audio files + preset tray cards ─────────────────────────────
@@ -713,16 +701,57 @@
   // nothing is selected) and its room is reserved: selecting a clip must not
   // grow the tray, or the lanes jump under the pointer mid-drag.
   const TRACK_INSPECTOR_RESERVE = 72;
-  const inspectorRoom = $derived(hasTracks ? TRACK_INSPECTOR_RESERVE : inspectorVisible ? inspectorH : 0);
+  // The inspector wraps onto more rows in a narrow window (or at a large
+  // interface scale), and then needs more than the reserve: its real height.
+  const inspectorRoom = $derived(hasTracks ? Math.max(TRACK_INSPECTOR_RESERVE, inspectorH) : inspectorVisible ? inspectorH : 0);
+  // The takeover pads sit between the transport and the lanes. They make the
+  // tray taller rather than taking the lanes' room.
+  const padsRoom = $derived($takeoverPadsOpen ? padsH : 0);
+  /** Everything but the lanes: transport, pads, inspector, top border. */
+  const chromeH = $derived(transportH + padsRoom + inspectorRoom + 1);
+  const lanesH = $derived(laneStackH + GRID_SCROLLBAR_ALLOWANCE);
+  // Lanes always get room for the ruler, the presets and a couple of tracks
+  // (as far as the tray's hard limit allows), however much of the tray the
+  // rest needs at this window size and interface scale.
+  const lanesMin = $derived(Math.min(lanesH, RULER_HEIGHT + PRESET_LANE_HEIGHT + GRID_SCROLLBAR_ALLOWANCE
+    + (hasTracks ? Math.min(2, layerTracks.length) * TRACK_ROW_HEIGHT : AUDIO_LANE_HEIGHT)));
+  const trayLimits = $derived(trayHeightLimits(viewportH, chromeH, lanesMin));
   const contentH = $derived(Math.max(
-    transportH + laneStackH + inspectorRoom + GRID_SCROLLBAR_ALLOWANCE + 1 /* top border */,
+    chromeH + lanesH,
     // The cue list needs room for its status, a few rows and the editor.
-    cuesOpen ? transportH + CUE_PANEL_MIN_HEIGHT : 0,
+    cuesOpen ? transportH + padsRoom + CUE_PANEL_MIN_HEIGHT : 0,
   ));
-  const autoH = $derived(Math.max(TRAY_MIN_HEIGHT, Math.min(contentH, cuesOpen ? cueCeiling(viewportH) : autoCeiling(viewportH, hasTracks))));
+  const autoH = $derived(clampTray(contentH, trayLimits, (cuesOpen ? cueCeiling(viewportH) : autoCeiling(viewportH, hasTracks)) + padsRoom));
   const trayHeight = $derived(userHeight === null
     ? autoH
-    : Math.max(TRAY_MIN_HEIGHT, Math.min(userHeight, dragCeiling(viewportH))));
+    : clampTray(userHeight + padsRoom, trayLimits, dragCeiling(viewportH) + padsRoom));
+
+  // Publish the live height so App.svelte can reserve viewport space for the
+  // tray, the way it already does for the Presets / Sequencer / Keyframes
+  // panels. Those three hard-code a constant because their heights are
+  // constant; this one is content-sized and resizable, so it has to be a
+  // variable. Cleared on close so the viewport springs straight back.
+  // Declared after `trayHeight`: a pre-effect runs as soon as it is created,
+  // and with the tray already open at mount it reads the height at once.
+  $effect.pre(() => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.style.setProperty(
+        '--ga-show-tray-height',
+        isOpen && !hiddenInVJ ? `${trayHeight}px` : '0px',
+      );
+    }
+  });
+
+  /** Apply a typed number, then show the value that really took: a value
+   *  the show refused or clamped must not stay in the box. */
+  function commitNumber(e: Event, apply: (v: number) => void, read: () => number | undefined) {
+    const input = e.currentTarget as HTMLInputElement;
+    apply(parseFloat(input.value));
+    const v = read();
+    if (v !== undefined && Number.isFinite(v)) input.value = v.toFixed(2);
+  }
+  const livePreset = (id: string) => get(showTimeline).presetClips.find((c) => c.id === id);
+  const liveAudio = (id: string) => get(showTimeline).audioTracks.find((t) => t.id === id);
 
   function deleteSelected() {
     if (selectedMarker) {
@@ -785,18 +814,16 @@
     e.preventDefault();
     e.stopPropagation();
     showTimeline.select({ kind: 'transition', id: clipId });
+    const before = showTimeline.exportArrangement();
     let moved = false;
-    const onMove = (ev: MouseEvent) => {
-      moved = true;
-      showTimeline.setTransitionDuration(clipId, Math.abs(timeAt(ev) - boundary) * 2);
-    };
-    const onUp = () => {
-      if (moved) suppressNextClick = true;
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    followPointer({
+      move: (ev) => {
+        moved = true;
+        showTimeline.setTransitionDuration(clipId, Math.abs(timeAt(ev) - boundary) * 2);
+      },
+      end: () => { if (moved) suppressNextClick = true; },
+      cancel: () => { if (moved) showTimeline.restoreArrangement(before); },
+    });
   }
 
   /** Palette chip → junction. Mirrors the preset-card drag contract. */
@@ -847,6 +874,11 @@
   let pointerInTray = false;
   let focusInTray = false;
   function handleShowKey(e: KeyboardEvent): boolean {
+    // Esc during a drag cancels the drag (and nothing else), wherever the
+    // pointer is.
+    if (e.key === 'Escape' && cancelActiveDrag()) return true;
+    // Esc with a menu open is the menu's: it closes, the selection stays.
+    if (e.key === 'Escape' && showPopoverOpen()) return false;
     const s = get(showTimeline);
     const clipSel = hasClipSelection();
     const action = classifyShowKey(e, {
@@ -936,11 +968,74 @@
     { value: 'seconds', label: '¼ second' },
   ];
 
+  /**
+   * Cmd/Ctrl + wheel, and a trackpad pinch (which arrives as Ctrl + wheel):
+   * zoom by how far the wheel turned, keeping the time under the pointer
+   * where it is.
+   */
   function handleWheel(e: WheelEvent) {
     if (!(e.ctrlKey || e.metaKey)) return;
     e.preventDefault();
-    showTimeline.setZoom(zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15));
+    if (!gridEl) return;
+    const factor = wheelZoomFactor(e.deltaY, e.deltaMode);
+    if (factor === 1) return;
+    const from = get(showTimeline).zoom;
+    const pointerX = e.clientX - gridEl.getBoundingClientRect().left;
+    const time = (gridEl.scrollLeft + pointerX) / from;
+    showTimeline.setZoom(from * factor);
+    const to = get(showTimeline).zoom;
+    if (to === from) return;
+    // The grid is as wide as the new zoom only once Svelte has drawn it.
+    void tick().then(() => {
+      if (!gridEl) return;
+      gridEl.scrollLeft = anchoredScrollLeft(time, to, pointerX);
+      gridScrollLeft = gridEl.scrollLeft;
+    });
   }
+
+  /** The header column does not scroll itself: its wheel scrolls the grid
+   *  (which the column follows), and Cmd/Ctrl + wheel zooms as there. */
+  function handleLabelWheel(e: WheelEvent) {
+    if (!gridEl) return;
+    if (e.ctrlKey || e.metaKey) return handleWheel(e);
+    const dy = wheelPixels(e.deltaY, e.deltaMode, gridEl.clientHeight);
+    const dx = wheelPixels(e.deltaX, e.deltaMode, gridEl.clientWidth);
+    if (!dy && !dx) return;
+    e.preventDefault();
+    gridEl.scrollTop += dy;
+    gridEl.scrollLeft += dx;
+  }
+
+  // Playhead follow: playing (or jumping) off the visible stretch pages the
+  // view on, so a long show never runs out of sight. Left alone when the
+  // playhead was already off screen, i.e. the user scrolled away.
+  let followPrevX: number | null = null;
+  $effect(() => {
+    const x = currentTime * zoom;
+    untrack(() => {
+      const prev = followPrevX;
+      followPrevX = x;
+      if (!gridEl || prev === null) return;
+      // A zoom change moves the playhead's pixel position too; that is the
+      // view changing, not the playhead.
+      if (zoom !== followZoom) { followZoom = zoom; return; }
+      // The mirrored scroll and width: reading the element's own would
+      // force a layout on every playing frame.
+      const next = followScrollLeft(prev, x, gridScrollLeft, gridWidth);
+      if (next !== null) {
+        gridEl.scrollLeft = next;
+        gridScrollLeft = gridEl.scrollLeft;
+      }
+    });
+  });
+  let followZoom = 0;
+
+  // A zoom change can clamp the grid's scroll without a scroll event; keep
+  // the mirrored value (what the lanes draw from) true to it.
+  $effect(() => {
+    void zoom;
+    void tick().then(() => { if (gridEl) gridScrollLeft = gridEl.scrollLeft; });
+  });
 
   // How tight the transport is (0 roomy … 4 tightest): stepped up by
   // `transportFit` until the controls fit on one line. 1: the takeover's
@@ -1243,14 +1338,16 @@
     </div>
 
     {#if $takeoverPadsOpen}
-      <TakeoverPads />
+      <!-- The outer box may give way in a tight tray; the inner one reports
+           the pads' own height, which the tray grows by. -->
+      <div class="pads-wrap"><div bind:clientHeight={padsH}><TakeoverPads /></div></div>
     {/if}
 
     <div class="show-main">
     <div class="show-main-col">
     <!-- Body: lane labels + scrolling grid -->
     <div class="show-body">
-      <div class="lane-labels" style="width: {labelWidth}px; flex-basis: {labelWidth}px">
+      <div class="lane-labels" style="width: {labelWidth}px; flex-basis: {labelWidth}px" onwheel={handleLabelWheel}>
         <div class="label-ruler-spacer" style="height: {RULER_HEIGHT}px"></div>
         <!-- Translated, not scrolled: the grid owns the scroll and the ruler
              spacer above has to stay pinned the way the sticky ruler does.
@@ -1370,7 +1467,7 @@
           <input
             type="number" min="0" step="0.25"
             value={selectedMarker.time.toFixed(2)}
-            onchange={(e) => cueList.updateMarker(selectedMarker.id, { time: parseFloat((e.target as HTMLInputElement).value) || 0 })}
+            onchange={(e) => { const id = selectedMarker.id; commitNumber(e, (v) => cueList.updateMarker(id, { time: v || 0 }), () => cueList.state.markers.find((m) => m.id === id)?.time); }}
           />
           <span class="insp-unit">s</span>
         </label>
@@ -1447,7 +1544,7 @@
           <input
             type="number" min="0" step="0.25"
             value={selectedPreset.startTime.toFixed(2)}
-            onchange={(e) => showTimeline.movePresetClip(selectedPreset.id, parseFloat((e.target as HTMLInputElement).value))}
+            onchange={(e) => { const id = selectedPreset.id; commitNumber(e, (v) => showTimeline.movePresetClip(id, v), () => livePreset(id)?.startTime); }}
           />
           <span class="insp-unit">s</span>
         </label>
@@ -1456,10 +1553,7 @@
           <input
             type="number" min="0.25" step="0.25"
             value={selectedPreset.duration.toFixed(2)}
-            onchange={(e) => showTimeline.resizePresetClip(
-              selectedPreset.id, 'end',
-              selectedPreset.startTime + parseFloat((e.target as HTMLInputElement).value),
-            )}
+            onchange={(e) => { const clip = selectedPreset; commitNumber(e, (v) => showTimeline.resizePresetClip(clip.id, 'end', clip.startTime + v), () => livePreset(clip.id)?.duration); }}
           />
           <span class="insp-unit">s</span>
         </label>
@@ -1502,10 +1596,10 @@
             max={selectedTransitionMax}
             step="0.25"
             value={(selectedTransitionWindow?.duration ?? 0).toFixed(2)}
-            onchange={(e) => showTimeline.setTransitionDuration(
-              selectedTransitionClip.id,
-              parseFloat((e.target as HTMLInputElement).value) || 0,
-            )}
+            onchange={(e) => { const clip = selectedTransitionClip; commitNumber(e, (v) => showTimeline.setTransitionDuration(clip.id, v || 0), () => {
+              const s = get(showTimeline); const c = s.presetClips.find((x) => x.id === clip.id);
+              return c ? showTransitionWindow(s.presetClips, c)?.duration ?? 0 : undefined;
+            }); }}
           />
           <span class="insp-unit">s</span>
         </label>
@@ -1537,7 +1631,7 @@
           <input
             type="number" min="0" step="0.25"
             value={selectedAudio.startTime.toFixed(2)}
-            onchange={(e) => showTimeline.moveAudioTrack(selectedAudio.id, parseFloat((e.target as HTMLInputElement).value))}
+            onchange={(e) => { const id = selectedAudio.id; commitNumber(e, (v) => showTimeline.moveAudioTrack(id, v), () => liveAudio(id)?.startTime); }}
           />
           <span class="insp-unit">s</span>
         </label>
@@ -1546,10 +1640,7 @@
           <input
             type="number" min="0.25" step="0.25"
             value={selectedAudio.duration.toFixed(2)}
-            onchange={(e) => showTimeline.resizeAudioTrack(
-              selectedAudio.id, 'end',
-              selectedAudio.startTime + parseFloat((e.target as HTMLInputElement).value),
-            )}
+            onchange={(e) => { const t = selectedAudio; commitNumber(e, (v) => showTimeline.resizeAudioTrack(t.id, 'end', t.startTime + v), () => liveAudio(t.id)?.duration); }}
           />
           <span class="insp-unit">s</span>
         </label>
@@ -1583,7 +1674,7 @@
         <button aria-label="Close selected timeline item" class="insp-close" onclick={() => showTimeline.select(null)}>×</button>
       </div>
     {:else if hasTracks}
-      <div class="show-inspector insp-idle">
+      <div class="show-inspector insp-idle" bind:clientHeight={inspectorH}>
         <span class="insp-hint">Click a clip to edit it, or a track name for its settings. S splits at the playhead, Shift+Delete closes the gap, ? lists every key.</span>
       </div>
     {/if}
@@ -2047,6 +2138,7 @@
   }
   .insp-wrap { flex: 0 0 auto; }
   .insp-idle { min-height: 36px; }
+  .pads-wrap { flex: 0 1 auto; min-height: 64px; overflow: hidden; }
   .t-grid { max-width: 96px; }
   .t-seg { display: inline-flex; }
   .t-seg-btn {

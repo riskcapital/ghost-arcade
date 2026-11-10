@@ -271,9 +271,9 @@
     {#if groups.length === 0}
       <div class="th-picker-empty">Every parameter already has a lane.</div>
     {/if}
-    {#each groups as [group, list]}
+    {#each groups as [group, list] (group)}
       <div class="th-picker-group">{group}</div>
-      {#each list as p}
+      {#each list as p (p.key)}
         <button class="th-picker-item" onclick={() => addLane(p)} data-param-key={p.key}>{p.label}</button>
       {/each}
     {/each}

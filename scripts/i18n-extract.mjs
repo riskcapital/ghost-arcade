@@ -1,14 +1,17 @@
 // Collects the interface's English text into src/lib/i18n/source.json, the
 // list every language pack translates. Run after changing interface text:
-//   node scripts/i18n-extract.mjs
+//   npm run i18n:extract        (node scripts/i18n-extract.mjs)
+// Then translate the new entries into each pack in src/lib/i18n/locales/
+// (`node scripts/i18n-extract.mjs --missing` lists them per pack).
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 const ROOT = 'src';
 const SKIP_DIRS = new Set(['mobile', 'i18n', 'node_modules']);
 const ATTRS = /\b(title|placeholder|aria-label|data-help|alt)="([^"]*)"/g;
 const PROP_KEYS = 'label|title|name|description|hint|text|message|tooltip|placeholder|help|subtitle|heading|caption|summary|detail|body';
-const found = new Map(); // text -> first file
+let found = new Map(); // text -> first file
 
 function files(dir, out = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -104,36 +107,200 @@ function scanTemplate(template, file) {
   for (const expr of literals) scanStrings(expr, file, true);
 }
 
-/** UI-looking string literals. `loose` = inside a template expression. */
-function scanStrings(code, file, loose) {
-  const take = (value) => {
-    if (!/[A-Za-z]{2}/.test(value)) return;
-    const sentence = /\s/.test(value.trim());
-    const capital = /^[A-Z][a-z]/.test(value);
-    if (!sentence && !capital) return;
-    if (/^[A-Z][a-zA-Z]+$/.test(value) && /[a-z][A-Z]/.test(value)) return; // CamelCase identifier
-    if (/[\\<>$]|\.(svelte|ts|js|css|png|json)\b|^https?:|^[./]/.test(value)) return;
-    add(value.replace(/\$\{[^}]*\}/g, '\u0001').split('\u0001').reduce((acc, part, idx) => idx ? `${acc}{${idx - 1}}${part}` : part, ''), file);
-  };
-  if (loose) {
-    for (const m of code.matchAll(/'((?:[^'\\\n]|\\.)*)'|"((?:[^"\\\n]|\\.)*)"|`((?:[^`\\]|\\.)*)`/g)) take((m[1] ?? m[2] ?? m[3]).replace(/\\(['"`])/g, '$1'));
-    return;
+// ── String literals ─────────────────────────────────────────────────────
+// Read with a small scanner, not a regex: a template literal can hold
+// `${...}` with strings (and other template literals) of its own inside.
+
+/** Index just past the string literal that starts at `i` (a quote). */
+function skipString(code, i) {
+  const q = code[i];
+  let j = i + 1;
+  while (j < code.length) {
+    const c = code[j];
+    if (c === '\\') { j += 2; continue; }
+    if (c === q) return j + 1;
+    if (q !== '`' && c === '\n') return j;
+    if (q === '`' && c === '$' && code[j + 1] === '{') { j = skipExpr(code, j + 2); continue; }
+    j++;
   }
-  const keyed = new RegExp(`\\b(?:${PROP_KEYS})\\s*:\\s*(?:'((?:[^'\\\\\\n]|\\\\.)*)'|"((?:[^"\\\\\\n]|\\\\.)*)"|\`((?:[^\`\\\\]|\\\\.)*)\`)`, 'g');
-  for (const m of code.matchAll(keyed)) take((m[1] ?? m[2] ?? m[3]).replace(/\\(['"`])/g, '$1'));
-  const called = /\b(?:showToast|toast|alert|confirm|notify|setStatus|showError|showMessage)\(\s*(?:'((?:[^'\\\n]|\\.)*)'|"((?:[^"\\\n]|\\.)*)"|`((?:[^`\\]|\\.)*)`)/g;
-  for (const m of code.matchAll(called)) take((m[1] ?? m[2] ?? m[3]).replace(/\\(['"`])/g, '$1'));
+  return j;
 }
 
-for (const file of files(ROOT)) {
-  const source = fs.readFileSync(file, 'utf8');
-  if (file.endsWith('.ts')) { scanStrings(source, file, false); continue; }
+/** Index just past the `}` closing an expression that starts at `i`. */
+function skipExpr(code, i) {
+  let depth = 1;
+  while (i < code.length) {
+    const c = code[i];
+    if (c === "'" || c === '"' || c === '`') { i = skipString(code, i); continue; }
+    if (c === '{') depth++;
+    else if (c === '}' && --depth === 0) return i + 1;
+    i++;
+  }
+  return i;
+}
+
+/**
+ * A template literal's body as interface text: each `${...}` becomes {0},
+ * {1}… (what the runtime matches against). Escaped quotes and `$` are kept
+ * as the character; any other escape stays visible, so the text is dropped
+ * as not interface text.
+ */
+export function templateText(body) {
+  let out = '';
+  let n = 0;
+  let i = 0;
+  while (i < body.length) {
+    const c = body[i];
+    if (c === '\\') {
+      const next = body[i + 1] ?? '';
+      out += /['"`$\\{}]/.test(next) && next !== '\\' ? next : c + next;
+      i += 2;
+      continue;
+    }
+    if (c === '$' && body[i + 1] === '{') {
+      i = skipExpr(body, i + 2);
+      out += `{${n++}}`;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
+/** Every string literal in `code` at the top level (not inside another
+ *  literal's `${...}`): [start, end, quote, body]. */
+function literals(code) {
+  const out = [];
+  let i = 0;
+  while (i < code.length) {
+    const c = code[i];
+    if (c === '/' && code[i + 1] === '/') { const e = code.indexOf('\n', i); i = e < 0 ? code.length : e; continue; }
+    if (c === '/' && code[i + 1] === '*') { const e = code.indexOf('*/', i + 2); i = e < 0 ? code.length : e + 2; continue; }
+    if (c === "'" || c === '"' || c === '`') {
+      const end = skipString(code, i);
+      out.push([i, end, c, code.slice(i + 1, Math.max(i + 1, end - 1))]);
+      i = end;
+      continue;
+    }
+    i++;
+  }
+  return out;
+}
+
+/** A literal's text: plain quotes unescaped, template placeholders numbered. */
+function literalText(quote, body) {
+  return quote === '`' ? templateText(body) : body.replace(/\\(['"`])/g, '$1');
+}
+
+function take(value, file) {
+  if (!/[A-Za-z]{2}/.test(value.replace(/\{\d+\}/g, ''))) return;
+  const sentence = /\s/.test(value.trim());
+  const capital = /^[A-Z][a-z]/.test(value) || /^\{\d+\}\s+[A-Za-z]/.test(value);
+  if (!sentence && !capital) return;
+  if (/^[A-Z][a-zA-Z]+$/.test(value) && /[a-z][A-Z]/.test(value)) return; // CamelCase identifier
+  if (/[\\<>$]|\.(svelte|ts|js|css|png|json)\b|^https?:|^[./]/.test(value)) return;
+  if (/^[Mm][\d{}\s.,\-MmZzLlHhVvCcSsQqTtAa]*$/.test(value)) return; // SVG path data
+  add(value, file);
+}
+
+// Interface text kept in a table (labels by mode or state) or in a variable
+// that is plainly text: `const END_ACTION_LABELS: Record<…, string> = {…}`,
+// `const LOCK_TEXT = {…}`, `const audioTitle = $derived(…)`.
+const TABLE_NAME = /(?:LABELS?|TEXTS?|TITLES?|NAMES?|HINTS?|MESSAGES?|TOOLTIPS?|CAPTIONS?)$/;
+const TEXT_VAR = /(?:Text|Title|Label|Labels|Hint|Message|Tooltip|Caption|Name)$/;
+
+/** The initializer of each declaration whose name says it holds text. */
+function textDeclarations(code) {
+  const out = [];
+  const decl = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(:\s*[^=;]+?)?\s*=\s*/g;
+  for (const m of code.matchAll(decl)) {
+    const name = m[1];
+    const type = m[2] ?? '';
+    void type;
+    if (!TABLE_NAME.test(name) && !TEXT_VAR.test(name)) continue;
+    // The initializer: up to a `;` or a line break at depth 0.
+    let i = m.index + m[0].length;
+    let depth = 0;
+    const from = i;
+    while (i < code.length) {
+      const c = code[i];
+      if (c === "'" || c === '"' || c === '`') { i = skipString(code, i); continue; }
+      if (c === '(' || c === '[' || c === '{') depth++;
+      else if (c === ')' || c === ']' || c === '}') { if (depth === 0) break; depth--; }
+      else if (depth === 0 && (c === ';' || c === '\n' || c === ',')) break;
+      i++;
+    }
+    out.push(code.slice(from, i));
+  }
+  return out;
+}
+
+/** UI-looking string literals. `loose` = inside a template expression. */
+function scanStrings(code, file, loose) {
+  if (loose) {
+    for (const [, , q, body] of literals(code)) take(literalText(q, body), file);
+    return;
+  }
+  const all = literals(code);
+  const at = new Map(all.map((l) => [l[0], l]));
+  const literalAfter = (re) => {
+    for (const m of code.matchAll(re)) {
+      const l = at.get(m.index + m[0].length);
+      if (l) take(literalText(l[2], l[3]), file);
+    }
+  };
+  literalAfter(new RegExp(`\\b(?:${PROP_KEYS})\\s*:\\s*`, 'g'));
+  literalAfter(/\b(?:showToast|toast|alert|confirm|notify|setStatus|showError|showMessage)\(\s*/g);
+  for (const init of textDeclarations(code)) {
+    for (const [, , q, body] of literals(init)) take(literalText(q, body), file);
+  }
+}
+
+/** The interface text in one source file. */
+export function extractFrom(source, file = 'x.svelte') {
+  const before = found;
+  found = new Map();
+  try {
+    scanFile(source, file);
+    return [...found.keys()];
+  } finally {
+    found = before;
+  }
+}
+
+function scanFile(source, file) {
+  if (file.endsWith('.ts')) { scanStrings(source, file, false); return; }
   let template = source.replace(/<!--[^]*?-->/g, '');
   for (const m of template.matchAll(/<script[^>]*>([^]*?)<\/script>/g)) scanStrings(m[1], file, false);
   template = template.replace(/<script[^>]*>[^]*?<\/script>/g, '').replace(/<style[^>]*>[^]*?<\/style>/g, '');
   scanTemplate(template, file);
 }
 
-const list = [...found.keys()].sort((a, b) => a.localeCompare(b));
-fs.writeFileSync('src/lib/i18n/source.json', JSON.stringify(list, null, 1) + '\n');
-console.log(`${list.length} strings, ${list.join(' ').split(/\s+/).length} words`);
+export const SOURCE_FILE = 'src/lib/i18n/source.json';
+
+/** Every interface string under src/, sorted the same way on any machine. */
+export function extractAll() {
+  found = new Map();
+  for (const file of files(ROOT)) scanFile(fs.readFileSync(file, 'utf8'), file);
+  return [...found.keys()].sort((a, b) => a.localeCompare(b, 'en'));
+}
+
+function main() {
+  const list = extractAll();
+  if (process.argv.includes('--missing')) {
+    const dir = 'src/lib/i18n/locales';
+    for (const name of fs.readdirSync(dir).filter((f) => f.endsWith('.json'))) {
+      const pack = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
+      const missing = list.filter((s) => !(s in pack));
+      console.log(`${name}: ${missing.length} missing`);
+      for (const s of missing) console.log(`  ${JSON.stringify(s)}`);
+    }
+    return;
+  }
+  // A list with one-space indent: the format the packs' tools expect.
+  fs.writeFileSync(SOURCE_FILE, JSON.stringify(list, null, 1) + '\n');
+  console.log(`${list.length} strings, ${list.join(' ').split(/\s+/).length} words`);
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

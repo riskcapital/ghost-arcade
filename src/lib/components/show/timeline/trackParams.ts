@@ -33,7 +33,7 @@ export function trackParamLayer(track: ShowLayerTrack, live: Layer | null | unde
 export function trackLaneParams(track: ShowLayerTrack, live: Layer | null | undefined): KeyframeableParam[] {
   const layer = trackParamLayer(track, live);
   if (!layer) return [];
-  let params: KeyframeableParam[] = [];
+  let params: KeyframeableParam[];
   try {
     params = discoverKeyframeableParams(layer);
   } catch {

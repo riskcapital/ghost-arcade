@@ -160,6 +160,7 @@
         onselectkeys={(times, additive) => ctl.laneSelectKeys(track, lane.key, times, additive)}
         ondeletekeys={(times) => ctl.laneDeleteKeys(track, lane.key, times)}
         oneasing={(times, easing) => ctl.laneEasing(track, lane.key, times, easing)}
+        snapshot={ctl.snapshot}
       />
     {/each}
   {/if}

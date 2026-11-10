@@ -60,7 +60,7 @@
       </span>
     </div>
     <div class="tp-grid">
-      {#each grid as cells, r}
+      {#each grid as cells, r (r)}
         <div class="tp-row" data-pad-row={r}>
           <button
             class="tp-live"
@@ -70,7 +70,7 @@
             title={target ? `Take “${target.layerName}” over with row ${showDeck}${r + 1}` : 'Click a track first'}
             data-pad-live={r}
           >{showDeck}{r + 1}</button>
-          {#each cells as clip, c}
+          {#each cells as clip, c (c)}
             <button
               class="tp-pad"
               class:active={!!clip && rows[r]?.activeColumn === c}
@@ -101,7 +101,7 @@
     <label class="tp-field">
       <span>Blend</span>
       <select value={overlayBlend} onchange={(e) => liveTakeover.setOverlay({ blend: (e.currentTarget as HTMLSelectElement).value as BlendMode })} aria-label="Overlay blend">
-        {#each BLEND_MODE_ORDER as mode}<option value={mode}>{mode}</option>{/each}
+        {#each BLEND_MODE_ORDER as mode (mode)}<option value={mode}>{mode}</option>{/each}
       </select>
     </label>
     <div class="tp-field">

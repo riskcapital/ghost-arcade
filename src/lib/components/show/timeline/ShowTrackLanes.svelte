@@ -27,6 +27,9 @@
   import {
     ADD_TRACK_ROW_HEIGHT,
     TRACK_ROW_HEIGHT,
+    addsToSelection,
+    dragRowOffset,
+    movesFreely,
     focusedTrackId,
     laneKeySelection,
     showSnapGuide,
@@ -38,7 +41,8 @@
   } from './trackLayout';
   import { trackLaneInfo } from './trackParams';
   import { showSlice } from './timelineSlices';
-  import { dragSnapper } from './dragSnap';
+  import { dragSnapper, snapMovingClip } from './dragSnap';
+  import { followPointer } from './dragSession';
   import { liveTakeover } from '../../../show/takeover/liveTakeover';
   import ShowTakeoverHatch from './ShowTakeoverHatch.svelte';
 
@@ -148,27 +152,48 @@
     return showTimeline.findLayerClip(id)?.clip;
   }
 
-  /** Follow the pointer until release. */
-  function follow(e: MouseEvent, onMove: (ev: MouseEvent) => void, onUp: (moved: boolean, ev: MouseEvent) => void, threshold = 3) {
+  /** The show as it was when a drag started, put back if it is cancelled. */
+  function showRestorer(): () => void {
+    const before = showTimeline.exportArrangement();
+    return () => showTimeline.restoreArrangement(before);
+  }
+
+  /**
+   * Follow the pointer until release. Esc or the window losing focus
+   * cancels: `onCancel` (by default, the show as it was at the press) is put
+   * back, and only if the drag had moved.
+   */
+  function follow(
+    e: MouseEvent,
+    onMove: (ev: MouseEvent) => void,
+    onUp: (moved: boolean, ev: MouseEvent) => void,
+    threshold = 3,
+    onCancel: (() => void) | null = showRestorer(),
+  ) {
     const sx = e.clientX;
     const sy = e.clientY;
     let moved = false;
     const endGeometry = beginDragGeometry();
-    const move = (ev: MouseEvent) => {
-      if (!moved && Math.abs(ev.clientX - sx) < threshold && Math.abs(ev.clientY - sy) < threshold) return;
-      moved = true;
-      onMove(ev);
-    };
-    const up = (ev: MouseEvent) => {
-      window.removeEventListener('mousemove', move);
-      window.removeEventListener('mouseup', up);
+    const finish = () => {
       endGeometry();
       showSnapGuide.set(null);
-      if (moved) swallowClick();
-      onUp(moved, ev);
     };
-    window.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', up);
+    followPointer({
+      move: (ev) => {
+        if (!moved && Math.abs(ev.clientX - sx) < threshold && Math.abs(ev.clientY - sy) < threshold) return;
+        moved = true;
+        onMove(ev);
+      },
+      end: (ev) => {
+        finish();
+        if (moved) swallowClick();
+        onUp(moved, ev);
+      },
+      cancel: () => {
+        finish();
+        if (moved) onCancel?.();
+      },
+    });
   }
 
   // ── Clips ────────────────────────────────────────────────────────────
@@ -179,12 +204,13 @@
     e.stopPropagation();
     focusedTrackId.set(tr.id);
     laneKeySelection.set(null);
-    const additive = e.shiftKey || e.metaKey || e.ctrlKey;
+    // Shift adds a clip; on a clip already selected it takes it out again,
+    // but only on release, so Shift-dragging a selection still moves it.
+    // Cmd/Ctrl is only "move without snapping": a Cmd-drag of a clip that is
+    // not selected moves that clip alone.
+    const additive = addsToSelection(e);
     const before = get(showTimeline).selectedClipIds;
     const wasSelected = before.includes(clip.id);
-    // Shift / Cmd-click adds a clip; on a clip already selected it takes it
-    // out again, but only on release, so Cmd-dragging a selection (Cmd is
-    // also "move without snapping") still moves it.
     if (additive && part === 'body') {
       if (!wasSelected) showTimeline.selectLayerClips([...before, clip.id]);
     } else if (!wasSelected) {
@@ -207,7 +233,14 @@
     const origStart = clip.startTime;
     const duration = clip.duration;
     const grab = timeAt(e.clientX) - origStart;
-    const selectedClips = currentTracks().flatMap((t) => t.clips.filter((c) => idSet.has(c.id)));
+    const rows: number[] = [];
+    const selectedClips = currentTracks().flatMap((t, i) => {
+      const own = t.clips.filter((c) => idSet.has(c.id));
+      if (own.length) rows.push(i);
+      return own;
+    });
+    const minIndex = rows.length ? Math.min(...rows) : startIndex;
+    const maxIndex = rows.length ? Math.max(...rows) : startIndex;
     // The edges a moving selection snaps to do not move with it.
     const snapper = dragSnapper(ids);
     const minStart = Math.min(...selectedClips.map((c) => c.startTime));
@@ -215,15 +248,9 @@
     follow(e, (ev) => {
       const list = currentTracks();
       const row = trackIndexAt(list, yInStack(ev.clientY));
-      const offset = Math.max(-startIndex, Math.min(list.length - 1 - startIndex, row - startIndex));
+      const offset = dragRowOffset(row, startIndex, minIndex, maxIndex, list.length);
       const raw = Math.max(0, timeAt(ev.clientX) - grab);
-      let start = raw;
-      if (!(ev.metaKey || ev.ctrlKey)) {
-        const a = snapper.snap(raw);
-        const b = snapper.snap(raw + duration) - duration;
-        const pull = (v: number) => (Math.abs(v - raw) < 1e-9 ? Number.POSITIVE_INFINITY : Math.abs(v - raw));
-        start = pull(b) < pull(a) ? b : a;
-      }
+      const start = movesFreely(ev) ? raw : snapMovingClip(snapper, raw, duration);
       let delta = Math.max(start - origStart, -minStart);
       if (ids.length === 1 && offset === 0) {
         // One clip on its own track slides into the free space it is
@@ -240,7 +267,7 @@
         }
       }
       const s = origStart + applied.delta;
-      showSnapGuide.set(ev.metaKey || ev.ctrlKey ? null : snapGuideAt({ start: s, end: s + duration }, snapper.edges(), raw, s));
+      showSnapGuide.set(movesFreely(ev) ? null : snapGuideAt({ start: s, end: s + duration }, snapper.edges(), raw, s));
     }, (moved) => {
       if (moved) return;
       if (onClick === 'only' && ids.length > 1) showTimeline.selectLayerClips([clip.id]);
@@ -280,19 +307,13 @@
     follow(e, (ev) => {
       const list = currentTracks();
       const row = trackIndexAt(list, yInStack(ev.clientY));
-      const offset = Math.max(-minIndex, Math.min(list.length - 1 - maxIndex, row - startIndex));
+      const offset = dragRowOffset(row, startIndex, minIndex, maxIndex, list.length);
       const raw = Math.max(0, timeAt(ev.clientX) - grab);
-      let start = raw;
-      if (!(ev.metaKey || ev.ctrlKey)) {
-        const a = snapper.snap(raw);
-        const b = snapper.snap(raw + duration) - duration;
-        const pull = (v: number) => (Math.abs(v - raw) < 1e-9 ? Number.POSITIVE_INFINITY : Math.abs(v - raw));
-        start = pull(b) < pull(a) ? b : a;
-      }
+      const start = movesFreely(ev) ? raw : snapMovingClip(snapper, raw, duration);
       drop = { delta: Math.max(start - origStart, -minStart), offset };
       place();
       const s0 = origStart + drop.delta;
-      showSnapGuide.set(ev.metaKey || ev.ctrlKey ? null : snapGuideAt({ start: s0, end: s0 + duration }, snapper.edges(), raw, s0));
+      showSnapGuide.set(movesFreely(ev) ? null : snapGuideAt({ start: s0, end: s0 + duration }, snapper.edges(), raw, s0));
     }, (moved) => {
       ghosts = [];
       if (!moved) return;
@@ -306,6 +327,9 @@
       const groups = [...byTrack.entries()].map(([trackId, clipIds]) => ({ trackId, clips: showTimeline.copyLayerClips(clipIds) }));
       const created = showTimeline.pasteLayerClipGroups(groups, minStart + drop.delta);
       if (created.length) focusedTrackId.set(list[startIndex + drop.offset]?.id ?? tr.id);
+    }, 3, () => {
+      // Nothing is pasted until the drop: cancelling only clears the ghosts.
+      ghosts = [];
     });
   }
 
@@ -325,7 +349,7 @@
     const snapper = dragSnapper([clip.id]);
     follow(e, (ev) => {
       const raw = timeAt(ev.clientX);
-      const free = ev.metaKey || ev.ctrlKey;
+      const free = movesFreely(ev);
       // Snapped here against the edges held for the drag: the same answer
       // the store's own snap gives, without rebuilding them per move.
       showTimeline.trimLayerClip(clip.id, edge, free ? raw : snapper.snap(raw), { snap: false });
@@ -342,7 +366,7 @@
       const now = liveClip(clip.id);
       if (!now) return;
       let t = timeAt(ev.clientX);
-      if (!(ev.metaKey || ev.ctrlKey)) t = snapper.snap(t);
+      if (!movesFreely(ev)) t = snapper.snap(t);
       const value = which === 'fadeIn' ? t - now.startTime : clipEnd(now) - t;
       const clamped = Math.max(0, Math.min(now.duration, Math.round(value * 1000) / 1000));
       showTimeline.updateLayerClip(clip.id, { [which]: clamped });
@@ -390,8 +414,9 @@
     if (e.button !== 0) return;
     e.preventDefault();
     if (tr) focusedTrackId.set(tr.id);
-    const additive = e.shiftKey || e.metaKey || e.ctrlKey;
-    const base = additive ? [...get(showTimeline).selectedClipIds] : [];
+    const additive = addsToSelection(e);
+    const before = [...get(showTimeline).selectedClipIds];
+    const base = additive ? before : [];
     const x0 = timeAt(e.clientX) * zoom;
     const y0 = yInStack(e.clientY);
     follow(e, (ev) => {
@@ -417,6 +442,10 @@
         showTimeline.selectLayerClips([]);
         laneKeySelection.set(null);
       }
+    }, 3, () => {
+      // Cancelled: the selection from before the marquee.
+      marquee = null;
+      showTimeline.selectLayerClips(before);
     });
   }
 
@@ -458,7 +487,14 @@
 
   function selectKeys(tr: ShowLayerTrack, key: string, times: number[]) {
     laneKeySelection.set(times.length ? { trackId: tr.id, key, times } : null);
-    if (times.length) showTimeline.selectLayerClips([]);
+    if (times.length) {
+      showTimeline.selectLayerClips([]);
+      // The keys are now what Delete and the arrows act on: let go of a
+      // preset clip, audio track, transition or tempo picked before. The
+      // track's own selection (its inspector) stays.
+      const sel = get(showTimeline).selection;
+      if (sel && sel.kind !== 'track') showTimeline.select(null);
+    }
     focusedTrackId.set(tr.id);
   }
 
@@ -494,6 +530,7 @@
     laneEasing: (tr, key, times, easing: KeyframeEasing) => {
       showTimeline.setLaneKeyEasing(tr.id, key, times, easing);
     },
+    snapshot: showRestorer,
   };
 
   const EMPTY_SET: ReadonlySet<string> = new Set();
@@ -535,7 +572,7 @@
       {tracks.length ? 'Drop media here for a new track' : 'Drop video, images or shaders here to make a layer track'}
     </span>
   </div>
-  {#each ghosts as g}
+  {#each ghosts as g, i (i)}
     <div class="tl-ghost" style:left="{g.left}px" style:top="{g.top}px" style:width="{g.width}px" style:height="{TRACK_ROW_HEIGHT - 8}px" data-show-copy-ghost></div>
   {/each}
   {#if marquee}
