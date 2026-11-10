@@ -123,6 +123,18 @@ describe('showDropEffect', () => {
     expect(classifyShowKey({ key: 's' }, { ...bare, hasTracks: true, engaged: false })).toBeNull();
   });
 
+  it('L takes the focused track over live; R returns everything, Shift+R instantly', () => {
+    const ctx = { open: true, engaged: true, hasSelection: false, hasTracks: true };
+    expect(classifyShowKey({ key: 'l' }, ctx)).toBe('takeover');
+    expect(classifyShowKey({ key: 'L', shiftKey: true }, ctx)).toBeNull();
+    expect(classifyShowKey({ key: 'l' }, { ...ctx, hasTracks: false })).toBeNull();
+    expect(classifyShowKey({ key: 'r' }, ctx)).toBeNull();
+    expect(classifyShowKey({ key: 'r' }, { ...ctx, takeoverActive: true })).toBe('returnAll');
+    expect(classifyShowKey({ key: 'R', shiftKey: true }, { ...ctx, takeoverActive: true })).toBe('returnAllInstant');
+    expect(classifyShowKey({ key: 'r', metaKey: true }, { ...ctx, takeoverActive: true })).toBeNull();
+    expect(classifyShowKey({ key: 'l' }, { ...ctx, engaged: false })).toBeNull();
+  });
+
   it('takes its keys ahead of every other window listener', () => {
     const listeners: Array<{ fn: (e: Event) => void; capture: boolean }> = [];
     const target = {

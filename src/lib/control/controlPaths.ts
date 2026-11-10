@@ -1,5 +1,6 @@
 import { TRAY_TAB_ARGS, TRAY_TAB_ORDER } from './trayTabs';
 import { MUSIC_STUDIO } from '../features';
+import { parseShowControlPath } from './showControlPaths';
 
 export interface ControlPathValidation {
   valid: boolean;
@@ -40,6 +41,13 @@ export const CONTROL_PATH_EXAMPLES: ControlPathExample[] = [
   { path: 'show:stop', label: 'Cue list Stop' },
   { path: 'show:reset', label: 'Cue list Reset to the first cue' },
   { path: 'show:cue:0', label: 'Fire cue 1 of the cue list' },
+  { path: 'show:live:1:vja:1', label: 'Show track 1 taken over by Deck A row 1' },
+  { path: 'show:live:1:mix:hold', label: 'Show track 1 taken over by the VJ mix while held' },
+  { path: 'show:release', label: 'Hand every taken-over track back to the show' },
+  { path: 'show:release:1', label: 'Hand show track 1 back to the show' },
+  { path: 'show:overlay', label: 'Live overlay level over the whole show' },
+  { path: 'show:releasemode:bar', label: 'Hand back on the next bar' },
+  { path: 'show:underneath:pause', label: 'Pause the show while it is taken over' },
 ];
 
 /** A studio control id (src/lib/music/studioControls.ts), e.g. band.throw or voice.2.level. */
@@ -141,7 +149,12 @@ export function validateControlPath(path: string): ControlPathValidation {
     if (parts[1] === 'cue' && isIndex(parts[2]) && parts.length === 3) {
       return { valid: true, normalized, reason: null };
     }
-    return { valid: false, normalized, reason: 'Show paths are show:go, show:back, show:stop, show:reset or show:cue:<zero-based index>.' };
+    if (['live', 'release', 'overlay', 'releasemode', 'underneath'].includes(parts[1] ?? '')) {
+      return parseShowControlPath(parts)
+        ? { valid: true, normalized, reason: null }
+        : { valid: false, normalized, reason: 'Takeover paths are show:live:<track>:<vja:<row>|vjb:<row>|mix|group:<n>|black>[:hold], show:release[:<track>], show:overlay, show:releasemode:<instant|fade|beat|bar|phrase|marker> or show:underneath:<run|pause> (tracks and rows count from 1).' };
+    }
+    return { valid: false, normalized, reason: 'Show paths are show:go, show:back, show:stop, show:reset or show:cue:<zero-based index>, or a takeover path (show:live, show:release, show:overlay, show:releasemode, show:underneath).' };
   }
 
   if (scope === 'sv') {

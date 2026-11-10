@@ -1,6 +1,6 @@
 {
   "name": "Show timeline: live takeover",
-  "description": "A VJ deck row takes over a show track and hands it back: a cut in, a 1 s fade release, a release quantised to the next bar of the show's tempo map, and the show paused underneath with its time unchanged.",
+  "description": "A VJ deck row takes over a show track and hands it back: a cut in, a 1 s fade release, a release quantised to the next bar of the show's tempo map, and the show paused underneath with its time unchanged. A MIDI note held on show:live engages it and the note-off releases it.",
   "steps": [
     {
       "do": "app.start",
@@ -70,7 +70,7 @@
       "track": "wall",
       "deck": "A",
       "row": 1,
-      "settle": 1200,
+      "settle": 2000,
       "label": "Take the track over with deck A row 2 (blue): the output is blue",
       "expect": {
         "output.rgb": {
@@ -239,6 +239,52 @@
     {
       "do": "takeover.underneath",
       "mode": "run"
+    },
+    {
+      "do": "eval",
+      "js": "__show.g().showControl.midiRouter.dispatchPath('show:live:1:vja:2:hold', 1, { inputId: 'midi:note:36' })"
+    },
+    {
+      "do": "wait",
+      "seconds": 1.2,
+      "label": "MIDI note-on on show:live:1:vja:2:hold: the track is taken over and the transport says LIVE 1",
+      "expect": {
+        "output.rgb": {
+          "rgb": [
+            0,
+            0,
+            1
+          ],
+          "within": 0.03
+        },
+        "eval.true": {
+          "js": "document.querySelector('[data-takeover-pill]')?.textContent.trim() === 'LIVE 1' && /LIVE \u00b7 VJ A2/.test(document.querySelector('[data-takeover-badge]')?.textContent ?? '')",
+          "label": "LIVE pill and the track header's LIVE \u00b7 VJ A2"
+        }
+      }
+    },
+    {
+      "do": "eval",
+      "js": "__show.g().showControl.midiRouter.dispatchPath('show:live:1:vja:2:hold', 0, { inputId: 'midi:note:36' })"
+    },
+    {
+      "do": "wait",
+      "seconds": 1.4,
+      "label": "Note-off (value 0) hands the track back (1 s fade)",
+      "expect": {
+        "output.rgb": {
+          "rgb": [
+            1,
+            0,
+            0
+          ],
+          "within": 0.03
+        },
+        "eval.true": {
+          "js": "!document.querySelector('[data-takeover-pill]')",
+          "label": "LIVE pill gone"
+        }
+      }
     },
     {
       "do": "wait",

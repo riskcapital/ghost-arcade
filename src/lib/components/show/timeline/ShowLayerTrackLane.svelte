@@ -30,10 +30,12 @@
     inactiveLanes: ReadonlySet<string>;
     laneRanges: Record<string, { min: number; max: number }>;
     ctl: TrackLaneController;
+    /** The track's surface is taken over live (the row turns orange). */
+    live?: boolean;
   }
 
   let {
-    track, index, zoom, viewStart, viewEnd, selectedIds, keySelection, thumbs, dropTime, inactiveLanes, laneRanges, ctl,
+    track, index, zoom, viewStart, viewEnd, selectedIds, keySelection, thumbs, dropTime, inactiveLanes, laneRanges, ctl, live = false,
   }: Props = $props();
 
   const DEFAULT_COLOR = '#8b7cff';
@@ -69,6 +71,7 @@
     class:locked={track.locked}
     class:muted={track.muted}
     class:drop={dropTime !== null}
+    class:live
     style:height="{TRACK_ROW_HEIGHT}px"
     style:--track-color={color}
     onmousedown={pressRow}
@@ -169,6 +172,10 @@
     background: color-mix(in srgb, var(--track-color) 4%, transparent);
   }
   .lt-clips.muted { opacity: 0.5; }
+  .lt-clips.live {
+    background: color-mix(in srgb, #ff8c28 7%, transparent);
+    box-shadow: inset 0 1px 0 rgba(255, 140, 40, 0.55), inset 0 -1px 0 rgba(255, 140, 40, 0.55);
+  }
   .lt-clips.locked {
     background: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.02) 0 6px, transparent 6px 12px);
   }

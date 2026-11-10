@@ -6,6 +6,10 @@
    * picker that folds a keyframe lane open under the track. Lane headers
    * follow underneath when the track is unfolded. Double-click the name to
    * rename it; drag the header up or down to move the track.
+   *
+   * LIVE takes the track's surface over (a VJ row, the mix, a group, black,
+   * or media dropped on the button). While it is taken over the header is
+   * orange, says what is playing, and ↩ hands it back (Shift: instantly).
    */
   import { get } from 'svelte/store';
   import type { Layer, ShowLayerTrack } from '../../../types';
@@ -14,6 +18,10 @@
   import { LANE_ROW_HEIGHT, TRACK_ROW_HEIGHT, laneKeySelection, portal } from './trackLayout';
   import { trackLaneParams } from './trackParams';
   import { renameShowTrack } from './trackHeaderActions';
+  import { liveTakeover, takeoverSourceLabel, type SurfaceOverride } from '../../../show/takeover/liveTakeover';
+  import { takeOverTrack } from '../../../show/takeover/takeoverRuntime';
+  import ShowTakeoverMenu from './ShowTakeoverMenu.svelte';
+  import { mayCarryTakeoverMedia, takeoverMediaFromDrop } from './takeoverUi';
 
   interface Props {
     track: ShowLayerTrack;
@@ -27,9 +35,41 @@
     onpress?: (e: MouseEvent) => void;
     /** True while the header is being dragged to another row. */
     dragging?: boolean;
+    /** The live takeover of this track's surface, if any. */
+    takeover?: SurfaceOverride | null;
   }
 
-  let { track, onStage, soloed, otherSoloed, selected, live, inactiveLanes, onpress, dragging = false }: Props = $props();
+  let { track, onStage, soloed, otherSoloed, selected, live, inactiveLanes, onpress, dragging = false, takeover = null }: Props = $props();
+
+  // ── Live takeover ────────────────────────────────────────────────────
+  const taken = $derived(!!takeover && takeover.phase !== 'releasing');
+  const liveText = $derived(takeover ? `LIVE · ${takeoverSourceLabel(takeover.source)}` : '');
+  let liveMenu: { x: number; y: number } | null = $state(null);
+  let liveDrop = $state(false);
+  function openLiveMenu(e: MouseEvent) {
+    e.stopPropagation();
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    liveMenu = liveMenu ? null : { x: r.left, y: r.top - 4 };
+  }
+  function returnLive(e: MouseEvent) {
+    e.stopPropagation();
+    liveTakeover.release(track.layerId, e.shiftKey ? { mode: 'instant' } : undefined);
+  }
+  function liveDragOver(e: DragEvent) {
+    if (!mayCarryTakeoverMedia(e.dataTransfer)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = e.dataTransfer.effectAllowed === 'move' ? 'move' : 'copy';
+    liveDrop = true;
+  }
+  async function liveDropMedia(e: DragEvent) {
+    liveDrop = false;
+    if (!e.dataTransfer || !mayCarryTakeoverMedia(e.dataTransfer)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const media = await takeoverMediaFromDrop(e.dataTransfer);
+    if (media) takeOverTrack(track, { kind: 'media', media });
+  }
 
   // ── Rename ───────────────────────────────────────────────────────────
   let editing = $state(false);
@@ -106,7 +146,7 @@
   }
 </script>
 
-<div class="th" class:selected class:dragging style:--track-color={color} data-track-header={track.id}>
+<div class="th" class:selected class:dragging class:live={taken} class:returning={takeover?.phase === 'pendingRelease'} style:--track-color={color} data-track-header={track.id}>
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
@@ -151,7 +191,9 @@
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <span class="th-name layer-name" title={`${track.layerName}: double-click to rename`} ondblclick={startRename} data-track-name>{track.layerName}</span>
         {/if}
-        {#if !onStage}
+        {#if taken}
+          <span class="th-live-badge" title={takeover?.phase === 'pendingRelease' ? 'Taken over live: returning to the timeline' : 'Taken over live: the timeline plays on underneath'} data-takeover-badge>{liveText}</span>
+        {:else if !onStage}
           <span class="th-badge" title="The current preset has no such layer: the track plays its own copy of it above the stage.">off stage</span>
         {/if}
       </div>
@@ -179,6 +221,28 @@
           aria-pressed={track.locked}
         >L</button>
         <button class="th-btn lanes" onmousedown={(e) => e.stopPropagation()} onclick={openPicker} title="Add a keyframe lane under this track" data-lane-picker>◆+</button>
+        {#if taken}
+          <button
+            class="th-btn th-return"
+            onmousedown={(e) => e.stopPropagation()}
+            onclick={returnLive}
+            title="Return to the timeline (Shift: instantly)"
+            data-takeover-return
+          >↩</button>
+        {/if}
+        <button
+          class="th-btn th-live"
+          class:on={taken}
+          class:drop={liveDrop}
+          onmousedown={(e) => e.stopPropagation()}
+          onclick={openLiveMenu}
+          ondragover={liveDragOver}
+          ondragleave={() => (liveDrop = false)}
+          ondrop={liveDropMedia}
+          title="Take this track over live: a VJ row, the mix, a group or black. Drop media here to play it."
+          aria-pressed={taken}
+          data-takeover-live
+        >LIVE</button>
         {#if track.gap === 'hide'}
           <span class="th-gap" title="Between clips the layer is hidden">gaps hidden</span>
         {/if}
@@ -195,6 +259,10 @@
     {/each}
   {/if}
 </div>
+
+{#if liveMenu}
+  <ShowTakeoverMenu x={liveMenu.x} y={liveMenu.y} {track} onclose={() => (liveMenu = null)} />
+{/if}
 
 {#if picker}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -304,6 +372,33 @@
   .th-btn.lock.on { background: #9aa0aa; border-color: #9aa0aa; }
   .th-btn.solo.dim { opacity: 0.5; }
   .th-btn.lanes { color: var(--ga-coral, #ff6f5e); }
+  .th-btn.th-live { margin-left: auto; color: #ff8c28; border-color: rgba(255, 140, 40, 0.45); }
+  .th-btn.th-live:hover:not(.on) { color: #ffb070; border-color: rgba(255, 140, 40, 0.8); }
+  .th-btn.th-live.on { color: #1a0d02; background: #ff8c28; border-color: #ff8c28; }
+  .th-btn.th-live.drop { background: rgba(255, 140, 40, 0.3); border-color: #ff8c28; }
+  .th-btn.th-return { color: #ff8c28; border-color: rgba(255, 140, 40, 0.6); }
+  .th.live .th-main {
+    background: color-mix(in srgb, #ff8c28 16%, transparent);
+    box-shadow: inset 3px 0 0 #ff8c28;
+  }
+  .th.live .th-color { background: #ff8c28; }
+  .th-live-badge {
+    flex: 0 1 auto;
+    min-width: 0;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    color: #1a0d02;
+    background: #ff8c28;
+    border-radius: 3px;
+    padding: 0 4px;
+    line-height: 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .th.returning .th-live-badge { animation: th-live-blink 0.6s ease-in-out infinite alternate; }
+  @keyframes th-live-blink { from { opacity: 1; } to { opacity: 0.45; } }
   .th-gap { font-size: 9px; color: var(--ga-ink-2, #7a7a86); white-space: nowrap; margin-left: 2px; }
   .th-lane {
     display: flex;

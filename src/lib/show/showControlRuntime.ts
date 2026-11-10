@@ -30,6 +30,7 @@ import { settings } from '../stores/settings';
 import { launchClockTempo, launchClockPosition, launchClockFollowsShow } from '../stores/launchClock';
 import { midiRouter, registerShowControl } from '../midi/midiRouter';
 import { runAsLiveControl } from '../stores/historyHooks';
+import { handleTakeoverControl, runTakeoverCue, runTakeoverReleaseCue } from './takeover/takeoverRuntime';
 
 /** Hooks App.svelte fills in: things only the app shell can do. */
 export const showRuntimeHooks: {
@@ -87,6 +88,8 @@ export const appCueExecutor: CueExecutor = {
   },
   timeline,
   projector: (id, command, input) => projectors.command(id, command, input),
+  takeover: (action) => runAsLiveControl(() => runTakeoverCue(action)),
+  takeoverRelease: (action) => runAsLiveControl(() => runTakeoverReleaseCue(action)),
   bpm: () => {
     try {
       return launchClockTempo();
@@ -111,15 +114,15 @@ export function installShowControl(): () => void {
   cleanups.push(() => cueList.setExecutor(null));
 
   // ── MIDI / OSC / keyboard ──────────────────────────────────────────
-  registerShowControl((action) => {
+  registerShowControl((action, value = 1, inputId) => {
     if (action === 'go') cueList.go('remote');
     else if (action === 'back') cueList.back();
     else if (action === 'stop') cueList.stop();
     else if (action === 'reset') cueList.reset();
-    else {
+    else if ('cue' in action) {
       const cue = cueList.state.cues[action.cue];
       if (cue) cueList.fire(cue.id, 'remote');
-    }
+    } else handleTakeoverControl(action, value, inputId);
   });
   cleanups.push(() => registerShowControl(null));
 
@@ -209,7 +212,7 @@ export function installShowControl(): () => void {
     const w = window as unknown as { __ghostArcade?: Record<string, unknown> };
     w.__ghostArcade = {
       ...(w.__ghostArcade ?? {}),
-      showControl: { cueList, projectors, timecodeChase, showSchedule, getScheduleRunner, launchClock: { launchClockPosition, launchClockFollowsShow } },
+      showControl: { cueList, projectors, timecodeChase, showSchedule, getScheduleRunner, launchClock: { launchClockPosition, launchClockFollowsShow }, midiRouter },
     };
   } catch { /* sealed */ }
 

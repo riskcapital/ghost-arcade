@@ -8,7 +8,11 @@
  *   frames while a fade or a wall-clock release is running;
  * - publishes `takeoverFrame` for Canvas and keeps the VJ feeds running
  *   (`vjClipLauncher.setTakeoverLive`) while anything samples them;
- * - a test and automation surface (`__ghostArcade.takeover`).
+ * - holds back the VJ and blackout actions of clock-fired cues while a
+ *   takeover is live with marker policy 'hold', and runs them at the
+ *   hand-back;
+ * - carries out `show:live`, `show:release`… control paths and the
+ *   takeover cue actions.
  */
 import { get } from 'svelte/store';
 import type { ShowLayerTrack } from '../../types';
@@ -16,7 +20,8 @@ import { showTimeline, onShowTimelineReset } from '../../stores/showTimeline';
 import { vjClipLauncher } from '../../stores/vjClipLauncher';
 import { nextLaunchBoundary } from '../../stores/launchClock';
 import { takeoverFrame, takeoverMediaSources } from '../../stores/takeoverFrame';
-import { cueList } from '../cueList';
+import { cueList, type CueAction, type CueFireSource } from '../cueList';
+import type { ShowControlAction, ShowTakeoverSourceSpec } from '../../control/showControlPaths';
 import {
   liveTakeover,
   takeoverAnimating,
@@ -24,8 +29,37 @@ import {
   takeoverSummary,
   type ReleaseSpec,
   type TakeoverEvaluation,
+  type TakeoverReleaseMode,
   type TakeoverSource,
 } from './liveTakeover';
+
+/** Cue sources the clock fired: what marker policy 'hold' holds back. */
+const CLOCK_FIRED: ReadonlySet<CueFireSource> = new Set(['marker', 'timecode', 'follow']);
+/** Actions that would fight the VJ's live picture. */
+const HELD_KINDS: ReadonlySet<CueAction['kind']> = new Set(['vjClip', 'vjColumn', 'vjStopAll', 'blackout']);
+
+let deferred: CueAction[] = [];
+
+/** Should this action of a firing cue wait for the hand-back? Pure. */
+export function shouldHoldCueAction(
+  action: CueAction,
+  source: CueFireSource,
+  policy: 'fire' | 'hold',
+  takeoverActive: boolean,
+): boolean {
+  return policy === 'hold' && takeoverActive && CLOCK_FIRED.has(source) && HELD_KINDS.has(action.kind);
+}
+
+function takeoverActive(): boolean {
+  return Object.keys(liveTakeover.state.surfaces).length > 0;
+}
+
+function runDeferred(): void {
+  const actions = deferred;
+  deferred = [];
+  liveTakeover.setDeferredCount(0);
+  if (actions.length) cueList.runActions(actions);
+}
 
 // ── Tracks and sources ──────────────────────────────────────────────────
 
@@ -37,6 +71,19 @@ export function trackById(trackId: string): ShowLayerTrack | null {
   return get(showTimeline).layerTracks.find((t) => t.id === trackId) ?? null;
 }
 
+/** A path's source as a takeover source (groups by their 0-based index). */
+export function sourceFromSpec(spec: ShowTakeoverSourceSpec): TakeoverSource | null {
+  switch (spec.kind) {
+    case 'vjRow': return { kind: 'vjRow', deck: spec.deck, row: spec.row };
+    case 'vjMix': return { kind: 'vjMix' };
+    case 'black': return { kind: 'black' };
+    case 'vjGroup': {
+      const group = get(vjClipLauncher).groups?.[spec.index];
+      return group ? { kind: 'vjGroup', groupId: group.id, name: group.name } : null;
+    }
+  }
+}
+
 /** Take a show track over. */
 export function takeOverTrack(track: ShowLayerTrack, source: TakeoverSource | null, opts: { inputId?: string; momentary?: boolean; fadeIn?: number } = {}): boolean {
   return liveTakeover.engage(track.layerId, source, { ...opts, trackId: track.id });
@@ -45,6 +92,80 @@ export function takeOverTrack(track: ShowLayerTrack, source: TakeoverSource | nu
 /** Hand a show track back (with the takeover's release setting unless given). */
 export function returnTrack(track: ShowLayerTrack, spec?: Partial<ReleaseSpec>): number {
   return liveTakeover.release(track.layerId, spec);
+}
+
+/** The show's `show:live`/`show:release`… paths. */
+export function handleTakeoverControl(action: ShowControlAction, value: number, inputId = 'path'): boolean {
+  if (typeof action !== 'object') return false;
+  if ('live' in action) {
+    const track = trackAt(action.live.track);
+    if (!track) return true;
+    const momentary = action.live.hold || liveTakeover.state.padMode === 'momentary';
+    if (value > 0) {
+      const source = sourceFromSpec(action.live.source);
+      if (!source) return true;
+      const current = liveTakeover.state.surfaces[track.layerId];
+      // A latched pad pressed again on the same source hands back.
+      if (!momentary && current && current.phase !== 'releasing' && current.phase !== 'pendingRelease'
+        && JSON.stringify(current.source) === JSON.stringify(source)) {
+        returnTrack(track);
+        return true;
+      }
+      takeOverTrack(track, source, momentary ? { inputId, momentary: true } : {});
+    } else if (momentary) {
+      liveTakeover.releaseInput(track.layerId, inputId);
+    }
+    return true;
+  }
+  if ('release' in action) {
+    if (action.release === null) liveTakeover.release('all');
+    else {
+      const track = trackAt(action.release);
+      if (track) returnTrack(track);
+    }
+    return true;
+  }
+  if ('overlay' in action) {
+    liveTakeover.setOverlay({ level: Math.max(0, Math.min(1, value)) });
+    return true;
+  }
+  if ('releaseMode' in action) {
+    liveTakeover.setDefaultRelease({ mode: action.releaseMode as TakeoverReleaseMode });
+    return true;
+  }
+  if ('underneath' in action) {
+    liveTakeover.setUnderneath(action.underneath);
+    return true;
+  }
+  return false;
+}
+
+/** The takeover cue actions. */
+export function runTakeoverCue(action: Extract<CueAction, { kind: 'takeover' }>): void {
+  const track = trackById(action.trackId);
+  if (!track) return;
+  let source: TakeoverSource | null;
+  switch (action.source) {
+    case 'vjRow': source = { kind: 'vjRow', deck: action.deck, row: action.row }; break;
+    case 'vjMix': source = { kind: 'vjMix' }; break;
+    case 'black': source = { kind: 'black' }; break;
+    case 'vjGroup': {
+      const group = get(vjClipLauncher).groups?.find((g) => g.id === action.groupId);
+      source = group ? { kind: 'vjGroup', groupId: group.id, name: group.name } : null;
+      break;
+    }
+  }
+  if (source) takeOverTrack(track, source);
+}
+
+export function runTakeoverReleaseCue(action: Extract<CueAction, { kind: 'takeoverRelease' }>): void {
+  const spec = action.mode === 'default' ? undefined : { mode: action.mode, fadeSeconds: action.fade };
+  if (!action.trackId) {
+    liveTakeover.release('all', spec);
+    return;
+  }
+  const track = trackById(action.trackId);
+  if (track) returnTrack(track, spec);
 }
 
 // ── Install ─────────────────────────────────────────────────────────────
@@ -63,6 +184,7 @@ export function installTakeoverRuntime(): () => void {
     pauseShow: () => showTimeline.pause(),
     playShow: () => showTimeline.play(),
     launchBoundary: (gridBeats, nowMs) => nextLaunchBoundary(gridBeats, nowMs),
+    onAllReleased: runDeferred,
   });
 
   // ── Evaluate and publish ─────────────────────────────────────────────
@@ -120,7 +242,20 @@ export function installTakeoverRuntime(): () => void {
   });
 
   // A cleared show or another project: the old takeover is over.
-  disposers.push(onShowTimelineReset(() => liveTakeover.reset()));
+  disposers.push(onShowTimelineReset(() => {
+    deferred = [];
+    liveTakeover.reset();
+  }));
+
+  // ── Marker policy ────────────────────────────────────────────────────
+  cueList.setActionGate((action, source) => {
+    const s = liveTakeover.state;
+    if (!shouldHoldCueAction(action, source, s.markerPolicy, takeoverActive())) return false;
+    deferred.push(action);
+    liveTakeover.setDeferredCount(deferred.length);
+    return true;
+  });
+  disposers.push(() => cueList.setActionGate(null));
 
   // ── Automation / test surface ────────────────────────────────────────
   try {
@@ -139,6 +274,7 @@ export function installTakeoverRuntime(): () => void {
           const track = trackById(trackId);
           return track ? returnTrack(track, spec) : 0;
         },
+        deferredCount: () => deferred.length,
       },
     };
   } catch { /* sealed */ }

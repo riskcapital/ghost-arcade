@@ -35,6 +35,13 @@
  * been pressed on it. A jump or a seek does not fire the markers it skipped.
  * Cues can also carry a timecode time of their own, which fires them when a
  * chased timecode clock crosses it.
+ *
+ * LIVE TAKEOVER
+ * -------------
+ * 'takeover' and 'takeoverRelease' actions let a show hand a surface to the
+ * VJ and take it back on schedule. While a takeover is live, an action gate
+ * (`setActionGate`) may hold back actions of cues the clock fired (markers,
+ * timecode, follows) until the hand-back; GO, Back and Stop are never held.
  */
 
 import { writable, get } from 'svelte/store';
@@ -45,6 +52,11 @@ import { generateUUID } from '../utils/uuid';
 export type CueDeck = 'A' | 'B';
 export type CueTimelineOp = 'play' | 'pause' | 'stop' | 'seek';
 export type ProjectorCommand = 'power-on' | 'power-off' | 'shutter-close' | 'shutter-open' | 'input';
+/** What a 'takeover' cue puts on the track's surface. */
+export type CueTakeoverSource = 'vjRow' | 'vjMix' | 'vjGroup' | 'black';
+/** How a 'takeoverRelease' cue hands back ('default' = the takeover's own setting). */
+export type CueReleaseMode = 'default' | 'instant' | 'fade' | 'beat' | 'bar' | 'phrase' | 'marker';
+const CUE_RELEASE_MODES: CueReleaseMode[] = ['default', 'instant', 'fade', 'beat', 'bar', 'phrase', 'marker'];
 
 export type CueAction =
   | { id: string; kind: 'preset'; compositionId: string }
@@ -57,7 +69,9 @@ export type CueAction =
   | { id: string; kind: 'layerOpacity'; layerId: string; value: number; fade: number }
   | { id: string; kind: 'param'; path: string; value: number; fade: number; from: number | null }
   | { id: string; kind: 'timeline'; op: CueTimelineOp; seconds: number }
-  | { id: string; kind: 'projector'; projectorId: string; command: ProjectorCommand; input: string };
+  | { id: string; kind: 'projector'; projectorId: string; command: ProjectorCommand; input: string }
+  | { id: string; kind: 'takeover'; trackId: string; source: CueTakeoverSource; deck: CueDeck; row: number; groupId: string }
+  | { id: string; kind: 'takeoverRelease'; trackId: string; mode: CueReleaseMode; fade: number };
 
 export type CueActionKind = CueAction['kind'];
 
@@ -143,7 +157,17 @@ export interface CueExecutor {
   projector(projectorId: string, command: ProjectorCommand, input: string): unknown;
   /** Current tempo, for waits counted in beats. */
   bpm(): number;
+  /** Take over a show track's surface ('' = nothing). */
+  takeover?(action: Extract<CueAction, { kind: 'takeover' }>): void;
+  /** Hand a track back ('' = every surface). */
+  takeoverRelease?(action: Extract<CueAction, { kind: 'takeoverRelease' }>): void;
 }
+
+/**
+ * Decides, per action of a firing cue, whether to hold it back. Returns true
+ * when it took the action (it runs it later through `runActions`).
+ */
+export type CueActionGate = (action: CueAction, source: CueFireSource, cue: Cue) => boolean;
 
 export interface CueClock {
   now(): number;
@@ -186,6 +210,8 @@ export function createCueAction(kind: CueActionKind): CueAction {
     case 'param': return { id, kind, path: '', value: 1, fade: 0, from: null };
     case 'timeline': return { id, kind, op: 'play', seconds: 0 };
     case 'projector': return { id, kind, projectorId: '*', command: 'power-on', input: '' };
+    case 'takeover': return { id, kind, trackId: '', source: 'vjRow', deck: 'A', row: 0, groupId: '' };
+    case 'takeoverRelease': return { id, kind, trackId: '', mode: 'default', fade: 1 };
   }
 }
 
@@ -225,6 +251,15 @@ export function normalizeCueAction(raw: unknown): CueAction | null {
       const commands: ProjectorCommand[] = ['power-on', 'power-off', 'shutter-close', 'shutter-open', 'input'];
       const command = commands.includes(r.command as ProjectorCommand) ? (r.command as ProjectorCommand) : 'power-on';
       return { id, kind: 'projector', projectorId: str(r.projectorId, '*') || '*', command, input: str(r.input) };
+    }
+    case 'takeover': {
+      const sources: CueTakeoverSource[] = ['vjRow', 'vjMix', 'vjGroup', 'black'];
+      const source = sources.includes(r.source as CueTakeoverSource) ? (r.source as CueTakeoverSource) : 'vjRow';
+      return { id, kind: 'takeover', trackId: str(r.trackId), source, deck: deck(r.deck), row: Math.round(num(r.row, 0, 0, 63)), groupId: str(r.groupId) };
+    }
+    case 'takeoverRelease': {
+      const mode = CUE_RELEASE_MODES.includes(r.mode as CueReleaseMode) ? (r.mode as CueReleaseMode) : 'default';
+      return { id, kind: 'takeoverRelease', trackId: str(r.trackId), mode, fade: num(r.fade, 1, 0, 60) };
     }
     default:
       return null;
@@ -368,9 +403,20 @@ export class CueEngine {
    *  fade on a path whose live value cannot be read back. */
   private readonly lastWritten = new Map<string, number>();
   private readonly listeners = new Set<CueFireListener>();
+  private gate: CueActionGate | null = null;
 
   setExecutor(executor: CueExecutor | null): void {
     this.executor = executor;
+  }
+
+  /** Install (or remove) the action gate (see CueActionGate). */
+  setActionGate(gate: CueActionGate | null): void {
+    this.gate = gate;
+  }
+
+  /** Run actions now, outside any cue: what a gate held back. */
+  runActions(actions: readonly CueAction[]): void {
+    for (const action of actions) this.runAction(action);
   }
 
   setClock(clock: CueClock | null): void {
@@ -590,7 +636,17 @@ export class CueEngine {
       pendingFollow: null,
       history,
     });
-    for (const action of cue.actions) this.runAction(action);
+    for (const action of cue.actions) {
+      let held = false;
+      if (this.gate) {
+        try {
+          held = this.gate(action, source, cue);
+        } catch (err) {
+          console.warn('[CueList] action gate failed:', err);
+        }
+      }
+      if (!held) this.runAction(action);
+    }
     for (const listener of this.listeners) this.safely(() => listener(record, cue));
     // An action may have fired another cue (a projector hook, a marker at
     // the timeline's start). Only schedule if this cue is still current.
@@ -680,6 +736,7 @@ export class CueEngine {
     this.lastWritten.clear();
     this.listeners.clear();
     this.executor = null;
+    this.gate = null;
     this.clock = realClock;
     this.store.set(initialState());
   }
@@ -766,6 +823,12 @@ export class CueEngine {
         break;
       case 'projector':
         this.safely(() => ex.projector(action.projectorId, action.command, action.input));
+        break;
+      case 'takeover':
+        if (action.trackId) this.safely(() => ex.takeover?.(action));
+        break;
+      case 'takeoverRelease':
+        this.safely(() => ex.takeoverRelease?.(action));
         break;
     }
   }

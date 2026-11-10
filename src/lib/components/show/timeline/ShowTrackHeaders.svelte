@@ -11,6 +11,7 @@
   import ShowAddTrackMenu from './ShowAddTrackMenu.svelte';
   import { ADD_TRACK_ROW_HEIGHT, reorderGapAt, reorderIndexForGap, trackHeight, trackTops } from './trackLayout';
   import { trackLaneInfo } from './trackParams';
+  import { liveTakeover } from '../../../show/takeover/liveTakeover';
 
   const tracks = $derived($showTimeline.layerTracks);
   const solo = $derived($showTimeline.soloTrackId);
@@ -80,6 +81,7 @@
     inactiveLanes={tr.lanes.length ? trackLaneInfo(tr, liveById.get(tr.layerId)).inactive : EMPTY}
     onpress={(e) => pressHeader(e, tr.id)}
     dragging={reorder?.trackId === tr.id}
+    takeover={$liveTakeover.surfaces[tr.layerId] ?? null}
   />
 {/each}
 {#if reorder}

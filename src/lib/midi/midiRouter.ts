@@ -16,6 +16,8 @@ import type { BlendMode, Effect } from '../types';
 import { clampToSchema, resolveEffectParam } from './effectParamTarget';
 import { getPluginByEffectType } from '../plugins/registry';
 import { controlPathAsWritten, isVideoScratchPath, matchControlKey, normalizeControlPath } from '../control/controlPaths';
+import { parseShowControlPath, type ShowControlAction } from '../control/showControlPaths';
+export { parseShowControlPath, type ShowControlAction, type ShowTakeoverSourceSpec } from '../control/showControlPaths';
 import { audioStore } from '../stores/audio';
 import { buildNativeAnchor, needsNativeReanchor, predictNativePlayheadSeconds } from '../media/nativeTransport';
 import { createNativeVideoScratchController } from '../renderer/nativeVideoScratch';
@@ -149,16 +151,30 @@ export function registerSnapshotRecaller(recaller: (index: number) => void) {
 }
 
 /**
- * Late-bound cue list control for `show:go`, `show:back`, `show:stop`,
- * `show:reset` and `show:cue:<index>`. Registered by the show-control
- * runtime (src/lib/show/cueExecutor.ts) so the router does not import the
- * cue engine. Fires on the rising edge only (value > 0), like a pad.
+ * Late-bound show control, registered by the show-control runtime
+ * (src/lib/show/showControlRuntime.ts) so the router does not import the cue
+ * engine or the takeover.
+ *
+ * Cue list: `show:go`, `show:back`, `show:stop`, `show:reset`,
+ * `show:cue:<index>` fire on the rising edge only (value > 0), like a pad.
+ *
+ * Live takeover (track and row numbers count from 1, as the tray shows them):
+ *   show:live:<track>:<vja:<row>|vjb:<row>|mix|group:<n>|black>[:hold]
+ *       take the track over; value 0 hands it back when the takeover is
+ *       momentary (`:hold`, or pads set to momentary)
+ *   show:release | show:release:<track>      hand back (rising edge)
+ *   show:overlay                             overlay level, the value 0-1
+ *   show:releasemode:<instant|fade|beat|bar|phrase|marker>
+ *   show:underneath:<run|pause>
+ * These get the value through, so a note-off (value 0) can release.
  */
-export type ShowControlAction = 'go' | 'back' | 'stop' | 'reset' | { cue: number };
-let _showControl: ((action: ShowControlAction) => void) | null = null;
-export function registerShowControl(handler: ((action: ShowControlAction) => void) | null) {
+export type ShowControlHandler = (action: ShowControlAction, value: number, inputId?: string) => void;
+let _showControl: ShowControlHandler | null = null;
+export function registerShowControl(handler: ShowControlHandler | null) {
   _showControl = handler;
 }
+
+
 
 class MidiRouter {
   /** `from`: the input it came from, so mappings learned on another controller stay quiet. */
@@ -333,7 +349,7 @@ class MidiRouter {
           this.dispatchPerformer(parts, value, mapping, names);
           break;
         case 'show':
-          this.dispatchShow(parts, value);
+          this.dispatchShow(parts, value, inputId ?? `path:${parts.join(':')}`);
           break;
         case 'studio':
           // studio:<id> — the Music Studio's own controls (throw, freeze,
@@ -380,14 +396,15 @@ class MidiRouter {
     runStudioControl(id, position);
   }
 
-  private dispatchShow(parts: string[], value: number) {
-    if (!(value > 0) || !_showControl) return;
-    const action = parts[1];
-    if (action === 'go' || action === 'back' || action === 'stop' || action === 'reset') {
-      _showControl(action);
-    } else if (action === 'cue' && /^\d+$/.test(parts[2] ?? '')) {
-      _showControl({ cue: Number(parts[2]) });
-    }
+  private dispatchShow(parts: string[], value: number, inputId: string) {
+    if (!_showControl || !Number.isFinite(value)) return;
+    const action = parseShowControlPath(parts);
+    if (!action) return;
+    // The overlay is a fader and a live takeover can release on value 0;
+    // everything else fires on the rising edge only, like a pad.
+    const continuous = typeof action === 'object' && ('overlay' in action || 'live' in action);
+    if (!continuous && !(value > 0)) return;
+    _showControl(action, value, inputId);
   }
 
   private dispatchMapping(parts: string[], value: number, mapping: MidiMapping, layerId?: string, names: string[] = parts) {

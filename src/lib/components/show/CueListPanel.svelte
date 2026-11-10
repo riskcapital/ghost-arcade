@@ -109,6 +109,8 @@
     { value: 'param', label: 'Control path value' },
     { value: 'timeline', label: 'Show timeline' },
     { value: 'projector', label: 'Projector' },
+    { value: 'takeover', label: 'Take a track over live' },
+    { value: 'takeoverRelease', label: 'Return a track to the timeline' },
   ];
 
   function addCue() {

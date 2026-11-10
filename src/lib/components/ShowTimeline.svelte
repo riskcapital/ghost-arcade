@@ -66,6 +66,10 @@
   import ShowTrackInspector from './show/timeline/ShowTrackInspector.svelte';
   import ShowRuler from './show/timeline/ShowRuler.svelte';
   import ShowTempoInspector from './show/timeline/ShowTempoInspector.svelte';
+  import ShowTakeoverControls from './show/timeline/ShowTakeoverControls.svelte';
+  import TakeoverPads from './show/TakeoverPads.svelte';
+  import { takeoverPadsOpen, toggleTakeoverOnTarget } from './show/timeline/takeoverUi';
+  import { liveTakeover } from '../show/takeover/liveTakeover';
   import { detectShowTempo } from '../show/tempoDetect';
   import { formatBarsBeats, rulerTicks } from '../show/tempoMap';
   import { TRACK_HEADER_WIDTH, laneKeySelection, showSnapGuide, tracksStackHeight } from './show/timeline/trackLayout';
@@ -821,6 +825,7 @@
       hasClipSelection: clipSel,
       canPaste: canPasteClips() && state.layerTracks.length > 0,
       hasTracks: state.layerTracks.length > 0,
+      takeoverActive: Object.keys(liveTakeover.state.surfaces).length > 0 || !!liveTakeover.state.overlay,
     });
     if (!action) return false;
     switch (action) {
@@ -868,6 +873,12 @@
         clearTrackSelection();
         showTimeline.select(null);
         selectedMarkerId = null;
+        return true;
+      case 'takeover':
+        return toggleTakeoverOnTarget();
+      case 'returnAll':
+      case 'returnAllInstant':
+        liveTakeover.release('all', action === 'returnAllInstant' ? { mode: 'instant' } : undefined);
         return true;
     }
     return false;
@@ -1156,6 +1167,8 @@
           <span class="t-tc-warn" title={tcMismatchText} data-show-tempo-mismatch>⚠ {tcSourceName} {tc.sourceBpm?.toFixed(1)} · show {tc.showBpm?.toFixed(1)} BPM</span>
         {/if}
       {/if}
+      <span class="t-divider"></span>
+      <ShowTakeoverControls />
       <input
         class="hidden-file"
         type="file"
@@ -1165,6 +1178,10 @@
         onchange={handleAudioPick}
       />
     </div>
+
+    {#if $takeoverPadsOpen}
+      <TakeoverPads />
+    {/if}
 
     <div class="show-main">
     <div class="show-main-col">

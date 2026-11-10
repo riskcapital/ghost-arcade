@@ -78,6 +78,8 @@
           <div class="shortcut-row"><kbd>N</kbd><span>Snap on / off</span></div>
           <div class="shortcut-row"><kbd>M</kbd><span>Marker at the playhead</span></div>
           <div class="shortcut-row"><kbd>Home</kbd> / <kbd>End</kbd><span>Go to the start / end</span></div>
+          <div class="shortcut-row"><kbd>L</kbd><span>Take the focused track over live, or hand it back</span></div>
+          <div class="shortcut-row"><kbd>R</kbd> / <kbd>Shift</kbd>+<kbd>R</kbd><span>Return every taken-over track to the timeline / instantly</span></div>
           <div class="shortcut-row"><kbd>Esc</kbd><span>Clear the selection</span></div>
           <div class="shortcut-row"><kbd>{mod}</kbd><span>Hold while dragging a clip or key to move it without snapping</span></div>
           <div class="shortcut-row"><kbd>{isMac ? 'Option' : 'Alt'}</kbd><span>Hold while dragging clips to drop copies</span></div>

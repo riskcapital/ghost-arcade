@@ -37,6 +37,8 @@
     type TrackLaneController,
   } from './trackLayout';
   import { trackLaneInfo } from './trackParams';
+  import { liveTakeover } from '../../../show/takeover/liveTakeover';
+  import ShowTakeoverHatch from './ShowTakeoverHatch.svelte';
 
   interface Props {
     zoom: number;
@@ -455,8 +457,10 @@
       inactiveLanes={laneInfo[tr.id]?.inactive ?? EMPTY_SET}
       laneRanges={laneInfo[tr.id]?.ranges ?? EMPTY_RANGES}
       {ctl}
+      live={!!$liveTakeover.surfaces[tr.layerId]}
     />
   {/each}
+  <ShowTakeoverHatch {tracks} {zoom} />
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="tl-new"

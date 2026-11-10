@@ -4,6 +4,7 @@
   import VJFluxPanel from './VJFluxPanel.svelte';
   import StageFxChaseControls from './StageFxChaseControls.svelte';
   import LooksGallery from './LooksGallery.svelte';
+  import ShowUnderneathBanner from './show/ShowUnderneathBanner.svelte';
   import LooksIcon from './LooksIcon.svelte';
   import { videoBeatFit } from '../media/videoBeatFit';
   import { launchClock, TEMPO_NUDGE_AMOUNT } from '../stores/launchClock';
@@ -4442,6 +4443,7 @@
         </button>
       </div>
 
+      <ShowUnderneathBanner />
       <div class="header-stage-slot">
       {#if $vjClipLauncher.isLive}
         <div class="header-stage">

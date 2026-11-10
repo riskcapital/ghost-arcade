@@ -9,6 +9,8 @@
   import { macros } from '../../stores/macros';
   import { projectors } from '../../show/projectors';
   import { validateControlPath } from '../../control/controlPaths';
+  import { showTimeline } from '../../stores/showTimeline';
+  import { vjClipLauncher } from '../../stores/vjClipLauncher';
 
   export let cueId: string;
   export let action: CueAction;
@@ -25,6 +27,17 @@
     param: 'Control path',
     timeline: 'Show timeline',
     projector: 'Projector',
+    takeover: 'Take over live',
+    takeoverRelease: 'Return to timeline',
+  };
+  const RELEASE_LABELS: Record<string, string> = {
+    default: 'As set in the show',
+    instant: 'Cut',
+    fade: 'Fade',
+    beat: 'Next beat',
+    bar: 'Next bar',
+    phrase: 'Next phrase',
+    marker: 'Next marker',
   };
 
   function set(patch: Record<string, unknown>) {
@@ -142,6 +155,53 @@
     </select>
     {#if action.command === 'input'}
       <input class="ca-code" type="text" maxlength="2" placeholder="31" value={action.input} onchange={(e) => set({ input: val(e).toUpperCase() })} title="PJLink input: 11-19 RGB, 21-29 video, 31-39 digital, 41-49 storage, 51-59 network" aria-label="Input code" />
+    {/if}
+  {:else if action.kind === 'takeover'}
+    <select class="ca-wide" value={action.trackId} onchange={(e) => set({ trackId: val(e) })} aria-label="Track">
+      <option value="">Choose track</option>
+      {#each $showTimeline.layerTracks as track, i}
+        <option value={track.id}>{i + 1}. {track.layerName}</option>
+      {/each}
+    </select>
+    <select value={action.source} onchange={(e) => set({ source: val(e) })} aria-label="Takes over with">
+      <option value="vjRow">VJ row</option>
+      <option value="vjMix">VJ mix</option>
+      <option value="vjGroup">VJ group</option>
+      <option value="black">Black</option>
+    </select>
+    {#if action.source === 'vjRow'}
+      <select value={action.deck} onchange={(e) => set({ deck: val(e) })} aria-label="Deck">
+        <option value="A">Deck A</option>
+        <option value="B">Deck B</option>
+      </select>
+      <label class="ca-field">Row
+        <input type="number" min="1" max="64" step="1" value={action.row + 1} onchange={(e) => set({ row: num(e) - 1 })} />
+      </label>
+    {:else if action.source === 'vjGroup'}
+      <select value={action.groupId} onchange={(e) => set({ groupId: val(e) })} aria-label="VJ group">
+        <option value="">Choose group</option>
+        {#each $vjClipLauncher.groups ?? [] as group}
+          <option value={group.id}>{group.name}</option>
+        {/each}
+      </select>
+    {/if}
+  {:else if action.kind === 'takeoverRelease'}
+    <select class="ca-wide" value={action.trackId} onchange={(e) => set({ trackId: val(e) })} aria-label="Track">
+      <option value="">Every track</option>
+      {#each $showTimeline.layerTracks as track, i}
+        <option value={track.id}>{i + 1}. {track.layerName}</option>
+      {/each}
+    </select>
+    <select value={action.mode} onchange={(e) => set({ mode: val(e) })} aria-label="Return">
+      {#each Object.entries(RELEASE_LABELS) as [value, label]}
+        <option {value}>{label}</option>
+      {/each}
+    </select>
+    {#if action.mode !== 'default' && action.mode !== 'instant'}
+      <label class="ca-field">Fade
+        <input type="number" min="0" step="0.1" value={action.fade} onchange={(e) => set({ fade: num(e) })} />
+        <span class="ca-unit">s</span>
+      </label>
     {/if}
   {/if}
 

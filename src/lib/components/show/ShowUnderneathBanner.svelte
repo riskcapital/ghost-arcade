@@ -1,0 +1,40 @@
+<script lang="ts">
+  /**
+   * In VJ mode: the show is still running underneath (its tray is hidden
+   * there), and how many of its tracks are taken over live.
+   */
+  import { showTimeline } from '../../stores/showTimeline';
+  import { liveTakeover } from '../../show/takeover/liveTakeover';
+
+  const playing = $derived($showTimeline.isPlaying);
+  const count = $derived(Object.values($liveTakeover.surfaces).filter((o) => o.phase !== 'releasing').length);
+</script>
+
+{#if playing || count > 0}
+  <div class="su" title="The show timeline carries on while you play; tracks taken over live go back to it with Return" data-show-underneath>
+    <span class="su-dot" class:paused={!playing}></span>
+    {#if playing}Show playing underneath{:else}Show paused underneath{/if}
+    {#if count > 0}<span class="su-live">LIVE {count}</span>{/if}
+  </div>
+{/if}
+
+<style>
+  .su {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 22px;
+    padding: 0 8px;
+    font-size: var(--ga-text-meta, 11px);
+    font-weight: 600;
+    color: #ffb070;
+    border: 1px solid rgba(255, 140, 40, 0.5);
+    border-radius: 11px;
+    background: rgba(255, 140, 40, 0.08);
+    white-space: nowrap;
+  }
+  .su-dot { width: 7px; height: 7px; border-radius: 50%; background: #ff8c28; animation: su-pulse 1.1s ease-in-out infinite; }
+  .su-dot.paused { animation: none; opacity: 0.5; }
+  @keyframes su-pulse { 50% { opacity: 0.3; } }
+  .su-live { color: #1a0d02; background: #ff8c28; border-radius: 8px; padding: 0 6px; font-weight: 800; }
+</style>

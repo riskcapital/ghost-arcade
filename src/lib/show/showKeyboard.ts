@@ -30,7 +30,10 @@ export type ShowKeyAction =
   | 'marker'
   | 'home'
   | 'end'
-  | 'clearSelection';
+  | 'clearSelection'
+  | 'takeover'
+  | 'returnAll'
+  | 'returnAllInstant';
 
 export interface ShowKeyContext {
   /** The tray is open and visible. */
@@ -45,6 +48,8 @@ export interface ShowKeyContext {
   canPaste?: boolean;
   /** The show has layer tracks (split, select all). */
   hasTracks?: boolean;
+  /** A live takeover is on (R hands everything back). */
+  takeoverActive?: boolean;
 }
 
 interface KeyLike {
@@ -95,7 +100,11 @@ export function classifyShowKey(e: KeyLike, ctx: ShowKeyContext): ShowKeyAction 
     if (key === 'ArrowLeft') return e.shiftKey ? 'nudgeBarLeft' : 'nudgeLeft';
     return e.shiftKey ? 'nudgeBarRight' : 'nudgeRight';
   }
+  // L takes the focused track over live (or hands it back); R returns
+  // every taken-over track, Shift+R instantly.
+  if (key === 'r') return ctx.takeoverActive ? (e.shiftKey ? 'returnAllInstant' : 'returnAll') : null;
   if (e.shiftKey) return null;
+  if (key === 'l') return ctx.hasTracks ? 'takeover' : null;
   if (key === 's') return ctx.hasTracks ? 'split' : null;
   if (key === 'n') return 'toggleSnap';
   if (key === 'm') return 'marker';
