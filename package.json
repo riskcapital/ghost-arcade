@@ -71,6 +71,7 @@
     "start": "concurrently \"npm run dev\" \"npm run server\"",
     "legacy:electron:dev": "concurrently -k \"npm run dev\" \"node -e \\\"setTimeout(() => require('child_process').execSync('electron .', {stdio:'inherit'}), 2000)\\\"\"",
     "test": "vitest run",
+    "i18n:extract": "node scripts/i18n-extract.mjs",
     "lint": "eslint src",
     "format": "prettier --write src",
     "postinstall": "node scripts/sign-dev-electron.mjs",
