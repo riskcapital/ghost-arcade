@@ -126,7 +126,7 @@ async function runShow(file, opts, app, reportDir) {
 
   const result = { id, name: show.name ?? id, description: show.description ?? '', steps: [], perf: [], images: [], video: null, pass: true };
   const ctx = {
-    session, vars: {}, perf: result.perf, startedAt: Date.now(), stepLabel: '', mapsim: null, livePorts: app.livePorts,
+    session, vars: {}, perf: result.perf, startedAt: Date.now(), stepLabel: '', mapsim: null, livePorts: app.livePorts, profile: app.profile,
     eval: (js, t) => session.eval(js, t),
     async openPage(match) {
       const port = opts.port;

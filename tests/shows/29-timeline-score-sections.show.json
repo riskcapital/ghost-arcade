@@ -1,0 +1,183 @@
+{
+  "name": "Timeline: score a song, sections, hold and GO",
+  "description": "A synthetic 120 BPM track with a known structure (intro 8 bars, build 8, drop 16, breakdown 8, build 4, drop 8, outro 8) on the Song row; Score this song finds the tempo and the seven sections on their bars, names them, and lays down a look per section with an energy line. On the render core's real pixels the look changes at the section boundaries (the output's colour changes across each boundary, and a different look block is on each side). Then Drop 1 is set to Hold for GO: playing into its end stops the playhead there with the song, the picture stays up, GO carries on into the breakdown.",
+  "steps": [
+    {
+      "do": "app.start",
+      "choice": "blank"
+    },
+    {
+      "do": "project.layer",
+      "name": "Left",
+      "colour": "black",
+      "x0": 0.02,
+      "x1": 0.32
+    },
+    {
+      "do": "project.layer",
+      "name": "Middle",
+      "colour": "black",
+      "x0": 0.35,
+      "x1": 0.65
+    },
+    {
+      "do": "project.layer",
+      "name": "Right",
+      "colour": "black",
+      "x0": 0.68,
+      "x1": 0.98,
+      "wait": 1
+    },
+    {
+      "do": "show.open",
+      "doc": "timeline"
+    },
+    {
+      "do": "show.song",
+      "file": "sections.wav",
+      "wait": 1
+    },
+    {
+      "do": "show.score",
+      "label": "Score this song",
+      "expect": {
+        "eval.true": {
+          "js": "(() => { const s = __show.show(); const want = [[0,16,'Intro'],[16,32,'Build 1'],[32,64,'Drop 1'],[64,80,'Breakdown'],[80,88,'Build 2'],[88,104,'Drop 2'],[104,120,'Outro']]; return s.sections.length === 7 && s.sections.every((x, i) => Math.abs(x.start - want[i][0]) < 0.25 && Math.abs(x.end - want[i][1]) < 0.25 && x.name === want[i][2]); })()",
+          "label": "seven sections on the song's bars (within a bar), named intro, build, drop, breakdown, build, drop, outro"
+        }
+      }
+    },
+    {
+      "label": "the draft: a tempo from the song, a look per section (drops cut on the beat, then every bar), one energy line on All looks",
+      "expect": {
+        "eval.true": {
+          "js": "(() => { const s = __show.show(); return Math.abs(s.tempo.segments[0].bpm - 120) < 0.5 && s.lookClips.length > 20 && s.lines.some((l) => l.target.scope === 'look' && l.target.id === '*' && l.key === 'look:intensity'); })()",
+          "label": "tempo 120, look blocks, energy line"
+        }
+      }
+    },
+    {
+      "label": "Intro → Build 1 at 16 s: the look changes on the output (real pixels, ±0.4 s)",
+      "expect": {
+        "output.changesAt": {
+          "t": 16.003,
+          "gap": 0.4,
+          "by": 0.02
+        },
+        "eval.true": {
+          "js": "(() => { const L = __show.show().lookClips; const at = (t) => L.filter((c) => t >= c.startTime && t < c.startTime + c.duration).map((c) => c.lookId + '/' + c.paletteId).join(); return at(16-0.4) !== at(16+0.4); })()",
+          "label": "a different look block on each side"
+        }
+      }
+    },
+    {
+      "label": "Build 1 → Drop 1 at 32 s: the look changes on the output (real pixels, ±0.4 s)",
+      "expect": {
+        "output.changesAt": {
+          "t": 32.003,
+          "gap": 0.4,
+          "by": 0.02
+        },
+        "eval.true": {
+          "js": "(() => { const L = __show.show().lookClips; const at = (t) => L.filter((c) => t >= c.startTime && t < c.startTime + c.duration).map((c) => c.lookId + '/' + c.paletteId).join(); return at(32-0.4) !== at(32+0.4); })()",
+          "label": "a different look block on each side"
+        }
+      }
+    },
+    {
+      "label": "Drop 1 → Breakdown at 64 s: the look changes on the output (real pixels, ±0.4 s)",
+      "expect": {
+        "output.changesAt": {
+          "t": 64.003,
+          "gap": 0.4,
+          "by": 0.02
+        },
+        "eval.true": {
+          "js": "(() => { const L = __show.show().lookClips; const at = (t) => L.filter((c) => t >= c.startTime && t < c.startTime + c.duration).map((c) => c.lookId + '/' + c.paletteId).join(); return at(64-0.4) !== at(64+0.4); })()",
+          "label": "a different look block on each side"
+        }
+      }
+    },
+    {
+      "label": "Breakdown → Build 2 at 80 s: the look changes on the output (real pixels, ±0.4 s)",
+      "expect": {
+        "output.changesAt": {
+          "t": 80.003,
+          "gap": 0.4,
+          "by": 0.02
+        },
+        "eval.true": {
+          "js": "(() => { const L = __show.show().lookClips; const at = (t) => L.filter((c) => t >= c.startTime && t < c.startTime + c.duration).map((c) => c.lookId + '/' + c.paletteId).join(); return at(80-0.4) !== at(80+0.4); })()",
+          "label": "a different look block on each side"
+        }
+      }
+    },
+    {
+      "label": "Build 2 → Drop 2 at 88 s: the look changes on the output (real pixels, ±0.4 s)",
+      "expect": {
+        "output.changesAt": {
+          "t": 88.003,
+          "gap": 0.4,
+          "by": 0.02
+        },
+        "eval.true": {
+          "js": "(() => { const L = __show.show().lookClips; const at = (t) => L.filter((c) => t >= c.startTime && t < c.startTime + c.duration).map((c) => c.lookId + '/' + c.paletteId).join(); return at(88-0.4) !== at(88+0.4); })()",
+          "label": "a different look block on each side"
+        }
+      }
+    },
+    {
+      "label": "Drop 2 → Outro at 104 s: the look changes on the output (real pixels, ±0.4 s)",
+      "expect": {
+        "output.changesAt": {
+          "t": 104.003,
+          "gap": 0.4,
+          "by": 0.02
+        },
+        "eval.true": {
+          "js": "(() => { const L = __show.show().lookClips; const at = (t) => L.filter((c) => t >= c.startTime && t < c.startTime + c.duration).map((c) => c.lookId + '/' + c.paletteId).join(); return at(104-0.4) !== at(104+0.4); })()",
+          "label": "a different look block on each side"
+        }
+      }
+    },
+    {
+      "do": "show.section",
+      "name": "Drop 1",
+      "action": "hold"
+    },
+    {
+      "do": "show.play",
+      "from": 62,
+      "wait": 4,
+      "label": "Play into Drop 1's end: the playhead holds there",
+      "expect": {
+        "eval.true": {
+          "js": "(() => { const s = __show.show(); return s.isPlaying && Math.abs(s.currentTime - 64) < 0.01 && __show.g().showTimeline.sectionState().hold !== null; })()",
+          "label": "holding at 64 s, transport running"
+        }
+      }
+    },
+    {
+      "label": "Held: the picture stays up",
+      "expect": {
+        "output.notBlack": {
+          "min": 0.01
+        }
+      }
+    },
+    {
+      "do": "show.go",
+      "settle": 1600,
+      "label": "GO: the Timeline carries on into the breakdown",
+      "expect": {
+        "eval.true": {
+          "js": "(() => { const s = __show.show(); return s.isPlaying && s.currentTime > 65 && s.currentTime < 67 && __show.g().showTimeline.sectionState().hold === null; })()",
+          "label": "playing again from 64 s"
+        }
+      }
+    },
+    {
+      "do": "show.pause"
+    }
+  ]
+}
