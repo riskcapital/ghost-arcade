@@ -179,6 +179,7 @@ import {
   buildNativeEffectPassChainGraph,
   buildCompositeEffectPassChainGraph,
   buildNativeEffectPassPrecompileCommands,
+  packNativeEffectPassUniforms,
   type NativeEffectPassId,
   type NativeEffectPassOptions,
 } from '$lib/renderer/nativeEffectPass';
@@ -648,8 +649,12 @@ type NativeGraphRouteState = {
   lastVJCrossfadeUniformSig?: string;
   lastVJMixTopologySig?: string;
   lastVJMixUniformSig?: string;
-  /** Group effect uniforms last sent with the live audio (VJ Mix groups). */
-  lastVJGroupFxUniformSig?: string;
+  /** Group effect uniforms last sent (VJ Mix groups), by buffer id. */
+  vjGroupFxUniforms?: Map<string, string>;
+  /** The grouped mix built without audio, as JSON, and what it was built
+   *  from: the topology key, rebuilt only when its inputs change. */
+  vjGroupStructureInputs?: string;
+  vjGroupStructureJson?: string;
   lastQueuedClockFrame?: number;
   queuedThisClockFrame?: number;
   lastQueuedAtMs?: number;
@@ -975,6 +980,44 @@ function sourceValuesSignature(layer: Layer): string {
 function liveEffectAudioParams(): { audioLevel: number; audioBeat: number } {
   const audio = getVisualAudioSnapshot();
   return { audioLevel: audio.level, audioBeat: audio.beat };
+}
+
+/** Whether a pass's shader can read the live audio packed into it. Glitch
+ *  reads it only for its Audio (1) and Beat (2) triggers (the shader rounds
+ *  the trigger, so anything that could round to 1 or 2 counts); every other
+ *  effect gets it, as before. Audio a pass ignores would only change its
+ *  uniforms on every analysed frame. */
+export function nativeEffectPassReadsAudio(pass: { effect: string; params?: Record<string, unknown> }): boolean {
+  if (pass.effect !== 'glitch') return true;
+  const raw = Number(pass.params?.triggerMode ?? pass.params?.param7);
+  const trigger = Number.isFinite(raw) ? Math.max(0, Math.min(3, raw)) : 0;
+  return trigger >= 0.5 && trigger <= 2.5;
+}
+
+/** A pass of the standard effect shader whose output is its input pixel for
+ *  pixel: one mixed in at 0 (the shader returns mix(src, effect, 0)), or a
+ *  Glitch at no intensity (its shader hands the source straight back).
+ *  Decided on the packed uniforms, as the shader sees them. */
+export function nativeEffectPassIsIdentity(pass: { effect: string; amount?: number; mix?: number; params?: Record<string, any> }): boolean {
+  if (pass.effect === 'cube-lut' || !NATIVE_EFFECT_PASS_IDS.has(pass.effect as NativeEffectPassId)) return false;
+  const u = packNativeEffectPassUniforms({
+    effect: pass.effect as NativeEffectPassId,
+    amount: pass.amount,
+    mix: pass.mix ?? 1,
+    params: pass.params,
+    width: 1,
+    height: 1,
+  } as NativeEffectPassOptions);
+  if (Math.fround(u[6]) <= 0) return true;
+  return pass.effect === 'glitch' && Math.fround(u[5]) <= Math.fround(0.0001);
+}
+
+/** The passes a per-frame chain renders: identity passes are left out, but
+ *  a chain always keeps one pass so its output source is still written. */
+export function nativeEffectPassesToRender<T extends { effect: string; amount?: number; mix?: number; params?: Record<string, any> }>(passes: readonly T[]): T[] {
+  const kept = passes.filter((pass) => !nativeEffectPassIsIdentity(pass));
+  if (kept.length === passes.length) return passes as T[];
+  return kept.length ? kept : passes.slice(0, 1);
 }
 
 function nativeEffectDescriptors(layer: Layer): string[] {
@@ -7551,7 +7594,7 @@ export class NativeRendererSync {
           const effectGraph = buildNativeEffectPassChainGraph({
             sourceId: route.inputBindingId ?? route.inputSource.id,
             targetSourceId: route.source.id,
-            effects: route.effectPasses.map((effectPass) => ({
+            effects: nativeEffectPassesToRender(route.effectPasses).map((effectPass) => ({
               effect: effectPass.effect,
               amount: effectPass.amount,
               mix: effectPass.mix ?? 1,
@@ -10179,7 +10222,11 @@ export class NativeRendererSync {
           routeState.lastVJCrossfadeUniformSig = uniform.signature;
         }
         let groupedMixGraph: ReturnType<typeof buildVJGroupedMixGraph> | null = null;
+        // Built this flush only when its inputs changed.
         let groupedMixStructure: ReturnType<typeof buildVJGroupedMixGraph> | null = null;
+        let groupedMixStructureJson: string | undefined;
+        let groupedMixBuild: (() => ReturnType<typeof buildVJGroupedMixGraph>) | null = null;
+        let groupedMixAudioDriven = false;
         let vjMixGraphOptions: Parameters<typeof buildVJMixGraph>[0] | null = null;
         if (nativeGraphRoute.kind === 'vj-mix') {
           const rawRows = Array.isArray(nativeGraphScaledParams?.vjmixRows)
@@ -10215,19 +10262,37 @@ export class NativeRendererSync {
               }));
               // The core writes the render clock into these uniforms every
               // frame; the live audio level and beat (audio reactivity,
-              // Glitch's Audio and Beat triggers) come from here. The graph is
-              // keyed on a build without audio so it is only reinstalled when
-              // the groups change; between reinstalls the effect uniforms are
-              // refreshed in place when the audio moves them.
-              groupedMixStructure = buildVJGroupedMixGraph({ ...vjMixGraphOptions, rows, groups, time: 0, frameIndex: 0 } as VJGroupedMixOptions);
+              // Glitch's Audio and Beat triggers) come from here, and only
+              // passes that read them get them. The graph is keyed on a build
+              // without audio so it is only reinstalled when the groups
+              // change; that build is redone only when what it is built from
+              // changes. Between reinstalls the effect uniforms are refreshed
+              // in place, buffer by buffer, when the audio moves them.
+              const structureInputs = JSON.stringify([vjMixGraphOptions.outputSourceId, rows, groups, width, height]);
+              if (routeState.vjGroupStructureInputs !== structureInputs || routeState.vjGroupStructureJson === undefined) {
+                groupedMixStructure = buildVJGroupedMixGraph({ ...vjMixGraphOptions, rows, groups, time: 0, frameIndex: 0 } as VJGroupedMixOptions);
+                routeState.vjGroupStructureJson = JSON.stringify(groupedMixStructure.config);
+                routeState.vjGroupStructureInputs = structureInputs;
+              }
+              groupedMixStructureJson = routeState.vjGroupStructureJson;
               const liveAudio = liveEffectAudioParams();
+              let audioDriven = false;
               const liveGroups = groups.map(group => ({
                 ...group,
-                effects: group.effects.map((pass: any) => ({ ...pass, params: { ...pass.params, ...liveAudio } })),
+                effects: group.effects.map((pass: any) => {
+                  if (!nativeEffectPassReadsAudio(pass)) return pass;
+                  audioDriven = true;
+                  return { ...pass, params: { ...pass.params, ...liveAudio } };
+                }),
               }));
-              groupedMixGraph = buildVJGroupedMixGraph({ ...vjMixGraphOptions, rows, groups: liveGroups, time: 0, frameIndex: 0 } as VJGroupedMixOptions);
+              // Without audio the live graph is the structure: its uniforms
+              // only change when the structure does.
+              groupedMixAudioDriven = audioDriven;
+              groupedMixBuild = () => audioDriven || !groupedMixStructure
+                ? buildVJGroupedMixGraph({ ...vjMixGraphOptions, rows, groups: liveGroups, time: 0, frameIndex: 0 } as VJGroupedMixOptions)
+                : groupedMixStructure;
             }
-            const topologySig = JSON.stringify([nativeGraphRoute.source.id, nativeGraphRoute.effectPasses ?? []]) + ':' + (groupedMixStructure ? JSON.stringify(groupedMixStructure.config) : [
+            const topologySig = JSON.stringify([nativeGraphRoute.source.id, nativeGraphRoute.effectPasses ?? []]) + ':' + (groupedMixStructureJson ?? [
               vjMixGraphOptions.outputSourceId,
               ...rows.map((row) => row.frameId),
               width,
@@ -10235,27 +10300,31 @@ export class NativeRendererSync {
             ].join(':'));
             const uniform = buildVJMixUniformUpdate(vjMixGraphOptions);
             installPluginGraph = routeState.lastVJMixTopologySig !== topologySig;
-            if (groupedMixGraph) {
-              const updates: Array<{ bufferId: string; initialB64: string }> = [];
-              for (const buffer of groupedMixGraph.config.buffers) {
-                if (buffer.kind !== 'uniform' || !String(buffer.id).startsWith('effect-pass:')) continue;
-                const initialB64 = nativeGraphBufferBase64(buffer);
-                if (initialB64) updates.push({ bufferId: String(buffer.id), initialB64 });
-              }
-              const signature = updates.map((entry) => entry.initialB64).join('|');
-              if (!installPluginGraph && routeState.lastVJGroupFxUniformSig !== signature) {
-                for (const entry of updates) {
-                  commands.push({
-                    type: 'update_native_graph_buffer',
-                    layer_id: layer.id,
-                    buffer_id: entry.bufferId,
-                    initial_b64: entry.initialB64,
-                  });
+            if (groupedMixBuild) {
+              const structureChanged = !!groupedMixStructure;
+              if (installPluginGraph || groupedMixAudioDriven || structureChanged || !routeState.vjGroupFxUniforms) {
+                groupedMixGraph = groupedMixBuild();
+                const sent = routeState.vjGroupFxUniforms;
+                const next = new Map<string, string>();
+                for (const buffer of groupedMixGraph.config.buffers) {
+                  if (buffer.kind !== 'uniform' || !String(buffer.id).startsWith('effect-pass:')) continue;
+                  const initialB64 = nativeGraphBufferBase64(buffer);
+                  if (!initialB64) continue;
+                  const bufferId = String(buffer.id);
+                  next.set(bufferId, initialB64);
+                  if (!installPluginGraph && sent?.get(bufferId) !== initialB64) {
+                    commands.push({
+                      type: 'update_native_graph_buffer',
+                      layer_id: layer.id,
+                      buffer_id: bufferId,
+                      initial_b64: initialB64,
+                    });
+                  }
                 }
+                routeState.vjGroupFxUniforms = next;
               }
-              routeState.lastVJGroupFxUniformSig = signature;
             }
-            if (!groupedMixGraph && !installPluginGraph && routeState.lastVJMixUniformSig !== uniform.signature) {
+            if (!groupedMixBuild && !installPluginGraph && routeState.lastVJMixUniformSig !== uniform.signature) {
               for (const entry of uniform.buffers) {
                 commands.push({
                   type: 'update_native_graph_buffer',
