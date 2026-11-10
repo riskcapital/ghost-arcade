@@ -441,6 +441,9 @@ export function createStageRehearsalRender(): {
   /** The screens in a render drawn now show the show playing from the top
    *  (not the picture from before the jump to the start). */
   screensCaughtUp(playStartEpochMs: number): boolean;
+  /** The screens drawn now already show the show past its end (stopped or
+   *  back at the start): the take has everything. */
+  screensPastEnd(playStartEpochMs: number): boolean;
   cameraAt(epochMs: number): ReturnType<typeof stageLaneCameraAt>;
   noteFrame(dueAtEpochMs: number): void;
   addSound(outputPath: string, startedAtEpochMs: number, durationSeconds: number): Promise<RecAudioResult>;
@@ -476,6 +479,10 @@ export function createStageRehearsalRender(): {
     screensCaughtUp(playStart) {
       const info = compositeMirrorFrameInfo();
       return !info || info.requestedAt >= playStart + STAGE_CORE_LEAD_SECONDS * 1000;
+    },
+    screensPastEnd(playStart) {
+      const info = compositeMirrorFrameInfo();
+      return !!info && info.requestedAt >= playStart + (durationSeconds + STAGE_CORE_LEAD_SECONDS) * 1000;
     },
     cameraAt: (epochMs) => stageLaneCameraAt(epochMs),
     noteFrame: (dueAt) => audio?.noteFrame(dueAt),

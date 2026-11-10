@@ -37,7 +37,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'close_output_window', 'move_output_window',
   'resize_output_window', 'show_main_window',
   // Stage 3D pop-out window + state relay
-  'open_stage3d_window', 'stage3d_window_closing',
+  'open_stage3d_window', 'stage3d_window_closing', 'stage3d_capture_state',
   'stage3d_publish_state', 'stage3d_get_state', 'stage3d_is_open',
   'stage3d_set_fullscreen', 'stage3d_get_fullscreen',
   // Projection Simulator pop-out window

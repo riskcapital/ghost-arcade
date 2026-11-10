@@ -86,6 +86,8 @@ export interface ReelRehearsal {
   firstFrameAt(playStartEpochMs: number): number;
   /** The screens drawn now already show the show playing from the top. */
   screensCaughtUp(playStartEpochMs: number): boolean;
+  /** The screens drawn now show the show past its end. */
+  screensPastEnd(playStartEpochMs: number): boolean;
   /** The camera lane's camera at this instant (epoch ms), or null between shots. */
   cameraAt(epochMs: number): ReelCameraState | null;
   /** The frame due at this instant (epoch ms) was just captured. */
@@ -530,6 +532,15 @@ function createReelRenderStore() {
             // the one from before the jump to the start: let it pass (the
             // first fresh render fills the slots it missed).
             if (rehearsal && playStart !== null && !rehearsal.screensCaughtUp(playStart)) return null;
+            // Past the show's end (the view's latency is an estimate): the
+            // picture is the stopped show or its start again. The take ends;
+            // its last slots hold the last picture of the show.
+            if (rehearsal && playStart !== null && rehearsal.screensPastEnd(playStart)) {
+              console.info(`[stageReelRender] rehearsal: the screens reached the show's end at frame ${pacer.queued} of ${totalFrames}`);
+              ended = true;
+              queueMicrotask(settle);
+              return null;
+            }
             const slot = pacer.peek(nowMs);
             if (!slot) return null;
             if (slot.first >= totalFrames) {

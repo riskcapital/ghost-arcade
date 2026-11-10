@@ -10,7 +10,7 @@
    * the stage surface itself.
    */
   import { onMount, onDestroy } from 'svelte';
-  import { get } from 'svelte/store';
+  import { derived, get } from 'svelte/store';
   import Canvas from './lib/components/Canvas.svelte';
   import Stage3DDesigner from './lib/components/stage3d/Stage3DDesigner.svelte';
   import { initStateBroadcast, destroyStateBroadcast } from './lib/sync/stateBroadcast';
@@ -38,12 +38,18 @@
     initLicense().catch((e) => console.warn('[Stage3DWindow] License init:', e));
     stopRehearsal = installStageRehearsal();
 
-    window.addEventListener('beforeunload', guardCapture);
     window.addEventListener('beforeunload', notifyClosing);
   });
 
+  // Tell the main process while a capture runs: closing the window then
+  // asks first instead of losing the recording without a word.
+  const captureBusy = derived([stageRecActive, stageReelRender], ([$rec, $reel]) => $rec || reelRenderBusy($reel.status));
+  const stopBusyReport = captureBusy.subscribe((busy) => {
+    invoke('stage3d_capture_state', { busy }).catch(() => { /* older main process */ });
+  });
+
   onDestroy(() => {
-    window.removeEventListener('beforeunload', guardCapture);
+    stopBusyReport();
     window.removeEventListener('beforeunload', notifyClosing);
     stopRehearsal?.();
     stopRehearsal = null;
@@ -53,14 +59,6 @@
   /** A Rec, reel or rehearsal render is running or saving here. */
   function captureRunning(): boolean {
     return get(stageRecActive) || reelRenderBusy(get(stageReelRender).status);
-  }
-
-  // Closing or reloading mid-recording lost the take with no warning. Hold
-  // the unload; the main process asks whether to throw the recording away.
-  function guardCapture(e: BeforeUnloadEvent) {
-    if (!captureRunning()) return;
-    e.preventDefault();
-    e.returnValue = '';
   }
 
   function notifyClosing() {

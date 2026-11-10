@@ -110,11 +110,19 @@
     const tag = el.tagName;
     return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable === true;
   }
-  /** Enter on a focused button or link presses that, not the show's play. */
+  /** Enter on a button or link reached with the keyboard (Tab) presses that,
+   *  not the show's play. A button that only has focus because it was
+   *  clicked (Rec, then Enter to play) still leaves Enter to the show. */
   function pressesFocusedControl(e: KeyboardEvent): boolean {
     const el = e.target as HTMLElement | null;
     if (!el || typeof el.closest !== 'function') return false;
-    return !!el.closest('button, a[href], summary, [role="button"], [role="menuitem"], [role="tab"], [role="checkbox"], [role="switch"]');
+    const control = el.closest('button, a[href], summary, [role="button"], [role="menuitem"], [role="tab"], [role="checkbox"], [role="switch"]');
+    if (!control) return false;
+    try {
+      return control.matches(':focus-visible');
+    } catch {
+      return true;
+    }
   }
   /** This is the Stage Sim window (the editor's show arrives over the bridge). */
   const inStageWindow = typeof location !== 'undefined' && new URLSearchParams(location.search).get('mode') === 'stage-3d';

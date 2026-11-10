@@ -441,6 +441,8 @@ let mainWindow = null;
 let outputWindow = null;
 let spoutOsrWindow = null;  // Hidden OSR window for zero-copy Spout output
 let stage3dWindow = null;   // 3D Stage Designer pop-out (?mode=stage-3d)
+/** The Stage Sim page has a recording or reel running or saving. */
+let stage3dCaptureBusy = false;
 let projectionSimWindow = null; // Projection Simulator pop-out (?mode=projection-sim)
 // Per-slice multi-output windows. Keyed by sliceId; each entry is a
 // borderless fullscreen BrowserWindow opened on a specific physical
@@ -2129,6 +2131,7 @@ function closeAuxiliaryWindows() {
   if (stage3dWindow && !stage3dWindow.isDestroyed()) {
     const win = stage3dWindow;
     stage3dWindow = null;
+    win.__gaForceClose = true;
     try { win.close(); } catch {}
   } else {
     stage3dWindow = null;
@@ -6998,6 +7001,14 @@ function registerIpcHandlers() {
   // The renderer pings this when the user clicks the in-app close
   // button so we can dispose the window from the main process side
   // (renderer-initiated `window.close()` doesn't always fire on macOS).
+  // The Stage Sim page reports while a recording or reel runs or saves.
+  ipcMain.handle('stage3d_capture_state', (event, args = {}) => {
+    if (stage3dWindow && !stage3dWindow.isDestroyed() && event.sender === stage3dWindow.webContents) {
+      stage3dCaptureBusy = args?.busy === true;
+    }
+    return { ok: true };
+  });
+
   ipcMain.handle('stage3d_window_closing', () => {
     if (stage3dWindow && !stage3dWindow.isDestroyed()) {
       stage3dWindow.close();
@@ -10060,20 +10071,32 @@ function createStage3DWindow(targetDisplayId = null) {
     },
   });
   stage3dWindow.setMenuBarVisibility(false);
-  // The page holds the unload while a stage recording or reel is still
-  // running or saving: ask before throwing it away.
-  stage3dWindow.webContents.on('will-prevent-unload', (event) => {
-    const owner = BrowserWindow.fromWebContents(event.sender);
-    const choice = dialog.showMessageBoxSync(owner ?? undefined, {
-      type: 'warning',
-      buttons: ['Keep recording', 'Close anyway'],
-      defaultId: 0,
-      cancelId: 0,
-      message: 'A stage recording is still running.',
-      detail: 'Closing the Stage Sim now loses it. Stop the recording (or let the reel finish) to keep it.',
+  // While a stage recording or reel is still running or saving (the page
+  // says so), closing the window asks before throwing it away. Quitting the
+  // app (closeAuxiliaryWindows) does not ask.
+  stage3dCaptureBusy = false;
+  {
+    const win = stage3dWindow;
+    let allowClose = false;
+    win.on('close', (event) => {
+      if (!stage3dCaptureBusy || allowClose || win.__gaForceClose) return;
+      event.preventDefault();
+      const choice = dialog.showMessageBoxSync(win, {
+        type: 'warning',
+        buttons: ['Keep recording', 'Close anyway'],
+        defaultId: 0,
+        cancelId: 0,
+        message: 'A stage recording is still running.',
+        detail: 'Closing the Stage Sim now loses it. Stop the recording (or let the reel finish) to keep it.',
+      });
+      if (choice !== 1) return;
+      allowClose = true;
+      setImmediate(() => { if (!win.isDestroyed()) win.close(); });
     });
-    if (choice === 1) event.preventDefault();
-  });
+    win.webContents.on('did-start-navigation', (details) => {
+      if (details?.isMainFrame && !details.isSameDocument) stage3dCaptureBusy = false;
+    });
+  }
 
 
   // Forward this window's console to the terminal. Only the main window was
