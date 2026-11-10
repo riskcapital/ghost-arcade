@@ -17,7 +17,7 @@
 import { get } from 'svelte/store';
 import type { ShowLayerTrack } from '../../types';
 import { showTimeline, onShowTimelineReset } from '../../stores/showTimeline';
-import { vjClipLauncher } from '../../stores/vjClipLauncher';
+import { vjClipLauncher, type VJTakeoverSample } from '../../stores/vjClipLauncher';
 import { nextLaunchBoundary } from '../../stores/launchClock';
 import { takeoverFrame, takeoverMediaSources } from '../../stores/takeoverFrame';
 import { cueList, type CueAction, type CueFireSource } from '../cueList';
@@ -29,6 +29,7 @@ import {
   takeoverSummary,
   type ReleaseSpec,
   type TakeoverEvaluation,
+  type TakeoverFrame,
   type TakeoverReleaseMode,
   type TakeoverSource,
 } from './liveTakeover';
@@ -59,6 +60,20 @@ function runDeferred(): void {
   deferred = [];
   liveTakeover.setDeferredCount(0);
   if (actions.length) cueList.runActions(actions);
+}
+
+/** The VJ pictures a takeover frame shows (what leaving VJ mode must keep). Pure. */
+export function takeoverVjSamples(frame: TakeoverFrame | null): VJTakeoverSample[] {
+  if (!frame) return [];
+  const out: VJTakeoverSample[] = [];
+  const add = (source: TakeoverSource | null | undefined) => {
+    if (source?.kind === 'vjRow') out.push({ kind: 'row', deck: source.deck, row: source.row });
+    else if (source?.kind === 'vjMix') out.push({ kind: 'mix' });
+    else if (source?.kind === 'vjGroup') out.push({ kind: 'group', groupId: source.groupId });
+  };
+  for (const surface of frame.surfaces) add(surface.source);
+  add(frame.overlay?.source);
+  return out;
 }
 
 // ── Tracks and sources ──────────────────────────────────────────────────
@@ -197,7 +212,7 @@ export function installTakeoverRuntime(): () => void {
     const frame = ev.frame.surfaces.length || ev.frame.overlay ? ev.frame : null;
     const signature = frame ? takeoverFrameSignature(frame) : null;
     // The feeds first, so the launcher's layers exist when the scene builds.
-    vjClipLauncher.setTakeoverLive(!!frame?.needsVjFeeds);
+    vjClipLauncher.setTakeoverLive(!!frame?.needsVjFeeds, takeoverVjSamples(frame));
     if (signature === lastSignature) return;
     lastSignature = signature;
     takeoverMediaSources.retain(new Set((frame?.surfaces ?? []).map((s) => s.key)));

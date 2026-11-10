@@ -693,7 +693,8 @@ class MidiRouter {
       if (value > 0) {
         const state = get(vjClipLauncher);
         const enable = !(state.isOpen || state.isLive);
-        if (!enable) vjClipLauncher.stopAll();
+        // Rows a show takeover is showing keep playing (as the VJ panel's exit does).
+        if (!enable) vjClipLauncher.stopAllForLeave();
         vjClipLauncher.setOpen(enable);
         vjClipLauncher.setLive(enable);
       }

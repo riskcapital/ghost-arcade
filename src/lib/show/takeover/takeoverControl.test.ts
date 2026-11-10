@@ -52,6 +52,7 @@ function installDomShim(): void {
     visibilityState: 'visible',
   };
   (globalThis as any).window = globalThis;
+  if (typeof (globalThis as any).dispatchEvent !== 'function') (globalThis as any).dispatchEvent = () => true;
   (globalThis as any).matchMedia = () => ({
     matches: false,
     addEventListener() {}, removeEventListener() {},
@@ -259,5 +260,44 @@ describe('a cleared show', () => {
     path('show:live:1:vja:1', 1);
     timeline.showTimeline.clear();
     expect(surfaces()).toEqual({});
+  });
+});
+
+describe('leaving VJ mode with vj:mode', () => {
+  const shader = (id: string) => ({ id, type: 'shader', name: id, src: `./ISF/${id}.fs`, shaderCode: 'void main(){}' }) as any;
+  const vj = () => get(launcher.vjClipLauncher);
+  const active = () => vj().layerStates.slice(0, 2).map((ls) => ls.activeClip?.id ?? null);
+  const enterVj = () => {
+    launcher.vjClipLauncher.reset();
+    launcher.vjClipLauncher.setClip(0, 0, shader('red'));
+    launcher.vjClipLauncher.setClip(1, 0, shader('blue'));
+    launcher.vjClipLauncher.triggerClipNow(0, 0, 'A');
+    launcher.vjClipLauncher.triggerClipNow(1, 0, 'A');
+    path('vj:mode', 1);
+    expect(vj().isOpen && vj().isLive).toBe(true);
+  };
+
+  it('keeps the row a takeover samples playing, stops the rest, and stops it at the hand-back', () => {
+    enterVj();
+    path('show:live:1:vja:2', 1);
+    expect(vj().takeoverLive).toBe(true);
+    path('vj:mode', 1);
+    expect(vj().isOpen || vj().isLive).toBe(false);
+    expect(active()).toEqual([null, 'blue']);
+    path('show:release', 1);
+    expect(vj().takeoverLive).toBe(false);
+    expect(active()).toEqual([null, null]);
+  });
+
+  it('with nothing taken over it stops everything, as before', () => {
+    enterVj();
+    const stopAll = vi.spyOn(launcher.vjClipLauncher, 'stopAll');
+    try {
+      path('vj:mode', 1);
+      expect(stopAll).toHaveBeenCalledTimes(1);
+      expect(active()).toEqual([null, null]);
+    } finally {
+      stopAll.mockRestore();
+    }
   });
 });

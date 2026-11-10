@@ -1222,6 +1222,36 @@ export function vjFeedsRunning(s: Pick<VJClipLauncherState, 'isLive' | 'takeover
   return s.isLive || !!s.takeoverLive;
 }
 
+/** A VJ picture a show takeover is showing: one row, the mix, or a group. */
+export type VJTakeoverSample =
+  | { kind: 'row'; deck: VJDeck; row: number }
+  | { kind: 'mix' }
+  | { kind: 'group'; groupId: string };
+
+/** The rows behind the pictures a takeover shows (the mix is every row; a
+ *  group is its rows on both decks). */
+export function vjTakeoverRows(
+  state: Pick<VJClipLauncherState, 'layerStates' | 'bankBLayerStates' | 'groups'>,
+  samples: readonly VJTakeoverSample[],
+): { A: Set<number>; B: Set<number> } {
+  const rows = { A: new Set<number>(), B: new Set<number>() };
+  const all = (deck: VJDeck) => pickLayerStates(state as VJClipLauncherState, deck).forEach((_, i) => rows[deck].add(i));
+  for (const sample of samples) {
+    if (sample.kind === 'mix') { all('A'); all('B'); continue; }
+    if (sample.kind === 'row') { rows[sample.deck].add(sample.row); continue; }
+    const group = state.groups?.find(g => g.id === sample.groupId);
+    if (!group) continue;
+    for (let i = group.first; i <= group.last; i++) { rows.A.add(i); rows.B.add(i); }
+  }
+  return rows;
+}
+
+// What the show's takeover is showing (session only, set with takeoverLive).
+let takeoverSamples: VJTakeoverSample[] = [];
+// VJ mode was left while a takeover kept rows playing: they stop when the
+// takeover no longer needs them (unless VJ mode is back by then).
+let stopWhenTakeoverEnds = false;
+
 /** Feeds that also needed the VJ workspace open: a takeover runs them with
  *  the workspace closed. */
 function vjFeedsActive(s: Pick<VJClipLauncherState, 'isLive' | 'isOpen' | 'takeoverLive'>): boolean {
@@ -1536,6 +1566,7 @@ function createVJClipLauncherStore() {
     // Reset to default state
     reset() {
       holds.clear();
+      stopWhenTakeoverEnds = false;
       releaseTempoNudgeInputs('');
       vjClipTransitions.clear();
       // Cleanup video elements
@@ -1560,8 +1591,24 @@ function createVJClipLauncherStore() {
     // clip grid. Used when exiting VJ so stale shader/canvas textures do
     // not linger behind the main editor.
     clearRuntimeSourceCache() {
-      vjClipTransitions.clear();
-      clearVJSourceCache();
+      const state = get({ subscribe });
+      // Rows a show takeover still shows keep their sources.
+      const keep = state.takeoverLive ? vjTakeoverRows(state, takeoverSamples) : null;
+      if (!keep) {
+        vjClipTransitions.clear();
+        clearVJSourceCache();
+        return;
+      }
+      const kept = new Set<string>();
+      for (const deck of ['A', 'B'] as const) {
+        pickLayerStates(state, deck).forEach((ls, row) => {
+          if (keep[deck].has(row) && ls.activeClip) kept.add(`vj-${row}${deck === 'B' ? '-B' : ''}-${ls.activeClip.id}`);
+        });
+      }
+      for (const transition of [...get(vjClipTransitions).values()]) {
+        if (!keep[transition.deck].has(transition.layerIndex)) vjClipTransitions.cancel(transition.deck, transition.layerIndex, transition.token);
+      }
+      for (const key of [...vjSourceCache.keys()]) if (!kept.has(key)) releaseVJSourceCacheEntry(key);
     },
 
     // Set VJ mode open state. Mirrors into the workspace store so the
@@ -2403,12 +2450,53 @@ function createVJClipLauncherStore() {
     },
 
     /** A show takeover needs the VJ feeds (or no longer does). Not an edit,
-     *  not saved; VJ mode's own Live is untouched. */
-    setTakeoverLive(on: boolean) {
+     *  not saved; VJ mode's own Live is untouched. `samples`: what it shows
+     *  (leaving VJ mode keeps those rows playing); left out = the mix. */
+    setTakeoverLive(on: boolean, samples?: readonly VJTakeoverSample[]) {
+      takeoverSamples = on ? [...(samples ?? [{ kind: 'mix' }])] : [];
       const state = get({ subscribe });
       if (!!state.takeoverLive === on) return;
       if (!on && !state.isLive) vjClipTransitions.clear();
       update(s => ({ ...s, takeoverLive: on }));
+      if (!on && stopWhenTakeoverEnds) {
+        stopWhenTakeoverEnds = false;
+        const now = get({ subscribe });
+        if (!now.isOpen && !now.isLive) this.stopAll();
+      }
+    },
+
+    /**
+     * Leaving VJ mode: stop every clip, except on the rows a show takeover is
+     * showing right now, so the taken-over surface keeps its picture. Those
+     * stop once the takeover is handed back (if VJ mode is still closed).
+     * With nothing taken over this is `stopAll()`.
+     */
+    stopAllForLeave() {
+      const state = get({ subscribe });
+      const keep = state.takeoverLive ? vjTakeoverRows(state, takeoverSamples) : null;
+      const kept = (deck: VJDeck, row: number) => !!keep?.[deck].has(row) && !!pickLayerStates(state, deck)[row]?.activeClip;
+      const keepsAny = !!keep && (['A', 'B'] as const).some(deck => pickLayerStates(state, deck).some((_, row) => kept(deck, row)));
+      if (!keepsAny) {
+        this.stopAll();
+        return;
+      }
+      stopWhenTakeoverEnds = true;
+      for (const key of [...holds.keys()]) {
+        const [deck, row] = key.split(':');
+        if (!kept(deck as VJDeck, Number(row))) holds.delete(key);
+      }
+      releaseTempoNudgeInputs('');
+      for (const transition of [...get(vjClipTransitions).values()]) {
+        if (!kept(transition.deck, transition.layerIndex)) vjClipTransitions.cancel(transition.deck, transition.layerIndex, transition.token);
+      }
+      update(s => {
+        const stop = (deck: VJDeck) => pickLayerStates(s, deck).map((ls, row) => {
+          if (kept(deck, row) || !ls.activeClip) return ls;
+          pauseClipRuntime(ls.activeClip);
+          return { ...ls, activeColumn: null, activeClip: null };
+        });
+        return { ...s, layerStates: stop('A'), bankBLayerStates: stop('B'), pendingTriggers: [] };
+      });
     },
 
     /** Apply a complete preset in one store notification, including the saved block. */

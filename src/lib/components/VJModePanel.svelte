@@ -2330,7 +2330,8 @@
 
     // First make the workspace and renderer leave VJ. Cleanup below is
     // best-effort; it must never leave the overlay visible or VJ output live.
-    try { vjClipLauncher.stopAll(); } catch (err) { console.warn('[VJPanel] stopAll failed during close:', err); }
+    // Rows a show takeover is showing keep playing until it is handed back.
+    try { vjClipLauncher.stopAllForLeave(); } catch (err) { console.warn('[VJPanel] stopAll failed during close:', err); }
     try { vjClipLauncher.setLive(false); } catch (err) { console.warn('[VJPanel] setLive(false) failed during close:', err); }
     try { vjClipLauncher.setOpen(false, { fromWorkspace: true }); } catch (err) { console.warn('[VJPanel] setOpen(false) failed during close:', err); }
     try { workspace.closeAll(); } catch (err) { console.warn('[VJPanel] workspace close failed during close:', err); }

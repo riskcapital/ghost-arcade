@@ -56,7 +56,7 @@ vi.stubGlobal('localStorage', {
 vi.stubGlobal('requestAnimationFrame', (callback: (time: number) => void) => setTimeout(() => callback(performance.now()), 16));
 vi.stubGlobal('cancelAnimationFrame', (handle: ReturnType<typeof setTimeout>) => clearTimeout(handle));
 
-const { vjClipLauncher, vjOutputLayers, vjTransitionOutputLayers, vjFeedsRunning } = await import('./vjClipLauncher');
+const { vjClipLauncher, vjOutputLayers, vjTransitionOutputLayers, vjFeedsRunning, vjTakeoverRows } = await import('./vjClipLauncher');
 const { vjClipTransitions } = await import('./vjClipTransitions');
 const { keyframeTimeline } = await import('./keyframeTimeline');
 const { get } = await import('svelte/store');
@@ -127,4 +127,95 @@ describe('takeoverLive', () => {
     expect(get(vjClipTransitions).size).toBe(0);
   });
 
+});
+
+describe('leaving VJ mode during a takeover', () => {
+  const playing = (deck: 'A' | 'B' = 'A') => (deck === 'A' ? state().layerStates : state().bankBLayerStates).map((ls) => ls.activeClip?.id ?? null);
+  const threeRows = () => {
+    vjClipLauncher.setClip(0, 0, shader('red'));
+    vjClipLauncher.setClip(1, 0, shader('blue'));
+    vjClipLauncher.setClip(2, 0, shader('green'));
+    for (const row of [0, 1, 2]) vjClipLauncher.triggerClipNow(row, 0, 'A');
+    vjClipLauncher.setOpen(true, { fromWorkspace: true });
+    vjClipLauncher.setLive(true);
+  };
+
+  it('with nothing taken over it is stopAll', () => {
+    threeRows();
+    vjClipLauncher.stopAllForLeave();
+    expect(playing().slice(0, 3)).toEqual([null, null, null]);
+    expect(state().stoppedAll).toBe(true);
+  });
+
+  it('keeps the row a takeover shows, stops the rest, and stops it at the hand-back', () => {
+    threeRows();
+    vjClipLauncher.setTakeoverLive(true, [{ kind: 'row', deck: 'A', row: 1 }]);
+    vjClipLauncher.stopAllForLeave();
+    vjClipLauncher.setLive(false);
+    vjClipLauncher.setOpen(false, { fromWorkspace: true });
+    expect(playing().slice(0, 3)).toEqual([null, 'blue', null]);
+    expect(state().stoppedAll).toBe(false);
+    const unsubscribe = vjOutputLayers.subscribe(() => {});
+    expect(get(vjOutputLayers)?.map((l) => l.id)).toEqual(['vj-layer-1']);
+    unsubscribe();
+    // The takeover moves on to the mix: nothing else restarts.
+    vjClipLauncher.setTakeoverLive(true, [{ kind: 'mix' }]);
+    expect(playing().slice(0, 3)).toEqual([null, 'blue', null]);
+    vjClipLauncher.setTakeoverLive(false);
+    expect(playing().slice(0, 3)).toEqual([null, null, null]);
+    expect(state().stoppedAll).toBe(true);
+  });
+
+  it('VJ mode back by the hand-back: the rows keep playing', () => {
+    threeRows();
+    vjClipLauncher.setTakeoverLive(true, [{ kind: 'row', deck: 'A', row: 2 }]);
+    vjClipLauncher.stopAllForLeave();
+    vjClipLauncher.setOpen(false, { fromWorkspace: true });
+    vjClipLauncher.setOpen(true, { fromWorkspace: true });
+    vjClipLauncher.setTakeoverLive(false);
+    expect(playing().slice(0, 3)).toEqual([null, null, 'green']);
+  });
+
+  it('the mix keeps every row; a group keeps its rows', () => {
+    threeRows();
+    vjClipLauncher.setTakeoverLive(true, [{ kind: 'mix' }]);
+    vjClipLauncher.stopAllForLeave();
+    expect(playing().slice(0, 3)).toEqual(['red', 'blue', 'green']);
+    vjClipLauncher.setTakeoverLive(false);
+    vjClipLauncher.reset();
+    threeRows();
+    vjClipLauncher.addGroup(1, 2);
+    const groupId = state().groups![0].id;
+    vjClipLauncher.setTakeoverLive(true, [{ kind: 'group', groupId }]);
+    vjClipLauncher.stopAllForLeave();
+    expect(playing().slice(0, 3)).toEqual([null, 'blue', 'green']);
+  });
+
+  it('keeps clip transitions and held pads on the kept row only', () => {
+    threeRows();
+    vjClipLauncher.setClip(1, 1, shader('cyan'));
+    vjClipLauncher.setClip(0, 1, shader('pink'));
+    vjClipLauncher.setLayerTransition(0, { duration: 2, style: 'dissolve' });
+    vjClipLauncher.setLayerTransition(1, { duration: 2, style: 'dissolve' });
+    vjClipLauncher.triggerClipNow(0, 1, 'A');
+    vjClipLauncher.triggerClipNow(1, 1, 'A');
+    expect(get(vjClipTransitions).size).toBe(2);
+    vjClipLauncher.setTakeoverLive(true, [{ kind: 'row', deck: 'A', row: 1 }]);
+    vjClipLauncher.stopAllForLeave();
+    expect([...get(vjClipTransitions).values()].map((t) => t.layerIndex)).toEqual([1]);
+    vjClipLauncher.clearRuntimeSourceCache();
+    expect([...get(vjClipTransitions).values()].map((t) => t.layerIndex)).toEqual([1]);
+  });
+
+  it('vjTakeoverRows', () => {
+    const s = { layerStates: [{}, {}, {}], bankBLayerStates: [{}, {}, {}], groups: [{ id: 'g', first: 0, last: 1 }] } as any;
+    const rows = (samples: any[]) => {
+      const r = vjTakeoverRows(s, samples);
+      return { A: [...r.A].sort(), B: [...r.B].sort() };
+    };
+    expect(rows([])).toEqual({ A: [], B: [] });
+    expect(rows([{ kind: 'row', deck: 'B', row: 2 }])).toEqual({ A: [], B: [2] });
+    expect(rows([{ kind: 'mix' }])).toEqual({ A: [0, 1, 2], B: [0, 1, 2] });
+    expect(rows([{ kind: 'group', groupId: 'g' }, { kind: 'group', groupId: 'gone' }])).toEqual({ A: [0, 1], B: [0, 1] });
+  });
 });
