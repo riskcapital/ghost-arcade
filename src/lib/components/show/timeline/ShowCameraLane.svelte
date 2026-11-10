@@ -36,6 +36,7 @@
   const selected = $derived(lane.find((c) => c.id === $selectedCameraClipId) ?? null);
 
   let laneEl = $state<HTMLDivElement | undefined>();
+  let popEl = $state<HTMLDivElement | undefined>();
 
   // Shots are saved in the Stage Sim window; pick them up here.
   onMount(() => {
@@ -106,11 +107,23 @@
     select(null);
   }
 
+  /** The show tray is where the user works: the pointer is over it, or the
+   *  keyboard is in it or in this clip's inspector. Like the tray's own keys,
+   *  Delete elsewhere (a layer, a mapping point) is not the camera clip's. */
+  function trayEngaged(): boolean {
+    const tray = laneEl?.closest('.show-tray');
+    const active = document.activeElement;
+    if (tray?.matches(':hover')) return true;
+    if (active && active !== document.body && (tray?.contains(active) || popEl?.contains(active))) return true;
+    return !!popEl?.matches(':hover');
+  }
+
   // Delete / Backspace / Escape on the selected camera clip. The tray's own
   // key handler has nothing selected then, so it leaves these keys alone.
   onMount(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!$selectedCameraClipId) return;
+      if (!trayEngaged()) return;
       const el = e.target as HTMLElement | null;
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -178,7 +191,7 @@
 
 {#if selected && popPos}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="cam-pop" use:portal style:left="{popPos.x}px" style:top="{popPos.y}px" onpointerdown={(e) => e.stopPropagation()} data-camera-clip-inspector>
+  <div class="cam-pop" bind:this={popEl} use:portal style:left="{popPos.x}px" style:top="{popPos.y}px" onpointerdown={(e) => e.stopPropagation()} data-camera-clip-inspector>
     <label class="cam-row">
       <span>Shot</span>
       <select
