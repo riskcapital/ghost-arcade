@@ -45,19 +45,63 @@ describe('Stage 3D live frame stream', () => {
     expect(frames.length).toBe(1);
   });
 
-  it('stops taking frames once stopped; a new stream supersedes the old', () => {
+  it('a second stream is refused while one runs (it used to end the first and delete its file)', async () => {
     const r = streamTarget();
     const a = sink();
     const stopA = r.streamFrames(64, 36, a.s);
     const b = sink();
-    r.streamFrames(64, 36, b.s);
-    expect(a.errors).toEqual(['superseded']);
-    stopA(); // stale stop does not end the new stream
-    expect(r.frameStream?.sink).toBe(b.s);
+    const stopB = r.streamFrames(64, 36, b.s);
+    await Promise.resolve();
+    expect(a.errors).toEqual([]);
+    expect(b.errors).toEqual(['Another recording is using the stage view.']);
+    stopB(); // the refused stream's stop does not end the running one
+    expect(r.frameStream?.sink).toBe(a.s);
     r.streamTag = 1;
     r.fulfillCapture(renderer, 1920, 1080);
-    expect(b.frames.length).toBe(1);
-    expect(a.frames.length).toBe(0);
+    expect(a.frames.length).toBe(1);
+    expect(b.frames.length).toBe(0);
+    // Once the first stops, a new one may start.
+    stopA();
+    const c = sink();
+    r.streamFrames(64, 36, c.s);
+    await Promise.resolve();
+    expect(c.errors).toEqual([]);
+    expect(r.frameStream?.sink).toBe(c.s);
+  });
+
+  it('a kept render that never reached its capture is reported lost at the next render', () => {
+    const r = streamTarget();
+    const lost: unknown[] = [];
+    const { s } = sink({ lost: (tag) => lost.push(tag) });
+    r.streamFrames(64, 36, s);
+    r.streamTag = { slot: 7 };
+    // The render threw before fulfillCapture; the next render starts.
+    r.streamLost(r.streamTag);
+    expect(lost).toEqual([{ slot: 7 }]);
+  });
+
+  it('a lost WebGL context drops the frame reader without GL calls and keeps no renders until it is back', () => {
+    const r = streamTarget();
+    r.contextLossSeen = false;
+    let isLost = false;
+    const gl = { isContextLost: () => isLost };
+    const ctxRenderer = { getContext: () => gl } as any;
+    const abandon = vi.fn();
+    r.frameReader = { abandon };
+    r.frameReaderGl = gl;
+    expect(r.checkContextLoss(ctxRenderer)).toBe(false);
+    expect(abandon).not.toHaveBeenCalled();
+    isLost = true;
+    expect(r.checkContextLoss(ctxRenderer)).toBe(true);
+    expect(abandon).toHaveBeenCalledTimes(1);
+    expect(r.frameReader).toBeNull();
+    // Restored: a fresh reader is made on the next read (the old one's objects are dead).
+    r.frameReader = { abandon: vi.fn() };
+    r.frameReaderGl = gl;
+    isLost = false;
+    expect(r.checkContextLoss(ctxRenderer)).toBe(false);
+    expect(r.frameReader).toBeNull();
+    expect(r.frameReaderGl).toBeNull();
   });
 
   it('a sink that throws ends the stream with an error, once', () => {

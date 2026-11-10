@@ -790,6 +790,8 @@ export class Stage3DRenderer {
   private captureCtx: CanvasRenderingContext2D | null = null;
   /** Live capture (recordings): asked at every render, read back async. */
   private frameStream: { width: number; height: number; sink: StageFrameSink; failed: boolean } | null = null;
+  /** The WebGL context was seen lost and has not been seen back yet. */
+  private contextLossSeen = false;
   /** This render is kept by the frame stream: its tag, else undefined. */
   private streamTag: unknown = undefined;
   private frameReader: StageFrameReader | null = null;
@@ -959,10 +961,19 @@ export class Stage3DRenderer {
   ): void {
     this.lastRenderAt = performance.now();
     this.ensureRenderTargets(renderer);
+    // A render kept for the stream that never reached the reader (the last
+    // render threw before its capture): say so, a later frame fills it.
+    if (this.streamTag !== undefined) {
+      const lostTag = this.streamTag;
+      this.streamTag = undefined;
+      this.streamLost(lostTag);
+    }
+    const contextLost = this.checkContextLoss(renderer);
     this.frameReader?.poll();
-    this.streamTag = undefined;
     const stream = this.frameStream;
-    if (stream && !stream.failed) {
+    // No renders are kept while the WebGL context is lost: they read back
+    // black. The first render after the restore fills the slots.
+    if (stream && !stream.failed && !contextLost) {
       try {
         const tag = stream.sink.beforeRender(this.lastRenderAt);
         if (tag !== null && tag !== undefined) this.streamTag = tag;
@@ -1959,7 +1970,15 @@ export class Stage3DRenderer {
   // ── Live frame stream (recordings) ───────────────────────────────────
 
   private streamFrames(width: number, height: number, sink: StageFrameSink): () => void {
-    if (this.frameStream) this.failStream(this.frameStream, new Error('superseded'));
+    if (this.frameStream && !this.frameStream.failed) {
+      // One capture at a time. The new one is refused rather than ending
+      // the one already running (that deleted its file).
+      const err = new Error('Another recording is using the stage view.');
+      queueMicrotask(() => {
+        try { sink.error?.(err); } catch { /* the sink's own problem */ }
+      });
+      return () => {};
+    }
     const stream = {
       width: Math.max(2, Math.round(width)),
       height: Math.max(2, Math.round(height)),
@@ -1994,6 +2013,42 @@ export class Stage3DRenderer {
     } catch { /* the sink's own problem */ }
   }
 
+  /** A kept render's frame will never come; the stream fills its slots later. */
+  private streamLost(tag: unknown): void {
+    const stream = this.frameStream;
+    if (!stream || stream.failed) return;
+    try {
+      stream.sink.lost?.(tag);
+    } catch (err) {
+      this.failStream(stream, err);
+    }
+  }
+
+  /**
+   * True while the WebGL context is lost. The frame reader's GPU objects die
+   * with the context and stay dead after a restore: reading through them
+   * gave silently black (or repeated) frames. Its queued reads are reported
+   * lost and a new reader is made once the context is back.
+   */
+  private checkContextLoss(renderer: THREE.WebGLRenderer): boolean {
+    const gl = renderer.getContext() as WebGLRenderingContext;
+    const lost = !!gl.isContextLost?.();
+    if (lost && !this.contextLossSeen) {
+      this.contextLossSeen = true;
+      console.warn('[Stage3D] WebGL context lost: recording frames hold until it is back.');
+      this.frameReader?.abandon();
+      this.frameReader = null;
+      this.frameReaderGl = null;
+    } else if (!lost && this.contextLossSeen) {
+      this.contextLossSeen = false;
+      console.warn('[Stage3D] WebGL context restored.');
+      this.frameReader?.abandon();
+      this.frameReader = null;
+      this.frameReaderGl = null;
+    }
+    return lost;
+  }
+
   /** Read the frame just drawn for the stream, without waiting for the GPU.
    *  Runs in the render task, like the one-shot capture. */
   private fulfillStreamFrame(renderer: THREE.WebGLRenderer, tag: unknown): void {
@@ -2023,7 +2078,7 @@ export class Stage3DRenderer {
       this.canvas.clientWidth || sourceW, this.canvas.clientHeight || sourceH,
       w, h,
     );
-    if (this.frameReader?.read(crop, w, h, deliver, (err) => this.failStream(stream, err))) return;
+    if (this.frameReader?.read(crop, w, h, deliver, (err) => this.failStream(stream, err), () => this.streamLost(tag))) return;
     // The GPU would not take the async copy: read this frame synchronously,
     // after any frames still queued so the order holds.
     try {

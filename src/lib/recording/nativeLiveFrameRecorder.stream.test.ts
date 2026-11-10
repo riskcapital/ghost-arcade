@@ -151,5 +151,68 @@ describe('native live recorder, stream mode', () => {
       expect(r.writesDone).toBe(i + 1);
     });
   });
-});
 
+  it('Stop with seconds of frames still queued saves them all (it used to delete the take)', async () => {
+    // A loaded machine: each encoder write takes 200 ms, so ~5 s queue up.
+    writeDelayMs = 200;
+    const stage = fakeStage(1000 / 60, 5);
+    let complete = false;
+    let error: Error | null = null;
+    const { cancelNativeMp4FrameEncoder, finishNativeMp4FrameEncoder } = await import('./offlineRender');
+    const handle = await startNativeLiveFrameRecording({
+      captureFrame: async () => { throw new Error('unused'); },
+      streamFrames: stage.streamFrames,
+      width: 1, height: 1, fps: 30,
+      onComplete: () => { complete = true; },
+      onError: (e) => { error = e; },
+    });
+    await new Promise((r) => setTimeout(r, 1200));
+    handle!.stop();
+    stage.stop();
+    for (let i = 0; i < 600 && !complete && !error; i++) await new Promise((r) => setTimeout(r, 20));
+    expect(error).toBeNull();
+    expect(complete).toBe(true);
+    expect(cancelNativeMp4FrameEncoder).not.toHaveBeenCalled();
+    expect(finishNativeMp4FrameEncoder).toHaveBeenCalled();
+    // Every frame claimed before Stop reached the encoder, in order.
+    let next = 0;
+    for (const w of writes) {
+      expect(w.index).toBe(next);
+      next += w.repeat;
+    }
+    expect(writes.length).toBeGreaterThan(15);
+  }, 20_000);
+
+  it('a kept render that is lost leaves no gap: the next frame fills its slots', async () => {
+    let sink: StageFrameSink | null = null;
+    const streamFrames = (_w: number, _h: number, s: StageFrameSink) => { sink = s; return () => { sink = null; }; };
+    let complete = false;
+    let error: Error | null = null;
+    const handle = await startNativeLiveFrameRecording({
+      captureFrame: async () => { throw new Error('unused'); },
+      streamFrames,
+      width: 1, height: 1, fps: 30,
+      onComplete: () => { complete = true; },
+      onError: (e) => { error = e; },
+    });
+    const t0 = performance.now();
+    const at = (ms: number) => t0 + ms;
+    const frame = (n: number) => ({ data: new Uint8Array([n, 0, 0, 255]), width: 1, height: 1 });
+    // Slot 0 kept and delivered; slot 1 kept but lost (context loss); slot 2 delivered.
+    const s = sink as unknown as StageFrameSink;
+    const t0Tag = s.beforeRender(at(0));
+    s.frame(frame(1), t0Tag);
+    const lostTag = s.beforeRender(at(1000 / 30));
+    s.lost?.(lostTag);
+    const t2Tag = s.beforeRender(at(2000 / 30));
+    s.frame(frame(3), t2Tag);
+    await new Promise((r) => setTimeout(r, 30));
+    handle!.stop();
+    for (let i = 0; i < 100 && !complete && !error; i++) await new Promise((r) => setTimeout(r, 20));
+    expect(error).toBeNull();
+    expect(complete).toBe(true);
+    // Before: frame 3 was written at index 2 while the encoder expected 1
+    // ("MP4 frame order mismatch") and the take was lost.
+    expect(writes.map((w) => [w.index, w.repeat, w.tag])).toEqual([[0, 1, 1], [1, 2, 3]]);
+  });
+});

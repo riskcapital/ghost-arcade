@@ -471,6 +471,10 @@ export interface StageFrameSink {
    *  `release` once its bytes are no longer read (written out), so the view
    *  can reuse the buffer for a later frame. */
   frame(frame: { data: Uint8Array; width: number; height: number; release?: () => void }, tag: unknown): void;
+  /** The render kept for this tag never reached the reader (the render
+   *  failed, or the WebGL context was lost): no frame will come for it. A
+   *  later frame fills its slots. */
+  lost?(tag: unknown): void;
   /** The capture failed; no more frames will come. */
   error?(err: Error): void;
 }
