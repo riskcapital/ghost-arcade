@@ -11074,21 +11074,25 @@
   .main-content.native-primary-presenter {
     background: transparent;
   }
+  /* The trays sit just above the status bar (see the `bottom: 30px` rule
+     below), and .main-content already ends at the status bar, so it gives
+     up exactly the tray's own height. Adding the hidden dock's rail offset
+     here left a 74 px empty strip between the preview and the tray. */
   .main-content.preset-tray-open {
-    margin-bottom: calc(180px + var(--ga-bottom-rail-offset, 74px));
+    margin-bottom: 180px;
   }
   .main-content.seq-tray-open {
-    margin-bottom: calc(280px + var(--ga-bottom-rail-offset, 74px));
+    margin-bottom: 280px;
   }
   .main-content.kf-tray-open {
-    margin-bottom: calc(300px + var(--ga-bottom-rail-offset, 74px));
+    margin-bottom: 300px;
   }
   /* The show tray is the only one of the four whose height is not a
      constant — it fits its own content and is drag-resizable — so it
      publishes `--ga-show-tray-height` from ShowTimeline.svelte instead of
      hard-coding a number here. */
   .main-content.show-tray-open {
-    margin-bottom: calc(var(--ga-show-tray-height, 220px) + var(--ga-bottom-rail-offset, 74px));
+    margin-bottom: var(--ga-show-tray-height, 220px);
   }
 
   .viewport {
