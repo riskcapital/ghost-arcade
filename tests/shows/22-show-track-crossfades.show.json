@@ -1,6 +1,6 @@
 {
   "name": "Show timeline: track crossfades off stage and under a preset dissolve",
-  "description": "A track whose layer is not on stage keeps showing its outgoing clip through a crossfade into a faded-in clip, and has no black frame at the start of a plain crossfade. Under a preset dissolve between presets that share the tracked layer, the clip shows on both sides: no dip to the layer's own content.",
+  "description": "A row whose piece is only in a later look (W, at 40 s) is not on stage under looks A and B; it keeps showing its outgoing block through a crossfade into a faded-in clip, and has no black frame at the start of a plain crossfade. Under a preset dissolve between presets that share the tracked layer, the clip shows on both sides: no dip to the layer's own content.",
   "steps": [
     { "do": "app.start", "choice": "blank" },
     { "do": "project.layer", "name": "Wall", "colour": "white" },
@@ -8,6 +8,8 @@
     { "do": "show.open" },
     { "do": "show.track", "name": "wall", "layer": "Wall" },
     { "do": "show.track", "name": "floor", "layer": "Floor" },
+    { "do": "preset.save", "name": "W" },
+    { "do": "show.preset", "name": "W", "at": 40, "duration": 2 },
     { "do": "project.removeLayer", "name": "Wall" },
     { "do": "preset.save", "name": "A" },
     { "do": "preset.save", "name": "B" },

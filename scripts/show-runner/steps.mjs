@@ -184,6 +184,7 @@ const ACTIONS = {
       const rgb = ${J(NAMED_RGB[s.colour] ?? [1, 1, 1])};
       const clip = await __show.shaderClip('DM-SolidColor', { baseColor: [...rgb, 1] });
       g.project.setLayerSource(id, { id: crypto.randomUUID(), type: 'shader', src: clip.src, name: clip.name, shaderCode: clip.shaderCode, shaderValues: clip.shaderValues });
+      ${s.x0 !== undefined ? `g.project.updateLayer(id, { corners: { topLeft: { x: ${s.x0}, y: 1 }, topRight: { x: ${s.x1}, y: 1 }, bottomLeft: { x: ${s.x0}, y: 0 }, bottomRight: { x: ${s.x1}, y: 0 } } });` : ''}
       __show.vars['layer:' + ${J(s.name)}] = id;
     })()`);
     await sleep(800);
@@ -222,6 +223,27 @@ const ACTIONS = {
     if (!id) throw new Error(`no track for ${s.layer ?? s.newLayer ?? s.name}`);
     await sleep(300);
   },
+  async 'show.subRow'(ctx, s) {
+    // "+ Layer" on a piece's row: { name, track } (the piece's row name).
+    const id = await ctx.eval(`(() => {
+      const row = __show.show().layerTracks.find((t) => t.id === __show.vars['track:' + ${J(s.track)}]);
+      const id = row ? __show.tracks().addSubRow(row.layerId, ${J(s.label ?? s.name)}) : null;
+      __show.vars['track:' + ${J(s.name)}] = id;
+      return id;
+    })()`);
+    if (!id) throw new Error(`no layer added on ${s.track}`);
+    await sleep(300);
+  },
+  async 'show.blockParam'(ctx, s) {
+    // Click a block, then move one of its shader inputs as the Shader
+    // Parameters panel does: { clip (var), name, value }.
+    const ok = await ctx.eval(`(() => {
+      const t = __show.tracks();
+      return t.editBlock(__show.vars['clip:' + ${J(s.clip)}]) && t.setBlockShaderValue(${J(s.name)}, ${J(s.value)}, false);
+    })()`);
+    if (!ok) throw new Error(`could not edit block ${s.clip}`);
+    await sleep(400);
+  },
   async 'show.trackSet'(ctx, s) {
     const patch = {};
     for (const k of ['gap', 'muted', 'locked']) if (s[k] !== undefined) patch[k] = s[k];
@@ -233,7 +255,7 @@ const ACTIONS = {
     const file = s.clip ? fixture(s.clip) : null;
     const seconds = s.seconds ?? (s.clip && /^ramp/.test(s.clip) ? 10 : s.clip ? 4 : undefined);
     const opts = {};
-    for (const k of ['duration', 'inPoint', 'endBehaviour', 'fadeIn', 'fadeOut', 'rate', 'opacity', 'transitionIn', 'transitionDuration']) if (s[k] !== undefined) opts[k] = s[k];
+    for (const k of ['duration', 'inPoint', 'endBehaviour', 'fadeIn', 'fadeOut', 'rate', 'opacity', 'blendMode', 'transitionIn', 'transitionDuration']) if (s[k] !== undefined) opts[k] = s[k];
     const id = await ctx.eval(`(async () => {
       let media;
       ${file ? `media = __show.fileMedia(${J(file)}, ${seconds ?? 'undefined'});` : ''}
@@ -419,6 +441,25 @@ const CHECKS = {
     const got = snap.mean_rgba.slice(0, 3);
     const off = Math.max(...got.map((v, i) => Math.abs(v - s.rgb[i])));
     return { pass: off <= (s.within ?? 0.03), detail: `output ${got.map((v) => v.toFixed(3)).join(', ')} vs ${s.rgb.map((v) => v.toFixed(3)).join(', ')}` };
+  },
+  async 'output.region'(ctx, s) {
+    // Mean colour of a vertical strip of the output, numerically:
+    // { x0, x1 (0..1 of the width), rgb, within }.
+    const got = await ctx.eval(`(async () => {
+      const snap = await __show.snapshot({ include_pixels: true, max_dim: 96 });
+      if (!snap || !snap.rgba_b64) return null;
+      const bin = atob(snap.rgba_b64);
+      const x0 = Math.floor(${s.x0 ?? 0} * snap.width), x1 = Math.ceil(${s.x1 ?? 1} * snap.width);
+      const sum = [0, 0, 0]; let n = 0;
+      for (let y = 0; y < snap.height; y++) for (let x = x0 + 1; x < x1 - 1; x++) {
+        const i = (y * snap.width + x) * 4;
+        sum[0] += bin.charCodeAt(i + 2); sum[1] += bin.charCodeAt(i + 1); sum[2] += bin.charCodeAt(i); n++;
+      }
+      return sum.map((v) => v / Math.max(1, n) / 255);
+    })()`);
+    if (!got) return { pass: false, detail: 'no output pixels' };
+    const off = Math.max(...got.map((v, i) => Math.abs(v - s.rgb[i])));
+    return { pass: off <= (s.within ?? 0.05), detail: `x ${s.x0 ?? 0}..${s.x1 ?? 1}: ${got.map((v) => v.toFixed(3)).join(', ')} vs ${s.rgb.map((v) => v.toFixed(3)).join(', ')}` };
   },
   async 'output.notBlack'(ctx, s) {
     const snap = await ctx.eval('__show.snapshot()');

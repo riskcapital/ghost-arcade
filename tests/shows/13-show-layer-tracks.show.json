@@ -1,6 +1,6 @@
 {
-  "name": "Show timeline: a layer track plays clips on a mapping layer",
-  "description": "A red layer with a track: its own content in gaps, a grey-ramp video clip on the right frame while playing, paused and scrubbed, a split that keeps one decoder, a hidden gap, and Delete on a show clip that leaves the layers alone.",
+  "name": "Show timeline: a piece's row plays blocks on a mapping layer",
+  "description": "A red layer's row: hidden before its first block (a row with blocks hides its piece between them), a grey-ramp video block on the right frame while playing, paused and scrubbed, a split that keeps one decoder, the row set to show the look between blocks, and Delete on a show clip that leaves the layers alone.",
   "steps": [
     {
       "do": "app.start",
@@ -33,8 +33,12 @@
       "do": "show.seek",
       "t": 1,
       "settle": 1500,
-      "label": "In the gap before the clip the layer shows its own content",
+      "label": "Before the first block the piece is hidden (its row has blocks)",
       "expect": {
+        "output.colour": {
+          "is": "black",
+          "within": 10
+        },
         "layer.colour": {
           "track": "wall",
           "is": "red",
@@ -139,16 +143,16 @@
     {
       "do": "show.trackSet",
       "track": "wall",
-      "gap": "hide"
+      "gap": "layer"
     },
     {
       "do": "show.seek",
       "t": 1,
       "settle": 1500,
-      "label": "Gap set to hide: the layer is not drawn before the clip",
+      "label": "Row set to show the look between blocks: the layer's own red before the block",
       "expect": {
         "output.colour": {
-          "is": "black",
+          "is": "red",
           "within": 10
         }
       }

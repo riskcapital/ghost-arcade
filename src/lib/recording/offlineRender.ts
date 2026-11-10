@@ -280,6 +280,11 @@ function describeNativeFrameHealth(snapshot: NativeRendererFrameSnapshotExportRe
   ].join(' ');
 }
 
+/** A show render may go black on purpose (a row hides its piece between
+ *  blocks, a blackout, a dip): its blank frames are real frames. Any other
+ *  render that comes out blank has lost its picture. Set per render. */
+let blankFramesAreReal = false;
+
 function assertNativeRendererFrameExport(
   snapshot: NativeRendererFrameSnapshotExportResult,
   frameIndex: number,
@@ -296,7 +301,7 @@ function assertNativeRendererFrameExport(
       `Native renderer frame ${frameIndex} byte count mismatch: expected ${expectedBytes} raw bytes (${describeNativeFrameHealth(snapshot)})`,
     );
   }
-  if (snapshot.dark_frame || snapshot.nonzero_pixels <= 0) {
+  if ((snapshot.dark_frame || snapshot.nonzero_pixels <= 0) && !blankFramesAreReal) {
     throw new Error(`Native renderer exported a blank frame at ${frameIndex} (${describeNativeFrameHealth(snapshot)})`);
   }
   const snapshotPixelFormat = rawPixelFormatForNativeTextureFormat(snapshot.format);
@@ -1139,6 +1144,7 @@ function createOfflineRenderStore() {
       //     offset). Mixed down once, then sampled per frame through the
       //     same OfflineFileAudioAnalyzer the file-input path uses.
       const showState = get(showTimeline);
+      blankFramesAreReal = showTimeline.hasContent();
       if (showState.audioTracks.some(t => !t.muted && t.url && t.duration > 0)) {
         // Its RAF would race the render loop's own seek() — the render owns
         // the clock for the duration.
