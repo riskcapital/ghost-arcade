@@ -87,14 +87,22 @@ function linkTempo(): number | null {
 
 /** Beat position and tempo from the playing show, or null when it is not
  *  driving (paused, or no tempo map). Set by show/sync/showLaunchClock.ts. */
-export type ShowBeatSource = (nowMs: number) => { beat: number; bpm: number } | null;
+export type ShowBeatSource = (nowMs: number) => ShowBeat | null;
+export interface ShowBeat {
+  beat: number;
+  bpm: number;
+  /** Quarters in the show's bar here (3 in 3/4 or 6/8); 4 when absent. */
+  barQuarters?: number;
+  /** A beat where a bar starts (the current metre's first bar). */
+  barOrigin?: number;
+}
 let showBeatSource: ShowBeatSource | null = null;
 
 export function setShowBeatSource(source: ShowBeatSource | null): void {
   showBeatSource = source;
 }
 
-function showBeat(nowMs: number): { beat: number; bpm: number } | null {
+function showBeat(nowMs: number): ShowBeat | null {
   if (!showBeatSource) return null;
   try {
     const b = showBeatSource(nowMs);
@@ -175,7 +183,15 @@ export function launchClockPosition(nowMs = performance.now()): { beat: number; 
     return { beat: abletonLink.beatNow(), beatMs: 60000 / link };
   }
   const show = showBeat(nowMs);
-  if (show) return { beat: show.beat, beatMs: 60000 / show.bpm };
+  if (show) {
+    // The show owns tempo and phase: a nudge held from before it started
+    // stops here, so it does not keep moving the local phase underneath.
+    if (nudge !== 0) {
+      nudgeInputs.clear();
+      stopTempoNudge(undefined, nowMs);
+    }
+    return { beat: show.beat, beatMs: 60000 / show.bpm };
+  }
   const audio = get(audioStore) as AudioClockInput;
   const tempo = setTempo(audio);
   const audioBeat = audioBeatPosition(audio);
@@ -189,17 +205,40 @@ export function launchClockPosition(nowMs = performance.now()): { beat: number; 
   return { beat: segmentBeatAt(local, nowMs), beatMs: 60000 / local.bpm };
 }
 
+/**
+ * The grid a launch waits for. Callers count bars as 4 beats (4/4): a grid
+ * of whole bars (4, 8, 16 beats) is that many of the playing show's own bars
+ * when its metre is another (3 quarters in 3/4), counted from a bar line of
+ * the show. Beat grids, and every grid off the show, are as given.
+ */
+export function launchGrid(gridBeats: number, nowMs = performance.now()): { size: number; origin: number } {
+  if (!(gridBeats >= 4) || gridBeats % 4 !== 0 || linkTempo() !== null) return { size: gridBeats, origin: 0 };
+  const show = showBeat(nowMs);
+  const q = Number(show?.barQuarters);
+  if (!show || !(q > 0) || q === 4) return { size: gridBeats, origin: 0 };
+  return { size: (gridBeats / 4) * q, origin: Number.isFinite(show.barOrigin) ? show.barOrigin! : 0 };
+}
+
 /** Wall-clock time of the next boundary of a grid `gridBeats` long. */
 export function nextLaunchBoundary(gridBeats: number, nowMs = performance.now()): number {
   if (!(gridBeats > 0)) return nowMs;
   const { beat, beatMs } = launchClockPosition(nowMs);
-  return nextGridWallTime(nowMs, beat, beatMs, gridBeats);
+  const grid = launchGrid(gridBeats, nowMs);
+  return nextGridWallTime(nowMs, beat - grid.origin, beatMs, grid.size);
+}
+
+/** True while Link or the playing show owns tempo and phase: nudge and
+ *  resync do nothing then. */
+export function launchClockFollowsExternal(nowMs = performance.now()): boolean {
+  return linkTempo() !== null || showBeat(nowMs) !== null;
 }
 
 /** Hold-to-nudge: run the clock a few percent fast (1) or slow (-1) until
- *  released. Ignored while Link owns the tempo. */
+ *  released. Ignored while Link or the playing show owns the tempo (a nudge
+ *  then only shifted the hidden local phase, which jumped when the show
+ *  stopped). */
 export function startTempoNudge(direction: -1 | 1, nowMs = performance.now()): void {
-  if (linkTempo() !== null || nudge === direction) return;
+  if (launchClockFollowsExternal(nowMs) || nudge === direction) return;
   settleNudge(nowMs);
   nudge = direction;
   nudgeSince = nowMs;
@@ -265,7 +304,7 @@ audioStore.subscribe((audio) => {
 /** Independent ownership prevents one released pad from canceling another. */
 export function setTempoNudgeInput(id: string, direction: -1 | 0 | 1): void {
   if (direction === 0) nudgeInputs.delete(id);
-  else if (!launchClockFollowsLink()) { nudgeInputs.delete(id); nudgeInputs.set(id, direction); }
+  else if (!launchClockFollowsExternal()) { nudgeInputs.delete(id); nudgeInputs.set(id, direction); }
   const latest = [...nudgeInputs.values()].at(-1);
   if (latest) startTempoNudge(latest);
   else stopTempoNudge();

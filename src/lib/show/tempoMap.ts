@@ -226,6 +226,9 @@ export function nearestGridTime(map: ShowTempoMap, t: number, grid: ShowSnapGrid
   return Math.round(best * 1e9) / 1e9;
 }
 
+/** Bars closer than this (px) only get a tick when they carry a number. */
+const RULER_MIN_BAR_PX = 3;
+
 export interface RulerTick {
   time: number;
   bar: number;
@@ -245,7 +248,8 @@ export function rulerTicks(map: ShowTempoMap, t0: number, t1: number, pxPerSecon
   if (!(t1 > t0) || !(pxPerSecond > 0)) return ticks;
   const segs = resolve(map);
   let bar = barBeatAt(map, t0).bar;
-  // Hard cap: a ruler never needs more than a few thousand ticks.
+  // Hard cap: a ruler never needs more than a few thousand ticks (bars too
+  // close to see are skipped below, so this is only a safety net).
   for (let guard = 0; guard < 20000; guard++) {
     const start = secondsAtBar(map, bar);
     if (start > t1) break;
@@ -265,9 +269,42 @@ export function rulerTicks(map: ShowTempoMap, t0: number, t1: number, pxPerSecon
         if (time >= t0 - 1e-9 && time <= t1) ticks.push({ time, bar, beat: b, kind: 'beat' });
       }
     }
-    bar++;
+    if (barPx < RULER_MIN_BAR_PX && every > 1) {
+      // Bars under a few pixels apart are a smear: go straight to the next
+      // numbered bar (or the next segment). Stepping one bar at a time ran
+      // out of the tick cap and cut the ruler off at extreme zoom.
+      const into = (((bar - 1) % every) + every) % every;
+      const next = segs.find((seg) => seg.bar > bar)?.bar ?? Infinity;
+      bar = Math.min(bar + every - into, next);
+    } else {
+      bar++;
+    }
   }
   return ticks;
+}
+
+/**
+ * The tempo of a detected beat grid, unrounded. The analysis reports its
+ * tempo to 0.1 BPM for display; a map at that rounded tempo drifts off a
+ * 127.37 BPM song by half a beat in ten minutes. The beats themselves are
+ * the exact grid, so the tempo comes from their spacing (a least-squares
+ * line, so a beat clamped to 0 at the start does not bend it). Falls back to
+ * `reported` when there are too few beats or they disagree with it.
+ */
+export function gridTempo(beats: readonly number[], reported: number): number {
+  const ts = beats.filter((b) => b > 0 && Number.isFinite(b));
+  const n = ts.length;
+  if (n < 8) return reported;
+  let sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (let i = 0; i < n; i++) {
+    sx += i;
+    sy += ts[i];
+    sxx += i * i;
+    sxy += i * ts[i];
+  }
+  const period = (n * sxy - sx * sy) / (n * sxx - sx * sx);
+  const bpm = 60 / period;
+  return Number.isFinite(bpm) && Math.abs(bpm / reported - 1) < 0.01 ? clampBpm(bpm) : reported;
 }
 
 /**
@@ -285,7 +322,7 @@ export function tempoFromAnalysis(
   if (!analysis.tempo || !(analysis.tempo > 0)) return null;
   const firstBeat = analysis.beats.find((b) => b >= track.offset - 1e-6);
   const fileTime = firstBeat ?? track.offset;
-  const map = createTempoMap(analysis.tempo, track.startTime + (fileTime - track.offset));
+  const map = createTempoMap(gridTempo(analysis.beats, analysis.tempo), track.startTime + (fileTime - track.offset));
   map.source = 'analysis';
   if (track.id) map.analysedTrackId = track.id;
   return map;

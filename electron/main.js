@@ -6431,9 +6431,20 @@ function registerIpcHandlers() {
     }
   });
 
-  ipcMain.handle('link_get_state', () => {
+  ipcMain.handle('link_get_state', (_, args) => {
     if (!linkSession) return { available: !!loadLinkAddon(), enabled: false };
     try {
+      // A show following Link reads the beat against its own bar length
+      // (3 quarters in 6/8). Everything else keeps the default quantum of 4.
+      const quantum = Number(args?.quantum);
+      if (Number.isFinite(quantum) && quantum >= 1 && quantum <= 64 && quantum !== 4) {
+        linkSession.setQuantum(quantum);
+        try {
+          return { available: true, ...linkSession.getState() };
+        } finally {
+          linkSession.setQuantum(4);
+        }
+      }
       return { available: true, ...linkSession.getState() };
     } catch (err) {
       return { available: true, enabled: false, error: err?.message || String(err) };

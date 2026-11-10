@@ -24,6 +24,13 @@
  * timecode. They are turned into show time through the show's tempo map
  * (show/sync/beatChase.ts) and fed to the same chase clock, so a show with a
  * map can follow a DAW or a Link session the way it follows timecode.
+ *
+ * SWITCHING SOURCES
+ * -----------------
+ * A new source starts searching from nothing, so the show re-locks to it:
+ * the playhead (and the launch clock, LFOs and quantised launches that read
+ * the show's beat) jump to wherever the new clock is. That is by design: two
+ * clocks have no shared phase to carry over. The settings panel says so.
  */
 
 import { writable, get } from 'svelte/store';
@@ -129,10 +136,13 @@ export interface ChaseReading {
   /** Timecode seconds (before the offset) at the read instant. */
   seconds: number | null;
   running: boolean;
+  /** Source seconds per real second while running: 1 for timecode, the
+   *  source tempo over the map's for a musical clock at another tempo. */
+  rate: number;
 }
 
 export class ChaseClock {
-  private anchor: { seconds: number; atMs: number } | null = null;
+  private anchor: { seconds: number; atMs: number; rate: number } | null = null;
   private lastFrameAt = 0;
   private streak = 0;
   private still = 0;
@@ -160,12 +170,16 @@ export class ChaseClock {
   /**
    * One decoded frame: at `atMs` the source read `seconds`. `running` is
    * false for a locate (MTC full frame): the source is parked there.
+   * `rate` is how fast it runs on between frames (source seconds per
+   * second): a musical clock at another tempo than the map runs show time
+   * faster or slower than real time.
    */
-  onFrame(seconds: number, atMs: number, running = true): void {
+  onFrame(seconds: number, atMs: number, running = true, rate = 1): void {
+    const r = Number.isFinite(rate) && rate > 0 ? rate : 1;
     if (this.anchor) {
       const dt = atMs - this.lastFrameAt;
       if (dt > 0 && dt < 1000) this.interval = this.interval ? this.interval * 0.8 + dt * 0.2 : dt;
-      const predicted = this.sourceRunning ? this.anchor.seconds + (atMs - this.anchor.atMs) / 1000 : this.anchor.seconds;
+      const predicted = this.sourceRunning ? this.anchor.seconds + ((atMs - this.anchor.atMs) / 1000) * this.anchor.rate : this.anchor.seconds;
       const tolerance = Math.max(0.1, (2.5 * (this.interval || 40)) / 1000);
       const continuous = Math.abs(seconds - predicted) <= tolerance || (!this.sourceRunning && running);
       this.streak = continuous ? this.streak + 1 : 1;
@@ -174,7 +188,7 @@ export class ChaseClock {
       this.streak = 1;
       this.still = 0;
     }
-    this.anchor = { seconds, atMs };
+    this.anchor = { seconds, atMs, rate: r };
     this.lastFrameAt = atMs;
     // A generator paused on one frame keeps repeating it: parked, not rolling.
     this.sourceRunning = running && this.still < 2;
@@ -183,22 +197,23 @@ export class ChaseClock {
 
   read(nowMs: number): ChaseReading {
     const a = this.anchor;
-    if (!a) return { lock: 'searching', seconds: null, running: false };
+    if (!a) return { lock: 'searching', seconds: null, running: false, rate: 1 };
     const since = nowMs - this.lastFrameAt;
     const locked = this.streak >= this.lockFrames;
-    const runOn = (at: number) => a.seconds + Math.max(0, at - a.atMs) / 1000;
+    const runOn = (at: number) => a.seconds + (Math.max(0, at - a.atMs) / 1000) * a.rate;
+    const rate = a.rate;
     if (!this.sourceRunning) {
-      return { lock: locked ? 'locked' : 'searching', seconds: a.seconds, running: false };
+      return { lock: locked ? 'locked' : 'searching', seconds: a.seconds, running: false, rate };
     }
     const dropout = this.dropoutMs();
     if (since <= dropout) {
       return locked
-        ? { lock: 'locked', seconds: runOn(nowMs), running: true }
-        : { lock: 'searching', seconds: a.seconds, running: false };
+        ? { lock: 'locked', seconds: runOn(nowMs), running: true, rate }
+        : { lock: 'searching', seconds: a.seconds, running: false, rate };
     }
-    if (!locked) return { lock: 'searching', seconds: a.seconds, running: false };
-    if (since <= dropout + this.freewheelMs) return { lock: 'freewheel', seconds: runOn(nowMs), running: true };
-    return { lock: 'lost', seconds: runOn(this.lastFrameAt + dropout + this.freewheelMs), running: false };
+    if (!locked) return { lock: 'searching', seconds: a.seconds, running: false, rate };
+    if (since <= dropout + this.freewheelMs) return { lock: 'freewheel', seconds: runOn(nowMs), running: true, rate };
+    return { lock: 'lost', seconds: runOn(this.lastFrameAt + dropout + this.freewheelMs), running: false, rate };
   }
 }
 
@@ -225,7 +240,18 @@ export interface ChaseStatus {
   mismatch: boolean;
   /** Link quantised start: Play pressed, waiting for the next Link bar. */
   waiting: boolean;
+  /** Why the show's Play did nothing (Link follows the session's start). */
+  notice: ChaseNotice | null;
 }
+
+/**
+ * linkNoPeers: Play pressed while following the Link session's start, with
+ *   no other Link app on the network to start it.
+ * linkStartsWithSession: the same with peers: the session has to start.
+ */
+export type ChaseNotice = 'linkNoPeers' | 'linkStartsWithSession';
+/** How long a notice stays up unless the session starts first. */
+export const CHASE_NOTICE_MS = 8000;
 
 export interface ChaseSample extends ChaseReading {
   showTime: number | null;
@@ -236,7 +262,7 @@ export type ChaseSink = (sample: ChaseSample, settings: TimecodeSettings) => voi
 function initialStatus(): ChaseStatus {
   return {
     lock: 'off', label: null, rate: null, dropFrame: false, showTime: null, running: false, framesReceived: 0, inputPeak: 0, error: null,
-    sourceBpm: null, showBpm: null, mismatch: false, waiting: false,
+    sourceBpm: null, showBpm: null, mismatch: false, waiting: false, notice: null,
   };
 }
 
@@ -265,6 +291,7 @@ class TimecodeChaseController {
   private showContext: ShowClockContext | null = null;
   private sourceBpm: number | null = null;
   private waiting = false;
+  private notice: { kind: ChaseNotice; until: number } | null = null;
 
   setSink(sink: ChaseSink | null): void {
     this.sink = sink;
@@ -294,12 +321,33 @@ class TimecodeChaseController {
 
   /** Feed a position from a musical clock: show seconds at `atMs`. */
   feedBeats(showSeconds: number, atMs: number, running: boolean, sourceBpm: number | null, waiting = false): void {
+    // Between positions show time runs at the source's tempo over the
+    // map's: a source at 126 BPM plays a 120 BPM map 5% fast.
+    const map = this.showClock().map;
+    const showBpm = map && Number.isFinite(showSeconds) ? showTempoAt(map, showSeconds) : null;
+    const rate = sourceBpm && sourceBpm > 0 && showBpm && showBpm > 0
+      ? Math.max(0.25, Math.min(4, sourceBpm / showBpm))
+      : 1;
     // The chase clock works in source seconds; beats arrive as show time.
-    this.clock.onFrame(showSeconds + this.current.offset, atMs, running);
+    this.clock.onFrame(showSeconds + this.current.offset, atMs, running, rate);
     this.lastLabel = null;
     this.frames++;
     this.sourceBpm = sourceBpm;
     this.waiting = waiting;
+    if (running) this.notice = null;
+  }
+
+  /** A musical clock still parked: refresh its tempo and waiting state
+   *  without a new position, so the parked show stays where the user puts it. */
+  noteBeats(sourceBpm: number | null, waiting = false): void {
+    this.sourceBpm = sourceBpm;
+    this.waiting = waiting;
+  }
+
+  /** Say why the show's Play did nothing (cleared when the source rolls). */
+  setNotice(kind: ChaseNotice | null, nowMs = performance.now()): void {
+    this.notice = kind ? { kind, until: nowMs + CHASE_NOTICE_MS } : null;
+    this.lastStatusAt = -Infinity;
   }
 
   get current(): TimecodeSettings {
@@ -369,6 +417,10 @@ class TimecodeChaseController {
         console.warn('[Timecode] chase sink failed:', err);
       }
     }
+    if (this.notice && nowMs >= this.notice.until) {
+      this.notice = null;
+      this.lastStatusAt = -Infinity;
+    }
     if (nowMs - this.lastStatusAt >= 100 || get(this.status).lock !== reading.lock) {
       this.lastStatusAt = nowMs;
       const label = this.lastLabel;
@@ -383,11 +435,12 @@ class TimecodeChaseController {
           : reading.seconds !== null && label
             ? formatTimecode(secondsToTimecode(reading.seconds, label.rate, label.dropFrame))
             : label ? formatTimecode(label) : null,
-        sourceBpm: beats ? this.sourceBpm : null,
+        sourceBpm: beats && this.sourceBpm !== null ? Math.round(this.sourceBpm * 10) / 10 : null,
         showBpm,
         // Only while the source rolls: a parked session's tempo is no warning.
         mismatch: beats && reading.running && tempoMismatch(showBpm, this.sourceBpm),
         waiting: beats && this.waiting,
+        notice: beats ? this.notice?.kind ?? null : null,
         rate: label?.rate ?? null,
         dropFrame: label?.dropFrame ?? false,
         showTime: sample.showTime,
@@ -449,6 +502,7 @@ class TimecodeChaseController {
     this.peak = 0;
     this.sourceBpm = null;
     this.waiting = false;
+    this.notice = null;
   }
 
   /** Stop listening (app teardown). Settings are kept. */
@@ -638,24 +692,42 @@ async function startLinkFollow(chase: TimecodeChaseController): Promise<SourceHa
   const follower = new LinkFollower();
   let stopped = false;
   let busy = false;
+  let peers = 0;
+  let sessionPlaying = false;
+  // Parked, Link says nothing about where the show is (a parked reading is
+  // the show's own playhead), so a park is fed once, not every poll: a
+  // stale playhead from a poll would pull back a playhead being dragged.
+  let parkedFed = false;
   const poll = async () => {
     if (stopped || busy) return;
     busy = true;
     try {
+      // Read Link's beat against the show's bar length, so its bars are the
+      // ones peers with that bar length (a 6/8 set in Live: 3) agree on.
+      const before = chase.showClock();
+      const quantum = before.map
+        ? follower.quantum({ map: before.map, playhead: before.playhead, mode: chase.current.linkMode, barOffset: chase.current.barOffset })
+        : 4;
       const sentAt = performance.now();
-      const st = (await invoke('link_get_state')) as { enabled?: boolean; beat?: number; tempo?: number; playing?: boolean } | null;
+      const st = (await invoke('link_get_state', { quantum })) as { enabled?: boolean; beat?: number; tempo?: number; playing?: boolean; peers?: number; quantum?: number } | null;
       if (stopped || !st?.enabled || !Number.isFinite(st.beat) || !(Number(st.tempo) > 0)) return;
+      peers = Number(st.peers) || 0;
+      sessionPlaying = !!st.playing;
       const now = performance.now();
       // The state was captured about half way through the round trip.
       const atMs = sentAt + (now - sentAt) / 2;
       const show = chase.showClock();
       if (!show.map) return;
       const s = chase.current;
+      // An older main ignores the quantum and reads against 4: use what came back.
+      const readQuantum = Number(st.quantum) > 0 ? Number(st.quantum) : quantum;
       const reading = follower.update(
-        { beat: Number(st.beat), tempo: Number(st.tempo), playing: !!st.playing, atMs },
-        { map: show.map, playhead: show.playhead, mode: s.linkMode },
+        { beat: Number(st.beat), tempo: Number(st.tempo), playing: sessionPlaying, atMs, quantum: readQuantum },
+        { map: show.map, playhead: show.playhead, mode: s.linkMode, barOffset: s.barOffset },
       );
-      chase.feedBeats(reading.seconds, atMs, reading.running, Math.round(Number(st.tempo) * 10) / 10, reading.waiting);
+      if (reading.running || !parkedFed) chase.feedBeats(reading.seconds, atMs, reading.running, Number(st.tempo), reading.waiting);
+      else chase.noteBeats(Number(st.tempo), reading.waiting);
+      parkedFed = !reading.running;
     } catch {
       /* main not ready: the chase clock rides out the gap */
     } finally {
@@ -670,9 +742,21 @@ async function startLinkFollow(chase: TimecodeChaseController): Promise<SourceHa
       clearInterval(timer);
     },
     transport(op) {
-      if (chase.current.linkMode !== 'quantisedStart') return false;
+      if (chase.current.linkMode !== 'quantisedStart') {
+        // The session's own start and stop drive the show: say so, rather
+        // than doing nothing, when Play is pressed and nothing will start it.
+        if (op === 'play' && !sessionPlaying) chase.setNotice(peers > 0 ? 'linkStartsWithSession' : 'linkNoPeers');
+        return false;
+      }
       if (op === 'play') follower.request(!(follower.requested && !chase.showClock().playing));
       else follower.request(false);
+      // Park the chase clock now, where the show is going (Stop: the top), so
+      // the last rolling reading cannot restart the show before the next poll.
+      if (!follower.requested) {
+        const show = chase.showClock();
+        chase.feedBeats(op === 'stop' ? 0 : show.playhead, performance.now(), false, null);
+        parkedFed = true;
+      }
       void poll();
       return true;
     },

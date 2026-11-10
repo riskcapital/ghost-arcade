@@ -1,0 +1,99 @@
+{
+  "name": "Show timeline: following a musical clock",
+  "description": "A fake MIDI clock (fed through the real chase controller, sink and show store) rolls at 132 BPM against a 120 BPM map: the show follows at the source tempo with the song's rate set to match and no reseeks; a parked locate parks it; while parked the playhead can be moved and Stop goes to 0.",
+  "steps": [
+    {
+      "do": "app.start",
+      "choice": "blank"
+    },
+    {
+      "do": "project.layer",
+      "name": "Wall",
+      "colour": "red"
+    },
+    {
+      "do": "show.open"
+    },
+    {
+      "do": "show.track",
+      "name": "wall",
+      "layer": "Wall"
+    },
+    {
+      "do": "show.clip",
+      "track": "wall",
+      "layerContent": true,
+      "at": 0,
+      "duration": 60
+    },
+    {
+      "do": "show.tempo",
+      "bpm": 120,
+      "offset": 0
+    },
+    {
+      "do": "eval",
+      "js": "(() => {\n  const tc = __show.g().showControl.timecodeChase;\n  const read = __show.read;\n  clearInterval(window.__fakeClock);\n  tc.settings.set({ ...read(tc.settings), source: 'midiClock' });\n  // A MIDI clock at 132 BPM rolling from bar 3 (quarter 8) against the map's 120:\n  // the map is 0.5 s a quarter from 0, so show time = quarters / 2.\n  const t0 = performance.now();\n  window.__fakeGen = [];\n  window.__fakeClock = setInterval(() => {\n    const now = performance.now();\n    const q = 8 + ((now - t0) / 60000) * 132;\n    tc.feedBeats(q * 0.5, now, true, 132);\n    tc.step(now);\n    window.__fakeGen.push(__show.g().showTimeline.seekGeneration());\n  }, 16);\n  return true;\n})()"
+    },
+    {
+      "do": "wait",
+      "seconds": 2,
+      "label": "Rolling at 132 against 120: the show follows, 10% fast, with no reseeks",
+      "expect": {
+        "output.rgb": {
+          "rgb": [
+            1,
+            0,
+            0
+          ],
+          "within": 0.03
+        },
+        "eval.true": {
+          "js": "(() => { const s = __show.show(); const g = window.__fakeGen; const st = __show.read(__show.g().showControl.timecodeChase.status); return s.isPlaying && s.currentTime > 4 + 2 * 1.1 - 0.4 && s.currentTime < 4 + 2 * 1.1 + 0.4 && st.mismatch === true && g.length > 60 && g[g.length - 1] === g[10]; })()",
+          "label": "playing near 6.2 s, mismatch shown, seek generation steady after the start"
+        }
+      }
+    },
+    {
+      "do": "eval",
+      "js": "(() => {\n  const tc = __show.g().showControl.timecodeChase;\n  clearInterval(window.__fakeClock);\n  // The DAW stops and locates to bar 5 (quarter 16, show 8 s).\n  tc.feedBeats(8, performance.now(), false, 132);\n  window.__fakeClock = setInterval(() => tc.step(performance.now()), 16);\n  return true;\n})()"
+    },
+    {
+      "do": "wait",
+      "seconds": 0.5,
+      "label": "The clock stops and locates to bar 5: the show parks at 8 s",
+      "expect": {
+        "eval.true": {
+          "js": "(() => { const s = __show.show(); return !s.isPlaying && Math.abs(s.currentTime - 8) < 1e-6; })()",
+          "label": "parked at 8 s"
+        }
+      }
+    },
+    {
+      "do": "show.seek",
+      "t": 20,
+      "settle": 800,
+      "label": "Parked: the user moves the playhead and it stays",
+      "expect": {
+        "eval.true": {
+          "js": "__show.show().currentTime === 20",
+          "label": "playhead stays at 20 s"
+        }
+      }
+    },
+    {
+      "do": "show.stop",
+      "label": "Parked: Stop goes to 0 and stays",
+      "expect": {
+        "eval.true": {
+          "js": "(() => { const s = __show.show(); return !s.isPlaying && s.currentTime === 0; })()",
+          "label": "stopped at 0"
+        }
+      }
+    },
+    {
+      "do": "eval",
+      "js": "(() => {\n  const tc = __show.g().showControl.timecodeChase;\n  clearInterval(window.__fakeClock);\n  tc.settings.set({ ...__show.read(tc.settings), source: 'off' });\n  __show.g().showTimeline.releaseChase();\n  return true;\n})()"
+    }
+  ]
+}

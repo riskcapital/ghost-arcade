@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { secondsAtBeat, tempoFromAnalysis } from './tempoMap';
 import {
   analyzeSong,
   layoutEvenly,
@@ -145,6 +146,36 @@ function addKicks(out: Float32Array, beats: number[], bpm: number, level: number
   }
 }
 
+/** A kick with a falling pitch (its click reaches the mid band too). */
+function addDrumKicks(out: Float32Array, beats: number[], bpm: number, level: number) {
+  for (const b of beats) {
+    const start = Math.round(((b * 60) / bpm) * RATE);
+    for (let i = 0; i < 0.12 * RATE && start + i < out.length; i++) {
+      const f = 50 + 60 * Math.exp(-i / (0.02 * RATE));
+      out[start + i] += level * Math.exp(-i / (0.04 * RATE)) * Math.sin((2 * Math.PI * f * i) / RATE);
+    }
+  }
+}
+
+/** A snare: a mid tone and noise. */
+function addSnares(out: Float32Array, beats: number[], bpm: number, level: number, seed: number) {
+  const r = rng(seed);
+  for (const b of beats) {
+    const start = Math.round(((b * 60) / bpm) * RATE);
+    for (let i = 0; i < 0.2 * RATE && start + i < out.length; i++) {
+      const env = Math.exp(-i / (0.05 * RATE));
+      out[start + i] += level * env * (0.6 * r() + 0.5 * Math.sin((2 * Math.PI * 190 * i) / RATE));
+    }
+  }
+}
+
+/** `hits` (beats in a bar of `beatsPerBar`) repeated for `bars` bars. */
+function everyBar(bars: number, beatsPerBar: number, hits: number[]): number[] {
+  const out: number[] = [];
+  for (let bar = 0; bar < bars; bar++) for (const h of hits) out.push(bar * beatsPerBar + h);
+  return out;
+}
+
 /** Distance of each beat from the nearest true beat `k * 60 / bpm`, seconds. */
 function beatErrors(beats: number[], bpm: number): number[] {
   const period = 60 / bpm;
@@ -184,6 +215,52 @@ describe('analyzeSong', () => {
     addHits(song, snares, bpm, 0.6, 0.06, 3);
     const result = analyzeSong(song, RATE);
     expect(Math.abs(result.tempo! - bpm)).toBeLessThan(1);
+  });
+
+  it('hip-hop at 88: the beat, not the dotted figure (117.3), with the first beat on a kick', () => {
+    const bpm = 88;
+    const song = new Float32Array(60 * RATE);
+    const bars = 24;
+    addDrumKicks(song, everyBar(bars, 4, [0, 0.75, 2.25, 2.5]), bpm, 0.9);
+    addSnares(song, everyBar(bars, 4, [1, 3]), bpm, 0.7, 3);
+    addHits(song, everyBar(bars, 4, [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5]), bpm, 0.3, 0.015, 5);
+    const result = analyzeSong(song, RATE);
+    expect(Math.abs(result.tempo! - bpm)).toBeLessThan(0.5);
+    expect(Math.max(...beatErrors(result.beats.slice(1, 60), bpm))).toBeLessThan(0.03);
+    // Beats 2 and 4 carry the snare: the first beat is 1 or 3.
+    const first = Math.round(result.beats[0] / (60 / bpm));
+    expect(first % 2).toBe(0);
+  });
+
+  it('drum and bass at 174: not half time (87), and the grid on the beat, not the off-beat kick', () => {
+    for (const pattern of [[0, 1.5], [0, 2.5, 4, 6.5]]) {
+      const bpm = 174;
+      const song = new Float32Array(60 * RATE);
+      const bars = 46;
+      addDrumKicks(song, everyBar(bars, pattern.length > 2 ? 8 : 4, pattern), bpm, 0.9);
+      addSnares(song, everyBar(bars * 2, 4, [1, 3]), bpm, 0.8, 3);
+      addHits(song, everyBar(bars * 2, 4, [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5]), bpm, 0.2, 0.01, 5);
+      const result = analyzeSong(song, RATE);
+      expect(Math.abs(result.tempo! - bpm)).toBeLessThan(0.5);
+      expect(Math.max(...beatErrors(result.beats.slice(1, 120), bpm))).toBeLessThan(0.03);
+      expect(Math.round(result.beats[0] / (60 / bpm)) % 2).toBe(0);
+    }
+  });
+
+  it('a detected map stays on a non-integer tempo for a long mix (10 and 20 minutes)', () => {
+    for (const [bpm, minutes] of [[91.27, 10], [127.37, 20]]) {
+      const seconds = minutes * 60;
+      const song = new Float32Array(seconds * RATE);
+      addClicks(song, 0, seconds, bpm, 0.8, 0.1);
+      const map = tempoFromAnalysis(analyzeSong(song, RATE), { startTime: 0, offset: 0 })!;
+      const period = 60 / bpm;
+      // The map's beat for the kick k beats after its first, against the kick.
+      const k0 = Math.round((map.offset - 0.1) / period);
+      for (const k of [10, 300, Math.floor((seconds - 10) / period)]) {
+        const truth = 0.1 + k * period;
+        expect(Math.abs(secondsAtBeat(map, k - k0) - truth)).toBeLessThan(0.02);
+      }
+    }
   });
 
   it('finds the tempo and the beat of a steady kick', () => {

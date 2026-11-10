@@ -10,8 +10,8 @@
 import type { ShowTempoMap } from '../../types';
 import { showTimeline } from '../../stores/showTimeline';
 import { setShowBeatSource } from '../../stores/launchClock';
-import { beatAtSeconds } from '../tempoMap';
-import { showTempoAt } from './beatChase';
+import { barBeatAt, beatAtSeconds, secondsAtBar } from '../tempoMap';
+import { quartersPerBarAt, showTempoAt } from './beatChase';
 
 interface Anchor {
   t: number;
@@ -19,12 +19,23 @@ interface Anchor {
   map: ShowTempoMap;
 }
 
-/** Beat and tempo for a playing show at `nowMs`, from its last published position. */
-export function showBeatAt(anchor: Anchor | null, nowMs: number): { beat: number; bpm: number } | null {
+/** Beat and tempo for a playing show at `nowMs`, from its last published
+ *  position, with the show's bar length and a bar line of its metre so bar
+ *  launches land on its bars in 3/4 or 6/8 too. */
+export function showBeatAt(anchor: Anchor | null, nowMs: number): { beat: number; bpm: number; barQuarters: number; barOrigin: number } | null {
   if (!anchor) return null;
   const run = Math.max(-0.25, Math.min(0.25, (nowMs - anchor.at) / 1000));
   const t = anchor.t + run;
-  return { beat: beatAtSeconds(anchor.map, t), bpm: showTempoAt(anchor.map, t) };
+  const { map } = anchor;
+  // Bars count from the first bar of the segment in force (its metre).
+  const bar = barBeatAt(map, t).bar;
+  const segBar = map.segments.reduce((b, s) => (s.bar <= bar ? s.bar : b), map.segments[0]?.bar ?? 1);
+  return {
+    beat: beatAtSeconds(map, t),
+    bpm: showTempoAt(map, t),
+    barQuarters: quartersPerBarAt(map, t),
+    barOrigin: beatAtSeconds(map, secondsAtBar(map, Math.min(segBar, bar))),
+  };
 }
 
 export function installShowLaunchClock(now: () => number = () => performance.now()): () => void {

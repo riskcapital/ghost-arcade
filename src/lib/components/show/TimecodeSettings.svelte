@@ -103,13 +103,18 @@
     <p class="tc-error">The show has no tempo map, so there are no bars to follow. Add one with the show's Tempo button.</p>
   {/if}
   {#if st.mismatch && st.sourceBpm !== null && st.showBpm !== null}
-    <p class="tc-warn" data-tc-mismatch>{sourceName} is at {st.sourceBpm.toFixed(1)} BPM and the show's map at {st.showBpm.toFixed(1)} BPM. The show keeps following; its audio re-syncs as it drifts.</p>
+    <p class="tc-warn" data-tc-mismatch>{sourceName} is at {st.sourceBpm.toFixed(1)} BPM and the show's map at {st.showBpm.toFixed(1)} BPM. The show keeps following; its audio plays at {sourceName}'s tempo.</p>
+  {/if}
+  {#if st.notice === 'linkNoPeers'}
+    <p class="tc-warn" data-tc-notice={st.notice}>No other Link app is on the network to start the session. Start one (Live, for example), or set Start to “Play waits for the next bar”.</p>
+  {:else if st.notice === 'linkStartsWithSession'}
+    <p class="tc-warn" data-tc-notice={st.notice}>The show starts with the Link session: press Play in Live or another Link app. To start it from here, set Start to “Play waits for the next bar”.</p>
   {/if}
 
   <div class="sc-row">
     <div class="sc-label">
       <span class="sc-title">Follow</span>
-      <span class="sc-hint">LTC is SMPTE timecode on an audio input; MTC arrives over MIDI. Link and MIDI clock follow bars and beats, so they need the show's tempo map.</span>
+      <span class="sc-hint">LTC is SMPTE timecode on an audio input; MTC arrives over MIDI. Link and MIDI clock follow bars and beats, so they need the show's tempo map. Changing what the show follows re-locks it: the playhead, and anything synced to the beat, jumps to the new clock's position.</span>
     </div>
     <select value={s.source} onchange={(e) => patch({ source: e.currentTarget.value as TimecodeSettings['source'] })} data-tc-source>
       <option value="off">Off</option>
@@ -153,7 +158,9 @@
     <div class="sc-row">
       <div class="sc-label">
         <span class="sc-title">Bar 1 of the source</span>
-        <span class="sc-hint">The show bar where the {sourceName === 'Link' ? 'Link start' : 'song start of the DAW'} lands.</span>
+        <span class="sc-hint">{sourceName === 'Link'
+          ? 'The show bar a Link start lands on when the playhead is at or before it. From later in the show, Link starts the bar the playhead is in. Show bars always land on Link bars.'
+          : 'The show bar where the song start of the DAW lands.'}</span>
       </div>
       <div class="tc-inline">
         <span>show bar</span>
@@ -164,7 +171,7 @@
       <div class="sc-row">
         <div class="sc-label">
           <span class="sc-title">Start</span>
-          <span class="sc-hint">Follow the session's start and stop, or start on the show's own Play at the next Link bar.</span>
+          <span class="sc-hint">Follow the session's start and stop, or start on the show's own Play at the next Link bar. Link bars are the show's bar length: in Live, set the same time signature (a 6/8 show needs a 6/8 set).</span>
         </div>
         <select value={s.linkMode} onchange={(e) => patch({ linkMode: e.currentTarget.value as TimecodeSettings['linkMode'] })} data-tc-link-mode>
           <option value="startStop">With the Link session</option>

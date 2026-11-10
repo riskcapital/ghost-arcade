@@ -4,7 +4,7 @@
  * following it.
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { get } from 'svelte/store';
 import { ChaseClock, normalizeTimecodeSettings, timecodeChase, type ChaseSample } from './timecodeChase';
 import { LtcDecoder, generateLtc } from './ltc';
@@ -13,6 +13,7 @@ import { actualFps, timecodeToSeconds, type Timecode, type TimecodeRate } from '
 import { showTimeline, setShowCompositionLoader, setShowChaseTransportHandler } from '../../stores/showTimeline';
 import { MidiClockParser, showSecondsForSourceQuarters } from '../sync/beatChase';
 import { createTempoMap } from '../tempoMap';
+import { clipAudioBus, computeClipAudioDrift, type ClipAudioTransport } from '../../audio/clipAudioBus';
 
 function tc(h: number, m: number, s: number, f: number, rate: TimecodeRate): Timecode {
   return { hours: h, minutes: m, seconds: s, frames: f, rate, dropFrame: rate === 29.97 };
@@ -166,11 +167,17 @@ describe('controller and show timeline', () => {
     showTimeline.chase(5.016, true);
     showTimeline.chase(12, true);
     expect(loads).toEqual(['A', 'B']);
+    // The rolling source owns the transport: Pause and Stop leave it
+    // playing (they used to stop it for one tick, then restart it with a
+    // hard seek of the audio and every video).
+    const gen = showTimeline.seekGeneration();
     showTimeline.pause();
+    showTimeline.stop();
     showTimeline.play();
-    expect(get(showTimeline).isPlaying).toBe(false);
-    showTimeline.chase(12.5, true);
+    expect(get(showTimeline)).toMatchObject({ isPlaying: true, currentTime: 12 });
+    showTimeline.chase(12.016, true);
     expect(get(showTimeline).isPlaying).toBe(true);
+    expect(showTimeline.seekGeneration()).toBe(gen);
     showTimeline.chase(12.5, false);
     expect(get(showTimeline)).toMatchObject({ isPlaying: false, currentTime: 12.5 });
     showTimeline.releaseChase();
@@ -234,3 +241,116 @@ describe('controller and show timeline', () => {
     setShowChaseTransportHandler(null);
   });
 });
+
+describe('following a musical clock', () => {
+  const map = createTempoMap(120, 0.5);
+  const tick = (bpm: number) => 60000 / (bpm * 24);
+  let parser: MidiClockParser;
+  const feed = (bytes: number[], at: number) => {
+    const ev = parser.feed(bytes, at);
+    if (ev) timecodeChase.feedBeats(showSecondsForSourceQuarters(map, ev.quarters, 0), ev.atMs, ev.kind === 'tick', parser.bpm);
+  };
+  const setup = (extra: Record<string, unknown> = {}) => {
+    parser = new MidiClockParser();
+    showTimeline.hydrate({ presetClips: [{ id: 'a', compositionId: 'A', startTime: 0, duration: 120, transitionIn: 'cut', transitionDuration: 0 }], ...extra });
+    timecodeChase.setShowContext(() => ({ map, playhead: get(showTimeline).currentTime, playing: get(showTimeline).isPlaying }));
+    timecodeChase.setSink((sample) => {
+      if (sample.showTime !== null && (sample.lock === 'locked' || sample.lock === 'freewheel')) showTimeline.chase(sample.showTime, sample.running, sample.rate);
+    });
+    timecodeChase.settings.set(normalizeTimecodeSettings({ source: 'midiClock' }));
+  };
+  afterEach(() => {
+    timecodeChase.setSink(null);
+    timecodeChase.setShowContext(null);
+    timecodeChase.shutdown();
+    timecodeChase.settings.set(normalizeTimecodeSettings({}));
+    showTimeline._resetForTest();
+    vi.restoreAllMocks();
+    delete (globalThis as { document?: unknown }).document;
+  });
+
+  it('parked: the user can move the playhead, and only a new locate moves it back', () => {
+    setup();
+    feed([0xf2, 32, 0], 0); // bar 3
+    timecodeChase.step(5);
+    expect(get(showTimeline).currentTime).toBeCloseTo(4.5, 9);
+    showTimeline.seek(10);
+    for (let at = 21; at < 500; at += 16) timecodeChase.step(at);
+    expect(get(showTimeline).currentTime).toBe(10);
+    showTimeline.stop();
+    for (let at = 500; at < 700; at += 16) timecodeChase.step(at);
+    expect(get(showTimeline)).toMatchObject({ currentTime: 0, isPlaying: false });
+    // The DAW locates somewhere new: the show follows.
+    feed([0xf2, 64, 0], 710); // bar 5
+    timecodeChase.step(712);
+    expect(get(showTimeline).currentTime).toBeCloseTo(8.5, 9);
+  });
+
+  it('a chased time before 0 or past a looping show\'s end is not a jump every tick', () => {
+    showTimeline.hydrate({ loop: true, presetClips: [{ id: 'a', compositionId: 'A', startTime: 0, duration: 10, transitionIn: 'cut', transitionDuration: 0 }] });
+    expect(get(showTimeline).loop).toBe(true);
+    // Link locked on bar 0 of a map with a pickup: show time starts negative.
+    showTimeline.chase(-1, true);
+    const gen = showTimeline.seekGeneration();
+    for (let t = -1; t < 0; t += 0.016) showTimeline.chase(t, true);
+    expect(showTimeline.seekGeneration()).toBe(gen);
+    // A source that runs on past the loop end (show time unwrapped).
+    for (let t = 0; t < 14; t += 0.016) showTimeline.chase(t, true);
+    // One wrap is one jump at most, not one per tick.
+    expect(showTimeline.seekGeneration() - gen).toBeLessThanOrEqual(1);
+    expect(get(showTimeline).currentTime).toBeCloseTo(14 - 10, 1);
+  });
+
+  it('at another tempo the song plays at source / map tempo with no seek storm', () => {
+    // A fake document: the show wires one element per audio track to the bus.
+    (globalThis as { document?: unknown }).document = {
+      createElement: () => ({ dataset: {}, pause() {}, removeAttribute() {}, load() {} }),
+    };
+    const providers: Array<() => ClipAudioTransport | null> = [];
+    vi.spyOn(clipAudioBus, 'attachClip').mockImplementation((_id, _el, opts) => {
+      if (opts?.provider) providers.push(opts.provider);
+      return true;
+    });
+    vi.spyOn(clipAudioBus, 'detachClip').mockImplementation(() => {});
+    vi.spyOn(clipAudioBus, 'resume').mockImplementation(() => {});
+    setup({ audioTracks: [{ id: 't', url: 'song.mp3', name: 'Song', startTime: 0, duration: 120, offset: 0, sourceDuration: 120, volume: 1, muted: false }] });
+    // Continue from bar 3 at 132 BPM against the map's 120: 10% fast.
+    feed([0xf2, 32, 0], 0);
+    feed([0xfb], 1);
+    const bpm = 132;
+    let nextTick = 10;
+    let elementTime = 0;
+    let elementRate = 1;
+    let lastGen = -1;
+    let seeks = 0;
+    let worstDrift = 0;
+    let lastFrame = 0;
+    for (let at = 10; at < 20000; at += 1) {
+      while (nextTick <= at) {
+        feed([0xf8], nextTick);
+        nextTick += tick(bpm);
+      }
+      if (at - lastFrame < 16) continue;
+      elementTime += ((at - lastFrame) / 1000) * elementRate;
+      lastFrame = at;
+      timecodeChase.step(at);
+      const provider = providers[0];
+      const transport = provider?.();
+      if (!transport || transport.paused) continue;
+      const generationChanged = transport.seekGeneration !== lastGen;
+      lastGen = transport.seekGeneration;
+      const c = computeClipAudioDrift({ authorityTime: transport.timeSeconds, elementTime, baseRate: transport.playbackRate, forceSeek: generationChanged });
+      if (c.seekTo !== null) {
+        elementTime = c.seekTo;
+        if (at > 3000) seeks++;
+      }
+      elementRate = c.playbackRate;
+      if (at > 3000) worstDrift = Math.max(worstDrift, Math.abs(c.drift));
+    }
+    expect(seeks).toBe(0);
+    expect(worstDrift).toBeLessThan(0.03);
+    // The song runs at the source's tempo over the map's.
+    expect(providers[0]!()!.playbackRate).toBeCloseTo(132 / 120, 2);
+  });
+});
+

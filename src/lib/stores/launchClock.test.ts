@@ -93,6 +93,39 @@ describe('shared launch clock', () => {
       setShowBeatSource(null);
     }
   });
+  it('while the show drives the clock, nudge does nothing and a held nudge stops', () => {
+    setTempoNudgeInput('key', 1);
+    now += 500;
+    const start = now;
+    setShowBeatSource((at) => ({ beat: 4 + ((at - start) * 120) / 60000, bpm: 120 }));
+    try {
+      expect(launchClockPosition().beat).toBeCloseTo(4);
+      setTempoNudgeInput('pointer', -1);
+      expect(resyncLaunchClock()).toBe(false);
+      now += 4000;
+    } finally {
+      setShowBeatSource(null);
+    }
+    // Back on the local clock: only the half second nudged before the show
+    // started moved the phase (0.04 * 0.5 s * 2 beats/s), not the 4 s under it.
+    expect(launchClockTempo()).toBe(120);
+    expect(launchClockPosition().beat).toBeCloseTo(0.5 * 2 * 1.04 + 4 * 2, 6);
+  });
+  it('a bar grid is the show\'s own bar in 3/4, counted from its bar line', () => {
+    const start = now;
+    // 3/4 at 120 BPM: quarter 7 is bar 3 beat 2 (bars start on 0, 3, 6, 9...).
+    setShowBeatSource((at) => ({ beat: 7 + ((at - start) * 120) / 60000, bpm: 120, barQuarters: 3, barOrigin: 0 }));
+    try {
+      // Next bar line is quarter 9: two quarters, 1 s away.
+      expect(nextLaunchBoundary(4)).toBeCloseTo(now + 1000, 6);
+      // Two bars: quarter 12.
+      expect(nextLaunchBoundary(8)).toBeCloseTo(now + 2500, 6);
+      // Beat grids are unchanged.
+      expect(nextLaunchBoundary(1)).toBeCloseTo(now + 500, 6);
+    } finally {
+      setShowBeatSource(null);
+    }
+  });
   it('anchors to detected audio beats, counting the time since the last one in ms', () => {
     harness.audio.set({ manualBPM: null, bpm: 120, isActive: true, beat: { beatCount: 40, timeSinceLastBeat: 0 } });
     const onBeat = launchClockPosition().beat;

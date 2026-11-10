@@ -202,6 +202,9 @@ export interface LinkSample {
   tempo: number;
   playing: boolean;
   atMs: number;
+  /** The quantum `beat` was read against (its phase is shared with peers
+   *  using that bar length). Defaults to the show's bar length. */
+  quantum?: number;
 }
 
 export interface LinkFollowContext {
@@ -209,6 +212,9 @@ export interface LinkFollowContext {
   /** The show's playhead right now, seconds. */
   playhead: number;
   mode: LinkFollowMode;
+  /** "Bar 1 of the source": a start lands on show bar 1 + barOffset when
+   *  the playhead is at or before that bar. */
+  barOffset?: number;
 }
 
 export interface LinkFollowReading {
@@ -219,22 +225,49 @@ export interface LinkFollowReading {
   waiting: boolean;
 }
 
+/** A playhead this close before a bar line (quarters, a 32nd note) counts as on it. */
+const ON_BAR_QUARTERS = 0.125;
+
+/**
+ * The show bar (in quarters from bar 1) a Link start locks to Link's bar.
+ *
+ * Link has no song position, so the show's bars are put on Link's bars:
+ * - at or before "Bar 1 of the source" (show bar 1 + barOffset, the stopped
+ *   show at 0 included): that bar, so a session starting from its top has
+ *   its bar 1 there;
+ * - anywhere later: the bar the playhead is in.
+ * Locking the playhead itself instead put every bar of the show off Link's
+ * by however far the playhead was from a bar line.
+ */
+export function linkLockQuarters(map: ShowTempoMap, playhead: number, barOffset = 0): number {
+  const origin = sourceOriginQuarters(map, barOffset);
+  const p = beatAtSeconds(map, Number.isFinite(playhead) ? playhead : 0);
+  if (p <= origin + ON_BAR_QUARTERS) return origin;
+  const bar = barBeatAt(map, secondsAtBeat(map, p + ON_BAR_QUARTERS)).bar;
+  return beatAtSeconds(map, secondsAtBar(map, bar));
+}
+
+/** Link quantum (quarters per bar) for the bar a start would lock to. */
+export function linkQuantumAt(map: ShowTempoMap, playhead: number, barOffset = 0): number {
+  return quartersPerBarAt(map, secondsAtBeat(map, linkLockQuarters(map, playhead, barOffset)));
+}
+
 /**
  * Link has no song position, so the show phase-locks to it:
  *
  * - startStop: when the session starts playing, the Link bar it started on
- *   becomes the playhead's beat. From then show beat = Link beat − start
- *   bar + the playhead's beat, until the session stops.
+ *   becomes the lock bar (linkLockQuarters). From then show beat = Link
+ *   beat − start bar + lock bar, until the session stops.
  * - quantisedStart: the session's own start/stop is ignored. The show's
- *   Play waits for the next Link bar, then stays locked the same way until
- *   the show is paused.
+ *   Play waits for the next Link bar, which becomes the lock bar the same
+ *   way, and stays locked until the show is paused.
  *
  * Bars are counted in the show's quarter notes per bar, on Link's shared
- * beat timeline, so every peer that uses the same bar length agrees where
- * the downbeat is.
+ * beat timeline read against that same quantum, so every peer that uses the
+ * same bar length agrees where the downbeat is.
  */
 export class LinkFollower {
-  private lock: { linkStart: number; showStart: number } | null = null;
+  private lock: { linkStart: number; showStart: number; quantum: number } | null = null;
   private pendingStart: number | null = null;
   private wantPlay = false;
 
@@ -257,10 +290,21 @@ export class LinkFollower {
     return this.wantPlay;
   }
 
+  get locked(): boolean {
+    return this.lock !== null;
+  }
+
+  /** The quantum to read Link's beat against: the locked one while
+   *  following (its beat values must not change under the lock), else the
+   *  bar length a start would lock to. */
+  quantum(ctx: LinkFollowContext): number {
+    return this.lock?.quantum ?? linkQuantumAt(ctx.map, ctx.playhead, ctx.barOffset ?? 0);
+  }
+
   update(sample: LinkSample, ctx: LinkFollowContext): LinkFollowReading {
     const { map } = ctx;
-    const qpb = quartersPerBarAt(map, ctx.playhead);
     const parked = (): LinkFollowReading => ({ seconds: ctx.playhead, running: false, waiting: this.pendingStart !== null });
+    const qpb = sample.quantum && sample.quantum > 0 ? sample.quantum : this.quantum(ctx);
 
     if (ctx.mode === 'startStop') {
       this.pendingStart = null;
@@ -272,7 +316,7 @@ export class LinkFollower {
         // Started (or joined a session already playing): lock the bar it
         // is in. A start seen late by a poll still lands on its own bar.
         const linkStart = Math.floor(sample.beat / qpb + 1e-6) * qpb;
-        this.lock = { linkStart, showStart: beatAtSeconds(map, ctx.playhead) };
+        this.lock = { linkStart, showStart: linkLockQuarters(map, ctx.playhead, ctx.barOffset ?? 0), quantum: qpb };
       }
     } else {
       if (!this.wantPlay) {
@@ -283,7 +327,7 @@ export class LinkFollower {
       if (!this.lock) {
         if (this.pendingStart === null) this.pendingStart = Math.ceil(sample.beat / qpb - 1e-6) * qpb;
         if (sample.beat < this.pendingStart) return parked();
-        this.lock = { linkStart: this.pendingStart, showStart: beatAtSeconds(map, ctx.playhead) };
+        this.lock = { linkStart: this.pendingStart, showStart: linkLockQuarters(map, ctx.playhead, ctx.barOffset ?? 0), quantum: qpb };
         this.pendingStart = null;
       }
     }
