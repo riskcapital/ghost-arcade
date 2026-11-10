@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import dgram from 'node:dgram';
 import { createRequire } from 'node:module';
 import { fixture, NAMED_RGB } from './fixtures.mjs';
 
@@ -364,6 +365,91 @@ const ACTIONS = {
     await ctx.eval(`__show.g().showTimeline.setTempo({ offset: ${s.offset ?? 0}, segments: [{ bar: 1, bpm: ${s.bpm ?? 120}, beatsPerBar: ${s.beatsPerBar ?? 4}, beatUnit: 4 }], source: 'manual' })`);
     await sleep(200);
   },
+  // ── Ableton Live (a fake Live script on the app's own UDP ports) ─────
+  async 'live.fake'(ctx, s) {
+    // { tracks: [{ name, color, clips: [{ name, color, length (beats) } | null] }], protocol (5) }.
+    // Answers like the Ghost Arcade script in Live and logs every request.
+    const ports = ctx.livePorts;
+    if (!ports?.script) throw new Error('no Live ports for this app');
+    const tracks = s.tracks ?? [];
+    const log = (ctx.vars.liveLog = []);
+    const sock = dgram.createSocket('udp4');
+    const send = (m) => sock.send(Buffer.from(JSON.stringify(m)), ports.app, '127.0.0.1');
+    const hello = () => send({ t: 'hello', v: s.protocol ?? 5, tempo: s.bpm ?? 120, num: 4, den: 4, playing: true, quantize: s.quantize ?? 4, beat: 0, xf: 0.5, rev: 1 });
+    const structure = () => {
+      send({ t: 'set', rev: 1, scenes: [{ n: 'Scene 1', c: 0 }], count: 1, tracks: tracks.length, cues: [] });
+      tracks.forEach((tr, i) => send({ t: 'track', rev: 1, i, n: tr.name, c: tr.color ?? 0, midi: false, x: 1, count: tr.clips.length,
+        slots: tr.clips.map((c) => (c ? [c.name, c.color ?? 0, c.length ?? 4] : null)), play: -1, fired: -1, pos: null }));
+    };
+    sock.on('message', (buf) => {
+      let msg;
+      try { msg = JSON.parse(buf.toString('utf8')); } catch { return; }
+      if (msg.t === 'sync') { hello(); structure(); return; }
+      if (msg.t === 'watch' || msg.t === 'devices') return;
+      log.push({ at: Date.now(), msg });
+    });
+    await new Promise((res, rej) => { sock.once('error', rej); sock.bind(ports.script, '127.0.0.1', () => res()); });
+    sock.unref();
+    const timer = setInterval(() => { hello(); structure(); }, 500);
+    timer.unref();
+    ctx.vars.liveFake = { close: () => { clearInterval(timer); try { sock.close(); } catch { /* closed */ } } };
+    hello();
+    structure();
+  },
+  async 'live.connect'(ctx) {
+    await ctx.eval(`__show.g().timelineSound.ableton.enable()`);
+    await waitIn(ctx.session, `(() => { const s = __show.read(__show.g().timelineSound.ableton); return s.connected && s.tracks.length > 0; })()`, 15000, 'the app to see the fake Live set');
+  },
+  async 'live.stopFake'(ctx) { ctx.vars.liveFake?.close(); ctx.vars.liveFake = null; },
+  async 'sound.liveRow'(ctx, s) {
+    // A Live row on the Timeline bound to a Live track by name: { name, track, launch }.
+    const id = await ctx.eval(`(() => {
+      const c = __show.g().timelineSound.commands;
+      const br = __show.read(__show.g().timelineSound.ableton);
+      const i = br.tracks.findIndex((t) => t.name === ${J(s.track)});
+      const id = c.addRow('live');
+      c.bindLiveTrack(id, i, ${J(s.track)});
+      c.renameRow(id, ${J(s.name ?? s.track)});
+      ${s.launch ? `c.setLiveOptions(id, { launch: ${J(s.launch)} });` : ''}
+      return id;
+    })()`);
+    ctx.vars['row:' + (s.name ?? s.track)] = id;
+    await sleep(200);
+  },
+  async 'sound.liveClip'(ctx, s) {
+    // A Live clip block: { row, clip (name on the row's track), at, duration }.
+    const id = await ctx.eval(`(() => {
+      const c = __show.g().timelineSound.commands;
+      const br = __show.read(__show.g().timelineSound.ableton);
+      const row = c.soundRows().find((r) => r.id === ${J(ctx.vars['row:' + s.row])});
+      const track = br.tracks.find((t) => t.name === row.live.trackName);
+      const slot = track.slots.findIndex((x) => x && x.name === ${J(s.clip)});
+      const clip = track.slots[slot];
+      const id = c.addLiveBlock(row.id, { slot, name: clip.name, color: clip.color, length: clip.length }, ${s.at ?? 0});
+      ${s.duration ? `c.setLiveBlockTiming(id, ${s.at ?? 0}, ${s.duration});` : ''}
+      return id;
+    })()`);
+    if (!id) throw new Error(`Live clip ${s.clip} was not placed`);
+    await sleep(200);
+  },
+  async 'live.play'(ctx, s) {
+    // Play the Timeline { from, until } (show seconds), pairing wall and show
+    // time as it goes so each request Live got can be placed on the Timeline.
+    ctx.vars.liveLog.length = 0;
+    const pairs = await ctx.eval(`(async () => {
+      const st = __show.g().showTimeline;
+      st.seek(${s.from ?? 0});
+      await new Promise((r) => setTimeout(r, 300));
+      const pairs = [];
+      st.play();
+      // Until the time, or the end of a Timeline that does not loop.
+      while (__show.show().currentTime < ${s.until} && __show.show().isPlaying) { pairs.push([Date.now(), __show.show().currentTime]); await new Promise((r) => setTimeout(r, 20)); }
+      if (__show.show().isPlaying) st.pause();
+      return pairs;
+    })()`, ((s.until - (s.from ?? 0)) + 20) * 1000);
+    ctx.vars.livePairs = pairs;
+    await sleep(400);
+  },
   // ── Live takeover ────────────────────────────────────────────────────
   async 'takeover.engage'(ctx, s) {
     // { track, deck, row (0-based) } a VJ row, or { track, kind: 'vjMix' | 'black' }.
@@ -696,6 +782,28 @@ const CHECKS = {
     const late = r.first - r.at;
     const pass = r.last < r.at && late >= -1e-6 && late <= (r.frame ?? 1 / 60) * 1.5;
     return { pass, detail: `bar at ${r.at.toFixed(3)} s: still taken over at ${r.last.toFixed(3)}, handed back at ${r.first.toFixed(3)} (${(late * 1000).toFixed(1)} ms past the bar; frames ${((r.frame ?? 0) * 1000).toFixed(1)} ms)` };
+  },
+  async 'live.requests'(ctx, s) {
+    // What the fake Live got while playing, in order, at show time:
+    // { expect: [{ t, track, slot, q, pos, at, before, after }], within (s) }.
+    const pairs = (ctx.vars.livePairs ?? []).filter((p) => p[1] > 0 || p === ctx.vars.livePairs[0]);
+    const showAt = (wall) => {
+      let best = pairs[0];
+      for (const p of pairs) if (Math.abs(p[0] - wall) < Math.abs(best[0] - wall)) best = p;
+      return best ? best[1] + (wall - best[0]) / 1000 : NaN;
+    };
+    const got = (ctx.vars.liveLog ?? []).map((e) => ({ ...e.msg, at: showAt(e.at) }));
+    const text = got.map((g) => `${g.t}${g.i !== undefined ? ` ${g.i}` : ''}${g.s !== undefined ? `/${g.s}` : ''}${g.pos ? ` pos ${g.pos}` : ''} @${Number.isFinite(g.at) ? g.at.toFixed(3) : '?'}`).join(', ');
+    const want = s.expect ?? [];
+    if (got.length !== want.length) return { pass: false, detail: `${got.length} request(s), want ${want.length}: ${text}` };
+    for (const [k, w] of want.entries()) {
+      const g = got[k];
+      for (const field of ['t', 'i', 's', 'q', 'pos']) if (w[field] !== undefined && g[field] !== w[field]) return { pass: false, detail: `request ${k + 1}: ${field} ${JSON.stringify(g[field])}, want ${JSON.stringify(w[field])}: ${text}` };
+      if (w.at !== undefined && !(Math.abs(g.at - w.at) <= (w.within ?? s.within ?? 0.05))) return { pass: false, detail: `request ${k + 1} at ${g.at.toFixed(3)} s, want ${w.at} ± ${w.within ?? s.within ?? 0.05}: ${text}` };
+      if (w.before !== undefined && !(g.at < w.before)) return { pass: false, detail: `request ${k + 1} at ${g.at.toFixed(3)} s, want before ${w.before}: ${text}` };
+      if (w.after !== undefined && !(g.at > w.after)) return { pass: false, detail: `request ${k + 1} at ${g.at.toFixed(3)} s, want after ${w.after}: ${text}` };
+    }
+    return { pass: true, detail: text };
   },
   async noErrors(ctx) {
     const errs = ctx.session.errors.filter((e) => e.at >= ctx.startedAt && !/ResizeObserver loop|favicon/.test(e.text));

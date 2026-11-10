@@ -6,6 +6,7 @@ import {
   LIVE_Q_NONE,
   LIVE_Q_QUARTER,
   LiveClipScheduler,
+  liveSchedInputs,
   offGrid,
   resolveLiveSlot,
   resolveLiveTrack,
@@ -15,6 +16,7 @@ import {
   type LiveSchedBlock,
   type LiveSchedRow,
 } from './liveSchedule';
+import { defaultSoundRow, type SoundRow } from './soundModel';
 
 /** 120 BPM, 4/4 from 0: a beat is 0.5 s, a bar 2 s. */
 const tempo = createTempoMap(120, 0);
@@ -175,5 +177,39 @@ describe('Live clip blocks: the mirrored set', () => {
     expect(resolveLiveSlot({ slot: 1, clipName: 'Fill' }, tracks[0])).toBe(2);
     expect(resolveLiveSlot({ slot: 1, clipName: 'Gone' }, tracks[0])).toBeNull();
     expect(resolveLiveSlot({ slot: 0, clipName: 'Renamed' }, tracks[0])).toBe(0);
+  });
+});
+
+describe('Live clip blocks: from the Timeline and the mirrored set', () => {
+  const set = { tracks: [
+    { name: 'Drums', color: 0, slots: [{ name: 'Beat A', color: 1, length: 4 }, null] },
+    { name: 'Bass', color: 0, slots: [{ name: 'Sub', color: 2, length: 8 }] },
+  ] };
+  const live = (id: string, track: string, extra: Partial<SoundRow> = {}): SoundRow => ({
+    ...defaultSoundRow(0, 'live'), id, name: track, live: { track: -1, trackName: track, launch: 'bar', latencyMs: 30 }, ...extra,
+  });
+
+  it('missing clips and tracks: the block stays (drawn as missing) but fires nothing', () => {
+    const rows = [live('d', 'Drums'), live('b', 'Bass'), live('g', 'Gone')];
+    const sound = { live: [
+      { id: 'ok', lane: 0, startTime: 0, duration: 4, slot: 0, clipName: 'Beat A', color: 1 },
+      { id: 'empty', lane: 0, startTime: 4, duration: 4, slot: 1, clipName: 'Deleted', color: 1 },
+      { id: 'moved', lane: 1, startTime: 0, duration: 4, slot: 3, clipName: 'Sub', color: 2 },
+      { id: 'notrack', lane: 2, startTime: 0, duration: 4, slot: 0, clipName: 'X', color: 0 },
+    ] };
+    const out = liveSchedInputs(sound, rows, set);
+    expect(out.rows.map((r) => [r.rowId, r.track, r.launch, r.latency])).toEqual([['d', 0, 'bar', 0.03], ['b', 1, 'bar', 0.03], ['g', null, 'bar', 0.03]]);
+    expect(out.blocks.map((b) => [b.id, b.slot])).toEqual([['ok', 0], ['empty', null], ['moved', 0], ['notrack', null]]);
+    // Fed to the scheduler: only the clips that exist go out.
+    const { s, out: sent } = scheduler();
+    s.setBlocks(out.rows, out.blocks);
+    run(s, sent, 0, 9);
+    expect(sent.filter((o) => o.cmd.t === 'fire_clip').map((o) => [(o.cmd as { i: number }).i, (o.cmd as { s: number }).s])).toEqual([[0, 0], [1, 0]]);
+  });
+
+  it('a muted Live row (or one left out by a solo) fires nothing', () => {
+    const rows = [live('d', 'Drums', { muted: true }), live('b', 'Bass'), live('x', 'Bass', { solo: true })];
+    const out = liveSchedInputs({ live: [] }, rows, set);
+    expect(out.rows.map((r) => r.audible)).toEqual([false, false, true]);
   });
 });

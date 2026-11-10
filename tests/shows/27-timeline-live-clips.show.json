@@ -1,0 +1,41 @@
+{
+  "name": "Timeline: Live clip blocks lined up with a visual",
+  "description": "Two Live rows fire Live clips from the Timeline against a fake Ghost Arcade script on the app's own ports: a drum clip from bar 1 and a bass clip from bar 3, with a white block on a piece lined up on the bass clip's bar. Playing from the start, the fake Live gets the drum clip at once with its place one beat in (the Timeline started on its first beat), the bass clip inside the beat before bar 3 with the beat launch quantise, both stops just before bar 5, and stop all when the Timeline ends (and when it is paused). The piece shows the block from bar 3, on the same grid.",
+  "steps": [
+    { "do": "app.start", "choice": "blank" },
+    { "do": "live.fake", "tracks": [
+      { "name": "Drums", "color": 16737792, "clips": [{ "name": "Beat A", "color": 16746496, "length": 4 }, { "name": "Fill", "color": 16724821, "length": 1 }] },
+      { "name": "Bass", "color": 3377407, "clips": [{ "name": "Sub", "color": 3386111, "length": 8 }] }
+    ] },
+    { "do": "live.connect" },
+    { "do": "project.layer", "name": "Left", "colour": "red", "x0": 0, "x1": 0.5, "wait": 1 },
+    { "do": "show.open", "doc": "timeline" },
+    { "do": "show.tempo", "bpm": 120 },
+    { "do": "show.track", "name": "Left", "layer": "Left" },
+    { "do": "show.clip", "track": "Left", "colour": "white", "at": 4, "duration": 4 },
+    { "do": "sound.liveRow", "name": "Drums", "track": "Drums" },
+    { "do": "sound.liveRow", "name": "Bass", "track": "Bass" },
+    { "do": "sound.liveClip", "row": "Drums", "clip": "Beat A", "at": 0, "duration": 8 },
+    { "do": "sound.liveClip", "row": "Bass", "clip": "Sub", "at": 4, "duration": 4,
+      "expect": { "eval.true": { "js": "(() => { const s = __show.show(); const b = s.sound.live.find((x) => x.clipName === 'Sub'); const c = s.layerTracks.flatMap((t) => t.clips)[0]; return b && c && b.startTime === 4 && c.startTime === b.startTime; })()", "label": "the bass clip and the visual block start on the same bar (3)" } } },
+    { "do": "live.play", "from": 0, "until": 9, "label": "Play from bar 1 to the end of the Timeline (bar 5)",
+      "expect": { "live.requests": { "expect": [
+        { "t": "fire_clip", "i": 0, "s": 0, "q": 7, "pos": 1, "before": 0.35 },
+        { "t": "fire_clip", "i": 1, "s": 0, "q": 7, "at": 3.73, "within": 0.06 },
+        { "t": "stop_track", "i": 0, "q": 0, "at": 7.93, "within": 0.06 },
+        { "t": "stop_track", "i": 1, "q": 0, "at": 7.93, "within": 0.06 },
+        { "t": "stop_all", "q": 0, "after": 7.95 }
+      ] } } },
+    { "do": "live.play", "from": 5, "until": 6, "label": "Play from the middle of bar 3: both clips join on the next beat at their place",
+      "expect": { "live.requests": { "expect": [
+        { "t": "fire_clip", "i": 0, "s": 0, "q": 7, "pos": 11 },
+        { "t": "fire_clip", "i": 1, "s": 0, "q": 7, "pos": 3 },
+        { "t": "stop_all", "q": 0 }
+      ] } } },
+    { "do": "show.seek", "t": 3, "settle": 1500, "label": "t=3 (bar 2): the piece is empty before its block",
+      "expect": { "output.region": { "x0": 0.05, "x1": 0.45, "max": 0.05 } } },
+    { "do": "show.seek", "t": 5, "settle": 1500, "label": "t=5 (bar 3): the white block plays with the bass clip",
+      "expect": { "output.region": { "x0": 0.05, "x1": 0.45, "rgb": [1, 1, 1], "within": 0.1 }, "noErrors": true } },
+    { "do": "live.stopFake" }
+  ]
+}

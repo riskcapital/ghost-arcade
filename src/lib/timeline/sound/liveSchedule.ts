@@ -25,7 +25,7 @@
 import { beatAtSeconds, secondsAtBeat } from '../../show/tempoMap';
 import type { ShowTempoMap } from '../../types';
 import { quantizeBeats } from '../../ableton/abletonLinks';
-import type { LiveLaunch } from './soundModel';
+import { rowAudible, type LiveLaunch, type SoundDoc, type SoundRow } from './soundModel';
 
 /** The script reads requests this often (seconds), worst case. */
 export const SCRIPT_TICK_SECONDS = 0.1;
@@ -373,3 +373,28 @@ export function resolveLiveSlot(block: { slot: number; clipName: string }, track
   }
   return own ? block.slot : null;
 }
+
+/** The Live rows and blocks as the scheduler wants them, from the doc and the mirrored set. */
+export function liveSchedInputs(sound: Pick<SoundDoc, 'live'>, rows: SoundRow[], bridge: { tracks: readonly LiveTrackInfo[] }, mutes: (row: SoundRow) => boolean = (r) => r.muted): { rows: LiveSchedRow[]; blocks: LiveSchedBlock[] } {
+  const schedRows: LiveSchedRow[] = [];
+  rows.forEach((row) => {
+    if (row.kind !== 'live') return;
+    const mute = mutes(row);
+    schedRows.push({
+      rowId: row.id,
+      track: resolveLiveTrack(row.live, bridge.tracks),
+      launch: row.live?.launch ?? 'beat',
+      latency: (row.live?.latencyMs ?? 20) / 1000,
+      audible: rowAudible({ muted: mute, solo: row.solo }, rows),
+    });
+  });
+  const blocks: LiveSchedBlock[] = [];
+  for (const b of sound.live) {
+    const row = rows[b.lane];
+    if (!row || row.kind !== 'live') continue;
+    const ti = resolveLiveTrack(row.live, bridge.tracks);
+    blocks.push({ id: b.id, rowId: row.id, start: b.startTime, end: b.startTime + b.duration, slot: ti === null ? null : resolveLiveSlot(b, bridge.tracks[ti]) });
+  }
+  return { rows: schedRows, blocks };
+}
+

@@ -30,14 +30,14 @@ import {
 } from '../../stores/showTimeline';
 import { bpmAt, buildHitTimes, buildSettingsFor, GAIN_TC, RowBus } from './rowBus';
 import { cachedShowAudioDecode, decodeShowAudio } from '../../audio/showAudio';
-import { abletonBridge, type AbletonBridgeState } from '../../ableton/abletonBridge';
+import { abletonBridge } from '../../ableton/abletonBridge';
 import { currentLineFrame } from '../lines/lineRuntime';
 import { songFeaturesFor } from '../lines/songFeatures';
 import type { ShowAudioTrack, ShowTempoMap } from '../../types';
 import { blockGainAt, effectiveFades, rowAudible, soundRowsFor, type SoundDoc, type SoundRow } from './soundModel';
 import { rowValues } from './soundParams';
 import { beatHitsBetween, kickHitsInFeatures, rowKickTimes, timesBetween } from './soundDuck';
-import { LiveClipScheduler, resolveLiveSlot, resolveLiveTrack, type LiveCommand, type LiveSchedBlock, type LiveSchedRow } from './liveSchedule';
+import { LiveClipScheduler, liveSchedInputs, type LiveCommand } from './liveSchedule';
 
 const DUCK_LOOKAHEAD = 0.15;
 
@@ -216,36 +216,10 @@ function cancelBuilds(): void {
 
 // ── Live ───────────────────────────────────────────────────────────────────
 
-/** The Live rows and blocks as the scheduler wants them, from the doc and the mirrored set. */
-export function liveSchedInputs(s: Pick<ShowTimelineState, 'sound' | 'audioTracks'>, rows: SoundRow[], bridge: Pick<AbletonBridgeState, 'tracks'>, mutes: (row: SoundRow) => boolean = (r) => r.muted): { rows: LiveSchedRow[]; blocks: LiveSchedBlock[] } {
-  {
-    const schedRows: LiveSchedRow[] = [];
-    rows.forEach((row) => {
-      if (row.kind !== 'live') return;
-      const mute = mutes(row);
-      schedRows.push({
-        rowId: row.id,
-        track: resolveLiveTrack(row.live, bridge.tracks),
-        launch: row.live?.launch ?? 'beat',
-        latency: (row.live?.latencyMs ?? 20) / 1000,
-        audible: rowAudible({ muted: mute, solo: row.solo }, rows),
-      });
-    });
-    const blocks: LiveSchedBlock[] = [];
-    for (const b of s.sound.live) {
-      const row = rows[b.lane];
-      if (!row || row.kind !== 'live') continue;
-      const ti = resolveLiveTrack(row.live, bridge.tracks);
-      blocks.push({ id: b.id, rowId: row.id, start: b.startTime, end: b.startTime + b.duration, slot: ti === null ? null : resolveLiveSlot(b, bridge.tracks[ti]) });
-    }
-    return { rows: schedRows, blocks };
-  }
-}
-
 function syncLive(s: ShowTimelineState, rows: SoundRow[], tick: ShowFrameTick): void {
   const bridge = get(abletonBridge);
   const frame = currentLineFrame();
-  const inputs = liveSchedInputs(s, rows, bridge, (row) => rowValues(row, frame?.sounds?.get(row.id)).muted);
+  const inputs = liveSchedInputs(s.sound, rows, bridge, (row) => rowValues(row, frame?.sounds?.get(row.id)).muted);
   liveScheduler.setBlocks(inputs.rows, inputs.blocks);
   liveScheduler.setEnv({
     tempo: tick.tempo,
