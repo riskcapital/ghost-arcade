@@ -85,6 +85,7 @@
         {color}
         thumb={thumbnailFor(thumbs, clip.media)}
         {onpress}
+        oncontext={(e, c) => ctl.contextClip(e, track, c)}
       />
     {/each}
     {#each junctions as j (j.clip.id)}

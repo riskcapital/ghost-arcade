@@ -34,6 +34,7 @@
   } from '../api/ai-client';
   import { settings } from '../stores/settings';
   import { TRAY_TAB_ORDER, TRAY_TAB_ALIASES, type TrayTab } from '../control/trayTabs';
+  import { MEDIA_TRAY_REVEAL_EVENT, type MediaTrayRevealDetail } from './show/timeline/clipMenuActions';
   import { captureJSAnimationThumbnail as captureJSAnimationThumbnailInIframe, updateJSAnimationParams } from '../renderer/js-animation';
   import { singlePlayablePage } from '../p5sketch/wrapSketch';
   import { jsAnimationFromHtml } from '../renderer/jsAnimationPage';
@@ -2400,6 +2401,22 @@
     el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 
+  /** "Show in the media tray" from a show clip: switch to the card's tab
+   *  and put the browse outline on it. */
+  async function handleRevealRequest(e: Event) {
+    const detail = (e as CustomEvent<MediaTrayRevealDetail>).detail;
+    if (!detail?.id || detail.handled) return;
+    const tab: TrayTab = detail.kind === 'video' ? 'videos' : detail.kind === 'image' ? 'images' : detail.kind === 'sketch' ? 'js' : 'shaders';
+    activeTab = tab;
+    await tick();
+    const index = midiBrowseList.findIndex((item) => item.id === detail.id);
+    if (index < 0) return;
+    detail.handled = true;
+    midiCursor = index;
+    midiCursorShown = true;
+    void midiRevealCursor();
+  }
+
   function midiLoadCursor() {
     const item = midiBrowseList[midiCursor] as any;
     if (!item) return;
@@ -2612,8 +2629,10 @@
     if (orphans.length) liveSources = [...liveSources, ...orphans];
 
     window.addEventListener('midi-tray', handleMidiTray);
+    window.addEventListener(MEDIA_TRAY_REVEAL_EVENT, handleRevealRequest);
     return () => {
       window.removeEventListener('midi-tray', handleMidiTray);
+      window.removeEventListener(MEDIA_TRAY_REVEAL_EVENT, handleRevealRequest);
       const i = midiTrayInstances.indexOf(midiTrayInstance);
       if (i >= 0) midiTrayInstances.splice(i, 1);
       // Recordings deliberately survive: see the registry comment above.

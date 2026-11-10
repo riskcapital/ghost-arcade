@@ -139,6 +139,8 @@ export function trackClipboard(): TrackClipboard | null {
 export interface TrackLaneController {
   pressClip(e: MouseEvent, track: ShowLayerTrack, clip: ShowLayerClip, part: ClipPart): void;
   pressEmpty(e: MouseEvent, track: ShowLayerTrack): void;
+  /** Right-click on a clip: the clip menu. */
+  contextClip(e: MouseEvent, track: ShowLayerTrack, clip: ShowLayerClip): void;
   pressXfade(e: MouseEvent, track: ShowLayerTrack, clip: ShowLayerClip, edge: 'body' | 'edge'): void;
   addXfade(track: ShowLayerTrack, clip: ShowLayerClip): void;
   removeXfade(track: ShowLayerTrack, clip: ShowLayerClip): void;
@@ -162,4 +164,19 @@ export interface TrackLaneController {
 export function portal(node: HTMLElement): { destroy(): void } {
   document.body.appendChild(node);
   return { destroy: () => node.remove() };
+}
+
+/**
+ * Reorder drag: the gap (0 = above the first track, n = below the last) a
+ * header dragged to `y` in the header column points at.
+ */
+export function reorderGapAt(tops: readonly number[], heights: readonly number[], y: number): number {
+  let gap = 0;
+  for (let i = 0; i < tops.length; i++) if (y > tops[i] + heights[i] / 2) gap = i + 1;
+  return gap;
+}
+
+/** The index a track moved from `from` into `gap` ends up at. */
+export function reorderIndexForGap(from: number, gap: number): number {
+  return gap > from ? gap - 1 : gap;
 }

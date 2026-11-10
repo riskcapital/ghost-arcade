@@ -26,9 +26,10 @@
     thumb: string | null;
     onpress: (e: MouseEvent, clip: ShowLayerClip, part: ClipPart) => void;
     ondoubleclick?: (clip: ShowLayerClip) => void;
+    oncontext?: (e: MouseEvent, clip: ShowLayerClip) => void;
   }
 
-  let { clip, zoom, selected, locked, color, thumb, onpress, ondoubleclick }: Props = $props();
+  let { clip, zoom, selected, locked, color, thumb, onpress, ondoubleclick, oncontext }: Props = $props();
 
   const left = $derived(clip.startTime * zoom);
   const width = $derived(Math.max(4, clip.duration * zoom));
@@ -85,6 +86,7 @@
   data-clip-id={clip.id}
   onmousedown={(e) => press(e, 'body')}
   ondblclick={() => ondoubleclick?.(clip)}
+  oncontextmenu={(e) => { if (oncontext) { e.preventDefault(); e.stopPropagation(); oncontext(e, clip); } }}
   title={`${name} · ${fmt(clip.duration)}`}
 >
   {#if thumb}

@@ -4,9 +4,10 @@
    * audio lanes.
    *
    * Owns every pointer edit on tracks: moving clips (also onto other
-   * tracks), trimming, fades, crossfades, marquee selection, keys on the
-   * lanes, and drops of media-tray cards and files. All edits go through
-   * the show store; this component keeps only the drag in flight.
+   * tracks; Alt-drag drops copies), trimming, fades, crossfades, marquee
+   * selection, the clip menu, keys on the lanes, and drops of media-tray
+   * cards and files. All edits go through the show store; this component
+   * keeps only the drag in flight.
    *
    * Reads the store with $derived values that keep their identity while
    * only the playhead moves, so a playing show re-renders none of this.
@@ -20,6 +21,7 @@
   import { findJunctionPredecessor } from '../../../show/showJunctions';
   import type { KeyframeEasing, ShowLayerClip, ShowLayerTrack } from '../../../types';
   import ShowLayerTrackLane from './ShowLayerTrackLane.svelte';
+  import ShowClipContextMenu from './ShowClipContextMenu.svelte';
   import { clipThumbnails } from './clipMedia';
   import { carriesTrackMedia, dropTrackMedia, mayCarryTrackMedia } from './trackDrops';
   import {
@@ -62,6 +64,11 @@
   let stackEl: HTMLDivElement | undefined = $state();
   let drop: { trackId: string; time: number } | null = $state(null);
   let marquee: { x: number; y: number; w: number; h: number } | null = $state(null);
+  /** Alt-drag: where the copies would land. */
+  let ghosts: { left: number; top: number; width: number }[] = $state([]);
+  let menu: { x: number; y: number; trackId: string; clipId: string; ids: string[] } | null = $state(null);
+  const menuTrack = $derived(menu ? tracks.find((t) => t.id === menu!.trackId) ?? null : null);
+  const menuClip = $derived(menu && menuTrack ? menuTrack.clips.find((c) => c.id === menu!.clipId) ?? null : null);
 
   function timeAt(clientX: number): number {
     if (!stackEl) return 0;
@@ -136,7 +143,8 @@
       if (additive && wasSelected) showTimeline.selectLayerClips(before.filter((id) => id !== clip.id));
       return;
     }
-    if (part === 'body') dragClips(e, tr, clip, wasSelected ? (additive ? 'remove' : 'only') : null);
+    if (part === 'body' && e.altKey) dragCopies(e, tr, clip);
+    else if (part === 'body') dragClips(e, tr, clip, wasSelected ? (additive ? 'remove' : 'only') : null);
     else if (part === 'start' || part === 'end') dragTrim(e, clip, part);
     else dragFade(e, clip, part);
   }
@@ -184,6 +192,75 @@
       if (onClick === 'only' && ids.length > 1) showTimeline.selectLayerClips([clip.id]);
       else if (onClick === 'remove') showTimeline.selectLayerClips(get(showTimeline).selectedClipIds.filter((id) => id !== clip.id));
     });
+  }
+
+  /**
+   * Alt-drag: the selection stays where it is and copies land where it is
+   * dropped (on other tracks too), as one undo step. A drop where the copies
+   * would overlap a clip is refused.
+   */
+  function dragCopies(e: MouseEvent, tr: ShowLayerTrack, clip: ShowLayerClip) {
+    const ids = [...get(showTimeline).selectedClipIds];
+    const list0 = currentTracks();
+    const startIndex = trackIndexOf(tr.id);
+    const origStart = clip.startTime;
+    const duration = clip.duration;
+    const grab = timeAt(e.clientX) - origStart;
+    const picked = list0.flatMap((t, i) => t.clips.filter((c) => ids.includes(c.id)).map((c) => ({ c, i, trackId: t.id })));
+    if (!picked.length) return;
+    const minStart = Math.min(...picked.map((p) => p.c.startTime));
+    const minIndex = Math.min(...picked.map((p) => p.i));
+    const maxIndex = Math.max(...picked.map((p) => p.i));
+    let drop = { delta: 0, offset: 0 };
+    const place = () => {
+      const tops = trackTops(currentTracks());
+      ghosts = picked.map((p) => ({
+        left: (p.c.startTime + drop.delta) * zoom,
+        top: (tops[p.i + drop.offset] ?? 0) + 4,
+        width: Math.max(4, p.c.duration * zoom),
+      }));
+    };
+    follow(e, (ev) => {
+      const list = currentTracks();
+      const row = trackIndexAt(list, yInStack(ev.clientY));
+      const offset = Math.max(-minIndex, Math.min(list.length - 1 - maxIndex, row - startIndex));
+      const raw = Math.max(0, timeAt(ev.clientX) - grab);
+      let start = raw;
+      if (!(ev.metaKey || ev.ctrlKey)) {
+        const a = showTimeline.snapTime(raw);
+        const b = showTimeline.snapTime(raw + duration) - duration;
+        const pull = (v: number) => (Math.abs(v - raw) < 1e-9 ? Number.POSITIVE_INFINITY : Math.abs(v - raw));
+        start = pull(b) < pull(a) ? b : a;
+      }
+      drop = { delta: Math.max(start - origStart, -minStart), offset };
+      place();
+      const s0 = origStart + drop.delta;
+      showSnapGuide.set(ev.metaKey || ev.ctrlKey ? null : snapGuideAt({ start: s0, end: s0 + duration }, showTimeline.snapTargets(), raw, s0));
+    }, (moved) => {
+      ghosts = [];
+      if (!moved) return;
+      const list = currentTracks();
+      const byTrack = new Map<string, string[]>();
+      for (const p of picked) {
+        const target = list[p.i + drop.offset];
+        if (!target) return;
+        byTrack.set(target.id, [...(byTrack.get(target.id) ?? []), p.c.id]);
+      }
+      const groups = [...byTrack.entries()].map(([trackId, clipIds]) => ({ trackId, clips: showTimeline.copyLayerClips(clipIds) }));
+      const created = showTimeline.pasteLayerClipGroups(groups, minStart + drop.delta);
+      if (created.length) focusedTrackId.set(list[startIndex + drop.offset]?.id ?? tr.id);
+    });
+  }
+
+  // ── Clip menu ────────────────────────────────────────────────────────
+
+  function contextClip(e: MouseEvent, tr: ShowLayerTrack, clip: ShowLayerClip) {
+    focusedTrackId.set(tr.id);
+    laneKeySelection.set(null);
+    const selected = get(showTimeline).selectedClipIds;
+    const ids = selected.includes(clip.id) ? [...selected] : [clip.id];
+    if (!selected.includes(clip.id)) showTimeline.selectLayerClips([clip.id]);
+    menu = { x: e.clientX, y: e.clientY, trackId: tr.id, clipId: clip.id, ids };
   }
 
   function dragTrim(e: MouseEvent, clip: ShowLayerClip, edge: 'start' | 'end') {
@@ -326,6 +403,7 @@
   const ctl: TrackLaneController = {
     pressClip,
     pressEmpty: (e, tr) => pressEmpty(e, tr),
+    contextClip,
     pressXfade,
     addXfade,
     removeXfade,
@@ -360,7 +438,9 @@
   const EMPTY_RANGES: Record<string, { min: number; max: number }> = {};
 </script>
 
-<div class="tl-stack" bind:this={stackEl} style:width="{width}px" data-show-tracks>
+<!-- data-help-disabled: the app's hover-help card would sit over the clip
+     handles; the blocks keep their plain tooltips. -->
+<div class="tl-stack" bind:this={stackEl} style:width="{width}px" data-show-tracks data-help-disabled>
   {#each tracks as tr, index (tr.id)}
     <ShowLayerTrackLane
       track={tr}
@@ -391,10 +471,25 @@
       {tracks.length ? 'Drop media here for a new track' : 'Drop video, images or shaders here to make a layer track'}
     </span>
   </div>
+  {#each ghosts as g}
+    <div class="tl-ghost" style:left="{g.left}px" style:top="{g.top}px" style:width="{g.width}px" style:height="{TRACK_ROW_HEIGHT - 8}px" data-show-copy-ghost></div>
+  {/each}
   {#if marquee}
     <div class="tl-marquee" style:left="{marquee.x}px" style:top="{marquee.y}px" style:width="{marquee.w}px" style:height="{marquee.h}px"></div>
   {/if}
 </div>
+
+{#if menu && menuTrack && menuClip}
+  <ShowClipContextMenu
+    x={menu.x}
+    y={menu.y}
+    track={menuTrack}
+    clip={menuClip}
+    ids={menu.ids}
+    playhead={$showTimeline.currentTime}
+    onclose={() => (menu = null)}
+  />
+{/if}
 
 <style>
   .tl-stack { position: relative; }
@@ -418,6 +513,15 @@
     color: var(--ga-ink-2, #55555f);
     pointer-events: none;
     white-space: nowrap;
+  }
+  .tl-ghost {
+    position: absolute;
+    z-index: 7;
+    box-sizing: border-box;
+    border: 1px dashed rgba(255, 217, 107, 0.9);
+    border-radius: 4px;
+    background: rgba(255, 217, 107, 0.12);
+    pointer-events: none;
   }
   .tl-marquee {
     position: absolute;

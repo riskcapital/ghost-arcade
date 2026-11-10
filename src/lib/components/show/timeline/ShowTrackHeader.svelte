@@ -4,7 +4,8 @@
    * (with an "off stage" badge when the current preset has no such layer
    * and the track injects its own copy), Mute / Solo / Lock and the "◆+"
    * picker that folds a keyframe lane open under the track. Lane headers
-   * follow underneath when the track is unfolded.
+   * follow underneath when the track is unfolded. Double-click the name to
+   * rename it; drag the header up or down to move the track.
    */
   import { get } from 'svelte/store';
   import type { Layer, ShowLayerTrack } from '../../../types';
@@ -12,6 +13,7 @@
   import { evaluateTrack } from '../../../keyframes/easing';
   import { LANE_ROW_HEIGHT, TRACK_ROW_HEIGHT, laneKeySelection, portal } from './trackLayout';
   import { trackLaneParams } from './trackParams';
+  import { renameShowTrack } from './trackHeaderActions';
 
   interface Props {
     track: ShowLayerTrack;
@@ -21,9 +23,31 @@
     selected: boolean;
     live: Layer | null;
     inactiveLanes: ReadonlySet<string>;
+    /** Press on the header (not a button): the start of a reorder drag. */
+    onpress?: (e: MouseEvent) => void;
+    /** True while the header is being dragged to another row. */
+    dragging?: boolean;
   }
 
-  let { track, onStage, soloed, otherSoloed, selected, live, inactiveLanes }: Props = $props();
+  let { track, onStage, soloed, otherSoloed, selected, live, inactiveLanes, onpress, dragging = false }: Props = $props();
+
+  // ── Rename ───────────────────────────────────────────────────────────
+  let editing = $state(false);
+  let draft = $state('');
+  function startRename(e: MouseEvent) {
+    e.stopPropagation();
+    draft = track.layerName;
+    editing = true;
+  }
+  function focusInput(node: HTMLInputElement) {
+    node.focus();
+    node.select();
+  }
+  function commitRename() {
+    if (!editing) return;
+    editing = false;
+    renameShowTrack(track, draft, live);
+  }
 
   const color = $derived(track.color || '#8b7cff');
 
@@ -82,10 +106,19 @@
   }
 </script>
 
-<div class="th" class:selected style:--track-color={color} data-track-header={track.id}>
+<div class="th" class:selected class:dragging style:--track-color={color} data-track-header={track.id}>
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="th-main" style:height="{TRACK_ROW_HEIGHT}px" onclick={selectTrack}>
+  <div
+    class="th-main"
+    style:height="{TRACK_ROW_HEIGHT}px"
+    onclick={selectTrack}
+    onmousedown={(e) => {
+      const target = e.target as HTMLElement;
+      if (e.button !== 0 || editing || target.closest('button') || target.closest('input')) return;
+      onpress?.(e);
+    }}
+  >
     <span class="th-color" aria-hidden="true"></span>
     <div class="th-col">
       <div class="th-line">
@@ -97,7 +130,27 @@
           title={track.collapsed ? 'Show keyframe lanes' : 'Hide keyframe lanes'}
           aria-label={track.collapsed ? 'Show keyframe lanes' : 'Hide keyframe lanes'}
         >▸</button>
-        <span class="th-name layer-name" title={track.layerName}>{track.layerName}</span>
+        {#if editing}
+          <input
+            class="th-rename"
+            type="text"
+            bind:value={draft}
+            use:focusInput
+            onclick={(e) => e.stopPropagation()}
+            onmousedown={(e) => e.stopPropagation()}
+            onkeydown={(e) => {
+              e.stopPropagation();
+              if (e.key === 'Enter') commitRename();
+              else if (e.key === 'Escape') editing = false;
+            }}
+            onblur={commitRename}
+            aria-label="Track name"
+            data-track-rename
+          />
+        {:else}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <span class="th-name layer-name" title={`${track.layerName}: double-click to rename`} ondblclick={startRename} data-track-name>{track.layerName}</span>
+        {/if}
         {#if !onStage}
           <span class="th-badge" title="The current preset has no such layer: the track plays its own copy of it above the stage.">off stage</span>
         {/if}
@@ -169,6 +222,22 @@
     cursor: pointer;
   }
   .th.selected .th-main { background: color-mix(in srgb, var(--track-color) 12%, transparent); }
+  .th.dragging .th-main { opacity: 0.55; cursor: grabbing; }
+  .th-rename {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 18px;
+    box-sizing: border-box;
+    padding: 0 4px;
+    font: inherit;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: 600;
+    color: var(--ga-ink-0, #fff);
+    background: var(--ga-slot, rgba(255, 255, 255, 0.06));
+    border: 1px solid #FFD96B;
+    border-radius: 3px;
+    outline: none;
+  }
   .th-color { flex: 0 0 4px; background: var(--track-color); }
   .th-col {
     flex: 1 1 auto;

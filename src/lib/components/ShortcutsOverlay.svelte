@@ -80,6 +80,7 @@
           <div class="shortcut-row"><kbd>Home</kbd> / <kbd>End</kbd><span>Go to the start / end</span></div>
           <div class="shortcut-row"><kbd>Esc</kbd><span>Clear the selection</span></div>
           <div class="shortcut-row"><kbd>{mod}</kbd><span>Hold while dragging a clip or key to move it without snapping</span></div>
+          <div class="shortcut-row"><kbd>{isMac ? 'Option' : 'Alt'}</kbd><span>Hold while dragging clips to drop copies</span></div>
         </div>
         <div class="shortcut-section">
           <h3>Output</h3>

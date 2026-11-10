@@ -28,6 +28,7 @@ import {
   splitAtPlayhead,
 } from './trackCommands';
 import { clipMediaFromTrayPayload, isTrackMediaFile } from './clipMedia';
+import { reorderGapAt, reorderIndexForGap } from './trackLayout';
 
 const media = (name: string): ShowClipMedia => ({ kind: 'image', name, src: `/img/${name}` });
 const layer = (id: string) => ({ id, name: id, type: 'media', opacity: 1, source: null }) as unknown as Layer;
@@ -211,5 +212,21 @@ describe('editing tracks from the keyboard', () => {
     expect(tracks()[0].lanes[0].keyframes.map((k) => [k.time, k.value])).toEqual([[0, 0], [4, 1]]);
     showTimeline.updateLayerTrack(a, { locked: true });
     expect(showTimeline.setLaneKey(a, 'layer:opacity', 3, 1)).toBe(false);
+  });
+});
+
+describe('track header reorder', () => {
+  it('a header dropped past a row midpoint goes below that row', () => {
+    const tops = [0, 44, 118, 162];
+    const heights = [44, 74, 44, 44];
+    expect(reorderGapAt(tops, heights, 10)).toBe(0);
+    expect(reorderGapAt(tops, heights, 30)).toBe(1);
+    expect(reorderGapAt(tops, heights, 90)).toBe(2);
+    expect(reorderGapAt(tops, heights, 500)).toBe(4);
+    // Track 0 dropped into gap 2 ends up at index 1; track 3 into gap 1 at 1.
+    expect(reorderIndexForGap(0, 2)).toBe(1);
+    expect(reorderIndexForGap(3, 1)).toBe(1);
+    expect(reorderIndexForGap(1, 1)).toBe(1);
+    expect(reorderIndexForGap(1, 2)).toBe(1);
   });
 });
