@@ -2651,9 +2651,10 @@ struct IsfTimeAnchor {
 }
 
 impl IsfTimeAnchor {
-    fn time_at(&self, clock: f32) -> f32 {
-        let time = if self.paused { self.time } else { self.time + (clock as f64 - self.clock) * self.rate };
-        time.clamp(0.0, 1.0e9) as f32
+    /// The anchored time at `clock` (the unwrapped f64 render clock).
+    fn time_at(&self, clock: f64) -> f64 {
+        let time = if self.paused { self.time } else { self.time + (clock - self.clock) * self.rate };
+        time.clamp(0.0, 1.0e9)
     }
 }
 
@@ -16190,7 +16191,9 @@ impl App {
             return;
         }
         let Some(time) = number_at(command, &["time_seconds"]).filter(|time| time.is_finite()) else { return; };
-        let now = self.native_graph_time_seconds() as f64;
+        // Anchors run on the unwrapped clock: the wrapped shader clock jumps
+        // back every SHADER_CLOCK_WRAP_SECONDS and would jump a clip's TIME.
+        let now = self.native_clock_seconds();
         let clock = if self.render_clock_mode == "manual" {
             number_at(command, &["clock_time_seconds"]).filter(|clock| clock.is_finite()).unwrap_or(now)
         } else {
@@ -16324,7 +16327,7 @@ impl App {
             if let Some(used) = self.isf_shader_last_used.get_mut(&shader_id) {
                 *used = self.isf_shader_use_tick;
             }
-            let shader_time = self.isf_time_anchors.get(&shader_id).map_or(time, |anchor| anchor.time_at(time));
+            let shader_time = self.isf_time_anchors.get(&shader_id).map_or(time, |anchor| shader_clock_seconds(anchor.time_at(self.native_clock_seconds())));
             if let Some(state) = self.isf_uniforms.get_mut(&shader_id) {
                 state.time = shader_time;
                 state.time_delta = frame_delta;
@@ -35857,6 +35860,16 @@ mod tests {
         assert_eq!(paused.time_at(1000.0), 2.0);
         // Never before the start of the clip.
         assert_eq!(anchor.time_at(0.0), 0.0);
+    }
+
+    #[test]
+    fn isf_time_anchor_is_smooth_across_the_shader_clock_wrap() {
+        // Anchored on the unwrapped clock just before the wrap: a clip's TIME
+        // keeps counting up through it instead of jumping back.
+        let wrap = SHADER_CLOCK_WRAP_SECONDS;
+        let anchor = IsfTimeAnchor { time: 10.0, clock: wrap - 1.0, rate: 1.0, paused: false };
+        assert_eq!(shader_clock_seconds(anchor.time_at(wrap - 0.5)), 10.5);
+        assert_eq!(shader_clock_seconds(anchor.time_at(wrap + 0.5)), 11.5);
     }
 
     #[test]
