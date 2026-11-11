@@ -93,6 +93,7 @@ import {
   computeAudioPeaks,
   decodeShowAudio,
   forgetShowAudioDecode,
+  retainShowAudioDecodes,
   cachedShowAudioDecode,
 } from '../audio/showAudio';
 import {
@@ -969,7 +970,10 @@ function ensureTrackElement(track: ShowAudioTrack): void {
   }
   if (existing) releaseTrackElement(track.id);
 
-  const el = document.createElement('audio');
+  // A parked element of this file comes back (with its one source node).
+  const spare = spareElements.get(track.url);
+  if (spare) spareElements.delete(track.url);
+  const el = spare ?? document.createElement('audio');
   el.dataset.showTrackUrl = track.url;
   el.preload = 'auto';
   el.crossOrigin = 'anonymous';
@@ -1002,7 +1006,32 @@ function releaseTrackElement(trackId: string): void {
       /* best effort */
     }
     trackElements.delete(trackId);
+    parkElement(el);
   }
+}
+
+/**
+ * Released elements, one per file, kept for the next track of that file.
+ * An element wired into WebAudio stays alive with its source node for as
+ * long as the AudioContext runs (Chromium keeps a MediaElementAudioSourceNode
+ * as a pending activity even when disconnected), so a new element for every
+ * Show↔Timeline switch or reopened show piled up: three a cycle in a soak.
+ * Reusing the element reuses its source node instead. Bounded: past the
+ * limit the oldest is dropped (as every element was before).
+ */
+const spareElements = new Map<string, HTMLAudioElement>();
+const SPARE_ELEMENT_LIMIT = 16;
+
+function parkElement(el: HTMLAudioElement): void {
+  const url = el.dataset.showTrackUrl;
+  if (!url || spareElements.has(url)) return;
+  spareElements.set(url, el);
+  while (spareElements.size > SPARE_ELEMENT_LIMIT) spareElements.delete(spareElements.keys().next().value as string);
+}
+
+/** Test seam: how many released elements wait for reuse. */
+export function _spareShowAudioElementCount(): number {
+  return spareElements.size;
 }
 
 function releaseAllTrackElements(): void {
@@ -1086,6 +1115,14 @@ function notifyReset(): void {
   for (const listener of resetListeners) {
     try { listener(); } catch (err) { console.warn('[ShowTimeline] reset listener failed:', err); }
   }
+  // Once the new show is in (clear and hydrate finish in this task), let go
+  // of decoded songs neither of its documents uses.
+  queueMicrotask(() => {
+    const urls = new Set<string>();
+    for (const t of get(store).audioTracks) if (t.url) urls.add(t.url);
+    for (const t of parkedDoc.audioTracks ?? []) if (t.url) urls.add(t.url);
+    retainShowAudioDecodes(urls);
+  });
 }
 
 /** Extra snap targets from outside the store: the cue list's markers. */

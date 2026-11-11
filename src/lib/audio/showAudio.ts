@@ -41,6 +41,12 @@ export function forgetShowAudioDecode(url: string): void {
   inFlight.delete(url);
 }
 
+/** Keep only the decodes of these URLs (another show was loaded: a song it
+ *  does not use is ~10 MB a minute of samples nobody reads again). */
+export function retainShowAudioDecodes(urls: ReadonlySet<string>): void {
+  for (const url of decodeCache.keys()) if (!urls.has(url)) decodeCache.delete(url);
+}
+
 export function clearShowAudioDecodeCache(): void {
   decodeCache.clear();
   inFlight.clear();
