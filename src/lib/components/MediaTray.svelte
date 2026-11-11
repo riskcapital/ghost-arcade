@@ -7,6 +7,9 @@
   import { vjClipLauncher, type VJClip } from '../stores/vjClipLauncher';
   import { get, writable, type Writable } from 'svelte/store';
   import { project, selectedLayerId, selectedLayer, layers } from '../stores/layers';
+  import MusicMotionControl from './MusicMotionControl.svelte';
+  import MusicMotionMark from './MusicMotionMark.svelte';
+  import { isMusicMotionInput, shaderIsMusicMotionReady } from '../audio/musicMotion';
   import { activeMediaTargetLayerIds } from '../media/mediaTargeting';
   import PluginIcon from './PluginIcon.svelte';
   import VideoDecodeBadge from './VideoDecodeBadge.svelte';
@@ -4485,7 +4488,14 @@
         <button class="close-params" onclick={() => selectedShader = null}>x</button>
       </div>
       <div class="params-list">
-        {#each selectedShader.inputs as input}
+        {#if $selectedLayerId && $selectedLayer?.source?.type === 'shader'}
+          <MusicMotionControl
+            settings={$selectedLayer.source.musicMotion}
+            inputs={selectedShader.inputs}
+            onchange={(next) => $selectedLayerId && project.setLayerMusicMotion($selectedLayerId, next)}
+          />
+        {/if}
+        {#each selectedShader.inputs.filter((i) => !isMusicMotionInput(i.NAME)) as input}
           <!-- Inline modulationMap lookup so Svelte tracks the
                template's reactive dependency on the store (function
                calls hide the dep). target='mapping' so this picks
@@ -5480,6 +5490,9 @@
                   <span class="cloud-badge" title="Synced from ghostarcade.live">•</span>
                 {/if}
                 {item.name}
+                {#if 'shaderCode' in item && shaderIsMusicMotionReady(item.shaderCode)}
+                  <MusicMotionMark />
+                {/if}
               </span>
 
               <!-- Action buttons container -->

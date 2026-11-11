@@ -1,5 +1,8 @@
 <script lang="ts">
   import PreviewMonitorControl from './PreviewMonitorControl.svelte';
+  import MusicMotionControl from './MusicMotionControl.svelte';
+  import MusicMotionMark from './MusicMotionMark.svelte';
+  import { isMusicMotionInput, shaderIsMusicMotionReady } from '../audio/musicMotion';
   import VJGroups from './VJGroups.svelte';
   import VJFluxPanel from './VJFluxPanel.svelte';
   import StageFxChaseControls from './StageFxChaseControls.svelte';
@@ -1522,7 +1525,14 @@
     // Reference activeClipId to make this reactive to clip changes
     void activeClipId;
     // Note and visual voice inputs are played by the music studio every frame, not set by hand.
-    return getActiveShaderInputs(selectedLayerIndex).filter((input) => !isNoteDrivenInput(input.NAME) && !isVoiceDrivenInput(input.NAME));
+    // Music motion inputs are fed by Music motion, not set by hand.
+    return getActiveShaderInputs(selectedLayerIndex).filter((input) => !isNoteDrivenInput(input.NAME) && !isVoiceDrivenInput(input.NAME) && !isMusicMotionInput(input.NAME));
+  })();
+  // Music motion sees every input, so it knows a shader made for it.
+  $: selectedClipMotionInputs = (() => {
+    if (selectedLayerIndex === null) return [];
+    void activeClipId;
+    return getActiveShaderInputs(selectedLayerIndex);
   })();
 
   // Audio-ready badge: true if current shader uses audio uniforms
@@ -5328,6 +5338,14 @@
                   <div class="audio-warn">This shader doesn't use audio uniforms — modulation controls parameters only, not the shader's internal audio response.</div>
                 {/if}
                 <div class="shader-params-panel-list">
+                  {#if selectedLayerState.activeClip}
+                    {@const _mmClip = selectedLayerState.activeClip}
+                    <MusicMotionControl
+                      settings={_mmClip.musicMotion}
+                      inputs={selectedClipMotionInputs}
+                      onchange={(next) => vjClipLauncher.setClipMusicMotion(_mmClip.id, next)}
+                    />
+                  {/if}
                   {#each selectedClipShaderInputs as input (input.NAME)}
                     <!-- Inline the modulationMap lookup so the @const
                          expression's reactive dependency on the store
@@ -6401,7 +6419,7 @@
                   data-midi-mode="toggle"
                 >
                   {#if clip}
-                    <div class="clip-content">
+                    <div class="clip-content" class:mm-on={clip.type === 'shader' && clip.musicMotion?.on}>
                       {#if clip.thumbnail}
                         <img src={clip.thumbnail} alt={clip.name} class="clip-thumb" draggable="false" />
                       {:else}
@@ -6409,7 +6427,7 @@
                           {clip.type === 'shader' ? 'ISF' : clip.type === 'video' ? 'VID' : clip.type === 'spout' ? 'SPT' : clip.type === 'threejs' ? '3JS' : clip.type === 'splat' ? 'PLY' : clip.type === 'model3d' ? '3DM' : clip.type === 'gpu' ? 'GPU' : clip.type === 'text' ? 'TXT' : clip.type === 'effect' ? 'FX' : clip.type === 'preset' ? 'MAP' : clip.type === 'synthvision' ? 'PERF' : 'IMG'}
                         </div>
                       {/if}
-                      <span class="clip-name">{clip.name}</span>
+                      <span class="clip-name">{#if clip.type === 'shader' && clip.musicMotion?.on}<MusicMotionMark size={11} live title="Music motion is on" /> {:else if clip.type === 'shader' && shaderIsMusicMotionReady(clip.shaderCode)}<MusicMotionMark size={10} /> {/if}{clip.name}</span>
                       {#if isFileMissing}
                         <button
                           class="missing-badge"
@@ -9986,6 +10004,15 @@
     position: relative;
     min-width: 0;
     overflow: hidden;
+  }
+  /* Music motion on: an even ring in the icon blue, all the way round. */
+  .clip-content.mm-on::after {
+    content: '';
+    position: absolute;
+    inset: 2px;
+    border: 2px solid var(--ga-icon, #5278ff);
+    border-radius: var(--ga-r-hard, 3px);
+    pointer-events: none;
   }
 
   .clip-thumb {

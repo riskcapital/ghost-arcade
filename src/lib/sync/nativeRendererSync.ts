@@ -85,6 +85,8 @@ import {
   nativeJsCanvasUri,
 } from '$lib/renderer/nativeJsCanvasHosts';
 import { resolveAssetRefForRuntime } from '$lib/storage/assetRegistry';
+import { shaderIsMusicMotionReady, withMusicFlow, withMusicTime, musicTimePhase, MUSIC_TIME_PHASE_INPUT, MUSIC_TIME_RATE_INPUT } from '$lib/audio/musicMotion';
+import { getMusicTimeOffset, getMusicTimeRate, hasMusicTime } from '$lib/audio/musicMotionEngine';
 import {
   receiveSpoutTextureInfo,
   type SpoutSharedTextureInfo,
@@ -967,7 +969,7 @@ function sourceSignature(layer: Layer): string {
   const imageInputsSignature = s.shaderImageInputs && Object.keys(s.shaderImageInputs).length
     ? hashString(JSON.stringify(s.shaderImageInputs))
     : 'no-image-inputs';
-  return `${s.type}:${s.id}:${s.src}:${s.name}:${s.shaderCode ? hashString(s.shaderCode) : 'no-shader'}:${javascriptSignature}:${imageInputsSignature}`;
+  return `${s.type}:${s.id}:${s.src}:${s.name}:${s.shaderCode ? hashString(nativeShaderCode(s)!) : 'no-shader'}:${javascriptSignature}:${imageInputsSignature}`;
 }
 
 /** Shader and JS param values. Keyframes, sliders and macros change these
@@ -983,7 +985,8 @@ function sourceValuesSignature(layer: Layer): string {
     : 'no-js';
   // A show clip's shader time: a new anchor goes out with the uniforms.
   const shaderTime = s._nativeShaderTime ? `:t${s._nativeShaderTime.seq}` : '';
-  return `${shaderValuesSignature}:${javascriptValuesSignature}${shaderTime}`;
+  const musicTime = hasMusicTime(s.id) ? `:mt${getMusicTimeOffset(s.id).toFixed(4)}:${getMusicTimeRate(s.id).toFixed(4)}` : '';
+  return `${shaderValuesSignature}:${javascriptValuesSignature}${shaderTime}${musicTime}`;
 }
 
 /** Shader clocks wrap here (about 9 h 6 min). A uniform holds time as an
@@ -1070,6 +1073,24 @@ export function nativeEffectPassesToRender<T extends { effect: string; amount?: 
   const kept = passes.filter((pass) => !nativeEffectPassIsIdentity(pass));
   if (kept.length === passes.length) return passes as T[];
   return kept.length ? kept : passes.slice(0, 1);
+}
+
+const musicTimeCodeCache = new Map<string, string>();
+/**
+ * The shader code the core compiles. With Music motion on, the core's TIME is
+ * its own clock, so the code reads TIME plus an offset input the sync sends.
+ */
+function nativeShaderCode(s: Pick<NonNullable<Layer['source']>, 'shaderCode' | 'musicMotion' | 'type'>): string | undefined {
+  const code = s.shaderCode;
+  if (!code || !s.musicMotion?.on || s.type !== 'shader') return code;
+  let out = musicTimeCodeCache.get(code);
+  if (out === undefined) {
+    // A shader made for Music motion keeps its TIME; only its mmFlow runs on the music clock.
+    out = shaderIsMusicMotionReady(code) ? withMusicFlow(code) : withMusicTime(code);
+    if (musicTimeCodeCache.size > 32) musicTimeCodeCache.clear();
+    musicTimeCodeCache.set(code, out);
+  }
+  return out;
 }
 
 function nativeEffectDescriptors(layer: Layer): string[] {
@@ -10168,15 +10189,16 @@ export class NativeRendererSync {
           if (nativeSource.shouldPreview && !nativeStaticImageDecode && !nativeVideoDecodePump) {
             this.appendSourcePreviewCommand(commands, src, sourceType, now, true, null, previewBudget);
           }
-          if (src.shaderCode) {
-            const shaderId = `${src.id}:${hashString(src.shaderCode)}`;
+          const coreShaderCode = nativeShaderCode(src);
+          if (coreShaderCode) {
+            const shaderId = `${src.id}:${hashString(coreShaderCode)}`;
             if (!this.precompiledShaders.has(shaderId)) {
               this.precompiledShaders.add(shaderId);
               commands.push({
                 type: 'precompile_shader',
                 shader_id: shaderId,
                 stage: 'pixel',
-                source: src.shaderCode,
+                source: coreShaderCode,
                 entry: 'main',
               });
             }
@@ -10728,7 +10750,7 @@ export class NativeRendererSync {
         layer.visible &&
         (!prev || prev.sourceSig !== snap.sourceSig || prev.valuesSig !== snap.valuesSig)
       ) {
-        const shaderId = `${src2.id}:${hashString(src2.shaderCode)}`;
+        const shaderId = `${src2.id}:${hashString(nativeShaderCode(src2)!)}`;
         const shaderTime = nativeShaderClockSeconds(
           typeof renderClock.time === 'number' && Number.isFinite(renderClock.time)
             ? renderClock.time
@@ -10770,6 +10792,19 @@ export class NativeRendererSync {
         // displayed frame; media refs bind the media source (decoded on
         // demand for static images). Unresolvable refs are omitted -> the
         // shader falls back to its own input frame.
+        if (hasMusicTime(src2.id) && src2.musicMotion?.on) {
+          // The core keeps its own TIME between updates, so it gets the clock's
+          // speed and a phase: TIME * rate + phase is the music clock now, and
+          // keeps running at the music's speed until the next update.
+          const rate = getMusicTimeRate(src2.id);
+          const offset = Math.max(-shaderTime, getMusicTimeOffset(src2.id));
+          floatInputs[MUSIC_TIME_RATE_INPUT] = rate;
+          floatInputs[MUSIC_TIME_PHASE_INPUT] = musicTimePhase(shaderTime, offset, rate);
+        } else if (src2.musicMotion?.on) {
+          floatInputs[MUSIC_TIME_RATE_INPUT] = 1;
+          floatInputs[MUSIC_TIME_PHASE_INPUT] = 0;
+        }
+
         const imageInputs: Record<string, string> = {};
         if (src2.shaderImageInputs) {
           for (const [inputName, ref] of Object.entries(src2.shaderImageInputs)) {

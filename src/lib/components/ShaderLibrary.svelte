@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount, createEventDispatcher } from 'svelte';
   import { parseISF } from '../isf/parser';
+  import MusicMotionMark from './MusicMotionMark.svelte';
+  import { isMusicMotionShaderFile } from '../isf/musicMotionShaders';
   import { estimateShaderLoadRating } from '../isf/loadRating';
   import { shaderLibrary, type SavedShader } from '../stores/shaderLibrary';
   import { communityCredit } from '../community/catalogV2';
@@ -389,7 +391,7 @@
                   {/if}
                 </div>
                 <div class="sl-card-info">
-                  <span class="sl-card-name">{card.name}</span>
+                  <span class="sl-card-name">{#if card.manifest && isMusicMotionShaderFile(card.manifest.file)}<MusicMotionMark size={10} /> {/if}{card.name}</span>
                   {#if card.credit}
                     <span class="sl-card-cat" title={card.creditUrl ?? ''}>{card.credit}</span>
                   {:else if card.category}

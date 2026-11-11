@@ -32,6 +32,7 @@ import { type DrumVoice, type InstrumentId, type NoteEvent } from './noteEvents'
 import type { LoopRole } from './loops';
 import type { StudioSet } from './studioSets';
 import { isShaderTextInput } from './shaderText';
+import { smoothSignals, surge, signalLevel, freshSmoothSignals, type SmoothSignalState } from '../audio/musicMotion';
 
 /**
  * Which sound a voice follows. New entries go on the end: shaders see the
@@ -288,7 +289,7 @@ interface Sounding {
   oneShot: boolean;
 }
 
-interface SourceState {
+interface SourceState extends SmoothSignalState {
   notes: Sounding[];
   hit: number;
   vel: number;
@@ -298,25 +299,10 @@ interface SourceState {
   count: number;
   lastOn: number;
   presence: number;
-  /** The envelope eased: a soft rise and a long, smooth fall. */
-  swell: number;
-  /** Hits as an impulse that decays; `pulse` follows it with a soft attack. */
-  kick: number;
-  pulse: number;
-  /** A clock that runs faster as the sound swells and surges, never jumping. */
-  flow: number;
-  /** Hits counted without wrapping, and a spring easing toward them. */
-  hits: number;
-  morph: number;
-  morphVel: number;
-  /** The envelope averaged over ~0.3 s: how loud the part is playing now, steady through a beat. */
-  att: number;
-  /** `att` averaged over a few seconds: what "normal" is for this sound right now. */
-  usual: number;
 }
 
 function freshState(): SourceState {
-  return { notes: [], hit: 0, vel: 0, pitch: 0, glide: 0, phase: 0, count: 0, lastOn: -Infinity, presence: 0, swell: 0, kick: 0, pulse: 0, flow: 0, hits: 0, morph: 0, morphVel: 0, att: 0, usual: 0 };
+  return { notes: [], hit: 0, vel: 0, pitch: 0, glide: 0, phase: 0, count: 0, lastOn: -Infinity, presence: 0, ...freshSmoothSignals() };
 }
 
 /** One note's envelope at `time`. */
@@ -533,49 +519,10 @@ export class VoiceSignals {
  *    sits near 1 whatever the track's loudness: above 1 when the part
  *    rises above its usual level, below when it falls back. Use it to scale
  *    motion rates, e.g. zoom + k * (level - 1).
+ * The maths is shared with Music motion, in ../audio/musicMotion.ts.
  */
-const SWELL_RISE = 0.06;
-const SWELL_FALL = 0.45;
-const KICK_DECAY = 0.45;
-const PULSE_RISE = 0.035;
-const MORPH_OMEGA = 7;
-const ATT_SECONDS = 0.3;
-const USUAL_SECONDS = 4;
-/** A floor so silence reads as "quiet" (below 1), not as a ratio of two zeros. */
-const LEVEL_FLOOR = 0.04;
-
 function levelOf(state: SourceState): number {
-  return Math.min(3, (state.att + LEVEL_FLOOR) / (state.usual + LEVEL_FLOOR));
-}
-
-function surge(state: SourceState, velocity: number): void {
-  const v = Math.max(0, Math.min(1, velocity));
-  state.kick = Math.min(1.25, state.kick + v * (1 - 0.5 * Math.min(1, state.kick)));
-  state.hits += 1;
-}
-
-function smoothSignals(state: SourceState, env: number, dt: number): void {
-  const k = (tau: number) => 1 - Math.exp(-dt / tau);
-  state.swell += (env - state.swell) * k(env > state.swell ? SWELL_RISE : SWELL_FALL);
-  state.kick *= Math.exp(-dt / KICK_DECAY);
-  state.pulse += (Math.min(1, state.kick) - state.pulse) * k(PULSE_RISE);
-  state.flow = (state.flow + dt * (0.25 + 1.4 * state.swell + 0.9 * state.pulse)) % PHASE_WRAP;
-  state.att += (env - state.att) * k(ATT_SECONDS);
-  state.usual += (state.att - state.usual) * k(USUAL_SECONDS);
-  // Critically damped spring toward the hit count, in small steps so long frames stay stable.
-  let left = dt;
-  while (left > 0) {
-    const h = Math.min(left, 1 / 120);
-    const accel = MORPH_OMEGA * MORPH_OMEGA * (state.hits - state.morph) - 2 * MORPH_OMEGA * state.morphVel;
-    state.morphVel += accel * h;
-    state.morph += state.morphVel * h;
-    left -= h;
-  }
-  // Keep the pair small without moving the gap between them.
-  if (state.hits > 1e6) {
-    state.hits -= 1e6;
-    state.morph -= 1e6;
-  }
+  return signalLevel(state);
 }
 
 function fract(x: number): number {

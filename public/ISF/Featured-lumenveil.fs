@@ -23,11 +23,61 @@
         { "NAME": "background",    "TYPE": "float", "DEFAULT": 0.04,  "MIN": 0.0,   "MAX": 0.50,  "LABEL": "Background" },
         { "NAME": "vignette",      "TYPE": "float", "DEFAULT": 0.30,  "MIN": 0.0,   "MAX": 1.5,   "LABEL": "Vignette" },
         { "NAME": "contrast",      "TYPE": "float", "DEFAULT": 1.10,  "MIN": 0.5,   "MAX": 2.0,   "LABEL": "Contrast" },
-        { "NAME": "grain",         "TYPE": "float", "DEFAULT": 0.04,  "MIN": 0.0,   "MAX": 0.30,  "LABEL": "Film Grain" }
+        { "NAME": "grain",         "TYPE": "float", "DEFAULT": 0.04,  "MIN": 0.0,   "MAX": 0.30,  "LABEL": "Film Grain" },
+        { "NAME": "mmFlow",  "TYPE": "float", "DEFAULT": -1, "MIN": -1, "MAX": 3600, "LABEL": "Music flow" },
+        { "NAME": "mmSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1, "LABEL": "Music swell" },
+        { "NAME": "mmPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1, "LABEL": "Music pulse" },
+        { "NAME": "mmMorph", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000, "LABEL": "Music morph" }
+    ],
+    "PASSES": [
+        { "TARGET": "mmEase", "PERSISTENT": true, "FLOAT": true, "WIDTH": 2, "HEIGHT": 1 },
+        {}
     ]
 }*/
 
 precision highp float;
+
+// Made for Music motion. mmFlow >= 0 means it is on (-1 when off: the shader
+// runs at its normal speed and looks as it always did). mmSwell, mmPulse and
+// mmMorph arrive a few dozen times a second; the mmEase pass (2x1, kept between
+// frames) eases them every frame drawn, so nothing steps.
+//   left texel:  x pulse (a hit, ~60 ms), y swell (~0.25 s), z morph (the hit
+//                count, gliding), w slow pulse (~0.35 s)
+//   right texel: x last TIME, y this frame's step, z the music clock
+// The music clock is the shader's time: slow in quiet parts, quicker as the
+// music swells, surging on each hit. It always moves forward, never jumps.
+const float MM_REST = 0.25;    // clock speed with the music quiet
+const float MM_BY_SWELL = 1.1; // added at full swell
+const float MM_BY_HIT = 0.4;   // added at the top of a hit
+
+vec4 mmE;    // eased pulse, swell, morph, slow pulse (set at the top of main)
+float mmT;   // the music clock
+
+float mmTime() { return mmT; }
+
+void mmEaseStep() {
+    vec4 tk = IMG_NORM_PIXEL(mmEase, vec2(0.75, 0.5));
+    vec4 e = IMG_NORM_PIXEL(mmEase, vec2(0.25, 0.5));
+    bool fresh = tk.x <= 0.0 && tk.z <= 0.0;
+    float dt = fresh ? 0.0 : clamp(TIME - tk.x, 0.0, 0.1);
+    bool on = mmFlow >= 0.0;
+    if (gl_FragCoord.x > 1.0) {
+        float rate = on ? MM_REST + MM_BY_SWELL * e.y + MM_BY_HIT * e.x : 1.0;
+        gl_FragColor = vec4(TIME, dt, fresh ? TIME : tk.z + dt * rate, 0.0);
+        return;
+    }
+    if (fresh || abs(mmMorph - e.z) > 8.0) e.z = mmMorph;
+    e.x += (mmPulse - e.x) * (1.0 - exp(-dt / 0.06));
+    e.y += (mmSwell - e.y) * (1.0 - exp(-dt / 0.25));
+    e.z += (mmMorph - e.z) * (1.0 - exp(-dt / 0.1));
+    e.w += (mmPulse - e.w) * (1.0 - exp(-dt / 0.35));
+    gl_FragColor = e;
+}
+
+void mmBegin() {
+    mmE = IMG_NORM_PIXEL(mmEase, vec2(0.25, 0.5));
+    mmT = IMG_NORM_PIXEL(mmEase, vec2(0.75, 0.5)).z;
+}
 
 // ── helpers ─────────────────────────────────────────────────────────
 vec3 hsv2rgb(vec3 c) {
@@ -71,6 +121,8 @@ vec3 grad(float y) {
 }
 
 void main() {
+    if (PASSINDEX == 0) { mmEaseStep(); return; }
+    mmBegin();
     vec2 R = RENDERSIZE;
     float m = min(R.x, R.y);
 
@@ -84,36 +136,42 @@ void main() {
     // Breathing — two incommensurate sines so the pulse never lines up
     // exactly with itself: the frame keeps "breathing" without a loop.
     float breath = 1.0
-        + breatheAmount * sin(TIME * breatheSpeed)
-        + breatheAmount * 0.4 * sin(TIME * breatheSpeed * 0.37 + 1.7);
+        + breatheAmount * sin(mmTime() * breatheSpeed)
+        + breatheAmount * 0.4 * sin(mmTime() * breatheSpeed * 0.37 + 1.7)
+        + 0.03 * mmE.y;   // opens a little with the swell (more moves every ring at once)
 
     vec2 halfSize = vec2(boxWidth, boxHeight) * breath;
     float rad = clamp(cornerRadius * breath, 0.0, min(halfSize.x, halfSize.y) - 0.001);
 
     // Slow lissajous drift (irrational-ish freq ratio -> non-repeating).
-    vec2 drift = driftAmount * vec2(sin(TIME * 0.13), cos(TIME * 0.11 + 0.5));
+    vec2 drift = driftAmount * vec2(sin(mmTime() * 0.13), cos(mmTime() * 0.11 + 0.5));
     vec2 p = uv - drift;
 
     // Optional organic domain warp.
     if (warp > 0.0) {
-        p += warp * 0.08 * vec2(sin(p.y * 3.1 + TIME * 0.6),
-                                sin(p.x * 2.7 - TIME * 0.5));
+        p += warp * 0.08 * vec2(sin(p.y * 3.1 + mmTime() * 0.6),
+                                sin(p.x * 2.7 - mmTime() * 0.5));
     }
 
     // Nested rounded-rect outlines = level sets of the SDF, flowing inward.
     float sd = sdRoundedBox(p, halfSize, rad);
-    float rings = sd * ringDensity - TIME * speed;
+    float rings = sd * ringDensity - mmTime() * speed;
     float f = fract(rings);
     float dline = min(f, 1.0 - f);                 // 0 at a ring, 0.5 between
     float core = 1.0 - smoothstep(0.0, max(strokeWidth, 0.001), dline);
     float glowv = exp(-dline * glowFalloff) * glow;
-    float lum = core + glowv;
+    // Each hit sends a bright ring out from the box (the hit count glides up by
+    // one per hit, so its fraction carries the ring outward and fades it).
+    float climb = fract(mmE.z);
+    float hitRing = exp(-pow((sd - climb * 0.9) * 16.0, 2.0)) * sin(3.14159265 * climb);
+    float lum = (core + glowv) * (1.0 + 0.3 * mmE.y + 0.5 * mmE.x) + 0.7 * hitRing;
 
     // Colour from the vertical gradient, with a slow continuous hue drift.
     float gpos = clamp(vy + hueShift, 0.0, 1.0);
     vec3 base = grad(gpos);
     vec3 hsv = rgb2hsv(base);
-    hsv.x = fract(hsv.x + TIME * hueDrift);
+    // The hue walks a step with every hit.
+    hsv.x = fract(hsv.x + mmTime() * hueDrift + 0.02 * mmE.z);
     hsv.y *= saturation;
     vec3 col = hsv2rgb(hsv);
 
