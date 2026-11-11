@@ -26,13 +26,17 @@
       data-vj-takeover-return
     >LIVE {count} <span aria-hidden="true">↩</span></button>{/if}
     <span class="su-dot" class:paused={!playing}></span>
-    {#if playing}Show playing underneath{:else}Show paused underneath{/if}
+    <span class="su-text">{#if playing}Show playing underneath{:else}Show paused underneath{/if}</span>
   </div>
 {/if}
 
 <style>
   .su {
-    display: inline-flex;
+    /* A grid so that in a crowded header only the words give way (ellipsis,
+       the tooltip has them): its narrowest is the Return and the dot, and
+       the controls beside the banner keep their room. */
+    display: inline-grid;
+    grid-auto-flow: column;
     align-items: center;
     gap: 6px;
     height: 22px;
@@ -44,7 +48,9 @@
     border-radius: 11px;
     background: rgba(255, 140, 40, 0.08);
     white-space: nowrap;
+    flex: 0 1 auto;
   }
+  .su-text { overflow: hidden; text-overflow: ellipsis; }
   .su-dot { width: 7px; height: 7px; border-radius: 50%; background: #ff8c28; animation: su-pulse 1.1s ease-in-out infinite; }
   .su-dot.paused { animation: none; opacity: 0.5; }
   @keyframes su-pulse { 50% { opacity: 0.3; } }
