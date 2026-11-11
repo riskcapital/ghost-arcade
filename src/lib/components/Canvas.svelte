@@ -37,6 +37,7 @@
   import { evaluateStageEffectOutputForScreen, chaseOrderIndices, stageEffectsRuntime, resolveStageEffectForLayer } from '../stores/stageEffects';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
   import { controlLineFrame } from '../timeline/lines/lineRuntime';
+  import { timelineScreenFx, timelineScreenFxFor, timelineStageFxFrame } from '../timeline/stagefx/stageFxState';
   import { createLayer, VJ_MIX_SOURCE_INDEX, type Layer, type Effect, type MappingCompositionState } from '../types';
   import * as THREE from 'three';
   import { createISFShader, updateISFShader, setISFInputValue, setISFInputTexture, type ISFShaderInstance } from '../isf/renderer';
@@ -763,6 +764,17 @@
     renderLayers: Layer[],
     nowMs: number,
   ): void {
+    // The Timeline's Screen FX row drives: its values (show time, pure), and
+    // the project's own Screen FX and their automation cycle wait.
+    if (timelineScreenFx()) {
+      for (const layer of getMappingCompositionStageLayers(renderLayers)) {
+        const out = timelineScreenFxFor(layer.id);
+        if (!out) continue;
+        applyLayerOpacityModulation(layer, out.brightness);
+        if (out.tint) layer._stageTint = out.tint;
+      }
+      return;
+    }
     if (!mappingComposition?.enabled || mappingComposition.stageEffects.length === 0) return;
     advanceMappingCompositionAutomation(mappingComposition, nowMs);
     const live = mappingComposition.stageEffects.find((effect) => effect.id === mappingComposition.activeStageEffectId);
@@ -2294,8 +2306,16 @@
       const withStageFxOpacity = (list: Layer[]): Layer[] => {
         if (stageFxNativeOpacity.size === 0 && stageFxNativeTint.size === 0) return list;
         return list.map((layer) => {
-          const multiplier = stageFxNativeOpacity.get(layer.id);
-          const tint = stageFxNativeTint.get(layer.id);
+          let multiplier = stageFxNativeOpacity.get(layer.id);
+          let tint = stageFxNativeTint.get(layer.id);
+          if (multiplier === undefined && !tint && timelineScreenFx()) {
+            // The Timeline's copies of a piece (added layers, where copies) follow it.
+            const out = timelineScreenFxFor(layer.id);
+            if (out) {
+              if (out.brightness < 1) multiplier = Math.max(0, out.brightness);
+              if (out.tint) tint = out.tint;
+            }
+          }
           if (multiplier === undefined && !tint) return layer;
           const next = multiplier === undefined ? { ...layer } : { ...layer, opacity: layer.opacity * multiplier };
           if (tint) next._stageTint = tint;
@@ -2526,11 +2546,14 @@
       let stageFxNativeRaf: number | null = null;
       const stageFxNativeTick = () => {
         stageFxNativeRaf = requestAnimationFrame(stageFxNativeTick);
+        refreshStageFxNative();
+      };
+      const refreshStageFxNative = () => {
         const stageRt = get(stageEffectsRuntime);
         const p = get(project);
         const mc = p.mappingComposition;
         const surfaceFx = stageRt.sliceOutputs.size > 0;
-        const mappingFx = !!(mc?.enabled && (mc.stageEffects?.length ?? 0) > 0);
+        const mappingFx = !!timelineScreenFx() || !!(mc?.enabled && (mc.stageEffects?.length ?? 0) > 0);
         if (!surfaceFx && !mappingFx) {
           // Put the layers back at their own opacity once, when FX stop.
           if (stageFxNativeOpacity.size > 0 || stageFxNativeTint.size > 0) {
@@ -2598,6 +2621,12 @@
       const nativeSequencerUnsub = layerSequencer.subscribe(() => scheduleNativeLayersSync());
       const nativeKeyframeUnsub = keyframeTimeline.subscribe(() => scheduleNativeLayersSync());
       const nativeLineUnsub = controlLineFrame.subscribe(() => scheduleNativeLayersSync());
+      // The Timeline's Screen FX / Effects rows: apply this frame's values now
+      // (an offline render publishes once per virtual frame, between RAFs).
+      const nativeStageFxRowsUnsub = timelineStageFxFrame.subscribe(() => {
+        refreshStageFxNative();
+        scheduleNativeLayersSync();
+      });
       // Composition crossfade: `progress` moves every frame of the window and
       // it IS the layer opacities, so every publish has to reach the core.
       // The store only emits on a real change, so a settled scene costs
@@ -2645,6 +2674,7 @@
         nativeSequencerUnsub();
         nativeKeyframeUnsub();
         nativeLineUnsub();
+        nativeStageFxRowsUnsub();
         nativeCompositionXfadeUnsub();
         nativePerformerWorldUnsub();
         nativeShowTrackUnsub();

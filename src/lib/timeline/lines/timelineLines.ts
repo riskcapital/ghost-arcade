@@ -30,6 +30,7 @@ import { fitLineRanges } from './laneConversion';
 import { generateUUID } from '../../utils/uuid';
 import { pointsValueAt, SOUND_ROW_TRACK_PREFIX } from './lineEvaluator';
 import { installWhereRuntime } from '../where/whereRuntime';
+import { installStageFxRuntime } from '../stagefx/stageFxRuntime';
 import { soundRowsFor } from '../sound/soundModel';
 import { readSoundRowParam, soundRowParams } from '../sound/soundParams';
 
@@ -91,8 +92,10 @@ export function timelineRegistrySource(): RegistrySource {
     },
     hasLookBlock: (clipId) => (clipId === ALL_LOOKS_ID ? s.lookClips.length > 0 : s.lookClips.some((c) => c.id === clipId)),
     ledBlock: (clipId) => s.ledClips.find((c) => c.id === clipId) ?? null,
+    stageBlock: (clipId) => s.stageClips.find((c) => c.id === clipId) ?? null,
     whereOf: (clipId) => s.lookClips.find((c) => c.id === clipId)?.where
       ?? s.ledClips.find((c) => c.id === clipId)?.where
+      ?? s.stageClips.find((c) => c.id === clipId)?.where
       ?? findClip(s.layerTracks, clipId)?.clip.where
       ?? null,
     soundParams: (rowId) => {
@@ -285,6 +288,8 @@ export function installTimelineLines(): () => void {
   setShowLineTicker(onTick);
   // Where lines and LED rows evaluate right after the lines, on the same tick.
   const stopWhere = installWhereRuntime();
+  // Screen FX and Effects rows, on the same evaluation.
+  const stopStageFx = installStageFxRuntime();
   if (get(showTimeline).doc === 'timeline') startSession();
   const offDoc = onShowDocChange((doc) => {
     if (doc === 'timeline') startSession();
@@ -302,6 +307,7 @@ export function installTimelineLines(): () => void {
   let lastSound = get(showTimeline).sound;
   let lastTracks = get(showTimeline).layerTracks;
   let lastLooks = get(showTimeline).lookClips;
+  let lastStage = get(showTimeline).stageClips;
   const unsub = showTimeline.subscribe((s) => {
     if (!session || s.doc !== 'timeline') return;
     if (s.lines !== lastLines) {
@@ -319,9 +325,10 @@ export function installTimelineLines(): () => void {
       lastSound = s.sound;
       void refreshSongs();
     }
-    if (s.layerTracks !== lastTracks || s.lookClips !== lastLooks) {
+    if (s.layerTracks !== lastTracks || s.lookClips !== lastLooks || s.stageClips !== lastStage) {
       lastTracks = s.layerTracks;
       lastLooks = s.lookClips;
+      lastStage = s.stageClips;
       // A block's own values moved (its panel): record it when armed.
       session.observe();
     }
@@ -332,6 +339,7 @@ export function installTimelineLines(): () => void {
     offReset();
     setShowLineTicker(null);
     stopWhere();
+    stopStageFx();
     stopSession();
   };
 }

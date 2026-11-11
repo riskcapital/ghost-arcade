@@ -234,7 +234,7 @@ describe('GO, Live and export', () => {
   it('sections save and reopen with the Timeline (version 8), and come back with an undo arrangement', () => {
     timeline([sec('a', 0, 4, { action: 'vamp', exit: 'bar' }), sec('b', 4, 8, { action: 'live', livePieces: 'all', liveSource: { kind: 'vjRow', deck: 'B', row: 2 } })]);
     const saved = showTimeline.serialize();
-    expect(saved.version).toBe(8);
+    expect(saved.version).toBe(9);
     expect(saved.timeline?.sections?.map((s) => s.id)).toEqual(['a', 'b']);
     const before = showTimeline.exportArrangement();
     showTimeline.replaceTimelineParts({ sections: [], lookClips: [{ id: 'l', lookId: 'neon-pulse', paletteId: 'neon', startTime: 0, duration: 4, scope: 'all', fadeIn: 0, fadeOut: 0 }] });

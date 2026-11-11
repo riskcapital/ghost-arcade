@@ -11,6 +11,8 @@
  *   target { scope: 'block', id }  a Timeline block (clip id): its media's own
  *                                  values (shader:, sketch:, video:rate), only
  *                                  while that block plays
+ *                                  ; a block on the Screen FX / Effects rows:
+ *                                  its effect's settings (sfx:, fxb:)
  *   target { scope: 'look', id }   a look block on the Looks row (clip id):
  *                                  look:intensity / react / hue / chase / speed
  *
@@ -27,6 +29,8 @@ import { isLayerExtraKey, readLayerExtra, type ParamKind } from '../../keyframes
 import { discoverLedParams, discoverStageParams, readStageLedParam } from './stageLedParams';
 import type { WhereSpec } from '../where/whereModel';
 import type { TimelineLedClip } from '../leds/ledClips';
+import type { TimelineStageClip } from '../stagefx/stageClips';
+import { readStageBlockParam, stageBlockParams } from '../stagefx/stageFxParams';
 import { getWLEDPatternDefinition } from '../../wled/effects';
 
 export type { ParamKind } from '../../keyframes/layerParamKeys';
@@ -66,6 +70,8 @@ export interface RegistrySource {
   hasLookBlock?: (clipId: string) => boolean;
   /** A block on an LED row (Timeline). */
   ledBlock?: (clipId: string) => TimelineLedClip | null;
+  /** A block on the Screen FX or Effects row (Timeline). */
+  stageBlock?: (clipId: string) => TimelineStageClip | null;
   /** A block's or look block's where line, when it has one. */
   whereOf?: (clipId: string) => WhereSpec | null;
   /** A Timeline sound row's parameters, and its stored value for one. */
@@ -202,6 +208,8 @@ export function paramsFor(source: RegistrySource, target: ParamTarget): ParamEnt
     const where = source.whereOf?.(target.id);
     const led = source.ledBlock?.(target.id);
     if (led) return where ? [...ledBlockParams(led), ...whereParams(where)] : ledBlockParams(led);
+    const stage = source.stageBlock?.(target.id);
+    if (stage) return where ? [...stageBlockParams(stage), ...whereParams(where)] : stageBlockParams(stage);
     const layer = source.blockLayer?.(target.id);
     const own = layer ? layerParams(layer).filter((p) => isBlockKey(p.key)) : [];
     return where ? [...own, ...whereParams(where)] : own;
@@ -254,6 +262,8 @@ export function readParam(source: RegistrySource, target: ParamTarget, key: stri
     return layer ? readLayerParam(layer, key) : undefined;
   }
   if (target.scope === 'block') {
+    const stage = source.stageBlock?.(target.id);
+    if (stage) return readStageBlockParam(stage, key);
     const layer = source.blockLayer?.(target.id);
     return layer ? readLayerParam(layer, key) : undefined;
   }

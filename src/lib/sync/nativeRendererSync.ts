@@ -1,5 +1,6 @@
 import { applyParamOverrides, type ParamOverrideSet } from '../keyframes/applyParamOverrides';
 import { currentLineFrame } from '../timeline/lines/lineRuntime';
+import { timelineCompositionEffects } from '../timeline/stagefx/stageFxState';
 import { applyLookLines, lineBlockValues, lineLayerValues, wearsLookWithLines } from '../timeline/lines/lineTargets';
 import { IsfAnchorResend } from './isfAnchorResend';
 
@@ -8563,9 +8564,12 @@ export class NativeRendererSync {
     // (ASCII, blur, kaleidoscope), which did not come through on the mix
     // carrier. Mapping FX belong to Mapping and to the mapped STAGE output,
     // where they run first.
-    const mappingEffects = mappingComposition?.enabled
+    const projectMappingEffects = mappingComposition?.enabled
       ? applyStageOverrides(mappingComposition.effects ?? [], currentLineFrame()?.stage)
       : [];
+    // The Timeline's Effects row: its blocks' effects run after the project's.
+    const timelineEffects = timelineCompositionEffects();
+    const mappingEffects = timelineEffects.length ? [...projectMappingEffects, ...timelineEffects] : projectMappingEffects;
     const outputEffects = vjState.isLive
       ? [...(vjState.stageMode ? mappingEffects : []), ...(vjState.compositionEffects ?? [])]
       : mappingEffects;

@@ -238,7 +238,7 @@ describe('where lines through the Timeline', () => {
     showTimeline.addLedClip('led:strip', 2, { kind: 'chase', color: '#00ff00', where: { motion: { kind: 'random', every: 'bar', seed: 4 } } as never });
     showTimeline.setWhereOrders([{ id: 'n1', name: 'Facade', order: 'hand', hand: ['Left', 'Right'] }]);
     const saved = JSON.parse(JSON.stringify(showTimeline.serialize()));
-    expect(saved.version).toBe(8);
+    expect(saved.version).toBe(9);
     expect(saved.timeline.ledClips).toHaveLength(1);
     expect(saved.timeline.ledClips[0].where.motion).toEqual({ kind: 'random', every: 'bar', seed: 4 });
     expect(saved.timeline.whereOrders[0].name).toBe('Facade');

@@ -22,10 +22,17 @@
  *   Stage      a line on the first Stage FX's mix (or the LED controllers'
  *              brightness when there is no Stage FX) following the energy.
  *   LEDs       Follow the stage on every LED controller row.
+ *   Screen FX  (one or more pieces, an empty Screen FX row) a Screen FX
+ *              block per section, timed to the bar: beat pulse on drops,
+ *              a linear sweep on builds, breathing in intros, breakdowns
+ *              and outros, a travelling sine wave in verses, a chase in
+ *              bridges.
  */
 import type { ShowLookClip, ShowTempoMap } from '../../types';
 import type { ControlLine, LinePoint } from '../lines/lineModel';
 import type { TimelineLedClip } from '../leds/ledClips';
+import type { TimelineStageClip } from '../stagefx/stageClips';
+import type { StageEffect, StageEffectType } from '../../types';
 import type { WhereMotion, WhereSpec } from '../where/whereModel';
 import { SECTION_KIND_COLORS, type SectionKind, type TimelineSection } from '../sections/sectionModel';
 import { ALL_LOOKS_ID } from '../lines/paramRegistry';
@@ -95,6 +102,7 @@ export interface ScoreExisting {
   lookClips: readonly ShowLookClip[];
   lines: readonly ControlLine[];
   ledClips: readonly TimelineLedClip[];
+  stageClips?: readonly TimelineStageClip[];
 }
 
 export interface ScoreDraft {
@@ -102,6 +110,8 @@ export interface ScoreDraft {
   lookClips: ShowLookClip[];
   lines: ControlLine[];
   ledClips: TimelineLedClip[];
+  /** Screen FX row blocks. */
+  stageClips: TimelineStageClip[];
   /** What it adds, one line each (the confirm lists these). */
   adds: string[];
   /** What it leaves alone and why. */
@@ -165,6 +175,27 @@ function intensityAt(kind: SectionKind, energy: number): [number, number] {
 }
 
 const round = (x: number) => Math.round(x * 1e6) / 1e6;
+
+/** The Screen FX for a section, timed to its bar (`bar` seconds). */
+export function screenFxFor(kind: SectionKind, energy: number, bar: number, id: string): StageEffect {
+  const fx = (type: StageEffectType, params: Record<string, number>, opacity = 0.85): StageEffect => ({ id, type, enabled: true, opacity, params });
+  const b = Math.max(0.2, bar);
+  switch (kind) {
+    // A flash on every beat, decaying over a third of it.
+    case 'drop': return fx('beat-pulse', { sensitivity: 1.4, decay: round(Math.max(0.08, (b / 4) * 0.6)), threshold: 0.08 }, 1);
+    // One pass across the stage per bar.
+    case 'build': return fx('linear-sweep', { angle: 0, speed: round(2 / b), bandWidth: 0.35, tail: 0.4 }, 0.9);
+    case 'intro': return fx('breathing', { speed: round(1 / (4 * b)), depth: 0.45, heartbeat: 0 }, 0.8);
+    case 'outro': return fx('breathing', { speed: round(1 / (4 * b)), depth: 0.6, heartbeat: 0 }, 0.8);
+    case 'breakdown': return fx('breathing', { speed: round(1 / (2 * b)), depth: 0.55, heartbeat: 0.3 }, 0.8);
+    case 'bridge': return fx('chase', { speed: round(1 / (2 * b)), width: 0.3 }, 0.75);
+    default: return fx('sine-wave', { speed: round(1 / (2 * b)), phaseSpread: 1.6, depth: round(0.35 + 0.3 * energy) }, 0.75);
+  }
+}
+
+export const SCREEN_FX_NAMES: Partial<Record<StageEffectType, string>> = {
+  'beat-pulse': 'beat pulse', 'linear-sweep': 'sweep', breathing: 'breathing', chase: 'chase', 'sine-wave': 'sine wave',
+};
 
 /**
  * The draft for `structure` on a Timeline that already has `existing`.
@@ -329,12 +360,36 @@ export function draftScore(
   }
   if (ledClips.length) adds.push(`Follow the stage on ${ledClips.length} LED ${ledClips.length === 1 ? 'row' : 'rows'}`);
 
-  return { sections, lookClips, lines, ledClips, adds, skips, plan: planOut };
+  // ── Screen FX ──────────────────────────────────────────────────────────
+  const stageClips: TimelineStageClip[] = [];
+  const screenFxBusy = (existing.stageClips ?? []).some((c) => c.row === 'screenfx' && overlaps({ start: c.startTime, end: c.startTime + c.duration }, songStart, songEnd));
+  if (!stage.pieces.length) {
+    skips.push('Screen FX row: no pieces on the stage to drive.');
+  } else if (screenFxBusy) {
+    skips.push('Screen FX row: it has blocks under the song already.');
+  } else {
+    const bar = structure.bars.length > 1 ? structure.bars[1] - structure.bars[0] : 2;
+    const kinds = new Set<string>();
+    for (const p of plan) {
+      if (p.end - p.start < 0.1) continue;
+      const screenFx = screenFxFor(p.kind, p.energy, bar, ids.next('screenfx'));
+      kinds.add(SCREEN_FX_NAMES[screenFx.type] ?? screenFx.type);
+      stageClips.push({
+        id: ids.next('stage'), row: 'screenfx', startTime: round(p.start), duration: round(p.end - p.start),
+        fadeIn: p.kind === 'intro' ? round(Math.min(bar, (p.end - p.start) / 2)) : 0,
+        fadeOut: p.kind === 'outro' ? round(Math.min(2 * bar, (p.end - p.start) / 2)) : 0,
+        screenFx,
+      });
+    }
+    if (stageClips.length) adds.push(`${stageClips.length} Screen FX blocks, one per section: ${[...kinds].join(', ')}`);
+  }
+
+  return { sections, lookClips, lines, ledClips, stageClips, adds, skips, plan: planOut };
 }
 
 const MOTION_NAMES: Record<string, string> = { sweep: 'sweep', burst: 'burst', pingpong: 'ping-pong', random: 'random', kick: 'kick', drawn: 'drawn' };
 
 /** Nothing to add. */
-export function draftIsEmpty(d: Pick<ScoreDraft, 'sections' | 'lookClips' | 'lines' | 'ledClips'>): boolean {
-  return !d.sections.length && !d.lookClips.length && !d.lines.length && !d.ledClips.length;
+export function draftIsEmpty(d: Pick<ScoreDraft, 'sections' | 'lookClips' | 'lines' | 'ledClips'> & { stageClips?: readonly TimelineStageClip[] }): boolean {
+  return !d.sections.length && !d.lookClips.length && !d.lines.length && !d.ledClips.length && !(d.stageClips?.length);
 }
