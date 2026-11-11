@@ -47,7 +47,7 @@
   }
   const range = $derived(keyboardRange(size ?? s.keyboardSize, s.octave));
 
-  const FAMILIES: ToneFamily[] = ['bass', 'pad', 'lead'];
+  const FAMILIES: ToneFamily[] = ['bass', 'lead', 'arp', 'pad'];
 
   /** Other instruments than the synth and keys, which list their own sounds. */
   const OTHERS = PLAYABLE_INSTRUMENTS.filter((id) => id !== 'synth' && id !== 'keys');

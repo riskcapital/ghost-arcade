@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { DrumEngine, Ladder, ToneEngine } from './toneDsp';
 import { TONES } from './tones';
 import { DRUM_KITS } from './kits';
+import { EXTRA_SOUNDS, MACHINE_KITS } from '../drumMachine/machineKits';
 
 const SR = 48000;
 const BLOCK = 128;
@@ -64,6 +65,34 @@ describe('tone engine', () => {
     expect(render(e, 0.3).finite).toBe(true);
   });
 
+  it('arpeggiates a held chord on the tempo grid and stops when let go', () => {
+    const tone = TONES.find((t) => t.id === 'arp.pluck-up')!;
+    const e = new ToneEngine(SR);
+    e.message({ t: 'tempo', bpm: 120 }, 0);
+    e.message({ t: 'patch', patch: { ...tone.patch, fx: undefined } }, 0);
+    for (const note of [60, 64, 67]) e.message({ t: 'on', note, vel: 0.9, at: 0 }, 0);
+    for (const note of [60, 64, 67]) e.message({ t: 'off', note, at: 1 }, 0);
+    // Sixteenths at 120 are 0.125 s apart: count the attacks in the first second.
+    const L = new Float32Array(BLOCK);
+    const R = new Float32Array(BLOCK);
+    const blockLevel: number[] = [];
+    for (let b = 0; b < Math.ceil((2 * SR) / BLOCK); b++) {
+      L.fill(0);
+      R.fill(0);
+      e.process(L, R, BLOCK, (b * BLOCK) / SR);
+      blockLevel.push(Math.max(...L.map(Math.abs)));
+    }
+    const perStep = Math.round((0.125 * SR) / BLOCK);
+    let attacks = 0;
+    for (let k = 0; k < 8; k++) {
+      const at = Math.round((k * 0.125 * SR) / BLOCK);
+      if (blockLevel[at + 1] > 0.05 && blockLevel[at + 1] > blockLevel[Math.max(0, at - 2)]) attacks++;
+    }
+    expect(perStep).toBeGreaterThan(10);
+    expect(attacks).toBeGreaterThanOrEqual(7);
+    expect(e.busy).toBe(false);
+  });
+
   it('keeps the ladder stable at full resonance', () => {
     const f = new Ladder();
     f.set(2000, 1, SR);
@@ -98,4 +127,34 @@ describe('drum kits', () => {
     render(e, 0.35);
     expect(e.busy).toBe(false);
   });
+});
+
+describe('drum machine kits', () => {
+  const tweak = { tune: 0.5, decay: 0.5, tone: 0.5, drive: 0.5, level: 1 };
+  it('every library sound sounds, and none clips', () => {
+    const kit = { id: 'lib', name: 'Library', blurb: '', sounds: EXTRA_SOUNDS.map((p) => p.sound), gain: 1 };
+    for (let slot = 0; slot < EXTRA_SOUNDS.length; slot++) {
+      const e = new DrumEngine(SR);
+      e.message({ t: 'kit', kit }, 0);
+      e.message({ t: 'hit', slot, vel: 1, at: 0, tweak }, 0);
+      const { peak, finite } = render(e, 0.8);
+      expect(finite).toBe(true);
+      expect(peak, EXTRA_SOUNDS[slot].name).toBeGreaterThan(0.03);
+      expect(peak, EXTRA_SOUNDS[slot].name).toBeLessThan(1.6);
+    }
+  });
+  for (const mk of MACHINE_KITS) {
+    it(`${mk.name}: every pad sounds, and none clips`, () => {
+      const kit = { id: mk.id, name: mk.name, blurb: mk.blurb, sounds: mk.pads.map((p) => p.sound), fx: mk.fx, gain: mk.gain };
+      for (let slot = 0; slot < mk.pads.length; slot++) {
+        const e = new DrumEngine(SR);
+        e.message({ t: 'kit', kit }, 0);
+        e.message({ t: 'hit', slot, vel: 1, at: 0, tweak }, 0);
+        const { peak, finite } = render(e, 0.6);
+        expect(finite).toBe(true);
+        expect(peak, `${mk.name} ${mk.pads[slot].name}`).toBeGreaterThan(0.03);
+        expect(peak, `${mk.name} ${mk.pads[slot].name}`).toBeLessThan(1.6);
+      }
+    });
+  }
 });

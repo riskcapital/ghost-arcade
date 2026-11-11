@@ -67,6 +67,8 @@ export interface StudioPluginSource {
   musicVoices?: StudioVoice[];
   /** Auto-mix: the visuals taking turns on the bar (studioMix.ts). */
   musicMix?: StudioMix;
+  /** A deck cell's own studio setup (studioCells.ts), kept as it is; null when it has none. */
+  musicSetup?: unknown;
 }
 
 type RGB = [number, number, number];
@@ -77,9 +79,10 @@ export const STUDIO_PALETTES: Record<StudioSet, { ink: RGB; accent: RGB }> = {
   berlin: { ink: [0.94, 0.95, 0.97], accent: [1.0, 0.16, 0.1] },
   dub: { ink: [1.0, 0.72, 0.36], accent: [0.25, 0.9, 0.62] },
   analog: { ink: [0.75, 1.0, 0.92], accent: [1.0, 0.45, 0.12] },
+  machine: { ink: [1.0, 0.93, 0.82], accent: [1.0, 0.5, 0.1] },
 };
 
-const SETS: readonly StudioSet[] = ['bath', 'berlin', 'dub', 'analog'];
+const SETS: readonly StudioSet[] = ['bath', 'berlin', 'dub', 'analog', 'machine'];
 
 function clamp01(value: unknown, fallback: number): number {
   const n = Number(value);
@@ -137,6 +140,7 @@ export function normalizeStudioSource(raw: unknown): Required<StudioPluginSource
     musicSceneId: typeof r.musicSceneId === 'string' ? r.musicSceneId : null,
     musicVoices: voices,
     musicMix: normalizeMix(r.musicMix),
+    musicSetup: r.musicSetup && typeof r.musicSetup === 'object' ? r.musicSetup : null,
   };
 }
 

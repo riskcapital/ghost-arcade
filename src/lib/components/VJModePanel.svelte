@@ -1353,6 +1353,22 @@
   // Copy/paste state
   let clipboardClip: VJClip | null = null;
   let cellContextMenu: { x: number; y: number; layer: number; column: number; bank: VJDeck } | null = null;
+  /** A cell being renamed from its menu: where, and the name being typed. */
+  let cellRename: { x: number; y: number; layer: number; column: number; bank: VJDeck; value: string } | null = null;
+  function startCellRename() {
+    if (!cellContextMenu) return;
+    const clip = deckGrid(cellContextMenu.bank)[cellContextMenu.layer]?.[cellContextMenu.column];
+    if (clip) cellRename = { ...cellContextMenu, value: clip.name };
+    cellContextMenu = null;
+  }
+  function commitCellRename() {
+    if (!cellRename) return;
+    const { layer, column, bank, value } = cellRename;
+    const clip = deckGrid(bank)[layer]?.[column];
+    const name = value.trim();
+    if (clip && name && name !== clip.name) vjClipLauncher.setClip(layer, column, { ...clip, name }, bank);
+    cellRename = null;
+  }
   // Block-tab right-click context menu — gives quick access to "Save Project"
   // (overwrite the .gha file) plus the existing Rename / Duplicate / Delete
   // actions without forcing the user up to the File menu.
@@ -6623,6 +6639,7 @@
           {/if}
           {#if ctxClip}
             <button class="ctx-item" onclick={openClipPreview}>Edit / Preview</button>
+            <button class="ctx-item" onclick={startCellRename}>Rename…</button>
             <button class="ctx-item" onclick={copyClipToClipboard}>Copy</button>
           {/if}
           {#if clipboardClip}
@@ -6635,6 +6652,14 @@
             <div class="ctx-item ctx-disabled">No actions</div>
           {/if}
         </div>
+      {/if}
+
+      {#if cellRename}
+        <div class="ctx-backdrop" onclick={commitCellRename} role="presentation"></div>
+        <form class="ctx-menu cell-rename" style="left: {cellRename.x}px; top: {cellRename.y}px" onsubmit={(e) => { e.preventDefault(); commitCellRename(); }}>
+          <!-- svelte-ignore a11y_autofocus -->
+          <input bind:value={cellRename.value} autofocus aria-label="Cell name" maxlength="60" onkeydown={(e) => { if (e.key === 'Escape') cellRename = null; }} />
+        </form>
       {/if}
 
       <!-- Block tab context menu — Save Project + Rename / Duplicate / Delete -->
@@ -10126,6 +10151,8 @@
     min-width: 100px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
   }
+  .cell-rename { padding: 6px; }
+  .cell-rename input { width: 200px; height: 24px; padding: 0 6px; border: 1px solid var(--ga-line2, rgba(245, 236, 222, 0.13)); border-radius: 4px; background: var(--ga-slot, #060504); color: var(--ga-ink0, #f2ede4); font: inherit; }
   .ctx-item {
     display: block;
     width: 100%;
