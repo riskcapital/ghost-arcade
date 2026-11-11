@@ -91,6 +91,20 @@ const JUMP_BEATS = 0.25;
 const SCENE_CONFIRM_MS = 250;
 /** A device list is asked for at most this often per track (ms). */
 const DEVICE_REQUEST_MS = 2000;
+/** The script protocol with locators by name and a launch quantise per
+ *  scene launch (the Timeline's sections and phrases). */
+export const LIVE_PHRASE_PROTOCOL = 6;
+
+/** What Live did with a set of locators (`abletonBridge.setLocators`). */
+export interface LocatorsResult { added: number; moved: number; kept: number; errors: string[] }
+
+/** Launches a Timeline phrase for a link (registered by the phrase runtime,
+ *  so the bridge never imports the Timeline). */
+export type PhraseLinkLauncher = (sectionId: string, name: string, origin: { scene?: number }) => void;
+let phraseLinkLauncher: PhraseLinkLauncher | null = null;
+export function setPhraseLinkLauncher(launcher: PhraseLinkLauncher | null): void {
+  phraseLinkLauncher = launcher;
+}
 
 export interface ScriptStatus {
   installed: boolean;
@@ -350,6 +364,8 @@ function createAbletonBridge() {
   /** Set-up requests waiting for Live's answer, by id. */
   const setups = new Map<number, (result: SetupResult) => void>();
   let setupId = 0;
+  /** Locator requests waiting for Live's answer, by id. */
+  const locatorRequests = new Map<number, (result: LocatorsResult) => void>();
 
   // High-rate values stay out of the store.
   const paramValues = new Map<string, number>();
@@ -390,11 +406,13 @@ function createAbletonBridge() {
 
   // ── Firing ──────────────────────────────────────────────────────────
 
-  function runAction(action: VisualAction, velocity = 127, hold?: { untilBeat: number; inputId: string }) {
+  function runAction(action: VisualAction, velocity = 127, hold?: { untilBeat: number; inputId: string }, origin: { scene?: number } = {}) {
     if (action.kind === 'column') vjClipLauncher.triggerColumnNow(action.column, action.deck);
     else if (action.kind === 'clip') vjClipLauncher.triggerClipNow(action.layer, action.column, action.deck);
     else if (action.kind === 'snapshot') snapshots.recall(action.slot);
     else if (action.kind === 'stage') loadStage(action);
+    // Live has already waited for its launch quantise: the phrase starts now.
+    else if (action.kind === 'phrase') phraseLinkLauncher?.(action.sectionId, action.name, origin);
     else {
       const value = action.release + (action.value - action.release) * (velocity / 127);
       const inputId = hold?.inputId ?? `ableton:hit:${action.path}`;
@@ -413,12 +431,12 @@ function createAbletonBridge() {
     else project.loadStagePreset(preset.id, { history: false });
   }
 
-  function fire(links: AbletonLink[], label: string) {
+  function fire(links: AbletonLink[], label: string, origin: { scene?: number } = {}) {
     if (studioHosted()) return;
     const { missing } = read();
     const live = links.filter(link => !missing.includes(link.id));
     if (!live.length) return;
-    for (const link of live) runAction(link.action);
+    for (const link of live) runAction(link.action, 127, undefined, origin);
     const now = performance.now();
     update(s => ({
       ...s,
@@ -479,7 +497,7 @@ function createAbletonBridge() {
     if (color) colorValues.set(-1, colorHue(color));
     markPlayed(song => song.kind === 'scenes' && song.sections[0]?.scene === scene);
     studioFeed?.onScene?.(scene, read().scenes[scene]?.name ?? '');
-    fire(linksForScene(read().links, scene), sceneLabel(scene));
+    fire(linksForScene(read().links, scene), sceneLabel(scene), { scene });
   }
 
   /** Resolve scene triggers that cleared: launched if one of the scene's
@@ -1113,6 +1131,19 @@ function createAbletonBridge() {
         }
         break;
       }
+      case 'locators_done': {
+        const done = locatorRequests.get(Number(message.id));
+        if (done) {
+          locatorRequests.delete(Number(message.id));
+          done({
+            added: Number(message.added) || 0,
+            moved: Number(message.moved) || 0,
+            kept: Number(message.kept) || 0,
+            errors: Array.isArray(message.errors) ? message.errors.map(String) : [],
+          });
+        }
+        break;
+      }
       case 'error':
         if (message.what === 'create_score_track') {
           const now = performance.now();
@@ -1235,8 +1266,28 @@ function createAbletonBridge() {
       }
       syncWatch();
     },
-    launchScene(scene: number) {
-      send({ t: 'fire_scene', s: scene });
+    /** Fire a scene. Script protocol 6: `q`, the launch quantise for this
+     *  launch (Live's numbering); an older script uses the set's. */
+    launchScene(scene: number, opts: { q?: number } = {}) {
+      send({ t: 'fire_scene', s: scene, ...opts });
+    },
+
+    /**
+     * Create or move arrangement locators by name (script protocol 6).
+     * Live sets locators only while stopped. Resolves with what Live did,
+     * `null` when it did not answer, or `{ needsUpdate: true }` when the
+     * script in Live is older than protocol 6.
+     */
+    setLocators(items: { name: string; beat: number }[]): Promise<LocatorsResult | { needsUpdate: true } | null> {
+      const s = read();
+      if (!s.connected) return Promise.resolve(null);
+      if (s.protocol < LIVE_PHRASE_PROTOCOL) return Promise.resolve({ needsUpdate: true });
+      const id = ++setupId;
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => { locatorRequests.delete(id); resolve(null); }, 8000);
+        locatorRequests.set(id, (result) => { clearTimeout(timer); resolve(result); });
+        send({ t: 'set_locators', id, items: items.map((x) => ({ name: x.name, beat: Math.max(0, Math.round(x.beat * 1000) / 1000) })) });
+      });
     },
 
     /**

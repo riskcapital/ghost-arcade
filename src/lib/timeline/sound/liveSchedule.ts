@@ -19,6 +19,12 @@
  * - A block ends with stop_track, unless the next block on the row starts
  *   where it ends (that fire takes over the track). Transport stop stops all
  *   clips (`stop_all`).
+ * - A phrase landing on a bar (timeline/phrases): `entryPlan` says what to
+ *   send ahead of the bar for the place the playhead will land on (each
+ *   row's fire inside its own grid step, stops for tracks it leaves); the
+ *   caller sends them on time, `primeEntry` says they went out (so the jump
+ *   does not fire them again), and `setCut` keeps the playing phrase from
+ *   firing or stopping anything past its last bar.
  *
  * Pure apart from its own bookkeeping: time comes in, commands go out.
  */
@@ -157,6 +163,10 @@ export class LiveClipScheduler {
   private lastSeek = Number.NaN;
   /** A jump waiting for the playhead to settle (wall ms it may run at). */
   private settleAt: number | null = null;
+  /** Blocks a phrase landing already fired (see primeEntry). */
+  private primed = new Set<string>();
+  /** The playing phrase ends here (show seconds): nothing past it fires. */
+  private cut: number | null = null;
 
   constructor(private readonly opts: LiveSchedulerOptions) {}
 
@@ -240,6 +250,8 @@ export class LiveClipScheduler {
   /** Where everything should be at `t` after a jump (play, seek, loop wrap). */
   private resync(t: number): void {
     const keepPre = this.preFired;
+    const primed = this.primed;
+    this.primed = new Set();
     this.fired.clear();
     this.stopped.clear();
     this.preFired = new Set();
@@ -257,6 +269,12 @@ export class LiveClipScheduler {
         if (t < b.start - lead) continue; // still to come: the regular pass fires it
         if (b.slot === null) {
           this.fired.add(b.id);
+          continue;
+        }
+        if (primed.has(b.id)) {
+          // A phrase landing fired it ahead of the bar: it is starting now.
+          this.fired.add(b.id);
+          activeTracks.add(row.track);
           continue;
         }
         if (keepPre.has(b.id) && t < b.start + 0.25) {
@@ -282,9 +300,13 @@ export class LiveClipScheduler {
 
   private regular(t: number): void {
     const loopAhead = this.env.loop && (this.env.duration ?? 0) > 0 ? this.env.duration! : 0;
+    const cut = this.cut;
     for (const b of this.blocks) {
       const row = this.rows.get(b.rowId);
       if (!row || row.track === null) continue;
+      // Past the playing phrase's last bar the next phrase owns the tracks.
+      if (cut !== null && b.start >= cut - 1e-3) continue;
+      if (cut !== null && b.end > cut + 1e-3 && this.fired.has(b.id)) continue;
       if (!row.audible) {
         if (this.fired.has(b.id) && !this.stopped.has(b.id) && b.end > t && b.start <= t) {
           this.stopped.add(b.id);
@@ -335,6 +357,14 @@ export class LiveClipScheduler {
     this.lastSeek = seek;
     if (start) {
       this.settleAt = null;
+      this.cut = null;
+      this.resync(t);
+      return;
+    }
+    if (jump && this.primed.size) {
+      // A phrase landing on its bar: its clips are already on their way.
+      this.settleAt = null;
+      this.cut = null;
       this.resync(t);
       return;
     }
@@ -363,8 +393,61 @@ export class LiveClipScheduler {
     this.preFired.clear();
   }
 
+  /**
+   * Landing at show time `to` on a grid step (a phrase on its bar): for each
+   * audible Live row, the fire for the block there (with `pos` when the
+   * block started earlier: protocol 5) and how far ahead of the bar to send
+   * it; and the tracks this Timeline leaves playing that nothing at `to`
+   * plays, with their stop lead.
+   */
+  entryPlan(to: number): { fires: Array<{ blockId: string; track: number; lead: number; cmd: LiveCommand }>; stops: Array<{ track: number; lead: number }> } {
+    const fires: Array<{ blockId: string; track: number; lead: number; cmd: LiveCommand }> = [];
+    const used = new Set<number>();
+    let stopLead = SCRIPT_TICK_SECONDS / 2;
+    for (const row of this.rows.values()) {
+      if (row.track === null || !row.audible) continue;
+      stopLead = Math.max(stopLead, this.stopLeadFor(row, to));
+      const b = this.blocks.find((x) => x.rowId === row.rowId && x.start <= to + 1e-3 && x.end > to + 0.05);
+      if (!b || b.slot === null) continue;
+      const pos = Math.max(0, quarterAt(this.env, to) - quarterAt(this.env, b.start));
+      if (pos > 0.01 && this.env.protocol < LIVE_TIMELINE_PROTOCOL) continue;
+      const { q } = this.quantum(row);
+      const cmd: LiveCommand = { t: 'fire_clip', i: row.track, s: b.slot };
+      if (q !== undefined) cmd.q = q;
+      if (pos > 0.01) cmd.pos = Math.round(pos * 1000) / 1000;
+      fires.push({ blockId: b.id, track: row.track, lead: this.leadFor(row, to), cmd });
+      used.add(row.track);
+    }
+    const stops = [...this.owned].filter((track) => !used.has(track)).map((track) => ({ track, lead: stopLead }));
+    return { fires, stops };
+  }
+
+  /** Send one of entryPlan's commands (the scheduler keeps track of what it owns). */
+  sendEntry(cmd: LiveCommand): void {
+    this.send(cmd);
+  }
+
+  /** Stop a track as part of a landing (unquantised with protocol 5). */
+  stopForEntry(track: number): void {
+    if (this.owned.has(track)) this.stopTrack(track);
+  }
+
+  /** These blocks were fired for a landing: the jump treats them as playing. */
+  primeEntry(blockIds: readonly string[]): void {
+    this.primed = new Set(blockIds);
+    // An empty landing still lands at once (no scrub settle).
+    if (!blockIds.length) this.primed.add('\u0000');
+  }
+
+  /** The playing phrase ends at `at` (show seconds), or null. */
+  setCut(at: number | null): void {
+    this.cut = at;
+  }
+
   /** Forget everything (the document changed hands). */
   reset(): void {
+    this.primed.clear();
+    this.cut = null;
     this.fired.clear();
     this.stopped.clear();
     this.preFired.clear();

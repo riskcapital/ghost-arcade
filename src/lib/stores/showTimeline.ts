@@ -178,6 +178,8 @@ import {
   type SectionEvent,
   type SectionPlayerState,
 } from '../timeline/sections/sectionPlayer';
+import { PHRASE_XFADE_SECONDS, withPhraseEnd } from '../timeline/phrases/phraseModel';
+import { crossfadeLooks, crossfadeTrackFrames } from '../timeline/phrases/phraseCrossfade';
 
 // ─── Tunables ────────────────────────────────────────────────────────────
 
@@ -824,17 +826,34 @@ function publishTrackFrame(s: ShowTimelineState, evalTime: number, force = false
     }
     return;
   }
-  const frame = evaluateShowTracks(tracks, evalTime, {
+  const evalOpts = {
     playing: s.isPlaying,
     seekGeneration,
     soloTrackId: s.soloTrackId,
     manualClock: isManualClock(),
-    laneValues: (track, t) => (track.lanes.length ? evaluateLanes(track.lanes, t) : null),
+    laneValues: (track: ShowLayerTrack, t: number) => (track.lanes.length ? evaluateLanes(track.lanes, t) : null),
     evaluatedAtMs: typeof performance !== 'undefined' ? performance.now() : undefined,
     wrap: lastLoopWrap && lastLoopWrap.generation === seekGeneration ? lastLoopWrap.wrap : null,
     freeRun: freeRunFor(s),
-  });
+  };
+  let frame = evaluateShowTracks(tracks, evalTime, evalOpts);
   if (looks.length) frame.looks = looks;
+  // A phrase taking over: the old phrase fades out where it would have been.
+  const xf = phrase.xfade;
+  if (xf) {
+    const p = (evalTime - xf.at) / xf.seconds;
+    if (xf.generation !== seekGeneration || p >= 1 || p < -1e-6 || isManualClock() || s.doc !== 'timeline') {
+      phrase.xfade = null;
+    } else {
+      const oldTime = xf.from + (evalTime - xf.at);
+      const old = evaluateShowTracks(tracks, oldTime, { ...evalOpts, wrap: null, freeRun: undefined });
+      frame = crossfadeTrackFrames(frame, old, Math.max(0, p));
+      const oldLooks = s.lookClips.length ? evaluateShowLooks(s.lookClips.filter((c) => !c.where), oldTime) : [];
+      const mixed = crossfadeLooks(frame.looks ?? [], oldLooks, Math.max(0, p));
+      if (mixed.length) frame.looks = mixed;
+      else delete frame.looks;
+    }
+  }
   if (deco) {
     try { deco.frame(s, evalTime, frame); } catch (err) { console.warn('[ShowTimeline] where frame failed:', err); }
   }
@@ -1230,6 +1249,148 @@ export function showFreeRunOffset(start: number, end: number): number {
   return freeRunOffset(sectionPlayer, start, end, sectionClock());
 }
 
+// ─── Phrases (Timeline) ──────────────────────────────────────────────────
+//
+// A/V phrases (timeline/phrases/phraseModel.ts): a published section played
+// from its start by this transport, on the next bar. While the Timeline
+// plays, a launch waits for its bar in transport seconds (`elapsed`, the
+// show time the clock has advanced, loops and holds left out), so a phrase
+// looping a section shorter than the wait still hands over on the bar.
+// Stopped, a timer starts the transport on the bar. The landing is a seek
+// with a short crossfade of the pieces and looks from where the old phrase
+// would have been. The section player plays the phrase's section with the
+// phrase's end action. Session only, never saved; Render to Video plays the
+// Timeline straight through.
+
+/** What the phrases are doing, for the pads and the transport. */
+export interface ShowPhraseStatus {
+  /** The phrase playing (a section id). */
+  activeId: string | null;
+  /** A launch waiting for its bar: a phrase, or a stop (null). */
+  pending: { id: string | null; at: number } | null;
+}
+const phraseStatusStore = writable<ShowPhraseStatus>({ activeId: null, pending: null });
+export const showPhraseStatus = { subscribe: phraseStatusStore.subscribe };
+
+export type ShowPhraseEvent =
+  /** A launch is waiting: it lands at wall time `at` (performance.now() ms). */
+  | { type: 'pending'; id: string | null; at: number; immediate: boolean; origin: PhraseOrigin }
+  /** A phrase took over: the playhead is at `time` (just after its start). */
+  | { type: 'land'; id: string; time: number; from: string | null; origin: PhraseOrigin }
+  /** Phrases stopped (the transport paused on the bar). */
+  | { type: 'stop'; from: string | null }
+  /** A waiting launch was called off (Stop, a seek outside, another document). */
+  | { type: 'cancel' };
+export interface PhraseOrigin {
+  /** Launched by a Live scene (Live already started its clips). */
+  scene?: number;
+}
+let phraseEffects: ((event: ShowPhraseEvent) => void) | null = null;
+export function setShowPhraseEffects(effects: ((event: ShowPhraseEvent) => void) | null): void {
+  phraseEffects = effects;
+}
+function emitPhrase(event: ShowPhraseEvent): void {
+  try { phraseEffects?.(event); } catch (err) { console.warn('[ShowTimeline] phrase effect failed:', err); }
+}
+
+interface PhraseSession {
+  activeId: string | null;
+  /** A launch waiting for its bar. Playing: `due` in transport seconds;
+   *  stopped: `dueMs` wall time and its timer. */
+  pending: { id: string | null; due?: number; dueMs?: number; timer?: unknown; origin: PhraseOrigin } | null;
+  /** Show seconds the transport has advanced while playing. */
+  elapsed: number;
+  /** The hand-over crossfade: the old phrase's show time `from` at the new
+   *  one's `at`, for the seek generation it began. */
+  xfade: { from: number; at: number; generation: number; seconds: number } | null;
+}
+const phrase: PhraseSession = { activeId: null, pending: null, elapsed: 0, xfade: null };
+
+/** The frame the phrase clock last counted (a hold counts wall time). */
+let phraseLastFrameMs: number | null = null;
+/** Wall clock for phrase launches from a stopped Timeline (ms). Test seam. */
+let phraseNowMs: () => number = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+let phraseTimer: (fn: () => void, ms: number) => unknown = (fn, ms) => setTimeout(fn, Math.max(0, ms));
+let phraseClearTimer: (handle: unknown) => void = (h) => clearTimeout(h as ReturnType<typeof setTimeout>);
+
+function publishPhraseStatus(): void {
+  const p = phrase.pending;
+  let pending: ShowPhraseStatus['pending'] = null;
+  if (p) pending = { id: p.id, at: p.dueMs ?? phraseNowMs() + Math.max(0, (p.due ?? 0) - phrase.elapsed) * 1000 };
+  phraseStatusStore.set({ activeId: phrase.activeId, pending });
+}
+
+function clearPhrasePending(emit = true): void {
+  const p = phrase.pending;
+  if (!p) return;
+  if (p.timer !== undefined) phraseClearTimer(p.timer);
+  phrase.pending = null;
+  if (emit) emitPhrase({ type: 'cancel' });
+}
+
+/** Everything about phrases forgotten (Stop, another document, a new file). */
+function forgetPhrases(): void {
+  const had = phrase.activeId !== null || phrase.pending !== null || phrase.xfade !== null;
+  clearPhrasePending(phrase.pending !== null);
+  phrase.activeId = null;
+  phrase.xfade = null;
+  if (had) publishPhraseStatus();
+}
+
+/** The sections as the player sees them (the playing phrase's end action). */
+function playerSections(s: Pick<ShowTimelineState, 'sections'>): readonly TimelineSection[] {
+  return phrase.activeId ? withPhraseEnd(s.sections, phrase.activeId) : s.sections;
+}
+
+/** The playing phrase follows the playhead into the next published section
+ *  (a phrase that plays on, or jumps). */
+function followPhrase(s: ShowTimelineState): void {
+  if (!phrase.activeId) return;
+  const here = s.sections.find((x) => s.currentTime >= x.start - 1e-9 && s.currentTime < x.end - 1e-9);
+  if (here && here.phrase && here.id !== phrase.activeId) {
+    phrase.activeId = here.id;
+    publishPhraseStatus();
+  }
+}
+
+/**
+ * The phrase waiting lands now: `over` seconds past its bar, the old show
+ * time at the bar `oldAt`, the clock's proposed show time `next`.
+ */
+function landPhrase(over: number, oldAt: number, next: number | null): void {
+  const p = phrase.pending;
+  if (!p) return;
+  if (p.timer !== undefined) phraseClearTimer(p.timer);
+  phrase.pending = null;
+  const from = phrase.activeId;
+  const s = get(store);
+  if (p.id === null) {
+    // Stop on the bar: the picture stays where the bar left it.
+    phrase.activeId = null;
+    phrase.xfade = null;
+    publishPhraseStatus();
+    emitPhrase({ type: 'stop', from });
+    applyTime(oldAt, false);
+    showTimeline.pause();
+    return;
+  }
+  const target = s.sections.find((x) => x.id === p.id);
+  if (!target) {
+    publishPhraseStatus();
+    return;
+  }
+  const time = Math.min(target.end - 1e-4, target.start + Math.max(0, over));
+  // The old phrase's holds, loops and Live pieces end with it.
+  forgetSections();
+  phrase.activeId = target.id;
+  emitPhrase({ type: 'land', id: target.id, time, from, origin: p.origin });
+  if (next !== null) transportClock.shift(time - next);
+  else transportClock.reset();
+  phrase.xfade = from !== null || next !== null ? { from: oldAt, at: target.start, generation: seekGeneration + 1, seconds: PHRASE_XFADE_SECONDS } : null;
+  applyTime(time, true);
+  publishPhraseStatus();
+}
+
 /**
  * The single evaluation path. Everything that moves the playhead ends here.
  *
@@ -1284,8 +1445,25 @@ function tick(now: number): void {
   const audio = audioClockReader && showHasAudibleTracks(s) ? audioClockReader(now) : null;
   let next = transportClock.advance({ frame: now / 1000, audio }, s.currentTime);
 
+  // A phrase waiting for its bar: counted in transport seconds, so loops and
+  // the end of the Timeline do not move the bar it waits for.
+  if (s.doc === 'timeline' && !externalClock && !isManualClock()) {
+    const held = sectionHolding(s);
+    const step = held ? Math.max(0, (now - (phraseLastFrameMs ?? now)) / 1000) : Math.max(0, next - s.currentTime);
+    phraseLastFrameMs = now;
+    phrase.elapsed += step;
+    const p = phrase.pending;
+    if (p && p.due !== undefined && phrase.elapsed >= p.due - 1e-9) {
+      const over = phrase.elapsed - p.due;
+      const oldAt = held ? s.currentTime : Math.max(s.currentTime, next - over);
+      landPhrase(over, oldAt, next);
+      if (get(store).isPlaying) ticker.request();
+      return;
+    }
+  }
+
   if (sectionsRun(s)) {
-    const step = stepSections(sectionPlayer, s.sections, s.tempo, s.currentTime, next, sectionClock());
+    const step = stepSections(sectionPlayer, playerSections(s), s.tempo, s.currentTime, next, sectionClock());
     if (step.events.length) runSectionEvents(step.events);
     if (step.kind === 'hold') {
       // The playhead stays; the clock re-anchors when GO lets it go.
@@ -1328,11 +1506,13 @@ function tick(now: number): void {
   }
 
   applyTime(next, false);
+  if (phrase.activeId) followPhrase(get(store));
   ticker.request();
 }
 
 /** The end of a show that does not loop. */
 function finishShow(action: ShowEndAction): void {
+  forgetPhrases();
   if (action === 'rewind') {
     seekGeneration++;
     store.update((x) => ({ ...x, isPlaying: false, currentTime: 0, activeClipId: null }));
@@ -2016,6 +2196,7 @@ export const showTimeline = {
     // `suspend()` and arms the click-to-enable fallback if the policy still
     // refuses. Cheap and idempotent when the context is already running.
     clipAudioBus.resume();
+    phraseLastFrameMs = null;
     store.update((x) => ({ ...x, isPlaying: true }));
     // Starting again from the very end (the show stopped there) starts over.
     const from = !s.loop && s.currentTime >= s.duration - 1e-6 ? 0 : get(store).currentTime;
@@ -2036,6 +2217,10 @@ export const showTimeline = {
       if (!chaseTransportHandler?.('pause') && get(store).isPlaying) return;
     }
     cancelRaf();
+    if (phrase.pending) {
+      clearPhrasePending();
+      publishPhraseStatus();
+    }
     store.update((s) => ({ ...s, isPlaying: false }));
     seekGeneration++;
     transportClock.reset();
@@ -2048,6 +2233,7 @@ export const showTimeline = {
     }
     cancelRaf();
     forgetSections();
+    forgetPhrases();
     // Clearing activeClipId is what makes the next play() re-fire the
     // opening preset even if the operator hand-loaded something else.
     store.update((s) => ({ ...s, isPlaying: false, currentTime: 0, activeClipId: null }));
@@ -3540,6 +3726,109 @@ export const showTimeline = {
     return sectionPlayer;
   },
 
+  // ── Phrases (Timeline) ────────────────────────────────────────────────
+
+  /**
+   * Launch a phrase: section `id` plays from its start `delay` seconds from
+   * now (the caller's launch grid: the next bar; 0 = at once). Playing, the
+   * Timeline hands over on that bar; stopped, it starts there. Opens the
+   * Timeline document if the Show is active. Returns false (and does
+   * nothing) when the section is gone or an outside clock owns the playhead.
+   */
+  launchPhrase(id: string, opts: { delay?: number; origin?: PhraseOrigin } = {}): boolean {
+    if (externalClock || isManualClock()) return false;
+    if (get(store).doc !== 'timeline') this.activateDoc('timeline', { quiet: true });
+    const s = get(store);
+    const target = s.sections.find((x) => x.id === id);
+    if (!target) return false;
+    const delay = Math.max(0, Number.isFinite(opts.delay) ? opts.delay! : 0);
+    const origin = opts.origin ?? {};
+    clearPhrasePending(false);
+    const nowMs = phraseNowMs();
+    if (s.isPlaying) {
+      phrase.pending = { id, due: phrase.elapsed + delay, origin };
+      emitPhrase({ type: 'pending', id, at: nowMs + delay * 1000, immediate: delay <= 0, origin });
+      publishPhraseStatus();
+      if (delay <= 0) {
+        const t = get(store).currentTime;
+        landPhrase(0, t, null);
+        ticker.request();
+      }
+      return true;
+    }
+    const dueMs = nowMs + delay * 1000;
+    phrase.pending = { id, dueMs, origin };
+    emitPhrase({ type: 'pending', id, at: dueMs, immediate: delay <= 0, origin });
+    publishPhraseStatus();
+    const start = () => {
+      const p = phrase.pending;
+      if (!p || p.id !== id || p.dueMs !== dueMs) return;
+      phrase.pending = null;
+      const sec = get(store).sections.find((x) => x.id === id);
+      if (!sec) { publishPhraseStatus(); return; }
+      const over = Math.max(0, (phraseNowMs() - dueMs) / 1000);
+      const from = phrase.activeId;
+      const time = Math.min(sec.end - 1e-4, sec.start + over);
+      forgetSections();
+      phrase.activeId = id;
+      phrase.xfade = null;
+      emitPhrase({ type: 'land', id, time, from, origin });
+      applyTime(time, true);
+      transportClock.reset();
+      this.play();
+      publishPhraseStatus();
+    };
+    if (delay <= 0) start();
+    else phrase.pending.timer = phraseTimer(start, delay * 1000);
+    return true;
+  },
+
+  /** Stop the phrases on the bar (`delay` seconds from now): the Timeline
+   *  pauses there. Stopped, it forgets the playing phrase at once. */
+  stopPhrases(opts: { delay?: number } = {}): void {
+    const s = get(store);
+    const delay = Math.max(0, Number.isFinite(opts.delay) ? opts.delay! : 0);
+    if (!s.isPlaying || s.doc !== 'timeline' || delay <= 0) {
+      const from = phrase.activeId;
+      forgetPhrases();
+      if (s.isPlaying && s.doc === 'timeline') this.pause();
+      emitPhrase({ type: 'stop', from });
+      publishPhraseStatus();
+      return;
+    }
+    clearPhrasePending(false);
+    phrase.pending = { id: null, due: phrase.elapsed + delay, origin: {} };
+    emitPhrase({ type: 'pending', id: null, at: phraseNowMs() + delay * 1000, immediate: false, origin: {} });
+    publishPhraseStatus();
+  },
+
+  /** Call off the launch waiting for its bar. */
+  cancelPhraseLaunch(): boolean {
+    if (!phrase.pending) return false;
+    clearPhrasePending();
+    publishPhraseStatus();
+    return true;
+  },
+
+  /** Wall time (ms) the waiting launch lands at, or null. */
+  phrasePendingAt(): number | null {
+    const p = phrase.pending;
+    if (!p) return null;
+    return p.dueMs ?? phraseNowMs() + Math.max(0, (p.due ?? 0) - phrase.elapsed) * 1000;
+  },
+
+  /** The phrase state, for tests and the debug surface. */
+  phraseState(): Readonly<{ activeId: string | null; pending: { id: string | null } | null; elapsed: number; crossfading: boolean }> {
+    return { activeId: phrase.activeId, pending: phrase.pending ? { id: phrase.pending.id } : null, elapsed: phrase.elapsed, crossfading: phrase.xfade !== null };
+  },
+
+  /** Test seam: the wall clock and timer phrase launches from stopped use. */
+  _setPhraseClock(now: () => number, timer?: (fn: () => void, ms: number) => unknown, clear?: (handle: unknown) => void) {
+    phraseNowMs = now;
+    if (timer) phraseTimer = timer;
+    if (clear) phraseClearTimer = clear;
+  },
+
   // ── Sound rows (Timeline) ─────────────────────────────────────────────
 
   /** Replace the sound doc (rows, Live clip and build blocks). */
@@ -3751,6 +4040,7 @@ export const showTimeline = {
     if (wasPlaying && !externalClock) this.pause();
     cancelRaf();
     forgetSections();
+    forgetPhrases();
     const outgoing = docFieldsOf(get(store));
     const incoming = parkedDoc;
     setParked({ ...outgoing, selection: null, selectedClipIds: [] });
@@ -3840,6 +4130,7 @@ export const showTimeline = {
   hydrate(payload: unknown, projectDir?: string): void {
     cancelRaf();
     forgetSections();
+    forgetPhrases();
     releaseAllTrackElements();
     publishTransition(null);
     // Another show (or the same one reopened): its videos start from their
@@ -3935,6 +4226,14 @@ export const showTimeline = {
     tracksAwaitingFirstStep.clear();
     Object.assign(sectionPlayer, createSectionPlayerState());
     sectionEffects = null;
+    clearPhrasePending(false);
+    Object.assign(phrase, { activeId: null, pending: null, elapsed: 0, xfade: null });
+    phraseEffects = null;
+    phraseLastFrameMs = null;
+    phraseNowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    phraseTimer = (fn, ms) => setTimeout(fn, Math.max(0, ms));
+    phraseClearTimer = (h) => clearTimeout(h as ReturnType<typeof setTimeout>);
+    publishPhraseStatus();
     sectionClock = () => (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
     publishSectionStatus();
     setParked(emptyDocFields());

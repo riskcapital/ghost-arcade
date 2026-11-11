@@ -24,7 +24,7 @@
   $: displayRate = (s.rate === 'auto' ? st.rate ?? 25 : s.rate) as TimecodeRate;
   $: hasMap = !!$showTimeline.tempo;
   $: beats = isBeatSource(s.source);
-  $: sourceName = s.source === 'link' ? 'Link' : 'MIDI clock';
+  $: sourceName = s.source === 'link' ? 'Link' : s.source === 'liveSong' ? 'Live' : 'MIDI clock';
 
   let audioInputs: MediaDeviceInfo[] = [];
   let midiInputs: Array<{ id: string; name: string }> = [];
@@ -122,6 +122,7 @@
       <option value="mtc">MTC (MIDI)</option>
       <option value="link" disabled={!hasMap && s.source !== 'link'}>Ableton Link</option>
       <option value="midiClock" disabled={!hasMap && s.source !== 'midiClock'}>MIDI clock</option>
+      <option value="liveSong" data-tc-source-live>Ableton Live (arrangement position)</option>
     </select>
   </div>
 
@@ -160,7 +161,9 @@
         <span class="sc-title">Bar 1 of the source</span>
         <span class="sc-hint">{sourceName === 'Link'
           ? 'The show bar a Link start lands on when the playhead is at or before it. From later in the show, Link starts the bar the playhead is in. Show bars always land on Link bars.'
-          : 'The show bar where the song start of the DAW lands.'}</span>
+          : sourceName === 'Live'
+            ? "The show bar where bar 1 of Live's arrangement lands. The Ghost Arcade script in Live reports the song position; with Link on in both, the playhead runs on Link's clock between reports. Play and Stop here start and stop Live."
+            : 'The show bar where the song start of the DAW lands.'}</span>
       </div>
       <div class="tc-inline">
         <span>show bar</span>

@@ -216,21 +216,36 @@ function cancelBuilds(): void {
 
 // ── Live ───────────────────────────────────────────────────────────────────
 
-function syncLive(s: ShowTimelineState, rows: SoundRow[], tick: ShowFrameTick): void {
+function feedLiveScheduler(s: ShowTimelineState, rows: SoundRow[], env: { tempo: ShowTempoMap | null; loop: boolean; duration: number }): void {
   const bridge = get(abletonBridge);
   const frame = currentLineFrame();
   const inputs = liveSchedInputs(s.sound, rows, bridge, (row) => rowValues(row, frame?.sounds?.get(row.id)).muted);
   liveScheduler.setBlocks(inputs.rows, inputs.blocks);
   liveScheduler.setEnv({
-    tempo: tick.tempo,
+    tempo: env.tempo,
     setQuantize: bridge.quantize,
     numerator: bridge.numerator,
     denominator: bridge.denominator,
     protocol: bridge.protocol,
-    loop: tick.loop,
-    duration: tick.duration,
+    loop: env.loop,
+    duration: env.duration,
   });
+}
+
+function syncLive(s: ShowTimelineState, rows: SoundRow[], tick: ShowFrameTick): void {
+  feedLiveScheduler(s, rows, tick);
   liveScheduler.tick(tick.time, tick.playing, tick.seek);
+}
+
+/**
+ * The Live scheduler with the Timeline's Live rows as they are now, for a
+ * phrase landing (which may come while the Timeline is stopped, before any
+ * frame has fed it).
+ */
+export function liveSchedulerNow(): LiveClipScheduler {
+  const s = get(showTimeline);
+  if (s.doc === 'timeline') feedLiveScheduler(s, rowsOf(s), { tempo: s.tempo, loop: s.loop, duration: s.duration });
+  return liveScheduler;
 }
 
 // ── The frame ──────────────────────────────────────────────────────────────

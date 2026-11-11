@@ -12,15 +12,16 @@
  *            hold at its end until GO, then give them back and play on
  *
  * Sections never overlap and are kept in time order. They are the unit the
- * A/V phrases of VJ mode will launch (a section = a range of the Timeline
- * with a name and a colour), so a section carries nothing that only makes
- * sense on the Timeline's own playhead.
+ * A/V phrases of VJ mode launch (a section = a range of the Timeline with a
+ * name and a colour; see timeline/phrases/phraseModel.ts), so a section
+ * carries nothing that only makes sense on the Timeline's own playhead.
  *
  * Saved as plain JSON in the Timeline (`sections`); see normalizeSections.
  */
 import type { ShowTempoMap } from '../../types';
 import { beatAtSeconds, secondsAtBeat } from '../../show/tempoMap';
 import { generateUUID } from '../../utils/uuid';
+import { normalizeLiveScene, normalizePhrase, type SectionLiveScene, type SectionPhrase } from '../phrases/phraseModel';
 
 export const SECTION_ACTIONS = ['through', 'hold', 'vamp', 'jump', 'live'] as const;
 export type SectionAction = (typeof SECTION_ACTIONS)[number];
@@ -57,6 +58,10 @@ export interface TimelineSection {
   kind?: SectionKind;
   /** 0..1 how intense the music is here (Score the song). */
   energy?: number;
+  /** Published as an A/V phrase (a pad that plays the section). */
+  phrase?: SectionPhrase;
+  /** A Live scene fired where the section starts. */
+  liveScene?: SectionLiveScene;
 }
 
 export const SECTION_MIN_SECONDS = 0.25;
@@ -120,6 +125,10 @@ export function normalizeSection(raw: unknown, index = 0): TimelineSection | nul
   }
   if (kind) out.kind = kind;
   if (typeof r.energy === 'number' && Number.isFinite(r.energy)) out.energy = Math.max(0, Math.min(1, r.energy));
+  const phrase = normalizePhrase(r.phrase);
+  if (phrase) out.phrase = phrase;
+  const liveScene = normalizeLiveScene(r.liveScene);
+  if (liveScene) out.liveScene = liveScene;
   return out;
 }
 

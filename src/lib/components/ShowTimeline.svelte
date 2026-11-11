@@ -321,11 +321,12 @@
   const BEAT_LOCK_TEXT: Record<string, Record<string, string>> = {
     link: { searching: 'Link searching', locked: 'Link', freewheel: 'Link freewheel', lost: 'Link lost' },
     midiClock: { searching: 'Clock searching', locked: 'Clock', freewheel: 'Clock freewheel', lost: 'Clock lost' },
+    liveSong: { searching: 'Live searching', locked: 'Live', freewheel: 'Live freewheel', lost: 'Live lost' },
   };
   const chaseSettings = timecodeChase.settings;
   const tcSource = $derived($chaseSettings.source);
   const tcText = $derived((BEAT_LOCK_TEXT[tcSource] ?? LOCK_TEXT)[tc.lock] ?? tc.lock);
-  const tcSourceName = $derived(tcSource === 'link' ? 'Link' : 'MIDI clock');
+  const tcSourceName = $derived(tcSource === 'link' ? 'Link' : tcSource === 'liveSong' ? 'Live' : 'MIDI clock');
   const tcMismatchText = $derived(tc.mismatch && tc.sourceBpm !== null && tc.showBpm !== null
     ? `${tcSourceName} is at ${tc.sourceBpm.toFixed(1)} BPM, the show's map at ${tc.showBpm.toFixed(1)} BPM. Still following; the audio plays at ${tcSourceName}'s tempo.`
     : '');
@@ -334,7 +335,9 @@
     ? 'No Link peers: start Live or another Link app, or set Link to start on the show\'s Play (Settings > Show control > Timecode).'
     : tc.notice === 'linkStartsWithSession'
       ? 'The show starts with the Link session: press Play in Live or another Link app.'
-      : '');
+      : tc.notice === 'liveNotConnected'
+        ? 'Live is not connected: open the Ableton panel and check the Ghost Arcade control surface in Live.'
+        : '');
 
   // ── Audio output state ───────────────────────────────────────────────────
   // The clip-audio master is a persisted, APP-WIDE control whose only other UI
@@ -1493,7 +1496,7 @@
           <span class="t-tc-dot"></span>{tcText}{tc.label ? ` ${tc.label}` : ''}{tc.waiting ? ' · next bar' : ''}
         </span>
         {#if tcNoticeText}
-          <span class="t-tc-warn" title={tcNoticeText} data-show-link-notice>⚠ {tc.notice === 'linkNoPeers' ? 'No Link peers' : 'Start Link to play'}</span>
+          <span class="t-tc-warn" title={tcNoticeText} data-show-link-notice>⚠ {tc.notice === 'linkNoPeers' ? 'No Link peers' : tc.notice === 'liveNotConnected' ? 'Live not connected' : 'Start Link to play'}</span>
         {/if}
         {#if tcMismatchText}
           <span class="t-tc-warn" title={tcMismatchText} data-show-tempo-mismatch>⚠ {tcSourceName} {tc.sourceBpm?.toFixed(1)} · show {tc.showBpm?.toFixed(1)} BPM</span>
