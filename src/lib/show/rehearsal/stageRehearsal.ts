@@ -375,6 +375,8 @@ export function installStageRehearsal(): () => void {
   // Closing or reloading the window: the editor stops collecting sound for
   // recordings that will never finish (the main process cancels their files).
   const onUnload = () => {
+    // A render rehearsal under way gives the editor its Loop back and stops it.
+    for (const take of [...activeRenders]) take.end();
     for (const id of openRecAudio) post({ type: 'rec-audio-cancel', id });
     openRecAudio.clear();
     post({ type: 'stage-bye', instance: pageInstance });
@@ -429,6 +431,9 @@ export function installStageRehearsal(): () => void {
 
 // ── Render rehearsal ───────────────────────────────────────────────────
 
+/** Render rehearsals not ended yet (the window closing ends them). */
+const activeRenders = new Set<{ end(): void }>();
+
 /** What the Demo Reel's "Render rehearsal" needs from the show; null without a show. */
 export function createStageRehearsalRender(): {
   durationSeconds: number;
@@ -459,7 +464,7 @@ export function createStageRehearsalRender(): {
   // song files. The take plays it once; Loop comes back afterwards.
   const restoreLoop = show.loop;
   let ended = false;
-  return {
+  const take = {
     durationSeconds,
     async begin() {
       if (restoreLoop) sendRehearsalCommand({ op: 'loop', on: false });
@@ -495,9 +500,12 @@ export function createStageRehearsalRender(): {
     end() {
       if (ended) return;
       ended = true;
+      activeRenders.delete(take);
       audio?.cancel();
       if (get(stageShow)?.isPlaying) sendRehearsalCommand({ op: 'pause' });
       if (restoreLoop) sendRehearsalCommand({ op: 'loop', on: true });
     },
   };
+  activeRenders.add(take);
+  return take;
 }

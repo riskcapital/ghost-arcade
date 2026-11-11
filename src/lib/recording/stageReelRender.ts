@@ -275,6 +275,17 @@ function createReelRenderStore() {
   }
 
   async function start(shots: DemoShot[], requestedSettings: DemoReelSettings, rehearsal: ReelRehearsal | null = null): Promise<boolean> {
+    try {
+      return await run(shots, requestedSettings, rehearsal);
+    } finally {
+      // However it ended (also a render that could not start: renderer not
+      // ready), the take ends: the editor stops collecting its sound, shows
+      // live takeovers again and gets its Loop back.
+      rehearsal?.end();
+    }
+  }
+
+  async function run(shots: DemoShot[], requestedSettings: DemoReelSettings, rehearsal: ReelRehearsal | null): Promise<boolean> {
     // A rehearsal is filmed live into an MP4: the show plays in the editor.
     const settings: DemoReelSettings = rehearsal ? { ...requestedSettings, outputMode: 'mp4' } : requestedSettings;
     const rendererControls = get(stage3DRendererControls);
@@ -877,13 +888,10 @@ function createReelRenderStore() {
       return false;
     } finally {
       // Hand everything back: camera, content clock, engine size, and
-      // the stage scene the user had before the reel ran.
-      if (nativeJpegSequence && !nativeJpegSequenceFinished) {
-        await cancelNativeJpegSequence(nativeJpegSequence).catch(() => {});
-      }
-      if (nativeMp4FrameEncoder && !nativeMp4FrameEncoderFinished) {
-        await cancelNativeMp4FrameEncoder(nativeMp4FrameEncoder).catch(() => {});
-      }
+      // the stage scene the user had before the reel ran. All of it before
+      // the first await: the status already says the reel is done, so a
+      // Rec or another reel may start while the encoder below is cancelled,
+      // and nothing of this reel may land on it.
       if (boostedMirror) stageRecordingMaxDim.set(null);
       releaseCaptureHold();
       controls.releaseCamera();
@@ -894,6 +902,12 @@ function createReelRenderStore() {
       setStageEffectsManualTime(null);
       try { stage3dScene.loadScene(restoreScene); } catch { /* keep last shot's scene */ }
       try { engine.resize(restoreWidth, restoreHeight); } catch { /* nothing we can do */ }
+      if (nativeJpegSequence && !nativeJpegSequenceFinished) {
+        await cancelNativeJpegSequence(nativeJpegSequence).catch(() => {});
+      }
+      if (nativeMp4FrameEncoder && !nativeMp4FrameEncoderFinished) {
+        await cancelNativeMp4FrameEncoder(nativeMp4FrameEncoder).catch(() => {});
+      }
     }
   }
 

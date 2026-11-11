@@ -180,6 +180,35 @@ describe('stage window: show mirror', () => {
     uninstall = installStageRehearsal();
   });
 
+  it('closing the window during a Render rehearsal gives the editor its Loop back and stops it', async () => {
+    uninstall();
+    const handlers = new Map<string, () => void>();
+    vi.stubGlobal('addEventListener', (type: string, cb: () => void) => handlers.set(type, cb));
+    vi.stubGlobal('removeEventListener', (type: string) => handlers.delete(type));
+    uninstall = installStageRehearsal();
+    editor.postMessage({ type: 'show-state', state: showState({ loop: true, isPlaying: false, currentTime: 0, seekGeneration: 1 }), version: 'r.1' });
+    await settle();
+    const render = createStageRehearsalRender()!;
+    void render.begin().catch(() => {});
+    await settle();
+    editor.postMessage({ type: 'show-state', state: showState({ loop: false, isPlaying: true, currentTime: 0.2, seekGeneration: 2 }), version: 'r.2' });
+    await settle();
+    heard = [];
+    handlers.get('pagehide')!();
+    await settle();
+    const cmds = heard.filter((m) => m.type === 'show-command').map((m) => (m as Extract<RehearsalMessage, { type: 'show-command' }>).command);
+    expect(cmds).toEqual([{ op: 'pause' }, { op: 'loop', on: true }]);
+    expect(heard.some((m) => m.type === 'rec-audio-cancel')).toBe(true);
+    // Ending it again later (the reel's own cleanup) sends nothing more.
+    heard = [];
+    render.end();
+    await settle();
+    expect(heard.filter((m) => m.type === 'show-command')).toEqual([]);
+    uninstall();
+    vi.unstubAllGlobals();
+    uninstall = installStageRehearsal();
+  });
+
   it('Render rehearsal plays the show once with Loop off, from the epoch it hit 0, and gives Loop back', async () => {
     editor.postMessage({ type: 'show-state', state: showState({ loop: true, isPlaying: false, currentTime: 12, seekGeneration: 1 }), version: 'e.1' });
     await settle();
