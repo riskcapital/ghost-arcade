@@ -1237,6 +1237,10 @@
         return true;
       case 'toggleLines':
         return toggleFocusedLines();
+      case 'group':
+        return showTimeline.groupLayerClips(get(showTimeline).selectedClipIds);
+      case 'ungroup':
+        return showTimeline.ungroupLayerClips(get(showTimeline).selectedClipIds);
     }
     return false;
   }

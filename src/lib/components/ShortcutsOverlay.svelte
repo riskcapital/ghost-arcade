@@ -82,6 +82,7 @@
           <div class="shortcut-row"><kbd>=</kbd> <kbd>-</kbd> <kbd>\</kbd><span>Zoom in, out, to fit</span></div>
           <div class="shortcut-row"><kbd>U</kbd><span>Show / hide the row's lines</span></div>
           <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>D</kbd><span>Duplicate the selected clips</span></div>
+          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>G</kbd> / <kbd>{mod}</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd><span>Group the selected clips (they move and copy as one) / ungroup</span></div>
           <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>C</kbd> <kbd>X</kbd> <kbd>V</kbd><span>Copy, cut, paste at the playhead</span></div>
           <div class="shortcut-row"><kbd>Delete</kbd><span>Delete the selected clips or keys</span></div>
           <div class="shortcut-row"><kbd>Shift</kbd>+<kbd>Delete</kbd><span>Delete and close the gap</span></div>

@@ -102,7 +102,7 @@
 >
   <div class="ccm-head">{many ? `${ids.length} clips` : clip.label || clip.media.name}</div>
   <button class="ccm-item" role="menuitem" disabled={!canSplit} onclick={() => run(() => showTimeline.splitLayerClips(playhead, [clip.id]))} data-clip-menu="split">
-    <span>Split at the playhead</span><kbd>S</kbd>
+    <span>Split at the playhead</span><kbd>{KEYS.split}</kbd>
   </button>
   <button class="ccm-item" role="menuitem" disabled={locked} onclick={() => run(() => showTimeline.duplicateLayerClips(ids))} data-clip-menu="duplicate">
     <span>Duplicate</span><kbd>{KEYS.duplicate}</kbd>
@@ -113,6 +113,15 @@
   <button class="ccm-item" role="menuitem" disabled={locked} onclick={() => run(() => showTimeline.removeLayerClips(ids, { ripple: true }))} data-clip-menu="ripple">
     <span>Delete and close the gap</span><kbd>{KEYS.rippleDelete}</kbd>
   </button>
+  {#if clip.groupId}
+    <button class="ccm-item" role="menuitem" disabled={locked} onclick={() => run(() => showTimeline.ungroupLayerClips(ids))} data-clip-menu="ungroup">
+      <span>Ungroup</span><kbd>{KEYS.ungroup}</kbd>
+    </button>
+  {:else if many}
+    <button class="ccm-item" role="menuitem" disabled={locked} onclick={() => run(() => showTimeline.groupLayerClips(ids))} data-clip-menu="group">
+      <span>Group</span><kbd>{KEYS.group}</kbd>
+    </button>
+  {/if}
   <div class="ccm-sep"></div>
   <div class="ccm-head">At the end of the media</div>
   <div class="ccm-row" role="group" aria-label="At the end of the media">

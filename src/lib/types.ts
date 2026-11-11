@@ -5493,6 +5493,8 @@ export type ShowClipEndBehaviour = 'stop' | 'loop' | 'hold';
 
 export interface ShowLayerClip {
   id: string;
+  /** Blocks grouped together (Ctrl+G) share an id: they select, move, copy and delete as one. */
+  groupId?: string;
   /** Show time the clip starts, seconds. */
   startTime: number;
   duration: number;

@@ -13,7 +13,7 @@
    * only the playhead moves, so a playing show re-renders none of this.
    */
   import { get } from 'svelte/store';
-  import { showTimeline } from '../../../stores/showTimeline';
+  import { showTimeline, withGroupMembers } from '../../../stores/showTimeline';
   import { layers as liveLayersStore } from '../../../stores/layers';
   import { showDropEffect } from '../../../show/showDrop';
   import { placeOnTrack } from '../../../show/tracks/showTrackEdit';
@@ -222,7 +222,7 @@
     // they show the block's own values.
     if (!additive) editBlock(tr, clip);
     if (tr.locked) {
-      if (additive && wasSelected) showTimeline.selectLayerClips(before.filter((id) => id !== clip.id));
+      if (additive && wasSelected) showTimeline.selectLayerClips(withoutGroup(before, clip.id));
       return;
     }
     const tool = get(editTool);
@@ -233,6 +233,12 @@
     else if (part === 'body') dragClips(e, tr, clip, wasSelected ? (additive ? 'remove' : 'only') : null);
     else if (part === 'start' || part === 'end') dragTrim(e, clip, part);
     else dragFade(e, clip, part);
+  }
+
+  /** `ids` without the block and the rest of its group (Shift-click takes a whole group out). */
+  function withoutGroup(ids: readonly string[], clipId: string): string[] {
+    const out = new Set(withGroupMembers(currentTracks(), [clipId]));
+    return ids.filter((id) => !out.has(id));
   }
 
   /** The block touching `clip` at `edge` (the other side of the cut), if any. */
@@ -320,7 +326,7 @@
     }, (moved) => {
       if (moved) return;
       if (onClick === 'only' && ids.length > 1) showTimeline.selectLayerClips([clip.id]);
-      else if (onClick === 'remove') showTimeline.selectLayerClips(get(showTimeline).selectedClipIds.filter((id) => id !== clip.id));
+      else if (onClick === 'remove') showTimeline.selectLayerClips(withoutGroup(get(showTimeline).selectedClipIds, clip.id));
     });
   }
 

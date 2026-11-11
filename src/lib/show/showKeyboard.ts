@@ -69,7 +69,10 @@ export type ShowKeyAction =
   | 'slipTool'
   | 'selectTool'
   /** U: show or hide the focused row's lines. */
-  | 'toggleLines';
+  | 'toggleLines'
+  /** Ctrl+G / Ctrl+Shift+G: group the selected blocks, or ungroup them. */
+  | 'group'
+  | 'ungroup';
 
 export interface ShowKeyContext {
   /** The tray is open and visible. */
@@ -126,7 +129,8 @@ export function classifyShowKey(e: KeyLike, ctx: ShowKeyContext): ShowKeyAction 
     return ctx.hasSelection ? 'delete' : null;
   }
   if (mod) {
-    if (e.shiftKey) return key === 'x' ? 'clearInOut' : null;
+    if (e.shiftKey) return key === 'x' ? 'clearInOut' : key === 'g' ? (ctx.hasClipSelection ? 'ungroup' : null) : null;
+    if (key === 'g') return ctx.hasClipSelection ? 'group' : null;
     if (key === 'k') return ctx.hasTracks ? 'split' : null;
     if (key === 'd') return ctx.hasClipSelection ? 'duplicate' : null;
     if (key === 'c') return ctx.hasClipSelection ? 'copy' : null;

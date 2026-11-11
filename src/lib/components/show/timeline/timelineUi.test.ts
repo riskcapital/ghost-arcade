@@ -396,8 +396,8 @@ describe('Esc with a menu open, and key labels (B11)', () => {
     expect(onMac('MacIntel')).toBe(true);
     expect(onMac('Win32')).toBe(false);
     expect(onMac('Linux x86_64')).toBe(false);
-    expect(shortcutLabels(true)).toEqual({ duplicate: '⌘D', delete: '⌫', rippleDelete: '⇧⌫' });
-    expect(shortcutLabels(false)).toEqual({ duplicate: 'Ctrl+D', delete: 'Del', rippleDelete: 'Shift+Del' });
+    expect(shortcutLabels(true)).toEqual({ duplicate: '⌘D', delete: '⌫', rippleDelete: '⇧⌫', split: '⌘K', group: '⌘G', ungroup: '⇧⌘G' });
+    expect(shortcutLabels(false)).toEqual({ duplicate: 'Ctrl+D', delete: 'Del', rippleDelete: 'Shift+Del', split: 'Ctrl+K', group: 'Ctrl+G', ungroup: 'Ctrl+Shift+G' });
     const menu = readFileSync(join(process.cwd(), 'src/lib/components/show/timeline/ShowClipContextMenu.svelte'), 'utf8');
     expect(menu).not.toMatch(/[⌘⌫⇧]/);
   });

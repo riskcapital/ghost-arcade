@@ -239,3 +239,41 @@ describe('ripple, roll and slip', () => {
     expect(blocks()).toEqual([['a', 0, 4, 0], ['b', 4, 8, 0], ['c', 10, 12, 0]]);
   });
 });
+
+describe('grouped blocks', () => {
+  it('select, move, copy and ungroup as one; a copy is a new group', () => {
+    showTimeline.openDoc('timeline');
+    const ids = rows([['a', 0, 2]], [['b', 1, 2]], [['c', 6, 2]]);
+    expect(showTimeline.groupLayerClips([ids.a, ids.b])).toBe(true);
+    showTimeline.selectLayerClips([ids.a]);
+    expect(new Set(get(showTimeline).selectedClipIds)).toEqual(new Set([ids.a, ids.b]));
+    // Moving the selection moves both rows.
+    showTimeline.moveLayerClipsAcross(get(showTimeline).selectedClipIds, 1, 0);
+    const starts = () => get(showTimeline).layerTracks.map((t) => t.clips.map((c) => c.startTime));
+    expect(starts()).toEqual([[1], [2], [6]]);
+    // Duplicating makes a new group, not more members of the old one.
+    const copies = showTimeline.duplicateLayerClips(get(showTimeline).selectedClipIds);
+    const all = get(showTimeline).layerTracks.flatMap((t) => t.clips);
+    const groupOf = (id: string) => all.find((c) => c.id === id)!.groupId;
+    expect(groupOf(copies[0])).toBe(groupOf(copies[1]));
+    expect(groupOf(copies[0])).not.toBe(groupOf(ids.a));
+    // Ungroup: a click selects one block again.
+    expect(showTimeline.ungroupLayerClips([ids.b])).toBe(true);
+    showTimeline.selectLayerClips([ids.a]);
+    expect(get(showTimeline).selectedClipIds).toEqual([ids.a]);
+  });
+
+  it('a group is saved with the Timeline', () => {
+    showTimeline.openDoc('timeline');
+    const ids = rows([['a', 0, 2]], [['b', 1, 2]]);
+    showTimeline.groupLayerClips([ids.a, ids.b]);
+    const saved = JSON.parse(JSON.stringify(showTimeline.serialize()));
+    showTimeline._resetForTest();
+    showTimeline.hydrate(saved);
+    showTimeline.openDoc('timeline');
+    const clips = get(showTimeline).layerTracks.flatMap((t) => t.clips);
+    expect(clips.length).toBe(2);
+    expect(clips[0].groupId).toBeTruthy();
+    expect(clips[0].groupId).toBe(clips[1].groupId);
+  });
+});

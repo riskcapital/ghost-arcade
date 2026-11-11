@@ -1778,7 +1778,32 @@ export function normalizeLayerClip(raw: unknown): ShowLayerClip | null {
   const where = normalizeWhere(c.where);
   if (where) clip.where = { ...where, members: 'pieces' };
   if (c.holdStops === true) clip.holdStops = true;
+  if (typeof c.groupId === 'string' && c.groupId) clip.groupId = c.groupId;
   return clip;
+}
+
+/** `ids` with every block that shares a group with one of them. */
+export function withGroupMembers(tracks: readonly ShowLayerTrack[], ids: readonly string[]): string[] {
+  const set = new Set(ids);
+  const groups = new Set<string>();
+  for (const t of tracks) for (const c of t.clips) if (set.has(c.id) && c.groupId) groups.add(c.groupId);
+  if (!groups.size) return [...ids];
+  for (const t of tracks) for (const c of t.clips) if (c.groupId && groups.has(c.groupId)) set.add(c.id);
+  return [...set];
+}
+
+/** Copies just made (`created`) get groups of their own: a copied group is a new group, not part of the old one. */
+function regroupCopies(tracks: ShowLayerTrack[], created: readonly string[]): ShowLayerTrack[] {
+  const ids = new Set(created);
+  const fresh = new Map<string, string>();
+  return tracks.map((t) => {
+    if (!t.clips.some((c) => ids.has(c.id) && c.groupId)) return t;
+    return { ...t, clips: t.clips.map((c) => {
+      if (!ids.has(c.id) || !c.groupId) return c;
+      if (!fresh.has(c.groupId)) fresh.set(c.groupId, generateUUID());
+      return { ...c, groupId: fresh.get(c.groupId)! };
+    }) };
+  });
 }
 
 function normalizeLane(raw: unknown): KeyframeTrack | null {
@@ -3535,7 +3560,7 @@ export const showTimeline = {
       return { ...track, clips: result.clips };
     });
     if (!created.length) return created;
-    store.update((s) => withDuration({ ...s, layerTracks, selectedClipIds: created }));
+    store.update((s) => withDuration({ ...s, layerTracks: regroupCopies(layerTracks, created), selectedClipIds: created }));
     recordShowEdit();
     republishTracks();
     return created;
@@ -3554,12 +3579,14 @@ export const showTimeline = {
     const result = pasteClips(track.clips, copied, at);
     if (!result) return [];
     this._setTrackClips(trackId, result.clips);
-    store.update((s) => ({ ...s, selectedClipIds: result.ids }));
+    store.update((s) => ({ ...s, layerTracks: regroupCopies(s.layerTracks, result.ids), selectedClipIds: result.ids }));
     recordShowEdit();
     return result.ids;
   },
 
   selectLayerClips(clipIds: string[]) {
+    // A grouped block brings its whole group.
+    clipIds = withGroupMembers(get(store).layerTracks, clipIds);
     store.update((s) => ({
       ...s,
       selectedClipIds: [...clipIds],
@@ -3571,6 +3598,25 @@ export const showTimeline = {
           ? null
           : s.selection?.kind === 'layerClip' ? null : s.selection,
     }));
+  },
+
+  /** Group the blocks (Ctrl+G): one id, so they select, move, copy and delete as one. */
+  groupLayerClips(clipIds: string[]): boolean {
+    const ids = new Set(withGroupMembers(get(store).layerTracks, clipIds));
+    if (ids.size < 2) return false;
+    const groupId = generateUUID();
+    store.update((s) => ({ ...s, layerTracks: s.layerTracks.map((t) => (t.clips.some((c) => ids.has(c.id)) ? { ...t, clips: t.clips.map((c) => (ids.has(c.id) ? { ...c, groupId } : c)) } : t)) }));
+    recordShowEdit();
+    return true;
+  },
+
+  /** Ungroup the blocks' groups (Ctrl+Shift+G). */
+  ungroupLayerClips(clipIds: string[]): boolean {
+    const ids = new Set(withGroupMembers(get(store).layerTracks, clipIds));
+    if (![...get(store).layerTracks].some((t) => t.clips.some((c) => ids.has(c.id) && c.groupId))) return false;
+    store.update((s) => ({ ...s, layerTracks: s.layerTracks.map((t) => (t.clips.some((c) => ids.has(c.id) && c.groupId) ? { ...t, clips: t.clips.map((c) => { if (!ids.has(c.id) || !c.groupId) return c; const { groupId: _g, ...rest } = c; return rest; }) } : t)) }));
+    recordShowEdit();
+    return true;
   },
 
   /** Select every clip on every track. */
@@ -3619,7 +3665,7 @@ export const showTimeline = {
     }
     store.update((x) => withDuration({
       ...x,
-      layerTracks: x.layerTracks.map((t) => (next.has(t.id) ? { ...t, clips: next.get(t.id)! } : t)),
+      layerTracks: regroupCopies(x.layerTracks.map((t) => (next.has(t.id) ? { ...t, clips: next.get(t.id)! } : t)), created),
       selectedClipIds: created,
       selection: created.length === 1 ? { kind: 'layerClip', id: created[0] } : x.selection?.kind === 'layerClip' ? null : x.selection,
     }));
