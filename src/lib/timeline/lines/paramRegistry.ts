@@ -15,6 +15,10 @@
  *                                  its effect's settings (sfx:, fxb:)
  *   target { scope: 'look', id }   a look block on the Looks row (clip id):
  *                                  look:intensity / react / hue / chase / speed
+ *   target { scope: 'sound', id }  a Timeline sound row: its level and effects
+ *                                  (a registered scope, see below)
+ *   target { scope: '<area>.<x>', id? }  a scope registered at runtime
+ *                                  (lineExtensions.ts: registerParamScope)
  *
  * A layer target may also be one of the Timeline's copies of a piece: an
  * added layer (sub-row) `showsub::<pieceId>::<trackId>`; its parameters are
@@ -32,6 +36,7 @@ import type { TimelineLedClip } from '../leds/ledClips';
 import type { TimelineStageClip } from '../stagefx/stageClips';
 import { readStageBlockParam, stageBlockParams } from '../stagefx/stageFxParams';
 import { getWLEDPatternDefinition } from '../../wled/effects';
+import { paramScope, type ExtParamTarget } from './lineExtensions';
 
 export type { ParamKind } from '../../keyframes/layerParamKeys';
 
@@ -42,7 +47,22 @@ export type ParamTarget =
   | { scope: 'block'; id: string }
   | { scope: 'look'; id: string }
   /** A Timeline sound row (row id): its level and Music Studio effects. */
-  | { scope: 'sound'; id: string };
+  | { scope: 'sound'; id: string }
+  /** A scope registered at runtime (lineExtensions.ts). */
+  | ExtParamTarget;
+
+const BUILT_IN_SCOPES = new Set(['layer', 'stage', 'led', 'block', 'look']);
+
+/** A target in a scope the registry does not build in (sound, or one registered at runtime). */
+export function isScopedTarget(target: ParamTarget): target is ExtParamTarget | { scope: 'sound'; id: string } {
+  return !BUILT_IN_SCOPES.has(target.scope);
+}
+
+/** A scoped target's id ('' for a scope with one target). */
+export function scopedTargetId(target: ParamTarget): string {
+  const id = (target as { id?: unknown }).id;
+  return typeof id === 'string' ? id : '';
+}
 
 export interface ParamEntry {
   key: string;
@@ -74,9 +94,6 @@ export interface RegistrySource {
   stageBlock?: (clipId: string) => TimelineStageClip | null;
   /** A block's or look block's where line, when it has one. */
   whereOf?: (clipId: string) => WhereSpec | null;
-  /** A Timeline sound row's parameters, and its stored value for one. */
-  soundParams?: (rowId: string) => ParamEntry[];
-  readSound?: (rowId: string, key: string) => number | undefined;
 }
 
 /** The look target that means every look block on the Looks row (a line on
@@ -88,8 +105,12 @@ export function targetId(target: ParamTarget): string {
     case 'layer': return `layer:${target.id}`;
     case 'block': return `block:${target.id}`;
     case 'look': return `look:${target.id}`;
-    case 'sound': return `sound:${target.id}`;
-    default: return target.scope;
+    case 'stage':
+    case 'led': return target.scope;
+    default: {
+      const id = scopedTargetId(target);
+      return id ? `${target.scope}:${id}` : target.scope;
+    }
   }
 }
 
@@ -196,6 +217,16 @@ export function ledParams(source: Pick<RegistrySource, 'wledControllers' | 'wled
 }
 
 export function paramsFor(source: RegistrySource, target: ParamTarget): ParamEntry[] {
+  if (isScopedTarget(target)) {
+    const def = paramScope(target.scope);
+    if (!def) return [];
+    try {
+      return def.params(scopedTargetId(target) || undefined) ?? [];
+    } catch (err) {
+      console.warn(`[lines] scope ${target.scope}: params failed:`, err);
+      return [];
+    }
+  }
   if (target.scope === 'stage') return stageParams(source);
   if (target.scope === 'led') return ledParams(source);
   if (target.scope === 'look') {
@@ -203,7 +234,6 @@ export function paramsFor(source: RegistrySource, target: ParamTarget): ParamEnt
     const where = source.whereOf?.(target.id);
     return where ? [...lookBlockParams(), ...whereParams(where)] : lookBlockParams();
   }
-  if (target.scope === 'sound') return source.soundParams?.(target.id) ?? [];
   if (target.scope === 'block') {
     const where = source.whereOf?.(target.id);
     const led = source.ledBlock?.(target.id);
@@ -253,6 +283,15 @@ export function readLayerParam(layer: Layer, key: string): number | boolean | un
 
 /** The project's own value for (target, key). */
 export function readParam(source: RegistrySource, target: ParamTarget, key: string): number | boolean | undefined {
+  if (isScopedTarget(target)) {
+    const def = paramScope(target.scope);
+    try {
+      const v = def?.read?.(scopedTargetId(target) || undefined, key);
+      return typeof v === 'number' || typeof v === 'boolean' ? v : undefined;
+    } catch {
+      return undefined;
+    }
+  }
   if ((target.scope === 'block' || target.scope === 'look') && (key.startsWith('where:') || key.startsWith('ledblock:'))) {
     const entry = findParam(source, target, key);
     return entry ? (entry.default as number) : undefined;
@@ -271,6 +310,5 @@ export function readParam(source: RegistrySource, target: ParamTarget, key: stri
     const p = lookBlockParams().find((x) => x.key === key);
     return p ? (p.default as number) : undefined;
   }
-  if (target.scope === 'sound') return source.readSound?.(target.id, key);
   return readStageLedParam(key, source.mappingComposition, source.wledControllers, source.wledEffects);
 }

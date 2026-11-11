@@ -107,6 +107,7 @@
   import LineLanes from './show/timeline/LineLanes.svelte';
   import LineHeaders from './show/timeline/LineHeaders.svelte';
   import LinePicker from './show/timeline/LinePicker.svelte';
+  import { stageScopeTargets } from '../timeline/lines/lineExtensions';
   import LineRecordControls from './show/timeline/LineRecordControls.svelte';
   import LineDiamondOverlay from './show/timeline/LineDiamondOverlay.svelte';
   import { LOOKS_GROUP, STAGE_GROUP, STAGE_ROW_HEIGHT, LEDS_GROUP, lineLayout } from './show/timeline/lineUi';
@@ -510,7 +511,8 @@
   let linePicker: { x: number; y: number; group: 'looks' | 'stage' } | null = $state(null);
   const linePickerTargets = $derived.by(() => {
     if (!linePicker) return [];
-    if (linePicker.group === 'stage') return [{ target: { scope: 'stage' as const }, label: 'Stage FX' }, { target: { scope: 'led' as const }, label: 'LEDs' }];
+    // Scopes registered at runtime (lineExtensions.ts) add their targets here.
+    if (linePicker.group === 'stage') return [{ target: { scope: 'stage' as const }, label: 'Stage FX' }, { target: { scope: 'led' as const }, label: 'LEDs' }, ...stageScopeTargets()];
     const sel = selection?.kind === 'lookClip' ? selection.id : null;
     return [
       ...[...lookClips]

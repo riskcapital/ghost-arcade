@@ -170,6 +170,46 @@ describe('the Timeline drives its lines', () => {
   });
 });
 
+describe('scopes and sources registered at runtime on the Timeline', () => {
+  it('⌇+ adds a line on a registered scope; the Timeline drives it (apply) on play and seek; a registered source moves it', async () => {
+    const { registerParamScope, registerLineSource } = await import('./lineExtensions');
+    const applied: Array<Record<string, number | boolean> | null> = [];
+    const stored = { cutoff: 0.2 };
+    const offScope = registerParamScope({
+      scope: 'test.voice',
+      label: 'Test voices',
+      targets: () => [{ id: 'lead', label: 'Lead' }],
+      params: (id) => (id === 'lead' ? [{ key: 'voice:cutoff', label: 'Cutoff', group: 'Voice', min: 0, max: 1, step: 0.01, default: stored.cutoff, kind: 'continuous' }] : []),
+      read: (id, key) => (id === 'lead' && key === 'voice:cutoff' ? stored.cutoff : undefined),
+      apply: (values) => applied.push(values?.get('lead') ? { ...values.get('lead')! } : null),
+    });
+    const offSource = registerLineSource({ kind: 'test.half', label: 'Half', sample: () => 0.5 });
+    try {
+      const target = { scope: 'test.voice' as const, id: 'lead' };
+      expect(lines.paramsForTarget(target).map((p) => p.key)).toEqual(['voice:cutoff']);
+      // A point at the playhead holds the stored value.
+      const id = lines.addLineAtPlayhead(target, 'voice:cutoff')!;
+      expect(get(showTimeline).lines.find((l) => l.id === id)).toMatchObject({ target, key: 'voice:cutoff', label: 'Cutoff', min: 0, max: 1, points: [{ t: 0, v: 0.2 }] });
+      expect(applied.at(-1)?.['voice:cutoff']).toBeCloseTo(0.2, 6);
+      lines.addLineWithPoint(target, 'voice:cutoff', 4, 1);
+      showTimeline.seek(2);
+      expect(applied.at(-1)?.['voice:cutoff']).toBeCloseTo(0.6, 6);
+      // Following the registered source: base + depth × range × 0.5.
+      showTimeline.editLines((list) => list.map((l) => (l.id === id ? { ...l, follow: { source: { kind: 'test.half' }, depth: 0.2 } } : l)));
+      showTimeline.seek(2);
+      expect(applied.at(-1)?.['voice:cutoff']).toBeCloseTo(0.7, 6);
+      // The project is never written: the stored value is as it was.
+      expect(stored.cutoff).toBe(0.2);
+      // The Show tab takes over: the scope is let go.
+      showTimeline.openDoc('show');
+      expect(applied.at(-1)).toBeNull();
+    } finally {
+      offScope();
+      offSource();
+    }
+  });
+});
+
 describe('selected line points', () => {
   const line = { id: 'l', target: { scope: 'layer' as const, id: 'A' }, key: 'layer:opacity', kind: 'continuous' as const, min: 0, max: 1, points: [{ t: 0, v: 0 }, { t: 1, v: 1 }, { t: 2, v: 0 }], follow: { depthPoints: [{ t: 0, v: 1 }, { t: 3, v: 0 }] } } as never;
   it('belong to the list they were picked in', () => {

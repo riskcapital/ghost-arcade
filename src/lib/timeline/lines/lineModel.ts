@@ -24,11 +24,14 @@
  * thing on every parameter. Stepped values round to the step, bools switch
  * at the middle of the range, colours mix per channel toward `follow.color`.
  *
- * Saved as plain JSON (`ControlLine[]`); see normalizeLines.
+ * Saved as plain JSON (`ControlLine[]`); see normalizeLines. Scopes and
+ * sources registered at runtime (lineExtensions.ts) are saved as they are,
+ * and kept untouched by a build that does not know them.
  */
 import type { KeyframeEasing } from '../../types';
 import type { ParamKind, ParamTarget } from './paramRegistry';
 import { AUDIO_FEATURES, STEMS, type AudioFeature, type Stem } from './songFeatures';
+import { isLiveOnlyExtSource, type ExtFollowSource } from './lineExtensions';
 
 /** Curve from a point to the next one. The easings are the keyframe ones. */
 export type LineCurve = 'hold' | 'linear' | 'smooth' | Exclude<KeyframeEasing, 'linear' | 'step'>;
@@ -59,7 +62,9 @@ export type FollowSource =
   /** A Live track's level. Live-only. */
   | { kind: 'live-level'; track: number }
   /** A MIDI CC (channel 0..15, −1 any; `input` a device name). Live-only. */
-  | { kind: 'midi'; cc: number; channel: number; input?: string };
+  | { kind: 'midi'; cc: number; channel: number; input?: string }
+  /** A source registered at runtime (lineExtensions.ts: registerLineSource). */
+  | ExtFollowSource;
 
 export interface LineFollow {
   source: FollowSource;
@@ -100,7 +105,33 @@ export interface ControlLine {
 }
 
 export function isLiveOnlySource(source: FollowSource): boolean {
-  return source.kind === 'live-param' || source.kind === 'live-level' || source.kind === 'midi';
+  return source.kind === 'live-param' || source.kind === 'live-level' || source.kind === 'midi' || isLiveOnlyExtSource(source.kind);
+}
+
+const BUILT_IN_SOURCES = new Set(['audio', 'stem', 'beat', 'live-param', 'live-level', 'midi']);
+const BUILT_IN_SCOPES = new Set(['layer', 'block', 'look', 'sound', 'stage', 'led']);
+
+/** Plain JSON, copied (what a newer build wrote, kept as it was). */
+function keepAsWritten<T>(raw: T): T {
+  try {
+    return JSON.parse(JSON.stringify(raw)) as T;
+  } catch {
+    return raw;
+  }
+}
+
+/**
+ * A saved target. Built-in scopes are checked; any other scope (registered
+ * at runtime, or written by a newer build) is kept as written.
+ */
+export function normalizeTarget(t: any): ParamTarget | null {
+  if (!t || typeof t !== 'object' || typeof t.scope !== 'string' || !t.scope) return null;
+  if (!BUILT_IN_SCOPES.has(t.scope)) {
+    if (t.scope.length > 128 || (t.id !== undefined && typeof t.id !== 'string')) return null;
+    return keepAsWritten(t) as ParamTarget;
+  }
+  if (t.scope === 'stage' || t.scope === 'led') return { scope: t.scope };
+  return typeof t.id === 'string' ? { scope: t.scope, id: t.id } : null;
 }
 
 // ── Save format ──────────────────────────────────────────────────────────
@@ -123,6 +154,8 @@ function normalizePoints(raw: unknown): LinePoint[] {
 
 function normalizeSource(raw: any): FollowSource | null {
   if (!raw || typeof raw !== 'object') return null;
+  // A source registered at runtime, or one a newer build wrote: as written.
+  if (typeof raw.kind === 'string' && raw.kind && raw.kind.length <= 128 && !BUILT_IN_SOURCES.has(raw.kind)) return keepAsWritten(raw) as FollowSource;
   switch (raw.kind) {
     case 'audio': return AUDIO_FEATURES.includes(raw.feature) ? { kind: 'audio', feature: raw.feature, ...(typeof raw.track === 'string' ? { track: raw.track } : {}) } : null;
     case 'stem': return STEMS.includes(raw.stem) ? { kind: 'stem', stem: raw.stem, ...(typeof raw.track === 'string' ? { track: raw.track } : {}) } : null;
@@ -140,12 +173,7 @@ export function normalizeLines(raw: unknown): ControlLine[] {
   const out: ControlLine[] = [];
   for (const r of raw as any[]) {
     if (!r || typeof r !== 'object' || typeof r.id !== 'string' || typeof r.key !== 'string') continue;
-    const t = r.target;
-    const target: ParamTarget | null = t?.scope === 'layer' && typeof t.id === 'string' ? { scope: 'layer', id: t.id }
-      : t?.scope === 'block' && typeof t.id === 'string' ? { scope: 'block', id: t.id }
-      : t?.scope === 'look' && typeof t.id === 'string' ? { scope: 'look', id: t.id }
-      : t?.scope === 'sound' && typeof t.id === 'string' ? { scope: 'sound', id: t.id }
-      : t?.scope === 'stage' ? { scope: 'stage' } : t?.scope === 'led' ? { scope: 'led' } : null;
+    const target = normalizeTarget(r.target);
     if (!target) continue;
     const kind: ParamKind = ['continuous', 'stepped', 'bool', 'colour'].includes(r.kind) ? r.kind : 'continuous';
     const min = finite(r.min, 0);

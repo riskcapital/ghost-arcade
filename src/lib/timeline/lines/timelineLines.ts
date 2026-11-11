@@ -10,7 +10,7 @@
  *   frame of an offline render (exportFrame: live-only sources add nothing).
  * - A recorded pass is one undo step of the document.
  * - The registry the session reads knows the Timeline's blocks, look blocks
- *   and pieces that are off the stage.
+ *   and pieces that are off the stage; the sound rows are a registered scope.
  */
 import { get, writable } from 'svelte/store';
 import {
@@ -32,7 +32,8 @@ import { pointsValueAt, SOUND_ROW_TRACK_PREFIX } from './lineEvaluator';
 import { installWhereRuntime } from '../where/whereRuntime';
 import { installStageFxRuntime } from '../stagefx/stageFxRuntime';
 import { soundRowsFor } from '../sound/soundModel';
-import { readSoundRowParam, soundRowParams } from '../sound/soundParams';
+import { soundLineScope } from '../sound/soundParams';
+import { registerParamScope } from './lineExtensions';
 
 // ── Registry over the Timeline ─────────────────────────────────────────────
 
@@ -98,16 +99,15 @@ export function timelineRegistrySource(): RegistrySource {
       ?? s.stageClips.find((c) => c.id === clipId)?.where
       ?? findClip(s.layerTracks, clipId)?.clip.where
       ?? null,
-    soundParams: (rowId) => {
-      const row = soundRowsFor(s.sound, s.audioTracks).find((r) => r.id === rowId);
-      return row ? soundRowParams(row) : [];
-    },
-    readSound: (rowId, key) => {
-      const row = soundRowsFor(s.sound, s.audioTracks).find((r) => r.id === rowId);
-      return row ? readSoundRowParam(row, key) : undefined;
-    },
   };
 }
+
+// The sound rows are a line scope on the extension mechanism, with the
+// Timeline's own rows (lineExtensions.ts).
+registerParamScope(soundLineScope(() => {
+  const s = get(showTimeline);
+  return soundRowsFor(s.sound, s.audioTracks);
+}));
 
 export function describeLineParam(target: ParamTarget, key: string): ParamEntry | null {
   return findParam(timelineRegistrySource(), target, key);

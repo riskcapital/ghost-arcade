@@ -3,7 +3,7 @@
  * block carries the lines drawn for it, deleting a block deletes them.
  * Pure: each returns a new list, or the same list when nothing changed.
  */
-import type { ControlLine, LinePoint } from './lineModel';
+import { normalizeTarget, type ControlLine, type LinePoint } from './lineModel';
 import { sameTarget, type ParamTarget } from './paramRegistry';
 
 const EPS = 1e-4;
@@ -82,10 +82,8 @@ export function normalizeBindings(raw: unknown): import('./lineControls').LineBi
   const out: import('./lineControls').LineBinding[] = [];
   for (const b of raw as any[]) {
     if (!b || typeof b.id !== 'string' || typeof b.key !== 'string' || !b.target || !b.source) continue;
-    const t = b.target;
-    const target: ParamTarget | null = (t.scope === 'layer' || t.scope === 'block' || t.scope === 'look' || t.scope === 'sound') && typeof t.id === 'string'
-      ? { scope: t.scope, id: t.id }
-      : t.scope === 'stage' || t.scope === 'led' ? { scope: t.scope } : null;
+    // Scopes registered at runtime (or written by a newer build) are kept as written.
+    const target = normalizeTarget(b.target);
     if (!target) continue;
     const s = b.source;
     if (s.kind === 'midi' && Number.isFinite(s.cc) && Number.isFinite(s.channel)) {

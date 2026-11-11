@@ -5,13 +5,14 @@
    * a Live knob or track level, or a MIDI CC; plus how much it moves the
    * line (depth, which can be drawn as its own thin line), centred or not,
    * and smoothing. The drawn line is the resting value; the source moves it
-   * from there.
+   * from there. Sources registered at runtime (lineExtensions.ts) are listed
+   * after the built-in ones.
    */
   import { showTimeline } from '../../../stores/showTimeline';
   import type { BeatShape, ControlLine, FollowSource, LineFollow } from '../../../timeline/lines/lineModel';
   import { BEAT_SHAPES } from '../../../timeline/lines/lineModel';
   import { addMidiTap } from '../../../midi/midiTaps';
-  import { FOLLOW_CHOICES, followChoiceId } from './lineUi';
+  import { followChoices, followChoiceId } from './lineUi';
   import { portal } from './trackLayout';
   import { soundLayout } from './sound/soundRowLayout';
   import { SOUND_ROW_TRACK_PREFIX } from '../../../timeline/lines/lineEvaluator';
@@ -25,6 +26,8 @@
   let { line, x, y, onclose }: Props = $props();
 
   const follow = $derived(line.follow ?? null);
+  // Read when the menu opens: sources registered later show next time.
+  const choices = followChoices();
   const choice = $derived(followChoiceId(follow?.source));
   const SHAPE_NAMES: Record<BeatShape, string> = { sine: 'Sine', triangle: 'Triangle', saw: 'Saw up', ramp: 'Saw down', square: 'Square', pulse: 'Pulse' };
   let learning = $state(false);
@@ -34,7 +37,7 @@
     showTimeline.editLines((list) => list.map((l) => (l.id === line.id ? { ...l, follow: next } : l)), key);
   }
   function setSource(id: string) {
-    const c = FOLLOW_CHOICES.find((x) => x.id === id);
+    const c = choices.find((x) => x.id === id);
     if (!c?.source) { put(null); return; }
     // Song sources keep the sound row they read.
     const prev = follow?.source;
@@ -95,7 +98,7 @@
   <label class="lf-row">
     <span>Source</span>
     <select value={choice} onchange={(e) => setSource((e.currentTarget as HTMLSelectElement).value)} data-line-follow-source>
-      {#each FOLLOW_CHOICES as c (c.id)}<option value={c.id}>{c.label}</option>{/each}
+      {#each choices as c (c.id)}<option value={c.id}>{c.label}</option>{/each}
     </select>
   </label>
   {#if follow}
