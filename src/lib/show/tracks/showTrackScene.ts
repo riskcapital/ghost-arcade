@@ -150,10 +150,13 @@ function spanned(layer: Layer): Layer {
   return crop ? { ...layer, cropRegion: crop, contentFit: 'stretch' } : layer;
 }
 
-/** A piece whose own content is dark: not drawn. (Its looks ride on the
- *  block's copies over it, which stay in the scene while the block plays.
- *  A black fill instead showed as an empty-layer card in Map Sim's view.) */
+const BLACK = { hue: 0, saturation: 0, lightness: 0, alpha: 1 };
+
+/** A piece whose own content is dark: drawn black (a colour fill keeps its
+ *  shape and warp, so a look can still dress it), or not drawn when it is
+ *  not a layer that can show a colour. */
 export function darkPiece(layer: Layer): Layer {
+  if (layer.type === 'media' || layer.type === 'color') return { ...layer, source: null, colorContent: { ...BLACK } };
   return { ...layer, _showOpacityMul: 0 };
 }
 

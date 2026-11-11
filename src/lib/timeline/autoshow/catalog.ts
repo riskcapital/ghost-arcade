@@ -15,20 +15,11 @@
 import type { SectionKind } from '../sections/sectionModel';
 import type { ShowStyle } from './songStyle';
 
-export type AutoShowTier = 'calm' | 'groove' | 'drive' | 'peak';
-export type AutoShowMood = 'dark' | 'warm' | 'cool' | 'acid' | 'mono';
-export interface AutoShowContent {
-  id: string;                         // stable id
-  kind: 'shader' | 'look';            // ISF file in public/ISF, or a shape Look id (edgeLooks)
-  ref: string;                        // file name or Look id
-  tiers: AutoShowTier[];
-  moods: AutoShowMood[];
-  texture: 'geometric' | 'organic' | 'glitch' | 'light';
-  scale: Array<'piece' | 'span'>;     // good per face, across the stage, or both
-  params?: Record<string, number | boolean | number[]>;            // starting values
-  variants?: Array<{ mood: AutoShowMood; params: Record<string, number | boolean | number[]> }>; // colour variants
-  cost?: 'low' | 'mid' | 'high';      // measured GPU cost
-}
+import type { AutoShowContent, AutoShowMood, AutoShowTier } from './catalogTypes';
+import { autoShowParams } from './catalogData';
+
+// The catalog's types live in catalogTypes.ts (shared with the content data).
+export type { AutoShowContent, AutoShowMood, AutoShowTier } from './catalogTypes';
 
 export const AUTO_SHOW_TIERS: readonly AutoShowTier[] = ['calm', 'groove', 'drive', 'peak'];
 export const AUTO_SHOW_MOODS: readonly AutoShowMood[] = ['dark', 'warm', 'cool', 'acid', 'mono'];
@@ -97,10 +88,7 @@ export function sectionTier(kind: SectionKind, energy: number, style: ShowStyle)
   return order[i];
 }
 
-function variantParams(entry: AutoShowContent, mood: AutoShowMood): Record<string, number | boolean | number[]> {
-  const v = entry.variants?.find((x) => x.mood === mood);
-  return { ...(entry.params ?? {}), ...(v?.params ?? {}) };
-}
+const variantParams = (entry: AutoShowContent, mood: AutoShowMood) => autoShowParams(entry, mood);
 
 /** A catalog entry as a cast member in the show's mood. */
 export function castFromContent(entry: AutoShowContent, mood: AutoShowMood): CastMember {

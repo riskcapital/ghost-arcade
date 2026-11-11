@@ -149,7 +149,8 @@ function findClipWhere(tracks: readonly ShowLayerTrack[], clipId: string): { whe
  * Content blocks with a where line: the block's own piece is scaled by its
  * weight, and copies go over the other pieces of its order (every member
  * has its copy, at no opacity while it is not lit, so the scene keeps its
- * layers while the window moves and only their opacities change).
+ * layers while the window moves and only their opacities change; a window
+ * that never moves leaves its unlit pieces without copies).
  *
  * A block marked `dark` takes its pieces over while it plays: their own
  * content goes dark (`frame.darkPieces`), so only what the Timeline lights
@@ -171,11 +172,17 @@ export function applyContentWhere(
     });
     const base = state.opacity;
     state.opacity = base * (result.weights.get(state.layerId) ?? 0);
+    // A window that never moves (drawn, no where lines) never lights its
+    // unlit pieces: no copies for them, so they keep their own look.
+    const rec = whereLineValues(input.lines?.blocks?.get(state.clip.clipId));
+    const still = found.where.motion.kind === 'drawn' && rec.position === undefined && rec.spread === undefined && rec.soft === undefined;
     const copies: Array<{ pieceId: string; opacity: number }> = [];
     for (const slot of result.order.slots) {
       for (const pieceId of slot) {
         if (pieceId === state.layerId) continue;
-        copies.push({ pieceId, opacity: base * (result.weights.get(pieceId) ?? 0) });
+        const w = base * (result.weights.get(pieceId) ?? 0);
+        if (still && w <= 0) continue;
+        copies.push({ pieceId, opacity: w });
       }
     }
     state.whereCopies = copies;

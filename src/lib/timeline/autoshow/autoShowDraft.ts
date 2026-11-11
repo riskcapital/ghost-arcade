@@ -46,6 +46,7 @@ import { draftScore, seededRandom, sequentialIds, type ScoreDraft, type ScoreExi
 import { beatAtSeconds, secondsAtBeat } from '../../show/tempoMap';
 import { groupCount, groupOrders, pieceGroups, GROUP_ORDER_IDS, type PieceGroups } from './pieceGroups';
 import { paletteFor, pickCast, pickMember, sectionTier, STYLE_MOODS, type AutoShowContent, type AutoShowMood, type AutoShowPalette, type AutoShowTier, type CastMember } from './catalog';
+import { AUTO_SHOW_SCREEN_FX, autoShowLookPalette } from './catalogData';
 import { SHOW_STYLE_NAMES, type ShowStyle } from './songStyle';
 
 export const AUTO_ROW_NAMES = { stage: '✦ Stage', a: '✦ Set A', b: '✦ Set B', hero: '✦ Hero' } as const;
@@ -79,14 +80,6 @@ export const STYLE_RULES: Record<ShowStyle, StyleRules> = {
   driving: { swapBars: 2, dropBeatBars: 1, dropSwapBars: 1, buildBars: 4, fxMix: 0.35, riser: true, hits: 'first', revealBars: 4 },
   hard: { swapBars: 2, dropBeatBars: 2, dropSwapBars: 1, buildBars: 2, fxMix: 0.45, riser: true, hits: 'phrase', revealBars: 4 },
   cinematic: { swapBars: 8, dropBeatBars: 0, dropSwapBars: 4, buildBars: 16, fxMix: 0.2, riser: false, hits: 'none', revealBars: 16 },
-};
-
-/** Stroke looks (they outline over the content rather than cover it), by tier. */
-export const ACCENT_LOOKS: Record<AutoShowTier, readonly string[]> = {
-  calm: ['echo-rings', 'marching-ants'],
-  groove: ['echo-rings', 'twin-snakes', 'electric-nodes'],
-  drive: ['comet-chase', 'zigzag', 'twin-snakes', 'electric-nodes'],
-  peak: ['comet-chase', 'echo-rings', 'electric-nodes'],
 };
 
 /** Looks are accents over the content: the energy line runs them at this
@@ -212,10 +205,18 @@ export function draftAutoShow(input: AutoShowInput): AutoShowDraft {
     const t = sectionTier(p.kind, p.energy, style);
     tierTime[t] = (tierTime[t] ?? 0) + (p.end - p.start);
   }
-  const usableCatalog = input.catalog.filter((c) => c.kind === 'look' || !!input.shaderCode(c.ref));
-  const cast = pickCast(usableCatalog, mood, rnd, { tiers: tierTime, library: input.library, source: input.source ?? 'builtin' });
-  const contentCast = cast.filter((c) => c.kind !== 'look');
-  const lookCast = cast.filter((c) => c.kind === 'look');
+  const shaders = input.catalog.filter((c) => c.kind === 'shader' && !!input.shaderCode(c.ref));
+  const contentCast = pickCast(shaders, mood, rnd, { tiers: tierTime, library: input.library, source: input.source ?? 'builtin' });
+  // Looks come from the catalog only (face-filling Looks that pass the bar),
+  // for the pieces a breakdown leaves dark.
+  const lookEntries = input.catalog.filter((c) => c.kind === 'look' && (c.tiers.includes('calm') || c.tiers.includes('groove')));
+  const lookFor = (avoid: string | null) => {
+    const fits = lookEntries.filter((c) => c.ref !== avoid);
+    const inMood = fits.filter((c) => c.moods.includes(mood));
+    const from = inMood.length ? inMood : fits;
+    return from.length ? from[Math.floor(rnd() * from.length) % from.length] : null;
+  };
+  const cast = [...contentCast];
 
   // ── Content rows on the hero piece ─────────────────────────────────────
   const host = groups.hero[0] ?? null;
@@ -292,7 +293,15 @@ export function draftAutoShow(input: AutoShowInput): AutoShowDraft {
     const i = faces.slots.findIndex((s) => s.includes(groups.faces.top[0]));
     return i < 0 ? null : i / (faces.slots.length - 1);
   })();
+  const facesFrontIndex = (() => {
+    const faces = orderIndex(GROUP_ORDER_IDS.faces);
+    if (!faces?.slots || faces.slots.length < 2 || !groups.faces.front.length) return null;
+    const i = faces.slots.findIndex((sl) => sl.includes(groups.faces.front[0]));
+    return i < 0 ? null : i / (faces.slots.length - 1);
+  })();
   const rowsOrder = orderIndex(GROUP_ORDER_IDS.rows);
+  const breakdownLooks: Array<{ start: number; end: number; order: string; position: number; k: number }> = [];
+  const mainTexture: Array<CastMember['texture'] | null> = [];
   const travelOrder = (k: number) => ((k + Math.floor(rnd() * 2)) % 2 === 0 ? GROUP_ORDER_IDS.rows : GROUP_ORDER_IDS.columns);
 
   if (contentOn && !autoContentThere(existing.layerTracks, songStart, songEnd)) {
@@ -356,12 +365,17 @@ export function draftAutoShow(input: AutoShowInput): AutoShowDraft {
           break;
         }
         case 'breakdown': {
-          // Few pieces lit: the hero, and one group (the cube tops, else a row).
+          // Few pieces lit: the hero, and one group (the cube tops, else a
+          // row); a calm Look fills another group (the fronts, else another
+          // row) on black; the rest is dark.
           const m = pickStage(tier);
           if (m) {
             const order = facesTopIndex !== null ? GROUP_ORDER_IDS.faces : GROUP_ORDER_IDS.rows;
-            const position = facesTopIndex ?? (rowsOrder?.slots && rowsOrder.slots.length > 1 ? Math.floor(rowsOrder.slots.length / 3) / (rowsOrder.slots.length - 1) : 0);
-            block('stage', m, moodNow, p.start, p.end, whereOn(order, { kind: 'drawn' }, { position, spread: 0, soft: 0.3, span: m.scale.includes('span') }), { fadeIn: round(Math.min(bar0, (p.end - p.start) / 4)) });
+            const n = rowsOrder?.slots?.length ?? 1;
+            const position = facesTopIndex ?? (n > 1 ? Math.floor(n / 3) / (n - 1) : 0);
+            block('stage', m, moodNow, p.start, p.end, whereOn(order, { kind: 'drawn' }, { position, spread: 0, soft: 0, span: m.scale.includes('span') }), { fadeIn: round(Math.min(bar0, (p.end - p.start) / 4)) });
+            const lookAt = facesTopIndex !== null ? facesFrontIndex : (n > 2 ? Math.floor((2 * n) / 3) / (n - 1) : null);
+            if (lookAt !== null) breakdownLooks.push({ start: p.start, end: p.end, order, position: lookAt, k });
           }
           const h = pickMember(contentCast, 'calm', rnd, { avoid: [last.hero, m?.id].filter(Boolean) as string[], uses });
           if (h) { use(h); content.push(h.name); block('hero', h, moodNow, p.start, p.end, whereOn(GROUP_ORDER_IDS.hero, { kind: 'drawn' }, { spread: 1, dark: false })); }
@@ -382,6 +396,7 @@ export function draftAutoShow(input: AutoShowInput): AutoShowDraft {
         }
       }
       autoPlan.push({ start: p.start, end: p.end, kind: p.kind, name: p.name, tier, content, look: null });
+      mainTexture[k] = cast.find((c) => c.name === content[0])?.texture ?? null;
     });
   }
 
@@ -403,31 +418,27 @@ export function draftAutoShow(input: AutoShowInput): AutoShowDraft {
     adds.push(`Pieces in groups (⇄ Where): ${orders.filter((o) => o.id !== GROUP_ORDER_IDS.ring).map((o) => o.name.replace('✦ ', '')).join(', ')}`);
   }
 
-  // ── Looks row: a stroke look per section, worn over the content ────────
+  // ── Looks row: a catalog Look on the pieces a breakdown leaves dark ────
   const lookClips: ShowLookClip[] = [];
   const looksBusy = existing.lookClips.some((c) => overlaps({ start: c.startTime, end: c.startTime + c.duration }, songStart, songEnd));
   if (looksBusy) {
     skips.push('Looks row: it has blocks under the song already.');
-  } else {
+  } else if (breakdownLooks.length) {
     let prevLook: string | null = null;
-    plan.forEach((p, k) => {
-      const tier = sectionTier(p.kind, p.energy, style);
-      const loud = p.kind === 'build' || p.kind === 'drop';
-      const fromCast = lookCast.filter((c) => c.tiers.includes(tier) && c.ref !== prevLook);
-      const list = [...fromCast.map((c) => c.ref), ...ACCENT_LOOKS[tier]].filter((id) => id !== prevLook);
-      const lookId = list.length ? (fromCast.length && rnd() < 0.6 ? fromCast[0].ref : list[Math.floor(rnd() * list.length) % list.length]) : ACCENT_LOOKS[tier][0];
-      const paletteId = loud ? palette.looks.loud : palette.looks.calm;
-      // Worn by every piece for the section; the energy line brings it in
-      // and out a bar at a time (the content does the moving).
+    for (const b of breakdownLooks) {
+      const entry = lookFor(prevLook);
+      if (!entry) break;
       lookClips.push({
-        id: ids.next('look'), lookId, paletteId, startTime: round(p.start), duration: round(p.end - p.start), scope: 'all',
-        fadeIn: 0, fadeOut: 0,
+        id: ids.next('look'), lookId: entry.ref, paletteId: autoShowLookPalette(entry, mood) ?? palette.looks.calm,
+        startTime: round(b.start), duration: round(b.end - b.start), scope: 'all',
+        fadeIn: round(Math.min(bar0, (b.end - b.start) / 4)), fadeOut: 0,
+        where: { order: 'left-right', members: 'pieces', namedOrder: b.order, motion: { kind: 'drawn' }, position: b.position, spread: 0, soft: 0 },
       });
-      prevLook = lookId;
-      const item = autoPlan[k];
-      if (item) item.look = lookId;
-    });
-    if (lookClips.length) adds.push(`${lookClips.length} looks on the Looks row, one a section, outlined over the content`);
+      prevLook = entry.ref;
+      const item = autoPlan[b.k];
+      if (item) item.look = entry.ref;
+    }
+    if (lookClips.length) adds.push(`${lookClips.length === 1 ? 'A Look' : `${lookClips.length} Looks`} on the Looks row: the pieces the breakdown leaves dark wear ${[...new Set(lookClips.map((c) => c.lookId))].join(', ')}`);
   }
 
   // ── Screen FX and Effects rows ─────────────────────────────────────────
@@ -441,7 +452,7 @@ export function draftAutoShow(input: AutoShowInput): AutoShowDraft {
     const kinds = new Set<string>();
     for (const p of plan) {
       if (p.end - p.start < 0.1) continue;
-      const fx = screenFxFor(p.kind, p.energy, bar0, style, rules, ids.next('screenfx'));
+      const fx = screenFxFor(p.kind, p.energy, bar0, style, rules, ids.next('screenfx'), { texture: mainTexture[plan.indexOf(p)] ?? null, tier: sectionTier(p.kind, p.energy, style), mood, pick: rnd });
       if (fx) {
         kinds.add(fx.type);
         stageClips.push({
@@ -535,23 +546,41 @@ function median(xs: number[]): number {
   return s[Math.floor(s.length / 2)];
 }
 
-/** The section's Screen FX by style (null: none, as in breakdowns). */
-export function screenFxFor(kind: SectionKind, energy: number, bar: number, style: ShowStyle, rules: StyleRules, id: string): StageEffect | null {
+/** The section's Screen FX (null: none, as in breakdowns): the catalog's
+ *  fits for the texture of the section's content and its tier, strongest
+ *  first, mixed by style. Strobe and inverse pulse black the stage out between
+ *  flashes: drops only, and never on dark content. */
+export function screenFxFor(
+  kind: SectionKind, energy: number, bar: number, style: ShowStyle, rules: StyleRules, id: string,
+  fit: { texture: CastMember['texture'] | null; tier: AutoShowTier; mood: AutoShowMood; pick?: () => number } = { texture: null, tier: 'groove', mood: 'cool' },
+): StageEffect | null {
+  if (kind === 'breakdown') return null;
+  if (style === 'cinematic' && kind === 'drop') return fxOf('breathing', bar, energy, id, rules.fxMix);
+  const texture = fit.texture ?? 'light';
+  const harsh = new Set(['strobe', 'inverse-pulse']);
+  const options = (AUTO_SHOW_SCREEN_FX[texture]?.[fit.tier] ?? ['breathing']).filter((t) => !harsh.has(t) || (kind === 'drop' && fit.mood !== 'dark' && style !== 'chill'));
+  const list = options.length ? options : ['breathing' as StageEffect['type']];
+  // The strongest fit most of the time, the next one now and then.
+  const type = list.length > 1 && fit.pick && fit.pick() < 0.3 ? list[1] : list[0];
+  const mix = kind === 'intro' || kind === 'outro' ? Math.min(0.35, rules.fxMix) : kind === 'drop' ? rules.fxMix : Math.min(0.45, rules.fxMix);
+  return fxOf(type, bar, energy, id, mix);
+}
+
+/** A Screen FX of `type` timed to the bar; types without settings here take their defaults. */
+function fxOf(type: StageEffect['type'], bar: number, energy: number, id: string, opacity: number): StageEffect {
   const b = Math.max(0.2, bar);
-  const fx = (type: StageEffect['type'], params: Record<string, number>, opacity: number): StageEffect => ({ id, type, enabled: true, opacity: round(opacity), params });
-  const mix = rules.fxMix;
-  switch (kind) {
-    case 'breakdown': return null;
-    case 'drop':
-      if (style === 'cinematic') return fx('breathing', { speed: round(1 / (2 * b)), depth: 0.5, heartbeat: 0.3 }, mix);
-      if (style === 'chill') return fx('sine-wave', { speed: round(1 / b), phaseSpread: 1.6, depth: 0.5 }, mix);
-      return fx('beat-pulse', { sensitivity: 1.4, decay: round(Math.max(0.08, (b / 4) * (style === 'hard' ? 0.45 : 0.6))), threshold: 0.08 }, mix);
-    case 'build': return fx('linear-sweep', { angle: 0, speed: round(2 / b), bandWidth: 0.35, tail: 0.4 }, Math.max(0.3, mix - 0.05));
-    case 'intro': return fx('breathing', { speed: round(1 / (4 * b)), depth: 0.4, heartbeat: 0 }, Math.min(0.35, mix));
-    case 'outro': return fx('breathing', { speed: round(1 / (4 * b)), depth: 0.5, heartbeat: 0 }, Math.min(0.35, mix));
-    case 'bridge': return fx('chase', { speed: round(1 / (2 * b)), width: 0.3 }, Math.min(0.4, mix));
-    default: return fx('sine-wave', { speed: round(1 / (2 * b)), phaseSpread: 1.6, depth: round(0.3 + 0.3 * energy) }, Math.min(0.45, mix));
-  }
+  const params = ((): Record<string, number> => {
+    switch (type) {
+      case 'beat-pulse': return { sensitivity: 1.4, decay: round(Math.max(0.08, (b / 4) * 0.55)), threshold: 0.08 };
+      case 'linear-sweep': return { angle: 0, speed: round(2 / b), bandWidth: 0.35, tail: 0.4 };
+      case 'breathing': return { speed: round(1 / (4 * b)), depth: 0.45, heartbeat: 0 };
+      case 'sine-wave': return { speed: round(1 / (2 * b)), phaseSpread: 1.6, depth: round(0.3 + 0.3 * energy) };
+      case 'chase': return { speed: round(1 / (2 * b)), width: 0.3 };
+      case 'strobe': return { rate: round(4 / b), duty: 0.2 };
+      default: return {};
+    }
+  })();
+  return { id, type, enabled: true, opacity: round(opacity), params };
 }
 
 /** Nothing to add. */

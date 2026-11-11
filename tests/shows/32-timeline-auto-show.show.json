@@ -1,6 +1,6 @@
 {
   "name": "Timeline: ✦ Auto show on the auto-mapped Cube Wall",
-  "description": "Map Sim's Fragmented Cube Wall is auto-mapped (about eighty faces). The empty Timeline says \"Drop a song here, then ✦ Auto show\"; a synthetic 128 BPM driving song is dropped on that top row (a real file drop; it lands on the Song row) (the tempo is typed in: the detector reads this synthetic song's off-beat hats as 102.4 BPM at 44.1 kHz) and ✦ Auto show is clicked on the Song row, then Build the show. The dialog says what it heard; four ✦ rows land on the hero piece (the central screen) whose blocks travel over every face through the piece groups, plus sections, a look a section and Screen FX, well under 400 blocks. It plays at the editor's frame rate; on the render core's real pixels the picture changes at each section boundary and the tiles alternate on the beat at the start of each drop; one Cmd+Z takes it all back.",
+  "description": "Map Sim's Fragmented Cube Wall is auto-mapped (about eighty faces). The empty Timeline says \"Drop a song here, then ✦ Auto show\"; a synthetic 128 BPM driving song is dropped on that top row (a real file drop; it lands on the Song row) (the tempo is typed in: the detector reads this synthetic song's off-beat hats as 102.4 BPM at 44.1 kHz) and ✦ Auto show is clicked on the Song row, then Build the show. The dialog says what it heard; four ✦ rows land on the hero piece (the central screen) whose blocks travel over every face through the piece groups, plus sections, a catalog Look on the pieces the breakdown leaves dark and Screen FX, well under 400 blocks. It plays at the editor's frame rate; on the render core's real pixels the picture changes at each section boundary and the tiles alternate on the beat at the start of each drop; one Cmd+Z takes it all back.",
   "steps": [
     {
       "do": "app.start",
@@ -69,8 +69,8 @@
           "pattern": "Heard: 128 BPM · Driving · 7 sections · [6-9][0-9] pieces in [4-9] groups"
         },
         "eval.true": {
-          "js": "(() => { const s = __show.show(); const rows = s.layerTracks.filter((t) => t.subRow && t.layerName.startsWith('✦')); const host = rows[0]?.layerId; const hostName = __show.project().layers.find((l) => l.id === host)?.name ?? ''; return rows.map((r) => r.layerName).join('|') === '✦ Stage|✦ Set A|✦ Set B|✦ Hero' && rows.every((r) => r.layerId === host) && /Central screen face/.test(hostName) && s.sections.map((x) => x.name).join(',') === 'Intro,Build 1,Drop 1,Breakdown,Build 2,Drop 2,Outro' && ['autoshow:sets','autoshow:hero','autoshow:rows'].every((id) => s.whereOrders.some((o) => o.id === id)) && s.lookClips.length === 7 && s.stageClips.length > 6; })()",
-          "label": "four ✦ rows on the Central screen face, 7 sections, the group orders, a look a section, Screen FX"
+          "js": "(() => { const s = __show.show(); const rows = s.layerTracks.filter((t) => t.subRow && t.layerName.startsWith('✦')); const host = rows[0]?.layerId; const hostName = __show.project().layers.find((l) => l.id === host)?.name ?? ''; return rows.map((r) => r.layerName).join('|') === '✦ Stage|✦ Set A|✦ Set B|✦ Hero' && rows.every((r) => r.layerId === host) && /Central screen face/.test(hostName) && s.sections.map((x) => x.name).join(',') === 'Intro,Build 1,Drop 1,Breakdown,Build 2,Drop 2,Outro' && ['autoshow:sets','autoshow:hero','autoshow:rows'].every((id) => s.whereOrders.some((o) => o.id === id)) && s.lookClips.length >= 1 && s.lookClips.every((c) => c.where?.namedOrder?.startsWith('autoshow:')) && s.stageClips.length > 6; })()",
+          "label": "four ✦ rows on the Central screen face, 7 sections, the group orders, a catalog Look on the breakdown's dark pieces, Screen FX"
         }
       }
     },

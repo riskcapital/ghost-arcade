@@ -224,7 +224,8 @@ describe('where lines through the Timeline', () => {
     const tracks = [{ id: 'row:Left', layerId: 'Left', clips: [{ id: 'c1', startTime: 0, duration: 10, where: normalizeWhere({ motion: { kind: 'drawn' }, position: 1, soft: 0 }) }] }] as never;
     applyContentWhere(frame, { time: 1, tracks, spots: pieceSpots(pieces), ctx: motionContext(null), lines: null });
     expect(frame.tracks[0].opacity).toBe(0);
-    expect(frame.tracks[0].whereCopies).toEqual([{ pieceId: 'Middle', opacity: 0 }, { pieceId: 'Right', opacity: 1 }]);
+    // A window that never moves: copies only where it lights.
+    expect(frame.tracks[0].whereCopies).toEqual([{ pieceId: 'Right', opacity: 1 }]);
     const img = { id: 'img', type: 'image', src: '/a.png' } as never;
     const scene = buildShowTrackScene(pieces, frame, { sourceFor: () => img });
     const copy = scene.find((l) => l.id === showWhereLayerId('Right', 'c1'))!;
@@ -232,8 +233,14 @@ describe('where lines through the Timeline', () => {
     expect(copy.source).toBe(img);
     expect(copy._showOpacityMul).toBeUndefined();
     expect(scene.indexOf(copy)).toBe(scene.findIndex((l) => l.id === 'Right') - 1); // directly over it
-    expect(scene.find((l) => l.id === showWhereLayerId('Middle', 'c1'))!._showOpacityMul).toBe(0);
     expect(scene.find((l) => l.id === 'Left')!._showOpacityMul).toBe(0);
+    // A moving window keeps a copy on every piece of its order, unlit ones at no opacity.
+    const moving = [{ id: 'row:Left', layerId: 'Left', clips: [{ id: 'c1', startTime: 0, duration: 10, where: normalizeWhere({ motion: { kind: 'sweep', bars: 4 }, spread: 0, soft: 0 }) }] }] as never;
+    frame.tracks[0].opacity = 1;
+    applyContentWhere(frame, { time: 0.1, tracks: moving, spots: pieceSpots(pieces), ctx: motionContext(null), lines: null });
+    expect(frame.tracks[0].whereCopies).toEqual([{ pieceId: 'Middle', opacity: 0 }, { pieceId: 'Right', opacity: 0 }]);
+    const sceneMoving = buildShowTrackScene(pieces, frame, { sourceFor: () => img });
+    expect(sceneMoving.find((l) => l.id === showWhereLayerId('Middle', 'c1'))!._showOpacityMul).toBe(0);
     // Not dark: the other pieces keep their own content.
     expect(frame.darkPieces).toBeUndefined();
     expect(scene.find((l) => l.id === 'Middle')).toBe(pieces.find((l) => l.id === 'Middle'));
@@ -258,17 +265,19 @@ describe('where lines through the Timeline', () => {
     expect(frame.darkPieces).toEqual(['Left', 'Middle', 'Right']);
     const img = { id: 'img', type: 'image', src: '/a.png' } as never;
     const scene = buildShowTrackScene(stage, frame, { sourceFor: () => img });
-    // Own content dark: not drawn.
+    // Own content dark: drawn black.
     const middle = scene.find((l) => l.id === 'Middle')!;
-    expect(middle._showOpacityMul).toBe(0);
+    expect(middle.source).toBeNull();
+    expect(middle.colorContent).toMatchObject({ lightness: 0, alpha: 1 });
+    expect(middle._showOpacityMul).toBeUndefined();
     // The lit piece: its copy shows its part of the picture, and wears the look over it.
     const right = scene.find((l) => l.id === showWhereLayerId('Right', 'c2'))!;
     expect(right.cropRegion).toEqual({ x: 0.7, y: 0, width: expect.closeTo(0.3, 6), height: 1 });
     expect(right.edgeEffects?.look?.id).toBe('neon-pulse');
     expect(scene.find((l) => l.id === 'Right')!.edgeEffects?.look).toBeUndefined();
-    // An unlit copy wears it too (at no opacity), so a moving window never re-dresses the pieces.
-    expect(scene.find((l) => l.id === showWhereLayerId('Middle', 'c2'))!.edgeEffects?.look?.id).toBe('neon-pulse');
-    expect(middle.edgeEffects?.look).toBeUndefined();
+    // A window that never moves leaves its unlit pieces without copies: they wear the look on black.
+    expect(scene.find((l) => l.id === showWhereLayerId('Middle', 'c2'))).toBeUndefined();
+    expect(middle.edgeEffects?.look?.id).toBe('neon-pulse');
     // The sub copy on the host piece (unlit here) takes its own part too.
     const host = scene.find((l) => l.id.startsWith('showsub::Left::'))!;
     expect(host._showOpacityMul).toBe(0);

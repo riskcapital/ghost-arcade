@@ -154,6 +154,12 @@ describe('the Auto show draft', () => {
     for (let i = 1; i < passes.length; i++) expect(passes[i]).toBeLessThan(passes[i - 1]);
     const breakdown = inSection('Breakdown')[0];
     expect(breakdown.where).toMatchObject({ motion: { kind: 'drawn' }, spread: 0, dark: true });
+    // The breakdown's dark pieces wear a catalog Look (another row than the lit one), on black.
+    expect(d.lookClips).toHaveLength(1);
+    expect(AUTO_SHOW_CATALOG.filter((c) => c.kind === 'look').map((c) => c.ref)).toContain(d.lookClips[0].lookId);
+    expect(d.lookClips[0].startTime).toBeCloseTo(d.sections.find((x) => x.name === 'Breakdown')!.start, 5);
+    expect(d.lookClips[0].where).toMatchObject({ namedOrder: breakdown.where!.namedOrder, motion: { kind: 'drawn' }, spread: 0 });
+    expect(d.lookClips[0].where!.position).not.toBe(breakdown.where!.position);
     expect(inSection('Outro')[0].where?.motion).toMatchObject({ kind: 'reveal', reverse: true });
     expect(inSection('Outro')[0].fadeOut).toBeGreaterThan(0);
     // Screen FX: none in the breakdown; a riser in each build's last bar; invert hits in the drops (Driving: the first downbeat).
