@@ -130,8 +130,15 @@ export interface LineRecordUi {
   bindPending: { target: ParamTarget; key: string; label: string } | null;
   /** A pass is being written right now. */
   writing: boolean;
+  /** Follow edits: while armed, every parameter you change in the editor is
+   *  recorded, not only the ones with a line or a bound control. */
+  followEdits: boolean;
 }
-export const lineRecordState = writable<LineRecordUi>({ armed: false, mode: 'touch', bindPending: null, writing: false });
+const FOLLOW_EDITS_KEY = 'ga.timeline.followEdits';
+function storedFollowEdits(): boolean {
+  try { return typeof localStorage !== 'undefined' && localStorage.getItem(FOLLOW_EDITS_KEY) === '1'; } catch { return false; }
+}
+export const lineRecordState = writable<LineRecordUi>({ armed: false, mode: 'touch', bindPending: null, writing: false, followEdits: storedFollowEdits() });
 
 /** The line being edited, and its selected points (indices). */
 export interface LineSelection {
@@ -207,6 +214,7 @@ function startSession(): void {
   // Converted ◆ lanes and old files: ranges fit the parameters.
   const fitted = fitLineRanges(s.lines, describeLineParam);
   if (fitted !== s.lines) showTimeline.setLines(fitted, { quiet: true });
+  next.setFollowEdits(get(lineRecordState).followEdits);
   if (get(lineRecordState).armed) next.arm(mode);
   void refreshSongs(true);
   retick();
@@ -381,6 +389,13 @@ export function disarmLines(): void {
   syncRecordUi();
 }
 
+/** Follow edits on or off: armed, it records every parameter you change. */
+export function setFollowEdits(on: boolean): void {
+  lineRecordState.update((x) => (x.followEdits === on ? x : { ...x, followEdits: on }));
+  try { localStorage.setItem(FOLLOW_EDITS_KEY, on ? '1' : '0'); } catch { /* private window */ }
+  session?.setFollowEdits(on);
+}
+
 export function setRecordMode(mode: RecordMode): void {
   lineRecordState.update((x) => ({ ...x, mode }));
   if (session?.recorder.armed) session.recorder.setMode(mode);
@@ -469,7 +484,7 @@ export function addLineAtPlayhead(target: ParamTarget, key: string): string | nu
 /** Test seam. */
 export function _resetTimelineLinesForTest(): void {
   stopSession();
-  lineRecordState.set({ armed: false, mode: 'touch', bindPending: null, writing: false });
+  lineRecordState.set({ armed: false, mode: 'touch', bindPending: null, writing: false, followEdits: false });
   lineSelection.set(null);
   liveTraces.clear();
   lastSongsKey = '';

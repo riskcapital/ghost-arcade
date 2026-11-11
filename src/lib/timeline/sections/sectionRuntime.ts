@@ -11,7 +11,7 @@
 import { get } from 'svelte/store';
 import { setShowSectionEffects, showTimeline } from '../../stores/showTimeline';
 import { liveTakeover, type TakeoverSource } from '../../show/takeover/liveTakeover';
-import { runAsLiveControl } from '../../stores/historyHooks';
+import { runAsAutomation } from '../../stores/historyHooks';
 import type { SectionLiveSource, TimelineSection } from './sectionModel';
 import type { SectionEvent } from './sectionPlayer';
 
@@ -42,7 +42,7 @@ export function handleSectionEvent(e: SectionEvent): void {
     const rows = livePieceRows(e.section);
     const source = liveTakeoverSource(e.section.liveSource);
     const ids: string[] = [];
-    runAsLiveControl(() => {
+    runAsAutomation(() => {
       for (const r of rows) {
         // A piece the VJ already took over by hand stays theirs (the section
         // does not replace it, nor release it at its end).
@@ -57,7 +57,7 @@ export function handleSectionEvent(e: SectionEvent): void {
   } else if (e.type === 'liveEnd') {
     const ids = engaged.get(e.section.id) ?? [];
     engaged.delete(e.section.id);
-    runAsLiveControl(() => {
+    runAsAutomation(() => {
       for (const id of ids) liveTakeover.release(id);
     });
   }

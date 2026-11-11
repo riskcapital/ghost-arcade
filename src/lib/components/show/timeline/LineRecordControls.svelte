@@ -4,6 +4,8 @@
    * while a control moves, then goes back to the line; Latch: keeps the
    * last value until stop), and "touch a knob to bind" for the selected
    * line. Armed is red; while a pass is being written the dot pulses.
+   * Follow edits records every setting you change in the editor while
+   * armed (Mapping, the panels, controllers), not only bound ones.
    */
   import { showSlice } from './timelineSlices';
   import {
@@ -13,6 +15,7 @@
     disarmLines,
     lineRecordState,
     lineSelection,
+    setFollowEdits,
     setRecordMode,
   } from '../../../timeline/lines/timelineLines';
   import type { RecordMode } from '../../../timeline/lines/lineRecorder';
@@ -59,7 +62,7 @@
     class:armed={rec.armed}
     class:writing={rec.writing}
     onclick={toggleArm}
-    title={rec.armed ? 'Armed: moving a bound knob, a slider or a line\'s control while the Timeline plays writes its line. Click to disarm' : 'Arm: record control lines from MIDI, the panel sliders, OSC and Live while the Timeline plays'}
+    title={rec.armed && rec.followEdits ? 'Armed: every setting you change while the Timeline plays is written as a line. Click to disarm' : rec.armed ? 'Armed: moving a bound knob, a slider or a line\'s control while the Timeline plays writes its line. Click to disarm' : 'Arm: record control lines from MIDI, the panel sliders, OSC and Live while the Timeline plays'}
     aria-pressed={rec.armed}
     data-line-arm
   ><span class="lr-dot"></span>{rec.armed ? 'Armed' : 'Rec lines'}</button>
@@ -74,6 +77,14 @@
     <option value="touch">Touch</option>
     <option value="latch">Latch</option>
   </select>
+  <button
+    class="lr-btn lr-follow"
+    class:on={rec.followEdits}
+    onclick={() => setFollowEdits(!rec.followEdits)}
+    title={rec.followEdits ? 'Follow edits on: while armed, every setting you change in Mapping, the panels or with a controller is recorded. Click to record only lines and bound controls' : 'Follow edits: while armed, record every setting you change in Mapping, the panels or with a controller, not only lines and bound controls'}
+    aria-pressed={rec.followEdits}
+    data-line-follow-edits
+  >Follow edits</button>
   <button
     class="lr-btn lr-bind"
     class:pending={!!rec.bindPending}
@@ -101,6 +112,7 @@
   .lr-mode { padding: 0 4px; }
   .lr-btn:disabled { opacity: 0.4; cursor: default; }
   .lr-btn.on { color: #FFD96B; border-color: #FFD96B; }
+  .lr-follow.on { color: #fff; border-color: var(--ga-icon, #5278ff); background: color-mix(in srgb, var(--ga-icon, #5278ff) 35%, transparent); }
   .lr-arm { display: inline-flex; align-items: center; gap: 5px; }
   .lr-dot { width: 8px; height: 8px; border-radius: 50%; background: color-mix(in srgb, var(--ga-rec, #ff4757) 45%, transparent); }
   .lr-arm.armed { color: #fff; background: color-mix(in srgb, var(--ga-rec, #ff4757) 70%, #000); border-color: var(--ga-rec, #ff4757); }

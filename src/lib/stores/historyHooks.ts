@@ -221,6 +221,22 @@ export function runAsLiveControl<T>(fn: () => T): T {
 }
 export function isLiveControl(): boolean { return _liveControlDepth > 0; }
 
+// Engines that move values on their own (audio and LFO modulation, Auto,
+// Music motion, performance pads, the show's sections, cues and takeovers)
+// run inside runAsAutomation as well. Live record follows what a person
+// changes, so it leaves these writes out; a controller, a macro knob or the
+// panel is still recorded.
+let _automationDepth = 0;
+export function runAsAutomation<T>(fn: () => T): T {
+  _automationDepth += 1;
+  try {
+    return runAsLiveControl(fn);
+  } finally {
+    _automationDepth -= 1;
+  }
+}
+export function isAutomation(): boolean { return _automationDepth > 0; }
+
 // ─── Live changes and the latest step ───────────────────────────────────
 // Live control writes no step, so the latest step still holds the values
 // from before it. The next edit's step then holds the live values too, and

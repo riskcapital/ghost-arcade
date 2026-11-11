@@ -33,7 +33,7 @@ import { project, compositions } from '../stores/layers';
 import { settings } from '../stores/settings';
 import { vjClipLauncher, type VJDeck } from '../stores/vjClipLauncher';
 import { parkedShowDoc, showTimeline } from '../stores/showTimeline';
-import { runAsLiveControl } from '../stores/historyHooks';
+import { runAsAutomation } from '../stores/historyHooks';
 import { abletonBridge, type AbletonBridgeState } from '../ableton/abletonBridge';
 import { edgeLook } from '../looks/edgeLookCatalog';
 import { isLookTarget } from '../looks/edgeLooks';
@@ -284,7 +284,7 @@ function run(action: ShowAction): ShowActionResult {
 export function fireShowAction(action: ShowAction): ShowActionResult {
   if (!action || typeof action !== 'object' || typeof (action as { kind?: unknown }).kind !== 'string') return fail('invalid');
   try {
-    return runAsLiveControl(() => run(action));
+    return runAsAutomation(() => run(action));
   } catch (err) {
     console.warn(`[ShowActions] ${action.kind} failed:`, err);
     return fail('error');

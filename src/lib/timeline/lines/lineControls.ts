@@ -13,7 +13,7 @@ import type { MidiMessageType } from '../../midi/midiTypes';
 import type { LineRecorder } from './lineRecorder';
 import { lineFor, RELEASE_MS } from './lineRecorder';
 import type { ControlLine } from './lineModel';
-import { readParam, targetId, type ParamEntry, type ParamTarget, type RegistrySource } from './paramRegistry';
+import { layerParams, ledParams, readParam, stageParams, targetId, type ParamEntry, type ParamTarget, type RegistrySource } from './paramRegistry';
 
 export type BindingSource =
   | { kind: 'midi'; channel: number; cc: number; input?: string }
@@ -40,7 +40,25 @@ export interface LineControlsHost {
   /** The project is being put back (undo / redo): stored values that move
    *  now were not moved by a control, so they are not recorded. */
   restoring?: () => boolean;
+  /** An engine is writing (modulation, Auto, a section, a cue, a takeover):
+   *  with Follow edits on, what it moves is not a person's edit. */
+  automated?: () => boolean;
 }
+
+/** Every parameter Follow edits watches: each mapping layer's own, the Stage
+ *  FX and the LED rig. The scopes are read from the project as it is now. */
+function followTargets(source: RegistrySource): { target: ParamTarget; keys: () => string[]; ref: unknown }[] {
+  const out: { target: ParamTarget; keys: () => string[]; ref: unknown }[] = [];
+  for (const layer of source.layers) {
+    out.push({ target: { scope: 'layer', id: layer.id }, ref: layer, keys: () => layerParams(layer).map((p) => p.key) });
+  }
+  out.push({ target: { scope: 'stage' }, ref: source.mappingComposition, keys: () => stageParams(source).map((p) => p.key) });
+  out.push({ target: { scope: 'led' }, ref: [source.wledControllers, source.wledEffects], keys: () => ledParams(source).map((p) => p.key) });
+  return out;
+}
+
+const sameRef = (a: unknown, b: unknown): boolean =>
+  Array.isArray(a) && Array.isArray(b) ? a.length === b.length && a.every((x, i) => x === b[i]) : a === b;
 
 const sameSource = (a: BindingSource, b: BindingSource) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -55,6 +73,11 @@ export function createLineControls(host: LineControlsHost, initial: LineBinding[
   const lastObserved = new Map<string, number | boolean>();
   const lastLive = new Map<string, number>();
   const watched = new Map<string, { target: ParamTarget; key: string }>();
+  /** Follow edits: record any parameter a person changes, not only lines. */
+  let followEdits = false;
+  /** Follow edits: the object each scope was last read from. A scope whose
+   *  object is the same has not changed (the stores replace what they edit). */
+  const followRefs = new Map<string, unknown>();
 
   const setBindings = (next: LineBinding[]) => {
     bindings = next;
@@ -184,7 +207,8 @@ export function createLineControls(host: LineControlsHost, initial: LineBinding[
      */
     observe(source: RegistrySource): void {
       const seen = new Set<string>();
-      const visit = (target: ParamTarget, key: string) => {
+      const automated = host.automated?.() ?? false;
+      const visit = (target: ParamTarget, key: string, follow = false) => {
         const k = `${targetId(target)}|${key}`;
         if (seen.has(k)) return;
         seen.add(k);
@@ -194,11 +218,33 @@ export function createLineControls(host: LineControlsHost, initial: LineBinding[
         lastObserved.set(k, value);
         if (prev === undefined || prev === value) return;
         if (host.restoring?.()) return;
+        // Follow edits records what a person changes; an engine's own moves
+        // only drive the output. A line or a watched parameter is recorded
+        // from anything, as before.
+        if (follow && automated) return;
         if (host.recorder.armed && host.playing()) host.recorder.input(target, key, value, host.showTime());
       };
       for (const line of host.lines()) visit(line.target, line.key);
       for (const w of watched.values()) visit(w.target, w.key);
+      if (!followEdits || !host.recorder.armed) return;
+      for (const scope of followTargets(source)) {
+        const id = targetId(scope.target);
+        const before = followRefs.get(id);
+        followRefs.set(id, scope.ref);
+        if (before !== undefined && sameRef(before, scope.ref)) continue;
+        for (const key of scope.keys()) visit(scope.target, key, true);
+      }
     },
+
+    /** Follow edits: while armed, record every parameter a person changes in
+     *  the editor (Mapping, the panels, controllers), not only bound ones. */
+    setFollowEdits(on: boolean, source?: RegistrySource): void {
+      followEdits = on;
+      followRefs.clear();
+      // Read every value now, so the first change after this is recorded.
+      if (on && source && host.recorder.armed) this.observe(source);
+    },
+    followEdits: () => followEdits,
 
     /** Touch values for LineContext.touch: open record passes, plus unrecorded live moves. */
     touches(): ReadonlyMap<string, number> {

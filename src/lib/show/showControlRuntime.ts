@@ -29,7 +29,7 @@ import { macros } from '../stores/macros';
 import { vjClipLauncher } from '../stores/vjClipLauncher';
 import { launchClockTempo, launchClockPosition, launchClockFollowsShow } from '../stores/launchClock';
 import { midiRouter, registerShowControl, registerShowInputRelease } from '../midi/midiRouter';
-import { runAsLiveControl } from '../stores/historyHooks';
+import { runAsAutomation, runAsLiveControl } from '../stores/historyHooks';
 import { handleTakeoverControl, releaseTakeoverInputs, runTakeoverCue, runTakeoverReleaseCue } from './takeover/takeoverRuntime';
 import { installSectionRuntime } from '../timeline/sections/sectionRuntime';
 import { installPhraseRuntime } from '../timeline/phrases/phraseRuntime';
@@ -82,8 +82,8 @@ export const appCueExecutor: CueExecutor = {
   },
   timeline,
   projector: (id, command, input) => projectors.command(id, command, input),
-  takeover: (action) => runAsLiveControl(() => runTakeoverCue(action)),
-  takeoverRelease: (action) => runAsLiveControl(() => runTakeoverReleaseCue(action)),
+  takeover: (action) => runAsAutomation(() => runTakeoverCue(action)),
+  takeoverRelease: (action) => runAsAutomation(() => runTakeoverReleaseCue(action)),
   bpm: () => {
     try {
       return launchClockTempo();

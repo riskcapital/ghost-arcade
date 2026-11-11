@@ -182,9 +182,11 @@ describe('controls', () => {
     let showTime = 0;
     let playing = true;
     let restoring = false;
+    let automated = false;
     let bid = 0;
     const controls = createLineControls({
       restoring: () => restoring,
+      automated: () => automated,
       recorder: r.recorder,
       lines: () => r.store.lines(),
       describe: (_t, key) => entries[key] ?? null,
@@ -193,7 +195,7 @@ describe('controls', () => {
       newId: () => `b${++bid}`,
       now: () => r.clock.ms,
     });
-    return { ...r, controls, setTime: (t: number) => { showTime = t; }, setPlaying: (p: boolean) => { playing = p; }, setRestoring: (v: boolean) => { restoring = v; } };
+    return { ...r, controls, setTime: (t: number) => { showTime = t; }, setPlaying: (p: boolean) => { playing = p; }, setRestoring: (v: boolean) => { restoring = v; }, setAutomated: (v: boolean) => { automated = v; } };
   }
 
   it('touch a knob to bind: the next moved CC binds and is kept from the mappings', () => {
@@ -291,5 +293,72 @@ describe('controls', () => {
     live = 0.6;
     controls.pollLive();
     expect([...r.recorder.touches().values()].sort()).toEqual([0.6, 5]);
+  });
+  describe('follow edits', () => {
+    const facade = (over: Partial<Layer> = {}): Layer => ({ ...createLayer('L1', 'Facade'), ...over });
+    const source = (layer: Layer): RegistrySource => ({ layers: [layer] });
+
+    it('off: a setting with no line is not recorded', () => {
+      const c = controlsRig();
+      c.recorder.arm('touch');
+      c.setTime(1);
+      c.controls.observe(source(facade({ opacity: 1 })));
+      c.controls.observe(source(facade({ opacity: 0.3 })));
+      expect(c.recorder.openPasses()).toBe(0);
+    });
+
+    it('on: any setting a person changes while armed and playing gets a line', () => {
+      const c = controlsRig();
+      c.recorder.arm('touch');
+      c.controls.setFollowEdits(true, source(facade({ opacity: 1 })));
+      c.clock.ms = 1000;
+      c.setTime(1);
+      c.controls.observe(source(facade({ opacity: 0.3 })));
+      expect(c.recorder.openPasses()).toBe(1);
+      c.clock.ms = 1000 + RELEASE_MS;
+      c.recorder.tick(1.3);
+      const line = c.store.lines().find((l) => l.key === 'layer:opacity');
+      expect(line).toBeTruthy();
+      expect(lineValueAt(line!, 1.1)).toBeCloseTo(0.3);
+      // Outside the pass the line keeps the value it had before.
+      expect(pointsValueAt(line!.points, 0.5)).toBeCloseTo(1);
+    });
+
+    it('on: an engine moving a setting (modulation, a section, a cue) is not recorded', () => {
+      const c = controlsRig();
+      c.recorder.arm('touch');
+      c.controls.setFollowEdits(true, source(facade({ opacity: 1 })));
+      c.setTime(1);
+      c.setAutomated(true);
+      c.controls.observe(source(facade({ opacity: 0.5 })));
+      c.setAutomated(false);
+      expect(c.recorder.openPasses()).toBe(0);
+      // The engine's value is the new baseline: a person's change after it is recorded.
+      c.controls.observe(source(facade({ opacity: 0.2 })));
+      expect(c.recorder.openPasses()).toBe(1);
+    });
+
+    it('on: changes while paused or disarmed are edits, not recordings', () => {
+      const c = controlsRig();
+      c.controls.setFollowEdits(true, source(facade({ opacity: 1 })));
+      c.controls.observe(source(facade({ opacity: 0.4 })));
+      expect(c.recorder.openPasses()).toBe(0);
+      c.recorder.arm('touch');
+      c.controls.setFollowEdits(true, source(facade({ opacity: 0.4 })));
+      c.setPlaying(false);
+      c.controls.observe(source(facade({ opacity: 0.6 })));
+      expect(c.recorder.openPasses()).toBe(0);
+    });
+
+    it('on: a layer object that did not change is not read again', () => {
+      const c = controlsRig();
+      const same = facade({ opacity: 1 });
+      c.recorder.arm('touch');
+      c.controls.setFollowEdits(true, source(same));
+      c.setTime(1);
+      // The same object handed back: nothing to record.
+      c.controls.observe(source(same));
+      expect(c.recorder.openPasses()).toBe(0);
+    });
   });
 });

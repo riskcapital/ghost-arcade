@@ -21,7 +21,7 @@ import { get } from 'svelte/store';
 import { musicMotionOwned, musicMotionOwnsParam } from './musicMotionOwned';
 import { project } from '../stores/layers';
 import { vjClipLauncher } from '../stores/vjClipLauncher';
-import { runAsLiveControl } from '../stores/historyHooks';
+import { runAsAutomation } from '../stores/historyHooks';
 import { getVisualAudioSnapshot } from './visualAudio';
 import { parseISF } from '../isf/parser';
 import type { ISFInputDef } from '../types';
@@ -282,7 +282,7 @@ function step(now: number): void {
 function tick(now: number): void {
   rafId = requestAnimationFrame(tick);
   try {
-    runAsLiveControl(() => step(now));
+    runAsAutomation(() => step(now));
   } catch (error) {
     console.error('[MusicMotion] frame skipped:', error);
   }
