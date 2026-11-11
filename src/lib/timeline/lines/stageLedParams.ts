@@ -5,6 +5,7 @@
  *
  *   stage:fx:<effectId>:<param>     a Stage FX (mapping composition) effect
  *                                   value, `enabled` or `opacity`
+ *   stage:fx:<effectId>:rgb:<base>  one of its colours, packed 0xRRGGBB
  *   led:<controllerId>:brightness   a WLED controller's output level
  *   led:<controllerId>:gamma
  *   ledfx:<effectId>:active         an LED effect latched on
@@ -19,6 +20,7 @@ import type { KeyframeableParam } from '../../keyframes/paramDiscovery';
 import { effectParamLabels } from '../../effects/effectUX';
 import { getWLEDPatternDefinition } from '../../wled/effects';
 import { parseWLEDHexColor } from '../../wled/mapping';
+import { effectColourGroups, readEffectColour, writeEffectColour } from '../stagefx/effectColours';
 
 export type OverrideValues = Record<string, number | boolean>;
 
@@ -32,6 +34,13 @@ export function discoverStageParams(composition: MappingCompositionState | null 
       { key: `stage:fx:${effect.id}:enabled`, label: 'Enabled', type: 'boolean', kind: 'bool', defaultValue: effect.enabled, group },
       { key: `stage:fx:${effect.id}:opacity`, label: 'Mix', type: 'number', min: 0, max: 1, step: 0.01, defaultValue: effect.opacity ?? 1, group },
     );
+    // Colours first: one colour line instead of three R/G/B lines.
+    for (const colour of effectColourGroups(effect.type)) {
+      params.push({
+        key: `stage:fx:${effect.id}:rgb:${colour.base}`, label: colour.label, type: 'number', kind: 'colour',
+        min: 0, max: 0xffffff, step: 1, defaultValue: readEffectColour(effect, colour), group,
+      });
+    }
     for (const [name, meta] of Object.entries(effectParamLabels[effect.type] ?? {})) {
       if (meta.type === 'color') continue;
       const current = (effect.params as Record<string, unknown>)?.[name];
@@ -138,7 +147,10 @@ export function applyStageOverrides(effects: readonly Effect[], overrides: Overr
       const value = overrides[key];
       if (prop === 'enabled') next.enabled = typeof value === 'boolean' ? value : value >= 0.5;
       else if (prop === 'opacity') next.opacity = Number(value);
-      else next.params[prop] = value;
+      else if (prop.startsWith('rgb:')) {
+        const colour = effectColourGroups(effect.type).find((c) => c.base === prop.slice(4));
+        if (colour) writeEffectColour(next.params, colour, Number(value));
+      } else next.params[prop] = value;
     }
     return (next ?? effect) as Effect;
   }));
@@ -198,6 +210,10 @@ export function readStageLedParam(
     const prop = parts.slice(3).join(':');
     if (prop === 'enabled') return effect.enabled;
     if (prop === 'opacity') return effect.opacity ?? 1;
+    if (prop.startsWith('rgb:')) {
+      const colour = effectColourGroups(effect.type).find((c) => c.base === prop.slice(4));
+      return colour ? readEffectColour(effect, colour) : undefined;
+    }
     const v = (effect.params as Record<string, unknown>)[prop];
     return typeof v === 'number' || typeof v === 'boolean' ? v : undefined;
   }

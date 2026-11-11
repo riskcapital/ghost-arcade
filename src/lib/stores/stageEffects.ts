@@ -879,6 +879,13 @@ function evaluate(eff: StageEffect, cx: number, cy: number, tSec: number, state:
   }
 }
 
+/** One generator's raw 0..1 value for a screen at `tSec` (no wet/dry).
+ *  The Timeline's Screen FX row evaluates through this; `state` carries
+ *  `_sliceIndex` / `_sliceCount` for the order-based generators. */
+export function stageEffectRawValue(eff: StageEffect, cx: number, cy: number, tSec: number, state: Record<string, any>): number {
+  return evaluate(eff, cx, cy, tSec, state) ?? 1;
+}
+
 // ─── RAF tick ───────────────────────────────────────────────────────
 
 let rafId: number | null = null;

@@ -112,7 +112,7 @@ describe('the draft', () => {
 
   it('fills only empty rows: scoring again adds nothing; the Timeline\'s own sections are followed', () => {
     const first = draftScore(structure, tempo, stage, empty, 1);
-    const again = draftScore(structure, tempo, stage, { sections: first.sections, lookClips: first.lookClips, lines: first.lines, ledClips: first.ledClips }, 2);
+    const again = draftScore(structure, tempo, stage, { sections: first.sections, lookClips: first.lookClips, lines: first.lines, ledClips: first.ledClips, stageClips: first.stageClips }, 2);
     expect(draftIsEmpty(again)).toBe(true);
     expect(again.skips.length).toBeGreaterThan(0);
     // Own sections, no looks yet: the draft uses them (kind from the song).

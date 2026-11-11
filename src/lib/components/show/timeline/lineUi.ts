@@ -42,8 +42,9 @@ export function linesForLooks(lines: readonly ControlLine[]): ControlLine[] {
   return lines.filter((l) => l.target.scope === 'look');
 }
 
-export function linesForStage(lines: readonly ControlLine[]): ControlLine[] {
-  return lines.filter((l) => l.target.scope === 'stage' || l.target.scope === 'led');
+/** The Stage row's lines: Stage FX, LED controllers, and the blocks on its Screen FX / Effects rows. */
+export function linesForStage(lines: readonly ControlLine[], stageClipIds: ReadonlySet<string> = new Set()): ControlLine[] {
+  return lines.filter((l) => l.target.scope === 'stage' || l.target.scope === 'led' || (l.target.scope === 'block' && stageClipIds.has(l.target.id)));
 }
 
 /** Lines of blocks on the LED rows. */
@@ -86,7 +87,7 @@ export interface LineLayout {
   expanded: ReadonlySet<string>;
 }
 
-export function computeLineLayout(tracks: readonly ShowLayerTrack[], lines: readonly ControlLine[], expanded: ReadonlySet<string>, ledClipIds: ReadonlySet<string> = new Set()): LineLayout {
+export function computeLineLayout(tracks: readonly ShowLayerTrack[], lines: readonly ControlLine[], expanded: ReadonlySet<string>, ledClipIds: ReadonlySet<string> = new Set(), stageClipIds: ReadonlySet<string> = new Set()): LineLayout {
   const out: LineLayout = { lines: new Map(), heights: new Map(), expanded };
   const put = (id: string, list: ControlLine[]) => {
     if (!list.length) return;
@@ -96,7 +97,7 @@ export function computeLineLayout(tracks: readonly ShowLayerTrack[], lines: read
   if (lines.length) {
     for (const t of tracks) put(t.id, linesForTrack(t, lines));
     put(LOOKS_GROUP, linesForLooks(lines));
-    put(STAGE_GROUP, linesForStage(lines));
+    put(STAGE_GROUP, linesForStage(lines, stageClipIds));
     put(LEDS_GROUP, linesForLeds(lines, ledClipIds));
     // Sound rows: every row id that has lines (rows draw only their own group).
     const soundRows = new Set(lines.flatMap((l) => (l.target.scope === 'sound' ? [l.target.id] : [])));
@@ -110,8 +111,8 @@ let currentLayout: LineLayout = EMPTY_LAYOUT;
 
 /** The tray's line layout. Rows read their heights from it. */
 export const lineLayout: Readable<LineLayout> = derived(
-  [showSlice('lines'), showSlice('layerTracks'), expandedLineGroups, showSlice('ledClips')],
-  ([lines, tracks, expanded, ledClips]) => computeLineLayout(tracks, lines, expanded, new Set(ledClips.map((c) => c.id))),
+  [showSlice('lines'), showSlice('layerTracks'), expandedLineGroups, showSlice('ledClips'), showSlice('stageClips')],
+  ([lines, tracks, expanded, ledClips, stageClips]) => computeLineLayout(tracks, lines, expanded, new Set(ledClips.map((c) => c.id)), new Set(stageClips.map((c) => c.id))),
 );
 lineLayout.subscribe((layout) => { currentLayout = layout; });
 

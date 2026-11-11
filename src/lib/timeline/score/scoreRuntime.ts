@@ -84,7 +84,7 @@ export async function prepareScore(opts: { shuffle?: number } = {}): Promise<Sco
   const seed = (hashString(songKey(track)) + (opts.shuffle ?? 0) * 7919) >>> 0;
   const cur = get(showTimeline);
   const draft = draftScore(structure, tempo, stageNow(), {
-    sections: cur.sections, lookClips: cur.lookClips, lines: cur.lines, ledClips: cur.ledClips,
+    sections: cur.sections, lookClips: cur.lookClips, lines: cur.lines, ledClips: cur.ledClips, stageClips: cur.stageClips,
   }, seed, { next: (prefix) => `${prefix}-${generateUUID()}` });
   if (tempoDetected) draft.adds.unshift(`Tempo ${Math.round(tempo.segments[0].bpm * 10) / 10} BPM, from the song`);
   return { ok: true, prep: { track, tempo, tempoDetected, structure, draft, seed } };
@@ -101,6 +101,7 @@ export function commitScore(prep: ScorePrep): boolean {
     ...(d.lookClips.length ? { lookClips: [...s.lookClips, ...d.lookClips] } : {}),
     ...(d.lines.length ? { lines: [...s.lines, ...d.lines] } : {}),
     ...(d.ledClips.length ? { ledClips: [...s.ledClips, ...d.ledClips] } : {}),
+    ...(d.stageClips.length ? { stageClips: [...s.stageClips, ...d.stageClips] } : {}),
   });
   lastDraft = { draft: d, songKey: songKey(prep.track) };
   return true;
@@ -124,6 +125,7 @@ export async function shuffleScore(): Promise<ScorePrepResult> {
     lookClips: same(before.lookClips, old.lookClips),
     lines: same(before.lines, old.lines),
     ledClips: same(before.ledClips, old.ledClips),
+    stageClips: same(before.stageClips, old.stageClips),
   };
   shuffleCount++;
   const s = get(showTimeline);
@@ -139,6 +141,7 @@ export async function shuffleScore(): Promise<ScorePrepResult> {
     lookClips: [...stripped.lookClips, ...draft.lookClips],
     lines: [...stripped.lines, ...draft.lines],
     ledClips: [...stripped.ledClips, ...draft.ledClips],
+    stageClips: [...stripped.stageClips, ...draft.stageClips],
   });
   lastDraft = { draft, songKey: songKey(track) };
   return { ok: true, prep: { track, tempo: s.tempo, tempoDetected: false, structure, draft, seed } };

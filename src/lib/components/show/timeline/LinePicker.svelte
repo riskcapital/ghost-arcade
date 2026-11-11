@@ -49,7 +49,7 @@
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="lp" use:portal style:left="{x}px" style:top="{y}px" onmousedown={(e) => e.stopPropagation()} data-line-picker-menu>
+<div class="lp" use:portal style:left="{x}px" style:top="{y}px" onmousedown={(e) => e.stopPropagation()} data-line-picker-menu data-help-disabled>
   <div class="lp-head">Add a control line</div>
   {#if targets.length > 1}
     <div class="lp-targets">
