@@ -14,7 +14,7 @@ vi.mock('../../stores/layers', () => ({
   layers: derived(state, (s) => s.layers),
   selectedLayerId: derived(state, (s) => s.selectedLayerId),
 }));
-vi.mock('../../audio/showAudio', () => ({ cachedShowAudioDecode: () => null, decodeShowAudio: async () => null }));
+vi.mock('../../audio/showAudio', () => ({ cachedShowAudioDecode: () => null, decodeShowAudio: async () => null, retainShowAudioDecodes: () => {} }));
 
 const features = analyzeSongFeatures(synthSong(SYNTH_DEFAULT), 22050);
 let gate: Promise<void> = Promise.resolve();
