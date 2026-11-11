@@ -13,12 +13,17 @@ const canvasSource = readFileSync(join(process.cwd(), 'src', 'lib', 'components'
 
 describe('LED senders run in the editor window only', () => {
   it('gates the native WLED mirror and the pixel-map output on the editor window', () => {
-    const at = canvasSource.indexOf('const ledSender = !isOsrMode && !isOutputMode;');
+    const at = canvasSource.indexOf('const ledSender = !isOsrMode && !isOutputMode && !stage3DOutput');
     expect(at).toBeGreaterThan(-1);
     const block = canvasSource.slice(at, canvasSource.indexOf('canvas.addEventListener(\'mousemove\'', at));
+    expect(block).toMatch(/__OUTPUT_WINDOW_MODE__/);
     expect(block).toMatch(/const wantsWled = ledSender && /);
     expect(block).toMatch(/if \(ledSender\) nativeTeardownCallbacks\.push\(startPixelMapOutput\(\)\);/);
     // The mirror for the senders is the senders' size, not a large feed.
     expect(block).toMatch(/acquireNativeCompositeMirror\(\{ maxDim: 192, fps: 20,/);
+  });
+
+  it('never starts senders on the Stage Sim window\'s own canvas', () => {
+    expect(canvasSource).toMatch(/if \(!stage3DOutput\) startWLEDSenders\(canvas, /);
   });
 });

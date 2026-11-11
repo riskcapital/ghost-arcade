@@ -2756,7 +2756,10 @@
       // same controllers (without the Timeline's LED rows, which only the
       // editor runs) and read a 1280 px Stage Sim feed back from the GPU
       // for it, saturating that window's main thread.
-      const ledSender = !isOsrMode && !isOutputMode;
+      // (The window flag is read now: main.ts sets it after the bridge
+      // module has already read it, so `isOutputMode` misses the Stage Sim.)
+      const ledSender = !isOsrMode && !isOutputMode && !stage3DOutput
+        && !(window as unknown as { __OUTPUT_WINDOW_MODE__?: boolean }).__OUTPUT_WINDOW_MODE__;
       const wledUnsub = project.subscribe((p) => {
         const wantsWled = ledSender && (p.wledControllers ?? []).some((c: { enabled?: boolean }) => c.enabled);
         wledWanted = wantsWled;
@@ -3022,7 +3025,11 @@
     // and reconciles tap canvases when controllers are added/removed.
     // The per-frame tap+send happens via tickWLEDSenders() from
     // inside the animate loop.
-    startWLEDSenders(canvas, isOutputMode ? 'output' : isOsrMode ? 'osr' : 'editor');
+    // Never from the Stage Sim window: it is a view of the show, and its
+    // canvas is the 3D stage, so a sender there read the stage view back
+    // from the GPU each frame and sent it to the controllers the editor
+    // drives.
+    if (!stage3DOutput) startWLEDSenders(canvas, isOutputMode ? 'output' : isOsrMode ? 'osr' : 'editor');
     // Set initial container size from wrapper layout dimensions
     sizeContainer(wrapW, wrapH);
 
