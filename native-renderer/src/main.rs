@@ -84,9 +84,10 @@ use compute_graph::{
     NativeComputeGraphGpuBuffer, NativeComputeGraphPassPlan, NativeComputeGraphPrimitiveTopology,
     NativeComputeGraphReadbackSpec, NativeComputeGraphRenderBlend, NativeComputeGraphRenderPlan,
     NativeComputeGraphRenderTarget, NativeComputeGraphTextureDimension,
+    NativeComputeGraphTextureSpec, NativeGraphTextureFormat,
     compute_binding_kind_from_value, compute_graph_binding_kind_from_value,
     compute_graph_binding_resource_id, compute_graph_readbacks, dispatch_from_value,
-    parse_compute_graph_buffer,
+    parse_compute_graph_buffer, parse_compute_graph_texture,
 };
 use media_decode::{
     MAX_NATIVE_VIDEO_FRAME_DECODE_DIMENSION, NATIVE_VIDEO_PREFETCH_WINDOW_DEFAULT_FPS,
@@ -1983,6 +1984,16 @@ struct NativeGraphRenderPipeline {
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
 }
+
+struct NativeGraphGpuTexture {
+    spec: NativeComputeGraphTextureSpec,
+    view: wgpu::TextureView,
+    _texture: wgpu::Texture,
+}
+
+/// All graph textures together. A 2048 HDR scene with depth, a 2048 shadow
+/// map and a bloom chain is about 130 MB.
+const NATIVE_GRAPH_TEXTURE_BUDGET_BYTES: u64 = 768 * 1024 * 1024;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -4487,6 +4498,8 @@ struct RenderState {
     native_compute_pipelines: HashMap<String, NativeComputePipeline>,
     native_graph_render_pipelines: HashMap<String, NativeGraphRenderPipeline>,
     native_compute_graph_buffers: HashMap<String, NativeComputeGraphGpuBuffer>,
+    /// Textures graphs declared in `textures[]`, by id.
+    native_graph_textures: HashMap<String, NativeGraphGpuTexture>,
     /// Copies of graph buffers on their way back to the CPU. See
     /// NativeGraphFrameJob::readback_buffer_ids.
     pending_graph_readbacks: Vec<PendingGraphReadback>,
@@ -8797,6 +8810,8 @@ impl App {
             depth_write: false,
             depth_compare,
             depth_load: false,
+            depth_texture_id: None,
+            depth_only: false,
             bindings: vec![binding],
         };
         self.source_frames
@@ -9081,6 +9096,8 @@ impl App {
                 depth_write: false,
                 depth_compare: NativeComputeGraphDepthCompare::Less,
                 depth_load: false,
+                depth_texture_id: None,
+                depth_only: false,
                 bindings: bg_bindings,
             },
             NativeComputeGraphRenderPlan {
@@ -9111,6 +9128,8 @@ impl App {
                 depth_write: false,
                 depth_compare: NativeComputeGraphDepthCompare::Less,
                 depth_load: false,
+                depth_texture_id: None,
+                depth_only: false,
                 bindings: render_bindings,
             },
         ];
@@ -9546,6 +9565,8 @@ impl App {
             depth_write: false,
             depth_compare: NativeComputeGraphDepthCompare::Less,
             depth_load: false,
+            depth_texture_id: None,
+            depth_only: false,
             bindings: render_bindings,
         };
         self.source_frames
@@ -9928,6 +9949,8 @@ impl App {
                 depth_write: false,
                 depth_compare: NativeComputeGraphDepthCompare::Less,
                 depth_load: false,
+                depth_texture_id: None,
+                depth_only: false,
                 bindings,
             });
         }
@@ -9982,6 +10005,8 @@ impl App {
             depth_write: sphere_depth,
             depth_compare: NativeComputeGraphDepthCompare::Less,
             depth_load: false,
+            depth_texture_id: None,
+            depth_only: false,
             bindings,
         });
         if params.connect_enabled {
@@ -10039,6 +10064,8 @@ impl App {
                 depth_write: false,
                 depth_compare: NativeComputeGraphDepthCompare::Less,
                 depth_load: false,
+                depth_texture_id: None,
+                depth_only: false,
                 bindings,
             });
         }
@@ -10478,6 +10505,8 @@ impl App {
                 depth_write,
                 depth_compare: NativeComputeGraphDepthCompare::Less,
                 depth_load,
+                depth_texture_id: None,
+                depth_only: false,
                 bindings: render_bindings.clone(),
             }
         };
@@ -10938,6 +10967,8 @@ impl App {
                 depth_write,
                 depth_compare: NativeComputeGraphDepthCompare::Less,
                 depth_load,
+                depth_texture_id: None,
+                depth_only: false,
                 bindings: render_bindings.clone(),
             }
         };
@@ -11420,6 +11451,8 @@ impl App {
             depth_write: solid_points,
             depth_compare: NativeComputeGraphDepthCompare::Less,
             depth_load: false,
+            depth_texture_id: None,
+            depth_only: false,
             bindings: render_bindings,
         }];
         self.source_frames
@@ -12404,6 +12437,8 @@ impl App {
             depth_write: false,
             depth_compare: NativeComputeGraphDepthCompare::Less,
             depth_load: false,
+            depth_texture_id: None,
+            depth_only: false,
             bindings: render_bindings,
         };
         self.source_frames
@@ -12852,6 +12887,8 @@ impl App {
             depth_write: false,
             depth_compare: NativeComputeGraphDepthCompare::Less,
             depth_load: false,
+            depth_texture_id: None,
+            depth_only: false,
             bindings: render_bindings,
         };
         self.source_frames
@@ -14167,6 +14204,7 @@ impl App {
         let Some(passes_value) = params.get("passes").and_then(Value::as_array) else {
             return Err("queued compute_graph requires passes[]".to_string());
         };
+        self.upsert_compute_graph_textures(params)?;
         let mut buffer_specs = Vec::with_capacity(buffers_value.len());
         for buffer in buffers_value {
             let mut spec = parse_compute_graph_buffer(buffer)?;
@@ -14374,6 +14412,7 @@ impl App {
         let Some(passes_value) = params.get("passes").and_then(Value::as_array) else {
             return Err("compute_graph requires passes[]".to_string());
         };
+        self.upsert_compute_graph_textures(params)?;
         let mut buffer_specs = Vec::with_capacity(buffers_value.len());
         for buffer in buffers_value {
             buffer_specs.push(parse_compute_graph_buffer(buffer)?);
@@ -14474,6 +14513,7 @@ impl App {
                         self.stats.compute_graph_snapshot_renders =
                             self.stats.compute_graph_snapshot_renders.saturating_add(1);
                     }
+                    NativeComputeGraphRenderTarget::GraphTexture { .. } => {}
                     NativeComputeGraphRenderTarget::CompositeFrame { .. } => {
                         self.stats.compute_graph_source_frame_renders = self
                             .stats
@@ -14501,6 +14541,29 @@ impl App {
             }
         }
         Ok(result)
+    }
+
+    /// Create or resize the textures a graph declares. Done when the graph is
+    /// parsed, not when it runs, so a queued job never meets a missing one.
+    fn upsert_compute_graph_textures(&mut self, params: &Value) -> Result<(), String> {
+        let Some(textures) = params.get("textures").and_then(Value::as_array) else {
+            return Ok(());
+        };
+        let renderer = self
+            .renderer
+            .as_mut()
+            .ok_or("graph textures require a ready renderer")?;
+        for value in textures {
+            renderer.upsert_native_graph_texture(&parse_compute_graph_texture(value)?)?;
+        }
+        Ok(())
+    }
+
+    fn graph_texture_format(&self, id: &str) -> Option<NativeGraphTextureFormat> {
+        self.renderer
+            .as_ref()
+            .and_then(|renderer| renderer.native_graph_textures.get(id))
+            .map(|texture| texture.spec.format)
     }
 
     fn compute_graph_render_plans(
@@ -14564,6 +14627,37 @@ impl App {
                     resource_id,
                     kind: NativeComputeGraphBindingKind::CompositeFrameTexture,
                     source_slot: Some(index),
+                })
+            }
+            Some(
+                kind @ (NativeComputeGraphBindingKind::GraphTexture
+                | NativeComputeGraphBindingKind::GraphDepthTexture),
+            ) => {
+                let resource_id = string_at(binding, &["texture"])
+                    .or_else(|| string_at(binding, &["texture_id"]))
+                    .or_else(|| string_at(binding, &["resource"]))
+                    .ok_or_else(|| {
+                        format!(
+                            "compute_graph {context} `{shader_id}` binding {binding_number} graph texture requires `texture`"
+                        )
+                    })?;
+                let Some(format) = self.graph_texture_format(&resource_id) else {
+                    return Err(format!(
+                        "compute_graph {context} `{shader_id}` binding {binding_number} references undeclared texture `{resource_id}`"
+                    ));
+                };
+                let wants_depth = matches!(kind, NativeComputeGraphBindingKind::GraphDepthTexture);
+                if format.is_depth() != wants_depth {
+                    return Err(format!(
+                        "compute_graph {context} `{shader_id}` binding {binding_number}: texture `{resource_id}` is {format:?}, which does not match its `{}` binding",
+                        kind.signature()
+                    ));
+                }
+                Ok(NativeComputeGraphBindingSpec {
+                    binding: binding_number,
+                    resource_id,
+                    kind,
+                    source_slot: None,
                 })
             }
             Some(NativeComputeGraphBindingKind::SourceFrameSampler) => {
@@ -14964,12 +15058,56 @@ impl App {
                     seq,
                 }
             }
+            "texture" | "graph-texture" => {
+                let Some(id) = string_at(render, &["texture"])
+                    .or_else(|| string_at(render, &["texture_id"]))
+                else {
+                    return Err("compute_graph render target `texture` requires texture".to_string());
+                };
+                NativeComputeGraphRenderTarget::GraphTexture { id }
+            }
             _ => {
                 return Err(format!(
                     "compute_graph render target `{target_label}` is unsupported"
                 ));
             }
         };
+        let mut depth_enabled = depth_enabled;
+        let mut depth_write = depth_write;
+        let mut generate_mips = generate_mips;
+        let mut depth_only = false;
+        let mut depth_texture_id = string_at(render, &["depth_texture"])
+            .or_else(|| string_at(render, &["depth_texture_id"]));
+        if let NativeComputeGraphRenderTarget::GraphTexture { id } = &target {
+            let Some(format) = self.graph_texture_format(id) else {
+                return Err(format!(
+                    "compute_graph render `{shader_id}` targets undeclared texture `{id}`"
+                ));
+            };
+            generate_mips = false;
+            if format.is_depth() {
+                // The target is the depth buffer; there is no colour output.
+                depth_only = true;
+                depth_enabled = true;
+                depth_write = true;
+                depth_texture_id = Some(id.clone());
+            } else if depth_enabled && depth_texture_id.is_none() {
+                return Err(format!(
+                    "compute_graph render `{shader_id}` into texture `{id}` uses depth and so needs depth_texture"
+                ));
+            }
+        }
+        if let Some(id) = depth_texture_id.as_ref() {
+            if !self.graph_texture_format(id).is_some_and(NativeGraphTextureFormat::is_depth) {
+                return Err(format!(
+                    "compute_graph render `{shader_id}` depth_texture `{id}` is not a declared depth texture"
+                ));
+            }
+            if !depth_enabled {
+                depth_texture_id = None;
+            }
+        }
+        let depth_load = depth_load && depth_enabled;
         Ok(NativeComputeGraphRenderPlan {
             name,
             cache_key: format!(
@@ -14977,7 +15115,7 @@ impl App {
                 source_hash,
                 blend.signature(),
                 primitive_topology.signature(),
-                if depth_enabled { "depth" } else { "nodepth" },
+                if depth_only { "depthonly" } else if depth_enabled { "depth" } else { "nodepth" },
                 if depth_write { "write" } else { "read" },
                 depth_compare.signature()
             ),
@@ -14999,6 +15137,8 @@ impl App {
             depth_write,
             depth_compare,
             depth_load,
+            depth_texture_id,
+            depth_only,
             bindings,
         })
     }
@@ -21536,6 +21676,7 @@ impl RenderState {
             native_compute_pipelines: HashMap::new(),
             native_graph_render_pipelines: HashMap::new(),
             native_compute_graph_buffers: HashMap::new(),
+            native_graph_textures: HashMap::new(),
             pending_graph_readbacks: Vec::new(),
             graph_readback_results: HashMap::new(),
             output_mirror_texture,
@@ -23938,7 +24079,41 @@ impl RenderState {
                     None::<String>,
                     None::<usize>,
                 ),
+                NativeComputeGraphRenderTarget::GraphTexture { id } => {
+                    let Some(texture) = self.native_graph_textures.get(id) else {
+                        return Err(format!(
+                            "native compute graph render `{}` targets missing texture `{id}`",
+                            render_plan.name
+                        ));
+                    };
+                    (
+                        texture.spec.format.texture_format(),
+                        "graph_texture",
+                        texture.spec.width,
+                        texture.spec.height,
+                        None::<String>,
+                        None::<usize>,
+                    )
+                }
             };
+        let graph_target_id = match &render_plan.target {
+            NativeComputeGraphRenderTarget::GraphTexture { id } => Some(id.as_str()),
+            _ => None,
+        };
+        if let Some(depth_id) = render_plan.depth_texture_id.as_deref() {
+            let Some(depth) = self.native_graph_textures.get(depth_id) else {
+                return Err(format!(
+                    "native compute graph render `{}` uses missing depth texture `{depth_id}`",
+                    render_plan.name
+                ));
+            };
+            if depth.spec.width != target_width || depth.spec.height != target_height {
+                return Err(format!(
+                    "native compute graph render `{}`: depth texture `{depth_id}` is {}x{}, the target is {target_width}x{target_height}",
+                    render_plan.name, depth.spec.width, depth.spec.height
+                ));
+            }
+        }
         let composite_target_index = match &render_plan.target {
             NativeComputeGraphRenderTarget::CompositeFrame { index } => {
                 Some((*index).min(COMPOSITE_FRAME_SLOTS - 1))
@@ -24001,10 +24176,30 @@ impl RenderState {
         } else if let Some(target) = target_slot.as_ref() {
             source_frame_target_view = target.target_view("Ghost Native Compute Graph Source Frame View", 0);
             &source_frame_target_view
+        } else if let Some(texture) = graph_target_id.and_then(|id| self.native_graph_textures.get(id)) {
+            &texture.view
         } else {
             &self.snapshot_view
         };
-        let depth_stencil_attachment = if render_plan.depth_enabled {
+        let graph_depth = render_plan
+            .depth_texture_id
+            .as_deref()
+            .and_then(|id| self.native_graph_textures.get(id));
+        let depth_stencil_attachment = if let Some(depth) = graph_depth {
+            Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth.view,
+                depth_ops: Some(wgpu::Operations {
+                    load: if render_plan.depth_load {
+                        wgpu::LoadOp::Load
+                    } else {
+                        wgpu::LoadOp::Clear(1.0)
+                    },
+                    // A graph depth texture exists to be read later.
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            })
+        } else if render_plan.depth_enabled {
             let depth_view = if source_slot.is_some()
                 && target_width == self.source_frame_size as u32
                 && target_height == self.source_frame_size as u32
@@ -24034,26 +24229,29 @@ impl RenderState {
             None
         };
         {
+            let color_attachment = wgpu::RenderPassColorAttachment {
+                view: target_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: if render_plan.clear {
+                        wgpu::LoadOp::Clear(wgpu::Color {
+                            r: render_plan.clear_color[0],
+                            g: render_plan.clear_color[1],
+                            b: render_plan.clear_color[2],
+                            a: render_plan.clear_color[3],
+                        })
+                    } else {
+                        wgpu::LoadOp::Load
+                    },
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            };
+            let color_attachments = [Some(color_attachment)];
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some(&render_plan.name),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: if render_plan.clear {
-                            wgpu::LoadOp::Clear(wgpu::Color {
-                                r: render_plan.clear_color[0],
-                                g: render_plan.clear_color[1],
-                                b: render_plan.clear_color[2],
-                                a: render_plan.clear_color[3],
-                            })
-                        } else {
-                            wgpu::LoadOp::Load
-                        },
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
+                // A depth-only pass (a shadow map) has no colour output.
+                color_attachments: if render_plan.depth_only { &[] } else { &color_attachments },
                 depth_stencil_attachment,
                 timestamp_writes: None,
                 occlusion_query_set: None,
@@ -24192,6 +24390,7 @@ impl RenderState {
         enum PreparedBinding<'a> {
             Buffer(&'a wgpu::Buffer),
             TextureView(usize),
+            GraphTextureView(&'a wgpu::TextureView),
             Sampler,
         }
 
@@ -24258,6 +24457,16 @@ impl RenderState {
                 NativeComputeGraphBindingKind::SourceFrameSampler => {
                     prepared.push(PreparedBinding::Sampler);
                 }
+                NativeComputeGraphBindingKind::GraphTexture
+                | NativeComputeGraphBindingKind::GraphDepthTexture => {
+                    let Some(texture) = self.native_graph_textures.get(&binding.resource_id) else {
+                        return Err(format!(
+                            "native compute graph {context} references missing texture `{}`",
+                            binding.resource_id
+                        ));
+                    };
+                    prepared.push(PreparedBinding::GraphTextureView(&texture.view));
+                }
             }
         }
 
@@ -24270,6 +24479,9 @@ impl RenderState {
                     PreparedBinding::Buffer(buffer) => buffer.as_entire_binding(),
                     PreparedBinding::TextureView(index) => {
                         wgpu::BindingResource::TextureView(&texture_views[*index])
+                    }
+                    PreparedBinding::GraphTextureView(view) => {
+                        wgpu::BindingResource::TextureView(view)
                     }
                     PreparedBinding::Sampler => {
                         wgpu::BindingResource::Sampler(&self.source_frame_sampler)
@@ -24361,6 +24573,55 @@ impl RenderState {
             kind: spec.kind,
             indirect: spec.indirect,
         }
+    }
+
+    fn upsert_native_graph_texture(
+        &mut self,
+        spec: &NativeComputeGraphTextureSpec,
+    ) -> Result<(), String> {
+        if self
+            .native_graph_textures
+            .get(&spec.id)
+            .is_some_and(|existing| &existing.spec == spec)
+        {
+            return Ok(());
+        }
+        let bytes = |spec: &NativeComputeGraphTextureSpec| {
+            (spec.width as u64) * (spec.height as u64) * spec.format.bytes_per_pixel()
+        };
+        let others: u64 = self
+            .native_graph_textures
+            .values()
+            .filter(|texture| texture.spec.id != spec.id)
+            .map(|texture| bytes(&texture.spec))
+            .sum();
+        if others.saturating_add(bytes(spec)) > NATIVE_GRAPH_TEXTURE_BUDGET_BYTES {
+            return Err(format!("graph texture `{}` exceeds the graph texture budget", spec.id));
+        }
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(&format!("Ghost Native Graph Texture {}", spec.id)),
+            size: wgpu::Extent3d {
+                width: spec.width,
+                height: spec.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: spec.format.texture_format(),
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.native_graph_textures.insert(
+            spec.id.clone(),
+            NativeGraphGpuTexture {
+                spec: spec.clone(),
+                view,
+                _texture: texture,
+            },
+        );
+        Ok(())
     }
 
     fn upsert_native_compute_graph_buffer(
@@ -35535,6 +35796,8 @@ mod tests {
                 primitive_topology: NativeComputeGraphPrimitiveTopology::TriangleList,
                 depth_enabled: false, depth_write: false, depth_compare: NativeComputeGraphDepthCompare::Always,
                 depth_load: false,
+                depth_texture_id: None,
+                depth_only: false,
                 bindings: input.into_iter().map(|slot| NativeComputeGraphBindingSpec {
                     binding: 2, resource_id: format!("out{slot}"), source_slot: Some(slot),
                     kind: NativeComputeGraphBindingKind::SourceFrameTexture(NativeComputeGraphTextureDimension::D2),
@@ -36716,6 +36979,11 @@ fn build_graph_render_pipeline(device: &wgpu::Device, render_plan: &NativeComput
                 bind_group_layouts: &[Some(&bind_group_layout)],
                 immediate_size: 0,
             });
+        let color_targets = [Some(wgpu::ColorTargetState {
+            format: output_format,
+            blend: Some(render_plan.blend.blend_state()),
+            write_mask: wgpu::ColorWrites::ALL,
+        })];
         let pipeline = device
             .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("Ghost Render Core Native Graph Render Pipeline"),
@@ -36742,16 +37010,13 @@ fn build_graph_render_pipeline(device: &wgpu::Device, render_plan: &NativeComput
                     None
                 },
                 multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
+                // A depth-only pass (a shadow map) runs no fragment shader.
+                fragment: if render_plan.depth_only { None } else { Some(wgpu::FragmentState {
                     module: &shader,
                     entry_point: Some(&render_plan.fragment_entry),
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: output_format,
-                        blend: Some(render_plan.blend.blend_state()),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
+                    targets: &color_targets,
+                }) },
                 multiview_mask: None,
                 cache: None,
             });

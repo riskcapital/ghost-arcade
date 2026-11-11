@@ -95,6 +95,12 @@ pub(crate) enum NativeComputeGraphBindingKind {
     /// `NativeComputeGraphBindingSpec::source_slot`.
     CompositeFrameTexture,
     SourceFrameSampler,
+    /// A colour texture the graph declared in `textures[]`. Sampled as a
+    /// filterable 2D float texture. The id rides in `resource_id`.
+    GraphTexture,
+    /// A depth texture the graph declared in `textures[]` (a shadow map, the
+    /// scene depth). Read with `textureLoad`; no sampler is needed.
+    GraphDepthTexture,
 }
 
 impl NativeComputeGraphBindingKind {
@@ -104,6 +110,8 @@ impl NativeComputeGraphBindingKind {
             Self::SourceFrameTexture(dimension) => dimension.signature(),
             Self::CompositeFrameTexture => "composite-frame-texture",
             Self::SourceFrameSampler => "source-frame-sampler",
+            Self::GraphTexture => "graph-texture",
+            Self::GraphDepthTexture => "graph-depth-texture",
         }
     }
 
@@ -123,6 +131,16 @@ impl NativeComputeGraphBindingKind {
             Self::SourceFrameSampler => {
                 wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)
             }
+            Self::GraphTexture => wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            Self::GraphDepthTexture => wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Depth,
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
         }
     }
 }
@@ -177,6 +195,11 @@ pub(crate) enum NativeComputeGraphRenderTarget {
     /// and must not lose resolution on the way through.
     CompositeFrame {
         index: usize,
+    },
+    /// A texture the graph declared in `textures[]`. A depth-format texture
+    /// here makes the pass depth-only (a shadow map).
+    GraphTexture {
+        id: String,
     },
 }
 
@@ -332,6 +355,11 @@ pub(crate) struct NativeComputeGraphRenderPlan {
     /// them without drawing through the grains in front). Only meaningful
     /// with depth_enabled.
     pub(crate) depth_load: bool,
+    /// A graph depth texture to use as this pass's depth buffer instead of
+    /// the core's shared one. Always stored, so a later pass can read it.
+    pub(crate) depth_texture_id: Option<String>,
+    /// The pass has no colour output (its target is a depth texture).
+    pub(crate) depth_only: bool,
     pub(crate) bindings: Vec<NativeComputeGraphBindingSpec>,
 }
 
@@ -341,8 +369,88 @@ pub(crate) struct NativeComputeGraphReadbackSpec {
     pub(crate) include_bytes: bool,
 }
 
+/// Formats a graph may ask for. Kept short on purpose: each one is a
+/// pipeline permutation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NativeGraphTextureFormat {
+    Rgba16Float,
+    Rgba8Unorm,
+    Depth32Float,
+}
+
+impl NativeGraphTextureFormat {
+    pub(crate) fn from_label(label: &str) -> Option<Self> {
+        match label.trim().to_ascii_lowercase().replace(['_', '-', ' '], "").as_str() {
+            "rgba16float" | "rgba16f" | "hdr" => Some(Self::Rgba16Float),
+            "rgba8unorm" | "rgba8" => Some(Self::Rgba8Unorm),
+            "depth32float" | "depth" => Some(Self::Depth32Float),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn texture_format(self) -> wgpu::TextureFormat {
+        match self {
+            Self::Rgba16Float => wgpu::TextureFormat::Rgba16Float,
+            Self::Rgba8Unorm => wgpu::TextureFormat::Rgba8Unorm,
+            Self::Depth32Float => wgpu::TextureFormat::Depth32Float,
+        }
+    }
+
+    pub(crate) fn is_depth(self) -> bool {
+        matches!(self, Self::Depth32Float)
+    }
+
+    pub(crate) fn bytes_per_pixel(self) -> u64 {
+        match self {
+            Self::Rgba16Float => 8,
+            Self::Rgba8Unorm | Self::Depth32Float => 4,
+        }
+    }
+}
+
+/// A texture owned by a graph: created on first use, kept by id, recreated
+/// when its size or format changes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NativeComputeGraphTextureSpec {
+    pub(crate) id: String,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) format: NativeGraphTextureFormat,
+}
+
+pub(crate) const NATIVE_GRAPH_TEXTURE_MAX_SIZE: u32 = 4096;
+
+pub(crate) fn parse_compute_graph_texture(
+    value: &Value,
+) -> Result<NativeComputeGraphTextureSpec, String> {
+    let Some(id) = string_at(value, &["id"]).or_else(|| string_at(value, &["name"])) else {
+        return Err("compute_graph texture missing id".to_string());
+    };
+    let format_label = string_at(value, &["format"]).unwrap_or_else(|| "rgba16float".to_string());
+    let Some(format) = NativeGraphTextureFormat::from_label(&format_label) else {
+        return Err(format!(
+            "compute_graph texture `{id}` has unsupported format `{format_label}`"
+        ));
+    };
+    let size = number_at(value, &["size"]);
+    let dimension = |key: &str| {
+        number_at(value, &[key])
+            .or(size)
+            .unwrap_or(1024.0)
+            .round()
+            .clamp(1.0, NATIVE_GRAPH_TEXTURE_MAX_SIZE as f64) as u32
+    };
+    Ok(NativeComputeGraphTextureSpec {
+        id,
+        width: dimension("width"),
+        height: dimension("height"),
+        format,
+    })
+}
+
 pub(crate) fn compute_graph_binding_resource_id(value: &Value) -> Option<String> {
     string_at(value, &["resource"])
+        .or_else(|| string_at(value, &["texture"]))
         .or_else(|| string_at(value, &["resource_id"]))
         .or_else(|| string_at(value, &["buffer"]))
 }
@@ -395,6 +503,8 @@ fn compute_graph_binding_kind_from_str(kind: &str) -> Option<NativeComputeGraphB
         "source-frame-sampler" | "source-sampler" => {
             Some(NativeComputeGraphBindingKind::SourceFrameSampler)
         }
+        "graph-texture" => Some(NativeComputeGraphBindingKind::GraphTexture),
+        "graph-depth-texture" => Some(NativeComputeGraphBindingKind::GraphDepthTexture),
         _ => compute_binding_kind_from_str(&kind).map(NativeComputeGraphBindingKind::Buffer),
     }
 }
