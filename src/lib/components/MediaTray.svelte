@@ -50,7 +50,7 @@
   import { localFilesFromList, looksLikeSketch, sketchFromLocalFiles, takeDroppedFiles, type LocalFile } from '../p5import/localFiles';
   import { sketchFromZip } from '../p5import/zip';
   import type { P5Sketch } from '../p5sketch/files';
-  import { loadSketches, removeSketch, saveSketch, updateSketch } from '../stores/sketchLibrary';
+  import { loadSketches, removeSketch, saveSketch, updateSketch, sketchLibraryChanges, type StoredSketch } from '../stores/sketchLibrary';
   import ShaderLibrary from './ShaderLibrary.svelte';
   import * as THREE from 'three';
   import { modulationStore, setParamModSource, setParamModAmount, updateParamMod, setBaseValue, registerParamRanges, modKeyShader, hasModRange, rangeWithRestAt, type ModSource, type ParamModulation } from '../audio/modulation';
@@ -1578,6 +1578,7 @@
     // tab is never empty out of the box. Doesn't block shader loading.
     seedBuiltInThreeJSItems();
     void restoreImportedSketches();
+    stopCommunitySketchWatch = sketchLibraryChanges.subscribe(applySketchLibraryChange);
 
     // If shaders are already cached, use them instantly (filter out hidden)
     if (shaderCache.shaders) {
@@ -2292,6 +2293,7 @@
   onDestroy(() => {
     mediaTrayDestroyed = true;
     stopSketchSaves();
+    stopCommunitySketchWatch?.();
     if (shaderCacheWaitInterval) {
       clearInterval(shaderCacheWaitInterval);
       shaderCacheWaitInterval = null;
@@ -3780,6 +3782,10 @@
     const origin = item.jsAnimation.origin;
     if (!origin) return '';
     const by = origin.author ? ` by ${origin.author}` : '';
+    if (origin.kind === 'community') {
+      const licence = origin.community?.licence ? ` (${origin.community.licence})` : '';
+      return `${origin.sketchName}${by}, from the Ghost Arcade community${licence}\n`;
+    }
     return origin.kind === 'p5-editor'
       ? `${origin.sketchName}${by}, from the p5.js Web Editor\n`
       : `${origin.sketchName}${by}, a p5.js sketch\n`;
@@ -3934,16 +3940,37 @@
     void removeSketch(id);
   }
 
-  /** Imported p5.js sketches from earlier sessions, back in the JS tab under their own ids. */
+  function storedSketchItem(s: StoredSketch): JSAnimationItem {
+    return { id: s.id, name: s.name, type: s.jsAnimation.animationType ?? 'p5js', jsAnimation: s.jsAnimation, thumbnail: s.thumbnail };
+  }
+
+  /** Imported sketches and community pages from earlier sessions, back in the JS tab under their own ids. */
   async function restoreImportedSketches() {
     const stored = await loadSketches();
     const fresh = stored.filter((s) => !jsAnimations.some((a) => a.id === s.id));
     if (fresh.length === 0) return;
-    jsAnimations = [
-      ...jsAnimations,
-      ...fresh.map((s) => ({ id: s.id, name: s.name, type: 'p5js' as const, jsAnimation: s.jsAnimation, thumbnail: s.thumbnail })),
-    ];
+    jsAnimations = [...jsAnimations, ...fresh.map(storedSketchItem)];
     for (const s of fresh) if (!s.thumbnail) fillJSAnimationThumbnail(s.id, s.jsAnimation);
+  }
+
+  // Find latest brings community sketches and pages in (or takes them down)
+  // while the tray is open; show the change straight away. Layers already
+  // using a removed item keep their own copy.
+  let stopCommunitySketchWatch: (() => void) | null = null;
+  let lastSketchChangeSeq = 0;
+  function applySketchLibraryChange(change: { seq: number; put: StoredSketch[]; removed: string[] }) {
+    if (change.seq === lastSketchChangeSeq) return;
+    lastSketchChangeSeq = change.seq;
+    const gone = new Set(change.removed);
+    const incoming = new Map(change.put.map((s) => [s.id, s]));
+    let next = jsAnimations.filter((a) => !gone.has(a.id)).map((a) => {
+      const updated = incoming.get(a.id);
+      return updated ? { ...storedSketchItem(updated), thumbnail: updated.thumbnail ?? a.thumbnail } : a;
+    });
+    const added = change.put.filter((s) => !next.some((a) => a.id === s.id));
+    next = [...next, ...added.map(storedSketchItem)];
+    jsAnimations = next;
+    for (const s of change.put) if (!s.thumbnail) fillJSAnimationThumbnail(s.id, s.jsAnimation);
   }
 
   // Load a saved shader from the library and add it to the active list
