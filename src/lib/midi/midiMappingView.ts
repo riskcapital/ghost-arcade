@@ -9,7 +9,9 @@
  * A single pad or knob, though, can be bound to as many parameters as you
  * like — `getMappingsForMessage` returns an array for exactly that reason.
  * "Unlearn this pad" is therefore not one row, it is every row that shares a
- * (type, number, channel), which is what `groupMappingsByControl` builds.
+ * (type, number, channel) on the same controller, which is what
+ * `groupMappingsByControl` builds. With several controllers in use, the same
+ * note on two of them is two controls, each named with its controller.
  *
  * NAMING. `MidiMapping.label` comes from the `data-midi-label` attribute on
  * the control that was learned, and for an effect parameter that is just the
@@ -29,6 +31,7 @@
 import type { MidiMapping, MidiMessageType } from './midiTypes';
 import type { Project } from '../types';
 import { EFFECT_CATALOG } from '../effects/effectCatalog';
+import { STUDIO_SCOPE, studioControl } from '../music/studioControls';
 
 export interface MidiControlGroup {
   /** Stable key for an {#each} block. */
@@ -40,6 +43,8 @@ export interface MidiControlGroup {
   controlLabel: string;
   /** "Ch 1", or "Any channel" for the -1 wildcard. */
   channelLabel: string;
+  /** The controller it was learned on, by name; null for a mapping from before that answers any. */
+  device: string | null;
   mappings: MidiMapping[];
 }
 
@@ -52,9 +57,10 @@ export interface MidiTargetDescription {
   orphaned: boolean;
 }
 
-/** Groups a control by what a message has to match to reach it. */
-export function controlKey(m: Pick<MidiMapping, 'type' | 'number' | 'channel'>): string {
-  return `${m.type}:${m.number}:${m.channel}`;
+/** Groups a control by what a message has to match to reach it (and the controller it was learned on). */
+export function controlKey(m: Pick<MidiMapping, 'type' | 'number' | 'channel'> & { device?: string }): string {
+  const key = `${m.type}:${m.number}:${m.channel}`;
+  return m.device ? `${key}@${m.device}` : key;
 }
 
 export function controlLabel(type: MidiMessageType, number: number): string {
@@ -87,6 +93,7 @@ export function groupMappingsByControl(mappings: MidiMapping[]): MidiControlGrou
         number: m.number,
         controlLabel: controlLabel(m.type, m.number),
         channelLabel: channelLabel(m.channel),
+        device: m.device || null,
         mappings: [],
       };
       groups.set(key, g);
@@ -94,7 +101,9 @@ export function groupMappingsByControl(mappings: MidiMapping[]): MidiControlGrou
     g.mappings.push(m);
   }
   const typeOrder: Record<MidiMessageType, number> = { cc: 0, note: 1, pitchbend: 2 };
+  // Controller by controller (mappings for any controller first), each laid out as before.
   return [...groups.values()].sort((a, b) =>
+    (a.device ?? '').localeCompare(b.device ?? '') ||
     typeOrder[a.type] - typeOrder[b.type] ||
     a.number - b.number ||
     a.channel - b.channel
@@ -104,13 +113,14 @@ export function groupMappingsByControl(mappings: MidiMapping[]): MidiControlGrou
 /** Does an incoming message reach this control? Mirrors getMappingsForMessage. */
 export function groupMatchesMessage(
   group: MidiControlGroup,
-  msg: { channel: number; type: MidiMessageType; number: number } | null,
+  msg: { channel: number; type: MidiMessageType; number: number; device?: string } | null,
 ): boolean {
   if (!msg) return false;
   return (
     group.type === msg.type &&
     group.number === msg.number &&
-    (group.channel === -1 || group.channel === msg.channel)
+    (group.channel === -1 || group.channel === msg.channel) &&
+    (!group.device || !msg.device || group.device === msg.device)
   );
 }
 
@@ -181,6 +191,11 @@ export function describeTarget(
   }
 
   if (parts[0] === 'vj') return { context: 'VJ', label: fallbackLabel, orphaned: false };
+  if (parts[0] === 'vj-b') return { context: 'VJ deck B', label: fallbackLabel, orphaned: false };
+  // The studio names its own controls (Echo throw, FX pad 3, Next song).
+  if (`${parts[0]}:` === STUDIO_SCOPE) {
+    return { context: 'Music Studio', label: studioControl(parts.slice(1).join(':'))?.label ?? fallbackLabel, orphaned: false };
+  }
   if (parts[0] === 'global') return { context: 'Global', label: fallbackLabel, orphaned: false };
 
   return { context: null, label: fallbackLabel, orphaned: false };

@@ -108,10 +108,16 @@
     if (count >= MAX_LIVE_INPUTS) return;
     const last = s.liveInputs[count - 1];
     const sends = status[count - 1]?.channels ?? null;
-    const next = last.channel + 1;
+    // A second input on an interface that hears every channel mixed: the
+    // first takes channel 1 and the new one channel 2 (bass and guitar on a
+    // stereo interface), unless the device is known to send only one.
+    const split = last.channel < 0 && (sends === null || sends >= 2);
+    if (split) musicStudio.setLiveInput(count - 1, { channel: 0 });
+    const from = split ? 0 : last.channel;
+    const next = from + 1;
     // The device first, so the new input never opens the default input on its way.
     musicStudio.setInputDevice(count, s.inputDevices[count - 1] ?? '');
-    musicStudio.addLiveInput({ channel: last.channel >= 0 && (sends === null || next < sends) ? next : -1 });
+    musicStudio.addLiveInput({ channel: from >= 0 && (sends === null || next < sends) ? next : -1, monitor: last.monitor });
   }
 
   function deviceTitle(index: number): string {

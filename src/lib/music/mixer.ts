@@ -182,8 +182,14 @@ export interface LiveInputSettings {
   fxSend: number;
 }
 
+/**
+ * A new band input drives the visuals and the band effects but is not heard
+ * through the studio: the band's dry sound stays on the band's desk, so it
+ * is not doubled in the room, and a desk whose aux mix includes the studio's
+ * output cannot feed it back into itself.
+ */
 export function defaultLiveInput(): LiveInputSettings {
-  return { name: '', channel: -1, role: 'lead', sensitivity: 0.5, volume: 0.5, monitor: true, fxSend: 1 };
+  return { name: '', channel: -1, role: 'lead', sensitivity: 0.5, volume: 0.5, monitor: false, fxSend: 1 };
 }
 
 export function normalizeLiveInput(raw: unknown): LiveInputSettings {
@@ -207,7 +213,8 @@ export function normalizeLiveInput(raw: unknown): LiveInputSettings {
  * there were several has its one input as the first.
  */
 export function normalizeLiveInputs(raw: unknown, legacy?: unknown): LiveInputSettings[] {
-  const list = Array.isArray(raw) ? raw : legacy && typeof legacy === 'object' ? [legacy] : [];
+  // The one input from before was heard through the studio unless it said otherwise.
+  const list = Array.isArray(raw) ? raw : legacy && typeof legacy === 'object' ? [{ monitor: true, ...(legacy as object) }] : [];
   const inputs = list.slice(0, MAX_LIVE_INPUTS).map(normalizeLiveInput);
   return inputs.length ? inputs : [defaultLiveInput()];
 }

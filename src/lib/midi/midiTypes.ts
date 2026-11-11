@@ -106,6 +106,8 @@ export interface MidiStoreState {
     type: MidiMessageType;
     number: number;
     value: number;
+    /** The input it came from, by name. */
+    device?: string;
   } | null;
 
   // ===== MIDI Clock state =====

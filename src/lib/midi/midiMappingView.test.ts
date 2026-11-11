@@ -142,3 +142,32 @@ describe('naming what a mapping points at', () => {
     expect(describeTarget('something:odd:here', '', project).label).toBe('here');
   });
 });
+
+describe('several controllers', () => {
+  it('keeps the same note on two controllers as two controls, each named', () => {
+    const groups = groupMappingsByControl([
+      mapping({ number: 36, device: 'Pads', path: 'studio:band.throw' }),
+      mapping({ number: 36, device: 'Keys', path: 'vj:0:opacity' }),
+      mapping({ number: 36, path: 'vj:1:opacity' }),
+    ]);
+    expect(groups.map((g) => g.device)).toEqual([null, 'Keys', 'Pads']);
+    expect(new Set(groups.map((g) => g.key)).size).toBe(3);
+  });
+
+  it('finds the control pressed on its own controller only', () => {
+    const [onPads] = groupMappingsByControl([mapping({ number: 36, device: 'Pads' })]);
+    expect(groupMatchesMessage(onPads, { channel: 0, type: 'note', number: 36, device: 'Pads' })).toBe(true);
+    expect(groupMatchesMessage(onPads, { channel: 0, type: 'note', number: 36, device: 'Keys' })).toBe(false);
+    // A message whose input is not known still finds it.
+    expect(groupMatchesMessage(onPads, { channel: 0, type: 'note', number: 36 })).toBe(true);
+  });
+
+  it("names a studio control by the studio's own name for it", async () => {
+    const { registerStudioControls } = await import('../music/studioControls');
+    const off = registerStudioControls([{ id: 'test.throw', label: 'Echo throw', group: 'Band', kind: 'hold', run: () => {} }]);
+    expect(describeTarget('studio:test.throw', 'Throw', null)).toEqual({ context: 'Music Studio', label: 'Echo throw', orphaned: false });
+    off();
+    // Not loaded (a build without the studio): the learned label stands.
+    expect(describeTarget('studio:test.throw', 'Throw', null)).toEqual({ context: 'Music Studio', label: 'Throw', orphaned: false });
+  });
+});

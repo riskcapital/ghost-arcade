@@ -178,6 +178,8 @@ describe('music studio in the project file', () => {
     const after = get(s);
     expect(after.liveInputs.map((i) => i.name)).toEqual(['Bass', 'Guitar']);
     expect(after.liveInputs[1]).toMatchObject({ channel: 1, fxSend: 0.4 });
+    // A new input is not heard through the studio: the band's dry sound stays on its desk.
+    expect(after.liveInputs[1].monitor).toBe(false);
     expect(after.mixer.input2).toMatchObject({ pan: 0.5 });
     expect(after.bandFx).toMatchObject({ duckDepth: 0.6, followBass: true });
     expect(after.songs.map((x) => x.name)).toEqual(['Opener', 'Closer']);

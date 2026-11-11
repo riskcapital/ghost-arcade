@@ -83,9 +83,15 @@ Each input has a name, a device (kept per computer), a channel of that device
 (**Mix** hears every channel together; a stereo interface sends its two
 inputs as channels 1 and 2), what the visuals see it as (Lead, Bass, Kick...),
 how quietly it can be played and still count (**Sens**), whether it is heard
-(**Monitor**; off, it only drives the visuals), and an **FX** send into the
-band effects (the looper records each input at its own level, whatever its send). **Add input** starts the next one on the same
-device and the next channel. Each device is opened once and split into its
+(**Monitor**; off, it only drives the visuals and the band effects), and an
+**FX** send into the band effects (the looper records each input at its own
+level, whatever its send). A new input starts with Monitor off: the band's
+dry sound stays on the band's desk, so it is not doubled in the room and the
+desk cannot feed the studio's output back into itself. **Add input** starts
+the next one on the same device and the next channel; added to an input
+that hears every channel mixed, it splits them (the first input takes
+channel 1, the new one channel 2), the usual bass and guitar on a stereo
+interface. Each device is opened once and split into its
 channels; a channel the device does not send says so instead of staying
 silent. An interface that is unplugged mid-set (or not there when listening
 starts) is waited for: when the computer reports a device plugged in, it is

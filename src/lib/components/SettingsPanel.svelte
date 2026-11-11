@@ -2178,13 +2178,14 @@
                     <div class="mm-group-head">
                       <span class="mm-control">{group.controlLabel}</span>
                       <span class="mm-channel">{group.channelLabel}</span>
+                      {#if group.device}<span class="mm-channel device-name" title="Learned on this controller: it answers this one only">{group.device}</span>{/if}
                       <span class="mm-count">
-                        {group.mappings.length} mapping{group.mappings.length === 1 ? '' : 's'}
+                        {group.mappings.length === 1 ? '1 mapping' : `${group.mappings.length} mappings`}
                       </span>
                       <button
                         class="mm-clear"
                         onclick={() => clearMidiControl(group)}
-                        title="Remove every mapping on this control"
+                        title={group.device ? `Remove every mapping on this control of ${group.device}` : 'Remove every mapping on this control'}
                       >Clear control</button>
                     </div>
 

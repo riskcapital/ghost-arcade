@@ -599,7 +599,7 @@ export class MidiManager {
     const nowMs = performance.now();
     if (nowMs - this._lastMsgTs >= MidiManager._LAST_MSG_MIN_INTERVAL_MS) {
       this._lastMsgTs = nowMs;
-      midiStore.setLastMessage({ channel, type, number, value });
+      midiStore.setLastMessage({ channel, type, number, value, device: from?.name });
     }
 
     // A held pad must release its original deck/page even after navigation.
