@@ -213,7 +213,13 @@ export class ChaseClock {
         ? { lock: 'locked', seconds: runOn(nowMs), running: true, rate }
         : { lock: 'searching', seconds: a.seconds, running: false, rate };
     }
-    if (!locked) return { lock: 'searching', seconds: a.seconds, running: false, rate };
+    if (!locked) {
+      // Rolling frames that stopped before they locked again (a locate, then
+      // the source stopped): lost once the freewheel time is up, at no
+      // particular place, so whatever followed the clock parks where it is.
+      if (since > dropout + this.freewheelMs) return { lock: 'lost', seconds: null, running: false, rate };
+      return { lock: 'searching', seconds: a.seconds, running: false, rate };
+    }
     if (since <= dropout + this.freewheelMs) return { lock: 'freewheel', seconds: runOn(nowMs), running: true, rate };
     return { lock: 'lost', seconds: runOn(this.lastFrameAt + dropout + this.freewheelMs), running: false, rate };
   }

@@ -20,6 +20,17 @@ function tc(h: number, m: number, s: number, f: number, rate: TimecodeRate): Tim
 }
 
 describe('ChaseClock', () => {
+  it('a locate while rolling and then silence ends lost, not searching for ever', () => {
+    const c = new ChaseClock(3, 2000);
+    let t = 0;
+    for (let i = 0; i < 50; i++) { c.onFrame(10 + i * 0.04, t); t += 40; }
+    expect(c.read(t).lock).toBe('locked');
+    c.onFrame(100, t); t += 40;
+    c.onFrame(100.04, t); t += 40;
+    expect(c.read(t + 500).lock).toBe('searching');
+    expect(c.read(t + 60000)).toMatchObject({ lock: 'lost', seconds: null, running: false });
+  });
+
   it('searches, then locks after three continuous frames and runs on between them', () => {
     const c = new ChaseClock(3, 2000);
     expect(c.read(0).lock).toBe('searching');

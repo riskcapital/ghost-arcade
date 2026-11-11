@@ -186,7 +186,9 @@ export function installShowControl(): () => void {
       prevChase = null;
       if (sample.lock === 'lost' && !lostHandled) {
         lostHandled = true;
-        if (s.chaseTimeline && sample.showTime !== null) showTimeline.chase(sample.showTime, false);
+        // No last place (it never locked again after a jump): park where the playhead is.
+        const at = sample.showTime ?? (showTimeline.isChasing() ? get(showTimeline).currentTime : null);
+        if (s.chaseTimeline && at !== null) showTimeline.chase(at, false);
       }
     }
   });
