@@ -54,6 +54,8 @@ interface EngineState {
   wasPlaying: boolean;
   /** Kick times per source row (show seconds), by placement signature. */
   kicks: Map<string, { sig: string; times: number[] | null }>;
+  /** The document the graph was last pruned against. */
+  prunedFor: { tracks: readonly ShowAudioTrack[] | null; sound: SoundDoc | null };
 }
 
 const engine: EngineState = {
@@ -66,6 +68,7 @@ const engine: EngineState = {
   lastSeek: Number.NaN,
   wasPlaying: false,
   kicks: new Map(),
+  prunedFor: { tracks: null, sound: null },
 };
 
 /** Sent to the Live script (the bridge; tests replace it). */
@@ -138,6 +141,31 @@ function releaseGraph(): void {
   engine.blockGains.clear();
   engine.duckedTo.clear();
   engine.buildsStarted.clear();
+  engine.prunedFor = { tracks: null, sound: null };
+}
+
+/**
+ * Let go of what deleted blocks and rows held: a block's gain, a row's bus
+ * (its effect chain keeps running on the audio thread while connected), its
+ * kick times and duck state. Blocks of the other tab are let go too (their
+ * gains come back when they play there). Called when the document's blocks
+ * or rows change (an edit, undo, a project load).
+ */
+export function pruneSoundGraph(tracks: readonly ShowAudioTrack[], rows: readonly SoundRow[]): void {
+  const liveTracks = new Set(tracks.map((x) => x.id));
+  const liveRows = new Set(rows.map((r) => r.id));
+  for (const [id, e] of engine.blockGains) {
+    if (liveTracks.has(id) && liveRows.has(e.rowId)) continue;
+    try { e.node.disconnect(); } catch { /* gone */ }
+    engine.blockGains.delete(id);
+  }
+  for (const [id, bus] of engine.buses) {
+    if (liveRows.has(id)) continue;
+    bus.dispose();
+    engine.buses.delete(id);
+  }
+  for (const id of engine.kicks.keys()) if (!liveRows.has(id)) engine.kicks.delete(id);
+  for (const id of engine.duckedTo.keys()) if (!liveRows.has(id)) engine.duckedTo.delete(id);
 }
 
 // ── Ducking ────────────────────────────────────────────────────────────────
@@ -273,14 +301,10 @@ function onFrame(tick: ShowFrameTick): void {
   engine.wasPlaying = tick.playing;
 
   if (engine.ctx) {
-    // Blocks gone from the document (deleted, the other tab's) let go of their gains.
-    if (engine.blockGains.size > s.audioTracks.length) {
-      const live = new Set(s.audioTracks.map((x) => x.id));
-      for (const [id, e] of engine.blockGains) {
-        if (live.has(id)) continue;
-        try { e.node.disconnect(); } catch { /* gone */ }
-        engine.blockGains.delete(id);
-      }
+    // Blocks and rows gone from the document let go of their nodes.
+    if (s.audioTracks !== engine.prunedFor.tracks || s.sound !== engine.prunedFor.sound) {
+      engine.prunedFor = { tracks: s.audioTracks, sound: s.sound };
+      pruneSoundGraph(s.audioTracks, rows);
     }
     const frame = currentLineFrame();
     const values = rows.map((row) => rowValues(row, frame?.sounds?.get(row.id)));
