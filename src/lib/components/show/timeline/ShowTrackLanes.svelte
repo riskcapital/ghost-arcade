@@ -441,6 +441,12 @@
     e.stopPropagation();
     focusedTrackId.set(tr.id);
     showTimeline.selectLayerClips([clip.id]);
+    // Roll (N): the junction is the cut between the two blocks; rolling it
+    // moves the cut, and the crossfade goes with it.
+    if (get(editTool) === 'roll' && !tr.locked && rollPartner(tr, clip, 'start')) {
+      dragRoll(e, tr, clip, 'start');
+      return;
+    }
     if (part !== 'edge' || tr.locked) return;
     follow(e, (ev) => {
       const t = track(tr.id);
