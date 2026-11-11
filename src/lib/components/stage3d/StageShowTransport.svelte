@@ -326,11 +326,16 @@
 <style>
   .sst {
     position: absolute;
-    left: 50%;
+    /* Centred in the room the Stage Sim's side panels leave (the designer
+       sets the insets); it wraps there rather than covering the panels. */
+    left: var(--sst-inset-l, 16px);
+    right: var(--sst-inset-r, 16px);
     bottom: 56px;
-    transform: translateX(-50%);
-    width: min(860px, calc(100% - 32px));
+    margin: 0 auto;
+    max-width: 860px;
+    box-sizing: border-box;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 10px;
     padding: 6px 10px;

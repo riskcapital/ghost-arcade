@@ -108,3 +108,12 @@ describe('Timeline tray layout', () => {
     expect(source('ToastContainer.svelte')).toMatch(/bottom: calc\(24px \+ var\(--ga-tray-toast-lift, 0px\)\)/);
   });
 });
+
+describe('Stage Sim show transport', () => {
+  it('sits between the side panels and wraps there', () => {
+    expect(source('stage3d/Stage3DDesigner.svelte')).toMatch(/style:--sst-inset-l=\{panelsHidden \? '16px' : '236px'\} style:--sst-inset-r=\{panelsHidden \? '16px' : '288px'\}/);
+    const css = source('stage3d/StageShowTransport.svelte');
+    expect(css).toMatch(/left: var\(--sst-inset-l, 16px\);\s+right: var\(--sst-inset-r, 16px\);/);
+    expect(css).toMatch(/\.sst \{[^}]*flex-wrap: wrap;/);
+  });
+});
