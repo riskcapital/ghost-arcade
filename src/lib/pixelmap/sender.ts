@@ -35,7 +35,7 @@ import type {
   WLEDGroup,
   WLEDNormalizedPoint,
 } from '../types';
-import { acquireNativeCompositeMirror, type CompositeMirrorHandle } from '../sync/nativeCompositeMirror';
+import { acquireNativeCompositeMirror, compositeMirrorPixels, type CompositeMirrorHandle } from '../sync/nativeCompositeMirror';
 import { calibrateWLEDPixels, fillWLEDTestPattern, sampleWLEDSourcePixels } from '../wled/mapping';
 import { applyWLEDEffects, fixtureLEDTarget, ledEffectBpm } from '../wled/effects';
 import {
@@ -196,6 +196,13 @@ function captureMirror(): ImageData | null {
   if (!mirror) return null;
   if (!mirrorFresh) return latestFrame;
   const source = mirror.canvas;
+  // The mirror's last frame as pixels, when it came raw: no GPU readback.
+  const pixels = compositeMirrorPixels();
+  if (pixels && pixels.width === source.width && pixels.height === source.height) {
+    latestFrame = pixels;
+    mirrorFresh = false;
+    return latestFrame;
+  }
   if (!tapCanvas) {
     tapCanvas = document.createElement('canvas');
     tapContext = tapCanvas.getContext('2d', { willReadFrequently: true });

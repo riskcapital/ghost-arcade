@@ -2751,13 +2751,21 @@
       let wledMirror: import('$lib/sync/nativeCompositeMirror').CompositeMirrorHandle | null = null;
       let wledDisposed = false;
       let wledWanted = false;
+      // Only the editor sends: the Stage Sim and output windows mount this
+      // canvas too, and a second sender there sent its own frames to the
+      // same controllers (without the Timeline's LED rows, which only the
+      // editor runs) and read a 1280 px Stage Sim feed back from the GPU
+      // for it, saturating that window's main thread.
+      const ledSender = !isOsrMode && !isOutputMode;
       const wledUnsub = project.subscribe((p) => {
-        const wantsWled = (p.wledControllers ?? []).some((c: { enabled?: boolean }) => c.enabled);
+        const wantsWled = ledSender && (p.wledControllers ?? []).some((c: { enabled?: boolean }) => c.enabled);
         wledWanted = wantsWled;
         if (wantsWled && !wledMirror) {
           void import('$lib/sync/nativeCompositeMirror').then(({ acquireNativeCompositeMirror }) => {
             if (wledDisposed || !wledWanted || wledMirror) return;
-            wledMirror = acquireNativeCompositeMirror({ maxDim: 384, fps: 20,
+            // 192 px: the size the senders sample at (they read these pixels
+            // directly; a larger frame only costs more IPC and decoding).
+            wledMirror = acquireNativeCompositeMirror({ maxDim: 192, fps: 20,
               onFrame: () => { if (wledMirror) tickWLEDSenders(wledMirror.canvas); },
             });
             startWLEDSenders(wledMirror.canvas, 'native');
@@ -2770,7 +2778,7 @@
       });
       // Art-Net / sACN pixel mapping samples the same composite mirror.
       // It idles (no timer, no snapshots) until a fixture is enabled.
-      nativeTeardownCallbacks.push(startPixelMapOutput());
+      if (ledSender) nativeTeardownCallbacks.push(startPixelMapOutput());
       nativeTeardownCallbacks.push(() => {
         wledDisposed = true;
         wledUnsub();
