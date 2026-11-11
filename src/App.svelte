@@ -416,6 +416,7 @@
   import { compositionTransition } from './lib/stores/compositionTransition';
   import { layerSequencer } from './lib/stores/layerSequencer';
   import { NATIVE_ENGINE_ONLY, settings, outputFrozen } from './lib/stores/settings';
+  import { showState } from './lib/show/showState';
   import { liveOutput, LIVE_OUTPUT_FULLSCREEN_EVENT, LIVE_OUTPUT_WINDOW_EVENT, LIVE_OUTPUT_DISPLAY_MENU_EVENT } from './lib/stores/liveOutput';
   import { screenSetups } from './lib/stores/screenSetups';
   import { mcpStore } from './lib/mcp/mcpStore';
@@ -5333,6 +5334,21 @@
     }
   }
   $: if (phoneLinked) syncOutputFreeze($outputFrozen);
+
+  // The show as it is (read-only: section, GO, takeover, install health),
+  // for a phone remote. Only while a phone is connected; it changes at most
+  // 10 times a second and not at all while the show is paused.
+  let stopShowStateToPhone: (() => void) | null = null;
+  function linkShowStateToPhone(linked: boolean) {
+    if (linked && !stopShowStateToPhone) {
+      stopShowStateToPhone = showState.subscribe((state) => sendToPhone({ type: 'show_state', state }));
+    } else if (!linked && stopShowStateToPhone) {
+      stopShowStateToPhone();
+      stopShowStateToPhone = null;
+    }
+  }
+  $: linkShowStateToPhone(phoneLinked);
+  onDestroy(() => linkShowStateToPhone(false));
 
   // Sync the MediaTray's canonical shader list to mobile. This is the
   // EXACT same list the desktop user picks from (manifest catalog +

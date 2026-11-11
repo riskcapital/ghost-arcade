@@ -250,6 +250,10 @@ let compositionsState = [];
 // the freeze pill from the moment they mount. Updated by the
 // `output_freeze_state` message the desktop broadcasts on every change.
 let outputFrozenState = false;
+// The show as the desktop last reported it (read-only: time, section, GO,
+// takeover, install health), so a phone that connects is told at once.
+// Only the desktop sends it (HOST_MESSAGES); it goes when the desktop does.
+let showStateCache = null;
 
 // User shader library (synchronized from desktop's shaderLibrary store).
 // Mobile shader tab uses this to mirror desktop's add/remove of custom
@@ -479,6 +483,8 @@ wss.on('connection', (ws, req) => {
     frozen: outputFrozenState,
   }));
 
+  if (showStateCache) ws.send(JSON.stringify({ type: 'show_state', state: showStateCache }));
+
   // Send user shader library so mobile mirrors desktop's custom adds.
   if (shaderLibraryState.length > 0) {
     const msg = { type: 'shader_library_sync', shaders: shaderLibraryState };
@@ -525,6 +531,7 @@ wss.on('connection', (ws, req) => {
 
     if (ws === desktopClient) {
       desktopClient = null;
+      showStateCache = null;
       console.log('[!] Desktop client disconnected');
     }
 
@@ -1074,6 +1081,14 @@ function handleMessage(sender, msg) {
       outputFrozenState = !!msg.frozen;
       console.log(`[*] Desktop → output_freeze_state: ${outputFrozenState}`);
       broadcast(sender, msg);
+      break;
+
+    // ═══ Show state (desktop → phones, read-only) ═══
+    // Up to 10 a second while the show plays; nothing while it is paused.
+    case 'show_state':
+      if (!msg.state || typeof msg.state !== 'object') break;
+      showStateCache = msg.state;
+      broadcast(sender, { type: 'show_state', state: showStateCache });
       break;
 
     // ═══ Shader library sync (desktop MediaTray → mobile) ═══

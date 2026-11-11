@@ -34,6 +34,9 @@ import { handleTakeoverControl, releaseTakeoverInputs, runTakeoverCue, runTakeov
 import { installSectionRuntime } from '../timeline/sections/sectionRuntime';
 import { installPhraseRuntime } from '../timeline/phrases/phraseRuntime';
 import { fireShowAction, recallPreset, setBlackout } from './showActions';
+import { sampleShowState, showState } from './showState';
+import { registerLineSource, registerParamScope } from '../timeline/lines/lineExtensions';
+import { lineScopeValues } from '../timeline/lines/lineRuntime';
 
 export { setBlackout } from './showActions';
 
@@ -221,6 +224,8 @@ export function installShowControl(): () => void {
     w.__ghostArcade = {
       ...(w.__ghostArcade ?? {}),
       showControl: { cueList, projectors, timecodeChase, showSchedule, getScheduleRunner, launchClock: { launchClockPosition, launchClockFollowsShow }, midiRouter },
+      // The extension points later work plugs into (actions, read-only state, line scopes and sources).
+      showSeams: { fireShowAction, showState, sampleShowState, registerParamScope, registerLineSource, lineScopeValues },
     };
   } catch { /* sealed */ }
 

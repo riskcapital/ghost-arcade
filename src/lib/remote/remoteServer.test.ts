@@ -259,6 +259,25 @@ describe('paired devices cannot become the host or access other phones', () => {
     } finally { host.ws!.close(); phone.ws!.close(); }
   });
 
+  it('passes the desktop\'s show state to phones (and to one that connects later); a phone cannot send it', async () => {
+    const host = await openDesktop();
+    const phone = await openSocket(`?pair=${TOKEN}`);
+    try {
+      host.ws!.send(JSON.stringify({ type: 'show_state', state: { at: 1, doc: 'timeline', playing: true, time: 12.5, section: { name: 'Drop' } } }));
+      const got = await waitFor(() => phone.received!.find((m) => m.type === 'show_state'));
+      expect(got.state).toMatchObject({ playing: true, time: 12.5, section: { name: 'Drop' } });
+      const late = await openSocket(`?pair=${TOKEN}`);
+      await waitFor(() => late.received!.find((m) => m.type === 'show_state' && m.state.time === 12.5));
+      // From a phone it goes nowhere.
+      phone.ws!.send(JSON.stringify({ type: 'show_state', state: { marker: 'untrusted' } }));
+      phone.ws!.send(JSON.stringify({ type: 'set_vj_master_opacity', opacity: 0.4 }));
+      await waitFor(() => late.received!.find((m) => m.type === 'set_vj_master_opacity'));
+      expect(late.received!.some((m) => m.state?.marker === 'untrusted')).toBe(false);
+      expect(host.received!.some((m) => m.state?.marker === 'untrusted')).toBe(false);
+      late.ws!.close();
+    } finally { host.ws!.close(); phone.ws!.close(); }
+  });
+
   it('only lets phones select sources already advertised by the desktop', async () => {
     const host = await openDesktop(); const phone = await openSocket(`?pair=${TOKEN}`);
     try {
