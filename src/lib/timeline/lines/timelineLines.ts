@@ -308,6 +308,7 @@ export function installTimelineLines(): () => void {
   let lastTracks = get(showTimeline).layerTracks;
   let lastLooks = get(showTimeline).lookClips;
   let lastStage = get(showTimeline).stageClips;
+  let lastLeds = get(showTimeline).ledClips;
   const unsub = showTimeline.subscribe((s) => {
     if (!session || s.doc !== 'timeline') return;
     if (s.lines !== lastLines) {
@@ -325,10 +326,11 @@ export function installTimelineLines(): () => void {
       lastSound = s.sound;
       void refreshSongs();
     }
-    if (s.layerTracks !== lastTracks || s.lookClips !== lastLooks || s.stageClips !== lastStage) {
+    if (s.layerTracks !== lastTracks || s.lookClips !== lastLooks || s.stageClips !== lastStage || s.ledClips !== lastLeds) {
       lastTracks = s.layerTracks;
       lastLooks = s.lookClips;
       lastStage = s.stageClips;
+      lastLeds = s.ledClips;
       // A block's own values moved (its panel): record it when armed.
       session.observe();
     }

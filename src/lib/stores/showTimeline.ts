@@ -2920,8 +2920,15 @@ export const showTimeline = {
     const track = get(store).layerTracks.find((t) => t.id === trackId);
     if (!track) return;
     const clipIds = new Set(track.clips.map((c) => c.id));
+    // The row's block lines go with it, and an added layer's own lines.
+    const subTarget = track.subRow ? `showsub::${track.layerId}::${track.id}` : null;
     store.update((s) => withDuration({
       ...s,
+      lines: (() => {
+        const kept = removeLinesForBlocks(s.lines, clipIds);
+        if (!subTarget || !kept.some((l) => l.target.scope === 'layer' && l.target.id === subTarget)) return kept;
+        return kept.filter((l) => !(l.target.scope === 'layer' && l.target.id === subTarget));
+      })(),
       layerTracks: s.layerTracks.filter((t) => t.id !== trackId),
       soloTrackId: s.soloTrackId === trackId ? null : s.soloTrackId,
       selectedClipIds: s.selectedClipIds.filter((id) => !clipIds.has(id)),
@@ -3256,12 +3263,15 @@ export const showTimeline = {
   /** Delete clips; `ripple` closes the space they leave on their tracks. */
   removeLayerClips(clipIds: string[], opts: { ripple?: boolean } = {}) {
     const ids = new Set(clipIds);
+    // Only blocks really removed lose their lines (a locked row keeps both).
+    const removed = new Set<string>();
     let changed = false;
     store.update((s) => withDuration({
       ...s,
       layerTracks: s.layerTracks.map((track) => {
         if (track.locked || !track.clips.some((c) => ids.has(c.id))) return track;
         changed = true;
+        for (const c of track.clips) if (ids.has(c.id)) removed.add(c.id);
         if (!opts.ripple) return { ...track, clips: deleteClips(track.clips, ids) };
         const result = rippleDelete(track.clips, ids);
         let lanes = track.lanes;
@@ -3273,7 +3283,7 @@ export const showTimeline = {
     }));
     if (!changed) return;
     store.update((s) => {
-      const lines = removeLinesForBlocks(s.lines, ids);
+      const lines = removeLinesForBlocks(s.lines, removed);
       return lines === s.lines ? s : withDuration({ ...s, lines });
     });
     recordShowEdit();
@@ -4183,6 +4193,14 @@ export const showTimeline = {
     if (s.doc === doc) return false;
     const wasPlaying = s.isPlaying;
     if (wasPlaying && !externalClock) this.pause();
+    else if (wasPlaying) {
+      // Following a clock: the outgoing document still sees itself stop
+      // (open recording passes end in it, its Live clips stop) before the
+      // swap; the clock starts the incoming one.
+      store.update((x) => ({ ...x, isPlaying: false }));
+      seekGeneration++;
+      republishTracks();
+    }
     cancelRaf();
     forgetSections();
     forgetPhrases();

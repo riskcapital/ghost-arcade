@@ -37,6 +37,9 @@ export interface LineControlsHost {
   now?: () => number;
   liveParam?: (track: number, device: number, param: number) => number | null;
   onBindingsChange?: (bindings: LineBinding[]) => void;
+  /** The project is being put back (undo / redo): stored values that move
+   *  now were not moved by a control, so they are not recorded. */
+  restoring?: () => boolean;
 }
 
 const sameSource = (a: BindingSource, b: BindingSource) => JSON.stringify(a) === JSON.stringify(b);
@@ -190,6 +193,7 @@ export function createLineControls(host: LineControlsHost, initial: LineBinding[
         const prev = lastObserved.get(k);
         lastObserved.set(k, value);
         if (prev === undefined || prev === value) return;
+        if (host.restoring?.()) return;
         if (host.recorder.armed && host.playing()) host.recorder.input(target, key, value, host.showTime());
       };
       for (const line of host.lines()) visit(line.target, line.key);

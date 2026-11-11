@@ -14,6 +14,7 @@
  */
 import { get } from 'svelte/store';
 import { project } from '../../stores/layers';
+import { isRestoringHistory } from '../../stores/historyHooks';
 import { abletonBridge } from '../../ableton/abletonBridge';
 import { addMidiTap } from '../../midi/midiTaps';
 import { cachedShowAudioDecode, decodeShowAudio } from '../../audio/showAudio';
@@ -79,6 +80,7 @@ export function createLineSession(opts: {
     newId: generateUUID,
     liveParam: (t, d, p) => abletonBridge.liveParamValue(t, d, p),
     onBindingsChange: opts.onBindingsChange,
+    restoring: isRestoringHistory,
   }, opts.bindings ?? []);
 
   const removeTap = addMidiTap((channel, type, number, value, from) => controls.onMidi(channel, type, number, value, from));

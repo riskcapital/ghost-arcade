@@ -181,8 +181,10 @@ describe('controls', () => {
     const r = rig(initial);
     let showTime = 0;
     let playing = true;
+    let restoring = false;
     let bid = 0;
     const controls = createLineControls({
+      restoring: () => restoring,
       recorder: r.recorder,
       lines: () => r.store.lines(),
       describe: (_t, key) => entries[key] ?? null,
@@ -191,7 +193,7 @@ describe('controls', () => {
       newId: () => `b${++bid}`,
       now: () => r.clock.ms,
     });
-    return { ...r, controls, setTime: (t: number) => { showTime = t; }, setPlaying: (p: boolean) => { playing = p; } };
+    return { ...r, controls, setTime: (t: number) => { showTime = t; }, setPlaying: (p: boolean) => { playing = p; }, setRestoring: (v: boolean) => { restoring = v; } };
   }
 
   it('touch a knob to bind: the next moved CC binds and is kept from the mappings', () => {
@@ -233,6 +235,23 @@ describe('controls', () => {
     c.clock.ms = RELEASE_MS + 1;
     expect(c.controls.touches().get('a')).toBeUndefined();
     expect(c.store.lines()[0]).toBe(line);
+  });
+
+  it('a stored value put back by undo or redo is not recorded as a move', () => {
+    const line: ControlLine = { id: 'a', target: L1, key: 'layer:opacity', kind: 'continuous', min: 0, max: 1, points: [{ t: 0, v: 1 }, { t: 10, v: 1 }] };
+    const c = controlsRig([line]);
+    const source = (opacity: number): RegistrySource => ({ layers: [{ ...createLayer('L1', 'Facade'), opacity }] });
+    c.controls.observe(source(1));
+    c.recorder.arm('touch');
+    c.setTime(2);
+    c.setRestoring(true);
+    c.controls.observe(source(0.4));
+    c.setRestoring(false);
+    expect(c.recorder.openPasses()).toBe(0);
+    // The restored value is the new baseline: an unchanged project records nothing.
+    c.controls.observe(source(0.4));
+    expect(c.recorder.openPasses()).toBe(0);
+    expect(c.store.undoLabels()).toHaveLength(0);
   });
 
   it('a stored value moved by the slider, OSC or a Live signal is recorded (project watch)', () => {
