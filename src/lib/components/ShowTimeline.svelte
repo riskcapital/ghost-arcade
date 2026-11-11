@@ -1774,7 +1774,7 @@
           <div class="show-snap-guide" style="left: {$showSnapGuide * zoom}px; height: {laneStackH}px" data-show-snap-guide></div>
         {/if}
 
-        <div class="show-playhead" style="transform: translateX({playheadX}px)" onmousedown={startScrub}>
+        <div class="show-playhead" style="transform: translateX({playheadX}px); height: {laneStackH}px" onmousedown={startScrub}>
           <div class="playhead-handle"></div>
           <div class="playhead-line"></div>
         </div>
@@ -2573,10 +2573,11 @@
      the handle still scrub. */
   /* Placed by `transform` on its own layer: moving it every frame of a
      playing show must not repaint the lanes underneath. */
+  /* As tall as every row (the bar lines are too), so it runs all the way
+     down a long stack of layers, scrolled or not. */
   .show-playhead {
     position: absolute;
     top: 0;
-    bottom: 0;
     left: 0;
     width: 1px;
     z-index: 6;
@@ -2585,10 +2586,12 @@
     will-change: transform;
   }
   .playhead-handle { pointer-events: auto; cursor: col-resize; }
+  /* Sticks to the ruler while the rows scroll under it. */
   .playhead-handle {
-    position: absolute;
+    position: sticky;
     top: 0;
-    left: -5px;
+    z-index: 1;
+    margin-left: -5px;
     width: 11px;
     height: 10px;
     background: #FFD96B;
