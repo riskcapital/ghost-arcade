@@ -84,6 +84,18 @@ export function showCopyPieceId(id: string): string | null {
   return null;
 }
 
+/** The piece a scene layer draws on when it is one of the show's copies of
+ *  it (an injected copy, an added layer, a block travelling over it), else
+ *  null. */
+export function showLayerPieceId(id: string): string | null {
+  if (id.startsWith(SHOW_WHERE_LAYER_PREFIX)) {
+    const rest = id.slice(SHOW_WHERE_LAYER_PREFIX.length);
+    const cut = rest.lastIndexOf('::');
+    return cut > 0 ? rest.slice(0, cut) : null;
+  }
+  return showCopyPieceId(id);
+}
+
 /** What a state's helpers are named after: the piece for its own row, the
  *  row for a layer added on it. */
 function helperKey(state: Pick<ShowTrackState, 'sub' | 'layerId' | 'trackId'>): string {
@@ -113,6 +125,41 @@ function drive(layer: Layer, state: ShowTrackState, source: MediaSource | null):
   if (state.opacity < 1) next._showOpacityMul = Math.max(0, state.opacity);
   if (state.params && Object.keys(state.params).length) next._showParams = state.params;
   return next;
+}
+
+/** The part of the stage a piece covers, as a crop of a picture spread
+ *  across the stage (top-origin, like `cropRegion`). */
+export function stageCropOf(layer: Pick<Layer, 'corners'>): Layer['cropRegion'] {
+  const c = layer.corners;
+  if (!c) return null;
+  const xs = [c.topLeft.x, c.topRight.x, c.bottomLeft.x, c.bottomRight.x];
+  const ys = [c.topLeft.y, c.topRight.y, c.bottomLeft.y, c.bottomRight.y];
+  const clamp = (v: number) => Math.max(0, Math.min(1, v));
+  const x0 = clamp(Math.min(...xs));
+  const x1 = clamp(Math.max(...xs));
+  const y0 = clamp(Math.min(...ys));
+  const y1 = clamp(Math.max(...ys));
+  if (x1 - x0 < 1e-4 || y1 - y0 < 1e-4) return null;
+  // Corners are y up; the crop is measured from the top.
+  return { x: x0, y: 1 - y1, width: x1 - x0, height: y1 - y0 };
+}
+
+/** A layer showing its part of a picture spread across the stage. */
+function spanned(layer: Layer): Layer {
+  const crop = stageCropOf(layer);
+  return crop ? { ...layer, cropRegion: crop, contentFit: 'stretch' } : layer;
+}
+
+const BLACK = { hue: 0, saturation: 0, lightness: 0, alpha: 1 };
+
+/** A piece whose own content is dark: drawn black (a colour fill keeps its
+ *  shape, warp and looks), or hidden when it is not a layer that can show a
+ *  colour. */
+export function darkPiece(layer: Layer): Layer {
+  if (layer.type === 'media' || layer.type === 'color') {
+    return { ...layer, source: null, colorContent: { ...BLACK }, type: layer.type };
+  }
+  return { ...layer, _showOpacityMul: 0 };
 }
 
 function affects(state: ShowTrackState): boolean {
@@ -215,12 +262,18 @@ function stageState(onStage: ReadonlyMap<string, ShowTrackState>, id: string): S
 /** An off-stage track injects its copy: a clip plays and either it or the
  *  outgoing side of its crossfade shows. */
 function injects(state: ShowTrackState): boolean {
-  return !!state.clip && !!state.template && (state.opacity > 0 || xfadeShows(state));
+  return !!state.clip && !!state.template && (state.opacity > 0 || xfadeShows(state) || travels(state));
 }
 
-/** A layer added on a piece is drawn: one of its blocks plays and shows. */
+/** A layer added on a piece is drawn: one of its blocks plays and shows
+ *  (or travels: it stays, at no opacity, while its own piece is not lit). */
 function subShows(state: ShowTrackState): boolean {
-  return !!state.clip && (state.opacity > 0 || xfadeShows(state));
+  return !!state.clip && (state.opacity > 0 || xfadeShows(state) || travels(state));
+}
+
+/** The block has a where line over other pieces (its copies need its source). */
+function travels(state: ShowTrackState): boolean {
+  return !!state.whereCopies?.length;
 }
 
 function buildFromSources(
@@ -232,7 +285,7 @@ function buildFromSources(
 ): Layer[] {
   const scene = buildTracks(liveLayers, ids, frame, ctx, sources);
   // The Looks row dresses the shapes last, over whatever the rows did.
-  return frame.looks?.length ? applyShowLooks(scene, frame.looks, liveLayers) : scene;
+  return frame.looks?.length ? applyShowLooks(scene, frame.looks, liveLayers, showLayerPieceId) : scene;
 }
 
 /** Nothing in the frame changes the scene: no rows and no looks. */
@@ -285,7 +338,7 @@ function buildTracks(
       const plain: Layer = { ...base, id: showSubLayerId(state.layerId, state.trackId), visible: true, parentGroupId: null, blendMode: 'normal' };
       delete plain._showOpacityMul;
       delete plain._showParams;
-      const copy = drive(plain, state, sources.injected[index] ?? null);
+      const copy = drive(state.span ? spanned(plain) : plain, state, sources.injected[index] ?? null);
       const helper = xfadeHelper(copy, helperKey(state), state, sources.xfade.get(helperKey(state)) ?? null, base.source, 'normal');
       // Later rows draw over earlier ones: the newest goes first (on top).
       subsByPiece.set(state.layerId, [copy, ...(helper ? [helper] : []), ...(subsByPiece.get(state.layerId) ?? [])]);
@@ -319,20 +372,22 @@ function buildTracks(
     const source = state.sub || !isOnStage(ids, state.layerId) ? sources.injected[index] ?? null : sources.stage.get(state.layerId) ?? null;
     if (!source && state.clip.media.kind !== 'layer') return;
     for (const c of state.whereCopies) {
-      if (c.opacity <= 0) continue;
+      // Unlit copies stay, at no opacity: the scene keeps its layers while
+      // the window moves.
       const base = liveLayers.find((l) => l.id === c.pieceId);
       if (!base) continue;
       const plain: Layer = { ...base, id: showWhereLayerId(c.pieceId, state.clip.clipId), visible: true, parentGroupId: null, blendMode: 'normal' };
       delete plain._showOpacityMul;
       delete plain._showParams;
-      const copy = drive(plain, { ...state, opacity: c.opacity }, source);
+      const copy = drive(state.span ? spanned(plain) : plain, { ...state, opacity: c.opacity }, source);
       if (!state.clip.blendMode) copy.blendMode = 'normal';
       subsByPiece.set(c.pieceId, [copy, ...(subsByPiece.get(c.pieceId) ?? [])]);
     }
   });
 
   const onStage = sources.onStage;
-  if (!onStage.size && !injected.length && !warmLayers.length && !subsByPiece.size) return liveLayers;
+  const dark = frame.darkPieces?.length ? new Set(frame.darkPieces) : null;
+  if (!onStage.size && !injected.length && !warmLayers.length && !subsByPiece.size && !dark) return liveLayers;
   // Added layers go directly over their piece: where it first appears on
   // stage, over its injected copy, or at the top.
   const pendingSubs = new Map(subsByPiece);
@@ -343,12 +398,15 @@ function buildTracks(
     pendingSubs.delete(pieceId);
     return subs;
   };
-  const stage = onStage.size || subsByPiece.size
+  const stage = onStage.size || subsByPiece.size || dark
     ? liveLayers.flatMap((layer) => {
         const over = subsByPiece.size ? subsOver(layer.id) : [];
         const state = stageState(onStage, layer.id);
-        if (!state) return over.length ? [...over, layer] : [layer];
-        const driven = drive(layer, state, sources.stage.get(state.layerId) ?? null);
+        if (!state) {
+          const own = dark?.has(layer.id) ? darkPiece(layer) : layer;
+          return over.length ? [...over, own] : [own];
+        }
+        const driven = drive(state.span ? spanned(layer) : layer, state, sources.stage.get(state.layerId) ?? null);
         const helper = xfadeHelper(driven, layer.id, state, sources.xfade.get(state.layerId) ?? null, layer.source, layer.blendMode);
         return [...over, driven, ...(helper ? [helper] : [])];
       })
@@ -392,7 +450,7 @@ function layerIndex(layers: readonly Layer[]): Map<string, number> {
  * for `_showOpacityMul` and `_showParams`.
  */
 export function showTrackSceneShape(frame: ShowTrackFrame): string {
-  const parts: string[] = [showLooksSignature(frame.looks)];
+  const parts: string[] = [showLooksSignature(frame.looks), frame.darkPieces?.length ? `D:${frame.darkPieces.join(',')}` : ''];
   for (const state of frame.tracks) {
     const xf = state.xfade;
     parts.push([
@@ -405,7 +463,9 @@ export function showTrackSceneShape(frame: ShowTrackFrame): string {
       state.params ? Object.keys(state.params).join(',') : '',
       state.warm ? 'w' : '',
       xf ? `x${xf.clip.media.kind === 'layer' ? 'L' : ''}${xf.opacity > 0 ? '+' : '0'}${xf.opacity < 1 ? '<' : '1'}${xf.clip.blendMode ?? ''}` : '',
-      state.whereCopies?.length ? `W${state.whereCopies.filter((c) => c.opacity > 0).map((c) => `${c.pieceId}${c.opacity < 1 ? '<' : '1'}`).join(',')}` : '',
+      // Which copy shows matters to the looks (they dress the top one that shows).
+      state.whereCopies?.length ? `W${state.whereCopies.map((c) => `${c.pieceId}${c.opacity <= 0 ? '0' : c.opacity < 1 ? '<' : '1'}`).join(',')}` : '',
+      state.span ? 'S' : '',
     ].join('|'));
   }
   return parts.join(';');

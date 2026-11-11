@@ -25,7 +25,7 @@ export function whereMembers(spec: Pick<WhereSpec, 'members'>, spots: readonly W
 const orderCache = new Map<string, { spots: readonly WhereSpot[]; order: SpatialOrder }>();
 
 function orderKey(spec: WhereOrderSpec, aspect: number, spots: readonly WhereSpot[]): string {
-  return `${spec.order}|${spec.angle ?? 0}|${spec.groups ? 'g' : ''}|${(spec.hand ?? []).join(',')}|${aspect.toFixed(4)}|${spots.map((s) => `${s.id}@${s.x.toFixed(5)},${s.y.toFixed(5)},${s.group ?? ''}`).join(';')}`;
+  return `${spec.order}|${spec.angle ?? 0}|${spec.groups ? 'g' : ''}|${(spec.hand ?? []).join(',')}|${(spec.slots ?? []).map((s) => s.join(',')).join('/')}|${aspect.toFixed(4)}|${spots.map((s) => `${s.id}@${s.x.toFixed(5)},${s.y.toFixed(5)},${s.group ?? ''}`).join(';')}`;
 }
 
 export function cachedOrder(spots: readonly WhereSpot[], spec: WhereOrderSpec, aspect: number): SpatialOrder {

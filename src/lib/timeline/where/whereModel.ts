@@ -26,7 +26,7 @@
 export const WHERE_ORDERS = ['left-right', 'right-left', 'top-bottom', 'bottom-top', 'centre-out', 'around', 'hand'] as const;
 export type WhereOrderKind = (typeof WHERE_ORDERS)[number];
 
-export const WHERE_MOTIONS = ['drawn', 'sweep', 'pingpong', 'burst', 'random', 'kick'] as const;
+export const WHERE_MOTIONS = ['drawn', 'sweep', 'pingpong', 'burst', 'random', 'kick', 'reveal'] as const;
 export type WhereMotionKind = (typeof WHERE_MOTIONS)[number];
 
 export type WhereMotion =
@@ -41,7 +41,11 @@ export type WhereMotion =
   /** A random piece every beat or bar (seeded: the same every time). */
   | { kind: 'random'; every: 'beat' | 'bar'; seed: number }
   /** One step along the order on every kick of the song (every beat without one). */
-  | { kind: 'kick' };
+  | { kind: 'kick' }
+  /** Pieces light one after another along the order over `bars` bars from
+   *  the block's start, then all stay lit; `reverse`: all lit at the start,
+   *  then they go dark one after another (the last one stays). */
+  | { kind: 'reveal'; bars: number; reverse?: boolean };
 
 /** Which spots take part: the projected pieces, the LED fixtures, or both. */
 export type WhereMembers = 'pieces' | 'leds' | 'both';
@@ -55,6 +59,10 @@ export interface WhereOrderSpec {
   hand?: string[];
   /** A group of pieces is one spot (its members light together). */
   groups?: boolean;
+  /** The order as given: each entry is a slot of piece ids that light
+   *  together (a set). Only the listed pieces take part. Named orders made
+   *  from the mapping (Auto show's rows, columns, alternating sets) use it. */
+  slots?: string[][];
 }
 
 export interface WhereSpec extends WhereOrderSpec {
@@ -69,6 +77,12 @@ export interface WhereSpec extends WhereOrderSpec {
   soft: number;
   /** The order is a ring: the last piece neighbours the first. */
   wrap?: boolean;
+  /** Content blocks: the pieces of its order are the block's while it
+   *  plays. Their own content goes dark; the lit ones wear the block. */
+  dark?: boolean;
+  /** Content blocks: one picture across the pieces (each shows its part of
+   *  it, where it sits on the stage) instead of the whole picture on each. */
+  span?: boolean;
 }
 
 /** A named spatial order kept with the Timeline ("Facade sweep"). */
@@ -108,6 +122,7 @@ export function normalizeMotion(raw: unknown): WhereMotion {
     case 'burst': return { kind: 'burst', bars };
     case 'random': return { kind: 'random', every: m.every === 'bar' ? 'bar' : 'beat', seed: Math.floor(Math.abs(num(m.seed, 1))) >>> 0 };
     case 'kick': return { kind: 'kick' };
+    case 'reveal': return m.reverse === true ? { kind: 'reveal', bars, reverse: true } : { kind: 'reveal', bars };
     case 'sweep':
     default:
       return m.reverse === true ? { kind: 'sweep', bars, reverse: true } : { kind: 'sweep', bars };
@@ -123,6 +138,21 @@ function normalizeOrderSpec(w: Record<string, unknown>): WhereOrderSpec {
     if (hand.length) out.hand = hand;
   }
   if (w.groups === true) out.groups = true;
+  if (Array.isArray(w.slots)) {
+    const seen = new Set<string>();
+    const slots: string[][] = [];
+    for (const slot of w.slots) {
+      if (!Array.isArray(slot)) continue;
+      const ids: string[] = [];
+      for (const id of slot) {
+        if (typeof id !== 'string' || !id || seen.has(id)) continue;
+        seen.add(id);
+        ids.push(id);
+      }
+      if (ids.length) slots.push(ids);
+    }
+    if (slots.length) out.slots = slots;
+  }
   return out;
 }
 
@@ -140,6 +170,8 @@ export function normalizeWhere(raw: unknown): WhereSpec | null {
     soft: clamp01(num(w.soft, 0.5)),
   };
   if (w.wrap === true) spec.wrap = true;
+  if (w.dark === true) spec.dark = true;
+  if (w.span === true) spec.span = true;
   if (typeof w.namedOrder === 'string' && w.namedOrder) spec.namedOrder = w.namedOrder;
   return spec;
 }

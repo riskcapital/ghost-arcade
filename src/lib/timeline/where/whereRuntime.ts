@@ -147,12 +147,20 @@ function findClipWhere(tracks: readonly ShowLayerTrack[], clipId: string): { whe
 
 /**
  * Content blocks with a where line: the block's own piece is scaled by its
- * weight, and copies go over the other lit pieces. Pure.
+ * weight, and copies go over the other pieces of its order (every member
+ * has its copy, at no opacity while it is not lit, so the scene keeps its
+ * layers while the window moves and only their opacities change).
+ *
+ * A block marked `dark` takes its pieces over while it plays: their own
+ * content goes dark (`frame.darkPieces`), so only what the Timeline lights
+ * shows on them. A piece whose own row plays a block keeps it. A `span`
+ * block shows one picture across its pieces (`state.span`). Pure.
  */
 export function applyContentWhere(
   frame: ShowTrackFrame,
   input: { time: number; tracks: readonly ShowLayerTrack[]; spots: readonly WhereSpot[]; named?: readonly WhereNamedOrder[]; aspect?: number; ctx: WhereMotionContext; lines: LineFrame | null },
 ): void {
+  let dark: Set<string> | null = null;
   for (const state of frame.tracks) {
     if (!state.clip) continue;
     const found = findClipWhere(input.tracks, state.clip.clipId);
@@ -163,9 +171,24 @@ export function applyContentWhere(
     });
     const base = state.opacity;
     state.opacity = base * (result.weights.get(state.layerId) ?? 0);
-    state.whereCopies = [...result.weights]
-      .filter(([id, w]) => id !== state.layerId && w > 0)
-      .map(([pieceId, w]) => ({ pieceId, opacity: base * w }));
+    const copies: Array<{ pieceId: string; opacity: number }> = [];
+    for (const slot of result.order.slots) {
+      for (const pieceId of slot) {
+        if (pieceId === state.layerId) continue;
+        copies.push({ pieceId, opacity: base * (result.weights.get(pieceId) ?? 0) });
+      }
+    }
+    state.whereCopies = copies;
+    if (found.where.span) state.span = true;
+    if (found.where.dark && base > 0) {
+      dark ??= new Set(frame.darkPieces ?? []);
+      for (const slot of result.order.slots) for (const id of slot) dark.add(id);
+    }
+  }
+  if (dark) {
+    // A piece whose own row plays a block is that row's.
+    for (const state of frame.tracks) if (!state.sub && state.clip) dark.delete(state.layerId);
+    frame.darkPieces = [...dark].sort();
   }
 }
 

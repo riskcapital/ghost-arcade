@@ -213,7 +213,7 @@ describe('where lines through the Timeline', () => {
     expect(['Left', 'Middle', 'Right'].map((p) => wearing(scene7, p))).toEqual([0, 0, 0]);
   });
 
-  it('a content block with a where line goes over the other lit pieces, its own piece scaled', () => {
+  it('a content block with a where line goes over the other lit pieces, its own piece scaled (unlit copies wait at no opacity)', () => {
     const frame: ShowTrackFrame = {
       time: 1, playing: false, seekGeneration: 0, manualClock: false,
       tracks: [{
@@ -224,14 +224,61 @@ describe('where lines through the Timeline', () => {
     const tracks = [{ id: 'row:Left', layerId: 'Left', clips: [{ id: 'c1', startTime: 0, duration: 10, where: normalizeWhere({ motion: { kind: 'drawn' }, position: 1, soft: 0 }) }] }] as never;
     applyContentWhere(frame, { time: 1, tracks, spots: pieceSpots(pieces), ctx: motionContext(null), lines: null });
     expect(frame.tracks[0].opacity).toBe(0);
-    expect(frame.tracks[0].whereCopies).toEqual([{ pieceId: 'Right', opacity: 1 }]);
+    expect(frame.tracks[0].whereCopies).toEqual([{ pieceId: 'Middle', opacity: 0 }, { pieceId: 'Right', opacity: 1 }]);
     const img = { id: 'img', type: 'image', src: '/a.png' } as never;
     const scene = buildShowTrackScene(pieces, frame, { sourceFor: () => img });
     const copy = scene.find((l) => l.id === showWhereLayerId('Right', 'c1'))!;
     expect(copy).toBeTruthy();
     expect(copy.source).toBe(img);
+    expect(copy._showOpacityMul).toBeUndefined();
     expect(scene.indexOf(copy)).toBe(scene.findIndex((l) => l.id === 'Right') - 1); // directly over it
+    expect(scene.find((l) => l.id === showWhereLayerId('Middle', 'c1'))!._showOpacityMul).toBe(0);
     expect(scene.find((l) => l.id === 'Left')!._showOpacityMul).toBe(0);
+    // Not dark: the other pieces keep their own content.
+    expect(frame.darkPieces).toBeUndefined();
+    expect(scene.find((l) => l.id === 'Middle')).toBe(pieces.find((l) => l.id === 'Middle'));
+  });
+
+  it('a dark block takes its pieces over: their own content goes black (shape and looks kept); span crops each to its part of the stage', () => {
+    const media = (id: string, x0: number, x1: number) => ({ ...piece(id, x0, x1), type: 'media', colorContent: { hue: 120, saturation: 60, lightness: 40, alpha: 1 } }) as unknown as Layer;
+    const stage = [media('Right', 0.7, 1), media('Left', 0, 0.3), media('Middle', 0.35, 0.65)];
+    const frame: ShowTrackFrame = {
+      time: 1, playing: false, seekGeneration: 0, manualClock: false,
+      tracks: [
+        { trackId: 'row:Left', layerId: 'Left', layerName: 'Left', template: null, gap: 'hide', params: null, warm: null, opacity: 1, clip: null },
+        { trackId: 'row:Middle', layerId: 'Middle', layerName: 'Middle', template: null, gap: 'hide', params: null, warm: null, opacity: 1, clip: null },
+        { trackId: 'sub', layerId: 'Left', layerName: 'Auto', sub: true, template: null, gap: 'hide', params: null, warm: null, opacity: 1,
+          clip: { clipId: 'c2', runId: 'c2', runStart: 0, media: { kind: 'image', name: 'a', src: '/a.png' }, mediaTime: 1, paused: false, held: false, rate: 1, loopStart: 0, localTime: 1 } },
+      ],
+      looks: [{ clipId: 'lk', lookId: 'neon-pulse', paletteId: 'neon', scope: 'all', layerIds: [], weight: 1 }],
+    };
+    // Lights the right piece only (position 1, one piece wide).
+    const tracks = [{ id: 'sub', layerId: 'Left', subRow: true, clips: [{ id: 'c2', startTime: 0, duration: 10, where: normalizeWhere({ motion: { kind: 'drawn' }, position: 1, soft: 0, dark: true, span: true }) }] }] as never;
+    applyContentWhere(frame, { time: 1, tracks, spots: pieceSpots(stage), ctx: motionContext(null), lines: null });
+    expect(frame.darkPieces).toEqual(['Left', 'Middle', 'Right']);
+    const img = { id: 'img', type: 'image', src: '/a.png' } as never;
+    const scene = buildShowTrackScene(stage, frame, { sourceFor: () => img });
+    // Own content black, still drawn (its looks show on it when nothing is over it).
+    const middle = scene.find((l) => l.id === 'Middle')!;
+    expect(middle.source).toBeNull();
+    expect(middle.colorContent).toMatchObject({ lightness: 0, alpha: 1 });
+    expect(middle._showOpacityMul).toBeUndefined();
+    expect(middle.edgeEffects?.look?.id).toBe('neon-pulse');
+    // The lit piece: its copy shows its part of the picture, and wears the look over it.
+    const right = scene.find((l) => l.id === showWhereLayerId('Right', 'c2'))!;
+    expect(right.cropRegion).toEqual({ x: 0.7, y: 0, width: expect.closeTo(0.3, 6), height: 1 });
+    expect(right.edgeEffects?.look?.id).toBe('neon-pulse');
+    expect(scene.find((l) => l.id === 'Right')!.edgeEffects?.look).toBeUndefined();
+    // The sub copy on the host piece (unlit here) takes its own part too.
+    const host = scene.find((l) => l.id.startsWith('showsub::Left::'))!;
+    expect(host._showOpacityMul).toBe(0);
+    expect(host.cropRegion).toEqual({ x: 0, y: 0, width: expect.closeTo(0.3, 6), height: 1 });
+    // A piece whose own row plays a block stays that row's.
+    frame.tracks[1].clip = { ...frame.tracks[2].clip!, clipId: 'own', runId: 'own' };
+    frame.tracks[2].opacity = 1;
+    delete frame.darkPieces;
+    applyContentWhere(frame, { time: 1, tracks, spots: pieceSpots(stage), ctx: motionContext(null), lines: null });
+    expect(frame.darkPieces).toEqual(['Left', 'Right']);
   });
 
   it('LED blocks, where lines and named orders save with the Timeline and undo', () => {
