@@ -37,7 +37,36 @@ export type ShowKeyAction =
   /** L or R held down (key repeat): the show takes the key and does nothing. */
   | 'heldTakeoverKey'
   /** Enter on a Timeline with sections: GO (hold, vamp, Live). */
-  | 'go';
+  | 'go'
+  // The editing keys a video editor's hands already know.
+  /** J / K / L: play backwards (again: faster), stop, play. */
+  | 'shuttleBack'
+  | 'shuttleStop'
+  | 'shuttleForward'
+  /** I / O: in and out points; Shift+I / O goes to them; Ctrl+Shift+X clears them. */
+  | 'markIn'
+  | 'markOut'
+  | 'goIn'
+  | 'goOut'
+  | 'clearInOut'
+  /** Up / Down: the previous or next edit point. */
+  | 'prevEdit'
+  | 'nextEdit'
+  /** ← / → with nothing selected: one frame back or on. */
+  | 'frameBack'
+  | 'frameForward'
+  /** = / - / \: zoom in, out, to fit. */
+  | 'zoomIn'
+  | 'zoomOut'
+  | 'zoomFit'
+  /** Q / W: trim the block's start or end to the playhead. */
+  | 'trimStart'
+  | 'trimEnd'
+  /** C: the razor (click a block to cut it there); V: back to selecting. */
+  | 'razor'
+  | 'selectTool'
+  /** U: show or hide the focused row's lines. */
+  | 'toggleLines';
 
 export interface ShowKeyContext {
   /** The tray is open and visible. */
@@ -94,7 +123,7 @@ export function classifyShowKey(e: KeyLike, ctx: ShowKeyContext): ShowKeyAction 
     return ctx.hasSelection ? 'delete' : null;
   }
   if (mod) {
-    if (e.shiftKey) return null;
+    if (e.shiftKey) return key === 'x' ? 'clearInOut' : null;
     if (key === 'k') return ctx.hasTracks ? 'split' : null;
     if (key === 'd') return ctx.hasClipSelection ? 'duplicate' : null;
     if (key === 'c') return ctx.hasClipSelection ? 'copy' : null;
@@ -104,19 +133,34 @@ export function classifyShowKey(e: KeyLike, ctx: ShowKeyContext): ShowKeyAction 
     return null;
   }
   if (key === 'ArrowLeft' || key === 'ArrowRight') {
-    if (!ctx.hasClipSelection) return null;
+    if (!ctx.hasClipSelection) return e.shiftKey ? null : key === 'ArrowLeft' ? 'frameBack' : 'frameForward';
     if (key === 'ArrowLeft') return e.shiftKey ? 'nudgeBarLeft' : 'nudgeLeft';
     return e.shiftKey ? 'nudgeBarRight' : 'nudgeRight';
   }
-  // L takes the focused track over live (or hands it back); R returns
-  // every taken-over track, Shift+R instantly.
-  // Holding either down acts once: a repeating L would toggle the takeover
-  // about 30 times a second.
+  if (key === 'ArrowUp' || key === 'ArrowDown') return e.shiftKey ? null : key === 'ArrowUp' ? 'prevEdit' : 'nextEdit';
+  // Shift+L takes the focused track over live (or hands it back); R returns
+  // every taken-over track, Shift+R instantly. (L alone plays, as J / K / L
+  // do in a video editor.) Holding either down acts once: a repeating key
+  // would toggle the takeover about 30 times a second.
   if (key === 'r') return ctx.takeoverActive ? (e.repeat ? 'heldTakeoverKey' : e.shiftKey ? 'returnAllInstant' : 'returnAll') : null;
+  if (key === 'l' && e.shiftKey) return ctx.hasTracks ? (e.repeat ? 'heldTakeoverKey' : 'takeover') : null;
+  if (key === 'i' && e.shiftKey) return 'goIn';
+  if (key === 'o' && e.shiftKey) return 'goOut';
   if (e.shiftKey) return null;
-  if (key === 'l') return ctx.hasTracks ? (e.repeat ? 'heldTakeoverKey' : 'takeover') : null;
-  if (key === 's') return ctx.hasTracks ? 'split' : null;
-  if (key === 'n') return 'toggleSnap';
+  if (key === 'j') return 'shuttleBack';
+  if (key === 'k') return 'shuttleStop';
+  if (key === 'l') return 'shuttleForward';
+  if (key === 'i') return 'markIn';
+  if (key === 'o') return 'markOut';
+  if (key === '=' || key === '+') return 'zoomIn';
+  if (key === '-') return 'zoomOut';
+  if (key === '\\') return 'zoomFit';
+  if (key === 'q') return ctx.hasTracks ? 'trimStart' : null;
+  if (key === 'w') return ctx.hasTracks ? 'trimEnd' : null;
+  if (key === 'c') return ctx.hasTracks ? 'razor' : null;
+  if (key === 'v') return 'selectTool';
+  if (key === 'u') return ctx.hasTracks ? 'toggleLines' : null;
+  if (key === 's' || key === 'n') return 'toggleSnap';
   if (key === 'm') return 'marker';
   if (key === 'Enter') return ctx.hasSections && !e.repeat ? 'go' : null;
   if (key === 'Home') return 'home';

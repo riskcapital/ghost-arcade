@@ -277,7 +277,27 @@ export interface ShowTimelineState {
   sound: SoundDoc;
   /** Sections (Timeline): named spans with an end action (hold, vamp, jump, live). */
   sections: TimelineSection[];
+  /** In and out points (I / O): with Loop on, play loops between them. Null: none. */
+  workArea: ShowWorkArea | null;
 }
+
+/** In and out points of a document, seconds. */
+export interface ShowWorkArea {
+  start: number;
+  end: number;
+}
+
+/** A saved work area, or null when it is missing or makes no span. */
+export function normalizeWorkArea(value: unknown): ShowWorkArea | null {
+  const v = value as { start?: unknown; end?: unknown } | null | undefined;
+  const start = Number(v?.start);
+  const end = Number(v?.end);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end - start < SHOW_MIN_WORK_AREA) return null;
+  return { start, end };
+}
+
+/** The shortest span between in and out points, seconds. */
+export const SHOW_MIN_WORK_AREA = 0.05;
 
 /**
  * What a show that does not loop does at its end:
@@ -322,6 +342,7 @@ function createInitialState(): ShowTimelineState {
     whereOrders: [],
     sound: EMPTY_SOUND_DOC,
     sections: [],
+    workArea: null,
   };
 }
 
@@ -343,6 +364,11 @@ export function setShowRecordArm(armed: (() => boolean) | null): void {
 }
 function recordRun(s: Pick<ShowTimelineState, 'doc'>): boolean {
   return s.doc === 'timeline' && !externalClock && recordArmed();
+}
+
+/** The span Loop plays: the in and out points when there are some. */
+function loopArea(s: Pick<ShowTimelineState, 'loop' | 'workArea'>): ShowWorkArea | null {
+  return s.loop && s.workArea ? s.workArea : null;
 }
 
 // ─── Pure arrangement maths (exported for tests) ─────────────────────────
@@ -1559,7 +1585,27 @@ function tick(now: number): void {
     forgetSections();
   }
 
+  // Loop with in and out points: back to the in point at the out point.
+  const area = loopArea(s);
+  if (area && s.currentTime < area.end && next >= area.end && !externalClock) {
+    forgetSections();
+    const wrapped = area.start + ((next - area.end) % (area.end - area.start));
+    transportClock.shift(wrapped - next);
+    lastLoopWrap = { generation: seekGeneration + 1, wrap: { fromGeneration: seekGeneration, shift: next - wrapped } };
+    applyTime(wrapped, true);
+    ticker.request();
+    return;
+  }
+
   const dur = s.duration;
+  // Disarmed while recording on past the end (or on an empty Timeline): the
+  // run is over, and the playhead stays where it got to.
+  if (!recordRun(s) && (dur <= 0 || (!s.loop && s.currentTime > dur + 1e-6))) {
+    store.update((x) => ({ ...x, isPlaying: false }));
+    transportClock.reset();
+    republishTracks();
+    return;
+  }
   if (dur > 0 && next >= dur && !(recordRun(s) && !s.loop)) {
     if (s.loop) {
       // A new pass of the show: the last pass's vamps, jump counts and
@@ -1940,6 +1986,8 @@ export interface ShowTimelineSnapshot {
   sections?: TimelineSection[];
   /** Version 9: the Timeline's Screen FX and Effects rows. */
   stageClips?: TimelineStageClip[];
+  /** In and out points (missing: none). */
+  workArea?: ShowWorkArea;
   /** Version 4: the Timeline document (the fields above are the Show's). */
   timeline?: ShowTimelineSnapshot;
   /** Version 4: the document that was active when saved. */
@@ -1958,7 +2006,7 @@ export interface ShowTimelineSnapshot {
 /** What a document owns. Everything else in the state is the engine's. */
 const DOC_KEYS = [
   'audioTracks', 'presetClips', 'layerTracks', 'lookClips', 'lines', 'lineBindings', 'ledClips', 'stageClips', 'whereOrders', 'sound', 'sections', 'cameraLane', 'tempo', 'loop', 'endAction',
-  'rulerMode', 'snapGrid', 'zoom', 'snapEnabled', 'currentTime', 'selection', 'selectedClipIds', 'soloTrackId',
+  'rulerMode', 'snapGrid', 'zoom', 'snapEnabled', 'currentTime', 'selection', 'selectedClipIds', 'soloTrackId', 'workArea',
 ] as const;
 export type ShowDocFields = Pick<ShowTimelineState, (typeof DOC_KEYS)[number]>;
 
@@ -2108,6 +2156,7 @@ function serializeTemplate(template: Layer | null): Layer | null {
 /** A document as it is saved (see `serialize`). */
 function docSnapshot(d: ShowDocFields): Omit<ShowTimelineSnapshot, 'version' | 'isOpen'> {
   return {
+    ...(d.workArea ? { workArea: { ...d.workArea } } : {}),
     loop: d.loop,
     endAction: d.endAction,
     zoom: d.zoom,
@@ -2206,6 +2255,7 @@ function hydrateDoc(p: Record<string, unknown>, projectDir?: string): ShowDocFie
     whereOrders: normalizeNamedOrders(p.whereOrders),
     sound: normalizeSoundDoc(p.sound),
     sections: normalizeSections(p.sections),
+    workArea: normalizeWorkArea(p.workArea),
     cameraLane,
     tempo,
     loop: p.loop === true,
@@ -2261,6 +2311,28 @@ export const showTimeline = {
     store.update((s) => ({ ...s, endAction: next }));
     recordShowEdit();
   },
+  /** In and out points (null clears them). */
+  setWorkArea(area: ShowWorkArea | null) {
+    const next = area ? normalizeWorkArea(area) : null;
+    const cur = get(store).workArea;
+    if (cur === next || (cur && next && cur.start === next.start && cur.end === next.end)) return;
+    store.update((s) => ({ ...s, workArea: next }));
+    recordShowEdit();
+  },
+  /** The in point at `t` (I). The out point stays when it is still after it. */
+  markIn(t: number) {
+    const s = get(store);
+    const start = Math.max(0, t);
+    const end = s.workArea && s.workArea.end - start >= SHOW_MIN_WORK_AREA ? s.workArea.end : Math.max(s.duration, start + 1);
+    this.setWorkArea({ start, end });
+  },
+  /** The out point at `t` (O). The in point stays when it is still before it. */
+  markOut(t: number) {
+    const s = get(store);
+    const start = s.workArea && t - s.workArea.start >= SHOW_MIN_WORK_AREA ? s.workArea.start : 0;
+    if (t - start < SHOW_MIN_WORK_AREA) return;
+    this.setWorkArea({ start, end: t });
+  },
   /** Zoom so the whole show fits `width` pixels. */
   zoomToFit(width: number) {
     store.update((s) => ({ ...s, zoom: fitShowZoom(Math.max(s.duration, 1), width) }));
@@ -2290,7 +2362,11 @@ export const showTimeline = {
     holdPausedAt = null;
     store.update((x) => ({ ...x, isPlaying: true }));
     // Starting again from the very end (the show stopped there) starts over.
-    const from = !s.loop && s.currentTime >= s.duration - 1e-6 ? 0 : get(store).currentTime;
+    // Looping in and out points: from outside them, play starts at the in point.
+    const area = loopArea(s);
+    const from = area && (s.currentTime < area.start || s.currentTime >= area.end)
+      ? area.start
+      : !s.loop && s.currentTime >= s.duration - 1e-6 ? 0 : get(store).currentTime;
     // Re-evaluate at the current position. Fires only when the clip under
     // the playhead differs from what is loaded, so resuming from pause does
     // not reload (and visibly reset) the composition already on screen.

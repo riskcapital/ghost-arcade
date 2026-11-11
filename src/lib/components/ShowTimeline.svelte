@@ -135,10 +135,14 @@
     deleteSelection as deleteTrackSelection,
     duplicateSelection,
     hasClipSelection,
+    jumpToEdit,
     nudgeSelection,
     pasteAtPlayhead,
     splitAtPlayhead,
+    toggleFocusedLines,
+    trimToPlayhead,
   } from './show/timeline/trackCommands';
+  import { razorTool, shuttleBack, shuttleForward, shuttleStop, stepFrame } from './show/timeline/editTools';
 
   // ── Show state, field by field ──────────────────────────────────────────
   // The store publishes a new state object on every playhead frame. Reading
@@ -150,6 +154,7 @@
   const currentTimeStore = showSlice('currentTime');
   const durationStore = showSlice('duration');
   const loopStore = showSlice('loop');
+  const workAreaStore = showSlice('workArea');
   const audioTracksStore = showSlice('audioTracks');
   const presetClipsStore = showSlice('presetClips');
   const activeClipIdStore = showSlice('activeClipId');
@@ -1172,8 +1177,74 @@
       case 'go':
         showTimeline.go();
         return true;
+      case 'shuttleBack':
+        shuttleBack();
+        return true;
+      case 'shuttleStop':
+        shuttleStop();
+        return true;
+      case 'shuttleForward':
+        shuttleForward();
+        return true;
+      case 'frameBack':
+      case 'frameForward':
+        stepFrame(action === 'frameBack' ? -1 : 1);
+        return true;
+      case 'markIn':
+        showTimeline.markIn(s.currentTime);
+        return true;
+      case 'markOut':
+        showTimeline.markOut(s.currentTime);
+        return true;
+      case 'goIn':
+      case 'goOut':
+        if (!s.workArea) return false;
+        showTimeline.seek(action === 'goIn' ? s.workArea.start : s.workArea.end);
+        return true;
+      case 'clearInOut':
+        showTimeline.setWorkArea(null);
+        return true;
+      case 'prevEdit':
+      case 'nextEdit':
+        jumpToEdit(action === 'prevEdit' ? -1 : 1);
+        return true;
+      case 'zoomIn':
+      case 'zoomOut':
+        zoomAroundPlayhead(action === 'zoomIn' ? 1.25 : 1 / 1.25);
+        return true;
+      case 'zoomFit':
+        showTimeline.zoomToFit(Math.max(100, gridWidth - 24));
+        if (gridEl) gridEl.scrollLeft = 0;
+        return true;
+      case 'trimStart':
+      case 'trimEnd':
+        trimToPlayhead(action === 'trimStart' ? 'start' : 'end');
+        return true;
+      case 'razor':
+        razorTool.set(!get(razorTool));
+        return true;
+      case 'selectTool':
+        razorTool.set(false);
+        return true;
+      case 'toggleLines':
+        return toggleFocusedLines();
     }
     return false;
+  }
+
+  /** = / -: zoom in or out, keeping the playhead where it is on screen. */
+  function zoomAroundPlayhead(factor: number) {
+    const from = get(showTimeline).zoom;
+    const time = get(showTimeline).currentTime;
+    const screenX = gridEl ? time * from - gridEl.scrollLeft : 0;
+    showTimeline.setZoom(from * factor);
+    const to = get(showTimeline).zoom;
+    if (to === from) return;
+    void tick().then(() => {
+      if (!gridEl) return;
+      gridEl.scrollLeft = anchoredScrollLeft(time, to, Math.max(0, Math.min(gridEl.clientWidth, screenX)));
+      gridScrollLeft = gridEl.scrollLeft;
+    });
   }
   onMount(() => setShowKeyHandler(handleShowKey));
   // Taken ahead of every other window listener (see installShowKeyCapture).
@@ -1473,9 +1544,14 @@
       >
         {tempo ? `♩ ${Math.round(tempo.segments[0].bpm * 10) / 10}` : 'Tempo'}
       </button>
-      <button class="t-chip" class:active={snapEnabled} onclick={() => showTimeline.setSnapEnabled(!snapEnabled)} title="Snap to the grid, clip edges, the playhead and markers (N). Hold {MOD_KEY} while dragging to move freely." data-show-snap>
+      <button class="t-chip" class:active={snapEnabled} onclick={() => showTimeline.setSnapEnabled(!snapEnabled)} title="Snap to the grid, clip edges, the playhead and markers (S). Hold {MOD_KEY} while dragging to move freely." data-show-snap>
         Snap
       </button>
+      {#if isTimeline && layerTracks.length}
+        <button class="t-chip" class:active={$razorTool} onclick={() => razorTool.set(!$razorTool)} title="Razor (C): click a block to cut it there. V goes back to selecting" aria-pressed={$razorTool} data-show-razor>
+          Razor
+        </button>
+      {/if}
       {#if tempo}
         <select
           class="t-select t-grid"
@@ -1675,6 +1751,15 @@
       >
         <div class="show-ruler" style="width: {totalWidth}px; height: {RULER_HEIGHT}px" onmousedown={startScrub}>
           <ShowRuler {zoom} {rulerSeconds} {viewStart} {viewEnd} mode={rulerMode} tempo={tempo} />
+          {#if $workAreaStore}
+            <div
+              class="show-work-area"
+              class:looping={$loopStore}
+              style="left: {$workAreaStore.start * zoom}px; width: {($workAreaStore.end - $workAreaStore.start) * zoom}px"
+              title="In and out points (I / O). With Loop on, play loops between them. {MOD_KEY}+Shift+X clears them"
+              data-show-work-area
+            ></div>
+          {/if}
           {#each visibleMarkers as marker (marker.id)}
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div
@@ -1769,6 +1854,11 @@
         {#each visibleMarkers as marker (marker.id)}
           <div class="show-marker-line" class:selected={marker.id === selectedMarkerId} style="left: {marker.time * zoom}px; height: {laneStackH}px"></div>
         {/each}
+
+        {#if $workAreaStore}
+          <div class="show-work-edge" style="left: {$workAreaStore.start * zoom}px; height: {laneStackH}px"></div>
+          <div class="show-work-edge" style="left: {$workAreaStore.end * zoom}px; height: {laneStackH}px"></div>
+        {/if}
 
         {#if $showSnapGuide !== null}
           <div class="show-snap-guide" style="left: {$showSnapGuide * zoom}px; height: {laneStackH}px" data-show-snap-guide></div>
@@ -2018,7 +2108,7 @@
       </div>
     {:else if hasTracks}
       <div class="show-inspector insp-idle" bind:clientHeight={inspectorH}>
-        <span class="insp-hint insp-idle-hint" title="Each row is a mapping layer. Drop media on a row; click a block to edit it in Properties and Shader Parameters, or click a Media Library card to replace its media; click a row name for its settings. S splits at the playhead, Shift+Delete closes the gap, ? lists every key.">Each row is a mapping layer. Drop media on a row; click a block to edit it in Properties and Shader Parameters, or click a Media Library card to replace its media; click a row name for its settings. S splits at the playhead, Shift+Delete closes the gap, ? lists every key.</span>
+        <span class="insp-hint insp-idle-hint" title="Each row is a mapping layer. Drop media on a row; click a block to edit it in Properties and Shader Parameters, or click a Media Library card to replace its media; click a row name for its settings. {MOD_KEY}+K or the razor (C) cuts, Shift+Delete closes the gap, J K L shuttle, I and O set in and out, ? lists every key.">Each row is a mapping layer. Drop media on a row; click a block to edit it in Properties and Shader Parameters, or click a Media Library card to replace its media; click a row name for its settings. {MOD_KEY}+K or the razor (C) cuts, Shift+Delete closes the gap, J K L shuttle, I and O set in and out, ? lists every key.</span>
       </div>
     {/if}
 
@@ -2361,6 +2451,23 @@
   }
   .show-marker.unlinked .show-marker-flag { background: #7a7a86; color: #111; }
   .show-marker.selected .show-marker-flag { box-shadow: 0 0 0 1px #fff; }
+  /* In and out points: a band under the ruler and a faint line down each edge. */
+  .show-work-area {
+    position: absolute;
+    bottom: 0;
+    height: 4px;
+    background: color-mix(in srgb, var(--ga-icon, #5278ff) 45%, transparent);
+    pointer-events: none;
+  }
+  .show-work-area.looping { background: var(--ga-icon, #5278ff); }
+  .show-work-edge {
+    position: absolute;
+    top: 0;
+    width: 1px;
+    background: color-mix(in srgb, var(--ga-icon, #5278ff) 55%, transparent);
+    pointer-events: none;
+    z-index: 3;
+  }
   .show-marker-line {
     position: absolute;
     top: 0;

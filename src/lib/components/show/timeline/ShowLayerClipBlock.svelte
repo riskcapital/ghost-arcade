@@ -17,6 +17,8 @@
   import { clipFades, clipLoopStart, clipRate, mediaEnd, SHOW_CLIP_END_GUARD_SECONDS } from '../../../show/tracks/showTrackEval';
   import { trimEdgeWidth, type ClipPart } from './trackLayout';
   import WhereBand from './WhereBand.svelte';
+  import { razorTool } from './editTools';
+  import { showTimeline } from '../../../stores/showTimeline';
 
   interface Props {
     clip: ShowLayerClip;
@@ -73,6 +75,17 @@
   }
 
   function press(e: MouseEvent, part: ClipPart) {
+    // The razor (C): a click cuts the block where it lands.
+    if ($razorTool && e.button === 0 && !locked) {
+      const block = (e.currentTarget as HTMLElement).closest('.lc-block') as HTMLElement | null;
+      if (block) {
+        e.preventDefault();
+        e.stopPropagation();
+        const at = clip.startTime + (e.clientX - block.getBoundingClientRect().left) / zoom;
+        showTimeline.splitLayerClips(at, [clip.id]);
+        return;
+      }
+    }
     onpress(e, clip, part);
   }
 </script>
@@ -82,6 +95,7 @@
   class="lc-block"
   class:selected
   class:locked
+  class:razor={$razorTool && !locked}
   class:narrow={width < 48}
   style:left="{left}px"
   style:width="{width}px"
@@ -151,6 +165,8 @@
     position: relative;
     z-index: 1;
   }
+  /* The razor (C): every part of the block cuts. */
+  .lc-block.razor, .lc-block.razor :global(*) { cursor: crosshair; }
   .lc-block {
     --clip-color: #8b7cff;
     position: absolute;

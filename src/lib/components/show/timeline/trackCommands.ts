@@ -123,3 +123,65 @@ export function clearTrackSelection(): void {
   showTimeline.selectLayerClips([]);
   laneKeySelection.set(null);
 }
+
+/**
+ * Every edit point of the Timeline: the start and end of each block on the
+ * layer, Looks, Screen FX, Effects and LED rows, each section, each sound
+ * block, plus the start and the end. Sorted, without duplicates.
+ */
+export function editPoints(s = get(showTimeline)): number[] {
+  const out = new Set<number>([0]);
+  const add = (start: number, duration: number) => {
+    if (Number.isFinite(start)) out.add(round(start));
+    if (Number.isFinite(start + duration)) out.add(round(start + duration));
+  };
+  for (const t of s.layerTracks) for (const c of t.clips) add(c.startTime, c.duration);
+  for (const c of s.lookClips) add(c.startTime, c.duration);
+  for (const c of s.stageClips) add(c.startTime, c.duration);
+  for (const c of s.ledClips) add(c.startTime, c.duration);
+  for (const c of s.presetClips) add(c.startTime, c.duration);
+  for (const t of s.audioTracks) add(t.startTime, t.duration);
+  for (const x of s.sections) add(x.start, x.end - x.start);
+  if (s.duration > 0) out.add(round(s.duration));
+  return [...out].sort((a, b) => a - b);
+}
+
+const round = (t: number) => Math.round(t * 1e6) / 1e6;
+
+/** Up / Down: the playhead to the previous or next edit point. */
+export function jumpToEdit(direction: -1 | 1): boolean {
+  const s = get(showTimeline);
+  const now = s.currentTime;
+  const points = editPoints(s);
+  const target = direction > 0 ? points.find((p) => p > now + 1e-4) : [...points].reverse().find((p) => p < now - 1e-4);
+  if (target === undefined) return false;
+  showTimeline.seek(target);
+  return true;
+}
+
+/**
+ * Q / W: trim the start or the end of the selected blocks to the playhead,
+ * else of every block the playhead is inside. Blocks the playhead is not
+ * inside are left alone.
+ */
+export function trimToPlayhead(edge: 'start' | 'end'): boolean {
+  const s = get(showTimeline);
+  const t = s.currentTime;
+  const inside = (c: { startTime: number; duration: number }) => t > c.startTime + 1e-4 && t < c.startTime + c.duration - 1e-4;
+  const selected = new Set(s.selectedClipIds);
+  const all = s.layerTracks.flatMap((track) => track.clips);
+  const pick = (selected.size ? all.filter((c) => selected.has(c.id)) : all).filter(inside);
+  for (const c of pick) showTimeline.trimLayerClip(c.id, edge, t, { snap: false });
+  return pick.length > 0;
+}
+
+/** U: show or hide the lines of the focused row (else of the selected block's row). */
+export function toggleFocusedLines(): boolean {
+  const s = get(showTimeline);
+  const selected = new Set(s.selectedClipIds);
+  const id = get(focusedTrackId) ?? s.layerTracks.find((t) => t.clips.some((c) => selected.has(c.id)))?.id ?? null;
+  const track = s.layerTracks.find((t) => t.id === id);
+  if (!track) return false;
+  showTimeline.updateLayerTrack(track.id, { collapsed: !track.collapsed });
+  return true;
+}
