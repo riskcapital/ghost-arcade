@@ -181,3 +181,20 @@ describe('a recorded block', () => {
     expect(blocks).toEqual([['a', 0, 3], ['take', 3, 9], ['cut', 9, 12]]);
   });
 });
+
+describe('live edit with the playhead parked', () => {
+  it('a swap cuts the block under the playhead and the right part takes the new media', () => {
+    showTimeline.openDoc('timeline');
+    rows([['a', 0, 6]]);
+    const row = get(showTimeline).layerTracks[0].id;
+    showTimeline.cutInLayerMedia(row, video('swap.mp4'), 2);
+    const blocks = () => get(showTimeline).layerTracks[0].clips.map((c) => [c.media.name, c.startTime, c.startTime + c.duration]);
+    expect(blocks()).toEqual([['a.mp4', 0, 2], ['swap.mp4', 2, 6]]);
+    // At a block's start the whole block takes it.
+    showTimeline.cutInLayerMedia(row, video('again.mp4'), 2);
+    expect(blocks()).toEqual([['a.mp4', 0, 2], ['again.mp4', 2, 6]]);
+    // In a gap, a block runs to the next block or 10 s.
+    showTimeline.cutInLayerMedia(row, video('gap.mp4'), 8);
+    expect(blocks()).toEqual([['a.mp4', 0, 2], ['again.mp4', 2, 6], ['gap.mp4', 8, 18]]);
+  });
+});

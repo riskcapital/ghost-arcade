@@ -3279,6 +3279,41 @@ export const showTimeline = {
   },
 
   /**
+   * Live edit with the playhead parked: the row shows `media` from `t`. The
+   * block under the playhead is cut there and its right part takes the new
+   * media (the whole block when `t` is at its start). In a gap, a block runs
+   * from `t` to the next block (at most 10 s). One undo step.
+   */
+  cutInLayerMedia(trackId: string, media: ShowClipMedia, t: number): string | null {
+    const track = get(store).layerTracks.find((x) => x.id === trackId);
+    if (!track || track.locked) return null;
+    const normalizedMedia = normalizeClipMedia(media);
+    if (!normalizedMedia) return null;
+    const under = track.clips.find((c) => c.startTime <= t + 1e-6 && t < c.startTime + c.duration - 1e-6);
+    if (!under) {
+      const next = track.clips.filter((c) => c.startTime > t).reduce((m, c) => Math.min(m, c.startTime), t + 10);
+      return this.recordLayerBlock(trackId, normalizedMedia, t, next);
+    }
+    let clips: ShowLayerClip[];
+    let changedId = under.id;
+    const pieces = t - under.startTime >= SHOW_MIN_TRACK_CLIP_SECONDS ? splitClip(under, t) : null;
+    if (pieces) {
+      const [left, right] = pieces;
+      changedId = right.id;
+      clips = sortClips([...track.clips.filter((c) => c.id !== under.id), left, { ...right, media: normalizedMedia, inPoint: 0, loopStart: undefined }]);
+    } else {
+      clips = track.clips.map((c) => (c.id === under.id ? { ...c, media: normalizedMedia, inPoint: 0, loopStart: undefined } : c));
+    }
+    store.update((s) => withDuration({
+      ...s,
+      layerTracks: s.layerTracks.map((x) => (x.id === trackId ? { ...x, clips } : x)),
+    }));
+    recordShowEdit();
+    republishTracks();
+    return changedId;
+  },
+
+  /**
    * Record a block (live record): `media` on the row from `start` to `end`,
    * over whatever was there (an overwrite edit). One undo step. Returns the
    * new block's id, or null on a locked or missing row.

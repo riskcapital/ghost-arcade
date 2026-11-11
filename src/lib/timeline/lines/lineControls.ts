@@ -43,6 +43,8 @@ export interface LineControlsHost {
   /** An engine is writing (modulation, Auto, a section, a cue, a takeover):
    *  with Follow edits on, what it moves is not a person's edit. */
   automated?: () => boolean;
+  /** Live edit: key `value` on the parameter's line at show time `t` (parked playhead). */
+  keyAt?: (target: ParamTarget, key: string, value: number | boolean, t: number) => void;
 }
 
 /** Every parameter Follow edits watches: each mapping layer's own, the Stage
@@ -222,7 +224,13 @@ export function createLineControls(host: LineControlsHost, initial: LineBinding[
         // only drive the output. A line or a watched parameter is recorded
         // from anything, as before.
         if (follow && automated) return;
-        if (host.recorder.armed && host.playing()) host.recorder.input(target, key, value, host.showTime());
+        if (host.recorder.armed && host.playing()) {
+          host.recorder.input(target, key, value, host.showTime());
+          return;
+        }
+        // Live edit: the playhead is parked, armed with Follow edits on. A
+        // person's change is keyed on the line at the playhead.
+        if (followEdits && host.recorder.armed && !automated) host.keyAt?.(target, key, value, host.showTime());
       };
       for (const line of host.lines()) visit(line.target, line.key);
       for (const w of watched.values()) visit(w.target, w.key);

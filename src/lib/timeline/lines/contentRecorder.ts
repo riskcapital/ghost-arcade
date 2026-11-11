@@ -25,6 +25,8 @@ export interface ContentRecorderHost {
   /** The row a layer's content is recorded on (made when it has none). */
   rowFor(layer: Layer): string | null;
   write(trackId: string, media: ShowClipMedia, start: number, end: number): void;
+  /** Live edit with the playhead parked: the row shows `media` from `t` (its block there is cut at `t`). */
+  swapAt(trackId: string, media: ShowClipMedia, t: number): void;
   /** An engine or undo / redo is writing the project. */
   notAPerson(): boolean;
 }
@@ -77,6 +79,8 @@ export function createContentRecorder(host: ContentRecorderHost) {
   const shown = new Map<string, ShowClipMedia | null>();
   const open = new Map<string, Open>();
   let running = false;
+  /** Armed with the playhead parked: a swap is cut in at the playhead. */
+  let parked = false;
   let runStart = 0;
   let lastTime = 0;
 
@@ -99,9 +103,29 @@ export function createContentRecorder(host: ContentRecorderHost) {
     }
   }
 
+  /** Live edit, parked: each layer that shows other content is cut in at the playhead. */
+  function swapParked(): void {
+    const person = !host.notAPerson();
+    for (const layer of host.layers()) {
+      const key = contentKey(layer);
+      const prev = seen.get(layer.id);
+      if (prev === key) continue;
+      seen.set(layer.id, key);
+      const media = mediaOfLayer(layer);
+      shown.set(layer.id, media);
+      if (prev === undefined || !person || !media) continue;
+      const trackId = host.rowFor(layer);
+      if (trackId) host.swapAt(trackId, media, lastTime);
+    }
+  }
+
   return {
     /** Every frame: the show time and whether it plays. */
     tick(time: number, playing: boolean): void {
+      const nowParked = !playing && host.armed();
+      if (nowParked && !parked) snapshot();
+      parked = nowParked;
+      if (parked) lastTime = time;
       const active = playing && host.armed();
       if (active && !running) {
         running = true;
@@ -129,6 +153,7 @@ export function createContentRecorder(host: ContentRecorderHost) {
 
     /** The project changed: a layer that shows other content starts a block. */
     observe(): void {
+      if (parked) { swapParked(); return; }
       // Not recording: nothing to do (the run takes its own snapshot).
       if (!running) return;
       const person = !host.notAPerson();

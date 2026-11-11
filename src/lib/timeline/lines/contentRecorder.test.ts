@@ -15,6 +15,7 @@ function rig(opts: { rowHasBlocks?: boolean } = {}) {
     { id: 'rowB', layerId: 'B', clips: [] } as unknown as ShowLayerTrack,
   ];
   const written: Array<[string, string, number, number]> = [];
+  const swaps: Array<[string, string, number]> = [];
   let armed = true;
   let engine = false;
   const rec = createContentRecorder({
@@ -24,6 +25,7 @@ function rig(opts: { rowHasBlocks?: boolean } = {}) {
     rowFor: (layer) => tracks.find((t) => t.layerId === layer.id)?.id ?? null,
     write: (trackId, media: ShowClipMedia, start, end) => { written.push([trackId, media.name, +start.toFixed(3), +end.toFixed(3)]); },
     notAPerson: () => engine,
+    swapAt: (trackId, media: ShowClipMedia, t) => { swaps.push([trackId, media.name, t]); },
   });
   const set = (id: string, source: unknown) => {
     layers = layers.map((l) => (l.id === id ? ({ ...l, source } as Layer) : l));
@@ -31,7 +33,7 @@ function rig(opts: { rowHasBlocks?: boolean } = {}) {
   };
   /** Play from a to b in 0.1 s frames. */
   const play = (a: number, b: number) => { for (let x = a; x <= b + 1e-9; x += 0.1) rec.tick(+x.toFixed(3), true); };
-  return { rec, written, set, play, setArmed: (v: boolean) => { armed = v; }, setEngine: (v: boolean) => { engine = v; } };
+  return { rec, written, swaps, set, play, setArmed: (v: boolean) => { armed = v; }, setEngine: (v: boolean) => { engine = v; } };
 }
 
 describe('recording what a piece shows', () => {
@@ -94,6 +96,22 @@ describe('recording what a piece shows', () => {
       ['rowB', 'snow', 1, 4],
       ['rowB', 'snow', 0.5, 2],
     ]);
+  });
+
+  it('parked (armed, not playing): a swap is cut in at the playhead, nothing is recorded as a take', () => {
+    const r = rig();
+    r.rec.tick(12, false);
+    r.set('B', video('snow'));
+    r.setEngine(true);
+    r.set('A', shader('Prism'));
+    r.setEngine(false);
+    expect(r.swaps).toEqual([['rowB', 'snow', 12]]);
+    expect(r.written).toEqual([]);
+    // Disarmed, a swap is a plain edit.
+    r.setArmed(false);
+    r.rec.tick(12, false);
+    r.set('B', video('rain'));
+    expect(r.swaps).toHaveLength(1);
   });
 
   it('media for blocks comes from shaders, videos, images and sketches only', () => {

@@ -184,6 +184,7 @@ describe('controls', () => {
     let restoring = false;
     let automated = false;
     let bid = 0;
+    const keyed: Array<[string, number | boolean, number]> = [];
     const controls = createLineControls({
       restoring: () => restoring,
       automated: () => automated,
@@ -194,8 +195,9 @@ describe('controls', () => {
       playing: () => playing,
       newId: () => `b${++bid}`,
       now: () => r.clock.ms,
+      keyAt: (_target, key, value, t) => { keyed.push([key, value, t]); },
     });
-    return { ...r, controls, setTime: (t: number) => { showTime = t; }, setPlaying: (p: boolean) => { playing = p; }, setRestoring: (v: boolean) => { restoring = v; }, setAutomated: (v: boolean) => { automated = v; } };
+    return { ...r, controls, keyed, setTime: (t: number) => { showTime = t; }, setPlaying: (p: boolean) => { playing = p; }, setRestoring: (v: boolean) => { restoring = v; }, setAutomated: (v: boolean) => { automated = v; } };
   }
 
   it('touch a knob to bind: the next moved CC binds and is kept from the mappings', () => {
@@ -348,6 +350,21 @@ describe('controls', () => {
       c.setPlaying(false);
       c.controls.observe(source(facade({ opacity: 0.6 })));
       expect(c.recorder.openPasses()).toBe(0);
+    });
+
+    it('parked (armed, not playing): a change is keyed at the playhead, not recorded as a pass', () => {
+      const c = controlsRig();
+      c.recorder.arm('touch');
+      c.setPlaying(false);
+      c.setTime(7);
+      c.controls.setFollowEdits(true, source(facade({ opacity: 1 })));
+      c.controls.observe(source(facade({ opacity: 0.4 })));
+      expect(c.keyed).toEqual([['layer:opacity', 0.4, 7]]);
+      expect(c.recorder.openPasses()).toBe(0);
+      // An engine's move is not keyed.
+      c.setAutomated(true);
+      c.controls.observe(source(facade({ opacity: 0.2 })));
+      expect(c.keyed).toHaveLength(1);
     });
 
     it('on: a layer object that did not change is not read again', () => {

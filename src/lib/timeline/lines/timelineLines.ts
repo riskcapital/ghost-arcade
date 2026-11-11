@@ -186,6 +186,7 @@ const contentRecorder = createContentRecorder({
   tracks: () => get(showTimeline).layerTracks,
   rowFor: (layer) => get(showTimeline).layerTracks.find((t) => t.layerId === layer.id && !t.subRow)?.id ?? showTimeline.addLayerTrack(layer),
   write: (trackId, media, start, end) => { showTimeline.recordLayerBlock(trackId, media, start, end); },
+  swapAt: (trackId, media, t) => { showTimeline.cutInLayerMedia(trackId, media, t); },
   notAPerson: () => isAutomation() || isRestoringHistory(),
 });
 let lastPlaying = false;
@@ -217,6 +218,7 @@ function startSession(): void {
     bindings: s.lineBindings,
     onBindingsChange: (b) => showTimeline.setLineBindings(b),
     registry: timelineRegistrySource,
+    keyAt: (target, key, value, t) => { keyAtPlayhead(target, key, value, t); },
   });
   session = next;
   lastPlaying = s.isPlaying;
@@ -255,6 +257,7 @@ function retick(): void {
   const s = get(showTimeline);
   if (s.doc !== 'timeline') return;
   session.tick(s.currentTime, s.isPlaying, s.tempo);
+  contentRecorder.tick(s.currentTime, s.isPlaying);
 }
 
 async function refreshSongs(force = false): Promise<void> {
@@ -402,6 +405,7 @@ export function installTimelineLines(): () => void {
 export function armLines(mode: RecordMode = get(lineRecordState).mode): void {
   lineRecordState.update((x) => ({ ...x, mode, armed: true }));
   session?.arm(mode);
+  retick();
   syncRecordUi();
 }
 
@@ -417,6 +421,7 @@ export function setFollowEdits(on: boolean): void {
   lineRecordState.update((x) => (x.followEdits === on ? x : { ...x, followEdits: on }));
   try { localStorage.setItem(FOLLOW_EDITS_KEY, on ? '1' : '0'); } catch { /* private window */ }
   session?.setFollowEdits(on);
+  retick();
 }
 
 export function setRecordMode(mode: RecordMode): void {
@@ -497,6 +502,27 @@ export function addLineWithPoint(target: ParamTarget, key: string, time: number,
   showTimeline.editLines((list) => (existing ? list.map((l) => (l.id === line.id ? next : l)) : [...list, next]));
   lineSelection.set({ lineId: line.id, points: [points.indexOf(point)], channel: 'points', of: points });
   return line.id;
+}
+
+/**
+ * Live edit: a setting changed in the editor while the playhead is parked
+ * (armed, Follow edits on) is keyed on its line at the playhead. A first key
+ * makes the line. One gesture (a slider drag, a corner drag) is one undo step.
+ */
+export function keyAtPlayhead(target: ParamTarget, key: string, value: number | boolean, time: number): boolean {
+  const entry = describeLineParam(target, key);
+  const lines = get(showTimeline).lines;
+  const existing = lines.find((l) => l.key === key && sameTarget(l.target, target));
+  if (!entry && !existing) return false;
+  const line = existing ?? makeLine(target, entry!, lines);
+  const v = typeof value === 'boolean' ? (value ? 1 : 0) : value;
+  const point: LinePoint = line.kind === 'bool' || line.kind === 'stepped' || line.kind === 'colour' ? { t: Math.max(0, time), v, c: 'hold' } : { t: Math.max(0, time), v };
+  const points = [...line.points.filter((p) => Math.abs(p.t - point.t) > 1e-4), point].sort((a, b) => a.t - b.t);
+  const next = { ...line, points };
+  return showTimeline.editLines(
+    (list) => (existing ? list.map((l) => (l.id === line.id ? next : l)) : [...list, next]),
+    `live-edit:${line.id}:${point.t.toFixed(3)}`,
+  );
 }
 
 /** Add a line with one point at the playhead (the ⌇+ picker). */

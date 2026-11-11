@@ -53,6 +53,8 @@ export function createLineSession(opts: {
   /** What the registry reads (default: the project). The Timeline adds its
    *  blocks, look blocks and off-stage pieces. */
   registry?: () => RegistrySource;
+  /** Live edit: key a parked edit on its line (the Timeline document's lines). */
+  keyAt?: (target: ParamTarget, key: string, value: number | boolean, t: number) => void;
 } = {}) {
   const source = opts.registry ?? registrySource;
   const store = createLineStore(opts.initial ?? []);
@@ -82,6 +84,7 @@ export function createLineSession(opts: {
     onBindingsChange: opts.onBindingsChange,
     restoring: isRestoringHistory,
     automated: isAutomation,
+    keyAt: opts.keyAt,
   }, opts.bindings ?? []);
 
   const removeTap = addMidiTap((channel, type, number, value, from) => controls.onMidi(channel, type, number, value, from));

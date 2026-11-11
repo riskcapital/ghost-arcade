@@ -81,7 +81,7 @@
     class="lr-btn lr-follow"
     class:on={rec.followEdits}
     onclick={() => setFollowEdits(!rec.followEdits)}
-    title={rec.followEdits ? 'Follow edits on: while armed, every setting you change in Mapping, the panels or with a controller is recorded. Click to record only lines and bound controls' : 'Follow edits: while armed, record every setting you change in Mapping, the panels or with a controller, not only lines and bound controls'}
+    title={rec.followEdits ? 'Follow edits on: while armed, what you change in Mapping, the panels or with a controller lands on the Timeline. Playing, it is recorded as it happens; parked, it is keyed at the playhead and a content swap cuts in there. Click to record only lines and bound controls' : 'Follow edits: while armed, what you change in Mapping, the panels or with a controller lands on the Timeline: recorded while playing, keyed at the playhead while parked'}
     aria-pressed={rec.followEdits}
     data-line-follow-edits
   >Follow edits</button>
