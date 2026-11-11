@@ -1,0 +1,56 @@
+{
+  "name": "Timeline: A/V phrases from VJ mode, with Live",
+  "description": "Two Timeline sections published as phrases (Verse: red pieces, Drums 'Beat A' + Bass 'Sub'; Drop: blue pieces, 'Beat B' + 'Wob', fires the Live scene Drop) against a fake Ghost Arcade script on the app's own ports. In VJ mode with the decks live, a real click on phrase pad 1 just after a bar: the Timeline starts on the next bar (the decks hand the output over), the pieces turn red on the bar, Live gets the bass clip inside the bar before it (bar launch) and the drum clip inside the beat before it. Then pad 2: the playhead jumps to the Drop's start on the next bar and the pieces turn blue there, Live gets Wob, Beat B and the scene Drop ahead of that bar, nothing past Verse's last bar. show:phrase:stop stops on the bar: Live gets stop all, VJ mode gets the output back.",
+  "steps": [
+    { "do": "app.start", "choice": "blank" },
+    { "do": "live.fake", "protocol": 6, "scenes": ["Intro", "Drop"], "tracks": [
+      { "name": "Drums", "color": 16737792, "clips": [{ "name": "Beat A", "length": 4 }, { "name": "Beat B", "length": 4 }] },
+      { "name": "Bass", "color": 3377407, "clips": [{ "name": "Sub", "length": 8 }, { "name": "Wob", "length": 8 }] }
+    ] },
+    { "do": "live.connect" },
+    { "do": "project.layer", "name": "Left", "colour": "black", "x0": 0, "x1": 0.5 },
+    { "do": "project.layer", "name": "Right", "colour": "black", "x0": 0.5, "x1": 1, "wait": 1 },
+    { "do": "show.open", "doc": "timeline" },
+    { "do": "show.tempo", "bpm": 120 },
+    { "do": "show.track", "name": "Left", "layer": "Left" },
+    { "do": "show.track", "name": "Right", "layer": "Right" },
+    { "do": "show.clip", "track": "Left", "colour": "red", "at": 0, "duration": 8 },
+    { "do": "show.clip", "track": "Right", "colour": "red", "at": 0, "duration": 8 },
+    { "do": "show.clip", "track": "Left", "colour": "blue", "at": 8, "duration": 8 },
+    { "do": "show.clip", "track": "Right", "colour": "blue", "at": 8, "duration": 8 },
+    { "do": "sound.liveRow", "name": "Drums", "track": "Drums" },
+    { "do": "sound.liveRow", "name": "Bass", "track": "Bass", "launch": "bar" },
+    { "do": "sound.liveClip", "row": "Drums", "clip": "Beat A", "at": 0, "duration": 8 },
+    { "do": "sound.liveClip", "row": "Bass", "clip": "Sub", "at": 0, "duration": 8 },
+    { "do": "sound.liveClip", "row": "Drums", "clip": "Beat B", "at": 8, "duration": 8 },
+    { "do": "sound.liveClip", "row": "Bass", "clip": "Wob", "at": 8, "duration": 8 },
+    { "do": "show.sections", "sections": [
+      { "id": "verse", "name": "Verse", "color": "#5b8def", "start": 0, "end": 8, "action": "through", "phrase": { "end": "loop" } },
+      { "id": "drop", "name": "Drop", "color": "#eb5757", "start": 8, "end": 16, "action": "vamp", "phrase": { "end": "section" }, "liveScene": { "scene": 1, "name": "Drop" } }
+    ] },
+    { "do": "deck.open", "label": "VJ mode, the decks live",
+      "expect": { "eval.true": { "js": "document.querySelectorAll('[data-phrase-pads=\"vj\"] [data-phrase-pad]').length === 2 && __show.deck().isLive", "label": "two phrase pads under the decks" } } },
+    { "do": "phrase.launch", "from": "vj", "n": 1, "afterBar": true, "watch": 1.2, "label": "Pad 1 (Verse), clicked just after a bar",
+      "expect": {
+        "phrase.bar": { "section": "verse", "start": 0, "before": [0, 0, 0], "after": [1, 0, 0] },
+        "phrase.live": { "expect": [
+          { "t": "fire_clip", "i": 1, "s": 0, "q": 4, "lead": [700, 1200] },
+          { "t": "fire_clip", "i": 0, "s": 0, "q": 7, "lead": [130, 480] }
+        ] },
+        "eval.true": { "js": "!__show.deck().isLive && __show.show().isPlaying", "label": "the decks handed the output to the Timeline" }
+      } },
+    { "do": "wait", "seconds": 1 },
+    { "do": "phrase.launch", "from": "vj", "n": 2, "afterBar": true, "watch": 1.2, "label": "Pad 2 (Drop), clicked just after a bar of the Verse",
+      "expect": {
+        "phrase.bar": { "section": "drop", "start": 8, "before": [1, 0, 0], "after": [0, 0, 1] },
+        "phrase.live": { "expect": [
+          { "t": "fire_clip", "i": 1, "s": 1, "q": 4, "lead": [700, 1200] },
+          { "t": "fire_clip", "i": 0, "s": 1, "q": 7, "lead": [130, 480] },
+          { "t": "fire_scene", "s": 1, "q": 7, "lead": [130, 480] }
+        ] }
+      } },
+    { "do": "phrase.trigger", "path": "show:phrase:stop", "settle": 2600, "label": "show:phrase:stop: stops on the next bar",
+      "expect": { "eval.true": { "js": "!__show.show().isPlaying && __show.deck().isLive && __show.read(__show.g().timelinePhrases.status).activeId === null", "label": "stopped on the bar; VJ mode has the output back" }, "noErrors": true } },
+    { "do": "live.stopFake" }
+  ]
+}

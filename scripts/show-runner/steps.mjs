@@ -454,7 +454,7 @@ const ACTIONS = {
   },
   // ── Ableton Live (a fake Live script on the app's own UDP ports) ─────
   async 'live.fake'(ctx, s) {
-    // { tracks: [{ name, color, clips: [{ name, color, length (beats) } | null] }], protocol (5) }.
+    // { tracks: [{ name, color, clips: [{ name, color, length (beats) } | null] }], scenes: [names], cues: [[name, beat]], protocol (5) }.
     // Answers like the Ghost Arcade script in Live and logs every request.
     const ports = ctx.livePorts;
     if (!ports?.script) throw new Error('no Live ports for this app');
@@ -464,7 +464,8 @@ const ACTIONS = {
     const send = (m) => sock.send(Buffer.from(JSON.stringify(m)), ports.app, '127.0.0.1');
     const hello = () => send({ t: 'hello', v: s.protocol ?? 5, tempo: s.bpm ?? 120, num: 4, den: 4, playing: true, quantize: s.quantize ?? 4, beat: 0, xf: 0.5, rev: 1 });
     const structure = () => {
-      send({ t: 'set', rev: 1, scenes: [{ n: 'Scene 1', c: 0 }], count: 1, tracks: tracks.length, cues: [] });
+      const scenes = (s.scenes ?? ['Scene 1']).map((n) => ({ n, c: 0 }));
+      send({ t: 'set', rev: 1, scenes, count: scenes.length, tracks: tracks.length, cues: s.cues ?? [] });
       tracks.forEach((tr, i) => send({ t: 'track', rev: 1, i, n: tr.name, c: tr.color ?? 0, midi: false, x: 1, count: tr.clips.length,
         slots: tr.clips.map((c) => (c ? [c.name, c.color ?? 0, c.length ?? 4] : null)), play: -1, fired: -1, pos: null }));
     };
@@ -536,6 +537,60 @@ const ACTIONS = {
     })()`, ((s.until - (s.from ?? 0)) + 20) * 1000);
     ctx.vars.livePairs = pairs;
     await sleep(400);
+  },
+  // ── A/V phrases ──────────────────────────────────────────────────────
+  async 'show.sections'(ctx, s) {
+    // The Timeline's sections: { sections: [{ id, name, color, start, end, action, phrase, liveScene, ... }] }.
+    await ctx.eval(`__show.g().showTimeline.setSections(${J(s.sections ?? [])})`);
+    await sleep(300);
+  },
+  async 'phrase.launch'(ctx, s) {
+    // A real click on phrase pad { n } in VJ mode's strip ({ from: 'vj' }) or
+    // the Timeline's ({ from: 'timeline' }), or { stop: true } for ■. With
+    // { afterBar: true } the click comes just after a bar line, so the launch
+    // waits most of a bar. Samples the playhead, the playing phrase and the
+    // output strip { x0, x1 } until { watch } seconds after the landing.
+    const strip = `[data-phrase-pads="${s.from ?? 'vj'}"]`;
+    const sel = s.stop ? `${strip} [data-phrase-stop]` : `${strip} [data-phrase-pad="${s.n}"]`;
+    if (s.afterBar) {
+      await ctx.eval(`(async () => {
+        const lc = __show.g().showControl.launchClock;
+        for (let i = 0; i < 400; i++) { const { beat } = lc.launchClockPosition(performance.now()); const f = beat / 4 - Math.floor(beat / 4); if (f > 0.02 && f < 0.1) return; await new Promise((r) => setTimeout(r, 5)); }
+      })()`, 10000);
+    }
+    const rect = await ctx.eval(`(() => { const r = document.querySelector(${J(sel)})?.getBoundingClientRect(); return r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null; })()`);
+    if (!rect) throw new Error(`no phrase pad ${sel}`);
+    ctx.vars.liveLog && (ctx.vars.liveLog.length = 0);
+    await ctx.session.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: rect.x, y: rect.y });
+    await ctx.session.call('Input.dispatchMouseEvent', { type: 'mousePressed', x: rect.x, y: rect.y, button: 'left', clickCount: 1 });
+    await ctx.session.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: rect.x, y: rect.y, button: 'left', clickCount: 1 });
+    const r = await ctx.eval(`(async () => {
+      const st = () => __show.read(__show.g().timelinePhrases.status);
+      const pending = st().pending;
+      const at = pending ? pending.at : performance.now();
+      const samples = [];
+      const until = at + ${(s.watch ?? 1) * 1000};
+      while (performance.now() < until) {
+        const t0 = performance.now();
+        const snap = await __show.snapshot({ include_pixels: true, max_dim: 48 });
+        let rgb = null;
+        if (snap?.rgba_b64) {
+          const bin = atob(snap.rgba_b64); const x0 = Math.floor(${s.x0 ?? 0.05} * snap.width), x1 = Math.ceil(${s.x1 ?? 0.45} * snap.width); const sum = [0, 0, 0]; let n = 0;
+          for (let y = 0; y < snap.height; y++) for (let x = x0; x < x1; x++) { const i = (y * snap.width + x) * 4; sum[0] += bin.charCodeAt(i + 2); sum[1] += bin.charCodeAt(i + 1); sum[2] += bin.charCodeAt(i); n++; }
+          rgb = sum.map((v) => +(v / Math.max(1, n) / 255).toFixed(3));
+        }
+        samples.push({ at: t0, t: __show.show().currentTime, active: st().activeId, playing: __show.show().isPlaying, rgb });
+        await new Promise((res) => setTimeout(res, 10));
+      }
+      return { at, pendingId: pending?.id ?? null, dateOffset: Date.now() - performance.now(), samples };
+    })()`, ((s.watch ?? 1) + 6) * 1000);
+    ctx.vars.phrase = r;
+    await sleep(100);
+  },
+  async 'phrase.trigger'(ctx, s) {
+    // A control path press, as MIDI or OSC sends it: { path }.
+    await ctx.eval(`__show.g().showControl.midiRouter.dispatchPath(${J(s.path)}, 1)`);
+    await sleep(s.settle ?? 300);
   },
   // ── Live takeover ────────────────────────────────────────────────────
   async 'takeover.engage'(ctx, s) {
@@ -978,6 +1033,50 @@ const CHECKS = {
       if (w.at !== undefined && !(Math.abs(g.at - w.at) <= (w.within ?? s.within ?? 0.05))) return { pass: false, detail: `request ${k + 1} at ${g.at.toFixed(3)} s, want ${w.at} ± ${w.within ?? s.within ?? 0.05}: ${text}` };
       if (w.before !== undefined && !(g.at < w.before)) return { pass: false, detail: `request ${k + 1} at ${g.at.toFixed(3)} s, want before ${w.before}: ${text}` };
       if (w.after !== undefined && !(g.at > w.after)) return { pass: false, detail: `request ${k + 1} at ${g.at.toFixed(3)} s, want after ${w.after}: ${text}` };
+    }
+    return { pass: true, detail: text };
+  },
+  async 'phrase.bar'(ctx, s) {
+    // The last phrase.launch landed on its bar: { section (id), start (s),
+    // within (ms, default 60), before: rgb, after: rgb, tolerance }. The
+    // playhead jumps to the section start at the bar's time (not before), the
+    // output strip shows `before` up to the bar and `after` from shortly after.
+    const p = ctx.vars.phrase;
+    if (!p) return { pass: false, detail: 'no phrase launched' };
+    const land = p.samples.find((x) => x.active === s.section && (s.start === undefined || (x.t >= s.start - 1e-3 && x.t < s.start + 2)));
+    if (!land) return { pass: false, detail: `never landed: ${p.samples.slice(-3).map((x) => `${x.active}@${x.t.toFixed(3)}`).join(', ')}` };
+    const prev = p.samples[p.samples.indexOf(land) - 1];
+    const lateMs = land.at - p.at;
+    // The landing is seen within one sample after the bar.
+    const gap = prev ? land.at - prev.at : 0;
+    const within = s.within ?? 60;
+    const tol = s.tolerance ?? 0.12;
+    const near = (a, b) => a && b && Math.max(...a.map((v, i) => Math.abs(v - b[i]))) <= tol;
+    const beforeBar = p.samples.filter((x) => x.at < p.at - 60 && x.rgb);
+    const afterBar = p.samples.filter((x) => x.at > p.at + 250 && x.rgb);
+    const firstAfter = p.samples.find((x) => x.rgb && near(x.rgb, s.after) && x.at > p.at - 500);
+    const detail = `bar at +0 ms, landed seen at ${lateMs.toFixed(0)} ms (sample gap ${gap.toFixed(0)} ms) on ${land.t.toFixed(3)} s; pixels ${beforeBar.at(-1)?.rgb?.join('/') ?? '-'} → ${afterBar[0]?.rgb?.join('/') ?? '-'}, new colour first at ${firstAfter ? (firstAfter.at - p.at).toFixed(0) : '?'} ms`;
+    if (prev && prev.at > p.at + 5) return { pass: false, detail: `the last sample before the landing is after the bar: ${detail}` };
+    if (lateMs > within + gap) return { pass: false, detail: `late: ${detail}` };
+    if (s.start !== undefined && !(land.t >= s.start - 1e-3 && land.t < s.start + (within + gap) / 1000 + 0.02)) return { pass: false, detail: `landed off the start: ${detail}` };
+    if (s.before && beforeBar.length && !near(beforeBar.at(-1).rgb, s.before)) return { pass: false, detail: `before the bar: ${detail}` };
+    if (s.after && !afterBar.every((x) => near(x.rgb, s.after))) return { pass: false, detail: `after the bar: ${detail}` };
+    if (s.after && firstAfter && firstAfter.at < p.at - 20) return { pass: false, detail: `changed before the bar: ${detail}` };
+    return { pass: true, detail };
+  },
+  async 'phrase.live'(ctx, s) {
+    // What the fake Live got around the last phrase.launch, relative to its
+    // bar: { expect: [{ t, i, s, q, lead: [min ms, max ms] before the bar }] } (any order).
+    const p = ctx.vars.phrase;
+    const got = (ctx.vars.liveLog ?? []).map((e) => ({ ...e.msg, lead: p.at + p.dateOffset - e.at }));
+    const text = got.map((g) => `${g.t}${g.i !== undefined ? ` ${g.i}` : ''}${g.s !== undefined ? `/${g.s}` : ''}${g.q !== undefined ? ` q${g.q}` : ''} ${g.lead.toFixed(0)} ms before`).join(', ');
+    const want = s.expect ?? [];
+    if (got.length !== want.length) return { pass: false, detail: `${got.length} request(s), want ${want.length}: ${text}` };
+    const left = [...got];
+    for (const w of want) {
+      const k = left.findIndex((g) => ['t', 'i', 's', 'q'].every((f) => w[f] === undefined || g[f] === w[f]) && (!w.lead || (g.lead >= w.lead[0] && g.lead <= w.lead[1])));
+      if (k < 0) return { pass: false, detail: `nothing like ${JSON.stringify(w)}: ${text}` };
+      left.splice(k, 1);
     }
     return { pass: true, detail: text };
   },

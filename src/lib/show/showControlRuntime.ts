@@ -32,6 +32,7 @@ import { midiRouter, registerShowControl, registerShowInputRelease } from '../mi
 import { runAsLiveControl } from '../stores/historyHooks';
 import { handleTakeoverControl, releaseTakeoverInputs, runTakeoverCue, runTakeoverReleaseCue } from './takeover/takeoverRuntime';
 import { installSectionRuntime, timelineTakesGo } from '../timeline/sections/sectionRuntime';
+import { installPhraseRuntime, launchPhraseNumber, stopPhrases } from '../timeline/phrases/phraseRuntime';
 
 /** Hooks App.svelte fills in: things only the app shell can do. */
 export const showRuntimeHooks: {
@@ -115,6 +116,7 @@ export function installShowControl(): () => void {
   cueList.setExecutor(appCueExecutor);
   cleanups.push(() => cueList.setExecutor(null));
   cleanups.push(installSectionRuntime());
+  cleanups.push(installPhraseRuntime());
 
   // ── MIDI / OSC / keyboard ──────────────────────────────────────────
   registerShowControl((action, value = 1, inputId) => {
@@ -129,6 +131,8 @@ export function installShowControl(): () => void {
     else if ('cue' in action) {
       const cue = cueList.state.cues[action.cue];
       if (cue) cueList.fire(cue.id, 'remote');
+    } else if ('phrase' in action) {
+      runAsLiveControl(() => (action.phrase === null ? stopPhrases() : launchPhraseNumber(action.phrase + 1)));
     } else handleTakeoverControl(action, value, inputId);
   });
   cleanups.push(() => registerShowControl(null));

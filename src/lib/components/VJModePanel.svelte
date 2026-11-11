@@ -9,6 +9,11 @@
   import { videoBeatFit } from '../media/videoBeatFit';
   import { launchClock, TEMPO_NUDGE_AMOUNT } from '../stores/launchClock';
   import { abletonLink } from '../sync/abletonLink';
+  // The Timeline's A/V phrases: a strip of pads under the decks once the
+  // Timeline has sections (active or parked behind the Show tab).
+  const timelineDocSlice = showSlice('doc');
+  const timelineSectionsSlice = showSlice('sections');
+  $: timelineHasSections = ($timelineDocSlice === 'timeline' ? $timelineSectionsSlice : ($parkedShowDoc.sections ?? [])).length > 0;
   $: fitTempo = $abletonLink.enabled && $abletonLink.peers > 0 ? $abletonLink.tempo : ($audioManualBpm || $audioBpm || 120) * (1 + $launchClock.nudge * TEMPO_NUDGE_AMOUNT);
   import VJAudioOutput from './VJAudioOutput.svelte';
   import ShowSoundtrackBar from './ShowSoundtrackBar.svelte';
@@ -94,6 +99,9 @@
   import MacroKnobBar from './MacroKnobBar.svelte';
   import SnapshotBank from './SnapshotBank.svelte';
   import AbletonBridgePanel from './ableton/AbletonBridgePanel.svelte';
+  import PhrasePads from './show/PhrasePads.svelte';
+  import { parkedShowDoc } from '../stores/showTimeline';
+  import { showSlice } from './show/timeline/timelineSlices';
   import AbletonCountdown from './ableton/AbletonCountdown.svelte';
   import { abletonConnected } from '../ableton/abletonBridge';
   import VJLayerSequencer from './VJLayerSequencer.svelte';
@@ -6583,6 +6591,9 @@
           <div class="deck-scroll">
             {@render deckUI('A')}
           </div>
+        {/if}
+        {#if timelineHasSections}
+          <PhrasePads variant="vj" />
         {/if}
       </div>
 

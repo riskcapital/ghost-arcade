@@ -149,12 +149,17 @@ export function validateControlPath(path: string): ControlPathValidation {
     if (parts[1] === 'cue' && isIndex(parts[2]) && parts.length === 3) {
       return { valid: true, normalized, reason: null };
     }
+    if (parts[1] === 'phrase') {
+      return parseShowControlPath(parts)
+        ? { valid: true, normalized, reason: null }
+        : { valid: false, normalized, reason: 'Phrase paths are show:phrase:<n> (pads count from 1) or show:phrase:stop.' };
+    }
     if (['live', 'release', 'overlay', 'releasemode', 'underneath'].includes(parts[1] ?? '')) {
       return parseShowControlPath(parts)
         ? { valid: true, normalized, reason: null }
         : { valid: false, normalized, reason: 'Takeover paths are show:live:<track>:<vja:<row>|vjb:<row>|mix|group:<n>|black>[:hold], show:release[:<track>], show:overlay, show:releasemode:<instant|fade|beat|bar|phrase|marker> or show:underneath:<run|pause> (tracks and rows count from 1).' };
     }
-    return { valid: false, normalized, reason: 'Show paths are show:go, show:back, show:stop, show:reset or show:cue:<zero-based index>, or a takeover path (show:live, show:release, show:overlay, show:releasemode, show:underneath).' };
+    return { valid: false, normalized, reason: 'Show paths are show:go, show:back, show:stop, show:reset or show:cue:<zero-based index>, a takeover path (show:live, show:release, show:overlay, show:releasemode, show:underneath) or a phrase pad (show:phrase:<n>, show:phrase:stop).' };
   }
 
   if (scope === 'sv') {

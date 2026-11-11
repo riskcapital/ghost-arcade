@@ -55,7 +55,10 @@ export type VisualAction =
   | { kind: 'stage'; presetId: string; scope: 'project' | 'global'; name: string }
   /** Any Ghost Arcade control: set to `value`, then back to `release`
    *  (when the note ends, or straight after a launch). */
-  | { kind: 'control'; path: string; label: string; value: number; release: number };
+  | { kind: 'control'; path: string; label: string; value: number; release: number }
+  /** Launch a Timeline phrase (a published section), by section id; `name`
+   *  finds it again if the section was made again. */
+  | { kind: 'phrase'; sectionId: string; name: string };
 
 export interface AbletonLink {
   id: string;
@@ -212,6 +215,9 @@ export function sanitizeAction(a: any): VisualAction | null {
   if (a?.kind === 'snapshot' && int(a.slot) !== null) return { kind: 'snapshot', slot: a.slot };
   if (a?.kind === 'stage' && typeof a.presetId === 'string' && a.presetId) {
     return { kind: 'stage', presetId: a.presetId, scope: a.scope === 'global' ? 'global' : 'project', name: String(a.name ?? '') };
+  }
+  if (a?.kind === 'phrase' && typeof a.sectionId === 'string' && a.sectionId) {
+    return { kind: 'phrase', sectionId: a.sectionId, name: String(a.name ?? '') };
   }
   if (a?.kind === 'control' && typeof a.path === 'string' && a.path) {
     return { kind: 'control', path: a.path, label: String(a.label ?? a.path), value: num(a.value, 1), release: num(a.release, 0) };

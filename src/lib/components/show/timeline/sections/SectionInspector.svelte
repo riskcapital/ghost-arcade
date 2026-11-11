@@ -20,6 +20,8 @@
     type TimelineSection,
   } from '../../../../timeline/sections/sectionModel';
   import { formatBarsBeats } from '../../../../show/tempoMap';
+  import { abletonBridge } from '../../../../ableton/abletonBridge';
+  import { PHRASE_ENDS, PHRASE_END_LABELS, phraseNumber, type PhraseEnd } from '../../../../timeline/phrases/phraseModel';
   import { formatPrecise } from '../timeFormat';
 
   interface Props {
@@ -35,6 +37,29 @@
   const groups = $derived(($vjClipLauncher as { groups?: Array<{ id: string; name: string }> }).groups ?? []);
   const others = $derived(sections.filter((s) => s.id !== section.id));
   const chosen = $derived(new Set(section.livePieces === 'all' || !section.livePieces ? [] : section.livePieces));
+  const bridge = $derived($abletonBridge);
+  const padNumber = $derived(section.phrase ? phraseNumber(sections, section.id) : 0);
+  /** The link that makes the section's Live scene launch this phrase. */
+  const sceneLink = $derived(section.liveScene
+    ? bridge.links.find((l) => l.source.kind === 'scene' && l.action.kind === 'phrase' && l.action.sectionId === section.id) ?? null
+    : null);
+
+  function setPublished(on: boolean) {
+    patch({ phrase: on ? { end: section.action === 'through' ? 'loop' : 'section' } : undefined });
+    if (!on && sceneLink) abletonBridge.removeLink(sceneLink.id);
+  }
+  function setScene(value: string) {
+    if (sceneLink) abletonBridge.removeLink(sceneLink.id);
+    if (value === '') { patch({ liveScene: undefined }); return; }
+    const scene = Number(value);
+    patch({ liveScene: { scene, name: bridge.scenes[scene]?.name ?? section.liveScene?.name ?? '' } });
+  }
+  function setSceneLaunches(on: boolean) {
+    const ref = section.liveScene;
+    if (!ref) return;
+    if (sceneLink) abletonBridge.removeLink(sceneLink.id);
+    if (on) abletonBridge.addLink({ kind: 'scene', scene: ref.scene, name: ref.name }, { kind: 'phrase', sectionId: section.id, name: section.name });
+  }
 
   function patch(p: Partial<TimelineSection>) {
     showTimeline.updateSection(section.id, p);
@@ -147,6 +172,32 @@
       </span>
     {/if}
   {/if}
+  <label class="insp-field insp-phrase" title="A pad that plays this section from its start on the next bar: VJ mode's Phrases strip, the Timeline's phrase strip, MIDI/OSC show:phrase:{padNumber || 'n'}">
+    <input type="checkbox" checked={!!section.phrase} onchange={(e) => setPublished((e.currentTarget as HTMLInputElement).checked)} data-section-phrase />
+    <span>Phrase{padNumber ? ` (pad ${padNumber})` : ''}</span>
+  </label>
+  {#if section.phrase}
+    <label class="insp-field" title="What the phrase does at the section's end, until another phrase is launched">
+      <span>As a phrase, at its end</span>
+      <select value={section.phrase.end} onchange={(e) => patch({ phrase: { end: (e.currentTarget as HTMLSelectElement).value as PhraseEnd } })} data-section-phrase-end>
+        {#each PHRASE_ENDS as end (end)}<option value={end}>{end === 'section' ? `${PHRASE_END_LABELS.section} (${SECTION_ACTION_LABELS[section.action]})` : PHRASE_END_LABELS[end]}</option>{/each}
+      </select>
+    </label>
+  {/if}
+  <label class="insp-field" title="Fires this Live scene where the section starts: when the Timeline plays into it, and when it is launched as a phrase">
+    <span>Fires Live scene</span>
+    <select value={section.liveScene ? String(section.liveScene.scene) : ''} onchange={(e) => setScene((e.currentTarget as HTMLSelectElement).value)} disabled={!bridge.connected && !section.liveScene} data-section-live-scene>
+      <option value="">None</option>
+      {#if section.liveScene && !bridge.scenes[section.liveScene.scene]}<option value={String(section.liveScene.scene)}>{section.liveScene.name || `Scene ${section.liveScene.scene + 1}`} (not in the set)</option>{/if}
+      {#each bridge.scenes as sc, i (i)}<option value={String(i)}>{sc.name || `Scene ${i + 1}`}</option>{/each}
+    </select>
+  </label>
+  {#if section.liveScene && section.phrase}
+    <label class="insp-field insp-phrase" title="Launching the scene in Live (or from a controller) launches this phrase at once">
+      <input type="checkbox" checked={!!sceneLink} onchange={(e) => setSceneLaunches((e.currentTarget as HTMLInputElement).checked)} data-section-scene-launches />
+      <span>The scene in Live launches the phrase</span>
+    </label>
+  {/if}
   <span class="insp-hint">
     {#if section.action === 'hold'}The playhead stops on the section's end until GO; the song stops there too, blocks keep animating.
     {:else if section.action === 'vamp'}The section loops (its own bars) until GO; the song loops with it.
@@ -187,6 +238,7 @@
   .insp-seg button { background: none; border: 0; border-radius: 2px; color: var(--ga-ink-1, #b9bdc8); padding: 0 8px; cursor: pointer; font: inherit; font-size: var(--ga-text-control, 12px); }
   .insp-seg button.on { background: var(--ga-selection-bg, #1f3170); color: var(--ga-selection-ink, #e0e8ff); }
   .insp-pieces { display: flex; flex-wrap: wrap; gap: 4px 10px; max-width: 520px; }
+  .insp-phrase input { width: auto; height: auto; }
   .insp-piece { display: flex; align-items: center; gap: 4px; }
   .insp-delete {
     margin-left: auto; height: var(--ga-control-h-sm, 22px); background: transparent;

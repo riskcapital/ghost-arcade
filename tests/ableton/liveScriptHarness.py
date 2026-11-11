@@ -1,9 +1,13 @@
 # Runs the Ghost Arcade Live script against a fake Live and a fake socket,
 # hands it requests, and prints what it did to Live as JSON.
 #
-#   python3 liveScriptHarness.py <path to GhostArcade.py> '<json list of requests>' [--live10]
+#   python3 liveScriptHarness.py <path to GhostArcade.py> '<json list of requests>' [--live10] [--stopped] [--cues '<json [[name, beat]]>']
 #
 # --live10: a Live whose fire() and stop_all_clips() take no arguments.
+# --stopped: Live's transport is stopped (locators can only be set then).
+# --cues: the set's arrangement locators to start with. The result also
+# lists the locators at the end ("cues") and every reply the script sent
+# that isn't a heartbeat or the set ("replies").
 #
 # Requests are what the app sends (fire_clip, stop_track, stop_all ...). A
 # request {"t": "_tick"} marks every fired clip as playing and runs the
@@ -17,7 +21,12 @@ import sys
 import types
 
 calls = []
+replies = []
 LIVE10 = "--live10" in sys.argv[3:]
+STOPPED = "--stopped" in sys.argv[3:]
+CUES = []
+if "--cues" in sys.argv[3:]:
+    CUES = json.loads(sys.argv[sys.argv.index("--cues") + 1])
 
 
 def record(*entry):
@@ -81,15 +90,35 @@ class FakeTrack(Listeners):
         record("stop_track", self.index, list(args), song.clip_trigger_quantization)
 
 
+class FakeCue(Listeners):
+    def __init__(self, name, time):
+        self.name = name
+        self._time = float(time)
+
+    @property
+    def time(self):
+        return self._time
+
+
+class FakeScene(Listeners):
+    def __init__(self, index):
+        self.index = index
+        self.name = "Scene %d" % (index + 1)
+        self.color = 0
+
+    def fire(self, *args, **kwargs):
+        record("fire_scene", self.index, list(args), song.clip_trigger_quantization)
+
+
 class FakeSong(Listeners):
     def __init__(self):
         self.tracks = [FakeTrack(i) for i in range(3)]
-        self.scenes = []
-        self.cue_points = []
+        self.scenes = [FakeScene(i) for i in range(4)]
+        self.cue_points = [FakeCue(name, beat) for name, beat in CUES]
         self.tempo = 120.0
         self.signature_numerator = 4
         self.signature_denominator = 4
-        self.is_playing = True
+        self.is_playing = not STOPPED
         self.current_song_time = 0.0
         self._q = 4
         fader = Listeners()
@@ -109,6 +138,17 @@ class FakeSong(Listeners):
         if LIVE10 and args:
             raise TypeError("stop_all_clips() takes no arguments")
         record("stop_all", list(args), self._q)
+
+    def set_or_delete_cue(self):
+        """Live's own: a locator at the playhead goes, else one is added there."""
+        for cue in self.cue_points:
+            if abs(cue.time - self.current_song_time) < 1e-6:
+                self.cue_points.remove(cue)
+                record("delete_cue", cue.time)
+                return
+        self.cue_points.append(FakeCue("", self.current_song_time))
+        self.cue_points.sort(key=lambda cue: cue.time)
+        record("add_cue", self.current_song_time)
 
 
 song = FakeSong()
@@ -158,7 +198,10 @@ class FakeSocket(object):
         pass
 
     def sendto(self, data, address):
-        record("sent", json.loads(data.decode("utf-8")).get("t"))
+        message = json.loads(data.decode("utf-8"))
+        record("sent", message.get("t"))
+        if message.get("t") not in ("hello", "set", "scenes", "track", "slots", "pos"):
+            replies.append(message)
 
     def recvfrom(self, size):
         raise fake_socket.error(errno.EAGAIN, "nothing")
@@ -181,6 +224,7 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 surface = module.GhostArcade(None)
 del calls[:]
+del replies[:]
 
 for request in json.loads(sys.argv[2]):
     if request.get("t") == "_tick":
@@ -198,4 +242,10 @@ for request in json.loads(sys.argv[2]):
     except Exception as error:
         record("error", str(error))
 
-print(json.dumps({"protocol": module.PROTOCOL, "calls": calls}))
+print(json.dumps({
+    "protocol": module.PROTOCOL,
+    "calls": [c for c in calls if c[0] != "sent"],
+    "cues": [[cue.name, cue.time] for cue in song.cue_points],
+    "replies": replies,
+    "song_time": song.current_song_time,
+}))

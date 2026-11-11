@@ -34,7 +34,7 @@ function gridFor(ctx: VisualContext, deck: VJDeck) {
 
 export function actionThumb(ctx: VisualContext, action: VisualAction): string | undefined {
   if (action.kind === 'stage') return findStagePreset(ctx.stagePresets, action)?.thumbnail;
-  if (action.kind === 'snapshot' || action.kind === 'control') return undefined;
+  if (action.kind === 'snapshot' || action.kind === 'control' || action.kind === 'phrase') return undefined;
   const grid = gridFor(ctx, action.deck);
   if (action.kind === 'clip') return grid[action.layer]?.[action.column]?.thumbnail;
   return grid.map(row => row?.[action.column]).find(c => c?.thumbnail)?.thumbnail;
@@ -45,11 +45,13 @@ export function actionTag(action: VisualAction): string {
   if (action.kind === 'snapshot') return `S${action.slot + 1}`;
   if (action.kind === 'control') return 'FX';
   if (action.kind === 'stage') return 'STG';
+  if (action.kind === 'phrase') return 'PHR';
   return '·';
 }
 
 export function actionLabel(ctx: VisualContext, action: VisualAction): string {
   if (action.kind === 'control') return action.label;
+  if (action.kind === 'phrase') return `Phrase · ${action.name || 'Timeline section'}`;
   if (action.kind === 'stage') {
     const preset = findStagePreset(ctx.stagePresets, action);
     return preset ? `Stage · ${preset.name}` : `Stage · ${action.name || 'missing preset'}`;
@@ -65,6 +67,7 @@ export function actionLabel(ctx: VisualContext, action: VisualAction): string {
 
 export function actionHint(action: VisualAction): string {
   if (action.kind === 'control') return 'Control hit';
+  if (action.kind === 'phrase') return 'Timeline phrase (on the bar)';
   if (action.kind === 'stage') return action.scope === 'global' ? 'Global Stage preset' : 'Stage preset';
   if (action.kind === 'snapshot') return `Snapshot slot ${action.slot + 1}`;
   if (action.kind === 'column') return 'Whole column';

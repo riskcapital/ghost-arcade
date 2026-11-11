@@ -1,5 +1,7 @@
 /**
  * `show:` control paths (MIDI, OSC, keys, cue control paths) as actions.
+ * `show:phrase:<n>` launches the Timeline's phrase pad n (from 1) on the next
+ * bar, `show:phrase:stop` stops the phrases on the next bar.
  * Shared by the router, which dispatches them, and the path validator.
  * Pure: no stores.
  */
@@ -15,7 +17,9 @@ export type ShowControlAction =
   | { release: number | null }
   | { overlay: true }
   | { releaseMode: string }
-  | { underneath: 'run' | 'pause' };
+  | { underneath: 'run' | 'pause' }
+  /** A Timeline phrase pad (index from 0), or stop the phrases (null). */
+  | { phrase: number | null };
 
 const SHOW_RELEASE_MODES = ['instant', 'fade', 'beat', 'bar', 'phrase', 'marker'];
 const positiveIndex = (part: string | undefined): number | null => (part && /^\d+$/.test(part) && Number(part) >= 1 ? Number(part) - 1 : null);
@@ -50,6 +54,11 @@ export function parseShowControlPath(parts: string[]): ShowControlAction | null 
     if (parts.length === 2) return { release: null };
     const track = positiveIndex(parts[2]);
     return track !== null && parts.length === 3 ? { release: track } : null;
+  }
+  if (action === 'phrase' && parts.length === 3) {
+    if (parts[2] === 'stop') return { phrase: null };
+    const n = positiveIndex(parts[2]);
+    return n !== null ? { phrase: n } : null;
   }
   if (action === 'overlay' && parts.length === 2) return { overlay: true };
   if (action === 'releasemode' && parts.length === 3 && SHOW_RELEASE_MODES.includes(parts[2])) return { releaseMode: parts[2] };

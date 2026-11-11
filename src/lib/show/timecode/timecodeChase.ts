@@ -60,12 +60,14 @@ import {
 
 // ─── Settings (saved with the project) ───────────────────────────────────
 
-export type TimecodeSource = 'off' | 'ltc' | 'mtc' | 'midiClock' | 'link';
-const TIMECODE_SOURCES: readonly TimecodeSource[] = ['off', 'ltc', 'mtc', 'midiClock', 'link'];
+/** `liveSong`: Ableton Live's arrangement position, from the Ghost Arcade
+ *  script in Live (refined by Link's clock when Link is on). */
+export type TimecodeSource = 'off' | 'ltc' | 'mtc' | 'midiClock' | 'link' | 'liveSong';
+const TIMECODE_SOURCES: readonly TimecodeSource[] = ['off', 'ltc', 'mtc', 'midiClock', 'link', 'liveSong'];
 
 /** Sources that carry beats and need the show's tempo map. */
-export function isBeatSource(source: TimecodeSource): source is 'midiClock' | 'link' {
-  return source === 'midiClock' || source === 'link';
+export function isBeatSource(source: TimecodeSource): source is 'midiClock' | 'link' | 'liveSong' {
+  return source === 'midiClock' || source === 'link' || source === 'liveSong';
 }
 
 export interface TimecodeSettings {
@@ -248,8 +250,9 @@ export interface ChaseStatus {
  * linkNoPeers: Play pressed while following the Link session's start, with
  *   no other Link app on the network to start it.
  * linkStartsWithSession: the same with peers: the session has to start.
+ * liveNotConnected: following Live's song position with Live not connected.
  */
-export type ChaseNotice = 'linkNoPeers' | 'linkStartsWithSession';
+export type ChaseNotice = 'linkNoPeers' | 'linkStartsWithSession' | 'liveNotConnected';
 /** How long a notice stays up unless the session starts first. */
 export const CHASE_NOTICE_MS = 8000;
 
@@ -458,6 +461,7 @@ class TimecodeChaseController {
       : s.source === 'mtc' ? `mtc:${s.mtcInputId}`
       : s.source === 'midiClock' ? `midiClock:${s.mtcInputId}`
       : s.source === 'link' ? 'link'
+      : s.source === 'liveSong' ? 'liveSong'
       : 'off';
     if (key === this.sourceKey) return;
     this.stopSource();
@@ -476,7 +480,9 @@ class TimecodeChaseController {
           ? await startMidiClockInput(this, s.mtcInputId)
           : s.source === 'link'
             ? await startLinkFollow(this)
-            : await startMtcInput(this, s.mtcInputId);
+            : s.source === 'liveSong'
+              ? await startLiveSongFollow(this)
+              : await startMtcInput(this, s.mtcInputId);
       if (token !== this.startToken) {
         handle.stop();
         return;
@@ -758,6 +764,58 @@ async function startLinkFollow(chase: TimecodeChaseController): Promise<SourceHa
         parkedFed = true;
       }
       void poll();
+      return true;
+    },
+  };
+}
+
+/** Live's song position is read this often between Live's reports (Link). */
+export const LIVE_SONG_POLL_MS = 30;
+
+/**
+ * Ableton Live's arrangement: the song position the Ghost Arcade script
+ * reports (liveSongFollow.ts). The Timeline's Play / Pause / Stop start and
+ * stop Live, so the show and the song stay one transport.
+ */
+async function startLiveSongFollow(chase: TimecodeChaseController): Promise<SourceHandle> {
+  const { abletonBridge } = await import('../../ableton/abletonBridge');
+  const { LiveSongFollower } = await import('../sync/liveSongFollow');
+  if (!get(abletonBridge).enabled) await abletonBridge.enable();
+  const follower = new LiveSongFollower();
+  const linkBeat = (): number | null => {
+    const link = get(abletonLink);
+    return link.enabled && link.peers > 0 ? abletonLink.beatNow() : null;
+  };
+  const mapFor = (tempo: number): ShowTempoMap => chase.showClock().map ?? {
+    offset: 0, segments: [{ bar: 1, bpm: tempo > 0 ? tempo : 120, beatsPerBar: 4, beatUnit: 4 }], source: 'manual',
+  } as ShowTempoMap;
+  const feed = (f: { quarters: number; atMs: number; running: boolean; bpm: number } | null) => {
+    if (!f) return;
+    const seconds = showSecondsForSourceQuarters(mapFor(f.bpm), f.quarters, chase.current.barOffset);
+    chase.feedBeats(seconds, f.atMs, f.running, f.bpm);
+  };
+  const unsubscribe = abletonBridge.subscribe((s) => {
+    if (!s.connected || !(s.clockAt > 0)) return;
+    feed(follower.report({ beat: s.clockBeat, atMs: s.clockAt, playing: s.playing, tempo: s.tempo }, linkBeat()));
+  });
+  const timer = setInterval(() => feed(follower.poll(performance.now(), linkBeat())), LIVE_SONG_POLL_MS);
+  return {
+    stop() {
+      unsubscribe();
+      clearInterval(timer);
+      follower.reset();
+    },
+    transport(op) {
+      const s = get(abletonBridge);
+      if (!s.connected) {
+        chase.setNotice('liveNotConnected');
+        return true;
+      }
+      if (op === 'play') abletonBridge.play();
+      else {
+        abletonBridge.stop();
+        if (op === 'stop') abletonBridge.jump(0);
+      }
       return true;
     },
   };
