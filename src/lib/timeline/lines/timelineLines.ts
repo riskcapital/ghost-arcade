@@ -280,6 +280,14 @@ function recordTraces(time: number): void {
     liveTraces.set(line.id, list);
     any = true;
   }
+  // Traces of lines deleted or no longer following a live source.
+  if (liveTraces.size) {
+    for (const id of liveTraces.keys()) {
+      const line = lines.find((l) => l.id === id);
+      const kind = line?.follow?.source.kind;
+      if (kind !== 'midi' && kind !== 'live-param' && kind !== 'live-level') liveTraces.delete(id);
+    }
+  }
   if (any && ++traceTick % 4 === 0) liveTraceVersion.update((n) => n + 1);
 }
 

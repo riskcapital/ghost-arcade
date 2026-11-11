@@ -183,7 +183,10 @@ function songKicks(s: ShowTimelineState, wanted: boolean): number[] | null {
       if (wanted && !analysing.has(t.url)) {
         analysing.add(t.url);
         const url = t.url;
+        // Analysed: forget the mark, so a song the features cache later lets
+        // go of is analysed again (a song that cannot be read is not retried).
         void songFeaturesFor(url, async () => cachedShowAudioDecode(url) ?? (await decodeShowAudio(url)))
+          .then((features) => { if (features) analysing.delete(url); })
           .catch((err) => console.warn('[Where] song analysis failed:', err));
       }
       continue;
