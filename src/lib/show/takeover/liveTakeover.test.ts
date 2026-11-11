@@ -385,3 +385,35 @@ describe('pure evaluation and summary', () => {
     expect(store.state.defaultRelease.mode).toBe('bar');
   });
 });
+
+describe('a release called off during the fade-in', () => {
+  it('goes back up to the full level, not the level the fade had reached', () => {
+    const { t, store } = harness({ playing: true, tempo: createTempoMap(120, 0) });
+    store.engage('wall', blueRow, { fadeIn: 2 });
+    t.now += 500;
+    store.tick(t.now);
+    store.release('wall', { mode: 'bar', fadeSeconds: 0 });
+    // It waits for the bar at the level it had reached.
+    const waiting = store.frame(t.now).surfaces.find((x) => x.surfaceId === 'wall')?.level ?? 0;
+    expect(waiting).toBeGreaterThan(0.1);
+    expect(waiting).toBeLessThan(0.5);
+    expect(store.state.surfaces.wall.level).toBe(1);
+    store.cancelRelease('wall');
+    t.now += 3000;
+    store.tick(t.now);
+    expect(store.state.surfaces.wall.phase).toBe('live');
+    expect(store.state.surfaces.wall.level).toBe(1);
+  });
+
+  it('pressed again (re-engaged) it also ends at full level', () => {
+    const { t, store } = harness({ playing: true, tempo: createTempoMap(120, 0) });
+    store.engage('wall', blueRow, { fadeIn: 2 });
+    t.now += 500;
+    store.release('wall', { mode: 'bar', fadeSeconds: 0 });
+    store.engage('wall', blueRow, { fadeIn: 0.5 });
+    t.now += 1000;
+    store.tick(t.now);
+    expect(store.state.surfaces.wall.phase).toBe('live');
+    expect(store.state.surfaces.wall.level).toBe(1);
+  });
+});
