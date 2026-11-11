@@ -257,7 +257,9 @@ up puts back: **Sound**, **Band** and **Visuals**. A song keeps tonight's
 wiring when called up: a band input keeps its name and channel and takes the
 song's role, levels and send.
 
-A set list is songs in playing order; a song can come more than once. Calling
+A set list is songs in playing order; a song can come more than once. Drag
+a song by its grip, or Alt+↑/↓ on the grip, to move it; the song that is up
+keeps its place. Calling
 a song up, from the list, the set list, the song strip in the Studio header,
 or MIDI, happens on the next bar; pressing again brings it up at once. While
 Ableton Link has peers the tempo is left to Link. Next, previous, Go and MIDI

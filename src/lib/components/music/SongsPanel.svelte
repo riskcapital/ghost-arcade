@@ -7,6 +7,7 @@
    * set list being played: the songs in order (one can come more than once),
    * the song now up and the one after it.
    */
+  import { tick } from 'svelte';
   import { musicStudio } from '../../music/musicStudioStore';
   import { MAX_SONG_BPM, MIN_SONG_BPM, nextSetlistName, type Song, type SongRecallGroup } from '../../music/songs';
   import {
@@ -109,13 +110,32 @@
     if (at >= 0) musicStudio.setCurrentSong(s.currentSongId, place(at) ?? -1);
   }
 
-  function move(i: number, by: -1 | 1) {
-    if (!list) return;
-    const j = i + by;
-    if (j < 0 || j >= list.songIds.length) return;
+  /** Move the song at `from` to place `to`, the songs between shifting up or down a place. */
+  function moveTo(from: number, to: number): boolean {
+    if (!list || from === to || to < 0 || to >= list.songIds.length) return false;
     const ids = [...list.songIds];
-    [ids[i], ids[j]] = [ids[j], ids[i]];
-    reorder(ids, (k) => (k === i ? j : k === j ? i : k));
+    const [id] = ids.splice(from, 1);
+    ids.splice(to, 0, id);
+    reorder(ids, (k) => (k === from ? to : from < to ? (k > from && k <= to ? k - 1 : k) : k >= to && k < from ? k + 1 : k));
+    return true;
+  }
+
+  // Dragging a song in the set list: the one dragged, and the gap it would land in (0 = before the first).
+  let dragFrom = $state<number | null>(null);
+  let dropAt = $state<number | null>(null);
+
+  function dropSong() {
+    if (dragFrom !== null && dropAt !== null) moveTo(dragFrom, dropAt > dragFrom ? dropAt - 1 : dropAt);
+    dragFrom = null;
+    dropAt = null;
+  }
+
+  /** Alt+Up and Alt+Down move the song, and the grip follows it. */
+  function gripKey(e: KeyboardEvent, i: number) {
+    if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+    e.preventDefault();
+    const to = i + (e.key === 'ArrowUp' ? -1 : 1);
+    if (moveTo(i, to)) void tick().then(() => document.querySelectorAll<HTMLElement>('.setlist .grip')[to]?.focus());
   }
 
   function takeOut(i: number) {
@@ -228,17 +248,31 @@
             {#if song}
               {@const here = cursor === i}
               {@const next = upNext?.cursor === i}
-              <li class="entry" class:up={here} class:waiting={isWaiting(id, i)}>
+              <li
+                class="entry"
+                class:up={here}
+                class:waiting={isWaiting(id, i)}
+                class:dragging={dragFrom === i}
+                class:drop-before={dropAt === i && dragFrom !== null && dragFrom !== i && dragFrom !== i - 1}
+                class:drop-after={dropAt === list.songIds.length && i === list.songIds.length - 1 && dragFrom !== null && dragFrom !== i}
+                ondragover={(e) => { if (dragFrom === null) return; e.preventDefault(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); dropAt = e.clientY < r.top + r.height / 2 ? i : i + 1; }}
+                ondrop={(e) => { e.preventDefault(); dropSong(); }}
+              >
+                <span
+                  class="grip"
+                  draggable="true"
+                  role="button"
+                  tabindex="0"
+                  aria-label="Move {song.name} (Alt+Up or Alt+Down)"
+                  title="Drag to put it earlier or later in the set"
+                  ondragstart={(e) => { dragFrom = i; e.dataTransfer?.setData('text/plain', song.name); if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'; }}
+                  ondragend={() => { dragFrom = null; dropAt = null; }}
+                  onkeydown={(e) => gripKey(e, i)}
+                >⋮⋮</span>
                 <span class="num">{i + 1}</span>
                 {@render play(isWaiting(id, i), `Play from ${song.name}`, isWaiting(id, i) ? 'Bring it up now' : 'Play from here: call it up on the next bar (press again for now)', () => goToSong(i, { history: true }))}
                 <span class="entry-name">{song.name}</span>
                 {#if isWaiting(id, i)}<span class="tag accent">Next bar</span>{:else if here}<span class="tag accent">Now</span>{:else if next}<span class="tag">Next</span>{/if}
-                <button class="icon-btn" onclick={() => move(i, -1)} disabled={i === 0} aria-label="Move {song.name} up" title="Earlier in the set">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6" /></svg>
-                </button>
-                <button class="icon-btn" onclick={() => move(i, 1)} disabled={i === list.songIds.length - 1} aria-label="Move {song.name} down" title="Later in the set">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
-                </button>
                 {@render cross(`Take ${song.name} out of the set list`, 'Take it out of the set list (the song stays)', () => takeOut(i))}
               </li>
             {/if}
@@ -369,6 +403,12 @@
   .entry .icon-btn { width: 20px; height: 20px; border-color: transparent; color: inherit; }
   .entry .icon-btn:hover:not(:disabled) { border-color: var(--studio-edge); }
   .num { width: 22px; text-align: right; font-family: var(--ga-font-mono, ui-monospace); font-size: var(--ga-text-meta, 11px); opacity: 0.7; font-variant-numeric: tabular-nums; }
+  .grip { flex: 0 0 auto; cursor: grab; color: inherit; opacity: 0.55; font-size: 10px; letter-spacing: -2px; padding: 0 2px; user-select: none; }
+  .grip:focus-visible { outline: 1px solid var(--studio-accent); border-radius: 2px; opacity: 1; }
+  .entry.dragging { opacity: 0.4; }
+  /* Where a dragged song will land: a line in the gap. */
+  .entry.drop-before { box-shadow: inset 0 2px 0 var(--studio-accent); }
+  .entry.drop-after { box-shadow: inset 0 -2px 0 var(--studio-accent); }
   .entry-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--ga-weight-control, 600); }
   .tag { flex: 0 0 auto; padding: 0 5px; border: 1px solid var(--studio-edge); border-radius: var(--studio-radius); font-size: var(--ga-text-micro, 9px); line-height: 14px; color: var(--studio-muted); }
   .tag.accent { border-color: currentColor; color: inherit; }
