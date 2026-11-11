@@ -7,7 +7,8 @@
    */
   import { get } from 'svelte/store';
   import type { ShowTempoMap } from '../../../../types';
-  import { showTimeline, showSectionStatus, type ShowTimelineSelection } from '../../../../stores/showTimeline';
+  import { showTimeline, showSectionStatus, showPhraseStatus, type ShowTimelineSelection } from '../../../../stores/showTimeline';
+  import { phraseNumber } from '../../../../timeline/phrases/phraseModel';
   import { SECTION_ACTION_GLYPHS, SECTION_ACTION_LABELS, SECTION_MIN_SECONDS, makeSection, nearestBar, placeNewSection, type TimelineSection } from '../../../../timeline/sections/sectionModel';
   import { followPointer } from '../dragSession';
   import { formatPrecise } from '../timeFormat';
@@ -28,6 +29,7 @@
   const EDGE_PX = 6;
   const visible = $derived(sections.filter((s) => s.end * zoom >= viewStart * zoom - 24 && s.start * zoom <= viewEnd * zoom + 24));
   const status = $derived($showSectionStatus);
+  const phrases = $derived($showPhraseStatus);
 
   function timeAt(ev: MouseEvent): number {
     const r = laneEl?.getBoundingClientRect();
@@ -109,13 +111,17 @@
       class:holding={status.holdId === s.id}
       class:live={status.liveId === s.id}
       class:armed={status.armed.includes(s.id) || status.vampExitId === s.id}
+      class:phrase-on={phrases.activeId === s.id}
+      class:phrase-pending={phrases.pending?.id === s.id}
       style="left: {s.start * zoom}px; width: {Math.max(4, (s.end - s.start) * zoom)}px; --sec: {s.color}"
       onmousedown={(e) => startDrag(e, s)}
       title={title(s)}
       data-section-id={s.id}
       data-section-name={s.name}
     >
+      {#if s.phrase}<span class="sec-pad" title="Phrase pad {phraseNumber(sections, s.id)} (show:phrase:{phraseNumber(sections, s.id)})" data-section-phrase-badge>▣{phraseNumber(sections, s.id)}</span>{/if}
       <span class="sec-name item-name">{s.name}</span>
+      {#if s.liveScene}<span class="sec-scene" title="Fires the Live scene “{s.liveScene.name || `Scene ${s.liveScene.scene + 1}`}” where it starts">▶ {s.liveScene.name || `Scene ${s.liveScene.scene + 1}`}</span>{/if}
       {#if s.action !== 'through'}<span class="sec-action" aria-label={SECTION_ACTION_LABELS[s.action]}>{SECTION_ACTION_GLYPHS[s.action]}</span>{/if}
       {#if st}<span class="sec-state">{st}</span>{/if}
     </div>
@@ -165,6 +171,10 @@
   .sec-block.holding { animation: sec-pulse 1s ease-in-out infinite; }
   .sec-block.live { background: repeating-linear-gradient(45deg, color-mix(in srgb, var(--sec) 45%, transparent) 0 6px, color-mix(in srgb, var(--sec) 20%, transparent) 6px 12px); }
   .sec-block.armed { border-style: dashed; }
+  .sec-block.phrase-on { box-shadow: inset 0 0 0 1px #fff, 0 0 8px color-mix(in srgb, var(--sec) 90%, transparent); }
+  .sec-block.phrase-pending { animation: sec-blink 0.5s steps(2, jump-none) infinite; }
+  .sec-pad { font-size: 10px; font-weight: 700; padding: 0 3px; border-radius: 2px; background: color-mix(in srgb, var(--sec) 70%, #000); color: #fff; }
+  .sec-scene { font-size: 10px; opacity: 0.8; overflow: hidden; text-overflow: ellipsis; }
   .sec-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
   .sec-action { opacity: 0.9; }
   .sec-state { font-size: 10px; opacity: 0.85; color: #ffd36b; overflow: hidden; text-overflow: ellipsis; }
@@ -176,6 +186,10 @@
     font-size: 11px;
     opacity: 0.45;
     pointer-events: none;
+  }
+  @keyframes sec-blink {
+    0% { background: color-mix(in srgb, var(--sec) 70%, transparent); }
+    100% { background: color-mix(in srgb, var(--sec) 25%, transparent); }
   }
   @keyframes sec-pulse {
     0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--sec) 70%, transparent); }

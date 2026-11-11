@@ -58,7 +58,10 @@
   import { offerShowFromAudio, pickSongForShow } from '../show/showFromAudio';
   import { classifyShowKey, installShowKeyCapture, setShowKeyHandler } from '../show/showKeyboard';
   import { showDropEffect } from '../show/showDrop';
-  import { setShowSnapEdgeProvider, showSectionStatus } from '../stores/showTimeline';
+  import { setShowSnapEdgeProvider, showSectionStatus, showPhraseStatus } from '../stores/showTimeline';
+  import PhrasePads from './show/PhrasePads.svelte';
+  import { phraseSections } from '../timeline/phrases/phraseModel';
+  import SectionsLiveMenu from './show/timeline/sections/SectionsLiveMenu.svelte';
   import SectionLane from './show/timeline/sections/SectionLane.svelte';
   import SectionInspector from './show/timeline/sections/SectionInspector.svelte';
   import SectionCueList from './show/timeline/sections/SectionCueList.svelte';
@@ -186,6 +189,26 @@
   const selectedSection = $derived(selection?.kind === 'section' ? sections.find((x) => x.id === selection!.id) ?? null : null);
   const goText = $derived(isTimeline && sections.length ? goLabel(sections, $showSectionStatus, currentTime, isPlaying) : '');
   const sectionText = $derived(isTimeline && sections.length ? sectionStatusText(sections, $showSectionStatus, currentTime, isPlaying) : '');
+  // A/V phrases: the strip of pads under the transport (a view preference,
+  // on by default) once the Timeline has published sections.
+  const PHRASES_OPEN_KEY = 'ghostarcade-timeline-phrases-open';
+  let phrasesPref = $state((() => {
+    try { return localStorage.getItem(PHRASES_OPEN_KEY) !== '0'; } catch { return true; }
+  })());
+  function togglePhrases() {
+    phrasesPref = !phrasesPref;
+    try { localStorage.setItem(PHRASES_OPEN_KEY, phrasesPref ? '1' : '0'); } catch { /* private */ }
+  }
+  const hasPhrases = $derived(isTimeline && phraseSections(sections).length > 0);
+  const phraseStripShown = $derived(hasPhrases && phrasesPref);
+  const phraseText = $derived.by(() => {
+    if (!isTimeline) return '';
+    const st = $showPhraseStatus;
+    const name = (id: string | null) => sections.find((x) => x.id === id)?.name ?? '';
+    const playing = st.activeId ? `PHRASE · ${name(st.activeId)}` : '';
+    if (st.pending) return `${playing ? `${playing} → ` : ''}${st.pending.id ? name(st.pending.id) : 'stop'} on the bar`;
+    return playing;
+  });
   /** The sections' cue list beside the Timeline (a view preference). */
   const SECTION_CUES_KEY = 'ghostarcade-timeline-section-cues-open';
   let sectionCuesOpen = $state((() => {
@@ -856,7 +879,7 @@
   const inspectorRoom = $derived(hasTracks ? Math.max(TRACK_INSPECTOR_RESERVE, inspectorH) : inspectorVisible ? inspectorH : 0);
   // The takeover pads sit between the transport and the lanes. They make the
   // tray taller rather than taking the lanes' room.
-  const padsRoom = $derived($takeoverPadsOpen ? padsH : 0);
+  const padsRoom = $derived(($takeoverPadsOpen && isTimeline) || phraseStripShown ? padsH : 0);
   /** Everything but the lanes: transport, pads, inspector, top border. */
   const chromeH = $derived(transportH + padsRoom + inspectorRoom + 1);
   const lanesH = $derived(laneStackH + GRID_SCROLLBAR_ALLOWANCE);
@@ -1321,6 +1344,9 @@
         <button class="t-go" class:waiting={!!$showSectionStatus.holdId} onclick={() => showTimeline.go()} title={`GO: ${goText}. Enter while the pointer is over the Timeline; MIDI/OSC show/go.`} data-midi-path="show:go" data-section-go>GO</button>
         {#if sectionText}<span class="t-section" class:hold={!!$showSectionStatus.holdId} data-section-status>{sectionText}</span>{/if}
       {/if}
+      {#if phraseText}
+        <span class="t-phrase" class:waiting={!!$showPhraseStatus.pending} title="The A/V phrase playing, and the one waiting for its bar" data-phrase-status>{phraseText}</span>
+      {/if}
 
       <!-- Show audio output. Never hidden while the show has audio: a muted
            or blocked bus is exactly the state the user needs to SEE. -->
@@ -1484,6 +1510,11 @@
         <button class="t-chip" class:active={sectionCuesOpen} onclick={toggleSectionCues} title="The Timeline's sections and markers as a cue list, with a big GO" data-section-cues-toggle>
           Sections
         </button>
+        {#if hasPhrases}
+          <button class="t-chip" class:active={phrasesPref} onclick={togglePhrases} title="The A/V phrase pads: published sections, launched on the next bar" data-phrases-toggle>
+            Phrases
+          </button>
+        {/if}
       {/if}
       <button class="t-chip t-iconable" onclick={addMarkerAtPlayhead} title="Add a marker at the playhead. It fires the selected cue when the timeline plays across it." aria-label="Add a marker at the playhead. It fires the selected cue when the timeline plays across it." data-show-add-marker>
         <span class="t-label">+ Marker</span>
@@ -1518,10 +1549,13 @@
       />
     </div>
 
-    {#if $takeoverPadsOpen && isTimeline}
+    {#if ($takeoverPadsOpen && isTimeline) || phraseStripShown}
       <!-- The outer box may give way in a tight tray; the inner one reports
            the pads' own height, which the tray grows by. -->
-      <div class="pads-wrap"><div bind:clientHeight={padsH}><TakeoverPads /></div></div>
+      <div class="pads-wrap"><div bind:clientHeight={padsH}>
+        {#if phraseStripShown}<PhrasePads variant="timeline" />{/if}
+        {#if $takeoverPadsOpen && isTimeline}<TakeoverPads />{/if}
+      </div></div>
     {/if}
 
     <div class="show-main">
@@ -1540,6 +1574,7 @@
             <span class="lane-name" title="Named spans of the Timeline with what happens at their end: play through, hold for GO, loop until GO, jump, or Live (pieces to the VJ decks until GO).">Sections</span>
             <button class="lane-line-add" onclick={addSectionAtPlayhead} title="Add a section at the playhead (8 bars, or up to the next section)" data-section-add>+</button>
             <button class="lane-line-add score" onclick={() => (scoreOpen = true)} disabled={!audioTracks.length} title={audioTracks.length ? 'Score this song: sections, looks, energy and where lines from the song on the Song row' : 'Put a song on the Song row first'} data-score-open>✦ Score</button>
+            <SectionsLiveMenu />
           </div>
           <div class="lane-label look" style="height: {LOOK_LANE_HEIGHT}px">
             <span class="lane-name" title="Shape Looks along the Timeline: drag a Look card from the Looks gallery here. The shapes wear it for the block's span; overlapping blocks crossfade.">Looks</span>
@@ -2317,6 +2352,8 @@
   .t-go:hover { filter: brightness(1.1); }
   .t-section { font-size: var(--ga-text-meta, 11px); color: var(--ga-ink-1, #bbb); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .t-section.hold { color: #ffd36b; font-weight: 600; }
+  .t-phrase { font-size: var(--ga-text-meta, 11px); color: #9fe7ff; font-weight: 600; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .t-phrase.waiting { color: #ffd36b; }
   .t-tempo.has-map { font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); }
   .t-tc-warn {
     display: inline-flex;
