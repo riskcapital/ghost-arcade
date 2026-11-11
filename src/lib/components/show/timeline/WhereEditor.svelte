@@ -125,12 +125,15 @@
           <select value={where.motion.kind} onchange={(e) => setMotion((e.currentTarget as HTMLSelectElement).value as WhereMotion['kind'])} data-where-motion>
             {#each WHERE_MOTIONS as m (m)}<option value={m}>{WHERE_MOTION_LABELS[m]}</option>{/each}
           </select>
-          {#if where.motion.kind === 'sweep' || where.motion.kind === 'pingpong' || where.motion.kind === 'burst'}
+          {#if where.motion.kind === 'sweep' || where.motion.kind === 'pingpong' || where.motion.kind === 'burst' || where.motion.kind === 'reveal'}
             <label class="num"><input type="number" min="0.25" step="0.25" value={bars} onkeydown={(e) => { if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur(); }}
               onchange={(e) => { const b = Math.max(0.0625, parseFloat((e.currentTarget as HTMLInputElement).value) || 1); set({ motion: { ...(where!.motion as any), bars: b } }); }} data-where-bars /> bars a pass</label>
           {/if}
           {#if where.motion.kind === 'sweep'}
             <label class="chk"><input type="checkbox" checked={!!where.motion.reverse} onchange={(e) => set({ motion: { kind: 'sweep', bars, reverse: (e.currentTarget as HTMLInputElement).checked } })} /> Backwards</label>
+          {/if}
+          {#if where.motion.kind === 'reveal'}
+            <label class="chk" title="All lit at the start, then they go dark one after another"><input type="checkbox" checked={!!where.motion.reverse} onchange={(e) => set({ motion: { kind: 'reveal', bars, reverse: (e.currentTarget as HTMLInputElement).checked } })} data-where-reveal-out /> Drop out</label>
           {/if}
           {#if where.motion.kind === 'random'}
             <span class="seg">
@@ -183,6 +186,12 @@
             <label class="chk" title="The last piece neighbours the first: a sweep loops without a jump"><input type="checkbox" checked={!!where.wrap} onchange={(e) => set({ wrap: (e.currentTarget as HTMLInputElement).checked })} data-where-wrap /> Wrap</label>
           {/if}
         </div>
+        {#if members.length === 1 && members[0] === 'pieces'}
+          <div class="row">
+            <label class="chk" title="The pieces of its order are this block's while it plays: their own content goes dark, only what it lights shows"><input type="checkbox" checked={!!where.dark} onchange={(e) => set({ dark: (e.currentTarget as HTMLInputElement).checked })} data-where-dark /> Unlit pieces are dark</label>
+            <label class="chk" title="One picture across the pieces: each shows its part of it, where it sits on the stage"><input type="checkbox" checked={!!where.span} onchange={(e) => set({ span: (e.currentTarget as HTMLInputElement).checked })} data-where-span /> One picture across them</label>
+          </div>
+        {/if}
         <div class="hint">Lines on the block (◆ Where: position / spread / soft edge) win over these, and can follow the music or be recorded from a knob.</div>
       {/if}
     </div>

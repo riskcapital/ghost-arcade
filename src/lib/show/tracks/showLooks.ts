@@ -145,13 +145,14 @@ function scaled(effects: readonly EdgeEffect[], weight: number): EdgeEffect[] {
  *  settled scene hands the core the same object. */
 const mixed = new Map<string, { sig: string; own: EdgeEffectsConfig | null; config: EdgeEffectsConfig }>();
 
-function mixedStack(layer: Layer, looks: readonly ShowLookState[]): EdgeEffectsConfig | null {
+function mixedStack(layer: Layer, looks: readonly ShowLookState[], piece = layer.id): EdgeEffectsConfig | null {
   const own = layer.edgeEffects?.enabled ? layer.edgeEffects : null;
   const sig = looks.map((l) => `${l.clipId}/${l.lookId}/${l.paletteId}/${weightStep(l.weight)}`).join(';');
   const memo = mixed.get(layer.id);
   if (memo && memo.sig === sig && memo.own === own) return memo.config;
   const total = Math.min(1, looks.reduce((sum, l) => sum + l.weight, 0));
-  const stacks = looks.map((l) => ({ look: l, config: fullStack(l, layer.id) })).filter((s) => s.config) as Array<{ look: ShowLookState; config: EdgeEffectsConfig }>;
+  // Effect ids follow the piece, whichever of its layers wears them.
+  const stacks = looks.map((l) => ({ look: l, config: fullStack(l, piece) })).filter((s) => s.config) as Array<{ look: ShowLookState; config: EdgeEffectsConfig }>;
   if (!stacks.length) return null;
   const top = stacks[stacks.length - 1];
   let config: EdgeEffectsConfig;
@@ -171,27 +172,54 @@ function mixedStack(layer: Layer, looks: readonly ShowLookState[]): EdgeEffectsC
 
 /**
  * Dress the scene's shapes with the looks under the playhead. `layers` is
- * the scene being built; `liveLayers` the mapping layers it was built from
- * (a group in a block's scope brings its members). Returns `layers` itself
- * when no look applies.
+ * the scene being built (top first); `liveLayers` the mapping layers it was
+ * built from (a group in a block's scope brings its members). Returns
+ * `layers` itself when no look applies.
+ *
+ * A look is worn over whatever the piece shows: by the show's copies of the
+ * piece that are in the scene (blocks added on it or travelling over it;
+ * `pieceOf` names the piece of such a copy), each at its own opacity, else
+ * by the piece itself. Every copy wears it, not only the one showing now:
+ * a block whose window moves keeps its copies (at no opacity while unlit),
+ * so the looks stay put on them and are not sent again on every swap.
  */
-export function applyShowLooks(layers: Layer[], looks: readonly ShowLookState[] | undefined, liveLayers: readonly Layer[] = layers): Layer[] {
+export function applyShowLooks(
+  layers: Layer[],
+  looks: readonly ShowLookState[] | undefined,
+  liveLayers: readonly Layer[] = layers,
+  pieceOf: (id: string) => string | null = () => null,
+): Layer[] {
   if (!looks?.length) return layers;
   const all = new Set(liveLayers.filter(isLookTarget).map((l) => l.id));
   const scoped = new Map<string, Set<string>>();
   for (const look of looks) {
     if (look.scope === 'pieces') scoped.set(look.clipId, new Set(lookTargetLayerIds(liveLayers, look.layerIds, 'selected')));
   }
+  // Which layers wear each piece's looks: its copies, else the piece.
+  const wearer = new Map<number, string>();
+  const dressed = new Set<string>();
+  const ownIndex = new Map<string, number>();
+  layers.forEach((layer, index) => {
+    const piece = all.has(layer.id) ? layer.id : pieceOf(layer.id);
+    if (!piece || !all.has(piece)) return;
+    if (piece === layer.id) { ownIndex.set(piece, index); return; }
+    if (layer.visible === false) return;
+    dressed.add(piece);
+    wearer.set(index, piece);
+  });
+  // A piece with no copies over it wears them itself (as it always did).
+  for (const [piece, index] of ownIndex) if (!dressed.has(piece)) wearer.set(index, piece);
   let changed = false;
-  const out = layers.map((layer) => {
-    if (!all.has(layer.id)) return layer;
+  const out = layers.map((layer, index) => {
+    const piece = wearer.get(index);
+    if (!piece) return layer;
     const wearing = looks
-      .filter((l) => l.scope === 'all' || scoped.get(l.clipId)?.has(layer.id))
+      .filter((l) => l.scope === 'all' || scoped.get(l.clipId)?.has(piece))
       // A where line: only the shapes in its window, by how lit they are.
-      .map((l) => (l.where ? { ...l, weight: l.weight * (l.where.get(layer.id) ?? 0) } : l))
+      .map((l) => (l.where ? { ...l, weight: l.weight * (l.where.get(piece) ?? 0) } : l))
       .filter((l) => weightStep(l.weight) > 0);
     if (!wearing.length) return layer;
-    const config = mixedStack(layer, wearing);
+    const config = mixedStack(layer, wearing, piece);
     if (!config) return layer;
     changed = true;
     return { ...layer, edgeEffects: config };

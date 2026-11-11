@@ -65,7 +65,8 @@
   import SectionLane from './show/timeline/sections/SectionLane.svelte';
   import SectionInspector from './show/timeline/sections/SectionInspector.svelte';
   import SectionCueList from './show/timeline/sections/SectionCueList.svelte';
-  import ScoreDialog from './show/timeline/sections/ScoreDialog.svelte';
+  import AutoShowDialog from './show/timeline/autoshow/AutoShowDialog.svelte';
+  import { autoShowOpen } from './show/timeline/autoshow/autoShowUi';
   import { goLabel, sectionStatusText } from './show/timeline/sections/sectionGoUi';
   import { makeSection, placeNewSection } from '../timeline/sections/sectionModel';
   import { layers as liveLayersStore } from '../stores/layers';
@@ -223,7 +224,6 @@
     sectionCuesOpen = !sectionCuesOpen;
     try { localStorage.setItem(SECTION_CUES_KEY, sectionCuesOpen ? '1' : '0'); } catch { /* private mode */ }
   }
-  let scoreOpen = $state(false);
   function addSectionAtPlayhead() {
     const s = get(showTimeline);
     const span = placeNewSection(s.sections, s.tempo, s.currentTime);
@@ -1613,7 +1613,7 @@
           <div class="lane-label sections" style="height: {SECTION_LANE_HEIGHT}px" data-sections-label>
             <span class="lane-name" title="Named spans of the Timeline with what happens at their end: play through, hold for GO, loop until GO, jump, or Live (pieces to the VJ decks until GO).">Sections</span>
             <button class="lane-line-add" onclick={addSectionAtPlayhead} title="Add a section at the playhead (8 bars, or up to the next section)" data-section-add>+</button>
-            <button class="lane-line-add score" onclick={() => (scoreOpen = true)} disabled={!audioTracks.length} title={audioTracks.length ? 'Score this song: sections, looks, energy and where lines from the song on the Song row' : 'Put a song on the Song row first'} data-score-open>✦ Score</button>
+            <button class="lane-line-add score" onclick={() => autoShowOpen.set(true)} disabled={!audioTracks.length} title={audioTracks.length ? 'Auto show: a whole show on your mapping from the song on the Song row (sections, content on the pieces, looks, Screen FX)' : 'Drop a song on the Song row first'} data-auto-show-open>✦ Auto show</button>
             <SectionsLiveMenu />
           </div>
           <div class="lane-label look" style="height: {LOOK_LANE_HEIGHT}px">
@@ -2027,8 +2027,8 @@
       <CueListPanel />
     {/if}
     </div>
-    {#if scoreOpen}
-      <ScoreDialog onclose={() => (scoreOpen = false)} />
+    {#if $autoShowOpen}
+      <AutoShowDialog onclose={() => autoShowOpen.set(false)} />
     {/if}
 
     {#if showClearConfirm}

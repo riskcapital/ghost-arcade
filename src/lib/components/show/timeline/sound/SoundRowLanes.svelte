@@ -265,7 +265,11 @@
     >
       {#if row.kind === 'audio'}
         {#if !rowTracks.length && !sound.builds.some((b) => b.lane === lane)}
-          <span class="lane-hint">Drop audio here, or right-click for a sound from the library or a build</span>
+          {#if lane === 0 && !$tracksStore.length}
+            <span class="lane-hint song-hint" data-auto-show-song-hint>Drop a song here, then ✦ Auto show</span>
+          {:else}
+            <span class="lane-hint">Drop audio here, or right-click for a sound from the library or a build</span>
+          {/if}
         {/if}
         {#each rowTracks as track (track.id)}
           {#if inView(track.startTime, track.duration)}
@@ -407,6 +411,7 @@
   }
   .sound-lane.live { background: rgba(255, 160, 60, 0.02); }
   .sound-lane.muted { opacity: 0.55; }
+  .lane-hint.song-hint { color: #ffd36b; opacity: 0.85; font-weight: 600; }
   .lane-hint {
     position: absolute;
     left: 12px;

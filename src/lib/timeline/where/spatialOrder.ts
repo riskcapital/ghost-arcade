@@ -12,6 +12,7 @@
  *   around                    by angle about that centre, clockwise from
  *                             `angle` degrees (0 = 12 o'clock), ties nearer first
  *   hand                      the listed ids in order, the rest left to right
+ *   slots (given)             sets of ids in the order given (only those)
  *
  * With `groups`, the members of a group are one slot (they light together),
  * placed at their mean position. Pure.
@@ -155,8 +156,19 @@ function cmp(a: number, b: number): number {
   return Math.abs(a - b) <= EPS ? 0 : a < b ? -1 : 1;
 }
 
+/** The order a spec gives as its slots (sets of ids, in order): only the
+ *  listed spots that are on the stage, empty slots left out. */
+function givenSlots(spots: readonly WhereSpot[], given: readonly string[][]): SpatialOrder {
+  const here = new Set(spots.map((s) => s.id));
+  const slots = given.map((slot) => slot.filter((id) => here.has(id))).filter((slot) => slot.length > 0);
+  const slotOf = new Map<string, number>();
+  slots.forEach((ids, i) => { for (const id of ids) if (!slotOf.has(id)) slotOf.set(id, i); });
+  return { slots, slotOf };
+}
+
 /** Slots in the order a spec asks for. `aspect` = output width / height. */
 export function computeSpatialOrder(spots: readonly WhereSpot[], spec: WhereOrderSpec, aspect = 16 / 9): SpatialOrder {
+  if (spec.slots?.length) return givenSlots(spots, spec.slots);
   const slots = slotsOf(spots, spec.groups === true);
   let minX = Infinity;
   let maxX = -Infinity;

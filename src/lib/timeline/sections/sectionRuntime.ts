@@ -69,6 +69,26 @@ export function timelineTakesGo(): boolean {
   return s.doc === 'timeline' && s.sections.length > 0;
 }
 
+/** What the debug surface reports about an Auto show it built. */
+function autoShowSummary(prep: import('../autoshow/autoShowRuntime').AutoShowPrep, ms: Record<string, number>) {
+  const d = prep.draft;
+  return {
+    ok: true,
+    heard: d.heard,
+    style: prep.style,
+    reading: prep.reading,
+    mood: d.palette.mood,
+    cast: d.cast.map((c) => c.name),
+    groups: { hero: d.groups.hero, rows: d.groups.rows.length, columns: d.groups.columns.length, setA: d.groups.setA.length, setB: d.groups.setB.length, faces: Object.fromEntries(Object.entries(d.groups.faces).map(([k, v]) => [k, v.length])), how: d.groups.how },
+    rows: d.layerTracks.map((t) => ({ id: t.id, name: t.layerName, blocks: t.clips.length })),
+    blockCount: d.blockCount,
+    adds: d.adds,
+    skips: d.skips,
+    plan: d.autoPlan,
+    timings: { ...prep.timings, ...ms },
+  };
+}
+
 export function installSectionRuntime(): () => void {
   setShowSectionEffects(handleSectionEvent);
   // Debug/automation surface (Show Runner), like window.__ghostArcade's others.
@@ -89,6 +109,25 @@ export function installSectionRuntime(): () => void {
           const { shuffleScore } = await import('../score/scoreRuntime');
           const r = await shuffleScore();
           return r.ok ? { ok: true } : { ok: false, reason: r.reason };
+        },
+      },
+      timelineAutoShow: {
+        /** ✦ Auto show as the dialog's Build the show does (it then plays from the top unless `play: false`). */
+        async build(opts: { style?: import('../autoshow/songStyle').ShowStyle; source?: 'builtin' | 'library' | 'both'; play?: boolean } = {}) {
+          const { prepareAutoShow, commitAutoShow } = await import('../autoshow/autoShowRuntime');
+          const t0 = performance.now();
+          const r = await prepareAutoShow({ style: opts.style, source: opts.source });
+          if (!r.ok) return { ok: false, reason: r.reason };
+          const t1 = performance.now();
+          commitAutoShow(r.prep, { play: opts.play });
+          return autoShowSummary(r.prep, { prepareMs: t1 - t0, commitMs: performance.now() - t1 });
+        },
+        async shuffle(opts: { play?: boolean } = {}) {
+          const { shuffleAutoShow } = await import('../autoshow/autoShowRuntime');
+          const r = await shuffleAutoShow();
+          if (!r.ok) return { ok: false, reason: r.reason };
+          if (opts.play === false) (await import('../../stores/showTimeline')).showTimeline.pause();
+          return autoShowSummary(r.prep, {});
         },
       },
     };
