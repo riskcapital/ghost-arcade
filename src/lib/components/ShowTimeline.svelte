@@ -93,7 +93,7 @@
   import ShowCameraLane from './show/timeline/ShowCameraLane.svelte';
   import ShowCameraLaneLabel from './show/timeline/ShowCameraLaneLabel.svelte';
   import { CAMERA_LANE_HEIGHT, cameraLaneShown } from './show/timeline/cameraLaneUi';
-  import { TRACK_HEADER_WIDTH, TRACK_ROW_HEIGHT, laneKeySelection, showSnapGuide, tracksStackHeight } from './show/timeline/trackLayout';
+  import { TRACK_HEADER_WIDTH, TRACK_ROW_HEIGHT, TRAY_MIN_HEIGHT, laneKeySelection, showSnapGuide, trayEditorCap, tracksStackHeight } from './show/timeline/trackLayout';
   import { carriesTrackMedia, dropTrackMedia } from './show/timeline/trackDrops';
   import { presetJunctions, type PresetJunction } from './show/timeline/laneJunctions';
   import { distinct, showSlice } from './show/timeline/timelineSlices';
@@ -422,7 +422,6 @@
   // larger but still sane ceiling) and that override persists.
   /** Each tab keeps its own hand-set height. */
   const trayHeightKey = (d: ShowDocKind) => (d === 'timeline' ? 'ghostarcade-timeline-tray-height' : 'ghostarcade-show-tray-height');
-  const TRAY_MIN_HEIGHT = 150;
   /** Space an always-on horizontal scrollbar would eat inside the grid.
    *  Zero on macOS overlay scrollbars, ~8–15 px on Windows. */
   const GRID_SCROLLBAR_ALLOWANCE = 10;
@@ -619,6 +618,18 @@
   let gridEl: HTMLDivElement | undefined = $state();
   /** Grid scrollTop, mirrored onto the lane-label column. */
   let laneScrollTop = $state(0);
+  /** Tabbing to a row header out of view scrolls the label column itself
+   *  (it hides its overflow but still scrolls to show focus), and the
+   *  headers then sat beside the wrong lanes. The grid owns the scroll: hand
+   *  it the distance and put the column back. */
+  function labelsScrolled(e: Event) {
+    const el = e.currentTarget as HTMLElement;
+    const dy = el.scrollTop;
+    if (!dy && !el.scrollLeft) return;
+    el.scrollTop = 0;
+    el.scrollLeft = 0;
+    if (gridEl && dy) gridEl.scrollTop += dy;
+  }
 
   function timeAt(e: MouseEvent | DragEvent): number {
     if (!gridEl) return 0;
@@ -907,10 +918,23 @@
     // The cue list needs room for its status, a few rows and the editor.
     cuesOpen ? transportH + padsRoom + CUE_PANEL_MIN_HEIGHT : 0,
   ));
-  const autoH = $derived(clampTray(contentH, trayLimits, (cuesOpen ? cueCeiling(viewportH) : autoCeiling(viewportH, hasTracks)) + padsRoom));
+  // Sizing itself (content, pads, phrase strip) the tray leaves the editor
+  // its reserve; a height dragged by hand is kept, but the pads opening on
+  // top of it do not push it further.
+  // A tall inspector (an effect's settings at a large interface scale) still
+  // gets its whole height and a ruler with two rows of lanes above it.
+  const editorCap = $derived(Math.max(trayEditorCap(viewportH, TRAY_MAX_SHARE),
+    transportH + inspectorRoom + RULER_HEIGHT + 2 * TRACK_ROW_HEIGHT + GRID_SCROLLBAR_ALLOWANCE + 1));
+  const within = (cap: number): TrayLimits => ({ cap: Math.min(trayLimits.cap, cap), floor: Math.min(trayLimits.floor, cap) });
+  const autoH = $derived(clampTray(contentH, within(editorCap), (cuesOpen ? cueCeiling(viewportH) : autoCeiling(viewportH, hasTracks)) + padsRoom));
   const trayHeight = $derived(userHeight === null
     ? autoH
-    : clampTray(userHeight + padsRoom, trayLimits, dragCeiling(viewportH) + padsRoom));
+    : clampTray(userHeight + padsRoom, within(Math.max(editorCap, userHeight)), dragCeiling(viewportH) + padsRoom));
+
+  // In a tray at its cap the pads (a performance surface) take what a ruler
+  // and two rows of lanes leave, and scroll past that; they used to give
+  // way to a 64 px sliver that showed no pads at all.
+  const padsMax = $derived(Math.max(64, trayHeight - transportH - inspectorRoom - (RULER_HEIGHT + 2 * TRACK_ROW_HEIGHT + GRID_SCROLLBAR_ALLOWANCE) - 1));
 
   // Publish the live height so App.svelte can reserve viewport space for the
   // tray, the way it already does for the Presets / Sequencer / Keyframes
@@ -927,6 +951,8 @@
       const root = document.documentElement.style;
       root.setProperty('--ga-show-tray-height', open && !isTimeline ? `${trayHeight}px` : '0px');
       root.setProperty('--ga-timeline-tray-height', open && isTimeline ? `${trayHeight}px` : '0px');
+      // Toasts rise above the open tray (and the preview's zoom buttons).
+      root.setProperty('--ga-tray-toast-lift', open ? `${trayHeight + 52}px` : '0px');
     }
   });
 
@@ -1566,7 +1592,7 @@
     {#if ($takeoverPadsOpen && isTimeline) || phraseStripShown}
       <!-- The outer box may give way in a tight tray; the inner one reports
            the pads' own height, which the tray grows by. -->
-      <div class="pads-wrap" class:phrases-only={!($takeoverPadsOpen && isTimeline)}><div bind:clientHeight={padsH}>
+      <div class="pads-wrap" class:phrases-only={!($takeoverPadsOpen && isTimeline)} style:max-height="{padsMax}px"><div bind:clientHeight={padsH}>
         {#if phraseStripShown}<PhrasePads variant="timeline" />{/if}
         {#if $takeoverPadsOpen && isTimeline}<TakeoverPads />{/if}
       </div></div>
@@ -1576,7 +1602,7 @@
     <div class="show-main-col">
     <!-- Body: lane labels + scrolling grid -->
     <div class="show-body">
-      <div class="lane-labels" style="width: {labelWidth}px; flex-basis: {labelWidth}px" onwheel={handleLabelWheel}>
+      <div class="lane-labels" style="width: {labelWidth}px; flex-basis: {labelWidth}px" onwheel={handleLabelWheel} onscroll={labelsScrolled}>
         <div class="label-ruler-spacer" style="height: {RULER_HEIGHT}px"></div>
         <!-- Translated, not scrolled: the grid owns the scroll and the ruler
              spacer above has to stay pinned the way the sticky ruler does.
@@ -1989,7 +2015,7 @@
       </div>
     {:else if hasTracks}
       <div class="show-inspector insp-idle" bind:clientHeight={inspectorH}>
-        <span class="insp-hint">Each row is a mapping layer. Drop media on a row; click a block to edit it in Properties and Shader Parameters, or click a Media Library card to replace its media; click a row name for its settings. S splits at the playhead, Shift+Delete closes the gap, ? lists every key.</span>
+        <span class="insp-hint insp-idle-hint" title="Each row is a mapping layer. Drop media on a row; click a block to edit it in Properties and Shader Parameters, or click a Media Library card to replace its media; click a row name for its settings. S splits at the playhead, Shift+Delete closes the gap, ? lists every key.">Each row is a mapping layer. Drop media on a row; click a block to edit it in Properties and Shader Parameters, or click a Media Library card to replace its media; click a row name for its settings. S splits at the playhead, Shift+Delete closes the gap, ? lists every key.</span>
       </div>
     {/if}
 
@@ -2517,7 +2543,9 @@
   }
   .insp-wrap { flex: 0 0 auto; }
   .insp-idle { min-height: 36px; }
-  .pads-wrap { flex: 0 1 auto; min-height: 64px; overflow: hidden; }
+  /* In a tray at its cap the pads give way first, and scroll: every pad and
+     setting stays reachable. */
+  .pads-wrap { flex: 0 0 auto; min-height: 64px; overflow-x: hidden; overflow-y: auto; }
   .pads-wrap.phrases-only { min-height: 0; flex-shrink: 0; }
   .t-grid { max-width: 96px; }
   .t-seg { display: inline-flex; }
@@ -2642,6 +2670,18 @@
     color: var(--ga-ink-2, #888);
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     white-space: nowrap;
+  }
+  /* The idle hint is a paragraph: two lines in the reserved strip (longer
+     languages and narrow windows included), the rest in its tooltip. */
+  .insp-idle-hint {
+    flex: 1 1 0;
+    min-width: 0;
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
   }
   .insp-chip {
     height: var(--ga-control-h-sm, 22px);

@@ -7,7 +7,7 @@
   import type { ShowClipEndBehaviour, ShowLayerClip, ShowLayerTrack } from '../../../types';
   import { showTimeline } from '../../../stores/showTimeline';
   import { clipEnd } from '../../../show/tracks/showTrackEval';
-  import { portal } from './trackLayout';
+  import { keepInWindow, portal } from './trackLayout';
   import { CLIP_SWATCHES, revealClipInMediaTray } from './clipMenuActions';
   import { shortcutLabels } from './keyLabels';
 
@@ -90,6 +90,7 @@
   class="ccm"
   bind:this={el}
   use:portal
+  use:keepInWindow={pos}
   style:left="{pos.left}px"
   style:top="{pos.top}px"
   onmousedown={(e) => e.stopPropagation()}
@@ -97,6 +98,7 @@
   role="menu"
   tabindex="-1"
   data-clip-menu
+  data-help-disabled
 >
   <div class="ccm-head">{many ? `${ids.length} clips` : clip.label || clip.media.name}</div>
   <button class="ccm-item" role="menuitem" disabled={!canSplit} onclick={() => run(() => showTimeline.splitLayerClips(playhead, [clip.id]))} data-clip-menu="split">

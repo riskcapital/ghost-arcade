@@ -54,7 +54,7 @@
   {#if targets.length > 1}
     <div class="lp-targets">
       {#each targets as t, i (i)}
-        <button class="lp-target" class:on={i === which} onclick={() => (which = i)} data-line-picker-target={i}>{t.label}</button>
+        <button class="lp-target" class:on={i === which} onclick={() => (which = i)} title={t.label} data-line-picker-target={i}>{t.label}</button>
       {/each}
     </div>
   {/if}

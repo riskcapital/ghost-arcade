@@ -7,7 +7,7 @@ import { createDefaultStageEffect, getEffectDef, STAGE_EFFECT_CATALOG } from '..
 import { EFFECT_CATALOG } from '../../../effects/effectCatalog';
 import { isNativeSelectableEffect } from '../../../renderer/nativeEffectCoverage';
 import { generateUUID } from '../../../utils/uuid';
-import { stageClipName, type StageClipRow, type TimelineStageClip } from '../../../timeline/stagefx/stageClips';
+import { stageClipEnd, stageClipName, type StageClipRow, type TimelineStageClip } from '../../../timeline/stagefx/stageClips';
 
 export const STAGE_FX_ROW_HEIGHT = 30;
 export const STAGE_FX_ROWS: readonly StageClipRow[] = ['screenfx', 'effects'];
@@ -17,6 +17,22 @@ export const STAGE_FX_ROWS_HEIGHT = STAGE_FX_ROWS.length * STAGE_FX_ROW_HEIGHT;
 export const STAGE_ROW_NAMES: Record<StageClipRow, string> = { screenfx: 'Screen FX', effects: 'Effects' };
 
 /** The row under a y inside the two rows. */
+/** Where blocks of a row overlap (they crossfade there), one entry per pair
+ *  keyed by the pair's ids: two pairs can share a span (blocks stacked on
+ *  the same time), and a duplicate key would stop the tray rendering. */
+export function stageRowOverlaps(clips: readonly TimelineStageClip[]): Record<StageClipRow, Array<{ key: string; start: number; end: number }>> {
+  const out: Record<StageClipRow, Array<{ key: string; start: number; end: number }>> = { screenfx: [], effects: [] };
+  for (const row of STAGE_FX_ROWS) {
+    const list = clips.filter((c) => c.row === row);
+    for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
+      const start = Math.max(list[i].startTime, list[j].startTime);
+      const end = Math.min(stageClipEnd(list[i]), stageClipEnd(list[j]));
+      if (end - start > 1e-6) out[row].push({ key: `${list[i].id}:${list[j].id}`, start, end });
+    }
+  }
+  return out;
+}
+
 export function stageFxRowAtY(y: number): StageClipRow | null {
   if (y < 0) return null;
   return STAGE_FX_ROWS[Math.floor(y / STAGE_FX_ROW_HEIGHT)] ?? null;

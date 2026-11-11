@@ -4493,7 +4493,6 @@
         </button>
       </div>
 
-      <ShowUnderneathBanner />
       <div class="header-stage-slot">
       {#if $vjClipLauncher.isLive}
         <div class="header-stage">
@@ -6062,6 +6061,10 @@
             {/each}
             <button class="add-block-btn" onclick={handleAddBlock} title="Add new block" aria-label="Add new block">+</button>
           </div>
+          <!-- The show underneath and its Return live by the decks: in the
+               header they overran the MIX/STAGE/MAP toggle and the macro
+               bank below 1800 px. -->
+          <ShowUnderneathBanner />
           <div class="grid-snaps">
             <SnapshotBank placement="inline" />
           </div>
@@ -7305,7 +7308,9 @@
      wrapper takes the leftover lead-column width, the pill centres in it. */
   .header-stage-slot {
     display: flex;
-    flex: 1 1 auto;
+    /* Never narrower than the MIX/STAGE/MAP toggle: it overran the macro
+       bank when the show-underneath banner shared the lead column. */
+    flex: 1 0 auto;
     justify-content: center;
     min-width: 0;
   }
@@ -8274,8 +8279,10 @@
     }
   }
 
-  /* Narrow: the macro bank drops to a second row spanning both columns. */
-  @media (max-width: 1180px) {
+  /* Narrow: the macro bank drops to a second row spanning both columns.
+     Below ~1400 px the logo, File, master and the MIX/STAGE/MAP toggle no
+     longer fit beside a centred bank (the toggle went under the knobs). */
+  @media (max-width: 1400px) {
     .vj-header {
       grid-template-columns: 1fr auto;
       row-gap: 3px;

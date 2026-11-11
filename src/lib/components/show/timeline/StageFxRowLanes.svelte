@@ -8,13 +8,13 @@
    */
   import { showTimeline, type ShowTimelineSelection } from '../../../stores/showTimeline';
   import { showSlice } from './timelineSlices';
-  import { carriesStageDrag, readStageDrag, stageClipEnd, type StageClipRow, type TimelineStageClip } from '../../../timeline/stagefx/stageClips';
+  import { carriesStageDrag, readStageDrag, type StageClipRow, type TimelineStageClip } from '../../../timeline/stagefx/stageClips';
   import type { Effect, StageEffect } from '../../../types';
   import { followPointer } from './dragSession';
   import { trimEdgeWidth } from './trackLayout';
   import { formatPrecise } from './timeFormat';
   import WhereBand from './WhereBand.svelte';
-  import { STAGE_FX_ROWS, STAGE_FX_ROW_HEIGHT, STAGE_ROW_NAMES, blockName, newBlockEffect, newScreenFx, stageBlockBackground, stageFxRowAtY } from './stageFxRowsUi';
+  import { STAGE_FX_ROWS, STAGE_FX_ROW_HEIGHT, STAGE_ROW_NAMES, blockName, newBlockEffect, newScreenFx, stageBlockBackground, stageFxRowAtY, stageRowOverlaps } from './stageFxRowsUi';
 
   interface Props {
     zoom: number;
@@ -41,19 +41,8 @@
     }
     return out;
   });
-  /** Overlaps of each row (crossfades), as [start, end]. */
-  const overlaps = $derived.by(() => {
-    const out: Record<StageClipRow, Array<[number, number]>> = { screenfx: [], effects: [] };
-    for (const row of STAGE_FX_ROWS) {
-      const list = stageClips.filter((c) => c.row === row);
-      for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
-        const s = Math.max(list[i].startTime, list[j].startTime);
-        const e = Math.min(stageClipEnd(list[i]), stageClipEnd(list[j]));
-        if (e - s > 1e-6) out[row].push([s, e]);
-      }
-    }
-    return out;
-  });
+  /** Overlaps of each row (crossfades). */
+  const overlaps = $derived(stageRowOverlaps(stageClips));
 
   function timeAt(e: MouseEvent): number {
     const r = root!.getBoundingClientRect();
@@ -145,7 +134,7 @@
           <div class="handle right" onmousedown={(e) => pressBlock(e, clip, 'end')}></div>
         </div>
       {/each}
-      {#each overlaps[row] as [s, e] (`${s}:${e}`)}
+      {#each overlaps[row] as { key, start: s, end: e } (key)}
         <svg class="xfade" style:left="{s * zoom}px" style:width="{Math.max(2, (e - s) * zoom)}px" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
           <line x1="0" y1="0" x2="100" y2="100" /><line x1="0" y1="100" x2="100" y2="0" />
         </svg>
