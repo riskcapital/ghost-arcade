@@ -281,7 +281,7 @@ export function autoShowLookPalette(entry: AutoShowContent, mood?: AutoShowMood)
  * light content already moves like a rig, so it takes beat pulses and sweeps;
  * geometric content takes chases and checkers that agree with its edges;
  * organic content wants breathing and waves rather than hard cuts; glitch
- * takes random hits and splits. Strobe and inverse pulse black the stage out
+ * takes random hits and checkers. Strobe and inverse pulse black the stage out
  * between flashes; keep them for drops, and off dark-mood content.
  */
 export const AUTO_SHOW_SCREEN_FX: Record<AutoShowContent['texture'], Record<AutoShowTier, StageEffectType[]>> = {
