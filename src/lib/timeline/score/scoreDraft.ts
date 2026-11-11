@@ -176,20 +176,22 @@ function intensityAt(kind: SectionKind, energy: number): [number, number] {
 
 const round = (x: number) => Math.round(x * 1e6) / 1e6;
 
-/** The Screen FX for a section, timed to its bar (`bar` seconds). */
+/** The Screen FX for a section, timed to its bar (`bar` seconds). Accents
+ *  over the looks: mixed at 40–55 %, so a piece never drops below about half
+ *  its brightness and the looks stay readable. */
 export function screenFxFor(kind: SectionKind, energy: number, bar: number, id: string): StageEffect {
-  const fx = (type: StageEffectType, params: Record<string, number>, opacity = 0.85): StageEffect => ({ id, type, enabled: true, opacity, params });
+  const fx = (type: StageEffectType, params: Record<string, number>, opacity = 0.4): StageEffect => ({ id, type, enabled: true, opacity, params });
   const b = Math.max(0.2, bar);
   switch (kind) {
     // A flash on every beat, decaying over a third of it.
-    case 'drop': return fx('beat-pulse', { sensitivity: 1.4, decay: round(Math.max(0.08, (b / 4) * 0.6)), threshold: 0.08 }, 1);
+    case 'drop': return fx('beat-pulse', { sensitivity: 1.4, decay: round(Math.max(0.08, (b / 4) * 0.6)), threshold: 0.08 }, 0.55);
     // One pass across the stage per bar.
-    case 'build': return fx('linear-sweep', { angle: 0, speed: round(2 / b), bandWidth: 0.35, tail: 0.4 }, 0.9);
-    case 'intro': return fx('breathing', { speed: round(1 / (4 * b)), depth: 0.45, heartbeat: 0 }, 0.8);
-    case 'outro': return fx('breathing', { speed: round(1 / (4 * b)), depth: 0.6, heartbeat: 0 }, 0.8);
-    case 'breakdown': return fx('breathing', { speed: round(1 / (2 * b)), depth: 0.55, heartbeat: 0.3 }, 0.8);
-    case 'bridge': return fx('chase', { speed: round(1 / (2 * b)), width: 0.3 }, 0.75);
-    default: return fx('sine-wave', { speed: round(1 / (2 * b)), phaseSpread: 1.6, depth: round(0.35 + 0.3 * energy) }, 0.75);
+    case 'build': return fx('linear-sweep', { angle: 0, speed: round(2 / b), bandWidth: 0.35, tail: 0.4 }, 0.45);
+    case 'intro': return fx('breathing', { speed: round(1 / (4 * b)), depth: 0.45, heartbeat: 0 });
+    case 'outro': return fx('breathing', { speed: round(1 / (4 * b)), depth: 0.6, heartbeat: 0 });
+    case 'breakdown': return fx('breathing', { speed: round(1 / (2 * b)), depth: 0.55, heartbeat: 0.3 });
+    case 'bridge': return fx('chase', { speed: round(1 / (2 * b)), width: 0.3 });
+    default: return fx('sine-wave', { speed: round(1 / (2 * b)), phaseSpread: 1.6, depth: round(0.35 + 0.3 * energy) });
   }
 }
 

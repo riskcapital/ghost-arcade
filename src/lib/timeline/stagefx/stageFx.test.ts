@@ -33,6 +33,7 @@ import { createLineEvaluator } from '../lines/lineEvaluator';
 import type { ControlLine } from '../lines/lineModel';
 import { draftScore, sequentialIds, type ScoreStage } from '../score/scoreDraft';
 import { timelineRegistrySource } from '../lines/timelineLines';
+import { linesForStage } from '../../components/show/timeline/lineUi';
 
 function piece(id: string, x0: number, x1: number): Layer {
   return {
@@ -290,6 +291,12 @@ describe('store, save and load', () => {
     expect(get(showTimeline).stageClips).toEqual([]);
     // unreadable blocks are dropped, never thrown
     expect(normalizeStageClips([{ row: 'screenfx', screenFx: { type: 'nope' } }, null, { row: 'effects' }])).toEqual([]);
+  });
+
+  it('block lines show under the Stage row', () => {
+    const l = (id: string, target: any): ControlLine => ({ id, target, key: 'k', kind: 'continuous', min: 0, max: 1, points: [] });
+    const lines = [l('a', { scope: 'block', id: 'sfx1' }), l('b', { scope: 'block', id: 'piece-block' }), l('c', { scope: 'stage' })];
+    expect(linesForStage(lines, new Set(['sfx1'])).map((x) => x.id)).toEqual(['a', 'c']);
   });
 
   it('the line registry knows the blocks (Screen FX settings + where, Effects settings)', () => {
