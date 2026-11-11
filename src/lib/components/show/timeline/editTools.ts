@@ -1,7 +1,11 @@
 /**
  * The Timeline's editing tools and shuttle, as a video editor has them:
  *
- *   razor    C: a click on a block cuts it there (V goes back to selecting)
+ *   razor    C: a click on a block cuts it there
+ *   ripple   B: dragging an edge moves every later block on the row with it
+ *   roll     N: dragging the cut between two touching blocks moves both edges
+ *   slip     Y: dragging a block plays a different stretch of its media in place
+ *   select   V: back to selecting and moving
  *   shuttle  J plays backwards (each press doubles the speed, up to 8×),
  *            K stops, L plays
  *
@@ -11,8 +15,17 @@
 import { get, writable } from 'svelte/store';
 import { showTimeline } from '../../../stores/showTimeline';
 
-/** The razor is the pointer's tool. */
-export const razorTool = writable(false);
+export type EditTool = 'select' | 'razor' | 'ripple' | 'roll' | 'slip';
+export const EDIT_TOOLS: ReadonlyArray<{ id: EditTool; label: string; key: string; hint: string }> = [
+  { id: 'select', label: 'Select', key: 'V', hint: 'Select, move and trim blocks' },
+  { id: 'razor', label: 'Razor', key: 'C', hint: 'Click a block to cut it there' },
+  { id: 'ripple', label: 'Ripple', key: 'Shift+B', hint: 'Drag an edge: later blocks on the row move with it' },
+  { id: 'roll', label: 'Roll', key: 'N', hint: 'Drag the cut between two touching blocks' },
+  { id: 'slip', label: 'Slip', key: 'Y', hint: 'Drag a block to play a different part of its media in place' },
+];
+
+/** The pointer's tool on the Timeline's blocks. */
+export const editTool = writable<EditTool>('select');
 
 /** Seconds per frame for ← / → steps. */
 export const FRAME_SECONDS = 1 / 30;
@@ -85,5 +98,5 @@ export function stepFrame(direction: -1 | 1): void {
 /** Test seam. */
 export function _resetEditToolsForTest(): void {
   stopReverse();
-  razorTool.set(false);
+  editTool.set('select');
 }

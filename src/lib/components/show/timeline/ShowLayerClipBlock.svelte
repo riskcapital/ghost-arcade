@@ -17,7 +17,7 @@
   import { clipFades, clipLoopStart, clipRate, mediaEnd, SHOW_CLIP_END_GUARD_SECONDS } from '../../../show/tracks/showTrackEval';
   import { trimEdgeWidth, type ClipPart } from './trackLayout';
   import WhereBand from './WhereBand.svelte';
-  import { razorTool } from './editTools';
+  import { editTool } from './editTools';
   import { showTimeline } from '../../../stores/showTimeline';
 
   interface Props {
@@ -76,7 +76,7 @@
 
   function press(e: MouseEvent, part: ClipPart) {
     // The razor (C): a click cuts the block where it lands.
-    if ($razorTool && e.button === 0 && !locked) {
+    if ($editTool === 'razor' && e.button === 0 && !locked) {
       const block = (e.currentTarget as HTMLElement).closest('.lc-block') as HTMLElement | null;
       if (block) {
         e.preventDefault();
@@ -95,7 +95,9 @@
   class="lc-block"
   class:selected
   class:locked
-  class:razor={$razorTool && !locked}
+  class:razor={$editTool === 'razor' && !locked}
+  class:slip={$editTool === 'slip' && !locked}
+  class:edge-tool={($editTool === 'ripple' || $editTool === 'roll') && !locked}
   class:narrow={width < 48}
   style:left="{left}px"
   style:width="{width}px"
@@ -167,6 +169,10 @@
   }
   /* The razor (C): every part of the block cuts. */
   .lc-block.razor, .lc-block.razor :global(*) { cursor: crosshair; }
+  /* Slip (Y): the block's media slides under it. */
+  .lc-block.slip, .lc-block.slip :global(*) { cursor: ew-resize; }
+  /* Ripple and roll (B, N) work on the edges. */
+  .lc-block.edge-tool .lc-edge { cursor: col-resize; }
   .lc-block {
     --clip-color: #8b7cff;
     position: absolute;

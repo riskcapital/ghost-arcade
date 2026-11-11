@@ -120,6 +120,9 @@ import {
   moveClipsAcrossTracks,
   pasteClips,
   rippleDelete,
+  rippleTrim,
+  rollEdit,
+  slipClip,
   shiftLaneKeys,
   splitClip,
   trimClip,
@@ -3425,6 +3428,36 @@ export const showTimeline = {
     if (!clips) return;
     this._setTrackClips(found.track.id, clips);
     recordShowEdit(`layer-trim:${clipId}:${edge}`);
+  },
+
+  /** Ripple trim (B): one edge to `time`, later clips on the row move with it. */
+  rippleTrimLayerClip(clipId: string, edge: 'start' | 'end', time: number) {
+    const found = this.findLayerClip(clipId);
+    if (!found || found.track.locked) return;
+    const clips = rippleTrim(found.track.clips, clipId, edge, Math.max(0, time));
+    if (!clips) return;
+    this._setTrackClips(found.track.id, clips);
+    recordShowEdit(`layer-ripple:${clipId}:${edge}`);
+  },
+
+  /** Roll edit (N): the cut between two touching clips to `time`. */
+  rollLayerEdit(leftId: string, rightId: string, time: number) {
+    const found = this.findLayerClip(leftId);
+    if (!found || found.track.locked || !found.track.clips.some((c) => c.id === rightId)) return;
+    const clips = rollEdit(found.track.clips, leftId, rightId, time);
+    if (!clips) return;
+    this._setTrackClips(found.track.id, clips);
+    recordShowEdit(`layer-roll:${leftId}:${rightId}`);
+  },
+
+  /** Slip (Y): the clip plays `mediaDelta` seconds later in its media, in the same place. */
+  slipLayerClip(clipId: string, mediaDelta: number) {
+    const found = this.findLayerClip(clipId);
+    if (!found || found.track.locked) return;
+    const clips = slipClip(found.track.clips, clipId, mediaDelta);
+    if (!clips) return;
+    this._setTrackClips(found.track.id, clips);
+    recordShowEdit(`layer-slip:${clipId}`);
   },
 
   /**

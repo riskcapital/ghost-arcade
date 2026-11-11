@@ -106,7 +106,6 @@ describe('showDropEffect', () => {
       [{ key: 'Backspace', shiftKey: true }, 'rippleDelete'],
       [{ key: 'ArrowLeft' }, 'nudgeLeft'],
       [{ key: 'ArrowRight', shiftKey: true }, 'nudgeBarRight'],
-      [{ key: 'n' }, 'toggleSnap'],
       [{ key: 'M' }, 'marker'],
       [{ key: 'Home' }, 'home'],
       [{ key: 'End' }, 'end'],
@@ -157,7 +156,11 @@ describe('showDropEffect', () => {
       [{ key: 'c' }, 'razor'],
       [{ key: 'v' }, 'selectTool'],
       [{ key: 'u' }, 'toggleLines'],
-      [{ key: 'n' }, 'toggleSnap'],
+      [{ key: 'n' }, 'rollTool'],
+      [{ key: 'y' }, 'slipTool'],
+      [{ key: 'B', shiftKey: true }, 'rippleTool'],
+      [{ key: 'b' }, null],
+      [{ key: 's' }, 'toggleSnap'],
     ];
     for (const [e, want] of cases) expect(classifyShowKey(e as any, ctx), JSON.stringify(e)).toBe(want);
   });

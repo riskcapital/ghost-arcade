@@ -198,3 +198,44 @@ describe('live edit with the playhead parked', () => {
     expect(blocks()).toEqual([['a.mp4', 0, 2], ['again.mp4', 2, 6], ['gap.mp4', 8, 18]]);
   });
 });
+
+describe('ripple, roll and slip', () => {
+  function row() {
+    showTimeline.openDoc('timeline');
+    const ids = rows([['a', 0, 4], ['b', 4, 4], ['c', 10, 2]]);
+    const name = Object.fromEntries(Object.entries(ids).map(([k, v]) => [v, k]));
+    const blocks = () => get(showTimeline).layerTracks[0].clips.map((c) => [name[c.id], +c.startTime.toFixed(3), +(c.startTime + c.duration).toFixed(3), +c.inPoint.toFixed(3)]);
+    return { ids, blocks };
+  }
+
+  it('ripple: an end edge moves every later block with it, no gap and nothing covered', () => {
+    const { ids, blocks } = row();
+    showTimeline.rippleTrimLayerClip(ids.a, 'end', 3);
+    expect(blocks()).toEqual([['a', 0, 3, 0], ['b', 3, 7, 0], ['c', 9, 11, 0]]);
+    showTimeline.rippleTrimLayerClip(ids.a, 'end', 5);
+    expect(blocks()).toEqual([['a', 0, 5, 0], ['b', 5, 9, 0], ['c', 11, 13, 0]]);
+  });
+
+  it('ripple: a start edge trims the media and pulls the later blocks back', () => {
+    const { ids, blocks } = row();
+    showTimeline.rippleTrimLayerClip(ids.b, 'start', 5);
+    expect(blocks()).toEqual([['a', 0, 4, 0], ['b', 4, 7, 1], ['c', 9, 11, 0]]);
+  });
+
+  it('roll: the cut between touching blocks moves, the right block keeps its picture', () => {
+    const { ids, blocks } = row();
+    showTimeline.rollLayerEdit(ids.a, ids.b, 5);
+    expect(blocks()).toEqual([['a', 0, 5, 0], ['b', 5, 8, 1], ['c', 10, 12, 0]]);
+    // Blocks that do not touch do not roll.
+    showTimeline.rollLayerEdit(ids.b, ids.c, 9);
+    expect(blocks()).toEqual([['a', 0, 5, 0], ['b', 5, 8, 1], ['c', 10, 12, 0]]);
+  });
+
+  it('slip: the block stays put and plays a later stretch of its media', () => {
+    const { ids, blocks } = row();
+    showTimeline.slipLayerClip(ids.c, 3);
+    expect(blocks()).toEqual([['a', 0, 4, 0], ['b', 4, 8, 0], ['c', 10, 12, 3]]);
+    showTimeline.slipLayerClip(ids.c, -10);
+    expect(blocks()).toEqual([['a', 0, 4, 0], ['b', 4, 8, 0], ['c', 10, 12, 0]]);
+  });
+});

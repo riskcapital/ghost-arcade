@@ -142,7 +142,7 @@
     toggleFocusedLines,
     trimToPlayhead,
   } from './show/timeline/trackCommands';
-  import { razorTool, shuttleBack, shuttleForward, shuttleStop, stepFrame } from './show/timeline/editTools';
+  import { EDIT_TOOLS, editTool, shuttleBack, shuttleForward, shuttleStop, stepFrame } from './show/timeline/editTools';
 
   // ── Show state, field by field ──────────────────────────────────────────
   // The store publishes a new state object on every playhead frame. Reading
@@ -1221,10 +1221,19 @@
         trimToPlayhead(action === 'trimStart' ? 'start' : 'end');
         return true;
       case 'razor':
-        razorTool.set(!get(razorTool));
+        editTool.set('razor');
+        return true;
+      case 'rippleTool':
+        editTool.set('ripple');
+        return true;
+      case 'rollTool':
+        editTool.set('roll');
+        return true;
+      case 'slipTool':
+        editTool.set('slip');
         return true;
       case 'selectTool':
-        razorTool.set(false);
+        editTool.set('select');
         return true;
       case 'toggleLines':
         return toggleFocusedLines();
@@ -1548,9 +1557,19 @@
         Snap
       </button>
       {#if isTimeline && layerTracks.length}
-        <button class="t-chip" class:active={$razorTool} onclick={() => razorTool.set(!$razorTool)} title="Razor (C): click a block to cut it there. V goes back to selecting" aria-pressed={$razorTool} data-show-razor>
-          Razor
-        </button>
+        <select
+          class="t-select t-tool"
+          class:tool-on={$editTool !== 'select'}
+          value={$editTool}
+          onchange={(e) => editTool.set((e.currentTarget as HTMLSelectElement).value as typeof $editTool)}
+          title={EDIT_TOOLS.find((t) => t.id === $editTool)?.hint ?? ''}
+          aria-label="Editing tool"
+          data-show-tool
+        >
+          {#each EDIT_TOOLS as tool}
+            <option value={tool.id}>{tool.label} ({tool.key})</option>
+          {/each}
+        </select>
       {/if}
       {#if tempo}
         <select
@@ -2349,6 +2368,8 @@
     max-width: 170px;
     font-family: inherit;
   }
+  /* The editing tool: lit in the royal blue while it is not Select. */
+  .t-select.tool-on { border-color: var(--ga-icon, #5278ff); color: #fff; }
   .t-time {
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: var(--ga-text-control, 12px);

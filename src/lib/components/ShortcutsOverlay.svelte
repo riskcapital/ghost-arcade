@@ -69,6 +69,9 @@
           <div class="shortcut-row"><kbd>Space</kbd><span>Play / pause (show tray open)</span></div>
           <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>K</kbd><span>Split clips at the playhead</span></div>
           <div class="shortcut-row"><kbd>C</kbd> / <kbd>V</kbd><span>Razor (click a clip to cut it there) / select</span></div>
+          <div class="shortcut-row"><kbd>Shift</kbd>+<kbd>B</kbd><span>Ripple: drag an edge and later clips on the row move with it</span></div>
+          <div class="shortcut-row"><kbd>N</kbd><span>Roll: drag the cut between two touching clips</span></div>
+          <div class="shortcut-row"><kbd>Y</kbd><span>Slip: drag a clip to play a different part of its media</span></div>
           <div class="shortcut-row"><kbd>J</kbd> <kbd>K</kbd> <kbd>L</kbd><span>Play backwards (again: faster), stop, play</span></div>
           <div class="shortcut-row"><kbd>I</kbd> / <kbd>O</kbd><span>In / out point; with Loop on, play loops between them</span></div>
           <div class="shortcut-row"><kbd>Shift</kbd>+<kbd>I</kbd> / <kbd>O</kbd><span>Go to the in / out point</span></div>
@@ -85,7 +88,7 @@
           <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>A</kbd><span>Select every clip</span></div>
           <div class="shortcut-row"><kbd>←</kbd><kbd>→</kbd><span>Nudge the selection one grid step</span></div>
           <div class="shortcut-row"><kbd>Shift</kbd>+<kbd>←</kbd><kbd>→</kbd><span>Nudge the selection one bar</span></div>
-          <div class="shortcut-row"><kbd>S</kbd> / <kbd>N</kbd><span>Snap on / off</span></div>
+          <div class="shortcut-row"><kbd>S</kbd><span>Snap on / off</span></div>
           <div class="shortcut-row"><kbd>M</kbd><span>Marker at the playhead</span></div>
           <div class="shortcut-row"><kbd>Home</kbd> / <kbd>End</kbd><span>Go to the start / end</span></div>
           <div class="shortcut-row"><kbd>Shift</kbd>+<kbd>L</kbd><span>Take the focused track over live, or hand it back</span></div>

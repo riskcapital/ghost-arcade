@@ -106,6 +106,84 @@ export function placeOnTrack(
   return placeOnLane(clips.filter((c) => !ignore.has(c.id)), desiredStart, duration);
 }
 
+/** The latest media time a clip may start from and still fill `duration` (a 'stop' video). */
+function maxInPoint(clip: ShowLayerClip, duration: number): number {
+  if (clip.endBehaviour !== 'stop') return Number.POSITIVE_INFINITY;
+  const end = mediaEnd(clip.media);
+  return Number.isFinite(end) ? Math.max(0, end - duration * clipRate(clip)) : Number.POSITIVE_INFINITY;
+}
+
+/**
+ * Ripple trim (B): drag an edge and every later clip on the track moves with
+ * the change, so no gap opens and nothing is covered. The start edge keeps
+ * the clip where it is and trims its media, the end edge lengthens or
+ * shortens it. Null when nothing changes.
+ */
+export function rippleTrim(clips: readonly ShowLayerClip[], clipId: string, edge: 'start' | 'end', time: number): ShowLayerClip[] | null {
+  const clip = clips.find((c) => c.id === clipId);
+  if (!clip) return null;
+  const rate = clipRate(clip);
+  const oldEnd = clipEnd(clip);
+  let next: ShowLayerClip;
+  if (edge === 'end') {
+    const duration = Math.max(SHOW_MIN_TRACK_CLIP_SECONDS, Math.min(time - clip.startTime, maxClipDurationForMedia(clip)));
+    if (Math.abs(duration - clip.duration) < EPS) return null;
+    next = { ...clip, duration };
+  } else {
+    // Trimmed from the front: the clip keeps its place, its media starts later (or earlier).
+    const earliest = clip.media.kind === 'video' ? -clip.inPoint / rate : Number.NEGATIVE_INFINITY;
+    const delta = Math.max(earliest, Math.min(time - clip.startTime, clip.duration - SHOW_MIN_TRACK_CLIP_SECONDS));
+    if (Math.abs(delta) < EPS) return null;
+    const inPoint = Math.max(0, clip.inPoint + delta * rate);
+    next = { ...clip, duration: clip.duration - delta, inPoint };
+    if (clip.loopStart !== undefined) next.loopStart = Math.min(clip.loopStart, inPoint);
+  }
+  const shift = clipEnd(next) - oldEnd;
+  return sortClips(clips.map((c) => {
+    if (c.id === clipId) return withClampedFades(next);
+    return c.startTime >= oldEnd - EPS ? { ...c, startTime: Math.max(0, c.startTime + shift) } : c;
+  }));
+}
+
+/**
+ * Roll edit (N): move the cut between two touching clips. The left clip ends
+ * and the right one starts at `time`; the right clip's media moves with its
+ * start so its picture stays in place. Nothing else moves. Null when the
+ * clips do not touch or nothing changes.
+ */
+export function rollEdit(clips: readonly ShowLayerClip[], leftId: string, rightId: string, time: number): ShowLayerClip[] | null {
+  const left = clips.find((c) => c.id === leftId);
+  const right = clips.find((c) => c.id === rightId);
+  if (!left || !right || Math.abs(clipEnd(left) - right.startTime) > 1e-4) return null;
+  const rate = clipRate(right);
+  const lo = Math.max(left.startTime + SHOW_MIN_TRACK_CLIP_SECONDS, right.media.kind === 'video' ? right.startTime - right.inPoint / rate : Number.NEGATIVE_INFINITY);
+  const hi = Math.min(clipEnd(right) - SHOW_MIN_TRACK_CLIP_SECONDS, left.startTime + maxClipDurationForMedia(left));
+  if (!(hi > lo)) return null;
+  const cut = Math.max(lo, Math.min(hi, time));
+  if (Math.abs(cut - right.startTime) < EPS) return null;
+  const delta = cut - right.startTime;
+  const inPoint = Math.max(0, right.inPoint + delta * rate);
+  const nextLeft: ShowLayerClip = { ...left, duration: cut - left.startTime };
+  const nextRight: ShowLayerClip = { ...right, startTime: cut, duration: clipEnd(right) - cut, inPoint };
+  if (right.loopStart !== undefined) nextRight.loopStart = Math.min(right.loopStart, inPoint);
+  return sortClips(clips.map((c) => (c.id === leftId ? withClampedFades(nextLeft) : c.id === rightId ? withClampedFades(nextRight) : c)));
+}
+
+/**
+ * Slip (Y): play a different stretch of the clip's media without moving the
+ * clip. `mediaDelta` seconds of media later (or earlier when negative).
+ * Null when nothing changes.
+ */
+export function slipClip(clips: readonly ShowLayerClip[], clipId: string, mediaDelta: number): ShowLayerClip[] | null {
+  const clip = clips.find((c) => c.id === clipId);
+  if (!clip || !Number.isFinite(mediaDelta)) return null;
+  const inPoint = Math.max(0, Math.min(maxInPoint(clip, clip.duration), clip.inPoint + mediaDelta));
+  if (Math.abs(inPoint - clip.inPoint) < EPS) return null;
+  const next: ShowLayerClip = { ...clip, inPoint };
+  if (clip.loopStart !== undefined) next.loopStart = Math.min(clip.loopStart, inPoint);
+  return clips.map((c) => (c.id === clipId ? next : c));
+}
+
 /**
  * The clips with show time [start, end) cleared, as an overwrite edit does:
  * clips inside are dropped, a clip across an edge is cut there (its media

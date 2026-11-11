@@ -62,8 +62,11 @@ export type ShowKeyAction =
   /** Q / W: trim the block's start or end to the playhead. */
   | 'trimStart'
   | 'trimEnd'
-  /** C: the razor (click a block to cut it there); V: back to selecting. */
+  /** The editing tools: C razor, Shift+B ripple (B stays Blackout), N roll, Y slip, V select. */
   | 'razor'
+  | 'rippleTool'
+  | 'rollTool'
+  | 'slipTool'
   | 'selectTool'
   /** U: show or hide the focused row's lines. */
   | 'toggleLines';
@@ -146,6 +149,8 @@ export function classifyShowKey(e: KeyLike, ctx: ShowKeyContext): ShowKeyAction 
   if (key === 'l' && e.shiftKey) return ctx.hasTracks ? (e.repeat ? 'heldTakeoverKey' : 'takeover') : null;
   if (key === 'i' && e.shiftKey) return 'goIn';
   if (key === 'o' && e.shiftKey) return 'goOut';
+  // Shift+B: B alone stays Blackout, which must work from anywhere in a show.
+  if (key === 'b' && e.shiftKey) return ctx.hasTracks ? 'rippleTool' : null;
   if (e.shiftKey) return null;
   if (key === 'j') return 'shuttleBack';
   if (key === 'k') return 'shuttleStop';
@@ -159,8 +164,10 @@ export function classifyShowKey(e: KeyLike, ctx: ShowKeyContext): ShowKeyAction 
   if (key === 'w') return ctx.hasTracks ? 'trimEnd' : null;
   if (key === 'c') return ctx.hasTracks ? 'razor' : null;
   if (key === 'v') return 'selectTool';
+  if (key === 'n') return ctx.hasTracks ? 'rollTool' : null;
+  if (key === 'y') return ctx.hasTracks ? 'slipTool' : null;
   if (key === 'u') return ctx.hasTracks ? 'toggleLines' : null;
-  if (key === 's' || key === 'n') return 'toggleSnap';
+  if (key === 's') return 'toggleSnap';
   if (key === 'm') return 'marker';
   if (key === 'Enter') return ctx.hasSections && !e.repeat ? 'go' : null;
   if (key === 'Home') return 'home';
