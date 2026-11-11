@@ -87,8 +87,11 @@ how quietly it can be played and still count (**Sens**), whether it is heard
 band effects (the looper records each input at its own level, whatever its send). **Add input** starts the next one on the same
 device and the next channel. Each device is opened once and split into its
 channels; a channel the device does not send says so instead of staying
-silent. Call-audio processing (echo cancelling, noise suppression, auto gain)
-is off. The inputs are saved with the project (`liveInputs`); a project from
+silent. An interface that is unplugged mid-set (or not there when listening
+starts) is waited for: when the computer reports a device plugged in, it is
+opened again and its inputs come back by themselves; only a device that was
+refused or is busy ends the listening. Call-audio processing (echo
+cancelling, noise suppression, auto gain) is off. The inputs are saved with the project (`liveInputs`); a project from
 before has its one input as the first.
 
 The tracker reads the raw signal about 80 times a second, on its own timer:
@@ -177,6 +180,15 @@ last until the studio closes and are never saved: the project file and a
 song keep what the pads held before they were chopped. The looper records
 each band input at its own level, before its effects send. A recording is
 capped at 32 seconds.
+
+**Timing**: the band's sound reaches the computer a little late and the
+loop's sound leaves it a little late, so a recording is taken that much
+later than its bar lines (at the same length), and the band's beat lands on
+the bar line when the loop plays. The delay is read from the browser (the
+inputs' latency plus the output's) and shown in the Looper tab; **−** and
+**+** move the next loops 5 ms later or earlier by ear, kept on this
+computer, and **As measured** goes back to the measurement. It is limited to
+between 50 ms early and 250 ms late, which the take's head always covers.
 
 Kill lets the throw, the wash and the freeze go, drops a recording and stops
 the loops; closing the studio also frees the loops and puts chopped pads back.

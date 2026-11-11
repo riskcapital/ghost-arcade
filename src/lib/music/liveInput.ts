@@ -18,6 +18,8 @@ import { MAX_DEVICE_CHANNELS, channelError, coarseLevel, groupInputsByDevice, id
 const POLL_MS = 12;
 /** The status lights refresh at most this often. */
 const STATUS_MS = 100;
+/** How long device changes must settle (a USB interface comes up in steps) before unplugged inputs are opened again. */
+const REOPEN_SETTLE_MS = 700;
 /** Samples each tracker reads; a bass needs a longer look for its low notes. */
 const BLOCK = 2048;
 const LOW_BLOCK = 4096;
@@ -76,6 +78,8 @@ interface Device {
   opening: boolean;
   /** Let go: a stream arriving after that is closed at once. */
   closed: boolean;
+  /** Failed because it was unplugged or not there: opened again when a device is plugged in. */
+  retryable: boolean;
 }
 
 interface Wiring {
@@ -96,10 +100,16 @@ interface Input {
   error: string | null;
 }
 
+/** Unplugged or not there (not refused, not busy): worth trying again when a device is plugged in. */
+function absent(err: unknown): boolean {
+  const name = (err as { name?: string })?.name;
+  return name === 'NotFoundError' || name === 'OverconstrainedError';
+}
+
 function openError(err: unknown): string {
   const name = (err as { name?: string })?.name;
   if (name === 'NotAllowedError') return 'Audio input was not allowed.';
-  if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'That audio input is not connected.';
+  if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'That audio input is not connected. It starts when it is plugged in.';
   return 'The audio input could not be opened.';
 }
 
@@ -122,8 +132,15 @@ export class LiveInputs {
   private timer: ReturnType<typeof setInterval> | null = null;
   private status: BandInputStatus[] = [];
   private lastStatusAt = 0;
+  private watching = false;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly hooks: LiveInputsHooks) {}
+
+  /** A device was unplugged (or not there) and is waited for: it comes back when it is plugged in. */
+  get waiting(): boolean {
+    return [...this.devices.values()].some((device) => device.retryable && !device.stream && !device.opening);
+  }
 
   /** Some input is coming in. */
   get running(): boolean {
@@ -155,6 +172,17 @@ export class LiveInputs {
     return this.status;
   }
 
+  /** The longest delay of an open device on the way in, in seconds, as the browser reports it (0 when it does not). */
+  inputLatency(): number {
+    let longest = 0;
+    for (const device of this.devices.values()) {
+      const settings = device.stream?.getAudioTracks()[0]?.getSettings?.() as (MediaTrackSettings & { latency?: number }) | undefined;
+      const latency = Number(settings?.latency);
+      if (Number.isFinite(latency) && latency > longest && latency < 1) longest = latency;
+    }
+    return longest;
+  }
+
   /**
    * Open every input afresh (a device that failed is tried again). Resolves
    * once every device has opened or failed; a stop() or another start()
@@ -175,6 +203,7 @@ export class LiveInputs {
     if (this.ctx && this.ctx !== ctx) this.stop();
     this.ctx = ctx;
     this.into = into;
+    this.watchDevices(true);
     // Inputs that went away let go of their notes.
     while (this.inputs.length > specs.length) this.dropInput(this.inputs.length - 1);
     specs.forEach((spec, i) => {
@@ -203,6 +232,7 @@ export class LiveInputs {
 
   /** Let every input go: streams closed, nodes disconnected, held notes ended. */
   stop(): void {
+    this.watchDevices(false);
     for (const device of [...this.devices.values()]) this.closeDevice(device);
     while (this.inputs.length) this.dropInput(this.inputs.length - 1);
     this.stopTimer();
@@ -210,8 +240,47 @@ export class LiveInputs {
     this.publish(true);
   }
 
+  /**
+   * Devices plugged in or out: once things settle, open again every device
+   * that was unplugged or not there, so an interface that drops out mid-set
+   * comes back by itself.
+   */
+  private readonly onDeviceChange = (): void => {
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      void this.reopenAbsent();
+    }, REOPEN_SETTLE_MS);
+  };
+
+  private watchDevices(on: boolean): void {
+    if (!on && this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
+    const media = typeof navigator !== 'undefined' ? navigator.mediaDevices : undefined;
+    if (on === this.watching || typeof media?.addEventListener !== 'function') return;
+    this.watching = on;
+    if (on) media.addEventListener('devicechange', this.onDeviceChange);
+    else media.removeEventListener('devicechange', this.onDeviceChange);
+  }
+
+  /** Open again the devices waited for (a device still not there just fails again, and is still waited for). */
+  async reopenAbsent(): Promise<void> {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const absentDevices = [...this.devices.values()].filter((device) => device.retryable && !device.stream && !device.opening);
+    if (!absentDevices.length) return;
+    const groups = groupInputsByDevice(this.inputs.map((input) => input.spec), this.inputs.map((input) => input.spec.deviceId));
+    await Promise.all(absentDevices.map((device) => {
+      const group = groups.find((g) => g.deviceId === device.deviceId);
+      this.closeDevice(device);
+      return group ? this.openDevice(ctx, device.deviceId, group.channels) : Promise.resolve();
+    }));
+  }
+
   private async openDevice(ctx: AudioContext, deviceId: string, channels: number): Promise<void> {
-    const device: Device = { deviceId, channels, stream: null, source: null, splitter: null, delivered: null, error: null, opening: true, closed: false };
+    const device: Device = { deviceId, channels, stream: null, source: null, splitter: null, delivered: null, error: null, opening: true, closed: false, retryable: false };
     this.devices.set(deviceId, device);
     let stream: MediaStream;
     try {
@@ -229,6 +298,7 @@ export class LiveInputs {
       device.opening = false;
       if (device.closed) return;
       device.error = openError(err);
+      device.retryable = absent(err);
       this.rewire();
       return;
     }
@@ -253,7 +323,8 @@ export class LiveInputs {
     for (const track of stream.getAudioTracks()) track.addEventListener('ended', () => {
       if (device.closed || device.stream !== stream) return;
       this.releaseDevice(device);
-      device.error = 'The audio input was disconnected.';
+      device.error = 'The audio input was disconnected. It comes back when it is plugged in again.';
+      device.retryable = true;
       this.rewire();
     });
     this.rewire();

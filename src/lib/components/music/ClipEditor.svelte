@@ -352,7 +352,7 @@
           </label>
           <label class="labelled">Length
             <select value={clip.beats} onchange={(e) => setLength(+(e.target as HTMLSelectElement).value)}>
-              {#each LENGTHS.includes(clip.beats) ? LENGTHS : [...LENGTHS, clip.beats].sort((a, b) => a - b) as b}<option value={b}>{b % 4 === 0 ? `${b / 4} bar${b === 4 ? '' : 's'}` : `${b} beats`}</option>{/each}
+              {#each LENGTHS.includes(clip.beats) ? LENGTHS : [...LENGTHS, clip.beats].sort((a, b) => a - b) as b}<option value={b}>{b === 4 ? '1 bar' : b % 4 === 0 ? `${b / 4} bars` : `${b} beats`}</option>{/each}
             </select>
           </label>
           <label class="labelled">Snap

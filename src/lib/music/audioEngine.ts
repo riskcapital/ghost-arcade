@@ -541,6 +541,14 @@ export class MusicAudioEngine {
     return this.looper!;
   }
 
+  /** The delay from the audio clock to the speakers, in seconds, as the browser reports it. */
+  outputLatency(): number {
+    const ctx = this.ctx as (AudioContext & { outputLatency?: number }) | null;
+    if (!ctx) return 0;
+    const total = (Number(ctx.baseLatency) || 0) + (Number(ctx.outputLatency) || 0);
+    return total > 0 && total < 1 ? total : 0;
+  }
+
   /** When the sound last fired on a pad ends, on the music clock (Infinity while an atmosphere plays). */
   padEnd(index: number): number | null {
     return this.padEnds.get(index) ?? null;

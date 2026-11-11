@@ -235,3 +235,15 @@ describe('chops', () => {
     expect(chopPlayback(0, 24000, 192000, SR, { size: 0.5, tail: 0.5, tone: 1 }).highpass).toBeCloseTo(1200, 6);
   });
 });
+
+describe('the timing lag', () => {
+  it('adds the adjustment to what was measured, and keeps it in range', async () => {
+    const { lagFrames, MAX_LAG_SECONDS, MIN_LAG_SECONDS } = await import('./looperMath');
+    expect(lagFrames(0.02, 5, 48000)).toBe(1200);
+    expect(lagFrames(0, -10, 48000)).toBe(-480);
+    expect(lagFrames(NaN, 0, 48000)).toBe(0);
+    expect(lagFrames(-1, 0, 48000)).toBe(0);
+    expect(lagFrames(2, 0, 48000)).toBe(Math.round(MAX_LAG_SECONDS * 48000));
+    expect(lagFrames(0, -500, 48000)).toBe(Math.round(MIN_LAG_SECONDS * 48000));
+  });
+});

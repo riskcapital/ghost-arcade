@@ -3,9 +3,11 @@
  * the Looper panel and a MIDI controller use, what the panel shows, and the
  * chops put on (and taken off) the FX pads.
  *
- * The studio's runtime attaches its audio engine (attachLooper), which also
- * registers the looper's studio controls, so they answer a MIDI controller
- * while the Studio view is hidden. Loops and chops are this session's
+ * The studio's runtime attaches its audio engine (attachLooper) and says
+ * where the sound's delay in and out of the computer is read
+ * (setLooperLatency). The looper's studio controls are registered as this
+ * module loads, so they answer a MIDI controller while the Studio view is
+ * hidden. Loops and chops are this session's
  * audio: the kill switch stops them, and closing the studio lets them go
  * and puts the pads back.
  */
@@ -13,7 +15,7 @@
 import { get, writable } from 'svelte/store';
 import type { MusicAudioEngine } from './audioEngine';
 import { LOOP_SLOT_IDS, LOOP_SLOT_NAMES, type BandLooper, type LoopSlotId, type LoopSlotState } from './bandLooper';
-import { MAX_RECORD_SECONDS, countInBeats, longestLength, recordProgress, type LoopLength } from './looperMath';
+import { MAX_LAG_SECONDS, MAX_RECORD_SECONDS, MIN_LAG_SECONDS, countInBeats, longestLength, recordProgress, type LoopLength } from './looperMath';
 import { launchClockPosition } from '../stores/launchClock';
 import { musicStudio } from './musicStudioStore';
 import type { FxPads } from './soundSlots';
@@ -47,13 +49,32 @@ export interface LooperView {
   /** About the last recording (it was cut to fit). */
   note: string | null;
   error: string | null;
+  /**
+   * How much later than its bar lines a recording is taken, in ms: the
+   * sound's delay in and out of the computer as measured, plus the
+   * performer's adjustment (kept on this computer).
+   */
+  timing: { measuredMs: number; offsetMs: number; totalMs: number };
+}
+
+const OFFSET_KEY = 'ghostarcade-looper-timing-offset';
+/** The adjustment's step and range, in ms. */
+export const TIMING_STEP_MS = 5;
+const OFFSET_RANGE_MS = 150;
+
+function loadOffset(): number {
+  try {
+    const n = Number(localStorage.getItem(OFFSET_KEY));
+    return Number.isFinite(n) ? Math.max(-OFFSET_RANGE_MS, Math.min(OFFSET_RANGE_MS, Math.round(n))) : 0;
+  } catch {
+    return 0;
+  }
 }
 
 const DEFAULT_LEVEL = 0.8;
 
 let engine: MusicAudioEngine | null = null;
 let current: BandLooper | null = null;
-let controlsRegistered = false;
 /** The press being got ready (0: none): a press, cancel or kill meanwhile drops it. */
 let arming = 0;
 let serial = 0;
@@ -63,6 +84,9 @@ let selected: LoopSlotId = 0;
 const levels = LOOP_SLOT_IDS.map(() => DEFAULT_LEVEL);
 let note: string | null = null;
 let error: string | null = null;
+let offsetMs = loadOffset();
+/** The sound's delay in and out of the computer, in seconds; the studio's runtime says where it is read. */
+let measureLatency: () => number = () => 0;
 
 export const looperState = writable<LooperView>(view());
 
@@ -99,7 +123,32 @@ function view(): LooperView {
     }),
     note,
     error,
+    timing: timingView(),
   };
+}
+
+function timingView(): LooperView['timing'] {
+  const measuredMs = Math.round(Math.max(0, measureLatency() || 0) * 1000);
+  // As the looper uses it (lagFrames): kept in range.
+  const totalMs = Math.max(MIN_LAG_SECONDS * 1000, Math.min(MAX_LAG_SECONDS * 1000, measuredMs + offsetMs));
+  return { measuredMs, offsetMs, totalMs };
+}
+
+/** Where the sound's delay in and out of the computer is read (seconds): the band inputs and the audio output. */
+export function setLooperLatency(measure: () => number): void {
+  measureLatency = measure;
+  publish();
+}
+
+/** Take recordings a little later (loops sounded late) or earlier (they sounded early), by `stepMs`. Kept on this computer. */
+export function nudgeLooperTiming(stepMs: number): void {
+  setLooperTimingOffset(offsetMs + stepMs);
+}
+
+export function setLooperTimingOffset(ms: number): void {
+  offsetMs = Math.max(-OFFSET_RANGE_MS, Math.min(OFFSET_RANGE_MS, Math.round(Number(ms) || 0)));
+  try { localStorage.setItem(OFFSET_KEY, String(offsetMs)); } catch { /* the choice lasts the session */ }
+  publish();
 }
 
 function publish(): void {
@@ -127,6 +176,7 @@ function looper(): BandLooper | null {
   if (l !== current) {
     current = l;
     l.setClock(() => launchClockPosition());
+    l.setLatency(() => ({ measured: measureLatency() || 0, offsetMs }));
     l.onChange = publish;
     for (const id of LOOP_SLOT_IDS) l.setLevel(id, levels[id]);
   }
@@ -136,15 +186,18 @@ function looper(): BandLooper | null {
 /** Called once by the studio's runtime with its audio engine. */
 export function attachLooper(audio: MusicAudioEngine): void {
   engine = audio;
-  if (controlsRegistered) return;
-  controlsRegistered = true;
-  registerStudioControls([
-    { id: 'looper.record', label: 'Looper record', group: 'Looper', kind: 'trigger', run: () => toggleLooperRecord() },
-    { id: 'looper.play-a', label: 'Play loop A', group: 'Looper', kind: 'toggle', run: () => toggleLoopPlay(0) },
-    { id: 'looper.play-b', label: 'Play loop B', group: 'Looper', kind: 'toggle', run: () => toggleLoopPlay(1) },
-    { id: 'looper.chop', label: 'Chop loop to pads', group: 'Looper', kind: 'trigger', run: () => void chopToPads() },
-  ]);
 }
+
+// Registered as this module loads (with the studio's runtime), so a
+// controller reaches the looper while the Studio view is hidden, whichever
+// panel was opened first. Before the runtime starts there is no looper, and
+// these do nothing.
+registerStudioControls([
+  { id: 'looper.record', label: 'Looper record', group: 'Looper', kind: 'trigger', run: () => toggleLooperRecord() },
+  { id: 'looper.play-a', label: 'Play loop A', group: 'Looper', kind: 'toggle', run: () => toggleLoopPlay(0) },
+  { id: 'looper.play-b', label: 'Play loop B', group: 'Looper', kind: 'toggle', run: () => toggleLoopPlay(1) },
+  { id: 'looper.chop', label: 'Chop loop to pads', group: 'Looper', kind: 'trigger', run: () => void chopToPads() },
+]);
 
 // ── Recording ──
 

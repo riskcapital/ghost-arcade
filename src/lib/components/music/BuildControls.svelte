@@ -27,7 +27,7 @@
     style="--p: {$buildState.progress}"
     onclick={toggleBuild}
     oncontextmenu={(e) => { e.preventDefault(); editing = !editing; }}
-    title={building ? 'Building: press again to cancel' : `Build up for ${b.bars} bar${b.bars === 1 ? '' : 's'} and drop on the bar line. Right-click to edit.`}
+    title={building ? 'Building: press again to cancel' : b.bars === 1 ? 'Build up for 1 bar and drop on the bar line. Right-click to edit.' : `Build up for ${b.bars} bars and drop on the bar line. Right-click to edit.`}
     data-midi-path="studio:build.toggle"
     data-midi-label="Build up (again to cancel)"
     data-midi-mode="toggle"
@@ -37,7 +37,7 @@
   </button>
   <button class="go drop" onclick={dropNow} title="Drop on the next bar line" data-midi-path="studio:build.drop" data-midi-label="Drop on the next bar" data-midi-mode="toggle">Drop</button>
   <select value={b.bars} onchange={(e) => musicStudio.setBuild({ bars: +(e.target as HTMLSelectElement).value as BuildLength })} aria-label="Build length" title="How long the build runs">
-    {#each BUILD_LENGTHS as n}<option value={n}>{n} bar{n === 1 ? '' : 's'}</option>{/each}
+    {#each BUILD_LENGTHS as n}<option value={n}>{n === 1 ? '1 bar' : `${n} bars`}</option>{/each}
   </select>
   <select value={b.style} onchange={(e) => musicStudio.setBuild({ style: (e.target as HTMLSelectElement).value as BuildStyle })} aria-label="Build style">
     {#each BUILD_STYLES as st (st.id)}<option value={st.id}>{st.label}</option>{/each}

@@ -217,7 +217,8 @@
               {#each shape(item.loop) as r}<rect x={r.x} y={r.y} width={r.w} height={r.h} />{/each}
             </svg>
             <div class="meta">
-              <span>{item.style} · {ROLES.find((r) => r.id === item.track)?.label ?? item.track} · {item.bars} bar{item.bars === 1 ? '' : 's'}{item.tone ? ` · ${item.tone}` : ''}</span>
+              <!-- The bars in an element of their own, so the language packs translate them whole. -->
+              <span>{item.style} · {ROLES.find((r) => r.id === item.track)?.label ?? item.track} · <span>{item.bars === 1 ? '1 bar' : `${item.bars} bars`}</span>{item.tone ? ` · ${item.tone}` : ''}</span>
               <button class="add" onclick={(e) => { e.stopPropagation(); add(item); }} title={target.row !== null && target.track === item.track ? `Put it in row ${target.row + 1}` : 'Add it to its track'}>Add</button>
             </div>
           </div>

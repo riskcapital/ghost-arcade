@@ -25,6 +25,16 @@ export const MAX_RECORD_SECONDS = 32;
 /** A recording starts at least this far ahead, so the request reaches the audio thread before the bar line. */
 export const MIN_LEAD_SECONDS = 0.03;
 
+/**
+ * How far a recording is moved later than its bar lines, to make up for the
+ * time the band's sound takes into the computer and the loop's sound takes
+ * back out (so the band's beat lands on the next bar line when the loop
+ * plays). Never more than the head of a take covers.
+ */
+export const MAX_LAG_SECONDS = 0.25;
+/** A little the other way, for a measurement that is too high. */
+export const MIN_LAG_SECONDS = -0.05;
+
 /** Where the launch clock is: a beat position and how long a beat lasts. */
 export interface ClockReading {
   beat: number;
@@ -260,4 +270,11 @@ export function chopPlayback(start: number, end: number, total: number, sampleRa
     lowpass: tone < 0.48 ? 250 * Math.pow(80, tone * 2) : null,
     highpass: tone > 0.52 ? 30 * Math.pow(40, (tone - 0.5) * 2) : null,
   };
+}
+
+/** The lag in frames: what was measured (seconds, never below 0) plus the performer's adjustment (ms), kept in range. */
+export function lagFrames(measuredSeconds: number, offsetMs: number, sampleRate: number): number {
+  const measured = Number.isFinite(measuredSeconds) ? Math.max(0, measuredSeconds) : 0;
+  const offset = Number.isFinite(offsetMs) ? offsetMs / 1000 : 0;
+  return Math.round(clamp(measured + offset, MIN_LAG_SECONDS, MAX_LAG_SECONDS) * sampleRate);
 }

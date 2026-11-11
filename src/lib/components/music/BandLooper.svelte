@@ -4,7 +4,7 @@
    * chopped onto the FX pads.
    */
   import { musicStudio } from '../../music/musicStudioStore';
-  import { chopToPads, looperState, putBackPads, selectLoopSlot, setLoopLevel, setLooperLength, toggleLoopPlay, toggleLooperRecord } from '../../music/looperRuntime';
+  import { TIMING_STEP_MS, chopToPads, looperState, nudgeLooperTiming, putBackPads, selectLoopSlot, setLoopLevel, setLooperLength, setLooperTimingOffset, toggleLoopPlay, toggleLooperRecord } from '../../music/looperRuntime';
   import { LOOP_SLOT_IDS, LOOP_SLOT_NAMES, type LoopSlotId } from '../../music/bandLooper';
   import { LOOP_LENGTHS } from '../../music/looperMath';
   import { isChopId } from '../../music/sounds/chops';
@@ -13,7 +13,7 @@
   const v = $derived($looperState);
   const s = $derived($musicStudio);
   const name = (id: LoopSlotId) => LOOP_SLOT_NAMES[id];
-  const plural = (n: number) => `${n} bar${n === 1 ? '' : 's'}`;
+  const plural = (n: number) => (n === 1 ? '1 bar' : `${n} bars`);
   const percent = (x: number) => `${Math.round(x * 100)}%`;
 
   const busy = $derived(v.phase !== 'off');
@@ -38,6 +38,11 @@
     return 'Records the band from the next bar line and loops it in time.';
   });
 
+  const t = $derived(v.timing);
+  const timingTitle = $derived(
+    `Loops are moved ${t.totalMs} ms to make up for the sound's delay into and out of the computer (${t.measuredMs} ms measured${t.offsetMs ? `, ${t.offsetMs > 0 ? '+' : ''}${t.offsetMs} ms by ear` : ''}). Kept on this computer.`,
+  );
+
   function playLabel(id: LoopSlotId): string {
     const state = v.slots[id].state;
     return state === 'playing' ? `Playing ${name(id)}` : state === 'queued' ? 'Next bar' : `Play ${name(id)}`;
@@ -52,74 +57,93 @@
 </script>
 
 <section class="looper">
-  <span class="ga-eyebrow">Looper</span>
-  <div class="row choices">
-    <div class="ga-segmented small" role="group" aria-label="Bars to record">
-      {#each LOOP_LENGTHS as bars (bars)}
-        <button class:active={v.length === bars} aria-pressed={v.length === bars} onclick={() => setLooperLength(bars)} title="Record {plural(bars)}">{bars}</button>
-      {/each}
-    </div>
-    <div class="ga-segmented small" role="group" aria-label="Loop to record into and chop">
-      {#each LOOP_SLOT_IDS as id (id)}
-        <button class:active={v.slot === id} aria-pressed={v.slot === id} onclick={() => selectLoopSlot(id)} title="Record into loop {name(id)}, and chop it">{name(id)}</button>
-      {/each}
-    </div>
-  </div>
-
-  <div class="row">
-    <div class="rec-col">
-      <button
-        class="hold rec"
-        class:on={v.phase === 'rec'}
-        class:count={v.phase === 'count' || v.phase === 'arming'}
-        aria-pressed={busy}
-        onclick={toggleLooperRecord}
-        title={recordTitle}
-        data-midi-path="studio:looper.record"
-        data-midi-label="Looper record"
-      ><span class="dot" aria-hidden="true"></span>{recordLabel}</button>
-      <span class="progress" role="progressbar" aria-label="Recording" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(v.progress * 100)}>
-        <span class="fill" style="width: {v.phase === 'rec' ? v.progress * 100 : 0}%"></span>
-      </span>
-    </div>
-    {#each LOOP_SLOT_IDS as id (id)}
-      {@const slot = v.slots[id]}
-      <div class="slot">
-        <button
-          class="hold"
-          class:on={slot.state === 'playing'}
-          class:queued={slot.state === 'queued'}
-          aria-pressed={slot.state === 'playing' || slot.state === 'queued'}
-          disabled={slot.state === 'empty'}
-          onclick={() => toggleLoopPlay(id)}
-          title={playTitle(id)}
-          data-midi-path="studio:looper.play-{id === 0 ? 'a' : 'b'}"
-          data-midi-label="Play loop {name(id)}"
-        >{playLabel(id)}</button>
-        <StudioKnob label="Level" value={slot.level} defaultValue={0.8} size={24} format={percent} title="How loud loop {name(id)} plays" onchange={(x) => setLoopLevel(id, x)} />
+  <div class="col main">
+    <span class="ga-eyebrow">Looper</span>
+    <div class="row choices">
+      <div class="ga-segmented small" role="group" aria-label="Bars to record">
+        {#each LOOP_LENGTHS as bars (bars)}
+          <button class:active={v.length === bars} aria-pressed={v.length === bars} onclick={() => setLooperLength(bars)} title="Record {plural(bars)}">{bars}</button>
+        {/each}
       </div>
-    {/each}
+      <div class="ga-segmented small" role="group" aria-label="Loop to record into and chop">
+        {#each LOOP_SLOT_IDS as id (id)}
+          <button class:active={v.slot === id} aria-pressed={v.slot === id} onclick={() => selectLoopSlot(id)} title="Record into loop {name(id)}, and chop it">{name(id)}</button>
+        {/each}
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="rec-col">
+        <button
+          class="hold rec"
+          class:on={v.phase === 'rec'}
+          class:count={v.phase === 'count' || v.phase === 'arming'}
+          aria-pressed={busy}
+          onclick={toggleLooperRecord}
+          title={recordTitle}
+          data-midi-path="studio:looper.record"
+          data-midi-label="Looper record"
+        ><span class="dot" aria-hidden="true"></span>{recordLabel}</button>
+        <span class="progress" role="progressbar" aria-label="Recording" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(v.progress * 100)}>
+          <span class="fill" style="width: {v.phase === 'rec' ? v.progress * 100 : 0}%"></span>
+        </span>
+      </div>
+      {#each LOOP_SLOT_IDS as id (id)}
+        {@const slot = v.slots[id]}
+        <div class="slot">
+          <button
+            class="hold"
+            class:on={slot.state === 'playing'}
+            class:queued={slot.state === 'queued'}
+            aria-pressed={slot.state === 'playing' || slot.state === 'queued'}
+            disabled={slot.state === 'empty'}
+            onclick={() => toggleLoopPlay(id)}
+            title={playTitle(id)}
+            data-midi-path="studio:looper.play-{id === 0 ? 'a' : 'b'}"
+            data-midi-label="Play loop {name(id)}"
+          >{playLabel(id)}</button>
+          <StudioKnob label="Level" value={slot.level} defaultValue={0.8} size={24} format={percent} title="How loud loop {name(id)} plays" onchange={(x) => setLoopLevel(id, x)} />
+        </div>
+      {/each}
+    </div>
+
+    <span class="status" aria-live="polite">{status}</span>
+    {#if v.error}<span class="error" role="alert">{v.error}</span>{:else if v.note}<span class="hint">{v.note}</span>{/if}
   </div>
 
-  <span class="status" aria-live="polite">{status}</span>
-  {#if v.error}<span class="error" role="alert">{v.error}</span>{:else if v.note}<span class="hint">{v.note}</span>{/if}
+  <div class="col side">
+    <span class="ga-eyebrow">Chops</span>
+    <div class="row">
+      <button
+        class="studio-btn"
+        disabled={!hasLoop}
+        onclick={() => chopToPads()}
+        title="Slice loop {name(v.slot)} into eight and put the slices on this set's FX pads"
+        data-midi-path="studio:looper.chop"
+        data-midi-label="Chop loop to pads"
+      >Chop to pads</button>
+      <button class="studio-btn" disabled={!padsChopped} onclick={putBackPads} title="Put back the sounds the FX pads had before they were chopped">Put back pads</button>
+    </div>
+    <span class="hint">Chops play from the FX pads until the studio closes. They are not saved with the project.</span>
 
-  <div class="row">
-    <button
-      class="studio-btn"
-      disabled={!hasLoop}
-      onclick={() => chopToPads()}
-      title="Slice loop {name(v.slot)} into eight and put the slices on this set's FX pads"
-      data-midi-path="studio:looper.chop"
-      data-midi-label="Chop loop to pads"
-    >Chop to pads</button>
-    <button class="studio-btn" disabled={!padsChopped} onclick={putBackPads} title="Put back the sounds the FX pads had before they were chopped">Put back pads</button>
+    <span class="ga-eyebrow">Timing</span>
+    <div class="row timing" role="group" aria-label="Loop timing">
+      <button class="icon-btn step" onclick={() => nudgeLooperTiming(-TIMING_STEP_MS)} aria-label="Loops sound early" title="Loops sound early? This moves the next ones {TIMING_STEP_MS} ms later">−</button>
+      <span class="timing-value" title={timingTitle}>{t.totalMs} ms</span>
+      <button class="icon-btn step" onclick={() => nudgeLooperTiming(TIMING_STEP_MS)} aria-label="Loops sound late" title="Loops sound late? This moves the next ones {TIMING_STEP_MS} ms earlier">+</button>
+      {#if t.offsetMs !== 0}
+        <button class="text-btn small" onclick={() => setLooperTimingOffset(0)} title="Back to the measured delay alone">As measured</button>
+      {/if}
+    </div>
   </div>
-  <span class="hint">Chops play from the FX pads until the studio closes. They are not saved with the project.</span>
 </section>
 
 <style>
-  section { display: flex; flex-direction: column; gap: 6px; min-width: 0; max-width: 300px; }
+  /* Recording on the left; chops and timing beside it, or under it when the panel is narrow. */
+  section { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px 32px; min-width: 0; }
+  .col { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .main { width: 300px; max-width: 100%; }
+  .side { width: 260px; max-width: 100%; }
   .row { display: flex; align-items: flex-start; gap: 8px; }
   .choices { align-items: center; }
   .rec-col, .slot { display: flex; flex-direction: column; align-items: center; gap: 4px; }
@@ -162,4 +186,7 @@
   .status { font-size: var(--ga-text-control, 12px); color: var(--studio-ink); font-variant-numeric: tabular-nums; }
   .hint { font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); line-height: 1.35; }
   .error { font-size: var(--ga-text-meta, 11px); color: var(--ga-danger, #ff6b6b); }
+  .timing { align-items: center; gap: 4px; }
+  .timing-value { min-width: 48px; text-align: center; font-size: var(--ga-text-control, 12px); color: var(--studio-ink); font-variant-numeric: tabular-nums; }
+  .step { width: 24px; height: 24px; display: inline-grid; place-items: center; }
 </style>

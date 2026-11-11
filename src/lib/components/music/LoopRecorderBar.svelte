@@ -82,7 +82,7 @@
   </button>
   <div class="ga-segmented small" role="group" aria-label="Bars to record">
     {#each RECORD_LENGTHS as bars}
-      <button class:active={s.recordLength === bars} aria-pressed={s.recordLength === bars} onclick={() => musicStudio.setRecordLength(bars as RecordLength)} title={bars ? `Record ${bars} bar${bars === 1 ? '' : 's'}` : 'Record until stopped'}>{bars || 'Free'}</button>
+      <button class:active={s.recordLength === bars} aria-pressed={s.recordLength === bars} onclick={() => musicStudio.setRecordLength(bars as RecordLength)} title={bars === 1 ? 'Record 1 bar' : bars ? `Record ${bars} bars` : 'Record until stopped'}>{bars || 'Free'}</button>
     {/each}
   </div>
   {#if !compact}

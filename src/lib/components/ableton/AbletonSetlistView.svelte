@@ -120,7 +120,7 @@
     });
     if (!event) return `${song.sections.length > 1 ? label : song.title} loops until you press Next`;
     const bars = Math.ceil((event.at - at) / perBar);
-    const when = bars <= 0 ? 'now' : `in ${bars} bar${bars === 1 ? '' : 's'}`;
+    const when = bars <= 0 ? 'now' : bars === 1 ? 'in 1 bar' : `in ${bars} bars`;
     if (event.kind === 'section') return `${song.sections[event.index].label} ${when}`;
     if (event.kind === 'next') return `${upcoming?.title} ${mixBars ? 'mixes in' : 'starts'} ${when}`;
     return `Set ends ${when}`;

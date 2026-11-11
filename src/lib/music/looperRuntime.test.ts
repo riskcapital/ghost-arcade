@@ -22,6 +22,7 @@ function fakeLooper() {
   const fake = {
     cleared: 0,
     setClock() {},
+    setLatency() {},
     setLevel() {},
     onChange: null,
     recording: null,

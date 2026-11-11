@@ -32,6 +32,7 @@ import {
   nextBarBeat,
   phaseError,
   recordWindow,
+  lagFrames,
   shortenWindow,
   startRate,
   timeOfBeat,
@@ -90,6 +91,8 @@ interface Recording {
   id: number;
   slot: LoopSlotId;
   window: RecordWindow;
+  /** Frames the capture runs behind the bar lines (lagFrames). */
+  lag: number;
   headBuffer: AudioBuffer | null;
   head: Faded | null;
   watchdog: ReturnType<typeof setTimeout> | null;
@@ -121,6 +124,8 @@ export class BandLooper {
   private ticker: ReturnType<typeof setInterval> | null = null;
   /** Called when something the panel shows changes on its own (a take came back, a loop started on its bar). */
   onChange: (() => void) | null = null;
+  /** The sound's way in and out of the computer (seconds), and the performer's adjustment (ms). */
+  private latency: () => { measured: number; offsetMs: number } = () => ({ measured: 0, offsetMs: 0 });
 
   constructor(private readonly ctx: AudioContext, private readonly band: AudioNode, out: AudioNode) {
     this.slots = LOOP_SLOT_IDS.map(() => {
@@ -134,6 +139,15 @@ export class BandLooper {
   /** Where the launch clock is now. Recordings and loops land on its bar lines. */
   setClock(clock: () => ClockReading): void {
     this.clock = clock;
+  }
+
+  /**
+   * Where the sound's delay in and out of the computer is read from. Each
+   * recording is taken that much later than its bar lines, so the band's
+   * beat lands on the bar line when the loop plays.
+   */
+  setLatency(latency: () => { measured: number; offsetMs: number }): void {
+    this.latency = latency;
   }
 
   /** The audio clock. */
@@ -180,10 +194,13 @@ export class BandLooper {
     // Allocated here, not on the audio thread, and handed over.
     const channels = [new Float32Array(length), new Float32Array(length)];
     const head = [new Float32Array(headLength), new Float32Array(headLength)];
-    const rec: Recording = { id: ++this.serial, slot: id, window, headBuffer: null, head: null, watchdog: null, done };
+    const { measured, offsetMs } = this.latency();
+    const lag = lagFrames(measured, offsetMs, sr);
+    const rec: Recording = { id: ++this.serial, slot: id, window, lag, headBuffer: null, head: null, watchdog: null, done };
     this.rec = rec;
+    // The same length, taken `lag` frames after the bar lines: what the band played on them.
     node.port.postMessage(
-      { type: 'record', id: rec.id, start: window.startFrame, end: window.endFrame, channels, head },
+      { type: 'record', id: rec.id, start: window.startFrame + lag, end: window.endFrame + lag, channels, head },
       [...channels, ...head].map((c) => c.buffer),
     );
     this.armWatchdog(rec);
@@ -197,7 +214,7 @@ export class BandLooper {
     const window = shortenWindow(rec.window, this.ctx.currentTime, this.ctx.sampleRate);
     if (window === rec.window) return window;
     rec.window = window;
-    this.capture.port.postMessage({ type: 'end', id: rec.id, end: window.endFrame });
+    this.capture.port.postMessage({ type: 'end', id: rec.id, end: window.endFrame + rec.lag });
     this.armWatchdog(rec);
     this.scheduleHead(rec);
     return window;
@@ -458,7 +475,7 @@ export class BandLooper {
 
   private armWatchdog(rec: Recording): void {
     if (rec.watchdog) clearTimeout(rec.watchdog);
-    const wait = Math.max(0, (rec.window.endTime - this.ctx.currentTime) * 1000) + TAKE_TIMEOUT_MS;
+    const wait = Math.max(0, (rec.window.endTime + rec.lag / this.ctx.sampleRate - this.ctx.currentTime) * 1000) + TAKE_TIMEOUT_MS;
     rec.watchdog = setTimeout(() => {
       if (this.rec !== rec) return;
       this.cancelRecording();

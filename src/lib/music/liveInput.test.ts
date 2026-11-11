@@ -163,7 +163,7 @@ describe('LiveInputs', () => {
     pending[0].reject(Object.assign(new Error('x'), { name: 'NotFoundError' }));
     pending[1].resolve(fakeStream().stream);
     await opening;
-    expect(inputs.statuses()[0]).toMatchObject({ on: false, error: 'That audio input is not connected.' });
+    expect(inputs.statuses()[0]).toMatchObject({ on: false, error: 'That audio input is not connected. It starts when it is plugged in.' });
     expect(inputs.isOn(1)).toBe(true);
     // A failed device is not tried again on every change.
     await inputs.sync(ctx, [spec({ deviceId: 'gone', sensitivity: 0.9 }), spec({ deviceId: 'here' })], strips().into);
@@ -215,8 +215,46 @@ describe('LiveInputs', () => {
     s.ended.forEach((fn) => fn());
     expect(inputs.isOn(0)).toBe(false);
     expect(inputs.open).toBe(false);
-    expect(inputs.statuses()[0].error).toBe('The audio input was disconnected.');
+    expect(inputs.statuses()[0].error).toBe('The audio input was disconnected. It comes back when it is plugged in again.');
+    expect(inputs.waiting).toBe(true);
     expect(vi.getTimerCount()).toBe(0);
     await flush;
+  });
+
+  it('opens an unplugged device again when it is plugged back in, and stops waiting once stopped', async () => {
+    vi.useFakeTimers();
+    const pending = deferredInputs();
+    const changes: Listener[] = [];
+    const media = (navigator as unknown as { mediaDevices: Record<string, unknown> }).mediaDevices;
+    media.addEventListener = vi.fn((type: string, fn: Listener) => { if (type === 'devicechange') changes.push(fn); });
+    media.removeEventListener = vi.fn((type: string, fn: Listener) => { const i = changes.indexOf(fn); if (i >= 0) changes.splice(i, 1); });
+    const inputs = new LiveInputs({ onEvents: () => {} });
+    const { ctx } = fakeContext();
+    const opening = inputs.start(ctx, [spec({ deviceId: 'iface', channel: 0 }), spec({ deviceId: 'iface', channel: 1 })], strips().into);
+    const first = fakeStream(2);
+    pending[0].resolve(first.stream);
+    await opening;
+    expect([inputs.isOn(0), inputs.isOn(1)]).toEqual([true, true]);
+    // The USB cable is knocked out, and plugged back in.
+    first.ended.forEach((fn) => fn());
+    expect(inputs.waiting).toBe(true);
+    changes.forEach((fn) => fn());
+    changes.forEach((fn) => fn());
+    vi.advanceTimersByTime(700);
+    // Once, for both inputs on it, with the same channels asked for.
+    expect(pending).toHaveLength(2);
+    expect((pending[1].constraints.audio as MediaTrackConstraints).deviceId).toEqual({ exact: 'iface' });
+    pending[1].resolve(fakeStream(2).stream);
+    await vi.advanceTimersByTimeAsync(0);
+    expect([inputs.isOn(0), inputs.isOn(1)]).toEqual([true, true]);
+    expect(inputs.waiting).toBe(false);
+    // A device refused (not unplugged) is not waited for.
+    inputs.stop();
+    expect(changes).toHaveLength(0);
+    const refused = inputs.start(ctx, [spec({ deviceId: 'mic' })], strips().into);
+    pending[2].reject(Object.assign(new Error('x'), { name: 'NotAllowedError' }));
+    await refused;
+    expect(inputs.waiting).toBe(false);
+    inputs.stop();
   });
 });

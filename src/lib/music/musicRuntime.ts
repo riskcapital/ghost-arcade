@@ -106,7 +106,7 @@ import { editStudio, studioTargetNow } from './studioTarget';
 import { MAX_STUDIO_VOICES, normalizeStudioSource, type StudioVoice } from './studioPlugin';
 import { soundById } from './sounds/library';
 import { KeyFinder, type KeyGuess } from './keyFinder';
-import { attachLooper, killLooper, stopLooper } from './looperRuntime';
+import { attachLooper, killLooper, setLooperLatency, stopLooper } from './looperRuntime';
 import type { VoiceSourceId } from './visualVoices';
 import { BandFxVisuals } from './bandFxVisuals';
 // The studio's MIDI controls and the band's keys answer while the Studio view is hidden.
@@ -2339,7 +2339,7 @@ export function wakeStudioVisuals(): void {
 /** How each band input is doing: coming in, why not, and its level in coarse steps. */
 export const bandInputStatus = writable<BandInputStatus[]>([]);
 
-/** Listening was asked for; it ends by itself when every device has failed or gone. */
+/** Listening was asked for; it ends by itself when every device has failed for good (not just been unplugged). */
 let bandListening = false;
 let syncedInputs: unknown = null;
 let syncedDevices: unknown = null;
@@ -2373,11 +2373,12 @@ function heardFromInput(index: number, events: TrackerEvent[]): void {
 
 function publishInputStatus(statuses: BandInputStatus[]): void {
   bandInputStatus.set(statuses);
-  // Every device failed or went away: listening ends (the errors stay to read).
-  if (bandListening && !bandInputs.open && !bandInputs.pending && statuses.some((st) => st.error)) bandListening = false;
+  // Every device failed (refused, busy): listening ends, the errors stay to read.
+  // An unplugged device is waited for instead: it comes back when plugged in.
+  if (bandListening && !bandInputs.open && !bandInputs.pending && !bandInputs.waiting && statuses.some((st) => st.error)) bandListening = false;
   const s = get(musicStudio);
-  // On while listening, a device reopening (its device just changed) included.
-  const on = bandListening && (bandInputs.open || bandInputs.pending);
+  // On while listening, a device reopening (its device just changed) or waited for included.
+  const on = bandListening && (bandInputs.open || bandInputs.pending || bandInputs.waiting);
   const { error } = overallInputStatus(statuses, s.liveInputs);
   if (on !== s.inputOn || error !== s.inputError) musicStudio.setInputStatus(on, error);
 }
@@ -2502,6 +2503,8 @@ export function ensureMusicRuntime(): void {
   setStudioDriver(drivenForStudio);
   // The band looper's actions and MIDI controls (looperRuntime.ts).
   attachLooper(audio);
+  // The band's way in (its inputs) and the loops' way out (the audio output), so loops land on the bar.
+  setLooperLatency(() => bandInputs.inputLatency() + audio.outputLatency());
   // Risers land on the next bar line of the launch clock.
   audio.setBarClock(() => {
     const { beat, beatMs } = launchClockPosition();
