@@ -65,7 +65,7 @@ export interface AutoShowPalette {
 export const STYLE_MOODS: Record<ShowStyle, AutoShowMood[]> = {
   chill: ['warm', 'cool', 'mono'],
   groove: ['warm', 'cool', 'acid'],
-  driving: ['cool', 'acid', 'dark'],
+  driving: ['cool', 'acid', 'warm'],
   hard: ['dark', 'acid', 'mono'],
   cinematic: ['dark', 'cool', 'warm'],
 };

@@ -90,8 +90,12 @@ export const ACCENT_LOOKS: Record<AutoShowTier, readonly string[]> = {
 };
 
 /** Looks are accents over the content: the energy line runs them at this
- *  share of Score's intensity, so the outlines never outshine the picture. */
-const LOOK_ACCENT = 0.65;
+ *  share of Score's intensity, so the outlines never outshine the picture —
+ *  least where content fills every piece (verses, drops), most where pieces
+ *  are dark around it (intro, breakdown, outro). */
+const LOOK_ACCENT: Record<SectionKind, number> = {
+  intro: 0.65, breakdown: 0.65, outro: 0.6, build: 0.5, drop: 0.35, verse: 0.35, bridge: 0.4, other: 0.4,
+};
 
 export interface AutoShowStage extends ScoreStage {
   /** The mapping layers (for the groups). */
@@ -329,7 +333,7 @@ export function draftAutoShow(input: AutoShowInput): AutoShowDraft {
             let passBars = Math.max(0.5, Math.min(rules.buildBars, phrase));
             for (let t = p.start, i = 0; t < p.end - 1e-6 && i < 32; i++) {
               const next = Math.min(p.end, barsAfter(tempo, t, phrase));
-              block('stage', m, moodNow, t, next, whereOn(order, { kind: 'sweep', bars: passBars }, { spread: 0.35, soft: 0.5, wrap: true, span: m.scale.includes('span') }));
+              block('stage', m, moodNow, t, next, whereOn(order, { kind: 'sweep', bars: passBars }, { spread: 0.6, soft: 0.6, wrap: true, span: m.scale.includes('span') }));
               passBars = Math.max(0.25, passBars / 2);
               t = next;
             }
@@ -485,7 +489,7 @@ export function draftAutoShow(input: AutoShowInput): AutoShowDraft {
 
   // The energy line steps once a bar (no audio follow): on eighty pieces a
   // line that moves every frame re-dresses every piece every frame.
-  const lines = base.lines.map((l) => (l.key === 'look:intensity' && l.target.scope === 'look' ? steppedEnergyLine(l, plan, structure.bars) : l));
+  const lines = base.lines.map((l) => (l.key === 'look:intensity' && l.target.scope === 'look' ? steppedEnergyLine(l, plan, structure.bars, (t) => LOOK_ACCENT[plan.find((p) => t >= p.start - 1e-6 && t < p.end - 1e-6)?.kind ?? 'other']) : l));
   const sections = base.sections;
   const draft: AutoShowDraft = {
     sections, lookClips, lines, ledClips: base.ledClips, stageClips, adds, skips, plan: base.plan,
@@ -500,7 +504,7 @@ export function draftAutoShow(input: AutoShowInput): AutoShowDraft {
 /** Score's energy line held a bar at a time: each bar takes the line's value
  *  at its start (builds climb bar by bar, the outro steps down), and it no
  *  longer follows the song's level frame by frame. */
-export function steppedEnergyLine(line: import('../lines/lineModel').ControlLine, plan: ReadonlyArray<{ start: number; end: number }>, bars: readonly number[]): import('../lines/lineModel').ControlLine {
+export function steppedEnergyLine(line: import('../lines/lineModel').ControlLine, plan: ReadonlyArray<{ start: number; end: number }>, bars: readonly number[], scale: (t: number) => number = () => 1): import('../lines/lineModel').ControlLine {
   const pts = line.points;
   const at = (t: number) => {
     if (!pts.length) return line.default ?? 1;
@@ -519,7 +523,7 @@ export function steppedEnergyLine(line: import('../lines/lineModel').ControlLine
   const start = plan[0]?.start ?? 0;
   const end = plan[plan.length - 1]?.end ?? start;
   const times = [...new Set([...bars.filter((b) => b >= start - 1e-6 && b < end - 1e-6), ...plan.map((p) => p.start)].map((t) => round(t)))].sort((a, b) => a - b);
-  const points = times.map((t) => ({ t, v: round(at(t + 1e-4) * LOOK_ACCENT), c: 'hold' as const }));
+  const points = times.map((t) => ({ t, v: round(at(t + 1e-4) * scale(t)), c: 'hold' as const }));
   if (times.length) points.push({ t: round(Math.max(times[times.length - 1], end - 0.01)), v: points[points.length - 1].v, c: 'hold' as const });
   const { follow: _follow, ...rest } = line;
   return { ...rest, points };

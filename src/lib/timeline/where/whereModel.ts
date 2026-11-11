@@ -78,7 +78,7 @@ export interface WhereSpec extends WhereOrderSpec {
   /** The order is a ring: the last piece neighbours the first. */
   wrap?: boolean;
   /** Content blocks: the pieces of its order are the block's while it
-   *  plays. Their own content goes dark; the lit ones wear the block. */
+   *  plays. Their own content goes dark; the lit ones show the block. */
   dark?: boolean;
   /** Content blocks: one picture across the pieces (each shows its part of
    *  it, where it sits on the stage) instead of the whole picture on each. */

@@ -239,7 +239,7 @@ describe('where lines through the Timeline', () => {
     expect(scene.find((l) => l.id === 'Middle')).toBe(pieces.find((l) => l.id === 'Middle'));
   });
 
-  it('a dark block takes its pieces over: their own content goes black (shape and looks kept); span crops each to its part of the stage', () => {
+  it('a dark block takes its pieces over: their own content goes dark; span crops each to its part of the stage', () => {
     const media = (id: string, x0: number, x1: number) => ({ ...piece(id, x0, x1), type: 'media', colorContent: { hue: 120, saturation: 60, lightness: 40, alpha: 1 } }) as unknown as Layer;
     const stage = [media('Right', 0.7, 1), media('Left', 0, 0.3), media('Middle', 0.35, 0.65)];
     const frame: ShowTrackFrame = {
@@ -258,11 +258,9 @@ describe('where lines through the Timeline', () => {
     expect(frame.darkPieces).toEqual(['Left', 'Middle', 'Right']);
     const img = { id: 'img', type: 'image', src: '/a.png' } as never;
     const scene = buildShowTrackScene(stage, frame, { sourceFor: () => img });
-    // Own content black, still drawn.
+    // Own content dark: not drawn.
     const middle = scene.find((l) => l.id === 'Middle')!;
-    expect(middle.source).toBeNull();
-    expect(middle.colorContent).toMatchObject({ lightness: 0, alpha: 1 });
-    expect(middle._showOpacityMul).toBeUndefined();
+    expect(middle._showOpacityMul).toBe(0);
     // The lit piece: its copy shows its part of the picture, and wears the look over it.
     const right = scene.find((l) => l.id === showWhereLayerId('Right', 'c2'))!;
     expect(right.cropRegion).toEqual({ x: 0.7, y: 0, width: expect.closeTo(0.3, 6), height: 1 });

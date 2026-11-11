@@ -269,7 +269,7 @@ export interface ShowTrackFrame {
   /** The Looks row: look blocks under the playhead (see showLooks.ts). */
   looks?: ShowLookState[];
   /** Pieces whose own content is dark now (a `dark` where block holds
-   *  them): drawn black, keeping their shape for the looks. Sorted. */
+   *  them): not drawn. Sorted. */
   darkPieces?: string[];
 }
 

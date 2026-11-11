@@ -13,7 +13,7 @@ export const AUTO_SHOW_CATALOG: AutoShowContent[] = [
     params: { drift: 0.3 },
     variants: [
       { mood: 'cool', params: { colorMode: 1 } }, { mood: 'warm', params: { colorMode: 2 } }, { mood: 'acid', params: { colorMode: 4 } },
-      { mood: 'mono', params: { colorMode: 6 } }, { mood: 'dark', params: { colorMode: 3, exposure: 0.8 } },
+      { mood: 'mono', params: { colorMode: 6 } }, { mood: 'dark', params: { colorMode: 3 } },
     ],
     cost: 'mid',
   },

@@ -89,7 +89,7 @@ describe('the Auto show draft', () => {
     const used = new Set(d.layerTracks.flatMap((t) => t.clips.map((c) => c.label)));
     expect(used.size).toBeLessThanOrEqual(8);
     expect(d.layerTracks.flatMap((t) => t.clips).length).toBeGreaterThan(used.size); // they return
-    expect(['cool', 'acid', 'dark']).toContain(d.palette.mood);
+    expect(['cool', 'acid', 'warm']).toContain(d.palette.mood);
   });
 
   it('never the same content twice running on a row, and the two sets never show the same content together', () => {
