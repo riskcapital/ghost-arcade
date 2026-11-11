@@ -11,7 +11,7 @@
 import { applyEasing } from '../../keyframes/easing';
 import { beatAtSeconds } from '../../show/tempoMap';
 import type { KeyframeEasing, ShowTempoMap } from '../../types';
-import { LINE_CURVES, isLiveOnlySource, type BeatShape, type ControlLine, type FollowSource, type LineCurve, type LinePoint } from './lineModel';
+import { DEFAULT_BEZIER, LINE_CURVES, isLiveOnlySource, type BeatShape, type ControlLine, type FollowSource, type LineCurve, type LinePoint } from './lineModel';
 import { sampleFeature, sampleStem, type SongFeatures } from './songFeatures';
 import { unpackColor } from './stageLedParams';
 import { lineSource, registerLineSource } from './lineExtensions';
@@ -110,6 +110,35 @@ const CURVE_CODE: Record<LineCurve, number> = Object.fromEntries(LINE_CURVES.map
 const HOLD = CURVE_CODE.hold;
 const LINEAR = CURVE_CODE.linear;
 const SMOOTH = CURVE_CODE.smooth;
+const BEZIER = CURVE_CODE.bezier;
+
+/**
+ * y of a CSS-style cubic bezier at x (0..1): Newton steps on x(s), with a
+ * bisection fallback, so the curve is exact enough for a drawn line.
+ */
+export function bezierAt(x: number, x1: number, y1: number, x2: number, y2: number): number {
+  if (x <= 0) return 0;
+  if (x >= 1) return 1;
+  const bx = (s: number) => 3 * x1 * s * (1 - s) * (1 - s) + 3 * x2 * s * s * (1 - s) + s * s * s;
+  const by = (s: number) => 3 * y1 * s * (1 - s) * (1 - s) + 3 * y2 * s * s * (1 - s) + s * s * s;
+  const dx = (s: number) => 3 * x1 * (1 - s) * (1 - s) + 6 * (x2 - x1) * s * (1 - s) + 3 * (1 - x2) * s * s;
+  let s = x;
+  for (let k = 0; k < 8; k++) {
+    const err = bx(s) - x;
+    if (Math.abs(err) < 1e-7) return by(s);
+    const d = dx(s);
+    if (Math.abs(d) < 1e-6) break;
+    s = Math.max(0, Math.min(1, s - err / d));
+  }
+  let lo = 0;
+  let hi = 1;
+  s = x;
+  for (let k = 0; k < 40; k++) {
+    if (bx(s) < x) lo = s; else hi = s;
+    s = (lo + hi) / 2;
+  }
+  return by(s);
+}
 
 export interface CompiledPoints {
   n: number;
@@ -118,6 +147,8 @@ export interface CompiledPoints {
   /** Monotone tangents (value per second) for 'smooth' segments. */
   m: Float64Array;
   c: Uint8Array;
+  /** Each 'bezier' segment's handles, four per point (x1, y1, x2, y2). */
+  b: Float64Array;
 }
 
 /** Fritsch–Carlson monotone cubic tangents: smooth, never overshoots. */
@@ -159,14 +190,17 @@ export function compilePoints(points: readonly LinePoint[], defaultCurve: LineCu
   const t = new Float64Array(n);
   const v = new Float64Array(n);
   const c = new Uint8Array(n);
+  const b = new Float64Array(n * 4);
   const def = CURVE_CODE[defaultCurve];
   for (let i = 0; i < n; i++) {
     t[i] = points[i].t;
     v[i] = points[i].v;
     const code = points[i].c ? CURVE_CODE[points[i].c!] : undefined;
     c[i] = code ?? def;
+    const h = points[i].b ?? DEFAULT_BEZIER;
+    b.set(h, i * 4);
   }
-  hit = { n, t, v, m: monotoneTangents(t, v, n), c };
+  hit = { n, t, v, m: monotoneTangents(t, v, n), c, b };
   compiledPoints.set(points, hit);
   return hit;
 }
@@ -201,13 +235,19 @@ export function segmentValue(cp: CompiledPoints, i: number, time: number, colour
   const u = (time - t0) / h;
   if (colour) {
     // Colours ease per channel (smooth/easing shape the mix, no overshoot).
-    const k = code === LINEAR || code === SMOOTH ? (code === SMOOTH ? u * u * (3 - 2 * u) : u) : applyEasing(u, LINE_CURVES[code] as KeyframeEasing);
+    const k = code === LINEAR || code === SMOOTH ? (code === SMOOTH ? u * u * (3 - 2 * u) : u)
+      : code === BEZIER ? Math.max(0, Math.min(1, bezierAt(u, cp.b[i * 4], cp.b[i * 4 + 1], cp.b[i * 4 + 2], cp.b[i * 4 + 3])))
+      : applyEasing(u, LINE_CURVES[code] as KeyframeEasing);
     const a = unpackColor(v[i]);
     const b = unpackColor(v[i + 1]);
     const mix = (x: number, y: number) => Math.max(0, Math.min(255, Math.round(x + (y - x) * k)));
     return (mix(a[0], b[0]) << 16) | (mix(a[1], b[1]) << 8) | mix(a[2], b[2]);
   }
   if (code === LINEAR) return v[i] + (v[i + 1] - v[i]) * u;
+  if (code === BEZIER) {
+    const o = i * 4;
+    return v[i] + (v[i + 1] - v[i]) * bezierAt(u, cp.b[o], cp.b[o + 1], cp.b[o + 2], cp.b[o + 3]);
+  }
   if (code === SMOOTH) {
     const u2 = u * u;
     const u3 = u2 * u;

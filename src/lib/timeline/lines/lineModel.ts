@@ -34,8 +34,18 @@ import { AUDIO_FEATURES, STEMS, type AudioFeature, type Stem } from './songFeatu
 import { isLiveOnlyExtSource, type ExtFollowSource } from './lineExtensions';
 
 /** Curve from a point to the next one. The easings are the keyframe ones. */
-export type LineCurve = 'hold' | 'linear' | 'smooth' | Exclude<KeyframeEasing, 'linear' | 'step'>;
-export const LINE_CURVES: readonly LineCurve[] = ['hold', 'linear', 'smooth', 'ease-in', 'ease-out', 'ease-in-out', 'sine', 'exponential', 'bounce', 'elastic'];
+export type LineCurve = 'hold' | 'linear' | 'smooth' | Exclude<KeyframeEasing, 'linear' | 'step'> | 'bezier';
+export const LINE_CURVES: readonly LineCurve[] = ['hold', 'linear', 'smooth', 'ease-in', 'ease-out', 'ease-in-out', 'sine', 'exponential', 'bounce', 'elastic', 'bezier'];
+
+/**
+ * A 'bezier' segment's two handles, as a CSS cubic-bezier: [x1, y1, x2, y2].
+ * x is the share of the way to the next point (0..1), y the share of the
+ * change in value (it may go past 0..1 to overshoot), so a handle reads the
+ * same however far apart the points are.
+ */
+export type BezierHandles = [number, number, number, number];
+/** Handles a new bezier segment starts with: ease in and out. */
+export const DEFAULT_BEZIER: BezierHandles = [0.42, 0, 0.58, 1];
 
 export interface LinePoint {
   /** Show seconds. */
@@ -44,6 +54,8 @@ export interface LinePoint {
   v: number;
   /** Curve to the next point (default 'linear'; 'hold' for bools). */
   c?: LineCurve;
+  /** Handles of a 'bezier' curve to the next point (default DEFAULT_BEZIER). */
+  b?: BezierHandles;
 }
 
 export type BeatShape = 'sine' | 'triangle' | 'saw' | 'ramp' | 'square' | 'pulse';
@@ -138,6 +150,8 @@ export function normalizeTarget(t: any): ParamTarget | null {
 
 const finite = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
 
+const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
+
 function normalizePoints(raw: unknown): LinePoint[] {
   if (!Array.isArray(raw)) return [];
   const out: LinePoint[] = [];
@@ -147,7 +161,12 @@ function normalizePoints(raw: unknown): LinePoint[] {
     const v = Number((p as any).v);
     if (!Number.isFinite(t) || !Number.isFinite(v)) continue;
     const c = (p as any).c;
-    out.push(LINE_CURVES.includes(c) ? { t: Math.max(0, t), v, c } : { t: Math.max(0, t), v });
+    const point: LinePoint = LINE_CURVES.includes(c) ? { t: Math.max(0, t), v, c } : { t: Math.max(0, t), v };
+    const b = (p as any).b;
+    if (c === 'bezier' && Array.isArray(b) && b.length === 4 && b.every((x: unknown) => Number.isFinite(Number(x)))) {
+      point.b = [clamp01(Number(b[0])), Number(b[1]), clamp01(Number(b[2])), Number(b[3])];
+    }
+    out.push(point);
   }
   return out.sort((a, b) => a.t - b.t);
 }

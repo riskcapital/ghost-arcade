@@ -19,8 +19,8 @@
    */
   import { get } from 'svelte/store';
   import { showTimeline } from '../../../stores/showTimeline';
-  import type { ControlLine, LineCurve, LinePoint } from '../../../timeline/lines/lineModel';
-  import { LINE_CURVES, isLiveOnlySource } from '../../../timeline/lines/lineModel';
+  import type { BezierHandles, ControlLine, LineCurve, LinePoint } from '../../../timeline/lines/lineModel';
+  import { DEFAULT_BEZIER, LINE_CURVES, isLiveOnlySource } from '../../../timeline/lines/lineModel';
   import { lineValueAt } from '../../../timeline/lines/lineEvaluator';
   import { scaleOffsetPoints, strokeToPoints, spliceStroke } from '../../../timeline/lines/lineDrawing';
   import { currentLineSession, lineSelection, liveTraces, liveTraceVersion, recordingPasses, selectedLinePoints } from '../../../timeline/lines/timelineLines';
@@ -70,7 +70,7 @@
   const t1 = $derived(Math.max(t0 + 0.001, viewEnd));
   const CURVE_NAMES: Record<LineCurve, string> = {
     hold: 'Hold', linear: 'Linear', smooth: 'Smooth', 'ease-in': 'Ease in', 'ease-out': 'Ease out', 'ease-in-out': 'Ease in and out',
-    sine: 'Sine', exponential: 'Exponential', bounce: 'Bounce', elastic: 'Elastic',
+    sine: 'Sine', exponential: 'Exponential', bounce: 'Bounce', elastic: 'Elastic', bezier: 'Bezier (drag its handles)',
   };
 
   function colorOf(line: ControlLine): string {
@@ -348,6 +348,68 @@
     commit(withPoints(line, menu.ch, setPointCurves(pointsOf(line, menu.ch), menu.indices, curve)));
     menu = null;
   }
+  // ── Bezier handles (the graph editor) ─────────────────────────────────
+  // A point whose curve is 'bezier' shows its two handles when it is the one
+  // selected point; the incoming segment's second handle shows too. Handles
+  // are stored as a share of the way and of the change (see BezierHandles).
+  type Handle = { seg: number; which: 0 | 1; x: number; y: number; ax: number; ay: number };
+  function handlesFor(line: ControlLine, ch: Channel, h: number): Handle[] {
+    const chosen = selectedPoints(line, ch);
+    if (chosen.length !== 1 || locked) return [];
+    const pts = pointsOf(line, ch);
+    const i = chosen[0];
+    const out: Handle[] = [];
+    const add = (seg: number, which: 0 | 1) => {
+      const a = pts[seg];
+      const b = pts[seg + 1];
+      if (!a || !b || a.c !== 'bezier') return;
+      const hb = a.b ?? DEFAULT_BEZIER;
+      const [hx, hy] = which === 0 ? [hb[0], hb[1]] : [hb[2], hb[3]];
+      const anchor = which === 0 ? a : b;
+      const t = a.t + hx * (b.t - a.t);
+      const v = a.v + hy * (b.v - a.v);
+      out.push({ seg, which, x: t * zoom, y: pointY(line, ch, { t, v }, h), ax: anchor.t * zoom, ay: pointY(line, ch, anchor, h) });
+    };
+    add(i, 0);
+    add(i, 1);
+    add(i - 1, 1);
+    return out;
+  }
+
+  function dragHandle(e: MouseEvent, line: ControlLine, ch: Channel, h: number, hd: Handle) {
+    if (e.button !== 0 || locked) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const lane = (e.currentTarget as Element).closest('.ll-lane') as HTMLElement | null;
+    if (!lane) return;
+    const rect = lane.getBoundingClientRect();
+    const [lo, hi] = rangeOf(line, ch);
+    const key = `line-handle:${line.id}:${Date.now()}-${++dragSeq}`;
+    followPointer({
+      move: (ev) => {
+        const pts = pointsOf(get(showTimeline).lines.find((l) => l.id === line.id) ?? line, ch);
+        const a = pts[hd.seg];
+        const b = pts[hd.seg + 1];
+        if (!a || !b) return;
+        const t = (ev.clientX - rect.left) / zoom;
+        const v = yToValue(ev.clientY - rect.top, lo, hi, h);
+        const dt = b.t - a.t;
+        const dv = b.v - a.v;
+        const hb = [...(a.b ?? DEFAULT_BEZIER)] as BezierHandles;
+        const nx = dt > 0 ? Math.max(0, Math.min(1, (t - a.t) / dt)) : hb[hd.which * 2];
+        // A flat segment has no change to share: its handles move in time only.
+        const ny = Math.abs(dv) > 1e-9 ? (v - a.v) / dv : hb[hd.which * 2 + 1];
+        hb[hd.which * 2] = nx;
+        hb[hd.which * 2 + 1] = Math.max(-2, Math.min(3, ny));
+        const next = pts.map((p, k) => (k === hd.seg ? { ...p, b: hb } : p));
+        const current = get(showTimeline).lines.find((l) => l.id === line.id) ?? line;
+        commit(withPoints(current, ch, next), key);
+      },
+      end: () => {},
+      cancel: () => {},
+    });
+  }
+
   function deleteSelected(line: ControlLine, ch: Channel, indices: number[]) {
     if (!indices.length || locked) return;
     commit(withPoints(line, ch, deletePoints(pointsOf(line, ch), indices)));
@@ -426,6 +488,15 @@
             data-line-point={i}
           />
         {/each}
+      {/each}
+      {#each laneLines as line (line.id)}
+        {#if laneLines.length === 1 || line.id === active?.id}
+          {#each handlesFor(line, ch, h) as hd (hd.seg + ':' + hd.which)}
+            <line class="ll-handle-arm" x1={hd.ax} y1={hd.ay} x2={hd.x} y2={hd.y} />
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <circle class="ll-handle" cx={hd.x} cy={hd.y} r="4" onmousedown={(e) => dragHandle(e, line, ch, h, hd)} data-line-handle={hd.which} />
+          {/each}
+        {/if}
       {/each}
       {#if ch === 'points'}
         {#each laneLines as line (line.id)}
@@ -534,6 +605,9 @@
   .ll-pt { stroke: rgba(0, 0, 0, 0.75); stroke-width: 1; }
   .ll-pt.small { opacity: 0.8; }
   .ll-pt.sel { filter: drop-shadow(0 0 3px rgba(255, 217, 107, 0.9)); }
+  /* Bezier handles: the royal blue, grabbable inside the click-through drawing. */
+  .ll-handle-arm { stroke: var(--ga-icon, #5278ff); stroke-width: 1; opacity: 0.8; }
+  .ll-handle { fill: var(--ga-void, #08080c); stroke: var(--ga-icon, #5278ff); stroke-width: 1.5; pointer-events: all; cursor: grab; }
   .ll-rec { fill: none; stroke: var(--ga-rec, #ff4757); stroke-width: 2.2; filter: drop-shadow(0 0 3px rgba(255, 71, 87, 0.8)); }
   .ll-stroke { fill: none; stroke: #ffffff; stroke-width: 1.5; stroke-dasharray: 2 2; }
   .ll-marquee {
