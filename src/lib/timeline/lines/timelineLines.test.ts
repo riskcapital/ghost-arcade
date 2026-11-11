@@ -169,3 +169,19 @@ describe('the Timeline drives its lines', () => {
     }
   });
 });
+
+describe('selected line points', () => {
+  const line = { id: 'l', target: { scope: 'layer' as const, id: 'A' }, key: 'layer:opacity', kind: 'continuous' as const, min: 0, max: 1, points: [{ t: 0, v: 0 }, { t: 1, v: 1 }, { t: 2, v: 0 }], follow: { depthPoints: [{ t: 0, v: 1 }, { t: 3, v: 0 }] } } as never;
+  it('belong to the list they were picked in', () => {
+    const sel = { lineId: 'l', points: [1], channel: 'depth' as const, of: (line as { follow: { depthPoints: unknown[] } }).follow.depthPoints as never };
+    expect(lines.selectedLinePoints(sel, line, 'depth')).toEqual([1]);
+    expect(lines.selectedLinePoints(sel, line, 'points')).toEqual([]);
+  });
+  it('no longer apply once the points were replaced (undo, a recorded pass)', () => {
+    const l = line as { points: unknown[] };
+    const sel = { lineId: 'l', points: [2], channel: 'points' as const, of: l.points as never };
+    expect(lines.selectedLinePoints(sel, line)).toEqual([2]);
+    const replaced = { ...(line as object), points: [{ t: 0, v: 0 }, { t: 2, v: 0 }] } as never;
+    expect(lines.selectedLinePoints(sel, replaced)).toEqual([]);
+  });
+});

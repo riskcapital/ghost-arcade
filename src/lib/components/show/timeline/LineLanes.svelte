@@ -23,7 +23,7 @@
   import { LINE_CURVES, isLiveOnlySource } from '../../../timeline/lines/lineModel';
   import { lineValueAt } from '../../../timeline/lines/lineEvaluator';
   import { scaleOffsetPoints, strokeToPoints, spliceStroke } from '../../../timeline/lines/lineDrawing';
-  import { currentLineSession, lineSelection, liveTraces, liveTraceVersion, recordingPasses } from '../../../timeline/lines/timelineLines';
+  import { currentLineSession, lineSelection, liveTraces, liveTraceVersion, recordingPasses, selectedLinePoints } from '../../../timeline/lines/timelineLines';
   import {
     LINE_DEPTH_HEIGHT,
     LINE_LANE_HEIGHT,
@@ -87,8 +87,12 @@
     if (ch === 'depth') return line.follow ? { ...line, follow: { ...line.follow, depthPoints: points } } : line;
     return { ...line, points };
   }
-  function selectedPoints(line: ControlLine): number[] {
-    return sel && sel.lineId === line.id ? sel.points : [];
+  function selectedPoints(line: ControlLine, ch: Channel): number[] {
+    return selectedLinePoints(sel, line, ch);
+  }
+  /** Select points of `line`'s `ch` list as it is in `list` (the list just committed, or the line's own). */
+  function selectPoints(line: ControlLine, ch: Channel, indices: number[], list: readonly LinePoint[] = pointsOf(line, ch)): void {
+    lineSelection.set({ lineId: line.id, points: indices, channel: ch, of: list });
   }
 
   // ── Drawing ───────────────────────────────────────────────────────────
@@ -188,18 +192,19 @@
   }
 
   function pressPoint(e: MouseEvent, line: ControlLine, ch: Channel, h: number, index: number) {
-    const current = selectedPoints(line);
+    const current = selectedPoints(line, ch);
     const inSel = current.includes(index);
     let indices: number[];
     if (e.shiftKey) {
       indices = inSel ? current.filter((i) => i !== index) : [...current, index];
-      lineSelection.set({ lineId: line.id, points: indices });
+      selectPoints(line, ch, indices);
       return;
     }
     indices = inSel ? current : [index];
-    lineSelection.set({ lineId: line.id, points: indices });
+    selectPoints(line, ch, indices);
     if (locked) return;
-    const startAll = get(showTimeline).lines;
+    // Esc puts back this line only (a pass recorded meanwhile into another stays).
+    const startLine = get(showTimeline).lines.find((l) => l.id === line.id) ?? line;
     const startPoints = pointsOf(line, ch);
     const [lo, hi] = rangeOf(line, ch);
     const sx = e.clientX;
@@ -230,11 +235,11 @@
           });
         }
         commit(withPoints(line, ch, next.points), key);
-        lineSelection.set({ lineId: line.id, points: next.indices });
+        selectPoints(line, ch, next.indices, next.points);
       },
       end: () => {},
       cancel: () => {
-        if (moved) showTimeline.setLines(startAll, { continuousKey: key });
+        if (moved) showTimeline.editLines((list) => list.map((l) => (l.id === startLine.id ? startLine : l)), key);
       },
     });
   }
@@ -259,8 +264,8 @@
           marquee = null;
           if (!m) return;
           const picked = pointsInRect(line, pointsOf(line, ch), { x0: m.x, y0: m.y, x1: m.x + m.w, y1: m.y + m.h }, zoom, h, rangeOf(line, ch));
-          const base = ev.shiftKey ? selectedPoints(line) : [];
-          lineSelection.set({ lineId: line.id, points: [...new Set([...base, ...picked])] });
+          const base = ev.shiftKey ? selectedPoints(line, ch) : [];
+          selectPoints(line, ch, [...new Set([...base, ...picked])]);
           return;
         }
         if (locked) return;
@@ -271,7 +276,7 @@
         const curve = ch === 'points' && defaultCurveFor(line) === 'hold' ? 'hold' : undefined;
         const res = insertPoint(pointsOf(line, ch), t, v, curve);
         commit(withPoints(line, ch, res.points));
-        lineSelection.set({ lineId: line.id, points: [res.index] });
+        selectPoints(line, ch, [res.index], res.points);
       },
       cancel: () => { marquee = null; },
     });
@@ -328,9 +333,9 @@
     if (!line || point < 0) return;
     e.preventDefault();
     e.stopPropagation();
-    const current = selectedPoints(line);
+    const current = selectedPoints(line, ch);
     const indices = current.includes(point) ? current : [point];
-    lineSelection.set({ lineId: line.id, points: indices });
+    selectPoints(line, ch, indices);
     menu = { x: e.clientX, y: e.clientY, lineId: line.id, ch, indices };
   }
 
@@ -367,9 +372,12 @@
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
       const line = lines.find((l) => l.id === s.lineId);
       if (!line) return;
+      const ch: Channel = s.channel ?? 'points';
+      const picked = selectedLinePoints(s, line, ch);
+      if (!picked.length) return;
       e.preventDefault();
       e.stopPropagation();
-      deleteSelected(line, 'points', s.points);
+      deleteSelected(line, ch, picked);
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
@@ -404,7 +412,7 @@
       {/each}
       {#each laneLines as line (line.id)}
         {@const pts = pointsOf(line, ch)}
-        {@const chosen = selectedPoints(line)}
+        {@const chosen = selectedPoints(line, ch)}
         {@const big = laneLines.length === 1 || line.id === active?.id}
         {#each visiblePoints(pts) as { p, i } (i)}
           <circle

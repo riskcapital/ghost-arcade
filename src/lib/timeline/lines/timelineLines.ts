@@ -137,6 +137,19 @@ export const lineRecordState = writable<LineRecordUi>({ armed: false, mode: 'tou
 export interface LineSelection {
   lineId: string;
   points: number[];
+  /** Which of the line's point lists the indices are in (default: its points). */
+  channel?: 'points' | 'depth';
+  /** The point list the indices were taken from: once the line's points are
+   *  replaced (undo, redo, a recorded pass) the indices no longer apply. */
+  of?: readonly LinePoint[];
+}
+
+/** The selected point indices of `line`'s `channel` list, while they still apply. */
+export function selectedLinePoints(sel: LineSelection | null, line: ControlLine, channel: 'points' | 'depth' = 'points'): number[] {
+  if (!sel || sel.lineId !== line.id || (sel.channel ?? 'points') !== channel) return [];
+  const list = channel === 'depth' ? line.follow?.depthPoints ?? [] : line.points;
+  if (sel.of && sel.of !== list) return [];
+  return sel.points;
 }
 export const lineSelection = writable<LineSelection | null>(null);
 
@@ -436,7 +449,7 @@ export function addLineWithPoint(target: ParamTarget, key: string, time: number,
   const points = [...line.points.filter((p) => Math.abs(p.t - point.t) > 1e-4), point].sort((a, b) => a.t - b.t);
   const next = { ...line, points };
   showTimeline.editLines((list) => (existing ? list.map((l) => (l.id === line.id ? next : l)) : [...list, next]));
-  lineSelection.set({ lineId: line.id, points: [points.indexOf(point)] });
+  lineSelection.set({ lineId: line.id, points: [points.indexOf(point)], channel: 'points', of: points });
   return line.id;
 }
 
