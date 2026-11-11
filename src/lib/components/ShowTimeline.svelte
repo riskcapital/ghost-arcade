@@ -919,7 +919,10 @@
   // Sizing itself (content, pads, phrase strip) the tray leaves the editor
   // its reserve; a height dragged by hand is kept, but the pads opening on
   // top of it do not push it further.
-  const editorCap = $derived(trayEditorCap(viewportH, TRAY_MAX_SHARE));
+  // A tall inspector (an effect's settings at a large interface scale) still
+  // gets its whole height and a ruler with two rows of lanes above it.
+  const editorCap = $derived(Math.max(trayEditorCap(viewportH, TRAY_MAX_SHARE),
+    transportH + inspectorRoom + RULER_HEIGHT + 2 * TRACK_ROW_HEIGHT + GRID_SCROLLBAR_ALLOWANCE + 1));
   const within = (cap: number): TrayLimits => ({ cap: Math.min(trayLimits.cap, cap), floor: Math.min(trayLimits.floor, cap) });
   const autoH = $derived(clampTray(contentH, within(editorCap), (cuesOpen ? cueCeiling(viewportH) : autoCeiling(viewportH, hasTracks)) + padsRoom));
   const trayHeight = $derived(userHeight === null
@@ -946,6 +949,8 @@
       const root = document.documentElement.style;
       root.setProperty('--ga-show-tray-height', open && !isTimeline ? `${trayHeight}px` : '0px');
       root.setProperty('--ga-timeline-tray-height', open && isTimeline ? `${trayHeight}px` : '0px');
+      // Toasts rise above the open tray (and the preview's zoom buttons).
+      root.setProperty('--ga-tray-toast-lift', open ? `${trayHeight + 52}px` : '0px');
     }
   });
 

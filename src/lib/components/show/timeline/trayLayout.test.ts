@@ -103,4 +103,8 @@ describe('Timeline tray layout', () => {
   it('the idle hint wraps to two lines with the whole text in its tooltip', () => {
     expect(tray).toMatch(/insp-idle-hint" title="Each row is a mapping layer/);
   });
+  it('toasts rise above the open tray instead of covering the block inspector', () => {
+    expect(tray).toMatch(/'--ga-tray-toast-lift', open \? `\$\{trayHeight \+ 52\}px` : '0px'/);
+    expect(source('ToastContainer.svelte')).toMatch(/bottom: calc\(24px \+ var\(--ga-tray-toast-lift, 0px\)\)/);
+  });
 });

@@ -14,7 +14,11 @@
 <style>
   .toast-container {
     position: fixed;
-    bottom: 24px;
+    /* With the Show / Timeline tray open (ShowTimeline publishes the lift,
+       0px when closed) a toast sat on the block inspector's Where and colour
+       buttons for five seconds: it rises over the preview instead, clear of
+       the viewport's zoom buttons. */
+    bottom: calc(24px + var(--ga-tray-toast-lift, 0px));
     left: 50%;
     transform: translateX(-50%);
     z-index: 100000;
