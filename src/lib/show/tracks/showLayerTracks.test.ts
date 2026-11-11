@@ -293,6 +293,35 @@ describe('the show store with layer tracks', () => {
     expect(frames[frames.length - 1]!.tracks[0].clip!.runId).toBe(clips[0].id);
   });
 
+  it('deleting blocks across a locked row keeps the locked blocks and their lines', () => {
+    const layer2 = { ...layer, id: 'L2', name: 'Floor' } as Layer;
+    const t1 = showTimeline.addLayerTrack(layer);
+    const t2 = showTimeline.addLayerTrack(layer2);
+    const a = showTimeline.addLayerClip(t1, video(), 0, { duration: 2 })!;
+    const b = showTimeline.addLayerClip(t2, video(), 0, { duration: 2 })!;
+    const line = (id: string) => ({ id: `line-${id}`, target: { scope: 'block' as const, id }, key: 'layer:opacity', kind: 'continuous' as const, min: 0, max: 1, points: [{ t: 0, v: 1 }] });
+    showTimeline.setLines([line(a), line(b)]);
+    showTimeline.updateLayerTrack(t2, { locked: true });
+    showTimeline.removeLayerClips([a, b]);
+    expect(get(showTimeline).lines.map((l) => l.id)).toEqual([`line-${b}`]);
+  });
+
+  it('removing a row removes its block lines and an added layer\'s own lines', () => {
+    showTimeline.addLayerTrack(layer);
+    const sub = showTimeline.addSubRow('L1', 'Glow')!;
+    const a = showTimeline.addLayerClip(sub, video(), 0, { duration: 2 })!;
+    const lines = [
+      { id: 'blk', target: { scope: 'block' as const, id: a }, key: 'layer:opacity', kind: 'continuous' as const, min: 0, max: 1, points: [{ t: 0, v: 1 }] },
+      { id: 'own', target: { scope: 'layer' as const, id: `showsub::L1::${sub}` }, key: 'layer:opacity', kind: 'continuous' as const, min: 0, max: 1, points: [{ t: 30, v: 1 }] },
+      { id: 'piece', target: { scope: 'layer' as const, id: 'L1' }, key: 'layer:opacity', kind: 'continuous' as const, min: 0, max: 1, points: [{ t: 0, v: 1 }] },
+    ];
+    showTimeline.setLines(lines);
+    expect(get(showTimeline).duration).toBe(30);
+    showTimeline.removeLayerTrack(sub);
+    expect(get(showTimeline).lines.map((l) => l.id)).toEqual(['piece']);
+    expect(get(showTimeline).duration).toBeLessThan(30);
+  });
+
   it('ripple-deletes and removes tracks', () => {
     const t = showTimeline.addLayerTrack(layer);
     const a = showTimeline.addLayerClip(t, video(), 0, { duration: 2 })!;

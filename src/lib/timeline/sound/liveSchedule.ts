@@ -159,6 +159,9 @@ export class LiveClipScheduler {
   private preFired = new Set<string>();
   /** Tracks this Timeline started a clip on (and has not stopped). */
   private owned = new Set<number>();
+  /** The block whose fire went out last on each track (Live plays the last
+   *  clip it was told to). A block's stop never cancels a later block's fire. */
+  private lastFire = new Map<number, { id: string; cmd: LiveCommand }>();
   private wasPlaying = false;
   private lastSeek = Number.NaN;
   /** A jump waiting for the playhead to settle (wall ms it may run at). */
@@ -181,14 +184,52 @@ export class LiveClipScheduler {
   setBlocks(rows: readonly LiveSchedRow[], blocks: readonly LiveSchedBlock[]): void {
     this.rows = new Map(rows.map((r) => [r.rowId, r]));
     this.blocks = blocks.slice().sort((a, b) => a.start - b.start);
+    if (!this.wasPlaying || !this.owned.size) return;
+    // A playing block deleted (or its row removed or bound elsewhere): its clip stops.
+    for (const track of [...this.owned]) {
+      const last = this.lastFire.get(track);
+      if (last === undefined) continue;
+      const b = this.blocks.find((x) => x.id === last.id);
+      if (!b || this.rows.get(b.rowId)?.track !== track) this.stopTrack(track);
+    }
   }
 
   /** Commands go out here (recorded by tests). */
-  private send(cmd: LiveCommand): void {
-    if (cmd.t === 'fire_clip') this.owned.add(cmd.i);
-    if (cmd.t === 'stop_track') this.owned.delete(cmd.i);
-    if (cmd.t === 'stop_all') this.owned.clear();
+  private send(cmd: LiveCommand, blockId?: string): void {
+    if (cmd.t === 'fire_clip') {
+      this.owned.add(cmd.i);
+      if (blockId !== undefined) this.lastFire.set(cmd.i, { id: blockId, cmd });
+      else this.lastFire.delete(cmd.i);
+    }
+    if (cmd.t === 'stop_track') {
+      this.owned.delete(cmd.i);
+      this.lastFire.delete(cmd.i);
+    }
+    if (cmd.t === 'stop_all') {
+      this.owned.clear();
+      this.lastFire.clear();
+    }
     this.opts.send(cmd);
+  }
+
+  /**
+   * End a block on its track. When a later block's fire already went out on
+   * that track (a fire goes out up to a grid step early; a stop goes out just
+   * before the end), the stop would cancel it in Live: stop, then send that
+   * fire again (Live still starts it on its step) while there is time,
+   * otherwise leave the track to the coming clip.
+   */
+  private endBlock(track: number, block: LiveSchedBlock, t: number, row: LiveSchedRow): void {
+    const last = this.lastFire.get(track);
+    if (!last || last.id === block.id) {
+      this.stopTrack(track);
+      return;
+    }
+    const next = this.blocks.find((x) => x.id === last.id);
+    if (!next || next.start <= t + row.latency + SCRIPT_TICK_SECONDS) return;
+    const again = last;
+    this.stopTrack(track);
+    this.send(again.cmd, again.id);
   }
 
   private quantum(row: LiveSchedRow) {
@@ -222,7 +263,7 @@ export class LiveClipScheduler {
     const cmd: LiveCommand = { t: 'fire_clip', i: row.track, s: block.slot };
     if (q !== undefined) cmd.q = q;
     if (pos !== undefined && pos > 1e-6) cmd.pos = Math.round(pos * 1000) / 1000;
-    this.send(cmd);
+    this.send(cmd, block.id);
   }
 
   private stopTrack(track: number): void {
@@ -309,8 +350,9 @@ export class LiveClipScheduler {
       if (cut !== null && b.end > cut + 1e-3 && this.fired.has(b.id)) continue;
       if (!row.audible) {
         if (this.fired.has(b.id) && !this.stopped.has(b.id) && b.end > t && b.start <= t) {
-          this.stopped.add(b.id);
-          if (this.owned.has(row.track)) this.stopTrack(row.track);
+          // Not marked stopped: unmuted again, the block comes back in mid-way.
+          this.fired.delete(b.id);
+          if (this.owned.has(row.track)) this.endBlock(row.track, b, t, row);
         }
         continue;
       }
@@ -337,7 +379,7 @@ export class LiveClipScheduler {
         const stopAt = b.end - this.stopLeadFor(row, b.end);
         if (t >= stopAt) {
           this.stopped.add(b.id);
-          if (!this.takesOver(b) && !this.wrapsInto(b, loopAhead)) this.stopTrack(row.track);
+          if (!this.takesOver(b) && !this.wrapsInto(b, loopAhead)) this.endBlock(row.track, b, t, row);
         }
       }
     }
@@ -423,8 +465,18 @@ export class LiveClipScheduler {
   }
 
   /** Send one of entryPlan's commands (the scheduler keeps track of what it owns). */
-  sendEntry(cmd: LiveCommand): void {
-    this.send(cmd);
+  sendEntry(cmd: LiveCommand, blockId?: string): void {
+    this.send(cmd, blockId);
+  }
+
+  /**
+   * Live may not be playing what the scheduler thinks (a phrase launch
+   * called off after its clips went out, the script reconnected): put
+   * everything where it should be on the next playing tick.
+   */
+  resyncSoon(): void {
+    if (this.wasPlaying) this.settleAt = this.now();
+    this.primed.clear();
   }
 
   /** Stop a track as part of a landing (unquantised with protocol 5). */
@@ -444,8 +496,10 @@ export class LiveClipScheduler {
     this.cut = at;
   }
 
-  /** Forget everything (the document changed hands). */
+  /** Forget everything (the document changed hands). Clips it left playing stop. */
   reset(): void {
+    if (this.wasPlaying || this.owned.size) this.stopAll();
+    this.lastFire.clear();
     this.primed.clear();
     this.cut = null;
     this.fired.clear();

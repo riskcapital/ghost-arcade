@@ -129,6 +129,51 @@ describe('recording', () => {
     expect(r.store.undoLabels()).toHaveLength(1);
     expect(r.recorder.openPasses()).toBe(1);
   });
+
+  it('latch: a seek forward leaves what the playhead skipped as it was', () => {
+    const r = rig([{ id: 'a', target: L1, key: 'shader:speed', kind: 'continuous', min: 0, max: 10, points: [{ t: 0, v: 2 }, { t: 100, v: 2 }] }]);
+    r.recorder.arm('latch');
+    play(r, 0, 2, (t) => (t >= 1 && t <= 1.2 ? 8 : null));
+    // Seek to 50 and play on.
+    for (let t = 50; t <= 52; t += 1 / 60) {
+      r.clock.ms += 1000 / 60;
+      r.recorder.tick(t);
+    }
+    r.recorder.stop(52);
+    const line = r.store.lines()[0];
+    expect(lineValueAt(line, 1.5)).toBeCloseTo(8);
+    expect(lineValueAt(line, 25)).toBeCloseTo(2);
+    expect(lineValueAt(line, 51)).toBeCloseTo(8);
+  });
+
+  it('touch: a seek forward mid-gesture does not ramp across the skipped part', () => {
+    const r = rig([{ id: 'a', target: L1, key: 'shader:speed', kind: 'continuous', min: 0, max: 10, points: [{ t: 0, v: 2 }, { t: 100, v: 2 }] }]);
+    r.recorder.arm('touch');
+    play(r, 1, 1.2, () => 8);
+    r.clock.ms += 16;
+    r.recorder.input(L1, 'shader:speed', 9, 40);
+    r.clock.ms += 1000;
+    r.recorder.tick(41);
+    const line = r.store.lines()[0];
+    expect(lineValueAt(line, 20)).toBeCloseTo(2);
+    expect(lineValueAt(line, 1.1)).toBeCloseTo(8);
+  });
+
+  it('latch across a loop wrap writes the next lap too', () => {
+    const r = rig([{ id: 'a', target: L1, key: 'shader:speed', kind: 'continuous', min: 0, max: 10, points: [{ t: 0, v: 2 }, { t: 10, v: 2 }] }]);
+    r.recorder.arm('latch');
+    play(r, 5, 10 - 1 / 60, (t) => (t < 5.1 ? 9 : null));
+    // The loop wraps: lap 2 from just past 0 to 4.
+    for (let t = 0.01; t <= 4; t += 1 / 60) {
+      r.clock.ms += 1000 / 60;
+      r.recorder.tick(t);
+    }
+    r.recorder.stop(4);
+    const line = r.store.lines()[0];
+    expect(lineValueAt(line, 7)).toBeCloseTo(9);
+    expect(lineValueAt(line, 2)).toBeCloseTo(9);
+    expect(r.store.undoLabels()).toHaveLength(2);
+  });
 });
 
 describe('controls', () => {
@@ -136,8 +181,10 @@ describe('controls', () => {
     const r = rig(initial);
     let showTime = 0;
     let playing = true;
+    let restoring = false;
     let bid = 0;
     const controls = createLineControls({
+      restoring: () => restoring,
       recorder: r.recorder,
       lines: () => r.store.lines(),
       describe: (_t, key) => entries[key] ?? null,
@@ -146,7 +193,7 @@ describe('controls', () => {
       newId: () => `b${++bid}`,
       now: () => r.clock.ms,
     });
-    return { ...r, controls, setTime: (t: number) => { showTime = t; }, setPlaying: (p: boolean) => { playing = p; } };
+    return { ...r, controls, setTime: (t: number) => { showTime = t; }, setPlaying: (p: boolean) => { playing = p; }, setRestoring: (v: boolean) => { restoring = v; } };
   }
 
   it('touch a knob to bind: the next moved CC binds and is kept from the mappings', () => {
@@ -188,6 +235,23 @@ describe('controls', () => {
     c.clock.ms = RELEASE_MS + 1;
     expect(c.controls.touches().get('a')).toBeUndefined();
     expect(c.store.lines()[0]).toBe(line);
+  });
+
+  it('a stored value put back by undo or redo is not recorded as a move', () => {
+    const line: ControlLine = { id: 'a', target: L1, key: 'layer:opacity', kind: 'continuous', min: 0, max: 1, points: [{ t: 0, v: 1 }, { t: 10, v: 1 }] };
+    const c = controlsRig([line]);
+    const source = (opacity: number): RegistrySource => ({ layers: [{ ...createLayer('L1', 'Facade'), opacity }] });
+    c.controls.observe(source(1));
+    c.recorder.arm('touch');
+    c.setTime(2);
+    c.setRestoring(true);
+    c.controls.observe(source(0.4));
+    c.setRestoring(false);
+    expect(c.recorder.openPasses()).toBe(0);
+    // The restored value is the new baseline: an unchanged project records nothing.
+    c.controls.observe(source(0.4));
+    expect(c.recorder.openPasses()).toBe(0);
+    expect(c.store.undoLabels()).toHaveLength(0);
   });
 
   it('a stored value moved by the slider, OSC or a Live signal is recorded (project watch)', () => {

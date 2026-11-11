@@ -18,6 +18,7 @@
 import { get } from 'svelte/store';
 import {
   onShowFrame,
+  parkedShowDoc,
   setShowPhraseEffects,
   showPhraseStatus,
   showTimeline,
@@ -121,7 +122,7 @@ function sendDue(force: boolean): void {
   const due = (lead: number) => force || now >= e.at - lead * 1000;
   const scheduler = out.scheduler();
   for (const s of e.stops) if (!s.sent && due(s.lead)) { s.sent = true; scheduler.stopForEntry(s.item); }
-  for (const f of e.fires) if (!f.sent && due(f.lead)) { f.sent = true; scheduler.sendEntry(f.item.cmd); }
+  for (const f of e.fires) if (!f.sent && due(f.lead)) { f.sent = true; scheduler.sendEntry(f.item.cmd, f.item.blockId); }
   if (e.scene && !e.scene.sent && due(e.scene.lead)) {
     e.scene.sent = true;
     out.fireScene(e.scene.item.index, e.scene.item.q);
@@ -206,11 +207,17 @@ export function handlePhraseEvent(e: ShowPhraseEvent): void {
       out.scheduler().setCut(null);
       handOutput(false);
       break;
-    case 'cancel':
+    case 'cancel': {
       stopEntryTimer();
+      // Clips already sent ahead of the bar play in Live: put Live back to
+      // what the Timeline plays.
+      const sent = !!entry && (entry.fires.some((f) => f.sent) || entry.stops.some((x) => x.sent));
       entry = null;
-      out.scheduler().setCut(null);
+      const scheduler = out.scheduler();
+      scheduler.setCut(null);
+      if (sent) scheduler.resyncSoon();
       break;
+    }
   }
 }
 
@@ -272,9 +279,15 @@ export function phraseDelay(now = nowMs()): number {
  * Press a phrase pad: the phrase plays from its start on the next bar.
  * Pressing the pad of the phrase waiting for its bar calls it off.
  */
-export function launchPhrase(id: string, opts: { origin?: PhraseOrigin } = {}): boolean {
+/** The Timeline's sections, whichever document is open (the pads launch
+ *  from the Show tab too: launching opens the Timeline). */
+function timelineSections() {
   const s = get(showTimeline);
-  if (!s.sections.some((x) => x.id === id && x.phrase)) return false;
+  return s.doc === 'timeline' ? s.sections : get(parkedShowDoc).sections ?? [];
+}
+
+export function launchPhrase(id: string, opts: { origin?: PhraseOrigin } = {}): boolean {
+  if (!timelineSections().some((x) => x.id === id && x.phrase)) return false;
   if (showTimeline.isChasing()) {
     showToast('The Timeline follows an outside clock: phrases need its own transport (Settings > Show control > Timecode: Follow Off).', 'info');
     return false;
@@ -287,7 +300,7 @@ export function launchPhrase(id: string, opts: { origin?: PhraseOrigin } = {}): 
 
 /** Pad `n` (1-based). */
 export function launchPhraseNumber(n: number): boolean {
-  const p = phraseByNumber(get(showTimeline).sections, n);
+  const p = phraseByNumber(timelineSections(), n);
   return p ? launchPhrase(p.id) : false;
 }
 
@@ -299,8 +312,8 @@ export function stopPhrases(): void {
 
 /** A Live scene linked to a phrase launched in Live. */
 function launchFromLive(sectionId: string, name: string, origin: { scene?: number }): void {
-  const s = get(showTimeline);
-  const section = s.sections.find((x) => x.id === sectionId && x.phrase) ?? s.sections.find((x) => !!name && x.name === name && x.phrase);
+  const sections = timelineSections();
+  const section = sections.find((x) => x.id === sectionId && x.phrase) ?? sections.find((x) => !!name && x.name === name && x.phrase);
   if (!section) return;
   const st = get(showPhraseStatus);
   // The phrase fired this scene itself: Live echoes the launch back.

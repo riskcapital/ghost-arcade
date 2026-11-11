@@ -46,7 +46,7 @@
     return base;
   }
   function select(line: ControlLine) {
-    lineSelection.set({ lineId: line.id, points: sel?.lineId === line.id ? sel.points : [] });
+    lineSelection.set(sel?.lineId === line.id ? sel : { lineId: line.id, points: [] });
   }
   function remove(line: ControlLine) {
     showTimeline.editLines((list) => list.filter((l) => l.id !== line.id));

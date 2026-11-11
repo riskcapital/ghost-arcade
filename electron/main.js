@@ -103,7 +103,9 @@ const { createShowStartup } = require('./show-startup.cjs');
 const { createQuitGuard } = require('./quit-guard.cjs');
 const showStartup = createShowStartup({ app });
 ipcMain.on('show_startup_session', (event) => {
-  try { event.returnValue = showStartup.get(); } catch { event.returnValue = null; }
+  // Show mode as this launch runs it (fixed at launch, off once left), so a
+  // reloaded editor agrees with the watchdog and quit protection here.
+  try { event.returnValue = installMode.sessionInfo(showStartup.get()); } catch { event.returnValue = null; }
 });
 ipcMain.handle('show_startup_get', () => showStartup.get());
 ipcMain.handle('show_startup_set', (_, patch) => showStartup.set(patch));
@@ -6639,7 +6641,7 @@ function registerIpcHandlers() {
   // The editor's answer to app-quit-requested (see quit-guard.cjs).
   ipcMain.handle('app_quit_ack', () => { quitGuard.acknowledged(); });
   ipcMain.handle('app_quit_proceed', () => { quitGuard.proceed(); });
-  ipcMain.handle('app_quit_cancel', () => { quitGuard.cancel(); });
+  ipcMain.handle('app_quit_cancel', () => { quitGuard.cancel(); installMode.quitCalledOff(); });
 
   ipcMain.handle('app_relaunch', () => {
     console.log('[IPC] app_relaunch — restarting');

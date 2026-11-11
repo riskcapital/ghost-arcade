@@ -375,6 +375,8 @@ export function installStageRehearsal(): () => void {
   // Closing or reloading the window: the editor stops collecting sound for
   // recordings that will never finish (the main process cancels their files).
   const onUnload = () => {
+    // A render rehearsal under way gives the editor its Loop back and stops it.
+    for (const take of [...activeRenders]) take.end();
     for (const id of openRecAudio) post({ type: 'rec-audio-cancel', id });
     openRecAudio.clear();
     post({ type: 'stage-bye', instance: pageInstance });
@@ -429,8 +431,11 @@ export function installStageRehearsal(): () => void {
 
 // ── Render rehearsal ───────────────────────────────────────────────────
 
-/** What the Demo Reel's "Render rehearsal" needs from the show; null without a show. */
-export function createStageRehearsalRender(): {
+/** Render rehearsals not ended yet (the window closing ends them). */
+const activeRenders = new Set<{ end(): void }>();
+
+/** A render rehearsal take (see createStageRehearsalRender). */
+export interface StageRehearsalTake {
   durationSeconds: number;
   /** Play the show from its start (Loop off for the take). Resolves with the
    *  epoch (ms) at which the editor was at show time 0. */
@@ -448,7 +453,10 @@ export function createStageRehearsalRender(): {
   noteFrame(dueAtEpochMs: number): void;
   addSound(outputPath: string, startedAtEpochMs: number, durationSeconds: number): Promise<RecAudioResult>;
   end(): void;
-} | null {
+}
+
+/** What the Demo Reel's "Render rehearsal" needs from the show; null without a show. */
+export function createStageRehearsalRender(): StageRehearsalTake | null {
   const show = get(stageShow);
   if (!show?.hasShow || show.duration <= 0) return null;
   // A render of the show: the editor leaves a live takeover out of it.
@@ -459,7 +467,7 @@ export function createStageRehearsalRender(): {
   // song files. The take plays it once; Loop comes back afterwards.
   const restoreLoop = show.loop;
   let ended = false;
-  return {
+  const take: StageRehearsalTake = {
     durationSeconds,
     async begin() {
       if (restoreLoop) sendRehearsalCommand({ op: 'loop', on: false });
@@ -495,9 +503,12 @@ export function createStageRehearsalRender(): {
     end() {
       if (ended) return;
       ended = true;
+      activeRenders.delete(take);
       audio?.cancel();
       if (get(stageShow)?.isPlaying) sendRehearsalCommand({ op: 'pause' });
       if (restoreLoop) sendRehearsalCommand({ op: 'loop', on: true });
     },
   };
+  activeRenders.add(take);
+  return take;
 }

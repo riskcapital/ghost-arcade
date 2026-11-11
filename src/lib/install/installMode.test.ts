@@ -189,6 +189,22 @@ describe('install mode (main process)', () => {
     expect(h.im.holdQuit()).toBe(false);
   });
 
+  it('a reloaded editor is told the session as this launch runs it', () => {
+    const h = setup();
+    h.im.start();
+    expect(h.im.sessionInfo(h.startup.get()).session.showMode).toBe(true);
+    // Switched off in Settings mid-session: this launch still runs it.
+    h.startup.set({ showMode: false });
+    expect(h.im.sessionInfo(h.startup.get()).session.showMode).toBe(true);
+    // Left with the key combo: a reload does not start it again.
+    h.shortcuts.get('CommandOrControl+Alt+Shift+X')!();
+    expect(h.im.sessionInfo(h.startup.get()).session.showMode).toBe(false);
+    // Switched on mid-session in a normal launch: not until the next launch.
+    const n = setup({ showMode: false });
+    n.startup.set({ showMode: true });
+    expect(n.im.sessionInfo(n.startup.get()).session.showMode).toBe(false);
+  });
+
   it('in combo mode refuses a quit outright', () => {
     const h = setup({ config: { quitProtection: 'combo' } });
     h.im.start();
@@ -236,6 +252,88 @@ describe('install mode (main process)', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('an editor still down after a crash during the cooldown is reloaded once the cooldown ends', () => {
+    vi.useFakeTimers();
+    try {
+      const h = setup();
+      let crashed = false;
+      h.wc.isCrashed = () => crashed;
+      h.wc.reload.mockImplementation(() => { crashed = false; });
+      h.im.start();
+      // A crash loop uses up the reloads and relaunches.
+      for (let i = 0; i < 6; i++) { h.im.rendererGone({ reason: 'crashed', exitCode: 11 }); vi.advanceTimersByTime(600); h.advance(1000); }
+      expect(h.app.exit).toHaveBeenCalledTimes(3);
+      h.wc.reload.mockClear();
+      h.app.exit.mockClear();
+      crashed = true;
+      expect(h.im.rendererGone({ reason: 'crashed', exitCode: 11 })).toBe(true);
+      vi.advanceTimersByTime(600);
+      expect(h.wc.reload).not.toHaveBeenCalled();
+      // The heartbeat check keeps asking; once the cooldown is over it acts.
+      for (let i = 0; i < 2000 && !h.wc.reload.mock.calls.length && !h.app.exit.mock.calls.length; i++) {
+        h.advance(5000);
+        h.im._checkHeartbeat();
+        vi.advanceTimersByTime(600);
+      }
+      expect(h.wc.reload.mock.calls.length + h.app.exit.mock.calls.length).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a reload that never comes back is tried again', () => {
+    vi.useFakeTimers();
+    try {
+      const h = setup();
+      h.wc.isLoading = () => true;
+      h.im.start();
+      h.im.pageLoaded();
+      h.im.heartbeat({ state: 'on' });
+      h.advance(25_000);
+      h.wc.isLoading = () => false;
+      h.im._checkHeartbeat();
+      vi.advanceTimersByTime(600);
+      expect(h.wc.reload).toHaveBeenCalledTimes(1);
+      // The page hangs while loading: no load, no heartbeat.
+      h.wc.isLoading = () => true;
+      h.advance(60_000);
+      h.im._checkHeartbeat();
+      h.advance(40_000);
+      h.im._checkHeartbeat();
+      vi.advanceTimersByTime(600);
+      expect(h.wc.reload).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a confirmed quit called off at the save question keeps quits held and the guardian on', async () => {
+    const h = setup();
+    h.dialog.showMessageBox.mockResolvedValueOnce({ response: 1 });
+    h.im.start();
+    expect(h.im.holdQuit()).toBe(true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.app.quit).toHaveBeenCalled();
+    expect(JSON.parse(readFileSync(h.im.stateFile, 'utf8')).cleanExit).toBe(false);
+    h.im.quitCalledOff();
+    expect(h.im.active()).toBe(true);
+    expect(h.im.holdQuit()).toBe(true);
+  });
+
+  it('an output window reloaded hides its cursor again', async () => {
+    const h = setup();
+    h.im.start();
+    const wc = { insertCSS: vi.fn(async () => 'k1'), removeInsertedCSS: vi.fn(async () => {}) };
+    const out = { isDestroyed: () => false, webContents: wc } as unknown as { __gaCursorKey?: string };
+    h.im.outputWindowLoaded(out);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(out.__gaCursorKey).toBe('k1');
+    // Reloaded: the page lost the CSS.
+    h.im.outputWindowLoaded(out);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(wc.insertCSS).toHaveBeenCalledTimes(2);
   });
 
   it('ends a render core whose frame count stopped', async () => {

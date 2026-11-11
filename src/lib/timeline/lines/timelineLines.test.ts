@@ -24,7 +24,7 @@ vi.mock('../../ableton/abletonBridge', () => ({
   abletonBridge: { liveParamValue: () => null, liveLevelValue: () => null, watchLiveSources: () => {} },
 }));
 
-const { showTimeline, setShowCompositionLoader } = await import('../../stores/showTimeline');
+const { showTimeline, setShowCompositionLoader, parkedShowDoc } = await import('../../stores/showTimeline');
 const { setHistoryCallback } = await import('../../stores/historyHooks');
 const { runMidiTaps } = await import('../../midi/midiTaps');
 const { currentLineFrame } = await import('./lineRuntime');
@@ -90,6 +90,40 @@ describe('the Timeline drives its lines', () => {
     expect(line.color).toMatch(/^#/);
   });
 
+  it('following a clock, opening the Show tab ends an open pass in the Timeline', () => {
+    lines.addLineWithPoint({ scope: 'layer', id: 'A' }, 'layer:opacity', 10, 1);
+    lines.bindNextControl({ scope: 'layer', id: 'A' }, 'shader:speed', 'speed');
+    runMidiTaps(0, 'cc', 21, 0, { id: 'dev', name: 'Knobs' });
+    lines.armLines('latch');
+    for (let i = 0; i <= 30; i++) {
+      const t = (i / 30) * 1;
+      runMidiTaps(0, 'cc', 21, 127, { id: 'dev', name: 'Knobs' });
+      showTimeline.chase(t, true);
+    }
+    showTimeline.activateDoc('show');
+    showTimeline.releaseChase();
+    const rec = get(parkedShowDoc).lines.find((l) => l.key === 'shader:speed');
+    expect(rec).toBeTruthy();
+    expect(lineValueAt(rec!, 0.8) as number).toBeCloseTo(4, 1);
+    expect(get(showTimeline).lines.some((l) => l.key === 'shader:speed')).toBe(false);
+  });
+
+  it('an LED block value moved from its panel while armed and playing is recorded', () => {
+    const clip = showTimeline.addLedClip('led:strip', 0, { kind: 'colour', color: '#ff0000', duration: 20, brightness: 1 })!;
+    expect(clip).toBeTruthy();
+    lines.addLineWithPoint({ scope: 'block', id: clip }, 'ledblock:brightness', 10, 1);
+    lines.armLines('touch');
+    showTimeline.seek(2);
+    showTimeline.play();
+    // The panel's slider moving: the first change is seen, the rest recorded.
+    showTimeline.updateLedClip(clip, { brightness: 0.5 });
+    showTimeline.updateLedClip(clip, { brightness: 0.3 });
+    lines.disarmLines();
+    showTimeline.pause();
+    const rec = get(showTimeline).lines.find((l) => l.key === 'ledblock:brightness')!;
+    expect(lineValueAt(rec, 2) as number).toBeCloseTo(0.3, 2);
+  });
+
   it('records a MIDI sweep into a new line: bind by touching a knob, arm, play; one undo step', () => {
     lines.addLineWithPoint({ scope: 'layer', id: 'A' }, 'layer:opacity', 10, 1);
     const before = steps;
@@ -133,5 +167,21 @@ describe('the Timeline drives its lines', () => {
     } finally {
       manualClock = false;
     }
+  });
+});
+
+describe('selected line points', () => {
+  const line = { id: 'l', target: { scope: 'layer' as const, id: 'A' }, key: 'layer:opacity', kind: 'continuous' as const, min: 0, max: 1, points: [{ t: 0, v: 0 }, { t: 1, v: 1 }, { t: 2, v: 0 }], follow: { depthPoints: [{ t: 0, v: 1 }, { t: 3, v: 0 }] } } as never;
+  it('belong to the list they were picked in', () => {
+    const sel = { lineId: 'l', points: [1], channel: 'depth' as const, of: (line as { follow: { depthPoints: unknown[] } }).follow.depthPoints as never };
+    expect(lines.selectedLinePoints(sel, line, 'depth')).toEqual([1]);
+    expect(lines.selectedLinePoints(sel, line, 'points')).toEqual([]);
+  });
+  it('no longer apply once the points were replaced (undo, a recorded pass)', () => {
+    const l = line as { points: unknown[] };
+    const sel = { lineId: 'l', points: [2], channel: 'points' as const, of: l.points as never };
+    expect(lines.selectedLinePoints(sel, line)).toEqual([2]);
+    const replaced = { ...(line as object), points: [{ t: 0, v: 0 }, { t: 2, v: 0 }] } as never;
+    expect(lines.selectedLinePoints(sel, replaced)).toEqual([]);
   });
 });

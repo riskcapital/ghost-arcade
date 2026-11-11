@@ -241,3 +241,99 @@ describe('Live clip blocks: from the Timeline and the mirrored set', () => {
     expect(out.rows.map((r) => r.audible)).toEqual([false, false, true]);
   });
 });
+
+describe('LiveClipScheduler: track ownership', () => {
+  let clock = 0;
+  function mk(e = env()) {
+    const out: Array<{ t: number; cmd: LiveCommand }> = [];
+    let cur = 0;
+    const s = new LiveClipScheduler({ send: (cmd) => out.push({ t: +cur.toFixed(3), cmd }), now: () => clock });
+    s.setEnv(e);
+    const play = (from: number, to: number, seek = 0) => {
+      for (let t = from; t <= to + 1e-9; t += 1 / 60) {
+        cur = t;
+        clock += 1000 / 60;
+        s.tick(t, true, seek);
+      }
+    };
+    return { s, out, play };
+  }
+  /** What Live was last told for `track` before show time `at`. */
+  const lastBefore = (out: Array<{ t: number; cmd: LiveCommand }>, track: number, at: number) =>
+    out.filter((o) => o.t < at && (o.cmd.t === 'stop_all' || ('i' in o.cmd && o.cmd.i === track))).at(-1)?.cmd;
+
+  it('a block ending just before the next one on a bar row does not cancel the next fire', () => {
+    const { s, out, play } = mk();
+    s.setBlocks([row('r', 0, { launch: 'bar' })], [blk('a', 'r', 0, 3.5, 1), blk('b', 'r', 4, 8, 2)]);
+    play(0, 6);
+    // The stop at 3.5 still goes out, and b's fire is sent again after it.
+    expect(out.some((o) => o.cmd.t === 'stop_track' && o.t > 3 && o.t < 3.5)).toBe(true);
+    expect(lastBefore(out, 0, 4)).toMatchObject({ t: 'fire_clip', s: 2, q: LIVE_Q_BAR });
+  });
+
+  it('a short gap on a slow beat row keeps the next block', () => {
+    const { s, out, play } = mk(env(5, { tempo: createTempoMap(60, 0) }));
+    s.setBlocks([row('r', 0)], [blk('a', 'r', 1, 2.7, 1), blk('b', 'r', 3, 5, 2)]);
+    play(0, 4);
+    expect(lastBefore(out, 0, 3)).toMatchObject({ t: 'fire_clip', s: 2 });
+  });
+
+  it('two rows on one Live track hand over without the stop killing the next fire', () => {
+    const { s, out, play } = mk();
+    s.setBlocks([row('a', 0), row('b', 0)], [blk('a1', 'a', 1, 4, 1), blk('b1', 'b', 4, 8, 2)]);
+    play(0, 5);
+    expect(lastBefore(out, 0, 4)).toMatchObject({ t: 'fire_clip', s: 2 });
+  });
+
+  it('deleting the playing block, its row, or binding the row elsewhere stops its clip', () => {
+    for (const after of [
+      { rows: [row('r', 0)], blocks: [] as LiveSchedBlock[] },
+      { rows: [] as LiveSchedRow[], blocks: [] as LiveSchedBlock[] },
+      { rows: [row('r', 3)], blocks: [blk('a', 'r', 1, 6, 1)] },
+    ]) {
+      const { s, out, play } = mk();
+      s.setBlocks([row('r', 0)], [blk('a', 'r', 1, 6, 1)]);
+      play(0, 2);
+      s.setBlocks(after.rows, after.blocks);
+      play(2 + 1 / 60, 3);
+      expect(out.some((o) => o.cmd.t === 'stop_track' && o.cmd.i === 0 && o.t >= 2)).toBe(true);
+    }
+  });
+
+  it('a row muted mid-block and unmuted comes back in mid-way', () => {
+    const { s, out, play } = mk();
+    s.setBlocks([row('r', 0)], [blk('a', 'r', 0.5, 8, 1)]);
+    play(0, 2);
+    s.setBlocks([row('r', 0, { audible: false })], [blk('a', 'r', 0.5, 8, 1)]);
+    play(2 + 1 / 60, 3);
+    s.setBlocks([row('r', 0)], [blk('a', 'r', 0.5, 8, 1)]);
+    play(3 + 1 / 60, 9);
+    const fires = out.filter((o) => o.cmd.t === 'fire_clip');
+    expect(fires).toHaveLength(2);
+    expect(fires[1].cmd).toMatchObject({ s: 1 });
+    expect((fires[1].cmd as { pos?: number }).pos).toBeGreaterThan(0);
+    // And it still stops at its end.
+    expect(out.filter((o) => o.cmd.t === 'stop_track').length).toBe(2);
+  });
+
+  it('reset while a clip plays (the document changed hands) stops it in Live', () => {
+    const { s, out, play } = mk();
+    s.setBlocks([row('r', 0)], [blk('a', 'r', 0.5, 8, 1)]);
+    play(0, 2);
+    s.reset();
+    expect(out.at(-1)?.cmd.t).toBe('stop_all');
+    s.tick(2.1, false, 1);
+    expect(out.filter((o) => o.cmd.t === 'stop_all')).toHaveLength(1);
+  });
+
+  it('resyncSoon puts Live back on what the Timeline plays', () => {
+    const { s, out, play } = mk();
+    s.setBlocks([row('r', 0)], [blk('a', 'r', 0, 8, 1)]);
+    play(0, 1);
+    // Something else (a called-off phrase) fired another clip on the track.
+    s.sendEntry({ t: 'fire_clip', i: 0, s: 5 }, 'other');
+    s.resyncSoon();
+    play(1 + 1 / 60, 1.2);
+    expect(lastBefore(out, 0, 99)).toMatchObject({ t: 'fire_clip', s: 1 });
+  });
+});

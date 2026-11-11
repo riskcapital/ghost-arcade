@@ -9,14 +9,13 @@
  */
 import { get } from 'svelte/store';
 import type { ShowAudioTrack, ShowTempoMap } from '../../types';
-import { showTimeline } from '../../stores/showTimeline';
+import { onShowTimelineReset, showTimeline } from '../../stores/showTimeline';
 import { project } from '../../stores/layers';
 import { cachedShowAudioDecode, decodeShowAudio } from '../../audio/showAudio';
 import { songFeaturesFor, type SongFeatures } from '../lines/songFeatures';
 import { detectShowTempo } from '../../show/tempoDetect';
 import { detectSongStructure, type SongStructure } from './songStructure';
 import { draftIsEmpty, draftScore, hashString, type ScoreDraft, type ScoreStage } from './scoreDraft';
-import { sameJson } from '../../show/jsonEqual';
 import { ledSpotId } from '../where/spatialOrder';
 import { generateUUID } from '../../utils/uuid';
 
@@ -57,6 +56,27 @@ function stageNow(): ScoreStage {
 
 let shuffleCount = 0;
 let lastDraft: { draft: ScoreDraft; songKey: string } | null = null;
+/** Every draft laid down since the last Score of a new document: an undo
+ *  can bring an earlier one back, and Shuffle takes that out too. */
+let drafts: ScoreDraft[] = [];
+const MAX_DRAFTS = 32;
+
+/** JSON with every object's keys sorted. */
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) => {
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return v;
+    const o = v as Record<string, unknown>;
+    return Object.fromEntries(Object.keys(o).sort().map((k) => [k, o[k]]));
+  });
+}
+
+function remember(draft: ScoreDraft): void {
+  drafts.push(draft);
+  if (drafts.length > MAX_DRAFTS) drafts = drafts.slice(-MAX_DRAFTS);
+}
+
+// A new or reopened document: Shuffle starts over.
+onShowTimelineReset(() => forgetLastScore());
 
 function songKey(track: ShowAudioTrack): string {
   return `${track.name}|${Math.round((track.sourceDuration || track.duration) * 10)}|${track.startTime}`;
@@ -93,6 +113,7 @@ export async function prepareScore(opts: { shuffle?: number } = {}): Promise<Sco
 /** Lay the draft down: one undo step. */
 export function commitScore(prep: ScorePrep): boolean {
   const s = get(showTimeline);
+  if (s.doc !== 'timeline') return false;
   const d = prep.draft;
   if (draftIsEmpty(d) && !prep.tempoDetected) return false;
   showTimeline.replaceTimelineParts({
@@ -104,6 +125,7 @@ export function commitScore(prep: ScorePrep): boolean {
     ...(d.stageClips.length ? { stageClips: [...s.stageClips, ...d.stageClips] } : {}),
   });
   lastDraft = { draft: d, songKey: songKey(prep.track) };
+  remember(d);
   return true;
 }
 
@@ -113,26 +135,38 @@ export function commitScore(prep: ScorePrep): boolean {
  */
 export async function shuffleScore(): Promise<ScorePrepResult> {
   if (!lastDraft) return { ok: false, reason: 'Score the song first.' };
-  const before = get(showTimeline);
-  const old = lastDraft.draft;
-  const same = <T extends { id: string }>(list: readonly T[], drafted: readonly T[]) => {
-    const byId = new Map(drafted.map((x) => [x.id, x]));
-    return list.filter((x) => !(byId.has(x.id) && sameJson(x, byId.get(x.id))));
-  };
-  // Take the untouched draft out (quietly: the new draft is the one undo step).
-  const stripped = {
-    sections: same(before.sections, old.sections),
-    lookClips: same(before.lookClips, old.lookClips),
-    lines: same(before.lines, old.lines),
-    ledClips: same(before.ledClips, old.ledClips),
-    stageClips: same(before.stageClips, old.stageClips),
-  };
+  if (get(showTimeline).doc !== 'timeline') return { ok: false, reason: 'Open the Timeline first.' };
   shuffleCount++;
-  const s = get(showTimeline);
-  const track = scoreSongTrack(s.audioTracks);
-  if (!track || !s.tempo) return { ok: false, reason: 'Score the song first.' };
+  const first = get(showTimeline);
+  const track = scoreSongTrack(first.audioTracks);
+  if (!track || !first.tempo) return { ok: false, reason: 'Score the song first.' };
   const features = await songFeaturesFor(track.url, async () => cachedShowAudioDecode(track.url) ?? (await decodeShowAudio(track.url)));
   if (!features) return { ok: false, reason: 'The song could not be read.' };
+  // Read the document after the song's analysis: edits (or an undo, or the
+  // other tab) made meanwhile are what the new draft goes into.
+  const s = get(showTimeline);
+  if (s.doc !== 'timeline' || !s.tempo) return { ok: false, reason: 'Open the Timeline first.' };
+  // Compared without key order: a restore (undo) or a reopened file writes
+  // the same item with its keys in another order.
+  const same = <T extends { id: string }>(list: readonly T[], pick: (d: ScoreDraft) => readonly T[]) => {
+    const byId = new Map<string, Set<string>>();
+    for (const d of drafts) {
+      for (const x of pick(d)) {
+        const seen = byId.get(x.id) ?? new Set<string>();
+        seen.add(canonicalJson(x));
+        byId.set(x.id, seen);
+      }
+    }
+    return list.filter((x) => !(byId.get(x.id)?.has(canonicalJson(x)) ?? false));
+  };
+  // Take every untouched drafted item out (quietly: the new draft is the one undo step).
+  const stripped = {
+    sections: same(s.sections, (d) => d.sections),
+    lookClips: same(s.lookClips, (d) => d.lookClips),
+    lines: same(s.lines, (d) => d.lines),
+    ledClips: same(s.ledClips, (d) => d.ledClips),
+    stageClips: same(s.stageClips, (d) => d.stageClips),
+  };
   const structure = detectSongStructure(features, s.tempo, { origin: track.startTime - track.offset, start: track.startTime, end: track.startTime + track.duration });
   const seed = (hashString(songKey(track)) + shuffleCount * 7919) >>> 0;
   const draft = draftScore(structure, s.tempo, stageNow(), stripped, seed, { next: (prefix) => `${prefix}-${generateUUID()}` });
@@ -144,12 +178,14 @@ export async function shuffleScore(): Promise<ScorePrepResult> {
     stageClips: [...stripped.stageClips, ...draft.stageClips],
   });
   lastDraft = { draft, songKey: songKey(track) };
+  remember(draft);
   return { ok: true, prep: { track, tempo: s.tempo, tempoDetected: false, structure, draft, seed } };
 }
 
 /** A new song or document: Shuffle starts over. */
 export function forgetLastScore(): void {
   lastDraft = null;
+  drafts = [];
   shuffleCount = 0;
 }
 

@@ -1274,7 +1274,11 @@ function sectionHolding(s: Pick<ShowTimelineState, 'doc'>): boolean {
   return s.doc === 'timeline' && sectionPlayer.hold !== null;
 }
 
+/** Clock seconds a hold was paused at (a paused hold does not run its blocks on). */
+let holdPausedAt: number | null = null;
+
 function forgetSections(): void {
+  holdPausedAt = null;
   const hadState = sectionPlayer.hold || sectionPlayer.live || sectionPlayer.armed.length || sectionPlayer.vampExit
     || sectionPlayer.freeRun.length || Object.keys(sectionPlayer.passes).length;
   if (!hadState) return;
@@ -1371,13 +1375,20 @@ function clearPhrasePending(emit = true): void {
   if (emit) emitPhrase({ type: 'cancel' });
 }
 
-/** Everything about phrases forgotten (Stop, another document, a new file). */
-function forgetPhrases(): void {
+/**
+ * Everything about phrases forgotten (Stop, another document, a new file,
+ * the end of the show). A phrase that was playing stops (the VJ decks get
+ * the output back). Returns whether a stop went out.
+ */
+function forgetPhrases(): boolean {
   const had = phrase.activeId !== null || phrase.pending !== null || phrase.xfade !== null;
+  const from = phrase.activeId;
   clearPhrasePending(phrase.pending !== null);
   phrase.activeId = null;
   phrase.xfade = null;
   if (had) publishPhraseStatus();
+  if (from !== null) emitPhrase({ type: 'stop', from });
+  return from !== null;
 }
 
 /** The sections as the player sees them (the playing phrase's end action). */
@@ -1419,7 +1430,9 @@ function landPhrase(over: number, oldAt: number, next: number | null): void {
   }
   const target = s.sections.find((x) => x.id === p.id);
   if (!target) {
+    // The phrase was deleted while it waited: the launch is off.
     publishPhraseStatus();
+    emitPhrase({ type: 'cancel' });
     return;
   }
   const time = Math.min(target.end - 1e-4, target.start + Math.max(0, over));
@@ -1531,6 +1544,9 @@ function tick(now: number): void {
   const dur = s.duration;
   if (dur > 0 && next >= dur) {
     if (s.loop) {
+      // A new pass of the show: the last pass's vamps, jump counts and
+      // free-running offsets are done with.
+      forgetSections();
       const wrapped = ((next % dur) + dur) % dur;
       // Keep the clock anchor: only the show time moves back by whole passes.
       transportClock.shift(wrapped - next);
@@ -1555,6 +1571,7 @@ function tick(now: number): void {
 
 /** The end of a show that does not loop. */
 function finishShow(action: ShowEndAction): void {
+  forgetSections();
   forgetPhrases();
   if (action === 'rewind') {
     seekGeneration++;
@@ -2250,6 +2267,8 @@ export const showTimeline = {
     // refuses. Cheap and idempotent when the context is already running.
     clipAudioBus.resume();
     phraseLastFrameMs = null;
+    if (sectionPlayer.hold && holdPausedAt !== null) sectionPlayer.hold.since += Math.max(0, sectionClock() - holdPausedAt);
+    holdPausedAt = null;
     store.update((x) => ({ ...x, isPlaying: true }));
     // Starting again from the very end (the show stopped there) starts over.
     const from = !s.loop && s.currentTime >= s.duration - 1e-6 ? 0 : get(store).currentTime;
@@ -2274,6 +2293,7 @@ export const showTimeline = {
       clearPhrasePending();
       publishPhraseStatus();
     }
+    if (sectionPlayer.hold && holdPausedAt === null && get(store).isPlaying) holdPausedAt = sectionClock();
     store.update((s) => ({ ...s, isPlaying: false }));
     seekGeneration++;
     transportClock.reset();
@@ -2310,6 +2330,13 @@ export const showTimeline = {
    * chasing, and hard-seeks only on a real jump so audio follows smoothly.
    */
   chase(seconds: number, running: boolean, rate = 1) {
+    if (!externalClock) {
+      // The outside clock takes the playhead: sections and phrases need the
+      // Timeline's own transport, so what they were doing ends here.
+      externalClock = true;
+      forgetSections();
+      forgetPhrases();
+    }
     externalClock = true;
     cancelRaf();
     const s = get(store);
@@ -2374,6 +2401,11 @@ export const showTimeline = {
    */
   seek(seconds: number) {
     forgetSections();
+    // A launch waiting for its bar is called off (its bar was on the old place).
+    if (phrase.pending) {
+      clearPhrasePending();
+      publishPhraseStatus();
+    }
     applyTime(seconds, true);
     // A seek while playing carries on from the new position.
     transportClock.reset();
@@ -2925,8 +2957,15 @@ export const showTimeline = {
     const track = get(store).layerTracks.find((t) => t.id === trackId);
     if (!track) return;
     const clipIds = new Set(track.clips.map((c) => c.id));
+    // The row's block lines go with it, and an added layer's own lines.
+    const subTarget = track.subRow ? `showsub::${track.layerId}::${track.id}` : null;
     store.update((s) => withDuration({
       ...s,
+      lines: (() => {
+        const kept = removeLinesForBlocks(s.lines, clipIds);
+        if (!subTarget || !kept.some((l) => l.target.scope === 'layer' && l.target.id === subTarget)) return kept;
+        return kept.filter((l) => !(l.target.scope === 'layer' && l.target.id === subTarget));
+      })(),
       layerTracks: s.layerTracks.filter((t) => t.id !== trackId),
       soloTrackId: s.soloTrackId === trackId ? null : s.soloTrackId,
       selectedClipIds: s.selectedClipIds.filter((id) => !clipIds.has(id)),
@@ -3261,12 +3300,15 @@ export const showTimeline = {
   /** Delete clips; `ripple` closes the space they leave on their tracks. */
   removeLayerClips(clipIds: string[], opts: { ripple?: boolean } = {}) {
     const ids = new Set(clipIds);
+    // Only blocks really removed lose their lines (a locked row keeps both).
+    const removed = new Set<string>();
     let changed = false;
     store.update((s) => withDuration({
       ...s,
       layerTracks: s.layerTracks.map((track) => {
         if (track.locked || !track.clips.some((c) => ids.has(c.id))) return track;
         changed = true;
+        for (const c of track.clips) if (ids.has(c.id)) removed.add(c.id);
         if (!opts.ripple) return { ...track, clips: deleteClips(track.clips, ids) };
         const result = rippleDelete(track.clips, ids);
         let lanes = track.lanes;
@@ -3278,7 +3320,7 @@ export const showTimeline = {
     }));
     if (!changed) return;
     store.update((s) => {
-      const lines = removeLinesForBlocks(s.lines, ids);
+      const lines = removeLinesForBlocks(s.lines, removed);
       return lines === s.lines ? s : withDuration({ ...s, lines });
     });
     recordShowEdit();
@@ -3913,7 +3955,7 @@ export const showTimeline = {
       if (!p || p.id !== id || p.dueMs !== dueMs) return;
       phrase.pending = null;
       const sec = get(store).sections.find((x) => x.id === id);
-      if (!sec) { publishPhraseStatus(); return; }
+      if (!sec) { publishPhraseStatus(); emitPhrase({ type: 'cancel' }); return; }
       const over = Math.max(0, (phraseNowMs() - dueMs) / 1000);
       const from = phrase.activeId;
       const time = Math.min(sec.end - 1e-4, sec.start + over);
@@ -3938,9 +3980,9 @@ export const showTimeline = {
     const delay = Math.max(0, Number.isFinite(opts.delay) ? opts.delay! : 0);
     if (!s.isPlaying || s.doc !== 'timeline' || delay <= 0) {
       const from = phrase.activeId;
-      forgetPhrases();
+      const stopped = forgetPhrases();
       if (s.isPlaying && s.doc === 'timeline') this.pause();
-      emitPhrase({ type: 'stop', from });
+      if (!stopped) emitPhrase({ type: 'stop', from });
       publishPhraseStatus();
       return;
     }
@@ -4073,6 +4115,7 @@ export const showTimeline = {
   clear() {
     cancelRaf();
     forgetSections();
+    forgetPhrases();
     releaseAllTrackElements();
     publishTransition(null);
     transportClock.reset();
@@ -4187,6 +4230,14 @@ export const showTimeline = {
     if (s.doc === doc) return false;
     const wasPlaying = s.isPlaying;
     if (wasPlaying && !externalClock) this.pause();
+    else if (wasPlaying) {
+      // Following a clock: the outgoing document still sees itself stop
+      // (open recording passes end in it, its Live clips stop) before the
+      // swap; the clock starts the incoming one.
+      store.update((x) => ({ ...x, isPlaying: false }));
+      seekGeneration++;
+      republishTracks();
+    }
     cancelRaf();
     forgetSections();
     forgetPhrases();

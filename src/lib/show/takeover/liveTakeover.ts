@@ -298,8 +298,10 @@ export function overrideLevel(o: SurfaceOverride, nowMs: number): number {
       return o.fromLevel + (target - o.fromLevel) * p;
     }
     case 'live':
-    case 'pendingRelease':
       return target;
+    case 'pendingRelease':
+      // Released part way into its fade-in: it waits at that level.
+      return clamp01(o.release?.fromLevel ?? target);
     case 'releasing': {
       const r = o.release;
       const from = clamp01(r?.fromLevel ?? target);
@@ -361,7 +363,7 @@ export function evaluateTakeover(
         startAt = at.wallMs;
       }
       if (startAt !== null) {
-        o = { ...o, phase: 'releasing', release: { ...r, at, requestedShowTime, startedAtMs: startAt, fromLevel: clamp01(o.level) } };
+        o = { ...o, phase: 'releasing', release: { ...r, at, requestedShowTime, startedAtMs: startAt, fromLevel: clamp01(r.fromLevel ?? o.level) } };
         releasesStarted.push(id);
       } else if (at !== r.at) {
         o = { ...o, release: { ...r, at, requestedShowTime } };
@@ -493,6 +495,9 @@ export interface EngageOptions {
   fadeIn?: number;
   level?: number;
   effects?: Effect[];
+  /** Never pause the show underneath (a Live section hands pieces over
+   *  while the Timeline plays on). */
+  keepShowPlaying?: boolean;
 }
 
 export interface LiveTakeoverStore extends Readable<TakeoverState> {
@@ -565,7 +570,9 @@ export function createLiveTakeover(initialDeps: Partial<TakeoverDeps> = {}): Liv
     const level = overrideLevel(o, nowMs);
     const base: SurfaceRelease = { spec, requestedAtMs: nowMs, requestedShowTime: show.showTime, at: {} };
     const at = releaseTargetFor(spec, show, nowMs, deps.launchBoundary);
-    if (at) return { ...o, level: o.phase === 'in' ? level : o.level, phase: 'pendingRelease', release: { ...base, at }, momentaryInputs: [] };
+    // The level stays the surface's target (a cancel or re-engage goes back
+    // to it); one released mid fade-in waits at the level it had reached.
+    if (at) return { ...o, phase: 'pendingRelease', release: { ...base, at, ...(o.phase === 'in' ? { fromLevel: level } : {}) }, momentaryInputs: [] };
     return { ...o, phase: 'releasing', release: { ...base, startedAtMs: nowMs, fromLevel: level }, momentaryInputs: [] };
   }
 
@@ -614,7 +621,7 @@ export function createLiveTakeover(initialDeps: Partial<TakeoverDeps> = {}): Liv
       // release already resumed a paused show).
       const first = !Object.values(s.surfaces).some((o) => o.phase !== 'releasing');
       let pause = false;
-      if (first && s.underneath === 'pause' && s.pausedAt === undefined && show.playing && !deps.chasing()) {
+      if (first && !opts.keepShowPlaying && s.underneath === 'pause' && s.pausedAt === undefined && show.playing && !deps.chasing()) {
         next = { ...next, pausedAt: show.showTime };
         pause = true;
       }
@@ -675,8 +682,11 @@ export function createLiveTakeover(initialDeps: Partial<TakeoverDeps> = {}): Liv
       if (!o || (o.phase !== 'pendingRelease' && o.phase !== 'releasing')) return false;
       const nowMs = deps.now();
       const level = overrideLevel(o, nowMs);
-      const back: SurfaceOverride = o.phase === 'pendingRelease'
+      const held = o.phase === 'pendingRelease' && o.release?.fromLevel !== undefined && level < clamp01(o.level) - 1e-6;
+      const back: SurfaceOverride = o.phase === 'pendingRelease' && !held
         ? { ...o, phase: 'live', release: undefined }
+        : held
+          ? { ...o, phase: 'in', release: undefined, engagedAtMs: nowMs, fromLevel: level, fadeInSeconds: Math.max(0.05, o.fadeInSeconds * (1 - level)) }
         : { ...o, phase: 'in', release: undefined, engagedAtMs: nowMs, fromLevel: level, fadeInSeconds: Math.max(0.05, o.release?.spec.fadeSeconds ?? 0) * (1 - level) };
       set({ ...s, surfaces: { ...s.surfaces, [surfaceId]: back } });
       return true;
