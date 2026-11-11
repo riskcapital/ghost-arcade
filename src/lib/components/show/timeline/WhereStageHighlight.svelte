@@ -6,7 +6,7 @@
    * Timeline (at the playhead). Visual only (pointer-events: none).
    */
   import { project } from '../../../stores/layers';
-  import { showTimeline } from '../../../stores/showTimeline';
+  import { showSlice } from './timelineSlices';
   import { getShapeVertices, type Layer, type WLEDController } from '../../../types';
   import { resolveWLEDMapping } from '../../../wled/mapping';
   import { parseLedSpotId } from '../../../timeline/where/spatialOrder';
@@ -14,11 +14,21 @@
 
   let { containerWidth, containerHeight }: { containerWidth: number; containerHeight: number } = $props();
 
+  // Slices, not $showTimeline: the store publishes every playhead frame.
+  const doc = showSlice('doc');
+  const isOpen = showSlice('isOpen');
+  const selection = showSlice('selection');
+  const lookClips = showSlice('lookClips');
+  const ledClips = showSlice('ledClips');
+  const layerTracks = showSlice('layerTracks');
+  const isPlaying = showSlice('isPlaying');
+  const currentTime = showSlice('currentTime');
+
   /** The selected block's where line, when the Timeline is open on it. */
   const selectedInfo = $derived.by((): WhereBlockInfo | null => {
-    const s = $showTimeline;
-    if (s.doc !== 'timeline' || !s.isOpen || !s.selection) return null;
-    const sel = s.selection;
+    if ($doc !== 'timeline' || !$isOpen || !$selection) return null;
+    const sel = $selection;
+    const s = { lookClips: $lookClips, ledClips: $ledClips, layerTracks: $layerTracks };
     if (sel.kind === 'lookClip') {
       const c = s.lookClips.find((x) => x.id === sel.id);
       return c?.where ? { target: { scope: 'look', id: c.id }, where: c.where, start: c.startTime, duration: c.duration, pieces: lookPieces(($project.layers ?? []) as Layer[], c.scope, c.layerIds) } : null;
@@ -39,8 +49,8 @@
   const lit = $derived.by(() => {
     if ($whereHighlight) return $whereHighlight;
     const info = selectedInfo;
-    if (!info || $showTimeline.isPlaying) return null;
-    return litSpotsAt(info, $showTimeline.currentTime).lit;
+    if (!info || $isPlaying) return null;
+    return litSpotsAt(info, $currentTime).lit;
   });
 
   function outline(layer: Layer): string {

@@ -5,7 +5,7 @@
    * last value until stop), and "touch a knob to bind" for the selected
    * line. Armed is red; while a pass is being written the dot pulses.
    */
-  import { showTimeline } from '../../../stores/showTimeline';
+  import { showSlice } from './timelineSlices';
   import {
     armLines,
     bindNextControl,
@@ -19,6 +19,8 @@
   import { linePenTool } from './lineUi';
   import { lastLineControl } from './lineDiamond';
 
+  // A slice: the whole store publishes every playhead frame.
+  const linesSlice = showSlice('lines');
   const rec = $derived($lineRecordState);
   const pen = $derived($linePenTool);
   const sel = $derived($lineSelection);
@@ -26,7 +28,7 @@
 
   /** What "bind" binds: the selected line, else the last control picked with ◆. */
   const bindTarget = $derived.by(() => {
-    const lines = $showTimeline.lines;
+    const lines = $linesSlice;
     const line = sel ? lines.find((l) => l.id === sel.lineId) : null;
     if (line) return { target: line.target, key: line.key, label: line.label ?? line.key };
     return last;

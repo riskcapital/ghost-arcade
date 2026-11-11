@@ -5,20 +5,24 @@
    * LED effect, Colour, Gradient, Chase, Look); "⌇+" adds a control line for
    * the controller (brightness, gamma) or a block on the row.
    */
+  import { get } from 'svelte/store';
   import { showTimeline } from '../../../stores/showTimeline';
+  import { showSlice } from './timelineSlices';
   import { LED_BLOCK_KINDS, ledClipName, type LedBlockKind } from '../../../timeline/leds/ledClips';
   import { ledRows, ledGroupFolded, LED_GROUP_HEADER_HEIGHT, LED_ROW_HEIGHT, LED_KIND_LABELS, newLedBlockFields, type LedRow } from './ledRowsUi';
   import LinePicker from './LinePicker.svelte';
   import { formatPrecise } from './timeFormat';
   import { portal } from './trackLayout';
 
+  // A slice: the whole store publishes every playhead frame.
+  const ledClipsSlice = showSlice('ledClips');
   let menu: { x: number; y: number; row: LedRow } | null = $state(null);
   let picker: { x: number; y: number; row: LedRow } | null = $state(null);
 
   const pickerTargets = $derived.by(() => {
     if (!picker) return [];
     const row = picker.row;
-    const blocks = $showTimeline.ledClips.filter((c) => c.rowId === row.id);
+    const blocks = $ledClipsSlice.filter((c) => c.rowId === row.id);
     return [
       ...blocks.map((c) => ({ target: { scope: 'block' as const, id: c.id }, label: `${ledClipName(c)} @ ${formatPrecise(c.startTime)}` })),
       { target: { scope: 'led' as const }, label: 'LED controllers' },
@@ -37,7 +41,7 @@
   }
   function add(kind: LedBlockKind) {
     if (!menu) return;
-    showTimeline.addLedClip(menu.row.id, $showTimeline.currentTime, newLedBlockFields(kind));
+    showTimeline.addLedClip(menu.row.id, get(showTimeline).currentTime, newLedBlockFields(kind));
     menu = null;
   }
   $effect(() => {

@@ -7,6 +7,7 @@
    * edge and wrap. "◆ Draw position" starts a where line at the playhead.
    */
   import { showTimeline } from '../../../stores/showTimeline';
+  import { showSlice } from './timelineSlices';
   import { project } from '../../../stores/layers';
   import { addLineAtPlayhead } from '../../../timeline/lines/timelineLines';
   import type { ParamTarget } from '../../../timeline/lines/paramRegistry';
@@ -33,7 +34,9 @@
   let newName = $state('');
   let dragFrom: number | null = $state(null);
 
-  const named = $derived($showTimeline.whereOrders);
+  // A slice: the whole store publishes every playhead frame.
+  const ordersSlice = showSlice('whereOrders');
+  const named = $derived($ordersSlice);
   const order = $derived.by(() => {
     void $project;
     return where ? whereOrderView(where, pieces, named) : { slots: [] };

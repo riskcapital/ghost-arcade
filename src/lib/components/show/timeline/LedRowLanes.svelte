@@ -6,6 +6,7 @@
    * on a row for a Look block. A block with a where line shows its band.
    */
   import { showTimeline, type ShowTimelineSelection } from '../../../stores/showTimeline';
+  import { showSlice } from './timelineSlices';
   import { ledClipName, type TimelineLedClip } from '../../../timeline/leds/ledClips';
   import { readEdgeLookDrag, carriesEdgeLook } from '../../../looks/edgeLookDrag';
   import { followPointer } from './dragSession';
@@ -27,11 +28,13 @@
   let dropRow: string | null = $state(null);
 
   const SLACK = 24;
+  // A slice: the whole store publishes every playhead frame.
+  const ledClipsSlice = showSlice('ledClips');
   const clipsByRow = $derived.by(() => {
     const out = new Map<string, TimelineLedClip[]>();
     const x0 = viewStart * zoom - SLACK;
     const x1 = viewEnd * zoom + SLACK;
-    for (const c of $showTimeline.ledClips) {
+    for (const c of $ledClipsSlice) {
       if (c.startTime * zoom + Math.max(6, c.duration * zoom) < x0 || c.startTime * zoom > x1) continue;
       const list = out.get(c.rowId) ?? [];
       list.push(c);

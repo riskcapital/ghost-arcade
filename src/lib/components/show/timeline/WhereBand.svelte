@@ -7,7 +7,7 @@
    * highlights them on the stage preview.
    */
   import { onDestroy } from 'svelte';
-  import { showTimeline } from '../../../stores/showTimeline';
+  import { showSlice } from './timelineSlices';
   import { project } from '../../../stores/layers';
   import { whereHighlight, whereOrderView, whereSampler, litSpotsAt, type WhereBlockInfo } from './whereUi';
   import { formatPrecise } from './timeFormat';
@@ -25,14 +25,22 @@
   let height = $state(0);
   let hover: { x: number; y: number; t: number; labels: string[] } | null = $state(null);
 
+  // Slices, not $showTimeline: the store publishes every playhead frame and
+  // the band only changes with these (redrawing it each frame cost a full
+  // canvas of fills per frame while a show played).
+  const tempoSlice = showSlice('tempo');
+  const linesSlice = showSlice('lines');
+  const ordersSlice = showSlice('whereOrders');
+
   const view = $derived.by(() => {
     void $project;
-    return whereOrderView(info.where, info.pieces, $showTimeline.whereOrders);
+    return whereOrderView(info.where, info.pieces, $ordersSlice);
   });
 
   $effect(() => {
     const el = canvas;
-    const s = $showTimeline;
+    const tempo = $tempoSlice;
+    const lines = $linesSlice;
     const v = view;
     const w = width;
     const h = height;
@@ -46,7 +54,7 @@
     if (!ctx) return;
     ctx.clearRect(0, 0, el.width, el.height);
     if (n === 0) return;
-    const sampler = whereSampler(info, n, s.tempo, s.lines);
+    const sampler = whereSampler(info, n, tempo, lines);
     const rowH = el.height / n;
     // Stripes: the pieces in order, faint.
     for (let i = 0; i < n; i++) {
