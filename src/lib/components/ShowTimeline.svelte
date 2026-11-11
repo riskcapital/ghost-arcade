@@ -1552,7 +1552,7 @@
     {#if ($takeoverPadsOpen && isTimeline) || phraseStripShown}
       <!-- The outer box may give way in a tight tray; the inner one reports
            the pads' own height, which the tray grows by. -->
-      <div class="pads-wrap"><div bind:clientHeight={padsH}>
+      <div class="pads-wrap" class:phrases-only={!($takeoverPadsOpen && isTimeline)}><div bind:clientHeight={padsH}>
         {#if phraseStripShown}<PhrasePads variant="timeline" />{/if}
         {#if $takeoverPadsOpen && isTimeline}<TakeoverPads />{/if}
       </div></div>
@@ -2498,6 +2498,7 @@
   .insp-wrap { flex: 0 0 auto; }
   .insp-idle { min-height: 36px; }
   .pads-wrap { flex: 0 1 auto; min-height: 64px; overflow: hidden; }
+  .pads-wrap.phrases-only { min-height: 0; flex-shrink: 0; }
   .t-grid { max-width: 96px; }
   .t-seg { display: inline-flex; }
   .t-seg-btn {

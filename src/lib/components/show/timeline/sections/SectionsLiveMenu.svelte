@@ -38,6 +38,11 @@
       open = false;
     }
   }
+  /** The menu lives on the body: the label column is transformed (scrolled), which would clip a fixed popover. */
+  function toBody(node: HTMLElement) {
+    document.body.appendChild(node);
+    return { destroy() { node.remove(); } };
+  }
   function onWindowDown(e: MouseEvent) {
     if (!open) return;
     const t = e.target as HTMLElement;
@@ -49,7 +54,7 @@
 <svelte:window onmousedown={onWindowDown} />
 
 <button
-  class="lane-line-add live"
+  class="slm-btn"
   class:on={bridge.syncLocators}
   bind:this={btn}
   onclick={toggle}
@@ -58,7 +63,7 @@
 >Live</button>
 
 {#if open}
-  <div class="slm" style="left: {pos.x}px; top: {pos.y}px" role="menu" data-sections-live-menu>
+  <div class="slm" use:toBody style="left: {pos.x}px; top: {pos.y}px" role="menu" data-sections-live-menu>
     {#if !bridge.connected}
       <p class="slm-note">Live is not connected: open the Ableton panel (VJ mode → Ableton) and turn the connection on.</p>
     {/if}
@@ -77,7 +82,20 @@
 {/if}
 
 <style>
-  .lane-line-add.live.on { color: #5fdc76; }
+  .slm-btn {
+    margin-left: 4px;
+    background: var(--ga-sunk, #0c0c10);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    color: var(--ga-ink-1, #aaa);
+    border-radius: 3px;
+    font: inherit;
+    font-size: 11px;
+    padding: 0 6px;
+    height: 18px;
+    cursor: pointer;
+  }
+  .slm-btn:hover { color: var(--ga-ink-0, #fff); border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24)); }
+  .slm-btn.on { color: #5fdc76; border-color: rgba(95, 220, 118, 0.5); }
   .slm {
     position: fixed;
     z-index: 1200;
