@@ -4332,6 +4332,17 @@ function stabilizeNativeEditorHost() {
   }
 }
 
+function restackNativeEditorUnderlays() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const addon = nativePreviewAddon;
+  if (!addon || typeof addon.restackIfDisplaced !== 'function') return;
+  try {
+    addon.restackIfDisplaced();
+  } catch (err) {
+    nativePreviewAddonLoadError = err?.message || String(err);
+  }
+}
+
 function updateNativeEditorPreview(rectArgs = {}) {
   const addon = nativePreviewAddon || loadNativePreviewAddon();
   if (!addon || typeof addon.update !== 'function') return getNativePreviewStatus();
@@ -9620,7 +9631,14 @@ function createMainWindow() {
   // Windows raises only the editor window on activation; its native preview
   // and deck monitor underlays must be re-stacked behind it straight away or
   // the app in front shows through their holes.
-  if (process.platform === 'win32') mainWindow.on('focus', stabilizeNativeEditorHost);
+  if (process.platform === 'win32') {
+    mainWindow.on('focus', stabilizeNativeEditorHost);
+    // Another app's window can also come between the editor and its underlays
+    // without the editor being focused, and an idle preview never re-stacks
+    // them, so check a few times a second (it only acts when something moved).
+    const underlayWatch = setInterval(restackNativeEditorUnderlays, 200);
+    mainWindow.on('closed', () => clearInterval(underlayWatch));
+  }
   mainWindow.webContents.on('did-finish-load', stabilizeNativeEditorHost);
 
   if (process.platform === 'darwin') {
