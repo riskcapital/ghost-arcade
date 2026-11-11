@@ -6639,7 +6639,7 @@ function registerIpcHandlers() {
   // The editor's answer to app-quit-requested (see quit-guard.cjs).
   ipcMain.handle('app_quit_ack', () => { quitGuard.acknowledged(); });
   ipcMain.handle('app_quit_proceed', () => { quitGuard.proceed(); });
-  ipcMain.handle('app_quit_cancel', () => { quitGuard.cancel(); });
+  ipcMain.handle('app_quit_cancel', () => { quitGuard.cancel(); installMode.quitCalledOff(); });
 
   ipcMain.handle('app_relaunch', () => {
     console.log('[IPC] app_relaunch — restarting');

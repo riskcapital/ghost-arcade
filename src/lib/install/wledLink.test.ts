@@ -102,3 +102,47 @@ describe('WLED links', () => {
     await b.close();
   });
 });
+
+describe('WLED links: late errors', () => {
+  /** A dgram stand-in whose sends complete when the test says. */
+  function fakeDgram() {
+    const pending: Array<(err: Error | null) => void> = [];
+    const dgram = {
+      createSocket: () => ({
+        on: () => {},
+        connect: (_p: number, _ip: string, cb: (err?: Error) => void) => cb(),
+        send: (_b: unknown, cb: (err: Error | null) => void) => { pending.push(cb); },
+        close: () => {},
+      }),
+    };
+    return { dgram, pending };
+  }
+
+  it('a second send failing on the socket the first error closed is not counted again', async () => {
+    const { dgram, pending } = fakeDgram();
+    const timers: Array<() => void> = [];
+    const l = createWledLinks({ dgram, confirmMs: 0, setTimer: (fn: () => void) => { timers.push(fn); return timers.length; }, clearTimer: () => {} });
+    const msg = { controllerId: 'strip', name: 'Strip', ip: '10.0.0.9', port: 21324, packet: Buffer.from([2]) };
+    const a = l.send(msg);
+    const b = l.send(msg);
+    const err = Object.assign(new Error('unreachable'), { code: 'EHOSTUNREACH' });
+    pending[0](err);
+    pending[1](err);
+    await Promise.all([a, b]);
+    expect(l.list()[0]).toMatchObject({ state: 'down', errors: 1 });
+    expect(timers).toHaveLength(1);
+  });
+
+  it('a late error after the link was closed does nothing', async () => {
+    const { dgram, pending } = fakeDgram();
+    const changes: unknown[] = [];
+    const l = createWledLinks({ dgram, confirmMs: 0, onChange: (c: unknown) => changes.push(c) });
+    const msg = { controllerId: 'strip', name: 'Strip', ip: '10.0.0.9', port: 21324, packet: Buffer.from([2]) };
+    const a = l.send(msg);
+    l.close('strip');
+    pending[0](new Error('late'));
+    await a;
+    expect(l.size()).toBe(0);
+    expect(changes).toEqual([]);
+  });
+});

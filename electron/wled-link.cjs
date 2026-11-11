@@ -77,7 +77,9 @@ function createWledLinks({ dgram = nodeDgram, now = () => Date.now(), onChange =
   }
 
   function markError(link, sock, err) {
-    if (link.sock && sock && link.sock !== sock) return; // an old socket
+    // An old socket (already closed after its first error, or replaced), or
+    // a link closed meanwhile: its late errors count for nothing.
+    if (link.sock !== sock || links.get(link.controllerId) !== link) return;
     const t = now();
     link.errors += 1;
     link.lastError = (err && (err.code || err.message)) || 'send failed';

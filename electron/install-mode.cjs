@@ -69,6 +69,8 @@ function createInstallMode({
   let started = false;
   let quitAllowed = false;
   let quitDialogOpen = false;
+  /** The app is really going away (markCleanExit ran). */
+  let exiting = false;
   let timer = null;
   let coreTimer = null;
   let coreCheckBusy = false;
@@ -80,6 +82,8 @@ function createInstallMode({
   let guardianPid = null;
   /** When the watchdog itself ended a hung editor (its crash is not a new fault). */
   let intentionalCrashAt = 0;
+  /** When the watchdog last asked the editor to reload (0: not waiting for one). */
+  let reloadAskedAt = 0;
   const stall = createFrameStallDetector();
   const startedAt = now();
 
@@ -162,6 +166,7 @@ function createInstallMode({
     if (action === 'reload-renderer') {
       lastHeartbeatAt = 0;
       pageLoadedAt = 0;
+      reloadAskedAt = now();
       if (!win || win.isDestroyed()) { relaunch(); return; }
       const wc = win.webContents;
       try {
@@ -203,8 +208,23 @@ function createInstallMode({
     const win = getMainWindow();
     if (!win || win.isDestroyed()) return;
     const wc = win.webContents;
-    if (wc.isLoading() || wc.isCrashed() || !pageLoadedAt) return;
     const t = now();
+    // A reload the watchdog asked for that never came back (the page hung
+    // before it loaded, or the reload never happened): try again.
+    if (reloadAskedAt && !pageLoadedAt && t - reloadAskedAt > FIRST_HEARTBEAT_TIMEOUT_MS) {
+      reloadAskedAt = t;
+      fault('renderer-hang', `the editor did not come back ${Math.round(FIRST_HEARTBEAT_TIMEOUT_MS / 1000)} s after a reload`);
+      return;
+    }
+    if (wc.isCrashed()) {
+      // Still down: a crash the watchdog could not act on yet (it was
+      // cooling down after a crash loop) is acted on once it may. Not while
+      // its own reload is on the way.
+      const settling = (intentionalCrashAt && t - intentionalCrashAt < 10_000) || (reloadAskedAt && t - reloadAskedAt < 10_000);
+      if (!settling) fault('renderer-crash', 'the editor is still down after a crash');
+      return;
+    }
+    if (wc.isLoading() || !pageLoadedAt) return;
     const since = lastHeartbeatAt || pageLoadedAt;
     const limit = lastHeartbeatAt ? HEARTBEAT_TIMEOUT_MS : FIRST_HEARTBEAT_TIMEOUT_MS;
     if (t - since > limit) {
@@ -374,8 +394,10 @@ function createInstallMode({
     Promise.resolve(shown).then((r) => {
       if (r && r.response === 1) {
         log('stop', 'quit confirmed');
+        // Allowed for this quit only: if it is called off later (the editor
+        // asks to save and the answer is Cancel) the next quit is held
+        // again. The guardian stops when the app really goes (markCleanExit).
         quitAllowed = true;
-        stopGuardian();
         app.quit();
       } else {
         log('quit', 'quit cancelled');
@@ -387,8 +409,16 @@ function createInstallMode({
     return true;
   }
 
+  /** A quit confirmed here was called off later (Cancel at "save changes?"). */
+  function quitCalledOff() {
+    if (exiting || !quitAllowed) return;
+    quitAllowed = false;
+    log('quit', 'quit called off; install mode keeps running');
+  }
+
   /** The app is going away on purpose. */
   function markCleanExit() {
+    exiting = true;
     stopMonitors();
     if (started) {
       stopGuardian();
@@ -414,6 +444,7 @@ function createInstallMode({
   function pageLoaded() {
     pageLoadedAt = now();
     lastHeartbeatAt = 0;
+    reloadAskedAt = 0;
   }
 
   /** From render-process-gone. True when install mode handles recovery. */
@@ -442,13 +473,19 @@ function createInstallMode({
       if (show) {
         if (win.__gaCursorKey) { wc.removeInsertedCSS(win.__gaCursorKey).catch?.(() => {}); win.__gaCursorKey = null; }
       } else if (!win.__gaCursorKey) {
-        Promise.resolve(wc.insertCSS('html, body, * { cursor: none !important; }')).then((key) => { win.__gaCursorKey = key; }).catch(() => {});
+        Promise.resolve(wc.insertCSS('html, body, * { cursor: none !important; }')).then((key) => {
+          // Left install mode while the CSS went in: take it out again.
+          if (!active()) { try { wc.removeInsertedCSS(key).catch?.(() => {}); } catch { /* ignore */ } return; }
+          win.__gaCursorKey = key;
+        }).catch(() => {});
       }
     } catch { /* window going away */ }
   }
 
   /** Call for every output window once its page has loaded. */
   function outputWindowLoaded(win) {
+    // A reload dropped the inserted CSS: the old key no longer hides anything.
+    try { if (win && !win.isDestroyed()) win.__gaCursorKey = null; } catch { /* going away */ }
     if (active() && config().hideCursor !== false) setCursor(win, false);
   }
 
@@ -492,6 +529,7 @@ function createInstallMode({
     start,
     pause,
     holdQuit,
+    quitCalledOff,
     markCleanExit,
     heartbeat,
     pageLoaded,
