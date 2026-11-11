@@ -142,6 +142,8 @@ export interface AbletonBridgeState {
   playMode: PlayMode;
   /** Bars per section, by song key, where the DJ changed them (saved). */
   songPlans: Record<string, number[]>;
+  /** The Timeline's sections follow Live's arrangement locators (saved). */
+  syncLocators: boolean;
   // Runtime only.
   /** Keep the section playing now looping; autoplay waits. */
   hold: boolean;
@@ -189,6 +191,7 @@ const INITIAL: AbletonBridgeState = {
   autoMixBars: 8,
   playMode: 'live',
   songPlans: {},
+  syncLocators: false,
   hold: false,
   played: [],
   currentSong: null,
@@ -1565,6 +1568,11 @@ function createAbletonBridge() {
       update(s => ({ ...s, autoMixBars: Math.max(0, Math.min(32, Math.round(bars))) }));
     },
 
+    /** Keep the Timeline's sections on Live's locators. */
+    setSyncLocators(on: boolean) {
+      update(s => ({ ...s, syncLocators: on }));
+    },
+
     resetPlayed() {
       update(s => ({ ...s, played: [], currentSong: null }));
     },
@@ -1668,6 +1676,7 @@ function createAbletonBridge() {
         autoMixBars: Number.isFinite(saved.autoMixBars) ? Math.max(0, Math.min(32, saved.autoMixBars)) : 8,
         playMode: saved.playMode === 'song' || saved.playMode === 'set' ? saved.playMode : 'live',
         songPlans: sanitizePlans(saved.songPlans),
+        syncLocators: saved.syncLocators === true,
         hold: false,
         played: [],
         currentSong: null,
@@ -1684,8 +1693,8 @@ function createAbletonBridge() {
     },
 
     serialize() {
-      const { enabled, links, signals, scoreTracks, scoreMap, beatScramble, deckMode, setlistOrder, autoMixBars, playMode, songPlans } = read();
-      return { enabled, links, signals, scoreTracks, scoreMap, beatScramble, deckMode, deckModeChosen, setlistOrder, autoMixBars, playMode, songPlans, linkedCounts };
+      const { enabled, links, signals, scoreTracks, scoreMap, beatScramble, deckMode, setlistOrder, autoMixBars, playMode, songPlans, syncLocators } = read();
+      return { enabled, links, signals, scoreTracks, scoreMap, beatScramble, deckMode, deckModeChosen, setlistOrder, autoMixBars, playMode, songPlans, linkedCounts, ...(syncLocators ? { syncLocators } : {}) };
     },
 
     reset() {
@@ -1696,7 +1705,7 @@ function createAbletonBridge() {
       scorePlayhead.clear();
       update(s => ({
         ...s, enabled: false, links: [], signals: [], scoreTracks: [], scoreMap: {}, beatScramble: DEFAULT_BEAT_SCRAMBLE, deckMode: false,
-        setlistOrder: [], autoMixBars: 8, playMode: 'live', songPlans: {}, hold: false,
+        setlistOrder: [], autoMixBars: 8, playMode: 'live', songPlans: {}, syncLocators: false, hold: false,
         played: [], currentSong: null, mix: null, missing: [], fired: {},
       }));
       pendingStops = [];

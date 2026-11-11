@@ -35,6 +35,7 @@ import { fireLead, LIVE_Q_QUARTER, type LiveClipScheduler } from '../sound/liveS
 import { liveSchedulerNow } from '../sound/soundEngine';
 import type { TimelineSection } from '../sections/sectionModel';
 import { phraseByNumber, phraseGridBeats } from './phraseModel';
+import { installLocatorSync, sectionsFromLive, sendSectionsToLive } from './liveArrangementRuntime';
 
 /** Latency allowed for a scene fire (s), like a Live row's default. */
 const SCENE_LATENCY = 0.02;
@@ -314,12 +315,17 @@ export function installPhraseRuntime(): () => void {
   setShowPhraseEffects(handlePhraseEvent);
   setPhraseLinkLauncher(launchFromLive);
   const offFrame = onShowFrame(sceneTick);
+  const offSync = installLocatorSync();
   try {
     const w = window as unknown as { __ghostArcade?: Record<string, unknown> };
-    w.__ghostArcade = { ...(w.__ghostArcade ?? {}), timelinePhrases: { launch: launchPhrase, launchNumber: launchPhraseNumber, stop: stopPhrases, status: showPhraseStatus, delay: phraseDelay } };
+    w.__ghostArcade = {
+      ...(w.__ghostArcade ?? {}),
+      timelinePhrases: { launch: launchPhrase, launchNumber: launchPhraseNumber, stop: stopPhrases, status: showPhraseStatus, delay: phraseDelay, sectionsFromLive, sendSectionsToLive },
+    };
   } catch { /* sealed */ }
   installed = () => {
     offFrame();
+    offSync();
     setShowPhraseEffects(null);
     setPhraseLinkLauncher(null);
     stopEntryTimer();
