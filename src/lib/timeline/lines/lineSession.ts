@@ -157,8 +157,8 @@ export function createLineSession(opts: {
 
     arm(mode: RecordMode = 'touch'): void {
       recorder.arm(mode);
-      // Follow edits starts from the values as they are now.
-      if (controls.followEdits()) controls.setFollowEdits(true, source());
+      // Recording starts from the values as they are now.
+      controls.setFollowEdits(controls.followEdits(), source());
     },
     /** Follow edits: record every parameter a person changes while armed. */
     setFollowEdits(on: boolean): void { controls.setFollowEdits(on, source()); },

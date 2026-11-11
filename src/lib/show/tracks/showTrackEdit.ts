@@ -141,7 +141,7 @@ export function rippleTrim(clips: readonly ShowLayerClip[], clipId: string, edge
   const shift = clipEnd(next) - oldEnd;
   return sortClips(clips.map((c) => {
     if (c.id === clipId) return withClampedFades(next);
-    return c.startTime >= oldEnd - EPS ? { ...c, startTime: Math.max(0, c.startTime + shift) } : c;
+    return c.startTime >= oldEnd - 1e-9 ? { ...c, startTime: Math.max(0, c.startTime + shift) } : c;
   }));
 }
 
@@ -194,13 +194,20 @@ export function clearRange(clips: readonly ShowLayerClip[], start: number, end: 
   for (const c of clips) {
     const cEnd = clipEnd(c);
     if (cEnd <= start + EPS || c.startTime >= end - EPS) { out.push(c); continue; }
-    if (c.startTime < start - EPS) {
+    // The part before the range stays (a split, or a trim when the split
+    // would leave a sliver on the other side); only a piece too short to be
+    // a block is dropped.
+    if (c.startTime < start - EPS && start - c.startTime >= SHOW_MIN_TRACK_CLIP_SECONDS - EPS) {
       const pieces = splitClip(c, start);
-      if (pieces) out.push(pieces[0]);
+      out.push(pieces ? pieces[0] : withClampedFades({ ...c, duration: start - c.startTime, fadeOut: 0 }));
     }
-    if (cEnd > end + EPS) {
+    if (cEnd > end + EPS && cEnd - end >= SHOW_MIN_TRACK_CLIP_SECONDS - EPS) {
       const pieces = splitClip(c, end);
       if (pieces) out.push(pieces[1]);
+      else {
+        const inPoint = c.inPoint + (end - c.startTime) * clipRate(c);
+        out.push(withClampedFades({ ...c, id: generateUUID(), startTime: end, duration: cEnd - end, inPoint, fadeIn: 0, transitionIn: 'cut', transitionDuration: undefined }));
+      }
     }
   }
   return sortClips(out);

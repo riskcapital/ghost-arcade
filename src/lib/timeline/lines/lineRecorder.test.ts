@@ -263,8 +263,8 @@ describe('controls', () => {
     const c = controlsRig([line]);
     const layer = (opacity: number): Layer => ({ ...createLayer('L1', 'Facade'), opacity });
     const source = (opacity: number): RegistrySource => ({ layers: [layer(opacity)] });
-    c.controls.observe(source(1)); // primes
     c.recorder.arm('touch');
+    c.controls.observe(source(1)); // primes (arming takes a fresh look)
     c.clock.ms = 2000;
     c.setTime(2);
     c.controls.observe(source(0.4));
@@ -365,6 +365,21 @@ describe('controls', () => {
       c.setAutomated(true);
       c.controls.observe(source(facade({ opacity: 0.2 })));
       expect(c.keyed).toHaveLength(1);
+    });
+
+    it('on: after an engine moved one setting, a change by a person records only what that person changed', () => {
+      const c = controlsRig();
+      c.recorder.arm('touch');
+      c.controls.setFollowEdits(true, source(facade({ opacity: 1, visible: true })));
+      c.setTime(2);
+      c.setAutomated(true);
+      c.controls.observe(source(facade({ opacity: 0.3, visible: true })));
+      c.setAutomated(false);
+      c.controls.observe(source(facade({ opacity: 0.3, visible: false })));
+      expect([...c.recorder.passSamples().keys()].length).toBe(1);
+      expect(c.store.lines().length + c.recorder.openPasses()).toBeGreaterThan(0);
+      const keys = [...c.recorder.touches().keys()];
+      expect(keys.length).toBe(1);
     });
 
     it('on: a layer object that did not change is not read again', () => {

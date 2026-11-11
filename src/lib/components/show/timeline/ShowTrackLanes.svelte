@@ -17,7 +17,7 @@
   import { layers as liveLayersStore } from '../../../stores/layers';
   import { showDropEffect } from '../../../show/showDrop';
   import { placeOnTrack } from '../../../show/tracks/showTrackEdit';
-  import { clipEnd } from '../../../show/tracks/showTrackEval';
+  import { clipEnd, clipRate } from '../../../show/tracks/showTrackEval';
   import { findJunctionPredecessor } from '../../../show/showJunctions';
   import type { KeyframeEasing, ShowLayerClip, ShowLayerTrack } from '../../../types';
   import ShowLayerTrackLane from './ShowLayerTrackLane.svelte';
@@ -271,7 +271,7 @@
   /** Slip (Y): dragging right plays earlier media, as if pulling the film under the block. */
   function dragSlip(e: MouseEvent, clip: ShowLayerClip) {
     let last = timeAt(e.clientX);
-    const rate = Number(clip.rate ?? 1) || 1;
+    const rate = clipRate(clip);
     follow(e, (ev) => {
       const t = timeAt(ev.clientX);
       const delta = t - last;

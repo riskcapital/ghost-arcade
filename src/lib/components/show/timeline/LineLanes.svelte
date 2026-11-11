@@ -384,6 +384,8 @@
     if (!lane) return;
     const rect = lane.getBoundingClientRect();
     const [lo, hi] = rangeOf(line, ch);
+    // Esc puts the line back as it was when the handle was pressed.
+    const startLine = get(showTimeline).lines.find((l) => l.id === line.id) ?? line;
     const key = `line-handle:${line.id}:${Date.now()}-${++dragSeq}`;
     followPointer({
       move: (ev) => {
@@ -406,7 +408,9 @@
         commit(withPoints(current, ch, next), key);
       },
       end: () => {},
-      cancel: () => {},
+      cancel: () => {
+        showTimeline.editLines((list) => list.map((l) => (l.id === startLine.id ? startLine : l)), key);
+      },
     });
   }
 

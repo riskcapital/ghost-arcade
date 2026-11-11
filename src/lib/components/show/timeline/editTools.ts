@@ -2,7 +2,7 @@
  * The Timeline's editing tools and shuttle, as a video editor has them:
  *
  *   razor    C: a click on a block cuts it there
- *   ripple   B: dragging an edge moves every later block on the row with it
+ *   ripple   Shift+B (B is Blackout): dragging an edge moves every later block on the row with it
  *   roll     N: dragging the cut between two touching blocks moves both edges
  *   slip     Y: dragging a block plays a different stretch of its media in place
  *   select   V: back to selecting and moving
@@ -13,7 +13,7 @@
  * (the picture, lines, the time readout) follows the shuttle too.
  */
 import { get, writable } from 'svelte/store';
-import { showTimeline } from '../../../stores/showTimeline';
+import { onShowDocChange, showTimeline } from '../../../stores/showTimeline';
 
 export type EditTool = 'select' | 'razor' | 'ripple' | 'roll' | 'slip';
 export const EDIT_TOOLS: ReadonlyArray<{ id: EditTool; label: string; key: string; hint: string }> = [
@@ -94,6 +94,18 @@ export function stepFrame(direction: -1 | 1): void {
   if (s.isPlaying) showTimeline.pause();
   showTimeline.seek(Math.max(0, get(showTimeline).currentTime + direction * FRAME_SECONDS));
 }
+
+/** The tray closed: a backwards shuttle stops with it. */
+export function stopShuttle(): void {
+  stopReverse();
+}
+
+// Another document opened: the tool goes back to Select (its menu lives in the
+// Timeline) and a backwards shuttle stops instead of scrubbing the new one.
+onShowDocChange(() => {
+  stopReverse();
+  editTool.set('select');
+});
 
 /** Test seam. */
 export function _resetEditToolsForTest(): void {

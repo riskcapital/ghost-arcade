@@ -1,7 +1,7 @@
 /**
  * Shared bits of the takeover UI in the show tray: the source menu's
  * choices, media dropped on a LIVE button, release-mode labels, and the
- * focused-track helpers the L / R keys and the pads use.
+ * focused-track helpers the Shift+L / R keys and the pads use.
  */
 import { get, writable } from 'svelte/store';
 import type { ShowClipMedia, ShowLayerTrack } from '../../../types';
@@ -92,7 +92,7 @@ export async function takeoverMediaFromDrop(dt: DataTransfer): Promise<ShowClipM
   return file ? clipMediaFromFile(file) : null;
 }
 
-/** The track the L key and the pads act on: the focused one, else the
+/** The track Shift+L and the pads act on: the focused one, else the
  *  selected one, else the only one. */
 export function targetTrack(): ShowLayerTrack | null {
   const s = get(showTimeline);
@@ -103,7 +103,7 @@ export function targetTrack(): ShowLayerTrack | null {
     ?? (s.layerTracks.length === 1 ? s.layerTracks[0] : null);
 }
 
-/** L: take the target track over with the last source, or hand it back. */
+/** Shift+L: take the target track over with the last source, or hand it back. */
 export function toggleTakeoverOnTarget(): boolean {
   const track = targetTrack();
   if (!track) return false;

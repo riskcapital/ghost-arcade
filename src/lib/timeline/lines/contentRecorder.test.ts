@@ -25,7 +25,7 @@ function rig(opts: { rowHasBlocks?: boolean } = {}) {
     rowFor: (layer) => tracks.find((t) => t.layerId === layer.id)?.id ?? null,
     write: (trackId, media: ShowClipMedia, start, end) => { written.push([trackId, media.name, +start.toFixed(3), +end.toFixed(3)]); },
     notAPerson: () => engine,
-    swapAt: (trackId, media: ShowClipMedia, t) => { swaps.push([trackId, media.name, t]); },
+    swapAt: (trackId, media: ShowClipMedia, t, before) => { swaps.push([trackId, media.name, t]); if (before) written.push([trackId, before.name, 0, t]); },
   });
   const set = (id: string, source: unknown) => {
     layers = layers.map((l) => (l.id === id ? ({ ...l, source } as Layer) : l));

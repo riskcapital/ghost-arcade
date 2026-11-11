@@ -25,8 +25,9 @@ export interface ContentRecorderHost {
   /** The row a layer's content is recorded on (made when it has none). */
   rowFor(layer: Layer): string | null;
   write(trackId: string, media: ShowClipMedia, start: number, end: number): void;
-  /** Live edit with the playhead parked: the row shows `media` from `t` (its block there is cut at `t`). */
-  swapAt(trackId: string, media: ShowClipMedia, t: number): void;
+  /** Live edit with the playhead parked: the row shows `media` from `t` (its block there is cut at `t`).
+   *  `before`: an empty row's own content, kept from 0 to `t` in the same step. */
+  swapAt(trackId: string, media: ShowClipMedia, t: number, before: ShowClipMedia | null): void;
   /** An engine or undo / redo is writing the project. */
   notAPerson(): boolean;
 }
@@ -40,12 +41,15 @@ export function mediaOfLayer(layer: Pick<Layer, 'source'>): ShowClipMedia | null
   const s = layer.source as (Layer['source'] & Record<string, unknown>) | null | undefined;
   if (!s) return null;
   const name = String(s.name || 'Recorded');
-  if (s.jsAnimation) return { kind: 'sketch', name, src: 'js-animation', jsAnimation: s.jsAnimation };
+  const library = typeof s.id === 'string' && s.id ? { libraryId: s.id } : {};
+  if (s.jsAnimation) return { kind: 'sketch', name, src: 'js-animation', jsAnimation: s.jsAnimation, ...library };
   if (s.type === 'shader' && s.shaderCode) {
     return {
       kind: 'shader',
       name,
+      ...library,
       src: String(s.src ?? ''),
+      ...(s._assetRef ? { _assetRef: s._assetRef } : {}),
       shaderCode: s.shaderCode,
       shaderInputs: s.shaderInputs ?? [],
       shaderValues: { ...(s.shaderValues ?? {}) },
@@ -53,7 +57,15 @@ export function mediaOfLayer(layer: Pick<Layer, 'source'>): ShowClipMedia | null
     };
   }
   if ((s.type === 'video' || s.type === 'image') && s.src) {
-    return { kind: s.type, name, src: String(s.src), ...(s._assetRef ? { _assetRef: s._assetRef } : {}) };
+    const seconds = Number(s.duration ?? s.durationSeconds);
+    return {
+      kind: s.type,
+      name,
+      ...library,
+      src: String(s.src),
+      ...(s._assetRef ? { _assetRef: s._assetRef } : {}),
+      ...(s.type === 'video' && Number.isFinite(seconds) && seconds > 0 ? { sourceDuration: seconds } : {}),
+    };
   }
   return null;
 }
@@ -117,10 +129,11 @@ export function createContentRecorder(host: ContentRecorderHost) {
       if (prev === undefined || !person || !media) continue;
       const trackId = host.rowFor(layer);
       if (!trackId) continue;
-      // An empty row showed the piece's own content all along: keep it before the cut.
+      // An empty row showed the piece's own content all along: keep it before
+      // the cut (one step with it).
       const row = host.tracks().find((r) => r.id === trackId);
-      if (before && row && row.clips.length === 0 && lastTime >= SHOW_MIN_TRACK_CLIP_SECONDS) host.write(trackId, before, 0, lastTime);
-      host.swapAt(trackId, media, lastTime);
+      const keep = before && row && row.clips.length === 0 && lastTime >= SHOW_MIN_TRACK_CLIP_SECONDS ? before : null;
+      host.swapAt(trackId, media, lastTime, keep);
     }
   }
 
@@ -158,6 +171,8 @@ export function createContentRecorder(host: ContentRecorderHost) {
 
     /** The project changed: a layer that shows other content starts a block. */
     observe(): void {
+      // Disarmed (or Follow edits off) since the last frame: nothing is recorded.
+      if (!host.armed()) return;
       if (parked) { swapParked(); return; }
       // Not recording: nothing to do (the run takes its own snapshot).
       if (!running) return;
@@ -186,9 +201,14 @@ export function createContentRecorder(host: ContentRecorderHost) {
 
     /** Recording ends now (disarm, stop): open blocks are written. */
     stop(time = lastTime): void {
-      if (!running) return;
-      running = false;
-      closeAll(Math.max(lastTime, time));
+      if (running) {
+        running = false;
+        closeAll(Math.max(lastTime, time));
+      }
+      // Back to idle: the next arm, parked or playing, starts from a fresh look.
+      parked = false;
+      seen.clear();
+      shown.clear();
     },
 
     /** Layers with a block being recorded now. */

@@ -91,6 +91,9 @@ export interface ShowKeyContext {
   takeoverActive?: boolean;
   /** The Timeline has sections: Enter is GO. */
   hasSections?: boolean;
+  /** The pointer itself is over the tray (not only focus left inside it):
+   *  the arrows step the playhead only then, so they still nudge mapping points. */
+  pointerOver?: boolean;
 }
 
 interface KeyLike {
@@ -140,11 +143,13 @@ export function classifyShowKey(e: KeyLike, ctx: ShowKeyContext): ShowKeyAction 
     return null;
   }
   if (key === 'ArrowLeft' || key === 'ArrowRight') {
-    if (!ctx.hasClipSelection) return e.shiftKey ? null : key === 'ArrowLeft' ? 'frameBack' : 'frameForward';
+    if (!ctx.hasClipSelection) return e.shiftKey || ctx.pointerOver === false ? null : key === 'ArrowLeft' ? 'frameBack' : 'frameForward';
     if (key === 'ArrowLeft') return e.shiftKey ? 'nudgeBarLeft' : 'nudgeLeft';
     return e.shiftKey ? 'nudgeBarRight' : 'nudgeRight';
   }
-  if (key === 'ArrowUp' || key === 'ArrowDown') return e.shiftKey ? null : key === 'ArrowUp' ? 'prevEdit' : 'nextEdit';
+  if (key === 'ArrowUp' || key === 'ArrowDown') return e.shiftKey || ctx.pointerOver === false ? null : key === 'ArrowUp' ? 'prevEdit' : 'nextEdit';
+  // Zoom keys come before the Shift rule: + is Shift+= on most keyboards.
+  if (key === '=' || key === '+') return 'zoomIn';
   // Shift+L takes the focused track over live (or hands it back); R returns
   // every taken-over track, Shift+R instantly. (L alone plays, as J / K / L
   // do in a video editor.) Holding either down acts once: a repeating key
@@ -161,7 +166,6 @@ export function classifyShowKey(e: KeyLike, ctx: ShowKeyContext): ShowKeyAction 
   if (key === 'l') return 'shuttleForward';
   if (key === 'i') return 'markIn';
   if (key === 'o') return 'markOut';
-  if (key === '=' || key === '+') return 'zoomIn';
   if (key === '-') return 'zoomOut';
   if (key === '\\') return 'zoomFit';
   if (key === 'q') return ctx.hasTracks ? 'trimStart' : null;

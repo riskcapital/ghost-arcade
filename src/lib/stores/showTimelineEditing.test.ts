@@ -277,3 +277,105 @@ describe('grouped blocks', () => {
     expect(clips[0].groupId).toBe(clips[1].groupId);
   });
 });
+
+describe('recording past the end of a Timeline with content', () => {
+  it('what is played past the end is evaluated where the playhead is, Loop or not', async () => {
+    const { setShowLineTicker } = await import('./showTimeline');
+    const times: number[] = [];
+    setShowLineTicker((tick) => { times.push(tick.time); });
+    showTimeline.openDoc('timeline');
+    rows([['a', 0, 2]]);
+    showTimeline.setLoop(true);
+    setShowRecordArm(() => true);
+    showTimeline.play();
+    frame(16);
+    for (let i = 0; i < 40; i++) frame(100); // 4 s on a 2 s Timeline
+    setShowLineTicker(null);
+    expect(get(showTimeline).currentTime).toBeGreaterThan(3.5);
+    expect(Math.max(...times)).toBeGreaterThan(3.5);
+  });
+
+  it('a show that reaches its end without recording still runs its end action', () => {
+    hydrateShow(1, false);
+    showTimeline.setEndAction('rewind');
+    showTimeline.play();
+    frame(16);
+    for (let i = 0; i < 15; i++) frame(100);
+    expect(get(showTimeline).isPlaying).toBe(false);
+    expect(get(showTimeline).currentTime).toBe(0);
+  });
+});
+
+describe('overwrite and cut-in near a block edge', () => {
+  it('recording over the last moment of a block keeps the rest of it', () => {
+    showTimeline.openDoc('timeline');
+    rows([['a', 0, 10]]);
+    const row = get(showTimeline).layerTracks[0].id;
+    showTimeline.recordLayerBlock(row, video('take.mp4'), 9.95, 20);
+    const blocks = get(showTimeline).layerTracks[0].clips.map((c) => [c.media.name, +c.startTime.toFixed(2), +(c.startTime + c.duration).toFixed(2)]);
+    expect(blocks).toEqual([['a.mp4', 0, 9.95], ['take.mp4', 9.95, 20]]);
+  });
+
+  it('a parked cut-in a moment before a block ends starts at its end', () => {
+    showTimeline.openDoc('timeline');
+    rows([['a', 0, 8]]);
+    const row = get(showTimeline).layerTracks[0].id;
+    showTimeline.cutInLayerMedia(row, video('swap.mp4'), 7.95);
+    const blocks = get(showTimeline).layerTracks[0].clips.map((c) => [c.media.name, c.startTime, +(c.startTime + c.duration).toFixed(2)]);
+    expect(blocks).toEqual([['a.mp4', 0, 8], ['swap.mp4', 8, 18]]);
+  });
+
+  it('a cut-in on an empty row keeps what the piece showed before, in the same step', () => {
+    showTimeline.openDoc('timeline');
+    const track = showTimeline.addLayerTrack(layer('L0'));
+    showTimeline.cutInLayerMedia(track, video('new.mp4'), 5, video('old.mp4'));
+    const blocks = get(showTimeline).layerTracks[0].clips.map((c) => [c.media.name, c.startTime, c.startTime + c.duration]);
+    expect(blocks).toEqual([['old.mp4', 0, 5], ['new.mp4', 5, 15]]);
+  });
+
+});
+
+describe('in and out points and undo', () => {
+  it('a mark is in the undo step and comes back with it', () => {
+    hydrateShow(20, false);
+    const before = JSON.parse(JSON.stringify(showTimeline.exportArrangement()));
+    showTimeline.setWorkArea({ start: 2, end: 6 });
+    expect(JSON.stringify(showTimeline.exportArrangement())).toContain('"workArea":{"start":2,"end":6}');
+    showTimeline.restoreArrangement(before);
+    expect(get(showTimeline).workArea).toBeNull();
+  });
+});
+
+describe('block media that travels with the project', () => {
+  it('a sketch block keeps its marker src through save and open, never a file path', () => {
+    showTimeline.openDoc('timeline');
+    const track = showTimeline.addLayerTrack(layer('L0'));
+    showTimeline.addLayerClip(track, { kind: 'sketch', name: 'Waves', src: 'js-animation', jsAnimation: { code: 'function draw(){}' } } as unknown as ShowClipMedia, 0, { duration: 4 });
+    const saved = JSON.parse(JSON.stringify(showTimeline.serialize()));
+    showTimeline._resetForTest();
+    showTimeline.hydrate(saved, 'C:/Shows/My show');
+    showTimeline.openDoc('timeline');
+    const again = JSON.parse(JSON.stringify(showTimeline.serialize()));
+    const clip = (again.timeline ?? again).layerTracks[0].clips[0];
+    expect(clip.media.src).toBe('js-animation');
+  });
+
+  it('a shader dropped from a file saves its code, not the session-only URL', () => {
+    showTimeline.openDoc('timeline');
+    const track = showTimeline.addLayerTrack(layer('L0'));
+    showTimeline.addLayerClip(track, { kind: 'shader', name: 'Mine', src: 'blob:abc', shaderCode: 'void main(){}', shaderInputs: [] } as unknown as ShowClipMedia, 0, { duration: 4 });
+    const saved = JSON.parse(JSON.stringify(showTimeline.serialize()));
+    const clip = (saved.timeline ?? saved).layerTracks[0].clips[0];
+    expect(clip.media.src).toBe('');
+    expect(clip.media.shaderCode).toBe('void main(){}');
+  });
+
+  it('a file block without a reference gets one from its own path', () => {
+    showTimeline.openDoc('timeline');
+    const track = showTimeline.addLayerTrack(layer('L0'));
+    showTimeline.addLayerClip(track, { kind: 'video', name: 'legacy.mp4', src: 'ghost-asset://localhost/C:/Shows/legacy.mp4' } as ShowClipMedia, 0, { duration: 4 });
+    const saved = JSON.parse(JSON.stringify(showTimeline.serialize()));
+    const clip = (saved.timeline ?? saved).layerTracks[0].clips[0];
+    expect(clip.media._assetRef).toEqual({ kind: 'local-file', originalPath: 'C:\\Shows\\legacy.mp4' });
+  });
+});

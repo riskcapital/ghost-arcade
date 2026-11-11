@@ -142,7 +142,7 @@
     toggleFocusedLines,
     trimToPlayhead,
   } from './show/timeline/trackCommands';
-  import { EDIT_TOOLS, editTool, shuttleBack, shuttleForward, shuttleStop, stepFrame } from './show/timeline/editTools';
+  import { EDIT_TOOLS, editTool, shuttleBack, shuttleForward, shuttleStop, stepFrame, stopShuttle } from './show/timeline/editTools';
 
   // ── Show state, field by field ──────────────────────────────────────────
   // The store publishes a new state object on every playhead frame. Reading
@@ -1118,6 +1118,7 @@
       hasTracks: s.doc === 'timeline' && s.layerTracks.length > 0,
       takeoverActive: s.doc === 'timeline' && (Object.keys(liveTakeover.state.surfaces).length > 0 || !!liveTakeover.state.overlay),
       hasSections: s.doc === 'timeline' && s.sections.length > 0,
+      pointerOver: pointerInTray,
     });
     if (!action) return false;
     switch (action) {
@@ -1260,6 +1261,8 @@
     });
   }
   onMount(() => setShowKeyHandler(handleShowKey));
+  // A backwards shuttle stops when the tray goes.
+  onMount(() => () => stopShuttle());
   // Taken ahead of every other window listener (see installShowKeyCapture).
   onMount(() => installShowKeyCapture());
   // Markers are snap targets for clips and keys.
@@ -1887,7 +1890,7 @@
           <div class="show-snap-guide" style="left: {$showSnapGuide * zoom}px; height: {laneStackH}px" data-show-snap-guide></div>
         {/if}
 
-        <div class="show-playhead" style="transform: translateX({playheadX}px); height: {laneStackH}px" onmousedown={startScrub}>
+        <div class="show-playhead" style:transform="translateX({playheadX}px)" style:height="{laneStackH}px" onmousedown={startScrub}>
           <div class="playhead-handle"></div>
           <div class="playhead-line"></div>
         </div>
@@ -2374,6 +2377,8 @@
   }
   /* The editing tool: lit in the royal blue while it is not Select. */
   .t-select.tool-on { border-color: var(--ga-icon, #5278ff); color: #fff; }
+  /* The open list keeps the app's colours (a white tool name must not land on a white list). */
+  .t-select option { background: var(--ga-raise, #14141a); color: var(--ga-ink-0, #ddd); }
   .t-time {
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: var(--ga-text-control, 12px);

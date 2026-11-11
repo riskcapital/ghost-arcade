@@ -16,6 +16,8 @@
  *   following the pointer with nothing held.
  */
 
+import { beginGesture, endGesture } from '../../../stores/historyHooks';
+
 export interface DragCallbacks {
   move(ev: MouseEvent): void;
   /** Released. `ev` is the release, or the buttonless move that showed it. */
@@ -66,6 +68,8 @@ export function followPointer(cb: DragCallbacks, target: Window = window): void 
   // Only one drag at a time; a stale one (it should not exist) gives way.
   if (active) active.cancel();
   let done = false;
+  // The whole drag is one undo step (see beginGesture).
+  beginGesture();
   const stop = () => {
     done = true;
     target.removeEventListener('mousemove', onMove);
@@ -78,6 +82,7 @@ export function followPointer(cb: DragCallbacks, target: Window = window): void 
     if ((ev.buttons & 1) === 0) {
       stop();
       cb.end(ev);
+      endGesture(true);
       return;
     }
     cb.move(ev);
@@ -86,12 +91,14 @@ export function followPointer(cb: DragCallbacks, target: Window = window): void 
     if (done) return;
     stop();
     cb.end(ev);
+    endGesture(true);
   };
   const cancel = (afterRelease: boolean) => {
     if (done) return;
     stop();
     if (afterRelease) swallowClickAfterRelease(target);
     cb.cancel();
+    endGesture(false);
   };
   const onBlur = () => cancel(false);
   const me: ActiveDrag = { cancel: () => cancel(true) };

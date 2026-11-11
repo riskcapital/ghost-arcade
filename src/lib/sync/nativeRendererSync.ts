@@ -985,7 +985,10 @@ function sourceValuesSignature(layer: Layer): string {
     : 'no-js';
   // A show clip's shader time: a new anchor goes out with the uniforms.
   const shaderTime = s._nativeShaderTime ? `:t${s._nativeShaderTime.seq}` : '';
-  const musicTime = hasMusicTime(s.id) ? `:mt${getMusicTimeOffset(s.id).toFixed(4)}:${getMusicTimeRate(s.id).toFixed(4)}` : '';
+  // The core runs the music clock on its own between updates: a new anchor
+  // goes out when the rate moves or the drift passes a tenth of a second, not
+  // every frame the offset creeps on.
+  const musicTime = hasMusicTime(s.id) ? `:mt${Math.round(getMusicTimeOffset(s.id) * 10)}:${Math.round(getMusicTimeRate(s.id) * 50)}` : '';
   return `${shaderValuesSignature}:${javascriptValuesSignature}${shaderTime}${musicTime}`;
 }
 

@@ -36,7 +36,7 @@ import { soundRowsFor } from '../sound/soundModel';
 import { soundLineScope } from '../sound/soundParams';
 import { registerParamScope } from './lineExtensions';
 import { createContentRecorder } from './contentRecorder';
-import { isAutomation, isRestoringHistory } from '../../stores/historyHooks';
+import { cancelPendingHistorySnapshot, isAutomation, isRestoringHistory } from '../../stores/historyHooks';
 
 // ── Registry over the Timeline ─────────────────────────────────────────────
 
@@ -186,7 +186,7 @@ const contentRecorder = createContentRecorder({
   tracks: () => get(showTimeline).layerTracks,
   rowFor: (layer) => get(showTimeline).layerTracks.find((t) => t.layerId === layer.id && !t.subRow)?.id ?? showTimeline.addLayerTrack(layer),
   write: (trackId, media, start, end) => { showTimeline.recordLayerBlock(trackId, media, start, end); },
-  swapAt: (trackId, media, t) => { showTimeline.cutInLayerMedia(trackId, media, t); },
+  swapAt: (trackId, media, t, before) => { showTimeline.cutInLayerMedia(trackId, media, t, before); },
   notAPerson: () => isAutomation() || isRestoringHistory(),
 });
 let lastPlaying = false;
@@ -227,6 +227,9 @@ function startSession(): void {
   unsubStore = next.store.subscribe((state) => {
     const doc = get(showTimeline);
     if (session !== next || state.lines === doc.lines) return;
+    // The pass and the control moves that made it are one step: a slider's
+    // own edit, still waiting for its debounce, is folded into this one.
+    cancelPendingHistorySnapshot();
     showTimeline.setLines(state.lines);
     syncRecordUi();
   });
@@ -509,7 +512,16 @@ export function addLineWithPoint(target: ParamTarget, key: string, time: number,
  * (armed, Follow edits on) is keyed on its line at the playhead. A first key
  * makes the line. One gesture (a slider drag, a corner drag) is one undo step.
  */
+// A slider drag sends a stream of changes: they make one step. A pause longer
+// than this starts a new gesture, so two separate drags never share a step.
+const LIVE_EDIT_GESTURE_MS = 250;
+let liveEditAt = 0;
+let liveEditSeq = 0;
+
 export function keyAtPlayhead(target: ParamTarget, key: string, value: number | boolean, time: number): boolean {
+  const nowMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  if (nowMs - liveEditAt > LIVE_EDIT_GESTURE_MS) liveEditSeq++;
+  liveEditAt = nowMs;
   const entry = describeLineParam(target, key);
   const lines = get(showTimeline).lines;
   const existing = lines.find((l) => l.key === key && sameTarget(l.target, target));
@@ -521,7 +533,7 @@ export function keyAtPlayhead(target: ParamTarget, key: string, value: number | 
   const next = { ...line, points };
   return showTimeline.editLines(
     (list) => (existing ? list.map((l) => (l.id === line.id ? next : l)) : [...list, next]),
-    `live-edit:${line.id}:${point.t.toFixed(3)}`,
+    `live-edit:${line.id}:${point.t.toFixed(3)}:${liveEditSeq}`,
   );
 }
 

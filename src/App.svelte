@@ -2502,7 +2502,8 @@
       }
 
       // B key toggles blackout (not in inputs)
-      if ((e.key === 'b' || e.key === 'B') && !inInput && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      // Shift+B is the Timeline's Ripple tool: Blackout is B alone.
+      if ((e.key === 'b' || e.key === 'B') && !inInput && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
         settings.update(s => ({ ...s, output: { ...s.output, blackout: !s.output.blackout } }));
         e.preventDefault();
         return;
@@ -6528,13 +6529,15 @@
 
   /** Restore a snapshot into every store it spans. */
   function applyHistorySnapshot(snapshot: HistorySnapshot) {
-    project.set(snapshot.project);
-    // The multi-selection may still name a layer the step removed.
-    project.setSelectedLayerIds(get(selectedLayerIds));
-    // beginHistoryRestore() stops importAll() from recording the state it is
-    // restoring as a fresh undo entry (which would poison the redo stack).
+    // beginHistoryRestore() first: the project's own subscribers (live record,
+    // Follow edits) must see the restore as a restore, not as a person's edit,
+    // and importAll() must not record the state it is restoring as a fresh
+    // undo entry (which would poison the redo stack).
     beginHistoryRestore();
     try {
+      project.set(snapshot.project);
+      // The multi-selection may still name a layer the step removed.
+      project.setSelectedLayerIds(get(selectedLayerIds));
       keyframeTimeline.importAll(Array.isArray(snapshot.keyframes) ? snapshot.keyframes as any : []);
       // Only what this step changed goes back into the output stage.
       const outputPatch = outputHistoryPatch(snapshot.output, snapshot.leavingOutput);

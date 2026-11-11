@@ -18,6 +18,8 @@
   import { trimEdgeWidth, type ClipPart } from './trackLayout';
   import WhereBand from './WhereBand.svelte';
   import { editTool } from './editTools';
+  import { shortcutLabels } from './keyLabels';
+  const UNGROUP_KEY = shortcutLabels().ungroup;
   import { showTimeline } from '../../../stores/showTimeline';
 
   interface Props {
@@ -118,7 +120,7 @@
     <WhereBand info={{ target: { scope: 'block', id: clip.id }, where: clip.where, start: clip.startTime, duration: clip.duration }} {zoom} tint={[92, 225, 230]} />
   {/if}
   {#if clip.groupId}
-    <svg class="lc-group" width="10" height="10" viewBox="0 0 10 10" role="img" aria-label="Grouped"><title>Grouped: it selects, moves and copies with its group. Ctrl+Shift+G ungroups</title><path d="M4 6 6 4M3.2 5 2 6.2a1.6 1.6 0 0 0 2.3 2.3L5.5 7.3M6.8 5 8 3.8A1.6 1.6 0 0 0 5.7 1.5L4.5 2.7" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+    <svg class="lc-group" width="10" height="10" viewBox="0 0 10 10" role="img" aria-label="Grouped"><title>Grouped: it selects, moves and copies with its group. {UNGROUP_KEY} ungroups</title><path d="M4 6 6 4M3.2 5 2 6.2a1.6 1.6 0 0 0 2.3 2.3L5.5 7.3M6.8 5 8 3.8A1.6 1.6 0 0 0 5.7 1.5L4.5 2.7" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
   {/if}
   <span class="lc-name clip-name">{name}</span>
   {#if clip.blendMode && clip.blendMode !== 'normal' && width > 60}

@@ -123,7 +123,7 @@ export interface TakeoverState {
   markerPolicy: TakeoverMarkerPolicy;
   /** How a pad or a mapped note takes over: latch, or only while held. */
   padMode: TakeoverPadMode;
-  /** The source the L key and a bare LIVE click use. */
+  /** The source Shift+L and a bare LIVE click use. */
   lastSource: TakeoverSource;
   /** Cue actions held back by markerPolicy 'hold' until the hand-back. */
   deferredCount: number;
