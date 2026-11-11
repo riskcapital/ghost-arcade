@@ -3892,9 +3892,10 @@ export const showTimeline = {
 
   /**
    * Several parts of the Timeline replaced at once, as one undo step (Score
-   * the song lays down sections, looks, lines and LED blocks together).
+   * the song lays down sections, looks, lines and LED blocks together; Auto
+   * show adds rows with their blocks and named where orders too).
    */
-  replaceTimelineParts(parts: Partial<Pick<ShowTimelineState, 'sections' | 'lookClips' | 'lines' | 'ledClips' | 'stageClips' | 'tempo'>>) {
+  replaceTimelineParts(parts: Partial<Pick<ShowTimelineState, 'sections' | 'lookClips' | 'lines' | 'ledClips' | 'stageClips' | 'tempo' | 'layerTracks' | 'whereOrders'>>) {
     store.update((x) => withDuration({
       ...x,
       ...(parts.tempo !== undefined && !x.tempo && parts.tempo
@@ -3905,6 +3906,8 @@ export const showTimeline = {
       ...(parts.lines ? { lines: parts.lines } : {}),
       ...(parts.ledClips ? { ledClips: normalizeLedClips(parts.ledClips) } : {}),
       ...(parts.stageClips ? { stageClips: normalizeStageClips(parts.stageClips) } : {}),
+      ...(parts.layerTracks ? { layerTracks: parts.layerTracks.map((t) => ({ ...t, clips: [...t.clips].sort((a, b) => a.startTime - b.startTime) })) } : {}),
+      ...(parts.whereOrders ? { whereOrders: normalizeNamedOrders(parts.whereOrders) } : {}),
     }));
     republishTracks();
     publishSectionStatus();
