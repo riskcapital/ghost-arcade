@@ -127,7 +127,7 @@
     </div>
   {/each}
   {#if !sections.length}
-    <span class="sec-empty">Double-click to add a section, or Score this song</span>
+    <span class="sec-empty">Double-click to add a section, or ✦ Auto show</span>
   {/if}
 </div>
 

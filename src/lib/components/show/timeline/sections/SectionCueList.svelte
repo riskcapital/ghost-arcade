@@ -59,7 +59,7 @@
         </li>
       {/if}
     {:else}
-      <li class="sec-none">No sections yet: double-click the Sections row, or Score this song.</li>
+      <li class="sec-none">No sections yet: double-click the Sections row, or ✦ Auto show.</li>
     {/each}
   </ol>
 </div>
