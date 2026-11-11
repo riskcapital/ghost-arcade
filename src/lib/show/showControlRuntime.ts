@@ -4,7 +4,8 @@
  *
  * - The cue executor: what each cue action does to the real stores.
  * - `show:*` control paths for MIDI, OSC and keyboard (GO, Back, Stop,
- *   Reset, fire cue N), through the shared router.
+ *   Reset, fire cue N, phrase pads), through the shared router and on to
+ *   fireShowAction (showActions.ts), the one action API.
  * - Timeline markers: the playing show timeline fires the cues its markers
  *   name as the playhead crosses them.
  * - The timecode chase sink: drives the show timeline and fires cues that
@@ -22,38 +23,25 @@ import { ScheduleRunner, createScheduleHooks, showSchedule } from './scheduler';
 import { onShowControlHydrate } from './showControlPersistence';
 import { showTimeline, setShowChaseTransportHandler } from '../stores/showTimeline';
 import { installShowLaunchClock } from './sync/showLaunchClock';
-import { project, compositions } from '../stores/layers';
+import { project } from '../stores/layers';
 import { snapshots } from '../stores/snapshots';
 import { macros } from '../stores/macros';
 import { vjClipLauncher } from '../stores/vjClipLauncher';
-import { settings } from '../stores/settings';
 import { launchClockTempo, launchClockPosition, launchClockFollowsShow } from '../stores/launchClock';
 import { midiRouter, registerShowControl, registerShowInputRelease } from '../midi/midiRouter';
 import { runAsLiveControl } from '../stores/historyHooks';
 import { handleTakeoverControl, releaseTakeoverInputs, runTakeoverCue, runTakeoverReleaseCue } from './takeover/takeoverRuntime';
-import { installSectionRuntime, timelineTakesGo } from '../timeline/sections/sectionRuntime';
-import { installPhraseRuntime, launchPhraseNumber, stopPhrases } from '../timeline/phrases/phraseRuntime';
+import { installSectionRuntime } from '../timeline/sections/sectionRuntime';
+import { installPhraseRuntime } from '../timeline/phrases/phraseRuntime';
+import { fireShowAction, recallPreset, setBlackout } from './showActions';
+
+export { setBlackout } from './showActions';
 
 /** Hooks App.svelte fills in: things only the app shell can do. */
 export const showRuntimeHooks: {
   /** Open the outputs fullscreen if they are not already. */
   ensureOutputs: (() => Promise<void> | void) | null;
 } = { ensureOutputs: null };
-
-export function setBlackout(on: boolean): void {
-  settings.update((s) => (s.output.blackout === on ? s : { ...s, output: { ...s.output, blackout: on } }));
-}
-
-/**
- * Recall a mapping preset the way a tray click does (with the tray's
- * transition) when the tray is mounted to take it; otherwise a hard cut.
- */
-function recallPreset(compositionId: string): void {
-  if (!get(compositions).some((c) => c.id === compositionId)) return;
-  const detail = { compositionId, handled: false };
-  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('show-recall-preset', { detail }));
-  if (!detail.handled) project.loadComposition(compositionId, { recordHistory: false });
-}
 
 function timeline(op: CueTimelineOp, seconds: number): void {
   // A chased timeline belongs to the timecode source.
@@ -67,7 +55,7 @@ function timeline(op: CueTimelineOp, seconds: number): void {
 }
 
 export const appCueExecutor: CueExecutor = {
-  recallPreset,
+  recallPreset: (compositionId) => { recallPreset(compositionId); },
   recallSnapshot: (slot) => snapshots.recall(slot - 1),
   triggerClip: (deck, layer, column) => vjClipLauncher.triggerClip(layer, column, deck),
   triggerColumn: (deck, column) => vjClipLauncher.triggerColumn(column, deck),
@@ -120,20 +108,15 @@ export function installShowControl(): () => void {
 
   // ── MIDI / OSC / keyboard ──────────────────────────────────────────
   registerShowControl((action, value = 1, inputId) => {
-    // On the Timeline with sections, GO is the sections' (hold, vamp, Live).
-    if (action === 'go') {
-      if (timelineTakesGo()) showTimeline.go();
-      else cueList.go('remote');
-    }
-    else if (action === 'back') cueList.back();
-    else if (action === 'stop') cueList.stop();
-    else if (action === 'reset') cueList.reset();
-    else if ('cue' in action) {
-      const cue = cueList.state.cues[action.cue];
-      if (cue) cueList.fire(cue.id, 'remote');
-    } else if ('phrase' in action) {
-      runAsLiveControl(() => (action.phrase === null ? stopPhrases() : launchPhraseNumber(action.phrase + 1)));
-    } else handleTakeoverControl(action, value, inputId);
+    // GO: on the Timeline with sections, the sections' (hold, vamp, Live);
+    // else the cue list's. The rest of the cue list and the phrase pads go
+    // through the same action API; the takeover paths keep their own edge
+    // and latch handling.
+    if (action === 'go') fireShowAction({ kind: 'go' });
+    else if (action === 'back' || action === 'stop' || action === 'reset') fireShowAction({ kind: 'cue', op: action });
+    else if ('cue' in action) fireShowAction({ kind: 'cue', op: 'fire', index: action.cue });
+    else if ('phrase' in action) fireShowAction(action.phrase === null ? { kind: 'phrase', stop: true } : { kind: 'phrase', pad: action.phrase + 1 });
+    else handleTakeoverControl(action, value, inputId);
   });
   cleanups.push(() => registerShowControl(null));
   // A controller that disconnects lets go of the takeovers it holds (with
