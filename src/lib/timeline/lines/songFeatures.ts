@@ -30,6 +30,121 @@ export interface SongFeatures {
   features: Record<AudioFeature, Float32Array>;
   /** Real stems' levels (0..1 per frame) when the song has them. */
   stems?: Partial<Record<Stem, Float32Array>>;
+  /** Song-wide measures the per-frame features (each scaled to the song)
+   *  lose: how loud, how wide its dynamics, how much low end. */
+  stats?: SongStats;
+}
+
+export interface SongStats {
+  /** Mean loudness of the frames that sound, dB (energy, full scale ≈ 0). */
+  loudDb: number;
+  /** How far apart its quiet and loud parts are: the 95th minus the 10th
+   *  percentile of loudness over the frames that sound, dB. */
+  rangeDb: number;
+  /** Share of the energy in the low band over the frames that sound, 0..1. */
+  lowShare: number;
+  /** Hits per second: sudden jumps in loudness (6 dB or more summed over
+   *  the bands within a frame) while the song sounds. Pads and swells make
+   *  none; drums one per hit. */
+  hitRate: number;
+  /** How hard the hits land: the median jump of those hits, dB. */
+  punchDb: number;
+  /** How regular the beat is: how well the kick-and-snare rises repeat
+   *  themselves at the best beat length between 60 and 200 BPM, 0..1. */
+  pulse: number;
+  /** When the hits are (song seconds). */
+  hits: Float32Array;
+  /** When the low band jumps hard (kicks, bass hits; song seconds). */
+  lowHits: Float32Array;
+}
+
+const HIT_JUMP = 0.6;
+const LOW_HIT = 6;
+
+/** Song-wide loudness, dynamics, low end and hits from the envelope (log energies). */
+export function songStatsFromEnvelope(env: Pick<Envelope, 'bands'> & Partial<Pick<Envelope, 'onset' | 'beatOnset' | 'lowOnset' | 'frameRate'>>): SongStats {
+  const [low, mid, high] = env.bands;
+  const n = low.length;
+  const none: SongStats = { loudDb: -120, rangeDb: 0, lowShare: 0, hitRate: 0, punchDb: 0, pulse: 0, hits: new Float32Array(0), lowHits: new Float32Array(0) };
+  if (!n) return none;
+  const loud = new Float32Array(n);
+  for (let i = 0; i < n; i++) loud[i] = Math.log10(1e-12 + 10 ** low[i] + 10 ** mid[i] + 10 ** high[i]);
+  // Frames within 50 dB of the loudest sound; silence and fades out of it do not count.
+  const top = quantile(loud, 0.99);
+  const sounding: number[] = [];
+  let lowSum = 0;
+  let allSum = 0;
+  let loudSum = 0;
+  for (let i = 0; i < n; i++) {
+    if (loud[i] < top - 5) continue;
+    sounding.push(loud[i]);
+    loudSum += loud[i];
+    const l = 10 ** low[i];
+    lowSum += l;
+    allSum += l + 10 ** mid[i] + 10 ** high[i];
+  }
+  if (!sounding.length) return none;
+  const round = (v: number) => Math.round(v * 100) / 100;
+  const fr = env.frameRate ?? 100;
+  // Hits: local peaks of the summed rise over HIT_JUMP, 60 ms apart at least.
+  const onset = env.onset;
+  const peakTimes = (curve: Float32Array | undefined, threshold: number, heights?: number[]): Float32Array => {
+    const times: number[] = [];
+    if (!curve) return new Float32Array(0);
+    const gap = Math.max(1, Math.round(0.06 * fr));
+    let last = -Infinity;
+    for (let i = 1; i < curve.length - 1; i++) {
+      const v = curve[i];
+      if (v < threshold || v < curve[i - 1] || v < curve[i + 1] || loud[i] < top - 5) continue;
+      if (i - last < gap) continue;
+      heights?.push(v);
+      times.push(i / fr);
+      last = i;
+    }
+    return Float32Array.from(times);
+  };
+  const peaks: number[] = [];
+  const hits = peakTimes(onset, HIT_JUMP, peaks);
+  // The low band's jump over its mean (1): a kick is many times the mean.
+  const lowHits = peakTimes(env.lowOnset, LOW_HIT);
+  return {
+    loudDb: round((10 * loudSum) / sounding.length),
+    rangeDb: round(10 * (quantile(sounding, 0.95) - quantile(sounding, 0.1))),
+    lowShare: round(allSum > 0 ? lowSum / allSum : 0),
+    hitRate: round(peaks.length / Math.max(1, sounding.length / fr)),
+    punchDb: round(10 * quantile(peaks, 0.5)),
+    pulse: round(env.beatOnset ? pulseStrength(env.beatOnset, fr) : 0),
+    hits,
+    lowHits,
+  };
+}
+
+/** Normalised self-similarity of an onset curve one beat later, at the best
+ *  beat length between 60 and 200 BPM (the same beat two beats later too). */
+function pulseStrength(onset: Float32Array, frameRate: number): number {
+  const n = onset.length;
+  if (n < frameRate * 4) return 0;
+  // Two minutes at most: the middle of a long song says enough.
+  const from = Math.max(0, Math.floor(n / 2 - 60 * frameRate));
+  const to = Math.min(n, from + Math.floor(120 * frameRate));
+  let mean = 0;
+  for (let i = from; i < to; i++) mean += onset[i];
+  mean /= Math.max(1, to - from);
+  let energy = 0;
+  for (let i = from; i < to; i++) energy += (onset[i] - mean) ** 2;
+  if (energy <= 1e-9) return 0;
+  const minLag = Math.max(2, Math.floor((60 * frameRate) / 200));
+  const maxLag = Math.ceil((60 * frameRate) / 60);
+  const corr = new Float64Array(2 * maxLag + 2);
+  for (let lag = minLag - 1; lag <= 2 * maxLag + 1; lag++) {
+    let sum = 0;
+    for (let i = from + lag; i < to; i++) sum += (onset[i] - mean) * (onset[i - lag] - mean);
+    corr[lag] = sum / energy;
+  }
+  const near = (l: number) => Math.max(corr[l - 1], corr[l], corr[l + 1]);
+  let best = 0;
+  for (let lag = minLag; lag <= maxLag; lag++) best = Math.max(best, Math.min(near(lag), near(2 * lag)));
+  return Math.max(0, Math.min(1, best));
 }
 
 /** Hit envelope decay, seconds to fall to ~37 %. */
@@ -103,6 +218,7 @@ export function songFeaturesFromEnvelope(env: Envelope): SongFeatures {
     frameRate: fr,
     frames,
     duration: frames / fr,
+    stats: songStatsFromEnvelope(env),
     features: {
       level,
       energy: normalize(boxSmooth(level, ENERGY_WINDOW * fr), 0.02, 0.995),
