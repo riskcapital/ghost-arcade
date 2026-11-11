@@ -17,6 +17,7 @@ import {
   onShowDocChange,
   onShowTimelineReset,
   setShowLineTicker,
+  setShowRecordArm,
   showTimeline,
   type ShowLineTick,
 } from '../../stores/showTimeline';
@@ -139,6 +140,8 @@ function storedFollowEdits(): boolean {
   try { return typeof localStorage !== 'undefined' && localStorage.getItem(FOLLOW_EDITS_KEY) === '1'; } catch { return false; }
 }
 export const lineRecordState = writable<LineRecordUi>({ armed: false, mode: 'touch', bindPending: null, writing: false, followEdits: storedFollowEdits() });
+// Armed, the Timeline plays even when empty and rolls on past its end.
+setShowRecordArm(() => get(lineRecordState).armed);
 
 /** The line being edited, and its selected points (indices). */
 export interface LineSelection {

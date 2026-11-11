@@ -32,6 +32,7 @@
    */
   import { onMount, tick, untrack } from 'svelte';
   import { get } from 'svelte/store';
+  import { lineRecordState } from '../timeline/lines/timelineLines';
   import {
     showTimeline,
     setShowTransportSink,
@@ -172,6 +173,8 @@
   const isPlaying = $derived($isPlayingStore);
   const currentTime = $derived($currentTimeStore);
   const duration = $derived($durationStore);
+  // Armed, an empty Timeline plays too, so there is time to record into.
+  const recordArmed = $derived($lineRecordState.armed);
   const loop = $derived($loopStore);
   const audioTracks = $derived($audioTracksStore);
   const presetClips = $derived($presetClipsStore);
@@ -1341,7 +1344,7 @@
       <button
         class="t-btn"
         class:active={isPlaying}
-        disabled={duration <= 0}
+        disabled={duration <= 0 && !(recordArmed && doc === 'timeline')}
         onclick={() => showTimeline.togglePlay()}
         title={isPlaying ? 'Pause show' : 'Play show'}
       >

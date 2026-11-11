@@ -331,6 +331,20 @@ export function fitShowZoom(duration: number, width: number): number {
   return Math.max(SHOW_MIN_ZOOM, Math.min(SHOW_MAX_ZOOM, width / duration));
 }
 
+// ─── Recording run ───────────────────────────────────────────────────────
+// While recording is armed on the Timeline, play starts on an empty Timeline
+// and the playhead runs on past the end, the way a recorder rolls: what is
+// recorded out there is what makes the Timeline longer. The record arm lives
+// with the lines (timelineLines.ts), which registers it here.
+let recordArmed: () => boolean = () => false;
+/** Where the Timeline reads whether recording is armed. */
+export function setShowRecordArm(armed: (() => boolean) | null): void {
+  recordArmed = armed ?? (() => false);
+}
+function recordRun(s: Pick<ShowTimelineState, 'doc'>): boolean {
+  return s.doc === 'timeline' && !externalClock && recordArmed();
+}
+
 // ─── Pure arrangement maths (exported for tests) ─────────────────────────
 
 /** Content length of a show: the furthest edge of anything on it. */
@@ -1457,9 +1471,13 @@ function landPhrase(over: number, oldAt: number, next: number | null): void {
 function applyTime(time: number, bumpSeek: boolean): void {
   const s = get(store);
   const dur = s.duration;
+  const recording = recordRun(s);
 
   let t = Number.isFinite(time) ? Math.max(0, time) : 0;
-  if (dur <= 0) {
+  if (recording && !(s.loop && dur > 0)) {
+    // Recording runs on past the end (and on an empty Timeline): what is
+    // recorded there makes the Timeline longer.
+  } else if (dur <= 0) {
     t = 0;
   } else if (s.loop) {
     t = ((t % dur) + dur) % dur;
@@ -1542,7 +1560,7 @@ function tick(now: number): void {
   }
 
   const dur = s.duration;
-  if (dur > 0 && next >= dur) {
+  if (dur > 0 && next >= dur && !(recordRun(s) && !s.loop)) {
     if (s.loop) {
       // A new pass of the show: the last pass's vamps, jump counts and
       // free-running offsets are done with.
@@ -2257,8 +2275,9 @@ export const showTimeline = {
       return;
     }
     if (s.isPlaying) return;
-    // An empty show has nothing to play — stay completely inert.
-    if (s.duration <= 0) return;
+    // An empty show has nothing to play — stay completely inert, unless
+    // recording is armed: then the playhead runs so there is time to record into.
+    if (s.duration <= 0 && !recordRun(s)) return;
     syncAudioWiring(s.audioTracks);
     // Transport start is the moment audio has to be ready. A context built
     // outside a user gesture starts suspended (browser / mobile builds) and
