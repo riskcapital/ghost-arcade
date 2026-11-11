@@ -29,6 +29,10 @@ export type RecordMode = 'touch' | 'latch';
 export const RELEASE_MS = 300;
 /** Seconds a touch pass takes to glide back to the line. */
 export const RETURN_GLIDE = 0.12;
+/** The show moving on more than this between two samples is a jump (a seek,
+ *  a section jump), not play: the pass ends where it was (the evaluator's
+ *  own jump rule). */
+export const JUMP_SECONDS = 0.5;
 
 export interface RecorderHost {
   lines(): readonly ControlLine[];
@@ -70,6 +74,11 @@ export function createLineRecorder(host: RecorderHost, opts: { now?: () => numbe
   let overlayCount = -1;
 
   const passKey = (target: ParamTarget, key: string) => `${targetId(target)}|${key}`;
+  const lastT = (pass: Pass) => pass.samples[pass.samples.length - 1].t;
+  /** Show time `t` is not where play from the pass's last sample goes (back, or far ahead). */
+  const jumped = (pass: Pass, t: number) => t < lastT(pass) - 1e-9 || t - lastT(pass) > JUMP_SECONDS;
+  /** Where an open pass ends when the show is at `t`. */
+  const endAt = (pass: Pass, t: number) => (jumped(pass, t) ? lastT(pass) : Math.max(t, lastT(pass)));
 
   function commitPass(pass: Pass, endTime: number): void {
     passes.delete(passKey(pass.target, pass.key));
@@ -150,8 +159,9 @@ export function createLineRecorder(host: RecorderHost, opts: { now?: () => numbe
         passes.set(k, pass);
       }
       const last = pass.samples[pass.samples.length - 1];
-      if (last && showTime < last.t) {
-        // The show jumped back (loop or seek): the old pass ends there.
+      if (last && jumped(pass, showTime)) {
+        // The show jumped (loop, seek, section jump): the old pass ends where
+        // it was, and what the playhead skipped is left as it was.
         commitPass(pass, last.t);
         return this.input(target, key, value, showTime);
       }
@@ -168,10 +178,16 @@ export function createLineRecorder(host: RecorderHost, opts: { now?: () => numbe
       if (!passes.size) return;
       const t = now();
       for (const pass of [...passes.values()]) {
-        if (mode === 'touch' && t - pass.lastInputMs >= releaseMs) {
+        if (jumped(pass, showTime)) {
+          // A jump: the pass ends where the show was. A latched control
+          // keeps writing its value from the new place (the next lap of a
+          // loop records too).
+          commitPass(pass, lastT(pass));
+          if (mode === 'latch') this.input(pass.target, pass.key, pass.value, showTime);
+        } else if (mode === 'touch' && t - pass.lastInputMs >= releaseMs) {
           // The value held while the control rested, as it was seen, then
           // the glide back to the line.
-          commitPass(pass, Math.max(showTime, pass.samples[pass.samples.length - 1].t));
+          commitPass(pass, Math.max(showTime, lastT(pass)));
         } else if (mode === 'latch' && showTime > pass.samples[pass.samples.length - 1].t) {
           // Latched: keep writing the held value (for the live view; the
           // thinning folds the flat run back to two points).
@@ -182,7 +198,7 @@ export function createLineRecorder(host: RecorderHost, opts: { now?: () => numbe
 
     /** The show stopped: every open pass (latch ones included) ends at `showTime`. */
     stop(showTime = lastShowTime): void {
-      for (const pass of [...passes.values()]) commitPass(pass, Math.max(showTime, pass.samples[pass.samples.length - 1].t));
+      for (const pass of [...passes.values()]) commitPass(pass, endAt(pass, showTime));
     },
 
     /** Live values of open passes by line id (LineContext.touch). */
