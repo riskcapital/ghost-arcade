@@ -71,16 +71,16 @@ describe('recording what a piece shows', () => {
     expect(r.written).toEqual([]);
   });
 
-  it('nothing is recorded while disarmed or paused', () => {
+  it('nothing is recorded while disarmed, playing or not', () => {
     const r = rig();
     r.setArmed(false);
     r.rec.tick(1, true);
     r.set('A', shader('Prism'));
     r.rec.tick(3, true);
-    r.setArmed(true);
     r.rec.tick(4, false);
     r.set('A', shader('Tide'));
     expect(r.written).toEqual([]);
+    expect(r.swaps).toEqual([]);
     expect(r.rec.recording()).toBe(0);
   });
 
@@ -106,7 +106,8 @@ describe('recording what a piece shows', () => {
     r.set('A', shader('Prism'));
     r.setEngine(false);
     expect(r.swaps).toEqual([['rowB', 'snow', 12]]);
-    expect(r.written).toEqual([]);
+    // The empty row keeps what it showed before the cut.
+    expect(r.written).toEqual([['rowB', 'rain', 0, 12]]);
     // Disarmed, a swap is a plain edit.
     r.setArmed(false);
     r.rec.tick(12, false);

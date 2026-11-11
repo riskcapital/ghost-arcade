@@ -111,11 +111,16 @@ export function createContentRecorder(host: ContentRecorderHost) {
       const prev = seen.get(layer.id);
       if (prev === key) continue;
       seen.set(layer.id, key);
+      const before = shown.get(layer.id) ?? null;
       const media = mediaOfLayer(layer);
       shown.set(layer.id, media);
       if (prev === undefined || !person || !media) continue;
       const trackId = host.rowFor(layer);
-      if (trackId) host.swapAt(trackId, media, lastTime);
+      if (!trackId) continue;
+      // An empty row showed the piece's own content all along: keep it before the cut.
+      const row = host.tracks().find((r) => r.id === trackId);
+      if (before && row && row.clips.length === 0 && lastTime >= SHOW_MIN_TRACK_CLIP_SECONDS) host.write(trackId, before, 0, lastTime);
+      host.swapAt(trackId, media, lastTime);
     }
   }
 
