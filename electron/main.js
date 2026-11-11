@@ -103,7 +103,9 @@ const { createShowStartup } = require('./show-startup.cjs');
 const { createQuitGuard } = require('./quit-guard.cjs');
 const showStartup = createShowStartup({ app });
 ipcMain.on('show_startup_session', (event) => {
-  try { event.returnValue = showStartup.get(); } catch { event.returnValue = null; }
+  // Show mode as this launch runs it (fixed at launch, off once left), so a
+  // reloaded editor agrees with the watchdog and quit protection here.
+  try { event.returnValue = installMode.sessionInfo(showStartup.get()); } catch { event.returnValue = null; }
 });
 ipcMain.handle('show_startup_get', () => showStartup.get());
 ipcMain.handle('show_startup_set', (_, patch) => showStartup.set(patch));

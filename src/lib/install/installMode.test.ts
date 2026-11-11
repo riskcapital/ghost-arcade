@@ -189,6 +189,22 @@ describe('install mode (main process)', () => {
     expect(h.im.holdQuit()).toBe(false);
   });
 
+  it('a reloaded editor is told the session as this launch runs it', () => {
+    const h = setup();
+    h.im.start();
+    expect(h.im.sessionInfo(h.startup.get()).session.showMode).toBe(true);
+    // Switched off in Settings mid-session: this launch still runs it.
+    h.startup.set({ showMode: false });
+    expect(h.im.sessionInfo(h.startup.get()).session.showMode).toBe(true);
+    // Left with the key combo: a reload does not start it again.
+    h.shortcuts.get('CommandOrControl+Alt+Shift+X')!();
+    expect(h.im.sessionInfo(h.startup.get()).session.showMode).toBe(false);
+    // Switched on mid-session in a normal launch: not until the next launch.
+    const n = setup({ showMode: false });
+    n.startup.set({ showMode: true });
+    expect(n.im.sessionInfo(n.startup.get()).session.showMode).toBe(false);
+  });
+
   it('in combo mode refuses a quit outright', () => {
     const h = setup({ config: { quitProtection: 'combo' } });
     h.im.start();

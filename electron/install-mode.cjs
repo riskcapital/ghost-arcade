@@ -409,6 +409,18 @@ function createInstallMode({
     return true;
   }
 
+  /**
+   * What a page loading now is told about this launch (preload reads it on
+   * every load, a reload too): show mode as this launch started it, and off
+   * once install mode was left for the session. The setting changed since
+   * applies at the next launch, as it does here.
+   */
+  function sessionInfo(info) {
+    if (!info || typeof info !== 'object') return info;
+    const showMode = launchedInShowMode && !paused;
+    return { ...info, session: { ...(info.session || {}), showMode } };
+  }
+
   /** A quit confirmed here was called off later (Cancel at "save changes?"). */
   function quitCalledOff() {
     if (exiting || !quitAllowed) return;
@@ -530,6 +542,7 @@ function createInstallMode({
     pause,
     holdQuit,
     quitCalledOff,
+    sessionInfo,
     markCleanExit,
     heartbeat,
     pageLoaded,
