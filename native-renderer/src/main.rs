@@ -8,6 +8,7 @@ mod audio;
 mod capabilities;
 mod compositor;
 mod compute_graph;
+mod graph_textures;
 mod core_frame_counter;
 mod media_decode;
 mod hap_video;
@@ -1079,6 +1080,9 @@ struct CoreStatus {
     native_image_decode_failures: u64,
     native_image_decode_bytes_uploaded: u64,
     native_image_decode_last_error: String,
+    /// Graph textures held now, and their bytes (they are freed when unused).
+    graph_textures: usize,
+    graph_texture_bytes: u64,
     native_video_frame_decodes: u64,
     native_video_hardware_frames: u64,
     native_video_hap_frames: u64,
@@ -1985,15 +1989,6 @@ struct NativeGraphRenderPipeline {
     bind_group_layout: wgpu::BindGroupLayout,
 }
 
-struct NativeGraphGpuTexture {
-    spec: NativeComputeGraphTextureSpec,
-    view: wgpu::TextureView,
-    _texture: wgpu::Texture,
-}
-
-/// All graph textures together. A 2048 HDR scene with depth, a 2048 shadow
-/// map and a bloom chain is about 130 MB.
-const NATIVE_GRAPH_TEXTURE_BUDGET_BYTES: u64 = 768 * 1024 * 1024;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -4499,7 +4494,8 @@ struct RenderState {
     native_graph_render_pipelines: HashMap<String, NativeGraphRenderPipeline>,
     native_compute_graph_buffers: HashMap<String, NativeComputeGraphGpuBuffer>,
     /// Textures graphs declared in `textures[]`, by id.
-    native_graph_textures: HashMap<String, NativeGraphGpuTexture>,
+    /// Graph textures (graph_textures.rs): kept by id, freed when unused.
+    native_graph_textures: graph_textures::GraphTexturePool,
     /// Copies of graph buffers on their way back to the CPU. See
     /// NativeGraphFrameJob::readback_buffer_ids.
     pending_graph_readbacks: Vec<PendingGraphReadback>,
@@ -6156,6 +6152,8 @@ impl App {
             } else {
                 self.stats.native_image_decode_last_error.clone()
             },
+            graph_textures: self.renderer.as_ref().map_or(0, |renderer| renderer.native_graph_textures.len()),
+            graph_texture_bytes: self.renderer.as_ref().map_or(0, |renderer| renderer.native_graph_textures.total_bytes()),
             native_video_frame_decodes: self.stats.native_video_frame_decodes,
             native_video_hardware_frames: self.stats.native_video_hardware_frames,
             native_video_hap_frames: self.stats.native_video_hap_frames,
@@ -12946,6 +12944,9 @@ impl App {
             self.stats.gpu_frames_submitted = renderer.gpu_frames_submitted;
             self.stats.gpu_frames_completed = renderer.gpu_frames_completed();
             self.stats.frames_presented = self.stats.gpu_frames_completed;
+            // Graph textures no graph used for a while are freed.
+            let frame = renderer.gpu_frames_submitted;
+            renderer.native_graph_textures.end_frame(frame);
         }
     }
 
@@ -14562,8 +14563,8 @@ impl App {
     fn graph_texture_format(&self, id: &str) -> Option<NativeGraphTextureFormat> {
         self.renderer
             .as_ref()
-            .and_then(|renderer| renderer.native_graph_textures.get(id))
-            .map(|texture| texture.spec.format)
+            .and_then(|renderer| renderer.native_graph_textures.spec(id))
+            .map(|spec| spec.format)
     }
 
     fn compute_graph_render_plans(
@@ -21676,7 +21677,7 @@ impl RenderState {
             native_compute_pipelines: HashMap::new(),
             native_graph_render_pipelines: HashMap::new(),
             native_compute_graph_buffers: HashMap::new(),
-            native_graph_textures: HashMap::new(),
+            native_graph_textures: graph_textures::GraphTexturePool::default(),
             pending_graph_readbacks: Vec::new(),
             graph_readback_results: HashMap::new(),
             output_mirror_texture,
@@ -24579,49 +24580,7 @@ impl RenderState {
         &mut self,
         spec: &NativeComputeGraphTextureSpec,
     ) -> Result<(), String> {
-        if self
-            .native_graph_textures
-            .get(&spec.id)
-            .is_some_and(|existing| &existing.spec == spec)
-        {
-            return Ok(());
-        }
-        let bytes = |spec: &NativeComputeGraphTextureSpec| {
-            (spec.width as u64) * (spec.height as u64) * spec.format.bytes_per_pixel()
-        };
-        let others: u64 = self
-            .native_graph_textures
-            .values()
-            .filter(|texture| texture.spec.id != spec.id)
-            .map(|texture| bytes(&texture.spec))
-            .sum();
-        if others.saturating_add(bytes(spec)) > NATIVE_GRAPH_TEXTURE_BUDGET_BYTES {
-            return Err(format!("graph texture `{}` exceeds the graph texture budget", spec.id));
-        }
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some(&format!("Ghost Native Graph Texture {}", spec.id)),
-            size: wgpu::Extent3d {
-                width: spec.width,
-                height: spec.height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: spec.format.texture_format(),
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        self.native_graph_textures.insert(
-            spec.id.clone(),
-            NativeGraphGpuTexture {
-                spec: spec.clone(),
-                view,
-                _texture: texture,
-            },
-        );
-        Ok(())
+        self.native_graph_textures.upsert(&self.device, spec)
     }
 
     fn upsert_native_compute_graph_buffer(
