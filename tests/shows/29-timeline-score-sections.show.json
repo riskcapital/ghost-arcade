@@ -1,6 +1,6 @@
 {
   "name": "Timeline: score a song, sections, hold and GO",
-  "description": "A synthetic 120 BPM track with a known structure (intro 8 bars, build 8, drop 16, breakdown 8, build 4, drop 8, outro 8) on the Song row; Score this song finds the tempo and the seven sections on their bars, names them, and lays down a look per section with an energy line. On the render core's real pixels the look changes at the section boundaries (the output's colour changes across each boundary, and a different look block is on each side). Then Drop 1 is set to Hold for GO: playing into its end stops the playhead there with the song, the picture stays up, GO carries on into the breakdown.",
+  "description": "A synthetic 120 BPM track with a known structure (intro 8 bars, build 8, drop 16, breakdown 8, build 4, drop 8, outro 8) on the Song row; Score this song (now ✦ Auto show with Content: Looks only, run here through its runtime) finds the tempo and the seven sections on their bars, names them, and lays down a look per section with an energy line. On the render core's real pixels the look changes at the section boundaries (the output's colour changes across each boundary, and a different look block is on each side). Then Drop 1 is set to Hold for GO: playing into its end stops the playhead there with the song, the picture stays up, GO carries on into the breakdown.",
   "steps": [
     {
       "do": "app.start",

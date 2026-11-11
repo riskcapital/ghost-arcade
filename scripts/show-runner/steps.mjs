@@ -396,6 +396,18 @@ const ACTIONS = {
     if (!id) throw new Error('the song was not added');
     await sleep(500);
   },
+  async 'show.dropSong'(ctx, s) {
+    // A real file drop (CDP drag) of a song fixture on the empty Timeline's
+    // top row (the Sections row says "Drop a song here"): { file, selector }.
+    const src = fixture(s.file ?? 'sections.wav');
+    const dir = path.join(ctx.profile, 'project-assets');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, path.basename(src));
+    fs.copyFileSync(src, file);
+    await ctx.session.dropFiles(`document.querySelector(${J(s.selector ?? '[data-section-lane]')})`, [file]);
+    await waitIn(ctx.session, `__show.show().audioTracks.some((t) => t.lane === 0 && t.url && t.duration > 1)`, 60000, 'the song on the Song row');
+    await sleep(s.settle ?? 800);
+  },
   async 'show.score'(ctx, s) {
     // Score this song (the dialog's confirm); { shuffle: n } shuffles n times after.
     const r = await ctx.eval('__show.g().timelineScore.score()', 120000);

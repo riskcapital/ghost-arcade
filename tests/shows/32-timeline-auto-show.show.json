@@ -1,6 +1,6 @@
 {
   "name": "Timeline: ✦ Auto show on the auto-mapped Cube Wall",
-  "description": "Map Sim's Fragmented Cube Wall is auto-mapped (about eighty faces). The empty Timeline says \"Drop a song here, then ✦ Auto show\"; a synthetic 128 BPM driving song goes on the Song row (the tempo is typed in: the detector reads this synthetic song's off-beat hats as 102.4 BPM at 44.1 kHz) and ✦ Auto show is clicked on the Song row, then Build the show. The dialog says what it heard; four ✦ rows land on the hero piece (the central screen) whose blocks travel over every face through the piece groups, plus sections, a look a section and Screen FX, well under 400 blocks. It plays at the editor's frame rate; on the render core's real pixels the picture changes at each section boundary and the tiles alternate on the beat at the start of each drop; one Cmd+Z takes it all back.",
+  "description": "Map Sim's Fragmented Cube Wall is auto-mapped (about eighty faces). The empty Timeline says \"Drop a song here, then ✦ Auto show\"; a synthetic 128 BPM driving song is dropped on that top row (a real file drop; it lands on the Song row) (the tempo is typed in: the detector reads this synthetic song's off-beat hats as 102.4 BPM at 44.1 kHz) and ✦ Auto show is clicked on the Song row, then Build the show. The dialog says what it heard; four ✦ rows land on the hero piece (the central screen) whose blocks travel over every face through the piece groups, plus sections, a look a section and Screen FX, well under 400 blocks. It plays at the editor's frame rate; on the render core's real pixels the picture changes at each section boundary and the tiles alternate on the beat at the start of each drop; one Cmd+Z takes it all back.",
   "steps": [
     {
       "do": "app.start",
@@ -42,10 +42,10 @@
       }
     },
     {
-      "do": "show.song",
+      "do": "show.dropSong",
       "file": "song-driving.wav",
       "wait": 1,
-      "label": "A song on the Song row: ✦ Auto show appears on it",
+      "label": "A song dropped on that row (a real file drop): it lands on the Song row and ✦ Auto show appears on it",
       "expect": {
         "eval.true": {
           "js": "!!document.querySelector('[data-auto-show-song]') && !!document.querySelector('[data-auto-show-open]:not([disabled])')",

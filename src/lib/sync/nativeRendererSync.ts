@@ -10071,7 +10071,7 @@ export class NativeRendererSync {
         // every field an upsert leaves out, so just the opacity goes. A show
         // with a picture travelling over eighty pieces sent each whole layer
         // (corners, shape and mask points) every frame.
-        commands.push({ type: 'upsert_layer', layer_id: layer.id, z_index: index, opacity: layer.opacity });
+        commands.push({ type: 'upsert_layer', layer_id: layer.id, z_index: index, blend_mode: layer.type === 'mask' ? 'hierarchy-mask' : canonicalBlendMode(layer.blendMode), opacity: layer.opacity });
       } else if (layerChanged || prev.opacity !== snap.opacity) {
         commands.push({
           type: 'upsert_layer',
