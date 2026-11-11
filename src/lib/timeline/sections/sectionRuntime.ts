@@ -44,7 +44,13 @@ export function handleSectionEvent(e: SectionEvent): void {
     const ids: string[] = [];
     runAsLiveControl(() => {
       for (const r of rows) {
-        if (liveTakeover.engage(r.layerId, source, { trackId: r.id, fadeIn: 0.5 })) ids.push(r.layerId);
+        // A piece the VJ already took over by hand stays theirs (the section
+        // does not replace it, nor release it at its end).
+        const held = liveTakeover.state.surfaces[r.layerId];
+        if (held && (held.phase === 'in' || held.phase === 'live')) continue;
+        // The Timeline plays on through a Live section whatever the takeover
+        // does underneath otherwise.
+        if (liveTakeover.engage(r.layerId, source, { trackId: r.id, fadeIn: 0.5, keepShowPlaying: true })) ids.push(r.layerId);
       }
     });
     engaged.set(e.section.id, ids);

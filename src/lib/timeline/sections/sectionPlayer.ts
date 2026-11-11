@@ -60,6 +60,9 @@ export interface SectionPlayerState {
   passes: Record<string, number>;
   /** The Live section whose pieces are handed over. */
   live: string | null;
+  /** That section as it was when it took over: its pieces are still given
+   *  back if it is deleted or replaced (undo, Score) while live. */
+  liveSection?: TimelineSection | null;
   freeRun: FreeRunEvent[];
 }
 
@@ -88,10 +91,16 @@ export type GoResult =
   | { kind: 'none' };
 
 export function createSectionPlayerState(): SectionPlayerState {
-  return { hold: null, armed: [], vampExit: null, passes: {}, live: null, freeRun: [] };
+  return { hold: null, armed: [], vampExit: null, passes: {}, live: null, liveSection: null, freeRun: [] };
 }
 
 const byId = (sections: readonly TimelineSection[], id: string | null | undefined) => (id ? sections.find((s) => s.id === id) ?? null : null);
+
+/** The Live section handed over, even when it is no longer in the list. */
+function liveOf(state: SectionPlayerState, sections: readonly TimelineSection[]): TimelineSection | null {
+  if (!state.live) return null;
+  return byId(sections, state.live) ?? (state.liveSection?.id === state.live ? state.liveSection : null);
+}
 
 /**
  * The step from `prev` to `next` (seconds, next ≥ prev) while playing.
@@ -119,14 +128,16 @@ export function stepSections(
   const here = sectionAt(sections, prev);
   if (here && here.action === 'live' && state.live !== here.id && !state.armed.includes(here.id)) {
     if (state.live) {
-      const old = byId(sections, state.live);
+      const old = liveOf(state, sections);
       if (old) events.push({ type: 'liveEnd', section: old });
     }
     state.live = here.id;
+    state.liveSection = here;
     events.push({ type: 'liveStart', section: here });
   } else if (state.live && (!here || here.id !== state.live)) {
-    const old = byId(sections, state.live);
+    const old = liveOf(state, sections);
     state.live = null;
+    state.liveSection = null;
     if (old) events.push({ type: 'liveEnd', section: old });
   }
 
@@ -159,6 +170,7 @@ export function stepSections(
           state.armed.splice(armedAt, 1);
           if (s.action === 'live' && state.live === s.id) {
             state.live = null;
+            state.liveSection = null;
             events.push({ type: 'liveEnd', section: s });
           }
           continue;
@@ -229,6 +241,7 @@ export function goSections(
     const events: SectionEvent[] = [{ type: 'resume', section: s }];
     if (s.action === 'live' && state.live === s.id) {
       state.live = null;
+      state.liveSection = null;
       events.push({ type: 'liveEnd', section: s });
     }
     return { kind: 'resume', section: s, events };
@@ -255,7 +268,7 @@ export function goSections(
 /** A seek, Stop or a new document: everything the playhead was in is forgotten. */
 export function resetSections(state: SectionPlayerState, sections: readonly TimelineSection[]): SectionEvent[] {
   const events: SectionEvent[] = [];
-  const live = byId(sections, state.live);
+  const live = liveOf(state, sections);
   if (live) events.push({ type: 'liveEnd', section: live });
   Object.assign(state, createSectionPlayerState());
   return events;
