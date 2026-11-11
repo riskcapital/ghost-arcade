@@ -12,7 +12,7 @@
   import { BEAT_SHAPES } from '../../../timeline/lines/lineModel';
   import { addMidiTap } from '../../../midi/midiTaps';
   import { FOLLOW_CHOICES, followChoiceId } from './lineUi';
-  import { portal } from './trackLayout';
+  import { keepInWindow, portal } from './trackLayout';
   import { soundLayout } from './sound/soundRowLayout';
   import { SOUND_ROW_TRACK_PREFIX } from '../../../timeline/lines/lineEvaluator';
 
@@ -90,7 +90,7 @@
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="lf" use:portal style:left="{x}px" style:top="{y}px" onmousedown={(e) => e.stopPropagation()} data-line-follow>
+<div class="lf" use:portal use:keepInWindow={[x, y]} style:left="{x}px" style:top="{y}px" onmousedown={(e) => e.stopPropagation()} data-line-follow data-help-disabled>
   <div class="lf-head">{line.label ?? line.key} follows</div>
   <label class="lf-row">
     <span>Source</span>

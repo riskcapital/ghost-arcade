@@ -8,7 +8,7 @@
   import { vjClipLauncher } from '../../../stores/vjClipLauncher';
   import { liveTakeover, sameTakeoverSource, type TakeoverSource } from '../../../show/takeover/liveTakeover';
   import { takeOverTrack } from '../../../show/takeover/takeoverRuntime';
-  import { portal } from './trackLayout';
+  import { keepInWindow, portal } from './trackLayout';
   import { takeoverSourceOptions } from './takeoverUi';
 
   interface Props {
@@ -42,7 +42,7 @@
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="tk-menu" use:portal style:left="{x}px" style:top="{y}px" onmousedown={(e) => e.stopPropagation()} data-takeover-menu>
+<div class="tk-menu" use:portal use:keepInWindow={[x, y]} style:left="{x}px" style:top="{y}px" onmousedown={(e) => e.stopPropagation()} data-takeover-menu data-help-disabled>
   <div class="tk-head">Take over “{track.layerName}”</div>
   <div class="tk-group">VJ rows</div>
   <div class="tk-rows">

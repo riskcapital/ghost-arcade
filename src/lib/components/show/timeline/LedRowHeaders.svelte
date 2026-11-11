@@ -10,7 +10,7 @@
   import { ledRows, ledGroupFolded, LED_GROUP_HEADER_HEIGHT, LED_ROW_HEIGHT, LED_KIND_LABELS, newLedBlockFields, type LedRow } from './ledRowsUi';
   import LinePicker from './LinePicker.svelte';
   import { formatPrecise } from './timeFormat';
-  import { portal } from './trackLayout';
+  import { keepInWindow, portal } from './trackLayout';
 
   let menu: { x: number; y: number; row: LedRow } | null = $state(null);
   let picker: { x: number; y: number; row: LedRow } | null = $state(null);
@@ -65,7 +65,7 @@
 {/if}
 
 {#if menu}
-  <div class="led-menu" use:portal style:left="{menu.x}px" style:top="{menu.y}px" data-led-add-menu>
+  <div class="led-menu" use:portal use:keepInWindow={menu} style:left="{menu.x}px" style:top="{menu.y}px" data-led-add-menu data-help-disabled>
     {#each LED_BLOCK_KINDS as kind (kind)}
       <button type="button" onclick={() => add(kind)} data-led-add-kind={kind}>{LED_KIND_LABELS[kind]}</button>
     {/each}

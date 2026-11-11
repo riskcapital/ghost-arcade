@@ -38,7 +38,7 @@
   import LineLanes from '../LineLanes.svelte';
   import { cachedWavePath, WAVE_VIEW_H } from '../waveform';
   import { formatPrecise } from '../timeFormat';
-  import { portal, trimEdgeWidth } from '../trackLayout';
+  import { keepInWindow, portal, trimEdgeWidth } from '../trackLayout';
   import { showSlice } from '../timelineSlices';
   import { liveColor, SOUND_FOOTER_HEIGHT, SOUND_ROW_HEIGHT, soundLayout, soundRowAt } from './soundRowLayout';
 
@@ -359,7 +359,7 @@
 </div>
 
 {#if menu}
-  <div class="sound-menu" use:portal style="left: {menu.x}px; top: {menu.y}px" data-sound-menu>
+  <div class="sound-menu" use:portal use:keepInWindow={menu} style="left: {menu.x}px; top: {menu.y}px" data-sound-menu data-help-disabled>
     {#if menu.sub === 'sounds'}
       <div class="sm-title">Sound at {formatPrecise(menu.at)}</div>
       <div class="sm-scroll">
