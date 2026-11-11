@@ -9637,7 +9637,7 @@ function createMainWindow() {
     // without the editor being focused, and an idle preview never re-stacks
     // them, so check a few times a second (it only acts when something moved).
     const underlayWatch = setInterval(restackNativeEditorUnderlays, 200);
-    mainWindow.on('closed', () => clearInterval(underlayWatch));
+    mainWindow.once('closed', () => clearInterval(underlayWatch));
   }
   mainWindow.webContents.on('did-finish-load', stabilizeNativeEditorHost);
 

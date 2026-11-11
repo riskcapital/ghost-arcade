@@ -169,6 +169,7 @@ export function defaultStudioSource(): Required<StudioPluginSource> {
       { file: 'VX-DataPlot.fs', source: 'lead', level: 0.8 },
     ]),
     musicMix: { ...DEFAULT_MIX },
+    musicSetup: null,
   };
 }
 

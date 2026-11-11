@@ -9,7 +9,7 @@ const hex = (b: ArrayBuffer | Uint8Array) => Buffer.from(b instanceof Uint8Array
 
 /** A throwaway signing key, standing in for the website's. */
 async function keyPair() {
-  const pair = (await webcrypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify'])) as CryptoKeyPair;
+  const pair = (await webcrypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify'])) as unknown as CryptoKeyPair;
   const publicHex = hex(await webcrypto.subtle.exportKey('raw', pair.publicKey));
   const sign = async (payload: string) => hex(await webcrypto.subtle.sign({ name: 'Ed25519' }, pair.privateKey, new TextEncoder().encode(payload)));
   return { publicHex, sign };
