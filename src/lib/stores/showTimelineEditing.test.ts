@@ -168,3 +168,16 @@ describe('edit points and trims', () => {
     expect(trimToPlayhead('start')).toBe(false);
   });
 });
+
+describe('a recorded block', () => {
+  it('overwrites what was under it: blocks inside go, blocks across an edge are cut', () => {
+    showTimeline.openDoc('timeline');
+    const ids = rows([['a', 0, 4], ['b', 5, 2], ['c', 8, 4]]);
+    const row = get(showTimeline).layerTracks[0].id;
+    const id = showTimeline.recordLayerBlock(row, video('take.mp4'), 3, 9);
+    expect(id).toBeTruthy();
+    const name: Record<string, string> = { ...Object.fromEntries(Object.entries(ids).map(([k, v]) => [v, k])), [id!]: 'take' };
+    const blocks = get(showTimeline).layerTracks[0].clips.map((c) => [name[c.id] ?? 'cut', c.startTime, c.startTime + c.duration]);
+    expect(blocks).toEqual([['a', 0, 3], ['take', 3, 9], ['cut', 9, 12]]);
+  });
+});

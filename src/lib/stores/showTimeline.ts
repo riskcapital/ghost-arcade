@@ -109,6 +109,8 @@ import {
   maxDurationAt,
   type Placeable,
   SHOW_MIN_TRACK_CLIP_SECONDS,
+  clearRange,
+  sortClips,
   deleteClips,
   duplicateClips,
   insertClip,
@@ -3274,6 +3276,37 @@ export const showTimeline = {
     store.update((s) => ({ ...s, layerTracks }));
     if (!isRestoringHistory()) amendLastHistoryStep();
     republishTracks();
+  },
+
+  /**
+   * Record a block (live record): `media` on the row from `start` to `end`,
+   * over whatever was there (an overwrite edit). One undo step. Returns the
+   * new block's id, or null on a locked or missing row.
+   */
+  recordLayerBlock(trackId: string, media: ShowClipMedia, start: number, end: number): string | null {
+    const track = get(store).layerTracks.find((t) => t.id === trackId);
+    if (!track || track.locked) return null;
+    const normalizedMedia = normalizeClipMedia(media);
+    if (!normalizedMedia || !(end - start >= SHOW_MIN_TRACK_CLIP_SECONDS)) return null;
+    const clip: ShowLayerClip = {
+      id: generateUUID(),
+      startTime: Math.max(0, start),
+      duration: end - Math.max(0, start),
+      media: normalizedMedia,
+      inPoint: 0,
+      // A recorded block lasts as long as it was on: a video loops to fill it.
+      endBehaviour: 'loop',
+      fadeIn: 0,
+      fadeOut: 0,
+    };
+    const clips = sortClips([...clearRange(track.clips, clip.startTime, clip.startTime + clip.duration), clip]);
+    store.update((s) => withDuration({
+      ...s,
+      layerTracks: s.layerTracks.map((t) => (t.id === trackId ? { ...t, clips } : t)),
+    }));
+    recordShowEdit();
+    republishTracks();
+    return clip.id;
   },
 
   /** Where a layer clip lives. */

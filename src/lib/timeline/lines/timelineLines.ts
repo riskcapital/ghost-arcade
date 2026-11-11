@@ -35,6 +35,8 @@ import { installStageFxRuntime } from '../stagefx/stageFxRuntime';
 import { soundRowsFor } from '../sound/soundModel';
 import { soundLineScope } from '../sound/soundParams';
 import { registerParamScope } from './lineExtensions';
+import { createContentRecorder } from './contentRecorder';
+import { isAutomation, isRestoringHistory } from '../../stores/historyHooks';
 
 // ── Registry over the Timeline ─────────────────────────────────────────────
 
@@ -174,6 +176,18 @@ const TRACE_SECONDS = 30;
 
 let session: LineSession | null = null;
 let unsubStore: (() => void) | null = null;
+let unsubContent: (() => void) | null = null;
+
+// Follow edits also records what each piece shows: other content put on a
+// layer while armed and playing becomes a block on its row.
+const contentRecorder = createContentRecorder({
+  armed: () => { const r = get(lineRecordState); return r.armed && r.followEdits; },
+  layers: () => ((get(project) as { layers?: Layer[] } | null)?.layers ?? []),
+  tracks: () => get(showTimeline).layerTracks,
+  rowFor: (layer) => get(showTimeline).layerTracks.find((t) => t.layerId === layer.id && !t.subRow)?.id ?? showTimeline.addLayerTrack(layer),
+  write: (trackId, media, start, end) => { showTimeline.recordLayerBlock(trackId, media, start, end); },
+  notAPerson: () => isAutomation() || isRestoringHistory(),
+});
 let lastPlaying = false;
 let lastSongsKey = '';
 let traceTick = 0;
@@ -217,6 +231,7 @@ function startSession(): void {
   // Converted ◆ lanes and old files: ranges fit the parameters.
   const fitted = fitLineRanges(s.lines, describeLineParam);
   if (fitted !== s.lines) showTimeline.setLines(fitted, { quiet: true });
+  unsubContent = project.subscribe(() => contentRecorder.observe());
   next.setFollowEdits(get(lineRecordState).followEdits);
   if (get(lineRecordState).armed) next.arm(mode);
   void refreshSongs(true);
@@ -224,6 +239,9 @@ function startSession(): void {
 }
 
 function stopSession(): void {
+  contentRecorder.stop();
+  unsubContent?.();
+  unsubContent = null;
   unsubStore?.();
   unsubStore = null;
   session?.dispose();
@@ -279,6 +297,7 @@ function onTick(tick: ShowLineTick): void {
   if (lastPlaying && !tick.playing) session.stopped(tick.time);
   lastPlaying = tick.playing;
   session.tick(tick.time, tick.playing, tick.tempo);
+  contentRecorder.tick(tick.time, tick.playing);
   if (tick.playing) recordTraces(tick.time);
   if (session.recorder.armed || get(lineRecordState).bindPending) syncRecordUi();
   const open = session.recorder.openPasses();
@@ -387,6 +406,7 @@ export function armLines(mode: RecordMode = get(lineRecordState).mode): void {
 }
 
 export function disarmLines(): void {
+  contentRecorder.stop();
   session?.disarm();
   lineRecordState.update((x) => ({ ...x, armed: false }));
   syncRecordUi();

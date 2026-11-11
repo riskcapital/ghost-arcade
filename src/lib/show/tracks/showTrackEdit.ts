@@ -106,6 +106,28 @@ export function placeOnTrack(
   return placeOnLane(clips.filter((c) => !ignore.has(c.id)), desiredStart, duration);
 }
 
+/**
+ * The clips with show time [start, end) cleared, as an overwrite edit does:
+ * clips inside are dropped, a clip across an edge is cut there (its media
+ * carries on in the piece that is kept, as a split does).
+ */
+export function clearRange(clips: readonly ShowLayerClip[], start: number, end: number): ShowLayerClip[] {
+  const out: ShowLayerClip[] = [];
+  for (const c of clips) {
+    const cEnd = clipEnd(c);
+    if (cEnd <= start + EPS || c.startTime >= end - EPS) { out.push(c); continue; }
+    if (c.startTime < start - EPS) {
+      const pieces = splitClip(c, start);
+      if (pieces) out.push(pieces[0]);
+    }
+    if (cEnd > end + EPS) {
+      const pieces = splitClip(c, end);
+      if (pieces) out.push(pieces[1]);
+    }
+  }
+  return sortClips(out);
+}
+
 /** Insert a clip, placed into the free window nearest its start. */
 export function insertClip(clips: readonly ShowLayerClip[], clip: ShowLayerClip): ShowLayerClip[] | null {
   const duration = Math.max(SHOW_MIN_TRACK_CLIP_SECONDS, Math.min(clip.duration, maxClipDurationForMedia(clip)));
