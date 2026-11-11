@@ -764,7 +764,10 @@ const CHECKS = {
     // The picture changes across show time `t` (a cut between looks): just
     // before and just after (± `gap` s) the mean colour of a vertical third
     // moves by at least `by`, or the pixels change clearly more than they do
-    // between two moments of the same stretch before it: { t, gap, by, settle }.
+    // between two moments of the same stretch before it, or the colour of
+    // what is lit moves by at least `litBy` (outline looks light about 1 % of
+    // the frame, too little to move a third's mean; their animation moves
+    // the lit pixels but not their colour): { t, gap, by, litBy, settle }.
     const grab = async (time) => {
       await ctx.eval(`__show.g().showTimeline.seek(${time})`);
       await sleep(s.settle ?? 1500);
@@ -775,14 +778,19 @@ const CHECKS = {
         const px = new Array(snap.width * snap.height * 3);
         const strips = [];
         for (let k = 0; k < 3; k++) strips.push([0, 0, 0, 0]);
+        const lit = [0, 0, 0, 0];
         for (let y = 0; y < snap.height; y++) for (let x = 0; x < snap.width; x++) {
           const i = (y * snap.width + x) * 4, o = (y * snap.width + x) * 3;
           const r = bin.charCodeAt(i + 2) / 255, g = bin.charCodeAt(i + 1) / 255, b = bin.charCodeAt(i) / 255;
           px[o] = r; px[o + 1] = g; px[o + 2] = b;
           const st = strips[Math.min(2, Math.floor((x * 3) / snap.width))];
           st[0] += r; st[1] += g; st[2] += b; st[3]++;
+          if (Math.max(r, g, b) > 0.08) { lit[0] += r; lit[1] += g; lit[2] += b; lit[3]++; }
         }
-        return { px, strips: strips.map((st) => [st[0] / st[3], st[1] / st[3], st[2] / st[3]]) };
+        // Chromaticity of the lit pixels (null when almost nothing is lit).
+        const sum = lit[0] + lit[1] + lit[2];
+        const litChroma = lit[3] >= 0.001 * snap.width * snap.height && sum > 0 ? [lit[0] / sum, lit[1] / sum, lit[2] / sum] : null;
+        return { px, strips: strips.map((st) => [st[0] / st[3], st[1] / st[3], st[2] / st[3]]), litChroma, litFrac: lit[3] / (snap.width * snap.height) };
       })()`);
     };
     const gap = s.gap ?? 0.4;
@@ -790,14 +798,23 @@ const CHECKS = {
     const a = await grab(s.t - gap);
     const b = await grab(s.t + gap);
     if (!a || !b || !base) return { pass: false, detail: 'no output pixels' };
-    let meanDiff = 0;
-    for (let k = 0; k < 3; k++) for (let c = 0; c < 3; c++) meanDiff = Math.max(meanDiff, Math.abs(a.strips[k][c] - b.strips[k][c]));
+    const stripDiff = (p, q) => { let d = 0; for (let k = 0; k < 3; k++) for (let c = 0; c < 3; c++) d = Math.max(d, Math.abs(p.strips[k][c] - q.strips[k][c])); return d; };
+    const meanDiff = stripDiff(a, b);
+    const meanWithin = stripDiff(base, a);
     const pixDiff = (p, q) => { let d = 0; for (let i = 0; i < p.length; i++) d += Math.abs(p[i] - q[i]); return d / p.length; };
     const across = pixDiff(a.px, b.px);
     const within = pixDiff(base.px, a.px);
-    const pass = meanDiff >= (s.by ?? 0.03) || across > Math.max(0.004, 1.5 * within);
+    const chromaDiff = (p, q) => (p && q ? Math.max(...p.map((v, i) => Math.abs(v - q[i]))) : null);
+    const litAcross = chromaDiff(a.litChroma, b.litChroma);
+    const litWithin = chromaDiff(base.litChroma, a.litChroma) ?? 0;
+    const litBy = s.litBy ?? 0.08;
+    const litPass = litAcross !== null && litAcross >= Math.max(litBy, 2 * litWithin);
+    const pass = meanDiff >= (s.by ?? 0.03) || across > Math.max(0.004, 1.5 * within) || litPass;
     const fmt = (x) => x.map((v) => v.map((c) => c.toFixed(2)).join('/')).join(' | ');
-    return { pass, detail: `before ${fmt(a.strips)} · after ${fmt(b.strips)} · colour change ${meanDiff.toFixed(3)} (≥ ${s.by ?? 0.03}) · pixels across ${across.toFixed(4)} vs within the stretch before ${within.toFixed(4)}` };
+    const litText = litAcross === null
+      ? 'lit colour: too little lit'
+      : `lit colour change ${litAcross.toFixed(3)} (≥ ${litBy}, within ${litWithin.toFixed(3)}; lit ${(a.litFrac * 100).toFixed(1)} % → ${(b.litFrac * 100).toFixed(1)} %)`;
+    return { pass, detail: `before ${fmt(a.strips)} · after ${fmt(b.strips)} · colour change ${meanDiff.toFixed(3)} (≥ ${s.by ?? 0.03}, within ${meanWithin.toFixed(3)}) · pixels across ${across.toFixed(4)} vs within the stretch before ${within.toFixed(4)} · ${litText}` };
   },
   async 'output.notBlack'(ctx, s) {
     const snap = await ctx.eval('__show.snapshot()');
