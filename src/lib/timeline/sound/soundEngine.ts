@@ -216,8 +216,16 @@ function cancelBuilds(): void {
 
 // ── Live ───────────────────────────────────────────────────────────────────
 
+/** The script connection the scheduler last saw (a reconnect or a new script resyncs). */
+let liveLink: { connected: boolean; protocol: number } = { connected: false, protocol: 0 };
+
 function feedLiveScheduler(s: ShowTimelineState, rows: SoundRow[], env: { tempo: ShowTempoMap | null; loop: boolean; duration: number }): void {
   const bridge = get(abletonBridge);
+  if (bridge.connected !== liveLink.connected || bridge.protocol !== liveLink.protocol) {
+    // Live (or its script) came back: what it plays is unknown, put it where the Timeline is.
+    if (bridge.connected) liveScheduler.resyncSoon();
+    liveLink = { connected: bridge.connected, protocol: bridge.protocol };
+  }
   const frame = currentLineFrame();
   const inputs = liveSchedInputs(s.sound, rows, bridge, (row) => rowValues(row, frame?.sounds?.get(row.id)).muted);
   liveScheduler.setBlocks(inputs.rows, inputs.blocks);
@@ -265,6 +273,7 @@ function onFrame(tick: ShowFrameTick): void {
   const rows = rowsOf(s);
   const t = tick.time;
   const jump = tick.seek !== engine.lastSeek || tick.playing !== engine.wasPlaying;
+  const wasPlaying = engine.wasPlaying;
   engine.lastSeek = tick.seek;
   if (jump) {
     engine.duckedTo.clear();
@@ -313,7 +322,8 @@ function onFrame(tick: ShowFrameTick): void {
       runBuilds(s.sound, rows, t, tick.tempo);
     }
   }
-  if (s.sound.live.length || rows.some((r) => r.kind === 'live') || engine.wasPlaying) syncLive(s, rows, tick);
+  // The last Live row gone while playing: the scheduler still stops what it started.
+  if (s.sound.live.length || rows.some((r) => r.kind === 'live') || tick.playing || wasPlaying) syncLive(s, rows, tick);
 }
 
 let installed: (() => void) | null = null;
