@@ -143,6 +143,7 @@ export const WHERE_MOTION_LABELS: Record<WhereSpec['motion']['kind'], string> = 
   random: 'Random piece',
   kick: 'Follow the kick',
   drawn: 'Drawn',
+  reveal: 'Reveal',
 };
 
 export const WHERE_MEMBER_LABELS: Record<WhereMembers, string> = {
@@ -155,7 +156,7 @@ export const WHERE_MEMBER_LABELS: Record<WhereMembers, string> = {
 export function whereSummary(where: WhereSpec, named: readonly WhereNamedOrder[]): string {
   const m = where.motion;
   const motion = WHERE_MOTION_LABELS[m.kind];
-  const extra = m.kind === 'sweep' || m.kind === 'pingpong' || m.kind === 'burst'
+  const extra = m.kind === 'sweep' || m.kind === 'pingpong' || m.kind === 'burst' || m.kind === 'reveal'
     ? ` · ${m.bars} bar${m.bars === 1 ? '' : 's'}`
     : m.kind === 'random' ? ` · every ${m.every}` : '';
   const order = where.namedOrder ? named.find((o) => o.id === where.namedOrder)?.name ?? WHERE_ORDER_LABELS[where.order] : WHERE_ORDER_LABELS[where.order];

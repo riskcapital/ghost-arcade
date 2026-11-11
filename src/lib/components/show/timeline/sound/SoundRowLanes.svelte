@@ -266,7 +266,7 @@
       {#if row.kind === 'audio'}
         {#if !rowTracks.length && !sound.builds.some((b) => b.lane === lane)}
           {#if lane === 0 && !$tracksStore.length}
-            <span class="lane-hint song-hint" data-auto-show-hint>Drop a song here, then ✦ Auto show</span>
+            <span class="lane-hint song-hint" data-auto-show-song-hint>Drop a song here, then ✦ Auto show</span>
           {:else}
             <span class="lane-hint">Drop audio here, or right-click for a sound from the library or a build</span>
           {/if}

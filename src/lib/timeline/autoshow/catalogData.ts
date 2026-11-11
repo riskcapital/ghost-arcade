@@ -103,8 +103,8 @@ export const AUTO_SHOW_CATALOG: AutoShowContent[] = [
     cost: 'low',
   },
   {
-    id: 'look-neon-pulse', kind: 'look', ref: 'neon-pulse',
-    tiers: ['groove', 'peak'], moods: ['acid', 'cool', 'dark'], texture: 'light', scale: ['piece'],
+    id: 'look-echo-rings', kind: 'look', ref: 'echo-rings',
+    tiers: ['calm', 'peak'], moods: ['acid', 'cool', 'dark'], texture: 'light', scale: ['piece'],
     cost: 'low',
   },
   {

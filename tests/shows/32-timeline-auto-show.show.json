@@ -1,0 +1,200 @@
+{
+  "name": "Timeline: ✦ Auto show on the auto-mapped Cube Wall",
+  "description": "Map Sim's Fragmented Cube Wall is auto-mapped (about eighty faces). The empty Timeline says \"Drop a song here, then ✦ Auto show\"; a synthetic 128 BPM driving song goes on the Song row (the tempo is typed in: the detector reads this synthetic song's off-beat hats as 102.4 BPM at 44.1 kHz) and ✦ Auto show is clicked on the Song row, then Build the show. The dialog says what it heard; four ✦ rows land on the hero piece (the central screen) whose blocks travel over every face through the piece groups, plus sections, a look a section and Screen FX, well under 400 blocks. It plays at the editor's frame rate; on the render core's real pixels the picture changes at each section boundary and the tiles alternate on the beat at the start of each drop; one Cmd+Z takes it all back.",
+  "steps": [
+    {
+      "do": "app.start",
+      "choice": "blank"
+    },
+    {
+      "do": "mapsim.open"
+    },
+    {
+      "do": "mapsim.preset",
+      "id": "isam-cubes"
+    },
+    {
+      "do": "mapsim.automap",
+      "label": "Auto-map the Fragmented Cube Wall",
+      "expect": {
+        "text.contains": {
+          "var": "automapStatus",
+          "pattern": "Mapped [6-9][0-9] surfaces"
+        },
+        "project.layers": {
+          "min": 60
+        }
+      }
+    },
+    {
+      "do": "mapsim.close"
+    },
+    {
+      "do": "show.open",
+      "doc": "timeline",
+      "wait": 1,
+      "label": "The empty Timeline says what to do (on its top row)",
+      "expect": {
+        "eval.true": {
+          "js": "/Drop a song here, then ✦ Auto show/.test(document.querySelector('[data-auto-show-hint]')?.textContent ?? '')",
+          "label": "Sections row: Drop a song here, then ✦ Auto show"
+        }
+      }
+    },
+    {
+      "do": "show.song",
+      "file": "song-driving.wav",
+      "wait": 1,
+      "label": "A song on the Song row: ✦ Auto show appears on it",
+      "expect": {
+        "eval.true": {
+          "js": "!!document.querySelector('[data-auto-show-song]') && !!document.querySelector('[data-auto-show-open]:not([disabled])')",
+          "label": "✦ Auto show on the Song row and on the Sections label"
+        }
+      }
+    },
+    {
+      "do": "show.tempo",
+      "bpm": 128,
+      "label": "Tempo 128 typed in (the synthetic song's off-beat hats read as 102.4 BPM at 44.1 kHz)"
+    },
+    {
+      "do": "show.autoShow",
+      "open": "sections",
+      "wait": 2,
+      "label": "✦ Auto show → Build the show (real clicks on the Sections label): Heard, rows on the hero piece, groups, sections, bounded",
+      "expect": {
+        "text.contains": {
+          "var": "autoShowHeard",
+          "pattern": "Heard: 128 BPM · Driving · 7 sections · [6-9][0-9] pieces in [4-9] groups"
+        },
+        "eval.true": {
+          "js": "(() => { const s = __show.show(); const rows = s.layerTracks.filter((t) => t.subRow && t.layerName.startsWith('✦')); const host = rows[0]?.layerId; const hostName = __show.project().layers.find((l) => l.id === host)?.name ?? ''; return rows.map((r) => r.layerName).join('|') === '✦ Stage|✦ Set A|✦ Set B|✦ Hero' && rows.every((r) => r.layerId === host) && /Central screen face/.test(hostName) && s.sections.map((x) => x.name).join(',') === 'Intro,Build 1,Drop 1,Breakdown,Build 2,Drop 2,Outro' && ['autoshow:sets','autoshow:hero','autoshow:rows'].every((id) => s.whereOrders.some((o) => o.id === id)) && s.lookClips.length === 7 && s.stageClips.length > 6; })()",
+          "label": "four ✦ rows on the Central screen face, 7 sections, the group orders, a look a section, Screen FX"
+        }
+      }
+    },
+    {
+      "label": "Block count bounded, built in under 2 s after the analysis",
+      "expect": {
+        "eval.true": {
+          "js": "(() => { const s = __show.show(); const rows = s.layerTracks.filter((t) => t.subRow && t.layerName.startsWith('✦')); const n = rows.reduce((a, t) => a + t.clips.length, 0) + s.lookClips.length + s.stageClips.length + s.ledClips.length; return n > 20 && n < 400; })()",
+          "label": "blocks between 20 and 400"
+        },
+        "text.contains": {
+          "var": "autoShowClickToPlayMs",
+          "pattern": "^1?[0-9]{1,3}$"
+        }
+      }
+    },
+    {
+      "label": "Playing: the frame rate holds",
+      "expect": {
+        "perf": {
+          "seconds": 4,
+          "minEditorFps": 30,
+          "minFps": 25
+        },
+        "output.notBlack": {
+          "min": 0.01
+        },
+        "core.noShaderError": {}
+      }
+    },
+    {
+      "do": "show.pause"
+    },
+    {
+      "label": "Intro → Build 1 at 30 s: the picture changes on the output (real pixels, ±0.4 s)",
+      "expect": {
+        "output.changesAt": {
+          "t": 30.003,
+          "gap": 0.4,
+          "by": 0.02
+        }
+      }
+    },
+    {
+      "label": "Build 1 → Drop 1 at 45 s: the picture changes on the output (real pixels, ±0.4 s)",
+      "expect": {
+        "output.changesAt": {
+          "t": 45.003,
+          "gap": 0.4,
+          "by": 0.02
+        }
+      }
+    },
+    {
+      "label": "Drop 1 → Breakdown at 75 s: the picture changes on the output (real pixels, ±0.4 s)",
+      "expect": {
+        "output.changesAt": {
+          "t": 75.003,
+          "gap": 0.4,
+          "by": 0.02
+        }
+      }
+    },
+    {
+      "label": "Breakdown → Build 2 at 90 s: the picture changes on the output (real pixels, ±0.4 s)",
+      "expect": {
+        "output.changesAt": {
+          "t": 90.003,
+          "gap": 0.4,
+          "by": 0.02
+        }
+      }
+    },
+    {
+      "label": "Build 2 → Drop 2 at 105 s: the picture changes on the output (real pixels, ±0.4 s)",
+      "expect": {
+        "output.changesAt": {
+          "t": 105.003,
+          "gap": 0.4,
+          "by": 0.02
+        }
+      }
+    },
+    {
+      "label": "Drop 2 → Outro at 135 s: the picture changes on the output (real pixels, ±0.4 s)",
+      "expect": {
+        "output.changesAt": {
+          "t": 135.003,
+          "gap": 0.4,
+          "by": 0.02
+        }
+      }
+    },
+    {
+      "label": "Drop 1: the tiles alternate on the beat in its first bar (real pixels)",
+      "expect": {
+        "output.alternatesOnBeats": {
+          "t": 45,
+          "beat": 0.46875,
+          "beats": 4,
+          "ratio": 1.4
+        }
+      }
+    },
+    {
+      "label": "Drop 2's first bar too",
+      "expect": {
+        "output.alternatesOnBeats": {
+          "t": 105,
+          "beat": 0.46875,
+          "beats": 4,
+          "ratio": 1.4
+        }
+      }
+    },
+    {
+      "do": "ui.undo",
+      "label": "Cmd+Z: one step takes the whole show back",
+      "expect": {
+        "eval.true": {
+          "js": "(() => { const s = __show.show(); return !s.layerTracks.some((t) => t.subRow) && s.sections.length === 0 && s.lookClips.length === 0 && s.stageClips.length === 0 && !s.whereOrders.some((o) => o.id.startsWith('autoshow:')) && s.audioTracks.length === 1; })()",
+          "label": "no ✦ rows, sections, looks, Screen FX or group orders; the song stays"
+        }
+      }
+    }
+  ]
+}

@@ -159,7 +159,7 @@ export function pickCast(catalog: readonly AutoShowContent[], mood: AutoShowMood
   const used = AUTO_SHOW_TIERS.filter((t) => (opts.tiers[t] ?? 0) > 0);
   const total = used.reduce((n, t) => n + (opts.tiers[t] ?? 0), 0) || 1;
   const size = Math.max(Math.min(4, pool.length), Math.min(8, pool.length, opts.size ?? Math.max(4, used.length * 2)));
-  const maxHigh = opts.maxHighCost ?? 3;
+  const maxHigh = opts.maxHighCost ?? 1;
   const cast: CastMember[] = [];
   const has = (id: string) => cast.some((c) => c.id === id);
   const textures = () => new Set(cast.map((c) => c.texture));
@@ -223,6 +223,8 @@ export function pickMember(
   for (const c of from) {
     const key = dist(c) * 10
       + (opts.scale && !c.scale.includes(opts.scale) ? 3 : 0)
+      // A picture across the stage renders at the stage's size: the costly ones last.
+      + (opts.scale === 'span' && c.cost === 'high' ? 2 : 0)
       + (opts.uses?.get(c.id) ?? 0) * 1.5
       + rnd();
     if (key < bestKey) { bestKey = key; best = c; }

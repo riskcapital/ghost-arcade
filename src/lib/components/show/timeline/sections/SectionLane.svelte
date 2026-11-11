@@ -12,6 +12,10 @@
   import { SECTION_ACTION_GLYPHS, SECTION_ACTION_LABELS, SECTION_MIN_SECONDS, makeSection, nearestBar, placeNewSection, type TimelineSection } from '../../../../timeline/sections/sectionModel';
   import { followPointer } from '../dragSession';
   import { formatPrecise } from '../timeFormat';
+  import { showSlice } from '../timelineSlices';
+  import { isShowAudioFile } from '../../../../audio/showAudioImport';
+  import { addFilesToRow } from '../../../../timeline/sound/soundCommands';
+  import { soundLayout } from '../sound/soundRowLayout';
 
   interface Props {
     sections: TimelineSection[];
@@ -29,6 +33,24 @@
   const EDGE_PX = 6;
   const visible = $derived(sections.filter((s) => s.end * zoom >= viewStart * zoom - 24 && s.start * zoom <= viewEnd * zoom + 24));
   const status = $derived($showSectionStatus);
+  // No song yet: the top row says what to do and takes the song (the Song
+  // row sits under every piece's row, out of sight on a big mapping).
+  const audioTracks = showSlice('audioTracks');
+  const noSong = $derived(!$audioTracks.length);
+  function songOver(e: DragEvent) {
+    if (!noSong || !e.dataTransfer?.types.includes('Files')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  }
+  function songDrop(e: DragEvent) {
+    if (!noSong) return;
+    const files = Array.from(e.dataTransfer?.files ?? []).filter((f) => isShowAudioFile(f.name, f.type));
+    const row = $soundLayout.rows.find((r) => r.kind === 'audio');
+    if (!files.length || !row) return;
+    e.preventDefault();
+    e.stopPropagation();
+    void addFilesToRow(files.slice(0, 1), row.id, 0);
+  }
   const phrases = $derived($showPhraseStatus);
 
   function timeAt(ev: MouseEvent): number {
@@ -102,7 +124,7 @@
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="sec-lane" style="height: {height}px" bind:this={laneEl} ondblclick={addAt} data-section-lane>
+<div class="sec-lane" style="height: {height}px" bind:this={laneEl} ondblclick={addAt} ondragover={songOver} ondrop={songDrop} data-section-lane>
   {#each visible as s (s.id)}
     {@const st = stateOf(s)}
     <div
@@ -127,7 +149,11 @@
     </div>
   {/each}
   {#if !sections.length}
-    <span class="sec-empty">Double-click to add a section, or ✦ Auto show</span>
+    {#if noSong}
+      <span class="sec-empty song" data-auto-show-hint>Drop a song here, then ✦ Auto show</span>
+    {:else}
+      <span class="sec-empty">Double-click to add a section, or ✦ Auto show</span>
+    {/if}
   {/if}
 </div>
 
@@ -178,6 +204,7 @@
   .sec-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
   .sec-action { opacity: 0.9; }
   .sec-state { font-size: 10px; opacity: 0.85; color: #ffd36b; overflow: hidden; text-overflow: ellipsis; }
+  .sec-empty.song { opacity: 0.9; color: #ffd36b; font-weight: 600; }
   .sec-empty {
     position: sticky;
     left: 8px;

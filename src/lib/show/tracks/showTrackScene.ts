@@ -463,8 +463,7 @@ export function showTrackSceneShape(frame: ShowTrackFrame): string {
       state.params ? Object.keys(state.params).join(',') : '',
       state.warm ? 'w' : '',
       xf ? `x${xf.clip.media.kind === 'layer' ? 'L' : ''}${xf.opacity > 0 ? '+' : '0'}${xf.opacity < 1 ? '<' : '1'}${xf.clip.blendMode ?? ''}` : '',
-      // Which copy shows matters to the looks (they dress the top one that shows).
-      state.whereCopies?.length ? `W${state.whereCopies.map((c) => `${c.pieceId}${c.opacity <= 0 ? '0' : c.opacity < 1 ? '<' : '1'}`).join(',')}` : '',
+      state.whereCopies?.length ? `W${state.whereCopies.map((c) => c.pieceId).join(',')}` : '',
       state.span ? 'S' : '',
     ].join('|'));
   }

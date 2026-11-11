@@ -74,20 +74,24 @@ interface StyleRules {
 }
 
 export const STYLE_RULES: Record<ShowStyle, StyleRules> = {
-  chill: { swapBars: 8, dropBeatBars: 0, dropSwapBars: 4, buildBars: 8, fxMix: 0.3, riser: false, hits: 'none', revealBars: 8 },
-  groove: { swapBars: 4, dropBeatBars: 1, dropSwapBars: 2, buildBars: 4, fxMix: 0.4, riser: true, hits: 'none', revealBars: 8 },
-  driving: { swapBars: 2, dropBeatBars: 1, dropSwapBars: 1, buildBars: 4, fxMix: 0.5, riser: true, hits: 'first', revealBars: 4 },
-  hard: { swapBars: 2, dropBeatBars: 2, dropSwapBars: 1, buildBars: 2, fxMix: 0.6, riser: true, hits: 'phrase', revealBars: 4 },
-  cinematic: { swapBars: 8, dropBeatBars: 0, dropSwapBars: 4, buildBars: 16, fxMix: 0.25, riser: false, hits: 'none', revealBars: 16 },
+  chill: { swapBars: 8, dropBeatBars: 0, dropSwapBars: 4, buildBars: 8, fxMix: 0.2, riser: false, hits: 'none', revealBars: 8 },
+  groove: { swapBars: 4, dropBeatBars: 1, dropSwapBars: 2, buildBars: 4, fxMix: 0.3, riser: true, hits: 'none', revealBars: 8 },
+  driving: { swapBars: 2, dropBeatBars: 1, dropSwapBars: 1, buildBars: 4, fxMix: 0.35, riser: true, hits: 'first', revealBars: 4 },
+  hard: { swapBars: 2, dropBeatBars: 2, dropSwapBars: 1, buildBars: 2, fxMix: 0.45, riser: true, hits: 'phrase', revealBars: 4 },
+  cinematic: { swapBars: 8, dropBeatBars: 0, dropSwapBars: 4, buildBars: 16, fxMix: 0.2, riser: false, hits: 'none', revealBars: 16 },
 };
 
 /** Stroke looks (they outline over the content rather than cover it), by tier. */
 export const ACCENT_LOOKS: Record<AutoShowTier, readonly string[]> = {
-  calm: ['echo-rings', 'marching-ants', 'neon-pulse'],
-  groove: ['neon-pulse', 'twin-snakes', 'electric-nodes', 'marching-ants'],
+  calm: ['echo-rings', 'marching-ants'],
+  groove: ['echo-rings', 'twin-snakes', 'electric-nodes'],
   drive: ['comet-chase', 'zigzag', 'twin-snakes', 'electric-nodes'],
-  peak: ['neon-pulse', 'laser-grid', 'echo-rings', 'kick-strobe'],
+  peak: ['comet-chase', 'echo-rings', 'electric-nodes'],
 };
+
+/** Looks are accents over the content: the energy line runs them at this
+ *  share of Score's intensity, so the outlines never outshine the picture. */
+const LOOK_ACCENT = 0.65;
 
 export interface AutoShowStage extends ScoreStage {
   /** The mapping layers (for the groups). */
@@ -409,19 +413,11 @@ export function draftAutoShow(input: AutoShowInput): AutoShowDraft {
       const list = [...fromCast.map((c) => c.ref), ...ACCENT_LOOKS[tier]].filter((id) => id !== prevLook);
       const lookId = list.length ? (fromCast.length && rnd() < 0.6 ? fromCast[0].ref : list[Math.floor(rnd() * list.length) % list.length]) : ACCENT_LOOKS[tier][0];
       const paletteId = loud ? palette.looks.loud : palette.looks.calm;
-      const where: WhereSpec | null = groups.pieces.length >= 2
-        ? (p.kind === 'verse' || p.kind === 'bridge' || p.kind === 'other'
-          ? { order: 'left-right', members: 'pieces', motion: { kind: 'pingpong', bars: 4 }, position: 0, spread: 0.6, soft: 0.6 }
-          : p.kind === 'build'
-            ? { order: 'left-right', members: 'pieces', namedOrder: GROUP_ORDER_IDS.rows, motion: { kind: 'sweep', bars: 1 }, position: 0, spread: 0.4, soft: 0.5, wrap: true }
-            : null)
-        : null;
-      const bar = bar0;
+      // Worn by every piece for the section; the energy line brings it in
+      // and out a bar at a time (the content does the moving).
       lookClips.push({
         id: ids.next('look'), lookId, paletteId, startTime: round(p.start), duration: round(p.end - p.start), scope: 'all',
-        fadeIn: p.kind === 'intro' ? round(Math.min(2 * bar, (p.end - p.start) / 2)) : 0,
-        fadeOut: p.kind === 'outro' ? round(Math.min(2 * bar, (p.end - p.start) / 2)) : 0,
-        ...(where ? { where } : {}),
+        fadeIn: 0, fadeOut: 0,
       });
       prevLook = lookId;
       const item = autoPlan[k];
@@ -487,15 +483,46 @@ export function draftAutoShow(input: AutoShowInput): AutoShowDraft {
     if (hits) adds.push(`${hits} invert ${hits === 1 ? 'hit' : 'hits'} on the drops' downbeats (Effects row)`);
   }
 
+  // The energy line steps once a bar (no audio follow): on eighty pieces a
+  // line that moves every frame re-dresses every piece every frame.
+  const lines = base.lines.map((l) => (l.key === 'look:intensity' && l.target.scope === 'look' ? steppedEnergyLine(l, plan, structure.bars) : l));
   const sections = base.sections;
   const draft: AutoShowDraft = {
-    sections, lookClips, lines: base.lines, ledClips: base.ledClips, stageClips, adds, skips, plan: base.plan,
+    sections, lookClips, lines, ledClips: base.ledClips, stageClips, adds, skips, plan: base.plan,
     layerTracks, hostLayerId: hostRow?.layerId ?? null, whereOrders, groups, cast, palette, style,
     heard: { bpm: Math.round((tempo.segments[0]?.bpm ?? 0) * 10) / 10, style: SHOW_STYLE_NAMES[style], sections: plan.length, pieces: groups.pieces.length, groups: groupCount(groups) },
     autoPlan,
     blockCount: contentBlocks + lookClips.length + stageClips.length + base.ledClips.length,
   };
   return draft;
+}
+
+/** Score's energy line held a bar at a time: each bar takes the line's value
+ *  at its start (builds climb bar by bar, the outro steps down), and it no
+ *  longer follows the song's level frame by frame. */
+export function steppedEnergyLine(line: import('../lines/lineModel').ControlLine, plan: ReadonlyArray<{ start: number; end: number }>, bars: readonly number[]): import('../lines/lineModel').ControlLine {
+  const pts = line.points;
+  const at = (t: number) => {
+    if (!pts.length) return line.default ?? 1;
+    if (t <= pts[0].t) return pts[0].v;
+    for (let i = 1; i < pts.length; i++) {
+      if (t < pts[i].t) {
+        const a = pts[i - 1];
+        const b = pts[i];
+        if (a.c === 'hold') return a.v;
+        const f = (t - a.t) / Math.max(1e-9, b.t - a.t);
+        return a.v + (b.v - a.v) * (a.c === 'ease-in' ? f * f : f);
+      }
+    }
+    return pts[pts.length - 1].v;
+  };
+  const start = plan[0]?.start ?? 0;
+  const end = plan[plan.length - 1]?.end ?? start;
+  const times = [...new Set([...bars.filter((b) => b >= start - 1e-6 && b < end - 1e-6), ...plan.map((p) => p.start)].map((t) => round(t)))].sort((a, b) => a - b);
+  const points = times.map((t) => ({ t, v: round(at(t + 1e-4) * LOOK_ACCENT), c: 'hold' as const }));
+  if (times.length) points.push({ t: round(Math.max(times[times.length - 1], end - 0.01)), v: points[points.length - 1].v, c: 'hold' as const });
+  const { follow: _follow, ...rest } = line;
+  return { ...rest, points };
 }
 
 function median(xs: number[]): number {
@@ -586,7 +613,7 @@ export function stripDrafts(
     ledClips: same(s.ledClips, (d) => d.ledClips),
     stageClips: same(s.stageClips, (d) => d.stageClips),
     layerTracks,
-    whereOrders: s.whereOrders,
+    whereOrders: [...s.whereOrders],
   };
 }
 

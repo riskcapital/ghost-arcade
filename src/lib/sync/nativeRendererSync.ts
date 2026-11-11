@@ -10065,7 +10065,14 @@ export class NativeRendererSync {
         }
       }
 
-      if (!prev || prev.z !== snap.z || prev.vjIndex !== snap.vjIndex || prev.visible !== snap.visible || prev.blend !== snap.blend || prev.opacity !== snap.opacity || prev.renderQuality !== snap.renderQuality || prev.deckMonitorSig !== snap.deckMonitorSig || prev.geometrySig !== snap.geometrySig || prev.uvSig !== snap.uvSig || prev.shapeSig !== snap.shapeSig || prev.maskSig !== snap.maskSig) {
+      const layerChanged = !prev || prev.z !== snap.z || prev.vjIndex !== snap.vjIndex || prev.visible !== snap.visible || prev.blend !== snap.blend || prev.renderQuality !== snap.renderQuality || prev.deckMonitorSig !== snap.deckMonitorSig || prev.geometrySig !== snap.geometrySig || prev.uvSig !== snap.uvSig || prev.shapeSig !== snap.shapeSig || prev.maskSig !== snap.maskSig;
+      if (!layerChanged && prev.opacity !== snap.opacity) {
+        // Only its opacity moved (a fade, a travelling window): the core keeps
+        // every field an upsert leaves out, so just the opacity goes. A show
+        // with a picture travelling over eighty pieces sent each whole layer
+        // (corners, shape and mask points) every frame.
+        commands.push({ type: 'upsert_layer', layer_id: layer.id, z_index: index, opacity: layer.opacity });
+      } else if (layerChanged || prev.opacity !== snap.opacity) {
         commands.push({
           type: 'upsert_layer',
           layer_id: layer.id,

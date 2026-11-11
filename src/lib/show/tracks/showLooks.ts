@@ -170,19 +170,18 @@ function mixedStack(layer: Layer, looks: readonly ShowLookState[], piece = layer
   return config;
 }
 
-function shows(layer: Layer): boolean {
-  return layer.visible !== false && (layer.opacity ?? 1) > 0 && (layer._showOpacityMul === undefined || layer._showOpacityMul > 0);
-}
-
 /**
  * Dress the scene's shapes with the looks under the playhead. `layers` is
  * the scene being built (top first); `liveLayers` the mapping layers it was
  * built from (a group in a block's scope brings its members). Returns
  * `layers` itself when no look applies.
  *
- * A look is worn over whatever the piece shows: by the topmost layer of the
- * piece that shows (a block added on it or travelling over it, `pieceOf`
- * names the piece of such a copy), else by the piece itself.
+ * A look is worn over whatever the piece shows: by the show's copies of the
+ * piece that are in the scene (blocks added on it or travelling over it;
+ * `pieceOf` names the piece of such a copy), each at its own opacity, else
+ * by the piece itself. Every copy wears it, not only the one showing now:
+ * a block whose window moves keeps its copies (at no opacity while unlit),
+ * so the looks stay put on them and are not sent again on every swap.
  */
 export function applyShowLooks(
   layers: Layer[],
@@ -196,19 +195,19 @@ export function applyShowLooks(
   for (const look of looks) {
     if (look.scope === 'pieces') scoped.set(look.clipId, new Set(lookTargetLayerIds(liveLayers, look.layerIds, 'selected')));
   }
-  // Which layer wears each piece's looks: its topmost one that shows.
+  // Which layers wear each piece's looks: its copies, else the piece.
   const wearer = new Map<number, string>();
   const dressed = new Set<string>();
   const ownIndex = new Map<string, number>();
   layers.forEach((layer, index) => {
     const piece = all.has(layer.id) ? layer.id : pieceOf(layer.id);
     if (!piece || !all.has(piece)) return;
-    if (piece === layer.id) ownIndex.set(piece, index);
-    if (dressed.has(piece) || !shows(layer)) return;
+    if (piece === layer.id) { ownIndex.set(piece, index); return; }
+    if (layer.visible === false) return;
     dressed.add(piece);
     wearer.set(index, piece);
   });
-  // A piece with nothing showing wears them itself (as it always did).
+  // A piece with no copies over it wears them itself (as it always did).
   for (const [piece, index] of ownIndex) if (!dressed.has(piece)) wearer.set(index, piece);
   let changed = false;
   const out = layers.map((layer, index) => {

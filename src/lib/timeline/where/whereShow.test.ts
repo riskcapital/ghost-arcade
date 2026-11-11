@@ -258,17 +258,19 @@ describe('where lines through the Timeline', () => {
     expect(frame.darkPieces).toEqual(['Left', 'Middle', 'Right']);
     const img = { id: 'img', type: 'image', src: '/a.png' } as never;
     const scene = buildShowTrackScene(stage, frame, { sourceFor: () => img });
-    // Own content black, still drawn (its looks show on it when nothing is over it).
+    // Own content black, still drawn.
     const middle = scene.find((l) => l.id === 'Middle')!;
     expect(middle.source).toBeNull();
     expect(middle.colorContent).toMatchObject({ lightness: 0, alpha: 1 });
     expect(middle._showOpacityMul).toBeUndefined();
-    expect(middle.edgeEffects?.look?.id).toBe('neon-pulse');
     // The lit piece: its copy shows its part of the picture, and wears the look over it.
     const right = scene.find((l) => l.id === showWhereLayerId('Right', 'c2'))!;
     expect(right.cropRegion).toEqual({ x: 0.7, y: 0, width: expect.closeTo(0.3, 6), height: 1 });
     expect(right.edgeEffects?.look?.id).toBe('neon-pulse');
     expect(scene.find((l) => l.id === 'Right')!.edgeEffects?.look).toBeUndefined();
+    // An unlit copy wears it too (at no opacity), so a moving window never re-dresses the pieces.
+    expect(scene.find((l) => l.id === showWhereLayerId('Middle', 'c2'))!.edgeEffects?.look?.id).toBe('neon-pulse');
+    expect(middle.edgeEffects?.look).toBeUndefined();
     // The sub copy on the host piece (unlit here) takes its own part too.
     const host = scene.find((l) => l.id.startsWith('showsub::Left::'))!;
     expect(host._showOpacityMul).toBe(0);
