@@ -16,6 +16,7 @@
  * Built on the song analysis's envelope pass (show/songLayout.ts).
  */
 import { SongEnvelopeBuilder, type Envelope } from '../../show/songLayout';
+import { songEnvelopeOffThread } from '../../show/songAnalysisClient';
 
 export const AUDIO_FEATURES = ['level', 'energy', 'bass', 'mid', 'high', 'kick', 'snare', 'hats'] as const;
 export type AudioFeature = (typeof AUDIO_FEATURES)[number];
@@ -225,7 +226,9 @@ export function songFeaturesFor(
       const decoded = await load();
       if (!decoded) return null;
       analyses++;
-      const features = analyzeSongFeatures(decoded.mono, decoded.sampleRate);
+      // The envelope pass walks every sample: in a worker, so a long song
+      // does not stall the page (same result as analyzeSongFeatures).
+      const features = songFeaturesFromEnvelope(await songEnvelopeOffThread(decoded.mono, decoded.sampleRate));
       putSongFeatures(key, features);
       return features;
     } finally {

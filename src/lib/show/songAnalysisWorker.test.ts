@@ -5,7 +5,8 @@
 import { describe, expect, it } from 'vitest';
 import { analyzeSong, SongEnvelopeBuilder, analyzeSongEnvelope } from './songLayout';
 import { createSongAnalysisJob, type SongAnalysisReply, type SongAnalysisRequest } from './songAnalysisProtocol';
-import { analyzeSongOffThread, SONG_ANALYSIS_CHUNK, type SongAnalysisWorker } from './songAnalysisClient';
+import { analyzeSongOffThread, songEnvelopeOffThread, SONG_ANALYSIS_CHUNK, type SongAnalysisWorker } from './songAnalysisClient';
+import { analyzeSongFeatures, songFeaturesFromEnvelope } from '../timeline/lines/songFeatures';
 
 const RATE = 22050;
 
@@ -103,5 +104,16 @@ describe('song analysis off the main thread', () => {
       terminate() {},
     };
     await expect(analyzeSongOffThread(song(10, 120), RATE, {}, () => failing)).rejects.toThrow('boom');
+  });
+
+  it('builds the song features\' envelope in a worker, with the same features as on the main thread', async () => {
+    const mono = song(130, 97, 9);
+    const worker = new InProcessWorker();
+    const envelope = await songEnvelopeOffThread(mono, RATE, () => worker);
+    expect(songFeaturesFromEnvelope(envelope)).toEqual(analyzeSongFeatures(mono, RATE));
+    expect(worker.chunks.reduce((a, b) => a + b, 0)).toBe(mono.length);
+    expect(worker.terminated).toBe(true);
+    // No worker: built here, the same.
+    expect(songFeaturesFromEnvelope(await songEnvelopeOffThread(mono, RATE, () => null))).toEqual(analyzeSongFeatures(mono, RATE));
   });
 });

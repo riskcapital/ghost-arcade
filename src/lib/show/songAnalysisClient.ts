@@ -6,7 +6,7 @@
  * analyzeSong()'s. Where no worker can be started (tests, or a worker that
  * fails to load) the analysis runs here instead, with the same result.
  */
-import { analyzeSong, songIsAnalysable, type SongAnalysis, type SongAnalysisOptions } from './songLayout';
+import { SongEnvelopeBuilder, analyzeSong, songIsAnalysable, type Envelope, type SongAnalysis, type SongAnalysisOptions } from './songLayout';
 import type { SongAnalysisReply, SongAnalysisRequest } from './songAnalysisProtocol';
 
 /** Samples per slice: 8 MB of float32, a whole number of analysis frames. */
@@ -38,9 +38,39 @@ export function analyzeSongOffThread(
   makeWorker: () => SongAnalysisWorker | null = startWorker,
 ): Promise<SongAnalysis> {
   if (!songIsAnalysable(mono.length, sampleRate)) return Promise.resolve(analyzeSong(mono, sampleRate, options));
+  return runInWorker(mono, sampleRate, { options }, makeWorker, () => analyzeSong(mono, sampleRate, options), (reply) => (reply.type === 'done' ? reply.analysis : undefined));
+}
+
+/**
+ * The song's envelope (what the Timeline's song features are made from),
+ * built in a worker the same way: exactly what one pass of
+ * SongEnvelopeBuilder over `mono` gives, without the main thread walking
+ * every sample of a long song.
+ */
+export function songEnvelopeOffThread(
+  mono: Float32Array,
+  sampleRate: number,
+  makeWorker: () => SongAnalysisWorker | null = startWorker,
+): Promise<Envelope> {
+  const here = () => {
+    const builder = new SongEnvelopeBuilder(mono.length, sampleRate);
+    builder.push(mono);
+    return builder.finish();
+  };
+  return runInWorker(mono, sampleRate, { envelope: true }, makeWorker, here, (reply) => (reply.type === 'envelope' ? reply.envelope : undefined));
+}
+
+function runInWorker<T>(
+  mono: Float32Array,
+  sampleRate: number,
+  extra: { options?: SongAnalysisOptions; envelope?: boolean },
+  makeWorker: () => SongAnalysisWorker | null,
+  here: () => T,
+  result: (reply: SongAnalysisReply) => T | undefined,
+): Promise<T> {
   const worker = makeWorker();
-  if (!worker) return Promise.resolve().then(() => analyzeSong(mono, sampleRate, options));
-  return new Promise<SongAnalysis>((resolve, reject) => {
+  if (!worker) return Promise.resolve().then(here);
+  return new Promise<T>((resolve, reject) => {
     const total = mono.length;
     let next = 0;
     let inFlight = 0;
@@ -71,10 +101,11 @@ export function analyzeSongOffThread(
         acked = true;
         inFlight--;
         pump();
-      } else if (reply.type === 'done') {
-        finish(() => resolve(reply.analysis));
-      } else {
+      } else if (reply.type === 'error') {
         finish(() => reject(new Error(reply.message)));
+      } else {
+        const value = result(reply);
+        finish(() => (value === undefined ? reject(new Error('unexpected song analysis reply')) : resolve(value)));
       }
     };
     worker.onerror = (event) => {
@@ -84,7 +115,7 @@ export function analyzeSongOffThread(
         console.warn('[SongAnalysis] worker failed, analysing on the main thread:', event.message);
         finish(() => {
           try {
-            resolve(analyzeSong(mono, sampleRate, options));
+            resolve(here());
           } catch (err) {
             reject(err);
           }
@@ -93,7 +124,7 @@ export function analyzeSongOffThread(
         finish(() => reject(new Error(event.message || 'song analysis worker failed')));
       }
     };
-    worker.postMessage({ type: 'start', length: total, sampleRate, options });
+    worker.postMessage({ type: 'start', length: total, sampleRate, ...extra });
     pump();
   });
 }
