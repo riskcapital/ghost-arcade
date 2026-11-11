@@ -43,6 +43,7 @@
   import { isNativeSelectableEffect } from '../renderer/nativeEffectCoverage';
   import { isNativeReadyGpuShaderId } from '../renderer/gpuShaderCatalog';
   import { createDefaultStageEffect, getEffectDef, STAGE_EFFECT_CATALOG } from '../stores/stageEffects';
+  import { writeStageDrag } from '../timeline/stagefx/stageClips';
   import EffectPickerModal from './EffectPickerModal.svelte';
   import EffectChainPresets from './EffectChainPresets.svelte';
   import EdgeEffectsPanel from './EdgeEffectsPanel.svelte';
@@ -1227,6 +1228,11 @@
                   class="composition-effect-item"
                   class:disabled={!effect.enabled}
                   class:native-pending={pendingNativeEffect}
+                  draggable="true"
+                  ondragstart={(e) => writeStageDrag(e.dataTransfer, 'effects', effect)}
+                  title="Drag onto the Timeline's Effects row for a block with this effect"
+                  role="listitem"
+                  data-composition-effect-card={effect.id}
                 >
                   <div class="composition-effect-header">
                     <input
@@ -1431,7 +1437,11 @@
               {#each mappingComposition.stageEffects as eff (eff.id)}
                 {@const def = getEffectDef(eff.type)}
                 {@const isLive = mappingComposition.activeStageEffectId === eff.id}
-                <div class="effect-item" class:live={isLive}>
+                <div class="effect-item" class:live={isLive} draggable="true"
+                  ondragstart={(e) => writeStageDrag(e.dataTransfer, 'screenfx', eff)}
+                  title="Drag onto the Timeline's Screen FX row for a block with this Screen FX"
+                  role="listitem"
+                  data-screen-fx-card={eff.id}>
                   <div class="effect-header" onclick={() => expandedMappingStageEffectId = expandedMappingStageEffectId === eff.id ? null : eff.id}>
                     <button
                       class="effect-live-radio"

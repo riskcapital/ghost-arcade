@@ -366,6 +366,21 @@ const ACTIONS = {
     if (!id) throw new Error('LED block was not placed');
     await sleep(300);
   },
+  async 'show.stageBlock'(ctx, s) {
+    // A block on the Stage group's Screen FX or Effects row:
+    // { row: 'screenfx' | 'effects', at, duration, type, params, mix, fadeIn, fadeOut, var }.
+    const id = await ctx.eval(`(() => {
+      const s = ${J(s)};
+      const effect = { id: crypto.randomUUID(), type: s.type, enabled: true, opacity: s.mix ?? 1, params: s.params ?? {} };
+      const fields = { duration: s.duration ?? 8, fadeIn: s.fadeIn ?? 0, fadeOut: s.fadeOut ?? 0, ...(s.row === 'effects' ? { effect } : { screenFx: effect }) };
+      const id = __show.g().showTimeline.addStageClip(s.row ?? 'screenfx', s.at ?? 0, fields);
+      if (id && s.var) __show.vars['stage:' + s.var] = id;
+      __show.g().showTimeline.select(null);
+      return id;
+    })()`);
+    if (!id) throw new Error('Stage block was not placed');
+    await sleep(300);
+  },
   async 'show.song'(ctx, s) {
     // A song on the Timeline's Song row: { file (fixture, e.g. sections.wav), at }.
     // Copied into the app's own project-assets folder (a path it may read).

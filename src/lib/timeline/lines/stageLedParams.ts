@@ -34,6 +34,13 @@ export function discoverStageParams(composition: MappingCompositionState | null 
       { key: `stage:fx:${effect.id}:enabled`, label: 'Enabled', type: 'boolean', kind: 'bool', defaultValue: effect.enabled, group },
       { key: `stage:fx:${effect.id}:opacity`, label: 'Mix', type: 'number', min: 0, max: 1, step: 0.01, defaultValue: effect.opacity ?? 1, group },
     );
+    // Colours first: one colour line instead of three R/G/B lines.
+    for (const colour of effectColourGroups(effect.type)) {
+      params.push({
+        key: `stage:fx:${effect.id}:rgb:${colour.base}`, label: colour.label, type: 'number', kind: 'colour',
+        min: 0, max: 0xffffff, step: 1, defaultValue: readEffectColour(effect, colour), group,
+      });
+    }
     for (const [name, meta] of Object.entries(effectParamLabels[effect.type] ?? {})) {
       if (meta.type === 'color') continue;
       const current = (effect.params as Record<string, unknown>)?.[name];
@@ -47,12 +54,6 @@ export function discoverStageParams(composition: MappingCompositionState | null 
         defaultValue: typeof current === 'number' ? current : meta.default,
         group,
         ...(meta.type === 'select' ? { kind: 'stepped' as const } : {}),
-      });
-    }
-    for (const colour of effectColourGroups(effect.type)) {
-      params.push({
-        key: `stage:fx:${effect.id}:rgb:${colour.base}`, label: colour.label, type: 'number', kind: 'colour',
-        min: 0, max: 0xffffff, step: 1, defaultValue: readEffectColour(effect, colour), group,
       });
     }
   }

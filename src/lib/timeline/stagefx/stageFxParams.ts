@@ -91,6 +91,9 @@ export function effectBlockParams(clip: TimelineStageClip): ParamEntry[] {
     { key: 'fxb:mix', label: 'Effect mix', group, min: 0, max: 1, step: 0.01, default: effect.opacity ?? 1, kind: 'continuous' },
   ];
   const colours = effectColourGroups(effect.type);
+  for (const c of colours) {
+    out.push({ key: `fxb:rgb:${c.base}`, label: c.label, group, min: 0, max: 0xffffff, step: 1, default: readEffectColour(effect, c), kind: 'colour' });
+  }
   for (const [name, meta] of Object.entries((effectParamLabels as Record<string, Record<string, ParamMeta> | undefined>)[effect.type] ?? {})) {
     if (meta.type === 'color') continue;
     const current = params[name];
@@ -99,9 +102,6 @@ export function effectBlockParams(clip: TimelineStageClip): ParamEntry[] {
       default: typeof current === 'number' ? current : meta.default,
       kind: meta.type === 'select' ? 'stepped' : 'continuous',
     });
-  }
-  for (const c of colours) {
-    out.push({ key: `fxb:rgb:${c.base}`, label: c.label, group, min: 0, max: 0xffffff, step: 1, default: readEffectColour(effect, c), kind: 'colour' });
   }
   return out;
 }
