@@ -123,9 +123,9 @@
               {@const v = fx.params[p.key]?.value ?? p.value}
               <div class="fx-param">
                 <button class="fx-diamond" onclick={() => addLineWithPoint({ scope: 'sound', id: row.id }, `sfx:${fx.id}:${p.key}`, playhead(), v)} title={`◆ ${p.label}: a point at the playhead on this knob's line, at the knob's value`} data-line-key={`sfx:${fx.id}:${p.key}`}>◆</button>
-                <span class="fx-label">{p.label}</span>
+                <span class="fx-label" title={p.label}>{p.label}</span>
                 <input type="range" min="0" max="1" step="0.01" value={v} oninput={(e) => setFxParam(row.id, fx.id, p.key, +(e.currentTarget as HTMLInputElement).value)} data-sound-fx-param={p.key} />
-                <span class="fx-value">{p.format(v, 120)}</span>
+                <span class="fx-value" title={p.format(v, 120)}>{p.format(v, 120)}</span>
               </div>
             {/each}
           </div>
