@@ -51,7 +51,8 @@ import { applyWLEDEffects, ledEffectBpm } from './effects';
 import { lineLedOverrides } from '../timeline/lines/lineRuntime';
 import { applyLedControllerOverrides, applyLedEffectOverrides } from '../timeline/lines/stageLedParams';
 import { currentLedTimeline } from '../timeline/leds/ledRuntime';
-import { renderTimelineLeds } from '../timeline/leds/ledRender';
+import { controllerNeedsPicture, renderTimelineLeds } from '../timeline/leds/ledRender';
+import { compositeMirrorCanvas, compositeMirrorPixels } from '../sync/nativeCompositeMirror';
 
 /** Per-controller runtime state. */
 interface SenderState {
@@ -252,7 +253,7 @@ function captureComposite(sourceCanvas: HTMLCanvasElement, flipY: boolean): Imag
   return context.getImageData(0, 0, frameTapCanvas.width, frameTapCanvas.height);
 }
 
-function packRGB(state: SenderState, imageData: ImageData | null, nowMs: number) {
+function packRGB(state: SenderState, imageData: { data: Uint8ClampedArray; width: number; height: number } | null, nowMs: number) {
   // Timeline control lines on the LEDs (brightness, gamma, effect values),
   // never written to the project.
   const ledLines = lineLedOverrides();
@@ -343,12 +344,33 @@ function averageColorHex(buffer: Uint8Array): string {
   return `#${hex(red)}${hex(green)}${hex(blue)}`;
 }
 
+/** The Timeline drives this controller with colours only: no picture needed. */
+function needsPicture(controller: WLEDController): boolean {
+  const timeline = currentLedTimeline();
+  return !timeline || controllerNeedsPicture(controller, timeline.clips, timeline);
+}
+
+/**
+ * The picture to sample. Under the native driver the canvas is the composite
+ * mirror, whose last frame is already in memory as pixels: sampling those
+ * avoids reading the canvas back from the GPU (a synchronous round trip that
+ * stalls the page while the GPU is busy). Otherwise, or when the mirror's
+ * last frame came as JPEG, the canvas is tapped.
+ */
+function framePixels(canvas: HTMLCanvasElement): ImageData | { data: Uint8ClampedArray; width: number; height: number } | null {
+  if (activeSource()?.role === 'native' && canvas === compositeMirrorCanvas()) {
+    const pixels = compositeMirrorPixels();
+    if (pixels && pixels.width === canvas.width && pixels.height === canvas.height) return pixels;
+  }
+  return captureComposite(canvas, activeSource()?.role !== 'native');
+}
+
 /** Called every frame from Canvas.svelte's animate loop. Walks the
  *  current sender set, taps + sends for any due for an update. */
 export function tickWLEDSenders(canvas: HTMLCanvasElement) {
   if (senders.size === 0 || activeSource()?.canvas !== canvas) return;
   const now = performance.now();
-  let imageData: ImageData | null | undefined;
+  let imageData: ReturnType<typeof framePixels> | undefined;
   for (const state of senders.values()) {
     if (!state.controller.enabled) continue;
     if (state.inFlight) continue;
@@ -357,9 +379,9 @@ export function tickWLEDSenders(canvas: HTMLCanvasElement) {
     ensureSamplePoints(state, canvas);
 
     try {
-      if (imageData === undefined && !forceBlack && (state.controller.testPattern ?? 'off') === 'off') {
+      if (imageData === undefined && !forceBlack && (state.controller.testPattern ?? 'off') === 'off' && needsPicture(state.controller)) {
         try {
-          imageData = captureComposite(canvas, activeSource()?.role !== 'native');
+          imageData = framePixels(canvas);
         } catch (err) {
           // No picture this frame: the Timeline's own colours still go out.
           if (!currentLedTimeline()) throw err;

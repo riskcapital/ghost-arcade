@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { WLEDController } from '../../types';
 import { ledClipGain, normalizeLedClip, normalizeLedClips, type TimelineLedClip } from './ledClips';
-import { renderLedBlock, renderTimelineLeds, type LedRenderContext } from './ledRender';
+import { controllerNeedsPicture, renderLedBlock, renderTimelineLeds, type LedRenderContext } from './ledRender';
 import { lookPalette } from '../../looks/edgeLooks';
 
 const strip = (fields: Partial<WLEDController> = {}): WLEDController => ({
@@ -141,5 +141,23 @@ describe('LED rows', () => {
     const { driven, out } = render(strip(), [], ctx(1, { looks, allDriven: true }));
     expect(driven).toBe(true);
     expect(out.some((v) => v > 0)).toBe(true);
+  });
+});
+
+describe('which controllers need the stage picture', () => {
+  it('colour blocks need none; follow and content effects do while lit; undriven controllers always do', () => {
+    const colours = [block({ kind: 'colour', startTime: 0, duration: 4 }), block({ id: 'c', kind: 'chase', startTime: 4, duration: 4 })];
+    expect(controllerNeedsPicture(strip(), colours, { time: 1 })).toBe(false);
+    expect(controllerNeedsPicture(strip(), colours, { time: 9 })).toBe(false);
+    const follow = [...colours, block({ id: 'f', kind: 'follow', startTime: 8, duration: 2 })];
+    expect(controllerNeedsPicture(strip(), follow, { time: 1 })).toBe(false);
+    expect(controllerNeedsPicture(strip(), follow, { time: 9 })).toBe(true);
+    const content = [block({ id: 'e', kind: 'effect', pattern: 'chase', startTime: 0, duration: 4 })];
+    expect(controllerNeedsPicture(strip(), content, { time: 1 })).toBe(false);
+    const shaderChase = [block({ id: 'e', kind: 'effect', pattern: 'shader-color-chase', startTime: 0, duration: 4 })];
+    expect(controllerNeedsPicture(strip(), shaderChase, { time: 1 })).toBe(true);
+    // Not on the Timeline: the project's own LED output samples the picture.
+    expect(controllerNeedsPicture(strip({ id: 'other' }), colours, { time: 1 })).toBe(true);
+    expect(controllerNeedsPicture(strip({ id: 'other' }), colours, { time: 1, allDriven: true })).toBe(false);
   });
 });

@@ -85,6 +85,27 @@ export function controllerHasLedBlocks(controller: WLEDController, clips: readon
   return clips.some((c) => c.rowId === own || c.rowId.startsWith(own + '#'));
 }
 
+/** A block whose light is made from the stage picture. */
+function blockReadsPicture(c: TimelineLedClip): boolean {
+  return c.kind === 'follow' || (c.kind === 'effect' && getWLEDPatternDefinition(c.pattern ?? 'chase').category === 'content');
+}
+
+/**
+ * Whether this controller needs the stage picture at `time`: the Timeline
+ * does not drive it (the project's own LED output samples the picture), or
+ * a lit block reads the picture (follow, or a content effect). False when
+ * the Timeline drives it with colours only, so the sender can skip the
+ * frame capture.
+ */
+export function controllerNeedsPicture(
+  controller: WLEDController,
+  clips: readonly TimelineLedClip[],
+  ctx: { time: number; allDriven?: boolean },
+): boolean {
+  if (!ctx.allDriven && !controllerHasLedBlocks(controller, clips)) return true;
+  return clips.some((c) => blockReadsPicture(c) && ledClipGain(c, ctx.time) > 0);
+}
+
 const clamp01 = (v: number) => (v <= 0 ? 0 : v >= 1 ? 1 : v);
 const frac = (v: number) => v - Math.floor(v);
 const num = (v: number | boolean | undefined, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : typeof v === 'boolean' ? (v ? 1 : 0) : d);

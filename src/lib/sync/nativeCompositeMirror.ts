@@ -66,6 +66,17 @@ export function compositeMirrorCanvas(): HTMLCanvasElement | null {
   return mirrorCanvas;
 }
 
+/**
+ * The picture currently on the mirror canvas as RGBA pixels (top row first),
+ * or null when the last frame came as JPEG. A CPU consumer (LED sampling)
+ * reads these instead of reading the canvas back from the GPU, which is a
+ * synchronous round trip that stalls the page whenever the GPU is busy. Read
+ * it in an `onFrame` callback: the next raw frame overwrites it.
+ */
+export function compositeMirrorPixels(): ImageData | null {
+  return rawFrame;
+}
+
 /** Timing of the picture currently on the mirror canvas, or null before the first. */
 export function compositeMirrorFrameInfo(): CompositeMirrorFrameInfo | null {
   return frameInfo;
@@ -73,6 +84,9 @@ export function compositeMirrorFrameInfo(): CompositeMirrorFrameInfo | null {
 let inFlight = false;
 let failureStreak = 0;
 let scratch: ImageData | null = null;
+/** The picture on the mirror canvas as decoded pixels, when the last frame
+ *  drawn came as raw pixels (null after a JPEG frame). */
+let rawFrame: ImageData | null = null;
 const frameListeners = new Set<() => void>();
 
 /** The pixel payload of a core frame snapshot. */
@@ -163,6 +177,7 @@ async function decodeJpegIntoIfNewer(snap: { jpeg_b64?: string }, requestSeq: nu
     if (mirrorCanvas.width !== bitmap.width) mirrorCanvas.width = bitmap.width;
     if (mirrorCanvas.height !== bitmap.height) mirrorCanvas.height = bitmap.height;
     mirrorCtx.drawImage(bitmap, 0, 0);
+    rawFrame = null;
   } finally {
     bitmap.close();
   }
@@ -174,6 +189,7 @@ function decodeSnapshotInto(snap: SnapshotPixels): boolean {
   const image = drawSnapshotToCanvas(snap, mirrorCanvas, mirrorCtx, scratch);
   if (!image) return false;
   scratch = image;
+  rawFrame = image;
   return true;
 }
 
@@ -306,6 +322,7 @@ export function acquireNativeCompositeMirror(
         clearInterval(timer);
         timer = null;
         pumpFps = 0;
+        rawFrame = null;
       } else {
         rearmPump();
       }
