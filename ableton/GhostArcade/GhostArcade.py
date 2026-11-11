@@ -10,6 +10,10 @@
 # 127.0.0.1:11051 for requests (resync, launch, transport, what to watch).
 #
 # Works with Live 10 (Python 2.7) through Live 12 (Python 3.11).
+#
+# Protocol 6 adds, for the Timeline: set_locators (create or move
+# arrangement locators by name, never deleting one) and a launch quantise
+# per scene launch (fire_scene with "q"). Older scripts ignore both.
 
 import errno
 import json
@@ -25,7 +29,7 @@ except ImportError:
 
 APP_ADDRESS = ("127.0.0.1", 11050)
 SCRIPT_ADDRESS = ("127.0.0.1", 11051)
-PROTOCOL = 5
+PROTOCOL = 6
 NAME_LIMIT = 64
 # update_display runs roughly ten times a second.
 HEARTBEAT_TICKS = 10
@@ -243,7 +247,13 @@ class GhostArcade(ControlSurface):
         elif kind == "fire_scene":
             index = int(message.get("s", -1))
             if 0 <= index < len(song.scenes):
-                song.scenes[index].fire()
+                scene = song.scenes[index]
+                if message.get("q") is not None:
+                    self._quantized_call(int(message["q"]), scene.fire)
+                else:
+                    scene.fire()
+        elif kind == "set_locators":
+            self._set_locators(message)
         elif kind == "fire_clip":
             track = self._track(int(message.get("i", -2)))
             slot = int(message.get("s", -1))
@@ -379,6 +389,60 @@ class GhostArcade(ControlSurface):
             except Exception as error:
                 self._log("Ghost Arcade: jump failed (%s)" % error)
         self._pending_jumps = waiting
+
+    def _set_locators(self, message):
+        """Arrangement locators by name (protocol 6): one that exists moves to
+        its new beat, a new name gets a locator there. Nothing is deleted.
+        Live only adds a locator at its playhead, so this runs while Live is
+        stopped and puts the playhead back after."""
+        song = self._song
+        wanted = []
+        for item in message.get("items", []):
+            try:
+                wanted.append((str(item["name"])[:200], max(0.0, float(item["beat"]))))
+            except (KeyError, TypeError, ValueError):
+                pass
+        result = {"t": "locators_done", "id": message.get("id"), "added": 0, "moved": 0, "kept": 0, "errors": []}
+        if song.is_playing:
+            result["errors"].append("playing")
+            self._send(result)
+            return
+        previous = song.current_song_time
+
+        def cue_at(beat):
+            for cue in song.cue_points:
+                if abs(cue.time - beat) < 1e-3:
+                    return cue
+            return None
+
+        for name, beat in wanted:
+            try:
+                same = [cue for cue in song.cue_points if cue.name == name]
+                if same and abs(same[0].time - beat) < 1e-3:
+                    result["kept"] += 1
+                    continue
+                if same:
+                    song.current_song_time = same[0].time
+                    song.set_or_delete_cue()
+                there = cue_at(beat)
+                if there is None:
+                    song.current_song_time = beat
+                    song.set_or_delete_cue()
+                    there = cue_at(beat)
+                if there is None:
+                    result["errors"].append("%s: Live did not add it" % name)
+                    continue
+                there.name = name
+                result["moved" if same else "added"] += 1
+            except Exception as error:
+                result["errors"].append("%s: %s" % (name, error))
+        try:
+            song.current_song_time = previous
+        except Exception:
+            pass
+        result["errors"] = result["errors"][:8]
+        self._send(result)
+        self._send_scenes(force=True)
 
     def _setup(self, message):
         """Lay the set out for the Music Studio: name and colour tracks and
