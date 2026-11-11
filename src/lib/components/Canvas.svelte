@@ -8184,6 +8184,10 @@
   function handleSplatPointerDown(e: PointerEvent) { updateSplatPointerFromEvent(e, true); }
   function handleSplatPointerUp(e: PointerEvent) { updateSplatPointerFromEvent(e, false); }
 
+  // Back-off for the native preview when it cannot attach (see scheduleNativePreviewWindowSync).
+  let nativePreviewRetryMs = 0;
+  let nativePreviewRetryTimer: ReturnType<typeof setTimeout> | null = null;
+
   function nativePreviewEmbeddedRect(): {
     x: number;
     y: number;
@@ -8238,9 +8242,6 @@
       contentHeight: height,
     };
   }
-
-  let nativePreviewRetryMs = 0;
-  let nativePreviewRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
   function scheduleNativePreviewWindowSync(reason = 'schedule'): void {
     nativePreviewSyncQueuedReason = reason;
