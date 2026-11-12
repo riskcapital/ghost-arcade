@@ -1136,6 +1136,7 @@ import { validateScene3D } from '$lib/scene3d/sceneModel';
 import { buildVideoSynthGraph } from '$lib/videosynth/graph';
 import { domePlacementCommand, nativeDomeStage } from '$lib/output/domeMath';
 import { domeView } from '$lib/stores/domeView';
+import { mirrorMeshCommand, type MirrorMesh } from '$lib/output/mirrorMesh';
 const NATIVE_EFFECT_PASS_IDS = new Set<NativeEffectPassId>(
   NATIVE_EFFECT_PASS_MANIFEST.map((entry) => entry.id),
 );
@@ -5805,6 +5806,8 @@ export class NativeRendererSync {
   private lastCompositeEffectsSig: string | null = null;
   private lastOutputStageSig: string | null = null;
   private lastDomeViewSig: string | null = null;
+  /** Mirror meshes the core holds (by content id), so each is sent once. */
+  private sentMirrorMeshes = new Set<string>();
   private lastSliceOutputsSig: string | null = null;
   private openSliceWindowIds: string[] = [];
   private displayBounds = new Map<number, { width: number; height: number; scaleFactor: number }>();
@@ -8992,6 +8995,9 @@ export class NativeRendererSync {
         masks: nativeScreenMasks(s.masks),
         // A Map Sim projector view replaces the master crop for this Screen.
         mapSimProjectorId: s.mapSimProjectorId ? String(s.mapSimProjectorId) : null,
+        // A mirror dome draws the dome picture through its warp mesh; the
+        // mesh itself goes once, by its content id (set_mirror_mesh).
+        mirrorMeshId: s.mirrorMesh && s.mirrorMeshEnabled !== false ? String(s.mirrorMesh.id) : null,
         };
       });
     const sig = JSON.stringify(slices);
@@ -9010,10 +9016,18 @@ export class NativeRendererSync {
         + ` falling back to the rect crop for: ${oversized.map((s: any) => s.name || s.id).join(', ')}`,
       );
     }
-    void submitNativeRendererCommands([{ type: 'set_slice_outputs', slices }])
+    // Meshes the core has not been given yet go first, in the same batch.
+    const meshes = (out?.slices ?? [])
+      .map((s: any) => (s?.mirrorMesh && s.mirrorMeshEnabled !== false && open.has(s.id) ? s.mirrorMesh as MirrorMesh : null))
+      .filter((mesh: MirrorMesh | null): mesh is MirrorMesh => !!mesh && !this.sentMirrorMeshes.has(mesh.id));
+    for (const mesh of meshes) this.sentMirrorMeshes.add(mesh.id);
+    void submitNativeRendererCommands([...meshes.map(mirrorMeshCommand), { type: 'set_slice_outputs', slices }])
       .then(result => {
         if (this.lastSliceOutputsSig !== sig || !result) return;
-        const error = result.errors?.find(entry => entry.type === 'set_slice_outputs');
+        // A mesh the core turned down is sent again with the next change.
+        const meshError = result.errors?.find(entry => entry.type === 'set_mirror_mesh');
+        if (meshError) for (const mesh of meshes) this.sentMirrorMeshes.delete(mesh.id);
+        const error = result.errors?.find(entry => entry.type === 'set_slice_outputs') ?? meshError;
         screenOutputError.set(error?.message ?? null);
       })
       .catch(error => {
@@ -9748,6 +9762,7 @@ export class NativeRendererSync {
     this.lastCompositeEffectsSig = null;
     this.lastOutputStageSig = null;
     this.lastDomeViewSig = null;
+    this.sentMirrorMeshes.clear();
     this.lastSliceOutputsSig = null;
     if (this.sliceWindowPoll) {
       clearInterval(this.sliceWindowPoll);

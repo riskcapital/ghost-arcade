@@ -26,6 +26,8 @@
   import { screenActions, selectedScreenMaskId, screenMaskPlacing } from '../stores/screens';
   import { recordDiscreteAction, scheduleHistorySnapshot } from '../stores/historyHooks';
   import { isDesktopApp, getTextureShareLabel } from '$lib/bridge';
+  import { MirrorMeshError, parseMirrorMesh } from '../output/mirrorMesh';
+  import { settings } from '../stores/settings';
   import { projectionSimScene } from '../projectionSim/store';
 
   // Is the NDI native addon built + the NDI runtime initialized? Gates
@@ -80,6 +82,31 @@
   function update(partial: Partial<OutputSlice>) {
     screenActions.update(screen.id, partial);
     scheduleHistorySnapshot(`screen:${screen.id}:${Object.keys(partial).sort().join(',')}`);
+  }
+
+  // ─── Mirror dome ────────────────────────────────────────────────────
+  let mirrorMeshInput: HTMLInputElement | null = $state(null);
+  let mirrorMeshError = $state('');
+
+  async function importMirrorMesh(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    try {
+      const mesh = parseMirrorMesh(await file.arrayBuffer(), file.name);
+      mirrorMeshError = '';
+      screenActions.update(screen.id, { mirrorMesh: mesh, mirrorMeshEnabled: true });
+      recordDiscreteAction();
+    } catch (error) {
+      mirrorMeshError = error instanceof MirrorMeshError ? error.message : `Could not read ${file.name}.`;
+    }
+  }
+
+  function removeMirrorMesh() {
+    mirrorMeshError = '';
+    screenActions.update(screen.id, { mirrorMesh: null });
+    recordDiscreteAction();
   }
 
   function clampNumber(value: number, min: number, max: number) {
@@ -324,6 +351,44 @@
         <option value={0}>0°</option><option value={90}>90°</option><option value={180}>180°</option><option value={270}>270°</option>
       </select>
     </label>
+  </section>
+
+  <!-- Mirror dome ──────────────────────────────────────────────────
+       One projector bouncing off a spherical mirror onto the dome. A warp
+       mesh in Paul Bourke's format (from meshmapper or the dome's maker)
+       carries the whole optics; the core draws the dome picture through
+       it (draw_mirror_dome), in place of this Screen's slice. -->
+  <section class="sec">
+    <div class="section-row">
+      <h4>Mirror dome</h4>
+      <button class="section-action" onclick={() => mirrorMeshInput?.click()}>
+        {screen.mirrorMesh ? 'Replace mesh' : 'Import mesh'}
+      </button>
+    </div>
+    <input bind:this={mirrorMeshInput} type="file" accept=".data,.txt,.mesh,.map,.bin" hidden onchange={importMirrorMesh} />
+    {#if screen.mirrorMesh}
+      <label class="field check-field">
+        <input type="checkbox" checked={screen.mirrorMeshEnabled !== false}
+          onchange={(e) => { screenActions.update(screen.id, { mirrorMeshEnabled: (e.target as HTMLInputElement).checked }); recordDiscreteAction(); }} />
+        <span>Draw the dome through the mesh</span>
+      </label>
+      <p class="hint">
+        {screen.mirrorMesh.name}: {screen.mirrorMesh.cols} by {screen.mirrorMesh.rows} points,
+        {screen.mirrorMesh.drawnCells} cells drawn, made for a {screen.mirrorMesh.aspect.toFixed(2)}:1 projector.
+        {#if screen.mirrorMeshEnabled !== false}This Screen's slice, warp, blend and masks are not used while it is on.{/if}
+      </p>
+      {#if screen.mirrorMeshEnabled !== false && !$settings.output.domeEnabled}
+        <p class="hint">Turn on the dome output (Dome output, above) so the mesh gets a dome picture. Until then it shows the canvas.</p>
+      {/if}
+      <div class="preset-strip">
+        <button class="chip-btn" onclick={removeMirrorMesh}>Remove mesh</button>
+      </div>
+    {:else}
+      <p class="hint">For one projector and a spherical mirror. Import the warp mesh made for your projector, mirror and dome (Paul Bourke's mesh format, from meshmapper or the dome's maker), and this Screen shows the dome picture through it.</p>
+    {/if}
+    {#if mirrorMeshError}
+      <p class="hint mesh-error" role="alert">{mirrorMeshError}</p>
+    {/if}
   </section>
 
   <ProjectorCalibrationPanel {screen} {displays} outputOpen={openWindowIds.includes(screen.id)} />
@@ -701,6 +766,7 @@
     border-color: color-mix(in srgb, var(--ga-rec, #ff4438) 35%, transparent);
     color: var(--ga-rec, #ff8080);
   }
+  .mesh-error { color: var(--ga-danger, #ff7a7a); }
   .hint {
     margin: 4px 0 0 0;
     color: var(--ga-ink-2, #7a7481);

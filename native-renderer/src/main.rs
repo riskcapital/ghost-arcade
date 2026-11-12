@@ -2531,6 +2531,219 @@ fn validate_slice_outputs(params: &Value) -> Result<(), String> {
     Ok(())
 }
 
+/// A mirror dome warp mesh (Paul Bourke's format; see
+/// src/lib/output/mirrorMesh.ts), ready to draw: each vertex's place on the
+/// projector's image (x across -aspect..aspect, y -1..1), the fisheye
+/// (domemaster) point it shows (u, v, 0..1, v up) and its brightness, and
+/// two triangles for every grid cell whose four corners are in use.
+#[derive(Debug)]
+struct MirrorMesh {
+    id: String,
+    vertices: Vec<[f32; 5]>,
+    indices: Vec<u32>,
+}
+
+impl MirrorMesh {
+    fn from_command(command: &Value) -> Result<Self, String> {
+        let id = string_at(command, &["mesh_id"])
+            .filter(|id| !id.is_empty())
+            .ok_or("set_mirror_mesh needs a mesh_id")?;
+        let count = |key: &str| command.get(key).and_then(Value::as_u64).unwrap_or(0) as usize;
+        let (cols, rows) = (count("cols"), count("rows"));
+        if cols < 2 || rows < 2 || cols * rows > 512 * 512 {
+            return Err(format!("mirror mesh {id}: a {cols} by {rows} grid is not one this core draws"));
+        }
+        let nodes: Vec<f32> = command
+            .get("nodes")
+            .and_then(Value::as_array)
+            .map(|values| values.iter().map(|v| v.as_f64().unwrap_or(f64::NAN) as f32).collect())
+            .unwrap_or_default();
+        if nodes.len() < cols * rows * 5 {
+            return Err(format!("mirror mesh {id}: {} values for a {cols} by {rows} grid", nodes.len()));
+        }
+        let vertices: Vec<[f32; 5]> = (0..cols * rows)
+            .map(|k| [nodes[k * 5], nodes[k * 5 + 1], nodes[k * 5 + 2], nodes[k * 5 + 3], nodes[k * 5 + 4]])
+            .collect();
+        // A node is unused when it is not drawn (brightness below 0) or
+        // shows no point of the fisheye (u or v outside 0..1).
+        let used = |k: usize| {
+            let [x, y, u, v, i] = vertices[k];
+            [x, y, u, v, i].iter().all(|value| value.is_finite())
+                && i >= 0.0 && (0.0..=1.0).contains(&u) && (0.0..=1.0).contains(&v)
+        };
+        // A polar mesh (type 1) wraps its columns round.
+        let wrap = command.get("mesh_type").and_then(Value::as_u64) == Some(1);
+        let across = if wrap { cols } else { cols - 1 };
+        let mut indices = Vec::new();
+        for r in 0..rows - 1 {
+            for c in 0..across {
+                let c1 = (c + 1) % cols;
+                let corners = [r * cols + c, r * cols + c1, (r + 1) * cols + c1, (r + 1) * cols + c];
+                if corners.iter().all(|&k| used(k)) {
+                    let [a, b, e, d] = corners.map(|k| k as u32);
+                    indices.extend_from_slice(&[a, b, e, a, e, d]);
+                }
+            }
+        }
+        if indices.is_empty() {
+            return Err(format!("mirror mesh {id}: no cell of it is drawn"));
+        }
+        Ok(Self { id, vertices, indices })
+    }
+}
+
+/// The square domemaster a mirror dome Screen is drawn from: Paul Bourke
+/// suggests 2048 for HD projectors.
+const MIRROR_MASTER_SIZE: u32 = 2048;
+
+const MIRROR_MESH_WGSL: &str = r#"
+struct MirrorUniforms { aspect: vec4<f32> };
+@group(0) @binding(0) var dome_master: texture_2d<f32>;
+@group(0) @binding(1) var dome_sampler: sampler;
+@group(0) @binding(2) var<uniform> mu: MirrorUniforms;
+
+struct VsOut {
+  @builtin(position) position: vec4<f32>,
+  @location(0) uv: vec2<f32>,
+  @location(1) intensity: f32,
+};
+
+@vertex
+fn vs_mirror(@location(0) pos: vec2<f32>, @location(1) uv: vec2<f32>, @location(2) intensity: f32) -> VsOut {
+  var out: VsOut;
+  // The mesh spans -aspect..aspect across, -1..1 up: the projector's frame.
+  out.position = vec4<f32>(pos.x / max(mu.aspect.x, 0.01), pos.y, 0.0, 1.0);
+  out.uv = uv;
+  out.intensity = intensity;
+  return out;
+}
+
+@fragment
+fn fs_mirror(in: VsOut) -> @location(0) vec4<f32> {
+  // v is up; the texture's rows run down.
+  let color = textureSample(dome_master, dome_sampler, vec2<f32>(in.uv.x, 1.0 - in.uv.y)).rgb;
+  return vec4<f32>(color * clamp(in.intensity, 0.0, 1.0), 1.0);
+}
+"#;
+
+struct MirrorMeshGpu {
+    vertices: wgpu::Buffer,
+    indices: wgpu::Buffer,
+    count: u32,
+}
+
+struct MirrorRenderer {
+    pipeline: wgpu::RenderPipeline,
+    uniform: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
+    _master: wgpu::Texture,
+    master_view: wgpu::TextureView,
+    meshes: HashMap<String, MirrorMeshGpu>,
+}
+
+impl MirrorRenderer {
+    fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Mirror dome mesh"),
+            source: wgpu::ShaderSource::Wgsl(MIRROR_MESH_WGSL.into()),
+        });
+        let master = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Mirror dome master"),
+            size: wgpu::Extent3d { width: MIRROR_MASTER_SIZE, height: MIRROR_MASTER_SIZE, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let master_view = master.create_view(&Default::default());
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Mirror dome master"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Mirror dome mesh uniforms"),
+            size: 16,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Mirror dome mesh"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Mirror dome mesh"),
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&master_view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
+                wgpu::BindGroupEntry { binding: 2, resource: uniform.as_entire_binding() },
+            ],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Mirror dome mesh"),
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Mirror dome mesh"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_mirror"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: 20,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32],
+                })],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_mirror"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL })],
+            }),
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        Self { pipeline, uniform, bind_group, _master: master, master_view, meshes: HashMap::new() }
+    }
+}
+
 /// Editor-side description of a slice output: where it presents and how the
 /// master composition maps onto it.
 #[derive(Clone)]
@@ -2542,6 +2755,11 @@ struct SliceOutputSpec {
     /// Map Sim projector whose view this slice shows instead of a crop of
     /// the master.
     projector_view: Option<String>,
+    /// A mirror dome: the Screen shows the dome picture through this warp
+    /// mesh instead of a crop of the master (`draw_mirror_dome`). The id
+    /// stays when the mesh has not arrived yet, so it attaches when it does.
+    mirror_mesh_id: Option<String>,
+    mirror_mesh: Option<Arc<MirrorMesh>>,
 }
 
 /// Which layers the recording target renders.
@@ -4619,6 +4837,9 @@ struct RenderState {
     /// the program's master like a Screen, and handed to the editor
     /// preview in place of the program output while it is on.
     dome_view_target: Option<DeckMonitorTarget>,
+    /// Mirror dome Screens: the dome picture as a square domemaster, the
+    /// pass that draws it through a warp mesh, and the meshes' buffers.
+    mirror: Option<MirrorRenderer>,
     /// Per-slice display targets, keyed by the editor's slice id.
     slice_targets: HashMap<String, SliceOutputTarget>,
     /// Linux Screen presenters, keyed by slice id. Kept apart from
@@ -4894,6 +5115,8 @@ struct App {
     deck_monitor_width: u32,
     /// The editor's Inside view camera (`OutputStage::dview`), while it is on.
     dome_view: Option<[f32; 4]>,
+    /// Mirror dome warp meshes by content id (`set_mirror_mesh`).
+    mirror_meshes: HashMap<String, Arc<MirrorMesh>>,
     output_window_attached: bool,
     /// The composite size set by the project (set_output). While a
     /// fullscreen output window shows it, the window's own size no longer
@@ -5399,6 +5622,7 @@ impl App {
             deck_monitors_lit: false,
             deck_monitor_width: 480,
             dome_view: None,
+            mirror_meshes: HashMap::new(),
             output_window_attached: false,
             output_size_configured: false,
             output_window_fullscreen: false,
@@ -7556,7 +7780,9 @@ impl App {
                 let projector_view = string_at(entry, &["mapSimProjectorId"])
                     .filter(|projector| !projector.trim().is_empty());
                 let stage = if projector_view.is_some() { projector_view_output_stage(stage) } else { stage };
-                specs.push(SliceOutputSpec { id, width, height, stage, projector_view });
+                let mirror_mesh_id = string_at(entry, &["mirrorMeshId"]).filter(|id| !id.is_empty());
+                let mirror_mesh = mirror_mesh_id.as_ref().and_then(|id| self.mirror_meshes.get(id).cloned());
+                specs.push(SliceOutputSpec { id, width, height, stage, projector_view, mirror_mesh_id, mirror_mesh });
             }
         }
         let ids: Vec<String> = specs.iter().map(|spec| spec.id.clone()).collect();
@@ -7872,6 +8098,13 @@ impl App {
                 }
                 "set_output_stage" => {
                     let _ = self.apply_output_stage(command);
+                }
+                "set_mirror_mesh" => {
+                    if let Err(error) = self.apply_mirror_mesh(command) {
+                        if errors.len() < 16 { errors.push(json!({ "type": command_type, "message": error })); }
+                        dropped = dropped.saturating_add(1);
+                        continue;
+                    }
                 }
                 "set_slice_outputs" => {
                     if let Err(error) = self.apply_slice_outputs(command) {
@@ -13751,14 +13984,14 @@ impl App {
         // `slice_id` reads one screen's output (its crop, warp, grade, blend
         // and masks) through the same presenter pass a slice display uses,
         // instead of the editor preview's master stage.
-        let output_stage = match string_at(params, &["slice_id"]) {
+        let (output_stage, mirror_mesh) = match string_at(params, &["slice_id"]) {
             Some(slice_id) => self
                 .slice_outputs
                 .iter()
                 .find(|spec| spec.id == slice_id)
-                .map(|spec| spec.stage)
+                .map(|spec| (spec.stage, spec.mirror_mesh.clone()))
                 .ok_or_else(|| format!("unknown screen output: {slice_id}"))?,
-            None => self.preview_output_stage(),
+            None => (self.preview_output_stage(), None),
         };
         let Some(renderer) = self.renderer.as_mut() else {
             return Err("native renderer has not created a wgpu device".to_string());
@@ -13782,6 +14015,7 @@ impl App {
             &self.pending_composite_graph_jobs,
             self.pending_composite_output_index,
             output_stage,
+            mirror_mesh,
         ) {
             renderer.last_frame_error = Some(err.clone());
             return Err(err);
@@ -15988,6 +16222,24 @@ impl App {
             .entry(layer_id.clone())
             .or_insert_with(|| SceneLayer::new(layer_id, 0));
         entry.tint = [rgba[0].clamp(0.0, 1.0), rgba[1].clamp(0.0, 1.0), rgba[2].clamp(0.0, 1.0), 1.0];
+    }
+
+    /// Keeps a mirror dome warp mesh and attaches it to the Screens that
+    /// name it. Meshes are few and kept by content, so a re-sent one is
+    /// the same mesh.
+    fn apply_mirror_mesh(&mut self, command: &Value) -> Result<(), String> {
+        let mesh = Arc::new(MirrorMesh::from_command(command)?);
+        for spec in &mut self.slice_outputs {
+            if spec.mirror_mesh_id.as_deref() == Some(mesh.id.as_str()) {
+                spec.mirror_mesh = Some(Arc::clone(&mesh));
+            }
+        }
+        if self.mirror_meshes.len() >= 16 {
+            let named: Vec<String> = self.slice_outputs.iter().filter_map(|spec| spec.mirror_mesh_id.clone()).collect();
+            self.mirror_meshes.retain(|id, _| named.contains(id));
+        }
+        self.mirror_meshes.insert(mesh.id.clone(), mesh);
+        Ok(())
     }
 
     /// The editor's view from inside the dome: on or off, where it looks
@@ -21966,6 +22218,7 @@ impl RenderState {
             native_recorder_error: None,
             deck_monitor_targets: None,
             dome_view_target: None,
+            mirror: None,
             slice_targets: HashMap::new(),
             #[cfg(not(any(target_os = "macos", target_os = "windows")))]
             linux_slice_windows: HashMap::new(),
@@ -22880,7 +23133,10 @@ impl RenderState {
             // So must every Screen of a dome with layers placed on it: they are
             // laid over the dome by the output stage.
             let direct = allow_direct && needs_detail && self.output_flux[0][3] <= 0.0005
-                && self.dome_layer_pass[0] < 0.5;
+                && self.dome_layer_pass[0] < 0.5 && spec.mirror_mesh.is_none();
+            if let Some(mesh) = spec.mirror_mesh.as_ref() {
+                self.prepare_mirror_mesh(mesh);
+            }
             if direct {
                 self.write_frame_inputs(command_phase, layers.len() as u32, time_seconds, frame_count,
                     layers, None, audio0, audio1, audio2, output_gate, post_effects, spec.stage);
@@ -22896,7 +23152,11 @@ impl RenderState {
                 let Some(target) = self.slice_targets.get(&spec.id) else {
                     continue;
                 };
-                if direct {
+                if let Some(mesh) = spec.mirror_mesh.as_ref() {
+                    self.draw_mirror_dome(&mut encoder, &target.render_view, spec.width, spec.height,
+                        output_gate, OutputStage { dlayer: self.dome_layer_pass, ..spec.stage },
+                        time_seconds.unwrap_or(0.0), &mesh.id);
+                } else if direct {
                     self.draw_fullscreen_to_view(&mut encoder, &target.render_view, "Full-detail slice", None);
                 } else {
                 self.output_presenter.draw(&self.queue, &mut encoder, &target.render_view,
@@ -23309,6 +23569,89 @@ impl RenderState {
     /// Shared-texture metadata for both deck monitors — same shape the
     /// output export uses so the electron presenter pump can reuse its
     /// import path.
+    /// Gets a mirror mesh's buffers (and the mirror pass itself) ready to
+    /// draw. Before the encoder, so drawing needs no mutable borrow.
+    fn prepare_mirror_mesh(&mut self, mesh: &MirrorMesh) {
+        if self.mirror.is_none() {
+            self.mirror = Some(MirrorRenderer::new(&self.device, self.config.format));
+        }
+        let Some(mirror) = self.mirror.as_mut() else { return };
+        if !mirror.meshes.contains_key(&mesh.id) {
+            if mirror.meshes.len() >= 8 {
+                mirror.meshes.clear();
+            }
+            let vertices = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Mirror mesh vertices"),
+                contents: bytemuck::cast_slice(&mesh.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+            let indices = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Mirror mesh indices"),
+                contents: bytemuck::cast_slice(&mesh.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+            mirror.meshes.insert(mesh.id.clone(), MirrorMeshGpu { vertices, indices, count: mesh.indices.len() as u32 });
+        }
+    }
+
+    /// A mirror dome Screen: the dome picture is drawn as a square
+    /// domemaster (the output stage with the Screen's dome, grade and dome
+    /// layers, but none of its flat crop, warp, blend or masks), then
+    /// through the warp mesh as geometry, each vertex taking its fisheye
+    /// point and brightness, as Paul Bourke's players do.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_mirror_dome(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+        output_gate: f32,
+        stage: OutputStage,
+        time: f32,
+        mesh_id: &str,
+    ) {
+        let Some(mirror) = self.mirror.as_ref() else { return };
+        let Some(mesh) = mirror.meshes.get(mesh_id) else { return };
+        let master_stage = OutputStage {
+            out0: [0.0, 0.0, 1.0, 1.0],
+            out1: [0.0, stage.out1[1], stage.out1[2], stage.out1[3]],
+            edge: [0.0; 4],
+            dome1: [stage.dome1[0], 0.0, 0.0, stage.dome1[3]],
+            dome2: [stage.dome2[0], 2.2, 0.0, 0.0],
+            ..OutputStage {
+                dome0: stage.dome0,
+                dome1: stage.dome1,
+                dome3: stage.dome3,
+                dome4: stage.dome4,
+                dlayer: stage.dlayer,
+                ..OutputStage::default()
+            }
+        };
+        self.output_presenter.draw(&self.queue, encoder, &mirror.master_view, self.creative_frame_index,
+            MIRROR_MASTER_SIZE, MIRROR_MASTER_SIZE, output_gate, master_stage, time);
+        let aspect = width.max(1) as f32 / height.max(1) as f32;
+        self.queue.write_buffer(&mirror.uniform, 0, bytemuck::cast_slice(&[aspect, 0.0f32, 0.0, 0.0]));
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Mirror dome mesh"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                resolve_target: None,
+                ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&mirror.pipeline);
+        pass.set_bind_group(0, &mirror.bind_group, &[]);
+        pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+        pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+        pass.draw_indexed(0..mesh.count, 0, 0..1);
+    }
+
     /// The Inside view's texture, described like the program output's
     /// (output_export_metadata) so the editor preview can show either.
     fn dome_view_metadata(&self) -> Value {
@@ -27075,7 +27418,11 @@ impl RenderState {
         composite_graph_jobs: &[NativeGraphFrameJob],
         composite_output_index: usize,
         stage: OutputStage,
+        mirror_mesh: Option<Arc<MirrorMesh>>,
     ) -> Result<(), String> {
+        if let Some(mesh) = mirror_mesh.as_ref() {
+            self.prepare_mirror_mesh(mesh);
+        }
         self.refresh_source_frame_bind_groups();
         self.sync_dome_layers(&stage, scene_layers);
         let stage = OutputStage { dlayer: self.dome_layer_pass, ..stage };
@@ -27136,9 +27483,14 @@ impl RenderState {
         );
         self.draw_dome_layers(&mut encoder);
         }
-        self.output_presenter.draw(&self.queue, &mut encoder, &self.snapshot_view,
-            self.creative_frame_index, self.config.width, self.config.height,
-            output_gate, stage, time_seconds.unwrap_or(0.0));
+        if let Some(mesh) = mirror_mesh.as_ref() {
+            self.draw_mirror_dome(&mut encoder, &self.snapshot_view, self.config.width, self.config.height,
+                output_gate, stage, time_seconds.unwrap_or(0.0), &mesh.id);
+        } else {
+            self.output_presenter.draw(&self.queue, &mut encoder, &self.snapshot_view,
+                self.creative_frame_index, self.config.width, self.config.height,
+                output_gate, stage, time_seconds.unwrap_or(0.0));
+        }
         if should_record_timing {
             if let Some(gpu_timing) = self.gpu_timing.as_ref() {
                 gpu_timing.resolve_to_readback(&mut encoder);
@@ -35839,6 +36191,32 @@ mod tests {
                     .unwrap_or_else(|error| panic!("{name} {mode:?} validation: {error:?}"));
             }
         }
+    }
+
+    #[test]
+    fn mirror_mesh_draws_only_the_cells_it_uses() {
+        // 3 by 2 nodes, the top-right one unused: of the two cells only the left one draws.
+        let nodes: Vec<f64> = vec![
+            -1.0, -1.0, 0.0, 0.0, 1.0,   0.0, -1.0, 0.5, 0.0, 1.0,   1.0, -1.0, 1.0, 0.0, 1.0,
+            -1.0, 1.0, 0.0, 1.0, 1.0,    0.0, 1.0, 0.5, 1.0, 0.8,    1.0, 1.0, 1.0, 1.0, -1.0,
+        ];
+        let mesh = MirrorMesh::from_command(&json!({ "mesh_id": "m", "cols": 3, "rows": 2, "nodes": nodes })).unwrap();
+        assert_eq!(mesh.vertices.len(), 6);
+        assert_eq!(mesh.indices, vec![0, 1, 4, 0, 4, 3]);
+        // A polar mesh wraps its last column round to the first.
+        let polar = MirrorMesh::from_command(&json!({ "mesh_id": "p", "mesh_type": 1, "cols": 3, "rows": 2,
+            "nodes": nodes.iter().enumerate().map(|(k, v)| if k == 29 { 1.0 } else { *v }).collect::<Vec<_>>() })).unwrap();
+        assert_eq!(polar.indices.len(), 18);
+        assert!(MirrorMesh::from_command(&json!({ "mesh_id": "x", "cols": 3, "rows": 2, "nodes": [0.0] })).is_err());
+    }
+
+    #[test]
+    fn mirror_mesh_shader_validates() {
+        let module = naga::front::wgsl::parse_str(MIRROR_MESH_WGSL)
+            .unwrap_or_else(|error| panic!("mirror mesh parse: {}", error.emit_to_string(MIRROR_MESH_WGSL)));
+        naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty())
+            .validate(&module)
+            .unwrap_or_else(|error| panic!("mirror mesh validation: {error:?}"));
     }
 
     #[test]

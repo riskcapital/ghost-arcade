@@ -359,6 +359,7 @@ export type RendererCommand =
   | { type: 'set_layer_tint'; layer_id: string; rgba: [number, number, number, number] }
   | { type: 'set_layer_dome'; layer_id: string; enabled: boolean; azimuth: number; elevation: number; size: number; roll: number }
   | { type: 'set_dome_view'; enabled: boolean; azimuth: number; elevation: number; fov: number }
+  | { type: 'set_mirror_mesh'; mesh_id: string; mesh_type: 1 | 2; cols: number; rows: number; nodes: number[] }
   /** Anchor the core's beat clock: `beat` is the launch-clock position now. */
   | { type: 'set_beat_clock'; beat: number; bpm: number; time?: number }
   | { type: 'set_layer_source_color'; layer_id: string; rgb: [number, number, number] }

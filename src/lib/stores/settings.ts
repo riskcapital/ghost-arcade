@@ -8,6 +8,7 @@ import { writable, get } from 'svelte/store';
 import { invoke, isDesktopApp } from '$lib/bridge';
 import type { WarpCorners, MeshWarpGrid, Effect, Point2D, BezierPoint } from '../types';
 import { meshGridHasTangents } from '../utils/meshWarp';
+import type { MirrorMesh } from '../output/mirrorMesh';
 
 // ============================================================================
 // COLOR SCHEME DEFINITIONS
@@ -420,6 +421,13 @@ export interface OutputSlice {
    *  mapped onto it) instead of a slice of the master. Rendered by the
    *  native core on physical-display outputs. */
   mapSimProjectorId?: string | null;
+  /** A mirror dome: this Screen shows the dome picture through a warp mesh
+   *  (Paul Bourke's format, output/mirrorMesh.ts) instead of a slice of the
+   *  master, for one projector bouncing off a spherical mirror. Kept with
+   *  the project, so the mesh travels with the show. */
+  mirrorMesh?: MirrorMesh | null;
+  /** Use the mesh (false keeps it loaded but shows the slice as usual). */
+  mirrorMeshEnabled?: boolean;
 }
 
 /** One polygon mask on a Screen. See OutputSlice.masks for the
@@ -674,7 +682,16 @@ export function migrateOutputSlice(s: Partial<OutputSlice> & { id: string }): Ou
     outputWarp: s.outputWarp ?? { enabled: false, mode: 'corners' },
     masks: migrateScreenMasks(s.masks),
     mapSimProjectorId: typeof s.mapSimProjectorId === 'string' && s.mapSimProjectorId ? s.mapSimProjectorId : null,
+    mirrorMesh: isStoredMirrorMesh(s.mirrorMesh) ? s.mirrorMesh : null,
+    mirrorMeshEnabled: s.mirrorMeshEnabled !== false,
   };
+}
+
+/** A saved mirror mesh worth keeping: the fields the core needs, consistent. */
+function isStoredMirrorMesh(mesh: any): mesh is MirrorMesh {
+  return !!mesh && typeof mesh === 'object' && typeof mesh.id === 'string'
+    && Number.isInteger(mesh.cols) && Number.isInteger(mesh.rows)
+    && Array.isArray(mesh.nodes) && mesh.nodes.length === mesh.cols * mesh.rows * 5;
 }
 
 export interface OutputSettings {
