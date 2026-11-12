@@ -61,7 +61,7 @@ import { DUB_SHOT_COUNT } from './dubShots';
 import { KEY_MODES } from './keyMode';
 import { BUILD_LENGTHS, BUILD_STYLES } from './buildDrop';
 import { RETURN_IDS } from './sendReturns';
-import { CHANNEL_LABELS, stripFor } from './mixer';
+import { CHANNEL_LABELS, INPUT_CHANNELS, stripFor, type ChannelId } from './mixer';
 import { INSTRUMENTS } from './noteEvents';
 import { LOOP_ROLES, type LoopRole } from './loops';
 import { DRUM_KITS } from './tone/kits';
@@ -342,10 +342,10 @@ const TONE_CONTROLS: StudioControl[] = [
 // A dub shot fires on the press with its velocity; letting go ends a Hold echo.
 const DUB_SHOT_CONTROLS: StudioControl[] = range(DUB_SHOT_COUNT).map((i) => ({
   id: `dubshot.${i + 1}`, label: `Dub shot ${i + 1}`, group: 'Dub shots', kind: 'hold',
+  // A release always lets go (the studio may have closed while it was held).
   run: (v) => {
-    if (!studioOpen()) return;
-    if (v > 0) fireDubShot(i, hit(v));
-    else releaseDubShot(i);
+    if (v === 0) releaseDubShot(i);
+    else if (studioOpen()) fireDubShot(i, hit(v));
   },
 }));
 
@@ -420,22 +420,26 @@ const BUILD_CONTROLS: StudioControl[] = [
 ];
 
 // The mixer: every instrument's level, pan, mute, solo and sends, the returns and the master.
+/** A desk channel's controls: its level (set by `level`), pan, mute, solo, trim and sends. */
+function channelControls(id: ChannelId, name: string, level: (v: number) => void): StudioControl[] {
+  const strip = () => stripFor(get(musicStudio).mixer, id);
+  return [
+    { id: `mix.${id}.volume`, label: `${name} level`, group: 'Mixer', kind: 'value', run: level },
+    { id: `mix.${id}.pan`, label: `${name} pan`, group: 'Mixer', kind: 'value', run: (v) => musicStudio.setStrip(id, { pan: v * 2 - 1 }) },
+    { id: `mix.${id}.mute`, label: `${name} mute`, group: 'Mixer', kind: 'toggle', run: () => musicStudio.setStrip(id, { mute: !strip().mute }) },
+    { id: `mix.${id}.solo`, label: `${name} solo`, group: 'Mixer', kind: 'toggle', run: () => musicStudio.setStrip(id, { solo: !strip().solo }) },
+    { id: `mix.${id}.trim`, label: `${name} trim`, group: 'Mixer', kind: 'value', run: (v) => musicStudio.setStrip(id, { trim: Math.round((v * 24 - 12) * 2) / 2 }) },
+    ...RETURN_IDS.map((r): StudioControl => ({
+      id: `mix.${id}.send.${r}`, label: `${name} to the ${r}`, group: 'Mixer', kind: 'value',
+      run: (v) => musicStudio.setStrip(id, { sends: { reverb: 0, echo: 0, spring: 0, ...strip().sends, [r]: v } }),
+    })),
+  ];
+}
+
 const MIX_CONTROLS: StudioControl[] = [
-  ...INSTRUMENTS.flatMap((id): StudioControl[] => {
-    const name = CHANNEL_LABELS[id];
-    const strip = () => stripFor(get(musicStudio).mixer, id);
-    return [
-      { id: `mix.${id}.volume`, label: `${name} level`, group: 'Mixer', kind: 'value', run: (v) => musicStudio.setVolume(id, v) },
-      { id: `mix.${id}.pan`, label: `${name} pan`, group: 'Mixer', kind: 'value', run: (v) => musicStudio.setStrip(id, { pan: v * 2 - 1 }) },
-      { id: `mix.${id}.mute`, label: `${name} mute`, group: 'Mixer', kind: 'toggle', run: () => musicStudio.setStrip(id, { mute: !strip().mute }) },
-      { id: `mix.${id}.solo`, label: `${name} solo`, group: 'Mixer', kind: 'toggle', run: () => musicStudio.setStrip(id, { solo: !strip().solo }) },
-      { id: `mix.${id}.trim`, label: `${name} trim`, group: 'Mixer', kind: 'value', run: (v) => musicStudio.setStrip(id, { trim: Math.round((v * 24 - 12) * 2) / 2 }) },
-      ...RETURN_IDS.map((r): StudioControl => ({
-        id: `mix.${id}.send.${r}`, label: `${name} to the ${r}`, group: 'Mixer', kind: 'value',
-        run: (v) => musicStudio.setStrip(id, { sends: { reverb: 0, echo: 0, spring: 0, ...strip().sends, [r]: v } }),
-      })),
-    ];
-  }),
+  ...INSTRUMENTS.flatMap((id) => channelControls(id, CHANNEL_LABELS[id], (v) => musicStudio.setVolume(id, v))),
+  // The band inputs' strips on the desk: their level is the input's own.
+  ...INPUT_CHANNELS.flatMap((id, i) => channelControls(id, `Band input ${i + 1}`, (v) => queueInput(i, { volume: v }))),
   ...RETURN_IDS.map((r): StudioControl => ({ id: `mix.return.${r}`, label: `${r[0].toUpperCase()}${r.slice(1)} return level`, group: 'Mixer', kind: 'value', run: (v) => musicStudio.setReturn(r, v) })),
   { id: 'mix.master', label: 'Master level', group: 'Mixer', kind: 'value', run: (v) => musicStudio.setMasterVolume(v) },
 ];

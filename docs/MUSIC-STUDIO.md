@@ -262,10 +262,16 @@ a song by its grip, or Alt+↑/↓ on the grip, to move it; the song that is up
 keeps its place. Calling
 a song up, from the list, the set list, the song strip in the Studio header,
 or MIDI, happens on the next bar; pressing again brings it up at once. While
-Ableton Link has peers the tempo is left to Link. Next, previous, Go and MIDI
-make no undo step; a song called up by hand from the list is one step for
-what it changed on the map (a stage preset, the looks on a mapping layer).
-Kill and closing the studio drop a song waiting for the bar.
+Ableton Link has peers, or while the tempo follows the band, the tempo is
+left alone (and a song saved while following the band leaves it too); a tap
+still waiting for its beat does not undo a song's tempo. A song's scene
+starts what plays, but the song's own sound and looks stay. A session
+clip's effects belong to the clip and stay as they are, and a song saved by
+an earlier version leaves alone the settings it did not have. Next,
+previous, Go and MIDI make no undo step; a song called up by hand from the
+list is one step for what it changed on the map (a stage preset, the looks
+on a mapping layer). Kill and closing the studio drop a song waiting for
+the bar.
 
 ### Ableton Live in control (`liveControl.ts`, `liveFeed.ts`, `components/music/LiveSessionGrid.svelte`)
 

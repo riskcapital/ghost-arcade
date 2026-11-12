@@ -46,10 +46,10 @@ describe('songs', () => {
     // The mixer comes with the band for its band input strips (the store takes only those).
     expect(Object.keys(out).sort()).toEqual(['bandFx', 'liveInputs', 'mixer']);
     out.bandFx!.echoSend = 1;
-    expect(s.setup.bandFx.echoSend).toBe(0);
+    expect(s.setup.bandFx?.echoSend).toBe(0);
   });
 
-  it('reads a saved song back, filling in what is missing', () => {
+  it('reads a saved song back, checking what it kept and leaving out what it did not', () => {
     const read = normalizeSong(
       { id: 'song-1', name: '  Opener ', bpm: 1000, setup: { set: 'dub', bandFx: { duckDepth: 3 } }, visuals: { vjColumn: 2, voices: [{ file: 'VX-Scope.fs', source: 'bass' }, { file: '../evil.fs' }] }, recall: { band: false } },
       normalizeSongSetup,
@@ -58,8 +58,13 @@ describe('songs', () => {
     expect(read!.name).toBe('Opener');
     expect(read!.bpm).toBe(300);
     expect(read!.setup.set).toBe('dub');
-    expect(read!.setup.bandFx.duckDepth).toBe(1);
-    expect(read!.setup.liveInputs).toHaveLength(1);
+    // A part it kept is filled in and checked.
+    expect(read!.setup.bandFx?.duckDepth).toBe(1);
+    expect(read!.setup.bandFx?.echoTime).toBe('3/16');
+    // A part it did not keep (saved by an earlier version) stays out, so calling it up leaves that part alone.
+    expect(read!.setup.liveInputs).toBeUndefined();
+    expect('inserts' in read!.setup).toBe(false);
+    expect(Object.keys(recalledSetup({ setup: read!.setup, recall: { sound: true, band: true, visuals: true } })).sort()).toEqual(['bandFx', 'set']);
     expect(read!.visuals.vjColumn).toBe(2);
     expect(read!.visuals.voices?.map((v) => v.file)).toEqual(['VX-Scope.fs']);
     expect(read!.recall).toEqual({ sound: true, band: false, visuals: true });

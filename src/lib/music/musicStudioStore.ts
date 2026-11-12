@@ -33,6 +33,7 @@ import {
   type RecordLength,
 } from './loopRecorder';
 import {
+  CLIP_FX_PREFIX,
   MAX_SESSION_ROWS,
   clipFromRecording,
   defaultSession,
@@ -121,6 +122,7 @@ import {
   type Setlist,
   type Song,
   type SongSetup,
+  type SongSetupKey,
 } from './songs';
 
 export const MUSIC_STUDIO_SCHEMA = 1;
@@ -427,8 +429,18 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
 }
 
 /** A song's setup, read the way the studio reads its own state. */
-export function normalizeSongSetup(raw: unknown): SongSetup {
-  return pickSetup(normalizeProjectState(raw && typeof raw === 'object' ? { ...(raw as object), songs: [], setlists: [] } : null));
+/**
+ * A song's (or a scene's) setup, read the way the studio reads its own
+ * state. Only the parts it kept come back: one saved before the studio had
+ * a setting leaves that setting alone when it is called up, rather than
+ * resetting it.
+ */
+export function normalizeSongSetup(raw: unknown): Partial<SongSetup> {
+  if (!raw || typeof raw !== 'object') return {};
+  const full = pickSetup(normalizeProjectState({ ...(raw as object), songs: [], setlists: [] }));
+  const out: Partial<Record<SongSetupKey, unknown>> = {};
+  for (const key of SONG_SETUP_KEYS) if (key in raw && (raw as Record<string, unknown>)[key] !== undefined) out[key] = full[key];
+  return out as Partial<SongSetup>;
 }
 
 /** The sound part of a setup, as a scene keeps it. */
@@ -754,6 +766,13 @@ function createMusicStudioStore() {
         if (setup.liveInputs) {
           const saved = setup.liveInputs;
           next.liveInputs = s.liveInputs.map((current, i) => (saved[i] ? normalizeLiveInput({ ...saved[i], name: current.name, channel: current.channel }) : current));
+        }
+        if (setup.inserts) {
+          // A session clip's own effects belong to the clip, not the setup: they stay as they are.
+          const inserts: typeof s.inserts = {};
+          for (const [key, chain] of Object.entries(s.inserts)) if (key.startsWith(CLIP_FX_PREFIX)) inserts[key] = chain;
+          for (const [key, chain] of Object.entries(setup.inserts)) if (!key.startsWith(CLIP_FX_PREFIX)) inserts[key] = chain;
+          next.inserts = inserts;
         }
         return next;
       }),

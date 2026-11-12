@@ -26,6 +26,12 @@ function setTempoOnBeat(bpm: number): void {
   }, msToNextBeat(beat, beatMs));
 }
 
+/** Drop a tempo waiting for the next beat (a song setting its own tempo comes after it). */
+export function cancelPendingTempo(): void {
+  if (pending) clearTimeout(pending);
+  pending = null;
+}
+
 export function tapStudioTempo(nowMs = performance.now()): void {
   taps = addTap(taps, nowMs);
   const bpm = tapBpm(taps);

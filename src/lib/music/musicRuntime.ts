@@ -99,6 +99,7 @@ import { DROP_FX_PREFIX, dropFxEffects, dropFxEnvelope } from './dropFx';
 import { contribution, newFollow, stepCable, sumInput, type CableFollow } from './controlSignals';
 import { setStudioVoiceMods } from './studioPlugin';
 import { runAsLiveControl } from '../stores/historyHooks';
+import { noteAutomatedRecall } from '../stores/layers';
 import { getDefaultEffectParams } from '../renderer/effects';
 import type { Effect } from '../types';
 import { captureSetup, type SongSetup } from './songs';
@@ -282,6 +283,9 @@ export function stopAll(): void {
   const loops = Object.values(s.playingLoops).filter((id): id is string => !!id);
   if (sequencer || loops.length) resumable = { beat: !!sequencer, loops };
   cancelQueuedScene();
+  // A build has nothing to land on once the music stops; the clips' effects and looks go with them.
+  cancelBuild();
+  undressAll();
   stopAllLoops();
   if (sequencer) stopSequencer();
   releaseChords();
@@ -312,7 +316,7 @@ export function studioAudio(): MusicAudioEngine {
 
 export function killAll(): void {
   stopDropFx();
-  for (const track of [...clipDressing.keys()]) undressTrack(track);
+  undressAll();
   cancelBuild();
   stopPreview();
   stopAll();
@@ -343,6 +347,8 @@ export function onKill(listener: () => void): () => void {
 /** A song that brings up another set starts fresh: what was playing stops and nothing is left held. */
 export function freshStart(): void {
   cancelQueuedScene();
+  cancelBuild();
+  undressAll();
   stopAllLoops();
   if (sequencer) stopSequencer();
   releaseChords();
@@ -745,7 +751,11 @@ export function captureCurrentScene(name?: string): string {
  * keep in time with, so it starts at once. Launching the queued scene again
  * starts it at once too, as does `atOnce` (a song already on the bar).
  */
-export function launchScene(id: string, atOnce = false): void {
+/**
+ * `keepSetup`: only what plays changes, not the sound or the looks (a song
+ * launching its scene has already put back its own).
+ */
+export function launchScene(id: string, atOnce = false, opts: { keepSetup?: boolean } = {}): void {
   ensureMusicRuntime();
   const s = get(musicStudio);
   if (!s.scenes.some((sc) => sc.id === id)) return;
@@ -754,28 +764,33 @@ export function launchScene(id: string, atOnce = false): void {
   if (sceneTimer) clearTimeout(sceneTimer);
   sceneTimer = null;
   if (idle || atOnce || s.queuedSceneId === id) {
-    applyScene(id);
+    applyScene(id, opts);
     return;
   }
   musicStudio.setTransport({ queuedSceneId: id });
   const wait = Math.max(0, nextLaunchBoundary(SCENE_GRID_BEATS) - performance.now());
   sceneTimer = setTimeout(() => {
     sceneTimer = null;
-    applyScene(id);
+    applyScene(id, opts);
   }, wait);
 }
 
-function applyScene(id: string): void {
+function applyScene(id: string, opts: { keepSetup?: boolean } = {}): void {
   const s = get(musicStudio);
   const scene = s.scenes.find((sc) => sc.id === id);
   musicStudio.setTransport({ queuedSceneId: null });
   if (!scene) return;
   // Its sound first (a set change keeps the music going), then its visuals, then what plays.
-  if (scene.sound) musicStudio.applySetup(scene.sound as Partial<SongSetup>, { sound: true, band: false });
-  if (scene.voices && studioTargetNow()) {
-    const voices = normalizeStudioSource({ musicVoices: scene.voices }).musicVoices;
-    editStudio((src) => ({ ...src, musicVoices: voices }));
-  }
+  // Launching a scene is playing the show: none of it is an edit or an undo step.
+  const sound = !opts.keepSetup && scene.sound;
+  runAsLiveControl(() => {
+    if (sound) musicStudio.applySetup(sound as Partial<SongSetup>, { sound: true, band: false });
+    if (!opts.keepSetup && scene.voices && studioTargetNow()) {
+      const voices = normalizeStudioSource({ musicVoices: scene.voices }).musicVoices;
+      editStudio((src) => ({ ...src, musicVoices: voices }));
+    }
+  });
+  if (sound) noteAutomatedRecall(['studioSound']);
   const takeIds = new Set(s.takes.map((t) => t.id));
   for (const action of sceneLaunchActions(scene, playingNow(), takeIds)) {
     if (action.kind === 'pattern') musicStudio.setPattern(action.pattern);
@@ -902,12 +917,18 @@ function clipChannel(track: TrackId, clip: SessionClip): string {
 function fadeClipVoice(clipId: string, to: number, then?: () => void): void {
   const steps = 6;
   for (let i = 1; i <= steps; i++) {
-    setTimeout(() => {
+    // A clip's look coming and going is playing the show: no edit, no undo step.
+    setTimeout(() => runAsLiveControl(() => {
       if (!studioTargetNow()) return;
       editStudio((src) => ({ ...src, musicVoices: src.musicVoices.map((v) => (v.clip === clipId ? { ...v, level: to * (i / steps) + (1 - i / steps) * (to === 0 ? v.level : 0) } : v)) }));
       if (i === steps) then?.();
-    }, (i * 480) / steps);
+    }), (i * 480) / steps);
   }
+}
+
+/** Every playing clip's effects and look let go. */
+function undressAll(): void {
+  for (const track of [...clipDressing.keys()]) undressTrack(track);
 }
 
 function undressTrack(track: TrackId): void {
@@ -938,7 +959,7 @@ function dressTrack(track: TrackId, clip: SessionClip, atMs: number): void {
     const v = clip.visual;
     const target = studioTargetNow();
     if (v && target && !target.source.musicVoices.some((x) => x.clip === clip.id) && target.source.musicVoices.length < MAX_STUDIO_VOICES) {
-      editStudio((src) => ({ ...src, musicVoices: [...src.musicVoices, { file: v.file, source: v.source as VoiceSourceId, auto: true, level: 0, blend: v.blend as StudioVoice['blend'], params: {}, clip: clip.id }] }));
+      runAsLiveControl(() => editStudio((src) => ({ ...src, musicVoices: [...src.musicVoices, { file: v.file, source: v.source as VoiceSourceId, auto: true, level: 0, blend: v.blend as StudioVoice['blend'], params: {}, clip: clip.id }] })));
       fadeClipVoice(clip.id, v.level);
     }
   }, atMs));
@@ -1694,7 +1715,11 @@ function landDrop(at: number): void {
   send(noteOn('shots', DROP_NOTE, 1, 'sequencer', at));
   send(noteOff('shots', DROP_NOTE, 'sequencer', at + 0.25));
   const { dropScene, dropSet } = get(musicStudio).build;
-  if (dropSet && dropSet !== get(musicStudio).set) musicStudio.setSet(dropSet);
+  if (dropSet && dropSet !== get(musicStudio).set) {
+    musicStudio.setSet(dropSet);
+    // A drop bringing in another set is playing, not an edit.
+    noteAutomatedRecall(['studioSound']);
+  }
   if (dropScene && get(musicStudio).scenes.some((sc) => sc.id === dropScene)) launchScene(dropScene, true);
 }
 
@@ -2157,6 +2182,9 @@ function stopEverything(): void {
   releaseBand();
   stopLooper();
   cancelQueuedScene();
+  // A build would otherwise land after the studio closed, with its drop scene starting the music again.
+  cancelBuild();
+  undressAll();
   cancelLoopRecord();
   stopAllLoops();
   setScan(false);

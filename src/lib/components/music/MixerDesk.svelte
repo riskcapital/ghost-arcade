@@ -129,7 +129,14 @@
           <span class="num">{n + 1}</span>
           <StudioKnob label="Trim" value={st.trim ?? 0} min={-12} max={12} defaultValue={0} size={20} format={dbKnob} onchange={(v) => set(id, { trim: Math.round(v * 2) / 2 })} midiPath="studio:mix.{id}.trim" />
           <span class="section">Insert</span>
-          {@render inserts(id)}
+          {#if isInputChannel(id)}
+            <!-- A band input goes through the band effects (Live band tab), not inserts: an empty rack keeps the strips in line. -->
+            <span class="inserts none" title="A band input takes the band effects in the Live band tab, not inserts">
+              {#each [0, 1, 2, 3] as i (i)}<span class="slot"></span>{/each}
+            </span>
+          {:else}
+            {@render inserts(id)}
+          {/if}
           <span class="section">EQ</span>
           <div class="eq">
             <StudioKnob label="High" value={st.high} min={-EQ_RANGE_DB} max={EQ_RANGE_DB} defaultValue={0} size={18} format={dbKnob} onchange={(v) => set(id, { high: Math.round(v * 2) / 2 })} />
@@ -253,7 +260,8 @@
     cursor: pointer;
     font: inherit;
   }
-  .inserts.open, .inserts:hover { border-color: var(--studio-accent); }
+  .inserts.open, .inserts:not(.none):hover { border-color: var(--studio-accent); }
+  .inserts.none { cursor: default; opacity: 0.35; }
   .slot { height: 11px; padding: 0 3px; font-size: 8px; line-height: 11px; text-align: left; border-radius: 1px; background: rgba(255, 255, 255, 0.03); color: var(--studio-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .slot.used { background: color-mix(in srgb, var(--studio-accent) 22%, transparent); }
   .slot.off { color: var(--studio-muted); text-decoration: line-through; background: rgba(255, 255, 255, 0.03); }

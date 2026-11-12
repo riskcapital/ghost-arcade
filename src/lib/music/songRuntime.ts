@@ -35,6 +35,7 @@ import type { RecallSection } from '../stores/projectDirty';
 import { globalStagePresets } from '../stores/globalPresets';
 import { audioStore } from '../stores/audio';
 import { launchClockFollowsLink, launchClockTempo, nextLaunchBoundary } from '../stores/launchClock';
+import { cancelPendingTempo, followingBand } from './studioTempo';
 import { recordDiscreteAction, runAsLiveControl } from '../stores/historyHooks';
 import { generateUUID } from '../utils/uuid';
 import type { StagePreset } from '../types';
@@ -107,7 +108,9 @@ function captureVisuals(): SongVisuals {
   // Only a preset that is on stage now, and still exists.
   const stagePresetId = vj.stageMode && vj.stagePresetId && stagePresetById(vj.stagePresetId) ? vj.stagePresetId : null;
   return {
-    voices: target ? copyVoices(target.source.musicVoices) : null,
+    // Not the looks a playing session clip brought in (they go when it stops, and may be mid-fade);
+    // an instrument's own look (inst:…) is part of the setup and stays.
+    voices: target ? copyVoices(target.source.musicVoices.filter((v) => !v.clip || v.clip.startsWith('inst:'))) : null,
     sceneId: target?.source.musicSceneId ?? null,
     vjBlockId: vj.activeBlockId ?? null,
     vjColumn: dominantColumn(vj.layerStates.map((ls) => (ls?.activeClip ? ls.activeColumn : null))),
@@ -125,7 +128,8 @@ export function saveSong(name?: string): Song | null {
   const song: Song = {
     id: generateUUID(),
     name: name?.trim().slice(0, 60) || nextSongName(s.songs),
-    bpm: tempoNow(),
+    // Following the band, a song leaves the tempo to the band.
+    bpm: followingBand() ? null : tempoNow(),
     sceneId: s.sceneId,
     notes: '',
     setup: captureSetup(s),
@@ -222,7 +226,7 @@ function applySong(song: Song, cursor: number, history: boolean): void {
     if (song.recall.visuals) showBlock(song.visuals);
     // Its scene starts the music only with the studio open, as the studio's other controls do.
     const s = get(musicStudio);
-    if (song.recall.sound && s.isOpen && song.sceneId && s.scenes.some((sc) => sc.id === song.sceneId)) launchScene(song.sceneId, true);
+    if (song.recall.sound && s.isOpen && song.sceneId && s.scenes.some((sc) => sc.id === song.sceneId)) launchScene(song.sceneId, true, { keepSetup: true });
     if (song.recall.visuals) mapChanged = showVisuals(song.visuals, history);
   });
   musicStudio.setCurrentSong(song.id, cursor);
@@ -241,6 +245,13 @@ function applyTempo(bpm: number | null): void {
     notice.set(`Ableton Link has the tempo, so ${bpm} BPM was left to it.`);
     return;
   }
+  // Following the band is a choice made on stage: a song does not quietly turn it off.
+  if (followingBand()) {
+    notice.set(`Following the band, so ${bpm} BPM was left to it.`);
+    return;
+  }
+  // A tap or half/double still waiting for its beat would undo the song's tempo.
+  cancelPendingTempo();
   if (get(audioStore).manualBPM === bpm) return;
   audioStore.setManualBPM(bpm);
 }

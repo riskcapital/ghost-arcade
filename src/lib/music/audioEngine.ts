@@ -88,6 +88,8 @@ interface Strip {
   meter: AnalyserNode;
   /** Sends to the shared returns, after the fader and pan. */
   sends: Record<ReturnId, GainNode> | null;
+  /** Where its sound goes: the mix, or the set's FX rack (applyRouting). */
+  out: AudioNode | null;
 }
 
 const MIXER_RAMP_SECONDS = 0.015;
@@ -701,7 +703,7 @@ export class MusicAudioEngine {
       if (!settings) {
         // The first input's strip always stays.
         if (strip && i > 0) {
-          for (const node of [strip.input, ...Object.values(strip.eq), strip.pan, strip.gate, this.inputSends.get(id)]) {
+          for (const node of [strip.input, strip.trim, strip.lowCut, ...Object.values(strip.eq), strip.pan, strip.gate, ...Object.values(strip.sends ?? {}), this.inputSends.get(id)]) {
             try { node?.disconnect(); } catch { /* gone */ }
           }
           this.strips.delete(id);
@@ -715,7 +717,7 @@ export class MusicAudioEngine {
         strip = this.makeStrip(ctx, gain);
         this.strips.set(id, strip);
         strip.gate.connect(this.masterGain!);
-        strip.gate.connect(strip.meter);
+        strip.out = this.masterGain;
       }
       // The band comes in after its EQ and pan, before the monitor gate: its
       // effects work whether or not its dry sound is played here.
@@ -831,6 +833,7 @@ export class MusicAudioEngine {
     const meter = ctx.createAnalyser();
     meter.fftSize = 512;
     last.connect(pan).connect(gate);
+    gate.connect(meter);
     let sends: Strip['sends'] = null;
     if (this.returns) {
       const r = this.returns;
@@ -841,7 +844,7 @@ export class MusicAudioEngine {
         return [id, g];
       })) as Record<ReturnId, GainNode>;
     }
-    return { input, trim, lowCut, eq, pan, gate, meter, sends };
+    return { input, trim, lowCut, eq, pan, gate, meter, sends, out: null };
   }
 
   private applyRouting(): void {
@@ -853,10 +856,16 @@ export class MusicAudioEngine {
       rack.output.connect(this.masterGain);
       this.racks[this.activeSet] = rack;
     }
+    // Only where the strip's sound goes changes: its sends to the returns,
+    // its meter and a recording's stem taps stay connected.
     for (const [id, strip] of this.strips) {
-      try { strip.gate.disconnect(); } catch { /* not connected */ }
-      strip.gate.connect(!isInputChannel(id) && this.throughFx.has(id) ? rack.input : this.masterGain);
-      strip.gate.connect(strip.meter);
+      const dest = !isInputChannel(id) && this.throughFx.has(id) ? rack.input : this.masterGain;
+      if (strip.out === dest) continue;
+      if (strip.out) {
+        try { strip.gate.disconnect(strip.out); } catch { /* not connected */ }
+      }
+      strip.gate.connect(dest);
+      strip.out = dest;
     }
   }
 

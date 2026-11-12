@@ -143,7 +143,7 @@ describe('saving a song', () => {
 
     // A copy: the studio moving on leaves the song as it was.
     s.setKey({ root: 0, scale: 'major' });
-    expect(state().songs[0].setup.key.root).toBe(7);
+    expect(state().songs[0].setup.key?.root).toBe(7);
     expect(songs.saveSong()!.name).toBe('Song 2');
   });
 
@@ -154,7 +154,7 @@ describe('saving a song', () => {
     s.setKey({ root: 3, scale: 'major' });
     expect(songs.updateSongFromNow(song.id)).toBe(true);
     const after = state().songs[0];
-    expect(after.setup.key.root).toBe(3);
+    expect(after.setup.key?.root).toBe(3);
     expect(after.name).toBe('Ballad');
     expect(after.notes).toBe('Count in on four');
     expect(after.bpm).toBeNull();
@@ -222,6 +222,28 @@ describe('calling a song up', () => {
     songs.callSong(song.id, { now: true });
     expect(state().key.root).toBe(0);
     expect(state().liveInputs[0].role).toBe('bass');
+  });
+
+  it('leaves the tempo to the band while following it, and a song saved then leaves it too', () => {
+    const fixed = songs.saveSong('Fixed')!;
+    studio.musicStudio.updateSong(fixed.id, { bpm: 97 });
+    audio.audioStore.clearManualBPM();
+    // Saved while following the band: it leaves the tempo to the band.
+    expect(songs.saveSong('Following')!.bpm).toBeNull();
+    songs.callSong(fixed.id, { now: true });
+    expect(get(audio.audioStore).manualBPM).toBeNull();
+    expect(get(songs.songNotice)).toMatch(/Following the band/);
+  });
+
+  it("keeps a session clip's effects when a song comes up, and puts back the song's own", () => {
+    studio.musicStudio.addInsert('drone', 'song-fx', 'delay');
+    const song = songs.saveSong('A')!;
+    // Since then: an effect on a session clip, and the drone's effect taken off.
+    studio.musicStudio.addInsert('clip:abc', 'clip-fx', 'delay');
+    studio.musicStudio.removeInsert('drone', 'song-fx');
+    songs.callSong(song.id, { now: true });
+    expect(state().inserts['clip:abc']?.map((fx) => fx.id)).toEqual(['clip-fx']);
+    expect(state().inserts.drone?.map((fx) => fx.id)).toEqual(['song-fx']);
   });
 
   it('leaves the tempo to Ableton Link when Link has it, and says so', () => {

@@ -53,7 +53,8 @@ export interface Song {
   sceneId: string | null;
   /** A note for the performer: cues, who counts in. */
   notes: string;
-  setup: SongSetup;
+  /** What it keeps of the studio (a song from an earlier version keeps less). */
+  setup: Partial<SongSetup>;
   visuals: SongVisuals;
   /** Which parts calling it up puts back. */
   recall: Record<SongRecallGroup, boolean>;
@@ -93,11 +94,12 @@ export function recalledSetup(song: Pick<Song, 'setup' | 'recall'>): Partial<Son
   const out: Partial<Record<SongSetupKey, unknown>> = {};
   for (const group of SONG_RECALL_GROUPS) {
     if (!song.recall[group]) continue;
-    for (const key of SONG_SETUP_GROUPS[group]) out[key] = copyJson(song.setup[key]);
+    // A part the song did not keep is left as it is.
+    for (const key of SONG_SETUP_GROUPS[group]) if (song.setup[key] !== undefined) out[key] = copyJson(song.setup[key]);
   }
   // The band inputs' strips belong to the band: the mixer comes with either
   // part, and the store takes from it only the strips of the parts recalled.
-  if (song.recall.band && !out.mixer) out.mixer = copyJson(song.setup.mixer);
+  if (song.recall.band && !out.mixer && song.setup.mixer) out.mixer = copyJson(song.setup.mixer);
   return out as Partial<SongSetup>;
 }
 
@@ -172,7 +174,7 @@ function normalizeSongVisuals(raw: unknown): SongVisuals {
  * Read one saved song back. `normalizeSetup` fills in and checks the setup
  * the way the store reads its own state.
  */
-export function normalizeSong(raw: unknown, normalizeSetup: (raw: unknown) => SongSetup): Song | null {
+export function normalizeSong(raw: unknown, normalizeSetup: (raw: unknown) => Partial<SongSetup>): Song | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Partial<Record<keyof Song, unknown>>;
   const id = optionalId(r.id);
@@ -191,7 +193,7 @@ export function normalizeSong(raw: unknown, normalizeSetup: (raw: unknown) => So
   };
 }
 
-export function normalizeSongs(raw: unknown, normalizeSetup: (raw: unknown) => SongSetup): Song[] {
+export function normalizeSongs(raw: unknown, normalizeSetup: (raw: unknown) => Partial<SongSetup>): Song[] {
   const songs: Song[] = [];
   for (const item of Array.isArray(raw) ? raw : []) {
     const song = normalizeSong(item, normalizeSetup);
