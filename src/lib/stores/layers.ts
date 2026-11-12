@@ -1,6 +1,6 @@
 import {defaultInteractive,sanitizeStoredInteractive} from '../mobile/studio/interactive';
 import {editableEffects, soundDefaults} from '../mobile/studio/interactiveEffects';
-import { buildWorld, type StageShape, type WorldId } from '../scene3d/worlds';
+import { buildWorld, WORLDS, type StageShape, type WorldId } from '../scene3d/worlds';
 import { checkScene3D } from '../scene3d/sceneModel';
 import { normalizeVJGroups } from './vjGroups';
 import { normalizeCuePoints } from './vjCuePoints';
@@ -380,8 +380,27 @@ function sanitizeStoredScene3D<T>(effectSource: T): T {
     console.warn('[Store] Interactive 3D world could not be read:', check.error);
     showToast(`An Interactive 3D world could not be read: ${check.error}`, 'warning');
   }
-  const { scene3dBursts: _live, ...rest } = source;
-  return { ...rest, ...(check.scene ? { scene3d: check.scene } : {}) } as T;
+  const { scene3dBursts: _live, scene3dWorld, ...rest } = source as typeof source & { scene3dWorld?: unknown };
+  const world = WORLDS.some((w) => w.id === scene3dWorld) ? { scene3dWorld } : {};
+  return { ...rest, ...world, ...(check.scene ? { scene3d: check.scene } : {}) } as T;
+}
+/**
+ * The shapes mapped on the stage, as Interactive 3D worlds read them: each
+ * visible corner-mapped layer's outline in output space (Y down). Interactive
+ * layers (2D or 3D) are content, not stage, and are left out.
+ */
+function stageShapes(layers: Layer[], exclude?: string): StageShape[] {
+  return layers
+    .filter((l) => l.id !== exclude && l.visible && l.corners && l.warpMode !== 'mesh'
+      && !l.source?.effectSource?.scene3d && !l.source?.effectSource?.interactiveScene)
+    .map((l) => ({
+      name: l.name,
+      // Corners are Y-up; the world reads the output Y-down.
+      points: [l.corners!.topLeft, l.corners!.topRight, l.corners!.bottomRight, l.corners!.bottomLeft].map((p) => ({
+        x: Math.max(0, Math.min(1, p.x)),
+        y: Math.max(0, Math.min(1, 1 - p.y)),
+      })),
+    }));
 }
 /** Layers that reach the project without _importLayer (preset copies). */
 function sanitizeInteractiveLayers<T extends { source?: { effectSource?: unknown } | null }>(layers: T[], origin: string): T[] {
@@ -766,17 +785,7 @@ void main() {
      */
     addInteractive3DLayer(world: WorldId = 'light-and-shadow'): string | undefined {
       const current = get({ subscribe });
-      const shapes: StageShape[] = current.layers
-        .filter((l) => l.visible && l.corners && l.warpMode !== 'mesh')
-        .map((l) => ({
-          name: l.name,
-          // Corners are Y-up; the world reads the output Y-down.
-          points: [l.corners!.topLeft, l.corners!.topRight, l.corners!.bottomRight, l.corners!.bottomLeft].map((p) => ({
-            x: Math.max(0, Math.min(1, p.x)),
-            y: Math.max(0, Math.min(1, 1 - p.y)),
-          })),
-        }));
-      const scene = buildWorld(world, shapes, (current.width || 1920) / (current.height || 1080));
+      const scene = buildWorld(world, stageShapes(current.layers), (current.width || 1920) / (current.height || 1080));
       const id = this.addLayer(scene.name, 'interactive');
       if (!id) return undefined;
       update((project) => ({
@@ -785,12 +794,33 @@ void main() {
           ...l,
           name: scene.name,
           effects: [],
-          source: { id: generateUUID(), type: 'effect', src: 'plugin://scene3d', name: 'Interactive 3D', effectSource: { effectType: 'scene3d', scene3d: scene } },
+          source: { id: generateUUID(), type: 'effect', src: 'plugin://scene3d', name: 'Interactive 3D', effectSource: { effectType: 'scene3d', scene3d: scene, scene3dWorld: world } },
         }),
       }));
       // Add and fill are one step: undo removes the layer at once.
       amendLastHistoryStep();
       return id;
+    },
+
+    /**
+     * Play `world` on an Interactive 3D layer, built afresh from the stage as
+     * it is now (the shapes mapped on the other layers). Replaces the layer's
+     * world, edits included; one undo step.
+     */
+    setScene3DWorld(layerId: string, world: WorldId): boolean {
+      const current = get({ subscribe });
+      const target = current.layers.find((l) => l.id === layerId);
+      if (!target?.source?.effectSource?.scene3d) return false;
+      const scene = buildWorld(world, stageShapes(current.layers, layerId), (current.width || 1920) / (current.height || 1080));
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((l) => l.id !== layerId || !l.source ? l : {
+          ...l,
+          source: { ...l.source, effectSource: { ...l.source.effectSource!, scene3d: scene, scene3dWorld: world } },
+        }),
+      }));
+      recordDiscreteAction();
+      return true;
     },
 
     /**
