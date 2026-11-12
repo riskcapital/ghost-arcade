@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createLayer, type Layer } from '../types';
 import type { StudioFinish } from './studioFinish';
+import { resolvePalette } from './studioPalettes';
 import {
   MAX_STUDIO_VOICES,
   defaultStudioSource,
@@ -74,7 +75,8 @@ describe('Music Studio plugin', () => {
     expect(values.vxSource).toBe(1);
     expect(values.vxAuto).toBe(true);
     expect(values.vxEnv).toBe(0.8);
-    expect(values.ink).toEqual([0.94, 0.95, 0.97, 1]);
+    // A new instance is on Auto: Berlin's palette, and a kick voice takes its accent.
+    expect(values.ink).toEqual([...resolvePalette('auto', 'berlin', { root: 2, scale: 'dorian' }).accent, 1]);
   });
 
   it('finishes the picture: last frame faded under the voices, then glow, grade and grain after the mix', () => {

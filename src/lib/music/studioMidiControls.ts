@@ -51,10 +51,11 @@ import { DUCK_RELEASE_MAX, DUCK_RELEASE_MIN, type BandFxSettings } from './sound
 import { MAX_LIVE_INPUTS, type LiveInputSettings } from './mixer';
 import { registerStudioControls, releaseStudioControls, type StudioControl } from './studioControls';
 import { STUDIO_GRADES, normalizeFinish } from './studioFinish';
+import { AUTO_PALETTE, CLASSIC_PALETTE, KEY_PALETTE, STUDIO_PALETTE_LIST } from './studioPalettes';
 import { MIDI_VOICE_SLOTS, studioVoiceBlend } from './studioPlugin';
 import { BLEND_MODE_ORDER } from '../types';
 import { STUDIO_SETS } from './studioSets';
-import { editStudio, loadSceneIntoStudio, replaceStudioVoice, setStudioFinish, setStudioMix, setStudioVoice, studioTargetNow } from './studioTarget';
+import { editStudio, loadSceneIntoStudio, replaceStudioVoice, setStudioFinish, setStudioMix, setStudioPalette, setStudioVoice, studioTargetNow } from './studioTarget';
 import { MIX_MODES, normalizeMix } from './studioMix';
 import { VOICE_SHADERS, scenesForSet } from './visualScenes';
 import { voiceSourcesFor, type VoiceSourceId } from './visualVoices';
@@ -323,6 +324,14 @@ const SCENES: StudioControl[] = [
   { id: 'visuals.glow', label: 'Overall glow', group: 'Visuals', kind: 'value', run: (v) => void setStudioFinish({ glow: v }, 'finish:glow') },
   { id: 'visuals.trails', label: 'Overall trails', group: 'Visuals', kind: 'value', run: (v) => void setStudioFinish({ trails: v }, 'finish:trails') },
   { id: 'visuals.grain', label: 'Overall grain', group: 'Visuals', kind: 'value', run: (v) => void setStudioFinish({ grain: v }, 'finish:grain') },
+  {
+    id: 'visuals.palette-next', label: 'Next palette', group: 'Visuals', kind: 'trigger',
+    run: () => {
+      const order = [AUTO_PALETTE, KEY_PALETTE, ...STUDIO_PALETTE_LIST.map((p) => p.id), CLASSIC_PALETTE];
+      const i = order.indexOf(studioTargetNow()?.source.musicPalette ?? CLASSIC_PALETTE);
+      void setStudioPalette(order[(i + 1) % order.length]);
+    },
+  },
   {
     id: 'visuals.grade-next', label: 'Next grade', group: 'Visuals', kind: 'trigger',
     run: () => {

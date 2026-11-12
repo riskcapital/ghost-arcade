@@ -30,6 +30,7 @@
     showStudioVisuals,
     replaceStudioVoice,
     setStudioFinish,
+    setStudioPalette,
     setStudioMix,
     setStudioVoice,
     studioTarget,
@@ -39,6 +40,7 @@
   import StudioModule from './StudioModule.svelte';
   import StudioKnob from './StudioKnob.svelte';
   import { STUDIO_GRADES, normalizeFinish, type StudioGrade } from '../../music/studioFinish';
+  import { AUTO_PALETTE, CLASSIC_PALETTE, KEY_PALETTE, SET_PALETTE, STUDIO_PALETTE_LIST } from '../../music/studioPalettes';
 
   /** Main controls shown on each voice; the rest open under it. */
   const MAIN_CONTROLS = 4;
@@ -49,6 +51,8 @@
   const voices = $derived(target?.source.musicVoices ?? []);
   const mix = $derived(normalizeMix(target?.source.musicMix));
   const finish = $derived(normalizeFinish(target?.source.musicFinish));
+  const paletteId = $derived(target?.source.musicPalette ?? CLASSIC_PALETTE);
+  const autoName = $derived(STUDIO_PALETTE_LIST.find((p) => p.id === SET_PALETTE[s.set])?.name ?? '');
   let open = $state<number | null>(null);
   let activity = $state<number[]>([]);
   let codeTick = $state(0);
@@ -332,6 +336,15 @@
       </select>
       <button class="text-btn small follow" class:on={mix.follow} aria-pressed={mix.follow} disabled={mix.mode === 'all'} onclick={() => setStudioMix({ follow: !mix.follow })} title="Follow the music: busy, loud playing changes faster (and shuffle shows more at once); sparse, quiet playing changes slower. Up to two steps either side of the pace you set." data-midi-path="studio:visuals.automix-follow" data-midi-label="Auto-mix follows the music" data-midi-mode="toggle">Follow</button>
     </div>
+    <div class="palette">
+      <span class="ga-eyebrow">Color</span>
+      <select value={paletteId} onchange={(e) => setStudioPalette((e.target as HTMLSelectElement).value)} aria-label="Palette" title="The colors every voice takes, each by the role of what it follows">
+        <option value={AUTO_PALETTE}>Auto · {autoName}</option>
+        <option value={KEY_PALETTE}>Key color</option>
+        {#each STUDIO_PALETTE_LIST as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
+        <option value={CLASSIC_PALETTE}>Classic</option>
+      </select>
+    </div>
     <div class="finish" role="group" aria-label="Overall look">
       <span class="ga-eyebrow">Overall look</span>
       <StudioKnob label="Glow" title="Bloom around bright things" value={finish.glow} defaultValue={0.5} size={20} format={levelFormat} midiPath="studio:visuals.glow" onchange={(v) => setStudioFinish({ glow: v }, 'finish:glow')} />
@@ -463,6 +476,9 @@
   .automix .ga-eyebrow { color: var(--studio-muted); flex: 0 0 auto; }
   .automix select { flex: 1 1 0; min-width: 0; height: 22px; font-size: var(--ga-text-meta, 11px); }
   .automix .follow { flex: 0 0 auto; height: 22px; padding: 0 7px; }
+  .palette { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; }
+  .palette .ga-eyebrow { color: var(--studio-muted); flex: 0 0 auto; }
+  .palette select { flex: 1 1 0; min-width: 0; height: 22px; font-size: var(--ga-text-meta, 11px); }
   .finish { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; }
   .finish .ga-eyebrow { color: var(--studio-muted); flex: 0 0 auto; }
   .finish .grade { flex: 1 1 0; min-width: 0; height: 22px; font-size: var(--ga-text-meta, 11px); }

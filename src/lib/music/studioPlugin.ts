@@ -20,9 +20,10 @@ import { VOICE_CLEAR_INPUT, withClearOption } from './voiceClear';
 import { DEFAULT_TEXT_EVERY, normalizePhrases, normalizeTextEvery, shaderTextValues } from './shaderText';
 import { DEFAULT_MIX, MixFollower, mixAt, normalizeMix, type MixFeel, type StudioMix } from './studioMix';
 import { finishEffectsFor, normalizeFinish, trailsOpacity, type StudioFinish } from './studioFinish';
+import { AUTO_PALETTE, CLASSIC_COLORS, CLASSIC_PALETTE, KEY_PALETTE, KeyHueGlide, isPaletteId, keyHue, resolvePalette, voiceColors, type PaletteSlots } from './studioPalettes';
 import { BLEND_MODE_ORDER, createLayer, type BlendMode, type Layer } from '../types';
 import { isLiveSource, VOICE_AUTO_INPUT, VOICE_SOURCE_INPUT, VOICE_SOURCES, voiceSourceIndex, type LiveSourceId, type VoiceSourceId } from './visualVoices';
-import type { StudioSet } from './studioSets';
+import type { MusicKey, StudioSet } from './studioSets';
 
 export const STUDIO_PLUGIN_ID = 'musicstudio';
 export const STUDIO_EFFECT_TYPE = 'music-studio';
@@ -72,18 +73,12 @@ export interface StudioPluginSource {
   musicSetup?: unknown;
   /** The finish over the whole picture: glow, trails, grade, grain (studioFinish.ts). */
   musicFinish?: StudioFinish;
+  /** The palette the voices take their colours from (studioPalettes.ts). */
+  musicPalette?: string;
 }
 
-type RGB = [number, number, number];
-
-/** Each set's palette: one ink and one accent. Mirrors visualScenes.SET_PALETTES. */
-export const STUDIO_PALETTES: Record<StudioSet, { ink: RGB; accent: RGB }> = {
-  bath: { ink: [0.72, 0.82, 1.0], accent: [1.0, 0.8, 0.45] },
-  berlin: { ink: [0.94, 0.95, 0.97], accent: [1.0, 0.16, 0.1] },
-  dub: { ink: [1.0, 0.72, 0.36], accent: [0.25, 0.9, 0.62] },
-  analog: { ink: [0.75, 1.0, 0.92], accent: [1.0, 0.45, 0.12] },
-  machine: { ink: [1.0, 0.93, 0.82], accent: [1.0, 0.5, 0.1] },
-};
+/** Each set's original two colours, one ink and one accent (the Classic palette). */
+export const STUDIO_PALETTES = CLASSIC_COLORS;
 
 const SETS: readonly StudioSet[] = ['bath', 'berlin', 'dub', 'analog', 'machine'];
 
@@ -145,6 +140,8 @@ export function normalizeStudioSource(raw: unknown): Required<StudioPluginSource
     musicMix: normalizeMix(r.musicMix),
     musicSetup: r.musicSetup && typeof r.musicSetup === 'object' ? r.musicSetup : null,
     musicFinish: normalizeFinish(r.musicFinish),
+    // Saved before palettes: the set's original two colours.
+    musicPalette: isPaletteId(r.musicPalette) ? r.musicPalette : CLASSIC_PALETTE,
   };
 }
 
@@ -175,6 +172,7 @@ export function defaultStudioSource(): Required<StudioPluginSource> {
     musicMix: { ...DEFAULT_MIX },
     musicSetup: null,
     musicFinish: normalizeFinish(null),
+    musicPalette: AUTO_PALETTE,
   };
 }
 
@@ -188,19 +186,31 @@ export interface StudioRenderInputs {
   driven(source: VoiceSourceId, auto: boolean, live?: LiveSourceId): Record<string, number>;
   /** How busy and loud the music is, for auto-mix that follows it. */
   feel?(): MixFeel;
+  /** The song key, for the Key colour palette. */
+  key?(): MusicKey;
 }
 
 export function studioVoiceLayerId(host: Layer, index: number): string {
   return `music-voice:${host.id}:${index}`;
 }
 
-/** The shader values one voice renders with: its look, the set's palette, what it follows, and this frame's signals. */
-export function studioVoiceValues(voice: StudioVoice, set: StudioSet, driven: Record<string, number>): Record<string, unknown> {
-  const palette = STUDIO_PALETTES[set] ?? STUDIO_PALETTES.berlin;
+/**
+ * The shader values one voice renders with: its look, its colours (from the
+ * palette, by the role of what it follows), what it follows, and this frame's
+ * signals. Without a palette, the set's original two colours.
+ */
+export function studioVoiceValues(voice: StudioVoice, set: StudioSet, driven: Record<string, number>, palette?: { id: string; slots: PaletteSlots }): Record<string, unknown> {
+  const pal = palette ?? { id: CLASSIC_PALETTE, slots: resolvePalette(CLASSIC_PALETTE, set, DEFAULT_KEY) };
+  const colors = voiceColors(pal.id, pal.slots, voice.source);
   return {
     ...voice.params,
-    ink: [...palette.ink, 1],
-    accent: [...palette.accent, 1],
+    ink: [...colors.ink, 1],
+    accent: [...colors.accent, 1],
+    palGround: [...pal.slots.ground, 1],
+    palBody: [...pal.slots.body, 1],
+    palAccent: [...pal.slots.accent, 1],
+    palLight: [...pal.slots.light, 1],
+    palShadow: [...pal.slots.shadow, 1],
     [VOICE_SOURCE_INPUT]: voiceSourceIndex(voice.source),
     [VOICE_AUTO_INPUT]: voice.auto,
     [VOICE_CLEAR_INPUT]: voice.clear === true,
@@ -225,6 +235,8 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
     }
     hosts++;
     const studio = normalizeStudioSource(effectSource);
+    const key = inputs.key?.() ?? DEFAULT_KEY;
+    const palette = { id: studio.musicPalette, slots: resolvePalette(studio.musicPalette, studio.musicSet, key, studio.musicPalette === KEY_PALETTE ? keyGlide.step(keyHue(key), Date.now()) : undefined) };
     const rows: Array<{ layerId: string; frameId?: string; opacity: number; blendMode: string }> = [];
     const driven = studio.musicVoices.map((voice) => inputs.driven(voice.source, voice.auto, voice.live));
     // Auto-mix works from the bar clock every voice shares.
@@ -247,7 +259,7 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
           name: voice.file,
           src: `ISF/${voice.file}`,
           shaderCode: code,
-          shaderValues: studioVoiceValues(voice, studio.musicSet, driven[index]),
+          shaderValues: studioVoiceValues(voice, studio.musicSet, driven[index], palette),
         },
       } as Layer);
       rows.push({ layerId: id, opacity: voice.level * (voiceMods.get(index) ?? 1) * mixed[index].gain, blendMode: voice.clear ? studioVoiceBlend(voice.blend, 'normal') : mixed[index].blend ?? studioVoiceBlend(voice.blend) });
@@ -314,12 +326,18 @@ export function studioVoiceCode(file: string): string | undefined {
 
 let driver: StudioRenderInputs['driven'] | null = null;
 let feel: (() => MixFeel) | null = null;
+let keyOf: (() => MusicKey) | null = null;
+/** The studio's key before the runtime runs: D Dorian, the studio's own default. */
+const DEFAULT_KEY: MusicKey = { root: 2, scale: 'dorian' };
+/** The Key colour palette's hue, gliding between keys. */
+const keyGlide = new KeyHueGlide();
 let liveHosts = 0;
 
 /** The studio runtime supplies the voices' signals. */
-export function setStudioDriver(fn: StudioRenderInputs['driven'] | null, feelFn: (() => MixFeel) | null = null): void {
+export function setStudioDriver(fn: StudioRenderInputs['driven'] | null, feelFn: (() => MixFeel) | null = null, keyFn: (() => MusicKey) | null = null): void {
   driver = fn;
   feel = feelFn;
+  keyOf = keyFn;
 }
 
 /** One follower per studio instance (auto-mix following the music keeps a little state). */
@@ -351,6 +369,7 @@ export const studioRenderInputs: StudioRenderInputs = {
   code: studioVoiceCode,
   driven: (source, auto, live) => (driver ? driver(source, auto, live) : { vxPresence: 1 }),
   feel: () => (feel ? feel() : { pace: 0.5, level: 0.5 }),
+  key: () => (keyOf ? keyOf() : DEFAULT_KEY),
 };
 
 /** Called by the renderer with the number of instances in the scene. */

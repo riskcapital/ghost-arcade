@@ -2700,7 +2700,7 @@ let lastPattern: DrumPattern | null = null;
 export function ensureMusicRuntime(): void {
   if (started) return;
   started = true;
-  setStudioDriver(drivenForStudio, () => voices.feel());
+  setStudioDriver(drivenForStudio, () => voices.feel(), () => get(musicStudio).key);
   // The music stops with its last host: a studio clip cleared or stopped on the deck, or its mapping layer removed.
   const hosted = hostWatch(stopForGoneHost);
   // One studio cell plays at a time, each with its own setup.

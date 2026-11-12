@@ -275,6 +275,11 @@ export function setStudioMix(patch: Partial<StudioMix>): boolean {
   return editStudio((s) => ({ ...s, musicMix: normalizeMix({ ...s.musicMix, ...patch }) }));
 }
 
+/** Choose the palette every voice takes its colours from. */
+export function setStudioPalette(id: string): boolean {
+  return editStudio((s) => ({ ...s, musicPalette: id }));
+}
+
 /** Change the finish over the whole picture (glow, trails, grade, grain). */
 export function setStudioFinish(patch: Partial<StudioFinish>, gesture?: string): boolean {
   return editStudio((s) => ({ ...s, musicFinish: normalizeFinish({ ...s.musicFinish, ...patch }) }), gesture);
