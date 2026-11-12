@@ -16,7 +16,8 @@
 
 import type { IntegratedEffectType } from '../types';
 import { STUDIO_PLUGIN_ID, defaultStudioSource } from '../music/studioPlugin';
-import { MUSIC_STUDIO } from '../features';
+import { MUSIC_STUDIO, PHOSPHOR } from '../features';
+import { VIDEOSYNTH_DEFAULTS, VIDEOSYNTH_PARAMS } from '../videosynth/patch';
 
 // ─── Plugin Param Definitions ───────────────────────────────────────────────
 
@@ -730,6 +731,31 @@ if (MUSIC_STUDIO) registerPlugin({
   paramDefs: [],
   // A fresh voice list for every instance: clips and layers never share one.
   get defaultSourceParams() { return defaultStudioSource(); },
+});
+
+// ─── Phosphor — a video synthesizer, add-on ──────────────────────────
+// Three raster oscillators, a mixer, feedback and a tube finish, drawn by
+// the native core. Every control is a plain parameter, so MIDI learn,
+// presets and Timeline lines reach all of them.
+if (PHOSPHOR) registerPlugin({
+  id: 'phosphor',
+  name: 'Phosphor',
+  description: 'A video synthesizer. Three oscillators draw across the picture like a beam, locked into bands or drifting free, bent by each other, the music and their own feedback, and finished like a tube.',
+  category: 'Generators',
+  version: '1.0.0',
+  author: 'Ghost Arcade',
+  tier: 'pro',
+  icon: '◉',
+  previewCSS: 'repeating-linear-gradient(0deg, rgba(0,0,0,.35) 0 1px, transparent 1px 3px), linear-gradient(120deg, #ff2d6f, #3a5bff 40%, #2dffb0 70%, #ffe14a)',
+  effectType: 'videosynth',
+  paramDefs: VIDEOSYNTH_PARAMS.map((p) => ({
+    name: `${p.group} · ${p.label}`,
+    param: p.key,
+    type: p.options ? 'select' : 'slider',
+    ...(p.options ? { options: p.options.map((label, value) => ({ value, label })) } : { min: p.min, max: p.max, step: p.step }),
+    default: p.default,
+  })),
+  defaultSourceParams: { ...VIDEOSYNTH_DEFAULTS },
 });
 
 // ─── HandFX — GPU hand, body and face performance instrument ──────────

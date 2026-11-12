@@ -449,6 +449,22 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
         ],
         parity: "native-scene3d-template-with-graph-textures-and-frame-block",
     },
+    NativeGraphInstrumentSpec {
+        id: "videosynth",
+        label: "Video synthesizer",
+        // Its shaders come with its graph.
+        shader_ids: &[],
+        features: &[
+            "compute_graph_host",
+            "compute_graph_render",
+            "compute_graph_multi_render",
+            "compute_graph_source_frame_target",
+            "compute_graph_textures",
+            "persistent_compute_buffers",
+            "native_videosynth_graph",
+        ],
+        parity: "native-videosynth-template-with-feedback-textures-and-frame-block",
+    },
 ];
 
 pub fn native_graph_instruments_note() -> &'static str {

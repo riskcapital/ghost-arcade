@@ -9,3 +9,6 @@
  */
 
 export const MUSIC_STUDIO = (import.meta.env.VITE_MUSIC_STUDIO ?? 'on') !== 'off';
+
+/** VITE_PHOSPHOR=off leaves out Phosphor, the video synthesizer add-on. */
+export const PHOSPHOR = (import.meta.env.VITE_PHOSPHOR ?? 'on') !== 'off';

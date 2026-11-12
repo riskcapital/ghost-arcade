@@ -368,7 +368,7 @@ type NativeRenderClockCommand = {
 
 export type PresentPolicyProfile = 'vsync-live' | 'low-latency-safe' | 'low-latency-aggressive';
 
-type NativeGraphRouteKind = 'planet' | 'fluid-riders' | 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders' | 'ink-cloud' | 'flythrough' | 'pixel-particles' | 'point-cloud-fx' | 'ghostfx' | 'handfx' | 'performer-world' | 'scene3d' | 'vj-crossfade' | 'vj-mix' | 'effect-pass' | 'lines' | 'svg' | 'light-painting' | 'text' | 'splat' | 'model3d';
+type NativeGraphRouteKind = 'planet' | 'fluid-riders' | 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders' | 'ink-cloud' | 'flythrough' | 'pixel-particles' | 'point-cloud-fx' | 'ghostfx' | 'handfx' | 'performer-world' | 'scene3d' | 'videosynth' | 'vj-crossfade' | 'vj-mix' | 'effect-pass' | 'lines' | 'svg' | 'light-painting' | 'text' | 'splat' | 'model3d';
 
 export type NativeEffectPassRuntime = {
   effect: NativeEffectPassId;
@@ -399,6 +399,7 @@ const NATIVE_CORE_OWNED_GRAPH_KINDS = new Set<NativeGraphRouteKind>([
   'handfx',
   'performer-world',
   'scene3d',
+  'videosynth',
   'vj-crossfade',
   'vj-mix',
 ]);
@@ -579,6 +580,12 @@ const NATIVE_GRAPH_ROUTE_REQUIREMENTS: ReadonlyArray<NativeGraphRouteRequirement
     kind: 'scene3d',
     feature: 'native_scene3d_graph',
     instrument: 'scene3d',
+    shaderIds: [],
+  },
+  {
+    kind: 'videosynth',
+    feature: 'native_videosynth_graph',
+    instrument: 'videosynth',
     shaderIds: [],
   },
   {
@@ -1124,6 +1131,7 @@ import { fireShowAction } from '$lib/show/showActions';
 import { runAsAutomation } from '$lib/stores/historyHooks';
 import { buildScene3DGraph } from '$lib/renderer/scene3dNative';
 import { validateScene3D } from '$lib/scene3d/sceneModel';
+import { buildVideoSynthGraph } from '$lib/videosynth/graph';
 const NATIVE_EFFECT_PASS_IDS = new Set<NativeEffectPassId>(
   NATIVE_EFFECT_PASS_MANIFEST.map((entry) => entry.id),
 );
@@ -4850,6 +4858,7 @@ function nativeGraphOutputSource(layer: Layer, kind: NativeGraphRouteKind): Nati
     || kind === 'handfx'
     || kind === 'performer-world'
     || kind === 'scene3d'
+    || kind === 'videosynth'
     || kind === 'vj-crossfade'
     || kind === 'vj-mix';
   const effectType = String(layer.source?.effectSource?.effectType ?? kind).trim().toLowerCase();
@@ -5017,6 +5026,9 @@ function nativeGraphBufferPrefixesForRoute(route: NativeGraphLayerRoute): string
     case 'scene3d':
       prefixes = [`scene3d:${safeSourceId}`];
       break;
+    case 'videosynth':
+      prefixes = [`videosynth:${safeSourceId}`];
+      break;
     case 'vj-crossfade':
       prefixes = [`vjxfade:${safeSourceId}`];
       break;
@@ -5075,6 +5087,21 @@ function scene3dPluginGraph(params: Record<string, any>, sourceId: string, width
       values: graph.values.map((v) => ({ ...v, key: v.initial_b64 })),
       effectIds: [],
       bufferPrefix: () => `scene3d:${nativeGraphBufferSafeId(sourceId)}:`,
+    },
+  } as InteractiveGraphBuildResult;
+}
+
+/** Phosphor's graph, carried by the same install-once, update-values path. */
+function videosynthPluginGraph(params: Record<string, any>, sourceId: string, width: number, height: number): InteractiveGraphBuildResult {
+  const graph = buildVideoSynthGraph({ params, sourceId, width, height });
+  return {
+    config: graph.config,
+    state: { scene: 'videosynth', prevFrameTime: 0, historyHead: 0 },
+    interactive: {
+      topology: graph.topology,
+      values: graph.values.map((v) => ({ ...v, key: v.initial_b64 })),
+      effectIds: [],
+      bufferPrefix: () => `videosynth:${nativeGraphBufferSafeId(sourceId)}:`,
     },
   } as InteractiveGraphBuildResult;
 }
@@ -5162,6 +5189,7 @@ function nativeGraphParamsForLayer(
     || kind === 'handfx'
     || kind === 'performer-world'
     || kind === 'scene3d'
+    || kind === 'videosynth'
     || kind === 'vj-crossfade'
     || kind === 'vj-mix';
   let params: Record<string, any> = isEffectGraphKind
@@ -10423,6 +10451,7 @@ export class NativeRendererSync {
           || nativeGraphRoute.kind === 'handfx'
           || nativeGraphRoute.kind === 'performer-world'
           || nativeGraphRoute.kind === 'scene3d'
+          || nativeGraphRoute.kind === 'videosynth'
           || nativeGraphRoute.kind === 'vj-crossfade'
           || nativeGraphRoute.kind === 'vj-mix';
         const routeState = this.nativeGraphRoutes.get(nativeGraphRoute.key) ?? {
@@ -10640,6 +10669,8 @@ export class NativeRendererSync {
             : null
           : nativeGraphRoute.kind === 'scene3d'
           ? scene3dPluginGraph(nativeGraphScaledParams ?? {}, graphSource.id, width, height)
+          : nativeGraphRoute.kind === 'videosynth'
+          ? videosynthPluginGraph(nativeGraphScaledParams ?? {}, graphSource.id, width, height)
           : pluginRoute
           ? timedNativePluginGraph({
               kind: nativeGraphRoute.kind as 'ghostfx' | 'handfx' | 'performer-world',

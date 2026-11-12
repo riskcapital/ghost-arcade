@@ -1,3 +1,4 @@
+import { paramValue, VIDEOSYNTH_PARAMS } from '../videosynth/patch';
 import {effectParams,effectLabels} from '../mobile/studio/interactiveEffects';
 import { EDGE_STROKE_SHAPE_PARAMS, EDGE_TRIM_PARAMS, edgeTypeDef } from '../drawing/edgeEffectCatalog';
 import type { Layer } from '../types';
@@ -43,6 +44,17 @@ export function discoverKeyframeableParams(layer: Layer): KeyframeableParam[] {
     const group=`Interactive · ${interactiveLabels.get(effect.id)}`;
     params.push({key:`interactive:${effect.id}:enabled`,label:'Enabled',type:'boolean',defaultValue:effect.enabled,group});
     for(const d of effectParams(effect.kind))params.push({key:`interactive:${effect.id}:${d.key}`,label:d.label,type:'number',min:d.min,max:d.max,step:d.step,defaultValue:effect.params[d.key]??d.value,group});
+  }
+  // ── Phosphor controls ──
+  if (layer.source?.effectSource?.effectType === 'videosynth') {
+    const es = layer.source.effectSource as unknown as Record<string, unknown>;
+    for (const p of VIDEOSYNTH_PARAMS) {
+      params.push({
+        key: `vsynth:${p.key}`, label: p.label, type: 'number', min: p.min, max: p.max, step: p.step,
+        defaultValue: paramValue(es, p), group: `Phosphor · ${p.group}`,
+        ...(p.options || p.step === 1 ? { kind: 'stepped' as const } : {}),
+      });
+    }
   }
   // ── Shader parameters ──
   if (layer.source?.shaderInputs) {

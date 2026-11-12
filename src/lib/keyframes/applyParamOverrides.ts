@@ -53,6 +53,16 @@ export function applyParamOverrides(target: Layer, overrides: ParamOverrideSet):
       },
     };
   }
+  // Phosphor's controls live flat on the effect source.
+  if (next.source?.effectSource?.effectType === 'videosynth') {
+    let synth: Record<string, any> | null = null;
+    for (const key in overrides) {
+      if (!key.startsWith('vsynth:')) continue;
+      if (!synth) synth = { ...next.source.effectSource };
+      synth![key.slice(7)] = overrides[key];
+    }
+    if (synth) next.source = { ...next.source, effectSource: synth };
+  }
   let shaderValues: Record<string, any> | null = null;
   let effects: any[] | null = null;
   let extras: ExtraApplyState | null = null;

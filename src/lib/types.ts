@@ -162,7 +162,7 @@ export type MediaType =
   | 'synthvision';
 
 // Integrated effect types (FluidGen, Particles3D, Point Cloud, 3D Models running natively in WebGL)
-export type IntegratedEffectType = 'fluid' | 'particles' | 'splat' | 'model3d' | 'milkdrop' | 'audiomotion' | 'wavejs' | 'hydra' | 'ghostfx' | 'analyzerlab' | 'handfx' | 'ghostpilot' | 'vj-crossfade' | 'vj-mix' | 'performer-world' | 'music-studio' | 'scene3d';
+export type IntegratedEffectType = 'fluid' | 'particles' | 'splat' | 'model3d' | 'milkdrop' | 'audiomotion' | 'wavejs' | 'hydra' | 'ghostfx' | 'analyzerlab' | 'handfx' | 'ghostpilot' | 'vj-crossfade' | 'vj-mix' | 'performer-world' | 'music-studio' | 'scene3d' | 'videosynth';
 
 // Stem identifiers for the multi-stem routing matrix (Milkdrop plugin).
 // 'full' is the unsplit mix; the rest match standard Demucs output names plus a

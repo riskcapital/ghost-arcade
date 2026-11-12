@@ -3304,6 +3304,9 @@ enum NativeGraphLayerKind {
     /// Interactive 3D: an app-built scene graph installed as a template and
     /// replayed by the core every frame, with the scene frame block written.
     Scene3D,
+    /// A video synthesizer: an app-built graph replayed every frame with the
+    /// scene frame block, like Scene3D, drawn in 2D.
+    VideoSynth,
     VjCrossfade,
     VjMix,
     Unsupported(String),
@@ -3332,6 +3335,7 @@ impl NativeGraphLayerKind {
             "handfx" => Self::HandFx,
             "performer-world" => Self::PerformerWorld,
             "scene3d" | "scene-3d" | "interactive-3d" => Self::Scene3D,
+            "videosynth" | "video-synth" => Self::VideoSynth,
             "vj-crossfade" => Self::VjCrossfade,
             "vj-mix" => Self::VjMix,
             other => Self::Unsupported(other.to_string()),
@@ -3360,6 +3364,7 @@ impl NativeGraphLayerKind {
             Self::HandFx => "handfx",
             Self::PerformerWorld => "performer-world",
             Self::Scene3D => "scene3d",
+            Self::VideoSynth => "videosynth",
             Self::VjCrossfade => "vj-crossfade",
             Self::VjMix => "vj-mix",
             Self::Unsupported(label) => label.as_str(),
@@ -3404,6 +3409,7 @@ impl NativeGraphLayerKind {
                 | Self::HandFx
                 | Self::PerformerWorld
                 | Self::Scene3D
+                | Self::VideoSynth
                 | Self::VjCrossfade
                 | Self::VjMix
         )
@@ -5653,6 +5659,7 @@ impl App {
             "native_handfx_graph": true,
             "native_performer_world_graph": true,
             "native_scene3d_graph": true,
+            "native_videosynth_graph": true,
             "native_vj_crossfade_graph": true,
             "native_vj_mix_graph": true,
             "command_drain_policy": true,
@@ -8111,6 +8118,7 @@ impl App {
                     | NativeGraphLayerKind::HandFx
                     | NativeGraphLayerKind::PerformerWorld
                     | NativeGraphLayerKind::Scene3D
+                    | NativeGraphLayerKind::VideoSynth
                     | NativeGraphLayerKind::VjCrossfade
                     | NativeGraphLayerKind::VjMix
             ) {
@@ -8177,6 +8185,7 @@ impl App {
                 | NativeGraphLayerKind::HandFx
                 | NativeGraphLayerKind::PerformerWorld
                 | NativeGraphLayerKind::Scene3D
+                | NativeGraphLayerKind::VideoSynth
                 | NativeGraphLayerKind::VjCrossfade
                 | NativeGraphLayerKind::VjMix => unreachable!(),
                 NativeGraphLayerKind::Unsupported(_) => continue,
@@ -8307,7 +8316,7 @@ impl App {
         let time = self.native_graph_time_seconds();
         let delta = self.native_frame_delta().clamp(0.0, 0.1);
         let frame_index = self.native_frame_index();
-        let reactivity_key = if graph_layer.kind == NativeGraphLayerKind::Scene3D { "scene3dReactivity" } else { "ghostfxReactivity" };
+        let reactivity_key = match graph_layer.kind { NativeGraphLayerKind::Scene3D => "scene3dReactivity", NativeGraphLayerKind::VideoSynth => "videosynthReactivity", _ => "ghostfxReactivity" };
         let reactivity = native_graph_param_f32(&graph_layer.params, reactivity_key, 0.0, 1.0, 0.4);
         self.native_plugin_audio_smooth.retain(|id, _| self.native_graph_layers.contains_key(id));
         let envelope = self.native_plugin_audio_smooth.entry(graph_layer.layer_id.clone()).or_default();
@@ -8433,7 +8442,7 @@ impl App {
                 }
             }
         }
-        let scene_frame = (graph_layer.kind == NativeGraphLayerKind::Scene3D
+        let scene_frame = (matches!(graph_layer.kind, NativeGraphLayerKind::Scene3D | NativeGraphLayerKind::VideoSynth)
             && graph_layer.params["scene3dPaused"] != true)
             .then(|| {
                 let beat_phase = self.audio1[2];
@@ -8461,7 +8470,7 @@ impl App {
             if !matches!(buffer.kind, NativeComputeBufferBindingKind::Uniform) {
                 continue;
             }
-            if graph_layer.kind == NativeGraphLayerKind::Scene3D {
+            if matches!(graph_layer.kind, NativeGraphLayerKind::Scene3D | NativeGraphLayerKind::VideoSynth) {
                 // Only the frame block is the core's; every other uniform of a
                 // scene belongs to the app, which updates it in place.
                 if let Some(frame) = scene_frame.as_ref() {
