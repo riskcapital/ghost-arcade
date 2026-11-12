@@ -28,6 +28,7 @@ import {
 import type { StudioSet } from './studioSets';
 import type { LiveSourceId, VoiceSourceId } from './visualVoices';
 import { normalizeMix, type StudioMix } from './studioMix';
+import { idleRowCell } from './studioPlacement';
 
 export type StudioTarget =
   | { kind: 'vj'; deck: VJDeck; layer: number; column: number; playing: boolean; source: Required<StudioPluginSource> }
@@ -201,6 +202,44 @@ export function placeStudio(): StudioTarget | null {
   const clip = studioClip();
   project.setLayerSource(layerId, { id: `plugin-${STUDIO_PLUGIN_ID}-${layerId}-${Date.now()}`, type: 'effect', name: clip.name, src: clip.src, effectSource: clip.effectSource } as MediaSource);
   return studioTargetNow();
+}
+
+/**
+ * Put the visuals on the deck when the music starts, so the output is never
+ * blank: on deck A's first row that is not playing anything, in its first
+ * free cell, with the set's first scene. A row already playing a clip is
+ * never covered. Returns the row used (0 = the top), or null when nothing
+ * was placed (visuals already exist, the VJ deck is closed, or every row is
+ * busy).
+ */
+export function autoPlaceStudio(set: StudioSet, sceneFor: (set: StudioSet) => Parameters<typeof loadSceneIntoStudio>[0] | undefined): number | null {
+  if (studioTargetNow()) return null;
+  const state = get(vjClipLauncher);
+  if (!state.isOpen) return null;
+  const cell = idleRowCell(state.clipGrid, state.layerStates);
+  if (!cell) return null;
+  vjClipLauncher.setClip(cell.layer, cell.column, studioClip(), 'A');
+  vjClipLauncher.triggerClipNow(cell.layer, cell.column, 'A');
+  const scene = sceneFor(set);
+  if (scene) loadSceneIntoStudio(scene);
+  return cell.layer;
+}
+
+
+/** Hide the visuals: the studio's clip stops (its voices are kept) and the music no longer brings it back. */
+export function hideStudioVisuals(): void {
+  const target = studioTargetNow();
+  if (target?.kind === 'vj' && target.playing) vjClipLauncher.stopLayer(target.layer, target.deck);
+}
+
+/** Show the visuals again: the studio's clip plays, or one is put in place. */
+export function showStudioVisuals(): StudioTarget | null {
+  const target = studioTargetNow();
+  if (target?.kind === 'vj') {
+    if (!target.playing) vjClipLauncher.triggerClipNow(target.layer, target.column, target.deck);
+    return studioTargetNow();
+  }
+  return placeStudio();
 }
 
 /** Load a scene's voices into the instance, putting one in place if there is none. */

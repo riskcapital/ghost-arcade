@@ -24,8 +24,10 @@
     editStudio,
     loadSceneIntoStudio,
     moveStudioVoice,
+    hideStudioVisuals,
     placeStudio,
     removeStudioVoice,
+    showStudioVisuals,
     replaceStudioVoice,
     setStudioMix,
     setStudioVoice,
@@ -207,9 +209,21 @@
 
   /** A new instance starts with this set's first scene, in its palette. */
   function putInPlace() {
+    musicStudio.setVisualsHidden(false);
+    if (target) {
+      showStudioVisuals();
+      return;
+    }
     if (!placeStudio()) return;
     const scene = VISUAL_SCENES.find((sc) => sc.set === s.set);
     if (scene) loadSceneIntoStudio(scene);
+  }
+
+  /** Visible: the studio's clip plays. Hiding stops it and keeps the music from bringing it back. */
+  const visible = $derived(!!target && (target.kind !== 'vj' || target.playing));
+  function hideVisuals() {
+    musicStudio.setVisualsHidden(true);
+    hideStudioVisuals();
   }
 
   // Reordering: the voice being dragged, and the gap it would land in (0 = before the first).
@@ -256,6 +270,9 @@
 
 <StudioModule title="Visuals" subtitle={where} grow>
   {#snippet head()}
+    {#if target}
+      <button class="text-btn small" onclick={visible ? hideVisuals : putInPlace} title={visible ? 'Stop the visuals; the music no longer puts them back on the deck' : 'Play the visuals again'}>{visible ? 'Hide visuals' : 'Show visuals'}</button>
+    {/if}
     <select class="scene" value="" onchange={pickScene} aria-label="Load a visual scene" title="Load a stack of voices for this set" data-midi-path="studio:visuals.scene-next" data-midi-label="Next visual scene" data-midi-mode="toggle">
       <option value="" disabled>Load scene…</option>
       {#each ownScenes as sc (sc.id)}<option value={sc.id}>{sc.name}</option>{/each}
@@ -298,8 +315,8 @@
   {/if}
   {#if !target}
     <div class="none">
-      <p>The studio's visuals play in a Music Studio clip, so they never take over your deck rows. Drag Music Studio from Plugins onto a cell, or put one here.</p>
-      <button class="studio-btn" onclick={putInPlace}>{$vjClipLauncher.isOpen ? 'Put it on the deck' : 'Show it on the selected layer'}</button>
+      <p>{s.visualsHidden ? 'The visuals are hidden.' : $vjClipLauncher.isOpen ? 'The visuals go on a free deck row when the music starts.' : 'The visuals play on a layer.'}</p>
+      <button class="studio-btn" onclick={putInPlace}>{$vjClipLauncher.isOpen ? 'Show visuals' : 'Show them on the selected layer'}</button>
     </div>
   {:else}
     <div class="automix">

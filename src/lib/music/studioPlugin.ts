@@ -145,11 +145,11 @@ export function normalizeStudioSource(raw: unknown): Required<StudioPluginSource
 }
 
 /** A scene's voices as plugin voices. */
-export function studioVoicesFromScene(voices: readonly { file: string; source: VoiceSourceId; params?: Record<string, number>; level?: number; blend?: BlendMode }[]): StudioVoice[] {
+export function studioVoicesFromScene(voices: readonly { file: string; source: VoiceSourceId; params?: Record<string, number>; level?: number; blend?: BlendMode; auto?: boolean }[]): StudioVoice[] {
   return voices.slice(0, MAX_STUDIO_VOICES).map((v) => ({
     file: v.file,
     source: v.source,
-    auto: true,
+    auto: v.auto ?? true,
     level: clamp01(v.level, 1),
     blend: studioVoiceBlend(v.blend),
     params: { ...(v.params ?? {}) },

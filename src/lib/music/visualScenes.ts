@@ -41,7 +41,8 @@ export const VOICE_SHADERS: readonly VoiceShader[] = [
   { file: 'VX-VideoSynth.fs', name: 'Video Synth', family: 'analog', blurb: 'Oscillators in the raster, tuned to the notes' },
   { file: 'VX-Wobbulator.fs', name: 'Wobbulator', family: 'analog', blurb: 'Scan lines bent by the sound itself' },
   { file: 'VX-ScanField.fs', name: 'Scan Field', family: 'analog', blurb: 'A scan-processor landscape that ripples on each hit' },
-  { file: 'VX-Feedback.fs', name: 'Feedback', family: 'analog', blurb: 'Camera-into-monitor feedback, seeded by hits' },  { file: 'VX-Automaton.fs', name: 'Automaton', family: 'berlin', blurb: 'A cellular automaton that prints one row per hit' },
+  { file: 'VX-Feedback.fs', name: 'Feedback', family: 'analog', blurb: 'Camera-into-monitor feedback, seeded by hits' },
+  { file: 'VX-Automaton.fs', name: 'Automaton', family: 'berlin', blurb: 'A cellular automaton that prints one row per hit' },
   { file: 'VX-Compression.fs', name: 'Compression', family: 'berlin', blurb: 'Codec blocks rebuilt from a few patterns' },
   { file: 'VX-Datamosh.fs', name: 'Datamosh', family: 'berlin', blurb: 'A picture smeared along its own motion' },
   { file: 'VX-DataPlot.fs', name: 'Data Plot', family: 'berlin', blurb: 'The notes as scientific plots in hairlines' },
@@ -155,6 +156,11 @@ export interface SceneVoice {
   params?: Record<string, number>;
   /** How much of it shows, 0-1. */
   level?: number;
+  /**
+   * False: the scene's ground, which stays (dim, at rest) when its sound is
+   * silent instead of coming and going with it, so the scene is never black.
+   */
+  auto?: boolean;
 }
 
 export interface VisualScene {
@@ -225,30 +231,30 @@ export const VISUAL_SCENES: readonly VisualScene[] = [
     { file: 'VX-TapeLoop.fs', source: 'fx', level: 0.8 },
   ] },
   { id: 'bath-night', name: 'Night sky', set: 'bath', voices: [
-    { file: 'VX-Nebula.fs', source: 'pad', level: 0.65 },
+    { file: 'VX-Nebula.fs', source: 'pad', level: 0.65, auto: false },
     { file: 'VX-Aurora.fs', source: 'chords' },
     // Bowls and drone count as pads.
     { file: 'VX-Cymatics.fs', source: 'pad' },
     { file: 'VX-Scope.fs', source: 'lead', level: 0.7 },
   ] },
   { id: 'bath-water', name: 'Still water', set: 'bath', voices: [
-    { file: 'VX-Nebula.fs', source: 'pad', level: 0.8 },
+    { file: 'VX-Nebula.fs', source: 'pad', level: 0.8, auto: false },
     { file: 'VX-ScanField.fs', source: 'played', params: { relief: 0.15, ripple: 0.6, ring: 0.95, flow: 0.08, lines: 120 } },
     { file: 'VX-Cymatics.fs', source: 'chords' },
   ] },
   { id: 'bath-moon', name: 'Moonrise', set: 'bath', voices: [
-    { file: 'VX-Horizon.fs', source: 'pad', level: 0.8 },
+    { file: 'VX-Horizon.fs', source: 'pad', level: 0.8, auto: false },
     { file: 'VX-Moon.fs', source: 'chords' },
     { file: 'VX-Starfield.fs', source: 'lead', level: 0.6 },
   ] },
   { id: 'bath-pool', name: 'Pool', set: 'bath', voices: [
-    { file: 'VX-Caustics.fs', source: 'pad', level: 0.7 },
+    { file: 'VX-Caustics.fs', source: 'pad', level: 0.7, auto: false },
     { file: 'VX-InkBloom.fs', source: 'played' },
     { file: 'VX-Breath.fs', source: 'chords', level: 0.8 },
   ] },
   { id: 'bath-pendulum', name: 'Pendulum', set: 'bath', voices: [
     { file: 'VX-RoseCurves.fs', source: 'chords' },
-    { file: 'VX-Breath.fs', source: 'pad', level: 0.7 },
+    { file: 'VX-Breath.fs', source: 'pad', level: 0.7, auto: false },
     { file: 'VX-Starfield.fs', source: 'played', level: 0.5 },
   ] },
   { id: 'analog-patch', name: 'Patch bay', set: 'analog', voices: [
@@ -259,16 +265,17 @@ export const VISUAL_SCENES: readonly VisualScene[] = [
   ] },
   { id: 'analog-signal', name: 'Signal', set: 'analog', voices: [
     { file: 'VX-Feedback.fs', source: 'played' },
-    { file: 'VX-Wobbulator.fs', source: 'bass' },
+    { file: 'VX-Wobbulator.fs', source: 'bass', auto: false },
     { file: 'VX-Scope.fs', source: 'chords' },
-  ] },  { id: 'analog-lab', name: 'Test bench', set: 'analog', voices: [
+  ] },
+  { id: 'analog-lab', name: 'Test bench', set: 'analog', voices: [
     { file: 'VX-ScopeGrid.fs', source: 'played', level: 0.8 },
     { file: 'VX-OscBank.fs', source: 'chords' },
     { file: 'VX-SyncRoll.fs', source: 'kick', level: 0.6 },
     { file: 'VX-VectorText.fs', source: 'lead' },
   ] },
   { id: 'analog-colour', name: 'Color', set: 'analog', voices: [
-    { file: 'VX-Colorizer.fs', source: 'pad', level: 0.8 },
+    { file: 'VX-Colorizer.fs', source: 'pad', level: 0.8, auto: false },
     { file: 'VX-Moire.fs', source: 'chords', level: 0.7 },
     { file: 'VX-Stairs.fs', source: 'bass' },
   ] },

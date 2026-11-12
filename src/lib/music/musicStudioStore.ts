@@ -179,6 +179,8 @@ export interface MusicStudioProjectState {
   liveInputs: LiveInputSettings[];
   /** Ableton Live is in control: the session grid fires Live, Live plays the backing, the instruments play on top. */
   liveControl: boolean;
+  /** The visuals were hidden: starting the music does not put them on the deck. */
+  visualsHidden: boolean;
   /** Live track name -> the sound it feeds the visual voices as. */
   liveRoles: LiveRoles;
   /** The sound and octave of each of the five bowls. */
@@ -236,6 +238,11 @@ export interface MusicStudioState extends MusicStudioProjectState {
 }
 
 /** The saved section of a project file. */
+/** Whether the studio is making music: the beat, a loop (or one about to start) or a take. */
+export function isStudioPlaying(s: Pick<MusicStudioState, 'sequencerPlaying' | 'playingLoops' | 'queuedLoops' | 'playingTakeId'>): boolean {
+  return s.sequencerPlaying || Object.keys(s.playingLoops).length > 0 || Object.keys(s.queuedLoops).length > 0 || !!s.playingTakeId;
+}
+
 export interface MusicStudioProjectSection extends MusicStudioProjectState {
   schemaVersion: number;
 }
@@ -327,6 +334,7 @@ export function defaultProjectState(): MusicStudioProjectState {
     mixer: {},
     liveInputs: [defaultLiveInput()],
     liveControl: false,
+    visualsHidden: false,
     liveRoles: {},
     bowlSlots: defaultBowlSlots(),
     fxPads: defaultFxPads(),
@@ -421,6 +429,7 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
     mixer: normalizeMixer(input.mixer),
     liveInputs: normalizeLiveInputs(input.liveInputs, (input as { liveInput?: unknown }).liveInput),
     liveControl: input.liveControl === true,
+    visualsHidden: input.visualsHidden === true,
     liveRoles: normalizeLiveRoles(input.liveRoles),
     bowlSlots: normalizeBowlSlots(input.bowlSlots),
     // Chops are this session's audio; a file saved with one on a pad gets the set's default there.
@@ -680,6 +689,7 @@ function createMusicStudioStore() {
       }),
     setInputStatus: (inputOn: boolean, inputError: string | null = null) => set({ inputOn, inputError }),
     setLiveControl: (liveControl: boolean) => set({ liveControl }),
+    setVisualsHidden: (visualsHidden: boolean) => set({ visualsHidden }),
     /** Put a sound on one bowl (and move it up or down octaves). */
     setBowlSlot: (index: number, patch: Partial<BowlSlot>) =>
       update((s) => {
@@ -892,6 +902,7 @@ function createMusicStudioStore() {
         mixer: JSON.parse(JSON.stringify(s.mixer)),
         liveInputs: s.liveInputs.map((input) => ({ ...input })),
         liveControl: s.liveControl,
+        visualsHidden: s.visualsHidden,
         liveRoles: { ...s.liveRoles },
         bowlSlots: s.bowlSlots.map((slot) => ({ ...slot })),
         // What the pads held before any chops went on them (chops are not saved).

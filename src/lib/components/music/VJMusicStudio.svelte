@@ -33,6 +33,9 @@
   import DubModules from './DubModules.svelte';
   import AnalogModules from './AnalogModules.svelte';
   import { studioOnDeck } from '../../music/studioDeck';
+  import { watchAutoVisuals } from '../../music/autoVisuals';
+  // Visuals on by default: when the music starts, they go on the deck.
+  watchAutoVisuals();
 
   let minimized = $state(false);
   let elapsed = $state(0);
