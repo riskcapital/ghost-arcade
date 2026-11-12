@@ -5,14 +5,20 @@
 //!
 //! The pool keeps each texture by id and recreates it when its size or format
 //! changes. All of them together stay inside a byte budget. A texture no graph
-//! has used for `RELEASE_AFTER_FRAMES` frames is freed, the way unreferenced
-//! source-frame slots are, so a removed layer gives its memory back.
+//! has used for `RELEASE_AFTER_MS` is freed, so a removed layer gives its
+//! memory back. The grace period is time, not frames: an idle core draws only
+//! when asked, and frames would leave the memory held for minutes.
+//!
+//! The pool belongs to the renderer, so a recreated device starts with an
+//! empty pool, and the next graph declares and recreates its textures. Sizes
+//! come from the graph, not the output, so an output resize leaves them alone.
 //!
 //! The bookkeeping (budget, which textures to free) is plain data and tested
 //! here; only `upsert` touches the GPU.
 
 use std::cell::Cell;
 use std::collections::HashMap;
+use std::time::Instant;
 
 use crate::compute_graph::{NativeComputeGraphTextureSpec, NativeGraphTextureFormat};
 
@@ -20,10 +26,10 @@ use crate::compute_graph::{NativeComputeGraphTextureSpec, NativeGraphTextureForm
 /// map and a bloom chain is about 130 MB.
 pub(crate) const BUDGET_BYTES: u64 = 768 * 1024 * 1024;
 
-/// Frames a texture may go unused before it is freed: about two seconds at
-/// 60 fps, so a graph replaced for a moment (a parameter change, a quality
-/// switch) finds its textures still there.
-pub(crate) const RELEASE_AFTER_FRAMES: u64 = 120;
+/// How long a texture may go unused before it is freed: long enough that a
+/// graph replaced for a moment (a parameter change, a quality switch) finds
+/// its textures still there.
+pub(crate) const RELEASE_AFTER_MS: u64 = 2000;
 
 pub(crate) fn spec_bytes(spec: &NativeComputeGraphTextureSpec) -> u64 {
     (spec.width as u64) * (spec.height as u64) * spec.format.bytes_per_pixel()
@@ -40,14 +46,14 @@ pub(crate) fn fits_budget<'a>(
     kept.saturating_add(spec_bytes(spec)) <= budget
 }
 
-/// Ids last used before `frame - release_after` (to free now).
+/// Ids last used more than `release_after` ms before `now` (to free now).
 pub(crate) fn stale_ids<'a>(
     entries: impl Iterator<Item = (&'a String, u64)>,
-    frame: u64,
+    now: u64,
     release_after: u64,
 ) -> Vec<String> {
     entries
-        .filter(|(_, last_used)| frame.saturating_sub(*last_used) > release_after)
+        .filter(|(_, last_used)| now.saturating_sub(*last_used) > release_after)
         .map(|(id, _)| id.clone())
         .collect()
 }
@@ -139,21 +145,30 @@ pub(crate) struct GraphTexture {
     pub(crate) spec: NativeComputeGraphTextureSpec,
     pub(crate) view: wgpu::TextureView,
     _texture: wgpu::Texture,
-    /// The frame a graph last declared or drew with this texture.
+    /// When a graph last declared or drew with this texture (pool ms).
     last_used: Cell<u64>,
 }
 
-#[derive(Default)]
 pub(crate) struct GraphTexturePool {
     textures: HashMap<String, GraphTexture>,
-    frame: u64,
+    origin: Instant,
+}
+
+impl Default for GraphTexturePool {
+    fn default() -> Self {
+        Self { textures: HashMap::new(), origin: Instant::now() }
+    }
 }
 
 impl GraphTexturePool {
-    /// The texture with this id, marked as used this frame.
+    fn now_ms(&self) -> u64 {
+        self.origin.elapsed().as_millis() as u64
+    }
+
+    /// The texture with this id, marked as used now.
     pub(crate) fn get(&self, id: &str) -> Option<&GraphTexture> {
         let texture = self.textures.get(id)?;
-        texture.last_used.set(self.frame);
+        texture.last_used.set(self.now_ms());
         Some(texture)
     }
 
@@ -171,7 +186,7 @@ impl GraphTexturePool {
     ) -> Result<(), String> {
         if let Some(existing) = self.textures.get(&spec.id) {
             if &existing.spec == spec {
-                existing.last_used.set(self.frame);
+                existing.last_used.set(self.now_ms());
                 return Ok(());
             }
         }
@@ -199,22 +214,21 @@ impl GraphTexturePool {
                 spec: spec.clone(),
                 view,
                 _texture: texture,
-                last_used: Cell::new(self.frame),
+                last_used: Cell::new(self.now_ms()),
             },
         );
         Ok(())
     }
 
     /// Once per frame: textures no graph used for a while are freed.
-    pub(crate) fn end_frame(&mut self, frame: u64) {
-        self.frame = frame;
+    pub(crate) fn end_frame(&mut self) {
         if self.textures.is_empty() {
             return;
         }
         let stale = stale_ids(
             self.textures.iter().map(|(id, texture)| (id, texture.last_used.get())),
-            frame,
-            RELEASE_AFTER_FRAMES,
+            self.now_ms(),
+            RELEASE_AFTER_MS,
         );
         for id in stale {
             self.textures.remove(&id);
@@ -263,8 +277,8 @@ mod tests {
     #[test]
     fn unused_textures_are_freed_after_the_grace_period() {
         let ids = ["kept".to_string(), "stale".to_string(), "edge".to_string()];
-        let entries = [(&ids[0], 500u64), (&ids[1], 100u64), (&ids[2], 380u64)];
-        let stale = stale_ids(entries.into_iter(), 500, RELEASE_AFTER_FRAMES);
+        let entries = [(&ids[0], 5000u64), (&ids[1], 1000u64), (&ids[2], 3000u64)];
+        let stale = stale_ids(entries.into_iter(), 5000, RELEASE_AFTER_MS);
         assert_eq!(stale, vec!["stale".to_string()]);
     }
 

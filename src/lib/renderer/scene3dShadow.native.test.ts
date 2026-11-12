@@ -90,6 +90,18 @@ suite('Scene 3D graph textures', () => {
       const held = await rpc.send('status');
       expect(held.graph_textures).toBeGreaterThan(0);
       expect(held.graph_texture_bytes).toBeGreaterThan(0);
+
+      // With the layer gone and no graph drawing into them, they are freed
+      // after the two-second grace period, even with the core idle.
+      await rpc.commands([{ type: 'remove_layer', layer_id: 's3d' }, { type: 'present' }]);
+      let released = held;
+      for (let i = 0; i < 40 && released.graph_textures > 0; i++) {
+        await wait(150);
+        await rpc.commands([{ type: 'present' }]);
+        released = await rpc.send('status');
+      }
+      expect(released.graph_textures).toBe(0);
+      expect(released.graph_texture_bytes).toBe(0);
     } finally { await rpc.close(); }
   }, 60000);
 });

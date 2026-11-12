@@ -12945,8 +12945,7 @@ impl App {
             self.stats.gpu_frames_completed = renderer.gpu_frames_completed();
             self.stats.frames_presented = self.stats.gpu_frames_completed;
             // Graph textures no graph used for a while are freed.
-            let frame = renderer.gpu_frames_submitted;
-            renderer.native_graph_textures.end_frame(frame);
+            renderer.native_graph_textures.end_frame();
         }
     }
 
