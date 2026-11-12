@@ -16,6 +16,9 @@
   import { showTimeline } from '../../../../stores/showTimeline';
   import { abletonBridge } from '../../../../ableton/abletonBridge';
   import { isShowAudioFile } from '../../../../audio/showAudioImport';
+
+  /** What the file picker offers: what the show plays, and what it converts. */
+  const SHOW_AUDIO_ACCEPT = 'audio/*,.mp3,.wav,.ogg,.opus,.m4a,.aac,.flac,.webm,.aif,.aiff,.aifc,.wma,.caf,.ac3,.ape,.amr,.mka,.alac';
   import { soundGroups } from '../../../../music/sounds/library';
   import { offGrid, resolveLiveSlot, resolveLiveTrack, type LiveEnv } from '../../../../timeline/sound/liveSchedule';
   import { effectiveFades, type BuildBlock, type LiveClipBlock, type SoundRow } from '../../../../timeline/sound/soundModel';
@@ -237,6 +240,25 @@
     e.dataTransfer.dropEffect = 'copy';
   }
 
+  // ─── Audio from this computer ───────────────────────────────────────
+  // The same as dropping files on the row, through a file picker.
+  let fileInput: HTMLInputElement | undefined = $state();
+  let pickTarget: { rowId: string; at: number } | null = null;
+
+  function pickAudioFiles(rowId: string, at: number) {
+    pickTarget = { rowId, at };
+    fileInput?.click();
+  }
+
+  function onAudioFilesPicked(e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    const files = Array.from(input.files ?? []).filter((f) => isShowAudioFile(f.name, f.type));
+    input.value = '';
+    const target = pickTarget;
+    pickTarget = null;
+    if (target && files.length) void addFilesToRow(files, target.rowId, target.at);
+  }
+
   function onDrop(e: DragEvent, row: SoundRow) {
     const files = Array.from(e.dataTransfer?.files ?? []).filter((f) => isShowAudioFile(f.name, f.type));
     if (row.kind !== 'audio' || !files.length) return;
@@ -248,6 +270,7 @@
   const selected = (kind: string, id: string) => $selection?.kind === kind && $selection.id === id;
 </script>
 
+<input class="hidden-file" type="file" accept={SHOW_AUDIO_ACCEPT} multiple bind:this={fileInput} onchange={onAudioFilesPicked} />
 <div class="sound-stack" bind:this={stackEl} style="height: {layout.total}px" data-sound-stack>
   {#each layout.rows as row, lane (row.id)}
     {@const lines = $lineLayout.lines.get(soundLineGroup(row.id)) ?? []}
@@ -266,9 +289,15 @@
       {#if row.kind === 'audio'}
         {#if !rowTracks.length && !sound.builds.some((b) => b.lane === lane)}
           {#if lane === 0 && !$tracksStore.length}
-            <span class="lane-hint song-hint" data-auto-show-song-hint>Drop a song here, then ✦ Auto show</span>
+            <span class="lane-hint song-hint" data-auto-show-song-hint>Drop a song here or
+              <button type="button" class="hint-pick" onmousedown={(e) => e.stopPropagation()}
+                onclick={(e) => { e.stopPropagation(); pickAudioFiles(row.id, 0); }} data-sound-pick-song>choose one</button>,
+              then ✦ Auto show</span>
           {:else}
-            <span class="lane-hint">Drop audio here, or right-click for a sound from the library or a build</span>
+            <span class="lane-hint">Drop audio here or
+              <button type="button" class="hint-pick" onmousedown={(e) => e.stopPropagation()}
+                onclick={(e) => { e.stopPropagation(); pickAudioFiles(row.id, 0); }} data-sound-pick>choose a file</button>,
+              or right-click for a sound from the library or a build</span>
           {/if}
         {/if}
         {#each rowTracks as track (track.id)}
@@ -389,6 +418,7 @@
       </div>
     {:else}
       {#if menu.row.kind === 'audio'}
+        <button class="sm-item" onclick={() => { const m = menu!; menu = null; pickAudioFiles(m.row.id, m.at); }} data-sound-menu-file>Audio file from this computer…</button>
         <button class="sm-item" onclick={() => (menu = menu && { ...menu, sub: 'sounds' })} data-sound-menu-sounds>Sound from the library ▸</button>
       {:else}
         <button class="sm-item" onclick={() => (menu = menu && { ...menu, sub: 'clips' })} data-sound-menu-clips>Live clip ▸</button>
@@ -412,6 +442,20 @@
   .sound-lane.live { background: rgba(255, 160, 60, 0.02); }
   .sound-lane.muted { opacity: 0.55; }
   .lane-hint.song-hint { color: #ffd36b; opacity: 0.85; font-weight: 600; }
+  .hidden-file { display: none; }
+  /* The hint is click-through; its file link is not. */
+  .hint-pick {
+    pointer-events: auto;
+    padding: 0;
+    background: none;
+    border: none;
+    color: inherit;
+    font: inherit;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+  }
+  .hint-pick:hover { color: var(--ga-ink-0, #fff); }
   .lane-hint {
     position: absolute;
     left: 12px;
