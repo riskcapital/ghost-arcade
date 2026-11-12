@@ -5091,7 +5091,7 @@ function scene3dPluginGraph(params: Record<string, any>, sourceId: string, width
   } as InteractiveGraphBuildResult;
 }
 
-/** Phosphor's graph, carried by the same install-once, update-values path. */
+/** Analog Synth's graph, carried by the same install-once, update-values path. */
 function videosynthPluginGraph(params: Record<string, any>, sourceId: string, width: number, height: number): InteractiveGraphBuildResult {
   const graph = buildVideoSynthGraph({ params, sourceId, width, height });
   return {

@@ -1,5 +1,5 @@
 /**
- * Phosphor, a video synthesizer: the controls of a patch.
+ * Analog Synth, a video synthesizer: the controls of a patch.
  *
  * A patch is flat values on the layer's effect source (keys `vs…`), so the
  * plugin panel, MIDI learn, presets and Timeline lines all reach every
@@ -31,14 +31,18 @@ export type ParamSpec = {
 };
 
 /** What a modulation or FM input listens to. */
-export const SOURCES = ['Off', 'Feedback', 'Osc A', 'Osc B', 'Osc C', 'LFO 1', 'LFO 2', 'LFO 3', 'Bass', 'Mids', 'Highs', 'Level', 'Kick'];
+export const SOURCES = ['Off', 'Feedback', 'Osc A', 'Osc B', 'Osc C', 'LFO 1', 'LFO 2', 'LFO 3', 'Bass', 'Mids', 'Highs', 'Level', 'Kick', 'Input'];
+/** What an oscillator draws: its own beam, or the input layer coloured by it. */
+export const OSC_INPUTS = ['Oscillator', 'Input'];
 export const MOD_MODES = ['Phase', 'Key', 'Hue'];
 export const MIX_MODES = ['Brightest', 'Layer', 'YUV'];
 
+// A calm start: three slow, mostly locked patterns in red, green and blue,
+// lightly bent by each other and a little feedback.
 const OSC_DEFAULTS = [
-  { freq: 0.42, sync: 0.85, shape: 1, mod: 0.3, modSrc: 1, fm: 0.08, fmSrc: 5, hue: 0.0, sat: 0.85 },
-  { freq: 0.5, sync: 1.35, shape: 0.5, mod: 0.4, modSrc: 2, fm: 0.08, fmSrc: 6, hue: 0.33, sat: 0.85 },
-  { freq: 0.58, sync: 1.8, shape: 1, mod: 0.35, modSrc: 3, fm: 0.08, fmSrc: 7, hue: 0.66, sat: 0.85 },
+  { freq: 0.36, sync: 0.92, shape: 1, mod: 0.18, modSrc: 1, fm: 0.04, fmSrc: 5, hue: 0.0, sat: 0.8, level: 1 },
+  { freq: 0.44, sync: 1.25, shape: 0.5, mod: 0.22, modSrc: 2, fm: 0.04, fmSrc: 6, hue: 0.36, sat: 0.75, level: 0.8 },
+  { freq: 0.52, sync: 1.85, shape: 1, mod: 0.2, modSrc: 3, fm: 0.04, fmSrc: 7, hue: 0.64, sat: 0.75, level: 0.7 },
 ];
 
 const spec = (key: string, label: string, group: string, min: number, max: number, step: number, value: number, slot: number, options?: string[]): ParamSpec => ({
@@ -59,7 +63,8 @@ function oscParams(i: number): ParamSpec[] {
     spec(`vs${n}FmSrc`, 'FM from', g, 0, SOURCES.length - 1, 1, d.fmSrc, base + 8, SOURCES),
     spec(`vs${n}Hue`, 'Colour', g, 0, 1, 0.001, d.hue, base + 9),
     spec(`vs${n}Sat`, 'Saturation', g, 0, 1, 0.001, d.sat, base + 10),
-    spec(`vs${n}Level`, 'Level', g, 0, 1, 0.001, 1, base + 11),
+    spec(`vs${n}Level`, 'Level', g, 0, 1, 0.001, d.level, base + 11),
+    spec(`vs${n}Input`, 'Draws', g, 0, 1, 1, 0, 61 + i, OSC_INPUTS),
   ];
 }
 
@@ -73,9 +78,9 @@ export const VIDEOSYNTH_PARAMS: ParamSpec[] = [
   spec('vsRotate', 'Rotate', 'Picture', -180, 180, 0.1, 0, 39),
   spec('vsScale', 'Scale', 'Picture', 0.25, 2, 0.001, 1, 40),
   spec('vsKaleido', 'Mirror segments', 'Picture', 0, 16, 1, 0, 41),
-  spec('vsFeedback', 'Feedback', 'Feedback', 0, 1, 0.001, 0.55, 42),
-  spec('vsFbZoom', 'Zoom', 'Feedback', 0.9, 1.1, 0.0005, 1.012, 43),
-  spec('vsFbRotate', 'Turn', 'Feedback', -10, 10, 0.01, 0.4, 44),
+  spec('vsFeedback', 'Feedback', 'Feedback', 0, 1, 0.001, 0.4, 42),
+  spec('vsFbZoom', 'Zoom', 'Feedback', 0.9, 1.1, 0.0005, 1.008, 43),
+  spec('vsFbRotate', 'Turn', 'Feedback', -10, 10, 0.01, 0.25, 44),
   spec('vsFbX', 'Drift X', 'Feedback', -0.05, 0.05, 0.0005, 0, 45),
   spec('vsFbY', 'Drift Y', 'Feedback', -0.05, 0.05, 0.0005, 0, 46),
   spec('vsFbHue', 'Colour shift', 'Feedback', 0, 1, 0.001, 0.02, 47),
@@ -85,12 +90,40 @@ export const VIDEOSYNTH_PARAMS: ParamSpec[] = [
   spec('vsLfo2Skew', 'LFO 2 shape', 'LFOs', 0, 1, 0.001, 0.5, 51),
   spec('vsLfo3Rate', 'LFO 3 rate', 'LFOs', 0, 1, 0.001, 0.15, 52),
   spec('vsLfo3Skew', 'LFO 3 shape', 'LFOs', 0, 1, 0.001, 0.5, 53),
-  spec('vsScanlines', 'Scanlines', 'Tube', 0, 1, 0.001, 0.35, 54),
+  spec('vsScanlines', 'Scanlines', 'Tube', 0, 1, 0.001, 0.3, 54),
   spec('vsBleed', 'Colour bleed', 'Tube', 0, 1, 0.001, 0.3, 55),
   spec('vsRoll', 'Roll', 'Tube', 0, 1, 0.001, 0, 56),
-  spec('vsGlow', 'Glow', 'Tube', 0, 1, 0.001, 0.3, 57),
+  spec('vsGlow', 'Glow', 'Tube', 0, 1, 0.001, 0.2, 57),
   spec('vsReact', 'Follow the music', 'Music', 0, 1, 0.001, 0.5, 58),
 ];
+
+/** The layer an oscillator draws, or that the Input source reads: an
+ *  effect-source string, not a knob. Any layer works, a camera included. */
+export const INPUT_LAYER_KEY = 'vsInputLayer';
+
+/** Four stored patches at the corners of the snapshot pad. */
+export const SNAPSHOTS_KEY = 'vsSnapshots';
+export const MORPH_KEY = 'vsMorph';
+export type Snapshots = (Record<string, number> | null)[];
+
+/** Controls a snapshot holds and the pad blends: every knob, not the choices. */
+export const MORPHABLE = (): ParamSpec[] => VIDEOSYNTH_PARAMS.filter((p) => !p.options && p.step !== 1);
+
+/**
+ * Blend the four corner patches at (x, y): 0,0 is top left (corner 0), then
+ * top right, bottom left, bottom right. An empty corner holds `current`.
+ */
+export function morphValues(snapshots: Snapshots, x: number, y: number, current: Record<string, number>): Record<string, number> {
+  const fx = Math.max(0, Math.min(1, x)), fy = Math.max(0, Math.min(1, y));
+  const w = [(1 - fx) * (1 - fy), fx * (1 - fy), (1 - fx) * fy, fx * fy];
+  const out: Record<string, number> = {};
+  for (const p of MORPHABLE()) {
+    let v = 0;
+    for (let i = 0; i < 4; i++) v += w[i] * (snapshots[i]?.[p.key] ?? current[p.key] ?? p.default);
+    out[p.key] = v;
+  }
+  return out;
+}
 
 /** Slots the app fills after the controls. */
 export const SLOT_ASPECT = 59;

@@ -16,7 +16,7 @@
 
 import type { IntegratedEffectType } from '../types';
 import { STUDIO_PLUGIN_ID, defaultStudioSource } from '../music/studioPlugin';
-import { MUSIC_STUDIO, PHOSPHOR } from '../features';
+import { MUSIC_STUDIO, ANALOG_SYNTH } from '../features';
 import { VIDEOSYNTH_DEFAULTS, VIDEOSYNTH_PARAMS } from '../videosynth/patch';
 
 // ─── Plugin Param Definitions ───────────────────────────────────────────────
@@ -733,13 +733,13 @@ if (MUSIC_STUDIO) registerPlugin({
   get defaultSourceParams() { return defaultStudioSource(); },
 });
 
-// ─── Phosphor — a video synthesizer, add-on ──────────────────────────
+// ─── Analog Synth — a video synthesizer, add-on ──────────────────────
 // Three raster oscillators, a mixer, feedback and a tube finish, drawn by
 // the native core. Every control is a plain parameter, so MIDI learn,
 // presets and Timeline lines reach all of them.
-if (PHOSPHOR) registerPlugin({
-  id: 'phosphor',
-  name: 'Phosphor',
+if (ANALOG_SYNTH) registerPlugin({
+  id: 'analog-synth',
+  name: 'Analog Synth',
   description: 'A video synthesizer. Three oscillators draw across the picture like a beam, locked into bands or drifting free, bent by each other, the music and their own feedback, and finished like a tube.',
   category: 'Generators',
   version: '1.0.0',

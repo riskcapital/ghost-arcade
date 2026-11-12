@@ -1855,7 +1855,7 @@
   $: selectedPluginId = selectedMediaSource?.effectSource?.effectType ?? selectedMediaSource?.spoutSource?.pluginId ?? null;
   // Show the plugin-controls tab for any registered integrated effect type
   // (fluid, particles, milkdrop, …) plus the legacy Spout plugin ids.
-  $: hasPluginControls = selectedPluginId === 'fluid' || selectedPluginId === 'fluidgen' || selectedPluginId === 'particles' || selectedPluginId === 'particles3d' || selectedPluginId === 'milkdrop' || selectedPluginId === 'audiomotion' || selectedPluginId === 'wavejs' || selectedPluginId === 'hydra' || selectedPluginId === 'ghostfx' || selectedPluginId === 'handfx' || selectedPluginId === 'music-studio';
+  $: hasPluginControls = selectedPluginId === 'fluid' || selectedPluginId === 'fluidgen' || selectedPluginId === 'particles' || selectedPluginId === 'particles3d' || selectedPluginId === 'milkdrop' || selectedPluginId === 'audiomotion' || selectedPluginId === 'wavejs' || selectedPluginId === 'hydra' || selectedPluginId === 'ghostfx' || selectedPluginId === 'handfx' || selectedPluginId === 'music-studio' || selectedPluginId === 'videosynth';
   // Auto-switch to plugin tab when a plugin layer is first selected
   let prevPluginId: string | null = null;
   $: if (hasPluginControls && selectedPluginId !== prevPluginId) {

@@ -35,6 +35,7 @@
   import MilkdropPanel from './MilkdropPanel.svelte';
   import HydraPanel from './HydraPanel.svelte';
   import MusicStudioPanel from './MusicStudioPanel.svelte';
+  import AnalogSynthPanel from './AnalogSynthPanel.svelte';
   import { MUSIC_STUDIO } from '../features';
 
   export let source: MediaSource | null = null;
@@ -231,6 +232,17 @@
       </div>
     {/if}
 
+    {#if effectSource.effectType === 'videosynth'}
+      <AnalogSynthPanel
+        effectSource={effectSource as unknown as Record<string, unknown>}
+        layers={$project.layers.filter((l) => l.id !== panelLayerId).map((l) => ({ id: l.id, name: l.name }))}
+        {midiPrefix}
+        onpatch={(patch, gesture) => {
+          const base = onUpdateEffectSource ? effectSource : ($selectedLayer?.source?.effectSource ?? effectSource);
+          if (base) commitEffectSource({ ...base, ...patch } as IntegratedEffectSource, gesture);
+        }}
+      />
+    {:else}
     <!-- All controls, flat -->
     <div class="controls">
       {#each pluginManifest.paramDefs as def (def.param)}
@@ -315,6 +327,7 @@
         {/if}
       {/each}
     </div>
+    {/if}
   </div>
 {/if}
 

@@ -53,7 +53,7 @@ export function applyParamOverrides(target: Layer, overrides: ParamOverrideSet):
       },
     };
   }
-  // Phosphor's controls live flat on the effect source.
+  // Analog Synth's controls live flat on the effect source.
   if (next.source?.effectSource?.effectType === 'videosynth') {
     let synth: Record<string, any> | null = null;
     for (const key in overrides) {

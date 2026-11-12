@@ -45,13 +45,13 @@ export function discoverKeyframeableParams(layer: Layer): KeyframeableParam[] {
     params.push({key:`interactive:${effect.id}:enabled`,label:'Enabled',type:'boolean',defaultValue:effect.enabled,group});
     for(const d of effectParams(effect.kind))params.push({key:`interactive:${effect.id}:${d.key}`,label:d.label,type:'number',min:d.min,max:d.max,step:d.step,defaultValue:effect.params[d.key]??d.value,group});
   }
-  // ── Phosphor controls ──
+  // ── Analog Synth controls ──
   if (layer.source?.effectSource?.effectType === 'videosynth') {
     const es = layer.source.effectSource as unknown as Record<string, unknown>;
     for (const p of VIDEOSYNTH_PARAMS) {
       params.push({
         key: `vsynth:${p.key}`, label: p.label, type: 'number', min: p.min, max: p.max, step: p.step,
-        defaultValue: paramValue(es, p), group: `Phosphor · ${p.group}`,
+        defaultValue: paramValue(es, p), group: `Analog Synth · ${p.group}`,
         ...(p.options || p.step === 1 ? { kind: 'stepped' as const } : {}),
       });
     }

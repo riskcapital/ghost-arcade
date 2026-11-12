@@ -1,5 +1,5 @@
 /**
- * Phosphor's WGSL (see graph.ts for the passes).
+ * Analog Synth's WGSL (see graph.ts for the passes).
  *
  *   fs_synth  three raster oscillators, their modulation, the mixer, the
  *             picture controls and feedback from the last frame
@@ -17,6 +17,7 @@ ${SCENE3D_FRAME_WGSL}
 @group(0) @binding(1) var<uniform> frame: SceneFrame;
 @group(0) @binding(2) var src: texture_2d<f32>;
 @group(0) @binding(3) var samp: sampler;
+@group(0) @binding(4) var input_tex: texture_2d<f32>;
 
 const TAU = 6.2831853;
 
@@ -71,6 +72,8 @@ fn wave(phase: f32, shape: f32) -> f32 {
 // Picture-wide state the sources read.
 var<private> feedback_luma: f32;
 var<private> osc_values: vec3f;
+var<private> input_luma: f32;
+var<private> input_rgb: vec3f;
 
 fn source(k: f32) -> f32 {
   let i = u32(k + 0.5);
@@ -87,6 +90,7 @@ fn source(k: f32) -> f32 {
     case 10u: { return frame.treble; }
     case 11u: { return frame.energy; }
     case 12u: { return frame.kick; }
+    case 13u: { return input_luma; }
     default: { return 0.0; }
   }
 }
@@ -104,6 +108,9 @@ fn oscillator(n: u32, uv: vec2f) -> vec4f {
   var hue = prm(b + 9u) + react * frame.treble * 0.08;
   if (mode == 0u) { phase += m * 2.0; }
   var v = wave(phase, prm(b + 3u));
+  // Drawing the input: its brightness is the signal, its colour tinted by the oscillator's.
+  let draws_input = prm(61u + n) > 0.5;
+  if (draws_input) { v = input_luma; }
   if (mode == 1u) {
     // Key: the wave shape sets the threshold; the source pushes past it.
     let th = 0.5;
@@ -111,7 +118,9 @@ fn oscillator(n: u32, uv: vec2f) -> vec4f {
   } else if (mode == 2u) {
     hue += m;
   }
-  return vec4f(hsv(hue, prm(b + 10u), v * prm(b + 11u)), v);
+  var rgb = hsv(hue, prm(b + 10u), v * prm(b + 11u));
+  if (draws_input && mode != 1u) { rgb = mix(input_rgb, hsv(hue, 1.0, v), prm(b + 10u)) * prm(b + 11u); }
+  return vec4f(rgb, v);
 }
 
 // Turn a colour about the grey axis.
@@ -145,6 +154,8 @@ fn fs_synth(in: VsOut) -> @location(0) vec4f {
     p = vec2f(cos(a), sin(a)) * length(p);
   }
   let uv = p / vec2f(aspect, 1.0) + 0.5;
+  input_rgb = textureSampleLevel(input_tex, samp, uv, 0.0).rgb;
+  input_luma = luma(input_rgb);
 
   // A, then B, then C: each can listen to the ones before it.
   osc_values = vec3f(0.0);
@@ -212,7 +223,7 @@ fn fs_out(in: VsOut) -> @location(0) vec4f {
 }
 `;
 
-export const VIDEOSYNTH_SHADER_ID = 'videosynth/phosphor';
+export const VIDEOSYNTH_SHADER_ID = 'videosynth/analog-synth';
 export const videosynthPrecompileCommands = () => [
   { type: 'precompile_shader' as const, shader_id: VIDEOSYNTH_SHADER_ID, stage: 'render' as const, entry: 'fs_synth', source: VIDEOSYNTH_WGSL },
 ];

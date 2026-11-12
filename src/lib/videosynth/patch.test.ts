@@ -1,16 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { paramBlock, paramValue, PARAM_FLOATS, SLOT_ASPECT, VIDEOSYNTH_DEFAULTS, VIDEOSYNTH_PARAMS, VIDEOSYNTH_PRESETS } from './patch';
+import { morphValues, paramBlock, paramValue, PARAM_FLOATS, SLOT_ASPECT, SLOT_LINES, VIDEOSYNTH_DEFAULTS, VIDEOSYNTH_PARAMS, VIDEOSYNTH_PRESETS } from './patch';
 import { buildVideoSynthGraph } from './graph';
 import { discoverKeyframeableParams } from '../keyframes/paramDiscovery';
 import { applyParamOverrides } from '../keyframes/applyParamOverrides';
 import type { Layer } from '../types';
 
-describe('Phosphor controls', () => {
+describe('Analog Synth controls', () => {
   it('give every control its own slot inside the block', () => {
     const slots = VIDEOSYNTH_PARAMS.map((p) => p.slot);
     expect(new Set(slots).size).toBe(slots.length);
-    expect(Math.max(...slots)).toBeLessThan(SLOT_ASPECT);
-    expect(SLOT_ASPECT).toBeLessThan(PARAM_FLOATS);
+    expect(slots).not.toContain(SLOT_ASPECT);
+    expect(slots).not.toContain(SLOT_LINES);
+    expect(Math.max(...slots)).toBeLessThan(PARAM_FLOATS);
   });
 
   it('clamp, round choices and turn degrees into radians', () => {
@@ -42,5 +43,16 @@ describe('Phosphor controls', () => {
     const copy = structuredClone(layer);
     applyParamOverrides(copy, { 'vsynth:vsFeedback': 0.2 });
     expect((copy.source!.effectSource as unknown as Record<string, number>).vsFeedback).toBe(0.2);
+  });
+
+  it('the snapshot pad blends the corners, holding empty ones at the current patch', () => {
+    const a = { ...VIDEOSYNTH_DEFAULTS, vsFeedback: 0 }, d = { ...VIDEOSYNTH_DEFAULTS, vsFeedback: 1 };
+    const current = { ...VIDEOSYNTH_DEFAULTS, vsFeedback: 0.5 };
+    expect(morphValues([a, null, null, d], 0, 0, current).vsFeedback).toBe(0);
+    expect(morphValues([a, null, null, d], 1, 1, current).vsFeedback).toBe(1);
+    expect(morphValues([a, null, null, d], 0.5, 0.5, current).vsFeedback).toBeCloseTo(0.5);
+    expect(morphValues([a, null, null, d], 1, 0, current).vsFeedback).toBeCloseTo(0.5);
+    // Choices (mixer, sources) are not blended.
+    expect(morphValues([a, null, null, d], 0.5, 0.5, current)).not.toHaveProperty('vsMix');
   });
 });

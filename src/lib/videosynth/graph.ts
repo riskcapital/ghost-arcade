@@ -1,5 +1,5 @@
 /**
- * Phosphor's render graph. Installed once on a `videosynth` layer and drawn
+ * Analog Synth's render graph. Installed once on a `videosynth` layer and drawn
  * by the core every frame: the core writes the clock and audio into the
  * frame block, so the patch only goes out when a control moves.
  *
@@ -8,7 +8,7 @@
  *   out    `next` through the tube → the layer's source
  */
 import { scene3dFrameBuffer } from '../renderer/scene3dFrame';
-import { paramBlock } from './patch';
+import { INPUT_LAYER_KEY, paramBlock } from './patch';
 import { VIDEOSYNTH_SHADER_ID } from './shaders';
 
 export type VideoSynthGraph = {
@@ -45,9 +45,12 @@ export function buildVideoSynthGraph(options: {
   const patch = { id: id('patch'), kind: 'uniform', byte_length: 256, initial_b64: b64(paramBlock(options.params, aspect)) };
   const frame = scene3dFrameBuffer(id('clock'));
   const base = [{ binding: 0, resource: patch.id, kind: 'uniform' }, { binding: 1, resource: frame.id, kind: 'uniform' }];
+  // The input layer's composited picture (any layer; empty when none is set).
+  const inputLayer = typeof options.params?.[INPUT_LAYER_KEY] === 'string' ? (options.params[INPUT_LAYER_KEY] as string) : '';
+  const input = { binding: 4, kind: 'source-frame-texture', source_id: `layer-frame:${inputLayer}` };
   const pass = (name: string, entry: string, from: string, target: object) => ({
     name, shader_id: VIDEOSYNTH_SHADER_ID, vertex_entry: 'vs_main', fragment_entry: entry, vertex_count: 3, clear: true, clear_color: [0, 0, 0, 1],
-    bindings: [...base, { binding: 2, kind: 'graph-texture', texture: from }, { binding: 3, kind: 'source-frame-sampler' }],
+    bindings: [...base, { binding: 2, kind: 'graph-texture', texture: from }, { binding: 3, kind: 'source-frame-sampler' }, input],
     ...target,
   });
   const render_passes = [
@@ -57,7 +60,7 @@ export function buildVideoSynthGraph(options: {
   ];
   return {
     config: { textures, buffers: [patch, frame], passes: [], render_passes, readbacks: [] },
-    topology: JSON.stringify([textures, options.sourceId]),
+    topology: JSON.stringify([textures, options.sourceId, inputLayer]),
     values: [{ id: patch.id, initial_b64: patch.initial_b64 }],
   };
 }
