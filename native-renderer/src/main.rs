@@ -9,6 +9,7 @@ mod capabilities;
 mod compositor;
 mod compute_graph;
 mod graph_textures;
+mod scene_frame;
 mod core_frame_counter;
 mod media_decode;
 mod hap_video;
@@ -3276,6 +3277,9 @@ enum NativeGraphLayerKind {
     GhostFx,
     HandFx,
     PerformerWorld,
+    /// Interactive 3D: an app-built scene graph installed as a template and
+    /// replayed by the core every frame, with the scene frame block written.
+    Scene3D,
     VjCrossfade,
     VjMix,
     Unsupported(String),
@@ -3303,6 +3307,7 @@ impl NativeGraphLayerKind {
             "ghostfx" => Self::GhostFx,
             "handfx" => Self::HandFx,
             "performer-world" => Self::PerformerWorld,
+            "scene3d" | "scene-3d" | "interactive-3d" => Self::Scene3D,
             "vj-crossfade" => Self::VjCrossfade,
             "vj-mix" => Self::VjMix,
             other => Self::Unsupported(other.to_string()),
@@ -3330,6 +3335,7 @@ impl NativeGraphLayerKind {
             Self::GhostFx => "ghostfx",
             Self::HandFx => "handfx",
             Self::PerformerWorld => "performer-world",
+            Self::Scene3D => "scene3d",
             Self::VjCrossfade => "vj-crossfade",
             Self::VjMix => "vj-mix",
             Self::Unsupported(label) => label.as_str(),
@@ -3373,6 +3379,7 @@ impl NativeGraphLayerKind {
                 | Self::GhostFx
                 | Self::HandFx
                 | Self::PerformerWorld
+                | Self::Scene3D
                 | Self::VjCrossfade
                 | Self::VjMix
         )
@@ -3591,6 +3598,10 @@ struct PendingGraphReadback {
 
 #[derive(Clone, Debug)]
 struct NativeGraphFrameJob {
+    /// Textures the graph declared. Re-declared each time the job is admitted,
+    /// so a texture freed while its layer was hidden, or lost with the
+    /// device, is there again before the job draws.
+    textures: Vec<NativeComputeGraphTextureSpec>,
     buffers: Vec<NativeComputeGraphBufferSpec>,
     pass_plans: Vec<NativeComputeGraphPassPlan>,
     render_plans: Vec<NativeComputeGraphRenderPlan>,
@@ -4832,6 +4843,8 @@ struct App {
     native_plugin_liquid_states: HashMap<String, NativePluginLiquidState>,
     native_plugin_templates_initialized: HashSet<String>,
     native_plugin_audio_smooth: HashMap<String, NativePluginAudioSmooth>,
+    /// Beat count and bar position for the scene frame block.
+    scene_clock: scene_frame::SceneClock,
     native_point_cloud_assets: HashMap<String, NativePointCloudAsset>,
     pending_native_graph_jobs: Vec<NativeGraphFrameJob>,
     /// Graph jobs that must run AFTER the compositor has drawn every layer:
@@ -5313,6 +5326,7 @@ impl App {
             native_plugin_liquid_states: HashMap::new(),
             native_plugin_templates_initialized: HashSet::new(),
             native_plugin_audio_smooth: HashMap::new(),
+            scene_clock: scene_frame::SceneClock::default(),
             native_point_cloud_assets: HashMap::new(),
             pending_native_graph_jobs: Vec::new(),
             pending_composite_graph_jobs: Arc::new(Vec::new()),
@@ -5607,6 +5621,7 @@ impl App {
             "native_ghostfx_graph": true,
             "native_handfx_graph": true,
             "native_performer_world_graph": true,
+            "native_scene3d_graph": true,
             "native_vj_crossfade_graph": true,
             "native_vj_mix_graph": true,
             "command_drain_policy": true,
@@ -5679,6 +5694,7 @@ impl App {
             "native_graph_instruments": native_graph_instrument_ids(),
             "native_graph_instrument_manifest": native_graph_instrument_manifest(),
             "audio_uniform_layout": ghost_audio_uniform_layout(),
+            "scene3d_frame_layout": scene_frame::layout(),
             "source_frame_shared_texture_import": source_frame_shared_texture_import,
             "output_shared_texture_export": output_shared_texture_export,
             "native_editor_preview": native_editor_preview,
@@ -8063,6 +8079,7 @@ impl App {
                 NativeGraphLayerKind::GhostFx
                     | NativeGraphLayerKind::HandFx
                     | NativeGraphLayerKind::PerformerWorld
+                    | NativeGraphLayerKind::Scene3D
                     | NativeGraphLayerKind::VjCrossfade
                     | NativeGraphLayerKind::VjMix
             ) {
@@ -8128,6 +8145,7 @@ impl App {
                 NativeGraphLayerKind::GhostFx
                 | NativeGraphLayerKind::HandFx
                 | NativeGraphLayerKind::PerformerWorld
+                | NativeGraphLayerKind::Scene3D
                 | NativeGraphLayerKind::VjCrossfade
                 | NativeGraphLayerKind::VjMix => unreachable!(),
                 NativeGraphLayerKind::Unsupported(_) => continue,
@@ -8258,8 +8276,8 @@ impl App {
         let time = self.native_graph_time_seconds();
         let delta = self.native_frame_delta().clamp(0.0, 0.1);
         let frame_index = self.native_frame_index();
-        let reactivity =
-            native_graph_param_f32(&graph_layer.params, "ghostfxReactivity", 0.0, 1.0, 0.4);
+        let reactivity_key = if graph_layer.kind == NativeGraphLayerKind::Scene3D { "scene3dReactivity" } else { "ghostfxReactivity" };
+        let reactivity = native_graph_param_f32(&graph_layer.params, reactivity_key, 0.0, 1.0, 0.4);
         self.native_plugin_audio_smooth.retain(|id, _| self.native_graph_layers.contains_key(id));
         let envelope = self.native_plugin_audio_smooth.entry(graph_layer.layer_id.clone()).or_default();
         envelope.update(frame_index, delta, self.audio0, self.audio1, reactivity);
@@ -8384,8 +8402,42 @@ impl App {
                 }
             }
         }
+        let scene_frame = (graph_layer.kind == NativeGraphLayerKind::Scene3D
+            && graph_layer.params["scene3dPaused"] != true)
+            .then(|| {
+                let beat_phase = self.audio1[2];
+                self.scene_clock.advance(frame_index, beat_phase);
+                scene_frame::SceneFrame {
+                    time,
+                    delta,
+                    frame: frame_index,
+                    audio_active: self.audio2[3] > 0.5,
+                    bass: smooth.bass,
+                    mid: smooth.mid,
+                    treble: smooth.treble,
+                    energy: smooth.energy,
+                    beat: smooth.beat_env,
+                    kick: self.audio2[1],
+                    snare: self.audio2[2],
+                    centroid: self.audio2[0],
+                    tempo: self.audio1[3],
+                    beat_phase,
+                    bar_phase: self.scene_clock.bar_phase(beat_phase),
+                    beats: self.scene_clock.beats(),
+                }
+            });
         for buffer in &mut job.buffers {
             if !matches!(buffer.kind, NativeComputeBufferBindingKind::Uniform) {
+                continue;
+            }
+            if graph_layer.kind == NativeGraphLayerKind::Scene3D {
+                // Only the frame block is the core's; every other uniform of a
+                // scene belongs to the app, which updates it in place.
+                if let Some(frame) = scene_frame.as_ref() {
+                    if buffer.id.ends_with(scene_frame::BUFFER_SUFFIX) {
+                        frame.write(&mut buffer.initial_bytes);
+                    }
+                }
                 continue;
             }
             // Interactive material settings contain light depth/power at slots
@@ -8822,6 +8874,7 @@ impl App {
         Ok((
             NativeGraphLayerState::Planet(state),
             NativeGraphFrameJob {
+                textures: Vec::new(),
                 buffers: vec![buffer_spec],
                 pass_plans: Vec::new(),
                 render_plans: vec![render_plan],
@@ -9141,6 +9194,7 @@ impl App {
         Ok((
             NativeGraphLayerState::InkCloud(state),
             NativeGraphFrameJob {
+                textures: Vec::new(),
                 buffers,
                 pass_plans,
                 render_plans,
@@ -9577,6 +9631,7 @@ impl App {
         Ok((
             NativeGraphLayerState::Smoke3D(state),
             NativeGraphFrameJob {
+                textures: Vec::new(),
                 buffers,
                 pass_plans,
                 render_plans: vec![render_plan],
@@ -10077,6 +10132,7 @@ impl App {
         Ok((
             NativeGraphLayerState::ParticleField(state),
             NativeGraphFrameJob {
+                textures: Vec::new(),
                 buffers,
                 pass_plans,
                 render_plans,
@@ -10576,6 +10632,7 @@ impl App {
         Ok((
             NativeGraphLayerState::PixelParticles(state),
             NativeGraphFrameJob {
+                textures: Vec::new(),
                 buffers,
                 pass_plans,
                 render_plans,
@@ -11060,6 +11117,7 @@ impl App {
         Ok((
             NativeGraphLayerState::Flythrough(state),
             NativeGraphFrameJob {
+                textures: Vec::new(),
                 buffers,
                 pass_plans,
                 render_plans,
@@ -11463,6 +11521,7 @@ impl App {
         Ok((
             NativeGraphLayerState::PointCloudFx(state),
             NativeGraphFrameJob {
+                textures: Vec::new(),
                 buffers,
                 pass_plans,
                 render_plans,
@@ -12449,6 +12508,7 @@ impl App {
         Ok((
             NativeGraphLayerState::SmokeRiders(state),
             NativeGraphFrameJob {
+                textures: Vec::new(),
                 buffers,
                 pass_plans,
                 render_plans: vec![render_plan],
@@ -12899,6 +12959,7 @@ impl App {
         Ok((
             NativeGraphLayerState::VolumetricSpheres(state),
             NativeGraphFrameJob {
+                textures: Vec::new(),
                 buffers,
                 pass_plans,
                 render_plans: vec![render_plan],
@@ -14204,7 +14265,7 @@ impl App {
         let Some(passes_value) = params.get("passes").and_then(Value::as_array) else {
             return Err("queued compute_graph requires passes[]".to_string());
         };
-        self.upsert_compute_graph_textures(params)?;
+        let texture_specs = self.upsert_compute_graph_textures(params)?;
         let mut buffer_specs = Vec::with_capacity(buffers_value.len());
         for buffer in buffers_value {
             let mut spec = parse_compute_graph_buffer(buffer)?;
@@ -14278,6 +14339,7 @@ impl App {
             }
         }
         Ok(NativeGraphFrameJob {
+            textures: texture_specs,
             buffers: buffer_specs,
             pass_plans,
             render_plans,
@@ -14545,18 +14607,21 @@ impl App {
 
     /// Create or resize the textures a graph declares. Done when the graph is
     /// parsed, not when it runs, so a queued job never meets a missing one.
-    fn upsert_compute_graph_textures(&mut self, params: &Value) -> Result<(), String> {
+    fn upsert_compute_graph_textures(&mut self, params: &Value) -> Result<Vec<NativeComputeGraphTextureSpec>, String> {
         let Some(textures) = params.get("textures").and_then(Value::as_array) else {
-            return Ok(());
+            return Ok(Vec::new());
         };
         let renderer = self
             .renderer
             .as_mut()
             .ok_or("graph textures require a ready renderer")?;
+        let mut specs = Vec::with_capacity(textures.len());
         for value in textures {
-            renderer.upsert_native_graph_texture(&parse_compute_graph_texture(value)?)?;
+            let spec = parse_compute_graph_texture(value)?;
+            renderer.upsert_native_graph_texture(&spec)?;
+            specs.push(spec);
         }
-        Ok(())
+        Ok(specs)
     }
 
     fn graph_texture_format(&self, id: &str) -> Option<NativeGraphTextureFormat> {
@@ -16878,6 +16943,11 @@ impl App {
         self.audio0 = audio.audio0;
         self.audio1 = audio.audio1;
         self.audio2 = audio.audio2;
+        // Optional, for the scene frame block: where the app is in the bar.
+        self.scene_clock.bar_phase_hint = number_at(command, &["bar_phase"]).map(|v| v as f32);
+        if let Some(beats) = number_at(command, &["beats_per_bar"]).filter(|v| v.is_finite() && *v >= 1.0) {
+            self.scene_clock.beats_per_bar = beats.min(32.0) as u32;
+        }
     }
 
     fn apply_media_source(&mut self, command: &Value) {
@@ -23198,6 +23268,9 @@ impl RenderState {
         let mut required = HashMap::<String, u64>::new();
         let mut transient = 0u64;
         for job in jobs {
+            for spec in &job.textures {
+                self.native_graph_textures.upsert(&self.device, spec)?;
+            }
             for spec in &job.buffers {
                 if spec.persistent { required.insert(spec.id.clone(), spec.byte_length); }
                 else { transient = transient.saturating_add(spec.byte_length); }
@@ -35727,7 +35800,7 @@ mod tests {
     }
 
     fn graph_test_job(output: usize, input: Option<usize>) -> NativeGraphFrameJob {
-        NativeGraphFrameJob { buffers: Vec::new(), pass_plans: Vec::new(), readback_buffer_ids: Vec::new(),
+        NativeGraphFrameJob { textures: Vec::new(), buffers: Vec::new(), pass_plans: Vec::new(), readback_buffer_ids: Vec::new(),
             render_plans: vec![NativeComputeGraphRenderPlan {
                 name: "test".into(), cache_key: "shader".into(), source: Arc::from(""),
                 vertex_entry: "vs".into(), fragment_entry: "fs".into(), clear: true,

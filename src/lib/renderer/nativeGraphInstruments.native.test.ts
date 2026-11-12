@@ -231,6 +231,12 @@ const EXPECTED_NATIVE_GRAPH_MANIFEST: NativeGraphManifestExpectation[] = [
         String(command.shader_id).startsWith('performer-world/')),
     ),
   },
+  {
+    // A scene brings its own shaders with its graph.
+    id: 'scene3d',
+    feature: 'native_scene3d_graph',
+    shaderIds: [],
+  },
 ];
 
 type NativeRpc = {

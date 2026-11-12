@@ -431,10 +431,28 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
         ],
         parity: "native-performer-world-overlay-with-xy-and-movement-spaces",
     },
+    NativeGraphInstrumentSpec {
+        id: "scene3d",
+        label: "Interactive 3D",
+        // A scene brings its own shaders with its graph; none are built in.
+        shader_ids: &[],
+        features: &[
+            "compute_graph_host",
+            "compute_graph_render",
+            "compute_graph_multi_render",
+            "compute_graph_instanced_render",
+            "compute_graph_clear_color",
+            "compute_graph_source_frame_target",
+            "compute_graph_textures",
+            "persistent_compute_buffers",
+            "native_scene3d_graph",
+        ],
+        parity: "native-scene3d-template-with-graph-textures-and-frame-block",
+    },
 ];
 
 pub fn native_graph_instruments_note() -> &'static str {
-    "Native graph instruments use shared WGSL, including persistent GhostFX, HandFX, and Performer world overlay graphs; the legacy native lookalike proxy path is disabled."
+    "Native graph instruments use shared WGSL, including persistent GhostFX, HandFX, Performer world overlay and Interactive 3D graphs; the legacy native lookalike proxy path is disabled."
 }
 
 pub fn native_graph_instrument_ids() -> Vec<&'static str> {
