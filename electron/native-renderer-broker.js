@@ -322,6 +322,7 @@ const RENDERER_COMMANDS = [
   'native_renderer_get_output_shared_texture_snapshot',
   'native_renderer_get_deck_monitor_state',
   'native_renderer_set_deck_monitor_width',
+  'native_renderer_get_dome_view_texture',
   // Recording one layer / VJ row / transparent composition (main process sets it).
   'native_renderer_set_record_target',
   'native_renderer_get_slice_output_state',
@@ -704,6 +705,8 @@ class NativeRendererBroker {
         return this.sendIfRunning('output_shared_texture_snapshot', args, { fallback: null, timeoutMs: 10000 });
       case 'native_renderer_get_deck_monitor_state':
         return this.sendIfRunning('get_deck_monitor_state', args, { fallback: { available: false }, timeoutMs: 2500 });
+      case 'native_renderer_get_dome_view_texture':
+        return this.sendIfRunning('get_dome_view_texture', args, { fallback: { available: false }, timeoutMs: 2500 });
       case 'native_renderer_set_deck_monitor_width':
         return this.sendIfRunning('set_deck_monitor_width', args, { fallback: null, timeoutMs: 2500 });
       case 'native_renderer_set_stage3d_scene':

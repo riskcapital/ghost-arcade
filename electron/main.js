@@ -2316,6 +2316,10 @@ let nativePreviewLastRectSignature = '';
 let nativePreviewGeometryGeneration = 0;
 let nativePreviewCachedTexture = null;
 let nativePreviewNextTexturePollAt = 0;
+/** The editor asked for its Inside view of the dome: while the core draws
+ *  one, the editor preview shows it instead of the program. The output
+ *  window and every Screen keep the program. */
+let nativePreviewDomeViewWanted = false;
 let nativePreviewLastTextureFrame = -1;
 let nativePreviewLastTextureFrameAt = 0;
 let nativePreviewPausedForStaleFrame = false;
@@ -2862,7 +2866,7 @@ async function nativePreviewTextureMetadataForPump() {
     // failed read: the frame counter it carries is as fresh as the last query.
     return nativePreviewCachedTexture;
   }
-  const texture = await getNativeOutputSharedTextureMetadata();
+  const texture = await getNativeEditorPreviewTextureMetadata();
   if (isPublishableNativeOutputTexture(texture)) {
     const previousHandle = nativePreviewCachedTexture?.handle;
     const previousSize = `${nativePreviewCachedTexture?.width ?? 0}x${nativePreviewCachedTexture?.height ?? 0}`;
@@ -5172,6 +5176,20 @@ function canPublishNativeOutputTextureWithOutput(texture, output = spoutOutput) 
     return !!(nativeOutputTextureHandleBuffer(texture) && typeof output?.sendTexture === 'function');
   }
   return false;
+}
+
+/** What the editor preview shows: the Inside view of the dome while it is
+ *  wanted and drawn, otherwise the program output. */
+async function getNativeEditorPreviewTextureMetadata() {
+  if (nativePreviewDomeViewWanted) {
+    try {
+      const view = await nativeRendererBroker.invoke('native_renderer_get_dome_view_texture', {});
+      if (isPublishableNativeOutputTexture(view)) return view;
+    } catch {
+      // Fall back to the program below.
+    }
+  }
+  return getNativeOutputSharedTextureMetadata();
 }
 
 async function getNativeOutputSharedTextureMetadata() {
@@ -9176,6 +9194,16 @@ function registerIpcHandlers() {
 
   ipcMain.handle('native_preview_get_status', async () => {
     return getNativePreviewStatus();
+  });
+
+  ipcMain.handle('native_preview_dome_view', async (_event, args = {}) => {
+    const wanted = !!args?.on;
+    if (wanted !== nativePreviewDomeViewWanted) {
+      nativePreviewDomeViewWanted = wanted;
+      // Switch on the next pump tick rather than after the cache's poll window.
+      nativePreviewNextTexturePollAt = 0;
+    }
+    return { on: nativePreviewDomeViewWanted };
   });
 
   // ── Native output live recording (main-process IOSurface capture) ──

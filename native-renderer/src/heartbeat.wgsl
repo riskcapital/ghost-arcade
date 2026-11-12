@@ -98,6 +98,10 @@ struct Uniforms {
   dome3: vec4<f32>,
   dome4: vec4<f32>,
   dlayer: vec4<f32>,
+  // The view from inside the dome (fs_output only, the editor's Inside
+  // view): (on, look azimuth, look elevation, tangent of half the vertical
+  // field of view), radians.
+  dview: vec4<f32>,
 }
 
 @group(0) @binding(0)
@@ -2005,19 +2009,27 @@ fn dome_picture_point(uv_in: vec2<f32>, aspect: f32) -> vec2<f32> {
 ///   2 domemaster: the canvas already holds a dome picture dome4.x wide,
 ///     fitted to its height; this only re-lenses, rotates and tilts it.
 fn dome_source_uv(uv_in: vec2<f32>, aspect: f32, canvas_aspect: f32) -> vec4<f32> {
-  let pi = 3.14159265359;
   let truncation = u.dome2.x;
   let m = dome_picture_point(uv_in, aspect);
   let r = length(m);
-  let dome_dir = dome_direction(m, u.dome0.y, u.dome0.z);
+  // About one output pixel, as an angle: soft edges where the canvas ends.
+  let px_angle = max(u.dome0.z * 0.5, 0.01) / max(0.5 * min(u.resolution.x, u.resolution.y), 1.0);
+  let seen = dome_canvas_seen(dome_direction(m, u.dome0.y, u.dome0.z), uv_in, canvas_aspect, px_angle);
+  let edge_fade = smoothstep(truncation, truncation - 0.05, r) * step(r, truncation);
+  return vec4<f32>(seen, edge_fade);
+}
+
+/// The canvas UV a direction on the dome (z to the zenith) sees, in `xy`,
+/// and how much of the canvas is there in `z`. `flat_uv_rest` is where the
+/// flat view's curvature eases back to; `px_angle` is about one pixel as an
+/// angle, for soft edges. See dome_source_uv for the canvas kinds.
+fn dome_canvas_seen(dome_dir: vec3<f32>, flat_uv_rest: vec2<f32>, canvas_aspect: f32, px_angle: f32) -> vec3<f32> {
+  let pi = 3.14159265359;
   let tilt_c = cos(u.dome1.x);
   let tilt_s = sin(u.dome1.x);
   let dir = vec3<f32>(dome_dir.x, dome_dir.y * tilt_c - dome_dir.z * tilt_s, dome_dir.y * tilt_s + dome_dir.z * tilt_c);
   let kind = i32(floor(u.dome3.x + 0.5));
-  // About one output pixel, as an angle: soft edges where the canvas ends.
-  let px_angle = max(u.dome0.z * 0.5, 0.01) / max(0.5 * min(u.resolution.x, u.resolution.y), 1.0);
-
-  var tex_uv = uv_in;
+  var tex_uv = flat_uv_rest;
   var inside = 1.0;
   if (kind == 1) {
     let az = atan2(dir.x, -dir.y);
@@ -2047,15 +2059,27 @@ fn dome_source_uv(uv_in: vec2<f32>, aspect: f32, canvas_aspect: f32) -> vec4<f32
     let half_w = tan(clamp(u.dome4.x * 0.5, 0.05, 1.5));
     let z = max(dir.z, 0.001);
     let flat_uv = vec2<f32>(0.5 + dir.x / z / (2.0 * half_w), 0.5 + dir.y / z * canvas_aspect / (2.0 * half_w));
-    tex_uv = mix(uv_in, flat_uv, u.dome1.w);
+    tex_uv = mix(flat_uv_rest, flat_uv, u.dome1.w);
     let e = px_angle / max(half_w, 0.05);
     let edge = min(min(flat_uv.x, 1.0 - flat_uv.x), min(flat_uv.y, 1.0 - flat_uv.y));
     // Curvature eases back to the plain canvas, which always has a picture.
     inside = mix(1.0, smoothstep(-e, e, edge) * step(0.001, dir.z), u.dome1.w);
   }
-  tex_uv = clamp(tex_uv, vec2<f32>(0.0), vec2<f32>(1.0));
-  let edge_fade = smoothstep(truncation, truncation - 0.05, r) * step(r, truncation);
-  return vec4<f32>(tex_uv, inside, edge_fade);
+  return vec3<f32>(clamp(tex_uv, vec2<f32>(0.0), vec2<f32>(1.0)), inside);
+}
+
+/// dome_lens_theta the other way: how far out in the dome picture a point
+/// `theta` radians from the zenith sits.
+fn dome_lens_radius(theta: f32, lens: f32, fov: f32) -> f32 {
+  let half_fov = max(fov * 0.5, 0.0001);
+  let mode = i32(floor(lens + 0.5));
+  if (mode == 1) {
+    return tan(theta * 0.5) / tan(min(half_fov, 3.0) * 0.5);
+  }
+  if (mode == 2) {
+    return sin(min(theta * (3.14159265359 * 0.5) / half_fov, 3.14159265359 * 0.5));
+  }
+  return theta / half_fov;
 }
 
 /// The dome grid drawn over a dome output to line projectors up with the
@@ -2063,8 +2087,11 @@ fn dome_source_uv(uv_in: vec2<f32>, aspect: f32, canvas_aspect: f32) -> vec4<f32
 /// degrees around, the horizon and the front marked in amber. In dome
 /// coordinates, so tilt and canvas don't move it. Returns (colour, coverage).
 fn dome_grid(uv_in: vec2<f32>, aspect: f32) -> vec4<f32> {
+  return dome_grid_at(dome_picture_point(uv_in, aspect));
+}
+
+fn dome_grid_at(m: vec2<f32>) -> vec4<f32> {
   let pi = 3.14159265359;
-  let m = dome_picture_point(uv_in, aspect);
   let r = length(m);
   let theta = dome_lens_theta(r, u.dome0.y, u.dome0.z);
   let tw = max(fwidth(theta), 0.000001);
@@ -4303,6 +4330,48 @@ fn flux_apply(dry: vec3<f32>, uv_frame: vec2<f32>) -> vec3<f32> {
   return mix(dry, clamp(blended, vec3<f32>(0.0), vec3<f32>(1.0)), clamp(u.flux0.w, 0.0, 1.0));
 }
 
+/// The view from inside the dome, for the editor's Inside view: a camera at
+/// the centre of the dome looking at azimuth dview.y, elevation dview.z,
+/// sees the canvas as the dome output wraps it, the layers placed on the
+/// dome and the grid; past the dome's edge, a dim floor. In dome
+/// coordinates, so the dome's turn and offset (projector alignment) don't
+/// move it, while tilt, which moves the content, does.
+fn dome_inside_view(uv_in: vec2<f32>, aspect: f32, canvas_aspect: f32) -> vec3<f32> {
+  let yaw = u.dview.y;
+  let pitch = u.dview.z;
+  let t = max(u.dview.w, 0.01);
+  let forward = vec3<f32>(cos(pitch) * sin(yaw), -cos(pitch) * cos(yaw), sin(pitch));
+  let right = vec3<f32>(cos(yaw), sin(yaw), 0.0);
+  let up = cross(forward, right);
+  let ndc = uv_in * 2.0 - vec2<f32>(1.0);
+  let dir = normalize(forward + right * ndc.x * t * aspect + up * ndc.y * t);
+  let theta = acos(clamp(dir.z, -1.0, 1.0));
+  let r = dome_lens_radius(theta, u.dome0.y, u.dome0.z);
+  let phi = atan2(dir.y, dir.x);
+  let m = vec2<f32>(cos(phi), sin(phi)) * r;
+  let truncation = u.dome2.x;
+  let on_dome = step(theta, u.dome0.z * 0.5) * step(r, truncation);
+
+  // Past the dome's edge: a dim floor, lighter towards the horizon, so the
+  // view keeps its bearings.
+  let floor_shade = mix(0.012, 0.05, smoothstep(-0.6, 0.0, dir.z));
+  var color = vec3<f32>(floor_shade);
+  let px_angle = 2.0 * t / max(u.resolution.y, 1.0);
+  let seen = dome_canvas_seen(dir, m * 0.5 + vec2<f32>(0.5), canvas_aspect, px_angle);
+  var dome_rgb = textureSampleLevel(creative_master, creative_sampler, vec2<f32>(seen.x, 1.0 - seen.y), 0.0).rgb * seen.z;
+  if (u.dlayer.x > 0.5) {
+    let placed = textureSampleLevel(dome_layers_tex, creative_sampler, vec2<f32>(m.x * 0.5 + 0.5, 0.5 - m.y * 0.5), 0.0);
+    dome_rgb = dome_rgb * (1.0 - placed.a) + placed.rgb;
+  }
+  if (u.dome4.y > 0.001) {
+    let grid = dome_grid_at(m);
+    dome_rgb = mix(dome_rgb, grid.rgb, grid.a * clamp(u.dome4.y, 0.0, 1.0));
+  }
+  let fade = smoothstep(truncation, truncation - 0.05, r);
+  color = mix(color, dome_rgb, on_dome * fade);
+  return color;
+}
+
 @fragment
 fn fs_output(in: VertexOut) -> @location(0) vec4<f32> {
   // Blackout is independent of every creative operation and calibration.
@@ -4312,6 +4381,10 @@ fn fs_output(in: VertexOut) -> @location(0) vec4<f32> {
   var uv = source.xy;
   var mask = source.z;
   let master_dims = vec2<f32>(textureDimensions(creative_master));
+  if (u.dview.x > 0.5) {
+    let inside = dome_inside_view(in.uv, aspect, master_dims.x / max(master_dims.y, 1.0));
+    return vec4<f32>(clamp(inside * u.output_gate, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+  }
   var canvas_cover = 1.0;
   if (u.dome0.x > 0.5) {
     let domed = dome_source_uv(uv, aspect, master_dims.x / max(master_dims.y, 1.0));

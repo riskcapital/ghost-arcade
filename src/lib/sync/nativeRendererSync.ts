@@ -1135,6 +1135,7 @@ import { buildScene3DGraph } from '$lib/renderer/scene3dNative';
 import { validateScene3D } from '$lib/scene3d/sceneModel';
 import { buildVideoSynthGraph } from '$lib/videosynth/graph';
 import { domePlacementCommand, nativeDomeStage } from '$lib/output/domeMath';
+import { domeView } from '$lib/stores/domeView';
 const NATIVE_EFFECT_PASS_IDS = new Set<NativeEffectPassId>(
   NATIVE_EFFECT_PASS_MANIFEST.map((entry) => entry.id),
 );
@@ -5803,6 +5804,7 @@ export class NativeRendererSync {
   private compositeFxResident = false;
   private lastCompositeEffectsSig: string | null = null;
   private lastOutputStageSig: string | null = null;
+  private lastDomeViewSig: string | null = null;
   private lastSliceOutputsSig: string | null = null;
   private openSliceWindowIds: string[] = [];
   private displayBounds = new Map<number, { width: number; height: number; scaleFactor: number }>();
@@ -8896,6 +8898,25 @@ export class NativeRendererSync {
       .catch(() => { /* core without output-stage support */ });
   }
 
+  /** The editor's Inside view of the dome (stores/domeView.ts): the core
+   *  draws it only while it is on and the dome output is. */
+  private pushDomeView() {
+    const view = get(domeView);
+    const enabled = !!view.inside && !!get(settings)?.output?.domeEnabled;
+    const payload = {
+      type: 'set_dome_view' as const,
+      enabled,
+      azimuth: view.azimuth,
+      elevation: view.elevation,
+      fov: view.fov,
+    };
+    const sig = enabled ? JSON.stringify(payload) : 'off';
+    if (sig === this.lastDomeViewSig) return;
+    this.lastDomeViewSig = sig;
+    void submitNativeRendererCommands([payload])
+      .catch(() => { /* core without the Inside view */ });
+  }
+
   /** Screens with an output window open, at the pixel size the core renders
    *  them: what an auto-map capture can put stripes on. */
   openScreenOutputs(): { id: string; name: string; width: number; height: number }[] {
@@ -9169,6 +9190,8 @@ export class NativeRendererSync {
     this.outputStateUnsubs = [];
     this.outputStateUnsubs.push(settings.subscribe(() => this.pushOutputState()));
     this.outputStateUnsubs.push(settings.subscribe(() => this.pushOutputStage()));
+    this.outputStateUnsubs.push(settings.subscribe(() => this.pushDomeView()));
+    this.outputStateUnsubs.push(domeView.subscribe(() => this.pushDomeView()));
     this.outputStateUnsubs.push(settings.subscribe(() => this.pushSliceOutputs()));
     this.outputStateUnsubs.push(recordingScreenIds.subscribe(() => this.pushSliceOutputs()));
     this.outputStateUnsubs.push(screenAlignmentAids.subscribe(() => this.pushSliceOutputs()));
@@ -9724,6 +9747,7 @@ export class NativeRendererSync {
     this.lastOutputBlackout = null;
     this.lastCompositeEffectsSig = null;
     this.lastOutputStageSig = null;
+    this.lastDomeViewSig = null;
     this.lastSliceOutputsSig = null;
     if (this.sliceWindowPoll) {
       clearInterval(this.sliceWindowPoll);

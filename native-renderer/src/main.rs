@@ -1324,6 +1324,10 @@ struct OutputStage {
     /// Layers placed on the dome: (drawn by the dome pass, lens, dome
     /// angle radians, _). Set per frame by `sync_dome_layers`.
     dlayer: [f32; 4],
+    /// The editor's view from inside the dome: (on, look azimuth, look
+    /// elevation, tangent of half the vertical field of view), radians.
+    /// Only the dome view target sets it (`render_dome_view`).
+    dview: [f32; 4],
     /// Per-edge blend gamma (left, right, top, bottom); slice mode only.
     edge_gamma: [f32; 4],
     /// Projector black-level lift (r, g, b, feather); slice mode only.
@@ -1364,6 +1368,7 @@ impl Default for OutputStage {
             dome3: [0.0, 0.0, std::f32::consts::FRAC_PI_2, std::f32::consts::TAU],
             dome4: [std::f32::consts::FRAC_PI_2, 0.0, 0.0, 0.0],
             dlayer: [0.0; 4],
+            dview: [0.0; 4],
             edge_gamma: [2.2; 4],
             black_level: [0.0; 4],
             projector_calibration: [[0.0; 4]; 5],
@@ -1438,6 +1443,7 @@ struct Uniforms {
     dome3: [f32; 4],
     dome4: [f32; 4],
     dlayer: [f32; 4],
+    dview: [f32; 4],
 }
 
 #[repr(C)]
@@ -4609,6 +4615,10 @@ struct RenderState {
     /// panel shows beside Program. Created lazily on the first frame that
     /// carries deck-monitor-tagged layers.
     deck_monitor_targets: Option<[DeckMonitorTarget; 2]>,
+    /// The editor's Inside view of the dome (`render_dome_view`): drawn from
+    /// the program's master like a Screen, and handed to the editor
+    /// preview in place of the program output while it is on.
+    dome_view_target: Option<DeckMonitorTarget>,
     /// Per-slice display targets, keyed by the editor's slice id.
     slice_targets: HashMap<String, SliceOutputTarget>,
     /// Linux Screen presenters, keyed by slice id. Kept apart from
@@ -4882,6 +4892,8 @@ struct App {
     /// Width of the deck confidence monitors' textures. 480 suits the small
     /// deck panes; a Preview monitor on its own display asks for more.
     deck_monitor_width: u32,
+    /// The editor's Inside view camera (`OutputStage::dview`), while it is on.
+    dome_view: Option<[f32; 4]>,
     output_window_attached: bool,
     /// The composite size set by the project (set_output). While a
     /// fullscreen output window shows it, the window's own size no longer
@@ -5386,6 +5398,7 @@ impl App {
             pending_render_retry: false,
             deck_monitors_lit: false,
             deck_monitor_width: 480,
+            dome_view: None,
             output_window_attached: false,
             output_size_configured: false,
             output_window_fullscreen: false,
@@ -6758,6 +6771,12 @@ impl App {
                 self.deck_monitor_width = deck_monitor_width(width);
                 Ok(json!({ "width": self.deck_monitor_width }))
             }
+            "dome_view_texture" | "get_dome_view_texture" => Ok(self.tag_presenter_info(
+                self.renderer
+                    .as_ref()
+                    .map(RenderState::dome_view_metadata)
+                    .unwrap_or_else(|| json!({ "available": false })),
+            )),
             "deck_monitor_state" | "get_deck_monitor_state" => Ok(self.tag_presenter_info(
                 self.renderer
                     .as_ref()
@@ -7381,6 +7400,7 @@ impl App {
                 0.0,
             ],
             dlayer: [0.0; 4],
+            dview: [0.0; 4],
             edge_gamma: [2.2; 4],
             black_level: [0.0; 4],
             // The main output never carries a per-slice screen warp; that is
@@ -7498,6 +7518,7 @@ impl App {
                     dome4: self.output_stage.dome4,
                     // The renderer sets this per frame (sync_dome_layers).
                     dlayer: [0.0; 4],
+                    dview: [0.0; 4],
                     // w: Screen alignment aid (7 numbered grid, 8 identify, 9 auto-map stripes);
                     // the main output's test patterns never reach a Screen.
                     dome2: [self.output_stage.dome2[0], blend_gamma as f32, 1.0, match read(&["alignmentAid"], 0.0).round() as i32 { 1 => 7.0, 2 => 8.0, 3 => 9.0, _ => 0.0 }],
@@ -7864,6 +7885,7 @@ impl App {
                 "set_layer_color" => self.apply_layer_color(command),
                 "set_layer_tint" => self.apply_layer_tint(command),
                 "set_layer_dome" => self.apply_layer_dome(command),
+                "set_dome_view" => self.apply_dome_view(command),
                 "set_output_flux" => {
                     // Flux from a paired phone. Absent or zero gain switches it off.
                     let number = |key: &str, fallback: f64| command.get(key).and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(fallback) as f32;
@@ -13436,6 +13458,21 @@ impl App {
                 },
             );
         }
+        // The editor's Inside view of the dome rides the frame too: one more
+        // output-stage pass over the master the program render just made.
+        if render_result.is_ok() {
+            let view = self.dome_view.filter(|_| self.output_stage.dome0[0] > 0.5);
+            renderer.render_dome_view(
+                view.map(|dview| OutputStage {
+                    out0: [0.0, 0.0, 1.0, 1.0],
+                    out1: [0.0, 1.0, 1.0, 1.0],
+                    dview,
+                    ..self.output_stage
+                }),
+                output_gate,
+                render_time,
+            );
+        }
         // The recording target rides the same frame, after the program render,
         // for the same reason: it samples the source frames just made current.
         #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -13837,7 +13874,10 @@ impl App {
         let bank = match string_at(&req.params, &["deck_monitor"]).as_deref() {
             Some("a") | Some("A") => 0,
             Some("b") | Some("B") => 1,
-            _ => return Err("deck_monitor must be \"a\" or \"b\"".to_string()),
+            // The dome's Inside view rides the same readback, for a panel or
+            // test with no presenter to show it.
+            Some("dome") => 2,
+            _ => return Err("deck_monitor must be \"a\", \"b\" or \"dome\"".to_string()),
         };
         let busy = &LIVE_DECK_PREVIEW_BUSY[bank];
         if busy.swap(true, Ordering::AcqRel) {
@@ -15948,6 +15988,21 @@ impl App {
             .entry(layer_id.clone())
             .or_insert_with(|| SceneLayer::new(layer_id, 0));
         entry.tint = [rgba[0].clamp(0.0, 1.0), rgba[1].clamp(0.0, 1.0), rgba[2].clamp(0.0, 1.0), 1.0];
+    }
+
+    /// The editor's view from inside the dome: on or off, where it looks
+    /// (azimuth and elevation, degrees) and how wide (vertical, degrees).
+    fn apply_dome_view(&mut self, command: &Value) {
+        let enabled = bool_at(command, &["enabled"]).unwrap_or(false);
+        let read = |key: &str, fallback: f64| number_at(command, &[key]).filter(|v| v.is_finite()).unwrap_or(fallback);
+        self.dome_view = enabled.then(|| {
+            [
+                1.0,
+                read("azimuth", 0.0).to_radians() as f32,
+                read("elevation", 30.0).clamp(-89.0, 89.0).to_radians() as f32,
+                (read("fov", 80.0).clamp(10.0, 150.0) * 0.5).to_radians().tan() as f32,
+            ]
+        });
     }
 
     /// Places a layer on the dome, or back on the canvas. Degrees in;
@@ -21178,6 +21233,7 @@ impl RenderState {
                 dome3: OutputStage::default().dome3,
                 dome4: OutputStage::default().dome4,
                 dlayer: [0.0; 4],
+                dview: [0.0; 4],
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -21909,6 +21965,7 @@ impl RenderState {
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             native_recorder_error: None,
             deck_monitor_targets: None,
+            dome_view_target: None,
             slice_targets: HashMap::new(),
             #[cfg(not(any(target_os = "macos", target_os = "windows")))]
             linux_slice_windows: HashMap::new(),
@@ -22625,7 +22682,12 @@ impl RenderState {
     /// copy is queued; `finish()` waits for it. `None` until the monitors
     /// have been drawn once.
     fn prepare_deck_monitor_readback(&self, bank: usize) -> Result<Option<PendingFrameReadback>, String> {
-        let Some(target) = self.deck_monitor_targets.as_ref().and_then(|targets| targets.get(bank)) else {
+        let target = if bank == 2 {
+            self.dome_view_target.as_ref()
+        } else {
+            self.deck_monitor_targets.as_ref().and_then(|targets| targets.get(bank))
+        };
+        let Some(target) = target else {
             return Ok(None);
         };
         prepare_texture_readback(&self.device, &self.queue, &target.render_texture,
@@ -23247,6 +23309,121 @@ impl RenderState {
     /// Shared-texture metadata for both deck monitors — same shape the
     /// output export uses so the electron presenter pump can reuse its
     /// import path.
+    /// The Inside view's texture, described like the program output's
+    /// (output_export_metadata) so the editor preview can show either.
+    fn dome_view_metadata(&self) -> Value {
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(target) = self.dome_view_target.as_ref() {
+                let export = &target.export;
+                return json!({
+                    "available": true,
+                    "platform": "iosurface",
+                    "handle": export.surface.id().to_string(),
+                    "handle_encoding": "integer",
+                    "handle_scope": "global-id",
+                    "preferred_transport": "handle",
+                    "handle_byte_length": 4,
+                    "width": export.width,
+                    "height": export.height,
+                    "format": texture_format_label(export.format),
+                    "color_space": "srgb",
+                    "alpha_mode": "opaque",
+                    "single_render_source": "core-dome-view",
+                    "frame": export.frame,
+                    "flipped": false,
+                });
+            }
+        }
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(target) = self.dome_view_target.as_ref() {
+                let export = &target.export;
+                return json!({
+                    "available": true,
+                    "platform": "dxgi",
+                    "handle": (export.shared_handle.0 as usize).to_string(),
+                    "handle_encoding": "integer",
+                    "handle_scope": "process-local",
+                    "preferred_transport": "shared_name",
+                    "handle_byte_length": 8,
+                    "name": export.shared_name.clone(),
+                    "shared_name": export.shared_name.clone(),
+                    "width": export.width,
+                    "height": export.height,
+                    "format": texture_format_label(export.format),
+                    "color_space": "srgb",
+                    "alpha_mode": "opaque",
+                    "single_render_source": "core-dome-view",
+                    "frame": export.frame,
+                    "flipped": false,
+                });
+            }
+        }
+        json!({ "available": false })
+    }
+
+    /// Draws the editor's Inside view of the dome (`stage.dview`), or drops
+    /// its target when the view is off. Same pass as a Screen's, from the
+    /// same master, at the composition's size so it fills the editor canvas.
+    fn render_dome_view(&mut self, stage: Option<OutputStage>, output_gate: f32, time_seconds: Option<f32>) {
+        let Some(stage) = stage else {
+            self.dome_view_target = None;
+            return;
+        };
+        let width = self.config.width.clamp(16, 4096);
+        let height = self.config.height.clamp(16, 4096);
+        if self.dome_view_target.as_ref().map(|target| (target.width, target.height)) != Some((width, height)) {
+            let (render_texture, render_view) = Self::create_offscreen_target(
+                &self.device,
+                width,
+                height,
+                self.config.format,
+                "Ghost Dome View Render Target",
+            );
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            let export = match Self::create_output_export_target(
+                &self.device,
+                width,
+                height,
+                native_output_export_format(self.config.format),
+            ) {
+                Ok(export) => export,
+                Err(err) => {
+                    eprintln!("[ghost-core] dome view export target failed: {err}");
+                    self.dome_view_target = None;
+                    return;
+                }
+            };
+            self.dome_view_target = Some(DeckMonitorTarget {
+                render_texture,
+                render_view,
+                width,
+                height,
+                #[cfg(any(target_os = "macos", target_os = "windows"))]
+                export,
+            });
+        }
+        let stage = OutputStage { dlayer: self.dome_layer_pass, ..stage };
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Ghost Dome View Encoder"),
+        });
+        {
+            let Some(target) = self.dome_view_target.as_ref() else {
+                return;
+            };
+            self.output_presenter.draw(&self.queue, &mut encoder, &target.render_view,
+                self.creative_frame_index, width, height, output_gate, stage, time_seconds.unwrap_or(0.0));
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            target.export.blitter.copy(&self.device, &mut encoder, &target.render_view, &target.export.view);
+        }
+        self.queue.submit(Some(encoder.finish()));
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        if let Some(target) = self.dome_view_target.as_mut() {
+            target.export.frame = target.export.frame.saturating_add(1);
+        }
+    }
+
     fn deck_monitor_metadata(&self) -> Value {
         #[cfg(target_os = "macos")]
         {
@@ -26530,6 +26707,7 @@ impl RenderState {
             dome3: stage.dome3,
             dome4: stage.dome4,
             dlayer: stage.dlayer,
+            dview: stage.dview,
             edge_gamma: stage.edge_gamma,
             black_level: stage.black_level,
             projector_calibration: stage.projector_calibration,
@@ -33676,8 +33854,10 @@ static LIVE_FRAME_STREAM: Mutex<Option<(u16, String, std::net::TcpStream)>> = Mu
 static LIVE_CAPTURE_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static LIVE_DIAGNOSTIC_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static LIVE_PREVIEW_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-/// One in-flight readback per deck monitor (bank A, bank B).
-static LIVE_DECK_PREVIEW_BUSY: [std::sync::atomic::AtomicBool; 2] = [
+/// One in-flight readback per deck monitor (bank A, bank B) and for the
+/// dome's Inside view.
+static LIVE_DECK_PREVIEW_BUSY: [std::sync::atomic::AtomicBool; 3] = [
+    std::sync::atomic::AtomicBool::new(false),
     std::sync::atomic::AtomicBool::new(false),
     std::sync::atomic::AtomicBool::new(false),
 ];

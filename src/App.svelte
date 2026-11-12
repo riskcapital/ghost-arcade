@@ -22,6 +22,8 @@
   import ScreenWarpHandles from './lib/components/ScreenWarpHandles.svelte';
   import MasterWarpHandles from './lib/components/MasterWarpHandles.svelte';
   import DomeGizmo from './lib/components/DomeGizmo.svelte';
+  import DomeViewControls from './lib/components/DomeViewControls.svelte';
+  import { domeView } from './lib/stores/domeView';
   import { isPlacedOnDome } from './lib/output/domeMath';
   import Object3DTransformGizmo from './lib/components/Object3DTransformGizmo.svelte';
   import CustomShapeHandles from './lib/components/CustomShapeHandles.svelte';
@@ -8117,15 +8119,21 @@
              placed on the dome are moved, sized and turned here instead of
              with their canvas handles (hidden below for them). -->
         {#if $settings.output.domeEnabled}
-          <div class="warp-handles-offset" style="left: {canvasOffsetX}px; top: {canvasOffsetY}px;">
-            <DomeGizmo containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} />
+          <div class="warp-handles-offset" style="left: {canvasOffsetX}px; top: {canvasOffsetY}px; width: {canvasWidth}px; height: {canvasHeight}px;">
+            {#if !$domeView.inside}
+              <DomeGizmo containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} />
+            {/if}
           </div>
+          <!-- Over the whole viewport, not the canvas: its switch stays in
+               view when the canvas is zoomed or panned, and the Inside view
+               turns from a drag anywhere. -->
+          <DomeViewControls />
         {/if}
         <div class="chase-badges-offset" style="position: absolute; pointer-events: none; left: {canvasOffsetX}px; top: {canvasOffsetY}px;">
           <ChaseOrderBadges containerWidth={canvasWidth} containerHeight={canvasHeight} />
           <WhereStageHighlight containerWidth={canvasWidth} containerHeight={canvasHeight} />
         </div>
-        {#if $selectedLayer && $selectedLayer.type !== 'mask' && $leftSidebarTab !== 'screens' && !isPlacedOnDome($selectedLayer, $settings.output)}
+        {#if $selectedLayer && $selectedLayer.type !== 'mask' && $leftSidebarTab !== 'screens' && !isPlacedOnDome($selectedLayer, $settings.output) && !($settings.output.domeEnabled && $domeView.inside)}
           <!-- Warp handles positioned to match the aspect-ratio-constrained canvas -->
           <div class="warp-handles-offset" style="left: {canvasOffsetX}px; top: {canvasOffsetY}px;">
             <WarpHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} hideCorners={$selectedLayer.warpMode === 'mesh'} shapeWarpActive={shapeWarpModeEnabled} interactionOnly={nativePrimaryRenderer} />

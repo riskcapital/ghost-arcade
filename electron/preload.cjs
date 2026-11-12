@@ -164,6 +164,8 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'native_renderer_set_output_window',
   'native_preview_attach', 'native_preview_update', 'native_preview_set_overlay', 'native_preview_detach',
   'native_preview_get_status',
+  // The editor's Inside view of the dome replaces the program in the editor preview
+  'native_preview_dome_view',
   // Deck A/B confidence monitors — named presenter views beside Program
   'deck_monitor_attach', 'deck_monitor_detach',
   // Preview monitor — program and decks on a display of the operator's own

@@ -256,6 +256,7 @@ impl OutputPresenter {
             dome3: stage.dome3,
             dome4: stage.dome4,
             dlayer: stage.dlayer,
+            dview: stage.dview,
             edge_gamma: stage.edge_gamma,
             black_level: stage.black_level,
             projector_calibration: stage.projector_calibration,
