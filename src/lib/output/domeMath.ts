@@ -250,3 +250,41 @@ function normalize(a: Vec3): Vec3 {
   const l = Math.hypot(a[0], a[1], a[2]) || 1;
   return [a[0] / l, a[1] / l, a[2] / l];
 }
+
+// ─── The Inside view's camera ─────────────────────────────────────────────
+
+/** Where the Inside view looks: degrees, the field of view vertical. */
+export interface DomeCamera {
+  azimuth: number;
+  elevation: number;
+  fov: number;
+}
+
+/** The camera's basis, as dome_inside_view in heartbeat.wgsl builds it. */
+function cameraBasis(camera: DomeCamera) {
+  const yaw = camera.azimuth * DEG;
+  const pitch = camera.elevation * DEG;
+  const forward: Vec3 = [Math.cos(pitch) * Math.sin(yaw), -Math.cos(pitch) * Math.cos(yaw), Math.sin(pitch)];
+  const right: Vec3 = [Math.cos(yaw), Math.sin(yaw), 0];
+  const up = cross(forward, right);
+  const t = Math.tan(Math.max(camera.fov, 1) * DEG * 0.5);
+  return { forward, right, up, t };
+}
+
+/** Where a direction shows in the Inside view (frame UV, y-up), or null behind the camera. */
+export function insideViewPoint(dir: Vec3, camera: DomeCamera, aspect: number): Vec2 | null {
+  const { forward, right, up, t } = cameraBasis(camera);
+  const z = dot(dir, forward);
+  if (z <= 0.01) return null;
+  const x = dot(dir, right) / z;
+  const y = dot(dir, up) / z;
+  return { x: (x / (t * aspect) + 1) * 0.5, y: (y / t + 1) * 0.5 };
+}
+
+/** The direction the Inside view shows at frame UV `uv` (y-up). */
+export function insideViewDirection(uv: Vec2, camera: DomeCamera, aspect: number): Vec3 {
+  const { forward, right, up, t } = cameraBasis(camera);
+  const x = (uv.x * 2 - 1) * t * aspect;
+  const y = (uv.y * 2 - 1) * t;
+  return normalize(add(forward, add(scale(right, x), scale(up, y))));
+}

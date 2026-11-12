@@ -7,6 +7,8 @@ import {
   domePointToFrame,
   domeSourceOf,
   framePointToDome,
+  insideViewDirection,
+  insideViewPoint,
   lensRadius,
   lensTheta,
   nativeDomeStage,
@@ -121,5 +123,34 @@ describe('layers placed on the dome', () => {
 
   it('sees nothing behind the placement', () => {
     expect(placedCanvasUv(directionOf(220, -55), place, 1)).toBeNull();
+  });
+});
+
+describe('the Inside view camera', () => {
+  const camera = { azimuth: 25, elevation: 40, fov: 80 };
+
+  it('looks where it is pointed, through the middle of the frame', () => {
+    const middle = azElOf(insideViewDirection({ x: 0.5, y: 0.5 }, camera, 16 / 9));
+    close(middle.azimuth, 25, 1e-6);
+    close(middle.elevation, 40, 1e-6);
+  });
+
+  it('finds a point of the frame again from its direction', () => {
+    for (const uv of [{ x: 0.1, y: 0.9 }, { x: 0.7, y: 0.3 }]) {
+      const back = insideViewPoint(insideViewDirection(uv, camera, 16 / 9), camera, 16 / 9)!;
+      close(back.x, uv.x, 1e-9);
+      close(back.y, uv.y, 1e-9);
+    }
+  });
+
+  it('puts up at the top and the audience’s right on the right', () => {
+    const top = azElOf(insideViewDirection({ x: 0.5, y: 1 }, camera, 1));
+    expect(top.elevation).toBeGreaterThan(40);
+    const right = azElOf(insideViewDirection({ x: 1, y: 0.5 }, { azimuth: 0, elevation: 0, fov: 60 }, 1));
+    expect(right.azimuth).toBeGreaterThan(0);
+  });
+
+  it('sees nothing behind the camera', () => {
+    expect(insideViewPoint(directionOf(205, -40), camera, 1)).toBeNull();
   });
 });

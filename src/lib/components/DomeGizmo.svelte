@@ -7,16 +7,19 @@
    * overlay draws the dome's rim and front, the outline of every layer
    * placed on the dome (Layer.domePlacement), and handles for the selected
    * one:
-   *   - drag the layer to move it over the dome (the drag carries the layer
-   *     around the sphere, so it keeps facing the way it did, even across
-   *     the zenith);
+   *   - drag the layer to move it over the dome (its top keeps pointing to
+   *     the zenith, and its turn stays as set);
    *   - drag a corner to size it;
    *   - drag the knob above it to turn it.
+   * It works the same over the Inside view (`inside`), drawn through that
+   * view's camera, so a layer can be placed while looking at it from the
+   * seats; dragging anywhere else there still turns the view.
    * The geometry is output/domeMath.ts, which mirrors the renderer.
    */
   import { onDestroy } from 'svelte';
   import { project } from '../stores/layers';
   import { settings } from '../stores/settings';
+  import { domeView } from '../stores/domeView';
   import {
     azElOf,
     directionAt,
@@ -24,6 +27,8 @@
     domePointToFrame,
     dot,
     framePointToDome,
+    insideViewDirection,
+    insideViewPoint,
     placedCanvasDirection,
     placementBasis,
     placementOf,
@@ -37,8 +42,11 @@
     containerWidth: number;
     containerHeight: number;
     zoom?: number;
+    /** Over the Inside view rather than the dome picture. */
+    inside?: boolean;
   }
-  let { containerWidth, containerHeight, zoom = 1 }: Props = $props();
+  let { containerWidth, containerHeight, zoom = 1, inside = false }: Props = $props();
+  let camera = $derived($domeView);
 
   let out = $derived($settings.output);
   let lens = $derived(domeLensOf(out));
@@ -56,17 +64,23 @@
   }
 
   function dirToPx(dir: Vec3): Vec2 | null {
+    // Off the dome is off the dome, whichever way it is looked at.
     const m = pointOf(dir, lens, fov);
     if (!m || Math.hypot(m.x, m.y) > truncation + 1e-3) return null;
-    return toPx(m);
+    if (!inside) return toPx(m);
+    const uv = insideViewPoint(dir, camera, aspect);
+    // Far outside the view a point only stretches the outline across it.
+    if (!uv || uv.x < -2 || uv.x > 3 || uv.y < -2 || uv.y > 3) return null;
+    return { x: uv.x * containerWidth, y: (1 - uv.y) * containerHeight };
   }
 
   function pointerDir(e: PointerEvent, svg: SVGSVGElement): Vec3 {
     const rect = svg.getBoundingClientRect();
     const px = ((e.clientX - rect.left) / Math.max(rect.width, 1)) * containerWidth;
     const py = ((e.clientY - rect.top) / Math.max(rect.height, 1)) * containerHeight;
-    const m = framePointToDome({ x: px / containerWidth, y: 1 - py / containerHeight }, aspect, out);
-    return directionAt(m, lens, fov);
+    const uv = { x: px / containerWidth, y: 1 - py / containerHeight };
+    if (inside) return insideViewDirection(uv, camera, aspect);
+    return directionAt(framePointToDome(uv, aspect, out), lens, fov);
   }
 
   // ─── Outlines ───────────────────────────────────────────────────────
@@ -119,7 +133,7 @@
 
   // ─── Dragging ───────────────────────────────────────────────────────
   type Drag =
-    | { kind: 'move'; layerId: string; from: Vec3; center: Vec3; upward: Vec3 }
+    | { kind: 'move'; layerId: string; from: Vec3; center: Vec3 }
     | { kind: 'size'; layerId: string }
     | { kind: 'roll'; layerId: string };
   let drag: Drag | null = null;
@@ -163,7 +177,7 @@
     dragSvg = svg;
     if (kind === 'move') {
       const basis = placementBasis(place);
-      drag = { kind, layerId: layer.id, from: pointerDir(e, svg), center: basis.center, upward: basis.upward };
+      drag = { kind, layerId: layer.id, from: pointerDir(e, svg), center: basis.center };
     } else {
       drag = { kind, layerId: layer.id };
     }
@@ -179,17 +193,12 @@
     if (!layer) return;
     const place = placementOf(layer);
     if (drag.kind === 'move') {
-      // Carry the layer around the sphere with the pointer: its center and
-      // its up direction turn together, then azimuth, elevation and roll
-      // are read back from them.
+      // Turn the layer's center with the pointer around the dome's center,
+      // so the point grabbed stays under the pointer. Its turn is left as
+      // set: measured from the zenith, so the top keeps pointing up.
       const center = rotateTowards(drag.center, drag.from, dir);
-      const upward = rotateTowards(drag.upward, drag.from, dir);
       const { azimuth, elevation } = azElOf(center);
-      const base = placementBasis({ azimuth, elevation, size: place.size, roll: 0 });
-      const east = base.across;
-      const up = base.upward;
-      const roll = (Math.atan2(-dot(upward, east), dot(upward, up)) * 180) / Math.PI;
-      commit(drag.layerId, { azimuth, elevation, roll });
+      commit(drag.layerId, { azimuth, elevation });
     } else {
       const basis = placementBasis(drag.kind === 'roll' ? { ...place, roll: 0 } : place);
       const facing = dot(dir, basis.center);
@@ -218,14 +227,17 @@
 
 <svg
   class="dome-gizmo"
+  class:inside
   width={containerWidth}
   height={containerHeight}
   viewBox={`0 0 ${containerWidth} ${containerHeight}`}
   aria-label="Dome placement"
 >
-  <circle class="rim" cx={rimCenter.x} cy={rimCenter.y} r={rimRadius} />
-  <line class="front" x1={frontIn.x} y1={frontIn.y} x2={frontOut.x} y2={frontOut.y} />
-  <text class="front-label" x={frontOut.x} y={frontOut.y + 12} text-anchor="middle">Front</text>
+  {#if !inside}
+    <circle class="rim" cx={rimCenter.x} cy={rimCenter.y} r={rimRadius} />
+    <line class="front" x1={frontIn.x} y1={frontIn.y} x2={frontOut.x} y2={frontOut.y} />
+    <text class="front-label" x={frontOut.x} y={frontOut.y + 12} text-anchor="middle">Front</text>
+  {/if}
 
   {#each placed as layer (layer.id)}
     {@const place = placementOf(layer)}
@@ -292,6 +304,9 @@
     pointer-events: none;
     z-index: 12;
   }
+  /* The Inside view ends at the canvas; outlines running past it would
+     draw over the panels around it. */
+  .dome-gizmo.inside { overflow: hidden; }
   .rim {
     fill: none;
     stroke: rgba(255, 255, 255, 0.28);

@@ -8120,9 +8120,7 @@
              with their canvas handles (hidden below for them). -->
         {#if $settings.output.domeEnabled}
           <div class="warp-handles-offset" style="left: {canvasOffsetX}px; top: {canvasOffsetY}px; width: {canvasWidth}px; height: {canvasHeight}px;">
-            {#if !$domeView.inside}
-              <DomeGizmo containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} />
-            {/if}
+            <DomeGizmo containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} inside={$domeView.inside} />
           </div>
           <!-- Over the whole viewport, not the canvas: its switch stays in
                view when the canvas is zoomed or panned, and the Inside view
