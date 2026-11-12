@@ -52,7 +52,6 @@
   import { clipAudioBus, clipAudioMaster, CLIP_AUDIO_BLOCK_TEXT } from '../audio/clipAudioBus';
   import CueListPanel from './show/CueListPanel.svelte';
   import TimelineIcon from './show/timeline/TimelineIcon.svelte';
-  import TimelineStartGuide from './show/timeline/TimelineStartGuide.svelte';
   import { openExternalUrl } from '$lib/bridge';
 
   /** The Timeline guide on the website (the ? in the Timeline's header). */
@@ -556,22 +555,6 @@
   const laneStackH = $derived(RULER_HEIGHT + topLaneH + looksLinesH + tracksH + stageRowH + ledRowsH + audioStackH + cameraLaneH);
   const hasTracks = $derived(isTimeline && layerTracks.length > 0);
 
-  // ── Start guide ─────────────────────────────────────────────────────────
-  // Three steps to a show, over an empty Timeline: until it has a song and
-  // something on it and has been played once, or "Got it".
-  const START_GUIDE_KEY = 'ga.timeline.startGuideDone';
-  let startGuideDone = $state((() => { try { return localStorage.getItem(START_GUIDE_KEY) === '1'; } catch { return false; } })());
-  const timelineHasContent = $derived(layerTracks.some((t) => (t.clips?.length ?? 0) > 0) || lookClips.length > 0);
-  const timelinePieces = $derived(layerTracks.filter((t) => !t.subRow).length);
-  const showStartGuide = $derived(isTimeline && !startGuideDone);
-  function finishStartGuide() {
-    startGuideDone = true;
-    try { localStorage.setItem(START_GUIDE_KEY, '1'); } catch { /* private window */ }
-  }
-  // Played with a song and something on it: the guide has done its job.
-  $effect(() => {
-    if (isPlaying && audioTracks.length > 0 && timelineHasContent && !startGuideDone) finishStartGuide();
-  });
   const labelWidth = $derived(isTimeline ? TRACK_HEADER_WIDTH : 108);
   // The bound clientHeight keeps its last value after the inspector
   // unmounts, so gate it on the selection rather than trusting the binding.
@@ -1731,19 +1714,6 @@
     <div class="show-main-col">
     <!-- Body: lane labels + scrolling grid -->
     <div class="show-body">
-      {#if showStartGuide}
-        <div class="start-guide-wrap" style="left: {labelWidth}px">
-          <TimelineStartGuide
-            hasSong={audioTracks.length > 0}
-            hasContent={timelineHasContent}
-            pieces={timelinePieces}
-            onpicksong={() => audioInput?.click()}
-            onautoshow={() => autoShowOpen.set(true)}
-            onplay={() => showTimeline.togglePlay()}
-            ondismiss={finishStartGuide}
-          />
-        </div>
-      {/if}
       <div class="lane-labels" style="width: {labelWidth}px; flex-basis: {labelWidth}px" onwheel={handleLabelWheel} onscroll={labelsScrolled}>
         <div class="label-ruler-spacer" style="height: {RULER_HEIGHT}px"></div>
         <!-- Translated, not scrolled: the grid owns the scroll and the ruler
@@ -2320,15 +2290,6 @@
     padding-right: 4px;
   }
   .show-tray.timeline-doc .show-doc-name { color: color-mix(in srgb, #8c78ff 75%, #ffffff); }
-  .start-guide-wrap {
-    position: absolute;
-    top: 40px;
-    right: 0;
-    z-index: 30;
-    display: flex;
-    justify-content: center;
-    pointer-events: none;
-  }
   .show-clear,
   .show-help {
     width: var(--ga-control-h, 26px);
@@ -2485,7 +2446,6 @@
      min-height a wrapped transport bar or a tall lane stack would refuse to
      shrink and push the inspector out through the bottom of the tray. */
   .show-body {
-    position: relative;
     display: flex;
     flex: 1 1 auto;
     min-height: 0;
