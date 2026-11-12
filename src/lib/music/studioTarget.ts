@@ -30,6 +30,7 @@ import type { LiveSourceId, VoiceSourceId } from './visualVoices';
 import { normalizeMix, type StudioMix } from './studioMix';
 import { idleRowCell } from './studioPlacement';
 import { normalizeFinish, type StudioFinish } from './studioFinish';
+import { isPaletteId } from './studioPalettes';
 
 export type StudioTarget =
   | { kind: 'vj'; deck: VJDeck; layer: number; column: number; playing: boolean; source: Required<StudioPluginSource> }
@@ -244,9 +245,16 @@ export function showStudioVisuals(): StudioTarget | null {
 }
 
 /** Load a scene's voices into the instance, putting one in place if there is none. */
-export function loadSceneIntoStudio(scene: { id: string; set: StudioSet; voices: { file: string; source: VoiceSourceId; params?: Record<string, number>; level?: number }[] }): boolean {
+export function loadSceneIntoStudio(scene: { id: string; set: StudioSet; palette?: string; voices: { file: string; source: VoiceSourceId; params?: Record<string, number>; level?: number; auto?: boolean }[] }): boolean {
   if (!placeStudio()) return false;
-  return editStudio((s) => ({ ...s, musicSet: scene.set, musicSceneId: scene.id, musicVoices: studioVoicesFromScene(scene.voices) }));
+  return editStudio((s) => ({
+    ...s,
+    musicSet: scene.set,
+    musicSceneId: scene.id,
+    musicVoices: studioVoicesFromScene(scene.voices),
+    // A scene made in a palette brings it; the palette menu can change it after.
+    ...(scene.palette && isPaletteId(scene.palette) ? { musicPalette: scene.palette } : {}),
+  }));
 }
 
 /** The palette follows the studio's set. */

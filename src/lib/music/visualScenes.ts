@@ -24,11 +24,12 @@ export interface VoiceShader {
   pack?: VoicePack;
 }
 
-export type VoicePack = 'glitch' | 'cosmos';
-export const VOICE_PACKS: readonly { id: VoicePack; label: string }[] = [{ id: 'glitch', label: 'Glitch' }, { id: 'cosmos', label: 'Cosmos' }];
+export type VoicePack = 'glitch' | 'cosmos' | 'form';
+export const VOICE_PACKS: readonly { id: VoicePack; label: string }[] = [{ id: 'glitch', label: 'Glitch' }, { id: 'cosmos', label: 'Cosmos' }, { id: 'form', label: 'Form and Light' }];
 
 export const VOICE_SHADERS: readonly VoiceShader[] = [
   { file: 'VX-Barcode.fs', name: 'Barcode', family: 'berlin', blurb: 'Black and white data stripes that re-roll on every hit' },
+  { file: 'VX-BarcodeVertical.fs', name: 'Barcode Vertical', family: 'berlin', blurb: 'The Barcode turned upright: columns of stripes that re-roll on hits' },
   { file: 'VX-LightLines.fs', name: 'Light Lines', family: 'berlin', blurb: 'Frames of light rushing down a dark corridor' },
   { file: 'VX-Panels.fs', name: 'Panels', family: 'berlin', blurb: 'Architectural light panels that fire in patterns' },
   { file: 'VX-Glyphs.fs', name: 'Glyphs', family: 'berlin', blurb: 'A readout of the notes as they play' },
@@ -142,6 +143,20 @@ export const VOICE_SHADERS: readonly VoiceShader[] = [
   { file: 'VX-Northlight.fs', name: 'Northlight', family: 'dub', pack: 'cosmos', blurb: 'Folded curtains of polar light drifting over a starry sky, pulses racing along their hems' },
   { file: 'VX-MoltenChrome.fs', name: 'Molten Chrome', family: 'berlin', pack: 'cosmos', blurb: 'Polished liquid metal pours down and folds over itself; hits ripple through the pool' },
   { file: 'VX-PlasmaCells.fs', name: 'Plasma Cells', family: 'analog', pack: 'cosmos', blurb: 'Drifting living cells whose nuclei breathe light out to soft, wavering membranes' },
+  // Form and Light: lit, finished voices made to the studio's visual guide.
+  { file: 'VX-BeamOrgan.fs', name: 'Beam Organ', family: 'bath', pack: 'form', blurb: 'A fan of beams through haze, one per chord note, crossing as chords change' },
+  { file: 'VX-Louvers.fs', name: 'Louvers', family: 'dub', pack: 'form', blurb: 'Lit vertical slats that open with the bass and ripple on every hit' },
+  { file: 'VX-Slabs.fs', name: 'Slabs', family: 'analog', pack: 'form', blurb: 'A hard-edge construction of colored slabs that slides on each chord' },
+  { file: 'VX-Stack.fs', name: 'Stack', family: 'berlin', pack: 'form', blurb: 'Black and white bar stacks that re-roll on hits, capped in red' },
+  { file: 'VX-OpBands.fs', name: 'Op Bands', family: 'berlin', pack: 'form', blurb: 'Black and white op-art bands that bend into waves with the bass' },
+  { file: 'VX-LedMonolith.fs', name: 'LED Monolith', family: 'berlin', pack: 'form', blurb: 'A freestanding LED slab whose diode data re-rolls on every hit' },
+  { file: 'VX-AuroraWater.fs', name: 'Aurora Over Water', family: 'bath', pack: 'form', blurb: 'Aurora curtains, one per chord note, mirrored in still black water' },
+  { file: 'VX-Lighthouse.fs', name: 'Lighthouse', family: 'dub', pack: 'form', blurb: 'A lighthouse beam sweeping a night sea, blooming as it faces you' },
+  { file: 'VX-Aperture.fs', name: 'Aperture', family: 'bath', pack: 'form', blurb: 'An iris of light that opens with the pads, trailed by lens ghosts' },
+  { file: 'VX-LightRoom.fs', name: 'Light Room', family: 'analog', pack: 'form', blurb: 'A room of glowing planes and frames that rebuilds on each chord' },
+  { file: 'VX-ChromePool.fs', name: 'Chrome Pool', family: 'dub', pack: 'form', blurb: 'A pool of liquid chrome that swells and ripples in a soft studio' },
+  { file: 'VX-Prism.fs', name: 'Prism', family: 'bath', pack: 'form', blurb: 'Chord notes as light beams split by a rocking glass prism' },
+  { file: 'VX-Harp.fs', name: 'Harp', family: 'bath', pack: 'form', blurb: 'Lit harp strings plucked by each note, ringing and settling' },
 ];
 
 export const voiceShaderByFile = (file: string): VoiceShader | undefined => VOICE_SHADERS.find((v) => v.file === file);
@@ -169,6 +184,8 @@ export interface VisualScene {
   set: StudioSet;
   /** The voices, bottom to top. */
   voices: SceneVoice[];
+  /** The palette the scene was made in (studioPalettes.ts); loading the scene sets it. */
+  palette?: string;
 }
 
 export const VISUAL_SCENES: readonly VisualScene[] = [
@@ -283,6 +300,40 @@ export const VISUAL_SCENES: readonly VisualScene[] = [
     { file: 'VX-FrameStore.fs', source: 'kick', level: 0.8 },
     { file: 'VX-Wobbulator.fs', source: 'bass', level: 0.8 },
     { file: 'VX-Stairs.fs', source: 'hats', level: 0.6 },
+  ] },
+  // Form and Light scenes, after the studio's visual guide.
+  { id: 'form-chrome-pool', name: 'Chrome pool', set: 'dub', palette: 'cobalt-chrome', voices: [
+    { file: 'VX-ChromePool.fs', source: 'bass', auto: false },
+    { file: 'VX-Aperture.fs', source: 'pad', level: 0.45 },
+  ] },
+  { id: 'form-beam-organ', name: 'Beam organ', set: 'bath', palette: 'tungsten', voices: [
+    { file: 'VX-Aperture.fs', source: 'pad', level: 0.5, auto: false },
+    { file: 'VX-BeamOrgan.fs', source: 'chords' },
+    { file: 'VX-Harp.fs', source: 'lead', level: 0.6 },
+  ] },
+  { id: 'form-led-monolith', name: 'LED monolith', set: 'berlin', palette: 'mono-accent', voices: [
+    { file: 'VX-LedMonolith.fs', source: 'kick', auto: false },
+    { file: 'VX-Stack.fs', source: 'hats', level: 0.35 },
+  ] },
+  { id: 'form-aurora-water', name: 'Aurora over water', set: 'bath', palette: 'arctic', voices: [
+    { file: 'VX-AuroraWater.fs', source: 'chords', auto: false },
+    { file: 'VX-Lighthouse.fs', source: 'kick', level: 0.5 },
+  ] },
+  { id: 'form-hard-edge', name: 'Hard edge', set: 'analog', palette: 'blood-orange', voices: [
+    { file: 'VX-Slabs.fs', source: 'chords', auto: false },
+    { file: 'VX-Stack.fs', source: 'kick', level: 0.45 },
+  ] },
+  { id: 'form-light-room', name: 'Light room', set: 'analog', palette: 'rose-gold', voices: [
+    { file: 'VX-LightRoom.fs', source: 'chords', auto: false },
+    { file: 'VX-Prism.fs', source: 'lead', level: 0.6 },
+  ] },
+  { id: 'form-louvers', name: 'Louvers', set: 'dub', palette: 'sodium-street', voices: [
+    { file: 'VX-Louvers.fs', source: 'bass', auto: false },
+    { file: 'VX-Lighthouse.fs', source: 'kick', level: 0.55 },
+  ] },
+  { id: 'form-op', name: 'Op bands', set: 'berlin', palette: 'bone-ink', voices: [
+    { file: 'VX-OpBands.fs', source: 'bass', level: 0.9, auto: false },
+    { file: 'VX-BarcodeVertical.fs', source: 'hats', level: 0.3 },
   ] },
 ];
 
