@@ -1,5 +1,7 @@
 import {defaultInteractive,sanitizeStoredInteractive} from '../mobile/studio/interactive';
 import {editableEffects, soundDefaults} from '../mobile/studio/interactiveEffects';
+import { buildWorld, type StageShape, type WorldId } from '../scene3d/worlds';
+import { checkScene3D } from '../scene3d/sceneModel';
 import { normalizeVJGroups } from './vjGroups';
 import { normalizeCuePoints } from './vjCuePoints';
 import { normalizeAutopilot } from './vjAutopilot';
@@ -365,10 +367,29 @@ function noteUnreadableInteractive(error: Error): void {
     );
   }, 0);
 }
+/**
+ * An Interactive 3D world on the way in. A world that does not validate is
+ * kept exactly as stored (nothing is lost; its layer shows why it cannot
+ * draw) and named in a warning. Burst counts are live and do not come back.
+ */
+function sanitizeStoredScene3D<T>(effectSource: T): T {
+  const source = effectSource as { scene3d?: unknown; scene3dBursts?: unknown } | null | undefined;
+  if (!source || typeof source !== 'object' || source.scene3d === undefined) return effectSource;
+  const check = checkScene3D(source.scene3d);
+  if (check.error) {
+    console.warn('[Store] Interactive 3D world could not be read:', check.error);
+    showToast(`An Interactive 3D world could not be read: ${check.error}`, 'warning');
+  }
+  const { scene3dBursts: _live, ...rest } = source;
+  return { ...rest, ...(check.scene ? { scene3d: check.scene } : {}) } as T;
+}
 /** Layers that reach the project without _importLayer (preset copies). */
 function sanitizeInteractiveLayers<T extends { source?: { effectSource?: unknown } | null }>(layers: T[], origin: string): T[] {
   return layers.map((layer) => {
     const effectSource = layer?.source?.effectSource as Parameters<typeof sanitizeStoredInteractive>[0];
+    if ((effectSource as { scene3d?: unknown } | undefined)?.scene3d !== undefined) {
+      return { ...layer, source: { ...layer.source, effectSource: sanitizeStoredScene3D(effectSource) } };
+    }
     if (!effectSource?.interactiveScene) return layer;
     const safe = sanitizeStoredInteractive(effectSource, (error) => noteUnreadableInteractive(new Error(`${origin}: ${error.message}`)));
     return { ...layer, source: { ...layer.source, effectSource: safe } };
@@ -734,6 +755,41 @@ void main() {
       if (type === 'media' && !(NATIVE_ENGINE_ONLY && Boolean(get(settings).experimental?.outputNativeCore))) {
         autoApplyDefaultShader(id);
       }
+      return id;
+    },
+
+    /**
+     * A new Interactive 3D layer playing `world`, built from the shapes mapped
+     * on the stage so far (each visible corner-mapped layer's outline). One
+     * undo step. Returns the layer id, or undefined when the layer limit is
+     * reached.
+     */
+    addInteractive3DLayer(world: WorldId = 'light-and-shadow'): string | undefined {
+      const current = get({ subscribe });
+      const shapes: StageShape[] = current.layers
+        .filter((l) => l.visible && l.corners && l.warpMode !== 'mesh')
+        .map((l) => ({
+          name: l.name,
+          // Corners are Y-up; the world reads the output Y-down.
+          points: [l.corners!.topLeft, l.corners!.topRight, l.corners!.bottomRight, l.corners!.bottomLeft].map((p) => ({
+            x: Math.max(0, Math.min(1, p.x)),
+            y: Math.max(0, Math.min(1, 1 - p.y)),
+          })),
+        }));
+      const scene = buildWorld(world, shapes, (current.width || 1920) / (current.height || 1080));
+      const id = this.addLayer(scene.name, 'interactive');
+      if (!id) return undefined;
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((l) => l.id !== id ? l : {
+          ...l,
+          name: scene.name,
+          effects: [],
+          source: { id: generateUUID(), type: 'effect', src: 'plugin://scene3d', name: 'Interactive 3D', effectSource: { effectType: 'scene3d', scene3d: scene } },
+        }),
+      }));
+      // Add and fill are one step: undo removes the layer at once.
+      amendLastHistoryStep();
       return id;
     },
 
@@ -6057,7 +6113,7 @@ void main() {
           ...layer.source,
           // An Interactive scene is validated on the way in: a damaged one
           // would otherwise stop the native sync for every layer.
-          effectSource: sanitizeStoredInteractive(layer.source.effectSource, noteUnreadableInteractive),
+          effectSource: sanitizeStoredScene3D(sanitizeStoredInteractive(layer.source.effectSource, noteUnreadableInteractive)),
           musicMotion: layer.source.musicMotion && typeof layer.source.musicMotion === 'object' ? normalizeMusicMotion(layer.source.musicMotion) : layer.source.musicMotion,
           texture: undefined,
           videoElement: undefined,

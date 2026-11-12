@@ -100,7 +100,9 @@ export const SCENE3D_SIM_WGSL = /* wgsl */ `${COMMON}
 fn look_at(eye: vec3f, aim: vec3f, up_hint: vec3f) -> mat4x4f {
   let f = normalize(aim - eye);
   var up = up_hint;
-  if (abs(dot(f, up)) > 0.999) { up = vec3f(0.0, 0.0, 1.0); }
+  // Looking straight down: the top of the picture is -Z (far), so a floor
+  // laid out like the output reads the right way round.
+  if (abs(dot(f, up)) > 0.999) { up = vec3f(0.0, 0.0, -1.0); }
   let r = normalize(cross(f, up));
   let u = cross(r, f);
   return mat4x4f(
@@ -166,7 +168,8 @@ fn cs_frame() {
   // Sky, top and horizon.
   let sky = settings.env.x;
   let k = settings.env.y;
-  if (sky < 0.5) { view.sky_top = vec4f(0.0); view.sky_low = vec4f(0.0); }
+  // The void is never drawn (it stays transparent), but still fills shadows a little.
+  if (sky < 0.5) { view.sky_top = vec4f(vec3f(0.16, 0.18, 0.22) * k, 0.0); view.sky_low = vec4f(vec3f(0.08, 0.085, 0.095) * k, 0.0); }
   else if (sky < 1.5) { view.sky_top = vec4f(vec3f(0.30, 0.32, 0.36) * k, 1.0); view.sky_low = vec4f(vec3f(0.12, 0.12, 0.13) * k, 1.0); }
   else { view.sky_top = vec4f(vec3f(0.02, 0.03, 0.08) * k, 1.0); view.sky_low = vec4f(vec3f(0.06, 0.05, 0.10) * k, 1.0); }
 }

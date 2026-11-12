@@ -368,7 +368,7 @@ type NativeRenderClockCommand = {
 
 export type PresentPolicyProfile = 'vsync-live' | 'low-latency-safe' | 'low-latency-aggressive';
 
-type NativeGraphRouteKind = 'planet' | 'fluid-riders' | 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders' | 'ink-cloud' | 'flythrough' | 'pixel-particles' | 'point-cloud-fx' | 'ghostfx' | 'handfx' | 'performer-world' | 'vj-crossfade' | 'vj-mix' | 'effect-pass' | 'lines' | 'svg' | 'light-painting' | 'text' | 'splat' | 'model3d';
+type NativeGraphRouteKind = 'planet' | 'fluid-riders' | 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders' | 'ink-cloud' | 'flythrough' | 'pixel-particles' | 'point-cloud-fx' | 'ghostfx' | 'handfx' | 'performer-world' | 'scene3d' | 'vj-crossfade' | 'vj-mix' | 'effect-pass' | 'lines' | 'svg' | 'light-painting' | 'text' | 'splat' | 'model3d';
 
 export type NativeEffectPassRuntime = {
   effect: NativeEffectPassId;
@@ -398,6 +398,7 @@ const NATIVE_CORE_OWNED_GRAPH_KINDS = new Set<NativeGraphRouteKind>([
   'ghostfx',
   'handfx',
   'performer-world',
+  'scene3d',
   'vj-crossfade',
   'vj-mix',
 ]);
@@ -572,6 +573,13 @@ const NATIVE_GRAPH_ROUTE_REQUIREMENTS: ReadonlyArray<NativeGraphRouteRequirement
     feature: 'native_performer_world_graph',
     instrument: 'performer-world',
     shaderIds: ['performer-world/render'],
+  },
+  {
+    // A scene brings its own shaders (precompiled by the app), none built in.
+    kind: 'scene3d',
+    feature: 'native_scene3d_graph',
+    instrument: 'scene3d',
+    shaderIds: [],
   },
   {
     kind: 'vj-crossfade',
@@ -1114,6 +1122,8 @@ import { combineInputs, PointSmoother, trackedPoints, ZoneTriggers, type FiredZo
 import { defaultInteractiveInput, validateScene, type InteractiveScene, type Interaction } from '$lib/mobile/studio/interactive';
 import { fireShowAction } from '$lib/show/showActions';
 import { runAsAutomation } from '$lib/stores/historyHooks';
+import { buildScene3DGraph } from '$lib/renderer/scene3dNative';
+import { validateScene3D } from '$lib/scene3d/sceneModel';
 const NATIVE_EFFECT_PASS_IDS = new Set<NativeEffectPassId>(
   NATIVE_EFFECT_PASS_MANIFEST.map((entry) => entry.id),
 );
@@ -4839,6 +4849,7 @@ function nativeGraphOutputSource(layer: Layer, kind: NativeGraphRouteKind): Nati
   const pluginKind = kind === 'ghostfx'
     || kind === 'handfx'
     || kind === 'performer-world'
+    || kind === 'scene3d'
     || kind === 'vj-crossfade'
     || kind === 'vj-mix';
   const effectType = String(layer.source?.effectSource?.effectType ?? kind).trim().toLowerCase();
@@ -5003,6 +5014,9 @@ function nativeGraphBufferPrefixesForRoute(route: NativeGraphLayerRoute): string
     case 'performer-world':
       prefixes = [`performer-world:${safeSourceId}`];
       break;
+    case 'scene3d':
+      prefixes = [`scene3d:${safeSourceId}`];
+      break;
     case 'vj-crossfade':
       prefixes = [`vjxfade:${safeSourceId}`];
       break;
@@ -5042,6 +5056,27 @@ const handFxTracking = { ownsBody: false, ownsFace: false, bodyNeededAt: 0, face
 function ensureHandFxTracking(params: Record<string, any> | null | undefined): void {
   if (!params || params.handfxInput === 'demo') return;
   ensureCameraTracking('handfx-layers', handFxTrackingNeeds(params));
+}
+
+/**
+ * An Interactive 3D layer's graph, shaped like an interactive scene's result
+ * so the same install-once, update-values path carries it. A scene that does
+ * not validate throws, and its layer reports the message.
+ */
+function scene3dPluginGraph(params: Record<string, any>, sourceId: string, width: number, height: number): InteractiveGraphBuildResult {
+  const scene = validateScene3D(params.scene3d);
+  const bursts = params.scene3dBursts && typeof params.scene3dBursts === 'object' ? params.scene3dBursts : undefined;
+  const graph = buildScene3DGraph({ scene, sourceId, width, height, bursts });
+  return {
+    config: graph.config,
+    state: { scene: 'scene3d', prevFrameTime: 0, historyHead: 0 },
+    interactive: {
+      topology: graph.topology,
+      values: graph.values.map((v) => ({ ...v, key: v.initial_b64 })),
+      effectIds: [],
+      bufferPrefix: () => `scene3d:${nativeGraphBufferSafeId(sourceId)}:`,
+    },
+  } as InteractiveGraphBuildResult;
 }
 
 /**
@@ -5126,6 +5161,7 @@ function nativeGraphParamsForLayer(
   const isEffectGraphKind = kind === 'ghostfx'
     || kind === 'handfx'
     || kind === 'performer-world'
+    || kind === 'scene3d'
     || kind === 'vj-crossfade'
     || kind === 'vj-mix';
   let params: Record<string, any> = isEffectGraphKind
@@ -10386,6 +10422,7 @@ export class NativeRendererSync {
         const pluginRoute = nativeGraphRoute.kind === 'ghostfx'
           || nativeGraphRoute.kind === 'handfx'
           || nativeGraphRoute.kind === 'performer-world'
+          || nativeGraphRoute.kind === 'scene3d'
           || nativeGraphRoute.kind === 'vj-crossfade'
           || nativeGraphRoute.kind === 'vj-mix';
         const routeState = this.nativeGraphRoutes.get(nativeGraphRoute.key) ?? {
@@ -10601,6 +10638,8 @@ export class NativeRendererSync {
           ? installPluginGraph && vjMixGraphOptions
             ? groupedMixGraph ?? buildVJMixGraph(vjMixGraphOptions)
             : null
+          : nativeGraphRoute.kind === 'scene3d'
+          ? scene3dPluginGraph(nativeGraphScaledParams ?? {}, graphSource.id, width, height)
           : pluginRoute
           ? timedNativePluginGraph({
               kind: nativeGraphRoute.kind as 'ghostfx' | 'handfx' | 'performer-world',

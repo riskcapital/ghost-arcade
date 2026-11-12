@@ -162,7 +162,7 @@ export type MediaType =
   | 'synthvision';
 
 // Integrated effect types (FluidGen, Particles3D, Point Cloud, 3D Models running natively in WebGL)
-export type IntegratedEffectType = 'fluid' | 'particles' | 'splat' | 'model3d' | 'milkdrop' | 'audiomotion' | 'wavejs' | 'hydra' | 'ghostfx' | 'analyzerlab' | 'handfx' | 'ghostpilot' | 'vj-crossfade' | 'vj-mix' | 'performer-world' | 'music-studio';
+export type IntegratedEffectType = 'fluid' | 'particles' | 'splat' | 'model3d' | 'milkdrop' | 'audiomotion' | 'wavejs' | 'hydra' | 'ghostfx' | 'analyzerlab' | 'handfx' | 'ghostpilot' | 'vj-crossfade' | 'vj-mix' | 'performer-world' | 'music-studio' | 'scene3d';
 
 // Stem identifiers for the multi-stem routing matrix (Milkdrop plugin).
 // 'full' is the unsplit mix; the rest match standard Demucs output names plus a
@@ -198,6 +198,10 @@ export interface IntegratedEffectSource {
   performerWorldParams?: number[];
   performerWorldPump?: number;
   interactiveScene?: import('./mobile/studio/interactive').InteractiveScene;
+  /** Interactive 3D: the world (schema ghost-scene). */
+  scene3d?: import('./scene3d/sceneModel').Scene3D;
+  /** Interactive 3D: bursts released per emitter node id (live, counts up). */
+  scene3dBursts?: Record<string, number>;
   interactiveInputs?: import('./mobile/studio/interactive').Interaction[];
   interactivePaused?: boolean;
   /** Set on a layer or clip a paired phone drives: the sender id of that
