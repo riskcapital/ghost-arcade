@@ -2033,9 +2033,14 @@ let cablesAt = 0;
 const cableMods = new Map<string, number>();
 let modSig = '';
 
-function routeControlCables(): void {
+/**
+ * Drive every control cable of the current set, once per frame. Cables are
+ * part of the set, not of the Studio view: they keep working with the view
+ * closed (the tray, the deck, another mode). Exported for tests.
+ */
+export function routeControlCables(): void {
   const s = get(musicStudio);
-  const cables = s.studioView ? s.cables[s.set] : [];
+  const cables = s.cables[s.set] ?? [];
   const now = performance.now();
   const dt = cablesAt ? Math.min(0.1, (now - cablesAt) / 1000) : 1 / 60;
   cablesAt = now;
