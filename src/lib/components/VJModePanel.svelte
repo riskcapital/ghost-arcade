@@ -31,7 +31,7 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import { isMac, isDesktopApp, getTextureShareLabel, invoke } from '$lib/bridge';
   import { jsAnimationFromHtml } from '../renderer/jsAnimationPage';
-  import { nativePreviewHostEl } from '../stores/nativePreviewHost';
+  import { nativePreviewClaim, nativePreviewHostEl } from '../stores/nativePreviewHost';
   import { acquireNativeCompositeMirror, type CompositeMirrorHandle } from '../sync/nativeCompositeMirror';
   import { startNativeDeckMonitorMirror, type DeckMonitorMirrorHandle } from '../sync/nativeDeckMonitorMirror';
   import { getNativeRendererCapabilities } from '$lib/api/native-renderer';
@@ -615,9 +615,9 @@
   });
   $: if (nativePreviewActive) {
     // The Studio view claims the preview for its own frame while it is up.
-    if ($vjClipLauncher.isOpen && !$vjStageEdit && !$musicStudio.studioView && previewContainerEl) {
+    if ($vjClipLauncher.isOpen && !$vjStageEdit && !$musicStudio.studioView && !$nativePreviewClaim && previewContainerEl) {
       if ($nativePreviewHostEl !== previewContainerEl) nativePreviewHostEl.set(previewContainerEl);
-    } else if ($nativePreviewHostEl === previewContainerEl) {
+    } else if ($nativePreviewHostEl === previewContainerEl && !$nativePreviewClaim) {
       nativePreviewHostEl.set(null);
     }
   }

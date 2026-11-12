@@ -1,12 +1,14 @@
 <script lang="ts">
   /**
-   * Analog Synth's controls: three oscillators, the mixer, the picture,
-   * feedback, LFOs, the tube and the music, as knobs; where each oscillator
-   * listens, as menus; the input layer; presets; and a snapshot pad that
-   * blends four stored patches. Every knob answers MIDI learn.
+   * Analog Synth in the deck tray, condensed: presets, the modules as
+   * collapsible sections of knobs, the patch as a list, the input layer and
+   * the snapshot pad. "Open the synth" opens the full instrument, where the
+   * same patch is made with cables. Every knob answers MIDI learn.
    */
   import './music/studioTokens.css';
   import StudioKnob from './music/StudioKnob.svelte';
+  import AnalogPatchBay from './AnalogPatchBay.svelte';
+  import AnalogSynthStudio from './AnalogSynthStudio.svelte';
   import {
     INPUT_LAYER_KEY,
     MORPH_KEY,
@@ -15,11 +17,10 @@
     paramValue,
     presetValues,
     SNAPSHOTS_KEY,
-    VIDEOSYNTH_PARAMS,
     VIDEOSYNTH_PRESETS,
-    type ParamSpec,
     type Snapshots,
   } from '../videosynth/patch';
+  import { formatParam, knobLabel, paramSpec } from '../videosynth/labels';
 
   let {
     effectSource,
@@ -35,45 +36,21 @@
     onpatch: (patch: Record<string, unknown>, gesture?: string) => void;
   } = $props();
 
-  const spec = (key: string) => VIDEOSYNTH_PARAMS.find((p) => p.key === key)!;
-  const val = (key: string) => paramValue(effectSource, spec(key));
+  /** The full instrument, opened from the tray. */
+  let studioOpen = $state(false);
 
-  const hz = (v: number) => {
-    const f = 60 * Math.pow(2, v * 10 - 2);
-    return f >= 1000 ? `${(f / 1000).toFixed(2)} kHz` : `${f.toFixed(f < 100 ? 1 : 0)} Hz`;
-  };
-  const pct = (v: number) => `${Math.round(v * 100)}%`;
-  const FORMATS: Record<string, (v: number) => string> = {
-    Freq: hz,
-    Fine: (v) => `${v >= 0 ? '+' : ''}${(v * 2).toFixed(2)} Hz`,
-    Sync: (v) => (v < 0.15 ? 'Free' : v < 0.85 ? 'Free–H' : v < 1.15 ? 'H' : v < 1.85 ? 'H–V' : 'V'),
-    Shape: (v) => (v < 0.15 ? 'Saw' : v < 0.35 ? 'Saw–tri' : v < 0.65 ? 'Tri' : v < 0.85 ? 'Tri–sine' : 'Sine'),
-    Hue: (v) => `${Math.round(v * 360)}°`,
-    vsRotate: (v) => `${Math.round(v)}°`,
-    vsScale: (v) => `${v.toFixed(2)}×`,
-    vsKaleido: (v) => (v < 1 ? 'Off' : `${Math.round(v)}`),
-    vsFbZoom: (v) => `${((v - 1) * 100).toFixed(1)}%`,
-    vsFbRotate: (v) => `${v.toFixed(1)}°`,
-    vsFbX: (v) => (v * 100).toFixed(1),
-    vsFbY: (v) => (v * 100).toFixed(1),
-    vsX: (v) => v.toFixed(2),
-    vsY: (v) => v.toFixed(2),
-    Rate: (v) => {
-      const f = 0.002 * Math.pow(5000, v);
-      return f < 0.1 ? `${(1 / f).toFixed(0)} s` : `${f.toFixed(2)} Hz`;
-    },
-  };
-  function format(p: ParamSpec): (v: number) => string {
-    if (FORMATS[p.key]) return FORMATS[p.key];
-    const tail = p.key.replace(/^vs[ABC]/, '').replace(/^vsLfo\d/, '');
-    return FORMATS[tail] ?? pct;
+  const val = (key: string) => paramValue(effectSource, paramSpec(key));
+  /** The tray has no row legends, so an LFO's rate knob carries its number. */
+  function trayLabel(key: string): string {
+    const lfo = key.match(/^vsLfo(\d)Rate$/);
+    return lfo ? `LFO ${lfo[1]}` : knobLabel(key);
   }
 
   type Section = { name: string; knobs: string[]; menus: string[] };
   const osc = (n: 'A' | 'B' | 'C'): Section => ({
     name: `Oscillator ${n}`,
-    knobs: ['Freq', 'Fine', 'Sync', 'Shape', 'Mod', 'Fm', 'Hue', 'Sat', 'Level'].map((k) => `vs${n}${k}`),
-    menus: ['Input', 'ModMode', 'ModSrc', 'FmSrc'].map((k) => `vs${n}${k}`),
+    knobs: ['Freq', 'Fine', 'Sync', 'Shape', 'Hue', 'Sat', 'Level'].map((k) => `vs${n}${k}`),
+    menus: ['Input', 'ModMode'].map((k) => `vs${n}${k}`),
   });
   const SECTIONS: Section[] = [
     osc('A'),
@@ -85,17 +62,8 @@
     { name: 'Tube', knobs: ['vsScanlines', 'vsBleed', 'vsRoll', 'vsGlow'], menus: [] },
     { name: 'Music', knobs: ['vsReact'], menus: [] },
   ];
-  /** Short labels under knobs: the group is the section's own. */
-  const KNOB_LABELS: Record<string, string> = {
-    Freq: 'Freq', Fine: 'Fine', Sync: 'Sync', Shape: 'Wave', Mod: 'Mod', Fm: 'FM', Hue: 'Colour', Sat: 'Sat', Level: 'Level',
-    vsX: 'Move X', vsY: 'Move Y', vsRotate: 'Rotate', vsScale: 'Scale', vsKaleido: 'Mirror',
-    vsFeedback: 'Amount', vsFbZoom: 'Zoom', vsFbRotate: 'Turn', vsFbX: 'Drift X', vsFbY: 'Drift Y', vsFbHue: 'Colour',
-    vsLfo1Rate: 'LFO 1', vsLfo1Skew: 'Shape', vsLfo2Rate: 'LFO 2', vsLfo2Skew: 'Shape', vsLfo3Rate: 'LFO 3', vsLfo3Skew: 'Shape',
-    vsScanlines: 'Lines', vsBleed: 'Bleed', vsRoll: 'Roll', vsGlow: 'Glow', vsReact: 'Follow',
-  };
-  const knobLabel = (key: string) => KNOB_LABELS[key] ?? KNOB_LABELS[key.replace(/^vs[ABC]/, '')] ?? spec(key).label;
-  const MENU_LABELS: Record<string, string> = { Input: 'Draws', ModMode: 'Mod mode', ModSrc: 'Mod from', FmSrc: 'FM from', vsMix: 'Mixer' };
-  const menuLabel = (key: string) => MENU_LABELS[key] ?? MENU_LABELS[key.replace(/^vs[ABC]/, '')] ?? spec(key).label;
+  const MENU_LABELS: Record<string, string> = { Input: 'Draws', ModMode: 'Mod mode', vsMix: 'Mixer' };
+  const menuLabel = (key: string) => MENU_LABELS[key] ?? MENU_LABELS[key.replace(/^vs[ABC]/, '')] ?? paramSpec(key).label;
 
   let open = $state<Record<string, boolean>>({ 'Oscillator A': true });
 
@@ -151,6 +119,10 @@
   const CORNERS = ['Top left', 'Top right', 'Bottom left', 'Bottom right'];
 </script>
 
+{#if studioOpen}
+  <AnalogSynthStudio {effectSource} {layers} {midiPrefix} {onpatch} onclose={() => (studioOpen = false)} />
+{/if}
+
 <div class="studio-tokens analog-synth">
   <div class="bar">
     <label class="field">
@@ -163,6 +135,7 @@
       </select>
     </label>
     <button class="btn" onclick={randomise} title="A new patch, kept within ranges that make a picture">Randomise</button>
+    <button class="btn open" onclick={() => (studioOpen = true)} title="The whole instrument full screen, patched with cables">Open the synth</button>
   </div>
 
   {#each SECTIONS as section (section.name)}
@@ -175,7 +148,7 @@
         {#if section.menus.length}
           <div class="menus">
             {#each section.menus as key (key)}
-              {@const p = spec(key)}
+              {@const p = paramSpec(key)}
               <label class="field">
                 <span>{menuLabel(key)}</span>
                 <select
@@ -196,16 +169,16 @@
         {/if}
         <div class="knobs">
           {#each section.knobs as key (key)}
-            {@const p = spec(key)}
+            {@const p = paramSpec(key)}
             <StudioKnob
-              label={knobLabel(key)}
+              label={trayLabel(key)}
               title={`${section.name} · ${p.label}`}
               value={val(key)}
               min={p.min}
               max={p.max}
               defaultValue={p.default}
               size={38}
-              format={format(p)}
+              format={formatParam(p)}
               midiPath={`${midiPrefix}:${key}`}
               onchange={(v) => onpatch({ [key]: p.step === 1 ? Math.round(v) : v }, `analog-synth:${key}`)}
             />
@@ -214,6 +187,17 @@
       {/if}
     </section>
   {/each}
+
+  <section class="section">
+    <button class="section-head" aria-expanded={!!open.Patch} onclick={() => (open.Patch = !open.Patch)}>
+      <span class="ga-eyebrow">Patch</span>
+      <span class="chev" aria-hidden="true">{open.Patch ? '−' : '+'}</span>
+    </button>
+    {#if open.Patch}
+      <AnalogPatchBay {effectSource} {midiPrefix} {onpatch} />
+      <p class="hint">What feeds each input, and how much. Open the synth to patch with cables.</p>
+    {/if}
+  </section>
 
   <section class="section">
     <div class="section-head static"><span class="ga-eyebrow">Input</span></div>
@@ -226,7 +210,7 @@
         {/each}
       </select>
     </label>
-    <p class="hint">Any layer, a camera included. An oscillator set to draw the input shows it, coloured by its own colour and saturation; any oscillator can take Input as its mod or FM source.</p>
+    <p class="hint">Any layer, a camera included. An oscillator set to draw the input shows it, coloured by its own colour and saturation; any input can take it.</p>
   </section>
 
   <section class="section">
@@ -269,7 +253,7 @@
   }
   .bar {
     display: grid;
-    grid-template-columns: 1fr auto;
+    grid-template-columns: 1fr auto auto;
     gap: 8px;
     align-items: end;
     margin-bottom: 6px;

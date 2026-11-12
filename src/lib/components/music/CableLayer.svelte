@@ -14,12 +14,14 @@
   import { canConnect } from '../../music/studioSets';
   import { musicStudio } from '../../music/musicStudioStore';
   import { generateUUID } from '../../utils/uuid';
+  import { CABLE_COLORS, CABLE_LIVE_COLOR, cablePath } from '../../music/cableLook';
+  import './cableStyles.css';
 
   let { root }: { root: HTMLElement | null } = $props();
 
   interface Drawn { id: string; d: string; color: string; ends: [number, number, number, number] }
 
-  const COLORS = ['#5278ff', '#a8bcff', '#7ec8e3', '#ff8577', '#e6ebf7'];
+  const COLORS = CABLE_COLORS;
 
   let drawn = $state<Drawn[]>([]);
   let live = $state<{ d: string; color: string } | null>(null);
@@ -41,12 +43,7 @@
     return [r.left + r.width / 2 - origin.left, r.top + r.height / 2 - origin.top];
   }
 
-  /** A cable hangs: the lower the ends and the longer the run, the deeper the sag. */
-  function path(x1: number, y1: number, x2: number, y2: number): string {
-    const sag = Math.min(130, 24 + Math.hypot(x2 - x1, y2 - y1) * 0.12);
-    const low = Math.max(y1, y2) + sag;
-    return `M${x1.toFixed(1)} ${y1.toFixed(1)} C ${(x1 + (x2 - x1) * 0.2).toFixed(1)} ${low.toFixed(1)}, ${(x2 - (x2 - x1) * 0.2).toFixed(1)} ${low.toFixed(1)}, ${x2.toFixed(1)} ${y2.toFixed(1)}`;
-  }
+  const path = cablePath;
 
   function colorFor(id: string, index: number): string {
     let h = 0;
@@ -88,7 +85,7 @@
     let nextLive: typeof live = null;
     if (drag) {
       const a = centre(jacks, drag.from, origin);
-      if (a) nextLive = { d: path(a[0], a[1], drag.x - origin.left, drag.y - origin.top), color: '#a8bcff' };
+      if (a) nextLive = { d: path(a[0], a[1], drag.x - origin.left, drag.y - origin.top), color: CABLE_LIVE_COLOR };
     }
     const sig = next.map((n) => n.d).join('|') + (nextLive?.d ?? '');
     if (sig === signature) return;
@@ -227,16 +224,16 @@
   <g class="patched {$cableView}">
   {#each drawn as c (c.id)}
     <path d={c.d} class="hit" data-cable={c.id} />
-    <path d={c.d} class="shadow" />
-    <path d={c.d} stroke={c.color} class="cable" class:hover={hovered === c.id} />
-    <circle cx={c.ends[0]} cy={c.ends[1]} r={hovered === c.id ? 9 : 6} class="plug" class:hover={hovered === c.id} stroke={c.color} />
-    <circle cx={c.ends[2]} cy={c.ends[3]} r={hovered === c.id ? 9 : 6} class="plug" class:hover={hovered === c.id} stroke={c.color} />
+    <path d={c.d} class="shadow studio-cable-shadow" />
+    <path d={c.d} stroke={c.color} class="cable studio-cable" class:hover={hovered === c.id} />
+    <circle cx={c.ends[0]} cy={c.ends[1]} r={hovered === c.id ? 9 : 6} class="plug studio-cable-plug" class:hover={hovered === c.id} stroke={c.color} />
+    <circle cx={c.ends[2]} cy={c.ends[3]} r={hovered === c.id ? 9 : 6} class="plug studio-cable-plug" class:hover={hovered === c.id} stroke={c.color} />
   {/each}
   </g>
   <g>
   {#if live}
-    <path d={live.d} class="shadow" />
-    <path d={live.d} stroke={live.color} class="cable live" />
+    <path d={live.d} class="shadow studio-cable-shadow" />
+    <path d={live.d} stroke={live.color} class="cable studio-cable live" />
   {/if}
   </g>
 </svg>
@@ -348,8 +345,4 @@
   /* Hidden or faded cables still patch; only the drawing steps back. The cable in the hand always shows. */
   .patched.fade { opacity: 0.22; }
   .patched.hide { display: none; }
-  .cable { fill: none; stroke-width: 5; stroke-linecap: round; }
-  .cable.live { stroke-dasharray: 2 8; }
-  .shadow { fill: none; stroke: rgba(0, 0, 0, 0.5); stroke-width: 8; transform: translate(2px, 4px); }
-  .plug { fill: #0d1224; stroke-width: 3; }
 </style>

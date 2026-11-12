@@ -8,7 +8,7 @@
  *   out    `next` through the tube → the layer's source
  */
 import { scene3dFrameBuffer } from '../renderer/scene3dFrame';
-import { INPUT_LAYER_KEY, paramBlock } from './patch';
+import { INPUT_LAYER_KEY, PARAM_FLOATS, paramBlock } from './patch';
 import { VIDEOSYNTH_SHADER_ID } from './shaders';
 
 export type VideoSynthGraph = {
@@ -42,7 +42,7 @@ export function buildVideoSynthGraph(options: {
     { id: id('next'), width: w, height: h, format: 'rgba16float' },
     { id: id('prev'), width: w, height: h, format: 'rgba16float' },
   ];
-  const patch = { id: id('patch'), kind: 'uniform', byte_length: 256, initial_b64: b64(paramBlock(options.params, aspect)) };
+  const patch = { id: id('patch'), kind: 'uniform', byte_length: PARAM_FLOATS * 4, initial_b64: b64(paramBlock(options.params, aspect)) };
   const frame = scene3dFrameBuffer(id('clock'));
   const base = [{ binding: 0, resource: patch.id, kind: 'uniform' }, { binding: 1, resource: frame.id, kind: 'uniform' }];
   // The input layer's composited picture (any layer; empty when none is set).

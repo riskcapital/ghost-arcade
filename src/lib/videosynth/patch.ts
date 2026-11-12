@@ -49,6 +49,21 @@ const spec = (key: string, label: string, group: string, min: number, max: numbe
   key, label, group, min, max, step, default: value, slot, ...(options ? { options } : {}),
 });
 
+/** Inputs that only a cable reaches (the oscillators' Mod and FM are knobs too). */
+const PATCH_ONLY_JACKS = [
+  { id: 'ALevel', label: 'Osc A level', short: 'Level', module: 'Osc A' },
+  { id: 'BLevel', label: 'Osc B level', short: 'Level', module: 'Osc B' },
+  { id: 'CLevel', label: 'Osc C level', short: 'Level', module: 'Osc C' },
+  { id: 'FbZoomIn', label: 'Feedback zoom', short: 'Zoom', module: 'Feedback' },
+  { id: 'FbTurnIn', label: 'Feedback turn', short: 'Turn', module: 'Feedback' },
+  { id: 'FbHueIn', label: 'Feedback colour', short: 'Colour', module: 'Feedback' },
+  { id: 'RotateIn', label: 'Picture rotate', short: 'Rotate', module: 'Picture' },
+  { id: 'ScaleIn', label: 'Picture scale', short: 'Scale', module: 'Picture' },
+  { id: 'MoveXIn', label: 'Picture move X', short: 'Move X', module: 'Picture' },
+  { id: 'MoveYIn', label: 'Picture move Y', short: 'Move Y', module: 'Picture' },
+  { id: 'RollIn', label: 'Tube roll', short: 'Roll', module: 'Tube' },
+] as const;
+
 function oscParams(i: number): ParamSpec[] {
   const n = 'ABC'[i], g = `Osc ${n}`, d = OSC_DEFAULTS[i], base = i * 12;
   return [
@@ -95,6 +110,36 @@ export const VIDEOSYNTH_PARAMS: ParamSpec[] = [
   spec('vsRoll', 'Roll', 'Tube', 0, 1, 0.001, 0, 56),
   spec('vsGlow', 'Glow', 'Tube', 0, 1, 0.001, 0.2, 57),
   spec('vsReact', 'Follow the music', 'Music', 0, 1, 0.001, 0.5, 58),
+  ...PATCH_ONLY_JACKS.flatMap((j, i) => [
+    spec(`vs${j.id}Src`, `${j.label} from`, 'Patch', 0, SOURCES.length - 1, 1, 0, 64 + i * 2, SOURCES),
+    spec(`vs${j.id}Amt`, `${j.label} amount`, 'Patch', -1, 1, 0.001, 0.5, 65 + i * 2),
+  ]),
+];
+
+/**
+ * The patch bay. Outputs are the sources (one jack each, any number of
+ * cables). Inputs are where a cable goes (one cable each): every input is a
+ * source setting and an amount. An input's normal is the connection it has
+ * with no cable in it; a cable replaces the normal, and pulling the cable out
+ * brings the normal back. Pulling out a normal breaks it.
+ */
+export type OutputJack = { source: number; label: string };
+export type InputJack = { id: string; label: string; module: string; srcKey: string; amtKey: string; normal: number };
+
+/** Every source but Off, as jacks. */
+export const OUTPUT_JACKS: OutputJack[] = [
+  { source: 1, label: 'Out' }, { source: 2, label: 'Osc A' }, { source: 3, label: 'Osc B' }, { source: 4, label: 'Osc C' },
+  { source: 5, label: 'LFO 1' }, { source: 6, label: 'LFO 2' }, { source: 7, label: 'LFO 3' },
+  { source: 8, label: 'Bass' }, { source: 9, label: 'Mids' }, { source: 10, label: 'Highs' }, { source: 11, label: 'Level' },
+  { source: 12, label: 'Kick' }, { source: 13, label: 'Input' },
+];
+
+export const INPUT_JACKS: InputJack[] = [
+  ...(['A', 'B', 'C'] as const).flatMap((n, i): InputJack[] => [
+    { id: `${n}Mod`, label: 'Mod', module: `Osc ${n}`, srcKey: `vs${n}ModSrc`, amtKey: `vs${n}Mod`, normal: OSC_DEFAULTS[i].modSrc },
+    { id: `${n}Fm`, label: 'FM', module: `Osc ${n}`, srcKey: `vs${n}FmSrc`, amtKey: `vs${n}Fm`, normal: OSC_DEFAULTS[i].fmSrc },
+  ]),
+  ...PATCH_ONLY_JACKS.map((j): InputJack => ({ id: j.id, label: j.short, module: j.module, srcKey: `vs${j.id}Src`, amtKey: `vs${j.id}Amt`, normal: 0 })),
 ];
 
 /** The layer an oscillator draws, or that the Input source reads: an
@@ -128,7 +173,7 @@ export function morphValues(snapshots: Snapshots, x: number, y: number, current:
 /** Slots the app fills after the controls. */
 export const SLOT_ASPECT = 59;
 export const SLOT_LINES = 60;
-export const PARAM_FLOATS = 64;
+export const PARAM_FLOATS = 128;
 
 export const VIDEOSYNTH_DEFAULTS: Record<string, number> = Object.fromEntries(VIDEOSYNTH_PARAMS.map((p) => [p.key, p.default]));
 

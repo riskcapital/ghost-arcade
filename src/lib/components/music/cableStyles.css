@@ -1,0 +1,6 @@
+/* Patch cables, the same on every instrument: a coloured strand over a soft
+   drop shadow, with a plug at each end. The cable in the hand is dotted. */
+.studio-cable { fill: none; stroke-width: 5; stroke-linecap: round; }
+.studio-cable.live { stroke-dasharray: 2 8; }
+.studio-cable-shadow { fill: none; stroke: rgba(0, 0, 0, 0.5); stroke-width: 8; transform: translate(2px, 4px); }
+.studio-cable-plug { fill: #0d1224; stroke-width: 3; }

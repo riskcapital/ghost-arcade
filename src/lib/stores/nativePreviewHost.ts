@@ -11,3 +11,10 @@ import { writable } from 'svelte/store';
  * every UI frame, so the presenter follows layout changes automatically.
  */
 export const nativePreviewHostEl = writable<HTMLElement | null>(null);
+
+/**
+ * A full-screen instrument (Analog Synth's full view) that holds the
+ * preview while it is open. While set, VJ mode leaves `nativePreviewHostEl`
+ * alone instead of taking the preview back for its own box.
+ */
+export const nativePreviewClaim = writable<string | null>(null);

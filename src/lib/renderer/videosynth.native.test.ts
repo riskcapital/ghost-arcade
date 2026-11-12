@@ -61,8 +61,11 @@ suite('Analog Synth video synth', () => {
         for (let i = 0; i < img.rgba.length; i += 4) { const v = img.rgba[i] + img.rgba[i + 1] + img.rgba[i + 2]; sum += v; if (v > 60) lit++; }
         return { lit: lit / (img.w * img.h), mean: sum / (img.w * img.h * 765) };
       };
-      for (const preset of VIDEOSYNTH_PRESETS) {
-        const graph = buildVideoSynthGraph({ params: presetValues(preset.id), sourceId: source, width: W, height: H, maxSide: 960 });
+      // The presets, then the still test card with a cable from LFO 1 into Picture rotate.
+      const patched = { id: 'test-card+cable', name: 'Test card, patched', values: { ...VIDEOSYNTH_PRESETS.find((p) => p.id === 'test-card')!.values, vsRotateInSrc: 5, vsRotateInAmt: 1, vsLfo1Rate: 0.9 } };
+      for (const preset of [...VIDEOSYNTH_PRESETS, patched]) {
+        const values = preset === patched ? { ...presetValues('test-card'), ...patched.values } : presetValues(preset.id);
+        const graph = buildVideoSynthGraph({ params: values, sourceId: source, width: W, height: H, maxSide: 960 });
         await rpc.commands([
           { type: 'upsert_layer', layer_id: 'synth', z_index: 0, opacity: 1, blend_mode: 'normal', corners: full },
           { type: 'set_layer_visibility', layer_id: 'synth', visible: true },
@@ -72,7 +75,9 @@ suite('Analog Synth video synth', () => {
         for (let i = 0; i < 8; i++) { await wait(80); await rpc.commands([{ type: 'present' }]); }
         const status = await rpc.send('status');
         expect(String(status.last_shader_error || status.last_frame_error || ''), preset.id).toBe('');
-        const a = await shot();
+        // The first frames of a new graph can take a moment: wait for a picture.
+        let a = await shot();
+        for (let i = 0; i < 30 && stats(a).lit < 0.05; i++) { await wait(100); a = await shot(); }
         await wait(500);
         const b = await shot();
         if (process.env.VSYNTH_DUMP) writeFileSync(`${process.env.VSYNTH_DUMP}-${preset.id}.json`, JSON.stringify({ w: a.w, h: a.h, b64: Buffer.from(a.rgba).toString('base64') }));

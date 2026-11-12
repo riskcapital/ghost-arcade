@@ -84,6 +84,16 @@
     <path d="M3 19.5h18M5 22h14" stroke="currentColor" stroke-width="1" opacity="0.55" stroke-linecap="round"/>
   </svg>
 
+{:else if resolvedId === 'analog-synth'}
+  <!-- A tube screen with a wave across it, and two patch jacks: the video synth. -->
+  <svg class="plugin-icon-svg" width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <rect x="3" y="3.5" width="18" height="12" rx="2.5" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M5.5 10 Q 8 5.5, 10.5 9.5 T 15.5 9.5 T 18.5 8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+    <circle cx="8" cy="19.5" r="1.6" stroke="currentColor" stroke-width="1.2"/>
+    <circle cx="16" cy="19.5" r="1.6" stroke="currentColor" stroke-width="1.2"/>
+    <path d="M9.6 19.5 Q 12 22, 14.4 19.5" stroke="currentColor" stroke-width="1" opacity="0.6" stroke-linecap="round"/>
+  </svg>
+
 {:else if resolvedId === 'ghostfx'}
   <svg class="plugin-icon-svg" width={size} height={size} viewBox="0 0 24 24" fill="none">
     <path d="M12 3 L20 12 L12 21 L4 12 Z"  stroke="currentColor" stroke-width="1.3"/>

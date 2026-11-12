@@ -6,14 +6,14 @@
  *   fs_keep   copies the new frame aside, for the next frame's feedback
  *   fs_out    the tube: scanlines, colour bleed, roll and glow
  *
- * Bindings: 0 the patch (64 floats, see patch.ts), 1 the frame block the
+ * Bindings: 0 the patch (128 floats, see patch.ts), 1 the frame block the
  * core writes (time, audio), 2 the picture read, 3 the sampler.
  */
 import { SCENE3D_FRAME_WGSL } from '../renderer/scene3dFrame';
 
 export const VIDEOSYNTH_WGSL = /* wgsl */ `
 ${SCENE3D_FRAME_WGSL}
-@group(0) @binding(0) var<uniform> controls: array<vec4f, 16>;
+@group(0) @binding(0) var<uniform> controls: array<vec4f, 32>;
 @group(0) @binding(1) var<uniform> frame: SceneFrame;
 @group(0) @binding(2) var src: texture_2d<f32>;
 @group(0) @binding(3) var samp: sampler;
@@ -118,8 +118,11 @@ fn oscillator(n: u32, uv: vec2f) -> vec4f {
   } else if (mode == 2u) {
     hue += m;
   }
-  var rgb = hsv(hue, prm(b + 10u), v * prm(b + 11u));
-  if (draws_input && mode != 1u) { rgb = mix(input_rgb, hsv(hue, 1.0, v), prm(b + 10u)) * prm(b + 11u); }
+  // Level, plus whatever is patched into this oscillator's level input.
+  var level = prm(b + 11u);
+  if (prm(64u + n * 2u) > 0.5) { level = clamp(level + source(prm(64u + n * 2u)) * prm(65u + n * 2u), 0.0, 1.0); }
+  var rgb = hsv(hue, prm(b + 10u), v * level);
+  if (draws_input && mode != 1u) { rgb = mix(input_rgb, hsv(hue, 1.0, v), prm(b + 10u)) * level; }
   return vec4f(rgb, v);
 }
 
@@ -129,6 +132,27 @@ fn hue_rotate(c: vec3f, a: f32) -> vec3f {
   let ca = cos(a);
   return c * ca + cross(k, c) * sin(a) + k * dot(k, c) * (1.0 - ca);
 }
+// A source read straight at a point, before the picture is moved: the picture
+// (the last frame, or the frame being finished), an oscillator's bare wave,
+// an LFO, the music, or the input. Cables into the picture and feedback
+// read sources this way, since those decide where the oscillators draw.
+fn raw_source(k: f32, uv: vec2f) -> f32 {
+  let i = u32(k + 0.5);
+  if (i == 1u) { return luma(textureSampleLevel(src, samp, uv, 0.0).rgb); }
+  if (i >= 2u && i <= 4u) {
+    let b = (i - 2u) * 12u;
+    let freq = 60.0 * pow(2.0, prm(b) * 10.0 - 2.0) + prm(b + 1u) * 2.0;
+    return wave(osc_phase(freq, prm(b + 2u), uv), prm(b + 3u));
+  }
+  if (i == 13u) { return luma(textureSampleLevel(input_tex, samp, uv, 0.0).rgb); }
+  return source(k);
+}
+/** A patch-bay input: its cable's source times its amount (nothing when unpatched). */
+fn jack(slot: u32, uv: vec2f) -> f32 {
+  if (prm(slot) < 0.5) { return 0.0; }
+  return raw_source(prm(slot), uv) * prm(slot + 1u);
+}
+
 fn rotate(p: vec2f, a: f32) -> vec2f { let c = cos(a); let s = sin(a); return vec2f(c * p.x - s * p.y, s * p.x + c * p.y); }
 
 @fragment
@@ -137,15 +161,16 @@ fn fs_synth(in: VsOut) -> @location(0) vec4f {
   let react = prm(58u);
   // Feedback: last frame, zoomed, turned and drifted about the centre.
   var f = (in.uv - 0.5) * vec2f(aspect, 1.0);
-  let zoom = prm(43u) + react * frame.kick * 0.02;
-  f = rotate(f / zoom, prm(44u) * 0.1) / vec2f(aspect, 1.0) + 0.5 - vec2f(prm(45u), prm(46u));
+  let zoom = max(prm(43u) + react * frame.kick * 0.02 + jack(70u, in.uv) * 0.06, 0.5);
+  f = rotate(f / zoom, prm(44u) * 0.1 + jack(72u, in.uv) * 0.05) / vec2f(aspect, 1.0) + 0.5 - vec2f(prm(45u), prm(46u));
   var last = textureSampleLevel(src, samp, f, 0.0).rgb;
   if (any(f < vec2f(0.0)) || any(f > vec2f(1.0))) { last = vec3f(0.0); }
   feedback_luma = luma(last);
 
   // The picture's own move, turn, scale and mirror, applied to where the beam draws.
-  var p = (in.uv - 0.5 - vec2f(prm(37u), -prm(38u)) * 0.5) * vec2f(aspect, 1.0);
-  p = rotate(p, -prm(39u)) / max(prm(40u), 0.01);
+  let shift = vec2f(prm(37u) + jack(80u, in.uv), -(prm(38u) + jack(82u, in.uv)));
+  var p = (in.uv - 0.5 - shift * 0.5) * vec2f(aspect, 1.0);
+  p = rotate(p, -(prm(39u) + jack(76u, in.uv) * 3.14159)) / max(prm(40u) * (1.0 + jack(78u, in.uv)), 0.01);
   let segments = prm(41u);
   if (segments >= 1.0) {
     let wedge = TAU / (segments * 2.0);
@@ -179,7 +204,7 @@ fn fs_synth(in: VsOut) -> @location(0) vec4f {
   }
   // Trails keep the brighter of now and the fed-back last frame.
   // The fed-back picture turns its colour a little each frame.
-  let fed = hue_rotate(last, prm(47u) * TAU * 0.1);
+  let fed = hue_rotate(last, prm(47u) * TAU * 0.1 + jack(74u, in.uv) * 0.5);
   col = max(clamp(col, vec3f(0.0), vec3f(1.0)), fed * prm(42u) * 0.985);
   return vec4f(col, 1.0);
 }
@@ -197,7 +222,7 @@ fn fs_out(in: VsOut) -> @location(0) vec4f {
   var uv = in.uv;
   // Roll: the picture slips vertically, more on a hit.
   let roll = prm(56u) + prm(58u) * frame.kick * 0.15;
-  uv.y = fract(uv.y + roll * frame.time * 0.35);
+  uv.y = fract(uv.y + roll * frame.time * 0.35 + jack(84u, in.uv) * 0.25);
   // Colour bleed: red and blue spread sideways, as a tube's colour carrier did.
   let bleed = prm(55u) * 4.0 / dims.x;
   var col = vec3f(
