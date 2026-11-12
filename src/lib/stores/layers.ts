@@ -1,7 +1,7 @@
 import {defaultInteractive,sanitizeStoredInteractive} from '../mobile/studio/interactive';
 import {editableEffects, soundDefaults} from '../mobile/studio/interactiveEffects';
 import { buildWorld, WORLDS, type StageShape, type WorldId } from '../scene3d/worlds';
-import { checkScene3D } from '../scene3d/sceneModel';
+import { checkScene3D, type Scene3D } from '../scene3d/sceneModel';
 import { normalizeVJGroups } from './vjGroups';
 import { normalizeCuePoints } from './vjCuePoints';
 import { normalizeAutopilot } from './vjAutopilot';
@@ -800,6 +800,23 @@ void main() {
       // Add and fill are one step: undo removes the layer at once.
       amendLastHistoryStep();
       return id;
+    },
+
+    /**
+     * Replace an Interactive 3D layer's world with an edited one. With
+     * `gesture` (a slider drag, typing in a field) the edits of that gesture
+     * are one undo step; without, this edit is one step.
+     */
+    setScene3D(layerId: string, scene: Scene3D, gesture?: string): void {
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((l) => l.id !== layerId || !l.source?.effectSource?.scene3d ? l : {
+          ...l,
+          source: { ...l.source, effectSource: { ...l.source.effectSource, scene3d: scene } },
+        }),
+      }));
+      if (gesture) scheduleHistorySnapshot(editKey('scene3d', layerId, gesture));
+      else recordDiscreteAction();
     },
 
     /**

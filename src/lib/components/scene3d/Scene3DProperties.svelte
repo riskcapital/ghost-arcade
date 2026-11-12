@@ -8,8 +8,10 @@
   import { checkScene3D } from '../../scene3d/sceneModel';
   import { WORLDS, type WorldId } from '../../scene3d/worlds';
   import type { Layer } from '../../types';
+  import Scene3DEditor from './Scene3DEditor.svelte';
 
   export let layer: Layer;
+  let editing = false;
 
   $: source = layer.source?.effectSource;
   $: world = (source?.scene3dWorld ?? 'light-and-shadow') as WorldId;
@@ -51,6 +53,13 @@
     onclick={() => project.setScene3DWorld(layer.id, world)}>Rebuild from stage</button
   >
 </div>
+<div class="property-row">
+  <span></span>
+  <button class="btn-small" aria-expanded={editing} disabled={!check.scene} onclick={() => (editing = !editing)}>{editing ? 'Close editor' : 'Edit world'}</button>
+</div>
+{#if editing && check.scene}
+  <Scene3DEditor layerId={layer.id} scene={check.scene} />
+{/if}
 {#if check.error}
   <p class="scene3d-error" role="alert">This world cannot be read: {check.error}</p>
 {:else if failed}

@@ -1019,7 +1019,7 @@
               <PluginIcon effectType="performer-world" size={14}/> Interactive
             </button>
             <button onclick={()=>{project.addInteractive3DLayer('light-and-shadow');showAddLayerMenu=false;}}>
-              <PluginIcon effectType="performer-world" size={14}/> Interactive 3D
+              <PluginIcon effectType="scene3d" size={14}/> Interactive 3D
             </button>
             <button
               title="Add custom shape media layer"

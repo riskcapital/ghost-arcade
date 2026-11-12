@@ -138,6 +138,14 @@
     <circle cx="12" cy="11" r="0.75" fill="currentColor"/>
   </svg>
 
+{:else if effectType === 'scene3d'}
+  <!-- Interactive 3D: a block standing in light, casting its shadow. -->
+  <svg class="plugin-icon-svg" width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <path d="M13 17.5l8 2.5-4 1.5-8-2.5z" fill="currentColor" opacity="0.3"/>
+    <path d="M12 3.5l7 3.5v8l-7 3.5-7-3.5v-8z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+    <path d="M5 7l7 3.5 7-3.5M12 10.5V18.5" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+  </svg>
+
 {:else if resolvedId === 'performer' || effectType === 'performer-world'}
   <!-- Performer: keyboard-launched orbits around a nucleus. -->
   <svg class="plugin-icon-svg" width={size} height={size} viewBox="0 0 24 24" fill="none">
