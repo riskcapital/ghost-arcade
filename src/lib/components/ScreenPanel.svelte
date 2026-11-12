@@ -18,6 +18,7 @@
   import { displayFingerprint, resolveStoredDisplay } from '../output/displayAssignment';
   import OutputCanvasPreview from './OutputCanvasPreview.svelte';
   import ScreenInspector from './ScreenInspector.svelte';
+  import DomePanel from './DomePanel.svelte';
 
   const tsLabel = getTextureShareLabel();
 
@@ -213,66 +214,6 @@
     settings.setMasterWarp({ meshGrid: { ...masterWarp.meshGrid, bezier } });
     focusMasterWarp();
     recordDiscreteAction();
-  }
-
-  // ─── Dome projection ────────────────────────────────────────────────
-  type DomeNumberKey =
-    | 'domeFOV'
-    | 'domeRotation'
-    | 'domeTilt'
-    | 'domeOffsetX'
-    | 'domeOffsetY'
-    | 'domeCurvature'
-    | 'domeTruncation';
-
-  const domeModes: { value: OutputSettings['domeMode']; label: string }[] = [
-    { value: 'angular', label: 'Angular fisheye' },
-    { value: 'stereographic', label: 'Stereographic' },
-    { value: 'orthographic', label: 'Orthographic' },
-    { value: 'equirectangular', label: 'Equirectangular 360' },
-  ];
-
-  function clamp(value: number, min: number, max: number) {
-    return Math.max(min, Math.min(max, Number.isFinite(value) ? value : min));
-  }
-  function eventNumber(e: Event, fallback = 0) {
-    const value = parseFloat((e.target as HTMLInputElement).value);
-    return Number.isFinite(value) ? value : fallback;
-  }
-  function updateDomeNumber(key: DomeNumberKey, value: number, min: number, max: number) {
-    settings.updateDomeSetting(key, clamp(value, min, max));
-  }
-  function resetDome() {
-    settings.update(s => ({
-      ...s,
-      output: {
-        ...s.output,
-        domeFOV: 180,
-        domeRotation: 0,
-        domeTilt: 0,
-        domeOffsetX: 0,
-        domeOffsetY: 0,
-        domeCurvature: 1,
-        domeTruncation: 1,
-      },
-    }));
-  }
-  function applyDomePreset(kind: 'domemaster' | 'panorama' | 'half') {
-    settings.update(s => ({
-      ...s,
-      output: {
-        ...s.output,
-        domeEnabled: true,
-        domeMode: kind === 'panorama' ? 'equirectangular' : 'angular',
-        domeFOV: kind === 'panorama' ? 360 : 180,
-        domeRotation: 0,
-        domeTilt: 0,
-        domeOffsetX: 0,
-        domeOffsetY: 0,
-        domeCurvature: 1,
-        domeTruncation: kind === 'half' ? 0.5 : 1,
-      },
-    }));
   }
 
   // ─── Saved screen setups ────────────────────────────────────────────
@@ -480,96 +421,14 @@
       {/if}
     </details>
 
-    <!-- Dome projection — global fisheye/panorama reprojection for domes.
-         Kept beside Master canvas/warp because it changes the entire
-         master output before Screens slice it. -->
+    <!-- Dome output: the whole master becomes a dome picture before Screens
+         slice it, so it sits beside Master canvas and warp. -->
     <details class="master-details dome-details" open={$settings.output.domeEnabled}>
       <summary>
-        Dome projection
-        {#if $settings.output.domeEnabled}<span class="mw-active-dot dome-dot" title="Dome projection enabled"></span>{/if}
+        Dome output
+        {#if $settings.output.domeEnabled}<span class="mw-active-dot dome-dot" title="Dome output on"></span>{/if}
       </summary>
-      <label class="mw-enable">
-        <input
-          type="checkbox"
-          checked={$settings.output.domeEnabled ?? false}
-          onchange={(e) => settings.setDomeEnabled((e.target as HTMLInputElement).checked)}
-        />
-        <span>Fisheye / domemaster output</span>
-      </label>
-      <div class="dome-presets">
-        <button class="dome-chip" onclick={() => applyDomePreset('domemaster')}>Domemaster 180</button>
-        <button class="dome-chip" onclick={() => applyDomePreset('half')}>Half dome</button>
-        <button class="dome-chip" onclick={() => applyDomePreset('panorama')}>Panorama 360</button>
-      </div>
-      {#if $settings.output.domeEnabled ?? false}
-        {@const dome = {
-          fov: $settings.output.domeFOV ?? 180,
-          rotation: $settings.output.domeRotation ?? 0,
-          tilt: $settings.output.domeTilt ?? 0,
-          curvature: $settings.output.domeCurvature ?? 1,
-          truncation: $settings.output.domeTruncation ?? 1,
-          offsetX: $settings.output.domeOffsetX ?? 0,
-          offsetY: $settings.output.domeOffsetY ?? 0,
-        }}
-        <label class="dome-field">
-          <span>Mode</span>
-          <select
-            value={$settings.output.domeMode ?? 'angular'}
-            onchange={(e) => settings.setDomeMode((e.target as HTMLSelectElement).value as OutputSettings['domeMode'])}
-          >
-            {#each domeModes as mode}
-              <option value={mode.value}>{mode.label}</option>
-            {/each}
-          </select>
-        </label>
-        <div class="dome-controls">
-          <label class="dome-row">
-            <span>FOV</span>
-            <input type="range" min="90" max="360" step="1" value={dome.fov}
-              oninput={(e) => updateDomeNumber('domeFOV', eventNumber(e, 180), 90, 360)} />
-            <em>{dome.fov.toFixed(0)}°</em>
-          </label>
-          <label class="dome-row">
-            <span>Rotation</span>
-            <input type="range" min="0" max="360" step="1" value={dome.rotation}
-              oninput={(e) => updateDomeNumber('domeRotation', eventNumber(e), 0, 360)} />
-            <em>{dome.rotation.toFixed(0)}°</em>
-          </label>
-          <label class="dome-row">
-            <span>Tilt</span>
-            <input type="range" min="-90" max="90" step="1" value={dome.tilt}
-              oninput={(e) => updateDomeNumber('domeTilt', eventNumber(e), -90, 90)} />
-            <em>{dome.tilt.toFixed(0)}°</em>
-          </label>
-          <label class="dome-row">
-            <span>Curvature</span>
-            <input type="range" min="0" max="1" step="0.01" value={dome.curvature}
-              oninput={(e) => updateDomeNumber('domeCurvature', eventNumber(e, 1), 0, 1)} />
-            <em>{(dome.curvature * 100).toFixed(0)}%</em>
-          </label>
-          <label class="dome-row">
-            <span>Truncation</span>
-            <input type="range" min="0.5" max="1" step="0.01" value={dome.truncation}
-              oninput={(e) => updateDomeNumber('domeTruncation', eventNumber(e, 1), 0.5, 1)} />
-            <em>{(dome.truncation * 100).toFixed(0)}%</em>
-          </label>
-          <label class="dome-row">
-            <span>Offset X</span>
-            <input type="range" min="-1" max="1" step="0.01" value={dome.offsetX}
-              oninput={(e) => updateDomeNumber('domeOffsetX', eventNumber(e), -1, 1)} />
-            <em>{dome.offsetX.toFixed(2)}</em>
-          </label>
-          <label class="dome-row">
-            <span>Offset Y</span>
-            <input type="range" min="-1" max="1" step="0.01" value={dome.offsetY}
-              oninput={(e) => updateDomeNumber('domeOffsetY', eventNumber(e), -1, 1)} />
-            <em>{dome.offsetY.toFixed(2)}</em>
-          </label>
-        </div>
-        <div class="master-row">
-          <button class="mini-btn" onclick={resetDome}>Reset dome</button>
-        </div>
-      {/if}
+      <DomePanel />
     </details>
 
     <!-- Saved setups. Sits after the rig controls because it acts on all of
@@ -973,89 +832,6 @@
   .dome-dot {
     background: var(--ga-blue-300);
     box-shadow: 0 0 5px color-mix(in srgb, var(--ga-blue-300) 80%, transparent);
-  }
-  .dome-presets {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-top: 8px;
-  }
-  .dome-chip {
-    height: var(--ga-control-h-sm, 22px);
-    padding: 0 8px;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
-    border-radius: var(--ga-r-hard, 4px);
-    color: var(--ga-ink-1, #b8b2c2);
-    font-size: var(--ga-text-control, 12px);
-    font-weight: var(--ga-weight-control, 600);
-    font-family: inherit;
-    cursor: pointer;
-  }
-  .dome-chip:hover {
-    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24));
-    color: var(--ga-ink-0, #fff);
-  }
-  .dome-field,
-  .dome-row {
-    display: grid;
-    grid-template-columns: 74px minmax(0, 1fr) 42px;
-    align-items: center;
-    gap: 6px;
-    margin-top: 6px;
-  }
-  .dome-field {
-    grid-template-columns: 74px minmax(0, 1fr);
-  }
-  .dome-field span,
-  .dome-row span {
-    color: var(--ga-ink-1, #a29baa);
-    font-size: var(--ga-text-control, 12px);
-    font-weight: var(--ga-weight-body, 500);
-  }
-  .dome-field select {
-    min-width: 0;
-    height: var(--ga-control-h, 26px);
-    padding: 0 8px;
-    background: var(--ga-slot, rgba(0, 0, 0, 0.28));
-    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
-    border-radius: var(--ga-r-hard, 4px);
-    color: var(--ga-ink-0, #e6e1ee);
-    font-size: var(--ga-text-control, 12px);
-    font-family: inherit;
-  }
-  .dome-row input[type="range"] {
-    width: 100%;
-    min-width: 0;
-    height: 4px;
-    -webkit-appearance: none;
-    appearance: none;
-    background: var(--ga-slot, #050507);
-    border-radius: 999px;
-    accent-color: var(--ga-selection-line, #5278ff);
-    cursor: pointer;
-  }
-  .dome-row input[type="range"]::-webkit-slider-runnable-track {
-    height: 4px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--ga-selection-line, #5278ff) 70%, transparent);
-  }
-  .dome-row input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    width: 12px;
-    height: 12px;
-    margin-top: -4px;
-    border-radius: 50%;
-    border: 2px solid var(--ga-panel, #111114);
-    background: var(--ga-ink-0, #f2ede4);
-    box-shadow: 0 0 0 1px var(--ga-line-3, rgba(255, 255, 255, 0.24));
-  }
-  .dome-row em {
-    color: var(--ga-ink-1, #8f8998);
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    font-size: var(--ga-text-meta, 11px);
-    font-style: normal;
-    text-align: right;
   }
   .inspector-section {
     margin-top: 12px;

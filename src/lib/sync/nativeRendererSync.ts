@@ -278,6 +278,8 @@ type LayerSnapshot = {
   edgeEffectsSig: string;
   colorSig: string;
   tintSig: string;
+  /** Where the layer sits on the dome ('none' when it isn't placed). */
+  domeSig: string;
 };
 
 type NativeLayerSource = {
@@ -1132,6 +1134,7 @@ import { runAsAutomation } from '$lib/stores/historyHooks';
 import { buildScene3DGraph } from '$lib/renderer/scene3dNative';
 import { validateScene3D } from '$lib/scene3d/sceneModel';
 import { buildVideoSynthGraph } from '$lib/videosynth/graph';
+import { domePlacementCommand, nativeDomeStage } from '$lib/output/domeMath';
 const NATIVE_EFFECT_PASS_IDS = new Set<NativeEffectPassId>(
   NATIVE_EFFECT_PASS_MANIFEST.map((entry) => entry.id),
 );
@@ -8852,7 +8855,6 @@ export class NativeRendererSync {
   private pushOutputStage() {
     const out = get(settings)?.output;
     if (!out) return;
-    const domeModes = ['angular', 'stereographic', 'orthographic', 'equirectangular'];
     const payload = {
       type: 'set_output_stage' as const,
       rotation: out.outputRotation ?? 0,
@@ -8868,15 +8870,7 @@ export class NativeRendererSync {
       edgeBlendTop: out.edgeBlendTop ?? 0,
       edgeBlendBottom: out.edgeBlendBottom ?? 0,
       edgeBlendGamma: out.edgeBlendGamma ?? 2.2,
-      domeEnabled: !!out.domeEnabled,
-      domeMode: Math.max(0, domeModes.indexOf(out.domeMode ?? 'angular')),
-      domeFOV: out.domeFOV ?? 180,
-      domeRotation: out.domeRotation ?? 0,
-      domeTilt: out.domeTilt ?? 0,
-      domeOffsetX: out.domeOffsetX ?? 0,
-      domeOffsetY: out.domeOffsetY ?? 0,
-      domeCurvature: out.domeCurvature ?? 1,
-      domeTruncation: out.domeTruncation ?? 1,
+      ...nativeDomeStage(out),
       // Alignment pattern drawn by the compositor's output stage, so it
       // reaches the projector (the DOM overlay only ever covered the
       // editor preview).
@@ -10198,6 +10192,7 @@ export class NativeRendererSync {
         edgeEffectsSig: nativeLayerBlocked ? nativeBlockSig : nativeEdgeEffects.signature,
         colorSig: colorSignature(layer),
         tintSig: stageTintSignature(layer),
+        domeSig: layer.domePlacement?.enabled ? JSON.stringify(domePlacementCommand(layer.id, layer)) : 'none',
       };
       current.set(layer.id, snap);
       const prev = this.lastLayers.get(layer.id);
@@ -10871,6 +10866,10 @@ export class NativeRendererSync {
 
       if (prev ? prev.tintSig !== snap.tintSig : snap.tintSig !== 'none') {
         commands.push({ type: 'set_layer_tint', layer_id: layer.id, rgba: stageTintRgba(layer) });
+      }
+
+      if (prev ? prev.domeSig !== snap.domeSig : snap.domeSig !== 'none') {
+        commands.push(domePlacementCommand(layer.id, layer));
       }
 
       if (!prev || prev.colorSig !== snap.colorSig) {

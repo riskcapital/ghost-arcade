@@ -1314,6 +1314,16 @@ struct OutputStage {
     dome1: [f32; 4],
     /// (truncation, edge-blend gamma, slice mode, _).
     dome2: [f32; 4],
+    /// How the canvas lies on the dome: (kind 0 flat view / 1 panorama /
+    /// 2 domemaster, panorama bottom and top elevation, panorama span),
+    /// radians. See dome_source_uv in heartbeat.wgsl.
+    dome3: [f32; 4],
+    /// (flat view width or domemaster canvas angle radians, dome grid
+    /// strength, _, _).
+    dome4: [f32; 4],
+    /// Layers placed on the dome: (drawn by the dome pass, lens, dome
+    /// angle radians, _). Set per frame by `sync_dome_layers`.
+    dlayer: [f32; 4],
     /// Per-edge blend gamma (left, right, top, bottom); slice mode only.
     edge_gamma: [f32; 4],
     /// Projector black-level lift (r, g, b, feather); slice mode only.
@@ -1351,6 +1361,9 @@ impl Default for OutputStage {
             dome0: [0.0; 4],
             dome1: [0.0; 4],
             dome2: [1.0, 2.2, 0.0, 0.0],
+            dome3: [0.0, 0.0, std::f32::consts::FRAC_PI_2, std::f32::consts::TAU],
+            dome4: [std::f32::consts::FRAC_PI_2, 0.0, 0.0, 0.0],
+            dlayer: [0.0; 4],
             edge_gamma: [2.2; 4],
             black_level: [0.0; 4],
             projector_calibration: [[0.0; 4]; 5],
@@ -1420,6 +1433,11 @@ struct Uniforms {
     flux1: [f32; 4],
     /// Each screen's box for Flux: see `Uniforms.flux_regions` in heartbeat.wgsl.
     flux_regions: [[f32; 4]; MAX_FLUX_REGIONS],
+    /// Dome canvas, dome grid and dome-placed layers: see `Uniforms.dome3`
+    /// in heartbeat.wgsl.
+    dome3: [f32; 4],
+    dome4: [f32; 4],
+    dlayer: [f32; 4],
 }
 
 #[repr(C)]
@@ -1482,6 +1500,9 @@ struct LayerGpu {
     /// the content alpha folded into `color`, so edge effects on a
     /// source-less layer are not dimmed with its placeholder.
     tint: [f32; 4],
+    /// Placed on the dome (fast_flags[2]): azimuth, elevation, tangent of
+    /// half the angular width, roll; radians. See `set_layer_dome`.
+    dome: [f32; 4],
 }
 
 /// The GPU's memory: Metal's recommended working set (on Apple silicon a
@@ -2598,6 +2619,20 @@ fn live_capture_export_source(source: &str) -> bool {
 
 /// Output stage for the recording pass: the untransformed composition, with
 /// the compositor's straight-alpha output switched on when asked.
+/// A dome placement in degrees as the compositor reads it: azimuth,
+/// elevation, the tangent of half the angular width, roll, in radians.
+/// The width stays short of 180 degrees, where a flat canvas has no edge.
+fn dome_place_gpu(azimuth: f64, elevation: f64, size: f64, roll: f64) -> [f32; 4] {
+    let finite = |v: f64, fallback: f64| if v.is_finite() { v } else { fallback };
+    let half = (finite(size, 60.0).clamp(1.0, 170.0) * 0.5).to_radians();
+    [
+        finite(azimuth, 0.0).to_radians() as f32,
+        finite(elevation, 90.0).clamp(-90.0, 90.0).to_radians() as f32,
+        half.tan() as f32,
+        finite(roll, 0.0).to_radians() as f32,
+    ]
+}
+
 fn record_target_output_stage(alpha: bool) -> OutputStage {
     let mut stage = OutputStage::default();
     stage.smask[2] = if alpha { 1.0 } else { 0.0 };
@@ -2613,6 +2648,7 @@ fn projector_view_output_stage(stage: OutputStage) -> OutputStage {
     OutputStage {
         out0: [0.0, 0.0, 1.0, 1.0],
         dome0: [0.0; 4],
+        dlayer: [0.0; 4],
         projector_calibration: [[0.0; 4]; 5],
         swarp: [0.0; 4],
         swarp_c0: [0.0, 0.0, 1.0, 0.0],
@@ -2865,6 +2901,9 @@ struct SceneLayer {
     deck_monitor_opacity: f32,
     /// Colour multiplier from `set_layer_tint`; white leaves the layer as is.
     tint: [f32; 4],
+    /// Where the layer sits on the dome, from `set_layer_dome`, packed as
+    /// `LayerGpu::dome`. None composites it on the canvas like any layer.
+    dome: Option<[f32; 4]>,
     /// The outgoing picture, shown until the new source has one.
     held: Option<HeldPicture>,
 }
@@ -3724,6 +3763,7 @@ impl SceneLayer {
             deck_monitor_bank: None,
             deck_monitor_opacity: 1.0,
             tint: [1.0; 4],
+            dome: None,
             held: None,
         }
     }
@@ -3841,8 +3881,9 @@ impl SceneLayer {
             mesh_tangents: self.mesh_tangents_gpu(),
             mesh_bounds: self.mesh_bounds_gpu(),
             source_rect: held.map_or(self.source_rect, |held| held.rect),
-            fast_flags: [u32::from(plain_fill), u32::from(self.mesh_is_bezier()), 0, 0],
+            fast_flags: [u32::from(plain_fill), u32::from(self.mesh_is_bezier()), u32::from(self.dome.is_some()), 0],
             tint: [self.tint[0], self.tint[1], self.tint[2], self.color[3].clamp(0.0, 1.0)],
+            dome: self.dome.unwrap_or([0.0; 4]),
         }
     }
 
@@ -4480,6 +4521,9 @@ struct RenderState {
     video_device: Result<windows_video_texture::WindowsVideoDevice, String>,
     composite_frame_blitter: TextureBlitter,
     output_presenter: output_present::OutputPresenter,
+    /// `OutputStage::dlayer` for this frame: whether layers placed on the
+    /// dome get their own pass (see `sync_dome_layers`).
+    dome_layer_pass: [f32; 4],
     creative_frame_index: usize,
     frame_epoch: u64,
     pipeline_cap: usize,
@@ -7324,6 +7368,19 @@ impl App {
                 // Alignment test pattern code (TestPatternType index).
                 read(&["testPattern"], 0.0).clamp(0.0, 6.0) as f32,
             ],
+            dome3: [
+                read(&["domeSource"], 0.0).round().clamp(0.0, 2.0) as f32,
+                read(&["domePanoBottom"], 0.0).clamp(-90.0, 89.0).to_radians() as f32,
+                read(&["domePanoTop"], 90.0).clamp(-89.0, 90.0).to_radians() as f32,
+                read(&["domePanoSpan"], 360.0).clamp(10.0, 360.0).to_radians() as f32,
+            ],
+            dome4: [
+                read(&["domeSourceAngle"], 90.0).clamp(10.0, 360.0).to_radians() as f32,
+                read(&["domeGrid"], 0.0).clamp(0.0, 1.0) as f32,
+                0.0,
+                0.0,
+            ],
+            dlayer: [0.0; 4],
             edge_gamma: [2.2; 4],
             black_level: [0.0; 4],
             // The main output never carries a per-slice screen warp; that is
@@ -7365,6 +7422,8 @@ impl App {
             stage.dome0 = master.dome0;
             stage.dome1 = master.dome1;
             stage.dome2[0] = master.dome2[0];
+            stage.dome3 = master.dome3;
+            stage.dome4 = master.dome4;
             stage.mwarp = master.mwarp;
             stage.mwarp_c0 = master.mwarp_c0;
             stage.mwarp_c1 = master.mwarp_c1;
@@ -7435,6 +7494,10 @@ impl App {
                     ],
                     dome0: self.output_stage.dome0,
                     dome1: self.output_stage.dome1,
+                    dome3: self.output_stage.dome3,
+                    dome4: self.output_stage.dome4,
+                    // The renderer sets this per frame (sync_dome_layers).
+                    dlayer: [0.0; 4],
                     // w: Screen alignment aid (7 numbered grid, 8 identify, 9 auto-map stripes);
                     // the main output's test patterns never reach a Screen.
                     dome2: [self.output_stage.dome2[0], blend_gamma as f32, 1.0, match read(&["alignmentAid"], 0.0).round() as i32 { 1 => 7.0, 2 => 8.0, 3 => 9.0, _ => 0.0 }],
@@ -7800,6 +7863,7 @@ impl App {
                 "set_layer_visibility" => self.apply_layer_visibility(command),
                 "set_layer_color" => self.apply_layer_color(command),
                 "set_layer_tint" => self.apply_layer_tint(command),
+                "set_layer_dome" => self.apply_layer_dome(command),
                 "set_output_flux" => {
                     // Flux from a paired phone. Absent or zero gain switches it off.
                     let number = |key: &str, fallback: f64| command.get(key).and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(fallback) as f32;
@@ -15886,6 +15950,22 @@ impl App {
         entry.tint = [rgba[0].clamp(0.0, 1.0), rgba[1].clamp(0.0, 1.0), rgba[2].clamp(0.0, 1.0), 1.0];
     }
 
+    /// Places a layer on the dome, or back on the canvas. Degrees in;
+    /// stored as `LayerGpu::dome` (radians, half width as a tangent).
+    fn apply_layer_dome(&mut self, command: &Value) {
+        let Some(layer_id) = string_at(command, &["layer_id"]) else {
+            return;
+        };
+        let enabled = bool_at(command, &["enabled"]).unwrap_or(false);
+        let read = |key: &str, fallback: f64| number_at(command, &[key]).unwrap_or(fallback);
+        let place = enabled.then(|| dome_place_gpu(read("azimuth", 0.0), read("elevation", 90.0), read("size", 60.0), read("roll", 0.0)));
+        let entry = self
+            .scene_layers
+            .entry(layer_id.clone())
+            .or_insert_with(|| SceneLayer::new(layer_id, 0));
+        entry.dome = place;
+    }
+
     fn apply_layer_native_params(&mut self, command: &Value) {
         let Some(layer_id) = string_at(command, &["layer_id"]) else {
             return;
@@ -21095,6 +21175,9 @@ impl RenderState {
                 flux0: [0.0; 4],
                 flux1: [0.0; 4],
                 flux_regions: [[0.0; 4]; MAX_FLUX_REGIONS],
+                dome3: OutputStage::default().dome3,
+                dome4: OutputStage::default().dome4,
+                dlayer: [0.0; 4],
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -21769,6 +21852,7 @@ impl RenderState {
             video_device,
             composite_frame_blitter,
             output_presenter,
+            dome_layer_pass: [0.0; 4],
             creative_frame_index: 0,
             frame_epoch: 0,
             pipeline_cap: 512,
@@ -22731,7 +22815,10 @@ impl RenderState {
                 || spec.height as f32 > self.config.height as f32 * spec.stage.out0[3]
                 || spec.stage.swarp[0] > 0.5 || spec.stage.mwarp[0] > 0.5;
             // Flux resamples the finished picture, so a Screen must take the shared master while it plays.
-            let direct = allow_direct && needs_detail && self.output_flux[0][3] <= 0.0005;
+            // So must every Screen of a dome with layers placed on it: they are
+            // laid over the dome by the output stage.
+            let direct = allow_direct && needs_detail && self.output_flux[0][3] <= 0.0005
+                && self.dome_layer_pass[0] < 0.5;
             if direct {
                 self.write_frame_inputs(command_phase, layers.len() as u32, time_seconds, frame_count,
                     layers, None, audio0, audio1, audio2, output_gate, post_effects, spec.stage);
@@ -22752,7 +22839,7 @@ impl RenderState {
                 } else {
                 self.output_presenter.draw(&self.queue, &mut encoder, &target.render_view,
                     self.creative_frame_index, spec.width, spec.height,
-                    output_gate, spec.stage, time_seconds.unwrap_or(0.0));
+                    output_gate, OutputStage { dlayer: self.dome_layer_pass, ..spec.stage }, time_seconds.unwrap_or(0.0));
                 }
                 #[cfg(any(target_os = "macos", target_os = "windows"))]
                 target.export.blitter.copy(
@@ -26440,6 +26527,9 @@ impl RenderState {
             dome0: stage.dome0,
             dome1: stage.dome1,
             dome2: stage.dome2,
+            dome3: stage.dome3,
+            dome4: stage.dome4,
+            dlayer: stage.dlayer,
             edge_gamma: stage.edge_gamma,
             black_level: stage.black_level,
             projector_calibration: stage.projector_calibration,
@@ -26580,6 +26670,48 @@ impl RenderState {
             },
             wgpu::Extent3d { width: upload.rect.width(), height: upload.rect.height(), depth_or_array_layers: 1 },
         );
+    }
+
+    /// Layers placed on the dome get their own pass while a dome output is
+    /// on: route them there (dlayer, which also tells the canvas composite
+    /// to skip them) and keep the output presenter's dome picture sized to
+    /// the composition's long side.
+    fn sync_dome_layers(&mut self, stage: &OutputStage, scene_layers: &[LayerGpu]) {
+        let dome = stage.dome0;
+        let routed = dome[0] > 0.5 && scene_layers.iter().any(|layer| layer.fast_flags[2] == 1);
+        self.dome_layer_pass = if routed { [1.0, dome[1], dome[2], 0.0] } else { [0.0; 4] };
+        let size = routed.then(|| self.config.width.max(self.config.height).clamp(1024, 4096));
+        self.output_presenter.set_dome_layers(&self.device, &self.composite_frame_textures, size);
+    }
+
+    /// The compositor's dome pass (draw instance 1, see fs_main).
+    fn draw_dome_layers(&self, encoder: &mut wgpu::CommandEncoder) {
+        if self.dome_layer_pass[0] < 0.5 {
+            return;
+        }
+        let Some(view) = self.output_presenter.dome_layers_view() else {
+            return;
+        };
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Ghost Render Core Dome Layers Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.set_bind_group(1, &self.source_frames_bind_group, &[]);
+        pass.draw(0..3, 1..2);
     }
 
     fn draw_fullscreen_to_view(
@@ -26767,6 +26899,8 @@ impl RenderState {
         stage: OutputStage,
     ) -> Result<(), String> {
         self.refresh_source_frame_bind_groups();
+        self.sync_dome_layers(&stage, scene_layers);
+        let stage = OutputStage { dlayer: self.dome_layer_pass, ..stage };
         self.allow_async_compile = false;
         self.frame_uniform_cursor = 0;
         self.write_frame_inputs(
@@ -26781,7 +26915,7 @@ impl RenderState {
             audio2,
             1.0,
             post_effects,
-            OutputStage::default(),
+            OutputStage { dlayer: self.dome_layer_pass, ..OutputStage::default() },
         );
         let mut encoder = self
             .device
@@ -26822,6 +26956,7 @@ impl RenderState {
             time_seconds,
             stage3d_overlay_items,
         );
+        self.draw_dome_layers(&mut encoder);
         }
         self.output_presenter.draw(&self.queue, &mut encoder, &self.snapshot_view,
             self.creative_frame_index, self.config.width, self.config.height,
@@ -26865,6 +27000,8 @@ impl RenderState {
         stage: OutputStage,
     ) -> Result<SurfacePresentOutcome, String> {
         self.refresh_source_frame_bind_groups();
+        self.sync_dome_layers(&stage, scene_layers);
+        let stage = OutputStage { dlayer: self.dome_layer_pass, ..stage };
         let mut present_outcome = SurfacePresentOutcome::Offscreen;
         let surface_frame = if present_surface {
             match self.surface.get_current_texture() {
@@ -26916,7 +27053,7 @@ impl RenderState {
             audio2,
             1.0,
             post_effects,
-            OutputStage::default(),
+            OutputStage { dlayer: self.dome_layer_pass, ..OutputStage::default() },
         );
         let mut mirror_encoder =
             self.device
@@ -26976,6 +27113,7 @@ impl RenderState {
             time_seconds,
             stage3d_overlay_items,
         );
+        self.draw_dome_layers(&mut mirror_encoder);
         }
         self.output_presenter.draw(&self.queue, &mut mirror_encoder, &self.output_mirror_view,
             self.creative_frame_index, self.config.width, self.config.height,
@@ -35543,6 +35681,16 @@ mod tests {
             panic!("LayerData is a struct");
         };
         assert_eq!(span as usize, std::mem::size_of::<LayerGpu>());
+        // And the uniform block with Uniforms, dome fields at the tail included.
+        let uniforms = module
+            .types
+            .iter()
+            .find(|(_, ty)| ty.name.as_deref() == Some("Uniforms"))
+            .expect("Uniforms struct");
+        let naga::TypeInner::Struct { span, .. } = uniforms.1.inner else {
+            panic!("Uniforms is a struct");
+        };
+        assert_eq!(span as usize, std::mem::size_of::<Uniforms>());
     }
 
     #[test]

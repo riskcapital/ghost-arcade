@@ -3159,6 +3159,19 @@ export interface EdgeEffectsConfig {
 
 export const VJ_MIX_SOURCE_INDEX = -1;
 
+/** A layer's spot on the dome (Layer.domePlacement). Degrees. */
+export interface DomePlacement {
+  enabled: boolean;
+  /** Around from the front of the dome, positive to the audience's right. */
+  azimuth: number;
+  /** Up from the horizon; 90 is the zenith. */
+  elevation: number;
+  /** How wide the layer's canvas is on the dome, as an angle (1..170). */
+  size: number;
+  /** Turn about its own centre. */
+  roll: number;
+}
+
 export interface Layer {
   id: string;
   name: string;
@@ -3212,6 +3225,11 @@ export interface Layer {
 
   // Content fit mode: how source content maps to the layer quad
   contentFit?: ContentFitMode;
+
+  /** Where the layer sits on the dome while a dome output is on. A placed
+   *  layer skips the composition effects and the dome wrap: its canvas is
+   *  laid flat on the dome at this spot, so it lands undistorted. */
+  domePlacement?: DomePlacement | null;
 
   // Render quality multiplier for shader layers (1.0 = full res, 0.5 = half, 0.25 = quarter)
   // Lower values dramatically improve performance for heavy raymarched shaders

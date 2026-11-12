@@ -769,6 +769,19 @@ export interface OutputSettings {
   domeOffsetY: number;       // -1 to 1
   domeCurvature: number;     // 0 (flat) to 1 (full dome)
   domeTruncation: number;    // 0.5 to 1.0 (fraction of circle)
+  /** What the canvas is to the dome (see output/domeMath.ts). Absent on
+   *  older settings: read through domeSourceOf, which takes the old
+   *  'equirectangular' mode as a panorama. domeMode is then only the lens. */
+  domeSource?: 'flat' | 'panorama' | 'domemaster';
+  /** Flat view: its width in degrees. Domemaster canvas: its fisheye angle. */
+  domeSourceAngle?: number;
+  /** Panorama: the elevation (degrees) of the canvas's bottom and top
+   *  edges, and how far round the dome it reaches. */
+  domePanoBottom?: number;
+  domePanoTop?: number;
+  domePanoSpan?: number;
+  /** Draw the dome grid (elevation rings, azimuth spokes, front) on every dome output. */
+  domeGrid?: boolean;
   // ─── Global master warp ───────────────────────────────────────────────
   // A single output-side warp applied to the ENTIRE master canvas before
   // it reaches any transport — the main output window (WebGPU shared-
@@ -1009,6 +1022,12 @@ export const OUTPUT_STAGE_KEYS = [
   'domeOffsetY',
   'domeCurvature',
   'domeTruncation',
+  'domeSource',
+  'domeSourceAngle',
+  'domePanoBottom',
+  'domePanoTop',
+  'domePanoSpan',
+  'domeGrid',
   'outputRotation',
   'outputCropX',
   'outputCropY',
@@ -1127,6 +1146,14 @@ function createDefaultSettings(): AppSettings {
       domeOffsetY: 0,
       domeCurvature: 1.0,
       domeTruncation: 1.0,
+      // A new dome wraps a panorama round it; settings and projects from
+      // before domeSource existed keep their look (withDomeSource).
+      domeSource: 'panorama',
+      domeSourceAngle: 90,
+      domePanoBottom: 0,
+      domePanoTop: 90,
+      domePanoSpan: 360,
+      domeGrid: false,
       // Global master warp — off + identity by default so existing
       // projects present an un-warped composite exactly as before.
       masterWarp: { enabled: false, mode: 'corners' },
@@ -1275,6 +1302,23 @@ function runVersionMigration(): { versionChanged: boolean } {
 runVersionMigration();
 
 // Load settings from localStorage
+/**
+ * Output settings saved before the dome had a canvas kind (domeSource)
+ * carried it in domeMode: 'equirectangular' was meant as a panorama wrap,
+ * every other mode looked up through a flat canvas. Give such a snapshot
+ * the canvas kind it had, and leave domeMode only the lens. Snapshots that
+ * already carry domeSource, or no dome at all, pass through unchanged.
+ */
+export function withDomeSource<T extends Record<string, unknown>>(output: T): T {
+  if (!output || typeof output !== 'object' || 'domeSource' in output || !('domeMode' in output)) return output;
+  const legacyPanorama = output.domeMode === 'equirectangular';
+  return {
+    ...output,
+    domeSource: legacyPanorama ? 'panorama' : 'flat',
+    ...(legacyPanorama ? { domeMode: 'angular' } : {}),
+  };
+}
+
 function loadSettings(): AppSettings {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
@@ -1299,7 +1343,7 @@ function loadSettings(): AppSettings {
         },
         output: {
           ...defaults.output,
-          ...parsed.output,
+          ...withDomeSource(parsed.output ?? {}),
           // ── Projection-mapping setup is SESSION-SCOPED ──────────────
           // Slices (Screens), the master canvas size, and the master warp
           // are "the setup" — they travel with the .gha project file, not
@@ -1897,7 +1941,8 @@ function createSettingsStore() {
     },
 
     /** Apply a snapshot taken by captureOutputStage. */
-    applyOutputStage(snapshot: OutputStageSnapshot) {
+    applyOutputStage(stored: OutputStageSnapshot) {
+      const snapshot = withDomeSource(stored as Record<string, unknown>) as OutputStageSnapshot;
       update(s => {
         const output = { ...s.output } as unknown as Record<string, unknown>;
         for (const key of OUTPUT_STAGE_KEYS) {

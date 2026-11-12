@@ -21,6 +21,8 @@
   import MeshWarpHandles from './lib/components/MeshWarpHandles.svelte';
   import ScreenWarpHandles from './lib/components/ScreenWarpHandles.svelte';
   import MasterWarpHandles from './lib/components/MasterWarpHandles.svelte';
+  import DomeGizmo from './lib/components/DomeGizmo.svelte';
+  import { isPlacedOnDome } from './lib/output/domeMath';
   import Object3DTransformGizmo from './lib/components/Object3DTransformGizmo.svelte';
   import CustomShapeHandles from './lib/components/CustomShapeHandles.svelte';
   // LayerPanel now mounts via LeftSidebar (which swaps it for
@@ -8111,11 +8113,19 @@
             <MasterWarpHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} />
           </div>
         {/if}
+        <!-- Dome output on: the canvas shows the dome picture, and layers
+             placed on the dome are moved, sized and turned here instead of
+             with their canvas handles (hidden below for them). -->
+        {#if $settings.output.domeEnabled}
+          <div class="warp-handles-offset" style="left: {canvasOffsetX}px; top: {canvasOffsetY}px;">
+            <DomeGizmo containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} />
+          </div>
+        {/if}
         <div class="chase-badges-offset" style="position: absolute; pointer-events: none; left: {canvasOffsetX}px; top: {canvasOffsetY}px;">
           <ChaseOrderBadges containerWidth={canvasWidth} containerHeight={canvasHeight} />
           <WhereStageHighlight containerWidth={canvasWidth} containerHeight={canvasHeight} />
         </div>
-        {#if $selectedLayer && $selectedLayer.type !== 'mask' && $leftSidebarTab !== 'screens'}
+        {#if $selectedLayer && $selectedLayer.type !== 'mask' && $leftSidebarTab !== 'screens' && !isPlacedOnDome($selectedLayer, $settings.output)}
           <!-- Warp handles positioned to match the aspect-ratio-constrained canvas -->
           <div class="warp-handles-offset" style="left: {canvasOffsetX}px; top: {canvasOffsetY}px;">
             <WarpHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} hideCorners={$selectedLayer.warpMode === 'mesh'} shapeWarpActive={shapeWarpModeEnabled} interactionOnly={nativePrimaryRenderer} />

@@ -65,7 +65,7 @@ import { geoDeckStore } from './geoDeck';
 import { createDefaultShapeMesh } from '../drawing/types';
 import type { LineElement, LineShape, LinesContent, LineDrawAnimation, LineStroke } from '../lines/types';
 import { maxLayers } from './license';
-import { NATIVE_ENGINE_ONLY, settings, migrateOutputSlice, PROJECT_OUTPUT_KEYS, PROJECT_OUTPUT_SETTING_KEYS, type OutputStageSnapshot } from './settings';
+import { NATIVE_ENGINE_ONLY, settings, migrateOutputSlice, withDomeSource, PROJECT_OUTPUT_KEYS, PROJECT_OUTPUT_SETTING_KEYS, type OutputStageSnapshot } from './settings';
 import { screenSetups } from './screenSetups';
 import { isIdentityMeshGrid, meshGridHasTangents, withMeshPointTangents } from '../utils/meshWarp';
 import { fittedMeshGrid, refitRestingMesh } from '../utils/meshShapeFit';
@@ -402,6 +402,20 @@ function stageShapes(layers: Layer[], exclude?: string): StageShape[] {
       })),
     }));
 }
+/** A saved dome placement, or null when the file has none or a broken one. */
+function importDomePlacement(value: unknown): import('../types').DomePlacement | null {
+  if (!value || typeof value !== 'object') return null;
+  const v = value as Record<string, unknown>;
+  const num = (x: unknown, fallback: number) => (typeof x === 'number' && Number.isFinite(x) ? x : fallback);
+  return {
+    enabled: v.enabled === true,
+    azimuth: num(v.azimuth, 0),
+    elevation: Math.max(-90, Math.min(90, num(v.elevation, 90))),
+    size: Math.max(1, Math.min(170, num(v.size, 60))),
+    roll: num(v.roll, 0),
+  };
+}
+
 /** Layers that reach the project without _importLayer (preset copies). */
 function sanitizeInteractiveLayers<T extends { source?: { effectSource?: unknown } | null }>(layers: T[], origin: string): T[] {
   return layers.map((layer) => {
@@ -5499,6 +5513,7 @@ void main() {
         surfaceDetached: layer.surfaceDetached,
         contentFit: layer.contentFit,
         renderQuality: layer.renderQuality,
+        domePlacement: layer.domePlacement ?? null,
         parentGroupId: layer.parentGroupId,
         groupConfig: layer.groupConfig,
         groupCollapsed: layer.groupCollapsed,
@@ -6197,6 +6212,7 @@ void main() {
         ...(layer.surfaceDetached === true ? { surfaceDetached: true } : {}),
         contentFit: layer.contentFit,
         renderQuality: layer.renderQuality,
+        domePlacement: importDomePlacement(layer.domePlacement),
         stageTextureFlipV: layer.stageTextureFlipV,
         parentGroupId: layer.parentGroupId ?? null,
         groupConfig: layer.groupConfig,
@@ -7134,7 +7150,10 @@ void main() {
         const incomingMW = (proj as any).outputMasterCanvasWidth;
         const incomingMH = (proj as any).outputMasterCanvasHeight;
         const incomingMasterWarp = (proj as any).outputMasterWarp;
-        const incomingOutputSettings = (proj as any).outputSettings;
+        const rawOutputSettings = (proj as any).outputSettings;
+        const incomingOutputSettings = rawOutputSettings && typeof rawOutputSettings === 'object'
+          ? withDomeSource(rawOutputSettings)
+          : rawOutputSettings;
         const savedOutputSettings: OutputStageSnapshot = {};
         if (incomingOutputSettings && typeof incomingOutputSettings === 'object') {
           for (const key of PROJECT_OUTPUT_SETTING_KEYS) {

@@ -126,6 +126,18 @@ describe('the output stage saves with the project', () => {
     expect(output()).toMatchObject(SHOW_SETUP);
   });
 
+  it('opens a dome saved before the canvas kind existed with the look it had', () => {
+    // 'equirectangular' was meant as a panorama wrap; it is now that, with an angular lens.
+    expect(layers.project.importProject(oldFile({ outputSettings: { domeEnabled: true, domeMode: 'equirectangular' } }))).toBe(true);
+    expect(output()).toMatchObject({ domeEnabled: true, domeSource: 'panorama', domeMode: 'angular' });
+    // Every other old mode looked up through a flat canvas, and still does.
+    expect(layers.project.importProject(oldFile({ outputSettings: { domeEnabled: true, domeMode: 'stereographic' } }))).toBe(true);
+    expect(output()).toMatchObject({ domeSource: 'flat', domeMode: 'stereographic' });
+    // A file that carries the canvas kind keeps it.
+    expect(layers.project.importProject(oldFile({ outputSettings: { domeMode: 'angular', domeSource: 'domemaster' } }))).toBe(true);
+    expect(output().domeSource).toBe('domemaster');
+  });
+
   it('ignores a damaged value and uses the default instead', () => {
     setOutput(LEFT_BEHIND);
     expect(layers.project.importProject(oldFile({ outputSettings: { outputRotation: 'sideways', brightness: Number.NaN, domeFOV: 200 } }))).toBe(true);

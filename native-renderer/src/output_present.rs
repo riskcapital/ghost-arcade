@@ -9,6 +9,13 @@ pub(super) struct OutputPresenter {
     input_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     inputs: Vec<wgpu::BindGroup>,
+    format: wgpu::TextureFormat,
+    /// Layers placed on the dome, drawn into dome space by the compositor's
+    /// dome pass and laid over the dome reprojection here. Square; made
+    /// only while some layer is placed on a dome output.
+    dome_layers: Option<(wgpu::Texture, wgpu::TextureView)>,
+    /// One transparent texel standing in for `dome_layers` when there are none.
+    dome_blank: wgpu::TextureView,
     /// Flux from a paired phone, the beat clock and the running time, set by
     /// the renderer each frame so every output drawn here plays the same Flux.
     pub(super) flux: [[f32; 4]; 2],
@@ -70,6 +77,16 @@ impl OutputPresenter {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -107,7 +124,12 @@ impl OutputPresenter {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
+        // Textures start zeroed: a transparent texel.
+        let dome_blank = Self::dome_texture(device, 1, format).create_view(&Default::default());
         let mut result = Self {
+            format,
+            dome_layers: None,
+            dome_blank,
             pipeline,
             uniform,
             uniforms,
@@ -121,6 +143,39 @@ impl OutputPresenter {
         };
         result.set_inputs(device, textures);
         result
+    }
+
+    fn dome_texture(device: &wgpu::Device, size: u32, format: wgpu::TextureFormat) -> wgpu::Texture {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Dome layers"),
+            size: wgpu::Extent3d { width: size, height: size, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        })
+    }
+
+    /// Keeps the dome-layer picture at `size` square (Some) or drops it
+    /// (None), rebuilding the inputs when that changes what they bind.
+    pub(super) fn set_dome_layers(&mut self, device: &wgpu::Device, textures: &[wgpu::Texture; 2], size: Option<u32>) {
+        let current = self.dome_layers.as_ref().map(|(texture, _)| texture.width());
+        if current == size {
+            return;
+        }
+        self.dome_layers = size.map(|size| {
+            let texture = Self::dome_texture(device, size, self.format);
+            let view = texture.create_view(&Default::default());
+            (texture, view)
+        });
+        self.set_inputs(device, textures);
+    }
+
+    /// Where the compositor's dome pass draws, while any layer is placed on the dome.
+    pub(super) fn dome_layers_view(&self) -> Option<&wgpu::TextureView> {
+        self.dome_layers.as_ref().map(|(_, view)| view)
     }
 
     pub(super) fn set_inputs(&mut self, device: &wgpu::Device, textures: &[wgpu::Texture; 2]) {
@@ -144,6 +199,10 @@ impl OutputPresenter {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(self.dome_layers_view().unwrap_or(&self.dome_blank)),
                 },
             ],
         })
@@ -194,6 +253,9 @@ impl OutputPresenter {
             dome0: stage.dome0,
             dome1: stage.dome1,
             dome2: stage.dome2,
+            dome3: stage.dome3,
+            dome4: stage.dome4,
+            dlayer: stage.dlayer,
             edge_gamma: stage.edge_gamma,
             black_level: stage.black_level,
             projector_calibration: stage.projector_calibration,

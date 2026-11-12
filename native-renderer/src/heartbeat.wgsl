@@ -87,6 +87,17 @@ struct Uniforms {
   flux0: vec4<f32>,
   flux1: vec4<f32>,
   flux_regions: array<vec4<f32>, 16>,
+  // How the canvas lies on the dome, for the dome output (dome0 on):
+  //   dome3 = (canvas kind: 0 flat view, 1 panorama, 2 domemaster;
+  //            panorama bottom elevation, panorama top elevation,
+  //            panorama span around; radians)
+  //   dome4 = (flat: horizontal view angle, domemaster: its fisheye angle
+  //            (radians); dome grid strength 0..1; _, _)
+  //   dlayer = layers placed on the dome: (drawn in their own pass, lens,
+  //            dome angle radians, _). See fs_main's dome pass.
+  dome3: vec4<f32>,
+  dome4: vec4<f32>,
+  dlayer: vec4<f32>,
 }
 
 @group(0) @binding(0)
@@ -211,6 +222,9 @@ struct LayerData {
   // (r, g, b) colour multiplier (Screen FX colour chases; white leaves the
   // layer be), w the content alpha folded into color.a (see fs_main).
   tint: vec4<f32>,
+  // Placed on the dome (fast_flags.z): (azimuth, elevation, tangent of half
+  // the angular width, roll), radians. See dome_place_uv.
+  dome: vec4<f32>,
 }
 
 @group(0) @binding(1)
@@ -248,10 +262,13 @@ const NATIVE_SHADER_SOURCE_KIND: f32 = 17.0;
 struct VertexOut {
   @builtin(position) position: vec4<f32>,
   @location(0) uv: vec2<f32>,
+  // The draw's instance: 0 composites the canvas, 1 is the dome pass that
+  // draws only the layers placed on the dome (see fs_main).
+  @location(1) @interpolate(flat) pass_kind: u32,
 }
 
 @vertex
-fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
+fn vs_main(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) instance_index: u32) -> VertexOut {
   let pos = array<vec2<f32>, 3>(
     vec2<f32>(-1.0, -3.0),
     vec2<f32>(-1.0,  1.0),
@@ -261,6 +278,7 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
   var out: VertexOut;
   out.position = vec4<f32>(p, 0.0, 1.0);
   out.uv = p * 0.5 + vec2<f32>(0.5);
+  out.pass_kind = instance_index;
   return out;
 }
 
@@ -1935,53 +1953,169 @@ fn slice_output_grade(color_in: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
   return linear_to_srgb(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)));
 }
 
-/// Dome / fisheye reprojection, ported from shaders/dome.ts. Returns the
-/// composition UV to sample in `xy` and the dome mask (edge falloff and the
-/// circle cutoff) in `z`.
-fn dome_source_uv(uv_in: vec2<f32>, aspect: f32) -> vec3<f32> {
-  let mode = i32(floor(u.dome0.y + 0.5));
-  let half_fov = u.dome0.z * 0.5;
-  let truncation = u.dome2.x;
+/// Dome lens: how far from the zenith (radians) a point `r` out from the
+/// centre of the dome picture looks, for a dome `fov` wide. 0 angular
+/// (equidistant, the planetarium domemaster), 1 stereographic, 2
+/// orthographic; 3 is the old "equirectangular" mode, an angular lens.
+fn dome_lens_theta(r: f32, lens: f32, fov: f32) -> f32 {
+  let half_fov = fov * 0.5;
+  let mode = i32(floor(lens + 0.5));
+  if (mode == 1) {
+    return 2.0 * atan(r * tan(min(half_fov, 3.0) * 0.5));
+  }
+  if (mode == 2) {
+    return asin(min(r, 1.0)) * half_fov / (3.14159265359 * 0.5);
+  }
+  return r * half_fov;
+}
 
-  var uv = (uv_in - vec2<f32>(0.5)) * 2.0;
-  // Dome content is circular in a square frame, so undo the aspect.
-  if (aspect > 1.0) { uv.x = uv.x * aspect; } else { uv.y = uv.y / aspect; }
-  uv = uv - u.dome1.yz;
+/// The direction on the dome seen at `m` in the dome picture (the unit
+/// circle; +y is the back of the dome, -y the front). z points at the
+/// zenith, so (x, y) keep the picture's orientation.
+fn dome_direction(m: vec2<f32>, lens: f32, fov: f32) -> vec3<f32> {
+  let theta = dome_lens_theta(length(m), lens, fov);
+  let phi = atan2(m.y, m.x);
+  return vec3<f32>(sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta));
+}
+
+/// An output pixel's place in the dome picture: centred, the circle
+/// fitted to the frame's short side, then the dome offset and rotation.
+fn dome_picture_point(uv_in: vec2<f32>, aspect: f32) -> vec2<f32> {
+  var m = (uv_in - vec2<f32>(0.5)) * 2.0;
+  if (aspect > 1.0) { m.x = m.x * aspect; } else { m.y = m.y / aspect; }
+  m = m - u.dome1.yz;
   let rot_c = cos(u.dome0.w);
   let rot_s = sin(u.dome0.w);
-  uv = vec2<f32>(uv.x * rot_c - uv.y * rot_s, uv.x * rot_s + uv.y * rot_c);
+  return vec2<f32>(m.x * rot_c - m.y * rot_s, m.x * rot_s + m.y * rot_c);
+}
 
-  let r = length(uv);
-  if (r > truncation) {
-    return vec3<f32>(uv_in, 0.0);
-  }
-
-  if (mode == 3) {
-    // Equirectangular: longitude/latitude straight onto the frame.
-    let tex_uv = clamp(uv * vec2<f32>(0.5) + vec2<f32>(0.5), vec2<f32>(0.0), vec2<f32>(1.0));
-    return vec3<f32>(tex_uv, 1.0);
-  }
-
-  var theta = r * half_fov;
-  if (mode == 1) {
-    theta = 2.0 * atan(r * tan(half_fov * 0.5));
-  } else if (mode == 2) {
-    theta = asin(min(r, 1.0)) * half_fov / (3.14159265359 * 0.5);
-  }
-  let phi = atan2(uv.y, uv.x);
-
-  var dir = vec3<f32>(sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta));
+/// Dome / fisheye reprojection. Returns the canvas UV to sample in `xy`,
+/// how much of the canvas this pixel sees in `z` (a panorama or a flat view
+/// ends somewhere) and the dome's own mask (edge falloff, circle cutoff) in
+/// `w`. Layers placed on the dome are cut by `w` only. `canvas_aspect` is
+/// the canvas being sampled, which need not match the output frame.
+///
+/// The canvas is one of three kinds (dome3.x):
+///   0 flat view: a camera at the centre of the dome looking up through the
+///     canvas, dome4.x wide across; tilt aims it.
+///   1 panorama: across the canvas goes round the dome (dome3.w of it,
+///     centred on the front), up the canvas climbs from elevation dome3.y at
+///     its bottom edge to dome3.z at its top. The polar wrap fulldome
+///     artists otherwise build with a polar-transform effect.
+///   2 domemaster: the canvas already holds a dome picture dome4.x wide,
+///     fitted to its height; this only re-lenses, rotates and tilts it.
+fn dome_source_uv(uv_in: vec2<f32>, aspect: f32, canvas_aspect: f32) -> vec4<f32> {
+  let pi = 3.14159265359;
+  let truncation = u.dome2.x;
+  let m = dome_picture_point(uv_in, aspect);
+  let r = length(m);
+  let dome_dir = dome_direction(m, u.dome0.y, u.dome0.z);
   let tilt_c = cos(u.dome1.x);
   let tilt_s = sin(u.dome1.x);
-  dir = vec3<f32>(dir.x, dir.y * tilt_c - dir.z * tilt_s, dir.y * tilt_s + dir.z * tilt_c);
+  let dir = vec3<f32>(dome_dir.x, dome_dir.y * tilt_c - dome_dir.z * tilt_s, dome_dir.y * tilt_s + dome_dir.z * tilt_c);
+  let kind = i32(floor(u.dome3.x + 0.5));
+  // About one output pixel, as an angle: soft edges where the canvas ends.
+  let px_angle = max(u.dome0.z * 0.5, 0.01) / max(0.5 * min(u.resolution.x, u.resolution.y), 1.0);
 
-  let z = max(dir.z, 0.001);
-  var tex_uv = vec2<f32>(dir.x / z * 0.5 + 0.5, dir.y / z * 0.5 + 0.5);
-  tex_uv = mix(uv_in, tex_uv, u.dome1.w);
+  var tex_uv = uv_in;
+  var inside = 1.0;
+  if (kind == 1) {
+    let az = atan2(dir.x, -dir.y);
+    let el = asin(clamp(dir.z, -1.0, 1.0));
+    let span = clamp(u.dome3.w, 0.01, 2.0 * pi);
+    let bottom = u.dome3.y;
+    let height = max(u.dome3.z - bottom, 0.001);
+    let x = az / span + 0.5;
+    let y = (el - bottom) / height;
+    tex_uv = vec2<f32>(x, y);
+    let ex = px_angle / span;
+    let ey = px_angle / height;
+    if (span < 2.0 * pi - 0.001) {
+      inside = smoothstep(-ex, ex, x) * smoothstep(-ex, ex, 1.0 - x);
+    } else {
+      tex_uv.x = fract(x);
+    }
+    inside = inside * smoothstep(-ey, ey, y) * smoothstep(-ey, ey, 1.0 - y);
+  } else if (kind == 2) {
+    let theta = acos(clamp(dir.z, -1.0, 1.0));
+    let phi = atan2(dir.y, dir.x);
+    let reach = theta / max(u.dome4.x * 0.5, 0.01);
+    tex_uv = vec2<f32>(0.5 + reach * cos(phi) * 0.5 / max(canvas_aspect, 0.01), 0.5 + reach * sin(phi) * 0.5);
+    let er = px_angle / max(u.dome4.x * 0.5, 0.01);
+    inside = smoothstep(1.0 + er, 1.0 - er, reach);
+  } else {
+    let half_w = tan(clamp(u.dome4.x * 0.5, 0.05, 1.5));
+    let z = max(dir.z, 0.001);
+    let flat_uv = vec2<f32>(0.5 + dir.x / z / (2.0 * half_w), 0.5 + dir.y / z * canvas_aspect / (2.0 * half_w));
+    tex_uv = mix(uv_in, flat_uv, u.dome1.w);
+    let e = px_angle / max(half_w, 0.05);
+    let edge = min(min(flat_uv.x, 1.0 - flat_uv.x), min(flat_uv.y, 1.0 - flat_uv.y));
+    // Curvature eases back to the plain canvas, which always has a picture.
+    inside = mix(1.0, smoothstep(-e, e, edge) * step(0.001, dir.z), u.dome1.w);
+  }
   tex_uv = clamp(tex_uv, vec2<f32>(0.0), vec2<f32>(1.0));
+  let edge_fade = smoothstep(truncation, truncation - 0.05, r) * step(r, truncation);
+  return vec4<f32>(tex_uv, inside, edge_fade);
+}
 
-  let edge_fade = smoothstep(truncation, truncation - 0.05, r);
-  return vec3<f32>(tex_uv, edge_fade);
+/// The dome grid drawn over a dome output to line projectors up with the
+/// physical dome: rings every 15 degrees of elevation, spokes every 30
+/// degrees around, the horizon and the front marked in amber. In dome
+/// coordinates, so tilt and canvas don't move it. Returns (colour, coverage).
+fn dome_grid(uv_in: vec2<f32>, aspect: f32) -> vec4<f32> {
+  let pi = 3.14159265359;
+  let m = dome_picture_point(uv_in, aspect);
+  let r = length(m);
+  let theta = dome_lens_theta(r, u.dome0.y, u.dome0.z);
+  let tw = max(fwidth(theta), 0.000001);
+  let mw = max(max(fwidth(m.x), fwidth(m.y)), 0.000001);
+  let ring_step = pi / 12.0;
+  let ring = abs(fract(theta / ring_step + 0.5) - 0.5) * ring_step / tw;
+  let horizon = abs(theta - pi * 0.5) / tw;
+  var spoke = 1.0e6;
+  var front = 1.0e6;
+  for (var k = 0; k < 6; k = k + 1) {
+    let a = f32(k) * pi / 6.0;
+    let along = vec2<f32>(sin(a), -cos(a));
+    let off = abs(m.x * cos(a) + m.y * sin(a)) / mw;
+    spoke = min(spoke, off);
+    if (k == 0 && dot(m, along) > 0.0) { front = off; }
+  }
+  // Spokes stop short of the zenith so it stays readable.
+  let spoke_line = (1.0 - smoothstep(0.75, 1.75, spoke)) * smoothstep(0.04, 0.08, r);
+  let ring_line = 1.0 - smoothstep(0.75, 1.75, ring);
+  let horizon_line = 1.0 - smoothstep(1.0, 2.5, horizon);
+  let front_line = 1.0 - smoothstep(1.5, 3.0, front);
+  let zenith = 1.0 - smoothstep(1.0, 2.0, abs(r - 0.012) / mw);
+  let inside = step(r, u.dome2.x);
+  let amber = max(horizon_line, front_line);
+  let white = max(max(spoke_line, ring_line), zenith) * (1.0 - amber);
+  let coverage = clamp(max(white * 0.75, amber), 0.0, 1.0) * inside;
+  let rgb = (vec3<f32>(1.0) * white * 0.75 + vec3<f32>(1.0, 0.68, 0.18) * amber) / max(coverage, 0.0001) * inside;
+  return vec4<f32>(rgb, coverage);
+}
+
+/// Where a dome-placed layer's canvas lands: the canvas is laid flat on
+/// the dome, centred at azimuth/elevation `place.xy`, `place.z` the
+/// tangent of half its angular width, rolled `place.w` about its centre.
+/// Returns the canvas UV `dir` sees through it (y up) in `xy`, and 1 in `z`
+/// when `dir` faces it.
+fn dome_place_uv(dir: vec3<f32>, place: vec4<f32>, canvas_aspect: f32) -> vec3<f32> {
+  let az = place.x;
+  let el = place.y;
+  let centre = vec3<f32>(cos(el) * sin(az), -cos(el) * cos(az), sin(el));
+  let east = vec3<f32>(cos(az), sin(az), 0.0);
+  let up = cross(centre, east);
+  let rc = cos(place.w);
+  let rs = sin(place.w);
+  let across = east * rc + up * rs;
+  let upward = up * rc - east * rs;
+  let facing = dot(dir, centre);
+  let half_w = max(place.z, 0.0001);
+  let x = dot(dir, across) / max(facing, 0.0001);
+  let y = dot(dir, upward) / max(facing, 0.0001);
+  let uv = vec2<f32>(0.5 + x / (2.0 * half_w), 0.5 + y * canvas_aspect / (2.0 * half_w));
+  return vec3<f32>(uv, select(0.0, 1.0, facing > 0.02));
 }
 
 fn rgb_to_hsv(c: vec3<f32>) -> vec3<f32> {
@@ -3724,17 +3858,26 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
   var canvas_uv = source.xy;
   var dome_mask = source.z;
   if (u.dome0.x > 0.5) {
-    let domed = dome_source_uv(canvas_uv, aspect);
+    let domed = dome_source_uv(canvas_uv, aspect, aspect);
     canvas_uv = domed.xy;
     // Multiply, don't replace: a pixel outside the master warp's quad stays
     // black even when the dome mask says it is inside the dome circle.
-    dome_mask = dome_mask * domed.z;
+    dome_mask = dome_mask * domed.z * domed.w;
   }
   var p = (canvas_uv * 2.0 - vec2<f32>(1.0)) * vec2<f32>(aspect, 1.0);
   // One screen pixel measured in composition pixels: the anti-alias width
   // of analytic edges (1 unless the output stage scales the composition).
   let canvas_px = canvas_uv * u.resolution;
   let edge_aa = clamp(max(length(dpdx(canvas_px)), length(dpdy(canvas_px))), 0.25, 8.0);
+  // The dome pass (draw instance 1) paints only the layers placed on the
+  // dome, into a square dome picture the output stage lays over the dome
+  // reprojection of everything else. Each pixel is a direction on the dome;
+  // each placed layer is seen through its own spot (dome_place_uv), so it
+  // skips the composition effects and the dome wrap and lands undistorted.
+  let dome_pass = in.pass_kind == 1u;
+  let dome_m = in.uv * 2.0 - vec2<f32>(1.0);
+  let dome_dir = dome_direction(dome_m, u.dlayer.y, u.dlayer.z);
+  let dome_in = select(1.0, step(length(dome_m), 1.0), dome_pass);
   let t = u.time;
   let audio = ghost_audio_scene();
   let audio_level = ghost_audio_level(audio);
@@ -3752,7 +3895,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
   // over black, i.e. premultiplied by this; only the alpha recording pass
   // reads it.
   var out_alpha = 0.0;
-  if (u.layer_count < -0.5) {
+  if (u.layer_count < -0.5 && !dome_pass) {
     let vignette = smoothstep(1.45, 0.18, length(p));
     color += vec3<f32>(0.006, 0.008, 0.012);
     color += vec3<f32>(0.01, 0.025, 0.04) * vignette * (1.0 + audio_drive * 0.8);
@@ -3779,7 +3922,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
   // with binning off it walks them all. Bound must match MAX_SCENE_LAYERS.
   let tiles_x = layer_tiles[0];
   let tiles_y = layer_tiles[1];
-  let binned = layer_tiles[2] == 1u && tiles_x > 0u && tiles_y > 0u
+  let binned = !dome_pass && layer_tiles[2] == 1u && tiles_x > 0u && tiles_y > 0u
     && all(canvas_uv >= vec2<f32>(0.0)) && all(canvas_uv <= vec2<f32>(1.0));
   var walk_start = 0u;
   var walk_end = u32(clamp(u.layer_count, 0.0, 1024.0));
@@ -3799,10 +3942,24 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     if (layer_index >= 1024u || f32(layer_index) >= u.layer_count) {
       continue;
     }
+    // A layer placed on the dome draws only in the dome pass while the dome
+    // output is on (dlayer.x); otherwise it composites like any other.
+    let dome_placed = layers[layer_index].fast_flags.z == 1u;
+    if (dome_pass != dome_placed && (dome_pass || u.dlayer.x > 0.5)) {
+      continue;
+    }
+    var layer_uv = canvas_uv;
+    if (dome_pass) {
+      let placed = dome_place_uv(dome_dir, layers[layer_index].dome, aspect);
+      if (placed.z < 0.5 || dome_in < 0.5) {
+        continue;
+      }
+      layer_uv = placed.xy;
+    }
     // One small read decides most layers: outside its reach, skip it before
     // touching the rest of the record.
     let cull = layers[layer_index].cull;
-    if (any(canvas_uv < cull.xy) || any(canvas_uv > cull.zw)) {
+    if (any(layer_uv < cull.xy) || any(layer_uv > cull.zw)) {
       continue;
     }
     if (layers[layer_index].info.x < 0.5) {
@@ -3821,7 +3978,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     if (layers[layer_index].style.x >= 25.5 && layers[layer_index].style.x < 26.5) {
       let mask_enabled = layers[layer_index].mask_info.x > 0.5 && layers[layer_index].mask_info.w >= 2.5;
       if (mask_enabled) {
-        let mask_local = quad_local_uv(canvas_uv, tl, tr, br, bl);
+        let mask_local = quad_local_uv(layer_uv, tl, tr, br, bl);
         var coverage = select(0.0, 1.0, layers[layer_index].mask_info.y > 0.5);
         if (mask_local.x > 0.5) {
           coverage = native_polygon_mask(mask_local.yz, layer_index);
@@ -3838,7 +3995,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     // them is also evaluated inside the rectangle its stack can reach.
     let edge_bounds = layers[layer_index].edge_bounds;
     let in_edges = layers[layer_index].edge_info.y > 0.5 && layers[layer_index].edge_info.x > 2.5
-      && all(canvas_uv >= edge_bounds.xy) && all(canvas_uv <= edge_bounds.zw);
+      && all(layer_uv >= edge_bounds.xy) && all(layer_uv <= edge_bounds.zw);
     // Reject outside the conservative quad bounds before inverse mapping,
     // mesh search, masks and effects.
     // A Bezier mesh can bulge past the corner quad: bound it by the reach
@@ -3854,13 +4011,13 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let bounds_pad = vec2<f32>(max(1.0, max(quad_max.x - quad_min.x, quad_max.y - quad_min.y)) * 0.001);
     let bounds_min = quad_min - bounds_pad;
     let bounds_max = quad_max + bounds_pad;
-    let in_quad_bounds = !(any(canvas_uv < bounds_min) || any(canvas_uv > bounds_max));
+    let in_quad_bounds = !(any(layer_uv < bounds_min) || any(layer_uv > bounds_max));
     if (!in_quad_bounds && !in_edges) {
       continue;
     }
     if (layers[layer_index].fast_flags.x != 0u) {
       // CPU-classified plain rectangles keep the same shape AA and blend order.
-      let uv = (canvas_uv - tl) / (br - tl);
+      let uv = (layer_uv - tl) / (br - tl);
       if (all(uv >= vec2<f32>(-0.0005)) && all(uv <= vec2<f32>(1.0005))) {
         let coverage = native_layer_shape(clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), layer_index).x;
         if (coverage > 0.001) {
@@ -3878,9 +4035,9 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     if (in_quad_bounds) {
       var local: vec3<f32>;
       if (bezier_mesh) {
-        local = quad_local_uv_reach(canvas_uv, tl, tr, br, bl, layers[layer_index].mesh_bounds);
+        local = quad_local_uv_reach(layer_uv, tl, tr, br, bl, layers[layer_index].mesh_bounds);
       } else {
-        local = quad_local_uv(canvas_uv, tl, tr, br, bl);
+        local = quad_local_uv(layer_uv, tl, tr, br, bl);
       }
       let inside = local.x > 0.5;
       let mesh_sample = layer_mesh_uv(local.yz, layer_index);
@@ -3939,7 +4096,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     var layer_alpha = layers[layer_index].color.a;
     if (in_edges) {
       let own = clamp(layers[layer_index].tint.w, 0.0, 1.0);
-      let edged = apply_native_edge_effects(vec4<f32>(layer_rgb, content_alpha * own), canvas_uv, layer_index, edge_aa);
+      let edged = apply_native_edge_effects(vec4<f32>(layer_rgb, content_alpha * own), layer_uv, layer_index, edge_aa);
       layer_rgb = edged.rgb;
       content_alpha = edged.a;
       layer_alpha = layer_alpha / max(own, 1e-4);
@@ -3952,6 +4109,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     }
   }
 
+  if (dome_pass) {
+    // Premultiplied: `color` is the stack over black, `out_alpha` its coverage.
+    return vec4<f32>(color * dome_in, clamp(out_alpha, 0.0, 1.0) * dome_in);
+  }
   color = apply_composite_effects(color, canvas_uv, t);
   if (u.smask.z > 0.5) {
     // Recording with transparency: un-premultiply so empty regions carry
@@ -3966,6 +4127,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
   let aid = screen_alignment_aid(in.uv, canvas_uv, u.resolution, dome_mask);
   if (aid.a > 0.5) { return vec4<f32>(aid.rgb * u.output_gate, 1.0); }
   color = apply_test_pattern(color, in.uv, aspect);
+  if (u.dome0.x > 0.5 && u.dome4.y > 0.001) {
+    let grid = dome_grid(source.xy, aspect);
+    color = mix(color, grid.rgb, grid.a * clamp(u.dome4.y, 0.0, 1.0));
+  }
   if (u.dome2.z > 0.5) {
     color = slice_output_grade(color, in.uv) * dome_mask * screen_mask_alpha(screen_content_uv(in.uv));
   } else {
@@ -3977,6 +4142,9 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 
 @group(1) @binding(0) var creative_master: texture_2d<f32>;
 @group(1) @binding(1) var creative_sampler: sampler;
+// Layers placed on the dome, as a square dome picture (fs_main's dome pass);
+// a transparent texel when there are none.
+@group(1) @binding(2) var dome_layers_tex: texture_2d<f32>;
 
 // ── Flux on the output ─────────────────────────────────────────────────────
 // The phone app's Flux effect (src/lib/mobile/studio/flux.ts), line for line,
@@ -4143,19 +4311,37 @@ fn fs_output(in: VertexOut) -> @location(0) vec4<f32> {
   let source = output_source_uv(in.uv);
   var uv = source.xy;
   var mask = source.z;
+  let master_dims = vec2<f32>(textureDimensions(creative_master));
+  var canvas_cover = 1.0;
   if (u.dome0.x > 0.5) {
-    let domed = dome_source_uv(uv, aspect);
+    let domed = dome_source_uv(uv, aspect, master_dims.x / max(master_dims.y, 1.0));
     uv = domed.xy;
-    mask *= domed.z;
+    canvas_cover = domed.z;
+    mask *= domed.w;
   }
   var color = textureSampleLevel(creative_master, creative_sampler, vec2<f32>(uv.x, 1.0 - uv.y), 0.0).rgb;
   if (u.flux0.w > 0.0005) { color = flux_apply(color, uv); }
+  // Where a panorama or flat view runs out the canvas is black, but layers
+  // placed on the dome still draw there.
+  color = color * canvas_cover;
+  if (u.dome0.x > 0.5 && u.dlayer.x > 0.5) {
+    // Layers placed on the dome, drawn straight into dome space by
+    // fs_main's dome pass (premultiplied), over everything else.
+    let m = dome_picture_point(source.xy, aspect);
+    let placed = textureSampleLevel(dome_layers_tex, creative_sampler, vec2<f32>(m.x * 0.5 + 0.5, 0.5 - m.y * 0.5), 0.0);
+    let on = step(length(m), 1.0);
+    color = color * (1.0 - placed.a * on) + placed.rgb * on;
+  }
   // Screen alignment aids replace the picture and skip the grade, overlap
   // fade and masks: 7 = numbered grid in composition space (through this
   // Screen's crop, warp and projector corners), 8 = identify.
-  let aid = screen_alignment_aid(in.uv, uv, vec2<f32>(textureDimensions(creative_master)), mask);
+  let aid = screen_alignment_aid(in.uv, uv, master_dims, mask);
   if (aid.a > 0.5) { return vec4<f32>(aid.rgb * u.output_gate, 1.0); }
   color = apply_test_pattern(color, in.uv, aspect);
+  if (u.dome0.x > 0.5 && u.dome4.y > 0.001) {
+    let grid = dome_grid(source.xy, aspect);
+    color = mix(color, grid.rgb, grid.a * clamp(u.dome4.y, 0.0, 1.0));
+  }
   if (u.dome2.z > 0.5) {
     color = slice_output_grade(color, in.uv) * mask * screen_mask_alpha(screen_content_uv(in.uv));
   } else {

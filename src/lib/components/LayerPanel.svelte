@@ -1,6 +1,7 @@
 <script lang="ts">
   import Scene3DProperties from './scene3d/Scene3DProperties.svelte';
   import MusicMotionMark from './MusicMotionMark.svelte';
+  import LayerDomePlacement from './LayerDomePlacement.svelte';
   import VideoPlaybackDirection from './VideoPlaybackDirection.svelte';
   import VideoPlaybackModes from './VideoPlaybackModes.svelte';
   import { nativeVideoTransportSnapshot, nativeVideoLaunchTime } from '../media/nativeTransport';
@@ -2421,6 +2422,11 @@
               {/if}
             </div>
           </div>
+        {/if}
+
+        {#if $settings.output.domeEnabled || layer.domePlacement?.enabled}
+          <div class="inspector-section-title">Dome</div>
+          <LayerDomePlacement {layer} />
         {/if}
 
         <div class="inspector-section-title">Appearance</div>
