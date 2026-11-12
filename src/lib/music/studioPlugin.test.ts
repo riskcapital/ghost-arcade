@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createLayer, type Layer } from '../types';
+import type { StudioFinish } from './studioFinish';
 import {
   MAX_STUDIO_VOICES,
   defaultStudioSource,
@@ -20,8 +21,8 @@ const inputs: StudioRenderInputs = {
 };
 
 /** An instance with its finish off, so these tests see the mix alone (the finish has its own tests). */
-const NO_FINISH = { glow: 0, trails: 0, grade: 'neutral' as const, grain: 0 };
-function studioLayer(id: string, voices = defaultStudioSource().musicVoices, musicFinish = NO_FINISH): Layer {
+const NO_FINISH: StudioFinish = { glow: 0, trails: 0, grade: 'neutral', grain: 0 };
+function studioLayer(id: string, voices = defaultStudioSource().musicVoices, musicFinish: StudioFinish = NO_FINISH): Layer {
   return {
     ...createLayer(id, 'Music Studio', 'media'),
     opacity: 0.7,
