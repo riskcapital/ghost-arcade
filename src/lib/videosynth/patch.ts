@@ -11,7 +11,7 @@
  * rate; their sync locks the pattern into still bands or lets it drift. Each
  * is modulated (phase, key or hue) and frequency-modulated by a chosen source.
  * A mixer combines them, the picture is moved, mirrored and fed back into
- * itself, then finished like a tube: scanlines, colour bleed and roll.
+ * itself, then finished like a tube: scanlines, color bleed and roll.
  */
 
 export const VIDEOSYNTH_EFFECT_TYPE = 'videosynth';
@@ -32,7 +32,7 @@ export type ParamSpec = {
 
 /** What a modulation or FM input listens to. */
 export const SOURCES = ['Off', 'Feedback', 'Osc A', 'Osc B', 'Osc C', 'LFO 1', 'LFO 2', 'LFO 3', 'Bass', 'Mids', 'Highs', 'Level', 'Kick', 'Input'];
-/** What an oscillator draws: its own beam, or the input layer coloured by it. */
+/** What an oscillator draws: its own beam, or the input layer colored by it. */
 export const OSC_INPUTS = ['Oscillator', 'Input'];
 export const MOD_MODES = ['Phase', 'Key', 'Hue'];
 export const MIX_MODES = ['Brightest', 'Layer', 'YUV'];
@@ -56,7 +56,7 @@ const PATCH_ONLY_JACKS = [
   { id: 'CLevel', label: 'Osc C level', short: 'Level', module: 'Osc C' },
   { id: 'FbZoomIn', label: 'Feedback zoom', short: 'Zoom', module: 'Feedback' },
   { id: 'FbTurnIn', label: 'Feedback turn', short: 'Turn', module: 'Feedback' },
-  { id: 'FbHueIn', label: 'Feedback colour', short: 'Colour', module: 'Feedback' },
+  { id: 'FbHueIn', label: 'Feedback color', short: 'Color', module: 'Feedback' },
   { id: 'RotateIn', label: 'Picture rotate', short: 'Rotate', module: 'Picture' },
   { id: 'ScaleIn', label: 'Picture scale', short: 'Scale', module: 'Picture' },
   { id: 'MoveXIn', label: 'Picture move X', short: 'Move X', module: 'Picture' },
@@ -76,7 +76,7 @@ function oscParams(i: number): ParamSpec[] {
     spec(`vs${n}ModSrc`, 'Mod from', g, 0, SOURCES.length - 1, 1, d.modSrc, base + 6, SOURCES),
     spec(`vs${n}Fm`, 'FM amount', g, 0, 1, 0.001, d.fm, base + 7),
     spec(`vs${n}FmSrc`, 'FM from', g, 0, SOURCES.length - 1, 1, d.fmSrc, base + 8, SOURCES),
-    spec(`vs${n}Hue`, 'Colour', g, 0, 1, 0.001, d.hue, base + 9),
+    spec(`vs${n}Hue`, 'Color', g, 0, 1, 0.001, d.hue, base + 9),
     spec(`vs${n}Sat`, 'Saturation', g, 0, 1, 0.001, d.sat, base + 10),
     spec(`vs${n}Level`, 'Level', g, 0, 1, 0.001, d.level, base + 11),
     spec(`vs${n}Input`, 'Draws', g, 0, 1, 1, 0, 61 + i, OSC_INPUTS),
@@ -98,7 +98,7 @@ export const VIDEOSYNTH_PARAMS: ParamSpec[] = [
   spec('vsFbRotate', 'Turn', 'Feedback', -10, 10, 0.01, 0.25, 44),
   spec('vsFbX', 'Drift X', 'Feedback', -0.05, 0.05, 0.0005, 0, 45),
   spec('vsFbY', 'Drift Y', 'Feedback', -0.05, 0.05, 0.0005, 0, 46),
-  spec('vsFbHue', 'Colour shift', 'Feedback', 0, 1, 0.001, 0.02, 47),
+  spec('vsFbHue', 'Color shift', 'Feedback', 0, 1, 0.001, 0.02, 47),
   spec('vsLfo1Rate', 'LFO 1 rate', 'LFOs', 0, 1, 0.001, 0.35, 48),
   spec('vsLfo1Skew', 'LFO 1 shape', 'LFOs', 0, 1, 0.001, 0.5, 49),
   spec('vsLfo2Rate', 'LFO 2 rate', 'LFOs', 0, 1, 0.001, 0.25, 50),
@@ -106,7 +106,7 @@ export const VIDEOSYNTH_PARAMS: ParamSpec[] = [
   spec('vsLfo3Rate', 'LFO 3 rate', 'LFOs', 0, 1, 0.001, 0.15, 52),
   spec('vsLfo3Skew', 'LFO 3 shape', 'LFOs', 0, 1, 0.001, 0.5, 53),
   spec('vsScanlines', 'Scanlines', 'Tube', 0, 1, 0.001, 0.3, 54),
-  spec('vsBleed', 'Colour bleed', 'Tube', 0, 1, 0.001, 0.3, 55),
+  spec('vsBleed', 'Color bleed', 'Tube', 0, 1, 0.001, 0.3, 55),
   spec('vsRoll', 'Roll', 'Tube', 0, 1, 0.001, 0, 56),
   spec('vsGlow', 'Glow', 'Tube', 0, 1, 0.001, 0.2, 57),
   spec('vsReact', 'Follow the music', 'Music', 0, 1, 0.001, 0.5, 58),

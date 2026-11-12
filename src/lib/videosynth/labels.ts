@@ -44,9 +44,9 @@ export function formatParam(p: ParamSpec): (v: number) => string {
 }
 
 const KNOB_LABELS: Record<string, string> = {
-  Freq: 'Freq', Fine: 'Fine', Sync: 'Sync', Shape: 'Wave', Mod: 'Mod', Fm: 'FM', Hue: 'Colour', Sat: 'Sat', Level: 'Level',
+  Freq: 'Freq', Fine: 'Fine', Sync: 'Sync', Shape: 'Wave', Mod: 'Mod', Fm: 'FM', Hue: 'Color', Sat: 'Sat', Level: 'Level',
   vsX: 'Move X', vsY: 'Move Y', vsRotate: 'Rotate', vsScale: 'Scale', vsKaleido: 'Mirror',
-  vsFeedback: 'Amount', vsFbZoom: 'Zoom', vsFbRotate: 'Turn', vsFbX: 'Drift X', vsFbY: 'Drift Y', vsFbHue: 'Colour',
+  vsFeedback: 'Amount', vsFbZoom: 'Zoom', vsFbRotate: 'Turn', vsFbX: 'Drift X', vsFbY: 'Drift Y', vsFbHue: 'Color',
   vsLfo1Rate: 'Rate', vsLfo1Skew: 'Shape', vsLfo2Rate: 'Rate', vsLfo2Skew: 'Shape', vsLfo3Rate: 'Rate', vsLfo3Skew: 'Shape',
   vsScanlines: 'Lines', vsBleed: 'Bleed', vsRoll: 'Roll', vsGlow: 'Glow', vsReact: 'Follow',
 };

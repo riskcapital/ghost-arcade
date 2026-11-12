@@ -36,7 +36,7 @@
     type Snapshots,
   } from '../videosynth/patch';
   import { formatParam, knobLabel, paramSpec } from '../videosynth/labels';
-  import { inputJack, plugPatch, unplugPatch } from '../videosynth/patching';
+  import { chooseInputPatch, inputJack, inputUsers, plugPatch, unplugPatch } from '../videosynth/patching';
 
   let {
     effectSource,
@@ -124,11 +124,11 @@
     { id: 'input', title: 'Input', width: 150, rows: [], switches: [], ins: [], outs: [{ source: 13, label: 'In' }], input: true },
   ];
 
-  // ── Presets, randomise, morph ──
+  // ── Presets, randomize, morph ──
   function loadPreset(id: string) {
     if (id) onpatch(presetValues(id));
   }
-  function randomise() {
+  function randomize() {
     const r = (a: number, b: number) => a + Math.random() * (b - a);
     const patch: Record<string, number> = {};
     for (const n of ['A', 'B', 'C']) {
@@ -143,6 +143,8 @@
   }
   const snapshots = $derived<Snapshots>(Array.isArray(effectSource[SNAPSHOTS_KEY]) ? (effectSource[SNAPSHOTS_KEY] as Snapshots).slice(0, 4) : [null, null, null, null]);
   const stored = $derived(snapshots.filter(Boolean).length);
+  /** What uses the input layer, shown in the Input module. */
+  const inputUse = $derived(inputUsers(effectSource));
   const morph = $derived.by(() => {
     const m = effectSource[MORPH_KEY];
     return Array.isArray(m) && m.length === 2 ? { x: Number(m[0]) || 0, y: Number(m[1]) || 0 } : { x: 0.5, y: 0.5 };
@@ -214,10 +216,10 @@
 
   // ── Cables ──
   let caseEl: HTMLDivElement | undefined = $state();
-  let centres = $state<Record<string, { x: number; y: number }>>({});
+  let centers = $state<Record<string, { x: number; y: number }>>({});
   let showNormals = $state(false);
   let drag = $state<{ from: number; x: number; y: number; carried?: InputJack } | null>(null);
-  /** Jack centres in the case's own (unscaled) pixels, where the cables are drawn. */
+  /** Jack centers in the case's own (unscaled) pixels, where the cables are drawn. */
   function measure() {
     if (!caseEl) return;
     const o = caseEl.getBoundingClientRect();
@@ -227,7 +229,7 @@
       const r = el.getBoundingClientRect();
       next[el.dataset.jack!] = { x: (r.left + r.width / 2 - o.left) / s, y: (r.top + r.height / 2 - o.top) / s };
     }
-    centres = next;
+    centers = next;
   }
   onMount(() => {
     const observer = new ResizeObserver(() => fitCase());
@@ -247,12 +249,12 @@
       const from = sourceOf(j);
       const normal = from === j.normal;
       if (!from || (normal && !showNormals)) return [];
-      const a = centres[`out:${from}`], b = centres[`in:${j.id}`];
+      const a = centers[`out:${from}`], b = centers[`in:${j.id}`];
       if (!a || !b) return [];
       return [{ id: j.id, d: cablePath(a.x, a.y, b.x, b.y, fit.height - 4), color: cableColor(from), normal, a, b }];
     }),
   );
-  const liveStart = $derived(drag ? centres[`out:${drag.from}`] : undefined);
+  const liveStart = $derived(drag ? centers[`out:${drag.from}`] : undefined);
 
   /**
    * While a cable is in the hand, every input can take it: the inputs light
@@ -266,7 +268,7 @@
     let best: string | null = null;
     let bestDist = SNAP;
     for (const j of INPUT_JACKS) {
-      const c = centres[`in:${j.id}`];
+      const c = centers[`in:${j.id}`];
       if (!c) continue;
       const d = Math.hypot(c.x - p.x, c.y - p.y);
       if (d < bestDist) {
@@ -277,7 +279,7 @@
     return best;
   }
   /** Where the live cable's free end is: on the input it snaps to, or in the hand. */
-  const liveEnd = $derived(drag ? (snapTo && centres[`in:${snapTo}`]) || drag : undefined);
+  const liveEnd = $derived(drag ? (snapTo && centers[`in:${snapTo}`]) || drag : undefined);
 
   const at = (e: PointerEvent) => {
     const o = caseEl!.getBoundingClientRect();
@@ -411,14 +413,31 @@
     {#if m.input}
       <label class="input-field">
         <span class="legend small">Layer</span>
-        <select value={String(effectSource[INPUT_LAYER_KEY] ?? '')} onchange={(e) => onpatch({ [INPUT_LAYER_KEY]: e.currentTarget.value })}>
+        <select value={String(effectSource[INPUT_LAYER_KEY] ?? '')} onchange={(e) => onpatch(chooseInputPatch(effectSource, e.currentTarget.value))}>
           <option value="">None</option>
           {#each layers as l (l.id)}
             <option value={l.id}>{l.name}</option>
           {/each}
         </select>
       </label>
-      <p class="panel-note">Any layer, a camera included. Oscillators can draw it; any input can take it.</p>
+      {#if !effectSource[INPUT_LAYER_KEY]}
+        <p class="panel-note">{layers.length ? 'Choose a layer, a camera included, to bring its picture into the synth.' : 'Put a clip or a camera on another layer to bring it into the synth.'}</p>
+      {:else}
+        <div class="input-use" role="status">
+          <span class="led" class:on={inputUse.drawnBy.length + inputUse.patchedTo.length > 0}></span>
+          <div>
+            {#each inputUse.drawnBy as n (n)}
+              <p class="panel-note">Oscillator {n} draws it.</p>
+            {/each}
+            {#each inputUse.patchedTo as j (j.id)}
+              <p class="panel-note">Patched to {j.module} {j.label}.</p>
+            {/each}
+            {#if !inputUse.drawnBy.length && !inputUse.patchedTo.length}
+              <p class="panel-note">Nothing uses it yet: set an oscillator to draw Input, or patch In to an input.</p>
+            {/if}
+          </div>
+        </div>
+      {/if}
     {/if}
     {#if m.ins.length || m.outs.length}
       <div class="jacks">
@@ -471,7 +490,7 @@
           {/each}
         </select>
       </label>
-      <button class="bar-btn" onclick={randomise} title="A new patch, kept within ranges that make a picture">Randomise</button>
+      <button class="bar-btn" onclick={randomize} title="A new patch, kept within ranges that make a picture">Randomize</button>
       <button class="bar-btn" aria-pressed={showNormals} onclick={() => (showNormals = !showNormals)} title="Normals are the connections an input has with nothing plugged in">{showNormals ? 'Hide normals' : 'Show normals'}</button>
       <span class="spacer"></span>
       <span class="bar-hint">Drag from an output to an input · Alt-click an input to unplug</span>
@@ -1033,6 +1052,18 @@
   .panel-btn:disabled {
     opacity: 0.35;
     cursor: default;
+  }
+  .input-use {
+    display: grid;
+    grid-template-columns: 7px 1fr;
+    gap: 8px;
+    align-items: start;
+  }
+  .input-use .led {
+    margin-top: 3px;
+  }
+  .input-use .panel-note + .panel-note {
+    margin-top: 2px;
   }
   .input-field {
     display: grid;

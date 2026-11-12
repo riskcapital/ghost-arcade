@@ -96,7 +96,7 @@
     gap: 8px;
     align-items: center;
   }
-  /* The cable's colour, as in the full view; a ring when nothing is plugged in. */
+  /* The cable's color, as in the full view; a ring when nothing is plugged in. */
   .plug {
     width: 10px;
     height: 10px;

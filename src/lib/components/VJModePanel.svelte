@@ -4395,6 +4395,23 @@
       : `vj-layer-${layerIndex}`;
   }
 
+  /** The deck's other layers, for a plugin that takes a picture from one
+   *  (Analog Synth's input), named with the clip each is playing. */
+  function vjInputLayers(state: typeof $vjClipLauncher, selfIndex: number, selfDeck: VJDeck): { id: string; name: string }[] {
+    const decks: VJDeck[] = state.crossfaderEnabled ? ['A', 'B'] : ['A'];
+    const out: { id: string; name: string }[] = [];
+    for (const deck of decks) {
+      const states = deck === 'B' ? state.bankBLayerStates : state.layerStates;
+      for (let i = 0; i < state.numLayers; i++) {
+        if (i === selfIndex && deck === selfDeck) continue;
+        const layer = state.crossfaderEnabled ? `Deck ${deck} · Layer ${i + 1}` : `Layer ${i + 1}`;
+        const clip = states[i]?.activeClip?.name;
+        out.push({ id: vjEffectControlLayerId(i, deck), name: clip ? `${layer} · ${clip}` : `${layer} (empty)` });
+      }
+    }
+    return out;
+  }
+
   // Drive the video-controls polling tick from the selected clip type. Same
   // pattern as LayerPanel's startVideoTick — only run when a video clip is
   // selected, so the rAF loop is dormant for shader/splat/model3d clips.
@@ -5718,6 +5735,7 @@
                     source={vjPluginSource}
                     onUpdateEffectSource={updateActiveEffectClipSource}
                     controlLayerId={vjEffectControlLayerId(selectedLayerIndex, paramDeck)}
+                    inputLayers={vjInputLayers($vjClipLauncher, selectedLayerIndex, paramDeck)}
                     midiPrefix={paramDeck === 'B' ? `vj-b:${selectedLayerIndex}:plugin` : `vj:${selectedLayerIndex}:plugin`}
                   />
                 </div>

@@ -21,6 +21,7 @@
     type Snapshots,
   } from '../videosynth/patch';
   import { formatParam, knobLabel, paramSpec } from '../videosynth/labels';
+  import { chooseInputPatch } from '../videosynth/patching';
 
   let {
     effectSource,
@@ -67,13 +68,13 @@
 
   let open = $state<Record<string, boolean>>({ 'Oscillator A': true });
 
-  // ── Presets and randomise ──
+  // ── Presets and randomize ──
   function loadPreset(id: string) {
     if (!id) return;
     onpatch(presetValues(id));
   }
   /** A new patch within ranges that make a picture, not noise. */
-  function randomise() {
+  function randomize() {
     const r = (a: number, b: number) => a + Math.random() * (b - a);
     const patch: Record<string, number> = {};
     for (const n of ['A', 'B', 'C']) {
@@ -134,7 +135,7 @@
         {/each}
       </select>
     </label>
-    <button class="btn" onclick={randomise} title="A new patch, kept within ranges that make a picture">Randomise</button>
+    <button class="btn" onclick={randomize} title="A new patch, kept within ranges that make a picture">Randomize</button>
     <button class="btn open" onclick={() => (studioOpen = true)} title="The whole instrument full screen, patched with cables">Open the synth</button>
   </div>
 
@@ -203,14 +204,14 @@
     <div class="section-head static"><span class="ga-eyebrow">Input</span></div>
     <label class="field">
       <span>Input layer</span>
-      <select value={String(effectSource[INPUT_LAYER_KEY] ?? '')} onchange={(e) => onpatch({ [INPUT_LAYER_KEY]: e.currentTarget.value })}>
+      <select value={String(effectSource[INPUT_LAYER_KEY] ?? '')} onchange={(e) => onpatch(chooseInputPatch(effectSource, e.currentTarget.value))}>
         <option value="">None</option>
         {#each layers as l (l.id)}
           <option value={l.id}>{l.name}</option>
         {/each}
       </select>
     </label>
-    <p class="hint">Any layer, a camera included. An oscillator set to draw the input shows it, coloured by its own colour and saturation; any input can take it.</p>
+    <p class="hint">{layers.length ? 'Any other layer, a camera included. An oscillator set to draw Input shows it in its own color; any input can take it. Choosing one when nothing uses the input sets Oscillator A to draw it.' : 'Put a clip or a camera on another layer to bring it into the synth.'}</p>
   </section>
 
   <section class="section">

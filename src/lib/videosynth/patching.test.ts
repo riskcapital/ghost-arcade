@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { cablePath } from '../music/cableLook';
-import { inputJack, plugPatch, unplugPatch } from './patching';
+import { chooseInputPatch, INPUT_SOURCE, inputJack, inputUsers, plugPatch, unplugPatch } from './patching';
 
 describe('Analog Synth patching', () => {
   const mod = inputJack('AMod')!;
@@ -19,6 +19,20 @@ describe('Analog Synth patching', () => {
     expect(unplugPatch(mod, mod.normal)).toEqual({ vsAModSrc: 0 });
     // A patch-only input has no normal: unplugged, it is empty.
     expect(unplugPatch(rotate, 5)).toEqual({ vsRotateInSrc: 0 });
+  });
+});
+
+describe('choosing the input layer', () => {
+  it('sets Oscillator A to draw it when nothing uses the input', () => {
+    expect(chooseInputPatch({}, 'vj-layer-1')).toEqual({ vsInputLayer: 'vj-layer-1', vsAInput: 1 });
+    expect(inputUsers({ vsAInput: 1 }).drawnBy).toEqual(['A']);
+  });
+
+  it('leaves the patch alone when something already uses it, or when the input is cleared', () => {
+    expect(chooseInputPatch({ vsCInput: 1 }, 'cam')).toEqual({ vsInputLayer: 'cam' });
+    expect(chooseInputPatch({ vsRotateInSrc: INPUT_SOURCE }, 'cam')).toEqual({ vsInputLayer: 'cam' });
+    expect(inputUsers({ vsRotateInSrc: INPUT_SOURCE }).patchedTo.map((j) => j.id)).toEqual(['RotateIn']);
+    expect(chooseInputPatch({}, '')).toEqual({ vsInputLayer: '' });
   });
 });
 

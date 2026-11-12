@@ -42,6 +42,8 @@
   export let onUpdateEffectSource: ((next: IntegratedEffectSource) => void) | null = null;
   export let controlLayerId: string | null = null;
   export let midiPrefix = 'map:plugin';
+  /** Layers the plugin can take a picture from (the VJ deck passes its rows); the project's layers when not given. */
+  export let inputLayers: { id: string; name: string }[] | null = null;
 
   // Resolve the plugin manifest from the source
   $: effectSource = source?.effectSource ?? null;
@@ -235,7 +237,7 @@
     {#if effectSource.effectType === 'videosynth'}
       <AnalogSynthPanel
         effectSource={effectSource as unknown as Record<string, unknown>}
-        layers={$project.layers.filter((l) => l.id !== panelLayerId).map((l) => ({ id: l.id, name: l.name }))}
+        layers={inputLayers ?? $project.layers.filter((l) => l.id !== panelLayerId).map((l) => ({ id: l.id, name: l.name }))}
         {midiPrefix}
         onpatch={(patch, gesture) => {
           const base = onUpdateEffectSource ? effectSource : ($selectedLayer?.source?.effectSource ?? effectSource);

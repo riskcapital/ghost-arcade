@@ -4,7 +4,7 @@
  *   fs_synth  three raster oscillators, their modulation, the mixer, the
  *             picture controls and feedback from the last frame
  *   fs_keep   copies the new frame aside, for the next frame's feedback
- *   fs_out    the tube: scanlines, colour bleed, roll and glow
+ *   fs_out    the tube: scanlines, color bleed, roll and glow
  *
  * Bindings: 0 the patch (128 floats, see patch.ts), 1 the frame block the
  * core writes (time, audio), 2 the picture read, 3 the sampler.
@@ -108,7 +108,7 @@ fn oscillator(n: u32, uv: vec2f) -> vec4f {
   var hue = prm(b + 9u) + react * frame.treble * 0.08;
   if (mode == 0u) { phase += m * 2.0; }
   var v = wave(phase, prm(b + 3u));
-  // Drawing the input: its brightness is the signal, its colour tinted by the oscillator's.
+  // Drawing the input: its brightness is the signal, its color tinted by the oscillator's.
   let draws_input = prm(61u + n) > 0.5;
   if (draws_input) { v = input_luma; }
   if (mode == 1u) {
@@ -126,7 +126,7 @@ fn oscillator(n: u32, uv: vec2f) -> vec4f {
   return vec4f(rgb, v);
 }
 
-// Turn a colour about the grey axis.
+// Turn a color about the gray axis.
 fn hue_rotate(c: vec3f, a: f32) -> vec3f {
   let k = vec3f(0.57735);
   let ca = cos(a);
@@ -159,7 +159,7 @@ fn rotate(p: vec2f, a: f32) -> vec2f { let c = cos(a); let s = sin(a); return ve
 fn fs_synth(in: VsOut) -> @location(0) vec4f {
   let aspect = prm(59u);
   let react = prm(58u);
-  // Feedback: last frame, zoomed, turned and drifted about the centre.
+  // Feedback: last frame, zoomed, turned and drifted about the center.
   var f = (in.uv - 0.5) * vec2f(aspect, 1.0);
   let zoom = max(prm(43u) + react * frame.kick * 0.02 + jack(70u, in.uv) * 0.06, 0.5);
   f = rotate(f / zoom, prm(44u) * 0.1 + jack(72u, in.uv) * 0.05) / vec2f(aspect, 1.0) + 0.5 - vec2f(prm(45u), prm(46u));
@@ -196,14 +196,14 @@ fn fs_synth(in: VsOut) -> @location(0) vec4f {
     col = mix(a.rgb, b.rgb, smoothstep(0.15, 0.3, luma(b.rgb)));
     col = mix(col, c.rgb, smoothstep(0.15, 0.3, luma(c.rgb)));
   } else {
-    // YUV: A is brightness, B and C the colour.
+    // YUV: A is brightness, B and C the color.
     let y = a.w * prm(11u);
     let u = (b.w - 0.5) * prm(23u) * 0.9;
     let vv = (c.w - 0.5) * prm(35u) * 0.9;
     col = vec3f(y + 1.14 * vv, y - 0.395 * u - 0.581 * vv, y + 2.032 * u);
   }
   // Trails keep the brighter of now and the fed-back last frame.
-  // The fed-back picture turns its colour a little each frame.
+  // The fed-back picture turns its color a little each frame.
   let fed = hue_rotate(last, prm(47u) * TAU * 0.1 + jack(74u, in.uv) * 0.5);
   col = max(clamp(col, vec3f(0.0), vec3f(1.0)), fed * prm(42u) * 0.985);
   return vec4f(col, 1.0);
@@ -223,7 +223,7 @@ fn fs_out(in: VsOut) -> @location(0) vec4f {
   // Roll: the picture slips vertically, more on a hit.
   let roll = prm(56u) + prm(58u) * frame.kick * 0.15;
   uv.y = fract(uv.y + roll * frame.time * 0.35 + jack(84u, in.uv) * 0.25);
-  // Colour bleed: red and blue spread sideways, as a tube's colour carrier did.
+  // Color bleed: red and blue spread sideways, as a tube's color carrier did.
   let bleed = prm(55u) * 4.0 / dims.x;
   var col = vec3f(
     textureSampleLevel(src, samp, uv - vec2f(bleed, 0.0), 0.0).r,

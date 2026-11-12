@@ -1,12 +1,12 @@
 /**
  * How a patch cable looks, shared by every patchable instrument (the Music
- * Studio, Analog Synth): its colours and how it hangs between two jacks. The
+ * Studio, Analog Synth): its colors and how it hangs between two jacks. The
  * strokes themselves are in components/music/cableStyles.css.
  */
 
 export const CABLE_COLORS = ['#5278ff', '#a8bcff', '#7ec8e3', '#ff8577', '#e6ebf7'];
 
-/** The colour of the cable in a drag, before it is plugged. */
+/** The color of the cable in a drag, before it is plugged. */
 export const CABLE_LIVE_COLOR = '#a8bcff';
 
 /**
