@@ -29,6 +29,7 @@
     removeStudioVoice,
     showStudioVisuals,
     replaceStudioVoice,
+    setStudioFinish,
     setStudioMix,
     setStudioVoice,
     studioTarget,
@@ -37,6 +38,7 @@
   import { stepVoiceLook, toggledVoiceLevel } from '../../music/studioMidiControls';
   import StudioModule from './StudioModule.svelte';
   import StudioKnob from './StudioKnob.svelte';
+  import { STUDIO_GRADES, normalizeFinish, type StudioGrade } from '../../music/studioFinish';
 
   /** Main controls shown on each voice; the rest open under it. */
   const MAIN_CONTROLS = 4;
@@ -46,6 +48,7 @@
   const target = $derived($studioTarget);
   const voices = $derived(target?.source.musicVoices ?? []);
   const mix = $derived(normalizeMix(target?.source.musicMix));
+  const finish = $derived(normalizeFinish(target?.source.musicFinish));
   let open = $state<number | null>(null);
   let activity = $state<number[]>([]);
   let codeTick = $state(0);
@@ -329,6 +332,15 @@
       </select>
       <button class="text-btn small follow" class:on={mix.follow} aria-pressed={mix.follow} disabled={mix.mode === 'all'} onclick={() => setStudioMix({ follow: !mix.follow })} title="Follow the music: busy, loud playing changes faster (and shuffle shows more at once); sparse, quiet playing changes slower. Up to two steps either side of the pace you set." data-midi-path="studio:visuals.automix-follow" data-midi-label="Auto-mix follows the music" data-midi-mode="toggle">Follow</button>
     </div>
+    <div class="finish" role="group" aria-label="Overall look">
+      <span class="ga-eyebrow">Overall look</span>
+      <StudioKnob label="Glow" title="Bloom around bright things" value={finish.glow} defaultValue={0.5} size={20} format={levelFormat} midiPath="studio:visuals.glow" onchange={(v) => setStudioFinish({ glow: v }, 'finish:glow')} />
+      <StudioKnob label="Trails" title="How long each hit leaves a fading tail" value={finish.trails} defaultValue={0.35} size={20} format={levelFormat} midiPath="studio:visuals.trails" onchange={(v) => setStudioFinish({ trails: v }, 'finish:trails')} />
+      <StudioKnob label="Grain" title="Film grain and a soft vignette" value={finish.grain} defaultValue={0.3} size={20} format={levelFormat} midiPath="studio:visuals.grain" onchange={(v) => setStudioFinish({ grain: v }, 'finish:grain')} />
+      <select class="grade" value={finish.grade} onchange={(e) => setStudioFinish({ grade: (e.target as HTMLSelectElement).value as StudioGrade })} aria-label="Grade" title="One look over every voice">
+        {#each STUDIO_GRADES as g (g.id)}<option value={g.id}>{g.label}</option>{/each}
+      </select>
+    </div>
     <p class="order">Top of the list draws on top · drag ⋮⋮ or Alt+↑↓ to reorder</p>
     <div class="voices">
       {#each voices as voice, i (i)}
@@ -451,6 +463,9 @@
   .automix .ga-eyebrow { color: var(--studio-muted); flex: 0 0 auto; }
   .automix select { flex: 1 1 0; min-width: 0; height: 22px; font-size: var(--ga-text-meta, 11px); }
   .automix .follow { flex: 0 0 auto; height: 22px; padding: 0 7px; }
+  .finish { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; }
+  .finish .ga-eyebrow { color: var(--studio-muted); flex: 0 0 auto; }
+  .finish .grade { flex: 1 1 0; min-width: 0; height: 22px; font-size: var(--ga-text-meta, 11px); }
   .live { flex: 0 0 auto; margin-bottom: 6px; border-bottom: 1px solid var(--studio-edge-soft); padding-bottom: 4px; }
   .live-head { display: flex; align-items: center; gap: 6px; width: 100%; padding: 2px 0; border: 0; background: none; color: var(--studio-ink); cursor: pointer; text-align: left; }
   .live-head svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; flex: 0 0 auto; }

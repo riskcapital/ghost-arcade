@@ -19,12 +19,14 @@ const inputs: StudioRenderInputs = {
   driven: (source) => ({ vxEnv: source === 'kick' ? 0.8 : 0.1, vxPresence: 1 }),
 };
 
-function studioLayer(id: string, voices = defaultStudioSource().musicVoices): Layer {
+/** An instance with its finish off, so these tests see the mix alone (the finish has its own tests). */
+const NO_FINISH = { glow: 0, trails: 0, grade: 'neutral' as const, grain: 0 };
+function studioLayer(id: string, voices = defaultStudioSource().musicVoices, musicFinish = NO_FINISH): Layer {
   return {
     ...createLayer(id, 'Music Studio', 'media'),
     opacity: 0.7,
     blendMode: 'add',
-    source: { id: `${id}-clip`, type: 'effect', name: 'Music Studio', src: 'plugin://musicstudio', effectSource: { ...defaultStudioSource(), musicVoices: voices } },
+    source: { id: `${id}-clip`, type: 'effect', name: 'Music Studio', src: 'plugin://musicstudio', effectSource: { ...defaultStudioSource(), musicVoices: voices, musicFinish } },
   } as Layer;
 }
 
@@ -72,6 +74,37 @@ describe('Music Studio plugin', () => {
     expect(values.vxAuto).toBe(true);
     expect(values.vxEnv).toBe(0.8);
     expect(values.ink).toEqual([0.94, 0.95, 0.97, 1]);
+  });
+
+  it('finishes the picture: last frame faded under the voices, then glow, grade and grain after the mix', () => {
+    const host = studioLayer('m', defaultStudioSource().musicVoices, { glow: 0.5, trails: 0.4, grade: 'tungsten', grain: 0.3 });
+    const out = expandStudioLayers([host], inputs);
+    const mixLayer = out[out.length - 1];
+    const fx = mixLayer.source?.effectSource as { vjmixRows: Array<{ frameId?: string; opacity: number }>; vjmixLayerEffectChain?: boolean };
+    // The trail is the bottom row: the mix's own output from the last frame.
+    expect(fx.vjmixRows[0].frameId).toBe('plugin:m:vj-mix');
+    expect(fx.vjmixRows[0].opacity).toBeCloseTo(0.55, 5);
+    expect(fx.vjmixRows).toHaveLength(5);
+    expect(fx.vjmixLayerEffectChain).toBe(true);
+    expect(mixLayer.effects?.map((e) => e.type)).toEqual(['bloom', 'temperatureTint', 'saturation', 'filmGrain', 'vignette']);
+    // The same effect objects frame after frame, so the renderer keeps its passes.
+    expect(expandStudioLayers([host], inputs).at(-1)!.effects![0]).toBe(mixLayer.effects![0]);
+  });
+
+  it('with the finish off, the mix is left as it was and the layer keeps its own effects', () => {
+    const own = { id: 'blur', type: 'blur', enabled: true, params: {} } as never;
+    const host = { ...studioLayer('m'), effects: [own] } as Layer;
+    const mixLayer = expandStudioLayers([host], inputs).at(-1)!;
+    const fx = mixLayer.source?.effectSource as { vjmixRows: Array<{ frameId?: string }>; vjmixLayerEffectChain?: boolean };
+    expect(fx.vjmixRows.some((r) => r.frameId)).toBe(false);
+    expect(fx.vjmixLayerEffectChain).toBeUndefined();
+    expect(mixLayer.effects).toEqual([own]);
+  });
+
+  it('starts a new instance with the finish on, at modest values, and keeps old ones that have none', () => {
+    expect(defaultStudioSource().musicFinish).toEqual({ glow: 0.5, trails: 0.35, grade: 'neutral', grain: 0.3 });
+    expect(normalizeStudioSource({ musicVoices: [] }).musicFinish.grade).toBe('neutral');
+    expect(normalizeStudioSource({ musicFinish: { glow: 4, grade: 'bogus' } }).musicFinish).toEqual({ glow: 1, trails: 0.35, grade: 'neutral', grain: 0.3 });
   });
 
   it('leaves out a voice until its shader has loaded', () => {

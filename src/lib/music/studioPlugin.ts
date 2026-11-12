@@ -19,6 +19,7 @@ import { writable } from 'svelte/store';
 import { VOICE_CLEAR_INPUT, withClearOption } from './voiceClear';
 import { DEFAULT_TEXT_EVERY, normalizePhrases, normalizeTextEvery, shaderTextValues } from './shaderText';
 import { DEFAULT_MIX, MixFollower, mixAt, normalizeMix, type MixFeel, type StudioMix } from './studioMix';
+import { finishEffectsFor, normalizeFinish, trailsOpacity, type StudioFinish } from './studioFinish';
 import { BLEND_MODE_ORDER, createLayer, type BlendMode, type Layer } from '../types';
 import { isLiveSource, VOICE_AUTO_INPUT, VOICE_SOURCE_INPUT, VOICE_SOURCES, voiceSourceIndex, type LiveSourceId, type VoiceSourceId } from './visualVoices';
 import type { StudioSet } from './studioSets';
@@ -69,6 +70,8 @@ export interface StudioPluginSource {
   musicMix?: StudioMix;
   /** A deck cell's own studio setup (studioCells.ts), kept as it is; null when it has none. */
   musicSetup?: unknown;
+  /** The finish over the whole picture: glow, trails, grade, grain (studioFinish.ts). */
+  musicFinish?: StudioFinish;
 }
 
 type RGB = [number, number, number];
@@ -141,6 +144,7 @@ export function normalizeStudioSource(raw: unknown): Required<StudioPluginSource
     musicVoices: voices,
     musicMix: normalizeMix(r.musicMix),
     musicSetup: r.musicSetup && typeof r.musicSetup === 'object' ? r.musicSetup : null,
+    musicFinish: normalizeFinish(r.musicFinish),
   };
 }
 
@@ -170,6 +174,7 @@ export function defaultStudioSource(): Required<StudioPluginSource> {
     ]),
     musicMix: { ...DEFAULT_MIX },
     musicSetup: null,
+    musicFinish: normalizeFinish(null),
   };
 }
 
@@ -220,7 +225,7 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
     }
     hosts++;
     const studio = normalizeStudioSource(effectSource);
-    const rows: Array<{ layerId: string; opacity: number; blendMode: string }> = [];
+    const rows: Array<{ layerId: string; frameId?: string; opacity: number; blendMode: string }> = [];
     const driven = studio.musicVoices.map((voice) => inputs.driven(voice.source, voice.auto, voice.live));
     // Auto-mix works from the bar clock every voice shares.
     const clock = driven.find((d) => Number.isFinite(d.vxBars));
@@ -249,11 +254,17 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
     });
     // The top of the list draws on top: the mix stacks its rows from the first up.
     rows.reverse();
+    // Trails: last frame's mix, faded, under this frame's voices.
+    const trail = trailsOpacity(studio.musicFinish);
+    if (trail > 0 && rows.length) rows.unshift({ layerId: '', frameId: `plugin:${layer.id}:vj-mix`, opacity: trail, blendMode: 'normal' });
+    // Glow, grade and grain run after the mix, before the layer's own effects.
+    const finish = finishEffectsFor(layer.id, studio.musicFinish);
     out.push({
       ...layer,
+      ...(finish.length ? { effects: [...finish, ...(layer.effects ?? [])] } : {}),
       source: {
         ...layer.source!,
-        effectSource: { effectType: 'vj-mix', vjmixRows: rows, vjmixGroups: [] },
+        effectSource: { effectType: 'vj-mix', vjmixRows: rows, vjmixGroups: [], ...(finish.length ? { vjmixLayerEffectChain: true } : {}) },
       },
     } as Layer);
   }

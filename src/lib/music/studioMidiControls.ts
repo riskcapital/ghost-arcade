@@ -50,10 +50,11 @@ import { musicStudio, type MusicStudioState } from './musicStudioStore';
 import { DUCK_RELEASE_MAX, DUCK_RELEASE_MIN, type BandFxSettings } from './soundSlots';
 import { MAX_LIVE_INPUTS, type LiveInputSettings } from './mixer';
 import { registerStudioControls, releaseStudioControls, type StudioControl } from './studioControls';
+import { STUDIO_GRADES, normalizeFinish } from './studioFinish';
 import { MIDI_VOICE_SLOTS, studioVoiceBlend } from './studioPlugin';
 import { BLEND_MODE_ORDER } from '../types';
 import { STUDIO_SETS } from './studioSets';
-import { editStudio, loadSceneIntoStudio, replaceStudioVoice, setStudioMix, setStudioVoice, studioTargetNow } from './studioTarget';
+import { editStudio, loadSceneIntoStudio, replaceStudioVoice, setStudioFinish, setStudioMix, setStudioVoice, studioTargetNow } from './studioTarget';
 import { MIX_MODES, normalizeMix } from './studioMix';
 import { VOICE_SHADERS, scenesForSet } from './visualScenes';
 import { voiceSourcesFor, type VoiceSourceId } from './visualVoices';
@@ -319,6 +320,17 @@ const SCENES: StudioControl[] = [
   },
   { id: 'visuals.scene-next', label: 'Next visual scene', group: 'Visuals', kind: 'trigger', run: () => void stepVisualScene(1) },
   { id: 'visuals.scene-prev', label: 'Previous visual scene', group: 'Visuals', kind: 'trigger', run: () => void stepVisualScene(-1) },
+  { id: 'visuals.glow', label: 'Overall glow', group: 'Visuals', kind: 'value', run: (v) => void setStudioFinish({ glow: v }, 'finish:glow') },
+  { id: 'visuals.trails', label: 'Overall trails', group: 'Visuals', kind: 'value', run: (v) => void setStudioFinish({ trails: v }, 'finish:trails') },
+  { id: 'visuals.grain', label: 'Overall grain', group: 'Visuals', kind: 'value', run: (v) => void setStudioFinish({ grain: v }, 'finish:grain') },
+  {
+    id: 'visuals.grade-next', label: 'Next grade', group: 'Visuals', kind: 'trigger',
+    run: () => {
+      const now = normalizeFinish(studioTargetNow()?.source.musicFinish).grade;
+      const i = STUDIO_GRADES.findIndex((g) => g.id === now);
+      void setStudioFinish({ grade: STUDIO_GRADES[(i + 1) % STUDIO_GRADES.length].id });
+    },
+  },
 ];
 
 /** The next (or previous) tone in the library on the synth or keys, or kit on the drums. */
