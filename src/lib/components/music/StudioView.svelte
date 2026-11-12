@@ -75,6 +75,7 @@
   import { abletonBridge } from '../../ableton/abletonBridge';
   import { ensureLiveFeed } from '../../music/liveFeed';
   import { STUDIO_VIEW_KEY_LABEL, showDeck, showTray } from '../../music/studioDeck';
+  import { windowCaption, wheelScrollsSideways } from '../../utils/windowCaption';
 
   let { nativePreview = false }: { nativePreview?: boolean } = $props();
 
@@ -301,7 +302,7 @@
 
 {#if open}
   <div class="studio-view studio-tokens set-{s.set}" class:lower-tall={lowerTall} role="region" aria-label="Studio view" bind:this={root}>
-    <header class="bar">
+    <header class="bar" use:windowCaption use:wheelScrollsSideways>
       <span class="bar-title">Studio</span>
       <div class="group">
         <button class="transport" class:on={playing} onclick={toggleAll} title={playing ? 'Stop everything (effects ring out)' : 'Play: the beat, or what was playing when you stopped'} aria-label={playing ? 'Stop everything' : 'Play'} data-midi-path="studio:studio.play" data-midi-label="Play or stop the studio" data-midi-mode="toggle">
@@ -591,7 +592,13 @@
     border-bottom: 1px solid var(--studio-edge-soft);
     white-space: nowrap;
     font-size: var(--ga-text-body, 13px);
+    /* A narrow window scrolls the bar sideways instead of cutting it off. */
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: var(--studio-edge) transparent;
   }
+  .bar > :global(*) { flex-shrink: 0; }
   .group { display: flex; align-items: center; gap: var(--ga-bar-gap, 6px); flex: 0 0 auto; }
   .bar-title { font-size: var(--ga-text-title, 14px); font-weight: var(--ga-weight-title, 650); color: var(--studio-ink); }
   .bar-label { color: var(--studio-muted); font-weight: var(--ga-weight-control, 600); }

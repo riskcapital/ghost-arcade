@@ -15,6 +15,7 @@
   import './music/cableStyles.css';
   import StudioKnob from './music/StudioKnob.svelte';
   import { portal } from '../utils/portal';
+  import { windowCaption, wheelScrollsSideways } from '../utils/windowCaption';
   import { nativePreviewClaim, nativePreviewHostEl } from '../stores/nativePreviewHost';
   import { NATIVE_ENGINE_ONLY } from '../stores/settings';
   import { isDesktopApp } from '$lib/bridge';
@@ -479,7 +480,7 @@
 
 <div style="display: contents">
   <div class="synth-app studio-tokens set-analog" class:native={nativePreview} class:patching={!!drag} use:portal role="dialog" aria-modal="true" aria-label="Analog Synth">
-    <header class="topbar">
+    <header class="topbar" use:windowCaption use:wheelScrollsSideways>
       <span class="app-title">Analog Synth</span>
       <label class="bar-field">
         <span class="sr-only">Preset</span>
@@ -624,6 +625,17 @@
     padding: 0 14px;
     background: var(--ga-panel, #100f0d);
     border-bottom: 1px solid var(--ga-line2, rgba(245, 236, 222, 0.13));
+    white-space: nowrap;
+    /* A narrow window scrolls the bar sideways instead of cutting it off. */
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+  }
+  .topbar > * {
+    flex-shrink: 0;
+  }
+  .topbar > .spacer {
+    flex: 1 1 8px;
   }
   .app-title {
     font-weight: 600;

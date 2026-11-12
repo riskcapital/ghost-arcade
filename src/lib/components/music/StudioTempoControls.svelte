@@ -43,6 +43,31 @@
   let holdTimer: ReturnType<typeof setTimeout> | null = null;
   let held = false;
   let menu = $state(false);
+  /** The menu is placed in the window under its button, so a bar that
+   *  scrolls sideways never clips it; it closes if the bar scrolls. */
+  let moreButton: HTMLButtonElement | undefined = $state();
+  let menuAt = $state({ top: 0, left: 0 });
+  function toggleMenu() {
+    if (!menu && moreButton) {
+      const r = moreButton.getBoundingClientRect();
+      menuAt = { top: r.bottom + 6, left: Math.max(8, Math.min(r.left, window.innerWidth - 300)) };
+    }
+    menu = !menu;
+  }
+  $effect(() => {
+    if (!menu) return;
+    const close = (e: Event) => {
+      if (e.type === 'resize' || !(e.target instanceof Node && e.target.contains(moreButton ?? null))) return;
+      menu = false;
+    };
+    const onResize = () => (menu = false);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', onResize);
+    };
+  });
   const following = $derived($audioManualBpm === null);
   const pulse = $derived($studioTapPulse);
 
@@ -121,9 +146,9 @@
   <button class="text-btn one wide" onclick={downbeat} title="Downbeat: this is beat 1 (Alt+1). The tempo stays." data-midi-path="studio:tempo.downbeat" data-midi-label="Downbeat" data-midi-mode="toggle">1</button>
   <button class="text-btn nudge wide" onpointerdown={() => studioNudge(-1)} onpointerup={() => studioNudge(0)} onpointerleave={() => studioNudge(0)} title="Hold to slow down a little and drift back into phase" aria-label="Nudge slower" data-midi-path="studio:tempo.nudge-down" data-midi-label="Nudge slower">‹</button>
   <button class="text-btn nudge wide" onpointerdown={() => studioNudge(1)} onpointerup={() => studioNudge(0)} onpointerleave={() => studioNudge(0)} title="Hold to speed up a little and drift into phase" aria-label="Nudge faster" data-midi-path="studio:tempo.nudge-up" data-midi-label="Nudge faster">›</button>
-  <button class="text-btn more" class:on={following} onclick={() => (menu = !menu)} aria-expanded={menu} aria-label="More tempo" title="Half, double, follow the band">▾</button>
+  <button class="text-btn more" class:on={following} bind:this={moreButton} onclick={toggleMenu} aria-expanded={menu} aria-label="More tempo" title="Half, double, follow the band">▾</button>
   {#if menu}
-    <div class="menu" role="dialog" aria-label="More tempo">
+    <div class="menu" role="dialog" aria-label="More tempo" style:top={`${menuAt.top}px`} style:left={`${menuAt.left}px`}>
       <button class="text-btn narrow" onclick={downbeat} title="Downbeat: this is beat 1 (Alt+1)">1</button>
       <button class="text-btn narrow" onpointerdown={() => studioNudge(-1)} onpointerup={() => studioNudge(0)} onpointerleave={() => studioNudge(0)} title="Hold to slow down a little" aria-label="Nudge slower">‹</button>
       <button class="text-btn narrow" onpointerdown={() => studioNudge(1)} onpointerup={() => studioNudge(0)} onpointerleave={() => studioNudge(0)} title="Hold to speed up a little" aria-label="Nudge faster">›</button>
@@ -149,10 +174,8 @@
   .tempo-tools > .text-btn { min-width: 0; padding: 0 6px; touch-action: none; }
   .tap { padding: 0 8px; }
   .menu {
-    position: absolute;
-    top: calc(100% + 6px);
-    left: 0;
-    z-index: 20;
+    position: fixed;
+    z-index: 100;
     display: flex;
     align-items: center;
     gap: 6px;
