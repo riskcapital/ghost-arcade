@@ -179,6 +179,7 @@ export function defaultInteractive(): InteractiveScene {
         id: 'portal',
         name: 'Portal',
         behavior: 'trigger',
+        trigger: defaultZoneTrigger(),
         points: [
           { x: 0.6, y: 0.25 },
           { x: 0.85, y: 0.25 },

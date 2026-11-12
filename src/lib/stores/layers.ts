@@ -1,5 +1,5 @@
 import {defaultInteractive,sanitizeStoredInteractive} from '../mobile/studio/interactive';
-import {editableEffects} from '../mobile/studio/interactiveEffects';
+import {editableEffects, soundDefaults} from '../mobile/studio/interactiveEffects';
 import { normalizeVJGroups } from './vjGroups';
 import { normalizeCuePoints } from './vjCuePoints';
 import { normalizeAutopilot } from './vjAutopilot';
@@ -714,8 +714,10 @@ void main() {
         );
         const newLayer = createLayer(id, type==='interactive'?(name||'Interactive Studio'):layerName, type);
         if(type==='interactive'){
-          const scene=defaultInteractive();scene.effects=editableEffects(scene);
+          const scene=defaultInteractive();scene.effects=editableEffects(scene).map(e=>({...e,mods:soundDefaults(e.kind)}));
           newLayer.source={id:generateUUID(),type:'effect',src:'plugin://performer-world',name:'Interactive Studio',effectSource:{effectType:'performer-world',interactiveScene:scene}};
+          // A finish from the start: the glow that makes light read as light.
+          newLayer.effects=[{id:generateUUID(),type:'bloom',enabled:true,params:{amount:.45,amount2:.55,threshold:.45}}];
         }
         if (type === 'media' && initialShapeType) {
           newLayer.layerShape = createDefaultLayerShape(initialShapeType);
