@@ -148,11 +148,11 @@
         <p>Built in {(builtMs / 1000).toFixed(1)} s and playing from the top. Cmd+Z takes it all back; click anything on the Timeline to change it.</p>
       {/if}
       <ul class="auto-adds" data-auto-adds>
-        {#each adds as a (a)}<li>{a}</li>{/each}
+        {#each adds as a, i (i)}<li>{a}</li>{/each}
       </ul>
       {#if skips.length}
         <p class="auto-skip-title">Left alone:</p>
-        <ul class="auto-skips" data-auto-skips>{#each skips as s (s)}<li>{s}</li>{/each}</ul>
+        <ul class="auto-skips" data-auto-skips>{#each skips as s, i (i)}<li>{s}</li>{/each}</ul>
       {/if}
       <div class="auto-btns">
         {#if phase === 'confirm'}

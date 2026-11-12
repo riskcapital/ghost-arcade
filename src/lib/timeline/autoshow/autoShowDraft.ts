@@ -503,7 +503,8 @@ export function draftAutoShow(input: AutoShowInput): AutoShowDraft {
   const lines = base.lines.map((l) => (l.key === 'look:intensity' && l.target.scope === 'look' ? steppedEnergyLine(l, plan, structure.bars, (t) => LOOK_ACCENT[plan.find((p) => t >= p.start - 1e-6 && t < p.end - 1e-6)?.kind ?? 'other']) : l));
   const sections = base.sections;
   const draft: AutoShowDraft = {
-    sections, lookClips, lines, ledClips: base.ledClips, stageClips, adds, skips, plan: base.plan,
+    // Score's own list and Auto show's can name the same row: say it once.
+    sections, lookClips, lines, ledClips: base.ledClips, stageClips, adds: [...new Set(adds)], skips: [...new Set(skips)], plan: base.plan,
     layerTracks, hostLayerId: hostRow?.layerId ?? null, whereOrders, groups, cast, palette, style,
     heard: { bpm: Math.round((tempo.segments[0]?.bpm ?? 0) * 10) / 10, style: SHOW_STYLE_NAMES[style], sections: plan.length, pieces: groups.pieces.length, groups: groupCount(groups) },
     autoPlan,

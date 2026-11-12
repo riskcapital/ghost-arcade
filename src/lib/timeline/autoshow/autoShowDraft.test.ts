@@ -201,6 +201,10 @@ describe('the Auto show draft', () => {
     expect(d.skips.some((s) => /blocks of their own/.test(s))).toBe(true);
     expect(d.lookClips).toHaveLength(0);
     expect(d.skips.some((s) => /Looks row/.test(s))).toBe(true);
+    // Score's list and Auto show's both name a busy Looks row: once is enough
+    // (the dialog lists them, and a repeat line broke it).
+    expect(new Set(d.skips).size).toBe(d.skips.length);
+    expect(d.skips.filter((s) => /Looks row/.test(s))).toHaveLength(1);
     const again = draftAutoShow(input({ existing: { sections: [], lookClips: [], lines: [], ledClips: [], stageClips: [], layerTracks: withAutoRows(layers.map(rowOf), d.hostLayerId, d.layerTracks), whereOrders: d.whereOrders } }));
     expect(again.layerTracks).toHaveLength(0);
     expect(again.skips.some((s) => /earlier Auto show/.test(s))).toBe(true);
