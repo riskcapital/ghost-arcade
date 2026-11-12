@@ -44,8 +44,8 @@ export interface LineControlsHost {
   /** An engine is writing (modulation, Auto, a section, a cue, a takeover):
    *  with Follow edits on, what it moves is not a person's edit. */
   automated?: () => boolean;
-  /** Live edit: key `value` on the parameter's line at show time `t` (parked playhead). */
-  keyAt?: (target: ParamTarget, key: string, value: number | boolean, t: number) => void;
+  /** Live edit: key `value` on the parameter's line at show time `t` (parked playhead); `was` the value before. */
+  keyAt?: (target: ParamTarget, key: string, value: number | boolean, t: number, was?: number | boolean) => void;
 }
 
 /** Every parameter Follow edits watches: each mapping layer's own, the Stage
@@ -230,27 +230,31 @@ export function createLineControls(host: LineControlsHost, initial: LineBinding[
       const automated = host.automated?.() ?? false;
       const restoring = host.restoring?.() ?? false;
       /** A change to record: as it happens while playing, keyed at the playhead while parked. */
-      const record = (target: ParamTarget, key: string, value: number | boolean) => {
+      const record = (target: ParamTarget, key: string, value: number | boolean, was?: number | boolean) => {
         if (host.playing()) {
           host.recorder.input(target, key, value, host.showTime());
           return;
         }
         // Live edit: the playhead is parked, armed with Follow edits on. A
         // person's change is keyed on the line at the playhead.
-        if (followEdits && !automated) host.keyAt?.(target, key, value, host.showTime());
+        if (followEdits && !automated) host.keyAt?.(target, key, value, host.showTime(), was);
       };
       const visit = (target: ParamTarget, key: string) => {
         const k = `${targetId(target)}|${key}`;
         if (seen.has(k)) return;
-        seen.add(k);
         const value = readParam(source, target, key);
         if (value === undefined) return;
         const prev = lastObserved.get(k);
         lastObserved.set(k, value);
-        if (prev === undefined || prev === value) return;
+        // First sight of it (a line just added): only the baseline here.
+        // Left unseen, so Follow edits below still records it when its
+        // scope shows it changed: the first move after its line appears.
+        if (prev === undefined) return;
+        seen.add(k);
+        if (prev === value) return;
         if (restoring) return;
         // A line or a watched parameter is recorded from anything, as before.
-        record(target, key, value);
+        record(target, key, value, prev);
       };
       for (const line of host.lines()) visit(line.target, line.key);
       for (const w of watched.values()) visit(w.target, w.key);
@@ -269,7 +273,7 @@ export function createLineControls(host: LineControlsHost, initial: LineBinding[
           const value = scope.read(key);
           const was = before.read(key);
           if (value === undefined || was === undefined || value === was) continue;
-          record(scope.target, key, value);
+          record(scope.target, key, value, was);
         }
       }
     },

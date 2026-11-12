@@ -53,8 +53,12 @@ export function createLineSession(opts: {
   /** What the registry reads (default: the project). The Timeline adds its
    *  blocks, look blocks and off-stage pieces. */
   registry?: () => RegistrySource;
-  /** Live edit: key a parked edit on its line (the Timeline document's lines). */
-  keyAt?: (target: ParamTarget, key: string, value: number | boolean, t: number) => void;
+  /** Live edit: key a parked edit on its line (the Timeline document's lines).
+   *  `was` is the value before the edit, when it is known. */
+  keyAt?: (target: ParamTarget, key: string, value: number | boolean, t: number, was?: number | boolean) => void;
+  /** Values that win over their lines (by line id) while they are held:
+   *  Live edit's changes waiting for Update, so they show as made. */
+  held?: () => ReadonlyMap<string, number>;
 } = {}) {
   const source = opts.registry ?? registrySource;
   const store = createLineStore(opts.initial ?? []);
@@ -100,8 +104,19 @@ export function createLineSession(opts: {
       liveLevel: (t) => abletonBridge.liveLevelValue(t),
       midiCC: (ch, cc, input) => controls.midiCC(ch, cc, input),
       dt: dtSeconds,
-      touch: controls.touches(),
+      touch: withHeld(controls.touches()),
     };
+  }
+
+  const heldMerged = new Map<string, number>();
+  function withHeld(touches: ReadonlyMap<string, number>): ReadonlyMap<string, number> {
+    const held = opts.held?.();
+    if (!held?.size) return touches;
+    heldMerged.clear();
+    for (const [id, v] of held) heldMerged.set(id, v);
+    // A control being moved right now wins over a held value.
+    for (const [id, v] of touches) heldMerged.set(id, v);
+    return heldMerged;
   }
 
   /** Ask Live for the knobs and levels the lines follow. */

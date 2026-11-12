@@ -20,6 +20,7 @@
   } from '../../../timeline/lines/timelineLines';
   import type { RecordMode } from '../../../timeline/lines/lineRecorder';
   import { linePenTool } from './lineUi';
+  import { liveEditOn, setLiveEdit } from '../../../timeline/liveEdit';
   import { lastLineControl } from './lineDiamond';
 
   // A slice: the whole store publishes every playhead frame.
@@ -57,6 +58,14 @@
     aria-pressed={pen}
     data-line-pen
   >✎</button>
+  <button
+    class="lr-btn lr-live"
+    class:on={$liveEditOn}
+    onclick={() => setLiveEdit(!$liveEditOn)}
+    title={$liveEditOn ? 'Live edit on: what you change goes onto the Timeline (stopped: held for Update; playing: recorded). Click to stop' : 'Live edit: what you change in the editor goes onto the Timeline. Stopped, changes are held until you press Update; playing, they are recorded'}
+    aria-pressed={$liveEditOn}
+    data-live-edit
+  >Live edit</button>
   <button
     class="lr-btn lr-arm"
     class:armed={rec.armed}
@@ -114,6 +123,7 @@
   .lr-btn.on { color: #FFD96B; border-color: #FFD96B; }
   .lr-follow.on { color: #fff; border-color: var(--ga-icon, #5278ff); background: color-mix(in srgb, var(--ga-icon, #5278ff) 35%, transparent); }
   .lr-arm { display: inline-flex; align-items: center; gap: 5px; }
+  .lr-live.on { color: #fff; background: var(--ga-rec, #ff4757); border-color: var(--ga-rec, #ff4757); }
   .lr-dot { width: 8px; height: 8px; border-radius: 50%; background: color-mix(in srgb, var(--ga-rec, #ff4757) 45%, transparent); }
   .lr-arm.armed { color: #fff; background: color-mix(in srgb, var(--ga-rec, #ff4757) 70%, #000); border-color: var(--ga-rec, #ff4757); }
   .lr-arm.armed .lr-dot { background: #fff; }

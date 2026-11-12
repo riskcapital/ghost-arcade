@@ -13,6 +13,7 @@
  *   and pieces that are off the stage; the sound rows are a registered scope.
  */
 import { get, writable } from 'svelte/store';
+import { heldEdits, heldTouches, holdContentEdit, holdParamEdit, installLiveEditHooks, liveEditOn } from '../liveEdit';
 import {
   onShowDocChange,
   onShowTimelineReset,
@@ -186,7 +187,8 @@ const contentRecorder = createContentRecorder({
   tracks: () => get(showTimeline).layerTracks,
   rowFor: (layer) => get(showTimeline).layerTracks.find((t) => t.layerId === layer.id && !t.subRow)?.id ?? showTimeline.addLayerTrack(layer),
   write: (trackId, media, start, end) => { showTimeline.recordLayerBlock(trackId, media, start, end); },
-  swapAt: (trackId, media, t, before) => { showTimeline.cutInLayerMedia(trackId, media, t, before); },
+  // Parked with Live edit on, a swap is held until Update (liveEdit.ts).
+  swapAt: (trackId, media, t, before) => { if (!holdContentEdit(trackId, media, t, before)) showTimeline.cutInLayerMedia(trackId, media, t, before); },
   notAPerson: () => isAutomation() || isRestoringHistory(),
 });
 let lastPlaying = false;
@@ -196,6 +198,8 @@ let traceTick = 0;
 export function currentLineSession(): LineSession | null {
   return session;
 }
+
+const EMPTY_HELD: ReadonlyMap<string, number> = new Map();
 
 function syncRecordUi(): void {
   const r = session?.recorder;
@@ -218,7 +222,10 @@ function startSession(): void {
     bindings: s.lineBindings,
     onBindingsChange: (b) => showTimeline.setLineBindings(b),
     registry: timelineRegistrySource,
-    keyAt: (target, key, value, t) => { keyAtPlayhead(target, key, value, t); },
+    // Parked with Live edit on, a change is held until Update (liveEdit.ts).
+    keyAt: (target, key, value, t) => { if (!holdParamEdit(target, key, value, t)) keyAtPlayhead(target, key, value, t); },
+    // While parked, a held change shows over its line; playing shows the Timeline as it is.
+    held: () => (get(showTimeline).isPlaying ? EMPTY_HELD : heldTouches()),
   });
   session = next;
   lastPlaying = s.isPlaying;
@@ -392,7 +399,25 @@ export function installTimelineLines(): () => void {
       session.observe();
     }
   });
+  // Live edit is the recorder armed with Follow edits; its held changes
+  // show at once, so a change to them is evaluated again.
+  installLiveEditHooks({
+    keyAt: (target, key, value, t) => { keyAtPlayhead(target, key, value, t); },
+    cutIn: (trackId, media, t, before) => { showTimeline.cutInLayerMedia(trackId, media, t, before); },
+    setArmed: (on) => {
+      if (on) {
+        setFollowEdits(true);
+        armLines();
+      } else {
+        disarmLines();
+      }
+    },
+  });
+  const offLive = lineRecordState.subscribe((r) => liveEditOn.set(r.armed && r.followEdits));
+  const offHeld = heldEdits.subscribe(() => { if (!get(showTimeline).isPlaying) retick(); });
   return () => {
+    offLive();
+    offHeld();
     unsub();
     offDoc();
     offReset();

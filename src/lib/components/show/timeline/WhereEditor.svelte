@@ -14,6 +14,9 @@
   import { defaultWhere, WHERE_KEYS, WHERE_MOTIONS, WHERE_ORDERS, type WhereMembers, type WhereMotion, type WhereSpec } from '../../../timeline/where/whereModel';
   import { WHERE_MEMBER_LABELS, WHERE_MOTION_LABELS, WHERE_ORDER_LABELS, whereOrderView, whereSummary } from './whereUi';
   import { generateUUID } from '../../../utils/uuid';
+  import { get } from 'svelte/store';
+  import { stageNow } from './whereUi';
+  import { slotsFromPieces, wherePick } from '../../../timeline/where/wherePick';
 
   interface Props {
     where: WhereSpec | null | undefined;
@@ -61,10 +64,44 @@
     set({ motion, ...(kind === 'pingpong' || kind === 'burst' || kind === 'random' || kind === 'kick' ? { wrap: false } : {}) });
   }
   function setOrderValue(value: string) {
+    if (value === 'picked') return;
     if (value.startsWith('named:')) set({ namedOrder: value.slice(6) });
-    else set({ order: value as WhereSpec['order'], namedOrder: undefined, ...(value === 'hand' && !where?.hand?.length ? { hand: order.slots.flatMap((s) => s.ids) } : {}) });
+    // A plain order takes every piece again: the picked ones are let go.
+    else set({ order: value as WhereSpec['order'], namedOrder: undefined, slots: undefined, ...(value === 'hand' && !where?.hand?.length ? { hand: order.slots.flatMap((s) => s.ids) } : {}) });
   }
-  const orderValue = $derived(where?.namedOrder && named.some((o) => o.id === where.namedOrder) ? `named:${where.namedOrder}` : where?.order ?? 'left-right');
+  const namedNow = $derived(where?.namedOrder ? named.find((o) => o.id === where.namedOrder) ?? null : null);
+  const orderValue = $derived(namedNow ? `named:${namedNow.id}` : where?.slots?.length ? 'picked' : where?.order ?? 'left-right');
+
+  /** Choose this block's pieces (or its named group's) on the canvas. */
+  function pickPieces() {
+    if (!where) return;
+    const current = where;
+    const group = namedNow;
+    const { spots } = stageNow();
+    const pieceSpotsNow = spots.filter((s) => s.kind === 'piece');
+    const given = group?.slots ?? current.slots;
+    wherePick.set({
+      ids: order.slots.flatMap((slot) => slot.ids).filter((id) => pieceSpotsNow.some((s) => s.id === id)),
+      together: !!given && given.length === 1 && given[0].length > 1,
+      groupName: group?.name ?? null,
+      commit: (ids, together, name) => {
+        const slots = slotsFromPieces(ids, pieceSpotsNow, together);
+        if (!slots.length) return;
+        const orders = get(showTimeline).whereOrders ?? [];
+        if (group) {
+          // The group itself changes, for every block that uses it.
+          showTimeline.setWhereOrders(orders.map((o) => (o.id === group.id ? { ...o, name: name ?? o.name, slots } : o)));
+        } else if (name) {
+          const id = generateUUID();
+          showTimeline.setWhereOrders([...orders, { id, name, order: 'left-right', slots }]);
+          onchange({ ...current, namedOrder: id, slots: undefined });
+        } else {
+          onchange({ ...current, namedOrder: undefined, slots });
+        }
+      },
+    });
+    open = false;
+  }
 
   function moveSlot(from: number, to: number) {
     if (!where || from === to) return;
@@ -73,8 +110,14 @@
     ids.splice(to, 0, it);
     const hand = ids.flat();
     const namedHit = where.namedOrder ? named.find((o) => o.id === where.namedOrder) : null;
-    if (namedHit) {
+    // Picked pieces and named groups keep their own pieces: the order of
+    // their slots changes. Otherwise it becomes an order by hand.
+    if (namedHit?.slots?.length) {
+      showTimeline.setWhereOrders(named.map((o) => (o.id === namedHit.id ? { ...o, slots: ids } : o)));
+    } else if (namedHit) {
       showTimeline.setWhereOrders(named.map((o) => (o.id === namedHit.id ? { ...o, order: 'hand', hand } : o)));
+    } else if (where.slots?.length) {
+      set({ slots: ids });
     } else {
       set({ order: 'hand', hand });
     }
@@ -83,9 +126,9 @@
     if (!where) return;
     const name = newName.trim() || `Order ${named.length + 1}`;
     const id = generateUUID();
-    const spec = { order: where.order, angle: where.angle, hand: where.order === 'hand' ? order.slots.flatMap((s) => s.ids) : where.hand, groups: where.groups };
+    const spec = { order: where.order, angle: where.angle, hand: where.order === 'hand' ? order.slots.flatMap((s) => s.ids) : where.hand, groups: where.groups, ...(where.slots?.length ? { slots: where.slots } : {}) };
     showTimeline.setWhereOrders([...named, { id, name, ...spec }]);
-    set({ namedOrder: id });
+    set({ namedOrder: id, slots: undefined });
     naming = false;
     newName = '';
   }
@@ -151,11 +194,17 @@
         <div class="row">
           <span class="lbl">Order</span>
           <select value={orderValue} onchange={(e) => setOrderValue((e.currentTarget as HTMLSelectElement).value)} data-where-order>
+            {#if orderValue === 'picked'}<option value="picked">Picked pieces ({where.slots?.flat().length ?? 0})</option>{/if}
             {#each WHERE_ORDERS as o (o)}<option value={o}>{WHERE_ORDER_LABELS[o]}</option>{/each}
             {#each named as o (o.id)}<option value={`named:${o.id}`}>★ {o.name}</option>{/each}
           </select>
           {#if where.order === 'around' && !where.namedOrder}
             <label class="num">from <input type="number" step="15" value={where.angle ?? 0} onchange={(e) => set({ angle: parseFloat((e.currentTarget as HTMLInputElement).value) || 0 })} />°</label>
+          {/if}
+          {#if members.includes('pieces')}
+            <button type="button" class="line" onclick={pickPieces}
+              title={namedNow ? `Choose the pieces of ${namedNow.name} on the canvas: it changes for every block that uses it` : 'Choose the pieces this block plays on, on the canvas'}
+              data-where-pick-pieces>{namedNow ? 'Edit pieces…' : 'Pick pieces…'}</button>
           {/if}
           <label class="chk" title="Pieces in a group light together"><input type="checkbox" checked={!!where.groups} onchange={(e) => set({ groups: (e.currentTarget as HTMLInputElement).checked })} /> Groups as one</label>
           {#if naming}

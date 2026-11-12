@@ -159,6 +159,9 @@ export function whereSummary(where: WhereSpec, named: readonly WhereNamedOrder[]
   const extra = m.kind === 'sweep' || m.kind === 'pingpong' || m.kind === 'burst' || m.kind === 'reveal'
     ? ` · ${m.bars} bar${m.bars === 1 ? '' : 's'}`
     : m.kind === 'random' ? ` · every ${m.every}` : '';
-  const order = where.namedOrder ? named.find((o) => o.id === where.namedOrder)?.name ?? WHERE_ORDER_LABELS[where.order] : WHERE_ORDER_LABELS[where.order];
+  const picked = where.slots?.length ? `${where.slots.flat().length} picked pieces` : null;
+  const order = where.namedOrder
+    ? named.find((o) => o.id === where.namedOrder)?.name ?? picked ?? WHERE_ORDER_LABELS[where.order]
+    : picked ?? WHERE_ORDER_LABELS[where.order];
   return `${motion}${extra} · ${order}`;
 }

@@ -23,6 +23,9 @@
   import MasterWarpHandles from './lib/components/MasterWarpHandles.svelte';
   import DomeGizmo from './lib/components/DomeGizmo.svelte';
   import DomeViewControls from './lib/components/DomeViewControls.svelte';
+  import { installLiveEditHooks } from './lib/timeline/liveEdit';
+  import LiveEditBar from './lib/components/LiveEditBar.svelte';
+  import WherePickOverlay from './lib/components/WherePickOverlay.svelte';
   import { domeView } from './lib/stores/domeView';
   import { isPlacedOnDome } from './lib/output/domeMath';
   import Object3DTransformGizmo from './lib/components/Object3DTransformGizmo.svelte';
@@ -6590,6 +6593,15 @@
     history.unsuppress();
   }
 
+  // Live edit's Discard steps back through the undo history.
+  installLiveEditHooks({
+    undo: () => {
+      const before = history.currentStepId();
+      handleUndo();
+      return history.currentStepId() !== before;
+    },
+  });
+
   function handleRedo() {
     if (showInteractiveStudio) return;
     fileMenuOpen = false;
@@ -8127,6 +8139,11 @@
                turns from a drag anywhere. -->
           <DomeViewControls />
         {/if}
+        <!-- Live edit: a red frame round the canvas and a bar saying where
+             edits go, with Update / Discard for held changes. -->
+        <LiveEditBar canvasX={canvasOffsetX} canvasY={canvasOffsetY} canvasWidth={canvasWidth} canvasHeight={canvasHeight} />
+        <!-- A block's ⇄ Where: choosing its pieces on the canvas. -->
+        <WherePickOverlay canvasX={canvasOffsetX} canvasY={canvasOffsetY} canvasWidth={canvasWidth} canvasHeight={canvasHeight} />
         <div class="chase-badges-offset" style="position: absolute; pointer-events: none; left: {canvasOffsetX}px; top: {canvasOffsetY}px;">
           <ChaseOrderBadges containerWidth={canvasWidth} containerHeight={canvasHeight} />
           <WhereStageHighlight containerWidth={canvasWidth} containerHeight={canvasHeight} />
