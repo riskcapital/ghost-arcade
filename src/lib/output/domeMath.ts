@@ -288,3 +288,218 @@ export function insideViewDirection(uv: Vec2, camera: DomeCamera, aspect: number
   const y = (uv.y * 2 - 1) * t;
   return normalize(add(forward, add(scale(right, x), scale(up, y))));
 }
+
+// ─── Projectors around the dome ──────────────────────────────────────────
+//
+// A Screen can be one projector of a dome rig (OutputSlice.domeProjector).
+// The dome is the unit sphere's upper part around the origin, in the same
+// frame as above (z to the zenith, -y the front). A projector sits at a
+// point inside it, aims somewhere and throws a frame `throw` degrees wide;
+// the render core traces each of its pixels to the dome and shows what is
+// there, blended with the other projectors where they overlap
+// (dome_projector_view in heartbeat.wgsl).
+
+export interface DomeProjector {
+  enabled: boolean;
+  /** Where it is mounted: around and up (degrees, as a direction from the
+   *  dome's center) and how far out (0 the center, 1 the dome itself). */
+  mountAzimuth: number;
+  mountElevation: number;
+  mountDistance: number;
+  /** Where its lens points, and its turn about that axis (degrees). */
+  aimAzimuth: number;
+  aimElevation: number;
+  roll: number;
+  /** Horizontal throw angle (degrees). */
+  throw: number;
+  /** Vertical lens shift, in half frame heights (0 centered). */
+  lensShift: number;
+  /** The projector's frame, width over height (its native resolution). */
+  aspect: number;
+}
+
+export const DEFAULT_DOME_PROJECTOR: DomeProjector = {
+  enabled: true,
+  mountAzimuth: 180,
+  mountElevation: 0,
+  mountDistance: 0.85,
+  aimAzimuth: 0,
+  aimElevation: 40,
+  roll: 0,
+  throw: 70,
+  lensShift: 0,
+  aspect: 16 / 9,
+};
+
+/** A projector as the core traces it: its lens position and basis, the
+ *  tangents of half its frame across and up, and its lens shift in those. */
+export interface ProjectorFrustum {
+  position: Vec3;
+  right: Vec3;
+  up: Vec3;
+  forward: Vec3;
+  tanX: number;
+  tanY: number;
+  shiftY: number;
+}
+
+export function projectorFrustum(p: DomeProjector, aspect = p.aspect): ProjectorFrustum {
+  const position = scale(directionOf(p.mountAzimuth, p.mountElevation), Math.max(0, Math.min(0.99, p.mountDistance)));
+  const forward = directionOf(p.aimAzimuth, p.aimElevation);
+  const az = p.aimAzimuth * DEG;
+  // As the Inside view's camera: across is the aim's own east, up follows.
+  const east: Vec3 = [Math.cos(az), Math.sin(az), 0];
+  const up0 = cross(forward, east);
+  const rc = Math.cos(p.roll * DEG);
+  const rs = Math.sin(p.roll * DEG);
+  const right = add(scale(east, rc), scale(up0, rs));
+  const up = sub(scale(up0, rc), scale(east, rs));
+  const tanX = Math.tan(Math.max(1, Math.min(170, p.throw)) * DEG * 0.5);
+  const tanY = tanX / Math.max(aspect, 0.01);
+  return { position, right, up, forward, tanX, tanY, shiftY: p.lensShift * tanY };
+}
+
+/** Where a ray from a point inside the unit sphere leaves it, or null when it never does. */
+export function sphereExit(origin: Vec3, dir: Vec3): Vec3 | null {
+  const b = dot(origin, dir);
+  const c = dot(origin, origin) - 1;
+  const disc = b * b - c;
+  if (disc < 0) return null;
+  const t = -b + Math.sqrt(disc);
+  if (t <= 0) return null;
+  return normalize(add(origin, scale(dir, t)));
+}
+
+/** The dome point a projector pixel lands on (frame UV y-up), before the dome's own edge. */
+export function projectorPixelDirection(f: ProjectorFrustum, uv: Vec2): Vec3 | null {
+  const x = (uv.x * 2 - 1) * f.tanX;
+  const y = (uv.y * 2 - 1) * f.tanY + f.shiftY;
+  return sphereExit(f.position, normalize(add(f.forward, add(scale(f.right, x), scale(f.up, y)))));
+}
+
+/** Where a dome point sits in a projector's frame (UV y-up; inside when both are 0..1), or null behind it. */
+export function projectorFramePoint(f: ProjectorFrustum, dir: Vec3): Vec2 | null {
+  const v = sub(dir, f.position);
+  const z = dot(v, f.forward);
+  if (z <= 1e-4) return null;
+  const x = dot(v, f.right) / z;
+  const y = dot(v, f.up) / z;
+  return { x: (x / f.tanX + 1) * 0.5, y: ((y - f.shiftY) / f.tanY + 1) * 0.5 };
+}
+
+/** The dome points along a projector frame's edge, for drawing its footprint. */
+export function projectorFootprint(f: ProjectorFrustum, steps = 24): (Vec3 | null)[] {
+  const ring: Vec2[] = [];
+  for (let k = 0; k < steps; k++) ring.push({ x: k / steps, y: 0 });
+  for (let k = 0; k < steps; k++) ring.push({ x: 1, y: k / steps });
+  for (let k = 0; k < steps; k++) ring.push({ x: 1 - k / steps, y: 1 });
+  for (let k = 0; k <= steps; k++) ring.push({ x: 0, y: 1 - k / steps });
+  return ring.map((uv) => projectorPixelDirection(f, uv));
+}
+
+/**
+ * Aim a projector at a region of the dome and size its throw to cover it:
+ * aimed at the middle of the region as seen from the mount, as wide as its
+ * widest point needs, with the lens shift that centers it vertically.
+ * `region` are dome points over the region.
+ */
+export function fitProjector(
+  mount: Pick<DomeProjector, 'mountAzimuth' | 'mountElevation' | 'mountDistance'>,
+  region: Vec3[],
+  aspect: number,
+  margin = 1.04,
+): DomeProjector {
+  const position = scale(directionOf(mount.mountAzimuth, mount.mountElevation), mount.mountDistance);
+  let mean: Vec3 = [0, 0, 0];
+  for (const point of region) mean = add(mean, normalize(sub(point, position)));
+  const { azimuth, elevation } = azElOf(normalize(mean));
+  const base: DomeProjector = { ...DEFAULT_DOME_PROJECTOR, ...mount, aimAzimuth: azimuth, aimElevation: elevation, roll: 0, throw: 60, lensShift: 0, aspect };
+  const f = projectorFrustum(base, aspect);
+  let maxX = 0;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const point of region) {
+    const v = sub(point, position);
+    const z = Math.max(dot(v, f.forward), 1e-3);
+    maxX = Math.max(maxX, Math.abs(dot(v, f.right) / z));
+    const y = dot(v, f.up) / z;
+    minY = Math.min(minY, y);
+    maxY = Math.max(maxY, y);
+  }
+  const halfY = (maxY - minY) / 2;
+  const tanX = Math.max(maxX, halfY * aspect) * margin;
+  const tanY = tanX / aspect;
+  return {
+    ...base,
+    throw: Math.min(170, (2 * Math.atan(tanX)) / DEG),
+    lensShift: (maxY + minY) / 2 / tanY,
+  };
+}
+
+/** Dome points over a band of azimuth and elevation (degrees), edges and inside. */
+export function domeRegion(az0: number, az1: number, el0: number, el1: number, n = 8): Vec3[] {
+  const points: Vec3[] = [];
+  for (let i = 0; i <= n; i++) {
+    for (let j = 0; j <= n; j++) {
+      points.push(directionOf(az0 + ((az1 - az0) * i) / n, el0 + ((el1 - el0) * j) / n));
+    }
+  }
+  return points;
+}
+
+/**
+ * A ring of projectors around the dome, each mounted by the rim across
+ * from the part it covers, plus one for the cap when `zenith`. Neighbours
+ * overlap by `overlap` degrees for the blend; `top` is where the ring
+ * stops and the cap starts.
+ */
+export function domeProjectorRing(
+  count: number,
+  zenith: boolean,
+  aspect: number,
+  { overlap = 12, top = zenith ? 60 : 90 }: { overlap?: number; top?: number } = {},
+): DomeProjector[] {
+  const n = Math.max(1, Math.min(8 - (zenith ? 1 : 0), Math.round(count)));
+  const step = 360 / n;
+  const ring = Array.from({ length: n }, (_, i) => {
+    const az = i * step;
+    return fitProjector(
+      { mountAzimuth: az + 180, mountElevation: 0, mountDistance: 0.85 },
+      domeRegion(az - step / 2 - overlap / 2, az + step / 2 + overlap / 2, 0, Math.min(90, top + overlap / 2)),
+      aspect,
+    );
+  });
+  if (!zenith) return ring;
+  // The cap, from low at the back, looking up and forward.
+  const cap = fitProjector(
+    { mountAzimuth: 180, mountElevation: 0, mountDistance: 0.3 },
+    domeRegion(-180, 180, top - overlap / 2, 90, 16),
+    aspect,
+  );
+  return [...ring, cap];
+}
+
+/** The rig as the core reads it: every projector of the dome, in order, at most 8. */
+export function domeRigPayload(projectors: { id: string; frustum: ProjectorFrustum }[], blendWidth: number, blendGamma: number) {
+  return {
+    blendWidth,
+    blendGamma,
+    projectors: projectors.slice(0, 8).map(({ id, frustum: f }) => ({
+      id,
+      frustum: [...f.position, f.tanX, ...f.right, f.tanY, ...f.up, f.shiftY, ...f.forward, 0],
+    })),
+  };
+}
+
+/** A stored projector, with anything missing or broken at its default. */
+export function domeProjectorOf(stored: Partial<DomeProjector> | null | undefined): DomeProjector {
+  const out = { ...DEFAULT_DOME_PROJECTOR };
+  if (!stored || typeof stored !== 'object') return { ...out, enabled: false };
+  for (const key of Object.keys(out) as (keyof DomeProjector)[]) {
+    const value = stored[key];
+    if (key === 'enabled') out.enabled = value === true;
+    else if (typeof value === 'number' && Number.isFinite(value)) (out[key] as number) = value;
+  }
+  out.aspect = Math.max(0.25, Math.min(4, out.aspect));
+  return out;
+}

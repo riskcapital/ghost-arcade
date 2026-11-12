@@ -17,12 +17,14 @@
   import { settings, type OutputSettings } from '../stores/settings';
   import { project, selectedLayer } from '../stores/layers';
   import { recordDiscreteAction } from '../stores/historyHooks';
+  import { screenActions, selectedScreenId } from '../stores/screens';
   import {
     defaultSourceAngle,
     domeLensOf,
     domeSourceAngleOf,
     domeSourceOf,
     placementOf,
+    domeProjectorRing,
     type DomeLens,
     type DomeSource,
   } from '../output/domeMath';
@@ -147,6 +149,28 @@
     recordDiscreteAction();
   }
 
+  // ─── Projectors ─────────────────────────────────────────────────────
+  let projectorScreens = $derived((out.slices ?? []).filter((slice) => slice.domeProjector));
+  let ringCount = $state(4);
+  let ringCap = $state(true);
+  let blendWidth = $derived(out.domeBlendWidth ?? 0.25);
+  let blendGamma = $derived(out.domeBlendGamma ?? 2.2);
+
+  /** Lay a ring of projectors (and a cap) around the dome on Screens:
+   *  the dome's projector Screens first, then new ones. */
+  function setUpProjectors() {
+    const rig = domeProjectorRing(ringCount, ringCap, 16 / 9);
+    const existing = projectorScreens.map((slice) => slice.id);
+    rig.forEach((projector, index) => {
+      const name = ringCap && index === rig.length - 1 ? 'Dome cap' : `Dome ${index + 1}`;
+      const id = existing[index] ?? screenActions.add();
+      if (id) screenActions.update(id, { name, domeProjector: { ...projector, enabled: true } });
+    });
+    // Projector Screens the new rig does not need go back to plain Screens.
+    for (const id of existing.slice(rig.length)) screenActions.update(id, { domeProjector: null });
+    recordDiscreteAction();
+  }
+
   function wrap180(deg: number): number {
     return ((((deg + 180) % 360) + 360) % 360) - 180;
   }
@@ -238,6 +262,54 @@
     {/if}
     {#if $selectedLayer && !$selectedLayer.domePlacement?.enabled && $selectedLayer.type !== 'mask'}
       <button type="button" class="dome-action" onclick={placeSelected}>Place {$selectedLayer.name} on the dome</button>
+    {/if}
+  </div>
+
+  <div class="dome-group">
+    <div class="dome-group-title">Projectors</div>
+    <p class="dome-hint">Several projectors around the dome, each on a Screen of its own. Each one shows the part of the dome it lands on, and they blend where they overlap.</p>
+    <div class="dome-ring">
+      <label class="dome-field" title="Projectors in the ring around the dome">
+        <span>Ring</span>
+        <select value={ringCount} onchange={(e) => (ringCount = Number((e.target as HTMLSelectElement).value))}>
+          {#each [2, 3, 4, 5, 6, 7] as n (n)}
+            <option value={n}>{n} projectors</option>
+          {/each}
+        </select>
+      </label>
+      <label class="dome-check" title="One more projector for the top of the dome">
+        <input type="checkbox" checked={ringCap} onchange={(e) => (ringCap = (e.target as HTMLInputElement).checked)} />
+        <span>And one for the cap</span>
+      </label>
+      <button type="button" class="dome-action" onclick={setUpProjectors}
+        title="Mount each projector by the rim, across from its part of the dome, aimed and sized to cover it">
+        {projectorScreens.length ? 'Lay out the projectors again' : 'Set up the projectors'}
+      </button>
+    </div>
+    {#if projectorScreens.length}
+      <ul class="dome-placed">
+        {#each projectorScreens as slice, index (slice.id)}
+          <li>
+            <button type="button" class:selected={slice.id === $selectedScreenId} onclick={() => selectedScreenId.set(slice.id)}>
+              <span class="dome-placed-name">{index + 1} · {slice.name}</span>
+              <span class="dome-placed-at">{slice.domeProjector?.enabled ? `${Math.round(slice.domeProjector.throw)}° throw` : 'off'}</span>
+            </button>
+          </li>
+        {/each}
+      </ul>
+      <label class="dome-row" title="How far in from its edge a projector's share of the overlap rises to full">
+        <span>Blend</span>
+        <input type="range" min="0.05" max="0.6" step="0.01" value={blendWidth}
+          oninput={(e) => patch({ domeBlendWidth: Number((e.target as HTMLInputElement).value) })} onchange={() => recordDiscreteAction()} />
+        <em>{Math.round(blendWidth * 100)}%</em>
+      </label>
+      <label class="dome-row" title="The projectors' gamma, undone in the overlap so the two shares add up to one">
+        <span>Gamma</span>
+        <input type="range" min="1" max="3" step="0.05" value={blendGamma}
+          oninput={(e) => patch({ domeBlendGamma: Number((e.target as HTMLInputElement).value) })} onchange={() => recordDiscreteAction()} />
+        <em>{blendGamma.toFixed(2)}</em>
+      </label>
+      <p class="dome-hint">Give each Screen its projector's display, then fine-tune its mount and aim in the Screen's Dome projector section. Their footprints show on the dome picture.</p>
     {/if}
   </div>
 {/if}
@@ -388,6 +460,7 @@
     border-color: var(--ga-selection-line, #5278ff);
   }
   .dome-placed-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dome-ring { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; }
   .dome-placed-at {
     flex-shrink: 0;
     color: var(--ga-ink-2, #888);

@@ -102,6 +102,15 @@ struct Uniforms {
   // view): (on, look azimuth, look elevation, tangent of half the vertical
   // field of view), radians.
   dview: vec4<f32>,
+  // This Screen as one projector of a dome rig (dome_projector_view):
+  //   dproj0 = (on, its index in the rig, projectors in the rig, blend width)
+  //   dproj1 = (blend gamma, _, _, _)
+  //   dprojs = per projector, four vec4: (lens position, tangent of half
+  //            the frame across), (right, tangent of half the frame up),
+  //            (up, lens shift as a tangent), (forward, _). Dome frame.
+  dproj0: vec4<f32>,
+  dproj1: vec4<f32>,
+  dprojs: array<vec4<f32>, 32>,
 }
 
 @group(0) @binding(0)
@@ -4345,31 +4354,85 @@ fn dome_inside_view(uv_in: vec2<f32>, aspect: f32, canvas_aspect: f32) -> vec3<f
   let up = cross(forward, right);
   let ndc = uv_in * 2.0 - vec2<f32>(1.0);
   let dir = normalize(forward + right * ndc.x * t * aspect + up * ndc.y * t);
+  // Past the dome's edge: a dim floor, lighter towards the horizon, so the
+  // view keeps its bearings.
+  let floor_shade = vec3<f32>(mix(0.012, 0.05, smoothstep(-0.6, 0.0, dir.z)));
+  let content = dome_content(dir, 2.0 * t / max(u.resolution.y, 1.0), canvas_aspect);
+  return mix(floor_shade, content.rgb, content.a);
+}
+
+/// What the dome shows in a direction from its center (z to the zenith):
+/// the canvas as the dome output wraps it, the layers placed on the dome
+/// and the grid, in `rgb`; in `a`, how much of it is dome (0 past its edge).
+/// `px_angle` is about one pixel of whoever looks, as an angle.
+fn dome_content(dir: vec3<f32>, px_angle: f32, canvas_aspect: f32) -> vec4<f32> {
   let theta = acos(clamp(dir.z, -1.0, 1.0));
   let r = dome_lens_radius(theta, u.dome0.y, u.dome0.z);
   let phi = atan2(dir.y, dir.x);
   let m = vec2<f32>(cos(phi), sin(phi)) * r;
   let truncation = u.dome2.x;
   let on_dome = step(theta, u.dome0.z * 0.5) * step(r, truncation);
-
-  // Past the dome's edge: a dim floor, lighter towards the horizon, so the
-  // view keeps its bearings.
-  let floor_shade = mix(0.012, 0.05, smoothstep(-0.6, 0.0, dir.z));
-  var color = vec3<f32>(floor_shade);
-  let px_angle = 2.0 * t / max(u.resolution.y, 1.0);
   let seen = dome_canvas_seen(dir, m * 0.5 + vec2<f32>(0.5), canvas_aspect, px_angle);
-  var dome_rgb = textureSampleLevel(creative_master, creative_sampler, vec2<f32>(seen.x, 1.0 - seen.y), 0.0).rgb * seen.z;
+  var rgb = textureSampleLevel(creative_master, creative_sampler, vec2<f32>(seen.x, 1.0 - seen.y), 0.0).rgb * seen.z;
   if (u.dlayer.x > 0.5) {
     let placed = textureSampleLevel(dome_layers_tex, creative_sampler, vec2<f32>(m.x * 0.5 + 0.5, 0.5 - m.y * 0.5), 0.0);
-    dome_rgb = dome_rgb * (1.0 - placed.a) + placed.rgb;
+    rgb = rgb * (1.0 - placed.a) + placed.rgb;
   }
   if (u.dome4.y > 0.001) {
     let grid = dome_grid_at(m);
-    dome_rgb = mix(dome_rgb, grid.rgb, grid.a * clamp(u.dome4.y, 0.0, 1.0));
+    rgb = mix(rgb, grid.rgb, grid.a * clamp(u.dome4.y, 0.0, 1.0));
   }
   let fade = smoothstep(truncation, truncation - 0.05, r);
-  color = mix(color, dome_rgb, on_dome * fade);
-  return color;
+  return vec4<f32>(rgb, on_dome * fade);
+}
+
+/// How much a rig projector `k` contributes at dome point `dir`: 0 outside
+/// its frame, rising to 1 a blend width (in half frames) in from its edge.
+fn dome_projector_reach(k: i32, dir: vec3<f32>, width: f32) -> f32 {
+  let base = k * 4;
+  let pos = u.dprojs[base].xyz;
+  let v = dir - pos;
+  let z = dot(v, u.dprojs[base + 3].xyz);
+  if (z <= 0.0001) { return 0.0; }
+  let x = dot(v, u.dprojs[base + 1].xyz) / z / max(u.dprojs[base].w, 0.0001);
+  let y = (dot(v, u.dprojs[base + 2].xyz) / z - u.dprojs[base + 2].w) / max(u.dprojs[base + 1].w, 0.0001);
+  let edge = min(1.0 - abs(x), 1.0 - abs(y));
+  return smoothstep(0.0, max(width, 0.001), edge);
+}
+
+/// This Screen as one projector of a dome rig: each pixel is a ray from
+/// the projector's lens, traced to where it meets the dome; the dome shows
+/// what is there (dome_content), and where projectors overlap each takes
+/// its share of the light, more the further it is from its own edge, with
+/// the blend gamma undone so the shares add up on the dome.
+fn dome_projector_view(uv_in: vec2<f32>, canvas_aspect: f32) -> vec3<f32> {
+  let me = i32(floor(u.dproj0.y + 0.5));
+  let base = me * 4;
+  let pos = u.dprojs[base].xyz;
+  let tan_x = u.dprojs[base].w;
+  let tan_y = u.dprojs[base + 1].w;
+  let ndc = uv_in * 2.0 - vec2<f32>(1.0);
+  let ray = normalize(u.dprojs[base + 3].xyz + u.dprojs[base + 1].xyz * ndc.x * tan_x
+    + u.dprojs[base + 2].xyz * (ndc.y * tan_y + u.dprojs[base + 2].w));
+  // Leaving the dome's sphere from inside it.
+  let b = dot(pos, ray);
+  let c = dot(pos, pos) - 1.0;
+  let disc = b * b - c;
+  if (disc < 0.0) { return vec3<f32>(0.0); }
+  let dir = normalize(pos + ray * (-b + sqrt(disc)));
+  let px_angle = 2.0 * tan_y / max(u.resolution.y, 1.0);
+  let content = dome_content(dir, px_angle, canvas_aspect);
+  let count = i32(floor(u.dproj0.z + 0.5));
+  var total = 0.0;
+  var mine = 0.0;
+  for (var k = 0; k < 8; k = k + 1) {
+    if (k >= count) { break; }
+    let reach = dome_projector_reach(k, dir, u.dproj0.w);
+    total = total + reach;
+    if (k == me) { mine = reach; }
+  }
+  let share = select(1.0, mine / total, total > 0.0001);
+  return content.rgb * content.a * pow(share, 1.0 / max(u.dproj1.x, 0.1));
 }
 
 @fragment
@@ -4384,6 +4447,10 @@ fn fs_output(in: VertexOut) -> @location(0) vec4<f32> {
   if (u.dview.x > 0.5) {
     let inside = dome_inside_view(in.uv, aspect, master_dims.x / max(master_dims.y, 1.0));
     return vec4<f32>(clamp(inside * u.output_gate, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+  }
+  if (u.dproj0.x > 0.5) {
+    let projected = output_color_grade(dome_projector_view(in.uv, master_dims.x / max(master_dims.y, 1.0)));
+    return vec4<f32>(clamp(projected * u.output_gate, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
   }
   var canvas_cover = 1.0;
   if (u.dome0.x > 0.5) {

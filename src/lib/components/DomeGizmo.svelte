@@ -20,6 +20,7 @@
   import { project } from '../stores/layers';
   import { settings } from '../stores/settings';
   import { domeView } from '../stores/domeView';
+  import { selectedScreenId } from '../stores/screens';
   import {
     azElOf,
     directionAt,
@@ -30,6 +31,10 @@
     insideViewDirection,
     insideViewPoint,
     placedCanvasDirection,
+    domeProjectorOf,
+    projectorFootprint,
+    projectorFrustum,
+    projectorPixelDirection,
     placementBasis,
     placementOf,
     pointOf,
@@ -81,6 +86,44 @@
     const uv = { x: px / containerWidth, y: 1 - py / containerHeight };
     if (inside) return insideViewDirection(uv, camera, aspect);
     return directionAt(framePointToDome(uv, aspect, out), lens, fov);
+  }
+
+  // ─── Projector footprints ───────────────────────────────────────────
+  // Where each projector of the dome rig lands, so the rig's coverage and
+  // overlaps can be seen while it is set up.
+  let footprints = $derived(
+    (out.slices ?? [])
+      .filter((slice) => slice.enabled !== false && slice.domeProjector?.enabled)
+      .map((slice, index) => {
+        const frustum = projectorFrustum(domeProjectorOf(slice.domeProjector));
+        // Recompute with the view: dirToPx reads the camera and dome settings.
+        void camera;
+        void out;
+        return {
+          id: slice.id,
+          number: index + 1,
+          path: pathThroughDirections(projectorFootprint(frustum)),
+          label: (() => {
+            const center = projectorPixelDirection(frustum, { x: 0.5, y: 0.5 });
+            return center ? dirToPx(center) : null;
+          })(),
+        };
+      }),
+  );
+
+  function pathThroughDirections(dirs: (Vec3 | null)[]): string {
+    let d = '';
+    let pen = false;
+    for (const dir of dirs) {
+      const px = dir ? dirToPx(dir) : null;
+      if (!px) {
+        pen = false;
+        continue;
+      }
+      d += `${pen ? 'L' : 'M'}${px.x.toFixed(1)},${px.y.toFixed(1)}`;
+      pen = true;
+    }
+    return d;
   }
 
   // ─── Outlines ───────────────────────────────────────────────────────
@@ -239,6 +282,14 @@
     <text class="front-label" x={frontOut.x} y={frontOut.y + 12} text-anchor="middle">Front</text>
   {/if}
 
+  {#each footprints as footprint (footprint.id)}
+    <path class="footprint" class:selected={footprint.id === $selectedScreenId} d={footprint.path} />
+    {#if footprint.label}
+      <text class="footprint-label" class:selected={footprint.id === $selectedScreenId}
+        x={footprint.label.x} y={footprint.label.y} text-anchor="middle" dominant-baseline="middle">{footprint.number}</text>
+    {/if}
+  {/each}
+
   {#each placed as layer (layer.id)}
     {@const place = placementOf(layer)}
     {@const selected = layer.id === selectedId}
@@ -322,6 +373,28 @@
     font-weight: 600;
     letter-spacing: 0.04em;
   }
+  .footprint {
+    fill: none;
+    stroke: rgba(255, 255, 255, 0.5);
+    stroke-width: 1;
+    stroke-dasharray: 6 4;
+    pointer-events: none;
+  }
+  .footprint.selected {
+    stroke: var(--ga-icon, #5278ff);
+    stroke-width: 1.5;
+    stroke-dasharray: none;
+  }
+  .footprint-label {
+    fill: rgba(255, 255, 255, 0.75);
+    font-size: 13px;
+    font-weight: 700;
+    paint-order: stroke;
+    stroke: rgba(0, 0, 0, 0.7);
+    stroke-width: 3px;
+    pointer-events: none;
+  }
+  .footprint-label.selected { fill: var(--ga-icon, #5278ff); }
   .layer-outline {
     fill: rgba(255, 255, 255, 0.001);
     stroke: rgba(255, 255, 255, 0.55);

@@ -1134,7 +1134,7 @@ import { runAsAutomation } from '$lib/stores/historyHooks';
 import { buildScene3DGraph } from '$lib/renderer/scene3dNative';
 import { validateScene3D } from '$lib/scene3d/sceneModel';
 import { buildVideoSynthGraph } from '$lib/videosynth/graph';
-import { domePlacementCommand, nativeDomeStage } from '$lib/output/domeMath';
+import { domePlacementCommand, domeProjectorOf, domeRigPayload, nativeDomeStage, projectorFrustum } from '$lib/output/domeMath';
 import { domeView } from '$lib/stores/domeView';
 import { mirrorMeshCommand, type MirrorMesh } from '$lib/output/mirrorMesh';
 const NATIVE_EFFECT_PASS_IDS = new Set<NativeEffectPassId>(
@@ -8998,9 +8998,19 @@ export class NativeRendererSync {
         // A mirror dome draws the dome picture through its warp mesh; the
         // mesh itself goes once, by its content id (set_mirror_mesh).
         mirrorMeshId: s.mirrorMesh && s.mirrorMeshEnabled !== false ? String(s.mirrorMesh.id) : null,
+        // One projector of the dome rig below: traced onto the dome and blended.
+        domeProjector: !!s.domeProjector?.enabled,
         };
       });
-    const sig = JSON.stringify(slices);
+    // Every projector of the dome, open or not: each blends against all of them.
+    const domeRig = domeRigPayload(
+      (out?.slices ?? [])
+        .filter((s: any) => s?.enabled !== false && s?.domeProjector?.enabled)
+        .map((s: any) => ({ id: String(s.id), frustum: projectorFrustum(domeProjectorOf(s.domeProjector)) })),
+      out?.domeBlendWidth ?? 0.25,
+      out?.domeBlendGamma ?? 2.2,
+    );
+    const sig = JSON.stringify({ slices, domeRig });
     if (sig === this.lastSliceOutputsSig) return;
     this.lastSliceOutputsSig = sig;
     // A mesh grid larger than the compositor's 16x16 cap is dropped by the
@@ -9021,7 +9031,7 @@ export class NativeRendererSync {
       .map((s: any) => (s?.mirrorMesh && s.mirrorMeshEnabled !== false && open.has(s.id) ? s.mirrorMesh as MirrorMesh : null))
       .filter((mesh: MirrorMesh | null): mesh is MirrorMesh => !!mesh && !this.sentMirrorMeshes.has(mesh.id));
     for (const mesh of meshes) this.sentMirrorMeshes.add(mesh.id);
-    void submitNativeRendererCommands([...meshes.map(mirrorMeshCommand), { type: 'set_slice_outputs', slices }])
+    void submitNativeRendererCommands([...meshes.map(mirrorMeshCommand), { type: 'set_slice_outputs', slices, domeRig }])
       .then(result => {
         if (this.lastSliceOutputsSig !== sig || !result) return;
         // A mesh the core turned down is sent again with the next change.

@@ -251,6 +251,8 @@ export type RendererCommand =
   | {
       type: 'set_slice_outputs';
       slices: Array<Record<string, unknown>>;
+      /** Every projector of the dome (output/domeMath.ts domeRigPayload). */
+      domeRig?: { blendWidth: number; blendGamma: number; projectors: Array<{ id: string; frustum: number[] }> };
     }
   | { type: 'set_clip_audio_mix'; sources: string[]; voices: Array<{ id: string; source_id: string; gain: number; pan: number }> }
   | { type: 'set_media_source_phase'; source_id: string; uri: string; seek_generation: number; time_seconds: number; reverse: boolean; clock?: 'link'; beat_position?: number; beats_per_cycle?: number }

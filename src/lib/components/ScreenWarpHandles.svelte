@@ -127,6 +127,11 @@
   // handle clicked last on it.
   let selectedMeshPoint: { sliceId: string; row: number; col: number } | null = $state(null);
   let selectedTangent: MeshTangentSide | null = $state(null);
+  // A dome projector or mirror dome Screen shows the whole dome, not a
+  // slice of the canvas, so it has no outline or handles here.
+  let slicedScreens = $derived($screens.filter((s) =>
+    !s.domeProjector?.enabled && !(s.mirrorMesh && s.mirrorMeshEnabled !== false)));
+
   // Corner picked for the arrow keys on a corner-pinned screen.
   let selectedCorner: { sliceId: string; corner: keyof WarpCorners } | null = $state(null);
 
@@ -693,7 +698,7 @@
 
   <!-- Outlines + mesh grid lines for ALL screens. -->
   <svg class="lines-overlay" width={containerWidth} height={containerHeight}>
-    {#each $screens as s (s.id)}
+    {#each slicedScreens as s (s.id)}
       {@const isSel = $selectedScreenId === s.id}
       {@const stroke = isSel ? '#BB86FC' : 'rgba(187, 134, 252, 0.35)'}
       {@const sw = isSel ? 2 : 1}
@@ -759,7 +764,7 @@
       oncontextmenu={(e) => e.preventDefault()}></div>
   {/if}
 
-  {#each $screens as s (s.id)}
+  {#each slicedScreens as s (s.id)}
     {#if $selectedScreenId === s.id}
       {@const mask = selectedMaskOf(s)}
       {#if mask}
@@ -821,7 +826,7 @@
   {/each}
 
   <!-- Selected-screen handles (HTML divs positioned absolutely). -->
-  {#each $screens as s (s.id)}
+  {#each slicedScreens as s (s.id)}
     {#if $selectedScreenId === s.id && s.enabled}
       {@const mode = s.warpMode ?? 'rect'}
 

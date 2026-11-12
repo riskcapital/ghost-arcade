@@ -1328,6 +1328,12 @@ struct OutputStage {
     /// elevation, tangent of half the vertical field of view), radians.
     /// Only the dome view target sets it (`render_dome_view`).
     dview: [f32; 4],
+    /// This Screen as one projector of a dome rig: (on, its index, rig
+    /// size, blend width), (blend gamma, _, _, _), and the rig's projectors,
+    /// four vec4 each. See `Uniforms.dproj0` in heartbeat.wgsl.
+    dproj0: [f32; 4],
+    dproj1: [f32; 4],
+    dprojs: [[f32; 4]; 32],
     /// Per-edge blend gamma (left, right, top, bottom); slice mode only.
     edge_gamma: [f32; 4],
     /// Projector black-level lift (r, g, b, feather); slice mode only.
@@ -1369,6 +1375,9 @@ impl Default for OutputStage {
             dome4: [std::f32::consts::FRAC_PI_2, 0.0, 0.0, 0.0],
             dlayer: [0.0; 4],
             dview: [0.0; 4],
+            dproj0: [0.0; 4],
+            dproj1: [0.0; 4],
+            dprojs: [[0.0; 4]; 32],
             edge_gamma: [2.2; 4],
             black_level: [0.0; 4],
             projector_calibration: [[0.0; 4]; 5],
@@ -1444,6 +1453,9 @@ struct Uniforms {
     dome4: [f32; 4],
     dlayer: [f32; 4],
     dview: [f32; 4],
+    dproj0: [f32; 4],
+    dproj1: [f32; 4],
+    dprojs: [[f32; 4]; 32],
 }
 
 #[repr(C)]
@@ -2589,6 +2601,43 @@ impl MirrorMesh {
             return Err(format!("mirror mesh {id}: no cell of it is drawn"));
         }
         Ok(Self { id, vertices, indices })
+    }
+}
+
+/// Every projector of a dome rig (`set_slice_outputs`' domeRig): ids in
+/// rig order and their frusta packed as `OutputStage::dprojs`. A Screen
+/// that is one of them blends against all of them, whether or not their
+/// own outputs are open.
+struct DomeRig {
+    ids: Vec<String>,
+    frusta: [[f32; 4]; 32],
+    blend_width: f32,
+    blend_gamma: f32,
+}
+
+impl DomeRig {
+    fn from_params(rig: Option<&Value>) -> Self {
+        let mut out = Self { ids: Vec::new(), frusta: [[0.0; 4]; 32], blend_width: 0.25, blend_gamma: 2.2 };
+        let Some(rig) = rig else { return out };
+        out.blend_width = number_at(rig, &["blendWidth"]).filter(|v| v.is_finite()).unwrap_or(0.25).clamp(0.0, 1.0) as f32;
+        out.blend_gamma = number_at(rig, &["blendGamma"]).filter(|v| v.is_finite()).unwrap_or(2.2).clamp(0.1, 4.0) as f32;
+        for projector in rig.get("projectors").and_then(Value::as_array).into_iter().flatten().take(8) {
+            let Some(id) = string_at(projector, &["id"]) else { continue };
+            let values: Vec<f32> = projector
+                .get("frustum")
+                .and_then(Value::as_array)
+                .map(|values| values.iter().filter_map(Value::as_f64).map(|v| v as f32).collect())
+                .unwrap_or_default();
+            if values.len() < 16 || values.iter().any(|v| !v.is_finite()) {
+                continue;
+            }
+            let slot = out.ids.len() * 4;
+            for row in 0..4 {
+                out.frusta[slot + row] = [values[row * 4], values[row * 4 + 1], values[row * 4 + 2], values[row * 4 + 3]];
+            }
+            out.ids.push(id);
+        }
+        out
     }
 }
 
@@ -7625,6 +7674,9 @@ impl App {
             ],
             dlayer: [0.0; 4],
             dview: [0.0; 4],
+            dproj0: [0.0; 4],
+            dproj1: [0.0; 4],
+            dprojs: [[0.0; 4]; 32],
             edge_gamma: [2.2; 4],
             black_level: [0.0; 4],
             // The main output never carries a per-slice screen warp; that is
@@ -7682,6 +7734,7 @@ impl App {
     /// slice window re-render the whole scene in WebGL and crop it.
     fn apply_slice_outputs(&mut self, params: &Value) -> Result<Value, String> {
         validate_slice_outputs(params)?;
+        let rig = DomeRig::from_params(params.get("domeRig"));
         let mut specs: Vec<SliceOutputSpec> = Vec::new();
         if let Some(entries) = params.get("slices").and_then(Value::as_array) {
             for entry in entries {
@@ -7743,6 +7796,10 @@ impl App {
                     // The renderer sets this per frame (sync_dome_layers).
                     dlayer: [0.0; 4],
                     dview: [0.0; 4],
+                    // Filled from the dome rig below, for a projector Screen.
+                    dproj0: [0.0; 4],
+                    dproj1: [0.0; 4],
+                    dprojs: [[0.0; 4]; 32],
                     // w: Screen alignment aid (7 numbered grid, 8 identify, 9 auto-map stripes);
                     // the main output's test patterns never reach a Screen.
                     dome2: [self.output_stage.dome2[0], blend_gamma as f32, 1.0, match read(&["alignmentAid"], 0.0).round() as i32 { 1 => 7.0, 2 => 8.0, 3 => 9.0, _ => 0.0 }],
@@ -7779,7 +7836,14 @@ impl App {
                 };
                 let projector_view = string_at(entry, &["mapSimProjectorId"])
                     .filter(|projector| !projector.trim().is_empty());
-                let stage = if projector_view.is_some() { projector_view_output_stage(stage) } else { stage };
+                let mut stage = if projector_view.is_some() { projector_view_output_stage(stage) } else { stage };
+                if bool_at(entry, &["domeProjector"]).unwrap_or(false) {
+                    if let Some(index) = rig.ids.iter().position(|rig_id| *rig_id == id) {
+                        stage.dproj0 = [1.0, index as f32, rig.ids.len() as f32, rig.blend_width];
+                        stage.dproj1 = [rig.blend_gamma, 0.0, 0.0, 0.0];
+                        stage.dprojs = rig.frusta;
+                    }
+                }
                 let mirror_mesh_id = string_at(entry, &["mirrorMeshId"]).filter(|id| !id.is_empty());
                 let mirror_mesh = mirror_mesh_id.as_ref().and_then(|id| self.mirror_meshes.get(id).cloned());
                 specs.push(SliceOutputSpec { id, width, height, stage, projector_view, mirror_mesh_id, mirror_mesh });
@@ -21486,6 +21550,9 @@ impl RenderState {
                 dome4: OutputStage::default().dome4,
                 dlayer: [0.0; 4],
                 dview: [0.0; 4],
+                dproj0: [0.0; 4],
+                dproj1: [0.0; 4],
+                dprojs: [[0.0; 4]; 32],
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -23133,7 +23200,8 @@ impl RenderState {
             // So must every Screen of a dome with layers placed on it: they are
             // laid over the dome by the output stage.
             let direct = allow_direct && needs_detail && self.output_flux[0][3] <= 0.0005
-                && self.dome_layer_pass[0] < 0.5 && spec.mirror_mesh.is_none();
+                && self.dome_layer_pass[0] < 0.5 && spec.mirror_mesh.is_none()
+                && spec.stage.dproj0[0] < 0.5;
             if let Some(mesh) = spec.mirror_mesh.as_ref() {
                 self.prepare_mirror_mesh(mesh);
             }
@@ -27051,6 +27119,9 @@ impl RenderState {
             dome4: stage.dome4,
             dlayer: stage.dlayer,
             dview: stage.dview,
+            dproj0: stage.dproj0,
+            dproj1: stage.dproj1,
+            dprojs: stage.dprojs,
             edge_gamma: stage.edge_gamma,
             black_level: stage.black_level,
             projector_calibration: stage.projector_calibration,
@@ -36208,6 +36279,18 @@ mod tests {
             "nodes": nodes.iter().enumerate().map(|(k, v)| if k == 29 { 1.0 } else { *v }).collect::<Vec<_>>() })).unwrap();
         assert_eq!(polar.indices.len(), 18);
         assert!(MirrorMesh::from_command(&json!({ "mesh_id": "x", "cols": 3, "rows": 2, "nodes": [0.0] })).is_err());
+    }
+
+    #[test]
+    fn dome_rig_reads_its_projectors_in_order() {
+        let frustum: Vec<f64> = (0..16).map(|v| v as f64).collect();
+        let rig = DomeRig::from_params(Some(&json!({ "blendWidth": 0.3, "blendGamma": 2.0,
+            "projectors": [{ "id": "a", "frustum": frustum }, { "id": "bad", "frustum": [1.0] }, { "id": "b", "frustum": frustum }] })));
+        assert_eq!(rig.ids, vec!["a", "b"]);
+        assert_eq!(rig.frusta[4], [0.0, 1.0, 2.0, 3.0]);
+        assert_eq!(rig.frusta[7], [12.0, 13.0, 14.0, 15.0]);
+        assert!((rig.blend_width - 0.3).abs() < 1e-6);
+        assert!(DomeRig::from_params(None).ids.is_empty());
     }
 
     #[test]

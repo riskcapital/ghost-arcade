@@ -9,6 +9,7 @@ import { invoke, isDesktopApp } from '$lib/bridge';
 import type { WarpCorners, MeshWarpGrid, Effect, Point2D, BezierPoint } from '../types';
 import { meshGridHasTangents } from '../utils/meshWarp';
 import type { MirrorMesh } from '../output/mirrorMesh';
+import { domeProjectorOf, type DomeProjector } from '../output/domeMath';
 
 // ============================================================================
 // COLOR SCHEME DEFINITIONS
@@ -428,6 +429,10 @@ export interface OutputSlice {
   mirrorMesh?: MirrorMesh | null;
   /** Use the mesh (false keeps it loaded but shows the slice as usual). */
   mirrorMeshEnabled?: boolean;
+  /** One projector of a dome rig: where it is and where it aims inside the
+   *  dome (output/domeMath.ts). The core traces its pixels onto the dome
+   *  and blends it with the rig's other projectors, in place of a slice. */
+  domeProjector?: DomeProjector | null;
 }
 
 /** One polygon mask on a Screen. See OutputSlice.masks for the
@@ -684,6 +689,7 @@ export function migrateOutputSlice(s: Partial<OutputSlice> & { id: string }): Ou
     mapSimProjectorId: typeof s.mapSimProjectorId === 'string' && s.mapSimProjectorId ? s.mapSimProjectorId : null,
     mirrorMesh: isStoredMirrorMesh(s.mirrorMesh) ? s.mirrorMesh : null,
     mirrorMeshEnabled: s.mirrorMeshEnabled !== false,
+    domeProjector: s.domeProjector && typeof s.domeProjector === 'object' ? domeProjectorOf(s.domeProjector) : null,
   };
 }
 
@@ -799,6 +805,11 @@ export interface OutputSettings {
   domePanoSpan?: number;
   /** Draw the dome grid (elevation rings, azimuth spokes, front) on every dome output. */
   domeGrid?: boolean;
+  /** Dome projectors' overlap blend: how far in from a projector's edge
+   *  its share rises to full (in half frames), and the gamma undone so
+   *  the shares add up on the dome. */
+  domeBlendWidth?: number;
+  domeBlendGamma?: number;
   // ─── Global master warp ───────────────────────────────────────────────
   // A single output-side warp applied to the ENTIRE master canvas before
   // it reaches any transport — the main output window (WebGPU shared-
@@ -1045,6 +1056,8 @@ export const OUTPUT_STAGE_KEYS = [
   'domePanoTop',
   'domePanoSpan',
   'domeGrid',
+  'domeBlendWidth',
+  'domeBlendGamma',
   'outputRotation',
   'outputCropX',
   'outputCropY',
@@ -1171,6 +1184,8 @@ function createDefaultSettings(): AppSettings {
       domePanoTop: 90,
       domePanoSpan: 360,
       domeGrid: false,
+      domeBlendWidth: 0.25,
+      domeBlendGamma: 2.2,
       // Global master warp — off + identity by default so existing
       // projects present an un-warped composite exactly as before.
       masterWarp: { enabled: false, mode: 'corners' },

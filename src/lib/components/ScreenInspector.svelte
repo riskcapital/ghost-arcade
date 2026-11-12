@@ -27,6 +27,7 @@
   import { recordDiscreteAction, scheduleHistorySnapshot } from '../stores/historyHooks';
   import { isDesktopApp, getTextureShareLabel } from '$lib/bridge';
   import { MirrorMeshError, parseMirrorMesh } from '../output/mirrorMesh';
+  import { DEFAULT_DOME_PROJECTOR, domeProjectorOf, type DomeProjector } from '../output/domeMath';
   import { settings } from '../stores/settings';
   import { projectionSimScene } from '../projectionSim/store';
 
@@ -101,6 +102,35 @@
     } catch (error) {
       mirrorMeshError = error instanceof MirrorMeshError ? error.message : `Could not read ${file.name}.`;
     }
+  }
+
+  // ─── Dome projector ─────────────────────────────────────────────────
+  let projector = $derived(screen.domeProjector ? domeProjectorOf(screen.domeProjector) : null);
+
+  function setProjector(patch: Partial<DomeProjector>) {
+    update({ domeProjector: { ...(projector ?? DEFAULT_DOME_PROJECTOR), ...patch } });
+  }
+
+  const PROJECTOR_ROWS: { key: keyof DomeProjector; label: string; title: string; min: number; max: number; step: number; unit: string }[] = [
+    { key: 'mountAzimuth', label: 'Mounted at', title: 'Around the dome from the front, where the projector sits', min: -180, max: 180, step: 1, unit: '°' },
+    { key: 'mountElevation', label: 'Mount height', title: 'Up from the spring line of the dome, as seen from its center', min: -45, max: 80, step: 1, unit: '°' },
+    { key: 'mountDistance', label: 'Out from center', title: '0 at the center of the dome, 1 at the dome itself', min: 0, max: 0.98, step: 0.01, unit: '' },
+    { key: 'aimAzimuth', label: 'Aims at', title: 'Around the dome from the front, where the lens points', min: -180, max: 180, step: 1, unit: '°' },
+    { key: 'aimElevation', label: 'Aim up', title: 'Up from the horizon, where the lens points', min: -30, max: 90, step: 1, unit: '°' },
+    { key: 'roll', label: 'Turn', title: 'The projector turned about its lens axis', min: -180, max: 180, step: 1, unit: '°' },
+    { key: 'throw', label: 'Throw', title: 'How wide the lens throws the frame, across', min: 10, max: 160, step: 0.5, unit: '°' },
+    { key: 'lensShift', label: 'Lens shift', title: 'The frame moved up (or down) off the lens axis, in half frames', min: -1.5, max: 1.5, step: 0.01, unit: '' },
+  ];
+
+  const FRAMES = [
+    { label: '16:9', aspect: 16 / 9 },
+    { label: '16:10', aspect: 16 / 10 },
+    { label: '4:3', aspect: 4 / 3 },
+    { label: '1:1', aspect: 1 },
+  ];
+
+  function wrapDeg(value: number): number {
+    return ((((value + 180) % 360) + 360) % 360) - 180;
   }
 
   function removeMirrorMesh() {
@@ -351,6 +381,44 @@
         <option value={0}>0°</option><option value={90}>90°</option><option value={180}>180°</option><option value={270}>270°</option>
       </select>
     </label>
+  </section>
+
+  <!-- Dome projector ───────────────────────────────────────────────
+       This Screen as one projector of a dome rig: where it is mounted
+       inside the dome and where it aims. The core traces its pixels onto
+       the dome and blends it with the rig's other projectors
+       (dome_projector_view), in place of its slice. -->
+  <section class="sec">
+    <h4>Dome projector</h4>
+    <label class="field check-field">
+      <input type="checkbox" checked={!!projector?.enabled}
+        onchange={(e) => { setProjector({ enabled: (e.target as HTMLInputElement).checked }); recordDiscreteAction(); }} />
+      <span>This Screen is a projector of the dome</span>
+    </label>
+    {#if projector?.enabled}
+      {#if !$settings.output.domeEnabled}
+        <p class="hint">Turn on the dome output (Dome output, above) so it has a dome to show.</p>
+      {/if}
+      {#each PROJECTOR_ROWS as row (row.key)}
+        {@const value = row.key === 'mountAzimuth' || row.key === 'aimAzimuth' ? wrapDeg(projector[row.key] as number) : (projector[row.key] as number)}
+        <label class="field projector-row" title={row.title}>
+          <span class="lbl">{row.label}</span>
+          <input type="range" min={row.min} max={row.max} step={row.step} value={value}
+            oninput={(e) => setProjector({ [row.key]: Number((e.target as HTMLInputElement).value) })} />
+          <em>{row.unit ? `${Math.round(value)}${row.unit}` : value.toFixed(2)}</em>
+        </label>
+      {/each}
+      <label class="field">
+        <span class="lbl">Frame</span>
+        <select value={FRAMES.reduce((best, frame) => (Math.abs(frame.aspect - projector.aspect) < Math.abs(best.aspect - projector.aspect) ? frame : best)).label}
+          onchange={(e) => { setProjector({ aspect: FRAMES.find((frame) => frame.label === (e.target as HTMLSelectElement).value)?.aspect ?? 16 / 9 }); recordDiscreteAction(); }}>
+          {#each FRAMES as frame (frame.label)}
+            <option value={frame.label}>{frame.label}</option>
+          {/each}
+        </select>
+      </label>
+      <p class="hint">Its footprint shows on the dome picture. While this is on, the Screen's slice, warp, blend and masks are not used; the rig blends itself (Dome output, Projectors).</p>
+    {/if}
   </section>
 
   <!-- Mirror dome ──────────────────────────────────────────────────
@@ -767,6 +835,20 @@
     color: var(--ga-rec, #ff8080);
   }
   .mesh-error { color: var(--ga-danger, #ff7a7a); }
+  .projector-row {
+    display: grid;
+    grid-template-columns: 92px minmax(0, 1fr) 40px;
+    align-items: center;
+    gap: 6px;
+  }
+  .projector-row input[type='range'] { width: 100%; min-width: 0; accent-color: var(--ga-selection-line, #5278ff); }
+  .projector-row em {
+    color: var(--ga-ink-1, #8f8998);
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
+    font-size: var(--ga-text-meta, 11px);
+    font-style: normal;
+    text-align: right;
+  }
   .hint {
     margin: 4px 0 0 0;
     color: var(--ga-ink-2, #7a7481);
