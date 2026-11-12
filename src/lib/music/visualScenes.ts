@@ -155,7 +155,7 @@ export const VOICE_SHADERS: readonly VoiceShader[] = [
   { file: 'VX-Aperture.fs', name: 'Aperture', family: 'bath', pack: 'form', blurb: 'An iris of light that opens with the pads, trailed by lens ghosts' },
   { file: 'VX-LightRoom.fs', name: 'Light Room', family: 'analog', pack: 'form', blurb: 'A room of glowing planes and frames that rebuilds on each chord' },
   { file: 'VX-ChromePool.fs', name: 'Chrome Pool', family: 'dub', pack: 'form', blurb: 'A pool of liquid chrome that swells and ripples in a soft studio' },
-  { file: 'VX-Prism.fs', name: 'Prism', family: 'bath', pack: 'form', blurb: 'Chord notes as light beams split by a rocking glass prism' },
+  { file: 'VX-Prism.fs', name: 'Pyramid', family: 'bath', pack: 'form', blurb: 'Chord notes as light beams split into spectra by a glass pyramid' },
   { file: 'VX-Harp.fs', name: 'Harp', family: 'bath', pack: 'form', blurb: 'Lit harp strings plucked by each note, ringing and settling' },
 ];
 

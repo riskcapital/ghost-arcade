@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A clear glass prism hanging over a dark floor, slowly rocking, with beams of light crossing the haze to strike it. Each note of the chord is one beam: the note's place in the octave sets the angle it comes in at, so harmony changes where the light lands. Inside the glass every beam bends and splits, and leaves as a fan of spectrum colors that falls across the floor; louder notes burn brighter. With no sound the beams rest dim and the prism turns on its own.",
+    "DESCRIPTION": "A clear glass pyramid hanging over a dark floor, slowly turning, with beams of light crossing the haze to strike it. Each note of the chord is one beam: the note's place in the octave sets the angle it comes in at, so harmony changes where the light lands. Inside the glass every beam bends and splits, and leaves as a fan of spectrum colors that falls across the floor; louder notes burn brighter. With no sound the beams rest dim and the pyramid turns on its own.",
     "PASSES": [
         {
             "TARGET": "beams",
@@ -58,40 +58,41 @@ float hash21(vec2 q) {
     return fract((p3.x + p3.y) * p3.z);
 }
 
-// The prism, set once per pixel in main: center, the three side normals, the long axis,
-// inradius of the triangle and half its length.
+// The pyramid, set once per pixel in main: center, the four side normals, the base normal,
+// and how far the sides and the base sit from the center.
 vec3 gC;
 vec3 gN0;
 vec3 gN1;
 vec3 gN2;
-vec3 gAx;
-float gRin;
-float gHalf;
+vec3 gN3;
+vec3 gNb;
+float gHs;
+float gHb;
 
-// Planes 0-2 are the sides, 3-4 the ends, and 5-13 narrow chamfers on the nine edges, which
-// catch the studio lights as thin glints the way a real polished prism's edges do.
-vec3 planeN(float i) {
+vec3 sideN(float i) {
     if (i < 0.5) return gN0;
     if (i < 1.5) return gN1;
     if (i < 2.5) return gN2;
-    if (i < 3.5) return gAx;
-    if (i < 4.5) return -gAx;
-    if (i < 5.5) return -gN2;
-    if (i < 6.5) return -gN0;
-    if (i < 7.5) return -gN1;
-    if (i < 8.5) return normalize(gN0 + gAx);
-    if (i < 9.5) return normalize(gN1 + gAx);
-    if (i < 10.5) return normalize(gN2 + gAx);
-    if (i < 11.5) return normalize(gN0 - gAx);
-    if (i < 12.5) return normalize(gN1 - gAx);
-    return normalize(gN2 - gAx);
+    return gN3;
+}
+
+// Planes 0-3 are the four sides, 4 the base, 5-8 narrow chamfers on the edges running up to
+// the apex and 9-12 on the base edges, which catch the studio lights as thin glints the way a
+// real polished glass pyramid's edges do.
+vec3 planeN(float i) {
+    if (i < 3.5) return sideN(i);
+    if (i < 4.5) return gNb;
+    if (i < 8.5) return normalize(sideN(i - 5.0) + sideN(mod(i - 4.0, 4.0)));
+    return normalize(sideN(i - 9.0) + gNb);
 }
 
 float planeH(float i) {
-    if (i < 2.5) return gRin;
-    if (i < 4.5) return gHalf;
-    if (i < 7.5) return 2.0 * gRin - BEVEL * 2.0;
-    return (gRin + gHalf) * 0.70710678 - BEVEL;
+    if (i < 3.5) return gHs;
+    if (i < 4.5) return gHb;
+    // A chamfer sits a hair inside the edge it cuts: the edge lies on both planes, so its
+    // distance along their bisector is (hA + hB) / |nA + nB|.
+    if (i < 8.5) return 2.0 * gHs / length(sideN(i - 5.0) + sideN(mod(i - 4.0, 4.0))) - BEVEL;
+    return (gHs + gHb) / length(sideN(i - 9.0) + gNb) - BEVEL;
 }
 
 // Ray against the prism from outside: (t in, t out, plane in, plane out).
@@ -100,7 +101,7 @@ vec4 prismHit(vec3 ro, vec3 rd, float nPl) {
     float tF = 1e9;
     float iN = 0.0;
     float iF = 0.0;
-    for (int k = 0; k < 14; k++) {
+    for (int k = 0; k < 13; k++) {
         float fi = float(k);
         if (fi > nPl - 0.5) break;
         vec3 n = planeN(fi);
@@ -261,27 +262,35 @@ void main() {
 
     vec2 p = (gl_FragCoord.xy - 0.5 * RENDERSIZE.xy) / RENDERSIZE.y;
 
-    // The prism: a triangle of side 1.25 along a long axis, rocking slowly about that axis and
-    // turning a little on the vertical so its end face shows. The latest note tilts it.
-    float tilt = vxGlide > 0.01 ? (vxGlide - 0.5) * 0.5 : 0.0;
+    // The pyramid: a square base 1.3 across and 1.15 tall, apex up, turning slowly on the
+    // vertical and rocking a little so its faces catch the light in turn. The latest note tilts it.
+    float tilt = vxGlide > 0.01 ? (vxGlide - 0.5) * 0.35 : 0.0;
     float rk = clamp(rock, 0.0, 1.0);
-    float roll = (0.08 + 0.2 * rk) * sin(TIME * 0.21 + vxFlow * 0.05) + tilt;
-    float yaw = 0.3 + (0.03 + 0.12 * rk) * sin(TIME * 0.13 + 1.0);
-    gC = vec3(0.0, 1.05 + 0.03 * sin(TIME * 0.4), 0.0);
-    gRin = 1.25 / (2.0 * sqrt(3.0));
-    gHalf = 0.8;
+    float roll = (0.04 + 0.12 * rk) * sin(TIME * 0.21 + vxFlow * 0.05) + tilt;
+    float yaw = 0.42 + (0.05 + 0.3 * rk) * sin(TIME * 0.11 + 1.0) + vxFlow * 0.01;
+    gC = vec3(0.0, 1.0 + 0.03 * sin(TIME * 0.4), 0.0);
+    float bHalf = 0.65;
+    float hUp = 0.8;
+    float hDown = 0.35;
     float cy = cos(yaw);
     float sy = sin(yaw);
-    gAx = vec3(sy, 0.0, cy);
+    vec3 gAx = vec3(sy, 0.0, cy);
     vec3 side = vec3(cy, 0.0, -sy);
     vec3 upv = vec3(0.0, 1.0, 0.0);
-    // Side normals of an apex-up triangle (pointing down, up-right, up-left), rolled.
-    float a0 = -0.5 * PI + roll;
-    float a1 = PI / 6.0 + roll;
-    float a2 = 5.0 * PI / 6.0 + roll;
-    gN0 = side * cos(a0) + upv * sin(a0);
-    gN1 = side * cos(a1) + upv * sin(a1);
-    gN2 = side * cos(a2) + upv * sin(a2);
+    // Rock: the pyramid's own up and across lean about the depth axis.
+    vec3 pUp = upv * cos(roll) - side * sin(roll);
+    vec3 pSide = side * cos(roll) + upv * sin(roll);
+    gNb = -pUp;
+    gHb = hDown;
+    // A side runs from the apex (hUp above the center) to a base edge (bHalf out, hDown below).
+    float slope = length(vec2(hUp + hDown, bHalf));
+    float cn = (hUp + hDown) / slope;
+    float cu = bHalf / slope;
+    gHs = bHalf * hUp / slope;
+    gN0 = pSide * cn + pUp * cu;
+    gN1 = gAx * cn + pUp * cu;
+    gN2 = -pSide * cn + pUp * cu;
+    gN3 = -gAx * cn + pUp * cu;
 
     // Camera: a little above, the prism left of center so the fans have room to fall.
     vec3 ro = vec3(0.35, 1.85, 5.0);
@@ -294,7 +303,7 @@ void main() {
     // What the camera ray meets: glass, then floor.
     // Glass coverage from four sub-pixel rays, so its silhouette is anti-aliased; the glass is
     // shaded along the center ray, or along a covered sub-ray at the very edge.
-    vec4 gh = prismHit(ro, rd, 14.0);
+    vec4 gh = prismHit(ro, rd, 13.0);
     float onGlass = (gh.x < gh.y && gh.x > 0.0) ? 1.0 : 0.0;
     vec3 rdG = rd;
     vec4 ghG = gh;
@@ -308,7 +317,7 @@ void main() {
         if (fs > 2.5) off = vec2(-0.375, 0.125);
         off /= RENDERSIZE.y;
         vec3 rds = normalize(fw * 1.9 + rt * (p.x + off.x) + up * (p.y + off.y));
-        vec4 hs = prismHit(ro, rds, 14.0);
+        vec4 hs = prismHit(ro, rds, 13.0);
         if (hs.x < hs.y && hs.x > 0.0) {
             cov += 0.25;
             if (onGlass < 0.5) { rdG = rds; ghG = hs; onGlass = 0.5; }
@@ -333,12 +342,12 @@ void main() {
         float e = st.y * (1.0 + 0.35 * clamp(vxPulse, 0.0, 1.0));
         vec3 tintc = bi == 0 || bi == 2 ? ink.rgb : accent.rgb;
         vec3 bc = mix(vec3(1.0), tintc / max(max(tintc.r, tintc.g), max(tintc.b, 1e-3)), 0.5) * e;
-        // The beam comes from the upper left, each at its own depth along the prism; its note
-        // sets how steeply it falls, aimed at the prism's middle.
+        // The beam comes from the upper left, each at its own depth; its note sets how steeply
+        // it falls, aimed at the face toward it, low on the pyramid where the glass is widest.
         float zb = (fb - 1.5) * 0.36;
         float elev = mix(-0.47, -0.29, st.x);
         vec3 dir = normalize(side * cos(elev) - upv * sin(elev));
-        vec3 aimP = gC + gN2 * (gRin * 0.92) + gN0 * 0.13 + gAx * zb;
+        vec3 aimP = gC - side * 0.12 + upv * 0.02 + gAx * zb * 0.55;
         vec3 src = aimP - dir * 7.0;
         vec4 bh = prismHit(src, dir, 5.0);
         float through = (bh.x < bh.y && bh.x > 0.0) ? 1.0 : 0.0;
