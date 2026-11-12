@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { computeSpatialOrder, ledSpots, parseLedSpotId, pieceCentre, pieceSpots, type WhereSpot } from './spatialOrder';
 import { slotWeight, windowWeights } from './whereWindow';
-import { countKicks, defaultBeatAt, kickOnsets, randomSlot, whereWindowAt } from './whereMotion';
+import { countKicks, defaultBeatAt, kickOnsets, randomSlot, stepWeights, whereWindowAt } from './whereMotion';
 import { evaluateWhere } from './whereEval';
 import { defaultWhere, normalizeNamedOrders, normalizeWhere, resolveOrderSpec, type WhereSpec } from './whereModel';
 import type { Layer, WLEDController } from '../../types';
@@ -248,5 +248,33 @@ describe('given slots, reveal (Auto show orders and sets)', () => {
     expect(normalizeWhere({ motion: { kind: 'reveal', bars: 8, reverse: true } })!.motion).toEqual({ kind: 'reveal', bars: 8, reverse: true });
     expect(normalizeWhere({ dark: true, span: true })).toMatchObject({ dark: true, span: true });
     expect(normalizeWhere({})).not.toHaveProperty('dark');
+  });
+});
+
+describe('steps motion (a step grid, like the Sequencer)', () => {
+  const spots = [spot('A', 0.1, 0.5), spot('B', 0.5, 0.5), spot('C', 0.9, 0.5)];
+  // defaultBeatAt: 120 BPM, so a quarter-note step is half a second.
+  const spec: WhereSpec = { ...defaultWhere('pieces'), motion: { kind: 'steps', per: 1, steps: [[0], [1, 2], []] } };
+  const lit = (time: number, start = 0) => [...evaluateWhere({ spec, spots, time, start, ctx: { beatAt: defaultBeatAt } }).weights.keys()].sort();
+
+  it('lights the slots each step names, a step every `per` quarter notes, looping', () => {
+    expect(lit(0.1)).toEqual(['A']);
+    expect(lit(0.6)).toEqual(['B', 'C']);
+    expect(lit(1.1)).toEqual([]);
+    expect(lit(1.6)).toEqual(['A']);
+  });
+
+  it('counts steps from the block start', () => {
+    expect(lit(10.1, 10)).toEqual(['A']);
+    expect(lit(10.6, 10)).toEqual(['B', 'C']);
+  });
+
+  it('ignores slots past the order and keeps its steps through a save', () => {
+    expect(stepWeights({ kind: 'steps', per: 1, steps: [[0, 7]] }, 0, 0, 2, { beatAt: defaultBeatAt })).toEqual([1, 0]);
+    expect(stepWeights({ kind: 'sweep', bars: 1 }, 0, 0, 2, { beatAt: defaultBeatAt })).toBeNull();
+    expect(normalizeWhere(JSON.parse(JSON.stringify(spec)))?.motion).toEqual(spec.motion);
+    expect(normalizeWhere({ motion: { kind: 'steps', per: 99, steps: [[2, 2, -1, 'x', 1.5, 0], 'junk'] } })?.motion)
+      .toEqual({ kind: 'steps', per: 16, steps: [[0, 2], []] });
+    expect(normalizeWhere({ motion: { kind: 'steps' } })?.motion).toEqual({ kind: 'steps', per: 1, steps: [[0]] });
   });
 });

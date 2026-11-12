@@ -26,7 +26,7 @@
 export const WHERE_ORDERS = ['left-right', 'right-left', 'top-bottom', 'bottom-top', 'centre-out', 'around', 'hand'] as const;
 export type WhereOrderKind = (typeof WHERE_ORDERS)[number];
 
-export const WHERE_MOTIONS = ['drawn', 'sweep', 'pingpong', 'burst', 'random', 'kick', 'reveal'] as const;
+export const WHERE_MOTIONS = ['drawn', 'sweep', 'pingpong', 'burst', 'random', 'kick', 'reveal', 'steps'] as const;
 export type WhereMotionKind = (typeof WHERE_MOTIONS)[number];
 
 export type WhereMotion =
@@ -45,7 +45,15 @@ export type WhereMotion =
   /** Pieces light one after another along the order over `bars` bars from
    *  the block's start, then all stay lit; `reverse`: all lit at the start,
    *  then they go dark one after another (the last one stays). */
-  | { kind: 'reveal'; bars: number; reverse?: boolean };
+  | { kind: 'reveal'; bars: number; reverse?: boolean }
+  /** A step grid, like the Sequencer: each step lasts `per` quarter notes
+   *  and lights the slots listed for it (indices along the order); the
+   *  steps loop from the block's start. */
+  | { kind: 'steps'; per: number; steps: number[][] };
+
+/** Most steps a pattern has, and most slots a step can name. */
+export const WHERE_MAX_STEPS = 64;
+const WHERE_MAX_SLOT = 255;
 
 /** Which spots take part: the projected pieces, the LED fixtures, or both. */
 export type WhereMembers = 'pieces' | 'leds' | 'both';
@@ -123,6 +131,14 @@ export function normalizeMotion(raw: unknown): WhereMotion {
     case 'random': return { kind: 'random', every: m.every === 'bar' ? 'bar' : 'beat', seed: Math.floor(Math.abs(num(m.seed, 1))) >>> 0 };
     case 'kick': return { kind: 'kick' };
     case 'reveal': return m.reverse === true ? { kind: 'reveal', bars, reverse: true } : { kind: 'reveal', bars };
+    case 'steps': {
+      const per = Math.max(0.125, Math.min(16, num(m.per, 1)));
+      const raw = Array.isArray(m.steps) ? m.steps.slice(0, WHERE_MAX_STEPS) : [];
+      const steps = raw.map((step) => Array.isArray(step)
+        ? [...new Set(step.filter((i): i is number => Number.isInteger(i) && i >= 0 && i <= WHERE_MAX_SLOT))].sort((a, b) => a - b)
+        : []);
+      return { kind: 'steps', per, steps: steps.length ? steps : [[0]] };
+    }
     case 'sweep':
     default:
       return m.reverse === true ? { kind: 'sweep', bars, reverse: true } : { kind: 'sweep', bars };

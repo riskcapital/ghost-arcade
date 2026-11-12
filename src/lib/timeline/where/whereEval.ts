@@ -4,7 +4,7 @@
  */
 import { computeSpatialOrder, type SpatialOrder, type WhereSpot } from './spatialOrder';
 import { resolveOrderSpec, type WhereNamedOrder, type WhereOrderSpec, type WhereSpec } from './whereModel';
-import { whereWindowAt, type WhereLineValues, type WhereMotionContext } from './whereMotion';
+import { stepWeights, whereWindowAt, type WhereLineValues, type WhereMotionContext } from './whereMotion';
 import { slotWeight, type WhereWindow } from './whereWindow';
 
 export interface WhereResult {
@@ -57,8 +57,9 @@ export function evaluateWhere(input: WhereEvalInput): WhereResult {
   const n = order.slots.length;
   const window = whereWindowAt(input.spec, input.time, input.start, n, input.ctx, input.lines);
   const weights = new Map<string, number>();
+  const steps = stepWeights(input.spec.motion, input.time, input.start, n, input.ctx);
   for (let i = 0; i < n; i++) {
-    const w = slotWeight(i, n, window);
+    const w = steps ? steps[i] : slotWeight(i, n, window);
     if (w <= 0) continue;
     for (const id of order.slots[i]) weights.set(id, w);
   }

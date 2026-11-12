@@ -4,12 +4,13 @@
    * (LED fixture) in the block's spatial order, lit where and as much as the
    * where window lights it over time (the band: position ± spread, soft
    * edges fading). Hovering shows which pieces are lit at that moment and
-   * highlights them on the stage preview.
+   * highlights them on the stage preview. Double-click opens the pattern
+   * editor (WherePatternEditor) by the block.
    */
   import { onDestroy } from 'svelte';
   import { showSlice } from './timelineSlices';
   import { project } from '../../../stores/layers';
-  import { whereHighlight, whereOrderView, whereSampler, litSpotsAt, type WhereBlockInfo } from './whereUi';
+  import { openWhereEditor, whereHighlight, whereOrderView, whereSampler, litSpotsAt, type WhereBlockInfo } from './whereUi';
   import { formatPrecise } from './timeFormat';
 
   interface Props {
@@ -92,11 +93,12 @@
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="where-band" bind:clientWidth={width} bind:clientHeight={height} onmousemove={move} onmouseleave={leave} data-where-band>
+<div class="where-band" bind:clientWidth={width} bind:clientHeight={height} onmousemove={move} onmouseleave={leave}
+  ondblclick={(e) => { e.stopPropagation(); openWhereEditor(info.target, e.currentTarget as Element); }} data-where-band>
   <canvas bind:this={canvas}></canvas>
   {#if hover}
     <span class="where-tip" style:left="{hover.x + 10}px" style:top="{hover.y - 24}px" data-where-tip>
-      {formatPrecise(hover.t)}: {hover.labels.length ? hover.labels.join(', ') : 'nothing lit'}
+      {formatPrecise(hover.t)}: {hover.labels.length ? hover.labels.join(', ') : 'nothing lit'}<span class="where-tip-hint"> · double-click to edit</span>
     </span>
   {/if}
 </div>
@@ -109,4 +111,5 @@
     background: rgba(10, 10, 14, 0.94); color: #FFD96B; border: 1px solid rgba(255, 217, 107, 0.5);
     border-radius: 3px; padding: 1px 6px; font-size: 11px;
   }
+  .where-tip-hint { color: var(--ga-ink-2, #999); }
 </style>

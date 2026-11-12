@@ -13,6 +13,9 @@
  *   reveal    pieces light one after another along the order over `bars`
  *             bars, then all stay lit (reverse: they go dark one after
  *             another, the last one stays)
+ *   steps     a step grid (like the Sequencer): which slots each step lights,
+ *             a step every `per` quarter notes, looping from the block's
+ *             start (stepWeights; the window is not used)
  *   drawn     the block's lines (`where:position` / `where:spread` / `where:soft`),
  *             else the resting values
  *
@@ -113,6 +116,22 @@ export function kickOnsets(envelope: Float32Array, frameRate: number, offset = 0
       armed = true;
     }
   }
+  return out;
+}
+
+/** The step a steps motion is on at `t` (looping from the block's start). */
+export function stepIndexAt(motion: Extract<WhereMotion, { kind: 'steps' }>, t: number, start: number, ctx: WhereMotionContext): number {
+  const count = Math.max(1, motion.steps.length);
+  const k = Math.floor(Math.max(0, ctx.beatAt(t) - ctx.beatAt(start)) / motion.per + 1e-9);
+  return k % count;
+}
+
+/** How lit each of `n` slots is at `t`, for a steps motion (else null:
+ *  the window decides). A step lights its slots fully; the rest are dark. */
+export function stepWeights(motion: WhereMotion, t: number, start: number, n: number, ctx: WhereMotionContext): number[] | null {
+  if (motion.kind !== 'steps') return null;
+  const out = new Array<number>(n).fill(0);
+  for (const i of motion.steps[stepIndexAt(motion, t, start, ctx)] ?? []) if (i < n) out[i] = 1;
   return out;
 }
 

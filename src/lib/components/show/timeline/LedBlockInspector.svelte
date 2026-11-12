@@ -97,7 +97,7 @@
     <span>Brightness</span>
     <input type="range" min="0" max="1" step="0.01" value={clip.brightness} oninput={(e) => patch({ brightness: parseFloat((e.currentTarget as HTMLInputElement).value) }, true)} data-led-brightness />
   </label>
-  <WhereEditor where={clip.where} target={{ scope: 'block', id: clip.id }} members={['leds']} onchange={(where) => patch({ where })} />
+  <WhereEditor where={clip.where} target={{ scope: 'block', id: clip.id }} />
   <span class="insp-lines" role="group" aria-label="Control lines for this LED block">
     {#each lineParams as p (p.key)}
       <button type="button" class="insp-line" onclick={() => addLineAtPlayhead({ scope: 'block', id: clip.id }, p.key)}

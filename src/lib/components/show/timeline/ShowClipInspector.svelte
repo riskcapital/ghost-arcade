@@ -206,7 +206,7 @@
       </label>
     {/if}
     {#if !locked}
-      <WhereEditor where={clip.where} target={{ scope: 'block', id: clip.id }} members={['pieces']} onchange={(where) => patch({ where })} />
+      <WhereEditor where={clip.where} target={{ scope: 'block', id: clip.id }} />
     {/if}
     <span class="insp-swatches" role="group" aria-label="Block color">
       {#each SWATCHES as sw (sw)}

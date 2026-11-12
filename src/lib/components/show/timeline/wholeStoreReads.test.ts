@@ -8,7 +8,7 @@ import { join } from 'node:path';
  * redrew its whole canvas (thousands of fills) each frame while a show
  * played. These read slices (timelineSlices.ts) instead.
  */
-const PARTS = ['WhereBand', 'WhereStageHighlight', 'WhereEditor', 'LedRowLanes', 'LedRowHeaders', 'LineRecordControls'];
+const PARTS = ['WhereBand', 'WhereStageHighlight', 'WhereEditor', 'WherePatternEditor', 'LedRowLanes', 'LedRowHeaders', 'LineRecordControls'];
 
 describe('Timeline tray parts do not follow every playhead frame', () => {
   for (const name of PARTS) {

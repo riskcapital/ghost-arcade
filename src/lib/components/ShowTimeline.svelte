@@ -72,6 +72,7 @@
   import SectionInspector from './show/timeline/sections/SectionInspector.svelte';
   import SectionCueList from './show/timeline/sections/SectionCueList.svelte';
   import AutoShowDialog from './show/timeline/autoshow/AutoShowDialog.svelte';
+  import WherePatternEditor from './show/timeline/WherePatternEditor.svelte';
   import { autoShowOpen } from './show/timeline/autoshow/autoShowUi';
   import { goLabel, sectionStatusText } from './show/timeline/sections/sectionGoUi';
   import { makeSection, placeNewSection } from '../timeline/sections/sectionModel';
@@ -2153,6 +2154,7 @@
       <CueListPanel />
     {/if}
     </div>
+    <WherePatternEditor />
     {#if $autoShowOpen}
       <AutoShowDialog onclose={() => autoShowOpen.set(false)} />
     {/if}

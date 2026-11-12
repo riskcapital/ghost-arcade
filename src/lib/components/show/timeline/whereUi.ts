@@ -16,12 +16,27 @@ import { sameTarget } from '../../../timeline/lines/paramRegistry';
 import { stageSpots, motionContext } from '../../../timeline/where/whereRuntime';
 import { cachedOrder, whereMembers } from '../../../timeline/where/whereEval';
 import { resolveOrderSpec, WHERE_KEYS, type WhereMembers, type WhereNamedOrder, type WhereSpec } from '../../../timeline/where/whereModel';
-import { whereWindowAt, type WhereLineValues } from '../../../timeline/where/whereMotion';
+import { stepWeights, whereWindowAt, type WhereLineValues } from '../../../timeline/where/whereMotion';
 import { slotWeight, windowSpan } from '../../../timeline/where/whereWindow';
 import type { WhereSpot } from '../../../timeline/where/spatialOrder';
 
 /** Spots lit on the stage preview while a where line is hovered or edited: id → 0..1. */
 export const whereHighlight = writable<ReadonlyMap<string, number> | null>(null);
+
+/** The block whose pattern editor is open (WherePatternEditor), and the box it opens by. */
+export interface WhereEditRequest {
+  scope: 'block' | 'look';
+  id: string;
+  anchor: { left: number; top: number; bottom: number };
+}
+export const whereEditing = writable<WhereEditRequest | null>(null);
+
+/** Opens a block's pattern editor next to `el` (the block, or a button). */
+export function openWhereEditor(target: ParamTarget, el: Element): void {
+  if (target.scope !== 'block' && target.scope !== 'look') return;
+  const box = (el.closest('.lc-block, .look-block, .led-block, .sfx-block') ?? el).getBoundingClientRect();
+  whereEditing.set({ scope: target.scope, id: target.id, anchor: { left: box.left, top: box.top, bottom: box.bottom } });
+}
 
 export interface WhereBlockInfo {
   /** The block's line target (its where lines live there). */
@@ -104,6 +119,8 @@ export function whereSampler(info: WhereBlockInfo, n: number, tempo: ShowTempoMa
       return { ...span, soft: w.soft, wrap: !!w.wrap };
     },
     weights(t) {
+      const steps = stepWeights(info.where.motion, t, info.start, n, ctx);
+      if (steps) return steps;
       const w = windowAt(t);
       return Array.from({ length: n }, (_, i) => slotWeight(i, n, w));
     },
@@ -144,6 +161,7 @@ export const WHERE_MOTION_LABELS: Record<WhereSpec['motion']['kind'], string> = 
   kick: 'Follow the kick',
   drawn: 'Drawn',
   reveal: 'Reveal',
+  steps: 'Steps',
 };
 
 export const WHERE_MEMBER_LABELS: Record<WhereMembers, string> = {
@@ -158,7 +176,8 @@ export function whereSummary(where: WhereSpec, named: readonly WhereNamedOrder[]
   const motion = WHERE_MOTION_LABELS[m.kind];
   const extra = m.kind === 'sweep' || m.kind === 'pingpong' || m.kind === 'burst' || m.kind === 'reveal'
     ? ` · ${m.bars} bar${m.bars === 1 ? '' : 's'}`
-    : m.kind === 'random' ? ` · every ${m.every}` : '';
+    : m.kind === 'random' ? ` · every ${m.every}`
+    : m.kind === 'steps' ? ` · ${m.steps.length} steps` : '';
   const picked = where.slots?.length ? `${where.slots.flat().length} picked pieces` : null;
   const order = where.namedOrder
     ? named.find((o) => o.id === where.namedOrder)?.name ?? picked ?? WHERE_ORDER_LABELS[where.order]

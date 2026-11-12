@@ -96,7 +96,7 @@
     {#if fx.type === 'beat-pulse'}<span class="insp-hint">Flashes on the Timeline's beats.</span>{/if}
     {#if fx.type === 'audio-rms-intensity'}<span class="insp-hint">Follows the Timeline's song.</span>{/if}
     <div class="chase"><StageFxChaseControls effect={fx} target="mapping" onUpdate={(p) => patchFx(p)} /></div>
-    <WhereEditor where={clip.where} target={{ scope: 'block', id: clip.id }} members={['pieces']} onchange={(where) => patch({ where })} />
+    <WhereEditor where={clip.where} target={{ scope: 'block', id: clip.id }} />
   {:else if effect}
     <label class="insp-field" title="How much of the effect shows (0 = none)">
       <span>Mix</span>
