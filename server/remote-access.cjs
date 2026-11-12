@@ -5,6 +5,7 @@ const HOST_MESSAGES = new Set([
   'sync', 'library_sync', 'vj_clips_sync', 'compositions_sync', 'shader_library_sync',
   'beat_pulse', 'output_freeze_state', 'studio_scene_status', 'studio_capabilities',
   'studio_calibration_status', 'studio_scan_status', 'phone_camera_answer', 'phone_vision_status',
+  'show_state',
 ]);
 const BUNDLED_SHADER = /^(\.?\/)?ISF\/([^/\\?#:]+\/)*[^/\\?#:]+\.fs$/;
 function isLoopback(address) {

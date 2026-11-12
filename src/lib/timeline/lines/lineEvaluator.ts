@@ -11,9 +11,11 @@
 import { applyEasing } from '../../keyframes/easing';
 import { beatAtSeconds } from '../../show/tempoMap';
 import type { KeyframeEasing, ShowTempoMap } from '../../types';
-import { LINE_CURVES, isLiveOnlySource, type BeatShape, type ControlLine, type FollowSource, type LineCurve, type LinePoint } from './lineModel';
+import { DEFAULT_BEZIER, LINE_CURVES, isLiveOnlySource, type BeatShape, type ControlLine, type FollowSource, type LineCurve, type LinePoint } from './lineModel';
 import { sampleFeature, sampleStem, type SongFeatures } from './songFeatures';
 import { unpackColor } from './stageLedParams';
+import { lineSource, registerLineSource } from './lineExtensions';
+import { isScopedTarget, scopedTargetId } from './paramRegistry';
 
 export type OverrideRecord = Record<string, number | boolean>;
 
@@ -94,7 +96,11 @@ export interface LineFrame {
   blocks?: Map<string, OverrideRecord>;
   /** By look block (clip id): applied to that block's effects on the shapes. */
   looks?: Map<string, OverrideRecord>;
-  /** By Timeline sound row (row id): its level and effects. */
+  /** Scopes outside the built-in ones (sound rows, scopes registered at
+   *  runtime): scope → target id ('' for none) → values. */
+  scopes?: Map<string, Map<string, OverrideRecord>>;
+  /** By Timeline sound row (row id): its level and effects. The same map as
+   *  `scopes.get('sound')`, kept for the sound engine and export. */
   sounds?: Map<string, OverrideRecord>;
 }
 
@@ -104,6 +110,35 @@ const CURVE_CODE: Record<LineCurve, number> = Object.fromEntries(LINE_CURVES.map
 const HOLD = CURVE_CODE.hold;
 const LINEAR = CURVE_CODE.linear;
 const SMOOTH = CURVE_CODE.smooth;
+const BEZIER = CURVE_CODE.bezier;
+
+/**
+ * y of a CSS-style cubic bezier at x (0..1): Newton steps on x(s), with a
+ * bisection fallback, so the curve is exact enough for a drawn line.
+ */
+export function bezierAt(x: number, x1: number, y1: number, x2: number, y2: number): number {
+  if (x <= 0) return 0;
+  if (x >= 1) return 1;
+  const bx = (s: number) => 3 * x1 * s * (1 - s) * (1 - s) + 3 * x2 * s * s * (1 - s) + s * s * s;
+  const by = (s: number) => 3 * y1 * s * (1 - s) * (1 - s) + 3 * y2 * s * s * (1 - s) + s * s * s;
+  const dx = (s: number) => 3 * x1 * (1 - s) * (1 - s) + 6 * (x2 - x1) * s * (1 - s) + 3 * (1 - x2) * s * s;
+  let s = x;
+  for (let k = 0; k < 8; k++) {
+    const err = bx(s) - x;
+    if (Math.abs(err) < 1e-7) return by(s);
+    const d = dx(s);
+    if (Math.abs(d) < 1e-6) break;
+    s = Math.max(0, Math.min(1, s - err / d));
+  }
+  let lo = 0;
+  let hi = 1;
+  s = x;
+  for (let k = 0; k < 40; k++) {
+    if (bx(s) < x) lo = s; else hi = s;
+    s = (lo + hi) / 2;
+  }
+  return by(s);
+}
 
 export interface CompiledPoints {
   n: number;
@@ -112,6 +147,8 @@ export interface CompiledPoints {
   /** Monotone tangents (value per second) for 'smooth' segments. */
   m: Float64Array;
   c: Uint8Array;
+  /** Each 'bezier' segment's handles, four per point (x1, y1, x2, y2). */
+  b: Float64Array;
 }
 
 /** Fritsch–Carlson monotone cubic tangents: smooth, never overshoots. */
@@ -153,14 +190,17 @@ export function compilePoints(points: readonly LinePoint[], defaultCurve: LineCu
   const t = new Float64Array(n);
   const v = new Float64Array(n);
   const c = new Uint8Array(n);
+  const b = new Float64Array(n * 4);
   const def = CURVE_CODE[defaultCurve];
   for (let i = 0; i < n; i++) {
     t[i] = points[i].t;
     v[i] = points[i].v;
     const code = points[i].c ? CURVE_CODE[points[i].c!] : undefined;
     c[i] = code ?? def;
+    const h = points[i].b ?? DEFAULT_BEZIER;
+    b.set(h, i * 4);
   }
-  hit = { n, t, v, m: monotoneTangents(t, v, n), c };
+  hit = { n, t, v, m: monotoneTangents(t, v, n), c, b };
   compiledPoints.set(points, hit);
   return hit;
 }
@@ -195,13 +235,19 @@ export function segmentValue(cp: CompiledPoints, i: number, time: number, colour
   const u = (time - t0) / h;
   if (colour) {
     // Colours ease per channel (smooth/easing shape the mix, no overshoot).
-    const k = code === LINEAR || code === SMOOTH ? (code === SMOOTH ? u * u * (3 - 2 * u) : u) : applyEasing(u, LINE_CURVES[code] as KeyframeEasing);
+    const k = code === LINEAR || code === SMOOTH ? (code === SMOOTH ? u * u * (3 - 2 * u) : u)
+      : code === BEZIER ? Math.max(0, Math.min(1, bezierAt(u, cp.b[i * 4], cp.b[i * 4 + 1], cp.b[i * 4 + 2], cp.b[i * 4 + 3])))
+      : applyEasing(u, LINE_CURVES[code] as KeyframeEasing);
     const a = unpackColor(v[i]);
     const b = unpackColor(v[i + 1]);
     const mix = (x: number, y: number) => Math.max(0, Math.min(255, Math.round(x + (y - x) * k)));
     return (mix(a[0], b[0]) << 16) | (mix(a[1], b[1]) << 8) | mix(a[2], b[2]);
   }
   if (code === LINEAR) return v[i] + (v[i + 1] - v[i]) * u;
+  if (code === BEZIER) {
+    const o = i * 4;
+    return v[i] + (v[i + 1] - v[i]) * bezierAt(u, cp.b[o], cp.b[o + 1], cp.b[o + 2], cp.b[o + 3]);
+  }
   if (code === SMOOTH) {
     const u2 = u * u;
     const u3 = u2 * u;
@@ -264,18 +310,42 @@ export function sourceValue(source: FollowSource, time: number, ctx: LineContext
       const hit = songAt(ctx.songs, source.track, time);
       return hit ? sampleStem(hit.song.features, source.stem, hit.at, smooth) : null;
     }
-    case 'beat': {
-      const quarters = ctx.tempo ? beatAtSeconds(ctx.tempo, time) : time * 2;
-      return beatShapeValue(source.shape, quarters / Math.max(1 / 16, source.beats) + (source.phase ?? 0));
-    }
     case 'live-param':
       return ctx.liveInputs === false ? null : ctx.liveParam?.(source.track, source.device, source.param) ?? null;
     case 'live-level':
       return ctx.liveInputs === false ? null : ctx.liveLevel?.(source.track) ?? null;
     case 'midi':
       return ctx.liveInputs === false ? null : ctx.midiCC?.(source.channel, source.cc, source.input) ?? null;
+    default:
+      return registeredSourceValue(source, time, ctx, smooth);
   }
 }
+
+/** A source registered at runtime (the Beat LFO is one): null when it is not registered. */
+function registeredSourceValue(source: FollowSource, time: number, ctx: LineContext, smooth: number): number | null {
+  const def = lineSource(source.kind);
+  if (!def) return null;
+  try {
+    let v: number | null | undefined;
+    if (def.sample) v = def.sample(time, source, ctx, smooth);
+    else if (ctx.liveInputs === false) return null;
+    else v = def.live?.(source, ctx);
+    return typeof v === 'number' && Number.isFinite(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+// The Beat LFO runs on the line source mechanism (lineExtensions.ts): an
+// offline source, the same at every show time however it is reached.
+registerLineSource<Extract<FollowSource, { kind: 'beat' }>>({
+  kind: 'beat',
+  label: 'Beat LFO',
+  sample(time, source, ctx) {
+    const quarters = ctx.tempo ? beatAtSeconds(ctx.tempo, time) : time * 2;
+    return beatShapeValue(source.shape, quarters / Math.max(1 / 16, source.beats) + (source.phase ?? 0));
+  },
+});
 
 // ── Lines ────────────────────────────────────────────────────────────────
 
@@ -380,7 +450,8 @@ export function createLineEvaluator() {
   let lastLines: readonly ControlLine[] | null = null;
   let compiled: CompiledLine[] = [];
   const byLine = new Map<ControlLine, CompiledLine>();
-  const frame: LineFrame = { time: 0, layers: new Map(), stage: null, leds: null, blocks: new Map(), looks: new Map(), sounds: new Map() };
+  const sounds = new Map<string, OverrideRecord>();
+  const frame: LineFrame = { time: 0, layers: new Map(), stage: null, leds: null, blocks: new Map(), looks: new Map(), scopes: new Map([['sound', sounds]]), sounds };
 
   function recompile(lines: readonly ControlLine[]) {
     const keep = new Set<ControlLine>();
@@ -390,16 +461,25 @@ export function createLineEvaluator() {
     frame.blocks = new Map();
     frame.looks = new Map();
     frame.sounds = new Map();
+    frame.scopes = new Map([['sound', frame.sounds]]);
     compiled = [];
     for (const line of lines) {
       if (line.enabled === false) continue;
-      if (!line.points.length && !line.follow) continue;
+      if (!line.points?.length && !line.follow) continue;
       let out: OverrideRecord;
-      if (line.target.scope === 'layer' || line.target.scope === 'block' || line.target.scope === 'look' || line.target.scope === 'sound') {
-        const map = line.target.scope === 'layer' ? frame.layers : line.target.scope === 'block' ? frame.blocks! : line.target.scope === 'sound' ? frame.sounds! : frame.looks!;
-        out = map.get(line.target.id) ?? {};
-        map.set(line.target.id, out);
-      } else if (line.target.scope === 'stage') {
+      const target = line.target;
+      if (isScopedTarget(target)) {
+        // Sound rows and scopes registered at runtime (lineExtensions.ts).
+        let byId = frame.scopes.get(target.scope);
+        if (!byId) frame.scopes.set(target.scope, (byId = new Map()));
+        const id = scopedTargetId(target);
+        out = byId.get(id) ?? {};
+        byId.set(id, out);
+      } else if (target.scope === 'layer' || target.scope === 'block' || target.scope === 'look') {
+        const map = target.scope === 'layer' ? frame.layers : target.scope === 'block' ? frame.blocks! : frame.looks!;
+        out = map.get(target.id) ?? {};
+        map.set(target.id, out);
+      } else if (target.scope === 'stage') {
         out = frame.stage ??= {};
       } else {
         out = frame.leds ??= {};
@@ -448,7 +528,21 @@ function copyRecords(map: Map<string, OverrideRecord> | undefined): Map<string, 
   return out;
 }
 
+function copyScopes(scopes: Map<string, Map<string, OverrideRecord>> | undefined): Map<string, Map<string, OverrideRecord>> {
+  const out = new Map<string, Map<string, OverrideRecord>>();
+  if (scopes) {
+    for (const [scope, byId] of scopes) {
+      const copy = copyRecords(byId);
+      if (copy.size) out.set(scope, copy);
+    }
+  }
+  return out;
+}
+
 export function snapshotFrame(frame: LineFrame): LineFrame {
+  const scopes = copyScopes(frame.scopes ?? (frame.sounds ? new Map([['sound', frame.sounds]]) : undefined));
+  let sounds = scopes.get('sound');
+  if (!sounds) scopes.set('sound', (sounds = new Map()));
   return {
     time: frame.time,
     layers: copyRecords(frame.layers),
@@ -456,13 +550,28 @@ export function snapshotFrame(frame: LineFrame): LineFrame {
     leds: frame.leds && Object.keys(frame.leds).length ? { ...frame.leds } : null,
     blocks: copyRecords(frame.blocks),
     looks: copyRecords(frame.looks),
-    sounds: copyRecords(frame.sounds),
+    scopes,
+    sounds,
   };
+}
+
+function scopesEmpty(frame: LineFrame): boolean {
+  if (frame.scopes) {
+    for (const byId of frame.scopes.values()) if (byId.size) return false;
+    return true;
+  }
+  return !frame.sounds?.size;
 }
 
 /** No values at all. */
 export function frameIsEmpty(frame: LineFrame | null): boolean {
-  return !frame || (!frame.layers.size && !frame.stage && !frame.leds && !frame.blocks?.size && !frame.looks?.size && !frame.sounds?.size);
+  return !frame || (!frame.layers.size && !frame.stage && !frame.leds && !frame.blocks?.size && !frame.looks?.size && scopesEmpty(frame));
+}
+
+/** A scope's values in a frame (sound rows, scopes registered at runtime). */
+export function frameScopeValues(frame: LineFrame | null, scope: string): Map<string, OverrideRecord> | undefined {
+  if (!frame) return undefined;
+  return frame.scopes?.get(scope) ?? (scope === 'sound' ? frame.sounds : undefined);
 }
 
 /** Same values to the precision they take effect (32-bit float). */
@@ -486,7 +595,16 @@ export function sameFrameValues(a: LineFrame | null, b: LineFrame | null): boole
     if (x) for (const [id, rec] of x) if (!same(rec, y?.get(id))) return false;
     return true;
   };
-  return sameMap(a.layers, b.layers) && sameMap(a.blocks, b.blocks) && sameMap(a.looks, b.looks) && sameMap(a.sounds, b.sounds) && same(a.stage, b.stage) && same(a.leds, b.leds);
+  if (!(sameMap(a.layers, b.layers) && sameMap(a.blocks, b.blocks) && sameMap(a.looks, b.looks) && same(a.stage, b.stage) && same(a.leds, b.leds))) return false;
+  return sameScopes(a, b, sameMap);
+}
+
+function sameScopes(a: LineFrame, b: LineFrame, sameMap: (x: Map<string, OverrideRecord> | undefined, y: Map<string, OverrideRecord> | undefined) => boolean): boolean {
+  const names = new Set<string>(['sound']);
+  for (const k of a.scopes?.keys() ?? []) names.add(k);
+  for (const k of b.scopes?.keys() ?? []) names.add(k);
+  for (const scope of names) if (!sameMap(frameScopeValues(a, scope), frameScopeValues(b, scope))) return false;
+  return true;
 }
 
 /**

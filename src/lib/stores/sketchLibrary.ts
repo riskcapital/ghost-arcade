@@ -8,6 +8,7 @@
  * launch, under the same ids, so layers and clips that use them still find
  * their tray item.
  */
+import { writable } from 'svelte/store';
 import type { JSAnimationSource } from '../types';
 
 export interface StoredSketch {
@@ -99,4 +100,15 @@ export async function removeSketch(id: string): Promise<void> {
   } catch (err) {
     console.warn('[SketchLibrary] could not remove a sketch:', err);
   }
+}
+
+/**
+ * Changes made to the library from outside the media tray (Find latest
+ * bringing in or taking down community sketches), so an open tray can show
+ * them straight away. `seq` counts up with every change.
+ */
+export const sketchLibraryChanges = writable<{ seq: number; put: StoredSketch[]; removed: string[] }>({ seq: 0, put: [], removed: [] });
+
+export function announceSketchChanges(change: { put: StoredSketch[]; removed: string[] }): void {
+  sketchLibraryChanges.update((prev) => ({ seq: prev.seq + 1, ...change }));
 }

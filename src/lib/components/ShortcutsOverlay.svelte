@@ -67,18 +67,32 @@
         <div class="shortcut-section">
           <h3>Show timeline</h3>
           <div class="shortcut-row"><kbd>Space</kbd><span>Play / pause (show tray open)</span></div>
-          <div class="shortcut-row"><kbd>S</kbd> / <kbd>{mod}</kbd>+<kbd>K</kbd><span>Split clips at the playhead</span></div>
+          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>K</kbd><span>Split clips at the playhead</span></div>
+          <div class="shortcut-row"><kbd>C</kbd> / <kbd>V</kbd><span>Razor (click a clip to cut it there) / select</span></div>
+          <div class="shortcut-row"><kbd>Shift</kbd>+<kbd>B</kbd><span>Ripple: drag an edge and later clips on the row move with it</span></div>
+          <div class="shortcut-row"><kbd>N</kbd><span>Roll: drag the cut between two touching clips</span></div>
+          <div class="shortcut-row"><kbd>Y</kbd><span>Slip: drag a clip to play a different part of its media</span></div>
+          <div class="shortcut-row"><kbd>J</kbd> <kbd>K</kbd> <kbd>L</kbd><span>Play backwards (again: faster), stop, play</span></div>
+          <div class="shortcut-row"><kbd>I</kbd> / <kbd>O</kbd><span>In / out point; with Loop on, play loops between them</span></div>
+          <div class="shortcut-row"><kbd>Shift</kbd>+<kbd>I</kbd> / <kbd>O</kbd><span>Go to the in / out point</span></div>
+          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>Shift</kbd>+<kbd>X</kbd><span>Clear the in and out points</span></div>
+          <div class="shortcut-row"><kbd>↑</kbd> / <kbd>↓</kbd><span>Previous / next edit point</span></div>
+          <div class="shortcut-row"><kbd>←</kbd> / <kbd>→</kbd><span>One frame back / on (nothing selected)</span></div>
+          <div class="shortcut-row"><kbd>Q</kbd> / <kbd>W</kbd><span>Trim the clip's start / end to the playhead</span></div>
+          <div class="shortcut-row"><kbd>=</kbd> <kbd>-</kbd> <kbd>\</kbd><span>Zoom in, out, to fit</span></div>
+          <div class="shortcut-row"><kbd>U</kbd><span>Show / hide the row's lines</span></div>
           <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>D</kbd><span>Duplicate the selected clips</span></div>
+          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>G</kbd> / <kbd>{mod}</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd><span>Group the selected clips (they move and copy as one) / ungroup</span></div>
           <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>C</kbd> <kbd>X</kbd> <kbd>V</kbd><span>Copy, cut, paste at the playhead</span></div>
           <div class="shortcut-row"><kbd>Delete</kbd><span>Delete the selected clips or keys</span></div>
           <div class="shortcut-row"><kbd>Shift</kbd>+<kbd>Delete</kbd><span>Delete and close the gap</span></div>
           <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>A</kbd><span>Select every clip</span></div>
           <div class="shortcut-row"><kbd>←</kbd><kbd>→</kbd><span>Nudge the selection one grid step</span></div>
           <div class="shortcut-row"><kbd>Shift</kbd>+<kbd>←</kbd><kbd>→</kbd><span>Nudge the selection one bar</span></div>
-          <div class="shortcut-row"><kbd>N</kbd><span>Snap on / off</span></div>
+          <div class="shortcut-row"><kbd>S</kbd><span>Snap on / off</span></div>
           <div class="shortcut-row"><kbd>M</kbd><span>Marker at the playhead</span></div>
           <div class="shortcut-row"><kbd>Home</kbd> / <kbd>End</kbd><span>Go to the start / end</span></div>
-          <div class="shortcut-row"><kbd>L</kbd><span>Take the focused track over live, or hand it back</span></div>
+          <div class="shortcut-row"><kbd>Shift</kbd>+<kbd>L</kbd><span>Take the focused track over live, or hand it back</span></div>
           <div class="shortcut-row"><kbd>R</kbd> / <kbd>Shift</kbd>+<kbd>R</kbd><span>Return every taken-over track to the timeline / instantly</span></div>
           <div class="shortcut-row"><kbd>Esc</kbd><span>Clear the selection</span></div>
           <div class="shortcut-row"><kbd>{mod}</kbd><span>Hold while dragging a clip or key to move it without snapping</span></div>

@@ -41,6 +41,7 @@
   import { createLayer, VJ_MIX_SOURCE_INDEX, type Layer, type Effect, type MappingCompositionState } from '../types';
   import * as THREE from 'three';
   import { createISFShader, updateISFShader, setISFInputValue, setISFInputTexture, type ISFShaderInstance } from '../isf/renderer';
+  import { getMusicTimeOffset, hasMusicTime } from '../audio/musicMotionEngine';
   import { LinesRenderer } from '../lines/renderer';
   import { DrawingRenderer } from '../drawing/renderer';
   import type { SVGLayerRenderer } from '../svg/renderer';
@@ -6031,6 +6032,14 @@
       const rtW = renderTarget.width;
       const rtH = renderTarget.height;
       updateISFShader(shaderInstance, rtW, rtH, undefined, audioState);
+      // Music motion: this shader's time runs on the music's flow clock.
+      if (hasMusicTime(layer.source.id) && shaderInstance.uniforms.TIME) {
+        const _t = shaderInstance.uniforms.TIME.value as number;
+        const _music = Math.max(0, _t + getMusicTimeOffset(layer.source.id));
+        // Made for Music motion: TIME stays, mmFlow carries the music clock (every frame drawn).
+        if (shaderInstance.uniforms.mmFlow) shaderInstance.uniforms.mmFlow.value = _music;
+        else shaderInstance.uniforms.TIME.value = _music;
+      }
 
       // ── Phase integration for time-multiplier params with active keyframes ──
       // After updateISFShader set TIME from performance.now(), override it with
@@ -8175,6 +8184,10 @@
   function handleSplatPointerDown(e: PointerEvent) { updateSplatPointerFromEvent(e, true); }
   function handleSplatPointerUp(e: PointerEvent) { updateSplatPointerFromEvent(e, false); }
 
+  // Back-off for the native preview when it cannot attach (see scheduleNativePreviewWindowSync).
+  let nativePreviewRetryMs = 0;
+  let nativePreviewRetryTimer: ReturnType<typeof setTimeout> | null = null;
+
   function nativePreviewEmbeddedRect(): {
     x: number;
     y: number;
@@ -8307,10 +8320,18 @@
         if (nativeEmbeddedPresenterAttached && status?.geometryMatches === true) {
           nativePreviewLastSignature = signature;
           nativePreviewLastVerifiedAt = performance.now();
+          nativePreviewRetryMs = 0;
         } else {
           nativePreviewLastSignature = '';
           nativePreviewLastVerifiedAt = 0;
-          scheduleNativePreviewWindowSync('geometry-retry');
+          // Try again, backing off: retrying every frame forced a layout per frame
+          // for as long as the preview could not attach.
+          nativePreviewRetryMs = Math.min(2000, nativePreviewRetryMs ? nativePreviewRetryMs * 2 : 50);
+          if (nativePreviewRetryTimer) clearTimeout(nativePreviewRetryTimer);
+          nativePreviewRetryTimer = setTimeout(() => {
+            nativePreviewRetryTimer = null;
+            scheduleNativePreviewWindowSync('geometry-retry');
+          }, nativePreviewRetryMs);
         }
       } catch (err) {
         nativeEmbeddedPresenterAttached = false;

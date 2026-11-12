@@ -6,6 +6,7 @@
   import { abletonBridge, LIVE_PHRASE_PROTOCOL } from '../../../../ableton/abletonBridge';
   import { showToast } from '../../../../stores/errorToast';
   import { locatorMessage, sectionsFromLive, sendSectionsToLive } from '../../../../timeline/phrases/liveArrangementRuntime';
+  import { keepInWindow } from '../trackLayout';
 
   let open = $state(false);
   let btn: HTMLButtonElement | undefined = $state();
@@ -63,7 +64,7 @@
 >Live</button>
 
 {#if open}
-  <div class="slm" use:toBody style="left: {pos.x}px; top: {pos.y}px" role="menu" data-sections-live-menu>
+  <div class="slm" use:toBody use:keepInWindow={pos} style="left: {pos.x}px; top: {pos.y}px" role="menu" data-sections-live-menu data-help-disabled>
     {#if !bridge.connected}
       <p class="slm-note">Live is not connected: open the Ableton panel (VJ mode → Ableton) and turn the connection on.</p>
     {/if}

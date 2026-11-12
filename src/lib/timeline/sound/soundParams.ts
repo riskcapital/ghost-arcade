@@ -12,6 +12,7 @@ import { macroFxDef } from '../../music/macroFx';
 import type { ParamEntry } from '../lines/paramRegistry';
 import type { OverrideRecord } from '../lines/lineEvaluator';
 import type { SoundRow } from './soundModel';
+import type { ParamScopeDef } from '../lines/lineExtensions';
 
 export const SOUND_ROW_GROUP = 'Sound row';
 
@@ -43,6 +44,29 @@ export function readSoundRowParam(row: SoundRow, key: string): number | undefine
     return row.fx.find((f) => f.id === fxId)?.params[param]?.value;
   }
   return undefined;
+}
+
+/**
+ * The sound rows as a line scope (lineExtensions.ts): the Timeline registers
+ * it with its own rows (timelineLines.ts). `rows: 'own'`: each sound row
+ * draws its lines and has its own ⌇+.
+ */
+export function soundLineScope(rows: () => readonly SoundRow[]): ParamScopeDef {
+  const row = (id: string | undefined) => (id ? rows().find((r) => r.id === id) ?? null : null);
+  return {
+    scope: 'sound',
+    label: 'Sound rows',
+    rows: 'own',
+    targets: () => rows().map((r) => ({ id: r.id, label: r.name })),
+    params: (id) => {
+      const r = row(id);
+      return r ? soundRowParams(r) : [];
+    },
+    read: (id, key) => {
+      const r = row(id);
+      return r ? readSoundRowParam(r, key) : undefined;
+    },
+  };
 }
 
 /** Split an fx key: [fxId, param] or null. */

@@ -4,7 +4,7 @@
  * hands it back to the timeline.
  *
  * Session only. Nothing here is saved, and nothing is an undo step: every
- * edit runs through `runAsLiveControl`, and the state lives in its own store,
+ * edit runs through `runAsAutomation`, and the state lives in its own store,
  * never in the project or the show arrangement. The timeline underneath is
  * untouched; a takeover is a layer drawn above the surface in the scene (see
  * takeoverScene.ts), so handing back is just removing that layer.
@@ -35,7 +35,7 @@
 import { get, writable, type Readable } from 'svelte/store';
 import type { BlendMode, Effect, ShowClipMedia, ShowTempoMap } from '../../types';
 import { barBeatAt, secondsAtBar } from '../tempoMap';
-import { runAsLiveControl } from '../../stores/historyHooks';
+import { runAsAutomation } from '../../stores/historyHooks';
 
 // ─── Types ───────────────────────────────────────────────────────────────
 
@@ -123,7 +123,7 @@ export interface TakeoverState {
   markerPolicy: TakeoverMarkerPolicy;
   /** How a pad or a mapped note takes over: latch, or only while held. */
   padMode: TakeoverPadMode;
-  /** The source the L key and a bare LIVE click use. */
+  /** The source Shift+L and a bare LIVE click use. */
   lastSource: TakeoverSource;
   /** Cue actions held back by markerPolicy 'hold' until the hand-back. */
   deferredCount: number;
@@ -532,7 +532,7 @@ export interface LiveTakeoverStore extends Readable<TakeoverState> {
 export function createLiveTakeover(initialDeps: Partial<TakeoverDeps> = {}): LiveTakeoverStore {
   let deps: TakeoverDeps = { ...inertDeps, ...initialDeps };
   const store = writable<TakeoverState>(createTakeoverState());
-  const set = (next: TakeoverState) => runAsLiveControl(() => store.set(next));
+  const set = (next: TakeoverState) => runAsAutomation(() => store.set(next));
   const cur = () => get(store);
 
   function evaluate(nowMs: number): TakeoverEvaluation {

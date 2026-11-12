@@ -15,12 +15,17 @@ export interface ShortcutLabels {
   delete: string;
   /** Ripple delete: ⇧⌫ / Shift+Del. */
   rippleDelete: string;
+  /** Split at the playhead: ⌘K / Ctrl+K. */
+  split: string;
+  /** Group / ungroup blocks: ⌘G, ⇧⌘G / Ctrl+G, Ctrl+Shift+G. */
+  group: string;
+  ungroup: string;
 }
 
 export function shortcutLabels(mac = onMac()): ShortcutLabels {
   return mac
-    ? { duplicate: '⌘D', delete: '⌫', rippleDelete: '⇧⌫' }
-    : { duplicate: 'Ctrl+D', delete: 'Del', rippleDelete: 'Shift+Del' };
+    ? { duplicate: '⌘D', delete: '⌫', rippleDelete: '⇧⌫', split: '⌘K', group: '⌘G', ungroup: '⇧⌘G' }
+    : { duplicate: 'Ctrl+D', delete: 'Del', rippleDelete: 'Shift+Del', split: 'Ctrl+K', group: 'Ctrl+G', ungroup: 'Ctrl+Shift+G' };
 }
 
 /**

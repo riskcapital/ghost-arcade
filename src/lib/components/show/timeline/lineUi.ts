@@ -15,7 +15,9 @@ import type { ShowLayerTrack } from '../../../types';
 import type { ControlLine, LineCurve, LinePoint } from '../../../timeline/lines/lineModel';
 import { pointsValueAt } from '../../../timeline/lines/lineEvaluator';
 import { rowLineTarget } from '../../../timeline/lines/laneConversion';
-import { sameTarget, type ParamEntry, type ParamTarget } from '../../../timeline/lines/paramRegistry';
+import { isScopedTarget, sameTarget, scopedTargetId, type ParamEntry, type ParamTarget } from '../../../timeline/lines/paramRegistry';
+import { isStageScope, lineSource, lineSources } from '../../../timeline/lines/lineExtensions';
+import { frameScopeValues } from '../../../timeline/lines/lineEvaluator';
 import { showSlice } from './timelineSlices';
 
 export const LINE_OVERLAY_HEIGHT = 56;
@@ -42,9 +44,9 @@ export function linesForLooks(lines: readonly ControlLine[]): ControlLine[] {
   return lines.filter((l) => l.target.scope === 'look');
 }
 
-/** The Stage row's lines: Stage FX, LED controllers, and the blocks on its Screen FX / Effects rows. */
+/** The Stage row's lines: Stage FX, LED controllers, the blocks on its Screen FX / Effects rows, and scopes registered at runtime (lineExtensions.ts). */
 export function linesForStage(lines: readonly ControlLine[], stageClipIds: ReadonlySet<string> = new Set()): ControlLine[] {
-  return lines.filter((l) => l.target.scope === 'stage' || l.target.scope === 'led' || (l.target.scope === 'block' && stageClipIds.has(l.target.id)));
+  return lines.filter((l) => l.target.scope === 'stage' || l.target.scope === 'led' || (l.target.scope === 'block' && stageClipIds.has(l.target.id)) || isStageScope(l.target.scope));
 }
 
 /** Lines of blocks on the LED rows. */
@@ -402,11 +404,11 @@ export const linePenTool = writable(false);
 export function frameValue(frame: import('../../../timeline/lines/lineEvaluator').LineFrame | null, line: Pick<ControlLine, 'target' | 'key'>): number | boolean | undefined {
   if (!frame) return undefined;
   const t = line.target;
+  if (isScopedTarget(t)) return frameScopeValues(frame, t.scope)?.get(scopedTargetId(t))?.[line.key];
   const rec = t.scope === 'layer' ? frame.layers.get(t.id)
     : t.scope === 'block' ? frame.blocks?.get(t.id)
       : t.scope === 'look' ? frame.looks?.get(t.id)
-        : t.scope === 'sound' ? frame.sounds?.get(t.id)
-          : t.scope === 'stage' ? frame.stage : frame.leds;
+        : t.scope === 'stage' ? frame.stage : frame.leds;
   return rec?.[line.key];
 }
 
@@ -431,10 +433,45 @@ export const FOLLOW_CHOICES: ReadonlyArray<{ id: string; label: string; source: 
   { id: 'midi', label: 'MIDI CC', source: { kind: 'midi', cc: 1, channel: -1 } },
 ];
 
+type FollowChoice = (typeof FOLLOW_CHOICES)[number];
+
+/** Choice ids of registered sources: `<kind>`, or `<kind>#<choice id>` for a source with choices. */
+const EXT_CHOICE_SEP = '#';
+
+/**
+ * The "follows" menu: the built-in sources, then every source registered
+ * at runtime (lineExtensions.ts) that the built-in list does not already
+ * have, one entry per choice it offers.
+ */
+export function followChoices(): FollowChoice[] {
+  const out: FollowChoice[] = [...FOLLOW_CHOICES];
+  const builtIn = new Set<string | undefined>(FOLLOW_CHOICES.map((c) => c.source?.kind));
+  for (const def of lineSources()) {
+    if (builtIn.has(def.kind)) continue;
+    let choices: ReturnType<NonNullable<typeof def.choices>> | null = null;
+    try { choices = def.choices ? def.choices() : null; } catch { choices = []; }
+    if (!choices) {
+      out.push({ id: def.kind, label: def.label, source: { kind: def.kind } as import('../../../timeline/lines/lineModel').FollowSource });
+      continue;
+    }
+    for (const c of choices) {
+      out.push({ id: `${def.kind}${EXT_CHOICE_SEP}${c.id}`, label: c.label, source: { ...(c.source ?? {}), kind: def.kind } as import('../../../timeline/lines/lineModel').FollowSource });
+    }
+  }
+  return out;
+}
+
 export function followChoiceId(source: import('../../../timeline/lines/lineModel').FollowSource | null | undefined): string {
   if (!source) return 'none';
   if (source.kind === 'audio') return `audio:${source.feature}`;
   if (source.kind === 'stem') return `stem:${source.stem}`;
+  const def = lineSource(source.kind);
+  if (def?.choices && !FOLLOW_CHOICES.some((c) => c.source?.kind === source.kind)) {
+    // The registered choice whose settings this source carries.
+    const match = followChoices().find((c) => c.source?.kind === source.kind
+      && Object.entries(c.source).every(([k, v]) => JSON.stringify((source as Record<string, unknown>)[k]) === JSON.stringify(v)));
+    if (match) return match.id;
+  }
   return source.kind;
 }
 
@@ -443,5 +480,6 @@ export function followLabel(source: import('../../../timeline/lines/lineModel').
   if (!source) return 'follows';
   if (source.kind === 'midi') return `CC ${source.cc}`;
   if (source.kind === 'beat') return `LFO ${source.beats / 4} bar`;
-  return FOLLOW_CHOICES.find((c) => c.id === followChoiceId(source))?.label ?? 'follows';
+  const id = followChoiceId(source);
+  return FOLLOW_CHOICES.find((c) => c.id === id)?.label ?? followChoices().find((c) => c.id === id)?.label ?? lineSource(source.kind)?.label ?? 'follows';
 }

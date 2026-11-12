@@ -82,6 +82,7 @@
   import { STRIPE_BLACK, STRIPE_CELLS } from './lib/mobile/studio/structuredLightCodes';
   import {tick as studioTick} from 'svelte';
   import {defaultInteractive,validateScene as validateInteractiveScene,type InteractiveScene,type Interaction} from './lib/mobile/studio/interactive';
+  import {setLivePointer} from './lib/interactive/interactiveLive';
   import {mergeInteractiveEdit,editableEffects,interactiveEditSignature} from './lib/mobile/studio/interactiveEffects';
   import {PhoneSessions,PHONE_SCENE_MAX_BYTES,phoneSenderId,sanitizePhoneInputs,type PhoneSceneState} from './lib/mobile/studio/phoneSessions';
   import {pickEditorClipRow,pickEditorClipSlot,pickPhoneClipSlot,isPhoneInteractiveClip} from './lib/mobile/studio/studioTargets';
@@ -193,6 +194,8 @@
     if(!studioEditorClip&&editSignature!==studioOwnSignature)studioUnrecordedEdit=true;
     studioSeenScene=studioCurrentSource()?.interactiveScene;studioOwnSignature=editSignature;
   }
+  /** The editor's pointer straight to the layer, every frame (VJ clips use the scene path). */
+  function studioPointer(inputs:Interaction[]){if(showInteractiveStudio&&!studioEditorClip&&studioEditorLayer)setLivePointer(studioEditorLayer,inputs);}
   function closeInteractiveStudio(){
     if(!showInteractiveStudio)return;
     studioEditor?.flush();showInteractiveStudio=false;recordDiscreteAction();studioUnrecordedEdit=false;
@@ -416,6 +419,7 @@
   import { compositionTransition } from './lib/stores/compositionTransition';
   import { layerSequencer } from './lib/stores/layerSequencer';
   import { NATIVE_ENGINE_ONLY, settings, outputFrozen } from './lib/stores/settings';
+  import { showState } from './lib/show/showState';
   import { liveOutput, LIVE_OUTPUT_FULLSCREEN_EVENT, LIVE_OUTPUT_WINDOW_EVENT, LIVE_OUTPUT_DISPLAY_MENU_EVENT } from './lib/stores/liveOutput';
   import { screenSetups } from './lib/stores/screenSetups';
   import { mcpStore } from './lib/mcp/mcpStore';
@@ -465,6 +469,7 @@
   import { initLicense, destroyLicense } from './lib/stores/license';
   import { startUpdateChecker, stopUpdateChecker } from './lib/stores/updateChecker';
   import { startAutoEngine, stopAutoEngine } from './lib/audio/autoEngine';
+  import { startMusicMotionEngine, stopMusicMotionEngine } from './lib/audio/musicMotionEngine';
   import { linesStore, linesDrawingModeForTool } from './lib/stores/lines';
   import { startInterfaceScale } from './lib/stores/interfaceScale';
   import { startTranslation } from './lib/i18n';
@@ -2161,6 +2166,8 @@
     // mode switching, layer reorder, and project save/load because
     // the state lives on the layer, not in a side map.
     startAutoEngine();
+    // Music motion: shaders whose time and main params follow the music.
+    startMusicMotionEngine();
 
     // Start preloading shaders in background (non-blocking — don't wait for completion)
     preloadShaderLibrary().catch(() => {});
@@ -2498,7 +2505,8 @@
       }
 
       // B key toggles blackout (not in inputs)
-      if ((e.key === 'b' || e.key === 'B') && !inInput && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      // Shift+B is the Timeline's Ripple tool: Blackout is B alone.
+      if ((e.key === 'b' || e.key === 'B') && !inInput && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
         settings.update(s => ({ ...s, output: { ...s.output, blackout: !s.output.blackout } }));
         e.preventDefault();
         return;
@@ -2832,6 +2840,7 @@
       destroyLicense();
       stopUpdateChecker();
       stopAutoEngine();
+      stopMusicMotionEngine();
     };
   });
 
@@ -5334,6 +5343,21 @@
   }
   $: if (phoneLinked) syncOutputFreeze($outputFrozen);
 
+  // The show as it is (read-only: section, GO, takeover, install health),
+  // for a phone remote. Only while a phone is connected; it changes at most
+  // 10 times a second and not at all while the show is paused.
+  let stopShowStateToPhone: (() => void) | null = null;
+  function linkShowStateToPhone(linked: boolean) {
+    if (linked && !stopShowStateToPhone) {
+      stopShowStateToPhone = showState.subscribe((state) => sendToPhone({ type: 'show_state', state }));
+    } else if (!linked && stopShowStateToPhone) {
+      stopShowStateToPhone();
+      stopShowStateToPhone = null;
+    }
+  }
+  $: linkShowStateToPhone(phoneLinked);
+  onDestroy(() => linkShowStateToPhone(false));
+
   // Sync the MediaTray's canonical shader list to mobile. This is the
   // EXACT same list the desktop user picks from (manifest catalog +
   // user-added + AI generated + cloud-synced), with the same thumbnails
@@ -6508,13 +6532,15 @@
 
   /** Restore a snapshot into every store it spans. */
   function applyHistorySnapshot(snapshot: HistorySnapshot) {
-    project.set(snapshot.project);
-    // The multi-selection may still name a layer the step removed.
-    project.setSelectedLayerIds(get(selectedLayerIds));
-    // beginHistoryRestore() stops importAll() from recording the state it is
-    // restoring as a fresh undo entry (which would poison the redo stack).
+    // beginHistoryRestore() first: the project's own subscribers (live record,
+    // Follow edits) must see the restore as a restore, not as a person's edit,
+    // and importAll() must not record the state it is restoring as a fresh
+    // undo entry (which would poison the redo stack).
     beginHistoryRestore();
     try {
+      project.set(snapshot.project);
+      // The multi-selection may still name a layer the step removed.
+      project.setSelectedLayerIds(get(selectedLayerIds));
       keyframeTimeline.importAll(Array.isArray(snapshot.keyframes) ? snapshot.keyframes as any : []);
       // Only what this step changed goes back into the output stage.
       const outputPatch = outputHistoryPatch(snapshot.output, snapshot.leavingOutput);
@@ -9023,7 +9049,7 @@
              would restore the scene it was opened with and publish that over
              every edit made since. -->
         <div class="studio-page" style:display={studioPage==='interactive'?'contents':'none'}>
-          {#key studioEditorRevision}<InteractiveStudio bind:this={studioEditor} aspect={canvasAspect} visible={studioPage==='interactive'} initialPaused={studioEditorPaused} nativeOutput nativeFrame={studioNativeFrame} initialActive={studioEditorActive} initialScene={studioEditorScene} onscene={editStudioScene} captureScene={captureStudioScene} onrestore={restoreStudioAnimation} onparam={studioParamRecord} onkeyframe={studioAddKeyframe} ontimeline={studioToggleTimeline} mappingSurfaces={studioMappingSurfaces($project.layers,studioEditorLayer)} onclose={closeInteractiveStudio}><KeyframeTimeline slot="timeline" embedded targetId={studioTimelineId}/></InteractiveStudio>{/key}
+          {#key studioEditorRevision}<InteractiveStudio bind:this={studioEditor} aspect={canvasAspect} visible={studioPage==='interactive'} initialPaused={studioEditorPaused} nativeOutput nativeFrame={studioNativeFrame} initialActive={studioEditorActive} initialScene={studioEditorScene} onscene={editStudioScene} onpointer={studioPointer} captureScene={captureStudioScene} onrestore={restoreStudioAnimation} onparam={studioParamRecord} onkeyframe={studioAddKeyframe} ontimeline={studioToggleTimeline} mappingSurfaces={studioMappingSurfaces($project.layers,studioEditorLayer)} onclose={closeInteractiveStudio}><KeyframeTimeline slot="timeline" embedded targetId={studioTimelineId}/></InteractiveStudio>{/key}
         </div>
         {#if studioPage==='calibration'}<DesktopCalibrationImport incoming={pendingPhoneCalibration}/>{/if}
       </section></div>

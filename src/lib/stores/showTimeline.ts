@@ -104,11 +104,14 @@ import {
 } from '../audio/showAudioImport';
 import { ShowTransportClock, readAudioClock, type AudioClockContext } from '../show/showTransportClock';
 import { showToast } from './errorToast';
+import { localPathFromUrl } from '../vj/clipFiles';
 import {
   placeOnLane,
   maxDurationAt,
   type Placeable,
   SHOW_MIN_TRACK_CLIP_SECONDS,
+  clearRange,
+  sortClips,
   deleteClips,
   duplicateClips,
   insertClip,
@@ -118,6 +121,9 @@ import {
   moveClipsAcrossTracks,
   pasteClips,
   rippleDelete,
+  rippleTrim,
+  rollEdit,
+  slipClip,
   shiftLaneKeys,
   splitClip,
   trimClip,
@@ -277,7 +283,27 @@ export interface ShowTimelineState {
   sound: SoundDoc;
   /** Sections (Timeline): named spans with an end action (hold, vamp, jump, live). */
   sections: TimelineSection[];
+  /** In and out points (I / O): with Loop on, play loops between them. Null: none. */
+  workArea: ShowWorkArea | null;
 }
+
+/** In and out points of a document, seconds. */
+export interface ShowWorkArea {
+  start: number;
+  end: number;
+}
+
+/** A saved work area, or null when it is missing or makes no span. */
+export function normalizeWorkArea(value: unknown): ShowWorkArea | null {
+  const v = value as { start?: unknown; end?: unknown } | null | undefined;
+  const start = Number(v?.start);
+  const end = Number(v?.end);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end - start < SHOW_MIN_WORK_AREA) return null;
+  return { start, end };
+}
+
+/** The shortest span between in and out points, seconds. */
+export const SHOW_MIN_WORK_AREA = 0.05;
 
 /**
  * What a show that does not loop does at its end:
@@ -322,6 +348,7 @@ function createInitialState(): ShowTimelineState {
     whereOrders: [],
     sound: EMPTY_SOUND_DOC,
     sections: [],
+    workArea: null,
   };
 }
 
@@ -329,6 +356,27 @@ function createInitialState(): ShowTimelineState {
 export function fitShowZoom(duration: number, width: number): number {
   if (!(duration > 0) || !(width > 0)) return SHOW_DEFAULT_ZOOM;
   return Math.max(SHOW_MIN_ZOOM, Math.min(SHOW_MAX_ZOOM, width / duration));
+}
+
+// ─── Recording run ───────────────────────────────────────────────────────
+// While recording is armed on the Timeline, play starts on an empty Timeline
+// and the playhead runs on past the end, the way a recorder rolls: what is
+// recorded out there is what makes the Timeline longer. The record arm lives
+// with the lines (timelineLines.ts), which registers it here.
+let recordArmed: () => boolean = () => false;
+/** A record run has been rolling (so a disarm past the end stops there). */
+let recordRunRolling = false;
+/** Where the Timeline reads whether recording is armed. */
+export function setShowRecordArm(armed: (() => boolean) | null): void {
+  recordArmed = armed ?? (() => false);
+}
+function recordRun(s: Pick<ShowTimelineState, 'doc'>): boolean {
+  return s.doc === 'timeline' && !externalClock && recordArmed();
+}
+
+/** The span Loop plays: the in and out points when there are some. */
+function loopArea(s: Pick<ShowTimelineState, 'loop' | 'workArea'>): ShowWorkArea | null {
+  return s.loop && s.workArea ? s.workArea : null;
 }
 
 // ─── Pure arrangement maths (exported for tests) ─────────────────────────
@@ -879,7 +927,7 @@ function publishTrackFrame(s: ShowTimelineState, evalTime: number, force = false
 function republishTracks(): void {
   const s = get(store);
   const dur = s.duration;
-  const evalTime = !s.loop && dur > 0 && s.currentTime >= dur ? Math.max(0, dur - 1e-6) : s.currentTime;
+  const evalTime = !recordRun(s) && !s.loop && dur > 0 && s.currentTime >= dur ? Math.max(0, dur - 1e-6) : s.currentTime;
   publishTrackFrame(s, evalTime, true);
 }
 
@@ -1457,9 +1505,13 @@ function landPhrase(over: number, oldAt: number, next: number | null): void {
 function applyTime(time: number, bumpSeek: boolean): void {
   const s = get(store);
   const dur = s.duration;
+  const recording = recordRun(s);
 
   let t = Number.isFinite(time) ? Math.max(0, time) : 0;
-  if (dur <= 0) {
+  if (recording) {
+    // Recording runs on past the end (and on an empty Timeline): what is
+    // recorded there makes the Timeline longer.
+  } else if (dur <= 0) {
     t = 0;
   } else if (s.loop) {
     t = ((t % dur) + dur) % dur;
@@ -1470,7 +1522,9 @@ function applyTime(time: number, bumpSeek: boolean): void {
   // Parking exactly on the end of a non-looping show would leave every clip
   // "not active" (half-open intervals) and drop the picture. Evaluate a hair
   // inside instead.
-  const evalTime = !s.loop && dur > 0 && t >= dur ? Math.max(0, dur - 1e-6) : t;
+  // A record run past the end evaluates where the playhead is: what is recorded
+  // there lands at that time, not piled on the old end.
+  const evalTime = !recording && !s.loop && dur > 0 && t >= dur ? Math.max(0, dur - 1e-6) : t;
   const next = findActiveShowClip(s.presetClips, evalTime);
   const nextId = next ? next.id : null;
   const changed = nextId !== s.activeClipId;
@@ -1541,13 +1595,42 @@ function tick(now: number): void {
     forgetSections();
   }
 
+  // Loop with in and out points: back to the in point at the out point.
+  const area = loopArea(s);
+  if (area && s.currentTime < area.end && next >= area.end && !externalClock) {
+    forgetSections();
+    const wrapped = area.start + ((next - area.end) % (area.end - area.start));
+    transportClock.shift(wrapped - next);
+    lastLoopWrap = { generation: seekGeneration + 1, wrap: { fromGeneration: seekGeneration, shift: next - wrapped } };
+    applyTime(wrapped, true);
+    ticker.request();
+    return;
+  }
+
   const dur = s.duration;
-  if (dur > 0 && next >= dur) {
+  const recording = recordRun(s);
+  if (recording) recordRunRolling = true;
+  // Disarmed during a record run that was past the end (or on an empty
+  // Timeline): the run is over and the playhead stays where it got to. Only a
+  // record run ends this way; a show that simply reaches its end runs its end
+  // action below.
+  if (!recording && recordRunRolling && (dur <= 0 || s.currentTime > dur + 1e-6)) {
+    recordRunRolling = false;
+    store.update((x) => ({ ...x, isPlaying: false }));
+    transportClock.reset();
+    republishTracks();
+    return;
+  }
+  if (!recording) recordRunRolling = false;
+  // Recording rolls on past the end even with Loop on: a take is not cut
+  // short by the end of what is there yet (in and out points still loop).
+  if (dur > 0 && next >= dur && !recording) {
     if (s.loop) {
       // A new pass of the show: the last pass's vamps, jump counts and
       // free-running offsets are done with.
       forgetSections();
-      const wrapped = ((next % dur) + dur) % dur;
+      // With in and out points, a loop goes back to the in point.
+      const wrapped = area ? area.start : ((next % dur) + dur) % dur;
       // Keep the clock anchor: only the show time moves back by whole passes.
       transportClock.shift(wrapped - next);
       lastLoopWrap = { generation: seekGeneration + 1, wrap: { fromGeneration: seekGeneration, shift: next - wrapped } };
@@ -1709,7 +1792,37 @@ export function normalizeLayerClip(raw: unknown): ShowLayerClip | null {
   const where = normalizeWhere(c.where);
   if (where) clip.where = { ...where, members: 'pieces' };
   if (c.holdStops === true) clip.holdStops = true;
+  if (typeof c.groupId === 'string' && c.groupId) clip.groupId = c.groupId;
   return clip;
+}
+
+/** A block written by live record or a cut-in: the media from its start, looping to fill the span. */
+function recordedBlock(media: ShowClipMedia, start: number, end: number): ShowLayerClip {
+  return { id: generateUUID(), startTime: start, duration: end - start, media, inPoint: 0, endBehaviour: 'loop', fadeIn: 0, fadeOut: 0 };
+}
+
+/** `ids` with every block that shares a group with one of them. */
+export function withGroupMembers(tracks: readonly ShowLayerTrack[], ids: readonly string[]): string[] {
+  const set = new Set(ids);
+  const groups = new Set<string>();
+  for (const t of tracks) for (const c of t.clips) if (set.has(c.id) && c.groupId) groups.add(c.groupId);
+  if (!groups.size) return [...ids];
+  for (const t of tracks) for (const c of t.clips) if (c.groupId && groups.has(c.groupId)) set.add(c.id);
+  return [...set];
+}
+
+/** Copies just made (`created`) get groups of their own: a copied group is a new group, not part of the old one. */
+function regroupCopies(tracks: ShowLayerTrack[], created: readonly string[]): ShowLayerTrack[] {
+  const ids = new Set(created);
+  const fresh = new Map<string, string>();
+  return tracks.map((t) => {
+    if (!t.clips.some((c) => ids.has(c.id) && c.groupId)) return t;
+    return { ...t, clips: t.clips.map((c) => {
+      if (!ids.has(c.id) || !c.groupId) return c;
+      if (!fresh.has(c.groupId)) fresh.set(c.groupId, generateUUID());
+      return { ...c, groupId: fresh.get(c.groupId)! };
+    }) };
+  });
 }
 
 function normalizeLane(raw: unknown): KeyframeTrack | null {
@@ -1883,6 +1996,8 @@ export interface ShowArrangement {
   whereOrders?: WhereNamedOrder[];
   sound?: SoundDoc;
   sections?: TimelineSection[];
+  /** In and out points (missing in older steps: left as they are). */
+  workArea?: ShowWorkArea | null;
   /** The Timeline document's arrangement; the fields above are the Show's.
    *  Missing in steps made before the two were separate: such a step is
    *  the active document's. */
@@ -1922,6 +2037,8 @@ export interface ShowTimelineSnapshot {
   sections?: TimelineSection[];
   /** Version 9: the Timeline's Screen FX and Effects rows. */
   stageClips?: TimelineStageClip[];
+  /** In and out points (missing: none). */
+  workArea?: ShowWorkArea;
   /** Version 4: the Timeline document (the fields above are the Show's). */
   timeline?: ShowTimelineSnapshot;
   /** Version 4: the document that was active when saved. */
@@ -1940,7 +2057,7 @@ export interface ShowTimelineSnapshot {
 /** What a document owns. Everything else in the state is the engine's. */
 const DOC_KEYS = [
   'audioTracks', 'presetClips', 'layerTracks', 'lookClips', 'lines', 'lineBindings', 'ledClips', 'stageClips', 'whereOrders', 'sound', 'sections', 'cameraLane', 'tempo', 'loop', 'endAction',
-  'rulerMode', 'snapGrid', 'zoom', 'snapEnabled', 'currentTime', 'selection', 'selectedClipIds', 'soloTrackId',
+  'rulerMode', 'snapGrid', 'zoom', 'snapEnabled', 'currentTime', 'selection', 'selectedClipIds', 'soloTrackId', 'workArea',
 ] as const;
 export type ShowDocFields = Pick<ShowTimelineState, (typeof DOC_KEYS)[number]>;
 
@@ -2008,6 +2125,7 @@ function arrangementOf(d: ShowDocFields): ShowArrangement {
     // So is the sound doc.
     sound: d.sound,
     sections: d.sections,
+    workArea: d.workArea,
   };
 }
 
@@ -2067,6 +2185,7 @@ function docWithArrangement(base: ShowDocFields, a: Partial<ShowArrangement>): S
     whereOrders,
     sound,
     sections,
+    workArea: a.workArea !== undefined ? normalizeWorkArea(a.workArea) : base.workArea,
     soloTrackId: base.soloTrackId && layerTracks.some((t) => t.id === base.soloTrackId) ? base.soloTrackId : null,
     selectedClipIds: base.selectedClipIds.filter((id) => clipIds.has(id)),
     selection: base.selection && ids.has(base.selection.id) ? base.selection : null,
@@ -2077,7 +2196,20 @@ function docWithArrangement(base: ShowDocFields, a: Partial<ShowArrangement>): S
 /** Clip media for a file: the runtime URL is blanked when the AssetRef can
  *  rebuild it (same contract as the audio tracks). */
 function serializeClipMedia(media: ShowClipMedia): ShowClipMedia {
-  return { ...media, src: refIsDurable(media._assetRef) ? '' : media.src };
+  // A sketch carries its code: its src is only a marker, never a file.
+  if (media.kind === 'sketch') return { ...media, src: 'js-animation' };
+  // A shader block carries its code too; a session-only URL it came from
+  // (a dropped .fs) is not a file the project can find again.
+  if (media.kind === 'shader' && media.shaderCode && !media._assetRef && /^(blob|data):/i.test(media.src)) return { ...media, src: '' };
+  // A file block without a reference (recorded from an older layer, or from
+  // before references existed) gets one from its own path, so the project can
+  // save it beside itself and find it after the folder moves.
+  let ref = media._assetRef;
+  if (!ref && (media.kind === 'video' || media.kind === 'image')) {
+    const path = localPathFromUrl(media.src);
+    if (path) ref = { kind: 'local-file', originalPath: path } as AssetRef;
+  }
+  return { ...media, ...(ref ? { _assetRef: ref } : {}), src: refIsDurable(ref) ? '' : media.src };
 }
 
 function serializeTemplate(template: Layer | null): Layer | null {
@@ -2090,6 +2222,7 @@ function serializeTemplate(template: Layer | null): Layer | null {
 /** A document as it is saved (see `serialize`). */
 function docSnapshot(d: ShowDocFields): Omit<ShowTimelineSnapshot, 'version' | 'isOpen'> {
   return {
+    ...(d.workArea ? { workArea: { ...d.workArea } } : {}),
     loop: d.loop,
     endAction: d.endAction,
     zoom: d.zoom,
@@ -2153,6 +2286,9 @@ function hydrateDoc(p: Record<string, unknown>, projectDir?: string): ShowDocFie
       const clips = track.clips.map((clip) => {
         const media = clip.media;
         if (media.kind === 'layer' || media.kind === 'shader' && !media._assetRef) return clip;
+        // A sketch plays from its code; its src is a marker (older files may
+        // have saved a resolved path there, which then read as a missing file).
+        if (media.kind === 'sketch') return media.src === 'js-animation' ? clip : { ...clip, media: { ...media, src: 'js-animation' } };
         const resolved = resolveAssetRefForRuntime(media._assetRef, projectDir, media.src) ?? '';
         if (!resolved && media._assetRef) {
           recordMissingAsset({ assetRef: media._assetRef, fieldHint: 'show timeline clip' });
@@ -2188,6 +2324,7 @@ function hydrateDoc(p: Record<string, unknown>, projectDir?: string): ShowDocFie
     whereOrders: normalizeNamedOrders(p.whereOrders),
     sound: normalizeSoundDoc(p.sound),
     sections: normalizeSections(p.sections),
+    workArea: normalizeWorkArea(p.workArea),
     cameraLane,
     tempo,
     loop: p.loop === true,
@@ -2243,6 +2380,28 @@ export const showTimeline = {
     store.update((s) => ({ ...s, endAction: next }));
     recordShowEdit();
   },
+  /** In and out points (null clears them). */
+  setWorkArea(area: ShowWorkArea | null) {
+    const next = area ? normalizeWorkArea(area) : null;
+    const cur = get(store).workArea;
+    if (cur === next || (cur && next && cur.start === next.start && cur.end === next.end)) return;
+    store.update((s) => ({ ...s, workArea: next }));
+    recordShowEdit();
+  },
+  /** The in point at `t` (I). The out point stays when it is still after it. */
+  markIn(t: number) {
+    const s = get(store);
+    const start = Math.max(0, t);
+    const end = s.workArea && s.workArea.end - start >= SHOW_MIN_WORK_AREA ? s.workArea.end : Math.max(s.duration, start + 1);
+    this.setWorkArea({ start, end });
+  },
+  /** The out point at `t` (O). The in point stays when it is still before it. */
+  markOut(t: number) {
+    const s = get(store);
+    const start = s.workArea && t - s.workArea.start >= SHOW_MIN_WORK_AREA ? s.workArea.start : 0;
+    if (t - start < SHOW_MIN_WORK_AREA) return;
+    this.setWorkArea({ start, end: t });
+  },
   /** Zoom so the whole show fits `width` pixels. */
   zoomToFit(width: number) {
     store.update((s) => ({ ...s, zoom: fitShowZoom(Math.max(s.duration, 1), width) }));
@@ -2257,8 +2416,9 @@ export const showTimeline = {
       return;
     }
     if (s.isPlaying) return;
-    // An empty show has nothing to play — stay completely inert.
-    if (s.duration <= 0) return;
+    // An empty show has nothing to play — stay completely inert, unless
+    // recording is armed: then the playhead runs so there is time to record into.
+    if (s.duration <= 0 && !recordRun(s)) return;
     syncAudioWiring(s.audioTracks);
     // Transport start is the moment audio has to be ready. A context built
     // outside a user gesture starts suspended (browser / mobile builds) and
@@ -2271,7 +2431,11 @@ export const showTimeline = {
     holdPausedAt = null;
     store.update((x) => ({ ...x, isPlaying: true }));
     // Starting again from the very end (the show stopped there) starts over.
-    const from = !s.loop && s.currentTime >= s.duration - 1e-6 ? 0 : get(store).currentTime;
+    // Looping in and out points: from outside them, play starts at the in point.
+    const area = loopArea(s);
+    const from = area && (s.currentTime < area.start || s.currentTime >= area.end)
+      ? area.start
+      : !s.loop && s.currentTime >= s.duration - 1e-6 ? 0 : get(store).currentTime;
     // Re-evaluate at the current position. Fires only when the clip under
     // the playhead differs from what is loaded, so resuming from pause does
     // not reload (and visibly reset) the composition already on screen.
@@ -2289,6 +2453,7 @@ export const showTimeline = {
       if (!chaseTransportHandler?.('pause') && get(store).isPlaying) return;
     }
     cancelRaf();
+    recordRunRolling = false;
     if (phrase.pending) {
       clearPhrasePending();
       publishPhraseStatus();
@@ -2305,6 +2470,7 @@ export const showTimeline = {
       if (!chaseTransportHandler?.('stop') && get(store).isPlaying) return;
     }
     cancelRaf();
+    recordRunRolling = false;
     forgetSections();
     forgetPhrases();
     // Clearing activeClipId is what makes the next play() re-fire the
@@ -3181,6 +3347,86 @@ export const showTimeline = {
     republishTracks();
   },
 
+  /**
+   * Live edit with the playhead parked: the row shows `media` from `t`. The
+   * block under the playhead is cut there and its right part takes the new
+   * media (the whole block when `t` is at its start). In a gap, a block runs
+   * from `t` to the next block (at most 10 s). One undo step.
+   */
+  cutInLayerMedia(trackId: string, media: ShowClipMedia, t: number, before: ShowClipMedia | null = null): string | null {
+    const track = get(store).layerTracks.find((x) => x.id === trackId);
+    if (!track || track.locked) return null;
+    const normalizedMedia = normalizeClipMedia(media);
+    if (!normalizedMedia) return null;
+    let clips = track.clips;
+    // An empty row kept what the piece showed before, from 0 to the cut: the
+    // same step as the cut-in, so one undo takes both back.
+    const kept = before ? normalizeClipMedia(before) : null;
+    if (kept && !clips.length && t >= SHOW_MIN_TRACK_CLIP_SECONDS) clips = [recordedBlock(kept, 0, t)];
+    const under = clips.find((c) => c.startTime <= t + 1e-6 && t < c.startTime + c.duration - 1e-6);
+    // Too close to a block's end to cut there: the new content starts at its end.
+    const at = under && clipEnd(under) - t < SHOW_MIN_TRACK_CLIP_SECONDS ? clipEnd(under) : t;
+    const inside = under && at === t ? under : null;
+    let changedId: string;
+    if (!inside) {
+      const next = clips.filter((c) => c.startTime > at + 1e-6).reduce((m, c) => Math.min(m, c.startTime), at + 10);
+      if (!(next - at >= SHOW_MIN_TRACK_CLIP_SECONDS)) return null;
+      const block = recordedBlock(normalizedMedia, at, next);
+      clips = sortClips([...clearRange(clips, block.startTime, clipEnd(block)), block]);
+      changedId = block.id;
+    } else {
+      // The new content plays as a fresh recorded block: its own speed, its
+      // own end, no fades or group carried over from the block it replaces.
+      const fresh = (c: ShowLayerClip): ShowLayerClip => ({ ...recordedBlock(normalizedMedia, c.startTime, clipEnd(c)), id: c.id });
+      const pieces = t - inside.startTime >= SHOW_MIN_TRACK_CLIP_SECONDS ? splitClip(inside, t) : null;
+      if (pieces) {
+        const [left, right] = pieces;
+        changedId = right.id;
+        clips = sortClips([...clips.filter((c) => c.id !== inside.id), left, fresh(right)]);
+      } else {
+        changedId = inside.id;
+        clips = clips.map((c) => (c.id === inside.id ? fresh(c) : c));
+      }
+    }
+    this._replaceRowClips(trackId, track.clips, clips);
+    recordShowEdit();
+    republishTracks();
+    return changedId;
+  },
+
+  /**
+   * Record a block (live record): `media` on the row from `start` to `end`,
+   * over whatever was there (an overwrite edit). One undo step. Returns the
+   * new block's id, or null on a locked or missing row.
+   */
+  recordLayerBlock(trackId: string, media: ShowClipMedia, start: number, end: number): string | null {
+    const track = get(store).layerTracks.find((t) => t.id === trackId);
+    if (!track || track.locked) return null;
+    const normalizedMedia = normalizeClipMedia(media);
+    if (!normalizedMedia || !(end - start >= SHOW_MIN_TRACK_CLIP_SECONDS)) return null;
+    const clip = recordedBlock(normalizedMedia, Math.max(0, start), end);
+    const clips = sortClips([...clearRange(track.clips, clip.startTime, clip.startTime + clip.duration), clip]);
+    this._replaceRowClips(trackId, track.clips, clips);
+    recordShowEdit();
+    republishTracks();
+    return clip.id;
+  },
+
+  /** A row's clips replaced by an overwrite: blocks that are gone take their
+   *  lines and their place in the selection with them. Not an undo step. */
+  _replaceRowClips(trackId: string, before: readonly ShowLayerClip[], clips: ShowLayerClip[]) {
+    const kept = new Set(clips.map((c) => c.id));
+    const gone = before.filter((c) => !kept.has(c.id)).map((c) => c.id);
+    const goneSet = new Set(gone);
+    store.update((s) => withDuration({
+      ...s,
+      layerTracks: s.layerTracks.map((t) => (t.id === trackId ? { ...t, clips } : t)),
+      lines: gone.length ? removeLinesForBlocks(s.lines, gone) : s.lines,
+      selectedClipIds: gone.length ? s.selectedClipIds.filter((id) => !goneSet.has(id)) : s.selectedClipIds,
+      selection: s.selection && goneSet.has(s.selection.id) ? null : s.selection,
+    }));
+  },
+
   /** Where a layer clip lives. */
   findLayerClip(clipId: string): { track: ShowLayerTrack; clip: ShowLayerClip } | null {
     for (const track of get(store).layerTracks) {
@@ -3264,6 +3510,43 @@ export const showTimeline = {
     recordShowEdit(`layer-trim:${clipId}:${edge}`);
   },
 
+  /** Ripple trim (B): one edge to `time`, later clips on the row move with it. */
+  rippleTrimLayerClip(clipId: string, edge: 'start' | 'end', time: number) {
+    const found = this.findLayerClip(clipId);
+    if (!found || found.track.locked) return;
+    const clips = rippleTrim(found.track.clips, clipId, edge, Math.max(0, time));
+    if (!clips) return;
+    // The later blocks moved: their keys on the row and their own lines go with them.
+    const oldEnd = clipEnd(found.clip);
+    const now = clips.find((c) => c.id === clipId)!;
+    const shift = clipEnd(now) - oldEnd;
+    const later = found.track.clips.filter((c) => c.id !== clipId && c.startTime >= oldEnd - 1e-9);
+    const lanes = Math.abs(shift) > 1e-9 ? shiftLaneKeys(found.track.lanes, oldEnd, Number.POSITIVE_INFINITY, shift) : found.track.lanes;
+    this._setTrackClips(found.track.id, clips, lanes);
+    this._carryLines(found.track, later, shift);
+    recordShowEdit(`layer-ripple:${clipId}:${edge}`);
+  },
+
+  /** Roll edit (N): the cut between two touching clips to `time`. */
+  rollLayerEdit(leftId: string, rightId: string, time: number) {
+    const found = this.findLayerClip(leftId);
+    if (!found || found.track.locked || !found.track.clips.some((c) => c.id === rightId)) return;
+    const clips = rollEdit(found.track.clips, leftId, rightId, time);
+    if (!clips) return;
+    this._setTrackClips(found.track.id, clips);
+    recordShowEdit(`layer-roll:${leftId}:${rightId}`);
+  },
+
+  /** Slip (Y): the clip plays `mediaDelta` seconds later in its media, in the same place. */
+  slipLayerClip(clipId: string, mediaDelta: number) {
+    const found = this.findLayerClip(clipId);
+    if (!found || found.track.locked) return;
+    const clips = slipClip(found.track.clips, clipId, mediaDelta);
+    if (!clips) return;
+    this._setTrackClips(found.track.id, clips);
+    recordShowEdit(`layer-slip:${clipId}`);
+  },
+
   /**
    * Split at show time `t`: the given clips, or with none given the selected
    * clips under `t`, or failing that every clip under `t` on an unlocked
@@ -3339,7 +3622,7 @@ export const showTimeline = {
       return { ...track, clips: result.clips };
     });
     if (!created.length) return created;
-    store.update((s) => withDuration({ ...s, layerTracks, selectedClipIds: created }));
+    store.update((s) => withDuration({ ...s, layerTracks: regroupCopies(layerTracks, created), selectedClipIds: created }));
     recordShowEdit();
     republishTracks();
     return created;
@@ -3358,12 +3641,14 @@ export const showTimeline = {
     const result = pasteClips(track.clips, copied, at);
     if (!result) return [];
     this._setTrackClips(trackId, result.clips);
-    store.update((s) => ({ ...s, selectedClipIds: result.ids }));
+    store.update((s) => ({ ...s, layerTracks: regroupCopies(s.layerTracks, result.ids), selectedClipIds: result.ids }));
     recordShowEdit();
     return result.ids;
   },
 
   selectLayerClips(clipIds: string[]) {
+    // A grouped block brings its whole group.
+    clipIds = withGroupMembers(get(store).layerTracks, clipIds);
     store.update((s) => ({
       ...s,
       selectedClipIds: [...clipIds],
@@ -3375,6 +3660,27 @@ export const showTimeline = {
           ? null
           : s.selection?.kind === 'layerClip' ? null : s.selection,
     }));
+  },
+
+  /** Group the blocks (Ctrl+G): one id, so they select, move, copy and delete as one. */
+  groupLayerClips(clipIds: string[]): boolean {
+    const ids = new Set(withGroupMembers(get(store).layerTracks, clipIds));
+    if (ids.size < 2) return false;
+    // A group on a locked row would move and delete only in part: refused.
+    if (get(store).layerTracks.some((t) => t.locked && t.clips.some((c) => ids.has(c.id)))) return false;
+    const groupId = generateUUID();
+    store.update((s) => ({ ...s, layerTracks: s.layerTracks.map((t) => (t.clips.some((c) => ids.has(c.id)) ? { ...t, clips: t.clips.map((c) => (ids.has(c.id) ? { ...c, groupId } : c)) } : t)) }));
+    recordShowEdit();
+    return true;
+  },
+
+  /** Ungroup the blocks' groups (Ctrl+Shift+G). */
+  ungroupLayerClips(clipIds: string[]): boolean {
+    const ids = new Set(withGroupMembers(get(store).layerTracks, clipIds));
+    if (![...get(store).layerTracks].some((t) => t.clips.some((c) => ids.has(c.id) && c.groupId))) return false;
+    store.update((s) => ({ ...s, layerTracks: s.layerTracks.map((t) => (t.clips.some((c) => ids.has(c.id) && c.groupId) ? { ...t, clips: t.clips.map((c) => { if (!ids.has(c.id) || !c.groupId) return c; const { groupId: _g, ...rest } = c; return rest; }) } : t)) }));
+    recordShowEdit();
+    return true;
   },
 
   /** Select every clip on every track. */
@@ -3423,7 +3729,7 @@ export const showTimeline = {
     }
     store.update((x) => withDuration({
       ...x,
-      layerTracks: x.layerTracks.map((t) => (next.has(t.id) ? { ...t, clips: next.get(t.id)! } : t)),
+      layerTracks: regroupCopies(x.layerTracks.map((t) => (next.has(t.id) ? { ...t, clips: next.get(t.id)! } : t)), created),
       selectedClipIds: created,
       selection: created.length === 1 ? { kind: 'layerClip', id: created[0] } : x.selection?.kind === 'layerClip' ? null : x.selection,
     }));
@@ -3892,9 +4198,10 @@ export const showTimeline = {
 
   /**
    * Several parts of the Timeline replaced at once, as one undo step (Score
-   * the song lays down sections, looks, lines and LED blocks together).
+   * the song lays down sections, looks, lines and LED blocks together; Auto
+   * show adds rows with their blocks and named where orders too).
    */
-  replaceTimelineParts(parts: Partial<Pick<ShowTimelineState, 'sections' | 'lookClips' | 'lines' | 'ledClips' | 'stageClips' | 'tempo'>>) {
+  replaceTimelineParts(parts: Partial<Pick<ShowTimelineState, 'sections' | 'lookClips' | 'lines' | 'ledClips' | 'stageClips' | 'tempo' | 'layerTracks' | 'whereOrders'>>) {
     store.update((x) => withDuration({
       ...x,
       ...(parts.tempo !== undefined && !x.tempo && parts.tempo
@@ -3905,6 +4212,8 @@ export const showTimeline = {
       ...(parts.lines ? { lines: parts.lines } : {}),
       ...(parts.ledClips ? { ledClips: normalizeLedClips(parts.ledClips) } : {}),
       ...(parts.stageClips ? { stageClips: normalizeStageClips(parts.stageClips) } : {}),
+      ...(parts.layerTracks ? { layerTracks: parts.layerTracks.map((t) => ({ ...t, clips: [...t.clips].sort((a, b) => a.startTime - b.startTime) })) } : {}),
+      ...(parts.whereOrders ? { whereOrders: normalizeNamedOrders(parts.whereOrders) } : {}),
     }));
     republishTracks();
     publishSectionStatus();

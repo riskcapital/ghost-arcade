@@ -77,6 +77,8 @@ export interface NoteEvent {
   drum?: DrumVoice;
   /** A tone-library tone to play it on (a clip's own tone), instead of the instrument's sound. */
   tone?: string;
+  /** A drum machine pad (0-15): it sounds on the machine's kit; `drum` is the voice it acts as for visuals. */
+  pad?: number;
   source: NoteSource;
   /**
    * When the note sounds, in seconds on the music clock (the audio context's

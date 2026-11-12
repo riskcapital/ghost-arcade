@@ -704,7 +704,8 @@
   });
 </script>
 
-<div data-help-page="stage-simulator" class="stage3d-root" class:external={!renderViewport}>
+<!-- The show transport sits between the side panels (212 + 264 px, 12 px in), not over them. -->
+<div data-help-page="stage-simulator" class="stage3d-root" class:external={!renderViewport} style:--sst-inset-l={panelsHidden ? '16px' : '236px'} style:--sst-inset-r={panelsHidden ? '16px' : '288px'}>
   {#if renderViewport}
     <div class="viewport-fallback">
       <p>Open Stage 3D in the pop-out window for the live view.</p>

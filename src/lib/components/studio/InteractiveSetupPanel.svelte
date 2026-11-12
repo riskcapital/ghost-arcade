@@ -1,5 +1,22 @@
 <script lang="ts">
-  /** Setup tab: audio input, scene name, save / export / import and the camera reference. */
+  /** Setup tab: input, audio, scene name, save / export / import and the camera reference. */
+  import { defaultInteractiveInput, type InteractiveInput, type TrackingSource, type InputForce } from '../../mobile/studio/interactive';
+  /** Tracked hands and body. `step` is a single change and its own undo step. */
+  export let input: InteractiveInput = defaultInteractiveInput();
+  export let oninputchange: (input: InteractiveInput, step: boolean) => void;
+  /** The strength slider is about to change: remember the scene for undo. */
+  export let oninputstart: () => void;
+  const TRACKING: { value: TrackingSource; label: string }[] = [
+    { value: 'off', label: 'Pointer only' },
+    { value: 'hands', label: 'Hands' },
+    { value: 'body', label: 'Body' },
+    { value: 'both', label: 'Hands and body' },
+  ];
+  const FORCES: { value: InputForce; label: string }[] = [
+    { value: 'attract', label: 'Attract' },
+    { value: 'repel', label: 'Repel' },
+    { value: 'vortex', label: 'Vortex' },
+  ];
   export let nativeOutput = false;
   /** Phone or tablet: the camera choice is rear / selfie. */
   export let handheld = false;
@@ -28,6 +45,42 @@
   export let onstopcamera: () => void;
 </script>
 
+<div class="group-label">Input</div>
+<label>
+  Tracking
+  <select value={input.tracking} onchange={(e) => oninputchange({ ...input, tracking: e.currentTarget.value as TrackingSource }, true)}>
+    {#each TRACKING as t}
+      <option value={t.value}>{t.label}</option>
+    {/each}
+  </select>
+</label>
+{#if input.tracking !== 'off'}
+  <label>
+    Tracked points
+    <select value={input.force} onchange={(e) => oninputchange({ ...input, force: e.currentTarget.value as InputForce }, true)}>
+      {#each FORCES as f}
+        <option value={f.value}>{f.label}</option>
+      {/each}
+    </select>
+  </label>
+  <label>
+    Strength <output>{Math.round(input.strength * 100)}%</output>
+    <input
+      type="range"
+      min="0"
+      max="1"
+      step=".01"
+      value={input.strength}
+      onpointerdown={oninputstart}
+      oninput={(e) => oninputchange({ ...input, strength: +e.currentTarget.value }, false)}
+    />
+  </label>
+  <p class="hint">
+    {input.tracking === 'hands' ? 'Palms and index fingertips' : input.tracking === 'body' ? 'Head, wrists and feet' : 'Palms, fingertips, head, wrists and feet'}
+    from the hand-tracking camera move the effects and touch trigger zones, with this editor open or closed. The camera view maps onto the whole scene.
+  </p>
+{/if}
+<div class="group-label">Audio</div>
 {#if !nativeOutput}
   <button class="wide" onclick={ontoggleaudio}>{audioOn ? 'Stop microphone' : 'Enable audio modulation'}</button>
 {:else}
@@ -35,6 +88,7 @@
     Audio Mod uses the desktop audio input. LFO and beat controls keep running when this editor closes.
   </p>
 {/if}
+<div class="group-label">Scene</div>
 <label>
   Scene name
   <input value={sceneName} onfocus={onnamestart} oninput={(e) => onname(e.currentTarget.value)} maxlength="120" />

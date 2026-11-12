@@ -10,13 +10,14 @@
  *   frame of an offline render (exportFrame: live-only sources add nothing).
  * - A recorded pass is one undo step of the document.
  * - The registry the session reads knows the Timeline's blocks, look blocks
- *   and pieces that are off the stage.
+ *   and pieces that are off the stage; the sound rows are a registered scope.
  */
 import { get, writable } from 'svelte/store';
 import {
   onShowDocChange,
   onShowTimelineReset,
   setShowLineTicker,
+  setShowRecordArm,
   showTimeline,
   type ShowLineTick,
 } from '../../stores/showTimeline';
@@ -32,7 +33,10 @@ import { pointsValueAt, SOUND_ROW_TRACK_PREFIX } from './lineEvaluator';
 import { installWhereRuntime } from '../where/whereRuntime';
 import { installStageFxRuntime } from '../stagefx/stageFxRuntime';
 import { soundRowsFor } from '../sound/soundModel';
-import { readSoundRowParam, soundRowParams } from '../sound/soundParams';
+import { soundLineScope } from '../sound/soundParams';
+import { registerParamScope } from './lineExtensions';
+import { createContentRecorder } from './contentRecorder';
+import { cancelPendingHistorySnapshot, isAutomation, isRestoringHistory } from '../../stores/historyHooks';
 
 // ── Registry over the Timeline ─────────────────────────────────────────────
 
@@ -98,16 +102,15 @@ export function timelineRegistrySource(): RegistrySource {
       ?? s.stageClips.find((c) => c.id === clipId)?.where
       ?? findClip(s.layerTracks, clipId)?.clip.where
       ?? null,
-    soundParams: (rowId) => {
-      const row = soundRowsFor(s.sound, s.audioTracks).find((r) => r.id === rowId);
-      return row ? soundRowParams(row) : [];
-    },
-    readSound: (rowId, key) => {
-      const row = soundRowsFor(s.sound, s.audioTracks).find((r) => r.id === rowId);
-      return row ? readSoundRowParam(row, key) : undefined;
-    },
   };
 }
+
+// The sound rows are a line scope on the extension mechanism, with the
+// Timeline's own rows (lineExtensions.ts).
+registerParamScope(soundLineScope(() => {
+  const s = get(showTimeline);
+  return soundRowsFor(s.sound, s.audioTracks);
+}));
 
 export function describeLineParam(target: ParamTarget, key: string): ParamEntry | null {
   return findParam(timelineRegistrySource(), target, key);
@@ -130,8 +133,17 @@ export interface LineRecordUi {
   bindPending: { target: ParamTarget; key: string; label: string } | null;
   /** A pass is being written right now. */
   writing: boolean;
+  /** Follow edits: while armed, every parameter you change in the editor is
+   *  recorded, not only the ones with a line or a bound control. */
+  followEdits: boolean;
 }
-export const lineRecordState = writable<LineRecordUi>({ armed: false, mode: 'touch', bindPending: null, writing: false });
+const FOLLOW_EDITS_KEY = 'ga.timeline.followEdits';
+function storedFollowEdits(): boolean {
+  try { return typeof localStorage !== 'undefined' && localStorage.getItem(FOLLOW_EDITS_KEY) === '1'; } catch { return false; }
+}
+export const lineRecordState = writable<LineRecordUi>({ armed: false, mode: 'touch', bindPending: null, writing: false, followEdits: storedFollowEdits() });
+// Armed, the Timeline plays even when empty and rolls on past its end.
+setShowRecordArm(() => get(lineRecordState).armed);
 
 /** The line being edited, and its selected points (indices). */
 export interface LineSelection {
@@ -164,6 +176,19 @@ const TRACE_SECONDS = 30;
 
 let session: LineSession | null = null;
 let unsubStore: (() => void) | null = null;
+let unsubContent: (() => void) | null = null;
+
+// Follow edits also records what each piece shows: other content put on a
+// layer while armed and playing becomes a block on its row.
+const contentRecorder = createContentRecorder({
+  armed: () => { const r = get(lineRecordState); return r.armed && r.followEdits; },
+  layers: () => ((get(project) as { layers?: Layer[] } | null)?.layers ?? []),
+  tracks: () => get(showTimeline).layerTracks,
+  rowFor: (layer) => get(showTimeline).layerTracks.find((t) => t.layerId === layer.id && !t.subRow)?.id ?? showTimeline.addLayerTrack(layer),
+  write: (trackId, media, start, end) => { showTimeline.recordLayerBlock(trackId, media, start, end); },
+  swapAt: (trackId, media, t, before) => { showTimeline.cutInLayerMedia(trackId, media, t, before); },
+  notAPerson: () => isAutomation() || isRestoringHistory(),
+});
 let lastPlaying = false;
 let lastSongsKey = '';
 let traceTick = 0;
@@ -193,6 +218,7 @@ function startSession(): void {
     bindings: s.lineBindings,
     onBindingsChange: (b) => showTimeline.setLineBindings(b),
     registry: timelineRegistrySource,
+    keyAt: (target, key, value, t) => { keyAtPlayhead(target, key, value, t); },
   });
   session = next;
   lastPlaying = s.isPlaying;
@@ -201,18 +227,26 @@ function startSession(): void {
   unsubStore = next.store.subscribe((state) => {
     const doc = get(showTimeline);
     if (session !== next || state.lines === doc.lines) return;
+    // The pass and the control moves that made it are one step: a slider's
+    // own edit, still waiting for its debounce, is folded into this one.
+    cancelPendingHistorySnapshot();
     showTimeline.setLines(state.lines);
     syncRecordUi();
   });
   // Converted ◆ lanes and old files: ranges fit the parameters.
   const fitted = fitLineRanges(s.lines, describeLineParam);
   if (fitted !== s.lines) showTimeline.setLines(fitted, { quiet: true });
+  unsubContent = project.subscribe(() => contentRecorder.observe());
+  next.setFollowEdits(get(lineRecordState).followEdits);
   if (get(lineRecordState).armed) next.arm(mode);
   void refreshSongs(true);
   retick();
 }
 
 function stopSession(): void {
+  contentRecorder.stop();
+  unsubContent?.();
+  unsubContent = null;
   unsubStore?.();
   unsubStore = null;
   session?.dispose();
@@ -226,6 +260,7 @@ function retick(): void {
   const s = get(showTimeline);
   if (s.doc !== 'timeline') return;
   session.tick(s.currentTime, s.isPlaying, s.tempo);
+  contentRecorder.tick(s.currentTime, s.isPlaying);
 }
 
 async function refreshSongs(force = false): Promise<void> {
@@ -268,6 +303,7 @@ function onTick(tick: ShowLineTick): void {
   if (lastPlaying && !tick.playing) session.stopped(tick.time);
   lastPlaying = tick.playing;
   session.tick(tick.time, tick.playing, tick.tempo);
+  contentRecorder.tick(tick.time, tick.playing);
   if (tick.playing) recordTraces(tick.time);
   if (session.recorder.armed || get(lineRecordState).bindPending) syncRecordUi();
   const open = session.recorder.openPasses();
@@ -372,13 +408,23 @@ export function installTimelineLines(): () => void {
 export function armLines(mode: RecordMode = get(lineRecordState).mode): void {
   lineRecordState.update((x) => ({ ...x, mode, armed: true }));
   session?.arm(mode);
+  retick();
   syncRecordUi();
 }
 
 export function disarmLines(): void {
+  contentRecorder.stop();
   session?.disarm();
   lineRecordState.update((x) => ({ ...x, armed: false }));
   syncRecordUi();
+}
+
+/** Follow edits on or off: armed, it records every parameter you change. */
+export function setFollowEdits(on: boolean): void {
+  lineRecordState.update((x) => (x.followEdits === on ? x : { ...x, followEdits: on }));
+  try { localStorage.setItem(FOLLOW_EDITS_KEY, on ? '1' : '0'); } catch { /* private window */ }
+  session?.setFollowEdits(on);
+  retick();
 }
 
 export function setRecordMode(mode: RecordMode): void {
@@ -461,6 +507,36 @@ export function addLineWithPoint(target: ParamTarget, key: string, time: number,
   return line.id;
 }
 
+/**
+ * Live edit: a setting changed in the editor while the playhead is parked
+ * (armed, Follow edits on) is keyed on its line at the playhead. A first key
+ * makes the line. One gesture (a slider drag, a corner drag) is one undo step.
+ */
+// A slider drag sends a stream of changes: they make one step. A pause longer
+// than this starts a new gesture, so two separate drags never share a step.
+const LIVE_EDIT_GESTURE_MS = 250;
+let liveEditAt = 0;
+let liveEditSeq = 0;
+
+export function keyAtPlayhead(target: ParamTarget, key: string, value: number | boolean, time: number): boolean {
+  const nowMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  if (nowMs - liveEditAt > LIVE_EDIT_GESTURE_MS) liveEditSeq++;
+  liveEditAt = nowMs;
+  const entry = describeLineParam(target, key);
+  const lines = get(showTimeline).lines;
+  const existing = lines.find((l) => l.key === key && sameTarget(l.target, target));
+  if (!entry && !existing) return false;
+  const line = existing ?? makeLine(target, entry!, lines);
+  const v = typeof value === 'boolean' ? (value ? 1 : 0) : value;
+  const point: LinePoint = line.kind === 'bool' || line.kind === 'stepped' || line.kind === 'colour' ? { t: Math.max(0, time), v, c: 'hold' } : { t: Math.max(0, time), v };
+  const points = [...line.points.filter((p) => Math.abs(p.t - point.t) > 1e-4), point].sort((a, b) => a.t - b.t);
+  const next = { ...line, points };
+  return showTimeline.editLines(
+    (list) => (existing ? list.map((l) => (l.id === line.id ? next : l)) : [...list, next]),
+    `live-edit:${line.id}:${point.t.toFixed(3)}:${liveEditSeq}`,
+  );
+}
+
 /** Add a line with one point at the playhead (the ⌇+ picker). */
 export function addLineAtPlayhead(target: ParamTarget, key: string): string | null {
   return addLineWithPoint(target, key, get(showTimeline).currentTime);
@@ -469,7 +545,7 @@ export function addLineAtPlayhead(target: ParamTarget, key: string): string | nu
 /** Test seam. */
 export function _resetTimelineLinesForTest(): void {
   stopSession();
-  lineRecordState.set({ armed: false, mode: 'touch', bindPending: null, writing: false });
+  lineRecordState.set({ armed: false, mode: 'touch', bindPending: null, writing: false, followEdits: false });
   lineSelection.set(null);
   liveTraces.clear();
   lastSongsKey = '';

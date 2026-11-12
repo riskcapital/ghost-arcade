@@ -15,8 +15,12 @@
   import LinePicker from '../LinePicker.svelte';
   import { showSlice } from '../timelineSlices';
   import { SOUND_FOOTER_HEIGHT, SOUND_ROW_HEIGHT, soundLayout } from './soundRowLayout';
+  import { autoShowOpen } from '../autoshow/autoShowUi';
 
   const selection = showSlice('selection');
+  const audioTracks = showSlice('audioTracks');
+  /** The Song row (the first row) has a song on it: ✦ Auto show is offered there. */
+  const songOnRow = $derived($audioTracks.some((t) => t.lane === 0 && !!t.url));
   const layout = $derived($soundLayout);
   const bridge = $derived($abletonBridge);
   let picker: { x: number; y: number; row: SoundRow } | null = $state(null);
@@ -62,6 +66,9 @@
         {@const st = liveStatus(row)}
         <span class="sh-live" class:warn={st.warn} title={st.text}>{st.text}</span>
       {:else}
+        {#if i === 0 && songOnRow}
+          <button class="sh-auto" onclick={(e) => { e.stopPropagation(); autoShowOpen.set(true); }} title="Auto show: a whole show on your mapping from this song" data-auto-show-song>✦ Auto show</button>
+        {/if}
         <input
           class="sh-vol"
           type="range" min="0" max="1" step="0.01"
@@ -148,6 +155,21 @@
     cursor: pointer;
   }
   .sh-btn:hover { color: #fff; border-color: rgba(255, 255, 255, 0.3); }
+  .sh-auto {
+    flex: 0 0 auto;
+    height: 17px;
+    padding: 0 6px;
+    border-radius: 3px;
+    border: 1px solid rgba(255, 211, 107, 0.45);
+    background: rgba(255, 211, 107, 0.08);
+    color: #ffd36b;
+    font: inherit;
+    font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .sh-auto:hover { background: rgba(255, 211, 107, 0.18); color: #fff; }
   .sh-btn.on { background: #ff4757; border-color: #ff4757; color: #fff; }
   .sh-btn.solo.on { background: #ffd96b; border-color: #ffd96b; color: #111; }
   .sh-vol { flex: 1 1 auto; min-width: 0; height: 12px; margin: 0; accent-color: #5ce1e6; }

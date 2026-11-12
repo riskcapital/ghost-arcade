@@ -147,7 +147,7 @@ export function createLineRecorder(host: RecorderHost, opts: { now?: () => numbe
         let line = lineFor(host.lines(), target, key);
         if (!line) {
           line = {
-            id: host.newId(), target, key, kind: entry.kind, min: entry.min, max: entry.max,
+            id: host.newId(), target, key, label: entry.label, kind: entry.kind, min: entry.min, max: entry.max,
             ...(entry.kind === 'stepped' ? { step: entry.step } : {}),
             default: Number(entry.default), points: [{ t: 0, v: Number(entry.default) }],
           };

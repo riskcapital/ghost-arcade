@@ -12,13 +12,16 @@
   import { musicStudio } from '../../music/musicStudioStore';
   import { insertEditorChannel } from '../../music/studioUi';
   import { findClip } from '../../music/session';
+  import { playingKit } from '../../music/drumMachine/machineRuntime';
   import type { InstrumentId } from '../../music/noteEvents';
   import StudioKnob from './StudioKnob.svelte';
 
   const channel = $derived($insertEditorChannel);
   const chain = $derived(channel ? ($musicStudio.inserts[channel] ?? []) : []);
   const clipName = $derived(channel?.startsWith('clip:') ? (findClip($musicStudio.session, channel.slice(5))?.clip.name ?? 'Clip') : null);
-  const name = $derived(channel === 'master' ? 'Master' : clipName ? `${clipName} (clip)` : channel ? (INSTRUMENT_LABELS[channel as InstrumentId] ?? channel) : '');
+  const padIndex = $derived(channel?.startsWith('pad:') ? Number(channel.slice(4)) : -1);
+  const padName = $derived(padIndex >= 0 ? `Pad ${padIndex + 1}: ${playingKit($musicStudio.machine).pads[padIndex]?.name ?? ''}` : null);
+  const name = $derived(padName ? padName : channel === 'master' ? 'Master' : clipName ? `${clipName} (clip)` : channel ? (INSTRUMENT_LABELS[channel as InstrumentId] ?? channel) : '');
   const tempo = launchClockTempo();
   let dragging = $state<string | null>(null);
 

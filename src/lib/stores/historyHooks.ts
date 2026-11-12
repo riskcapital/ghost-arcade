@@ -170,7 +170,7 @@ function schedule(key: string) {
     // changed first, so undoing this edit leaves those changes alone.
     foldLiveIntoLatestStep();
   }
-  const timer = setTimeout(commitPending, HISTORY_DEBOUNCE_MS);
+  const timer = setTimeout(commitWhenIdle, HISTORY_DEBOUNCE_MS);
   _pending = {
     keys: _pending?.keys ?? new Set([key]),
     lastEditAt: now,
@@ -178,6 +178,34 @@ function schedule(key: string) {
     seq: ++_captureSeq,
     timer,
   };
+}
+
+/** The debounce ran out: commit, unless a pointer gesture is still going (a
+ *  drag that rests for a moment is still one step). */
+function commitWhenIdle() {
+  if (_gestureDepth > 0 && _pending) {
+    _pending.timer = setTimeout(commitWhenIdle, HISTORY_DEBOUNCE_MS);
+    return;
+  }
+  commitPending();
+}
+
+// ─── Pointer gestures ────────────────────────────────────────────────────
+// A drag (a block, an edge, a point, a handle) is one undo step from press to
+// release, however long it rests on the way, and two drags never share a
+// step. Cancelled with Esc, it leaves no step at all.
+let _gestureDepth = 0;
+/** A pointer gesture starts: what was waiting before it is its own step. */
+export function beginGesture() {
+  if (_gestureDepth === 0) commitPending();
+  _gestureDepth += 1;
+}
+/** The gesture ended (`commit`: released) or was cancelled (Esc, focus lost). */
+export function endGesture(commit: boolean) {
+  _gestureDepth = Math.max(0, _gestureDepth - 1);
+  if (_gestureDepth > 0) return;
+  if (commit) commitPending();
+  else cancelPendingHistorySnapshot();
 }
 
 /** Commit any debounced edit now (before undo/redo, save, quit). */
@@ -220,6 +248,22 @@ export function runAsLiveControl<T>(fn: () => T): T {
   }
 }
 export function isLiveControl(): boolean { return _liveControlDepth > 0; }
+
+// Engines that move values on their own (audio and LFO modulation, Auto,
+// Music motion, performance pads, the show's sections, cues and takeovers)
+// run inside runAsAutomation as well. Live record follows what a person
+// changes, so it leaves these writes out; a controller, a macro knob or the
+// panel is still recorded.
+let _automationDepth = 0;
+export function runAsAutomation<T>(fn: () => T): T {
+  _automationDepth += 1;
+  try {
+    return runAsLiveControl(fn);
+  } finally {
+    _automationDepth -= 1;
+  }
+}
+export function isAutomation(): boolean { return _automationDepth > 0; }
 
 // ─── Live changes and the latest step ───────────────────────────────────
 // Live control writes no step, so the latest step still holds the values

@@ -7,7 +7,8 @@
 
 import type { DrumKit, DrumTweak, TonePatch, ToneMessage } from './toneTypes';
 
-export type ToneSlot = 'synth' | 'keys' | 'drums';
+/** `machine` is the drum machine's own kit, beside the set's kit, into the same drum channel. */
+export type ToneSlot = 'synth' | 'keys' | 'drums' | 'machine';
 
 export class ToneHost {
   private ctx: AudioContext;
@@ -54,7 +55,7 @@ export class ToneHost {
     if (!this.loaded) return null;
     let node = this.nodes.get(slot);
     if (!node) {
-      node = this.create(slot === 'drums' ? 'drums' : 'tone', this.outputs[slot]);
+      node = this.create(slot === 'drums' || slot === 'machine' ? 'drums' : 'tone', this.outputs[slot]);
       this.nodes.set(slot, node);
     }
     return node;
@@ -110,6 +111,33 @@ export class ToneHost {
     this.send('drums', { t: 'kit', kit });
   }
 
+  /** Pads with effects of their own play on an engine each, into their effects chain. */
+  private padNodes = new Map<number, AudioWorkletNode>();
+
+  setMachineKit(kit: DrumKit): void {
+    if (this.patches.get('machine') === kit) return;
+    this.patches.set('machine', kit);
+    this.send('machine', { t: 'kit', kit });
+    for (const node of this.padNodes.values()) node.port.postMessage({ t: 'kit', kit });
+  }
+
+  /** A hit on the drum machine's kit; `out` sends it through a pad's own effects instead of straight to the drum channel. */
+  machineHit(slot: number, vel: number, at: number, tweak: DrumTweak, out?: AudioNode): void {
+    if (!out) {
+      this.send('machine', { t: 'hit', slot, vel, at, tweak });
+      return;
+    }
+    if (!this.loaded) return;
+    let node = this.padNodes.get(slot);
+    if (!node) {
+      node = this.create('drums', out);
+      const kit = this.patches.get('machine');
+      if (kit) node.port.postMessage({ t: 'kit', kit });
+      this.padNodes.set(slot, node);
+    }
+    node.port.postMessage({ t: 'hit', slot, vel, at, tweak });
+  }
+
   noteOn(slot: 'synth' | 'keys', note: number, vel: number, at: number): void {
     this.send(slot, { t: 'on', note, vel, at });
   }
@@ -128,7 +156,7 @@ export class ToneHost {
   }
 
   private all(): AudioWorkletNode[] {
-    return [...this.nodes.values(), ...this.clipNodes.values()];
+    return [...this.nodes.values(), ...this.clipNodes.values(), ...this.padNodes.values()];
   }
 
   setTempo(bpm: number): void {
@@ -149,5 +177,6 @@ export class ToneHost {
     }
     this.nodes.clear();
     this.clipNodes.clear();
+    this.padNodes.clear();
   }
 }

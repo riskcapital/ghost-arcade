@@ -1,5 +1,8 @@
 <script lang="ts">
   import PreviewMonitorControl from './PreviewMonitorControl.svelte';
+  import MusicMotionControl from './MusicMotionControl.svelte';
+  import MusicMotionMark from './MusicMotionMark.svelte';
+  import { isMusicMotionInput, shaderIsMusicMotionReady } from '../audio/musicMotion';
   import VJGroups from './VJGroups.svelte';
   import VJFluxPanel from './VJFluxPanel.svelte';
   import StageFxChaseControls from './StageFxChaseControls.svelte';
@@ -1353,6 +1356,22 @@
   // Copy/paste state
   let clipboardClip: VJClip | null = null;
   let cellContextMenu: { x: number; y: number; layer: number; column: number; bank: VJDeck } | null = null;
+  /** A cell being renamed from its menu: where, and the name being typed. */
+  let cellRename: { x: number; y: number; layer: number; column: number; bank: VJDeck; value: string } | null = null;
+  function startCellRename() {
+    if (!cellContextMenu) return;
+    const clip = deckGrid(cellContextMenu.bank)[cellContextMenu.layer]?.[cellContextMenu.column];
+    if (clip) cellRename = { ...cellContextMenu, value: clip.name };
+    cellContextMenu = null;
+  }
+  function commitCellRename() {
+    if (!cellRename) return;
+    const { layer, column, bank, value } = cellRename;
+    const clip = deckGrid(bank)[layer]?.[column];
+    const name = value.trim();
+    if (clip && name && name !== clip.name) vjClipLauncher.setClip(layer, column, { ...clip, name }, bank);
+    cellRename = null;
+  }
   // Block-tab right-click context menu — gives quick access to "Save Project"
   // (overwrite the .gha file) plus the existing Rename / Duplicate / Delete
   // actions without forcing the user up to the File menu.
@@ -1506,7 +1525,14 @@
     // Reference activeClipId to make this reactive to clip changes
     void activeClipId;
     // Note and visual voice inputs are played by the music studio every frame, not set by hand.
-    return getActiveShaderInputs(selectedLayerIndex).filter((input) => !isNoteDrivenInput(input.NAME) && !isVoiceDrivenInput(input.NAME));
+    // Music motion inputs are fed by Music motion, not set by hand.
+    return getActiveShaderInputs(selectedLayerIndex).filter((input) => !isNoteDrivenInput(input.NAME) && !isVoiceDrivenInput(input.NAME) && !isMusicMotionInput(input.NAME));
+  })();
+  // Music motion sees every input, so it knows a shader made for it.
+  $: selectedClipMotionInputs = (() => {
+    if (selectedLayerIndex === null) return [];
+    void activeClipId;
+    return getActiveShaderInputs(selectedLayerIndex);
   })();
 
   // Audio-ready badge: true if current shader uses audio uniforms
@@ -4493,7 +4519,6 @@
         </button>
       </div>
 
-      <ShowUnderneathBanner />
       <div class="header-stage-slot">
       {#if $vjClipLauncher.isLive}
         <div class="header-stage">
@@ -5313,6 +5338,14 @@
                   <div class="audio-warn">This shader doesn't use audio uniforms — modulation controls parameters only, not the shader's internal audio response.</div>
                 {/if}
                 <div class="shader-params-panel-list">
+                  {#if selectedLayerState.activeClip}
+                    {@const _mmClip = selectedLayerState.activeClip}
+                    <MusicMotionControl
+                      settings={_mmClip.musicMotion}
+                      inputs={selectedClipMotionInputs}
+                      onchange={(next) => vjClipLauncher.setClipMusicMotion(_mmClip.id, next)}
+                    />
+                  {/if}
                   {#each selectedClipShaderInputs as input (input.NAME)}
                     <!-- Inline the modulationMap lookup so the @const
                          expression's reactive dependency on the store
@@ -6062,6 +6095,10 @@
             {/each}
             <button class="add-block-btn" onclick={handleAddBlock} title="Add new block" aria-label="Add new block">+</button>
           </div>
+          <!-- The show underneath and its Return live by the decks: in the
+               header they overran the MIX/STAGE/MAP toggle and the macro
+               bank below 1800 px. -->
+          <ShowUnderneathBanner />
           <div class="grid-snaps">
             <SnapshotBank placement="inline" />
           </div>
@@ -6382,7 +6419,7 @@
                   data-midi-mode="toggle"
                 >
                   {#if clip}
-                    <div class="clip-content">
+                    <div class="clip-content" class:mm-on={clip.type === 'shader' && clip.musicMotion?.on}>
                       {#if clip.thumbnail}
                         <img src={clip.thumbnail} alt={clip.name} class="clip-thumb" draggable="false" />
                       {:else}
@@ -6390,7 +6427,7 @@
                           {clip.type === 'shader' ? 'ISF' : clip.type === 'video' ? 'VID' : clip.type === 'spout' ? 'SPT' : clip.type === 'threejs' ? '3JS' : clip.type === 'splat' ? 'PLY' : clip.type === 'model3d' ? '3DM' : clip.type === 'gpu' ? 'GPU' : clip.type === 'text' ? 'TXT' : clip.type === 'effect' ? 'FX' : clip.type === 'preset' ? 'MAP' : clip.type === 'synthvision' ? 'PERF' : 'IMG'}
                         </div>
                       {/if}
-                      <span class="clip-name">{clip.name}</span>
+                      <span class="clip-name">{#if clip.type === 'shader' && clip.musicMotion?.on}<MusicMotionMark size={11} live title="Music motion is on" /> {:else if clip.type === 'shader' && shaderIsMusicMotionReady(clip.shaderCode)}<MusicMotionMark size={10} /> {/if}{clip.name}</span>
                       {#if isFileMissing}
                         <button
                           class="missing-badge"
@@ -6620,6 +6657,7 @@
           {/if}
           {#if ctxClip}
             <button class="ctx-item" onclick={openClipPreview}>Edit / Preview</button>
+            <button class="ctx-item" onclick={startCellRename}>Rename…</button>
             <button class="ctx-item" onclick={copyClipToClipboard}>Copy</button>
           {/if}
           {#if clipboardClip}
@@ -6632,6 +6670,14 @@
             <div class="ctx-item ctx-disabled">No actions</div>
           {/if}
         </div>
+      {/if}
+
+      {#if cellRename}
+        <div class="ctx-backdrop" onclick={commitCellRename} role="presentation"></div>
+        <form class="ctx-menu cell-rename" style="left: {cellRename.x}px; top: {cellRename.y}px" onsubmit={(e) => { e.preventDefault(); commitCellRename(); }}>
+          <!-- svelte-ignore a11y_autofocus -->
+          <input bind:value={cellRename.value} autofocus aria-label="Cell name" maxlength="60" onkeydown={(e) => { if (e.key === 'Escape') cellRename = null; }} />
+        </form>
       {/if}
 
       <!-- Block tab context menu — Save Project + Rename / Duplicate / Delete -->
@@ -7305,7 +7351,9 @@
      wrapper takes the leftover lead-column width, the pill centres in it. */
   .header-stage-slot {
     display: flex;
-    flex: 1 1 auto;
+    /* Never narrower than the MIX/STAGE/MAP toggle: it overran the macro
+       bank when the show-underneath banner shared the lead column. */
+    flex: 1 0 auto;
     justify-content: center;
     min-width: 0;
   }
@@ -8274,8 +8322,10 @@
     }
   }
 
-  /* Narrow: the macro bank drops to a second row spanning both columns. */
-  @media (max-width: 1180px) {
+  /* Narrow: the macro bank drops to a second row spanning both columns.
+     Below ~1400 px the logo, File, master and the MIX/STAGE/MAP toggle no
+     longer fit beside a centred bank (the toggle went under the knobs). */
+  @media (max-width: 1400px) {
     .vj-header {
       grid-template-columns: 1fr auto;
       row-gap: 3px;
@@ -9955,6 +10005,15 @@
     min-width: 0;
     overflow: hidden;
   }
+  /* Music motion on: an even ring in the icon blue, all the way round. */
+  .clip-content.mm-on::after {
+    content: '';
+    position: absolute;
+    inset: 2px;
+    border: 2px solid var(--ga-icon, #5278ff);
+    border-radius: var(--ga-r-hard, 3px);
+    pointer-events: none;
+  }
 
   .clip-thumb {
     width: 100%;
@@ -10119,6 +10178,8 @@
     min-width: 100px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
   }
+  .cell-rename { padding: 6px; }
+  .cell-rename input { width: 200px; height: 24px; padding: 0 6px; border: 1px solid var(--ga-line2, rgba(245, 236, 222, 0.13)); border-radius: 4px; background: var(--ga-slot, #060504); color: var(--ga-ink0, #f2ede4); font: inherit; }
   .ctx-item {
     display: block;
     width: 100%;

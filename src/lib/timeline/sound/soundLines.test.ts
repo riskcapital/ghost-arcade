@@ -4,7 +4,7 @@
  * follow source computed offline (scrub = play), and a row runs the
  * studio's own effect chain with the same values the studio would give it.
  */
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createLineEvaluator, sourceValue, SOUND_ROW_TRACK_PREFIX, type PlacedSong } from '../lines/lineEvaluator';
 import { normalizeLines, type ControlLine } from '../lines/lineModel';
 import { findParam, paramsFor, readParam, targetId, type RegistrySource } from '../lines/paramRegistry';
@@ -13,7 +13,8 @@ import type { SongFeatures } from '../lines/songFeatures';
 import { MacroFxChain } from '../../music/macroFxAudio';
 import { effectiveValue, macroFxDef } from '../../music/macroFx';
 import { addRowFx, defaultSoundRow, setRowFxParam, type SoundRow } from './soundModel';
-import { readSoundRowParam, rowValues, soundRowParams } from './soundParams';
+import { rowValues, soundLineScope, soundRowParams } from './soundParams';
+import { registerParamScope } from '../lines/lineExtensions';
 import { RowBus } from './rowBus';
 import { FakeAudioContext } from './fakeAudio.testutil';
 
@@ -24,10 +25,16 @@ function rowWithFx(): SoundRow {
   return { ...row, volume: 0.7, duck: { source: 'beat', depth: 0.4, release: 0.2 } };
 }
 
-const source = (row: SoundRow): RegistrySource => ({
-  layers: [],
-  soundParams: (id) => (id === row.id ? soundRowParams(row) : []),
-  readSound: (id, key) => (id === row.id ? readSoundRowParam(row, key) : undefined),
+// The sound rows are a registered line scope (the Timeline registers its own rows).
+let unregisterSound: (() => void) | null = null;
+const source = (row: SoundRow): RegistrySource => {
+  unregisterSound?.();
+  unregisterSound = registerParamScope(soundLineScope(() => [row]));
+  return { layers: [] };
+};
+afterEach(() => {
+  unregisterSound?.();
+  unregisterSound = null;
 });
 
 describe('sound rows: line keys', () => {

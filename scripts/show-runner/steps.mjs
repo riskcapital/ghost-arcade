@@ -396,6 +396,18 @@ const ACTIONS = {
     if (!id) throw new Error('the song was not added');
     await sleep(500);
   },
+  async 'show.dropSong'(ctx, s) {
+    // A real file drop (CDP drag) of a song fixture on the empty Timeline's
+    // top row (the Sections row says "Drop a song here"): { file, selector }.
+    const src = fixture(s.file ?? 'sections.wav');
+    const dir = path.join(ctx.profile, 'project-assets');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, path.basename(src));
+    fs.copyFileSync(src, file);
+    await ctx.session.dropFiles(`document.querySelector(${J(s.selector ?? '[data-section-lane]')})`, [file]);
+    await waitIn(ctx.session, `__show.show().audioTracks.some((t) => t.lane === 0 && t.url && t.duration > 1)`, 60000, 'the song on the Song row');
+    await sleep(s.settle ?? 800);
+  },
   async 'show.score'(ctx, s) {
     // Score this song (the dialog's confirm); { shuffle: n } shuffles n times after.
     const r = await ctx.eval('__show.g().timelineScore.score()', 120000);
@@ -403,6 +415,42 @@ const ACTIONS = {
     ctx.vars.score = r;
     for (let i = 0; i < (s.shuffle ?? 0); i++) await ctx.eval('__show.g().timelineScore.shuffle()', 120000);
     await sleep(800);
+  },
+  async 'ui.click'(ctx, s) {
+    // A real click (CDP mouse) on the centre of the first element matching `selector`.
+    const rect = await waitIn(ctx.session, `(() => { const el = document.querySelector(${J(s.selector)}); if (!el || el.disabled) return null; const r = el.getBoundingClientRect(); return r.width ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null; })()`, (s.seconds ?? 20) * 1000, s.selector);
+    await ctx.session.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: rect.x, y: rect.y });
+    await ctx.session.call('Input.dispatchMouseEvent', { type: 'mousePressed', x: rect.x, y: rect.y, button: 'left', clickCount: 1 });
+    await ctx.session.call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: rect.x, y: rect.y, button: 'left', clickCount: 1 });
+    await sleep(s.settle ?? 300);
+  },
+  async 'ui.undo'(ctx, s) {
+    // A real Cmd+Z (Ctrl+Z off the Mac), with the pointer over the Timeline.
+    const mod = process.platform === 'darwin' ? 4 : 2;
+    for (const type of ['rawKeyDown', 'keyUp']) await ctx.session.call('Input.dispatchKeyEvent', { type, key: 'z', code: 'KeyZ', windowsVirtualKeyCode: 90, modifiers: mod });
+    await sleep(s.settle ?? 800);
+  },
+  async 'show.autoShow'(ctx, s) {
+    // ✦ Auto show through its dialog with real clicks: { open: 'song' | 'sections', style, source }.
+    // Keeps the build time (click to playing) and what the show laid down in ctx.vars.autoShow.
+    const opener = s.open === 'sections' ? '[data-auto-show-open]' : '[data-auto-show-song]';
+    await ACTIONS['ui.click'](ctx, { selector: opener });
+    await waitIn(ctx.session, `!!document.querySelector('[data-auto-build]')`, 120000, 'the Auto show dialog to listen to the song');
+    if (s.style) await ACTIONS['ui.click'](ctx, { selector: `[data-auto-style="${s.style}"]`, settle: 600 });
+    if (s.source) await ACTIONS['ui.click'](ctx, { selector: `[data-auto-source="${s.source}"]`, settle: 600 });
+    ctx.vars.autoShowHeard = await ctx.eval(`document.querySelector('[data-auto-heard]')?.textContent?.replace(/\\s+/g, ' ').trim() ?? ''`);
+    const t0 = Date.now();
+    await ACTIONS['ui.click'](ctx, { selector: '[data-auto-build]', settle: 0 });
+    await waitIn(ctx.session, `document.querySelector('[data-auto-phase]')?.dataset.autoPhase === 'done' && __show.show().isPlaying`, 30000, 'the show to be built and playing');
+    ctx.vars.autoShowClickToPlayMs = Date.now() - t0;
+    ctx.vars.autoShow = await ctx.eval(`(() => {
+      const s = __show.show();
+      const rows = s.layerTracks.filter((t) => t.subRow && t.layerName.startsWith('✦'));
+      return { rows: rows.map((t) => ({ name: t.layerName, blocks: t.clips.length, layerId: t.layerId })), sections: s.sections.map((x) => ({ name: x.name, kind: x.kind, start: x.start, end: x.end })),
+        orders: s.whereOrders.map((o) => o.id), looks: s.lookClips.length, stage: s.stageClips.length, lines: s.lines.length,
+        blocks: rows.reduce((n, t) => n + t.clips.length, 0) + s.lookClips.length + s.stageClips.length + s.ledClips.length };
+    })()`);
+    if (s.done !== false) await ACTIONS['ui.click'](ctx, { selector: '[data-auto-done]', settle: 300 });
   },
   async 'show.section'(ctx, s) {
     // Change a section: { name, action, exit, jumpTo (name), passes }.
@@ -664,7 +712,8 @@ const ACTIONS = {
 async function waitIn(page, js, ms, what) {
   const until = Date.now() + ms;
   for (;;) {
-    if (await page.eval(js).catch(() => false)) return;
+    const v = await page.eval(js).catch(() => false);
+    if (v) return v;
     if (Date.now() > until) throw new Error(`timed out waiting for ${what}`);
     await sleep(250);
   }
@@ -815,6 +864,35 @@ const CHECKS = {
       ? 'lit colour: too little lit'
       : `lit colour change ${litAcross.toFixed(3)} (≥ ${litBy}, within ${litWithin.toFixed(3)}; lit ${(a.litFrac * 100).toFixed(1)} % → ${(b.litFrac * 100).toFixed(1)} %)`;
     return { pass, detail: `before ${fmt(a.strips)} · after ${fmt(b.strips)} · colour change ${meanDiff.toFixed(3)} (≥ ${s.by ?? 0.03}, within ${meanWithin.toFixed(3)}) · pixels across ${across.toFixed(4)} vs within the stretch before ${within.toFixed(4)} · ${litText}` };
+  },
+  async 'output.alternatesOnBeats'(ctx, s) {
+    // Tiles alternate on the beat: frames half a beat into `beats` successive
+    // beats from `t` (paused seeks) differ more from beat to beat than two
+    // beats apart (the same tiles, only the content's own motion): { t, beat, beats, ratio }.
+    const n = s.beats ?? 4;
+    const frames = [];
+    for (let k = 0; k < n; k++) {
+      await ctx.eval(`__show.g().showTimeline.seek(${s.t + (k + 0.5) * s.beat})`);
+      await sleep(s.settle ?? 1500);
+      frames.push(await ctx.eval(`(async () => {
+        const snap = await __show.snapshot({ include_pixels: true, max_dim: 160 });
+        if (!snap || !snap.rgba_b64) return null;
+        const bin = atob(snap.rgba_b64); const out = new Array(snap.width * snap.height * 3);
+        for (let i = 0, o = 0; i < bin.length; i += 4, o += 3) { out[o] = bin.charCodeAt(i + 2) / 255; out[o + 1] = bin.charCodeAt(i + 1) / 255; out[o + 2] = bin.charCodeAt(i) / 255; }
+        return out;
+      })()`));
+    }
+    if (frames.some((f) => !f)) return { pass: false, detail: 'no output pixels' };
+    const d = (p, q) => { let x = 0; for (let i = 0; i < p.length; i++) x += Math.abs(p[i] - q[i]); return x / p.length; };
+    const next = [];
+    for (let k = 0; k + 1 < n; k++) next.push(d(frames[k], frames[k + 1]));
+    const same = [];
+    for (let k = 0; k + 2 < n; k++) same.push(d(frames[k], frames[k + 2]));
+    const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
+    const alt = mean(next);
+    const keep = mean(same);
+    const ratio = s.ratio ?? 1.5;
+    return { pass: alt >= ratio * keep && alt >= (s.min ?? 0.005), detail: `beat to beat ${alt.toFixed(4)} vs two beats apart ${keep.toFixed(4)} (≥ ${ratio}×)` };
   },
   async 'output.notBlack'(ctx, s) {
     const snap = await ctx.eval('__show.snapshot()');

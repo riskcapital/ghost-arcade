@@ -15,6 +15,9 @@ import { keyboardAction, type KeyboardAction } from './keyboardLayout';
 /** True while the studio's letter keys are armed. */
 export const musicKeysArmed = writable(false);
 
+/** True while another player (the drum machine's pads) has the letter keys: the music keyboard leaves them alone. */
+export const musicKeysYield = writable(false);
+
 const TEXT_INPUT_TYPES = new Set(['text', 'search', 'email', 'number', 'password', 'tel', 'url', 'date', 'time', 'datetime-local', 'month', 'week']);
 
 /** A focused control that takes typed letters. Sliders, buttons and checkboxes do not. */
@@ -34,7 +37,7 @@ function performerOwnsKeys(): boolean {
 
 /** What the music keyboard does with this key event, or null when it leaves it alone. */
 export function musicKeyAction(e: KeyboardEvent, octave: number): KeyboardAction {
-  if (!get(musicKeysArmed) || performerOwnsKeys()) return null;
+  if (!get(musicKeysArmed) || get(musicKeysYield) || performerOwnsKeys()) return null;
   if (e.ctrlKey || e.metaKey || e.altKey) return null;
   if (typeof document !== 'undefined' && isTypingTarget(document.activeElement)) return null;
   return keyboardAction(e.code, octave);

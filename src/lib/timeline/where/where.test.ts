@@ -213,3 +213,40 @@ describe('where model', () => {
     expect([...scoped.weights]).toEqual([['B', 1]]);
   });
 });
+
+describe('given slots, reveal (Auto show orders and sets)', () => {
+  const row = [spot('a', 0.1, 0.5), spot('b', 0.3, 0.5), spot('c', 0.5, 0.5), spot('d', 0.7, 0.5)];
+
+  it('a named order can be its own slots: sets that light together, only the listed pieces', () => {
+    const order = computeSpatialOrder(row, { order: 'left-right', slots: [['c', 'a'], ['d'], ['gone']] });
+    expect(order.slots).toEqual([['c', 'a'], ['d']]);
+    expect(order.slotOf.get('a')).toBe(0);
+    expect(order.slotOf.has('b')).toBe(false);
+    // Saved and opened again as it was (empty and repeated ids dropped).
+    const [named] = normalizeNamedOrders([{ id: 'set', name: 'Set A', order: 'left-right', slots: [['a', 'a', 'c'], [], ['d', 7]] }]);
+    expect(named.slots).toEqual([['a', 'c'], ['d']]);
+    // Two sets swapping each beat: a sweep over two slots, one lit.
+    const spec = normalizeWhere({ namedOrder: 'set', motion: { kind: 'sweep', bars: 0.5 }, spread: 0, soft: 0 })!;
+    const lit = (t: number) => [...evaluateWhere({ spec, named: [named], spots: row, time: t, start: 0, ctx: { beatAt: defaultBeatAt } }).weights.entries()].filter(([, w]) => w >= 0.99).map(([id]) => id).sort();
+    expect(lit(0.1)).toEqual(['a', 'c']);
+    expect(lit(0.6)).toEqual(['d']);
+    expect(lit(1.1)).toEqual(['a', 'c']);
+  });
+
+  it('reveal: pieces light one after another over the bars, then stay; reversed they go dark in turn', () => {
+    const at = (t: number, reverse = false) => {
+      const w = whereWindowAt({ motion: { kind: 'reveal', bars: 2, ...(reverse ? { reverse: true } : {}) }, position: 0, spread: 0, soft: 0 }, t, 0, 4, { beatAt: defaultBeatAt });
+      return [0, 1, 2, 3].map((i) => (slotWeight(i, 4, w) >= 0.5 ? 1 : 0));
+    };
+    // 2 bars at 120 BPM = 4 s.
+    expect(at(0)).toEqual([1, 0, 0, 0]);
+    // Half-way: 2.5 of 4 lit (the half-lit third sits on the window's edge).
+    expect(at(2)).toEqual([1, 1, 1, 0]);
+    expect(at(4.5)).toEqual([1, 1, 1, 1]);
+    expect(at(0, true)).toEqual([1, 1, 1, 1]);
+    expect(at(4.5, true)).toEqual([0, 0, 0, 1]);
+    expect(normalizeWhere({ motion: { kind: 'reveal', bars: 8, reverse: true } })!.motion).toEqual({ kind: 'reveal', bars: 8, reverse: true });
+    expect(normalizeWhere({ dark: true, span: true })).toMatchObject({ dark: true, span: true });
+    expect(normalizeWhere({})).not.toHaveProperty('dark');
+  });
+});

@@ -24,15 +24,28 @@
  * thing on every parameter. Stepped values round to the step, bools switch
  * at the middle of the range, colours mix per channel toward `follow.color`.
  *
- * Saved as plain JSON (`ControlLine[]`); see normalizeLines.
+ * Saved as plain JSON (`ControlLine[]`); see normalizeLines. Scopes and
+ * sources registered at runtime (lineExtensions.ts) are saved as they are,
+ * and kept untouched by a build that does not know them.
  */
 import type { KeyframeEasing } from '../../types';
 import type { ParamKind, ParamTarget } from './paramRegistry';
 import { AUDIO_FEATURES, STEMS, type AudioFeature, type Stem } from './songFeatures';
+import { isLiveOnlyExtSource, type ExtFollowSource } from './lineExtensions';
 
 /** Curve from a point to the next one. The easings are the keyframe ones. */
-export type LineCurve = 'hold' | 'linear' | 'smooth' | Exclude<KeyframeEasing, 'linear' | 'step'>;
-export const LINE_CURVES: readonly LineCurve[] = ['hold', 'linear', 'smooth', 'ease-in', 'ease-out', 'ease-in-out', 'sine', 'exponential', 'bounce', 'elastic'];
+export type LineCurve = 'hold' | 'linear' | 'smooth' | Exclude<KeyframeEasing, 'linear' | 'step'> | 'bezier';
+export const LINE_CURVES: readonly LineCurve[] = ['hold', 'linear', 'smooth', 'ease-in', 'ease-out', 'ease-in-out', 'sine', 'exponential', 'bounce', 'elastic', 'bezier'];
+
+/**
+ * A 'bezier' segment's two handles, as a CSS cubic-bezier: [x1, y1, x2, y2].
+ * x is the share of the way to the next point (0..1), y the share of the
+ * change in value (it may go past 0..1 to overshoot), so a handle reads the
+ * same however far apart the points are.
+ */
+export type BezierHandles = [number, number, number, number];
+/** Handles a new bezier segment starts with: ease in and out. */
+export const DEFAULT_BEZIER: BezierHandles = [0.42, 0, 0.58, 1];
 
 export interface LinePoint {
   /** Show seconds. */
@@ -41,6 +54,8 @@ export interface LinePoint {
   v: number;
   /** Curve to the next point (default 'linear'; 'hold' for bools). */
   c?: LineCurve;
+  /** Handles of a 'bezier' curve to the next point (default DEFAULT_BEZIER). */
+  b?: BezierHandles;
 }
 
 export type BeatShape = 'sine' | 'triangle' | 'saw' | 'ramp' | 'square' | 'pulse';
@@ -59,7 +74,9 @@ export type FollowSource =
   /** A Live track's level. Live-only. */
   | { kind: 'live-level'; track: number }
   /** A MIDI CC (channel 0..15, −1 any; `input` a device name). Live-only. */
-  | { kind: 'midi'; cc: number; channel: number; input?: string };
+  | { kind: 'midi'; cc: number; channel: number; input?: string }
+  /** A source registered at runtime (lineExtensions.ts: registerLineSource). */
+  | ExtFollowSource;
 
 export interface LineFollow {
   source: FollowSource;
@@ -100,12 +117,40 @@ export interface ControlLine {
 }
 
 export function isLiveOnlySource(source: FollowSource): boolean {
-  return source.kind === 'live-param' || source.kind === 'live-level' || source.kind === 'midi';
+  return source.kind === 'live-param' || source.kind === 'live-level' || source.kind === 'midi' || isLiveOnlyExtSource(source.kind);
+}
+
+const BUILT_IN_SOURCES = new Set(['audio', 'stem', 'beat', 'live-param', 'live-level', 'midi']);
+const BUILT_IN_SCOPES = new Set(['layer', 'block', 'look', 'sound', 'stage', 'led']);
+
+/** Plain JSON, copied (what a newer build wrote, kept as it was). */
+function keepAsWritten<T>(raw: T): T {
+  try {
+    return JSON.parse(JSON.stringify(raw)) as T;
+  } catch {
+    return raw;
+  }
+}
+
+/**
+ * A saved target. Built-in scopes are checked; any other scope (registered
+ * at runtime, or written by a newer build) is kept as written.
+ */
+export function normalizeTarget(t: any): ParamTarget | null {
+  if (!t || typeof t !== 'object' || typeof t.scope !== 'string' || !t.scope) return null;
+  if (!BUILT_IN_SCOPES.has(t.scope)) {
+    if (t.scope.length > 128 || (t.id !== undefined && typeof t.id !== 'string')) return null;
+    return keepAsWritten(t) as ParamTarget;
+  }
+  if (t.scope === 'stage' || t.scope === 'led') return { scope: t.scope };
+  return typeof t.id === 'string' ? { scope: t.scope, id: t.id } : null;
 }
 
 // ── Save format ──────────────────────────────────────────────────────────
 
 const finite = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
+
+const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
 
 function normalizePoints(raw: unknown): LinePoint[] {
   if (!Array.isArray(raw)) return [];
@@ -116,13 +161,20 @@ function normalizePoints(raw: unknown): LinePoint[] {
     const v = Number((p as any).v);
     if (!Number.isFinite(t) || !Number.isFinite(v)) continue;
     const c = (p as any).c;
-    out.push(LINE_CURVES.includes(c) ? { t: Math.max(0, t), v, c } : { t: Math.max(0, t), v });
+    const point: LinePoint = LINE_CURVES.includes(c) ? { t: Math.max(0, t), v, c } : { t: Math.max(0, t), v };
+    const b = (p as any).b;
+    if (c === 'bezier' && Array.isArray(b) && b.length === 4 && b.every((x: unknown) => Number.isFinite(Number(x)))) {
+      point.b = [clamp01(Number(b[0])), Number(b[1]), clamp01(Number(b[2])), Number(b[3])];
+    }
+    out.push(point);
   }
   return out.sort((a, b) => a.t - b.t);
 }
 
 function normalizeSource(raw: any): FollowSource | null {
   if (!raw || typeof raw !== 'object') return null;
+  // A source registered at runtime, or one a newer build wrote: as written.
+  if (typeof raw.kind === 'string' && raw.kind && raw.kind.length <= 128 && !BUILT_IN_SOURCES.has(raw.kind)) return keepAsWritten(raw) as FollowSource;
   switch (raw.kind) {
     case 'audio': return AUDIO_FEATURES.includes(raw.feature) ? { kind: 'audio', feature: raw.feature, ...(typeof raw.track === 'string' ? { track: raw.track } : {}) } : null;
     case 'stem': return STEMS.includes(raw.stem) ? { kind: 'stem', stem: raw.stem, ...(typeof raw.track === 'string' ? { track: raw.track } : {}) } : null;
@@ -140,12 +192,7 @@ export function normalizeLines(raw: unknown): ControlLine[] {
   const out: ControlLine[] = [];
   for (const r of raw as any[]) {
     if (!r || typeof r !== 'object' || typeof r.id !== 'string' || typeof r.key !== 'string') continue;
-    const t = r.target;
-    const target: ParamTarget | null = t?.scope === 'layer' && typeof t.id === 'string' ? { scope: 'layer', id: t.id }
-      : t?.scope === 'block' && typeof t.id === 'string' ? { scope: 'block', id: t.id }
-      : t?.scope === 'look' && typeof t.id === 'string' ? { scope: 'look', id: t.id }
-      : t?.scope === 'sound' && typeof t.id === 'string' ? { scope: 'sound', id: t.id }
-      : t?.scope === 'stage' ? { scope: 'stage' } : t?.scope === 'led' ? { scope: 'led' } : null;
+    const target = normalizeTarget(r.target);
     if (!target) continue;
     const kind: ParamKind = ['continuous', 'stepped', 'bool', 'colour'].includes(r.kind) ? r.kind : 'continuous';
     const min = finite(r.min, 0);

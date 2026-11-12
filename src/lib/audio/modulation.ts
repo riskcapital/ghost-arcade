@@ -8,10 +8,11 @@ import { writable } from 'svelte/store';
 import { audioStore, type AudioState } from '../stores/audio';
 import { getVisualAudioSnapshot } from './visualAudio';
 import { vjClipLauncher } from '../stores/vjClipLauncher';
+import { musicMotionOwnsParam } from './musicMotionOwned';
 import type { ISFInput } from '../isf/parser';
 
 import { modulationHandlers } from './modulationHandlers';
-import { runAsLiveControl } from '../stores/historyHooks';
+import { runAsAutomation } from '../stores/historyHooks';
 export { registerCompositionModulationHandlers, registerMappingLayerCallbacks } from './modulationHandlers';
 
 import { DEFAULT_MOD, defaultModRange, hasModRange, computeModulatedValue, isAudioDrivenMod, clamp01, legacySignal, type ModSource, type ModTarget, type ParamModulation } from './modulationControls';
@@ -1105,7 +1106,7 @@ class ModulationEngine {
 
     // Modulation performs: nothing it writes is an undo step, except a
     // recording into an armed keyframe track (one step per take).
-    runAsLiveControl(() => this.applyModulations());
+    runAsAutomation(() => this.applyModulations());
     this.animFrameId = requestAnimationFrame(this.tick);
   };
 
@@ -1500,6 +1501,8 @@ class ModulationEngine {
         const batch = isMapping
           ? mappingBatch
           : (bank === 'B' ? vjBatchB : vjBatchA);
+        // Music motion drives this param: its audio response replaces the bump.
+        if (musicMotionOwnsParam(isMapping ? 'map' : bank, layerIndex, paramName)) continue;
         let layerBatch = batch.get(layerIndex);
         if (!layerBatch) {
           layerBatch = {};

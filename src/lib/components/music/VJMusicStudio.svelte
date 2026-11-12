@@ -1,4 +1,6 @@
 <script lang="ts">
+  import MachinePads from './MachinePads.svelte';
+  import MachineSequencer from './MachineSequencer.svelte';
   /**
    * The music tray: a condensed copy of the current set under the VJ deck.
    * It plays the same instruments as the Studio view, with the set's main
@@ -75,6 +77,7 @@
   function formatSeconds(sec: number): string {
     return `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
   }
+  let machinePad = $state(0);
 </script>
 
 {#snippet loops()}
@@ -168,6 +171,10 @@
           <div class="slot pads face"><PadsModule /></div>
           <div class="slot face"><DubModules part="siren" /></div>
           <div class="slot loops">{@render loops()}</div>
+        {:else if s.set === 'machine'}
+          <!-- No keyboard: the pads, and the sequencer beside them. -->
+          <div class="slot machine-pads face"><MachinePads bind:selected={machinePad} /></div>
+          <div class="slot machine-seq face"><MachineSequencer bind:selected={machinePad} /></div>
         {:else}
           <div class="slot play face"><PlayModule size={null} patches /></div>
           <div class="slot synth face"><AnalogModules bay={false} /></div>
@@ -233,4 +240,6 @@
 
   /* Patching lives in the Studio view; the tray hides the jacks. */
   .music-tray :global(.jack-wrap) { display: none; }
+  .slot.machine-pads { flex: 0 0 300px; min-width: 0; }
+  .slot.machine-seq { flex: 1 1 0; min-width: 0; }
 </style>

@@ -51,6 +51,7 @@ export const DEFAULT_FX_PADS: Record<StudioSet, string[]> = {
   berlin: ['noise-riser', 'snare-build', 'downlifter', 'impact', 'sub-drop', 'sweep-down', 'laser', 'glass-smash'],
   dub: ['laser', 'zap', 'riser', 'boing', 'crackle', 'boom', 'alarm', 'echo-clap'],
   analog: ['pitch-riser', 'long-riser', 'braam', 'sub-drop', 'impact', 'zap', 'radio', 'sweep-down'],
+  machine: ['noise-riser', 'snare-build', 'downlifter', 'impact', 'sub-drop', 'sweep-down', 'laser', 'zap'],
 };
 
 /** The eight dub shots every set's pads played before pads could be chosen. */
@@ -64,6 +65,7 @@ export function defaultFxPads(): FxPads {
     berlin: [...DEFAULT_FX_PADS.berlin],
     dub: [...DEFAULT_FX_PADS.dub],
     analog: [...DEFAULT_FX_PADS.analog],
+    machine: [...DEFAULT_FX_PADS.machine],
   };
 }
 
@@ -156,14 +158,14 @@ export function normalizeBowlSlots(raw: unknown): BowlSlot[] {
  */
 export function normalizeFxPads(raw: unknown): FxPads {
   if (!raw || typeof raw !== 'object') {
-    return { bath: [...LEGACY_PADS], berlin: [...LEGACY_PADS], dub: [...LEGACY_PADS], analog: [...LEGACY_PADS] };
+    return { bath: [...LEGACY_PADS], berlin: [...LEGACY_PADS], dub: [...LEGACY_PADS], analog: [...LEGACY_PADS], machine: [...DEFAULT_FX_PADS.machine] };
   }
   const input = raw as Partial<Record<StudioSet, unknown>>;
   const set = (id: StudioSet) => {
     const list = Array.isArray(input[id]) ? (input[id] as unknown[]) : [];
     return DEFAULT_FX_PADS[id].map((d, i) => soundId(list[i], d));
   };
-  return { bath: set('bath'), berlin: set('berlin'), dub: set('dub'), analog: set('analog') };
+  return { bath: set('bath'), berlin: set('berlin'), dub: set('dub'), analog: set('analog'), machine: set('machine') };
 }
 
 export function normalizeDronePatch(raw: unknown): string {

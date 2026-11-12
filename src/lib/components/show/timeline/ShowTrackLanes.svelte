@@ -13,11 +13,11 @@
    * only the playhead moves, so a playing show re-renders none of this.
    */
   import { get } from 'svelte/store';
-  import { showTimeline } from '../../../stores/showTimeline';
+  import { showTimeline, withGroupMembers } from '../../../stores/showTimeline';
   import { layers as liveLayersStore } from '../../../stores/layers';
   import { showDropEffect } from '../../../show/showDrop';
   import { placeOnTrack } from '../../../show/tracks/showTrackEdit';
-  import { clipEnd } from '../../../show/tracks/showTrackEval';
+  import { clipEnd, clipRate } from '../../../show/tracks/showTrackEval';
   import { findJunctionPredecessor } from '../../../show/showJunctions';
   import type { KeyframeEasing, ShowLayerClip, ShowLayerTrack } from '../../../types';
   import ShowLayerTrackLane from './ShowLayerTrackLane.svelte';
@@ -43,6 +43,7 @@
   import { showSlice } from './timelineSlices';
   import { dragSnapper, snapMovingClip } from './dragSnap';
   import { followPointer } from './dragSession';
+  import { editTool } from './editTools';
   import { liveTakeover } from '../../../show/takeover/liveTakeover';
   import ShowTakeoverHatch from './ShowTakeoverHatch.svelte';
   import { editBlock } from '../../../show/tracks/showBlockEdit';
@@ -221,13 +222,63 @@
     // they show the block's own values.
     if (!additive) editBlock(tr, clip);
     if (tr.locked) {
-      if (additive && wasSelected) showTimeline.selectLayerClips(before.filter((id) => id !== clip.id));
+      if (additive && wasSelected) showTimeline.selectLayerClips(withoutGroup(before, clip.id));
       return;
     }
-    if (part === 'body' && e.altKey) dragCopies(e, tr, clip);
+    const tool = get(editTool);
+    if (tool === 'slip' && part === 'body') dragSlip(e, clip);
+    else if (tool === 'ripple' && (part === 'start' || part === 'end')) dragRipple(e, clip, part);
+    else if (tool === 'roll' && (part === 'start' || part === 'end') && rollPartner(tr, clip, part)) dragRoll(e, tr, clip, part);
+    else if (part === 'body' && e.altKey) dragCopies(e, tr, clip);
     else if (part === 'body') dragClips(e, tr, clip, wasSelected ? (additive ? 'remove' : 'only') : null);
     else if (part === 'start' || part === 'end') dragTrim(e, clip, part);
     else dragFade(e, clip, part);
+  }
+
+  /** `ids` without the block and the rest of its group (Shift-click takes a whole group out). */
+  function withoutGroup(ids: readonly string[], clipId: string): string[] {
+    const out = new Set(withGroupMembers(currentTracks(), [clipId]));
+    return ids.filter((id) => !out.has(id));
+  }
+
+  /** The block touching `clip` at `edge` (the other side of the cut), if any. */
+  function rollPartner(tr: ShowLayerTrack, clip: ShowLayerClip, edge: 'start' | 'end'): ShowLayerClip | null {
+    const at = edge === 'end' ? clipEnd(clip) : clip.startTime;
+    return tr.clips.find((c) => c.id !== clip.id && Math.abs((edge === 'end' ? c.startTime : clipEnd(c)) - at) < 1e-4) ?? null;
+  }
+
+  /** Ripple (B): the edge follows the pointer and later blocks on the row move with it. */
+  function dragRipple(e: MouseEvent, clip: ShowLayerClip, edge: 'start' | 'end') {
+    const snapper = dragSnapper([clip.id]);
+    follow(e, (ev) => {
+      const raw = timeAt(ev.clientX);
+      showTimeline.rippleTrimLayerClip(clip.id, edge, movesFreely(ev) ? raw : snapper.snap(raw));
+    }, () => showSnapGuide.set(null), 1);
+  }
+
+  /** Roll (N): the cut between two touching blocks follows the pointer. */
+  function dragRoll(e: MouseEvent, tr: ShowLayerTrack, clip: ShowLayerClip, edge: 'start' | 'end') {
+    const other = rollPartner(tr, clip, edge);
+    if (!other) return;
+    const [left, right] = edge === 'end' ? [clip, other] : [other, clip];
+    const snapper = dragSnapper([left.id, right.id]);
+    follow(e, (ev) => {
+      const raw = timeAt(ev.clientX);
+      showTimeline.rollLayerEdit(left.id, right.id, movesFreely(ev) ? raw : snapper.snap(raw));
+    }, () => showSnapGuide.set(null), 1);
+  }
+
+  /** Slip (Y): dragging right plays earlier media, as if pulling the film under the block. */
+  function dragSlip(e: MouseEvent, clip: ShowLayerClip) {
+    let last = timeAt(e.clientX);
+    const rate = clipRate(clip);
+    follow(e, (ev) => {
+      const t = timeAt(ev.clientX);
+      const delta = t - last;
+      if (Math.abs(delta) < 1e-6) return;
+      last = t;
+      showTimeline.slipLayerClip(clip.id, -delta * rate);
+    }, () => {}, 1);
   }
 
   function dragClips(e: MouseEvent, tr: ShowLayerTrack, clip: ShowLayerClip, onClick: 'only' | 'remove' | null) {
@@ -275,7 +326,7 @@
     }, (moved) => {
       if (moved) return;
       if (onClick === 'only' && ids.length > 1) showTimeline.selectLayerClips([clip.id]);
-      else if (onClick === 'remove') showTimeline.selectLayerClips(get(showTimeline).selectedClipIds.filter((id) => id !== clip.id));
+      else if (onClick === 'remove') showTimeline.selectLayerClips(withoutGroup(get(showTimeline).selectedClipIds, clip.id));
     });
   }
 
@@ -390,6 +441,12 @@
     e.stopPropagation();
     focusedTrackId.set(tr.id);
     showTimeline.selectLayerClips([clip.id]);
+    // Roll (N): the junction is the cut between the two blocks; rolling it
+    // moves the cut, and the crossfade goes with it.
+    if (get(editTool) === 'roll' && !tr.locked && rollPartner(tr, clip, 'start')) {
+      dragRoll(e, tr, clip, 'start');
+      return;
+    }
     if (part !== 'edge' || tr.locked) return;
     follow(e, (ev) => {
       const t = track(tr.id);

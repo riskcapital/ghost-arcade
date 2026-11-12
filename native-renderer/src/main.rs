@@ -1545,6 +1545,30 @@ fn layer_composite_extent(layer: &SceneLayer) -> (f32, f32) {
     (width, height)
 }
 
+/// See `App::layer_render_footprint`. A layer showing part of its picture (a
+/// crop: a piece's share of a picture spread across the stage) needs the
+/// whole picture at the detail it shows its part: its extent divided by
+/// that part.
+fn layer_render_footprint_for(layer: &SceneLayer, composite_w: u32, composite_h: u32, max_edge: u32) -> (u32, u32) {
+    let (width, height) = layer_composite_extent(layer);
+    let (span_x, span_y) = layer_source_span(layer);
+    let (width, height) = (width / span_x, height / span_y);
+    let edge = |extent: f32, composite: u32| -> u32 {
+        if !extent.is_finite() {
+            return max_edge;
+        }
+        let pixels = (extent * composite.max(1) as f32 * 1.25).ceil().max(1.0) as u32;
+        pixels.div_ceil(128).saturating_mul(128).clamp(256.min(max_edge), max_edge)
+    };
+    (edge(width, composite_w), edge(height, composite_h))
+}
+
+/// Key of a group of layers sharing one single-pass shader render (see
+/// `isf_shared_footprints`).
+fn isf_share_key_for(shader_id: &str, source_hash: u64, input_source_slot: usize, quality: f32) -> String {
+    format!("{shader_id}:{source_hash:016x}:{input_source_slot}:{:08x}", quality.to_bits())
+}
+
 /// The share of its source (width, height) a layer shows: its crop (the
 /// `uv_transform` scale), narrowed further on the long side by Fill.
 fn layer_source_span(layer: &SceneLayer) -> (f32, f32) {
@@ -4956,6 +4980,12 @@ struct App {
     /// one render and one source-frame slot instead of taking a slot each,
     /// which ran out of slots and left faces blank.
     isf_frame_outputs: HashMap<String, (usize, u64)>,
+    /// This frame's render size for each group of layers that show the same
+    /// single-pass shader with the same input and quality (`isf_share_key`):
+    /// the largest footprint among them. They all draw it at that one size,
+    /// so the group is one render instead of one per size class (eighty cube
+    /// faces of a few sizes were six renders of every shader).
+    isf_shared_footprints: HashMap<String, (u32, u32)>,
     isf_uniforms: HashMap<String, IsfUniformState>,
     /// Shaders whose TIME follows an anchor (`set_isf_time_anchor`) instead
     /// of the render clock, by shader id.
@@ -5394,6 +5424,7 @@ impl App {
             native_graph_step_delta_this_render: 1.0 / 60.0,
             isf_layer_bindings: HashMap::new(),
             isf_frame_outputs: HashMap::new(),
+            isf_shared_footprints: HashMap::new(),
             isf_uniforms: HashMap::new(),
             isf_time_anchors: HashMap::new(),
             shader_registry: HashMap::new(),
@@ -16538,6 +16569,16 @@ impl App {
         // A fixed order: when layers share one render, the same layer draws
         // it (and steps its pass buffers) every frame.
         layer_ids.sort_unstable();
+        // Layers that will share a render draw it at the largest size any
+        // of them needs (see `isf_shared_footprints`).
+        self.isf_shared_footprints.clear();
+        let max_edge = self.renderer.as_ref().map_or(1024, |renderer| renderer.source_frame_size as u32);
+        for layer_id in &layer_ids {
+            if let Some((key, size)) = self.isf_share_key(layer_id, max_edge) {
+                let entry = self.isf_shared_footprints.entry(key).or_insert(size);
+                *entry = (entry.0.max(size.0), entry.1.max(size.1));
+            }
+        }
         // One encoder and one submit for all single-pass shaders this frame.
         let async_compile = self.render_clock_mode != "manual";
         if let Some(renderer) = self.renderer.as_mut() {
@@ -16553,6 +16594,38 @@ impl App {
         }
     }
 
+    /// What a single-pass shader layer's render is shared by, and the size
+    /// the layer alone would need: the same shader, source, input picture
+    /// and quality give the same picture at any size, so layers with the
+    /// same key draw one render (`isf_shared_footprints`). None for layers
+    /// that do not render a single-pass shader.
+    fn isf_share_key(&self, layer_id: &str, max_edge: u32) -> Option<(String, (u32, u32))> {
+        let shader_id = self.isf_layer_bindings.get(layer_id).cloned().or_else(|| {
+            self.scene_layers.get(layer_id).and_then(|layer| layer.shader_id.clone())
+        })?;
+        if self.shader_isf_hosts.contains_key(&shader_id) {
+            return None;
+        }
+        let record = self.shader_registry.get(&shader_id)?;
+        let layer = self.scene_layers.get(layer_id);
+        let input_source_slot = layer
+            .and_then(|layer| {
+                layer
+                    .source_id
+                    .as_deref()
+                    .and_then(|source_id| self.source_frame_slots.get(source_id).copied())
+                    .or(layer.frame_slot)
+            })
+            .unwrap_or(0);
+        let quality = layer
+            .and_then(|layer| layer.render_quality)
+            .unwrap_or(self.native_quality.quality_scale);
+        Some((
+            isf_share_key_for(&shader_id, record.source_hash, input_source_slot, quality),
+            self.layer_render_footprint(layer_id, max_edge),
+        ))
+    }
+
     /// The pixels a layer covers on the composite, for sizing what is
     /// rendered for it: the bounding box of its corners (stretched by a mesh
     /// warp that reaches past them), with a quarter more for Screens that show
@@ -16562,15 +16635,7 @@ impl App {
         let Some(layer) = self.scene_layers.get(layer_id) else {
             return (max_edge, max_edge);
         };
-        let (width, height) = layer_composite_extent(layer);
-        let edge = |extent: f32, composite: u32| -> u32 {
-            if !extent.is_finite() {
-                return max_edge;
-            }
-            let pixels = (extent * composite.max(1) as f32 * 1.25).ceil().max(1.0) as u32;
-            pixels.div_ceil(128).saturating_mul(128).clamp(256.min(max_edge), max_edge)
-        };
-        (edge(width, self.pending_width), edge(height, self.pending_height))
+        layer_render_footprint_for(layer, self.pending_width, self.pending_height, max_edge)
     }
 
     /// How much of the full decode size a video needs: the largest share of
@@ -16692,7 +16757,9 @@ impl App {
             let frame_size = if self.shader_isf_hosts.contains_key(&shader_id) {
                 (max_edge, max_edge)
             } else {
-                self.layer_render_footprint(&layer_id, max_edge)
+                let own = self.layer_render_footprint(&layer_id, max_edge);
+                let key = isf_share_key_for(&shader_id, source_hash, input_source_slot, quality_scale_for_key);
+                self.isf_shared_footprints.get(&key).copied().unwrap_or(own)
             };
             // Same shader, same input picture, same quality, same size: the
             // output is identical, so it is rendered once per frame and shared.
@@ -35314,6 +35381,30 @@ mod tests {
         assert_eq!(native_video_slice_edge_cap((1920, 1080), scale), None);
         // A video no layer shows decodes in full.
         assert_eq!(video_decode_scale_for_layers(std::iter::empty()), 1.0);
+    }
+
+    #[test]
+    fn a_shader_on_a_cropped_piece_renders_the_whole_picture_at_the_detail_it_shows() {
+        use super::{SceneLayer, isf_share_key_for, layer_render_footprint_for};
+        let piece = |corners: [[f32; 2]; 4], crop: [f32; 4]| {
+            let mut layer = SceneLayer::new("piece".to_string(), 0);
+            layer.corners = corners;
+            layer.uv0 = crop;
+            layer
+        };
+        let small = [[0.0, 0.0], [0.1, 0.0], [0.1, 0.1], [0.0, 0.1]];
+        // An uncropped cube face a tenth of the output: drawn at its own size.
+        assert_eq!(layer_render_footprint_for(&piece(small, [0.0, 0.0, 1.0, 1.0]), 1920, 1080, 1024), (256, 256));
+        // The same face showing its tenth of a picture spread over the
+        // stage: the whole picture, at the detail of that tenth.
+        assert_eq!(layer_render_footprint_for(&piece(small, [0.3, 0.6, 0.1, 0.1]), 1920, 1080, 1024), (1024, 1024));
+        // Half the picture on a quarter-width piece: twice its width.
+        let quarter = [[0.0, 0.0], [0.25, 0.0], [0.25, 0.25], [0.0, 0.25]];
+        assert_eq!(layer_render_footprint_for(&piece(quarter, [0.0, 0.0, 0.5, 1.0]), 1920, 1080, 4096), (1280, 384));
+        // Sizes are not part of the share key: one render serves every size.
+        assert_eq!(isf_share_key_for("s", 7, 0, 1.0), isf_share_key_for("s", 7, 0, 1.0));
+        assert_ne!(isf_share_key_for("s", 7, 0, 1.0), isf_share_key_for("s", 7, 3, 1.0));
+        assert_ne!(isf_share_key_for("s", 7, 0, 1.0), isf_share_key_for("s", 7, 0, 0.5));
     }
 
     #[test]

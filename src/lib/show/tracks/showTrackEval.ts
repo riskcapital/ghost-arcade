@@ -244,6 +244,9 @@ export interface ShowTrackState {
    *  (`showwhere::<piece>::<clip>`) at these opacities. Its own piece is
    *  scaled in `opacity`. */
   whereCopies?: Array<{ pieceId: string; opacity: number }> | null;
+  /** The block shows one picture across its pieces: each draws the part of
+   *  it where it sits on the stage (a where line's `span`). */
+  span?: boolean;
 }
 
 export interface ShowTrackFrame {
@@ -265,6 +268,9 @@ export interface ShowTrackFrame {
   tracks: ShowTrackState[];
   /** The Looks row: look blocks under the playhead (see showLooks.ts). */
   looks?: ShowLookState[];
+  /** Pieces whose own content is dark now (a `dark` where block holds
+   *  them): drawn black, keeping their shape for a look. Sorted. */
+  darkPieces?: string[];
 }
 
 export interface ShowLoopWrap {
@@ -541,7 +547,7 @@ export function mediaToken(media: ShowClipMedia): number {
 }
 
 export function showTrackFrameSignature(frame: ShowTrackFrame): string {
-  const parts: string[] = [frame.playing ? 'p' : 's', String(frame.seekGeneration), frame.manualClock ? 'm' : '', showLooksSignature(frame.looks)];
+  const parts: string[] = [frame.playing ? 'p' : 's', String(frame.seekGeneration), frame.manualClock ? 'm' : '', showLooksSignature(frame.looks), frame.darkPieces?.length ? `D:${frame.darkPieces.join(',')}` : ''];
   for (const tr of frame.tracks) {
     const c = tr.clip;
     parts.push(
@@ -558,6 +564,7 @@ export function showTrackFrameSignature(frame: ShowTrackFrame): string {
         tr.warm ? `w:${tr.warm.clipId}` : '',
         tr.xfade ? `x:${tr.xfade.clip.clipId}/${tr.xfade.clip.runId}/${tr.xfade.clip.paused ? 'P' : ''}${visibleOpacity(tr.xfade.opacity)}/${mediaToken(tr.xfade.clip.media)}/${tr.xfade.clip.blendMode ?? ''}` : '',
         tr.whereCopies?.length ? `W:${tr.whereCopies.map((w) => `${w.pieceId}=${visibleOpacity(w.opacity)}`).join(',')}` : '',
+        tr.span ? 'S' : '',
       ].join('|'),
     );
   }

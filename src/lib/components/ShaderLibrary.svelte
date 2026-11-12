@@ -1,8 +1,11 @@
 <script lang="ts">
   import { onMount, createEventDispatcher } from 'svelte';
   import { parseISF } from '../isf/parser';
+  import MusicMotionMark from './MusicMotionMark.svelte';
+  import { isMusicMotionShaderFile } from '../isf/musicMotionShaders';
   import { estimateShaderLoadRating } from '../isf/loadRating';
   import { shaderLibrary, type SavedShader } from '../stores/shaderLibrary';
+  import { communityCredit } from '../community/catalogV2';
 
   export let isOpen = false;
   export let currentShaderIds: Set<string> = new Set();
@@ -45,6 +48,9 @@
     manifest?: ManifestEntry;
     /** Library-specific id (the `SavedShader.id`). */
     libraryShaderId?: string;
+    /** Community shaders: "by Name · MIT", and the author's profile. */
+    credit?: string;
+    creditUrl?: string;
   }
 
   let manifestShaders: ManifestEntry[] = [];
@@ -89,6 +95,8 @@
         tags: s.tags,
         thumbnail: s.thumbnail,
         libraryShaderId: s.id,
+        ...(src === 'cloud' && (s.author || s.licence) ? { credit: communityCredit(s.author, s.licence) } : {}),
+        ...(src === 'cloud' && s.authorUrl ? { creditUrl: s.authorUrl } : {}),
       });
     }
     return cards;
@@ -178,9 +186,12 @@
       const parts: string[] = [];
       if (result.added > 0) parts.push(`${result.added} new`);
       if (result.updated > 0) parts.push(`${result.updated} updated`);
+      if (result.removed) parts.push(`${result.removed} taken down`);
       syncMessage = parts.length
         ? `Synced ${parts.join(', ')}`
         : `Up to date (${result.total} in catalog)`;
+      // p5.js sketches and three.js pages land in the media tray's JS tab.
+      if (result.rejected?.length) syncMessage += ` · ${result.rejected.length} skipped: failed the safety check`;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       syncMessage = msg === 'offline' ? 'Offline — connect to the internet and retry' : `Sync failed: ${msg}`;
@@ -380,8 +391,10 @@
                   {/if}
                 </div>
                 <div class="sl-card-info">
-                  <span class="sl-card-name">{card.name}</span>
-                  {#if card.category}
+                  <span class="sl-card-name">{#if card.manifest && isMusicMotionShaderFile(card.manifest.file)}<MusicMotionMark size={10} /> {/if}{card.name}</span>
+                  {#if card.credit}
+                    <span class="sl-card-cat" title={card.creditUrl ?? ''}>{card.credit}</span>
+                  {:else if card.category}
                     <span class="sl-card-cat">{card.category}</span>
                   {/if}
                 </div>

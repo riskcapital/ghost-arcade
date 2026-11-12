@@ -17,6 +17,10 @@
   import { clipFades, clipLoopStart, clipRate, mediaEnd, SHOW_CLIP_END_GUARD_SECONDS } from '../../../show/tracks/showTrackEval';
   import { trimEdgeWidth, type ClipPart } from './trackLayout';
   import WhereBand from './WhereBand.svelte';
+  import { editTool } from './editTools';
+  import { shortcutLabels } from './keyLabels';
+  const UNGROUP_KEY = shortcutLabels().ungroup;
+  import { showTimeline } from '../../../stores/showTimeline';
 
   interface Props {
     clip: ShowLayerClip;
@@ -73,6 +77,17 @@
   }
 
   function press(e: MouseEvent, part: ClipPart) {
+    // The razor (C): a click cuts the block where it lands.
+    if ($editTool === 'razor' && e.button === 0 && !locked) {
+      const block = (e.currentTarget as HTMLElement).closest('.lc-block') as HTMLElement | null;
+      if (block) {
+        e.preventDefault();
+        e.stopPropagation();
+        const at = clip.startTime + (e.clientX - block.getBoundingClientRect().left) / zoom;
+        showTimeline.splitLayerClips(at, [clip.id]);
+        return;
+      }
+    }
     onpress(e, clip, part);
   }
 </script>
@@ -82,6 +97,9 @@
   class="lc-block"
   class:selected
   class:locked
+  class:razor={$editTool === 'razor' && !locked}
+  class:slip={$editTool === 'slip' && !locked}
+  class:edge-tool={($editTool === 'ripple' || $editTool === 'roll') && !locked}
   class:narrow={width < 48}
   style:left="{left}px"
   style:width="{width}px"
@@ -100,6 +118,9 @@
   {/if}
   {#if clip.where}
     <WhereBand info={{ target: { scope: 'block', id: clip.id }, where: clip.where, start: clip.startTime, duration: clip.duration }} {zoom} tint={[92, 225, 230]} />
+  {/if}
+  {#if clip.groupId}
+    <svg class="lc-group" width="10" height="10" viewBox="0 0 10 10" role="img" aria-label="Grouped"><title>Grouped: it selects, moves and copies with its group. {UNGROUP_KEY} ungroups</title><path d="M4 6 6 4M3.2 5 2 6.2a1.6 1.6 0 0 0 2.3 2.3L5.5 7.3M6.8 5 8 3.8A1.6 1.6 0 0 0 5.7 1.5L4.5 2.7" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
   {/if}
   <span class="lc-name clip-name">{name}</span>
   {#if clip.blendMode && clip.blendMode !== 'normal' && width > 60}
@@ -151,6 +172,12 @@
     position: relative;
     z-index: 1;
   }
+  /* The razor (C): every part of the block cuts. */
+  .lc-block.razor, .lc-block.razor :global(*) { cursor: crosshair; }
+  /* Slip (Y): the block's media slides under it. */
+  .lc-block.slip, .lc-block.slip :global(*) { cursor: ew-resize; }
+  /* Ripple and roll (B, N) work on the edges. */
+  .lc-block.edge-tool .lc-edge { cursor: col-resize; }
   .lc-block {
     --clip-color: #8b7cff;
     position: absolute;
@@ -191,6 +218,7 @@
     color: color-mix(in srgb, var(--clip-color) 70%, #ffffff);
     pointer-events: none;
   }
+  .lc-group { flex: none; color: var(--ga-icon, #5278ff); margin-right: 3px; }
   .lc-name {
     position: relative;
     z-index: 1;

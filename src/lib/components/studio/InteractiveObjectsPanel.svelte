@@ -1,7 +1,10 @@
 <script lang="ts">
   /** Objects tab: the shapes in the scene and what can be done to the selected one. */
+  import InteractiveZonePanel from './InteractiveZonePanel.svelte';
   import {
     defaultSurfaceLook,
+    defaultZoneTrigger,
+    type ZoneTrigger,
     invisibleSurfaceLook,
     surfaceHidden,
     type Behavior,
@@ -18,6 +21,8 @@
   export let canImportMapping = false;
   /** Every effect slot is in use, so nothing more can be attached. */
   export let effectsFull = false;
+  /** The surface each enabled effect is aimed at. */
+  export let effectTargets: string[] = [];
 
   export let onshape: (kind: ShapeKind) => void;
   export let onselect: (id: string) => void;
@@ -35,6 +40,11 @@
   export let onduplicate: () => void;
   export let ondelete: () => void;
   export let onimportmapping: () => void;
+  /** A zone's "When touched" settings; `step` is its own undo step. */
+  export let ontrigger: (trigger: ZoneTrigger, step: boolean) => void;
+  export let ontriggerstart: () => void;
+  /** Fire the selected zone's actions now. */
+  export let ontesttrigger: () => void;
 
   const ROTATE_STEP = Math.PI / 12;
   const sliderKeys = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
@@ -105,6 +115,16 @@
       <option value="trigger">Trigger region</option>
     </select>
   </label>
+  {#if chosen.behavior === 'trigger'}
+    <InteractiveZonePanel
+      trigger={chosen.trigger ?? defaultZoneTrigger()}
+      burstTargets={effectTargets.filter((t) => t === chosen.id).length}
+      onchange={ontrigger}
+      onrearmstart={ontriggerstart}
+      ontest={ontesttrigger}
+    />
+  {/if}
+  {#if chosen.behavior === 'solid'}
   <label>
     Blocker depth <output>{(chosen.height ?? 0.25).toFixed(2)}</output>
     <input
@@ -120,6 +140,7 @@
       oninput={(e) => onheight(+e.currentTarget.value)}
     />
   </label>
+  {/if}
   <div class="group-label">Look</div>
   <label>
     Appearance

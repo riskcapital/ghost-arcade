@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { styleSong, STYLE_SONGS } from './styleSongs.mjs';
 
 const require = createRequire(import.meta.url);
 
@@ -68,6 +69,12 @@ export function fixture(name) {
     // intro 8 bars, build 8, drop 16, breakdown 8, build 4, drop 8, outro 8
     // (the same song as src/lib/timeline/score/synthSong.testutil.ts).
     fs.writeFileSync(file, wavMono16(synthSections(), 22050));
+    return file;
+  }
+  if (base.startsWith('song-') && STYLE_SONGS[base.slice(5)]) {
+    // A synthetic song in one of Auto show's five styles (styleSongs.mjs):
+    // song-chill, song-groove, song-driving, song-hard, song-cinematic.
+    fs.writeFileSync(file, wavMono16(styleSong(base.slice(5), 22050), 22050));
     return file;
   }
   if (base === 'bars') input = ['-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30'];

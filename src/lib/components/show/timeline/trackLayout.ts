@@ -249,3 +249,48 @@ export function reorderGapAt(tops: readonly number[], heights: readonly number[]
 export function reorderIndexForGap(from: number, gap: number): number {
   return gap > from ? gap - 1 : gap;
 }
+
+/** The tray never goes below this, whatever the window. */
+export const TRAY_MIN_HEIGHT = 150;
+/** Room kept above the tray for the editor (CSS px): the toolbar and status
+ *  bar, the panel headers and a row of Media Library cards or layers. */
+export const TRAY_EDITOR_RESERVE = 410;
+/**
+ * The most the tray takes of a window `vh` tall when it sizes itself (its
+ * content, the pads and phrase strip it grows by): the editor keeps
+ * TRAY_EDITOR_RESERVE, or half of a short window. Past this the pads strip
+ * scrolls and the lanes scroll, instead of the Media Library and the layer
+ * list being squeezed to a sliver.
+ */
+export function trayEditorCap(vh: number, share = 0.72): number {
+  return Math.max(TRAY_MIN_HEIGHT, Math.min(Math.round(vh * share), Math.max(vh - TRAY_EDITOR_RESERVE, Math.round(vh * 0.5))));
+}
+
+/**
+ * Keeps a fixed menu or popover inside the window (8 px in from the edges):
+ * after layout, and again when it changes size or the window does, it is
+ * shifted back in with `translate` (which adds to any `transform` it has).
+ * Pass the position as the parameter so a moved menu is fitted again.
+ */
+export function keepInWindow(node: HTMLElement, _position?: unknown): { update(): void; destroy(): void } {
+  const margin = 8;
+  const fit = () => {
+    node.style.translate = '';
+    const r = node.getBoundingClientRect();
+    const w = window.innerWidth, h = window.innerHeight;
+    let dx = 0, dy = 0;
+    if (r.right > w - margin) dx = w - margin - r.right;
+    if (r.left + dx < margin) dx = margin - r.left;
+    if (r.bottom > h - margin) dy = h - margin - r.bottom;
+    if (r.top + dy < margin) dy = margin - r.top;
+    if (dx || dy) node.style.translate = `${Math.round(dx)}px ${Math.round(dy)}px`;
+  };
+  const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(fit) : null;
+  observer?.observe(node);
+  window.addEventListener('resize', fit);
+  fit();
+  return {
+    update: fit,
+    destroy() { observer?.disconnect(); window.removeEventListener('resize', fit); },
+  };
+}

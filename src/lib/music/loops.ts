@@ -138,6 +138,7 @@ export const ROLE_INSTRUMENTS: Record<StudioSet, Record<LoopRole, InstrumentId>>
   berlin: { bass: 'acid', lead: 'synth', chords: 'keys', texture: 'synth' },
   dub: { bass: 'dubbass', lead: 'keys', chords: 'keys', texture: 'siren' },
   analog: { bass: 'analog', lead: 'synth', chords: 'keys', texture: 'synth' },
+  machine: { bass: 'synth', lead: 'keys', chords: 'keys', texture: 'synth' },
 };
 
 /** Where each kind of loop sits on the keyboard. */

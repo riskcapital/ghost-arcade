@@ -1,5 +1,5 @@
 import {defaultInteractive,sanitizeStoredInteractive} from '../mobile/studio/interactive';
-import {editableEffects} from '../mobile/studio/interactiveEffects';
+import {editableEffects, soundDefaults} from '../mobile/studio/interactiveEffects';
 import { normalizeVJGroups } from './vjGroups';
 import { normalizeCuePoints } from './vjCuePoints';
 import { normalizeAutopilot } from './vjAutopilot';
@@ -86,6 +86,7 @@ import {
   noteLiveChange,
 } from './historyHooks';
 import type { RecallSection } from './projectDirty';
+import { normalizeMusicMotion, type MusicMotionSettings } from '../audio/musicMotion';
 export {
   setHistoryCallback,
   recordDiscreteAction,
@@ -713,8 +714,10 @@ void main() {
         );
         const newLayer = createLayer(id, type==='interactive'?(name||'Interactive Studio'):layerName, type);
         if(type==='interactive'){
-          const scene=defaultInteractive();scene.effects=editableEffects(scene);
+          const scene=defaultInteractive();scene.effects=editableEffects(scene).map(e=>({...e,mods:soundDefaults(e.kind)}));
           newLayer.source={id:generateUUID(),type:'effect',src:'plugin://performer-world',name:'Interactive Studio',effectSource:{effectType:'performer-world',interactiveScene:scene}};
+          // A finish from the start: the glow that makes light read as light.
+          newLayer.effects=[{id:generateUUID(),type:'bloom',enabled:true,params:{amount:.45,amount2:.55,threshold:.45}}];
         }
         if (type === 'media' && initialShapeType) {
           newLayer.layerShape = createDefaultLayerShape(initialShapeType);
@@ -3511,6 +3514,21 @@ void main() {
       scheduleHistorySnapshot(editKey('auto', `${layerId}:shader`, paramName));
     },
 
+    /** Turn Music motion on or off on a mapping shader layer, or change its
+     *  Amount or params. Amount drags merge into one undo step. */
+    setLayerMusicMotion(layerId: string, settings: MusicMotionSettings | null) {
+      const next = settings ? normalizeMusicMotion(settings) : undefined;
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((l) => {
+          if (l.id !== layerId || !l.source) return l;
+          const { musicMotion: _drop, ...sourceRest } = l.source;
+          return { ...l, source: next ? { ...sourceRest, musicMotion: next } : sourceRest };
+        }),
+      }));
+      scheduleHistorySnapshot(editKey('musicMotion', layerId, 'shader'));
+    },
+
     /** Reset a layer effect's params back to the catalog defaults
      *  (getDefaultEffectParams). Replaces the params object wholesale
      *  rather than merging — half-set state from earlier tweaks
@@ -5659,6 +5677,7 @@ void main() {
           // Preset clips fire a saved composition by id.
           presetId: (clip as any).presetId,
           shaderValueAuto: (clip as any).shaderValueAuto,
+          musicMotion: normalizeMusicMotion((clip as any).musicMotion),
           mirrorX: (clip as any).mirrorX,
           playbackSyncBeats: (clip as any).playbackSyncBeats,
           durationSeconds: (clip as any).durationSeconds,
@@ -6039,6 +6058,7 @@ void main() {
           // An Interactive scene is validated on the way in: a damaged one
           // would otherwise stop the native sync for every layer.
           effectSource: sanitizeStoredInteractive(layer.source.effectSource, noteUnreadableInteractive),
+          musicMotion: layer.source.musicMotion && typeof layer.source.musicMotion === 'object' ? normalizeMusicMotion(layer.source.musicMotion) : layer.source.musicMotion,
           texture: undefined,
           videoElement: undefined,
           isPlaying: false,
@@ -6475,6 +6495,7 @@ void main() {
               textContent: clip.textContent,
               presetId: clip.presetId,
               shaderValueAuto: clip.shaderValueAuto,
+              musicMotion: normalizeMusicMotion((clip as any).musicMotion),
               mirrorX: clip.mirrorX,
               playbackSyncBeats: clip.playbackSyncBeats ?? null,
               durationSeconds: clip.durationSeconds,

@@ -519,9 +519,13 @@ export interface JSAnimationSource {
   origin?: JSAnimationOrigin;
 }
 
-/** An imported p5.js sketch: from the p5.js Web Editor, or files dropped on the app. */
+/**
+ * An imported page: a p5.js sketch from the p5.js Web Editor or dropped
+ * files, or a sketch or three.js page from the Ghost Arcade community
+ * (Find latest).
+ */
 export interface JSAnimationOrigin {
-  kind: 'p5-editor' | 'p5-files';
+  kind: 'p5-editor' | 'p5-files' | 'community';
   sketchName: string;
   author?: string;
   /** The sketch in the p5.js Web Editor. */
@@ -529,8 +533,10 @@ export interface JSAnimationOrigin {
   sketchId?: string;
   /** The p5.js version the sketch was written for. */
   p5Version?: string;
-  importedFrom: 'account' | 'link' | 'zip' | 'files';
+  importedFrom: 'account' | 'link' | 'zip' | 'files' | 'community';
   importedAt: number;
+  /** A community item: its catalog id and version (for updates and take-downs) and licence. */
+  community?: { id: string; version: number; licence: 'MIT' | 'CC0' | null };
 }
 
 // Content fit modes for how source content maps to the layer quad
@@ -942,6 +948,8 @@ export interface MediaSource {
   /** Per-param Auto playhead state for shader inputs. Same role as
    *  Effect.paramAuto — see AutoConfig docs above. */
   shaderValueAuto?: Record<string, AutoConfig>;
+  /** Music motion: the music runs this shader's time and moves its main params. */
+  musicMotion?: import('./audio/musicMotion').MusicMotionSettings;
   shaderImageInputs?: Record<string, ImageInputRef>; // References to textures for 'image' type inputs
   isPlaying?: boolean; // For video playback control
   mirrorX?: boolean; // Source-owned horizontal mirror, used for webcam/selfie feeds
@@ -5485,6 +5493,8 @@ export type ShowClipEndBehaviour = 'stop' | 'loop' | 'hold';
 
 export interface ShowLayerClip {
   id: string;
+  /** Blocks grouped together (Ctrl+G) share an id: they select, move, copy and delete as one. */
+  groupId?: string;
   /** Show time the clip starts, seconds. */
   startTime: number;
   duration: number;

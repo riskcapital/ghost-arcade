@@ -10,6 +10,9 @@
  *             always picks the same pieces, never the same one twice running
  *   kick      one step along the order on every kick of the song (counted
  *             from the block's start); every beat when there is no song
+ *   reveal    pieces light one after another along the order over `bars`
+ *             bars, then all stay lit (reverse: they go dark one after
+ *             another, the last one stays)
  *   drawn     the block's lines (`where:position` / `where:spread` / `where:soft`),
  *             else the resting values
  *
@@ -164,6 +167,17 @@ export function whereWindowAt(
         ? Math.max(0, countKicks(ctx.kicks, start, t) - 1)
         : Math.floor(Math.max(0, beats()) + 1e-9);
       position = slotPosition(n > 0 ? steps % n : 0, n);
+      wrap = false;
+      break;
+    }
+    case 'reveal': {
+      // m slots lit from the start of the order (from its end, reversed):
+      // a window over slots [0, m) is centred on (m − 1) / 2, m slots wide.
+      const p = Math.max(0, Math.min(1, Math.max(0, beats()) / (motion.bars * QUARTERS_PER_BAR)));
+      const lit = n <= 1 ? 1 : Math.max(1, Math.min(n, motion.reverse ? n - p * (n - 1) : 1 + p * (n - 1)));
+      const span = Math.max(1, n - 1);
+      spread = (lit - 1) / span;
+      position = motion.reverse ? 1 - (lit - 1) / (2 * span) : (lit - 1) / (2 * span);
       wrap = false;
       break;
     }

@@ -1,3 +1,4 @@
+import { normalizeMusicMotion } from '../audio/musicMotion';
 import { getDefaultEffectParams } from '../renderer/effects';
 import { mergeBlockGrids } from './vjBlockMerge';
 import { NATIVE_EFFECT_PASS_LIMIT } from '../renderer/nativeEffectChainPolicy';
@@ -121,6 +122,8 @@ export interface VJClip {
    *  see AutoConfig in types.ts. Keyed by the same param names as
    *  `shaderValues`. */
   shaderValueAuto?: Record<string, import('../types').AutoConfig>;
+  /** Music motion: the music runs this shader's time and moves its main params. */
+  musicMotion?: import('../audio/musicMotion').MusicMotionSettings;
   // For videos. videoElement is the runtime <video> created when the clip
   // is dropped into the grid (vjClipLauncher.setClip → videoElementCache).
   // The other fields control playback the same way MediaSource does for
@@ -3382,6 +3385,39 @@ function createVJClipLauncherStore() {
       });
     },
 
+    /** Turn Music motion on or off on a shader clip, or change its Amount or params. */
+    setClipMusicMotion(clipId: string, settings: import('../audio/musicMotion').MusicMotionSettings | null) {
+      const next = settings ? normalizeMusicMotion(settings) : undefined;
+      edit(state => {
+        const applyToClip = (clip: VJClip): VJClip => {
+          const { musicMotion: _drop, ...rest } = clip;
+          return next ? { ...rest, musicMotion: next } : rest;
+        };
+        const mapGrid = (grid: (VJClip | null)[][]) => grid.map(row =>
+          row.map(c => (c && c.id === clipId ? applyToClip(c) : c))
+        );
+        const mapStates = (states: any[]) => states.map(ls => {
+          if (!ls?.activeClip || ls.activeClip.id !== clipId) return ls;
+          return { ...ls, activeClip: applyToClip(ls.activeClip) };
+        });
+        // Every block too: the saved grids are what a save writes and what a
+        // block switch restores.
+        const blocks = state.blocks.map(block => ({
+          ...block,
+          clipGrid: mapGrid(block.clipGrid),
+          ...(block.bankBClipGrid ? { bankBClipGrid: mapGrid(block.bankBClipGrid) } : {}),
+        }));
+        return {
+          ...state,
+          blocks,
+          clipGrid: mapGrid(state.clipGrid),
+          bankBClipGrid: mapGrid(state.bankBClipGrid),
+          layerStates: mapStates(state.layerStates),
+          bankBLayerStates: mapStates(state.bankBLayerStates),
+        };
+      });
+    },
+
     /**
      * Change a JavaScript sketch in every clip that holds it, on both decks,
      * in every block, and in the clips playing now. `change` returns the new
@@ -4575,6 +4611,7 @@ export function buildVJClipLayer(activeLayer: ActiveVJLayer, launcherState: VJCl
       shaderCode: clip.shaderCode,
       shaderInputs: getShaderInputs(clip.shaderCode),
       shaderValues: clip.shaderValues || {},
+      musicMotion: clip.musicMotion,
       jsAnimation: clip.jsAnimation,
       videoElement: clip.videoElement,
       iframeElement: clip.iframeElement,
@@ -4645,6 +4682,7 @@ export function buildVJClipLayer(activeLayer: ActiveVJLayer, launcherState: VJCl
       source.videoElement = undefined;
     }
     source.shaderValues = clip.shaderValues || {};
+    source.musicMotion = clip.musicMotion;
     if (clip.videoElement) {
       source.videoElement = clip.videoElement;
     }

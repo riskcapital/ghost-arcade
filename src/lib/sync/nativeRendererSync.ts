@@ -85,6 +85,8 @@ import {
   nativeJsCanvasUri,
 } from '$lib/renderer/nativeJsCanvasHosts';
 import { resolveAssetRefForRuntime } from '$lib/storage/assetRegistry';
+import { shaderIsMusicMotionReady, withMusicFlow, withMusicTime, musicTimePhase, MUSIC_TIME_PHASE_INPUT, MUSIC_TIME_RATE_INPUT } from '$lib/audio/musicMotion';
+import { getMusicTimeOffset, getMusicTimeRate, hasMusicTime } from '$lib/audio/musicMotionEngine';
 import {
   receiveSpoutTextureInfo,
   type SpoutSharedTextureInfo,
@@ -967,7 +969,7 @@ function sourceSignature(layer: Layer): string {
   const imageInputsSignature = s.shaderImageInputs && Object.keys(s.shaderImageInputs).length
     ? hashString(JSON.stringify(s.shaderImageInputs))
     : 'no-image-inputs';
-  return `${s.type}:${s.id}:${s.src}:${s.name}:${s.shaderCode ? hashString(s.shaderCode) : 'no-shader'}:${javascriptSignature}:${imageInputsSignature}`;
+  return `${s.type}:${s.id}:${s.src}:${s.name}:${s.shaderCode ? hashString(nativeShaderCode(s)!) : 'no-shader'}:${javascriptSignature}:${imageInputsSignature}`;
 }
 
 /** Shader and JS param values. Keyframes, sliders and macros change these
@@ -983,7 +985,11 @@ function sourceValuesSignature(layer: Layer): string {
     : 'no-js';
   // A show clip's shader time: a new anchor goes out with the uniforms.
   const shaderTime = s._nativeShaderTime ? `:t${s._nativeShaderTime.seq}` : '';
-  return `${shaderValuesSignature}:${javascriptValuesSignature}${shaderTime}`;
+  // The core runs the music clock on its own between updates: a new anchor
+  // goes out when the rate moves or the drift passes a tenth of a second, not
+  // every frame the offset creeps on.
+  const musicTime = hasMusicTime(s.id) ? `:mt${Math.round(getMusicTimeOffset(s.id) * 10)}:${Math.round(getMusicTimeRate(s.id) * 50)}` : '';
+  return `${shaderValuesSignature}:${javascriptValuesSignature}${shaderTime}${musicTime}`;
 }
 
 /** Shader clocks wrap here (about 9 h 6 min). A uniform holds time as an
@@ -1072,6 +1078,24 @@ export function nativeEffectPassesToRender<T extends { effect: string; amount?: 
   return kept.length ? kept : passes.slice(0, 1);
 }
 
+const musicTimeCodeCache = new Map<string, string>();
+/**
+ * The shader code the core compiles. With Music motion on, the core's TIME is
+ * its own clock, so the code reads TIME plus an offset input the sync sends.
+ */
+function nativeShaderCode(s: Pick<NonNullable<Layer['source']>, 'shaderCode' | 'musicMotion' | 'type'>): string | undefined {
+  const code = s.shaderCode;
+  if (!code || !s.musicMotion?.on || s.type !== 'shader') return code;
+  let out = musicTimeCodeCache.get(code);
+  if (out === undefined) {
+    // A shader made for Music motion keeps its TIME; only its mmFlow runs on the music clock.
+    out = shaderIsMusicMotionReady(code) ? withMusicFlow(code) : withMusicTime(code);
+    if (musicTimeCodeCache.size > 32) musicTimeCodeCache.clear();
+    musicTimeCodeCache.set(code, out);
+  }
+  return out;
+}
+
 function nativeEffectDescriptors(layer: Layer): string[] {
   const effects = layer.effects || [];
   if (!effects.length) return [];
@@ -1085,6 +1109,11 @@ import { nativeEffectPassIdForEffectType } from '$lib/renderer/nativeEffectCover
 import { statusFrameRate } from './statusFrameRate';
 import { recordingScreenIds } from '$lib/recording/recordingSources';
 import { launchClockPosition } from '$lib/stores/launchClock';
+import { liveInteractiveInputs, livePointer, pruneLiveInteractiveInputs, setLiveInteractiveInputs } from '$lib/interactive/interactiveLive';
+import { combineInputs, PointSmoother, trackedPoints, ZoneTriggers, type FiredZone } from '$lib/interactive/interactiveRuntime';
+import { defaultInteractiveInput, validateScene, type InteractiveScene, type Interaction } from '$lib/mobile/studio/interactive';
+import { fireShowAction } from '$lib/show/showActions';
+import { runAsAutomation } from '$lib/stores/historyHooks';
 const NATIVE_EFFECT_PASS_IDS = new Set<NativeEffectPassId>(
   NATIVE_EFFECT_PASS_MANIFEST.map((entry) => entry.id),
 );
@@ -5012,8 +5041,54 @@ const handFxTracking = { ownsBody: false, ownsFace: false, bodyNeededAt: 0, face
  */
 function ensureHandFxTracking(params: Record<string, any> | null | undefined): void {
   if (!params || params.handfxInput === 'demo') return;
-  mediaPipeSource.acquire('handfx-layers', 1000);
-  const needs = handFxTrackingNeeds(params);
+  ensureCameraTracking('handfx-layers', handFxTrackingNeeds(params));
+}
+
+/**
+ * What a touched zone does. Show actions go through `fireShowAction`, like
+ * every controller. A burst raises the burst count of each effect aimed at
+ * the zone, as the editor's Trigger burst button does. Live control: not an
+ * undo step.
+ */
+function fireInteractiveZones(layerId: string, fired: FiredZone[]): void {
+  const bursts = new Set<string>();
+  for (const zone of fired) {
+    for (const action of zone.actions) {
+      if (action.kind === 'show') fireShowAction(action.action);
+      else bursts.add(zone.surfaceId);
+    }
+  }
+  if (!bursts.size) return;
+  runAsAutomation(() => project.update((p) => ({
+    ...p,
+    layers: p.layers.map((l) => {
+      const effectSource = l.id === layerId ? l.source?.effectSource : undefined;
+      const scene = effectSource?.interactiveScene as InteractiveScene | undefined;
+      if (!effectSource || !scene?.effects?.some((e) => bursts.has(e.target))) return l;
+      return {
+        ...l,
+        source: {
+          ...l.source!,
+          effectSource: {
+            ...effectSource,
+            interactiveScene: {
+              ...scene,
+              effects: scene.effects.map((e) => (bursts.has(e.target) ? { ...e, burst: e.burst + 1 } : e)),
+            },
+          },
+        },
+      };
+    }),
+  })));
+}
+
+/**
+ * Keep the camera tracker running for `owner` (renewed each frame, lapsing a
+ * second after the last call) with the body and face trackers it needs.
+ * Shared by HandFX and interactive layers.
+ */
+function ensureCameraTracking(owner: string, needs: { trackBody: boolean; trackFace: boolean }): void {
+  mediaPipeSource.acquire(owner, 1000);
   const now = performance.now();
   if (needs.trackBody) handFxTracking.bodyNeededAt = now;
   if (needs.trackFace) handFxTracking.faceNeededAt = now;
@@ -5053,9 +5128,14 @@ function nativeGraphParamsForLayer(
     || kind === 'performer-world'
     || kind === 'vj-crossfade'
     || kind === 'vj-mix';
-  const params: Record<string, any> = isEffectGraphKind
+  let params: Record<string, any> = isEffectGraphKind
     ? layer.source?.effectSource ?? {}
     : layer.gpuLayerContent?.params ?? {};
+  if (kind === 'performer-world') {
+    // Tracked hands and body join the pointer here, at frame rate.
+    const live = liveInteractiveInputs(layer.id);
+    if (live) params = { ...params, interactiveInputs: live };
+  }
   // Everything instrument-shaped goes through the shared funnel in
   // `nativeGraphQuality`: instrument defaults, colour-preset expansion,
   // the declared per-tier budget (the SAME function the browser runner
@@ -7468,6 +7548,7 @@ export class NativeRendererSync {
     const routesFor = flushRoutes ?? this.nativeGraphRouteLookup();
     const activeRouteKeys = new Set<string>();
     const lutOwnersSeen = new Set<string>();
+    const interactiveLayersSeen = new Set<string>();
     this.activePointCloudKeys = new Set(layers.flatMap(layer => {
       const input = routesFor(layer).possible?.inputSource;
       return input ? [this.nativePointCloudCacheKey(input)] : [];
@@ -7501,6 +7582,10 @@ export class NativeRendererSync {
             });
             this.nativePointCloudUploadSignatures.set(layer.id, pointData.signature);
           }
+        }
+        if (possibleRoute.kind === 'performer-world') {
+          interactiveLayersSeen.add(layer.id);
+          this.stepInteractiveLayer(layer);
         }
         if (possibleRoute.kind === 'handfx') {
           const routeState = this.nativeGraphRoutes.get(possibleRoute.key) ?? {
@@ -8239,7 +8324,62 @@ export class NativeRendererSync {
     if (inactiveGraphBufferPrefixes.length > 0) {
       await this.clearNativeGraphBuffers(inactiveGraphBufferPrefixes);
     }
+    pruneLiveInteractiveInputs(interactiveLayersSeen);
+    for (const id of Array.from(this.interactiveRuntimes.keys())) {
+      if (!interactiveLayersSeen.has(id)) this.interactiveRuntimes.delete(id);
+    }
     return queuedCommands;
+  }
+
+  /** Per interactive layer: tracked-point smoothing and its trigger zones. */
+  private interactiveRuntimes = new Map<string, { smoother: PointSmoother; zones: ZoneTriggers; sceneRef: unknown; scene: InteractiveScene | null }>();
+
+  /**
+   * One frame of an interactive layer, editor open or not: combine the
+   * pointer with tracked hands and body, publish the points for the graph,
+   * and fire the trigger zones they touch.
+   */
+  private stepInteractiveLayer(layer: Layer): void {
+    const source = layer.source?.effectSource;
+    let runtime = this.interactiveRuntimes.get(layer.id);
+    if (!runtime) {
+      runtime = { smoother: new PointSmoother(), zones: new ZoneTriggers(), sceneRef: undefined, scene: null };
+      this.interactiveRuntimes.set(layer.id, runtime);
+    }
+    // Validate only when the stored scene object changed.
+    if (runtime.sceneRef !== source?.interactiveScene) {
+      runtime.sceneRef = source?.interactiveScene;
+      try {
+        runtime.scene = source?.interactiveScene ? validateScene(source.interactiveScene) : null;
+      } catch {
+        runtime.scene = null;
+      }
+    }
+    const scene = runtime.scene;
+    if (!scene || layer.visible === false) {
+      setLiveInteractiveInputs(layer.id, null);
+      runtime.smoother.reset();
+      runtime.zones.reset();
+      return;
+    }
+    const input = scene.input ?? defaultInteractiveInput();
+    // An open editor's pointer arrives every animation frame; the copy in the
+    // project (phones, a closed editor's last state) is the fallback.
+    const fresh = livePointer(layer.id);
+    const pointer = fresh ?? ((Array.isArray(source?.interactiveInputs) ? source!.interactiveInputs : []) as Interaction[]);
+    let points = pointer;
+    if (input.tracking !== 'off') {
+      ensureCameraTracking('interactive-layers', { trackBody: input.tracking !== 'hands', trackFace: false });
+      const tracked = runtime.smoother.update(trackedPoints(mediaPipeSource.getLastFrame(), input.tracking, mediaPipeSource.isMirrored()));
+      points = combineInputs(pointer, tracked, input);
+      setLiveInteractiveInputs(layer.id, points);
+    } else {
+      runtime.smoother.reset();
+      setLiveInteractiveInputs(layer.id, fresh ?? null);
+    }
+    if (source?.interactivePaused === true) return;
+    const fired = runtime.zones.update(scene, points, performance.now() / 1000);
+    if (fired.length) fireInteractiveZones(layer.id, fired);
   }
 
   private scheduleAudioSync() {
@@ -10065,7 +10205,14 @@ export class NativeRendererSync {
         }
       }
 
-      if (!prev || prev.z !== snap.z || prev.vjIndex !== snap.vjIndex || prev.visible !== snap.visible || prev.blend !== snap.blend || prev.opacity !== snap.opacity || prev.renderQuality !== snap.renderQuality || prev.deckMonitorSig !== snap.deckMonitorSig || prev.geometrySig !== snap.geometrySig || prev.uvSig !== snap.uvSig || prev.shapeSig !== snap.shapeSig || prev.maskSig !== snap.maskSig) {
+      const layerChanged = !prev || prev.z !== snap.z || prev.vjIndex !== snap.vjIndex || prev.visible !== snap.visible || prev.blend !== snap.blend || prev.renderQuality !== snap.renderQuality || prev.deckMonitorSig !== snap.deckMonitorSig || prev.geometrySig !== snap.geometrySig || prev.uvSig !== snap.uvSig || prev.shapeSig !== snap.shapeSig || prev.maskSig !== snap.maskSig;
+      if (!layerChanged && prev.opacity !== snap.opacity) {
+        // Only its opacity moved (a fade, a travelling window): the core keeps
+        // every field an upsert leaves out, so just the opacity goes. A show
+        // with a picture travelling over eighty pieces sent each whole layer
+        // (corners, shape and mask points) every frame.
+        commands.push({ type: 'upsert_layer', layer_id: layer.id, z_index: index, blend_mode: layer.type === 'mask' ? 'hierarchy-mask' : canonicalBlendMode(layer.blendMode), opacity: layer.opacity });
+      } else if (layerChanged || prev.opacity !== snap.opacity) {
         commands.push({
           type: 'upsert_layer',
           layer_id: layer.id,
@@ -10161,15 +10308,16 @@ export class NativeRendererSync {
           if (nativeSource.shouldPreview && !nativeStaticImageDecode && !nativeVideoDecodePump) {
             this.appendSourcePreviewCommand(commands, src, sourceType, now, true, null, previewBudget);
           }
-          if (src.shaderCode) {
-            const shaderId = `${src.id}:${hashString(src.shaderCode)}`;
+          const coreShaderCode = nativeShaderCode(src);
+          if (coreShaderCode) {
+            const shaderId = `${src.id}:${hashString(coreShaderCode)}`;
             if (!this.precompiledShaders.has(shaderId)) {
               this.precompiledShaders.add(shaderId);
               commands.push({
                 type: 'precompile_shader',
                 shader_id: shaderId,
                 stage: 'pixel',
-                source: src.shaderCode,
+                source: coreShaderCode,
                 entry: 'main',
               });
             }
@@ -10721,7 +10869,7 @@ export class NativeRendererSync {
         layer.visible &&
         (!prev || prev.sourceSig !== snap.sourceSig || prev.valuesSig !== snap.valuesSig)
       ) {
-        const shaderId = `${src2.id}:${hashString(src2.shaderCode)}`;
+        const shaderId = `${src2.id}:${hashString(nativeShaderCode(src2)!)}`;
         const shaderTime = nativeShaderClockSeconds(
           typeof renderClock.time === 'number' && Number.isFinite(renderClock.time)
             ? renderClock.time
@@ -10763,6 +10911,19 @@ export class NativeRendererSync {
         // displayed frame; media refs bind the media source (decoded on
         // demand for static images). Unresolvable refs are omitted -> the
         // shader falls back to its own input frame.
+        if (hasMusicTime(src2.id) && src2.musicMotion?.on) {
+          // The core keeps its own TIME between updates, so it gets the clock's
+          // speed and a phase: TIME * rate + phase is the music clock now, and
+          // keeps running at the music's speed until the next update.
+          const rate = getMusicTimeRate(src2.id);
+          const offset = Math.max(-shaderTime, getMusicTimeOffset(src2.id));
+          floatInputs[MUSIC_TIME_RATE_INPUT] = rate;
+          floatInputs[MUSIC_TIME_PHASE_INPUT] = musicTimePhase(shaderTime, offset, rate);
+        } else if (src2.musicMotion?.on) {
+          floatInputs[MUSIC_TIME_RATE_INPUT] = 1;
+          floatInputs[MUSIC_TIME_PHASE_INPUT] = 0;
+        }
+
         const imageInputs: Record<string, string> = {};
         if (src2.shaderImageInputs) {
           for (const [inputName, ref] of Object.entries(src2.shaderImageInputs)) {

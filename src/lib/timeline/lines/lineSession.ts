@@ -14,7 +14,7 @@
  */
 import { get } from 'svelte/store';
 import { project } from '../../stores/layers';
-import { isRestoringHistory } from '../../stores/historyHooks';
+import { isAutomation, isRestoringHistory } from '../../stores/historyHooks';
 import { abletonBridge } from '../../ableton/abletonBridge';
 import { addMidiTap } from '../../midi/midiTaps';
 import { cachedShowAudioDecode, decodeShowAudio } from '../../audio/showAudio';
@@ -53,6 +53,8 @@ export function createLineSession(opts: {
   /** What the registry reads (default: the project). The Timeline adds its
    *  blocks, look blocks and off-stage pieces. */
   registry?: () => RegistrySource;
+  /** Live edit: key a parked edit on its line (the Timeline document's lines). */
+  keyAt?: (target: ParamTarget, key: string, value: number | boolean, t: number) => void;
 } = {}) {
   const source = opts.registry ?? registrySource;
   const store = createLineStore(opts.initial ?? []);
@@ -81,6 +83,8 @@ export function createLineSession(opts: {
     liveParam: (t, d, p) => abletonBridge.liveParamValue(t, d, p),
     onBindingsChange: opts.onBindingsChange,
     restoring: isRestoringHistory,
+    automated: isAutomation,
+    keyAt: opts.keyAt,
   }, opts.bindings ?? []);
 
   const removeTap = addMidiTap((channel, type, number, value, from) => controls.onMidi(channel, type, number, value, from));
@@ -151,7 +155,13 @@ export function createLineSession(opts: {
       playing = false;
     },
 
-    arm(mode: RecordMode = 'touch'): void { recorder.arm(mode); },
+    arm(mode: RecordMode = 'touch'): void {
+      recorder.arm(mode);
+      // Recording starts from the values as they are now.
+      controls.setFollowEdits(controls.followEdits(), source());
+    },
+    /** Follow edits: record every parameter a person changes while armed. */
+    setFollowEdits(on: boolean): void { controls.setFollowEdits(on, source()); },
     disarm(): void { recorder.disarm(showTime); },
 
     /** Songs on the show, analysed offline (once per file) for music-following lines. */

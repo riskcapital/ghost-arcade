@@ -201,3 +201,26 @@ describe('Interactive graph: objects with their own look', () => {
     expect(decode(table.initial_b64!)[23]).toBeCloseTo(0.5);
   });
 });
+
+describe('Interactive graph: where balls come from', () => {
+  const matter = (graph: InteractiveGraphBuildResult, effectId: string) => {
+    const buffer = buffers(graph).find((b) => b.id === `performer-world:layer-1:${effectId}:interactive:matter`)!;
+    return new Float32Array(Uint8Array.from(atob(buffer.initial_b64!), (c) => c.charCodeAt(0)).buffer);
+  };
+  it('pours from the shape they are aimed at, across its size', () => {
+    const scene = defaultInteractive();
+    const zone = { id: 'drop', name: 'Drop', behavior: 'trigger' as const, points: [{ x: 0.6, y: 0.1 }, { x: 0.9, y: 0.1 }, { x: 0.9, y: 0.3 }, { x: 0.6, y: 0.3 }] };
+    const aimed = { ...makeEffect('balls', 'drop'), id: 'aimed' };
+    const free = { ...makeEffect('balls'), id: 'free' };
+    const graph = build({ ...scene, surfaces: [...scene.surfaces, zone], effects: [aimed, free] });
+    const a = matter(graph, 'aimed');
+    expect(a[15]).toBe(1);
+    expect(a[16]).toBeCloseTo(0.75);
+    expect(a[17]).toBeCloseTo(0.2);
+    expect(a[18]).toBeCloseTo(0.1);
+    // Not aimed: the canvas position as set.
+    const f = matter(graph, 'free');
+    expect(f[16]).toBeCloseTo(free.params.x);
+    expect(f[17]).toBeCloseTo(free.params.y);
+  });
+});

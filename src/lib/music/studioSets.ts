@@ -14,13 +14,14 @@
 import { DRUM_VOICES, type DrumVoice, type InstrumentId } from './noteEvents';
 import { normalizeCableShape, type CableShape } from './controlSignals';
 
-export type StudioSet = 'bath' | 'berlin' | 'dub' | 'analog';
+export type StudioSet = 'bath' | 'berlin' | 'dub' | 'analog' | 'machine';
 
 export const STUDIO_SETS: { id: StudioSet; label: string }[] = [
   { id: 'bath', label: 'Sound bath' },
   { id: 'berlin', label: 'Berlin' },
   { id: 'dub', label: 'Dub' },
   { id: 'analog', label: 'Analog' },
+  { id: 'machine', label: 'Drum machine' },
 ];
 
 export interface ParamDef {
@@ -105,6 +106,12 @@ export const FX_RACKS: Record<StudioSet, FxUnitDef[]> = {
     { id: 'adrive', kind: 'drive', name: 'Drive', params: defs('fx.adrive', [['gain', 'Gain', 0.3], ['tone', 'Tone', 0.55], ['mix', 'Mix', 0.4]]) },
     { id: 'adelay', kind: 'delay', name: 'Delay', params: defs('fx.adelay', [['time', 'Time', 0.45], ['feedback', 'Feedbk', 0.35], ['mix', 'Mix', 0.2]]) },
     { id: 'areverb', kind: 'reverb', name: 'Reverb', params: defs('fx.areverb', [['space', 'Space', 0.6], ['decay', 'Decay', 0.5], ['mix', 'Mix', 0.25]]) },
+  ],
+  machine: [
+    { id: 'mdrive', kind: 'drive', name: 'Drive', params: defs('fx.mdrive', [['gain', 'Gain', 0.2], ['tone', 'Tone', 0.5], ['mix', 'Mix', 0.3]]) },
+    { id: 'mcrush', kind: 'crush', name: 'Bitcrush', params: defs('fx.mcrush', [['bits', 'Bits', 0.6], ['rate', 'Rate', 0.7], ['mix', 'Mix', 0.0]]) },
+    { id: 'mdelay', kind: 'dubdelay', name: 'Echo', params: defs('fx.mdelay', [['time', 'Time', 0.75], ['feedback', 'Feedbk', 0.4], ['mix', 'Mix', 0.2]]) },
+    { id: 'mverb', kind: 'gate', name: 'Room', params: defs('fx.mverb', [['space', 'Space', 0.4], ['length', 'Gate', 0.5], ['mix', 'Mix', 0.15]]) },
   ],
 };
 
@@ -257,6 +264,7 @@ export const AUDIO_SOURCES: Record<StudioSet, InstrumentId[]> = {
   berlin: ['drums', 'acid', 'synth', 'keys', 'scan'],
   dub: ['dubbass', 'siren', 'shots', 'drums', 'keys', 'scan'],
   analog: ['analog', 'synth', 'keys', 'drums', 'scan'],
+  machine: ['drums', 'synth', 'keys', 'scan'],
 };
 
 /** Control outputs each set offers. */
@@ -267,6 +275,7 @@ export function controlSources(set: StudioSet): string[] {
     berlin: [...drums, 'cv:acid.cutoff', 'cv:acid.level'],
     dub: ['cv:dubbass.level', 'cv:siren.level', 'cv:shots.level', ...drums],
     analog: ['cv:analog.lfo', 'cv:analog.env', 'cv:analog.vco2', 'cv:analog.level'],
+    machine: [...Array.from({ length: 32 }, (_, i) => `cv:pad.${i}`), 'cv:pad.any', ...drums],
   };
   return [...bySet[set], 'cv:scan.level', 'cv:build.progress', 'cv:keys.level'];
 }
@@ -279,6 +288,8 @@ const DRUM_NAMES: Record<string, string> = {
 export function sourceLabel(jack: string): string {
   const name = jack.replace(/^cv:|^audio:/, '');
   if (name.startsWith('drum.')) return DRUM_NAMES[name.slice(5)] ?? name.slice(5);
+  if (name === 'pad.any') return 'Any pad';
+  if (name.startsWith('pad.')) return `Pad ${Number(name.slice(4)) + 1}`;
   const labels: Record<string, string> = {
     'xy.x': 'XY X', 'xy.y': 'XY Y', 'drone.level': 'Drone', 'bowls.ring': 'Bowls',
     'acid.cutoff': 'Acid cutoff', 'acid.level': 'Acid',
@@ -346,6 +357,7 @@ export function defaultCables(): Record<StudioSet, Cable[]> {
       { id: 'dub-shots-fx', from: 'audio:shots', to: 'fx:in' },
     ],
     analog: [{ id: 'analog-fx', from: 'audio:analog', to: 'fx:in' }],
+    machine: [{ id: 'machine-fx', from: 'audio:drums', to: 'fx:in' }],
   };
 }
 
@@ -360,7 +372,7 @@ const MOVED_SOURCES: Record<string, string> = {
 export function normalizeCables(raw: unknown): Record<StudioSet, Cable[]> {
   if (!raw || typeof raw !== 'object') return defaultCables();
   const input = raw as Partial<Record<StudioSet, unknown>>;
-  const out: Record<StudioSet, Cable[]> = { bath: [], berlin: [], dub: [], analog: [] };
+  const out: Record<StudioSet, Cable[]> = { bath: [], berlin: [], dub: [], analog: [], machine: [] };
   const defaults = defaultCables();
   for (const set of STUDIO_SETS.map((k) => k.id)) {
     // A set saved before this build had it starts with its default patch.

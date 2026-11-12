@@ -55,7 +55,7 @@
       {:else}
         <span class="tp-title">Deck A</span>
       {/if}
-      <span class="tp-target" title="The track a row's LIVE and the L key take over: click a track to choose it">
+      <span class="tp-target" title="The track a row's LIVE and Shift+L take over: click a track to choose it">
         {#if target}→ {target.layerName}{:else}Click a track to choose what LIVE takes over{/if}
       </span>
     </div>

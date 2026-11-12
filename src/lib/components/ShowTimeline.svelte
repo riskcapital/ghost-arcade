@@ -32,6 +32,7 @@
    */
   import { onMount, tick, untrack } from 'svelte';
   import { get } from 'svelte/store';
+  import { lineRecordState } from '../timeline/lines/timelineLines';
   import {
     showTimeline,
     setShowTransportSink,
@@ -65,7 +66,8 @@
   import SectionLane from './show/timeline/sections/SectionLane.svelte';
   import SectionInspector from './show/timeline/sections/SectionInspector.svelte';
   import SectionCueList from './show/timeline/sections/SectionCueList.svelte';
-  import ScoreDialog from './show/timeline/sections/ScoreDialog.svelte';
+  import AutoShowDialog from './show/timeline/autoshow/AutoShowDialog.svelte';
+  import { autoShowOpen } from './show/timeline/autoshow/autoShowUi';
   import { goLabel, sectionStatusText } from './show/timeline/sections/sectionGoUi';
   import { makeSection, placeNewSection } from '../timeline/sections/sectionModel';
   import { layers as liveLayersStore } from '../stores/layers';
@@ -93,7 +95,7 @@
   import ShowCameraLane from './show/timeline/ShowCameraLane.svelte';
   import ShowCameraLaneLabel from './show/timeline/ShowCameraLaneLabel.svelte';
   import { CAMERA_LANE_HEIGHT, cameraLaneShown } from './show/timeline/cameraLaneUi';
-  import { TRACK_HEADER_WIDTH, TRACK_ROW_HEIGHT, laneKeySelection, showSnapGuide, tracksStackHeight } from './show/timeline/trackLayout';
+  import { TRACK_HEADER_WIDTH, TRACK_ROW_HEIGHT, TRAY_MIN_HEIGHT, laneKeySelection, showSnapGuide, trayEditorCap, tracksStackHeight } from './show/timeline/trackLayout';
   import { carriesTrackMedia, dropTrackMedia } from './show/timeline/trackDrops';
   import { presetJunctions, type PresetJunction } from './show/timeline/laneJunctions';
   import { distinct, showSlice } from './show/timeline/timelineSlices';
@@ -107,6 +109,7 @@
   import LineLanes from './show/timeline/LineLanes.svelte';
   import LineHeaders from './show/timeline/LineHeaders.svelte';
   import LinePicker from './show/timeline/LinePicker.svelte';
+  import { stageScopeTargets } from '../timeline/lines/lineExtensions';
   import LineRecordControls from './show/timeline/LineRecordControls.svelte';
   import LineDiamondOverlay from './show/timeline/LineDiamondOverlay.svelte';
   import { LOOKS_GROUP, STAGE_GROUP, STAGE_ROW_HEIGHT, LEDS_GROUP, lineLayout } from './show/timeline/lineUi';
@@ -132,10 +135,14 @@
     deleteSelection as deleteTrackSelection,
     duplicateSelection,
     hasClipSelection,
+    jumpToEdit,
     nudgeSelection,
     pasteAtPlayhead,
     splitAtPlayhead,
+    toggleFocusedLines,
+    trimToPlayhead,
   } from './show/timeline/trackCommands';
+  import { EDIT_TOOLS, editTool, shuttleBack, shuttleForward, shuttleStop, stepFrame, stopShuttle } from './show/timeline/editTools';
 
   // ── Show state, field by field ──────────────────────────────────────────
   // The store publishes a new state object on every playhead frame. Reading
@@ -147,6 +154,7 @@
   const currentTimeStore = showSlice('currentTime');
   const durationStore = showSlice('duration');
   const loopStore = showSlice('loop');
+  const workAreaStore = showSlice('workArea');
   const audioTracksStore = showSlice('audioTracks');
   const presetClipsStore = showSlice('presetClips');
   const activeClipIdStore = showSlice('activeClipId');
@@ -170,6 +178,8 @@
   const isPlaying = $derived($isPlayingStore);
   const currentTime = $derived($currentTimeStore);
   const duration = $derived($durationStore);
+  // Armed, an empty Timeline plays too, so there is time to record into.
+  const recordArmed = $derived($lineRecordState.armed);
   const loop = $derived($loopStore);
   const audioTracks = $derived($audioTracksStore);
   const presetClips = $derived($presetClipsStore);
@@ -222,7 +232,6 @@
     sectionCuesOpen = !sectionCuesOpen;
     try { localStorage.setItem(SECTION_CUES_KEY, sectionCuesOpen ? '1' : '0'); } catch { /* private mode */ }
   }
-  let scoreOpen = $state(false);
   function addSectionAtPlayhead() {
     const s = get(showTimeline);
     const span = placeNewSection(s.sections, s.tempo, s.currentTime);
@@ -421,7 +430,6 @@
   // larger but still sane ceiling) and that override persists.
   /** Each tab keeps its own hand-set height. */
   const trayHeightKey = (d: ShowDocKind) => (d === 'timeline' ? 'ghostarcade-timeline-tray-height' : 'ghostarcade-show-tray-height');
-  const TRAY_MIN_HEIGHT = 150;
   /** Space an always-on horizontal scrollbar would eat inside the grid.
    *  Zero on macOS overlay scrollbars, ~8–15 px on Windows. */
   const GRID_SCROLLBAR_ALLOWANCE = 10;
@@ -510,7 +518,8 @@
   let linePicker: { x: number; y: number; group: 'looks' | 'stage' } | null = $state(null);
   const linePickerTargets = $derived.by(() => {
     if (!linePicker) return [];
-    if (linePicker.group === 'stage') return [{ target: { scope: 'stage' as const }, label: 'Stage FX' }, { target: { scope: 'led' as const }, label: 'LEDs' }];
+    // Scopes registered at runtime (lineExtensions.ts) add their targets here.
+    if (linePicker.group === 'stage') return [{ target: { scope: 'stage' as const }, label: 'Stage FX' }, { target: { scope: 'led' as const }, label: 'LEDs' }, ...stageScopeTargets()];
     const sel = selection?.kind === 'lookClip' ? selection.id : null;
     return [
       ...[...lookClips]
@@ -617,6 +626,18 @@
   let gridEl: HTMLDivElement | undefined = $state();
   /** Grid scrollTop, mirrored onto the lane-label column. */
   let laneScrollTop = $state(0);
+  /** Tabbing to a row header out of view scrolls the label column itself
+   *  (it hides its overflow but still scrolls to show focus), and the
+   *  headers then sat beside the wrong lanes. The grid owns the scroll: hand
+   *  it the distance and put the column back. */
+  function labelsScrolled(e: Event) {
+    const el = e.currentTarget as HTMLElement;
+    const dy = el.scrollTop;
+    if (!dy && !el.scrollLeft) return;
+    el.scrollTop = 0;
+    el.scrollLeft = 0;
+    if (gridEl && dy) gridEl.scrollTop += dy;
+  }
 
   function timeAt(e: MouseEvent | DragEvent): number {
     if (!gridEl) return 0;
@@ -905,10 +926,23 @@
     // The cue list needs room for its status, a few rows and the editor.
     cuesOpen ? transportH + padsRoom + CUE_PANEL_MIN_HEIGHT : 0,
   ));
-  const autoH = $derived(clampTray(contentH, trayLimits, (cuesOpen ? cueCeiling(viewportH) : autoCeiling(viewportH, hasTracks)) + padsRoom));
+  // Sizing itself (content, pads, phrase strip) the tray leaves the editor
+  // its reserve; a height dragged by hand is kept, but the pads opening on
+  // top of it do not push it further.
+  // A tall inspector (an effect's settings at a large interface scale) still
+  // gets its whole height and a ruler with two rows of lanes above it.
+  const editorCap = $derived(Math.max(trayEditorCap(viewportH, TRAY_MAX_SHARE),
+    transportH + inspectorRoom + RULER_HEIGHT + 2 * TRACK_ROW_HEIGHT + GRID_SCROLLBAR_ALLOWANCE + 1));
+  const within = (cap: number): TrayLimits => ({ cap: Math.min(trayLimits.cap, cap), floor: Math.min(trayLimits.floor, cap) });
+  const autoH = $derived(clampTray(contentH, within(editorCap), (cuesOpen ? cueCeiling(viewportH) : autoCeiling(viewportH, hasTracks)) + padsRoom));
   const trayHeight = $derived(userHeight === null
     ? autoH
-    : clampTray(userHeight + padsRoom, trayLimits, dragCeiling(viewportH) + padsRoom));
+    : clampTray(userHeight + padsRoom, within(Math.max(editorCap, userHeight)), dragCeiling(viewportH) + padsRoom));
+
+  // In a tray at its cap the pads (a performance surface) take what a ruler
+  // and two rows of lanes leave, and scroll past that; they used to give
+  // way to a 64 px sliver that showed no pads at all.
+  const padsMax = $derived(Math.max(64, trayHeight - transportH - inspectorRoom - (RULER_HEIGHT + 2 * TRACK_ROW_HEIGHT + GRID_SCROLLBAR_ALLOWANCE) - 1));
 
   // Publish the live height so App.svelte can reserve viewport space for the
   // tray, the way it already does for the Presets / Sequencer / Keyframes
@@ -925,6 +959,8 @@
       const root = document.documentElement.style;
       root.setProperty('--ga-show-tray-height', open && !isTimeline ? `${trayHeight}px` : '0px');
       root.setProperty('--ga-timeline-tray-height', open && isTimeline ? `${trayHeight}px` : '0px');
+      // Toasts rise above the open tray (and the preview's zoom buttons).
+      root.setProperty('--ga-tray-toast-lift', open ? `${trayHeight + 52}px` : '0px');
     }
   });
 
@@ -1082,6 +1118,7 @@
       hasTracks: s.doc === 'timeline' && s.layerTracks.length > 0,
       takeoverActive: s.doc === 'timeline' && (Object.keys(liveTakeover.state.surfaces).length > 0 || !!liveTakeover.state.overlay),
       hasSections: s.doc === 'timeline' && s.sections.length > 0,
+      pointerOver: pointerInTray,
     });
     if (!action) return false;
     switch (action) {
@@ -1141,10 +1178,91 @@
       case 'go':
         showTimeline.go();
         return true;
+      case 'shuttleBack':
+        shuttleBack();
+        return true;
+      case 'shuttleStop':
+        shuttleStop();
+        return true;
+      case 'shuttleForward':
+        shuttleForward();
+        return true;
+      case 'frameBack':
+      case 'frameForward':
+        stepFrame(action === 'frameBack' ? -1 : 1);
+        return true;
+      case 'markIn':
+        showTimeline.markIn(s.currentTime);
+        return true;
+      case 'markOut':
+        showTimeline.markOut(s.currentTime);
+        return true;
+      case 'goIn':
+      case 'goOut':
+        if (!s.workArea) return false;
+        showTimeline.seek(action === 'goIn' ? s.workArea.start : s.workArea.end);
+        return true;
+      case 'clearInOut':
+        showTimeline.setWorkArea(null);
+        return true;
+      case 'prevEdit':
+      case 'nextEdit':
+        jumpToEdit(action === 'prevEdit' ? -1 : 1);
+        return true;
+      case 'zoomIn':
+      case 'zoomOut':
+        zoomAroundPlayhead(action === 'zoomIn' ? 1.25 : 1 / 1.25);
+        return true;
+      case 'zoomFit':
+        showTimeline.zoomToFit(Math.max(100, gridWidth - 24));
+        if (gridEl) gridEl.scrollLeft = 0;
+        return true;
+      case 'trimStart':
+      case 'trimEnd':
+        trimToPlayhead(action === 'trimStart' ? 'start' : 'end');
+        return true;
+      case 'razor':
+        editTool.set('razor');
+        return true;
+      case 'rippleTool':
+        editTool.set('ripple');
+        return true;
+      case 'rollTool':
+        editTool.set('roll');
+        return true;
+      case 'slipTool':
+        editTool.set('slip');
+        return true;
+      case 'selectTool':
+        editTool.set('select');
+        return true;
+      case 'toggleLines':
+        return toggleFocusedLines();
+      case 'group':
+        return showTimeline.groupLayerClips(get(showTimeline).selectedClipIds);
+      case 'ungroup':
+        return showTimeline.ungroupLayerClips(get(showTimeline).selectedClipIds);
     }
     return false;
   }
+
+  /** = / -: zoom in or out, keeping the playhead where it is on screen. */
+  function zoomAroundPlayhead(factor: number) {
+    const from = get(showTimeline).zoom;
+    const time = get(showTimeline).currentTime;
+    const screenX = gridEl ? time * from - gridEl.scrollLeft : 0;
+    showTimeline.setZoom(from * factor);
+    const to = get(showTimeline).zoom;
+    if (to === from) return;
+    void tick().then(() => {
+      if (!gridEl) return;
+      gridEl.scrollLeft = anchoredScrollLeft(time, to, Math.max(0, Math.min(gridEl.clientWidth, screenX)));
+      gridScrollLeft = gridEl.scrollLeft;
+    });
+  }
   onMount(() => setShowKeyHandler(handleShowKey));
+  // A backwards shuttle stops when the tray goes.
+  onMount(() => () => stopShuttle());
   // Taken ahead of every other window listener (see installShowKeyCapture).
   onMount(() => installShowKeyCapture());
   // Markers are snap targets for clips and keys.
@@ -1313,7 +1431,7 @@
       <button
         class="t-btn"
         class:active={isPlaying}
-        disabled={duration <= 0}
+        disabled={duration <= 0 && !(recordArmed && doc === 'timeline')}
         onclick={() => showTimeline.togglePlay()}
         title={isPlaying ? 'Pause show' : 'Play show'}
       >
@@ -1442,9 +1560,24 @@
       >
         {tempo ? `♩ ${Math.round(tempo.segments[0].bpm * 10) / 10}` : 'Tempo'}
       </button>
-      <button class="t-chip" class:active={snapEnabled} onclick={() => showTimeline.setSnapEnabled(!snapEnabled)} title="Snap to the grid, clip edges, the playhead and markers (N). Hold {MOD_KEY} while dragging to move freely." data-show-snap>
+      <button class="t-chip" class:active={snapEnabled} onclick={() => showTimeline.setSnapEnabled(!snapEnabled)} title="Snap to the grid, clip edges, the playhead and markers (S). Hold {MOD_KEY} while dragging to move freely." data-show-snap>
         Snap
       </button>
+      {#if isTimeline && layerTracks.length}
+        <select
+          class="t-select t-tool"
+          class:tool-on={$editTool !== 'select'}
+          value={$editTool}
+          onchange={(e) => editTool.set((e.currentTarget as HTMLSelectElement).value as typeof $editTool)}
+          title={EDIT_TOOLS.find((t) => t.id === $editTool)?.hint ?? ''}
+          aria-label="Editing tool"
+          data-show-tool
+        >
+          {#each EDIT_TOOLS as tool}
+            <option value={tool.id}>{tool.label} ({tool.key})</option>
+          {/each}
+        </select>
+      {/if}
       {#if tempo}
         <select
           class="t-select t-grid"
@@ -1564,7 +1697,7 @@
     {#if ($takeoverPadsOpen && isTimeline) || phraseStripShown}
       <!-- The outer box may give way in a tight tray; the inner one reports
            the pads' own height, which the tray grows by. -->
-      <div class="pads-wrap" class:phrases-only={!($takeoverPadsOpen && isTimeline)}><div bind:clientHeight={padsH}>
+      <div class="pads-wrap" class:phrases-only={!($takeoverPadsOpen && isTimeline)} style:max-height="{padsMax}px"><div bind:clientHeight={padsH}>
         {#if phraseStripShown}<PhrasePads variant="timeline" />{/if}
         {#if $takeoverPadsOpen && isTimeline}<TakeoverPads />{/if}
       </div></div>
@@ -1574,7 +1707,7 @@
     <div class="show-main-col">
     <!-- Body: lane labels + scrolling grid -->
     <div class="show-body">
-      <div class="lane-labels" style="width: {labelWidth}px; flex-basis: {labelWidth}px" onwheel={handleLabelWheel}>
+      <div class="lane-labels" style="width: {labelWidth}px; flex-basis: {labelWidth}px" onwheel={handleLabelWheel} onscroll={labelsScrolled}>
         <div class="label-ruler-spacer" style="height: {RULER_HEIGHT}px"></div>
         <!-- Translated, not scrolled: the grid owns the scroll and the ruler
              spacer above has to stay pinned the way the sticky ruler does.
@@ -1585,7 +1718,7 @@
           <div class="lane-label sections" style="height: {SECTION_LANE_HEIGHT}px" data-sections-label>
             <span class="lane-name" title="Named spans of the Timeline with what happens at their end: play through, hold for GO, loop until GO, jump, or Live (pieces to the VJ decks until GO).">Sections</span>
             <button class="lane-line-add" onclick={addSectionAtPlayhead} title="Add a section at the playhead (8 bars, or up to the next section)" data-section-add>+</button>
-            <button class="lane-line-add score" onclick={() => (scoreOpen = true)} disabled={!audioTracks.length} title={audioTracks.length ? 'Score this song: sections, looks, energy and where lines from the song on the Song row' : 'Put a song on the Song row first'} data-score-open>✦ Score</button>
+            <button class="lane-line-add score" onclick={() => autoShowOpen.set(true)} disabled={!audioTracks.length} title={audioTracks.length ? 'Auto show: a whole show on your mapping from the song on the Song row (sections, content on the pieces, looks, Screen FX)' : 'Drop a song on the Song row first'} data-auto-show-open>✦ Auto show</button>
             <SectionsLiveMenu />
           </div>
           <div class="lane-label look" style="height: {LOOK_LANE_HEIGHT}px">
@@ -1644,6 +1777,15 @@
       >
         <div class="show-ruler" style="width: {totalWidth}px; height: {RULER_HEIGHT}px" onmousedown={startScrub}>
           <ShowRuler {zoom} {rulerSeconds} {viewStart} {viewEnd} mode={rulerMode} tempo={tempo} />
+          {#if $workAreaStore}
+            <div
+              class="show-work-area"
+              class:looping={$loopStore}
+              style="left: {$workAreaStore.start * zoom}px; width: {($workAreaStore.end - $workAreaStore.start) * zoom}px"
+              title="In and out points (I / O). With Loop on, play loops between them. {MOD_KEY}+Shift+X clears them"
+              data-show-work-area
+            ></div>
+          {/if}
           {#each visibleMarkers as marker (marker.id)}
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div
@@ -1739,11 +1881,16 @@
           <div class="show-marker-line" class:selected={marker.id === selectedMarkerId} style="left: {marker.time * zoom}px; height: {laneStackH}px"></div>
         {/each}
 
+        {#if $workAreaStore}
+          <div class="show-work-edge" style="left: {$workAreaStore.start * zoom}px; height: {laneStackH}px"></div>
+          <div class="show-work-edge" style="left: {$workAreaStore.end * zoom}px; height: {laneStackH}px"></div>
+        {/if}
+
         {#if $showSnapGuide !== null}
           <div class="show-snap-guide" style="left: {$showSnapGuide * zoom}px; height: {laneStackH}px" data-show-snap-guide></div>
         {/if}
 
-        <div class="show-playhead" style="transform: translateX({playheadX}px)" onmousedown={startScrub}>
+        <div class="show-playhead" style:transform="translateX({playheadX}px)" style:height="{laneStackH}px" onmousedown={startScrub}>
           <div class="playhead-handle"></div>
           <div class="playhead-line"></div>
         </div>
@@ -1987,7 +2134,7 @@
       </div>
     {:else if hasTracks}
       <div class="show-inspector insp-idle" bind:clientHeight={inspectorH}>
-        <span class="insp-hint">Each row is a mapping layer. Drop media on a row; click a block to edit it in Properties and Shader Parameters, or click a Media Library card to replace its media; click a row name for its settings. S splits at the playhead, Shift+Delete closes the gap, ? lists every key.</span>
+        <span class="insp-hint insp-idle-hint" title="Each row is a mapping layer. Drop media on a row; click a block to edit it in Properties and Shader Parameters, or click a Media Library card to replace its media; click a row name for its settings. {MOD_KEY}+K or the razor (C) cuts, Shift+Delete closes the gap, J K L shuttle, I and O set in and out, ? lists every key.">Each row is a mapping layer. Drop media on a row; click a block to edit it in Properties and Shader Parameters, or click a Media Library card to replace its media; click a row name for its settings. {MOD_KEY}+K or the razor (C) cuts, Shift+Delete closes the gap, J K L shuttle, I and O set in and out, ? lists every key.</span>
       </div>
     {/if}
 
@@ -1999,8 +2146,8 @@
       <CueListPanel />
     {/if}
     </div>
-    {#if scoreOpen}
-      <ScoreDialog onclose={() => (scoreOpen = false)} />
+    {#if $autoShowOpen}
+      <AutoShowDialog onclose={() => autoShowOpen.set(false)} />
     {/if}
 
     {#if showClearConfirm}
@@ -2228,6 +2375,10 @@
     max-width: 170px;
     font-family: inherit;
   }
+  /* The editing tool: lit in the royal blue while it is not Select. */
+  .t-select.tool-on { border-color: var(--ga-icon, #5278ff); color: #fff; }
+  /* The open list keeps the app's colours (a white tool name must not land on a white list). */
+  .t-select option { background: var(--ga-raise, #14141a); color: var(--ga-ink-0, #ddd); }
   .t-time {
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: var(--ga-text-control, 12px);
@@ -2330,6 +2481,23 @@
   }
   .show-marker.unlinked .show-marker-flag { background: #7a7a86; color: #111; }
   .show-marker.selected .show-marker-flag { box-shadow: 0 0 0 1px #fff; }
+  /* In and out points: a band under the ruler and a faint line down each edge. */
+  .show-work-area {
+    position: absolute;
+    bottom: 0;
+    height: 4px;
+    background: color-mix(in srgb, var(--ga-icon, #5278ff) 45%, transparent);
+    pointer-events: none;
+  }
+  .show-work-area.looping { background: var(--ga-icon, #5278ff); }
+  .show-work-edge {
+    position: absolute;
+    top: 0;
+    width: 1px;
+    background: color-mix(in srgb, var(--ga-icon, #5278ff) 55%, transparent);
+    pointer-events: none;
+    z-index: 3;
+  }
   .show-marker-line {
     position: absolute;
     top: 0;
@@ -2515,7 +2683,9 @@
   }
   .insp-wrap { flex: 0 0 auto; }
   .insp-idle { min-height: 36px; }
-  .pads-wrap { flex: 0 1 auto; min-height: 64px; overflow: hidden; }
+  /* In a tray at its cap the pads give way first, and scroll: every pad and
+     setting stays reachable. */
+  .pads-wrap { flex: 0 0 auto; min-height: 64px; overflow-x: hidden; overflow-y: auto; }
   .pads-wrap.phrases-only { min-height: 0; flex-shrink: 0; }
   .t-grid { max-width: 96px; }
   .t-seg { display: inline-flex; }
@@ -2540,10 +2710,11 @@
      the handle still scrub. */
   /* Placed by `transform` on its own layer: moving it every frame of a
      playing show must not repaint the lanes underneath. */
+  /* As tall as every row (the bar lines are too), so it runs all the way
+     down a long stack of layers, scrolled or not. */
   .show-playhead {
     position: absolute;
     top: 0;
-    bottom: 0;
     left: 0;
     width: 1px;
     z-index: 6;
@@ -2552,10 +2723,12 @@
     will-change: transform;
   }
   .playhead-handle { pointer-events: auto; cursor: col-resize; }
+  /* Sticks to the ruler while the rows scroll under it. */
   .playhead-handle {
-    position: absolute;
+    position: sticky;
     top: 0;
-    left: -5px;
+    z-index: 1;
+    margin-left: -5px;
     width: 11px;
     height: 10px;
     background: #FFD96B;
@@ -2640,6 +2813,18 @@
     color: var(--ga-ink-2, #888);
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     white-space: nowrap;
+  }
+  /* The idle hint is a paragraph: two lines in the reserved strip (longer
+     languages and narrow windows included), the rest in its tooltip. */
+  .insp-idle-hint {
+    flex: 1 1 0;
+    min-width: 0;
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
   }
   .insp-chip {
     height: var(--ga-control-h-sm, 22px);
