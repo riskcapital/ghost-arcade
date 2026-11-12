@@ -151,7 +151,8 @@
       <div class="lt-drop" style:left="{dropTime * zoom}px"></div>
     {/if}
     {#if track.clips.length === 0 && dropTime === null}
-      <span class="lt-empty">{kind === 'sub' ? 'Drop media here: it draws over the piece' : kind === 'missing' ? 'This layer is gone from the stage' : 'Shows its look. Drop media here to play it on this piece'}</span>
+      <!-- The hint on the first piece row; the rest say it on hover, not all at once. -->
+      <span class="lt-empty" class:quiet={index > 0 && kind === 'piece'}>{kind === 'sub' ? 'Drop media here: it draws over the piece' : kind === 'missing' ? 'This layer is gone from the stage' : 'Shows its look. Drop media here to play it on this piece'}</span>
     {/if}
   </div>
   {#if !track.collapsed && rowLines.length}
@@ -200,6 +201,8 @@
     pointer-events: none;
     z-index: 6;
   }
+  .lt-empty.quiet { opacity: 0; transition: opacity 120ms; }
+  .lt:hover .lt-empty.quiet { opacity: 1; }
   .lt-empty {
     position: absolute;
     left: 12px;

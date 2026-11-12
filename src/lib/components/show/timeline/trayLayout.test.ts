@@ -100,8 +100,10 @@ describe('Timeline tray layout', () => {
     expect(tray).toMatch(/class="lane-labels"[^>]*onscroll=\{labelsScrolled\}/);
     expect(tray).toMatch(/gridEl\.scrollTop \+= dy/);
   });
-  it('the idle hint wraps to two lines with the whole text in its tooltip', () => {
-    expect(tray).toMatch(/insp-idle-hint" title="Each row is a mapping layer/);
+  it('the idle strip is one short hint; the full guide is the help link in the header', () => {
+    expect(tray).toMatch(/insp-idle-hint">Click a block to see its settings here\.</);
+    expect(tray).toMatch(/TIMELINE_HELP_URL = 'https:\/\/ghostarcade\.live\/docs\/timeline'/);
+    expect(tray).toMatch(/data-timeline-help/);
   });
   it('toasts rise above the open tray instead of covering the block inspector', () => {
     expect(tray).toMatch(/'--ga-tray-toast-lift', open \? `\$\{trayHeight \+ 52\}px` : '0px'/);

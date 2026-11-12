@@ -13,6 +13,7 @@
    * orange, says what is playing, and ↩ hands it back (Shift: instantly).
    */
   import type { Layer, ShowLayerTrack } from '../../../types';
+  import TimelineIcon from './TimelineIcon.svelte';
   import { showTimeline } from '../../../stores/showTimeline';
   import { TRACK_ROW_HEIGHT, rowColor } from './trackLayout';
   import { lineLayout } from './lineUi';
@@ -228,18 +229,20 @@
           class:dim={otherSoloed}
           onclick={(e) => { e.stopPropagation(); showTimeline.setSoloTrack(soloed ? null : track.id); }}
           title="Solo: hide every other tracked layer (not saved)"
+          aria-label="Solo this piece"
           aria-pressed={soloed}
-        >S</button>
+        ><TimelineIcon name="solo" size={12} /></button>
         <button
           class="th-btn lock"
           class:on={track.locked}
           onclick={(e) => { e.stopPropagation(); showTimeline.updateLayerTrack(track.id, { locked: !track.locked }); }}
-          title="Lock: no edits on this track"
+          title={track.locked ? 'Locked: no edits on this track. Click to unlock' : 'Lock: no edits on this track'}
+          aria-label={track.locked ? 'Unlock this track' : 'Lock this track'}
           aria-pressed={track.locked}
-        >L</button>
-        <button class="th-btn lanes" onmousedown={(e) => e.stopPropagation()} onclick={openPicker} title="Add a control line under this row: any parameter of the piece or of a block on it" data-line-picker>⌇+</button>
+        ><TimelineIcon name={track.locked ? 'lock' : 'unlock'} size={12} /></button>
+        <button class="th-btn lanes" onmousedown={(e) => e.stopPropagation()} onclick={openPicker} title="Add a control line under this row: any parameter of the piece or of a block on it" aria-label="Add a control line" data-line-picker><TimelineIcon name="line-add" size={12} /></button>
         {#if kind === 'piece' || kind === 'group'}
-          <button class="th-btn th-addsub" onmousedown={(e) => e.stopPropagation()} onclick={addLayerOnPiece} title="Add a layer on this piece: a row of its own whose blocks draw over the piece (same shape), each with its own blend mode" data-add-sub-row>+ Layer</button>
+          <button class="th-btn th-addsub" onmousedown={(e) => e.stopPropagation()} onclick={addLayerOnPiece} title="Add a layer on this piece: a row of its own whose blocks draw over the piece (same shape), each with its own blend mode" aria-label="Add a layer on this piece" data-add-sub-row><TimelineIcon name="layer-add" size={12} /></button>
         {:else}
           <button class="th-btn th-remove" onmousedown={(e) => e.stopPropagation()} onclick={removeRow} title={kind === 'sub' ? 'Remove this layer and its blocks' : 'Delete this row and its blocks'} aria-label={kind === 'sub' ? 'Remove this layer and its blocks' : 'Delete this row and its blocks'} data-remove-row>×</button>
         {/if}
@@ -263,9 +266,10 @@
           ondragleave={() => (liveDrop = false)}
           ondrop={liveDropMedia}
           title="Take this track over live: a VJ row, the mix, a group or black. Drop media here to play it."
+          aria-label="Take this track over live"
           aria-pressed={taken}
           data-takeover-live
-        >LIVE</button>
+        ><TimelineIcon name="live" size={12} /></button>
         {/if}
         {#if track.gap === 'layer' && track.clips.length > 0}
           <span class="th-gap" title="Between blocks this piece shows what the current look gives it (the row's settings)">look between</span>
@@ -318,7 +322,7 @@
   .th.missing .th-name { color: var(--ga-ink-2, #888); text-decoration: line-through; }
   .th.hidden-row .th-name { opacity: 0.5; }
   .th-sub-mark { color: var(--ga-ink-2, #666); font-size: 10px; margin-right: -2px; }
-  .th-btn.th-eye { display: inline-flex; align-items: center; justify-content: center; }
+  .th-btn.th-eye, .th-btn.solo, .th-btn.lock, .th-btn.lanes, .th-btn.th-addsub, .th-btn.th-live { display: inline-flex; align-items: center; justify-content: center; }
   .th-btn.th-eye.on { color: #1a1204; background: #9aa0aa; border-color: #9aa0aa; }
   .th-btn { white-space: nowrap; }
   .th-btn.th-addsub { color: color-mix(in srgb, var(--track-color) 70%, #ffffff); }

@@ -51,6 +51,12 @@
   import { vjClipLauncher } from '../stores/vjClipLauncher';
   import { clipAudioBus, clipAudioMaster, CLIP_AUDIO_BLOCK_TEXT } from '../audio/clipAudioBus';
   import CueListPanel from './show/CueListPanel.svelte';
+  import TimelineIcon from './show/timeline/TimelineIcon.svelte';
+  import TimelineStartGuide from './show/timeline/TimelineStartGuide.svelte';
+  import { openExternalUrl } from '$lib/bridge';
+
+  /** The Timeline guide on the website (the ? in the Timeline's header). */
+  const TIMELINE_HELP_URL = 'https://ghostarcade.live/docs/timeline';
   import { cueList, cueLabel } from '../show/cueList';
   import { timecodeChase } from '../show/timecode/timecodeChase';
   import { settings } from '../stores/settings';
@@ -549,6 +555,23 @@
   const audioStackH = $derived(isTimeline ? $soundLayout.total : audioLaneCount * AUDIO_LANE_HEIGHT);
   const laneStackH = $derived(RULER_HEIGHT + topLaneH + looksLinesH + tracksH + stageRowH + ledRowsH + audioStackH + cameraLaneH);
   const hasTracks = $derived(isTimeline && layerTracks.length > 0);
+
+  // ── Start guide ─────────────────────────────────────────────────────────
+  // Three steps to a show, over an empty Timeline: until it has a song and
+  // something on it and has been played once, or "Got it".
+  const START_GUIDE_KEY = 'ga.timeline.startGuideDone';
+  let startGuideDone = $state((() => { try { return localStorage.getItem(START_GUIDE_KEY) === '1'; } catch { return false; } })());
+  const timelineHasContent = $derived(layerTracks.some((t) => (t.clips?.length ?? 0) > 0) || lookClips.length > 0);
+  const timelinePieces = $derived(layerTracks.filter((t) => !t.subRow).length);
+  const showStartGuide = $derived(isTimeline && !startGuideDone);
+  function finishStartGuide() {
+    startGuideDone = true;
+    try { localStorage.setItem(START_GUIDE_KEY, '1'); } catch { /* private window */ }
+  }
+  // Played with a song and something on it: the guide has done its job.
+  $effect(() => {
+    if (isPlaying && audioTracks.length > 0 && timelineHasContent && !startGuideDone) finishStartGuide();
+  });
   const labelWidth = $derived(isTimeline ? TRACK_HEADER_WIDTH : 108);
   // The bound clientHeight keeps its last value after the inspector
   // unmounts, so gate it on the selection rather than trusting the binding.
@@ -1410,7 +1433,13 @@
 
     <div class="show-header-btns">
       <span class="show-doc-name" data-show-doc-name>{isTimeline ? 'Timeline' : 'Show'}</span>
-      <button class="show-clear" onclick={() => showClearConfirm = true} title={isTimeline ? 'Clear the whole Timeline' : 'Clear the whole show'}>Clear</button>
+      <button class="show-help" onclick={() => void openExternalUrl(TIMELINE_HELP_URL)}
+        title="How the Timeline works: a guide with pictures, on ghostarcade.live" aria-label="Timeline help" data-timeline-help>
+        <TimelineIcon name="help" size={16} />
+      </button>
+      <button class="show-clear" onclick={() => showClearConfirm = true} title={isTimeline ? 'Clear the whole Timeline' : 'Clear the whole show'} aria-label={isTimeline ? 'Clear the whole Timeline' : 'Clear the whole show'}>
+        <TimelineIcon name="trash" size={15} />
+      </button>
       <button class="show-close" onclick={() => showTimeline.setOpen(false)} title={isTimeline ? 'Close the Timeline' : 'Close show timeline'}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
           <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -1548,8 +1577,8 @@
 
       <span class="t-divider"></span>
 
-      <button class="t-btn" onclick={() => showTimeline.setZoom(zoom / 1.4)} disabled={zoom <= SHOW_MIN_ZOOM} title="Zoom out">−</button>
-      <button class="t-btn" onclick={() => showTimeline.setZoom(zoom * 1.4)} disabled={zoom >= SHOW_MAX_ZOOM} title="Zoom in">+</button>
+      <button class="t-btn" onclick={() => showTimeline.setZoom(zoom / 1.4)} disabled={zoom <= SHOW_MIN_ZOOM} title="Zoom out" aria-label="Zoom out"><TimelineIcon name="zoom-out" /></button>
+      <button class="t-btn" onclick={() => showTimeline.setZoom(zoom * 1.4)} disabled={zoom >= SHOW_MAX_ZOOM} title="Zoom in" aria-label="Zoom in"><TimelineIcon name="zoom-in" /></button>
       <button
         class="t-chip t-tempo"
         class:active={selectedTempo}
@@ -1558,10 +1587,11 @@
         title="The show's tempo map: BPM, time signature and where bar 1 is"
         data-show-tempo
       >
-        {tempo ? `♩ ${Math.round(tempo.segments[0].bpm * 10) / 10}` : 'Tempo'}
+        <TimelineIcon name="tempo" />
+        <span>{tempo ? `${Math.round(tempo.segments[0].bpm * 10) / 10} BPM` : 'Tempo'}</span>
       </button>
-      <button class="t-chip" class:active={snapEnabled} onclick={() => showTimeline.setSnapEnabled(!snapEnabled)} title="Snap to the grid, clip edges, the playhead and markers (S). Hold {MOD_KEY} while dragging to move freely." data-show-snap>
-        Snap
+      <button class="t-chip t-iconable" class:active={snapEnabled} onclick={() => showTimeline.setSnapEnabled(!snapEnabled)} title="Snap to the grid, clip edges, the playhead and markers (S). Hold {MOD_KEY} while dragging to move freely." aria-label="Snap" data-show-snap>
+        <TimelineIcon name="snap" /><span class="t-label">Snap</span>
       </button>
       {#if isTimeline && layerTracks.length}
         <select
@@ -1609,11 +1639,8 @@
         + Preset
       </button>
       {/if}
-      <button class="t-chip t-iconable" onclick={() => audioInput?.click()} title="Add an audio file" aria-label="Add an audio file">
-        <span class="t-label">+ Audio</span>
-        <svg class="t-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
-          <path d="M5 2v8M1 6h8"/><path d="M14 18V6l8-2v12"/><circle cx="11.5" cy="18" r="2.5"/><circle cx="19.5" cy="16" r="2.5"/>
-        </svg>
+      <button class="t-chip t-iconable" onclick={() => audioInput?.click()} title="Add a song or a sound from this computer, at the playhead" aria-label="Add a song or sound">
+        <TimelineIcon name="song" /><span class="t-label">Add song</span>
       </button>
       {#if !isTimeline}
       <!-- Transition palette. Drag onto the junction between two touching
@@ -1648,24 +1675,21 @@
 
       <span class="t-divider"></span>
 
-      <button class="t-chip" class:active={cuesOpen} onclick={toggleCues} title="Show the cue list beside the timeline" data-show-cues-toggle>
-        Cues
+      <button class="t-chip t-iconable" class:active={cuesOpen} onclick={toggleCues} title="Show the cue list beside the timeline" aria-label="Cues" data-show-cues-toggle>
+        <TimelineIcon name="cues" /><span class="t-label">Cues</span>
       </button>
       {#if isTimeline}
-        <button class="t-chip" class:active={sectionCuesOpen} onclick={toggleSectionCues} title="The Timeline's sections and markers as a cue list, with a big GO" data-section-cues-toggle>
-          Sections
+        <button class="t-chip t-iconable" class:active={sectionCuesOpen} onclick={toggleSectionCues} title="The Timeline's sections and markers as a cue list, with a big GO" aria-label="Sections" data-section-cues-toggle>
+          <TimelineIcon name="sections" /><span class="t-label">Sections</span>
         </button>
         {#if hasPhrases}
-          <button class="t-chip" class:active={phrasesPref} onclick={togglePhrases} title="The A/V phrase pads: published sections, launched on the next bar" data-phrases-toggle>
-            Phrases
+          <button class="t-chip t-iconable" class:active={phrasesPref} onclick={togglePhrases} title="The A/V phrase pads: published sections, launched on the next bar" aria-label="Phrases" data-phrases-toggle>
+            <TimelineIcon name="phrases" /><span class="t-label">Phrases</span>
           </button>
         {/if}
       {/if}
       <button class="t-chip t-iconable" onclick={addMarkerAtPlayhead} title="Add a marker at the playhead. It fires the selected cue when the timeline plays across it." aria-label="Add a marker at the playhead. It fires the selected cue when the timeline plays across it." data-show-add-marker>
-        <span class="t-label">+ Marker</span>
-        <svg class="t-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M5 2v8M1 6h8"/><path d="M13 5h8v9l-4 5-4-5z"/>
-        </svg>
+        <TimelineIcon name="marker" /><span class="t-label">Marker</span>
       </button>
       {#if tc.lock !== 'off'}
         <span class="t-tc" class:locked={tc.lock === 'locked'} class:freewheel={tc.lock === 'freewheel'} class:lost={tc.lock === 'lost'} title={tc.error ?? `Timecode ${tc.lock}${tc.rate ? `, ${tc.rate} fps` : ''}`} data-show-tc-badge>
@@ -1707,6 +1731,19 @@
     <div class="show-main-col">
     <!-- Body: lane labels + scrolling grid -->
     <div class="show-body">
+      {#if showStartGuide}
+        <div class="start-guide-wrap" style="left: {labelWidth}px">
+          <TimelineStartGuide
+            hasSong={audioTracks.length > 0}
+            hasContent={timelineHasContent}
+            pieces={timelinePieces}
+            onpicksong={() => audioInput?.click()}
+            onautoshow={() => autoShowOpen.set(true)}
+            onplay={() => showTimeline.togglePlay()}
+            ondismiss={finishStartGuide}
+          />
+        </div>
+      {/if}
       <div class="lane-labels" style="width: {labelWidth}px; flex-basis: {labelWidth}px" onwheel={handleLabelWheel} onscroll={labelsScrolled}>
         <div class="label-ruler-spacer" style="height: {RULER_HEIGHT}px"></div>
         <!-- Translated, not scrolled: the grid owns the scroll and the ruler
@@ -1718,13 +1755,13 @@
           <div class="lane-label sections" style="height: {SECTION_LANE_HEIGHT}px" data-sections-label>
             <span class="lane-name" title="Named spans of the Timeline with what happens at their end: play through, hold for GO, loop until GO, jump, or Live (pieces to the VJ decks until GO).">Sections</span>
             <button class="lane-line-add" onclick={addSectionAtPlayhead} title="Add a section at the playhead (8 bars, or up to the next section)" data-section-add>+</button>
-            <button class="lane-line-add score" onclick={() => autoShowOpen.set(true)} disabled={!audioTracks.length} title={audioTracks.length ? 'Auto show: a whole show on your mapping from the song on the Song row (sections, content on the pieces, looks, Screen FX)' : 'Drop a song on the Song row first'} data-auto-show-open>✦ Auto show</button>
+            <button class="lane-line-add score" onclick={() => autoShowOpen.set(true)} disabled={!audioTracks.length} title={audioTracks.length ? 'Auto show: a whole show on your mapping from the song on the Song row (sections, content on the pieces, looks, Screen FX)' : 'Drop a song on the Song row first'} data-auto-show-open><TimelineIcon name="sparkle" size={12} />Auto</button>
             <SectionsLiveMenu />
           </div>
           <div class="lane-label look" style="height: {LOOK_LANE_HEIGHT}px">
             <span class="lane-name" title="Shape Looks along the Timeline: drag a Look card from the Looks gallery here. The shapes wear it for the block's span; overlapping blocks crossfade.">Looks</span>
             {#if lookClips.length > 0}
-              <button class="lane-line-add" onclick={(e) => openLinePicker(e, 'looks')} title="Add a control line for a look block: intensity, speed, color step, beat reaction, chase" data-line-picker-looks>⌇+</button>
+              <button class="lane-line-add" onclick={(e) => openLinePicker(e, 'looks')} title="Add a control line for a look block: intensity, speed, color step, beat reaction, chase" data-line-picker-looks aria-label="Add a control line"><TimelineIcon name="line-add" size={13} /></button>
             {/if}
           </div>
           {#if looksLines.length}
@@ -2134,7 +2171,7 @@
       </div>
     {:else if hasTracks}
       <div class="show-inspector insp-idle" bind:clientHeight={inspectorH}>
-        <span class="insp-hint insp-idle-hint" title="Each row is a mapping layer. Drop media on a row; click a block to edit it in Properties and Shader Parameters, or click a Media Library card to replace its media; click a row name for its settings. {MOD_KEY}+K or the razor (C) cuts, Shift+Delete closes the gap, J K L shuttle, I and O set in and out, ? lists every key.">Each row is a mapping layer. Drop media on a row; click a block to edit it in Properties and Shader Parameters, or click a Media Library card to replace its media; click a row name for its settings. {MOD_KEY}+K or the razor (C) cuts, Shift+Delete closes the gap, J K L shuttle, I and O set in and out, ? lists every key.</span>
+        <span class="insp-hint insp-idle-hint">Click a block to see its settings here.</span>
       </div>
     {/if}
 
@@ -2283,18 +2320,31 @@
     padding-right: 4px;
   }
   .show-tray.timeline-doc .show-doc-name { color: color-mix(in srgb, #8c78ff 75%, #ffffff); }
-  .show-clear {
+  .start-guide-wrap {
+    position: absolute;
+    top: 40px;
+    right: 0;
+    z-index: 30;
+    display: flex;
+    justify-content: center;
+    pointer-events: none;
+  }
+  .show-clear,
+  .show-help {
+    width: var(--ga-control-h, 26px);
     height: var(--ga-control-h, 26px);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
     background: transparent;
-    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border: 1px solid transparent;
     color: var(--ga-ink-1, #aaa);
-    font-size: var(--ga-text-control, 12px);
-    font-weight: var(--ga-weight-control, 600);
-    padding: 0 10px;
     border-radius: var(--ga-r-hard, 4px);
     cursor: pointer;
-    font-family: inherit;
   }
+  .show-help { color: var(--ga-icon, #5278ff); }
+  .show-help:hover { color: var(--ga-ink-0, #fff); border-color: var(--ga-line-2, rgba(255, 255, 255, 0.12)); }
   .show-clear:hover { border-color: color-mix(in srgb, var(--ga-rec, #ff4438) 55%, transparent); color: var(--ga-rec, #ff4438); }
   .show-close {
     width: var(--ga-control-h, 26px);
@@ -2435,6 +2485,7 @@
      min-height a wrapped transport bar or a tall lane stack would refuse to
      shrink and push the inspector out through the bottom of the tray. */
   .show-body {
+    position: relative;
     display: flex;
     flex: 1 1 auto;
     min-height: 0;
@@ -2602,6 +2653,9 @@
   .lane-label.stage { background: rgba(92, 225, 230, 0.03); }
   .lane-line-add {
     margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     background: var(--ga-sunk, #0c0c10);
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     color: var(--ga-ink-1, #aaa);
@@ -2614,7 +2668,7 @@
   }
   .lane-line-add:hover { color: var(--ga-ink-0, #fff); border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24)); }
   .lane-label.sections .lane-line-add + .lane-line-add { margin-left: 4px; }
-  .lane-line-add.score { color: #ffd36b; border-color: rgba(255, 211, 107, 0.45); }
+  .lane-line-add.score { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; color: var(--ga-icon, #5278ff); border-color: color-mix(in srgb, var(--ga-icon, #5278ff) 55%, transparent); }
   .lane-line-add:disabled { opacity: 0.4; cursor: default; }
   .stage-row-strip { border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07)); background: rgba(92, 225, 230, 0.03); box-sizing: border-box; }
 
@@ -2642,10 +2696,12 @@
   .t-end { max-width: 160px; }
   .t-out { max-width: 150px; }
   /* Tighter, step by step, until the transport fits on one line. */
-  .t-icon { display: none; }
-  .fit2 .t-iconable { padding: 0 8px; }
+  /* Icons always; their labels while there is room. */
+  .t-iconable, .t-tempo { display: inline-flex; align-items: center; gap: 6px; }
+  .t-btn { display: inline-flex; align-items: center; justify-content: center; }
+  .t-icon { display: block; }
+  .fit2 .t-iconable { padding: 0 7px; }
   .fit2 .t-iconable .t-label, .fit2 .t-transition-chip .t-label { display: none; }
-  .fit2 .t-icon { display: block; }
   .fit2 .t-end { max-width: 104px; }
   .fit2 .t-out { max-width: 104px; }
   .fit2 .t-preset { max-width: 104px; }
