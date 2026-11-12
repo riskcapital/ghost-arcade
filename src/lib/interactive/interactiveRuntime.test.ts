@@ -173,3 +173,16 @@ describe('new effects follow the music', () => {
     expect(makeEffect('fire', 'point', false).mods).toEqual({});
   });
 });
+
+import { livePointer, pruneLiveInteractiveInputs, setLivePointer } from './interactiveLive';
+
+describe('the editor pointer, straight to the layer', () => {
+  it('is used while fresh, dropped once the editor stops sending, and pruned with its layer', () => {
+    setLivePointer('layer', [at(0.5, 0.5)], 1000);
+    expect(livePointer('layer', 1100)).toHaveLength(1);
+    expect(livePointer('layer', 1300)).toBeUndefined();
+    setLivePointer('gone', [at(0.5, 0.5)], 2000);
+    pruneLiveInteractiveInputs(new Set(['layer']));
+    expect(livePointer('gone', 2001)).toBeUndefined();
+  });
+});

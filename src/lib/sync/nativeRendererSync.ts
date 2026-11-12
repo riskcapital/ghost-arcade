@@ -1109,7 +1109,7 @@ import { nativeEffectPassIdForEffectType } from '$lib/renderer/nativeEffectCover
 import { statusFrameRate } from './statusFrameRate';
 import { recordingScreenIds } from '$lib/recording/recordingSources';
 import { launchClockPosition } from '$lib/stores/launchClock';
-import { liveInteractiveInputs, pruneLiveInteractiveInputs, setLiveInteractiveInputs } from '$lib/interactive/interactiveLive';
+import { liveInteractiveInputs, livePointer, pruneLiveInteractiveInputs, setLiveInteractiveInputs } from '$lib/interactive/interactiveLive';
 import { combineInputs, PointSmoother, trackedPoints, ZoneTriggers, type FiredZone } from '$lib/interactive/interactiveRuntime';
 import { defaultInteractiveInput, validateScene, type InteractiveScene, type Interaction } from '$lib/mobile/studio/interactive';
 import { fireShowAction } from '$lib/show/showActions';
@@ -8363,7 +8363,10 @@ export class NativeRendererSync {
       return;
     }
     const input = scene.input ?? defaultInteractiveInput();
-    const pointer = (Array.isArray(source?.interactiveInputs) ? source!.interactiveInputs : []) as Interaction[];
+    // An open editor's pointer arrives every animation frame; the copy in the
+    // project (phones, a closed editor's last state) is the fallback.
+    const fresh = livePointer(layer.id);
+    const pointer = fresh ?? ((Array.isArray(source?.interactiveInputs) ? source!.interactiveInputs : []) as Interaction[]);
     let points = pointer;
     if (input.tracking !== 'off') {
       ensureCameraTracking('interactive-layers', { trackBody: input.tracking !== 'hands', trackFace: false });
@@ -8372,7 +8375,7 @@ export class NativeRendererSync {
       setLiveInteractiveInputs(layer.id, points);
     } else {
       runtime.smoother.reset();
-      setLiveInteractiveInputs(layer.id, null);
+      setLiveInteractiveInputs(layer.id, fresh ?? null);
     }
     if (source?.interactivePaused === true) return;
     const fired = runtime.zones.update(scene, points, performance.now() / 1000);

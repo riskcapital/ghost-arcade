@@ -107,6 +107,8 @@
     active: boolean,
     paused: boolean,
   ) => void = () => {};
+  /** The pointer touches, every animation frame (the scene goes out at 20 Hz). */
+  export let onpointer: ((inputs: Interaction[]) => void) | undefined = undefined;
   export let mappingSurfaces: { name: string; points: Point[]; enabled: boolean; mode: string }[] = [];
   export let onoutput: (canvas: HTMLCanvasElement | null) => void = () => {};
   /**
@@ -912,6 +914,7 @@
       motion = [];
       sensor.reset();
     }
+    onpointer?.(liveInputs());
     if (now - lastPublish > 50) {
       lastPublish = now;
       onscene(scene, liveInputs(), outputActive, paused);
