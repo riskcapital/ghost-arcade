@@ -169,7 +169,7 @@ fn cs_frame() {
   let sky = settings.env.x;
   let k = settings.env.y;
   // The void is never drawn (it stays transparent), but still fills shadows a little.
-  if (sky < 0.5) { view.sky_top = vec4f(vec3f(0.16, 0.18, 0.22) * k, 0.0); view.sky_low = vec4f(vec3f(0.08, 0.085, 0.095) * k, 0.0); }
+  if (sky < 0.5) { view.sky_top = vec4f(vec3f(0.36, 0.39, 0.46) * k, 0.0); view.sky_low = vec4f(vec3f(0.16, 0.16, 0.17) * k, 0.0); }
   else if (sky < 1.5) { view.sky_top = vec4f(vec3f(0.30, 0.32, 0.36) * k, 1.0); view.sky_low = vec4f(vec3f(0.12, 0.12, 0.13) * k, 1.0); }
   else { view.sky_top = vec4f(vec3f(0.02, 0.03, 0.08) * k, 1.0); view.sky_low = vec4f(vec3f(0.06, 0.05, 0.10) * k, 1.0); }
 }
@@ -419,7 +419,7 @@ fn lighting(m: Material, world: vec3f, n: vec3f, v: vec3f) -> vec3f {
   // The sky lights everything a little, and metals mirror it.
   let f0 = mix(vec3f(0.04), m.base, m.metal);
   let env_spec = sky_at(reflect(-v, n)) * mix(f0, vec3f(1.0), pow(1.0 - max(dot(n, v), 0.0), 5.0)) * (1.0 - m.rough * 0.7);
-  col += m.base * (1.0 - m.metal) * sky_at(n) * 0.6 + env_spec;
+  col += m.base * (1.0 - m.metal) * sky_at(n) + env_spec;
   // A faint floor of light so unlit sides are not pure black.
   col += m.base * 0.015;
   return col + m.base * m.emissive;
@@ -564,13 +564,14 @@ fn fs_composite(in: VsOut) -> @location(0) vec4f {
   let glow = textureSampleLevel(bloom, samp, in.uv, 0.0).rgb;
   let flare = 1.0 + settings.react.z * (frame.beat * 0.8 + frame.kick * 0.6);
   var hdr = (s.rgb + glow * settings.post_a.x * flare) * exp2(settings.post_a.y);
-  var col = aces(hdr);
-  // Temperature, saturation, contrast.
+  // Tone map, then grade on the display values, where 0.5 is mid grey (in
+  // linear light most of the picture sits far below 0.5 and contrast there
+  // crushes the darks to black).
+  var col = pow(aces(hdr), vec3f(1.0 / 2.2));
   col *= vec3f(1.0 + settings.post_b.x * 0.12, 1.0, 1.0 - settings.post_b.x * 0.12);
   let luma = dot(col, vec3f(0.2126, 0.7152, 0.0722));
   col = mix(vec3f(luma), col, settings.post_a.w);
   col = clamp((col - 0.5) * settings.post_a.z + 0.5, vec3f(0.0), vec3f(1.0));
-  col = pow(col, vec3f(1.0 / 2.2));
   let px = vec2u(in.clip.xy);
   let n = hash1(px.x * 1973u + px.y * 9277u + u32(frame.frame) * 26699u) - 0.5;
   col = clamp(col + n * settings.post_b.y * 0.08, vec3f(0.0), vec3f(1.0));
