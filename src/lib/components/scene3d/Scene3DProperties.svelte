@@ -41,9 +41,7 @@
 </div>
 {#if chosen}<p class="scene3d-note">{chosen.blurb}</p>{/if}
 {#if counts}
-  <p class="scene3d-note">
-    {counts.shapes} shape{counts.shapes === 1 ? '' : 's'} from the stage, {counts.lights} light{counts.lights === 1 ? '' : 's'}, {counts.emitters} particle emitter{counts.emitters === 1 ? '' : 's'}.
-  </p>
+  <p class="scene3d-note">Shapes from the stage: {counts.shapes}. Lights: {counts.lights}. Particle emitters: {counts.emitters}.</p>
 {/if}
 <div class="property-row">
   <span></span>
