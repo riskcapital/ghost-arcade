@@ -416,6 +416,14 @@ pub(crate) struct NativeComputeGraphTextureSpec {
     pub(crate) width: u32,
     pub(crate) height: u32,
     pub(crate) format: NativeGraphTextureFormat,
+    /// A full mip chain, rebuilt after every pass that draws into it, so
+    /// depth of field and blur can read coarser levels. Colour formats only.
+    pub(crate) mips: bool,
+}
+
+/// Mip levels of a full chain down to 1x1.
+pub(crate) fn graph_texture_mip_levels(width: u32, height: u32) -> u32 {
+    32 - width.max(height).max(1).leading_zeros()
 }
 
 pub(crate) const NATIVE_GRAPH_TEXTURE_MAX_SIZE: u32 = 4096;
@@ -440,11 +448,16 @@ pub(crate) fn parse_compute_graph_texture(
             .round()
             .clamp(1.0, NATIVE_GRAPH_TEXTURE_MAX_SIZE as f64) as u32
     };
+    let mips = bool_at(value, &["mips"]).unwrap_or(false);
+    if mips && format.is_depth() {
+        return Err(format!("compute_graph texture `{id}`: depth textures cannot have mips"));
+    }
     Ok(NativeComputeGraphTextureSpec {
         id,
         width: dimension("width"),
         height: dimension("height"),
         format,
+        mips,
     })
 }
 

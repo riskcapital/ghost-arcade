@@ -160,4 +160,66 @@ suite('Interactive 3D layer', () => {
       expect(status.graph_textures).toBeGreaterThan(0);
     } finally { await rpc.close(); }
   }, 60000);
+
+  it('builds a mip chain for a graph texture that asks for one', async () => {
+    const rpc = core();
+    const shader = 'scene3d-test/mips';
+    const source = `${SCENE3D_FRAME_WGSL}
+@group(0) @binding(0) var<uniform> f: SceneFrame;
+@group(0) @binding(1) var src: texture_2d<f32>;
+struct VsOut { @builtin(position) clip: vec4f, @location(0) uv: vec2f }
+@vertex fn vs_main(@builtin(vertex_index) vi: u32) -> VsOut {
+  let p = vec2f(f32((vi << 1u) & 2u), f32(vi & 2u));
+  var out: VsOut;
+  out.clip = vec4f(p * 2.0 - 1.0, 0.0, 1.0);
+  out.uv = vec2f(p.x, 1.0 - p.y);
+  return out;
+}
+// Half white, half black.
+@fragment fn fs_paint(in: VsOut) -> @location(0) vec4f {
+  return select(vec4f(0.0, 0.0, 0.0, 1.0), vec4f(1.0), in.uv.x < 0.5 + f.delta * 0.0);
+}
+// The last level (1x1) is the average of the whole picture. Read directly:
+// the shared sampler stays on level 0.
+@fragment fn fs_out(in: VsOut) -> @location(0) vec4f {
+  let last = i32(textureNumLevels(src)) - 1;
+  return vec4f(textureLoad(src, vec2i(0, 0), last).rgb, 1.0);
+}`;
+    try {
+      await rpc.send('start', { config: { backend: platform.rendererBackend, width: W, height: H, target_fps: 60 } });
+      await rpc.commands([{ type: 'precompile_shader', shader_id: shader, stage: 'render', entry: 'fs_out', source }]);
+      const tex = 'mips-test:paint';
+      const out = 'mips-test:out';
+      // Every pass needs a binding; the paint pass reads the (zeroed) frame block.
+      const frame = scene3dFrameBuffer('mips-test');
+      const pass = (name: string, entry: string, extra: Record<string, unknown>) => ({
+        name, shader_id: shader, vertex_entry: 'vs_main', fragment_entry: entry, clear: true, clear_color: [0, 0, 0, 1], vertex_count: 3, ...extra,
+      });
+      await rpc.send('compute_graph', {
+        textures: [{ id: tex, size: 64, format: 'rgba8unorm', mips: true }],
+        buffers: [frame], passes: [], readbacks: [],
+        render_passes: [
+          pass('paint', 'fs_paint', { target: 'texture', texture: tex, bindings: [{ binding: 0, resource: frame.id, kind: 'uniform' }] }),
+          pass('out', 'fs_out', { target: 'source_frame', source_id: out, include_snapshot: false,
+            bindings: [{ binding: 1, kind: 'graph-texture', texture: tex }] }),
+        ],
+      });
+      await rpc.commands([
+        { type: 'upsert_layer', layer_id: 'mips', z_index: 0, opacity: 1, blend_mode: 'normal', corners: full },
+        { type: 'set_layer_visibility', layer_id: 'mips', visible: true },
+        { type: 'bind_media_source', layer_id: 'mips', source_id: out, uri: 'native-graph://scene3d/mips', source_type: 'image' },
+        { type: 'present' },
+      ]);
+      await wait(250);
+      const status = await rpc.send('status');
+      expect(String(status.last_shader_error || status.last_frame_error || '')).toBe('');
+      const img = snapshotPixels(await rpc.send('frame_snapshot', { include_pixels: true }));
+      const i = (Math.round(img.h / 2) * img.w + Math.round(img.w / 4)) * 4;
+      const grey = img.rgba[i] / 255;
+      // Without the chain the last level would be empty (black).
+      expect(grey).toBeGreaterThan(0.25);
+      expect(grey).toBeLessThan(0.85);
+      expect(Math.abs(img.rgba[i] - img.rgba[(Math.round(img.h / 2) * img.w + Math.round(img.w * 0.75)) * 4])).toBeLessThan(6);
+    } finally { await rpc.close(); }
+  }, 60000);
 });

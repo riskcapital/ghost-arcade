@@ -24234,7 +24234,7 @@ impl RenderState {
             source_frame_target_view = target.target_view("Ghost Native Compute Graph Source Frame View", 0);
             &source_frame_target_view
         } else if let Some(texture) = graph_target_id.and_then(|id| self.native_graph_textures.get(id)) {
-            &texture.view
+            &texture.target_view
         } else {
             &self.snapshot_view
         };
@@ -24337,6 +24337,9 @@ impl RenderState {
         }
         if let Some(slot) = source_slot.filter(|_| render_plan.generate_mips) {
             self.generate_source_frame_mips(encoder, slot);
+        }
+        if let Some(id) = graph_target_id {
+            self.native_graph_textures.generate_mips(encoder, id);
         }
         if !report {
             return Ok(Value::Null);

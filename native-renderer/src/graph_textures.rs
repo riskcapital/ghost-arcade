@@ -20,7 +20,7 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::time::Instant;
 
-use crate::compute_graph::{NativeComputeGraphTextureSpec, NativeGraphTextureFormat};
+use crate::compute_graph::{graph_texture_mip_levels, NativeComputeGraphTextureSpec, NativeGraphTextureFormat};
 
 /// All graph textures together. A 2048 HDR scene with depth, a 2048 shadow
 /// map and a bloom chain is about 130 MB.
@@ -31,8 +31,18 @@ pub(crate) const BUDGET_BYTES: u64 = 768 * 1024 * 1024;
 /// its textures still there.
 pub(crate) const RELEASE_AFTER_MS: u64 = 2000;
 
+pub(crate) fn mip_levels(spec: &NativeComputeGraphTextureSpec) -> u32 {
+    if spec.mips { graph_texture_mip_levels(spec.width, spec.height) } else { 1 }
+}
+
 pub(crate) fn spec_bytes(spec: &NativeComputeGraphTextureSpec) -> u64 {
-    (spec.width as u64) * (spec.height as u64) * spec.format.bytes_per_pixel()
+    (0..mip_levels(spec))
+        .map(|level| {
+            let w = (spec.width >> level).max(1) as u64;
+            let h = (spec.height >> level).max(1) as u64;
+            w * h * spec.format.bytes_per_pixel()
+        })
+        .sum()
 }
 
 /// Whether `spec` fits the budget next to the textures that would stay (every
@@ -141,9 +151,101 @@ pub(crate) fn check_depth_size(
     Ok(())
 }
 
+/// Each texel of the next level is the average of the 2x2 under it (an odd
+/// last row or column is folded into its neighbour). Exact texel loads, so
+/// no sampler filtering is involved.
+const MIP_WGSL: &str = r#"
+@group(0) @binding(0) var src: texture_2d<f32>;
+
+@vertex
+fn vs_main(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4f {
+  let p = vec2f(f32((vi << 1u) & 2u), f32(vi & 2u));
+  return vec4f(p * 2.0 - 1.0, 0.0, 1.0);
+}
+
+@fragment
+fn fs_main(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+  let hi = vec2i(textureDimensions(src)) - vec2i(1);
+  let base = vec2i(pos.xy) * 2;
+  var sum = vec4f(0.0);
+  for (var y = 0; y < 2; y++) {
+    for (var x = 0; x < 2; x++) {
+      sum += textureLoad(src, min(base + vec2i(x, y), hi), 0);
+    }
+  }
+  return sum * 0.25;
+}
+"#;
+
+/// The downsample pipeline for one colour format.
+struct MipBuilder {
+    layout: wgpu::BindGroupLayout,
+    pipeline: wgpu::RenderPipeline,
+}
+
+impl MipBuilder {
+    fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Ghost Graph Texture Mips"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            }],
+        });
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Ghost Graph Texture Mips"),
+            source: wgpu::ShaderSource::Wgsl(MIP_WGSL.into()),
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Ghost Graph Texture Mips"),
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Ghost Graph Texture Mips"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        Self { layout, pipeline }
+    }
+}
+
 pub(crate) struct GraphTexture {
     pub(crate) spec: NativeComputeGraphTextureSpec,
+    /// Every mip level, for sampling.
     pub(crate) view: wgpu::TextureView,
+    /// Level 0 only, for drawing into.
+    pub(crate) target_view: wgpu::TextureView,
+    /// Building the chain: level n+1 is drawn reading level n through
+    /// `mip_sources[n]`. Empty without mips; made once, with the texture.
+    mip_targets: Vec<wgpu::TextureView>,
+    mip_sources: Vec<wgpu::BindGroup>,
     _texture: wgpu::Texture,
     /// When a graph last declared or drew with this texture (pool ms).
     last_used: Cell<u64>,
@@ -151,12 +253,14 @@ pub(crate) struct GraphTexture {
 
 pub(crate) struct GraphTexturePool {
     textures: HashMap<String, GraphTexture>,
+    /// Mip builders, one per colour format, made on first use.
+    mip_builders: HashMap<wgpu::TextureFormat, MipBuilder>,
     origin: Instant,
 }
 
 impl Default for GraphTexturePool {
     fn default() -> Self {
-        Self { textures: HashMap::new(), origin: Instant::now() }
+        Self { textures: HashMap::new(), mip_builders: HashMap::new(), origin: Instant::now() }
     }
 }
 
@@ -200,7 +304,7 @@ impl GraphTexturePool {
                 height: spec.height,
                 depth_or_array_layers: 1,
             },
-            mip_level_count: 1,
+            mip_level_count: mip_levels(spec),
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: spec.format.texture_format(),
@@ -208,16 +312,72 @@ impl GraphTexturePool {
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let level_view = |level: u32| {
+            texture.create_view(&wgpu::TextureViewDescriptor {
+                base_mip_level: level,
+                mip_level_count: Some(1),
+                ..Default::default()
+            })
+        };
+        let target_view = level_view(0);
+        let (mut mip_targets, mut mip_sources) = (Vec::new(), Vec::new());
+        if spec.mips {
+            let format = spec.format.texture_format();
+            let builder = self.mip_builders.entry(format).or_insert_with(|| MipBuilder::new(device, format));
+            for level in 1..mip_levels(spec) {
+                mip_targets.push(level_view(level));
+                mip_sources.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Ghost Graph Texture Mip Source"),
+                    layout: &builder.layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&level_view(level - 1)),
+                    }],
+                }));
+            }
+        }
         self.textures.insert(
             spec.id.clone(),
             GraphTexture {
                 spec: spec.clone(),
                 view,
+                target_view,
+                mip_targets,
+                mip_sources,
                 _texture: texture,
                 last_used: Cell::new(self.now_ms()),
             },
         );
         Ok(())
+    }
+
+    /// Rebuild a texture's mip chain from level 0, after a pass drew into it.
+    /// Does nothing for a texture without mips.
+    pub(crate) fn generate_mips(&self, encoder: &mut wgpu::CommandEncoder, id: &str) {
+        let Some(texture) = self.textures.get(id).filter(|texture| !texture.mip_targets.is_empty()) else {
+            return;
+        };
+        let Some(builder) = self.mip_builders.get(&texture.spec.format.texture_format()) else {
+            return;
+        };
+        for (target, source) in texture.mip_targets.iter().zip(&texture.mip_sources) {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Ghost Graph Texture Mip"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&builder.pipeline);
+            pass.set_bind_group(0, source, &[]);
+            pass.draw(0..3, 0..1);
+        }
     }
 
     /// Once per frame: textures no graph used for a while are freed.
@@ -259,6 +419,19 @@ mod tests {
         assert_eq!(spec_bytes(&spec("a", 1024, "rgba8unorm")), 1024 * 1024 * 4);
         assert_eq!(spec_bytes(&spec("b", 1024, "rgba16float")), 1024 * 1024 * 8);
         assert_eq!(spec_bytes(&spec("c", 1024, "depth32float")), 1024 * 1024 * 4);
+    }
+
+    #[test]
+    fn mips_add_their_levels_to_the_bytes_and_are_colour_only() {
+        let with = parse_compute_graph_texture(&json!({ "id": "m", "size": 256, "format": "rgba8unorm", "mips": true })).unwrap();
+        assert_eq!(mip_levels(&with), 9);
+        // 256² + 128² + ... + 1² texels, four bytes each.
+        let texels: u64 = (0..9).map(|l| (256u64 >> l).pow(2)).sum();
+        assert_eq!(spec_bytes(&with), texels * 4);
+        let wide = parse_compute_graph_texture(&json!({ "id": "w", "width": 300, "height": 20, "format": "rgba8unorm", "mips": true })).unwrap();
+        assert_eq!(mip_levels(&wide), 9);
+        assert!(parse_compute_graph_texture(&json!({ "id": "d", "size": 64, "format": "depth32float", "mips": true })).is_err());
+        assert_eq!(mip_levels(&spec("n", 256, "rgba8unorm")), 1);
     }
 
     #[test]
