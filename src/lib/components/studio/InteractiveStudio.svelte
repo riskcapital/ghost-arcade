@@ -27,6 +27,7 @@
   import { InteractiveProgram } from '../../mobile/studio/interactiveProgram';
   import {
     defaultInteractive,
+    defaultInteractiveInput,
     validateScene,
     InteractiveWorld,
     MotionSensor,
@@ -72,6 +73,7 @@
   import InteractiveEffectParams from './InteractiveEffectParams.svelte';
   import InteractiveObjectsPanel from './InteractiveObjectsPanel.svelte';
   import InteractiveSetupPanel from './InteractiveSetupPanel.svelte';
+  import { fireShowAction } from '../../show/showActions';
 
   // ── Props ────────────────────────────────────────────────────────────────
   export let outputLevel = 1,
@@ -604,6 +606,21 @@
   }
   function rename(value: string) {
     if (chosen && value !== chosen.name) apply(edit.renameSurface(scene, selected, value));
+  }
+  /** Fire the selected zone's actions now, as a touch would. Not an undo step. */
+  function testTrigger() {
+    const zone = scene.surfaces.find((s) => s.id === selected);
+    if (!zone?.trigger) return;
+    for (const action of zone.trigger.actions) {
+      if (action.kind === 'show') {
+        const result = fireShowAction(action.action);
+        if (!result.ok) say(`Could not fire: ${result.reason ?? 'error'}.`);
+      } else {
+        for (const e of scene.effects ?? []) {
+          if (e.enabled && e.target === zone.id) scene = edit.patchEffect(scene, e.id, { burst: e.burst + 1 });
+        }
+      }
+    }
   }
   function behavior(value: Behavior) {
     apply(edit.setSurfaceBehavior(scene, selected, value));
@@ -1142,9 +1159,28 @@
             onduplicate={duplicate}
             ondelete={removeSurface}
             onimportmapping={importMapping}
+            effectTargets={(scene.effects ?? []).filter((e) => e.enabled).map((e) => e.target)}
+            ontriggerstart={beginEdit}
+            ontrigger={(trigger, step) => {
+              if (step) apply(edit.setSurfaceTrigger(scene, selected, trigger));
+              else {
+                scene = edit.setSurfaceTrigger(scene, selected, trigger);
+                touchEdit();
+              }
+            }}
+            ontesttrigger={testTrigger}
           />
         {:else}
           <InteractiveSetupPanel
+            input={scene.input ?? defaultInteractiveInput()}
+            oninputstart={beginEdit}
+            oninputchange={(input, step) => {
+              if (step) apply(edit.setSceneInput(scene, input));
+              else {
+                scene = edit.setSceneInput(scene, input);
+                touchEdit();
+              }
+            }}
             {nativeOutput}
             {handheld}
             {audioOn}

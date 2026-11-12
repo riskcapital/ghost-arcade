@@ -4,7 +4,7 @@
  * Every function takes a scene and returns a new one; nothing here touches
  * component state, history or the DOM, so each edit can be unit tested.
  */
-import type { Behavior, InteractiveScene, InteractiveSurface, Point, SurfaceLook } from './interactive';
+import { defaultZoneTrigger, type Behavior, type InteractiveInput, type InteractiveScene, type InteractiveSurface, type Point, type SurfaceLook, type ZoneTrigger } from './interactive';
 import {
   MAX_INTERACTIVE_EFFECTS,
   makeEffect,
@@ -152,8 +152,21 @@ export function renameSurface(scene: InteractiveScene, id: string, name: string)
   return mapSurface(scene, id, (s) => ({ ...s, name: name.slice(0, 80) }));
 }
 
+/** A zone keeps its trigger while it is a zone, and starts with a burst. */
 export function setSurfaceBehavior(scene: InteractiveScene, id: string, behavior: Behavior): InteractiveScene {
-  return mapSurface(scene, id, (s) => ({ ...s, behavior }));
+  return mapSurface(scene, id, ({ trigger, ...s }) =>
+    behavior === 'trigger' ? { ...s, behavior, trigger: trigger ?? defaultZoneTrigger() } : { ...s, behavior },
+  );
+}
+
+/** What a trigger zone does when touched. */
+export function setSurfaceTrigger(scene: InteractiveScene, id: string, trigger: ZoneTrigger): InteractiveScene {
+  return mapSurface(scene, id, (s) => (s.behavior === 'trigger' ? { ...s, trigger } : s));
+}
+
+/** How tracked hands and body move the scene. */
+export function setSceneInput(scene: InteractiveScene, input: InteractiveInput): InteractiveScene {
+  return { ...scene, input };
 }
 
 export function setSurfaceHeight(scene: InteractiveScene, id: string, height: number): InteractiveScene {

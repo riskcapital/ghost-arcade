@@ -44,14 +44,40 @@ export function effectLabels(effects:Pick<InteractiveEffect,'id'|'kind'|'name'>[
  });
  return labels;
 }
-export function makeEffect(kind:EffectKind,target='point'):InteractiveEffect{return{id:crypto.randomUUID(),kind,name:EFFECT_NAMES[kind],enabled:true,target,emission:'continuous',burst:0,params:Object.fromEntries(effectParams(kind).map(d=>[d.key,d.value])),mods:{}};}
+/**
+ * How a new effect follows the music before anyone touches a slider: the
+ * main drive of each kind sweeps from a quiet value to a loud one (in the
+ * parameter's own units), so a scene reacts to sound out of the box and is
+ * still alive in silence.
+ */
+const SOUND_DEFAULTS:Record<EffectKind,{key:string;source:ParamModulation['source'];quiet:number;loud:number}[]>={
+ architecture:[{key:'energy',source:'bass',quiet:.35,loud:1}],
+ garden:[{key:'energy',source:'bass',quiet:.35,loud:1}],
+ walls:[{key:'energy',source:'bass',quiet:.3,loud:1}],
+ ribbons:[{key:'energy',source:'bass',quiet:.35,loud:1}],
+ orbit:[{key:'energy',source:'mid',quiet:.35,loud:1}],
+ electric:[{key:'energy',source:'treble',quiet:.3,loud:1}],
+ light:[{key:'lightPower',source:'bass',quiet:1,loud:2.4},{key:'haze',source:'mid',quiet:.4,loud:.8}],
+ balls:[{key:'flow',source:'kick',quiet:.3,loud:1}],
+ smoke:[{key:'flow',source:'bass',quiet:.45,loud:1},{key:'turbulence',source:'mid',quiet:.5,loud:1.3}],
+ cloud:[{key:'turbulence',source:'bass',quiet:.4,loud:1.4},{key:'size',source:'treble',quiet:.25,loud:.55}],
+ liquid:[{key:'flow',source:'bass',quiet:.5,loud:1}],
+ fire:[{key:'flow',source:'bass',quiet:.5,loud:1},{key:'heat',source:'amplitude',quiet:.9,loud:1.8}],
+};
+export function soundDefaults(kind:EffectKind):Record<string,ParamModulation>{
+ const defs=effectParams(kind),mods:Record<string,ParamModulation>={};
+ for(const m of SOUND_DEFAULTS[kind]){const d=defs.find(x=>x.key===m.key);if(!d)continue;const at=(v:number)=>Math.max(0,Math.min(1,(v-d.min)/(d.max-d.min)));mods[m.key]={source:m.source,amount:.5,speed:.15,invert:false,bpmSync:false,rangeMin:at(m.quiet),rangeMax:at(m.loud)};}
+ return mods;
+}
+/** A new effect. `reactive: false` for one rebuilt from an older scene, which keeps how it behaved. */
+export function makeEffect(kind:EffectKind,target='point',reactive=true):InteractiveEffect{return{id:crypto.randomUUID(),kind,name:EFFECT_NAMES[kind],enabled:true,target,emission:'continuous',burst:0,params:Object.fromEntries(effectParams(kind).map(d=>[d.key,d.value])),mods:reactive?soundDefaults(kind):{}};}
 /** Migrate once at the editor boundary. Legacy render descriptors retain their old path. */
 export function editableEffects(scene:InteractiveScene):InteractiveEffect[]{
  if(scene.effects)return structuredClone(scene.effects);
- const first=makeEffect(scene.preset);first.params.hue=scene.hue;for(const key of ['energy','gravity','trails'])if(key in first.params)first.params[key]=scene[key as 'energy'];
+ const first=makeEffect(scene.preset,'point',false);first.params.hue=scene.hue;for(const key of ['energy','gravity','trails'])if(key in first.params)first.params[key]=scene[key as 'energy'];
  if(scene.matter)for(const d of effectParams(first.kind))if(d.key in scene.matter)first.params[d.key]=scene.matter[d.key as keyof typeof scene.matter];
  const material=({fire:'fire',smoke:'smoke',liquid:'liquid',cloud:'points'} as Record<string,string>)[first.kind];const matching=material?scene.surfaces.find(s=>s.material===material):undefined;if(matching)first.target=matching.id;
- const result=[first];for(const s of scene.surfaces){if(!s.material||s.material==='none'||s===matching)continue;const kind=s.material==='points'?'cloud':s.material;result.push(makeEffect(kind,s.id));}return result.slice(0,MAX_INTERACTIVE_EFFECTS);
+ const result=[first];for(const s of scene.surfaces){if(!s.material||s.material==='none'||s===matching)continue;const kind=s.material==='points'?'cloud':s.material;result.push(makeEffect(kind,s.id,false));}return result.slice(0,MAX_INTERACTIVE_EFFECTS);
 }
 export function validateEffects(raw:unknown,surfaceIds:Set<string>):InteractiveEffect[]{
  if(!Array.isArray(raw)||raw.length>MAX_INTERACTIVE_EFFECTS)throw Error('Use up to eight interactive effects.');const ids=new Set<string>();

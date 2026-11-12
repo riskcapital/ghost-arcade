@@ -10,6 +10,8 @@ import {
 } from './interactiveEffects';
 import { MatterPreview } from './matterPreview';
 import { createInteractiveQuality, interactiveFrameDelta, type InteractiveQualityBudget } from './interactiveQuality';
+import { validateShowAction } from '../../show/showActionValidate';
+import type { ShowAction } from '../../show/showActions';
 export type Point = { x: number; y: number };
 export type Behavior = 'solid' | 'emitter' | 'attractor' | 'trigger';
 export const INTERACTIVE_PRESETS = [
@@ -67,6 +69,22 @@ export const invisibleSurfaceLook = (): SurfaceLook => ({ ...defaultSurfaceLook(
 /** Nothing of this object reaches the output. */
 export const surfaceHidden = (look: SurfaceLook | undefined) =>
   !!look && look.outline <= 0 && (look.fill === 'none' || look.brightness <= 0);
+/**
+ * What a trigger zone does when someone touches it. `burst` fires every
+ * effect aimed at the zone; `show` fires anything the show can do (a Look, a
+ * VJ clip, a cue, a section, a Live clip…) through `fireShowAction`.
+ */
+export type ZoneAction = { kind: 'burst' } | { kind: 'show'; action: ShowAction };
+export const MAX_ZONE_ACTIONS = 8;
+export type ZoneTrigger = {
+  actions: ZoneAction[];
+  /** Seconds after firing before the zone can fire again. A touch held in the
+   *  zone fires once; it fires again only after leaving and coming back. */
+  rearm: number;
+};
+export const ZONE_REARM_MIN = 0.1;
+export const ZONE_REARM_MAX = 60;
+export const defaultZoneTrigger = (): ZoneTrigger => ({ actions: [{ kind: 'burst' }], rearm: 1 });
 export type InteractiveSurface = {
   id: string;
   name: string;
@@ -75,7 +93,26 @@ export type InteractiveSurface = {
   material?: SurfaceMaterial;
   height?: number;
   look?: SurfaceLook;
+  /** Trigger zones only. */
+  trigger?: ZoneTrigger;
 };
+/**
+ * What moves the scene besides a pointer (the editor, a phone, which always
+ * work): tracked hands, a tracked body, or both, from the camera the app
+ * already uses for hand tracking. Works with the editor closed.
+ */
+export const TRACKING_SOURCES = ['off', 'hands', 'body', 'both'] as const;
+export type TrackingSource = (typeof TRACKING_SOURCES)[number];
+export const INPUT_FORCES = ['attract', 'repel', 'vortex'] as const;
+export type InputForce = (typeof INPUT_FORCES)[number];
+export type InteractiveInput = {
+  tracking: TrackingSource;
+  /** How a tracked point pushes the effects. */
+  force: InputForce;
+  /** 0 to 1. */
+  strength: number;
+};
+export const defaultInteractiveInput = (): InteractiveInput => ({ tracking: 'off', force: 'attract', strength: 0.8 });
 export type MatterSettings = {
   lightX: number;
   lightY: number;
@@ -109,6 +146,7 @@ export type InteractiveScene = {
   matter?: MatterSettings;
   effects?: InteractiveEffect[];
   animation?: InteractiveAnimation;
+  input?: InteractiveInput;
   surfaces: InteractiveSurface[];
   energy: number;
   gravity: number;
@@ -152,6 +190,34 @@ export function defaultInteractive(): InteractiveScene {
   };
 }
 const unit = (v: number) => Math.max(0, Math.min(1, v));
+/** A zone's trigger from anywhere. Actions that do not validate are dropped
+ *  (one stale action must not cost the scene); a missing list is none. */
+export function validateZoneTrigger(raw: unknown): ZoneTrigger {
+  const t = raw as Partial<ZoneTrigger> | undefined;
+  const actions: ZoneAction[] = [];
+  for (const a of Array.isArray(t?.actions) ? t!.actions : []) {
+    if (actions.length >= MAX_ZONE_ACTIONS) break;
+    if ((a as ZoneAction)?.kind === 'burst') actions.push({ kind: 'burst' });
+    else if ((a as ZoneAction)?.kind === 'show') {
+      const action = validateShowAction((a as { action?: unknown }).action);
+      if (action) actions.push({ kind: 'show', action });
+    }
+  }
+  const rearm = Number(t?.rearm);
+  return {
+    actions,
+    rearm: Number.isFinite(rearm) ? Math.max(ZONE_REARM_MIN, Math.min(ZONE_REARM_MAX, rearm)) : defaultZoneTrigger().rearm,
+  };
+}
+export function validateInteractiveInput(raw: unknown): InteractiveInput {
+  const i = raw as Partial<InteractiveInput> | undefined;
+  const base = defaultInteractiveInput();
+  return {
+    tracking: TRACKING_SOURCES.includes(i?.tracking as TrackingSource) ? (i!.tracking as TrackingSource) : base.tracking,
+    force: INPUT_FORCES.includes(i?.force as InputForce) ? (i!.force as InputForce) : base.force,
+    strength: Number.isFinite(i?.strength) ? unit(i!.strength!) : base.strength,
+  };
+}
 /** Longest surface id or name kept in a scene. */
 export const SURFACE_TEXT_LIMIT = 100;
 /**
@@ -237,6 +303,7 @@ export function validateScene(raw: unknown): InteractiveScene {
           },
         }
       : {}),
+    ...(p.behavior === 'trigger' && p.trigger !== undefined ? { trigger: validateZoneTrigger(p.trigger) } : {}),
   }));
   return {
     schema: 'ghost-interactive',
@@ -247,6 +314,7 @@ export function validateScene(raw: unknown): InteractiveScene {
     matter,
     ...(effects ? { effects } : {}),
     ...(animation ? { animation } : {}),
+    ...(s.input !== undefined && s.input !== null ? { input: validateInteractiveInput(s.input) } : {}),
     surfaces,
     energy: Math.max(0, Math.min(1, s.energy)),
     gravity: Math.max(-1, Math.min(1, s.gravity)),

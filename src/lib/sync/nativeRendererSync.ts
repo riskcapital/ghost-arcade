@@ -1109,6 +1109,11 @@ import { nativeEffectPassIdForEffectType } from '$lib/renderer/nativeEffectCover
 import { statusFrameRate } from './statusFrameRate';
 import { recordingScreenIds } from '$lib/recording/recordingSources';
 import { launchClockPosition } from '$lib/stores/launchClock';
+import { liveInteractiveInputs, pruneLiveInteractiveInputs, setLiveInteractiveInputs } from '$lib/interactive/interactiveLive';
+import { combineInputs, PointSmoother, trackedPoints, ZoneTriggers, type FiredZone } from '$lib/interactive/interactiveRuntime';
+import { defaultInteractiveInput, validateScene, type InteractiveScene, type Interaction } from '$lib/mobile/studio/interactive';
+import { fireShowAction } from '$lib/show/showActions';
+import { runAsAutomation } from '$lib/stores/historyHooks';
 const NATIVE_EFFECT_PASS_IDS = new Set<NativeEffectPassId>(
   NATIVE_EFFECT_PASS_MANIFEST.map((entry) => entry.id),
 );
@@ -5036,8 +5041,54 @@ const handFxTracking = { ownsBody: false, ownsFace: false, bodyNeededAt: 0, face
  */
 function ensureHandFxTracking(params: Record<string, any> | null | undefined): void {
   if (!params || params.handfxInput === 'demo') return;
-  mediaPipeSource.acquire('handfx-layers', 1000);
-  const needs = handFxTrackingNeeds(params);
+  ensureCameraTracking('handfx-layers', handFxTrackingNeeds(params));
+}
+
+/**
+ * What a touched zone does. Show actions go through `fireShowAction`, like
+ * every controller. A burst raises the burst count of each effect aimed at
+ * the zone, as the editor's Trigger burst button does. Live control: not an
+ * undo step.
+ */
+function fireInteractiveZones(layerId: string, fired: FiredZone[]): void {
+  const bursts = new Set<string>();
+  for (const zone of fired) {
+    for (const action of zone.actions) {
+      if (action.kind === 'show') fireShowAction(action.action);
+      else bursts.add(zone.surfaceId);
+    }
+  }
+  if (!bursts.size) return;
+  runAsAutomation(() => project.update((p) => ({
+    ...p,
+    layers: p.layers.map((l) => {
+      const effectSource = l.id === layerId ? l.source?.effectSource : undefined;
+      const scene = effectSource?.interactiveScene as InteractiveScene | undefined;
+      if (!effectSource || !scene?.effects?.some((e) => bursts.has(e.target))) return l;
+      return {
+        ...l,
+        source: {
+          ...l.source!,
+          effectSource: {
+            ...effectSource,
+            interactiveScene: {
+              ...scene,
+              effects: scene.effects.map((e) => (bursts.has(e.target) ? { ...e, burst: e.burst + 1 } : e)),
+            },
+          },
+        },
+      };
+    }),
+  })));
+}
+
+/**
+ * Keep the camera tracker running for `owner` (renewed each frame, lapsing a
+ * second after the last call) with the body and face trackers it needs.
+ * Shared by HandFX and interactive layers.
+ */
+function ensureCameraTracking(owner: string, needs: { trackBody: boolean; trackFace: boolean }): void {
+  mediaPipeSource.acquire(owner, 1000);
   const now = performance.now();
   if (needs.trackBody) handFxTracking.bodyNeededAt = now;
   if (needs.trackFace) handFxTracking.faceNeededAt = now;
@@ -5077,9 +5128,14 @@ function nativeGraphParamsForLayer(
     || kind === 'performer-world'
     || kind === 'vj-crossfade'
     || kind === 'vj-mix';
-  const params: Record<string, any> = isEffectGraphKind
+  let params: Record<string, any> = isEffectGraphKind
     ? layer.source?.effectSource ?? {}
     : layer.gpuLayerContent?.params ?? {};
+  if (kind === 'performer-world') {
+    // Tracked hands and body join the pointer here, at frame rate.
+    const live = liveInteractiveInputs(layer.id);
+    if (live) params = { ...params, interactiveInputs: live };
+  }
   // Everything instrument-shaped goes through the shared funnel in
   // `nativeGraphQuality`: instrument defaults, colour-preset expansion,
   // the declared per-tier budget (the SAME function the browser runner
@@ -7492,6 +7548,7 @@ export class NativeRendererSync {
     const routesFor = flushRoutes ?? this.nativeGraphRouteLookup();
     const activeRouteKeys = new Set<string>();
     const lutOwnersSeen = new Set<string>();
+    const interactiveLayersSeen = new Set<string>();
     this.activePointCloudKeys = new Set(layers.flatMap(layer => {
       const input = routesFor(layer).possible?.inputSource;
       return input ? [this.nativePointCloudCacheKey(input)] : [];
@@ -7525,6 +7582,10 @@ export class NativeRendererSync {
             });
             this.nativePointCloudUploadSignatures.set(layer.id, pointData.signature);
           }
+        }
+        if (possibleRoute.kind === 'performer-world') {
+          interactiveLayersSeen.add(layer.id);
+          this.stepInteractiveLayer(layer);
         }
         if (possibleRoute.kind === 'handfx') {
           const routeState = this.nativeGraphRoutes.get(possibleRoute.key) ?? {
@@ -8263,7 +8324,59 @@ export class NativeRendererSync {
     if (inactiveGraphBufferPrefixes.length > 0) {
       await this.clearNativeGraphBuffers(inactiveGraphBufferPrefixes);
     }
+    pruneLiveInteractiveInputs(interactiveLayersSeen);
+    for (const id of Array.from(this.interactiveRuntimes.keys())) {
+      if (!interactiveLayersSeen.has(id)) this.interactiveRuntimes.delete(id);
+    }
     return queuedCommands;
+  }
+
+  /** Per interactive layer: tracked-point smoothing and its trigger zones. */
+  private interactiveRuntimes = new Map<string, { smoother: PointSmoother; zones: ZoneTriggers; sceneRef: unknown; scene: InteractiveScene | null }>();
+
+  /**
+   * One frame of an interactive layer, editor open or not: combine the
+   * pointer with tracked hands and body, publish the points for the graph,
+   * and fire the trigger zones they touch.
+   */
+  private stepInteractiveLayer(layer: Layer): void {
+    const source = layer.source?.effectSource;
+    let runtime = this.interactiveRuntimes.get(layer.id);
+    if (!runtime) {
+      runtime = { smoother: new PointSmoother(), zones: new ZoneTriggers(), sceneRef: undefined, scene: null };
+      this.interactiveRuntimes.set(layer.id, runtime);
+    }
+    // Validate only when the stored scene object changed.
+    if (runtime.sceneRef !== source?.interactiveScene) {
+      runtime.sceneRef = source?.interactiveScene;
+      try {
+        runtime.scene = source?.interactiveScene ? validateScene(source.interactiveScene) : null;
+      } catch {
+        runtime.scene = null;
+      }
+    }
+    const scene = runtime.scene;
+    if (!scene || layer.visible === false) {
+      setLiveInteractiveInputs(layer.id, null);
+      runtime.smoother.reset();
+      runtime.zones.reset();
+      return;
+    }
+    const input = scene.input ?? defaultInteractiveInput();
+    const pointer = (Array.isArray(source?.interactiveInputs) ? source!.interactiveInputs : []) as Interaction[];
+    let points = pointer;
+    if (input.tracking !== 'off') {
+      ensureCameraTracking('interactive-layers', { trackBody: input.tracking !== 'hands', trackFace: false });
+      const tracked = runtime.smoother.update(trackedPoints(mediaPipeSource.getLastFrame(), input.tracking, mediaPipeSource.isMirrored()));
+      points = combineInputs(pointer, tracked, input);
+      setLiveInteractiveInputs(layer.id, points);
+    } else {
+      runtime.smoother.reset();
+      setLiveInteractiveInputs(layer.id, null);
+    }
+    if (source?.interactivePaused === true) return;
+    const fired = runtime.zones.update(scene, points, performance.now() / 1000);
+    if (fired.length) fireInteractiveZones(layer.id, fired);
   }
 
   private scheduleAudioSync() {
