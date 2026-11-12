@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Scene3DProperties from './scene3d/Scene3DProperties.svelte';
   import MusicMotionMark from './MusicMotionMark.svelte';
   import VideoPlaybackDirection from './VideoPlaybackDirection.svelte';
   import VideoPlaybackModes from './VideoPlaybackModes.svelte';
@@ -1018,7 +1019,7 @@
               <PluginIcon effectType="performer-world" size={14}/> Interactive
             </button>
             <button onclick={()=>{project.addInteractive3DLayer('light-and-shadow');showAddLayerMenu=false;}}>
-              <PluginIcon effectType="performer-world" size={14}/> Interactive 3D
+              <PluginIcon effectType="scene3d" size={14}/> Interactive 3D
             </button>
             <button
               title="Add custom shape media layer"
@@ -2007,7 +2008,7 @@
           {:else}
 
           <div class="layer-properties media-properties">
-        <h4>Properties ({layer.type === 'lines' ? 'Lines' : layer.type === 'svg' ? 'SVG' : layer.type === 'color' ? 'Color' : layer.type === 'splat' ? 'Point cloud' : layer.type === 'model3d' ? '3D model' : layer.type === 'interactive' ? 'Interactive' : 'Media'})</h4>
+        <h4>Properties ({layer.type === 'lines' ? 'Lines' : layer.type === 'svg' ? 'SVG' : layer.type === 'color' ? 'Color' : layer.type === 'splat' ? 'Point cloud' : layer.type === 'model3d' ? '3D model' : layer.type === 'interactive' ? (layer.source?.effectSource?.scene3d ? 'Interactive 3D' : 'Interactive') : 'Media'})</h4>
         <!-- Source picks where a surface's picture comes from, so it only
              belongs on the layers that route someone else's feed. A media or
              custom-shape layer draws its own content -- video, shader,
@@ -2526,6 +2527,9 @@
 
         {#if layer.source?.effectSource?.interactiveScene}
           <button class="btn-small" onclick={()=>window.dispatchEvent(new CustomEvent('open-interactive-studio',{detail:{layerId:layer.id}}))}>Edit Interactive Studio</button>
+        {/if}
+        {#if layer.source?.effectSource?.scene3d}
+          <Scene3DProperties {layer} />
         {/if}
         <!-- Content Fit Mode (for media/screen/shader layers) -->
         {#if layer.type === 'media' || layer.type === 'screen' || layer.type === 'interactive'}
