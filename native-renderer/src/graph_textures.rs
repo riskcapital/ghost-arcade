@@ -14,7 +14,7 @@
 use std::cell::Cell;
 use std::collections::HashMap;
 
-use crate::compute_graph::NativeComputeGraphTextureSpec;
+use crate::compute_graph::{NativeComputeGraphTextureSpec, NativeGraphTextureFormat};
 
 /// All graph textures together. A 2048 HDR scene with depth, a 2048 shadow
 /// map and a bloom chain is about 130 MB.
@@ -50,6 +50,89 @@ pub(crate) fn stale_ids<'a>(
         .filter(|(_, last_used)| frame.saturating_sub(*last_used) > release_after)
         .map(|(id, _)| id.clone())
         .collect()
+}
+
+/// Why a `graph-texture` / `graph-depth-texture` binding can't use a texture.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum BindingProblem {
+    Undeclared,
+    /// A colour texture bound as depth, or the other way round.
+    KindMismatch(NativeGraphTextureFormat),
+}
+
+/// Check a binding against the declared format of the texture it names
+/// (`None`: no graph declared it).
+pub(crate) fn check_binding(
+    format: Option<NativeGraphTextureFormat>,
+    wants_depth: bool,
+) -> Result<(), BindingProblem> {
+    let format = format.ok_or(BindingProblem::Undeclared)?;
+    if format.is_depth() != wants_depth {
+        return Err(BindingProblem::KindMismatch(format));
+    }
+    Ok(())
+}
+
+/// How a render pass uses depth once its target and `depth_texture` are known.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct RenderDepth {
+    pub(crate) enabled: bool,
+    pub(crate) write: bool,
+    /// The target itself is a depth texture: no colour output.
+    pub(crate) depth_only: bool,
+    pub(crate) texture_id: Option<String>,
+}
+
+/// Resolve a render's depth use. `target` is the graph texture it draws into
+/// (`None` for the other targets); `format_of` looks up declared textures.
+pub(crate) fn resolve_render_depth(
+    shader_id: &str,
+    target: Option<&str>,
+    depth_texture_id: Option<String>,
+    enabled: bool,
+    write: bool,
+    format_of: impl Fn(&str) -> Option<NativeGraphTextureFormat>,
+) -> Result<RenderDepth, String> {
+    let mut depth = RenderDepth { enabled, write, depth_only: false, texture_id: depth_texture_id };
+    if let Some(id) = target {
+        let Some(format) = format_of(id) else {
+            return Err(format!("compute_graph render `{shader_id}` targets undeclared texture `{id}`"));
+        };
+        if format.is_depth() {
+            depth = RenderDepth { enabled: true, write: true, depth_only: true, texture_id: Some(id.to_string()) };
+        } else if depth.enabled && depth.texture_id.is_none() {
+            return Err(format!(
+                "compute_graph render `{shader_id}` into texture `{id}` uses depth and so needs depth_texture"
+            ));
+        }
+    }
+    if let Some(id) = depth.texture_id.as_deref() {
+        if !format_of(id).is_some_and(NativeGraphTextureFormat::is_depth) {
+            return Err(format!(
+                "compute_graph render `{shader_id}` depth_texture `{id}` is not a declared depth texture"
+            ));
+        }
+        if !depth.enabled {
+            depth.texture_id = None;
+        }
+    }
+    Ok(depth)
+}
+
+/// A depth texture must match the size of the target it is used with.
+pub(crate) fn check_depth_size(
+    render: &str,
+    depth: &NativeComputeGraphTextureSpec,
+    target_width: u32,
+    target_height: u32,
+) -> Result<(), String> {
+    if depth.width != target_width || depth.height != target_height {
+        return Err(format!(
+            "native compute graph render `{render}`: depth texture `{}` is {}x{}, the target is {target_width}x{target_height}",
+            depth.id, depth.width, depth.height
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) struct GraphTexture {
@@ -150,7 +233,7 @@ impl GraphTexturePool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute_graph::{parse_compute_graph_texture, NativeGraphTextureFormat};
+    use crate::compute_graph::parse_compute_graph_texture;
     use serde_json::json;
 
     fn spec(id: &str, size: u32, format: &str) -> NativeComputeGraphTextureSpec {
@@ -183,6 +266,78 @@ mod tests {
         let entries = [(&ids[0], 500u64), (&ids[1], 100u64), (&ids[2], 380u64)];
         let stale = stale_ids(entries.into_iter(), 500, RELEASE_AFTER_FRAMES);
         assert_eq!(stale, vec!["stale".to_string()]);
+    }
+
+    use NativeGraphTextureFormat::{Depth32Float, Rgba16Float};
+
+    fn declared(id: &str) -> Option<NativeGraphTextureFormat> {
+        match id {
+            "scene" => Some(Rgba16Float),
+            "scene_depth" | "shadow" => Some(Depth32Float),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn bindings_must_name_a_declared_texture_of_the_right_kind() {
+        assert_eq!(check_binding(None, false), Err(BindingProblem::Undeclared));
+        assert_eq!(check_binding(None, true), Err(BindingProblem::Undeclared));
+        assert_eq!(check_binding(Some(Rgba16Float), false), Ok(()));
+        assert_eq!(check_binding(Some(Depth32Float), true), Ok(()));
+        assert_eq!(check_binding(Some(Rgba16Float), true), Err(BindingProblem::KindMismatch(Rgba16Float)));
+        assert_eq!(check_binding(Some(Depth32Float), false), Err(BindingProblem::KindMismatch(Depth32Float)));
+    }
+
+    #[test]
+    fn render_into_an_undeclared_texture_is_refused() {
+        let err = resolve_render_depth("s", Some("nope"), None, false, false, declared).unwrap_err();
+        assert!(err.contains("undeclared texture `nope`"), "{err}");
+    }
+
+    #[test]
+    fn render_into_a_depth_texture_is_depth_only() {
+        let depth = resolve_render_depth("s", Some("shadow"), None, false, false, declared).unwrap();
+        assert_eq!(
+            depth,
+            RenderDepth { enabled: true, write: true, depth_only: true, texture_id: Some("shadow".into()) }
+        );
+    }
+
+    #[test]
+    fn colour_target_with_depth_needs_a_depth_texture() {
+        let err = resolve_render_depth("s", Some("scene"), None, true, true, declared).unwrap_err();
+        assert!(err.contains("needs depth_texture"), "{err}");
+        let ok = resolve_render_depth("s", Some("scene"), Some("scene_depth".into()), true, true, declared).unwrap();
+        assert_eq!(ok.texture_id.as_deref(), Some("scene_depth"));
+        assert!(!ok.depth_only);
+    }
+
+    #[test]
+    fn depth_texture_must_be_a_declared_depth_texture() {
+        let colour = resolve_render_depth("s", None, Some("scene".into()), true, true, declared).unwrap_err();
+        assert!(colour.contains("not a declared depth texture"), "{colour}");
+        let missing = resolve_render_depth("s", None, Some("gone".into()), true, true, declared).unwrap_err();
+        assert!(missing.contains("not a declared depth texture"), "{missing}");
+        // Named but depth off: checked, then dropped.
+        let off = resolve_render_depth("s", Some("scene"), Some("scene_depth".into()), false, false, declared).unwrap();
+        assert_eq!(off.texture_id, None);
+    }
+
+    #[test]
+    fn depth_texture_size_must_match_the_target() {
+        let depth = spec("d", 512, "depth32float");
+        assert!(check_depth_size("r", &depth, 512, 512).is_ok());
+        let err = check_depth_size("r", &depth, 1024, 512).unwrap_err();
+        assert!(err.contains("512x512") && err.contains("1024x512"), "{err}");
+    }
+
+    #[test]
+    fn upsert_budget_refusal_is_reported_by_fits_budget() {
+        // 4096² rgba16float is 128 MiB; six of them leave no room for a seventh.
+        let big: Vec<_> = (0..6).map(|i| spec(&format!("t{i}"), 4096, "rgba16float")).collect();
+        let next = spec("t6", 4096, "rgba16float");
+        assert!(!fits_budget(&next, big.iter(), BUDGET_BYTES));
+        assert!(fits_budget(&spec("t0", 4096, "rgba16float"), big.iter(), BUDGET_BYTES));
     }
 
     #[test]

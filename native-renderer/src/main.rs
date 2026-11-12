@@ -14642,17 +14642,20 @@ impl App {
                             "compute_graph {context} `{shader_id}` binding {binding_number} graph texture requires `texture`"
                         )
                     })?;
-                let Some(format) = self.graph_texture_format(&resource_id) else {
-                    return Err(format!(
-                        "compute_graph {context} `{shader_id}` binding {binding_number} references undeclared texture `{resource_id}`"
-                    ));
-                };
                 let wants_depth = matches!(kind, NativeComputeGraphBindingKind::GraphDepthTexture);
-                if format.is_depth() != wants_depth {
-                    return Err(format!(
-                        "compute_graph {context} `{shader_id}` binding {binding_number}: texture `{resource_id}` is {format:?}, which does not match its `{}` binding",
-                        kind.signature()
-                    ));
+                match graph_textures::check_binding(self.graph_texture_format(&resource_id), wants_depth) {
+                    Ok(()) => {}
+                    Err(graph_textures::BindingProblem::Undeclared) => {
+                        return Err(format!(
+                            "compute_graph {context} `{shader_id}` binding {binding_number} references undeclared texture `{resource_id}`"
+                        ));
+                    }
+                    Err(graph_textures::BindingProblem::KindMismatch(format)) => {
+                        return Err(format!(
+                            "compute_graph {context} `{shader_id}` binding {binding_number}: texture `{resource_id}` is {format:?}, which does not match its `{}` binding",
+                            kind.signature()
+                        ));
+                    }
                 }
                 Ok(NativeComputeGraphBindingSpec {
                     binding: binding_number,
@@ -15073,41 +15076,27 @@ impl App {
                 ));
             }
         };
-        let mut depth_enabled = depth_enabled;
-        let mut depth_write = depth_write;
         let mut generate_mips = generate_mips;
-        let mut depth_only = false;
-        let mut depth_texture_id = string_at(render, &["depth_texture"])
-            .or_else(|| string_at(render, &["depth_texture_id"]));
-        if let NativeComputeGraphRenderTarget::GraphTexture { id } = &target {
-            let Some(format) = self.graph_texture_format(id) else {
-                return Err(format!(
-                    "compute_graph render `{shader_id}` targets undeclared texture `{id}`"
-                ));
-            };
-            generate_mips = false;
-            if format.is_depth() {
-                // The target is the depth buffer; there is no colour output.
-                depth_only = true;
-                depth_enabled = true;
-                depth_write = true;
-                depth_texture_id = Some(id.clone());
-            } else if depth_enabled && depth_texture_id.is_none() {
-                return Err(format!(
-                    "compute_graph render `{shader_id}` into texture `{id}` uses depth and so needs depth_texture"
-                ));
+        let graph_target = match &target {
+            NativeComputeGraphRenderTarget::GraphTexture { id } => {
+                generate_mips = false;
+                Some(id.as_str())
             }
-        }
-        if let Some(id) = depth_texture_id.as_ref() {
-            if !self.graph_texture_format(id).is_some_and(NativeGraphTextureFormat::is_depth) {
-                return Err(format!(
-                    "compute_graph render `{shader_id}` depth_texture `{id}` is not a declared depth texture"
-                ));
-            }
-            if !depth_enabled {
-                depth_texture_id = None;
-            }
-        }
+            _ => None,
+        };
+        let graph_textures::RenderDepth {
+            enabled: depth_enabled,
+            write: depth_write,
+            depth_only,
+            texture_id: depth_texture_id,
+        } = graph_textures::resolve_render_depth(
+            &shader_id,
+            graph_target,
+            string_at(render, &["depth_texture"]).or_else(|| string_at(render, &["depth_texture_id"])),
+            depth_enabled,
+            depth_write,
+            |id| self.graph_texture_format(id),
+        )?;
         let depth_load = depth_load && depth_enabled;
         Ok(NativeComputeGraphRenderPlan {
             name,
@@ -24108,12 +24097,7 @@ impl RenderState {
                     render_plan.name
                 ));
             };
-            if depth.spec.width != target_width || depth.spec.height != target_height {
-                return Err(format!(
-                    "native compute graph render `{}`: depth texture `{depth_id}` is {}x{}, the target is {target_width}x{target_height}",
-                    render_plan.name, depth.spec.width, depth.spec.height
-                ));
-            }
+            graph_textures::check_depth_size(&render_plan.name, &depth.spec, target_width, target_height)?;
         }
         let composite_target_index = match &render_plan.target {
             NativeComputeGraphRenderTarget::CompositeFrame { index } => {
