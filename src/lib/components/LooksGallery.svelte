@@ -61,7 +61,7 @@
     paletteChoice = id;
     if (wearing) {
       apply(wearing.id, id);
-      message = `Colours changed to ${LOOK_PALETTES.find((p) => p.id === id)?.name}.`;
+      message = `Colors changed to ${LOOK_PALETTES.find((p) => p.id === id)?.name}.`;
     }
   }
 
@@ -119,10 +119,10 @@
         disabled={!selectedTargets.length} onclick={() => (scopeChoice = 'selected')}>Selected ({selectedTargets.length})</button>
     </div>
     {/if}
-    <div class="looks-palettes" role="radiogroup" aria-label="Colours">
+    <div class="looks-palettes" role="radiogroup" aria-label="Colors">
       {#each LOOK_PALETTES as p (p.id)}
         <button type="button" role="radio" class="palette" class:active={palette === p.id} aria-checked={palette === p.id}
-          title={p.name} aria-label={`${p.name} colours`} onclick={() => pickPalette(p.id)}>
+          title={p.name} aria-label={`${p.name} colors`} onclick={() => pickPalette(p.id)}>
           {#each p.colors as c, i (i)}<span style:background={css(c)}></span>{/each}
         </button>
       {/each}

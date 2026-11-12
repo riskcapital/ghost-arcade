@@ -1,7 +1,7 @@
 /*{
     "CREDIT": "Ghost Arcade",
     "ISFVSN": "2",
-    "DESCRIPTION": "Living plasma. Glowing cells of very different sizes drift across the dark, each at its own pace, with a nucleus that breathes light. Every frame the last picture is pushed outward from each nucleus and turned gently inside its cell, so light streams to the cell walls and gathers there as soft, wavering membranes, broken in places; as the cells drift, neighbours squeeze together, swallow one another and split apart. The colour comes from the brightness: deep ink in the shadows, the accent in the glow and white-hot where light gathers most. The music sets how fast the cells drift; a swell feeds the nuclei and lets light bleed through the walls so cells merge into larger blobs; each hit makes every cell breathe out at once, flaring the membranes, then they settle. The cells change in number smoothly as the hits add up.",
+    "DESCRIPTION": "Living plasma. Glowing cells of very different sizes drift across the dark, each at its own pace, with a nucleus that breathes light. Every frame the last picture is pushed outward from each nucleus and turned gently inside its cell, so light streams to the cell walls and gathers there as soft, wavering membranes, broken in places; as the cells drift, neighbors squeeze together, swallow one another and split apart. The color comes from the brightness: deep ink in the shadows, the accent in the glow and white-hot where light gathers most. The music sets how fast the cells drift; a swell feeds the nuclei and lets light bleed through the walls so cells merge into larger blobs; each hit makes every cell breathe out at once, flaring the membranes, then they settle. The cells change in number smoothly as the hits add up.",
     "CATEGORIES": [
         "Visual Voices",
         "Generator"
@@ -23,7 +23,7 @@
         { "NAME": "swirl", "LABEL": "Swirl", "TYPE": "float", "DEFAULT": 0.45, "MIN": 0, "MAX": 1 },
         { "NAME": "echo", "LABEL": "Echo", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0, "MAX": 1 },
         { "NAME": "glow", "LABEL": "Glow", "TYPE": "float", "DEFAULT": 0.55, "MIN": 0, "MAX": 1 },
-        { "NAME": "fringe", "LABEL": "Colour fringe", "TYPE": "float", "DEFAULT": 0.4, "MIN": 0, "MAX": 1 },
+        { "NAME": "fringe", "LABEL": "Color fringe", "TYPE": "float", "DEFAULT": 0.4, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Light", "TYPE": "color", "DEFAULT": [0.3, 0.8, 1.0, 1.0] },
         { "NAME": "accent", "LABEL": "Second light", "TYPE": "color", "DEFAULT": [1.0, 0.3, 0.6, 1.0] },
         { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },

@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A whirlpool of light seen at a slight tilt. Streams of light enter at the rim and every frame the picture is drawn inward and turned - slowly at the edge, fast near the centre - so the light winds down in spiral arms and vanishes into a dark eye with a hot lip. The colours split a little as they turn, so the arms carry prism fringes, and a deep glow rises off the water. Quiet passages wind the arms tight; as the music swells the pull grows and they loosen and open out; each hit surges the drain, widens the eye and flares the streams and glints at the rim, then it settles.",
+    "DESCRIPTION": "A whirlpool of light seen at a slight tilt. Streams of light enter at the rim and every frame the picture is drawn inward and turned - slowly at the edge, fast near the center - so the light winds down in spiral arms and vanishes into a dark eye with a hot lip. The colors split a little as they turn, so the arms carry prism fringes, and a deep glow rises off the water. Quiet passages wind the arms tight; as the music swells the pull grows and they loosen and open out; each hit surges the drain, widens the eye and flares the streams and glints at the rim, then it settles.",
     "PASSES": [
         { "TARGET": "blurA", "WIDTH": "$WIDTH/4", "HEIGHT": "$HEIGHT/4" },
         { "TARGET": "blurB", "WIDTH": "$WIDTH/16", "HEIGHT": "$HEIGHT/16" },

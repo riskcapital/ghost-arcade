@@ -9,7 +9,7 @@
          "LABELS": ["Follow Spot", "Jewel", "Forest", "Volcano", "Lagoon", "Lilac", "Monochrome"]},
         {"NAME": "colorPattern", "TYPE": "long", "DEFAULT": 2,
          "VALUES": [0, 1, 2, 3, 4],
-         "LABELS": ["One colour", "Alternate", "Three-way", "Colour wheel", "Split gel"]},
+         "LABELS": ["One color", "Alternate", "Three-way", "Color wheel", "Split gel"]},
         {"NAME": "spots",     "TYPE": "long",  "DEFAULT": 3,
          "VALUES": [1, 2, 3, 4, 5, 6], "LABELS": ["1", "2", "3", "4", "5", "6"]},
         {"NAME": "gobo",      "TYPE": "long",  "DEFAULT": 1,

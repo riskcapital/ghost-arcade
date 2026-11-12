@@ -115,7 +115,7 @@ export const CONCEPTS: Concept[] = [
   },
   {
     id: 'background', category: 'structure', title: 'background(): paint over the last frame',
-    body: 'background() covers the whole canvas in one colour. At the top of draw() it wipes the previous frame. Give it some transparency, as in background(0, 20), and old frames fade out slowly instead, leaving trails.',
+    body: 'background() covers the whole canvas in one color. At the top of draw() it wipes the previous frame. Give it some transparency, as in background(0, 20), and old frames fade out slowly instead, leaving trails.',
     triggers: ['call:background', 'call:clear'], links: [ref('background'), ref('clear')],
   },
   {
@@ -154,7 +154,7 @@ export const CONCEPTS: Concept[] = [
   },
   {
     id: 'lerp', category: 'maths', title: 'lerp(): part of the way there',
-    body: 'lerp(a, b, t) finds the point a fraction t of the way from a to b: t = 0 gives a, t = 1 gives b. Moving a value a little towards its target every frame, x = lerp(x, target, 0.1), gives smooth easing instead of a jump. lerpColor() does the same between two colours.',
+    body: 'lerp(a, b, t) finds the point a fraction t of the way from a to b: t = 0 gives a, t = 1 gives b. Moving a value a little towards its target every frame, x = lerp(x, target, 0.1), gives smooth easing instead of a jump. lerpColor() does the same between two colors.',
     triggers: ['call:lerp', 'call:lerpColor'], links: [ref('lerp'), ref('lerpColor')],
   },
   {
@@ -164,7 +164,7 @@ export const CONCEPTS: Concept[] = [
   },
   {
     id: 'dist', category: 'maths', title: 'dist(): how far apart',
-    body: 'dist(x1, y1, x2, y2) is the straight-line distance between two points. It is how sketches find neighbours, detect touches and fade things with distance.',
+    body: 'dist(x1, y1, x2, y2) is the straight-line distance between two points. It is how sketches find neighbors, detect touches and fade things with distance.',
     triggers: ['call:dist'], links: [ref('dist')],
   },
   {
@@ -205,12 +205,12 @@ export const CONCEPTS: Concept[] = [
   // ── Transformations ────────────────────────────────────────────────────
   {
     id: 'translate', category: 'transform', title: 'translate(): move the origin',
-    body: 'translate(x, y) moves the point (0, 0), so everything drawn after it shifts. translate(width / 2, height / 2) is the usual way to draw around the centre of the screen.',
+    body: 'translate(x, y) moves the point (0, 0), so everything drawn after it shifts. translate(width / 2, height / 2) is the usual way to draw around the center of the screen.',
     triggers: ['call:translate'], links: [ref('translate'), TRAIN.transforms],
   },
   {
     id: 'rotate', category: 'transform', title: 'rotate(): turn the drawing',
-    body: 'rotate(angle) turns everything drawn after it around the origin. To spin a shape around its own centre, translate() to that centre first, then rotate(), then draw at (0, 0).',
+    body: 'rotate(angle) turns everything drawn after it around the origin. To spin a shape around its own center, translate() to that center first, then rotate(), then draw at (0, 0).',
     triggers: ['call:rotate'], links: [ref('rotate'), TRAIN.transforms],
   },
   {
@@ -249,7 +249,7 @@ export const CONCEPTS: Concept[] = [
   // ── Objects and data ───────────────────────────────────────────────────
   {
     id: 'class', category: 'objects', title: 'class: a template for things',
-    body: 'A class describes a kind of thing that has its own data and behaviour, like a Particle with a position and an update() method. new Particle() makes one; an array of them makes a system.',
+    body: 'A class describes a kind of thing that has its own data and behavior, like a Particle with a position and an update() method. new Particle() makes one; an array of them makes a system.',
     triggers: ['syntax:class'], links: [ref('class'), TRAIN.classes, NOC.particles],
   },
   {
@@ -259,7 +259,7 @@ export const CONCEPTS: Concept[] = [
   },
   {
     id: 'vectors', category: 'objects', title: 'Vectors: position and velocity',
-    body: 'A vector holds an x and a y (and z) together, with maths built in: add(), mult(), mag(), normalize(). Position plus velocity as vectors is the heart of motion, forces and steering.',
+    body: 'A vector holds an x and a y (and z) together, with math built in: add(), mult(), mag(), normalize(). Position plus velocity as vectors is the heart of motion, forces and steering.',
     triggers: ['call:createVector', 'new:p5.Vector', 'member:p5.Vector'], links: [ref('p5.Vector'), NOC.vectors, NOC.forces, NOC.agents],
   },
 
@@ -288,18 +288,18 @@ export const CONCEPTS: Concept[] = [
 
   // ── Colour ─────────────────────────────────────────────────────────────
   {
-    id: 'fillStroke', category: 'colour', title: 'fill() and stroke(): colour',
-    body: 'fill() colours the inside of shapes and stroke() their outline; strokeWeight() sets the outline\'s thickness, and noFill() / noStroke() switch either off. They apply to everything drawn after them. A fourth number, as in fill(255, 0, 0, 100), is transparency.',
+    id: 'fillStroke', category: 'colour', title: 'fill() and stroke(): color',
+    body: 'fill() colors the inside of shapes and stroke() their outline; strokeWeight() sets the outline\'s thickness, and noFill() / noStroke() switch either off. They apply to everything drawn after them. A fourth number, as in fill(255, 0, 0, 100), is transparency.',
     triggers: ['call:fill', 'call:stroke', 'call:strokeWeight', 'call:noFill', 'call:noStroke'], links: [ref('fill'), ref('stroke'), ref('strokeWeight')],
   },
   {
-    id: 'colorMode', category: 'colour', title: 'colorMode(): how colours are written',
-    body: 'colorMode(HSB) switches colours from red, green, blue to hue, saturation, brightness. Rainbows and palettes become easy: keep saturation and brightness, change only the hue.',
+    id: 'colorMode', category: 'colour', title: 'colorMode(): how colors are written',
+    body: 'colorMode(HSB) switches colors from red, green, blue to hue, saturation, brightness. Rainbows and palettes become easy: keep saturation and brightness, change only the hue.',
     triggers: ['call:colorMode'], links: [ref('colorMode')],
   },
   {
-    id: 'color', category: 'colour', title: 'color(): a colour to keep',
-    body: 'color() makes a colour value you can store in a variable and reuse, or blend with lerpColor().',
+    id: 'color', category: 'colour', title: 'color(): a color to keep',
+    body: 'color() makes a color value you can store in a variable and reuse, or blend with lerpColor().',
     triggers: ['call:color'], links: [ref('color')],
   },
   {
@@ -346,7 +346,7 @@ export const CONCEPTS: Concept[] = [
   // ── Size ───────────────────────────────────────────────────────────────
   {
     id: 'widthHeight', category: 'size', title: 'width and height: the canvas size',
-    body: 'width and height are the canvas size in pixels. Writing positions as parts of them, width / 2 for the centre, keeps the picture right on any screen.',
+    body: 'width and height are the canvas size in pixels. Writing positions as parts of them, width / 2 for the center, keeps the picture right on any screen.',
     triggers: ['name:width', 'name:height'], links: [ref('width'), ref('height')],
   },
   {
@@ -358,12 +358,12 @@ export const CONCEPTS: Concept[] = [
   // ── Ghost Arcade ───────────────────────────────────────────────────────
   {
     id: 'ghostParams', category: 'ghost', title: 'window.shaderParams: Ghost Arcade controls',
-    body: 'window.shaderParams holds the current value of each of this sketch\'s controls. The sliders, switches and colour pickers in Ghost Arcade write into it while the sketch runs, and they can be mapped to MIDI or automated, so read it inside draw() every frame.',
+    body: 'window.shaderParams holds the current value of each of this sketch\'s controls. The sliders, switches and color pickers in Ghost Arcade write into it while the sketch runs, and they can be mapped to MIDI or automated, so read it inside draw() every frame.',
     triggers: ['member:window.shaderParams'], links: [],
   },
   {
     id: 'ghostParamDefs', category: 'ghost', title: 'window.shaderParamDefs: which controls to show',
-    body: 'window.shaderParamDefs lists the controls Ghost Arcade shows for this sketch: a name, label, type (number, boolean, color, text or select) and range for each. It must be plain data: numbers, strings, true and false, no maths.',
+    body: 'window.shaderParamDefs lists the controls Ghost Arcade shows for this sketch: a name, label, type (number, boolean, color, text or select) and range for each. It must be plain data: numbers, strings, true and false, no math.',
     triggers: ['member:window.shaderParamDefs'], links: [],
   },
   {

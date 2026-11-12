@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A shallow dish of glossy black ferrofluid under a magnet. Where the field is strong the liquid rises into a crown of sharp spikes, each one a black mirror catching coloured studio lights along its sides and a pin of light at its tip. A held sound strengthens the field so the spikes grow taller and pack tighter; each hit surges them upward and sends waves rolling out across the pool, and they settle back with a liquid wobble. The pitch moves the magnet, so the crown drifts across the dish.",
+    "DESCRIPTION": "A shallow dish of glossy black ferrofluid under a magnet. Where the field is strong the liquid rises into a crown of sharp spikes, each one a black mirror catching colored studio lights along its sides and a pin of light at its tip. A held sound strengthens the field so the spikes grow taller and pack tighter; each hit surges them upward and sends waves rolling out across the pool, and they settle back with a liquid wobble. The pitch moves the magnet, so the crown drifts across the dish.",
     "INPUTS": [
         { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 5, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play", "Bowls", "Drone", "XY tone", "Analog synth", "Scan synth", "Echo shots", "Build and drop", "Siren", "Acid line", "Dub bass"] },
         { "NAME": "vxAuto", "LABEL": "Comes and goes with its sound", "TYPE": "bool", "DEFAULT": true },

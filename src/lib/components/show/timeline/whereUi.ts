@@ -131,7 +131,7 @@ export const WHERE_ORDER_LABELS: Record<WhereSpec['order'], string> = {
   'right-left': 'Right → left',
   'top-bottom': 'Top → bottom',
   'bottom-top': 'Bottom → top',
-  'centre-out': 'Centre out',
+  'centre-out': 'Center out',
   around: 'Around',
   hand: 'By hand',
 };
@@ -139,7 +139,7 @@ export const WHERE_ORDER_LABELS: Record<WhereSpec['order'], string> = {
 export const WHERE_MOTION_LABELS: Record<WhereSpec['motion']['kind'], string> = {
   sweep: 'Sweep',
   pingpong: 'Ping-pong',
-  burst: 'Centre burst',
+  burst: 'Center burst',
   random: 'Random piece',
   kick: 'Follow the kick',
   drawn: 'Drawn',

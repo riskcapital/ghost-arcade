@@ -41,7 +41,7 @@ const RULES: Array<[RegExp, (m: RegExpMatchArray) => string]> = [
   [/Invalid array length/, () => 'An array was made with a negative or fractional size. Round the size with floor() and keep it above zero.'],
   [/is not iterable/, () => 'A for...of loop (or ...spread) was given something that is not a list.'],
   [/Failed to execute '[^']+' on 'CanvasRenderingContext2D'|non-finite/, () =>
-    'A drawing call got a number that is not a number: NaN or Infinity, often from dividing by zero. Check the maths feeding it.'],
+    'A drawing call got a number that is not a number: NaN or Infinity, often from dividing by zero. Check the math feeding it.'],
 ];
 
 /** The message without the browser's "Uncaught" prefix. */

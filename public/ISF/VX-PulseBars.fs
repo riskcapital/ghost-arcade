@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A wall of tall light bars. Every hit of the sound it follows fires them one after another, left to right, right to left or out from the centre (turning every fourth hit): each bar flashes as a soft slab of light behind a bright leading edge, then falls away. Between hits only the bar outlines remain, as hairlines. Never more than about 40% of the frame is lit.",
+    "DESCRIPTION": "A wall of tall light bars. Every hit of the sound it follows fires them one after another, left to right, right to left or out from the center (turning every fourth hit): each bar flashes as a soft slab of light behind a bright leading edge, then falls away. Between hits only the bar outlines remain, as hairlines. Never more than about 40% of the frame is lit.",
     "PASSES": [
         {
             "TARGET": "launchA",
@@ -53,7 +53,7 @@
         { "NAME": "decay", "LABEL": "Decay", "TYPE": "float", "DEFAULT": 0.4, "MIN": 0, "MAX": 1 },
         { "NAME": "edgeGlow", "LABEL": "Edge glow", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
         { "NAME": "fill", "LABEL": "Fill", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
-        { "NAME": "sweepMode", "LABEL": "Sweep", "TYPE": "long", "DEFAULT": 0, "VALUES": [0, 1, 2, 3], "LABELS": ["Turns every 4th hit", "Left to right", "Right to left", "From the centre"] },
+        { "NAME": "sweepMode", "LABEL": "Sweep", "TYPE": "long", "DEFAULT": 0, "VALUES": [0, 1, 2, 3], "LABELS": ["Turns every 4th hit", "Left to right", "Right to left", "From the center"] },
         { "NAME": "height", "LABEL": "Height", "TYPE": "float", "DEFAULT": 0.74, "MIN": 0.2, "MAX": 1 },
         { "NAME": "outline", "LABEL": "Outlines", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Light", "TYPE": "color", "DEFAULT": [0.94, 0.95, 0.97, 1.0] },

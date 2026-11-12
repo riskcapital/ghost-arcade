@@ -340,7 +340,7 @@
     <!-- Error / cancelled state. -->
     <div class="modal-body error">
       <div class="error-icon">{state.status === 'error' ? '!' : '×'}</div>
-      <h3>{state.status === 'error' ? 'Render failed' : 'Render cancelled'}</h3>
+      <h3>{state.status === 'error' ? 'Render failed' : 'Render canceled'}</h3>
       {#if state.errorMessage}
         <p class="error-msg">{state.errorMessage}</p>
       {/if}

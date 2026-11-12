@@ -133,7 +133,7 @@ export function lookBlockParams(): ParamEntry[] {
   return [
     { key: 'look:intensity', label: 'Look intensity', group, min: 0, max: 2, step: 0.01, default: 1, kind: 'continuous' },
     { key: 'look:speed', label: 'Look speed', group, min: 0, max: 4, step: 0.01, default: 1, kind: 'continuous' },
-    { key: 'look:hue', label: 'Colour step per beat', group, min: 0, max: 1, step: 0.01, default: 0, kind: 'continuous' },
+    { key: 'look:hue', label: 'Color step per beat', group, min: 0, max: 1, step: 0.01, default: 0, kind: 'continuous' },
     { key: 'look:react', label: 'Beat reaction', group, min: 0, max: 1, step: 0.01, default: 0, kind: 'continuous' },
     { key: 'look:chase', label: 'Chase delay', group, min: 0, max: 4, step: 0.05, default: 0.5, kind: 'continuous' },
   ];
@@ -158,10 +158,10 @@ export function ledBlockParams(clip: TimelineLedClip): ParamEntry[] {
     { key: 'ledblock:brightness', label: 'LED brightness', group, min: 0, max: 1, step: 0.01, default: clip.brightness, kind: 'continuous' },
   ];
   if (clip.kind !== 'follow') {
-    out.push({ key: 'ledblock:color', label: 'LED colour', group, min: 0, max: 0xffffff, step: 1, default: hexToInt(clip.color), kind: 'colour' });
+    out.push({ key: 'ledblock:color', label: 'LED color', group, min: 0, max: 0xffffff, step: 1, default: hexToInt(clip.color), kind: 'colour' });
   }
   if (clip.kind === 'gradient' || clip.kind === 'effect') {
-    out.push({ key: 'ledblock:color2', label: 'LED second colour', group, min: 0, max: 0xffffff, step: 1, default: hexToInt(clip.color2), kind: 'colour' });
+    out.push({ key: 'ledblock:color2', label: 'LED second color', group, min: 0, max: 0xffffff, step: 1, default: hexToInt(clip.color2), kind: 'colour' });
   }
   if (clip.kind !== 'follow' && clip.kind !== 'colour') {
     out.push({ key: 'ledblock:speed', label: 'LED speed', group, min: 0, max: 4, step: 0.01, default: clip.speed, kind: 'continuous' });

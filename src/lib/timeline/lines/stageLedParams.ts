@@ -89,8 +89,8 @@ export function discoverLedParams(controllers: readonly WLEDController[] | undef
       { key: `ledfx:${e.id}:active`, label: 'On', type: 'boolean', kind: 'bool', defaultValue: e.active, group },
       { key: `ledfx:${e.id}:amount`, label: 'Amount', type: 'number', min: 0, max: 1, step: 0.01, defaultValue: e.amount, group },
       { key: `ledfx:${e.id}:speed`, label: 'Speed', type: 'number', min: 0, max: 4, step: 0.01, defaultValue: e.speed, group },
-      { key: `ledfx:${e.id}:color`, label: 'Colour', type: 'number', kind: 'colour', min: 0, max: 0xffffff, step: 1, defaultValue: packColor(e.color), group },
-      { key: `ledfx:${e.id}:secondaryColor`, label: 'Second colour', type: 'number', kind: 'colour', min: 0, max: 0xffffff, step: 1, defaultValue: packColor(e.secondaryColor), group },
+      { key: `ledfx:${e.id}:color`, label: 'Color', type: 'number', kind: 'colour', min: 0, max: 0xffffff, step: 1, defaultValue: packColor(e.color), group },
+      { key: `ledfx:${e.id}:secondaryColor`, label: 'Second color', type: 'number', kind: 'colour', min: 0, max: 0xffffff, step: 1, defaultValue: packColor(e.secondaryColor), group },
     );
     let names: string[] = [];
     try { names = Object.keys(getWLEDPatternDefinition(e.pattern).params ?? {}); } catch { names = Object.keys(e.params ?? {}); }

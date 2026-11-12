@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A night drive played back off a worn videotape. The picture is a road at night: lane lines rushing in, street lamps sweeping past, tail lights ahead and a lit skyline on the horizon, with soft tape luma, smeared colour that runs to the right and edge ringing. Every hit of the sound it follows throws the tracking out: a rolling band of noise tears through the picture, lines skew sideways, the colour drops out, dropouts streak across and the deck's TRACKING meter comes up; then it settles back. The deck's PLAY display stays rock steady over the top. Tracking error sets how hard hits throw it, Settle how long it takes to recover, Tape wear the noise and dropouts at rest, Colour bleed the smear, Head switching the torn strip along the bottom, and Speed the drive.",
+    "DESCRIPTION": "A night drive played back off a worn videotape. The picture is a road at night: lane lines rushing in, street lamps sweeping past, tail lights ahead and a lit skyline on the horizon, with soft tape luma, smeared color that runs to the right and edge ringing. Every hit of the sound it follows throws the tracking out: a rolling band of noise tears through the picture, lines skew sideways, the color drops out, dropouts streak across and the deck's TRACKING meter comes up; then it settles back. The deck's PLAY display stays rock steady over the top. Tracking error sets how hard hits throw it, Settle how long it takes to recover, Tape wear the noise and dropouts at rest, Color bleed the smear, Head switching the torn strip along the bottom, and Speed the drive.",
     "PASSES": [
         {
             "TARGET": "clock",
@@ -27,7 +27,7 @@
         { "NAME": "tracking", "LABEL": "Tracking error", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0, "MAX": 1 },
         { "NAME": "settle", "LABEL": "Settle", "TYPE": "float", "DEFAULT": 0.45, "MIN": 0, "MAX": 1 },
         { "NAME": "wear", "LABEL": "Tape wear", "TYPE": "float", "DEFAULT": 0.35, "MIN": 0, "MAX": 1 },
-        { "NAME": "bleed", "LABEL": "Colour bleed", "TYPE": "float", "DEFAULT": 0.55, "MIN": 0, "MAX": 1 },
+        { "NAME": "bleed", "LABEL": "Color bleed", "TYPE": "float", "DEFAULT": 0.55, "MIN": 0, "MAX": 1 },
         { "NAME": "headSwitch", "LABEL": "Head switching", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
         { "NAME": "speed", "LABEL": "Speed", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
         { "NAME": "osd", "LABEL": "Deck display", "TYPE": "bool", "DEFAULT": true },

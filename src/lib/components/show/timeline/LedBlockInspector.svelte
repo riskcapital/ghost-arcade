@@ -66,17 +66,17 @@
     {/each}
   {/if}
   {#if clip.kind === 'look'}
-    <span class="insp-palettes" role="radiogroup" aria-label="Colours">
+    <span class="insp-palettes" role="radiogroup" aria-label="Colors">
       {#each LOOK_PALETTES as p (p.id)}
         <button type="button" role="radio" class="insp-palette" class:on={(clip.paletteId ?? 'neon') === p.id} aria-checked={(clip.paletteId ?? 'neon') === p.id}
-          title={p.name} aria-label={`${p.name} colours`} onclick={() => patch({ paletteId: p.id })}>
+          title={p.name} aria-label={`${p.name} colors`} onclick={() => patch({ paletteId: p.id })}>
           {#each p.colors as c, i (i)}<span style:background={css(c)}></span>{/each}
         </button>
       {/each}
     </span>
   {/if}
   {#if clip.kind !== 'follow' && clip.kind !== 'look'}
-    <label class="insp-field"><span>Colour</span><input type="color" value={clip.color} onchange={(e) => patch({ color: (e.currentTarget as HTMLInputElement).value })} data-led-color /></label>
+    <label class="insp-field"><span>Color</span><input type="color" value={clip.color} onchange={(e) => patch({ color: (e.currentTarget as HTMLInputElement).value })} data-led-color /></label>
   {/if}
   {#if clip.kind === 'gradient' || clip.kind === 'effect'}
     <label class="insp-field"><span>Second</span><input type="color" value={clip.color2} onchange={(e) => patch({ color2: (e.currentTarget as HTMLInputElement).value })} data-led-color2 /></label>

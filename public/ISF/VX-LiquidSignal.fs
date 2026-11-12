@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A bold picture melting in a slow current. The voice paints its own image (a slatted sun, a staring eye or a block of Bauhaus shapes) and a flowing field pushes it around, smearing it into glossy liquid streaks whose colour channels drift apart at the edges. The picture keeps pulling itself back together, so it always reads. Every hit of the sound it follows stirs a few turbulent swirls into the flow that wind the picture up and slowly unwind. Picture picks the image, Flow how strongly the current moves, Smear how long the streaks hold before the picture recovers, Swirl how hard hits stir it, Split how far the colours separate, and Gloss the wet shine on the streaks.",
+    "DESCRIPTION": "A bold picture melting in a slow current. The voice paints its own image (a slatted sun, a staring eye or a block of Bauhaus shapes) and a flowing field pushes it around, smearing it into glossy liquid streaks whose color channels drift apart at the edges. The picture keeps pulling itself back together, so it always reads. Every hit of the sound it follows stirs a few turbulent swirls into the flow that wind the picture up and slowly unwind. Picture picks the image, Flow how strongly the current moves, Smear how long the streaks hold before the picture recovers, Swirl how hard hits stir it, Split how far the colors separate, and Gloss the wet shine on the streaks.",
     "PASSES": [
         {
             "TARGET": "pic",

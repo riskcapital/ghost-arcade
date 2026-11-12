@@ -1,5 +1,5 @@
 /*{
-    "DESCRIPTION": "Liquid sky. A laser scanned into a flat sheet cuts through haze and shows the smoke as a slice: slow rolling marble with a hard bright edge, the effect that fills the air over a crowd. Open the fan, set where the laser sits, choose a smooth sheet or separate beams, and control the smoke: how thick, how fast it rolls, how turbulent. Scan lines, sparkle and a second sheet in another colour are there when you want more. Bass thickens the smoke, beats flash the sheet, spectral centroid opens the fan.",
+    "DESCRIPTION": "Liquid sky. A laser scanned into a flat sheet cuts through haze and shows the smoke as a slice: slow rolling marble with a hard bright edge, the effect that fills the air over a crowd. Open the fan, set where the laser sits, choose a smooth sheet or separate beams, and control the smoke: how thick, how fast it rolls, how turbulent. Scan lines, sparkle and a second sheet in another color are there when you want more. Bass thickens the smoke, beats flash the sheet, spectral centroid opens the fan.",
     "CREDIT": "Ghost Arcade 2.0 stage pack",
     "ISFVSN": "2",
     "CATEGORIES": ["Generator", "Audio Reactive"],

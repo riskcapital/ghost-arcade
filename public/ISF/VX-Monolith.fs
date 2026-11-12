@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A field of tall stone monoliths under two hard lights, matte grey against a black sky. Every hit of the sound it follows pushes a ripple of slab heights out from the middle of the field; a thin edge light marks the slab struck last. The camera moves slowly with the sound and steps to a new station on each bar.",
+    "DESCRIPTION": "A field of tall stone monoliths under two hard lights, matte gray against a black sky. Every hit of the sound it follows pushes a ripple of slab heights out from the middle of the field; a thin edge light marks the slab struck last. The camera moves slowly with the sound and steps to a new station on each bar.",
     "PASSES": [
         {
             "TARGET": "rippleAge",

@@ -1482,7 +1482,7 @@
               {:else if currentBrush.type === 'water'}
                 Viscous glowing ectoplasm hugs the stroke and undulates slowly. Use a darker green/teal base color and high glow for the slimy fluid look.
               {:else if currentBrush.type === 'smoke'}
-                Wisps rise upward from the stroke with curl-noise drift. Use white/grey base color and moderate glow.
+                Wisps rise upward from the stroke with curl-noise drift. Use white/gray base color and moderate glow.
               {/if}
             </div>
           {/if}

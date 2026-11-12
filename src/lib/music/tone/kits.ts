@@ -29,7 +29,7 @@ export const DRUM_KITS: DrumKit[] = [
     fx: { drive: 0.08 }, gain: 0.95,
   },
   {
-    id: 'kit.parlour', name: 'Parlour', blurb: 'A small, polite rhythm-box kit: soft thumps, ticky hats and a clave',
+    id: 'kit.parlour', name: 'Parlor', blurb: 'A small, polite rhythm-box kit: soft thumps, ticky hats and a clave',
     sounds: [kick(70, 0.45, 0.6, 0.05), snare(240, 0.18, 0.4), clap(1500, 0.18, { level: 0.5 }), hat(420, 0.05, 0.4, false, { level: 0.35 }), hat(420, 0.3, 0.4, true, { level: 0.3 }), tom(160, 0.3, 0.3), rim(2500, 0.06, { level: 0.5 }), cymbal(500, 1.1, 0.4)],
     gain: 0.9,
   },

@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "Sound-system smoke. Every note of the sound it follows breathes smoke in from the floor, low notes to the left and high notes to the right, and each hit shoves a short puff upward. The smoke curls and rises through a slow swirling flow and is lit from one side, dark and dense, never grey.",
+    "DESCRIPTION": "Sound-system smoke. Every note of the sound it follows breathes smoke in from the floor, low notes to the left and high notes to the right, and each hit shoves a short puff upward. The smoke curls and rises through a slow swirling flow and is lit from one side, dark and dense, never gray.",
     "PASSES": [
         {
             "TARGET": "flow",

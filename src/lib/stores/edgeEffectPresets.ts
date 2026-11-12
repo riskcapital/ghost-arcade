@@ -42,7 +42,7 @@ function validateEffect(effect: any): void {
     throw new Error('A saved preset contains an unsupported edge effect.');
   if (typeof effect.opacity !== 'number' || effect.opacity < 0 || effect.opacity > 1) throw new Error('Invalid edge effect opacity.');
   if (typeof effect.blendMode !== 'string') throw new Error('Invalid edge effect blend mode.');
-  if (effect.customCenter !== undefined && typeof effect.customCenter !== 'boolean') throw new Error('Invalid edge effect centre.');
+  if (effect.customCenter !== undefined && typeof effect.customCenter !== 'boolean') throw new Error('Invalid edge effect center.');
   for (const key of ['centerX', 'centerY', 'chaseSpread']) {
     if (effect[key] !== undefined && typeof effect[key] !== 'number') throw new Error('Invalid edge effect setting.');
   }

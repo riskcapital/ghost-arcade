@@ -1,5 +1,5 @@
 /*{
-    "DESCRIPTION": "A hyperbolic plane tiled with regular polygons and drawn in the Poincare disc, the construction behind Escher's Circle Limit prints. Every tile is the same size in hyperbolic space, so they crowd toward the rim without ever reaching it. The view glides by hyperbolic translation, which pours tiles in from one side of the rim and out the other. Rings of light travel outward from the centre of every tile at once. Bass swells the rings, beats jump their phase, spectral centroid steers the glide.",
+    "DESCRIPTION": "A hyperbolic plane tiled with regular polygons and drawn in the Poincare disc, the construction behind Escher's Circle Limit prints. Every tile is the same size in hyperbolic space, so they crowd toward the rim without ever reaching it. The view glides by hyperbolic translation, which pours tiles in from one side of the rim and out the other. Rings of light travel outward from the center of every tile at once. Bass swells the rings, beats jump their phase, spectral centroid steers the glide.",
     "CREDIT": "Ghost Arcade 2.0 pack",
     "ISFVSN": "2",
     "CATEGORIES": ["Generator", "Audio Reactive"],

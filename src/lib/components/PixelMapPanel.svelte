@@ -445,8 +445,8 @@
           />
         </label>
         <label>
-          <span>Colour order</span>
-          <select value={selected.colorOrder} aria-label="Colour order" onchange={(event) => updateFixture({ colorOrder: (event.target as HTMLSelectElement).value as PixelMapColorOrder })}>
+          <span>Color order</span>
+          <select value={selected.colorOrder} aria-label="Color order" onchange={(event) => updateFixture({ colorOrder: (event.target as HTMLSelectElement).value as PixelMapColorOrder })}>
             {#each PIXEL_COLOR_ORDERS as order}
               <option value={order}>{order}</option>
             {/each}
@@ -644,7 +644,7 @@
                 oninput={(event) => updateFixture({ calibration: { ...(selected!.calibration ?? {}), smoothing: Number.parseFloat((event.target as HTMLInputElement).value) } })} />
             </label>
           </div>
-          <p class="section-note">RGBW fixtures drive the white channel with the shared white part of each colour, min(R, G, B).</p>
+          <p class="section-note">RGBW fixtures drive the white channel with the shared white part of each color, min(R, G, B).</p>
         </section>
       {:else}
         <section class="panel-body">

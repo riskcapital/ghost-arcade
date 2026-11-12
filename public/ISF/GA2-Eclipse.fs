@@ -1,5 +1,5 @@
 /*{
-    "DESCRIPTION": "A total solar eclipse. The moon's disc hides the sun and leaves the corona: long streamers along the equator, short plumes at the poles, drawn out by a flow that never repeats. Slide the moon off-centre for the diamond ring, raise the beads for the last sunlight through lunar valleys, and add prominences on the limb. Bass breathes the corona outward, beats flash the diamond, spectral centroid stirs the streamers.",
+    "DESCRIPTION": "A total solar eclipse. The moon's disc hides the sun and leaves the corona: long streamers along the equator, short plumes at the poles, drawn out by a flow that never repeats. Slide the moon off-center for the diamond ring, raise the beads for the last sunlight through lunar valleys, and add prominences on the limb. Bass breathes the corona outward, beats flash the diamond, spectral centroid stirs the streamers.",
     "CREDIT": "Ghost Arcade 2.0 pack",
     "ISFVSN": "2",
     "CATEGORIES": ["Generator", "Audio Reactive"],

@@ -252,7 +252,7 @@ function oneOf<T extends string>(v: unknown, options: readonly T[], where: strin
   return v as T;
 }
 function color(v: unknown, where: string): string {
-  if (typeof v !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(v)) return fail(where, 'must be a colour like #ff8800');
+  if (typeof v !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(v)) return fail(where, 'must be a color like #ff8800');
   return v.toLowerCase();
 }
 function vec3(v: unknown, where: string, limit = 1000): Vec3 {

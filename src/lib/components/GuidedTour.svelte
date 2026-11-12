@@ -227,7 +227,7 @@
           body: 'With the surface selected, its handles appear on the canvas.',
           bullets: [
             'Drag the four corner handles onto the corners of your object',
-            'Drag the centre handle to move it and the top circle to rotate it',
+            'Drag the center handle to move it and the top circle to rotate it',
             'Arrow keys nudge the selection for fine alignment',
             'For curved or uneven surfaces, set Warp mode to Mesh in its properties and pull the grid points',
           ],

@@ -55,14 +55,14 @@
 {#if $ledRows.length}
   <div class="led-group" style:height="{LED_GROUP_HEADER_HEIGHT}px" data-led-group>
     <button type="button" class="fold" onclick={() => ledGroupFolded.update((v) => !v)} aria-label={$ledGroupFolded ? 'Show the LED rows' : 'Hide the LED rows'}>{$ledGroupFolded ? '▸' : '▾'}</button>
-    <span class="name" title="Your WLED controllers and their ranges. Put blocks on them: follow the projected picture, an LED effect, a colour, gradient, chase or a Look. A row with blocks is dark between them.">LEDs</span>
+    <span class="name" title="Your WLED controllers and their ranges. Put blocks on them: follow the projected picture, an LED effect, a color, gradient, chase or a Look. A row with blocks is dark between them.">LEDs</span>
   </div>
   {#if !$ledGroupFolded}
     {#each $ledRows as row (row.id)}
       <div class="led-row" class:range={row.kind === 'range'} class:off={!row.enabled} style:height="{LED_ROW_HEIGHT}px" data-led-row={row.id}>
         <span class="name" title={`${row.name}: ${row.ledCount} LEDs${row.enabled ? '' : ' (switched off in the WLED setup)'}`}>{row.kind === 'range' ? '└ ' : ''}{row.name}</span>
         <button type="button" class="add" onclick={(e) => openMenu(e, row)} title="Put an LED block here at the playhead" data-led-add={row.id}>+</button>
-        <button type="button" class="add line" onclick={(e) => openPicker(e, row)} title="Add a control line: the controller's brightness, or a block's colour, speed or where line" data-led-line-picker={row.id}>⌇+</button>
+        <button type="button" class="add line" onclick={(e) => openPicker(e, row)} title="Add a control line: the controller's brightness, or a block's color, speed or where line" data-led-line-picker={row.id}>⌇+</button>
       </div>
     {/each}
   {/if}

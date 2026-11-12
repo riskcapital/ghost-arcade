@@ -1,7 +1,7 @@
 /*{
     "CREDIT": "Ghost Arcade",
     "ISFVSN": "2",
-    "DESCRIPTION": "Polar light seen from below. A few curtains float at different heights across a starry sky, their bright hems rippling through S-shaped folds and curling spirals. Every frame the light they leave is drawn up toward a point overhead, so each curtain trails rays that converge into the sky: clusters of faint rays, a few long brilliant ones, and dark sky between. The rays age from the first colour at the hem to the second colour high up. The music sets how fast the rays climb and the curtains sweep; the swell brightens them; each hit flares the hems toward white, sends a bright pulse racing along every curtain and ripples the whole sky, then it settles.",
+    "DESCRIPTION": "Polar light seen from below. A few curtains float at different heights across a starry sky, their bright hems rippling through S-shaped folds and curling spirals. Every frame the light they leave is drawn up toward a point overhead, so each curtain trails rays that converge into the sky: clusters of faint rays, a few long brilliant ones, and dark sky between. The rays age from the first color at the hem to the second color high up. The music sets how fast the rays climb and the curtains sweep; the swell brightens them; each hit flares the hems toward white, sends a bright pulse racing along every curtain and ripples the whole sky, then it settles.",
     "CATEGORIES": [
         "Visual Voices",
         "Generator"

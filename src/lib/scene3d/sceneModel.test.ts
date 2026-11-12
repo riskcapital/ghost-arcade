@@ -40,7 +40,7 @@ describe('ghost-scene v1', () => {
     expect(errorOf(scene([box(), box()]))).toMatch(/id "box" is used twice/);
     expect(errorOf(scene([box({ transform: { ...identityTransform(), scale: [1, 0, 1] } })]))).toMatch(/scale: cannot be zero/);
     expect(errorOf(scene([box({ shape: 'outline' })]))).toMatch(/an outline mesh needs its outline/);
-    expect(errorOf(scene([box({ material: material('matte', { base: 'red' }) })]))).toMatch(/must be a colour like #ff8800/);
+    expect(errorOf(scene([box({ material: material('matte', { base: 'red' }) })]))).toMatch(/must be a color like #ff8800/);
     expect(errorOf(scene([], { camera: { mode: 'projector', fov: 40, position: [0, 1, 5], target: [0, 0, 0] } }))).toMatch(/unknown camera mode "projector"/);
     expect(errorOf(scene([], { camera: { mode: 'free', fov: 40, position: [1, 1, 1], target: [1, 1, 1] } }))).toMatch(/cannot be the same point/);
     expect(errorOf({ ...scene(), extra: 1 })).toBe('scene: unknown field "extra"');

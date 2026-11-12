@@ -1,5 +1,5 @@
 /*{
-    "DESCRIPTION": "Tie-dye, as dyed and not as drawn. Cloth is pleated and bound, dye is poured on in bands, and where the binding was tight the dye could not reach, leaving the white veins. Five ways of tying: the spiral, the bullseye, the sunburst, the accordion stripe and the crumple. Bleed sets how far the colours ran into each other, resist how much white survived, and the weave of the cotton is there if you look. It turns and breathes slowly. Bass swells the cloth, beats pulse the dye, spectral centroid winds the spiral.",
+    "DESCRIPTION": "Tie-dye, as dyed and not as drawn. Cloth is pleated and bound, dye is poured on in bands, and where the binding was tight the dye could not reach, leaving the white veins. Five ways of tying: the spiral, the bullseye, the sunburst, the accordion stripe and the crumple. Bleed sets how far the colors ran into each other, resist how much white survived, and the weave of the cotton is there if you look. It turns and breathes slowly. Bass swells the cloth, beats pulse the dye, spectral centroid winds the spiral.",
     "CREDIT": "Ghost Arcade psychedelic pack",
     "ISFVSN": "2",
     "CATEGORIES": ["Generator", "Audio Reactive"],

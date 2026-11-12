@@ -1,5 +1,5 @@
 /*{
-    "DESCRIPTION": "The walls breathing. A surface that will not hold still: its pattern flows through itself, folds, and comes back, while bands of colour run across it without ever settling. Fold it into a kaleidoscope, set how deep the flow goes, and add tracers, the echo a moving thing leaves behind it. Slow and low it is a living wallpaper; pushed up it is full peak. Bass makes it breathe, beats kick the colour, spectral centroid drives the flow.",
+    "DESCRIPTION": "The walls breathing. A surface that will not hold still: its pattern flows through itself, folds, and comes back, while bands of color run across it without ever settling. Fold it into a kaleidoscope, set how deep the flow goes, and add tracers, the echo a moving thing leaves behind it. Slow and low it is a living wallpaper; pushed up it is full peak. Bass makes it breathe, beats kick the color, spectral centroid drives the flow.",
     "CREDIT": "Ghost Arcade psychedelic pack",
     "ISFVSN": "2",
     "CATEGORIES": ["Generator", "Audio Reactive"],

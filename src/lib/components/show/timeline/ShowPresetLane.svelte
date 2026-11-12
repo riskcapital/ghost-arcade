@@ -126,7 +126,7 @@
           onselecttransition(junction.clipId);
         }}
         ondblclick={() => onremovetransition(junction.clipId)}
-        title={`${transitionStyleLabel(junction.window.style)} — ${junction.window.duration.toFixed(2)}s centred on ${formatPrecise(junction.boundary)}. Drag an edge to retime, double-click to remove.`}
+        title={`${transitionStyleLabel(junction.window.style)} — ${junction.window.duration.toFixed(2)}s centered on ${formatPrecise(junction.boundary)}. Drag an edge to retime, double-click to remove.`}
       >
         <div
           class="xf-handle left"

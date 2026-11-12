@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A vector beam on an old phosphor tube. The beam keeps drawing a looping figure whose shape follows the notes; its fresh trace burns hot in the ink colour and leaves a long afterglow in the accent, and where it lingers it slowly burns a ghost into the glass. Every hit overdrives the beam: it flares and blooms, parks for an instant and scorches a spot, skips pieces of its path, kicks off in deflection spikes and leaves faint retraces beside itself. Afterglow sets how long the trace lingers, Burn-in how fast the glass scars and how slowly it clears, Overdrive how hard a hit pushes the beam, Damage how broken the beam gets on hits, Sweep how fast it draws and Figure the family of shapes.",
+    "DESCRIPTION": "A vector beam on an old phosphor tube. The beam keeps drawing a looping figure whose shape follows the notes; its fresh trace burns hot in the ink color and leaves a long afterglow in the accent, and where it lingers it slowly burns a ghost into the glass. Every hit overdrives the beam: it flares and blooms, parks for an instant and scorches a spot, skips pieces of its path, kicks off in deflection spikes and leaves faint retraces beside itself. Afterglow sets how long the trace lingers, Burn-in how fast the glass scars and how slowly it clears, Overdrive how hard a hit pushes the beam, Damage how broken the beam gets on hits, Sweep how fast it draws and Figure the family of shapes.",
     "PASSES": [
         {
             "TARGET": "phos",

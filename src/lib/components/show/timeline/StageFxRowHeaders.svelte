@@ -66,7 +66,7 @@
     <span class="name" title={TIPS[row]}>└ {STAGE_ROW_NAMES[row]}</span>
     <button type="button" class="add" onclick={(e) => openMenu(e, row)} title={row === 'screenfx' ? 'Put a Screen FX block here at the playhead' : 'Put an effect block here at the playhead'} data-stage-fx-add={row}>+</button>
     {#if counts[row] > 0}
-      <button type="button" class="add line" onclick={(e) => openPicker(e, row)} title="Add a control line for a block on this row: any of its settings, colours or its where line" data-stage-fx-line-picker={row}>⌇+</button>
+      <button type="button" class="add line" onclick={(e) => openPicker(e, row)} title="Add a control line for a block on this row: any of its settings, colors or its where line" data-stage-fx-line-picker={row}>⌇+</button>
     {/if}
   </div>
 {/each}

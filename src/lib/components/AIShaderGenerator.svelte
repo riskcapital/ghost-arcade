@@ -197,7 +197,7 @@
       'A flock of 600 boids leaving thin ink trails, tightening into a swirl on every kick',
       'A recursive tree that grows branch by branch, sways in a noise wind and regrows every few bars',
       'Flow-field hatching: thousands of short pen strokes that build up slowly like an etching',
-      'Truchet tiles in two neon colours that flip in waves on the beat',
+      'Truchet tiles in two neon colors that flip in waves on the beat',
       'Kinetic type: the words from a text box break into letters that scatter and re-form'
     ]
   };

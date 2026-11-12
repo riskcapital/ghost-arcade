@@ -189,7 +189,7 @@
     progress = {
       stage: 'cancelled',
       progress: progress.progress,
-      message: 'Cancelling conversion...',
+      message: 'Canceling conversion...',
     };
     try {
       await cancelActiveVideoConversion();
@@ -213,13 +213,13 @@
       resultPath = result.outputPath;
       resultUrl = pathToFileUrl(result.outputPath);
       noticeMessage = result.hdrSkipped
-        ? `${outputFormat.label} ready. This video is HDR and this FFmpeg cannot convert HDR to SDR, so its colours may look washed out.`
+        ? `${outputFormat.label} ready. This video is HDR and this FFmpeg cannot convert HDR to SDR, so its colors may look washed out.`
         : `${outputFormat.label} ready.`;
       progress = { stage: 'complete', progress: 1, message: 'Conversion complete.', outputPath: result.outputPath };
     } catch (error: any) {
       if (isVideoConversionCancelled(error)) {
-        progress = { stage: 'cancelled', progress: 0, message: 'Conversion cancelled.' };
-        noticeMessage = 'Conversion cancelled.';
+        progress = { stage: 'cancelled', progress: 0, message: 'Conversion canceled.' };
+        noticeMessage = 'Conversion canceled.';
       } else {
         progress = { stage: 'error', progress: 0, message: 'Conversion failed' };
         errorMessage = error?.message || String(error);
@@ -402,7 +402,7 @@
         {/if}
         {#if isConverting}
           <button class="btn-danger" onclick={cancelConversion} disabled={isCancelling}>
-            {isCancelling ? 'Cancelling...' : 'Cancel'}
+            {isCancelling ? 'Canceling...' : 'Cancel'}
           </button>
         {/if}
         <button class="btn-primary primary-btn" onclick={startConversion} disabled={!canStart || isConverting}>

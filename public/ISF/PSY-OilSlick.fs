@@ -1,5 +1,5 @@
 /*{
-    "DESCRIPTION": "An oil slick. A film of oil a few hundred millionths of a metre thick on wet black tarmac, and the colours that come from nothing but its thickness: light reflecting off the top of the film and off the bottom interferes, so each thickness cancels some colours and doubles others. The bands are contour lines of the film. It swirls, thins toward its edges, and rings spread through it when something drops in. Seven films, from petrol on a puddle to a soap bubble about to burst. Bass thickens the film, beats drop into it, spectral centroid stirs it.",
+    "DESCRIPTION": "An oil slick. A film of oil a few hundred millionths of a meter thick on wet black tarmac, and the colors that come from nothing but its thickness: light reflecting off the top of the film and off the bottom interferes, so each thickness cancels some colors and doubles others. The bands are contour lines of the film. It swirls, thins toward its edges, and rings spread through it when something drops in. Seven films, from petrol on a puddle to a soap bubble about to burst. Bass thickens the film, beats drop into it, spectral centroid stirs it.",
     "CREDIT": "Ghost Arcade psychedelic pack",
     "ISFVSN": "2",
     "CATEGORIES": ["Generator", "Audio Reactive"],

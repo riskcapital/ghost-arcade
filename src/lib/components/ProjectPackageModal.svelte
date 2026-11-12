@@ -61,7 +61,7 @@
         <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={percent}><span style="width:{percent}%"></span></div>
         <p class="detail">{percent}% · {size(progress.done)} of {size(progress.total)}{progress.file ? ` · ${progress.file.replace(/^Media\//, '')}` : ''}</p>
       </div>
-      <footer><button class="secondary secondary-btn" disabled={cancelling} onclick={cancel}>{cancelling ? 'Cancelling…' : 'Cancel'}</button></footer>
+      <footer><button class="secondary secondary-btn" disabled={cancelling} onclick={cancel}>{cancelling ? 'Canceling…' : 'Cancel'}</button></footer>
     {:else if phase === 'done' && result}
       <div class="body">
         <p>Packed with the project: {result.files} {result.files === 1 ? 'media file' : 'media files'} ({size(result.bytes)}).</p>

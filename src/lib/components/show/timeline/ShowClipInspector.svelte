@@ -196,7 +196,7 @@
       <span class="insp-unit">s</span>
     </label>
     {#if prev}
-      <label class="insp-field" title="Crossfade from the clip before, centred on the cut">
+      <label class="insp-field" title="Crossfade from the clip before, centered on the cut">
         <span>Crossfade</span>
         <input type="checkbox" checked={xfadeOn} disabled={locked} onchange={(e) => setXfade((e.currentTarget as HTMLInputElement).checked)} data-clip-xfade />
         {#if xfadeOn}
@@ -208,7 +208,7 @@
     {#if !locked}
       <WhereEditor where={clip.where} target={{ scope: 'block', id: clip.id }} members={['pieces']} onchange={(where) => patch({ where })} />
     {/if}
-    <span class="insp-swatches" role="group" aria-label="Block colour">
+    <span class="insp-swatches" role="group" aria-label="Block color">
       {#each SWATCHES as sw (sw)}
         <button
           class="insp-swatch"
@@ -216,8 +216,8 @@
           style:background={sw || 'transparent'}
           disabled={locked}
           onclick={() => patch({ color: sw || undefined })}
-          title={sw ? 'Block colour' : 'Row colour'}
-          aria-label={sw ? 'Block colour' : 'Row colour'}
+          title={sw ? 'Block color' : 'Row color'}
+          aria-label={sw ? 'Block color' : 'Row color'}
         ></button>
       {/each}
     </span>

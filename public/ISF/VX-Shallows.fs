@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "Looking up at a rippling water surface from below: a bright round window of sky with a coloured rim, the moving net of sun on the waves, and long shafts of light slanting down into the deep. Each surge in the music heaves the surface in a slow swell that rolls across it, bending the light, and blooms the shafts brighter and longer before they settle; a held sound keeps the water moving faster and the light up, and pitch leans the sun. With the background off only the light is left: the bright surface and its rays.",
+    "DESCRIPTION": "Looking up at a rippling water surface from below: a bright round window of sky with a colored rim, the moving net of sun on the waves, and long shafts of light slanting down into the deep. Each surge in the music heaves the surface in a slow swell that rolls across it, bending the light, and blooms the shafts brighter and longer before they settle; a held sound keeps the water moving faster and the light up, and pitch leans the sun. With the background off only the light is left: the bright surface and its rays.",
     "INPUTS": [
         { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 8, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play", "Bowls", "Drone", "XY tone", "Analog synth", "Scan synth", "Echo shots", "Build and drop", "Siren", "Acid line", "Dub bass"] },
         { "NAME": "vxAuto", "LABEL": "Comes and goes with its sound", "TYPE": "bool", "DEFAULT": true },

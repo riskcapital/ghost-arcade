@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A storm of dither patterns. The voice lights a smooth glowing form, a shaded globe with a ribbon of light sweeping behind it, and draws it only through dithering: a few levels of colour laid out by ordered Bayer grids, halftone dots, line screens and noise. Drifting weather fronts split the frame into regions, each with its own pattern, colour depth and dot size. Every hit of the sound it follows sends a shock front out across the picture that crushes the colour depth to the bone and coarsens the dots as it passes, and swaps the patterns of some regions. Dot size sets the grid; Depth how many levels the calm picture keeps; Fronts how many regions there are; Storm how much each hit changes; Shock how hard the shock front crushes.",
+    "DESCRIPTION": "A storm of dither patterns. The voice lights a smooth glowing form, a shaded globe with a ribbon of light sweeping behind it, and draws it only through dithering: a few levels of color laid out by ordered Bayer grids, halftone dots, line screens and noise. Drifting weather fronts split the frame into regions, each with its own pattern, color depth and dot size. Every hit of the sound it follows sends a shock front out across the picture that crushes the color depth to the bone and coarsens the dots as it passes, and swaps the patterns of some regions. Dot size sets the grid; Depth how many levels the calm picture keeps; Fronts how many regions there are; Storm how much each hit changes; Shock how hard the shock front crushes.",
     "PASSES": [
         {
             "TARGET": "pic",

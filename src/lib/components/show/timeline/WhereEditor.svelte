@@ -183,7 +183,7 @@
           <label class="rng">Spread <input type="range" min="0" max="1" step="0.01" value={where.spread} oninput={(e) => set({ spread: parseFloat((e.currentTarget as HTMLInputElement).value) })} data-where-spread /> {Math.round(where.spread * 100)}%</label>
           <label class="rng">Soft edge <input type="range" min="0" max="1" step="0.01" value={where.soft} oninput={(e) => set({ soft: parseFloat((e.currentTarget as HTMLInputElement).value) })} data-where-soft /> {Math.round(where.soft * 100)}%</label>
           {#if where.motion.kind === 'sweep' || where.motion.kind === 'drawn'}
-            <label class="chk" title="The last piece neighbours the first: a sweep loops without a jump"><input type="checkbox" checked={!!where.wrap} onchange={(e) => set({ wrap: (e.currentTarget as HTMLInputElement).checked })} data-where-wrap /> Wrap</label>
+            <label class="chk" title="The last piece neighbors the first: a sweep loops without a jump"><input type="checkbox" checked={!!where.wrap} onchange={(e) => set({ wrap: (e.currentTarget as HTMLInputElement).checked })} data-where-wrap /> Wrap</label>
           {/if}
         </div>
         {#if members.length === 1 && members[0] === 'pieces'}

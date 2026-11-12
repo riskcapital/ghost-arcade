@@ -103,9 +103,9 @@
     <span>Name</span>
     <input class="insp-name" type="text" value={section.name} onchange={(e) => patch({ name: (e.currentTarget as HTMLInputElement).value.trim() || section.name })} data-section-name-input />
   </label>
-  <span class="insp-colors" role="radiogroup" aria-label="Colour">
+  <span class="insp-colors" role="radiogroup" aria-label="Color">
     {#each SECTION_COLORS as c (c)}
-      <button type="button" role="radio" class="insp-color" class:on={section.color === c} aria-checked={section.color === c} aria-label="Section colour" style:background={c} onclick={() => patch({ color: c })}></button>
+      <button type="button" role="radio" class="insp-color" class:on={section.color === c} aria-checked={section.color === c} aria-label="Section color" style:background={c} onclick={() => patch({ color: c })}></button>
     {/each}
   </span>
   <label class="insp-field">

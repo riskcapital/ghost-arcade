@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A swarm of fireflies swimming round a hidden centre above a dark meadow. Each one glides on its own tilted orbit, drifting in and out, rising and diving, and slowly floating toward you and away again: near ones swell into soft out-of-focus glows, far ones shrink to pinpoints. The music sets how fast they swim; as it swells the swarm widens and brightens, and each hit blooms it outward before it gathers back. Alone they glow on and off at their own pace; Sync pulls their glow onto the beat. The grass below catches their light.",
+    "DESCRIPTION": "A swarm of fireflies swimming round a hidden center above a dark meadow. Each one glides on its own tilted orbit, drifting in and out, rising and diving, and slowly floating toward you and away again: near ones swell into soft out-of-focus glows, far ones shrink to pinpoints. The music sets how fast they swim; as it swells the swarm widens and brightens, and each hit blooms it outward before it gathers back. Alone they glow on and off at their own pace; Sync pulls their glow onto the beat. The grass below catches their light.",
     "INPUTS": [
         { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 3, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play", "Bowls", "Drone", "XY tone", "Analog synth", "Scan synth", "Echo shots", "Build and drop", "Siren", "Acid line", "Dub bass"] },
         { "NAME": "vxAuto", "LABEL": "Comes and goes with its sound", "TYPE": "bool", "DEFAULT": true },

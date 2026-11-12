@@ -84,7 +84,7 @@ export const MACHINE_KITS: MachineKit[] = [
     gain: 0.95,
   },
   {
-    id: 'mk.studio-acoustic', name: 'Studio kit', family: 'classic', blurb: 'A modelled acoustic kit: round kick, crack snare, brushes and toms',
+    id: 'mk.studio-acoustic', name: 'Studio kit', family: 'classic', blurb: 'A modeled acoustic kit: round kick, crack snare, brushes and toms',
     pads: [
       pad('Kick', 'kick', kick(62, 0.5, 0.9, 0.35)), pad('Kick soft', 'kick', kick(58, 0.4, 0.6, 0.1, { level: 0.75 })),
       pad('Snare', 'snare', snare(200, 0.32, 0.75)), pad('Side stick', 'rim', rim(1400, 0.07)),

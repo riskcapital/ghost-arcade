@@ -153,7 +153,7 @@
     </label>
     <label class="lf-check">
       <input type="checkbox" checked={!!follow.bipolar} onchange={(e) => patch({ bipolar: (e.currentTarget as HTMLInputElement).checked })} />
-      <span>Centred: moves up and down around the line</span>
+      <span>Centered: moves up and down around the line</span>
     </label>
     <label class="lf-row">
       <span>Smooth</span>

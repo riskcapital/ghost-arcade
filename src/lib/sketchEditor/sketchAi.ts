@@ -54,12 +54,12 @@ function context(runtime: SketchRuntime): string {
 
 The sketch is a set of files, as in the p5.js Web Editor: sketch.js, index.html and so on. It must stay plain p5.js that runs in the p5.js Web Editor as well. Ghost Arcade adds its own wrapping when the sketch plays, so the code never needs any of it:
 - It runs the sketch on p5.js 1.11, offline, in a window the size of the output (often 1920x1080). ${runtime.canvas?.mode === 'fit' ? 'This sketch\'s canvas keeps its size and is scaled to fit the output.' : 'The canvas grows to fill the output, so positions written from width and height follow it.'} Never add code to size the canvas for Ghost Arcade.
-- Top-level variables the sketch only reads while drawing (numbers, true/false${runtime.colourControls ? ', colours' : ''}) become controls the performer can change live and map to MIDI. Keeping tunable values in well-named top-level variables is how a sketch gets controls.
+- Top-level variables the sketch only reads while drawing (numbers, true/false${runtime.colourControls ? ', colors' : ''}) become controls the performer can change live and map to MIDI. Keeping tunable values in well-named top-level variables is how a sketch gets controls.
 - Nobody touches the picture at a show: there is no mouse, keyboard or camera, so anything that depends on them stays still.
 - ${runtime.soundFromShow
     ? 'p5.sound hears the music of the show: p5.Amplitude, p5.FFT and p5.AudioIn follow it. Use them for audio, exactly as in the p5.js Web Editor.'
     : 'For the music of the show, Ghost Arcade provides window.ghostAudio: level, bass, mid, treble, high, beat, kick and snare from 0 to 1 (all 0 when nothing plays). It is the only Ghost Arcade name a sketch may use.'}
-- The layer can be blended with others and given GPU effects (glow, blur, feedback, colour), so the sketch should draw the form and leave those treatments to Ghost Arcade.`;
+- The layer can be blended with others and given GPU effects (glow, blur, feedback, color), so the sketch should draw the form and leave those treatments to Ghost Arcade.`;
 }
 
 /** A file with line numbers, so replies can point at lines. */
@@ -139,7 +139,7 @@ ${open.text}
 - Keep its idea and look, and the author's names and comments.
 - Positions and sizes from width and height rather than fixed numbers, so the picture fills any screen. Do not change createCanvas() for Ghost Arcade.
 - Replace the mouse and keyboard with motion of its own (noise(), sin(), millis()), since nobody touches a projection.
-- Tunable numbers and colours in well-named top-level variables, so they become controls.
+- Tunable numbers and colors in well-named top-level variables, so they become controls.
 - Time motion with deltaTime or millis() rather than frameCount, and keep heavy work (createGraphics, loading, big allocations) out of draw().
 - Add a short comment by each change saying why.
 

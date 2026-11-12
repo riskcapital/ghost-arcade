@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A picture frame holding a smaller frame holding a smaller frame, over and over, each one turned a little further than the last so the stack winds into a spiral. Light glints along the bevelled edges and a bright band keeps travelling down through the frames. The music speeds the whole stack's turning; each hit swings it round, the deepest frames swinging furthest, and lights the frames up before they ease back; a held sound winds the spiral tighter.",
+    "DESCRIPTION": "A picture frame holding a smaller frame holding a smaller frame, over and over, each one turned a little further than the last so the stack winds into a spiral. Light glints along the bevelled edges and a bright band keeps traveling down through the frames. The music speeds the whole stack's turning; each hit swings it round, the deepest frames swinging furthest, and lights the frames up before they ease back; a held sound winds the spiral tighter.",
     "INPUTS": [
         { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 1, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play", "Bowls", "Drone", "XY tone", "Analog synth", "Scan synth", "Echo shots", "Build and drop", "Siren", "Acid line", "Dub bass"] },
         { "NAME": "vxAuto", "LABEL": "Comes and goes with its sound", "TYPE": "bool", "DEFAULT": true },

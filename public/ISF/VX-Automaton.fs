@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A one-dimensional cellular automaton printing down the screen in crisp square cells. Every hit of the sound it follows computes one new row at the top and pushes the history down; with no hits it steps slowly on its own. On bar lines the rule changes (30, 90, 110, 150 or 45) and new seeds drop in at the pitch, so the frame fills with nested triangles, chaotic shells and travelling structures, each rule's stretch marked off by a hairline.",
+    "DESCRIPTION": "A one-dimensional cellular automaton printing down the screen in crisp square cells. Every hit of the sound it follows computes one new row at the top and pushes the history down; with no hits it steps slowly on its own. On bar lines the rule changes (30, 90, 110, 150 or 45) and new seeds drop in at the pitch, so the frame fills with nested triangles, chaotic shells and traveling structures, each rule's stretch marked off by a hairline.",
     "PASSES": [
         {
             "TARGET": "cells",

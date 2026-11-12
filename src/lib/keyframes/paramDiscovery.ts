@@ -355,7 +355,7 @@ function pushLayerExtras(layer: Layer, params: KeyframeableParam[]): void {
       { key: 'look:enabled', label: 'Look on', type: 'boolean', kind: 'bool', defaultValue: edge.enabled !== false, group },
       { key: 'look:intensity', label: 'Look intensity', type: 'number', min: 0, max: 2, step: 0.01, defaultValue: 1, group },
       { key: 'look:react', label: 'Beat reaction', type: 'number', min: 0, max: 1, step: 0.01, defaultValue: Number(first.react?.amount ?? 0), group },
-      { key: 'look:hue', label: 'Colour step per beat', type: 'number', min: 0, max: 1, step: 0.01, defaultValue: Number(first.react?.hueStep ?? 0), group },
+      { key: 'look:hue', label: 'Color step per beat', type: 'number', min: 0, max: 1, step: 0.01, defaultValue: Number(first.react?.hueStep ?? 0), group },
       { key: 'look:chase', label: 'Chase delay', type: 'number', min: 0, max: 4, step: 0.05, defaultValue: Number(first.chaseSpread ?? 0.5), group },
       { key: 'look:corner', label: 'Corner rounding', type: 'number', min: 0, max: 200, step: 1, defaultValue: Number(edge.cornerRadius ?? 0), group },
     );

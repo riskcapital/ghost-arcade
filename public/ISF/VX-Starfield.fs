@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A deep, slow flight through stars: several layers of sharp points at different depths drift toward you, the near ones faster, with a gentle sideways parallax. Each swell of the sound it follows draws the stars out into soft streaks toward the centre, then lets them settle back to points. A few rare stars burn gold.",
+    "DESCRIPTION": "A deep, slow flight through stars: several layers of sharp points at different depths drift toward you, the near ones faster, with a gentle sideways parallax. Each swell of the sound it follows draws the stars out into soft streaks toward the center, then lets them settle back to points. A few rare stars burn gold.",
     "PASSES": [
         {
             "TARGET": "swellState",
@@ -25,7 +25,7 @@
         { "NAME": "warp", "LABEL": "Warp", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
         { "NAME": "twinkle", "LABEL": "Twinkle", "TYPE": "float", "DEFAULT": 0.35, "MIN": 0, "MAX": 1 },
         { "NAME": "starSize", "LABEL": "Star size", "TYPE": "float", "DEFAULT": 0.35, "MIN": 0, "MAX": 1 },
-        { "NAME": "temperature", "LABEL": "Colour temperature", "TYPE": "float", "DEFAULT": 0.4, "MIN": 0, "MAX": 1 },
+        { "NAME": "temperature", "LABEL": "Color temperature", "TYPE": "float", "DEFAULT": 0.4, "MIN": 0, "MAX": 1 },
         { "NAME": "brightness", "LABEL": "Brightness", "TYPE": "float", "DEFAULT": 0.55, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Stars", "TYPE": "color", "DEFAULT": [0.72, 0.82, 1.0, 1.0] },
         { "NAME": "accent", "LABEL": "Gold stars", "TYPE": "color", "DEFAULT": [1.0, 0.8, 0.45, 1.0] },

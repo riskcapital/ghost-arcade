@@ -399,7 +399,7 @@ function hexToRgb(hex: string): number[] | null {
 function hueName([r, g, b]: number[]): string {
   const max = Math.max(r, g, b);
   const d = max - Math.min(r, g, b);
-  if (d === 0) return 'grey';
+  if (d === 0) return 'gray';
   const h = max === r ? ((g - b) / d + 6) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
   const degrees = h * 60;
   const names: Array<[number, string]> = [[15, 'red'], [40, 'orange'], [65, 'yellow'], [90, 'lime'], [150, 'green'], [175, 'teal'], [200, 'cyan'], [250, 'blue'], [285, 'purple'], [320, 'magenta'], [345, 'pink'], [360, 'red']];
@@ -470,8 +470,8 @@ function colourTips(source: SketchSource, runtime: SketchRuntime): SketchTip[] {
       id: `colour-${hex}`,
       kind: 'colour',
       severity: 'suggestion',
-      title: `Name the colour ${hex}`,
-      body: `${first.call.name}(${written}${first.alpha ? ', …' : ''})${uses.length > 1 ? ` and ${uses.length - 1} more use${uses.length > 2 ? 's' : ''} of it` : ''}: a colour written into a call is easy to lose. As a variable at the top (let ${name} = ${value}) it is one place to change${runtime.colourControls ? ', and Ghost Arcade shows it as a colour control you can change live, map to MIDI or animate' : ''}.`,
+      title: `Name the color ${hex}`,
+      body: `${first.call.name}(${written}${first.alpha ? ', …' : ''})${uses.length > 1 ? ` and ${uses.length - 1} more use${uses.length > 2 ? 's' : ''} of it` : ''}: a color written into a call is easy to lose. As a variable at the top (let ${name} = ${value}) it is one place to change${runtime.colourControls ? ', and Ghost Arcade shows it as a color control you can change live, map to MIDI or animate' : ''}.`,
       ranges: uses.map((u) => ({ from: u.argsFrom, to: u.argsTo })),
       fixes: [{ id: `colour-${hex}`, label: `Name it ${name}`, changes: edit.build() }],
       links: [p5Reference('fill')],
@@ -502,7 +502,7 @@ function performanceTips(source: SketchSource): SketchTip[] {
     tips.push(tip(source, {
       id: 'perf-pixels', kind: 'performance', severity: 'suggestion',
       title: 'Pixel work every frame',
-      body: 'loadPixels() and updatePixels() copy every pixel of the canvas, two million of them at full HD, every frame. Ghost Arcade\'s effects (pixelate, colour grading, feedback) do this kind of work on the graphics card. If the sketch needs it, work on a smaller createGraphics() and draw that scaled up.',
+      body: 'loadPixels() and updatePixels() copy every pixel of the canvas, two million of them at full HD, every frame. Ghost Arcade\'s effects (pixelate, color grading, feedback) do this kind of work on the graphics card. If the sketch needs it, work on a smaller createGraphics() and draw that scaled up.',
       ranges: pixels.map((c) => rangeOf(c.n)), fixes: [], links: [p5Reference('loadPixels')],
     }));
   }

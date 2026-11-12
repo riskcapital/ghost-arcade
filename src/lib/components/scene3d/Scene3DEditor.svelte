@@ -69,7 +69,7 @@
   <Slider label="Glow" value={scene.post.bloom} min={0} max={2} onchange={(v, live) => write({ ...scene, post: { ...scene.post, bloom: v } }, live, 'bloom')} />
   <Slider label="Exposure" value={scene.post.exposure} min={-4} max={4} step={0.05} onchange={(v, live) => write({ ...scene, post: { ...scene.post, exposure: v } }, live, 'exposure')} />
   <Slider label="Contrast" value={scene.post.contrast} min={0} max={2} onchange={(v, live) => write({ ...scene, post: { ...scene.post, contrast: v } }, live, 'contrast')} />
-  <Slider label="Colour" value={scene.post.saturation} min={0} max={2} onchange={(v, live) => write({ ...scene, post: { ...scene.post, saturation: v } }, live, 'saturation')} />
+  <Slider label="Color" value={scene.post.saturation} min={0} max={2} onchange={(v, live) => write({ ...scene, post: { ...scene.post, saturation: v } }, live, 'saturation')} />
   <Slider label="Warmth" value={scene.post.temperature} min={-1} max={1} onchange={(v, live) => write({ ...scene, post: { ...scene.post, temperature: v } }, live, 'temperature')} />
   <Slider label="Grain" value={scene.post.grain} min={0} max={1} onchange={(v, live) => write({ ...scene, post: { ...scene.post, grain: v } }, live, 'grain')} />
 
@@ -142,7 +142,7 @@
         </select>
       </div>
       <div class="row">
-        <label for="s3d-base-{layerId}">Colour</label>
+        <label for="s3d-base-{layerId}">Color</label>
         <input id="s3d-base-{layerId}" type="color" value={node.material.base} onchange={(e) => write(setMaterial(scene, node!.id, { base: e.currentTarget.value }))} />
       </div>
       <Slider label="Metal" value={node.material.metal} min={0} max={1} onchange={(v, live) => write(setMaterial(scene, node!.id, { metal: v }), live, `${node!.id}-metal`)} />
@@ -161,7 +161,7 @@
       </div>
     {:else if node.kind === 'light'}
       <div class="row">
-        <label for="s3d-lcolor-{layerId}">Colour</label>
+        <label for="s3d-lcolor-{layerId}">Color</label>
         <input id="s3d-lcolor-{layerId}" type="color" value={node.color} onchange={(e) => write(patchNode(scene, node!.id, { color: e.currentTarget.value }))} />
       </div>
       <Slider label="Power" value={node.power} min={0} max={10} step={0.05} onchange={(v, live) => write(patchNode(scene, node!.id, { power: v }), live, `${node!.id}-power`)} />
@@ -171,11 +171,11 @@
           <input type="checkbox" checked={node.shadows} aria-label="Shadows" onchange={(e) => write(patchNode(scene, node!.id, { shadows: e.currentTarget.checked }))} />
         </div>
         <Slider label="Circles" value={node.orbit} min={-60} max={60} step={0.5} unit="°/s" onchange={(v, live) => write(patchNode(scene, node!.id, { orbit: v }), live, `${node!.id}-orbit`)} />
-        <p class="hint">A sun's direction is from the world's centre to its place.</p>
+        <p class="hint">A sun's direction is from the world's center to its place.</p>
       {/if}
     {:else if node.kind === 'emitter'}
       <div class="row">
-        <label for="s3d-ecolor-{layerId}">Colour</label>
+        <label for="s3d-ecolor-{layerId}">Color</label>
         <input id="s3d-ecolor-{layerId}" type="color" value={node.color} onchange={(e) => write(patchNode(scene, node!.id, { color: e.currentTarget.value }))} />
       </div>
       <Slider label="A second" value={node.rate} min={0} max={20000} step={10} onchange={(v, live) => write(patchNode(scene, node!.id, { rate: v }), live, `${node!.id}-rate`)} />

@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A staircase wavefolder. A ramp from the centre (a circle, diamond or square) is cut into quantised steps and folded up and down in stages, so the frame fills with concentric terraces of stepped brightness, each edge a crisp line. The bass swells the step count so the rings crowd inward as it plays; every bass note pushes the rings outward; the top ring of each stage is the accent.",
+    "DESCRIPTION": "A staircase wavefolder. A ramp from the center (a circle, diamond or square) is cut into quantized steps and folded up and down in stages, so the frame fills with concentric terraces of stepped brightness, each edge a crisp line. The bass swells the step count so the rings crowd inward as it plays; every bass note pushes the rings outward; the top ring of each stage is the accent.",
     "PASSES": [
         {
             "TARGET": "stairState",
@@ -33,7 +33,7 @@
         { "NAME": "phaseResponse", "LABEL": "Phase response", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
         { "NAME": "contrast", "LABEL": "Contrast", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0, "MAX": 1 },
         { "NAME": "fill", "LABEL": "Fill", "TYPE": "float", "DEFAULT": 0.35, "MIN": 0, "MAX": 1 },
-        { "NAME": "centreOffset", "LABEL": "Centre offset", "TYPE": "float", "DEFAULT": 0.2, "MIN": 0, "MAX": 1 },
+        { "NAME": "centreOffset", "LABEL": "Center offset", "TYPE": "float", "DEFAULT": 0.2, "MIN": 0, "MAX": 1 },
         { "NAME": "size", "LABEL": "Size", "TYPE": "float", "DEFAULT": 0.7, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Steps", "TYPE": "color", "DEFAULT": [0.75, 1.0, 0.92, 1.0] },
         { "NAME": "accent", "LABEL": "Top ring", "TYPE": "color", "DEFAULT": [1.0, 0.45, 0.12, 1.0] },

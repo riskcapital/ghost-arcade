@@ -1,5 +1,5 @@
 /*{
-    "DESCRIPTION": "A liquid light show. Coloured oils and dyed water pressed between clock glasses on an overhead projector, the way the ballroom light shows of the sixties were made: blobs that swell and split when the plates are squeezed, dyes that stack like stained glass where they overlap, a dark line and a bright one round every edge where the liquid bends the lamp. Up to three dishes are stacked, each with its own dye, and the whole stack turns like a colour wheel. Bass squeezes the plates, beats pump them, spectral centroid stirs the oil.",
+    "DESCRIPTION": "A liquid light show. Colored oils and dyed water pressed between clock glasses on an overhead projector, the way the ballroom light shows of the sixties were made: blobs that swell and split when the plates are squeezed, dyes that stack like stained glass where they overlap, a dark line and a bright one round every edge where the liquid bends the lamp. Up to three dishes are stacked, each with its own dye, and the whole stack turns like a color wheel. Bass squeezes the plates, beats pump them, spectral centroid stirs the oil.",
     "CREDIT": "Ghost Arcade psychedelic pack",
     "ISFVSN": "2",
     "CATEGORIES": ["Generator", "Audio Reactive"],

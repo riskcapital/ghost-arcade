@@ -112,7 +112,7 @@
   {#if setupOpen}
     <div class="drawer">
       {#if missing.length}
-        <p class="hint">Lanes to add at the end of the set, each named and coloured, playing as its studio sound:</p>
+        <p class="hint">Lanes to add at the end of the set, each named and colored, playing as its studio sound:</p>
         <div class="chips">
           {#each missing as lane (lane.id)}
             <label class="chip" style="--lane: #{lane.color.toString(16).padStart(6, '0')}">

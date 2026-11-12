@@ -187,7 +187,7 @@
         <select value={row.live?.launch ?? 'beat'} onchange={(e) => setLiveOptions(row.id, { launch: (e.currentTarget as HTMLSelectElement).value as 'beat' | 'bar' | 'set' })} data-live-launch>
           <option value="beat">On the beat</option>
           <option value="bar">On the bar</option>
-          <option value="set">On the set's launch quantise</option>
+          <option value="set">On the set's launch quantize</option>
         </select>
       </label>
       <label class="insp-field">

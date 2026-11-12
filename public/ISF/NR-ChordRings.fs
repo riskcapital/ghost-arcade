@@ -5,7 +5,7 @@
         "Note Reactive",
         "Generator"
     ],
-    "DESCRIPTION": "Every note sends out a ring coloured by its pitch that widens as the note fades, so chords leave ripples. The kick lights the centre and the snare shimmers the rings. Build keeps the rings standing and stacks them up.",
+    "DESCRIPTION": "Every note sends out a ring colored by its pitch that widens as the note fades, so chords leave ripples. The kick lights the center and the snare shimmers the rings. Build keeps the rings standing and stacks them up.",
     "INPUTS": [
         {
             "NAME": "noteMode",
@@ -53,7 +53,7 @@
             "DEFAULT": 0.85,
             "MIN": 0.0,
             "MAX": 1.0,
-            "LABEL": "Colour"
+            "LABEL": "Color"
         },
         {
             "NAME": "notePitch0",

@@ -51,10 +51,10 @@ export function screenFxBlockParams(clip: TimelineStageClip): ParamEntry[] {
     });
   }
   out.push(
-    { key: 'sfx:color', label: 'Lit colour', group, min: 0, max: 0xffffff, step: 1, default: hexToInt(fx.color, DEFAULT_CHASE_COLOR), kind: 'colour' },
-    { key: 'sfx:color2', label: 'Rest colour', group, min: 0, max: 0xffffff, step: 1, default: hexToInt(fx.color2, DEFAULT_CHASE_COLOR2), kind: 'colour' },
-    { key: 'sfx:output', label: 'Drives (brightness / colour / both)', group, min: 0, max: 2, step: 1, default: Math.max(0, OUTPUTS.indexOf(fx.output ?? 'brightness')), kind: 'stepped' },
-    { key: 'sfx:colorStyle', label: 'Colour style (two / rainbow)', group, min: 0, max: 1, step: 1, default: fx.colorStyle === 'rainbow' ? 1 : 0, kind: 'stepped' },
+    { key: 'sfx:color', label: 'Lit color', group, min: 0, max: 0xffffff, step: 1, default: hexToInt(fx.color, DEFAULT_CHASE_COLOR), kind: 'colour' },
+    { key: 'sfx:color2', label: 'Rest color', group, min: 0, max: 0xffffff, step: 1, default: hexToInt(fx.color2, DEFAULT_CHASE_COLOR2), kind: 'colour' },
+    { key: 'sfx:output', label: 'Drives (brightness / color / both)', group, min: 0, max: 2, step: 1, default: Math.max(0, OUTPUTS.indexOf(fx.output ?? 'brightness')), kind: 'stepped' },
+    { key: 'sfx:colorStyle', label: 'Color style (two / rainbow)', group, min: 0, max: 1, step: 1, default: fx.colorStyle === 'rainbow' ? 1 : 0, kind: 'stepped' },
   );
   return out;
 }

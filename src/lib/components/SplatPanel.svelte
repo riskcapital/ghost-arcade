@@ -1701,13 +1701,13 @@
             </div>
 
             <div class="property-row">
-              <label>Haze colour</label>
+              <label>Haze color</label>
               <input
                 type="color"
                 value={sc.volumetricColor ?? '#cfe0ff'}
                 oninput={(e) => doUpdate({ volumetricColor: (e.target as HTMLInputElement).value })}
                 data-midi-path="map:splat:volumetricColor"
-                data-midi-label="Haze Colour"
+                data-midi-label="Haze Color"
               />
             </div>
 
@@ -2323,7 +2323,7 @@
 
             {#if sc.constellationWave}
               <p class="hint">
-                Sparkle sweeps across the cloud as a travelling front instead
+                Sparkle sweeps across the cloud as a traveling front instead
                 of firing uniformly.
               </p>
               <div class="property-row">

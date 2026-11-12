@@ -15,7 +15,7 @@
         {"NAME": "gap",       "TYPE": "float", "DEFAULT": 0.30, "MIN": 0.00, "MAX": 1.00},
         {"NAME": "gloss",     "TYPE": "float", "DEFAULT": 0.55, "MIN": 0.00, "MAX": 1.00},
         {"NAME": "tilePattern","TYPE": "long", "DEFAULT": 0,
-         "VALUES": [0, 1, 2, 3], "LABELS": ["Checker", "Rows", "Scattered", "One colour"]},
+         "VALUES": [0, 1, 2, 3], "LABELS": ["Checker", "Rows", "Scattered", "One color"]},
         {"NAME": "drift",     "TYPE": "float", "DEFAULT": 0.25, "MIN": 0.00, "MAX": 1.50},
         {"NAME": "turn",      "TYPE": "float", "DEFAULT": 0.10, "MIN": -1.00, "MAX": 1.00},
         {"NAME": "hueShift",  "TYPE": "float", "DEFAULT": 0.00, "MIN": 0.00, "MAX": 1.00},

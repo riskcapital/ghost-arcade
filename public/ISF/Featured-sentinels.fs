@@ -22,7 +22,7 @@
         { "NAME": "pillarRadius",    "TYPE": "float", "DEFAULT": 0.45, "MIN": 0.10,  "MAX": 1.5,  "LABEL": "Pillar Radius" },
         { "NAME": "pillarFalloff",   "TYPE": "float", "DEFAULT": 1.6,  "MIN": 0.5,   "MAX": 4.0,  "LABEL": "Pillar Sharpness" },
         { "NAME": "pillarHeight",    "TYPE": "float", "DEFAULT": 3.0,  "MIN": 0.5,   "MAX": 10.0, "LABEL": "Pillar Height" },
-        { "NAME": "centreY",         "TYPE": "float", "DEFAULT": 0.0,  "MIN": -3.0,  "MAX": 3.0,  "LABEL": "Pillar Centre Y" },
+        { "NAME": "centreY",         "TYPE": "float", "DEFAULT": 0.0,  "MIN": -3.0,  "MAX": 3.0,  "LABEL": "Pillar Center Y" },
         { "NAME": "camHeight",       "TYPE": "float", "DEFAULT": 0.2,  "MIN": -2.0,  "MAX": 2.0,  "LABEL": "Camera Height" },
         { "NAME": "camPitch",        "TYPE": "float", "DEFAULT": 0.05, "MIN": -0.5,  "MAX": 0.5,  "LABEL": "Camera Pitch" },
         { "NAME": "sway",            "TYPE": "float", "DEFAULT": 0.15, "MIN": 0.0,   "MAX": 1.0,  "LABEL": "Camera Sway" },

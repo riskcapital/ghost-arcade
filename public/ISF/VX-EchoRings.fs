@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "Tape echo drawn as rings. Every hit throws a thin ring out of a slowly wandering source, and the ring repeats like a dub delay: each echo lands on the echo time, fainter and softer than the last, walking off-centre and wavering with tape wow. Old echoes sink back into the dark.",
+    "DESCRIPTION": "Tape echo drawn as rings. Every hit throws a thin ring out of a slowly wandering source, and the ring repeats like a dub delay: each echo lands on the echo time, fainter and softer than the last, walking off-center and wavering with tape wow. Old echoes sink back into the dark.",
     "PASSES": [
         {
             "TARGET": "hits",

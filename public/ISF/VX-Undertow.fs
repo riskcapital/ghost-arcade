@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "Light poured into a slowly turning current. Every frame the picture is carried a little inward, twisted and stirred, and it drifts along its own contours, so what you see is the music's last few seconds folding over itself. A ring of light breathes with the sound and sheds its colour into the current; points of light circle it and leave trails. The music sets how fast the current turns and pulls, the swell widens the ring, and each hit throws a bright pulse into the stream.",
+    "DESCRIPTION": "Light poured into a slowly turning current. Every frame the picture is carried a little inward, twisted and stirred, and it drifts along its own contours, so what you see is the music's last few seconds folding over itself. A ring of light breathes with the sound and sheds its color into the current; points of light circle it and leave trails. The music sets how fast the current turns and pulls, the swell widens the ring, and each hit throws a bright pulse into the stream.",
     "PASSES": [
         { "TARGET": "blurA", "WIDTH": "$WIDTH/4", "HEIGHT": "$HEIGHT/4" },
         { "TARGET": "feedback", "PERSISTENT": true, "FLOAT": true },

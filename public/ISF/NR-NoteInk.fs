@@ -5,7 +5,7 @@
         "Note Reactive",
         "Generator"
     ],
-    "DESCRIPTION": "Each note is a brush that paints coloured ink across the canvas, its path set by the pitch. In Fade the ink washes away soon after a note ends; in Build it stays and keeps flowing, so a whole performance paints one picture.",
+    "DESCRIPTION": "Each note is a brush that paints colored ink across the canvas, its path set by the pitch. In Fade the ink washes away soon after a note ends; in Build it stays and keeps flowing, so a whole performance paints one picture.",
     "PERSISTENT_BUFFERS": [
         "inkBuffer"
     ],
@@ -64,7 +64,7 @@
             "DEFAULT": 0.85,
             "MIN": 0.0,
             "MAX": 1.0,
-            "LABEL": "Colour"
+            "LABEL": "Color"
         },
         {
             "NAME": "notePitch0",

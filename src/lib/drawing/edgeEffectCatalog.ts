@@ -32,7 +32,7 @@ export interface EdgeTypeDef {
 
 const rgba = (r: number, g: number, b: number, a = 1) => [r, g, b, a];
 
-const color = (key = 'color', label = 'Colour'): EdgeParamDef => ({ key, label, kind: 'color' });
+const color = (key = 'color', label = 'Color'): EdgeParamDef => ({ key, label, kind: 'color' });
 const width: EdgeParamDef = { key: 'width', label: 'Width', kind: 'number', min: 0.25, max: 40, step: 0.25, format: 'px' };
 const speed = (min = -3, max = 3, label = 'Speed'): EdgeParamDef => ({ key: 'speed', label, kind: 'number', min, max, step: 0.05, format: 'x' });
 const pxParam = (key: string, label: string, min: number, max: number, step = 1): EdgeParamDef => ({ key, label, kind: 'number', min, max, step, format: 'px' });
@@ -148,7 +148,7 @@ export const EDGE_STROKE_TYPES: EdgeTypeDef[] = [
   {
     type: 'wireframe', label: 'Wireframe', group: 'Structure',
     defaults: { type: 'wireframe', color: rgba(1, 1, 1), width: 1.5, spokes: true, triangles: true, outline: true },
-    params: [color(), width, toggle('spokes', 'Lines to centre'), toggle('triangles', 'Triangles'), toggle('outline', 'Outline')],
+    params: [color(), width, toggle('spokes', 'Lines to center'), toggle('triangles', 'Triangles'), toggle('outline', 'Outline')],
   },
   {
     type: 'corners', label: 'Corner accents', group: 'Accents',
@@ -209,7 +209,7 @@ export const EDGE_FILL_TYPES: EdgeTypeDef[] = [
   {
     type: 'gradient', label: 'Gradient', group: 'Classic', webgl: true,
     defaults: { type: 'gradient', color: rgba(1, 0, 0), color2: rgba(0, 0, 1), angle: 0, gradientType: 'linear', speed: 0 },
-    params: [color('color', 'Colour 1'), color('color2', 'Colour 2'), select('gradientType', 'Shape', [['linear', 'Linear'], ['radial', 'Radial'], ['angular', 'Angular'], ['diamond', 'Diamond']]), deg(), num('speed', 'Speed', -3, 3, 0.05, 'x')],
+    params: [color('color', 'Color 1'), color('color2', 'Color 2'), select('gradientType', 'Shape', [['linear', 'Linear'], ['radial', 'Radial'], ['angular', 'Angular'], ['diamond', 'Diamond']]), deg(), num('speed', 'Speed', -3, 3, 0.05, 'x')],
   },
   {
     type: 'plasma', label: 'Plasma', group: 'Classic', webgl: true,
@@ -239,12 +239,12 @@ export const EDGE_FILL_TYPES: EdgeTypeDef[] = [
   {
     type: 'noise', label: 'Noise', group: 'Classic', webgl: true,
     defaults: { type: 'noise', color1: rgba(0, 0, 0), color2: rgba(1, 1, 1), scale: 5, octaves: 4, speed: 0.5, turbulence: 0.5 },
-    params: [color('color1', 'Colour 1'), color('color2', 'Colour 2'), num('scale', 'Scale', 1, 30, 0.5), pct('turbulence', 'Turbulence'), speed(0, 3)],
+    params: [color('color1', 'Color 1'), color('color2', 'Color 2'), num('scale', 'Scale', 1, 30, 0.5), pct('turbulence', 'Turbulence'), speed(0, 3)],
   },
   {
-    type: 'randomColor', label: 'Random colour', group: 'Colour',
+    type: 'randomColor', label: 'Random color', group: 'Color',
     defaults: { type: 'randomColor', saturation: 0.85, brightness: 1, opacity: 1, beatChange: false },
-    params: [pct('saturation', 'Saturation'), pct('brightness', 'Brightness'), pct('opacity', 'Opacity'), toggle('beatChange', 'New colour each beat')],
+    params: [pct('saturation', 'Saturation'), pct('brightness', 'Brightness'), pct('opacity', 'Opacity'), toggle('beatChange', 'New color each beat')],
   },
   {
     type: 'inside', label: 'Inside', group: 'Reveal',
@@ -294,22 +294,22 @@ export const EDGE_FILL_TYPES: EdgeTypeDef[] = [
   {
     type: 'hypnotic', label: 'Hypnotic', group: 'Pattern',
     defaults: { type: 'hypnotic', color: rgba(1, 1, 1), color2: rgba(0, 0, 0, 0), band: 20, speed: 0.5 },
-    params: [color('color', 'Colour 1'), color('color2', 'Colour 2'), pxParam('band', 'Band', 2, 200), num('speed', 'Speed', -3, 3, 0.05, 'x')],
+    params: [color('color', 'Color 1'), color('color2', 'Color 2'), pxParam('band', 'Band', 2, 200), num('speed', 'Speed', -3, 3, 0.05, 'x')],
   },
   {
     type: 'stripes', label: 'Stripes', group: 'Pattern',
     defaults: { type: 'stripes', color: rgba(1, 1, 1), color2: rgba(0, 0, 0, 0), angle: 45, stripeWidth: 16, speed: 0.5 },
-    params: [color('color', 'Colour 1'), color('color2', 'Colour 2'), deg(), pxParam('stripeWidth', 'Stripe width', 1, 200), num('speed', 'Speed', -3, 3, 0.05, 'x')],
+    params: [color('color', 'Color 1'), color('color2', 'Color 2'), deg(), pxParam('stripeWidth', 'Stripe width', 1, 200), num('speed', 'Speed', -3, 3, 0.05, 'x')],
   },
   {
     type: 'doubleStripes', label: 'Double stripes', group: 'Pattern',
     defaults: { type: 'doubleStripes', color: rgba(1, 1, 1), color2: rgba(0, 0, 0, 0), angle: 45, stripeWidth: 12, speed: 0.4 },
-    params: [color('color', 'Colour 1'), color('color2', 'Colour 2'), deg(), pxParam('stripeWidth', 'Stripe width', 1, 200), num('speed', 'Speed', -3, 3, 0.05, 'x')],
+    params: [color('color', 'Color 1'), color('color2', 'Color 2'), deg(), pxParam('stripeWidth', 'Stripe width', 1, 200), num('speed', 'Speed', -3, 3, 0.05, 'x')],
   },
   {
     type: 'mosaic', label: 'Mosaic', group: 'Pattern',
     defaults: { type: 'mosaic', color: rgba(1, 1, 1), color2: rgba(0, 0, 0, 0), cell: 24, progressMode: 'loop', speed: 0.5, progress: 1 },
-    params: [color('color', 'Colour 1'), color('color2', 'Colour 2'), pxParam('cell', 'Cell', 4, 200), ...progressParams],
+    params: [color('color', 'Color 1'), color('color2', 'Color 2'), pxParam('cell', 'Cell', 4, 200), ...progressParams],
   },
   {
     type: 'halftone', label: 'Halftone', group: 'Pattern',
@@ -418,10 +418,10 @@ export const EDGE_ANIMATION_TYPES: EdgeTypeDef[] = [
 
 /** Effect-level controls shown under every effect. */
 export const EDGE_EFFECT_LEVEL_PARAMS: EdgeParamDef[] = [
-  toggle('customCenter', 'Custom centre'),
-  pct('centerX', 'Centre X'),
-  pct('centerY', 'Centre Y'),
-  select('chaseMode', 'Group chase', [['none', 'Off'], ['order', 'Layer order'], ['leftToRight', 'Left to right'], ['radial', 'From the centre']]),
+  toggle('customCenter', 'Custom center'),
+  pct('centerX', 'Center X'),
+  pct('centerY', 'Center Y'),
+  select('chaseMode', 'Group chase', [['none', 'Off'], ['order', 'Layer order'], ['leftToRight', 'Left to right'], ['radial', 'From the center']]),
   num('chaseSpread', 'Chase delay', 0, 4, 0.05, 'plain'),
 ];
 

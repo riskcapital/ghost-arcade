@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A flight over a mountain landscape captured as a laser survey: thousands of points on a grid, joined by faint contour lines, sharp in the distance and softening into large out-of-focus dots close to the camera, streaking as they rush past. A laser line sweeps out across the ground, lighting the points it passes and leaving a fading glow. Ridges roll away across the land and every hit throws them up in the laser's colour before they settle; the music speeds the flight and the note's pitch raises or flattens the mountains.",
+    "DESCRIPTION": "A flight over a mountain landscape captured as a laser survey: thousands of points on a grid, joined by faint contour lines, sharp in the distance and softening into large out-of-focus dots close to the camera, streaking as they rush past. A laser line sweeps out across the ground, lighting the points it passes and leaving a fading glow. Ridges roll away across the land and every hit throws them up in the laser's color before they settle; the music speeds the flight and the note's pitch raises or flattens the mountains.",
     "INPUTS": [
         { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 5, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play", "Bowls", "Drone", "XY tone", "Analog synth", "Scan synth", "Echo shots", "Build and drop", "Siren", "Acid line", "Dub bass"] },
         { "NAME": "vxAuto", "LABEL": "Comes and goes with its sound", "TYPE": "bool", "DEFAULT": true },

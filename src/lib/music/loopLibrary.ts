@@ -303,7 +303,7 @@ const CHORDS: LibMelodic[] = [
 // ── Textures ────────────────────────────────────────────────────────────
 
 const TEXTURES: LibMelodic[] = [
-  written('cur-tex-harbour-fog', 'Harbour Fog', 'texture', 'ambient', 'pad.dark-drone', FEELS.float, 16, [[0, 7.8, [0, 4, 9], 0.6], [8, 7.8, [-2, 2, 7], 0.55]]),
+  written('cur-tex-harbour-fog', 'Harbor Fog', 'texture', 'ambient', 'pad.dark-drone', FEELS.float, 16, [[0, 7.8, [0, 4, 9], 0.6], [8, 7.8, [-2, 2, 7], 0.55]]),
   written('cur-tex-halo', 'Halo', 'texture', 'ambient', 'pad.shimmer', FEELS.float, 8, [[0, 7.8, [7, 11, 14], 0.5], [4, 3.8, 16, 0.35]]),
   written('cur-tex-cave-drips', 'Cave Drips', 'texture', 'dub', 'pad.glass', FEELS.dub, 8, [[0.5, 0.4, 9, 0.85], [2.75, 0.4, 11, 0.65], [4.25, 0.4, 7, 0.8], [6.5, 0.4, 12, 0.62], [7.25, 0.4, 11, 0.5]]),
   written('cur-tex-slow-swell', 'Slow Swell', 'texture', 'ambient', 'pad.sweep', FEELS.float, 16, [[0, 15.8, [0, 2, 4, 6], 0.55], [8, 7.8, 9, 0.35]]),

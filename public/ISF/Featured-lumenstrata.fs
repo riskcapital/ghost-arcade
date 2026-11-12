@@ -1,5 +1,5 @@
 /*{
-    "DESCRIPTION": "Lumen Strata — a centred stack of overlapping translucent rounded-rectangle layers, each sliding up/down on its own phase and morphing its shape over time. Not a repeating concentric loop: the layers desync, breathe, and the palette drifts, so the overlaps evolve forever and never resolve to the same frame. Vertical red/magenta/cyan/indigo gradient. Pure 2D SDF.",
+    "DESCRIPTION": "Lumen Strata — a centered stack of overlapping translucent rounded-rectangle layers, each sliding up/down on its own phase and morphing its shape over time. Not a repeating concentric loop: the layers desync, breathe, and the palette drifts, so the overlaps evolve forever and never resolve to the same frame. Vertical red/magenta/cyan/indigo gradient. Pure 2D SDF.",
     "CREDIT": "Ghost Arcade",
     "ISFVSN": "2",
     "CATEGORIES": ["Generator", "Geometric", "Minimal"],

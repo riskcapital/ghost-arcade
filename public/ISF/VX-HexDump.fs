@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A memory dump scrolling past: an address column, sixteen bytes a row in hex and the same bytes decoded as text, in a crisp terminal font. The memory has its own character (runs of zeros, pointer tables, fill patterns, packed data and readable strings). Every hit of the sound it follows corrupts it: a block of bytes is overwritten and spreads in the accent colour, scattered bits flip, a band of rows repeats the same address and now and then the read jumps ahead. Corrupted blocks scroll away with the data and heal after a while. Text size sets how many rows fill the frame, Scroll speed how fast it reads, Corruption how big the damage is, Jumps how often a hit skips ahead and Healing how long the damage lasts.",
+    "DESCRIPTION": "A memory dump scrolling past: an address column, sixteen bytes a row in hex and the same bytes decoded as text, in a crisp terminal font. The memory has its own character (runs of zeros, pointer tables, fill patterns, packed data and readable strings). Every hit of the sound it follows corrupts it: a block of bytes is overwritten and spreads in the accent color, scattered bits flip, a band of rows repeats the same address and now and then the read jumps ahead. Corrupted blocks scroll away with the data and heal after a while. Text size sets how many rows fill the frame, Scroll speed how fast it reads, Corruption how big the damage is, Jumps how often a hit skips ahead and Healing how long the damage lasts.",
     "PASSES": [
         { "TARGET": "clock", "PERSISTENT": true, "FLOAT": true, "WIDTH": 1, "HEIGHT": 1 },
         { "TARGET": "mem", "PERSISTENT": true, "FLOAT": true, "WIDTH": 1, "HEIGHT": 1 },

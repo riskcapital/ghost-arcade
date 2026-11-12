@@ -88,7 +88,7 @@
     aria-valuemax="100"
     aria-valuenow={Math.round(value * 100)}
     aria-valuetext={value < 0.02 ? 'Deck A' : value > 0.98 ? 'Deck B' : `${Math.round(value * 100)}% to B`}
-    title="Moves Live's crossfader{linked ? " and Ghost Arcade's" : ''}. Double-click to centre"
+    title="Moves Live's crossfader{linked ? " and Ghost Arcade's" : ''}. Double-click to center"
     onpointerdown={onPointerDown}
     onpointermove={onPointerMove}
     onpointerup={onPointerUp}
@@ -110,7 +110,7 @@
   </div>
   <div class="cuts">
     <button onclick={() => onChange(0)}>◀ A</button>
-    <button onclick={() => onChange(0.5)}>Centre</button>
+    <button onclick={() => onChange(0.5)}>Center</button>
     <button onclick={() => onChange(1)}>B ▶</button>
   </div>
 </div>

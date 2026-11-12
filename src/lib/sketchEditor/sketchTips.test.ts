@@ -149,7 +149,7 @@ function draw() {
 
   it('groups uses of one colour and skips greys', () => {
     const tips = tipsOf(sketch).filter((t) => t.kind === 'colour');
-    expect(tips.map((t) => t.title)).toEqual(['Name the colour #ff0064', 'Name the colour #00ff88']);
+    expect(tips.map((t) => t.title)).toEqual(['Name the color #ff0064', 'Name the color #00ff88']);
     expect(tips.map((t) => t.fixes[0].label)).toEqual(['Name it pinkColor', 'Name it tealColor']);
     expect(tips[0].ranges).toHaveLength(2);
   });
@@ -168,8 +168,8 @@ function draw() {
   });
 
   it('mentions the colour control only when Ghost Arcade makes one', () => {
-    expect(tipOf(sketch, 'colour')!.body).not.toContain('colour control');
-    expect(tipOf(sketch, 'colour', { runtime: { colourControls: true } })!.body).toContain('colour control');
+    expect(tipOf(sketch, 'colour')!.body).not.toContain('color control');
+    expect(tipOf(sketch, 'colour', { runtime: { colourControls: true } })!.body).toContain('color control');
   });
 });
 

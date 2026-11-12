@@ -50,7 +50,7 @@ export interface ColorScheme {
 export const SCHEME_MIDNIGHT_CORAL: ColorScheme = {
   id: 'midnight-coral',
   name: 'Ghost Chrome',
-  description: 'Ghostly white and metallic ice blue-grey accents',
+  description: 'Ghostly white and metallic ice blue-gray accents',
   colors: {
     bgPrimary: '#0a0a0c',
     bgSecondary: 'rgba(18, 18, 22, 0.95)',

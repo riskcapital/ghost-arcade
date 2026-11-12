@@ -12,7 +12,7 @@ export class DesktopSender {
   this.socket.addEventListener('message',this.receive);this.socket.addEventListener('close',this.closed);
   this.send({type:'studio_capabilities_request'});
   try{
-   await new Promise<void>((resolve,reject)=>{let waited=0;const poll=setInterval(()=>{waited+=50;if(epoch!==this.generation){clearInterval(poll);reject(Error('Sending cancelled.'));}else if(this.acknowledged){clearInterval(poll);resolve();}else if(waited>=10000){clearInterval(poll);reject(Error('Desktop is not ready or needs an update with Studio feed support.'));}else if(waited%500===0)this.send({type:'studio_capabilities_request'});},50);});
+   await new Promise<void>((resolve,reject)=>{let waited=0;const poll=setInterval(()=>{waited+=50;if(epoch!==this.generation){clearInterval(poll);reject(Error('Sending canceled.'));}else if(this.acknowledged){clearInterval(poll);resolve();}else if(waited>=10000){clearInterval(poll);reject(Error('Desktop is not ready or needs an update with Studio feed support.'));}else if(waited%500===0)this.send({type:'studio_capabilities_request'});},50);});
    if(epoch!==this.generation)return;
    const peer=new RTCPeerConnection();this.peer=peer;this.stream=canvas.captureStream(24);
    this.stream.getTracks().forEach(t=>peer.addTrack(t,this.stream!));

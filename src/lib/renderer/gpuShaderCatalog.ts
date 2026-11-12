@@ -139,7 +139,7 @@ const PARTICLE_FIELD_DEF: GpuShaderDef = {
 const VOLUMETRIC_BALLS_DEF: GpuShaderDef = {
   id: 'volumetric-balls',
   label: 'Volumetric Nodes',
-  description: 'A ray-traced node field in a real lit space. Pick the primitive — sphere, cube, rounded box, octahedron, capsule or torus, each solved analytically or by a bounded sphere trace. Neighbours found through a spatial hash grid connect as thin lines or semi-transparent cylinders that sort correctly through each other. A light-space opacity volume gives the key light genuine volumetric shafts that the nodes cast, land on the ground plane and fall across each other, with Henyey-Greenstein haze, GGX + clear-coat materials, environment reflections, contact AO and AgX.',
+  description: 'A ray-traced node field in a real lit space. Pick the primitive — sphere, cube, rounded box, octahedron, capsule or torus, each solved analytically or by a bounded sphere trace. Neighbors found through a spatial hash grid connect as thin lines or semi-transparent cylinders that sort correctly through each other. A light-space opacity volume gives the key light genuine volumetric shafts that the nodes cast, land on the ground plane and fall across each other, with Henyey-Greenstein haze, GGX + clear-coat materials, environment reflections, contact AO and AgX.',
   category: 'Generative',
   paramSchema: volumetricSpheresParamSchema,
   defaultParams: volumetricSpheresParamDefaults,
@@ -270,7 +270,7 @@ const SMOKE_RIDERS_DEF: GpuShaderDef = {
 const FLUID_RIDERS_DEF: GpuShaderDef = {
   id: 'fluid-riders',
   label: 'Fluid Riders',
-  description: 'Thick viscous opaque liquid rendered as a lit isosurface, with raytraced riders that drift on the flow and take their colour from the fluid. Accepts an image or video source to colour the pour.',
+  description: 'Thick viscous opaque liquid rendered as a lit isosurface, with raytraced riders that drift on the flow and take their color from the fluid. Accepts an image or video source to color the pour.',
   category: 'Generative',
   paramSchema: fluidRidersParamSchema,
   defaultParams: fluidRidersParamDefaults,

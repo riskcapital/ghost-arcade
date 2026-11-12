@@ -1,5 +1,5 @@
 /*{
-    "DESCRIPTION": "A truss of moving-head beams. Up to twelve fixtures hang along the top of the frame and throw hard-edged beams through haze, with a second row on the floor if you want it. Pick how they move (fan, cross, wave, ballyhoo, converge or parked), how wide and long the beams are, how the colours are dealt across the rig, and how the dimmers chase. A prism splits every beam in three. On black, so a projector aimed across a band becomes the lighting rig. Bass lifts the dimmers, beats step the chase, spectral centroid opens the fan.",
+    "DESCRIPTION": "A truss of moving-head beams. Up to twelve fixtures hang along the top of the frame and throw hard-edged beams through haze, with a second row on the floor if you want it. Pick how they move (fan, cross, wave, ballyhoo, converge or parked), how wide and long the beams are, how the colors are dealt across the rig, and how the dimmers chase. A prism splits every beam in three. On black, so a projector aimed across a band becomes the lighting rig. Bass lifts the dimmers, beats step the chase, spectral centroid opens the fan.",
     "CREDIT": "Ghost Arcade 2.0 stage pack",
     "ISFVSN": "2",
     "CATEGORIES": ["Generator", "Audio Reactive"],
@@ -9,7 +9,7 @@
          "LABELS": ["Arena", "Congo and Amber", "Ice", "Sunset", "Emerald", "Rose Gold", "Open White"]},
         {"NAME": "colorPattern", "TYPE": "long", "DEFAULT": 1,
          "VALUES": [0, 1, 2, 3, 4, 5],
-         "LABELS": ["One colour", "Alternate", "Three-way", "Spread across rig", "Colour chase", "Rainbow"]},
+         "LABELS": ["One color", "Alternate", "Three-way", "Spread across rig", "Color chase", "Rainbow"]},
         {"NAME": "fixtures",  "TYPE": "long",  "DEFAULT": 8,
          "VALUES": [1, 2, 3, 4, 5, 6, 8, 10, 12], "LABELS": ["1", "2", "3", "4", "5", "6", "8", "10", "12"]},
         {"NAME": "movement",  "TYPE": "long",  "DEFAULT": 2,

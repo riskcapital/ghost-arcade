@@ -299,7 +299,7 @@
               {/each}
 
               <div class="subsection">
-                <span class="subsection-label">Centre and group chase</span>
+                <span class="subsection-label">Center and group chase</span>
                 {#each EDGE_EFFECT_LEVEL_PARAMS as def (def.key)}
                   {#if (def.key !== 'centerX' && def.key !== 'centerY') || effect.customCenter}
                     {@render paramRow(effect, null, def, { type: '', label: '', group: '', params: [], defaults: { customCenter: false, centerX: 0.5, centerY: 0.5, chaseMode: 'none', chaseSpread: 0.5 } })}

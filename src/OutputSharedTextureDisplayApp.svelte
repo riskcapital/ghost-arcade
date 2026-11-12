@@ -682,7 +682,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
 
   // Reactive labels for the overlays
   $: statusText = (() => {
-    if (initStatus === 'init') return 'Initialising WebGPU…';
+    if (initStatus === 'init') return 'Initializing WebGPU…';
     if (initStatus === 'no-webgpu') return `WebGPU required: ${initError}`;
     if (initStatus === 'no-port') return 'Waiting for editor link…';
     if (initStatus === 'error') return `Error: ${initError}`;

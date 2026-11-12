@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "Codec artefacts as a picture. The voice paints its own image and shows it through a block transform: every block is rebuilt from a few quantised basis patterns, cosine stripes and checkers or hard Walsh codes. The level of the sound it follows raises the quantisation, so blocks lose detail and fall to flat tones and single stripes, then sharpen again between notes; hits swap blocks with a neighbour's coefficients. Colour sits in coarser blocks, as in a subsampled codec, and block edges ring faintly. Seed re-rolls the image, the block size and the basis set; Mutate re-rolls part of that on hits.",
+    "DESCRIPTION": "Codec artifacts as a picture. The voice paints its own image and shows it through a block transform: every block is rebuilt from a few quantized basis patterns, cosine stripes and checkers or hard Walsh codes. The level of the sound it follows raises the quantization, so blocks lose detail and fall to flat tones and single stripes, then sharpen again between notes; hits swap blocks with a neighbor's coefficients. Color sits in coarser blocks, as in a subsampled codec, and block edges ring faintly. Seed re-rolls the image, the block size and the basis set; Mutate re-rolls part of that on hits.",
     "PASSES": [
         {
             "TARGET": "clock",
@@ -31,12 +31,12 @@
         { "NAME": "blockSize", "LABEL": "Block size", "TYPE": "long", "DEFAULT": 0, "VALUES": [0, 1, 2, 3], "LABELS": ["Set by seed", "8", "16", "32"] },
         { "NAME": "swap", "LABEL": "Swap on hits", "TYPE": "float", "DEFAULT": 0.35, "MIN": 0, "MAX": 1 },
         { "NAME": "ringing", "LABEL": "Ringing", "TYPE": "float", "DEFAULT": 0.4, "MIN": 0, "MAX": 1 },
-        { "NAME": "chroma", "LABEL": "Colour bleed", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0, "MAX": 1 },
+        { "NAME": "chroma", "LABEL": "Color bleed", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0, "MAX": 1 },
         { "NAME": "source", "LABEL": "Source", "TYPE": "long", "DEFAULT": 0, "VALUES": [0, 1, 2, 3], "LABELS": ["Set by seed", "Bodies", "Type", "Bars"] },
         { "NAME": "seed", "LABEL": "Seed", "TYPE": "float", "DEFAULT": 0.14, "MIN": 0, "MAX": 1 },
         { "NAME": "mutate", "LABEL": "Mutate", "TYPE": "float", "DEFAULT": 0.15, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Image", "TYPE": "color", "DEFAULT": [0.94, 0.95, 0.97, 1.0] },
-        { "NAME": "accent", "LABEL": "Colour", "TYPE": "color", "DEFAULT": [1.0, 0.16, 0.1, 1.0] },
+        { "NAME": "accent", "LABEL": "Color", "TYPE": "color", "DEFAULT": [1.0, 0.16, 0.1, 1.0] },
         { "NAME": "vxEnv", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
         { "NAME": "vxHit", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
         { "NAME": "vxPhase", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },

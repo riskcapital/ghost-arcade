@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A great dial of light, its centre off to one side so its rings sweep across the frame. Each ring carries its own markings (hairlines, dashed tracks, a radial bar graph, a scale, a glowing arc) and turns at its own speed. Every hit tears the rings into sectors: some jump round out of step, some show the ring next door, some smear outwards into streaks, with an accent copy split off along the tear, and they settle back as the hit fades. Rings sets how many, Tear how many sectors break, Smear how many streak outwards, Spin how fast the rings turn, Recovery how long the tear lasts. Seed re-rolls the dial.",
+    "DESCRIPTION": "A great dial of light, its center off to one side so its rings sweep across the frame. Each ring carries its own markings (hairlines, dashed tracks, a radial bar graph, a scale, a glowing arc) and turns at its own speed. Every hit tears the rings into sectors: some jump round out of step, some show the ring next door, some smear outwards into streaks, with an accent copy split off along the tear, and they settle back as the hit fades. Rings sets how many, Tear how many sectors break, Smear how many streak outwards, Spin how fast the rings turn, Recovery how long the tear lasts. Seed re-rolls the dial.",
     "PASSES": [
         {
             "TARGET": "clock",

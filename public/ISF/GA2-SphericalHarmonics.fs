@@ -1,5 +1,5 @@
 /*{
-    "DESCRIPTION": "A surface built from real spherical harmonics. The radius in every direction is the sum of the SH basis through l=3, evaluated in Cartesian form so it costs polynomials rather than Legendre recurrences, with the coefficients drifting on independent oscillators so the solid walks continuously through the whole harmonic space. An SH sum is signed, so positive and negative lobes take complementary colours -- the two-tone scheme is the mathematics, not a palette choice. Bass swells the amplitude, beats kick individual harmonics, spectral centroid tilts the band balance.",
+    "DESCRIPTION": "A surface built from real spherical harmonics. The radius in every direction is the sum of the SH basis through l=3, evaluated in Cartesian form so it costs polynomials rather than Legendre recurrences, with the coefficients drifting on independent oscillators so the solid walks continuously through the whole harmonic space. An SH sum is signed, so positive and negative lobes take complementary colors -- the two-tone scheme is the mathematics, not a palette choice. Bass swells the amplitude, beats kick individual harmonics, spectral centroid tilts the band balance.",
     "CREDIT": "Ghost Arcade 2.0 pack",
     "ISFVSN": "2",
     "CATEGORIES": ["Generator", "Audio Reactive"],

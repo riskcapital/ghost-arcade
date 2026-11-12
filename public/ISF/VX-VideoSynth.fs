@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "An analog video synth patch played by the notes. Oscillators running in raster time make bars whose count follows the pitch; two notes beat against each other, a chord weaves a plaid. A shape ramp goes through a wavefolder and a soft keyer, a colourizer bands it, and a little frame feedback smears it.",
+    "DESCRIPTION": "An analog video synth patch played by the notes. Oscillators running in raster time make bars whose count follows the pitch; two notes beat against each other, a chord weaves a plaid. A shape ramp goes through a wavefolder and a soft keyer, a colorizer bands it, and a little frame feedback smears it.",
     "PASSES": [
         {
             "TARGET": "trail",
@@ -24,7 +24,7 @@
         { "NAME": "folds", "LABEL": "Fold stages", "TYPE": "float", "DEFAULT": 3, "MIN": 1, "MAX": 6 },
         { "NAME": "keyLevel", "LABEL": "Key threshold", "TYPE": "float", "DEFAULT": 0.55, "MIN": 0, "MAX": 1 },
         { "NAME": "keySoft", "LABEL": "Key softness", "TYPE": "float", "DEFAULT": 0.2, "MIN": 0, "MAX": 1 },
-        { "NAME": "bands", "LABEL": "Colour bands", "TYPE": "float", "DEFAULT": 4, "MIN": 2, "MAX": 8 },
+        { "NAME": "bands", "LABEL": "Color bands", "TYPE": "float", "DEFAULT": 4, "MIN": 2, "MAX": 8 },
         { "NAME": "feedback", "LABEL": "Feedback", "TYPE": "float", "DEFAULT": 0.3, "MIN": 0, "MAX": 1 },
         { "NAME": "rotate", "LABEL": "Loop rotate", "TYPE": "float", "DEFAULT": 0.2, "MIN": -1, "MAX": 1 },
         { "NAME": "zoom", "LABEL": "Loop zoom", "TYPE": "float", "DEFAULT": 0.35, "MIN": -1, "MAX": 1 },

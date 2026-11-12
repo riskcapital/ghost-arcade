@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "An op-art disc in the style of a sixties gallery print: crisp concentric bands, or a checkerboard of rings and spokes, swelling into a sphere that slides around inside the disc so the flat pattern seems to bulge out of the wall. Every hit sends a coloured shock wave gliding out from the middle through the bands and off the rim as a fading ring, and ripples the outline; the louder the sound, the bigger the sphere swells and the faster the bands flow outward. The note's pitch steers where the bulge sits.",
+    "DESCRIPTION": "An op-art disc in the style of a sixties gallery print: crisp concentric bands, or a checkerboard of rings and spokes, swelling into a sphere that slides around inside the disc so the flat pattern seems to bulge out of the wall. Every hit sends a colored shock wave gliding out from the middle through the bands and off the rim as a fading ring, and ripples the outline; the louder the sound, the bigger the sphere swells and the faster the bands flow outward. The note's pitch steers where the bulge sits.",
     "PASSES": [
         {
             "TARGET": "ease",

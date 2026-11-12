@@ -38,15 +38,15 @@
       <option value="layer">Show the look</option>
     </select>
   </label>
-  <span class="insp-swatches" role="group" aria-label="Row colour">
+  <span class="insp-swatches" role="group" aria-label="Row color">
     {#each SWATCHES as sw (sw)}
       <button
         class="insp-swatch"
         class:on={(track.color ?? SWATCHES[0]) === sw}
         style:background={sw}
         onclick={() => showTimeline.updateLayerTrack(track.id, { color: sw === SWATCHES[0] ? undefined : sw })}
-        title="Row colour"
-        aria-label="Row colour"
+        title="Row color"
+        aria-label="Row color"
       ></button>
     {/each}
   </span>

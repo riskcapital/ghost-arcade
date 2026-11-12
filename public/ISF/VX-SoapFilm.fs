@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A large soap bubble hangs in the dark with two small ones drifting near it. Its skin shimmers with real thin-film colour: almost invisible black film at the crown, then bands of gold, magenta and blue draining downward, stirred into slow swirls, with crisp window reflections on its surface. The music stirs it: a held sound makes the colours swirl faster, and each surge sets the bubble quivering on its own springy skin while waves of colour roll across it and slowly calm.",
+    "DESCRIPTION": "A large soap bubble hangs in the dark with two small ones drifting near it. Its skin shimmers with real thin-film color: almost invisible black film at the crown, then bands of gold, magenta and blue draining downward, stirred into slow swirls, with crisp window reflections on its surface. The music stirs it: a held sound makes the colors swirl faster, and each surge sets the bubble quivering on its own springy skin while waves of color roll across it and slowly calm.",
     "PASSES": [
         {
             "TARGET": "pump",

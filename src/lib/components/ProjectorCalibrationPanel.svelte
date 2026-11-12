@@ -213,7 +213,7 @@
       value={overlapGamma(band).toFixed(2)} data-current={overlapGamma(band).toFixed(2)} onchange={e => commit(e, v => setBand({ gamma: Math.max(1, Math.min(4, v)) }))} onkeydown={fieldKey} /></label>
     <input class="gamma" aria-label="Overlap projector gamma slider" type="range" min="1.4" max="3.2" step="0.05" value={overlapGamma(band)}
       oninput={e => setBand({ gamma: +e.currentTarget.value }, true)} ondblclick={() => setBand({ gamma: DEFAULT_OVERLAP_GAMMA })} />
-    <p>On a flat white or mid-grey image: if the overlap looks darker than the rest, raise this; if it looks brighter, lower it. 2.2 is standard. Double-click the slider to reset.</p>
+    <p>On a flat white or mid-gray image: if the overlap looks darker than the rest, raise this; if it looks brighter, lower it. 2.2 is standard. Double-click the slider to reset.</p>
     {#if legacyBlend}<p class="error">This Screen also has Edge Blend ramps, which darken the seam a second time. Set them to 0, or pair again to clear them.</p>{/if}
     {#if partner}
       <p class={inStep ? 'note' : 'error'}>Paired with <strong>{partner.name}</strong>. {inStep ? 'Boundaries, gamma and source crops are shared: edits here update both Screens.' : 'The two Screens no longer match (boundaries, gamma or source crops differ).'}</p>

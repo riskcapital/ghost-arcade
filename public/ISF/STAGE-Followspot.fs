@@ -1,5 +1,5 @@
 /*{
-    "DESCRIPTION": "Followspots. Up to four hard-edged spots that track across the stage the way an operator would: holding centre on a singer, crossing in pairs, roaming, a slow ballyhoo, or parked where you put them. Each has an iris, an edge that runs from knife sharp to soft, a hot centre or a flat field, and a gel frame. The beam can be seen coming down through the haze from the spot's position in the house. Aimed across a band, a single white spot at low level does more than any pattern. Bass breathes the iris, beats change the gel if you ask, spectral centroid sets how restless the operator is.",
+    "DESCRIPTION": "Followspots. Up to four hard-edged spots that track across the stage the way an operator would: holding center on a singer, crossing in pairs, roaming, a slow ballyhoo, or parked where you put them. Each has an iris, an edge that runs from knife sharp to soft, a hot center or a flat field, and a gel frame. The beam can be seen coming down through the haze from the spot's position in the house. Aimed across a band, a single white spot at low level does more than any pattern. Bass breathes the iris, beats change the gel if you ask, spectral centroid sets how restless the operator is.",
     "CREDIT": "Ghost Arcade 2.0 stage pack",
     "ISFVSN": "2",
     "CATEGORIES": ["Generator", "Audio Reactive"],
@@ -14,7 +14,7 @@
          "VALUES": [1, 2, 3, 4], "LABELS": ["1", "2", "3", "4"]},
         {"NAME": "tracking",  "TYPE": "long",  "DEFAULT": 1,
          "VALUES": [0, 1, 2, 3, 4],
-         "LABELS": ["Parked", "Hold centre", "Cross", "Roam", "Ballyhoo"]},
+         "LABELS": ["Parked", "Hold center", "Cross", "Roam", "Ballyhoo"]},
         {"NAME": "posX",      "TYPE": "float", "DEFAULT": 0.50, "MIN": 0.00, "MAX": 1.00},
         {"NAME": "posY",      "TYPE": "float", "DEFAULT": 0.45, "MIN": 0.00, "MAX": 1.00},
         {"NAME": "speed",     "TYPE": "float", "DEFAULT": 0.30, "MIN": 0.00, "MAX": 3.00},

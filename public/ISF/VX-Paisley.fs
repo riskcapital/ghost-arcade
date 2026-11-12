@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A paisley rosette like a sixties poster border come to life: a ring of teardrops with curling tails turns around a jewelled centre, each one inked with bold outlines, nested bands, a ring of dots and a scalloped fringe. The music turns it: the louder it plays, the faster the rosette revolves; each hit flings the teardrops' tails out long and straight and lets them curl back, easing the rosette a little further round, and held notes flare the fringe and keep the tails open.",
+    "DESCRIPTION": "A paisley rosette like a sixties poster border come to life: a ring of teardrops with curling tails turns around a jewelled center, each one inked with bold outlines, nested bands, a ring of dots and a scalloped fringe. The music turns it: the louder it plays, the faster the rosette revolves; each hit flings the teardrops' tails out long and straight and lets them curl back, easing the rosette a little further round, and held notes flare the fringe and keep the tails open.",
     "PASSES": [
         {
             "TARGET": "ease",

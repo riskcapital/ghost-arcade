@@ -450,7 +450,7 @@ export const effectParamLabels: Partial<Record<EffectType, Record<string, ParamM
     bcRun: { label: 'Slice length', min: 0, max: 1, step: 0.01, default: 0.5 },
     bcSmear: { label: 'Smear', min: 0, max: 1, step: 0.01, default: 0.6 },
     bcMotion: { label: 'Motion', min: 0, max: 1, step: 0.01, default: 0.5 },
-    bcColorFault: { label: 'Colour faults', min: 0, max: 1, step: 0.01, default: 0.45 },
+    bcColorFault: { label: 'Color faults', min: 0, max: 1, step: 0.01, default: 0.45 },
     bcAudioReact: { label: 'Audio reactivity', min: 0, max: 1, step: 0.01, default: 0 },
     bcMix: { label: 'Mix', min: 0, max: 1, step: 0.01, default: 1 },
   },
@@ -565,7 +565,7 @@ export const effectParamLabels: Partial<Record<EffectType, Record<string, ParamM
     halftoneMode: {
       label: 'Mode', min: 0, max: 2, step: 1, default: 0, type: 'select',
       options: [
-        { value: 0, label: 'Greyscale' },
+        { value: 0, label: 'Grayscale' },
         { value: 1, label: 'CMYK' },
         { value: 2, label: 'Spot color' },
       ],
@@ -624,7 +624,7 @@ export const effectParamLabels: Partial<Record<EffectType, Record<string, ParamM
       label: 'Paper tone', min: 0, max: 2, step: 1, default: 0, type: 'select',
       options: [
         { value: 0, label: 'Cream' },
-        { value: 1, label: 'Cool grey' },
+        { value: 1, label: 'Cool gray' },
         { value: 2, label: 'Tea stain' },
       ],
     },
@@ -3446,7 +3446,7 @@ export const effectPresets: Partial<Record<EffectType, EffectPreset[]>> = {
   // Halftone (hero) — print/CMYK presets.
   halftone: [
     { name: 'Off',                 params: { halftoneDotSize: 32, halftoneMode: 0 } },
-    { name: 'Newspaper Greyscale', params: { halftoneMode: 0, halftoneDotSize: 4, halftoneDotShape: 0, halftoneAngleK: 45 } },
+    { name: 'Newspaper Grayscale', params: { halftoneMode: 0, halftoneDotSize: 4, halftoneDotShape: 0, halftoneAngleK: 45 } },
     { name: 'Comic CMYK',          params: { halftoneMode: 1, halftoneDotSize: 6, halftoneDotShape: 0, halftoneAngleC: 15, halftoneAngleM: 75, halftoneAngleY: 0, halftoneAngleK: 45 } },
     { name: 'Pop Art Big Dots',    params: { halftoneMode: 1, halftoneDotSize: 14, halftoneDotShape: 0, halftoneAngleC: 15, halftoneAngleM: 75, halftoneAngleY: 0, halftoneAngleK: 45 } },
     { name: 'Square Pixels',       params: { halftoneMode: 0, halftoneDotSize: 6, halftoneDotShape: 1 } },

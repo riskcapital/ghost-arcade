@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "Paper marbling, alive. Drops of dark ink and the palette's two colours fall on still water, each one pushing the rings before it outward, then two pairs of slow eddies turning against each other fold the rings into veins, feathers and swirls while a gentle rake combs them along their own contours. It is printed like ink on pale paper, or glowing on a dark ground. The music sets how fast it stirs; every hit drops a new ring of ink and surges the eddies, then the water calms and the pattern keeps folding.",
+    "DESCRIPTION": "Paper marbling, alive. Drops of dark ink and the palette's two colors fall on still water, each one pushing the rings before it outward, then two pairs of slow eddies turning against each other fold the rings into veins, feathers and swirls while a gentle rake combs them along their own contours. It is printed like ink on pale paper, or glowing on a dark ground. The music sets how fast it stirs; every hit drops a new ring of ink and surges the eddies, then the water calms and the pattern keeps folding.",
     "PASSES": [
         { "TARGET": "blurA", "WIDTH": "$WIDTH/4", "HEIGHT": "$HEIGHT/4" },
         { "TARGET": "blurB", "WIDTH": "$WIDTH/16", "HEIGHT": "$HEIGHT/16" },
@@ -22,8 +22,8 @@
         { "NAME": "hold", "LABEL": "Hold", "TYPE": "float", "DEFAULT": 0.7, "MIN": 0, "MAX": 1 },
         { "NAME": "veins", "LABEL": "Dark ink", "TYPE": "float", "DEFAULT": 0.4, "MIN": 0, "MAX": 1 },
         { "NAME": "ground", "LABEL": "Paper to night", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
-        { "NAME": "ink", "LABEL": "Colour", "TYPE": "color", "DEFAULT": [0.12, 0.35, 0.62, 1.0] },
-        { "NAME": "accent", "LABEL": "Second colour", "TYPE": "color", "DEFAULT": [0.78, 0.32, 0.22, 1.0] },
+        { "NAME": "ink", "LABEL": "Color", "TYPE": "color", "DEFAULT": [0.12, 0.35, 0.62, 1.0] },
+        { "NAME": "accent", "LABEL": "Second color", "TYPE": "color", "DEFAULT": [0.78, 0.32, 0.22, 1.0] },
         { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
         { "NAME": "vxPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
         { "NAME": "vxFlow", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },

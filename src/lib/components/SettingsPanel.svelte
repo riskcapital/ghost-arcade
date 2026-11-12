@@ -924,7 +924,7 @@
           <div class="setting-row">
             <div class="setting-label">
               <span class="label-text">Accent scheme</span>
-              <span class="label-hint">Fine-tune accent colours on top of the active theme template.</span>
+              <span class="label-hint">Fine-tune accent colors on top of the active theme template.</span>
             </div>
           </div>
 
@@ -1535,7 +1535,7 @@
           <div class="setting-row">
             <div class="setting-label">
               <span class="label-text">Show cursor on output</span>
-              <span class="label-hint">Visualises mouse position on the output window</span>
+              <span class="label-hint">Visualizes mouse position on the output window</span>
             </div>
             <label class="toggle">
               <input
@@ -1643,7 +1643,7 @@
              the render core's managed output window or unavailable. -->
 
         <!-- Performance Tab — opt-in knobs for users on weaker hardware.
-             Defaults match the historical full-quality behaviour. Intro
+             Defaults match the historical full-quality behavior. Intro
              card shows under GPU since that's first in the sidebar. -->
         {#if selectedSection === 'performance:gpu'}
         <section class="settings-section">

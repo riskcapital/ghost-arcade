@@ -1,5 +1,5 @@
 /*{
-    "DESCRIPTION": "Aurora — a still-lake panorama with rippling volumetric aurora curtains drifting overhead and mirrored in the water. No surfaces at all: pure volumetric emission marching through a sparse atmospheric medium, sheets of light shaped by undulating curves in space, breathing and twisting with time. Multiple curtain bands in dispersive colours, a starfield through the gaps, soft horizon glow, and the whole sky reflected in the rippling lake. A world with no walls.",
+    "DESCRIPTION": "Aurora — a still-lake panorama with rippling volumetric aurora curtains drifting overhead and mirrored in the water. No surfaces at all: pure volumetric emission marching through a sparse atmospheric medium, sheets of light shaped by undulating curves in space, breathing and twisting with time. Multiple curtain bands in dispersive colors, a starfield through the gaps, soft horizon glow, and the whole sky reflected in the rippling lake. A world with no walls.",
     "CREDIT": "Ghost Arcade",
     "ISFVSN": "2",
     "CATEGORIES": ["Generator", "3D", "Volumetric", "Landscape"],

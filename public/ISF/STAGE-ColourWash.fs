@@ -1,5 +1,5 @@
 /*{
-    "DESCRIPTION": "A colour wash. Soft pools of light from a row of wash fixtures overlap across the stage and blend where they meet, the way a bank of PARs or LED washes does. Choose how many zones, how soft the joins are, where the light falls from, and how the colours move: hold, chase, ping-pong, crossfade or a random shuffle. This is the one to leave on behind everything else: it lights the whole band evenly and never goes dark unless you ask it to. Bass lifts the level, beats bump it, spectral centroid slides the colours.",
+    "DESCRIPTION": "A color wash. Soft pools of light from a row of wash fixtures overlap across the stage and blend where they meet, the way a bank of PARs or LED washes does. Choose how many zones, how soft the joins are, where the light falls from, and how the colors move: hold, chase, ping-pong, crossfade or a random shuffle. This is the one to leave on behind everything else: it lights the whole band evenly and never goes dark unless you ask it to. Bass lifts the level, beats bump it, spectral centroid slides the colors.",
     "CREDIT": "Ghost Arcade 2.0 stage pack",
     "ISFVSN": "2",
     "CATEGORIES": ["Generator", "Audio Reactive"],
@@ -9,7 +9,7 @@
          "LABELS": ["Club", "Theatre", "Deep Sea", "Fire", "Pastel", "Acid", "Tungsten"]},
         {"NAME": "colorPattern", "TYPE": "long", "DEFAULT": 2,
          "VALUES": [0, 1, 2, 3, 4, 5],
-         "LABELS": ["One colour", "Alternate", "Three-way", "Spread across stage", "Rainbow", "Split left and right"]},
+         "LABELS": ["One color", "Alternate", "Three-way", "Spread across stage", "Rainbow", "Split left and right"]},
         {"NAME": "motion",    "TYPE": "long",  "DEFAULT": 1,
          "VALUES": [0, 1, 2, 3, 4],
          "LABELS": ["Hold", "Chase", "Ping-pong", "Crossfade all", "Shuffle"]},

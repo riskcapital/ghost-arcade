@@ -1,5 +1,5 @@
 /*{
-    "DESCRIPTION": "A quaternion Julia set: z' = z*z + c evaluated in 4D, raymarched by distance estimate. The 3D slice plane is rotated inside 4D before it cuts, so the solid reorganises in ways no rotation of a 3D object can produce, and c walks a closed 4D path so the form continuously reforms without ever repeating. Orbit trapping colours the interior. Bass drives the constant, beats spin the slice, spectral centroid steers the edge.",
+    "DESCRIPTION": "A quaternion Julia set: z' = z*z + c evaluated in 4D, raymarched by distance estimate. The 3D slice plane is rotated inside 4D before it cuts, so the solid reorganises in ways no rotation of a 3D object can produce, and c walks a closed 4D path so the form continuously reforms without ever repeating. Orbit trapping colors the interior. Bass drives the constant, beats spin the slice, spectral centroid steers the edge.",
     "CREDIT": "Ghost Arcade 2.0 pack",
     "ISFVSN": "2",
     "CATEGORIES": ["Generator", "Audio Reactive"],

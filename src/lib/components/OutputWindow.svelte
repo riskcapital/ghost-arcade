@@ -214,7 +214,7 @@
       const features = `popup=true,width=${winW},height=${winH},left=${x},top=${y}`;
       const newWin = window.open(url.toString(), 'ga-output', features);
       if (!newWin) {
-        alert('Output window failed to open. Check Chromium popup-blocker behaviour.');
+        alert('Output window failed to open. Check Chromium popup-blocker behavior.');
         return;
       }
       isOpen = true;
@@ -529,7 +529,7 @@
         url.search = '?mode=webgpu-display';
         const newWin = window.open(url.toString(), 'ga-output', 'popup=true');
         if (!newWin) {
-          alert('Output window failed to open. Check Chromium popup-blocker behaviour.');
+          alert('Output window failed to open. Check Chromium popup-blocker behavior.');
           return false;
         }
         isOpen = true;

@@ -1,7 +1,7 @@
 /*{
     "CREDIT": "Ghost Arcade",
     "ISFVSN": "2",
-    "DESCRIPTION": "Coloured ink dropped into a tank of still, milky water. Each hit lets a drop fall in: it sinks as a heavy plume, its head rolling outward into curling mushroom caps while its tail feathers into threads, and slow currents carry the clouds sideways until they thin and the water clears. The two colours mix where plumes cross. Every frame the water's last picture is carried along its own currents, so the motion is the fluid itself. The music sets how fast the currents run; the swell lets a thin stream of ink trickle in; each hit drops new ink and stirs the whole tank.",
+    "DESCRIPTION": "Colored ink dropped into a tank of still, milky water. Each hit lets a drop fall in: it sinks as a heavy plume, its head rolling outward into curling mushroom caps while its tail feathers into threads, and slow currents carry the clouds sideways until they thin and the water clears. The two colors mix where plumes cross. Every frame the water's last picture is carried along its own currents, so the motion is the fluid itself. The music sets how fast the currents run; the swell lets a thin stream of ink trickle in; each hit drops new ink and stirs the whole tank.",
     "CATEGORIES": [
         "Visual Voices",
         "Generator"

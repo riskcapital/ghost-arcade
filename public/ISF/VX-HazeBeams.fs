@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "Narrow light beams cutting down through smoke from a rig above. Every sounding note hangs one beam, placed across the rig by pitch, bright while the note plays and fading as it lets go. The beams sweep slowly, the smoke turns inside them, and outside them the room stays black. The newest note's lamp burns in the accent colour.",
+    "DESCRIPTION": "Narrow light beams cutting down through smoke from a rig above. Every sounding note hangs one beam, placed across the rig by pitch, bright while the note plays and fading as it lets go. The beams sweep slowly, the smoke turns inside them, and outside them the room stays black. The newest note's lamp burns in the accent color.",
     "PASSES": [
         {
             "TARGET": "beamState",

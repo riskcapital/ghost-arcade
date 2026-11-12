@@ -53,7 +53,7 @@
             "DEFAULT": 0.7,
             "MIN": 0.0,
             "MAX": 1.0,
-            "LABEL": "Colour"
+            "LABEL": "Color"
         },
         {
             "NAME": "drumKick",

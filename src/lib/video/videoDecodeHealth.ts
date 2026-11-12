@@ -54,8 +54,8 @@ export function plainDecodeReason(backend: string, rawReason: string, codec = ''
   if (['vp8', 'vp9', 'av1', 'mpeg2video', 'mpeg4', 'mjpeg', 'cfhd', 'qtrle', 'png'].includes(name)) {
     return `${name.toUpperCase()} has no hardware decoder in this app`;
   }
-  if (/yuva?444/.test(stream)) return "it uses 4:4:4 colour, which this computer's hardware decoder does not take";
-  if (/yuva?422/.test(stream)) return "it uses 4:2:2 colour, which this computer's hardware decoder does not take";
+  if (/yuva?444/.test(stream)) return "it uses 4:4:4 color, which this computer's hardware decoder does not take";
+  if (/yuva?422/.test(stream)) return "it uses 4:2:2 color, which this computer's hardware decoder does not take";
   if ((name === 'h264') && /p10|p12/.test(stream)) return "it is 10-bit H.264, which this computer's hardware decoder does not take";
   if (/interlaced/i.test(reason)) return 'it is interlaced';
   if (/non-square/i.test(reason)) return 'it has non-square pixels';

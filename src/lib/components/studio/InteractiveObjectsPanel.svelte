@@ -187,11 +187,11 @@
           onlook(e.currentTarget.checked ? { ...rest, hue: 185 } : rest, true);
         }}
       />
-      Own colour
+      Own color
     </label>
     {#if look.hue !== undefined}
       <label>
-        Colour <output>{Math.round(look.hue)}°</output>
+        Color <output>{Math.round(look.hue)}°</output>
         <input
           type="range"
           min="0"

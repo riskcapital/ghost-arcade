@@ -483,7 +483,7 @@ export const TONES: Tone[] = [
     },
   },
   {
-    id: 'keys.tine', name: 'Tine piano', family: 'lead', blurb: 'An electric piano modelled with FM: a bell-like tine and a warm, round body',
+    id: 'keys.tine', name: 'Tine piano', family: 'lead', blurb: 'An electric piano modeled with FM: a bell-like tine and a warm, round body',
     patch: {
       osc1: { wave: 'sine', level: 0.85 }, fm: { ratio: 1, index: 3.4, decay: 0.45, sustain: 0.06, vel: 0.9 },
       osc2: { wave: 'sine', oct: 2, semi: 7, level: 0.06 },

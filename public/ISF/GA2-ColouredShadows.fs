@@ -1,5 +1,5 @@
 /*{
-    "DESCRIPTION": "Coloured shadows. Red, green and blue lamps circle a floor of columns. Together they light the floor white; wherever a column blocks one lamp, the other two fill its shadow with their mix, so every column throws a fan of cyan, magenta and yellow shadows, and where two shadows cross only one lamp is left. The shadows are exact, not marched: each is the true silhouette of a round column from a round lamp, soft where the lamp is wide. Bass brightens the lamps, beats kick their orbit, spectral centroid widens it.",
+    "DESCRIPTION": "Colored shadows. Red, green and blue lamps circle a floor of columns. Together they light the floor white; wherever a column blocks one lamp, the other two fill its shadow with their mix, so every column throws a fan of cyan, magenta and yellow shadows, and where two shadows cross only one lamp is left. The shadows are exact, not marched: each is the true silhouette of a round column from a round lamp, soft where the lamp is wide. Bass brightens the lamps, beats kick their orbit, spectral centroid widens it.",
     "CREDIT": "Ghost Arcade 2.0 pack",
     "ISFVSN": "2",
     "CATEGORIES": ["Generator", "Audio Reactive"],

@@ -91,7 +91,7 @@ export const EDGE_LOOKS: LookDef[] = [
   },
   {
     id: 'hue-hop', name: 'Hue Hop', palette: 'neon',
-    blurb: 'Faces jump to a new colour on every beat, out of step with each other.',
+    blurb: 'Faces jump to a new color on every beat, out of step with each other.',
     build: ({ a, white }) => [
       { fill: { type: 'solid', color: a, opacity: 0.85 }, react: beat('pulse', 0.35, { hueStep: 1 / 6, chaseBeats: 1 }) },
       { stroke: { type: 'solid', color: white, width: 2 } },
@@ -99,7 +99,7 @@ export const EDGE_LOOKS: LookDef[] = [
   },
   {
     id: 'laser-grid', name: 'Laser Grid', palette: 'acid',
-    blurb: 'A turning laser grid that pulses out from the centre.',
+    blurb: 'A turning laser grid that pulses out from the center.',
     build: ({ a }) => [
       { fill: { type: 'grid', color: a, spacing: 22, lineWidth: 1.5, rotateSpeed: 12 }, chaseMode: 'radial', react: beat('pulse', 0.7, { chaseBeats: 0.25 }) },
       { stroke: { type: 'glow', color: a, width: 2, glowSize: 20, pulseSpeed: 0 }, blendMode: 'add' },
@@ -146,7 +146,7 @@ export const EDGE_LOOKS: LookDef[] = [
   },
   {
     id: 'mosaic-shimmer', name: 'Mosaic Shimmer', palette: 'candy',
-    blurb: 'Tiles flip in and out, spreading from the centre.',
+    blurb: 'Tiles flip in and out, spreading from the center.',
     build: ({ a, b, clear }) => [
       { fill: { type: 'mosaic', color: a, color2: clear, cell: 20, progressMode: 'loop', speed: 0.6 }, chaseMode: 'radial', chaseSpread: 1 },
       { stroke: { type: 'solid', color: b, width: 1.5 }, react: beat('pulse', 0.5) },
@@ -170,7 +170,7 @@ export const EDGE_LOOKS: LookDef[] = [
   },
   {
     id: 'gradient-glow', name: 'Gradient Glow', palette: 'ocean',
-    blurb: 'Slow-turning colour gradients that breathe on the beat.',
+    blurb: 'Slow-turning color gradients that breathe on the beat.',
     build: ({ a, b, c }) => [
       { fill: { type: 'gradient', color: a, color2: b, gradientType: 'angular', angle: 0, speed: 0.4 }, opacity: 0.85, react: beat('pulse', 0.45, { decay: 0.6, chaseBeats: 0.25 }) },
       { stroke: { type: 'glow', color: c, width: 2, glowSize: 14, pulseSpeed: 0 }, blendMode: 'add' },

@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A liquid light show: glossy blobs of coloured oil drifting between two glass plates, merging and parting as they slide past each other. Each blob has a dark meniscus rim, rainbow film fringes near its edge and a bright lens of light in its middle, and where blobs meet their dyes mix. The music stirs the tank: the louder it gets, the fatter the blobs swell and the faster they drift and turn, and each hit stretches every blob into two lobes that flow back together while the oil leaves soft smeared trails as it moves.",
+    "DESCRIPTION": "A liquid light show: glossy blobs of colored oil drifting between two glass plates, merging and parting as they slide past each other. Each blob has a dark meniscus rim, rainbow film fringes near its edge and a bright lens of light in its middle, and where blobs meet their dyes mix. The music stirs the tank: the louder it gets, the fatter the blobs swell and the faster they drift and turn, and each hit stretches every blob into two lobes that flow back together while the oil leaves soft smeared trails as it moves.",
     "PASSES": [
         {
             "TARGET": "ease",

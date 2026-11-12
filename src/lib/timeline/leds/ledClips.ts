@@ -133,7 +133,7 @@ export function ledClipName(c: TimelineLedClip): string {
   switch (c.kind) {
     case 'follow': return 'Follow the stage';
     case 'effect': return WLED_PATTERN_CATALOG.find((p) => p.id === c.pattern)?.label ?? 'LED effect';
-    case 'colour': return 'Colour';
+    case 'colour': return 'Color';
     case 'gradient': return 'Gradient';
     case 'chase': return 'Chase';
     case 'look': return 'Look';

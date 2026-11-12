@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A raw picture read back with the wrong row stride. The voice draws a bold pixel picture (a giant banded planet with its ring, over the bright limb of a cratered moon, against a glowing sky), stores it as raw bytes, three channels a pixel, and reads it back. Every hit of the sound it follows gets the read wrong: the picture shears into diagonals, splits into copies side by side or stacked, or slips by a byte so the channels trade colours and stripe. Each new stride is read down the frame like a decoder at work, then the decoder tries a near miss, then gets the colours right, then the whole picture. A readout shows the stride and offset in use. Picture size sets how many pixels the picture has, Stride error how far wrong the reads go, Colour slip how often a byte slip swaps the channels, Repeated rows how often a band of rows smears, Recovery how long the decoder takes and Pixel grid how visible the pixels are.",
+    "DESCRIPTION": "A raw picture read back with the wrong row stride. The voice draws a bold pixel picture (a giant banded planet with its ring, over the bright limb of a cratered moon, against a glowing sky), stores it as raw bytes, three channels a pixel, and reads it back. Every hit of the sound it follows gets the read wrong: the picture shears into diagonals, splits into copies side by side or stacked, or slips by a byte so the channels trade colors and stripe. Each new stride is read down the frame like a decoder at work, then the decoder tries a near miss, then gets the colors right, then the whole picture. A readout shows the stride and offset in use. Picture size sets how many pixels the picture has, Stride error how far wrong the reads go, Color slip how often a byte slip swaps the channels, Repeated rows how often a band of rows smears, Recovery how long the decoder takes and Pixel grid how visible the pixels are.",
     "PASSES": [
         { "TARGET": "clock", "PERSISTENT": true, "FLOAT": true, "WIDTH": 1, "HEIGHT": 1 },
         {}
@@ -15,7 +15,7 @@
         { "NAME": "vxAuto", "LABEL": "Comes and goes with its sound", "TYPE": "bool", "DEFAULT": true },
         { "NAME": "picSize", "LABEL": "Picture size", "TYPE": "float", "DEFAULT": 192, "MIN": 128, "MAX": 384 },
         { "NAME": "strideError", "LABEL": "Stride error", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0, "MAX": 1 },
-        { "NAME": "colourSlip", "LABEL": "Colour slip", "TYPE": "float", "DEFAULT": 0.4, "MIN": 0, "MAX": 1 },
+        { "NAME": "colourSlip", "LABEL": "Color slip", "TYPE": "float", "DEFAULT": 0.4, "MIN": 0, "MAX": 1 },
         { "NAME": "repeatRows", "LABEL": "Repeated rows", "TYPE": "float", "DEFAULT": 0.35, "MIN": 0, "MAX": 1 },
         { "NAME": "recovery", "LABEL": "Recovery", "TYPE": "float", "DEFAULT": 0.3, "MIN": 0, "MAX": 1 },
         { "NAME": "grid", "LABEL": "Pixel grid", "TYPE": "float", "DEFAULT": 0.35, "MIN": 0, "MAX": 1 },

@@ -1724,7 +1724,7 @@
           <div class="lane-label look" style="height: {LOOK_LANE_HEIGHT}px">
             <span class="lane-name" title="Shape Looks along the Timeline: drag a Look card from the Looks gallery here. The shapes wear it for the block's span; overlapping blocks crossfade.">Looks</span>
             {#if lookClips.length > 0}
-              <button class="lane-line-add" onclick={(e) => openLinePicker(e, 'looks')} title="Add a control line for a look block: intensity, speed, colour step, beat reaction, chase" data-line-picker-looks>⌇+</button>
+              <button class="lane-line-add" onclick={(e) => openLinePicker(e, 'looks')} title="Add a control line for a look block: intensity, speed, color step, beat reaction, chase" data-line-picker-looks>⌇+</button>
             {/if}
           </div>
           {#if looksLines.length}
@@ -2062,7 +2062,7 @@
           />
           <span class="insp-unit">s</span>
         </label>
-        <span class="insp-hint" title="The window is centred on the junction — half of it plays over the outgoing clip and half over the incoming one.">
+        <span class="insp-hint" title="The window is centered on the junction — half of it plays over the outgoing clip and half over the incoming one.">
           {formatPrecise(selectedTransitionWindow?.start ?? 0)} → {formatPrecise(selectedTransitionWindow?.end ?? 0)}
         </span>
         {#if selectedTransitionClamped}

@@ -22,7 +22,7 @@
         { "NAME": "spread", "LABEL": "Width", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0, "MAX": 1 },
         { "NAME": "ripple", "LABEL": "Ripple", "TYPE": "float", "DEFAULT": 0.45, "MIN": 0, "MAX": 1 },
         { "NAME": "pearl", "LABEL": "Pearl", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0, "MAX": 1 },
-        { "NAME": "drift", "LABEL": "Colour drift", "TYPE": "float", "DEFAULT": 0.3, "MIN": 0, "MAX": 1 },
+        { "NAME": "drift", "LABEL": "Color drift", "TYPE": "float", "DEFAULT": 0.3, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Light", "TYPE": "color", "DEFAULT": [0.25, 0.85, 0.9, 1.0] },
         { "NAME": "accent", "LABEL": "Second light", "TYPE": "color", "DEFAULT": [0.55, 0.4, 1.0, 1.0] },
         { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },

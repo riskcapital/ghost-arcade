@@ -146,7 +146,7 @@
   {#if !bridge.signals.length && !adding}
     <div class="intro">
       <b>Let the music move the visuals.</b>
-      <p>Turn a filter in Live and open a blur in Ghost Arcade. Let the kick track pump a macro. Build intensity across a 16-bar riser, or tint the output with each scene's colour. Works with any device and rack macro — no Max for Live needed.</p>
+      <p>Turn a filter in Live and open a blur in Ghost Arcade. Let the kick track pump a macro. Build intensity across a 16-bar riser, or tint the output with each scene's color. Works with any device and rack macro — no Max for Live needed.</p>
     </div>
   {/if}
 

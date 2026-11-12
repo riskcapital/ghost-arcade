@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "Molten chrome. Streams of liquid metal pour in from above, fall, and gather into a polished pool that keeps sliding, folding and rolling over itself. Every frame the last picture is carried down and sheared sideways in slow bands, so the metal stretches and folds like hot glass; the surface is lit as a mirror, so its curves catch a dark floor, a bright horizon and the two colours above it, with white highlights on the crests. Freshly poured metal glows hot and cools to a mirror. The music sets how fast it pours and folds; the swell thickens the streams; each hit sends rings rippling through the pool and flares the heat, then it settles.",
+    "DESCRIPTION": "Molten chrome. Streams of liquid metal pour in from above, fall, and gather into a polished pool that keeps sliding, folding and rolling over itself. Every frame the last picture is carried down and sheared sideways in slow bands, so the metal stretches and folds like hot glass; the surface is lit as a mirror, so its curves catch a dark floor, a bright horizon and the two colors above it, with white highlights on the crests. Freshly poured metal glows hot and cools to a mirror. The music sets how fast it pours and folds; the swell thickens the streams; each hit sends rings rippling through the pool and flares the heat, then it settles.",
     "PASSES": [
         { "TARGET": "blurA", "WIDTH": "$WIDTH/4", "HEIGHT": "$HEIGHT/4" },
         { "TARGET": "blurB", "WIDTH": "$WIDTH/4", "HEIGHT": "$HEIGHT/4" },

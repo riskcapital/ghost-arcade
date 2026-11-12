@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A low-resolution frame store in the manner of an early digital video buffer. Two ramp shapes drift slowly through the live picture; every hit of the sound it follows writes the bright parts of it into the store as coarse blocks, and the output keys the live picture over the held blocks, so the frame is half live and half remembered. Held blocks step down through grey levels as they fade, and every few hits the whole frame holds still for a beat.",
+    "DESCRIPTION": "A low-resolution frame store in the manner of an early digital video buffer. Two ramp shapes drift slowly through the live picture; every hit of the sound it follows writes the bright parts of it into the store as coarse blocks, and the output keys the live picture over the held blocks, so the frame is half live and half remembered. Held blocks step down through gray levels as they fade, and every few hits the whole frame holds still for a beat.",
     "PASSES": [
         {
             "TARGET": "hitState",

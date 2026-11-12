@@ -2066,9 +2066,9 @@ export const fluidRidersParamSchema: ParamControl[] = [
     min: 16, max: 160, step: 4, default: 96 },
 
   // ── Riders ───────────────────────────────────────────────────
-  { kind: 'slider', key: 'colorFollow', label: 'Colour Follow', group: 'Riders',
+  { kind: 'slider', key: 'colorFollow', label: 'Color Follow', group: 'Riders',
     min: 0, max: 10, step: 0.05, default: 3.2 },
-  { kind: 'select', key: 'colorPreset', label: 'Colour Preset', group: 'Palette',
+  { kind: 'select', key: 'colorPreset', label: 'Color Preset', group: 'Palette',
     options: RIDERS_COLOR_PRESET_OPTIONS,
     default: 'custom' },
   { kind: 'slider', key: 'textureInfluence', label: 'Texture Influence', group: 'Palette',
@@ -2198,7 +2198,7 @@ export const fluidRidersParamSchema: ParamControl[] = [
   // meaningfully more expensive.
   { kind: 'slider', key: 'mediumDensity', label: 'Haze Density', group: 'Volumetrics',
     min: 0, max: 3, step: 0.01, default: 0.55 },
-  { kind: 'color', key: 'mediumColor', label: 'Haze Colour', group: 'Volumetrics',
+  { kind: 'color', key: 'mediumColor', label: 'Haze Color', group: 'Volumetrics',
     default: [226, 232, 255] },
   { kind: 'slider', key: 'shadowDensity', label: 'Shadow Density', group: 'Volumetrics',
     min: 0, max: 6, step: 0.01, default: 1.6 },

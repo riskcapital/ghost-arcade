@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A projected hologram of a head and shoulders, drawn as glowing contour slices with a bright rim, slowly turning to look about above its projector. A ring of light orbits it, a scan line sweeps up through it, and the picture carries the faint interference ripple and colour fringe of a projection. Hits of the sound it follows make the signal stumble: the figure breaks into slices that slide apart, its colours split, parts of it drop out and it dims and flickers before it steadies again. Signal loss sets how hard hits break it, Slices how finely the figure is sliced, Fringe the colour split, Interference the ripple, Sweep how often the scan line passes, and Turn how far the head looks about.",
+    "DESCRIPTION": "A projected hologram of a head and shoulders, drawn as glowing contour slices with a bright rim, slowly turning to look about above its projector. A ring of light orbits it, a scan line sweeps up through it, and the picture carries the faint interference ripple and color fringe of a projection. Hits of the sound it follows make the signal stumble: the figure breaks into slices that slide apart, its colors split, parts of it drop out and it dims and flickers before it steadies again. Signal loss sets how hard hits break it, Slices how finely the figure is sliced, Fringe the color split, Interference the ripple, Sweep how often the scan line passes, and Turn how far the head looks about.",
     "PASSES": [
         {
             "TARGET": "clock",

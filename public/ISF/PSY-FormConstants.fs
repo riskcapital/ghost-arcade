@@ -1,5 +1,5 @@
 /*{
-    "DESCRIPTION": "Form constants. In the 1920s Heinrich Kluver noticed that whatever people saw at the onset of mescaline came in the same few forms: spirals, cobwebs, honeycombs, radiating rays. Half a century later the reason was worked out. The visual cortex is wired as a stretched map of the eye, so when plain stripes or hexagons ripple across the cortex they are seen as spirals and lattices that wrap round the centre of gaze. This runs that map: choose the pattern on the cortex and see the form the eye reports. Bass swells the pattern, beats shift its phase, spectral centroid turns the stripes.",
+    "DESCRIPTION": "Form constants. In the 1920s Heinrich Kluver noticed that whatever people saw at the onset of mescaline came in the same few forms: spirals, cobwebs, honeycombs, radiating rays. Half a century later the reason was worked out. The visual cortex is wired as a stretched map of the eye, so when plain stripes or hexagons ripple across the cortex they are seen as spirals and lattices that wrap round the center of gaze. This runs that map: choose the pattern on the cortex and see the form the eye reports. Bass swells the pattern, beats shift its phase, spectral centroid turns the stripes.",
     "CREDIT": "Ghost Arcade psychedelic pack",
     "ISFVSN": "2",
     "CATEGORIES": ["Generator", "Audio Reactive"],

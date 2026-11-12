@@ -5,14 +5,14 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A seventies poster rainbow that is melting: a fat striped arch with glossy bands and inked outlines, its legs and underside sagging into drips that stretch, swell into drops and let go. Every hit slides the colours a band along the arch, squashes it like jelly and lets it spring back, and sends fresh drips racing down; the louder the sound, the more it wobbles and the faster it melts. Colour shift: off, one band or two bands per hit.",
+    "DESCRIPTION": "A seventies poster rainbow that is melting: a fat striped arch with glossy bands and inked outlines, its legs and underside sagging into drips that stretch, swell into drops and let go. Every hit slides the colors a band along the arch, squashes it like jelly and lets it spring back, and sends fresh drips racing down; the louder the sound, the more it wobbles and the faster it melts. Color shift: off, one band or two bands per hit.",
     "INPUTS": [
         { "NAME": "vxSource", "LABEL": "Follows", "TYPE": "long", "DEFAULT": 6, "VALUES": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], "LABELS": ["Everything", "Kick", "Snare and clap", "Hats", "Toms and crash", "Bass", "Lead", "Chords", "Pads and textures", "Shots and siren", "What you play", "Bowls", "Drone", "XY tone", "Analog synth", "Scan synth", "Echo shots", "Build and drop", "Siren", "Acid line", "Dub bass"] },
         { "NAME": "vxAuto", "LABEL": "Comes and goes with its sound", "TYPE": "bool", "DEFAULT": true },
         { "NAME": "vxClear", "LABEL": "Transparent background", "TYPE": "bool", "DEFAULT": false },
         { "NAME": "drip", "LABEL": "Drip", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0, "MAX": 1 },
         { "NAME": "melt", "LABEL": "Melt", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
-        { "NAME": "shift", "LABEL": "Colour shift", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 },
+        { "NAME": "shift", "LABEL": "Color shift", "TYPE": "float", "DEFAULT": 1, "MIN": 0, "MAX": 1 },
         { "NAME": "squash", "LABEL": "Squash", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0, "MAX": 1 },
         { "NAME": "bands", "LABEL": "Bands", "TYPE": "float", "DEFAULT": 6, "MIN": 3, "MAX": 9 },
         { "NAME": "gloss", "LABEL": "Gloss", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0, "MAX": 1 },

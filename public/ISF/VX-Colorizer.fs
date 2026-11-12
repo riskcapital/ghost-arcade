@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A colourizer in the manner of the early analog image processors. A slowly flowing field of soft light is sliced by a bank of comparators into bands, each keyed to its own level, alternating with black and edged with hairlines: a topographic map that flows. Each note moves the comparator thresholds by its pitch, so the contours jump and re-slice; the sound's level sets the contrast.",
+    "DESCRIPTION": "A colorizer in the manner of the early analog image processors. A slowly flowing field of soft light is sliced by a bank of comparators into bands, each keyed to its own level, alternating with black and edged with hairlines: a topographic map that flows. Each note moves the comparator thresholds by its pitch, so the contours jump and re-slice; the sound's level sets the contrast.",
     "PASSES": [
         {
             "TARGET": "czState",

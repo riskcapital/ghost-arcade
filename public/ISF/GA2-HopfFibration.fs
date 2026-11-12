@@ -1,12 +1,12 @@
 /*{
-    "DESCRIPTION": "The Hopf fibration, rendered volumetrically. Every point of the 3-sphere lies on exactly one circle, and every two of those circles are linked -- no pair can be pulled apart. Projected into 3D the result is space entirely filled with interlocking rings. Each sample is inverse-projected back onto S3 and pushed through the Hopf map to find which fibre it belongs to, so the linkage emerges from the mathematics rather than from drawn geometry. A 4D rotation of the sphere before the map rolls the whole fibration through itself. Bass swells the fibres, beats turn the 4D rotation, spectral centroid walks the base sphere.",
+    "DESCRIPTION": "The Hopf fibration, rendered volumetrically. Every point of the 3-sphere lies on exactly one circle, and every two of those circles are linked -- no pair can be pulled apart. Projected into 3D the result is space entirely filled with interlocking rings. Each sample is inverse-projected back onto S3 and pushed through the Hopf map to find which fiber it belongs to, so the linkage emerges from the mathematics rather than from drawn geometry. A 4D rotation of the sphere before the map rolls the whole fibration through itself. Bass swells the fibers, beats turn the 4D rotation, spectral centroid walks the base sphere.",
     "CREDIT": "Ghost Arcade 2.0 pack",
     "ISFVSN": "2",
     "CATEGORIES": ["Generator", "Audio Reactive"],
     "INPUTS": [
         {"NAME": "colorMode", "TYPE": "long", "DEFAULT": 5,
          "VALUES": [0, 1, 2, 3, 4, 5, 6],
-         "LABELS": ["Fibre", "Ion", "Neon", "Copper", "Jade", "Sodium", "Mono"]},
+         "LABELS": ["Fiber", "Ion", "Neon", "Copper", "Jade", "Sodium", "Mono"]},
         {"NAME": "fibres",    "TYPE": "float", "DEFAULT": 7.0,  "MIN": 3.00, "MAX": 16.0},
         {"NAME": "thickness", "TYPE": "float", "DEFAULT": 0.055, "MIN": 0.02, "MAX": 0.45},
         {"NAME": "density",   "TYPE": "float", "DEFAULT": 0.45, "MIN": 0.10, "MAX": 2.00},

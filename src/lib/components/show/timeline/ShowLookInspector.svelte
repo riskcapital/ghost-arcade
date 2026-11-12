@@ -53,10 +53,10 @@
       {/each}
     </select>
   </label>
-  <span class="insp-palettes" role="radiogroup" aria-label="Colours">
+  <span class="insp-palettes" role="radiogroup" aria-label="Colors">
     {#each LOOK_PALETTES as p (p.id)}
       <button type="button" role="radio" class="insp-palette" class:on={clip.paletteId === p.id} aria-checked={clip.paletteId === p.id}
-        title={p.name} aria-label={`${p.name} colours`} onclick={() => patch({ paletteId: p.id })}>
+        title={p.name} aria-label={`${p.name} colors`} onclick={() => patch({ paletteId: p.id })}>
         {#each p.colors as c, i (i)}<span style:background={css(c)}></span>{/each}
       </button>
     {/each}

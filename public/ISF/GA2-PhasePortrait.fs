@@ -1,5 +1,5 @@
 /*{
-    "DESCRIPTION": "The phase portrait of a complex function. A handful of zeros and poles wander the plane; colour is the angle of the function's value and the dark rings are its size, doubling from one ring to the next. Colours pinwheel once around every zero and backwards around every pole, and the rings and rays cross at right angles everywhere, because the function is conformal. A symmetry control folds the plane first so the whole field repeats around the centre. Bass sends the rings travelling, beats kick the orbits, spectral centroid turns the fold.",
+    "DESCRIPTION": "The phase portrait of a complex function. A handful of zeros and poles wander the plane; color is the angle of the function's value and the dark rings are its size, doubling from one ring to the next. Colors pinwheel once around every zero and backwards around every pole, and the rings and rays cross at right angles everywhere, because the function is conformal. A symmetry control folds the plane first so the whole field repeats around the center. Bass sends the rings traveling, beats kick the orbits, spectral centroid turns the fold.",
     "CREDIT": "Ghost Arcade 2.0 pack",
     "ISFVSN": "2",
     "CATEGORIES": ["Generator", "Audio Reactive"],

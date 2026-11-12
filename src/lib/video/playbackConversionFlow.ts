@@ -44,7 +44,7 @@ export async function convertForSmoothPlayback(path: string, deps: PlaybackConve
     const moved = relink(path, result.outputPath);
     void recheck(result.outputPath, { force: true });
     const users = describeRelink(moved);
-    const hdr = result.hdrSkipped ? ' It is HDR and could not be converted to SDR here, so colours may look washed out.' : '';
+    const hdr = result.hdrSkipped ? ' It is HDR and could not be converted to SDR here, so colors may look washed out.' : '';
     toast(users
       ? `Converted ${name}. ${users} now play ${fileNameOf(result.outputPath)}. Save the project to keep this.${hdr}`
       : `Converted ${name} to ${fileNameOf(result.outputPath)}.${hdr}`,
@@ -52,7 +52,7 @@ export async function convertForSmoothPlayback(path: string, deps: PlaybackConve
     return result.outputPath;
   } catch (error) {
     if (isVideoConversionCancelled(error)) {
-      toast(`Conversion of ${name} cancelled.`, 'info');
+      toast(`Conversion of ${name} canceled.`, 'info');
     } else {
       const message = error instanceof Error ? error.message.split('\n')[0] : String(error);
       toast(`Could not convert ${name}: ${message}`, 'error');

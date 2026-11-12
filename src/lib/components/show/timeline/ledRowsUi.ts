@@ -55,7 +55,7 @@ export function ledGroupHeight(rows: readonly LedRow[], folded: boolean): number
 export const LED_KIND_LABELS: Record<LedBlockKind, string> = {
   follow: 'Follow the stage',
   effect: 'LED effect',
-  colour: 'Colour',
+  colour: 'Color',
   gradient: 'Gradient',
   chase: 'Chase',
   look: 'Look',

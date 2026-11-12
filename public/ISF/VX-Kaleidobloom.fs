@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A kaleidoscope that blooms. Every frame the picture is folded into mirrored segments, carried outward through a curved lens, turned and stirred, so the light poured in at the centre - a turning rose of light and petals that orbit it - streams outward as layered, symmetrical echoes. The trails age through the palette's colours and catch light like glass. The music sets how fast it blooms and turns; the swell opens the rose; each hit punches the bloom outward, lurches the spin and flares the light, then it settles. Segments change smoothly as the hits add up.",
+    "DESCRIPTION": "A kaleidoscope that blooms. Every frame the picture is folded into mirrored segments, carried outward through a curved lens, turned and stirred, so the light poured in at the center - a turning rose of light and petals that orbit it - streams outward as layered, symmetrical echoes. The trails age through the palette's colors and catch light like glass. The music sets how fast it blooms and turns; the swell opens the rose; each hit punches the bloom outward, lurches the spin and flares the light, then it settles. Segments change smoothly as the hits add up.",
     "PASSES": [
         { "TARGET": "blurA", "WIDTH": "$WIDTH/4", "HEIGHT": "$HEIGHT/4" },
         { "TARGET": "blurB", "WIDTH": "$WIDTH/16", "HEIGHT": "$HEIGHT/16" },
@@ -21,7 +21,7 @@
         { "NAME": "segments", "LABEL": "Segments", "TYPE": "float", "DEFAULT": 6, "MIN": 3, "MAX": 12 },
         { "NAME": "echo", "LABEL": "Echo", "TYPE": "float", "DEFAULT": 0.65, "MIN": 0, "MAX": 1 },
         { "NAME": "relief", "LABEL": "Glass", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0, "MAX": 1 },
-        { "NAME": "drift", "LABEL": "Colour drift", "TYPE": "float", "DEFAULT": 0.4, "MIN": 0, "MAX": 1 },
+        { "NAME": "drift", "LABEL": "Color drift", "TYPE": "float", "DEFAULT": 0.4, "MIN": 0, "MAX": 1 },
         { "NAME": "stir", "LABEL": "Stir", "TYPE": "float", "DEFAULT": 0.4, "MIN": 0, "MAX": 1 },
         { "NAME": "ink", "LABEL": "Light", "TYPE": "color", "DEFAULT": [0.3, 0.8, 1.0, 1.0] },
         { "NAME": "accent", "LABEL": "Second light", "TYPE": "color", "DEFAULT": [1.0, 0.3, 0.6, 1.0] },

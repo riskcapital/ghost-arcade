@@ -1,6 +1,6 @@
 /*{
     "CREDIT": "Justin Wood / Ghost Arcade",
-    "DESCRIPTION": "Drift Veil - sheets of translucent membrane suspended at different depths in a current, undulating on travelling waves and curled by domain warp until they fold back over themselves. The same water as Deep Descent: god rays from the surface, caustics projected down through it, suspended particulate. A drift rather than a fall, and folded sheets rather than a chain of masses, so the glass is marched through several crossings at once.",
+    "DESCRIPTION": "Drift Veil - sheets of translucent membrane suspended at different depths in a current, undulating on traveling waves and curled by domain warp until they fold back over themselves. The same water as Deep Descent: god rays from the surface, caustics projected down through it, suspended particulate. A drift rather than a fall, and folded sheets rather than a chain of masses, so the glass is marched through several crossings at once.",
     "ISFVSN": "2",
     "CATEGORIES": ["Generator", "3D Room", "Audio Reactive"],
     "INPUTS": [

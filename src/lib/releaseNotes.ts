@@ -40,7 +40,7 @@ const RELEASE_NOTES: Record<string, AppReleaseNotes> = {
       'Undo and redo also cover keyframe edits — add, delete, move, retime, value and easing — restored together with the project.',
       'Point cloud layers gain a Material and Glow section: shininess, metallic, fresnel, emissive, specular and rim tints, and a per-point glow.',
       'Point cloud specular highlights now track the camera instead of a fixed view direction, so they move as the cloud is orbited.',
-      'Datamosh gains a flicker-speed control, and Constellation gains speed, a blend mode, and a travelling wave mode.',
+      'Datamosh gains a flicker-speed control, and Constellation gains speed, a blend mode, and a traveling wave mode.',
       'Point cloud mouse interaction is stronger by default with a much wider usable range.',
       'New Quotron generator: a 1970s quote terminal with eleven programs, six phosphors and seven glyph ROMs, rolled from a seed with a Generate button, adapting its character grid to the composition resolution.',
     ],

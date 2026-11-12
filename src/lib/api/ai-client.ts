@@ -292,7 +292,7 @@ Write ONE complete, self-contained HTML file that runs on the first try.
 
 p5 makes the FORM. Ghost Arcade does the TREATMENT.
 
-Ghost Arcade already has GPU effects for glow, bloom, blur, feedback, mirroring, kaleidoscopes, colour grading and blend modes. Do not fake those in p5 (no shadowBlur glow, no drawingContext.filter, no full-screen pixel loops). Spend the sketch on what a fragment shader cannot do well:
+Ghost Arcade already has GPU effects for glow, bloom, blur, feedback, mirroring, kaleidoscopes, color grading and blend modes. Do not fake those in p5 (no shadowBlur glow, no drawingContext.filter, no full-screen pixel loops). Spend the sketch on what a fragment shader cannot do well:
 
 - Agents with memory: flocks, boids, ants, slime trails, walkers that remember where they have been.
 - Strokes and line quality: flow-field pen strokes, hatching, contour lines, ribbons, calligraphic width.
@@ -301,7 +301,7 @@ Ghost Arcade already has GPU effects for glow, bloom, blur, feedback, mirroring,
 - Accumulation: let marks build up over seconds by fading slowly instead of clearing.
 - Systems with rules: circle packing, differential growth, cellular automata, tiling (Truchet, Wang), physics, springs.
 
-Pick ONE strong idea and execute it with care. Restraint reads better at scale than everything at once. Prefer a considered palette of two to four colours over rainbow cycling, and give the piece a slow evolution so it still surprises after five minutes.
+Pick ONE strong idea and execute it with care. Restraint reads better at scale than everything at once. Prefer a considered palette of two to four colors over rainbow cycling, and give the piece a slow evolution so it still surprises after five minutes.
 
 ═══ TEMPLATE (FOLLOW THIS STRUCTURE) ═══
 
@@ -398,7 +398,7 @@ Pick ONE strong idea and execute it with care. Restraint reads better at scale t
 
 ═══ CONTROLS ═══
 
-- Give 4 to 7 controls, including speed, one colour control (hue or a color) and the transparent switch. Every control must visibly change the piece.
+- Give 4 to 7 controls, including speed, one color control (hue or a color) and the transparent switch. Every control must visibly change the piece.
 - window.shaderParams is one flat object literal; window.shaderParamDefs is one array literal. Both must be plain data (numbers, strings, booleans, arrays): no Math.PI, no variables, no function calls, no template strings. The app reads these literals to build its controls.
 - Control types in shaderParamDefs:
   - number: { name, label, type: 'number', min, max, default }
@@ -418,7 +418,7 @@ Pick ONE strong idea and execute it with care. Restraint reads better at scale t
 
 - pixelDensity(1) always.
 - Allocate in setup(); reuse and recycle in draw(). No new arrays, objects or createGraphics() per frame.
-- Neighbour searches over more than a few hundred agents need a spatial grid, never an all-pairs loop.
+- Neighbor searches over more than a few hundred agents need a spatial grid, never an all-pairs loop.
 - Budget: a few thousand short lines or a few hundred filled shapes per frame. Batch strokes that share a style into one beginShape()/endShape() or one Path2D on drawingContext.
 - No shadowBlur, drawingContext.filter, loadPixels() or get() at full resolution in draw(). Leave glow and blur to Ghost Arcade's effects.
 - Time with deltaTime (as in the template), not frameCount, so motion keeps its speed when the frame rate changes.
@@ -428,7 +428,7 @@ Pick ONE strong idea and execute it with care. Restraint reads better at scale t
 
 - Black ground and bright marks: the layer is usually blended with Add or Screen, and black disappears. Transparent mode lets the marks sit over anything.
 - Use alpha and line weight for depth instead of more objects.
-- Centre the composition and fill the frame at any aspect ratio, from a 16:9 screen to a tall LED strip.
+- Center the composition and fill the frame at any aspect ratio, from a 16:9 screen to a tall LED strip.
 - No mouse, keyboard or DOM interface: nobody touches a projection.
 
 ═══ ONLY WHEN THE USER ASKS FOR A SHADER ═══
@@ -443,7 +443,7 @@ Ghost Arcade Pro then runs that shader natively on the GPU. For everything else,
 - let/const only, no var.
 - No external resources other than the p5 script tag.
 - No console spam, no alert(), no errors in setup() or draw().
-- Test the maths in your head: no NaN, no division by zero, no unbounded growth in arrays.
+- Test the math in your head: no NaN, no division by zero, no unbounded growth in arrays.
 
 ═══ OUTPUT ═══
 
@@ -795,7 +795,7 @@ Make it VISUALLY SPECTACULAR — this will be projected at large scale in live p
 
 "${description}"
 
-Lean into what p5.js does best: agents with memory, expressive strokes, typography, recursion, slow accumulation and rule-based systems. Draw the form with care and leave glow, blur and feedback to Ghost Arcade's effects. It must hold 60 fps at 1920x1080, evolve over minutes, and offer 4-7 controls including speed, a colour control and the Transparent switch.`;
+Lean into what p5.js does best: agents with memory, expressive strokes, typography, recursion, slow accumulation and rule-based systems. Draw the form with care and leave glow, blur and feedback to Ghost Arcade's effects. It must hold 60 fps at 1920x1080, evolve over minutes, and offer 4-7 controls including speed, a color control and the Transparent switch.`;
   }
 
   if (additionalContext) {

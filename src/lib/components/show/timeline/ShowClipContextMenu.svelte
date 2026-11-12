@@ -136,11 +136,11 @@
       >{label}</button>
     {/each}
   </div>
-  <div class="ccm-head">Colour</div>
-  <div class="ccm-row" role="group" aria-label="Clip colour">
-    <button class="ccm-swatch track" class:on={!clip.color} disabled={locked} onclick={() => setColor(undefined)} title="Use the track's colour" aria-label="Use the track's colour"></button>
+  <div class="ccm-head">Color</div>
+  <div class="ccm-row" role="group" aria-label="Clip color">
+    <button class="ccm-swatch track" class:on={!clip.color} disabled={locked} onclick={() => setColor(undefined)} title="Use the track's color" aria-label="Use the track's color"></button>
     {#each CLIP_SWATCHES as sw (sw)}
-      <button class="ccm-swatch" class:on={clip.color === sw} style:background={sw} disabled={locked} onclick={() => setColor(sw)} title="Clip colour" aria-label="Clip colour" data-clip-menu-colour={sw}></button>
+      <button class="ccm-swatch" class:on={clip.color === sw} style:background={sw} disabled={locked} onclick={() => setColor(sw)} title="Clip color" aria-label="Clip color" data-clip-menu-colour={sw}></button>
     {/each}
   </div>
   {#if canReveal}

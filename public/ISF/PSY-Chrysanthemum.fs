@@ -1,5 +1,5 @@
 /*{
-    "DESCRIPTION": "The chrysanthemum. The first thing many people report on DMT, before anything else arrives: a flower of impossible detail opening from its centre, ring after ring of petals, each ring turning against the last, each petal jewelled and outlined, the whole thing brighter than colour should be. New rings are born at the heart and pass outward as it blooms without end. Set the petal count, how fast it opens, how the rings counter-turn and how fine the jewelling is. Bass opens the bloom, beats flash the outlines, spectral centroid turns the rings.",
+    "DESCRIPTION": "The chrysanthemum. The first thing many people report on DMT, before anything else arrives: a flower of impossible detail opening from its center, ring after ring of petals, each ring turning against the last, each petal jewelled and outlined, the whole thing brighter than color should be. New rings are born at the heart and pass outward as it blooms without end. Set the petal count, how fast it opens, how the rings counter-turn and how fine the jewelling is. Bass opens the bloom, beats flash the outlines, spectral centroid turns the rings.",
     "CREDIT": "Ghost Arcade psychedelic pack",
     "ISFVSN": "2",
     "CATEGORIES": ["Generator", "Audio Reactive"],

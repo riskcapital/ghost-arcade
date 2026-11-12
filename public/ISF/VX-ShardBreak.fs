@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A pane of glass with light behind it. The voice draws a twisting ribbon of fine light lines; every hit strikes the pane at a point and it cracks into radial shards around it. The shards fly a little apart, tilt and turn, show their bright refracting edges and split the picture into an ink and an accent copy, then drift back and seal again, leaving a glint along the seams. Shards sets how finely it breaks, Impact how far they fly, Spin how much they turn, Channel split the colour fringe and Recovery how long they take to come back. Seed re-rolls the picture.",
+    "DESCRIPTION": "A pane of glass with light behind it. The voice draws a twisting ribbon of fine light lines; every hit strikes the pane at a point and it cracks into radial shards around it. The shards fly a little apart, tilt and turn, show their bright refracting edges and split the picture into an ink and an accent copy, then drift back and seal again, leaving a glint along the seams. Shards sets how finely it breaks, Impact how far they fly, Spin how much they turn, Channel split the color fringe and Recovery how long they take to come back. Seed re-rolls the picture.",
     "PASSES": [
         {
             "TARGET": "clock",

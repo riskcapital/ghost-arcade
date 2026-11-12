@@ -122,7 +122,7 @@
   </div>
  </div>
  {#if paintingSrc}<div class="am-shapes">
-  <header><small>SHAPES</small><h3>Cut the painting into shapes</h3><p>Each patch of colour becomes its own mapping layer. Less detail gives a few broad shapes; more gives many small ones.</p></header>
+  <header><small>SHAPES</small><h3>Cut the painting into shapes</h3><p>Each patch of color becomes its own mapping layer. Less detail gives a few broad shapes; more gives many small ones.</p></header>
   <div class="am-shapes-body">
    <div class="am-shapes-view"><img src={paintingSrc} alt="The painting"/>
     <svg viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true">{#each shapes as shape}<polygon points={shape.points.map(p=>`${p.x},${p.y}`).join(' ')}/>{/each}</svg></div>
@@ -139,7 +139,7 @@
 {#if data}<h3>{data.name}</h3><img src={data.image} alt="Calibration reference photograph"/><div class="fields"><label>Measured projector<select bind:value={projector} onchange={()=>surface=0}>{#each data.projectors as p,i}<option value={i}>{p.name} · {p.width} × {p.height}</option>{/each}</select></label><label>Traced surface<select bind:value={surface}>{#each candidate?.surfaces??[] as s,i}<option value={i}>{s.name}</option>{/each}</select></label><label>Physical output<select bind:value={target}><option value="">Choose a screen</option>{#each $screens as s}<option value={s.id}>{s.name}</option>{/each}</select></label></div>
 <svg viewBox="-0.1 -0.1 1.2 1.2" aria-label="Proposed projector raster geometry"><rect x="0" y="0" width="1" height="1" fill="#070b10" stroke="var(--ga-blue-mute-300)" stroke-width=".004"/><polygon points={(shape?.corners??shape?.points??[]).map(p=>`${p.x},${p.y}`).join(' ')} fill="var(--ga-blue-a28)" stroke="var(--ga-blue-300)" stroke-width=".008"/>{#if shape?.corners}<circle cx={shape.corners[0].x} cy={shape.corners[0].y} r=".03" fill="#ffd45c"><title>Top left of the picture</title></circle>{/if}</svg>
 {#if shape?.corners&&shape.reordered}<p class="warn">The surface was not traced top left, top right, bottom right, bottom left as this projector sees it, so its corners were put in that order. The picture will be upright in the projector's raster, with its top left at the yellow dot. For a turned surface use the Screen's Rotation.</p>{/if}
-{#if candidate?.mirrored}<p class="warn">This projector's corners run anticlockwise in the photo: a mirrored or rear-projection view, or corners marked out of order. Check the result on the surface before relying on it.</p>{/if}
+{#if candidate?.mirrored}<p class="warn">This projector's corners run counterclockwise in the photo: a mirrored or rear-projection view, or corners marked out of order. Check the result on the surface before relying on it.</p>{/if}
 {#if !shape?.corners}<p role="alert">Choose a convex four-corner surface within the supported projector raster. Polygons and non-planar objects cannot be applied as a corner calibration.</p>{/if}<button disabled={!target||!shape?.corners} onclick={apply}>Apply geometry to selected output</button>{/if}<p class="note">This is a planar photo calibration. Match the selected display’s resolution to the measured projector. Depth measurements do not make this an automatic 3D projector solve. Verify alignment at the venue; overlap blending remains a separate step.</p>{/if}
 {#if !mappedSurfaces.length}<p role="status">{message}</p>{/if}</section>
 <style>
