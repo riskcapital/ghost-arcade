@@ -100,6 +100,42 @@ const hasNativeCore = existsSync(nativeCoreBin);
 const itIfNativeCore = hasNativeCore ? it : it.skip;
 const nativeBackend = process.platform === 'darwin' ? 'metal' : process.platform === 'win32' ? 'dx12' : 'vulkan';
 
+/**
+ * Builds the effect-pass pipeline before a test times anything.
+ *
+ * `precompile_shader` only registers the WGSL; the pipeline is built in the
+ * background the first time a graph uses it, and the graph's output stays
+ * blank until then. The app hides that by queuing a small effect chain at
+ * start-up (NativeRendererSync.warmNativeEffectPassPipeline). A bare test core
+ * gets no such warm-up, so its first effect graph paid the cold build of the
+ * effect-pass shader inside a 5 s poll. Every effect lives in that one shader,
+ * and on D3D12 the build takes about ten seconds (DXC lowering all of them
+ * into one pixel shader, then the driver), so those polls timed the compile,
+ * not the behavior, and could never pass there.
+ */
+async function warmEffectPassPipeline(rpc: NativeRpc) {
+  const size = 16;
+  const graph = buildNativeEffectPassChainGraph({
+    sourceId: 'warmup:effect-pass:src',
+    targetSourceId: 'warmup:effect-pass:out',
+    effects: [{ effect: 'brightness', amount: 1, mix: 1, params: {} }],
+    width: size,
+    height: size,
+    time: 0,
+    frameIndex: 0,
+    seq: 1,
+  });
+  await rpc.send('submit_commands', { commands: [
+    { type: 'upload_source_frame', source_id: 'warmup:effect-pass:src', width: size, height: size, seq: 1,
+      rgba_b64: Buffer.from(Array.from({ length: size * size }, () => [0, 0, 0, 255]).flat()).toString('base64') },
+    { type: 'queue_compute_graph', ...(graph.config as Record<string, unknown>) },
+  ] }, 20000);
+  await expect.poll(
+    async () => (await rpc.send('get_source_frame_readiness', { source_id: 'warmup:effect-pass:out' }))?.ready,
+    { timeout: 45000 * rpcDeadlineScale, interval: 50, message: 'the effect-pass pipeline did not finish building' },
+  ).toBe(true);
+}
+
 
 describe('composition FX run as a post-composite pass on the native core', () => {
   itIfNativeCore('accepts a composite-target graph and renders with it', async () => {
@@ -158,6 +194,7 @@ itIfNativeCore('renders group effects after children and applies group opacity o
   try {
     await rpc.send('start', { config: { backend: nativeBackend, width: 32, height: 32, source_frame_size: 32, target_fps: 30 } }, 20000);
     await rpc.send('submit_commands', { commands: [...buildVJMixPrecompileCommands(), ...buildNativeEffectPassPrecompileCommands()] }, 20000);
+    await warmEffectPassPipeline(rpc);
     const commands: Record<string, unknown>[] = [];
     for (const [id, color] of [['group-red', [255, 0, 0, 255]], ['group-green', [0, 255, 0, 255]], ['group-black', [0, 0, 0, 255]]] as const) {
       commands.push(
@@ -219,7 +256,7 @@ itIfNativeCore('renders group effects after children and applies group opacity o
       });
     }, { timeout: 5000 * rpcDeadlineScale, interval: 20 }).toEqual([[64, 0, 64, 255], [64, 0, 64, 255]]);
   } finally { await rpc.close(); }
-}, 60000 * rpcDeadlineScale);
+}, 120000 * rpcDeadlineScale);
 
 itIfNativeCore('retains VJ composition FX with the mix graph and shares their processed frame with stage slices', async () => {
   const rpc = createNativeRpc();
@@ -229,6 +266,7 @@ itIfNativeCore('retains VJ composition FX with the mix graph and shares their pr
       { type: 'upload_source_frame', source_id: 'review-red', width: 32, height: 32, seq: 1,
         rgba_b64: Buffer.from(Array.from({ length: 1024 }, () => [255, 0, 0, 255]).flat()).toString('base64') },
     ] }, 20000);
+    await warmEffectPassPipeline(rpc);
     const mix = buildVJMixGraph({ outputSourceId: 'review-mix', width: 32, height: 32, time: 0, frameIndex: 0,
       rows: [{ frameId: 'review-red', opacity: 1, blendMode: 'normal' }] });
     const effects = buildNativeEffectPassChainGraph({ sourceId: 'review-mix', targetSourceId: 'review-fx',
@@ -270,7 +308,7 @@ itIfNativeCore('retains VJ composition FX with the mix graph and shares their pr
     await rpc.send('submit_commands', { commands: [producer(false)] });
     await expect.poll(pixel, { timeout: 5000 * rpcDeadlineScale, interval: 20 }).toEqual([255, 0, 0, 255]);
   } finally { await rpc.close(); }
-}, 60000 * rpcDeadlineScale);
+}, 120000 * rpcDeadlineScale);
 
 itIfNativeCore('keeps warped mesh cells opaque across concave bends and distant grid cells', async () => {
   const rpc = createNativeRpc();
