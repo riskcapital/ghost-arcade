@@ -1328,6 +1328,7 @@ struct OutputStage {
     /// elevation, tangent of half the vertical field of view), radians.
     /// Only the dome view target sets it (`render_dome_view`).
     dview: [f32; 4],
+    dview1: [f32; 4],
     /// This Screen as one projector of a dome rig: (on, its index, rig
     /// size, blend width), (blend gamma, _, _, _), and the rig's projectors,
     /// four vec4 each. See `Uniforms.dproj0` in heartbeat.wgsl.
@@ -1375,6 +1376,7 @@ impl Default for OutputStage {
             dome4: [std::f32::consts::FRAC_PI_2, 0.0, 0.0, 0.0],
             dlayer: [0.0; 4],
             dview: [0.0; 4],
+            dview1: [0.0; 4],
             dproj0: [0.0; 4],
             dproj1: [0.0; 4],
             dprojs: [[0.0; 4]; 32],
@@ -1453,6 +1455,7 @@ struct Uniforms {
     dome4: [f32; 4],
     dlayer: [f32; 4],
     dview: [f32; 4],
+    dview1: [f32; 4],
     dproj0: [f32; 4],
     dproj1: [f32; 4],
     dprojs: [[f32; 4]; 32],
@@ -5162,8 +5165,8 @@ struct App {
     /// Width of the deck confidence monitors' textures. 480 suits the small
     /// deck panes; a Preview monitor on its own display asks for more.
     deck_monitor_width: u32,
-    /// The editor's Inside view camera (`OutputStage::dview`), while it is on.
-    dome_view: Option<[f32; 4]>,
+    /// The editor's Inside view camera (`OutputStage::dview`, `dview1`), while it is on.
+    dome_view: Option<[[f32; 4]; 2]>,
     /// Mirror dome warp meshes by content id (`set_mirror_mesh`).
     mirror_meshes: HashMap<String, Arc<MirrorMesh>>,
     output_window_attached: bool,
@@ -7669,11 +7672,12 @@ impl App {
             dome4: [
                 read(&["domeSourceAngle"], 90.0).clamp(10.0, 360.0).to_radians() as f32,
                 read(&["domeGrid"], 0.0).clamp(0.0, 1.0) as f32,
-                0.0,
+                read(&["domePanoSeam"], 0.0).clamp(0.0, 0.3) as f32,
                 0.0,
             ],
             dlayer: [0.0; 4],
             dview: [0.0; 4],
+            dview1: [0.0; 4],
             dproj0: [0.0; 4],
             dproj1: [0.0; 4],
             dprojs: [[0.0; 4]; 32],
@@ -7796,6 +7800,7 @@ impl App {
                     // The renderer sets this per frame (sync_dome_layers).
                     dlayer: [0.0; 4],
                     dview: [0.0; 4],
+                    dview1: [0.0; 4],
                     // Filled from the dome rig below, for a projector Screen.
                     dproj0: [0.0; 4],
                     dproj1: [0.0; 4],
@@ -13760,10 +13765,11 @@ impl App {
         if render_result.is_ok() {
             let view = self.dome_view.filter(|_| self.output_stage.dome0[0] > 0.5);
             renderer.render_dome_view(
-                view.map(|dview| OutputStage {
+                view.map(|[dview, dview1]| OutputStage {
                     out0: [0.0, 0.0, 1.0, 1.0],
                     out1: [0.0, 1.0, 1.0, 1.0],
                     dview,
+                    dview1,
                     ..self.output_stage
                 }),
                 output_gate,
@@ -16313,10 +16319,20 @@ impl App {
         let read = |key: &str, fallback: f64| number_at(command, &[key]).filter(|v| v.is_finite()).unwrap_or(fallback);
         self.dome_view = enabled.then(|| {
             [
-                1.0,
-                read("azimuth", 0.0).to_radians() as f32,
-                read("elevation", 30.0).clamp(-89.0, 89.0).to_radians() as f32,
-                (read("fov", 80.0).clamp(10.0, 150.0) * 0.5).to_radians().tan() as f32,
+                [
+                    1.0,
+                    read("azimuth", 0.0).to_radians() as f32,
+                    read("elevation", 30.0).clamp(-89.0, 89.0).to_radians() as f32,
+                    (read("fov", 80.0).clamp(10.0, 160.0) * 0.5).to_radians().tan() as f32,
+                ],
+                [
+                    // Where the eye sits: 0 the dome's center, 1 the back
+                    // of the room (in dome radii, along the look's back).
+                    read("back", 0.0).clamp(0.0, 1.0) as f32,
+                    if bool_at(command, &["room"]).unwrap_or(true) { 1.0 } else { 0.0 },
+                    0.0,
+                    0.0,
+                ],
             ]
         });
     }
@@ -21550,6 +21566,7 @@ impl RenderState {
                 dome4: OutputStage::default().dome4,
                 dlayer: [0.0; 4],
                 dview: [0.0; 4],
+                dview1: [0.0; 4],
                 dproj0: [0.0; 4],
                 dproj1: [0.0; 4],
                 dprojs: [[0.0; 4]; 32],
@@ -27119,6 +27136,7 @@ impl RenderState {
             dome4: stage.dome4,
             dlayer: stage.dlayer,
             dview: stage.dview,
+            dview1: stage.dview1,
             dproj0: stage.dproj0,
             dproj1: stage.dproj1,
             dprojs: stage.dprojs,

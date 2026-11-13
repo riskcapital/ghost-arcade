@@ -257,6 +257,7 @@ impl OutputPresenter {
             dome4: stage.dome4,
             dlayer: stage.dlayer,
             dview: stage.dview,
+            dview1: stage.dview1,
             dproj0: stage.dproj0,
             dproj1: stage.dproj1,
             dprojs: stage.dprojs,

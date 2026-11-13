@@ -4,8 +4,11 @@
    * (what the projectors get) and the Inside view (the dome as someone at
    * its center sees it), and steers the Inside view:
    *   - drag to look around (the dome follows the pointer);
-   *   - scroll to zoom;
-   *   - double-click, or Reset, to look back at the front.
+   *   - scroll to zoom: out widens the view, then moves the eye back
+   *     toward the back of the room; the bar's sliders set both directly;
+   *   - double-click, or Reset, to look back at the front;
+   *   - Room draws the room under the dome (floor, seats, the wall and its
+   *     cove, lit by the dome) for context.
    * The render core draws the view (dome_inside_view in heartbeat.wgsl) and
    * the editor preview shows it in place of the program; the output window
    * and every Screen keep the program. macOS and Windows only: the view
@@ -13,7 +16,7 @@
    */
   import { onDestroy } from 'svelte';
   import { invoke, isLinux } from '$lib/bridge';
-  import { clampDomeView, domeView, DOME_VIEW_HOME } from '../stores/domeView';
+  import { clampDomeView, domeView, DOME_VIEW_FOV_RANGE, DOME_VIEW_HOME, zoomDomeView } from '../stores/domeView';
 
   let view = $derived($domeView);
   let lookEl: HTMLDivElement | null = $state(null);
@@ -35,7 +38,7 @@
     domeView.update((v) => ({ ...v, inside }));
   }
 
-  function look(patch: Partial<typeof DOME_VIEW_HOME>) {
+  function look(patch: Partial<Omit<typeof view, 'inside'>>) {
     domeView.update((v) => clampDomeView({ ...v, ...patch }));
   }
 
@@ -74,7 +77,7 @@
     // Ours, not the editor viewport's zoom.
     e.preventDefault();
     e.stopPropagation();
-    look({ fov: view.fov * Math.exp(e.deltaY * 0.0012) });
+    domeView.update((v) => zoomDomeView(v, e.deltaY * 0.0012));
   }
 
   // Not passive: scrolling zooms the view instead of moving the page.
@@ -105,7 +108,21 @@
       ondblclick={() => look({ ...DOME_VIEW_HOME })}
     ></div>
     <div class="dome-view-status">
-      <span>{Math.round(view.azimuth)}° around · {Math.round(view.elevation)}° up · {Math.round(view.fov)}° wide</span>
+      <span>{Math.round(view.azimuth)}° around · {Math.round(view.elevation)}° up</span>
+      <label class="dome-view-slider" title="How wide the view is (scroll on the view to zoom)">
+        Wide
+        <input type="range" min={DOME_VIEW_FOV_RANGE.min} max={DOME_VIEW_FOV_RANGE.max} step="1" value={view.fov}
+          oninput={(e) => look({ fov: Number((e.currentTarget as HTMLInputElement).value) })} data-dome-view-fov />
+        <output>{Math.round(view.fov)}°</output>
+      </label>
+      <label class="dome-view-slider" title="Where you sit: the dome's center, or back toward the back of the room (scroll out past the widest view to move back)">
+        Seat
+        <input type="range" min="0" max="1" step="0.01" value={view.back}
+          oninput={(e) => look({ back: Number((e.currentTarget as HTMLInputElement).value) })} data-dome-view-back />
+        <output>{view.back < 0.02 ? 'Center' : view.back > 0.98 ? 'Back row' : `${Math.round(view.back * 100)}%`}</output>
+      </label>
+      <button type="button" class:on={view.room} onclick={() => domeView.update((v) => ({ ...v, room: !v.room }))}
+        title="Show the room under the dome: floor, seats and the wall, lit by the dome" aria-pressed={view.room} data-dome-view-room>Room</button>
       <button type="button" onclick={() => look({ azimuth: 0, elevation: 20 })} title="Look at the front, low">Front</button>
       <button type="button" onclick={() => look({ elevation: 89 })} title="Look straight up at the zenith">Up</button>
       <button type="button" onclick={() => look({ ...DOME_VIEW_HOME })} title="Back to the starting view">Reset</button>
@@ -171,6 +188,26 @@
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
     border-radius: var(--ga-r-hard, 4px);
     pointer-events: auto;
+  }
+  .dome-view-slider {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-right: 8px;
+    color: var(--ga-ink-2, #8a8a96);
+    font-size: var(--ga-text-meta, 11px);
+  }
+  .dome-view-slider input { width: 90px; accent-color: var(--ga-icon, #5278ff); }
+  .dome-view-slider output {
+    min-width: 52px;
+    color: var(--ga-ink-1, #b8b2c2);
+    font-family: var(--ga-font-mono, ui-monospace, monospace);
+    font-size: var(--ga-text-meta, 11px);
+  }
+  .dome-view-status button.on {
+    background: var(--ga-selection-bg, rgba(82, 120, 255, 0.16));
+    border-color: var(--ga-selection-line, #5278ff);
+    color: var(--ga-selection-ink, #e0e8ff);
   }
   .dome-view-status span {
     margin-right: 6px;

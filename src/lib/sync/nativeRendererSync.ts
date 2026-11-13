@@ -8912,6 +8912,8 @@ export class NativeRendererSync {
       azimuth: view.azimuth,
       elevation: view.elevation,
       fov: view.fov,
+      back: view.back,
+      room: view.room,
     };
     const sig = enabled ? JSON.stringify(payload) : 'off';
     if (sig === this.lastDomeViewSig) return;

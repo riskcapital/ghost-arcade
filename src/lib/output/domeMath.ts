@@ -33,6 +33,7 @@ export interface DomeOutput {
   domePanoBottom?: number;
   domePanoTop?: number;
   domePanoSpan?: number;
+  domePanoSeam?: number;
   domeGrid?: boolean;
 }
 
@@ -233,6 +234,7 @@ export function nativeDomeStage(out: DomeOutput) {
     domePanoBottom: finite(out.domePanoBottom, 0),
     domePanoTop: finite(out.domePanoTop, 90),
     domePanoSpan: finite(out.domePanoSpan, 360),
+    domePanoSeam: finite(out.domePanoSeam, 0),
     domeGrid: out.domeGrid ? 0.85 : 0,
   };
 }
@@ -253,14 +255,18 @@ function normalize(a: Vec3): Vec3 {
 
 // ─── The Inside view's camera ─────────────────────────────────────────────
 
-/** Where the Inside view looks: degrees, the field of view vertical. */
+/** Where the Inside view looks: degrees, the field of view vertical; where
+ *  the eye sits (`back` 0 the center .. 1 the back of the room, behind the
+ *  look) and whether the room is drawn (the eye then sits at seat height). */
 export interface DomeCamera {
   azimuth: number;
   elevation: number;
   fov: number;
+  back?: number;
+  room?: boolean;
 }
 
-/** The camera's basis, as dome_inside_view in heartbeat.wgsl builds it. */
+/** The camera's basis and eye, as dome_inside_view in heartbeat.wgsl builds them. */
 function cameraBasis(camera: DomeCamera) {
   const yaw = camera.azimuth * DEG;
   const pitch = camera.elevation * DEG;
@@ -268,25 +274,33 @@ function cameraBasis(camera: DomeCamera) {
   const right: Vec3 = [Math.cos(yaw), Math.sin(yaw), 0];
   const up = cross(forward, right);
   const t = Math.tan(Math.max(camera.fov, 1) * DEG * 0.5);
-  return { forward, right, up, t };
+  const back = Math.max(0, Math.min(1, camera.back ?? 0)) * 0.82;
+  const eye: Vec3 = [-Math.sin(yaw) * back, Math.cos(yaw) * back, camera.room ? -0.14 : 0];
+  return { forward, right, up, t, eye };
 }
 
-/** Where a direction shows in the Inside view (frame UV, y-up), or null behind the camera. */
+/** Where a direction on the dome shows in the Inside view (frame UV, y-up), or null behind the camera. */
 export function insideViewPoint(dir: Vec3, camera: DomeCamera, aspect: number): Vec2 | null {
-  const { forward, right, up, t } = cameraBasis(camera);
-  const z = dot(dir, forward);
+  const { forward, right, up, t, eye } = cameraBasis(camera);
+  const v = sub(normalize(dir), eye);
+  const z = dot(v, forward);
   if (z <= 0.01) return null;
-  const x = dot(dir, right) / z;
-  const y = dot(dir, up) / z;
+  const x = dot(v, right) / z;
+  const y = dot(v, up) / z;
   return { x: (x / (t * aspect) + 1) * 0.5, y: (y / t + 1) * 0.5 };
 }
 
-/** The direction the Inside view shows at frame UV `uv` (y-up). */
+/** The direction (from the dome's center) of the dome point the Inside view shows at frame UV `uv` (y-up). */
 export function insideViewDirection(uv: Vec2, camera: DomeCamera, aspect: number): Vec3 {
-  const { forward, right, up, t } = cameraBasis(camera);
+  const { forward, right, up, t, eye } = cameraBasis(camera);
   const x = (uv.x * 2 - 1) * t * aspect;
   const y = (uv.y * 2 - 1) * t;
-  return normalize(add(forward, add(scale(right, x), scale(up, y))));
+  const ray = normalize(add(forward, add(scale(right, x), scale(up, y))));
+  // Leaving the unit sphere from inside it.
+  const b = dot(eye, ray);
+  const c = dot(eye, eye) - 1;
+  const along = -b + Math.sqrt(Math.max(b * b - c, 0));
+  return normalize(add(eye, scale(ray, along)));
 }
 
 // ─── Projectors around the dome ──────────────────────────────────────────

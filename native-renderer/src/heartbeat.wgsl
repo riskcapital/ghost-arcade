@@ -92,7 +92,8 @@ struct Uniforms {
   //            panorama bottom elevation, panorama top elevation,
   //            panorama span around; radians)
   //   dome4 = (flat: horizontal view angle, domemaster: its fisheye angle
-  //            (radians); dome grid strength 0..1; _, _)
+  //            (radians); dome grid strength 0..1; full-circle panorama
+  //            seam blend, a fraction of the canvas width; _)
   //   dlayer = layers placed on the dome: (drawn in their own pass, lens,
   //            dome angle radians, _). See fs_main's dome pass.
   dome3: vec4<f32>,
@@ -100,8 +101,10 @@ struct Uniforms {
   dlayer: vec4<f32>,
   // The view from inside the dome (fs_output only, the editor's Inside
   // view): (on, look azimuth, look elevation, tangent of half the vertical
-  // field of view), radians.
+  // field of view), radians; dview1 = (eye pulled back from the center
+  // toward the back of the room 0..1, room drawn 0/1, _, _).
   dview: vec4<f32>,
+  dview1: vec4<f32>,
   // This Screen as one projector of a dome rig (dome_projector_view):
   //   dproj0 = (on, its index in the rig, projectors in the rig, blend width)
   //   dproj1 = (blend gamma, _, _, _)
@@ -2028,6 +2031,36 @@ fn dome_source_uv(uv_in: vec2<f32>, aspect: f32, canvas_aspect: f32) -> vec4<f32
   return vec4<f32>(seen, edge_fade);
 }
 
+/// A full-circle panorama's join, set by dome_canvas_seen for the sample
+/// that follows (dome_canvas_sample): x = 1 when the canvas wraps all the
+/// way round; with a seam blend, where the canvas's right end fades into
+/// its left start, the partner sample's x (y) and its weight (z).
+var<private> dome_seam: vec3<f32> = vec3<f32>(0.0, 0.0, 0.0);
+
+/// The canvas colour at a UV dome_canvas_seen gave (the creative master,
+/// sampled without mips). All the way round, the canvas's first and last
+/// columns are neighbours: across the join it filters between them, as
+/// it does between any two columns, so a true 360 equirectangular picture
+/// meets itself without a line. With a seam blend, the crossfade.
+fn dome_canvas_sample(seen: vec2<f32>) -> vec3<f32> {
+  let v = 1.0 - seen.y;
+  var rgb = textureSampleLevel(creative_master, creative_sampler, vec2<f32>(seen.x, v), 0.0).rgb;
+  if (dome_seam.x > 0.5) {
+    let w = f32(max(textureDimensions(creative_master).x, 1u));
+    let px = seen.x * w;
+    if (px < 0.5 || px > w - 0.5) {
+      let last = textureSampleLevel(creative_master, creative_sampler, vec2<f32>((w - 0.5) / w, v), 0.0).rgb;
+      let first = textureSampleLevel(creative_master, creative_sampler, vec2<f32>(0.5 / w, v), 0.0).rgb;
+      rgb = mix(last, first, fract(px + 0.5));
+    }
+  }
+  if (dome_seam.z > 0.0) {
+    let other = textureSampleLevel(creative_master, creative_sampler, vec2<f32>(dome_seam.y, v), 0.0).rgb;
+    rgb = mix(rgb, other, dome_seam.z);
+  }
+  return rgb;
+}
+
 /// The canvas UV a direction on the dome (z to the zenith) sees, in `xy`,
 /// and how much of the canvas is there in `z`. `flat_uv_rest` is where the
 /// flat view's curvature eases back to; `px_angle` is about one pixel as an
@@ -2040,6 +2073,7 @@ fn dome_canvas_seen(dome_dir: vec3<f32>, flat_uv_rest: vec2<f32>, canvas_aspect:
   let kind = i32(floor(u.dome3.x + 0.5));
   var tex_uv = flat_uv_rest;
   var inside = 1.0;
+  dome_seam = vec3<f32>(0.0, 0.0, 0.0);
   if (kind == 1) {
     let az = atan2(dir.x, -dir.y);
     let el = asin(clamp(dir.z, -1.0, 1.0));
@@ -2054,7 +2088,21 @@ fn dome_canvas_seen(dome_dir: vec3<f32>, flat_uv_rest: vec2<f32>, canvas_aspect:
     if (span < 2.0 * pi - 0.001) {
       inside = smoothstep(-ex, ex, x) * smoothstep(-ex, ex, 1.0 - x);
     } else {
-      tex_uv.x = fract(x);
+      // All the way round: the canvas's two ends meet behind, filtered
+      // across the join (dome_canvas_sample). For a canvas not made to
+      // wrap, a seam blend w squeezes it by w and fades its last w (of
+      // what is shown) into its first w, so the join has no line.
+      let w = clamp(u.dome4.z, 0.0, 0.3);
+      let f = fract(x);
+      dome_seam.x = 1.0;
+      if (w > 0.0005) {
+        let t = f * (1.0 - w);
+        tex_uv.x = t + w;
+        let k = smoothstep(0.0, 1.0, (t - (1.0 - 2.0 * w)) / w);
+        if (k > 0.0) { dome_seam = vec3<f32>(1.0, max(t - (1.0 - 2.0 * w), 0.0), k); }
+      } else {
+        tex_uv.x = f;
+      }
     }
     inside = inside * smoothstep(-ey, ey, y) * smoothstep(-ey, ey, 1.0 - y);
   } else if (kind == 2) {
@@ -3984,7 +4032,14 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     if (dome_pass != dome_placed && (dome_pass || u.dlayer.x > 0.5)) {
       continue;
     }
-    var layer_uv = canvas_uv;
+    // The canvas has nothing past its border, so a layer reaching it is not
+    // faded there: its anti-aliased edge (native_layer_shape: 1.5 px of the
+    // canvas's short side, in UV, so wider across a wide canvas) would leave
+    // a dark rim round a layer that fills the canvas, and a line where a 360
+    // panorama's two edges meet on the dome. The outermost pixels read the
+    // layer just inside that edge instead.
+    let border = vec2<f32>(1.6 / max(min(u.resolution.x, u.resolution.y), 64.0));
+    var layer_uv = clamp(canvas_uv, border, vec2<f32>(1.0) - border);
     if (dome_pass) {
       let placed = dome_place_uv(dome_dir, layers[layer_index].dome, aspect);
       if (placed.z < 0.5 || dome_in < 0.5) {
@@ -4339,26 +4394,115 @@ fn flux_apply(dry: vec3<f32>, uv_frame: vec2<f32>) -> vec3<f32> {
   return mix(dry, clamp(blended, vec3<f32>(0.0), vec3<f32>(1.0)), clamp(u.flux0.w, 0.0, 1.0));
 }
 
-/// The view from inside the dome, for the editor's Inside view: a camera at
-/// the centre of the dome looking at azimuth dview.y, elevation dview.z,
-/// sees the canvas as the dome output wraps it, the layers placed on the
-/// dome and the grid; past the dome's edge, a dim floor. In dome
-/// coordinates, so the dome's turn and offset (projector alignment) don't
-/// move it, while tilt, which moves the content, does.
+/// The view from inside the dome, for the editor's Inside view: an eye
+/// looking at azimuth dview.y, elevation dview.z (vertical field dview.w as
+/// a tangent) sees the canvas as the dome output wraps it, the layers
+/// placed on the dome and the grid. The eye sits at the dome's centre, or
+/// pulled back toward the back of the room (dview1.x, along the look), at
+/// a seated height when the room is drawn (dview1.y): a floor with rows of
+/// seats and a console, the wall under the dome's edge with a cove light,
+/// all lit by what the dome shows. In dome coordinates, so the dome's turn
+/// and offset (projector alignment) don't move it, while tilt, which moves
+/// the content, does.
+const DOME_ROOM_FLOOR: f32 = 0.32;
+
 fn dome_inside_view(uv_in: vec2<f32>, aspect: f32, canvas_aspect: f32) -> vec3<f32> {
   let yaw = u.dview.y;
   let pitch = u.dview.z;
   let t = max(u.dview.w, 0.01);
+  let room = u.dview1.y > 0.5;
   let forward = vec3<f32>(cos(pitch) * sin(yaw), -cos(pitch) * cos(yaw), sin(pitch));
   let right = vec3<f32>(cos(yaw), sin(yaw), 0.0);
   let up = cross(forward, right);
   let ndc = uv_in * 2.0 - vec2<f32>(1.0);
   let dir = normalize(forward + right * ndc.x * t * aspect + up * ndc.y * t);
-  // Past the dome's edge: a dim floor, lighter towards the horizon, so the
-  // view keeps its bearings.
-  let floor_shade = vec3<f32>(mix(0.012, 0.05, smoothstep(-0.6, 0.0, dir.z)));
-  let content = dome_content(dir, 2.0 * t / max(u.resolution.y, 1.0), canvas_aspect);
-  return mix(floor_shade, content.rgb, content.a);
+  let px = 2.0 * t / max(u.resolution.y, 1.0);
+  // The eye: pulled back behind the look, and at a seated height in the room.
+  let flat_back = vec2<f32>(-sin(yaw), cos(yaw));
+  let eye = vec3<f32>(flat_back * clamp(u.dview1.x, 0.0, 1.0) * 0.82, select(0.0, -0.14, room));
+  // Leaving the dome's sphere from inside it.
+  let b = dot(eye, dir);
+  let c = dot(eye, eye) - 1.0;
+  let ts = -b + sqrt(max(b * b - c, 0.0));
+  let hit = eye + dir * ts;
+  if (hit.z >= 0.0) {
+    let content = dome_content(normalize(hit), px / max(ts, 0.05), canvas_aspect);
+    // Past the content's edge (a dome angle under 180, a truncated rim): the bare shell.
+    let shell = select(vec3<f32>(0.02), vec3<f32>(0.03) + dome_room_light() * 0.08, room);
+    return mix(shell, content.rgb, content.a);
+  }
+  if (!room) {
+    // A dim floor, lighter towards the horizon, so the view keeps its bearings.
+    return vec3<f32>(mix(0.012, 0.05, smoothstep(-0.6, 0.0, dir.z)));
+  }
+  let light = dome_room_light();
+  // The wall under the dome's edge: a cylinder of the dome's radius.
+  let a2 = max(dot(dir.xy, dir.xy), 1e-6);
+  let b2 = dot(eye.xy, dir.xy);
+  let c2 = dot(eye.xy, eye.xy) - 1.0;
+  let tw = (-b2 + sqrt(max(b2 * b2 - a2 * c2, 0.0))) / a2;
+  var tf = 1e9;
+  if (dir.z < -1e-5) { tf = (-DOME_ROOM_FLOOR - eye.z) / dir.z; }
+  if (tf < tw) {
+    return dome_room_floor((eye + dir * tf).xy, tf * px, light);
+  }
+  let wz = eye.z + dir.z * tw;
+  // Darker toward the floor; the cove, a strip of light just under the edge.
+  var wall = vec3<f32>(0.022) + light * mix(0.06, 0.16, smoothstep(-DOME_ROOM_FLOOR, 0.0, wz));
+  let fw = max(tw * px, 0.002);
+  let cove = smoothstep(-0.03 - fw, -0.03 + fw, wz) * (1.0 - smoothstep(-0.012 - fw, -0.012 + fw, wz));
+  wall = wall + vec3<f32>(0.10, 0.11, 0.13) * cove;
+  // The rim: a thin dark line where the wall meets the dome.
+  wall = wall * mix(1.0, 0.4, smoothstep(-0.006 - fw, 0.0, wz));
+  return wall;
+}
+
+/// The light the dome throws into the room: what it shows straight up and
+/// halfway down the front, back and sides, averaged.
+fn dome_room_light() -> vec3<f32> {
+  let k = 0.70710678;
+  var sum = dome_content(vec3<f32>(0.0, 0.0, 1.0), 0.01, 1.0);
+  sum = sum + dome_content(vec3<f32>(0.0, -k, k), 0.01, 1.0);
+  sum = sum + dome_content(vec3<f32>(0.0, k, k), 0.01, 1.0);
+  sum = sum + dome_content(vec3<f32>(k, 0.0, k), 0.01, 1.0);
+  sum = sum + dome_content(vec3<f32>(-k, 0.0, k), 0.01, 1.0);
+  return sum.rgb * 0.2;
+}
+
+/// The floor at `p` (dome radii, front toward -y): rows of seats facing the
+/// front with an aisle down the middle, the console at the centre, carpet
+/// between, lit by the dome. `fp` is about one pixel's footprint there.
+fn dome_room_floor(p: vec2<f32>, fp: f32, light: vec3<f32>) -> vec3<f32> {
+  var col = vec3<f32>(0.03, 0.03, 0.035) + light * 0.16;
+  let r = length(p);
+  // Rows curve round a point well in front, as planetarium seating faces
+  // the front, from just in front of the centre to near the back wall; an
+  // aisle down the middle.
+  let focus = vec2<f32>(0.0, -1.6);
+  let q = p - focus;
+  let dist = length(q);
+  let row_h = 0.11;
+  let seat_w = 0.075;
+  let rows = (dist - 1.25) / row_h;
+  let along = atan2(q.x, q.y) * dist;
+  let in_rows = step(0.0, rows) * step(rows, 13.0) * step(0.07, abs(along)) * step(r, 0.9) * step(0.15, r);
+  if (in_rows > 0.5) {
+    let cell = vec2<f32>(fract(along / seat_w) - 0.5, fract(rows) - 0.5);
+    let w = max(fp / seat_w, 0.03);
+    let box = abs(cell) - vec2<f32>(0.33, 0.24);
+    let d = length(max(box, vec2<f32>(0.0))) + min(max(box.x, box.y), 0.0) - 0.1;
+    let seat = 1.0 - smoothstep(-w, w, d);
+    // The seat back: a lighter edge on the side away from the front.
+    let back = seat * smoothstep(0.05, 0.3, cell.y);
+    col = mix(col, vec3<f32>(0.05, 0.05, 0.06) + light * 0.3, seat);
+    col = col + (vec3<f32>(0.03) + light * 0.16) * back;
+  }
+  // The console at the centre.
+  let cw = max(fp, 0.004);
+  let console = 1.0 - smoothstep(0.07 - cw, 0.07 + cw, r);
+  col = mix(col, vec3<f32>(0.06, 0.065, 0.075) + light * 0.25, console);
+  // Darker toward the wall.
+  return col * mix(1.0, 0.55, smoothstep(0.6, 1.0, r));
 }
 
 /// What the dome shows in a direction from its center (z to the zenith):
@@ -4373,7 +4517,7 @@ fn dome_content(dir: vec3<f32>, px_angle: f32, canvas_aspect: f32) -> vec4<f32> 
   let truncation = u.dome2.x;
   let on_dome = step(theta, u.dome0.z * 0.5) * step(r, truncation);
   let seen = dome_canvas_seen(dir, m * 0.5 + vec2<f32>(0.5), canvas_aspect, px_angle);
-  var rgb = textureSampleLevel(creative_master, creative_sampler, vec2<f32>(seen.x, 1.0 - seen.y), 0.0).rgb * seen.z;
+  var rgb = dome_canvas_sample(seen.xy) * seen.z;
   if (u.dlayer.x > 0.5) {
     let placed = textureSampleLevel(dome_layers_tex, creative_sampler, vec2<f32>(m.x * 0.5 + 0.5, 0.5 - m.y * 0.5), 0.0);
     rgb = rgb * (1.0 - placed.a) + placed.rgb;
@@ -4459,7 +4603,8 @@ fn fs_output(in: VertexOut) -> @location(0) vec4<f32> {
     canvas_cover = domed.z;
     mask *= domed.w;
   }
-  var color = textureSampleLevel(creative_master, creative_sampler, vec2<f32>(uv.x, 1.0 - uv.y), 0.0).rgb;
+  // dome_seam is zero unless the dome's panorama seam is being blended here.
+  var color = dome_canvas_sample(uv);
   if (u.flux0.w > 0.0005) { color = flux_apply(color, uv); }
   // Where a panorama or flat view runs out the canvas is black, but layers
   // placed on the dome still draw there.

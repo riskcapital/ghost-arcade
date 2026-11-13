@@ -143,6 +143,20 @@ describe('the Inside view camera', () => {
     }
   });
 
+  it('finds the dome point again from a seat in the room, pulled back', () => {
+    const seat = { ...camera, back: 0.6, room: true };
+    for (const uv of [{ x: 0.2, y: 0.8 }, { x: 0.6, y: 0.4 }]) {
+      const dir = insideViewDirection(uv, seat, 16 / 9);
+      close(Math.hypot(dir[0], dir[1], dir[2]), 1, 1e-9);
+      const again = insideViewPoint(dir, seat, 16 / 9)!;
+      close(again.x, uv.x, 1e-9);
+      close(again.y, uv.y, 1e-9);
+    }
+    // Pulled back, the middle of the frame lands higher up the far side than from the center.
+    expect(azElOf(insideViewDirection({ x: 0.5, y: 0.5 }, { azimuth: 0, elevation: 20, fov: 80, back: 0.8 }, 1)).elevation)
+      .toBeGreaterThan(20);
+  });
+
   it('puts up at the top and the audience’s right on the right', () => {
     const top = azElOf(insideViewDirection({ x: 0.5, y: 1 }, camera, 1));
     expect(top.elevation).toBeGreaterThan(40);

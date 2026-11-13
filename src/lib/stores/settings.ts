@@ -803,6 +803,11 @@ export interface OutputSettings {
   domePanoBottom?: number;
   domePanoTop?: number;
   domePanoSpan?: number;
+  /** Panorama all the way round: how much of the canvas width (0..0.3)
+   *  fades its right edge into its left, for content not made to wrap.
+   *  0 (the default) for a true 360 equirectangular picture, whose edges
+   *  already meet. */
+  domePanoSeam?: number;
   /** Draw the dome grid (elevation rings, azimuth spokes, front) on every dome output. */
   domeGrid?: boolean;
   /** Dome projectors' overlap blend: how far in from a projector's edge
@@ -1055,6 +1060,7 @@ export const OUTPUT_STAGE_KEYS = [
   'domePanoBottom',
   'domePanoTop',
   'domePanoSpan',
+  'domePanoSeam',
   'domeGrid',
   'domeBlendWidth',
   'domeBlendGamma',
@@ -1183,6 +1189,7 @@ function createDefaultSettings(): AppSettings {
       domePanoBottom: 0,
       domePanoTop: 90,
       domePanoSpan: 360,
+      domePanoSeam: 0,
       domeGrid: false,
       domeBlendWidth: 0.25,
       domeBlendGamma: 2.2,

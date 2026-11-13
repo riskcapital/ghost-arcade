@@ -46,7 +46,8 @@
     | 'domeSourceAngle'
     | 'domePanoBottom'
     | 'domePanoTop'
-    | 'domePanoSpan';
+    | 'domePanoSpan'
+    | 'domePanoSeam';
 
   type Row = { key: NumberKey; label: string; title: string; min: number; max: number; step: number; value: number; unit: 'deg' | 'pct' | 'num' };
 
@@ -94,6 +95,9 @@
         { key: 'domePanoBottom', label: 'Bottom edge', title: 'The elevation the bottom of the canvas sits at. 0 is the horizon; below it reaches under a dome wider than 180 degrees.', min: -90, max: 85, step: 1, value: out.domePanoBottom ?? 0, unit: 'deg' },
         { key: 'domePanoTop', label: 'Top edge', title: 'The elevation the top of the canvas reaches. 90 closes it at the zenith; lower leaves the top of the dome clear for placed layers.', min: -85, max: 90, step: 1, value: out.domePanoTop ?? 90, unit: 'deg' },
         { key: 'domePanoSpan', label: 'Around', title: 'How far around the dome the canvas reaches, centered on the front', min: 10, max: 360, step: 1, value: out.domePanoSpan ?? 360, unit: 'deg' },
+        ...((out.domePanoSpan ?? 360) >= 360
+          ? [{ key: 'domePanoSeam' as const, label: 'Seam blend', title: 'Off for a true 360 equirectangular picture: its edges already meet without a line. For content not made to wrap (most shaders), this much of the canvas width fades its right edge into its left so the join behind the audience has no line.', min: 0, max: 0.3, step: 0.01, value: out.domePanoSeam ?? 0, unit: 'pct' as const }]
+          : []),
       ];
     }
     if (source === 'domemaster') {
@@ -138,6 +142,7 @@
       domePanoBottom: 0,
       domePanoTop: 90,
       domePanoSpan: 360,
+      domePanoSeam: 0,
     });
     recordDiscreteAction();
   }

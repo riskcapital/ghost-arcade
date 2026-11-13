@@ -244,6 +244,7 @@ export type RendererCommand =
       domePanoBottom?: number;
       domePanoTop?: number;
       domePanoSpan?: number;
+      domePanoSeam?: number;
       domeGrid?: number;
       testPattern?: number;
       masterWarp?: Record<string, unknown>;
@@ -360,7 +361,7 @@ export type RendererCommand =
   /** Colour multiplier on the layer's finished colour (Screen FX colour chases). */
   | { type: 'set_layer_tint'; layer_id: string; rgba: [number, number, number, number] }
   | { type: 'set_layer_dome'; layer_id: string; enabled: boolean; azimuth: number; elevation: number; size: number; roll: number }
-  | { type: 'set_dome_view'; enabled: boolean; azimuth: number; elevation: number; fov: number }
+  | { type: 'set_dome_view'; enabled: boolean; azimuth: number; elevation: number; fov: number; back: number; room: boolean }
   | { type: 'set_mirror_mesh'; mesh_id: string; mesh_type: 1 | 2; cols: number; rows: number; nodes: number[] }
   /** Anchor the core's beat clock: `beat` is the launch-clock position now. */
   | { type: 'set_beat_clock'; beat: number; bpm: number; time?: number }
