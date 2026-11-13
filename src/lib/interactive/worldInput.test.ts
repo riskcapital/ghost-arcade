@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { THROW_EVERY, THROW_KEEP, WorldInput, worldInputParam } from './worldInput';
+import { IGNITE_HOLD, MAX_FIRES, THROW_EVERY, THROW_KEEP, WorldInput, worldInputParam } from './worldInput';
 import type { Interaction } from '../mobile/studio/interactive';
 
 const at = (x: number, y: number, mode: Interaction['mode'], id = 'a'): Interaction => ({ id, point: { x, y }, strength: 1, mode });
@@ -45,5 +45,20 @@ describe('touches on the 3D world', () => {
     expect(param.pointers).toHaveLength(1);
     expect(param.throws).toHaveLength(0);
     expect(worldInputParam(undefined)).toEqual({ pointers: [], throws: [] });
+  });
+
+  it('keeps a fire burning a while after the finger lifts, dying down at the end', () => {
+    const input = new WorldInput();
+    input.update([at(0.3, 0.4, 'ignite')], 0);
+    let fires = input.update([], 1).pointers.filter((p) => p.tool === 'ignite');
+    expect(fires).toHaveLength(1);
+    expect(fires[0].point).toEqual({ x: 0.3, y: 0.4 });
+    expect(fires[0].strength).toBe(1);
+    fires = input.update([], IGNITE_HOLD - 0.5).pointers;
+    expect(fires[0].strength).toBeCloseTo(0.5, 5);
+    expect(input.update([], IGNITE_HOLD + 0.1).pointers).toHaveLength(0);
+    // No more than MAX_FIRES at once: the oldest goes out.
+    for (let i = 0; i < MAX_FIRES + 2; i++) input.update([at(i / 10, 0.5, 'ignite', `f${i}`)], 10 + i * 0.1);
+    expect(input.update([], 10.6).pointers.map((p) => p.point.x)).toEqual([0.2, 0.3, 0.4, 0.5]);
   });
 });

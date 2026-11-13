@@ -19,7 +19,7 @@
  * 15 ball kinds, 16 blocks, 17 physics, 18 input.
  */
 import { effectParams } from '../mobile/studio/interactiveEffects';
-import { SCENE3D_COMMON_WGSL, SCENE3D_RELIEF_WGSL } from './scene3dShaders';
+import { SCENE3D_COMMON_WGSL, SCENE3D_RELIEF_WGSL, SCENE3D_WORLD_WGSL } from './scene3dShaders';
 
 /** Floats per ball: position + radius, velocity + age, kind / seed / number / span. */
 export const BALL_FLOATS = 12;
@@ -27,7 +27,7 @@ export const BALL_FLOATS = 12;
 export const BALL_KIND_FLOATS = (2 + 5 + 40) * 4;
 /** Floats per block: bounds, depth and count, 32 vec4 holding 64 points. */
 export const BALL_BLOCK_FLOATS = (2 + 32) * 4;
-export const BALL_PHYS_FLOATS = 20;
+export const BALL_PHYS_FLOATS = 24;
 /** Head, 8 pointers and 8 throws of two vec4 each. */
 export const BALL_INPUT_FLOATS = 4 + 8 * 8 + 8 * 8;
 /** The order of a ball kind's params (effectParams('balls3d')). */
@@ -43,6 +43,7 @@ struct Phys {
   counts: vec4f,  // balls, ball kinds, blocks, substeps
   kill: vec4f,    // below this y, beyond this |x|, nearer than this z
   drips: vec4f,   // drops, drop kinds, seconds a stain takes to fade, seconds paint stays wet
+  fire: vec4f,    // flame particles, flame kinds
 }
 @group(0) @binding(17) var<uniform> phys: Phys;
 
@@ -86,7 +87,7 @@ fn hue_rgb(h: f32) -> vec3f {
 /** The world's shape, for the simulations: blocks, wall, floor and pane, and the touches. */
 const WORLD_SIM = /* wgsl */ `
 struct Block { box: vec4f, info: vec4f, pts: array<vec4f, 32> } // box: min xy, max xy; info: depth, points
-struct Pointer { a: vec4f, b: vec4f }  // a: hit xyz, tool (1 push, 2 attract, 3 repel, 4 vortex, 5 pour); b: velocity xyz, strength
+struct Pointer { a: vec4f, b: vec4f }  // a: hit xyz, tool (1 push, 2 attract, 3 repel, 4 vortex, 5 pour, 6 ignite); b: velocity xyz, strength
 struct Throw { a: vec4f, b: vec4f }    // a: position xyz, number; b: velocity xyz, spare
 struct Input { head: vec4f, pointers: array<Pointer, 8>, throws: array<Throw, 8> } // head: pointers, throws
 
@@ -288,7 +289,7 @@ fn cs_balls_life(@builtin(global_invocation_id) gid: vec3u) {
         let out = off / max(d, 1e-4);
         let tool = ptr.a.w;
         let s = ptr.b.w;
-        if (tool > 4.5) { continue; }  // Pour is for paint
+        if (tool > 4.5) { continue; }  // Pour and Ignite are for paint and fire
         if (tool < 1.5) {
           // Push: carried along with the finger, and nudged out of its way.
           b.vel = vec4f(b.vel.xyz + (ptr.b.xyz - b.vel.xyz) * min(1.0, w * 12.0 * dt) + out * w * 4.0 * dt, b.vel.w);
@@ -499,7 +500,7 @@ fn ball_color(h: BallHit, look: BallLook) -> vec3f {
   m.emissive = look.glow * 4.0;
   m.opacity = 1.0;
   m.catcher = 0.0;
-  return lighting(m, h.pos, h.n, h.v);
+  return lighting(m, h.pos, h.n, h.v) + fire_lighting(m, h.pos, h.n, h.v);
 }
 
 @fragment
@@ -700,14 +701,14 @@ fn cs_drips(@builtin(global_invocation_id) gid: vec3u) {
   if (emission > 2.5) {
     // Poured: a few slots a frame, round the pool, go to the fingers that pour.
     var pours = 0u;
-    for (var p = 0u; p < u32(input.head.x); p++) { if (input.pointers[p].a.w > 4.5) { pours++; } }
+    for (var p = 0u; p < u32(input.head.x); p++) { if (abs(input.pointers[p].a.w - 5.0) < 0.5) { pours++; } }
     let pool = u32(slots.y);
     let off = (local + pool - (tick * ${POURED_PER_FRAME}u) % pool) % pool;
     if (pours > 0u && off < ${POURED_PER_FRAME}u) {
       var want = off % pours;
       for (var p = 0u; p < u32(input.head.x); p++) {
         let ptr = input.pointers[p];
-        if (ptr.a.w < 4.5) { continue; }
+        if (abs(ptr.a.w - 5.0) > 0.5) { continue; }
         if (want > 0u) { want--; continue; }
         let seed = hash1(i * 37u + tick * 101u + 3u) + 1e-4;
         let r = drip_radius(k, seed);
@@ -809,7 +810,7 @@ fn drip_shade(in: DripOut) -> DripFrag {
   m.emissive = max(dparam(k, D_GLOW), 0.0) * 3.0;
   m.opacity = 1.0;
   m.catcher = 0.0;
-  out.color = vec4f(fogged(lighting(m, hit, n, -dir), hit), 1.0);
+  out.color = vec4f(fogged(lighting(m, hit, n, -dir) + fire_lighting(m, hit, n, -dir), hit), 1.0);
   let clip = view.view_proj * vec4f(hit, 1.0);
   out.depth = clip.z / clip.w;
   return out;
@@ -918,11 +919,308 @@ fn fs_splat_gloss(in: SplatOut) -> @location(0) vec4f {
 }
 `;
 
+// ── Fire and smoke ──────────────────────────────────────────────────────
+
+/** Floats per flame particle: position + size, velocity + age, kind / seed / type / span, burst seen. */
+export const FLAME_FLOATS = 16;
+/** Floats per flame kind: the same layout as a drop kind. */
+export const FLAME_KIND_FLOATS = DRIP_KIND_FLOATS;
+export const FLAME_PARAM_KEYS = effectParams('flames').map((d) => d.key);
+/** Flame particles lit each frame at each burning spot. */
+export const IGNITED_PER_FRAME = 6;
+/** Head and 8 lights of two vec4: position + power, color + flicker seed. */
+export const FIRE_LIGHT_FLOATS = 4 + 8 * 8;
+
+const FLAME_CONSTS = FLAME_PARAM_KEYS.map((key, i) => `const F_${key.toUpperCase()} = ${i}u;`).join('\n');
+
+const FLAME_COMMON = /* wgsl */ `
+struct FlameKind {
+  slots: vec4f,   // first slot, slot count, emission (0 flow, 1 pulse, 2 burst, 3 ignited), burst generation
+  emit: vec4f,    // sites (0: from a point), spare, spare, on
+  params: array<vec4f, 5>,
+  mods: array<vec4f, 40>,
+  sites: array<vec4f, 16>,  // upper edges of a block: a.xy, b.xy
+  site_z: array<vec4f, 4>,  // the depth of each site's block
+}
+// pos.w size (0: not in play); vel.w age, negative while waiting to be born;
+// info: kind, seed, type (1 flame, 2 ember), life span; extra.x the burst seen.
+struct Flame { pos: vec4f, vel: vec4f, info: vec4f, extra: vec4f }
+@group(0) @binding(25) var<storage, read> fkinds: array<FlameKind>;
+
+${FLAME_CONSTS}
+
+fn fparam(k: u32, i: u32) -> f32 {
+  return modulated(fkinds[k].params[i / 4u][i % 4u], fkinds[k].mods[i * 2u], fkinds[k].mods[i * 2u + 1u]);
+}
+`;
+
+export const SCENE3D_FLAMES_WGSL = /* wgsl */ `${SCENE3D_COMMON_WGSL}
+${WORLD_COMMON}
+${WORLD_SIM}
+${FLAME_COMMON}
+
+@group(0) @binding(24) var<storage, read_write> flames: array<Flame>;
+
+fn flame_kind_of(i: u32) -> i32 {
+  for (var k = 0u; k < u32(phys.fire.y); k++) {
+    let s = fkinds[k].slots;
+    if (f32(i) >= s.x && f32(i) < s.x + s.y) { return i32(k); }
+  }
+  return -1;
+}
+
+// A new particle at a point: a flame, or now and then an ember.
+fn flame_at(k: u32, i: u32, tick: u32, at: vec3f) -> Flame {
+  let h3 = hash1(i * 83u + tick * 5u + 3u);
+  let h4 = hash1(i * 79u + tick * 3u + 4u);
+  let h5 = hash1(i * 67u + tick * 17u + 6u);
+  var f: Flame;
+  let seed = hash1(i * 71u + tick * 11u + 5u) + 1e-4;
+  let life = max(fparam(k, F_LIFETIME), 0.1);
+  if (h4 < clamp(fparam(k, F_EMBERS), 0.0, 1.0) * 0.12) {
+    f.pos = vec4f(at, 0.012 + 0.01 * h5);
+    f.vel = vec4f((h3 - 0.5) * 2.0, 1.8 + 2.5 * h5, (h4 - 0.5) * 1.0, 0.0);
+    f.info = vec4f(f32(k), seed, 2.0, life * (1.5 + h3));
+  } else {
+    f.pos = vec4f(at, mix(0.05, 0.35, clamp(fparam(k, F_SIZE), 0.0, 1.0)) * (0.6 + 0.6 * h5));
+    f.vel = vec4f((h3 - 0.5) * 0.3, 0.2 + 0.3 * h5, (h4 - 0.5) * 0.2, 0.0);
+    f.info = vec4f(f32(k), seed, 1.0, life * (0.6 + 0.6 * h3));
+  }
+  return f;
+}
+
+// A new particle of its kind: on top of a block along one of its upper
+// edges, or at the emitter.
+fn flame_born(k: u32, i: u32, tick: u32) -> Flame {
+  let h1 = hash1(i * 97u + tick * 13u + 1u);
+  let h2 = hash1(i * 89u + tick * 7u + 2u);
+  let h3 = hash1(i * 61u + tick * 19u + 9u);
+  let sites = u32(fkinds[k].emit.x);
+  var at: vec3f;
+  if (sites > 0u) {
+    let n = min(u32(h1 * f32(sites)), sites - 1u);
+    let site = fkinds[k].sites[n];
+    let depth = fkinds[k].site_z[n / 4u][n % 4u];
+    let p = mix(site.xy, site.zw, h2);
+    at = vec3f(p.x, p.y + 0.02, mix(0.04, max(depth - 0.04, 0.05), h3));
+  } else {
+    let uv = vec2f(fparam(k, F_X) + (h1 * 2.0 - 1.0) * fparam(k, F_RADIUS), fparam(k, F_Y));
+    at = unproject(uv, mix(0.05, max(phys.bounds.z * 0.8, 0.1), h2));
+  }
+  return flame_at(k, i, tick, at);
+}
+
+fn curl(p: vec3f) -> vec3f {
+  return vec3f(
+    sin(p.y * 1.3 + p.z) - cos(p.z * 1.7 - p.x),
+    sin(p.z * 1.1 + p.x) - cos(p.x * 1.5 + p.y) * 0.5,
+    sin(p.x * 1.2 - p.y) - cos(p.y * 1.4 + p.z));
+}
+
+@compute @workgroup_size(64)
+fn cs_flames(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (f32(i) >= phys.fire.x) { return; }
+  var f = flames[i];
+  let ki = flame_kind_of(i);
+  if (ki < 0) { f.pos = AWAY; flames[i] = f; return; }
+  let k = u32(ki);
+  let slots = fkinds[k].slots;
+  let on = fkinds[k].emit.w > 0.5;
+  let emission = slots.z;
+  let local = i - u32(slots.x);
+  let dt = view.clock.x;
+  let tick = u32(view.clock.y);
+  if (f.info.y == 0.0) {
+    f.pos = AWAY;
+    f.vel = vec4f(0.0, 0.0, 0.0, -hash1(i * 31u + 5u) * max(fparam(k, F_LIFETIME), 0.1));
+    f.info = vec4f(f32(k), hash1(i * 7919u + 17u) + 1e-4, 0.0, 0.0);
+    f.extra = vec4f(slots.w, 0.0, 0.0, 0.0);
+  }
+  let in_use = min(slots.y, max(fparam(k, F_AMOUNT), 0.0));
+  if (emission > 2.5) {
+    // Ignited: a few slots a frame, round the pool, go to the burning spots.
+    var fires = 0u;
+    for (var p = 0u; p < u32(input.head.x); p++) { if (abs(input.pointers[p].a.w - 6.0) < 0.5) { fires++; } }
+    let pool = u32(slots.y);
+    let off = (local + pool - (tick * ${IGNITED_PER_FRAME}u) % pool) % pool;
+    if (fires > 0u && off < ${IGNITED_PER_FRAME}u) {
+      var want = off % fires;
+      for (var p = 0u; p < u32(input.head.x); p++) {
+        let ptr = input.pointers[p];
+        if (abs(ptr.a.w - 6.0) > 0.5) { continue; }
+        if (want > 0u) { want--; continue; }
+        // A spot dying down lights fewer.
+        if (hash1(i * 29u + tick * 7u) > ptr.b.w) { break; }
+        let toward = normalize(vec3f(0.0, 0.0, phys.frame.z) - ptr.a.xyz);
+        let jitter = (vec2f(hash1(i * 13u + tick), hash1(i * 17u + tick * 3u)) - 0.5) * 0.16;
+        f = flame_at(k, i, tick, ptr.a.xyz + toward * 0.04 + vec3f(jitter, 0.0));
+        break;
+      }
+    }
+  } else if (on && slots.w != f.extra.x) {
+    if (f32(local) < max(in_use * 0.3, 1.0)) { f = flame_born(k, i, tick + u32(slots.w) * 977u); }
+    f.extra.x = slots.w;
+  }
+  let seen = f.extra.x;
+  if (f.pos.w > 0.0) {
+    f.vel.w += dt;
+    let gone = f.pos.y < phys.kill.x || f.pos.y > -phys.kill.x || abs(f.pos.x) > phys.kill.y || f.pos.z > phys.kill.z;
+    if (f.vel.w > f.info.w || gone) {
+      f.pos = AWAY;
+      f.vel = vec4f(0.0, 0.0, 0.0, -0.02);
+    } else {
+      var p = f.pos.xyz;
+      var v = f.vel.xyz;
+      if (f.info.z < 1.5) {
+        // A flame rises while it is hot, curls, and slows; it slides round what it meets.
+        let t = f.vel.w / f.info.w;
+        let q = p * 1.6 + vec3f(0.0, -frame.time * 1.2, frame.time * 0.3) + f.info.y * 10.0;
+        let lift = max(fparam(k, F_HEAT), 0.0) * 2.4 * (1.0 - t) + 0.4;
+        v += (vec3f(0.0, lift, 0.0) + curl(q) * max(fparam(k, F_TURBULENCE), 0.0) * 1.1) * dt;
+        // Sideways motion dies fast, so the fire rises as a column.
+        v *= vec3f(exp(-dt * 4.5), exp(-dt * 2.6), exp(-dt * 4.5));
+        p += v * dt;
+        let s = world_sdf(p) - f.pos.w * 0.25;
+        if (s < 0.0) {
+          let n = world_normal(p);
+          p -= n * s;
+          let vn = dot(v, n);
+          if (vn < 0.0) { v -= n * vn; }
+        }
+      } else {
+        // An ember: thrown up, falls, bounces.
+        v.y -= phys.frame.w * dt;
+        v *= exp(-dt * 0.3);
+        p += v * dt;
+        let s = world_sdf(p) - f.pos.w;
+        if (s < 0.0) {
+          let n = world_normal(p);
+          p -= n * s;
+          let vn = dot(v, n);
+          if (vn < 0.0) { v = (v - n * vn) * 0.7 - n * vn * 0.4; }
+        }
+      }
+      f.pos = vec4f(p, f.pos.w);
+      f.vel = vec4f(v, f.vel.w);
+    }
+  } else if (on && emission < 1.5) {
+    f.vel.w += dt;
+    if (f.vel.w >= 0.0) {
+      var hazard = 0.0;
+      if (f32(local) < in_use) {
+        let flow = clamp(fparam(k, F_FLOW), 0.0, 1.0);
+        let life = max(fparam(k, F_LIFETIME), 0.1);
+        if (emission < 0.5) {
+          hazard = flow / (life * max(1.0 - flow, 0.02));
+        } else {
+          let period = max(fparam(k, F_PERIOD), 0.2);
+          let open = fract(frame.time / period) * period < fparam(k, F_DURATION);
+          hazard = select(0.0, 6.0 * flow / max(fparam(k, F_DURATION), 0.05), open);
+        }
+      }
+      if (hash1(i * 613u + tick * 1031u + 7u) < 1.0 - exp(-hazard * dt)) {
+        f = flame_born(k, i, tick);
+      }
+    }
+  }
+  f.extra.x = seen;
+  flames[i] = f;
+}
+`;
+
+export const SCENE3D_FLAMES_DRAW_WGSL = /* wgsl */ `${SCENE3D_WORLD_WGSL}
+${WORLD_COMMON}
+${FLAME_COMMON}
+
+@group(0) @binding(24) var<storage, read> flames: array<Flame>;
+
+struct FlameOut {
+  @builtin(position) clip: vec4f,
+  @location(0) uv: vec2f,
+  @location(1) color: vec4f,
+}
+
+// The flame's color as it cools: white-yellow at its root, its own color,
+// then red. Brighter than white, so it blooms.
+fn flame_color(k: u32, t: f32) -> vec3f {
+  let own = mix(vec3f(1.0), hue_rgb(fparam(k, F_HUE) / 360.0), 0.9) * vec3f(1.0, 0.75, 0.5);
+  let hot = mix(vec3f(1.0, 0.9, 0.65), own, smoothstep(0.0, 0.35, t));
+  return mix(hot, vec3f(0.9, 0.12, 0.02), smoothstep(0.35, 0.7, t));
+}
+
+// A quad facing the camera, stretched along the way it moves: a tongue of
+// flame, a streak of ember.
+fn sprite(f: Flame, vi: u32, size: f32, stretch: f32) -> vec4f {
+  let c = corner(vi);
+  let v = f.vel.xyz;
+  let along = v - dot(v, normalize(view.cam_pos.xyz - f.pos.xyz)) * normalize(view.cam_pos.xyz - f.pos.xyz);
+  let speed = length(along);
+  var up = view.cam_up.xyz;
+  if (speed > 1e-3) { up = along / speed; }
+  let side = normalize(cross(up, normalize(view.cam_pos.xyz - f.pos.xyz)));
+  let world = f.pos.xyz + side * c.x * size + up * c.y * size * (1.0 + speed * stretch);
+  return view.view_proj * vec4f(world, 1.0);
+}
+
+// Additive: flames while they are hot, and embers.
+@vertex
+fn vs_fire(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> FlameOut {
+  let f = flames[ii];
+  var out: FlameOut;
+  if (f.pos.w <= 0.0) { out.clip = OFFSCREEN; return out; }
+  let k = u32(f.info.x);
+  let t = clamp(f.vel.w / max(f.info.w, 1e-3), 0.0, 1.0);
+  out.uv = corner(vi);
+  if (f.info.z > 1.5) {
+    out.clip = sprite(f, vi, f.pos.w * 1.5, 1.5);
+    out.color = vec4f(vec3f(1.0, 0.45, 0.1) * 4.0 * (1.0 - t), 1.0);
+    return out;
+  }
+  out.clip = sprite(f, vi, f.pos.w * (0.35 + 0.5 * t), 1.2);
+  let strength = smoothstep(0.0, 0.1, t) * (1.0 - smoothstep(0.3, 0.75, t));
+  out.color = vec4f(flame_color(k, t) * strength * 0.12, 1.0);
+  return out;
+}
+
+@fragment
+fn fs_fire(in: FlameOut) -> @location(0) vec4f {
+  let r2 = dot(in.uv, in.uv);
+  if (r2 > 1.0) { discard; }
+  return vec4f(in.color.rgb * (1.0 - r2) * (1.0 - r2), 0.0);
+}
+
+// Premultiplied: smoke, from flames as they cool, wider as it rises.
+@vertex
+fn vs_smoke(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> FlameOut {
+  let f = flames[ii];
+  var out: FlameOut;
+  if (f.pos.w <= 0.0 || f.info.z > 1.5) { out.clip = OFFSCREEN; return out; }
+  let k = u32(f.info.x);
+  let t = clamp(f.vel.w / max(f.info.w, 1e-3), 0.0, 1.0);
+  out.uv = corner(vi);
+  out.clip = sprite(f, vi, f.pos.w * (1.0 + 2.2 * t), 0.0);
+  let a = clamp(fparam(k, F_SMOKE), 0.0, 1.0) * smoothstep(0.3, 0.65, t) * (1.0 - t) * 0.6;
+  let lit = 0.04 + 0.05 * view.light.w;
+  out.color = vec4f(vec3f(lit) * a, a);
+  return out;
+}
+
+@fragment
+fn fs_smoke(in: FlameOut) -> @location(0) vec4f {
+  let r2 = dot(in.uv, in.uv);
+  if (r2 > 1.0) { discard; }
+  return in.color * (1.0 - r2);
+}
+`;
+
 export const SCENE3D_WORLD_SHADERS: { id: string; stage: 'compute' | 'render'; entry: string; source: string }[] = [
   { id: 'scene3d/balls', stage: 'compute', entry: 'cs_balls_step', source: SCENE3D_BALLS_WGSL },
   { id: 'scene3d/balls-draw', stage: 'render', entry: 'fs_ball', source: SCENE3D_BALLS_DRAW_WGSL },
   { id: 'scene3d/drips', stage: 'compute', entry: 'cs_drips', source: SCENE3D_DRIPS_WGSL },
   { id: 'scene3d/drips-draw', stage: 'render', entry: 'fs_drip', source: SCENE3D_DRIPS_DRAW_WGSL },
+  { id: 'scene3d/flames', stage: 'compute', entry: 'cs_flames', source: SCENE3D_FLAMES_WGSL },
+  { id: 'scene3d/flames-draw', stage: 'render', entry: 'fs_fire', source: SCENE3D_FLAMES_DRAW_WGSL },
 ];
 
 /** Commands that compile the world's shaders ahead of the first frame. */

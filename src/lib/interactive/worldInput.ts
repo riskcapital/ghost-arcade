@@ -5,7 +5,9 @@
  * Throw: a press throws a ball under the finger at once, and holding keeps
  * throwing one every THROW_EVERY seconds, each carrying the finger's speed,
  * so a flick flings it. Push sweeps balls along with the finger. Pour pours
- * paint where the finger is, which runs down what it lands on. Attract,
+ * paint where the finger is, which runs down what it lands on. Ignite sets
+ * fire to what is under the finger, which burns on for IGNITE_HOLD seconds
+ * after it lifts. Attract,
  * Repel and Vortex pull, push away and swirl, as they do the 2D effects.
  *
  * Everything here is in output space (0..1, y down); the graph turns points
@@ -17,13 +19,17 @@
  */
 import type { Interaction, Point } from '../mobile/studio/interactive';
 
-export const WORLD_TOOLS = ['push', 'attract', 'repel', 'vortex', 'pour'] as const;
+export const WORLD_TOOLS = ['push', 'attract', 'repel', 'vortex', 'pour', 'ignite'] as const;
 export type WorldForceTool = (typeof WORLD_TOOLS)[number];
 /** The most points and listed throws the GPU reads. */
 export const MAX_WORLD_POINTERS = 8;
 export const MAX_WORLD_THROWS = 8;
 export const THROW_EVERY = 0.12;
 export const THROW_KEEP = 0.4;
+/** How long a spot keeps burning after the finger lifts, in seconds. */
+export const IGNITE_HOLD = 3;
+/** The most spots burning at once. */
+export const MAX_FIRES = 4;
 
 export type WorldPointer = { point: Point; velocity: Point; tool: WorldForceTool; strength: number };
 export type WorldThrow = { point: Point; velocity: Point; number: number; at: number };
@@ -35,6 +41,8 @@ export class WorldInput {
   private held = new Map<string, Held>();
   private throws: WorldThrow[] = [];
   private count = 0;
+  /** Fires lit by Ignite, by touch id: they burn on after the finger lifts. */
+  private fires = new Map<string, { point: Point; until: number }>();
 
   /** One frame: the points touching the scene now, at `now` seconds. */
   update(points: Interaction[], now: number): WorldInputState {
@@ -70,6 +78,12 @@ export class WorldInput {
         }
         continue;
       }
+      if (p.mode === 'ignite') {
+        // A new press lights a new fire; the oldest goes out past MAX_FIRES.
+        if (!this.fires.has(id) && this.fires.size >= MAX_FIRES) this.fires.delete(this.fires.keys().next().value!);
+        this.fires.set(id, { point, until: now + IGNITE_HOLD });
+        continue;
+      }
       const tool: WorldForceTool = p.mode === 'push' || p.mode === 'repel' || p.mode === 'vortex' || p.mode === 'pour' ? p.mode : 'attract';
       if (pointers.length < MAX_WORLD_POINTERS) {
         pointers.push({ point, velocity: { ...h.velocity }, tool, strength: Math.max(0, Math.min(1, Number(p.strength) || 0)) });
@@ -77,12 +91,18 @@ export class WorldInput {
     }
     for (const id of [...this.held.keys()]) if (!seen.has(id)) this.held.delete(id);
     this.throws = this.throws.filter((t) => now - t.at <= THROW_KEEP).slice(-MAX_WORLD_THROWS);
+    for (const [id, fire] of [...this.fires]) {
+      if (fire.until < now) { this.fires.delete(id); continue; }
+      // Strength: dies down over the last second.
+      if (pointers.length < MAX_WORLD_POINTERS) pointers.push({ point: fire.point, velocity: { x: 0, y: 0 }, tool: 'ignite', strength: Math.min(1, fire.until - now) });
+    }
     return { pointers, throws: [...this.throws] };
   }
 
   reset(): void {
     this.held.clear();
     this.throws = [];
+    this.fires.clear();
   }
 }
 

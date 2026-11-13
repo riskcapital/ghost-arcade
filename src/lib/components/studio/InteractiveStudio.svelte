@@ -181,12 +181,12 @@
   let placingEmitter = false;
   let draft: Point[] = [];
   let tool: TouchTool = 'attract';
-  // With the 3D world on, a touch throws balls; without it, Throw, Push and Pour do nothing.
+  // With the 3D world on, a touch throws balls; without it, Throw, Push, Pour and Ignite do nothing.
   let toolWorld = false;
   $: if (!!scene.world?.enabled !== toolWorld) {
     toolWorld = !!scene.world?.enabled;
     if (toolWorld && tool === 'attract') tool = 'throw';
-    else if (!toolWorld && (tool === 'throw' || tool === 'push' || tool === 'pour')) tool = 'attract';
+    else if (!toolWorld && (tool === 'throw' || tool === 'push' || tool === 'pour' || tool === 'ignite')) tool = 'attract';
   }
   let message = '';
   let messageTimer: ReturnType<typeof setTimeout> | undefined;

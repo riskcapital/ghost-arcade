@@ -640,6 +640,24 @@ fn fs_relief(in: LitOut) -> @location(0) vec4f {
 // Paint on the world (scene3dWorld.ts): a stain, premultiplied, whose
 // strongest channel is how much paint there is, and how wet it still is. Both
 // are kept face-on, like the picture.
+// Firelight: the world's fires, flickering (scene3dWorld.ts).
+struct FireLights { head: vec4f, lights: array<vec4f, 16> } // head.x count; per light: position + power, color + seed
+@group(0) @binding(23) var<uniform> fire: FireLights;
+
+fn fire_lighting(m: Material, world: vec3f, n: vec3f, v: vec3f) -> vec3f {
+  var col = vec3f(0.0);
+  let t = frame.time;
+  for (var i = 0u; i < u32(fire.head.x); i++) {
+    let a = fire.lights[i * 2u];
+    let b = fire.lights[i * 2u + 1u];
+    let to = a.xyz - world;
+    let d2 = max(dot(to, to), 0.04);
+    let flicker = 0.7 + 0.18 * sin(t * 13.0 + b.w * 7.0) + 0.12 * sin(t * 29.0 + b.w * 3.0);
+    col += shade(m, n, v, to / sqrt(d2), b.rgb * a.w * flicker * 6.0 / d2);
+  }
+  return col;
+}
+
 @group(0) @binding(19) var wet_stain: texture_2d<f32>;
 @group(0) @binding(20) var wet_gloss: texture_2d<f32>;
 
@@ -670,7 +688,7 @@ fn fs_wet(in: LitOut) -> @location(0) vec4f {
   }
   let m = wetted(raw, in.world);
   let v = normalize(view.cam_pos.xyz - in.world);
-  return vec4f(fogged(lighting(m, in.world, n, v), in.world), 1.0);
+  return vec4f(fogged(lighting(m, in.world, n, v) + fire_lighting(m, in.world, n, v), in.world), 1.0);
 }
 
 @fragment
@@ -686,7 +704,7 @@ fn fs_relief_wet(in: LitOut) -> @location(0) vec4f {
   }
   let m = wetted(raw, in.world);
   let reflectance = m.base * (1.0 - m.metal) + vec3f(0.12);
-  return vec4f(fogged(lighting(m, in.world, n, v) + thrown * reflectance, in.world), 1.0);
+  return vec4f(fogged(lighting(m, in.world, n, v) + fire_lighting(m, in.world, n, v) + thrown * reflectance, in.world), 1.0);
 }
 `;
 

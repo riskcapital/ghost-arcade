@@ -38,10 +38,15 @@ const blockFrom = (shape: StageShape, i: number, finish: SurfaceFinish, height =
   finish,
 });
 
-/** The scene's flat effect, following the music, balls raining onto the blocks and paint running down the first. */
+/**
+ * The scene's flat effect, following the music; balls raining onto the
+ * blocks, paint running down the first and fire on the last.
+ */
 function withEffects(scene: InteractiveScene): InteractiveScene {
-  const paint = scene.surfaces[0] ? [makeEffect('drips', scene.surfaces[0].id)] : [];
-  return { ...scene, effects: [makeEffect('balls3d'), ...paint, ...editableEffects(scene).map((e) => ({ ...e, mods: soundDefaults(e.kind) }))] };
+  const first = scene.surfaces[0], last = scene.surfaces[scene.surfaces.length - 1];
+  const paint = first ? [makeEffect('drips', first.id)] : [];
+  const fire = last && last !== first ? [makeEffect('flames', last.id)] : [];
+  return { ...scene, effects: [makeEffect('balls3d'), ...paint, ...fire, ...editableEffects(scene).map((e) => ({ ...e, mods: soundDefaults(e.kind) }))] };
 }
 
 /** A new Interactive 3D layer: the mapped shapes (or three plinths) standing out of a lit wall. */

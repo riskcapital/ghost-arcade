@@ -20,12 +20,13 @@
   export let onundopoint: () => void;
   export let onfinish: () => void;
 
-  const TOOL_LABELS: Record<TouchTool, string> = { throw: 'Throw', push: 'Push', pour: 'Pour', attract: 'Attract', repel: 'Repel', vortex: 'Vortex' };
-  $: tools = (world ? ['throw', 'push', 'pour', 'attract', 'repel', 'vortex'] : ['attract', 'repel', 'vortex']) as TouchTool[];
+  const TOOL_LABELS: Record<TouchTool, string> = { throw: 'Throw', push: 'Push', pour: 'Pour', ignite: 'Ignite', attract: 'Attract', repel: 'Repel', vortex: 'Vortex' };
+  $: tools = (world ? ['throw', 'push', 'pour', 'ignite', 'attract', 'repel', 'vortex'] : ['attract', 'repel', 'vortex']) as TouchTool[];
   const PLAY_HINTS: Record<TouchTool, string> = {
     throw: 'Press to throw a ball, hold to keep throwing, flick to fling.',
     push: 'Drag through the balls to sweep them along.',
     pour: 'Hold to pour paint. It runs down whatever it lands on.',
+    ignite: 'Press to set fire to whatever is under the finger. It burns on for a few seconds.',
     attract: 'Drag to stir, attract or repel.',
     repel: 'Drag to stir, attract or repel.',
     vortex: 'Drag to stir, attract or repel.',

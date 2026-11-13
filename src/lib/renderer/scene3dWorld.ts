@@ -40,6 +40,10 @@ import {
   DRIP_FLOATS,
   DRIP_KIND_FLOATS,
   DRIP_PARAM_KEYS,
+  FIRE_LIGHT_FLOATS,
+  FLAME_FLOATS,
+  FLAME_KIND_FLOATS,
+  FLAME_PARAM_KEYS,
 } from './scene3dWorldShaders';
 
 /** Brightness of the projected 2D picture on the relief. */
@@ -54,6 +58,10 @@ export const MAX_DRIPS_PER_EFFECT = 8192;
 const MAX_DRIPS = 12288;
 /** How long poured paint stays wet, in seconds. */
 const GLOSS_SECONDS = 3;
+/** Flame slots for Ignite, and the most for all Fire & Smoke effects together. */
+export const IGNITED_FLAMES = 2048;
+export const MAX_FLAMES_PER_EFFECT = 16384;
+const MAX_FLAMES = 24576;
 
 export type WorldPart = {
   textures: object[];
@@ -112,11 +120,11 @@ export function ballLayout(scene: InteractiveScene): BallLayout {
 const EMISSIONS = ['continuous', 'pulse', 'burst'] as const;
 
 /** One kind's params and their modulation, as the shaders' `param()` and `dparam()` read them. */
-function writeKind(out: Float32Array, at: number, kind: 'balls3d' | 'drips', effect: InteractiveEffect | undefined, slots: [number, number, number, number], emit: [number, number, number, number], overrides: Record<string, number> = {}): void {
+function writeKind(out: Float32Array, at: number, kind: 'balls3d' | 'drips' | 'flames', effect: InteractiveEffect | undefined, slots: [number, number, number, number], emit: [number, number, number, number], overrides: Record<string, number> = {}): void {
   out.set(slots, at);
   out.set(emit, at + 4);
   const defs = effectParams(kind);
-  (kind === 'balls3d' ? BALL_PARAM_KEYS : DRIP_PARAM_KEYS).forEach((key, i) => {
+  (kind === 'balls3d' ? BALL_PARAM_KEYS : kind === 'drips' ? DRIP_PARAM_KEYS : FLAME_PARAM_KEYS).forEach((key, i) => {
     const d = defs[i];
     out[at + 8 + i] = overrides[key] ?? effect?.params[key] ?? d.value;
     const mod = overrides[key] === undefined ? effect?.mods[key] : undefined;
@@ -222,12 +230,81 @@ export function dripKinds(scene: InteractiveScene, world: ReliefWorld, frame: Re
   return kinds;
 }
 
+// ── Fire and smoke ────────────────────────────────────────────────────────
+
+export type FlameLayout = { effects: InteractiveEffect[]; perEffect: number; count: number };
+
+export function flameLayout(scene: InteractiveScene): FlameLayout {
+  const effects = (scene.effects ?? []).filter((e) => e.kind === 'flames');
+  const perEffect = effects.length ? Math.min(MAX_FLAMES_PER_EFFECT, Math.floor(MAX_FLAMES / effects.length)) : 0;
+  return { effects, perEffect, count: IGNITED_FLAMES + perEffect * effects.length };
+}
+
+export function flameKinds(scene: InteractiveScene, world: ReliefWorld, frame: ReliefFrame, layout: FlameLayout): Float32Array {
+  const kinds = new Float32Array((1 + layout.effects.length) * FLAME_KIND_FLOATS);
+  // Kind 0: fires lit by Ignite, in the first effect's style.
+  const first = layout.effects.find((e) => e.enabled) ?? layout.effects[0];
+  writeKind(kinds, 0, 'flames', first, [0, IGNITED_FLAMES, 3, 0], [0, 0, 0, 1]);
+  layout.effects.forEach((e, i) => {
+    const at = (i + 1) * FLAME_KIND_FLOATS;
+    const sites = e.target !== 'point' ? dripSites(scene, world, frame, e.target) : [];
+    writeKind(kinds, at, 'flames', e, [IGNITED_FLAMES + i * layout.perEffect, layout.perEffect, EMISSIONS.indexOf(e.emission), e.burst], [sites.length, 0, 0, e.enabled ? 1 : 0]);
+    sites.forEach((site, j) => {
+      kinds.set([site.a.x, site.a.y, site.b.x, site.b.y], at + 188 + j * 4);
+      kinds[at + 252 + j] = site.z;
+    });
+  });
+  return kinds;
+}
+
+/** `#rrggbb`-free hue to a linear color with its brightest channel 1, as the shaders do. */
+function hueColor(hue: number): [number, number, number] {
+  const h = (((hue / 360) % 1) + 1) % 1;
+  const k = [0, 2 / 3, 1 / 3].map((o) => (h + o) % 1);
+  return k.map((x) => Math.max(0, Math.min(1, Math.abs(x * 6 - 3) - 1))) as [number, number, number];
+}
+
+/**
+ * Firelight: a flickering light above each Fire & Smoke effect and each spot
+ * Ignite set burning, so a fire lights what is round it. At most 8.
+ */
+export function fireLights(scene: InteractiveScene, world: ReliefWorld, frame: ReliefFrame, aspect: number, layout: FlameLayout, input?: WorldInputState): Float32Array {
+  const data = new Float32Array(FIRE_LIGHT_FLOATS);
+  const lights: { pos: number[]; power: number; color: [number, number, number] }[] = [];
+  const tint = (e: InteractiveEffect | undefined) => {
+    const c = hueColor(e?.params.hue ?? 24);
+    return [0.55 + 0.45 * c[0], 0.3 + 0.3 * c[1], 0.1 + 0.2 * c[2]] as [number, number, number];
+  };
+  for (const e of layout.effects) {
+    if (!e.enabled || (e.params.glow ?? 0) <= 0) continue;
+    const sites = e.target !== 'point' ? dripSites(scene, world, frame, e.target) : [];
+    let pos: number[];
+    if (sites.length) {
+      const s0 = sites.reduce((a, b) => (a.a.y + a.b.y > b.a.y + b.b.y ? a : b));
+      pos = [(s0.a.x + s0.b.x) / 2, (s0.a.y + s0.b.y) / 2 + 0.3, s0.z / 2];
+    } else {
+      const p = unproject(frame, { x: e.params.x ?? 0.5, y: e.params.y ?? 0.85 }, 0.3);
+      pos = [p.x, p.y + 0.3, 0.3];
+    }
+    lights.push({ pos, power: (e.params.glow ?? 0) * (0.4 + 0.6 * (e.params.flow ?? 0.6)) * (e.params.heat ?? 1.2), color: tint(e) });
+  }
+  const style = layout.effects.find((e) => e.enabled) ?? layout.effects[0];
+  for (const p of input?.pointers ?? []) {
+    if (p.tool !== 'ignite') continue;
+    const hit = pickRelief(scene, world, aspect, rayFromUv(frame, p.point)).point;
+    lights.push({ pos: [hit[0], hit[1] + 0.25, hit[2] + 0.15], power: 0.8 * p.strength, color: tint(style) });
+  }
+  lights.slice(0, 8).forEach((l, i) => data.set([...l.pos, l.power, ...l.color, i * 1.37 + 0.5], 4 + i * 8));
+  data[0] = Math.min(8, lights.length);
+  return data;
+}
+
 /** The size of the wet map: the output's shape, 640 wide or high. */
 export function wetSize(aspect: number): { width: number; height: number } {
   return aspect >= 1 ? { width: 640, height: Math.max(8, Math.round(640 / aspect)) } : { width: Math.max(8, Math.round(640 * aspect)), height: 640 };
 }
 
-export function worldPhysics(scene: InteractiveScene, world: ReliefWorld, frame: ReliefFrame, balls: BallLayout, drips: DripLayout): Float32Array {
+export function worldPhysics(scene: InteractiveScene, world: ReliefWorld, frame: ReliefFrame, balls: BallLayout, drips: DripLayout, flames: FlameLayout = { effects: [], perEffect: 0, count: 0 }): Float32Array {
   const pane = world.frontPane ? frontPaneDepth(scene, world, frame) : 0;
   const paint = drips.effects.find((e) => e.enabled) ?? drips.effects[0];
   return new Float32Array([
@@ -236,10 +313,11 @@ export function worldPhysics(scene: InteractiveScene, world: ReliefWorld, frame:
     balls.count, 1 + balls.effects.length, reliefSolids(scene).length, BALL_SUBSTEPS,
     -frame.H / 2 - 3, frame.W / 2 + 1, frame.camZ * 0.8, 0,
     drips.count, 1 + drips.effects.length, paint?.params.dry ?? effectParams('drips').find((d) => d.key === 'dry')!.value, GLOSS_SECONDS,
+    flames.count, 1 + flames.effects.length, 0, 0,
   ]);
 }
 
-const TOOL_CODES = { push: 1, attract: 2, repel: 3, vortex: 4, pour: 5 } as const;
+const TOOL_CODES = { push: 1, attract: 2, repel: 3, vortex: 4, pour: 5, ignite: 6 } as const;
 const MAX_THROW_SPEED = 14;
 
 /**
@@ -303,13 +381,16 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
   // Balls and drops: their state, their kinds, the blocks they hit and this frame's touches.
   const layout = ballLayout(scene);
   const paint = dripLayout(scene);
+  const fire = flameLayout(scene);
   const value = (name: string, kind: 'uniform' | 'storage', data: Float32Array) => ({ id: id(name), kind, byte_length: data.byteLength, initial_b64: b64(data) });
   const ballValues = [
-    value('ball-phys', 'uniform', worldPhysics(scene, world, frame, layout, paint)),
+    value('ball-phys', 'uniform', worldPhysics(scene, world, frame, layout, paint, fire)),
     value('ball-kinds', 'storage', ballKinds(scene, world, frame, layout)),
     value('ball-blocks', 'storage', ballBlocks(scene, world, frame)),
     value('ball-input', 'uniform', ballInput(scene, world, frame, aspect, layout, options.input)),
     value('drip-kinds', 'storage', dripKinds(scene, world, frame, paint)),
+    value('flame-kinds', 'storage', flameKinds(scene, world, frame, fire)),
+    value('fire-lights', 'uniform', fireLights(scene, world, frame, aspect, fire, options.input)),
   ];
   const ballBytes = layout.count * BALL_FLOATS * 4;
   const wet = wetSize(aspect);
@@ -318,6 +399,7 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
     ...graph.config.buffers,
     ...ballValues,
     { id: id('drips'), kind: 'storage', byte_length: paint.count * DRIP_FLOATS * 4, persistent: true },
+    { id: id('flames'), kind: 'storage', byte_length: fire.count * FLAME_FLOATS * 4, persistent: true },
     { id: id('balls'), kind: 'storage', byte_length: ballBytes, persistent: true },
     { id: id('balls-prev'), kind: 'storage', byte_length: ballBytes, persistent: true },
   ];
@@ -339,11 +421,18 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
       b(17, 'ball-phys', 'uniform'), b(18, 'ball-input', 'uniform'), b(21, 'drips', 'storage'), b(22, 'drip-kinds', 'read-only-storage'),
     ],
   });
+  passes.push({
+    name: 'flames', shader_id: 'scene3d/flames', entry: 'cs_flames', dispatch: [Math.ceil(fire.count / 64), 1, 1],
+    bindings: [
+      { binding: 1, resource: frameBuffer.id, kind: 'uniform' }, b(2, 'view', 'read-only-storage'), b(16, 'ball-blocks', 'read-only-storage'),
+      b(17, 'ball-phys', 'uniform'), b(18, 'ball-input', 'uniform'), b(24, 'flames', 'storage'), b(25, 'flame-kinds', 'read-only-storage'),
+    ],
+  });
 
   const drawBindings = [
     b(0, 'settings', 'uniform'), { binding: 1, resource: frameBuffer.id, kind: 'uniform' }, b(2, 'view', 'read-only-storage'),
     { binding: 5, kind: 'graph-depth-texture', texture: id('shadow') }, b(9, 'lights', 'read-only-storage'),
-    b(13, 'balls', 'read-only-storage'), b(15, 'ball-kinds', 'read-only-storage'), b(17, 'ball-phys', 'uniform'),
+    b(13, 'balls', 'read-only-storage'), b(15, 'ball-kinds', 'read-only-storage'), b(17, 'ball-phys', 'uniform'), b(23, 'fire-lights', 'uniform'),
   ];
   const renders = [...graph.config.render_passes] as { name: string }[];
   const after = (name: string, pass: object) => renders.splice(renders.findIndex((r) => r.name === name) + 1, 0, pass as { name: string });
@@ -377,6 +466,7 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
     { binding: 12, kind: 'source-frame-sampler' } as { binding: number },
     { binding: 19, kind: 'graph-texture', texture: id('wet-stain') } as { binding: number },
     { binding: 20, kind: 'graph-texture', texture: id('wet-gloss') } as { binding: number },
+    b(23, 'fire-lights', 'uniform') as { binding: number },
   ];
   after('opaque', {
     name: 'balls', shader_id: 'scene3d/balls-draw', vertex_entry: 'vs_ball', fragment_entry: flatTexture ? 'fs_ball_relief' : 'fs_ball',
@@ -387,7 +477,7 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
   const dripDraw = [
     b(0, 'settings', 'uniform'), { binding: 1, resource: frameBuffer.id, kind: 'uniform' }, b(2, 'view', 'read-only-storage'),
     { binding: 5, kind: 'graph-depth-texture', texture: id('shadow') }, b(9, 'lights', 'read-only-storage'),
-    b(17, 'ball-phys', 'uniform'), b(21, 'drips', 'read-only-storage'), b(22, 'drip-kinds', 'read-only-storage'),
+    b(17, 'ball-phys', 'uniform'), b(21, 'drips', 'read-only-storage'), b(22, 'drip-kinds', 'read-only-storage'), b(23, 'fire-lights', 'uniform'),
   ];
   after('balls', {
     name: 'drips', shader_id: 'scene3d/drips-draw', vertex_entry: 'vs_drip', fragment_entry: flatTexture ? 'fs_drip_relief' : 'fs_drip',
@@ -395,6 +485,18 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
     vertex_count: 6, instance_count: paint.count,
     bindings: flatTexture ? [...dripDraw, { binding: 11, kind: 'graph-texture', texture: flatTexture }, { binding: 12, kind: 'source-frame-sampler' }] : dripDraw,
   });
+  const flameDraw = [
+    b(0, 'settings', 'uniform'), { binding: 1, resource: frameBuffer.id, kind: 'uniform' }, b(2, 'view', 'read-only-storage'),
+    b(17, 'ball-phys', 'uniform'), b(24, 'flames', 'read-only-storage'), b(25, 'flame-kinds', 'read-only-storage'),
+  ];
+  const flamePass = (name: string, vertex: string, fragment: string, blend: string) => ({
+    name, shader_id: 'scene3d/flames-draw', vertex_entry: vertex, fragment_entry: fragment,
+    target: 'texture', texture: id('hdr'), clear: false, blend,
+    depth: true, depth_write: false, depth_compare: 'less-equal', depth_load: true, depth_texture: id('depth'),
+    vertex_count: 6, instance_count: fire.count, bindings: flameDraw,
+  });
+  after('drips', flamePass('smoke', 'vs_smoke', 'fs_smoke', 'alpha'));
+  after('smoke', flamePass('fire', 'vs_fire', 'fs_fire', 'add'));
 
   return {
     textures,
@@ -402,7 +504,7 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
     passes,
     render_passes: renders,
     values: [...graph.values, ...ballValues.map(({ id, initial_b64 }) => ({ id, initial_b64 }))].map((v) => ({ ...v, key: v.initial_b64 })),
-    topology: `${world.flat}|${flatTexture ? JSON.stringify(flatSize(width, height)) : ''}|balls:${layout.count}:${layout.effects.length}|drips:${paint.count}:${paint.effects.length}:${JSON.stringify(wet)}|${graph.topology}`,
+    topology: `${world.flat}|${flatTexture ? JSON.stringify(flatSize(width, height)) : ''}|balls:${layout.count}:${layout.effects.length}|drips:${paint.count}:${paint.effects.length}:${JSON.stringify(wet)}|flames:${fire.count}:${fire.effects.length}|${graph.topology}`,
     flatTexture,
   };
 }

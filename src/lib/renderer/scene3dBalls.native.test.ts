@@ -7,7 +7,7 @@ import { makeEffect } from '../mobile/studio/interactiveEffects';
 import { blockDepth, reliefFrame, reliefSolids, unproject } from '../scene3d/relief';
 import { defaultReliefWorld } from '../scene3d/worldModel';
 import { buildWorldPart } from './scene3dWorld';
-import { BALL_FLOATS, DRIP_FLOATS, scene3dWorldPrecompileCommands } from './scene3dWorldShaders';
+import { BALL_FLOATS, DRIP_FLOATS, FLAME_FLOATS, scene3dWorldPrecompileCommands } from './scene3dWorldShaders';
 import { scene3dPrecompileCommands } from './scene3dShaders';
 
 /**
@@ -192,6 +192,70 @@ suite('Relief world balls on the GPU', () => {
         if (q[3] > 0 && Math.hypot(q[0] - want.x, q[1] - want.y) < 0.4 && q[10] === 2 && q[2] < 0.15) near++;
       }
       expect(near, 'drops poured onto the wall under the finger').toBeGreaterThanOrEqual(12);
+    } finally {
+      await rpc.close();
+    }
+  }, 120000);
+
+  it('burns on a block: flames rise above it, embers fall back, and Ignite lights a fire under the finger', async () => {
+    const rpc = core();
+    try {
+      await rpc.send('start', { config: { backend: platform.rendererBackend, width: W, height: H, target_fps: 60 } });
+      await rpc.send('submit_commands', { commands: [...scene3dPrecompileCommands(), ...scene3dWorldPrecompileCommands()] });
+      const fire = { ...makeEffect('flames', 'plinth', false) };
+      fire.params = { ...fire.params, flow: 0.9, embers: 1, lifetime: 2, amount: 2000 };
+      const s: InteractiveScene = {
+        ...defaultInteractive(),
+        surfaces: [{ id: 'plinth', name: 'Plinth', behavior: 'solid', height: 0.3, points: [{ x: 0.4, y: 0.6 }, { x: 0.6, y: 0.6 }, { x: 0.6, y: 0.9 }, { x: 0.4, y: 0.9 }] }],
+        effects: [fire],
+        world: defaultReliefWorld(),
+      };
+      const world = s.world!;
+      const step = async (n: number, igniteAt?: { x: number; y: number }, read = false) => {
+        const part = buildWorldPart({
+          scene: s, world, sourceId: 'flames-test', width: W, height: H,
+          input: igniteAt ? { pointers: [{ point: igniteAt, velocity: { x: 0, y: 0 }, tool: 'ignite', strength: 1 }], throws: [] } : undefined,
+        });
+        const buffers = part.buffers.map((b) => (b.id.endsWith(':scene3d:frame') ? { ...b, initial_b64: frameBlock(n) } : b));
+        const flames = part.buffers.find((b) => b.id.endsWith(':flames'))!.id;
+        const result = await rpc.send('compute_graph', {
+          buffers, passes: part.passes, render_passes: [], textures: [],
+          readbacks: read ? [{ id: flames, include_bytes: true }] : [],
+        });
+        if (!read) return null;
+        const bytes = Buffer.from(result.readbacks[flames].bytes_b64, 'base64');
+        return new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
+      };
+      for (let n = 1; n < 240; n++) await step(n);
+      const state = (await step(240, undefined, true))!;
+      const frame = reliefFrame(W / H, world.lens);
+      const d = blockDepth(reliefSolids(s)[0], world, frame);
+      const top = unproject(frame, { x: 0.5, y: 0.6 }, d).y;
+      const flames: number[][] = [], embers: number[][] = [];
+      let nan = 0;
+      for (let i = 0; i < state.length / FLAME_FLOATS; i++) {
+        const q = state.subarray(i * FLAME_FLOATS, i * FLAME_FLOATS + FLAME_FLOATS);
+        if (![...q].every(Number.isFinite)) { nan++; continue; }
+        if (q[3] <= 0) continue;
+        (q[10] > 1.5 ? embers : flames).push([...q]);
+      }
+      const above = flames.filter((q) => q[1] > top + 0.1);
+      const report = JSON.stringify({ flames: flames.length, embers: embers.length, above: above.length, nan, top });
+      expect(nan, report).toBe(0);
+      expect(flames.length, report).toBeGreaterThan(100);
+      expect(above.length, report).toBeGreaterThan(flames.length * 0.4);
+      // Embers come back down: some are falling.
+      expect(embers.filter((q) => q[5] < 0).length, report).toBeGreaterThan(0);
+
+      for (let n = 241; n < 250; n++) await step(n, { x: 0.15, y: 0.3 });
+      const lit = (await step(250, { x: 0.15, y: 0.3 }, true))!;
+      const want = unproject(frame, { x: 0.15, y: 0.3 }, 0);
+      let near = 0;
+      for (let i = 0; i < 2048; i++) {
+        const q = lit.subarray(i * FLAME_FLOATS, i * FLAME_FLOATS + FLAME_FLOATS);
+        if (q[3] > 0 && Math.hypot(q[0] - want.x, q[1] - want.y) < 0.6) near++;
+      }
+      expect(near, 'a fire under the finger').toBeGreaterThan(40);
     } finally {
       await rpc.close();
     }

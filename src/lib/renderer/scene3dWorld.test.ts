@@ -164,4 +164,29 @@ describe('the 3D world in an Interactive layer', () => {
     expect(dripSites({ ...s, surfaces: [tri] }, s.world!, frame, 't')).toHaveLength(2);
     expect(dripSites(s, s.world!, frame, 'nothing')).toEqual([]);
   });
+
+  it('simulates fire, draws smoke under the flames, and lights the world with it', async () => {
+    const flames = { ...makeEffect('flames'), target: 'b' };
+    const g = build({ ...scene(), effects: [flames, ...effects] });
+    const r = renders(g);
+    const names = r.map((p) => p.name);
+    expect(names.slice(names.indexOf('drips') + 1, names.indexOf('drips') + 3)).toEqual(['smoke', 'fire']);
+    expect(r.find((p) => p.name === 'smoke')!.blend).toBe('alpha');
+    expect(r.find((p) => p.name === 'fire')!.blend).toBe('add');
+    expect((g.config.passes as unknown as Pass[]).map((p) => p.name)).toContain('flames');
+    for (const name of ['opaque', 'balls', 'drips']) {
+      expect(r.find((p) => p.name === name)!.bindings.find((b) => b.binding === 23), name).toMatchObject({ kind: 'uniform' });
+    }
+    const { fireLights, flameLayout } = await import('./scene3dWorld');
+    const { reliefFrame } = await import('../scene3d/relief');
+    const s = { ...scene(), effects: [flames] };
+    const frame = reliefFrame(16 / 9, s.world!.lens);
+    const lit = fireLights(s, s.world!, frame, 16 / 9, flameLayout(s));
+    expect(lit[0]).toBe(1);
+    // Above the block it burns on.
+    expect(lit[5]).toBeGreaterThan(0);
+    const spots = fireLights(s, s.world!, frame, 16 / 9, flameLayout(s), { pointers: [{ point: { x: 0.1, y: 0.1 }, velocity: { x: 0, y: 0 }, tool: 'ignite', strength: 1 }], throws: [] });
+    expect(spots[0]).toBe(2);
+    expect(fireLights(s, s.world!, frame, 16 / 9, flameLayout({ ...s, effects: [{ ...flames, enabled: false }] }))[0]).toBe(0);
+  });
 });
