@@ -181,6 +181,13 @@
   let placingEmitter = false;
   let draft: Point[] = [];
   let tool: TouchTool = 'attract';
+  // With the 3D world on, a touch throws balls; without it, Throw and Push do nothing.
+  let toolWorld = false;
+  $: if (!!scene.world?.enabled !== toolWorld) {
+    toolWorld = !!scene.world?.enabled;
+    if (toolWorld && tool === 'attract') tool = 'throw';
+    else if (!toolWorld && (tool === 'throw' || tool === 'push')) tool = 'attract';
+  }
   let message = '';
   let messageTimer: ReturnType<typeof setTimeout> | undefined;
   let question: Question | null = null;
@@ -1083,6 +1090,7 @@
         {placingEmitter}
         {handheld}
         bind:tool
+        world={!!scene.world?.enabled}
         draftLength={draft.length}
         markerName={emitterMarker?.label.toLowerCase() ?? ''}
         sourceLabel={referencePreview
@@ -1137,6 +1145,7 @@
             {effects}
             surfaces={scene.surfaces}
             {selectedEffect}
+            world={!!scene.world?.enabled}
             onadd={(kind) => addEffect(kind)}
             onselect={selectEffect}
             ontoggle={(id) => apply(edit.toggleEffect(scene, id))}

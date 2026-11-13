@@ -1,4 +1,5 @@
-import type {InteractiveEffect} from '../mobile/studio/interactiveEffects';
+import {isWorldEffect,type InteractiveEffect} from '../mobile/studio/interactiveEffects';
+import {worldInputParam} from '../interactive/worldInput';
 import {buildMatterPasses} from './nativeInteractiveMatterGraph';
 import {validateScene, surfaceHidden, INTERACTIVE_PRESETS, SURFACE_FILLS, type InteractiveScene} from '../mobile/studio/interactive';
 import type {NativePluginGraphOptions,NativePluginGraphBuildResult} from './nativePluginGraphs';
@@ -180,7 +181,8 @@ function touchInputs(raw:unknown):{data:Float32Array;count:number}{
  const data=new Float32Array(8*4),list=Array.isArray(raw)?raw.slice(0,8):[];
  list.forEach((p:any,i:number)=>{
   if(!Number.isFinite(p?.point?.x)||!Number.isFinite(p?.point?.y))return;
-  data.set([Math.max(0,Math.min(1,p.point.x)),Math.max(0,Math.min(1,p.point.y)),Math.max(0,Math.min(1,Number(p.strength)||0)),p.mode==='repel'?1:p.mode==='vortex'?2:0],i*4);
+  // Throw only acts on the 3D world's balls; Push stirs the 2D effects.
+  data.set([Math.max(0,Math.min(1,p.point.x)),Math.max(0,Math.min(1,p.point.y)),p.mode==='throw'?0:Math.max(0,Math.min(1,Number(p.strength)||0)),p.mode==='repel'?1:p.mode==='vortex'||p.mode==='push'?2:0],i*4);
  });
  return {data,count:list.length};
 }
@@ -269,12 +271,13 @@ export function buildInteractiveGraph(options:NativePluginGraphOptions):Interact
   // distinct (target, material) pair instead of once per effect.
   const base=sceneShapes(scene.surfaces,false,scene.hue),encoded=new Map<string,{shapes:Float32Array;b64:string}>();
   for(const effect of scene.effects){
-   if(!effect.enabled)continue;
+   // The 3D world's elements are drawn by the world part.
+   if(!effect.enabled||isWorldEffect(effect.kind))continue;
    const material=({fire:'fire',smoke:'smoke',liquid:'liquid',cloud:'points'} as Record<string,string>)[effect.kind]??'none';
    const target=material==='none'?-1:scene.surfaces.findIndex(s=>s.id===effect.target),key=target<0?'-':`${target}:${material}`;
    let own=encoded.get(key);
    if(!own){const shapes=target<0?base:base.slice();if(target>=0)shapes[target*SHAPE_FLOATS+10]=MATERIALS.indexOf(material);own={shapes,b64:interactiveB64(shapes)};encoded.set(key,own);}
-   const view:InteractiveScene={...scene,effects:undefined,preset:effect.kind,hue:effect.params.hue??scene.hue,matter:{...scene.matter!,...effect.params}};
+   const view:InteractiveScene={...scene,effects:undefined,preset:effect.kind as InteractiveScene['preset'],hue:effect.params.hue??scene.hue,matter:{...scene.matter!,...effect.params}};
    parts.push(buildPart(options,view,effect,`${source}:${effect.id}`,own.shapes,own.b64,touches,touchesB64,new Set(target>=0?[material]:[])));
    mods+=`${effect.id}[${coreModSignature(effect)}]`;
   }
@@ -288,7 +291,7 @@ export function buildInteractiveGraph(options:NativePluginGraphOptions):Interact
  }
  // A 3D world: the 2D effects are drawn into its flat picture (Projected),
  // over it (Over) or not at all (Off). See scene3dWorld.ts.
- const world=scene.world?.enabled?buildWorldPart({scene,world:scene.world,sourceId:options.sourceId,width:options.width,height:options.height,view:worldView(options.params.interactiveView)}):null;
+ const world=scene.world?.enabled?buildWorldPart({scene,world:scene.world,sourceId:options.sourceId,width:options.width,height:options.height,view:worldView(options.params.interactiveView),input:worldInputParam(options.params.interactiveWorld)}):null;
  if(world&&scene.world?.flat==='off')parts.length=0;
  const buffers=[...parts.flatMap(p=>p.buffers),...(world?.buffers??[])],passes=[...parts.flatMap(p=>p.passes),...(world?.passes??[]) as GraphPass[]];
  let render_passes=parts.flatMap(p=>p.render_passes);

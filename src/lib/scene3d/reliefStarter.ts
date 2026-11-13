@@ -4,7 +4,7 @@
  * own) brought into the Studio.
  */
 import { defaultInteractive, type InteractiveScene, type InteractiveSurface } from '../mobile/studio/interactive';
-import { editableEffects, soundDefaults } from '../mobile/studio/interactiveEffects';
+import { editableEffects, makeEffect, soundDefaults } from '../mobile/studio/interactiveEffects';
 import { generateUUID } from '../utils/uuid';
 import type { MeshNode, Scene3D, SceneNode, LightNode } from './sceneModel';
 import { floorFrame, type StageShape } from './worlds';
@@ -38,8 +38,9 @@ const blockFrom = (shape: StageShape, i: number, finish: SurfaceFinish, height =
   finish,
 });
 
+/** The scene's flat effect, following the music, and balls raining onto the blocks. */
 function withEffects(scene: InteractiveScene): InteractiveScene {
-  return { ...scene, effects: editableEffects(scene).map((e) => ({ ...e, mods: soundDefaults(e.kind) })) };
+  return { ...scene, effects: [makeEffect('balls3d'), ...editableEffects(scene).map((e) => ({ ...e, mods: soundDefaults(e.kind) }))] };
 }
 
 /** A new Interactive 3D layer: the mapped shapes (or three plinths) standing out of a lit wall. */

@@ -61,6 +61,24 @@ export function blockDepth(surface: InteractiveSurface, world: ReliefWorld, fram
   return Math.min(frame.camZ * MAX_DEPTH_SHARE, Math.max(0.01, (surface.height ?? 0.2) * world.depthScale));
 }
 
+/** The deepest block, in meters (0 with none). */
+export function deepestBlock(scene: InteractiveScene, world: ReliefWorld, frame: ReliefFrame): number {
+  return reliefSolids(scene).reduce((d, s) => Math.max(d, blockDepth(s, world, frame)), 0);
+}
+
+/**
+ * The invisible front pane that keeps balls in the world: far enough in front
+ * of the deepest block for a big ball to pass in front of it.
+ */
+export function frontPaneDepth(scene: InteractiveScene, world: ReliefWorld, frame: ReliefFrame): number {
+  return Math.max(0.5, deepestBlock(scene, world, frame)) + 0.45;
+}
+
+/** How far the floor ledge stands out: under everything up to the pane. */
+export function floorDepth(scene: InteractiveScene, world: ReliefWorld, frame: ReliefFrame): number {
+  return Math.max(0.8, frontPaneDepth(scene, world, frame));
+}
+
 /** A finish as a ghost-scene material. `light` draws only the light that falls on it. */
 export function finishMaterial(finish: SurfaceFinish = defaultSurfaceFinish()): Material {
   switch (finish.preset) {
@@ -134,7 +152,7 @@ export function reliefScene(scene: InteractiveScene, world: ReliefWorld, aspect:
   if (world.floor) {
     nodes.push(node('floor', 'Floor', {
       kind: 'mesh', shape: 'box', material: material('matte', { base: world.wall.color, rough: world.wall.rough }), collider: 'static', catcher: world.wall.catcher,
-    }, { position: [0, -frame.H / 2 - 0.05, 0.4], scale: [frame.W * 1.04, 0.1, 0.8] }));
+    }, ((d) => ({ position: [0, -frame.H / 2 - 0.05, d / 2] as Vec3, scale: [frame.W * 1.04, 0.1, d] as Vec3 }))(floorDepth(scene, world, frame))));
   }
   for (const s of reliefSolids(scene)) nodes.push(blockNode(s, world, frame));
   nodes.push(node('sun', 'Sun', { kind: 'light', light: 'key', color: world.sun.color, power: world.sun.power, shadows: true, orbit: 0 }, {

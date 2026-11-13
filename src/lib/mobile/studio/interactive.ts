@@ -6,6 +6,8 @@ import {
   applyInteractiveOverrides,
   evaluateEffect,
   effectScene,
+  isWorldEffect,
+  type FlatEffectKind,
   type InteractiveEffect,
 } from './interactiveEffects';
 import { MatterPreview } from './matterPreview';
@@ -398,7 +400,8 @@ export function collision(a: Point, b: Point, c: Point, d: Point) {
   return { t, x: a.x + v.x * t, y: a.y + v.y * t, nx: -w.y / len, ny: w.x / len };
 }
 type Particle = Point & { vx: number; vy: number; life: number; seed: number };
-export type Interaction = { id: string; point: Point; strength: number; mode?: 'attract' | 'repel' | 'vortex' };
+/** A touch on the scene. Throw and Push only act on the 3D world's balls. */
+export type Interaction = { id: string; point: Point; strength: number; mode?: 'attract' | 'repel' | 'vortex' | 'push' | 'throw' };
 export class InteractiveWorld {
   private quality: InteractiveQualityBudget;
   constructor(quality = createInteractiveQuality()) {
@@ -493,7 +496,9 @@ export class InteractiveWorld {
       const effects = scene
         .effects!.slice(0, 8)
         .filter((e) => e.enabled)
-        .map((base) => evaluateEffect(base, this.clock, audio, bpm));
+        .map((base) => evaluateEffect(base, this.clock, audio, bpm))
+        // The 3D world's elements are drawn by the native world, not here.
+        .filter((e): e is InteractiveEffect & { kind: FlatEffectKind } => !isWorldEffect(e.kind));
       if (this.quality.activeLayers !== effects.length)
         this.setQuality({
           ...createInteractiveQuality(

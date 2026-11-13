@@ -94,4 +94,43 @@ describe('the 3D world in an Interactive layer', () => {
     const more = build(scene({}, [block, { ...block, id: 'c', points: block.points.map((p) => ({ x: p.x * 0.5, y: p.y })) }]));
     expect(more.interactive.topology).not.toBe(a.interactive.topology);
   });
+
+  it('simulates balls before drawing them, and casts their shadows into the shadow map', () => {
+    const balls = makeEffect('balls3d');
+    const g = build({ ...scene(), effects: [balls, ...effects] });
+    const names = (g.config.passes as unknown as Pass[]).map((p) => p.name);
+    expect(names.indexOf('balls-life')).toBeGreaterThan(names.indexOf('frame'));
+    expect(names.filter((n) => n.startsWith('balls-step'))).toHaveLength(4);
+    const r = renders(g).map((p) => p.name);
+    expect(r.indexOf('ball-shadows')).toBe(r.indexOf('shadow') + 1);
+    expect(r.indexOf('balls')).toBe(r.indexOf('opaque') + 1);
+    // The shadow map is drawn into there, so it is not also read.
+    expect(renders(g).find((p) => p.name === 'ball-shadows')!.bindings.some((b) => b.binding === 5)).toBe(false);
+    // The 2D builder leaves the world's elements alone.
+    expect(renders(g).filter(is2d).length).toBe(renders(build(scene())).filter(is2d).length);
+  });
+
+  it('treats a throw, a ball param and switching balls off as values, a new balls effect as structure', () => {
+    const balls = makeEffect('balls3d');
+    const base = { ...scene(), effects: [balls, ...effects] };
+    const a = build(base);
+    const withInput = buildInteractiveGraph({
+      kind: 'performer-world', sourceId: 'layer-1',
+      params: { interactiveScene: base, interactiveWorld: { pointers: [], throws: [{ point: { x: 0.5, y: 0.2 }, velocity: { x: 0, y: 0 }, number: 3, at: 0 }] } },
+      width: 1920, height: 1080, time: 0, frameDelta: 1 / 60, frameIndex: 1, audio, state: null, reset: false,
+    } as Parameters<typeof buildInteractiveGraph>[0]);
+    expect(withInput.interactive.topology).toBe(a.interactive.topology);
+    const changed = (g: InteractiveGraphBuildResult) => {
+      const before = new Map(a.interactive.values.map((v) => [v.id, v.key]));
+      return g.interactive.values.filter((v) => before.get(v.id) !== v.key).map((v) => v.id.split(':').pop());
+    };
+    expect(changed(withInput)).toEqual(['ball-input']);
+    const bigger = build({ ...base, effects: [{ ...balls, params: { ...balls.params, size: 0.9 } }, ...effects] });
+    expect(bigger.interactive.topology).toBe(a.interactive.topology);
+    expect(changed(bigger)).toContain('ball-kinds');
+    const off = build({ ...base, effects: [{ ...balls, enabled: false }, ...effects] });
+    expect(off.interactive.topology).toBe(a.interactive.topology);
+    const two = build({ ...base, effects: [balls, { ...makeEffect('balls3d') }, ...effects] });
+    expect(two.interactive.topology).not.toBe(a.interactive.topology);
+  });
 });

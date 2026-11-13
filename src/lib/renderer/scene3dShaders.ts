@@ -29,7 +29,8 @@ export const MAX_FIELDS = 16;
 export const MAX_POINT_LIGHTS = 8;
 export const MAX_COLLIDERS = 64;
 
-const COMMON = /* wgsl */ `
+/** Settings, frame block and the shared structs: the start of every scene module. */
+export const SCENE3D_COMMON_WGSL = /* wgsl */ `
 ${SCENE3D_FRAME_WGSL}
 
 // Scene settings, written by the app when the scene changes.
@@ -90,7 +91,7 @@ fn hash1(n: u32) -> f32 {
 }
 `;
 
-export const SCENE3D_SIM_WGSL = /* wgsl */ `${COMMON}
+export const SCENE3D_SIM_WGSL = /* wgsl */ `${SCENE3D_COMMON_WGSL}
 @group(0) @binding(2) var<storage, read_write> view: View;
 @group(0) @binding(6) var<storage, read_write> particles: array<Particle>;
 @group(0) @binding(7) var<storage, read> emitters: array<Emitter>;
@@ -328,7 +329,7 @@ fn cs_sim(@builtin(global_invocation_id) gid: vec3u) {
 }
 `;
 
-export const SCENE3D_WORLD_WGSL = /* wgsl */ `${COMMON}
+export const SCENE3D_WORLD_WGSL = /* wgsl */ `${SCENE3D_COMMON_WGSL}
 @group(0) @binding(2) var<storage, read> view: View;
 @group(0) @binding(3) var<storage, read> vertices: array<Vertex>;
 @group(0) @binding(4) var<storage, read> materials: array<Material>;
@@ -509,7 +510,7 @@ fn fs_particle(in: SpriteOut) -> @location(0) vec4f {
 }
 `;
 
-export const SCENE3D_POST_WGSL = /* wgsl */ `${COMMON}
+export const SCENE3D_POST_WGSL = /* wgsl */ `${SCENE3D_COMMON_WGSL}
 @group(0) @binding(2) var src: texture_2d<f32>;
 @group(0) @binding(3) var samp: sampler;
 @group(0) @binding(4) var bloom: texture_2d<f32>;

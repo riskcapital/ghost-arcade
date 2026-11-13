@@ -7,6 +7,7 @@
  * Live state only: never saved, never an undo step.
  */
 import type { Interaction } from '../mobile/studio/interactive';
+import type { WorldInputState } from './worldInput';
 
 const live = new Map<string, Interaction[]>();
 /** Pointer touches straight from an open editor, every animation frame. */
@@ -16,6 +17,17 @@ const POINTER_FRESH_MS = 250;
 /** The Studio's Orbit view: degrees the 3D world's camera has turned. */
 export type WorldView = { yaw: number; pitch: number };
 const views = new Map<string, WorldView>();
+/** What the touches do to the 3D world's balls this frame (worldInput.ts). */
+const worldInputs = new Map<string, WorldInputState>();
+
+export function setLiveWorldInput(layerId: string, state: WorldInputState | null): void {
+  if (state && (state.pointers.length || state.throws.length)) worldInputs.set(layerId, state);
+  else worldInputs.delete(layerId);
+}
+
+export function liveWorldInput(layerId: string): WorldInputState | undefined {
+  return worldInputs.get(layerId);
+}
 
 /** Turn the layer's 3D world camera, or back to face-on with `null`. */
 export function setLiveWorldView(layerId: string, view: WorldView | null): void {
@@ -56,4 +68,5 @@ export function pruneLiveInteractiveInputs(keep: Set<string>): void {
   for (const id of live.keys()) if (!keep.has(id)) live.delete(id);
   for (const id of pointers.keys()) if (!keep.has(id)) pointers.delete(id);
   for (const id of views.keys()) if (!keep.has(id)) views.delete(id);
+  for (const id of worldInputs.keys()) if (!keep.has(id)) worldInputs.delete(id);
 }

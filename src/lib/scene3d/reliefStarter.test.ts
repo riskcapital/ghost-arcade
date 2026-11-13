@@ -15,7 +15,8 @@ describe('Interactive 3D in the Studio', () => {
     expect(scene.surfaces.map((s) => [s.name, s.behavior])).toEqual([['Left', 'solid'], ['Right', 'solid']]);
     expect(scene.surfaces.map((s) => s.finish?.preset)).toEqual(['stone', 'chrome']);
     expect(scene.surfaces[1].points).toEqual(shapes[1].points);
-    expect(scene.effects?.length).toBeGreaterThan(0);
+    expect(scene.effects?.map((e) => e.kind)).toContain('balls3d');
+    expect(scene.effects?.some((e) => e.kind !== 'balls3d')).toBe(true);
   });
 
   it('stands three plinths up when nothing is mapped', () => {

@@ -198,7 +198,7 @@ export function reseed(scene: InteractiveScene): InteractiveScene {
 // ── Labels ─────────────────────────────────────────────────────────────────
 
 /** Effects that emit matter from a shape outline or from a free position. */
-export const EMITTER_KINDS: EffectKind[] = ['fire', 'smoke', 'liquid', 'balls', 'cloud'];
+export const EMITTER_KINDS: EffectKind[] = ['fire', 'smoke', 'liquid', 'balls', 'cloud', 'balls3d'];
 
 export function isEmitter(kind: EffectKind): boolean {
   return EMITTER_KINDS.includes(kind);

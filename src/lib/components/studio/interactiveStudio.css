@@ -1236,6 +1236,12 @@
 .interactive-workspace .add-effect-menu button {
   text-align: left;
 }
+.interactive-workspace .add-effect-group {
+  grid-column: 1 / -1;
+  padding: 4px 2px 0;
+  font-size: 11px;
+  color: var(--ga-text-muted, #9aa3b5);
+}
 .interactive-workspace .hint.limit:not(:where(.param *, .mt *, .studio-timeline *)) {
   color: #ffcf8a;
 }

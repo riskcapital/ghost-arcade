@@ -1126,7 +1126,8 @@ import { nativeEffectPassIdForEffectType } from '$lib/renderer/nativeEffectCover
 import { statusFrameRate } from './statusFrameRate';
 import { recordingScreenIds } from '$lib/recording/recordingSources';
 import { launchClockPosition } from '$lib/stores/launchClock';
-import { liveInteractiveInputs, livePointer, liveWorldView, pruneLiveInteractiveInputs, setLiveInteractiveInputs } from '$lib/interactive/interactiveLive';
+import { liveInteractiveInputs, livePointer, liveWorldInput, liveWorldView, pruneLiveInteractiveInputs, setLiveInteractiveInputs, setLiveWorldInput } from '$lib/interactive/interactiveLive';
+import { WorldInput } from '$lib/interactive/worldInput';
 import { combineInputs, PointSmoother, trackedPoints, ZoneTriggers, type FiredZone } from '$lib/interactive/interactiveRuntime';
 import { defaultInteractiveInput, validateScene, type InteractiveScene, type Interaction } from '$lib/mobile/studio/interactive';
 import { fireShowAction } from '$lib/show/showActions';
@@ -5207,6 +5208,9 @@ function nativeGraphParamsForLayer(
     // The Studio's Orbit view turns the 3D world's camera, live.
     const view = liveWorldView(layer.id);
     if (view) params = { ...params, interactiveView: view };
+    // Throws and pushes on its balls.
+    const world = liveWorldInput(layer.id);
+    if (world) params = { ...params, interactiveWorld: world };
   }
   // Everything instrument-shaped goes through the shared funnel in
   // `nativeGraphQuality`: instrument defaults, colour-preset expansion,
@@ -8407,7 +8411,7 @@ export class NativeRendererSync {
   }
 
   /** Per interactive layer: tracked-point smoothing and its trigger zones. */
-  private interactiveRuntimes = new Map<string, { smoother: PointSmoother; zones: ZoneTriggers; sceneRef: unknown; scene: InteractiveScene | null }>();
+  private interactiveRuntimes = new Map<string, { smoother: PointSmoother; zones: ZoneTriggers; world: WorldInput; sceneRef: unknown; scene: InteractiveScene | null }>();
 
   /**
    * One frame of an interactive layer, editor open or not: combine the
@@ -8418,7 +8422,7 @@ export class NativeRendererSync {
     const source = layer.source?.effectSource;
     let runtime = this.interactiveRuntimes.get(layer.id);
     if (!runtime) {
-      runtime = { smoother: new PointSmoother(), zones: new ZoneTriggers(), sceneRef: undefined, scene: null };
+      runtime = { smoother: new PointSmoother(), zones: new ZoneTriggers(), world: new WorldInput(), sceneRef: undefined, scene: null };
       this.interactiveRuntimes.set(layer.id, runtime);
     }
     // Validate only when the stored scene object changed.
@@ -8433,8 +8437,10 @@ export class NativeRendererSync {
     const scene = runtime.scene;
     if (!scene || layer.visible === false) {
       setLiveInteractiveInputs(layer.id, null);
+      setLiveWorldInput(layer.id, null);
       runtime.smoother.reset();
       runtime.zones.reset();
+      runtime.world.reset();
       return;
     }
     const input = scene.input ?? defaultInteractiveInput();
@@ -8452,7 +8458,12 @@ export class NativeRendererSync {
       runtime.smoother.reset();
       setLiveInteractiveInputs(layer.id, fresh ?? null);
     }
-    if (source?.interactivePaused === true) return;
+    if (source?.interactivePaused === true) {
+      setLiveWorldInput(layer.id, null);
+      return;
+    }
+    // The 3D world: throws and pushes on its balls.
+    setLiveWorldInput(layer.id, scene.world?.enabled ? runtime.world.update(points, performance.now() / 1000) : null);
     const fired = runtime.zones.update(scene, points, performance.now() / 1000);
     if (fired.length) fireInteractiveZones(layer.id, fired);
   }
