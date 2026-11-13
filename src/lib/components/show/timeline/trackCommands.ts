@@ -2,19 +2,23 @@
  * Keyboard commands on the show's layer tracks: split, duplicate, copy /
  * cut / paste, delete and ripple delete, select all, nudge. The tray's key
  * handler (ShowTimeline.svelte, through show/showKeyboard.ts) calls these;
- * each is one undo step through the show store.
+ * each is one undo step through the show store. Selected keys (line
+ * points, keyCommands.ts) take part in delete, copy / cut / paste and nudge
+ * together with the selected blocks.
  */
 import { get } from 'svelte/store';
 import { showTimeline, SHOW_SNAP_SECONDS } from '../../../stores/showTimeline';
 import { gridStepSeconds, secondsAtBar, barBeatAt } from '../../../show/tempoMap';
 import { focusedTrackId, laneKeySelection, setTrackClipboard, trackClipboard } from './trackLayout';
+import { canPasteKeys, copySelectedKeys, deleteSelectedKeys, hasKeySelection, moveSelectedKeys, pasteKeysAtPlayhead } from './keyCommands';
+import { clearSelectedKeys, selectedKeys } from '../../../timeline/lines/lineSelection';
 
 export function hasClipSelection(): boolean {
-  return get(showTimeline).selectedClipIds.length > 0 || !!get(laneKeySelection)?.times.length;
+  return get(showTimeline).selectedClipIds.length > 0 || !!get(laneKeySelection)?.times.length || hasKeySelection();
 }
 
 export function canPasteClips(): boolean {
-  return !!trackClipboard()?.groups.length;
+  return !!trackClipboard()?.groups.length || canPasteKeys();
 }
 
 /** Split under the playhead: the selected clips there, or every clip there. */
@@ -28,22 +32,25 @@ export function duplicateSelection(): boolean {
   return ids.length > 0 && showTimeline.duplicateLayerClips(ids).length > 0;
 }
 
-/** Copy the selected clips, grouped by track. */
+/** Copy the selected clips, grouped by track, and the selected keys. A copy
+ *  replaces both clipboards, so a paste brings back exactly what was copied. */
 export function copySelection(): boolean {
   const s = get(showTimeline);
   const ids = new Set(s.selectedClipIds);
-  if (!ids.size) return false;
+  const keys = copySelectedKeys();
   const groups = s.layerTracks
-    .map((t) => ({ trackId: t.id, clips: showTimeline.copyLayerClips(t.clips.filter((c) => ids.has(c.id)).map((c) => c.id)) }))
+    .map((t) => ({ trackId: t.id, clips: ids.size ? showTimeline.copyLayerClips(t.clips.filter((c) => ids.has(c.id)).map((c) => c.id)) : [] }))
     .filter((g) => g.clips.length);
-  if (!groups.length) return false;
+  if (!groups.length && !keys) return false;
   setTrackClipboard({ groups });
   return true;
 }
 
 export function cutSelection(): boolean {
   if (!copySelection()) return false;
-  showTimeline.removeLayerClips(get(showTimeline).selectedClipIds);
+  deleteSelectedKeys();
+  const ids = get(showTimeline).selectedClipIds;
+  if (ids.length) showTimeline.removeLayerClips(ids);
   return true;
 }
 
@@ -52,18 +59,19 @@ export function cutSelection(): boolean {
  * track (the one last clicked); from several tracks, each back onto its own.
  */
 export function pasteAtPlayhead(): boolean {
+  const keys = pasteKeysAtPlayhead();
   const board = trackClipboard();
-  if (!board?.groups.length) return false;
+  if (!board?.groups.length) return keys;
   const s = get(showTimeline);
   const focused = get(focusedTrackId);
   const exists = (id: string | null) => !!id && s.layerTracks.some((t) => t.id === id);
   let groups = board.groups.filter((g) => exists(g.trackId));
   if (board.groups.length === 1 && exists(focused)) groups = [{ trackId: focused!, clips: board.groups[0].clips }];
-  if (!groups.length) return false;
-  return showTimeline.pasteLayerClipGroups(groups, s.currentTime).length > 0;
+  if (!groups.length) return keys;
+  return showTimeline.pasteLayerClipGroups(groups, s.currentTime).length > 0 || keys;
 }
 
-/** Delete selected keys, or else selected clips. False when neither. */
+/** Delete selected keys and selected clips. False when there are neither. */
 export function deleteSelection(ripple: boolean): boolean {
   const keys = get(laneKeySelection);
   if (keys?.times.length) {
@@ -71,8 +79,9 @@ export function deleteSelection(ripple: boolean): boolean {
     laneKeySelection.set(null);
     return true;
   }
+  const lineKeys = deleteSelectedKeys();
   const ids = get(showTimeline).selectedClipIds;
-  if (!ids.length) return false;
+  if (!ids.length) return lineKeys;
   showTimeline.removeLayerClips(ids, { ripple });
   return true;
 }
@@ -109,19 +118,24 @@ export function nudgeSelection(direction: -1 | 1, bar: boolean): boolean {
     return true;
   }
   const ids = s.selectedClipIds;
-  if (!ids.length) return false;
   const idSet = new Set(ids);
   const clips = s.layerTracks.flatMap((t) => t.clips.filter((c) => idSet.has(c.id)));
-  if (!clips.length) return false;
-  const at = Math.min(...clips.map((c) => c.startTime));
-  const delta = direction * (bar ? barStep(at) : gridStep(at));
-  showTimeline.moveLayerClipsAcross(ids, Math.max(delta, -at), 0);
+  const lineKeys = selectedKeys(s.lines);
+  if (!clips.length && !lineKeys.length) return false;
+  // Blocks and keys move as one set by one step, never past 0.
+  const at = Math.min(...clips.map((c) => c.startTime), ...lineKeys.map((k) => k.t));
+  const delta = Math.max(direction * (bar ? barStep(at) : gridStep(at)), -at);
+  if (Math.abs(delta) < 1e-9) return true;
+  // Blocks move without their points (moveLayerClipsAcross): every selected key moves by the same step.
+  if (lineKeys.length) moveSelectedKeys(delta);
+  if (clips.length) showTimeline.moveLayerClipsAcross(ids, delta, 0);
   return true;
 }
 
 export function clearTrackSelection(): void {
   showTimeline.selectLayerClips([]);
   laneKeySelection.set(null);
+  clearSelectedKeys();
 }
 
 /**

@@ -73,6 +73,7 @@
   import SectionCueList from './show/timeline/sections/SectionCueList.svelte';
   import AutoShowDialog from './show/timeline/autoshow/AutoShowDialog.svelte';
   import WherePatternEditor from './show/timeline/WherePatternEditor.svelte';
+  import { selectAllKeys } from './show/timeline/keyCommands';
   import { autoShowOpen } from './show/timeline/autoshow/autoShowUi';
   import { goLabel, sectionStatusText } from './show/timeline/sections/sectionGoUi';
   import { makeSection, placeNewSection } from '../timeline/sections/sectionModel';
@@ -1151,6 +1152,7 @@
       case 'selectAll':
         showTimeline.selectAllLayerClips();
         laneKeySelection.set(null);
+        selectAllKeys();
         return true;
       case 'nudgeLeft':
       case 'nudgeRight':
@@ -1227,6 +1229,9 @@
       case 'trimStart':
       case 'trimEnd':
         trimToPlayhead(action === 'trimStart' ? 'start' : 'end');
+        return true;
+      case 'forwardTool':
+        editTool.set('forward');
         return true;
       case 'razor':
         editTool.set('razor');

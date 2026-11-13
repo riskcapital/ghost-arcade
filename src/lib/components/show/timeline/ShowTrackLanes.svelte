@@ -34,11 +34,16 @@
     laneKeySelection,
     showSnapGuide,
     snapGuideAt,
+    trackHeight,
     trackIndexAt,
     trackTops,
     type ClipPart,
     type TrackLaneController,
   } from './trackLayout';
+  import { _currentLineLayout } from './lineUi';
+  import { clearSelectedKeys, selectedKeys, selectKeys as selectLineKeys } from '../../../timeline/lines/timelineLines';
+  import { keysBetween, shiftKeys, unionKeys } from '../../../timeline/lines/keyEdit';
+  import { selectForward } from './keyCommands';
   import { trackLaneInfo } from './trackParams';
   import { showSlice } from './timelineSlices';
   import { dragSnapper, snapMovingClip } from './dragSnap';
@@ -202,6 +207,7 @@
 
   function pressClip(e: MouseEvent, tr: ShowLayerTrack, clip: ShowLayerClip, part: ClipPart) {
     if (e.button !== 0) return;
+    if (get(editTool) === 'forward') { pressForward(e, tr); return; }
     e.preventDefault();
     e.stopPropagation();
     focusedTrackId.set(tr.id);
@@ -217,6 +223,7 @@
       if (!wasSelected) showTimeline.selectLayerClips([...before, clip.id]);
     } else if (!wasSelected) {
       showTimeline.selectLayerClips([clip.id]);
+      clearSelectedKeys();
     }
     // A block is edited in the normal panels: its piece is selected and
     // they show the block's own values.
@@ -300,6 +307,10 @@
     const snapper = dragSnapper(ids);
     const minStart = Math.min(...selectedClips.map((c) => c.startTime));
     let applied = { delta: 0, offset: 0 };
+    // Selected keys go along by the same amount (moveLayerClipsAcross moves
+    // the blocks without their points).
+    const allKeys = selectedKeys(get(showTimeline).lines);
+    let freeKeys = allKeys;
     follow(e, (ev) => {
       const list = currentTracks();
       const row = trackIndexAt(list, yInStack(ev.clientY));
@@ -316,7 +327,13 @@
         delta = placed - origStart;
       }
       if (Math.abs(delta - applied.delta) > 1e-9 || offset !== applied.offset) {
-        if (showTimeline.moveLayerClipsAcross(ids, delta - applied.delta, offset - applied.offset)) {
+        const step = delta - applied.delta;
+        if (showTimeline.moveLayerClipsAcross(ids, step, offset - applied.offset)) {
+          if (freeKeys.length && Math.abs(step) > 1e-9) {
+            const r = shiftKeys(get(showTimeline).lines, freeKeys, step);
+            if (r.lines !== get(showTimeline).lines) showTimeline.setLines(r.lines);
+            freeKeys = r.keys;
+          }
           applied = { delta, offset };
           focusedTrackId.set(list[startIndex + offset]?.id ?? tr.id);
         }
@@ -324,8 +341,11 @@
       const s = origStart + applied.delta;
       showSnapGuide.set(movesFreely(ev) ? null : snapGuideAt({ start: s, end: s + duration }, snapper.edges(), raw, s));
     }, (moved) => {
-      if (moved) return;
-      if (onClick === 'only' && ids.length > 1) showTimeline.selectLayerClips([clip.id]);
+      if (moved) {
+        if (allKeys.length) selectLineKeys(freeKeys);
+        return;
+      }
+      if (onClick === 'only' && ids.length > 1) { showTimeline.selectLayerClips([clip.id]); clearSelectedKeys(); }
       else if (onClick === 'remove') showTimeline.selectLayerClips(withoutGroup(get(showTimeline).selectedClipIds, clip.id));
     });
   }
@@ -471,13 +491,60 @@
 
   // ── Marquee ──────────────────────────────────────────────────────────
 
+  /**
+   * Select forward (A): every block that starts at the clicked time or later
+   * and every key from there on (Shift: on this row only) is selected; a
+   * drag then shifts them all, snapped (Cmd / Ctrl: free), blocks and keys
+   * by the same amount.
+   */
+  function pressForward(e: MouseEvent, tr: ShowLayerTrack | null) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (tr) focusedTrackId.set(tr.id);
+    laneKeySelection.set(null);
+    const t0 = Math.max(0, timeAt(e.clientX));
+    selectForward(t0, e.shiftKey ? tr : null);
+    const s = get(showTimeline);
+    const ids = [...s.selectedClipIds];
+    const idSet = new Set(ids);
+    const allKeys = selectedKeys(s.lines);
+    if (!ids.length && !allKeys.length) return;
+    const starts = s.layerTracks.flatMap((t) => t.clips.filter((c) => idSet.has(c.id)).map((c) => c.startTime));
+    let freeKeys = allKeys;
+    const minT = Math.min(...starts, ...allKeys.map((k) => k.t));
+    const snapper = dragSnapper(ids);
+    let applied = 0;
+    follow(e, (ev) => {
+      const raw = Math.max(0, timeAt(ev.clientX));
+      const to = movesFreely(ev) ? raw : snapper.snap(raw);
+      const delta = Math.max(to - t0, -minT);
+      const step = delta - applied;
+      if (Math.abs(step) < 1e-9) return;
+      if (ids.length && !showTimeline.moveLayerClipsAcross(ids, step, 0)) return;
+      if (freeKeys.length) {
+        const r = shiftKeys(get(showTimeline).lines, freeKeys, step);
+        if (r.lines !== get(showTimeline).lines) showTimeline.setLines(r.lines);
+        freeKeys = r.keys;
+      }
+      applied = delta;
+      showSnapGuide.set(movesFreely(ev) ? null : snapGuideAt({ start: t0 + delta, end: t0 + delta }, snapper.edges(), raw, t0 + delta));
+    }, (moved) => {
+      showSnapGuide.set(null);
+      if (moved && allKeys.length) selectLineKeys(freeKeys);
+    }, 3);
+  }
+
   function pressEmpty(e: MouseEvent, tr: ShowLayerTrack | null) {
     if (e.button !== 0) return;
+    if (get(editTool) === 'forward') { pressForward(e, tr); return; }
     e.preventDefault();
     if (tr) focusedTrackId.set(tr.id);
     const additive = addsToSelection(e);
     const before = [...get(showTimeline).selectedClipIds];
     const base = additive ? before : [];
+    const keysBefore = selectedKeys();
+    const keyBase = additive ? keysBefore : [];
     const x0 = timeAt(e.clientX) * zoom;
     const y0 = yInStack(e.clientY);
     follow(e, (ev) => {
@@ -490,23 +557,33 @@
       const t0 = box.x / zoom;
       const t1 = (box.x + box.w) / zoom;
       const hits: string[] = [];
+      const keyLines = new Set<string>();
+      const layout = _currentLineLayout();
       list.forEach((t, i) => {
         const top = tops[i] + 4;
         const bottom = tops[i] + TRACK_ROW_HEIGHT - 4;
+        // The row and the line lanes under it: their keys in the box.
+        if (!(box.y > tops[i] + trackHeight(t) - 2 || box.y + box.h < top)) {
+          for (const l of layout.lines.get(t.id) ?? []) keyLines.add(l.id);
+        }
         if (box.y > bottom || box.y + box.h < top) return;
         for (const c of t.clips) if (c.startTime < t1 && clipEnd(c) > t0) hits.push(c.id);
       });
       showTimeline.selectLayerClips([...new Set([...base, ...hits])]);
+      const keys = keyLines.size ? keysBetween(get(showTimeline).lines, t0, t1, keyLines) : [];
+      selectLineKeys(unionKeys(keyBase, keys));
     }, (moved) => {
       marquee = null;
       if (!moved && !additive) {
         showTimeline.selectLayerClips([]);
         laneKeySelection.set(null);
+        clearSelectedKeys();
       }
     }, 3, () => {
       // Cancelled: the selection from before the marquee.
       marquee = null;
       showTimeline.selectLayerClips(before);
+      selectLineKeys(keysBefore);
     });
   }
 

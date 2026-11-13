@@ -13,6 +13,7 @@
   import { junctionPredecessors, predecessorList } from './laneJunctions';
   import ShowLayerClipBlock from './ShowLayerClipBlock.svelte';
   import LineLanes from './LineLanes.svelte';
+  import RowKeyStrip from './RowKeyStrip.svelte';
   import { lineLayout } from './lineUi';
   import { thumbnailFor } from './clipMedia';
   import { clipsInView, hiddenSpans, rowColor, TRACK_ROW_HEIGHT, type LaneKeySelection, type TrackLaneController } from './trackLayout';
@@ -149,6 +150,9 @@
     {/each}
     {#if dropTime !== null}
       <div class="lt-drop" style:left="{dropTime * zoom}px"></div>
+    {/if}
+    {#if rowLines.length}
+      <RowKeyStrip lines={rowLines} {zoom} {viewStart} {viewEnd} locked={track.locked} />
     {/if}
     {#if track.clips.length === 0 && dropTime === null}
       <!-- The hint on the first piece row; the rest say it on hover, not all at once. -->

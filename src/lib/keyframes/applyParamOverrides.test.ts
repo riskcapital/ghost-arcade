@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { applyParamOverrides, setDotPathClone, type ParamOverrideSet } from './applyParamOverrides';
 import type { Layer } from '../types';
+import { readLayerExtra } from './layerParamKeys';
+import { discoverKeyframeableParams } from './paramDiscovery';
 
 /**
  * The override code used to live inline in NativeRendererSync. This is that
@@ -115,9 +117,7 @@ describe("a group's Individual / Unified and Override styles as Timeline values"
     groupConfig: { shaderMode: 'individual', overrideStyles: false, shaderSource: null },
   } as unknown as Layer);
 
-  it('reads, applies onto a copy, and is offered for groups only', async () => {
-    const { readLayerExtra } = await import('./layerParamKeys');
-    const { discoverKeyframeableParams } = await import('./paramDiscovery');
+  it('reads, applies onto a copy, and is offered for groups only', () => {
     const g = group();
     expect(readLayerExtra(g, 'group:unified')).toBe(false);
     expect(readLayerExtra(g, 'group:override')).toBe(false);

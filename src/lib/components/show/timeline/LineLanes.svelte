@@ -23,7 +23,8 @@
   import { DEFAULT_BEZIER, LINE_CURVES, isLiveOnlySource } from '../../../timeline/lines/lineModel';
   import { lineValueAt } from '../../../timeline/lines/lineEvaluator';
   import { scaleOffsetPoints, strokeToPoints, spliceStroke } from '../../../timeline/lines/lineDrawing';
-  import { currentLineSession, lineSelection, liveTraces, liveTraceVersion, recordingPasses, selectedLinePoints } from '../../../timeline/lines/timelineLines';
+  import { currentLineSession, lineSelection, liveTraces, liveTraceVersion, recordingPasses, selectedKeys, selectedLinePoints, selectKeys } from '../../../timeline/lines/timelineLines';
+  import { beginKeyDrag } from './keyCommands';
   import {
     LINE_DEPTH_HEIGHT,
     LINE_LANE_HEIGHT,
@@ -90,9 +91,19 @@
   function selectedPoints(line: ControlLine, ch: Channel): number[] {
     return selectedLinePoints(sel, line, ch);
   }
-  /** Select points of `line`'s `ch` list as it is in `list` (the list just committed, or the line's own). */
-  function selectPoints(line: ControlLine, ch: Channel, indices: number[], list: readonly LinePoint[] = pointsOf(line, ch)): void {
+  /** Select points of `line`'s `ch` list as it is in `list` (the list just committed, or the line's own).
+   *  With `add`, the keys selected on other lines stay selected (points only). */
+  function selectPoints(line: ControlLine, ch: Channel, indices: number[], list: readonly LinePoint[] = pointsOf(line, ch), add = false): void {
+    if (add && ch === 'points') {
+      const others = selectedKeys().filter((k) => k.lineId !== line.id);
+      selectKeys([...others, ...indices.filter((i) => list[i]).map((i) => ({ lineId: line.id, t: list[i].t }))], { activeLineId: line.id });
+      return;
+    }
     lineSelection.set({ lineId: line.id, points: indices, channel: ch, of: list });
+  }
+  /** Keys selected on lines other than `line` (a selection across lines). */
+  function spansOtherLines(line: ControlLine): boolean {
+    return selectedKeys().some((k) => k.lineId !== line.id);
   }
 
   // ── Drawing ───────────────────────────────────────────────────────────
@@ -197,7 +208,12 @@
     let indices: number[];
     if (e.shiftKey) {
       indices = inSel ? current.filter((i) => i !== index) : [...current, index];
-      selectPoints(line, ch, indices);
+      selectPoints(line, ch, indices, pointsOf(line, ch), true);
+      return;
+    }
+    // A selected key of a selection across lines: the whole set moves in time.
+    if (inSel && ch === 'points' && spansOtherLines(line)) {
+      if (!locked) dragKeySet(e, line.points[index].t);
       return;
     }
     indices = inSel ? current : [index];
@@ -244,6 +260,24 @@
     });
   }
 
+  /** Drag every selected key in time, the grabbed one (at `grabT`) snapped. One undo step; Esc puts them back. */
+  function dragKeySet(e: MouseEvent, grabT: number) {
+    const drag = beginKeyDrag();
+    if (!drag) return;
+    const sx = e.clientX;
+    let moved = false;
+    followPointer({
+      move: (ev) => {
+        if (!moved && Math.abs(ev.clientX - sx) < 3) return;
+        moved = true;
+        const to = snapTime(grabT + (ev.clientX - sx) / zoom, ev);
+        drag.move(to - grabT);
+      },
+      end: () => { if (moved) drag.end(); },
+      cancel: () => { if (moved) drag.cancel(); },
+    });
+  }
+
   function pressEmpty(e: MouseEvent, line: ControlLine, ch: Channel, h: number, rect: DOMRect, laneId: string) {
     const sx = e.clientX;
     const sy = e.clientY;
@@ -265,7 +299,7 @@
           if (!m) return;
           const picked = pointsInRect(line, pointsOf(line, ch), { x0: m.x, y0: m.y, x1: m.x + m.w, y1: m.y + m.h }, zoom, h, rangeOf(line, ch));
           const base = ev.shiftKey ? selectedPoints(line, ch) : [];
-          selectPoints(line, ch, [...new Set([...base, ...picked])]);
+          selectPoints(line, ch, [...new Set([...base, ...picked])], pointsOf(line, ch), ev.shiftKey);
           return;
         }
         if (locked) return;
@@ -427,13 +461,15 @@
     return () => { clearTimeout(t); window.removeEventListener('mousedown', close); };
   });
 
-  // Delete / Backspace: the selected points of a line in this group.
+  // Delete / Backspace on a line's depth points. Its keys (the points) are
+  // the Timeline's key selection: the tray's Delete takes them, with the
+  // keys on other lines and the selected blocks (keyCommands.ts).
   $effect(() => {
     const ids = new Set(lines.map((l) => l.id));
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Delete' && e.key !== 'Backspace') return;
       const s = get(lineSelection);
-      if (!s || !s.points.length || !ids.has(s.lineId)) return;
+      if (!s || !s.points.length || !ids.has(s.lineId) || (s.channel ?? 'points') === 'points') return;
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
       const line = lines.find((l) => l.id === s.lineId);

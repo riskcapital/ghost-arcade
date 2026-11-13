@@ -5,6 +5,8 @@
  *   ripple   Shift+B (B is Blackout): dragging an edge moves every later block on the row with it
  *   roll     N: dragging the cut between two touching blocks moves both edges
  *   slip     Y: dragging a block plays a different stretch of its media in place
+ *   forward  A: a click selects every block and key from there on (Shift: on
+ *            that row only); dragging moves them all (shift a whole passage)
  *   select   V: back to selecting and moving
  *   shuttle  J plays backwards (each press doubles the speed, up to 8×),
  *            K stops, L plays
@@ -15,13 +17,14 @@
 import { get, writable } from 'svelte/store';
 import { onShowDocChange, showTimeline } from '../../../stores/showTimeline';
 
-export type EditTool = 'select' | 'razor' | 'ripple' | 'roll' | 'slip';
+export type EditTool = 'select' | 'razor' | 'ripple' | 'roll' | 'slip' | 'forward';
 export const EDIT_TOOLS: ReadonlyArray<{ id: EditTool; label: string; key: string; hint: string }> = [
   { id: 'select', label: 'Select', key: 'V', hint: 'Select, move and trim blocks' },
   { id: 'razor', label: 'Razor', key: 'C', hint: 'Click a block to cut it there' },
   { id: 'ripple', label: 'Ripple', key: 'Shift+B', hint: 'Drag an edge: later blocks on the row move with it' },
   { id: 'roll', label: 'Roll', key: 'N', hint: 'Drag the cut between two touching blocks' },
   { id: 'slip', label: 'Slip', key: 'Y', hint: 'Drag a block to play a different part of its media in place' },
+  { id: 'forward', label: 'Select forward', key: 'A', hint: 'Click a time: every block and key from there on is selected (Shift: that row only). Drag to shift them' },
 ];
 
 /** The pointer's tool on the Timeline's blocks. */

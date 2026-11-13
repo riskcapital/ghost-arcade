@@ -147,24 +147,10 @@ export const lineRecordState = writable<LineRecordUi>({ armed: false, mode: 'tou
 setShowRecordArm(() => get(lineRecordState).armed);
 
 /** The line being edited, and its selected points (indices). */
-export interface LineSelection {
-  lineId: string;
-  points: number[];
-  /** Which of the line's point lists the indices are in (default: its points). */
-  channel?: 'points' | 'depth';
-  /** The point list the indices were taken from: once the line's points are
-   *  replaced (undo, redo, a recorded pass) the indices no longer apply. */
-  of?: readonly LinePoint[];
-}
-
-/** The selected point indices of `line`'s `channel` list, while they still apply. */
-export function selectedLinePoints(sel: LineSelection | null, line: ControlLine, channel: 'points' | 'depth' = 'points'): number[] {
-  if (!sel || sel.lineId !== line.id || (sel.channel ?? 'points') !== channel) return [];
-  const list = channel === 'depth' ? line.follow?.depthPoints ?? [] : line.points;
-  if (sel.of && sel.of !== list) return [];
-  return sel.points;
-}
-export const lineSelection = writable<LineSelection | null>(null);
+// The point and key selection lives in lineSelection.ts (light enough for
+// the track commands to import); re-exported here for its users.
+export { lineSelection, selectedLinePoints, selectedKeys, selectKeys, clearSelectedKeys, type LineSelection } from './lineSelection';
+import { lineSelection } from './lineSelection';
 
 /** Live values of lines that follow a live source (for the faint trace). */
 export const liveTraces = new Map<string, Array<{ t: number; v: number }>>();

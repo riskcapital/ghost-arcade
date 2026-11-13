@@ -64,6 +64,8 @@ export type ShowKeyAction =
   | 'trimEnd'
   /** The editing tools: C razor, Shift+B ripple (B stays Blackout), N roll, Y slip, V select. */
   | 'razor'
+  /** A: select every block and key from a clicked time on. */
+  | 'forwardTool'
   | 'rippleTool'
   | 'rollTool'
   | 'slipTool'
@@ -171,6 +173,7 @@ export function classifyShowKey(e: KeyLike, ctx: ShowKeyContext): ShowKeyAction 
   if (key === 'q') return ctx.hasTracks ? 'trimStart' : null;
   if (key === 'w') return ctx.hasTracks ? 'trimEnd' : null;
   if (key === 'c') return ctx.hasTracks ? 'razor' : null;
+  if (key === 'a') return ctx.hasTracks ? 'forwardTool' : null;
   if (key === 'v') return 'selectTool';
   if (key === 'n') return ctx.hasTracks ? 'rollTool' : null;
   if (key === 'y') return ctx.hasTracks ? 'slipTool' : null;
