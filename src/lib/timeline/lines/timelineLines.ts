@@ -223,7 +223,7 @@ function startSession(): void {
     onBindingsChange: (b) => showTimeline.setLineBindings(b),
     registry: timelineRegistrySource,
     // Parked with Live edit on, a change is held until Update (liveEdit.ts).
-    keyAt: (target, key, value, t) => { if (!holdParamEdit(target, key, value, t)) keyAtPlayhead(target, key, value, t); },
+    keyAt: (target, key, value, t, was) => { if (!holdParamEdit(target, key, value, t, was)) keyAtPlayhead(target, key, value, t, was); },
     // While parked, a held change shows over its line; playing shows the Timeline as it is.
     held: () => (get(showTimeline).isPlaying ? EMPTY_HELD : heldTouches()),
   });
@@ -402,7 +402,7 @@ export function installTimelineLines(): () => void {
   // Live edit is the recorder armed with Follow edits; its held changes
   // show at once, so a change to them is evaluated again.
   installLiveEditHooks({
-    keyAt: (target, key, value, t) => { keyAtPlayhead(target, key, value, t); },
+    keyAt: (target, key, value, t, was) => { keyAtPlayhead(target, key, value, t, was); },
     cutIn: (trackId, media, t, before) => { showTimeline.cutInLayerMedia(trackId, media, t, before); },
     setArmed: (on) => {
       if (on) {
@@ -543,7 +543,7 @@ const LIVE_EDIT_GESTURE_MS = 250;
 let liveEditAt = 0;
 let liveEditSeq = 0;
 
-export function keyAtPlayhead(target: ParamTarget, key: string, value: number | boolean, time: number): boolean {
+export function keyAtPlayhead(target: ParamTarget, key: string, value: number | boolean, time: number, was?: number | boolean): boolean {
   const nowMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
   if (nowMs - liveEditAt > LIVE_EDIT_GESTURE_MS) liveEditSeq++;
   liveEditAt = nowMs;
@@ -554,7 +554,12 @@ export function keyAtPlayhead(target: ParamTarget, key: string, value: number | 
   const line = existing ?? makeLine(target, entry!, lines);
   const v = typeof value === 'boolean' ? (value ? 1 : 0) : value;
   const point: LinePoint = line.kind === 'bool' || line.kind === 'stepped' || line.kind === 'colour' ? { t: Math.max(0, time), v, c: 'hold' } : { t: Math.max(0, time), v };
-  const points = [...line.points.filter((p) => Math.abs(p.t - point.t) > 1e-4), point].sort((a, b) => a.t - b.t);
+  // A new line from a change part-way through: the setting keeps what it
+  // was up to the change (held, then the change), not the new value from 0.
+  const start: LinePoint[] = !existing && was !== undefined && point.t > 1e-3
+    ? [{ t: 0, v: typeof was === 'boolean' ? (was ? 1 : 0) : was, c: 'hold' }]
+    : [];
+  const points = [...start, ...line.points.filter((p) => Math.abs(p.t - point.t) > 1e-4), point].sort((a, b) => a.t - b.t);
   const next = { ...line, points };
   return showTimeline.editLines(
     (list) => (existing ? list.map((l) => (l.id === line.id ? next : l)) : [...list, next]),

@@ -30,6 +30,8 @@ export interface HeldParamEdit {
   target: ParamTarget;
   key: string;
   value: number | boolean;
+  /** What it was before the first held change: a new line keeps it up to `t`. */
+  was?: number | boolean;
   /** Where the playhead was when it was changed: where Update keys it. */
   t: number;
 }
@@ -46,8 +48,8 @@ export interface HeldContentEdit {
 export type HeldEdit = HeldParamEdit | HeldContentEdit;
 
 export interface LiveEditHooks {
-  /** Key a parameter at a time (timelineLines' keyAtPlayhead). */
-  keyAt(target: ParamTarget, key: string, value: number | boolean, t: number): void;
+  /** Key a parameter at a time (timelineLines' keyAtPlayhead); `was`, its value before. */
+  keyAt(target: ParamTarget, key: string, value: number | boolean, t: number, was?: number | boolean): void;
   /** Cut content in on a row at a time (the content recorder's swap). */
   cutIn(trackId: string, media: ShowClipMedia, t: number, before: ShowClipMedia | null): void;
   /** One app-level undo step (App's handleUndo); false when there is none. */
@@ -79,13 +81,15 @@ export function setLiveEdit(on: boolean): void {
 }
 
 /** A parked parameter change while Live edit is on: held, not keyed. Returns false when Live edit is off. */
-export function holdParamEdit(target: ParamTarget, key: string, value: number | boolean, t: number): boolean {
+export function holdParamEdit(target: ParamTarget, key: string, value: number | boolean, t: number, was?: number | boolean): boolean {
   if (!get(liveEditOn)) return false;
   markStart();
   heldEdits.update((list) => {
     const id = `param|${targetId(target)}|${key}`;
-    const next: HeldParamEdit = { kind: 'param', id, target, key, value, t };
     const at = list.findIndex((e) => e.id === id);
+    // The first "was" is what the setting was before Live edit touched it.
+    const first = at < 0 ? was : (list[at] as HeldParamEdit).was;
+    const next: HeldParamEdit = { kind: 'param', id, target, key, value, ...(first !== undefined ? { was: first } : {}), t };
     if (at < 0) return [...list, next];
     const copy = list.slice();
     copy[at] = next;
@@ -135,7 +139,7 @@ export function updateHeldEdits(): number {
   heldEdits.set([]);
   heldFrom = null;
   for (const e of held) {
-    if (e.kind === 'param') hooks.keyAt(e.target, e.key, e.value, e.t);
+    if (e.kind === 'param') hooks.keyAt(e.target, e.key, e.value, e.t, e.was);
     else hooks.cutIn(e.trackId, e.media, e.t, e.before);
   }
   recordDiscreteAction();

@@ -108,3 +108,30 @@ describe('applyParamOverrides', () => {
     expect((layer.source as any).shaderValues.speed).toBe(1);
   });
 });
+
+describe("a group's Individual / Unified and Override styles as Timeline values", () => {
+  const group = (): Layer => ({
+    id: 'g1', name: 'Group', type: 'group', visible: true, opacity: 1,
+    groupConfig: { shaderMode: 'individual', overrideStyles: false, shaderSource: null },
+  } as unknown as Layer);
+
+  it('reads, applies onto a copy, and is offered for groups only', async () => {
+    const { readLayerExtra } = await import('./layerParamKeys');
+    const { discoverKeyframeableParams } = await import('./paramDiscovery');
+    const g = group();
+    expect(readLayerExtra(g, 'group:unified')).toBe(false);
+    expect(readLayerExtra(g, 'group:override')).toBe(false);
+    const next = { ...g } as Layer;
+    applyParamOverrides(next, { 'group:unified': 1, 'group:override': true } as unknown as ParamOverrideSet);
+    expect((next as any).groupConfig.shaderMode).toBe('unified');
+    expect((next as any).groupConfig.overrideStyles).toBe(true);
+    // The store's own object is untouched.
+    expect((g as any).groupConfig.shaderMode).toBe('individual');
+    const keys = discoverKeyframeableParams(g).map((p) => p.key);
+    expect(keys).toContain('group:unified');
+    expect(keys).toContain('group:override');
+    const piece = { id: 'p', name: 'Piece', type: 'media', visible: true, opacity: 1 } as unknown as Layer;
+    expect(discoverKeyframeableParams(piece).map((p) => p.key)).not.toContain('group:unified');
+    expect(readLayerExtra(piece, 'group:unified')).toBeUndefined();
+  });
+});

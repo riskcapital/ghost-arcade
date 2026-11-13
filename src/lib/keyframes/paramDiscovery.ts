@@ -280,14 +280,22 @@ export function discoverKeyframeableParams(layer: Layer): KeyframeableParam[] {
   return params;
 }
 
-/** Visibility, blend, transform, corners, mesh, sketch, video speed and the
- *  edge Look as a whole (keys in layerParamKeys.ts). */
+/** Visibility, blend, a group's Individual / Unified and Override styles,
+ *  transform, corners, mesh, sketch, video speed and the edge Look as a
+ *  whole (keys in layerParamKeys.ts). */
 function pushLayerExtras(layer: Layer, params: KeyframeableParam[]): void {
   const l = layer as any;
   params.push(
     { key: 'layer:visible', label: 'Visible', type: 'boolean', kind: 'bool', defaultValue: l.visible !== false, group: 'Layer' },
     { key: 'layer:blend', label: 'Blend mode', type: 'number', kind: 'stepped', min: 0, max: BLEND_MODE_ORDER.length - 1, step: 1, defaultValue: blendIndex(l.blendMode), group: 'Layer' },
   );
+  if (l.type === 'group') {
+    // Individual / Unified and Override styles: a flip is a Timeline value.
+    params.push(
+      { key: 'group:unified', label: 'Unified across the group', type: 'boolean', kind: 'bool', defaultValue: l.groupConfig?.shaderMode === 'unified', group: 'Group' },
+      { key: 'group:override', label: 'Group styles override', type: 'boolean', kind: 'bool', defaultValue: l.groupConfig?.overrideStyles === true, group: 'Group' },
+    );
+  }
   if (l.corners) {
     // Relative to where the piece is mapped (see layerParamKeys.ts).
     const transform = 'Transform';

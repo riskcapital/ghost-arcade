@@ -7,6 +7,9 @@
  *
  *   layer:visible              shown / hidden (bool)
  *   layer:blend                blend mode, an index into BLEND_MODE_ORDER (stepped)
+ *   group:unified              a group's content across the group (Unified) or
+ *                              on each piece (Individual) (bool)
+ *   group:override             the group's styles replace its pieces' own (bool)
  *   transform:x | y            move the piece (output UV, y up), 0 = where it is
  *   transform:scale            uniform scale about the piece's centre, 1 = as is
  *   transform:scaleX | scaleY  scale per axis
@@ -75,6 +78,7 @@ const num = (value: number | boolean) => (typeof value === 'boolean' ? (value ? 
 /** True for keys this module owns. */
 export function isLayerExtraKey(key: string): boolean {
   return key === 'layer:visible' || key === 'layer:blend' || key === 'video:rate'
+    || key === 'group:unified' || key === 'group:override'
     || key.startsWith('transform:') || key.startsWith('corner:') || key.startsWith('mesh:')
     || key.startsWith('sketch:') || key.startsWith('gpu:') || key.startsWith('look:');
 }
@@ -84,6 +88,8 @@ export function readLayerExtra(layer: Layer, key: string): number | boolean | un
   const l = layer as any;
   if (key === 'layer:visible') return l.visible !== false;
   if (key === 'layer:blend') return blendIndex(l.blendMode);
+  if (key === 'group:unified') return l.type === 'group' ? l.groupConfig?.shaderMode === 'unified' : undefined;
+  if (key === 'group:override') return l.type === 'group' ? l.groupConfig?.overrideStyles === true : undefined;
   if (key === 'video:rate') return l.source?.type === 'video' ? Number(l.source.playbackRate ?? 1) : undefined;
   if (key.startsWith('transform:')) {
     // Relative: a piece at rest is not moved, scaled or turned.
@@ -145,6 +151,13 @@ export function applyLayerExtra(next: any, key: string, value: number | boolean,
   };
   if (key === 'layer:visible') { next.visible = truthy(value); return true; }
   if (key === 'layer:blend') { next.blendMode = blendAt(value); return true; }
+  if (key === 'group:unified' || key === 'group:override') {
+    if (next.type !== 'group') return true;
+    once('groupConfig', () => { next.groupConfig = { shaderMode: 'individual', overrideStyles: false, shaderSource: null, ...(next.groupConfig ?? {}) }; });
+    if (key === 'group:unified') next.groupConfig.shaderMode = truthy(value) ? 'unified' : 'individual';
+    else next.groupConfig.overrideStyles = truthy(value);
+    return true;
+  }
   if (key === 'video:rate') {
     if (next.source?.type === 'video') {
       once('source', () => { next.source = { ...next.source }; });

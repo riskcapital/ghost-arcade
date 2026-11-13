@@ -53,9 +53,19 @@ describe('Live edit', () => {
     holdParamEdit(piece, 'opacity', 0.5, 3);
     holdContentEdit('row', media('next'), 7, null);
     expect(updateHeldEdits()).toBe(2);
-    expect(keyAt).toHaveBeenCalledWith(piece, 'opacity', 0.5, 3);
+    expect(keyAt).toHaveBeenCalledWith(piece, 'opacity', 0.5, 3, undefined);
     expect(cutIn).toHaveBeenCalledWith('row', expect.objectContaining({ name: 'next' }), 7, null);
     expect(get(heldEdits)).toHaveLength(0);
+  });
+
+  it('keys what a setting was before the first held change, so a new line keeps it up to there', () => {
+    const keyAt = vi.fn();
+    installLiveEditHooks({ keyAt, cutIn: vi.fn(), undo: () => false, setArmed: () => {} });
+    liveEditOn.set(true);
+    holdParamEdit(piece, 'opacity', 0.5, 3, 1);
+    holdParamEdit(piece, 'opacity', 0.2, 3, 0.5);
+    updateHeldEdits();
+    expect(keyAt).toHaveBeenCalledWith(piece, 'opacity', 0.2, 3, 1);
   });
 
   it('drops held changes on Discard without keying them', () => {
