@@ -5592,6 +5592,10 @@ export interface ShowLayerTrack {
   subRow?: boolean;
   /** A group's row: its children's rows are folded away. */
   foldChildren?: boolean;
+  /** A group row (an added layer): its blocks play across a named group of
+   *  pieces (`orderId`, a where order), as one picture (Unified) or the whole
+   *  picture on each piece. See timeline/where/groupRows.ts. */
+  group?: { orderId: string; unified: boolean };
   /** Runtime only (see ShowRowInfo). */
   row?: ShowRowInfo;
 }

@@ -7,6 +7,10 @@
    */
   import type { ShowLayerTrack } from '../../../types';
   import { showTimeline } from '../../../stores/showTimeline';
+  import { editGroupRowPieces } from './groupRowUi';
+  import { showSlice } from './timelineSlices';
+
+  const ordersSlice = showSlice('whereOrders');
 
   interface Props {
     track: ShowLayerTrack;
@@ -18,7 +22,11 @@
 
   const SWATCHES = ['#8b7cff', '#ff6f5e', '#f0c674', '#5fdc76', '#5ce1e6', '#5278ff', '#c77dff'];
   const kind = $derived(track.row?.kind ?? (track.subRow ? 'sub' : 'piece'));
-  const title = $derived(kind === 'sub' ? 'Layer on a piece' : kind === 'missing' ? 'Missing piece' : kind === 'group' ? 'Group row' : 'Row');
+  const title = $derived(track.group ? 'Group of pieces' : kind === 'sub' ? 'Layer on a piece' : kind === 'missing' ? 'Missing piece' : kind === 'group' ? 'Group row' : 'Row');
+  const pieceCount = $derived.by(() => {
+    const order = track.group ? ($ordersSlice ?? []).find((o) => o.id === track.group!.orderId) : null;
+    return order?.slots?.flat().length ?? 0;
+  });
 </script>
 
 <div class="show-inspector" data-track-inspector>
@@ -26,6 +34,14 @@
   <span class="insp-name layer-name">{track.layerName}</span>
   {#if kind === 'missing'}
     <span class="insp-hint">This mapping layer is gone from the stage and every look the show uses.</span>
+  {/if}
+  {#if track.group}
+    <span class="insp-seg" role="group" aria-label="How the group shows its blocks">
+      <button class:on={!track.group.unified} onclick={() => showTimeline.setGroupRowUnified(track.id, false)} title="The whole picture on each piece" data-group-insp-individual>Individual</button>
+      <button class:on={track.group.unified} onclick={() => showTimeline.setGroupRowUnified(track.id, true)} title="One picture across the pieces, each showing its part" data-group-insp-unified>Unified</button>
+    </span>
+    <button class="insp-pieces" onclick={() => editGroupRowPieces(track)} title="Choose the group's pieces on the canvas" data-group-insp-pieces>{pieceCount} {pieceCount === 1 ? 'piece' : 'pieces'} · Edit</button>
+    <span class="insp-hint">Select this row and click a card in the Media Library to put it here at the playhead.</span>
   {/if}
   <label class="insp-field" title="A row with no blocks always shows what the current look gives its piece">
     <span>Between blocks</span>
@@ -72,6 +88,12 @@
     flex: 0 0 auto;
     flex-wrap: wrap;
   }
+  .insp-seg { display: inline-flex; border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.14)); border-radius: 4px; overflow: hidden; }
+  .insp-seg button { height: 22px; padding: 0 9px; background: transparent; border: 0; color: var(--ga-ink-1, #bbb); font: inherit; font-size: 12px; cursor: pointer; }
+  .insp-seg button + button { border-left: 1px solid var(--ga-line, rgba(255, 255, 255, 0.08)); }
+  .insp-seg button.on { background: var(--ga-icon, #5278ff); color: #fff; }
+  .insp-pieces { height: 22px; padding: 0 9px; background: transparent; border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.14)); border-radius: 4px; color: var(--ga-ink-1, #bbb); font: inherit; font-size: 12px; cursor: pointer; }
+  .insp-pieces:hover { color: var(--ga-ink-0, #fff); }
   .insp-title {
     color: #FFD96B;
     font-weight: var(--ga-weight-control, 600);

@@ -12,6 +12,7 @@
   import { layers as liveLayersStore } from '../../../stores/layers';
   import ShowTrackHeader from './ShowTrackHeader.svelte';
   import { ADD_TRACK_ROW_HEIGHT, reorderGapAt, reorderIndexForGap, trackHeight, trackTops } from './trackLayout';
+  import { startGroupRow } from './groupRowUi';
   import { trackLaneInfo } from './trackParams';
   import { liveTakeover } from '../../../show/takeover/liveTakeover';
   import { showSlice } from './timelineSlices';
@@ -101,6 +102,9 @@
 {/if}
 </div>
 <div class="tha" style:height="{ADD_TRACK_ROW_HEIGHT}px">
+  <button class="tha-btn tha-group" onmousedown={(e) => e.stopPropagation()} onclick={startGroupRow}
+    title="A row whose blocks play across a group of pieces you pick on the canvas (Left half, Top row…), as one picture or on each piece"
+    data-add-group-row>+ Group row</button>
   {#if $cameraLaneStore.length === 0 && !$cameraLaneShown}
     <button class="tha-btn" onmousedown={(e) => e.stopPropagation()} onclick={() => cameraLaneShown.set(true)} title="Shots from the Stage Sim's Demo reel that its camera follows while the show plays" data-add-camera-lane>+ Stage camera lane</button>
   {:else}
@@ -140,5 +144,8 @@
     cursor: pointer;
   }
   .tha-btn:hover { border-color: rgba(139, 124, 255, 0.8); color: #fff; }
+  .tha { gap: 6px; }
+  .tha-btn.tha-group { color: #fff; background: color-mix(in srgb, var(--ga-icon, #5278ff) 18%, transparent); border-color: color-mix(in srgb, var(--ga-icon, #5278ff) 60%, transparent); }
+  .tha-btn.tha-group:hover { border-color: var(--ga-icon, #5278ff); }
   .tha-hint { font-size: var(--ga-text-meta, 11px); color: var(--ga-ink-2, #55555f); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 </style>

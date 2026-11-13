@@ -174,6 +174,7 @@ import { linesEnd, normalizeBindings, removeLinesForBlocks, shiftLinesOnTarget, 
 import { normalizeLedClip, normalizeLedClips, type TimelineLedClip } from '../timeline/leds/ledClips';
 import { normalizeStageClip, normalizeStageClips, type StageClipRow, type TimelineStageClip } from '../timeline/stagefx/stageClips';
 import { normalizeNamedOrders, normalizeWhere, type WhereNamedOrder } from '../timeline/where/whereModel';
+import { adoptGroupWhere, normalizeTrackGroup, setGroupRowUnified } from '../timeline/where/groupRows';
 import { EMPTY_SOUND_DOC, normalizeSoundDoc, soundDocIsEmpty, type SoundDoc } from '../timeline/sound/soundModel';
 import { normalizeSections, sectionsEnd, tidySections, type TimelineSection } from '../timeline/sections/sectionModel';
 import {
@@ -1098,6 +1099,19 @@ function syncAudioWiring(tracks: ShowAudioTrack[]): void {
 
 const store = writable<ShowTimelineState>(createInitialState());
 
+// A block on a group row plays through the row's group: one that lands there
+// without a pattern (a drop, a paste, a recorded cut-in, a move from another
+// row) is given the row's (timeline/where/groupRows.ts), whatever put it there.
+let groupCheckedTracks: readonly ShowLayerTrack[] | null = null;
+store.subscribe((s) => {
+  if (s.layerTracks === groupCheckedTracks) return;
+  groupCheckedTracks = s.layerTracks;
+  const adopted = adoptGroupWhere(s.layerTracks);
+  if (adopted === s.layerTracks) return;
+  groupCheckedTracks = adopted;
+  store.update((x) => (x.layerTracks === s.layerTracks ? { ...x, layerTracks: adopted } : x));
+});
+
 /** Animation frames while the editor is on screen, a timer while it is minimised. */
 const ticker = createShowTicker((now) => tick(now));
 /** The playhead's clock: the sound card while the show has audio, animation frames otherwise. */
@@ -1873,6 +1887,7 @@ export function normalizeLayerTrack(raw: unknown, index: number): ShowLayerTrack
     collapsed: t.collapsed === true,
     ...(t.subRow === true ? { subRow: true } : {}),
     ...(t.foldChildren === true ? { foldChildren: true } : {}),
+    ...(t.subRow === true && normalizeTrackGroup(t.group) ? { group: normalizeTrackGroup(t.group)! } : {}),
   };
 }
 
@@ -3223,6 +3238,54 @@ export const showTimeline = {
   },
 
   /** Track settings: gap mode, mute, lock, fold, colour, name. */
+  /**
+   * "+ Group row": a row added on `hostLayerId` (one of the group's pieces)
+   * whose blocks play across the where order `orderId` (groupRows.ts),
+   * Unified or Individual. Returns the new row's id.
+   */
+  addGroupRow(hostLayerId: string, name: string, group: { orderId: string; unified: boolean }): string | null {
+    const tracks = get(store).layerTracks;
+    const main = tracks.find((t) => t.layerId === hostLayerId && !t.subRow);
+    if (!main) return null;
+    const own = tracks.filter((t) => t.layerId === hostLayerId && t.subRow);
+    const id = generateUUID();
+    const track: ShowLayerTrack = {
+      id,
+      layerId: hostLayerId,
+      layerName: name.trim() || 'Group',
+      template: main.template,
+      clips: [],
+      lanes: [],
+      gap: 'hide',
+      muted: false,
+      locked: false,
+      collapsed: false,
+      subRow: true,
+      group: { orderId: group.orderId, unified: group.unified },
+      ...(main.row ? { row: { ...main.row, kind: 'sub' as const, depth: main.row.depth + 1 } } : {}),
+    };
+    const last = own.length ? tracks.indexOf(own[own.length - 1]) : tracks.indexOf(main);
+    store.update((s) => {
+      const layerTracks = [...s.layerTracks];
+      layerTracks.splice(last + 1, 0, track);
+      return { ...s, layerTracks, selection: { kind: 'track', id } };
+    });
+    recordShowEdit();
+    republishTracks();
+    return id;
+  },
+
+  /** A group row Unified (one picture across its pieces) or Individual (the whole picture on each), with its blocks. One undo step. */
+  setGroupRowUnified(trackId: string, unified: boolean): boolean {
+    const s = get(store);
+    const track = s.layerTracks.find((t) => t.id === trackId);
+    if (!track?.group || track.locked || track.group.unified === unified) return false;
+    store.update((x) => ({ ...x, layerTracks: setGroupRowUnified(x.layerTracks, trackId, unified) }));
+    recordShowEdit();
+    republishTracks();
+    return true;
+  },
+
   updateLayerTrack(trackId: string, patch: Partial<Pick<ShowLayerTrack, 'gap' | 'muted' | 'locked' | 'collapsed' | 'color' | 'layerName' | 'foldChildren'>>) {
     let changed = false;
     store.update((s) => ({

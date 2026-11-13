@@ -422,6 +422,8 @@
   /** The Timeline's Looks row. */
   const LOOK_LANE_HEIGHT = 40;
   const SECTION_LANE_HEIGHT = 28;
+  /** The Timeline's Presets row (shorter than the Show's preset lane). */
+  const PRESET_ROW_HEIGHT = 34;
   const AUDIO_LANE_HEIGHT = 52;
   const RULER_HEIGHT = 20;
 
@@ -541,7 +543,7 @@
     linePicker = linePicker ? null : { x: r.left, y: r.top - 4, group };
   }
   /** The lane under the ruler: Presets on the Show, Looks on the Timeline. */
-  const topLaneH = $derived(isTimeline ? SECTION_LANE_HEIGHT + LOOK_LANE_HEIGHT : PRESET_LANE_HEIGHT);
+  const topLaneH = $derived(isTimeline ? SECTION_LANE_HEIGHT + PRESET_ROW_HEIGHT + LOOK_LANE_HEIGHT : PRESET_LANE_HEIGHT);
   // The Stage camera lane sits under the audio lanes once it has shots (or was asked for).
   const cameraLaneH = $derived(cameraLane.length > 0 || $cameraLaneShown ? CAMERA_LANE_HEIGHT : 0);
   const audioLaneCount = $derived(Math.max(1, audioTracks.reduce((m, t) => Math.max(m, t.lane + 1), 0)));
@@ -803,10 +805,6 @@
     // A card dragged out of the Preset Tray carries its index into the
     // current compositions list (PresetTray.handlePresetDragStart).
     const presetIndex = dt.getData('application/x-ghost-mapping-preset');
-    if (presetIndex && isTimeline) {
-      showToast('Presets go on the Show: the Timeline has rows for the pieces instead.', 'info');
-      return;
-    }
     if (presetIndex) {
       const comp = $compositions[Number(presetIndex)];
       if (comp) {
@@ -852,6 +850,12 @@
   }
 
   // ── Add preset ─────────────────────────────────────────────────────────
+  /** The Timeline's Presets row: a preset at the playhead. */
+  function addPresetAtPlayhead(id: string) {
+    const comp = $compositions.find((c) => c.id === id);
+    if (!comp) return;
+    showTimeline.insertPresetClipAt(comp.id, get(showTimeline).currentTime, SHOW_DEFAULT_PRESET_SECONDS, comp.name);
+  }
   let addPresetId = $state('');
   function addPreset() {
     const comp = $compositions.find((c) => c.id === addPresetId) ?? $compositions[0];
@@ -1734,6 +1738,16 @@
             <button class="lane-line-add score" onclick={() => autoShowOpen.set(true)} disabled={!audioTracks.length} title={audioTracks.length ? 'Auto show: a whole show on your mapping from the song on the Song row (sections, content on the pieces, looks, Screen FX)' : 'Drop a song on the Song row first'} data-auto-show-open><TimelineIcon name="sparkle" size={12} />Auto</button>
             <SectionsLiveMenu />
           </div>
+          <div class="lane-label preset timeline-presets" style="height: {PRESET_ROW_HEIGHT}px" data-presets-label>
+            <span class="lane-name" title="Presets along the Timeline: each block loads a saved preset (the whole stage, its groups and content) at its start, with transitions between them. Drag a preset here from the Presets tray. The rows below play over it.">Presets</span>
+            <select class="lane-preset-add" value="" disabled={comps.length === 0}
+              title={comps.length ? 'Put a preset on the Presets row at the playhead' : 'Save a preset in the Presets tray first'}
+              onchange={(e) => { const el = e.currentTarget as HTMLSelectElement; addPresetAtPlayhead(el.value); el.value = ''; }}
+              aria-label="Add a preset at the playhead" data-timeline-preset-add>
+              <option value="">+</option>
+              {#each comps as comp (comp.id)}<option value={comp.id}>{comp.name}</option>{/each}
+            </select>
+          </div>
           <div class="lane-label look" style="height: {LOOK_LANE_HEIGHT}px">
             <span class="lane-name" title="Shape Looks along the Timeline: drag a Look card from the Looks gallery here. The shapes wear it for the block's span; overlapping blocks crossfade.">Looks</span>
             {#if lookClips.length > 0}
@@ -1818,6 +1832,26 @@
         <div class="lanes" style="width: {totalWidth}px">
           {#if isTimeline}
           <SectionLane {sections} {tempo} height={SECTION_LANE_HEIGHT} {zoom} {viewStart} {viewEnd} {selection} snap={snapEnabled} />
+          <ShowPresetLane
+            clips={presetClips}
+            {junctions}
+            height={PRESET_ROW_HEIGHT}
+            emptyHint="Drop a preset card from the Presets tray here, or choose one with + (it goes in at the playhead)."
+            {zoom}
+            {viewStart}
+            {viewEnd}
+            {selection}
+            {activeClipId}
+            names={compositionNames}
+            {transitionDragActive}
+            {transitionDropTarget}
+            onblockdrag={(e, id, start) => startBlockDrag(e, 'preset', id, start)}
+            onblockresize={(e, id, edge) => startBlockResize(e, 'preset', id, edge)}
+            ontransitionresize={startTransitionResize}
+            oncreatetransition={createTransitionAt}
+            onselecttransition={(clipId) => showTimeline.select({ kind: 'transition', id: clipId })}
+            onremovetransition={(clipId) => showTimeline.removeTransitionAt(clipId)}
+          />
           <ShowLookLane
             clips={lookClips}
             height={LOOK_LANE_HEIGHT}
@@ -2635,6 +2669,20 @@
   }
   .lane-line-add:hover { color: var(--ga-ink-0, #fff); border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24)); }
   .lane-label.sections .lane-line-add + .lane-line-add { margin-left: 4px; }
+  .lane-preset-add {
+    margin-left: auto;
+    width: 34px;
+    height: 18px;
+    padding: 0 2px;
+    background: var(--ga-sunk, #0c0c10);
+    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-radius: 3px;
+    color: var(--ga-ink-1, #aaa);
+    font: inherit;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .lane-preset-add:disabled { opacity: 0.4; cursor: default; }
   .lane-line-add.score { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; color: var(--ga-icon, #5278ff); border-color: color-mix(in srgb, var(--ga-icon, #5278ff) 55%, transparent); }
   .lane-line-add:disabled { opacity: 0.4; cursor: default; }
   .stage-row-strip { border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07)); background: rgba(92, 225, 230, 0.03); box-sizing: border-box; }

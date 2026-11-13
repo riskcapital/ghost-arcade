@@ -39,6 +39,7 @@
   import { TRAY_TAB_ORDER, TRAY_TAB_ALIASES, type TrayTab } from '../control/trayTabs';
   import { MEDIA_TRAY_REVEAL_EVENT, type MediaTrayRevealDetail } from './show/timeline/clipMenuActions';
   import { activeBlock, replaceActiveBlockMedia, setBlockShaderValue, setBlockShaderValues, setBlockShaderImageInput, setBlockSketchParam } from '../show/tracks/showBlockEdit';
+  import { placeOnSelectedGroupRow } from './show/timeline/groupRowUi';
   import { captureJSAnimationThumbnail as captureJSAnimationThumbnailInIframe, updateJSAnimationParams } from '../renderer/js-animation';
   import { singlePlayablePage } from '../p5sketch/wrapSketch';
   import { jsAnimationFromHtml } from '../renderer/jsAnimationPage';
@@ -3665,6 +3666,8 @@
       // A Timeline block is being edited: the card replaces its media
       // (timing, fades, blend and opacity stay), not the mapping layer's.
       if ($activeBlock && replaceActiveBlockMedia(mediaTrayDragPayload(item))) return;
+      // A group row is selected: the card goes on it at the playhead.
+      if (placeOnSelectedGroupRow(mediaTrayDragPayload(item))) return;
       applyToLayer(item);
       return;
     }

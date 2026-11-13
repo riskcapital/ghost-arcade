@@ -17,6 +17,12 @@ export interface WherePick {
   together: boolean;
   /** The named group being edited, or null for the block's own pieces. */
   groupName: string | null;
+  /** What the pick is for, when not a block's pieces (the bar's title), and
+   *  what the "together" box means there. */
+  title?: string;
+  togetherLabel?: string;
+  togetherHint?: string;
+  namePlaceholder?: string;
   /** Done: the chosen pieces, how they light, and a name (to keep them as a named group). */
   commit(ids: string[], together: boolean, name: string | null): void;
 }

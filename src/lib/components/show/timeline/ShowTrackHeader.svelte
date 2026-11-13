@@ -26,6 +26,7 @@
   import { takeOverTrack } from '../../../show/takeover/takeoverRuntime';
   import ShowTakeoverMenu from './ShowTakeoverMenu.svelte';
   import { mayCarryTakeoverMedia, takeoverMediaFromDrop } from './takeoverUi';
+  import { editGroupRowPieces } from './groupRowUi';
 
   interface Props {
     track: ShowLayerTrack;
@@ -171,7 +172,7 @@
             aria-label={track.collapsed ? 'Show the control lines' : 'Hide the control lines'}
           >▸</button>
         {/if}
-        {#if kind === 'sub'}<span class="th-sub-mark" aria-hidden="true">└</span>{/if}
+        {#if track.group}<button class="th-group-mark" onmousedown={(e) => e.stopPropagation()} onclick={(e) => { e.stopPropagation(); editGroupRowPieces(track); }} title="A group row: its blocks play across a group of pieces. Click to choose the pieces on the canvas" aria-label="Edit the group's pieces" data-group-row-pieces><TimelineIcon name="phrases" size={11} /></button>{:else if kind === 'sub'}<span class="th-sub-mark" aria-hidden="true">└</span>{/if}
         {#if editing}
           <input
             class="th-rename"
@@ -193,7 +194,9 @@
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <span
             class="th-name layer-name"
-            title={kind === 'sub'
+            title={track.group
+              ? `${track.layerName}: a group row. Its blocks play across the group's pieces (${track.group.unified ? 'Unified: one picture across them' : 'Individual: the whole picture on each'}). Double-click to rename.`
+              : kind === 'sub'
               ? `${track.layerName}: a layer of the show's own on this piece, drawn over it. Double-click to rename.`
               : kind === 'missing'
                 ? `${track.layerName}: this mapping layer is gone from the stage and from every look the show uses.`
@@ -245,6 +248,12 @@
           <button class="th-btn th-addsub" onmousedown={(e) => e.stopPropagation()} onclick={addLayerOnPiece} title="Add a layer on this piece: a row of its own whose blocks draw over the piece (same shape), each with its own blend mode" aria-label="Add a layer on this piece" data-add-sub-row><TimelineIcon name="layer-add" size={12} /></button>
         {:else}
           <button class="th-btn th-remove" onmousedown={(e) => e.stopPropagation()} onclick={removeRow} title={kind === 'sub' ? 'Remove this layer and its blocks' : 'Delete this row and its blocks'} aria-label={kind === 'sub' ? 'Remove this layer and its blocks' : 'Delete this row and its blocks'} data-remove-row>×</button>
+        {/if}
+        {#if track.group}
+          <button class="th-btn th-grp-mode" class:on={track.group.unified} disabled={track.locked}
+            onmousedown={(e) => e.stopPropagation()} onclick={(e) => { e.stopPropagation(); showTimeline.setGroupRowUnified(track.id, !track.group!.unified); }}
+            title={track.group.unified ? 'Unified: one picture across the pieces. Click for Individual (the whole picture on each piece)' : 'Individual: the whole picture on each piece. Click for Unified (one picture across them)'}
+            aria-pressed={track.group.unified} data-group-row-mode>{track.group.unified ? 'Unified' : 'Individual'}</button>
         {/if}
         {#if taken}
           <button
@@ -322,6 +331,11 @@
   .th.missing .th-name { color: var(--ga-ink-2, #888); text-decoration: line-through; }
   .th.hidden-row .th-name { opacity: 0.5; }
   .th-sub-mark { color: var(--ga-ink-2, #666); font-size: 10px; margin-right: -2px; }
+  .th-group-mark { display: inline-flex; padding: 0; background: none; border: 0; color: var(--ga-icon, #5278ff); cursor: pointer; }
+  .th-group-mark:hover { color: #fff; }
+  .th-btn.th-grp-mode { margin-left: auto; padding: 0 5px; font-weight: 600; }
+  .th-btn.th-grp-mode.on { color: #fff; background: var(--ga-icon, #5278ff); border-color: var(--ga-icon, #5278ff); }
+
   .th-btn.th-eye, .th-btn.solo, .th-btn.lock, .th-btn.lanes, .th-btn.th-addsub, .th-btn.th-live { display: inline-flex; align-items: center; justify-content: center; }
   .th-btn.th-eye.on { color: #1a1204; background: #9aa0aa; border-color: #9aa0aa; }
   .th-btn { white-space: nowrap; }

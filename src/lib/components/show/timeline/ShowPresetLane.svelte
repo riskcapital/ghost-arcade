@@ -34,12 +34,15 @@
     oncreatetransition: (clipId: string) => void;
     onselecttransition: (clipId: string) => void;
     onremovetransition: (clipId: string) => void;
+    /** What the empty lane says. */
+    emptyHint?: string;
   }
 
   let {
     clips, junctions, height, zoom, viewStart, viewEnd, selection, activeClipId, names,
     transitionDragActive, transitionDropTarget,
     onblockdrag, onblockresize, ontransitionresize, oncreatetransition, onselecttransition, onremovetransition,
+    emptyHint = 'Drop a preset card here, or use “+ Preset”.',
   }: Props = $props();
 
   function compositionName(id: string, fallback?: string): string {
@@ -164,7 +167,7 @@
     {/if}
   {/each}
   {#if clips.length === 0}
-    <span class="lane-empty">Drop a preset card here, or use “+ Preset”.</span>
+    <span class="lane-empty">{emptyHint}</span>
   {/if}
 </div>
 

@@ -3252,6 +3252,7 @@
     'a[href]',
     '[role="button"]',
     '[role="radio"]',
+    '[role="checkbox"]',
     '[data-viewport-ui]',
   ].join(', ');
 

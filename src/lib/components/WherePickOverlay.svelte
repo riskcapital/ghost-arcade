@@ -80,7 +80,7 @@
 </script>
 
 {#if pick}
-  <div class="pick-layer" style="left: {canvasX}px; top: {canvasY}px; width: {canvasWidth}px; height: {canvasHeight}px;">
+  <div class="pick-layer" data-viewport-ui style="left: {canvasX}px; top: {canvasY}px; width: {canvasWidth}px; height: {canvasHeight}px;">
     <svg width={canvasWidth} height={canvasHeight} viewBox={`0 0 ${canvasWidth} ${canvasHeight}`} aria-label="Pieces: click to put one in the group or take it out">
       {#each pieces as piece (piece.id)}
         <polygon
@@ -98,16 +98,16 @@
       {/each}
     </svg>
   </div>
-  <div class="pick-bar" role="dialog" aria-label="Choose the pieces" data-where-pick>
-    <span class="pick-title">{pick.groupName ? `Pieces of ${pick.groupName}` : 'Pieces for this block'}</span>
+  <div class="pick-bar" data-viewport-ui role="dialog" aria-label="Choose the pieces" data-where-pick>
+    <span class="pick-title">{pick.title ?? (pick.groupName ? `Pieces of ${pick.groupName}` : 'Pieces for this block')}</span>
     <span class="pick-count">{chosen.size} chosen</span>
     <button type="button" onclick={() => (chosen = new Set(pieces.map((p) => p.id)))}>All</button>
     <button type="button" onclick={() => (chosen = new Set())}>None</button>
-    <label class="pick-check" title="All the chosen pieces light at once, instead of one after another along the order">
+    <label class="pick-check" title={pick.togetherHint ?? 'All the chosen pieces light at once, instead of one after another along the order'}>
       <input type="checkbox" checked={together} onchange={(e) => (together = (e.currentTarget as HTMLInputElement).checked)} />
-      Light together
+      {pick.togetherLabel ?? 'Light together'}
     </label>
-    <input class="pick-name" placeholder={pick.groupName ? 'Name' : 'Name it to reuse it'} bind:value={name}
+    <input class="pick-name" placeholder={pick.namePlaceholder ?? (pick.groupName ? 'Name' : 'Name it to reuse it')} bind:value={name}
       title="With a name, the pieces are kept as a group (★) other blocks can use" />
     <button type="button" class="primary" onclick={done} disabled={chosen.size === 0} data-where-pick-done>Done</button>
     <button type="button" onclick={cancel}>Cancel</button>
