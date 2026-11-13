@@ -3241,6 +3241,18 @@
     // Map Sim calibration pad (the crosshair the operator drags onto a
     // physical feature) when Map Sim runs inside the editor window.
     '.psim-calibration-pad',
+    // Any control over the canvas (the dome view switch and its sliders,
+    // the Live edit bar, a pick's Done): pressing one must not start a
+    // selection, whose pointer capture would take the click from it.
+    'button',
+    'input',
+    'select',
+    'textarea',
+    'label',
+    'a[href]',
+    '[role="button"]',
+    '[role="radio"]',
+    '[data-viewport-ui]',
   ].join(', ');
 
   function viewportClientToCanvasCoords(clientX: number, clientY: number): Point2D {

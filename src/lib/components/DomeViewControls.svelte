@@ -88,7 +88,7 @@
 </script>
 
 {#if !isLinux}
-  <div class="dome-view-bar" role="group" aria-label="Editor view of the dome">
+  <div class="dome-view-bar" data-viewport-ui role="group" aria-label="Editor view of the dome">
     <div class="dome-view-modes" role="radiogroup" aria-label="Show">
       <button type="button" role="radio" aria-checked={!view.inside} class:active={!view.inside}
         onclick={() => setInside(false)} title="The dome picture the projectors get">Dome picture</button>
@@ -107,7 +107,7 @@
       use:wheelZoom
       ondblclick={() => look({ ...DOME_VIEW_HOME })}
     ></div>
-    <div class="dome-view-status">
+    <div class="dome-view-status" data-viewport-ui>
       <span>{Math.round(view.azimuth)}° around · {Math.round(view.elevation)}° up</span>
       <label class="dome-view-slider" title="How wide the view is (scroll on the view to zoom)">
         Wide
