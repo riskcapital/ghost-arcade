@@ -1,0 +1,97 @@
+import { describe, expect, it } from 'vitest';
+import { buildInteractiveGraph, type InteractiveGraphBuildResult } from './nativeInteractiveGraph';
+import { defaultInteractive, type InteractiveScene } from '../mobile/studio/interactive';
+import { makeEffect } from '../mobile/studio/interactiveEffects';
+import { defaultReliefWorld, type ReliefWorld } from '../scene3d/worldModel';
+import { SCENE3D_FRAME_BUFFER_SUFFIX } from './scene3dFrame';
+
+const audio = { active: false, bass: 0, mid: 0, treble: 0, energy: 0, beatPhase: 0, beatPulse: 0, amplitude: 0 };
+const build = (scene: InteractiveScene): InteractiveGraphBuildResult =>
+  buildInteractiveGraph({
+    kind: 'performer-world', sourceId: 'layer-1', params: { interactiveScene: scene },
+    width: 1920, height: 1080, time: 0, frameDelta: 1 / 60, frameIndex: 1, audio, state: null, reset: false,
+  } as Parameters<typeof buildInteractiveGraph>[0]);
+type Binding = { binding: number; kind: string; resource?: string; texture?: string };
+type Render = { name: string; target: string; texture?: string; clear: boolean; shader_id: string; bindings: Binding[] };
+type Pass = { name: string; bindings: Binding[] };
+const renders = (g: InteractiveGraphBuildResult) => g.config.render_passes as unknown as Render[];
+const block = { id: 'b', name: 'Block', behavior: 'solid' as const, points: [{ x: 0.3, y: 0.3 }, { x: 0.6, y: 0.3 }, { x: 0.6, y: 0.7 }, { x: 0.3, y: 0.7 }], height: 0.4 };
+const effects = [makeEffect('architecture'), makeEffect('fire')];
+const scene = (world: Partial<ReliefWorld> | null = {}, surfaces = [block]): InteractiveScene => ({
+  ...defaultInteractive(),
+  surfaces,
+  effects,
+  ...(world ? { world: { ...defaultReliefWorld(), ...world } } : {}),
+});
+const is2d = (r: Render) => r.name.startsWith('interactive-');
+
+describe('the 3D world in an Interactive layer', () => {
+  it('leaves a scene without a world exactly as it was', () => {
+    const g = build(scene(null));
+    expect('textures' in g.config).toBe(false);
+    expect(renders(g).every((r) => r.target === 'source_frame')).toBe(true);
+    expect(g.interactive.topology.includes('scene3d')).toBe(false);
+    expect(build(scene({ enabled: false })).config).toEqual(g.config);
+  });
+
+  it('throws the effects onto the relief as light (Projected)', () => {
+    const g = build(scene({ flat: 'projected' }));
+    const r = renders(g);
+    const flat = (g.config as unknown as { textures: { id: string; width: number; height: number }[] }).textures[0];
+    expect(flat).toMatchObject({ id: 'scene3d:layer-1:flat', width: 1920, height: 1080 });
+    const flatPasses = r.filter(is2d);
+    expect(flatPasses.length).toBeGreaterThan(1);
+    // The effects draw first, into the flat picture, cleared once.
+    expect(r.slice(0, flatPasses.length)).toEqual(flatPasses);
+    expect(flatPasses.every((p) => p.target === 'texture' && p.texture === flat.id && !('source_id' in p))).toBe(true);
+    expect(flatPasses.map((p) => p.clear)).toEqual(flatPasses.map((_, i) => i === 0));
+    // The lit pass reads it; the world's composite is the one pass on the output, and clears it.
+    const opaque = r.find((p) => p.name === 'opaque')!;
+    expect(opaque.shader_id).toBe('scene3d/relief');
+    expect(opaque.bindings.find((b) => b.binding === 11)).toMatchObject({ kind: 'graph-texture', texture: flat.id });
+    const out = r.filter((p) => p.target === 'source_frame');
+    expect(out.map((p) => [p.name, p.clear])).toEqual([['composite', true]]);
+    expect(r[r.length - 1].name).toBe('composite');
+  });
+
+  it('draws the effects over the world (Over), and leaves them out (Off)', () => {
+    const over = renders(build(scene({ flat: 'over' })));
+    const first2d = over.findIndex(is2d);
+    expect(over[first2d - 1].name).toBe('composite');
+    expect(over.filter((p) => p.target === 'source_frame' && p.clear).map((p) => p.name)).toEqual(['composite']);
+    expect(over.find((p) => p.name === 'opaque')!.shader_id).toBe('scene3d/world');
+    const off = build(scene({ flat: 'off' }));
+    expect(renders(off).some(is2d)).toBe(false);
+    expect((off.config.passes as unknown as Pass[]).some((p) => p.name.startsWith('interactive'))).toBe(false);
+  });
+
+  it('declares one frame block the core fills, and keeps the world’s buffers its own', () => {
+    const g = build(scene());
+    const ids = (g.config.buffers as { id: string }[]).map((b) => b.id);
+    const frames = ids.filter((id) => id.endsWith(SCENE3D_FRAME_BUFFER_SUFFIX));
+    expect(frames).toHaveLength(1);
+    expect(ids.filter((id) => id.startsWith('scene3d:')).length).toBeGreaterThan(5);
+    // The 2D effects' buffers never take the world's prefix.
+    expect(ids.filter((id) => !id.startsWith('scene3d:')).every((id) => id.startsWith('performer-world:'))).toBe(true);
+    expect(g.interactive.values.some((v) => frames.includes(v.id))).toBe(false);
+  });
+
+  it('binds at most eight storage buffers in any pass', () => {
+    const g = build(scene());
+    for (const p of [...(g.config.passes as unknown as Pass[]), ...renders(g)]) {
+      expect(p.bindings.filter((b) => b.kind === 'storage' || b.kind === 'read-only-storage').length, p.name).toBeLessThanOrEqual(8);
+    }
+  });
+
+  it('treats the sun and a block’s depth as values, a new block as structure', () => {
+    const a = build(scene());
+    const sun = build(scene({ sun: { ...defaultReliefWorld().sun, color: '#ff0000' } }));
+    expect(sun.interactive.topology).toBe(a.interactive.topology);
+    const deeper = build(scene({}, [{ ...block, height: 0.8 }]));
+    expect(deeper.interactive.topology).toBe(a.interactive.topology);
+    const before = new Map(a.interactive.values.map((v) => [v.id, v.key]));
+    expect(deeper.interactive.values.filter((v) => before.get(v.id) !== v.key).map((v) => v.id.split(':').pop())).toContain('vertices');
+    const more = build(scene({}, [block, { ...block, id: 'c', points: block.points.map((p) => ({ x: p.x * 0.5, y: p.y })) }]));
+    expect(more.interactive.topology).not.toBe(a.interactive.topology);
+  });
+});

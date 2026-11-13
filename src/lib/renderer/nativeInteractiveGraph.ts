@@ -2,6 +2,7 @@ import type {InteractiveEffect} from '../mobile/studio/interactiveEffects';
 import {buildMatterPasses} from './nativeInteractiveMatterGraph';
 import {validateScene, surfaceHidden, INTERACTIVE_PRESETS, SURFACE_FILLS, type InteractiveScene} from '../mobile/studio/interactive';
 import type {NativePluginGraphOptions,NativePluginGraphBuildResult} from './nativePluginGraphs';
+import {buildWorldPart} from './scene3dWorld';
 export const INTERACTIVE_PARTICLES=16384;
 const common=/* wgsl */`
 struct U { view:vec4<f32>, style:vec4<f32>, touch:vec4<f32>, params:vec4<f32>, flags:vec4<f32> };
@@ -251,6 +252,11 @@ function buildLookPart(options:NativePluginGraphOptions,scene:InteractiveScene,i
  * otherwise sends just the value buffers that changed (Auto, keyframes,
  * sliders, touches, dragged surfaces).
  */
+/** The Studio's Orbit view from the layer params, if it is sane. */
+function worldView(raw:unknown):{yaw:number;pitch:number}|undefined{
+ const v=raw as {yaw?:unknown;pitch?:unknown}|null;
+ return v&&Number.isFinite(v.yaw)&&Number.isFinite(v.pitch)?{yaw:v.yaw as number,pitch:v.pitch as number}:undefined;
+}
 export function buildInteractiveGraph(options:NativePluginGraphOptions):InteractiveGraphBuildResult{
  const scene=validateScene(options.params.interactiveScene);
  const source=`performer-world:${options.sourceId.replace(/[^a-zA-Z0-9:_-]+/g,'_').slice(0,120)}`;
@@ -280,16 +286,29 @@ export function buildInteractiveGraph(options:NativePluginGraphOptions):Interact
   if(scene.surfaces.some(s=>s.look&&!surfaceHidden(s.look)))parts.push(buildLookPart(options,scene,`${source}:looks`,shapes,touches,touchesB64));
   parts.push(buildPart(options,scene,undefined,source,shapes,interactiveB64(shapes),touches,touchesB64,new Set(scene.surfaces.map(s=>s.material??'none').filter(m=>m!=='none'))));
  }
- const buffers=parts.flatMap(p=>p.buffers),passes=parts.flatMap(p=>p.passes),render_passes=parts.flatMap(p=>p.render_passes);
+ // A 3D world: the 2D effects are drawn into its flat picture (Projected),
+ // over it (Over) or not at all (Off). See scene3dWorld.ts.
+ const world=scene.world?.enabled?buildWorldPart({scene,world:scene.world,sourceId:options.sourceId,width:options.width,height:options.height,view:worldView(options.params.interactiveView)}):null;
+ if(world&&scene.world?.flat==='off')parts.length=0;
+ const buffers=[...parts.flatMap(p=>p.buffers),...(world?.buffers??[])],passes=[...parts.flatMap(p=>p.passes),...(world?.passes??[]) as GraphPass[]];
+ let render_passes=parts.flatMap(p=>p.render_passes);
  // Content over transparent: the first pass clears to zero alpha (the core's
  // default clear is opaque black, which made the whole layer opaque).
  render_passes.forEach((pass,i)=>{pass.clear=i===0;if(i===0)pass.clear_color=[0,0,0,0];});
- const values:InteractiveGraphValue[]=buffers.filter(b=>b.initial_b64!==undefined).map(b=>({id:b.id,initial_b64:b.initial_b64!,key:b.key??b.initial_b64!}));
+ if(world){
+  const flat=world.flatTexture,own=world.render_passes as GraphRender[];
+  // Over: the world's composite clears the output and the effects draw on it.
+  if(flat)render_passes=render_passes.map(({source_id:_source,seq:_seq,...pass})=>({...pass,target:'texture',texture:flat}));
+  else render_passes.forEach(pass=>{pass.clear=false;});
+  render_passes=flat?[...render_passes,...own]:[...own,...render_passes];
+ }
+ const values:InteractiveGraphValue[]=[...parts.flatMap(p=>p.buffers).filter(b=>b.initial_b64!==undefined).map(b=>({id:b.id,initial_b64:b.initial_b64!,key:b.key??b.initial_b64!})),...(world?.values??[])];
  const topology=[
   options.params.interactivePaused?'paused':'running',mods,
   buffers.map(b=>`${b.id}:${b.kind}:${b.byte_length}:${b.persistent?1:0}`).join('|'),
   passes.map(p=>`${p.name}@${p.shader_id}/${p.entry}:${p.dispatch.join('x')}`).join('|'),
   render_passes.map(r=>`${r.name}:${r.instance_count}:${r.blend}`).join('|'),
+  ...(world?[world.topology]:[]),
  ].join('#');
- return {state:options.state??{scene:'interactive',prevFrameTime:options.time,historyHead:0},config:{buffers:buffers.map(({key:_key,...buffer})=>buffer),passes,render_passes,readbacks:[]},interactive:{topology,values,effectIds,bufferPrefix}};
+ return {state:options.state??{scene:'interactive',prevFrameTime:options.time,historyHead:0},config:{...(world?{textures:world.textures}:{}),buffers:buffers.map(({key:_key,...buffer}:GraphBuffer)=>buffer),passes,render_passes,readbacks:[]},interactive:{topology,values,effectIds,bufferPrefix}};
 }

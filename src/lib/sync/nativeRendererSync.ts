@@ -1126,7 +1126,7 @@ import { nativeEffectPassIdForEffectType } from '$lib/renderer/nativeEffectCover
 import { statusFrameRate } from './statusFrameRate';
 import { recordingScreenIds } from '$lib/recording/recordingSources';
 import { launchClockPosition } from '$lib/stores/launchClock';
-import { liveInteractiveInputs, livePointer, pruneLiveInteractiveInputs, setLiveInteractiveInputs } from '$lib/interactive/interactiveLive';
+import { liveInteractiveInputs, livePointer, liveWorldView, pruneLiveInteractiveInputs, setLiveInteractiveInputs } from '$lib/interactive/interactiveLive';
 import { combineInputs, PointSmoother, trackedPoints, ZoneTriggers, type FiredZone } from '$lib/interactive/interactiveRuntime';
 import { defaultInteractiveInput, validateScene, type InteractiveScene, type Interaction } from '$lib/mobile/studio/interactive';
 import { fireShowAction } from '$lib/show/showActions';
@@ -5204,6 +5204,9 @@ function nativeGraphParamsForLayer(
     // Tracked hands and body join the pointer here, at frame rate.
     const live = liveInteractiveInputs(layer.id);
     if (live) params = { ...params, interactiveInputs: live };
+    // The Studio's Orbit view turns the 3D world's camera, live.
+    const view = liveWorldView(layer.id);
+    if (view) params = { ...params, interactiveView: view };
   }
   // Everything instrument-shaped goes through the shared funnel in
   // `nativeGraphQuality`: instrument defaults, colour-preset expansion,

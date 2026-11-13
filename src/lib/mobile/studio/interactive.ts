@@ -12,6 +12,7 @@ import { MatterPreview } from './matterPreview';
 import { createInteractiveQuality, interactiveFrameDelta, type InteractiveQualityBudget } from './interactiveQuality';
 import { validateShowAction } from '../../show/showActionValidate';
 import type { ShowAction } from '../../show/showActions';
+import { validateReliefWorld, validateSurfaceFinish, type ReliefWorld, type SurfaceFinish } from '../../scene3d/worldModel';
 export type Point = { x: number; y: number };
 export type Behavior = 'solid' | 'emitter' | 'attractor' | 'trigger';
 export const INTERACTIVE_PRESETS = [
@@ -95,6 +96,8 @@ export type InteractiveSurface = {
   look?: SurfaceLook;
   /** Trigger zones only. */
   trigger?: ZoneTrigger;
+  /** How the object looks as a block in the 3D world (scene.world). */
+  finish?: SurfaceFinish;
 };
 /**
  * What moves the scene besides a pointer (the editor, a phone, which always
@@ -147,6 +150,9 @@ export type InteractiveScene = {
   effects?: InteractiveEffect[];
   animation?: InteractiveAnimation;
   input?: InteractiveInput;
+  /** The 3D world the objects stand out of (worldModel.ts). Without it the
+   *  scene is flat, exactly as before. */
+  world?: ReliefWorld;
   surfaces: InteractiveSurface[];
   energy: number;
   gravity: number;
@@ -305,7 +311,9 @@ export function validateScene(raw: unknown): InteractiveScene {
         }
       : {}),
     ...(p.behavior === 'trigger' && p.trigger !== undefined ? { trigger: validateZoneTrigger(p.trigger) } : {}),
+    ...(p.finish !== undefined && p.finish !== null ? { finish: validateSurfaceFinish(p.finish) } : {}),
   }));
+  const world = s.world === undefined || s.world === null ? undefined : validateReliefWorld(s.world);
   return {
     schema: 'ghost-interactive',
     version: 1,
@@ -316,6 +324,7 @@ export function validateScene(raw: unknown): InteractiveScene {
     ...(effects ? { effects } : {}),
     ...(animation ? { animation } : {}),
     ...(s.input !== undefined && s.input !== null ? { input: validateInteractiveInput(s.input) } : {}),
+    ...(world ? { world } : {}),
     surfaces,
     energy: Math.max(0, Math.min(1, s.energy)),
     gravity: Math.max(-1, Math.min(1, s.gravity)),

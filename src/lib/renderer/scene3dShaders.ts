@@ -38,13 +38,13 @@ struct Settings {
   cam_target: vec4f,   // xyz, mode (0 free, 1 director)
   key_color: vec4f,    // rgb, power
   key_dir: vec4f,      // xyz towards the light, orbit (degrees a second)
-  key_opts: vec4f,     // shadows, present, shadow map size, 0
+  key_opts: vec4f,     // shadows, present, shadow map size, swing about Z (degrees either side)
   env: vec4f,          // sky (0 void, 1 studio, 2 night), intensity, fog, aspect
   post_a: vec4f,       // bloom, exposure, contrast, saturation
-  post_b: vec4f,       // temperature, grain, 0, 0
+  post_b: vec4f,       // temperature, grain, projected light gain (relief), projector distance (relief)
   react: vec4f,        // light, particles, bloom, camera
   counts: vec4f,       // vertices, particles, emitters, fields
-  counts_b: vec4f,     // point lights, colliders, 0, 0
+  counts_b: vec4f,     // point lights, colliders, wall width, wall height (relief)
   bounds: vec4f,       // centre xyz, radius
 }
 
@@ -129,6 +129,12 @@ fn ortho(half: f32, near: f32, far: f32) -> mat4x4f {
     vec4f(0.0, 0.0, near / (near - far), 1.0),
   );
 }
+fn rotate_z(v: vec3f, a: f32) -> vec3f {
+  let c = cos(a);
+  let s = sin(a);
+  return vec3f(c * v.x - s * v.y, s * v.x + c * v.y, v.z);
+}
+
 fn rotate_y(v: vec3f, a: f32) -> vec3f {
   let c = cos(a); let s = sin(a);
   return vec3f(c * v.x + s * v.z, v.y, -s * v.x + c * v.z);
@@ -158,12 +164,16 @@ fn cs_frame() {
   view.cam_up = vec4f(cam_view[0].y, cam_view[1].y, cam_view[2].y, 0.0);
 
   // Key light: turns around +Y by its orbit, breathes with the bass.
-  let dir = normalize(rotate_y(settings.key_dir.xyz, radians(settings.key_dir.w) * now));
+  var dir = normalize(rotate_y(settings.key_dir.xyz, radians(settings.key_dir.w) * now));
+  // A sun over a wall swings across it instead, so shadows sweep the wall.
+  if (settings.key_opts.w != 0.0) { dir = rotate_z(dir, radians(settings.key_opts.w) * sin(now * 0.3)); }
   let breathe = 1.0 + settings.react.x * (frame.bass * 0.8 + frame.kick * 0.4);
   view.light = vec4f(dir, settings.key_color.w * breathe);
   let c = settings.bounds.xyz;
   let r = max(settings.bounds.w, 0.5);
-  view.light_view_proj = ortho(r, 0.05, r * 4.0) * look_at(c + dir * r * 2.0, c, vec3f(0.0, 1.0, 0.0));
+  // A light straight overhead looks along +Y, so it takes another up.
+  let light_up = select(vec3f(0.0, 1.0, 0.0), vec3f(0.0, 0.0, 1.0), abs(dir.y) > 0.95);
+  view.light_view_proj = ortho(r, 0.05, r * 4.0) * look_at(c + dir * r * 2.0, c, light_up);
 
   // Sky, top and horizon.
   let sky = settings.env.x;
@@ -582,11 +592,53 @@ fn fs_composite(in: VsOut) -> @location(0) vec4f {
 }
 `;
 
+/**
+ * The relief world in the Interactive Studio: the 2D effects, drawn first into
+ * a flat texture, are thrown onto the wall and blocks as light from a
+ * projector where the face-on camera stands. Seen face-on, sampling the flat
+ * picture where a point shows on screen is exactly that projection.
+ */
+export const SCENE3D_RELIEF_WGSL = /* wgsl */ `${SCENE3D_WORLD_WGSL}
+@group(0) @binding(11) var flat_tex: texture_2d<f32>;
+@group(0) @binding(12) var flat_samp: sampler;
+
+// The projector: face-on to the wall from the face-on camera's place, so the
+// picture stays on the blocks when the Studio's Orbit view turns the camera.
+fn projector_pos() -> vec3f { return vec3f(0.0, 0.0, settings.post_b.w); }
+
+// The flat picture at this point, premultiplied, in linear light.
+fn thrown_light(world: vec3f) -> vec4f {
+  let k = settings.post_b.w / max(settings.post_b.w - world.z, 1e-3);
+  let uv = vec2f(0.5 + world.x * k / settings.counts_b.z, 0.5 - world.y * k / settings.counts_b.w);
+  let f = textureSampleLevel(flat_tex, flat_samp, uv, 0.0);
+  return vec4f(pow(max(f.rgb, vec3f(0.0)), vec3f(2.2)), f.a);
+}
+
+@fragment
+fn fs_relief(in: LitOut) -> @location(0) vec4f {
+  let m = materials[in.material];
+  if (m.opacity < 0.999) { discard; }
+  let n = normalize(in.normal);
+  let v = normalize(view.cam_pos.xyz - in.world);
+  let thrown = thrown_light(in.world).rgb * settings.post_b.z * max(dot(n, normalize(projector_pos() - in.world)), 0.0);
+  if (m.catcher > 0.5) {
+    // A real object: the light that falls on it and the shadow it receives.
+    let dark = 1.0 - shadow_at(in.world, n);
+    return vec4f(thrown, clamp(dark * 0.85, 0.0, 1.0));
+  }
+  // What the surface reflects of the picture, plus a little glow so dark
+  // finishes still carry it.
+  let reflectance = m.base * (1.0 - m.metal) + vec3f(0.12);
+  return vec4f(fogged(lighting(m, in.world, n, v) + thrown * reflectance, in.world), 1.0);
+}
+`;
+
 /** The shader modules a scene graph uses, by id. */
 export const SCENE3D_SHADERS: { id: string; stage: 'compute' | 'render'; entry: string; source: string }[] = [
   { id: 'scene3d/sim', stage: 'compute', entry: 'cs_sim', source: SCENE3D_SIM_WGSL },
   { id: 'scene3d/world', stage: 'render', entry: 'fs_main', source: SCENE3D_WORLD_WGSL },
   { id: 'scene3d/post', stage: 'render', entry: 'fs_composite', source: SCENE3D_POST_WGSL },
+  { id: 'scene3d/relief', stage: 'render', entry: 'fs_relief', source: SCENE3D_RELIEF_WGSL },
 ];
 
 /** Commands that compile the scene shaders ahead of the first frame. */

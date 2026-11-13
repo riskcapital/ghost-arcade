@@ -89,7 +89,7 @@
   import { STRIPE_BLACK, STRIPE_CELLS } from './lib/mobile/studio/structuredLightCodes';
   import {tick as studioTick} from 'svelte';
   import {defaultInteractive,validateScene as validateInteractiveScene,type InteractiveScene,type Interaction} from './lib/mobile/studio/interactive';
-  import {setLivePointer} from './lib/interactive/interactiveLive';
+  import {setLivePointer, setLiveWorldView} from './lib/interactive/interactiveLive';
   import {mergeInteractiveEdit,editableEffects,interactiveEditSignature} from './lib/mobile/studio/interactiveEffects';
   import {PhoneSessions,PHONE_SCENE_MAX_BYTES,phoneSenderId,sanitizePhoneInputs,type PhoneSceneState} from './lib/mobile/studio/phoneSessions';
   import {pickEditorClipRow,pickEditorClipSlot,pickPhoneClipSlot,isPhoneInteractiveClip} from './lib/mobile/studio/studioTargets';
@@ -162,7 +162,10 @@
       studioEditorClip={row,col:slot.col,id:clip.id,deck};
     }else{
       const scenic=(l:Layer)=>!!l.source?.effectSource?.interactiveScene;
-      const chosen=p.layers.find(l=>l.id===(layerId??p.selectedLayerId)&&scenic(l));
+      // An older Interactive 3D layer chosen by name comes into the Studio as a 3D world.
+      const older=layerId?p.layers.find(l=>l.id===layerId&&!!l.source?.effectSource?.scene3d):undefined;
+      if(older)project.convertScene3DLayer(older.id);
+      const chosen=get(project).layers.find(l=>l.id===(layerId??p.selectedLayerId)&&scenic(l));
       // Without an explicit choice, never fall back to a layer a phone is driving.
       studioEditorLayer=chosen?.id??(!layerId?p.layers.find(l=>scenic(l)&&!l.source?.effectSource?.interactiveRemote)?.id:'')??'';
       if(!studioEditorLayer)studioEditorLayer=project.addLayer('Interactive Studio','interactive')??'';
@@ -203,6 +206,8 @@
   }
   /** The editor's pointer straight to the layer, every frame (VJ clips use the scene path). */
   function studioPointer(inputs:Interaction[]){if(showInteractiveStudio&&!studioEditorClip&&studioEditorLayer)setLivePointer(studioEditorLayer,inputs);}
+  /** The Studio's Orbit view turns the layer's 3D world; closing it turns it back (Studio onDestroy). */
+  function studioView(view:{yaw:number;pitch:number}|null){if(!studioEditorClip&&studioEditorLayer)setLiveWorldView(studioEditorLayer,view);}
   function closeInteractiveStudio(){
     if(!showInteractiveStudio)return;
     studioEditor?.flush();showInteractiveStudio=false;recordDiscreteAction();studioUnrecordedEdit=false;
@@ -9095,7 +9100,7 @@
              would restore the scene it was opened with and publish that over
              every edit made since. -->
         <div class="studio-page" style:display={studioPage==='interactive'?'contents':'none'}>
-          {#key studioEditorRevision}<InteractiveStudio bind:this={studioEditor} aspect={canvasAspect} visible={studioPage==='interactive'} initialPaused={studioEditorPaused} nativeOutput nativeFrame={studioNativeFrame} initialActive={studioEditorActive} initialScene={studioEditorScene} onscene={editStudioScene} onpointer={studioPointer} captureScene={captureStudioScene} onrestore={restoreStudioAnimation} onparam={studioParamRecord} onkeyframe={studioAddKeyframe} ontimeline={studioToggleTimeline} mappingSurfaces={studioMappingSurfaces($project.layers,studioEditorLayer)} onclose={closeInteractiveStudio}><KeyframeTimeline slot="timeline" embedded targetId={studioTimelineId}/></InteractiveStudio>{/key}
+          {#key studioEditorRevision}<InteractiveStudio bind:this={studioEditor} aspect={canvasAspect} visible={studioPage==='interactive'} initialPaused={studioEditorPaused} nativeOutput nativeFrame={studioNativeFrame} initialActive={studioEditorActive} initialScene={studioEditorScene} onscene={editStudioScene} onpointer={studioPointer} onview={studioView} captureScene={captureStudioScene} onrestore={restoreStudioAnimation} onparam={studioParamRecord} onkeyframe={studioAddKeyframe} ontimeline={studioToggleTimeline} mappingSurfaces={studioMappingSurfaces($project.layers,studioEditorLayer)} onclose={closeInteractiveStudio}><KeyframeTimeline slot="timeline" embedded targetId={studioTimelineId}/></InteractiveStudio>{/key}
         </div>
         {#if studioPage==='calibration'}<DesktopCalibrationImport incoming={pendingPhoneCalibration}/>{/if}
       </section></div>

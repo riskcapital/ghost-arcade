@@ -8830,8 +8830,17 @@ impl App {
                 }
             }
         }
-        let scene_frame = (matches!(graph_layer.kind, NativeGraphLayerKind::Scene3D | NativeGraphLayerKind::VideoSynth)
-            && graph_layer.params["scene3dPaused"] != true)
+        // Scenes and the synth always get the frame block; an Interactive
+        // layer gets it when its graph declares one (a 3D world in the
+        // Studio, scene_frame::declares).
+        let wants_frame = match graph_layer.kind {
+            NativeGraphLayerKind::Scene3D | NativeGraphLayerKind::VideoSynth => graph_layer.params["scene3dPaused"] != true,
+            NativeGraphLayerKind::PerformerWorld => {
+                graph_layer.params["interactivePaused"] != true && scene_frame::declares(job.buffers.iter().map(|b| b.id.as_str()))
+            }
+            _ => false,
+        };
+        let scene_frame = wants_frame
             .then(|| {
                 let beat_phase = self.audio1[2];
                 self.scene_clock.advance(frame_index, beat_phase);
@@ -8856,6 +8865,16 @@ impl App {
             });
         for buffer in &mut job.buffers {
             if !matches!(buffer.kind, NativeComputeBufferBindingKind::Uniform) {
+                continue;
+            }
+            // A 3D world inside an Interactive layer: like a scene, only its
+            // frame block is the core's.
+            if graph_layer.kind == NativeGraphLayerKind::PerformerWorld && buffer.id.starts_with(scene_frame::SCENE_BUFFER_PREFIX) {
+                if let Some(frame) = scene_frame.as_ref() {
+                    if buffer.id.ends_with(scene_frame::BUFFER_SUFFIX) {
+                        frame.write(&mut buffer.initial_bytes);
+                    }
+                }
                 continue;
             }
             if matches!(graph_layer.kind, NativeGraphLayerKind::Scene3D | NativeGraphLayerKind::VideoSynth) {

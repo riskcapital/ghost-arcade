@@ -4,7 +4,7 @@
 export type EditorMode = 'perform' | 'draw' | 'edit';
 
 /** Inspector tabs: Scenes, Effects, Objects, Setup. */
-export type InspectorTab = 'presets' | 'effects' | 'objects' | 'scene';
+export type InspectorTab = 'presets' | 'effects' | 'objects' | 'world' | 'scene';
 
 /** What a touch does to the simulation in Play mode. */
 export type TouchTool = 'attract' | 'repel' | 'vortex';

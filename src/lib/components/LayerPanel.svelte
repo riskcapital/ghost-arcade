@@ -1019,7 +1019,7 @@
             <button onclick={()=>{const layerId=project.addLayer('Interactive Studio','interactive');showAddLayerMenu=false;if(layerId)window.dispatchEvent(new CustomEvent('open-interactive-studio',{detail:{layerId}}));}}>
               <PluginIcon effectType="performer-world" size={14}/> Interactive
             </button>
-            <button onclick={()=>{project.addInteractive3DLayer('light-and-shadow');showAddLayerMenu=false;}}>
+            <button onclick={()=>{const id=project.addInteractive3DLayer();showAddLayerMenu=false;if(id)window.dispatchEvent(new CustomEvent('open-interactive-studio',{detail:{layerId:id}}));}}>
               <PluginIcon effectType="scene3d" size={14}/> Interactive 3D
             </button>
             <button

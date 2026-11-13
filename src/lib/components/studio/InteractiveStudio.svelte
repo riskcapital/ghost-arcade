@@ -73,6 +73,7 @@
   import InteractiveEffectParams from './InteractiveEffectParams.svelte';
   import InteractiveObjectsPanel from './InteractiveObjectsPanel.svelte';
   import InteractiveSetupPanel from './InteractiveSetupPanel.svelte';
+  import InteractiveWorldPanel from './InteractiveWorldPanel.svelte';
   import { fireShowAction } from '../../show/showActions';
 
   // ── Props ────────────────────────────────────────────────────────────────
@@ -109,6 +110,8 @@
   ) => void = () => {};
   /** The pointer touches, every animation frame (the scene goes out at 20 Hz). */
   export let onpointer: ((inputs: Interaction[]) => void) | undefined = undefined;
+  /** Orbit view: how far the 3D world's camera is turned; `null` is face-on. */
+  export let onview: ((view: { yaw: number; pitch: number } | null) => void) | undefined = undefined;
   export let mappingSurfaces: { name: string; points: Point[]; enabled: boolean; mode: string }[] = [];
   export let onoutput: (canvas: HTMLCanvasElement | null) => void = () => {};
   /**
@@ -155,6 +158,22 @@
   let history = past.emptyHistory<Snapshot>();
   let mode: EditorMode = 'edit';
   let inspector: InspectorTab = 'effects';
+  /** Orbit view of the 3D world (live only, never saved). */
+  let orbit = false;
+  let orbitView = { yaw: 0, pitch: 0 };
+  function setOrbit(on: boolean) {
+    orbit = on;
+    if (on) chooseMode('edit');
+    orbitView = { yaw: 0, pitch: 0 };
+    onview?.(null);
+  }
+  function turnOrbit(dx: number, dy: number) {
+    const clamp = (v: number) => Math.max(-70, Math.min(70, v));
+    orbitView = { yaw: clamp(orbitView.yaw - dx * 140), pitch: clamp(orbitView.pitch + dy * 100) };
+    onview?.(orbitView);
+  }
+  // Without a world there is nothing to orbit.
+  $: if (orbit && !scene.world?.enabled) setOrbit(false);
   let selected = 'stage';
   let selectedEffect = '';
   let lastEffect = '';
@@ -947,6 +966,7 @@
     raf = requestAnimationFrame(frame);
   });
   onDestroy(() => {
+    if (orbit) onview?.(null);
     draftSave();
     clearInterval(saveTimer);
     clearTimeout(messageTimer);
@@ -999,7 +1019,13 @@
         canUndo={past.canUndo(history)}
         canRedo={past.canRedo(history)}
         {paused}
-        onmode={chooseMode}
+        world={!!scene.world?.enabled && !handheld}
+        {orbit}
+        onorbit={setOrbit}
+        onmode={(m) => {
+          if (orbit) setOrbit(false);
+          chooseMode(m);
+        }}
         onundo={undo}
         onredo={redo}
         onpause={() => (paused = !paused)}
@@ -1049,6 +1075,8 @@
         onfinish={finishDraft}
         oninteract={interact}
         onrelease={(id) => pointers.delete(id)}
+        {orbit}
+        onorbitdrag={turnOrbit}
       />
       <InteractiveStageTools
         {mode}
@@ -1068,7 +1096,7 @@
     </div>
     <aside>
       <nav class="inspector-tabs" aria-label="Interactive tools">
-        {#each [['presets', 'Scenes'], ['effects', 'Effects'], ['objects', 'Objects'], ['scene', 'Setup']] as [id, label]}
+        {#each [['presets', 'Scenes'], ['effects', 'Effects'], ['objects', 'Objects'], ['world', '3D World'], ['scene', 'Setup']] as [id, label]}
           <button
             class:active={inspector === id}
             aria-current={inspector === id ? 'true' : undefined}
@@ -1172,6 +1200,21 @@
               }
             }}
             ontesttrigger={testTrigger}
+            world={!!scene.world?.enabled}
+            onfinish={(finish) => apply(edit.setSurfaceFinish(scene, selected, finish))}
+          />
+        {:else if inspector === 'world'}
+          <InteractiveWorldPanel
+            world={scene.world}
+            blocks={scene.surfaces.filter((s) => s.behavior === 'solid').length}
+            onstart={beginEdit}
+            onchange={(world, step) => {
+              if (step) apply(edit.setSceneWorld(scene, world));
+              else {
+                scene = edit.setSceneWorld(scene, world);
+                touchEdit();
+              }
+            }}
           />
         {:else}
           <InteractiveSetupPanel

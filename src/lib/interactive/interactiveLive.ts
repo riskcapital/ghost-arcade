@@ -13,6 +13,19 @@ const live = new Map<string, Interaction[]>();
 const pointers = new Map<string, { inputs: Interaction[]; at: number }>();
 /** A pointer older than this is from an editor that has closed or stalled. */
 const POINTER_FRESH_MS = 250;
+/** The Studio's Orbit view: degrees the 3D world's camera has turned. */
+export type WorldView = { yaw: number; pitch: number };
+const views = new Map<string, WorldView>();
+
+/** Turn the layer's 3D world camera, or back to face-on with `null`. */
+export function setLiveWorldView(layerId: string, view: WorldView | null): void {
+  if (view && (view.yaw || view.pitch)) views.set(layerId, view);
+  else views.delete(layerId);
+}
+
+export function liveWorldView(layerId: string): WorldView | undefined {
+  return views.get(layerId);
+}
 
 export function setLivePointer(layerId: string, inputs: Interaction[], now = performance.now()): void {
   pointers.set(layerId, { inputs, at: now });
@@ -42,4 +55,5 @@ export function liveInteractiveInputs(layerId: string): Interaction[] | undefine
 export function pruneLiveInteractiveInputs(keep: Set<string>): void {
   for (const id of live.keys()) if (!keep.has(id)) live.delete(id);
   for (const id of pointers.keys()) if (!keep.has(id)) pointers.delete(id);
+  for (const id of views.keys()) if (!keep.has(id)) views.delete(id);
 }
