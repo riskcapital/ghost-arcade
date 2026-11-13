@@ -106,7 +106,7 @@
     title="A row whose blocks play across a group of pieces you pick on the canvas (Left half, Top row…), as one picture or on each piece"
     data-add-group-row>+ Group row</button>
   {#if $cameraLaneStore.length === 0 && !$cameraLaneShown}
-    <button class="tha-btn" onmousedown={(e) => e.stopPropagation()} onclick={() => cameraLaneShown.set(true)} title="Shots from the Stage Sim's Demo reel that its camera follows while the show plays" data-add-camera-lane>+ Stage camera lane</button>
+    <button class="tha-btn" onmousedown={(e) => e.stopPropagation()} onclick={() => cameraLaneShown.set(true)} title="Shots from the Stage Sim's Demo reel that its camera follows while the show plays" data-add-camera-lane>+ Camera lane</button>
   {:else}
     <span class="tha-hint">Rows follow the mapping layers</span>
   {/if}
@@ -132,6 +132,8 @@
     border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
   }
   .tha-btn {
+    flex: 0 0 auto;
+    white-space: nowrap;
     height: 20px;
     padding: 0 8px;
     font: inherit;

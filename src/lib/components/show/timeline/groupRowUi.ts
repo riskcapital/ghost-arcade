@@ -11,6 +11,7 @@ import { showTimeline } from '../../../stores/showTimeline';
 import { slotsFromPieces, wherePick } from '../../../timeline/where/wherePick';
 import { holdContentEdit } from '../../../timeline/liveEdit';
 import { generateUUID } from '../../../utils/uuid';
+import { showToast } from '../../../stores/errorToast';
 import type { Layer, ShowLayerTrack } from '../../../types';
 import { stageNow } from './whereUi';
 import { clipMediaFromTrayPayload } from './clipMedia';
@@ -31,6 +32,7 @@ function nextGroupName(): string {
 
 /** "+ Group row": choose the pieces on the canvas, name the group; the row is added on one of them. */
 export function startGroupRow(): void {
+  showToast('Click the pieces for the group on the canvas, name it, then press Done in the bar at the top of the canvas.', 'info');
   wherePick.set({
     ids: [],
     together: true,

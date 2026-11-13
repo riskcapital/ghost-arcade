@@ -100,7 +100,11 @@
   </div>
   <div class="pick-bar" data-viewport-ui role="dialog" aria-label="Choose the pieces" data-where-pick>
     <span class="pick-title">{pick.title ?? (pick.groupName ? `Pieces of ${pick.groupName}` : 'Pieces for this block')}</span>
-    <span class="pick-count">{chosen.size} chosen</span>
+    {#if chosen.size === 0}
+      <span class="pick-hint" data-where-pick-hint>Click pieces on the canvas to add them</span>
+    {:else}
+      <span class="pick-count">{chosen.size} chosen</span>
+    {/if}
     <button type="button" onclick={() => (chosen = new Set(pieces.map((p) => p.id)))}>All</button>
     <button type="button" onclick={() => (chosen = new Set())}>None</button>
     <label class="pick-check" title={pick.togetherHint ?? 'All the chosen pieces light at once, instead of one after another along the order'}>
@@ -155,6 +159,8 @@
     font-size: var(--ga-text-meta, 11px);
     white-space: nowrap;
   }
+  .pick-hint { color: var(--ga-icon, #5278ff); font-weight: 600; white-space: nowrap; animation: pick-pulse 1.4s ease-in-out infinite; }
+  @keyframes pick-pulse { 50% { opacity: 0.55; } }
   .pick-check { display: flex; align-items: center; gap: 4px; white-space: nowrap; cursor: pointer; }
   .pick-check input { margin: 0; }
   .pick-name {
