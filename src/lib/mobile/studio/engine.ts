@@ -7,13 +7,14 @@ import {acquireCamera} from './camera';
 import {defaultFlux,fluxEffect,type FluxState} from './flux';
 import { StandaloneRenderer } from '../standaloneRenderer';
 import { findShader } from '../standaloneShaderList';
-import { StandaloneAudio, SILENT_AUDIO } from '../standaloneAudio';
+import { StandaloneAudio, SILENT_AUDIO, type AudioUniforms } from '../standaloneAudio';
 import type { AudioSourceKind } from '../nativeAudio';
 import { parseISF, type ISFInput } from '../../isf/parser';
 import { StudioCompositor, type TextureInput } from './compositor';
 import { getAsset } from './assets';
-import { type Show, type Clip, layerGain, clipUnavailable } from './model';
-import { QualityGovernor, shaderRenderHeight } from './qualityGovernor';
+import { type Show, type Clip, type Layer, layerGain, clipUnavailable } from './model';
+import { QualityGovernor, shaderRenderHeight, SURFACE_CLIP_CAP } from './qualityGovernor';
+import { planSurfaceClips, planKey, type SurfaceClipPlan } from './surfaceClips';
 
 type Prepared = { native?:NativeLiveSource; releaseCapture?:()=>void; clip: Clip; source?: string; media?: HTMLImageElement | HTMLVideoElement; url?: string };
 type Slot = {
@@ -38,7 +39,11 @@ type Slot = {
   url?: string;
   params: ISFInput[];
   image?: HTMLImageElement;
+  /** A surface clip that could not start. Its surfaces show their deck source; no retry each frame. */
+  failed?: boolean;
 };
+/** What a slot is drawn with: a layer row, or a surface's clip at its own look. */
+type SlotLook = Pick<Layer, 'params' | 'speed' | 'intensity' | 'effects'>;
 const shaderSources = new Map<string, Promise<string>>();
 /** A library shader's source, fetched once. Also used by the clip picker's preview. */
 export function shaderSource(id: string) {
@@ -65,6 +70,13 @@ export class StudioEngine {
   private fluxGain=0;
   private fluxFrame=0;
   private slots: Slot[] = [];
+  /** Surfaces playing a clip of their own: one render per different clip, shared by its surfaces. */
+  private surfaceSlots = new Map<string, Slot>();
+  /** Different clips the surfaces may play at once. The owner sets it from the device tier. */
+  surfaceClipCap = SURFACE_CLIP_CAP.balanced;
+  private surfacePlanKey = '';
+  /** The surface clip plan changed (a clip started, stopped or went over the cap). */
+  onSurfacePlan: (plan: SurfaceClipPlan) => void = () => {};
   private compositor: StudioCompositor;
   private compositionFX: StandaloneRenderer;
   private raf = 0;
@@ -110,16 +122,17 @@ export class StudioEngine {
     this.compositor.onPaintError=message=>this.onError(message);
     this.compositionFX=new StandaloneRenderer(canvas,this.compositor.context);
     this.compositionFX.onEffectError=message=>this.onError(message);
-    for (let i = 0; i < 8; i++) {
-      const c = canvas;
-      const renderer = new StandaloneRenderer(c, this.compositor.context);
-      renderer.onEffectError = message => this.onError(message);
-      const effects = new StandaloneRenderer(c,this.compositor.context);
-      effects.onEffectError=message=>this.onError(message);
-      this.slots.push({ canvas: c, renderer, effects, preparation: 0, generation: 0, clipId: null, params: [] });
-    }
+    for (let i = 0; i < 8; i++) this.slots.push(this.newSlot());
     canvas.addEventListener('webglcontextlost', this.contextLost);
     canvas.addEventListener('webglcontextrestored', this.contextRestored);
+  }
+  private newSlot(): Slot {
+    const c = this.compositor.canvas;
+    const renderer = new StandaloneRenderer(c, this.compositor.context);
+    renderer.onEffectError = message => this.onError(message);
+    const effects = new StandaloneRenderer(c,this.compositor.context);
+    effects.onEffectError=message=>this.onError(message);
+    return { canvas: c, renderer, effects, preparation: 0, generation: 0, clipId: null, params: [] };
   }
   private contextLost = (event: Event) => {
     // Without preventDefault the browser never restores the context.
@@ -142,9 +155,11 @@ export class StudioEngine {
     }
     if (p?.url) URL.revokeObjectURL(p.url);
   }
-  async prepare(index: number, clip: Clip): Promise<boolean> {
-    const s = this.slots[index],
-      generation = ++s.preparation;
+  prepare(index: number, clip: Clip): Promise<boolean> {
+    return this.prepareSlot(this.slots[index], clip);
+  }
+  private async prepareSlot(s: Slot, clip: Clip): Promise<boolean> {
+    const generation = ++s.preparation;
     this.disposePrepared(s.prepared);
     s.prepared = undefined;
     const p: Prepared = { clip };
@@ -213,10 +228,12 @@ export class StudioEngine {
       return false;
     }
   }
-  async launch(index: number, clip: Clip): Promise<boolean> {
-    const s = this.slots[index],
-      generation = ++s.generation;
-    if (s.prepared?.clip.id !== clip.id && !(await this.prepare(index, clip))) return false;
+  launch(index: number, clip: Clip): Promise<boolean> {
+    return this.launchSlot(this.slots[index], clip);
+  }
+  private async launchSlot(s: Slot, clip: Clip): Promise<boolean> {
+    const generation = ++s.generation;
+    if (s.prepared?.clip.id !== clip.id && !(await this.prepareSlot(s, clip))) return false;
     if (this.dead || s.generation !== generation) return false;
     const p = s.prepared;
     if (!p || p.clip.id !== clip.id) return false;
@@ -334,16 +351,21 @@ export class StudioEngine {
       const show = this.getShow();
       if (this.mic) this.audio.update(now);
       const audio = this.mic ? this.audio.uniforms : SILENT_AUDIO;
-      if(this.previewSuspended){for(const slot of this.slots)if(slot.video&&!slot.releaseCapture&&!slot.video.paused)slot.video.pause();this.lastLookFrame=now;this.frames=0;this.lastReport=now;return;}
+      if(this.previewSuspended){for(const slot of [...this.slots,...this.surfaceSlots.values()])if(slot.video&&!slot.releaseCapture&&!slot.video.paused)slot.video.pause();this.lastLookFrame=now;this.frames=0;this.lastReport=now;return;}
       const inputs: (TextureInput | null)[] = [];
       try {
         this.compositor.beginFrame(show.quality);
-        const activeShaderCount=this.slots.filter((slot,i)=>slot.clipId&&layerGain(show,i)>0&&show.clips.find(c=>c.id===slot.clipId)?.kind==='shader').length;
+        const plan=this.syncSurfaceSlots(show);
+        // When every surface on the output plays its own clip, nothing shows the deck: it rests.
+        const deckShown=!show.mapping||!show.surfaces.length||show.surfaces.some(sf=>sf.enabled&&!(sf.clipId&&plan.playing.includes(sf.clipId)&&!this.surfaceSlots.get(sf.clipId)?.failed));
+        const shaderSlot=(slot:Slot)=>show.clips.find(c=>c.id===slot.clipId)?.kind==='shader';
+        const activeShaderCount=this.slots.filter((slot,i)=>deckShown&&slot.clipId&&layerGain(show,i)>0&&shaderSlot(slot)).length
+          +[...this.surfaceSlots].filter(([id,slot])=>slot.clipId===id&&shaderSlot(slot)).length;
         const shaderHeight=shaderRenderHeight(show.quality,activeShaderCount,this.governor.detail);
         for (let i = 0; i < 8; i++) {
           const s = this.slots[i],
             l = show.layers[i];
-          const active = !!s.clipId && layerGain(show, i) > 0;
+          const active = deckShown && !!s.clipId && layerGain(show, i) > 0;
           if (s.video) {
             if (active && !this.frozen && l.speed > 0) {
               s.video.playbackRate = s.releaseCapture ? 1 : Math.max(0.0625, l.speed);
@@ -355,45 +377,18 @@ export class StudioEngine {
             continue;
           }
           this.hadClip = true;
-          if (active && !this.frozen && s.native) s.native.draw(l.params);
-          if (active && !this.frozen && !s.native) {
-            s.renderer.setAudio(audio);
-            s.renderer.setClipParams({ speed: l.speed, intensity: l.intensity });
-            if(show.clips.find(c=>c.id===s.clipId)?.shaderId==='ga-ghostfx'){
-              s.ghostMotion??=new GhostFXMotion();
-              const dt=s.ghostTime?Math.min(.1,(now-s.ghostTime)/1000):0;s.ghostTime=now;
-              const response=s.ghostMotion.update(audio,dt*Math.max(0,l.speed),Number(l.params.movement)||0,Number(l.params.drift??.6),Number(l.params.morph??2.5),Number(l.params.reactivity??1),l.params.journey===true,Number(l.params.journeySeconds??24));
-              s.ghostBass=response.audio.audioBass;s.renderer.setAudio(response.audio);
-              s.renderer.setShaderInputs({...this.budgetInputs(s,l.params),...response.inputs});
-            }else s.renderer.setShaderInputs(this.budgetInputs(s,l.params));
-
-            const sourceWidth = s.video?.videoWidth || s.image?.naturalWidth || 16,
-              sourceHeight = s.video?.videoHeight || s.image?.naturalHeight || 9;
-            const height=show.clips.find(c=>c.id===s.clipId)?.kind==='shader'?Math.max(180,shaderHeight*(s.budget?.scale??1)):show.quality;
-            const scale = Math.min(height / sourceHeight, (height * 16) / 9 / sourceWidth);
-            s.renderer.drawFrame(
-              Math.max(1, Math.round(sourceWidth * scale)),
-              Math.max(1, Math.round(sourceHeight * scale)),
-            );
-          }
-          // Keep the held source separate from its FX result: editing or bypassing
-          // clip/layer FX must update even while source playback is held.
-          let source=s.native?.textureOutput??s.renderer.textureOutput;
-          const clip=show.clips.find(c=>c.id===l.clipId);
-          if(source&&active&&clip?.shaderId==='ga-ghostfx'){s.drift??=new GhostFXFeedback(this.compositor.context);source=s.drift.process(source,l.params,now/1000,!this.frozen,s.ghostBass??0);}
-          if(source&&active&&(clip?.kind==='camera'||clip?.kind==='depth')){
-            if(cameraFxEnabled(l.params)){
-              if(!s.cameraFxFailed){try{
-                s.cameraFx??=new CameraFx(this.compositor.context);
-                source=s.cameraFx.process(source,l.params,now/1000,!this.frozen,audio.audioLevel);
-              }catch(e){s.cameraFx?.destroy();s.cameraFx=undefined;s.cameraFxFailed=true;this.onError(`Camera motion FX bypassed: ${e instanceof Error?e.message:'GPU resources unavailable.'}`);}}
-            }else {s.cameraFx?.destroy();s.cameraFx=undefined;s.cameraFxFailed=false;}
-          }
-          const chain=[...(clip?.effects || []),...l.effects];
-          if(source && active && chain.some(e=>e.enabled)) {
-            s.effects.setAudio(audio);
-            inputs.push(s.effects.processTexture(source,chain,this.lookTime));
-          } else inputs.push(source);
+          inputs.push(this.drawSlot(s,show.clips.find(c=>c.id===s.clipId),show.clips.find(c=>c.id===l.clipId),l,active,audio,now,shaderHeight,show.quality));
+        }
+        const surfaceInputs=new Map<string,TextureInput|null>();
+        for(const [id,s] of this.surfaceSlots){
+          if(s.failed)continue;
+          this.hadClip=true;
+          const clip=show.clips.find(c=>c.id===id);
+          // Still loading: its surfaces stay dark rather than flash the deck first.
+          if(s.clipId!==id||!clip){surfaceInputs.set(id,null);continue;}
+          if(s.video&&(this.frozen?!s.video.paused:s.video.paused)){if(this.frozen)s.video.pause();else void s.video.play().catch(()=>{});}
+          const defaults=clip.shaderId?findShader(clip.shaderId)?.defaults:undefined;
+          surfaceInputs.set(id,this.drawSlot(s,clip,clip,{params:{...defaults,...clip.params},speed:1,intensity:1,effects:[]},true,audio,now,shaderHeight,show.quality));
         }
         if (!this.frozen && this.lastLookFrame) this.lookTime += Math.min(.1, (now-this.lastLookFrame)/1000);
         if (!this.frozen) this.lookBeat = this.beatClock?.() ?? this.lookTime * show.bpm / 60;
@@ -404,7 +399,7 @@ export class StudioEngine {
         this.fluxGain+=(target-this.fluxGain)*(1-Math.exp(-dt*22));
         const gesture=fluxEffect(this.flux,this.fluxGain,this.lookBeat);
         const composition=[...(show.effects||[]),...(gesture.enabled?[gesture]:[])];
-        this.compositor.render(show, inputs, this.blackout, this.testGrid || !this.hadClip, this.lookTime, audio.audioBeat, this.lookBeat, composition.some(e=>e.enabled) ? input => {this.compositionFX.setAudio(audio);return this.compositionFX.processTexture(input,composition,this.lookTime);} : undefined);
+        this.compositor.render(show, inputs, this.blackout, this.testGrid || !this.hadClip, this.lookTime, audio.audioBeat, this.lookBeat, composition.some(e=>e.enabled) ? input => {this.compositionFX.setAudio(audio);return this.compositionFX.processTexture(input,composition,this.lookTime);} : undefined, surfaceInputs);
       } catch (e) {
         this.contextFailed = true;
         cancelAnimationFrame(this.raf);
@@ -424,6 +419,82 @@ export class StudioEngine {
     };
     this.lastReport = performance.now();
     this.raf = requestAnimationFrame(loop);
+  }
+  /**
+   * Render one slot for this frame and return its picture: the source, then its GhostFX feedback
+   * or camera FX, then the clip's and the layer's effects. `clip` is what the slot holds and
+   * `chainClip` the clip whose look and effects apply (the same, except mid-launch on a layer).
+   */
+  private drawSlot(s:Slot,clip:Clip|undefined,chainClip:Clip|undefined,l:SlotLook,active:boolean,audio:AudioUniforms,now:number,shaderHeight:number,quality:number):TextureInput|null{
+    if (active && !this.frozen && s.native) s.native.draw(l.params);
+    if (active && !this.frozen && !s.native) {
+      s.renderer.setAudio(audio);
+      s.renderer.setClipParams({ speed: l.speed, intensity: l.intensity });
+      if(clip?.shaderId==='ga-ghostfx'){
+        s.ghostMotion??=new GhostFXMotion();
+        const dt=s.ghostTime?Math.min(.1,(now-s.ghostTime)/1000):0;s.ghostTime=now;
+        const response=s.ghostMotion.update(audio,dt*Math.max(0,l.speed),Number(l.params.movement)||0,Number(l.params.drift??.6),Number(l.params.morph??2.5),Number(l.params.reactivity??1),l.params.journey===true,Number(l.params.journeySeconds??24));
+        s.ghostBass=response.audio.audioBass;s.renderer.setAudio(response.audio);
+        s.renderer.setShaderInputs({...this.budgetInputs(s,l.params),...response.inputs});
+      }else s.renderer.setShaderInputs(this.budgetInputs(s,l.params));
+
+      const sourceWidth = s.video?.videoWidth || s.image?.naturalWidth || 16,
+        sourceHeight = s.video?.videoHeight || s.image?.naturalHeight || 9;
+      const height=clip?.kind==='shader'?Math.max(180,shaderHeight*(s.budget?.scale??1)):quality;
+      const scale = Math.min(height / sourceHeight, (height * 16) / 9 / sourceWidth);
+      s.renderer.drawFrame(
+        Math.max(1, Math.round(sourceWidth * scale)),
+        Math.max(1, Math.round(sourceHeight * scale)),
+      );
+    }
+    // Keep the held source separate from its FX result: editing or bypassing
+    // clip/layer FX must update even while source playback is held.
+    let source=s.native?.textureOutput??s.renderer.textureOutput;
+    if(source&&active&&chainClip?.shaderId==='ga-ghostfx'){s.drift??=new GhostFXFeedback(this.compositor.context);source=s.drift.process(source,l.params,now/1000,!this.frozen,s.ghostBass??0);}
+    if(source&&active&&(chainClip?.kind==='camera'||chainClip?.kind==='depth')){
+      if(cameraFxEnabled(l.params)){
+        if(!s.cameraFxFailed){try{
+          s.cameraFx??=new CameraFx(this.compositor.context);
+          source=s.cameraFx.process(source,l.params,now/1000,!this.frozen,audio.audioLevel);
+        }catch(e){s.cameraFx?.destroy();s.cameraFx=undefined;s.cameraFxFailed=true;this.onError(`Camera motion FX bypassed: ${e instanceof Error?e.message:'GPU resources unavailable.'}`);}}
+      }else {s.cameraFx?.destroy();s.cameraFx=undefined;s.cameraFxFailed=false;}
+    }
+    const chain=[...(chainClip?.effects || []),...l.effects];
+    if(source && active && chain.some(e=>e.enabled)) {
+      s.effects.setAudio(audio);
+      return s.effects.processTexture(source,chain,this.lookTime);
+    }
+    return source;
+  }
+  /** Start renders for surface clips that joined the plan and free the ones that left it. */
+  private syncSurfaceSlots(show:Show):SurfaceClipPlan{
+    const plan=planSurfaceClips(show,this.surfaceClipCap);
+    for(const [id,slot] of this.surfaceSlots)if(!plan.playing.includes(id)){this.disposeSlot(slot);this.surfaceSlots.delete(id);}
+    for(const id of plan.playing){
+      if(this.surfaceSlots.has(id))continue;
+      const clip=show.clips.find(c=>c.id===id)!;
+      const slot=this.newSlot();
+      this.surfaceSlots.set(id,slot);
+      void this.launchSlot(slot,clip).then(ok=>{if(!ok&&this.surfaceSlots.get(id)===slot&&!this.dead)slot.failed=true;},e=>{
+        if(this.surfaceSlots.get(id)!==slot||this.dead)return;
+        slot.failed=true;
+        this.onError(e instanceof Error?e.message:`${clip.name} could not start on its surface.`);
+      });
+    }
+    const key=planKey(plan);
+    if(key!==this.surfacePlanKey){this.surfacePlanKey=key;this.onSurfacePlan(plan);}
+    return plan;
+  }
+  /** Surface clips being rendered now, for tests and diagnostics. */
+  get surfaceClips(){return [...this.surfaceSlots].filter(([id,slot])=>slot.clipId===id).map(([id])=>id);}
+  private disposeSlot(s:Slot){
+    s.generation++;
+    s.preparation++;
+    this.disposePrepared(s.prepared);
+    s.prepared=undefined;
+    this.releaseMedia(s);
+    s.renderer.destroy();
+    s.effects.destroy();
   }
   async restore(show: Show) {
     await Promise.all(
@@ -446,14 +517,11 @@ export class StudioEngine {
     cancelAnimationFrame(this.raf);
     this.audio.stop();
     for (const s of this.slots) {
-      s.generation++;
-      s.preparation++;
-      this.disposePrepared(s.prepared);
       s.canvas.removeEventListener('webglcontextlost', this.contextLost);
-      this.releaseMedia(s);
-      s.renderer.destroy();
-      s.effects.destroy();
+      this.disposeSlot(s);
     }
+    for (const s of this.surfaceSlots.values()) this.disposeSlot(s);
+    this.surfaceSlots.clear();
     this.compositor.canvas.removeEventListener('webglcontextlost', this.contextLost);
     this.compositor.canvas.removeEventListener('webglcontextrestored', this.contextRestored);
     this.compositionFX.destroy();

@@ -54,3 +54,32 @@ export class QualityGovernor {
     return 'raised';
   }
 }
+
+// ── Clips on surfaces ──────────────────────────────────────────────────────
+//
+// A surface that plays its own clip costs one more render. Those renders join the shader pixel
+// budget above (so the governor's detail covers them), and their number is capped by how capable
+// the device is. The cap is fixed for the session: a surface never drops its clip mid-show
+// because of a slow second.
+
+export type DeviceTier = 'economy' | 'balanced' | 'high';
+
+/** What the device says about itself. The iPhone and iPad app reports its memory natively. */
+export type DeviceHints = { memoryGB?: number; cores?: number };
+
+/**
+ * Memory is the clearest sign of a phone's generation (and of how many render targets it can
+ * hold). Unknown devices get the middle tier.
+ */
+export function deviceTier(hints: DeviceHints = {}): DeviceTier {
+  const memory = hints.memoryGB ?? 0,
+    cores = hints.cores ?? 0;
+  if ((memory > 0 && memory < 3.5) || (memory <= 0 && cores > 0 && cores <= 2)) return 'economy';
+  if (memory >= 5.5) return 'high';
+  return 'balanced';
+}
+
+/** Different clips the surfaces may play at once, beside the deck. */
+export const SURFACE_CLIP_CAP: Record<DeviceTier, number> = { economy: 3, balanced: 4, high: 6 };
+
+export const surfaceClipCap = (hints: DeviceHints = {}) => SURFACE_CLIP_CAP[deviceTier(hints)];

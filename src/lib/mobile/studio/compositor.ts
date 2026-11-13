@@ -240,7 +240,11 @@ export class StudioCompositor {
     g.uniform1i(L.contained, fit === 'contain' ? 1 : 0);
     g.drawArrays(g.TRIANGLES, 0, verts.length / 4);
   }
-  render(show: Show, inputs: (TextureInput | null)[], blackout = false, testGrid = false, time = 0, audio = 0, transportBeat = time * show.bpm / 60, postProcess?: (input:TextureInput)=>TextureInput) {
+  /**
+   * `surfaceInputs` holds the clips surfaces play by themselves: a picture, or null while it loads
+   * (the surface stays dark). A surface whose clip is not in it shows its deck source.
+   */
+  render(show: Show, inputs: (TextureInput | null)[], blackout = false, testGrid = false, time = 0, audio = 0, transportBeat = time * show.bpm / 60, postProcess?: (input:TextureInput)=>TextureInput, surfaceInputs?: ReadonlyMap<string, TextureInput | null>) {
     const g = this.gl;
     if (show.dualDeck && this.targets.length === 2) {
       for (let i = 0; i < 8; i++) this.targets.push({ texture: this.texture(), frame: g.createFramebuffer()! });
@@ -343,24 +347,29 @@ export class StudioCompositor {
     else
       for (const s of show.surfaces) {
         if (!s.enabled) continue;
+        // Its own clip (MB-6) when that clip has a render; otherwise the deck source.
+        const own = s.clipId !== undefined && !!surfaceInputs?.has(s.clipId);
+        const clip = own ? surfaceInputs!.get(s.clipId!) : null;
         const i = s.source;
-        const paired = show.dualDeck && i !== 'mix';
-        const available = paired || i === 'mix' || !!inputs[i] || s.look?.enabled;
+        const paired = !own && show.dualDeck && i !== 'mix';
+        const available = own ? !!clip || s.look?.enabled : paired || i === 'mix' || !!inputs[i] || s.look?.enabled;
         const ink=this.paint?.texture(s.id);
         if (!available && !testGrid && !ink) continue;
         const paintOnly=show.paint?.enabled&&show.paint.isolate&&!this.paintFailed;
         if((available&&!paintOnly)||testGrid)this.draw(
-          paired
+          own
+            ? clip?.texture || this.sources[0]
+            : paired
             ? this.targets[(Number(i) % 4) * 2 + (Number(i)%4>=2?2:0) + 1].texture
             : i === 'mix'
               ? mixTexture
               : inputs[i]?.texture || this.sources[i],
           this.sources[0],
           -1,
-          outputGain * (paired || i === 'mix' ? 1 : layerGain(show, Number(i))),
+          outputGain * (own || paired || i === 'mix' ? 1 : layerGain(show, Number(i))),
           s,
           testGrid,
-          paired || i === 'mix' ? 16 / 9 : (inputs[i]?.width || 16) / (inputs[i]?.height || 9),
+          own ? (clip?.width || 16) / (clip?.height || 9) : paired || i === 'mix' ? 16 / 9 : (inputs[i]?.width || 16) / (inputs[i]?.height || 9),
         );
         const verts = this.geometry.get(s) || surfaceVertices(s);
 

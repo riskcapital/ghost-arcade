@@ -63,7 +63,7 @@ export function repairSet(show: Show, problems: SetProblems = setProblems(show))
   if (problems.inset && next.surfaces[0]) {
     const surface = next.surfaces[0];
     surface.points = fullFramePoints();
-    const inUse = surface.feather > 0 || !!surface.look?.enabled || surface.source !== 'mix' || !!next.paint?.strokes?.length;
+    const inUse = surface.feather > 0 || !!surface.look?.enabled || surface.source !== 'mix' || !!surface.clipId || !!next.paint?.strokes?.length;
     if (!inUse) next.mapping = false;
   }
   next.rev = SET_REV;

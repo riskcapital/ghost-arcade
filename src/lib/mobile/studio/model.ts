@@ -41,7 +41,14 @@ export type Surface = {
   look?: LookConfig;
   id: string;
   name: string;
+  /** What the surface shows from the deck: the full composition or one layer row. */
   source: number | 'mix';
+  /**
+   * A clip of this set shown on this surface instead of `source`. Absent on sets saved before
+   * app 1.2. `source` stays the fallback: an older app, a clip over the device's cap or a clip
+   * that cannot play here shows the deck source instead.
+   */
+  clipId?: string;
   enabled: boolean;
   locked: boolean;
   fit: 'stretch' | 'contain' | 'fill';
@@ -53,6 +60,12 @@ export type Scene = { launchGrid?: (string|null)[][]; clipEffects?: Record<strin
 export type Show = {
   /** Format revision. Absent on sets saved by app 1.0; 2 from app 1.1 on (see setRepair.ts). */
   rev?: number;
+  /**
+   * A template's rendered stage the preview shows behind the surfaces (never on the output), so a
+   * template or the first-run demo reads as projection on a real object. Cleared when the surfaces
+   * stop matching it.
+   */
+  stage?: string;
   paint?:PaintConfig;
   activeBlockId?: string;
   effects: EffectChain;
@@ -94,6 +107,33 @@ export function clipUnavailable(clip: Clip | undefined): boolean {
 export function gridPoints(x = 0.08, y = 0.08, w = 0.84, h = 0.84): Point[] {
   return Array.from({ length: 9 }, (_, i) => ({ x: x + ((i % 3) * w) / 2, y: y + (Math.floor(i / 3) * h) / 2 }));
 }
+/** The 3×3 lattice of a four-corner surface: corners in reading order, the rest in between. */
+export function cornerPoints(topLeft: Point, topRight: Point, bottomRight: Point, bottomLeft: Point): Point[] {
+  return Array.from({ length: 9 }, (_, i) => {
+    const u = (i % 3) / 2,
+      v = Math.floor(i / 3) / 2;
+    return {
+      x: topLeft.x * (1 - u) * (1 - v) + topRight.x * u * (1 - v) + bottomRight.x * u * v + bottomLeft.x * (1 - u) * v,
+      y: topLeft.y * (1 - u) * (1 - v) + topRight.y * u * (1 - v) + bottomRight.y * u * v + bottomLeft.y * (1 - u) * v,
+    };
+  });
+}
+/** Kinds of clip a surface can play by itself. Live cameras stay on the deck, which owns the capture. */
+export const SURFACE_CLIP_KINDS: readonly Clip['kind'][] = ['shader', 'video', 'image'];
+/** True when `clip` can be put on a surface of its own in this build. */
+export const surfaceClipAllowed = (clip: Clip | undefined): clip is Clip =>
+  !!clip && SURFACE_CLIP_KINDS.includes(clip.kind) && !clipUnavailable(clip);
+/** Surfaces with any clip `clipId` taken off them: they show their deck source again. */
+export function forgetSurfaceClip(surfaces: Surface[], clipId: string): Surface[] {
+  return surfaces.map((s) => {
+    if (s.clipId !== clipId) return s;
+    const rest = { ...s };
+    delete rest.clipId;
+    return rest;
+  });
+}
+/** A stage id as saved: short and lower-case, or nothing. Unknown ids simply show no stage. */
+const stageId = (value: unknown) => (typeof value === 'string' && /^[a-z][a-z0-9-]{0,31}$/.test(value) ? value : undefined);
 /** The whole output frame: where a set's first surface starts, so turning mapping on changes nothing. */
 export const fullFramePoints = (): Point[] => gridPoints(0, 0, 1, 1);
 const sameGrid = (a: Point[], b: Point[]) => a.length === b.length && a.every((p, i) => Math.abs(p.x - b[i].x) < 1e-6 && Math.abs(p.y - b[i].y) < 1e-6);
@@ -263,6 +303,8 @@ function normalizeStored(raw: unknown): Show {
           Array.isArray(s.points) && s.points.length === 9
             ? s.points.map((p) => ({ x: clamp(p.x, -0.5, 1.5), y: clamp(p.y, -0.5, 1.5) }))
             : gridPoints(),
+        // Kept only while the clip is still in the set and is a kind a surface can play.
+        ...(typeof s.clipId === 'string' && clips.some((c) => c.id === s.clipId && SURFACE_CLIP_KINDS.includes(c.kind)) ? { clipId: s.clipId } : {}),
       })),
     activeBlockId: typeof r.activeBlockId==='string' && r.scenes?.some(s=>s.id===r.activeBlockId) ? r.activeBlockId : undefined,
     scenes: (Array.isArray(r.scenes) ? r.scenes : [])
@@ -295,6 +337,7 @@ function normalizeStored(raw: unknown): Show {
     quality: [540, 720, 1080].includes(r.quality) ? r.quality : 720,
     mapping: !!r.mapping,
     paint: normalizePaint(r.paint),
+    ...(stageId(r.stage) && r.mapping ? { stage: stageId(r.stage) } : {}),
   };
   // Sets made before mapping became opt-in hold one untouched surface inset by 8%. While mapping is
   // still off that inset was never on screen, so start it full-frame: switching mapping on then
