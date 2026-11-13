@@ -14,22 +14,26 @@
   import {effectLabel,moveEffect} from '../../mobile/studio/effectBrowser';
   import {dragReorder} from '../../mobile/studio/reorder';
   import {secondFingerTaps} from '../../mobile/studio/secondFingerTaps';
-  import {loadPreferences,savePreferences,feel,type StudioPreferences} from '../../mobile/studio/preferences';
-  import {startCoach,coachAfter,coachLaunch,type CoachState} from '../../mobile/studio/coach';
+  import {loadPreferences,savePreferences,isFirstRun,feel,type StudioPreferences} from '../../mobile/studio/preferences';
+  import {startCoach,coachAfter,coachLaunch,coachSkip,coachSteps,coachStep,type CoachState} from '../../mobile/studio/coach';
   // Choices of this device (haptics, launch on touch-down, hints already seen). Written at once,
-  // so "first run" is decided on the first launch only.
+  // so "first run" is decided on the first launch only. A first run opens the mapping demo.
+  const firstRun=isFirstRun();
   let prefs=loadPreferences();
+  if(firstRun)prefs={...prefs,coachTrack:'mapping'};
   savePreferences(prefs);
   function setPrefs(patch:Partial<StudioPreferences>){prefs={...prefs,...patch};savePreferences(prefs);}
-  let coach:CoachState=startCoach();
+  let coach:CoachState=prefs.coachTrack==='mapping'?{...startCoach('mapping'),step:prefs.coachAt??0}:startCoach();
   function coachMove(next:CoachState){
     if(prefs.coachDone||next===coach)return;
     coach=next;
+    if(next.track==='mapping'&&!next.done)setPrefs({coachAt:next.step});
     if(next.done){setPrefs({coachDone:true});flash('That is the basics. Have a good set.');}
   }
   /** A clip launched by a finger (not Autopilot): the haptic tap and the coach's launch steps. */
   function handLaunch(row:number){
     feel(prefs,'launch');
+    noteDeckHidden();
     // Rows of a deck that is switched off still hold a clip id; they are not playing.
     coachMove(coachLaunch(coach,show.layers.slice(0,show.dualDeck?8:4).flatMap((l,i)=>l.clipId?[i]:[]),row));
   }
@@ -289,10 +293,84 @@
     type Surface,
   } from '../../mobile/studio/model';
   import type { ISFInput } from '../../isf/parser';
+  // ── Mapping 1.2: first-run demo, templates, a clip per surface, landscape mapping ──────────
+  import TemplateGallery from './TemplateGallery.svelte';
+  import StageBackdrop from './StageBackdrop.svelte';
+  import SurfaceContentStrip from './SurfaceContentStrip.svelte';
+  import { forgetSurfaceClip } from '../../mobile/studio/model';
+  import { mappingDemoShow, applyTemplate, stageMatches } from '../../mobile/studio/templates';
+  import { findTemplate } from '../../mobile/studio/stageScenes';
+  import { putOnSurface, surfaceCapMessage, type SurfaceChoice, type SurfaceClipPlan } from '../../mobile/studio/surfaceClips';
+  import { surfaceClipCap, type DeviceHints } from '../../mobile/studio/qualityGovernor';
+  import { allowMappingRotation } from '../../mobile/studio/captureToolkit';
+  let templatesOpen = false;
+  /** Surface lit up while a visual is dragged over it. */
+  let dropSurface: number | null = null;
+  let surfaceCap = surfaceClipCap();
+  let surfacePlan: SurfaceClipPlan = { playing: [], capped: [], wanted: 0, cap: surfaceCap };
+  function setSurfaceCap(hints: DeviceHints) {
+    surfaceCap = surfaceClipCap(hints);
+    if (engine) engine.surfaceClipCap = surfaceCap;
+  }
+  $: deviceName = layoutInfo.mixer === 'docked' ? 'This iPad' : 'This iPhone';
+  $: capNotice = surfaceCapMessage(surfacePlan, deviceName);
+  /** The template's rendered stage shows behind the picture while the surfaces still sit on it. */
+  $: stageShown = !clean && stageMatches(show) ? show.stage! : '';
+  /**
+   * Integration hook for the output wizard (MB-1): "Connect a projector" lands here. Until the
+   * wizard is wired in, it opens Output settings.
+   */
+  function connectProjector() { outputSettings = true; }
+  $: if (outputStatus.state === 'live') coachMove(coachAfter(coach, 'connect'));
+  $: coachCurrent = prefs.coachDone ? undefined : coachStep(coach);
+  // iPhone turns sideways for mapping only; leaving Map brings it back upright.
+  let rotationAllowed = false;
+  $: { const allow = tab === 'map' && !interactiveOpen && !pickerOpen; if (allow !== rotationAllowed) { rotationAllowed = allow; void allowMappingRotation(allow); } }
+  function applyTemplateById(id: string) {
+    const template = findTemplate(id);
+    if (!template) return;
+    checkpoint();
+    show = applyTemplate(show, template);
+    selectedSurface = 0; selectedPoint = 0; mappingTool = 'edit'; templatesOpen = false;
+    persist();
+    // Templates arrive moving to the music.
+    if (audioSource === 'off') void chooseAudio(preferredAudio());
+    flash(`${template.name} placed. Drag the corners onto your object.`, { label: 'Undo', run: () => void undo() }, 6000);
+  }
+  function chooseLayout(preset: 'split' | 'triptych' | 'paint-box') { templatesOpen = false; addSurface(preset); }
+  function assignSurface(index: number, choice: SurfaceChoice) {
+    const next = putOnSurface(show, index, choice);
+    if (next === show) { if (!('deck' in choice)) flash('That clip cannot play on a surface. Live cameras stay on the deck.'); return; }
+    checkpoint();
+    show = { ...show, ...next, mapping: true };
+    selectedSurface = index;
+    persist();
+    feel(prefs, 'switch');
+  }
+  function hideStage() { checkpoint(); show.stage = undefined; persist(); }
+  /** Said once a session: launching a pad while every surface plays its own clip shows nowhere. */
+  let deckHiddenNoted = false;
+  function noteDeckHidden() {
+    if (deckHiddenNoted || !show.mapping || !show.surfaces.some(s => s.enabled)) return;
+    if (!show.surfaces.every(s => !s.enabled || (s.clipId && surfacePlan.playing.includes(s.clipId)))) return;
+    deckHiddenNoted = true;
+    flash('Every surface plays its own visual, so the deck is not on the output. In Map, drag Deck mix onto a surface.', null, 7000);
+  }
+  $: surfaceMedia = show.clips.filter(c => c.kind === 'image' || c.kind === 'video');
+  $: currentChoice = surface?.clipId ? (() => { const c = show.clips.find(c => c.id === surface.clipId); return c?.kind === 'shader' && !c.assetId ? { shader: c.shaderId } : { clip: c?.id }; })() : null;
+  const surfaceContentName = (s: Surface, index: number) => {
+    const clip = s.clipId ? show.clips.find(c => c.id === s.clipId) : undefined;
+    if (clip && !surfacePlan.capped.includes(index)) return clip.name;
+    const deck = s.source === 'mix' ? 'Full composition' : `Layer ${(show.dualDeck ? s.source % 4 : s.source) + 1}${show.dualDeck ? ' · A/B' : ''}`;
+    return clip ? `${clip.name} · over limit, ${deck}` : deck;
+  };
 
-  let show = loadShow();
+  let show = firstRun ? mappingDemoShow() : loadShow();
+  // Kept at once, so closing the app before touching anything still reopens on the demo.
+  if (firstRun) try { saveCurrentShow(show); } catch { /* storage full: the demo is rebuilt next time */ }
   let setBank = savedSets();
-  let tab: 'perform' | 'map' | 'fx' | 'flux' = 'perform';
+  // The mapping coach's first steps happen in Map, so the app opens there until they are done.
+  let tab: 'perform' | 'map' | 'fx' | 'flux' = firstRun || coachStep(coach)?.tab === 'map' && !prefs.coachDone ? 'map' : 'perform';
   let mixerOpen=false;
   let clipControlsOpen=false;
   let controlsReturnFocus:HTMLElement|null=null;
@@ -749,6 +827,7 @@
   function removeClip(clip: Clip) {
     checkpoint();
     show.clips = show.clips.filter((c) => c.id !== clip.id);
+    show.surfaces = forgetSurfaceClip(show.surfaces, clip.id);
     show.launchGrid = show.launchGrid.map(row => row.map(id => id === clip.id ? null : id));
     show.layers = show.layers.map((l, i) => {
       if (l.clipId !== clip.id) return l;
@@ -769,6 +848,7 @@
   function addSurface(preset = 'single') {
     checkpoint();
     show.mapping = true;
+    if (preset !== 'single') show.stage = undefined;
     if (preset === 'single') {
       if (show.surfaces.length >= 16) {
         flash('A set supports up to 16 surfaces.');
@@ -822,6 +902,7 @@
       const from=show.surfaces[drag.surface].points[drag.point];
       if(Math.hypot((point.x-from.x)*r.width,(point.y-from.y)*r.height)<1)return;
       drag.moved=true;checkpoint();show.mapping=true;
+      coachMove(coachAfter(coach,'corner'));
     }
     if(mappingSnap)point=snapMappingPoint(point,show.surfaces,drag.surface,r.width,r.height);
     show.surfaces[drag.surface] = movePoint(show.surfaces[drag.surface], drag.point, point);
@@ -1229,6 +1310,7 @@
       else if (change === 'raised' && value >= 1) { detailNoticed = false; flash('Full detail is back.'); }
     };
     next.frozen = frozen; next.blackout = blackout; next.testGrid = testGrid; next.flux = flux;
+    next.surfaceClipCap = surfaceCap; next.onSurfacePlan = plan => { if (engine === next) surfacePlan = plan; };
     engine = next;
     next.start();
     if (audioSource !== 'off') void next.audioSource(audioSource).catch(() => { audioSource = 'off'; });
@@ -1263,7 +1345,8 @@
     }
   }
   onMount(() => {
-    if(hasNativeLive())void captureCapabilities().then(c=>lidar=!!c.lidar).catch(()=>lidar=false);
+    if(hasNativeLive())void captureCapabilities().then(c=>{lidar=!!c.lidar;setSurfaceCap({memoryGB:c.memoryGB,cores:c.cores});}).catch(()=>lidar=false);
+    else setSurfaceCap({cores:navigator.hardwareConcurrency});
     const stopLayout=watchLayout(info=>{layoutInfo=info;if(info.mixer==='docked')mixerOpen=false;});
     let disposed = false;
     try {
@@ -1571,8 +1654,10 @@
         >
       </div>
       <div class="preview-frame">
-        <div class="preview" bind:this={preview} onclick={selectPreviewScreen}>
+        <div class="preview" class:staged={!!stageShown} bind:this={preview} onclick={selectPreviewScreen}>
+          {#if stageShown}<StageBackdrop template={stageShown} width={layoutInfo.mixer === 'docked' ? 1280 : 960} />{/if}
           {#key canvasGeneration}<canvas bind:this={output} aria-label="Live video output"></canvas>{/key}
+          {#if stageShown}<span class="stage-chip" data-stage-chip aria-hidden="true">DEMO STAGE</span>{/if}
           {#if visualsDown}<div class="visuals-down" role="alert"><strong>{visualsRestarting ? 'Restarting visuals…' : 'Visuals interrupted'}</strong><span>Your set is safe.</span><button data-restart-visuals disabled={visualsRestarting} onclick={() => restartVisuals(true)}>Restart visuals</button></div>{/if}
           {#if tab === 'map' && !clean}
             <svg class="mapping-lines" viewBox="0 0 1000 562.5" aria-hidden="true">
@@ -1580,8 +1665,9 @@
               {#each show.surfaces as s, i}<polyline
                   points={meshPath(s)}
                   class:chosen={i === selectedSurface}
+                  class:drop={i === dropSurface}
                   class:dim={!s.enabled}
-                /><text x={s.points[0].x * 1000 + 12} y={s.points[0].y * 562.5 + 28}>{i + 1} · {s.name}</text>{/each}
+                />{#if !stageShown || i === selectedSurface || i === dropSurface}<text x={s.points[0].x * 1000 + 12} y={s.points[0].y * 562.5 + 28}>{i + 1} · {s.name}</text>{/if}{/each}
               {#if surface?.mode === 'mesh'}{#each [0, 1, 2] as row}<polyline
                     class="mesh-line"
                     points={[0, 1, 2]
@@ -1611,7 +1697,7 @@
             <PaintPad surfaces={show.surfaces} config={paint} beat={()=>engine?.beatClock?.()??0} onstroke={startStroke} onfinish={finishStroke} onlimit={()=>flash('Paint memory is full. Clear or undo strokes to keep drawing.')}/>
           {/if}
         </div>
-        {#if tab==='perform' && !prefs.coachDone && !clean && !visualsDown}<CoachStrip step={coach.step} onclose={()=>setPrefs({coachDone:true})}/>{/if}
+        {#if tab==='perform' && coachCurrent && (coachCurrent.tab==='perform'||coachCurrent.skippable) && !clean && !visualsDown}<CoachStrip step={coach.step} steps={coachSteps(coach.track)} actionLabel={coachCurrent.id==='connect'?'Connect':''} onaction={connectProjector} onskip={coachCurrent.skippable?()=>coachMove(coachSkip(coach)):null} onclose={()=>setPrefs({coachDone:true})}/>{/if}
       </div>
       <div class="monitor-tools">
         {#if tab==='perform' && !interactiveLive}<button class="tempo-chip" class:active={tempoOpen} aria-expanded={tempoOpen} aria-label={`Tempo ${show.bpm} BPM. Tap in time to set it; hold for tempo and audio.`} onpointerdown={tempoDown} onpointerup={tempoUp} onpointercancel={tempoUp} onpointerleave={tempoUp} onclick={()=>{if(performance.now()-tempoPress>1000)toggleTempo();}}><strong>{show.bpm}</strong>BPM</button><button class="q-chip" class:active={show.quantize} aria-pressed={show.quantize} aria-label="Quantize launches to the beat" title="Quantize launches to the beat" onclick={()=>{show.quantize=!show.quantize;if(!show.quantize)cancelQueued();persist();}}>Q</button><button class="ab-chip" class:active={show.dualDeck} aria-pressed={show.dualDeck} aria-label="A/B decks" onclick={()=>setDual(!show.dualDeck)}>A/B</button><div class="autopilot-bar">
@@ -1705,6 +1791,7 @@
         {:else if tab === 'flux'}
           <FluxPanel value={flux} onchange={value=>{flux=value;if(engine)engine.flux=value;}}/>
         {:else if tab === 'map'}
+          {#if coachCurrent && !clean}<CoachStrip inline step={coach.step} steps={coachSteps(coach.track)} actionLabel={coachCurrent.id==='connect'?'Connect':''} onaction={connectProjector} onskip={coachCurrent.skippable?()=>coachMove(coachSkip(coach)):null} onclose={()=>setPrefs({coachDone:true})}/>{/if}
           <div class="panel-heading">
             <div>
               <span class="eyebrow">PROJECTION WORKSPACE</span>
@@ -1730,18 +1817,11 @@
                 persist();
               }}>{show.mapping ? 'Mapping on' : 'Mapping off'}</button
             ><button class:active={mappingGrid} aria-pressed={mappingGrid} onclick={()=>mappingGrid=!mappingGrid}><Icon name="grid" size={16}/>Grid</button><button class:active={mappingSnap} aria-pressed={mappingSnap} onclick={()=>mappingSnap=!mappingSnap}><Icon name="snap" size={16}/>Snap</button><button class:active={testGrid} aria-pressed={testGrid} onclick={toggleGrid}><Icon name="grid" size={16} />Test grid</button
-            ><select
-              aria-label="Stage layout preset"
-              value=""
-              onchange={(e) => {
-                if (e.currentTarget.value) addSurface(e.currentTarget.value);
-                e.currentTarget.value = '';
-              }}
-              ><option value="">Layouts…</option><option value="split">Two panels</option><option value="triptych"
-                >Triptych</option><option value="paint-box">Paint box · linked faces</option
-              ></select
-            >
+            ><button class="templates-button" data-open-templates onclick={() => (templatesOpen = true)}><Icon name="library" size={16} />Templates</button>
           </div>
+          {#if mappingTool==='edit'}<SurfaceContentStrip visuals={libraryShaders} media={surfaceMedia} surfaces={show.surfaces} selected={selectedSurface} current={currentChoice} target={preview} onassign={assignSurface} onhover={(i) => (dropSurface = i)} />{/if}
+          {#if capNotice}<p class="cap-notice" role="status" data-surface-cap>{capNotice}</p>{/if}
+          {#if stageShown}<div class="stage-note" data-stage-note><p>The room in the picture is a demo stage, shown only here. Your projector shows just the visuals.</p><button onclick={hideStage}>Hide stage</button></div>{/if}
           <div class="surface-list">
             {#each show.surfaces as s, i}<button
                 class:active={selectedSurface === i}
@@ -1750,8 +1830,8 @@
                   selectedPoint = 0;
                 }}
                 ><span class="surface-index">{i + 1}</span><span
-                  ><strong>{s.name}</strong><small
-                    >{s.source === 'mix' ? 'Full composition' : `Layer ${(show.dualDeck ? s.source % 4 : s.source) + 1}${show.dualDeck ? " · A/B" : ""}`} · {s.mode === 'mesh'
+                  ><strong>{s.name}</strong><small class:capped={surfacePlan.capped.includes(i)}
+                    >{surfaceContentName(s, i)} · {s.mode === 'mesh'
                       ? 'Mesh'
                       : 'Corners'}</small
                   ></span
@@ -1795,12 +1875,15 @@
               <div class="field-grid">
                 <label class="field"
                   >Content<select aria-label="Screen content"
-                    value={surface.source === 'mix' ? 'mix' : show.dualDeck ? surface.source % 4 : surface.source}
+                    value={surface.clipId ? 'clip' : surface.source === 'mix' ? 'mix' : show.dualDeck ? surface.source % 4 : surface.source}
                     onchange={(e) => {
+                      if (e.currentTarget.value === 'clip') return;
                       checkpoint();
-                      patchSurface({ source: e.currentTarget.value === 'mix' ? 'mix' : Number(e.currentTarget.value) });
+                      const source = e.currentTarget.value === 'mix' ? 'mix' : Number(e.currentTarget.value);
+                      show.surfaces[selectedSurface] = { ...forgetSurfaceClip([surface], surface.clipId ?? '')[0], source };
+                      persist();
                     }}
-                    ><option value="mix">Full composition</option>{#each show.layers.slice(0,4) as _, i}<option value={i}
+                    >{#if surface.clipId}<option value="clip">Own clip · {show.clips.find(c => c.id === surface.clipId)?.name ?? 'Clip'}</option>{/if}<option value="mix">Full composition</option>{#each show.layers.slice(0,4) as _, i}<option value={i}
                         >Layer {i + 1}{show.dualDeck?' · follows A/B':''}</option
                       >{/each}</select
                   ></label
@@ -2018,6 +2101,7 @@
         onclick={()=>navTo(t.id)}><Icon name={t.icon}/><span>{t.label}</span></button>
     {/each}
   </nav></MobileInteractiveWorkspace>{/if}
+{#if templatesOpen}<TemplateGallery onapply={applyTemplateById} onlayout={chooseLayout} onclose={() => (templatesOpen = false)} />{/if}
 {#if outputSettings}<OutputPanel source={interactiveLive?'interactive':'mix'} status={outputStatus} preferences={outputPreferences} quality={show.quality} onpreferences={value=>{outputPreferences=value;externalOutput?.configure(value);}} onquality={quality=>{show.quality=quality;persist();}} onwireless={()=>externalOutput?.chooseWireless()} onclose={()=>outputSettings=false} onretry={()=>externalOutput?.retry()} onpreview={()=>{outputSettings=false;if(interactiveLive){interactiveOpen=true;interactiveWorkspace?.previewOutput();}else clean=true;}}/>{/if}
 {#if settings}<div class="modal-backdrop" role="presentation">
     <div
@@ -2943,6 +3027,23 @@
   .mapping-lines polyline.dim {
     opacity: 0.3;
   }
+  .mapping-lines polyline.drop {
+    stroke: #fff;
+    stroke-width: 3;
+    stroke-dasharray: none;
+  }
+  /* A template's stage behind the picture: the picture is light on it. */
+  .preview.staged canvas { position: relative; mix-blend-mode: screen; }
+  .stage-chip {
+    position: absolute; right: 5px; bottom: 5px; z-index: 3; padding: 2px 6px; border-radius: 4px; background: #000a;
+    font-size: 12px; letter-spacing: .06em; line-height: 1.3; color: var(--ga-ink-1); pointer-events: none;
+  }
+  .stage-note { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; }
+  .stage-note p { flex: 1; margin: 0; font-size: 12px; line-height: 1.4; color: var(--ga-ink-1); }
+  .stage-note button { flex: none; min-height: 44px; padding: 0 14px; font-size: 13px; }
+  .templates-button { display: inline-flex; align-items: center; gap: 6px; }
+  .cap-notice { margin: 0 0 12px; padding: 8px 10px; border: 1px solid #ffc57066; border-radius: 6px; background: #ffc5700f; font-size: 12px; line-height: 1.4; color: #ffd9a0; }
+  .surface-list small.capped { color: #ffc570; }
   .mapping-lines text {
     font-size: 17px;
     fill: #e3edff;
@@ -2988,11 +3089,6 @@
     flex-wrap: wrap;
   }
   .mapping-toolbar button,
-  .mapping-toolbar select {
-    font-size: 11px;
-    min-height: 38px;
-    padding: 6px 9px;
-  }
   .surface-list {
     display: grid;
     grid-template-columns: 1fr 1fr;

@@ -246,3 +246,7 @@ nav.tabs.in-studio button.active {color:var(--ga-ink-0);background:var(--ga-sele
 .studio[data-layout][data-layout] .audio-action {display:flex;align-items:center;justify-content:center;gap:8px;min-height:44px;font-size:12px;color:var(--ga-ink-0);background:var(--ga-hardware-bg);border:1px solid var(--ga-line-2);border-radius:6px;}
 .studio[data-layout][data-layout] .tempo-sheet .audio-status {color:var(--ga-ink-1);}
 .studio[data-layout][data-layout] .tempo-sheet .audio-status.live {color:var(--ga-selection-ink);}
+/* Mapping on an iPhone held sideways: the picture with its corners gets most of the width. */
+.studio[data-layout='phone-landscape'][data-layout].mapping:not(.clean) .workspace {grid-template-columns:minmax(0,1.55fr) minmax(250px,1fr);}
+.studio[data-layout='phone-landscape'][data-layout].mapping:not(.clean) .monitor {justify-content:center;}
+.studio[data-layout='phone-landscape'][data-layout].mapping .preview-frame {max-width:min(100%,calc((100dvh - 96px) * 16 / 9));margin:0 auto;}
