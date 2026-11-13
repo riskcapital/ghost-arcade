@@ -1,4 +1,4 @@
-export type CaptureCapabilities = { lidar: boolean; dualCamera: boolean; platform: string };
+export type CaptureCapabilities = { lidar: boolean; dualCamera: boolean; platform: string; /** Device memory, from app 1.2. */ memoryGB?: number; cores?: number };
 export type SavedScan = { id: string; name: string; points: number; bytes: number; created: string; mode: string; url: string; thumbnail: string; file?: string; preset?: string; voxelMm?: number; sizeM?: [number, number, number]; cropped?: boolean };
 export type CameraShot = { name: string; url: string };
 type CaptureBridge = { getPlatform?:()=>string; nativePromise?:(plugin:string,method:string,args:Record<string,unknown>)=>Promise<unknown>; convertFileSrc?:(url:string)=>string };
@@ -13,6 +13,11 @@ export async function captureCapabilities():Promise<CaptureCapabilities> {
  const platform=bridge()?.getPlatform?.()??'web';
  if(platform!=='ios')return {lidar:false,dualCamera:false,platform};
  return call<CaptureCapabilities>('capabilities');
+}
+/** iPhone: let the app turn sideways while mapping (true) or bring it back upright (false). No-op elsewhere. */
+export async function allowMappingRotation(allow:boolean):Promise<void>{
+ if(bridge()?.getPlatform?.()!=='ios')return;
+ try{await call('mappingRotation',{allow});}catch{/* an older native shell without it stays upright */}
 }
 export const listScans=()=>call<{scans:SavedScan[]}>('listScans');
 export const openScanner=(mode:'scan'|'live')=>call<void>('openScanner',{mode});

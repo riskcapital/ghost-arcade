@@ -43,6 +43,7 @@ public final class StudioCapturePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name:"shareCalibrationPreparation",returnType:CAPPluginReturnPromise),
         CAPPluginMethod(name:"shareInteractiveScene",returnType:CAPPluginReturnPromise),
         CAPPluginMethod(name:"capabilities",returnType:CAPPluginReturnPromise),
+        CAPPluginMethod(name:"mappingRotation",returnType:CAPPluginReturnPromise),
         CAPPluginMethod(name:"openScanner",returnType:CAPPluginReturnPromise),
         CAPPluginMethod(name:"openDualCamera",returnType:CAPPluginReturnPromise),
         CAPPluginMethod(name:"listScans",returnType:CAPPluginReturnPromise),
@@ -142,7 +143,28 @@ public final class StudioCapturePlugin: CAPPlugin, CAPBridgedPlugin {
         let configure = { StudioLiveCapture.shared.configure(sources) { error in if let error = error { call.reject(error.localizedDescription) } else { call.resolve() } } }
         if sources.isEmpty { configure() } else { permission(call, presents: false, then: configure) }
     }
-    @objc func capabilities(_ call:CAPPluginCall){call.resolve(["lidar":ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth),"dualCamera":AVCaptureMultiCamSession.isMultiCamSupported,"platform":"ios"])}
+    @objc func capabilities(_ call:CAPPluginCall){call.resolve(["lidar":ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth),"dualCamera":AVCaptureMultiCamSession.isMultiCamSupported,"platform":"ios","memoryGB":Double(ProcessInfo.processInfo.physicalMemory)/1_073_741_824,"cores":ProcessInfo.processInfo.activeProcessorCount])}
+    /// iPhone turns sideways only while the Map workspace is open; leaving it brings the app back upright.
+    @objc func mappingRotation(_ call:CAPPluginCall){
+        let allow=call.getBool("allow") ?? false
+        DispatchQueue.main.async{
+            StudioOrientation.landscapeAllowed=allow
+            guard let controller=self.bridge?.viewController else{call.resolve();return}
+            controller.setNeedsUpdateOfSupportedInterfaceOrientations()
+            guard UIDevice.current.userInterfaceIdiom == .phone,let scene=controller.view.window?.windowScene else{call.resolve();return}
+            if !allow,scene.interfaceOrientation.isLandscape{
+                scene.requestGeometryUpdate(.iOS(interfaceOrientations:.portrait)){_ in}
+            }else if allow,!scene.interfaceOrientation.isLandscape{
+                // Already held sideways when Map opens: turn now rather than wait for the next tilt.
+                switch UIDevice.current.orientation{
+                case .landscapeLeft: scene.requestGeometryUpdate(.iOS(interfaceOrientations:.landscapeRight)){_ in}
+                case .landscapeRight: scene.requestGeometryUpdate(.iOS(interfaceOrientations:.landscapeLeft)){_ in}
+                default: break
+                }
+            }
+            call.resolve()
+        }
+    }
     @objc func listScans(_ call:CAPPluginCall){DispatchQueue.global(qos:.userInitiated).async{do{call.resolve(["scans":try ScanFiles.list()])}catch{call.reject(error.localizedDescription)}}}
     @objc func deleteScan(_ call:CAPPluginCall){guard let id=call.getString("id"),UUID(uuidString:id) != nil else{call.reject("Invalid scan.");return};DispatchQueue.global(qos:.userInitiated).async{do{try FileManager.default.removeItem(at:ScanFiles.root().appendingPathComponent(id));call.resolve()}catch{call.reject(error.localizedDescription)}}}
     @objc func shareScan(_ call: CAPPluginCall) {
