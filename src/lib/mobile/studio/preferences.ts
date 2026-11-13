@@ -15,6 +15,10 @@ export type StudioPreferences = {
   coachDone: boolean;
   /** Sets that were already offered the one-time repair, fixed or not. */
   repairOffered: string[];
+  /** The coach a first run of app 1.2 or later gets: projector and mapping first, then the deck. */
+  coachTrack?: 'mapping';
+  /** Where that coach got to, so it picks up there next launch. */
+  coachAt?: number;
 };
 
 export const defaultPreferences = (): StudioPreferences => ({ haptics: true, launchOnTouchDown: false, coachDone: false, repairOffered: [] });
@@ -30,6 +34,8 @@ export function normalizePreferences(raw: unknown): StudioPreferences {
     launchOnTouchDown: typeof r.launchOnTouchDown === 'boolean' ? r.launchOnTouchDown : base.launchOnTouchDown,
     coachDone: r.coachDone === true,
     repairOffered: Array.isArray(r.repairOffered) ? [...new Set(r.repairOffered.filter((id): id is string => typeof id === 'string'))].slice(-200) : [],
+    ...(r.coachTrack === 'mapping' ? { coachTrack: 'mapping' as const } : {}),
+    ...(r.coachTrack === 'mapping' && Number.isInteger(r.coachAt) && r.coachAt! > 0 && r.coachAt! < 10 ? { coachAt: r.coachAt } : {}),
   };
 }
 
@@ -44,6 +50,18 @@ export function loadPreferences(storage: Store | undefined = store()): StudioPre
     return { ...defaultPreferences(), coachDone: !!storage?.getItem(STORAGE_KEY) };
   } catch {
     return defaultPreferences();
+  }
+}
+
+/**
+ * True on the very first launch on this device: no preferences and no set saved yet. Read before
+ * `loadPreferences` result is saved, because saving it is what ends the first run.
+ */
+export function isFirstRun(storage: Store | undefined = store()): boolean {
+  try {
+    return !!storage && !storage.getItem(PREFERENCES_KEY) && !storage.getItem(STORAGE_KEY);
+  } catch {
+    return false;
   }
 }
 

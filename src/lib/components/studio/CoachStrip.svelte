@@ -4,24 +4,37 @@
    * itself when the performer really does it. Closing it, or finishing, hides it for good.
    */
   import Icon from './StudioIcon.svelte';
-  import { COACH_STEPS } from '../../mobile/studio/coach';
+  import { COACH_STEPS, type CoachStep } from '../../mobile/studio/coach';
 
   /** Index of the step being asked for. */
   export let step = 0;
+  /** The track's steps (the deck track unless told otherwise). */
+  export let steps: CoachStep[] = COACH_STEPS;
+  /** In the page flow under the picture instead of over its lower edge (the Map workspace, where corners live). */
+  export let inline = false;
+  /** The step's own button, for example "Connect" on the projector step. */
+  export let actionLabel = '';
+  export let onaction: () => void = () => {};
+  /** Shown on a step that can be put off. */
+  export let onskip: (() => void) | null = null;
   export let onclose: () => void = () => {};
 
-  $: current = COACH_STEPS[Math.min(step, COACH_STEPS.length - 1)];
+  $: current = steps[Math.min(step, steps.length - 1)];
 </script>
 
-<aside class="coach" data-coach data-coach-step={current.id} aria-label="Getting started">
-  <span class="progress" aria-hidden="true">{step + 1}/{COACH_STEPS.length}</span>
+<aside class="coach" class:inline class:has-actions={!!actionLabel || !!onskip} data-coach data-coach-step={current.id} aria-label="Getting started">
+  <span class="progress" aria-hidden="true">{step + 1}/{steps.length}</span>
   <!-- Announced when the step changes, so VoiceOver users hear the next thing to try. -->
   <p role="status" aria-live="polite">
-    <span class="count">Step {step + 1} of {COACH_STEPS.length}.</span>
+    <span class="count">Step {step + 1} of {steps.length}.</span>
     <strong>{current.title}</strong>
     <span class="hint">{current.hint}</span>
   </p>
   <button class="close" data-coach-close aria-label="Close getting started tips" onclick={onclose}><Icon name="close" size={18} /></button>
+  {#if actionLabel || onskip}<div class="actions">
+    {#if actionLabel}<button class="action" data-coach-action onclick={onaction}>{actionLabel}</button>{/if}
+    {#if onskip}<button class="later" data-coach-later onclick={onskip}>Later</button>{/if}
+  </div>{/if}
 </aside>
 
 <style>
@@ -47,4 +60,13 @@
     background: none; border: 0; color: var(--ga-ink-1); touch-action: manipulation;
   }
   .close:focus-visible { outline: 2px solid var(--ga-focus); outline-offset: -4px; border-radius: 6px; }
+  .coach.inline { position: relative; left: auto; right: auto; bottom: auto; z-index: auto; margin: 0 0 12px; max-width: none; box-shadow: none; }
+  .actions { grid-column: 2 / -1; display: flex; gap: 8px; padding: 0 8px 8px 0; }
+  .actions button {
+    min-height: 44px; padding: 0 16px; border-radius: var(--ga-r-soft); font-size: 14px; font-weight: 650;
+    touch-action: manipulation;
+  }
+  .action { background: var(--ga-blue-400); border: 0; color: #fff; }
+  .later { background: none; border: 1px solid var(--ga-blue-500); color: var(--ga-ink-0); }
+  .actions button:focus-visible { outline: 2px solid var(--ga-focus); outline-offset: 2px; }
 </style>

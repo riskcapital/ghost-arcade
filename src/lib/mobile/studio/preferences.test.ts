@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { PREFERENCES_KEY, defaultPreferences, feel, loadPreferences, normalizePreferences, savePreferences } from './preferences';
+import { PREFERENCES_KEY, defaultPreferences, feel, isFirstRun, loadPreferences, normalizePreferences, savePreferences } from './preferences';
 import { STORAGE_KEY } from './model';
 import { resetHapticsProbe } from './nativeShare';
 
@@ -15,6 +15,19 @@ describe('device preferences', () => {
   });
   it('an install that already holds a set never sees the coach', () => {
     expect(loadPreferences(memory({ [STORAGE_KEY]: '{}' })).coachDone).toBe(true);
+  });
+  it('knows a first run: nothing saved yet, neither preferences nor a set', () => {
+    expect(isFirstRun(memory())).toBe(true);
+    expect(isFirstRun(memory({ [STORAGE_KEY]: '{}' }))).toBe(false);
+    expect(isFirstRun(memory({ [PREFERENCES_KEY]: '{}' }))).toBe(false);
+    expect(isFirstRun(undefined)).toBe(false);
+  });
+  it('keeps the mapping coach track and where it got to, and nothing else', () => {
+    const storage = memory();
+    savePreferences({ ...defaultPreferences(), coachTrack: 'mapping', coachAt: 2 }, storage);
+    expect(loadPreferences(storage)).toMatchObject({ coachTrack: 'mapping', coachAt: 2 });
+    expect(normalizePreferences({ coachTrack: 'other', coachAt: 2 })).toEqual(defaultPreferences());
+    expect(normalizePreferences({ coachTrack: 'mapping', coachAt: 99 })).toEqual({ ...defaultPreferences(), coachTrack: 'mapping' });
   });
   it('round-trips and repairs bad values', () => {
     const storage = memory();
