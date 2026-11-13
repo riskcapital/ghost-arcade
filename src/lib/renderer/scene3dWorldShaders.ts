@@ -27,7 +27,7 @@ export const BALL_FLOATS = 12;
 export const BALL_KIND_FLOATS = (2 + 5 + 40) * 4;
 /** Floats per block: bounds, depth and count, 32 vec4 holding 64 points. */
 export const BALL_BLOCK_FLOATS = (2 + 32) * 4;
-export const BALL_PHYS_FLOATS = 16;
+export const BALL_PHYS_FLOATS = 20;
 /** Head, 8 pointers and 8 throws of two vec4 each. */
 export const BALL_INPUT_FLOATS = 4 + 8 * 8 + 8 * 8;
 /** The order of a ball kind's params (effectParams('balls3d')). */
@@ -36,33 +36,19 @@ export const BALL_SUBSTEPS = 4;
 
 const PARAM_CONSTS = BALL_PARAM_KEYS.map((key, i) => `const P_${key.toUpperCase()} = ${i}u;`).join('\n');
 
-const BALL_COMMON = /* wgsl */ `
-struct BallKind {
-  slots: vec4f,   // first slot, slot count, emission (0 flow, 1 pulse, 2 burst, 3 thrown), burst generation
-  emit: vec4f,    // from (0 a point, 1 a block), that block's depth, spare, on
-  params: array<vec4f, 5>,
-  mods: array<vec4f, 40>,
-}
-// pos.w radius (0: not in play). vel.w age, negative while waiting to be born.
-// info: kind, seed, birth number (throws) or burst seen, life span.
-struct Ball { pos: vec4f, vel: vec4f, info: vec4f }
+const WORLD_COMMON = /* wgsl */ `
 struct Phys {
   frame: vec4f,   // wall width, height, camera distance, gravity (m/s²)
   bounds: vec4f,  // front pane z (0 none), floor top y, deepest spawn z, floor depth
-  counts: vec4f,  // balls, kinds, blocks, substeps
+  counts: vec4f,  // balls, ball kinds, blocks, substeps
   kill: vec4f,    // below this y, beyond this |x|, nearer than this z
+  drips: vec4f,   // drops, drop kinds, seconds a stain takes to fade, seconds paint stays wet
 }
-
-@group(0) @binding(15) var<storage, read> kinds: array<BallKind>;
 @group(0) @binding(17) var<uniform> phys: Phys;
 
-${PARAM_CONSTS}
-
-// A param of a kind with its modulation, the same maths as evaluateEffect.
-fn param(k: u32, i: u32) -> f32 {
-  let base = kinds[k].params[i / 4u][i % 4u];
-  let a = kinds[k].mods[i * 2u];
-  let b = kinds[k].mods[i * 2u + 1u];
+// A param with its modulation (a: source, amount, speed, invert; b: low,
+// high, beat sync, ranged), the same maths as evaluateEffect.
+fn modulated(base: f32, a: vec4f, b: vec4f) -> f32 {
   if (a.x < 0.5) { return base; }
   let source = u32(a.x);
   let phase = frame.time * a.z * select(1.0, max(frame.tempo, 1.0) / 60.0, b.z > 0.5);
@@ -90,24 +76,21 @@ fn param(k: u32, i: u32) -> f32 {
   return clamp(base + (signal - 0.5) * a.y * (b.y - b.x), b.x, b.y);
 }
 
-// A ball's radius in meters, before it grows in and shrinks out.
-fn ball_radius(k: u32, seed: f32) -> f32 {
-  let spread = (fract(seed * 91.7) - 0.5) * param(k, P_VARIETY) * 0.7;
-  return mix(0.03, 0.2, clamp(param(k, P_SIZE), 0.0, 1.0)) * (1.0 + spread);
+fn hue_rgb(h: f32) -> vec3f {
+  let k = fract(vec3f(h) + vec3f(0.0, 2.0 / 3.0, 1.0 / 3.0));
+  return clamp(abs(k * 6.0 - 3.0) - 1.0, vec3f(0.0), vec3f(1.0));
 }
+
 `;
 
-export const SCENE3D_BALLS_WGSL = /* wgsl */ `${SCENE3D_COMMON_WGSL}
-${BALL_COMMON}
-
+/** The world's shape, for the simulations: blocks, wall, floor and pane, and the touches. */
+const WORLD_SIM = /* wgsl */ `
 struct Block { box: vec4f, info: vec4f, pts: array<vec4f, 32> } // box: min xy, max xy; info: depth, points
-struct Pointer { a: vec4f, b: vec4f }  // a: hit xyz, tool (1 push, 2 attract, 3 repel, 4 vortex); b: velocity xyz, strength
+struct Pointer { a: vec4f, b: vec4f }  // a: hit xyz, tool (1 push, 2 attract, 3 repel, 4 vortex, 5 pour); b: velocity xyz, strength
 struct Throw { a: vec4f, b: vec4f }    // a: position xyz, number; b: velocity xyz, spare
 struct Input { head: vec4f, pointers: array<Pointer, 8>, throws: array<Throw, 8> } // head: pointers, throws
 
 @group(0) @binding(2) var<storage, read> view: View;
-@group(0) @binding(13) var<storage, read_write> balls: array<Ball>;
-@group(0) @binding(14) var<storage, read_write> prev: array<Ball>;
 @group(0) @binding(16) var<storage, read> blocks: array<Block>;
 @group(0) @binding(18) var<uniform> input: Input;
 
@@ -167,18 +150,53 @@ fn world_normal(p: vec3f) -> vec3f {
     k.yxy * world_sdf(p + k.yxy * e) + k.xxx * world_sdf(p + k.xxx * e));
 }
 
+// A point of the output (0..1, y down) at depth z in front of the wall.
+fn unproject(uv: vec2f, z: f32) -> vec3f {
+  let k = 1.0 - z / phys.frame.z;
+  return vec3f((uv.x - 0.5) * phys.frame.x * k, (0.5 - uv.y) * phys.frame.y * k, z);
+}
+
+`;
+
+const BALL_COMMON = /* wgsl */ `
+struct BallKind {
+  slots: vec4f,   // first slot, slot count, emission (0 flow, 1 pulse, 2 burst, 3 thrown), burst generation
+  emit: vec4f,    // from (0 a point, 1 a block), that block's depth, spare, on
+  params: array<vec4f, 5>,
+  mods: array<vec4f, 40>,
+}
+// pos.w radius (0: not in play). vel.w age, negative while waiting to be born.
+// info: kind, seed, birth number (throws) or burst seen, life span.
+struct Ball { pos: vec4f, vel: vec4f, info: vec4f }
+@group(0) @binding(15) var<storage, read> kinds: array<BallKind>;
+
+${PARAM_CONSTS}
+
+// A param of a kind with its modulation.
+fn param(k: u32, i: u32) -> f32 {
+  return modulated(kinds[k].params[i / 4u][i % 4u], kinds[k].mods[i * 2u], kinds[k].mods[i * 2u + 1u]);
+}
+// A ball's radius in meters, before it grows in and shrinks out.
+fn ball_radius(k: u32, seed: f32) -> f32 {
+  let spread = (fract(seed * 91.7) - 0.5) * param(k, P_VARIETY) * 0.7;
+  return mix(0.03, 0.2, clamp(param(k, P_SIZE), 0.0, 1.0)) * (1.0 + spread);
+}
+`;
+
+export const SCENE3D_BALLS_WGSL = /* wgsl */ `${SCENE3D_COMMON_WGSL}
+${WORLD_COMMON}
+${WORLD_SIM}
+${BALL_COMMON}
+
+@group(0) @binding(13) var<storage, read_write> balls: array<Ball>;
+@group(0) @binding(14) var<storage, read_write> prev: array<Ball>;
+
 fn kind_of(i: u32) -> i32 {
   for (var k = 0u; k < u32(phys.counts.y); k++) {
     let s = kinds[k].slots;
     if (f32(i) >= s.x && f32(i) < s.x + s.y) { return i32(k); }
   }
   return -1;
-}
-
-// A point of the output (0..1, y down) at depth z in front of the wall.
-fn unproject(uv: vec2f, z: f32) -> vec3f {
-  let k = 1.0 - z / phys.frame.z;
-  return vec3f((uv.x - 0.5) * phys.frame.x * k, (0.5 - uv.y) * phys.frame.y * k, z);
 }
 
 // A new ball from its kind's emitter.
@@ -270,6 +288,7 @@ fn cs_balls_life(@builtin(global_invocation_id) gid: vec3u) {
         let out = off / max(d, 1e-4);
         let tool = ptr.a.w;
         let s = ptr.b.w;
+        if (tool > 4.5) { continue; }  // Pour is for paint
         if (tool < 1.5) {
           // Push: carried along with the finger, and nudged out of its way.
           b.vel = vec4f(b.vel.xyz + (ptr.b.xyz - b.vel.xyz) * min(1.0, w * 12.0 * dt) + out * w * 4.0 * dt, b.vel.w);
@@ -371,6 +390,7 @@ fn cs_balls_step(@builtin(global_invocation_id) gid: vec3u) {
 `;
 
 export const SCENE3D_BALLS_DRAW_WGSL = /* wgsl */ `${SCENE3D_RELIEF_WGSL}
+${WORLD_COMMON}
 ${BALL_COMMON}
 
 @group(0) @binding(13) var<storage, read> balls: array<Ball>;
@@ -437,11 +457,6 @@ fn ball_hit(in: BallOut) -> BallHit {
   let clip = view.view_proj * vec4f(h.pos, 1.0);
   h.depth = clip.z / clip.w;
   return h;
-}
-
-fn hue_rgb(h: f32) -> vec3f {
-  let k = fract(vec3f(h) + vec3f(0.0, 2.0 / 3.0, 1.0 / 3.0));
-  return clamp(abs(k * 6.0 - 3.0) - 1.0, vec3f(0.0), vec3f(1.0));
 }
 
 // A ball's color and finish: its kind's, varied by its seed. With Variety up,
@@ -521,9 +536,393 @@ fn fs_ball_relief(in: BallOut) -> BallFrag {
 }
 `;
 
+// ── Paint drips ──────────────────────────────────────────────────────────
+
+/** Floats per drop: position + radius, velocity + age, kind / seed / state / span, burst seen. */
+export const DRIP_FLOATS = 16;
+/** Floats per drop kind: slots, emit, params, mods, 16 sites and their depths. */
+export const DRIP_KIND_FLOATS = (2 + 5 + 40 + 16 + 4) * 4;
+export const DRIP_PARAM_KEYS = effectParams('drips').map((d) => d.key);
+/** Drops poured each frame while a finger pours. */
+export const POURED_PER_FRAME = 6;
+
+const DRIP_CONSTS = DRIP_PARAM_KEYS.map((key, i) => `const D_${key.toUpperCase()} = ${i}u;`).join('\n');
+
+const DRIP_COMMON = /* wgsl */ `
+struct DripKind {
+  slots: vec4f,   // first slot, slot count, emission (0 flow, 1 pulse, 2 burst, 3 poured), burst generation
+  emit: vec4f,    // sites (0: from a point), spare, spare, on
+  params: array<vec4f, 5>,
+  mods: array<vec4f, 40>,
+  sites: array<vec4f, 16>,  // upper edges of a block on its front face: a.xy, b.xy
+  site_z: array<vec4f, 4>,  // the depth of each site
+}
+// pos.w radius (0: not in play); vel.w age, negative while waiting to be born;
+// info: kind, seed, state (1 falling, 2 on a surface), life span; extra.x the burst seen.
+struct Drip { pos: vec4f, vel: vec4f, info: vec4f, extra: vec4f }
+@group(0) @binding(22) var<storage, read> dkinds: array<DripKind>;
+
+${DRIP_CONSTS}
+
+fn dparam(k: u32, i: u32) -> f32 {
+  return modulated(dkinds[k].params[i / 4u][i % 4u], dkinds[k].mods[i * 2u], dkinds[k].mods[i * 2u + 1u]);
+}
+
+fn drip_radius(k: u32, seed: f32) -> f32 {
+  return mix(0.012, 0.06, clamp(dparam(k, D_SIZE), 0.0, 1.0)) * (0.7 + 0.6 * fract(seed * 53.1));
+}
+
+// The paint color at full strength: its brightest channel is 1.
+fn drip_color(k: u32, seed: f32) -> vec3f {
+  let hue = dparam(k, D_HUE) / 360.0 + (fract(seed * 7.13) - 0.5) * dparam(k, D_VARIETY) * 0.6;
+  return mix(vec3f(1.0), hue_rgb(hue), 0.9);
+}
+`;
+
+export const SCENE3D_DRIPS_WGSL = /* wgsl */ `${SCENE3D_COMMON_WGSL}
+${WORLD_COMMON}
+${WORLD_SIM}
+${DRIP_COMMON}
+
+@group(0) @binding(21) var<storage, read_write> drips: array<Drip>;
+
+fn drip_kind_of(i: u32) -> i32 {
+  for (var k = 0u; k < u32(phys.drips.y); k++) {
+    let s = dkinds[k].slots;
+    if (f32(i) >= s.x && f32(i) < s.x + s.y) { return i32(k); }
+  }
+  return -1;
+}
+
+// A new drop of its kind: on the front face of a block just under one of its
+// upper edges, or falling from the emitter.
+fn drip_born(k: u32, i: u32, tick: u32) -> Drip {
+  let h1 = hash1(i * 97u + tick * 13u + 1u);
+  let h2 = hash1(i * 89u + tick * 7u + 2u);
+  let h3 = hash1(i * 83u + tick * 5u + 3u);
+  var d: Drip;
+  let seed = hash1(i * 71u + tick * 11u + 5u) + 1e-4;
+  let r = drip_radius(k, seed);
+  let sites = u32(dkinds[k].emit.x);
+  if (sites > 0u) {
+    let at = min(u32(h1 * f32(sites)), sites - 1u);
+    let site = dkinds[k].sites[at];
+    let z = dkinds[k].site_z[at / 4u][at % 4u];
+    // From a few spots along the edge, so the paint runs in rivulets; the
+    // spots wander slowly.
+    let spots = max(2.0, round(length(site.zw - site.xy) / 0.14));
+    let wander = sin(frame.time * 0.13 + f32(at) * 2.1) * 0.3;
+    let t = clamp((floor(h2 * spots) + 0.5 + wander + (h3 - 0.5) * 0.12) / spots, 0.02, 0.98);
+    let p = mix(site.xy, site.zw, t);
+    d.pos = vec4f(p.x, p.y - r * 1.5, z + r * 0.4, r);
+    d.vel = vec4f(0.0, -0.02, 0.0, 0.0);
+    d.info = vec4f(f32(k), seed, 2.0, 0.0);
+  } else {
+    let uv = vec2f(dparam(k, D_X) + (h1 * 2.0 - 1.0) * dparam(k, D_RADIUS), dparam(k, D_Y));
+    let z = mix(r + 0.01, max(phys.bounds.z - r, r + 0.01), h2);
+    d.pos = vec4f(unproject(uv, z), r);
+    d.vel = vec4f((h3 - 0.5) * 0.2, -0.3, 0.0, 0.0);
+    d.info = vec4f(f32(k), seed, 1.0, 0.0);
+  }
+  d.info.w = max(dparam(k, D_LIFETIME), 0.5) * (0.75 + 0.5 * h3);
+  return d;
+}
+
+// One substep of a drop. Falling, it lands and mostly sticks. On a surface it
+// runs down it, now slower now faster, follows it over edges, and falls off
+// where the surface turns to face down.
+fn drip_step(d: ptr<function, Drip>, k: u32, h: f32) {
+  var p = (*d).pos.xyz;
+  var v = (*d).vel.xyz;
+  let r = (*d).pos.w;
+  let seed = (*d).info.y;
+  let g = vec3f(0.0, -phys.frame.w, 0.0);
+  if ((*d).info.z < 1.5) {
+    v = (v + g * h) * (1.0 - 0.3 * h);
+    p += v * h;
+    let s = world_sdf(p) - r;
+    if (s < 0.0) {
+      let n = world_normal(p);
+      p -= n * s;
+      if (hash1(u32(seed * 9973.0) + u32((*d).vel.w * 600.0)) < 0.3 + 0.7 * dparam(k, D_STICK) || length(v) < 0.8) {
+        (*d).info.z = 2.0;
+        v = (v - n * dot(v, n)) * 0.15;
+      } else {
+        v = reflect(v, n) * 0.25;
+      }
+    }
+  } else {
+    let n = world_normal(p);
+    if (n.y < -0.55) {
+      (*d).info.z = 1.0;
+      v += n * 0.05;
+    } else {
+      let along = g - n * dot(g, n);
+      // Runs and stops: each drop has its own stutter.
+      let stutter = 0.5 + 0.5 * sin((*d).vel.w * (2.0 + 3.0 * fract(seed * 17.3)) + seed * 40.0);
+      let mobility = mix(0.12, 0.012, clamp(dparam(k, D_VISCOSITY), 0.0, 1.0)) * (0.2 + 0.8 * stutter) * (0.6 + 0.8 * fract(seed * 29.7));
+      v = mix(v, along * mobility, 1.0 - exp(-h * 6.0));
+      p += v * h;
+      // Back onto the surface, a film off it.
+      let s = world_sdf(p);
+      if (s > r * 4.0) {
+        (*d).info.z = 1.0;
+      } else {
+        p -= world_normal(p) * (s - r * 0.4);
+      }
+    }
+  }
+  (*d).pos = vec4f(p, r);
+  (*d).vel = vec4f(v, (*d).vel.w);
+}
+
+@compute @workgroup_size(64)
+fn cs_drips(@builtin(global_invocation_id) gid: vec3u) {
+  let i = gid.x;
+  if (f32(i) >= phys.drips.x) { return; }
+  var d = drips[i];
+  let ki = drip_kind_of(i);
+  if (ki < 0) { d.pos = AWAY; drips[i] = d; return; }
+  let k = u32(ki);
+  let slots = dkinds[k].slots;
+  let on = dkinds[k].emit.w > 0.5;
+  let emission = slots.z;
+  let local = i - u32(slots.x);
+  let dt = view.clock.x;
+  let tick = u32(view.clock.y);
+  if (d.info.y == 0.0) {
+    d.pos = AWAY;
+    d.vel = vec4f(0.0, 0.0, 0.0, -hash1(i * 31u + 5u) * min(max(dparam(k, D_LIFETIME), 1.0), 6.0) * 0.5);
+    d.info = vec4f(f32(k), hash1(i * 7919u + 17u) + 1e-4, 0.0, 0.0);
+    d.extra = vec4f(slots.w, 0.0, 0.0, 0.0);
+  }
+  let in_use = min(slots.y, max(dparam(k, D_AMOUNT), 0.0));
+  if (emission > 2.5) {
+    // Poured: a few slots a frame, round the pool, go to the fingers that pour.
+    var pours = 0u;
+    for (var p = 0u; p < u32(input.head.x); p++) { if (input.pointers[p].a.w > 4.5) { pours++; } }
+    let pool = u32(slots.y);
+    let off = (local + pool - (tick * ${POURED_PER_FRAME}u) % pool) % pool;
+    if (pours > 0u && off < ${POURED_PER_FRAME}u) {
+      var want = off % pours;
+      for (var p = 0u; p < u32(input.head.x); p++) {
+        let ptr = input.pointers[p];
+        if (ptr.a.w < 4.5) { continue; }
+        if (want > 0u) { want--; continue; }
+        let seed = hash1(i * 37u + tick * 101u + 3u) + 1e-4;
+        let r = drip_radius(k, seed);
+        let toward = normalize(vec3f(0.0, 0.0, phys.frame.z) - ptr.a.xyz);
+        let jitter = (vec2f(hash1(i * 13u + tick), hash1(i * 17u + tick * 3u)) - 0.5) * 0.12;
+        // Onto whatever is under the finger: it runs down from there.
+        d.pos = vec4f(ptr.a.xyz + toward * r * 0.4 + vec3f(jitter, 0.0), r);
+        d.vel = vec4f(ptr.b.xyz * 0.3, 0.0);
+        d.info = vec4f(f32(k), seed, 2.0, max(dparam(k, D_LIFETIME), 0.5));
+        break;
+      }
+    }
+  } else if (on && slots.w != d.extra.x) {
+    if (f32(local) < max(in_use * 0.25, 1.0)) { d = drip_born(k, i, tick + u32(slots.w) * 977u); }
+    d.extra.x = slots.w;
+  }
+  let seen = d.extra.x;
+  if (d.pos.w > 0.0) {
+    d.vel.w += dt;
+    let gone = d.pos.y < phys.kill.x || abs(d.pos.x) > phys.kill.y || d.pos.z > phys.kill.z;
+    if (!on || d.vel.w > d.info.w || gone) {
+      d.pos = AWAY;
+      d.vel = vec4f(0.0, 0.0, 0.0, -0.05);
+    } else {
+      drip_step(&d, k, dt * 0.5);
+      drip_step(&d, k, dt * 0.5);
+    }
+  } else if (on && emission < 1.5) {
+    d.vel.w += dt;
+    if (d.vel.w >= 0.0) {
+      var hazard = 0.0;
+      if (f32(local) < in_use) {
+        let flow = clamp(dparam(k, D_FLOW), 0.0, 1.0);
+        let life = max(dparam(k, D_LIFETIME), 0.5);
+        if (emission < 0.5) {
+          hazard = flow / (life * max(1.0 - flow, 0.02));
+        } else {
+          let period = max(dparam(k, D_PERIOD), 0.2);
+          let open = fract(frame.time / period) * period < dparam(k, D_DURATION);
+          hazard = select(0.0, 6.0 * flow / max(dparam(k, D_DURATION), 0.05), open);
+        }
+      }
+      if (hash1(i * 613u + tick * 1031u + 7u) < 1.0 - exp(-hazard * dt)) {
+        d = drip_born(k, i, tick);
+      }
+    }
+  }
+  d.extra.x = seen;
+  drips[i] = d;
+}
+`;
+
+export const SCENE3D_DRIPS_DRAW_WGSL = /* wgsl */ `${SCENE3D_RELIEF_WGSL}
+${WORLD_COMMON}
+${DRIP_COMMON}
+
+struct Block { box: vec4f, info: vec4f, pts: array<vec4f, 32> }
+@group(0) @binding(16) var<storage, read> blocks: array<Block>;
+@group(0) @binding(21) var<storage, read> drips: array<Drip>;
+
+struct DripOut {
+  @builtin(position) clip: vec4f,
+  @location(0) world: vec3f,
+  @location(1) @interpolate(flat) index: u32,
+}
+struct DripFrag { @location(0) color: vec4f, @builtin(frag_depth) depth: f32 }
+
+@vertex
+fn vs_drip(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> DripOut {
+  let d = drips[ii];
+  var out: DripOut;
+  out.index = ii;
+  if (d.pos.w <= 0.0) { out.clip = OFFSCREEN; return out; }
+  let c = corner(vi);
+  let to_cam = normalize(view.cam_pos.xyz - d.pos.xyz);
+  let world = d.pos.xyz + to_cam * d.pos.w + (view.cam_right.xyz * c.x + view.cam_up.xyz * c.y) * d.pos.w * 1.5;
+  out.clip = view.view_proj * vec4f(world, 1.0);
+  out.world = world;
+  return out;
+}
+
+// A drop of paint: a glossy sphere. Depth 2 when the ray misses it.
+fn drip_shade(in: DripOut) -> DripFrag {
+  let d = drips[in.index];
+  let o = view.cam_pos.xyz;
+  let dir = normalize(in.world - o);
+  let oc = o - d.pos.xyz;
+  let bq = dot(oc, dir);
+  let disc = bq * bq - (dot(oc, oc) - d.pos.w * d.pos.w);
+  var out: DripFrag;
+  if (disc < 0.0) { out.depth = 2.0; return out; }
+  let hit = o + dir * (-bq - sqrt(disc));
+  let n = normalize(hit - d.pos.xyz);
+  let k = u32(d.info.x);
+  var m: Material;
+  m.base = drip_color(k, d.info.y) * 0.8;
+  m.metal = 0.0;
+  m.rough = mix(0.45, 0.04, clamp(dparam(k, D_GLOSS), 0.0, 1.0));
+  m.emissive = max(dparam(k, D_GLOW), 0.0) * 3.0;
+  m.opacity = 1.0;
+  m.catcher = 0.0;
+  out.color = vec4f(fogged(lighting(m, hit, n, -dir), hit), 1.0);
+  let clip = view.view_proj * vec4f(hit, 1.0);
+  out.depth = clip.z / clip.w;
+  return out;
+}
+
+@fragment
+fn fs_drip(in: DripOut) -> DripFrag {
+  let f = drip_shade(in);
+  if (f.depth > 1.5) { discard; }
+  return f;
+}
+
+@fragment
+fn fs_drip_relief(in: DripOut) -> DripFrag {
+  var f = drip_shade(in);
+  if (f.depth > 1.5) { discard; }
+  f.color = vec4f(f.color.rgb + thrown_light(drips[in.index].pos.xyz).rgb * settings.post_b.z * 0.3, 1.0);
+  return f;
+}
+
+// The wet map: two face-on pictures of the paint on the world. The stain
+// (premultiplied, its strongest channel how much paint) fades over
+// phys.drips.z seconds, the gloss (red: how wet) over phys.drips.w. Each
+// frame both fade, then every drop on a surface paints itself into both.
+
+struct FullOut { @builtin(position) clip: vec4f }
+
+@vertex
+fn vs_full(@builtin(vertex_index) vi: u32) -> FullOut {
+  let p = vec2f(f32((vi << 1u) & 2u), f32(vi & 2u));
+  var out: FullOut;
+  out.clip = vec4f(p * 2.0 - 1.0, 0.0, 1.0);
+  return out;
+}
+
+// Drawn with premultiplied blending, so what is there keeps 1 - a of itself.
+@fragment
+fn fs_fade_stain(in: FullOut) -> @location(0) vec4f {
+  return vec4f(0.0, 0.0, 0.0, 1.0 - exp(-view.clock.x / max(phys.drips.z, 0.1)));
+}
+
+@fragment
+fn fs_fade_gloss(in: FullOut) -> @location(0) vec4f {
+  return vec4f(0.0, 0.0, 0.0, 1.0 - exp(-view.clock.x / max(phys.drips.w, 0.1)));
+}
+
+struct SplatOut {
+  @builtin(position) clip: vec4f,
+  @location(0) uv: vec2f,
+  @location(1) color: vec3f,
+}
+
+fn block_corner(bi: u32, i: u32) -> vec2f {
+  let v = blocks[bi].pts[i / 2u];
+  return select(v.xy, v.zw, (i & 1u) == 1u);
+}
+
+// Whether a block in front of a drop hides it face-on. A hidden drop paints
+// nothing, or its trail would show on the front of that block.
+fn hidden(p: vec3f) -> bool {
+  let cam = phys.frame.z;
+  for (var b = 0u; b < u32(phys.counts.z); b++) {
+    let depth = blocks[b].info.x;
+    if (depth < p.z + 0.03) { continue; }
+    let q = p.xy * ((cam - depth) / max(cam - p.z, 1e-3));
+    let box = blocks[b].box;
+    if (any(q < box.xy) || any(q > box.zw)) { continue; }
+    let n = u32(blocks[b].info.y);
+    var inside = false;
+    var j = n - 1u;
+    for (var i = 0u; i < n; i++) {
+      let a = block_corner(b, i);
+      let c = block_corner(b, j);
+      if (((a.y > q.y) != (c.y > q.y)) && (q.x < (c.x - a.x) * (q.y - a.y) / (c.y - a.y) + a.x)) { inside = !inside; }
+      j = i;
+    }
+    if (inside) { return true; }
+  }
+  return false;
+}
+
+@vertex
+fn vs_splat(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> SplatOut {
+  let d = drips[ii];
+  var out: SplatOut;
+  if (d.pos.w <= 0.0 || d.info.z < 1.5 || hidden(d.pos.xyz)) { out.clip = OFFSCREEN; return out; }
+  let c = corner(vi);
+  let k = phys.frame.z / max(phys.frame.z - d.pos.z, 1e-3);
+  let middle = vec2f(d.pos.x * k / phys.frame.x, d.pos.y * k / phys.frame.y) * 2.0;
+  let size = vec2f(d.pos.w * k / phys.frame.x, d.pos.w * k / phys.frame.y) * 2.0 * 1.6;
+  out.clip = vec4f(middle + c * size, 0.0, 1.0);
+  out.uv = c;
+  out.color = drip_color(u32(d.info.x), d.info.y);
+  return out;
+}
+
+@fragment
+fn fs_splat_stain(in: SplatOut) -> @location(0) vec4f {
+  let a = smoothstep(1.0, 0.3, length(in.uv)) * 0.2;
+  return vec4f(in.color * a, a);
+}
+
+@fragment
+fn fs_splat_gloss(in: SplatOut) -> @location(0) vec4f {
+  return vec4f(smoothstep(1.0, 0.3, length(in.uv)) * 0.3, 0.0, 0.0, 0.0);
+}
+`;
+
 export const SCENE3D_WORLD_SHADERS: { id: string; stage: 'compute' | 'render'; entry: string; source: string }[] = [
   { id: 'scene3d/balls', stage: 'compute', entry: 'cs_balls_step', source: SCENE3D_BALLS_WGSL },
   { id: 'scene3d/balls-draw', stage: 'render', entry: 'fs_ball', source: SCENE3D_BALLS_DRAW_WGSL },
+  { id: 'scene3d/drips', stage: 'compute', entry: 'cs_drips', source: SCENE3D_DRIPS_WGSL },
+  { id: 'scene3d/drips-draw', stage: 'render', entry: 'fs_drip', source: SCENE3D_DRIPS_DRAW_WGSL },
 ];
 
 /** Commands that compile the world's shaders ahead of the first frame. */

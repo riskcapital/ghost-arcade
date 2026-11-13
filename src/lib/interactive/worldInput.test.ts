@@ -39,8 +39,8 @@ describe('touches on the 3D world', () => {
   });
 
   it('reads attract, repel and vortex as forces, and drops what is not sane', () => {
-    const state = new WorldInput().update([at(0.1, 0.1, 'repel'), at(0.2, 0.2, 'vortex', 'b'), at(0.3, 0.3, undefined, 'c')], 0);
-    expect(state.pointers.map((p) => p.tool)).toEqual(['repel', 'vortex', 'attract']);
+    const state = new WorldInput().update([at(0.1, 0.1, 'repel'), at(0.2, 0.2, 'vortex', 'b'), at(0.3, 0.3, undefined, 'c'), at(0.4, 0.4, 'pour', 'd')], 0);
+    expect(state.pointers.map((p) => p.tool)).toEqual(['repel', 'vortex', 'attract', 'pour']);
     const param = worldInputParam({ pointers: [{ point: { x: NaN, y: 0 }, velocity: { x: 0, y: 0 }, tool: 'push', strength: 1 }, state.pointers[0]], throws: [{ point: { x: 0, y: 0 }, velocity: { x: 0, y: 0 }, number: 0, at: 0 }] });
     expect(param.pointers).toHaveLength(1);
     expect(param.throws).toHaveLength(0);

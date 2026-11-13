@@ -400,8 +400,8 @@ export function collision(a: Point, b: Point, c: Point, d: Point) {
   return { t, x: a.x + v.x * t, y: a.y + v.y * t, nx: -w.y / len, ny: w.x / len };
 }
 type Particle = Point & { vx: number; vy: number; life: number; seed: number };
-/** A touch on the scene. Throw and Push only act on the 3D world's balls. */
-export type Interaction = { id: string; point: Point; strength: number; mode?: 'attract' | 'repel' | 'vortex' | 'push' | 'throw' };
+/** A touch on the scene. Throw, Push and Pour only act on the 3D world. */
+export type Interaction = { id: string; point: Point; strength: number; mode?: 'attract' | 'repel' | 'vortex' | 'push' | 'throw' | 'pour' };
 export class InteractiveWorld {
   private quality: InteractiveQualityBudget;
   constructor(quality = createInteractiveQuality()) {

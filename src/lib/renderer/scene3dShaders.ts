@@ -607,11 +607,15 @@ export const SCENE3D_RELIEF_WGSL = /* wgsl */ `${SCENE3D_WORLD_WGSL}
 // picture stays on the blocks when the Studio's Orbit view turns the camera.
 fn projector_pos() -> vec3f { return vec3f(0.0, 0.0, settings.post_b.w); }
 
+// Where a point of the world shows on the output, seen face-on.
+fn face_uv(world: vec3f) -> vec2f {
+  let k = settings.post_b.w / max(settings.post_b.w - world.z, 1e-3);
+  return vec2f(0.5 + world.x * k / settings.counts_b.z, 0.5 - world.y * k / settings.counts_b.w);
+}
+
 // The flat picture at this point, premultiplied, in linear light.
 fn thrown_light(world: vec3f) -> vec4f {
-  let k = settings.post_b.w / max(settings.post_b.w - world.z, 1e-3);
-  let uv = vec2f(0.5 + world.x * k / settings.counts_b.z, 0.5 - world.y * k / settings.counts_b.w);
-  let f = textureSampleLevel(flat_tex, flat_samp, uv, 0.0);
+  let f = textureSampleLevel(flat_tex, flat_samp, face_uv(world), 0.0);
   return vec4f(pow(max(f.rgb, vec3f(0.0)), vec3f(2.2)), f.a);
 }
 
@@ -629,6 +633,58 @@ fn fs_relief(in: LitOut) -> @location(0) vec4f {
   }
   // What the surface reflects of the picture, plus a little glow so dark
   // finishes still carry it.
+  let reflectance = m.base * (1.0 - m.metal) + vec3f(0.12);
+  return vec4f(fogged(lighting(m, in.world, n, v) + thrown * reflectance, in.world), 1.0);
+}
+
+// Paint on the world (scene3dWorld.ts): a stain, premultiplied, whose
+// strongest channel is how much paint there is, and how wet it still is. Both
+// are kept face-on, like the picture.
+@group(0) @binding(19) var wet_stain: texture_2d<f32>;
+@group(0) @binding(20) var wet_gloss: texture_2d<f32>;
+
+fn wetted(m: Material, world: vec3f) -> Material {
+  let uv = face_uv(world);
+  let stain = textureSampleLevel(wet_stain, flat_samp, uv, 0.0).rgb;
+  let gloss = clamp(textureSampleLevel(wet_gloss, flat_samp, uv, 0.0).r, 0.0, 1.0);
+  let cover = clamp(max(stain.r, max(stain.g, stain.b)), 0.0, 1.0);
+  var out = m;
+  if (cover > 1e-3) {
+    out.base = mix(m.base, stain / cover * 0.75, cover);
+    out.metal = m.metal * (1.0 - cover);
+  }
+  // Wet paint is darker and shines.
+  out.base *= 1.0 - 0.2 * gloss;
+  out.rough = mix(out.rough, 0.06, gloss);
+  return out;
+}
+
+@fragment
+fn fs_wet(in: LitOut) -> @location(0) vec4f {
+  let raw = materials[in.material];
+  if (raw.opacity < 0.999) { discard; }
+  let n = normalize(in.normal);
+  if (raw.catcher > 0.5) {
+    let dark = 1.0 - shadow_at(in.world, n);
+    return vec4f(0.0, 0.0, 0.0, dark * 0.85);
+  }
+  let m = wetted(raw, in.world);
+  let v = normalize(view.cam_pos.xyz - in.world);
+  return vec4f(fogged(lighting(m, in.world, n, v), in.world), 1.0);
+}
+
+@fragment
+fn fs_relief_wet(in: LitOut) -> @location(0) vec4f {
+  let raw = materials[in.material];
+  if (raw.opacity < 0.999) { discard; }
+  let n = normalize(in.normal);
+  let v = normalize(view.cam_pos.xyz - in.world);
+  let thrown = thrown_light(in.world).rgb * settings.post_b.z * max(dot(n, normalize(projector_pos() - in.world)), 0.0);
+  if (raw.catcher > 0.5) {
+    let dark = 1.0 - shadow_at(in.world, n);
+    return vec4f(thrown, clamp(dark * 0.85, 0.0, 1.0));
+  }
+  let m = wetted(raw, in.world);
   let reflectance = m.base * (1.0 - m.metal) + vec3f(0.12);
   return vec4f(fogged(lighting(m, in.world, n, v) + thrown * reflectance, in.world), 1.0);
 }

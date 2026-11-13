@@ -16,6 +16,7 @@ describe('Interactive 3D in the Studio', () => {
     expect(scene.surfaces.map((s) => s.finish?.preset)).toEqual(['stone', 'chrome']);
     expect(scene.surfaces[1].points).toEqual(shapes[1].points);
     expect(scene.effects?.map((e) => e.kind)).toContain('balls3d');
+    expect(scene.effects?.find((e) => e.kind === 'drips')?.target).toBe(scene.surfaces[0].id);
     expect(scene.effects?.some((e) => e.kind !== 'balls3d')).toBe(true);
   });
 

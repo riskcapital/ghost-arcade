@@ -12,7 +12,7 @@ const build = (scene: InteractiveScene): InteractiveGraphBuildResult =>
     width: 1920, height: 1080, time: 0, frameDelta: 1 / 60, frameIndex: 1, audio, state: null, reset: false,
   } as Parameters<typeof buildInteractiveGraph>[0]);
 type Binding = { binding: number; kind: string; resource?: string; texture?: string };
-type Render = { name: string; target: string; texture?: string; clear: boolean; shader_id: string; bindings: Binding[] };
+type Render = { name: string; target: string; texture?: string; clear: boolean; shader_id: string; fragment_entry: string; blend?: string; bindings: Binding[] };
 type Pass = { name: string; bindings: Binding[] };
 const renders = (g: InteractiveGraphBuildResult) => g.config.render_passes as unknown as Render[];
 const block = { id: 'b', name: 'Block', behavior: 'solid' as const, points: [{ x: 0.3, y: 0.3 }, { x: 0.6, y: 0.3 }, { x: 0.6, y: 0.7 }, { x: 0.3, y: 0.7 }], height: 0.4 };
@@ -47,7 +47,7 @@ describe('the 3D world in an Interactive layer', () => {
     expect(flatPasses.map((p) => p.clear)).toEqual(flatPasses.map((_, i) => i === 0));
     // The lit pass reads it; the world's composite is the one pass on the output, and clears it.
     const opaque = r.find((p) => p.name === 'opaque')!;
-    expect(opaque.shader_id).toBe('scene3d/relief');
+    expect([opaque.shader_id, opaque.fragment_entry]).toEqual(['scene3d/relief', 'fs_relief_wet']);
     expect(opaque.bindings.find((b) => b.binding === 11)).toMatchObject({ kind: 'graph-texture', texture: flat.id });
     const out = r.filter((p) => p.target === 'source_frame');
     expect(out.map((p) => [p.name, p.clear])).toEqual([['composite', true]]);
@@ -59,7 +59,9 @@ describe('the 3D world in an Interactive layer', () => {
     const first2d = over.findIndex(is2d);
     expect(over[first2d - 1].name).toBe('composite');
     expect(over.filter((p) => p.target === 'source_frame' && p.clear).map((p) => p.name)).toEqual(['composite']);
-    expect(over.find((p) => p.name === 'opaque')!.shader_id).toBe('scene3d/world');
+    const opaque = over.find((p) => p.name === 'opaque')!;
+    expect(opaque.fragment_entry).toBe('fs_wet');
+    expect(opaque.bindings.some((b) => b.binding === 11)).toBe(false);
     const off = build(scene({ flat: 'off' }));
     expect(renders(off).some(is2d)).toBe(false);
     expect((off.config.passes as unknown as Pass[]).some((p) => p.name.startsWith('interactive'))).toBe(false);
@@ -132,5 +134,34 @@ describe('the 3D world in an Interactive layer', () => {
     expect(off.interactive.topology).toBe(a.interactive.topology);
     const two = build({ ...base, effects: [balls, { ...makeEffect('balls3d') }, ...effects] });
     expect(two.interactive.topology).not.toBe(a.interactive.topology);
+  });
+
+  it('keeps the paint on the world: the wet map fades, then the drops paint it, before the surfaces read it', () => {
+    const drips = { ...makeEffect('drips'), target: 'b' };
+    const g = build({ ...scene(), effects: [drips, ...effects] });
+    const r = renders(g);
+    const names = r.map((p) => p.name);
+    const opaque = names.indexOf('opaque');
+    expect(names.slice(opaque - 4, opaque)).toEqual(['wet-fade', 'gloss-fade', 'wet-splat', 'gloss-splat']);
+    expect(r.find((p) => p.name === 'wet-fade')!.blend).toBe('alpha');
+    expect(r.find((p) => p.name === 'gloss-splat')!.blend).toBe('add');
+    const stain = r.find((p) => p.name === 'wet-splat')!.texture!;
+    expect(r[opaque].bindings.find((b) => b.binding === 19)).toMatchObject({ texture: stain });
+    expect(names.indexOf('drips')).toBe(names.indexOf('balls') + 1);
+    expect((g.config.passes as unknown as Pass[]).map((p) => p.name)).toContain('drips');
+  });
+
+  it('drips from the upper edges of the block it is on', async () => {
+    const { dripSites } = await import('./scene3dWorld');
+    const { reliefFrame } = await import('../scene3d/relief');
+    const s = scene();
+    const frame = reliefFrame(16 / 9, s.world!.lens);
+    const sites = dripSites(s, s.world!, frame, 'b');
+    // A rectangle has one upper edge: its top, which is the highest in the world (y up).
+    expect(sites).toHaveLength(1);
+    expect(sites[0].a.y).toBeCloseTo(sites[0].b.y, 9);
+    const tri = { ...block, id: 't', points: [{ x: 0.5, y: 0.2 }, { x: 0.7, y: 0.6 }, { x: 0.3, y: 0.6 }] };
+    expect(dripSites({ ...s, surfaces: [tri] }, s.world!, frame, 't')).toHaveLength(2);
+    expect(dripSites(s, s.world!, frame, 'nothing')).toEqual([]);
   });
 });

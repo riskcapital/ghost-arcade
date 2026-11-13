@@ -181,8 +181,8 @@ function touchInputs(raw:unknown):{data:Float32Array;count:number}{
  const data=new Float32Array(8*4),list=Array.isArray(raw)?raw.slice(0,8):[];
  list.forEach((p:any,i:number)=>{
   if(!Number.isFinite(p?.point?.x)||!Number.isFinite(p?.point?.y))return;
-  // Throw only acts on the 3D world's balls; Push stirs the 2D effects.
-  data.set([Math.max(0,Math.min(1,p.point.x)),Math.max(0,Math.min(1,p.point.y)),p.mode==='throw'?0:Math.max(0,Math.min(1,Number(p.strength)||0)),p.mode==='repel'?1:p.mode==='vortex'||p.mode==='push'?2:0],i*4);
+  // Throw and Pour only act on the 3D world; Push stirs the 2D effects.
+  data.set([Math.max(0,Math.min(1,p.point.x)),Math.max(0,Math.min(1,p.point.y)),p.mode==='throw'||p.mode==='pour'?0:Math.max(0,Math.min(1,Number(p.strength)||0)),p.mode==='repel'?1:p.mode==='vortex'||p.mode==='push'?2:0],i*4);
  });
  return {data,count:list.length};
 }

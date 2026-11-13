@@ -7,7 +7,7 @@ import { makeEffect } from '../mobile/studio/interactiveEffects';
 import { blockDepth, reliefFrame, reliefSolids, unproject } from '../scene3d/relief';
 import { defaultReliefWorld } from '../scene3d/worldModel';
 import { buildWorldPart } from './scene3dWorld';
-import { BALL_FLOATS, scene3dWorldPrecompileCommands } from './scene3dWorldShaders';
+import { BALL_FLOATS, DRIP_FLOATS, scene3dWorldPrecompileCommands } from './scene3dWorldShaders';
 import { scene3dPrecompileCommands } from './scene3dShaders';
 
 /**
@@ -125,6 +125,73 @@ suite('Relief world balls on the GPU', () => {
       expect(ball[3], `thrown ball in play: ${[...ball]}`).toBeGreaterThan(0);
       expect(ball[0] / k, `under the finger: ${[...ball]} want ${JSON.stringify(want)}`).toBeCloseTo(want.x, 1);
       expect(ball[1] / k, `under the finger: ${[...ball]} want ${JSON.stringify(want)}`).toBeCloseTo(want.y, 1);
+    } finally {
+      await rpc.close();
+    }
+  }, 120000);
+
+  it('runs paint down the front of a block, off its bottom edge onto the floor, and pours where a finger pours', async () => {
+    const rpc = core();
+    try {
+      await rpc.send('start', { config: { backend: platform.rendererBackend, width: W, height: H, target_fps: 60 } });
+      await rpc.send('submit_commands', { commands: [...scene3dPrecompileCommands(), ...scene3dWorldPrecompileCommands()] });
+      const paint = { ...makeEffect('drips', 'tall', false) };
+      paint.params = { ...paint.params, flow: 0.9, viscosity: 0, stick: 1, lifetime: 40, amount: 600, size: 0.4 };
+      const s: InteractiveScene = {
+        ...defaultInteractive(),
+        surfaces: [{ id: 'tall', name: 'Tall', behavior: 'solid', height: 0.3, points: [{ x: 0.4, y: 0.3 }, { x: 0.6, y: 0.3 }, { x: 0.6, y: 0.7 }, { x: 0.4, y: 0.7 }] }],
+        effects: [paint],
+        world: defaultReliefWorld(),
+      };
+      const world = s.world!;
+      const step = async (n: number, pourAt?: { x: number; y: number }, read = false) => {
+        const part = buildWorldPart({
+          scene: s, world, sourceId: 'drips-test', width: W, height: H,
+          input: pourAt ? { pointers: [{ point: pourAt, velocity: { x: 0, y: 0 }, tool: 'pour', strength: 1 }], throws: [] } : undefined,
+        });
+        const buffers = part.buffers.map((b) => (b.id.endsWith(':scene3d:frame') ? { ...b, initial_b64: frameBlock(n) } : b));
+        const drips = part.buffers.find((b) => b.id.endsWith(':drips'))!.id;
+        const result = await rpc.send('compute_graph', {
+          buffers, passes: part.passes, render_passes: [], textures: [],
+          readbacks: read ? [{ id: drips, include_bytes: true }] : [],
+        });
+        if (!read) return null;
+        const bytes = Buffer.from(result.readbacks[drips].bytes_b64, 'base64');
+        return new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
+      };
+      for (let n = 1; n < 360; n++) await step(n);
+      const state = (await step(360, undefined, true))!;
+      const frame = reliefFrame(W / H, world.lens);
+      const d = blockDepth(reliefSolids(s)[0], world, frame);
+      const top = unproject(frame, { x: 0.5, y: 0.3 }, d).y, bottom = unproject(frame, { x: 0.5, y: 0.7 }, d).y;
+      const floor = -frame.H / 2;
+      const drops: { x: number; y: number; z: number; r: number; state: number }[] = [];
+      let nan = 0;
+      for (let i = 0; i < state.length / DRIP_FLOATS; i++) {
+        const q = state.subarray(i * DRIP_FLOATS, i * DRIP_FLOATS + DRIP_FLOATS);
+        if (![...q].every(Number.isFinite)) { nan++; continue; }
+        if (q[3] > 0) drops.push({ x: q[0], y: q[1], z: q[2], r: q[3], state: q[10] });
+      }
+      const onFront = drops.filter((q) => q.state === 2 && Math.abs(q.z - d) < q.r * 1.5 && q.y < top - 0.05 && q.y > bottom);
+      const onFloor = drops.filter((q) => q.y < floor + q.r * 3 && q.z > 0.02);
+      const inside = drops.filter((q) => q.z < d - 0.03 && q.y < top - 0.03 && q.y > bottom + 0.03 && Math.abs(q.x) < unproject(frame, { x: 0.6, y: 0.5 }, d).x - 0.03);
+      const report = JSON.stringify({ drops: drops.length, nan, onFront: onFront.length, onFloor: onFloor.length, inside: inside.length, sample: drops.slice(0, 3) });
+      expect(nan, report).toBe(0);
+      expect(onFront.length, report).toBeGreaterThan(10);
+      expect(onFloor.length, report).toBeGreaterThan(5);
+      expect(inside.length, report).toBe(0);
+
+      // Pour on the bare wall, away from the block: drops start there.
+      for (let n = 361; n < 366; n++) await step(n, { x: 0.15, y: 0.25 });
+      const poured = (await step(366, { x: 0.15, y: 0.25 }, true))!;
+      const want = unproject(frame, { x: 0.15, y: 0.25 }, 0);
+      let near = 0;
+      for (let i = 0; i < 4096; i++) {
+        const q = poured.subarray(i * DRIP_FLOATS, i * DRIP_FLOATS + DRIP_FLOATS);
+        // On the wall, running down it, not falling in front of it.
+        if (q[3] > 0 && Math.hypot(q[0] - want.x, q[1] - want.y) < 0.4 && q[10] === 2 && q[2] < 0.15) near++;
+      }
+      expect(near, 'drops poured onto the wall under the finger').toBeGreaterThanOrEqual(12);
     } finally {
       await rpc.close();
     }

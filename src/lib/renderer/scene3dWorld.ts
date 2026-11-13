@@ -37,6 +37,9 @@ import {
   BALL_PARAM_KEYS,
   BALL_PHYS_FLOATS,
   BALL_SUBSTEPS,
+  DRIP_FLOATS,
+  DRIP_KIND_FLOATS,
+  DRIP_PARAM_KEYS,
 } from './scene3dWorldShaders';
 
 /** Brightness of the projected 2D picture on the relief. */
@@ -45,6 +48,12 @@ export const RELIEF_PROJECTOR_GAIN = 2.5;
 export const THROWN_BALLS = 64;
 export const MAX_BALLS_PER_EFFECT = 256;
 const MAX_BALLS = 1024;
+/** Drop slots for pouring, and the most for all Paint Drips effects together. */
+export const POURED_DRIPS = 4096;
+export const MAX_DRIPS_PER_EFFECT = 8192;
+const MAX_DRIPS = 12288;
+/** How long poured paint stays wet, in seconds. */
+const GLOSS_SECONDS = 3;
 
 export type WorldPart = {
   textures: object[];
@@ -102,12 +111,12 @@ export function ballLayout(scene: InteractiveScene): BallLayout {
 
 const EMISSIONS = ['continuous', 'pulse', 'burst'] as const;
 
-/** One kind's params and their modulation, as the shader's `param()` reads them. */
-function writeKind(out: Float32Array, at: number, effect: InteractiveEffect | undefined, slots: [number, number, number, number], emit: [number, number, number, number], overrides: Record<string, number> = {}): void {
+/** One kind's params and their modulation, as the shaders' `param()` and `dparam()` read them. */
+function writeKind(out: Float32Array, at: number, kind: 'balls3d' | 'drips', effect: InteractiveEffect | undefined, slots: [number, number, number, number], emit: [number, number, number, number], overrides: Record<string, number> = {}): void {
   out.set(slots, at);
   out.set(emit, at + 4);
-  const defs = effectParams('balls3d');
-  BALL_PARAM_KEYS.forEach((key, i) => {
+  const defs = effectParams(kind);
+  (kind === 'balls3d' ? BALL_PARAM_KEYS : DRIP_PARAM_KEYS).forEach((key, i) => {
     const d = defs[i];
     out[at + 8 + i] = overrides[key] ?? effect?.params[key] ?? d.value;
     const mod = overrides[key] === undefined ? effect?.mods[key] : undefined;
@@ -136,11 +145,11 @@ export function ballKinds(scene: InteractiveScene, world: ReliefWorld, frame: Re
   const kinds = new Float32Array((1 + layout.effects.length) * BALL_KIND_FLOATS);
   // Kind 0: thrown balls, in the first effect's style.
   const first = layout.effects.find((e) => e.enabled) ?? layout.effects[0];
-  writeKind(kinds, 0, first, [0, THROWN_BALLS, 3, 0], [0, 0, 0, 1]);
+  writeKind(kinds, 0, 'balls3d', first, [0, THROWN_BALLS, 3, 0], [0, 0, 0, 1]);
   layout.effects.forEach((e, i) => {
     const from = e.target !== 'point' ? blockEmitter(scene, world, frame, e) : null;
     writeKind(
-      kinds, (i + 1) * BALL_KIND_FLOATS, e,
+      kinds, (i + 1) * BALL_KIND_FLOATS, 'balls3d', e,
       [THROWN_BALLS + i * layout.perEffect, layout.perEffect, EMISSIONS.indexOf(e.emission), e.burst],
       [from ? 1 : 0, from?.depth ?? 0, 0, e.enabled ? 1 : 0],
       from?.params,
@@ -163,17 +172,74 @@ export function ballBlocks(scene: InteractiveScene, world: ReliefWorld, frame: R
   return blocks;
 }
 
-export function ballPhysics(scene: InteractiveScene, world: ReliefWorld, frame: ReliefFrame, layout: BallLayout): Float32Array {
+// ── Paint drips ───────────────────────────────────────────────────────────
+
+export type DripLayout = { effects: InteractiveEffect[]; perEffect: number; count: number };
+
+export function dripLayout(scene: InteractiveScene): DripLayout {
+  const effects = (scene.effects ?? []).filter((e) => e.kind === 'drips');
+  const perEffect = effects.length ? Math.min(MAX_DRIPS_PER_EFFECT, Math.floor(MAX_DRIPS / effects.length)) : 0;
+  return { effects, perEffect, count: POURED_DRIPS + perEffect * effects.length };
+}
+
+/**
+ * Where a block drips from: its upper edges (those that face up, as seen on
+ * the output), on its front face. At most 16.
+ */
+export function dripSites(scene: InteractiveScene, world: ReliefWorld, frame: ReliefFrame, surfaceId: string): { a: { x: number; y: number }; b: { x: number; y: number }; z: number }[] {
+  const s = reliefSolids(scene).find((x) => x.id === surfaceId);
+  if (!s) return [];
+  const z = blockDepth(s, world, frame);
+  const pts = s.points.map((p) => unproject(frame, p, z));
+  let area = 0;
+  pts.forEach((a, i) => { const b = pts[(i + 1) % pts.length]; area += a.x * b.y - b.x * a.y; });
+  const sites: { a: { x: number; y: number }; b: { x: number; y: number }; z: number }[] = [];
+  pts.forEach((a, i) => {
+    const b = pts[(i + 1) % pts.length];
+    const ex = b.x - a.x, ey = b.y - a.y, len = Math.hypot(ex, ey);
+    if (len < 1e-6) return;
+    // Outward: to the right of each edge when the outline runs counterclockwise.
+    const ny = (area > 0 ? -ex : ex) / len;
+    if (ny > 0.35) sites.push({ a, b, z });
+  });
+  return sites.slice(0, 16);
+}
+
+export function dripKinds(scene: InteractiveScene, world: ReliefWorld, frame: ReliefFrame, layout: DripLayout): Float32Array {
+  const kinds = new Float32Array((1 + layout.effects.length) * DRIP_KIND_FLOATS);
+  // Kind 0: poured paint, in the first effect's style.
+  const first = layout.effects.find((e) => e.enabled) ?? layout.effects[0];
+  writeKind(kinds, 0, 'drips', first, [0, POURED_DRIPS, 3, 0], [0, 0, 0, 1]);
+  layout.effects.forEach((e, i) => {
+    const at = (i + 1) * DRIP_KIND_FLOATS;
+    const sites = e.target !== 'point' ? dripSites(scene, world, frame, e.target) : [];
+    writeKind(kinds, at, 'drips', e, [POURED_DRIPS + i * layout.perEffect, layout.perEffect, EMISSIONS.indexOf(e.emission), e.burst], [sites.length, 0, 0, e.enabled ? 1 : 0]);
+    sites.forEach((site, j) => {
+      kinds.set([site.a.x, site.a.y, site.b.x, site.b.y], at + 188 + j * 4);
+      kinds[at + 252 + j] = site.z;
+    });
+  });
+  return kinds;
+}
+
+/** The size of the wet map: the output's shape, 640 wide or high. */
+export function wetSize(aspect: number): { width: number; height: number } {
+  return aspect >= 1 ? { width: 640, height: Math.max(8, Math.round(640 / aspect)) } : { width: Math.max(8, Math.round(640 * aspect)), height: 640 };
+}
+
+export function worldPhysics(scene: InteractiveScene, world: ReliefWorld, frame: ReliefFrame, balls: BallLayout, drips: DripLayout): Float32Array {
   const pane = world.frontPane ? frontPaneDepth(scene, world, frame) : 0;
+  const paint = drips.effects.find((e) => e.enabled) ?? drips.effects[0];
   return new Float32Array([
     frame.W, frame.H, frame.camZ, 9.8 * world.gravity,
     pane, world.floor ? -frame.H / 2 : -1e9, Math.max(0.5, deepestBlock(scene, world, frame)), world.floor ? floorDepth(scene, world, frame) : 0,
-    layout.count, 1 + layout.effects.length, reliefSolids(scene).length, BALL_SUBSTEPS,
+    balls.count, 1 + balls.effects.length, reliefSolids(scene).length, BALL_SUBSTEPS,
     -frame.H / 2 - 3, frame.W / 2 + 1, frame.camZ * 0.8, 0,
+    drips.count, 1 + drips.effects.length, paint?.params.dry ?? effectParams('drips').find((d) => d.key === 'dry')!.value, GLOSS_SECONDS,
   ]);
 }
 
-const TOOL_CODES = { push: 1, attract: 2, repel: 3, vortex: 4 } as const;
+const TOOL_CODES = { push: 1, attract: 2, repel: 3, vortex: 4, pour: 5 } as const;
 const MAX_THROW_SPEED = 14;
 
 /**
@@ -234,19 +300,24 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
   const textures = [...graph.config.textures];
   if (flatTexture) textures.unshift({ id: flatTexture, ...flatSize(width, height), format: 'rgba16float' });
 
-  // Balls: their state, the kinds, the blocks they hit and this frame's touches.
+  // Balls and drops: their state, their kinds, the blocks they hit and this frame's touches.
   const layout = ballLayout(scene);
+  const paint = dripLayout(scene);
   const value = (name: string, kind: 'uniform' | 'storage', data: Float32Array) => ({ id: id(name), kind, byte_length: data.byteLength, initial_b64: b64(data) });
   const ballValues = [
-    value('ball-phys', 'uniform', ballPhysics(scene, world, frame, layout)),
+    value('ball-phys', 'uniform', worldPhysics(scene, world, frame, layout, paint)),
     value('ball-kinds', 'storage', ballKinds(scene, world, frame, layout)),
     value('ball-blocks', 'storage', ballBlocks(scene, world, frame)),
     value('ball-input', 'uniform', ballInput(scene, world, frame, aspect, layout, options.input)),
+    value('drip-kinds', 'storage', dripKinds(scene, world, frame, paint)),
   ];
   const ballBytes = layout.count * BALL_FLOATS * 4;
+  const wet = wetSize(aspect);
+  textures.push({ id: id('wet-stain'), ...wet, format: 'rgba16float' }, { id: id('wet-gloss'), ...wet, format: 'rgba16float' });
   const buffers = [
     ...graph.config.buffers,
     ...ballValues,
+    { id: id('drips'), kind: 'storage', byte_length: paint.count * DRIP_FLOATS * 4, persistent: true },
     { id: id('balls'), kind: 'storage', byte_length: ballBytes, persistent: true },
     { id: id('balls-prev'), kind: 'storage', byte_length: ballBytes, persistent: true },
   ];
@@ -261,6 +332,13 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
   const sim = (name: string, entry: string) => ({ name, shader_id: 'scene3d/balls', entry, dispatch: groups, bindings: simBindings });
   const passes = [...graph.config.passes, sim('balls-life', 'cs_balls_life')];
   for (let i = 0; i < BALL_SUBSTEPS; i++) passes.push(sim(`balls-copy-${i}`, 'cs_balls_copy'), sim(`balls-step-${i}`, 'cs_balls_step'));
+  passes.push({
+    name: 'drips', shader_id: 'scene3d/drips', entry: 'cs_drips', dispatch: [Math.ceil(paint.count / 64), 1, 1],
+    bindings: [
+      { binding: 1, resource: frameBuffer.id, kind: 'uniform' }, b(2, 'view', 'read-only-storage'), b(16, 'ball-blocks', 'read-only-storage'),
+      b(17, 'ball-phys', 'uniform'), b(18, 'ball-input', 'uniform'), b(21, 'drips', 'storage'), b(22, 'drip-kinds', 'read-only-storage'),
+    ],
+  });
 
   const drawBindings = [
     b(0, 'settings', 'uniform'), { binding: 1, resource: frameBuffer.id, kind: 'uniform' }, b(2, 'view', 'read-only-storage'),
@@ -274,11 +352,48 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
     // Not the shadow map itself: it is what this pass draws into.
     target: 'texture', texture: id('shadow'), depth_load: true, vertex_count: 36, instance_count: layout.count, bindings: drawBindings.filter((x) => x.binding !== 5),
   });
+  // The wet map: both pictures fade, then the drops on surfaces paint into them.
+  const dripBindings = [
+    b(0, 'settings', 'uniform'), { binding: 1, resource: frameBuffer.id, kind: 'uniform' }, b(2, 'view', 'read-only-storage'),
+    b(16, 'ball-blocks', 'read-only-storage'), b(17, 'ball-phys', 'uniform'), b(21, 'drips', 'read-only-storage'), b(22, 'drip-kinds', 'read-only-storage'),
+  ];
+  const wetPass = (name: string, texture: string, vertex: string, fragment: string, blend: string, vertices: number, instances: number) => ({
+    name, shader_id: 'scene3d/drips-draw', vertex_entry: vertex, fragment_entry: fragment, target: 'texture', texture: id(texture),
+    clear: false, blend, vertex_count: vertices, instance_count: instances, bindings: dripBindings,
+  });
+  const opaqueAt = renders.findIndex((r) => r.name === 'opaque');
+  renders.splice(opaqueAt, 0,
+    wetPass('wet-fade', 'wet-stain', 'vs_full', 'fs_fade_stain', 'alpha', 3, 1) as { name: string },
+    wetPass('gloss-fade', 'wet-gloss', 'vs_full', 'fs_fade_gloss', 'alpha', 3, 1) as { name: string },
+    wetPass('wet-splat', 'wet-stain', 'vs_splat', 'fs_splat_stain', 'alpha', 6, paint.count) as { name: string },
+    wetPass('gloss-splat', 'wet-gloss', 'vs_splat', 'fs_splat_gloss', 'add', 6, paint.count) as { name: string },
+  );
+  // The world's surfaces show the paint.
+  const opaque = renders.find((r) => r.name === 'opaque') as { name: string; shader_id: string; fragment_entry: string; bindings: { binding: number }[] };
+  opaque.shader_id = 'scene3d/relief';
+  opaque.fragment_entry = flatTexture ? 'fs_relief_wet' : 'fs_wet';
+  opaque.bindings = [
+    ...opaque.bindings.filter((x) => x.binding !== 12),
+    { binding: 12, kind: 'source-frame-sampler' } as { binding: number },
+    { binding: 19, kind: 'graph-texture', texture: id('wet-stain') } as { binding: number },
+    { binding: 20, kind: 'graph-texture', texture: id('wet-gloss') } as { binding: number },
+  ];
   after('opaque', {
     name: 'balls', shader_id: 'scene3d/balls-draw', vertex_entry: 'vs_ball', fragment_entry: flatTexture ? 'fs_ball_relief' : 'fs_ball',
     target: 'texture', texture: id('hdr'), clear: false, depth: true, depth_write: true, depth_load: true, depth_texture: id('depth'),
     vertex_count: 6, instance_count: layout.count,
     bindings: flatTexture ? [...drawBindings, { binding: 11, kind: 'graph-texture', texture: flatTexture }, { binding: 12, kind: 'source-frame-sampler' }] : drawBindings,
+  });
+  const dripDraw = [
+    b(0, 'settings', 'uniform'), { binding: 1, resource: frameBuffer.id, kind: 'uniform' }, b(2, 'view', 'read-only-storage'),
+    { binding: 5, kind: 'graph-depth-texture', texture: id('shadow') }, b(9, 'lights', 'read-only-storage'),
+    b(17, 'ball-phys', 'uniform'), b(21, 'drips', 'read-only-storage'), b(22, 'drip-kinds', 'read-only-storage'),
+  ];
+  after('balls', {
+    name: 'drips', shader_id: 'scene3d/drips-draw', vertex_entry: 'vs_drip', fragment_entry: flatTexture ? 'fs_drip_relief' : 'fs_drip',
+    target: 'texture', texture: id('hdr'), clear: false, depth: true, depth_write: true, depth_load: true, depth_texture: id('depth'),
+    vertex_count: 6, instance_count: paint.count,
+    bindings: flatTexture ? [...dripDraw, { binding: 11, kind: 'graph-texture', texture: flatTexture }, { binding: 12, kind: 'source-frame-sampler' }] : dripDraw,
   });
 
   return {
@@ -287,7 +402,7 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
     passes,
     render_passes: renders,
     values: [...graph.values, ...ballValues.map(({ id, initial_b64 }) => ({ id, initial_b64 }))].map((v) => ({ ...v, key: v.initial_b64 })),
-    topology: `${world.flat}|${flatTexture ? JSON.stringify(flatSize(width, height)) : ''}|balls:${layout.count}:${layout.effects.length}|${graph.topology}`,
+    topology: `${world.flat}|${flatTexture ? JSON.stringify(flatSize(width, height)) : ''}|balls:${layout.count}:${layout.effects.length}|drips:${paint.count}:${paint.effects.length}:${JSON.stringify(wet)}|${graph.topology}`,
     flatTexture,
   };
 }

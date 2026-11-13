@@ -6,14 +6,14 @@ import type {ParamModulation} from '../../audio/modulationControls';
 /** Styles drawn on the flat picture (the 2D effects). */
 export type FlatEffectKind = InteractiveScene['preset'];
 /** Elements of the 3D world: they only play while the scene's world is on. */
-export const WORLD_EFFECT_KINDS = ['balls3d'] as const;
+export const WORLD_EFFECT_KINDS = ['balls3d', 'drips'] as const;
 export type WorldEffectKind = (typeof WORLD_EFFECT_KINDS)[number];
 export type EffectKind = FlatEffectKind | WorldEffectKind;
 export const isWorldEffect = (kind: EffectKind): kind is WorldEffectKind => (WORLD_EFFECT_KINDS as readonly string[]).includes(kind);
 export type InteractiveEffect = {id:string;kind:EffectKind;name:string;enabled:boolean;target:string;emission:'continuous'|'pulse'|'burst';burst:number;params:Record<string,number>;mods:Record<string,ParamModulation>;paramAuto?:Record<string,AutoConfig>};
 export type EffectParam = {key:string;label:string;min:number;max:number;step:number;value:number;slot?:number;group?:string};
 const p=(key:string,label:string,min:number,max:number,value:number,slot?:number,group='Look'):EffectParam=>({key,label,min,max,value,slot,group,step:max>20?1:.01});
-export const EFFECT_NAMES:Record<EffectKind,string>={architecture:'Living Architecture',garden:'Gravity Garden',walls:'Contour Waves',ribbons:'Silk Flow',orbit:'Orbital Bloom',electric:'Neural Web',light:'Volumetric Light',balls:'Kinetic Balls',smoke:'Rising Smoke',cloud:'Point Swarm',liquid:'Liquid',fire:'Fire',balls3d:'Bouncing Balls'};
+export const EFFECT_NAMES:Record<EffectKind,string>={architecture:'Living Architecture',garden:'Gravity Garden',walls:'Contour Waves',ribbons:'Silk Flow',orbit:'Orbital Bloom',electric:'Neural Web',light:'Volumetric Light',balls:'Kinetic Balls',smoke:'Rising Smoke',cloud:'Point Swarm',liquid:'Liquid',fire:'Fire',balls3d:'Bouncing Balls',drips:'Paint Drips'};
 export const EFFECT_KINDS=Object.keys(EFFECT_NAMES) as EffectKind[];
 /** What Add effect offers. Liquid is withdrawn (it does not look good enough yet); scenes that already use it still play. */
 export const OFFERED_EFFECT_KINDS=EFFECT_KINDS.filter((kind):kind is FlatEffectKind=>kind!=='liquid'&&!isWorldEffect(kind));
@@ -26,6 +26,11 @@ export function effectParams(kind:EffectKind):EffectParam[]{
   p('hue','Color',0,360,205),p('variety','Variety',0,1,.6),p('shine','Shine',0,1,.8),p('glow','Glow',0,1,.2),p('clear','Glass',0,1,.25),
   p('x','Emitter X',0,1,.5,undefined,'Emitter'),p('y','Emitter Y',0,1,.03,undefined,'Emitter'),p('radius','Emitter width',.005,.5,.32,undefined,'Emitter'),p('speed','Launch speed',0,1,.08,undefined,'Emitter'),p('direction','Direction',-180,180,90,undefined,'Emitter'),p('flow','Flow rate',0,1,.55,undefined,'Emitter'),p('period','Pulse interval (s)',.2,12,2,undefined,'Emitter'),p('duration','Burst duration (s)',.05,4,.4,undefined,'Emitter'),
   p('size','Ball size',0,1,.3,undefined,'Physics'),p('bounce','Bounce',0,1,.6,undefined,'Physics'),p('friction','Friction',0,1,.25,undefined,'Physics'),p('lifetime','Lifetime (s)',1,40,14,undefined,'Physics'),p('amount','Most balls',8,256,110,undefined,'Physics'),
+ ];
+ if(kind==='drips')return [
+  p('hue','Color',0,360,318),p('variety','Variety',0,1,.3),p('size','Drop size',0,1,.25),p('gloss','Gloss',0,1,.8),p('glow','Glow',0,1,0),
+  p('x','Emitter X',0,1,.5,undefined,'Emitter'),p('y','Emitter Y',0,1,.04,undefined,'Emitter'),p('radius','Emitter width',.005,.5,.3,undefined,'Emitter'),p('flow','Flow rate',0,1,.4,undefined,'Emitter'),p('period','Pulse interval (s)',.2,12,2,undefined,'Emitter'),p('duration','Burst duration (s)',.05,4,.4,undefined,'Emitter'),
+  p('viscosity','Viscosity',0,1,.5,undefined,'Paint'),p('stick','Stickiness',0,1,.7,undefined,'Paint'),p('lifetime','Lifetime (s)',1,40,12,undefined,'Paint'),p('dry','Stain fades (s)',1,90,20,undefined,'Paint'),p('amount','Most drops',64,8192,700,undefined,'Paint'),
  ];
  const look=[p('opacity','Opacity',0,1,1,25),p('hue','Color',0,360,kind==='fire'?22:kind==='liquid'?195:185,24)];
  if(kind==='light')return [...look,p('lightX','Position X',0,1,.25,0,'Position'),p('lightY','Position Y',0,1,.15,1,'Position'),p('lightHeight','Depth',.05,1,.7,2,'Position'),p('targetX','Aim X',0,1,.55,32,'Beam'),p('targetY','Aim Y',0,1,.75,33,'Beam'),p('spread','Beam spread',5,175,80,34,'Beam'),p('softness','Softness',0,1,.35,35,'Beam'),p('lightPower','Intensity',0,3,1.5,3),p('haze','Haze',0,1,.55,4),p('shadow','Shadow strength',0,1,1,36),p('falloff','Falloff',0,6,2,37),p('ambient','Ambient fill',0,1,.05,38),p('turbulence','Haze texture',0,2,.45,26)];
@@ -77,6 +82,7 @@ const SOUND_DEFAULTS:Record<EffectKind,{key:string;source:ParamModulation['sourc
  liquid:[{key:'flow',source:'bass',quiet:.5,loud:1}],
  fire:[{key:'flow',source:'bass',quiet:.5,loud:1},{key:'heat',source:'amplitude',quiet:.9,loud:1.8}],
  balls3d:[{key:'flow',source:'kick',quiet:.35,loud:1},{key:'glow',source:'bass',quiet:.1,loud:.7}],
+ drips:[{key:'flow',source:'bass',quiet:.25,loud:.7}],
 };
 export function soundDefaults(kind:EffectKind):Record<string,ParamModulation>{
  const defs=effectParams(kind),mods:Record<string,ParamModulation>={};

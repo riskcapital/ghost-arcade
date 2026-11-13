@@ -4,7 +4,8 @@
  *
  * Throw: a press throws a ball under the finger at once, and holding keeps
  * throwing one every THROW_EVERY seconds, each carrying the finger's speed,
- * so a flick flings it. Push sweeps balls along with the finger. Attract,
+ * so a flick flings it. Push sweeps balls along with the finger. Pour pours
+ * paint where the finger is, which runs down what it lands on. Attract,
  * Repel and Vortex pull, push away and swirl, as they do the 2D effects.
  *
  * Everything here is in output space (0..1, y down); the graph turns points
@@ -16,7 +17,7 @@
  */
 import type { Interaction, Point } from '../mobile/studio/interactive';
 
-export const WORLD_TOOLS = ['push', 'attract', 'repel', 'vortex'] as const;
+export const WORLD_TOOLS = ['push', 'attract', 'repel', 'vortex', 'pour'] as const;
 export type WorldForceTool = (typeof WORLD_TOOLS)[number];
 /** The most points and listed throws the GPU reads. */
 export const MAX_WORLD_POINTERS = 8;
@@ -69,7 +70,7 @@ export class WorldInput {
         }
         continue;
       }
-      const tool: WorldForceTool = p.mode === 'push' || p.mode === 'repel' || p.mode === 'vortex' ? p.mode : 'attract';
+      const tool: WorldForceTool = p.mode === 'push' || p.mode === 'repel' || p.mode === 'vortex' || p.mode === 'pour' ? p.mode : 'attract';
       if (pointers.length < MAX_WORLD_POINTERS) {
         pointers.push({ point, velocity: { ...h.velocity }, tool, strength: Math.max(0, Math.min(1, Number(p.strength) || 0)) });
       }
