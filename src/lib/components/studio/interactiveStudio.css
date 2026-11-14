@@ -50,21 +50,31 @@
 }
 .interactive-workspace .starter-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  grid-template-columns: 1fr;
 }
+/* A plain list: icon, name, one line of description. No card chrome. */
 .interactive-workspace .starter {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  column-gap: 12px;
+  row-gap: 2px;
+  align-items: start;
   text-align: left;
-  gap: 7px;
-  padding: 13px !important;
-  border-top: 2px solid var(--starter-color) !important;
+  padding: 10px 6px !important;
   min-width: 0;
+  border: 0 !important;
+  border-bottom: 1px solid var(--ga-line-1, #24272d) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.interactive-workspace .starter:hover {
+  background: var(--ga-hover, #ffffff0a) !important;
 }
 .interactive-workspace .starter svg {
-  color: var(--starter-color);
+  grid-row: span 2;
+  margin-top: 1px;
+  color: var(--ga-ink-2);
 }
 .interactive-workspace .starter strong {
   font-size: var(--ga-text-body, 13px);

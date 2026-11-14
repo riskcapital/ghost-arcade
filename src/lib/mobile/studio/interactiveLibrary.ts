@@ -165,6 +165,44 @@ export function starterScene(id: InteractiveStarter): InteractiveScene {
   return validateScene(scene);
 }
 
+// ── The scene a new Interactive layer opens with ──────────────────────────
+
+/** A circle as an outline of `n` points. */
+const ring = (cx: number, cy: number, r: number, aspect = 16 / 9, n = 20): Pt[] =>
+  Array.from({ length: n }, (_, i) => ({ x: cx + (Math.cos((i / n) * Math.PI * 2) * r) / aspect, y: cy + Math.sin((i / n) * Math.PI * 2) * r }));
+
+/**
+ * The first thing a new Interactive layer shows: a monolith on fire, light
+ * raking through haze past it, and a swarm of points pulled into a vortex
+ * that swallows them. Everything follows the music, and touches stir it.
+ */
+export function introScene(): InteractiveScene {
+  const scene = defaultInteractive();
+  scene.name = 'Gravity well';
+  scene.surfaces = [
+    {
+      id: 'monolith', name: 'Monolith', behavior: 'solid', height: 0.45, points: box(0.2, 0.3, 0.32, 0.9),
+      look: { fill: 'contours', brightness: 0.3, scale: 0.6, speed: 0.25, outline: 0.55, hue: 24 },
+    },
+    {
+      id: 'vortex', name: 'Vortex', behavior: 'attractor', points: ring(0.68, 0.46, 0.13),
+      look: { fill: 'spiral', brightness: 0.35, scale: 0.55, speed: 0.7, outline: 0.45, hue: 200 },
+    },
+  ];
+  const effect = (kind: EffectKind, params: Record<string, number> = {}, target = 'point') => {
+    const e = makeEffect(kind, target);
+    Object.assign(e.params, params);
+    return e;
+  };
+  scene.effects = [
+    // A stream of points from the lower left that the vortex draws in.
+    effect('cloud', { x: 0.42, y: 0.92, radius: 0.08, direction: -45, speed: 0.45, flow: 0.85, lifetime: 9, size: 0.4, turbulence: 0.6, hue: 195 }),
+    // A torch on top of the monolith.
+    effect('fire', { x: 0.26, y: 0.29, radius: 0.035, direction: -90, flow: 0.8, heat: 1.6, hue: 22 }),
+  ];
+  return validateScene(scene);
+}
+
 // ── Starters in the 3D world ──────────────────────────────────────────────
 
 type Pt = { x: number; y: number };
