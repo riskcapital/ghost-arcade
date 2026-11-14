@@ -121,8 +121,18 @@ export interface SongAnalysisOptions {
   targetSection?: number;
 }
 
-/** Samples per analysis frame at 44.1/48 kHz: about 10 ms. */
-const HOP = 512;
+/**
+ * Seconds per analysis frame, whatever the song's sample rate: ~23 ms (512
+ * samples at 22.05 kHz, the rate the analysis is tuned and tested at). It
+ * used to be 512 samples at every rate, so the same song was analysed at
+ * 43, 86 or 94 frames a second and could read another tempo at each (a
+ * 128 BPM song read as 102.4 at 44.1 kHz).
+ */
+export const ANALYSIS_STEP = 512 / 22050;
+/** Samples per analysis frame at `sampleRate`. */
+export function analysisHop(sampleRate: number): number {
+  return Math.max(16, Math.round(sampleRate * ANALYSIS_STEP));
+}
 const MIN_BPM = 70;
 const MAX_BPM = 180;
 /** Seconds per feature block for the section search. */
@@ -158,6 +168,7 @@ export interface Envelope {
 export class SongEnvelopeBuilder {
   readonly frames: number;
   private readonly sampleRate: number;
+  private readonly hop: number;
   private readonly bands: [Float32Array, Float32Array, Float32Array];
   private readonly onset: Float32Array;
   private readonly lowJump: Float32Array;
@@ -173,9 +184,11 @@ export class SongEnvelopeBuilder {
   private eMid = 0;
   private eHigh = 0;
 
-  /** `length`: the song's sample count (only whole HOP frames are used). */
+  /** `length`: the song's sample count (only whole frames of analysisHop(sampleRate) samples are used). */
   constructor(length: number, sampleRate: number) {
-    const frames = Math.floor(length / HOP);
+    const hop = analysisHop(sampleRate);
+    const frames = Math.floor(length / hop);
+    this.hop = hop;
     this.frames = frames;
     this.sampleRate = sampleRate;
     this.bands = [new Float32Array(frames), new Float32Array(frames), new Float32Array(frames)];
@@ -188,13 +201,13 @@ export class SongEnvelopeBuilder {
 
   /** The next samples of the song, in order. */
   push(samples: Float32Array): void {
-    const { frames, lowCoef, highCoef, bands, onset, lowJump, midJump } = this;
+    const { frames, lowCoef, highCoef, bands, onset, lowJump, midJump, hop } = this;
     let { low, belowHigh, f, i, eLow, eMid, eHigh } = this;
     const n = samples.length;
     let index = 0;
     while (index < n && f < frames) {
       // The rest of the frame in progress, or as much of it as is here.
-      const take = Math.min(HOP - i, n - index);
+      const take = Math.min(hop - i, n - index);
       for (let k = 0; k < take; k++, index++) {
         const x = samples[index] || 0;
         low += lowCoef * (x - low);
@@ -206,12 +219,12 @@ export class SongEnvelopeBuilder {
         eHigh += high * high;
       }
       i += take;
-      if (i < HOP) break;
-      bands[0][f] = Math.log10(1e-10 + eLow / HOP);
-      bands[1][f] = Math.log10(1e-10 + eMid / HOP);
+      if (i < hop) break;
+      bands[0][f] = Math.log10(1e-10 + eLow / hop);
+      bands[1][f] = Math.log10(1e-10 + eMid / hop);
       lowJump[f] = eLow;
       midJump[f] = eMid;
-      bands[2][f] = Math.log10(1e-10 + eHigh / HOP);
+      bands[2][f] = Math.log10(1e-10 + eHigh / hop);
       if (f > 0) {
         let rise = 0;
         for (let b = 0; b < 3; b++) rise += Math.max(0, bands[b][f] - bands[b][f - 1]);
@@ -245,7 +258,7 @@ export class SongEnvelopeBuilder {
       midJump[f] *= midScale;
       beatOnset[f] = lowJump[f] + midJump[f];
     }
-    return { onset: this.onset, beatOnset, lowOnset: lowJump, midOnset: midJump, bands: this.bands, frameRate: this.sampleRate / HOP };
+    return { onset: this.onset, beatOnset, lowOnset: lowJump, midOnset: midJump, bands: this.bands, frameRate: this.sampleRate / this.hop };
   }
 }
 
@@ -405,7 +418,29 @@ function checkTempo(env: Envelope, period: number): number {
     const grid = fitted(period * factor);
     if (backbeat(env, grid.period, grid.phase) !== null) return grid.period;
   }
+  // No backbeat: a kick on every beat (four on the floor). Read at 2/3 or
+  // 3/4 of the tempo (a dotted figure of hats or bass taken for the beat),
+  // every other beat of the reading falls between kicks; at the tempo every
+  // beat has its kick.
+  const ownKick = steadyKick(env, own.period, own.phase);
+  if (!ownKick.even) {
+    for (const factor of [2 / 3, 3 / 4]) {
+      const bpm = bpmOf(period * factor);
+      if (bpm < CHECK_MIN_BPM || bpm > CHECK_MAX_BPM) continue;
+      const grid = fitted(period * factor);
+      const kick = steadyKick(env, grid.period, grid.phase);
+      if (kick.even && kick.strength >= 0.8 * ownKick.strength) return grid.period;
+    }
+  }
   return period;
+}
+
+/** The kicks on the grid `phase + k * period`: as strong on every beat of the bar (`even`), and how strong. */
+function steadyKick(env: Envelope, period: number, phase: number): { even: boolean; strength: number } {
+  const low = slotMeans(env.lowOnset, period, phase);
+  const strength = Math.max(...low);
+  // The low band's rise is scaled to its mean (1): a kick is many times that.
+  return { even: strength > 2 && Math.min(...low) >= 0.75 * strength, strength };
 }
 
 /**
@@ -479,7 +514,11 @@ function beatGrid(onset: Float32Array, frameRate: number, estimate: number): { b
       }
     }
   };
-  for (let k = -20; k <= 20; k++) search(estimate * (1 + k * 0.001));
+  // The estimate is a whole number of frames (the correlation peaks there),
+  // up to half a frame off the beat: ~3% at 140 BPM at ~43 frames a second.
+  // The search covers that as well as 2% either side.
+  const reach = 20 + Math.ceil(500 / Math.max(1, estimate));
+  for (let k = -reach; k <= reach; k++) search(estimate * (1 + k * 0.001));
   let fit = { period: bestPeriod, phase: bestPhase };
   for (let end = searchEnd; ; end = Math.min(n, end * 2)) {
     fit = refineGrid(onset, fit.period, fit.phase, end);
@@ -623,7 +662,7 @@ export function analyzeSong(mono: Float32Array, sampleRate: number, options: Son
 /** False for a song too short (or with no rate) to analyse: no envelope is needed then. */
 export function songIsAnalysable(length: number, sampleRate: number): boolean {
   const duration = sampleRate > 0 ? length / sampleRate : 0;
-  return duration > 0 && length >= HOP * 4;
+  return duration > 0 && length >= analysisHop(sampleRate) * 4;
 }
 
 /**

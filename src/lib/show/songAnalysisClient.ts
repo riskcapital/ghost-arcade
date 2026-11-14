@@ -9,7 +9,7 @@
 import { SongEnvelopeBuilder, analyzeSong, songIsAnalysable, type Envelope, type SongAnalysis, type SongAnalysisOptions } from './songLayout';
 import type { SongAnalysisReply, SongAnalysisRequest } from './songAnalysisProtocol';
 
-/** Samples per slice: 8 MB of float32, a whole number of analysis frames. */
+/** Samples per slice: 8 MB of float32 (a frame cut between slices carries on in the next). */
 export const SONG_ANALYSIS_CHUNK = 512 * 4096;
 /** Slices sent ahead of the worker's acknowledgements. */
 const IN_FLIGHT = 4;
