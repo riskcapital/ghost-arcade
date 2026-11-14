@@ -123,13 +123,13 @@ export async function prepareScore(opts: { shuffle?: number; signal?: AbortSigna
   let tempo = s.tempo;
   let tempoDetected = false;
   if (!tempo) {
-    const detected = await detectShowTempo(track.id, { apply: false });
+    const detected = await detectShowTempo(track.id, { apply: false, signal });
     if (signal?.aborted) return CANCELLED;
     if (!detected.ok) return { ok: false, reason: detected.reason === 'no-pulse' ? 'No steady beat found in the song: set the tempo first (Tempo in the transport).' : 'The song could not be read.' };
     tempo = detected.map;
     tempoDetected = true;
   }
-  const features: SongFeatures | null = await songFeaturesFor(track.url, async () => cachedShowAudioDecode(track.url) ?? (await decodeShowAudio(track.url)));
+  const features: SongFeatures | null = await songFeaturesFor(track.url, async () => cachedShowAudioDecode(track.url) ?? (await decodeShowAudio(track.url)), signal);
   if (signal?.aborted) return CANCELLED;
   if (!features) return { ok: false, reason: 'The song could not be read.' };
   const place = { origin: track.startTime - track.offset, start: track.startTime, end: track.startTime + track.duration };
@@ -181,7 +181,7 @@ export async function shuffleScore(opts: { signal?: AbortSignal } = {}): Promise
   const first = get(showTimeline);
   const track = scoreSongTrack(first.audioTracks);
   if (!track || !first.tempo) return { ok: false, reason: 'Score the song first.' };
-  const features = await songFeaturesFor(track.url, async () => cachedShowAudioDecode(track.url) ?? (await decodeShowAudio(track.url)));
+  const features = await songFeaturesFor(track.url, async () => cachedShowAudioDecode(track.url) ?? (await decodeShowAudio(track.url)), opts.signal);
   if (opts.signal?.aborted) return CANCELLED;
   if (!features) return { ok: false, reason: 'The song could not be read.' };
   // Read the document after the song's analysis: edits (or an undo, or the

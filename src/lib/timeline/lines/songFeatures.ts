@@ -302,7 +302,7 @@ export function sampleStem(song: SongFeatures, stem: Stem, seconds: number, smoo
 /** Analysed songs by key (the audio file's URL); a few at a time. */
 const CACHE_LIMIT = 8;
 const cache = new Map<string, SongFeatures>();
-const pending = new Map<string, Promise<SongFeatures | null>>();
+const pending = new Map<string, PendingSong>();
 let analyses = 0;
 
 /** How many analyses have run (tests prove the cache holds). */
@@ -325,37 +325,94 @@ export function putSongFeatures(key: string, features: SongFeatures): void {
   while (cache.size > CACHE_LIMIT) cache.delete(cache.keys().next().value as string);
 }
 
+/** One analysis in flight, shared by everyone waiting for it. */
+interface PendingSong {
+  job: Promise<SongFeatures | null>;
+  /** Ends the analysis: once every caller waiting on it has stopped. */
+  stop: AbortController;
+  /** Callers waiting that can stop (have a signal) and have not yet. */
+  waiting: number;
+  /** A caller without a signal waits: the analysis always runs to its end. */
+  kept: boolean;
+}
+
 /**
  * The features for `key`, analysed at most once: `load` decodes the audio
  * (mono samples + rate) and is called only on a miss.
+ *
+ * `signal`: this caller stops waiting (its promise gives null at once). The
+ * analysis itself ends only when every caller waiting for it has stopped
+ * (one without a signal never does); an analysis that ended is not cached,
+ * and the next call starts it again. What it gives is the same either way.
  */
 export function songFeaturesFor(
   key: string,
   load: () => Promise<{ mono: Float32Array; sampleRate: number } | null>,
+  signal?: AbortSignal,
 ): Promise<SongFeatures | null> {
   const hit = cachedSongFeatures(key);
   if (hit) return Promise.resolve(hit);
-  const inFlight = pending.get(key);
-  if (inFlight) return inFlight;
-  const job = (async () => {
-    try {
-      const decoded = await load();
-      if (!decoded) return null;
-      analyses++;
-      // The envelope pass walks every sample: in a worker, so a long song
-      // does not stall the page (same result as analyzeSongFeatures).
-      const features = songFeaturesFromEnvelope(await songEnvelopeOffThread(decoded.mono, decoded.sampleRate));
-      putSongFeatures(key, features);
-      return features;
-    } finally {
-      pending.delete(key);
-    }
-  })();
-  pending.set(key, job);
-  return job;
+  if (signal?.aborted) return Promise.resolve(null);
+  let entry = pending.get(key);
+  if (!entry) {
+    const stop = new AbortController();
+    const job = (async () => {
+      try {
+        const decoded = await load();
+        if (!decoded || stop.signal.aborted) return null;
+        analyses++;
+        // The envelope pass walks every sample: in a worker, so a long song
+        // does not stall the page (same result as analyzeSongFeatures).
+        const features = songFeaturesFromEnvelope(await songEnvelopeOffThread(decoded.mono, decoded.sampleRate, undefined, stop.signal));
+        putSongFeatures(key, features);
+        return features;
+      } catch (err) {
+        if (stop.signal.aborted) return null;
+        throw err;
+      } finally {
+        if (pending.get(key) === entry) pending.delete(key);
+      }
+    })();
+    entry = { job, stop, waiting: 0, kept: false };
+    pending.set(key, entry);
+  }
+  const shared = entry;
+  if (!signal) {
+    shared.kept = true;
+    return shared.job;
+  }
+  shared.waiting++;
+  return new Promise<SongFeatures | null>((resolve, reject) => {
+    let done = false;
+    const leave = () => {
+      if (done) return false;
+      done = true;
+      signal.removeEventListener('abort', onAbort);
+      shared.waiting--;
+      return true;
+    };
+    const onAbort = () => {
+      if (!leave()) return;
+      resolve(null);
+      if (shared.waiting === 0 && !shared.kept) {
+        shared.stop.abort();
+        if (pending.get(key) === shared) pending.delete(key);
+      }
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    shared.job.then(
+      (v) => { if (leave()) resolve(v); },
+      (e) => { if (leave()) reject(e); },
+    );
+  });
 }
 
 export function clearSongFeatureCache(): void {
   cache.clear();
   pending.clear();
+}
+
+/** Analyses in flight (tests). */
+export function pendingSongFeatureCount(): number {
+  return pending.size;
 }

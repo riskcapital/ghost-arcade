@@ -31,14 +31,32 @@ function startWorker(): SongAnalysisWorker | null {
   }
 }
 
+/** What an analysis stopped by its signal rejects with. */
+export class SongAnalysisAborted extends Error {
+  constructor() {
+    super('song analysis stopped');
+    this.name = 'AbortError';
+  }
+}
+
+export function isSongAnalysisAborted(err: unknown): boolean {
+  return err instanceof SongAnalysisAborted;
+}
+
+/**
+ * `signal`: stops the analysis (the worker is ended at once) and the promise
+ * rejects with SongAnalysisAborted. Not stopped, the result is the same.
+ */
 export function analyzeSongOffThread(
   mono: Float32Array,
   sampleRate: number,
   options: SongAnalysisOptions = {},
   makeWorker: () => SongAnalysisWorker | null = startWorker,
+  signal?: AbortSignal,
 ): Promise<SongAnalysis> {
+  if (signal?.aborted) return Promise.reject(new SongAnalysisAborted());
   if (!songIsAnalysable(mono.length, sampleRate)) return Promise.resolve(analyzeSong(mono, sampleRate, options));
-  return runInWorker(mono, sampleRate, { options }, makeWorker, () => analyzeSong(mono, sampleRate, options), (reply) => (reply.type === 'done' ? reply.analysis : undefined));
+  return runInWorker(mono, sampleRate, { options }, makeWorker, () => analyzeSong(mono, sampleRate, options), (reply) => (reply.type === 'done' ? reply.analysis : undefined), signal);
 }
 
 /**
@@ -51,13 +69,15 @@ export function songEnvelopeOffThread(
   mono: Float32Array,
   sampleRate: number,
   makeWorker: () => SongAnalysisWorker | null = startWorker,
+  signal?: AbortSignal,
 ): Promise<Envelope> {
+  if (signal?.aborted) return Promise.reject(new SongAnalysisAborted());
   const here = () => {
     const builder = new SongEnvelopeBuilder(mono.length, sampleRate);
     builder.push(mono);
     return builder.finish();
   };
-  return runInWorker(mono, sampleRate, { envelope: true }, makeWorker, here, (reply) => (reply.type === 'envelope' ? reply.envelope : undefined));
+  return runInWorker(mono, sampleRate, { envelope: true }, makeWorker, here, (reply) => (reply.type === 'envelope' ? reply.envelope : undefined), signal);
 }
 
 function runInWorker<T>(
@@ -67,23 +87,33 @@ function runInWorker<T>(
   makeWorker: () => SongAnalysisWorker | null,
   here: () => T,
   result: (reply: SongAnalysisReply) => T | undefined,
+  signal?: AbortSignal,
 ): Promise<T> {
   const worker = makeWorker();
-  if (!worker) return Promise.resolve().then(here);
+  if (!worker) {
+    // Here, the work cannot be stopped part-way: only before it starts.
+    return Promise.resolve().then(() => {
+      if (signal?.aborted) throw new SongAnalysisAborted();
+      return here();
+    });
+  }
   return new Promise<T>((resolve, reject) => {
     const total = mono.length;
     let next = 0;
     let inFlight = 0;
     let acked = false;
     let settled = false;
+    const onAbort = () => finish(() => reject(new SongAnalysisAborted()));
     const finish = (fn: () => void) => {
       if (settled) return;
       settled = true;
+      signal?.removeEventListener('abort', onAbort);
       worker.onmessage = null;
       worker.onerror = null;
       worker.terminate();
       fn();
     };
+    signal?.addEventListener('abort', onAbort, { once: true });
     const pump = () => {
       while (inFlight < IN_FLIGHT && next < total) {
         const end = Math.min(total, next + SONG_ANALYSIS_CHUNK);

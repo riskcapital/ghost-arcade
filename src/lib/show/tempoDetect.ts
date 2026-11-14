@@ -11,12 +11,14 @@ import type { ShowAudioTrack, ShowTempoMap } from '../types';
 import { showTimeline } from '../stores/showTimeline';
 import { cachedShowAudioDecode, decodeShowAudio } from '../audio/showAudio';
 import type { SongAnalysis } from './songLayout';
-import { analyzeSongOffThread } from './songAnalysisClient';
+import { analyzeSongOffThread, isSongAnalysisAborted } from './songAnalysisClient';
 import { tempoFromAnalysis } from './tempoMap';
 
 export type TempoDetectResult =
   | { ok: true; map: ShowTempoMap; bpm: number; trackId: string }
   | { ok: false; reason: 'no-audio' | 'undecodable' | 'no-pulse' };
+/** The read was stopped by its signal (only when one is passed). */
+export type TempoDetectStopped = { ok: false; reason: 'stopped' };
 
 /** The track "Detect tempo" reads when none is named: the longest one. */
 export function tempoSourceTrack(tracks: readonly ShowAudioTrack[], trackId?: string): ShowAudioTrack | null {
@@ -36,18 +38,25 @@ export function tempoMapForTrack(analysis: Pick<SongAnalysis, 'tempo' | 'beats'>
  * (one undo step). The analysis runs in a worker (songAnalysisClient.ts),
  * as New show from audio's does, so a long mix does not freeze the app.
  */
-export async function detectShowTempo(trackId?: string, opts: { apply?: boolean } = {}): Promise<TempoDetectResult> {
+export function detectShowTempo(trackId?: string, opts?: { apply?: boolean }): Promise<TempoDetectResult>;
+/** With a signal: stopping it ends the analysis, and the answer is 'stopped' (nothing is applied). */
+export function detectShowTempo(trackId: string | undefined, opts: { apply?: boolean; signal?: AbortSignal }): Promise<TempoDetectResult | TempoDetectStopped>;
+export async function detectShowTempo(trackId?: string, opts: { apply?: boolean; signal?: AbortSignal } = {}): Promise<TempoDetectResult | TempoDetectStopped> {
+  const { signal } = opts;
   const track = tempoSourceTrack(get(showTimeline).audioTracks, trackId);
   if (!track?.url) return { ok: false, reason: 'no-audio' };
   const decoded = cachedShowAudioDecode(track.url) ?? (await decodeShowAudio(track.url));
+  if (signal?.aborted) return { ok: false, reason: 'stopped' };
   if (!decoded) return { ok: false, reason: 'undecodable' };
   let analysis: SongAnalysis;
   try {
-    analysis = await analyzeSongOffThread(decoded.mono, decoded.sampleRate);
+    analysis = await analyzeSongOffThread(decoded.mono, decoded.sampleRate, {}, undefined, signal);
   } catch (err) {
+    if (isSongAnalysisAborted(err)) return { ok: false, reason: 'stopped' };
     console.warn('[ShowTempo] analysis failed:', err);
     return { ok: false, reason: 'no-pulse' };
   }
+  if (signal?.aborted) return { ok: false, reason: 'stopped' };
   const map = tempoMapForTrack(analysis, track);
   if (!map) return { ok: false, reason: 'no-pulse' };
   if (opts.apply !== false) showTimeline.setTempo(map);

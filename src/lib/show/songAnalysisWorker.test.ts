@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { analyzeSong, SongEnvelopeBuilder, analyzeSongEnvelope } from './songLayout';
 import { createSongAnalysisJob, type SongAnalysisReply, type SongAnalysisRequest } from './songAnalysisProtocol';
-import { analyzeSongOffThread, songEnvelopeOffThread, SONG_ANALYSIS_CHUNK, type SongAnalysisWorker } from './songAnalysisClient';
+import { analyzeSongOffThread, isSongAnalysisAborted, songEnvelopeOffThread, SONG_ANALYSIS_CHUNK, type SongAnalysisWorker } from './songAnalysisClient';
 import { analyzeSongFeatures, songFeaturesFromEnvelope } from '../timeline/lines/songFeatures';
 
 const RATE = 22050;
@@ -115,5 +115,31 @@ describe('song analysis off the main thread', () => {
     expect(worker.terminated).toBe(true);
     // No worker: built here, the same.
     expect(songFeaturesFromEnvelope(await songEnvelopeOffThread(mono, RATE, () => null))).toEqual(analyzeSongFeatures(mono, RATE));
+  });
+
+  it('stops when its signal does: the worker is ended, nothing more is sent, the promise says it was stopped', async () => {
+    const mono = song(400, 120, 5);
+    for (const run of [
+      (w: SongAnalysisWorker, signal: AbortSignal) => analyzeSongOffThread(mono, RATE, {}, () => w, signal),
+      (w: SongAnalysisWorker, signal: AbortSignal) => songEnvelopeOffThread(mono, RATE, () => w, signal),
+    ]) {
+      const worker = new InProcessWorker();
+      const stop = new AbortController();
+      const job = run(worker, stop.signal);
+      const sentBefore = worker.chunks.length;
+      expect(sentBefore).toBeGreaterThan(0);
+      expect(sentBefore * SONG_ANALYSIS_CHUNK).toBeLessThan(mono.length);
+      stop.abort();
+      const err = await job.then(() => null, (e) => e);
+      expect(isSongAnalysisAborted(err)).toBe(true);
+      expect(worker.terminated).toBe(true);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(worker.chunks.length).toBe(sentBefore);
+    }
+    // Stopped before it starts: no worker at all.
+    let made = 0;
+    const stopped = AbortSignal.abort();
+    await expect(analyzeSongOffThread(mono, RATE, {}, () => { made++; return new InProcessWorker(); }, stopped)).rejects.toMatchObject({ name: 'AbortError' });
+    expect(made).toBe(0);
   });
 });

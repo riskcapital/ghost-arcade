@@ -206,7 +206,7 @@ export async function prepareAutoShow(opts: { style?: ShowStyle; source?: AutoSh
   let tempoDetected = false;
   let pulse = true;
   if (!tempo) {
-    const detected = await detectShowTempo(track.id, { apply: false });
+    const detected = await detectShowTempo(track.id, { apply: false, signal });
     const stop = gone();
     if (stop) return stop;
     if (detected.ok) {
@@ -221,7 +221,7 @@ export async function prepareAutoShow(opts: { style?: ShowStyle; source?: AutoSh
       return { ok: false, reason: 'The song could not be read.' };
     }
   }
-  const features = await songFeaturesFor(track.url, async () => cachedShowAudioDecode(track.url) ?? (await decodeShowAudio(track.url)));
+  const features = await songFeaturesFor(track.url, async () => cachedShowAudioDecode(track.url) ?? (await decodeShowAudio(track.url)), signal);
   const stop = gone();
   if (stop) return stop;
   if (!features) return { ok: false, reason: 'The song could not be read.' };
