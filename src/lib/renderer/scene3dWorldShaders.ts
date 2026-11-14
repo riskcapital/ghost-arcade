@@ -955,7 +955,7 @@ fn vs_splat(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) ->
 
 @fragment
 fn fs_splat_stain(in: SplatOut) -> @location(0) vec4f {
-  let a = smoothstep(1.0, 0.3, length(in.uv)) * 0.2;
+  let a = smoothstep(1.0, 0.3, length(in.uv)) * 0.12;
   return vec4f(in.color * a, a);
 }
 

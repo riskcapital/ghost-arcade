@@ -1,5 +1,6 @@
-import { defaultInteractive, validateScene, type InteractiveScene, type InteractiveSurface } from './interactive';
+import { defaultInteractive, validateScene, type InteractiveScene, type InteractiveSurface, type ZoneTrigger } from './interactive';
 import { makeEffect, type EffectKind } from './interactiveEffects';
+import { defaultReliefWorld, type SurfaceFinish } from '../../scene3d/worldModel';
 
 export const INTERACTIVE_STARTERS = [
   {
@@ -37,12 +38,48 @@ export const INTERACTIVE_STARTERS = [
     color: '#79dccb',
     description: 'Soft trails and contour waves. Drag to bend the flow.',
   },
+  {
+    id: 'cascade',
+    name: 'Cascade',
+    icon: 'trails',
+    color: '#8fb4ff',
+    description: 'Balls bounce down a stack of ledges. Touch the top corner to drop a handful.',
+    world: true,
+  },
+  {
+    id: 'firewall',
+    name: 'Fire wall',
+    icon: 'smoke',
+    color: '#ff9a5c',
+    description: 'Four plinths burning, embers and smoke. Touch the band above them to set more alight.',
+    world: true,
+  },
+  {
+    id: 'gallery',
+    name: 'Paint gallery',
+    icon: 'paint',
+    color: '#ff7ac8',
+    description: 'Paint runs down three white panels. Touch the top band to pour more.',
+    world: true,
+  },
+  {
+    id: 'marbles',
+    name: 'Marbles',
+    icon: 'flux',
+    color: '#9fe3e0',
+    description: 'Glass and chrome marbles pile up in a bowl. Throw more in, or push them round.',
+    world: true,
+  },
 ] as const;
+/** Starters with the 3D world on. */
+export const isWorldStarter = (id: InteractiveStarter): boolean =>
+  !!(INTERACTIVE_STARTERS.find((s) => s.id === id) as { world?: boolean } | undefined)?.world;
 export type InteractiveStarter = (typeof INTERACTIVE_STARTERS)[number]['id'];
 export function starterScene(id: InteractiveStarter): InteractiveScene {
+  if (isWorldStarter(id)) return worldStarterScene(id);
   const scene = defaultInteractive();
   scene.name = INTERACTIVE_STARTERS.find((s) => s.id === id)!.name;
-  scene.preset = id;
+  scene.preset = id as InteractiveScene['preset'];
   scene.surfaces = [
     {
       id: 'block',
@@ -125,6 +162,70 @@ export function starterScene(id: InteractiveStarter): InteractiveScene {
   }
   if (id === 'ribbons')
     scene.effects = [add('walls', { hue: 220, opacity: 0.3 }), add('ribbons', { hue: 160, trails: 0.9 })];
+  return validateScene(scene);
+}
+
+// ── Starters in the 3D world ──────────────────────────────────────────────
+
+type Pt = { x: number; y: number };
+const box = (x0: number, y0: number, x1: number, y1: number): Pt[] => [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }];
+const solid = (id: string, name: string, points: Pt[], height: number, finish: SurfaceFinish): InteractiveSurface => ({ id, name, behavior: 'solid', points, height, finish });
+/** A touch zone, drawn as a faint outline, that does something to the world. */
+const worldZone = (id: string, name: string, points: Pt[], what: 'ignite' | 'pour' | 'balls'): InteractiveSurface => ({
+  id, name, behavior: 'trigger', points,
+  look: { fill: 'none', brightness: 0, scale: 0.5, speed: 0.5, outline: 0.35 },
+  trigger: { actions: [{ kind: 'world', what }], rearm: 0.8 } satisfies ZoneTrigger,
+});
+
+function worldStarterScene(id: InteractiveStarter): InteractiveScene {
+  const scene = defaultInteractive();
+  scene.name = INTERACTIVE_STARTERS.find((s) => s.id === id)!.name;
+  scene.world = defaultReliefWorld();
+  const effect = (kind: EffectKind, params: Record<string, number> = {}, target = 'point') => {
+    const e = makeEffect(kind, target);
+    Object.assign(e.params, params);
+    return e;
+  };
+  // A faint glow on the outlines, thrown onto the world.
+  const glow = effect('architecture', { opacity: 0.45, hue: 210 });
+  const stone: SurfaceFinish = { preset: 'stone', color: '#7a746c' };
+  if (id === 'cascade') {
+    // Ledges that slope one way, then the other, down the wall; each ends
+    // just above the next, so balls drop from one to the next.
+    const ledges = Array.from({ length: 5 }, (_, i) => {
+      const left = i % 2 === 0, y = 0.12 + i * 0.16, tilt = left ? 0.08 : -0.08;
+      const [x0, x1] = left ? [0.16, 0.56] : [0.44, 0.84];
+      const pts = [{ x: x0, y }, { x: x1, y: y + tilt }, { x: x1, y: y + tilt + 0.035 }, { x: x0, y: y + 0.035 }];
+      return solid(`ledge-${i}`, `Ledge ${i + 1}`, pts, 0.4, i % 2 ? { preset: 'chrome', color: '#d8dce4' } : stone);
+    });
+    scene.surfaces = [...ledges, worldZone('drop', 'Drop', box(0.86, 0.03, 0.98, 0.15), 'balls')];
+    scene.effects = [effect('balls3d', { x: 0.24, y: 0.02, radius: 0.05, flow: 0.6, size: 0.28, bounce: 0.5, friction: 0.08, variety: 0.8, clear: 0.3 }), glow];
+  } else if (id === 'firewall') {
+    scene.surfaces = [0.2, 0.4, 0.6, 0.8].map((x, i) => solid(`plinth-${i}`, `Plinth ${i + 1}`, box(x - 0.06, 0.55, x + 0.06, 0.9), 0.3, stone));
+    scene.surfaces.push(worldZone('band', 'Ignite', box(0.1, 0.08, 0.9, 0.2), 'ignite'));
+    scene.effects = [
+      ...[24, 12, 36, 200].map((hue, i) => effect('flames', { hue, flow: 0.55, embers: i === 1 ? 0.8 : 0.4, amount: 1100 }, `plinth-${i}`)),
+      glow,
+    ];
+  } else if (id === 'gallery') {
+    const panels = [[0.16, 0.36], [0.4, 0.6], [0.64, 0.84]];
+    scene.surfaces = panels.map(([x0, x1], i) => solid(`panel-${i}`, `Panel ${i + 1}`, box(x0, 0.18, x1, 0.82), 0.2, { preset: 'matte', color: '#e8e4dc' }));
+    scene.surfaces.push(worldZone('pour', 'Pour', box(0.12, 0.04, 0.88, 0.14), 'pour'));
+    scene.effects = [
+      ...[318, 190, 46].map((hue, i) => effect('drips', { hue, flow: 0.35, amount: 500, gloss: 0.9 }, `panel-${i}`)),
+      glow,
+    ];
+  } else {
+    // A bowl: two walls and a base, a bump in the middle.
+    scene.surfaces = [
+      solid('left', 'Left wall', box(0.22, 0.42, 0.27, 0.86), 0.45, stone),
+      solid('right', 'Right wall', box(0.73, 0.42, 0.78, 0.86), 0.45, stone),
+      solid('base', 'Base', box(0.22, 0.86, 0.78, 0.92), 0.45, stone),
+      solid('bump', 'Bump', [{ x: 0.44, y: 0.86 }, { x: 0.5, y: 0.74 }, { x: 0.56, y: 0.86 }], 0.45, { preset: 'chrome', color: '#d8dce4' }),
+      worldZone('more', 'More', box(0.4, 0.04, 0.6, 0.16), 'balls'),
+    ];
+    scene.effects = [effect('balls3d', { x: 0.5, y: 0.05, radius: 0.18, flow: 0.7, amount: 220, size: 0.18, bounce: 0.25, friction: 0.5, variety: 0.9, clear: 0.5, lifetime: 40 }), glow];
+  }
   return validateScene(scene);
 }
 

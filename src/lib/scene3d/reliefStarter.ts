@@ -23,7 +23,7 @@ const PLINTHS: StageShape[] = [0.25, 0.5, 0.75].map((x, i) => ({
 const STARTER_FINISHES: SurfaceFinish[] = [
   { preset: 'stone', color: '#7a746c' },
   { preset: 'chrome', color: '#d8dce4' },
-  { preset: 'neon', color: '#3d7dff' },
+  { preset: 'neon', color: '#1d3a8c' },
 ];
 
 /** validateScene's limit on an outline. */

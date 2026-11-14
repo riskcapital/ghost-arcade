@@ -30,7 +30,7 @@ export function effectParams(kind:EffectKind):EffectParam[]{
  if(kind==='drips')return [
   p('hue','Color',0,360,318),p('variety','Variety',0,1,.3),p('size','Drop size',0,1,.25),p('gloss','Gloss',0,1,.8),p('glow','Glow',0,1,0),
   p('x','Emitter X',0,1,.5,undefined,'Emitter'),p('y','Emitter Y',0,1,.04,undefined,'Emitter'),p('radius','Emitter width',.005,.5,.3,undefined,'Emitter'),p('flow','Flow rate',0,1,.4,undefined,'Emitter'),p('period','Pulse interval (s)',.2,12,2,undefined,'Emitter'),p('duration','Burst duration (s)',.05,4,.4,undefined,'Emitter'),
-  p('viscosity','Viscosity',0,1,.5,undefined,'Paint'),p('stick','Stickiness',0,1,.7,undefined,'Paint'),p('lifetime','Lifetime (s)',1,40,12,undefined,'Paint'),p('dry','Stain fades (s)',1,90,20,undefined,'Paint'),p('amount','Most drops',64,8192,700,undefined,'Paint'),
+  p('viscosity','Viscosity',0,1,.5,undefined,'Paint'),p('stick','Stickiness',0,1,.7,undefined,'Paint'),p('lifetime','Lifetime (s)',1,40,12,undefined,'Paint'),p('dry','Stain fades (s)',1,90,12,undefined,'Paint'),p('amount','Most drops',64,8192,700,undefined,'Paint'),
  ];
  if(kind==='flames')return [
   p('hue','Color',0,360,24),p('size','Flame size',0,1,.45),p('glow','Firelight',0,1,.6),p('smoke','Smoke',0,1,.5),p('embers','Embers',0,1,.4),

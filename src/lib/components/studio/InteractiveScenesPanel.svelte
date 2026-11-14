@@ -3,6 +3,7 @@
   import Icon from './StudioIcon.svelte';
   import {
     INTERACTIVE_STARTERS,
+    isWorldStarter,
     type InteractiveStarter,
     type SavedInteractiveScene,
   } from '../../mobile/studio/interactiveLibrary';
@@ -24,15 +25,18 @@
 <p class="hint">
   Choose a starting point. Add effects, move objects, make it yours. Undo brings your previous scene back.
 </p>
-<div class="starter-grid">
-  {#each INTERACTIVE_STARTERS as starter}
-    <button class="starter" style:--starter-color={starter.color} onclick={() => onstarter(starter.id)}>
-      <Icon name={starter.icon} size={24} />
-      <strong>{starter.name}</strong>
-      <span>{starter.description}</span>
-    </button>
-  {/each}
-</div>
+{#each [{ label: '', world: false }, { label: 'In the 3D world', world: true }] as group}
+  {#if group.label}<div class="group-label">{group.label}</div>{/if}
+  <div class="starter-grid">
+    {#each INTERACTIVE_STARTERS.filter((s) => isWorldStarter(s.id) === group.world) as starter}
+      <button class="starter" style:--starter-color={starter.color} onclick={() => onstarter(starter.id)}>
+        <Icon name={starter.icon} size={24} />
+        <strong>{starter.name}</strong>
+        <span>{starter.description}</span>
+      </button>
+    {/each}
+  </div>
+{/each}
 <div class="panel-heading saved-heading">
   <strong>Your scenes</strong>
   <button onclick={onsave}><Icon name="save" size={16} />Save current</button>
