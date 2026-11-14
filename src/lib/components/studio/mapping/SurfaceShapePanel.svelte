@@ -47,7 +47,7 @@
 
 {#if s}
   <section class="mp" aria-label="Surface shape">
-    <div class="mp-head"><strong>SHAPE</strong>{#if welded}<span class="mp-label weld">Point welded</span>{/if}</div>
+    <div class="mp-head"><strong><MapIcon name="shape" size={16} />Shape</strong>{#if welded}<span class="mp-label weld">Point welded</span>{/if}</div>
     <div class="mp-seg" role="group" aria-label="Surface kind">
       {#each kinds as k}<button class:active={kind === k.id} aria-pressed={kind === k.id} disabled={s.locked} onclick={() => setKind(k.id)}><MapIcon name={k.icon} size={16} />{k.label}</button>{/each}
     </div>

@@ -221,6 +221,7 @@
   import NudgePad from './mapping/NudgePad.svelte';
   import SurfaceShapePanel from './mapping/SurfaceShapePanel.svelte';
   import AddSurfaceSheet from './mapping/AddSurfaceSheet.svelte';
+  import MapIcon from './mapping/MapIcon.svelte';
   import MaskPanel from './mapping/MaskPanel.svelte';
   import SurfaceActions from './mapping/SurfaceActions.svelte';
   import type {SurfacePattern} from '../../mobile/studio/compositor';
@@ -1842,7 +1843,7 @@
                 persist();
               }}><Icon name="power" size={16} />{show.mapping ? 'Mapping on' : 'Mapping off'}</button
             ><button class:active={mappingGrid} aria-pressed={mappingGrid} onclick={()=>mappingGrid=!mappingGrid}><Icon name="grid" size={16}/>Grid</button><button class:active={mappingSnap} aria-pressed={mappingSnap} onclick={()=>mappingSnap=!mappingSnap}><Icon name="snap" size={16}/>Snap</button><button class:active={testGrid} aria-pressed={testGrid} onclick={toggleGrid}><Icon name="grid" size={16} />Test grid</button
-            ><button class:active={mapIdentify} aria-pressed={mapIdentify} onclick={()=>mapIdentify=!mapIdentify} aria-label="Identify surfaces on the projector">Identify</button
+            ><button class="identify-button" class:active={mapIdentify} aria-pressed={mapIdentify} onclick={()=>mapIdentify=!mapIdentify} aria-label="Identify surfaces on the projector"><MapIcon name="identify" size={16} />Identify</button
             ><button class="templates-button" data-open-templates onclick={() => (templatesOpen = true)}><Icon name="library" size={16} />Templates</button>
           </div>
           </Section>
@@ -3089,7 +3090,7 @@
     min-width: 0;
     background: var(--ga-card);
   }
-  .surface-list > button.picked { border-color: #91f0d0; }
+  .surface-list > button.picked { border-color: var(--ga-coral-300, #ff9a8b); }
   .surface-list > button.active {
     background: var(--ga-selection-bg);
     border-color: var(--ga-selection-line);

@@ -36,7 +36,7 @@
 
 <section class="mp nudge-pad" aria-label="Nudge">
   <div class="mp-head">
-    <strong>NUDGE</strong>
+    <strong><MapIcon name="point" size={16} />Nudge</strong>
     <span class="mp-label">{basis.width} × {basis.height} px</span>
   </div>
   <div class="layout">

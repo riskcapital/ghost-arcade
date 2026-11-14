@@ -92,7 +92,7 @@
 
 {#if s}
   <section class="mp" aria-label="Masks">
-    <div class="mp-head"><strong>MASKS</strong><span class="mp-label">{masks.length} of {MAX_MASKS}</span></div>
+    <div class="mp-head"><strong><MapIcon name="mask" size={16} />Masks</strong><span class="mp-label">{masks.length} of {MAX_MASKS}</span></div>
     {#if tool === 'polygon'}
       <p class="mp-hint" role="status">Tap the corners of the area on the canvas{tapped ? ` (${tapped} so far)` : ''}. Tap the first corner again or press Done.</p>
       <div class="mp-row">

@@ -576,7 +576,7 @@
     surfaces.forEach((s, i) => {
       if (s.enabled === false && i !== selected) return;
       const ring = surfaceOutline(s, 24).map(to);
-      ctx.strokeStyle = i === selected ? '#bcd3ff' : 'rgba(140,170,255,.75)';
+      ctx.strokeStyle = i === selected ? '#ff6f5e' : 'rgba(140,170,255,.75)';
       ctx.beginPath();
       ring.forEach((q, j) => (j ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
       ctx.closePath();
@@ -593,7 +593,7 @@
     ctx.moveTo(LOUPE / 2 + 4, LOUPE / 2);
     ctx.lineTo(LOUPE / 2 + 14, LOUPE / 2);
     ctx.stroke();
-    ctx.strokeStyle = snapped ? '#91f0d0' : '#ffd36b';
+    ctx.strokeStyle = snapped ? '#45d0c0' : '#ffd36b';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.arc(LOUPE / 2, LOUPE / 2, 3.5, 0, Math.PI * 2);
@@ -725,12 +725,12 @@
     stroke-dasharray: 6 5;
   }
   polygon.chosen {
-    stroke: var(--ga-blue-200, #bcd3ff);
+    stroke: var(--ga-on-line, #ff6f5e);
     stroke-width: 2;
     stroke-dasharray: none;
   }
   polygon.picked {
-    stroke: #91f0d0;
+    stroke: var(--ga-coral-300, #ff9a8b);
     stroke-width: 1.5;
     stroke-dasharray: none;
   }
@@ -778,7 +778,7 @@
     fill: #0b1a33;
   }
   .handle.on {
-    fill: #91f0d0;
+    fill: var(--ga-coral-400, #ff6f5e);
     stroke: #fff;
   }
   .weld {
@@ -802,11 +802,11 @@
   }
   .add-point circle {
     fill: #07101bcc;
-    stroke: #91f0d0;
+    stroke: var(--ga-tone-map, #45d0c0);
     stroke-width: 1.5;
   }
   .add-point path {
-    stroke: #91f0d0;
+    stroke: var(--ga-tone-map, #45d0c0);
     stroke-width: 1.6;
   }
   .mask-line {
@@ -829,28 +829,28 @@
     stroke-width: 1.5;
   }
   .mask-point.on {
-    fill: #91f0d0;
+    fill: var(--ga-coral-400, #ff6f5e);
   }
   .snap {
     fill: none;
-    stroke: #91f0d0;
+    stroke: var(--ga-tone-map, #45d0c0);
     stroke-width: 2;
   }
   .box {
     fill: none;
-    stroke: #91f0d088;
+    stroke: var(--ga-coral-a70, #ff6f5eb3);
     stroke-width: 1;
     stroke-dasharray: 3 4;
   }
   .rotate,
   .scale {
     fill: #07101b;
-    stroke: #91f0d0;
+    stroke: var(--ga-coral-300, #ff9a8b);
     stroke-width: 2;
   }
   .ink {
     fill: none;
-    stroke: #91f0d0;
+    stroke: var(--ga-tone-map, #45d0c0);
     stroke-width: 3;
     stroke-linecap: round;
     stroke-linejoin: round;

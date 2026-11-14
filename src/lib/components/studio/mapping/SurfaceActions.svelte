@@ -58,7 +58,7 @@
 
 {#if s}
   <section class="mp" aria-label="Arrange surfaces">
-    <div class="mp-head"><strong>ARRANGE</strong>{#if selection.length > 1}<span class="mp-label">{selection.length} selected</span>{/if}</div>
+    <div class="mp-head"><strong><MapIcon name="group" size={16} />Arrange</strong>{#if selection.length > 1}<span class="mp-label">{selection.length} selected</span>{/if}</div>
     <div class="mp-row">
       <button class="grow" aria-pressed={multi} onclick={() => onmulti(!multi)}><MapIcon name="group" size={16} />{multi ? 'Done selecting' : 'Select several'}</button>
       {#if grouped}

@@ -107,6 +107,10 @@
 :root .studio[data-layout][data-layout] .map-section .mapping-toolbar .templates-button {
   grid-column: 1 / -1;
 }
+/* Identify (pro mapping tools) shares the last row with Templates. */
+:root .studio[data-layout][data-layout] .map-section .mapping-toolbar .identify-button + .templates-button {
+  grid-column: span 2;
+}
 :root .studio[data-layout][data-layout] .map-section .mapping-toolbar .mapping-switch {
   justify-content: flex-start;
   min-height: 48px;

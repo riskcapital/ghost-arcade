@@ -1,10 +1,9 @@
-/* Shared look of the mapping tool panels (inspector sections). Scoped under .mp. */
+/* Shared look of the mapping tool panels (groups inside the surface inspector). Scoped under .mp. */
+/* One group inside the surface's box: a hairline rule and a small icon header, never a box of its own. */
 .mp {
-  border: 1px solid var(--ga-line-2);
-  border-radius: var(--ga-r-soft, 10px);
-  padding: 12px;
-  margin: 12px 0;
-  background: var(--ga-card, #0d1522);
+  margin: 16px 0 10px;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--ga-section-head-line, var(--ga-line-2));
   color: var(--ga-ink-0, #e8eefc);
 }
 .mp-head {
@@ -12,12 +11,17 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 10px;
+  min-height: 44px;
+  margin-bottom: 6px;
 }
 .mp-head strong {
-  font-size: 12px;
-  letter-spacing: 0.06em;
-  color: var(--ga-ink-1, #9fb0cc);
+  --ga-icon-tone: var(--ga-tone-map, #45d0c0);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ga-ink-0, #e8eefc);
 }
 .mp button,
 .mp select {

@@ -15,7 +15,7 @@
 </script>
 
 <section class="mp add-sheet" aria-label="Add a surface">
-  <div class="mp-head"><strong>ADD SURFACE</strong><button aria-label="Close" onclick={onclose}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button></div>
+  <div class="mp-head"><strong><MapIcon name="add" size={16} />Add a surface</strong><button aria-label="Close" onclick={onclose}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg></button></div>
   {#if full}<p class="mp-hint">A set holds up to 16 surfaces. Remove one to add another.</p>{/if}
   <div class="mp-grid">
     {#each kinds as k}<button disabled={full} onclick={() => onadd(k.id)}><MapIcon name={k.icon} size={22} />{k.label}</button>{/each}
