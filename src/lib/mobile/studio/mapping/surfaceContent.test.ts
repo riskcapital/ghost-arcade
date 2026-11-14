@@ -11,6 +11,7 @@ import { newEllipseMask, newPolygonMask } from './masks';
 import { convertSurface, createSurface, setDensity } from './surfaceKinds';
 import { addPathPoint, dragHandle, duplicateSurface, mirrorSurface } from './edit';
 import { surfaceOutline } from './surfaceShape';
+import { surfaceBounds, surfaceVertices } from '../compositor';
 
 const reload = (show: Show) => normalizeShow(JSON.parse(JSON.stringify(show)));
 const shaderClip = (show: Show) => show.clips.find((c) => c.kind === 'shader')!;
@@ -78,6 +79,29 @@ describe('own clip and placement on pro surfaces', () => {
     expect(b.placement!.y).toBeCloseTo(0.5, 6);
     expect(b.placement!.angle).toBe(0);
     expect(b.placement!.w).toBeCloseTo(0.84, 6);
+  });
+});
+
+describe('opacity and blend on pro surfaces', () => {
+  it('a masked shape playing its own placed clip keeps its opacity and blend through a save', () => {
+    const show = defaultShow();
+    show.mapping = true;
+    const s: Surface = { ...createSurface('circle', 0), clipId: shaderClip(show).id, placement: withControl(undefined, 'zoom', 1.5), masks: [newEllipseMask()], opacity: 0.5, blend: 'overlay' };
+    show.surfaces = [s];
+    const loaded = reload(show).surfaces[0];
+    expect(loaded).toMatchObject({ opacity: 0.5, blend: 'overlay', clipId: s.clipId, placement: s.placement, masks: s.masks });
+    expect(JSON.stringify(loaded.shape)).toBe(JSON.stringify(s.shape));
+  });
+  it('a blending shape or mesh copies what is beneath all of its geometry', () => {
+    for (const s of [createSurface('circle', 0, { x: 0.3, y: 0.6 }), setDensity(convertSurface(newSurface(1), 'mesh'), { cols: 7, rows: 6 })]) {
+      const [x, y, w, h] = surfaceBounds(surfaceVertices(s), 1920, 1080)!;
+      for (const p of surfaceOutline(s)) {
+        expect(p.x * 1920).toBeGreaterThanOrEqual(x);
+        expect(p.x * 1920).toBeLessThanOrEqual(x + w);
+        expect((1 - p.y) * 1080).toBeGreaterThanOrEqual(y);
+        expect((1 - p.y) * 1080).toBeLessThanOrEqual(y + h);
+      }
+    }
   });
 });
 
