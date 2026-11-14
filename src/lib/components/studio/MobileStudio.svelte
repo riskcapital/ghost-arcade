@@ -2685,11 +2685,6 @@
     padding: 4px 8px;
     min-height: 32px;
   }
-  .section-heading select {
-    font-size: 12px;
-    letter-spacing: 0;
-    min-height: 36px;
-  }
   .channel-grid {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
