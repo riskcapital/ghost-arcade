@@ -13,7 +13,7 @@
 import type { InteractiveScene } from '../mobile/studio/interactive';
 import { effectParams, MOD_SOURCES, type InteractiveEffect } from '../mobile/studio/interactiveEffects';
 import type { WorldInputState } from '../interactive/worldInput';
-import { floorDepth, type ReliefView } from '../scene3d/relief';
+import { floorDepth, reliefCamera, type ReliefView } from '../scene3d/relief';
 import { add, dot, scale } from '../scene3d/roomModel';
 import {
   faceSites,
@@ -27,7 +27,7 @@ import {
   worldGeometry,
   type WorldGeo,
 } from '../scene3d/worldGeometry';
-import { worldScene } from '../scene3d/worldScene';
+import { roomCamera, worldScene } from '../scene3d/worldScene';
 import type { ReliefWorld } from '../scene3d/worldModel';
 import { buildScene3DGraph, SCENE3D_TIERS, type Scene3DQuality } from './scene3dNative';
 import {
@@ -79,6 +79,13 @@ export type WorldPart = {
   flatTexture: string | null;
   /** The buffer the app reads back live: how many times a ball has come into each zone (ballZones order). */
   zoneHits: { bufferId: string; zoneIds: string[] } | null;
+  /**
+   * The values that follow live input, worked out again for another Orbit
+   * view and other touches without rebuilding the world: the scene settings
+   * (the camera), the balls' input and the fire lights. Equal to what a full
+   * build with that view and input puts in `values` for the same ids.
+   */
+  live: (view?: ReliefView, input?: WorldInputState) => { id: string; initial_b64: string; key: string }[];
 };
 
 export type WorldPartOptions = {
@@ -515,6 +522,18 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
     passes,
     render_passes: renders,
     values: [...graph.values, ...ballValues.map(({ id, initial_b64 }) => ({ id, initial_b64 }))].map((v) => ({ ...v, key: v.initial_b64 })),
+    live: (view, input) => {
+      // Only the camera reads the view: rewrite its slots of the settings.
+      const settings = graph.settings.slice();
+      const camera = geo.mode === 'room' || !geo.frame ? roomCamera(geo, view) : reliefCamera(geo.frame, world, view);
+      settings.set([...camera.position, camera.fov, ...camera.target, camera.mode === 'director' ? 1 : 0], 0);
+      settings.set(view && (view.yaw || view.pitch) ? [0, 0] : geo.projector.shift, 42);
+      return [
+        value('settings', 'uniform', settings),
+        value('ball-input', 'uniform', ballInput(geo, layout, input)),
+        value('fire-lights', 'uniform', fireLights(geo, fire, input)),
+      ].map(({ id, initial_b64 }) => ({ id, initial_b64, key: initial_b64 }));
+    },
     topology: `${geo.mode}|${world.flat}|${flatTexture ? JSON.stringify(flatSize(width, height)) : ''}|balls:${layout.count}:${layout.effects.length}|drips:${paint.count}:${paint.effects.length}:${JSON.stringify(wet)}|flames:${fire.count}:${fire.effects.length}|${graph.topology}`,
     flatTexture,
     zoneHits: ballZones(scene).length ? { bufferId: id('zone-hits'), zoneIds: ballZones(scene).map((z) => z.id) } : null,
