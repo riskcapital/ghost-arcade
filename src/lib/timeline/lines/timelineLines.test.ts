@@ -392,7 +392,7 @@ describe('Live edit Update', () => {
     await new Promise((r) => setTimeout(r, 700));
     expect(steps - before).toBe(1);
     const s = get(showTimeline);
-    expect(s.lines.map((l) => l.target.id).sort()).toEqual(['A', 'B']);
+    expect(s.lines.map((l) => ('id' in l.target ? l.target.id : '')).sort()).toEqual(['A', 'B']);
     const blocks = s.layerTracks.flatMap((t) => t.clips.map((c) => c.media.name)).sort();
     expect(blocks).toContain('Prism');
     expect(blocks).toContain('Tide');
