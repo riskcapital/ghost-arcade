@@ -42,6 +42,8 @@
     setPointCurves,
     tracePath,
     createTraceDrawer,
+    createLiveTraceDrawer,
+    type TracePart,
     valueToY,
     yToValue,
   } from './lineUi';
@@ -113,16 +115,20 @@
     return curvePath(line, t0, t1, zoom, h);
   }
 
-  /** The faint trace of what a following line does (offline sources), or the live source's recent values. */
-  function traceFor(line: ControlLine, h: number, _v: number): string {
+  /**
+   * The faint trace of what a following line does, for an offline source
+   * (the song, a beat): worked out again only when the line, the view or
+   * what the source reads (tempo, songs) changed, not on every live trace tick.
+   */
+  const offlineTraces = new Map<string, { line: ControlLine; key: string; tempo: unknown; songs: unknown; d: string }>();
+  function traceFor(laneId: string, line: ControlLine, h: number, _v: number): string {
     const f = line.follow;
-    if (!f || line.kind === 'colour') return '';
-    if (isLiveOnlySource(f.source)) {
-      const samples = liveTraces.get(line.id);
-      if (!samples?.length) return '';
-      return tracePath(samples.map((s) => ({ t: s.t, v: line.min + s.v * (line.max - line.min) })), zoom, h, line.min, line.max);
-    }
+    if (!f || line.kind === 'colour' || isLiveOnlySource(f.source)) return '';
     const ctx = currentLineSession()?.traceContext() ?? { liveInputs: false };
+    const id = `${laneId}|${line.id}`;
+    const key = `${t0}|${t1}|${zoom}|${h}`;
+    const had = offlineTraces.get(id);
+    if (had && had.line === line && had.key === key && had.tempo === ctx.tempo && had.songs === ctx.songs) return had.d;
     const step = Math.max(2, Math.min(8, 4)) / zoom;
     const samples: Array<{ t: number; v: number }> = [];
     for (let t = t0, i = 0; t <= t1 && i < 3000; t += step, i++) {
@@ -130,8 +136,32 @@
       if (v === undefined) continue;
       samples.push({ t, v: typeof v === 'boolean' ? (v ? line.max : line.min) : v });
     }
-    return tracePath(samples, zoom, h, line.min, line.max);
+    const d = tracePath(samples, zoom, h, line.min, line.max);
+    offlineTraces.set(id, { line, key, tempo: ctx.tempo, songs: ctx.songs, d });
+    return d;
   }
+
+  /** A live source's recent values: each lane adds only what is new to its drawing (createLiveTraceDrawer). */
+  const liveDrawers = new Map<string, ReturnType<typeof createLiveTraceDrawer>>();
+  function liveTraceParts(laneId: string, line: ControlLine, h: number, _v: number): TracePart[] {
+    const f = line.follow;
+    if (!f || line.kind === 'colour' || !isLiveOnlySource(f.source)) return [];
+    const trace = liveTraces.get(line.id);
+    if (!trace?.size) return [];
+    const id = `${laneId}|${line.id}`;
+    let draw = liveDrawers.get(id);
+    if (!draw) liveDrawers.set(id, (draw = createLiveTraceDrawer()));
+    const lo = line.min;
+    const span = line.max - line.min;
+    return draw(trace, zoom, h, line.min, line.max, (v) => lo + v * span);
+  }
+  // Drop the drawings of lines that are gone or no longer follow anything.
+  $effect(() => {
+    const keep = new Set(lines.filter((l) => l.follow).map((l) => l.id));
+    for (const m of [offlineTraces, liveDrawers] as Map<string, unknown>[]) {
+      for (const id of [...m.keys()]) if (!keep.has(id.slice(id.indexOf('|') + 1))) m.delete(id);
+    }
+  });
 
   function pointY(line: ControlLine, ch: Channel, p: LinePoint, h: number): number {
     const [lo, hi] = rangeOf(line, ch);
@@ -510,7 +540,13 @@
       {#if ch === 'points'}
         {#each laneLines as line (line.id)}
           {#if line.follow}
-            <path class="ll-trace" d={traceFor(line, h, traceTick)} style:stroke={colorOf(line)} />
+            {#if isLiveOnlySource(line.follow.source)}
+              {#each liveTraceParts(laneId, line, h, traceTick) as part (part.id)}
+                <path class="ll-trace" d={part.d} style:stroke={colorOf(line)} />
+              {/each}
+            {:else}
+              <path class="ll-trace" d={traceFor(laneId, line, h, traceTick)} style:stroke={colorOf(line)} />
+            {/if}
           {/if}
         {/each}
       {/if}

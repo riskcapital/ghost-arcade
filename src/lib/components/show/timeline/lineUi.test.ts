@@ -8,10 +8,12 @@ import { describe, expect, it } from 'vitest';
 import type { ShowLayerTrack } from '../../../types';
 import type { ControlLine } from '../../../timeline/lines/lineModel';
 import type { ParamEntry } from '../../../timeline/lines/paramRegistry';
+import { LiveTrace } from '../../../timeline/lines/liveTrace';
 import {
   LINE_DEPTH_HEIGHT,
   TRACE_CHUNK,
   createTraceDrawer,
+  createLiveTraceDrawer,
   tracePath,
   LINE_LANE_HEIGHT,
   LINE_OVERLAY_HEIGHT,
@@ -215,5 +217,58 @@ describe('a growing record trace', () => {
     samples[1] = { t: 5, v: 0.5 };
     expect(draw(samples, 2, 10, 40, 0, 1)).toEqual([tracePath(samples, 10, 40, 0, 1)]);
     expect(draw(samples, 2, 30, 40, 0, 1)).toEqual([tracePath(samples, 30, 40, 0, 1)]);
+  });
+});
+
+describe('a live source trace (a moving window)', () => {
+  const points = (d: string) => d.split(/[ML]/).filter(Boolean);
+  const joined = (parts: Array<{ d: string }>) => parts.flatMap((p, k) => (k === 0 ? points(p.d) : points(p.d).slice(1)));
+
+  it('matches the whole path of the window every frame, and only the parts that changed are new objects', () => {
+    const trace = new LiveTrace(10);
+    const draw = createLiveTraceDrawer();
+    let before: Array<{ id: number; d: string }> = [];
+    let rebuilt = 0;
+    for (let i = 0; i < 60 * 25; i++) {
+      trace.push(i / 60, (i % 37) / 37);
+      const parts = draw(trace, 20, 40, 0, 1);
+      if (i % 50 === 0) expect(joined(parts)).toEqual(points(tracePath(trace.samples(), 20, 40, 0, 1)));
+      const old = new Map(before.map((p) => [p.id, p]));
+      // At most the first part (samples left it) and the last (samples added) change, and
+      // where a new part begins the one before it takes its joining sample.
+      const fresh = parts.filter((p) => old.get(p.id) !== p).length;
+      expect(fresh).toBeLessThanOrEqual(i % TRACE_CHUNK === 0 ? 3 : 2);
+      rebuilt += fresh;
+      before = parts;
+    }
+    // The window is 600 samples: three parts, never the whole trace each frame.
+    expect(before.length).toBeLessThanOrEqual(Math.ceil(601 / TRACE_CHUNK) + 1);
+    expect(rebuilt).toBeLessThan(60 * 25 * 2);
+  });
+
+  it('gives back the same parts when nothing was added', () => {
+    const trace = new LiveTrace(30);
+    for (let i = 0; i < 400; i++) trace.push(i / 60, 0.5);
+    const draw = createLiveTraceDrawer();
+    const a = draw(trace, 20, 40, 0, 1);
+    expect(draw(trace, 20, 40, 0, 1)).toBe(a);
+    trace.push(400 / 60, 0.2);
+    const b = draw(trace, 20, 40, 0, 1);
+    expect(b).not.toBe(a);
+    expect(b[0]).toBe(a[0]);
+    expect(joined(b)).toEqual(points(tracePath(trace.samples(), 20, 40, 0, 1)));
+  });
+
+  it('starts over when the trace does (time went back) or the scale changes, and maps values', () => {
+    const trace = new LiveTrace(30);
+    for (let i = 0; i < 300; i++) trace.push(i / 60, i / 300);
+    const draw = createLiveTraceDrawer();
+    draw(trace, 20, 40, 0, 1);
+    trace.push(1, 0.5);
+    expect(trace.size).toBe(1);
+    expect(draw(trace, 20, 40, 0, 1)).toEqual([{ id: 0, d: 'M20.0 ' + valueToY(0.5, 0, 1, 40).toFixed(1) }]);
+    trace.push(2, 0.25);
+    const mapped = draw(trace, 50, 40, 10, 20, (v) => 10 + v * 10);
+    expect(joined(mapped)).toEqual(points(tracePath(trace.samples().map((s) => ({ t: s.t, v: 10 + s.v * 10 })), 50, 40, 10, 20)));
   });
 });

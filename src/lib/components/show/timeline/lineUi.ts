@@ -241,6 +241,75 @@ export function createTraceDrawer(): (samples: ReadonlyArray<{ t: number; v: num
   };
 }
 
+/** What a live trace drawer reads: a window over numbered samples (liveTrace.ts LiveTrace). */
+export interface LiveTraceWindow {
+  readonly run: number;
+  readonly first: number;
+  readonly end: number;
+  t(i: number): number;
+  v(i: number): number;
+}
+
+/** One part of a drawn live trace; `id` stays with the same samples while the window moves. */
+export interface TracePart { id: number; d: string }
+
+/**
+ * A live source's trace (a window that grows at its end and drops samples
+ * off its front), as path parts of TRACE_CHUNK samples numbered from the
+ * start of the run. A new frame adds only the new samples to the last part,
+ * draws the first part again only when samples left it, and drops parts that
+ * went off the front; every other part is the same object as before (its
+ * path is not touched). Samples never change once added. `map` turns a
+ * sample's value into the value drawn between `min` and `max`.
+ */
+export function createLiveTraceDrawer(): (trace: LiveTraceWindow, zoom: number, h: number, min: number, max: number, map?: (v: number) => number) => TracePart[] {
+  let run = -1;
+  let scale = '';
+  /** Drawn parts by part number, with the samples they hold. */
+  const parts = new Map<number, { part: TracePart; from: number; to: number }>();
+  let out: TracePart[] = [];
+  return (trace, zoom, h, min, max, map = (v) => v) => {
+    const key = `${zoom}|${h}|${min}|${max}`;
+    if (trace.run !== run || key !== scale) {
+      run = trace.run;
+      scale = key;
+      parts.clear();
+    }
+    const { first, end } = trace;
+    if (end - first <= 0) {
+      parts.clear();
+      return (out = []);
+    }
+    const point = (i: number) => `${(trace.t(i) * zoom).toFixed(1)} ${valueToY(map(trace.v(i)), min, max, h).toFixed(1)}`;
+    const firstPart = Math.floor(first / TRACE_CHUNK);
+    const lastPart = Math.floor((end - 1) / TRACE_CHUNK);
+    let changed = false;
+    for (const n of [...parts.keys()]) if (n < firstPart || n > lastPart) { parts.delete(n); changed = true; }
+    for (let n = firstPart; n <= lastPart; n++) {
+      // A part holds its samples and the next part's first (so the parts join up).
+      const from = Math.max(first, n * TRACE_CHUNK);
+      const to = Math.min(end, (n + 1) * TRACE_CHUNK + 1);
+      const had = parts.get(n);
+      if (had && had.from === from && had.to === to) continue;
+      let d: string;
+      if (had && had.from === from && had.to < to) {
+        d = had.part.d;
+        for (let i = had.to; i < to; i++) d += `L${point(i)}`;
+      } else {
+        d = '';
+        for (let i = from; i < to; i++) d += `${i === from ? 'M' : 'L'}${point(i)}`;
+      }
+      parts.set(n, { part: { id: n, d }, from, to });
+      changed = true;
+    }
+    if (changed || out.length !== parts.size) {
+      out = [];
+      for (let n = firstPart; n <= lastPart; n++) { const p = parts.get(n); if (p) out.push(p.part); }
+    }
+    return out;
+  };
+}
+
 // ── Hit testing ────────────────────────────────────────────────────────────
 
 /** The point under (x, y) within `radius` px (the nearest), or −1. */

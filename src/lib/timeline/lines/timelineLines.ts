@@ -38,6 +38,7 @@ import { soundRowsFor } from '../sound/soundModel';
 import { soundLineScope } from '../sound/soundParams';
 import { registerParamScope } from './lineExtensions';
 import { createContentRecorder } from './contentRecorder';
+import { LiveTraceTable } from './liveTrace';
 import { beginHistoryRestore, cancelPendingHistorySnapshot, endHistoryRestore, isAutomation, isRestoringHistory, recordDiscreteAction } from '../../stores/historyHooks';
 
 // ── Registry over the Timeline ─────────────────────────────────────────────
@@ -155,8 +156,9 @@ setShowRecordArm(() => get(lineRecordState).armed);
 export { lineSelection, selectedLinePoints, selectedKeys, selectKeys, clearSelectedKeys, type LineSelection } from './lineSelection';
 import { lineSelection } from './lineSelection';
 
-/** Live values of lines that follow a live source (for the faint trace). */
-export const liveTraces = new Map<string, Array<{ t: number; v: number }>>();
+/** Live values of lines that follow a live source (for the faint trace): the last 30 s. */
+export const liveTraces = new LiveTraceTable(30);
+/** Moves when a live trace grew (every few frames) or the offline sources changed (songs read). */
 export const liveTraceVersion = writable(0);
 /**
  * A record pass being written, for the view: the recorder's own samples (not
@@ -171,7 +173,6 @@ export interface RecordingPass {
 /** Record passes being written right now, by line id (drawn as they grow). */
 export const recordingPasses = writable<ReadonlyMap<string, RecordingPass>>(new Map());
 let passesShown = false;
-const TRACE_SECONDS = 30;
 /** The longest take: a record run stops here on its own (show-time seconds of
  *  recording, so it also ends a run rolling on past the end of the Timeline). */
 export const MAX_TAKE_SECONDS = 30 * 60;
@@ -204,6 +205,7 @@ const contentRecorder = createContentRecorder({
 let lastPlaying = false;
 let lastSongsKey = '';
 let traceTick = 0;
+let liveTraceTick = 0;
 
 export function currentLineSession(): LineSession | null {
   return session;
@@ -365,29 +367,9 @@ function setRecordNotice(notice: string | null): void {
 }
 
 function recordTraces(time: number): void {
-  const lines = get(showTimeline).lines;
-  let any = false;
-  for (const line of lines) {
-    const src = line.follow?.source;
-    if (!src || (src.kind !== 'midi' && src.kind !== 'live-param' && src.kind !== 'live-level')) continue;
-    const v = src.kind === 'midi' ? session!.controls.midiCC(src.channel, src.cc, src.input) : null;
-    if (v === null) continue;
-    const list = liveTraces.get(line.id) ?? [];
-    if (list.length && time < list[list.length - 1].t) list.length = 0;
-    list.push({ t: time, v });
-    while (list.length && list[0].t < time - TRACE_SECONDS) list.shift();
-    liveTraces.set(line.id, list);
-    any = true;
-  }
-  // Traces of lines deleted or no longer following a live source.
-  if (liveTraces.size) {
-    for (const id of liveTraces.keys()) {
-      const line = lines.find((l) => l.id === id);
-      const kind = line?.follow?.source.kind;
-      if (kind !== 'midi' && kind !== 'live-param' && kind !== 'live-level') liveTraces.delete(id);
-    }
-  }
-  if (any && ++traceTick % 4 === 0) liveTraceVersion.update((n) => n + 1);
+  const controls = session!.controls;
+  const any = liveTraces.record(get(showTimeline).lines, time, (src) => (src.kind === 'midi' ? controls.midiCC(src.channel, src.cc, src.input) : null));
+  if (any && ++liveTraceTick % 4 === 0) liveTraceVersion.update((n) => n + 1);
 }
 
 /** Wire the lines into the app (once, at start). */
