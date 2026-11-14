@@ -194,12 +194,17 @@
   import NudgePad from './mapping/NudgePad.svelte';
   import SurfaceShapePanel from './mapping/SurfaceShapePanel.svelte';
   import AddSurfaceSheet from './mapping/AddSurfaceSheet.svelte';
+  import MaskPanel from './mapping/MaskPanel.svelte';
   import {nudgeBasis} from '../../mobile/studio/mapping/viewport';
   import {nudge as nudgeSurfaces,pointAt,selectablePoints,pruneWelds} from '../../mobile/studio/mapping/edit';
   import {createDrawnSurface,createSurface,cornerView,kindLabel,resetGeometry,type NewSurfaceKind} from '../../mobile/studio/mapping/surfaceKinds';
   let mappingGrid=false, mappingSnap=false;
   // Pro mapping tools: extra selected surfaces, outline drawing, the add sheet and the canvas (for its loupe).
   let mapSelection:number[]=[], mapDraw=false, addSheet=false, mappingCanvas:MappingCanvas|undefined;
+  // The mask being edited on the selected surface, its selected point, and whether one is being made.
+  let mapMask=-1, mapMaskPoint=0, mapMaskTool:'edit'|'polygon'|'freehand'='edit', mapTapped=0;
+  $: { selectedSurface; mapMask=-1; mapMaskPoint=0; mapMaskTool='edit'; }
+  function mapMaskSet(mask:number,point:number,tool:'edit'|'polygon'|'freehand'){mapMask=mask;mapMaskPoint=point;mapMaskTool=tool;mapTapped=0;}
   $: mapBasis=nudgeBasis(outputStatus.connected?outputStatus.display:null);
   $: mapPoints=selectablePoints(show.surfaces[selectedSurface]);
   function mapChange(next:Surface[]){show.surfaces=next;show={...show};}
@@ -1561,6 +1566,7 @@
           {#if tab === 'map' && !clean}
             <MappingCanvas bind:this={mappingCanvas} surfaces={show.surfaces} selected={selectedSurface} selection={mapSelection} point={selectedPoint} snap={mappingSnap} grid={mappingGrid} multi={false} tool={mappingTool==='paint'?'view':mapDraw?'draw':'edit'} canvas={output} basis={mapBasis}
               onchange={mapChange} onbegin={mapBegin} oncommit={persist} onnotice={message=>flash(message)} ondrawn={drawnSurface}
+              mask={mapMask} maskPoint={mapMaskPoint} maskTool={mapMaskTool} onmask={mapMaskSet} ontaps={count=>mapTapped=count}
               onselect={(index,point,selection)=>{selectedSurface=index;selectedPoint=point;mapSelection=selection;}}/>
           {/if}
           {#if (tab==='flux' || (tab==='perform' && fluxPerform)) && !clean && !visualsDown}<FluxPad value={flux} onchange={value=>{flux=value;if(engine)engine.flux=value;}}/>{/if}
@@ -1776,6 +1782,7 @@
                 >
               </div>
               <SurfaceShapePanel surfaces={show.surfaces} index={selectedSurface} point={selectedPoint} onapply={mapApply} onnotice={message=>flash(message)}/>
+              <MaskPanel surfaces={show.surfaces} index={selectedSurface} mask={mapMask} point={mapMaskPoint} tool={mapMaskTool} tapped={mapTapped} onapply={next=>mapApply(next)} onlive={mapChange} onstart={mapBegin} onmask={mapMaskSet} onfinish={()=>mappingCanvas?.finishPolygon()} onnotice={message=>flash(message)}/>
               <label class="range-row"
                 ><span>Edge fade</span><input
                   type="range"

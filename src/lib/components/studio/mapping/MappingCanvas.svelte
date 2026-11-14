@@ -47,8 +47,10 @@
     /** Making a new mask by tapping its corners or tracing it. */
     maskTool?: 'edit' | 'polygon' | 'freehand';
     onmask?: (mask: number, point: number, tool: 'edit' | 'polygon' | 'freehand') => void;
+    /** How many corners of a new polygon mask have been tapped. */
+    ontaps?: (count: number) => void;
   };
-  let { surfaces, selected, selection = [], point, snap = false, grid = false, multi = false, tool = 'edit', canvas, basis = { width: 1920, height: 1080 }, onchange, onbegin, oncommit, onselect, ondrawn, onnotice, mask = -1, maskPoint = 0, maskTool = 'edit', onmask }: Props = $props();
+  let { surfaces, selected, selection = [], point, snap = false, grid = false, multi = false, tool = 'edit', canvas, basis = { width: 1920, height: 1080 }, onchange, onbegin, oncommit, onselect, ondrawn, onnotice, mask = -1, maskPoint = 0, maskTool = 'edit', onmask, ontaps }: Props = $props();
 
   let root: HTMLDivElement;
   let W = $state(1),
@@ -92,6 +94,9 @@
   let taps = $state<Point[]>([]);
   $effect(() => {
     if (maskTool !== 'polygon') taps = [];
+  });
+  $effect(() => {
+    ontaps?.(taps.length);
   });
   const maskCandidates = $derived(current && editedMask && editable && maskTool === 'edit' ? maskHandles(current, editedMask, maskPoint) : []);
   const maskLine = $derived(current && editedMask ? maskOutline(current, editedMask) : null);
@@ -456,7 +461,6 @@
     taps = [];
     if (points.length >= 3) addMask(newPolygonMask(points, `Polygon ${(current.masks?.length ?? 0) + 1}`));
   }
-  export const tappedCount = () => taps.length;
   function tap(e: PointerEvent, at: { x: number; y: number }) {
     const p = toNorm(at.x, at.y);
     if (editedMask) {
@@ -631,9 +635,24 @@
         {/if}
       {/each}
     {/if}
+    {#if tool === 'edit' && masksOn.length}
+      {#each masksOn as line, i}<polygon class="mask-line" class:edit={i === mask} class:off={current?.masks?.[i]?.enabled === false} points={pts(line)} />{/each}
+    {/if}
+    {#each maskCandidates as c}
+      {@const q = toScreen(c.at)}
+      {#if c.role === 'mid'}<g class="add-point"><circle cx={q.x} cy={q.y} r="7" /><path d={`M${q.x - 3.5} ${q.y}h7M${q.x} ${q.y - 3.5}v7`} /></g>
+      {:else if c.role === 'handle'}<circle class="tangent-tip" cx={q.x} cy={q.y} r="6" />
+      {:else}<circle class="mask-point" class:on={c.handle.kind === 'mpoint' && c.handle.index === maskPoint} cx={q.x} cy={q.y} r={c.handle.kind === 'ecentre' ? 7 : 6} />{/if}
+    {/each}
+    {#if taps.length}
+      <polyline class="ink" points={pts(taps)} />
+      {#each taps as t, i}<circle class="mask-point" class:on={i === 0} cx={toScreen(t).x} cy={toScreen(t).y} r="6" />{/each}
+    {/if}
     {#if drawing.length > 1}<polyline class="ink" points={pts(drawing)} />{/if}
   </svg>
   {#if tool === 'draw'}<div class="draw-hint" role="status">Trace the outline with one finger</div>{/if}
+  {#if tool === 'edit' && maskTool === 'polygon'}<div class="draw-hint" role="status">Tap the corners of the mask</div>{/if}
+  {#if tool === 'edit' && maskTool === 'freehand'}<div class="draw-hint" role="status">Trace the mask with one finger</div>{/if}
   {#if view.scale > 1.001}<button class="zoom-chip" onclick={resetView} aria-label={`Zoom ${view.scale.toFixed(1)} times. Tap to fit the whole output.`}><MapIcon name="fit" size={15} />{view.scale.toFixed(1)}×</button>{/if}
   {#if loupe && loupePos}
     <div class="loupe" style:left={`${loupePos.x}px`} style:top={`${loupePos.y}px`} aria-hidden="true">
@@ -749,6 +768,28 @@
   .add-point path {
     stroke: #91f0d0;
     stroke-width: 1.6;
+  }
+  .mask-line {
+    fill: #ff6bd51a;
+    stroke: #ff8be0;
+    stroke-width: 1.2;
+    stroke-dasharray: 4 4;
+  }
+  .mask-line.edit {
+    fill: #ff6bd526;
+    stroke-width: 2;
+    stroke-dasharray: none;
+  }
+  .mask-line.off {
+    opacity: 0.35;
+  }
+  .mask-point {
+    fill: #ff8be0;
+    stroke: #fff;
+    stroke-width: 1.5;
+  }
+  .mask-point.on {
+    fill: #91f0d0;
   }
   .snap {
     fill: none;
