@@ -421,7 +421,7 @@
   import { isProjectDirty, projectSettingsSections, recallSectionSignature, withRecallsAsSaved, type ProjectDirtySnapshot, type RecallSection } from './lib/stores/projectDirty';
   import { musicStudio } from './lib/music/musicStudioStore';
   import { stage3dScene } from './lib/stage3d/store';
-  import { showTimeline, setShowTransitionSink } from './lib/stores/showTimeline';
+  import { showTimeline, setShowTransitionSink, parkedShowDoc } from './lib/stores/showTimeline';
   import { handleShowKeydown } from './lib/show/showKeyboard';
   import { installShowTrackRuntime } from './lib/show/tracks/showTrackRuntime';
   import { installTimelineLines } from './lib/timeline/lines/timelineLines';
@@ -2230,6 +2230,9 @@
         const state = captured as CapturedHistoryState;
         history.amend(state.project, state.keyframes, state.output, { live: true }, state.show);
       },
+      // What captureHistoryState reads, by reference: live control notes its
+      // state only when one of these changed.
+      stamp: () => [get(project), get(keyframeTimeline), get(settings).output, get(showTimeline), get(parkedShowDoc)],
     });
     // Opening a project (any path: File, Open Recent, recovery, relink,
     // package) starts its history over. Deferred to a microtask so the steps
