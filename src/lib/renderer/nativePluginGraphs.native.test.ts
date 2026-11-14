@@ -53,6 +53,17 @@ describe('native plugin graphs', () => {
       'interactive/compute',
       'interactive/render',
       'performer-world/render',
+      'scene3d/sim',
+      'scene3d/world',
+      'scene3d/post',
+      'scene3d/relief',
+      'scene3d/balls',
+      'scene3d/balls-draw',
+      'scene3d/drips',
+      'scene3d/drips-draw',
+      'scene3d/flames',
+      'scene3d/flames-draw',
+      'videosynth/analog-synth',
     ]);
   });
 
