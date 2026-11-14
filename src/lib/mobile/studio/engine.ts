@@ -305,6 +305,12 @@ export class StudioEngine {
     const value=typeof params.detail==='number'?params.detail:Number(input.DEFAULT??1);
     return {...params,detail:value*budget.detail};
   }
+  /** A slot's shader inputs this frame: its look (inside the mobile budget) and, for a studio voice, the voice signals. */
+  private slotInputs(s:Slot,look:Show['layers'][number]['params'],intensity:number){
+    const params=this.budgetInputs(s,look);
+    if(s.voice===undefined)return params;
+    return {...params,...this.voices.inputs(Number(params.vxSource??s.voice),params.vxAuto===true,intensity)};
+  }
   /** Internal render height of a row's shader, for tests and diagnostics. */
   renderBudget(index:number){return this.slots[index]?.budget;}
   ghostMovement(index:number){return this.slots[index]?.ghostMotion?.currentMovement;}
@@ -381,10 +387,7 @@ export class StudioEngine {
               const response=s.ghostMotion.update(audio,dt*Math.max(0,l.speed),Number(l.params.movement)||0,Number(l.params.drift??.6),Number(l.params.morph??2.5),Number(l.params.reactivity??1),l.params.journey===true,Number(l.params.journeySeconds??24));
               s.ghostBass=response.audio.audioBass;s.renderer.setAudio(response.audio);
               s.renderer.setShaderInputs({...this.budgetInputs(s,l.params),...response.inputs});
-            }else if(s.voice!==undefined){
-              const params=this.budgetInputs(s,l.params);
-              s.renderer.setShaderInputs({...params,...this.voices.inputs(Number(params.vxSource??s.voice),params.vxAuto===true,l.intensity)});
-            }else s.renderer.setShaderInputs(this.budgetInputs(s,l.params));
+            }else s.renderer.setShaderInputs(this.slotInputs(s,l.params,l.intensity));
 
             const sourceWidth = s.video?.videoWidth || s.image?.naturalWidth || 16,
               sourceHeight = s.video?.videoHeight || s.image?.naturalHeight || 9;

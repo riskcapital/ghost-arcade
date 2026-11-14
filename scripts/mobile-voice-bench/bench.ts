@@ -278,6 +278,8 @@ async function render(path: string) {
   report('BENCH_START ' + JSON.stringify({ count: paths.length, mode: MODE, music: !!pcm, extensions: gl?.getSupportedExtensions() ?? [], renderer: gl?.getParameter(gl.RENDERER), units: gl?.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS) }));
   (gl?.getExtension('WEBGL_lose_context') as { loseContext(): void } | null)?.loseContext();
   for (const path of paths) {
+    // A pause before each voice lets the GPU settle after a heavy one.
+    if (params.has('cooldown')) await new Promise((r) => setTimeout(r, Number(params.get('cooldown'))));
     const result = MODE === 'render' ? await render(path).catch((e) => ({ path, error: String(e).slice(0, 600) })) : await measure(path);
     report('BENCH_ONE ' + JSON.stringify(result));
     await new Promise((r) => setTimeout(r, 30));

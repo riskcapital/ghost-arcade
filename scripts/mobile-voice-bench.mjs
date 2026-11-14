@@ -39,7 +39,7 @@ if (arg('--moments')) query.set('moments', JSON.stringify(arg('--moments').split
 if (process.argv.includes('--fps')) query.set('fps', '1');
 if (thumbnails) query.set('out', '320x180');
 if (arg('--step')) query.set('step', arg('--step'));
-for (const name of ['fpsscale', 'fpssec', 'fpsfrom']) if (arg('--' + name)) query.set(name, name === 'fpsscale' ? JSON.stringify(arg('--' + name).split(',').map(Number)) : arg('--' + name));
+for (const name of ['fpsscale', 'fpssec', 'fpsfrom', 'cooldown']) if (arg('--' + name)) query.set(name, name === 'fpsscale' ? JSON.stringify(arg('--' + name).split(',').map(Number)) : arg('--' + name));
 
 if (process.argv.includes('--app-bundle')) {
   const out = join(root, 'dist-native-mobile');
