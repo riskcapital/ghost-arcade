@@ -56,6 +56,7 @@ export function setHistoryCallback(record: () => void, snapshotHooks?: HistorySn
  */
 export function recordDiscreteAction() {
   if (_liveControlDepth > 0) return;
+  if (_oneStepDepth > 0) { _oneStepDirty = true; return; }
   if (_pending) {
     // A recording take is never folded into an edit, however close they are.
     if (_pending.keys.has(RECORDING_TAKE) || Date.now() - _pending.lastEditAt >= GESTURE_GAP_MS) commitPending();
@@ -73,6 +74,8 @@ export function recordDiscreteAction() {
  */
 export function amendLastHistoryStep() {
   if (_liveControlDepth > 0) return;
+  // Inside one step: it is part of that step.
+  if (_oneStepDepth > 0) { _oneStepDirty = true; return; }
   if (_snapshotHooks?.amend) _snapshotHooks.amend();
   else if (_record) _record();
   // The latest step now holds the live state too.
@@ -137,7 +140,32 @@ function commitPending() {
  */
 export function scheduleHistorySnapshot(key = '') {
   if (_liveControlDepth > 0) return;
+  if (_oneStepDepth > 0) { _oneStepDirty = true; return; }
   schedule(key);
+}
+
+// ─── Several edits as one step ───────────────────────────────────────────
+// A command made of other commands (Live edit's Update keys settings and cuts
+// content in) is one undo step: inside runAsOneStep the steps and debounced
+// edits its parts would record are not recorded, and when it ends one step
+// holds all of it. What was waiting before it is committed first, as its own.
+let _oneStepDepth = 0;
+let _oneStepDirty = false;
+export function runAsOneStep<T>(fn: () => T): T {
+  if (_oneStepDepth === 0) {
+    commitPending();
+    _oneStepDirty = false;
+  }
+  _oneStepDepth += 1;
+  try {
+    return fn();
+  } finally {
+    _oneStepDepth -= 1;
+    if (_oneStepDepth === 0 && _oneStepDirty) {
+      _oneStepDirty = false;
+      recordDiscreteAction();
+    }
+  }
 }
 
 /**

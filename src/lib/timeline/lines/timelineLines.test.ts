@@ -367,6 +367,95 @@ describe('Live edit on the Timeline', () => {
   });
 });
 
+describe('Live edit Update', () => {
+  const setLayer = (id: string, patch: Partial<Layer>) => state.update((p) => ({ ...p, layers: p.layers.map((l) => (l.id === id ? ({ ...l, ...patch } as Layer) : l)) }));
+  const prism = { id: 's-prism', type: 'shader', src: 'prism.fs', name: 'Prism', shaderCode: 'void main(){}', shaderInputs: [], shaderValues: {} };
+  const tide = { id: 's-tide', type: 'shader', src: 'tide.fs', name: 'Tide', shaderCode: 'void tide(){}', shaderInputs: [], shaderValues: {} };
+
+  beforeEach(() => {
+    state.set({ layers: [layer('A'), layer('B'), layer('C')], selectedLayerId: 'A' });
+    showTimeline.syncStageRows(get(state).layers, []);
+  });
+
+  it('keys every held change (settings and content) as exactly one undo step', async () => {
+    lines.setFollowEdits(true);
+    lines.armLines('touch');
+    showTimeline.seek(2);
+    setLayer('A', { opacity: 0.4 });
+    setLayer('B', { opacity: 0.6 });
+    setLayer('A', { source: prism as never });
+    setLayer('C', { source: tide as never });
+    expect(get(liveEdit.heldEdits)).toHaveLength(4);
+    const before = steps;
+    expect(liveEdit.updateHeldEdits()).toBe(4);
+    // Nothing left waiting to become a step later, either.
+    await new Promise((r) => setTimeout(r, 700));
+    expect(steps - before).toBe(1);
+    const s = get(showTimeline);
+    expect(s.lines.map((l) => l.target.id).sort()).toEqual(['A', 'B']);
+    const blocks = s.layerTracks.flatMap((t) => t.clips.map((c) => c.media.name)).sort();
+    expect(blocks).toContain('Prism');
+    expect(blocks).toContain('Tide');
+    expect(get(liveEdit.heldEdits)).toHaveLength(0);
+  });
+
+  it('one Undo takes the whole Update off the Timeline, and Redo puts it back', async () => {
+    const { history, showHistoryRestore } = await import('../../stores/history');
+    const { beginHistoryRestore, endHistoryRestore, flushPendingHistorySnapshot } = await import('../../stores/historyHooks');
+    const proj = { name: 'p', layers: [] } as never;
+    const capture = () => ({ show: showTimeline.exportArrangement() });
+    setHistoryCallback(() => { history.record(proj, null, null, capture().show); }, {
+      capture,
+      commit: (c) => { history.record(proj, null, null, (c as ReturnType<typeof capture>).show); },
+    });
+    history.clear();
+    history.init(proj, null, null, showTimeline.exportArrangement());
+    const restore = (snap: ReturnType<typeof history.undo>) => {
+      if (!snap) return;
+      beginHistoryRestore();
+      try {
+        const show = showHistoryRestore(snap.show, snap.leavingShow);
+        if (show !== undefined) showTimeline.restoreArrangement(show);
+      } finally { endHistoryRestore(); }
+    };
+    try {
+      lines.setFollowEdits(true);
+      lines.armLines('touch');
+      showTimeline.seek(2);
+      setLayer('A', { opacity: 0.4 });
+      setLayer('B', { opacity: 0.6 });
+      setLayer('A', { source: prism as never });
+      setLayer('C', { source: tide as never });
+      liveEdit.updateHeldEdits();
+      const after = get(showTimeline);
+      expect(after.lines).toHaveLength(2);
+      expect(after.layerTracks.some((t) => t.clips.some((c) => c.media.name === 'Tide'))).toBe(true);
+      flushPendingHistorySnapshot();
+      history.suppress(); restore(history.undo(proj)); history.unsuppress();
+      expect(get(showTimeline).lines).toHaveLength(0);
+      expect(get(showTimeline).layerTracks.some((t) => t.clips.some((c) => c.media.name === 'Tide' || c.media.name === 'Prism'))).toBe(false);
+      history.suppress(); restore(history.redo(proj)); history.unsuppress();
+      expect(get(showTimeline).lines).toHaveLength(2);
+      expect(get(showTimeline).layerTracks.some((t) => t.clips.some((c) => c.media.name === 'Tide'))).toBe(true);
+    } finally {
+      history.clear();
+    }
+  });
+
+  it('one step while an edit of the user\'s was still waiting: that edit stays its own step before it', () => {
+    lines.setFollowEdits(true);
+    lines.armLines('touch');
+    showTimeline.seek(1);
+    setLayer('A', { opacity: 0.3 });
+    setLayer('A', { source: prism as never });
+    // A slider still in its debounce when Update is pressed.
+    expect(showTimeline.editLines((l) => [...l], 'user-slider')).toBe(true);
+    const before = steps;
+    liveEdit.updateHeldEdits();
+    expect(steps - before).toBe(2);
+  });
+});
+
 describe('recording content on a piece without a row', () => {
   const shaderSource = (name: string) => ({ id: `s-${name}`, type: 'shader', src: `${name}.fs`, name, shaderCode: `// ${name}\nvoid main(){}`, shaderInputs: [], shaderValues: {} });
   const rowOfC = () => get(showTimeline).layerTracks.find((t) => t.layerId === 'C' && !t.subRow);

@@ -29,7 +29,7 @@
 import { derived, get, writable } from 'svelte/store';
 import { sameTarget, targetId, type ParamTarget } from './lines/paramRegistry';
 import { showTimeline } from '../stores/showTimeline';
-import { flushPendingHistorySnapshot, recordDiscreteAction } from '../stores/historyHooks';
+import { flushPendingHistorySnapshot, recordDiscreteAction, runAsOneStep } from '../stores/historyHooks';
 import type { MediaSource, ShowClipMedia } from '../types';
 
 export interface HeldParamEdit {
@@ -219,22 +219,24 @@ export function heldTouches(): ReadonlyMap<string, number> {
 }
 const EMPTY: ReadonlyMap<string, number> = new Map();
 
-/** Key every held change where it was made. */
+/** Key every held change where it was made, as one undo step (an edit still waiting before it stays its own). */
 export function updateHeldEdits(): number {
   const s = get(state);
   if (s.kind !== 'holding' || !hooks.keyAt || !hooks.cutIn) return 0;
-  flushPendingHistorySnapshot();
+  const { keyAt, cutIn } = hooks;
   dispatch({ type: 'settle' });
-  settling = true;
-  try {
-    for (const e of s.edits) {
-      if (e.kind === 'param') hooks.keyAt(e.target, e.key, e.value, e.t, e.was);
-      else hooks.cutIn(e);
+  runAsOneStep(() => {
+    settling = true;
+    try {
+      for (const e of s.edits) {
+        if (e.kind === 'param') keyAt(e.target, e.key, e.value, e.t, e.was);
+        else cutIn(e);
+      }
+    } finally {
+      settling = false;
     }
-  } finally {
-    settling = false;
-  }
-  recordDiscreteAction();
+    recordDiscreteAction();
+  });
   return s.edits.length;
 }
 
