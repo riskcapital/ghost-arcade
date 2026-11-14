@@ -88,7 +88,7 @@ import {
 import { resolveAssetRefForRuntime } from '$lib/storage/assetRegistry';
 import { shaderIsMusicMotionReady, withMusicFlow, withMusicTime, musicTimePhase, MUSIC_TIME_PHASE_INPUT, MUSIC_TIME_RATE_INPUT } from '$lib/audio/musicMotion';
 import { getMusicTimeOffset, getMusicTimeRate, hasMusicTime } from '$lib/audio/musicMotionEngine';
-import { hasLiveValues, liveCompositionValues, liveDeckOfLayerId, liveValuesForDeck, liveValuesForLayer, type LiveCompositionScope } from '$lib/audio/liveParams';
+import { hasLiveValues, liveCompositionValues, liveValuesForRenderedLayer, type LiveCompositionScope } from '$lib/audio/liveParams';
 import {
   receiveSpoutTextureInfo,
   type SpoutSharedTextureInfo,
@@ -1111,8 +1111,7 @@ const musicTimeCodeCache = new Map<string, string>();
  */
 /** A scene layer's live values: a mapping layer's by id, a VJ row's for the clip it shows. */
 function liveValuesForSceneLayer(layer: Layer) {
-  const row = liveDeckOfLayerId(layer.id);
-  return row ? liveValuesForDeck(row.deck, row.row, layer.source?.id) : liveValuesForLayer(layer);
+  return liveValuesForRenderedLayer(layer);
 }
 
 /**

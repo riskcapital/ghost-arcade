@@ -138,6 +138,7 @@
   import { installModeRunning } from '$lib/install/installSession';
   import { appendNativeVjDeckCrossfade, appendNativeVjMixCarrier, vjStageScreenLayers } from '$lib/renderer/vjCompositionNative';
   import { expandStudioLayers, noteStudioHosts, studioCodeTick, studioRenderInputs } from '$lib/music/studioPlugin';
+  import { hasLiveValues, liveCompositionValues, liveValuesForRenderedLayer } from '$lib/audio/liveParams';
   import { wakeStudioVisuals } from '$lib/music/musicRuntime';
   import { MUSIC_STUDIO } from '$lib/features';
 
@@ -3648,6 +3649,23 @@
           || (typeof engine.manualTime === 'number' && Number.isFinite(engine.manualTime));
         const kfOverrides = kfKeyframesActive ? kfState.activeOverrides : {};
         const kfStash: Array<{ layer: any; key: string; orig: any; target: any; prop: string }> = [];
+        // Live values (Auto, audio and LFO modulation, Music motion:
+        // liveParams.ts), read once for this frame. They go on first, where
+        // the stored values are, so keyframes win on the same key, and are
+        // put back after the render like the keyframes; nothing is written
+        // to the stores.
+        const liveOn = hasLiveValues();
+        if (liveOn && compEffects?.length) {
+          const scope = compEffects === vjState.compositionEffects ? 'vj' : 'map';
+          for (const effect of compEffects as any[]) {
+            const values = effect?.params ? liveCompositionValues(scope, effect.id) : undefined;
+            if (!values) continue;
+            for (const prop in values) {
+              kfStash.push({ layer: null, key: prop, orig: effect.params[prop], target: effect.params, prop });
+              effect.params[prop] = values[prop];
+            }
+          }
+        }
 
         // Debug: log once per second during playback. Behind a manual
         // flag — serializing the whole override map + layer-id array is
@@ -3665,7 +3683,9 @@
           // For VJ layers, overrides are keyed by clip ID (vj-${clipId}) not layer.id
           const isVJLayer = layer.id?.startsWith('vj-layer-');
           const overrideKey = isVJLayer && layer.source?.id ? `vj-${layer.source.id}` : layer.id;
-          const overrides = kfOverrides[overrideKey];
+          const keyed = kfOverrides[overrideKey];
+          const live = liveOn ? liveValuesForRenderedLayer(layer) : undefined;
+          const overrides = live ? (keyed ? { ...live, ...keyed } : live) : keyed;
           if (!overrides) continue;
 
           for (const [key, value] of Object.entries(overrides)) {
@@ -3748,7 +3768,7 @@
         }
 
         // ── Update all textures AFTER keyframe overrides so shader uniforms reflect new values ──
-        const hasKeyframeOverrides = Object.keys(kfOverrides).length > 0;
+        const hasKeyframeOverrides = Object.keys(kfOverrides).length > 0 || liveOn;
         if (browserEditorPreviewActive() && renderLocalContent && (!didStageTexturePrepass || hasKeyframeOverrides)) {
           updateAllTextures(layersToRender, null);
         }

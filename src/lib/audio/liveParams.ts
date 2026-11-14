@@ -215,6 +215,14 @@ export function liveDeckOfLayerId(id: string): { deck: LiveDeck; row: number } |
   return m ? { deck: (m[2] as LiveDeck | undefined) ?? 'A', row: Number(m[1]) } : null;
 }
 
+/** This frame's values for a layer as a scene renders it: a VJ row's
+ *  (`vj-layer-N`) for the clip it shows, or a mapping layer's. */
+export function liveValuesForRenderedLayer(layer: { id: string; source?: { id?: string } | null }): LiveValues | undefined {
+  if (frames.size === 0) return undefined;
+  const row = liveDeckOfLayerId(layer.id);
+  return row ? liveValuesForDeck(row.deck, row.row, layer.source?.id) : liveValuesForLayer(layer);
+}
+
 // ─── Panels ────────────────────────────────────────────────────────────────
 // A panel that shows a moving value subscribes to this tick and reads the
 // value with the functions above. It moves at most this many times a

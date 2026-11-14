@@ -393,6 +393,10 @@ describe('live values', () => {
     expect(live.liveDeckOfLayerId('vj-layer-3-B')).toEqual({ deck: 'B', row: 3 });
     expect(live.liveDeckOfLayerId('vj-layer-2')).toEqual({ deck: 'A', row: 2 });
     expect(live.liveDeckOfLayerId('map-1')).toBeNull();
+    // As a scene renders them (the frame sync and the browser render path).
+    expect(live.liveValuesForRenderedLayer({ id: 'vj-layer-1', source: { id: 'C' } })).toEqual({ 'shader:x': 3, 'fx:f:p': 6 });
+    expect(live.liveValuesForRenderedLayer({ id: 'vj-layer-1-A', source: { id: 'D' } })).toBeUndefined();
+    expect(live.liveValuesForRenderedLayer({ id: 'L', source: { id: 'S' } })).toEqual({ 'shader:x': 1, 'fx:f:p': 5 });
     // A frame replaces what an engine said before.
     a.layer('L', 'S', 'shader:x', 9); a.commit();
     expect(live.liveValuesForLayer({ id: 'L', source: { id: 'S' } })).toEqual({ 'shader:x': 9, 'fx:f:p': 5 });

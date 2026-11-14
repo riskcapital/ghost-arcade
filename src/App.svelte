@@ -210,6 +210,12 @@
     if(!studioEditorClip&&editSignature!==studioOwnSignature)studioUnrecordedEdit=true;
     studioSeenScene=studioCurrentSource()?.interactiveScene;studioOwnSignature=editSignature;
   }
+  /** What Auto plays on one of the edited scene's effect params now (the Studio's sliders show it). */
+  function studioLiveValue(effectId:string,key:string){
+    const at=`interactive:${effectId}:${key}`;
+    if(studioEditorClip)return liveDeckValue(studioEditorClip.deck,studioEditorClip.row,studioEditorClip.id,at);
+    return liveLayerValue(studioEditorLayer,at);
+  }
   /** The editor's pointer straight to the layer, every frame (VJ clips use the scene path). */
   function studioPointer(inputs:Interaction[]){if(showInteractiveStudio&&!studioEditorClip&&studioEditorLayer)setLivePointer(studioEditorLayer,inputs);}
   /** The Studio's Orbit view turns the layer's 3D world; closing it turns it back (Studio onDestroy). */
@@ -452,6 +458,7 @@
   import { startRecording as startRec, formatRecordingDuration, type RecorderHandle } from './lib/recording/recorder';
   import RecordingSourcePicker from './lib/components/RecordingSourcePicker.svelte';
   import { vjClipLauncher, vjEditVersion } from './lib/stores/vjClipLauncher';
+  import { liveDeckValue, liveLayerValue } from './lib/audio/liveParams';
   import { mediaRelinkVersion, noteMediaRelinked } from './lib/stores/missingMedia';
   import { audioStore, audioBpm, audioManualBpm, isBeat } from './lib/stores/audio';
   // Side effect: the analyser follows clip audio when no live input runs.
@@ -9104,7 +9111,7 @@
              would restore the scene it was opened with and publish that over
              every edit made since. -->
         <div class="studio-page" style:display={studioPage==='interactive'?'contents':'none'}>
-          {#key studioEditorRevision}<InteractiveStudio bind:this={studioEditor} aspect={canvasAspect} visible={studioPage==='interactive'} initialPaused={studioEditorPaused} nativeOutput nativeFrame={studioNativeFrame} initialActive={studioEditorActive} initialScene={studioEditorScene} onscene={editStudioScene} onpointer={studioPointer} onview={studioView} onworldaction={studioWorldAction} captureScene={captureStudioScene} onrestore={restoreStudioAnimation} onparam={studioParamRecord} onkeyframe={studioAddKeyframe} ontimeline={studioToggleTimeline} mappingSurfaces={studioMappingSurfaces($project.layers,studioEditorLayer)} onclose={closeInteractiveStudio}><KeyframeTimeline slot="timeline" embedded targetId={studioTimelineId}/></InteractiveStudio>{/key}
+          {#key studioEditorRevision}<InteractiveStudio bind:this={studioEditor} aspect={canvasAspect} visible={studioPage==='interactive'} initialPaused={studioEditorPaused} nativeOutput nativeFrame={studioNativeFrame} initialActive={studioEditorActive} initialScene={studioEditorScene} onscene={editStudioScene} onpointer={studioPointer} onview={studioView} onworldaction={studioWorldAction} captureScene={captureStudioScene} onrestore={restoreStudioAnimation} onparam={studioParamRecord} liveValue={studioLiveValue} onkeyframe={studioAddKeyframe} ontimeline={studioToggleTimeline} mappingSurfaces={studioMappingSurfaces($project.layers,studioEditorLayer)} onclose={closeInteractiveStudio}><KeyframeTimeline slot="timeline" embedded targetId={studioTimelineId}/></InteractiveStudio>{/key}
         </div>
         {#if studioPage==='calibration'}<DesktopCalibrationImport incoming={pendingPhoneCalibration}/>{/if}
       </section></div>
