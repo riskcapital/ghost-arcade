@@ -31,6 +31,12 @@ import {
 import { createJsSourceHost, JS_SOURCE_SCHEME } from './js-source-host.js';
 import { physicalOutputWindowArgs } from './output-window-placement.js';
 import {
+  coreAdapterFromStatus,
+  describeAdapter,
+  normalizeAdapterLuid,
+  pickCaptureAdapter,
+} from './live-capture-adapter.js';
+import {
   DEFAULT_DECK_MONITOR_WIDTH,
   PREVIEW_MONITOR_DECK_WIDTH,
   PREVIEW_MONITOR_TILES,
@@ -2774,6 +2780,50 @@ let liveCaptureAddon = null;
 let liveCaptureAddonLoadAttempted = false;
 let liveCaptureAddonLoadPath = null;
 let liveCaptureAddonLoadError = null;
+
+/** Windows: the start arguments that put a capture device on the render
+ *  core's adapter (see live-capture-adapter.js). Empty elsewhere, and when
+ *  nothing matches -- the addon then keeps its default adapter. */
+let liveCaptureAdapterLastLog = '';
+async function liveCaptureAdapterArgs(addon) {
+  if (!isWin || !addon) return {};
+  let status = nativeRendererBroker.lastStatus;
+  if (!coreAdapterFromStatus(status)) {
+    // The first camera can start before anything has asked the core for its
+    // status; one status call settles it.
+    try { status = await nativeRendererBroker.getStatus(); } catch {}
+  }
+  const core = coreAdapterFromStatus(status);
+  let adapters = [];
+  try { adapters = typeof addon.listAdapters === 'function' ? addon.listAdapters() : []; } catch {}
+  const pick = pickCaptureAdapter(adapters, core);
+  const line = pick.luid
+    ? `[LiveCapture] capture devices go on the render core's adapter ${describeAdapter(pick.adapter ?? { ...core })} (matched by ${pick.match})`
+    : `[LiveCapture] capture devices stay on the default adapter: ${pick.reason}. Render core: ${core ? describeAdapter(core) : 'unknown'}`
+      + `; adapters: ${adapters.map(describeAdapter).join(', ') || 'none listed'}`;
+  if (line !== liveCaptureAdapterLastLog) {
+    liveCaptureAdapterLastLog = line;
+    console.log(line);
+  }
+  return pick.luid ? { adapterLuid: pick.luid } : {};
+}
+
+/** Windows: one line saying which adapter a started capture session's device
+ *  is on and whether it is the render core's. A support log needs this to
+ *  tell a blank camera on a two-GPU laptop from anything else. */
+function logLiveCaptureSessionAdapter(addon, sessionId, what) {
+  if (!isWin || typeof addon?.receiveTextureInfo !== 'function') return;
+  try {
+    const info = addon.receiveTextureInfo({ sessionId });
+    if (!info?.adapterLuid) return;
+    const core = coreAdapterFromStatus(nativeRendererBroker.lastStatus);
+    const capture = { name: info.adapterName, vendorId: info.adapterVendorId, deviceId: info.adapterDeviceId, luid: info.adapterLuid };
+    const same = core?.luid ? (normalizeAdapterLuid(info.adapterLuid) === core.luid ? 'same adapter' : 'DIFFERENT adapter') : 'core adapter unknown';
+    console.log(`[LiveCapture] ${what} device on ${describeAdapter(capture)}; render core on ${core ? describeAdapter(core) : 'unknown'} -> ${same}`);
+  } catch {
+    // Logging only.
+  }
+}
 
 function loadLiveCaptureAddon() {
   if (liveCaptureAddon) return liveCaptureAddon;
@@ -7444,20 +7494,24 @@ function registerIpcHandlers() {
       }
     }
     try {
+      const sessionId = String(args.sessionId || '');
       const ok = !!addon.startCamera({
-        sessionId: String(args.sessionId || ''),
+        sessionId,
         deviceId: String(args.deviceId || ''),
+        ...(await liveCaptureAdapterArgs(addon)),
       });
+      if (ok) logLiveCaptureSessionAdapter(addon, sessionId, 'camera');
       return { ok, error: ok ? null : 'camera did not start' };
     } catch (err) {
       return { ok: false, error: err?.message || String(err) };
     }
   });
 
-  ipcMain.handle('native_live_capture_start_screen', (_event, args = {}) => {
+  ipcMain.handle('native_live_capture_start_screen', async (_event, args = {}) => {
     const addon = loadLiveCaptureAddon();
     if (!addon) return { ok: false, error: liveCaptureAddonLoadError || 'native capture unavailable' };
     try {
+      const adapterArgs = await liveCaptureAdapterArgs(addon);
       // Chromium's `display_id` (from desktopCapturer.getSources) is Chromium's
       // internal Display ID — NOT a DXGI IDXGIOutput index. Resolve it to
       // physical bounds so the addon can match by DesktopCoordinates. On macOS
@@ -7472,8 +7526,9 @@ function registerIpcHandlers() {
           bounds = { left: b.x, top: b.y, right: b.x + b.width, bottom: b.y + b.height };
         }
       }
+      const sessionId = String(args.sessionId || '');
       const ok = !!addon.startScreen({
-        sessionId: String(args.sessionId || ''),
+        sessionId,
         sourceId: String(args.sourceId || ''),
         displayId,
         kind: args.kind === 'screen' ? 'screen' : 'window',
@@ -7482,7 +7537,9 @@ function registerIpcHandlers() {
         boundsRight: bounds?.right ?? 0,
         boundsBottom: bounds?.bottom ?? 0,
         hasBounds: !!bounds,
+        ...adapterArgs,
       });
+      if (ok) logLiveCaptureSessionAdapter(addon, sessionId, 'screen capture');
       return { ok, error: ok ? null : 'screen capture did not start' };
     } catch (err) {
       return { ok: false, error: err?.message || String(err) };
@@ -7502,6 +7559,12 @@ function registerIpcHandlers() {
     try {
       const info = addon.receiveTextureInfo({ sessionId: String(args.sessionId || '') });
       if (!info || !info.available) return info || null;
+      // The editor polls each live source; when it already has this frame
+      // there is nothing to hand over (no handle copy, no upload).
+      const sinceFrame = Number(args.sinceFrame);
+      if (Number.isFinite(sinceFrame) && sinceFrame > 0 && Number(info.frame) === sinceFrame) {
+        return { available: true, unchanged: true, frame: sinceFrame };
+      }
       const handle = normalizeSharedTextureHandle(info.handle);
       const handlePayload = sharedTextureHandlePayload(handle);
       if (!handlePayload) return null;
@@ -7523,6 +7586,9 @@ function registerIpcHandlers() {
         handle: handlePayload.handle,
         handleEncoding: handlePayload.handleEncoding,
         handleByteLength: handlePayload.handleByteLength,
+        // Windows: the adapter the frames live on, so the editor can tell a
+        // frame the core cannot open because it is on the other GPU.
+        ...(info.adapterLuid ? { adapterLuid: normalizeAdapterLuid(info.adapterLuid) || null, adapterName: String(info.adapterName || '') } : {}),
       };
     } catch (err) {
       return { available: false, reason: err?.message || String(err) };

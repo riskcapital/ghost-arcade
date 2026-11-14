@@ -93,6 +93,70 @@ std::string HexOf(HRESULT hr) {
   return std::string(buf);
 }
 
+// -----------------------------------------------------------------------------
+// Which graphics adapter the capture device sits on.
+//
+// The render core opens each frame's shared texture on the adapter it renders
+// with -- the high-performance one on a laptop with two GPUs. A shared texture
+// only opens on the adapter that made it, and a device made with a null
+// adapter lands on the default one, usually the integrated GPU that drives the
+// laptop panel. Cameras then listed and started fine while every frame failed
+// to open in the core, so the layer stayed blank. Electron passes the core's
+// adapter LUID (16 hex digits, HighPart first, as the core prints it) and
+// every capture device is made on that adapter when it is present.
+// -----------------------------------------------------------------------------
+
+bool ParseLuidHex(const std::string& hex, LUID* out) {
+  if (hex.size() != 16) return false;
+  unsigned long long value = 0;
+  for (char c : hex) {
+    int digit = -1;
+    if (c >= '0' && c <= '9') digit = c - '0';
+    else if (c >= 'a' && c <= 'f') digit = c - 'a' + 10;
+    else if (c >= 'A' && c <= 'F') digit = c - 'A' + 10;
+    if (digit < 0) return false;
+    value = (value << 4) | (unsigned long long)digit;
+  }
+  out->HighPart = (LONG)(uint32_t)(value >> 32);
+  out->LowPart = (DWORD)(value & 0xffffffffULL);
+  return true;
+}
+
+std::string LuidHex(const LUID& luid) {
+  char buf[32];
+  sprintf_s(buf, "%08x%08x", (unsigned int)(uint32_t)luid.HighPart, (unsigned int)luid.LowPart);
+  return std::string(buf);
+}
+
+bool SameLuid(const LUID& a, const LUID& b) {
+  return a.HighPart == b.HighPart && a.LowPart == b.LowPart;
+}
+
+struct AdapterHint {
+  bool set = false;
+  LUID luid = {};
+};
+
+// AddRef'd adapter with this LUID, or nullptr when it is not present.
+IDXGIAdapter1* AdapterForLuid(const LUID& luid) {
+  IDXGIFactory1* factory = nullptr;
+  if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&factory)) || !factory) return nullptr;
+  IDXGIAdapter1* found = nullptr;
+  for (UINT i = 0; ; i++) {
+    IDXGIAdapter1* adapter = nullptr;
+    HRESULT hr = factory->EnumAdapters1(i, &adapter);
+    if (hr == DXGI_ERROR_NOT_FOUND || FAILED(hr) || !adapter) break;
+    DXGI_ADAPTER_DESC1 desc = {};
+    if (SUCCEEDED(adapter->GetDesc1(&desc)) && SameLuid(desc.AdapterLuid, luid)) {
+      found = adapter;
+      break;
+    }
+    adapter->Release();
+  }
+  factory->Release();
+  return found;
+}
+
 // The single MF startup / shutdown — MFStartup is refcounted internally so it
 // is safe to call from Init, but do it exactly once from the addon's own scope
 // to keep tear-down deterministic.
@@ -122,23 +186,62 @@ class Session {
  public:
   virtual ~Session() { StopThread(); Release(); }
 
-  bool EnsureDevice(std::string* error) {
+  // Makes the device on the hinted adapter (the render core's) when it is
+  // present, else on the default adapter as before -- and says which.
+  bool EnsureDevice(const AdapterHint& hint, std::string* error) {
     if (device_) return true;
     UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
     D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0};
     D3D_FEATURE_LEVEL got;
-    HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags,
-                                    levels, ARRAYSIZE(levels), D3D11_SDK_VERSION,
+    IDXGIAdapter1* adapter = hint.set ? AdapterForLuid(hint.luid) : nullptr;
+    if (hint.set && !adapter) {
+      fprintf(stderr,
+              "[WinCapture] the render core's adapter (luid=%s) was not found; using the default adapter\n",
+              LuidHex(hint.luid).c_str());
+    }
+    // An explicit adapter needs D3D_DRIVER_TYPE_UNKNOWN; HARDWARE is only
+    // valid with a null adapter.
+    HRESULT hr = D3D11CreateDevice(adapter, adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE,
+                                    nullptr, flags, levels, ARRAYSIZE(levels), D3D11_SDK_VERSION,
                                     &device_, &got, &context_);
+    if (adapter) adapter->Release();
     if (FAILED(hr)) {
       *error = "D3D11CreateDevice failed (" + HexOf(hr) + ")";
       return false;
     }
+    RecordDeviceAdapter(hint);
     // The class mutex serialises every context_ call from every thread
     // (capture worker + Napi caller), so ID3D11Multithread protection would
     // be redundant. All UpdateSubresource / CopyResource sites are under
     // std::lock_guard<std::mutex>(mutex_).
     return true;
+  }
+
+  // Notes which adapter device_ ended up on, for receiveTextureInfo and the
+  // log, and whether that is the adapter the render core asked for.
+  void RecordDeviceAdapter(const AdapterHint& hint) {
+    IDXGIDevice* dxgiDevice = nullptr;
+    IDXGIAdapter* adapter = nullptr;
+    DXGI_ADAPTER_DESC desc = {};
+    bool ok = device_ && SUCCEEDED(device_->QueryInterface(__uuidof(IDXGIDevice), (void**)&dxgiDevice)) &&
+              dxgiDevice && SUCCEEDED(dxgiDevice->GetAdapter(&adapter)) && adapter &&
+              SUCCEEDED(adapter->GetDesc(&desc));
+    SafeRelease(adapter);
+    SafeRelease(dxgiDevice);
+    if (!ok) return;
+    adapter_known_ = true;
+    adapter_luid_ = desc.AdapterLuid;
+    adapter_name_ = Narrow(desc.Description);
+    adapter_vendor_ = desc.VendorId;
+    adapter_device_ = desc.DeviceId;
+    adapter_requested_ = hint.set;
+    adapter_matched_ = hint.set && SameLuid(desc.AdapterLuid, hint.luid);
+    fprintf(stderr,
+            "[WinCapture] capture device on adapter=\"%s\" (vendor=0x%04x device=0x%04x luid=%s); "
+            "render core adapter luid=%s -> %s\n",
+            adapter_name_.c_str(), adapter_vendor_, adapter_device_, LuidHex(adapter_luid_).c_str(),
+            hint.set ? LuidHex(hint.luid).c_str() : "unknown",
+            !hint.set ? "not checked" : adapter_matched_ ? "same adapter" : "DIFFERENT adapter");
   }
 
   // Rebuild the shared texture at a new size. Returns false only if HRESULTs
@@ -250,6 +353,13 @@ class Session {
           env, reinterpret_cast<uint8_t*>(&handle_), sizeof(HANDLE)));
     }
     if (!last_error_.empty()) out.Set("lastError", Napi::String::New(env, last_error_));
+    if (adapter_known_) {
+      out.Set("adapterLuid", Napi::String::New(env, LuidHex(adapter_luid_)));
+      out.Set("adapterName", Napi::String::New(env, adapter_name_));
+      out.Set("adapterVendorId", Napi::Number::New(env, (double)adapter_vendor_));
+      out.Set("adapterDeviceId", Napi::Number::New(env, (double)adapter_device_));
+      if (adapter_requested_) out.Set("adapterMatched", Napi::Boolean::New(env, adapter_matched_));
+    }
     return out;
   }
 
@@ -293,6 +403,13 @@ class Session {
   std::atomic<uint64_t> frame_{0};
   int64_t last_update_ns_ = 0;
   std::string last_error_;
+  // Set once when the device is made, before the worker starts.
+  bool adapter_known_ = false;
+  bool adapter_requested_ = false;
+  bool adapter_matched_ = false;
+  LUID adapter_luid_ = {};
+  std::string adapter_name_;
+  uint32_t adapter_vendor_ = 0, adapter_device_ = 0;
   std::mutex mutex_;
   std::thread worker_;
   std::atomic<bool> stop_{false};
@@ -304,8 +421,10 @@ class Session {
 
 class WebcamSession : public Session {
  public:
-  bool Start(const std::wstring& deviceId, std::string* error) {
-    if (!EnsureDevice(error)) return false;
+  bool Start(const std::wstring& deviceId, const AdapterHint& hint, std::string* error) {
+    // Frames are copied from system memory into the shared texture, so the
+    // device can sit on whichever adapter the render core uses.
+    if (!EnsureDevice(hint, error)) return false;
 
     IMFAttributes* attrs = nullptr;
     HRESULT hr = MFCreateAttributes(&attrs, 2);
@@ -462,7 +581,7 @@ class ScreenSession : public Session {
   // Bounds are in Windows virtual-desktop coordinates; hasBounds=false picks
   // the primary output. Chromium's display_id is NOT a DXGI IDXGIOutput index,
   // so we match by DesktopCoordinates instead.
-  bool Start(RECT bounds, bool hasBounds, std::string* error) {
+  bool Start(RECT bounds, bool hasBounds, const AdapterHint& hint, std::string* error) {
     // On hybrid-graphics laptops the render device tends to land on the
     // discrete GPU while the displays are attached to the iGPU. Desktop
     // Duplication needs the D3D device to sit on the SAME adapter as the
@@ -561,6 +680,10 @@ class ScreenSession : public Session {
       *error = "D3D11CreateDevice on output-owning adapter failed (" + HexOf(hr) + ")";
       return false;
     }
+    // Duplication can only use the output's adapter. When that is not the
+    // render core's, the log and receiveTextureInfo say so, and the app tells
+    // the user if the core cannot open the frames.
+    RecordDeviceAdapter(hint);
 
     // Prefer DuplicateOutput1 with an explicit format list — it works on HDR
     // and hybrid-graphics displays where the legacy DuplicateOutput can
@@ -650,8 +773,10 @@ class WGCSession : public Session {
   }
 
   // Exactly one of monitor / window is non-null.
-  bool Start(HMONITOR monitor, HWND window, std::string* error) {
-    if (!EnsureDevice(error)) return false;
+  // WGC delivers frames to a device on any adapter (the system copies them
+  // across), so the device goes on the render core's adapter.
+  bool Start(HMONITOR monitor, HWND window, const AdapterHint& hint, std::string* error) {
+    if (!EnsureDevice(hint, error)) return false;
     try {
       auto interop = winrt::get_activation_factory<
           winrt::Windows::Graphics::Capture::GraphicsCaptureItem,
@@ -822,6 +947,41 @@ std::wstring Utf8ToWide(const std::string& s) {
   return out;
 }
 
+// `adapterLuid` from the start args: the render core's adapter, chosen by
+// Electron from listAdapters(). Absent or malformed = the default adapter.
+AdapterHint AdapterHintArg(const Napi::Object& obj) {
+  AdapterHint hint;
+  hint.set = ParseLuidHex(Utf8Arg(obj, "adapterLuid"), &hint.luid);
+  return hint;
+}
+
+// listAdapters() -> [{ luid, name, vendorId, deviceId, software }]
+Napi::Value ListAdapters(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  Napi::Array out = Napi::Array::New(env);
+  IDXGIFactory1* factory = nullptr;
+  if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&factory)) || !factory) return out;
+  uint32_t written = 0;
+  for (UINT i = 0; ; i++) {
+    IDXGIAdapter1* adapter = nullptr;
+    HRESULT hr = factory->EnumAdapters1(i, &adapter);
+    if (hr == DXGI_ERROR_NOT_FOUND || FAILED(hr) || !adapter) break;
+    DXGI_ADAPTER_DESC1 desc = {};
+    if (SUCCEEDED(adapter->GetDesc1(&desc))) {
+      Napi::Object item = Napi::Object::New(env);
+      item.Set("luid", Napi::String::New(env, LuidHex(desc.AdapterLuid)));
+      item.Set("name", Napi::String::New(env, Narrow(desc.Description)));
+      item.Set("vendorId", Napi::Number::New(env, (double)desc.VendorId));
+      item.Set("deviceId", Napi::Number::New(env, (double)desc.DeviceId));
+      item.Set("software", Napi::Boolean::New(env, (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0));
+      out.Set(written++, item);
+    }
+    adapter->Release();
+  }
+  factory->Release();
+  return out;
+}
+
 Napi::Value Available(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   Napi::Object out = Napi::Object::New(env);
@@ -885,7 +1045,7 @@ Napi::Value StartCamera(const Napi::CallbackInfo& info) {
   if (sessionId.empty()) return Napi::Boolean::New(env, false);
   auto s = std::make_shared<WebcamSession>();
   std::string err;
-  if (!s->Start(Utf8ToWide(deviceId), &err)) {
+  if (!s->Start(Utf8ToWide(deviceId), AdapterHintArg(args), &err)) {
     fprintf(stderr, "[WinCapture] startCamera failed: %s\n", err.c_str());
     return Napi::Boolean::New(env, false);
   }
@@ -951,9 +1111,20 @@ Napi::Value StartScreen(const Napi::CallbackInfo& info) {
         return Napi::Boolean::New(env, false);
       }
     }
+    const AdapterHint hint = AdapterHintArg(args);
     auto wgc = std::make_shared<WGCSession>();
     std::string wgcErr;
-    if (wgc->Start(monitor, window, &wgcErr)) {
+    bool started = wgc->Start(monitor, window, hint, &wgcErr);
+    if (!started && hint.set) {
+      // Should a driver refuse capture onto the render core's adapter, the
+      // default adapter is what worked before.
+      fprintf(stderr, "[WinCapture] WGC on the render core's adapter failed (%s), retrying on the default adapter\n",
+              wgcErr.c_str());
+      wgc = std::make_shared<WGCSession>();
+      wgcErr.clear();
+      started = wgc->Start(monitor, window, AdapterHint{}, &wgcErr);
+    }
+    if (started) {
       StoreSession(sessionId, wgc, kind == "window" ? "window" : "screen");
       fprintf(stderr, "[WinCapture] startScreen via WGC (%s) ok\n", kind.c_str());
       return Napi::Boolean::New(env, true);
@@ -968,7 +1139,7 @@ Napi::Value StartScreen(const Napi::CallbackInfo& info) {
   }
   auto s = std::make_shared<ScreenSession>();
   std::string err;
-  if (!s->Start(bounds, hasBounds, &err)) {
+  if (!s->Start(bounds, hasBounds, AdapterHintArg(args), &err)) {
     fprintf(stderr, "[WinCapture] startScreen failed: %s\n", err.c_str());
     return Napi::Boolean::New(env, false);
   }
@@ -1003,6 +1174,7 @@ Napi::Value ReceiveTextureInfo(const Napi::CallbackInfo& info) {
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("available", Napi::Function::New(env, Available));
   exports.Set("listCameras", Napi::Function::New(env, ListCameras));
+  exports.Set("listAdapters", Napi::Function::New(env, ListAdapters));
   exports.Set("startCamera", Napi::Function::New(env, StartCamera));
   exports.Set("startScreen", Napi::Function::New(env, StartScreen));
   exports.Set("stop", Napi::Function::New(env, Stop));

@@ -212,6 +212,7 @@
 
   // Check if running in desktop app (Electron)
   import { invoke as bridgeInvoke, isDesktopApp, getTextureShareLabel } from '$lib/bridge';
+  import { forgetLiveCaptureSession, liveCaptureImportStates, liveCaptureStatusLabel } from '$lib/renderer/liveCaptureImportState';
   const tsLabel = getTextureShareLabel();
   import { spoutSenders, textureShareInfo, scanSpoutSenders } from '$lib/stores/spout';
   const isDesktop = isDesktopApp || (typeof window !== 'undefined' && !!window.__ELECTRON__);
@@ -340,6 +341,7 @@
     if ((source.type === 'webcam' || source.type === 'capture') && source.nativeSessionId && isDesktop) {
       bridgeInvoke('native_live_capture_stop', { sessionId: source.nativeSessionId })
         .catch((err: any) => console.warn('Failed to stop native live source:', err));
+      forgetLiveCaptureSession(source.nativeSessionId);
     }
   }
 
@@ -4999,7 +5001,13 @@
                 <div class="source-info">
                   <span class="source-name">{source.name}</span>
                   <span class="source-status">
-                    {#if source.status === 'live'}
+                    {#if source.status === 'live' && source.nativeSessionId}
+                      <!-- A native camera or capture: Live only once the render
+                           core has shown a frame (it may not be able to). -->
+                      {@const shown = liveCaptureStatusLabel($liveCaptureImportStates.get(source.nativeSessionId))}
+                      <span class="status-dot {shown.tone}" title={shown.title}></span>
+                      <span title={shown.title}>{shown.label}</span>
+                    {:else if source.status === 'live'}
                       <span class="status-dot live"></span> Live
                     {:else if source.status === 'connecting'}
                       <span class="status-dot connecting"></span> Connecting...
@@ -8142,6 +8150,14 @@
   .status-dot.connecting {
     background: #f59e0b;
     animation: pulse-dot 1.2s infinite;
+  }
+
+  .status-dot.ready {
+    background: var(--ga-ink-2, #89857e);
+  }
+
+  .status-dot.error {
+    background: var(--ga-danger, #ef4444);
   }
 
   @keyframes pulse-dot {

@@ -703,6 +703,8 @@ export interface RendererStatus {
   /** True when the core is running on a software rasterizer (WARP) — the
    *  no-usable-GPU compatibility fallback. */
   adapter_is_software?: boolean;
+  /** Windows: the render adapter's LUID, 16 hex digits (HighPart first). */
+  adapter_luid?: string | null;
   native_caps: NativeGpuCaps;
   native_quality: NativeQualityState;
   source_preview_size: number;

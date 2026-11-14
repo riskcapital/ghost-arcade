@@ -12,6 +12,11 @@ pub struct SharedTextureSourceFrameDescriptor {
     pub close_handle_after_import: bool,
     pub frame: Option<u64>,
     pub sender_name: Option<String>,
+    /// Set by the editor for a camera or screen capture: names the texture
+    /// behind the handle (session and the addon's own handle). The handle in
+    /// the command is a fresh duplicate on every upload, so it cannot say
+    /// whether this is the texture already opened.
+    pub cache_key: Option<String>,
     pub width: u32,
     pub height: u32,
 }
@@ -74,6 +79,10 @@ impl SharedTextureSourceFrameDescriptor {
                 .or_else(|| string_at(command, "senderName"))
                 .or_else(|| nested_string_at(shared_texture, "sender_name"))
                 .or_else(|| nested_string_at(shared_texture, "senderName"))
+                .map(str::to_string),
+            cache_key: string_at(command, "shared_texture_cache_key")
+                .or_else(|| nested_string_at(shared_texture, "cache_key"))
+                .filter(|key| !key.is_empty())
                 .map(str::to_string),
             width: width.min(u32::MAX as usize) as u32,
             height: height.min(u32::MAX as usize) as u32,
@@ -315,6 +324,67 @@ fn bool_at(value: &Value, key: &str) -> Option<bool> {
 
 fn nested_bool_at(value: Option<&Value>, key: &str) -> Option<bool> {
     value?.as_object()?.get(key)?.as_bool()
+}
+
+/// What an opened shared texture is: the editor's key for it (session and
+/// the producer's handle) plus its size and format. A producer remakes its
+/// texture only on a size change, which changes the key.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SharedTextureImportKey {
+    pub cache_key: String,
+    pub width: u32,
+    pub height: u32,
+    pub format: String,
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+impl SharedTextureImportKey {
+    pub fn for_descriptor(descriptor: &SharedTextureSourceFrameDescriptor) -> Option<Self> {
+        Some(Self {
+            cache_key: descriptor.cache_key.clone()?,
+            width: descriptor.width,
+            height: descriptor.height,
+            format: descriptor.format.clone(),
+        })
+    }
+}
+
+/// Shared textures already opened, one per source-frame slot, so a camera's
+/// texture is opened once per session rather than once per frame. A slot
+/// holds at most one entry: a new key replaces it, and releasing or reusing
+/// the slot drops it, so the cache is bounded by the slot count.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub struct SharedTextureImportCache<T> {
+    entries: std::collections::HashMap<usize, (SharedTextureImportKey, T)>,
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+impl<T: Clone> SharedTextureImportCache<T> {
+    pub fn new() -> Self {
+        Self { entries: std::collections::HashMap::new() }
+    }
+
+    /// The texture opened for this slot under this key, if it still is.
+    pub fn get(&self, slot: usize, key: &SharedTextureImportKey) -> Option<T> {
+        self.entries
+            .get(&slot)
+            .filter(|(cached, _)| cached == key)
+            .map(|(_, texture)| texture.clone())
+    }
+
+    pub fn insert(&mut self, slot: usize, key: SharedTextureImportKey, texture: T) {
+        self.entries.insert(slot, (key, texture));
+    }
+
+    /// Drop whatever the slot holds. True when it held something.
+    pub fn release(&mut self, slot: usize) -> bool {
+        self.entries.remove(&slot).is_some()
+    }
+
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
 }
 
 #[cfg(test)]
@@ -633,6 +703,7 @@ mod tests {
             handle_chars: 1,
             handle_byte_length: None,
             close_handle_after_import: false,
+            cache_key: None,
             frame: None,
             sender_name: None,
             width: 1920,
@@ -655,5 +726,70 @@ mod tests {
             descriptor.wgpu_texture_format(),
             wgpu::TextureFormat::Bgra8Unorm
         );
+    }
+
+    fn key(cache_key: &str, width: u32) -> super::SharedTextureImportKey {
+        super::SharedTextureImportKey {
+            cache_key: cache_key.to_string(),
+            width,
+            height: 480,
+            format: "87".to_string(),
+        }
+    }
+
+    #[test]
+    fn import_cache_opens_a_session_texture_once() {
+        let mut cache = super::SharedTextureImportCache::<u32>::new();
+        let mut opens = 0;
+        for _frame in 0..120 {
+            let k = key("session-1:0x1a4", 640);
+            if cache.get(3, &k).is_none() {
+                opens += 1;
+                cache.insert(3, k, opens);
+            }
+        }
+        assert_eq!(opens, 1);
+        assert_eq!(cache.len(), 1);
+    }
+
+    #[test]
+    fn import_cache_reopens_when_the_handle_size_or_session_changes() {
+        let mut cache = super::SharedTextureImportCache::<u32>::new();
+        cache.insert(3, key("session-1:0x1a4", 640), 1);
+        assert_eq!(cache.get(3, &key("session-1:0x1a4", 640)), Some(1));
+        assert_eq!(cache.get(3, &key("session-1:0x1b0", 640)), None);
+        assert_eq!(cache.get(3, &key("session-1:0x1a4", 1280)), None);
+        assert_eq!(cache.get(3, &key("session-2:0x1a4", 640)), None);
+        assert_eq!(cache.get(4, &key("session-1:0x1a4", 640)), None);
+        // A new key replaces the slot's entry instead of adding one.
+        cache.insert(3, key("session-1:0x1a4", 1280), 2);
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.get(3, &key("session-1:0x1a4", 640)), None);
+    }
+
+    #[test]
+    fn import_cache_drops_a_released_slot() {
+        let mut cache = super::SharedTextureImportCache::<u32>::new();
+        cache.insert(3, key("session-1:0x1a4", 640), 1);
+        assert!(cache.release(3));
+        assert!(!cache.release(3));
+        assert_eq!(cache.get(3, &key("session-1:0x1a4", 640)), None);
+        assert_eq!(cache.len(), 0);
+    }
+
+    #[test]
+    fn descriptor_reads_the_editor_cache_key_and_only_then_is_cacheable() {
+        let with_key = serde_json::json!({
+            "shared_handle": "4", "platform": "dxgi", "format": 87,
+            "shared_texture_cache_key": "session-1:AQIDBAUGBwg=",
+        });
+        let descriptor = super::SharedTextureSourceFrameDescriptor::from_command(&with_key, 640, 480).unwrap();
+        assert_eq!(descriptor.cache_key.as_deref(), Some("session-1:AQIDBAUGBwg="));
+        let import_key = super::SharedTextureImportKey::for_descriptor(&descriptor).unwrap();
+        assert_eq!((import_key.width, import_key.height, import_key.format.as_str()), (640, 480, "87"));
+
+        let spout = serde_json::json!({ "shared_handle": "4", "platform": "dxgi", "format": 87 });
+        let descriptor = super::SharedTextureSourceFrameDescriptor::from_command(&spout, 640, 480).unwrap();
+        assert!(super::SharedTextureImportKey::for_descriptor(&descriptor).is_none());
     }
 }

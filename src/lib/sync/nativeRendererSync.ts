@@ -75,8 +75,20 @@ import {
 } from '$lib/renderer/nativeGraphQuality';
 import {
   cameraLayerSource,
+  noteCameraLiveSourceImport,
   pruneCameraLiveSources,
 } from '$lib/renderer/cameraLiveSource';
+import {
+  noteLiveCaptureImported,
+  noteLiveCaptureRejected,
+  noteLiveCaptureSent,
+} from '$lib/renderer/liveCaptureImportState';
+import {
+  LIVE_CAPTURE_NOTICE_INTERVAL_MS,
+  LiveCaptureNoticeLimiter,
+  liveCaptureImportNotice,
+  type LiveCaptureKind,
+} from '$lib/renderer/liveCaptureImportNotice';
 import { rasterizeSvg, svgRasterSignature, type SvgRaster } from '$lib/renderer/svgRaster';
 import { nativeShaderSourceFromJavascript } from '$lib/renderer/nativeJsShaderSource';
 import {
@@ -320,7 +332,64 @@ type SharedTextureUploadState = {
   previousSignature: string | undefined;
   previousSeq: number | undefined;
   submittedAt: number;
+  /** Set for a camera or screen capture, so a rejection can be explained. */
+  liveCapture?: { kind: LiveCaptureKind; adapterLuid: string | null };
+  /** Camera / screen capture session (any platform), for MediaTray's status. */
+  liveSessionId?: string;
+  liveSessionKind?: LiveCaptureKind;
+  /** What was sent, so a rejected source is backed off until it changes. */
+  infoKey: string;
+  handle: string;
+  width: number;
+  height: number;
 };
+
+/** A shared-texture source the core rejected: not re-sent until `until`
+ *  (performance.now() ms) unless its texture changes. */
+type SharedTextureRejectBackoff = {
+  until: number;
+  delayMs: number;
+  handle: string;
+  width: number;
+  height: number;
+};
+
+/** First retry of a rejected shared-texture source, doubling to the notice
+ *  interval while it keeps failing. */
+const SHARED_TEXTURE_REJECT_RETRY_MIN_MS = 1000;
+/** While backed off, how often to check whether its texture changed. */
+const SHARED_TEXTURE_REJECT_POLL_MS = 1000;
+/** Backed-off sources remembered at once; the oldest is dropped first. */
+const SHARED_TEXTURE_REJECT_BACKOFF_MAX = 64;
+
+/**
+ * Backoff after a rejection: 1 s, doubling, capped at the notice interval.
+ * A different texture (new handle or size) is a fresh start.
+ */
+export function nextSharedTextureRejectBackoff(
+  previous: SharedTextureRejectBackoff | undefined,
+  sent: { handle: string; width: number; height: number },
+  nowMs: number,
+  maxMs = LIVE_CAPTURE_NOTICE_INTERVAL_MS,
+): SharedTextureRejectBackoff {
+  const sameTexture = !!previous && previous.handle === sent.handle
+    && previous.width === sent.width && previous.height === sent.height;
+  const delayMs = sameTexture
+    ? Math.min(previous!.delayMs * 2, maxMs)
+    : Math.min(SHARED_TEXTURE_REJECT_RETRY_MIN_MS, maxMs);
+  return { until: nowMs + delayMs, delayMs, handle: sent.handle, width: sent.width, height: sent.height };
+}
+
+/** True while a rejected source should not be re-sent: still inside its
+ *  backoff and still the same texture. */
+export function sharedTextureRejectBackoffActive(
+  backoff: SharedTextureRejectBackoff | undefined,
+  current: { handle?: string | null; width: number; height: number },
+  nowMs: number,
+): boolean {
+  return !!backoff && nowMs < backoff.until && backoff.handle === (current.handle ?? '')
+    && backoff.width === current.width && backoff.height === current.height;
+}
 
 type NativeImageDecodeState = {
   sourceId: string;
@@ -5507,6 +5576,9 @@ export function buildNativeSharedTextureSourceFrameCommand(args: {
   info: SpoutSharedTextureInfo & { handle: string };
   senderName?: string;
   seq: number;
+  /** Camera / screen capture: names the texture behind the handle (session
+   *  and the addon's own handle), so the core opens it once per session. */
+  cacheKey?: string;
 }): RendererCommand {
   return {
     type: 'upload_source_gpu_shared_texture',
@@ -5521,6 +5593,7 @@ export function buildNativeSharedTextureSourceFrameCommand(args: {
     frame: args.info.frame ?? undefined,
     sender_name: (args.info.senderName ?? args.senderName) || undefined,
     seq: args.seq,
+    ...(args.cacheKey ? { shared_texture_cache_key: args.cacheKey } : {}),
   };
 }
 
@@ -6292,6 +6365,10 @@ export class NativeRendererSync {
   private sharedTextureLastRejectedUploads = 0;
   private sharedTextureLastSuccessfulUploads = 0;
   private sharedTextureRejectWarnings = 0;
+  /** Cameras and screen captures whose frames the core rejected, told once. */
+  private liveCaptureImportNotices = new LiveCaptureNoticeLimiter();
+  /** Shared-texture sources the core rejected, keyed like the info cache. */
+  private sharedTextureRejectBackoff = new Map<string, SharedTextureRejectBackoff>();
   private nativeImageDecodePending = new Map<string, NativeImageDecodeState>();
   private nativeImageDecodeBypass = new Set<string>();
   private nativeImageLastDecodeFailures = 0;
@@ -6470,6 +6547,8 @@ export class NativeRendererSync {
     this.sharedTextureLastRejectedUploads = 0;
     this.sharedTextureLastSuccessfulUploads = 0;
     this.sharedTextureRejectWarnings = 0;
+    this.liveCaptureImportNotices.clear();
+    this.sharedTextureRejectBackoff.clear();
   }
 
   private resetNativeImageDecodeTracking() {
@@ -6600,13 +6679,70 @@ export class NativeRendererSync {
         );
         this.sharedTextureRejectWarnings += 1;
       }
+      for (const [, upload] of pending) this.noteLiveCaptureImport(upload, status, false);
+      // Back off only when every pending upload was rejected: the counters
+      // are global, so with fewer rejections than uploads it is not known
+      // which ones failed, and a working source must not be held back.
+      if (pending.length && rejected - this.sharedTextureLastRejectedUploads >= pending.length) {
+        const nowMs = performance.now();
+        for (const [, upload] of pending) {
+          if (upload.liveSessionId) {
+            noteLiveCaptureRejected(upload.liveSessionId, liveCaptureImportNotice({
+              kind: upload.liveSessionKind ?? 'webcam',
+              captureAdapterLuid: upload.liveCapture?.adapterLuid ?? null,
+              coreAdapterLuid: status.adapter_luid ?? null,
+              reason: status.source_frame_last_reject_reason ?? null,
+            }));
+          }
+          const next = nextSharedTextureRejectBackoff(this.sharedTextureRejectBackoff.get(upload.infoKey), upload, nowMs);
+          this.sharedTextureRejectBackoff.delete(upload.infoKey);
+          this.sharedTextureRejectBackoff.set(upload.infoKey, next);
+        }
+        while (this.sharedTextureRejectBackoff.size > SHARED_TEXTURE_REJECT_BACKOFF_MAX) {
+          const oldest = this.sharedTextureRejectBackoff.keys().next().value;
+          if (oldest === undefined) break;
+          this.sharedTextureRejectBackoff.delete(oldest);
+        }
+      }
       this.sharedTextureUploadPending.clear();
     } else if (successful > this.sharedTextureLastSuccessfulUploads) {
+      for (const upload of this.sharedTextureUploadPending.values()) {
+        this.noteLiveCaptureImport(upload, status, true);
+        this.sharedTextureRejectBackoff.delete(upload.infoKey);
+        if (upload.liveSessionId) noteLiveCaptureImported(upload.liveSessionId);
+      }
       this.sharedTextureUploadPending.clear();
     }
 
     this.sharedTextureLastRejectedUploads = rejected;
     this.sharedTextureLastSuccessfulUploads = successful;
+  }
+
+  /**
+   * A camera or screen capture whose frames the core could not open was
+   * blank with nothing but a console warning. Say why, once per source (not
+   * per frame), on the source itself where the panel shows one and as a
+   * notice; clear it when its frames import again.
+   */
+  private noteLiveCaptureImport(upload: SharedTextureUploadState, status: RendererStatus, imported: boolean) {
+    const live = upload.liveCapture;
+    if (!live) return;
+    if (imported) {
+      if (this.liveCaptureImportNotices.recovered(upload.sourceId)) noteCameraLiveSourceImport(upload.sourceId, null);
+      return;
+    }
+    const message = liveCaptureImportNotice({
+      kind: live.kind,
+      captureAdapterLuid: live.adapterLuid,
+      coreAdapterLuid: status.adapter_luid ?? null,
+      reason: status.source_frame_last_reject_reason ?? null,
+    });
+    noteCameraLiveSourceImport(upload.sourceId, message);
+    if (this.liveCaptureImportNotices.shouldNotify(upload.sourceId, Date.now())) {
+      console.warn(`[NativeRendererSync] live capture ${upload.sourceId} (${live.kind}) frames rejected: ${message}`
+        + ` capture adapter=${live.adapterLuid ?? 'unknown'} core adapter=${status.adapter_luid ?? 'unknown'}`);
+      showToast(message, 'warning');
+    }
   }
 
   private reconcileNativeImageDecodes(status: RendererStatus) {
@@ -9590,6 +9726,7 @@ export class NativeRendererSync {
     this.sharedTextureInfoCache.clear();
     this.sharedTextureInfoInFlight.clear();
     this.sharedTextureInfoNextPollAt.clear();
+    this.sharedTextureRejectBackoff.clear();
     this.previewImageLoads.clear();
     this.nativeComputeGraphSourceFrames = false;
     this.nativeGraphCatalogComplete = false;
@@ -11757,7 +11894,10 @@ export class NativeRendererSync {
     const nextPollAt = this.sharedTextureInfoNextPollAt.get(key) ?? 0;
     if (now < nextPollAt || this.sharedTextureInfoInFlight.has(key)) return;
 
-    this.sharedTextureInfoNextPollAt.set(key, now + 16);
+    // A source the core rejected is only checked for a changed texture while
+    // it is backed off, not at frame rate.
+    const backedOff = (this.sharedTextureRejectBackoff.get(key)?.until ?? 0) > now;
+    this.sharedTextureInfoNextPollAt.set(key, now + (backedOff ? SHARED_TEXTURE_REJECT_POLL_MS : 16));
     this.sharedTextureInfoInFlight.add(key);
     void (async () => {
       try {
@@ -11770,12 +11910,26 @@ export class NativeRendererSync {
           this.sharedTextureReceiverSender = senderName;
         }
 
-        const info = liveSourceType === 'webcam' || liveSourceType === 'capture'
-          ? await invoke<SpoutSharedTextureInfo>('native_live_capture_texture_info', { sessionId: identity })
+        // Cameras and screen captures count their own frames (both addons),
+        // so main is asked for the texture only when there is a new one: an
+        // unchanged frame comes back as `{ unchanged: true }` and nothing is
+        // re-sent to the core. Spout and NDI report a sender's counter that
+        // may never move, so they keep re-sending each poll.
+        const liveCapture = liveSourceType === 'webcam' || liveSourceType === 'capture';
+        const previous = this.sharedTextureInfoCache.get(key);
+        const sinceFrame = liveCapture ? Number(previous?.info.frame ?? 0) : 0;
+        const info = liveCapture
+          ? await invoke<SpoutSharedTextureInfo & { unchanged?: boolean }>('native_live_capture_texture_info', {
+            sessionId: identity,
+            ...(sinceFrame > 0 ? { sinceFrame } : {}),
+          })
           : liveSourceType === 'ndi'
             ? await (window as any).ghostNDI?.receiveTextureInfo?.(identity)
             : await receiveSpoutTextureInfo();
+        if ((info as any)?.unchanged) return;
         if (!info?.available || !info.handle || !info.width || !info.height) return;
+        if (liveCapture && previous && sinceFrame > 0 && Number(info.frame ?? 0) === sinceFrame
+          && previous.info.handle === info.handle) return;
         if (liveSourceType === 'syphon' && senderName && info.senderName && info.senderName !== senderName) return;
         // Host-side receive count, because the sender's frame number cannot
         // be trusted to change.
@@ -11828,6 +11982,10 @@ export class NativeRendererSync {
     const height = Math.floor(Number(info.height ?? 0));
     if (width <= 0 || height <= 0) return false;
 
+    if (sharedTextureRejectBackoffActive(this.sharedTextureRejectBackoff.get(cacheKey), { handle: info.handle, width, height }, now)) {
+      return true;
+    }
+
     const sourceKey = this.sourceCacheKey(src.id, src.src);
     const signature = [
       'shared',
@@ -11860,6 +12018,10 @@ export class NativeRendererSync {
     this.sourcePreviewSeq.set(sourceKey, seq);
     this.sourcePreviewSig.set(sourceKey, signature);
     this.sourcePreviewNextAt.set(sourceKey, now + LIVE_SHARED_TEXTURE_REFRESH_MS);
+    const liveType = nativeLiveSourceType(src);
+    const liveSessionId = liveType === 'webcam' || liveType === 'capture' ? nativeLiveSourceIdentity(src) : '';
+    // Notices and the texture cache key are Windows only (DXGI handles).
+    const liveKind = info.platform === 'dxgi' ? liveType : null;
     this.sharedTextureUploadPending.set(sourceKey, {
       sourceId: src.id,
       signature,
@@ -11867,6 +12029,14 @@ export class NativeRendererSync {
       previousSignature,
       previousSeq,
       submittedAt: now,
+      infoKey: cacheKey,
+      ...(liveSessionId ? { liveSessionId, liveSessionKind: liveType as LiveCaptureKind } : {}),
+      handle: String(info.handle),
+      width,
+      height,
+      ...(liveKind === 'webcam' || liveKind === 'capture'
+        ? { liveCapture: { kind: liveKind, adapterLuid: info.adapterLuid ?? null } }
+        : {}),
     });
     if (budget) budget.dynamicRemaining -= 1;
 
@@ -11877,7 +12047,14 @@ export class NativeRendererSync {
       info: info as SpoutSharedTextureInfo & { handle: string },
       senderName: sharedTextureSenderName(src),
       seq,
+      // Cameras and screen captures keep one texture per session (remade on a
+      // size change, which changes the handle). Spout and NDI senders can
+      // restart behind the same name, so they are opened every time.
+      ...(liveKind === 'webcam' || liveKind === 'capture'
+        ? { cacheKey: `${nativeLiveSourceIdentity(src)}:${info.handle}` }
+        : {}),
     }));
+    if (liveSessionId) noteLiveCaptureSent(liveSessionId);
     return true;
   }
 

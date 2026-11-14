@@ -24,6 +24,7 @@
  */
 import { invoke, isElectron } from '$lib/bridge';
 import type { Layer } from '$lib/types';
+import { forgetLiveCaptureSession } from './liveCaptureImportState';
 
 export type CameraDevice = { id: string; name: string };
 
@@ -32,6 +33,10 @@ type CameraSession = {
   sessionId: string | null;
   state: 'idle' | 'starting' | 'live' | 'error';
   error: string | null;
+  /** The session is live but the render core cannot open its frames (on
+   *  Windows: most often a camera on the other GPU of a two-GPU laptop).
+   *  Shown like `error`, but does not stop or retry the session. */
+  importError: string | null;
   /** Epoch ms before which a failed session will not be retried. */
   retryAfter: number;
   retryDelay: number;
@@ -69,7 +74,72 @@ export function cameraDeviceIdFromLiveSourceId(id: string): string {
 }
 
 export function cameraLiveSourceError(deviceId: string | null | undefined): string | null {
-  return sessions.get(String(deviceId || ''))?.error ?? null;
+  const session = sessions.get(String(deviceId || ''));
+  return session?.error ?? session?.importError ?? null;
+}
+
+/*
+ * Panels that show a camera's error subscribe to it instead of polling. A
+ * listener hears the current error at once and then each change; the set
+ * empties as panels unsubscribe.
+ */
+type CameraErrorListener = (error: string | null) => void;
+const errorListeners = new Map<string, Set<CameraErrorListener>>();
+const lastNotifiedError = new Map<string, string | null>();
+
+function notifyCameraError(deviceId: string): void {
+  const listeners = errorListeners.get(deviceId);
+  if (!listeners?.size) return;
+  const error = cameraLiveSourceError(deviceId);
+  if (lastNotifiedError.get(deviceId) === error) return;
+  lastNotifiedError.set(deviceId, error);
+  for (const listener of listeners) listener(error);
+}
+
+export function subscribeCameraLiveSourceError(
+  deviceId: string | null | undefined,
+  listener: CameraErrorListener,
+): () => void {
+  const key = String(deviceId || '');
+  let listeners = errorListeners.get(key);
+  if (!listeners) {
+    listeners = new Set();
+    errorListeners.set(key, listeners);
+  }
+  listeners.add(listener);
+  const error = cameraLiveSourceError(key);
+  lastNotifiedError.set(key, error);
+  listener(error);
+  return () => {
+    const current = errorListeners.get(key);
+    if (!current) return;
+    current.delete(listener);
+    if (!current.size) {
+      errorListeners.delete(key);
+      lastNotifiedError.delete(key);
+    }
+  };
+}
+
+/** Panels listening, for tests: the listener maps must not outlive them. */
+export function cameraErrorListenerCount(): number {
+  let count = 0;
+  for (const listeners of errorListeners.values()) count += listeners.size;
+  return count;
+}
+
+/**
+ * The sync's verdict on a camera layer source's frames: a message when the
+ * core rejected them, null once they import again. Ignores ids that are not
+ * camera sources and cameras with no session.
+ */
+export function noteCameraLiveSourceImport(sourceId: string, message: string | null): void {
+  if (!isCameraLiveSourceId(sourceId)) return;
+  const deviceId = cameraDeviceIdFromLiveSourceId(sourceId);
+  const session = sessions.get(deviceId);
+  if (!session || session.importError === message) return;
+  session.importError = message;
+  notifyCameraError(deviceId);
 }
 
 /** Cameras the native addon can open. These ids are the addon's, NOT
@@ -101,6 +171,7 @@ function sessionFor(deviceId: string): CameraSession {
       sessionId: null,
       state: 'idle',
       error: null,
+      importError: null,
       retryAfter: 0,
       retryDelay: CAMERA_RETRY_MIN_MS,
     };
@@ -112,6 +183,7 @@ function sessionFor(deviceId: string): CameraSession {
 const reportedFailures = new Map<string, string>();
 
 function reportCameraFailure(session: CameraSession): void {
+  notifyCameraError(session.deviceId);
   const previous = reportedFailures.get(session.deviceId);
   if (previous === session.error) return;
   reportedFailures.set(session.deviceId, session.error ?? '');
@@ -154,6 +226,7 @@ function startSession(session: CameraSession): void {
       session.error = null;
       session.retryDelay = CAMERA_RETRY_MIN_MS;
       reportedFailures.delete(session.deviceId);
+      notifyCameraError(session.deviceId);
       console.log(`[camera] ${cameraLiveSourceId(session.deviceId)} session ${sessionId} started`);
     })
     .catch((err: any) => {
@@ -198,7 +271,9 @@ export function pruneCameraLiveSources(activeDeviceIds: Set<string>): void {
     if (activeDeviceIds.has(deviceId)) continue;
     sessions.delete(deviceId);
     reportedFailures.delete(deviceId);
+    notifyCameraError(deviceId);
     if (session.sessionId) {
+      forgetLiveCaptureSession(session.sessionId);
       void invoke('native_live_capture_stop', { sessionId: session.sessionId }).catch(() => {});
       console.log(`[camera] ${cameraLiveSourceId(deviceId)} released`);
     }
