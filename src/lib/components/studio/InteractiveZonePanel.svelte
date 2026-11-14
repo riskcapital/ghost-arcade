@@ -2,7 +2,8 @@
   /**
    * "When touched": what a trigger zone does. A list of actions, a way to add
    * one, the re-arm time, and Test to fire them now. The zone fires when a
-   * pointer, hand or body comes into it, editor open or not.
+   * pointer, hand or body comes into it, editor open or not. With the 3D
+   * world on, it can also act on the world where the zone is.
    */
   import {
     MAX_ZONE_ACTIONS,
@@ -10,6 +11,7 @@
     ZONE_REARM_MIN,
     type ZoneAction,
     type ZoneTrigger,
+    type ZoneWorldAction,
   } from '../../mobile/studio/interactive';
   import type { ShowAction } from '../../show/showActions';
   import { describeShowAction } from '../../show/showActionLabels';
@@ -25,6 +27,15 @@
   /** The re-arm slider is about to change: remember the scene for undo. */
   export let onrearmstart: () => void;
   export let ontest: () => void;
+  /** The scene's 3D world is on: offer what the zone can do to it. */
+  export let world = false;
+
+  const WORLD_LABELS: Record<ZoneWorldAction, string> = {
+    ignite: 'Set fire here',
+    pour: 'Pour paint here',
+    balls: 'Drop balls from here',
+  };
+  const WORLD_ADD: Record<ZoneWorldAction, string> = { ignite: '+ Fire', pour: '+ Paint', balls: '+ Balls' };
 
   let adding = false;
   let draft: ShowAction | null = null;
@@ -34,6 +45,7 @@
     section: (id: string) => ($showTimeline.sections ?? []).find((s) => s.id === id)?.name,
   };
   function label(a: ZoneAction): string {
+    if (a.kind === 'world') return world ? WORLD_LABELS[a.what] : `${WORLD_LABELS[a.what]} · needs the 3D world`;
     if (a.kind === 'burst') return burstTargets ? `Burst · ${burstTargets} effect${burstTargets === 1 ? '' : 's'} on this zone` : 'Burst · no effect is aimed at this zone';
     return describeShowAction(a.action, names);
   }
@@ -49,6 +61,9 @@
     draft = null;
     adding = false;
   }
+  function addWorld(what: ZoneWorldAction) {
+    onchange({ ...trigger, actions: [...trigger.actions, { kind: 'world', what }] }, true);
+  }
   function addBurst() {
     onchange({ ...trigger, actions: [...trigger.actions, { kind: 'burst' }] }, true);
   }
@@ -58,7 +73,7 @@
 {#if trigger.actions.length}
   <ol class="zone-actions">
     {#each trigger.actions as a, i}
-      <li class:muted={a.kind === 'burst' && !burstTargets}>
+      <li class:muted={(a.kind === 'burst' && !burstTargets) || (a.kind === 'world' && !world)}>
         <span>{label(a)}</span>
         <button class="remove" aria-label="Remove this action" title="Remove" onclick={() => remove(i)}>×</button>
       </li>
@@ -81,6 +96,16 @@
     <button disabled={full} onclick={() => (adding = true)}>+ Show action</button>
     <button disabled={full || hasBurst} onclick={addBurst}>+ Burst</button>
   </div>
+  {#if world}
+    <div class="tools">
+      {#each Object.keys(WORLD_ADD) as what}
+        <button
+          disabled={full || trigger.actions.some((a) => a.kind === 'world' && a.what === what)}
+          onclick={() => addWorld(what as ZoneWorldAction)}>{WORLD_ADD[what as ZoneWorldAction]}</button
+        >
+      {/each}
+    </div>
+  {/if}
 {/if}
 
 <label>

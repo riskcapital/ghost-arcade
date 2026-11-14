@@ -1126,7 +1126,7 @@ import { nativeEffectPassIdForEffectType } from '$lib/renderer/nativeEffectCover
 import { statusFrameRate } from './statusFrameRate';
 import { recordingScreenIds } from '$lib/recording/recordingSources';
 import { launchClockPosition } from '$lib/stores/launchClock';
-import { liveInteractiveInputs, livePointer, liveWorldInput, liveWorldView, pruneLiveInteractiveInputs, setLiveInteractiveInputs, setLiveWorldInput } from '$lib/interactive/interactiveLive';
+import { liveInteractiveInputs, livePointer, liveWorldInput, liveWorldView, pruneLiveInteractiveInputs, setLiveInteractiveInputs, setLiveWorldInput, takeWorldActions } from '$lib/interactive/interactiveLive';
 import { WorldInput } from '$lib/interactive/worldInput';
 import { combineInputs, PointSmoother, trackedPoints, ZoneTriggers, type FiredZone } from '$lib/interactive/interactiveRuntime';
 import { defaultInteractiveInput, validateScene, type InteractiveScene, type Interaction } from '$lib/mobile/studio/interactive';
@@ -5112,6 +5112,12 @@ function videosynthPluginGraph(params: Record<string, any>, sourceId: string, wi
   } as InteractiveGraphBuildResult;
 }
 
+/** Where a zone acts on the world: the middle of its outline. */
+function zoneMiddle(points: { x: number; y: number }[]): { x: number; y: number } {
+  const n = Math.max(1, points.length);
+  return { x: points.reduce((s, p) => s + p.x, 0) / n, y: points.reduce((s, p) => s + p.y, 0) / n };
+}
+
 /**
  * What a touched zone does. Show actions go through `fireShowAction`, like
  * every controller. A burst raises the burst count of each effect aimed at
@@ -5123,7 +5129,8 @@ function fireInteractiveZones(layerId: string, fired: FiredZone[]): void {
   for (const zone of fired) {
     for (const action of zone.actions) {
       if (action.kind === 'show') fireShowAction(action.action);
-      else bursts.add(zone.surfaceId);
+      else if (action.kind === 'burst') bursts.add(zone.surfaceId);
+      // World actions are the layer runtime's (stepInteractiveLayer).
     }
   }
   if (!bursts.size) return;
@@ -8462,10 +8469,22 @@ export class NativeRendererSync {
       setLiveWorldInput(layer.id, null);
       return;
     }
-    // The 3D world: throws and pushes on its balls.
-    setLiveWorldInput(layer.id, scene.world?.enabled ? runtime.world.update(points, performance.now() / 1000) : null);
-    const fired = runtime.zones.update(scene, points, performance.now() / 1000);
-    if (fired.length) fireInteractiveZones(layer.id, fired);
+    // The 3D world: touches, and what zones (or a zone's Test) asked of it.
+    const now = performance.now() / 1000;
+    const asked = takeWorldActions(layer.id);
+    if (scene.world?.enabled) for (const a of asked) runtime.world.trigger(a.what, a.point, now);
+    setLiveWorldInput(layer.id, scene.world?.enabled ? runtime.world.update(points, now) : null);
+    const fired = runtime.zones.update(scene, points, now);
+    if (!fired.length) return;
+    if (scene.world?.enabled) {
+      for (const zone of fired) {
+        const surface = scene.surfaces.find((s) => s.id === zone.surfaceId);
+        if (!surface) continue;
+        const middle = zoneMiddle(surface.points);
+        for (const action of zone.actions) if (action.kind === 'world') runtime.world.trigger(action.what, middle, now);
+      }
+    }
+    fireInteractiveZones(layer.id, fired);
   }
 
   private scheduleAudioSync() {

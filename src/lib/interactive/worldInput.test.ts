@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { IGNITE_HOLD, MAX_FIRES, THROW_EVERY, THROW_KEEP, WorldInput, worldInputParam } from './worldInput';
+import { IGNITE_HOLD, MAX_FIRES, THROW_EVERY, THROW_KEEP, WorldInput, worldInputParam, ZONE_BALLS, ZONE_POUR } from './worldInput';
 import type { Interaction } from '../mobile/studio/interactive';
 
 const at = (x: number, y: number, mode: Interaction['mode'], id = 'a'): Interaction => ({ id, point: { x, y }, strength: 1, mode });
@@ -68,5 +68,20 @@ describe('touches on the 3D world', () => {
     input.update([], 0.1);
     input.update([at(0.6, 0.6, 'ignite')], 0.2);
     expect(input.update([], 0.3).pointers.map((p) => p.point.x)).toEqual([0.2, 0.6]);
+  });
+
+  it('acts for a zone: a fire, paint poured for a while, a handful of balls', () => {
+    const input = new WorldInput();
+    input.trigger('ignite', { x: 0.4, y: 0.5 }, 0);
+    input.trigger('pour', { x: 0.6, y: 0.5 }, 0);
+    input.trigger('balls', { x: 0.5, y: 0.2 }, 0);
+    const state = input.update([], 0.05);
+    expect(state.pointers.map((p) => p.tool).sort()).toEqual(['ignite', 'pour']);
+    expect(state.throws).toHaveLength(ZONE_BALLS);
+    expect(new Set(state.throws.map((t) => t.number)).size).toBe(ZONE_BALLS);
+    // Tossed up (y is down on the output), some left and some right.
+    expect(state.throws.every((t) => t.velocity.y < 0)).toBe(true);
+    expect(state.throws.some((t) => t.velocity.x < 0) && state.throws.some((t) => t.velocity.x > 0)).toBe(true);
+    expect(input.update([], ZONE_POUR + 0.1).pointers.map((p) => p.tool)).toEqual(['ignite']);
   });
 });

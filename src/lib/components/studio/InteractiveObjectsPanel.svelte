@@ -135,6 +135,7 @@
       onchange={ontrigger}
       onrearmstart={ontriggerstart}
       ontest={ontesttrigger}
+      {world}
     />
   {/if}
   {#if chosen.behavior === 'solid'}

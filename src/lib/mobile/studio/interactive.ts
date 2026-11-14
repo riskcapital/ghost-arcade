@@ -75,9 +75,13 @@ export const surfaceHidden = (look: SurfaceLook | undefined) =>
 /**
  * What a trigger zone does when someone touches it. `burst` fires every
  * effect aimed at the zone; `show` fires anything the show can do (a Look, a
- * VJ clip, a cue, a section, a Live clip…) through `fireShowAction`.
+ * VJ clip, a cue, a section, a Live clip…) through `fireShowAction`; `world`
+ * acts on the 3D world where the zone is: sets it on fire, pours paint on it
+ * or drops a handful of balls from it.
  */
-export type ZoneAction = { kind: 'burst' } | { kind: 'show'; action: ShowAction };
+export const ZONE_WORLD_ACTIONS = ['ignite', 'pour', 'balls'] as const;
+export type ZoneWorldAction = (typeof ZONE_WORLD_ACTIONS)[number];
+export type ZoneAction = { kind: 'burst' } | { kind: 'show'; action: ShowAction } | { kind: 'world'; what: ZoneWorldAction };
 export const MAX_ZONE_ACTIONS = 8;
 export type ZoneTrigger = {
   actions: ZoneAction[];
@@ -207,6 +211,10 @@ export function validateZoneTrigger(raw: unknown): ZoneTrigger {
   for (const a of Array.isArray(t?.actions) ? t!.actions : []) {
     if (actions.length >= MAX_ZONE_ACTIONS) break;
     if ((a as ZoneAction)?.kind === 'burst') actions.push({ kind: 'burst' });
+    else if ((a as ZoneAction)?.kind === 'world') {
+      const what = (a as { what?: unknown }).what;
+      if ((ZONE_WORLD_ACTIONS as readonly unknown[]).includes(what)) actions.push({ kind: 'world', what: what as ZoneWorldAction });
+    }
     else if ((a as ZoneAction)?.kind === 'show') {
       const action = validateShowAction((a as { action?: unknown }).action);
       if (action) actions.push({ kind: 'show', action });

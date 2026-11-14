@@ -36,6 +36,7 @@
     type Point,
     type Interaction,
     type Behavior,
+    type ZoneWorldAction,
   } from '../../mobile/studio/interactive';
   import {
     effectParams,
@@ -110,6 +111,8 @@
   ) => void = () => {};
   /** The pointer touches, every animation frame (the scene goes out at 20 Hz). */
   export let onpointer: ((inputs: Interaction[]) => void) | undefined = undefined;
+  /** A zone's world action, tested from the editor: acts on the layer's 3D world. */
+  export let onworldaction: ((what: ZoneWorldAction, point: Point) => void) | undefined = undefined;
   /** Orbit view: how far the 3D world's camera is turned; `null` is face-on. */
   export let onview: ((view: { yaw: number; pitch: number } | null) => void) | undefined = undefined;
   export let mappingSurfaces: { name: string; points: Point[]; enabled: boolean; mode: string }[] = [];
@@ -643,6 +646,9 @@
       if (action.kind === 'show') {
         const result = fireShowAction(action.action);
         if (!result.ok) say(`Could not fire: ${result.reason ?? 'error'}.`);
+      } else if (action.kind === 'world') {
+        const n = Math.max(1, zone.points.length);
+        onworldaction?.(action.what, { x: zone.points.reduce((s, p) => s + p.x, 0) / n, y: zone.points.reduce((s, p) => s + p.y, 0) / n });
       } else {
         for (const e of scene.effects ?? []) {
           if (e.enabled && e.target === zone.id) scene = edit.patchEffect(scene, e.id, { burst: e.burst + 1 });

@@ -99,4 +99,10 @@ describe('the world settings', () => {
     expect(v.surfaces[0].finish).toEqual({ preset: 'chrome', color: '#ffffff' });
     expect(() => validateScene({ ...raw, surfaces: [{ ...raw.surfaces[0], finish: { preset: 'gold' } }] })).toThrow('unknown finish gold');
   });
+
+  it('keeps a zone’s world actions, and drops ones it does not know', async () => {
+    const { validateZoneTrigger } = await import('../mobile/studio/interactive');
+    const t = validateZoneTrigger({ rearm: 1, actions: [{ kind: 'world', what: 'ignite' }, { kind: 'world', what: 'nuke' }, { kind: 'world', what: 'balls' }, { kind: 'burst' }] });
+    expect(t.actions).toEqual([{ kind: 'world', what: 'ignite' }, { kind: 'world', what: 'balls' }, { kind: 'burst' }]);
+  });
 });

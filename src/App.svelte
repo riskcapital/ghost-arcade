@@ -89,7 +89,7 @@
   import { STRIPE_BLACK, STRIPE_CELLS } from './lib/mobile/studio/structuredLightCodes';
   import {tick as studioTick} from 'svelte';
   import {defaultInteractive,validateScene as validateInteractiveScene,type InteractiveScene,type Interaction} from './lib/mobile/studio/interactive';
-  import {setLivePointer, setLiveWorldView} from './lib/interactive/interactiveLive';
+  import {queueWorldAction, setLivePointer, setLiveWorldView} from './lib/interactive/interactiveLive';
   import {mergeInteractiveEdit,editableEffects,interactiveEditSignature} from './lib/mobile/studio/interactiveEffects';
   import {PhoneSessions,PHONE_SCENE_MAX_BYTES,phoneSenderId,sanitizePhoneInputs,type PhoneSceneState} from './lib/mobile/studio/phoneSessions';
   import {pickEditorClipRow,pickEditorClipSlot,pickPhoneClipSlot,isPhoneInteractiveClip} from './lib/mobile/studio/studioTargets';
@@ -208,6 +208,7 @@
   function studioPointer(inputs:Interaction[]){if(showInteractiveStudio&&!studioEditorClip&&studioEditorLayer)setLivePointer(studioEditorLayer,inputs);}
   /** The Studio's Orbit view turns the layer's 3D world; closing it turns it back (Studio onDestroy). */
   function studioView(view:{yaw:number;pitch:number}|null){if(!studioEditorClip&&studioEditorLayer)setLiveWorldView(studioEditorLayer,view);}
+  function studioWorldAction(what:import('./lib/mobile/studio/interactive').ZoneWorldAction,point:{x:number;y:number}){if(!studioEditorClip&&studioEditorLayer)queueWorldAction(studioEditorLayer,what,point);}
   function closeInteractiveStudio(){
     if(!showInteractiveStudio)return;
     studioEditor?.flush();showInteractiveStudio=false;recordDiscreteAction();studioUnrecordedEdit=false;
@@ -347,8 +348,11 @@
   const phoneSessions=new PhoneSessions({
     apply(phone,state:PhoneSceneState,starting){
       const effectSource={effectType:'performer-world' as const,interactiveScene:state.scene,interactiveInputs:state.inputs,interactivePaused:state.paused,interactiveRemote:phone};
+      // A phone app from before the 3D world sends scenes without one: the
+      // world set up here stays.
+      const keepWorld=(source:typeof effectSource|undefined)=>{const world=(source?.interactiveScene as InteractiveScene|undefined)?.world;return state.scene.world||!world?effectSource:{...effectSource,interactiveScene:{...state.scene,world}};};
       // A target the operator deleted is recreated like a fresh start.
-      if(starting||!patchPhoneTargets(phone,()=>effectSource))startPhoneScene(phone,effectSource);
+      if(starting||!patchPhoneTargets(phone,source=>keepWorld(source as typeof effectSource|undefined)))startPhoneScene(phone,effectSource);
     },
     hasTarget:phone=>!!phoneLayerId(phone)||!!phoneClipSlot(phone),
     releaseInputs(phone){patchPhoneTargets(phone,source=>({...source!,interactiveInputs:[]}));},
@@ -9100,7 +9104,7 @@
              would restore the scene it was opened with and publish that over
              every edit made since. -->
         <div class="studio-page" style:display={studioPage==='interactive'?'contents':'none'}>
-          {#key studioEditorRevision}<InteractiveStudio bind:this={studioEditor} aspect={canvasAspect} visible={studioPage==='interactive'} initialPaused={studioEditorPaused} nativeOutput nativeFrame={studioNativeFrame} initialActive={studioEditorActive} initialScene={studioEditorScene} onscene={editStudioScene} onpointer={studioPointer} onview={studioView} captureScene={captureStudioScene} onrestore={restoreStudioAnimation} onparam={studioParamRecord} onkeyframe={studioAddKeyframe} ontimeline={studioToggleTimeline} mappingSurfaces={studioMappingSurfaces($project.layers,studioEditorLayer)} onclose={closeInteractiveStudio}><KeyframeTimeline slot="timeline" embedded targetId={studioTimelineId}/></InteractiveStudio>{/key}
+          {#key studioEditorRevision}<InteractiveStudio bind:this={studioEditor} aspect={canvasAspect} visible={studioPage==='interactive'} initialPaused={studioEditorPaused} nativeOutput nativeFrame={studioNativeFrame} initialActive={studioEditorActive} initialScene={studioEditorScene} onscene={editStudioScene} onpointer={studioPointer} onview={studioView} onworldaction={studioWorldAction} captureScene={captureStudioScene} onrestore={restoreStudioAnimation} onparam={studioParamRecord} onkeyframe={studioAddKeyframe} ontimeline={studioToggleTimeline} mappingSurfaces={studioMappingSurfaces($project.layers,studioEditorLayer)} onclose={closeInteractiveStudio}><KeyframeTimeline slot="timeline" embedded targetId={studioTimelineId}/></InteractiveStudio>{/key}
         </div>
         {#if studioPage==='calibration'}<DesktopCalibrationImport incoming={pendingPhoneCalibration}/>{/if}
       </section></div>

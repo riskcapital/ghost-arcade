@@ -59,6 +59,9 @@ export function phoneSenderId(raw: unknown): string {
   return typeof raw === 'string' && /^[\w.:-]{1,80}$/.test(raw) ? raw : PHONE_UNKNOWN_SENDER;
 }
 
+/** What a phone touch may do: the 2D forces, and the 3D world's tools. */
+const PHONE_MODES: Interaction['mode'][] = ['attract', 'repel', 'vortex', 'push', 'throw', 'pour', 'ignite'];
+
 /** Keep up to eight well-formed touches; drop everything else on them. */
 export function sanitizePhoneInputs(raw: unknown): Interaction[] {
   if (!Array.isArray(raw)) return [];
@@ -70,7 +73,7 @@ export function sanitizePhoneInputs(raw: unknown): Interaction[] {
       id: String(entry.id ?? `touch-${inputs.length}`).slice(0, 40),
       point: { x: Math.max(0, Math.min(1, point.x)), y: Math.max(0, Math.min(1, point.y)) },
       strength: Math.max(0, Math.min(1, entry.strength)),
-      mode: entry.mode === 'repel' || entry.mode === 'vortex' ? entry.mode : 'attract',
+      mode: PHONE_MODES.includes(entry.mode) ? entry.mode : 'attract',
     });
   }
   return inputs;

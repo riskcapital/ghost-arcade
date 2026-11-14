@@ -17,7 +17,7 @@
  *
  * Live state only: never saved, never an undo step.
  */
-import type { Interaction, Point } from '../mobile/studio/interactive';
+import type { Interaction, Point, ZoneWorldAction } from '../mobile/studio/interactive';
 
 export const WORLD_TOOLS = ['push', 'attract', 'repel', 'vortex', 'pour', 'ignite'] as const;
 export type WorldForceTool = (typeof WORLD_TOOLS)[number];
@@ -30,6 +30,9 @@ export const THROW_KEEP = 0.4;
 export const IGNITE_HOLD = 3;
 /** The most spots burning at once. */
 export const MAX_FIRES = 4;
+/** How long a zone pours paint, in seconds, and how many balls it drops. */
+export const ZONE_POUR = 1.5;
+export const ZONE_BALLS = 8;
 
 export type WorldPointer = { point: Point; velocity: Point; tool: WorldForceTool; strength: number };
 export type WorldThrow = { point: Point; velocity: Point; number: number; at: number };
@@ -45,6 +48,8 @@ export class WorldInput {
   private presses = 0;
   /** Fires lit by Ignite, one per press: they burn on after the finger lifts. */
   private fires = new Map<string, { point: Point; until: number }>();
+  /** Paint a zone is pouring. */
+  private pours: { point: Point; until: number }[] = [];
 
   /** One frame: the points touching the scene now, at `now` seconds. */
   update(points: Interaction[], now: number): WorldInputState {
@@ -93,19 +98,42 @@ export class WorldInput {
       }
     }
     for (const id of [...this.held.keys()]) if (!seen.has(id)) this.held.delete(id);
-    this.throws = this.throws.filter((t) => now - t.at <= THROW_KEEP).slice(-MAX_WORLD_THROWS);
+    this.throws = this.throws.filter((t) => now - t.at <= THROW_KEEP);
+    this.pours = this.pours.filter((p) => p.until >= now);
+    for (const pour of this.pours) {
+      if (pointers.length < MAX_WORLD_POINTERS) pointers.push({ point: pour.point, velocity: { x: 0, y: 0 }, tool: 'pour', strength: 1 });
+    }
     for (const [id, fire] of [...this.fires]) {
       if (fire.until < now) { this.fires.delete(id); continue; }
       // Strength: dies down over the last second.
       if (pointers.length < MAX_WORLD_POINTERS) pointers.push({ point: fire.point, velocity: { x: 0, y: 0 }, tool: 'ignite', strength: Math.min(1, fire.until - now) });
     }
-    return { pointers, throws: [...this.throws] };
+    // The GPU reads the newest eight; each spawns the first frame it is listed.
+    return { pointers, throws: this.throws.slice(-MAX_WORLD_THROWS) };
+  }
+
+  /** What a zone does to the world, at the zone (a point of the output). */
+  trigger(what: ZoneWorldAction, point: Point, now: number): void {
+    const at = { x: Math.max(0, Math.min(1, point.x)), y: Math.max(0, Math.min(1, point.y)) };
+    if (what === 'ignite') {
+      if (this.fires.size >= MAX_FIRES) this.fires.delete(this.fires.keys().next().value!);
+      this.fires.set(`zone#${++this.presses}`, { point: at, until: now + IGNITE_HOLD });
+    } else if (what === 'pour') {
+      this.pours = [...this.pours.slice(-3), { point: at, until: now + ZONE_POUR }];
+    } else {
+      // A handful, tossed up and out, so they spill over what is below.
+      for (let i = 0; i < ZONE_BALLS; i++) {
+        const a = ((this.count * 0.618034 + i / ZONE_BALLS) % 1) * Math.PI;
+        this.throws.push({ point: at, velocity: { x: Math.cos(a) * 0.35, y: -0.25 - 0.2 * Math.sin(a) }, number: ++this.count, at: now });
+      }
+    }
   }
 
   reset(): void {
     this.held.clear();
     this.throws = [];
     this.fires.clear();
+    this.pours = [];
   }
 }
 

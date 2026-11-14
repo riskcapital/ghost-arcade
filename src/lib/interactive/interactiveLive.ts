@@ -6,7 +6,7 @@
  *
  * Live state only: never saved, never an undo step.
  */
-import type { Interaction } from '../mobile/studio/interactive';
+import type { Interaction, Point, ZoneWorldAction } from '../mobile/studio/interactive';
 import type { WorldInputState } from './worldInput';
 
 const live = new Map<string, Interaction[]>();
@@ -27,6 +27,21 @@ export function setLiveWorldInput(layerId: string, state: WorldInputState | null
 
 export function liveWorldInput(layerId: string): WorldInputState | undefined {
   return worldInputs.get(layerId);
+}
+
+/** World actions asked for outside the frame loop (a zone's Test), until the next frame takes them. */
+const worldActions = new Map<string, { what: ZoneWorldAction; point: Point }[]>();
+
+export function queueWorldAction(layerId: string, what: ZoneWorldAction, point: Point): void {
+  const list = worldActions.get(layerId) ?? [];
+  if (list.length < 16) list.push({ what, point });
+  worldActions.set(layerId, list);
+}
+
+export function takeWorldActions(layerId: string): { what: ZoneWorldAction; point: Point }[] {
+  const list = worldActions.get(layerId) ?? [];
+  worldActions.delete(layerId);
+  return list;
 }
 
 /** Turn the layer's 3D world camera, or back to face-on with `null`. */
@@ -69,4 +84,5 @@ export function pruneLiveInteractiveInputs(keep: Set<string>): void {
   for (const id of pointers.keys()) if (!keep.has(id)) pointers.delete(id);
   for (const id of views.keys()) if (!keep.has(id)) views.delete(id);
   for (const id of worldInputs.keys()) if (!keep.has(id)) worldInputs.delete(id);
+  for (const id of worldActions.keys()) if (!keep.has(id)) worldActions.delete(id);
 }
