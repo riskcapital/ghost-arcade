@@ -28,13 +28,13 @@
   border-bottom: 1px solid var(--ga-blue-700);
 }
 .interactive-workspace .workspace-status > span {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 650;
 }
 .interactive-workspace .workspace-status small {
   display: block;
   letter-spacing: 0;
-  font-size: 10px;
+  font-size: 12px;
   margin-top: 2px;
   color: #aebbc9;
 }
@@ -70,7 +70,7 @@
   font-size: 13px;
 }
 .interactive-workspace .starter span {
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.45;
   color: #adbac9;
 }
@@ -94,7 +94,7 @@
   justify-content: space-between;
 }
 .interactive-workspace .draft-status {
-  font-size: 11px;
+  font-size: 12px;
   color: #9fc9b1;
 }
 .interactive-workspace .transport button:not(:where(.param *, .mt *, .studio-timeline *)) {
@@ -184,7 +184,7 @@
   margin: 2px 0;
 }
 .interactive-workspace .engine-badge {
-  font-size: 9px;
+  font-size: 12px;
   color: var(--ga-blue-200);
   font-weight: 500;
   border: 1px solid var(--ga-blue-mute-600);
@@ -193,7 +193,7 @@
   vertical-align: middle;
 }
 .interactive-workspace small:not(:where(.param *, .mt *, .studio-timeline *)) {
-  font-size: 9px;
+  font-size: 12px;
   letter-spacing: 0.1em;
   color: var(--ga-ink-2, #99a7b9);
 }
@@ -290,7 +290,7 @@
 }
 .interactive-workspace .emitter text {
   fill: #a6e9ef;
-  font: 10px system-ui;
+  font: 12px system-ui;
   letter-spacing: 1px;
 }
 .interactive-workspace .stage polygon {
@@ -319,7 +319,7 @@
   gap: 12px;
   padding: 10px 0;
   color: var(--ga-ink-2, #8998ad);
-  font-size: 10px;
+  font-size: 12px;
 }
 .interactive-workspace .canvas-footer .stage-source {
   text-align: right;
@@ -337,7 +337,7 @@
 .interactive-workspace .panel-heading > span,
 .interactive-workspace .order:not(:where(.param *, .mt *, .studio-timeline *)) {
   font:
-    10px ui-monospace,
+    12px ui-monospace,
     monospace;
   color: #8290a5;
 }
@@ -374,7 +374,7 @@
   white-space: nowrap;
 }
 .interactive-workspace .effect-title small {
-  font-size: 9px;
+  font-size: 12px;
   letter-spacing: 0;
 }
 .interactive-workspace .grip:not(:where(.param *, .mt *, .studio-timeline *)) {
@@ -396,7 +396,7 @@
   padding: 2px 8px;
 }
 .interactive-workspace .group-label {
-  font-size: 9px;
+  font-size: 12px;
   letter-spacing: 0.13em;
   text-transform: uppercase;
   color: var(--ga-blue-300);
@@ -476,7 +476,7 @@
 }
 .interactive-workspace label:not(:where(.param *, .mt *, .studio-timeline *)) {
   display: block;
-  font-size: 11px;
+  font-size: 12px;
   margin: 12px 0;
 }
 .interactive-workspace label > input:not([type='checkbox']):not(:where(.param *, .mt *, .studio-timeline *)),
@@ -498,11 +498,11 @@
 }
 .interactive-workspace .hint:not(:where(.param *, .mt *, .studio-timeline *)),
 .interactive-workspace .empty:not(:where(.param *, .mt *, .studio-timeline *)) {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--ga-ink-2, #99a7ba);
 }
 .interactive-workspace p[role='status']:not(:where(.param *, .mt *, .studio-timeline *)) {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ga-blue-200);
   margin: 0;
   overflow-wrap: anywhere;
@@ -625,7 +625,7 @@
   gap: 6px;
 }
 .interactive-workspace.handheld .header-actions button {
-  font-size: 11px;
+  font-size: 12px;
   padding: 6px 9px;
 }
 .interactive-workspace.handheld .layout {
@@ -668,7 +668,7 @@
 .interactive-workspace.handheld .canvas-footer {
   min-height: 28px;
   padding: 7px 0;
-  font-size: 11px;
+  font-size: 12px;
 }
 .interactive-workspace.handheld .inspector-tabs {
   position: static;
@@ -685,14 +685,14 @@
   box-sizing: border-box;
 }
 .interactive-workspace.handheld .effect-title small {
-  font-size: 11px;
+  font-size: 12px;
 }
 .interactive-workspace.handheld .hint:not(:where(.param *, .mt *, .studio-timeline *)) {
   font-size: 12px;
   line-height: 1.5;
 }
 .interactive-workspace.handheld .group-label {
-  font-size: 10px;
+  font-size: 12px;
 }
 .interactive-workspace.handheld .canvas-toolbar {
   flex-wrap: nowrap;
@@ -712,7 +712,7 @@
 .interactive-workspace.handheld .segmented button {
   flex: 1;
   padding: 4px;
-  font-size: 11px;
+  font-size: 12px;
 }
 .interactive-workspace.handheld .viewport {
   flex: 1;
@@ -727,7 +727,7 @@
   display: none;
 }
 .interactive-workspace.handheld p[role='status']:not(:where(.param *, .mt *, .studio-timeline *)) {
-  font-size: 10px;
+  font-size: 12px;
   max-height: 30px;
   overflow: auto;
 }
@@ -856,7 +856,7 @@
   width: 100px;
   flex: none;
   margin: 0;
-  font-size: 11px;
+  font-size: 12px;
 }
 .interactive-workspace.handheld .canvas-footer {
   align-items: center;
@@ -867,7 +867,7 @@
   background: var(--ga-blue-mute-800);
   margin: 0 0 12px;
   max-height: none;
-  font-size: 11px;
+  font-size: 12px;
 }
 .interactive-workspace.handheld .workspace-status {
   padding-top: 3px;
@@ -885,10 +885,10 @@
     padding: 5px 10px;
   }
   .interactive-workspace.handheld .workspace-status small {
-    font-size: 9px;
+    font-size: 12px;
   }
   .interactive-workspace.handheld .canvas-footer {
-    font-size: 10px;
+    font-size: 12px;
   }
   .interactive-workspace.handheld .canvas-toolbar {
     padding-bottom: 4px;
@@ -1131,8 +1131,41 @@
 }
 .interactive-workspace .studio-question p {
   margin: 4px 0 0;
-  font-size: 11px;
+  font-size: 12px;
 }
 .interactive-workspace .studio-question .tools {
   margin: 10px 0 0;
+}
+
+/* A file field is a 44 pt target like every other control. */
+.interactive-workspace input[type='file'] {
+  min-height: 44px;
+  padding: 8px 0;
+  box-sizing: border-box;
+}
+.interactive-workspace label.check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+}
+.interactive-workspace header h2:not(:where(.param *, .mt *, .studio-timeline *)) {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.interactive-workspace .panel-heading strong {
+  flex: 1;
+  font-size: 14px;
+}
+.interactive-workspace .panel-heading .ga-info {
+  margin: -10px -4px;
+}
+/* Adding an effect is the main action of the effect stack. */
+.interactive-workspace .add-effect-button:not(:disabled) {
+  background: var(--ga-act-bg);
+  border-color: var(--ga-act-line);
+  color: var(--ga-act-ink);
+  font-weight: 700;
+  --ga-icon-tone: var(--ga-act-ink);
 }

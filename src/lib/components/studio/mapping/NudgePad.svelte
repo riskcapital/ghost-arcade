@@ -63,8 +63,10 @@
 </section>
 
 <style>
+  /* In a narrow column (iPad landscape) the step and point controls go under the pad. */
   .layout {
     display: flex;
+    flex-wrap: wrap;
     gap: 12px;
     align-items: center;
   }
@@ -88,7 +90,7 @@
     color: var(--ga-ink-1, #9fb0cc);
   }
   .side {
-    flex: 1;
+    flex: 1 1 150px;
     min-width: 0;
   }
   .readout {

@@ -47,5 +47,5 @@
 <style>
  .paint-pad{position:absolute;inset:0;z-index:8;touch-action:none;cursor:crosshair;user-select:none;-webkit-user-select:none}
  .brush-cursor{position:absolute;width:24px;height:24px;transform:translate(-50%,-50%);border:2px solid;border-radius:50%;box-shadow:0 0 0 1px #000;pointer-events:none}
- .paint-badge{position:absolute;bottom:7px;left:7px;padding:4px 6px;background:#080b11bb;border-radius:4px;color:#c4cedc;font-size:9px;letter-spacing:.08em;pointer-events:none}
+ .paint-badge{position:absolute;bottom:7px;left:7px;padding:4px 6px;background:#080b11bb;border-radius:4px;color:#c4cedc;font-size:12px;letter-spacing:.08em;pointer-events:none}
 </style>

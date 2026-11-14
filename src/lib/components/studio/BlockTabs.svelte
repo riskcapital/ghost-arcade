@@ -191,7 +191,7 @@
   .block-menu .move { padding: 0; display: grid; place-items: center; }
   /* Phone: the name gets its own line so the six actions share one row. */
   @media (max-width: 480px) { .block-menu { gap: 4px; } .block-menu strong { flex-basis: 100%; padding: 2px 6px; } .block-rename { flex-basis: 100%; } }
-  .block-rename { flex: 1 1 160px; min-width: 0; display: grid; gap: 4px; font-size: 11px; color: var(--ga-ink-2); }
+  .block-rename { flex: 1 1 160px; min-width: 0; display: grid; gap: 4px; font-size: 12px; color: var(--ga-ink-2); }
   .block-rename input {
     min-height: 44px; min-width: 0; box-sizing: border-box; width: 100%; padding: 0 10px; font: inherit; font-size: 16px;
     color: var(--ga-ink-0); background: var(--ga-slot); border: 1px solid var(--ga-line-2); border-radius: 6px;

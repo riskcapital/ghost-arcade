@@ -9,13 +9,13 @@
 .studio[data-layout] > .tabs { grid-area:nav; }
 .studio[data-layout] > .master-bar { grid-area:transport; }
 .studio[data-layout][data-layout] > .tabs {padding:0 4px;gap:0;border-top:1px solid var(--ga-line-2);}
-.studio[data-layout][data-layout] > .tabs button {min-height:48px;min-width:44px;flex-direction:column;gap:3px;padding:5px 2px;font-size:11px;}
+.studio[data-layout][data-layout] > .tabs button {min-height:48px;min-width:44px;flex-direction:column;gap:3px;padding:5px 2px;font-size:12px;}
 .studio[data-layout][data-layout] .monitor-tools button {min-width:44px;min-height:44px;flex:none;}
-.studio[data-layout][data-layout] .monitor-tools > span {font-size:10px;letter-spacing:.02em;overflow-wrap:anywhere;}
-.studio[data-layout][data-layout] .monitor-heading {font-size:10px;}
+.studio[data-layout][data-layout] .monitor-tools > span {font-size:12px;letter-spacing:.02em;overflow-wrap:anywhere;}
+.studio[data-layout][data-layout] .monitor-heading {font-size:12px;}
 .studio[data-layout][data-layout] .perform-actions {display:flex;justify-content:space-between;gap:8px;margin-bottom:8px;}
 .studio[data-layout] .perform-actions button {min-height:44px;font-size:12px;padding:6px 10px;}
-.studio[data-layout] .perform-actions button span {font-size:11px;color:var(--ga-ink-2);}
+.studio[data-layout] .perform-actions button span {font-size:12px;color:var(--ga-ink-2);}
 .studio[data-layout][data-layout] .master-bar {min-height:52px;padding:4px 10px;gap:6px;}
 .studio[data-layout][data-layout] .master-bar button {min-width:44px;min-height:44px;padding:4px 7px;}
 .studio[data-layout][data-layout] .master-bar .tempo {gap:6px;}
@@ -52,7 +52,7 @@
   grid-template-rows:46px minmax(0,1fr) auto;
 }
 .studio[data-layout='phone-landscape'][data-layout] > .tabs {flex-direction:column;overflow:auto;padding:0;}
-.studio[data-layout='phone-landscape'][data-layout] > .tabs button {flex:1;min-height:44px;font-size:10px;}
+.studio[data-layout='phone-landscape'][data-layout] > .tabs button {flex:1;min-height:44px;font-size:12px;}
 .studio[data-layout='phone-landscape'][data-layout] .app-header {padding:0 10px;gap:10px;}
 .studio[data-layout='phone-landscape'][data-layout] .brand-wordmark {width:125px;}
 .studio[data-layout='phone-landscape'][data-layout] .brand-mark {display:none;}
@@ -94,7 +94,7 @@
 .studio[data-layout] .param-group summary {display:flex;align-items:center;justify-content:space-between;min-height:48px;cursor:pointer;font-size:13px;font-weight:650;list-style:none;}
 .studio[data-layout] .param-group summary::before {content:'›';margin-right:8px;color:var(--ga-ink-2);}
 .studio[data-layout] .param-group[open] summary::before {transform:rotate(90deg);}
-.studio[data-layout] .param-group summary span {margin-left:auto;color:var(--ga-ink-2);font-size:11px;}
+.studio[data-layout] .param-group summary span {margin-left:auto;color:var(--ga-ink-2);font-size:12px;}
 .studio[data-layout] .param-group summary::-webkit-details-marker {display:none;}
 .studio[data-layout] .param-group summary:focus-visible {outline:2px solid var(--ga-focus);outline-offset:2px;}
 .studio[data-layout][data-layout] .mixer-tray {max-height:75dvh;overflow:auto;}
@@ -118,16 +118,16 @@
 
 /* Footer: tempo value, the BPM label that opens Tempo and audio, Quantize, then Mix / Master. */
 .studio[data-layout][data-layout] .master-bar .tempo > label {gap:0;}
-.studio[data-layout][data-layout] .master-bar .tempo-open {display:inline-flex;align-items:center;gap:5px;min-width:56px;font-size:10px;letter-spacing:1px;}
+.studio[data-layout][data-layout] .master-bar .tempo-open {display:inline-flex;align-items:center;gap:5px;min-width:56px;font-size:12px;letter-spacing:1px;}
 .studio[data-layout][data-layout] .master-bar .tempo-open span {font-size:13px;letter-spacing:0;line-height:1;transform:translateY(-2px);}
 .studio[data-layout] .tempo-sheet {position:fixed;z-index:30;max-height:calc(100dvh - var(--sheet-bottom, 60px) - 12px);overflow-y:auto;width:min(320px,calc(100vw - 20px));box-sizing:border-box;padding:6px 12px 12px;display:grid;gap:10px;background:var(--ga-inspector-bg);border:1px solid var(--ga-line-3);border-radius:10px;box-shadow:0 -8px 32px #000b;}
 .studio[data-layout] .tempo-sheet header {display:flex;align-items:center;justify-content:space-between;min-height:44px;}
-.studio[data-layout] .tempo-sheet header strong {font-size:11px;letter-spacing:.08em;color:var(--ga-ink-1);}
+.studio[data-layout] .tempo-sheet header strong {font-size:12px;letter-spacing:.08em;color:var(--ga-ink-1);}
 .studio[data-layout][data-layout] .tempo-sheet header .icon-button {min-width:44px;min-height:44px;background:none;border:0;}
 .studio[data-layout] .tempo-sheet-row {display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:12px;}
 .studio[data-layout][data-layout] .tempo-sheet .tap {min-height:56px;min-width:44px;font-size:14px;font-weight:650;color:var(--ga-ink-0);background:var(--ga-hardware-bg);border:1px solid var(--ga-line-2);border-radius:6px;}
 .studio[data-layout] .tempo-sheet output {font-size:18px;font-weight:620;font-variant-numeric:tabular-nums;min-width:86px;text-align:right;}
-.studio[data-layout] .tempo-sheet p {margin:0;font-size:11px;line-height:1.5;color:var(--ga-ink-2);}
+.studio[data-layout] .tempo-sheet p {margin:0;font-size:12px;line-height:1.5;color:var(--ga-ink-2);}
 .studio[data-layout][data-layout] .mic-toggle {display:flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:44px;font-size:12px;color:var(--ga-ink-0);background:var(--ga-hardware-bg);border:1px solid var(--ga-line-2);border-radius:6px;}
 .studio[data-layout][data-layout] .mic-toggle.active {background:var(--ga-selection-bg);border-color:var(--ga-selection-line);color:var(--ga-selection-ink);}
 .studio[data-layout][data-layout] .mic-toggle.inline {margin:4px 0 8px;}
@@ -170,7 +170,7 @@
 .studio[data-layout='tablet-portrait'][data-layout].flux-tab:not(.performance) .monitor {max-height:46%;}
 
 /* Top row: tempo and A/B sit where the composition label was. */
-.studio[data-layout][data-layout] .monitor-tools .tempo-chip {display:flex;align-items:center;gap:6px;padding:0 12px;font:10px ui-monospace,monospace;letter-spacing:.06em;color:var(--ga-ink-2);}
+.studio[data-layout][data-layout] .monitor-tools .tempo-chip {display:flex;align-items:center;gap:6px;padding:0 12px;font:12px ui-monospace,monospace;letter-spacing:.06em;color:var(--ga-ink-2);}
 .studio[data-layout][data-layout] .monitor-tools .tempo-chip strong {font:650 17px/1 system-ui;letter-spacing:0;color:var(--ga-ink-0);font-variant-numeric:tabular-nums;}
 .studio[data-layout][data-layout] .monitor-tools .ab-chip {padding:0 12px;font-weight:650;font-size:12px;letter-spacing:.04em;}
 .studio[data-layout][data-layout] .monitor-tools :is(.tempo-chip,.ab-chip).active {border-color:var(--ga-blue-300);background:var(--ga-selection-bg);color:var(--ga-ink-0);}
@@ -184,7 +184,7 @@
 
 /* The workspace bar as it appears inside Studio: same look, outside the deck's grid. */
 nav.tabs.in-studio {display:flex;flex:none;padding:0 4px;gap:0;border-top:1px solid var(--ga-line-2);background:var(--ga-bar,#0d1117);}
-nav.tabs.in-studio button {flex:1;display:flex;align-items:center;justify-content:center;min-height:48px;min-width:44px;flex-direction:column;gap:3px;padding:5px 2px;font-size:11px;border:0;background:transparent;color:var(--ga-ink-2);}
+nav.tabs.in-studio button {flex:1;display:flex;align-items:center;justify-content:center;min-height:48px;min-width:44px;flex-direction:column;gap:3px;padding:5px 2px;font-size:12px;border:0;background:transparent;color:var(--ga-ink-2);}
 nav.tabs.in-studio button.active {color:var(--ga-ink-0);background:var(--ga-selection-bg);}
 /* Top row now carries tempo, A/B and Auto: keep each compact. */
 .studio[data-layout][data-layout] .monitor-tools .autopilot-bar {flex:none;}
@@ -197,7 +197,7 @@ nav.tabs.in-studio button.active {color:var(--ga-ink-0);background:var(--ga-sele
 .studio[data-layout='phone'][data-layout] .monitor-tools > button {padding-left:9px;padding-right:9px;}
 .studio[data-layout='phone'][data-layout] .monitor-tools {gap:5px;}
 .studio[data-layout='phone'][data-layout] .monitor-tools > span:empty {display:none;}
-.studio[data-layout='phone'][data-layout] .monitor-tools > button {padding-left:7px;padding-right:7px;font-size:11px;gap:4px;}
+.studio[data-layout='phone'][data-layout] .monitor-tools > button {padding-left:7px;padding-right:7px;font-size:12px;gap:4px;}
 .studio[data-layout='phone'][data-layout] .monitor-tools .autopilot-bar {margin-right:auto;}
 .studio[data-layout='phone'][data-layout] .monitor-tools .autopilot-bar button {min-width:36px;padding:0 6px;}
 
@@ -208,7 +208,7 @@ nav.tabs.in-studio button.active {color:var(--ga-ink-0);background:var(--ga-sele
 .studio[data-layout][data-layout] .monitor-tools .q-chip.active {border-color:var(--ga-blue-300);background:var(--ga-selection-bg);color:var(--ga-ink-0);}
 
 /* Flux on the preview while performing: a small switch beside the logo. */
-.studio[data-layout] .app-header .flux-live {display:flex;align-items:center;gap:5px;flex:none;min-height:36px;padding:0 9px;border:1px solid var(--ga-line-2);border-radius:18px;background:transparent;color:var(--ga-ink-2);font:650 10px ui-monospace,monospace;letter-spacing:.08em;}
+.studio[data-layout] .app-header .flux-live {display:flex;align-items:center;gap:5px;flex:none;min-height:36px;padding:0 9px;border:1px solid var(--ga-line-2);border-radius:18px;background:transparent;color:var(--ga-ink-2);font:650 12px ui-monospace,monospace;letter-spacing:.08em;}
 .studio[data-layout] .app-header .flux-live.active {border-color:var(--ga-blue-300);background:var(--ga-selection-bg);color:var(--ga-ink-0);box-shadow:0 0 10px var(--ga-blue-a28);}
 .studio[data-layout='phone'][data-layout] .app-header .brand-wordmark {max-width:120px;width:120px;}
 /* Phone: the top row carries six controls, so Hold and Blackout are their icons. */
@@ -233,7 +233,7 @@ nav.tabs.in-studio button.active {color:var(--ga-ink-0);background:var(--ga-sele
 .studio[data-layout][data-layout] .audio-sources button {min-height:44px;font-size:12px;font-weight:600;color:var(--ga-ink-1);background:var(--ga-hardware-bg);border:1px solid var(--ga-line-2);border-radius:6px;}
 .studio[data-layout][data-layout] .audio-sources button.active {background:var(--ga-selection-bg);border-color:var(--ga-selection-line);color:var(--ga-selection-ink);}
 .studio[data-layout] .audio-meter {height:4px;border-radius:2px;background:var(--ga-line-2);overflow:hidden;}
-.studio[data-layout] .audio-meter i {display:block;height:100%;background:var(--ga-selection-line);transition:width .2s linear;}
+.studio[data-layout] .audio-meter i {display:block;height:100%;background:var(--ga-blue-400);transition:width .2s linear;}
 .studio[data-layout] .audio-transport {display:grid;grid-template-columns:repeat(3,44px) minmax(0,1fr);gap:4px;}
 .studio[data-layout][data-layout] .audio-transport button {min-height:44px;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--ga-ink-0);background:var(--ga-hardware-bg);border:1px solid var(--ga-line-2);border-radius:6px;}
 .studio[data-layout][data-layout] .audio-transport button.active {background:var(--ga-selection-bg);border-color:var(--ga-selection-line);color:var(--ga-selection-ink);}
@@ -243,7 +243,7 @@ nav.tabs.in-studio button.active {color:var(--ga-ink-0);background:var(--ga-sele
 .studio[data-layout][data-layout] .audio-tracks button {min-height:44px;background:none;border:0;color:var(--ga-ink-0);}
 .studio[data-layout][data-layout] .audio-tracks .track {display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 8px;text-align:left;font-size:12px;}
 .studio[data-layout] .audio-tracks .track span {overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.studio[data-layout] .audio-tracks .track small {flex:none;font-size:11px;color:var(--ga-ink-2);font-variant-numeric:tabular-nums;}
+.studio[data-layout] .audio-tracks .track small {flex:none;font-size:12px;color:var(--ga-ink-2);font-variant-numeric:tabular-nums;}
 .studio[data-layout][data-layout] .audio-tracks .remove {display:flex;align-items:center;justify-content:center;color:var(--ga-ink-2);}
 .studio[data-layout][data-layout] .audio-action {display:flex;align-items:center;justify-content:center;gap:8px;min-height:44px;font-size:12px;color:var(--ga-ink-0);background:var(--ga-hardware-bg);border:1px solid var(--ga-line-2);border-radius:6px;}
 .studio[data-layout][data-layout] .tempo-sheet .audio-status {color:var(--ga-ink-1);}

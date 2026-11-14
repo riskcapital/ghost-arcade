@@ -108,7 +108,7 @@
 <div class="clip-picker" bind:this={root} role="dialog" tabindex="-1" aria-modal="true" aria-label={target ? `Add a clip to ${target}` : 'Add a clip'} data-clip-picker onkeydown={key}>
   <header>
     <button class="back" data-picker-close aria-label="Close and go back to the deck" onclick={onclose}><Icon name="left" size={18} />Deck</button>
-    <h2>Add a clip{#if target}<small>{target}</small>{/if}</h2>
+    <h2><span class="ga-chip" aria-hidden="true"><Icon name="plus" size={18} /></span>Add a clip{#if target}<small>{target}</small>{/if}</h2>
   </header>
   <div class="sources" role="tablist" aria-label="Clip source">
     {#each SOURCES as s}<button role="tab" aria-selected={source === s.id} class:active={source === s.id} data-picker-source={s.id} onclick={() => pick(s.id)}><Icon name={s.icon} size={18} /><span>{s.label}</span></button>{/each}
@@ -193,7 +193,7 @@
   button:focus-visible, input:focus-visible { outline: 2px solid var(--ga-focus); outline-offset: 2px; }
   header { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 12px; margin-bottom: 8px; }
   .back { display: flex; align-items: center; gap: 4px; min-height: 44px; padding: 0 14px 0 8px; font-size: 13px; }
-  h2 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; margin: 0; font-size: 18px; font-weight: 600; line-height: 1.2; }
+  h2 { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; margin: 0; font-size: 18px; font-weight: 600; line-height: 1.2; }
   h2 small { font-size: 12px; font-weight: 500; color: var(--ga-ink-1); }
   .sources { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; margin-bottom: 10px; }
   .sources button { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 48px; padding: 4px 6px; font-size: 12px; line-height: 1.2; }
@@ -208,15 +208,15 @@
   .stage img, .stage canvas, .stage video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
   .stage canvas { opacity: 0; }
   .stage canvas.live { opacity: 1; }
-  .badge { position: absolute; left: 6px; bottom: 6px; padding: 2px 6px; border-radius: 3px; background: #000a; font-size: 10px; letter-spacing: .06em; color: var(--ga-ink-0); }
+  .badge { position: absolute; left: 6px; bottom: 6px; padding: 2px 6px; border-radius: 3px; background: #000a; font-size: 12px; letter-spacing: .06em; color: var(--ga-ink-0); }
   .badge.live { color: var(--ga-green); }
   .about { display: grid; gap: 3px; min-width: 0; }
   .about strong { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
   .about small { font-size: 12px; line-height: 1.35; color: var(--ga-ink-1); }
-  .add { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; margin-top: 5px; font-size: 13px; font-weight: 650; background: var(--ga-blue-500); border-color: var(--ga-blue-400); color: #fff; }
+  .add { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; margin-top: 5px; font-size: 14px; font-weight: 700; background: var(--ga-act-bg); border-color: var(--ga-act-line); color: var(--ga-act-ink); box-shadow: var(--ga-act-glow); --ga-icon-tone: var(--ga-act-ink); }
   .add :global(svg) { color: #fff !important; }
   .search { flex: none; display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 12px; margin-bottom: 8px; border: 1px solid var(--ga-line-2); border-radius: 6px; background: var(--ga-slot); }
-  .search input { flex: 1; min-width: 0; height: 42px; border: 0; background: none; color: var(--ga-ink-0); font: inherit; font-size: 16px; outline-offset: -2px; }
+  .search input { flex: 1; min-width: 0; height: 44px; border: 0; background: none; color: var(--ga-ink-0); font: inherit; font-size: 16px; outline-offset: -2px; }
   .chips { flex: none; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin-bottom: 8px; padding-bottom: 1px; }
   .chips::-webkit-scrollbar { display: none; }
   .chips button { flex: none; min-height: 44px; padding: 0 14px; font-size: 13px; }

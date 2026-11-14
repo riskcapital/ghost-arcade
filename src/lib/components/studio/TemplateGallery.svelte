@@ -7,6 +7,7 @@
    */
   import { onDestroy, onMount } from 'svelte';
   import Icon from './StudioIcon.svelte';
+  import InfoTip from './ui/InfoTip.svelte';
   import { MAPPING_TEMPLATES } from '../../mobile/studio/stageScenes';
   import { cachedStage, renderStages, type StageShot } from '../../mobile/studio/stageRenderer';
 
@@ -56,10 +57,10 @@
 <div class="gallery" bind:this={root} role="dialog" tabindex="-1" aria-modal="true" aria-label="Templates" data-template-gallery onkeydown={key}>
   <header>
     <button class="back" data-gallery-close aria-label="Close templates and go back to Map" onclick={onclose}><Icon name="left" size={18} />Map</button>
-    <h2>Templates<small>Surfaces placed, a visual on each, moving to the music.</small></h2>
+    <h2><span class="ga-chip" data-tone="map" aria-hidden="true"><Icon name="library" size={18} /></span>Templates<small>Surfaces placed, a visual on each.</small></h2>
+    <InfoTip label="How templates work" text="Pick the one closest to your object, then drag its corners onto it. Your current surfaces are replaced; Undo brings them back. Each template moves to the music." />
   </header>
   <div class="scroll">
-    <p class="lead">Pick the one closest to your object, then drag its corners onto it. Your current surfaces are replaced; Undo brings them back.</p>
     <div class="grid">
       {#each MAPPING_TEMPLATES as template (template.id)}
         <button class="card" data-template={template.id} aria-label={`${template.name}: ${template.blurb}. ${template.surfaces.length} surfaces.`} onclick={() => onapply(template.id)}>
@@ -93,12 +94,11 @@
   }
   button { font: inherit; color: var(--ga-ink-0); background: var(--ga-hardware-bg); border: 1px solid var(--ga-line-2); border-radius: 6px; touch-action: manipulation; cursor: pointer; }
   button:focus-visible { outline: 2px solid var(--ga-focus); outline-offset: 2px; }
-  header { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 12px; margin-bottom: 8px; }
+  header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; margin-bottom: 8px; }
   .back { display: flex; align-items: center; gap: 4px; min-height: 44px; padding: 0 14px 0 8px; font-size: 13px; }
-  h2 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; margin: 0; font-size: 18px; font-weight: 600; line-height: 1.2; }
+  h2 { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; margin: 0; font-size: 18px; font-weight: 600; line-height: 1.2; }
   h2 small { font-size: 12px; font-weight: 500; color: var(--ga-ink-1); }
   .scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding-bottom: 16px; margin-bottom: env(safe-area-inset-bottom); }
-  .lead { margin: 2px 2px 12px; font-size: 13px; line-height: 1.45; color: var(--ga-ink-1); }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
   .card { display: grid; padding: 0; overflow: hidden; text-align: left; background: var(--ga-card); }
   .picture { position: relative; display: block; aspect-ratio: 16 / 9; overflow: hidden; background: linear-gradient(110deg, #0c0c10 30%, #17171d 50%, #0c0c10 70%) 0 0 / 300% 100%; animation: shimmer 1.6s linear infinite; }

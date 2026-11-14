@@ -1,5 +1,7 @@
 <script lang="ts">
  import {onMount,onDestroy,tick} from 'svelte';
+ import Icon from './StudioIcon.svelte';
+ import InfoTip from './ui/InfoTip.svelte';
  import {detectSurfaces} from '../../mobile/studio/surfaceDetect';
  import {findPainting,paintingSize,rectifyPainting,clockwiseFromTopLeft} from '../../mobile/studio/painting';
  import {openAutoMapCamera,uprightTurn,mapSurface,type AutoMapCamera,type AutoMapProjector,type AutoMapResult} from '../../mobile/studio/autoMap';
@@ -159,7 +161,7 @@
  $: mapping=(()=>{try{return projectors.length?homography(projectors[0].corners,unitCorners):null;}catch{return null;}})();
 </script>
 <section aria-label="Projector calibration">
- <header><div><small>DESKTOP TOOLS</small><h2>{automap?'Auto map':'Calibration workshop'}</h2></div><button class="quiet" onclick={onclose} disabled={busy}>Back</button></header>
+ <header><span class="ga-chip" data-tone="output" aria-hidden="true"><Icon name="scan" size={18}/></span><h2>{automap?'Auto map':'Projector calibration'}</h2><button class="quiet" onclick={onclose} disabled={busy}>Back</button></header>
  {#if automap}
  {#if framing}
   <div class="am-stage">{#if lidar}<canvas class="am-preview" bind:this={previewCanvas}></canvas>{:else}<video bind:this={preview} playsinline muted></video>{/if}{#if busy}<div class="am-veil"><strong>{Math.round(fraction*100)}%</strong><span>{message}</span></div>{/if}</div>
@@ -198,16 +200,14 @@
   <button class="am-painting" onclick={startPainting}><b>Painting on this wall?</b><span>Outline it and send its photo, already lined up and cropped.</span></button>
  {:else}
   <div class="am-hero">
-   <p class="am-lead">The projector flashes a set of stripes, the phone watches, and every flat surface it lights becomes a layer on the desktop, already in place.</p>
-   <ol><li><b>1</b><span>Open the Screen on the projector from the desktop.</span></li><li><b>2</b><span>Prop the phone near the projector, looking at what it lights.</span></li><li><b>3</b><span>Scan, then send the surfaces you want.</span></li></ol>
+   <p class="am-lead">The projector flashes stripes, the phone watches, and each flat surface it lights becomes a layer on the desktop.<InfoTip label="How auto map works"><ol><li>Open the Screen on the projector from the desktop.</li><li>Prop the phone near the projector, looking at what it lights.</li><li>Scan, then send the surfaces you want.</li></ol></InfoTip></p>
    <div class="am-actions"><button class="primary" onclick={openAuto} disabled={busy}>Open camera</button></div>
   </div>
  {/if}
  <p class="status" role="status" class:quiet={busy}>{busy?'':message}</p>
  <details class="manual"><summary>Manual photo tools</summary>
- <p>Capture the backdrop, trace its surfaces, then match each projector. Export the preparation or send it to a paired desktop for review. Output geometry changes only when you apply it there.</p>
+ <p class="lead">Photograph the wall, trace its surfaces and mark the projector’s corners.<InfoTip label="About projector calibration" text="Export the preparation or send it to a paired desktop for review; the projector output changes only when you apply it there. Replacing the photo clears what you traced on it. Depth captures keep the photo, distances and coordinates lined up."/></p>
  <div class="row"><label class="file">Take / import photo<input type="file" accept="image/*" capture="environment" onchange={importPhoto} disabled={busy}/></label><button onclick={capture} disabled={!lidar||busy}>Capture RGB + depth</button></div>
- {#if reference}<p class="note">Replacing the reference clears its geometry. Depth captures use the camera’s sensor orientation so photo, distances and coordinates stay aligned.</p>{/if}
  <label>Session name<input bind:value={name}/></label>
  {#if reference}
  <div class="photo" bind:this={photo} style:aspect-ratio={`${reference.width}/${reference.height}`} onpointerdown={tap} role="application" aria-label="Tap reference photo to place outline points" tabindex="0">
@@ -220,8 +220,8 @@
   </svg>
  </div>
  <div class="row"><button class:active={mode==='corners'} onclick={()=>{mode='corners';points=[];}}>Projector corners</button><button class:active={mode==='surface'} onclick={()=>{mode='surface';points=[];}}>Trace surface</button><button onclick={()=>points=points.slice(0,-1)} disabled={!points.length}>Undo point</button></div>
- {#if mode==='corners'}<p>Tap the projected reference rectangle: <b>top left → top right → bottom right → bottom left</b>. These must be known projector corners, not arbitrary backdrop corners. Without a projector, save a draft and mark them later.</p><label>Projector name<input bind:value={projectorName}/></label><div class="row"><label>Width<input type="number" min="2" max="16384" bind:value={width}/></label><label>Height<input type="number" min="2" max="16384" bind:value={height}/></label></div>
- {:else}<p>Tap around one flat surface. Finish the outline below. Four-point calibration is valid only on the same plane as the reference rectangle; other depths need additional calibration.</p>{/if}
+ {#if mode==='corners'}<p class="lead">Tap the projected rectangle’s corners: <b>top left → top right → bottom right → bottom left</b>.<InfoTip label="About projector corners" text="These must be the projector’s own corners, not any corners in the room. Without a projector, save a draft and mark them later."/></p><label>Projector name<input bind:value={projectorName}/></label><div class="row"><label>Width<input type="number" min="2" max="16384" bind:value={width}/></label><label>Height<input type="number" min="2" max="16384" bind:value={height}/></label></div>
+ {:else}<p class="lead">Tap around one flat surface, then add it.<InfoTip label="About tracing surfaces" text="Four-point calibration holds only on the same flat plane as the projector rectangle; surfaces at other depths need their own calibration."/></p>{/if}
  <button class="primary" onclick={add} disabled={mode==='corners'?points.length!==4:points.length<3}>Add {mode==='corners'?'projector':'surface'}</button>
  {#each projectors as p}<div class="item"><span>{p.name} · {p.width} × {p.height}</span><button onclick={()=>projectors=projectors.filter(x=>x.id!==p.id)}>Remove</button></div>{/each}
  {#each surfaces as s}<div class="item"><span>{s.name} · {s.points.length} points{depthLabel(s.points)}</span>{#if mapped.some(m=>m.surfaceId===s.id)}<button class:active={!skipped.has(s.id)} aria-pressed={!skipped.has(s.id)} onclick={()=>toggle(s.id)}>{skipped.has(s.id)?'Off':'On'}</button>{/if}<button onclick={()=>surfaces=surfaces.filter(x=>x.id!==s.id)}>Remove</button></div>{/each}
@@ -232,9 +232,8 @@
  <details><summary>What still needs a projector?</summary><p>Pixel correspondence, focus, alignment, overlap, brightness matching and bump recovery require physical verification. LiDAR measures the scene, not where projector pixels land. Packages include photo-space outlines, per-projector homographies, raw depth when captured, and an inverted Gray-code pattern plan for the future desktop presenter. Automatic capture, decoding and blending are not active yet.</p></details>
  </details>
  {:else}
- <p>Capture the backdrop, trace its surfaces, then match each projector. Export the preparation or send it to a paired desktop for review. Output geometry changes only when you apply it there.</p>
+ <p class="lead">Photograph the wall, trace its surfaces and mark the projector’s corners.<InfoTip label="About projector calibration" text="Export the preparation or send it to a paired desktop for review; the projector output changes only when you apply it there. Replacing the photo clears what you traced on it. Depth captures keep the photo, distances and coordinates lined up."/></p>
  <div class="row"><label class="file">Take / import photo<input type="file" accept="image/*" capture="environment" onchange={importPhoto} disabled={busy}/></label><button onclick={capture} disabled={!lidar||busy}>Capture RGB + depth</button></div>
- {#if reference}<p class="note">Replacing the reference clears its geometry. Depth captures use the camera’s sensor orientation so photo, distances and coordinates stay aligned.</p>{/if}
  <label>Session name<input bind:value={name}/></label>
  {#if reference}
  <div class="photo" bind:this={photo} style:aspect-ratio={`${reference.width}/${reference.height}`} onpointerdown={tap} role="application" aria-label="Tap reference photo to place outline points" tabindex="0">
@@ -247,8 +246,8 @@
   </svg>
  </div>
  <div class="row"><button class:active={mode==='corners'} onclick={()=>{mode='corners';points=[];}}>Projector corners</button><button class:active={mode==='surface'} onclick={()=>{mode='surface';points=[];}}>Trace surface</button><button onclick={()=>points=points.slice(0,-1)} disabled={!points.length}>Undo point</button></div>
- {#if mode==='corners'}<p>Tap the projected reference rectangle: <b>top left → top right → bottom right → bottom left</b>. These must be known projector corners, not arbitrary backdrop corners. Without a projector, save a draft and mark them later.</p><label>Projector name<input bind:value={projectorName}/></label><div class="row"><label>Width<input type="number" min="2" max="16384" bind:value={width}/></label><label>Height<input type="number" min="2" max="16384" bind:value={height}/></label></div>
- {:else}<p>Tap around one flat surface. Finish the outline below. Four-point calibration is valid only on the same plane as the reference rectangle; other depths need additional calibration.</p>{/if}
+ {#if mode==='corners'}<p class="lead">Tap the projected rectangle’s corners: <b>top left → top right → bottom right → bottom left</b>.<InfoTip label="About projector corners" text="These must be the projector’s own corners, not any corners in the room. Without a projector, save a draft and mark them later."/></p><label>Projector name<input bind:value={projectorName}/></label><div class="row"><label>Width<input type="number" min="2" max="16384" bind:value={width}/></label><label>Height<input type="number" min="2" max="16384" bind:value={height}/></label></div>
+ {:else}<p class="lead">Tap around one flat surface, then add it.<InfoTip label="About tracing surfaces" text="Four-point calibration holds only on the same flat plane as the projector rectangle; surfaces at other depths need their own calibration."/></p>{/if}
  <button class="primary" onclick={add} disabled={mode==='corners'?points.length!==4:points.length<3}>Add {mode==='corners'?'projector':'surface'}</button>
  {#each projectors as p}<div class="item"><span>{p.name} · {p.width} × {p.height}</span><button onclick={()=>projectors=projectors.filter(x=>x.id!==p.id)}>Remove</button></div>{/each}
  {#each surfaces as s}<div class="item"><span>{s.name} · {s.points.length} points{depthLabel(s.points)}</span>{#if mapped.some(m=>m.surfaceId===s.id)}<button class:active={!skipped.has(s.id)} aria-pressed={!skipped.has(s.id)} onclick={()=>toggle(s.id)}>{skipped.has(s.id)?'Off':'On'}</button>{/if}<button onclick={()=>surfaces=surfaces.filter(x=>x.id!==s.id)}>Remove</button></div>{/each}
@@ -270,9 +269,9 @@
  .am-stage video,.am-stage .am-preview{display:block;width:100%;max-height:52vh;object-fit:contain;background:#000}
  .am-mode{display:grid;grid-template-columns:auto 1fr 1fr;gap:6px;align-items:center;margin-top:10px}
  .am-mode span{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ga-ink-2);padding-right:4px}
- .am-mode span b{display:grid;place-content:center;width:22px;height:22px;border-radius:50%;background:var(--ga-blue,#5278ff);color:#fff;font-size:11px}
+ .am-mode span b{display:grid;place-content:center;width:22px;height:22px;border-radius:50%;background:var(--ga-blue,#5278ff);color:#fff;font-size:12px}
  .am-mode button{min-height:44px;font-size:12px;border-radius:8px;background:transparent}
- .am-mode button.on{background:var(--ga-selection-bg);border-color:var(--ga-blue-300);color:var(--ga-ink-0)}
+ .am-mode button.on{background:var(--ga-on-bg);border-color:var(--ga-on-line);color:var(--ga-on-ink)}
  .am-stage.found{touch-action:manipulation}
  .am-stage img,.am-stage svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
  .am-stage polygon{fill:var(--ga-blue-a16);stroke:var(--ga-blue-200);stroke-width:2.5}
@@ -284,16 +283,15 @@
  .am-bar{height:4px;margin:12px 0 0;border-radius:2px;background:var(--ga-line-3);overflow:hidden}.am-bar i{display:block;height:100%;background:var(--ga-blue,#5278ff);transition:width .25s linear}
  .am-hint{margin:10px 0 0;text-align:center;font-size:12px}
  .am-check{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}.am-check li{position:relative;padding-left:22px;color:var(--ga-ink-1,var(--ga-ink-0));font-size:13px}.am-check li::before{content:"";position:absolute;left:4px;top:7px;width:6px;height:6px;border-radius:50%;background:var(--ga-blue,#5278ff)}
- .am-actions{display:flex;gap:10px;margin-top:16px}.am-actions .primary{flex:1;min-height:50px;font-weight:600;font-size:15px;border-radius:10px;background:var(--ga-blue,#5278ff);border-color:transparent;color:#fff}.am-actions .primary:disabled{opacity:.35}
+ .am-actions{display:flex;gap:10px;margin-top:16px}.am-actions .primary{flex:1;min-height:50px;font-weight:700;font-size:15px;border-radius:10px;background:var(--ga-act-bg);border-color:var(--ga-act-line);color:var(--ga-act-ink)}.am-actions .primary:disabled{opacity:.35}
  .quiet{background:transparent;border-color:var(--ga-line-3);border-radius:10px;padding:10px 16px}
  .am-summary{display:flex;justify-content:space-between;align-items:baseline;margin-top:14px}.am-summary strong{font-size:15px}.am-summary span{font-size:12px;color:var(--ga-ink-2)}
  .am-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
- .am-chip{display:flex;align-items:center;gap:8px;min-height:40px;padding:6px 12px 6px 6px;border-radius:20px;font-size:12px;color:var(--ga-ink-2);background:transparent}
+ .am-chip{display:flex;align-items:center;gap:8px;min-height:44px;padding:6px 12px 6px 6px;border-radius:20px;font-size:12px;color:var(--ga-ink-2);background:transparent}
  .am-chip b{display:grid;place-content:center;width:26px;height:26px;border-radius:50%;background:var(--ga-line-3);color:var(--ga-ink-0);font-size:12px}
- .am-chip.on{color:var(--ga-ink-0);border-color:var(--ga-blue-300)}.am-chip.on b{background:var(--ga-blue,#5278ff);color:#fff}
- .am-hero{padding:6px 0 0}.am-lead{font-size:15px;line-height:1.5;color:var(--ga-ink-0);margin:8px 0 18px}
- .am-hero ol{list-style:none;margin:0;padding:0;display:grid;gap:12px}.am-hero li{display:flex;gap:12px;align-items:flex-start}.am-hero li b{flex:none;display:grid;place-content:center;width:26px;height:26px;border-radius:50%;border:1px solid var(--ga-blue-300);color:var(--ga-blue-200);font-size:12px}.am-hero li span{padding-top:3px;color:var(--ga-ink-1,var(--ga-ink-0))}
+ .am-chip.on{color:var(--ga-on-ink);border-color:var(--ga-on-line)}.am-chip.on b{background:var(--ga-blue,#5278ff);color:#fff}
+ .am-hero{padding:6px 0 0}.am-lead{font-size:15px;line-height:1.5;color:var(--ga-ink-0);margin:8px 0 6px}.lead{margin:8px 0;color:var(--ga-ink-1)}.lead :global(.ga-info){vertical-align:middle;margin:-12px -6px -12px 0}
  .status.quiet{display:none}
  .manual{margin-top:26px;border-top:1px solid var(--ga-line-2);padding-top:6px}.manual summary{min-height:44px;display:flex;align-items:center;color:var(--ga-ink-2);font-size:12px;letter-spacing:.04em}
- section{padding:18px;font:13px/1.5 system-ui;color:var(--ga-ink-0)}header,.row,.item{display:flex;align-items:center;gap:8px;justify-content:space-between}.row{flex-wrap:wrap;margin:12px 0}.row>*{flex:1;min-width:110px}header small{font-size:9px;letter-spacing:.12em;color:var(--ga-blue-200)}h2{font-size:20px;margin:4px 0}h3{font-size:13px}p,.note{color:var(--ga-ink-2)}button,.file,input{box-sizing:border-box;min-height:44px;border:1px solid var(--ga-line-3);border-radius:5px;background:var(--ga-slot);color:inherit;padding:10px;font:inherit}button{touch-action:manipulation}button:disabled{opacity:.4}label{display:block;font-size:11px}input{display:block;width:100%;margin-top:4px}.file{cursor:pointer;font-size:13px}.file input{width:100%;font-size:11px}.primary,.active{background:var(--ga-selection-bg);border-color:var(--ga-blue-300)}.photo{position:relative;width:100%;background:#000;touch-action:none;margin-top:12px;overflow:hidden}.photo img,.photo svg{position:absolute;width:100%;height:100%;inset:0;pointer-events:none}.photo img{object-fit:fill}polygon{fill:var(--ga-blue-a16);stroke:var(--ga-blue-200);stroke-width:2;vector-effect:non-scaling-stroke}.projector{stroke:#ffa45b;fill:#ffa45b15}polyline{fill:none;stroke:white;stroke-width:2;vector-effect:non-scaling-stroke}circle{fill:#ffa45b;stroke:#fff;stroke-width:2}text{fill:white;font-size:30px;font-weight:bold}.item{border-bottom:1px solid var(--ga-line-2);padding:8px 0}.item span{overflow-wrap:anywhere;min-width:0}.status{color:var(--ga-blue-200)}summary{min-height:44px;cursor:pointer;font-weight:bold}
+ section{padding:18px;font:13px/1.5 system-ui;color:var(--ga-ink-0)}header,.row,.item{display:flex;align-items:center;gap:8px;justify-content:space-between}header{gap:10px;margin:-6px 0 6px}header h2{flex:1}.row{flex-wrap:wrap;margin:12px 0}.row>*{flex:1;min-width:110px}h2{font-size:18px;font-weight:650;margin:0}h3{font-size:13px}p,.note{color:var(--ga-ink-2)}button,.file,input{box-sizing:border-box;min-height:44px;border:1px solid var(--ga-line-3);border-radius:5px;background:var(--ga-slot);color:inherit;padding:10px;font:inherit}button{touch-action:manipulation}button:disabled{opacity:.4}label{display:block;font-size:12px}input{display:block;width:100%;margin-top:4px}.file{cursor:pointer;font-size:13px}.file input{width:100%;font-size:12px}.primary{background:var(--ga-act-bg);border-color:var(--ga-act-line);color:var(--ga-act-ink);font-weight:700}.primary:disabled{background:var(--ga-slot);border-color:var(--ga-line-3);color:var(--ga-ink-1)}.active{background:var(--ga-on-bg);border-color:var(--ga-on-line);color:var(--ga-on-ink)}.photo{position:relative;width:100%;background:#000;touch-action:none;margin-top:12px;overflow:hidden}.photo img,.photo svg{position:absolute;width:100%;height:100%;inset:0;pointer-events:none}.photo img{object-fit:fill}polygon{fill:var(--ga-blue-a16);stroke:var(--ga-blue-200);stroke-width:2;vector-effect:non-scaling-stroke}.projector{stroke:#ffa45b;fill:#ffa45b15}polyline{fill:none;stroke:white;stroke-width:2;vector-effect:non-scaling-stroke}circle{fill:#ffa45b;stroke:#fff;stroke-width:2}text{fill:white;font-size:30px;font-weight:bold}.item{border-bottom:1px solid var(--ga-line-2);padding:8px 0}.item span{overflow-wrap:anywhere;min-width:0}.status{color:var(--ga-blue-200)}summary{min-height:44px;cursor:pointer;font-weight:bold}
 </style>

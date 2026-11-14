@@ -119,7 +119,7 @@
 
 {#if phase==='options'}
  <dialog class="sheet" bind:this={optionsDialog} aria-label="Record" onclose={closeOptions} onclick={e=>{if(e.target===optionsDialog)optionsDialog.close();}}>
-  <header><strong>Record</strong><button class="close" aria-label="Close" onclick={()=>optionsDialog.close()}><Icon name="close" size={18}/></button></header>
+  <header><span class="ga-chip" aria-hidden="true"><Icon name="record" size={18}/></span><strong>Record</strong><button class="close" aria-label="Close" onclick={()=>optionsDialog.close()}><Icon name="close" size={18}/></button></header>
   <div class="body">
    <p>Records exactly what the projector shows, ready for Photos or a message.</p>
    <p class="sound" class:silent={audioSource!=='player'&&audioSource!=='mic'||!canStoreRecordings()} data-record-sound>{soundLine(audioSource,canStoreRecordings())}</p>
@@ -137,7 +137,7 @@
 
 {#if phase==='result' && result}
  <dialog class="sheet" bind:this={resultDialog} aria-label="Your recording" oncancel={e=>{e.preventDefault();requestClose();}}>
-  <header><strong>Your recording</strong><button class="close" aria-label="Close" onclick={requestClose}><Icon name="close" size={18}/></button></header>
+  <header><span class="ga-chip" aria-hidden="true"><Icon name="record" size={18}/></span><strong>Your recording</strong><button class="close" aria-label="Close" onclick={requestClose}><Icon name="close" size={18}/></button></header>
   <div class="body">
    <!-- svelte-ignore a11y_media_has_caption -->
    <video src={`${result.url}#t=0.1`} controls playsinline muted loop preload="auto" data-record-preview></video>
@@ -161,35 +161,39 @@
  .rec-button{position:absolute;top:8px;right:8px;z-index:5;display:flex;align-items:center;justify-content:center;gap:7px;min-width:44px;min-height:44px;padding:0 12px;border:1px solid #ffffff2e;border-radius:22px;background:#000000a6;color:#fff;font:650 13px/1 system-ui,-apple-system,sans-serif;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);touch-action:manipulation;}
  .rec-button.live{background:#c8243fe6;border-color:#ff8fa3;font-variant-numeric:tabular-nums;}
  .rec-button:disabled{opacity:.85;}
- .dot{width:12px;height:12px;border-radius:50%;background:#ff4d6a;box-shadow:0 0 8px #ff4d6a99;flex:none;}
+ .dot{width:12px;height:12px;border-radius:50%;background:var(--ga-record);box-shadow:0 0 8px rgba(255,75,62,.6);flex:none;}
  .square{width:11px;height:11px;border-radius:2px;background:#fff;flex:none;}
  .rec-label{font-size:12px;letter-spacing:.04em;}
  .sheet{position:fixed;inset:0;margin:auto;width:min(440px,calc(100% - 24px));max-height:88dvh;padding:0;overflow:auto;border:1px solid var(--ga-line-3);border-radius:12px;background:var(--ga-inspector-bg);color:var(--ga-ink-0);box-shadow:0 16px 60px #000c;font:13px/1.45 system-ui,-apple-system,sans-serif;}
  .sheet::backdrop{background:#000b;}
- header{display:flex;align-items:center;justify-content:space-between;padding:8px 8px 8px 18px;border-bottom:1px solid var(--ga-line-2);}
- header strong{font-size:16px;}
+ header{display:flex;align-items:center;gap:10px;padding:6px 6px 6px 14px;border-bottom:1px solid var(--ga-line-2);}
+ header strong{flex:1;font-size:17px;font-weight:650;}
+ header .ga-chip{--ga-icon-tone:var(--ga-record);background:rgba(255,75,62,.14);}
  .body{display:grid;gap:12px;padding:16px 18px 18px;}
  p{margin:0;color:var(--ga-ink-1);}
  button{display:flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:8px 12px;font:600 13px/1.2 system-ui,-apple-system,sans-serif;color:inherit;border:1px solid var(--ga-line-2);border-radius:6px;background:var(--ga-hardware-bg);touch-action:manipulation;}
  button:disabled{opacity:.6;}
  .close{width:44px;padding:0;border:0;background:none;}
- .primary{min-height:48px;font-size:14px;border-color:var(--ga-selection-line);background:var(--ga-selection-bg);}
+ .primary{min-height:50px;font-size:15px;font-weight:700;border-color:var(--ga-act-line);background:var(--ga-act-bg);color:var(--ga-act-ink);box-shadow:var(--ga-act-glow);}
+ .primary:disabled{background:var(--ga-hardware-bg);border-color:var(--ga-line-2);color:var(--ga-ink-1);box-shadow:none;}
+ .primary .dot{background:#2b0805;box-shadow:none;}
  .danger{border-color:#8a3346;background:#3b1720;}
  .subtle{border-color:transparent;background:none;color:var(--ga-ink-1);}
  .label{font-size:12px;font-weight:650;color:var(--ga-ink-1);}
  .segmented{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;}
  .segmented button{padding:6px 4px;font-size:12px;text-align:center;}
- .segmented button.active{border-color:var(--ga-selection-line);background:var(--ga-selection-bg);}
+ .segmented button.active{border-color:var(--ga-on-line);background:var(--ga-on-bg);color:var(--ga-on-ink);}
  .switch{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:52px;}
  .switch span{display:grid;gap:2px;}
  .switch small{font-size:12px;color:var(--ga-ink-2);}
- .switch input{flex:none;width:24px;height:24px;accent-color:var(--ga-slider-fill);}
+ .switch input{flex:none;width:24px;height:24px;accent-color:var(--ga-coral-400);}
  .hint{font-size:12px;color:var(--ga-ink-2);}
  .error{color:#f3a6a6;font-size:13px;}
  video{width:100%;aspect-ratio:16/9;border-radius:6px;background:#000;}
  .meta{font-size:12px;color:var(--ga-ink-2);font-variant-numeric:tabular-nums;}
- .sound{font-size:13px;color:var(--ga-ink-0);padding:8px 10px;border-radius:6px;background:var(--ga-slot);border:1px solid var(--ga-line-2);}
+ .sound{font-size:13px;color:var(--ga-ink-0);padding:0 0 0 10px;border-left:3px solid var(--ga-tone-audio);}
+ .sound.silent{border-left-color:#ffc570;}
  .sound.silent{color:#ffc570;}
  .pair{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:8px;}
- .confirm{display:grid;gap:10px;padding:12px;border:1px solid var(--ga-line-2);border-radius:6px;background:var(--ga-slot);}
+ .confirm{display:grid;gap:10px;padding:12px 0 0;border-top:1px solid var(--ga-line-2);}
 </style>

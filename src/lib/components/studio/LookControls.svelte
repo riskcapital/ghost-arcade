@@ -174,7 +174,7 @@
     padding: 0;
     overflow: hidden;
     text-align: left;
-    font-size: 11px;
+    font-size: 12px;
   }
   .gallery img {
     width: 100%;
@@ -212,7 +212,7 @@
   }
   output {
     font-variant-numeric: tabular-nums;
-    font-size: 11px;
+    font-size: 12px;
     width: 32px;
     text-align: right;
   }
@@ -250,7 +250,7 @@
     background: var(--ga-hardware-bg);
   }
   p {
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.5;
     color: var(--ga-ink-2);
     margin: 12px 0;
@@ -258,6 +258,6 @@
   footer {
     border-top: 1px solid var(--ga-line-2);
     padding-top: 10px;
-    font-size: 11px;
+    font-size: 12px;
   }
 </style>

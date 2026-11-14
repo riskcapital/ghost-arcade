@@ -55,7 +55,7 @@
 <div class="scrim" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) onclose(); }}>
     <div class="effect-browser" bind:this={root} role="dialog" tabindex="-1" aria-modal="true" aria-label={scope ? `Add an effect to ${scope}` : 'Add an effect'} data-effect-browser onkeydown={key}>
     <header>
-      <h2>Add an effect{#if scope}<small>{scope}</small>{/if}</h2>
+      <h2><span class="ga-chip" data-tone="fx" aria-hidden="true"><Icon name="fx" size={18} /></span>Add an effect{#if scope}<small>{scope}</small>{/if}</h2>
       <button class="close" data-effects-close aria-label="Close effects" onclick={onclose}><Icon name="close" size={20} /></button>
     </header>
     <label class="search"><Icon name="search" size={18} /><input type="search" placeholder="Search effects" bind:value={search} aria-label="Search effects" enterkeyhint="search" autocapitalize="off" autocomplete="off" /></label>
@@ -93,15 +93,15 @@
   button { font: inherit; color: var(--ga-ink-0); background: var(--ga-hardware-bg); border: 1px solid var(--ga-line-2); border-radius: 6px; touch-action: manipulation; cursor: pointer; }
   button:focus-visible, input:focus-visible { outline: 2px solid var(--ga-focus); outline-offset: 2px; }
   header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
-  h2 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; margin: 0; font-size: 18px; font-weight: 600; }
+  h2 { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; margin: 0; font-size: 18px; font-weight: 600; }
   h2 small { font-size: 12px; font-weight: 500; color: var(--ga-ink-1); }
   .close { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; flex: none; }
   .search { flex: none; display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 12px; margin-bottom: 8px; border: 1px solid var(--ga-line-2); border-radius: 6px; background: var(--ga-slot); }
-  .search input { flex: 1; min-width: 0; height: 42px; border: 0; background: none; color: var(--ga-ink-0); font: inherit; font-size: 16px; outline-offset: -2px; }
+  .search input { flex: 1; min-width: 0; height: 44px; border: 0; background: none; color: var(--ga-ink-0); font: inherit; font-size: 16px; outline-offset: -2px; }
   .chips { flex: none; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 1px; }
   .chips::-webkit-scrollbar { display: none; }
   .chips button { flex: none; display: flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 12px; font-size: 13px; white-space: nowrap; }
-  .chips button span { font-size: 11px; color: var(--ga-ink-2); }
+  .chips button span { font-size: 12px; color: var(--ga-ink-2); }
   .chips button.active { background: var(--ga-selection-bg); border-color: var(--ga-selection-line); color: var(--ga-selection-ink); }
   .chips svg, .glyph svg { color: var(--ga-icon, var(--ga-blue-400)); }
   .count { flex: none; margin: 8px 2px; font-size: 12px; color: var(--ga-ink-1); }
@@ -109,10 +109,10 @@
   .scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding-bottom: 16px; margin-bottom: env(safe-area-inset-bottom); }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(164px, 1fr)); gap: 6px; }
   .tile { display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: 10px; min-height: 56px; padding: 6px 10px 6px 8px; text-align: left; content-visibility: auto; contain-intrinsic-size: 164px 56px; }
-  .glyph { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 8px; background: var(--ga-blue-800); border: 1px solid var(--ga-blue-mute-600); }
+  .glyph { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 9px; background: var(--ga-tone-fx-soft); --ga-icon-tone: var(--ga-tone-fx); }
   .text { display: grid; gap: 2px; min-width: 0; }
   .text strong { font-size: 13px; font-weight: 600; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .text small { font-size: 11px; color: var(--ga-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .text small { font-size: 12px; color: var(--ga-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .none { margin: 14px 2px; font-size: 14px; color: var(--ga-ink-1); }
   @media (min-width: 700px) {
     .scrim { align-items: center; }

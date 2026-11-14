@@ -1,5 +1,6 @@
 <script lang="ts">
  import Icon from './StudioIcon.svelte';
+ import InfoTip from './ui/InfoTip.svelte';
  import type {PaintConfig,PaintLink,Edge} from '../../mobile/studio/paint';
  import type {Surface} from '../../mobile/studio/model';
  export let value:PaintConfig;export let surfaces:Surface[];export let selected:number;
@@ -20,7 +21,7 @@
  }
 </script>
 <section class="paint-panel" aria-label="Mapping paint controls">
- <header><strong><Icon name="paint" size={19}/>Surface paint</strong><button aria-pressed={value.enabled} class:active={value.enabled} onclick={()=>onchange({enabled:!value.enabled})}>{value.enabled?'Paint on':'Paint off'}</button></header>
+ <header><strong><Icon name="paint" size={19}/>Surface paint</strong><InfoTip label="How to paint" text={`${value.brush==='slime'?'Hold to pour. Slime runs down each face; link edges to carry it onto another screen.':'Draw in the preview. Strokes stay attached when you warp the screens.'} Loops follow BPM / Tap.`}/><button aria-pressed={value.enabled} class:active={value.enabled} onclick={()=>onchange({enabled:!value.enabled})}>{value.enabled?'Paint on':'Paint off'}</button></header>
  <div class="view-mode"><button class:active={!value.isolate} onclick={()=>onchange({isolate:false})}>Over visuals</button><button class:active={value.isolate} onclick={()=>onchange({isolate:true})}>Paint only</button></div>
  <div class="brushes">{#each brushes as b}<button aria-pressed={value.brush===b.id} class:active={value.brush===b.id} onclick={()=>onchange({brush:b.id})}><Icon name={b.icon}/>{b.name}</button>{/each}</div>
  <div class="colors">{#each colors as color}<button style:--swatch={color} class:chosen={value.color===color} aria-label={`Paint color ${color}`} aria-pressed={value.color===color} onclick={()=>onchange({color})}></button>{/each}<input type="color" aria-label="Custom paint color" value={value.color} oninput={e=>onchange({color:e.currentTarget.value})}/></div>
@@ -29,7 +30,6 @@
  {#if value.brush==='slime'}<label>Gravity <output>{Math.round(value.gravity*100)}%</output><input aria-label="Slime gravity" type="range" min="0" max="1" step=".01" value={value.gravity} oninput={e=>onchange({gravity:Number(e.currentTarget.value)})}/></label>{/if}
  <div class="actions"><button class:active={value.hold} aria-pressed={value.hold} onclick={()=>onchange({hold:!value.hold})}><Icon name="pause" size={16}/>Freeze</button><button disabled={!value.strokes.length} onclick={onundo}><Icon name="undo" size={16}/>Undo stroke</button><button disabled={!value.strokes.length} onclick={onclear}><Icon name="trash" size={16}/>Clear</button></div>
  <div class="loop"><button class:active={value.loop} aria-pressed={value.loop} onclick={()=>onchange({loop:!value.loop})}><Icon name="autopilot" size={17}/>Gesture loop</button><select aria-label="Gesture loop length" value={value.beats} onchange={e=>onchange({beats:Number(e.currentTarget.value)})}>{#each [4,8,16,32] as beats}<option value={beats}>{beats} beats</option>{/each}</select></div>
- <p>{value.brush==='slime'?'Hold to pour. Slime runs down each face; link edges to carry it onto another screen.':'Draw in the preview. Strokes stay attached when you warp the screens.'} Loops follow BPM / Tap.</p>
  <button class="connections" aria-expanded={linksOpen} onclick={()=>linksOpen=!linksOpen}><Icon name="link" size={18}/>Connected edges <span>{value.links.length}</span></button>
  {#if linksOpen}<div class="link-editor">
   <p>Connect touching faces. Flow crosses either way. Choose the matching direction along both edges.</p>
@@ -43,11 +43,11 @@
 <style>
  .view-mode{display:flex;gap:6px;margin:12px 0}.view-mode button{flex:1}.link-editor>label{display:flex;flex-direction:column;align-items:stretch;gap:6px}
  .paint-panel{padding:12px;border:1px solid var(--ga-line-3);border-radius:7px;background:var(--ga-inspector-bg);margin:12px 0}
- header,header strong{display:flex;align-items:center;gap:8px}header{justify-content:space-between}header strong{font-size:14px}
+ header,header strong{display:flex;align-items:center;gap:8px}header{justify-content:flex-start}header strong{flex:1;font-size:14px}
  button,select{min-height:44px;border:1px solid var(--ga-line-2);border-radius:5px;background:var(--ga-hardware-bg);color:var(--ga-ink-0);font:inherit;padding:7px 9px;touch-action:manipulation;font-size:12px}
  button{display:flex;align-items:center;justify-content:center;gap:6px}.active{background:var(--ga-selection-bg);border-color:var(--ga-selection-line)}button:disabled{opacity:.4}
- .brushes{display:flex;gap:6px;margin:12px 0}.brushes button{flex:1}.colors{display:flex;gap:4px;align-items:center;margin:10px 0}.colors button{flex:1;min-width:0;position:relative;padding:0}.colors button:before{content:'';width:20px;height:20px;background:var(--swatch);border-radius:50%}.colors .chosen{border-color:var(--swatch)}.colors input{width:40px;height:44px;background:transparent;border:0;padding:0}
- label{display:grid;grid-template-columns:1fr auto;align-items:center;font-size:12px;gap:0 8px;margin-top:8px}label input{grid-column:1/-1;width:100%;min-width:0}output{font:11px ui-monospace;color:#b7f375}
- .actions,.loop,.pair{display:flex;gap:6px;margin:10px 0}.actions button{flex:1;font-size:11px;padding:6px}.loop>*{flex:1;min-width:0}p{font-size:11px;line-height:1.5;color:#aab4c3}
- .connections{width:100%;justify-content:flex-start}.connections span{margin-left:auto;color:#b7f375}.pair>*{flex:1;min-width:0}.pair label{display:flex;flex-direction:column;align-items:stretch;gap:6px}.pair select{width:100%}.pair>button{align-self:end}.connect{width:100%}.connection{display:flex;align-items:center;gap:8px;border-top:1px solid var(--ga-line-2);padding:8px 0;font-size:11px;line-height:1.5}.connection span{flex:1}.connection button{width:44px}
+ .brushes{display:flex;gap:6px;margin:12px 0}.brushes button{flex:1}.colors{display:grid;grid-template-columns:repeat(auto-fill,minmax(44px,1fr));gap:4px;align-items:center;margin:10px 0}.colors button{min-width:44px;position:relative;padding:0}.colors button:before{content:'';width:20px;height:20px;background:var(--swatch);border-radius:50%}.colors .chosen{border-color:var(--swatch)}.colors input{width:44px;height:44px;background:transparent;border:0;padding:0}
+ label{display:grid;grid-template-columns:1fr auto;align-items:center;font-size:12px;gap:0 8px;margin-top:8px}label input{grid-column:1/-1;width:100%;min-width:0}output{font:12px ui-monospace;color:#b7f375}
+ .actions,.loop,.pair{display:flex;gap:6px;margin:10px 0}.actions button{flex:1;font-size:12px;padding:6px}.loop>*{flex:1;min-width:0}p{font-size:12px;line-height:1.5;color:#aab4c3}
+ .connections{width:100%;justify-content:flex-start}.connections span{margin-left:auto;color:#b7f375}.pair>*{flex:1;min-width:0}.pair label{display:flex;flex-direction:column;align-items:stretch;gap:6px}.pair select{width:100%}.pair>button{align-self:end}.connect{width:100%}.connection{display:flex;align-items:center;gap:8px;border-top:1px solid var(--ga-line-2);padding:8px 0;font-size:12px;line-height:1.5}.connection span{flex:1}.connection button{width:44px}
 </style>
