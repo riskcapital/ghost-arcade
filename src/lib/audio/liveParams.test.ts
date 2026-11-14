@@ -393,6 +393,10 @@ describe('live values', () => {
     expect(live.liveDeckOfLayerId('vj-layer-3-B')).toEqual({ deck: 'B', row: 3 });
     expect(live.liveDeckOfLayerId('vj-layer-2')).toEqual({ deck: 'A', row: 2 });
     expect(live.liveDeckOfLayerId('map-1')).toBeNull();
+    // A clip-transition input of a row (how a playing clip reaches the core with transitions on).
+    expect(live.liveDeckOfLayerId('__vj-clip:vj-layer-3-B:steady:in')).toEqual({ deck: 'B', row: 3 });
+    expect(live.liveDeckOfLayerId('__vj-clip:vj-layer-0:7:out')).toEqual({ deck: 'A', row: 0 });
+    expect(live.liveValuesForRenderedLayer({ id: '__vj-clip:vj-layer-1-A:steady:in', source: { id: 'C' } })).toEqual({ 'shader:x': 3, 'fx:f:p': 6 });
     // As a scene renders them (the frame sync and the browser render path).
     expect(live.liveValuesForRenderedLayer({ id: 'vj-layer-1', source: { id: 'C' } })).toEqual({ 'shader:x': 3, 'fx:f:p': 6 });
     expect(live.liveValuesForRenderedLayer({ id: 'vj-layer-1-A', source: { id: 'D' } })).toBeUndefined();

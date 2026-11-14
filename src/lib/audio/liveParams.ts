@@ -208,8 +208,11 @@ export function liveCompositionValues(scope: LiveCompositionScope, effectId: str
   return mergedCompositions.get(compositionKey(scope, effectId));
 }
 
-/** A VJ layer id as the scene builds it (`vj-layer-<row>`, `-A` / `-B` with the crossfader on). */
-const VJ_LAYER_ID = /^vj-layer-(\d+)(?:-([AB]))?$/;
+/** A VJ layer id as the scene builds it (`vj-layer-<row>`, `-A` / `-B` with
+ *  the crossfader on), or a clip-transition input of one
+ *  (`__vj-clip:vj-layer-<row>[-A|B]:<token>:in|out`, vjClipTransitionNative.ts),
+ *  which is how a playing clip reaches the core while clip transitions are on. */
+const VJ_LAYER_ID = /^(?:__vj-clip:)?vj-layer-(\d+)(?:-([AB]))?(?::[^:]+:(?:in|out))?$/;
 export function liveDeckOfLayerId(id: string): { deck: LiveDeck; row: number } | null {
   const m = VJ_LAYER_ID.exec(id);
   return m ? { deck: (m[2] as LiveDeck | undefined) ?? 'A', row: Number(m[1]) } : null;
