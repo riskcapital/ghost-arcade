@@ -1,6 +1,7 @@
 <script lang="ts">
   /** Kind of the selected surface (corners, mesh, free shape) and its geometry tools. */
   import './mappingPanel.css';
+  import InfoTip from '../ui/InfoTip.svelte';
   import type { Surface } from '../../../mobile/studio/model';
   import { gridOf, MAX_MESH_SIDE, MIN_MESH_SIDE } from '../../../mobile/studio/mapping/meshGrid';
   import { convertSurface, setDensity, surfaceKind, type SurfaceKind } from '../../../mobile/studio/mapping/surfaceKinds';
@@ -47,7 +48,7 @@
 
 {#if s}
   <section class="mp" aria-label="Surface shape">
-    <div class="mp-head"><strong><MapIcon name="shape" size={16} />Shape</strong>{#if welded}<span class="mp-label weld">Point welded</span>{/if}</div>
+    <div class="mp-head"><strong><MapIcon name="shape" size={16} />Shape</strong>{#if welded}<span class="mp-label weld">Point welded</span>{/if}<InfoTip label="How to shape a surface" text={kind === 'mesh' ? (s.bezier ? 'Select a point, then drag its yellow handles or the squares on its edges to bend them.' : 'More points follow a curved wall; the picture keeps its place when you change them.') : kind === 'shape' ? 'Tap a + on an edge to add a point there; drag the + to bend that edge.' : 'Drag the four corners onto your surface. Choose Mesh for a curved wall or Shape for any outline.'} /></div>
     <div class="mp-seg" role="group" aria-label="Surface kind">
       {#each kinds as k}<button class:active={kind === k.id} aria-pressed={kind === k.id} disabled={s.locked} onclick={() => setKind(k.id)}><MapIcon name={k.icon} size={16} />{k.label}</button>{/each}
     </div>
@@ -63,7 +64,6 @@
       <div class="mp-row">
         <button class="grow" aria-pressed={!!s.bezier} disabled={s.locked} onclick={() => patch({ ...s, bezier: !s.bezier })}><MapIcon name="curve" size={16} />Curved edges</button>
       </div>
-      <p class="mp-hint">{s.bezier ? 'Select a point, then drag its yellow handles or the squares on its edges to bend them.' : 'More points follow a curved wall; the picture keeps its place when you change them.'}</p>
     {:else if kind === 'shape'}
       <div class="mp-row">
         <button class="grow" disabled={s.locked || path.length >= MAX_PATH_POINTS} onclick={() => patch(withShape(s, insertPoint(path, point, 0.5)), point + 1)}><MapIcon name="add" size={16} />Add point</button>
@@ -75,9 +75,6 @@
           <button class:active={isSmooth(selectedPathPoint)} aria-pressed={isSmooth(selectedPathPoint)} disabled={s.locked} onclick={() => patch(withShape(s, setPointSmooth(path, point, true)), point)}><MapIcon name="smooth" size={16} />Curved</button>
         </div>
       {/if}
-      <p class="mp-hint">Tap a + on an edge to add a point there; drag the + to bend that edge.</p>
-    {:else}
-      <p class="mp-hint">Drag the four corners onto your surface. Choose Mesh for a curved wall or Shape for any outline.</p>
     {/if}
     {#if welded && at}
       <div class="mp-row"><button class="grow" disabled={s.locked} onclick={() => { onapply(unweldAt(surfaces, index, at), point); onnotice?.('Point unwelded: it now moves on its own.'); }}><MapIcon name="unweld" size={16} />Unweld point</button></div>

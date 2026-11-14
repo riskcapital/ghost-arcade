@@ -1161,3 +1161,11 @@
 .interactive-workspace .panel-heading .ga-info {
   margin: -10px -4px;
 }
+/* Adding an effect is the main action of the effect stack. */
+.interactive-workspace .add-effect-button:not(:disabled) {
+  background: var(--ga-act-bg);
+  border-color: var(--ga-act-line);
+  color: var(--ga-act-ink);
+  font-weight: 700;
+  --ga-icon-tone: var(--ga-act-ink);
+}
