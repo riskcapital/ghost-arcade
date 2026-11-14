@@ -2889,12 +2889,9 @@
 
     selectedShader.values[inputName] = value;
 
-    // Update the layer source
-    const source = $selectedLayer.source;
-    if (source.shaderValues) {
-      source.shaderValues[inputName] = value;
-      project.setLayerSource($selectedLayerId, { ...source });
-    }
+    // Through the store (a new source, never the stored one written in
+    // place): a drag of one slider is one undo step.
+    if ($selectedLayer.source.shaderValues) project.setLayerShaderValue($selectedLayerId, inputName, value);
 
     // Keep modulation base value in sync with slider (mapping mode)
     if (typeof value === 'number' && selectedLayerIdx >= 0) {
@@ -2912,7 +2909,6 @@
     if (typeof value === 'number' || typeof value === 'boolean') {
       const trackKey = `shader:${inputName}`;
       const label = selectedShader.inputs?.find(i => i.NAME === inputName)?.LABEL || inputName;
-      console.log('[KF MediaTray] autoRecord call: layerId=', $selectedLayerId, 'trackKey=', trackKey, 'value=', value);
       keyframeTimeline.autoRecord($selectedLayerId, trackKey, value, label, typeof value === 'boolean' ? 'boolean' : 'number');
     }
   }
@@ -4151,6 +4147,21 @@
   // being edited (its piece with the block's picture; see showBlockEdit).
   $: panelLayer = $activeBlock ? $activeBlock.layer : $selectedLayer;
 
+  // The tray's shader for a layer's source, looked up again only when the
+  // source or the list changes (the block below runs on every layer edit).
+  let shaderLookup: { list: ShaderItem[]; id: string; src: string; found: ShaderItem | undefined } | null = null;
+  function shaderForSource(sourceId: string, sourceSrc: string): ShaderItem | undefined {
+    if (shaderLookup && shaderLookup.list === shaders && shaderLookup.id === sourceId && shaderLookup.src === sourceSrc) return shaderLookup.found;
+    // Try exact ID match first, then fall back to matching by src path.
+    const found = shaders.find(s => s.id === sourceId) ||
+                  shaders.find(s => sourceId.startsWith(s.id)) ||
+                  shaders.find(s => s.src === sourceSrc);
+    shaderLookup = { list: shaders, id: sourceId, src: sourceSrc, found };
+    return found;
+  }
+  /** What the 'map:' ranges were last registered for. */
+  let rangesFor: { index: number; inputs: unknown } = { index: -1, inputs: null };
+
   // Check if current layer has a shader with the selected shader's id
   $: {
     const block = $activeBlock;
@@ -4177,9 +4188,7 @@
       // while shader item IDs are "isf:filename" - so also try matching by src
       const sourceId = $selectedLayer?.source?.id ?? '';
       const sourceSrc = $selectedLayer?.source?.src ?? '';
-      const found = shaders.find(s => s.id === sourceId) ||
-                    shaders.find(s => sourceId.startsWith(s.id)) ||
-                    shaders.find(s => s.src === sourceSrc);
+      const found = shaderForSource(sourceId, sourceSrc);
       if (found) {
         selectedShader = found;
         // Sync values from layer source
@@ -4195,8 +4204,11 @@
         }
         // Register param ranges in the 'map:' namespace so VJ-mode
         // ranges on the same layer index don't get clobbered.
-        if (selectedLayerIdx >= 0 && found.inputs) {
+        // Only when the layer or its shader's inputs change, not on every
+        // edit of the layer.
+        if (selectedLayerIdx >= 0 && found.inputs && (rangesFor.index !== selectedLayerIdx || rangesFor.inputs !== found.inputs)) {
           registerParamRanges(selectedLayerIdx, found.inputs, 'mapping');
+          rangesFor = { index: selectedLayerIdx, inputs: found.inputs };
         }
       }
     } else {
