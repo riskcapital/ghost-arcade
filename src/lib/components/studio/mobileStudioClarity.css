@@ -497,3 +497,28 @@ nav.tabs.in-studio button {
 :root .studio[data-layout][data-layout] .effect-card .effect-toggle.active {
   color: var(--ga-on-ink);
 }
+
+/* ---------- Tempo and audio sheet ---------- */
+.studio[data-layout] .tempo-sheet header {
+  justify-content: flex-start;
+  gap: 8px;
+}
+:root .studio[data-layout][data-layout] .tempo-sheet header strong {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: 0;
+  color: var(--ga-ink-0);
+}
+:root .studio[data-layout][data-layout] .tempo-sheet p {
+  font-size: 12px;
+  color: var(--ga-ink-1);
+}
+:root .studio[data-layout][data-layout] .tempo-sheet .with-tip {
+  display: flex;
+  align-items: center;
+}
+:root .studio[data-layout][data-layout] .tempo-sheet .audio-sources {
+  padding-top: 8px;
+  border-top: 1px solid var(--ga-section-head-line);
+}

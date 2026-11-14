@@ -29,7 +29,7 @@
 <header>
   <div>
     <small>GHOST ARCADE / INTERACTIVE</small>
-    <h2>Interactive Studio <span class="engine-badge">{engineLabel}</span></h2>
+    <h2><span class="ga-chip" data-tone="fx" aria-hidden="true"><Icon name="depth" size={18} /></span>Interactive Studio <span class="engine-badge">{engineLabel}</span></h2>
   </div>
   <div class="header-actions">
     {#if ontimeline}<button onclick={ontimeline}>◇ Keyframes</button>{/if}

@@ -1,6 +1,7 @@
 <script lang="ts">
   /** Scenes tab: starter scenes and the scenes saved on this device. */
   import Icon from './StudioIcon.svelte';
+  import InfoTip from './ui/InfoTip.svelte';
   import {
     INTERACTIVE_STARTERS,
     type InteractiveStarter,
@@ -20,10 +21,7 @@
   export let onundoremove: () => void;
 </script>
 
-<div class="panel-heading"><strong>Start with a scene</strong><span>Ready to play</span></div>
-<p class="hint">
-  Choose a starting point. Add effects, move objects, make it yours. Undo brings your previous scene back.
-</p>
+<div class="panel-heading"><strong>Start with a scene</strong><InfoTip label="About starter scenes" text="Choose a starting point, then add effects and move objects to make it yours. Undo brings your previous scene back." /><span>Ready to play</span></div>
 <div class="starter-grid">
   {#each INTERACTIVE_STARTERS as starter}
     <button class="starter" style:--starter-color={starter.color} onclick={() => onstarter(starter.id)}>

@@ -2024,7 +2024,7 @@
   </main>
   {#if mixerOpen && !tablet}<PerformanceMixer {show} {selectedLayer} onstart={checkpoint} onselect={changeLayer} oncontrols={openControls} onclose={()=>mixerOpen=false} onblendopen={()=>engine?.prepareBlends()} onchange={(i,patch)=>{show.layers[i]={...show.layers[i],...patch};persist();}} onmaster={value=>{show.master=value;persist();}} oncrossfade={value=>{show.crossfade=value;persist();}} oncrossfadesettings={value=>{show.crossfadeSettings=value;persist();}} />{/if}
   {#if tempoOpen}<div class="sheet-scrim" data-sheet-scrim role="presentation" onclick={(e) => { if (e.target === e.currentTarget) tempoOpen = false; }}><div class="tempo-sheet" role="dialog" aria-label="Tempo and audio" use:focusSheet={()=>(tempoOpen=false)} style={`left:${tempoAnchor.left}px;bottom:${tempoAnchor.bottom}px;--sheet-bottom:${tempoAnchor.bottom}px`}>
-    <header><strong>TEMPO AND AUDIO</strong><button class="icon-button" aria-label="Close tempo and audio" onclick={() => (tempoOpen = false)}><Icon name="close" size={18} /></button></header>
+    <header><span class="ga-chip small" data-tone="audio" aria-hidden="true"><Icon name="tempo" size={15} /></span><strong>Tempo and audio</strong><button class="icon-button" aria-label="Close tempo and audio" onclick={() => (tempoOpen = false)}><Icon name="close" size={18} /></button></header>
     <div class="tempo-sheet-row">
       <button class="tap" onclick={tap}>Tap tempo</button>
       <div class="beat-dots" aria-hidden="true">{#each [0, 1, 2, 3] as n}<i class:lit={beat === n}></i>{/each}</div>
@@ -2054,7 +2054,7 @@
     {:else if audioSource === 'phone'}
       <p class="audio-status" class:live={audioMeter.arriving} role="status">{phoneHint}</p>
       <button class="audio-action" onclick={() => audioCommand(startPhoneAudio, 'Phone audio could not start.')}><span>Start phone audio</span></button>
-      <p>Phone audio uses a screen broadcast that only sends sound to Ghost Arcade. Stop it from the red pill at the top of the screen. Apple Music and other copy-protected audio arrives silent; use Mic for those.</p>
+      <p class="with-tip">Plays what other apps play into the visuals.<InfoTip label="About phone audio" text="Phone audio uses a screen broadcast that only sends sound to Ghost Arcade. Stop it from the red pill at the top of the screen. Apple Music and other copy-protected audio arrives silent; use Mic for those." /></p>
     {:else}
       <p>Tap in time to set the tempo. Pick a source and Audio response drives every clip.</p>
     {/if}

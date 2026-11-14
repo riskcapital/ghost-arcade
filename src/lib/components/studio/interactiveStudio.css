@@ -1149,3 +1149,15 @@
   gap: 10px;
   min-height: 44px;
 }
+.interactive-workspace header h2:not(:where(.param *, .mt *, .studio-timeline *)) {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.interactive-workspace .panel-heading strong {
+  flex: 1;
+  font-size: 14px;
+}
+.interactive-workspace .panel-heading .ga-info {
+  margin: -10px -4px;
+}

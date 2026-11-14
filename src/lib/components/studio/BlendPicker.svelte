@@ -115,7 +115,7 @@
   <div class="scrim" use:portal role="presentation" onclick={(e) => { if (e.target === e.currentTarget) close(); }}>
     <div class="blend-sheet" bind:this={sheet} role="dialog" tabindex="-1" aria-modal="true" aria-label={`${title}, ${blendLabel(current)}`} data-blend-picker onkeydown={key}>
       <header>
-        <h2>Blend mode{#if scope}<small>{scope}</small>{/if}</h2>
+        <h2><span class="ga-chip" aria-hidden="true"><Icon name="layers" size={18} /></span>Blend mode{#if scope}<small>{scope}</small>{/if}</h2>
         <button class="done" data-blend-done onclick={close}>Done</button>
       </header>
       <p class="intro">How it mixes with what is beneath it. Tap one to try it on the output.</p>
@@ -152,7 +152,7 @@
   .blend-trigger .mini { flex: none; width: 28px; height: 18px; border-radius: 3px; }
   .blend-trigger .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .blend-trigger .chevron { flex: none; color: var(--ga-ink-2); }
-  .blend-trigger.compact { width: 100%; min-height: 40px; justify-content: center; padding: 0 4px; font-size: 12px; text-align: center; margin-top: 5px; border-radius: 5px; }
+  .blend-trigger.compact { width: 100%; min-height: 44px; justify-content: center; padding: 0 4px; font-size: 12px; text-align: center; margin-top: 5px; border-radius: 5px; }
 
   .scrim { position: fixed; inset: 0; z-index: 70; display: flex; align-items: flex-end; justify-content: center; background: #0006; }
   .blend-sheet {
@@ -166,7 +166,7 @@
   .blend-sheet button { font: inherit; color: var(--ga-ink-0); background: var(--ga-hardware-bg); border: 1px solid var(--ga-line-2); border-radius: 6px; touch-action: manipulation; cursor: pointer; }
   .blend-sheet button:focus-visible { outline: 2px solid var(--ga-focus); outline-offset: 2px; }
   header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-  h2 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; margin: 0; font-size: 18px; font-weight: 600; }
+  h2 { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; margin: 0; font-size: 18px; font-weight: 600; }
   h2 small { font-size: 12px; font-weight: 500; color: var(--ga-ink-1); }
   .done { flex: none; min-width: 72px; min-height: 44px; padding: 0 14px; font-weight: 650; }
   .intro { flex: none; margin: 6px 2px 8px; font-size: 12px; line-height: 1.4; color: var(--ga-ink-1); }
@@ -176,7 +176,8 @@
   h3 small { font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--ga-ink-2); }
   .options { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 6px; }
   .option { position: relative; display: grid; grid-template-columns: 56px minmax(0, 1fr); align-items: center; gap: 10px; min-height: 56px; padding: 8px 30px 8px 8px; text-align: left; }
-  .option.active { background: var(--ga-selection-bg); border-color: var(--ga-selection-line); }
+  .option.active { background: var(--ga-selection-bg); border-color: var(--ga-selection-line); box-shadow: var(--ga-on-glow); }
+  .option.active .text strong { color: var(--ga-selection-ink); }
   .swatch { display: block; width: 56px; height: 36px; border-radius: 4px; border: 1px solid var(--ga-line-2); box-sizing: border-box; }
   .text { display: grid; gap: 2px; min-width: 0; }
   .text strong { font-size: 13px; font-weight: 600; line-height: 1.2; }
