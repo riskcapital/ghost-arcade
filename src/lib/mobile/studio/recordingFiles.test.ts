@@ -4,7 +4,7 @@ import { canPickRoute, pickRoute, presentMode, requestReview } from './nativeOut
 
 const METHODS = ['showRoutePicker', 'routeStatus', 'recordingBegin', 'recordingAppend', 'recordingFinish', 'recordingDiscard', 'recordingSaveToPhotos', 'recordingShare', 'presentMode', 'requestReview', 'appVersion'];
 function app(answers: Record<string, unknown> = {}, methods = METHODS) {
-  const nativePromise = vi.fn(async (_plugin: string, method: string) => answers[method] ?? {});
+  const nativePromise = vi.fn(async (_plugin: string, method: string, _args?: Record<string, unknown>) => answers[method] ?? {});
   (globalThis as { Capacitor?: unknown }).Capacitor = {
     getPlatform: () => 'ios', nativePromise, convertFileSrc: (p: string) => `capacitor://localhost/_capacitor_file_${p}`,
     PluginHeaders: [{ name: 'StudioOutput', methods: methods.map((name) => ({ name })) }],

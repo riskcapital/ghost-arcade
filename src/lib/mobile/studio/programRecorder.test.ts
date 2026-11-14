@@ -17,9 +17,11 @@ describe('recording layout', () => {
     expect(recordingLayout({ camera: 'off', mark: false }, 3840, 2160)).toMatchObject({ width: 1920, height: 1080 });
     expect(recordingLayout({ camera: 'off', mark: false }, 640, 360)).toMatchObject({ width: 960, height: 540 });
   });
-  it('puts the camera and the program side by side at half size', () => {
-    const l = recordingLayout({ camera: 'side', mark: false }, 1920, 1080);
-    expect(l).toMatchObject({ width: 1920, height: 540, camera: { x: 0, y: 0, w: 960, h: 540 }, program: { x: 960, y: 0, w: 960, h: 540 } });
+  it('puts the camera and the program side by side in a 1920-wide frame, whatever the program size', () => {
+    for (const [w, h] of [[1920, 1080], [1280, 720], [960, 540]]) {
+      const l = recordingLayout({ camera: 'side', mark: false }, w, h);
+      expect(l).toMatchObject({ width: 1920, height: 540, camera: { x: 0, y: 0, w: 960, h: 540 }, program: { x: 960, y: 0, w: 960, h: 540 } });
+    }
   });
   it('puts an inset camera in the lower left, clear of the mark in the lower right', () => {
     const l = recordingLayout({ camera: 'inset', mark: true }, 1280, 720);

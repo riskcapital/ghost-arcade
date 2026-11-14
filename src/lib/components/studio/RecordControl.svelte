@@ -134,7 +134,7 @@
   <header><strong>Your recording</strong><button class="close" aria-label="Close" onclick={requestClose}><Icon name="close" size={18}/></button></header>
   <div class="body">
    <!-- svelte-ignore a11y_media_has_caption -->
-   <video src={result.url} controls playsinline muted loop preload="metadata" data-record-preview></video>
+   <video src={`${result.url}#t=0.1`} controls playsinline muted loop preload="auto" data-record-preview></video>
    <p class="meta" data-record-meta>{formatDuration(result.durationMs)} · {result.width} × {result.height} · {megabytes(result.bytes)}</p>
    {#if note}<p class="hint" role="status">{note}</p>{/if}
    {#if error}<p class="error" role="alert">{error}</p>{/if}

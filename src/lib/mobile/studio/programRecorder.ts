@@ -39,8 +39,8 @@ export function isRecordingSupported(): boolean {
 const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
 /**
  * Where everything goes in the recorded frame. The program keeps its own size (clamped between
- * 960 and 1920 wide); side by side puts the camera and the program next to each other at half that
- * size; inset puts the camera in the lower left so the mark keeps the lower right.
+ * 960 and 1920 wide); side by side puts the camera and the program next to each other in a
+ * 1920-wide frame; inset puts the camera in the lower left so the mark keeps the lower right.
  */
 export function recordingLayout(options: RecordingOptions, programWidth: number, programHeight: number): RecordingLayout {
   const aspect = programWidth > 0 && programHeight > 0 ? programWidth / programHeight : 16 / 9;
@@ -50,7 +50,8 @@ export function recordingLayout(options: RecordingOptions, programWidth: number,
   let program: Rect = { x: 0, y: 0, w: width, h: height };
   let camera: Rect | null = null;
   if (options.camera === 'side') {
-    const tileW = even(width / 2), tileH = even(tileW / aspect);
+    // Two 960-wide tiles: a 1920-wide frame whatever the program size, so neither half gets small.
+    const tileW = 960, tileH = even(tileW / aspect);
     frame = { width: tileW * 2, height: tileH };
     camera = { x: 0, y: 0, w: tileW, h: tileH };
     program = { x: tileW, y: 0, w: tileW, h: tileH };
