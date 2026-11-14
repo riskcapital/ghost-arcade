@@ -25,6 +25,7 @@
   import { getVisualAudioSnapshot } from '../../audio/visualAudio';
   import { StandaloneAudio } from '../../mobile/standaloneAudio';
   import { InteractiveProgram } from '../../mobile/studio/interactiveProgram';
+  import { createScenePublisher } from '../../mobile/studio/scenePublisher';
   import {
     defaultInteractive,
     defaultInteractiveInput,
@@ -141,7 +142,7 @@
   export function flush() {
     pointers.clear();
     motion = [];
-    onscene(scene, [], outputActive, paused);
+    publisher.now(performance.now(), scene, [], outputActive, paused);
   }
 
   // ── State ────────────────────────────────────────────────────────────────
@@ -320,8 +321,10 @@
     lastMobileFrame = 0;
   let raf = 0,
     last = 0,
-    lastPublish = 0,
     alive = true;
+
+  // The scene as the host last got it (onscene).
+  const publisher = createScenePublisher((sc, inputs, active, p) => onscene(sc, inputs, active, p));
 
   // Live input: touches on the stage and motion seen by the camera.
   let pointers = new Map<number, Interaction>();
@@ -916,7 +919,7 @@
     outputActive = !outputActive;
     try {
       if (!nativeOutput) onoutput(outputActive ? programCanvas! : null);
-      onscene(scene, liveInputs(), outputActive, paused);
+      publisher.now(performance.now(), scene, liveInputs(), outputActive, paused);
     } catch (e) {
       outputActive = false;
       say((e as Error).message);
@@ -1045,10 +1048,8 @@
       sensor.reset();
     }
     onpointer?.(liveInputs());
-    if (now - lastPublish > 50) {
-      lastPublish = now;
-      onscene(scene, liveInputs(), outputActive, paused);
-    }
+    // To the host only when something changed (a live touch streams).
+    publisher.tick(now, scene, liveInputs(), outputActive, paused);
     if (document.hidden || (!visible && !outputActive)) return;
     sampleMotion(now);
     if (nativeOutput && !referencePreview) {
