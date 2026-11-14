@@ -10167,6 +10167,14 @@ export class NativeRendererSync {
     return changed ? mapped : layers;
   }
 
+  /** Applied to the published scene on every frame sent, before the
+   *  frame's overrides: expands layers whose content moves every frame
+   *  (Music Studio instances into their voices and mix, Canvas.svelte). */
+  private frameLayers: ((layers: Layer[]) => Layer[]) | null = null;
+  setFrameLayers(fn: ((layers: Layer[]) => Layer[]) | null): void {
+    this.frameLayers = fn;
+  }
+
   async flush(width: number, height: number, layers: Layer[]) {
     if (width > 0 && height > 0) setTransformAspect(width / height);
     this.desiredWidth = width;
@@ -10185,7 +10193,7 @@ export class NativeRendererSync {
           await this.flushOnce(
             this.desiredWidth,
             this.desiredHeight,
-            this.applyTimelineOverrides(this.latestLayers),
+            this.applyTimelineOverrides(this.frameLayers ? this.frameLayers(this.latestLayers) : this.latestLayers),
           );
         } finally {
           // The frame's commands are sent: now the zones that fired while it

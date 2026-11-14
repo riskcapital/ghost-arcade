@@ -248,6 +248,33 @@ describe('shader values', () => {
   });
 });
 
+describe('layers expanded on every frame sent', () => {
+  const code = '/*{"INPUTS":[{"NAME":"amt","TYPE":"float"}]}*/ void main(){ gl_FragColor = vec4(amt); }';
+  it('expands the published scene on each frame, so values that move every frame need no re-publish', async () => {
+    const sync = makeSync();
+    let amt = 0.1;
+    let calls = 0;
+    // As the Music Studio's voices: this frame's signal, read when the frame is sent.
+    sync.setFrameLayers((layers: any[]) => {
+      calls += 1;
+      return layers.map((layer) => ({ ...layer, source: { ...layer.source, shaderValues: { amt } } }));
+    });
+    const layer = types.createLayer('voice', 'Voice', 'media') as any;
+    layer.source = { id: 'voice-1', type: 'shader', name: 'V', src: 'shader://v', shaderCode: code, shaderValues: { amt: 0 } };
+    const published = [layer];
+    await sync.flush(1920, 1080, published);
+    for (const next of [0.3, 0.6]) {
+      amt = next;
+      h.batches.length = 0;
+      // The frame loop's own flush: the same published list.
+      await sync.flush(1920, 1080, sync.latestLayers);
+      expect(sentOfType('update_isf_uniforms').at(-1)?.float_inputs).toEqual({ amt: next });
+    }
+    expect(calls).toBe(3);
+    expect(sync.latestLayers).toBe(published);
+  });
+});
+
 describe('edge effects', () => {
   const circleLayer = (i: number) => {
     const layer = imageLayer(i);

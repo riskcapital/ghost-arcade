@@ -95,7 +95,7 @@ import { LiveInputs, type BandInputSpec } from './liveInput';
 import { InputNoteRoles, overallInputStatus, type BandInputStatus } from './bandInputs';
 import { BassFollower, droneShift } from './bassFollow';
 import type { TrackerEvent } from './inputTracker';
-import { setStudioDriver, studioHostsLive, studioVisualTick } from './studioPlugin';
+import { setStudioDriver, studioHostsLive } from './studioPlugin';
 import { bowlSlotNotes } from './soundSlots';
 import { DUB_SHOT_NOTE } from './dubShots';
 import { keyModeNote } from './keyMode';
@@ -1933,9 +1933,9 @@ function frame(): void {
     visuals.advance(now);
     const { beat, beatMs } = launchClockPosition();
     voices.advance(now, { beat, beatSeconds: beatMs / 1000 });
-    // Music Studio instances read this frame's signals when the scene syncs.
+    // Music Studio instances read this frame's signals when the frame sync
+    // expands them (its own frame loop: nothing is published for it).
     studioDriven.clear();
-    if (studioHostsLive() > 0) studioVisualTick.update((n) => n + 1);
     const active = visuals.isActive();
     // One last write after the note visuals go quiet leaves those clips at
     // rest; visual voices follow the clock, so they are written every frame.
@@ -1952,7 +1952,6 @@ function frame(): void {
     const { beat, beatMs } = launchClockPosition();
     voices.advance(-Infinity, { beat, beatSeconds: beatMs / 1000 });
     studioDriven.clear();
-    studioVisualTick.update((n) => n + 1);
   }
   const s = get(musicStudio);
   // A store write above can already have queued the next frame (a studio
