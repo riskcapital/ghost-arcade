@@ -6,6 +6,8 @@
 import { StandaloneRenderer } from '../standaloneRenderer';
 import { findShader } from '../standaloneShaderList';
 import { shaderSource } from './engine';
+import { VoiceSignals } from '../studioVoices';
+import { parseISF, getInputDefault } from '../../isf/parser';
 
 /** Preview size in pixels: small enough to run beside a playing set. */
 export const AUDITION_SIZE = { width: 480, height: 270 };
@@ -15,6 +17,8 @@ export class ShaderAudition {
   private request = 0;
   private raf = 0;
   private dead = false;
+  /** A studio voice previews to the quiet groove its signals play with no source. */
+  private voice: { signals: VoiceSignals; values: Record<string, number | boolean | number[]>; follows: number; last: number } | null = null;
   /** The id being shown, or null while nothing has loaded. */
   current: string | null = null;
 
@@ -30,6 +34,13 @@ export class ShaderAudition {
     this.renderer ??= new StandaloneRenderer(this.canvas);
     await this.renderer.loadShaderSource(source, shader.audioNative, shader.audioInject, shader.motion);
     if (this.dead || request !== this.request) return false;
+    this.voice = null;
+    if (shader.voice) {
+      const values: Record<string, number | boolean | number[]> = {};
+      for (const input of parseISF(source).metadata.INPUTS) values[input.NAME] = getInputDefault(input);
+      Object.assign(values, shader.defaults);
+      this.voice = { signals: new VoiceSignals(), values, follows: Number(values.vxSource ?? 0), last: 0 };
+    }
     this.current = id;
     if (!this.raf) this.loop();
     return true;
@@ -39,7 +50,14 @@ export class ShaderAudition {
     if (this.dead) return;
     this.raf = requestAnimationFrame(this.loop);
     // Hidden canvases (another picker tab) are not drawn.
-    if (this.canvas.clientWidth) this.renderer?.drawFrame(AUDITION_SIZE.width, AUDITION_SIZE.height);
+    if (!this.canvas.clientWidth) return;
+    const voice = this.voice, now = performance.now();
+    if (voice) {
+      voice.signals.update(null, voice.last ? (now - voice.last) / 1000 : 0);
+      voice.last = now;
+      this.renderer?.setShaderInputs({ ...voice.values, ...voice.signals.inputs(voice.follows) });
+    }
+    this.renderer?.drawFrame(AUDITION_SIZE.width, AUDITION_SIZE.height);
   };
 
   /** Stops drawing and gives the GPU context back. The object cannot be used afterwards. */

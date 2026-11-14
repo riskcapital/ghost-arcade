@@ -26,6 +26,7 @@
 // sound. Elsewhere the web microphone feeds an AnalyserNode as before.
 
 import { acquireNativeAudio, AUDIO_BINS, hasNativeAudio, type AudioSourceKind, type NativeAudioHandle } from './nativeAudio';
+import type { VoiceAudioFrame } from './studioVoices';
 
 export interface AudioUniforms {
   spectrum?: Uint8Array<ArrayBuffer>;
@@ -188,6 +189,7 @@ export class StandaloneAudio {
   public rawLevel = 0;
   private beatTimes: number[] = [];
   private bpm = 0;
+  private sampleRate = 48000;
 
   // Beat detection: envelope follower on the bass band.
   // When the bass exceeds (running average * threshold), pop a beat that
@@ -275,10 +277,12 @@ export class StandaloneAudio {
       if (frame) { this.freq.set(frame.spectrum); this.wave.set(frame.waveform); }
       else { this.freq.fill(0); this.wave.fill(128); }
       this.arriving = !!frame?.arriving;
+      if (frame?.sampleRate) this.sampleRate = frame.sampleRate;
     } else if (this.analyser) {
       this.analyser.getByteFrequencyData(this.freq);
       this.analyser.getByteTimeDomainData(this.wave);
       this.arriving = true;
+      if (this.ctx) this.sampleRate = this.ctx.sampleRate;
     } else return;
     // dt for framerate-independent smoothing. Clamped so a tab-switch
     // pause doesn't blow the long-baseline towards zero with a giant
@@ -372,6 +376,15 @@ export class StandaloneAudio {
     this.uniforms.audioBPM = this.bpm;
     this.uniforms.audioBeatPhase = interval > 0 ? ((now - this.lastBeatTime) % interval) / interval : 0;
     this.uniforms.audioSpectralCentroid = spectralCentroid(this.specOut);
+  }
+
+  /**
+   * This frame's analysis for the studio voices: the spectrum before any easing (hits
+   * need its edges), with the tempo and beat. Null while nothing is listening.
+   */
+  get voiceFrame(): VoiceAudioFrame | null {
+    if (!this.ready || !this.freq.length) return null;
+    return { spectrum: this.freq, sampleRate: this.sampleRate, bpm: this.uniforms.audioBPM, beatPhase: this.uniforms.audioBeatPhase };
   }
 
   stop(): void {
