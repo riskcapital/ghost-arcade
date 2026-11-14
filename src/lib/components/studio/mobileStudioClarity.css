@@ -19,12 +19,6 @@
 :root .studio[data-layout][data-layout] .monitor-tools .autopilot-bar button.running span {
   color: var(--ga-coral-200);
 }
-:root .studio[data-layout][data-layout] .app-header .flux-live.active {
-  border-color: var(--ga-on-line);
-  background: var(--ga-on-bg);
-  color: var(--ga-on-ink);
-  box-shadow: 0 0 10px var(--ga-coral-a28);
-}
 :root .studio[data-layout][data-layout] .app-header .icon-button.active {
   background: var(--ga-on-bg);
   color: var(--ga-on-ink);
@@ -62,22 +56,122 @@
 @media (prefers-reduced-motion: reduce) {
   .studio .audio-bars i { transition: none; }
 }
-/* Phone: the transport row now carries the audio button too, so it packs a little tighter and
-   Auto shows its icon only. */
+/* Touch targets and type (MB-2): every control at least 44 pt, every word at least 12 px, and the
+   transport row never runs past the right edge. Audio, Hold and Blackout travel together: on a
+   narrow phone (iPhone SE) they drop to a second row under the tempo controls instead of off-screen. */
+:root .studio[data-layout][data-layout] .monitor-heading {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+}
+:root .studio[data-layout][data-layout] .monitor-tools {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+:root .studio[data-layout][data-layout] .monitor-tools > span:not(.live-group) {
+  font-size: 12px;
+}
+:root .studio[data-layout][data-layout] .monitor-tools .live-group {
+  display: flex;
+  gap: inherit;
+  margin-left: auto;
+}
+:root .studio[data-layout][data-layout] .monitor-tools :is(button, .autopilot-bar button) {
+  min-width: 44px;
+  min-height: 44px;
+}
+:root .studio[data-layout][data-layout] .monitor-tools .q-chip {
+  min-width: 44px;
+}
+:root .studio[data-layout][data-layout] .monitor-tools .tempo-chip {
+  font-size: 12px;
+}
+:root .studio[data-layout][data-layout] .monitor-tools .tool-label {
+  font-size: 12px;
+}
+:root .studio[data-layout='phone'][data-layout] .monitor {
+  padding-left: 8px;
+  padding-right: 8px;
+}
 :root .studio[data-layout='phone'][data-layout] .monitor-tools {
-  gap: 4px;
+  gap: 2px;
+}
+:root .studio[data-layout='phone'][data-layout] .monitor-tools .autopilot-bar {
+  margin: 0 2px;
 }
 :root .studio[data-layout='phone'][data-layout] .monitor-tools .autopilot-bar button:first-child strong {
   display: none;
 }
+/* Phone: the tempo chip stacks its number over "BPM" so the row has room for all eight controls. */
 :root .studio[data-layout='phone'][data-layout] .monitor-tools .tempo-chip {
-  padding: 0 7px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  min-width: 48px;
+  padding: 0 4px;
+  line-height: 1;
+  letter-spacing: 0.04em;
+}
+:root .studio[data-layout='phone'][data-layout] .monitor-tools .tempo-chip strong {
+  font-size: 16px;
 }
 :root .studio[data-layout='phone'][data-layout] .monitor-tools .ab-chip {
-  padding: 0 7px;
+  padding: 0 6px;
+}
+:root .studio[data-layout='phone'][data-layout] .monitor-tools > button,
+:root .studio[data-layout='phone'][data-layout] .monitor-tools .live-group > button {
+  padding-left: 0;
+  padding-right: 0;
 }
 :root .studio[data-layout='phone'][data-layout] .monitor-tools .audio-in.on {
   padding: 0 6px;
+}
+/* Header switches: a 30 pt pill drawn inside a 44 pt target. */
+:root .studio[data-layout][data-layout] .app-header .flux-live {
+  position: relative;
+  isolation: isolate;
+  min-height: 44px;
+  height: 44px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+:root .studio[data-layout][data-layout] .app-header .flux-live::before {
+  content: '';
+  position: absolute;
+  inset: 7px 0;
+  z-index: -1;
+  border: 1px solid var(--ga-line-2);
+  border-radius: 15px;
+}
+:root .studio[data-layout][data-layout] .app-header .flux-live.active {
+  background: none;
+  box-shadow: none;
+  color: var(--ga-on-ink);
+}
+:root .studio[data-layout][data-layout] .app-header .flux-live.active::before {
+  border-color: var(--ga-on-line);
+  background: var(--ga-on-bg);
+  box-shadow: var(--ga-on-glow);
+}
+:root .studio[data-layout][data-layout] .app-header .flux-live.scramble:active::before {
+  border-color: var(--ga-on-line);
+}
+:root .studio[data-layout='phone'][data-layout] .app-header {
+  padding: 0 6px 0 10px;
+  gap: 2px;
+}
+:root .studio[data-layout='phone'][data-layout] .app-header .brand-wordmark {
+  width: 88px;
+  max-width: 88px;
+}
+/* The workspace bar's labels. */
+:root .studio[data-layout][data-layout] > .tabs button,
+nav.tabs.in-studio button {
+  font-size: 12px;
 }
 
 /* ---------- Map ---------- */
@@ -193,7 +287,7 @@
   white-space: nowrap;
 }
 :root .studio[data-layout][data-layout] .ga-section .add-surface {
-  min-height: 40px;
+  min-height: 44px;
   padding: 0 14px 0 10px;
   gap: 4px;
   border-radius: var(--ga-r-control);

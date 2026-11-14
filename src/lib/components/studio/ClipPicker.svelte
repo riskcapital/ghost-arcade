@@ -208,7 +208,7 @@
   .stage img, .stage canvas, .stage video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
   .stage canvas { opacity: 0; }
   .stage canvas.live { opacity: 1; }
-  .badge { position: absolute; left: 6px; bottom: 6px; padding: 2px 6px; border-radius: 3px; background: #000a; font-size: 10px; letter-spacing: .06em; color: var(--ga-ink-0); }
+  .badge { position: absolute; left: 6px; bottom: 6px; padding: 2px 6px; border-radius: 3px; background: #000a; font-size: 12px; letter-spacing: .06em; color: var(--ga-ink-0); }
   .badge.live { color: var(--ga-green); }
   .about { display: grid; gap: 3px; min-width: 0; }
   .about strong { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
@@ -216,7 +216,7 @@
   .add { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; margin-top: 5px; font-size: 13px; font-weight: 650; background: var(--ga-blue-500); border-color: var(--ga-blue-400); color: #fff; }
   .add :global(svg) { color: #fff !important; }
   .search { flex: none; display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 12px; margin-bottom: 8px; border: 1px solid var(--ga-line-2); border-radius: 6px; background: var(--ga-slot); }
-  .search input { flex: 1; min-width: 0; height: 42px; border: 0; background: none; color: var(--ga-ink-0); font: inherit; font-size: 16px; outline-offset: -2px; }
+  .search input { flex: 1; min-width: 0; height: 44px; border: 0; background: none; color: var(--ga-ink-0); font: inherit; font-size: 16px; outline-offset: -2px; }
   .chips { flex: none; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin-bottom: 8px; padding-bottom: 1px; }
   .chips::-webkit-scrollbar { display: none; }
   .chips button { flex: none; min-height: 44px; padding: 0 14px; font-size: 13px; }

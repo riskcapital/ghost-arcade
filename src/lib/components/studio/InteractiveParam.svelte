@@ -155,7 +155,7 @@
   .auto-range {
     display: flex;
     gap: 8px;
-    font-size: 10px;
+    font-size: 12px;
     color: #a4bac9;
   }
   .auto-range label {
@@ -184,18 +184,18 @@
   }
   .head label {
     flex: 1;
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.3;
     overflow-wrap: anywhere;
   }
   .head output {
     font:
-      10px ui-monospace,
+      12px ui-monospace,
       monospace;
     color: var(--ga-ink-2, #a8b6c4);
   }
   button {
-    font-size: 10px;
+    font-size: 12px;
     min-height: 28px;
     padding: 3px 8px;
     border: 1px solid var(--ga-line-2, var(--ga-blue-mute-600));
@@ -243,7 +243,7 @@
     font-size: 13px;
   }
   :global(.handheld) .head output {
-    font-size: 11px;
+    font-size: 12px;
   }
   :global(.handheld) .auto-range input {
     height: 44px;

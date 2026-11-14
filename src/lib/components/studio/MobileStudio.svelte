@@ -1734,7 +1734,7 @@
             <button class="auto-settings" aria-label="Autopilot settings" aria-expanded={autoSettings} onclick={()=>autoSettings=!autoSettings}><Icon name="settings" size={18}/></button>
           </div>{/if}
         {#if interactiveLive}<button onclick={openInteractive}>Interactive</button><button onclick={()=>interactiveWorkspace?.restoreMix()}>Return to mix</button>{/if}
-        <span>{tab === 'map' ? mappingTool==='paint'?'PAINT · '+paint.brush.toUpperCase():show.mapping?'Drag points to fit your surface':'MAPPING OFF · OUTPUT UNCHANGED' : interactiveLive?'DECK PREVIEW · INTERACTIVE ON OUTPUT':tab==='flux'?'FLUX · PLAY ON THE PICTURE':''}</span>{#if tab==='perform' && !interactiveLive}<button
+        <span>{tab === 'map' ? mappingTool==='paint'?'PAINT · '+paint.brush.toUpperCase():show.mapping?'Drag points to fit your surface':'MAPPING OFF · OUTPUT UNCHANGED' : interactiveLive?'DECK PREVIEW · INTERACTIVE ON OUTPUT':tab==='flux'?'FLUX · PLAY ON THE PICTURE':''}</span><span class="live-group">{#if tab==='perform' && !interactiveLive}<button
           class="audio-in" class:on={mic} data-audio-input aria-haspopup="dialog" aria-expanded={tempoOpen} aria-label={`Audio input: ${mic ? audioNames[audioSource] : 'Off'}`} title="Audio input" onclick={toggleTempo}
           ><Icon name={audioIcons[audioSource]} size={16} />{#if mic}<span class="audio-bars" aria-hidden="true"><i style:transform={`scaleY(${Math.max(0.15, audioLevel * 0.8)})`}></i><i style:transform={`scaleY(${Math.max(0.15, audioLevel)})`}></i><i style:transform={`scaleY(${Math.max(0.15, audioLevel * 0.6)})`}></i></span>{/if}</button
         >{/if}<button
@@ -1743,7 +1743,7 @@
           aria-pressed={frozen} aria-label={frozen ? 'Resume output' : 'Hold output'}><Icon name={frozen ? 'play' : 'pause'} size={16} /><span class="tool-label">{frozen ? 'Resume' : 'Hold'}</span></button
         ><button class:danger={blackout} onclick={setBlackout} aria-pressed={blackout} aria-label="Blackout"
           ><Icon name="blackout" size={16} /><span class="tool-label">Blackout</span></button
-        >
+        ></span>
       </div>
       {#if tablet && tab==='perform' && !clean}<PerformanceMixer embedded {show} {selectedLayer} onstart={checkpoint} onselect={changeLayer} oncontrols={openControls} onclose={()=>mixerOpen=false} onblendopen={()=>engine?.prepareBlends()} onchange={(i,patch)=>{show.layers[i]={...show.layers[i],...patch};persist();}} onmaster={value=>{show.master=value;persist();}} oncrossfade={value=>{show.crossfade=value;persist();}} oncrossfadesettings={value=>{show.crossfadeSettings=value;persist();}} />{/if}
     </section>
@@ -2258,7 +2258,7 @@
   .autopilot-bar{display:flex;align-items:center;gap:0;border:1px solid var(--ga-line-2);border-radius:5px;background:var(--ga-slot);padding:0;}
   .autopilot-bar button{display:flex;align-items:center;gap:5px;min-height:44px;border:0;background:transparent;padding:0 7px;}
   .autopilot-bar strong{font-size:12px;font-weight:650;}
-  .autopilot-bar button span{font:10px ui-monospace;color:#a6adb9;}
+  .autopilot-bar button span{font:12px ui-monospace;color:#a6adb9;}
   .autopilot-bar button.running{color:#b7f375;background:#24311c;border-radius:4px;}
   .autopilot-bar button.running span{color:#b7f375;}
   .autopilot-bar button.paused{color:#ffc570;}
@@ -2266,13 +2266,13 @@
   .auto-options{padding:12px;border:1px solid var(--ga-line-2);border-radius:6px;margin-bottom:10px;background:var(--ga-card);}
   .auto-switches,.auto-fields,.auto-rows{display:flex;gap:8px;margin-bottom:10px;}
   .auto-switches button{display:flex;align-items:center;justify-content:center;gap:8px;flex:1;min-height:44px;}
-  .auto-fields label{flex:1;min-width:0;display:grid;gap:6px;font-size:11px;color:var(--ga-ink-2);}
+  .auto-fields label{flex:1;min-width:0;display:grid;gap:6px;font-size:12px;color:var(--ga-ink-2);}
   .auto-fields select{width:100%;font-size:12px;min-height:44px;}
   .auto-amount{display:grid;grid-template-columns:1fr auto;align-items:center;font-size:12px;}
   .auto-amount input{grid-column:1/-1;}
-  .auto-amount output{color:#b7f375;font:11px ui-monospace;}
+  .auto-amount output{color:#b7f375;font:12px ui-monospace;}
   .auto-rows button{flex:1;min-height:44px;}
-  .auto-options p{font-size:11px;color:#a6adb9;line-height:1.5;margin:4px 0;}
+  .auto-options p{font-size:12px;color:#a6adb9;line-height:1.5;margin:4px 0;}
 
   .performance-hidden { display: none !important; }
   :global(html),
@@ -2489,7 +2489,7 @@
     align-items: center;
     gap: 11px;
     white-space: nowrap;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 750;
     letter-spacing: 0.8px;
   }
@@ -2543,7 +2543,7 @@
     align-items: center;
     justify-content: space-between;
     color: var(--muted);
-    font-size: 10px;
+    font-size: 12px;
     letter-spacing: 1px;
     margin: 0 0 10px;
   }
@@ -2628,12 +2628,12 @@
   }
   .monitor-tools > span {
     margin-right: auto;
-    font-size: 9px;
+    font-size: 12px;
     letter-spacing: 1px;
     color: var(--muted);
   }
   .monitor-tools button {
-    font-size: 11px;
+    font-size: 12px;
     background: transparent;
     min-height: 34px;
     padding: 5px 8px;
@@ -2650,7 +2650,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    font-size: 10px;
+    font-size: 12px;
     letter-spacing: 1.1px;
     color: var(--muted);
     font-weight: 650;
@@ -2663,7 +2663,7 @@
     max-width: 70%;
   }
   .section-heading button {
-    font-size: 11px;
+    font-size: 12px;
     letter-spacing: 0;
     font-weight: 500;
     background: transparent;
@@ -2702,7 +2702,7 @@
     color: var(--ga-ink-0);
   }
   .channel-select > span:nth-child(2) {
-    font-size: 8px;
+    font-size: 12px;
     letter-spacing: 0.6px;
     color: var(--muted);
   }
@@ -2711,7 +2711,7 @@
     white-space: nowrap;
     text-overflow: ellipsis;
     overflow: hidden;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 500;
     color: var(--ga-ink-1);
     margin: 12px 0 5px;
@@ -2721,13 +2721,13 @@
     justify-content: space-between;
     align-items: center;
     color: var(--muted);
-    font-size: 10px;
+    font-size: 12px;
     font-variant-numeric: tabular-nums;
   }
   .channel-bottom button {
     min-height: 28px;
     padding: 2px 6px;
-    font-size: 8px;
+    font-size: 12px;
     background: none;
   }
   .channel-bottom button.active {
@@ -2812,7 +2812,7 @@
   .eyebrow {
     display: block;
     color: var(--ga-ink-1);
-    font-size: 9px;
+    font-size: 12px;
     letter-spacing: 1px;
     font-weight: 650;
     margin-bottom: 7px;
@@ -2829,7 +2829,7 @@
     border: 0;
     background: transparent;
     color: var(--muted);
-    font-size: 11px;
+    font-size: 12px;
     min-height: 30px;
     border-radius: 5px;
     padding: 5px 10px;
@@ -2859,7 +2859,7 @@
     padding: 7px 5px;
     background: var(--ga-card);
     color: var(--muted);
-    font-size: 10px;
+    font-size: 12px;
   }
   .layer-tabs button > span {
     color: var(--ga-ink-0);
@@ -2867,7 +2867,7 @@
   }
   .layer-tabs button > small {
     margin-left: auto;
-    font-size: 8px;
+    font-size: 12px;
     opacity: 0.6;
   }
   .layer-tabs button.active {
@@ -2948,7 +2948,7 @@
     align-items: center;
     margin: 9px 0 18px;
     color: var(--ga-ink-1);
-    font-size: 9px;
+    font-size: 12px;
     letter-spacing: 1.5px;
   }
   .bank-row small {
@@ -2981,7 +2981,7 @@
     width: 86px;
     flex: none;
     color: var(--ga-ink-1);
-    font-size: 11px;
+    font-size: 12px;
     overflow: hidden;
     text-overflow: ellipsis;
   }
@@ -2994,7 +2994,7 @@
     flex: none;
     color: var(--ga-blue);
     font:
-      11px ui-monospace,
+      12px ui-monospace,
       monospace;
   }
   .range-row select {
@@ -3006,7 +3006,7 @@
     display: flex;
     flex-direction: column;
     gap: 7px;
-    font-size: 11px;
+    font-size: 12px;
     color: var(--ga-ink-1);
     margin: 13px 0;
   }
@@ -3019,7 +3019,7 @@
     min-width: 0;
   }
   .hint {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--ga-ink-1);
     line-height: 1.75;
     margin: 14px 0;
@@ -3073,7 +3073,7 @@
     flex-wrap: wrap;
   }
   .mapping-toolbar button {
-    font-size: 11px;
+    font-size: 12px;
     min-height: 38px;
     padding: 6px 9px;
   }
@@ -3097,7 +3097,7 @@
   }
   .surface-index {
     color: var(--ga-ink-0);
-    font-size: 11px;
+    font-size: 12px;
     border: 1px solid var(--ga-line-3);
     border-radius: 4px;
     width: 24px;
@@ -3107,7 +3107,7 @@
     flex: none;
   }
   .surface-list strong {
-    font-size: 11px;
+    font-size: 12px;
     display: block;
     font-weight: 550;
     white-space: nowrap;
@@ -3116,7 +3116,7 @@
     max-width: 120px;
   }
   .surface-list small {
-    font-size: 9px;
+    font-size: 12px;
     color: var(--ga-ink-1);
     display: block;
     margin-top: 3px;
@@ -3137,7 +3137,7 @@
     margin-top: 14px;
   }
   .card-actions button {
-    font-size: 10px;
+    font-size: 12px;
     background: none;
     color: var(--ga-ink-1);
     padding: 5px 8px;
@@ -3188,7 +3188,7 @@
   }
   
   .tempo > button {
-    font-size: 10px;
+    font-size: 12px;
     min-height: 35px;
     padding: 5px 9px;
     background: transparent;
@@ -3204,7 +3204,7 @@
     gap: 12px;
   }
   .master-level span {
-    font-size: 9px;
+    font-size: 12px;
     letter-spacing: 1px;
     color: var(--ga-ink-1);
   }
@@ -3284,7 +3284,7 @@
   .saved-sets, .storage-card, .feel-card { display: grid; gap: 6px; margin: 16px 0; }
   .export-media { grid-column: 1 / -1; }
   .export-media span { display: grid; gap: 1px; text-align: left; }
-  .export-media small { font-size: 11px; font-weight: 500; opacity: .85; }
+  .export-media small { font-size: 12px; font-weight: 500; opacity: .85; }
   .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 44px; padding: 6px 0; cursor: pointer; }
   .switch-row > span { display: grid; gap: 2px; min-width: 0; }
   .switch-row strong { font-size: 13px; font-weight: 600; color: var(--ga-ink-0); }
@@ -3307,7 +3307,7 @@
   .set-row button { min-height: 44px; font-size: 12px; }
   .set-row .set-open { flex: 1; min-width: 0; display: grid; gap: 2px; justify-items: start; text-align: left; padding: 6px 10px; }
   .set-row .set-open strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
-  .set-row .set-open small { font-size: 10px; color: var(--ga-ink-2); }
+  .set-row .set-open small { font-size: 12px; color: var(--ga-ink-2); }
   .set-row.current .set-open { border-color: var(--ga-selection-line); background: var(--ga-selection-bg); opacity: 1; }
   .set-row input { flex: 1; min-width: 0; min-height: 44px; }
   .set-confirm { flex: 1; min-width: 0; font-size: 12px; line-height: 1.4; color: var(--ga-ink-0); }
@@ -3331,13 +3331,13 @@
     font-size: 13px;
   }
   .info-card p {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--ga-ink-1);
     line-height: 1.7;
     margin: 8px 0 12px;
   }
   .info-card button {
-    font-size: 11px;
+    font-size: 12px;
   }
   .recording-result {
     display: flex;
@@ -3454,7 +3454,7 @@
       font-size: 6px;
     }
     .channel > strong {
-      font-size: 9px;
+      font-size: 12px;
     }
     .panel-heading h1 {
       font-size: 15px;
@@ -3463,14 +3463,14 @@
       padding: 0;
     }
     .tabs button {
-      font-size: 10px;
+      font-size: 12px;
       gap: 5px;
     }
     .master-level {
       display: none;
     }
     .pad-name strong {
-      font-size: 11px;
+      font-size: 12px;
     }
   }
   @media (max-width: 760px) {
@@ -3486,7 +3486,7 @@
       min-height: 28px;
       height: 28px;
       padding: 0;
-      font-size: 11px;
+      font-size: 12px;
       background: var(--ga-card);
       border-color: var(--ga-line-2);
     }
@@ -3508,7 +3508,7 @@
     .brand {
       flex: 1;
       min-width: 0;
-      font-size: 9px;
+      font-size: 12px;
       letter-spacing: 1px;
       gap: 8px;
     }
@@ -3546,7 +3546,7 @@
       background: var(--ga-inspector-bg);
     }
     .monitor-heading {
-      font-size: 8px;
+      font-size: 12px;
       margin-bottom: 6px;
     }
     .preview-frame {
@@ -3561,11 +3561,11 @@
       margin: auto;
     }
     .monitor-tools > span {
-      font-size: 8px;
+      font-size: 12px;
       letter-spacing: 0.5px;
     }
     .monitor-tools button {
-      font-size: 10px;
+      font-size: 12px;
       min-height: 28px;
       padding: 3px 7px;
     }
@@ -3587,7 +3587,7 @@
     }
     .tabs button {
       flex-direction: column;
-      font-size: 9px;
+      font-size: 12px;
       padding: 5px 2px;
       gap: 3px;
       min-height: 48px;
@@ -3607,12 +3607,12 @@
       font-size: 15px;
     }
     .eyebrow {
-      font-size: 8px;
+      font-size: 12px;
       margin-bottom: 5px;
       letter-spacing: 1.3px;
     }
     .segmented button {
-      font-size: 10px;
+      font-size: 12px;
       padding: 5px 8px;
       min-height: 28px;
     }
@@ -3622,7 +3622,7 @@
     }
     .layer-tabs button {
       min-height: 38px;
-      font-size: 10px;
+      font-size: 12px;
     }
     
     
@@ -3631,7 +3631,7 @@
       left: 9px;
     }
     .pad-name strong {
-      font-size: 10px;
+      font-size: 12px;
     }
     .pad-name > span {
       font-size: 6px;
@@ -3667,7 +3667,7 @@
     .tempo > button {
       min-height: 36px;
       padding: 5px 8px;
-      font-size: 9px;
+      font-size: 12px;
     }
     .master-bar button { min-height:44px; }
     .master-bar .mobile-decks button { min-height:28px; }
@@ -3694,10 +3694,10 @@
     }
     .range-row > span {
       width: 77px;
-      font-size: 10px;
+      font-size: 12px;
     }
     .range-row output {
-      font-size: 10px;
+      font-size: 12px;
     }
     .mapping .monitor {
       padding: 15px 20px 0;
@@ -3798,10 +3798,10 @@
 
   .clip-controls-tray{position:absolute;inset:0;z-index:20;display:flex;flex-direction:column;min-height:0;min-width:0;background:var(--ga-inspector-bg);border-top:1px solid var(--ga-line-3);box-shadow:0 -8px 24px #0004;animation:controls-in 180ms ease-out;}
   .clip-controls-header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex:none;padding:10px 14px;border-bottom:1px solid var(--ga-line-2);background:var(--ga-faceplate-bg);}
-  .clip-controls-header>div{min-width:0;}.clip-controls-header h2{font-size:15px;line-height:1.3;overflow-wrap:anywhere;}.clip-controls-header .eyebrow{margin-bottom:3px;font-size:9px;}.clip-controls-header .icon-button{width:44px;height:44px;min-height:44px;}
+  .clip-controls-header>div{min-width:0;}.clip-controls-header h2{font-size:15px;line-height:1.3;overflow-wrap:anywhere;}.clip-controls-header .eyebrow{margin-bottom:3px;font-size:12px;}.clip-controls-header .icon-button{width:44px;height:44px;min-height:44px;}
   .clip-controls-body{flex:1;min-height:0;min-width:0;padding:12px 14px max(18px,env(safe-area-inset-bottom));overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;}
   .clip-controls-body .segmented{margin:0 0 12px;}.clip-controls-body .segmented button{min-height:44px;font-size:12px;}.clip-controls-body .inspector-card{margin-top:12px;}.clip-controls-body .range-row{display:grid;min-width:0;grid-template-columns:minmax(0,1fr) 52px;gap:0 10px;}.clip-controls-body .range-row>span{width:auto;min-width:0;font-size:12px;grid-column:1;grid-row:1;overflow:visible;overflow-wrap:anywhere;}.clip-controls-body .range-row>output{width:auto;font-size:12px;grid-column:2;grid-row:1;}.clip-controls-body .range-row>input,.clip-controls-body .range-row>select,.clip-controls-body .range-row>:global(.blend-trigger){grid-column:1/-1;grid-row:2;width:100%;min-width:0;min-height:44px;}.clip-controls-body .section-heading{flex-wrap:wrap;gap:8px;}.clip-controls-body .section-heading button{min-height:44px;}.clip-controls-body .toggle-row{min-height:44px;gap:12px;}.clip-controls-body .toggle-row>span{min-width:0;overflow-wrap:anywhere;}
-  .controls-notice{display:flex;align-items:center;gap:8px;flex:none;margin:0;padding:8px 14px;background:var(--ga-coral-soft);color:var(--ga-coral);font-size:11px;line-height:1.4;}.controls-notice button{min-height:44px;margin-left:auto;}
+  .controls-notice{display:flex;align-items:center;gap:8px;flex:none;margin:0;padding:8px 14px;background:var(--ga-coral-soft);color:var(--ga-coral);font-size:12px;line-height:1.4;}.controls-notice button{min-height:44px;margin-left:auto;}
   @keyframes controls-in{from{transform:translateY(32px);opacity:0;}to{transform:translateY(0);opacity:1;}}
   .clip-controls-body .look-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px;}
   .clip-controls-body .look-actions button{width:100%;min-height:44px;}

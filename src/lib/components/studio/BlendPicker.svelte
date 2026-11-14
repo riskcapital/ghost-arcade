@@ -152,7 +152,7 @@
   .blend-trigger .mini { flex: none; width: 28px; height: 18px; border-radius: 3px; }
   .blend-trigger .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .blend-trigger .chevron { flex: none; color: var(--ga-ink-2); }
-  .blend-trigger.compact { width: 100%; min-height: 40px; justify-content: center; padding: 0 4px; font-size: 11px; text-align: center; margin-top: 5px; border-radius: 5px; }
+  .blend-trigger.compact { width: 100%; min-height: 40px; justify-content: center; padding: 0 4px; font-size: 12px; text-align: center; margin-top: 5px; border-radius: 5px; }
 
   .scrim { position: fixed; inset: 0; z-index: 70; display: flex; align-items: flex-end; justify-content: center; background: #0006; }
   .blend-sheet {
@@ -173,14 +173,14 @@
   .scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding-bottom: 14px; margin-bottom: env(safe-area-inset-bottom); }
   .shelf { margin: 0 0 12px; }
   h3 { display: flex; align-items: baseline; gap: 8px; margin: 0 2px 6px; font-size: 12px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; color: var(--ga-ink-1); }
-  h3 small { font-size: 11px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--ga-ink-2); }
+  h3 small { font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--ga-ink-2); }
   .options { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 6px; }
   .option { position: relative; display: grid; grid-template-columns: 56px minmax(0, 1fr); align-items: center; gap: 10px; min-height: 56px; padding: 8px 30px 8px 8px; text-align: left; }
   .option.active { background: var(--ga-selection-bg); border-color: var(--ga-selection-line); }
   .swatch { display: block; width: 56px; height: 36px; border-radius: 4px; border: 1px solid var(--ga-line-2); box-sizing: border-box; }
   .text { display: grid; gap: 2px; min-width: 0; }
   .text strong { font-size: 13px; font-weight: 600; line-height: 1.2; }
-  .text small { font-size: 11px; line-height: 1.35; color: var(--ga-ink-1); }
+  .text small { font-size: 12px; line-height: 1.35; color: var(--ga-ink-1); }
   .tick { position: absolute; top: 8px; right: 8px; color: var(--ga-selection-ink, var(--ga-ink-0)); }
   /* Wide screens: a floating sheet, still low, so the output above it stays in view. */
   @media (min-width: 700px) {

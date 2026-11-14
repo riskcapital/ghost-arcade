@@ -97,11 +97,11 @@
   h2 small { font-size: 12px; font-weight: 500; color: var(--ga-ink-1); }
   .close { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; flex: none; }
   .search { flex: none; display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 12px; margin-bottom: 8px; border: 1px solid var(--ga-line-2); border-radius: 6px; background: var(--ga-slot); }
-  .search input { flex: 1; min-width: 0; height: 42px; border: 0; background: none; color: var(--ga-ink-0); font: inherit; font-size: 16px; outline-offset: -2px; }
+  .search input { flex: 1; min-width: 0; height: 44px; border: 0; background: none; color: var(--ga-ink-0); font: inherit; font-size: 16px; outline-offset: -2px; }
   .chips { flex: none; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 1px; }
   .chips::-webkit-scrollbar { display: none; }
   .chips button { flex: none; display: flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 12px; font-size: 13px; white-space: nowrap; }
-  .chips button span { font-size: 11px; color: var(--ga-ink-2); }
+  .chips button span { font-size: 12px; color: var(--ga-ink-2); }
   .chips button.active { background: var(--ga-selection-bg); border-color: var(--ga-selection-line); color: var(--ga-selection-ink); }
   .chips svg, .glyph svg { color: var(--ga-icon, var(--ga-blue-400)); }
   .count { flex: none; margin: 8px 2px; font-size: 12px; color: var(--ga-ink-1); }
@@ -112,7 +112,7 @@
   .glyph { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 8px; background: var(--ga-blue-800); border: 1px solid var(--ga-blue-mute-600); }
   .text { display: grid; gap: 2px; min-width: 0; }
   .text strong { font-size: 13px; font-weight: 600; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .text small { font-size: 11px; color: var(--ga-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .text small { font-size: 12px; color: var(--ga-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .none { margin: 14px 2px; font-size: 14px; color: var(--ga-ink-1); }
   @media (min-width: 700px) {
     .scrim { align-items: center; }
