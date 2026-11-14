@@ -100,7 +100,8 @@
   }
   .live-mark.recording::before { animation: live-pulse 1s ease-in-out infinite; }
   @keyframes live-pulse { 50% { opacity: 0.25; } }
-  .live-msg.notice { color: var(--ga-ink-0, #f2ede4); }
+  /* A notice says why something did not happen: shown whole, on two lines if it needs them. */
+  .live-msg.notice { color: var(--ga-ink-0, #f2ede4); white-space: normal; line-height: 1.3; }
   .live-msg {
     min-width: 0;
     overflow: hidden;
