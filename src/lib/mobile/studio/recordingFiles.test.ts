@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AppRecordingSink, canStoreRecordings, formatDuration, recordingSink, MemoryRecordingSink, saveRecording, shareRecording } from './recordingFiles';
+import { AppRecordingSink, canStoreRecordings, formatDuration, recordingSink, MemoryRecordingSink, saveRecording, shareRecording, soundLine } from './recordingFiles';
 import { canPickRoute, pickRoute, presentMode, requestReview } from './nativeOutput';
 
-const METHODS = ['showRoutePicker', 'routeStatus', 'recordingBegin', 'recordingAppend', 'recordingFinish', 'recordingDiscard', 'recordingSaveToPhotos', 'recordingShare', 'presentMode', 'requestReview', 'appVersion'];
+const METHODS = ['showRoutePicker', 'routeStatus', 'recordingBegin', 'recordingVideoStarted', 'recordingAppend', 'recordingFinish', 'recordingDiscard', 'recordingSaveToPhotos', 'recordingShare', 'presentMode', 'requestReview', 'appVersion'];
 function app(answers: Record<string, unknown> = {}, methods = METHODS) {
   const nativePromise = vi.fn(async (_plugin: string, method: string, _args?: Record<string, unknown>) => answers[method] ?? {});
   (globalThis as { Capacitor?: unknown }).Capacitor = {
@@ -23,9 +23,28 @@ describe('recording files in the app', () => {
     await sink.append(new Blob([new Uint8Array([1, 2, 3])]));
     const result = await sink.finish('Ghost Arcade.mp4');
     expect(native.mock.calls.map((c) => c[1])).toEqual(['recordingBegin', 'recordingAppend', 'recordingFinish']);
+    expect(native.mock.calls[0][2]).toMatchObject({ mimeType: 'video/mp4;codecs=avc1', sound: true });
     expect(native.mock.calls[1][2]).toEqual({ id: 'A', base64: 'AQID' });
     expect(result).toMatchObject({ id: 'A', bytes: 9_400_000, durationMs: 10_010, width: 1280, height: 720, mimeType: 'video/mp4', filename: 'Ghost Arcade.mp4' });
     expect(result.url).toBe('capacitor://localhost/_capacitor_file_/tmp/GhostRecordings/A/Ghost Arcade.mp4');
+  });
+  it('asks for the sound, tells the app when the video started, and reports the sound track', async () => {
+    const native = app({ recordingBegin: { id: 'B', sound: 'player', recordsSound: true }, recordingFinish: { id: 'B', path: '/t/B/a.mp4', bytes: 1, durationMs: 10_000, width: 1280, height: 720, sound: true } });
+    const sink = new AppRecordingSink();
+    expect(await sink.begin('video/mp4')).toEqual({ source: 'player', recorded: true });
+    const clock = (native.mock.calls[0][2] as { clock: number }).clock;
+    expect(Math.abs(clock - (performance.timeOrigin + performance.now()))).toBeLessThan(1000);
+    sink.videoStarted(clock + 40);
+    const result = await sink.finish('a.mp4');
+    expect(native.mock.calls.map((c) => c[1])).toEqual(['recordingBegin', 'recordingVideoStarted', 'recordingFinish']);
+    expect(native.mock.calls[1][2]).toMatchObject({ id: 'B', at: clock + 40 });
+    expect(result.sound).toBe(true);
+  });
+  it('a source the app cannot record comes back as such', async () => {
+    app({ recordingBegin: { id: 'C', sound: 'phone', recordsSound: false } });
+    expect(await new AppRecordingSink().begin('video/mp4')).toEqual({ source: 'phone', recorded: false });
+    app({ recordingBegin: { id: 'D', sound: 'nonsense' } });
+    expect(await new AppRecordingSink().begin('video/mp4')).toEqual({ source: 'off', recorded: false });
   });
   it('saves to Photos and shares through the app', async () => {
     const native = app({ recordingShare: { completed: true } });
@@ -55,6 +74,14 @@ describe('the rest of the StudioOutput plugin', () => {
     expect(() => presentMode(true)).not.toThrow();
     await expect(pickRoute()).rejects.toThrow(/latest version/);
   });
+});
+
+it('says plainly what sound a take will carry', () => {
+  expect(soundLine('player', true)).toMatch(/Player/);
+  expect(soundLine('mic', true)).toMatch(/microphone/);
+  expect(soundLine('phone', true)).toBe("Sound from other apps can't be recorded, so this video will be silent.");
+  expect(soundLine('off', true)).toMatch(/silent/);
+  expect(soundLine('player', false)).toMatch(/silent/);
 });
 
 it('formats a length the way a phone shows it', () => {

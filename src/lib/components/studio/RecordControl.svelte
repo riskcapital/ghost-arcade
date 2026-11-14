@@ -2,18 +2,22 @@
  import {onDestroy,tick} from 'svelte';
  import Icon from './StudioIcon.svelte';
  import {ProgramRecorder,isRecordingSupported,loadRecordingOptions,saveRecordingOptions,type CameraLayout,type RecordingOptions,type RecordingResult} from '../../mobile/studio/programRecorder';
- import {discardRecording,formatDuration,recordingSink,saveRecording,shareRecording} from '../../mobile/studio/recordingFiles';
+ import {canStoreRecordings,discardRecording,formatDuration,recordingSink,saveRecording,shareRecording,soundLine} from '../../mobile/studio/recordingFiles';
  import {acquireCamera} from '../../mobile/studio/camera';
  /** The program canvas: what goes to the projector. */
  export let source:()=>HTMLCanvasElement|null;
  /** Hide the idle button (Map tab, full-screen preview). A running take always keeps its stop button. */
  export let hidden=false;
  export let onsuccess:(moment:'recording-saved'|'recording-shared')=>void=()=>{};
+ /** The audio source the visuals listen to; the Player and the microphone are recorded with the picture. */
+ export let audioSource:'off'|'mic'|'player'|'phone'='off';
 
  type Phase='idle'|'options'|'starting'|'recording'|'finishing'|'result';
  let phase:Phase='idle';
  let options:RecordingOptions=loadRecordingOptions();
  let recorder:ProgramRecorder|null=null;
+ /** The sound the last take carried, as the app answered when it began. */
+ let sound:ProgramRecorder['sound']=null;
  let camera:{video:HTMLVideoElement;release:()=>void}|null=null;
  let elapsed=0, clock:ReturnType<typeof setInterval>|undefined;
  let result:RecordingResult|null=null;
@@ -56,6 +60,7 @@
    });
    recorder=take;
    await take.start();
+   sound=take.sound;
    camera=cam;phase='recording';elapsed=0;
    clock=setInterval(()=>elapsed=take.elapsed(),250);
   }catch(e){
@@ -117,6 +122,7 @@
   <header><strong>Record</strong><button class="close" aria-label="Close" onclick={()=>optionsDialog.close()}><Icon name="close" size={18}/></button></header>
   <div class="body">
    <p>Records exactly what the projector shows, ready for Photos or a message.</p>
+   <p class="sound" class:silent={audioSource!=='player'&&audioSource!=='mic'||!canStoreRecordings()} data-record-sound>{soundLine(audioSource,canStoreRecordings())}</p>
    <span class="label" id="record-camera">Camera of the wall</span>
    <div class="segmented" role="group" aria-labelledby="record-camera">
     {#each layouts as [value,name]}<button class:active={options.camera===value} aria-pressed={options.camera===value} onclick={()=>options={...options,camera:value}}>{name}</button>{/each}
@@ -135,7 +141,7 @@
   <div class="body">
    <!-- svelte-ignore a11y_media_has_caption -->
    <video src={`${result.url}#t=0.1`} controls playsinline muted loop preload="auto" data-record-preview></video>
-   <p class="meta" data-record-meta>{formatDuration(result.durationMs)} · {result.width} × {result.height} · {megabytes(result.bytes)}</p>
+   <p class="meta" data-record-meta>{formatDuration(result.durationMs)} · {result.width} × {result.height} · {megabytes(result.bytes)} · {result.sound&&(sound?.recorded??false)?'with sound':'silent'}</p>
    {#if note}<p class="hint" role="status">{note}</p>{/if}
    {#if error}<p class="error" role="alert">{error}</p>{/if}
    {#if confirmDelete}
@@ -182,6 +188,8 @@
  .error{color:#f3a6a6;font-size:13px;}
  video{width:100%;aspect-ratio:16/9;border-radius:6px;background:#000;}
  .meta{font-size:12px;color:var(--ga-ink-2);font-variant-numeric:tabular-nums;}
+ .sound{font-size:13px;color:var(--ga-ink-0);padding:8px 10px;border-radius:6px;background:var(--ga-slot);border:1px solid var(--ga-line-2);}
+ .sound.silent{color:#ffc570;}
  .pair{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:8px;}
  .confirm{display:grid;gap:10px;padding:12px;border:1px solid var(--ga-line-2);border-radius:6px;background:var(--ga-slot);}
 </style>

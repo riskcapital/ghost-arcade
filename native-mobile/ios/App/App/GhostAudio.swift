@@ -35,6 +35,9 @@ final class GhostAudio: NSObject {
     private let player = AVAudioPlayerNode()
     private var tappedNode: AVAudioNode?
     private var frameSequence: UInt32 = 0
+    /// While a video take records, this hears what the visuals hear (the player's mix or the microphone).
+    private let takeLock = NSLock()
+    private var takeListener: ((AVAudioPCMBuffer, AVAudioTime) -> Void)?
 
     // Player
     private(set) var tracks: [GhostAudioTrack] = []
@@ -124,8 +127,10 @@ final class GhostAudio: NSObject {
             throw NSError(domain: "GhostAudio", code: 1, userInfo: [NSLocalizedDescriptionKey: "No audio input is available."])
         }
         let rate = Float(format.sampleRate)
-        node.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+        node.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, when in
             guard let self = self, let channels = buffer.floatChannelData else { return }
+            self.takeLock.lock(); let listener = self.takeListener; self.takeLock.unlock()
+            listener?(buffer, when)
             let count = Int(buffer.frameLength)
             let channelCount = Int(buffer.format.channelCount)
             guard count > 0 else { return }
@@ -150,6 +155,11 @@ final class GhostAudio: NSObject {
         player.stop()
         scheduled = false
         playing = false
+    }
+
+    /// Starts (or with nil, stops) handing the analysed sound to a recording. Called on any thread.
+    func setTakeListener(_ listener: ((AVAudioPCMBuffer, AVAudioTime) -> Void)?) {
+        takeLock.lock(); takeListener = listener; takeLock.unlock()
     }
 
     // MARK: Analysis frames for the web layer
