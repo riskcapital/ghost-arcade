@@ -58,6 +58,19 @@ describe('pen stroke', () => {
     expect(pointsValueAt(glide, 6.25)).toBeCloseTo((9 + 6.5) / 2);
     expect(pointsValueAt(glide, 7)).toBeCloseTo(7);
   });
+
+  it('a stroke that starts at 0 on a line with a point at 0 starts at its own value', () => {
+    const line = [{ t: 0, v: 2 }, { t: 20, v: 2 }];
+    const out = spliceStroke(line, [{ t: 0, v: 8 }, { t: 5, v: 8 }]);
+    expect(out[0]).toEqual({ t: 0, v: 8 });
+    expect(pointsValueAt(out, 0)).toBeCloseTo(8);
+    expect(pointsValueAt(out, 2.5)).toBeCloseTo(8);
+    expect(pointsValueAt(out, 12)).toBeCloseTo(2);
+    // Just after 0 there is still room for the old value before the stroke.
+    const near = spliceStroke(line, [{ t: 0.5, v: 8 }, { t: 5, v: 8 }]);
+    expect(pointsValueAt(near, 0)).toBeCloseTo(2);
+    expect(pointsValueAt(near, 0.5)).toBeCloseTo(8);
+  });
 });
 
 describe('snap and transform', () => {

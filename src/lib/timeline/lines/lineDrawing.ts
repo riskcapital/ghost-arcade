@@ -120,10 +120,14 @@ export function spliceStroke(points: readonly LinePoint[], stroke: readonly Line
   const before = points.filter((p) => p.t < t0 - POINT_EPSILON);
   const after = points.filter((p) => p.t > t1 + glide + POINT_EPSILON);
   const out: LinePoint[] = [...before];
-  if (points.length) {
+  // The old value just before the stroke, so the line before it does not
+  // move. A stroke from 0 has nothing before it: an anchor there would take
+  // the stroke's own first point's place.
+  const leadAt = Math.max(0, t0 - POINT_EPSILON);
+  if (points.length && leadAt < t0) {
     const lead = pointsValueAt(points, t0 - POINT_EPSILON, 'linear', opts.colour);
     if (lead !== undefined && (!before.length || before[before.length - 1].t < t0 - 2 * POINT_EPSILON)) {
-      out.push({ t: Math.max(0, t0 - POINT_EPSILON), v: lead });
+      out.push({ t: leadAt, v: lead });
     }
   }
   out.push(...stroke.map((p) => ({ ...p })));

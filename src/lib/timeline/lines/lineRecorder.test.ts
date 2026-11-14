@@ -66,6 +66,17 @@ describe('recording', () => {
     expect(r.store.lines()[0]).toBe(existing);
   });
 
+  it('latch from 0 on a line with a point at 0: the pass keeps its start value', () => {
+    const r = rig([{ id: 'a', target: L1, key: 'shader:speed', kind: 'continuous', min: 0, max: 10, points: [{ t: 0, v: 2 }, { t: 20, v: 2 }] }]);
+    r.recorder.arm('latch');
+    play(r, 0, 4, () => 8);
+    r.recorder.stop(4);
+    const line = r.store.lines()[0];
+    expect(lineValueAt(line, 0) as number).toBeCloseTo(8);
+    expect(lineValueAt(line, 2) as number).toBeCloseTo(8);
+    expect(lineValueAt(line, 3.9) as number).toBeCloseTo(8);
+  });
+
   it('touch: the live value replaces the line while the pass is open, and only then', () => {
     const r = rig([{ id: 'a', target: L1, key: 'shader:speed', kind: 'continuous', min: 0, max: 10, points: [{ t: 0, v: 2 }] }]);
     r.recorder.arm('touch');
