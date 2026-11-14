@@ -1,9 +1,12 @@
-// The "Connect a projector" setup: when the main screen says nothing is connected, and which step
+// The "Connect a projector" setup: when the header says nothing is connected, and which step
 // of the setup is showing. Kept apart from the components so it can be tested without a display.
 import type { OutputStatus } from './externalOutput';
 
-/** The banner shows in the installed app whenever no external display is connected. */
-export function showNoDisplayBanner(status: Pick<OutputStatus, 'native' | 'connected'>): boolean {
+/**
+ * True in the installed app whenever no external display is connected: the header's display
+ * button then carries a dot and opens the setup instead of the settings.
+ */
+export function noDisplayConnected(status: Pick<OutputStatus, 'native' | 'connected'>): boolean {
   return status.native && !status.connected;
 }
 

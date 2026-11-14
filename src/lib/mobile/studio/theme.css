@@ -8,10 +8,78 @@
 }
 :root {
   color-scheme: dark;
-  --ga-selection-bg: var(--ga-blue-700);
-  --ga-selection-line: var(--ga-blue-500);
-  --ga-selection-ink: #e0e8ff;
+  /* Chosen and switched-on things are coral (see the accent rules below); focus rings stay blue. */
+  --ga-selection-bg: var(--ga-on-bg);
+  --ga-selection-line: var(--ga-on-line);
+  --ga-selection-ink: var(--ga-on-ink);
   --ga-focus: var(--ga-blue-300);
+}
+
+/* Two colours, two jobs.
+   Blue (blueScale.css) is structure: icons, outlines, section headers, sliders and meters, focus
+   rings and the "i" buttons. It says "this is part of the app".
+   Coral is the accent: the one main action in a group (filled), anything switched on or chosen
+   (tinted with a coral edge), and recording. It says "tap here" or "this is on".
+   The desktop theme's own --ga-coral is its chrome white, so the warm accent has its own names. */
+:root {
+  --ga-coral-100: #ffe2dd;
+  --ga-coral-200: #ffc3b9;
+  --ga-coral-300: #ff9a8b;
+  --ga-coral-400: #ff6f5e;
+  --ga-coral-500: #e8513f;
+  --ga-coral-600: #b93a2c;
+  --ga-coral-700: #7d271d;
+  --ga-coral-800: #4a1a14;
+  --ga-coral-900: #26100c;
+  --ga-coral-a70: rgba(255, 111, 94, 0.7);
+  --ga-coral-a45: rgba(255, 111, 94, 0.45);
+  --ga-coral-a28: rgba(255, 111, 94, 0.28);
+  --ga-coral-a16: rgba(255, 111, 94, 0.16);
+  --ga-coral-a08: rgba(255, 111, 94, 0.08);
+
+  /* The main action in a group: a filled coral button with dark text. */
+  --ga-act-bg: linear-gradient(180deg, #ff8070, var(--ga-coral-400) 55%, #f4604f);
+  --ga-act-flat: var(--ga-coral-400);
+  --ga-act-line: var(--ga-coral-300);
+  --ga-act-ink: #2b0d08;
+  --ga-act-glow: 0 0 0 1px rgba(255, 111, 94, 0.25), 0 4px 14px rgba(255, 111, 94, 0.22);
+  /* On, chosen, playing: a dark coral fill, a coral edge and light coral text. */
+  --ga-on-bg: #3b1d17;
+  --ga-on-line: var(--ga-coral-400);
+  --ga-on-ink: var(--ga-coral-100);
+  /* Recording and the live dot of a recording. */
+  --ga-record: #ff4b3e;
+
+  /* What a group does, as a tint on its header icon. Blue is the default (playing clips). */
+  --ga-tone-deck: var(--ga-blue-300);
+  --ga-tone-deck-soft: var(--ga-blue-a16);
+  --ga-tone-map: #45d0c0;
+  --ga-tone-map-soft: rgba(69, 208, 192, 0.14);
+  --ga-tone-output: #f2b45a;
+  --ga-tone-output-soft: rgba(242, 180, 90, 0.14);
+  --ga-tone-audio: #8edb7b;
+  --ga-tone-audio-soft: rgba(142, 219, 123, 0.14);
+  --ga-tone-fx: #b996ff;
+  --ga-tone-fx-soft: rgba(185, 150, 255, 0.15);
+  --ga-tone-neutral: var(--ga-ink-1);
+  --ga-tone-neutral-soft: rgba(245, 236, 222, 0.07);
+
+  /* Spacing, type and corners for panels. */
+  --ga-space-1: 4px;
+  --ga-space-2: 8px;
+  --ga-space-3: 12px;
+  --ga-space-4: 16px;
+  --ga-space-5: 20px;
+  --ga-space-6: 24px;
+  --ga-text-caption: 12px;
+  --ga-text-body: 13px;
+  --ga-text-label: 14px;
+  --ga-text-title: 15px;
+  --ga-r-section: 12px;
+  --ga-r-control: 8px;
+  --ga-section-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.028), rgba(255, 255, 255, 0.012));
+  --ga-section-line: rgba(245, 236, 222, 0.14);
+  --ga-section-head-line: rgba(245, 236, 222, 0.08);
 }
 
 /* Desktop Arcade faceplate and hardware finishes, shared by all mobile panels. */
@@ -35,9 +103,14 @@
    !important for the same reason as the desktop skin: it has to beat component-scoped colours.
    The fallback is the token's own value in arcade.ts, as the desktop rules write it.
    Opt-out, as on the desktop where colour carries meaning: the starter scene cards keep their
-   own per-scene colour (the desktop Studio shows the same cards the same way). */
+   own per-scene colour (the desktop Studio shows the same cards the same way).
+   A group can retint its icons by setting --ga-icon-tone (a section header uses its function
+   tint); a control that is on or is the main action draws its icon in its own text colour. */
 :root[data-theme] svg:is([stroke='currentColor'], [fill='currentColor']):not(.starter *) {
-  color: var(--ga-icon, #5278ff) !important;
+  color: var(--ga-icon-tone, var(--ga-icon, #5278ff)) !important;
+}
+:root[data-theme] :is(button.active, button.primary, button.ga-act, [aria-pressed='true'], [aria-checked='true'], [aria-current='page']) {
+  --ga-icon-tone: currentColor;
 }
 /* A disabled control is dimmed as a whole. Lift its icon towards ink so it stays readable. */
 :root[data-theme] :is(:disabled, [aria-disabled='true']) svg:is([stroke='currentColor'], [fill='currentColor']):not(.starter *) {
@@ -57,4 +130,16 @@
   background-size: 5px 5px, 5px 5px !important;
   background-position: right 11px center, right 6px center !important;
   background-repeat: no-repeat !important;
+}
+
+/* The one filled main action in a group. Components add `ga-act` to a button. */
+:root[data-theme] button.ga-act:not(:disabled) {
+  background: var(--ga-act-bg);
+  border-color: var(--ga-act-line);
+  color: var(--ga-act-ink);
+  box-shadow: var(--ga-act-glow);
+  font-weight: 700;
+}
+:root[data-theme] button.ga-act:not(:disabled):active {
+  background: var(--ga-coral-500);
 }

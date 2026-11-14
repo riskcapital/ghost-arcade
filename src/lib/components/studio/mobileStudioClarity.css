@@ -1,0 +1,300 @@
+/* Clarity pass for the standalone studio. Coral marks what is on, chosen or the main action;
+   blue stays for structure (icons, outlines, meters). Tokens live in theme.css; Section, InfoTip
+   and Divider are in ./ui/. The Perform screen keeps its 1.1.1 layout: only its accents change.
+   Elsewhere a group may be one outlined box (Section); nothing inside it gets another box.
+   The `:root .studio[data-layout][data-layout]` prefix outranks both the component styles and
+   mobileStudioLayout.css, so these rules win without !important. */
+
+/* ---------- Perform: same layout, coral where something is on ---------- */
+:root .studio[data-layout][data-layout] .monitor-tools :is(.q-chip, .ab-chip, .tempo-chip).active {
+  border-color: var(--ga-on-line);
+  background: var(--ga-on-bg);
+  color: var(--ga-on-ink);
+}
+:root .studio[data-layout][data-layout] .monitor-tools .autopilot-bar button.running {
+  color: var(--ga-on-ink);
+  background: var(--ga-on-bg);
+  --ga-icon-tone: var(--ga-coral-300);
+}
+:root .studio[data-layout][data-layout] .monitor-tools .autopilot-bar button.running span {
+  color: var(--ga-coral-200);
+}
+:root .studio[data-layout][data-layout] .app-header .flux-live.active {
+  border-color: var(--ga-on-line);
+  background: var(--ga-on-bg);
+  color: var(--ga-on-ink);
+  box-shadow: 0 0 10px var(--ga-coral-a28);
+}
+:root .studio[data-layout][data-layout] .app-header .icon-button.active {
+  background: var(--ga-on-bg);
+  color: var(--ga-on-ink);
+  --ga-icon-tone: var(--ga-coral-300);
+}
+
+/* Audio input, beside Hold: the source's icon (struck through when off), coral while it listens,
+   and three bars that move with what the app hears. */
+:root .studio[data-layout][data-layout] .monitor-tools .audio-in {
+  position: relative;
+  gap: 4px;
+}
+:root .studio[data-layout][data-layout] .monitor-tools .audio-in.on {
+  border-color: var(--ga-on-line);
+  background: var(--ga-on-bg);
+  color: var(--ga-on-ink);
+  --ga-icon-tone: var(--ga-coral-300);
+}
+.studio .audio-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 14px;
+}
+.studio .audio-bars i {
+  display: block;
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--ga-coral-300);
+  box-shadow: none;
+  transform-origin: 50% 100%;
+  transition: transform 0.1s linear;
+}
+@media (prefers-reduced-motion: reduce) {
+  .studio .audio-bars i { transition: none; }
+}
+/* Phone: the transport row now carries the audio button too, so it packs a little tighter and
+   Auto shows its icon only. */
+:root .studio[data-layout='phone'][data-layout] .monitor-tools {
+  gap: 4px;
+}
+:root .studio[data-layout='phone'][data-layout] .monitor-tools .autopilot-bar button:first-child strong {
+  display: none;
+}
+:root .studio[data-layout='phone'][data-layout] .monitor-tools .tempo-chip {
+  padding: 0 7px;
+}
+:root .studio[data-layout='phone'][data-layout] .monitor-tools .ab-chip {
+  padding: 0 7px;
+}
+:root .studio[data-layout='phone'][data-layout] .monitor-tools .audio-in.on {
+  padding: 0 6px;
+}
+
+/* ---------- Map ---------- */
+:root .studio[data-layout][data-layout] .map-section .mapping-tools {
+  margin: 0 0 var(--ga-space-3);
+}
+:root .studio[data-layout][data-layout] .map-section .mapping-toolbar {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--ga-space-2);
+  margin: 0;
+}
+:root .studio[data-layout][data-layout] .map-section .mapping-toolbar > :is(button, select) {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  white-space: nowrap;
+  min-height: 44px;
+  margin: 0;
+  padding: 0 8px;
+  gap: 6px;
+  border-radius: var(--ga-r-control);
+  font-size: 13px;
+  justify-content: center;
+}
+:root .studio[data-layout][data-layout] .map-section .mapping-toolbar .mapping-switch,
+:root .studio[data-layout][data-layout] .map-section .mapping-toolbar .templates-button {
+  grid-column: 1 / -1;
+}
+:root .studio[data-layout][data-layout] .map-section .mapping-toolbar .mapping-switch {
+  justify-content: flex-start;
+  min-height: 48px;
+  padding: 0 14px;
+  font-size: 14px;
+  font-weight: 650;
+}
+:root .studio[data-layout][data-layout] .map-section .mapping-toolbar .mapping-switch:not(.active) {
+  color: var(--ga-ink-1);
+}
+:root .studio[data-layout][data-layout] .map-section .mapping-off-hint,
+:root .studio[data-layout][data-layout] .panel-scroll .cap-notice {
+  margin: 0 0 var(--ga-space-3);
+  padding: 0 0 0 10px;
+  border: 0;
+  border-left: 3px solid #ffc570;
+  border-radius: 0;
+  background: none;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ga-ink-0);
+}
+:root .studio[data-layout][data-layout] .panel-scroll .stage-note {
+  margin: 0 0 var(--ga-space-3);
+}
+:root .studio[data-layout][data-layout] .panel-scroll .stage-note p {
+  font-size: 13px;
+}
+/* What plays: the strip runs to the box's edges. */
+:root .studio[data-layout][data-layout] .content-section .ga-section-body {
+  padding: var(--ga-space-2) 0 var(--ga-space-2) var(--ga-space-2);
+}
+/* Surfaces: two columns of cards; the chosen one is coral. */
+:root .studio[data-layout][data-layout] .surfaces-section .surface-list {
+  margin: 0;
+  gap: var(--ga-space-2);
+}
+:root .studio[data-layout][data-layout] .surfaces-section .surface-list > button {
+  gap: 10px;
+  min-height: 56px;
+  padding: 8px 10px;
+  border-radius: var(--ga-r-control);
+  background: var(--ga-hardware-bg);
+}
+:root .studio[data-layout][data-layout] .surfaces-section .surface-list > button.active {
+  background: var(--ga-on-bg);
+  border-color: var(--ga-on-line);
+  box-shadow: inset 0 0 0 1px var(--ga-on-line);
+}
+:root .studio[data-layout][data-layout] .surfaces-section .surface-index {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  border-color: rgba(69, 208, 192, 0.45);
+  background: var(--ga-tone-map-soft);
+  font-size: 13px;
+  font-weight: 700;
+}
+:root .studio[data-layout][data-layout] .surfaces-section .surface-list > button.active .surface-index {
+  border-color: var(--ga-coral-300);
+  background: var(--ga-coral-a28);
+  color: var(--ga-coral-100);
+}
+:root .studio[data-layout][data-layout] .surfaces-section .surface-list strong {
+  max-width: none;
+  font-size: 13px;
+  font-weight: 600;
+}
+:root .studio[data-layout][data-layout] .surfaces-section .surface-list small {
+  font-size: 12px;
+  line-height: 1.3;
+  margin-top: 1px;
+}
+:root .studio[data-layout][data-layout] .surfaces-section .surface-list > button > span:nth-child(2) {
+  min-width: 0;
+}
+:root .studio[data-layout][data-layout] .surfaces-section .surface-list > button > span:nth-child(2) > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+:root .studio[data-layout][data-layout] .ga-section .add-surface {
+  min-height: 40px;
+  padding: 0 14px 0 10px;
+  gap: 4px;
+  border-radius: var(--ga-r-control);
+  font-size: 14px;
+}
+/* The chosen surface's settings. */
+:root .studio[data-layout][data-layout] .inspector-card .field {
+  gap: 6px;
+  margin: 0 0 var(--ga-space-3);
+  font-size: 13px;
+  color: var(--ga-ink-1);
+}
+:root .studio[data-layout][data-layout] .inspector-card .field-grid {
+  gap: var(--ga-space-2);
+}
+:root .studio[data-layout][data-layout] .inspector-card .field-label {
+  display: block;
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--ga-ink-1);
+}
+:root .studio[data-layout][data-layout] .inspector-card .shape-modes {
+  margin: 0 0 var(--ga-space-2);
+}
+:root .studio[data-layout][data-layout] .inspector-card .segmented button {
+  min-height: 44px;
+  font-size: 13px;
+}
+:root .studio[data-layout][data-layout] .inspector-card .range-row > span {
+  font-size: 13px;
+}
+:root .studio[data-layout][data-layout] .inspector-card .range-row output {
+  font-size: 12px;
+}
+:root .studio[data-layout][data-layout] .inspector-card .inline .icon-button {
+  width: 44px;
+  height: 44px;
+}
+:root .studio[data-layout][data-layout] .inspector-card .nudge {
+  margin: var(--ga-space-4) 0 0;
+  padding-top: var(--ga-space-3);
+  border-top: 1px solid var(--ga-section-head-line);
+  gap: 6px;
+}
+:root .studio[data-layout][data-layout] .inspector-card .nudge-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ga-ink-0);
+  --ga-icon-tone: var(--ga-tone-map);
+}
+:root .studio[data-layout][data-layout] .inspector-card .nudge-title .ga-info {
+  margin: -10px 0 -10px -6px;
+}
+:root .studio[data-layout][data-layout] .inspector-card .nudge button {
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: var(--ga-r-control);
+  font-size: 18px;
+}
+:root .studio[data-layout][data-layout] .inspector-card .nudge .nudge-steps button {
+  font-size: 12px;
+}
+:root .studio[data-layout][data-layout] .inspector-card .card-actions {
+  gap: var(--ga-space-2);
+  margin-top: var(--ga-space-4);
+  padding-top: var(--ga-space-3);
+  border-top-color: var(--ga-section-head-line);
+}
+:root .studio[data-layout][data-layout] .inspector-card .card-actions button {
+  flex: 1;
+  min-height: 44px;
+  border: 1px solid var(--ga-line-2);
+  border-radius: var(--ga-r-control);
+  background: var(--ga-hardware-bg);
+  font-size: 13px;
+  color: var(--ga-ink-0);
+}
+:root .studio[data-layout][data-layout] .inspector-card .card-actions .remove-surface {
+  border-color: rgba(255, 111, 94, 0.4);
+  color: var(--ga-coral-200);
+  --ga-icon-tone: var(--ga-coral-300);
+}
+:root .studio[data-layout][data-layout] .map-library-section .map-library {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+:root .studio[data-layout][data-layout] .map-library-section .map-library p {
+  font-size: 13px;
+}
+
+/* The header's display button: a coral dot while no projector or TV is connected. */
+:root .studio[data-layout][data-layout] .app-header .output-button {
+  position: relative;
+}
+:root .studio[data-layout][data-layout] .app-header .output-button .status-dot {
+  position: absolute;
+  top: 9px;
+  right: 8px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--ga-coral-400);
+  box-shadow: 0 0 0 2px var(--ga-bar, #100f0d);
+}

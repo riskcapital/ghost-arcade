@@ -194,10 +194,9 @@
   let outputPreferences=loadOutputPreferences();
   let outputStatus:OutputStatus={native:false,connected:false,state:'disconnected'};
   // ── Projector setup, present mode, recording and the review prompt ─────────
-  import OutputBanner from './OutputBanner.svelte';
   import PresentMode from './PresentMode.svelte';
   import RecordControl from './RecordControl.svelte';
-  import {showNoDisplayBanner} from '../../mobile/studio/outputSetup';
+  import {noDisplayConnected} from '../../mobile/studio/outputSetup';
   import {appVersion,requestReview} from '../../mobile/studio/nativeOutput';
   import {MapSaveWatch,loadReviewState,noteLaunch,reviewAfterSuccess,saveReviewState,type SuccessMoment} from '../../mobile/studio/reviewPrompt';
   let outputSetup=false, presenting=false;
@@ -273,6 +272,10 @@
   import Icon from './StudioIcon.svelte';
   import { audioPlayer, hasNativeAudio, importAudioTracks, nativeAudioStatus, removeAudioTrack, startPhoneAudio, type AudioSourceKind, type NativeAudioStatus, type PlayerAction } from '../../mobile/nativeAudio';
   import StudioDecks from './StudioDecks.svelte';
+  import Section from './ui/Section.svelte';
+  import InfoTip from './ui/InfoTip.svelte';
+  import Divider from './ui/Divider.svelte';
+  import './mobileStudioClarity.css';
   import { StudioEngine } from '../../mobile/studio/engine';
   import { keepAwake } from '../../mobile/studio/wakeLock';
   import { shareFile, isNativePlatform, canOpenAppSettings, mentionsSettings, openAppSettings } from '../../mobile/studio/nativeShare';
@@ -1078,6 +1081,18 @@
   }
   $: watchAudio(tempoOpen);
   onDestroy(() => clearInterval(audioWatch));
+  /** The audio input button beside Hold: its icon says which source listens, its bars that sound arrives. */
+  const audioIcons: Record<AudioSourceKind, string> = { off: 'mic-off', mic: 'mic', player: 'note', phone: 'phone' };
+  let audioLevel = 0;
+  let levelWatch: ReturnType<typeof setInterval> | undefined;
+  function watchLevel(on: boolean) {
+    clearInterval(levelWatch);
+    levelWatch = undefined;
+    if (!on) { audioLevel = 0; return; }
+    levelWatch = setInterval(() => { audioLevel = engine ? Math.min(1, engine.audioMeter.level / 0.6) : 0; }, 100);
+  }
+  $: watchLevel(mic && tab === 'perform' && !clean);
+  onDestroy(() => clearInterval(levelWatch));
   function setFrozen() {
     frozen = !frozen;
     if (engine) engine.frozen = frozen;
@@ -1671,8 +1686,8 @@
         ><Icon name="undo" /></button
       ><button class="icon-button" disabled={!canRedo} onclick={() => undo(true)} aria-label="Redo"
         ><Icon name="redo" /></button
-      ><button class="icon-button" class:active={outputStatus.state==='live'} onclick={() => openOutput(false)} aria-label="Output settings"
-        ><Icon name="output" /></button
+      ><button class="icon-button output-button" class:active={outputStatus.state==='live'} class:no-display={noDisplayConnected(outputStatus)} onclick={() => openOutput(noDisplayConnected(outputStatus))} aria-label={noDisplayConnected(outputStatus) ? 'No projector connected. Connect a projector' : 'Output settings'}
+        ><Icon name="output" />{#if noDisplayConnected(outputStatus)}<span class="status-dot" aria-hidden="true"></span>{/if}</button
       ><button class="icon-button" onclick={() => (settings = true)} aria-label="Set settings"
         ><Icon name="settings" /></button
       >
@@ -1691,7 +1706,6 @@
           >{show.quality}p <b>·</b> {#if detail < 1}<em class="detail-reduced" data-detail title="Detail lowered to hold the frame rate">DETAIL {Math.round(detail * 100)}%</em>{' '}<b>·</b>{' '}{/if}{fps} FPS</span
         >
       </div>
-      {#if showNoDisplayBanner(outputStatus) && !clean}<OutputBanner onconnect={() => openOutput(true)} />{/if}
       <div class="preview-frame">
         <div class="preview" class:staged={!!stageShown} bind:this={preview} onclick={selectPreviewScreen}>
           {#if stageShown}<StageBackdrop template={stageShown} width={layoutInfo.mixer === 'docked' ? 1280 : 960} />{/if}
@@ -1745,7 +1759,10 @@
             <button class="auto-settings" aria-label="Autopilot settings" aria-expanded={autoSettings} onclick={()=>autoSettings=!autoSettings}><Icon name="settings" size={18}/></button>
           </div>{/if}
         {#if interactiveLive}<button onclick={openInteractive}>Interactive</button><button onclick={()=>interactiveWorkspace?.restoreMix()}>Return to mix</button>{/if}
-        <span>{tab === 'map' ? mappingTool==='paint'?'PAINT · '+paint.brush.toUpperCase():show.mapping?'Drag points to fit your surface':'MAPPING OFF · OUTPUT UNCHANGED' : interactiveLive?'DECK PREVIEW · INTERACTIVE ON OUTPUT':tab==='flux'?'FLUX · PLAY ON THE PICTURE':''}</span><button
+        <span>{tab === 'map' ? mappingTool==='paint'?'PAINT · '+paint.brush.toUpperCase():show.mapping?'Drag points to fit your surface':'MAPPING OFF · OUTPUT UNCHANGED' : interactiveLive?'DECK PREVIEW · INTERACTIVE ON OUTPUT':tab==='flux'?'FLUX · PLAY ON THE PICTURE':''}</span>{#if tab==='perform' && !interactiveLive}<button
+          class="audio-in" class:on={mic} data-audio-input aria-haspopup="dialog" aria-expanded={tempoOpen} aria-label={`Audio input: ${mic ? audioNames[audioSource] : 'Off'}`} title="Audio input" onclick={toggleTempo}
+          ><Icon name={audioIcons[audioSource]} size={16} />{#if mic}<span class="audio-bars" aria-hidden="true"><i style:transform={`scaleY(${Math.max(0.15, audioLevel * 0.8)})`}></i><i style:transform={`scaleY(${Math.max(0.15, audioLevel)})`}></i><i style:transform={`scaleY(${Math.max(0.15, audioLevel * 0.6)})`}></i></span>{/if}</button
+        >{/if}<button
           class:active={frozen}
           onclick={setFrozen}
           aria-pressed={frozen} aria-label={frozen ? 'Resume output' : 'Hold output'}><Icon name={frozen ? 'play' : 'pause'} size={16} /><span class="tool-label">{frozen ? 'Resume' : 'Hold'}</span></button
@@ -1832,15 +1849,8 @@
           <FluxPanel value={flux} onchange={value=>{flux=value;if(engine)engine.flux=value;}}/>
         {:else if tab === 'map'}
           {#if coachCurrent && !clean}<CoachStrip inline step={coach.step} steps={coachSteps(coach.track)} actionLabel={coachCurrent.id==='connect'?'Connect':''} onaction={connectProjector} onskip={coachCurrent.skippable?()=>coachMove(coachSkip(coach)):null} onclose={()=>setPrefs({coachDone:true})}/>{/if}
-          <div class="panel-heading">
-            <div>
-              <span class="eyebrow">PROJECTION WORKSPACE</span>
-              <h1>Screen mapping</h1>
-            </div>
-            <button class="icon-button primary" onclick={() => addSurface()} aria-label="Add surface"
-              ><Icon name="plus" /></button
-            >
-          </div>
+          {#snippet mapHelp()}<p>Mapping fits your visuals onto real things: each <b>surface</b> is a shape you drag onto a box, a wall or a screen.</p><ul><li><b>Edit screens</b>: drag the corner points in the picture above.</li><li><b>Paint</b>: draw light onto your surfaces with a finger.</li><li><b>Grid</b> and <b>Snap</b> help line corners up. <b>Test grid</b> shows lines on the projector so you can see the edges.</li></ul><p>With mapping off, the projector shows the whole picture as it is.</p>{/snippet}
+          <Section title="Mapping" icon="map" tone="map" class="map-section" info={mapHelp} infoLabel="How mapping works">
           <div class="segmented wide mapping-tools">
             <button class:active={mappingTool==='edit'} aria-pressed={mappingTool==='edit'} onclick={()=>mappingTool='edit'}><Icon name="map" size={17}/>Edit screens</button>
             <button class:active={mappingTool==='paint'} aria-pressed={mappingTool==='paint'} onclick={paintMode}><Icon name="paint" size={17}/>Paint</button>
@@ -1849,19 +1859,23 @@
           {#if !show.mapping}<p class="hint mapping-off-hint" role="status">Mapping is off, so your output is unchanged. Turn it on here, or move a corner to start.</p>{/if}
           <div class="mapping-toolbar">
             <button
+              class="mapping-switch"
               class:active={show.mapping}
               aria-pressed={show.mapping}
               onclick={() => {
                 checkpoint();
                 show.mapping = !show.mapping;
                 persist();
-              }}>{show.mapping ? 'Mapping on' : 'Mapping off'}</button
+              }}><Icon name="power" size={16} />{show.mapping ? 'Mapping on' : 'Mapping off'}</button
             ><button class:active={mappingGrid} aria-pressed={mappingGrid} onclick={()=>mappingGrid=!mappingGrid}><Icon name="grid" size={16}/>Grid</button><button class:active={mappingSnap} aria-pressed={mappingSnap} onclick={()=>mappingSnap=!mappingSnap}><Icon name="snap" size={16}/>Snap</button><button class:active={testGrid} aria-pressed={testGrid} onclick={toggleGrid}><Icon name="grid" size={16} />Test grid</button
             ><button class="templates-button" data-open-templates onclick={() => (templatesOpen = true)}><Icon name="library" size={16} />Templates</button>
           </div>
-          {#if mappingTool==='edit'}<SurfaceContentStrip visuals={libraryShaders} media={surfaceMedia} surfaces={show.surfaces} selected={selectedSurface} current={currentChoice} target={preview} onassign={assignSurface} onhover={(i) => (dropSurface = i)} />{/if}
+          </Section>
+          {#if mappingTool==='edit'}<Section title="What plays" icon="play" tone="deck" class="content-section" subtitle={show.surfaces[selectedSurface] ? `on ${selectedSurface + 1} · ${show.surfaces[selectedSurface].name}` : ''} info="Drag a tile up onto a surface in the picture, or tap a tile to put it on the selected surface. Deck mix shows whatever plays in Perform." infoLabel="How to choose what a surface plays"><SurfaceContentStrip visuals={libraryShaders} media={surfaceMedia} surfaces={show.surfaces} selected={selectedSurface} current={currentChoice} target={preview} onassign={assignSurface} onhover={(i) => (dropSurface = i)} /></Section>{/if}
           {#if capNotice}<p class="cap-notice" role="status" data-surface-cap>{capNotice}</p>{/if}
           {#if stageShown}<div class="stage-note" data-stage-note><p>The room in the picture is a demo stage, shown only here. Your projector shows just the visuals.</p><button onclick={hideStage}>Hide stage</button></div>{/if}
+          {#snippet surfacesAdd()}<button class="ga-act add-surface" onclick={() => addSurface()} aria-label="Add surface"><Icon name="plus" size={18} /><span>Add</span></button>{/snippet}
+          <Section title="Surfaces" icon="surface" tone="map" class="surfaces-section" subtitle={`${show.surfaces.length} of 16`} actions={surfacesAdd} info="Tap a surface to choose it, then drag its corners in the picture. Several surfaces can show the same layer. Mapping keeps working while clips change." infoLabel="About surfaces">
           <div class="surface-list">
             {#each show.surfaces as s, i}<button
                 class:active={selectedSurface === i}
@@ -1878,10 +1892,9 @@
                 >{#if s.locked}<Icon name="lock" size={16} />{/if}<i class:lit={s.enabled}></i></button
               >{/each}
           </div>
-          {#if surface && mappingTool==='edit'}<div class="inspector-card">
-              <div class="section-heading">
-                <span>SURFACE {selectedSurface + 1}</span>
-                <div class="inline">
+          </Section>
+          {#if surface && mappingTool==='edit'}
+            {#snippet surfaceToggles()}<div class="inline">
                   <button
                     class="icon-button"
                     class:active={surface.locked}
@@ -1901,8 +1914,8 @@
                     }}
                     aria-label="Toggle surface visibility"><Icon name="eye" size={17} /></button
                   >
-                </div>
-              </div>
+                </div>{/snippet}
+            <Section title={`Surface ${selectedSurface + 1}`} subtitle={surface.name} icon="point" tone="map" class="inspector-card" actions={surfaceToggles}>
               <label class="field"
                 >Name<input
                   value={surface.name}
@@ -1940,7 +1953,8 @@
                   ></label
                 >
               </div>
-              <div class="segmented wide">
+              <span class="field-label">Shape</span>
+              <div class="segmented wide shape-modes">
                 <button
                   class:active={surface.mode === 'corners'}
                   aria-pressed={surface.mode === 'corners'}
@@ -1979,7 +1993,7 @@
                 onspan={() => { checkpoint(); show.surfaces = spanPlacements(show.surfaces, sameSourceSurfaces(show.surfaces, selectedSurface)); persist(); flash('One picture across the surfaces. Move a corner and span again to refit.'); }} />
               <LookControls value={surface.look} onchange={(look) => { checkpoint(); patchSurface({look}); }} onapplyall={() => {checkpoint(); show.surfaces = show.surfaces.map(s => ({...s,look:copy(surface.look)}));persist();}} />
               <div class="nudge">
-                <span>Point {selectedPoint + 1}<small>Tap to step, hold to repeat</small></span>
+                <span class="nudge-title"><Icon name="point" size={16} />Move point {selectedPoint + 1}<InfoTip label="How to move a point" text="Choose a corner by tapping it in the picture. Tap an arrow to move it one step, or hold the arrow to keep moving. 0.1% is a fine step, 1% a big one." /></span>
                 <div class="nudge-steps" role="group" aria-label="Nudge step size">{#each [{step:0.001,label:'0.1%'},{step:0.01,label:'1%'}] as option}<button data-nudge-step class:active={nudgeStep===option.step} aria-pressed={nudgeStep===option.step} onclick={()=>nudgeStep=option.step}>{option.label}</button>{/each}</div>
                 {#each [{x:-1,y:0,label:'Nudge left',glyph:'←'},{x:0,y:-1,label:'Nudge up',glyph:'↑'},{x:0,y:1,label:'Nudge down',glyph:'↓'},{x:1,y:0,label:'Nudge right',glyph:'→'}] as arrow}<button class="nudge-arrow" disabled={surface.locked} aria-label={arrow.label} use:holdRepeat={{start:checkpoint,step:()=>nudge(arrow.x*nudgeStep,arrow.y*nudgeStep)}}>{arrow.glyph}</button>{/each}
               </div>
@@ -1996,18 +2010,16 @@
                     show.surfaces = show.surfaces.filter((_, i) => i !== selectedSurface);
                     selectedSurface = Math.max(0, selectedSurface - 1);
                     persist();
-                  }}><Icon name="trash" size={16} />Remove</button
+                  }} class="remove-surface"><Icon name="trash" size={16} />Remove</button
                 >
               </div>
-            </div>{/if}
-          <p class="hint">
-            Route one layer to several surfaces. Warp points move the actual image, including outside its original
-            rectangle. Mapping remains live during clip changes.
-          </p>
+            </Section>{/if}
+          <Section title="Saved" icon="save" tone="neutral" class="map-library-section">
           <div class="map-library" data-map-library>
-            <p>This map is saved in <strong>{show.name}</strong> on this device as you work.</p>
+            <p>Saved in <strong>{show.name}</strong> on this device as you work.</p>
             <div><button data-map-copy onclick={() => duplicateSavedSet(show.id)}><Icon name="copy" size={16} />Save a copy</button><button data-map-sets onclick={() => (settings = true)}><Icon name="save" size={16} />Sets and files</button></div>
           </div>
+          </Section>
         {:else if tab === 'fx'}
           {@render sourceControls()}
         {/if}
@@ -3206,12 +3218,6 @@
     font-size: 11px;
     margin-right: auto;
     color: var(--ga-ink-1);
-  }
-  .nudge small {
-    display: block;
-    font-size: 8px;
-    color: var(--ga-ink-2);
-    margin-top: 3px;
   }
   .nudge button {
     min-height: 36px;

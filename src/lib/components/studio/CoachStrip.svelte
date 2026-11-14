@@ -66,7 +66,7 @@
     min-height: 44px; padding: 0 16px; border-radius: var(--ga-r-soft); font-size: 14px; font-weight: 650;
     touch-action: manipulation;
   }
-  .action { background: var(--ga-blue-400); border: 0; color: #fff; }
+  .action { background: var(--ga-act-bg); border: 1px solid var(--ga-act-line); color: var(--ga-act-ink); box-shadow: var(--ga-act-glow); font-weight: 700; }
   .later { background: none; border: 1px solid var(--ga-blue-500); color: var(--ga-ink-0); }
   .actions button:focus-visible { outline: 2px solid var(--ga-focus); outline-offset: 2px; }
 </style>
