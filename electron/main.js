@@ -7559,6 +7559,12 @@ function registerIpcHandlers() {
     try {
       const info = addon.receiveTextureInfo({ sessionId: String(args.sessionId || '') });
       if (!info || !info.available) return info || null;
+      // The editor polls each live source; when it already has this frame
+      // there is nothing to hand over (no handle copy, no upload).
+      const sinceFrame = Number(args.sinceFrame);
+      if (Number.isFinite(sinceFrame) && sinceFrame > 0 && Number(info.frame) === sinceFrame) {
+        return { available: true, unchanged: true, frame: sinceFrame };
+      }
       const handle = normalizeSharedTextureHandle(info.handle);
       const handlePayload = sharedTextureHandlePayload(handle);
       if (!handlePayload) return null;

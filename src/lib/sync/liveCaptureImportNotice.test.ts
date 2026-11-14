@@ -86,6 +86,9 @@ function cameraSource(platform = 'dxgi', adapterLuid: string | null = IGPU_LUID)
 function uploadThen(sync: any, src: any, info: any, outcome: 'rejected' | 'imported', revision: number) {
   const key = sync.sharedTextureInfoKey(src, 'live:webcam');
   sync.sharedTextureInfoCache.set(key, { info, updatedAt: 0, revision });
+  // Each call stands for a retry once the rejection backoff has passed
+  // (sharedTextureLiveCadence.test.ts covers the backoff itself).
+  sync.sharedTextureRejectBackoff.clear();
   const commands: any[] = [];
   expect(sync.appendSharedTextureSourceFrameCommand(commands, src, 'live:webcam', revision * 100, false, null)).toBe(true);
   expect(commands).toHaveLength(1);

@@ -189,6 +189,15 @@ describe('live capture IPC handlers', () => {
     expect(h.addon.listAdapters).not.toHaveBeenCalled();
   });
 
+  it('answers "unchanged" without a handle when the editor already has the frame', async () => {
+    const h = harness('win32');
+    expect(await h.ipc.native_live_capture_texture_info(null, { sessionId: 's1', sinceFrame: 3 }))
+      .toEqual({ available: true, unchanged: true, frame: 3 });
+    const newer = await h.ipc.native_live_capture_texture_info(null, { sessionId: 's1', sinceFrame: 2 });
+    expect(newer).toMatchObject({ available: true, frame: 3, handle: expect.any(String) });
+    expect(newer.unchanged).toBeUndefined();
+  });
+
   it('passes the frames\' adapter through texture info for the editor', async () => {
     const h = harness('win32');
     const info = await h.ipc.native_live_capture_texture_info(null, { sessionId: 's1' });
