@@ -1789,7 +1789,7 @@
                 >
               </div>
               <SurfaceShapePanel surfaces={show.surfaces} index={selectedSurface} point={selectedPoint} onapply={mapApply} onnotice={message=>flash(message)}/>
-              <MaskPanel surfaces={show.surfaces} index={selectedSurface} mask={mapMask} point={mapMaskPoint} tool={mapMaskTool} tapped={mapTapped} onapply={next=>mapApply(next)} onlive={mapChange} onstart={mapBegin} onmask={mapMaskSet} onfinish={()=>mappingCanvas?.finishPolygon()} onnotice={message=>flash(message)}/>
+              <MaskPanel surfaces={show.surfaces} index={selectedSurface} mask={mapMask} point={mapMaskPoint} tool={mapMaskTool} tapped={mapTapped} onapply={next=>mapApply(next)} onlive={mapChange} onstart={mapBegin} oncommit={persist} onmask={mapMaskSet} onfinish={()=>mappingCanvas?.finishPolygon()} onnotice={message=>flash(message)}/>
               <label class="range-row"
                 ><span>Edge fade</span><input
                   type="range"

@@ -21,11 +21,13 @@
     /** Live change inside one slider drag (the undo step was taken at its start). */
     onlive: (surfaces: Surface[]) => void;
     onstart: () => void;
+    /** End of a slider drag: save, without another undo step. */
+    oncommit: () => void;
     onmask: (mask: number, point: number, tool: Tool) => void;
     onfinish: () => void;
     onnotice: (message: string) => void;
   };
-  let { surfaces, index, mask, point, tool, tapped = 0, onapply, onlive, onstart, onmask, onfinish, onnotice }: Props = $props();
+  let { surfaces, index, mask, point, tool, tapped = 0, onapply, onlive, onstart, oncommit, onmask, onfinish, onnotice }: Props = $props();
   const s = $derived(surfaces[index]);
   const masks = $derived(s?.masks ?? []);
   const m = $derived(masks[mask] ?? null);
@@ -134,7 +136,7 @@
       </div>
       <label class="mp-row">
         <span class="mp-label">Feather</span>
-        <input type="range" min="0" max={MAX_FEATHER} step="0.005" value={m.feather} aria-label="Mask feather" onpointerdown={onstart} oninput={(e) => onlive(withMask(surfaces, index, mask, { ...m, feather: Number(e.currentTarget.value) }))} onchange={(e) => onapply(withMask(surfaces, index, mask, { ...m, feather: Number(e.currentTarget.value) }))} />
+        <input type="range" min="0" max={MAX_FEATHER} step="0.005" value={m.feather} aria-label="Mask feather" onpointerdown={onstart} oninput={(e) => onlive(withMask(surfaces, index, mask, { ...m, feather: Number(e.currentTarget.value) }))} onchange={(e) => { onlive(withMask(surfaces, index, mask, { ...m, feather: Number(e.currentTarget.value) })); oncommit(); }} />
         <output class="mp-label">{Math.round(m.feather * 100)}%</output>
       </label>
       {#if (m.kind === 'polygon' || m.kind === 'freehand') && m.points[point]}

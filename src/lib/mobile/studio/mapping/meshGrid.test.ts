@@ -172,3 +172,32 @@ describe('curved edges', () => {
     }
   });
 });
+
+describe('new surface fields', () => {
+  it('save and load: density, curves, masks, group and welds', async () => {
+    const { newPolygonMask } = await import('./masks');
+    const show = defaultShow();
+    show.mapping = true;
+    const g = { cols: 4, rows: 5 };
+    const s: Surface = { ...newSurface(0), mode: 'mesh', grid: g, bezier: true, points: latticeFromCorners([{ x: 0.1, y: 0.1 }, { x: 0.9, y: 0.1 }, { x: 0.9, y: 0.9 }, { x: 0.1, y: 0.9 }], g), group: 'g1', welds: [{ x: 0.1, y: 0.1 }], masks: [newPolygonMask([{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }])] };
+    s.tangents = bendEdge(s, 0, 1, { x: 0.3, y: 0.05 });
+    show.surfaces = [s];
+    const loaded = normalizeShow(JSON.parse(JSON.stringify(show))).surfaces[0];
+    expect(loaded.grid).toEqual(g);
+    expect(loaded.points).toEqual(s.points);
+    expect(loaded.bezier).toBe(true);
+    expect(loaded.tangents).toEqual(s.tangents);
+    expect(loaded.masks).toEqual(s.masks);
+    expect(loaded.group).toBe('g1');
+    expect(loaded.welds).toEqual(s.welds);
+    expect(surfaceVertices(loaded)).toEqual(surfaceVertices(s));
+  });
+  it('drop a grid that does not match its points and fall back safely', () => {
+    const show = defaultShow();
+    show.mapping = true;
+    show.surfaces = [{ ...newSurface(0), mode: 'mesh', grid: { cols: 4, rows: 4 } }];
+    const loaded = normalizeShow(JSON.parse(JSON.stringify(show))).surfaces[0];
+    expect(loaded.grid).toBeUndefined();
+    expect(loaded.points).toHaveLength(9);
+  });
+});
