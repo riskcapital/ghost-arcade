@@ -559,11 +559,21 @@ export class ShowTrackSceneCache {
   ): PreparedShowTrackScene {
     const self = this;
     if (emptyFrame(frame)) {
+      // No rows and no looks: the scene is the caller's own list (and what
+      // it applies after), the same while `deps` are. A show playing with
+      // only lines (or nothing) used to build it again every frame.
+      const cached = this.cached;
+      const reusable = !!cached && cached.shape === EMPTY_SHAPE && sameItems(cached.deps, deps);
       return {
-        reusable: false,
-        reuse: () => { throw new Error('nothing to reuse'); },
+        reusable,
+        reuse: () => {
+          if (!reusable || !cached) throw new Error('the cached scene does not fit this frame');
+          return cached.scene;
+        },
         build: (list) => list,
-        commit: () => { self.cached = null; },
+        commit: (scene) => {
+          self.cached = { deps: [...deps], shape: EMPTY_SHAPE, templates: [], calls: [], scene, patches: [] };
+        },
       };
     }
     if (this.idsFor?.live !== liveLayers) this.idsFor = { live: liveLayers, ids: layerIndex(liveLayers) };
@@ -601,6 +611,9 @@ export class ShowTrackSceneCache {
     };
   }
 }
+
+/** The shape of a frame with no rows and no looks (never a real frame's: theirs always hold a ';'). */
+const EMPTY_SHAPE = '\u0000empty';
 
 function sameItems(a: readonly unknown[], b: readonly unknown[]): boolean {
   if (a.length !== b.length) return false;
