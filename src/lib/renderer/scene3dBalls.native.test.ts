@@ -6,6 +6,10 @@ import { defaultInteractive, type InteractiveScene } from '../mobile/studio/inte
 import { makeEffect } from '../mobile/studio/interactiveEffects';
 import { blockDepth, reliefFrame, reliefSolids, unproject } from '../scene3d/relief';
 import { defaultReliefWorld } from '../scene3d/worldModel';
+import { boxPyramid } from '../scene3d/roomFixtures';
+import { facePoint, length, normalize, sub } from '../scene3d/roomModel';
+import { solveRoom } from '../scene3d/roomSolve';
+import { projectPoint } from '../scene3d/worldGeometry';
 import { buildWorldPart } from './scene3dWorld';
 import { BALL_FLOATS, DRIP_FLOATS, FLAME_FLOATS, scene3dWorldPrecompileCommands } from './scene3dWorldShaders';
 import { scene3dPrecompileCommands } from './scene3dShaders';
@@ -355,6 +359,67 @@ suite('Relief world balls on the GPU', () => {
       }
       const status = await rpc.send('status');
       expect(counts[0], `live counts ${counts.slice(0, 2)} runs ${status.compute_graph_runs} err ${status.last_shader_error} ${status.last_frame_error}`).toBe(2);
+    } finally {
+      await rpc.close();
+    }
+  }, 120000);
+
+  it('in a room solved by hand, drops balls onto a pyramid of boxes: they settle on the tops and the ground, never inside', async () => {
+    const rpc = core();
+    try {
+      await rpc.send('start', { config: { backend: platform.rendererBackend, width: W, height: H, target_fps: 60 } });
+      await rpc.send('submit_commands', { commands: [...scene3dPrecompileCommands(), ...scene3dWorldPrecompileCommands()] });
+      const truth = boxPyramid([1.4, 2.6, 5.2], [0, 0.9, 0], 34, W / H);
+      const solved = solveRoom({ surfaces: truth.surfaces, aspect: W / H, arrow: truth.arrow, elevation: truth.elevation, fov: 34, distance: 5 });
+      // Balls from just above the top box, as seen on the output.
+      const balls = makeEffect('balls3d', 'point', false);
+      const over = projectPoint(truth.pr, [truth.boxes[2][0], truth.boxes[2][1] + 1.2, truth.boxes[2][2]]);
+      balls.params = { ...balls.params, x: over.x, y: over.y, radius: 0.08, flow: 1, amount: 64, lifetime: 40, size: 0.25, variety: 0, speed: 0, bounce: 0.1, friction: 0.9 };
+      const s: InteractiveScene = {
+        ...defaultInteractive(),
+        surfaces: truth.surfaces.map((x) => ({ id: x.id, name: x.id, behavior: 'solid' as const, points: x.points })),
+        effects: [balls],
+        world: { ...defaultReliefWorld(), source: 'room', room: solved.room },
+      };
+      const world = s.world!;
+      const step = async (n: number, read = false) => {
+        const part = buildWorldPart({ scene: s, world, sourceId: 'room-test', width: W, height: H });
+        const buffers = part.buffers.map((b) => (b.id.endsWith(':scene3d:frame') ? { ...b, initial_b64: frameBlock(n) } : b));
+        const id = part.buffers.find((b) => b.id.endsWith(':balls'))!.id;
+        const result = await rpc.send('compute_graph', { buffers, passes: part.passes, render_passes: [], textures: [], readbacks: read ? [{ id, include_bytes: true }] : [] });
+        if (!read) return null;
+        const bytes = Buffer.from(result.readbacks[id].bytes_b64, 'base64');
+        return new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
+      };
+      for (let n = 1; n < 600; n++) await step(n);
+      const state = (await step(600, true))!;
+
+      // Back to the boxes' own frame: the solve is in the projector's, at its own scale.
+      const f0 = solved.room.faces[0];
+      const t0 = truth.faces.find((f) => f.surfaceId === f0.surfaceId)!;
+      const toTruth = (p: [number, number, number]) => {
+        const across = normalize(truth.pr.right), upward = normalize(truth.pr.up), fwd = truth.pr.fwd;
+        return [0, 1, 2].map((i) => truth.pr.pos[i] + across[i] * p[0] + upward[i] * p[1] - fwd[i] * p[2]) as [number, number, number];
+      };
+      // Each solved corner is the true one, as the projector sees it, times one scale.
+      const scale = length(facePoint(f0, f0.points[0])) / length(sub(facePoint(t0, t0.points[0]), truth.pr.pos));
+      const live: { p: number[]; r: number; speed: number }[] = [];
+      let nan = 0;
+      for (let i = 0; i < state.length / BALL_FLOATS; i++) {
+        const b = state.subarray(i * BALL_FLOATS, i * BALL_FLOATS + BALL_FLOATS);
+        if (![...b].every(Number.isFinite)) { nan++; continue; }
+        if (b[3] > 0) live.push({ p: toTruth([b[0] / scale, b[1] / scale, b[2] / scale]), r: b[3] / scale, speed: Math.hypot(b[4], b[5], b[6]) / scale });
+      }
+      const inBox = (p: number[], margin: number) => truth.boxes.some((c) => Math.abs(p[0] - c[0]) < 0.5 - margin && Math.abs(p[1] - c[1]) < 0.5 - margin && Math.abs(p[2] - c[2]) < 0.5 - margin);
+      const inside = live.filter((b) => inBox(b.p, 0.03));
+      const onTop = live.filter((b) => truth.boxes.some((c) => Math.abs(b.p[0] - c[0]) < 0.5 && Math.abs(b.p[2] - c[2]) < 0.5 && Math.abs(b.p[1] - (c[1] + 0.5 + b.r)) < b.r * 0.6) && b.speed < 0.6);
+      const onGround = live.filter((b) => Math.abs(b.p[1] - b.r) < b.r * 0.6);
+      const report = JSON.stringify({ live: live.length, nan, inside: inside.length, onTop: onTop.length, onGround: onGround.length, scale, sample: live.slice(0, 4) });
+      expect(nan, report).toBe(0);
+      expect(live.length, report).toBeGreaterThan(30);
+      expect(inside.length, report).toBe(0);
+      expect(onTop.length, report).toBeGreaterThan(5);
+      expect(onTop.length + onGround.length, report).toBeGreaterThan(live.length * 0.6);
     } finally {
       await rpc.close();
     }

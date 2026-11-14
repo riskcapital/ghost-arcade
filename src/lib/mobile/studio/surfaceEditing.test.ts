@@ -247,3 +247,23 @@ describe('stage hit-testing', () => {
     expect(hitTestSurfaces([box], p, 540, 960, 'box').kind).toBe('none');
   });
 });
+
+describe('objects linked to mapped layers', () => {
+  const quad = (x: number) => [{ x, y: 0.1 }, { x: x + 0.1, y: 0.1 }, { x: x + 0.1, y: 0.2 }, { x, y: 0.2 }];
+  it('adds, follows and drops them, leaving the other objects alone', async () => {
+    const { syncMappedSurfaces, mappedSurfaceId } = await import('./surfaceEditing');
+    const own = { id: 'own', name: 'Own', behavior: 'solid' as const, points: quad(0.7) };
+    const first = syncMappedSurfaces([own], [
+      { id: 'a', name: 'Top', points: quad(0.1), enabled: true, mode: 'corners' },
+      { id: 'b', name: 'Mesh', points: quad(0.3), enabled: true, mode: 'mesh' },
+      { id: 'c', name: 'Hidden', points: quad(0.5), enabled: false, mode: 'corners' },
+    ])!;
+    expect(first.map((s) => s.id)).toEqual(['own', mappedSurfaceId('a')]);
+    // A finish set in the Studio stays when the mapping moves.
+    const styled = first.map((s) => (s.id === mappedSurfaceId('a') ? { ...s, finish: { preset: 'chrome' as const, color: '#ffffff' } } : s));
+    const moved = syncMappedSurfaces(styled, [{ id: 'a', name: 'Top face', points: quad(0.2), enabled: true, mode: 'corners' }])!;
+    expect(moved[1]).toMatchObject({ name: 'Top face', points: quad(0.2), finish: { preset: 'chrome' } });
+    expect(syncMappedSurfaces(moved, [{ id: 'a', name: 'Top face', points: quad(0.2), enabled: true, mode: 'corners' }])).toBeNull();
+    expect(syncMappedSurfaces(moved, [])!.map((s) => s.id)).toEqual(['own']);
+  });
+});

@@ -10,10 +10,13 @@
  *                       on quads, with their real depth; vs_ball_shadow: a disc
  *                       facing the key light, into the shadow map
  *
- * Collisions are exact: a block is a prism (its outline, from the wall to its
- * depth), so its distance is the 2D distance to the outline combined with
- * the distance along Z. The wall, the floor ledge and an invisible front pane
- * close the world.
+ * Collisions are exact: a block is a prism (a face's outline, from the face
+ * back to its depth, in the face's own frame), so its distance is the 2D
+ * distance to the outline combined with the distance along the face's
+ * normal. On the flat wall the wall, the floor ledge and an invisible front
+ * pane close the world; in a room, a ground plane. Gravity is a vector, and
+ * spawn points, touches and the output all go through the projector
+ * (settings.proj_*), see worldGeometry.ts.
  *
  * Bindings (group 0), besides the scene's: 13 balls, 14 last substep's copy,
  * 15 ball kinds, 16 blocks, 17 physics, 18 input.
@@ -28,9 +31,9 @@ export const MAX_BALL_ZONES = 24;
 export const BALL_ZONE_FLOATS = (2 + 32) * 4;
 /** Floats per ball kind: slots, emit, 5 vec4 of params, 40 vec4 of their mods. */
 export const BALL_KIND_FLOATS = (2 + 5 + 40) * 4;
-/** Floats per block: bounds, depth and count, 32 vec4 holding 64 points. */
-export const BALL_BLOCK_FLOATS = (2 + 32) * 4;
-export const BALL_PHYS_FLOATS = 24;
+/** Floats per block: bounds, depth and count, its frame (origin, u, v, n), 32 vec4 holding 64 points. */
+export const BALL_BLOCK_FLOATS = (6 + 32) * 4;
+export const BALL_PHYS_FLOATS = 36;
 /** Head, 8 pointers and 8 throws of two vec4 each. */
 export const BALL_INPUT_FLOATS = 4 + 8 * 8 + 8 * 8;
 /** The order of a ball kind's params (effectParams('balls3d')). */
@@ -41,14 +44,26 @@ const PARAM_CONSTS = BALL_PARAM_KEYS.map((key, i) => `const P_${key.toUpperCase(
 
 const WORLD_COMMON = /* wgsl */ `
 struct Phys {
-  frame: vec4f,   // wall width, height, camera distance, gravity (m/s²)
-  bounds: vec4f,  // front pane z (0 none), floor top y, deepest spawn z, floor depth
+  down: vec4f,    // which way things fall (unit), gravity (m/s²)
+  bounds: vec4f,  // front pane z (0 none), floor top y, deepest spawn z, floor depth (the wall)
   counts: vec4f,  // balls, ball kinds, blocks, substeps
-  kill: vec4f,    // below this y, beyond this |x|, nearer than this z
+  kill: vec4f,    // the wall: below this y, beyond this |x|, nearer than this z
   drips: vec4f,   // drops, drop kinds, seconds a stain takes to fade, seconds paint stays wet
   fire: vec4f,    // flame particles, flame kinds, zones balls set off
+  plane: vec4f,   // the plane behind or under everything: normal (0: none), offset
+  room: vec4f,    // mode (0 the wall, 1 a room), spawn reference, lost beyond this from the middle
+  middle: vec4f,  // the room's middle
 }
 @group(0) @binding(17) var<uniform> phys: Phys;
+
+fn gravity() -> vec3f { return phys.down.xyz * phys.down.w; }
+fn proj_across() -> vec3f { return normalize(settings.proj_right.xyz); }
+fn proj_upward() -> vec3f { return normalize(settings.proj_up.xyz); }
+// Out of the world: fallen away, or (the wall) off its sides or behind the camera.
+fn lost(p: vec3f) -> bool {
+  if (phys.room.x > 0.5) { return length(p - phys.middle.xyz) > phys.room.z; }
+  return p.y < phys.kill.x || abs(p.x) > phys.kill.y || p.z > phys.kill.z;
+}
 
 // A param with its modulation (a: source, amount, speed, invert; b: low,
 // high, beat sync, ranged), the same maths as evaluateEffect.
@@ -89,7 +104,8 @@ fn hue_rgb(h: f32) -> vec3f {
 
 /** The world's shape, for the simulations: blocks, wall, floor and pane, and the touches. */
 const WORLD_SIM = /* wgsl */ `
-struct Block { box: vec4f, info: vec4f, pts: array<vec4f, 32> } // box: min xy, max xy; info: depth, points
+// box: the outline's min and max in the face's plane; info: depth, points; o, u, v, n: the face's frame.
+struct Block { box: vec4f, info: vec4f, o: vec4f, u: vec4f, v: vec4f, n: vec4f, pts: array<vec4f, 32> }
 struct Pointer { a: vec4f, b: vec4f }  // a: hit xyz, tool (1 push, 2 attract, 3 repel, 4 vortex, 5 pour, 6 ignite); b: velocity xyz, strength
 struct Throw { a: vec4f, b: vec4f }    // a: position xyz, number; b: velocity xyz, spare
 struct Input { head: vec4f, pointers: array<Pointer, 8>, throws: array<Throw, 8> } // head: pointers, throws
@@ -105,7 +121,7 @@ fn corner_of(bi: u32, i: u32) -> vec2f {
   return select(v.xy, v.zw, (i & 1u) == 1u);
 }
 
-// Signed distance to an outline in the wall's plane (negative inside).
+// Signed distance to an outline in its face's plane (negative inside).
 fn sd_outline(bi: u32, q: vec2f) -> f32 {
   let n = u32(blocks[bi].info.y);
   let v0 = corner_of(bi, 0u);
@@ -126,22 +142,27 @@ fn sd_outline(bi: u32, q: vec2f) -> f32 {
   return s * sqrt(d);
 }
 
-// A block: its outline from the wall (z = 0) out to its depth.
+// A block: its face's outline, from the face back to its depth.
 fn sd_block(bi: u32, p: vec3f) -> f32 {
   let blk = blocks[bi];
-  let dz = max(p.z - blk.info.x, -p.z);
-  let q = clamp(p.xy, blk.box.xy, blk.box.zw);
-  let dxy = length(p.xy - q);
+  let r = p - blk.o.xyz;
+  let l = vec3f(dot(r, blk.u.xyz), dot(r, blk.v.xyz), dot(r, blk.n.xyz));
+  let dz = max(l.z, -l.z - blk.info.x);
+  let q = clamp(l.xy, blk.box.xy, blk.box.zw);
+  let dxy = length(l.xy - q);
   // Far from it: the distance to its bounds is close enough (and never more).
   if (dxy > 0.3) { return length(vec2f(dxy, max(dz, 0.0))); }
-  let w = vec2f(sd_outline(bi, p.xy), dz);
+  let w = vec2f(sd_outline(bi, l.xy), dz);
   return min(max(w.x, w.y), 0.0) + length(max(w, vec2f(0.0)));
 }
 
 fn world_sdf(p: vec3f) -> f32 {
-  var d = p.z;                                                     // the wall
-  if (phys.bounds.x > 0.0) { d = min(d, phys.bounds.x - p.z); }   // the front pane
-  if (p.z < phys.bounds.w) { d = min(d, p.y - phys.bounds.y); }   // the floor ledge
+  var d = 1.0e9;
+  if (dot(phys.plane.xyz, phys.plane.xyz) > 0.5) { d = dot(p, phys.plane.xyz) - phys.plane.w; }  // the wall or ground
+  if (phys.room.x < 0.5) {
+    if (phys.bounds.x > 0.0) { d = min(d, phys.bounds.x - p.z); }   // the front pane
+    if (p.z < phys.bounds.w) { d = min(d, p.y - phys.bounds.y); }   // the floor ledge
+  }
   for (var i = 0u; i < u32(phys.counts.z); i++) { d = min(d, sd_block(i, p)); }
   return d;
 }
@@ -154,11 +175,13 @@ fn world_normal(p: vec3f) -> vec3f {
     k.yxy * world_sdf(p + k.yxy * e) + k.xxx * world_sdf(p + k.xxx * e));
 }
 
-// A point of the output (0..1, y down) at depth z in front of the wall.
+// A point of the output (0..1, y down) at spawn depth z: on the wall, z in
+// front of it; in a room, z nearer the projector than the farthest face.
 fn unproject(uv: vec2f, z: f32) -> vec3f {
-  let k = 1.0 - z / phys.frame.z;
-  return vec3f((uv.x - 0.5) * phys.frame.x * k, (0.5 - uv.y) * phys.frame.y * k, z);
+  return settings.proj_pos.xyz + proj_dir(uv) * (phys.room.y - z);
 }
+// A direction on the output (x right, y up) in the world, at right angles to the projector.
+fn on_output(d: vec2f) -> vec3f { return proj_across() * d.x + proj_upward() * d.y; }
 
 `;
 
@@ -250,9 +273,9 @@ fn born(k: u32, i: u32, tick: u32) -> Ball {
   if (kinds[k].emit.x > 0.5) { deepest = kinds[k].emit.y; }
   if (phys.bounds.x > 0.0) { deepest = min(deepest, phys.bounds.x); }
   let z = mix(r + 0.01, max(deepest - r, r + 0.01), h2);
-  let jitter = (vec3f(h3, h4, 0.5) - 0.5) * 0.6;
+  let jitter = on_output(vec2f(h3, h4) - 0.5) * 0.6;
   b.pos = vec4f(unproject(uv, z), r);
-  b.vel = vec4f(vec3f(dir.x, -dir.y, 0.0) * param(k, P_SPEED) * 10.0 + jitter, 0.0);
+  b.vel = vec4f(on_output(vec2f(dir.x, -dir.y)) * param(k, P_SPEED) * 10.0 + jitter, 0.0);
   b.info = vec4f(f32(k), seed, 0.0, max(param(k, P_LIFETIME), 0.5) * (0.8 + 0.4 * h3));
   return b;
 }
@@ -302,8 +325,7 @@ fn cs_balls_life(@builtin(global_invocation_id) gid: vec3u) {
   if (b.pos.w > 0.0) {
     b.vel.w += dt;
     let age = b.vel.w;
-    let gone = b.pos.y < phys.kill.x || abs(b.pos.x) > phys.kill.y || b.pos.z > phys.kill.z;
-    if (!on || age > b.info.w || gone) {
+    if (!on || age > b.info.w || lost(b.pos.xyz)) {
       b.pos = AWAY;
       b.vel = vec4f(0.0, 0.0, 0.0, -0.05);
       b.extra.x = 0.0;
@@ -313,9 +335,7 @@ fn cs_balls_life(@builtin(global_invocation_id) gid: vec3u) {
       b.pos.w = max(ball_radius(k, b.info.y) * fade, 0.004);
       // Zones: count each one the ball has just come into, as seen on the output.
       if (phys.fire.z > 0.0) {
-        let near = phys.frame.z / max(phys.frame.z - b.pos.z, 1e-3);
-        let uv = vec2f(0.5 + b.pos.x * near / phys.frame.x, 0.5 - b.pos.y * near / phys.frame.y);
-        let now_in = zones_at(uv);
+        let now_in = zones_at(proj_uv(b.pos.xyz));
         let came = now_in & ~u32(b.extra.x);
         for (var z = 0u; z < u32(phys.fire.z); z++) {
           if ((came & (1u << z)) != 0u) { atomicAdd(&zone_hits[z], 1u); }
@@ -324,7 +344,7 @@ fn cs_balls_life(@builtin(global_invocation_id) gid: vec3u) {
       }
       for (var p = 0u; p < u32(input.head.x); p++) {
         let ptr = input.pointers[p];
-        let eye = vec3f(0.0, 0.0, phys.frame.z);
+        let eye = settings.proj_pos.xyz;
         let dir = normalize(ptr.a.xyz - eye);
         let rel = b.pos.xyz - eye;
         let off = rel - dir * dot(rel, dir);
@@ -342,7 +362,7 @@ fn cs_balls_life(@builtin(global_invocation_id) gid: vec3u) {
         } else if (tool < 2.5) {
           b.vel = vec4f(b.vel.xyz + normalize(ptr.a.xyz - b.pos.xyz + vec3f(1e-5)) * 30.0 * s * w * dt, b.vel.w);
         } else if (tool < 3.5) {
-          b.vel = vec4f(b.vel.xyz + (out + vec3f(0.0, 0.0, 0.3)) * 30.0 * s * w * dt, b.vel.w);
+          b.vel = vec4f(b.vel.xyz + (out - dir * 0.3) * 30.0 * s * w * dt, b.vel.w);
         } else {
           b.vel = vec4f(b.vel.xyz + (cross(dir, out) * 26.0 - out * 6.0) * s * w * dt, b.vel.w);
         }
@@ -391,7 +411,7 @@ fn cs_balls_step(@builtin(global_invocation_id) gid: vec3u) {
   let r = b.pos.w;
   let e = clamp(param(k, P_BOUNCE), 0.0, 0.98);
   var v = b.vel.xyz;
-  v.y -= phys.frame.w * h;
+  v += gravity() * h;
   // The others, as they were: each pair is pushed apart half each way.
   var shift = vec3f(0.0);
   var dv = vec3f(0.0);
@@ -571,8 +591,9 @@ fn fs_ball_relief(in: BallOut) -> BallFrag {
   col += thrown_light(h.pos).rgb * settings.post_b.z * facing * (look.base * (1.0 - look.metal) + vec3f(0.1));
   if (look.glass > 0.5) {
     let bent = refract(-h.v, h.n, 1.0 / 1.5);
-    if (bent.z < -1e-3) {
-      let behind = h.pos + bent * (-h.pos.z / bent.z);
+    let into = dot(bent, phys.plane.xyz);
+    if (into < -1e-3) {
+      let behind = h.pos + bent * ((phys.plane.w - dot(h.pos, phys.plane.xyz)) / into);
       col += thrown_light(behind).rgb * settings.post_b.z * (look.base * 0.7 + vec3f(0.3)) * 0.8;
     }
   }
@@ -587,8 +608,8 @@ fn fs_ball_relief(in: BallOut) -> BallFrag {
 
 /** Floats per drop: position + radius, velocity + age, kind / seed / state / span, burst seen. */
 export const DRIP_FLOATS = 16;
-/** Floats per drop kind: slots, emit, params, mods, 16 sites and their depths. */
-export const DRIP_KIND_FLOATS = (2 + 5 + 40 + 16 + 4) * 4;
+/** Floats per drop kind: slots, emit, params, mods, 16 sites of three vec4 (ends, the face's normal and depth). */
+export const DRIP_KIND_FLOATS = (2 + 5 + 40 + 48) * 4;
 export const DRIP_PARAM_KEYS = effectParams('drips').map((d) => d.key);
 /** Drops poured each frame while a finger pours. */
 export const POURED_PER_FRAME = 6;
@@ -601,8 +622,7 @@ struct DripKind {
   emit: vec4f,    // sites (0: from a point), spare, spare, on
   params: array<vec4f, 5>,
   mods: array<vec4f, 40>,
-  sites: array<vec4f, 16>,  // upper edges of a block on its front face: a.xy, b.xy
-  site_z: array<vec4f, 4>,  // the depth of each site
+  sites: array<vec4f, 48>,  // upper edges of a face: a, b, then its normal (xyz) and depth (w)
 }
 // pos.w radius (0: not in play); vel.w age, negative while waiting to be born;
 // info: kind, seed, state (1 falling, 2 on a surface), life span; extra.x the burst seen.
@@ -653,22 +673,22 @@ fn drip_born(k: u32, i: u32, tick: u32) -> Drip {
   let sites = u32(dkinds[k].emit.x);
   if (sites > 0u) {
     let at = min(u32(h1 * f32(sites)), sites - 1u);
-    let site = dkinds[k].sites[at];
-    let z = dkinds[k].site_z[at / 4u][at % 4u];
+    let a = dkinds[k].sites[at * 3u].xyz;
+    let b = dkinds[k].sites[at * 3u + 1u].xyz;
+    let n = dkinds[k].sites[at * 3u + 2u].xyz;
     // From a few spots along the edge, so the paint runs in rivulets; the
     // spots wander slowly.
-    let spots = max(2.0, round(length(site.zw - site.xy) / 0.14));
+    let spots = max(2.0, round(length(b - a) / 0.14));
     let wander = sin(frame.time * 0.13 + f32(at) * 2.1) * 0.3;
     let t = clamp((floor(h2 * spots) + 0.5 + wander + (h3 - 0.5) * 0.12) / spots, 0.02, 0.98);
-    let p = mix(site.xy, site.zw, t);
-    d.pos = vec4f(p.x, p.y - r * 1.5, z + r * 0.4, r);
-    d.vel = vec4f(0.0, -0.02, 0.0, 0.0);
+    d.pos = vec4f(mix(a, b, t) + phys.down.xyz * r * 1.5 + n * r * 0.4, r);
+    d.vel = vec4f(phys.down.xyz * 0.02, 0.0);
     d.info = vec4f(f32(k), seed, 2.0, 0.0);
   } else {
     let uv = vec2f(dparam(k, D_X) + (h1 * 2.0 - 1.0) * dparam(k, D_RADIUS), dparam(k, D_Y));
     let z = mix(r + 0.01, max(phys.bounds.z - r, r + 0.01), h2);
     d.pos = vec4f(unproject(uv, z), r);
-    d.vel = vec4f((h3 - 0.5) * 0.2, -0.3, 0.0, 0.0);
+    d.vel = vec4f(proj_across() * (h3 - 0.5) * 0.2 + phys.down.xyz * 0.3, 0.0);
     d.info = vec4f(f32(k), seed, 1.0, 0.0);
   }
   d.info.w = max(dparam(k, D_LIFETIME), 0.5) * (0.75 + 0.5 * h3);
@@ -683,7 +703,7 @@ fn drip_step(d: ptr<function, Drip>, k: u32, h: f32) {
   var v = (*d).vel.xyz;
   let r = (*d).pos.w;
   let seed = (*d).info.y;
-  let g = vec3f(0.0, -phys.frame.w, 0.0);
+  let g = gravity();
   if ((*d).info.z < 1.5) {
     v = (v + g * h) * (1.0 - 0.3 * h);
     p += v * h;
@@ -700,7 +720,7 @@ fn drip_step(d: ptr<function, Drip>, k: u32, h: f32) {
     }
   } else {
     let n = world_normal(p);
-    if (n.y < -0.55) {
+    if (dot(n, phys.down.xyz) > 0.55) {
       (*d).info.z = 1.0;
       v += n * 0.05;
     } else {
@@ -758,10 +778,10 @@ fn cs_drips(@builtin(global_invocation_id) gid: vec3u) {
         if (want > 0u) { want--; continue; }
         let seed = hash1(i * 37u + tick * 101u + 3u) + 1e-4;
         let r = drip_radius(k, seed);
-        let toward = normalize(vec3f(0.0, 0.0, phys.frame.z) - ptr.a.xyz);
+        let toward = normalize(settings.proj_pos.xyz - ptr.a.xyz);
         let jitter = (vec2f(hash1(i * 13u + tick), hash1(i * 17u + tick * 3u)) - 0.5) * 0.12;
         // Onto whatever is under the finger: it runs down from there.
-        d.pos = vec4f(ptr.a.xyz + toward * r * 0.4 + vec3f(jitter, 0.0), r);
+        d.pos = vec4f(ptr.a.xyz + toward * r * 0.4 + on_output(jitter), r);
         d.vel = vec4f(ptr.b.xyz * 0.3, 0.0);
         d.info = vec4f(f32(k), seed, 2.0, max(dparam(k, D_LIFETIME), 0.5));
         break;
@@ -774,8 +794,7 @@ fn cs_drips(@builtin(global_invocation_id) gid: vec3u) {
   let seen = d.extra.x;
   if (d.pos.w > 0.0) {
     d.vel.w += dt;
-    let gone = d.pos.y < phys.kill.x || abs(d.pos.x) > phys.kill.y || d.pos.z > phys.kill.z;
-    if (!on || d.vel.w > d.info.w || gone) {
+    if (!on || d.vel.w > d.info.w || lost(d.pos.xyz)) {
       d.pos = AWAY;
       d.vel = vec4f(0.0, 0.0, 0.0, -0.05);
     } else {
@@ -811,7 +830,7 @@ export const SCENE3D_DRIPS_DRAW_WGSL = /* wgsl */ `${SCENE3D_RELIEF_WGSL}
 ${WORLD_COMMON}
 ${DRIP_COMMON}
 
-struct Block { box: vec4f, info: vec4f, pts: array<vec4f, 32> }
+struct Block { box: vec4f, info: vec4f, o: vec4f, u: vec4f, v: vec4f, n: vec4f, pts: array<vec4f, 32> }
 @group(0) @binding(16) var<storage, read> blocks: array<Block>;
 @group(0) @binding(21) var<storage, read> drips: array<Drip>;
 
@@ -914,14 +933,19 @@ fn block_corner(bi: u32, i: u32) -> vec2f {
   return select(v.xy, v.zw, (i & 1u) == 1u);
 }
 
-// Whether a block in front of a drop hides it face-on. A hidden drop paints
-// nothing, or its trail would show on the front of that block.
+// Whether a face between the projector and a drop hides it. A hidden drop
+// paints nothing, or its trail would show on the front of that face.
 fn hidden(p: vec3f) -> bool {
-  let cam = phys.frame.z;
+  let eye = settings.proj_pos.xyz;
   for (var b = 0u; b < u32(phys.counts.z); b++) {
-    let depth = blocks[b].info.x;
-    if (depth < p.z + 0.03) { continue; }
-    let q = p.xy * ((cam - depth) / max(cam - p.z, 1e-3));
+    let face_n = blocks[b].n.xyz;
+    let o = blocks[b].o.xyz;
+    if (dot(p - o, face_n) > -0.03) { continue; }   // the drop is not behind it
+    let ray = p - eye;
+    let into = dot(ray, face_n);
+    if (into > -1e-6) { continue; }                 // the projector sees it from behind
+    let hit = eye + ray * (dot(o - eye, face_n) / into) - o;
+    let q = vec2f(dot(hit, blocks[b].u.xyz), dot(hit, blocks[b].v.xyz));
     let box = blocks[b].box;
     if (any(q < box.xy) || any(q > box.zw)) { continue; }
     let n = u32(blocks[b].info.y);
@@ -944,9 +968,10 @@ fn vs_splat(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) ->
   var out: SplatOut;
   if (d.pos.w <= 0.0 || d.info.z < 1.5 || hidden(d.pos.xyz)) { out.clip = OFFSCREEN; return out; }
   let c = corner(vi);
-  let k = phys.frame.z / max(phys.frame.z - d.pos.z, 1e-3);
-  let middle = vec2f(d.pos.x * k / phys.frame.x, d.pos.y * k / phys.frame.y) * 2.0;
-  let size = vec2f(d.pos.w * k / phys.frame.x, d.pos.w * k / phys.frame.y) * 2.0 * 1.6;
+  let uv = proj_uv(d.pos.xyz);
+  let middle = vec2f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+  let t = max(proj_depth(d.pos.xyz), 1e-3);
+  let size = vec2f(d.pos.w / (t * length(settings.proj_right.xyz)), d.pos.w / (t * length(settings.proj_up.xyz))) * 1.6;
   out.clip = vec4f(middle + c * size, 0.0, 1.0);
   out.uv = c;
   out.color = drip_color(u32(d.info.x), d.info.y);
@@ -985,8 +1010,7 @@ struct FlameKind {
   emit: vec4f,    // sites (0: from a point), spare, spare, on
   params: array<vec4f, 5>,
   mods: array<vec4f, 40>,
-  sites: array<vec4f, 16>,  // upper edges of a block: a.xy, b.xy
-  site_z: array<vec4f, 4>,  // the depth of each site's block
+  sites: array<vec4f, 48>,  // upper edges of a face: a, b, then its normal (xyz) and depth (w)
 }
 // pos.w size (0: not in play); vel.w age, negative while waiting to be born;
 // info: kind, seed, type (1 flame, 2 ember), life span; extra.x the burst seen.
@@ -1045,10 +1069,12 @@ fn flame_born(k: u32, i: u32, tick: u32) -> Flame {
   var at: vec3f;
   if (sites > 0u) {
     let n = min(u32(h1 * f32(sites)), sites - 1u);
-    let site = fkinds[k].sites[n];
-    let depth = fkinds[k].site_z[n / 4u][n % 4u];
-    let p = mix(site.xy, site.zw, h2);
-    at = vec3f(p.x, p.y + 0.02, mix(0.04, max(depth - 0.04, 0.05), h3));
+    let a = fkinds[k].sites[n * 3u].xyz;
+    let b = fkinds[k].sites[n * 3u + 1u].xyz;
+    let face = fkinds[k].sites[n * 3u + 2u];
+    // Along the edge, and back from the face across the top of its solid.
+    let back = face.w - mix(0.04, max(face.w - 0.04, 0.05), h3);
+    at = mix(a, b, h2) - phys.down.xyz * 0.02 - face.xyz * back;
   } else {
     let uv = vec2f(fparam(k, F_X) + (h1 * 2.0 - 1.0) * fparam(k, F_RADIUS), fparam(k, F_Y));
     at = unproject(uv, mix(0.05, max(phys.bounds.z * 0.8, 0.1), h2));
@@ -1098,9 +1124,9 @@ fn cs_flames(@builtin(global_invocation_id) gid: vec3u) {
         if (want > 0u) { want--; continue; }
         // A spot dying down lights fewer.
         if (hash1(i * 29u + tick * 7u) > ptr.b.w) { break; }
-        let toward = normalize(vec3f(0.0, 0.0, phys.frame.z) - ptr.a.xyz);
+        let toward = normalize(settings.proj_pos.xyz - ptr.a.xyz);
         let jitter = (vec2f(hash1(i * 13u + tick), hash1(i * 17u + tick * 3u)) - 0.5) * 0.16;
-        f = flame_at(k, i, tick, ptr.a.xyz + toward * 0.04 + vec3f(jitter, 0.0));
+        f = flame_at(k, i, tick, ptr.a.xyz + toward * 0.04 + on_output(jitter));
         break;
       }
     }
@@ -1111,7 +1137,7 @@ fn cs_flames(@builtin(global_invocation_id) gid: vec3u) {
   let seen = f.extra.x;
   if (f.pos.w > 0.0) {
     f.vel.w += dt;
-    let gone = f.pos.y < phys.kill.x || f.pos.y > -phys.kill.x || abs(f.pos.x) > phys.kill.y || f.pos.z > phys.kill.z;
+    let gone = lost(f.pos.xyz) || (phys.room.x < 0.5 && f.pos.y > -phys.kill.x);
     if (f.vel.w > f.info.w || gone) {
       f.pos = AWAY;
       f.vel = vec4f(0.0, 0.0, 0.0, -0.02);
@@ -1123,9 +1149,11 @@ fn cs_flames(@builtin(global_invocation_id) gid: vec3u) {
         let t = f.vel.w / f.info.w;
         let q = p * 1.6 + vec3f(0.0, -frame.time * 1.2, frame.time * 0.3) + f.info.y * 10.0;
         let lift = max(fparam(k, F_HEAT), 0.0) * 2.4 * (1.0 - t) + 0.4;
-        v += (vec3f(0.0, lift, 0.0) + curl(q) * max(fparam(k, F_TURBULENCE), 0.0) * 1.1) * dt;
+        let up = -phys.down.xyz;
+        v += (up * lift + curl(q) * max(fparam(k, F_TURBULENCE), 0.0) * 1.1) * dt;
         // Sideways motion dies fast, so the fire rises as a column.
-        v *= vec3f(exp(-dt * 4.5), exp(-dt * 2.6), exp(-dt * 4.5));
+        let rise = up * dot(v, up);
+        v = rise * exp(-dt * 2.6) + (v - rise) * exp(-dt * 4.5);
         p += v * dt;
         let s = world_sdf(p) - f.pos.w * 0.25;
         if (s < 0.0) {
@@ -1136,7 +1164,7 @@ fn cs_flames(@builtin(global_invocation_id) gid: vec3u) {
         }
       } else {
         // An ember: thrown up, falls, bounces.
-        v.y -= phys.frame.w * dt;
+        v += gravity() * dt;
         v *= exp(-dt * 0.3);
         p += v * dt;
         let s = world_sdf(p) - f.pos.w;

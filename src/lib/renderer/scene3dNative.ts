@@ -62,8 +62,10 @@ export type Scene3DRelief = {
   gain: number;
   /** Degrees the key light swings either side about the wall's axis. */
   sway: number;
-  /** The projector of the flat picture: wall width and height, and its distance. */
-  projector: { width: number; height: number; distance: number };
+  /** The projector of the flat picture (projector.ts ProjectorBasis). */
+  projector: { pos: Vec3; right: Vec3; up: Vec3; fwd: Vec3; shift: [number, number] };
+  /** The camera's lens shift, when the camera is the projector. */
+  cameraShift?: [number, number];
 };
 
 type Buffer = { id: string; kind: 'uniform' | 'storage'; byte_length: number; initial_b64?: string; persistent?: boolean };
@@ -227,9 +229,9 @@ export function buildScene3DGraph(options: Scene3DGraphOptions): Scene3DGraph {
   if (options.relief) {
     data.settings[19] = options.relief.sway;
     data.settings[30] = options.relief.flatTexture ? options.relief.gain : 0;
-    data.settings[31] = options.relief.projector.distance;
-    data.settings[42] = options.relief.projector.width;
-    data.settings[43] = options.relief.projector.height;
+    const pr = options.relief.projector;
+    data.settings.set([...pr.pos, 0, ...pr.right, pr.shift[0], ...pr.up, pr.shift[1], ...pr.fwd, 0], 48);
+    data.settings.set(options.relief.cameraShift ?? [0, 0], 42);
   }
   const safe = options.sourceId.replace(/[^\w:-]+/g, '_').slice(0, 120);
   const id = (name: string) => `scene3d:${safe}:${name}`;

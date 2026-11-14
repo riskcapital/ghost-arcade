@@ -1271,3 +1271,82 @@
 .interactive-workspace .studio-question .tools {
   margin: 10px 0 0;
 }
+
+/* ── Depth setup ─────────────────────────────────────────────────────────── */
+.interactive-workspace .depth-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.interactive-workspace .depth-head span,
+.interactive-workspace .depth-count {
+  font-size: var(--ga-text-meta, 11px);
+  color: var(--ga-ink-2);
+}
+.interactive-workspace .depth-nav {
+  margin-top: 14px;
+}
+.interactive-workspace .starter:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+/* Faces' roles, the gravity arrow and the projector marker on the stage. */
+.interactive-workspace .stage svg .depth-roles text {
+  fill: var(--ga-ink-0, #e8ebf0);
+  font: 600 11px var(--ga-font-ui, system-ui);
+  paint-order: stroke;
+  stroke: #000000b3;
+  stroke-width: 3px;
+}
+.interactive-workspace .stage svg .depth-arrow line,
+.interactive-workspace .stage svg .depth-projector line {
+  stroke: var(--ga-icon, #5278ff);
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+.interactive-workspace .stage svg .depth-arrow polygon,
+.interactive-workspace .stage svg .depth-arrow circle {
+  fill: var(--ga-icon, #5278ff);
+  stroke: none;
+}
+.interactive-workspace .stage svg .depth-projector line {
+  stroke-width: 1;
+  opacity: 0.5;
+}
+.interactive-workspace .stage svg .depth-projector line.sight {
+  stroke-dasharray: 4 4;
+}
+.interactive-workspace .stage svg .depth-projector circle {
+  fill: color-mix(in srgb, var(--ga-icon, #5278ff) 25%, transparent);
+  stroke: var(--ga-icon, #5278ff);
+  stroke-width: 2;
+}
+.interactive-workspace .stage svg .depth-projector text {
+  fill: var(--ga-ink-0, #e8ebf0);
+  font: 600 11px var(--ga-font-ui, system-ui);
+  paint-order: stroke;
+  stroke: #000000b3;
+  stroke-width: 3px;
+}
+
+.interactive-workspace .world-source {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.interactive-workspace .file-button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--ga-control-h, 28px);
+  border: 1px solid var(--ga-line-2);
+  border-radius: var(--ga-r-hard, 5px);
+  cursor: pointer;
+}
+.interactive-workspace .file-button input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}

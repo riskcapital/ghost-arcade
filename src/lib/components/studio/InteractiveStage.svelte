@@ -20,7 +20,7 @@
     pixelDistance,
     translatePoints,
   } from '../../mobile/studio/surfaceEditing';
-  import type { EditorMode, EmitterMarker, TouchTool } from './interactiveEditorTypes';
+  import type { DepthStage, EditorMode, EmitterMarker, TouchTool } from './interactiveEditorTypes';
 
   export let surfaces: InteractiveSurface[] = [];
   export let selected = '';
@@ -58,6 +58,48 @@
   /** `start` is true for the press, false while dragging. */
   export let oninteract: (pointerId: number, interaction: Interaction, start: boolean) => void = () => {};
   export let onrelease: (pointerId: number) => void = () => {};
+  /** Depth setup: the step's control on the stage (roles on the faces, the
+   *  gravity arrow, the projector marker), and what a press does. */
+  export let depth: DepthStage | null = null;
+  export let ondepthrole: (id: string) => void = () => {};
+  export let ondeptharrow: (arrow: Point) => void = () => {};
+  export let ondepthelevation: (degrees: number) => void = () => {};
+  /** The projector marker: its height on the stage is how far the projector looks down. */
+  const MARKER_X = 0.94;
+  const markerY = (elevation: number) => Math.max(0.03, Math.min(0.97, (85 - elevation) / 145));
+  const elevationAt = (y: number) => Math.round(85 - Math.max(0.03, Math.min(0.97, y)) * 145);
+  $: depthControl = depth && (depth.step === 'faces' || depth.step === 'down' || depth.step === 'projector') ? depth.step : null;
+  /** The gravity arrow, from the middle of the stage, in pixels. */
+  $: arrowLength = Math.min(width, height) * 0.22;
+  $: arrowHead = depth ? { x: width / 2 + depth.arrow.x * arrowLength, y: height / 2 + depth.arrow.y * arrowLength } : null;
+  const ROLE_LABEL = { top: 'Top', side: 'Side', backdrop: 'Back' } as const;
+  const middle = (points: Point[]) => ({
+    x: points.reduce((a, p) => a + p.x, 0) / Math.max(1, points.length),
+    y: points.reduce((a, p) => a + p.y, 0) / Math.max(1, points.length),
+  });
+  /** The arrow points from the middle of the stage to the pointer (in pixels, as it is seen). */
+  function aimArrow(e: PointerEvent) {
+    const box = stage.getBoundingClientRect();
+    const dx = e.clientX - box.left - box.width / 2, dy = e.clientY - box.top - box.height / 2;
+    const len = Math.hypot(dx, dy);
+    if (len > 8) ondeptharrow({ x: dx / len, y: dy / len });
+  }
+  /** A press during a depth step with its own control. True when it was handled. */
+  function pressDepth(e: PointerEvent, p: Point): boolean {
+    if (!depthControl) return false;
+    if (depthControl === 'faces') {
+      const hit = hitTestSurfaces(surfaces.filter((s) => s.behavior === 'solid'), p, width, height, '', tolerance(e));
+      if (hit.kind !== 'none') ondepthrole(hit.id);
+      return true;
+    }
+    ongesture();
+    depthDrag = true;
+    if (depthControl === 'down') aimArrow(e);
+    else ondepthelevation(elevationAt(p.y));
+    return true;
+  }
+  let depthDrag = false;
+
   /** Orbit view: dragging turns the 3D world's camera instead of editing. */
   export let orbit = false;
   export let onorbitdrag: (dx: number, dy: number) => void = () => {};
@@ -175,6 +217,7 @@
     stage.focus({ preventScroll: true });
     stage.setPointerCapture(e.pointerId);
     const p = position(e);
+    if (pressDepth(e, p)) return;
     if (placingEmitter) {
       ongesture();
       drag = { kind: 'emitter', offset: { x: 0, y: 0 } };
@@ -186,6 +229,11 @@
 
   function move(e: PointerEvent) {
     const p = position(e);
+    if (depthDrag && depthControl && stage.hasPointerCapture(e.pointerId)) {
+      if (depthControl === 'down') aimArrow(e);
+      else if (depthControl === 'projector') ondepthelevation(elevationAt(p.y));
+      return;
+    }
     if (drawing) hover = e.pointerType === 'mouse' ? p : null;
     if (mode === 'perform' && !placingEmitter) return oninteract(e.pointerId, touch(e, p), false);
     if (!drag || !stage.hasPointerCapture(e.pointerId)) return;
@@ -199,6 +247,7 @@
     if (stage.hasPointerCapture(e.pointerId)) stage.releasePointerCapture(e.pointerId);
     onrelease(e.pointerId);
     drag = null;
+    depthDrag = false;
   }
 
   // Reactive, so outlines follow the measured stage size like the handles do. As a plain
@@ -256,6 +305,34 @@
             {#each s.points as p}<circle class="handle" cx={p.x * width} cy={p.y * height} r={handleRadius} />{/each}
           {/if}
         {/each}
+      {/if}
+      {#if depthControl && depth}
+        <g class="depth-roles">
+          {#each surfaces.filter((s) => s.behavior === 'solid' && depth.roles[s.id]) as s}
+            {@const m = middle(s.points)}
+            <text x={m.x * width} y={m.y * height} text-anchor="middle" dominant-baseline="middle">{ROLE_LABEL[depth.roles[s.id]]}</text>
+          {/each}
+        </g>
+        {#if depthControl === 'down' && arrowHead}
+          <g class="depth-arrow">
+            <line x1={width / 2} y1={height / 2} x2={arrowHead.x} y2={arrowHead.y} />
+            <polygon
+              points="{arrowHead.x + depth.arrow.x * 10},{arrowHead.y + depth.arrow.y * 10} {arrowHead.x - depth.arrow.y * 7},{arrowHead.y + depth.arrow.x * 7} {arrowHead.x + depth.arrow.y * 7},{arrowHead.y - depth.arrow.x * 7}"
+            />
+            <circle cx={width / 2} cy={height / 2} r="4" />
+          </g>
+        {/if}
+        {#if depthControl === 'projector'}
+          {@const y = markerY(depth.elevation) * height}
+          <g class="depth-projector">
+            <line x1={MARKER_X * width} y1={height * 0.03} x2={MARKER_X * width} y2={height * 0.97} />
+            <line class="sight" x1={MARKER_X * width} y1={y} x2={width / 2} y2={height / 2} />
+            <circle cx={MARKER_X * width} cy={y} r="12" />
+            <text x={MARKER_X * width - 18} y={y + 4} text-anchor="end">
+              Projector · {depth.elevation >= 0 ? `${Math.round(depth.elevation)}° down` : `${Math.round(-depth.elevation)}° up`}
+            </text>
+          </g>
+        {/if}
       {/if}
       {#if emitter}
         <g class="emitter" class:grabbable={emitterGrabbable || placingEmitter}>

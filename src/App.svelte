@@ -301,7 +301,7 @@
   /** Other layers' corner quads, offered to the editor as outlines to import. */
   function studioMappingSurfaces(layers:Layer[],editing:string){
     const unit=(v:number)=>Math.max(0,Math.min(1,v));
-    return layers.filter(l=>l.id!==editing&&l.corners).map(l=>({name:l.name,enabled:l.visible,mode:l.warpMode==='mesh'?'mesh':'corners',
+    return layers.filter(l=>l.id!==editing&&l.corners).map(l=>({id:l.id,name:l.name,enabled:l.visible,mode:l.warpMode==='mesh'?'mesh':'corners',
       points:[l.corners.topLeft,l.corners.topRight,l.corners.bottomRight,l.corners.bottomLeft].map(p=>({x:unit(p.x),y:unit(1-p.y)}))}));
   }
 

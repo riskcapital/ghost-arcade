@@ -16,7 +16,7 @@
 import { SCENE3D_FRAME_WGSL } from './scene3dFrame';
 
 /** Floats in the scene settings uniform (vec4 slots × 4). */
-export const SCENE_UNIFORM_FLOATS = 12 * 4;
+export const SCENE_UNIFORM_FLOATS = 16 * 4;
 export const VIEW_FLOATS = 16 + 16 + 4 * 8;
 export const MATERIAL_FLOATS = 8;
 export const PARTICLE_FLOATS = 12;
@@ -42,11 +42,18 @@ struct Settings {
   key_opts: vec4f,     // shadows, present, shadow map size, swing about Z (degrees either side)
   env: vec4f,          // sky (0 void, 1 studio, 2 night), intensity, fog, aspect
   post_a: vec4f,       // bloom, exposure, contrast, saturation
-  post_b: vec4f,       // temperature, grain, projected light gain (relief), projector distance (relief)
+  post_b: vec4f,       // temperature, grain, projected light gain (relief), spare
   react: vec4f,        // light, particles, bloom, camera
   counts: vec4f,       // vertices, particles, emitters, fields
-  counts_b: vec4f,     // point lights, colliders, wall width, wall height (relief)
+  counts_b: vec4f,     // point lights, colliders, the camera's lens shift (x, y: halves of the picture)
   bounds: vec4f,       // centre xyz, radius
+  // The projector of the relief world (projector.ts ProjectorBasis): the ray
+  // through output point (u, v) is fwd + right·(2u − 1 − sx) + up·(1 − 2v − sy),
+  // the lens shift (sx, sy) in proj_right.w and proj_up.w.
+  proj_pos: vec4f,
+  proj_right: vec4f,
+  proj_up: vec4f,
+  proj_fwd: vec4f,
 }
 
 // This frame's camera and light, worked out once on the GPU.
@@ -80,6 +87,22 @@ struct Collider { model: mat4x4f, inverse: mat4x4f, opts: vec4f } // opts.x shap
 
 @group(0) @binding(0) var<uniform> settings: Settings;
 @group(0) @binding(1) var<uniform> frame: SceneFrame;
+
+// The projector's ray through a point of the output (0..1, y down); its
+// forward part is 1, so p = proj_pos + proj_dir(uv) · t is t in front.
+fn proj_dir(uv: vec2f) -> vec3f {
+  return settings.proj_fwd.xyz + settings.proj_right.xyz * (uv.x * 2.0 - 1.0 - settings.proj_right.w) + settings.proj_up.xyz * (1.0 - uv.y * 2.0 - settings.proj_up.w);
+}
+// How far in front of the projector a point is, along its axis.
+fn proj_depth(p: vec3f) -> f32 { return dot(p - settings.proj_pos.xyz, settings.proj_fwd.xyz); }
+// Where a point shows on the output.
+fn proj_uv(p: vec3f) -> vec2f {
+  let rel = p - settings.proj_pos.xyz;
+  let t = max(dot(rel, settings.proj_fwd.xyz), 1e-3);
+  let r = settings.proj_right.xyz;
+  let u = settings.proj_up.xyz;
+  return vec2f(0.5 + 0.5 * (dot(rel, r) / (dot(r, r) * t) + settings.proj_right.w), 0.5 - 0.5 * (dot(rel, u) / (dot(u, u) * t) + settings.proj_up.w));
+}
 
 const PI = 3.14159265;
 
@@ -159,7 +182,11 @@ fn cs_frame() {
   }
   let aspect = max(settings.env.w, 0.01);
   let cam_view = look_at(eye, aim, vec3f(0.0, 1.0, 0.0));
-  view.view_proj = perspective(radians(settings.cam_pos.w), aspect, 0.05, 400.0) * cam_view;
+  // A lens shift moves the picture off the lens's axis, as a projector's does.
+  var lens = perspective(radians(settings.cam_pos.w), aspect, 0.05, 400.0);
+  lens[2].x = -settings.counts_b.z;
+  lens[2].y = -settings.counts_b.w;
+  view.view_proj = lens * cam_view;
   view.cam_pos = vec4f(eye, now);
   view.cam_right = vec4f(cam_view[0].x, cam_view[1].x, cam_view[2].x, 0.0);
   view.cam_up = vec4f(cam_view[0].y, cam_view[1].y, cam_view[2].y, 0.0);
@@ -595,23 +622,20 @@ fn fs_composite(in: VsOut) -> @location(0) vec4f {
 
 /**
  * The relief world in the Interactive Studio: the 2D effects, drawn first into
- * a flat texture, are thrown onto the wall and blocks as light from a
- * projector where the face-on camera stands. Seen face-on, sampling the flat
- * picture where a point shows on screen is exactly that projection.
+ * a flat texture, are thrown onto the wall and blocks as light from the
+ * projector (settings.proj_*): sampling the flat picture where a point shows
+ * from the projector is exactly that projection.
  */
 export const SCENE3D_RELIEF_WGSL = /* wgsl */ `${SCENE3D_WORLD_WGSL}
 @group(0) @binding(11) var flat_tex: texture_2d<f32>;
 @group(0) @binding(12) var flat_samp: sampler;
 
-// The projector: face-on to the wall from the face-on camera's place, so the
-// picture stays on the blocks when the Studio's Orbit view turns the camera.
-fn projector_pos() -> vec3f { return vec3f(0.0, 0.0, settings.post_b.w); }
+// The projector stays where it is when the Studio's Orbit view turns the
+// camera, so the picture stays on the blocks.
+fn projector_pos() -> vec3f { return settings.proj_pos.xyz; }
 
-// Where a point of the world shows on the output, seen face-on.
-fn face_uv(world: vec3f) -> vec2f {
-  let k = settings.post_b.w / max(settings.post_b.w - world.z, 1e-3);
-  return vec2f(0.5 + world.x * k / settings.counts_b.z, 0.5 - world.y * k / settings.counts_b.w);
-}
+// Where a point of the world shows on the output, seen from the projector.
+fn face_uv(world: vec3f) -> vec2f { return proj_uv(world); }
 
 // The flat picture at this point, premultiplied, in linear light.
 fn thrown_light(world: vec3f) -> vec4f {
@@ -661,6 +685,12 @@ fn fire_lighting(m: Material, world: vec3f, n: vec3f, v: vec3f) -> vec3f {
 @group(0) @binding(19) var wet_stain: texture_2d<f32>;
 @group(0) @binding(20) var wet_gloss: texture_2d<f32>;
 
+// Paint on a real object (a catcher): its color, premultiplied, and how much.
+fn paint_at(world: vec3f) -> vec4f {
+  let stain = textureSampleLevel(wet_stain, flat_samp, face_uv(world), 0.0).rgb;
+  return vec4f(stain, clamp(max(stain.r, max(stain.g, stain.b)), 0.0, 1.0));
+}
+
 fn wetted(m: Material, world: vec3f) -> Material {
   let uv = face_uv(world);
   let stain = textureSampleLevel(wet_stain, flat_samp, uv, 0.0).rgb;
@@ -684,7 +714,8 @@ fn fs_wet(in: LitOut) -> @location(0) vec4f {
   let n = normalize(in.normal);
   if (raw.catcher > 0.5) {
     let dark = 1.0 - shadow_at(in.world, n);
-    return vec4f(0.0, 0.0, 0.0, dark * 0.85);
+    let paint = paint_at(in.world);
+    return vec4f(paint.rgb, max(dark * 0.85, paint.a));
   }
   let m = wetted(raw, in.world);
   let v = normalize(view.cam_pos.xyz - in.world);
@@ -700,7 +731,8 @@ fn fs_relief_wet(in: LitOut) -> @location(0) vec4f {
   let thrown = thrown_light(in.world).rgb * settings.post_b.z * max(dot(n, normalize(projector_pos() - in.world)), 0.0);
   if (raw.catcher > 0.5) {
     let dark = 1.0 - shadow_at(in.world, n);
-    return vec4f(thrown, clamp(dark * 0.85, 0.0, 1.0));
+    let paint = paint_at(in.world);
+    return vec4f(thrown * (1.0 - paint.a) + paint.rgb, clamp(max(dark * 0.85, paint.a), 0.0, 1.0));
   }
   let m = wetted(raw, in.world);
   let reflectance = m.base * (1.0 - m.metal) + vec3f(0.12);

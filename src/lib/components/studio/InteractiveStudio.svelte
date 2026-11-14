@@ -58,14 +58,18 @@
     type InteractiveStarter,
     type SavedInteractiveScene,
   } from '../../mobile/studio/interactiveLibrary';
-  import { DEFAULT_ASPECT, importCornerSurfaces } from '../../mobile/studio/surfaceEditing';
+  import { DEFAULT_ASPECT, importCornerSurfaces, syncMappedSurfaces, type MappedSurface } from '../../mobile/studio/surfaceEditing';
   import * as edit from '../../mobile/studio/editorActions';
   import * as past from '../../mobile/studio/editorHistory';
   import { editorKey, type EditorKeyCommand } from '../../mobile/studio/editorKeyboard';
   import { DesktopFeedPreview } from '../../mobile/studio/desktopFeed';
   import { shareInteractiveScene } from '../../mobile/studio/captureToolkit';
   import { dialogHostOf, isCovered, keyTargetOf, trapTab } from './interactiveEditorFocus';
-  import type { EditorMode, EmitterMarker, InspectorTab, TouchTool } from './interactiveEditorTypes';
+  import type { DepthStage, DepthStep, EditorMode, EmitterMarker, InspectorTab, TouchTool } from './interactiveEditorTypes';
+  import { defaultRoom, defaultRoomSetup, FACE_ROLES, type RoomSetup } from '../../scene3d/roomModel';
+  import { solveRoom } from '../../scene3d/roomSolve';
+  import { roomFromCapture, validateDepthCapture } from '../../scene3d/roomPhone';
+  import type { ReliefWorld, WorldSource } from '../../scene3d/worldModel';
   import InteractiveHeader from './InteractiveHeader.svelte';
   import InteractiveToolbar from './InteractiveToolbar.svelte';
   import InteractiveStage from './InteractiveStage.svelte';
@@ -76,6 +80,7 @@
   import InteractiveObjectsPanel from './InteractiveObjectsPanel.svelte';
   import InteractiveSetupPanel from './InteractiveSetupPanel.svelte';
   import InteractiveWorldPanel from './InteractiveWorldPanel.svelte';
+  import InteractiveDepthSetup from './InteractiveDepthSetup.svelte';
   import { fireShowAction } from '../../show/showActions';
 
   // ── Props ────────────────────────────────────────────────────────────────
@@ -116,7 +121,7 @@
   export let onworldaction: ((what: ZoneWorldAction, point: Point) => void) | undefined = undefined;
   /** Orbit view: how far the 3D world's camera is turned; `null` is face-on. */
   export let onview: ((view: { yaw: number; pitch: number } | null) => void) | undefined = undefined;
-  export let mappingSurfaces: { name: string; points: Point[]; enabled: boolean; mode: string }[] = [];
+  export let mappingSurfaces: MappedSurface[] = [];
   export let onoutput: (canvas: HTMLCanvasElement | null) => void = () => {};
   /**
    * Width ÷ height of the composition the scene plays in. The stage, the shape
@@ -178,6 +183,98 @@
   }
   // Without a world there is nothing to orbit.
   $: if (orbit && !scene.world?.enabled) setOrbit(false);
+
+  // ── Depth setup (real objects) ───────────────────────────────────────────
+  /** The step of depth setup in the 3D World tab; null when not setting up. */
+  let depthStep: DepthStep | null = null;
+  $: roomSetup = scene.world?.source === 'room' ? scene.world.room?.setup : undefined;
+  $: if (depthStep && depthStep !== 'start' && depthStep !== 'scan' && !roomSetup) depthStep = null;
+  $: depthSolids = scene.surfaces.filter((s) => s.behavior === 'solid' && s.points.length >= 3);
+  // The solve the engine will run, here for the roles and how well the faces meet.
+  $: depthSolve = depthStep && roomSetup
+    ? solveRoom({
+        surfaces: depthSolids.map((s) => ({ id: s.id, points: s.points, role: roomSetup!.roles[s.id] })),
+        aspect: safeAspect, arrow: roomSetup.arrow, elevation: roomSetup.elevation, fov: roomSetup.fov, distance: roomSetup.distance,
+      })
+    : null;
+  $: depthStage = (depthStep && roomSetup && inspector === 'world'
+    ? { step: depthStep, arrow: roomSetup.arrow, elevation: roomSetup.elevation, roles: depthSolve?.roles ?? {} }
+    : null) as DepthStage | null;
+  // Linked to the mapping: the faces follow the mapped layers.
+  $: followMapping(scene, mappingSurfaces);
+  function followMapping(current: InteractiveScene, mapping: MappedSurface[]) {
+    if (current.world?.source !== 'room' || !current.world.room?.setup?.linked) return;
+    const next = syncMappedSurfaces(current.surfaces, mapping);
+    if (next) scene = { ...current, surfaces: next };
+  }
+  function setWorld(world: ReliefWorld, undo: boolean) {
+    if (undo) apply(edit.setSceneWorld(scene, world));
+    else {
+      scene = edit.setSceneWorld(scene, world);
+      touchEdit();
+    }
+  }
+  function setRoomSetup(patch: Partial<RoomSetup>, undo: boolean) {
+    const world = scene.world;
+    if (!world?.room?.setup) return;
+    setWorld({ ...world, room: { ...world.room, setup: { ...world.room.setup, ...patch } } }, undo);
+  }
+  function openDepth(step: DepthStep | null) {
+    depthStep = step;
+    if (step && mode !== 'edit') chooseMode('edit');
+    if (step && step !== 'projector' && orbit) setOrbit(false);
+  }
+  /** The world's shape: a flat wall, or the real objects (set up the first time). */
+  function chooseSource(source: WorldSource) {
+    const world = scene.world;
+    if (!world || world.source === source) return;
+    if (source === 'wall') {
+      openDepth(null);
+      return setWorld({ ...world, source, look: 'shaded' }, true);
+    }
+    const room = world.room?.setup ? world.room : { ...(world.room ?? defaultRoom()), setup: defaultRoomSetup() };
+    setWorld({ ...world, source, look: 'effects', room }, true);
+    if (!room.setup?.done) openDepth('start');
+  }
+  function cancelDepth() {
+    openDepth(null);
+    // Never set up: back to the flat wall.
+    if (scene.world && !roomSetup?.done) setWorld({ ...scene.world, source: 'wall', look: 'shaded' }, true);
+  }
+  function cycleRole(id: string) {
+    if (!roomSetup) return;
+    const now = depthSolve?.roles[id] ?? 'side';
+    const next = FACE_ROLES[(FACE_ROLES.indexOf(now) + 1) % FACE_ROLES.length];
+    setRoomSetup({ roles: { ...roomSetup.roles, [id]: next } }, true);
+  }
+  function linkMapping() {
+    const world = scene.world;
+    if (!world?.room?.setup) return;
+    const surfaces = syncMappedSurfaces(scene.surfaces, mappingSurfaces) ?? scene.surfaces;
+    apply({ ...edit.setSceneWorld(scene, { ...world, room: { ...world.room, setup: { ...world.room.setup, linked: true } } }), surfaces });
+    say('The mapped layers are the faces now, and follow the mapping.');
+  }
+  /** A phone scan: its surfaces become the solid objects, the room is as measured. */
+  function applyCapture(text: string) {
+    const world = scene.world;
+    if (!world) return;
+    try {
+      const capture = validateDepthCapture(JSON.parse(text));
+      const { room, report } = roomFromCapture(capture, safeAspect, (id) => `scan:${id}`);
+      const kept = scene.surfaces.filter((s) => !s.id.startsWith('scan:') && !(s.behavior === 'solid' && s.id.startsWith('mapped:')));
+      const scanned = capture.surfaces.map((s) => ({ id: `scan:${s.id}`, name: s.name, behavior: 'solid' as const, points: s.outline.map((p) => ({ x: Math.max(0, Math.min(1, p.x)), y: Math.max(0, Math.min(1, p.y)) })) }));
+      apply({ ...edit.setSceneWorld(scene, { ...world, source: 'room', look: 'effects', room }), surfaces: [...kept, ...scanned].slice(0, 32) });
+      openDepth(null);
+      say(`Scanned ${room.faces.length} faces. Lens ${Math.round(report.fov)}°, off by ${report.pixelError.toFixed(1)} px on average.`);
+    } catch (e) {
+      say((e as Error).message);
+    }
+  }
+  function finishDepth() {
+    setRoomSetup({ done: true }, true);
+    openDepth(null);
+    say('Depth set up. Throw, pour or ignite on the stage to try it.');
+  }
   let selected = 'stage';
   let selectedEffect = '';
   let lastEffect = '';
@@ -1091,6 +1188,10 @@
         onrelease={(id) => pointers.delete(id)}
         {orbit}
         onorbitdrag={turnOrbit}
+        depth={depthStage}
+        ondepthrole={cycleRole}
+        ondeptharrow={(arrow) => setRoomSetup({ arrow }, false)}
+        ondepthelevation={(elevation) => setRoomSetup({ elevation }, false)}
       />
       <InteractiveStageTools
         {mode}
@@ -1098,6 +1199,7 @@
         {handheld}
         bind:tool
         world={!!scene.world?.enabled}
+        depthStep={depthStage && (depthStage.step === 'faces' || depthStage.step === 'down' || depthStage.step === 'projector') ? depthStage.step : null}
         draftLength={draft.length}
         markerName={emitterMarker?.label.toLowerCase() ?? ''}
         sourceLabel={referencePreview
@@ -1219,9 +1321,27 @@
             world={!!scene.world?.enabled}
             onfinish={(finish) => apply(edit.setSurfaceFinish(scene, selected, finish))}
           />
+        {:else if inspector === 'world' && depthStep && (roomSetup || depthStep === 'scan' || depthStep === 'start')}
+          <InteractiveDepthSetup
+            step={depthStep}
+            setup={roomSetup ?? defaultRoomSetup()}
+            gravity={scene.world?.gravity ?? 1}
+            faces={depthSolids.length}
+            contacts={depthSolve?.contacts ?? 0}
+            canLink={mappingSurfaces.some((s) => s.id && s.enabled && s.mode === 'corners')}
+            onstep={(step) => (step === null ? cancelDepth() : openDepth(step))}
+            onsetup={setRoomSetup}
+            ongravity={(gravity, undo) => scene.world && setWorld({ ...scene.world, gravity }, undo)}
+            onlink={linkMapping}
+            oncapture={applyCapture}
+            onstart={beginEdit}
+            ondone={finishDepth}
+          />
         {:else if inspector === 'world'}
           <InteractiveWorldPanel
             world={scene.world}
+            ondepth={chooseSource}
+            ondepthsetup={() => openDepth('start')}
             blocks={scene.surfaces.filter((s) => s.behavior === 'solid').length}
             onstart={beginEdit}
             onchange={(world, step) => {
