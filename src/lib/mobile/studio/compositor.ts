@@ -441,6 +441,7 @@ export class StudioCompositor {
           outputGain,
           audio,
           transportBeat,
+          this.coverage.field(s),
         );
         if(ink){
           g.enable(g.BLEND);g.blendFuncSeparate(g.ONE,g.ONE_MINUS_SRC_ALPHA,g.ONE,g.ONE_MINUS_SRC_ALPHA);

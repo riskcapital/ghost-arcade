@@ -198,7 +198,8 @@ describe('coverage', () => {
     expect(at(inverted, 0.05, 0.1)).toBe(0);
     expect(at(inverted, 0.75, 0.5)).toBe(255);
     const soft = rasterizeCoverage({ masks: [{ ...left, feather: 0.25 }] }, W, H)!;
-    expect(at(soft, 0.49, 0.5)).toBeLessThan(40);
+    expect(at(soft, 0.49, 0.5)).toBeLessThan(64);
+    expect(at(soft, 0.45, 0.5)).toBeGreaterThan(at(soft, 0.49, 0.5));
     expect(at(soft, 0.02, 0.5)).toBe(255);
     // Only cutting masks: the rest of the surface stays.
     const onlyHole = rasterizeCoverage({ masks: [hole] }, W, H)!;
@@ -222,5 +223,38 @@ describe('coverage', () => {
     const masks = normalizeMasks([good, { kind: 'polygon', points: [{ x: 0, y: 0 }] }, { kind: 'image', image: { src: 'http://x' } }, null, { kind: 'nope' }]);
     expect(masks).toHaveLength(1);
     expect(masks[0]).toEqual(good);
+  });
+});
+
+describe('edge field for Looks', () => {
+  it('measures inward distance to a free-form outline and position along it', async () => {
+    const { edgeField, FIELD_MAX_PX } = await import('./coverage');
+    const W = 64,
+      H = 64;
+    const circle = Array.from({ length: 64 }, (_, i) => ({ x: 32 + Math.cos((i / 64) * Math.PI * 2) * 24, y: 32 + Math.sin((i / 64) * Math.PI * 2) * 24 }));
+    const cov = new Float32Array(W * H);
+    fillPolygon(circle, W, H, cov);
+    const c8 = Uint8Array.from(cov, (v) => Math.round(Math.min(1, v) * 255));
+    const { data, perimeter } = edgeField(c8, W, H, 2, circle);
+    expect(perimeter).toBeCloseTo(2 * Math.PI * 24 * 2, -1);
+    const dist = (x: number, y: number) => (data[(y * W + x) * 4 + 1] / 255) ** 2 * FIELD_MAX_PX;
+    const along = (x: number, y: number) => (data[(y * W + x) * 4 + 2] * 256 + data[(y * W + x) * 4 + 3]) / 65535;
+    // Centre: 24 texels from the edge, 2 output pixels each.
+    expect(dist(32, 32)).toBeGreaterThan(44);
+    expect(dist(32, 32)).toBeLessThan(52);
+    expect(dist(32 + 22, 32)).toBeLessThan(6);
+    // Right of centre is the start of the outline, below it a quarter of the way round.
+    expect(along(54, 32)).toBeLessThan(0.05);
+    expect(along(32, 54)).toBeCloseTo(0.25, 1);
+    // Outside the outline nothing shows.
+    expect(data[(1 * W + 1) * 4]).toBe(0);
+  });
+  it('treats the frame border as an edge when masks leave it visible', async () => {
+    const { edgeField } = await import('./coverage');
+    const cov = new Uint8Array(32 * 32).fill(255);
+    const { data } = edgeField(cov, 32, 32, 1, null);
+    const d = (x: number, y: number) => (data[(y * 32 + x) * 4 + 1] / 255) ** 2 * 256;
+    expect(d(0, 16)).toBeLessThan(2);
+    expect(d(16, 16)).toBeGreaterThan(14);
   });
 });

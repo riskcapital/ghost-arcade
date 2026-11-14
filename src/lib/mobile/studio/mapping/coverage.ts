@@ -157,20 +157,72 @@ export function insideDistance(inside: Uint8Array, width: number, height: number
   return grid;
 }
 
-/** Ramp coverage inward over `radius` pixels from its edge. */
+/**
+ * Ramp coverage inward over `radius` pixels from its edge. A wide ramp is
+ * smooth anyway, so its distances are measured on a coarser grid (a step
+ * of at most a third of the ramp) and the crisp edge is kept from `cov`.
+ */
 export function featherInward(cov: Float32Array, width: number, height: number, radius: number) {
   if (!(radius >= 1)) return;
-  const inside = new Uint8Array(cov.length);
-  for (let i = 0; i < cov.length; i++) inside[i] = cov[i] >= 0.5 ? 1 : 0;
-  const dist = insideDistance(inside, width, height);
-  for (let i = 0; i < cov.length; i++) {
-    if (!inside[i]) {
-      cov[i] = 0;
-      continue;
+  const k = Math.max(1, Math.min(8, Math.floor(radius / 3)));
+  const w = Math.ceil(width / k),
+    h = Math.ceil(height / k);
+  const inside = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      // A coarse cell is inside only when all of it is: the ramp never starts outside the line.
+      let all = 1;
+      for (let yy = y * k; yy < Math.min(height, (y + 1) * k) && all; yy++)
+        for (let xx = x * k; xx < Math.min(width, (x + 1) * k); xx++)
+          if (cov[yy * width + xx] < 0.5) {
+            all = 0;
+            break;
+          }
+      inside[y * w + x] = all;
     }
-    const t = Math.min(1, dist[i] / radius);
-    cov[i] = t * t * (3 - 2 * t);
+  const dist = insideDistance(inside, w, h);
+  for (let y = 0; y < height; y++) {
+    const fy = Math.max(0, Math.min(h - 1, (y + 0.5) / k - 0.5));
+    const y0 = Math.floor(fy),
+      y1 = Math.min(h - 1, y0 + 1),
+      ty = fy - y0;
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x;
+      if (cov[i] <= 0) continue;
+      const fx = Math.max(0, Math.min(w - 1, (x + 0.5) / k - 0.5));
+      const x0 = Math.floor(fx),
+        x1 = Math.min(w - 1, x0 + 1),
+        tx = fx - x0;
+      const a = Math.min(dist[y0 * w + x0], 1e6),
+        b = Math.min(dist[y0 * w + x1], 1e6),
+        c = Math.min(dist[y1 * w + x0], 1e6),
+        d = Math.min(dist[y1 * w + x1], 1e6);
+      // Distances on the coarse grid count from cell centres: add back half a cell.
+      const cells = (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
+      const px = k === 1 ? cells : cells * k + (cells > 0 ? k / 2 : 0);
+      const t = Math.min(1, Math.max(0, px / radius));
+      cov[i] = Math.min(cov[i], t * t * (3 - 2 * t));
+    }
   }
+}
+
+/** Halve a coverage map (box filter), for the Look field. */
+export function halve(coverage: Uint8Array, width: number, height: number): { data: Uint8Array; width: number; height: number } {
+  const w = Math.max(1, Math.ceil(width / 2)),
+    h = Math.max(1, Math.ceil(height / 2));
+  const data = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      let sum = 0,
+        n = 0;
+      for (let yy = y * 2; yy < Math.min(height, y * 2 + 2); yy++)
+        for (let xx = x * 2; xx < Math.min(width, x * 2 + 2); xx++) {
+          sum += coverage[yy * width + xx];
+          n++;
+        }
+      data[y * w + x] = Math.round(sum / n);
+    }
+  return { data, width: w, height: h };
 }
 
 function sampleImage(img: GrayImage, u: number, v: number): number {
@@ -231,4 +283,185 @@ export function rasterizeCoverage(input: CoverageInput, width: number, height: n
     out[i] = Math.round(Math.max(0, Math.min(1, v)) * 255);
   }
   return out;
+}
+
+// ── The edge field Looks draw with ─────────────────────────────────────────
+
+/** Squared distance transform along one line that also says where each nearest site is. */
+function edt1dArg(f: Float32Array, n: number, d: Float32Array, arg: Int32Array, v: Int32Array, z: Float32Array) {
+  let k = 0;
+  v[0] = 0;
+  z[0] = -Infinity;
+  z[1] = Infinity;
+  for (let q = 1; q < n; q++) {
+    let s = (f[q] + q * q - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+    while (s <= z[k]) {
+      k--;
+      s = (f[q] + q * q - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+    }
+    k++;
+    v[k] = q;
+    z[k] = s;
+    z[k + 1] = Infinity;
+  }
+  k = 0;
+  for (let q = 0; q < n; q++) {
+    while (z[k + 1] < q) k++;
+    d[q] = (q - v[k]) * (q - v[k]) + f[v[k]];
+    arg[q] = v[k];
+  }
+}
+
+/** Largest inward distance the field stores, in output pixels. */
+export const FIELD_MAX_PX = 256;
+
+/**
+ * What a Look needs to follow an outline that is not the surface's frame:
+ * per pixel, how much shows (R), how far inside the visible edge it is in
+ * output pixels (G, square-root coded up to FIELD_MAX_PX), and where along
+ * the edge its nearest point is, 0–1 (B high byte, A low byte). The frame's
+ * own border counts as an edge too. `pixel` is output pixels per texel;
+ * `outline` (texels) gives exact positions along a single outline, else the
+ * position is the angle around the visible area's centre.
+ */
+export function edgeField(coverage: Uint8Array, width: number, height: number, pixel: number, outline: Point[] | null): { data: Uint8Array; perimeter: number } {
+  // Pad by one texel of outside so the border is an edge.
+  const W = width + 2,
+    H = height + 2;
+  const BIG = 1e20;
+  const grid = new Float32Array(W * H);
+  let cx = 0,
+    cy = 0,
+    mass = 0;
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++) {
+      const inside = x > 0 && y > 0 && x <= width && y <= height && coverage[(y - 1) * width + (x - 1)] >= 128;
+      grid[y * W + x] = inside ? BIG : 0;
+      if (inside) {
+        cx += x;
+        cy += y;
+        mass++;
+      }
+    }
+  cx /= Math.max(1, mass);
+  cy /= Math.max(1, mass);
+  const n = Math.max(W, H);
+  const f = new Float32Array(n),
+    d = new Float32Array(n),
+    z = new Float32Array(n + 1),
+    v = new Int32Array(n),
+    arg = new Int32Array(n);
+  const rowOf = new Int32Array(W * H);
+  for (let x = 0; x < W; x++) {
+    for (let y = 0; y < H; y++) f[y] = grid[y * W + x];
+    edt1dArg(f, H, d, arg, v, z);
+    for (let y = 0; y < H; y++) {
+      grid[y * W + x] = d[y];
+      rowOf[y * W + x] = arg[y];
+    }
+  }
+  const site = new Int32Array(W * H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) f[x] = grid[y * W + x];
+    edt1dArg(f, W, d, arg, v, z);
+    for (let x = 0; x < W; x++) {
+      grid[y * W + x] = d[x];
+      const sx = arg[x];
+      site[y * W + x] = rowOf[y * W + sx] * W + sx;
+    }
+  }
+  // Position along the edge for each site that is used.
+  let perimeter = 0;
+  const lengths: number[] = [];
+  if (outline && outline.length >= 3) {
+    for (let i = 0; i < outline.length; i++) {
+      const a = outline[i],
+        b = outline[(i + 1) % outline.length];
+      lengths.push(perimeter);
+      perimeter += Math.hypot(b.x - a.x, b.y - a.y);
+    }
+  }
+  const cache = new Map<number, number>();
+  const along = (s: number): number => {
+    let t = cache.get(s);
+    if (t !== undefined) return t;
+    const px = (s % W) - 1 + 0.5,
+      py = Math.floor(s / W) - 1 + 0.5;
+    if (outline && perimeter > 0) {
+      let best = Infinity;
+      t = 0;
+      for (let i = 0; i < outline.length; i++) {
+        const a = outline[i],
+          b = outline[(i + 1) % outline.length];
+        const ex = b.x - a.x,
+          ey = b.y - a.y;
+        const len2 = ex * ex + ey * ey || 1e-9;
+        const u = Math.max(0, Math.min(1, ((px - a.x) * ex + (py - a.y) * ey) / len2));
+        const dist = Math.hypot(px - (a.x + ex * u), py - (a.y + ey * u));
+        if (dist < best) {
+          best = dist;
+          t = (lengths[i] + u * Math.sqrt(len2)) / perimeter;
+        }
+      }
+    } else t = (Math.atan2(py + 1 - cy, px + 1 - cx) / (Math.PI * 2) + 1.25) % 1;
+    cache.set(s, t);
+    return t;
+  };
+  if (!(outline && perimeter > 0)) {
+    // Perimeter of the visible area: edge texels counted once.
+    let edges = 0;
+    for (let y = 1; y <= height; y++)
+      for (let x = 1; x <= width; x++)
+        if (grid[y * W + x] > 0 && grid[y * W + x] < 1.5) edges++;
+    perimeter = edges;
+  }
+  const data = new Uint8Array(width * height * 4);
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x,
+        g = (y + 1) * W + (x + 1);
+      const c = coverage[i];
+      data[i * 4] = c;
+      if (c < 128) continue;
+      const dist = Math.min(FIELD_MAX_PX, Math.sqrt(grid[g]) * pixel);
+      data[i * 4 + 1] = Math.round(Math.sqrt(dist / FIELD_MAX_PX) * 255);
+      const t = Math.round(along(site[g]) * 65535);
+      data[i * 4 + 2] = t >> 8;
+      data[i * 4 + 3] = t & 255;
+    }
+  return { data, perimeter: perimeter * pixel };
+}
+
+// ── One surface's textures, built in one go (on a worker when there is one) ──
+
+export type CoverageJob = {
+  key: string;
+  width: number;
+  height: number;
+  outline: Point[] | null;
+  outlineFeather: number;
+  masks: SurfaceMask[];
+  images: [string, GrayImage][];
+  /** Build the Look field too: output pixels per coverage texel, and the outline to measure along (texels). */
+  field: { pixel: number; line: Point[] | null } | null;
+};
+export type CoverageResult = {
+  key: string;
+  width: number;
+  height: number;
+  coverage: Uint8Array | null;
+  field: { data: Uint8Array; width: number; height: number; perimeter: number } | null;
+};
+
+/** Coverage at full size and, when asked, the Look field at half size. */
+export function buildCoverage(job: CoverageJob): CoverageResult {
+  const coverage = rasterizeCoverage({ outline: job.outline, outlineFeather: job.outlineFeather, masks: job.masks, images: new Map(job.images) }, job.width, job.height);
+  let field: CoverageResult['field'] = null;
+  if (job.field && coverage) {
+    const half = halve(coverage, job.width, job.height);
+    const line = job.field.line?.map((p) => ({ x: p.x / 2, y: p.y / 2 })) ?? null;
+    const built = edgeField(half.data, half.width, half.height, job.field.pixel * 2, line);
+    field = { data: built.data, width: half.width, height: half.height, perimeter: built.perimeter };
+  }
+  return { key: job.key, width: job.width, height: job.height, coverage, field };
 }
