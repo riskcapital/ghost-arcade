@@ -195,6 +195,8 @@
   import SurfaceShapePanel from './mapping/SurfaceShapePanel.svelte';
   import AddSurfaceSheet from './mapping/AddSurfaceSheet.svelte';
   import MaskPanel from './mapping/MaskPanel.svelte';
+  import SurfaceActions from './mapping/SurfaceActions.svelte';
+  import type {SurfacePattern} from '../../mobile/studio/compositor';
   import {nudgeBasis} from '../../mobile/studio/mapping/viewport';
   import {nudge as nudgeSurfaces,pointAt,selectablePoints,pruneWelds} from '../../mobile/studio/mapping/edit';
   import {createDrawnSurface,createSurface,cornerView,kindLabel,resetGeometry,type NewSurfaceKind} from '../../mobile/studio/mapping/surfaceKinds';
@@ -205,6 +207,9 @@
   let mapMask=-1, mapMaskPoint=0, mapMaskTool:'edit'|'polygon'|'freehand'='edit', mapTapped=0;
   $: { selectedSurface; mapMask=-1; mapMaskPoint=0; mapMaskTool='edit'; }
   function mapMaskSet(mask:number,point:number,tool:'edit'|'polygon'|'freehand'){mapMask=mask;mapMaskPoint=point;mapMaskTool=tool;mapTapped=0;}
+  // Editor-only views of the output (never saved, off outside Map): several selected, solo, test patterns.
+  let mapMulti=false, mapSolo=false, mapIdentify=false, mapPatterns:Record<string,SurfacePattern>={};
+  $: if(engine) engine.mappingView = tab==='map' ? {solo:mapSolo?(mapSelection.length>1?mapSelection:[selectedSurface]).map(i=>show.surfaces[i]?.id).filter(Boolean):undefined,identify:mapIdentify,patterns:mapPatterns} : null;
   $: mapBasis=nudgeBasis(outputStatus.connected?outputStatus.display:null);
   $: mapPoints=selectablePoints(show.surfaces[selectedSurface]);
   function mapChange(next:Surface[]){show.surfaces=next;show={...show};}
@@ -1564,7 +1569,7 @@
           {#key canvasGeneration}<canvas bind:this={output} aria-label="Live video output"></canvas>{/key}
           {#if visualsDown}<div class="visuals-down" role="alert"><strong>{visualsRestarting ? 'Restarting visuals…' : 'Visuals interrupted'}</strong><span>Your set is safe.</span><button data-restart-visuals disabled={visualsRestarting} onclick={() => restartVisuals(true)}>Restart visuals</button></div>{/if}
           {#if tab === 'map' && !clean}
-            <MappingCanvas bind:this={mappingCanvas} surfaces={show.surfaces} selected={selectedSurface} selection={mapSelection} point={selectedPoint} snap={mappingSnap} grid={mappingGrid} multi={false} tool={mappingTool==='paint'?'view':mapDraw?'draw':'edit'} canvas={output} basis={mapBasis}
+            <MappingCanvas bind:this={mappingCanvas} surfaces={show.surfaces} selected={selectedSurface} selection={mapSelection} point={selectedPoint} snap={mappingSnap} grid={mappingGrid} multi={mapMulti} tool={mappingTool==='paint'?'view':mapDraw?'draw':'edit'} canvas={output} basis={mapBasis}
               onchange={mapChange} onbegin={mapBegin} oncommit={persist} onnotice={message=>flash(message)} ondrawn={drawnSurface}
               mask={mapMask} maskPoint={mapMaskPoint} maskTool={mapMaskTool} onmask={mapMaskSet} ontaps={count=>mapTapped=count}
               onselect={(index,point,selection)=>{selectedSurface=index;selectedPoint=point;mapSelection=selection;}}/>
@@ -1695,6 +1700,7 @@
                 persist();
               }}>{show.mapping ? 'Mapping on' : 'Mapping off'}</button
             ><button class:active={mappingGrid} aria-pressed={mappingGrid} onclick={()=>mappingGrid=!mappingGrid}><Icon name="grid" size={16}/>Grid</button><button class:active={mappingSnap} aria-pressed={mappingSnap} onclick={()=>mappingSnap=!mappingSnap}><Icon name="snap" size={16}/>Snap</button><button class:active={testGrid} aria-pressed={testGrid} onclick={toggleGrid}><Icon name="grid" size={16} />Test grid</button
+            ><button class:active={mapIdentify} aria-pressed={mapIdentify} onclick={()=>mapIdentify=!mapIdentify} aria-label="Identify surfaces on the projector">Identify</button
             ><select
               aria-label="Stage layout preset"
               value=""
@@ -1710,6 +1716,7 @@
           <div class="surface-list">
             {#each show.surfaces as s, i}<button
                 class:active={selectedSurface === i}
+                class:picked={mapSelection.length > 1 && mapSelection.includes(i)}
                 onclick={() => {
                   selectedSurface = i;
                   selectedPoint = 0;
@@ -1799,6 +1806,10 @@
               <NudgePad at={pointAt(surface,selectedPoint)} label="Point" points={mapPoints.length} index={Math.max(0,mapPoints.indexOf(selectedPoint))} disabled={surface.locked} basis={mapBasis}
                 onstart={mapBegin} onnudge={(dx,dy)=>{mapChange(nudgeSurfaces(show.surfaces,selectedSurface,selectedPoint,dx,dy,mapSelection));persist();}}
                 onpoint={step=>{const at=mapPoints.indexOf(selectedPoint);selectedPoint=mapPoints[(Math.max(0,at)+step+mapPoints.length)%mapPoints.length]??0;}}/>
+              <SurfaceActions surfaces={show.surfaces} index={selectedSurface} selection={mapSelection} multi={mapMulti} solo={mapSolo} pattern={mapPatterns[surface.id]??null}
+                onapply={(next,select)=>{mapApply(next);if(select){selectedSurface=select.index;mapSelection=select.selection;selectedPoint=0;}}}
+                onmulti={on=>{mapMulti=on;if(on&&mapSelection.length<2)mapSelection=[selectedSurface];}} onsolo={on=>mapSolo=on}
+                onpattern={p=>{const next={...mapPatterns};if(p)next[surface.id]=p;else delete next[surface.id];mapPatterns=next;}} onnotice={message=>flash(message)}/>
               <div class="card-actions">
                 <button
                   disabled={surface.locked}
@@ -2891,6 +2902,7 @@
     min-width: 0;
     background: var(--ga-card);
   }
+  .surface-list > button.picked { border-color: #91f0d0; }
   .surface-list > button.active {
     background: var(--ga-selection-bg);
     border-color: var(--ga-selection-line);

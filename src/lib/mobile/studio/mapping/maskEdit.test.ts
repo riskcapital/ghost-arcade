@@ -60,7 +60,7 @@ describe('mask editing', () => {
   it('adds, replaces and removes masks without leaving an empty list behind', () => {
     const s = quad();
     const m = newPolygonMask([{ x: 0.2, y: 0.2 }, { x: 0.8, y: 0.2 }, { x: 0.5, y: 0.8 }]);
-    let surfaces = [{ ...s, masks: [m] }];
+    let surfaces: Surface[] = [{ ...s, masks: [m] }];
     surfaces = withMask(surfaces, 0, 0, { ...m, invert: true });
     expect(surfaces[0].masks![0].invert).toBe(true);
     surfaces = withMask(surfaces, 0, 0, null);

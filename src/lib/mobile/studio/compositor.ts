@@ -12,6 +12,8 @@ varying vec2 texCoord; uniform sampler2D source; uniform sampler2D backdrop;
 uniform int mode; uniform float gain; uniform float feather; uniform vec2 fit; uniform bool contained; uniform bool grid; uniform vec2 gridSize;
 // Free-form outline and masks: how much of each point of the surface shows.
 uniform sampler2D coverage; uniform bool covered;
+// A test pattern on one surface, for finding it on the wall: 1 card, 2 identify, 3 white.
+uniform int pattern; uniform float patternIndex;
 // The alignment card, matching the desktop's empty-layer card: square grid
 // from the centre, frame, centre cross and circles, diagonals, corner
 // brackets, a grey step row and a colour row. Between the lines it is 0,0,0.
@@ -40,11 +42,44 @@ vec3 alignmentCard(vec2 uv,vec2 size){
  col=max(col,blue*max(cardLine(corner.x-inset,w*1.5)*step(inset,corner.y)*step(corner.y,inset+arm),cardLine(corner.y-inset,w*1.5)*step(inset,corner.x)*step(corner.x,inset+arm)));
  return col;
 }
+vec3 patternHue(float h){return clamp(abs(fract(h+vec3(0.,2./3.,1./3.))*6.-3.)-1.,0.,1.);}
+float patternSeg(vec2 p,vec2 a,vec2 b,float w){vec2 pa=p-a,ba=b-a;float h=clamp(dot(pa,ba)/dot(ba,ba),0.,1.);return 1.-smoothstep(w,w+1.5,length(pa-ba*h));}
+float patternBit(float m,float k){return mod(floor(m/pow(2.,k)+.001),2.);}
+// A seven-segment digit s pixels tall; p from its lower left corner, y up.
+float patternDigit(vec2 p,float d,float s,float w){
+ float x0=s*.08,x1=s*.42,y0=s*.06,y1=s*.5,y2=s*.94;
+ float m=d<.5?63.:d<1.5?6.:d<2.5?91.:d<3.5?79.:d<4.5?102.:d<5.5?109.:d<6.5?125.:d<7.5?7.:d<8.5?127.:111.;
+ float v=patternBit(m,0.)*patternSeg(p,vec2(x0,y2),vec2(x1,y2),w);
+ v=max(v,patternBit(m,1.)*patternSeg(p,vec2(x1,y2),vec2(x1,y1),w));
+ v=max(v,patternBit(m,2.)*patternSeg(p,vec2(x1,y1),vec2(x1,y0),w));
+ v=max(v,patternBit(m,3.)*patternSeg(p,vec2(x0,y0),vec2(x1,y0),w));
+ v=max(v,patternBit(m,4.)*patternSeg(p,vec2(x0,y1),vec2(x0,y0),w));
+ v=max(v,patternBit(m,5.)*patternSeg(p,vec2(x0,y2),vec2(x0,y1),w));
+ return max(v,patternBit(m,6.)*patternSeg(p,vec2(x0,y1),vec2(x1,y1),w));
+}
+// Identify: the surface's own colour, an 8 x 8 grid, a white border and its number, large.
+vec3 identifyCard(vec2 uv,vec2 size,float n){
+ vec2 px=uv*size;vec3 base=patternHue(fract(n*.618034+.04));
+ vec2 cell=size/8.;vec2 q=abs(fract(px/cell+.5)-.5)*cell;
+ vec3 col=mix(base*.32,base,(1.-smoothstep(.75,1.75,min(q.x,q.y)))*.85);
+ float edge=min(min(px.x,size.x-px.x),min(px.y,size.y-px.y));
+ col=mix(col,vec3(1.),1.-smoothstep(3.,5.,edge));
+ float label=n+1.,tens=floor(label/10.),ones=label-tens*10.;bool two=tens>.5;
+ float h=min(size.y*.55,size.x*(two?.36:.6)),gap=h*.1,wd=h*.5,total=two?wd*2.+gap:wd;
+ vec2 up=vec2(px.x,size.y-px.y)-vec2(size.x*.5-total*.5,size.y*.5-h*.5);
+ float w=max(1.5,h*.065);
+ float ink=patternDigit(up-(two?vec2(wd+gap,0.):vec2(0.)),ones,h,w);
+ float halo=patternDigit(up-(two?vec2(wd+gap,0.):vec2(0.)),ones,h,w*2.4);
+ if(two){ink=max(ink,patternDigit(up,tens,h,w));halo=max(halo,patternDigit(up,tens,h,w*2.4));}
+ return mix(mix(col,vec3(0.),halo*.85),vec3(1.),ink);
+}
 void main(){
  vec2 uv=(texCoord-.5)*fit+.5;
  vec4 s=texture2D(source,vec2(uv.x,1.-uv.y));
  if(contained && (uv.x<0.||uv.x>1.||uv.y<0.||uv.y>1.)) s=vec4(0.);
- if(grid)s=vec4(alignmentCard(texCoord,max(gridSize,vec2(1.))),1.);
+ if(grid||pattern==1)s=vec4(alignmentCard(texCoord,max(gridSize,vec2(1.))),1.);
+ if(pattern==2)s=vec4(identifyCard(texCoord,max(gridSize,vec2(1.)),patternIndex),1.);
+ if(pattern==3)s=vec4(1.);
  float edge=min(min(texCoord.x,1.-texCoord.x),min(texCoord.y,1.-texCoord.y));
  float cut=covered?texture2D(coverage,texCoord).r:1.;
  s.a*=gain*(feather>0.?smoothstep(0.,feather,edge):1.)*cut;
@@ -66,6 +101,10 @@ export function surfaceVertices(surface?: Surface): Float32Array {
   return tessellate(surface);
 }
 export type TextureInput = { texture: WebGLTexture; width: number; height: number };
+export type SurfacePattern = 'card' | 'identify' | 'white';
+/** What the mapping editor asks the output to show for a moment: only some surfaces, or test patterns on them. */
+export type MappingView = { solo?: string[]; identify?: boolean; patterns?: Record<string, SurfacePattern> };
+const PATTERN_CODE: Record<SurfacePattern, number> = { card: 1, identify: 2, white: 3 };
 export class StudioCompositor {
   private gl: WebGLRenderingContext;
   private crossfade: DeckCrossfade;
@@ -84,6 +123,8 @@ export class StudioCompositor {
   private buffers = new Map<string, { verts: Float32Array; buffer: WebGLBuffer; seen: number }>();
   private coverage: CoverageTextures;
   private frameCount = 0;
+  /** Set by the engine from the mapping editor; never saved with the set. */
+  mappingView: MappingView | null = null;
   private fullFrame = surfaceVertices();
   private locations: Record<string, WebGLUniformLocation | null> = {};
   constructor(readonly canvas: HTMLCanvasElement) {
@@ -111,7 +152,7 @@ export class StudioCompositor {
     if (!gl.getProgramParameter(this.program, gl.LINK_STATUS)) throw new Error('Could not link the output compositor.');
     this.buffer = gl.createBuffer()!;
     this.coverage = new CoverageTextures(gl);
-    for (const name of ['source', 'backdrop', 'mode', 'gain', 'feather', 'fit', 'contained', 'grid', 'gridSize', 'coverage', 'covered'])
+    for (const name of ['source', 'backdrop', 'mode', 'gain', 'feather', 'fit', 'contained', 'grid', 'gridSize', 'coverage', 'covered', 'pattern', 'patternIndex'])
       this.locations[name] = gl.getUniformLocation(this.program, name);
     for (let i = 0; i < 8; i++) this.sources.push(this.texture());
     for (let i = 0; i < 2; i++) this.targets.push({ texture: this.texture(), frame: gl.createFramebuffer()! });
@@ -161,6 +202,8 @@ export class StudioCompositor {
     fitMode: Surface['fit'] = 'stretch',
     painted=false,
     cut: WebGLTexture | null = null,
+    pattern = 0,
+    patternIndex = 0,
   ) {
     const g = this.gl,
       L = this.locations;
@@ -207,6 +250,8 @@ export class StudioCompositor {
     g.uniform1i(L.covered, cut ? 1 : 0);
     g.activeTexture(g.TEXTURE0);
     g.uniform1i(L.grid, grid ? 1 : 0);
+    g.uniform1i(L.pattern, pattern);
+    g.uniform1f(L.patternIndex, patternIndex);
     let fx = 1,
       fy = 1;
     const fit = painted ? 'stretch' : surface?.fit || fitMode;
@@ -349,8 +394,16 @@ export class StudioCompositor {
     g.blendFuncSeparate(g.SRC_ALPHA, g.ONE_MINUS_SRC_ALPHA, g.ONE, g.ONE_MINUS_SRC_ALPHA);
     if (!mapped) this.draw(mixTexture, this.sources[0], -1, outputGain, undefined, testGrid);
     else
-      for (const s of show.surfaces) {
+      for (const [index, s] of show.surfaces.entries()) {
         if (!s.enabled) continue;
+        const view = this.mappingView;
+        if (view?.solo?.length && !view.solo.includes(s.id)) continue;
+        const pattern = view?.identify ? 'identify' : view?.patterns?.[s.id];
+        if (pattern) {
+          // A test pattern replaces the picture, its look and paint, at full brightness.
+          this.draw(this.sources[0], this.sources[0], -1, 1, s, false, 16 / 9, 'stretch', false, this.coverage.get(s, this.width, this.height), PATTERN_CODE[pattern], index);
+          continue;
+        }
         const i = s.source;
         const paired = show.dualDeck && i !== 'mix';
         const available = paired || i === 'mix' || !!inputs[i] || s.look?.enabled;
