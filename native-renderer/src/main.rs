@@ -146,6 +146,8 @@ use winit::{
 // Each layer is tested against its cull bounds first, so a large count costs
 // little when most layers miss most pixels.
 const MAX_SCENE_LAYERS: usize = 1024;
+/// Pipelines built at once on worker threads while a new graph warms.
+const PIPELINE_WORKERS: usize = 6;
 // Tile bins for the composite. The canvas is cut into LAYER_TILES x
 // LAYER_TILES tiles, and each tile lists, bottom to top, the layers whose
 // cull bounds reach it, so a pixel visits those layers instead of testing
@@ -24031,7 +24033,7 @@ impl RenderState {
 
     fn queue_pipeline_work(&mut self, key: &str, build: impl FnOnce() -> Result<CompiledPipeline, String> + Send + 'static) -> Result<(), String> {
         if let Some(error) = self.pipeline_failures.get(key) { return Err(error.clone()); }
-        if !self.pipeline_work.contains_key(key) && self.pipeline_work.len() < 2 {
+        if !self.pipeline_work.contains_key(key) && self.pipeline_work.len() < PIPELINE_WORKERS {
             let (tx, rx) = mpsc::channel();
             self.pipeline_work.insert(key.to_string(), rx);
             thread::spawn(move || { let _ = tx.send(build()); });
@@ -24733,26 +24735,30 @@ impl RenderState {
             // `Value` was dropped on the floor. Building it cost a fresh
             // serde_json map (18 entries for a render plan) for every pass of
             // every graph layer, every frame.
+            // A pipeline still building does not stop the job here: the rest
+            // of its passes are still asked for, so every missing pipeline is
+            // queued at once instead of one per frame. A graph with dozens of
+            // passes otherwise took minutes to appear. The frame is not
+            // submitted while any is warming (the caller retries the job).
+            let mut warming: Option<String> = None;
             for pass_plan in &job.pass_plans {
-                self.encode_native_compute_graph_pass(
-                    encoder,
-                    &transient_buffers,
-                    pass_plan,
-                    false,
-                )?;
+                match self.encode_native_compute_graph_pass(encoder, &transient_buffers, pass_plan, false) {
+                    Err(err) if err.starts_with("native pipeline is warming") => { warming.get_or_insert(err); }
+                    result => { result?; }
+                }
             }
             for (index, render_plan) in job.render_plans.iter().enumerate() {
                 let store_depth = job
                     .render_plans
                     .get(index + 1)
                     .is_some_and(|next| next.depth_load);
-                self.render_native_compute_graph(
-                    encoder,
-                    &transient_buffers,
-                    render_plan,
-                    false,
-                    store_depth,
-                )?;
+                match self.render_native_compute_graph(encoder, &transient_buffers, render_plan, false, store_depth) {
+                    Err(err) if err.starts_with("native pipeline is warming") => { warming.get_or_insert(err); }
+                    result => { result?; }
+                }
+            }
+            if let Some(err) = warming {
+                return Err(err);
             }
             for id in &job.readback_buffer_ids {
                 // One in flight per buffer: a slow map must not pile up copies.
