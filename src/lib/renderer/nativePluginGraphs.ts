@@ -1,3 +1,4 @@
+import { arrayBufferToBase64 } from '../utils/bytesBase64';
 import { scene3dPrecompileCommands } from './scene3dShaders';
 import { scene3dWorldPrecompileCommands } from './scene3dWorldShaders';
 import { videosynthPrecompileCommands } from '../videosynth/shaders';
@@ -639,12 +640,7 @@ function clamp(value: unknown, min: number, max: number, fallback: number): numb
 }
 
 function bufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
-  }
-  return btoa(binary);
+  return arrayBufferToBase64(buffer);
 }
 
 function safeId(value: string): string {
@@ -1476,7 +1472,22 @@ export function handFxDemoHands(time: number): SignalFrame['hands'] {
   });
 }
 
-function buildHandGraph(options: NativePluginGraphOptions): NativePluginGraphBuildResult {
+/**
+ * HandFX's per-frame inputs: the smoothed hands, the 144-byte uniform and,
+ * for a field mode, the packed body and face. This is all the live input
+ * changes; the passes and the persistent buffers stay as installed.
+ */
+type HandGraphInputs = {
+  state: NativePluginGraphState;
+  id: (name: string) => string;
+  mode: number;
+  fieldMode: number;
+  uniform: ArrayBuffer;
+  landmarks: Float32Array;
+  packed: ReturnType<typeof packHandFxBody> | null;
+};
+
+function handGraphInputs(options: NativePluginGraphOptions): HandGraphInputs {
   const params = options.params;
   const state = pluginState(options, 'handfx');
   const prefix = `handfx:${safeId(options.sourceId)}`;
@@ -1561,18 +1572,26 @@ function buildHandGraph(options: NativePluginGraphOptions): NativePluginGraphBui
   f[33] = clamp(params.handfxScale, 0.3, 3, 1);
   f[34] = clamp(params.handfxDetail, 1, 8, 5);
   f[35] = options.audio.active ? clamp(params.handfxAudioResponse, 0, 2, 0.65) * Math.max(options.audio.bass, options.audio.beatPulse) : 0;
+  let packed: HandGraphInputs['packed'] = null;
   if (fieldMode >= 0) {
-    const packed = packHandFxBody({
+    packed = packHandFxBody({
       params, width: options.width, height: options.height, time: options.time, frameDelta: options.frameDelta, frame: options.handFrame,
     }, state.handField, fieldMode);
     state.handField = packed.state;
+  }
+  return { state, id, mode, fieldMode, uniform, landmarks, packed };
+}
+
+function buildHandGraph(options: NativePluginGraphOptions): NativePluginGraphBuildResult {
+  const { state, id, mode, fieldMode, uniform, landmarks, packed } = handGraphInputs(options);
+  if (packed) {
     return {
       state,
       config: buildHandFxFieldConfig({
         id, sourceId: options.sourceId, frameIndex: options.frameIndex, modeIndex: fieldMode,
         uniformB64: bufferToBase64(uniform),
         bodyB64: bufferToBase64(packed.buffer.buffer as ArrayBuffer),
-        topologyB64: bufferToBase64(packed.topology.buffer as ArrayBuffer),
+        topologyB64: bufferToBase64(packed.topology().buffer as ArrayBuffer),
         layout: packed.layout, cameraSourceId: options.cameraSourceId, reset: !!options.reset,
       }),
     };
@@ -1587,7 +1606,7 @@ function buildHandGraph(options: NativePluginGraphOptions): NativePluginGraphBui
     config: {
       buffers: [
         { id: id('uniform'), kind: 'uniform', byte_length: 144, initial_b64: bufferToBase64(uniform) },
-        { id: id('landmarks'), kind: 'storage', byte_length: landmarks.byteLength, initial_b64: bufferToBase64(landmarks.buffer) },
+        { id: id('landmarks'), kind: 'storage', byte_length: landmarks.byteLength, initial_b64: bufferToBase64(landmarks.buffer as ArrayBuffer) },
         { id: id('particles'), kind: 'storage', byte_length: HAND_FX_PARTICLE_COUNT * 32, persistent: true, clear: !!options.reset },
       ],
       passes: [{
@@ -1699,23 +1718,19 @@ export function buildNativePluginGraph(options: NativePluginGraphOptions): Nativ
 export function buildNativeHandInputUpdate(
   options: Omit<NativePluginGraphOptions, 'kind'>,
 ): NativeHandInputUpdateResult {
-  const result = buildHandGraph({ ...options, kind: 'handfx' });
+  // Only the inputs, not the whole graph: the uniform and the hands (or, for
+  // a field mode, the body and face) are what change each frame.
+  const { state, id, uniform, landmarks, packed } = handGraphInputs({ ...options, kind: 'handfx' });
+  const buffers = [{ id: id('uniform'), initialB64: bufferToBase64(uniform) }];
+  if (!packed) {
+    buffers.push({ id: id('landmarks'), initialB64: bufferToBase64(landmarks.buffer as ArrayBuffer) });
+    return { buffers, state };
+  }
+  buffers.push({ id: id('body'), initialB64: bufferToBase64(packed.buffer.buffer as ArrayBuffer) });
   // The face wire is worked out once, when a face is first seen. It is sent
   // again only when it changes, not on every frame.
-  const topologyChanged = result.state.handField?.faceTopologyVersion !== options.state?.handField?.faceTopologyVersion;
-  const buffers = Array.isArray((result.config as any).buffers)
-    ? (result.config as any).buffers
-        .filter((buffer: any) =>
-          (String(buffer?.id ?? '').endsWith(':uniform') ||
-            String(buffer?.id ?? '').endsWith(':landmarks') ||
-            String(buffer?.id ?? '').endsWith(':body') ||
-            (topologyChanged && String(buffer?.id ?? '').endsWith(':face-topology'))) &&
-          typeof buffer?.initial_b64 === 'string',
-        )
-        .map((buffer: any) => ({
-          id: String(buffer.id),
-          initialB64: String(buffer.initial_b64),
-        }))
-    : [];
-  return { buffers, state: result.state };
+  if (state.handField?.faceTopologyVersion !== options.state?.handField?.faceTopologyVersion) {
+    buffers.push({ id: id('face-topology'), initialB64: bufferToBase64(packed.topology().buffer as ArrayBuffer) });
+  }
+  return { buffers, state };
 }
