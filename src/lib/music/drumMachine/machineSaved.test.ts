@@ -40,9 +40,6 @@ describe('saving beats and kits', () => {
   });
 
   it('a new kit at the cap is refused', () => {
-    // New kit ids come from the clock: one save per millisecond here.
-    let t = 1_700_000_000_000;
-    const clock = vi.spyOn(Date, 'now').mockImplementation(() => t++);
     savedKits.set([]);
     const first = saveKitAs('Kit A');
     expect(first.ok).toBe(true);
@@ -53,6 +50,27 @@ describe('saving beats and kits', () => {
     expect(saveKitAs('Kit A').ok).toBe(true);
     expect(get(savedKits)).toHaveLength(MAX_SAVED_KITS);
     savedKits.set([]);
-    clock.mockRestore();
+  });
+
+  it('two saves in the same millisecond get their own ids', () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+    try {
+      savedBeats.set([]);
+      savedKits.set([]);
+      const a = saveBeatAs('Beat A');
+      const b = saveBeatAs('Beat B');
+      expect(a.ok && b.ok).toBe(true);
+      expect(new Set(get(savedBeats).map((x) => x.id)).size).toBe(2);
+      expect(saveKitAs('Kit A').ok).toBe(true);
+      expect(saveKitAs('Kit B').ok).toBe(true);
+      const kits = get(savedKits);
+      expect(kits.map((k) => k.name).sort()).toEqual(['Kit A', 'Kit B']);
+      expect(new Set(kits.map((k) => k.id)).size).toBe(2);
+      for (const k of kits) expect(k.id.startsWith('user.')).toBe(true);
+    } finally {
+      clock.mockRestore();
+      savedBeats.set([]);
+      savedKits.set([]);
+    }
   });
 });

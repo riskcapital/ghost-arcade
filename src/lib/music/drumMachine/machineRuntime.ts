@@ -10,6 +10,7 @@
 
 import { get, writable } from 'svelte/store';
 import { launchClockPosition } from '../../stores/launchClock';
+import { generateUUID } from '../../utils/uuid';
 import { musicStudio } from '../musicStudioStore';
 import { auditionMachineSound, musicNow, sendMachineHit, setMachineHooks, setMachineSound } from '../musicRuntime';
 import { normalizeMacroFx, type MacroFxInstance } from '../macroFx';
@@ -420,7 +421,7 @@ export function saveBeatAs(name: string): SaveResult {
   musicStudio.setMachine(beat);
   const inserts = get(musicStudio).inserts;
   const padFx = Array.from({ length: beat.padCount }, (_, i) => JSON.parse(JSON.stringify(inserts[padChannel(i)] ?? [])));
-  const item: SavedBeat = { id: existing?.id ?? `beat-${Date.now().toString(36)}`, name: trimmed, beat, padFx };
+  const item: SavedBeat = { id: existing?.id ?? `beat-${generateUUID()}`, name: trimmed, beat, padFx };
   const next = withSaved(list, item, (x) => x.name === trimmed, MAX_SAVED_BEATS, 'beat');
   savedBeats.set(next.list);
   return next.result;
@@ -500,7 +501,7 @@ export function saveKitAs(name: string): SaveResult {
   const inserts = get(musicStudio).inserts;
   const trimmed = name.trim().slice(0, 40) || 'My kit';
   const existing = userKits(b).find((k) => k.name === trimmed);
-  const id = existing?.id ?? `user.${Date.now().toString(36)}`;
+  const id = existing?.id ?? `user.${generateUUID()}`;
   const list = get(savedKits);
   if (!list.some((k) => k.id === id) && list.length >= MAX_SAVED_KITS) return { ok: false, reason: fullMessage(MAX_SAVED_KITS, 'kit') };
   const saved: UserKit = {
