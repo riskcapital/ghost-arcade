@@ -449,3 +449,51 @@ nav.tabs.in-studio button {
 :root[data-theme] .settings-dialog > .confirm-row {
   margin-top: 18px;
 }
+
+/* ---------- Controls (Ctrls): an icon title; the look, playback and each effect are one box each ---------- */
+:root .studio[data-layout][data-layout] .clip-controls-header {
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 6px 6px 6px 12px;
+}
+:root .studio[data-layout][data-layout] .clip-controls-header > div {
+  flex: 1;
+}
+:root .studio[data-layout][data-layout] .clip-controls-header .eyebrow {
+  margin-bottom: 2px;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--ga-ink-2);
+}
+:root .studio[data-layout][data-layout] :is(.clip-controls-body, .panel-scroll) :is(.inspector-card, .transport-card) {
+  border: 1px solid var(--ga-section-line);
+  border-radius: var(--ga-r-section);
+  background: var(--ga-section-bg);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+:root .studio[data-layout][data-layout] .transport-card > summary {
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 0 4px;
+  font-size: 14px;
+}
+:root .studio[data-layout][data-layout] .transport-card > summary::before {
+  color: var(--ga-blue-300);
+}
+:root .studio[data-layout][data-layout] .transport-card[open] > summary {
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--ga-section-head-line);
+}
+:root .studio[data-layout][data-layout] :is(.clip-controls-body, .panel-scroll) .section-heading > span:first-child {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--ga-ink-1);
+}
+:root .studio[data-layout][data-layout] .effect-card .effect-heading {
+  margin: -4px -4px 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--ga-section-head-line);
+}
+:root .studio[data-layout][data-layout] .effect-card .effect-toggle.active {
+  color: var(--ga-on-ink);
+}

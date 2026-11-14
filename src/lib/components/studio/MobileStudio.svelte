@@ -2013,7 +2013,7 @@
       {#if clipControlsOpen || dockedInspector}
         <section class="clip-controls-tray" role={dockedInspector ? 'region' : 'dialog'} aria-label={`Controls for ${rowName(selectedLayer)}${activeClip ? `, ${activeClip.name}` : ''}`} use:focusControlsTray>
           <header class="clip-controls-header">
-            <div><span class="eyebrow">{show.dualDeck ? `DECK ${selectedLayer < 4 ? 'A' : 'B'} · LAYER ${selectedLayer % 4 + 1}` : `LAYER ${selectedLayer + 1}`}</span><h2>{activeClip?.name || 'No clip playing'}</h2></div>
+            <span class="ga-chip" aria-hidden="true"><Icon name="sliders" size={18}/></span><div><span class="eyebrow">{show.dualDeck ? `DECK ${selectedLayer < 4 ? 'A' : 'B'} · LAYER ${selectedLayer % 4 + 1}` : `LAYER ${selectedLayer + 1}`}</span><h2>{activeClip?.name || 'No clip playing'}</h2></div>
             {#if !dockedInspector}<button class="icon-button" data-close-controls aria-label="Close clip controls" onclick={closeControls}><Icon name="close" size={20}/></button>{/if}
           </header>
           {#if frozen || blackout}<div class="controls-notice" role="status">{blackout?'Output is blacked out.':'Output is held.'} Changes appear when you resume.<button onclick={()=>{if(blackout)setBlackout();if(frozen)setFrozen();}}>Resume</button></div>{:else if activeClip && (!layer.enabled || layer.opacity === 0)}<p class="controls-notice" role="status">This layer is muted. Raise its level in Mix to see your changes.</p>{:else if show.dualDeck && (selectedLayer < 4 ? show.crossfade === 1 : show.crossfade === 0)}<p class="controls-notice" role="status">This deck is faded out. Move the A/B crossfader to see your changes.</p>{/if}
@@ -2348,9 +2348,10 @@
     color: var(--ga-selection-ink);
   }
   button.primary {
-    background: var(--ga-coral-soft);
-    border-color: var(--ga-coral-line);
-    color: var(--ga-coral);
+    background: var(--ga-act-bg);
+    border-color: var(--ga-act-line);
+    color: var(--ga-act-ink);
+    font-weight: 700;
   }
   button.danger {
     background: #572737;
@@ -3311,31 +3312,6 @@
   .confirm-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; line-height: 1.4; }
   .confirm-row span { flex: 1 1 180px; min-width: 0; }
   .confirm-row button { min-height: 44px; }
-  .info-card {
-    display: flex;
-    gap: 14px;
-    padding: 17px;
-    border: 1px solid var(--ga-line-2);
-    border-radius: var(--ga-r-soft);
-    margin: 20px 0;
-    background: var(--ga-sub);
-  }
-  .info-card > :global(svg) {
-    flex: none;
-    color: var(--ga-blue);
-  }
-  .info-card strong {
-    font-size: 13px;
-  }
-  .info-card p {
-    font-size: 12px;
-    color: var(--ga-ink-1);
-    line-height: 1.7;
-    margin: 8px 0 12px;
-  }
-  .info-card button {
-    font-size: 12px;
-  }
   .recording-result {
     display: flex;
     flex-direction: column;
@@ -3805,7 +3781,8 @@
   @media(max-width:760px) and (max-height:650px){.studio.clip-editing .monitor{padding-top:8px;}.studio.clip-editing .preview-frame{max-width:min(100%,34dvh);}.clip-controls-header{padding-top:6px;padding-bottom:6px;}}
   @media(prefers-reduced-motion:reduce){.clip-controls-tray{animation:none;}}
   /* Effect chain: one card per effect, with a drag handle to reorder. */
-  .add-effect{display:flex;align-items:center;gap:6px;min-height:44px!important;padding:0 14px!important;font-size:13px!important;font-weight:650!important;background:var(--ga-selection-bg)!important;border-color:var(--ga-selection-line);color:var(--ga-selection-ink);}
+  .add-effect{display:flex;align-items:center;gap:6px;min-height:44px!important;padding:0 14px!important;font-size:13px!important;font-weight:700!important;background:var(--ga-act-bg)!important;border-color:var(--ga-act-line);color:var(--ga-act-ink);box-shadow:var(--ga-act-glow);--ga-icon-tone:var(--ga-act-ink);}
+  .add-effect:disabled{background:var(--ga-hardware-bg)!important;border-color:var(--ga-line-2);color:var(--ga-ink-1);box-shadow:none;--ga-icon-tone:var(--ga-ink-1);}
   .effect-chain{display:grid;gap:0;}
   .effect-heading{display:grid;grid-template-columns:44px minmax(0,1fr) 44px;gap:6px;}
   .effect-heading .reorder-handle{display:grid;place-items:center;width:44px;height:44px;min-height:44px;padding:0;color:var(--ga-ink-1);touch-action:none;cursor:grab;border:1px solid var(--ga-line-2);border-radius:6px;}

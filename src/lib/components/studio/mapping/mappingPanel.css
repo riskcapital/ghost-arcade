@@ -69,7 +69,7 @@
 }
 .mp-seg button {
   flex: 1;
-  min-width: 0;
+  min-width: 44px;
   border-color: transparent;
   background: transparent;
   box-shadow: none;

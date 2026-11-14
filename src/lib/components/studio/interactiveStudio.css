@@ -1136,3 +1136,16 @@
 .interactive-workspace .studio-question .tools {
   margin: 10px 0 0;
 }
+
+/* A file field is a 44 pt target like every other control. */
+.interactive-workspace input[type='file'] {
+  min-height: 44px;
+  padding: 8px 0;
+  box-sizing: border-box;
+}
+.interactive-workspace label.check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+}
