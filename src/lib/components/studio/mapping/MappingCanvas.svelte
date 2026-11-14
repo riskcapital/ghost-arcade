@@ -519,16 +519,22 @@
   // ── Loupe ──────────────────────────────────────────────────────────────────
   const LOUPE = 116,
     MAG = 3;
-  /** Above the finger when the canvas has room there, otherwise beside it, never over the bars above the canvas. */
+  /**
+   * Above the finger when the canvas has room there, otherwise beside it, never over the bars above
+   * the canvas and never past its bottom edge (the zoomed picture clips it there, readout included).
+   */
   const loupePos = $derived.by(() => {
     if (!loupe || !root) return null;
     const box = root.getBoundingClientRect();
     const screen = typeof window === 'undefined' ? 400 : window.innerWidth;
-    const top = Math.max(8, box.top) + LOUPE / 2;
+    // Half the loupe's height with its readout under it.
+    const half = LOUPE / 2 + 14;
+    const top = Math.max(8, box.top) + half;
+    const bottom = Math.max(top, box.bottom - half);
     const above = loupe.y - 72 - LOUPE / 2;
     if (above >= top) return { x: Math.max(LOUPE / 2 + 6, Math.min(screen - LOUPE / 2 - 6, loupe.x)), y: above };
     const side = loupe.x < screen / 2 ? loupe.x + 72 + LOUPE / 2 : loupe.x - 72 - LOUPE / 2;
-    return { x: Math.max(LOUPE / 2 + 6, Math.min(screen - LOUPE / 2 - 6, side)), y: Math.max(top, loupe.y) };
+    return { x: Math.max(LOUPE / 2 + 6, Math.min(screen - LOUPE / 2 - 6, side)), y: Math.min(bottom, Math.max(top, loupe.y)) };
   });
   const readout = $derived(loupe ? inPixels(loupe.at, basis) : null);
 
