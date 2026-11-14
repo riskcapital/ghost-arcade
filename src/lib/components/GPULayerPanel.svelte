@@ -29,7 +29,7 @@
   import type { ParamControl } from '../renderer/gpuShaderTypes';
   import { createAssetRefFromFile, resolveAssetRefForRuntime } from '../storage/assetRegistry';
   import { carryGpuShaderInput, gpuLayerAwaitingInput } from '../renderer/gpuShaderInput';
-  import { cameraLiveSourceError, listNativeCameras } from '../renderer/cameraLiveSource';
+  import { listNativeCameras, subscribeCameraLiveSourceError } from '../renderer/cameraLiveSource';
   import NumericInput from './NumericInput.svelte';
 
   // Media-source picker support (for shaders with kind: 'media-source'
@@ -81,10 +81,6 @@
 
   onMount(() => {
     void enumerateCameras();
-    cameraErrorPoll = setInterval(() => {
-      const src = content?.params?.source as any;
-      cameraError = src?.type === 'camera' ? cameraLiveSourceError(String(src.deviceId ?? '')) : null;
-    }, 700);
     // Re-enumerate whenever a device is plugged/unplugged so the
     // dropdown stays in sync without a panel re-mount.
     if (typeof navigator !== 'undefined' && navigator.mediaDevices?.addEventListener) {
@@ -96,10 +92,7 @@
   });
 
   onDestroy(() => {
-    if (cameraErrorPoll) {
-      clearInterval(cameraErrorPoll);
-      cameraErrorPoll = null;
-    }
+    watchCameraError(null);
     if (typeof navigator !== 'undefined' && navigator.mediaDevices?.removeEventListener) {
       navigator.mediaDevices.removeEventListener('devicechange', enumerateCameras);
     }
@@ -225,11 +218,25 @@
   /*
    * The camera start failure -- a denied OS permission, most often -- is only
    * known to the sync, which learns it a frame or two after the user picks.
-   * Polled rather than pushed so the panel can say what went wrong: without
-   * this the layer just stays black and the picker looks like it worked.
+   * The panel listens for it (only while a camera is the selected source) so
+   * it can say what went wrong: without this the layer just stays black and
+   * the picker looks like it worked.
    */
   let cameraError: string | null = null;
-  let cameraErrorPoll: ReturnType<typeof setInterval> | null = null;
+  let cameraErrorDevice: string | null = null;
+  let stopCameraError: (() => void) | null = null;
+  function watchCameraError(deviceId: string | null) {
+    if (deviceId === cameraErrorDevice) return;
+    stopCameraError?.();
+    stopCameraError = null;
+    cameraErrorDevice = deviceId;
+    cameraError = null;
+    if (deviceId !== null) {
+      stopCameraError = subscribeCameraLiveSourceError(deviceId, (error) => { cameraError = error; });
+    }
+  }
+  $: cameraSourceParam = content?.params?.source as any;
+  $: watchCameraError(cameraSourceParam?.type === 'camera' ? String(cameraSourceParam.deviceId ?? '') : null);
 
   let lastCameraInventoryMode: boolean | null = null;
   $: if (nativeSourceInventoryLocked !== lastCameraInventoryMode) {
