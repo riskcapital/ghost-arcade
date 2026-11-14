@@ -48,6 +48,7 @@
   } from '../../mobile/studio/interactiveEffects';
   import {
     starterScene,
+    introScene,
     readInteractiveDraft,
     writeInteractiveDraft,
     readInteractivePresets,
@@ -964,7 +965,7 @@
   onMount(() => {
     outputActive = initialActive;
     const restored = initialScene ?? (persistDraft ? readInteractiveDraft(localStorage) : null);
-    restore(restored ?? starterScene('balls'));
+    restore(restored ?? introScene());
     if (persistDraft && !restored) inspector = 'presets';
     savedScenes = readInteractivePresets(localStorage);
     fx = document.createElement('canvas');

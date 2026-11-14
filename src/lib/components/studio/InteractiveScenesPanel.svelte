@@ -29,8 +29,8 @@
   {#if group.label}<div class="group-label">{group.label}</div>{/if}
   <div class="starter-grid">
     {#each INTERACTIVE_STARTERS.filter((s) => isWorldStarter(s.id) === group.world) as starter}
-      <button class="starter" style:--starter-color={starter.color} onclick={() => onstarter(starter.id)}>
-        <Icon name={starter.icon} size={24} />
+      <button class="starter" onclick={() => onstarter(starter.id)}>
+        <Icon name={starter.icon} size={18} />
         <strong>{starter.name}</strong>
         <span>{starter.description}</span>
       </button>
