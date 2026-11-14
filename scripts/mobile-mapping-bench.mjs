@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Measures what the mapping tools cost in the phone's output compositor (corner
-// quads, 9x9 and curved meshes, free-form shapes, masks, Looks; 16 surfaces at
+// quads, 9x9 and curved meshes, free-form shapes, masks, Looks, surfaces playing
+// their own clips with placed pictures; 16 surfaces at
 // 720p and 1080p) and what one edit costs on the CPU. Reports only.
 //   node scripts/mobile-mapping-bench.mjs                      hidden Electron window (Mac GPU)
 //   node scripts/mobile-mapping-bench.mjs --ios-simulator <udid>  Safari on an iOS simulator

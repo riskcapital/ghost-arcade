@@ -1,5 +1,6 @@
 // What the mapping tools cost on the phone's output compositor: 16 surfaces as
-// corner quads, dense and curved meshes, free-form shapes, masks and Looks,
+// corner quads, dense and curved meshes, free-form shapes, masks and Looks, and
+// surfaces playing their own clips with the picture zoomed and turned inside,
 // drawn through StudioCompositor (WebGL 1) at 720p and 1080p with a moving
 // picture, GPU-synchronised. Also times the CPU work an edit costs (building a
 // surface's coverage). Driven by scripts/mobile-mapping-bench.mjs.
@@ -50,6 +51,8 @@ const masked = (s: Surface): Surface => ({
   ],
 });
 const look = (s: Surface): Surface => ({ ...s, look: { id: 'neon-pulse', palette: 'neon', enabled: true, amount: 1, speed: 1, width: 1 } });
+/** Four different clips across the surfaces (a balanced phone's cap), each placed: zoomed in and turned. */
+const ownClip = (s: Surface, i: number): Surface => ({ ...s, clipId: 'clip' + (i % 4), placement: { x: 0.45, y: 0.55, w: 0.6, h: 0.6, angle: 0.3 } });
 
 const CASES: [string, (i: number) => Surface][] = [
   ['16 corner quads', (i) => quad(i)],
@@ -60,6 +63,9 @@ const CASES: [string, (i: number) => Surface][] = [
   ['16 quads with a Look', (i) => look(quad(i))],
   ['16 circle shapes with a Look', (i) => look(shape(i))],
   ['16 curved 9x9 meshes, 3 masks and a Look each', (i) => look(masked(mesh(i, true)))],
+  ['16 quads, own clip and placement each', (i) => ownClip(quad(i), i)],
+  ['16 circle shapes, own clip, placement and 3 masks each', (i) => ownClip(masked(shape(i)), i)],
+  ['16 curved 9x9 meshes, own clip, placement, 3 masks and a Look each', (i) => ownClip(look(masked(mesh(i, true))), i)],
 ];
 
 function picture(gl: WebGLRenderingContext) {
@@ -89,17 +95,19 @@ async function measure(quality: 720 | 1080, make: (i: number) => Surface): Promi
   const input = picture(gl);
   const show: Show = { ...defaultShow(), mapping: true, quality, surfaces: Array.from({ length: 16 }, (_, i) => make(i)) };
   const inputs = [input, null, null, null, null, null, null, null];
+  // The clips surfaces play by themselves (the engine renders them like layers).
+  const own = new Map(Array.from({ length: 4 }, (_, k) => ['clip' + k, picture(gl)] as const));
   const pixel = new Uint8Array(4);
   // Warm up: geometry, coverage and Look programs are built on the first frames.
   const warm = performance.now();
-  compositor.render(show, inputs, false, false, 0, 0, 0);
+  compositor.render(show, inputs, false, false, 0, 0, 0, undefined, own);
   gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
   const first = performance.now() - warm;
-  for (let k = 0; k < 10; k++) compositor.render(show, inputs, false, false, k / 60, 0.5, k / 30);
+  for (let k = 0; k < 10; k++) compositor.render(show, inputs, false, false, k / 60, 0.5, k / 30, undefined, own);
   gl.finish();
   gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
   const start = performance.now();
-  for (let k = 0; k < FRAMES; k++) compositor.render(show, inputs, false, false, k / 60, 0.5, k / 30);
+  for (let k = 0; k < FRAMES; k++) compositor.render(show, inputs, false, false, k / 60, 0.5, k / 30, undefined, own);
   gl.finish();
   gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
   const ms = (performance.now() - start) / FRAMES;
