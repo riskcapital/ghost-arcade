@@ -1978,6 +1978,10 @@
             Route one layer to several surfaces. Warp points move the actual image, including outside its original
             rectangle. Mapping remains live during clip changes.
           </p>
+          <div class="map-library" data-map-library>
+            <p>This map is saved in <strong>{show.name}</strong> on this device as you work.</p>
+            <div><button data-map-copy onclick={() => duplicateSavedSet(show.id)}><Icon name="copy" size={16} />Save a copy</button><button data-map-sets onclick={() => (settings = true)}><Icon name="save" size={16} />Sets and files</button></div>
+          </div>
         {:else if tab === 'fx'}
           {@render sourceControls()}
         {/if}
@@ -3062,6 +3066,11 @@
   .stage-note p { flex: 1; margin: 0; font-size: 12px; line-height: 1.4; color: var(--ga-ink-1); }
   .stage-note button { flex: none; min-height: 44px; padding: 0 14px; font-size: 13px; }
   .templates-button { display: inline-flex; align-items: center; gap: 6px; }
+  .map-library { margin: 4px 0 16px; padding: 10px; border: 1px solid var(--ga-line-2); border-radius: 6px; }
+  .map-library p { margin: 0 0 8px; font-size: 12px; line-height: 1.4; color: var(--ga-ink-1); }
+  .map-library strong { color: var(--ga-ink-0); font-weight: 600; }
+  .map-library div { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .map-library button { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; font-size: 13px; }
   .cap-notice { margin: 0 0 12px; padding: 8px 10px; border: 1px solid #ffc57066; border-radius: 6px; background: #ffc5700f; font-size: 12px; line-height: 1.4; color: #ffd9a0; }
   .surface-list small.capped { color: #ffc570; }
   .mapping-lines text {
