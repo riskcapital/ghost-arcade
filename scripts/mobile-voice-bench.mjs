@@ -39,6 +39,7 @@ if (arg('--moments')) query.set('moments', JSON.stringify(arg('--moments').split
 if (process.argv.includes('--fps')) query.set('fps', '1');
 if (thumbnails) query.set('out', '320x180');
 if (arg('--step')) query.set('step', arg('--step'));
+for (const name of ['fpsscale', 'fpssec', 'fpsfrom']) if (arg('--' + name)) query.set(name, name === 'fpsscale' ? JSON.stringify(arg('--' + name).split(',').map(Number)) : arg('--' + name));
 
 if (process.argv.includes('--app-bundle')) {
   const out = join(root, 'dist-native-mobile');
@@ -72,7 +73,7 @@ function take(line) {
     const r = JSON.parse(line.slice(10));
     results.push(r);
     if (renderDir && r.shots) for (const shot of r.shots) writeFileSync(join(renderDir, thumbnails ? `${r.path.slice(4, -3)}.jpg` : `${r.path.slice(4, -3)}@${shot.at}.jpg`), Buffer.from(shot.jpeg.split(',')[1], 'base64'));
-    process.stderr.write(`  ${results.length}/${paths.length} ${r.path.slice(7, -3)} ${r.error ? 'ERROR ' + r.error.split('\n')[0].slice(0, 160) : renderDir ? 'rendered' : `${r.ms} ms, lit ${r.lit}, luma ${r.luma}${r.fps ? ', ' + r.fps + ' fps' : ''}`}\n`);
+    process.stderr.write(`  ${results.length}/${paths.length} ${r.path.slice(7, -3)} ${r.error ? 'ERROR ' + r.error.split('\n')[0].slice(0, 160) : renderDir ? 'rendered' : `${r.ms} ms, lit ${r.lit}, luma ${r.luma}${r.fps ? ', fps ' + JSON.stringify(r.fps) : ''}`}\n`);
   }
 }
 

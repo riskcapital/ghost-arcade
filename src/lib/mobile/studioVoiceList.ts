@@ -7,7 +7,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-aurora-water",
     "path": "ISF/VX-AuroraWater.fs",
     "name": "Aurora Over Water",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -23,7 +23,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-aperture",
     "path": "ISF/VX-Aperture.fs",
     "name": "Aperture",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -39,7 +39,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-bait-ball",
     "path": "ISF/VX-BaitBall.fs",
     "name": "Bait Ball",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -55,7 +55,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-beam-organ",
     "path": "ISF/VX-BeamOrgan.fs",
     "name": "Beam Organ",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -71,7 +71,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-chrome-pool",
     "path": "ISF/VX-ChromePool.fs",
     "name": "Chrome Pool",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -87,7 +87,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-droste-frames",
     "path": "ISF/VX-DrosteFrames.fs",
     "name": "Droste",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -103,7 +103,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-event-horizon",
     "path": "ISF/VX-EventHorizon.fs",
     "name": "Event Horizon",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -119,7 +119,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-ferrofluid",
     "path": "ISF/VX-Ferrofluid.fs",
     "name": "Ferrofluid Crown",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -135,7 +135,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-ink-bloom",
     "path": "ISF/VX-InkBloom.fs",
     "name": "Ink Bloom",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -151,7 +151,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-julia-jewel",
     "path": "ISF/VX-JuliaJewel.fs",
     "name": "Julia Jewel",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -167,7 +167,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-kaleidobloom",
     "path": "ISF/VX-Kaleidobloom.fs",
     "name": "Kaleidobloom",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -183,7 +183,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-light-room",
     "path": "ISF/VX-LightRoom.fs",
     "name": "Light Room",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -199,7 +199,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-louvers",
     "path": "ISF/VX-Louvers.fs",
     "name": "Louvers",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -215,7 +215,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-mandala",
     "path": "ISF/VX-Mandala.fs",
     "name": "Mandala",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -231,7 +231,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-marbling",
     "path": "ISF/VX-Marbling.fs",
     "name": "Marbling",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -247,7 +247,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-melt-bow",
     "path": "ISF/VX-MeltBow.fs",
     "name": "Melt Bow",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -263,7 +263,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-molten-chrome",
     "path": "ISF/VX-MoltenChrome.fs",
     "name": "Molten Chrome",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -279,7 +279,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-moon",
     "path": "ISF/VX-Moon.fs",
     "name": "Moon",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -295,7 +295,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-nebula",
     "path": "ISF/VX-Nebula.fs",
     "name": "Nebula",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -311,7 +311,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-northlight",
     "path": "ISF/VX-Northlight.fs",
     "name": "Northlight",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -327,7 +327,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-op-bands",
     "path": "ISF/VX-OpBands.fs",
     "name": "Op Bands",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -343,7 +343,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-op-disc",
     "path": "ISF/VX-OpDisc.fs",
     "name": "Op Disc",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -359,7 +359,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-paisley",
     "path": "ISF/VX-Paisley.fs",
     "name": "Paisley",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -375,7 +375,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-pillars",
     "path": "ISF/VX-Pillars.fs",
     "name": "Pillars",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -391,7 +391,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-pulsar",
     "path": "ISF/VX-Pulsar.fs",
     "name": "Pulsar",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -407,7 +407,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-remnant",
     "path": "ISF/VX-Remnant.fs",
     "name": "Remnant",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -423,7 +423,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-ringed-planet",
     "path": "ISF/VX-RingedPlanet.fs",
     "name": "Ringed Planet",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -439,7 +439,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-riverlight",
     "path": "ISF/VX-Riverlight.fs",
     "name": "Riverlight",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -455,7 +455,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-shallows",
     "path": "ISF/VX-Shallows.fs",
     "name": "Shallows",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -471,7 +471,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-slabs",
     "path": "ISF/VX-Slabs.fs",
     "name": "Slabs",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -487,7 +487,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-soap-film",
     "path": "ISF/VX-SoapFilm.fs",
     "name": "Soap Film",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -503,7 +503,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-spiral-galaxy",
     "path": "ISF/VX-SpiralGalaxy.fs",
     "name": "Golden Galaxy",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {
@@ -519,7 +519,7 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-undertow",
     "path": "ISF/VX-Undertow.fs",
     "name": "Undertow",
-    "category": "studio",
+    "category": "voices",
     "audioNative": true,
     "voice": true,
     "motion": {

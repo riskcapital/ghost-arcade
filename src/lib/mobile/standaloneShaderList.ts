@@ -1,8 +1,8 @@
 // Desktop ISF catalog plus stable IDs for existing mobile sets. Device performance varies by shader.
 import { STUDIO_VOICE_SHADERS } from './studioVoiceList';
 
-/** `studio`: the desktop's visual voices, each following one sound of the music (studioVoices.ts). */
-export type MobileShaderCategory = 'audio' | 'room' | 'pattern' | 'fluid' | 'kinetic' | 'generator' | 'simulation' | 'visual' | 'other' | 'studio';
+/** `voices` (shown as "Audio voices"): the desktop's visual voices, each following one sound of the music (studioVoices.ts). */
+export type MobileShaderCategory = 'audio' | 'room' | 'pattern' | 'fluid' | 'kinetic' | 'generator' | 'simulation' | 'visual' | 'other' | 'voices';
 
 export interface MobileShader {
   id: string;

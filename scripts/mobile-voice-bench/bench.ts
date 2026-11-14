@@ -166,7 +166,7 @@ async function measure(path: string) {
       total += ms; worst = Math.max(worst, ms);
     }
     const look = stats(gl, WIDTH, HEIGHT);
-    let fps: number | undefined;
+    let fps: Record<string, number> | undefined;
     if (params.has('fps')) fps = await onScreen(path, loaded.defaults, loaded.follows);
     return { path, ms: Math.round((total / MOMENTS.length) * 100) / 100, worst: Math.round(worst * 100) / 100, ...look, fps };
   } catch (e) {
@@ -177,32 +177,43 @@ async function measure(path: string) {
   }
 }
 
-/** Frames a second the voice holds drawn on the visible canvas at the phone's normal size, for 2.5 s. */
-async function onScreen(path: string, defaults: Record<string, number | boolean | number[]>, follows: number): Promise<number> {
+/**
+ * Frames a second the voice holds drawn on the visible canvas, at the phone's normal size
+ * times each of `fpsscale` (default 1), for `fpssec` seconds from `fpsfrom` seconds into the song.
+ */
+async function onScreen(path: string, defaults: Record<string, number | boolean | number[]>, follows: number): Promise<Record<string, number>> {
   const canvas = document.getElementById('c') as HTMLCanvasElement;
-  canvas.width = WIDTH; canvas.height = HEIGHT;
+  const scales: number[] = JSON.parse(params.get('fpsscale') ?? '[1]');
+  const seconds = Number(params.get('fpssec') ?? 2.5), from = Number(params.get('fpsfrom') ?? 0);
   const source = prepareVoiceSource(await (await fetch('/' + path.split('/').map(encodeURIComponent).join('/'))).text());
-  const renderer = new StandaloneRenderer(canvas);
-  try {
-    await renderer.loadShaderSource(source, true, undefined, { flow: 0, breath: 0, glow: false });
-    const drive = new Drive();
-    let frames = 0, last = realNow();
-    const started = realNow();
-    await new Promise<void>((done) => {
-      const tick = () => {
-        const now = realNow();
-        drive.step(Math.min(0.1, (now - last) / 1000)); last = now;
-        renderer.setShaderInputs({ ...defaults, ...drive.voices.inputs(follows) });
-        renderer.drawFrame(WIDTH, HEIGHT);
-        if (now - started > 500) frames++;
-        if (now - started < 3000) requestAnimationFrame(tick); else done();
-      };
-      requestAnimationFrame(tick);
-    });
-    return Math.round((frames / 2.5) * 10) / 10;
-  } finally {
-    renderer.destroy();
+  const out: Record<string, number> = {};
+  for (const scale of scales) {
+    const w = Math.round(WIDTH * scale), h = Math.round(HEIGHT * scale);
+    canvas.width = w; canvas.height = h;
+    const renderer = new StandaloneRenderer(canvas);
+    try {
+      await renderer.loadShaderSource(source, true, undefined, { flow: 0, breath: 0, glow: false });
+      const drive = new Drive();
+      while (drive.t < from) drive.step(0.1);
+      let frames = 0, last = realNow();
+      const started = realNow();
+      await new Promise<void>((done) => {
+        const tick = () => {
+          const now = realNow();
+          drive.step(Math.min(0.1, (now - last) / 1000)); last = now;
+          renderer.setShaderInputs({ ...defaults, ...drive.voices.inputs(follows) });
+          renderer.drawFrame(w, h);
+          if (now - started > 500) frames++;
+          if (now - started < 500 + seconds * 1000) requestAnimationFrame(tick); else done();
+        };
+        requestAnimationFrame(tick);
+      });
+      out[String(scale)] = Math.round((frames / seconds) * 10) / 10;
+    } finally {
+      renderer.destroy();
+    }
   }
+  return out;
 }
 
 async function render(path: string) {

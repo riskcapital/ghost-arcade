@@ -74,7 +74,7 @@ writeFileSync(recordFile, JSON.stringify(record, null, 2) + '\n');
 
 const id = (file) => 'voice-' + file.replace(/^VX-|\.fs$/g, '').replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
 const entries = record.voices.map((v) => {
-  const entry = { id: id(v.file), path: `ISF/${v.file}`, name: nameOf(v), category: 'studio', audioNative: true, voice: true, motion: { flow: 0, breath: 0, glow: false } };
+  const entry = { id: id(v.file), path: `ISF/${v.file}`, name: nameOf(v), category: 'voices', audioNative: true, voice: true, motion: { flow: 0, breath: 0, glow: false } };
   // The phone plays a voice all the time; "comes and goes with its sound" stays an option.
   const defaults = { vxAuto: false, ...(v.source !== undefined ? { vxSource: v.source } : {}), ...(v.defaults ?? {}) };
   return { ...entry, defaults };
