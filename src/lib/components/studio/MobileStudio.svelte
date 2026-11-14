@@ -3045,7 +3045,11 @@
     margin-bottom: 16px;
     flex-wrap: wrap;
   }
-  .mapping-toolbar button,
+  .mapping-toolbar button {
+    font-size: 11px;
+    min-height: 38px;
+    padding: 6px 9px;
+  }
   .surface-list {
     display: grid;
     grid-template-columns: 1fr 1fr;
