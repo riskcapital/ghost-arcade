@@ -56,7 +56,7 @@
   }
   button:disabled { opacity: .45; }
   button:focus-visible, input:focus-visible { outline: 2px solid var(--ga-focus); outline-offset: 2px; }
-  .row { display: grid; grid-template-columns: 92px minmax(0, 1fr) 52px; align-items: center; gap: 8px; min-height: 44px; }
+  .row { display: grid; grid-template-columns: minmax(0, 84px) minmax(96px, 1fr) 48px; align-items: center; gap: 8px; min-height: 44px; }
   .row span { font-size: 13px; color: var(--ga-ink-1); }
   .row input { width: 100%; min-height: 44px; margin: 0; }
   .row output { font-size: 12px; text-align: right; color: var(--ga-ink-0); font-variant-numeric: tabular-nums; }
