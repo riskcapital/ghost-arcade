@@ -5,9 +5,7 @@ export const DEFAULT_ASPECT = 16 / 9;
 
 /** Mobile mapping stores a 3×3 grid even in corner mode. Convert its boundary
  * in winding order; mesh surfaces need resampling and are intentionally omitted. */
-export function importCornerSurfaces(
-  surfaces: { name: string; points: Point[]; enabled: boolean; mode: string }[],
-): InteractiveSurface[] {
+export function importCornerSurfaces(surfaces: MappedSurface[]): InteractiveSurface[] {
   return surfaces
     .filter((s) => s.enabled && s.mode === 'corners' && [4, 9].includes(s.points.length))
     .slice(0, 32)
@@ -17,6 +15,38 @@ export function importCornerSurfaces(
       behavior: 'solid',
       points: structuredClone(s.points.length === 9 ? [s.points[0], s.points[2], s.points[8], s.points[6]] : s.points),
     }));
+}
+
+/** A mapped layer as the Studio sees it: its corner quad on the output. */
+export type MappedSurface = { id?: string; name: string; points: Point[]; enabled: boolean; mode: string };
+
+/** The id of a solid object that follows a mapped layer. */
+export const mappedSurfaceId = (layerId: string) => `mapped:${layerId}`;
+export const isMappedSurface = (s: { id: string }) => s.id.startsWith('mapped:');
+
+/**
+ * The scene's objects with the ones linked to mapped layers brought up to
+ * date: each corner-mapped layer is a solid object (its outline follows the
+ * layer, whatever else was set on it stays), objects whose layer is gone or
+ * hidden go, and the rest are left alone. Null when nothing would change.
+ */
+export function syncMappedSurfaces(surfaces: InteractiveSurface[], mapping: MappedSurface[]): InteractiveSurface[] | null {
+  const quads = mapping.filter((m) => m.id && m.enabled && m.mode === 'corners' && [4, 9].includes(m.points.length)).slice(0, 32);
+  const wanted = new Map(quads.map((m) => [mappedSurfaceId(m.id!), m]));
+  const next: InteractiveSurface[] = [];
+  for (const s of surfaces) {
+    if (!isMappedSurface(s)) { next.push(s); continue; }
+    const m = wanted.get(s.id);
+    if (!m) continue;
+    wanted.delete(s.id);
+    const points = m.points.length === 9 ? [m.points[0], m.points[2], m.points[8], m.points[6]] : m.points;
+    next.push({ ...s, name: m.name, points: structuredClone(points) });
+  }
+  for (const [id, m] of wanted) {
+    const points = m.points.length === 9 ? [m.points[0], m.points[2], m.points[8], m.points[6]] : m.points;
+    next.push({ id, name: m.name, behavior: 'solid', points: structuredClone(points) });
+  }
+  return JSON.stringify(next) === JSON.stringify(surfaces) ? null : next;
 }
 
 /** Move a shape, stopping at the canvas edge so the whole shape stays reachable. */

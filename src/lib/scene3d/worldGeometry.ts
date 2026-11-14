@@ -27,13 +27,10 @@ import {
 } from './roomModel';
 import { blockDepth, deepestBlock, floorDepth, frontPaneDepth, reliefFrame, reliefSolids, unproject, type ReliefFrame } from './relief';
 import type { ReliefWorld, SurfaceFinish } from './worldModel';
+import { forwardDepth, projectorBasis, rayDirection, type ProjectorBasis, type Ray } from './projector';
+import { effectiveRoom } from './roomSolve';
 
-/**
- * The projector as a pinhole: where it is, and three axes. `fwd` is unit;
- * `right` and `up` are scaled so that the ray through output point (u, v)
- * is fwd + right·(2u − 1) + up·(1 − 2v).
- */
-export type ProjectorBasis = { pos: Vec3; right: Vec3; up: Vec3; fwd: Vec3; fov: number };
+export { forwardDepth, projectorBasis, projectPoint, rayDirection, rayThrough, type ProjectorBasis, type Ray } from './projector';
 
 export type GeoFace = {
   surfaceId: string;
@@ -71,38 +68,10 @@ export type WorldGeo = {
 
 // ── Projector ─────────────────────────────────────────────────────────────
 
-/** A projector at `position` looking at `target`, unrolled (up as close to +Y as it can be). */
-export function projectorBasis(position: Vec3, target: Vec3, fov: number, aspect: number): ProjectorBasis {
-  const fwd = normalize(sub(target, position));
-  let side = cross(fwd, [0, 1, 0]);
-  if (length(side) < 1e-4) side = cross(fwd, [0, 0, -1]);
-  side = normalize(side);
-  const up = normalize(cross(side, fwd));
-  const th = Math.tan((fov * Math.PI) / 360);
-  return { pos: [...position] as Vec3, fwd, right: scale(side, th * Math.max(0.1, aspect)), up: scale(up, th), fov };
-}
-
 /** The face-on projector of the wall relief. */
 export function wallProjector(frame: ReliefFrame): ProjectorBasis {
   return { pos: [0, 0, frame.camZ], fwd: [0, 0, -1], right: [frame.W / 2 / frame.camZ, 0, 0], up: [0, frame.H / 2 / frame.camZ, 0], fov: frame.fov };
 }
-
-/** How far in front of the projector a point is, along its axis. */
-export const forwardDepth = (pr: ProjectorBasis, p: Vec3): number => dot(sub(p, pr.pos), pr.fwd);
-
-/** Where a point shows on the output (0..1, y down). */
-export function projectPoint(pr: ProjectorBasis, p: Vec3): Point {
-  const rel = sub(p, pr.pos);
-  const t = Math.max(1e-6, dot(rel, pr.fwd));
-  return { x: 0.5 + (0.5 * dot(rel, pr.right)) / (dot(pr.right, pr.right) * t), y: 0.5 - (0.5 * dot(rel, pr.up)) / (dot(pr.up, pr.up) * t) };
-}
-
-/** The direction (not unit) of the ray through an output point; its forward part is 1. */
-export const rayDirection = (pr: ProjectorBasis, uv: Point): Vec3 =>
-  add(pr.fwd, add(scale(pr.right, uv.x * 2 - 1), scale(pr.up, 1 - uv.y * 2)));
-
-export type Ray = { origin: Vec3; dir: Vec3 };
-export const rayThrough = (pr: ProjectorBasis, uv: Point): Ray => ({ origin: [...pr.pos] as Vec3, dir: normalize(rayDirection(pr, uv)) });
 
 /** The point on the ray through `uv` at spawn depth z. */
 export const unprojectAt = (geo: WorldGeo, uv: Point, z: number): Vec3 =>
@@ -161,7 +130,7 @@ function roomGeometry(scene: InteractiveScene, room: Room, aspect: number): Worl
 }
 
 export function worldGeometry(scene: InteractiveScene, world: ReliefWorld, aspect: number): WorldGeo {
-  return world.source === 'room' && world.room ? roomGeometry(scene, world.room, aspect) : wallGeometry(scene, world, aspect);
+  return world.source === 'room' && world.room ? roomGeometry(scene, effectiveRoom(scene, world.room, aspect), aspect) : wallGeometry(scene, world, aspect);
 }
 
 /** The face for a surface, if it has one. */

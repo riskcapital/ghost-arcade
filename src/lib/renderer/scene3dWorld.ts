@@ -350,13 +350,15 @@ export function ballInput(geo: WorldGeo, layout: BallLayout, input?: WorldInputS
   input.throws.slice(-8).forEach((t, i) => {
     const hit = pick(t.point);
     const lift = 0.05 + ((t.number * 0.618034) % 1) * 0.25;
+    // On the wall: on the ray, in front of what is hit. In a room: just off
+    // the surface under the finger (above a top, in front of a side).
     const z = Math.max(r + 0.01, Math.min(spawnZ(geo, hit.point) + r + lift, pane - r - 0.01));
-    const pos = unprojectAt(geo, t.point, z);
+    const pos = geo.mode === 'room' ? add(hit.point, scale(hit.normal, r + lift)) : unprojectAt(geo, t.point, z);
     let v = outputVelocity(geo, t.velocity, pos);
     const fast = Math.hypot(...v);
     if (fast > MAX_THROW_SPEED) v = scale(v, MAX_THROW_SPEED / fast);
-    // A little way in, away from the projector.
-    data.set([...pos, t.number, ...add(v, scale(geo.projector.fwd, 0.5)), 0], 4 + 64 + i * 8);
+    // On the wall, a little way in, away from the projector; in a room it drops where it is.
+    data.set([...pos, t.number, ...(geo.mode === 'room' ? v : add(v, scale(geo.projector.fwd, 0.5))), 0], 4 + 64 + i * 8);
   });
   data.set([Math.min(8, input.pointers.length), Math.min(8, input.throws.length)], 0);
   return data;

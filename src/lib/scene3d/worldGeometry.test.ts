@@ -135,6 +135,21 @@ describe('a room', () => {
     expect(faceSites(geo, 'top')).toHaveLength(0);
   });
 
+  it('throws from just above the top under the finger, and drops it there', async () => {
+    const { ballInput, ballLayout } = await import('../renderer/scene3dWorld');
+    const { scene, room } = boxRoom();
+    const geo = worldGeometry(scene, { ...defaultReliefWorld(), source: 'room', room }, ASPECT);
+    const t = scene.surfaces[0].points;
+    const point = { x: t.reduce((a, p) => a + p.x, 0) / 4, y: t.reduce((a, p) => a + p.y, 0) / 4 };
+    const data = ballInput(geo, ballLayout(scene), { pointers: [], throws: [{ point, velocity: { x: 0, y: 0 }, number: 3, at: 0 }] });
+    const pos = [data[68], data[69], data[70]];
+    // Above the top (y 0.5), within its outline, standing still.
+    expect(pos[1]).toBeGreaterThan(0.5);
+    expect(Math.abs(pos[0])).toBeLessThan(0.5);
+    expect(Math.abs(pos[2])).toBeLessThan(0.5);
+    expect(Math.hypot(data[72], data[73], data[74])).toBe(0);
+  });
+
   it('draws each face as a mesh lying on its plane', () => {
     const { scene, room } = boxRoom();
     const world = { ...defaultReliefWorld(), source: 'room' as const, room, look: 'effects' as const };

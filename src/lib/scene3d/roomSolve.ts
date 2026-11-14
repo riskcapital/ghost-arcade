@@ -30,9 +30,10 @@
  * Pure and exported for tests.
  */
 import type { Point } from '../mobile/studio/interactive';
+import type { InteractiveScene } from '../mobile/studio/interactive';
 import { add, cross, dot, length, normalize, scale, sub, type FaceRole, type Room, type RoomFace } from './roomModel';
 import type { Vec3 } from './sceneModel';
-import { projectorBasis, rayDirection, type ProjectorBasis } from './worldGeometry';
+import { projectorBasis, rayDirection, type ProjectorBasis } from './projector';
 
 export type SolveSurface = { id: string; points: Point[]; role?: FaceRole };
 
@@ -299,4 +300,25 @@ function solveOffsets(faces: SolveFace[], touches: { i: number; j: number; row: 
     rows.push({ c: x, y: distance * 1.3, w: 1 });
   });
   return leastSquares(rows, k + 1);
+}
+
+let lastKey = '';
+let lastRoom: Room | null = null;
+
+/**
+ * The room the engine uses: one set up by hand is solved from its setup and
+ * the scene's solid objects (the last answer is kept while they are the
+ * same); any other is as stored.
+ */
+export function effectiveRoom(scene: InteractiveScene, room: Room, aspect: number): Room {
+  const setup = room.setup;
+  if (!setup) return room;
+  const surfaces = scene.surfaces.filter((s) => s.behavior === 'solid' && s.points.length >= 3).map((s) => ({ id: s.id, points: s.points, role: setup.roles[s.id] }));
+  const key = JSON.stringify([surfaces, setup.arrow, setup.elevation, setup.fov, setup.distance, aspect, room.floor]);
+  if (key !== lastKey || !lastRoom) {
+    const solved = solveRoom({ surfaces, aspect, arrow: setup.arrow, elevation: setup.elevation, fov: setup.fov, distance: setup.distance });
+    lastRoom = { ...solved.room, floor: room.floor };
+    lastKey = key;
+  }
+  return { ...lastRoom, setup };
 }

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { boxPyramid, dirInProjector, inProjector } from './roomFixtures';
 import { cross, dot, facePoint, faceNormal, length, normalize, sub } from './roomModel';
-import { downFromArrow, solveRoom } from './roomSolve';
+import { downFromArrow, effectiveRoom, solveRoom } from './roomSolve';
+import { defaultRoom, defaultRoomSetup, validateRoom } from './roomModel';
+import { defaultInteractive } from '../mobile/studio/interactive';
 import type { Vec3 } from './sceneModel';
 import { projectorBasis, projectPoint } from './worldGeometry';
 
@@ -69,5 +71,23 @@ describe('solving a room by hand', () => {
     expect(Math.abs(dot(faceNormal(back), result.room.down))).toBeLessThan(1e-9);
     expect(dot(faceNormal(back), back.origin)).toBeLessThan(0);
     expect(length(cross(faceNormal(back), [1, 0, 0]))).toBeGreaterThan(0.9);
+  });
+
+  it('is worked out again from a room set up by hand whenever the outlines change', () => {
+    const truth = boxPyramid([1.4, 2.6, 5.2], [0, 0.9, 0], 34, ASPECT);
+    const setup = { ...defaultRoomSetup(), arrow: truth.arrow, elevation: truth.elevation, fov: 34, roles: { 'b2-top': 'side' as const } };
+    const room = { ...defaultRoom(), setup };
+    const scene = { ...defaultInteractive(), surfaces: truth.surfaces.map((x) => ({ id: x.id, name: x.id, behavior: 'solid' as const, points: x.points })) };
+    const a = effectiveRoom(scene, room, ASPECT);
+    expect(a.faces).toHaveLength(truth.faces.length);
+    expect(a.faces.find((f) => f.surfaceId === 'b2-top')!.role).toBe('side');
+    expect(effectiveRoom(scene, room, ASPECT).faces).toBe(a.faces);
+    const fewer = { ...scene, surfaces: scene.surfaces.slice(1) };
+    expect(effectiveRoom(fewer, room, ASPECT).faces).toHaveLength(truth.faces.length - 1);
+    // A scanned room is as stored.
+    expect(effectiveRoom(scene, defaultRoom(), ASPECT).faces).toEqual([]);
+    // The setup survives saving.
+    expect(validateRoom(JSON.parse(JSON.stringify(room))).setup).toEqual({ ...setup, arrow: { x: truth.arrow.x / Math.hypot(truth.arrow.x, truth.arrow.y), y: truth.arrow.y / Math.hypot(truth.arrow.x, truth.arrow.y) } });
+    expect(() => validateRoom({ setup: { roles: { a: 'floor' } } })).toThrow(/unknown role/);
   });
 });

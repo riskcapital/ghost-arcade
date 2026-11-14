@@ -41,8 +41,33 @@ export type RoomProjector = {
   fov: number;
 };
 
+/**
+ * What a person set up by hand (roomSolve.ts). While a room has one, its
+ * faces are worked out from it and the scene's solid objects every time, so
+ * reshaping an outline (or the mapping it is linked to) moves its face.
+ */
+export type RoomSetup = {
+  /** Which way is down on the output (x right, y down). */
+  arrow: { x: number; y: number };
+  /** Degrees the projector looks down (negative: up). */
+  elevation: number;
+  /** The projector's vertical field of view, degrees. */
+  fov: number;
+  /** Meters from the projector to the objects. */
+  distance: number;
+  /** Roles a person chose, by surface; the rest are guessed. */
+  roles: Record<string, FaceRole>;
+  /** The solid objects follow the layers mapped in mapping mode. */
+  linked: boolean;
+  /** Setup was finished (the Studio shows the world's settings, not the steps). */
+  done: boolean;
+};
+
+export const defaultRoomSetup = (): RoomSetup => ({ arrow: { x: 0, y: 1 }, elevation: 20, fov: 30, distance: 4, roles: {}, linked: false, done: false });
+
 export type Room = {
   source: 'manual' | 'phone';
+  setup?: RoomSetup;
   projector: RoomProjector;
   /** Which way is down, a unit vector. */
   down: Vec3;
@@ -106,6 +131,35 @@ const obj = (raw: unknown, where: string): Record<string, unknown> => {
   return raw as Record<string, unknown>;
 };
 
+function validateSetup(raw: unknown): RoomSetup {
+  const s = obj(raw, 'setup');
+  const d = defaultRoomSetup();
+  const arrow = obj(s.arrow, 'setup arrow');
+  let ax = num(arrow.x, 'setup arrow', d.arrow.x, -1, 1), ay = num(arrow.y, 'setup arrow', d.arrow.y, -1, 1);
+  const len = Math.hypot(ax, ay);
+  if (len < 1e-3) [ax, ay] = [d.arrow.x, d.arrow.y];
+  else [ax, ay] = [ax / len, ay / len];
+  const roles: Record<string, FaceRole> = {};
+  for (const [id, role] of Object.entries(obj(s.roles, 'setup roles'))) {
+    if (!FACE_ROLES.includes(role as FaceRole)) fail('setup roles', `unknown role ${String(role)}`);
+    roles[id] = role as FaceRole;
+  }
+  const flag = (raw: unknown, where: string, fallback: boolean) => {
+    if (raw === undefined) return fallback;
+    if (typeof raw !== 'boolean') fail(where, 'not true or false');
+    return raw as boolean;
+  };
+  return {
+    arrow: { x: ax, y: ay },
+    elevation: num(s.elevation, 'setup angle', d.elevation, -60, 85),
+    fov: num(s.fov, 'setup lens', d.fov, 8, 90),
+    distance: num(s.distance, 'setup distance', d.distance, 0.5, 30),
+    roles,
+    linked: flag(s.linked, 'setup link', d.linked),
+    done: flag(s.done, 'setup done', d.done),
+  };
+}
+
 function validateFace(raw: unknown, i: number): RoomFace {
   const where = `face ${i + 1}`;
   const f = obj(raw, where);
@@ -141,5 +195,5 @@ export function validateRoom(raw: unknown): Room {
   if (r.faces !== undefined && !Array.isArray(r.faces)) fail('faces', 'not a list');
   const faces = ((r.faces as unknown[] | undefined) ?? []).slice(0, MAX_ROOM_FACES).map(validateFace);
   if (r.floor !== undefined && typeof r.floor !== 'boolean') fail('floor', 'not true or false');
-  return { source: source as Room['source'], projector, down: unit(r.down, 'down', d.down), floor: (r.floor as boolean | undefined) ?? d.floor, faces };
+  return { source: source as Room['source'], ...(r.setup !== undefined ? { setup: validateSetup(r.setup) } : {}), projector, down: unit(r.down, 'down', d.down), floor: (r.floor as boolean | undefined) ?? d.floor, faces };
 }

@@ -16,6 +16,13 @@
 
   /** The scene's 3D world is on: its balls can be thrown and pushed. */
   export let world = false;
+  /** The depth setup step whose control is on the stage, if any. */
+  export let depthStep: 'faces' | 'down' | 'projector' | null = null;
+  const DEPTH_HINTS = {
+    faces: 'Tap a face to change it: Top, Side or Back.',
+    down: 'Drag to point the arrow the way things fall.',
+    projector: 'Drag up or down to set how steeply the projector looks down.',
+  };
 
   export let onundopoint: () => void;
   export let onfinish: () => void;
@@ -33,7 +40,9 @@
   };
 
   $: press = handheld ? 'Tap' : 'Click';
-  $: hint = placingEmitter
+  $: hint = depthStep
+    ? DEPTH_HINTS[depthStep]
+    : placingEmitter
     ? `${press} or drag on the canvas to place the source.${handheld ? '' : ' Esc when done.'}`
     : mode === 'draw'
       ? draftLength < 3
