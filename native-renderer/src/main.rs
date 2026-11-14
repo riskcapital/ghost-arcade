@@ -4865,6 +4865,8 @@ struct RenderState {
     pending_graph_readbacks: Vec<PendingGraphReadback>,
     /// Finished readbacks by buffer id, taken by whoever asked for them.
     graph_readback_results: HashMap<String, Vec<u8>>,
+    /// Which readbacks are wanted, and each one's staging buffer (graph_readbacks.rs).
+    graph_live_readbacks: graph_readbacks::LiveReadbacks<wgpu::Buffer>,
     output_mirror_texture: wgpu::Texture,
     /// Two full-resolution textures that composition FX ping-pong between.
     /// Deliberately separate textures rather than one two-layer array: wgpu
@@ -7075,7 +7077,11 @@ impl App {
             "capabilities" | "get_capabilities" => Ok(self.capabilities()),
             "compute_probe" | "run_compute_probe" => self.compute_probe(&req.params),
             "take_graph_readbacks" => match self.renderer.as_mut() {
-                Some(renderer) => graph_readbacks::take_readbacks(&mut renderer.graph_readback_results, &req.params),
+                Some(renderer) => graph_readbacks::take_readbacks(
+                    &mut renderer.graph_readback_results,
+                    &mut renderer.graph_live_readbacks,
+                    &req.params,
+                ),
                 None => Ok(serde_json::json!({ "readbacks": {} })),
             },
             "compute_graph" | "run_compute_graph" => {
@@ -10711,6 +10717,9 @@ impl App {
                 dispatch: [groups, groups, 1],
                 bindings,
             });
+            if let Some(renderer) = self.renderer.as_mut() {
+                renderer.graph_live_readbacks.ask(&grid_id);
+            }
             readback_buffer_ids.push(grid_id);
             track.poi_pending_since = Some(time);
         }
@@ -22317,6 +22326,7 @@ impl RenderState {
             native_graph_textures: graph_textures::GraphTexturePool::default(),
             pending_graph_readbacks: Vec::new(),
             graph_readback_results: HashMap::new(),
+            graph_live_readbacks: graph_readbacks::LiveReadbacks::default(),
             output_mirror_texture,
             composite_frame_textures,
             output_mirror_view,
@@ -24769,13 +24779,22 @@ impl RenderState {
                     continue;
                 };
                 let byte_length = source.byte_length;
-                let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("Ghost Graph Readback Staging"),
-                    size: byte_length,
-                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
+                let source_buffer = source.buffer.clone();
+                // Only when someone has asked since the last copy: the app
+                // reads zone counters ten times a second, not every frame.
+                if !self.graph_live_readbacks.take_ask(id) {
+                    continue;
+                }
+                let device = &self.device;
+                let staging = self.graph_live_readbacks.staging(id, byte_length, || {
+                    device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("Ghost Graph Readback Staging"),
+                        size: byte_length,
+                        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    })
                 });
-                encoder.copy_buffer_to_buffer(&source.buffer, 0, &staging, 0, byte_length);
+                encoder.copy_buffer_to_buffer(&source_buffer, 0, &staging, 0, byte_length);
                 self.pending_graph_readbacks.push(PendingGraphReadback {
                     id: id.clone(),
                     staging,
@@ -24824,6 +24843,9 @@ impl RenderState {
                         .insert(pending.id.clone(), view.to_vec());
                 }
                 pending.staging.unmap();
+            } else {
+                // A failed map leaves the buffer unusable: the next copy gets a new one.
+                self.graph_live_readbacks.forget_staging(&pending.id);
             }
         }
     }
@@ -25541,6 +25563,7 @@ impl RenderState {
         if clear_all {
             let count = self.native_compute_graph_buffers.len();
             self.native_compute_graph_buffers.clear();
+            self.prune_graph_readbacks(|_| false);
             return count;
         }
         let prefixes = prefixes
@@ -25554,7 +25577,16 @@ impl RenderState {
         let before = self.native_compute_graph_buffers.len();
         self.native_compute_graph_buffers
             .retain(|id, _| !prefixes.iter().any(|prefix| id.starts_with(prefix)));
+        self.prune_graph_readbacks(|id| !prefixes.iter().any(|prefix| id.starts_with(prefix)));
         before.saturating_sub(self.native_compute_graph_buffers.len())
+    }
+
+    /// Forget the readbacks of buffers that are gone: their asks, staging
+    /// buffers, copies in flight and bytes nobody took.
+    fn prune_graph_readbacks(&mut self, keep: impl Fn(&str) -> bool) {
+        self.graph_live_readbacks.retain(&keep);
+        self.graph_readback_results.retain(|id, _| keep(id));
+        self.pending_graph_readbacks.retain(|pending| keep(&pending.id));
     }
 
     /// Free every persistent graph buffer whose id contains `token`.
@@ -25572,6 +25604,7 @@ impl RenderState {
         let before = self.native_compute_graph_buffers.len();
         self.native_compute_graph_buffers
             .retain(|id, _| !id.contains(token));
+        self.prune_graph_readbacks(|id| !id.contains(token));
         before.saturating_sub(self.native_compute_graph_buffers.len())
     }
 
