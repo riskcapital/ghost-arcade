@@ -15,7 +15,7 @@ export type TouchTool = 'attract' | 'repel' | 'vortex' | 'throw' | 'push' | 'pou
 export type EmitterMarker = { x: number; y: number; label: string };
 
 /** Where depth setup is: choosing how, then the steps of setting up by hand. */
-export type DepthStep = 'start' | 'surfaces' | 'faces' | 'down' | 'projector';
+export type DepthStep = 'start' | 'scan' | 'surfaces' | 'faces' | 'down' | 'projector';
 
 /** What the stage shows and does during depth setup. */
 export type DepthStage = {

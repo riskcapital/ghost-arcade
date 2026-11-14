@@ -26,10 +26,19 @@
   export let onlink: () => void;
   export let onstart: () => void;
   export let ondone: () => void;
+  /** A depth capture file the phone app saved: its text. */
+  export let oncapture: (text: string) => void = () => {};
+  async function openCapture(e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (file) oncapture(await file.text());
+  }
 
   const HAND: DepthStep[] = ['surfaces', 'faces', 'down', 'projector'];
   const TITLES: Record<DepthStep, string> = {
     start: 'Real objects',
+    scan: 'Scan with the phone',
     surfaces: 'Faces',
     faces: 'What each face is',
     down: 'Which way is down',
@@ -52,10 +61,10 @@
   {#if step === 'start'}
     <p class="hint">Effects follow the shape of what you project on: balls roll off the tops, paint runs down the sides, fire sits on the ledges.</p>
     <div class="starter-grid">
-      <button class="starter" disabled>
+      <button class="starter" onclick={() => onstep('scan')}>
         <Icon name="scan" size={18} />
         <strong>Scan with the phone</strong>
-        <span>Measures the objects with an iPhone's depth camera. Coming with the phone app's depth scan.</span>
+        <span>An iPhone's depth camera measures the objects while the projector shows the auto-map stripes. Most accurate.</span>
       </button>
       <button class="starter" onclick={() => onstep('surfaces')}>
         <Icon name="map" size={18} />
@@ -63,6 +72,13 @@
         <span>Use the faces you mapped, then say which way is down and where the projector is.</span>
       </button>
     </div>
+  {:else if step === 'scan'}
+    <p class="hint">On the phone, run Auto-map with depth from Calibration, with the phone held still where it sees the objects and the projection. Then open the depth capture it saved.</p>
+    <label class="wide file-button">
+      Open a depth capture
+      <input type="file" accept=".json,application/json" onchange={openCapture} />
+    </label>
+    <p class="hint">The faces, the projector's place and lens, and which way is down all come from the scan.</p>
   {:else if step === 'surfaces'}
     <p class="hint">Each flat face of an object is its own outline: the top of a box and each side you can see.</p>
     {#if canLink}
@@ -107,7 +123,9 @@
       <button onclick={() => onstep(null)}>Cancel</button>
     {:else}
       <button onclick={() => onstep(at > 0 ? HAND[at - 1] : 'start')}>Back</button>
-      {#if at < HAND.length - 1}
+      {#if step === 'scan'}
+        <span></span>
+      {:else if at < HAND.length - 1}
         <button disabled={step === 'surfaces' && faces === 0} onclick={() => onstep(HAND[at + 1])}>Next</button>
       {:else}
         <button onclick={ondone}>Done</button>

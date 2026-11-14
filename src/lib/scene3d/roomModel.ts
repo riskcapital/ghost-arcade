@@ -39,6 +39,8 @@ export type RoomProjector = {
   target: Vec3;
   /** Vertical field of view, degrees. The aspect is the output's. */
   fov: number;
+  /** Lens shift, in halves of the output (projector.ts). */
+  shift?: { x: number; y: number };
 };
 
 /**
@@ -191,6 +193,10 @@ export function validateRoom(raw: unknown): Room {
     target: vec(p.target, 'projector target', d.projector.target),
     fov: num(p.fov, 'projector fov', d.projector.fov, 5, 120),
   };
+  if (p.shift !== undefined) {
+    const sh = obj(p.shift, 'projector shift');
+    projector.shift = { x: num(sh.x, 'projector shift', 0, -3, 3), y: num(sh.y, 'projector shift', 0, -3, 3) };
+  }
   if (length(sub(projector.target, projector.position)) < 1e-3) projector.target = add(projector.position, [0, 0, -1]);
   if (r.faces !== undefined && !Array.isArray(r.faces)) fail('faces', 'not a list');
   const faces = ((r.faces as unknown[] | undefined) ?? []).slice(0, MAX_ROOM_FACES).map(validateFace);

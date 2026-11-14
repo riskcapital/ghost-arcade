@@ -377,7 +377,11 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
     width,
     height,
     quality: options.quality ?? SCENE3D_TIERS.default,
-    relief: { flatTexture: flatTexture ?? undefined, gain: RELIEF_PROJECTOR_GAIN, sway: world.sun.sway, projector: geo.projector },
+    relief: {
+      flatTexture: flatTexture ?? undefined, gain: RELIEF_PROJECTOR_GAIN, sway: world.sun.sway, projector: geo.projector,
+      // Face-on, the camera is the projector, lens shift and all.
+      cameraShift: options.view && (options.view.yaw || options.view.pitch) ? [0, 0] : geo.projector.shift,
+    },
   });
   const textures = [...graph.config.textures];
   if (flatTexture) textures.unshift({ id: flatTexture, ...flatSize(width, height), format: 'rgba16float' });

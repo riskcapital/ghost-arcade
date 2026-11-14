@@ -1333,3 +1333,20 @@
 .interactive-workspace .world-source {
   grid-template-columns: repeat(2, 1fr);
 }
+
+.interactive-workspace .file-button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--ga-control-h, 28px);
+  border: 1px solid var(--ga-line-2);
+  border-radius: var(--ga-r-hard, 5px);
+  cursor: pointer;
+}
+.interactive-workspace .file-button input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}

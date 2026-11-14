@@ -68,6 +68,7 @@
   import type { DepthStage, DepthStep, EditorMode, EmitterMarker, InspectorTab, TouchTool } from './interactiveEditorTypes';
   import { defaultRoom, defaultRoomSetup, FACE_ROLES, type RoomSetup } from '../../scene3d/roomModel';
   import { solveRoom } from '../../scene3d/roomSolve';
+  import { roomFromCapture, validateDepthCapture } from '../../scene3d/roomPhone';
   import type { ReliefWorld, WorldSource } from '../../scene3d/worldModel';
   import InteractiveHeader from './InteractiveHeader.svelte';
   import InteractiveToolbar from './InteractiveToolbar.svelte';
@@ -187,7 +188,7 @@
   /** The step of depth setup in the 3D World tab; null when not setting up. */
   let depthStep: DepthStep | null = null;
   $: roomSetup = scene.world?.source === 'room' ? scene.world.room?.setup : undefined;
-  $: if (depthStep && !roomSetup) depthStep = null;
+  $: if (depthStep && depthStep !== 'start' && depthStep !== 'scan' && !roomSetup) depthStep = null;
   $: depthSolids = scene.surfaces.filter((s) => s.behavior === 'solid' && s.points.length >= 3);
   // The solve the engine will run, here for the roles and how well the faces meet.
   $: depthSolve = depthStep && roomSetup
@@ -252,6 +253,22 @@
     const surfaces = syncMappedSurfaces(scene.surfaces, mappingSurfaces) ?? scene.surfaces;
     apply({ ...edit.setSceneWorld(scene, { ...world, room: { ...world.room, setup: { ...world.room.setup, linked: true } } }), surfaces });
     say('The mapped layers are the faces now, and follow the mapping.');
+  }
+  /** A phone scan: its surfaces become the solid objects, the room is as measured. */
+  function applyCapture(text: string) {
+    const world = scene.world;
+    if (!world) return;
+    try {
+      const capture = validateDepthCapture(JSON.parse(text));
+      const { room, report } = roomFromCapture(capture, safeAspect, (id) => `scan:${id}`);
+      const kept = scene.surfaces.filter((s) => !s.id.startsWith('scan:') && !(s.behavior === 'solid' && s.id.startsWith('mapped:')));
+      const scanned = capture.surfaces.map((s) => ({ id: `scan:${s.id}`, name: s.name, behavior: 'solid' as const, points: s.outline.map((p) => ({ x: Math.max(0, Math.min(1, p.x)), y: Math.max(0, Math.min(1, p.y)) })) }));
+      apply({ ...edit.setSceneWorld(scene, { ...world, source: 'room', look: 'effects', room }), surfaces: [...kept, ...scanned].slice(0, 32) });
+      openDepth(null);
+      say(`Scanned ${room.faces.length} faces. Lens ${Math.round(report.fov)}°, off by ${report.pixelError.toFixed(1)} px on average.`);
+    } catch (e) {
+      say((e as Error).message);
+    }
   }
   function finishDepth() {
     setRoomSetup({ done: true }, true);
@@ -1182,7 +1199,7 @@
         {handheld}
         bind:tool
         world={!!scene.world?.enabled}
-        depthStep={depthStage && depthStage.step !== 'start' && depthStage.step !== 'surfaces' ? depthStage.step : null}
+        depthStep={depthStage && (depthStage.step === 'faces' || depthStage.step === 'down' || depthStage.step === 'projector') ? depthStage.step : null}
         draftLength={draft.length}
         markerName={emitterMarker?.label.toLowerCase() ?? ''}
         sourceLabel={referencePreview
@@ -1304,10 +1321,10 @@
             world={!!scene.world?.enabled}
             onfinish={(finish) => apply(edit.setSurfaceFinish(scene, selected, finish))}
           />
-        {:else if inspector === 'world' && depthStep && roomSetup}
+        {:else if inspector === 'world' && depthStep && (roomSetup || depthStep === 'scan' || depthStep === 'start')}
           <InteractiveDepthSetup
             step={depthStep}
-            setup={roomSetup}
+            setup={roomSetup ?? defaultRoomSetup()}
             gravity={scene.world?.gravity ?? 1}
             faces={depthSolids.length}
             contacts={depthSolve?.contacts ?? 0}
@@ -1316,6 +1333,7 @@
             onsetup={setRoomSetup}
             ongravity={(gravity, undo) => scene.world && setWorld({ ...scene.world, gravity }, undo)}
             onlink={linkMapping}
+            oncapture={applyCapture}
             onstart={beginEdit}
             ondone={finishDepth}
           />

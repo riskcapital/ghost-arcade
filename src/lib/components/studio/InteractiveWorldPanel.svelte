@@ -70,7 +70,7 @@
   </div>
   {#if real}
     <p class="hint">
-      {blocks === 1 ? '1 face' : `${blocks} faces`}{world.room?.setup ? ', set up by hand' : ', scanned'}.
+      {world.room?.setup ? `${blocks === 1 ? '1 face' : `${blocks} faces`}, set up by hand.` : `${world.room?.faces.length ?? 0} faces, scanned with the phone.`}
       {world.room?.setup?.linked ? 'Following the mapped layers.' : ''}
     </p>
     <button class="wide" onclick={ondepthsetup}>Set up again</button>

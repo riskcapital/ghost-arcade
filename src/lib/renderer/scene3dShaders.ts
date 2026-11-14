@@ -45,10 +45,11 @@ struct Settings {
   post_b: vec4f,       // temperature, grain, projected light gain (relief), spare
   react: vec4f,        // light, particles, bloom, camera
   counts: vec4f,       // vertices, particles, emitters, fields
-  counts_b: vec4f,     // point lights, colliders, spare, spare
+  counts_b: vec4f,     // point lights, colliders, the camera's lens shift (x, y: halves of the picture)
   bounds: vec4f,       // centre xyz, radius
-  // The projector of the relief world (worldGeometry.ts ProjectorBasis): the
-  // ray through output point (u, v) is fwd + right·(2u − 1) + up·(1 − 2v).
+  // The projector of the relief world (projector.ts ProjectorBasis): the ray
+  // through output point (u, v) is fwd + right·(2u − 1 − sx) + up·(1 − 2v − sy),
+  // the lens shift (sx, sy) in proj_right.w and proj_up.w.
   proj_pos: vec4f,
   proj_right: vec4f,
   proj_up: vec4f,
@@ -90,7 +91,7 @@ struct Collider { model: mat4x4f, inverse: mat4x4f, opts: vec4f } // opts.x shap
 // The projector's ray through a point of the output (0..1, y down); its
 // forward part is 1, so p = proj_pos + proj_dir(uv) · t is t in front.
 fn proj_dir(uv: vec2f) -> vec3f {
-  return settings.proj_fwd.xyz + settings.proj_right.xyz * (uv.x * 2.0 - 1.0) + settings.proj_up.xyz * (1.0 - uv.y * 2.0);
+  return settings.proj_fwd.xyz + settings.proj_right.xyz * (uv.x * 2.0 - 1.0 - settings.proj_right.w) + settings.proj_up.xyz * (1.0 - uv.y * 2.0 - settings.proj_up.w);
 }
 // How far in front of the projector a point is, along its axis.
 fn proj_depth(p: vec3f) -> f32 { return dot(p - settings.proj_pos.xyz, settings.proj_fwd.xyz); }
@@ -100,7 +101,7 @@ fn proj_uv(p: vec3f) -> vec2f {
   let t = max(dot(rel, settings.proj_fwd.xyz), 1e-3);
   let r = settings.proj_right.xyz;
   let u = settings.proj_up.xyz;
-  return vec2f(0.5 + 0.5 * dot(rel, r) / (dot(r, r) * t), 0.5 - 0.5 * dot(rel, u) / (dot(u, u) * t));
+  return vec2f(0.5 + 0.5 * (dot(rel, r) / (dot(r, r) * t) + settings.proj_right.w), 0.5 - 0.5 * (dot(rel, u) / (dot(u, u) * t) + settings.proj_up.w));
 }
 
 const PI = 3.14159265;
@@ -181,7 +182,11 @@ fn cs_frame() {
   }
   let aspect = max(settings.env.w, 0.01);
   let cam_view = look_at(eye, aim, vec3f(0.0, 1.0, 0.0));
-  view.view_proj = perspective(radians(settings.cam_pos.w), aspect, 0.05, 400.0) * cam_view;
+  // A lens shift moves the picture off the lens's axis, as a projector's does.
+  var lens = perspective(radians(settings.cam_pos.w), aspect, 0.05, 400.0);
+  lens[2].x = -settings.counts_b.z;
+  lens[2].y = -settings.counts_b.w;
+  view.view_proj = lens * cam_view;
   view.cam_pos = vec4f(eye, now);
   view.cam_right = vec4f(cam_view[0].x, cam_view[1].x, cam_view[2].x, 0.0);
   view.cam_up = vec4f(cam_view[0].y, cam_view[1].y, cam_view[2].y, 0.0);
