@@ -101,8 +101,9 @@
 :root .studio[data-layout='phone'][data-layout] .monitor-tools .autopilot-bar button:first-child strong {
   display: none;
 }
-/* Phone: the tempo chip stacks its number over "BPM" so the row has room for all eight controls. */
-:root .studio[data-layout='phone'][data-layout] .monitor-tools .tempo-chip {
+/* The tempo chip stacks its number over "BPM" so the row has room for all eight controls on a
+   phone, and the tempo controls stay on one row in the iPad's program column. */
+:root .studio[data-layout][data-layout] .monitor-tools .tempo-chip {
   flex-direction: column;
   justify-content: center;
   gap: 1px;
@@ -111,7 +112,7 @@
   line-height: 1;
   letter-spacing: 0.04em;
 }
-:root .studio[data-layout='phone'][data-layout] .monitor-tools .tempo-chip strong {
+:root .studio[data-layout][data-layout] .monitor-tools .tempo-chip strong {
   font-size: 16px;
 }
 :root .studio[data-layout='phone'][data-layout] .monitor-tools .ab-chip {
