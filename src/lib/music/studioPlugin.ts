@@ -281,7 +281,8 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
     } as Layer);
   }
   onHosts?.(hosts);
-  return out;
+  // No instance: the list as it came (it runs on every frame sent).
+  return hosts ? out : layers;
 }
 
 // ── Shared runtime hooks ────────────────────────────────────────────────
@@ -291,9 +292,6 @@ let voiceMods = new Map<number, number>();
 export function setStudioVoiceMods(mods: Map<number, number>): void {
   voiceMods = mods;
 }
-
-/** Bumped every frame while an instance is showing, so the renderer picks up the voices' new signals. */
-export const studioVisualTick = writable(0);
 
 /** Bumped when a voice's shader has loaded: its controls can show and the scene resyncs. Panels watch this, not the frame tick. */
 export const studioCodeTick = writable(0);

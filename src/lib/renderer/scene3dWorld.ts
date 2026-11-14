@@ -84,8 +84,11 @@ export type WorldPart = {
    * view and other touches without rebuilding the world: the scene settings
    * (the camera), the balls' input and the fire lights. Equal to what a full
    * build with that view and input puts in `values` for the same ids.
+   * With `scene` (the same scene with other effect params, from live
+   * values), the buffers those params fill are worked out again too: the
+   * kinds, the physics and the fire lights.
    */
-  live: (view?: ReliefView, input?: WorldInputState) => { id: string; initial_b64: string; key: string }[];
+  live: (view?: ReliefView, input?: WorldInputState, scene?: InteractiveScene) => { id: string; initial_b64: string; key: string }[];
 };
 
 export type WorldPartOptions = {
@@ -522,16 +525,27 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
     passes,
     render_passes: renders,
     values: [...graph.values, ...ballValues.map(({ id, initial_b64 }) => ({ id, initial_b64 }))].map((v) => ({ ...v, key: v.initial_b64 })),
-    live: (view, input) => {
+    live: (view, input, moved) => {
       // Only the camera reads the view: rewrite its slots of the settings.
       const settings = graph.settings.slice();
       const camera = geo.mode === 'room' || !geo.frame ? roomCamera(geo, view) : reliefCamera(geo.frame, world, view);
       settings.set([...camera.position, camera.fov, ...camera.target, camera.mode === 'director' ? 1 : 0], 0);
       settings.set(view && (view.yaw || view.pitch) ? [0, 0] : geo.projector.shift, 42);
+      // Other effect params: same effects in the same order, so the same
+      // slots; only the values the params fill change.
+      const balls = moved ? ballLayout(moved) : layout;
+      const drips = moved ? dripLayout(moved) : paint;
+      const flames = moved ? flameLayout(moved) : fire;
       return [
         value('settings', 'uniform', settings),
-        value('ball-input', 'uniform', ballInput(geo, layout, input)),
-        value('fire-lights', 'uniform', fireLights(geo, fire, input)),
+        value('ball-input', 'uniform', ballInput(geo, balls, input)),
+        value('fire-lights', 'uniform', fireLights(geo, flames, input)),
+        ...(moved ? [
+          value('ball-phys', 'uniform', worldPhysics(moved, world, geo, balls, drips, flames)),
+          value('ball-kinds', 'storage', ballKinds(moved, geo, balls)),
+          value('drip-kinds', 'storage', dripKinds(geo, drips)),
+          value('flame-kinds', 'storage', flameKinds(geo, flames)),
+        ] : []),
       ].map(({ id, initial_b64 }) => ({ id, initial_b64, key: initial_b64 }));
     },
     topology: `${geo.mode}|${world.flat}|${flatTexture ? JSON.stringify(flatSize(width, height)) : ''}|balls:${layout.count}:${layout.effects.length}|drips:${paint.count}:${paint.effects.length}:${JSON.stringify(wet)}|flames:${fire.count}:${fire.effects.length}|${graph.topology}`,

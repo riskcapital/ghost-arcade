@@ -3139,6 +3139,25 @@ void main() {
     },
 
     /** Lightweight shader value update for per-frame modulation — no history, no dispose checks */
+    /**
+     * One shader input of a layer, set from its panel. The layer gets a new
+     * source with new values (the stored ones are never written in place,
+     * so earlier undo steps keep theirs), and a drag of one slider is one
+     * undo step.
+     */
+    setLayerShaderValue(id: string, inputName: string, value: number | boolean | number[]) {
+      let changed = false;
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((l) => {
+          if (l.id !== id || !l.source?.shaderValues) return l;
+          changed = true;
+          return { ...l, source: { ...l.source, shaderValues: { ...l.source.shaderValues, [inputName]: value } } };
+        }),
+      }));
+      if (changed) scheduleHistorySnapshot(editKey('shader', id, inputName));
+    },
+
     batchUpdateLayerShaderValues(id: string, values: Record<string, number>) {
       update((project) => ({
         ...project,

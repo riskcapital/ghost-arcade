@@ -84,8 +84,28 @@ function createRpc(): Rpc {
   };
 }
 
+/** Compile every plugin shader in the core and wait until they are all done.
+ *  Graphs refuse a shader that was not precompiled, so every case needs it. */
+async function precompileAll(rpc: Rpc): Promise<any> {
+  if(process.env.GA_SHADER_DEBUG){for(const cmd of buildNativePluginPrecompileCommands()){await rpc.send('submit_commands',{commands:[cmd]});await new Promise(r=>setTimeout(r,35));const st=await rpc.send('status');if(st.last_shader_error)console.error(cmd.shader_id,st.last_shader_error);}}else await rpc.send('submit_commands', { commands: buildNativePluginPrecompileCommands() });
+  // Precompiles drain through the per-frame queue; poll until settled.
+  const expected = buildNativePluginPrecompileCommands().length;
+  let status: any = null;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    status = await rpc.send('status');
+    const done =
+      Number(status.shader_precompile_compiled ?? 0) +
+      Number(status.shader_precompile_failed ?? 0);
+    if (done >= expected) break;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+  }
+  return status;
+}
+
 describe('native plugin graphs (runtime, real core)', () => {
   let rpc: Rpc | null = null;
+  /** The core's status once every plugin shader was compiled (beforeAll). */
+  let precompiled: any = null;
 
   beforeAll(async () => {
     if (!existsSync(nativeCoreBin)) return;
@@ -94,31 +114,22 @@ describe('native plugin graphs (runtime, real core)', () => {
       config: { width: 320, height: 180, source_frame_size: 512, target_fps: 60 },
     });
     expect(started?.backend_ready).toBe(true);
-  });
+    // Here, not in a case of its own: a case run alone (-t) needs it too.
+    precompiled = await precompileAll(rpc);
+  }, 30000);
 
   afterAll(() => {
     rpc?.close();
   });
 
   itIfNativeCore('compiles every plugin shader through the core with zero failures', async () => {
-    if(process.env.GA_SHADER_DEBUG){for(const cmd of buildNativePluginPrecompileCommands()){await rpc!.send('submit_commands',{commands:[cmd]});await new Promise(r=>setTimeout(r,35));const st=await rpc!.send('status');if(st.last_shader_error)console.error(cmd.shader_id,st.last_shader_error);}}else await rpc!.send('submit_commands', { commands: buildNativePluginPrecompileCommands() });
-    // Precompiles drain through the per-frame queue; poll until settled.
-    const expected = buildNativePluginPrecompileCommands().length;
-    let status: any = null;
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      status = await rpc!.send('status');
-      const done =
-        Number(status.shader_precompile_compiled ?? 0) +
-        Number(status.shader_precompile_failed ?? 0);
-      if (done >= expected) break;
-      await new Promise((resolve) => setTimeout(resolve, 30));
-    }
+    const status = precompiled;
     expect(
       Number(status.shader_precompile_failed ?? -1),
       String(status.last_shader_error ?? ''),
     ).toBe(0);
-    expect(Number(status.shader_precompile_compiled ?? 0)).toBeGreaterThanOrEqual(expected);
-  }, 30000);
+    expect(Number(status.shader_precompile_compiled ?? 0)).toBeGreaterThanOrEqual(buildNativePluginPrecompileCommands().length);
+  });
 
   itIfNativeCore('composites a live camera beneath HandFX, mirrors it and dims it independently', async () => {
     const cameraSourceId = 'hand-camera-test';

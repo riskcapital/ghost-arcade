@@ -28,6 +28,11 @@ export interface HistorySnapshotHooks {
   /** Fold a state captured earlier into the latest step (see
    *  noteLiveChange). Without it, live changes are not folded. */
   amendTo?: (captured: unknown) => void;
+  /** The undoable stores' current values, by reference (cheap: no copies).
+   *  Live control compares the stamp from before and after it ran and
+   *  notes its state only when one of them changed. Without it, every live
+   *  control block is noted. */
+  stamp?: () => readonly unknown[];
 }
 
 // We record SYNCHRONOUSLY (no setTimeout) so each discrete action lands in its
@@ -267,15 +272,33 @@ export function hasPendingHistorySnapshot(): boolean {
 // recording into an armed keyframe track (scheduleRecordingTakeSnapshot).
 let _liveControlDepth = 0;
 export function runAsLiveControl<T>(fn: () => T): T {
+  // The engines run every frame and mostly write live values, not the
+  // stores: only a block that changed an undoable store is noted.
+  const before = _liveControlDepth === 0 ? stampNow() : null;
   _liveControlDepth += 1;
   try {
     return fn();
   } finally {
     _liveControlDepth -= 1;
-    if (_liveControlDepth === 0) noteLiveChange();
+    if (_liveControlDepth === 0 && !sameStamp(before, stampNow())) noteLiveChange();
   }
 }
 export function isLiveControl(): boolean { return _liveControlDepth > 0; }
+
+function stampNow(): readonly unknown[] | null {
+  if (!_snapshotHooks?.stamp || !_snapshotHooks.amendTo) return null;
+  try {
+    return _snapshotHooks.stamp();
+  } catch {
+    return null;
+  }
+}
+/** False when either stamp is missing: then the block is noted. */
+function sameStamp(a: readonly unknown[] | null, b: readonly unknown[] | null): boolean {
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
 
 // Engines that move values on their own (audio and LFO modulation, Auto,
 // Music motion, performance pads, the show's sections, cues and takeovers)

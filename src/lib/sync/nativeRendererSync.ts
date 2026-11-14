@@ -7,7 +7,8 @@ import { IsfAnchorResend } from './isfAnchorResend';
 const sharedIsfAnchors = new IsfAnchorResend();
 import { applyStageOverrides } from '../timeline/lines/stageLedParams';
 import { setTransformAspect } from '../keyframes/layerParamKeys';
-import type {InteractiveGraphBuildResult, InteractiveGraphMeta, InteractiveLiveInput} from '../renderer/nativeInteractiveGraph';
+import {interactiveParamsAreValues, type InteractiveGraphBuildResult, type InteractiveGraphMeta, type InteractiveLiveInput, type InteractiveLiveParams} from '../renderer/nativeInteractiveGraph';
+import {applyInteractiveOverrides} from '../mobile/studio/interactiveEffects';
 import {showToast} from '../stores/errorToast';
 import { projectorCalibrationUniforms } from '../output/projectorCalibration';
 import { composeNativeGraphs } from '../renderer/nativeGraphComposition';
@@ -87,7 +88,7 @@ import {
 import { resolveAssetRefForRuntime } from '$lib/storage/assetRegistry';
 import { shaderIsMusicMotionReady, withMusicFlow, withMusicTime, musicTimePhase, MUSIC_TIME_PHASE_INPUT, MUSIC_TIME_RATE_INPUT } from '$lib/audio/musicMotion';
 import { getMusicTimeOffset, getMusicTimeRate, hasMusicTime } from '$lib/audio/musicMotionEngine';
-import { hasLiveValues, liveCompositionValues, liveDeckOfLayerId, liveValuesForDeck, liveValuesForLayer, type LiveCompositionScope } from '$lib/audio/liveParams';
+import { hasLiveValues, liveCompositionValues, liveValuesForRenderedLayer, type LiveCompositionScope } from '$lib/audio/liveParams';
 import {
   receiveSpoutTextureInfo,
   type SpoutSharedTextureInfo,
@@ -699,6 +700,8 @@ type NativeGraphRouteState = {
    *  the live input they were last sent for. */
   interactiveLive?: InteractiveGraphMeta['live'];
   interactiveLiveSig?: string;
+  /** Live params (Auto on the scene's effect params) are on what the core holds. */
+  interactiveParamsLive?: boolean;
   /** Message of the build failure already reported for this route. */
   reportedBuildFailure?: string;
 };
@@ -1108,8 +1111,35 @@ const musicTimeCodeCache = new Map<string, string>();
  */
 /** A scene layer's live values: a mapping layer's by id, a VJ row's for the clip it shows. */
 function liveValuesForSceneLayer(layer: Layer) {
-  const row = liveDeckOfLayerId(layer.id);
-  return row ? liveValuesForDeck(row.deck, row.row, layer.source?.id) : liveValuesForLayer(layer);
+  return liveValuesForRenderedLayer(layer);
+}
+
+/**
+ * A layer's live values, split: the numbers on its Interactive scene's
+ * effect params that only move value buffers (`params`, sent through the
+ * installed graph's `interactive.live`, so the scene is not rebuilt every
+ * frame an Auto plays on it) and the rest (`rest`, onto the scene copy as
+ * before). A key a later override sets (keyframes, show lanes, lines) wins,
+ * so it is left in `rest` to be overwritten the usual way.
+ */
+export function splitInteractiveLiveValues(
+  layer: Layer,
+  values: Record<string, number>,
+  later: ReadonlyArray<Record<string, number | boolean> | undefined>,
+): { rest: Record<string, number> | undefined; params: InteractiveLiveParams | undefined } {
+  const scene = layer.source?.effectSource?.interactiveScene;
+  if (!scene) return { rest: values, params: undefined };
+  let rest: Record<string, number> | undefined;
+  let params: InteractiveLiveParams | undefined;
+  for (const key in values) {
+    const value = values[key];
+    const own = key.startsWith('interactive:')
+      && !later.some((set) => set !== undefined && key in set)
+      && interactiveParamsAreValues(scene, { [key]: value });
+    if (own) (params ??= {})[key] = value;
+    else (rest ??= {})[key] = value;
+  }
+  return { rest, params };
 }
 
 /** Composition effects with this frame's live values on their params. */
@@ -10090,6 +10120,7 @@ export class NativeRendererSync {
     // clip they were worked out for.
     const hasLive = hasLiveValues();
     if (!kfOverrides && !seqOverrides && !hasShow && !hasLines && !hasLive) return layers;
+    const interactiveLiveAsValues = this.supportsNativeFeature('native_interactive_value_updates');
 
     let changed = false;
     const mapped = layers.map((layer) => {
@@ -10100,14 +10131,23 @@ export class NativeRendererSync {
       const lineParams = hasLines ? lineLayerValues(lineFrame, layer.id) : undefined;
       const blockParams = hasLines ? lineBlockValues(lineFrame, layer) : undefined;
       const lookLines = hasLines && wearsLookWithLines(lineFrame, layer);
-      const liveParams = hasLive ? liveValuesForSceneLayer(layer) : undefined;
-      if (!kf && seqMult === undefined && !showParams && showMul === undefined && !lineParams && !blockParams && !lookLines && !liveParams) return layer;
+      const allLive = hasLive ? liveValuesForSceneLayer(layer) : undefined;
+      // An Auto on an Interactive scene's effect param: kept off the scene
+      // copy and sent as value buffers (no graph build per frame).
+      const split = allLive && interactiveLiveAsValues && layer.source?.effectSource?.interactiveScene
+        ? splitInteractiveLiveValues(layer, allLive, [kf as Record<string, number | boolean> | undefined, showParams, lineParams, blockParams])
+        : null;
+      const liveParams = split ? split.rest : allLive;
+      const interactiveParams = split?.params;
+      if (!kf && seqMult === undefined && !showParams && showMul === undefined && !lineParams && !blockParams && !lookLines && !liveParams && !interactiveParams && layer._interactiveLiveParams === undefined) return layer;
 
       changed = true;
       const next: any = { ...layer };
       if (seqMult !== undefined && seqMult < 1) {
         next.opacity = (next.opacity ?? 1) * seqMult;
       }
+      delete next._interactiveLiveParams;
+      if (interactiveParams) next._interactiveLiveParams = interactiveParams;
       if (liveParams) applyParamOverrides(next as Layer, liveParams as ParamOverrideSet);
       if (kf) applyParamOverrides(next as Layer, kf as ParamOverrideSet);
       if (showParams) applyParamOverrides(next as Layer, showParams);
@@ -10124,6 +10164,14 @@ export class NativeRendererSync {
       return next as Layer;
     });
     return changed ? mapped : layers;
+  }
+
+  /** Applied to the published scene on every frame sent, before the
+   *  frame's overrides: expands layers whose content moves every frame
+   *  (Music Studio instances into their voices and mix, Canvas.svelte). */
+  private frameLayers: ((layers: Layer[]) => Layer[]) | null = null;
+  setFrameLayers(fn: ((layers: Layer[]) => Layer[]) | null): void {
+    this.frameLayers = fn;
   }
 
   async flush(width: number, height: number, layers: Layer[]) {
@@ -10144,7 +10192,7 @@ export class NativeRendererSync {
           await this.flushOnce(
             this.desiredWidth,
             this.desiredHeight,
-            this.applyTimelineOverrides(this.latestLayers),
+            this.applyTimelineOverrides(this.frameLayers ? this.frameLayers(this.latestLayers) : this.latestLayers),
           );
         } finally {
           // The frame's commands are sent: now the zones that fired while it
@@ -10178,7 +10226,10 @@ export class NativeRendererSync {
       this.nativeSceneAdopted = true;
     }
     const urgentVideoRevisionAtStart = this.urgentVideoRevision;
-    this.latestLayers = layers;
+    // `layers` carries this frame's overrides (live values, keyframes,
+    // lanes). latestLayers keeps the scene as published: the next frame
+    // works its overrides out again from it, so a value an engine stopped
+    // moving goes back to the stored one instead of staying on.
     const commands: RendererCommand[] = [];
     // Mapping composition FX: rebuilt every frame, because the core drains
     // its post-composite queue each render and the uniforms carry time.
@@ -10381,10 +10432,12 @@ export class NativeRendererSync {
       // value buffers (below), not through the params that rebuild the graph.
       // A core without in-place value updates still needs the rebuild.
       const interactiveLive = nativeGraphRoute?.kind === 'performer-world' ? performerWorldLiveInput(layer.id) : null;
-      const interactiveLiveSig = interactiveLive ? JSON.stringify(interactiveLive) : '';
+      // Auto on the scene's effect params (applyTimelineOverrides): value buffers too.
+      const interactiveParams = nativeGraphRoute?.kind === 'performer-world' ? layer._interactiveLiveParams : undefined;
+      const interactiveLiveSig = interactiveLive || interactiveParams ? JSON.stringify([interactiveLive, interactiveParams ?? null]) : '';
       const interactiveLiveAsValues = this.supportsNativeFeature('native_interactive_value_updates');
       const nativeGraphParamsSig = nativeGraphScaledParams
-        ? graphParamsKey(nativeGraphScaledParams) + (interactiveLiveAsValues || !interactiveLive ? '' : `|live:${interactiveLiveSig}`)
+        ? graphParamsKey(nativeGraphScaledParams) + (interactiveLiveAsValues || !interactiveLiveSig ? '' : `|live:${interactiveLiveSig}`)
         : 'none';
       // The params that decide what a VJ graph binds. Other kinds' params are
       // values only (graphParamsSig below) and do not rebind the source.
@@ -10924,7 +10977,15 @@ export class NativeRendererSync {
           ? timedNativePluginGraph({
               kind: nativeGraphRoute.kind as 'ghostfx' | 'handfx' | 'performer-world',
               sourceId: graphSource.id,
-              params: interactiveLive ? { ...nativeGraphScaledParams, ...interactiveLive } : nativeGraphScaledParams ?? {},
+              params: interactiveLive || interactiveParams
+                ? {
+                    ...nativeGraphScaledParams,
+                    ...(interactiveParams && nativeGraphScaledParams?.interactiveScene
+                      ? { interactiveScene: applyInteractiveOverrides(nativeGraphScaledParams.interactiveScene, interactiveParams) }
+                      : {}),
+                    ...interactiveLive,
+                  }
+                : nativeGraphScaledParams ?? {},
               width,
               height,
               time: graphTime,
@@ -11000,9 +11061,11 @@ export class NativeRendererSync {
           routeState.interactiveEffectIds = interactive.effectIds;
           routeState.interactiveLive = interactive.live;
           routeState.interactiveLiveSig = interactiveLiveSig;
+          routeState.interactiveParamsLive = !!interactiveParams;
         } else if (!pluginGraphFailed) {
           routeState.interactiveLive = undefined;
           routeState.interactiveLiveSig = undefined;
+          routeState.interactiveParamsLive = undefined;
         }
         const skipInstall = pluginGraphFailed || interactiveValuesOnly;
         const effectGraph = !skipInstall
@@ -11061,7 +11124,9 @@ export class NativeRendererSync {
         const routeState = this.nativeGraphRoutes.get(nativeGraphRoute.key);
         const sent = routeState?.interactiveValueKeys;
         if (routeState?.interactiveLive && sent && routeState.interactiveLiveSig !== interactiveLiveSig) {
-          for (const value of routeState.interactiveLive(interactiveLive ?? {})) {
+          // Params that just stopped: `{}` puts the values they moved back.
+          const params = interactiveParams ?? (routeState.interactiveParamsLive ? {} : undefined);
+          for (const value of routeState.interactiveLive(interactiveLive ?? {}, params)) {
             if (sent.get(value.id) === value.key) continue;
             sent.set(value.id, value.key);
             commands.push({
@@ -11072,6 +11137,7 @@ export class NativeRendererSync {
             });
           }
           routeState.interactiveLiveSig = interactiveLiveSig;
+          routeState.interactiveParamsLive = !!interactiveParams;
         }
       }
       // The effect chain a core-owned graph layer carries (and a VJ crossfade

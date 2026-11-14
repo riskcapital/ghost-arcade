@@ -1,4 +1,4 @@
-import {isWorldEffect,type InteractiveEffect} from '../mobile/studio/interactiveEffects';
+import {applyInteractiveOverrides,isWorldEffect,type InteractiveEffect} from '../mobile/studio/interactiveEffects';
 import {worldInputParam} from '../interactive/worldInput';
 import {buildMatterPasses} from './nativeInteractiveMatterGraph';
 import {validateScene, surfaceHidden, INTERACTIVE_PRESETS, SURFACE_FILLS, type InteractiveScene} from '../mobile/studio/interactive';
@@ -140,8 +140,30 @@ export type InteractiveGraphMeta={
   * view, throws), worked out again for new input without rebuilding the
   * graph. For the same input they equal what a full build puts in `values`
   * under the same ids; every other value does not depend on live input. */
- live?:(input:InteractiveLiveInput)=>InteractiveGraphValue[];
+ live?:(input:InteractiveLiveInput,params?:InteractiveLiveParams)=>InteractiveGraphValue[];
 };
+/** Live values on an Interactive scene's effect params (`interactive:<effectId>:<param>`,
+ * from Auto): they only move value buffers (see interactiveParamsAreValues). Never saved. */
+export type InteractiveLiveParams=Record<string,number>;
+/** The values the core modulates from the installed parameters rather than
+ * from a buffer. They change the installed graph, so they are structural. */
+const CORE_MOD_KEYS=['energy','gravity','hue','trails','opacity'];
+/**
+ * True when these live params only change value buffers of the installed
+ * graph (`live(input, params)` covers them): a numeric value on an effect
+ * param, but not `enabled`, and not one the core modulates from the
+ * installed params (a Core-modulated key with a modulation on it).
+ */
+export function interactiveParamsAreValues(scene:InteractiveScene|undefined,params:Record<string,number|boolean>):boolean{
+ for(const key in params){
+  const [prefix,effectId,param]=key.split(':');
+  if(prefix!=='interactive'||!param||param==='enabled'||typeof params[key]!=='number')return false;
+  const effect=scene?.effects?.find(e=>e?.id===effectId);
+  const mod=effect?.mods?.[param];
+  if(CORE_MOD_KEYS.includes(param)&&mod&&mod.source!=='manual')return false;
+ }
+ return true;
+}
 /** The live input a frame adds to an Interactive layer's params. Never saved. */
 export type InteractiveLiveInput={interactiveInputs?:unknown;interactiveView?:unknown;interactiveWorld?:unknown};
 export type InteractiveGraphBuildResult=NativePluginGraphBuildResult&{interactive:InteractiveGraphMeta};
@@ -197,9 +219,6 @@ function touchInputs(raw:unknown):{data:Float32Array;count:number}{
  });
  return {data,count:list.length};
 }
-/** The values the core modulates from the installed parameters rather than
- * from a buffer. They change the installed graph, so they are structural. */
-const CORE_MOD_KEYS=['energy','gravity','hue','trails','opacity'];
 function coreModSignature(effect:InteractiveEffect):string{
  let signature='';
  for(const key of CORE_MOD_KEYS){const mod=effect.mods?.[key];if(mod&&mod.source!=='manual')signature+=`${key}=${JSON.stringify(mod)}@${effect.params[key]};`;}
@@ -279,6 +298,9 @@ export function buildInteractiveGraph(options:NativePluginGraphOptions):Interact
  const bufferPrefix=(effectId:string)=>`${source}:${effectId}:interactive:`;
  const touches=touchInputs(options.params.interactiveInputs),touchesB64=interactiveB64(touches.data);
  const parts:InteractivePart[]=[],effectIds:string[]=[];let mods='';
+ // Each 2D effect's part, and how to build it again for other params (live
+ // params: same geometry, same touches, only its value buffers differ).
+ const effectParts=new Map<string,{effect:InteractiveEffect;part:InteractivePart;rebuild:(effect:InteractiveEffect,t:{data:Float32Array;count:number},tb:string)=>InteractivePart}>();
  if(scene.effects){
   // Geometry is the same for every effect; only the material on an effect's
   // target surface differs, so it is laid out once and encoded once per
@@ -291,8 +313,13 @@ export function buildInteractiveGraph(options:NativePluginGraphOptions):Interact
    const target=material==='none'?-1:scene.surfaces.findIndex(s=>s.id===effect.target),key=target<0?'-':`${target}:${material}`;
    let own=encoded.get(key);
    if(!own){const shapes=target<0?base:base.slice();if(target>=0)shapes[target*SHAPE_FLOATS+10]=MATERIALS.indexOf(material);own={shapes,b64:interactiveB64(shapes)};encoded.set(key,own);}
-   const view:InteractiveScene={...scene,effects:undefined,preset:effect.kind as InteractiveScene['preset'],hue:effect.params.hue??scene.hue,matter:{...scene.matter!,...effect.params}};
-   parts.push(buildPart(options,view,effect,`${source}:${effect.id}`,own.shapes,own.b64,touches,touchesB64,new Set(target>=0?[material]:[])));
+   const shapes=own,materials=new Set(target>=0?[material]:[]);
+   const rebuild=(e:InteractiveEffect,t:{data:Float32Array;count:number},tb:string)=>{
+    const view:InteractiveScene={...scene,effects:undefined,preset:e.kind as InteractiveScene['preset'],hue:e.params.hue??scene.hue,matter:{...scene.matter!,...e.params}};
+    return buildPart(options,view,e,`${source}:${e.id}`,shapes.shapes,shapes.b64,t,tb,materials);
+   };
+   const part=rebuild(effect,touches,touchesB64);
+   parts.push(part);effectParts.set(effect.id,{effect,part,rebuild});
    mods+=`${effect.id}[${coreModSignature(effect)}]`;
   }
   effectIds.push(...scene.effects.map(e=>e.id));
@@ -306,16 +333,36 @@ export function buildInteractiveGraph(options:NativePluginGraphOptions):Interact
  // A 3D world: the 2D effects are drawn into its flat picture (Projected),
  // over it (Over) or not at all (Off). See scene3dWorld.ts.
  const world=scene.world?.enabled?buildWorldPart({scene,world:scene.world,sourceId:options.sourceId,width:options.width,height:options.height,view:worldView(options.params.interactiveView),input:worldInputParam(options.params.interactiveWorld)}):null;
- if(world&&scene.world?.flat==='off')parts.length=0;
+ if(world&&scene.world?.flat==='off'){parts.length=0;effectParts.clear();}
  const liveParts=parts.flatMap(p=>p.live?[p.live]:[]);
- const live=(input:InteractiveLiveInput):InteractiveGraphValue[]=>{
+ const live=(input:InteractiveLiveInput,params?:InteractiveLiveParams):InteractiveGraphValue[]=>{
   const t=touchInputs(input.interactiveInputs),tb=interactiveB64(t.data),out:InteractiveGraphValue[]=[];
+  // Effects whose params the live values move: their parts are built again
+  // (values only; interactiveParamsAreValues keeps the structure the same).
+  const moved=params&&scene.effects?applyInteractiveOverrides(scene,params):scene;
+  const changed=new Map<string,InteractiveEffect>();
+  if(moved!==scene)moved.effects!.forEach((e,i)=>{if(e!==scene.effects![i])changed.set(e.id,e);});
+  const rebuilt=new Set<string>();
+  // With params (even none: an Auto that just stopped), every buffer params
+  // fill goes out, so values a moved param left behind are put back.
+  if(params)for(const [id,entry] of effectParts){
+   const e=changed.get(id);
+   const part=e?entry.rebuild(e,t,tb):entry.part;
+   for(const b of part.buffers){
+    if(b.initial_b64===undefined||(!e&&(b.id===part.live?.uniform.id||b.id===part.live?.touches)))continue;
+    out.push({id:b.id,initial_b64:b.initial_b64,key:b.key??b.initial_b64});
+   }
+   if(e&&part.live)rebuilt.add(part.live.uniform.id);
+  }
   for(const part of liveParts){
+   if(rebuilt.has(part.uniform.id))continue;
    const u=part.uniform.data.slice();u[17]=Math.min(8,t.count);
    const uniform=valueBuffer(part.uniform.id,'uniform',u,UNIFORM_CORE_SLOTS);
    out.push({id:uniform.id,initial_b64:uniform.initial_b64!,key:uniform.key!},{id:part.touches,initial_b64:tb,key:tb});
   }
-  if(world)out.push(...world.live(worldView(input.interactiveView),worldInputParam(input.interactiveWorld)));
+  if(world){
+   out.push(...world.live(worldView(input.interactiveView),worldInputParam(input.interactiveWorld),params?moved:undefined));
+  }
   return out;
  };
  const buffers=[...parts.flatMap(p=>p.buffers),...(world?.buffers??[])],passes=[...parts.flatMap(p=>p.passes),...(world?.passes??[]) as GraphPass[]];

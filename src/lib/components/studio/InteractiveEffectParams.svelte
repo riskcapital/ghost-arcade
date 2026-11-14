@@ -6,6 +6,7 @@
   import type { InteractiveSurface } from '../../mobile/studio/interactive';
   import { effectParams, type EffectParam, type InteractiveEffect } from '../../mobile/studio/interactiveEffects';
   import { isEmitter } from '../../mobile/studio/editorActions';
+  import { liveParamsTick } from '../../audio/liveParams';
 
   export let effect: InteractiveEffect | undefined = undefined;
   export let surfaces: InteractiveSurface[] = [];
@@ -31,6 +32,13 @@
   export let onmod: (key: string, mod: ParamModulation | undefined) => void;
   export let onauto: (key: string, auto: AutoConfig | undefined) => void;
   export let onkeyframe: (def: EffectParam) => void = () => {};
+  /** The value an engine plays on a param now (Auto): shown in place of the stored one. */
+  export let liveValue: ((effectId: string, key: string) => number | undefined) | undefined = undefined;
+
+  /** What a slider shows: the playing value, at most 15 times a second (liveParamsTick), or the stored one. */
+  function shown(_tick: number, e: InteractiveEffect, def: EffectParam): number {
+    return liveValue?.(e.id, def.key) ?? e.params[def.key] ?? def.value;
+  }
 
   /** Shown first; everything else sits under Advanced controls. */
   const essentialKeys = [
@@ -114,7 +122,7 @@
           <InteractiveParam
             {def}
             {onstart}
-            value={current.params[def.key] ?? def.value}
+            value={shown($liveParamsTick, current, def)}
             mod={current.mods[def.key]}
             onchange={(v) => onvalue(def, v)}
             onmod={(v) => onmod(def.key, v)}

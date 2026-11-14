@@ -1,10 +1,11 @@
 /**
  * The music runtime's frame loop while a Music Studio clip or layer shows.
  *
- * Every frame bumps the studio tick, the renderer resyncs the scene on it,
- * and that resync wakes the loop again (it does not know the loop is
- * already running). The loop must stay one frame callback, never two: a
- * second one doubles every frame and freezes the app within a second.
+ * The frame sync expands the studio layers on every frame it sends, and
+ * that wakes the loop again (it does not know the loop is already
+ * running). The loop must stay one frame callback, never two: a second one
+ * doubles every frame and freezes the app within a second. Nothing is
+ * published for it per frame.
  */
 
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -59,23 +60,26 @@ beforeAll(async () => {
 
 describe('the studio frame loop', () => {
   it('stays one frame while a studio shows, and stops when none does', () => {
-    let ticks = 0;
-    // What the renderer does on each tick: resync, which wakes the loop.
-    const unsub = plugin.studioVisualTick.subscribe(() => {
-      ticks++;
+    // What the frame sync does on each frame it sends: expand, which wakes the loop.
+    const sceneSync = () => {
       plugin.noteStudioHosts(1);
       runtime.wakeStudioVisuals();
-    });
-    plugin.noteStudioHosts(1);
-    runtime.wakeStudioVisuals();
-    const before = ticks;
-    for (let i = 0; i < 20; i++) expect(runFrame()).toBe(1);
-    // The voices follow the clock even before the studio's audio exists.
-    expect(ticks - before).toBe(20);
+    };
+    sceneSync();
+    for (let i = 0; i < 20; i++) {
+      expect(runFrame()).toBe(1);
+      sceneSync();
+    }
 
-    unsub();
     plugin.noteStudioHosts(0);
     runFrame();
     expect(queue.filter((cb) => cb.name === 'frame')).toHaveLength(0);
+  });
+
+  it('hands back the scene as it came when it holds no studio', () => {
+    const layers = [{ id: 'a', source: { effectSource: { effectType: 'performer-world' } } }, { id: 'b' }] as any;
+    let hosts = -1;
+    expect(plugin.expandStudioLayers(layers, plugin.studioRenderInputs, (n) => { hosts = n; })).toBe(layers);
+    expect(hosts).toBe(0);
   });
 });

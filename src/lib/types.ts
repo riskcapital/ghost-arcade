@@ -3271,6 +3271,10 @@ export interface Layer {
   /** Show keyframe-lane values (applyParamOverrides keys), applied after the
    *  preset's own keyframes and the sequencer, so the show wins. */
   _showParams?: Record<string, number | boolean>;
+  /** Live values (Auto) on this layer's Interactive scene's effect params,
+   *  set by the frame sync on its scene copy and sent as value buffers
+   *  instead of going into the scene (no graph build). Never saved. */
+  _interactiveLiveParams?: Record<string, number>;
   /** The Timeline block this scene copy shows right now (its lines apply). */
   _showClipId?: string;
 

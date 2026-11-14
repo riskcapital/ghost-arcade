@@ -137,11 +137,15 @@
   import { openLogFolder } from '$lib/utils/logFolder';
   import { installModeRunning } from '$lib/install/installSession';
   import { appendNativeVjDeckCrossfade, appendNativeVjMixCarrier, vjStageScreenLayers } from '$lib/renderer/vjCompositionNative';
-  import { expandStudioLayers, noteStudioHosts, studioCodeTick, studioRenderInputs, studioVisualTick } from '$lib/music/studioPlugin';
+  import { expandStudioLayers, noteStudioHosts, studioCodeTick, studioRenderInputs } from '$lib/music/studioPlugin';
+  import { hasLiveValues, liveCompositionValues, liveValuesForRenderedLayer } from '$lib/audio/liveParams';
   import { wakeStudioVisuals } from '$lib/music/musicRuntime';
   import { MUSIC_STUDIO } from '$lib/features';
 
-  /** Music Studio clips and layers reach the core as their voices plus a mix (music/studioPlugin.ts). */
+  /** Music Studio clips and layers reach the core as their voices plus a mix
+   *  (music/studioPlugin.ts). The frame sync does this on every frame it
+   *  sends (setFrameLayers): the voices' signals move every frame, and
+   *  reading them there needs no scene rebuild or store tick per frame. */
   function withStudioVoices(list: Layer[]): Layer[] {
     // Without the Studio in the build its layers draw nothing and keep their data.
     if (!MUSIC_STUDIO) return list;
@@ -335,6 +339,7 @@
     if (canvasDestroyed) return;
     const sync = new NativeRendererSync();
     nativeRendererSync = sync;
+    sync.setFrameLayers(withStudioVoices);
     sync.onCoreLost = (reason) => handleNativeCoreLost(sync, reason);
     // Before start(), so the core starts with the chosen video memory.
     lastPushedVideoMemoryMb = get(settings).performance.videoMemoryMb ?? 0;
@@ -2374,7 +2379,7 @@
         }
         const p = get(project);
         const built = nativeEffectiveLayers();
-        const effective = built ? withStudioVoices(withStageFxOpacity(built)) : null;
+        const effective = built ? withStageFxOpacity(built) : null;
         if (!effective) {
           // A trigger updates the launcher and derived VJ layers in adjacent
           // store emissions. Give the derived layer one microtask to settle,
@@ -2439,7 +2444,7 @@
               // Rebuild from current state instead of restoring stale inputs.
               const latest = nativeEffectiveLayers();
               const currentProject = get(project);
-              if (latest) publishNativeScene(currentProject.width || 1920, currentProject.height || 1080, withStudioVoices(withStageFxOpacity(latest)));
+              if (latest) publishNativeScene(currentProject.width || 1920, currentProject.height || 1080, withStageFxOpacity(latest));
             });
           } else {
             callbacks.forEach(callback => callback());
@@ -2546,8 +2551,6 @@
         queuedNativeLayersSync.cancel();
         runNativeLayersSync();
       };
-      // Music Studio instances: their voices' signals move every frame.
-      const studioFrameUnsub = studioVisualTick.subscribe(() => scheduleNativeLayersSync());
       const studioCodeUnsub = studioCodeTick.subscribe(() => scheduleNativeLayersSync());
       // ── Stage FX driver (native mode) ──
       // When the native core owns the frame, the WebGL animate() loop
@@ -2694,7 +2697,6 @@
         nativeShowTrackUnsub();
         nativeTakeoverUnsub();
         nativeTakeoverHoldUnsub();
-        studioFrameUnsub();
         studioCodeUnsub();
         // No scene is showing a studio now, so its frame loop can rest.
         noteStudioHosts(0);
@@ -3647,6 +3649,23 @@
           || (typeof engine.manualTime === 'number' && Number.isFinite(engine.manualTime));
         const kfOverrides = kfKeyframesActive ? kfState.activeOverrides : {};
         const kfStash: Array<{ layer: any; key: string; orig: any; target: any; prop: string }> = [];
+        // Live values (Auto, audio and LFO modulation, Music motion:
+        // liveParams.ts), read once for this frame. They go on first, where
+        // the stored values are, so keyframes win on the same key, and are
+        // put back after the render like the keyframes; nothing is written
+        // to the stores.
+        const liveOn = hasLiveValues();
+        if (liveOn && compEffects?.length) {
+          const scope = compEffects === vjState.compositionEffects ? 'vj' : 'map';
+          for (const effect of compEffects as any[]) {
+            const values = effect?.params ? liveCompositionValues(scope, effect.id) : undefined;
+            if (!values) continue;
+            for (const prop in values) {
+              kfStash.push({ layer: null, key: prop, orig: effect.params[prop], target: effect.params, prop });
+              effect.params[prop] = values[prop];
+            }
+          }
+        }
 
         // Debug: log once per second during playback. Behind a manual
         // flag — serializing the whole override map + layer-id array is
@@ -3664,7 +3683,9 @@
           // For VJ layers, overrides are keyed by clip ID (vj-${clipId}) not layer.id
           const isVJLayer = layer.id?.startsWith('vj-layer-');
           const overrideKey = isVJLayer && layer.source?.id ? `vj-${layer.source.id}` : layer.id;
-          const overrides = kfOverrides[overrideKey];
+          const keyed = kfOverrides[overrideKey];
+          const live = liveOn ? liveValuesForRenderedLayer(layer) : undefined;
+          const overrides = live ? (keyed ? { ...live, ...keyed } : live) : keyed;
           if (!overrides) continue;
 
           for (const [key, value] of Object.entries(overrides)) {
@@ -3747,7 +3768,7 @@
         }
 
         // ── Update all textures AFTER keyframe overrides so shader uniforms reflect new values ──
-        const hasKeyframeOverrides = Object.keys(kfOverrides).length > 0;
+        const hasKeyframeOverrides = Object.keys(kfOverrides).length > 0 || liveOn;
         if (browserEditorPreviewActive() && renderLocalContent && (!didStageTexturePrepass || hasKeyframeOverrides)) {
           updateAllTextures(layersToRender, null);
         }

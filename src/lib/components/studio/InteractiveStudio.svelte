@@ -106,6 +106,8 @@
   /** A whole scene was loaded (or a load was undone): the host restores its keyframe tracks from it. */
   export let onrestore: (scene: InteractiveScene) => void = () => {};
   export let onparam: (effectId: string, key: string, value: number, label: string) => void = () => {};
+  /** The value an engine (Auto) plays on an effect param right now, if any: the sliders show it. */
+  export let liveValue: ((effectId: string, key: string) => number | undefined) | undefined = undefined;
   export let onkeyframe: ((effectId: string, key: string, value: number, label: string) => void) | undefined =
     undefined;
   export let ontimeline: (() => void) | undefined = undefined;
@@ -1280,6 +1282,7 @@
             onmod={effectMod}
             onauto={effectAuto}
             onkeyframe={addKeyframe}
+            {liveValue}
           />
         {:else if inspector === 'objects'}
           <InteractiveObjectsPanel

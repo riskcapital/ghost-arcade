@@ -208,11 +208,22 @@ export function liveCompositionValues(scope: LiveCompositionScope, effectId: str
   return mergedCompositions.get(compositionKey(scope, effectId));
 }
 
-/** A VJ layer id as the scene builds it (`vj-layer-<row>`, `-A` / `-B` with the crossfader on). */
-const VJ_LAYER_ID = /^vj-layer-(\d+)(?:-([AB]))?$/;
+/** A VJ layer id as the scene builds it (`vj-layer-<row>`, `-A` / `-B` with
+ *  the crossfader on), or a clip-transition input of one
+ *  (`__vj-clip:vj-layer-<row>[-A|B]:<token>:in|out`, vjClipTransitionNative.ts),
+ *  which is how a playing clip reaches the core while clip transitions are on. */
+const VJ_LAYER_ID = /^(?:__vj-clip:)?vj-layer-(\d+)(?:-([AB]))?(?::[^:]+:(?:in|out))?$/;
 export function liveDeckOfLayerId(id: string): { deck: LiveDeck; row: number } | null {
   const m = VJ_LAYER_ID.exec(id);
   return m ? { deck: (m[2] as LiveDeck | undefined) ?? 'A', row: Number(m[1]) } : null;
+}
+
+/** This frame's values for a layer as a scene renders it: a VJ row's
+ *  (`vj-layer-N`) for the clip it shows, or a mapping layer's. */
+export function liveValuesForRenderedLayer(layer: { id: string; source?: { id?: string } | null }): LiveValues | undefined {
+  if (frames.size === 0) return undefined;
+  const row = liveDeckOfLayerId(layer.id);
+  return row ? liveValuesForDeck(row.deck, row.row, layer.source?.id) : liveValuesForLayer(layer);
 }
 
 // ─── Panels ────────────────────────────────────────────────────────────────

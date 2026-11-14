@@ -229,6 +229,39 @@ describe('Auto plays live values, never the stores', () => {
     stop();
   });
 
+  it('keeps the value a paused VJ clip Auto stopped on: one launcher publish, a new clip, the old one untouched', () => {
+    const launcher = vjSetup();
+    auto.startAutoEngine();
+    for (let i = 0; i < 10; i++) frame();
+    const playing = live.liveDeckValue('A', 0, 'clip-1', 'shader:glow')!;
+    const glowAuto = get(launcher).layerStates[0].activeClip!.shaderValueAuto!.glow;
+    launcher.setClipShaderValueAuto('clip-1', 'glow', { ...glowAuto, playing: false });
+    const before = get(launcher).layerStates[0].activeClip!;
+    const beforeValues = { ...before.shaderValues };
+    let publishes = 0;
+    const stop = launcher.subscribe(() => { publishes += 1; });
+    publishes = 0;
+    frame();
+    for (let i = 0; i < 10; i++) frame();
+    stop();
+    // Every launcher publish in those frames is the pause's one write (the
+    // row effect and the VJ mix keep playing as live values).
+    expect(publishes).toBe(1);
+    const after = get(launcher).layerStates[0].activeClip!;
+    expect(after).not.toBe(before);
+    expect(after.shaderValues!.glow).toBeCloseTo(playing, 1);
+    expect(before.shaderValues).toEqual(beforeValues);
+    // The grid cell holds the clip with the value too.
+    expect(get(launcher).clipGrid[0][0]!.shaderValues!.glow).toBe(after.shaderValues!.glow);
+    // The same values again: nothing is published.
+    publishes = 0;
+    const again = launcher.subscribe(() => { publishes += 1; });
+    publishes = 0;
+    launcher.batchUpdateShaderValues(0, { glow: after.shaderValues!.glow as number }, 'A');
+    again();
+    expect(publishes).toBe(0);
+  });
+
   it('still records into an armed keyframe track', () => {
     expect(layers.project.importProject(mappingProject() as any)).toBe(true);
     kf.keyframeTimeline.clearAll();
@@ -360,6 +393,14 @@ describe('live values', () => {
     expect(live.liveDeckOfLayerId('vj-layer-3-B')).toEqual({ deck: 'B', row: 3 });
     expect(live.liveDeckOfLayerId('vj-layer-2')).toEqual({ deck: 'A', row: 2 });
     expect(live.liveDeckOfLayerId('map-1')).toBeNull();
+    // A clip-transition input of a row (how a playing clip reaches the core with transitions on).
+    expect(live.liveDeckOfLayerId('__vj-clip:vj-layer-3-B:steady:in')).toEqual({ deck: 'B', row: 3 });
+    expect(live.liveDeckOfLayerId('__vj-clip:vj-layer-0:7:out')).toEqual({ deck: 'A', row: 0 });
+    expect(live.liveValuesForRenderedLayer({ id: '__vj-clip:vj-layer-1-A:steady:in', source: { id: 'C' } })).toEqual({ 'shader:x': 3, 'fx:f:p': 6 });
+    // As a scene renders them (the frame sync and the browser render path).
+    expect(live.liveValuesForRenderedLayer({ id: 'vj-layer-1', source: { id: 'C' } })).toEqual({ 'shader:x': 3, 'fx:f:p': 6 });
+    expect(live.liveValuesForRenderedLayer({ id: 'vj-layer-1-A', source: { id: 'D' } })).toBeUndefined();
+    expect(live.liveValuesForRenderedLayer({ id: 'L', source: { id: 'S' } })).toEqual({ 'shader:x': 1, 'fx:f:p': 5 });
     // A frame replaces what an engine said before.
     a.layer('L', 'S', 'shader:x', 9); a.commit();
     expect(live.liveValuesForLayer({ id: 'L', source: { id: 'S' } })).toEqual({ 'shader:x': 9, 'fx:f:p': 5 });

@@ -69,6 +69,7 @@
   import { modulationStore, modulationEngine, setParamModSource, hasModRange, rangeWithRestAt, setCrossfaderModSource, updateParamMod, registerParamRanges, getModulatedValue, setBaseValue, clearBaseValues, clearModulatedValues, modKeyShader, MOD_KEY_XFADE_VALUE, type ModSource, type ParamModulation } from '../audio/modulation';
   import ModTray, { modSourceLabel } from './ModTray.svelte';
   import { defaultAutoFor } from '../audio/autoEngine';
+  import { CrossfaderAutoPlayer } from '../audio/crossfaderAuto';
   import type { AutoConfig } from '../types';
   import { performanceStore } from '../audio/performanceEngine';
   import type { ISFInput } from '../isf/parser';
@@ -2709,15 +2710,19 @@
   }
 
   // A/B crossfader modulation. Audio/LFO/sync use the shared
-  // modulation engine target; Auto is a tiny local playhead because
-  // the global fader is not a clip/layer param with an Auto sidecar.
+  // modulation engine target; Auto is a tiny playhead of its own
+  // (crossfaderAuto.ts) because the global fader is not a clip/layer param
+  // with an Auto sidecar. The playhead lives in the player, so the
+  // settings below change only when someone edits them.
   let crossfaderModTrayAnchor: HTMLElement | null = null;
   let crossfaderMod: ParamModulation | undefined;
   let crossfaderCurrentSource: ModSource = 'manual';
   let crossfaderModActive = false;
   let crossfaderAuto: AutoConfig | undefined = undefined;
-  let crossfaderAutoRaf: number | null = null;
-  let crossfaderAutoLastTime = 0;
+  const crossfaderAutoPlayer = new CrossfaderAutoPlayer({
+    setValue: (value) => vjClipLauncher.setCrossfaderValue(value),
+    enabled: () => get(vjClipLauncher).crossfaderEnabled,
+  });
   let crossfaderGlideRaf: number | null = null;
 
   $: crossfaderMod = modulationMap.get(MOD_KEY_XFADE_VALUE);
@@ -2728,48 +2733,12 @@
     return Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
   }
 
-  function resolveCrossfaderAutoValue(auto: AutoConfig): number {
-    const phase = Number.isFinite(auto.phase) ? auto.phase : 0;
-    const shaped = auto.mode === 'pingpong'
-      ? (phase < 0.5 ? phase * 2 : 2 - phase * 2)
-      : phase;
-    const min = clamp01(auto.min);
-    const max = clamp01(auto.max);
-    const lo = Math.min(min, max);
-    const hi = Math.max(min, max);
-    return clamp01(lo + shaped * (hi - lo));
-  }
-
-  function tickCrossfaderAuto(now: number) {
-    if (!crossfaderAuto) {
-      crossfaderAutoRaf = null;
-      crossfaderAutoLastTime = 0;
-      return;
-    }
-    crossfaderAutoRaf = requestAnimationFrame(tickCrossfaderAuto);
-    const dt = crossfaderAutoLastTime === 0 ? 0 : (now - crossfaderAutoLastTime) / 1000;
-    crossfaderAutoLastTime = now;
-    if (!$vjClipLauncher.crossfaderEnabled || !crossfaderAuto.playing || dt <= 0 || dt > 0.1) return;
-
-    const speedHz = Number.isFinite(crossfaderAuto.speedHz) ? crossfaderAuto.speedHz : 0.15;
-    const prev = Number.isFinite(crossfaderAuto.phase) ? crossfaderAuto.phase : 0;
-    const next = (prev + speedHz * dt) % 1;
-    crossfaderAuto.phase = next < 0 ? next + 1 : next;
-    vjClipLauncher.setCrossfaderValue(resolveCrossfaderAutoValue(crossfaderAuto));
-  }
-
   function startCrossfaderAutoLoop() {
-    if (crossfaderAutoRaf !== null || !crossfaderAuto) return;
-    crossfaderAutoLastTime = 0;
-    crossfaderAutoRaf = requestAnimationFrame(tickCrossfaderAuto);
+    crossfaderAutoPlayer.start();
   }
 
   function stopCrossfaderAutoLoop() {
-    if (crossfaderAutoRaf !== null) {
-      cancelAnimationFrame(crossfaderAutoRaf);
-      crossfaderAutoRaf = null;
-    }
-    crossfaderAutoLastTime = 0;
+    crossfaderAutoPlayer.stop();
   }
 
   function stopCrossfaderGlide() {
@@ -2787,12 +2756,13 @@
     if (source === 'auto') {
       setCrossfaderModSource('manual');
       crossfaderAuto = crossfaderAuto ?? defaultAutoFor(0, 1);
-      vjClipLauncher.setCrossfaderValue(resolveCrossfaderAutoValue(crossfaderAuto));
+      crossfaderAutoPlayer.setConfig(crossfaderAuto);
+      vjClipLauncher.setCrossfaderValue(crossfaderAutoPlayer.value() ?? 0);
       startCrossfaderAutoLoop();
       return;
     }
     crossfaderAuto = undefined;
-    stopCrossfaderAutoLoop();
+    crossfaderAutoPlayer.setConfig(undefined);
     setCrossfaderModSource(source);
   }
 
@@ -2813,18 +2783,14 @@
       min: Math.min(min, max),
       max: Math.max(min, max),
     };
-    if (crossfaderAuto.playing) {
-      startCrossfaderAutoLoop();
-    } else {
-      stopCrossfaderAutoLoop();
-    }
+    crossfaderAutoPlayer.setConfig(crossfaderAuto);
   }
 
   function setCrossfaderManualValue(value: number) {
     stopCrossfaderGlide();
     if (crossfaderCurrentSource !== 'manual') {
       crossfaderAuto = undefined;
-      stopCrossfaderAutoLoop();
+      crossfaderAutoPlayer.setConfig(undefined);
       setCrossfaderModSource('manual');
     }
     vjClipLauncher.setCrossfaderValue(clamp01(value));
@@ -2834,7 +2800,7 @@
     stopCrossfaderGlide();
     if (crossfaderCurrentSource !== 'manual') {
       crossfaderAuto = undefined;
-      stopCrossfaderAutoLoop();
+      crossfaderAutoPlayer.setConfig(undefined);
       setCrossfaderModSource('manual');
     }
 
