@@ -9649,6 +9649,8 @@ function createMainWindow() {
   stabilizeNativeEditorHost();
   mainWindow.once('ready-to-show', () => {
     stabilizeNativeEditorHost();
+    // The editor opens filling the screen; the toolbar button restores it.
+    mainWindow?.maximize();
     mainWindow?.show();
   });
   // Electron can recreate/reconfigure its native host on fullscreen and
