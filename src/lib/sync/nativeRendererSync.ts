@@ -8502,7 +8502,7 @@ export class NativeRendererSync {
           const surface = scene.surfaces.find((s) => s.id === zone.surfaceId)!;
           for (const action of zone.actions) if (action.kind === 'world') world.trigger(action.what, zoneMiddle(surface.points), at);
         }
-        if (fired.length) fireInteractiveZones(layerId, fired);
+        if (fired.length) this.fireZonesAfterFrame(layerId, fired);
       })
       .catch(() => {})
       .finally(() => { state.busy = false; });
@@ -8576,7 +8576,39 @@ export class NativeRendererSync {
         for (const action of zone.actions) if (action.kind === 'world') runtime.world.trigger(action.what, middle, now);
       }
     }
-    fireInteractiveZones(layer.id, fired);
+    this.fireZonesAfterFrame(layer.id, fired);
+  }
+
+  /**
+   * Zones that fired while a frame is being built. Their show actions and
+   * bursts change stores the frame is being built from (and `project.update`
+   * calls back into the sync), so they run once the frame's commands are
+   * sent (runQueuedZoneActions), in the order they fired.
+   */
+  private queuedZoneActions: Array<{ layerId: string; fired: FiredZone[] }> = [];
+  /** A frame that keeps failing cannot pile them up: the oldest go first. */
+  static readonly MAX_QUEUED_ZONE_ACTIONS = 64;
+
+  private fireZonesAfterFrame(layerId: string, fired: FiredZone[]): void {
+    if (!this.flushInFlight) {
+      fireInteractiveZones(layerId, fired);
+      return;
+    }
+    this.queuedZoneActions.push({ layerId, fired });
+    const over = this.queuedZoneActions.length - NativeRendererSync.MAX_QUEUED_ZONE_ACTIONS;
+    if (over > 0) this.queuedZoneActions.splice(0, over);
+  }
+
+  private runQueuedZoneActions(): void {
+    if (!this.queuedZoneActions.length) return;
+    const queued = this.queuedZoneActions.splice(0);
+    for (const { layerId, fired } of queued) {
+      try {
+        fireInteractiveZones(layerId, fired);
+      } catch (err) {
+        console.warn('[NativeRendererSync] a zone action failed', err);
+      }
+    }
   }
 
   private scheduleAudioSync() {
@@ -10087,11 +10119,17 @@ export class NativeRendererSync {
     try {
       do {
         this.flushAgain = false;
-        await this.flushOnce(
-          this.desiredWidth,
-          this.desiredHeight,
-          this.applyTimelineOverrides(this.latestLayers),
-        );
+        try {
+          await this.flushOnce(
+            this.desiredWidth,
+            this.desiredHeight,
+            this.applyTimelineOverrides(this.latestLayers),
+          );
+        } finally {
+          // The frame's commands are sent: now the zones that fired while it
+          // was built may change the show (which asks for another frame).
+          this.runQueuedZoneActions();
+        }
       } while (this.running && this.startupReady && this.flushAgain);
     } catch (err) {
       // Every caller fires this without awaiting it, so a throw here was an

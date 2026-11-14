@@ -5,7 +5,12 @@
  */
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
-const h = vi.hoisted(() => ({ batches: [] as Array<Array<Record<string, any>>> }));
+const h = vi.hoisted(() => ({ batches: [] as Array<Array<Record<string, any>>>, log: [] as string[] }));
+
+vi.mock('../show/showActions', async (original) => ({
+  ...(await original<typeof import('../show/showActions')>()),
+  fireShowAction: vi.fn((action: { kind: string }) => { h.log.push(`show:${action.kind}`); }),
+}));
 
 vi.mock('../bridge', async (original) => ({
   ...(await original<typeof import('../bridge')>()),
@@ -13,6 +18,7 @@ vi.mock('../bridge', async (original) => ({
     if (command === 'native_renderer_submit_batch' || command === 'native_renderer_submit_commands') {
       const commands = command === 'native_renderer_submit_batch' ? args.batch.commands : args.commands;
       h.batches.push(commands);
+      h.log.push('batch');
       return { total: commands.length, applied: commands.length, dropped: 0, unknown_types: [] };
     }
     if (command === 'native_renderer_get_layers_snapshot') return { layers: [] };
@@ -56,6 +62,7 @@ beforeAll(async () => {
 
 afterEach(() => {
   h.batches.length = 0;
+  h.log.length = 0;
   delete (globalThis as any).__gaNativeIpcProbe;
 });
 
@@ -129,5 +136,50 @@ describe('Interactive 3D world: live input without a graph rebuild', () => {
     const ms = (performance.now() - started) / frames;
     process.stderr.write(`[interactive-live] sync with live input: ${ms.toFixed(3)} ms per frame\n`);
     expect(ms).toBeGreaterThan(0);
+  });
+});
+
+describe('Interactive zones: actions run after the frame is sent', () => {
+  function zoneLayer(): any {
+    const zone = {
+      id: 'z', name: 'Zone', behavior: 'trigger' as const,
+      points: [{ x: 0.1, y: 0.1 }, { x: 0.9, y: 0.1 }, { x: 0.9, y: 0.9 }, { x: 0.1, y: 0.9 }],
+      trigger: { actions: [{ kind: 'show' as const, action: { kind: 'preset' as const, compositionId: 'c1' } }], rearm: 1 },
+    };
+    const layer = types.createLayer('zone-layer', 'Zones', 'media') as any;
+    layer.visible = true;
+    layer.source = {
+      id: 'zone-src', type: 'effect', src: 'plugin://performer-world', name: 'Interactive Studio',
+      effectSource: { effectType: 'performer-world', interactiveScene: { ...studio.defaultInteractive(), surfaces: [zone], effects: [fx.makeEffect('architecture')] } },
+    };
+    return layer;
+  }
+
+  it('fires a touched zone once the frame it was found in is sent, not while it is built', async () => {
+    const sync = makeSync();
+    const layers = [zoneLayer()];
+    await sync.flush(1920, 1080, layers);
+    h.log.length = 0;
+    live.setLivePointer('zone-layer', [{ id: 'mouse', point: { x: 0.5, y: 0.5 }, strength: 1, mode: 'push' } as any]);
+    await sync.flush(1920, 1080, layers);
+    expect(h.log).toContain('show:preset');
+    // Every batch of that frame went out before the action ran.
+    expect(h.log.lastIndexOf('batch')).toBeLessThan(h.log.indexOf('show:preset'));
+    expect(sync.queuedZoneActions).toEqual([]);
+  });
+
+  it('fires at once outside a frame, and keeps at most the newest while frames fail', () => {
+    const sync = makeSync();
+    const fired = [{ surfaceId: 'z', actions: [{ kind: 'show', action: { kind: 'preset', compositionId: 'c1' } }] }];
+    sync.fireZonesAfterFrame('zone-layer', fired);
+    expect(h.log).toEqual(['show:preset']);
+    sync.flushInFlight = true;
+    for (let i = 0; i < 70; i++) sync.fireZonesAfterFrame(`layer-${i}`, fired);
+    expect(h.log).toEqual(['show:preset']);
+    expect(sync.queuedZoneActions).toHaveLength(64);
+    expect(sync.queuedZoneActions[0].layerId).toBe('layer-6');
+    sync.runQueuedZoneActions();
+    expect(h.log).toHaveLength(65);
+    expect(sync.queuedZoneActions).toEqual([]);
   });
 });
