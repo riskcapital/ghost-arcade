@@ -139,6 +139,84 @@ describe('Interactive 3D world: live input without a graph rebuild', () => {
   });
 });
 
+describe('Interactive scene: Auto on an effect param without a graph rebuild', () => {
+  /** What Auto hands the frame sync for this layer each frame (liveParams.ts). */
+  async function autoFrames(sync: any, layers: any[], frames: number, onFrame?: () => void) {
+    const liveParams = await import('../audio/liveParams');
+    const scene = layers[0].source.effectSource.interactiveScene;
+    const fire = scene.effects.find((e: any) => e.kind === 'fire');
+    const balls = scene.effects.find((e: any) => e.kind === 'balls3d');
+    const writer = new liveParams.LiveFrameWriter('auto');
+    for (let i = 0; i < frames; i++) {
+      const t = i / frames;
+      writer.layer('world-layer', 'world-src', `interactive:${fire.id}:speed`, 0.2 + 0.6 * t);
+      writer.layer('world-layer', 'world-src', `interactive:${balls.id}:glow`, 0.1 + 0.8 * t);
+      writer.commit();
+      onFrame?.();
+      await sync.flush(1920, 1080, layers);
+    }
+    return { fire, balls, clear: () => liveParams.clearLiveValues('auto') };
+  }
+
+  it('installs once and then sends only the buffers the moving params fill', async () => {
+    const sync = makeSync();
+    const layers = [worldLayer()];
+    await sync.flush(1920, 1080, layers);
+    await sync.flush(1920, 1080, layers);
+    expect(ofType('set_native_graph_layer').length).toBe(1);
+    h.batches.length = 0;
+    (globalThis as any).__gaNativeIpcProbe = { types: {} };
+    const { fire, clear } = await autoFrames(sync, layers, 30);
+    const probe = (globalThis as any).__gaNativeIpcProbe;
+    expect(ofType('set_native_graph_layer')).toEqual([]);
+    expect(probe.graphBuilds ?? 0).toBe(0);
+    const updated = ofType('update_native_graph_buffer');
+    const names = new Set(updated.map((c) => String(c.buffer_id).replace(/^.*:interactive:|^.*:/, '')));
+    // The fire's settings (its own effect's part) and the balls' kinds.
+    expect(updated.some((c) => String(c.buffer_id).includes(`${fire.id}:interactive:`) && String(c.buffer_id).endsWith('matter'))).toBe(true);
+    expect(names.has('ball-kinds')).toBe(true);
+    // The stored scene is untouched.
+    expect(layers[0].source.effectSource.interactiveScene.effects.find((e: any) => e.id === fire.id).params.speed).toBe(fire.params.speed);
+
+    // What the core holds now is what a full build of the moved scene gives.
+    const { buildInteractiveGraph } = await import('../renderer/nativeInteractiveGraph');
+    const lastSent = new Map<string, string>();
+    for (const c of ofType('update_native_graph_buffer')) lastSent.set(c.buffer_id, c.initial_b64);
+    const scene = layers[0].source.effectSource.interactiveScene;
+    const moved = fx.applyInteractiveOverrides(scene, { [`interactive:${fire.id}:speed`]: 0.2 + 0.6 * (29 / 30) });
+    const full = buildInteractiveGraph({ kind: 'performer-world', sourceId: 'plugin:world-layer:performer-world', params: { interactiveScene: moved }, width: 1920, height: 1080, time: 0, frameDelta: 1 / 60, frameIndex: 1, audio: { active: false, bass: 0, mid: 0, treble: 0, energy: 0, beatPhase: 0, beatPulse: 0, amplitude: 0 }, state: null, reset: false } as any);
+    const matterId = [...lastSent.keys()].find((id) => id.includes(`${fire.id}:interactive:`) && id.endsWith('matter'))!;
+    const fullMatter = full.interactive.values.find((v) => v.id === matterId)!;
+    // Same settings, apart from the slots the core writes itself every frame.
+    expect(sync.nativeGraphRoutes.values().next().value.interactiveValueKeys.get(matterId)).toBe(fullMatter.key);
+
+    // Auto stops: the stored values go back, still without a rebuild.
+    h.batches.length = 0;
+    clear();
+    await sync.flush(1920, 1080, layers);
+    expect(ofType('set_native_graph_layer')).toEqual([]);
+    expect(ofType('update_native_graph_buffer').length).toBeGreaterThan(0);
+    const base = buildInteractiveGraph({ kind: 'performer-world', sourceId: 'plugin:world-layer:performer-world', params: { interactiveScene: scene }, width: 1920, height: 1080, time: 0, frameDelta: 1 / 60, frameIndex: 1, audio: { active: false, bass: 0, mid: 0, treble: 0, energy: 0, beatPhase: 0, beatPulse: 0, amplitude: 0 }, state: null, reset: false } as any);
+    expect(sync.nativeGraphRoutes.values().next().value.interactiveValueKeys.get(matterId)).toBe(base.interactive.values.find((v) => v.id === matterId)!.key);
+  });
+
+  it('measures the sync per frame with an Auto playing on two effect params', async () => {
+    const sync = makeSync();
+    const layers = [worldLayer()];
+    await sync.flush(1920, 1080, layers);
+    const warm = await autoFrames(sync, layers, 20);
+    (globalThis as any).__gaNativeIpcProbe = { types: {} };
+    const frames = 120;
+    const started = performance.now();
+    await autoFrames(sync, layers, frames);
+    const ms = (performance.now() - started) / frames;
+    const builds = (globalThis as any).__gaNativeIpcProbe.graphBuilds ?? 0;
+    process.stderr.write(`[interactive-auto] sync with Auto on 2 params: ${ms.toFixed(3)} ms per frame, ${builds} graph builds in ${frames} frames\n`);
+    warm.clear();
+    expect(ms).toBeGreaterThan(0);
+  });
+});
+
 describe('Interactive zones: actions run after the frame is sent', () => {
   function zoneLayer(): any {
     const zone = {

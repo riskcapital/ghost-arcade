@@ -4,9 +4,9 @@
  * build, instead of rebuilding the whole graph every frame it moves.
  */
 import { describe, expect, it } from 'vitest';
-import { buildInteractiveGraph, type InteractiveGraphBuildResult, type InteractiveLiveInput } from './nativeInteractiveGraph';
+import { buildInteractiveGraph, interactiveParamsAreValues, type InteractiveGraphBuildResult, type InteractiveLiveInput, type InteractiveLiveParams } from './nativeInteractiveGraph';
 import { defaultInteractive, type InteractiveScene } from '../mobile/studio/interactive';
-import { makeEffect } from '../mobile/studio/interactiveEffects';
+import { applyInteractiveOverrides, effectParams, makeEffect } from '../mobile/studio/interactiveEffects';
 import { defaultReliefWorld, type ReliefWorld } from '../scene3d/worldModel';
 import { facePoint, type Room, type RoomFace } from '../scene3d/roomModel';
 import { projectPoint, worldGeometry } from '../scene3d/worldGeometry';
@@ -88,5 +88,82 @@ describe('Interactive graph: live input as its own values', () => {
     const bytes = installed.interactive.live!(inputs[2]).reduce((n, v) => n + v.initial_b64.length, 0);
     expect(bytes).toBeLessThan(8_000);
     expect(JSON.stringify(installed.config).length).toBeGreaterThan(10 * bytes);
+  });
+});
+
+/**
+ * Auto on an Interactive scene's effect param (a live `interactive:` value)
+ * moves only value buffers: the installed build works them out without
+ * building the graph again, and they equal a full build of the scene with
+ * those params set.
+ */
+describe('Interactive graph: live params as their own values', () => {
+  /** Every number param of every effect, set somewhere inside its range. */
+  function everyParam(scene: InteractiveScene, at: number): InteractiveLiveParams {
+    const out: InteractiveLiveParams = {};
+    for (const e of scene.effects ?? []) {
+      for (const d of effectParams(e.kind)) out[`interactive:${e.id}:${d.key}`] = d.min + (d.max - d.min) * at;
+    }
+    return out;
+  }
+  /** Without the sound defaults, which put modulation on some of these keys. */
+  const quiet = (scene: InteractiveScene): InteractiveScene => ({ ...scene, effects: scene.effects?.map((e) => ({ ...e, mods: {} })) });
+  const scenes: [string, InteractiveScene][] = [
+    // With the sound defaults: their modulation is dropped where a live value lands.
+    ['wall, projected, with sound', wall({ flat: 'projected' })],
+    ['2D only', quiet(wall(null))],
+    ['wall, projected', quiet(wall({ flat: 'projected' }))],
+    ['wall, over', quiet(wall({ flat: 'over' }))],
+    ['wall, off', quiet(wall({ flat: 'off' }))],
+    ['room', quiet(room())],
+  ];
+  for (const [name, scene] of scenes) {
+    it(`gives what a full build of the moved scene gives (${name})`, () => {
+      const installed = build(scene);
+      const firstEffect = scene.effects![1] ?? scene.effects![0];
+      const sets: InteractiveLiveParams[] = [
+        everyParam(scene, 0.25),
+        everyParam(scene, 0.9),
+        { [`interactive:${firstEffect.id}:hue`]: 300 },
+        // One world effect's param only.
+        { [`interactive:${scene.effects!.find((e) => e.kind === 'balls3d' || e.kind === 'flames')!.id}:glow`]: 0.7 },
+      ];
+      // No params (an Auto that just stopped): the stored values, for every buffer params fill.
+      for (const live of inputs) {
+        const full = build(scene, live);
+        const byId = new Map(full.interactive.values.map((v) => [v.id, v]));
+        const back = installed.interactive.live!(live, {});
+        expect(back.some((v) => v.id.endsWith(':matter') || v.id.endsWith(':ball-kinds'))).toBe(true);
+        for (const v of back) expect({ id: v.id, key: v.key, initial_b64: v.initial_b64 }).toEqual(byId.get(v.id));
+      }
+      for (const all of sets) {
+        // Keys that need a rebuild (a Core-modulated key with modulation on it) are not live values.
+        const params = Object.fromEntries(Object.entries(all).filter(([k, v]) => interactiveParamsAreValues(scene, { [k]: v })));
+        expect(Object.keys(params).length).toBeGreaterThan(0);
+        expect(interactiveParamsAreValues(scene, params)).toBe(true);
+        for (const live of inputs) {
+          const full = build(applyInteractiveOverrides(scene, params), live);
+          // The same structure: nothing to install.
+          expect(full.interactive.topology).toBe(installed.interactive.topology);
+          const fresh = installed.interactive.live!(live, params);
+          const byId = new Map(full.interactive.values.map((v) => [v.id, v]));
+          for (const v of fresh) expect({ id: v.id, key: v.key, initial_b64: v.initial_b64 }).toEqual(byId.get(v.id));
+          const liveIds = new Set(fresh.map((v) => v.id));
+          const before = new Map(installed.interactive.values.map((v) => [v.id, v.key]));
+          const otherChanges = full.interactive.values.filter((v) => !liveIds.has(v.id) && before.get(v.id) !== v.key);
+          expect(otherChanges.map((v) => v.id)).toEqual([]);
+        }
+      }
+    });
+  }
+
+  it('leaves structural keys to a rebuild', () => {
+    const scene = wall({ flat: 'projected' });
+    const fire = scene.effects!.find((e) => e.kind === 'fire')!;
+    expect(interactiveParamsAreValues(scene, { [`interactive:${fire.id}:enabled`]: 0 })).toBe(false);
+    // A key the core modulates from the installed params, with a modulation on it.
+    const modded = { ...scene, effects: scene.effects!.map((e) => e.id === fire.id ? { ...e, mods: { hue: { source: 'bass', amount: 0.5, speed: 0.15, invert: false, bpmSync: false } } } : e) } as InteractiveScene;
+    expect(interactiveParamsAreValues(modded, { [`interactive:${fire.id}:hue`]: 120 })).toBe(false);
+    expect(interactiveParamsAreValues(modded, { [`interactive:${fire.id}:flow`]: 0.2 })).toBe(true);
   });
 });
