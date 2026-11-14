@@ -6,45 +6,39 @@
  *   - Auto is GENERATIVE: free sweeps advance at speedHz; beat-synced
  *     sweeps read the shared performance clock directly.
  *
- * Auto state lives directly on the data being automated:
+ * Auto settings live directly on the data being automated:
  *   - `layer.effects[i].paramAuto[paramName]` for mapping effects
  *   - `layer.source.shaderValueAuto[paramName]` for mapping shader params
  *   - `clip.shaderValueAuto[paramName]` for VJ clip shader params
+ * If there's an AutoConfig on the thing, the engine animates it.
  *
- * This is the entire architecture. There's no separate routing
- * layer, no per-layer-index keying that breaks on reorder, no
- * "which target am I in" decision per frame. If there's an
- * AutoConfig on the thing, the engine animates it. Period.
+ * What it works out each frame is a live value (liveParams.ts), never a
+ * write into the project or the VJ launcher: the frame sync puts it on over
+ * the stored value and the panels read it from there. The stored value is
+ * left alone, so nothing that watches the stores wakes up every frame and a
+ * saved project keeps its own values. Each Auto's playhead is kept here
+ * too, by where it is, rather than written into the AutoConfig: it survives
+ * a pause and an edit of the Auto, and reloading at any phase looks the
+ * same.
  *
- * Phase advancement is mutated in-place on the AutoConfig object
- * because:
- *   1. Per-frame Svelte store rewrites for a counter are pointless
- *      UI churn — the renderer reads `effect.params` (the value we
- *      write to) directly, and the UI slider doesn't show phase.
- *   2. Pause/resume needs `phase` to survive, so it can't be purely
- *      in-memory either.
- *
- * The compromise: we mutate `phase` in place on every tick (cheap,
- * no store update) and rely on the snapshot/save path to pick up
- * whatever value is current when the user saves. Phase isn't
- * meaningful UI state — it's just "where in the sweep is the
- * playhead", and reloading at any phase produces visually
- * indistinguishable output.
+ * Two things still reach the stores, both once rather than every frame:
+ *   - pausing an Auto keeps the value it stopped on (written once, as the
+ *     stored value), as it did when the engine wrote every frame;
+ *   - a keyframe track armed for an effect param still records what Auto
+ *     plays into it.
  */
 
 import { get } from 'svelte/store';
-import {advanceInteractiveAuto} from '../mobile/studio/interactiveEffects';
-import { resolveAutoValue as resolveValue, advanceAutoPhase, autoClipPosition } from './autoWave';
 import { launchClockPosition } from '../stores/launchClock';
 import { project } from '../stores/layers';
 import { vjClipLauncher, vjClipLauncherNow } from '../stores/vjClipLauncher';
+import { keyframeTimeline } from '../stores/keyframeTimeline';
 import { showToast } from '../stores/errorToast';
 import { runAsAutomation } from '../stores/historyHooks';
+import { resolveAutoValue as resolveValue, advanceAutoPhase, autoClipPosition } from './autoWave';
+import { LiveFrameWriter, clearLiveValues } from './liveParams';
 import type { AutoConfig, Layer, Effect } from '../types';
-
-// ─────────────────────────────────────────────────────────────────
-// Wave shaping
-// ─────────────────────────────────────────────────────────────────
+import type { InteractiveScene } from '../mobile/studio/interactive';
 
 // ─────────────────────────────────────────────────────────────────
 // Tick loop
@@ -52,6 +46,7 @@ import type { AutoConfig, Layer, Effect } from '../types';
 
 let rafId: number | null = null;
 let lastTime = 0;
+const live = new LiveFrameWriter('auto');
 
 /** True while the tick loop is running. */
 export function isAutoEngineRunning(): boolean {
@@ -68,11 +63,70 @@ function reportAutoFailure(id: string, name: string, error: unknown) {
   showToast(`Auto is off for "${name}": its settings could not be read.`, 'warning');
 }
 
+// ─── Playheads ───────────────────────────────────────────────────
+/** Each Auto's playhead by where it is (`map:<layerId>:fx:<effectId>:<param>`, …). */
+interface Playhead { phase: number; playing: boolean }
+/** Enough for every Auto in a big show; the oldest goes first past it. */
+export const AUTO_PLAYHEAD_LIMIT = 4096;
+const playheads = new Map<string, Playhead>();
+
+interface FrameClock { dt: number; beat: number; crossfader: number | undefined }
+
+/**
+ * This frame's value of one Auto, or null when it is paused. The frame it is
+ * paused, `onPause` gets the value it stopped on, once. `hold` keeps the
+ * playhead where it is (a paused Interactive scene) and still gives its value.
+ */
+function autoValue(key: string, auto: AutoConfig, clock: FrameClock, clipPosition?: number, onPause?: (value: number) => void, hold = false): number | null {
+  let head = playheads.get(key);
+  if (!head) {
+    if (playheads.size >= AUTO_PLAYHEAD_LIMIT) playheads.delete(playheads.keys().next().value as string);
+    head = { phase: Number.isFinite(auto.phase) ? auto.phase : 0, playing: !!auto.playing };
+    playheads.set(key, head);
+  }
+  if (!auto.playing) {
+    if (head.playing) {
+      head.playing = false;
+      onPause?.(resolveValue(auto, head.phase));
+    }
+    return null;
+  }
+  head.playing = true;
+  if (!hold) head.phase = advanceAutoPhase(auto, clock.dt, clock.beat, clock.crossfader, clipPosition, head.phase);
+  return resolveValue(auto, head.phase);
+}
+
+/** An Auto's playhead as the engine has it (tests, panels). */
+export function autoPlayhead(key: string): number | undefined {
+  return playheads.get(key)?.phase;
+}
+export function autoPlayheadCount(): number {
+  return playheads.size;
+}
+
 function tick(now: number) {
   rafId = requestAnimationFrame(tick);
   // Auto performs: nothing it writes is an undo step, except a recording
   // into an armed keyframe track (one step per take).
   runAsAutomation(() => autoStep(now));
+}
+
+/** Effects of an Interactive scene: each Auto'd param as a live `interactive:` value. */
+function driveInteractive(scene: InteractiveScene, keyBase: string, clock: FrameClock, hold: boolean, emit: (key: string, value: number) => void, onPause: (effectId: string, param: string, value: number) => void) {
+  if (!Array.isArray(scene?.effects)) return;
+  for (const e of scene.effects) {
+    if (!e || typeof e.params !== 'object' || !e.params) continue;
+    for (const [param, auto] of Object.entries(e.paramAuto ?? {})) {
+      if (!auto) continue;
+      const value = autoValue(`${keyBase}:interactive:${e.id}:${param}`, auto, clock, undefined, v => onPause(e.id, param, v), hold);
+      if (value !== null) emit(`interactive:${e.id}:${param}`, value);
+    }
+  }
+}
+
+/** A scene with these effect params set (a paused Auto keeping its value). */
+function sceneWithParams(scene: InteractiveScene, writes: Map<string, Record<string, number>>): InteractiveScene {
+  return { ...scene, effects: scene.effects?.map(e => writes.has(e.id) ? { ...e, params: { ...e.params, ...writes.get(e.id) } } : e) };
 }
 
 function autoStep(now: number) {
@@ -81,128 +135,92 @@ function autoStep(now: number) {
   if (dt <= 0 || !Number.isFinite(dt)) return;
   // One shared phase sample keeps all synced parameters aligned. Free sweeps
   // still skip stalls; beat sweeps catch up to the grid immediately.
-  const beat = launchClockPosition(now).beat;
   const vj = vjClipLauncherNow();
-  const crossfader = vj.crossfaderEnabled ? vj.crossfaderValue : undefined;
+  const clock: FrameClock = {
+    dt,
+    beat: launchClockPosition(now).beat,
+    crossfader: vj.crossfaderEnabled ? vj.crossfaderValue : undefined,
+  };
+  // Keyframe tracks armed to record (rare): Auto's effect values go into them.
+  const armed = get(keyframeTimeline).armedTracks;
+  const recording = Object.keys(armed).length > 0;
+  const record = (owner: string, key: string, param: string, value: number) => {
+    if (recording && armed[`${owner}:${key}`]) keyframeTimeline.autoRecord(owner, key, value, param, 'number');
+  };
+  // Pauses: the value each one stopped on, written once at the end.
+  const pauses: Array<() => void> = [];
 
   const p = get(project);
-  const layers = p.layers;
-
-  // Batched writes to the layers store. We collect per-layer-per-effect
-  // values, then commit at the end so a single layer with three auto
-  // params only triggers one store update instead of three.
-  type EffectBatch = Map<string, Record<string, number>>; // effectId → values
-  const effectBatches = new Map<string, EffectBatch>();   // layerId → batches
-  const shaderBatches = new Map<string, Record<string, number>>(); // layerId → values
-  const gpuBatches = new Map<string, Record<string, number>>();    // layerId → gpu param values
 
   const advanceLayerAuto = (layer: Layer) => {
-    const clipPosition = autoClipPosition(layer.source, now);
+    const src = layer.source;
+    const sourceId = src?.id;
+    const clipPosition = autoClipPosition(src, now);
+    const base = `map:${layer.id}`;
+    const emit = (key: string, value: number) => live.layer(layer.id, sourceId, key, value);
 
-    const interactive=layer.source?.effectSource?.interactiveScene;
-    if(interactive&&!layer.source?.effectSource?.interactivePaused){
-      const next=advanceInteractiveAuto(interactive,dt,beat,crossfader);
-      if(next!==interactive)project.update(p=>({...p,layers:p.layers.map(l=>l.id===layer.id&&l.source?{...l,source:{...l.source,effectSource:{...l.source.effectSource!,interactiveScene:next}}}:l)}));
+    const interactive = src?.effectSource?.interactiveScene;
+    if (interactive) {
+      // A paused scene holds its Auto values where they are.
+      const paused: Map<string, Record<string, number>> = new Map();
+      driveInteractive(interactive, base, clock, !!src?.effectSource?.interactivePaused, emit,
+        (effectId, param, value) => { const w = paused.get(effectId) ?? {}; w[param] = value; paused.set(effectId, w); });
+      if (paused.size) pauses.push(() => project.update(q => ({ ...q, layers: q.layers.map(l => l.id === layer.id && l.source?.effectSource?.interactiveScene
+        ? { ...l, source: { ...l.source, effectSource: { ...l.source.effectSource, interactiveScene: sceneWithParams(l.source.effectSource.interactiveScene, paused) } } }
+        : l) })));
     }
+
     // Effects — paramAuto sidecar on each Effect
-    if (layer.effects) {
-      for (const fx of layer.effects) {
-        if (!fx.paramAuto) continue;
-        for (const [paramName, auto] of Object.entries(fx.paramAuto)) {
-          if (!auto || !auto.playing) continue;
-          auto.phase = advanceAutoPhase(auto, dt, beat, crossfader, clipPosition);
-          const value = resolveValue(auto);
-          // Bucket the write
-          let layerEffectBatch = effectBatches.get(layer.id);
-          if (!layerEffectBatch) {
-            layerEffectBatch = new Map();
-            effectBatches.set(layer.id, layerEffectBatch);
-          }
-          let fxValues = layerEffectBatch.get(fx.id);
-          if (!fxValues) {
-            fxValues = {};
-            layerEffectBatch.set(fx.id, fxValues);
-          }
-          fxValues[paramName] = value;
-        }
+    for (const fx of layer.effects ?? []) {
+      if (!fx.paramAuto) continue;
+      for (const [paramName, auto] of Object.entries(fx.paramAuto)) {
+        if (!auto) continue;
+        const key = `fx:${fx.id}:${paramName}`;
+        const value = autoValue(`${base}:${key}`, auto, clock, clipPosition,
+          v => pauses.push(() => project.updateEffectParams(layer.id, fx.id, { [paramName]: v })));
+        if (value === null) continue;
+        emit(key, value);
+        record(layer.id, key, paramName, value);
       }
     }
 
-    // Edge effects — paramAuto keyed by dotted path
-    // (`stroke.width`, `fill.speed`, `animation.count`, top-level
-    // `opacity`). We write through project.updateEdgeEffect with the
-    // same deep-merge pattern the audio modulation engine's edge
-    // updater uses, so the two paths produce identical writes — the
-    // autoEngine just supplies its own time-based signal instead of
-    // the audio band amplitude.
-    if (layer.edgeEffects?.effects) {
-      for (const ee of layer.edgeEffects.effects) {
-        if (!ee.paramAuto) continue;
-        // Group nested writes by topKey so a single setter call
-        // ('stroke': {...all stroke.* in one merge...}) covers every
-        // animated param on that subobject. Same shape as the audio
-        // engine's edge writes — only the value source differs.
-        const topLevelWrites: Record<string, number> = {};
-        const subWrites: Record<string, Record<string, number>> = {};
-        for (const [path, auto] of Object.entries(ee.paramAuto)) {
-          if (!auto || !auto.playing) continue;
-          auto.phase = advanceAutoPhase(auto, dt, beat, crossfader, clipPosition);
-          const value = resolveValue(auto);
+    // Edge effects — paramAuto keyed by dotted path (`stroke.width`,
+    // `fill.speed`, top-level `opacity`), the keyframe `edge:` keys.
+    for (const ee of layer.edgeEffects?.effects ?? []) {
+      if (!ee.paramAuto) continue;
+      for (const [path, auto] of Object.entries(ee.paramAuto)) {
+        if (!auto) continue;
+        const key = `edge:${ee.id}:${path}`;
+        const value = autoValue(`${base}:${key}`, auto, clock, clipPosition, v => pauses.push(() => {
           const dot = path.indexOf('.');
-          if (dot < 0) {
-            topLevelWrites[path] = value;
-          } else {
-            const topKey = path.slice(0, dot);
-            const nestedKey = path.slice(dot + 1);
-            (subWrites[topKey] ||= {})[nestedKey] = value;
-          }
-        }
-        // Commit
-        if (Object.keys(topLevelWrites).length > 0) {
-          project.updateEdgeEffect(layer.id, ee.id, topLevelWrites as any);
-        }
-        for (const [topKey, kvs] of Object.entries(subWrites)) {
-          const currentTop = (ee as any)[topKey];
-          if (!currentTop || typeof currentTop !== 'object') continue;
-          project.updateEdgeEffect(layer.id, ee.id, {
-            [topKey]: { ...currentTop, ...kvs },
-          } as any);
-        }
+          if (dot < 0) { project.updateEdgeEffect(layer.id, ee.id, { [path]: v } as any); return; }
+          const top = path.slice(0, dot);
+          const current = (get(project).layers.find(l => l.id === layer.id)?.edgeEffects?.effects.find(e => e.id === ee.id) as any)?.[top];
+          if (current && typeof current === 'object') project.updateEdgeEffect(layer.id, ee.id, { [top]: { ...current, [path.slice(dot + 1)]: v } } as any);
+        }));
+        if (value !== null) emit(key, value);
       }
     }
 
     // Mapping shader params — shaderValueAuto on layer.source
-    if (layer.source?.shaderValueAuto) {
-      for (const [paramName, auto] of Object.entries(layer.source.shaderValueAuto)) {
-        if (!auto || !auto.playing) continue;
-        auto.phase = advanceAutoPhase(auto, dt, beat, crossfader, clipPosition);
-        const value = resolveValue(auto);
-        let batch = shaderBatches.get(layer.id);
-        if (!batch) {
-          batch = {};
-          shaderBatches.set(layer.id, batch);
-        }
-        batch[paramName] = value;
-      }
+    for (const [paramName, auto] of Object.entries(src?.shaderValueAuto ?? {})) {
+      if (!auto) continue;
+      const key = `shader:${paramName}`;
+      const value = autoValue(`${base}:${key}`, auto, clock, clipPosition,
+        v => pauses.push(() => project.batchUpdateLayerShaderValues(layer.id, { [paramName]: v })));
+      if (value !== null) emit(key, value);
     }
 
     // GPU shader-layer params — paramAuto sidecar on gpuLayerContent.
-    if (layer.gpuLayerContent?.paramAuto) {
-      for (const [paramKey, auto] of Object.entries(layer.gpuLayerContent.paramAuto)) {
-        if (!auto || !auto.playing) continue;
-        auto.phase = advanceAutoPhase(auto, dt, beat, crossfader, clipPosition);
-        const value = resolveValue(auto);
-        let batch = gpuBatches.get(layer.id);
-        if (!batch) {
-          batch = {};
-          gpuBatches.set(layer.id, batch);
-        }
-        batch[paramKey] = value;
-      }
+    for (const [paramKey, auto] of Object.entries(layer.gpuLayerContent?.paramAuto ?? {})) {
+      if (!auto) continue;
+      const key = `gpu:${paramKey}`;
+      const value = autoValue(`${base}:${key}`, auto, clock, clipPosition,
+        v => pauses.push(() => project.updateGPULayerParams(layer.id, { [paramKey]: v })));
+      if (value !== null) emit(key, value);
     }
   };
-  for (let layerIdx = 0; layerIdx < layers.length; layerIdx++) {
-    const layer = layers[layerIdx];
+  for (const layer of p.layers) {
     if (!layer) continue;
     // A layer whose Auto data cannot be read is skipped and reported once.
     // It must not stop Auto for every layer after it.
@@ -213,57 +231,33 @@ function autoStep(now: number) {
     }
   }
 
+  // The final mix has no single clip playhead: position-driven Autos hold
+  // here instead of silently choosing a deck or row.
   if (p.mappingComposition?.enabled) {
     for (const fx of p.mappingComposition.effects) {
-      if (!fx.paramAuto) continue;
-      const writes: Record<string, number> = {};
-      for (const [paramName, auto] of Object.entries(fx.paramAuto)) {
-        if (!auto?.playing || auto.timing === 'clip') continue;
-        auto.phase = advanceAutoPhase(auto, dt, beat, crossfader);
-        writes[paramName] = resolveValue(auto);
+      for (const [paramName, auto] of Object.entries(fx.paramAuto ?? {})) {
+        if (!auto || auto.timing === 'clip') continue;
+        const value = autoValue(`mapmix:${fx.id}:${paramName}`, auto, clock, undefined,
+          v => pauses.push(() => project.updateMappingCompositionEffectParams(fx.id, { [paramName]: v })));
+        if (value !== null) live.composition('map', fx.id, paramName, value);
       }
-      if (Object.keys(writes).length) project.updateMappingCompositionEffectParams(fx.id, writes);
     }
   }
-
-  // Commit effect writes
-  for (const [layerId, effectBatch] of effectBatches) {
-    for (const [effectId, values] of effectBatch) {
-      project.updateEffectParams(layerId, effectId, values);
-    }
-  }
-  // Commit shader writes
-  for (const [layerId, values] of shaderBatches) {
-    project.batchUpdateLayerShaderValues(layerId, values);
-  }
-  // Commit GPU param writes (mapping-only).
-  for (const [layerId, values] of gpuBatches) {
-    project.updateGPULayerParams(layerId, values);
-  }
-
-  // ──────────────────────────────────────────────────────────
-  // VJ deck slots — two automation surfaces:
-  //   1. Clip shader params: `clip.shaderValueAuto` on each deck's
-  //      active clip. Drives ISF inputs through batchUpdateShaderValues.
-  //   2. Layer effect params: `effect.paramAuto` on each effect in
-  //      the deck slot's effects array. Drives effect uniforms through
-  //      updateLayerEffectParams.
-  // Both banks (A + B) are walked because the crossfader can sit
-  // anywhere in between and both decks render.
-  // ──────────────────────────────────────────────────────────
-  // The final VJ mix has no single clip playhead. Position-driven presets
-  // hold here instead of silently choosing a deck or row.
   for (const fx of vj.compositionEffects) {
-    if (!fx.paramAuto) continue;
-    const writes: Record<string, number> = {};
-    for (const [paramName, auto] of Object.entries(fx.paramAuto)) {
-      if (!auto?.playing || auto.timing === 'clip') continue;
-      auto.phase = advanceAutoPhase(auto, dt, beat, crossfader);
-      writes[paramName] = resolveValue(auto);
+    for (const [paramName, auto] of Object.entries(fx.paramAuto ?? {})) {
+      if (!auto || auto.timing === 'clip') continue;
+      const value = autoValue(`vjmix:${fx.id}:${paramName}`, auto, clock, undefined,
+        v => pauses.push(() => vjClipLauncher.updateCompositionEffectParams(fx.id, { [paramName]: v })));
+      if (value !== null) live.composition('vj', fx.id, paramName, value);
     }
-    if (Object.keys(writes).length) vjClipLauncher.updateCompositionEffectParams(fx.id, writes);
   }
 
+  // ──────────────────────────────────────────────────────────
+  // VJ deck rows: the active clip's shader params and its own effects,
+  // and the row's effects. Both decks are walked because the crossfader
+  // can sit anywhere in between and both render. A row's values belong to
+  // the clip it shows, so a new clip starts from its own.
+  // ──────────────────────────────────────────────────────────
   const decks: Array<{ states: any; bank: 'A' | 'B' }> = [
     { states: vj.layerStates, bank: 'A' },
     { states: vj.bankBLayerStates, bank: 'B' },
@@ -271,61 +265,52 @@ function autoStep(now: number) {
   for (const { states, bank } of decks) {
     if (!states) continue;
     const advanceClipAuto = (i: number, layerState: any) => {
-      // (1) Shader params on the active clip
       const clip = layerState.activeClip;
+      if (!clip?.id) return;
       const clipPosition = autoClipPosition(clip, now);
-      const interactive=clip?.effectSource?.interactiveScene;
-      if(interactive&&!clip.effectSource.interactivePaused&&layerState.activeColumn!==null){
-        const next=advanceInteractiveAuto(interactive,dt,beat,crossfader);
-        if(next!==interactive)vjClipLauncher.updateClipEffectSource(i,layerState.activeColumn,{...clip.effectSource,interactiveScene:next},bank);
+      const emit = (key: string, value: number) => live.deck(bank, i, clip.id, key, value);
+      const column = layerState.activeColumn;
+
+      const interactive = clip.effectSource?.interactiveScene;
+      if (interactive && column !== null && column !== undefined) {
+        const paused: Map<string, Record<string, number>> = new Map();
+        driveInteractive(interactive, `vj:${clip.id}`, clock, !!clip.effectSource.interactivePaused, emit,
+          (effectId, param, value) => { const w = paused.get(effectId) ?? {}; w[param] = value; paused.set(effectId, w); });
+        if (paused.size) pauses.push(() => vjClipLauncher.updateClipEffectSource(i, column, { ...clip.effectSource, interactiveScene: sceneWithParams(interactive, paused) }, bank));
       }
-      if (clip?.shaderValueAuto) {
-        const writes: Record<string, number> = {};
-        let any = false;
-        for (const [paramName, auto] of Object.entries(clip.shaderValueAuto)) {
-          const a = auto as AutoConfig;
-          if (!a || !a.playing) continue;
-          a.phase = advanceAutoPhase(a, dt, beat, crossfader, clipPosition);
-          writes[paramName] = resolveValue(a);
-          any = true;
-        }
-        if (any) {
-          vjClipLauncher.batchUpdateShaderValues(i, writes, bank);
-        }
+
+      // (1) Shader params on the active clip
+      for (const [paramName, auto] of Object.entries(clip.shaderValueAuto ?? {})) {
+        const a = auto as AutoConfig;
+        if (!a) continue;
+        const value = autoValue(`vj:${clip.id}:shader:${paramName}`, a, clock, clipPosition,
+          v => pauses.push(() => vjClipLauncher.batchUpdateShaderValues(i, { [paramName]: v }, bank)));
+        if (value !== null) emit(`shader:${paramName}`, value);
       }
 
       // Clip-local effects retain their own automation through re-triggering.
-      if (clip?.effects && layerState.activeColumn !== null) {
-        for (const fx of clip.effects as Effect[]) {
-          if (!fx.paramAuto) continue;
-          const writes: Record<string, number> = {};
-          for (const [paramName, auto] of Object.entries(fx.paramAuto)) {
-            if (!auto?.playing) continue;
-            auto.phase = advanceAutoPhase(auto, dt, beat, crossfader, clipPosition);
-            writes[paramName] = resolveValue(auto);
-          }
-          if (Object.keys(writes).length) {
-            vjClipLauncher.updateClipEffectParams(i, layerState.activeColumn, fx.id, writes, bank);
+      if (column !== null && column !== undefined) {
+        for (const fx of (clip.effects ?? []) as Effect[]) {
+          for (const [paramName, auto] of Object.entries(fx.paramAuto ?? {})) {
+            if (!auto) continue;
+            const value = autoValue(`vj:${clip.id}:fx:${fx.id}:${paramName}`, auto, clock, clipPosition,
+              v => pauses.push(() => vjClipLauncher.updateClipEffectParams(i, column, fx.id, { [paramName]: v }, bank)));
+            if (value !== null) emit(`fx:${fx.id}:${paramName}`, value);
           }
         }
       }
 
-      // (2) Effect params on the layer slot
-      if (layerState.effects && layerState.effects.length > 0) {
-        for (const fx of layerState.effects) {
-          if (!fx.paramAuto) continue;
-          const writes: Record<string, number> = {};
-          let any = false;
-          for (const [paramName, auto] of Object.entries(fx.paramAuto)) {
-            const a = auto as AutoConfig;
-            if (!a || !a.playing) continue;
-            a.phase = advanceAutoPhase(a, dt, beat, crossfader, clipPosition);
-            writes[paramName] = resolveValue(a);
-            any = true;
-          }
-          if (any) {
-            vjClipLauncher.updateLayerEffectParams(i, fx.id, writes, bank);
-          }
+      // (2) Effect params on the row
+      for (const fx of (layerState.effects ?? []) as Effect[]) {
+        for (const [paramName, auto] of Object.entries(fx.paramAuto ?? {})) {
+          const a = auto as AutoConfig;
+          if (!a) continue;
+          const key = `fx:${fx.id}:${paramName}`;
+          const value = autoValue(`vj:${bank}:${i}:${key}`, a, clock, clipPosition,
+            v => pauses.push(() => vjClipLauncher.updateLayerEffectParams(i, fx.id, { [paramName]: v }, bank)));
+          if (value === null) continue;
+          emit(key, value);
+          record(`vj-${clip.id}`, key, paramName, value);
         }
       }
     };
@@ -340,6 +325,21 @@ function autoStep(now: number) {
       }
     }
   }
+
+  live.commit();
+  for (const write of pauses) write();
+}
+
+/** For tests: run one frame at `now` ms. */
+export function stepAutoForTest(now: number): void {
+  runAsAutomation(() => autoStep(now));
+}
+
+/** For tests: forget the clock and every playhead. */
+export function resetAutoForTest(): void {
+  lastTime = 0;
+  playheads.clear();
+  clearLiveValues('auto');
 }
 
 /** Start the auto engine. Idempotent. */
@@ -355,6 +355,8 @@ export function stopAutoEngine() {
     cancelAnimationFrame(rafId);
     rafId = null;
   }
+  // Its values go with it: the stored ones show again.
+  clearLiveValues('auto');
 }
 
 // ─────────────────────────────────────────────────────────────────

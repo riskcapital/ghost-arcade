@@ -367,7 +367,9 @@ describe('native plugin graphs (runtime, real core)', () => {
   },30000);
 
   itIfNativeCore.each(['balls', 'liquid'] as const)('keeps %s emitting across lifetimes and expires stopped or shortened emissions', async (kind) => {
-    const effect = makeEffect(kind);
+    // Without the sound defaults a new effect gets (makeEffect): their Min / Max
+    // range sets flow from the music, so in silence it stays at its quiet value.
+    const effect = makeEffect(kind, 'point', false);
     Object.assign(effect.params, { lifetime: 1, flow: 1, x: .25, y: .12, radius: .01 });
     const scene = { ...defaultInteractive(), seed: 4567, surfaces: [], effects: [effect] };
     const sourceId = `interactive-lifecycle-${kind}`;
@@ -490,8 +492,8 @@ describe('native plugin graphs (runtime, real core)', () => {
 
   itIfNativeCore('combines an effect stack and keeps manual bursts and GPU modulation live', async()=>{
     const layerId='interactive-stack-runtime',sourceId=layerId;
-    const fire=makeEffect('fire');fire.emission='burst';fire.params.y=.65;fire.params.duration=2;fire.params.hue=15;
-    const light=makeEffect('light');light.params.lightPower=0;light.params.haze=.5;light.params.ambient=0;
+    const fire=makeEffect('fire','point',false);fire.emission='burst';fire.params.y=.65;fire.params.duration=2;fire.params.hue=15;
+    const light=makeEffect('light','point',false);light.params.lightPower=0;light.params.haze=.5;light.params.ambient=0;
     const scene={...defaultInteractive(),surfaces:[],seed:812,effects:[fire,light]};
     async function publish(reset=false){const params={interactiveScene:scene};const graph=buildNativePluginGraph({kind:'performer-world',sourceId,params,width:320,height:180,time:1,frameDelta:1/60,frameIndex:1,reset,audio:{active:false,bass:0,mid:0,treble:0,energy:0,beatPhase:0,beatPulse:0,amplitude:0}});await rpc!.send('submit_commands',{commands:[{type:'upsert_layer',layer_id:layerId,z_index:99999,opacity:1,blend_mode:'normal',corners:{topLeft:{x:0,y:0},topRight:{x:1,y:0},bottomRight:{x:1,y:1},bottomLeft:{x:0,y:1}}},{type:'set_native_graph_layer',layer_id:layerId,kind:'performer-world',instrument_source_id:sourceId,composite_source_id:sourceId,input_source_id:null,effect_graph:graph.config,params},{type:'bind_media_source',layer_id:layerId,source_id:sourceId,uri:'plugin://performer-world',source_type:'video'}]});}
     await publish(true);await new Promise(r=>setTimeout(r,500));const idle=await rpc!.send('frame_snapshot',{include_pixels:true});

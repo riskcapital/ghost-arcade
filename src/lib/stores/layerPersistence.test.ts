@@ -793,17 +793,25 @@ describe('quantized VJ columns', () => {
     layers.project.setEffectChain(null, [{ id: 'shared-fx', type: 'blur', enabled: true, params: { amount: .5 } }]);
     launcher.setEffectChain('composition', [{ id: 'shared-fx', type: 'blur', enabled: true, params: { amount: .75 } }]);
     const mod = { source: 'lfo-saw' as const, amount: 1, speed: 1, invert: false, bpmSync: false };
-    const mappingValue = () => get(layers.project).mappingComposition!.effects[0].params.amount;
-    const vjValue = () => get(launcher).compositionEffects[0].params.amount;
+    const live = await import('../audio/liveParams');
+    // What the frame sync shows: the live value while modulated, else the stored one.
+    const mappingStored = () => get(layers.project).mappingComposition!.effects[0].params.amount;
+    const mappingValue = () => live.liveCompositionValues('map', 'shared-fx')?.amount ?? mappingStored();
+    const vjValue = () => live.liveCompositionValues('vj', 'shared-fx')?.amount ?? get(launcher).compositionEffects[0].params.amount;
     try {
       modulationStore.setCompositionEffectModulation('mapping', 'shared-fx', 'amount', mod, { base: .5, min: 0, max: 1 });
       modulationStore.setCompositionEffectModulation('vj', 'shared-fx', 'amount', { ...mod, amount: .5 }, { base: .75, min: 0, max: 1 });
       tick(10250);
       expect(mappingValue()).toBeCloseTo(.25);
       expect(vjValue()).toBeCloseTo(.625);
+      // The stored values stay the bases.
+      expect(mappingStored()).toBe(.5);
+      expect(get(launcher).compositionEffects[0].params.amount).toBe(.75);
       layers.project.setMappingCompositionEnabled(false);
       tick(10500);
-      expect(mappingValue()).toBeCloseTo(.25);
+      // Off: nothing drives it, and it keeps its own value.
+      expect(live.liveCompositionValues('map', 'shared-fx')).toBeUndefined();
+      expect(mappingValue()).toBe(.5);
       expect(vjValue()).toBeCloseTo(.75);
       const saved = JSON.parse(JSON.stringify(layers.project.exportProject()));
       expect(layers.project.importProject(saved)).toBe(true);
@@ -823,18 +831,25 @@ describe('quantized VJ columns', () => {
     launcher.setEffectChain('clip', [{ id: 'local-lfo', type: 'blur', enabled: true, params: { amount: .5 } }], 0, deck);
     const rows = () => deck === 'A' ? get(launcher).layerStates : get(launcher).bankBLayerStates;
     const clip = rows()[0].activeClip!;
+    const live = await import('../audio/liveParams');
+    // What the frame sync shows for a row's clip: its live value, else the stored one.
+    const clipValue = (row: number) => {
+      const active = rows()[row].activeClip;
+      return live.liveDeckValue(deck, row, active?.id, 'fx:local-lfo:amount') ?? active?.effects?.[0]?.params.amount;
+    };
     const mod = { source: 'lfo-saw' as const, amount: 1, speed: 1, invert: false, bpmSync: false };
     registerEffectParamRange(0, 'local-lfo', 'amount', 0, 1, clip.id);
     try {
       modulationStore.setClipEffectModulation(clip.id, 'local-lfo', 'amount', mod, deck);
       tick(10250);
-      expect(rows()[0].activeClip?.effects?.[0].params.amount).toBeCloseTo(.25);
+      expect(clipValue(0)).toBeCloseTo(.25);
+      expect(rows()[0].activeClip?.effects?.[0].params.amount).toBe(.5);
       expect(rows()[0].effects).toEqual([]);
       launcher.triggerClipNow(0, 1, deck); tick(10500);
       expect(rows()[0].activeClip?.effects ?? []).toEqual([]);
       launcher.setClip(1, 0, (deck === 'A' ? get(launcher).clipGrid : get(launcher).bankBClipGrid)[0][0], deck);
       launcher.triggerClipNow(1, 0, deck); tick(10750);
-      expect(rows()[1].activeClip?.effects?.[0].params.amount).toBeCloseTo(.75);
+      expect(clipValue(1)).toBeCloseTo(.75);
       const other = deck === 'A' ? get(launcher).bankBLayerStates : get(launcher).layerStates;
       expect(other.every(row => !row.activeClip)).toBe(true);
       const key = modKeyClipEffect(clip.id, 'local-lfo', 'amount', deck);
@@ -846,7 +861,7 @@ describe('quantized VJ columns', () => {
       launcher.updateClipEffectParams(1, 0, 'local-lfo', { amount: .8 }, deck);
       modulationStore.setClipEffectModulation(clip.id, 'local-lfo', 'amount', mod, deck);
       tick(11000);
-      expect(rows()[1].activeClip?.effects?.[0].params.amount).toBeCloseTo(.3);
+      expect(clipValue(1)).toBeCloseTo(.3);
     } finally {
       modulationStore.setClipEffectModulation(clip.id, 'local-lfo', 'amount', { ...mod, source: 'manual' }, deck);
       modulationStore.clearAll(); modulationEngine.stop();
@@ -860,15 +875,20 @@ describe('quantized VJ columns', () => {
     const config = { phase: 0, mode: 'loop' as const, speedHz: .5, min: 0, max: 1, playing: true };
     layers.project.setMappingCompositionEffectParamAuto('map-mix', 'amount', config);
     const effect = () => get(layers.project).mappingComposition!.effects[0];
+    const live = await import('../audio/liveParams');
+    const amount = () => live.liveCompositionValues('map', 'map-mix')?.amount ?? effect().params.amount;
     try {
       engine.startAutoEngine(); tick(10000); tick(10100);
-      expect(effect().params.amount).toBeCloseTo(.05);
+      expect(amount()).toBeCloseTo(.05);
       layers.project.setMappingCompositionEffectParamAuto('map-mix', 'amount', { ...config, timing: 'crossfader' });
       launcher.setCrossfaderValue(.6); tick(10150);
-      expect(effect().params.amount).toBe(.6);
+      expect(amount()).toBe(.6);
+      expect(effect().params.amount).toBe(0);
+      expect(effect().paramAuto?.amount.phase).toBe(0);
       layers.project.setMappingCompositionEnabled(false);
       launcher.setCrossfaderValue(.9); tick(10200);
-      expect(effect().params.amount).toBe(.6);
+      // Off: nothing drives it, and it keeps its own value.
+      expect(amount()).toBe(0);
       const saved = JSON.parse(JSON.stringify(layers.project.exportProject()));
       expect(layers.project.importProject(saved)).toBe(true);
       expect(effect().paramAuto?.amount.timing).toBe('crossfader');
@@ -884,20 +904,25 @@ describe('quantized VJ columns', () => {
     const config = { phase: 0, mode: 'loop' as const, speedHz: .5, min: 0, max: 1, playing: true };
     launcher.setCompositionEffectParamAuto('mix-blur', 'amount', config);
     const effect = () => get(launcher).compositionEffects[0];
+    const live = await import('../audio/liveParams');
+    const amount = () => live.liveCompositionValues('vj', 'mix-blur')?.amount ?? effect().params.amount;
     try {
       engine.startAutoEngine();
       tick(10000); tick(10100);
-      expect(effect().params.amount).toBeCloseTo(.05);
+      expect(amount()).toBeCloseTo(.05);
+      expect(effect().params.amount).toBe(0);
       launcher.setCompositionEffectParamAuto('mix-blur', 'amount', { ...config, timing: 'crossfader' });
       launcher.setCrossfaderValue(.8);
       tick(10150);
-      expect(effect().params.amount).toBe(.8);
+      expect(amount()).toBe(.8);
+      // Paused: it keeps the value it stopped on, written once.
       launcher.setCompositionEffectParamAuto('mix-blur', 'amount', { ...config, playing: false });
       tick(10200);
+      expect(amount()).toBe(.8);
       expect(effect().params.amount).toBe(.8);
       launcher.setCompositionEffectParamAuto('mix-blur', 'amount', { ...config, timing: 'clip' });
       tick(10250);
-      expect(effect().params.amount).toBe(.8);
+      expect(amount()).toBe(.8);
       const saved = JSON.parse(JSON.stringify(layers.project.exportProject()));
       expect(layers.project.importProject(saved)).toBe(true);
       expect(effect().paramAuto?.amount.timing).toBe('clip');
@@ -2161,13 +2186,14 @@ describe('Interactive layer project and preset persistence',()=>{
   // Damage that only exists in memory (nothing a loader would have let in),
   // placed BEFORE the healthy layer so it is ticked first.
   layers.project.update(p=>({...p,layers:[{...types.createLayer('damaged','Damaged','media'),effects:[null] as any},...p.layers]}));
-  const read=()=>get(layers.project).layers.find(l=>l.id==='healthy')!.source!.effectSource!.interactiveScene!.effects![0].params.lightPower;
+  const {liveLayerValue}=await import('../audio/liveParams');
+  const read=()=>liveLayerValue('healthy',`interactive:${sweep.id}:lightPower`)??get(layers.project).layers.find(l=>l.id==='healthy')!.source!.effectSource!.interactiveScene!.effects![0].params.lightPower;
   const before=read(),error=vi.spyOn(console,'error').mockImplementation(()=>{});
   try{
    startAutoEngine();
    await new Promise(r=>setTimeout(r,120));
+   expect(read()).not.toBe(before);
   }finally{stopAutoEngine();}
-  expect(read()).not.toBe(before);
   expect(error.mock.calls.filter(call=>String(call[0]).includes('Auto skipped for "Damaged"'))).toHaveLength(1);
   error.mockRestore();
  });

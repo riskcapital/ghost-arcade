@@ -137,16 +137,17 @@ describe('HandFX body and face packing', () => {
     const params = { handfxMode: 'facemask', handfxInput: 'demo' };
     const first = packHandFxBody({ ...base, params, time: 1 }, null, index('facemask'));
     expect(first.state.faceTopologyVersion).toBe(1);
-    expect(first.topology).toHaveLength(HAND_FX_FACE_POINTS * 4);
+    const topology = first.topology();
+    expect(topology).toHaveLength(HAND_FX_FACE_POINTS * 4);
     for (let point = 0; point < HAND_FX_FACE_POINTS; point += 1) {
-      const neighbours = Array.from(first.topology.subarray(point * 4, point * 4 + 4));
+      const neighbours = Array.from(topology.subarray(point * 4, point * 4 + 4));
       expect(new Set(neighbours).size).toBe(4);
       expect(neighbours.includes(point)).toBe(false);
       expect(neighbours.every((n) => n >= 0 && n < HAND_FX_FACE_POINTS)).toBe(true);
     }
     const next = packHandFxBody({ ...base, params, time: 2 }, first.state, index('facemask'));
     expect(next.state.faceTopologyVersion).toBe(1);
-    expect(Array.from(next.topology)).toEqual(Array.from(first.topology));
+    expect(Array.from(next.topology())).toEqual(Array.from(topology));
   });
 });
 

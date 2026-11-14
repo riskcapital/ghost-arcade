@@ -237,6 +237,12 @@ const EXPECTED_NATIVE_GRAPH_MANIFEST: NativeGraphManifestExpectation[] = [
     feature: 'native_scene3d_graph',
     shaderIds: [],
   },
+  {
+    // The Analog Synth brings its own shaders with its graph too.
+    id: 'videosynth',
+    feature: 'native_videosynth_graph',
+    shaderIds: [],
+  },
 ];
 
 type NativeRpc = {

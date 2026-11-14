@@ -908,7 +908,8 @@ function faceNeighbours(points: number[]): number[] {
  */
 export function packHandFxBody(input: HandFxFieldInput, previous: HandFxFieldState | null | undefined, modeIndex: number): {
   buffer: Float32Array;
-  topology: Float32Array;
+  /** The face wire as a buffer. Worked out when asked for: it changes only when a face is first seen. */
+  topology: () => Float32Array;
   state: HandFxFieldState;
   layout: HandFxFieldLayout;
 } {
@@ -1073,7 +1074,7 @@ export function packHandFxBody(input: HandFxFieldInput, previous: HandFxFieldSta
   for (let index = 0; index < head.length; index += 1) buffer[index] = Number.isFinite(head[index]) ? head[index] : 0;
   return {
     buffer,
-    topology: Float32Array.from(state.faceTopology ?? new Array<number>(HAND_FX_FACE_POINTS * 4).fill(0)),
+    topology: () => Float32Array.from(state.faceTopology ?? new Array<number>(HAND_FX_FACE_POINTS * 4).fill(0)),
     state,
     layout,
   };
