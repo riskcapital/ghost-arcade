@@ -82,8 +82,17 @@ export function recordingFilename(date = new Date()): string {
 }
 
 /** Where the encoded pieces go: the app's recording file, or memory in a browser. */
+/** Wall-clock milliseconds, on the clock the app's native side also reads (to lay sound against the picture). */
+export const wallClock = (): number => performance.timeOrigin + performance.now();
+
+/** Which sound a take carries, as the app answered when it began. */
+export type TakeSound = { source: 'off' | 'mic' | 'player' | 'phone'; recorded: boolean };
+
 export interface RecordingSink {
-  begin(mimeType: string): Promise<void>;
+  /** Starts the file (and in the app, the sound) and says which sound the take will carry. */
+  begin(mimeType: string): Promise<TakeSound | void>;
+  /** The moment the video started, so the sound can be laid against it. */
+  videoStarted?(at: number): void;
   append(chunk: Blob): Promise<void>;
   finish(filename: string): Promise<RecordingResult>;
   discard(): Promise<void>;
@@ -101,6 +110,8 @@ export type RecordingResult = {
   filename: string;
   /** Browser only: the file itself. */
   blob?: Blob;
+  /** The file has a sound track (silent when nothing could be recorded). */
+  sound?: boolean;
 };
 
 export type RecorderParts = {
@@ -140,6 +151,8 @@ export class ProgramRecorder {
   private limitTimer: ReturnType<typeof setTimeout> | undefined;
   private hidden = () => { if (document.visibilityState === 'hidden') this.autoStop('hidden'); };
   readonly mimeType: string;
+  /** The sound this take carries, once started (null in a browser). */
+  sound: TakeSound | null = null;
   private fps: number;
 
   constructor(private parts: RecorderParts) {
@@ -159,7 +172,7 @@ export class ProgramRecorder {
     this.canvas.height = this.layout.height;
     this.paintBlack();
     this.attachFeed(source);
-    try { await this.parts.sink.begin(this.mimeType); } catch (e) { this.release(); throw e; }
+    try { this.sound = (await this.parts.sink.begin(this.mimeType)) || null; } catch (e) { this.release(); throw e; }
     this.stream = this.canvas.captureStream(this.fps);
     try {
       this.recorder = new MediaRecorder(this.stream, { mimeType: this.mimeType, videoBitsPerSecond: this.parts.bitrate ?? 8_000_000 });
@@ -177,6 +190,9 @@ export class ProgramRecorder {
     };
     this.recorder.onerror = () => this.autoStop('error', 'The recording stopped unexpectedly.');
     this.startedAt = performance.now();
+    // The picture starts when MediaRecorder says it has started (WebKit: about 0.1 s after start()),
+    // not at the call: measured against a click track, the call is too early by about that much.
+    this.recorder.addEventListener('start', () => this.stampStart(), { once: true });
     this.recorder.start(1000);
     this.tick();
     document.addEventListener('visibilitychange', this.hidden);
@@ -204,8 +220,17 @@ export class ProgramRecorder {
     this.parts.onstop?.(reason, message);
   }
 
+  private stamped = false;
+  private stampStart(at = wallClock()) {
+    if (this.stamped) return;
+    this.stamped = true;
+    this.parts.sink.videoStarted?.(at);
+  }
+
   private async finish(filename: string): Promise<RecordingResult> {
     clearTimeout(this.limitTimer);
+    // A take stopped before the start event still needs a start: the call's own moment.
+    this.stampStart(performance.timeOrigin + this.startedAt);
     document.removeEventListener('visibilitychange', this.hidden);
     const recorder = this.recorder;
     if (recorder && recorder.state !== 'inactive') {

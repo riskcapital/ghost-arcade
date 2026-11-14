@@ -1,21 +1,30 @@
 // Where a recording is written and how it leaves the app: Photos and the share sheet in the iOS
 // app (StudioOutput plugin), a download in a browser.
-import type { RecordingResult, RecordingSink } from './programRecorder';
+import { wallClock, type RecordingResult, type RecordingSink, type TakeSound } from './programRecorder';
 import { blobToBase64, shareFile } from './nativeShare';
 import { callOutput, fileURL, hasOutputMethod } from './nativeOutput';
 
 /** The app can keep recordings itself (and save them to Photos). */
 export const canStoreRecordings = (): boolean => hasOutputMethod('recordingBegin') && hasOutputMethod('recordingFinish');
 
-/** Writes each encoded piece to a file in the app as it arrives. */
+const SOURCES: TakeSound['source'][] = ['off', 'mic', 'player', 'phone'];
+
+/** Writes each encoded piece to a file in the app as it arrives; the app records the sound beside it. */
 export class AppRecordingSink implements RecordingSink {
   private id: string | null = null;
   private mimeType = '';
-  async begin(mimeType: string) {
+  private started: Promise<unknown> = Promise.resolve();
+  async begin(mimeType: string): Promise<TakeSound> {
     this.mimeType = mimeType;
-    const r = await callOutput<{ id?: string }>('recordingBegin', { mimeType });
+    const r = await callOutput<{ id?: string; sound?: string; recordsSound?: boolean }>('recordingBegin', { mimeType, sound: true, clock: wallClock() });
     if (!r?.id) throw new Error('The recording could not be stored.');
     this.id = r.id;
+    const source = SOURCES.includes(r.sound as TakeSound['source']) ? (r.sound as TakeSound['source']) : 'off';
+    return { source, recorded: r.recordsSound === true };
+  }
+  videoStarted(at: number) {
+    if (!this.id || !hasOutputMethod('recordingVideoStarted')) return;
+    this.started = callOutput('recordingVideoStarted', { id: this.id, at, clock: wallClock() }).catch(() => undefined);
   }
   async append(chunk: Blob) {
     if (!this.id) throw new Error('The recording has not started.');
@@ -23,8 +32,9 @@ export class AppRecordingSink implements RecordingSink {
   }
   async finish(filename: string): Promise<RecordingResult> {
     if (!this.id) throw new Error('The recording has not started.');
-    const r = await callOutput<{ id: string; path: string; bytes: number; durationMs: number; width: number; height: number }>('recordingFinish', { id: this.id, filename });
-    return { id: r.id, url: fileURL(r.path), bytes: r.bytes, durationMs: r.durationMs, width: r.width, height: r.height, mimeType: 'video/mp4', filename: r.path.split('/').pop() || filename };
+    await this.started;
+    const r = await callOutput<{ id: string; path: string; bytes: number; durationMs: number; width: number; height: number; sound?: boolean }>('recordingFinish', { id: this.id, filename });
+    return { id: r.id, url: fileURL(r.path), bytes: r.bytes, durationMs: r.durationMs, width: r.width, height: r.height, mimeType: 'video/mp4', filename: r.path.split('/').pop() || filename, sound: r.sound === true };
   }
   async discard() {
     if (this.id) await callOutput('recordingDiscard', { id: this.id }).catch(() => undefined);
@@ -89,6 +99,15 @@ export async function shareRecording(result: RecordingResult, anchor?: Element |
 export async function discardRecording(result: RecordingResult): Promise<void> {
   if (result.id) await callOutput('recordingDiscard', { id: result.id }).catch(() => undefined);
   else if (result.url.startsWith('blob:')) URL.revokeObjectURL(result.url);
+}
+
+/** What the record sheet says about sound, for the app's current audio source. */
+export function soundLine(source: TakeSound['source'], app: boolean): string {
+  if (!app) return 'Recordings here are silent. Sound is recorded in the iPhone and iPad app.';
+  if (source === 'player') return 'Sound: the song playing in the Player.';
+  if (source === 'mic') return 'Sound: the microphone, as the room hears it.';
+  if (source === 'phone') return "Sound from other apps can't be recorded, so this video will be silent.";
+  return 'No sound source is on, so this video will be silent. Pick Mic or Player as the audio source first.';
 }
 
 /** "0:07", "1:02:03". */

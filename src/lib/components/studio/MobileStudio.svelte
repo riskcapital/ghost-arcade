@@ -1736,7 +1736,7 @@
             <PaintPad surfaces={show.surfaces} config={paint} beat={()=>engine?.beatClock?.()??0} onstroke={startStroke} onfinish={finishStroke} onlimit={()=>flash('Paint memory is full. Clear or undo strokes to keep drawing.')}/>
           {/if}
         </div>
-        <RecordControl source={programCanvas} hidden={tab==='map' || clean || visualsDown} onsuccess={reviewWhen} />
+        <RecordControl source={programCanvas} hidden={tab==='map' || clean || visualsDown} onsuccess={reviewWhen} {audioSource} />
         {#if tab==='perform' && coachCurrent && (coachCurrent.tab==='perform'||coachCurrent.skippable) && !clean && !visualsDown}<CoachStrip step={coach.step} steps={coachSteps(coach.track)} actionLabel={coachCurrent.id==='connect'?'Connect':''} onaction={connectProjector} onskip={coachCurrent.skippable?()=>coachMove(coachSkip(coach)):null} onclose={()=>setPrefs({coachDone:true})}/>{/if}
       </div>
       <div class="monitor-tools">
