@@ -2184,7 +2184,8 @@
         // Shallow-copy so per-frame opacity rides (stage FX) captured at
         // call time survive the end-of-frame restore before the sync flush.
         // The transition builder already copies every layer it touches, so
-        // the copy only has to cover the pass-through case.
+        // the copy only has to cover the pass-through case. The copies of
+        // one list are reused by the coalesced builds (liveLayerCopies).
         const mappingLive = get(layers) as Layer[];
         const xfade = get(compositionTransition).active;
         if (!xfade) {
@@ -2194,7 +2195,7 @@
           // sources, same shape.
           const prepared = showTrackScenes.prepare(mappingLive, get(showTrackFrame), showTrackSceneContext(), showSceneDeps(mappingLive));
           if (reuseShowScene && prepared.reusable) return prepared.reuse();
-          const scene = withTakeover(prepared.build(mappingLive.map((l) => ({ ...l }))));
+          const scene = withTakeover(prepared.build(liveLayerCopies(mappingLive)));
           // Only a coalesced build is kept: an immediate one may have copied
           // values the render loop is riding in place for this one frame.
           if (scene && reuseShowScene) prepared.commit(scene);
@@ -2209,7 +2210,7 @@
           compositionLayers: (id) => comps.find((c) => c.id === id)?.layers ?? null,
         });
         return withTakeover(buildShowTrackScene(
-          effective === mappingLive ? mappingLive.map((l) => ({ ...l })) : effective,
+          effective === mappingLive ? liveLayerCopies(mappingLive) : effective,
           get(showTrackFrame),
           showTrackSceneContext(),
         ));
@@ -2222,6 +2223,18 @@
       // scene. The immediate builds (an urgent trigger, the browser render
       // loop's in-place stage FX, a forced resync) always build afresh.
       let reuseShowScene = false;
+      // The live layers' copies for the scene. A coalesced build runs after
+      // the render loop has put its in-place values back, so its copies of a
+      // list are what that list holds for as long as the list is the same
+      // (the stores replace a list, never change it): they are made once per
+      // list, not on every build (every frame while anything plays). An
+      // immediate build copies afresh and keeps nothing.
+      let liveCopies: { from: Layer[]; copies: Layer[] } | null = null;
+      const liveLayerCopies = (live: Layer[]): Layer[] => {
+        if (!reuseShowScene) return live.map((l) => ({ ...l }));
+        if (liveCopies?.from !== live) liveCopies = { from: live, copies: live.map((l) => ({ ...l })) };
+        return liveCopies.copies;
+      };
       const showTrackSceneContext = () => {
         const frame = get(showTrackFrame);
         return {
