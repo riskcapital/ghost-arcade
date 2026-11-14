@@ -10219,7 +10219,10 @@ export class NativeRendererSync {
       this.nativeSceneAdopted = true;
     }
     const urgentVideoRevisionAtStart = this.urgentVideoRevision;
-    this.latestLayers = layers;
+    // `layers` carries this frame's overrides (live values, keyframes,
+    // lanes). latestLayers keeps the scene as published: the next frame
+    // works its overrides out again from it, so a value an engine stopped
+    // moving goes back to the stored one instead of staying on.
     const commands: RendererCommand[] = [];
     // Mapping composition FX: rebuilt every frame, because the core drains
     // its post-composite queue each render and the uniforms carry time.

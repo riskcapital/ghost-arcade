@@ -200,6 +200,21 @@ describe('Interactive scene: Auto on an effect param without a graph rebuild', (
     expect(sync.nativeGraphRoutes.values().next().value.interactiveValueKeys.get(matterId)).toBe(base.interactive.values.find((v) => v.id === matterId)!.key);
   });
 
+  it('puts the stored values back when Auto stops, on the frame loop\'s own next flush', async () => {
+    const sync = makeSync();
+    const layers = [worldLayer()];
+    await sync.flush(1920, 1080, layers);
+    const { clear } = await autoFrames(sync, layers, 5);
+    // The frame loop flushes what was published, not last frame's copy.
+    expect(sync.latestLayers).toBe(layers);
+    clear();
+    h.batches.length = 0;
+    await sync.flush(1920, 1080, sync.latestLayers);
+    const route = sync.nativeGraphRoutes.values().next().value;
+    expect(route.interactiveParamsLive).toBe(false);
+    expect(ofType('update_native_graph_buffer').length).toBeGreaterThan(0);
+  });
+
   it('measures the sync per frame with an Auto playing on two effect params', async () => {
     const sync = makeSync();
     const layers = [worldLayer()];
