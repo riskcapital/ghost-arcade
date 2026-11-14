@@ -147,7 +147,7 @@ export class ZoneTriggers {
     const fired: FiredZone[] = [];
     const occupied = new Set<string>();
     for (const surface of scene.surfaces) {
-      if (surface.behavior !== 'trigger' || !surface.trigger) continue;
+      if (surface.behavior !== 'trigger' || !surface.trigger || surface.trigger.when === 'ball') continue;
       if (!points.some((p) => inside(p.point, surface.points))) continue;
       occupied.add(surface.id);
       if (this.occupied.has(surface.id)) continue;

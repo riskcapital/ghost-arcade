@@ -111,6 +111,7 @@ pub const CORE_RPC_METHODS: &[&str] = &[
     "run_compute_probe",
     "compute_graph",
     "run_compute_graph",
+    "take_graph_readbacks",
     "shutdown",
 ];
 

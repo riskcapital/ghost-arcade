@@ -4,6 +4,7 @@
   import Icon from './StudioIcon.svelte';
   import {
     OFFERED_EFFECT_KINDS,
+    OFFERED_WORLD_EFFECT_KINDS,
     EFFECT_NAMES,
     MAX_INTERACTIVE_EFFECTS,
     type EffectKind,
@@ -15,6 +16,8 @@
   export let effects: InteractiveEffect[] = [];
   export let surfaces: InteractiveSurface[] = [];
   export let selectedEffect = '';
+  /** The scene's 3D world is on: its elements are offered too, first. */
+  export let world = false;
 
   export let onadd: (kind: EffectKind) => void;
   export let onselect: (id: string) => void;
@@ -37,6 +40,12 @@
   let menu: HTMLDivElement | undefined;
 
   $: full = effects.length >= MAX_INTERACTIVE_EFFECTS;
+  $: groups = world
+    ? [
+        { label: '3D world', kinds: OFFERED_WORLD_EFFECT_KINDS as EffectKind[] },
+        { label: 'On the picture', kinds: OFFERED_EFFECT_KINDS as EffectKind[] },
+      ]
+    : [{ label: '', kinds: OFFERED_EFFECT_KINDS as EffectKind[] }];
   $: if (full) menuOpen = false;
 
   const items = () => [...(menu?.querySelectorAll<HTMLButtonElement>('button') ?? [])];
@@ -96,7 +105,15 @@
   <Icon name="plus" size={16} />Add effect
   <select aria-label="Add effect" disabled={full} onchange={pickNative}>
     <option value="">Add effect</option>
-    {#each OFFERED_EFFECT_KINDS as kind}<option value={kind}>{EFFECT_NAMES[kind]}</option>{/each}
+    {#each groups as group}
+      {#if group.label}
+        <optgroup label={group.label}>
+          {#each group.kinds as kind}<option value={kind}>{EFFECT_NAMES[kind]}</option>{/each}
+        </optgroup>
+      {:else}
+        {#each group.kinds as kind}<option value={kind}>{EFFECT_NAMES[kind]}</option>{/each}
+      {/if}
+    {/each}
   </select>
 </label>
 {:else}
@@ -123,8 +140,11 @@
   {#if menuOpen}
     <!-- svelte-ignore a11y_interactive_supports_focus -->
     <div class="add-effect-menu" role="menu" aria-label="Add effect" bind:this={menu} onkeydown={menuKey}>
-      {#each OFFERED_EFFECT_KINDS as kind}
-        <button role="menuitem" onclick={() => choose(kind)}>{EFFECT_NAMES[kind]}</button>
+      {#each groups as group}
+        {#if group.label}<div class="add-effect-group" role="presentation">{group.label}</div>{/if}
+        {#each group.kinds as kind}
+          <button role="menuitem" onclick={() => choose(kind)}>{EFFECT_NAMES[kind]}</button>
+        {/each}
       {/each}
     </div>
   {/if}

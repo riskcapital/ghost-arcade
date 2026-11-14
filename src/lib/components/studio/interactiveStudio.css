@@ -240,7 +240,7 @@
 }
 .interactive-workspace .inspector-tabs {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 4px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--ga-line-2, #34383f);
@@ -985,22 +985,99 @@
 }
 
 /* ── Desktop dialog ──────────────────────────────────────────────────────── */
-/* The dialog element belongs to App.svelte. While it holds the editor it uses
-   the window (minus the backdrop margin) instead of a 1200 px box, and the
-   editor fills it. */
-.studio-workshop-backdrop > .studio-workshop:has(> .interactive-workspace.native-editor) {
-  width: calc(100vw - 48px);
+/* The dialog element belongs to App.svelte. While it holds the editor it is
+   the whole window, like the other studios, and the editor fills it. */
+.studio-workshop-backdrop:has(.interactive-workspace.native-editor) {
+  padding: 0;
+}
+.studio-workshop-backdrop > .studio-workshop:has(.interactive-workspace.native-editor) {
+  width: 100vw;
   max-width: none;
-  height: calc(100dvh - 48px);
+  height: 100dvh;
   max-height: none;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  border: 0;
+  border-radius: 0;
 }
-.studio-workshop:has(> .interactive-workspace.native-editor) > .interactive-workspace.native-editor {
+/* Already the whole window: no Full screen switch. */
+.studio-workshop .interactive-workspace.native-editor:not(.handheld) .fullscreen-action {
+  display: none;
+}
+/* The editor sits in a `display: contents` page wrapper, so it is the flex item. */
+.studio-workshop:has(.interactive-workspace.native-editor) .interactive-workspace.native-editor {
   flex: 1 1 auto;
   height: auto;
   min-height: 0;
+}
+
+/* ── 3D World tab ────────────────────────────────────────────────────────── */
+/* A color well beside its name, the width of a control. */
+.interactive-workspace label.color-row:not(:where(.param *, .mt *, .studio-timeline *)) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.interactive-workspace label.color-row > input[type='color']:not(:where(.param *, .mt *, .studio-timeline *)) {
+  width: 56px;
+  margin: 0;
+  padding: 2px;
+  cursor: pointer;
+}
+.interactive-workspace .world-switch:not(:where(.param *, .mt *, .studio-timeline *)) {
+  font-size: var(--ga-text-body, 13px);
+  font-weight: var(--ga-weight-control, 600);
+  color: var(--ga-ink-0);
+}
+.interactive-workspace .world-flat {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  padding: 2px;
+  background: var(--ga-slot);
+  border: 1px solid var(--ga-line-2);
+  border-radius: var(--ga-r-hard, 5px);
+}
+.interactive-workspace .world-flat button:not(:where(.param *, .mt *, .studio-timeline *)) {
+  min-height: var(--ga-control-h-sm, 22px);
+  padding: 0 6px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--ga-ink-1);
+}
+.interactive-workspace .world-flat button.active:not(:where(.param *, .mt *, .studio-timeline *)) {
+  background: var(--ga-selection-bg, var(--ga-blue-700));
+  color: var(--ga-selection-ink, inherit);
+}
+
+/* Face / Orbit sits beside Select / Draw / Play. */
+.interactive-workspace .canvas-toolbar .view-switch {
+  margin-right: auto;
+}
+/* Orbit view: the stage turns the camera, the outlines step aside. */
+.interactive-workspace .stage .orbit-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  cursor: grab;
+  touch-action: none;
+}
+.interactive-workspace .stage .orbit-layer.turning {
+  cursor: grabbing;
+}
+.interactive-workspace .stage .orbit-note {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 4;
+  padding: 2px 8px;
+  font-size: var(--ga-text-meta, 11px);
+  color: var(--ga-ink-1);
+  background: color-mix(in srgb, var(--ga-canvas-bg, #070a10) 70%, transparent);
+  border-radius: var(--ga-r-hard, 4px);
+  pointer-events: none;
 }
 
 /* ── Inspector tabs ──────────────────────────────────────────────────────── */
@@ -1158,6 +1235,12 @@
 }
 .interactive-workspace .add-effect-menu button {
   text-align: left;
+}
+.interactive-workspace .add-effect-group {
+  grid-column: 1 / -1;
+  padding: 4px 2px 0;
+  font-size: 11px;
+  color: var(--ga-text-muted, #9aa3b5);
 }
 .interactive-workspace .hint.limit:not(:where(.param *, .mt *, .studio-timeline *)) {
   color: #ffcf8a;

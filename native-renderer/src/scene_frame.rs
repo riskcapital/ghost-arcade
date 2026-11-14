@@ -29,6 +29,9 @@
 use serde_json::{json, Value};
 
 pub(crate) const BUFFER_SUFFIX: &str = ":scene3d:frame";
+/// Buffers of a 3D world graph start with this; inside an Interactive layer
+/// they belong to the app, all but the frame block.
+pub(crate) const SCENE_BUFFER_PREFIX: &str = "scene3d:";
 pub(crate) const FIELDS: [&str; 16] = [
     "time",
     "delta",
@@ -159,6 +162,12 @@ impl SceneClock {
     }
 }
 
+/// Whether a graph declares a frame block (a buffer named `…:scene3d:frame`).
+/// Interactive layers get the block only then: a 3D world in the Studio.
+pub(crate) fn declares<'a>(mut ids: impl Iterator<Item = &'a str>) -> bool {
+    ids.any(|id| id.ends_with(BUFFER_SUFFIX))
+}
+
 /// The layout as data, for the core's capabilities.
 pub(crate) fn layout() -> Value {
     json!({ "buffer_suffix": BUFFER_SUFFIX, "bytes": BYTES, "fields": FIELDS })
@@ -203,7 +212,13 @@ mod tests {
     }
 
     #[test]
-    fn short_buffers_are_left_alone() {
+    fn declares_only_with_a_frame_buffer() {
+        assert!(declares(["a:interactive:uniform", "a:scene3d:frame"].into_iter()));
+        assert!(!declares(["a:interactive:uniform", "a:scene3d:framex"].into_iter()));
+    }
+
+    #[test]
+        fn short_buffers_are_left_alone() {
         let mut bytes = vec![7u8; BYTES - 4];
         assert!(!SceneFrame::default().write(&mut bytes));
         assert!(bytes.iter().all(|b| *b == 7));

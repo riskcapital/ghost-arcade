@@ -14,6 +14,7 @@
   } from '../../mobile/studio/interactive';
   import type { EffectKind } from '../../mobile/studio/interactiveEffects';
   import { MAX_SURFACES, type ShapeKind } from '../../mobile/studio/editorActions';
+  import { defaultSurfaceFinish, type SurfaceFinish, type SurfaceFinishPreset } from '../../scene3d/worldModel';
 
   export let surfaces: InteractiveSurface[] = [];
   export let selected = '';
@@ -45,6 +46,18 @@
   export let ontriggerstart: () => void;
   /** Fire the selected zone's actions now. */
   export let ontesttrigger: () => void;
+  /** The 3D world is on: solid objects are blocks with a finish. */
+  export let world = false;
+  export let onfinish: (finish: SurfaceFinish) => void = () => {};
+  const FINISHES: { value: SurfaceFinishPreset; label: string }[] = [
+    { value: 'stone', label: 'Stone' },
+    { value: 'matte', label: 'Matte' },
+    { value: 'chrome', label: 'Chrome' },
+    { value: 'glass', label: 'Glass' },
+    { value: 'neon', label: 'Neon' },
+    { value: 'ink', label: 'Ink' },
+    { value: 'light', label: 'Real object (light only)' },
+  ];
 
   const ROTATE_STEP = Math.PI / 12;
   const sliderKeys = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
@@ -122,11 +135,12 @@
       onchange={ontrigger}
       onrearmstart={ontriggerstart}
       ontest={ontesttrigger}
+      {world}
     />
   {/if}
   {#if chosen.behavior === 'solid'}
   <label>
-    Blocker depth <output>{(chosen.height ?? 0.25).toFixed(2)}</output>
+    {world ? 'Block depth' : 'Blocker depth'} <output>{(chosen.height ?? 0.25).toFixed(2)}</output>
     <input
       type="range"
       min=".02"
@@ -140,6 +154,25 @@
       oninput={(e) => onheight(+e.currentTarget.value)}
     />
   </label>
+  {#if world}
+    {@const finish = chosen.finish ?? defaultSurfaceFinish()}
+    <label>
+      Block finish
+      <select value={finish.preset} onchange={(e) => onfinish({ ...finish, preset: e.currentTarget.value as SurfaceFinishPreset })}>
+        {#each FINISHES as f}
+          <option value={f.value}>{f.label}</option>
+        {/each}
+      </select>
+    </label>
+    {#if finish.preset !== 'light'}
+      <label class="color-row">
+        Block color
+        <input type="color" value={finish.color} onchange={(e) => onfinish({ ...finish, color: e.currentTarget.value })} />
+      </label>
+    {:else}
+      <p class="hint">The block is drawn only by the light and shadow that fall on it, for projecting onto a real object.</p>
+    {/if}
+  {/if}
   {/if}
   <div class="group-label">Look</div>
   <label>

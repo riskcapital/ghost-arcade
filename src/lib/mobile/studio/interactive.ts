@@ -6,12 +6,15 @@ import {
   applyInteractiveOverrides,
   evaluateEffect,
   effectScene,
+  isWorldEffect,
+  type FlatEffectKind,
   type InteractiveEffect,
 } from './interactiveEffects';
 import { MatterPreview } from './matterPreview';
 import { createInteractiveQuality, interactiveFrameDelta, type InteractiveQualityBudget } from './interactiveQuality';
 import { validateShowAction } from '../../show/showActionValidate';
 import type { ShowAction } from '../../show/showActions';
+import { validateReliefWorld, validateSurfaceFinish, type ReliefWorld, type SurfaceFinish } from '../../scene3d/worldModel';
 export type Point = { x: number; y: number };
 export type Behavior = 'solid' | 'emitter' | 'attractor' | 'trigger';
 export const INTERACTIVE_PRESETS = [
@@ -72,12 +75,21 @@ export const surfaceHidden = (look: SurfaceLook | undefined) =>
 /**
  * What a trigger zone does when someone touches it. `burst` fires every
  * effect aimed at the zone; `show` fires anything the show can do (a Look, a
- * VJ clip, a cue, a section, a Live clip…) through `fireShowAction`.
+ * VJ clip, a cue, a section, a Live clip…) through `fireShowAction`; `world`
+ * acts on the 3D world where the zone is: sets it on fire, pours paint on it
+ * or drops a handful of balls from it.
  */
-export type ZoneAction = { kind: 'burst' } | { kind: 'show'; action: ShowAction };
+export const ZONE_WORLD_ACTIONS = ['ignite', 'pour', 'balls'] as const;
+export type ZoneWorldAction = (typeof ZONE_WORLD_ACTIONS)[number];
+export type ZoneAction = { kind: 'burst' } | { kind: 'show'; action: ShowAction } | { kind: 'world'; what: ZoneWorldAction };
 export const MAX_ZONE_ACTIONS = 8;
+/** What sets a zone off: a touch (pointer, hand, body), a ball of the 3D world, or either. */
+export const ZONE_SOURCES = ['touch', 'ball', 'either'] as const;
+export type ZoneSource = (typeof ZONE_SOURCES)[number];
 export type ZoneTrigger = {
   actions: ZoneAction[];
+  /** Touch when missing. */
+  when?: ZoneSource;
   /** Seconds after firing before the zone can fire again. A touch held in the
    *  zone fires once; it fires again only after leaving and coming back. */
   rearm: number;
@@ -95,6 +107,8 @@ export type InteractiveSurface = {
   look?: SurfaceLook;
   /** Trigger zones only. */
   trigger?: ZoneTrigger;
+  /** How the object looks as a block in the 3D world (scene.world). */
+  finish?: SurfaceFinish;
 };
 /**
  * What moves the scene besides a pointer (the editor, a phone, which always
@@ -147,6 +161,9 @@ export type InteractiveScene = {
   effects?: InteractiveEffect[];
   animation?: InteractiveAnimation;
   input?: InteractiveInput;
+  /** The 3D world the objects stand out of (worldModel.ts). Without it the
+   *  scene is flat, exactly as before. */
+  world?: ReliefWorld;
   surfaces: InteractiveSurface[];
   energy: number;
   gravity: number;
@@ -199,14 +216,20 @@ export function validateZoneTrigger(raw: unknown): ZoneTrigger {
   for (const a of Array.isArray(t?.actions) ? t!.actions : []) {
     if (actions.length >= MAX_ZONE_ACTIONS) break;
     if ((a as ZoneAction)?.kind === 'burst') actions.push({ kind: 'burst' });
+    else if ((a as ZoneAction)?.kind === 'world') {
+      const what = (a as { what?: unknown }).what;
+      if ((ZONE_WORLD_ACTIONS as readonly unknown[]).includes(what)) actions.push({ kind: 'world', what: what as ZoneWorldAction });
+    }
     else if ((a as ZoneAction)?.kind === 'show') {
       const action = validateShowAction((a as { action?: unknown }).action);
       if (action) actions.push({ kind: 'show', action });
     }
   }
   const rearm = Number(t?.rearm);
+  const when = (ZONE_SOURCES as readonly unknown[]).includes(t?.when) ? (t!.when as ZoneSource) : undefined;
   return {
     actions,
+    ...(when && when !== 'touch' ? { when } : {}),
     rearm: Number.isFinite(rearm) ? Math.max(ZONE_REARM_MIN, Math.min(ZONE_REARM_MAX, rearm)) : defaultZoneTrigger().rearm,
   };
 }
@@ -305,7 +328,9 @@ export function validateScene(raw: unknown): InteractiveScene {
         }
       : {}),
     ...(p.behavior === 'trigger' && p.trigger !== undefined ? { trigger: validateZoneTrigger(p.trigger) } : {}),
+    ...(p.finish !== undefined && p.finish !== null ? { finish: validateSurfaceFinish(p.finish) } : {}),
   }));
+  const world = s.world === undefined || s.world === null ? undefined : validateReliefWorld(s.world);
   return {
     schema: 'ghost-interactive',
     version: 1,
@@ -316,6 +341,7 @@ export function validateScene(raw: unknown): InteractiveScene {
     ...(effects ? { effects } : {}),
     ...(animation ? { animation } : {}),
     ...(s.input !== undefined && s.input !== null ? { input: validateInteractiveInput(s.input) } : {}),
+    ...(world ? { world } : {}),
     surfaces,
     energy: Math.max(0, Math.min(1, s.energy)),
     gravity: Math.max(-1, Math.min(1, s.gravity)),
@@ -389,7 +415,8 @@ export function collision(a: Point, b: Point, c: Point, d: Point) {
   return { t, x: a.x + v.x * t, y: a.y + v.y * t, nx: -w.y / len, ny: w.x / len };
 }
 type Particle = Point & { vx: number; vy: number; life: number; seed: number };
-export type Interaction = { id: string; point: Point; strength: number; mode?: 'attract' | 'repel' | 'vortex' };
+/** A touch on the scene. Throw, Push, Pour and Ignite only act on the 3D world. */
+export type Interaction = { id: string; point: Point; strength: number; mode?: 'attract' | 'repel' | 'vortex' | 'push' | 'throw' | 'pour' | 'ignite' };
 export class InteractiveWorld {
   private quality: InteractiveQualityBudget;
   constructor(quality = createInteractiveQuality()) {
@@ -484,7 +511,9 @@ export class InteractiveWorld {
       const effects = scene
         .effects!.slice(0, 8)
         .filter((e) => e.enabled)
-        .map((base) => evaluateEffect(base, this.clock, audio, bpm));
+        .map((base) => evaluateEffect(base, this.clock, audio, bpm))
+        // The 3D world's elements are drawn by the native world, not here.
+        .filter((e): e is InteractiveEffect & { kind: FlatEffectKind } => !isWorldEffect(e.kind));
       if (this.quality.activeLayers !== effects.length)
         this.setQuality({
           ...createInteractiveQuality(

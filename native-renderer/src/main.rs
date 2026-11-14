@@ -9,6 +9,7 @@ mod capabilities;
 mod compositor;
 mod compute_graph;
 mod graph_textures;
+mod graph_readbacks;
 mod scene_frame;
 mod core_frame_counter;
 mod media_decode;
@@ -7071,6 +7072,10 @@ impl App {
             }
             "capabilities" | "get_capabilities" => Ok(self.capabilities()),
             "compute_probe" | "run_compute_probe" => self.compute_probe(&req.params),
+            "take_graph_readbacks" => match self.renderer.as_mut() {
+                Some(renderer) => graph_readbacks::take_readbacks(&mut renderer.graph_readback_results, &req.params),
+                None => Ok(serde_json::json!({ "readbacks": {} })),
+            },
             "compute_graph" | "run_compute_graph" => {
                 let result = self.compute_graph(&req.params);
                 if result.is_ok() {
@@ -8830,8 +8835,17 @@ impl App {
                 }
             }
         }
-        let scene_frame = (matches!(graph_layer.kind, NativeGraphLayerKind::Scene3D | NativeGraphLayerKind::VideoSynth)
-            && graph_layer.params["scene3dPaused"] != true)
+        // Scenes and the synth always get the frame block; an Interactive
+        // layer gets it when its graph declares one (a 3D world in the
+        // Studio, scene_frame::declares).
+        let wants_frame = match graph_layer.kind {
+            NativeGraphLayerKind::Scene3D | NativeGraphLayerKind::VideoSynth => graph_layer.params["scene3dPaused"] != true,
+            NativeGraphLayerKind::PerformerWorld => {
+                graph_layer.params["interactivePaused"] != true && scene_frame::declares(job.buffers.iter().map(|b| b.id.as_str()))
+            }
+            _ => false,
+        };
+        let scene_frame = wants_frame
             .then(|| {
                 let beat_phase = self.audio1[2];
                 self.scene_clock.advance(frame_index, beat_phase);
@@ -8856,6 +8870,16 @@ impl App {
             });
         for buffer in &mut job.buffers {
             if !matches!(buffer.kind, NativeComputeBufferBindingKind::Uniform) {
+                continue;
+            }
+            // A 3D world inside an Interactive layer: like a scene, only its
+            // frame block is the core's.
+            if graph_layer.kind == NativeGraphLayerKind::PerformerWorld && buffer.id.starts_with(scene_frame::SCENE_BUFFER_PREFIX) {
+                if let Some(frame) = scene_frame.as_ref() {
+                    if buffer.id.ends_with(scene_frame::BUFFER_SUFFIX) {
+                        frame.write(&mut buffer.initial_bytes);
+                    }
+                }
                 continue;
             }
             if matches!(graph_layer.kind, NativeGraphLayerKind::Scene3D | NativeGraphLayerKind::VideoSynth) {
@@ -14758,10 +14782,11 @@ impl App {
         let readbacks = compute_graph_readbacks(params, &buffer_specs);
         if !readbacks.is_empty() {
             return Err(
-                "queued compute_graph does not support readbacks; use run_compute_graph for probes"
+                "queued compute_graph does not support readbacks; use run_compute_graph for probes, or live_readbacks on a graph layer"
                     .to_string(),
             );
         }
+        let live_readbacks = graph_readbacks::live_readback_ids(params, &buffer_specs)?;
         // Install immutable LUT data before acknowledging a queued graph. Otherwise
         // coalescing could discard the first upload in favour of a reference-only job.
         // Resident jobs retain no table payload and never rewrite the table per frame.
@@ -14791,7 +14816,7 @@ impl App {
             buffers: buffer_specs,
             pass_plans,
             render_plans,
-            readback_buffer_ids: Vec::new(),
+            readback_buffer_ids: live_readbacks,
         })
     }
 

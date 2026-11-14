@@ -58,6 +58,26 @@
   /** `start` is true for the press, false while dragging. */
   export let oninteract: (pointerId: number, interaction: Interaction, start: boolean) => void = () => {};
   export let onrelease: (pointerId: number) => void = () => {};
+  /** Orbit view: dragging turns the 3D world's camera instead of editing. */
+  export let orbit = false;
+  export let onorbitdrag: (dx: number, dy: number) => void = () => {};
+  let orbitFrom: { x: number; y: number } | null = null;
+  function orbitDown(e: PointerEvent) {
+    e.stopPropagation();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    orbitFrom = { x: e.clientX, y: e.clientY };
+  }
+  function orbitMove(e: PointerEvent) {
+    e.stopPropagation();
+    if (!orbitFrom) return;
+    const box = stage.getBoundingClientRect();
+    onorbitdrag((e.clientX - orbitFrom.x) / Math.max(1, box.width), (e.clientY - orbitFrom.y) / Math.max(1, box.height));
+    orbitFrom = { x: e.clientX, y: e.clientY };
+  }
+  function orbitUp(e: PointerEvent) {
+    e.stopPropagation();
+    orbitFrom = null;
+  }
 
   /** Two presses this close together, this soon, are a double-click (or double-tap). */
   const DOUBLE_PRESS_MS = 400;
@@ -216,7 +236,19 @@
     {/if}
     <canvas bind:this={canvas} class:camera-overlay={nativePreview && camera} aria-label={previewLabel}></canvas>
     {#if previewStatus}<div class="preview-status" role="status">{previewStatus}</div>{/if}
-    <svg viewBox="0 0 {width} {height}" preserveAspectRatio="none" aria-hidden="true">
+    {#if orbit}
+      <div
+        class="orbit-layer"
+        class:turning={!!orbitFrom}
+        role="presentation"
+        onpointerdown={orbitDown}
+        onpointermove={orbitMove}
+        onpointerup={orbitUp}
+        onpointercancel={orbitUp}
+      ></div>
+      <div class="orbit-note" aria-live="polite">Orbit · the output follows this view</div>
+    {/if}
+    <svg viewBox="0 0 {width} {height}" preserveAspectRatio="none" aria-hidden="true" style:display={orbit ? 'none' : null}>
       {#if mode !== 'perform'}
         {#each surfaces as s}
           <polygon class:selected={editing && s.id === selected} points={outline(s.points)} />

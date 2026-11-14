@@ -1,7 +1,9 @@
-import type {InteractiveEffect} from '../mobile/studio/interactiveEffects';
+import {isWorldEffect,type InteractiveEffect} from '../mobile/studio/interactiveEffects';
+import {worldInputParam} from '../interactive/worldInput';
 import {buildMatterPasses} from './nativeInteractiveMatterGraph';
 import {validateScene, surfaceHidden, INTERACTIVE_PRESETS, SURFACE_FILLS, type InteractiveScene} from '../mobile/studio/interactive';
 import type {NativePluginGraphOptions,NativePluginGraphBuildResult} from './nativePluginGraphs';
+import {buildWorldPart} from './scene3dWorld';
 export const INTERACTIVE_PARTICLES=16384;
 const common=/* wgsl */`
 struct U { view:vec4<f32>, style:vec4<f32>, touch:vec4<f32>, params:vec4<f32>, flags:vec4<f32> };
@@ -132,6 +134,8 @@ export type InteractiveGraphMeta={
  effectIds:string[];
  /** Buffer id prefix of one effect. */
  bufferPrefix:(effectId:string)=>string;
+ /** The 3D world's ball zone counters, read back live (scene3dWorld.ts). */
+ zoneHits?:{bufferId:string;zoneIds:string[]}|null;
 };
 export type InteractiveGraphBuildResult=NativePluginGraphBuildResult&{interactive:InteractiveGraphMeta};
 /** `key` never leaves the app: it is stripped before the graph is sent. */
@@ -179,7 +183,8 @@ function touchInputs(raw:unknown):{data:Float32Array;count:number}{
  const data=new Float32Array(8*4),list=Array.isArray(raw)?raw.slice(0,8):[];
  list.forEach((p:any,i:number)=>{
   if(!Number.isFinite(p?.point?.x)||!Number.isFinite(p?.point?.y))return;
-  data.set([Math.max(0,Math.min(1,p.point.x)),Math.max(0,Math.min(1,p.point.y)),Math.max(0,Math.min(1,Number(p.strength)||0)),p.mode==='repel'?1:p.mode==='vortex'?2:0],i*4);
+  // Throw, Pour and Ignite only act on the 3D world; Push stirs the 2D effects.
+  data.set([Math.max(0,Math.min(1,p.point.x)),Math.max(0,Math.min(1,p.point.y)),p.mode==='throw'||p.mode==='pour'||p.mode==='ignite'?0:Math.max(0,Math.min(1,Number(p.strength)||0)),p.mode==='repel'?1:p.mode==='vortex'||p.mode==='push'?2:0],i*4);
  });
  return {data,count:list.length};
 }
@@ -251,6 +256,11 @@ function buildLookPart(options:NativePluginGraphOptions,scene:InteractiveScene,i
  * otherwise sends just the value buffers that changed (Auto, keyframes,
  * sliders, touches, dragged surfaces).
  */
+/** The Studio's Orbit view from the layer params, if it is sane. */
+function worldView(raw:unknown):{yaw:number;pitch:number}|undefined{
+ const v=raw as {yaw?:unknown;pitch?:unknown}|null;
+ return v&&Number.isFinite(v.yaw)&&Number.isFinite(v.pitch)?{yaw:v.yaw as number,pitch:v.pitch as number}:undefined;
+}
 export function buildInteractiveGraph(options:NativePluginGraphOptions):InteractiveGraphBuildResult{
  const scene=validateScene(options.params.interactiveScene);
  const source=`performer-world:${options.sourceId.replace(/[^a-zA-Z0-9:_-]+/g,'_').slice(0,120)}`;
@@ -263,12 +273,13 @@ export function buildInteractiveGraph(options:NativePluginGraphOptions):Interact
   // distinct (target, material) pair instead of once per effect.
   const base=sceneShapes(scene.surfaces,false,scene.hue),encoded=new Map<string,{shapes:Float32Array;b64:string}>();
   for(const effect of scene.effects){
-   if(!effect.enabled)continue;
+   // The 3D world's elements are drawn by the world part.
+   if(!effect.enabled||isWorldEffect(effect.kind))continue;
    const material=({fire:'fire',smoke:'smoke',liquid:'liquid',cloud:'points'} as Record<string,string>)[effect.kind]??'none';
    const target=material==='none'?-1:scene.surfaces.findIndex(s=>s.id===effect.target),key=target<0?'-':`${target}:${material}`;
    let own=encoded.get(key);
    if(!own){const shapes=target<0?base:base.slice();if(target>=0)shapes[target*SHAPE_FLOATS+10]=MATERIALS.indexOf(material);own={shapes,b64:interactiveB64(shapes)};encoded.set(key,own);}
-   const view:InteractiveScene={...scene,effects:undefined,preset:effect.kind,hue:effect.params.hue??scene.hue,matter:{...scene.matter!,...effect.params}};
+   const view:InteractiveScene={...scene,effects:undefined,preset:effect.kind as InteractiveScene['preset'],hue:effect.params.hue??scene.hue,matter:{...scene.matter!,...effect.params}};
    parts.push(buildPart(options,view,effect,`${source}:${effect.id}`,own.shapes,own.b64,touches,touchesB64,new Set(target>=0?[material]:[])));
    mods+=`${effect.id}[${coreModSignature(effect)}]`;
   }
@@ -280,16 +291,29 @@ export function buildInteractiveGraph(options:NativePluginGraphOptions):Interact
   if(scene.surfaces.some(s=>s.look&&!surfaceHidden(s.look)))parts.push(buildLookPart(options,scene,`${source}:looks`,shapes,touches,touchesB64));
   parts.push(buildPart(options,scene,undefined,source,shapes,interactiveB64(shapes),touches,touchesB64,new Set(scene.surfaces.map(s=>s.material??'none').filter(m=>m!=='none'))));
  }
- const buffers=parts.flatMap(p=>p.buffers),passes=parts.flatMap(p=>p.passes),render_passes=parts.flatMap(p=>p.render_passes);
+ // A 3D world: the 2D effects are drawn into its flat picture (Projected),
+ // over it (Over) or not at all (Off). See scene3dWorld.ts.
+ const world=scene.world?.enabled?buildWorldPart({scene,world:scene.world,sourceId:options.sourceId,width:options.width,height:options.height,view:worldView(options.params.interactiveView),input:worldInputParam(options.params.interactiveWorld)}):null;
+ if(world&&scene.world?.flat==='off')parts.length=0;
+ const buffers=[...parts.flatMap(p=>p.buffers),...(world?.buffers??[])],passes=[...parts.flatMap(p=>p.passes),...(world?.passes??[]) as GraphPass[]];
+ let render_passes=parts.flatMap(p=>p.render_passes);
  // Content over transparent: the first pass clears to zero alpha (the core's
  // default clear is opaque black, which made the whole layer opaque).
  render_passes.forEach((pass,i)=>{pass.clear=i===0;if(i===0)pass.clear_color=[0,0,0,0];});
- const values:InteractiveGraphValue[]=buffers.filter(b=>b.initial_b64!==undefined).map(b=>({id:b.id,initial_b64:b.initial_b64!,key:b.key??b.initial_b64!}));
+ if(world){
+  const flat=world.flatTexture,own=world.render_passes as GraphRender[];
+  // Over: the world's composite clears the output and the effects draw on it.
+  if(flat)render_passes=render_passes.map(({source_id:_source,seq:_seq,...pass})=>({...pass,target:'texture',texture:flat}));
+  else render_passes.forEach(pass=>{pass.clear=false;});
+  render_passes=flat?[...render_passes,...own]:[...own,...render_passes];
+ }
+ const values:InteractiveGraphValue[]=[...parts.flatMap(p=>p.buffers).filter(b=>b.initial_b64!==undefined).map(b=>({id:b.id,initial_b64:b.initial_b64!,key:b.key??b.initial_b64!})),...(world?.values??[])];
  const topology=[
   options.params.interactivePaused?'paused':'running',mods,
   buffers.map(b=>`${b.id}:${b.kind}:${b.byte_length}:${b.persistent?1:0}`).join('|'),
   passes.map(p=>`${p.name}@${p.shader_id}/${p.entry}:${p.dispatch.join('x')}`).join('|'),
   render_passes.map(r=>`${r.name}:${r.instance_count}:${r.blend}`).join('|'),
+  ...(world?[world.topology]:[]),
  ].join('#');
- return {state:options.state??{scene:'interactive',prevFrameTime:options.time,historyHead:0},config:{buffers:buffers.map(({key:_key,...buffer})=>buffer),passes,render_passes,readbacks:[]},interactive:{topology,values,effectIds,bufferPrefix}};
+ return {state:options.state??{scene:'interactive',prevFrameTime:options.time,historyHead:0},config:{...(world?{textures:world.textures}:{}),...(world?.zoneHits?{live_readbacks:[world.zoneHits.bufferId]}:{}),buffers:buffers.map(({key:_key,...buffer}:GraphBuffer)=>buffer),passes,render_passes,readbacks:[]},interactive:{topology,values,effectIds,bufferPrefix,zoneHits:world?.zoneHits??null}};
 }

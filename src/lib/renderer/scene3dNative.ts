@@ -50,6 +50,20 @@ export type Scene3DGraphOptions = {
   quality?: Scene3DQuality;
   /** Burst count per emitter node id: each increase releases a burst. */
   bursts?: Record<string, number>;
+  /** A relief world in the Interactive Studio (scene3dWorld.ts). */
+  relief?: Scene3DRelief;
+};
+
+export type Scene3DRelief = {
+  /** A texture of the graph holding the 2D effects, thrown onto the scene as
+   *  light from the camera. Drawn before this graph's passes. */
+  flatTexture?: string;
+  /** How bright that light is. */
+  gain: number;
+  /** Degrees the key light swings either side about the wall's axis. */
+  sway: number;
+  /** The projector of the flat picture: wall width and height, and its distance. */
+  projector: { width: number; height: number; distance: number };
 };
 
 type Buffer = { id: string; kind: 'uniform' | 'storage'; byte_length: number; initial_b64?: string; persistent?: boolean };
@@ -210,6 +224,13 @@ export function scene3dData(scene: Scene3D, width: number, height: number, quali
 export function buildScene3DGraph(options: Scene3DGraphOptions): Scene3DGraph {
   const quality = options.quality ?? SCENE3D_TIERS.default;
   const data = scene3dData(options.scene, options.width, options.height, quality, options.bursts);
+  if (options.relief) {
+    data.settings[19] = options.relief.sway;
+    data.settings[30] = options.relief.flatTexture ? options.relief.gain : 0;
+    data.settings[31] = options.relief.projector.distance;
+    data.settings[42] = options.relief.projector.width;
+    data.settings[43] = options.relief.projector.height;
+  }
   const safe = options.sourceId.replace(/[^\w:-]+/g, '_').slice(0, 120);
   const id = (name: string) => `scene3d:${safe}:${name}`;
 
@@ -261,10 +282,12 @@ export function buildScene3DGraph(options: Scene3DGraphOptions): Scene3DGraph {
     name: 'shadow', shader_id: 'scene3d/world', vertex_entry: 'vs_shadow', fragment_entry: 'fs_main',
     target: 'texture', texture: id('shadow'), vertex_count: data.hasShadows ? data.vertexCount : 0, bindings: meshBindings,
   });
+  const flat = options.relief?.flatTexture;
   renders.push({
-    name: 'opaque', shader_id: 'scene3d/world', vertex_entry: 'vs_main', fragment_entry: 'fs_main',
+    name: 'opaque', shader_id: flat ? 'scene3d/relief' : 'scene3d/world', vertex_entry: 'vs_main', fragment_entry: flat ? 'fs_relief' : 'fs_main',
     target: 'texture', texture: id('hdr'), depth: true, depth_write: true, depth_texture: id('depth'),
-    clear: true, clear_color: [0, 0, 0, 0], vertex_count: data.vertexCount, bindings: litBindings,
+    clear: true, clear_color: [0, 0, 0, 0], vertex_count: data.vertexCount,
+    bindings: flat ? [...litBindings, { binding: 11, kind: 'graph-texture', texture: flat }, { binding: 12, kind: 'source-frame-sampler' }] : litBindings,
   });
   renders.push({
     name: 'glass', shader_id: 'scene3d/world', vertex_entry: 'vs_main', fragment_entry: 'fs_glass',

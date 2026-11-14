@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   INTERACTIVE_STARTERS,
+  isWorldStarter,
   starterScene,
   readInteractiveDraft,
   writeInteractiveDraft,
@@ -10,6 +11,7 @@ import {
   restoreInteractivePreset,
 } from './interactiveLibrary';
 import { validateScene } from './interactive';
+import { isWorldEffect } from './interactiveEffects';
 const storage = () => {
   const map = new Map<string, string>();
   return {
@@ -25,6 +27,17 @@ describe('mobile interactive scenes', () => {
     expect(validateScene(JSON.parse(JSON.stringify(s)))).toEqual(s);
     expect(s.effects!.length).toBeGreaterThan(0);
     for (const e of s.effects!) expect(e.target === 'point' || s.surfaces.some((o) => o.id === e.target)).toBe(true);
+  });
+  it('starts the 3D world ones with the world on, its elements, and a zone that acts on it', () => {
+    const world = INTERACTIVE_STARTERS.filter((s) => isWorldStarter(s.id));
+    expect(world.map((s) => s.id)).toEqual(['cascade', 'firewall', 'gallery', 'marbles']);
+    for (const { id } of world) {
+      const s = starterScene(id);
+      expect(s.world?.enabled, id).toBe(true);
+      expect(s.effects!.some((e) => isWorldEffect(e.kind)), id).toBe(true);
+      expect(s.surfaces.some((o) => o.trigger?.actions.some((a) => a.kind === 'world')), id).toBe(true);
+      expect(s.surfaces.filter((o) => o.behavior === 'solid').every((o) => !!o.finish), id).toBe(true);
+    }
   });
   it('creates independent scenes without changing a previously edited starter', () => {
     const a = starterScene('fire'),

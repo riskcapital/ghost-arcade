@@ -1471,6 +1471,15 @@ export async function runNativeRendererComputeGraph(config: Record<string, unkno
   return invoke<Record<string, unknown>>('native_renderer_run_compute_graph', config);
 }
 
+/**
+ * The newest bytes of graph buffers a layer reads back live (`live_readbacks`
+ * in its graph), base64 by id. Each lands once: what was taken is gone.
+ */
+export async function takeNativeRendererGraphReadbacks(ids: string[]): Promise<Record<string, string>> {
+  const result = await invoke<{ readbacks?: Record<string, string> } | null>('native_renderer_take_graph_readbacks', { ids });
+  return result?.readbacks ?? {};
+}
+
 export async function uploadNativeRendererSourceGpuSharedTexture(
   sourceId: string,
   width: number,

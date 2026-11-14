@@ -28,6 +28,14 @@
 </script>
 
 <div class="property-row">
+  <span></span>
+  <button
+    class="btn-small"
+    title="Bring this world into the Interactive Studio, where its blocks take balls, drips, fire and touch. Undo turns it back."
+    onclick={() => window.dispatchEvent(new CustomEvent('open-interactive-studio', { detail: { layerId: layer.id } }))}>Open in Interactive Studio</button
+  >
+</div>
+<div class="property-row">
   <label for="scene3d-world-{layer.id}">World</label>
   <select
     id="scene3d-world-{layer.id}"

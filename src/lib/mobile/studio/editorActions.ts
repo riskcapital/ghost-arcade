@@ -12,6 +12,7 @@ import {
   type EffectKind,
   type InteractiveEffect,
 } from './interactiveEffects';
+import type { ReliefWorld, SurfaceFinish } from '../../scene3d/worldModel';
 import { DEFAULT_ASPECT, makeSurface, spawnPoint, transformPoints, translatePoints } from './surfaceEditing';
 
 export const MAX_SURFACES = 32;
@@ -169,6 +170,17 @@ export function setSceneInput(scene: InteractiveScene, input: InteractiveInput):
   return { ...scene, input };
 }
 
+/** Turn the 3D world on (with its settings) or off (`undefined` keeps nothing). */
+export function setSceneWorld(scene: InteractiveScene, world: ReliefWorld | undefined): InteractiveScene {
+  const { world: _old, ...rest } = scene;
+  return world ? { ...rest, world } : rest;
+}
+
+/** How an object looks as a block in the 3D world. */
+export function setSurfaceFinish(scene: InteractiveScene, id: string, finish: SurfaceFinish): InteractiveScene {
+  return mapSurface(scene, id, (s) => ({ ...s, finish }));
+}
+
 export function setSurfaceHeight(scene: InteractiveScene, id: string, height: number): InteractiveScene {
   return mapSurface(scene, id, (s) => ({ ...s, height }));
 }
@@ -186,7 +198,7 @@ export function reseed(scene: InteractiveScene): InteractiveScene {
 // ── Labels ─────────────────────────────────────────────────────────────────
 
 /** Effects that emit matter from a shape outline or from a free position. */
-export const EMITTER_KINDS: EffectKind[] = ['fire', 'smoke', 'liquid', 'balls', 'cloud'];
+export const EMITTER_KINDS: EffectKind[] = ['fire', 'smoke', 'liquid', 'balls', 'cloud', 'balls3d', 'drips', 'flames'];
 
 export function isEmitter(kind: EffectKind): boolean {
   return EMITTER_KINDS.includes(kind);

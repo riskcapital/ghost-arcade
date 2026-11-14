@@ -8,6 +8,10 @@
   export let canUndo = false;
   export let canRedo = false;
   export let paused = false;
+  /** The 3D world is on: Face edits the outlines, Orbit turns the camera. */
+  export let world = false;
+  export let orbit = false;
+  export let onorbit: (orbit: boolean) => void = () => {};
 
   export let onmode: (mode: EditorMode) => void;
   export let onundo: () => void;
@@ -34,6 +38,12 @@
       ◎ Play
     </button>
   </div>
+  {#if world}
+    <div class="segmented view-switch" role="group" aria-label="View">
+      <button class:active={!orbit} aria-pressed={!orbit} onclick={() => onorbit(false)} title="Face-on: the outlines are the blocks' fronts">Face</button>
+      <button class:active={orbit} aria-pressed={orbit} onclick={() => onorbit(true)} title="Drag to look round the blocks. The output follows this view.">Orbit</button>
+    </div>
+  {/if}
   <div class="transport">
     <button disabled={!canUndo} onclick={onundo} title={`Undo (${undoKeys})`} aria-label="Undo last edit">
       <Icon name="undo" size={16} />

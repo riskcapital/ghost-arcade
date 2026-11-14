@@ -1,6 +1,7 @@
 import {defaultInteractive,sanitizeStoredInteractive} from '../mobile/studio/interactive';
 import {editableEffects, soundDefaults} from '../mobile/studio/interactiveEffects';
 import { buildWorld, WORLDS, type StageShape, type WorldId } from '../scene3d/worlds';
+import { interactiveFromScene3D, reliefStarterScene } from '../scene3d/reliefStarter';
 import { checkScene3D, type Scene3D } from '../scene3d/sceneModel';
 import { normalizeVJGroups } from './vjGroups';
 import { normalizeCuePoints } from './vjCuePoints';
@@ -797,23 +798,49 @@ void main() {
      * undo step. Returns the layer id, or undefined when the layer limit is
      * reached.
      */
-    addInteractive3DLayer(world: WorldId = 'light-and-shadow'): string | undefined {
+    /**
+     * An Interactive layer with its 3D world on: the shapes mapped on the
+     * other layers (or three plinths) standing out of a lit wall. It opens in
+     * the Interactive Studio like any Interactive layer.
+     */
+    addInteractive3DLayer(): string | undefined {
       const current = get({ subscribe });
-      const scene = buildWorld(world, stageShapes(current.layers), (current.width || 1920) / (current.height || 1080));
-      const id = this.addLayer(scene.name, 'interactive');
+      const scene = reliefStarterScene(stageShapes(current.layers));
+      const id = this.addLayer('Interactive 3D', 'interactive');
       if (!id) return undefined;
       update((project) => ({
         ...project,
-        layers: project.layers.map((l) => l.id !== id ? l : {
+        layers: project.layers.map((l) => l.id !== id || !l.source?.effectSource ? l : {
           ...l,
-          name: scene.name,
+          // The world has its own glow.
           effects: [],
-          source: { id: generateUUID(), type: 'effect', src: 'plugin://scene3d', name: 'Interactive 3D', effectSource: { effectType: 'scene3d', scene3d: scene, scene3dWorld: world } },
+          source: { ...l.source, effectSource: { ...l.source.effectSource, interactiveScene: scene } },
         }),
       }));
       // Add and fill are one step: undo removes the layer at once.
       amendLastHistoryStep();
       return id;
+    },
+
+    /**
+     * An older Interactive 3D layer (its own ghost-scene) into an Interactive
+     * layer with the 3D world on, so it opens in the Studio. One undo step.
+     */
+    convertScene3DLayer(layerId: string): boolean {
+      const current = get({ subscribe });
+      const layer = current.layers.find((l) => l.id === layerId);
+      const scene3d = layer?.source?.effectSource?.scene3d;
+      if (!layer || !scene3d) return false;
+      const scene = interactiveFromScene3D(scene3d, (current.width || 1920) / (current.height || 1080));
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((l) => l.id !== layerId ? l : {
+          ...l,
+          source: { id: generateUUID(), type: 'effect', src: 'plugin://performer-world', name: 'Interactive Studio', effectSource: { effectType: 'performer-world', interactiveScene: scene } },
+        }),
+      }));
+      recordDiscreteAction();
+      return true;
     },
 
     /**

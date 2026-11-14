@@ -1,4 +1,5 @@
 import { scene3dPrecompileCommands } from './scene3dShaders';
+import { scene3dWorldPrecompileCommands } from './scene3dWorldShaders';
 import { videosynthPrecompileCommands } from '../videosynth/shaders';
 import {MATTER_EMISSION,MATTER_GEOMETRY,MATTER_FLUID,MATTER_PARTICLES,MATTER_MASS,MATTER_LIGHT,MATTER_RENDER} from './nativeInteractiveMatter';
 import {buildInteractiveGraph,INTERACTIVE_COMPUTE,INTERACTIVE_RENDER} from './nativeInteractiveGraph';
@@ -627,6 +628,7 @@ export function buildNativePluginPrecompileCommands(): NativePluginPrecompileCom
     { type: 'precompile_shader', shader_id: 'interactive/render', stage: 'render', source: INTERACTIVE_RENDER, entry: 'fs_bg' },
     { type: 'precompile_shader', shader_id: 'performer-world/render', stage: 'render', source: PERFORMER_WORLD_RENDER_WGSL, entry: 'fs_main' },
     ...scene3dPrecompileCommands(),
+    ...scene3dWorldPrecompileCommands(),
     ...videosynthPrecompileCommands(),
   ];
 }

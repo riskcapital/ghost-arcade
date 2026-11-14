@@ -36,6 +36,7 @@
     type Point,
     type Interaction,
     type Behavior,
+    type ZoneWorldAction,
   } from '../../mobile/studio/interactive';
   import {
     effectParams,
@@ -73,6 +74,7 @@
   import InteractiveEffectParams from './InteractiveEffectParams.svelte';
   import InteractiveObjectsPanel from './InteractiveObjectsPanel.svelte';
   import InteractiveSetupPanel from './InteractiveSetupPanel.svelte';
+  import InteractiveWorldPanel from './InteractiveWorldPanel.svelte';
   import { fireShowAction } from '../../show/showActions';
 
   // ── Props ────────────────────────────────────────────────────────────────
@@ -109,6 +111,10 @@
   ) => void = () => {};
   /** The pointer touches, every animation frame (the scene goes out at 20 Hz). */
   export let onpointer: ((inputs: Interaction[]) => void) | undefined = undefined;
+  /** A zone's world action, tested from the editor: acts on the layer's 3D world. */
+  export let onworldaction: ((what: ZoneWorldAction, point: Point) => void) | undefined = undefined;
+  /** Orbit view: how far the 3D world's camera is turned; `null` is face-on. */
+  export let onview: ((view: { yaw: number; pitch: number } | null) => void) | undefined = undefined;
   export let mappingSurfaces: { name: string; points: Point[]; enabled: boolean; mode: string }[] = [];
   export let onoutput: (canvas: HTMLCanvasElement | null) => void = () => {};
   /**
@@ -155,6 +161,22 @@
   let history = past.emptyHistory<Snapshot>();
   let mode: EditorMode = 'edit';
   let inspector: InspectorTab = 'effects';
+  /** Orbit view of the 3D world (live only, never saved). */
+  let orbit = false;
+  let orbitView = { yaw: 0, pitch: 0 };
+  function setOrbit(on: boolean) {
+    orbit = on;
+    if (on) chooseMode('edit');
+    orbitView = { yaw: 0, pitch: 0 };
+    onview?.(null);
+  }
+  function turnOrbit(dx: number, dy: number) {
+    const clamp = (v: number) => Math.max(-70, Math.min(70, v));
+    orbitView = { yaw: clamp(orbitView.yaw - dx * 140), pitch: clamp(orbitView.pitch + dy * 100) };
+    onview?.(orbitView);
+  }
+  // Without a world there is nothing to orbit.
+  $: if (orbit && !scene.world?.enabled) setOrbit(false);
   let selected = 'stage';
   let selectedEffect = '';
   let lastEffect = '';
@@ -162,6 +184,13 @@
   let placingEmitter = false;
   let draft: Point[] = [];
   let tool: TouchTool = 'attract';
+  // With the 3D world on, a touch throws balls; without it, Throw, Push, Pour and Ignite do nothing.
+  let toolWorld = false;
+  $: if (!!scene.world?.enabled !== toolWorld) {
+    toolWorld = !!scene.world?.enabled;
+    if (toolWorld && tool === 'attract') tool = 'throw';
+    else if (!toolWorld && (tool === 'throw' || tool === 'push' || tool === 'pour' || tool === 'ignite')) tool = 'attract';
+  }
   let message = '';
   let messageTimer: ReturnType<typeof setTimeout> | undefined;
   let question: Question | null = null;
@@ -617,6 +646,9 @@
       if (action.kind === 'show') {
         const result = fireShowAction(action.action);
         if (!result.ok) say(`Could not fire: ${result.reason ?? 'error'}.`);
+      } else if (action.kind === 'world') {
+        const n = Math.max(1, zone.points.length);
+        onworldaction?.(action.what, { x: zone.points.reduce((s, p) => s + p.x, 0) / n, y: zone.points.reduce((s, p) => s + p.y, 0) / n });
       } else {
         for (const e of scene.effects ?? []) {
           if (e.enabled && e.target === zone.id) scene = edit.patchEffect(scene, e.id, { burst: e.burst + 1 });
@@ -947,6 +979,7 @@
     raf = requestAnimationFrame(frame);
   });
   onDestroy(() => {
+    if (orbit) onview?.(null);
     draftSave();
     clearInterval(saveTimer);
     clearTimeout(messageTimer);
@@ -999,7 +1032,13 @@
         canUndo={past.canUndo(history)}
         canRedo={past.canRedo(history)}
         {paused}
-        onmode={chooseMode}
+        world={!!scene.world?.enabled && !handheld}
+        {orbit}
+        onorbit={setOrbit}
+        onmode={(m) => {
+          if (orbit) setOrbit(false);
+          chooseMode(m);
+        }}
         onundo={undo}
         onredo={redo}
         onpause={() => (paused = !paused)}
@@ -1049,12 +1088,15 @@
         onfinish={finishDraft}
         oninteract={interact}
         onrelease={(id) => pointers.delete(id)}
+        {orbit}
+        onorbitdrag={turnOrbit}
       />
       <InteractiveStageTools
         {mode}
         {placingEmitter}
         {handheld}
         bind:tool
+        world={!!scene.world?.enabled}
         draftLength={draft.length}
         markerName={emitterMarker?.label.toLowerCase() ?? ''}
         sourceLabel={referencePreview
@@ -1068,7 +1110,7 @@
     </div>
     <aside>
       <nav class="inspector-tabs" aria-label="Interactive tools">
-        {#each [['presets', 'Scenes'], ['effects', 'Effects'], ['objects', 'Objects'], ['scene', 'Setup']] as [id, label]}
+        {#each [['presets', 'Scenes'], ['effects', 'Effects'], ['objects', 'Objects'], ['world', '3D World'], ['scene', 'Setup']] as [id, label]}
           <button
             class:active={inspector === id}
             aria-current={inspector === id ? 'true' : undefined}
@@ -1109,6 +1151,7 @@
             {effects}
             surfaces={scene.surfaces}
             {selectedEffect}
+            world={!!scene.world?.enabled}
             onadd={(kind) => addEffect(kind)}
             onselect={selectEffect}
             ontoggle={(id) => apply(edit.toggleEffect(scene, id))}
@@ -1172,6 +1215,21 @@
               }
             }}
             ontesttrigger={testTrigger}
+            world={!!scene.world?.enabled}
+            onfinish={(finish) => apply(edit.setSurfaceFinish(scene, selected, finish))}
+          />
+        {:else if inspector === 'world'}
+          <InteractiveWorldPanel
+            world={scene.world}
+            blocks={scene.surfaces.filter((s) => s.behavior === 'solid').length}
+            onstart={beginEdit}
+            onchange={(world, step) => {
+              if (step) apply(edit.setSceneWorld(scene, world));
+              else {
+                scene = edit.setSceneWorld(scene, world);
+                touchEdit();
+              }
+            }}
           />
         {:else}
           <InteractiveSetupPanel

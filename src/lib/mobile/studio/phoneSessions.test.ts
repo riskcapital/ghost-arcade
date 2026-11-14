@@ -119,5 +119,8 @@ describe('paired phone sessions', () => {
     expect(inputs[0]).toEqual({ id: 'touch-0', point: { x: 1, y: 0 }, strength: 1, mode: 'vortex' });
     expect(JSON.stringify(inputs)).not.toContain('junk');
     expect(sanitizePhoneInputs('nope')).toEqual([]);
+    // The 3D world's tools come through; anything else is a plain touch.
+    const tools = sanitizePhoneInputs(['throw', 'push', 'pour', 'ignite', 'explode'].map((mode) => ({ point: { x: 0.5, y: 0.5 }, strength: 1, mode })));
+    expect(tools.map((t) => t.mode)).toEqual(['throw', 'push', 'pour', 'ignite', 'attract']);
   });
 });
