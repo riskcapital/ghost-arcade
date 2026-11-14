@@ -165,6 +165,9 @@
 .studio[data-layout] .sheet-scrim {position:fixed;inset:0;z-index:29;background:transparent;}
 .studio[data-layout].tempo-open .monitor-tools {position:relative;z-index:31;}
 .studio[data-layout='tablet-portrait'][data-layout].flux-tab .preview-frame {max-width:min(100%,680px);}
+/* Mapping: the canvas is the work surface, so it takes the full width (it zooms for detail). */
+.studio[data-layout='phone'][data-layout].mapping:not(.clean) .preview-frame {max-width:none;}
+.studio[data-layout='tablet-portrait'][data-layout].mapping .preview-frame {max-width:min(100%,760px);}
 .studio[data-layout='tablet-portrait'][data-layout].flux-tab:not(.performance) .monitor {max-height:46%;}
 
 /* Top row: tempo and A/B sit where the composition label was. */

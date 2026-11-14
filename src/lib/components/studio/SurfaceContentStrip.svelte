@@ -20,6 +20,11 @@
   export let current: { shader?: string; clip?: string } | null = null;
   /** The picture surfaces are dropped on. */
   export let target: HTMLElement | undefined;
+  /**
+   * The surface under a screen point, from the mapping canvas (it knows the zoom and free
+   * outlines). Without it the drop is tested against the unzoomed picture.
+   */
+  export let hitAt: ((clientX: number, clientY: number) => number | null) | undefined = undefined;
   export let onassign: (surface: number, choice: SurfaceChoice) => void = () => {};
   /** The surface under a drag, or null, so the picture can light it up. */
   export let onhover: (surface: number | null) => void = () => {};
@@ -38,6 +43,7 @@
   let suppressClick = false;
 
   function surfaceAt(x: number, y: number): number | null {
+    if (hitAt) return hitAt(x, y);
     const box = target?.getBoundingClientRect();
     if (!box || x < box.left || x > box.right || y < box.top || y > box.bottom) return null;
     const hits = hitMappingScreens({ x: (x - box.left) / box.width, y: (y - box.top) / box.height }, surfaces);

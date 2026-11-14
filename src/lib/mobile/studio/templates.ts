@@ -1,7 +1,9 @@
 // Applying a mapping template to a set, and the set a first run opens on. Pure: the studio
 // checkpoints, persists and starts audio around these.
 
-import { defaultShow, newSurface, type Show, type Surface } from './model';
+import { defaultShow, newSurface, type Point, type Show, type Surface } from './model';
+import { cornerIndices, gridOf } from './mapping/meshGrid';
+import { isShape } from './mapping/surfaceShape';
 import { libraryClip } from './surfaceClips';
 import { DEMO_TEMPLATE_ID, findTemplate, templateSurfacePoints, type MappingTemplate } from './stageScenes';
 
@@ -38,12 +40,34 @@ export function mappingDemoShow(): Show {
   return template ? { ...applyTemplate(show, template, DEMO_DECK_SURFACE), name: 'Untitled set' } : show;
 }
 
-/** True while the surfaces still sit exactly where the stage puts them, so the backdrop matches. */
+/**
+ * True while the surfaces still sit exactly where the stage puts them, so the backdrop matches.
+ * The studio also lets the stage go as soon as a point or a surface is dragged or nudged (a mesh's
+ * inner points and curves move the picture without moving its corners).
+ */
 export function stageMatches(show: Pick<Show, 'stage' | 'surfaces' | 'mapping'>): boolean {
   const template = findTemplate(show.stage);
   if (!template || !show.mapping || show.surfaces.length !== template.surfaces.length) return false;
-  return show.surfaces.every((surface, i) => {
-    const points = templateSurfacePoints(template, i);
-    return surface.points.every((p, k) => Math.abs(p.x - points[k].x) < 1e-4 && Math.abs(p.y - points[k].y) < 1e-4);
-  });
+  return show.surfaces.every((surface, i) => onFace(surface, templateSurfacePoints(template, i)));
+}
+
+const near = (p: Point, q: Point, eps = 1e-4) => Math.abs(p.x - q.x) < eps && Math.abs(p.y - q.y) < eps;
+/**
+ * The surface still covers the template's face (its 3×3 lattice): its corners on the face's
+ * corners, at any mesh density, and an outline, if it has one, that still runs straight along the
+ * face's edges.
+ */
+function onFace(surface: Surface, face: Point[]): boolean {
+  const corners: [Point, Point, Point, Point] = [face[0], face[2], face[8], face[6]];
+  const g = gridOf(surface);
+  if (surface.points.length !== g.cols * g.rows || !cornerIndices(g).every((i, k) => near(surface.points[i], corners[k]))) return false;
+  if (!isShape(surface)) return true;
+  const onEdge = (p: Point) =>
+    corners.some((a, k) => {
+      const b = corners[(k + 1) % 4];
+      const dx = b.x - a.x, dy = b.y - a.y, len = dx * dx + dy * dy;
+      const t = len > 0 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len)) : 0;
+      return near(p, { x: a.x + dx * t, y: a.y + dy * t }, 1e-3);
+    });
+  return surface.shape!.points.every((p) => !p.in && !p.out && onEdge(p));
 }

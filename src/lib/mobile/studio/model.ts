@@ -8,6 +8,8 @@ import { MOBILE_EDGE_STROKES, MOBILE_EDGE_FILLS } from './looks/renderer';
 import { MOBILE_SHADERS } from '../standaloneShaderList';
 import { MOBILE_EFFECTS, type MobileEffectInstance } from '../standaloneEffects';
 import { normalizePlacement, type Placement } from './placement';
+import { normalizeSurfaceGeometry, type SurfaceExtras } from './mapping/surfaceExtras';
+import { gridOf, cornerIndices } from './mapping/meshGrid';
 export type Point = { x: number; y: number };
 export type EffectChain = (MobileEffectInstance & { id: string })[];
 export type LookParams = Record<string, number | boolean | number[]>;
@@ -58,7 +60,7 @@ export type Surface = {
   feather: number;
   mode: 'corners' | 'mesh';
   points: Point[];
-};
+} & SurfaceExtras;
 export type Scene = { launchGrid?: (string|null)[][]; clipEffects?: Record<string, EffectChain>; effects?: EffectChain; id: string; name: string; layers: Layer[]; crossfade: number; dualDeck?: boolean };
 export type Show = {
   /** Format revision. Absent on sets saved by app 1.0; 2 from app 1.1 on (see setRepair.ts). */
@@ -302,10 +304,8 @@ function normalizeStored(raw: unknown): Show {
         feather: clamp(s.feather, 0, 0.4),
         look: normalizeLook(s.look ?? (s.source === 'mix' ? r.layers.find(l=>l?.look?.enabled)?.look : r.layers[Number(s.source)]?.look)),
         mode: s.mode === 'mesh' ? 'mesh' : 'corners',
-        points:
-          Array.isArray(s.points) && s.points.length === 9
-            ? s.points.map((p) => ({ x: clamp(p.x, -0.5, 1.5), y: clamp(p.y, -0.5, 1.5) }))
-            : gridPoints(),
+        // A 3×3 lattice as always, or a mesh of another density with its curves, masks and group.
+        ...(normalizeSurfaceGeometry(s) ?? { points: gridPoints() }),
         // Kept only while the clip is still in the set and is a kind a surface can play.
         ...(typeof s.clipId === 'string' && clips.some((c) => c.id === s.clipId && SURFACE_CLIP_KINDS.includes(c.kind)) ? { clipId: s.clipId } : {}),
         ...(s.placement ? { placement: normalizePlacement(s.placement) } : {}),
@@ -482,10 +482,11 @@ export function movePoint(surface: Surface, index: number, point: Point): Surfac
   const s = copy(surface);
   s.points[index] = { x: clamp(point.x, -0.5, 1.5), y: clamp(point.y, -0.5, 1.5) };
   if (s.mode === 'corners') {
-    const [a, b, c, d] = [s.points[0], s.points[2], s.points[8], s.points[6]];
-    s.points = Array.from({ length: 9 }, (_, i) => {
-      const u = (i % 3) / 2,
-        v = Math.floor(i / 3) / 2;
+    const g = gridOf(s);
+    const [a, b, c, d] = cornerIndices(g).map((i) => s.points[i]);
+    s.points = Array.from({ length: g.cols * g.rows }, (_, i) => {
+      const u = (i % g.cols) / (g.cols - 1),
+        v = Math.floor(i / g.cols) / (g.rows - 1);
       return {
         x: a.x * (1 - u) * (1 - v) + b.x * u * (1 - v) + c.x * u * v + d.x * (1 - u) * v,
         y: a.y * (1 - u) * (1 - v) + b.y * u * (1 - v) + c.y * u * v + d.y * (1 - u) * v,

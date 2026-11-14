@@ -1,0 +1,137 @@
+/* Shared look of the mapping tool panels (inspector sections). Scoped under .mp. */
+.mp {
+  border: 1px solid var(--ga-line-2);
+  border-radius: var(--ga-r-soft, 10px);
+  padding: 12px;
+  margin: 12px 0;
+  background: var(--ga-card, #0d1522);
+  color: var(--ga-ink-0, #e8eefc);
+}
+.mp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.mp-head strong {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--ga-ink-1, #9fb0cc);
+}
+.mp button,
+.mp select {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ga-ink-0, #e8eefc);
+  border: 1px solid var(--ga-line-2);
+  border-radius: 6px;
+  background: var(--ga-hardware-bg, #1a2333);
+  box-shadow: var(--ga-hardware-shadow, none);
+  min-height: 44px;
+  min-width: 44px;
+  padding: 6px 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.mp button:focus-visible,
+.mp select:focus-visible,
+.mp input:focus-visible {
+  outline: 2px solid var(--ga-focus, #7fa6ff);
+  outline-offset: 2px;
+}
+.mp button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.mp button.active,
+.mp button[aria-pressed='true'] {
+  background: var(--ga-selection-bg, #1d3a8a);
+  border-color: var(--ga-selection-line, #4f7dff);
+  color: var(--ga-selection-ink, #e0e8ff);
+}
+.mp-seg {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--ga-line-2);
+  border-radius: 8px;
+  background: var(--ga-slot, #060b13);
+}
+.mp-seg button {
+  flex: 1;
+  min-width: 0;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  font-size: 12px;
+}
+.mp-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.mp-row > .grow {
+  flex: 1;
+}
+.mp-label {
+  font-size: 12px;
+  color: var(--ga-ink-1, #9fb0cc);
+}
+.mp-hint {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--ga-ink-1, #9fb0cc);
+  margin: 8px 0 0;
+}
+.mp-step {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--ga-line-2);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.mp-step button {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.mp-step output {
+  min-width: 34px;
+  text-align: center;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.mp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 6px;
+  margin-top: 8px;
+}
+.mp-grid button {
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  min-height: 56px;
+}
+.mp input[type='range'] {
+  flex: 1;
+  min-height: 44px;
+}
+.mp input[type='text'] {
+  font: inherit;
+  font-size: 14px;
+  color: var(--ga-ink-0, #e8eefc);
+  background: var(--ga-slot, #060b13);
+  border: 1px solid var(--ga-line-2);
+  border-radius: 6px;
+  min-height: 44px;
+  padding: 0 10px;
+}

@@ -104,6 +104,10 @@ export class StudioEngine {
   blackout = false;
   frozen = false;
   testGrid = false;
+  /** Called right after each frame is drawn, while the canvas still holds it (the mapping loupe reads it). */
+  afterFrame?: (canvas: HTMLCanvasElement) => void;
+  /** Solo and test patterns from the mapping editor, shown on the output while it is open. */
+  mappingView: import('./compositor').MappingView | null = null;
   /** Set once any layer has had a clip. Until then the output shows the
    *  alignment card; after that an empty output is black, so stopping the
    *  last clip mid-set never puts the card on the projector. */
@@ -421,7 +425,9 @@ export class StudioEngine {
         this.fluxGain+=(target-this.fluxGain)*(1-Math.exp(-dt*22));
         const gesture=fluxEffect(this.flux,this.fluxGain,this.lookBeat);
         const composition=[...(show.effects||[]),...(gesture.enabled?[gesture]:[])];
+        this.compositor.mappingView = this.mappingView;
         this.compositor.render(show, inputs, this.blackout, this.testGrid || !this.hadClip, this.lookTime, audio.audioBeat, this.lookBeat, composition.some(e=>e.enabled) ? input => {this.compositionFX.setAudio(audio);return this.compositionFX.processTexture(input,composition,this.lookTime);} : undefined, surfaceInputs);
+        this.afterFrame?.(this.compositor.canvas);
       } catch (e) {
         this.contextFailed = true;
         cancelAnimationFrame(this.raf);

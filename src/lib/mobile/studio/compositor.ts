@@ -1,13 +1,21 @@
 import { DeckCrossfade } from './crossfade';
 import {PaintRenderer} from './paintRenderer';
 import { EdgeLookRenderer } from './looks/renderer';
-import { baseLayerGain, layerGain, type Show, type Surface, type Point } from './model';
+import { baseLayerGain, layerGain, type Show, type Surface } from './model';
+import { tessellate } from './mapping/meshGrid';
+import { isShape } from './mapping/surfaceShape';
+import { CoverageTextures } from './mapping/coverageTextures';
+export { quadPoint } from './mapping/meshGrid';
 const VERT = `attribute vec2 position; attribute vec2 uv; varying vec2 texCoord; void main(){texCoord=uv;gl_Position=vec4(position.x*2.-1.,1.-position.y*2.,0.,1.);}`;
 const FRAG = `precision highp float;
 varying vec2 texCoord; uniform sampler2D source; uniform sampler2D backdrop;
 uniform int mode; uniform float gain; uniform float feather; uniform vec2 fit; uniform bool contained; uniform bool grid; uniform vec2 gridSize;
 // Where the picture sits in a surface: region centre and size in the source, and its turn.
 uniform bool placed; uniform vec4 place; uniform float placeAngle; uniform float placeAspect;
+// Free-form outline and masks: how much of each point of the surface shows.
+uniform sampler2D coverage; uniform bool covered;
+// A test pattern on one surface, for finding it on the wall: 1 card, 2 identify, 3 white.
+uniform int pattern; uniform float patternIndex;
 // The alignment card, matching the desktop's empty-layer card: square grid
 // from the centre, frame, centre cross and circles, diagonals, corner
 // brackets, a grey step row and a colour row. Between the lines it is 0,0,0.
@@ -36,6 +44,37 @@ vec3 alignmentCard(vec2 uv,vec2 size){
  col=max(col,blue*max(cardLine(corner.x-inset,w*1.5)*step(inset,corner.y)*step(corner.y,inset+arm),cardLine(corner.y-inset,w*1.5)*step(inset,corner.x)*step(corner.x,inset+arm)));
  return col;
 }
+vec3 patternHue(float h){return clamp(abs(fract(h+vec3(0.,2./3.,1./3.))*6.-3.)-1.,0.,1.);}
+float patternSeg(vec2 p,vec2 a,vec2 b,float w){vec2 pa=p-a,ba=b-a;float h=clamp(dot(pa,ba)/dot(ba,ba),0.,1.);return 1.-smoothstep(w,w+1.5,length(pa-ba*h));}
+float patternBit(float m,float k){return mod(floor(m/pow(2.,k)+.001),2.);}
+// A seven-segment digit s pixels tall; p from its lower left corner, y up.
+float patternDigit(vec2 p,float d,float s,float w){
+ float x0=s*.08,x1=s*.42,y0=s*.06,y1=s*.5,y2=s*.94;
+ float m=d<.5?63.:d<1.5?6.:d<2.5?91.:d<3.5?79.:d<4.5?102.:d<5.5?109.:d<6.5?125.:d<7.5?7.:d<8.5?127.:111.;
+ float v=patternBit(m,0.)*patternSeg(p,vec2(x0,y2),vec2(x1,y2),w);
+ v=max(v,patternBit(m,1.)*patternSeg(p,vec2(x1,y2),vec2(x1,y1),w));
+ v=max(v,patternBit(m,2.)*patternSeg(p,vec2(x1,y1),vec2(x1,y0),w));
+ v=max(v,patternBit(m,3.)*patternSeg(p,vec2(x0,y0),vec2(x1,y0),w));
+ v=max(v,patternBit(m,4.)*patternSeg(p,vec2(x0,y1),vec2(x0,y0),w));
+ v=max(v,patternBit(m,5.)*patternSeg(p,vec2(x0,y2),vec2(x0,y1),w));
+ return max(v,patternBit(m,6.)*patternSeg(p,vec2(x0,y1),vec2(x1,y1),w));
+}
+// Identify: the surface's own colour, an 8 x 8 grid, a white border and its number, large.
+vec3 identifyCard(vec2 uv,vec2 size,float n){
+ vec2 px=uv*size;vec3 base=patternHue(fract(n*.618034+.04));
+ vec2 cell=size/8.;vec2 q=abs(fract(px/cell+.5)-.5)*cell;
+ vec3 col=mix(base*.32,base,(1.-smoothstep(.75,1.75,min(q.x,q.y)))*.85);
+ float edge=min(min(px.x,size.x-px.x),min(px.y,size.y-px.y));
+ col=mix(col,vec3(1.),1.-smoothstep(3.,5.,edge));
+ float label=n+1.,tens=floor(label/10.),ones=label-tens*10.;bool two=tens>.5;
+ float h=min(size.y*.55,size.x*(two?.36:.6)),gap=h*.1,wd=h*.5,total=two?wd*2.+gap:wd;
+ vec2 up=vec2(px.x,size.y-px.y)-vec2(size.x*.5-total*.5,size.y*.5-h*.5);
+ float w=max(1.5,h*.065);
+ float ink=patternDigit(up-(two?vec2(wd+gap,0.):vec2(0.)),ones,h,w);
+ float halo=patternDigit(up-(two?vec2(wd+gap,0.):vec2(0.)),ones,h,w*2.4);
+ if(two){ink=max(ink,patternDigit(up,tens,h,w));halo=max(halo,patternDigit(up,tens,h,w*2.4));}
+ return mix(mix(col,vec3(0.),halo*.85),vec3(1.),ink);
+}
 void main(){
  vec2 uv=(texCoord-.5)*fit+.5;
  if(placed){
@@ -46,10 +85,13 @@ void main(){
  }
  vec4 s=texture2D(source,vec2(uv.x,1.-uv.y));
  if((contained||placed) && (uv.x<0.||uv.x>1.||uv.y<0.||uv.y>1.)) s=vec4(0.);
- if(grid)s=vec4(alignmentCard(texCoord,max(gridSize,vec2(1.))),1.);
+ if(grid||pattern==1)s=vec4(alignmentCard(texCoord,max(gridSize,vec2(1.))),1.);
+ if(pattern==2)s=vec4(identifyCard(texCoord,max(gridSize,vec2(1.)),patternIndex),1.);
+ if(pattern==3)s=vec4(1.);
  float edge=min(min(texCoord.x,1.-texCoord.x),min(texCoord.y,1.-texCoord.y));
- s.a*=gain*(feather>0.?smoothstep(0.,feather,edge):1.);
- if(mode==-2)s.rgb*=gain*(feather>0.?smoothstep(0.,feather,edge):1.);
+ float cut=covered?texture2D(coverage,texCoord).r:1.;
+ s.a*=gain*(feather>0.?smoothstep(0.,feather,edge):1.)*cut;
+ if(mode==-2)s.rgb*=gain*(feather>0.?smoothstep(0.,feather,edge):1.)*cut;
  if(mode<0){gl_FragColor=s;return;}
  vec4 b=texture2D(backdrop,vec2(texCoord.x,1.-texCoord.y)); vec3 blend=s.rgb;
  if(mode==6){gl_FragColor=vec4(mix(s.rgb,b.rgb,gain),1.);return;}
@@ -62,51 +104,15 @@ void main(){
 }`;
 const MODES = ['normal', 'add', 'screen', 'multiply', 'difference'];
 
-/** Exact projective quadrilateral interpolation; never clips to the original rectangle. */
-export function quadPoint(c: Point[], u: number, v: number): Point {
-  const [a, b, d, e] = c;
-  const dx1 = b.x - d.x,
-    dx2 = e.x - d.x,
-    dy1 = b.y - d.y,
-    dy2 = e.y - d.y;
-  const dx3 = a.x - b.x + d.x - e.x,
-    dy3 = a.y - b.y + d.y - e.y,
-    det = dx1 * dy2 - dx2 * dy1;
-  const g = Math.abs(det) > 1e-8 ? (dx3 * dy2 - dx2 * dy3) / det : 0,
-    h = Math.abs(det) > 1e-8 ? (dx1 * dy3 - dx3 * dy1) / det : 0;
-  const den = g * u + h * v + 1;
-  return {
-    x: ((b.x - a.x + g * b.x) * u + (e.x - a.x + h * e.x) * v + a.x) / den,
-    y: ((b.y - a.y + g * b.y) * u + (e.y - a.y + h * e.y) * v + a.y) / den,
-  };
-}
+/** Triangles (x, y, u, v per vertex) of a surface's warp; the whole frame without one. */
 export function surfaceVertices(surface?: Surface): Float32Array {
-  const points = surface?.points;
-  const n = surface?.mode === 'corners' ? 16 : 2;
-  const vertex = (x: number, y: number) => {
-    const u = x / n,
-      v = y / n;
-    const p = !points
-      ? { x: u, y: v }
-      : surface?.mode === 'corners'
-        ? quadPoint([points[0], points[2], points[8], points[6]], u, v)
-        : points[y * 3 + x];
-    return [p.x, p.y, u, v];
-  };
-  const out: number[] = [];
-  for (let y = 0; y < n; y++)
-    for (let x = 0; x < n; x++)
-      out.push(
-        ...vertex(x, y),
-        ...vertex(x + 1, y),
-        ...vertex(x + 1, y + 1),
-        ...vertex(x, y),
-        ...vertex(x + 1, y + 1),
-        ...vertex(x, y + 1),
-      );
-  return new Float32Array(out);
+  return tessellate(surface);
 }
 export type TextureInput = { texture: WebGLTexture; width: number; height: number };
+export type SurfacePattern = 'card' | 'identify' | 'white';
+/** What the mapping editor asks the output to show for a moment: only some surfaces, or test patterns on them. */
+export type MappingView = { solo?: string[]; identify?: boolean; patterns?: Record<string, SurfacePattern> };
+const PATTERN_CODE: Record<SurfacePattern, number> = { card: 1, identify: 2, white: 3 };
 export class StudioCompositor {
   private gl: WebGLRenderingContext;
   private crossfade: DeckCrossfade;
@@ -121,6 +127,12 @@ export class StudioCompositor {
   private width = 0;
   private height = 0;
   private geometry = new WeakMap<Surface, Float32Array>();
+  /** One vertex buffer per surface, uploaded only when its geometry changes. */
+  private buffers = new Map<string, { verts: Float32Array; buffer: WebGLBuffer; seen: number }>();
+  private coverage: CoverageTextures;
+  private frameCount = 0;
+  /** Set by the engine from the mapping editor; never saved with the set. */
+  mappingView: MappingView | null = null;
   private fullFrame = surfaceVertices();
   private locations: Record<string, WebGLUniformLocation | null> = {};
   constructor(readonly canvas: HTMLCanvasElement) {
@@ -147,7 +159,8 @@ export class StudioCompositor {
     gl.deleteShader(f);
     if (!gl.getProgramParameter(this.program, gl.LINK_STATUS)) throw new Error('Could not link the output compositor.');
     this.buffer = gl.createBuffer()!;
-    for (const name of ['source', 'backdrop', 'mode', 'gain', 'feather', 'fit', 'contained', 'grid', 'gridSize', 'placed', 'place', 'placeAngle', 'placeAspect'])
+    this.coverage = new CoverageTextures(gl);
+    for (const name of ['source', 'backdrop', 'mode', 'gain', 'feather', 'fit', 'contained', 'grid', 'gridSize', 'placed', 'place', 'placeAngle', 'placeAspect', 'coverage', 'covered', 'pattern', 'patternIndex'])
       this.locations[name] = gl.getUniformLocation(this.program, name);
     for (let i = 0; i < 8; i++) this.sources.push(this.texture());
     for (let i = 0; i < 2; i++) this.targets.push({ texture: this.texture(), frame: gl.createFramebuffer()! });
@@ -196,17 +209,33 @@ export class StudioCompositor {
     sourceAspect = 16 / 9,
     fitMode: Surface['fit'] = 'stretch',
     painted=false,
+    cut: WebGLTexture | null = null,
+    pattern = 0,
+    patternIndex = 0,
   ) {
     const g = this.gl,
       L = this.locations;
     g.useProgram(this.program);
-    g.bindBuffer(g.ARRAY_BUFFER, this.buffer);
-    let verts = surface ? this.geometry.get(surface) : this.fullFrame;
-    if (!verts) {
-      verts = surfaceVertices(surface);
-      this.geometry.set(surface!, verts);
+    const verts = surface ? this.surfaceGeometry(surface) : this.fullFrame;
+    if (surface) {
+      let cached = this.buffers.get(surface.id);
+      if (!cached) {
+        cached = { verts, buffer: g.createBuffer()!, seen: 0 };
+        this.buffers.set(surface.id, cached);
+        g.bindBuffer(g.ARRAY_BUFFER, cached.buffer);
+        g.bufferData(g.ARRAY_BUFFER, verts, g.STATIC_DRAW);
+      } else {
+        g.bindBuffer(g.ARRAY_BUFFER, cached.buffer);
+        if (cached.verts !== verts) {
+          cached.verts = verts;
+          g.bufferData(g.ARRAY_BUFFER, verts, g.STATIC_DRAW);
+        }
+      }
+      cached.seen = this.frameCount;
+    } else {
+      g.bindBuffer(g.ARRAY_BUFFER, this.buffer);
+      g.bufferData(g.ARRAY_BUFFER, verts, g.DYNAMIC_DRAW);
     }
-    g.bufferData(g.ARRAY_BUFFER, verts, g.DYNAMIC_DRAW);
     const pos = g.getAttribLocation(this.program, 'position'),
       uv = g.getAttribLocation(this.program, 'uv');
     g.enableVertexAttribArray(pos);
@@ -221,8 +250,16 @@ export class StudioCompositor {
     g.uniform1i(L.backdrop, 1);
     g.uniform1i(L.mode, mode);
     g.uniform1f(L.gain, gain);
-    g.uniform1f(L.feather, surface?.feather || 0);
+    // A free-form surface fades along its outline (in its coverage), not along its frame.
+    g.uniform1f(L.feather, surface && !isShape(surface) ? surface.feather || 0 : 0);
+    g.activeTexture(g.TEXTURE2);
+    g.bindTexture(g.TEXTURE_2D, cut ?? this.sources[0]);
+    g.uniform1i(L.coverage, 2);
+    g.uniform1i(L.covered, cut ? 1 : 0);
+    g.activeTexture(g.TEXTURE0);
     g.uniform1i(L.grid, grid ? 1 : 0);
+    g.uniform1i(L.pattern, pattern);
+    g.uniform1f(L.patternIndex, patternIndex);
     let fx = 1,
       fy = 1;
     const fit = painted ? 'stretch' : surface?.fit || fitMode;
@@ -246,7 +283,8 @@ export class StudioCompositor {
     }
     g.uniform2f(L.fit, fx, fy);
     g.uniform1i(L.contained, fit === 'contain' ? 1 : 0);
-    const placement = painted || grid ? undefined : surface?.placement;
+    // A test pattern fills the whole surface, so it is never placed; masks still cut a placed picture.
+    const placement = painted || grid || pattern ? undefined : surface?.placement;
     g.uniform1i(L.placed, placement ? 1 : 0);
     if (placement) {
       g.uniform4f(L.place, placement.x, placement.y, placement.w, placement.h);
@@ -254,6 +292,14 @@ export class StudioCompositor {
       g.uniform1f(L.placeAspect, Math.max(0.05, targetAspect));
     }
     g.drawArrays(g.TRIANGLES, 0, verts.length / 4);
+  }
+  private surfaceGeometry(surface: Surface): Float32Array {
+    let verts = this.geometry.get(surface);
+    if (!verts) {
+      verts = surfaceVertices(surface);
+      this.geometry.set(surface, verts);
+    }
+    return verts;
   }
   /**
    * `surfaceInputs` holds the clips surfaces play by themselves: a picture, or null while it loads
@@ -266,6 +312,14 @@ export class StudioCompositor {
       this.height = 0;
     }
     this.resize(show.quality);
+    this.frameCount++;
+    this.coverage.begin();
+    if (this.frameCount % 120 === 0)
+      for (const [id, b] of this.buffers)
+        if (this.frameCount - b.seen > 120) {
+          g.deleteBuffer(b.buffer);
+          this.buffers.delete(id);
+        }
     if(!show.paint?.enabled)this.paintFailed=false;
     try{
       if(show.paint?.enabled&&show.paint.strokes.length&&!this.paint&&!this.paintFailed)this.paint=new PaintRenderer(g);
@@ -360,8 +414,16 @@ export class StudioCompositor {
     g.blendFuncSeparate(g.SRC_ALPHA, g.ONE_MINUS_SRC_ALPHA, g.ONE, g.ONE_MINUS_SRC_ALPHA);
     if (!mapped) this.draw(mixTexture, this.sources[0], -1, outputGain, undefined, testGrid);
     else
-      for (const s of show.surfaces) {
+      for (const [index, s] of show.surfaces.entries()) {
         if (!s.enabled) continue;
+        const view = this.mappingView;
+        if (view?.solo?.length && !view.solo.includes(s.id)) continue;
+        const pattern = view?.identify ? 'identify' : view?.patterns?.[s.id];
+        if (pattern) {
+          // A test pattern replaces the picture, its look and paint, at full brightness.
+          this.draw(this.sources[0], this.sources[0], -1, 1, s, false, 16 / 9, 'stretch', false, this.coverage.get(s, this.width, this.height), PATTERN_CODE[pattern], index);
+          continue;
+        }
         // Its own clip (MB-6) when that clip has a render; otherwise the deck source.
         const own = s.clipId !== undefined && !!surfaceInputs?.has(s.clipId);
         const clip = own ? surfaceInputs!.get(s.clipId!) : null;
@@ -371,6 +433,7 @@ export class StudioCompositor {
         const ink=this.paint?.texture(s.id);
         if (!available && !testGrid && !ink) continue;
         const paintOnly=show.paint?.enabled&&show.paint.isolate&&!this.paintFailed;
+        const cut = this.coverage.get(s, this.width, this.height);
         if((available&&!paintOnly)||testGrid)this.draw(
           own
             ? clip?.texture || this.sources[0]
@@ -385,8 +448,11 @@ export class StudioCompositor {
           s,
           testGrid,
           own ? (clip?.width || 16) / (clip?.height || 9) : paired || i === 'mix' ? 16 / 9 : (inputs[i]?.width || 16) / (inputs[i]?.height || 9),
+          'stretch',
+          false,
+          cut,
         );
-        const verts = this.geometry.get(s) || surfaceVertices(s);
+        const verts = this.surfaceGeometry(s);
 
         if(!paintOnly)this.looks.draw(
           s.look,
@@ -400,10 +466,11 @@ export class StudioCompositor {
           outputGain,
           audio,
           transportBeat,
+          this.coverage.field(s),
         );
         if(ink){
           g.enable(g.BLEND);g.blendFuncSeparate(g.ONE,g.ONE_MINUS_SRC_ALPHA,g.ONE,g.ONE_MINUS_SRC_ALPHA);
-          this.draw(ink,this.sources[0],-2,outputGain,s,false,1,'stretch',true);
+          this.draw(ink,this.sources[0],-2,outputGain,s,false,1,'stretch',true,cut);
         }
         g.enable(g.BLEND);
         g.blendFuncSeparate(g.SRC_ALPHA, g.ONE_MINUS_SRC_ALPHA, g.ONE, g.ONE_MINUS_SRC_ALPHA);
@@ -416,6 +483,9 @@ export class StudioCompositor {
     const g = this.gl;
     this.looks.destroy();
     this.crossfade.destroy();
+    this.coverage.destroy();
+    for (const b of this.buffers.values()) g.deleteBuffer(b.buffer);
+    this.buffers.clear();
     this.paint?.destroy();
     g.deleteProgram(this.program);
     g.deleteBuffer(this.buffer);

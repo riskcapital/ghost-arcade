@@ -49,13 +49,14 @@ export function mayAskForReview(state: ReviewState, version: string): boolean {
 
 export const markAsked = (state: ReviewState, version: string): ReviewState => ({ ...state, askedVersion: version });
 
+type MappedSurface = { points: ReadonlyArray<{ x: number; y: number }>; shape?: { points: ReadonlyArray<{ x: number; y: number }> } };
 /**
  * Says "a map was made" once: the person leaves Map with mapping on after moving a surface there.
  * Feed it the tab, the mapping switch and the surfaces on every change.
  */
 export class MapSaveWatch {
   private entered: string | null = null;
-  update(tab: string, mapping: boolean, surfaces: ReadonlyArray<{ points: ReadonlyArray<{ x: number; y: number }> }>): boolean {
+  update(tab: string, mapping: boolean, surfaces: ReadonlyArray<MappedSurface>): boolean {
     if (tab === 'map') {
       this.entered ??= MapSaveWatch.shape(surfaces);
       return false;
@@ -65,8 +66,10 @@ export class MapSaveWatch {
     this.entered = null;
     return mapping && surfaces.length > 0 && changed;
   }
-  private static shape(surfaces: ReadonlyArray<{ points: ReadonlyArray<{ x: number; y: number }> }>): string {
-    return surfaces.map((s) => s.points.map((p) => `${p.x.toFixed(4)},${p.y.toFixed(4)}`).join(' ')).join('|');
+  private static shape(surfaces: ReadonlyArray<MappedSurface>): string {
+    const at = (list: ReadonlyArray<{ x: number; y: number }>) => list.map((p) => `${p.x.toFixed(4)},${p.y.toFixed(4)}`).join(' ');
+    // A free outline counts too: reshaping a surface is making a map.
+    return surfaces.map((s) => (s.shape ? `${at(s.points)}/${at(s.shape.points)}` : at(s.points))).join('|');
   }
 }
 

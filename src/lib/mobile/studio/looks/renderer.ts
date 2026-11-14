@@ -2,6 +2,7 @@ import { EDGE_LOOKS } from './edgeLookCatalog';
 import { buildLookEffects, lookPalette } from './edgeLooks';
 import { edgeTypeDefaults } from './edgeEffectCatalog';
 import type { EdgeEffect, LookConfig } from './types';
+import { FIELD_MAX_PX } from '../mapping/coverage';
 export const MOBILE_EDGE_STROKES = [
   'none',
   'solid',
@@ -124,7 +125,7 @@ function fragment(e: EdgeEffect) {
       body = `vec2 tile=fract(v*6.)-.5;float facet=abs(tile.x)+abs(tile.y);vec4 face=${a};face.rgb*=.25+.75*abs(sin(facet*4.+t*${fs}));`;
       break;
   }
-  return `precision highp float;varying vec2 v;uniform vec2 size;uniform float t,beat,gain,widthScale,hue;vec3 shift(vec3 c,float a){vec3 axis=normalize(vec3(1.));return clamp(c*cos(a)+cross(axis,c)*sin(a)+axis*dot(axis,c)*(1.-cos(a)),0.,1.);}void main(){vec2 p=v*size;vec2 edge=min(p,size-p);float d=min(edge.x,edge.y);float perimeter=2.*(size.x+size.y);float path=(edge.y<edge.x?(v.y<.5?p.x:2.*size.x+size.y-p.x):(v.x>.5?size.x+p.y:perimeter-p.y))/perimeter;float w=${f(s.width, 2)}*widthScale;${stroke}${body}vec4 line=${color(s.color)};line.a*=clamp(ink,0.,1.);float alpha=line.a+face.a*(1.-line.a);vec3 rgb=(line.rgb*line.a+face.rgb*face.a*(1.-line.a))/max(alpha,.00001);gl_FragColor=vec4(shift(rgb,hue),clamp(alpha*gain,0.,1.));}`;
+  return `precision highp float;varying vec2 v;uniform vec2 size;uniform float t,beat,gain,widthScale,hue;uniform sampler2D field;uniform bool shaped;uniform float perimeterPx;vec3 shift(vec3 c,float a){vec3 axis=normalize(vec3(1.));return clamp(c*cos(a)+cross(axis,c)*sin(a)+axis*dot(axis,c)*(1.-cos(a)),0.,1.);}void main(){vec2 p=v*size;vec2 edge=min(p,size-p);float d=min(edge.x,edge.y);float perimeter=2.*(size.x+size.y);float path=(edge.y<edge.x?(v.y<.5?p.x:2.*size.x+size.y-p.x):(v.x>.5?size.x+p.y:perimeter-p.y))/perimeter;float cover=1.;if(shaped){vec4 F=texture2D(field,v);cover=F.r;d=F.g*F.g*${FIELD_MAX_PX.toFixed(1)};path=(F.b*65280.+F.a*255.)/65535.;perimeter=perimeterPx;}float w=${f(s.width, 2)}*widthScale;${stroke}${body}vec4 line=${color(s.color)};line.a*=clamp(ink,0.,1.);float alpha=line.a+face.a*(1.-line.a);vec3 rgb=(line.rgb*line.a+face.rgb*face.a*(1.-line.a))/max(alpha,.00001);gl_FragColor=vec4(shift(rgb,hue),clamp(alpha*gain,0.,1.)*cover);}`;
 }
 export class EdgeLookRenderer {
   private cache = new Map<
@@ -147,6 +148,8 @@ export class EdgeLookRenderer {
     gain = 1,
     audio = 0,
     transportBeat = time * bpm / 60,
+    /** A free-form outline or masks to follow instead of the frame's edges. */
+    edge: { texture: WebGLTexture; perimeter: number } | null = null,
   ) {
     if (!config?.enabled || config.amount <= 0 || gain <= 0) return;
     const gl = this.gl,
@@ -202,7 +205,7 @@ export class EdgeLookRenderer {
           program,
           effect,
           locations: Object.fromEntries(
-            ['center', 'transform', 'size', 't', 'beat', 'gain', 'widthScale', 'hue'].map((n) => [
+            ['center', 'transform', 'size', 't', 'beat', 'gain', 'widthScale', 'hue', 'field', 'shaped', 'perimeterPx'].map((n) => [
               n,
               gl.getUniformLocation(program, n),
             ]),
@@ -263,6 +266,14 @@ export class EdgeLookRenderer {
       gl.uniform1f(L.beat, beat);
       gl.uniform1f(L.widthScale, config.width);
       gl.uniform1f(L.hue, Math.floor(beat) * number(e.react?.hueStep) * Math.PI * 2);
+      gl.uniform1i(L.shaped, edge ? 1 : 0);
+      gl.uniform1f(L.perimeterPx, edge ? Math.max(1, edge.perimeter) : 1);
+      if (edge) {
+        gl.activeTexture(gl.TEXTURE3);
+        gl.bindTexture(gl.TEXTURE_2D, edge.texture);
+        gl.uniform1i(L.field, 3);
+        gl.activeTexture(gl.TEXTURE0);
+      }
       gl.blendFuncSeparate(
         gl.SRC_ALPHA,
         e.blendMode === 'add' ? gl.ONE : gl.ONE_MINUS_SRC_ALPHA,
