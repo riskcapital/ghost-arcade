@@ -2822,35 +2822,29 @@ function createVJClipLauncherStore() {
       });
     },
 
-    // Batch-update multiple shader values (modulation engine HOT PATH —
-    // runs per audio tick, up to 60Hz per modulated layer). Mutates the
-    // active clip's shaderValues IN PLACE and does NOT tick the store:
-    //   • Rendering still updates — updateShaderTextures re-reads
-    //     source.shaderValues every frame, and the cached VJ render
-    //     source points at this exact object (vjOutputLayers re-points
-    //     it on every derived run).
-    //   • The grid cell holds the same clip object as activeClip, so
-    //     grid state stays consistent by identity.
-    //   • UI sliders show the live value via the modulation ghost rAF
-    //     loop (getModulatedValue), not store reactivity.
-    // The old implementation cloned layerStates + the ENTIRE clip grid
-    // and woke every store subscriber on each tick — 120+ full-grid
-    // clones/second during an audio-reactive set with 2 modulated
-    // layers, all garbage.
+    /**
+     * Set several shader values on a row's active clip at once: the value a
+     * paused Auto stopped on, a modulation let go of. Not per frame (the
+     * engines hand their moving values to liveParams.ts). A new clip with
+     * new values, in its grid cell and block too, published once; nothing
+     * when the values are already there.
+     */
     batchUpdateShaderValues(layerIndex: number, values: Record<string, number>, deck: VJDeck = 'A') {
-      const state = get({ subscribe });
-      const activeClip = pickLayerStates(state, deck)[layerIndex]?.activeClip;
-      if (!activeClip) return;
-      if (!activeClip.shaderValues) {
-        // First touch: the cached render source may hold a detached {}
-        // (vjOutputLayers substitutes one when shaderValues is missing).
-        // Create the object, then tick the store once so the derived
-        // layer re-points its source at it.
-        activeClip.shaderValues = { ...values };
-        update(s => s);
-        return;
-      }
-      Object.assign(activeClip.shaderValues, values);
+      const shown = pickLayerStates(get({ subscribe }), deck)[layerIndex]?.activeClip?.shaderValues ?? {};
+      if (Object.entries(values).every(([key, value]) => shown[key] === value)) return;
+      edit(state => {
+        const rows = pickLayerStates(state, deck);
+        const activeClip = rows[layerIndex]?.activeClip;
+        if (!activeClip) return state;
+        const current = activeClip.shaderValues ?? {};
+        if (Object.entries(values).every(([key, value]) => current[key] === value)) return state;
+        const newClip = { ...activeClip, shaderValues: { ...current, ...values } };
+        const newLayerStates = [...rows];
+        newLayerStates[layerIndex] = { ...rows[layerIndex], activeClip: newClip };
+        const placed = placeActiveClipEdit(state, deck, layerIndex, activeClip.id, newClip);
+        const next = withDeck(state, deck, newLayerStates, placed?.grid);
+        return placed ? { ...next, blocks: placed.blocks } : next;
+      });
     },
 
     // Update splat content on the active clip of a layer (per deck)
