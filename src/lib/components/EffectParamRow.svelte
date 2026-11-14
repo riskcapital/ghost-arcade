@@ -29,6 +29,7 @@
   import type { AutoConfig } from '../types';
   import { onMount, tick } from 'svelte';
   import ModTray, { modSourceLabel } from './ModTray.svelte';
+  import { liveParamsTick, liveLayerValue, liveDeckValue, liveCompositionValues } from '../audio/liveParams';
 
   export let label: string;
   export let value: number;
@@ -131,7 +132,22 @@
     if (s >= 0.001) return 3;
     return 4;
   }
-  $: shown = displayValue ? displayValue(value) : value.toFixed(decimalsFromStep(step));
+  // What Auto or a modulation plays this frame (liveParams.ts), shown in
+  // place of the stored value, which is where it rests.
+  $: liveKey = effectKind === 'edge' ? `edge:${effectId}:${paramName}`
+    : effectKind === 'gpu' ? `gpu:${paramName}`
+    : effectKind === 'splat' ? `splat:${paramName}`
+    : `fx:${effectId}:${paramName}`;
+  // `_tick` is the live tick, passed so this re-reads when it moves.
+  function readLive(_tick: number, key: string): number | undefined {
+    if (mappingComposition) return liveCompositionValues('map', effectId)?.[paramName];
+    if (target === 'vj' && vjEffectScope === 'composition') return liveCompositionValues('vj', effectId)?.[paramName];
+    if (target === 'vj' && effectKind !== 'gpu' && effectKind !== 'splat') return liveDeckValue(vjBank, layerIndex, currentVjLayerState?.activeClip?.id, key);
+    return liveLayerValue(currentMappingLayer?.id, key);
+  }
+  $: liveValue = readLive($liveParamsTick, liveKey);
+  $: shownValue = typeof liveValue === 'number' ? liveValue : value;
+  $: shown = displayValue ? displayValue(shownValue) : shownValue.toFixed(decimalsFromStep(step));
 
   async function startEdit() {
     editError = "";
@@ -344,7 +360,7 @@
           {min}
           {max}
           {step}
-          {value}
+          value={shownValue}
           data-midi-path={effectKind === 'edge' ? `map:edge:${effectId}:${paramName}` : effectKind === 'gpu' ? `map:gpu:${paramName}` : effectKind === 'splat' ? `map:splat:${paramName}` : `map:effect:${effectId}:${paramName}`}
           data-midi-label={label}
           data-midi-min={min}
@@ -445,7 +461,7 @@
         {min}
         {max}
         {step}
-        {value}
+        value={shownValue}
         data-midi-path={effectKind === 'edge' ? `map:edge:${effectId}:${paramName}` : effectKind === 'gpu' ? `map:gpu:${paramName}` : effectKind === 'splat' ? `map:splat:${paramName}` : `map:effect:${effectId}:${paramName}`}
         data-midi-label={label}
         data-midi-min={min}

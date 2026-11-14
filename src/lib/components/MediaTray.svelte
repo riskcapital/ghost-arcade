@@ -57,6 +57,7 @@
   import { loadSketches, removeSketch, saveSketch, updateSketch, sketchLibraryChanges, type StoredSketch } from '../stores/sketchLibrary';
   import ShaderLibrary from './ShaderLibrary.svelte';
   import * as THREE from 'three';
+  import { liveParamsTick, liveLayerValue } from '../audio/liveParams';
   import { modulationStore, setParamModSource, setParamModAmount, updateParamMod, setBaseValue, registerParamRanges, modKeyShader, hasModRange, rangeWithRestAt, type ModSource, type ParamModulation } from '../audio/modulation';
   import ModTray, { modSourceLabel } from './ModTray.svelte';
   import { mediaTrayShaders } from '../stores/mediaTrayShaders';
@@ -2735,6 +2736,13 @@
 
   // Shader param modulation — cached layer index, shared helpers from modulation.ts
   $: selectedLayerIdx = $layers.findIndex(l => l.id === $selectedLayerId);
+  /** What Auto, a modulation or Music motion plays on this shader input now
+   *  (liveParams.ts); the stored value is where it rests. `_tick` is the
+   *  live tick, passed so the template re-reads it. Not while a show block
+   *  is being edited: the values are the block's then. */
+  function mapLiveShaderValue(_tick: number, inputName: string): number | undefined {
+    return $activeBlock ? undefined : liveLayerValue($selectedLayerId ?? undefined, `shader:${inputName}`);
+  }
 
   // Reactive subscription so the panel re-renders when a mod
   // is added / changed. getShaderModulation READS DIRECTLY from
@@ -4530,7 +4538,7 @@
                     min={input.MIN ?? 0}
                     max={input.MAX ?? 1}
                     step="0.01"
-                    value={selectedShader.values[input.NAME] ?? input.DEFAULT ?? 0}
+                    value={mapLiveShaderValue($liveParamsTick, input.NAME) ?? selectedShader.values[input.NAME] ?? input.DEFAULT ?? 0}
                     oninput={(e) => updateShaderParam(input.NAME, parseFloat((e.target as HTMLInputElement).value))}
                     class="param-slider"
                     data-midi-path={`map:shader:${input.NAME}`}
@@ -4568,7 +4576,7 @@
                   {/if}
                 </div>
                 <span class="param-val">
-                  {(selectedShader.values[input.NAME] as number)?.toFixed(2) ?? '0.00'}
+                  {((mapLiveShaderValue($liveParamsTick, input.NAME) ?? selectedShader.values[input.NAME]) as number)?.toFixed(2) ?? '0.00'}
                 </span>
               </div>
               <!-- Depth / LFO speed / BPM-sync / auto transport all

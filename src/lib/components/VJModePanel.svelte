@@ -65,6 +65,7 @@
   import { createDurableAssetRefFromFile, createAssetRefFromGeneratedBlob, pathToFileUrl } from '../storage/assetRegistry';
   import ClipPreviewPanel from './ClipPreviewPanel.svelte';
   import { markUserInteracting } from '../midi/midiRouter';
+  import { liveParamsTick, liveDeckValue } from '../audio/liveParams';
   import { modulationStore, modulationEngine, setParamModSource, hasModRange, rangeWithRestAt, setCrossfaderModSource, updateParamMod, registerParamRanges, getModulatedValue, setBaseValue, clearBaseValues, clearModulatedValues, modKeyShader, MOD_KEY_XFADE_VALUE, type ModSource, type ParamModulation } from '../audio/modulation';
   import ModTray, { modSourceLabel } from './ModTray.svelte';
   import { defaultAutoFor } from '../audio/autoEngine';
@@ -2484,6 +2485,13 @@
     } catch {
       return [];
     }
+  }
+
+  /** What Auto, a modulation, Music motion or the Music Studio plays on this
+   *  shader input now (liveParams.ts); the clip's own value is where it
+   *  rests. `_tick` is the live tick, passed so the template re-reads it. */
+  function deckLiveShaderValue(_tick: number, layerIndex: number, paramName: string): number | undefined {
+    return liveDeckValue(paramDeck, layerIndex, paramLayerStates[layerIndex]?.activeClip?.id, `shader:${paramName}`);
   }
 
   function getShaderParamValue(layerIndex: number, paramName: string, defaultValue: number): number {
@@ -5403,7 +5411,8 @@
                              the active clip. Same pattern fix as the
                              {@const mod = ...} above. -->
                         {@const _baseVal = paramLayerStates[selectedLayerIndex!]?.activeClip?.shaderValues?.[input.NAME] as number | undefined}
-                        {@const _sliderVal = typeof _baseVal === 'number' ? _baseVal : ((input.DEFAULT as number) ?? input.MIN ?? 0)}
+                        {@const _liveVal = deckLiveShaderValue($liveParamsTick, selectedLayerIndex!, input.NAME)}
+                        {@const _sliderVal = typeof _liveVal === 'number' ? _liveVal : typeof _baseVal === 'number' ? _baseVal : ((input.DEFAULT as number) ?? input.MIN ?? 0)}
                         <div class="shader-param-slider">
                           <div class="slider-track-wrap">
                             <input type="range" min={input.MIN ?? 0} max={input.MAX ?? 1} step={((input.MAX ?? 1) - (input.MIN ?? 0)) / 200}
