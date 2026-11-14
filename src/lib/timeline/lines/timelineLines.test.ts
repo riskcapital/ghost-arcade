@@ -11,7 +11,12 @@ import type { Layer } from '../../types';
 
 const state = writable<{ layers: Layer[]; selectedLayerId: string | null }>({ layers: [], selectedLayerId: null });
 vi.mock('../../stores/layers', () => ({
-  project: { subscribe: state.subscribe, selectLayer: () => {} },
+  project: {
+    subscribe: state.subscribe,
+    selectLayer: () => {},
+    update: state.update,
+    setLayerSource: (id: string, source: unknown) => state.update((p) => ({ ...p, layers: p.layers.map((l) => (l.id === id ? ({ ...l, source } as Layer) : l)) })),
+  },
   layers: derived(state, (s) => s.layers),
   selectedLayerId: derived(state, (s) => s.selectedLayerId),
 }));
@@ -29,6 +34,8 @@ const { setHistoryCallback } = await import('../../stores/historyHooks');
 const { runMidiTaps } = await import('../../midi/midiTaps');
 const { currentLineFrame } = await import('./lineRuntime');
 const lines = await import('./timelineLines');
+const liveEdit = await import('../liveEdit');
+const { recordDiscreteAction } = await import('../../stores/historyHooks');
 const { lineValueAt } = await import('./lineEvaluator');
 
 function layer(id: string): Layer {
@@ -51,6 +58,7 @@ beforeEach(() => {
   showTimeline.syncStageRows(get(state).layers, []);
 });
 afterEach(() => {
+  liveEdit._resetLiveEditForTest();
   uninstall();
   lines._resetTimelineLinesForTest();
   setShowCompositionLoader(null);
@@ -268,5 +276,124 @@ describe('a long take', () => {
     showTimeline.play();
     showTimeline.seek(get(showTimeline).currentTime + 0.1);
     expect(get(lines.lineRecordState).notice).toBeNull();
+  });
+});
+
+describe('Live edit on the Timeline', () => {
+  const A = { scope: 'layer' as const, id: 'A' };
+  const layerA = () => get(state).layers.find((l) => l.id === 'A')!;
+  const setLayer = (id: string, patch: Partial<Layer>) => state.update((p) => ({ ...p, layers: p.layers.map((l) => (l.id === id ? ({ ...l, ...patch } as Layer) : l)) }));
+  function liveEditParked(at = 3) {
+    lines.setFollowEdits(true);
+    lines.armLines('touch');
+    showTimeline.seek(at);
+    expect(get(liveEdit.liveEditOn)).toBe(true);
+  }
+
+  beforeEach(() => {
+    state.set({ layers: [layer('A'), layer('B')], selectedLayerId: 'A' });
+  });
+
+  it('Discard puts back only the held change, as one step, however many steps came after it', () => {
+    liveEditParked();
+    setLayer('A', { opacity: 0.4 });
+    expect(get(liveEdit.heldEdits)).toMatchObject([{ kind: 'param', key: 'layer:opacity', value: 0.4, was: 1 }]);
+    // Edits that are not held: a rename, and more steps than the undo history keeps.
+    setLayer('B', { name: 'Renamed' });
+    for (let i = 0; i < 60; i++) recordDiscreteAction();
+    const before = steps;
+    expect(liveEdit.discardHeldEdits()).toBe(true);
+    expect(layerA().opacity).toBe(1);
+    expect(get(state).layers.find((l) => l.id === 'B')!.name).toBe('Renamed');
+    expect(steps - before).toBe(1);
+    // Nothing was keyed, nothing is held again, Live edit stays on.
+    expect(get(showTimeline).lines).toHaveLength(0);
+    expect(get(liveEdit.heldEdits)).toHaveLength(0);
+    expect(get(liveEdit.liveEditOn)).toBe(true);
+  });
+
+  it('when a held change cannot be put back, Discard changes nothing and says why', () => {
+    liveEditParked();
+    setLayer('A', { opacity: 0.4 });
+    setLayer('B', { opacity: 0.5 });
+    state.update((p) => ({ ...p, layers: p.layers.filter((l) => l.id !== 'A') }));
+    const before = steps;
+    expect(liveEdit.discardHeldEdits()).toBe(false);
+    expect(get(state).layers.find((l) => l.id === 'B')!.opacity).toBe(0.5);
+    expect(steps).toBe(before);
+    expect(get(liveEdit.heldEdits)).toHaveLength(2);
+    expect(get(liveEdit.liveEdit).notice).toMatch(/can't put back/);
+  });
+
+  it('another document, another project or stopping drops what is held', () => {
+    liveEditParked();
+    setLayer('A', { opacity: 0.4 });
+    showTimeline.openDoc('show');
+    expect(get(liveEdit.heldEdits)).toHaveLength(0);
+    showTimeline.openDoc('timeline');
+    liveEditParked();
+    setLayer('A', { opacity: 0.3 });
+    expect(get(liveEdit.heldEdits)).toHaveLength(1);
+    showTimeline.clear();
+    expect(get(liveEdit.heldEdits)).toHaveLength(0);
+  });
+
+  it('stopping Live edit drops what is held; the change stays in the editor', () => {
+    liveEditParked();
+    setLayer('A', { opacity: 0.4 });
+    lines.disarmLines();
+    expect(get(liveEdit.heldEdits)).toHaveLength(0);
+    expect(layerA().opacity).toBe(0.4);
+  });
+
+  it('content swapped on a piece without a row: no row until Update, which makes it with the cut-in; Discard puts the content back', () => {
+    const rowOfC = () => get(showTimeline).layerTracks.find((t) => t.layerId === 'C' && !t.subRow);
+    liveEditParked(4);
+    state.update((p) => ({ ...p, layers: [...p.layers, layer('C')] }));
+    expect(rowOfC()).toBeUndefined();
+    const prism = { id: 's-prism', type: 'shader', src: 'prism.fs', name: 'Prism', shaderCode: 'void main(){}', shaderInputs: [], shaderValues: {} };
+    const first = get(state).layers.find((l) => l.id === 'C')!.source;
+    setLayer('C', { source: prism as never });
+    expect(get(liveEdit.heldEdits)).toMatchObject([{ kind: 'content', trackId: null, piece: { layerId: 'C' } }]);
+    expect(rowOfC()).toBeUndefined();
+    expect(liveEdit.discardHeldEdits()).toBe(true);
+    expect(get(state).layers.find((l) => l.id === 'C')!.source).toBe(first);
+    expect(rowOfC()).toBeUndefined();
+    // Again, and Update: the row and its block come in together.
+    setLayer('C', { source: prism as never });
+    liveEdit.updateHeldEdits();
+    const row = rowOfC();
+    expect(row?.clips.map((c) => [c.media.name, c.startTime])).toEqual([['Prism', 4]]);
+  });
+});
+
+describe('recording content on a piece without a row', () => {
+  const shaderSource = (name: string) => ({ id: `s-${name}`, type: 'shader', src: `${name}.fs`, name, shaderCode: `// ${name}\nvoid main(){}`, shaderInputs: [], shaderValues: {} });
+  const rowOfC = () => get(showTimeline).layerTracks.find((t) => t.layerId === 'C' && !t.subRow);
+
+  it('the row comes with the first block, in the same undo step', () => {
+    lines.setFollowEdits(true);
+    lines.armLines('touch');
+    showTimeline.seek(1);
+    showTimeline.play();
+    state.update((p) => ({ ...p, layers: [...p.layers, { ...layer('C'), source: shaderSource('Tide') } as unknown as Layer] }));
+    for (let t = 1; t <= 3; t += 0.1) showTimeline.seek(t);
+    expect(rowOfC()).toBeUndefined();
+    const before = steps;
+    state.update((p) => ({ ...p, layers: p.layers.map((l) => (l.id === 'C' ? ({ ...l, source: shaderSource('Prism') } as unknown as Layer) : l)) }));
+    // What the piece showed from the start of the take is written: the row and that block are one step.
+    expect(rowOfC()?.clips.map((c) => c.media.name)).toEqual(['Tide']);
+    expect(steps - before).toBe(1);
+    for (let t = 3; t <= 5; t += 0.1) showTimeline.seek(t);
+    showTimeline.pause();
+    expect(rowOfC()?.clips.map((c) => c.media.name)).toEqual(['Tide', 'Prism']);
+    expect(steps - before).toBe(2);
+  });
+
+  it('a row command that puts nothing on a new row leaves no row behind', () => {
+    const c = { ...layer('C'), source: shaderSource('Tide') } as unknown as Layer;
+    // Too short to be a block.
+    expect(showTimeline.recordLayerBlockFor(c, { kind: 'shader', name: 'Tide', src: 'Tide.fs', shaderCode: 'x' } as never, 2, 2.001)).toBeNull();
+    expect(rowOfC()).toBeUndefined();
   });
 });

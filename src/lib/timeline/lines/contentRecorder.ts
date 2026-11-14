@@ -21,13 +21,15 @@ export interface ContentRecorderHost {
   /** Recording is armed with Follow edits on. */
   armed(): boolean;
   layers(): readonly Layer[];
-  tracks(): readonly ShowLayerTrack[];
-  /** The row a layer's content is recorded on (made when it has none). */
-  rowFor(layer: Layer): string | null;
-  write(trackId: string, media: ShowClipMedia, start: number, end: number): void;
+  /** The row a layer's content is recorded on, or null while it has none. Never makes one:
+   *  a write or a cut-in makes the row in its own step (one undo takes both back). */
+  rowOf(layer: Layer): ShowLayerTrack | null;
+  /** A recorded block on the layer's row (made when it has none), one undo step. */
+  write(layer: Layer, media: ShowClipMedia, start: number, end: number): void;
   /** Live edit with the playhead parked: the row shows `media` from `t` (its block there is cut at `t`).
-   *  `before`: an empty row's own content, kept from 0 to `t` in the same step. */
-  swapAt(trackId: string, media: ShowClipMedia, t: number, before: ShowClipMedia | null): void;
+   *  `before`: an empty row's own content, kept from 0 to `t` in the same step. `row`: the layer's
+   *  row, null when it has none yet. `previous`: what the layer showed before this swap. */
+  swapAt(layer: Layer, row: string | null, media: ShowClipMedia, t: number, before: ShowClipMedia | null, previous: Layer['source'] | null): void;
   /** An engine or undo / redo is writing the project. */
   notAPerson(): boolean;
 }
@@ -80,7 +82,7 @@ function contentKey(layer: Pick<Layer, 'source'>): string {
 }
 
 interface Open {
-  trackId: string;
+  layer: Layer;
   media: ShowClipMedia;
   start: number;
 }
@@ -89,6 +91,8 @@ export function createContentRecorder(host: ContentRecorderHost) {
   const seen = new Map<string, string>();
   /** What each layer showed when last looked at, as block media. */
   const shown = new Map<string, ShowClipMedia | null>();
+  /** The source each layer had when last looked at (what a parked swap goes back from). */
+  const sources = new Map<string, Layer['source'] | null>();
   const open = new Map<string, Open>();
   let running = false;
   /** Armed with the playhead parked: a swap is cut in at the playhead. */
@@ -99,7 +103,7 @@ export function createContentRecorder(host: ContentRecorderHost) {
   function close(layerId: string, at: number): void {
     const o = open.get(layerId);
     open.delete(layerId);
-    if (o && at - o.start >= SHOW_MIN_TRACK_CLIP_SECONDS) host.write(o.trackId, o.media, o.start, at);
+    if (o && at - o.start >= SHOW_MIN_TRACK_CLIP_SECONDS) host.write(o.layer, o.media, o.start, at);
   }
 
   function closeAll(at: number): void {
@@ -109,9 +113,11 @@ export function createContentRecorder(host: ContentRecorderHost) {
   function snapshot(): void {
     seen.clear();
     shown.clear();
+    sources.clear();
     for (const l of host.layers()) {
       seen.set(l.id, contentKey(l));
       shown.set(l.id, mediaOfLayer(l));
+      sources.set(l.id, l.source ?? null);
     }
   }
 
@@ -124,16 +130,16 @@ export function createContentRecorder(host: ContentRecorderHost) {
       if (prev === key) continue;
       seen.set(layer.id, key);
       const before = shown.get(layer.id) ?? null;
+      const previous = sources.get(layer.id) ?? null;
       const media = mediaOfLayer(layer);
       shown.set(layer.id, media);
+      sources.set(layer.id, layer.source ?? null);
       if (prev === undefined || !person || !media) continue;
-      const trackId = host.rowFor(layer);
-      if (!trackId) continue;
+      const row = host.rowOf(layer);
       // An empty row showed the piece's own content all along: keep it before
       // the cut (one step with it).
-      const row = host.tracks().find((r) => r.id === trackId);
-      const keep = before && row && row.clips.length === 0 && lastTime >= SHOW_MIN_TRACK_CLIP_SECONDS ? before : null;
-      host.swapAt(trackId, media, lastTime, keep);
+      const keep = before && (!row || row.clips.length === 0) && lastTime >= SHOW_MIN_TRACK_CLIP_SECONDS ? before : null;
+      host.swapAt(layer, row?.id ?? null, media, lastTime, keep, previous);
     }
   }
 
@@ -184,18 +190,17 @@ export function createContentRecorder(host: ContentRecorderHost) {
         seen.set(layer.id, key);
         const before = shown.get(layer.id) ?? null;
         shown.set(layer.id, mediaOfLayer(layer));
+        sources.set(layer.id, layer.source ?? null);
         if (prev === undefined || !person) continue;
         const t = lastTime;
-        const trackId = host.rowFor(layer);
-        if (!trackId) continue;
+        const row = host.rowOf(layer);
         // The first change on an empty row: what it showed before, from the start of the take.
-        const row = host.tracks().find((r) => r.id === trackId);
-        if (!open.has(layer.id) && before && row && row.clips.length === 0 && t - runStart >= SHOW_MIN_TRACK_CLIP_SECONDS) {
-          host.write(trackId, before, runStart, t);
+        if (!open.has(layer.id) && before && (!row || row.clips.length === 0) && t - runStart >= SHOW_MIN_TRACK_CLIP_SECONDS) {
+          host.write(layer, before, runStart, t);
         }
         close(layer.id, t);
         const media = shown.get(layer.id);
-        if (media) open.set(layer.id, { trackId, media, start: t });
+        if (media) open.set(layer.id, { layer, media, start: t });
       }
     },
 
@@ -209,6 +214,7 @@ export function createContentRecorder(host: ContentRecorderHost) {
       parked = false;
       seen.clear();
       shown.clear();
+      sources.clear();
     },
 
     /** Layers with a block being recorded now. */

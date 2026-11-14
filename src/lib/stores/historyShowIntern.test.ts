@@ -107,6 +107,17 @@ describe('show fragments in the undo history', () => {
     expect(stepChars).toBeLessThan(51 * 400);
   });
 
+  it('keeps one shader once however many recorded blocks carry it', () => {
+    // Live record puts the piece's shader on each block it records (the same
+    // string): fifty steps of a row with forty such blocks hold it once.
+    const code = shader(1);
+    const block = (k: number) => ({ id: `r${k}`, startTime: k, duration: 1, inPoint: 0, endBehaviour: 'loop', fadeIn: 0, fadeOut: 0, media: { kind: 'shader', name: 'Rec', src: '', shaderCode: code, shaderValues: { speed: 1 } } });
+    const row = (n: number) => ({ ...arrangement(0, 0), layerTracks: [{ id: 't', layerId: 'L', layerName: 'L', clips: Array.from({ length: n }, (_, k) => block(k)), lanes: [], gap: 'layer', muted: false, locked: false, collapsed: false }] });
+    history.init(project, null, null, row(1));
+    for (let n = 2; n <= 51; n++) history.record(project, null, null, row(Math.min(40, n)));
+    expect(historyTableStats().strings).toBe(1);
+  });
+
   it('compares an untouched show by id and restores it once', () => {
     const a = arrangement(2, 2);
     history.init(project, null, null, a);

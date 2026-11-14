@@ -5,7 +5,7 @@ import type { Layer, ShowClipMedia, ShowLayerTrack } from '../../types';
 const shader = (name: string) => ({ type: 'shader', name, src: `${name}.fs`, shaderCode: `// ${name}\nvoid main(){}`, shaderInputs: [], shaderValues: {} });
 const video = (name: string) => ({ type: 'video', name, src: `ghost-asset://localhost/${name}.mp4` });
 
-function rig(opts: { rowHasBlocks?: boolean } = {}) {
+function rig(opts: { rowHasBlocks?: boolean; noRowFor?: string } = {}) {
   let layers: Layer[] = [
     { id: 'A', name: 'Wall', source: shader('Tide') } as unknown as Layer,
     { id: 'B', name: 'Floor', source: video('rain') } as unknown as Layer,
@@ -13,19 +13,25 @@ function rig(opts: { rowHasBlocks?: boolean } = {}) {
   const tracks: ShowLayerTrack[] = [
     { id: 'rowA', layerId: 'A', clips: opts.rowHasBlocks ? [{ id: 'x', startTime: 20, duration: 2 }] : [] } as unknown as ShowLayerTrack,
     { id: 'rowB', layerId: 'B', clips: [] } as unknown as ShowLayerTrack,
-  ];
+  ].filter((t) => t.layerId !== opts.noRowFor);
   const written: Array<[string, string, number, number]> = [];
   const swaps: Array<[string, string, number]> = [];
+  const previous: Array<[string, string | null, string | null]> = [];
+  /** A row a write made (the host makes it in the same step as the block). */
+  const rowId = (layer: Layer) => tracks.find((t) => t.layerId === layer.id)?.id ?? `new-${layer.id}`;
   let armed = true;
   let engine = false;
   const rec = createContentRecorder({
     armed: () => armed,
     layers: () => layers,
-    tracks: () => tracks,
-    rowFor: (layer) => tracks.find((t) => t.layerId === layer.id)?.id ?? null,
-    write: (trackId, media: ShowClipMedia, start, end) => { written.push([trackId, media.name, +start.toFixed(3), +end.toFixed(3)]); },
+    rowOf: (layer) => tracks.find((t) => t.layerId === layer.id) ?? null,
+    write: (layer, media: ShowClipMedia, start, end) => { written.push([rowId(layer), media.name, +start.toFixed(3), +end.toFixed(3)]); },
     notAPerson: () => engine,
-    swapAt: (trackId, media: ShowClipMedia, t, before) => { swaps.push([trackId, media.name, t]); if (before) written.push([trackId, before.name, 0, t]); },
+    swapAt: (layer, row, media: ShowClipMedia, t, before, prev) => {
+      swaps.push([row ?? `new-${layer.id}`, media.name, t]);
+      previous.push([layer.id, row, (prev as { name?: string } | null)?.name ?? null]);
+      if (before) written.push([row ?? `new-${layer.id}`, before.name, 0, t]);
+    },
   });
   const set = (id: string, source: unknown) => {
     layers = layers.map((l) => (l.id === id ? ({ ...l, source } as Layer) : l));
@@ -33,7 +39,7 @@ function rig(opts: { rowHasBlocks?: boolean } = {}) {
   };
   /** Play from a to b in 0.1 s frames. */
   const play = (a: number, b: number) => { for (let x = a; x <= b + 1e-9; x += 0.1) rec.tick(+x.toFixed(3), true); };
-  return { rec, written, swaps, set, play, setArmed: (v: boolean) => { armed = v; }, setEngine: (v: boolean) => { engine = v; } };
+  return { rec, written, swaps, previous, set, play, setArmed: (v: boolean) => { armed = v; }, setEngine: (v: boolean) => { engine = v; } };
 }
 
 describe('recording what a piece shows', () => {
@@ -113,6 +119,26 @@ describe('recording what a piece shows', () => {
     r.rec.tick(12, false);
     r.set('B', video('rain'));
     expect(r.swaps).toHaveLength(1);
+  });
+
+  it('a piece without a row is recorded without making one first: the write makes it', () => {
+    const r = rig({ noRowFor: 'A' });
+    r.play(2, 5);
+    r.set('A', shader('Prism'));
+    r.play(5, 8);
+    r.rec.stop(8);
+    expect(r.written).toEqual([
+      ['new-A', 'Tide', 2, 5],
+      ['new-A', 'Prism', 5, 8],
+    ]);
+  });
+
+  it('parked: a swap says what the piece showed before it, and that it has no row yet', () => {
+    const r = rig({ noRowFor: 'A' });
+    r.rec.tick(3, false);
+    r.set('A', shader('Prism'));
+    r.set('A', shader('Wave'));
+    expect(r.previous).toEqual([['A', null, 'Tide'], ['A', null, 'Prism']]);
   });
 
   it('media for blocks comes from shaders, videos, images and sketches only', () => {

@@ -18,7 +18,7 @@
   const playing = showSlice('isPlaying');
   let state = $derived($liveEdit);
   let held = $derived(state.held);
-  let shown = $derived(state.on || held.length > 0);
+  let shown = $derived(state.on);
 
   function clock(t: number): string {
     const m = Math.floor(t / 60);
@@ -34,7 +34,7 @@
 
   let message = $derived.by(() => {
     const n = `${held.length} ${held.length === 1 ? 'change' : 'changes'}`;
-    if (!state.on) return `${n} held at ${heldAt}, not on the Timeline yet`;
+    if (state.notice) return state.notice;
     if ($playing) return 'Recording your changes as it plays';
     if (held.length) return `${n} held at ${heldAt}`;
     return 'Changes are held for Update';
@@ -45,13 +45,13 @@
   <div class="live-frame" style="left: {canvasX}px; top: {canvasY}px; width: {canvasWidth}px; height: {canvasHeight}px;" aria-hidden="true"></div>
   <div class="live-bar" role="status" aria-live="polite" data-live-edit-bar>
     <span class="live-mark" class:recording={state.on && $playing}>Live edit</span>
-    <span class="live-msg" title="Stopped, what you change is held: it shows on the stage now, and Update keys it on the Timeline where you made it. Playing, it is recorded as it happens.">{message}</span>
+    <span class="live-msg" class:notice={!!state.notice} title={state.notice ?? 'Stopped, what you change is held: it shows on the stage now, and Update keys it on the Timeline where you made it. Playing, it is recorded as it happens.'}>{message}</span>
     {#if held.length}
       <button type="button" class="primary" onclick={() => updateHeldEdits()} title="Key every held change on the Timeline where it was made" data-live-update>Update</button>
-      <button type="button" onclick={() => discardHeldEdits()} title="Undo the held changes: back to how it was before the first one" data-live-discard>Discard</button>
+      <button type="button" onclick={() => discardHeldEdits()} title="Put back what the held changes changed. Other edits stay" data-live-discard>Discard</button>
     {/if}
     {#if state.on}
-      <button type="button" onclick={() => setLiveEdit(false)} title="Stop Live edit: changes no longer go onto the Timeline" data-live-stop>Stop</button>
+      <button type="button" onclick={() => setLiveEdit(false)} title="Stop Live edit: changes no longer go onto the Timeline. Held changes stay in the editor, not on the Timeline" data-live-stop>Stop</button>
     {/if}
   </div>
 {/if}
@@ -100,6 +100,7 @@
   }
   .live-mark.recording::before { animation: live-pulse 1s ease-in-out infinite; }
   @keyframes live-pulse { 50% { opacity: 0.25; } }
+  .live-msg.notice { color: var(--ga-ink-0, #f2ede4); }
   .live-msg {
     min-width: 0;
     overflow: hidden;

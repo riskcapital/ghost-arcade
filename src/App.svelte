@@ -23,7 +23,6 @@
   import MasterWarpHandles from './lib/components/MasterWarpHandles.svelte';
   import DomeGizmo from './lib/components/DomeGizmo.svelte';
   import DomeViewControls from './lib/components/DomeViewControls.svelte';
-  import { installLiveEditHooks } from './lib/timeline/liveEdit';
   import LiveEditBar from './lib/components/LiveEditBar.svelte';
   import WherePickOverlay from './lib/components/WherePickOverlay.svelte';
   import { domeView } from './lib/stores/domeView';
@@ -6614,15 +6613,6 @@
     }
     history.unsuppress();
   }
-
-  // Live edit's Discard steps back through the undo history.
-  installLiveEditHooks({
-    undo: () => {
-      const before = history.currentStepId();
-      handleUndo();
-      return history.currentStepId() !== before;
-    },
-  });
 
   function handleRedo() {
     if (showInteractiveStudio) return;

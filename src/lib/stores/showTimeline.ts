@@ -3117,6 +3117,14 @@ export const showTimeline = {
       store.update((s) => ({ ...s, selection: { kind: 'track', id: existing.id } }));
       return existing.id;
     }
+    const id = this._putLayerRow(layer, opts);
+    recordShowEdit();
+    republishTracks();
+    return id;
+  },
+
+  /** A new row for a layer, selected; no undo step (the caller records one). */
+  _putLayerRow(layer: Layer, opts: { color?: string; index?: number } = {}): string {
     const id = rowTrackId(layer.id);
     const track: ShowLayerTrack = {
       ...bareRowFor({ id: layer.id, name: layer.name }),
@@ -3129,9 +3137,22 @@ export const showTimeline = {
       layerTracks.splice(at, 0, track);
       return { ...s, layerTracks, selection: { kind: 'track', id } };
     });
-    recordShowEdit();
-    republishTracks();
     return id;
+  },
+
+  /**
+   * Run a row command for a layer's row, making the row when the layer has
+   * none: one undo step holds the row and what the command put on it. A
+   * command that put nothing there leaves no row behind.
+   */
+  _onLayerRow<T>(layer: Layer, command: (trackId: string) => T | null): T | null {
+    const existing = get(store).layerTracks.find((t) => t.layerId === layer.id && !t.subRow);
+    if (existing) return command(existing.id);
+    const before = get(store);
+    const id = this._putLayerRow(layer);
+    const result = command(id);
+    if (result === null) store.update((s) => ({ ...s, layerTracks: s.layerTracks.filter((t) => t.id !== id), selection: before.selection }));
+    return result;
   },
 
   removeLayerTrack(trackId: string) {
@@ -3455,6 +3476,16 @@ export const showTimeline = {
     recordShowEdit();
     republishTracks();
     return changedId;
+  },
+
+  /** cutInLayerMedia on a layer's row, made with it (one step) when the layer has none. */
+  cutInLayerMediaFor(layer: Layer, media: ShowClipMedia, t: number, before: ShowClipMedia | null = null): string | null {
+    return this._onLayerRow(layer, (trackId) => this.cutInLayerMedia(trackId, media, t, before));
+  },
+
+  /** recordLayerBlock on a layer's row, made with it (one step) when the layer has none. */
+  recordLayerBlockFor(layer: Layer, media: ShowClipMedia, start: number, end: number): string | null {
+    return this._onLayerRow(layer, (trackId) => this.recordLayerBlock(trackId, media, start, end));
   },
 
   /**

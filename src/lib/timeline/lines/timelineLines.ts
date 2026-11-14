@@ -13,7 +13,8 @@
  *   and pieces that are off the stage; the sound rows are a registered scope.
  */
 import { get, writable } from 'svelte/store';
-import { heldEdits, heldTouches, holdContentEdit, holdParamEdit, installLiveEditHooks, liveEditOn } from '../liveEdit';
+import { heldEdits, heldTouches, holdContentEdit, holdParamEdit, installLiveEditHooks, resetLiveEdit, setLiveEditArmed, type HeldEdit } from '../liveEdit';
+import { planDiscard } from '../liveEditRevert';
 import {
   onShowDocChange,
   onShowTimelineReset,
@@ -23,7 +24,7 @@ import {
   type ShowLineTick,
 } from '../../stores/showTimeline';
 import { project } from '../../stores/layers';
-import type { Layer, MediaSource, ShowLayerClip, ShowLayerTrack } from '../../types';
+import type { Layer, MediaSource, Project, ShowLayerClip, ShowLayerTrack } from '../../types';
 import { createLineSession, type LineSession } from './lineSession';
 import { ALL_LOOKS_ID, findParam, paramsFor, readParam, sameTarget, type ParamEntry, type ParamTarget, type RegistrySource } from './paramRegistry';
 import type { ControlLine, LinePoint } from './lineModel';
@@ -37,7 +38,7 @@ import { soundRowsFor } from '../sound/soundModel';
 import { soundLineScope } from '../sound/soundParams';
 import { registerParamScope } from './lineExtensions';
 import { createContentRecorder } from './contentRecorder';
-import { cancelPendingHistorySnapshot, isAutomation, isRestoringHistory } from '../../stores/historyHooks';
+import { beginHistoryRestore, cancelPendingHistorySnapshot, endHistoryRestore, isAutomation, isRestoringHistory, recordDiscreteAction } from '../../stores/historyHooks';
 
 // ── Registry over the Timeline ─────────────────────────────────────────────
 
@@ -191,11 +192,13 @@ let unsubContent: (() => void) | null = null;
 const contentRecorder = createContentRecorder({
   armed: () => { const r = get(lineRecordState); return r.armed && r.followEdits; },
   layers: () => ((get(project) as { layers?: Layer[] } | null)?.layers ?? []),
-  tracks: () => get(showTimeline).layerTracks,
-  rowFor: (layer) => get(showTimeline).layerTracks.find((t) => t.layerId === layer.id && !t.subRow)?.id ?? showTimeline.addLayerTrack(layer),
-  write: (trackId, media, start, end) => { showTimeline.recordLayerBlock(trackId, media, start, end); },
+  rowOf: (layer) => get(showTimeline).layerTracks.find((t) => t.layerId === layer.id && !t.subRow) ?? null,
+  // A piece without a row gets one in the same step as its block.
+  write: (layer, media, start, end) => { showTimeline.recordLayerBlockFor(layer, media, start, end); },
   // Parked with Live edit on, a swap is held until Update (liveEdit.ts).
-  swapAt: (trackId, media, t, before) => { if (!holdContentEdit(trackId, media, t, before)) showTimeline.cutInLayerMedia(trackId, media, t, before); },
+  swapAt: (layer, row, media, t, before, previous) => {
+    if (!holdContentEdit(row, media, t, before, { layerId: layer.id, previous: (previous ?? null) as MediaSource | null })) showTimeline.cutInLayerMediaFor(layer, media, t, before);
+  },
   notAPerson: () => isAutomation() || isRestoringHistory(),
 });
 let lastPlaying = false;
@@ -396,10 +399,13 @@ export function installTimelineLines(): () => void {
   const stopStageFx = installStageFxRuntime();
   if (get(showTimeline).doc === 'timeline') startSession();
   const offDoc = onShowDocChange((doc) => {
+    // What Live edit holds belongs to the document it was made in.
+    resetLiveEdit();
     if (doc === 'timeline') startSession();
     else stopSession();
   });
   const offReset = onShowTimelineReset(() => {
+    resetLiveEdit();
     // Another project (or the same reopened): its own bindings and lines.
     queueMicrotask(() => {
       if (get(showTimeline).doc === 'timeline') startSession();
@@ -443,7 +449,13 @@ export function installTimelineLines(): () => void {
   // show at once, so a change to them is evaluated again.
   installLiveEditHooks({
     keyAt: (target, key, value, t, was) => { keyAtPlayhead(target, key, value, t, was); },
-    cutIn: (trackId, media, t, before) => { showTimeline.cutInLayerMedia(trackId, media, t, before); },
+    cutIn: (edit) => {
+      if (edit.trackId) { showTimeline.cutInLayerMedia(edit.trackId, edit.media, edit.t, edit.before); return; }
+      // Held before the piece had a row: the row is made with the cut-in.
+      const layer = edit.piece ? layerOf(edit.piece.layerId) : null;
+      if (layer) showTimeline.cutInLayerMediaFor(layer, edit.media, edit.t, edit.before);
+    },
+    revert: discardEdits,
     setArmed: (on) => {
       if (on) {
         setFollowEdits(true);
@@ -453,7 +465,7 @@ export function installTimelineLines(): () => void {
       }
     },
   });
-  const offLive = lineRecordState.subscribe((r) => liveEditOn.set(r.armed && r.followEdits));
+  const offLive = lineRecordState.subscribe((r) => setLiveEditArmed(r.armed && r.followEdits));
   const offHeld = heldEdits.subscribe(() => { if (!get(showTimeline).isPlaying) retick(); });
   return () => {
     offLive();
@@ -466,6 +478,37 @@ export function installTimelineLines(): () => void {
     stopStageFx();
     stopSession();
   };
+}
+
+function layerOf(id: string): Layer | null {
+  return ((get(project) as { layers?: Layer[] } | null)?.layers ?? []).find((l) => l.id === id) ?? null;
+}
+
+/**
+ * Live edit's Discard: each held change's own setting or content goes back
+ * to what it was before (liveEditRevert.ts), as one undo step, and nothing
+ * else moves. Written as a restore, so Follow edits and the content
+ * recorder take it as no one's edit (nothing new is held or recorded).
+ */
+function discardEdits(edits: readonly HeldEdit[]): { ok: true } | { ok: false; reason: string } {
+  const before = get(project) as Project;
+  const plan = planDiscard(before, edits);
+  if (!plan.ok) return { ok: false, reason: cantDiscard(plan.edit) };
+  beginHistoryRestore();
+  try {
+    if (plan.project !== before) project.update((p) => (p === before ? plan.project : p));
+    for (const s of plan.sources) project.setLayerSource(s.layerId, s.source, { history: false });
+  } finally {
+    endHistoryRestore();
+  }
+  recordDiscreteAction();
+  return { ok: true };
+}
+
+function cantDiscard(edit: HeldEdit): string {
+  if (edit.kind === 'content') return "Discard can't put back what that piece showed: it is gone. Press Update to keep the change, or Stop.";
+  const label = describeLineParam(edit.target, edit.key)?.label ?? 'a setting whose piece is gone';
+  return `Discard can't put back ${label}. Undo it, or press Update to keep it.`;
 }
 
 // ── Commands (the UI calls these) ──────────────────────────────────────────
