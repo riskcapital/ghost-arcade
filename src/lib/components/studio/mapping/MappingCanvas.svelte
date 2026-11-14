@@ -494,12 +494,16 @@
   // ── Loupe ──────────────────────────────────────────────────────────────────
   const LOUPE = 116,
     MAG = 3;
+  /** Above the finger when the canvas has room there, otherwise beside it, never over the bars above the canvas. */
   const loupePos = $derived.by(() => {
-    if (!loupe) return null;
-    const above = loupe.y - LOUPE / 2 - 76;
-    const y = above - LOUPE / 2 < 8 ? loupe.y + 76 + LOUPE / 2 : above;
-    const x = Math.max(LOUPE / 2 + 6, Math.min((typeof window === 'undefined' ? 400 : window.innerWidth) - LOUPE / 2 - 6, loupe.x));
-    return { x, y };
+    if (!loupe || !root) return null;
+    const box = root.getBoundingClientRect();
+    const screen = typeof window === 'undefined' ? 400 : window.innerWidth;
+    const top = Math.max(8, box.top) + LOUPE / 2;
+    const above = loupe.y - 72 - LOUPE / 2;
+    if (above >= top) return { x: Math.max(LOUPE / 2 + 6, Math.min(screen - LOUPE / 2 - 6, loupe.x)), y: above };
+    const side = loupe.x < screen / 2 ? loupe.x + 72 + LOUPE / 2 : loupe.x - 72 - LOUPE / 2;
+    return { x: Math.max(LOUPE / 2 + 6, Math.min(screen - LOUPE / 2 - 6, side)), y: Math.max(top, loupe.y) };
   });
   const readout = $derived(loupe ? inPixels(loupe.at, basis) : null);
 
