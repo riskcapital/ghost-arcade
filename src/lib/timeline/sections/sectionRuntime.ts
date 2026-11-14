@@ -102,7 +102,8 @@ export function installSectionRuntime(): () => void {
           const { prepareScore, commitScore } = await import('../score/scoreRuntime');
           const r = await prepareScore();
           if (!r.ok) return { ok: false, reason: r.reason };
-          commitScore(r.prep);
+          const laid = commitScore(r.prep);
+          if (!laid.ok && laid.why !== 'empty') return { ok: false, reason: laid.reason };
           return { ok: true, adds: r.prep.draft.adds, plan: r.prep.draft.plan.map((p) => ({ name: p.name, kind: p.kind, start: p.start, end: p.end, looks: p.lookIds })) };
         },
         async shuffle() {
@@ -119,7 +120,8 @@ export function installSectionRuntime(): () => void {
           const r = await prepareAutoShow({ style: opts.style, source: opts.source });
           if (!r.ok) return { ok: false, reason: r.reason };
           const t1 = performance.now();
-          commitAutoShow(r.prep, { play: opts.play });
+          const laid = commitAutoShow(r.prep, { play: opts.play });
+          if (!laid.ok && laid.why !== 'empty') return { ok: false, reason: laid.reason };
           return autoShowSummary(r.prep, { prepareMs: t1 - t0, commitMs: performance.now() - t1 });
         },
         async shuffle(opts: { play?: boolean } = {}) {

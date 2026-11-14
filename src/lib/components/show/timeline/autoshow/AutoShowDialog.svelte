@@ -7,15 +7,16 @@
    * of the way with Shuffle and Done. "Looks only" is the old ✦ Score.
    */
   import { onMount } from 'svelte';
-  import { commitAutoShow, prepareAutoShow, redraftAutoShow, shuffleAutoShow, playFromTop, type AutoShowPrep, type AutoShowSource } from '../../../../timeline/autoshow/autoShowRuntime';
-  import { commitScore, prepareScore, shuffleScore, type ScorePrep } from '../../../../timeline/score/scoreRuntime';
+  import { commitAutoShow, prepareAutoShow, redraftAutoShow, releaseLastAutoShow, shuffleAutoShow, playFromTop } from '../../../../timeline/autoshow/autoShowRuntime';
+  import { commitScore, prepareScore, shuffleScore } from '../../../../timeline/score/scoreRuntime';
+  import { onShowDocChange, onShowTimelineReset } from '../../../../stores/showTimeline';
   import type { ShowStyle } from '../../../../timeline/autoshow/songStyle';
+  import { createAutoShowFlow, type AutoShowContent } from './autoShowFlow';
   import TimelineIcon from '../TimelineIcon.svelte';
 
   interface Props { onclose: () => void }
   let { onclose }: Props = $props();
 
-  type Content = AutoShowSource | 'looks';
   const STYLES: Array<{ id: ShowStyle; label: string; hint: string }> = [
     { id: 'chill', label: 'Chill', hint: 'Slow and soft: calm pictures, long swaps, gentle Screen FX' },
     { id: 'groove', label: 'Groove', hint: 'A steady groove: contents swap every few bars' },
@@ -23,85 +24,58 @@
     { id: 'hard', label: 'Hard', hint: 'Fast and heavy: beat cuts, strobes and hits' },
     { id: 'cinematic', label: 'Cinematic', hint: 'No steady beat: slow reveals and long builds, nothing cut on the beat' },
   ];
-  const CONTENTS: Array<{ id: Content; label: string; hint: string }> = [
+  const CONTENTS: Array<{ id: AutoShowContent; label: string; hint: string }> = [
     { id: 'builtin', label: 'Built-in', hint: 'Curated shaders and Looks made for mapped pieces' },
     { id: 'library', label: 'My library', hint: 'Your own videos (Media Library)' },
     { id: 'both', label: 'Both', hint: 'Built-in content and your videos' },
     { id: 'looks', label: 'Looks only', hint: 'Sections, looks and lines only (no content on the pieces)' },
   ];
 
-  let phase: 'reading' | 'confirm' | 'done' | 'error' = $state('reading');
-  let prep = $state<AutoShowPrep | null>(null);
-  let scorePrep = $state<ScorePrep | null>(null);
-  let content = $state<Content>('builtin');
-  let error = $state('');
-  let busy = $state(false);
-  let builtMs = $state(0);
+  // One state for the whole dialog (autoShowFlow.ts): no flag can stick.
+  const flow = createAutoShowFlow({
+    prepare: (signal) => prepareAutoShow({ signal }),
+    redraft: (prep, change, signal) => redraftAutoShow(prep, change, { signal }),
+    commit: (prep) => commitAutoShow(prep),
+    shuffle: (signal) => shuffleAutoShow({}, { signal }),
+    prepareScore: (signal) => prepareScore({ signal }),
+    commitScore: (prep) => commitScore(prep),
+    shuffleScore: (signal) => shuffleScore({ signal }),
+    playFromTop,
+    release: releaseLastAutoShow,
+    onReset: (listener) => {
+      const offReset = onShowTimelineReset(listener);
+      const offDoc = onShowDocChange(listener);
+      return () => { offReset(); offDoc(); };
+    },
+    now: () => performance.now(),
+  });
+  const flowState = flow.state;
 
   onMount(() => {
-    void (async () => {
-      const r = await prepareAutoShow();
-      if (!r.ok) { error = r.reason; phase = 'error'; return; }
-      prep = r.prep;
-      // Both, when the library has videos.
-      if (r.prep.libraryVideos > 0) { content = 'both'; prep = await redraftAutoShow(r.prep, { source: 'both' }); }
-      phase = 'confirm';
-    })();
+    void flow.start();
+    return () => flow.dispose();
   });
 
-  async function setStyle(style: ShowStyle) {
-    if (!prep || busy) return;
-    busy = true;
-    prep = await redraftAutoShow(prep, { style });
-    busy = false;
-  }
+  // A built show's dialog closes when another project or document opens.
+  $effect(() => {
+    if ($flowState.kind === 'closed') onclose();
+  });
 
-  async function setContent(next: Content) {
-    if (!prep || busy) return;
-    content = next;
-    if (next === 'looks') {
-      busy = true;
-      const r = await prepareScore();
-      busy = false;
-      if (r.ok) scorePrep = r.prep;
-      else { error = r.reason; phase = 'error'; }
-      return;
-    }
-    busy = true;
-    prep = await redraftAutoShow(prep, { source: next });
-    busy = false;
-  }
-
-  function build() {
-    if (!prep || busy) return;
-    const t0 = performance.now();
-    if (content === 'looks') {
-      if (!scorePrep || !commitScore(scorePrep)) { error = 'Nothing to add: the Timeline already has all of it.'; phase = 'error'; return; }
-      playFromTop({ structure: scorePrep.structure, track: scorePrep.track });
-    } else if (!commitAutoShow(prep)) {
-      error = 'Nothing to add: the Timeline already has all of it.';
-      phase = 'error';
-      return;
-    }
-    builtMs = prep.timings.analysisMs + prep.timings.draftMs + (performance.now() - t0);
-    phase = 'done';
-  }
-
-  async function shuffle() {
-    busy = true;
-    if (content === 'looks') {
-      const r = await shuffleScore();
-      if (r.ok) { scorePrep = r.prep; playFromTop({ structure: r.prep.structure, track: r.prep.track }); }
-      else { error = r.reason; phase = 'error'; }
-    } else {
-      const r = await shuffleAutoShow();
-      if (r.ok) prep = r.prep;
-      else { error = r.reason; phase = 'error'; }
-    }
-    busy = false;
-  }
-
-  const draft = $derived(prep?.draft ?? null);
+  const st = $derived($flowState);
+  /** Shown for the dialog's phases: reading, confirm (ready or working), done, error. */
+  const phase = $derived(
+    st.kind === 'idle' || st.kind === 'reading' ? 'reading'
+      : st.kind === 'ready' || st.kind === 'redrafting' || st.kind === 'building' ? 'confirm'
+        : st.kind === 'done' || st.kind === 'shuffling' ? 'done'
+          : 'error',
+  );
+  const shownState = $derived('content' in st ? st : null);
+  const prep = $derived(shownState?.prep ?? (st.kind === 'error' ? st.prep : null));
+  const content = $derived<AutoShowContent>(shownState?.content ?? 'builtin');
+  const scorePrep = $derived(shownState?.scorePrep ?? null);
+  /** A step is running: the choices and buttons wait. */
+  const busy = $derived(st.kind !== 'ready' && st.kind !== 'done');
+  const draft = $derived(shownState?.prep.draft ?? null);
   const adds = $derived(content === 'looks' ? scorePrep?.draft.adds ?? [] : draft?.adds ?? []);
   const skips = $derived(content === 'looks' ? scorePrep?.draft.skips ?? [] : draft?.skips ?? []);
   const sectionNames = $derived(draft ? draft.plan.map((p) => p.name).join(' · ') : '');
@@ -116,7 +90,7 @@
 <div class="auto-backdrop" class:docked={phase === 'done'} onclick={() => { if (phase !== 'done') onclose(); }} data-auto-show-dialog>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div class="auto-modal" onclick={(e) => e.stopPropagation()} data-auto-phase={phase}>
+  <div class="auto-modal" onclick={(e) => e.stopPropagation()} data-auto-phase={phase} data-auto-state={st.kind}>
     <div class="auto-head">
       <span class="auto-mark"><TimelineIcon name="sparkle" size={18} /></span>
       <span class="auto-titles">
@@ -131,10 +105,17 @@
         <span class="auto-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
         <span>Listening to the song: its tempo, its parts and how hard it hits.</span>
       </div>
-    {:else if phase === 'error'}
-      <p class="auto-error">{error}</p>
-      <div class="auto-btns"><button class="auto-ok" onclick={onclose}>OK</button></div>
-    {:else if prep && draft}
+    {:else if st.kind === 'error'}
+      <p class="auto-error" data-auto-error>{st.message}</p>
+      <div class="auto-btns">
+        {#if st.canRetry}
+          <button class="auto-cancel" onclick={onclose}>Close</button>
+          <button class="auto-ok" onclick={() => flow.retry()} data-auto-retry>Try again</button>
+        {:else}
+          <button class="auto-ok" onclick={onclose}>OK</button>
+        {/if}
+      </div>
+    {:else if shownState && draft}
       <div class="auto-heard" data-auto-heard>
         <span class="auto-fact" title="The tempo it heard"><TimelineIcon name="tempo" size={13} />{draft.heard.bpm} BPM</span>
         <span class="auto-fact" title="The style it heard"><TimelineIcon name="sparkle" size={13} />{draft.heard.style}</span>
@@ -143,6 +124,9 @@
       </div>
 
       {#if phase === 'confirm'}
+        {#if shownState.note}
+          <p class="auto-note" data-auto-note>{shownState.note}</p>
+        {/if}
         {#if earlierShow}
           <p class="auto-note" data-auto-earlier>This Timeline already has an Auto show under the song, so this one only fills what is still empty. For a different show, undo the earlier one first ({MOD} + Z), or keep it and use Shuffle after building.</p>
         {/if}
@@ -150,7 +134,7 @@
           <span class="auto-choice-label">Style</span>
           <span class="auto-seg">
             {#each STYLES as s (s.id)}
-              <button class:on={prep.style === s.id} class:heard={heardStyle === s.id} title={heardStyle === s.id ? `${s.hint} (what it heard)` : s.hint} disabled={busy || content === 'looks'} onclick={() => setStyle(s.id)} data-auto-style={s.id}>{s.label}</button>
+              <button class:on={shownState.prep.style === s.id} class:heard={heardStyle === s.id} title={heardStyle === s.id ? `${s.hint} (what it heard)` : s.hint} disabled={busy || content === 'looks'} onclick={() => flow.setStyle(s.id)} data-auto-style={s.id}>{s.label}</button>
             {/each}
           </span>
         </div>
@@ -158,13 +142,13 @@
           <span class="auto-choice-label">Content</span>
           <span class="auto-seg">
             {#each CONTENTS as c (c.id)}
-              <button class:on={content === c.id} title={c.hint} disabled={busy || ((c.id === 'library' || c.id === 'both') && prep.libraryVideos === 0)} onclick={() => setContent(c.id)} data-auto-source={c.id}>{c.label}</button>
+              <button class:on={content === c.id} title={c.hint} disabled={busy || ((c.id === 'library' || c.id === 'both') && shownState.prep.libraryVideos === 0)} onclick={() => flow.setContent(c.id)} data-auto-source={c.id}>{c.label}</button>
             {/each}
           </span>
         </div>
         <p class="auto-sub">What it adds, only where the Timeline is empty. One undo takes it all back.</p>
       {:else}
-        <p class="auto-sub">Built in {(builtMs / 1000).toFixed(1)} s and playing from the top. {MOD} + Z takes it all back; click anything on the Timeline to change it.</p>
+        <p class="auto-sub">Built in {((st.kind === 'done' || st.kind === 'shuffling' ? st.builtMs : 0) / 1000).toFixed(1)} s and playing from the top. {MOD} + Z takes it all back; click anything on the Timeline to change it.</p>
       {/if}
       <ul class="auto-adds" data-auto-adds>
         {#each adds as a, i (i)}<li><span class="auto-tick">✓</span><span>{a}</span></li>{/each}
@@ -178,9 +162,9 @@
       <div class="auto-btns">
         {#if phase === 'confirm'}
           <button class="auto-cancel" onclick={onclose}>Cancel</button>
-          <button class="auto-ok" onclick={build} disabled={busy || !adds.length} data-auto-build><TimelineIcon name="sparkle" size={14} />Build the show</button>
+          <button class="auto-ok" onclick={() => flow.build()} disabled={busy || !adds.length} data-auto-build><TimelineIcon name="sparkle" size={14} />Build the show</button>
         {:else}
-          <button class="auto-cancel" onclick={shuffle} disabled={busy} title="Another show by the same rules (blocks you changed are kept)" data-auto-shuffle>Shuffle</button>
+          <button class="auto-cancel" onclick={() => flow.shuffle()} disabled={busy} title="Another show by the same rules (blocks you changed are kept)" data-auto-shuffle>Shuffle</button>
           <button class="auto-ok" onclick={onclose} data-auto-done>Done</button>
         {/if}
       </div>

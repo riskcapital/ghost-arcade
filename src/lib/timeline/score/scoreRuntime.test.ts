@@ -24,7 +24,7 @@ vi.mock('../lines/songFeatures', async (orig) => ({
 }));
 
 const { showTimeline, setShowCompositionLoader } = await import('../../stores/showTimeline');
-const { commitScore, prepareScore, shuffleScore, hasLastScore } = await import('./scoreRuntime');
+const { commitScore, prepareScore, shuffleScore, hasLastScore, laidOnTimeline, _scoreDraftCount, MAX_SCORE_DRAFTS } = await import('./scoreRuntime');
 const { createTempoMap } = await import('../../show/tempoMap');
 
 function song() {
@@ -95,5 +95,58 @@ describe('Shuffle', () => {
     expect(hasLastScore()).toBe(true);
     song();
     expect(hasLastScore()).toBe(false);
+  });
+
+  it('after the whole draft was undone it refuses instead of laying a new one', async () => {
+    const before = showTimeline.exportArrangement();
+    const r = await prepareScore();
+    commitScore((r as { prep: Parameters<typeof commitScore>[0] }).prep);
+    showTimeline.restoreArrangement(before);
+    const out = await shuffleScore();
+    expect(out).toMatchObject({ ok: false, undone: true });
+    expect(get(showTimeline).sections).toEqual([]);
+    expect(get(showTimeline).lookClips).toEqual([]);
+  });
+
+  it('remembers the last 8 drafts only', async () => {
+    const r = await prepareScore();
+    commitScore((r as { prep: Parameters<typeof commitScore>[0] }).prep);
+    for (let i = 0; i < 11; i++) expect((await shuffleScore()).ok).toBe(true);
+    expect(MAX_SCORE_DRAFTS).toBe(8);
+    expect(_scoreDraftCount()).toBe(8);
+  });
+});
+
+describe('laying a Score draft down', () => {
+  it('refuses a draft the Timeline changed under, and the same draft twice', async () => {
+    const r = await prepareScore();
+    const prep = (r as { prep: Parameters<typeof commitScore>[0] }).prep;
+    showTimeline.replaceTimelineParts({ sections: [{ id: 'mine', name: 'Mine', start: 0, end: 4 } as never] });
+    expect(commitScore(prep)).toMatchObject({ ok: false, why: 'changed' });
+    expect(get(showTimeline).lookClips).toEqual([]);
+    const fresh = (await prepareScore()) as { prep: Parameters<typeof commitScore>[0] };
+    expect(commitScore(fresh.prep)).toEqual({ ok: true });
+    expect(commitScore(fresh.prep)).toMatchObject({ ok: false, why: 'changed' });
+  });
+
+  it('a stopped read returns stopped', async () => {
+    let open!: () => void;
+    gate = new Promise((res) => { open = res; });
+    const ac = new AbortController();
+    const pending = prepareScore({ signal: ac.signal });
+    ac.abort();
+    open();
+    expect(await pending).toMatchObject({ ok: false, cancelled: true });
+  });
+});
+
+describe('laidOnTimeline', () => {
+  it('finds any laid item by id (blocks in rows too), and nothing laid but a tempo counts as there', () => {
+    const tl = { sections: [{ id: 's1' }], lookClips: [], lines: [], ledClips: [], stageClips: [], layerTracks: [{ clips: [{ id: 'c1' }] }] };
+    expect(laidOnTimeline(tl, [{ sections: [{ id: 's1' }] }])).toBe(true);
+    expect(laidOnTimeline(tl, [{ layerTracks: [{ clips: [{ id: 'c1' }] }] }])).toBe(true);
+    expect(laidOnTimeline(tl, [{ sections: [{ id: 'gone' }], lines: [{ id: 'gone2' }] }])).toBe(false);
+    expect(laidOnTimeline(tl, [{ sections: [] }])).toBe(true);
+    expect(laidOnTimeline(tl, [])).toBe(true);
   });
 });

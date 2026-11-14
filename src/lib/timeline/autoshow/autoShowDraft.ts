@@ -612,9 +612,10 @@ function canonicalJson(value: unknown): string {
 /** The document without what the drafts laid down and nobody touched since. */
 export function stripDrafts(
   s: Pick<AutoShowExisting, 'sections' | 'lookClips' | 'lines' | 'ledClips' | 'layerTracks' | 'whereOrders'> & { stageClips: readonly TimelineStageClip[] },
-  laid: readonly AutoShowDraft[],
+  laid: ReadonlyArray<Pick<AutoShowDraft, 'sections' | 'lookClips' | 'lines' | 'ledClips' | 'stageClips' | 'layerTracks'>>,
 ) {
-  const same = <T extends { id: string }>(list: readonly T[], pick: (d: AutoShowDraft) => readonly T[]) => {
+  type Laid = (typeof laid)[number];
+  const same = <T extends { id: string }>(list: readonly T[], pick: (d: Laid) => readonly T[]) => {
     const byId = new Map<string, Set<string>>();
     for (const d of laid) for (const x of pick(d)) {
       const seen = byId.get(x.id) ?? new Set<string>();

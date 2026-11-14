@@ -18,15 +18,9 @@ import { detectSongStructure, type SongStructure } from './songStructure';
 import { draftIsEmpty, draftScore, hashString, type ScoreDraft, type ScoreStage } from './scoreDraft';
 import { ledSpotId } from '../where/spatialOrder';
 import { generateUUID } from '../../utils/uuid';
+import { canonicalJson, draftInputsNow, draftStaleness, scoreSongTrack, songInputKey, type DraftInputs, type DraftStaleness } from './draftInputs';
 
-/** The song to score: the first block on the Song row (the first sound row), else the longest audio block. */
-export function scoreSongTrack(tracks: readonly ShowAudioTrack[]): ShowAudioTrack | null {
-  const usable = tracks.filter((t) => t.url && t.duration > 0);
-  if (!usable.length) return null;
-  const songRow = usable.filter((t) => t.lane === 0).sort((a, b) => b.duration - a.duration);
-  if (songRow.length) return songRow[0];
-  return usable.reduce((a, b) => (b.duration > a.duration ? b : a));
-}
+export { scoreSongTrack };
 
 export interface ScorePrep {
   track: ShowAudioTrack;
@@ -36,9 +30,47 @@ export interface ScorePrep {
   structure: SongStructure;
   draft: ScoreDraft;
   seed: number;
+  /** What the draft was worked out from (it is laid down only onto the same). */
+  inputs: DraftInputs;
 }
 
-export type ScorePrepResult = { ok: true; prep: ScorePrep } | { ok: false; reason: string };
+export type ScorePrepResult =
+  | { ok: true; prep: ScorePrep }
+  /** `cancelled`: the signal stopped it. `undone`: Shuffle found none of the draft on the Timeline. */
+  | { ok: false; reason: string; cancelled?: boolean; undone?: boolean };
+
+/** Laying a draft down: done, or refused and why. */
+export type DraftCommitResult = { ok: true } | { ok: false; why: Exclude<DraftStaleness, null> | 'empty'; reason: string };
+
+const CANCELLED = { ok: false, reason: 'Stopped.', cancelled: true } as const;
+
+/** What to tell the user when a draft can no longer be laid down. */
+export function staleMessage(why: Exclude<DraftStaleness, null>): string {
+  if (why === 'doc') return 'Open the Timeline first.';
+  if (why === 'song') return 'The song changed since it was read. Read it again.';
+  return 'The pieces or the Timeline changed since this was worked out, so it was worked out again. Check it, then build.';
+}
+
+type LaidParts = { sections?: readonly { id: string }[]; lookClips?: readonly { id: string }[]; lines?: readonly { id: string }[]; ledClips?: readonly { id: string }[]; stageClips?: readonly { id: string }[]; layerTracks?: ReadonlyArray<{ clips: readonly { id: string }[] }> };
+
+/**
+ * Some of what these drafts laid down is on the Timeline (edited or not).
+ * False after an undo took it all back; true when they laid nothing but a
+ * tempo (there is nothing to tell).
+ */
+export function laidOnTimeline(s: LaidParts, laid: readonly LaidParts[]): boolean {
+  const have = new Set<string>();
+  const add = (list?: readonly { id: string }[]) => { for (const x of list ?? []) have.add(x.id); };
+  add(s.sections); add(s.lookClips); add(s.lines); add(s.ledClips); add(s.stageClips);
+  for (const t of s.layerTracks ?? []) add(t.clips);
+  let any = false;
+  const hit = (list?: readonly { id: string }[]) => (list ?? []).some((x) => { any = true; return have.has(x.id); });
+  for (const d of laid) {
+    if (hit(d.sections) || hit(d.lookClips) || hit(d.lines) || hit(d.ledClips) || hit(d.stageClips)) return true;
+    for (const t of d.layerTracks ?? []) if (hit(t.clips)) return true;
+  }
+  return !any;
+}
 
 function stageNow(): ScoreStage {
   const s = get(showTimeline);
@@ -56,23 +88,22 @@ function stageNow(): ScoreStage {
 
 let shuffleCount = 0;
 let lastDraft: { draft: ScoreDraft; songKey: string } | null = null;
-/** Every draft laid down since the last Score of a new document: an undo
- *  can bring an earlier one back, and Shuffle takes that out too. */
+/** The last drafts laid down since the last Score of a new document: an
+ *  undo can bring an earlier one back, and Shuffle takes that out too. */
 let drafts: ScoreDraft[] = [];
-const MAX_DRAFTS = 32;
-
-/** JSON with every object's keys sorted. */
-function canonicalJson(value: unknown): string {
-  return JSON.stringify(value, (_key, v: unknown) => {
-    if (!v || typeof v !== 'object' || Array.isArray(v)) return v;
-    const o = v as Record<string, unknown>;
-    return Object.fromEntries(Object.keys(o).sort().map((k) => [k, o[k]]));
-  });
-}
+export const MAX_SCORE_DRAFTS = 8;
+/** Drafts already laid down: laying one again would put it on top of itself. */
+const laidDrafts = new WeakSet<ScoreDraft>();
 
 function remember(draft: ScoreDraft): void {
+  laidDrafts.add(draft);
   drafts.push(draft);
-  if (drafts.length > MAX_DRAFTS) drafts = drafts.slice(-MAX_DRAFTS);
+  if (drafts.length > MAX_SCORE_DRAFTS) drafts = drafts.slice(-MAX_SCORE_DRAFTS);
+}
+
+/** Test seam: how many laid drafts Shuffle remembers. */
+export function _scoreDraftCount(): number {
+  return drafts.length;
 }
 
 // A new or reopened document: Shuffle starts over.
@@ -83,7 +114,8 @@ function songKey(track: ShowAudioTrack): string {
 }
 
 /** Work out the draft (nothing is changed yet). */
-export async function prepareScore(opts: { shuffle?: number } = {}): Promise<ScorePrepResult> {
+export async function prepareScore(opts: { shuffle?: number; signal?: AbortSignal } = {}): Promise<ScorePrepResult> {
+  const { signal } = opts;
   const s = get(showTimeline);
   if (s.doc !== 'timeline') return { ok: false, reason: 'Open the Timeline first.' };
   const track = scoreSongTrack(s.audioTracks);
@@ -92,30 +124,40 @@ export async function prepareScore(opts: { shuffle?: number } = {}): Promise<Sco
   let tempoDetected = false;
   if (!tempo) {
     const detected = await detectShowTempo(track.id, { apply: false });
+    if (signal?.aborted) return CANCELLED;
     if (!detected.ok) return { ok: false, reason: detected.reason === 'no-pulse' ? 'No steady beat found in the song: set the tempo first (Tempo in the transport).' : 'The song could not be read.' };
     tempo = detected.map;
     tempoDetected = true;
   }
   const features: SongFeatures | null = await songFeaturesFor(track.url, async () => cachedShowAudioDecode(track.url) ?? (await decodeShowAudio(track.url)));
+  if (signal?.aborted) return CANCELLED;
   if (!features) return { ok: false, reason: 'The song could not be read.' };
   const place = { origin: track.startTime - track.offset, start: track.startTime, end: track.startTime + track.duration };
   const structure = detectSongStructure(features, tempo, place);
   if (!structure.sections.length) return { ok: false, reason: 'The song is too short to score (it needs a few bars).' };
   const seed = (hashString(songKey(track)) + (opts.shuffle ?? 0) * 7919) >>> 0;
   const cur = get(showTimeline);
+  if (cur.doc !== 'timeline') return { ok: false, reason: 'Open the Timeline first.' };
+  if (songInputKey(scoreSongTrack(cur.audioTracks)) !== songInputKey(track)) return { ok: false, reason: 'The song changed while it was being read. Try again.' };
+  const inputs = draftInputsNow();
   const draft = draftScore(structure, tempo, stageNow(), {
     sections: cur.sections, lookClips: cur.lookClips, lines: cur.lines, ledClips: cur.ledClips, stageClips: cur.stageClips,
   }, seed, { next: (prefix) => `${prefix}-${generateUUID()}` });
   if (tempoDetected) draft.adds.unshift(`Tempo ${Math.round(tempo.segments[0].bpm * 10) / 10} BPM, from the song`);
-  return { ok: true, prep: { track, tempo, tempoDetected, structure, draft, seed } };
+  return { ok: true, prep: { track, tempo, tempoDetected, structure, draft, seed, inputs } };
 }
 
-/** Lay the draft down: one undo step. */
-export function commitScore(prep: ScorePrep): boolean {
-  const s = get(showTimeline);
-  if (s.doc !== 'timeline') return false;
+/**
+ * Lay the draft down: one undo step. Refused when the Timeline, the pieces
+ * or the song changed since the draft was worked out (`why` says which).
+ */
+export function commitScore(prep: ScorePrep): DraftCommitResult {
   const d = prep.draft;
-  if (draftIsEmpty(d) && !prep.tempoDetected) return false;
+  const now = draftInputsNow();
+  const stale = laidDrafts.has(d) ? (now.doc !== 'timeline' ? 'doc' : 'changed') : draftStaleness(prep.inputs, now);
+  if (stale) return { ok: false, why: stale, reason: staleMessage(stale) };
+  if (draftIsEmpty(d) && !prep.tempoDetected) return { ok: false, why: 'empty', reason: 'Nothing to add: the Timeline already has all of it.' };
+  const s = get(showTimeline);
   showTimeline.replaceTimelineParts({
     ...(prep.tempoDetected ? { tempo: prep.tempo } : {}),
     ...(d.sections.length ? { sections: [...s.sections, ...d.sections] } : {}),
@@ -126,26 +168,30 @@ export function commitScore(prep: ScorePrep): boolean {
   });
   lastDraft = { draft: d, songKey: songKey(prep.track) };
   remember(d);
-  return true;
+  return { ok: true };
 }
 
 /**
  * Another draft in place of the last one (a new seed). The last draft's
  * items that were not edited since come out; one undo step.
  */
-export async function shuffleScore(): Promise<ScorePrepResult> {
+export async function shuffleScore(opts: { signal?: AbortSignal } = {}): Promise<ScorePrepResult> {
   if (!lastDraft) return { ok: false, reason: 'Score the song first.' };
   if (get(showTimeline).doc !== 'timeline') return { ok: false, reason: 'Open the Timeline first.' };
-  shuffleCount++;
   const first = get(showTimeline);
   const track = scoreSongTrack(first.audioTracks);
   if (!track || !first.tempo) return { ok: false, reason: 'Score the song first.' };
   const features = await songFeaturesFor(track.url, async () => cachedShowAudioDecode(track.url) ?? (await decodeShowAudio(track.url)));
+  if (opts.signal?.aborted) return CANCELLED;
   if (!features) return { ok: false, reason: 'The song could not be read.' };
   // Read the document after the song's analysis: edits (or an undo, or the
   // other tab) made meanwhile are what the new draft goes into.
   const s = get(showTimeline);
   if (s.doc !== 'timeline' || !s.tempo) return { ok: false, reason: 'Open the Timeline first.' };
+  if (!lastDraft) return { ok: false, reason: 'Score the song first.' };
+  // Undone: nothing to replace, and a new draft on its own would be a Score the user did not ask for.
+  if (!laidOnTimeline(s, drafts)) return { ok: false, undone: true, reason: 'The show was undone, so Shuffle had nothing to replace.' };
+  shuffleCount++;
   // Compared without key order: a restore (undo) or a reopened file writes
   // the same item with its keys in another order.
   const same = <T extends { id: string }>(list: readonly T[], pick: (d: ScoreDraft) => readonly T[]) => {
@@ -179,7 +225,7 @@ export async function shuffleScore(): Promise<ScorePrepResult> {
   });
   lastDraft = { draft, songKey: songKey(track) };
   remember(draft);
-  return { ok: true, prep: { track, tempo: s.tempo, tempoDetected: false, structure, draft, seed } };
+  return { ok: true, prep: { track, tempo: s.tempo, tempoDetected: false, structure, draft, seed, inputs: draftInputsNow() } };
 }
 
 /** A new song or document: Shuffle starts over. */

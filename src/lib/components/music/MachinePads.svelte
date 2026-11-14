@@ -94,6 +94,7 @@
   function onKitMenu(value: string) {
     if (value === 'save') {
       kitName = isMine ? kit.name : `My ${kit.name}`;
+      nameProblem = '';
       naming = 'save';
     } else if (value === 'rename') {
       kitName = kit.name;
@@ -101,9 +102,13 @@
     } else if (value === 'delete') deleteKit(kit.id);
     else if (value === 'reset') editBeat((b) => ({ ...b, padSounds: b.padSounds.map(() => null) }));
   }
+  let nameProblem = $state('');
   function commitName() {
-    if (naming === 'save') saveKitAs(kitName);
-    else if (naming === 'rename') renameKit(kit.id, kitName);
+    if (naming === 'save') {
+      const r = saveKitAs(kitName);
+      nameProblem = r.ok ? '' : r.reason;
+      if (!r.ok) return;
+    } else if (naming === 'rename') renameKit(kit.id, kitName);
     naming = null;
   }
 
@@ -178,6 +183,7 @@
         <button class="studio-btn" type="submit">{naming === 'save' ? 'Save' : 'Rename'}</button>
         <button class="studio-btn" type="button" onclick={() => (naming = null)}>Cancel</button>
       </form>
+      {#if nameProblem}<p class="blurb" role="alert">{nameProblem}</p>{/if}
     {:else}
       <p class="blurb">{kit.blurb}</p>
     {/if}

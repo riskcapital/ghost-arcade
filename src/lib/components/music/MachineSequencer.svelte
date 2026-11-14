@@ -164,14 +164,17 @@
   const factory = factoryBeats();
   let saving = $state(false);
   let saveName = $state('');
+  let saveProblem = $state('');
   function commitSave() {
-    saveBeatAs(saveName);
-    saving = false;
+    const r = saveBeatAs(saveName);
+    saveProblem = r.ok ? '' : r.reason;
+    if (r.ok) saving = false;
   }
   function onBeatMenu(value: string) {
     if (value === 'new') newBeat();
     else if (value === 'save') {
       saveName = beat.name;
+      saveProblem = '';
       saving = true;
     } else if (value.startsWith('f:')) loadBeat(factory[Number(value.slice(2))]);
     else if (value.startsWith('s:')) {
@@ -276,6 +279,7 @@
         <input class="name-in" bind:value={saveName} autofocus aria-label="Beat name" onkeydown={(e) => { if (e.key === 'Escape') saving = false; }} />
         <button class="studio-btn" type="submit">Save</button>
         <button class="studio-btn" type="button" onclick={() => (saving = false)}>Cancel</button>
+        {#if saveProblem}<span class="save-problem" role="alert">{saveProblem}</span>{/if}
       </form>
     {/if}
     <select class="beats" value="" onchange={(e) => { const el = e.target as HTMLSelectElement; onBeatMenu(el.value); el.value = ''; }} aria-label="Beats" title="Load a beat, start a new one or save this one">
@@ -487,6 +491,7 @@
 
   .grid-wrap { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
   .part-bar { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; min-width: 0; }
+  .save-problem { font-size: 11px; color: var(--studio-ink); max-width: 260px; }
   .name-in { width: 92px; height: 22px; border: 1px solid var(--studio-edge); background: var(--studio-slot); color: var(--studio-ink); border-radius: var(--studio-radius); padding: 0 6px; font: inherit; font-size: 11px; }
   .spacer { flex: 1; }
   .hint { font-size: 10px; color: var(--studio-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }

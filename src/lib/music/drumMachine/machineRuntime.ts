@@ -339,6 +339,54 @@ export function padLevel(name: string): number {
 
 const STORAGE_KEY = 'ghostarcade-drum-beats';
 
+/** Beats and kits kept on this computer. At the limit a new name is refused
+ *  (with a message) until one is deleted; saving over a name still works.
+ *  Nothing already saved is ever dropped. */
+export const MAX_SAVED_BEATS = 100;
+export const MAX_SAVED_KITS = 50;
+
+/** Saving a beat or a kit: done, or refused and why. */
+export type SaveResult = { ok: true; id: string } | { ok: false; reason: string };
+
+/** This computer's storage, or null where it is blocked (reading it can throw). */
+function localStore(): Storage | null {
+  try {
+    return typeof localStorage === 'undefined' ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function readList(key: string): unknown[] {
+  try {
+    const raw = JSON.parse(localStore()?.getItem(key) ?? '[]');
+    return Array.isArray(raw) ? raw : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeList(key: string, list: unknown[]): void {
+  try {
+    localStore()?.setItem(key, JSON.stringify(list));
+  } catch { /* storage full or blocked: the list lasts the session */ }
+}
+
+function fullMessage(max: number, what: string): string {
+  return `You have ${max} saved ${what}s, the most this computer keeps: delete one to save another.`;
+}
+
+/**
+ * The list with `item` saved: over the entry `same` finds, else added at the
+ * end while there is room. Refused (the list unchanged) at `max`.
+ */
+export function withSaved<T extends { id: string }>(list: readonly T[], item: T, same: (x: T) => boolean, max: number, what: string): { list: T[]; result: SaveResult } {
+  const existing = list.find(same);
+  if (existing) return { list: list.map((x) => (x === existing ? item : x)), result: { ok: true, id: item.id } };
+  if (list.length >= max) return { list: [...list], result: { ok: false, reason: fullMessage(max, what) } };
+  return { list: [...list, item], result: { ok: true, id: item.id } };
+}
+
 export interface SavedBeat {
   id: string;
   name: string;
@@ -349,35 +397,33 @@ export interface SavedBeat {
 
 function loadSaved(): SavedBeat[] {
   try {
-    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]');
-    return Array.isArray(raw)
-      ? raw.filter((x) => x && typeof x.id === 'string' && typeof x.name === 'string').map((x) => ({ id: x.id, name: x.name, beat: normalizeBeat(x.beat, 'mk.boom-box'), padFx: Array.isArray(x.padFx) ? x.padFx.map((f: unknown) => normalizeMacroFx({ x: f }).x ?? []) : undefined }))
-      : [];
+    return (readList(STORAGE_KEY) as Array<{ id?: unknown; name?: unknown; beat?: unknown; padFx?: unknown }>)
+      .filter((x) => x && typeof x.id === 'string' && typeof x.name === 'string')
+      .map((x) => ({ id: x.id as string, name: x.name as string, beat: normalizeBeat(x.beat, 'mk.boom-box'), padFx: Array.isArray(x.padFx) ? x.padFx.map((f: unknown) => normalizeMacroFx({ x: f }).x ?? []) : undefined }));
   } catch {
     return [];
   }
 }
 
 /** Beats saved on this computer, offered in every project. */
-export const savedBeats = writable<SavedBeat[]>(typeof localStorage === 'undefined' ? [] : loadSaved());
+export const savedBeats = writable<SavedBeat[]>(loadSaved());
 
-savedBeats.subscribe((list) => {
-  try {
-    if (typeof localStorage !== 'undefined') localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
-  } catch { /* storage full or blocked: the beats last the session */ }
-});
+savedBeats.subscribe((list) => writeList(STORAGE_KEY, list));
 
-export function saveBeatAs(name: string): void {
+/** Save the beat under a name (over a beat of that name). Refused when the list is full. */
+export function saveBeatAs(name: string): SaveResult {
   const trimmed = name.trim().slice(0, 60) || 'Beat';
+  const list = get(savedBeats);
+  const existing = list.find((x) => x.name === trimmed);
+  if (!existing && list.length >= MAX_SAVED_BEATS) return { ok: false, reason: fullMessage(MAX_SAVED_BEATS, 'beat') };
   const beat = { ...JSON.parse(JSON.stringify(currentBeat())), name: trimmed } as Beat;
   musicStudio.setMachine(beat);
   const inserts = get(musicStudio).inserts;
   const padFx = Array.from({ length: beat.padCount }, (_, i) => JSON.parse(JSON.stringify(inserts[padChannel(i)] ?? [])));
-  savedBeats.update((list) => {
-    const existing = list.find((x) => x.name === trimmed);
-    if (existing) return list.map((x) => (x === existing ? { ...x, beat, padFx } : x));
-    return [...list, { id: `beat-${Date.now().toString(36)}`, name: trimmed, beat, padFx }];
-  });
+  const item: SavedBeat = { id: existing?.id ?? `beat-${Date.now().toString(36)}`, name: trimmed, beat, padFx };
+  const next = withSaved(list, item, (x) => x.name === trimmed, MAX_SAVED_BEATS, 'beat');
+  savedBeats.set(next.list);
+  return next.result;
 }
 
 /** A beat saved on this computer, with its pads' effects. */
@@ -437,29 +483,26 @@ const KITS_KEY = 'ghostarcade-drum-kits';
 
 function loadKits(): UserKit[] {
   try {
-    const raw = JSON.parse(localStorage.getItem(KITS_KEY) ?? '[]');
-    return Array.isArray(raw) ? raw.map(normalizeUserKit).filter((k): k is UserKit => !!k) : [];
+    return readList(KITS_KEY).map(normalizeUserKit).filter((k): k is UserKit => !!k);
   } catch {
     return [];
   }
 }
 
 /** Kits saved on this computer, offered in every project. */
-export const savedKits = writable<UserKit[]>(typeof localStorage === 'undefined' ? [] : loadKits());
-savedKits.subscribe((list) => {
-  try {
-    if (typeof localStorage !== 'undefined') localStorage.setItem(KITS_KEY, JSON.stringify(list));
-  } catch { /* storage full or blocked: the kits last the session */ }
-});
+export const savedKits = writable<UserKit[]>(loadKits());
+savedKits.subscribe((list) => writeList(KITS_KEY, list));
 
-/** Save what the pads play now (sounds, tune, level, effects) as a kit of yours, and switch to it. */
-export function saveKitAs(name: string): string {
+/** Save what the pads play now (sounds, tune, level, effects) as a kit of yours, and switch to it. Refused when the list is full. */
+export function saveKitAs(name: string): SaveResult {
   const b = currentBeat();
   const kit = playingKit(b);
   const inserts = get(musicStudio).inserts;
   const trimmed = name.trim().slice(0, 40) || 'My kit';
   const existing = userKits(b).find((k) => k.name === trimmed);
   const id = existing?.id ?? `user.${Date.now().toString(36)}`;
+  const list = get(savedKits);
+  if (!list.some((k) => k.id === id) && list.length >= MAX_SAVED_KITS) return { ok: false, reason: fullMessage(MAX_SAVED_KITS, 'kit') };
   const saved: UserKit = {
     id,
     name: trimmed,
@@ -472,9 +515,9 @@ export function saveKitAs(name: string): string {
     padLevel: [...b.padLevel],
     padFx: Array.from({ length: b.padCount }, (_, i) => JSON.parse(JSON.stringify(inserts[padChannel(i)] ?? []))),
   };
-  savedKits.update((list) => (list.some((k) => k.id === id) ? list.map((k) => (k.id === id ? saved : k)) : [...list, saved]));
+  savedKits.set(withSaved(list, saved, (k) => k.id === id, MAX_SAVED_KITS, 'kit').list);
   musicStudio.setMachine({ ...b, kitId: id, padSounds: new Array(b.padCount).fill(null), kits: [...b.kits.filter((k) => k.id !== id), saved] });
-  return id;
+  return { ok: true, id };
 }
 
 export function renameKit(id: string, name: string): void {
