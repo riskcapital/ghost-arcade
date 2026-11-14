@@ -35,13 +35,15 @@ export type WorldPointer = { point: Point; velocity: Point; tool: WorldForceTool
 export type WorldThrow = { point: Point; velocity: Point; number: number; at: number };
 export type WorldInputState = { pointers: WorldPointer[]; throws: WorldThrow[] };
 
-type Held = { point: Point; at: number; velocity: Point; nextThrow: number };
+/** A held point. `press` tells presses of one finger apart: a mouse keeps its id. */
+type Held = { point: Point; at: number; velocity: Point; nextThrow: number; press: number };
 
 export class WorldInput {
   private held = new Map<string, Held>();
   private throws: WorldThrow[] = [];
   private count = 0;
-  /** Fires lit by Ignite, by touch id: they burn on after the finger lifts. */
+  private presses = 0;
+  /** Fires lit by Ignite, one per press: they burn on after the finger lifts. */
   private fires = new Map<string, { point: Point; until: number }>();
 
   /** One frame: the points touching the scene now, at `now` seconds. */
@@ -55,7 +57,7 @@ export class WorldInput {
       const point = { x: Math.max(0, Math.min(1, p.point.x)), y: Math.max(0, Math.min(1, p.point.y)) };
       let h = this.held.get(id);
       if (!h) {
-        h = { point, at: now, velocity: { x: 0, y: 0 }, nextThrow: now };
+        h = { point, at: now, velocity: { x: 0, y: 0 }, nextThrow: now, press: ++this.presses };
         this.held.set(id, h);
       } else {
         const dt = now - h.at;
@@ -79,9 +81,10 @@ export class WorldInput {
         continue;
       }
       if (p.mode === 'ignite') {
-        // A new press lights a new fire; the oldest goes out past MAX_FIRES.
-        if (!this.fires.has(id) && this.fires.size >= MAX_FIRES) this.fires.delete(this.fires.keys().next().value!);
-        this.fires.set(id, { point, until: now + IGNITE_HOLD });
+        // Each press lights its own fire; the oldest goes out past MAX_FIRES.
+        const key = `${id}#${h.press}`;
+        if (!this.fires.has(key) && this.fires.size >= MAX_FIRES) this.fires.delete(this.fires.keys().next().value!);
+        this.fires.set(key, { point, until: now + IGNITE_HOLD });
         continue;
       }
       const tool: WorldForceTool = p.mode === 'push' || p.mode === 'repel' || p.mode === 'vortex' || p.mode === 'pour' ? p.mode : 'attract';

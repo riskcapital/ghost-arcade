@@ -61,4 +61,12 @@ describe('touches on the 3D world', () => {
     for (let i = 0; i < MAX_FIRES + 2; i++) input.update([at(i / 10, 0.5, 'ignite', `f${i}`)], 10 + i * 0.1);
     expect(input.update([], 10.6).pointers.map((p) => p.point.x)).toEqual([0.2, 0.3, 0.4, 0.5]);
   });
+
+  it('lights a new fire for each press of the same mouse', () => {
+    const input = new WorldInput();
+    input.update([at(0.2, 0.2, 'ignite')], 0);
+    input.update([], 0.1);
+    input.update([at(0.6, 0.6, 'ignite')], 0.2);
+    expect(input.update([], 0.3).pointers.map((p) => p.point.x)).toEqual([0.2, 0.6]);
+  });
 });
