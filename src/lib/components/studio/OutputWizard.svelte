@@ -72,13 +72,13 @@
   <h2>Connect a projector</h2>
   <p>Plug in a cable or choose an AirPlay display. The picture goes up as soon as it connects.</p>
   {#if status.platform==='android'}
-   <button class="primary" onclick={onwireless}><Icon name="output" size={18}/>Choose a wireless display</button>
+   <button class="primary ga-act" onclick={onwireless}><Icon name="airplay" size={18}/>Choose a wireless display</button>
   {:else if picker}
-   <button class="primary" bind:this={pickButton} disabled={picking} onclick={choose} data-pick-airplay><Icon name="output" size={18}/>Choose an AirPlay display</button>
+   <button class="primary ga-act" bind:this={pickButton} disabled={picking} onclick={choose} data-pick-airplay><Icon name="airplay" size={18}/>Choose an AirPlay display</button>
   {:else}
    <p class="how">Open Control Center, tap Screen Mirroring and choose your Apple TV or projector.</p>
   {/if}
-  <div class="cable"><strong>Cable</strong><span>HDMI or USB-C adapter: plug it in, there is nothing to tap.</span></div>
+  <div class="cable"><Icon name="cable" size={20}/><span><strong>Or use a cable</strong>Plug in an HDMI or USB-C adapter. Nothing to tap.</span></div>
   <p class="waiting" role="status"><span class="pulse" aria-hidden="true"></span>Looking for a display…</p>
   {#if lost}<p class="note">The display disconnected. Reconnect it and the picture comes back by itself.</p>{/if}
   {#if pickNote==='sound'}<p class="note">{pickName || 'The AirPlay display'} is playing sound only. Open Control Center, tap Screen Mirroring and choose it there to send the picture.</p>
@@ -92,7 +92,7 @@
   {#if status.state==='connecting'}<p class="waiting" role="status"><span class="pulse" aria-hidden="true"></span>Starting the picture…</p>
   {:else if status.state==='error' && status.message}<p class="note" role="status">{status.message}</p>{/if}
   <div class="actions">
-   <button class="primary" onclick={confirm} data-pattern-yes><Icon name="check" size={18}/>Yes, I see it</button>
+   <button class="primary ga-act" onclick={confirm} data-pattern-yes><Icon name="check" size={18}/>Yes, I see it</button>
    <button onclick={()=>noPicture=!noPicture} aria-expanded={noPicture}>No picture</button>
   </div>
   {#if noPicture}
@@ -110,7 +110,7 @@
   <h2>You're projecting</h2>
   <p>The projector now shows your mix. Next, fit a surface to the wall.</p>
   <div class="actions stack">
-   <button class="primary" onclick={onmap}><Icon name="map" size={18}/>Map a surface</button>
+   <button class="primary ga-act" onclick={onmap}><Icon name="map" size={18}/>Map a surface</button>
    <button onclick={onpresent}>Present: dim this phone</button>
    <button onclick={ondone}>Done</button>
   </div>
@@ -123,20 +123,22 @@
  p{margin:0;color:var(--ga-ink-1);}
  .steps{display:flex;gap:6px;margin:0;padding:0;list-style:none;}
  .steps li{flex:1;padding:6px 0 0;border-top:3px solid var(--ga-line-2);font-size:12px;color:var(--ga-ink-2);}
- .steps li.passed{border-color:var(--ga-selection-line);color:var(--ga-ink-1);}
- .steps li.current{border-color:var(--ga-slider-fill,#5278ff);color:var(--ga-ink-0);font-weight:650;}
- button{display:flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:8px 12px;font:600 13px/1.2 system-ui,-apple-system,sans-serif;color:inherit;border:1px solid var(--ga-line-2);border-radius:6px;background:var(--ga-hardware-bg);touch-action:manipulation;}
- button.primary{min-height:48px;font-size:14px;border-color:var(--ga-selection-line);background:var(--ga-selection-bg);}
+ .steps li.passed{border-color:var(--ga-coral-600);color:var(--ga-ink-1);}
+ .steps li.current{border-color:var(--ga-coral-400);color:var(--ga-ink-0);font-weight:650;}
+ button{display:flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:8px 12px;font:600 13px/1.2 system-ui,-apple-system,sans-serif;color:inherit;border:1px solid var(--ga-line-2);border-radius:8px;background:var(--ga-hardware-bg);touch-action:manipulation;}
+ button.primary{min-height:50px;font-size:15px;}
  button:disabled{opacity:.6;}
  .actions{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:8px;}
  .actions.stack{grid-template-columns:1fr;}
- .cable{display:grid;gap:2px;padding:10px 12px;border:1px solid var(--ga-line-2);border-radius:6px;background:var(--ga-slot);}
- .cable span{color:var(--ga-ink-1);}
+ .cable{--ga-icon-tone:var(--ga-tone-output);display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--ga-section-head-line,var(--ga-line-2));border-bottom:1px solid var(--ga-section-head-line,var(--ga-line-2));}
+ .cable span{display:grid;gap:1px;color:var(--ga-ink-1);}
+ .cable strong{color:var(--ga-ink-0);}
  .waiting{display:flex;align-items:center;gap:10px;font-size:12px;}
- .pulse{width:10px;height:10px;border-radius:50%;background:var(--ga-slider-fill,#5278ff);animation:pulse 1.4s ease-in-out infinite;}
+ .pulse{width:10px;height:10px;border-radius:50%;background:var(--ga-tone-output,#f2b45a);animation:pulse 1.4s ease-in-out infinite;}
  @keyframes pulse{0%,100%{opacity:.25;transform:scale(.8)}50%{opacity:1;transform:scale(1)}}
  @media (prefers-reduced-motion:reduce){.pulse{animation:none;opacity:.7}}
- .note,.how{padding:10px 12px;border-radius:6px;background:var(--ga-slot);border:1px solid var(--ga-line-2);color:var(--ga-ink-0);font-size:13px;}
+ .note,.how{padding:0 0 0 10px;border-left:3px solid #ffc570;color:var(--ga-ink-0);font-size:13px;}
+ .how{border-left-color:var(--ga-tone-output,#f2b45a);}
  .display{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ga-ink-0);}
  .fixes{display:grid;gap:8px;margin:0;padding:0;list-style:none;}
  .fixes li{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--ga-line-2);}

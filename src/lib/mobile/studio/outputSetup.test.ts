@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { darkOutputReasons, displaySize, nextSetupStep, showNoDisplayBanner } from './outputSetup';
+import { darkOutputReasons, displaySize, nextSetupStep, noDisplayConnected } from './outputSetup';
 
-describe('no display banner', () => {
-  it('shows in the app while nothing is connected and clears as soon as a display connects', () => {
-    expect(showNoDisplayBanner({ native: true, connected: false })).toBe(true);
-    expect(showNoDisplayBanner({ native: true, connected: true })).toBe(false);
+describe('no display connected', () => {
+  it('is true in the app while nothing is connected and clears as soon as a display connects', () => {
+    expect(noDisplayConnected({ native: true, connected: false })).toBe(true);
+    expect(noDisplayConnected({ native: true, connected: true })).toBe(false);
   });
-  it('never shows in a browser, which cannot drive a display', () => {
-    expect(showNoDisplayBanner({ native: false, connected: false })).toBe(false);
+  it('is never true in a browser, which cannot drive a display', () => {
+    expect(noDisplayConnected({ native: false, connected: false })).toBe(false);
   });
 });
 

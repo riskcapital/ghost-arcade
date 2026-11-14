@@ -215,7 +215,7 @@ hold={id:e.pointerId,x:e.clientX,y:e.clientY,el:e.currentTarget as HTMLElement,r
  .clip-menu{position:fixed;inset:0;margin:auto;width:min(340px,calc(100% - 24px));max-height:80dvh;padding:0;border:1px solid var(--ga-line-3);border-radius:12px;background:var(--ga-inspector-bg);color:var(--ga-ink-0);box-shadow:0 16px 60px #000c;}
  .clip-menu::backdrop{background:#0009}.menu-content{display:grid;gap:8px;padding:18px}.menu-content strong{font-size:15px;overflow-wrap:anywhere}.menu-content span{font-size:11px;color:var(--ga-ink-2);margin-bottom:8px}.menu-content button{min-height:48px;font-size:14px}.menu-content .remove{color:#f3a6a6}.pad{-webkit-touch-callout:none;}
 
- .level-button{grid-column:1/-1;min-height:40px;background:linear-gradient(90deg,var(--ga-selection-bg) var(--level),var(--ga-slot) var(--level));font-size:11px}
+ .level-button{grid-column:1/-1;min-height:40px;background:linear-gradient(90deg,var(--ga-blue-700) var(--level),var(--ga-slot) var(--level));font-size:11px}
   button, select { color:var(--ga-ink-0); background:var(--ga-hardware-bg); border:1px solid var(--ga-line-2); border-radius:var(--ga-r-hard); font:inherit; }
   button {cursor:pointer;min-height:40px;box-shadow:var(--ga-hardware-shadow);touch-action:manipulation}
   button:disabled {opacity:.4} button:hover:not(:disabled){border-color:var(--ga-line-3)}

@@ -4,6 +4,8 @@
    * put the same picture on every surface, or spread one picture across the surfaces that show it.
    */
   import { placementControls, isWholePicture, type Placement, type PlacementControls } from '../../mobile/studio/placement';
+  import Icon from './StudioIcon.svelte';
+  import InfoTip from './ui/InfoTip.svelte';
 
   export let placement: Placement | undefined;
   /** How many surfaces show the same thing as this one (this one included). */
@@ -28,7 +30,7 @@
 </script>
 
 <div class="placement" role="group" aria-label="Picture on this surface" data-surface-placement>
-  <div class="heading"><span>PICTURE ON THIS SURFACE</span>{#if !isWholePicture(placement)}<button data-placement-reset {disabled} onclick={onreset}>Whole picture</button>{/if}</div>
+  <div class="heading"><span class="title"><Icon name="crop" size={16} />Picture on this surface</span><InfoTip label="About the picture on a surface" text="Zoom, move and turn the picture inside this surface; zooming in crops it. Same picture on all surfaces copies this one everywhere. Span stretches one picture across every surface that shows the same thing." /><span class="grow"></span>{#if !isWholePicture(placement)}<button data-placement-reset {disabled} onclick={onreset}>Whole picture</button>{/if}</div>
   {#each ROWS as row (row.key)}
     <label class="row">
       <span>{row.label}</span>
@@ -47,9 +49,10 @@
 </div>
 
 <style>
-  .placement { display: grid; gap: 4px; margin: 10px 0; padding: 10px 0 0; border-top: 1px solid var(--ga-line-2); }
-  .heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; }
-  .heading span { font-size: 12px; letter-spacing: .06em; color: var(--ga-ink-1); }
+  .placement { display: grid; gap: 4px; margin: 16px 0 10px; padding: 12px 0 0; border-top: 1px solid var(--ga-section-head-line, var(--ga-line-2)); }
+  .heading { display: flex; align-items: center; gap: 2px; min-height: 44px; }
+  .title { --ga-icon-tone: var(--ga-tone-map); display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 650; color: var(--ga-ink-0); }
+  .grow { flex: 1; }
   .heading button, .actions button {
     min-height: 44px; padding: 0 12px; font: inherit; font-size: 13px; color: var(--ga-ink-0);
     background: var(--ga-hardware-bg); border: 1px solid var(--ga-line-2); border-radius: 6px; touch-action: manipulation;
@@ -57,7 +60,7 @@
   button:disabled { opacity: .45; }
   button:focus-visible, input:focus-visible { outline: 2px solid var(--ga-focus); outline-offset: 2px; }
   .row { display: grid; grid-template-columns: minmax(0, 84px) minmax(96px, 1fr) 48px; align-items: center; gap: 8px; min-height: 44px; }
-  .row span { font-size: 13px; color: var(--ga-ink-1); }
+  .row > span { font-size: 13px; color: var(--ga-ink-1); }
   .row input { width: 100%; min-height: 44px; margin: 0; }
   .row output { font-size: 12px; text-align: right; color: var(--ga-ink-0); font-variant-numeric: tabular-nums; }
   .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 4px; }

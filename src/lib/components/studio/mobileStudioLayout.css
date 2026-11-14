@@ -251,12 +251,10 @@ nav.tabs.in-studio button.active {color:var(--ga-ink-0);background:var(--ga-sele
 /* Mapping on an iPhone held sideways: the picture with its corners gets most of the width. */
 .studio[data-layout='phone-landscape'][data-layout].mapping:not(.clean) .workspace {grid-template-columns:minmax(0,1.55fr) minmax(250px,1fr);}
 /* The mapping canvas keeps its handles inside the picture, so the picture takes the column's full
-   width, as in portrait, up to what fits under the heading (and the no-projector banner while it
-   shows; Hold and Blackout scroll below). Auto margins centre the column without cutting off its
-   top when it is taller than the screen. */
+   width, as in portrait, up to what fits under the heading (Hold and Blackout scroll below). Auto
+   margins centre the column without cutting off its top when it is taller than the screen. */
 .studio[data-layout='phone-landscape'][data-layout].mapping:not(.clean) .monitor {justify-content:flex-start;padding-left:8px;padding-right:8px;}
 .studio[data-layout='phone-landscape'][data-layout].mapping:not(.clean) .monitor > :first-child {margin-top:auto;}
 .studio[data-layout='phone-landscape'][data-layout].mapping:not(.clean) .monitor > :last-child {margin-bottom:auto;}
 .studio[data-layout='phone-landscape'][data-layout].mapping .monitor-tools {margin-top:8px;}
 .studio[data-layout='phone-landscape'][data-layout].mapping .preview-frame {max-width:min(100%,calc((100dvh - 164px) * 16 / 9 + 12px));margin:0 auto;}
-.studio[data-layout='phone-landscape'][data-layout].mapping .monitor:has(.output-banner) .preview-frame {max-width:min(100%,calc((100dvh - 216px) * 16 / 9 + 12px));}

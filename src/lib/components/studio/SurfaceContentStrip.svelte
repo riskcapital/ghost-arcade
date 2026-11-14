@@ -151,7 +151,7 @@
 </script>
 
 <section class="content-strip" aria-label="Surface content" data-surface-content>
-  <p class="how">{#if surfaces.length}Drag a picture onto a surface, or tap one to put it on <strong>{surfaceLabel}</strong>.{:else}Add a surface first.{/if}</p>
+  {#if !surfaces.length}<p class="how">Add a surface first.</p>{/if}
   <div class="strip" role="group" aria-label="Visuals to put on a surface" use:dragSource>
     {#each tiles as tile (tile.key)}
       <button class="tile" class:current={isCurrent(tile)} aria-pressed={isCurrent(tile)} disabled={!surfaces.length}
@@ -173,9 +173,8 @@
 {/if}
 
 <style>
-  .content-strip { margin: 0 0 12px; }
+  .content-strip { margin: 0; }
   .how { margin: 0 0 6px; font-size: 12px; line-height: 1.4; color: var(--ga-ink-1); }
-  .how strong { color: var(--ga-ink-0); font-weight: 600; }
   .strip {
     display: flex; gap: 6px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
     padding-bottom: 2px; touch-action: pan-x; -webkit-overflow-scrolling: touch;
@@ -187,7 +186,7 @@
     touch-action: pan-x; cursor: grab; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
   }
   .tile:disabled { opacity: .45; }
-  .tile.current { border-color: var(--ga-blue-300); box-shadow: inset 0 0 0 2px var(--ga-blue-400); }
+  .tile.current { border-color: var(--ga-on-line); box-shadow: inset 0 0 0 2px var(--ga-on-line); background: var(--ga-on-bg); color: var(--ga-on-ink); }
   .tile:focus-visible { outline: 2px solid var(--ga-focus); outline-offset: 2px; }
   .thumb { position: relative; display: grid; place-items: center; aspect-ratio: 16 / 9; overflow: hidden; background: var(--ga-slot); }
   .thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }

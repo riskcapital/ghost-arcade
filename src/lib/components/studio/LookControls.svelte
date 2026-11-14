@@ -4,6 +4,7 @@
   import { EDGE_STROKE_TYPES, EDGE_FILL_TYPES } from '../../mobile/studio/looks/edgeEffectCatalog';
   import { MOBILE_EDGE_STROKES, MOBILE_EDGE_FILLS } from '../../mobile/studio/looks/renderer';
   import type { LookConfig } from '../../mobile/studio/looks/types';
+  import Icon from './StudioIcon.svelte';
   export let value: LookConfig | undefined;
   export let onchange: (config: LookConfig | undefined) => void;
   export let onapplyall: (() => void) | undefined = undefined;
@@ -24,7 +25,7 @@
 
 <section class="looks-panel">
   <header>
-    <strong>EDGE EFFECTS & LOOKS</strong><button
+    <strong><Icon name="look" size={16} />Edge looks</strong><button
       class:active={value?.enabled}
       aria-label="Toggle edge look"
       disabled={!value}
@@ -106,12 +107,11 @@
 </section>
 
 <style>
+  /* A group inside the surface's box: a rule above it, no box of its own. */
   .looks-panel {
-    border: 1px solid var(--ga-line-2);
-    border-radius: var(--ga-r-soft);
-    padding: 14px;
-    margin: 14px 0;
-    background: var(--ga-card);
+    margin: 16px 0 10px;
+    padding: 12px 0 0;
+    border-top: 1px solid var(--ga-section-head-line, var(--ga-line-2));
   }
   header,
   footer {
@@ -121,9 +121,13 @@
     gap: 8px;
   }
   header strong {
-    font-size: 11px;
-    letter-spacing: 0.06em;
-    color: var(--ga-ink-1);
+    --ga-icon-tone: var(--ga-tone-map);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 650;
+    color: var(--ga-ink-0);
   }
   button,
   select {
