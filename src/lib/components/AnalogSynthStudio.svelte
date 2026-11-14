@@ -198,7 +198,12 @@
       if (get(nativePreviewHostEl) === el) nativePreviewHostEl.set(previousHost);
     };
   });
-  onDestroy(() => document.body.classList.remove('analog-synth-open'));
+  onDestroy(() => {
+    document.body.classList.remove('analog-synth-open');
+    // Closed mid-drag: the cable's window listeners go with it.
+    window.removeEventListener('pointermove', follow);
+    window.removeEventListener('pointerup', finish);
+  });
 
   // ── Fit: the rack is laid out at one size and scaled to the window, as a
   // hardware panel would be; spare room in one direction widens the monitor
@@ -313,6 +318,7 @@
   }
   function finish(e: PointerEvent) {
     window.removeEventListener('pointermove', follow);
+    window.removeEventListener('pointerup', finish);
     const d = drag;
     const snapped = snapTo;
     drag = null;
