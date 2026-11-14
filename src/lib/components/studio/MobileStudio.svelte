@@ -267,6 +267,7 @@
     upsertSet,
     removeSet,
     renameSet,
+    duplicateSet,
     writeSetBank,
     MAX_SAVED_SETS,
     referencedAssetIds,
@@ -297,6 +298,8 @@
   import TemplateGallery from './TemplateGallery.svelte';
   import StageBackdrop from './StageBackdrop.svelte';
   import SurfaceContentStrip from './SurfaceContentStrip.svelte';
+  import SurfacePlacement from './SurfacePlacement.svelte';
+  import { withControl, sameSourceSurfaces, spanPlacements, sameOnSurfaces } from '../../mobile/studio/placement';
   import { forgetSurfaceClip } from '../../mobile/studio/model';
   import { mappingDemoShow, applyTemplate, stageMatches } from '../../mobile/studio/templates';
   import { findTemplate } from '../../mobile/studio/stageScenes';
@@ -488,6 +491,17 @@
     setEdit = null;
     flash(`${name} deleted.`);
     void refreshStorage();
+  }
+  /** A copy of a saved set (or the open one) beside it in the list. The open set stays open. */
+  function duplicateSavedSet(id: string) {
+    flushSaves();
+    const source = id === show.id ? show : setBank.find((s) => s.id === id);
+    if (!source) return;
+    const result = duplicateSet(setBank, source);
+    if (result.full || !result.copy) { error = `This device holds ${MAX_SAVED_SETS} sets. Delete one you no longer need, then try again.`; return; }
+    setBank = result.bank;
+    writeBank();
+    flash(`${result.copy.name} saved on this device.`);
   }
   /** A new set needs a free place: nothing already saved is dropped to make one. */
   function roomForNewSet(replacingId?: string) {
@@ -1932,6 +1946,11 @@
                   oninput={(e) => patchSurface({ feather: Number(e.currentTarget.value) })}
                 /><output>{Math.round(surface.feather * 100)}%</output></label
               >
+              <SurfacePlacement placement={surface.placement} disabled={surface.locked} sharing={sameSourceSurfaces(show.surfaces, selectedSurface).length} surfaces={show.surfaces.filter(s => s.enabled).length}
+                onstart={checkpoint} onchange={(control, value) => patchSurface({ placement: withControl(surface.placement, control, value) })}
+                onreset={() => { checkpoint(); show.surfaces[selectedSurface] = { ...surface, placement: undefined }; persist(); }}
+                onsameall={() => { checkpoint(); show.surfaces = sameOnSurfaces(show, selectedSurface, show.surfaces.flatMap((s, i) => (s.enabled ? [i] : []))); persist(); flash('Every surface shows the same picture. Span spreads it across them.'); }}
+                onspan={() => { checkpoint(); show.surfaces = spanPlacements(show.surfaces, sameSourceSurfaces(show.surfaces, selectedSurface)); persist(); flash('One picture across the surfaces. Move a corner and span again to refit.'); }} />
               <LookControls value={surface.look} onchange={(look) => { checkpoint(); patchSurface({look}); }} onapplyall={() => {checkpoint(); show.surfaces = show.surfaces.map(s => ({...s,look:copy(surface.look)}));persist();}} />
               <div class="nudge">
                 <span>Point {selectedPoint + 1}<small>Tap to step, hold to repeat</small></span>
@@ -2135,6 +2154,7 @@
             {:else}
               <button class="set-open" disabled={current} aria-label={current ? `${name}, open now` : `Open ${name}`} onclick={() => openSavedSet(set.id)}><strong>{name}</strong><small>{current ? 'Open now' : 'Tap to open'}</small></button>
               <button data-set-rename aria-label={`Rename ${name}`} onclick={() => (setEdit = { id: set.id, mode: 'rename', name })}>Rename</button>
+              <button class="icon-button" data-set-duplicate aria-label={`Duplicate ${name}`} title="Duplicate set" onclick={() => duplicateSavedSet(set.id)}><Icon name="copy" size={16} /></button>
               <button class="icon-button" data-set-delete aria-label={`Delete ${name}`} disabled={current} title={current ? 'Open another set first' : 'Delete set'} onclick={() => (setEdit = { id: set.id, mode: 'delete', name })}><Icon name="trash" size={16} /></button>
             {/if}
           </div>

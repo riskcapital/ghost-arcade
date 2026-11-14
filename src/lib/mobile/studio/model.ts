@@ -7,6 +7,7 @@ import { EDGE_LOOKS } from './looks/edgeLookCatalog';
 import { MOBILE_EDGE_STROKES, MOBILE_EDGE_FILLS } from './looks/renderer';
 import { MOBILE_SHADERS } from '../standaloneShaderList';
 import { MOBILE_EFFECTS, type MobileEffectInstance } from '../standaloneEffects';
+import { normalizePlacement, type Placement } from './placement';
 export type Point = { x: number; y: number };
 export type EffectChain = (MobileEffectInstance & { id: string })[];
 export type LookParams = Record<string, number | boolean | number[]>;
@@ -49,6 +50,8 @@ export type Surface = {
    * that cannot play here shows the deck source instead.
    */
   clipId?: string;
+  /** Which part of the picture the surface shows, zoomed and turned (placement.ts). Absent: the whole picture. */
+  placement?: Placement;
   enabled: boolean;
   locked: boolean;
   fit: 'stretch' | 'contain' | 'fill';
@@ -305,6 +308,7 @@ function normalizeStored(raw: unknown): Show {
             : gridPoints(),
         // Kept only while the clip is still in the set and is a kind a surface can play.
         ...(typeof s.clipId === 'string' && clips.some((c) => c.id === s.clipId && SURFACE_CLIP_KINDS.includes(c.kind)) ? { clipId: s.clipId } : {}),
+        ...(s.placement ? { placement: normalizePlacement(s.placement) } : {}),
       })),
     activeBlockId: typeof r.activeBlockId==='string' && r.scenes?.some(s=>s.id===r.activeBlockId) ? r.activeBlockId : undefined,
     scenes: (Array.isArray(r.scenes) ? r.scenes : [])
@@ -415,6 +419,23 @@ export function upsertSet(bank: Show[], show: Show): { bank: Show[]; full: boole
   const others = bank.filter((s) => s.id !== show.id);
   if (others.length === bank.length && bank.length >= MAX_SAVED_SETS) return { bank, full: true };
   return { bank: [show, ...others], full: false };
+}
+/**
+ * A copy of `source` as a new saved set, named "… copy", placed right after the original. Media is
+ * shared by reference: imported files stay until no set uses them. Unchanged with `full` set when
+ * the device already holds the most sets it keeps.
+ */
+export function duplicateSet(bank: Show[], source: Show): { bank: Show[]; copy?: Show; full: boolean } {
+  if (bank.length >= MAX_SAVED_SETS) return { bank, full: true };
+  const taken = new Set(bank.map((s) => s.name));
+  const base = `${source.name.replace(/ copy( \d+)?$/, '')} copy`.slice(0, 94);
+  let name = base;
+  for (let n = 2; taken.has(name); n++) name = `${base} ${n}`;
+  const duplicate: Show = { ...copy(source), id: uid(), name };
+  const at = bank.findIndex((s) => s.id === source.id);
+  const next = [...bank];
+  next.splice(at < 0 ? next.length : at + 1, 0, duplicate);
+  return { bank: next, copy: duplicate, full: false };
 }
 export function removeSet(bank: Show[], id: string): Show[] {
   return bank.filter((s) => s.id !== id);

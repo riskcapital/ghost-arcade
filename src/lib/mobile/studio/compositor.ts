@@ -6,6 +6,8 @@ const VERT = `attribute vec2 position; attribute vec2 uv; varying vec2 texCoord;
 const FRAG = `precision highp float;
 varying vec2 texCoord; uniform sampler2D source; uniform sampler2D backdrop;
 uniform int mode; uniform float gain; uniform float feather; uniform vec2 fit; uniform bool contained; uniform bool grid; uniform vec2 gridSize;
+// Where the picture sits in a surface: region centre and size in the source, and its turn.
+uniform bool placed; uniform vec4 place; uniform float placeAngle; uniform float placeAspect;
 // The alignment card, matching the desktop's empty-layer card: square grid
 // from the centre, frame, centre cross and circles, diagonals, corner
 // brackets, a grey step row and a colour row. Between the lines it is 0,0,0.
@@ -36,8 +38,14 @@ vec3 alignmentCard(vec2 uv,vec2 size){
 }
 void main(){
  vec2 uv=(texCoord-.5)*fit+.5;
+ if(placed){
+  // Turn in square units of the surface, then read the placed region of the source.
+  vec2 q=(uv-.5)*vec2(placeAspect,1.);float c=cos(placeAngle),n=sin(placeAngle);
+  q=vec2(c*q.x+n*q.y,-n*q.x+c*q.y)/vec2(placeAspect,1.);
+  uv=place.xy+q*place.zw;
+ }
  vec4 s=texture2D(source,vec2(uv.x,1.-uv.y));
- if(contained && (uv.x<0.||uv.x>1.||uv.y<0.||uv.y>1.)) s=vec4(0.);
+ if((contained||placed) && (uv.x<0.||uv.x>1.||uv.y<0.||uv.y>1.)) s=vec4(0.);
  if(grid)s=vec4(alignmentCard(texCoord,max(gridSize,vec2(1.))),1.);
  float edge=min(min(texCoord.x,1.-texCoord.x),min(texCoord.y,1.-texCoord.y));
  s.a*=gain*(feather>0.?smoothstep(0.,feather,edge):1.);
@@ -139,7 +147,7 @@ export class StudioCompositor {
     gl.deleteShader(f);
     if (!gl.getProgramParameter(this.program, gl.LINK_STATUS)) throw new Error('Could not link the output compositor.');
     this.buffer = gl.createBuffer()!;
-    for (const name of ['source', 'backdrop', 'mode', 'gain', 'feather', 'fit', 'contained', 'grid', 'gridSize'])
+    for (const name of ['source', 'backdrop', 'mode', 'gain', 'feather', 'fit', 'contained', 'grid', 'gridSize', 'placed', 'place', 'placeAngle', 'placeAspect'])
       this.locations[name] = gl.getUniformLocation(this.program, name);
     for (let i = 0; i < 8; i++) this.sources.push(this.texture());
     for (let i = 0; i < 2; i++) this.targets.push({ texture: this.texture(), frame: gl.createFramebuffer()! });
@@ -238,6 +246,13 @@ export class StudioCompositor {
     }
     g.uniform2f(L.fit, fx, fy);
     g.uniform1i(L.contained, fit === 'contain' ? 1 : 0);
+    const placement = painted || grid ? undefined : surface?.placement;
+    g.uniform1i(L.placed, placement ? 1 : 0);
+    if (placement) {
+      g.uniform4f(L.place, placement.x, placement.y, placement.w, placement.h);
+      g.uniform1f(L.placeAngle, placement.angle);
+      g.uniform1f(L.placeAspect, Math.max(0.05, targetAspect));
+    }
     g.drawArrays(g.TRIANGLES, 0, verts.length / 4);
   }
   /**
