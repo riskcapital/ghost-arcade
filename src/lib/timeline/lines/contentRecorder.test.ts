@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createContentRecorder, mediaOfLayer } from './contentRecorder';
+import { createContentRecorder, mediaOfLayer, recorderMode } from './contentRecorder';
 import type { Layer, ShowClipMedia, ShowLayerTrack } from '../../types';
 
 const shader = (name: string) => ({ type: 'shader', name, src: `${name}.fs`, shaderCode: `// ${name}\nvoid main(){}`, shaderInputs: [], shaderValues: {} });
@@ -147,5 +147,30 @@ describe('recording what a piece shows', () => {
     expect(mediaOfLayer({ source: { type: 'image', name: 'logo', src: 'logo.png' } } as unknown as Layer)?.kind).toBe('image');
     expect(mediaOfLayer({ source: { type: 'effect', name: 'Studio', effectSource: {} } } as unknown as Layer)).toBeNull();
     expect(mediaOfLayer({ source: null } as unknown as Layer)).toBeNull();
+  });
+});
+
+describe('the content recorder state', () => {
+  it('is idle disarmed, parked armed and stopped, running armed and playing', () => {
+    expect(recorderMode(false, false)).toBe('idle');
+    expect(recorderMode(false, true)).toBe('idle');
+    expect(recorderMode(true, false)).toBe('parked');
+    expect(recorderMode(true, true)).toBe('running');
+  });
+
+  it('a take that stops while armed writes its blocks and parks; playing again starts a new take', () => {
+    const r = rig({ rowHasBlocks: true });
+    r.play(0, 2);
+    r.set('A', shader('Prism'));
+    r.play(2, 4);
+    r.rec.tick(4, false); // stopped, still armed: parked
+    expect(r.written).toEqual([['rowA', 'Prism', 2, 4]]);
+    r.set('A', shader('Wave')); // parked: a cut-in
+    expect(r.swaps).toEqual([['rowA', 'Wave', 4]]);
+    r.play(4, 6);
+    r.set('A', shader('Tide'));
+    r.play(6, 7);
+    r.rec.stop(7);
+    expect(r.written.at(-1)).toEqual(['rowA', 'Tide', 6, 7]);
   });
 });

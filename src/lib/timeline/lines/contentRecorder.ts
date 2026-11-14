@@ -34,6 +34,13 @@ export interface ContentRecorderHost {
   notAPerson(): boolean;
 }
 
+export type RecorderMode = 'idle' | 'parked' | 'running';
+
+/** What the recorder does for an arm and a transport state (every tick moves it here). */
+export function recorderMode(armed: boolean, playing: boolean): RecorderMode {
+  return !armed ? 'idle' : playing ? 'running' : 'parked';
+}
+
 /** The show moving on more than this between two frames is a jump. */
 const JUMP_SECONDS = 0.5;
 
@@ -94,9 +101,9 @@ export function createContentRecorder(host: ContentRecorderHost) {
   /** The source each layer had when last looked at (what a parked swap goes back from). */
   const sources = new Map<string, Layer['source'] | null>();
   const open = new Map<string, Open>();
-  let running = false;
-  /** Armed with the playhead parked: a swap is cut in at the playhead. */
-  let parked = false;
+  /** idle: disarmed; parked: armed with the playhead parked (a swap is cut in
+   *  at the playhead); running: armed and playing (a swap starts a block). */
+  let mode: RecorderMode = 'idle';
   let runStart = 0;
   let lastTime = 0;
 
@@ -146,24 +153,19 @@ export function createContentRecorder(host: ContentRecorderHost) {
   return {
     /** Every frame: the show time and whether it plays. */
     tick(time: number, playing: boolean): void {
-      const nowParked = !playing && host.armed();
-      if (nowParked && !parked) snapshot();
-      parked = nowParked;
-      if (parked) lastTime = time;
-      const active = playing && host.armed();
-      if (active && !running) {
-        running = true;
-        runStart = time;
+      const next = recorderMode(host.armed(), playing);
+      if (next !== mode) {
+        // A take ends: its open blocks are written.
+        if (mode === 'running') closeAll(Math.max(lastTime, time));
+        mode = next;
+        // Parked or a new take: from a fresh look at what each piece shows.
+        if (next !== 'idle') snapshot();
         lastTime = time;
-        snapshot();
+        if (next === 'running') runStart = time;
         return;
       }
-      if (!active && running) {
-        running = false;
-        closeAll(Math.max(lastTime, time));
-        return;
-      }
-      if (!running) return;
+      if (mode === 'parked') lastTime = time;
+      if (mode !== 'running') return;
       if (time < lastTime - 1e-6 || time - lastTime > JUMP_SECONDS) {
         // A loop, a seek or a section jump: each open block ends where the
         // show was and carries on from the new place.
@@ -179,9 +181,9 @@ export function createContentRecorder(host: ContentRecorderHost) {
     observe(): void {
       // Disarmed (or Follow edits off) since the last frame: nothing is recorded.
       if (!host.armed()) return;
-      if (parked) { swapParked(); return; }
+      if (mode === 'parked') { swapParked(); return; }
       // Not recording: nothing to do (the run takes its own snapshot).
-      if (!running) return;
+      if (mode !== 'running') return;
       const person = !host.notAPerson();
       for (const layer of host.layers()) {
         const key = contentKey(layer);
@@ -206,12 +208,9 @@ export function createContentRecorder(host: ContentRecorderHost) {
 
     /** Recording ends now (disarm, stop): open blocks are written. */
     stop(time = lastTime): void {
-      if (running) {
-        running = false;
-        closeAll(Math.max(lastTime, time));
-      }
+      if (mode === 'running') closeAll(Math.max(lastTime, time));
       // Back to idle: the next arm, parked or playing, starts from a fresh look.
-      parked = false;
+      mode = 'idle';
       seen.clear();
       shown.clear();
       sources.clear();
