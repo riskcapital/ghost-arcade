@@ -20,6 +20,7 @@ import { project } from '../stores/layers';
 import { hostWatch, studioHosted } from './studioHostWatch';
 import { watchStudioCells } from './studioCells';
 import { vjClipLauncher, type VJDeck } from '../stores/vjClipLauncher';
+import { LiveFrameWriter } from '../audio/liveParams';
 import { launchClockPosition, launchClockTempo, nextLaunchBoundary } from '../stores/launchClock';
 import { parseISF } from '../isf/parser';
 import { generateUUID } from '../utils/uuid';
@@ -2230,12 +2231,23 @@ export function noteInputsForShader(code: string): ClipNoteInputs {
 }
 
 /**
- * Write the studio's values into every playing shader clip that reads them:
+ * The studio's values for each playing shader clip that reads them, by deck
+ * row: what was last worked out stays until the row shows another clip, as
+ * it did when they were written into the clip.
+ */
+const studioDeckValues = new Map<string, { deck: VJDeck; row: number; clipId: string; values: Record<string, number> }>();
+const studioLive = new LiveFrameWriter('studio');
+
+/**
+ * Hand the studio's values to every playing shader clip that reads them:
  * note inputs while the note visuals move (`notes`), and each visual
- * voice's signals for the sound it follows, every frame.
+ * voice's signals for the sound it follows, every frame. They are live
+ * values (liveParams.ts) the frame sync puts on over the clip's own, never
+ * written into the clip or the launcher.
  */
 function writeNoteInputs(notes: boolean): void {
   const launcher = get(vjClipLauncher);
+  const seen = new Set<string>();
   const byMode = new Map<number, Record<string, number>>();
   const bySource = new Map<string, Record<string, number>>();
   const decks: [VJDeck, typeof launcher.layerStates][] = [['A', launcher.layerStates], ['B', launcher.bankBLayerStates]];
@@ -2244,6 +2256,9 @@ function writeNoteInputs(notes: boolean): void {
       const clip = state?.activeClip;
       if (!clip || clip.type !== 'shader' || !clip.shaderCode) return;
       const info = noteInputsForShader(clip.shaderCode);
+      if (!info.driven.length && !info.voice.length) return;
+      const rowKey = `${deck}:${layer}`;
+      seen.add(rowKey);
       const picked: Record<string, number> = {};
       if (notes && info.driven.length) {
         const mode = Math.round(Number(clip.shaderValues?.[NOTE_MODE_INPUT] ?? info.modeDefault) || 0);
@@ -2265,9 +2280,19 @@ function writeNoteInputs(notes: boolean): void {
         }
         for (const name of info.voice) picked[name] = values[name];
       }
-      if (Object.keys(picked).length) vjClipLauncher.batchUpdateShaderValues(layer, picked, deck);
+      let entry = studioDeckValues.get(rowKey);
+      if (!entry || entry.clipId !== clip.id) studioDeckValues.set(rowKey, (entry = { deck, row: layer, clipId: clip.id, values: {} }));
+      Object.assign(entry.values, picked);
     });
   }
+  for (const [rowKey, entry] of studioDeckValues) {
+    if (!seen.has(rowKey)) {
+      studioDeckValues.delete(rowKey);
+      continue;
+    }
+    for (const name in entry.values) studioLive.deck(entry.deck, entry.row, entry.clipId, `shader:${name}`, entry.values[name]);
+  }
+  studioLive.commit();
 }
 
 // ── Lifecycle ───────────────────────────────────────────────────────────

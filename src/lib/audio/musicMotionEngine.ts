@@ -11,8 +11,8 @@
  *     the stored values (musicMotionLayerOverrides), as it does keyframes and
  *     Timeline lines: never into the project, so nothing that watches the
  *     project (recorders, undo, panels) wakes up every frame, and a saved
- *     project keeps its own values. A VJ clip's still go through the
- *     launcher, as Auto and audio modulation do.
+ *     project keeps its own values. A VJ clip's go the same way, as live
+ *     values for its deck row (liveParams.ts), never into the launcher.
  *
  * A driven param keeps its own value as the base: when the user (or anything
  * else) sets it, the new value becomes the base. Turning Music motion off puts
@@ -27,6 +27,7 @@ import { musicMotionOwned, musicMotionOwnsParam } from './musicMotionOwned';
 import { project } from '../stores/layers';
 import { vjClipLauncher } from '../stores/vjClipLauncher';
 import { runAsAutomation } from '../stores/historyHooks';
+import { LiveFrameWriter, clearLiveValues } from './liveParams';
 import { getVisualAudioSnapshot } from './visualAudio';
 import { parseISF } from '../isf/parser';
 import type { ISFInputDef } from '../types';
@@ -76,6 +77,8 @@ const inputCache = new Map<string, ISFInputDef[]>();
 const onsets = freshOnsets();
 let rafId: number | null = null;
 let lastTime = 0;
+/** This frame's values for the frame sync and the panels (liveParams.ts). */
+const live = new LiveFrameWriter('music');
 /** This frame's driven values of a mapping layer: the shader source they were worked out for, and `shader:<name>` overrides. */
 export type MusicMotionLayerValues = { sourceId: string; values: Record<string, number> };
 /** By layer id. */
@@ -309,20 +312,22 @@ function step(now: number): void {
         `${bank}:${index}`,
         now,
       );
-      if (Object.keys(writes).length) vjClipLauncher.batchUpdateShaderValues(index, writes, bank);
+      // Only what is driven, as for a layer above.
+      const t = targets.get(`vj:${bank}:${index}:${clip.id}`);
+      for (const name in writes) {
+        if (!t?.params.has(name) && !t?.ready?.includes(name)) continue;
+        live.deck(bank, index, clip.id, `shader:${name}`, writes[name]);
+      }
     });
   }
+  for (const [layerId, entry] of overrides) {
+    for (const key in entry.values) live.layer(layerId, entry.sourceId, key, entry.values[key]);
+  }
+  live.commit();
 
-  releaseTargets((key, values) => {
-    // A layer's own values were never overwritten: dropping its overrides
-    // (above) is all it takes to give them back.
-    if (key.startsWith('map:')) return;
-    const [, bank, index, clipId] = key.split(':');
-    const states = bank === 'B' ? get(vjClipLauncher).bankBLayerStates : get(vjClipLauncher).layerStates;
-    if (states?.[Number(index)]?.activeClip?.id === clipId) {
-      vjClipLauncher.batchUpdateShaderValues(Number(index), values, bank as 'A' | 'B');
-    }
-  });
+  // Neither a layer's nor a clip's own values were ever overwritten:
+  // dropping their live values (above) is all it takes to give them back.
+  releaseTargets(() => {});
 }
 
 function tick(now: number): void {
@@ -349,6 +354,7 @@ export function stopMusicMotionEngine(): void {
   }
   layerOverrides = new Map();
   sourceOverrides = new Map();
+  clearLiveValues('music');
 }
 
 /** For tests: run one frame at `now` ms. */

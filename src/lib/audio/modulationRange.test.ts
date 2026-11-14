@@ -103,6 +103,7 @@ describe('modulation value maths', () => {
 describe('effect-param modulation in the engine', () => {
   let layers: typeof import('../stores/layers');
   let m: typeof import('./modulation');
+  let live: typeof import('./liveParams');
   let now = 10000;
   let nextFrame = 0;
   const frames = new Map<number, FrameRequestCallback>();
@@ -114,7 +115,10 @@ describe('effect-param modulation in the engine', () => {
     frames.clear();
     callbacks.forEach(callback => callback(now));
   }
-  const amount = () => get(layers.project).layers[0].effects[0].params.amount as number;
+  // What the frame sync shows: the live value while modulated, the stored
+  // one (the slider, where it rests) otherwise.
+  const stored = () => get(layers.project).layers[0].effects[0].params.amount as number;
+  const amount = () => live.liveLayerValue('lay', 'fx:fx1:amount') ?? stored();
   const key = 'map:0:fx:fx1:amount';
   const setSource = (patch: Partial<ParamModulation>) =>
     m.modulationStore.setEffectModulation(0, 'fx1', 'amount', mod(patch), 'A', 'mapping');
@@ -122,6 +126,7 @@ describe('effect-param modulation in the engine', () => {
   beforeAll(async () => {
     layers = await import('../stores/layers');
     m = await import('./modulation');
+    live = await import('./liveParams');
   });
   beforeEach(async () => {
     vi.spyOn(performance, 'now').mockImplementation(() => now);

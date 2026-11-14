@@ -33,6 +33,12 @@ export const modulationHandlers: {
   /** Splat / point-cloud params, written into layer.splatContent. */
   mappingSplatUpdater: LayerValues | null;
   mappingSplatReader: LayerValue | null;
+  /** The mapping layers by index, read once per frame for their live values. */
+  mappingLayers: (() => ReadonlyArray<{ id: string; source?: { id?: string; shaderValues?: unknown } | null }>) | null;
+  /** Keyframe tracks armed to record, by `<owner>:<trackKey>`. */
+  armedTracks: (() => Record<string, boolean>) | null;
+  /** Record a value into an armed keyframe track. */
+  recordArmed: ((owner: string, trackKey: string, param: string, value: number) => void) | null;
 } = {
   compositionReader: null,
   compositionWriter: null,
@@ -47,7 +53,21 @@ export const modulationHandlers: {
   mappingGPUReader: null,
   mappingSplatUpdater: null,
   mappingSplatReader: null,
+  mappingLayers: null,
+  armedTracks: null,
+  recordArmed: null,
 };
+
+/** Register the live-value callbacks — called once from layers store init */
+export function registerModulationLiveHandlers(handlers: {
+  mappingLayers: NonNullable<typeof modulationHandlers.mappingLayers>;
+  armedTracks: NonNullable<typeof modulationHandlers.armedTracks>;
+  recordArmed: NonNullable<typeof modulationHandlers.recordArmed>;
+}) {
+  modulationHandlers.mappingLayers = handlers.mappingLayers;
+  modulationHandlers.armedTracks = handlers.armedTracks;
+  modulationHandlers.recordArmed = handlers.recordArmed;
+}
 
 export function registerCompositionModulationHandlers(
   reader: NonNullable<typeof modulationHandlers.compositionReader>,

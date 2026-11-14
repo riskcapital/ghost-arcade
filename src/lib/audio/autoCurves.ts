@@ -1,9 +1,13 @@
 import type { AutoConfig } from '../types';
 import { applyEasing } from '../keyframes/easing';
 
-/** Shape the sweep while respecting the user's Auto range, including elastic peaks. */
-export function resolveAutoValue(auto: AutoConfig): number {
-  const phase = Number.isFinite(auto.phase) ? Math.max(0, Math.min(1, auto.phase)) : 0;
+/**
+ * Shape the sweep while respecting the user's Auto range, including elastic peaks.
+ * `at` is the playhead to read (the engine keeps its own); the saved phase otherwise.
+ */
+export function resolveAutoValue(auto: AutoConfig, at?: number): number {
+  const raw = at !== undefined && Number.isFinite(at) ? at : auto.phase;
+  const phase = Number.isFinite(raw) ? Math.max(0, Math.min(1, raw)) : 0;
   const position = auto.timing !== 'crossfader' && auto.timing !== 'clip' && auto.mode === 'pingpong' ? (phase < .5 ? phase * 2 : 2 - phase * 2) : phase;
   const shaped = Math.max(0, Math.min(1, applyEasing(position, auto.easing ?? 'linear')));
   const lo = Number.isFinite(auto.min) ? auto.min : 0;
@@ -11,9 +15,13 @@ export function resolveAutoValue(auto: AutoConfig): number {
   return lo + shaped * (hi - lo);
 }
 
-/** Beat mode rejoins the global grid on resume; free mode retains its saved phase. */
-export function advanceAutoPhase(auto: AutoConfig, dt: number, beat: number, crossfader?: number, clipPosition?: number): number {
-  const previous = Number.isFinite(auto.phase) ? auto.phase : 0;
+/**
+ * Beat mode rejoins the global grid on resume; free mode retains its phase.
+ * `from` is the playhead to advance (the engine keeps its own); the saved phase otherwise.
+ */
+export function advanceAutoPhase(auto: AutoConfig, dt: number, beat: number, crossfader?: number, clipPosition?: number, from?: number): number {
+  const start = from !== undefined && Number.isFinite(from) ? from : auto.phase;
+  const previous = Number.isFinite(start) ? start : 0;
   if (!auto.playing) return previous;
   if (auto.timing === 'clip') {
     return Number.isFinite(clipPosition) ? Math.max(0, Math.min(1, clipPosition!)) : previous;

@@ -86,7 +86,8 @@ import {
 } from '$lib/renderer/nativeJsCanvasHosts';
 import { resolveAssetRefForRuntime } from '$lib/storage/assetRegistry';
 import { shaderIsMusicMotionReady, withMusicFlow, withMusicTime, musicTimePhase, MUSIC_TIME_PHASE_INPUT, MUSIC_TIME_RATE_INPUT } from '$lib/audio/musicMotion';
-import { getMusicTimeOffset, getMusicTimeRate, hasMusicTime, musicMotionLayerOverrides, musicMotionValuesFor } from '$lib/audio/musicMotionEngine';
+import { getMusicTimeOffset, getMusicTimeRate, hasMusicTime } from '$lib/audio/musicMotionEngine';
+import { hasLiveValues, liveCompositionValues, liveDeckOfLayerId, liveValuesForDeck, liveValuesForLayer, type LiveCompositionScope } from '$lib/audio/liveParams';
 import {
   receiveSpoutTextureInfo,
   type SpoutSharedTextureInfo,
@@ -1105,6 +1106,24 @@ const musicTimeCodeCache = new Map<string, string>();
  * The shader code the core compiles. With Music motion on, the core's TIME is
  * its own clock, so the code reads TIME plus an offset input the sync sends.
  */
+/** A scene layer's live values: a mapping layer's by id, a VJ row's for the clip it shows. */
+function liveValuesForSceneLayer(layer: Layer) {
+  const row = liveDeckOfLayerId(layer.id);
+  return row ? liveValuesForDeck(row.deck, row.row, layer.source?.id) : liveValuesForLayer(layer);
+}
+
+/** Composition effects with this frame's live values on their params. */
+function withLiveCompositionValues<T extends { id: string; params?: unknown }>(effects: T[], scope: LiveCompositionScope): T[] {
+  if (!hasLiveValues() || !effects.length) return effects;
+  let out: T[] | null = null;
+  effects.forEach((effect, index) => {
+    const values = liveCompositionValues(scope, effect.id);
+    if (!values) return;
+    (out ??= effects.slice())[index] = { ...effect, params: { ...(effect.params as Record<string, unknown> ?? {}), ...values } };
+  });
+  return out ?? effects;
+}
+
 function nativeShaderCode(s: Pick<NonNullable<Layer['source']>, 'shaderCode' | 'musicMotion' | 'type'>): string | undefined {
   const code = s.shaderCode;
   if (!code || !s.musicMotion?.on || s.type !== 'shader') return code;
@@ -8934,13 +8953,13 @@ export class NativeRendererSync {
     // carrier. Mapping FX belong to Mapping and to the mapped STAGE output,
     // where they run first.
     const projectMappingEffects = mappingComposition?.enabled
-      ? applyStageOverrides(mappingComposition.effects ?? [], currentLineFrame()?.stage)
+      ? applyStageOverrides(withLiveCompositionValues(mappingComposition.effects ?? [], 'map'), currentLineFrame()?.stage)
       : [];
     // The Timeline's Effects row: its blocks' effects run after the project's.
     const timelineEffects = timelineCompositionEffects();
     const mappingEffects = timelineEffects.length ? [...projectMappingEffects, ...timelineEffects] : projectMappingEffects;
     const outputEffects = vjState.isLive
-      ? [...(vjState.stageMode ? mappingEffects : []), ...(vjState.compositionEffects ?? [])]
+      ? [...(vjState.stageMode ? mappingEffects : []), ...withLiveCompositionValues(vjState.compositionEffects ?? [], 'vj')]
       : mappingEffects;
     const candidates = [
       ...outputEffects
@@ -10064,11 +10083,13 @@ export class NativeRendererSync {
     // (timeline/lines/lineTargets.ts).
     const lineFrame = currentLineFrame();
     const hasLines = !!lineFrame && (lineFrame.layers.size > 0 || !!lineFrame.blocks?.size || !!lineFrame.looks?.size);
-    // Music motion's values (musicMotionEngine.ts) go on first, where the
-    // stored values were: anything below wins over them on the same key. A
-    // Timeline copy showing the layer's shader follows the layer.
-    const hasMusic = musicMotionLayerOverrides().size > 0;
-    if (!kfOverrides && !seqOverrides && !hasShow && !hasLines && !hasMusic) return layers;
+    // Live values (liveParams.ts: Auto, audio and LFO modulation, Music
+    // motion, the Music Studio) go on first, where the stored values were:
+    // anything below wins over them on the same key. A Timeline copy
+    // showing a layer's shader follows the layer; a VJ row's follow the
+    // clip they were worked out for.
+    const hasLive = hasLiveValues();
+    if (!kfOverrides && !seqOverrides && !hasShow && !hasLines && !hasLive) return layers;
 
     let changed = false;
     const mapped = layers.map((layer) => {
@@ -10079,15 +10100,15 @@ export class NativeRendererSync {
       const lineParams = hasLines ? lineLayerValues(lineFrame, layer.id) : undefined;
       const blockParams = hasLines ? lineBlockValues(lineFrame, layer) : undefined;
       const lookLines = hasLines && wearsLookWithLines(lineFrame, layer);
-      const musicParams = hasMusic ? musicMotionValuesFor(layer) : undefined;
-      if (!kf && seqMult === undefined && !showParams && showMul === undefined && !lineParams && !blockParams && !lookLines && !musicParams) return layer;
+      const liveParams = hasLive ? liveValuesForSceneLayer(layer) : undefined;
+      if (!kf && seqMult === undefined && !showParams && showMul === undefined && !lineParams && !blockParams && !lookLines && !liveParams) return layer;
 
       changed = true;
       const next: any = { ...layer };
       if (seqMult !== undefined && seqMult < 1) {
         next.opacity = (next.opacity ?? 1) * seqMult;
       }
-      if (musicParams) applyParamOverrides(next as Layer, musicParams as ParamOverrideSet);
+      if (liveParams) applyParamOverrides(next as Layer, liveParams as ParamOverrideSet);
       if (kf) applyParamOverrides(next as Layer, kf as ParamOverrideSet);
       if (showParams) applyParamOverrides(next as Layer, showParams);
       if (lineParams) applyParamOverrides(next as Layer, lineParams);

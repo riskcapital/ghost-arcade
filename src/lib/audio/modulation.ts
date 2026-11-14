@@ -12,6 +12,7 @@ import { musicMotionOwnsParam } from './musicMotionOwned';
 import type { ISFInput } from '../isf/parser';
 
 import { modulationHandlers } from './modulationHandlers';
+import { LiveFrameWriter, clearLiveValues } from './liveParams';
 import { runAsAutomation } from '../stores/historyHooks';
 export { registerCompositionModulationHandlers, registerMappingLayerCallbacks } from './modulationHandlers';
 
@@ -269,6 +270,8 @@ export function clearEdgeEffectParamRanges(layerIndex: number) {
 
 // Last modulated values — for UI ghost indicator display
 const lastModulatedValues = new Map<string, number>();
+/** This frame's values, handed to the frame sync and the panels. */
+const live = new LiveFrameWriter('mod');
 
 // Base values — the user's manual slider position, never overwritten by modulation.
 // Without this, the modulation engine would read its own output as next frame's input,
@@ -1081,6 +1084,8 @@ class ModulationEngine {
       cancelAnimationFrame(this.animFrameId);
       this.animFrameId = null;
     }
+    // Its values go with it: the stored ones (the bases) show again.
+    clearLiveValues('mod');
   }
 
   /** External signal — called by the modulationStore subscriber when
@@ -1143,8 +1148,24 @@ class ModulationEngine {
       : 0.016;
     this.lastApplyTimeSec = now;
     const vjState = get(vjClipLauncher);
+    // Each frame's values are live values (liveParams.ts): the frame sync
+    // puts them on over the stored ones, which stay the bases. Only a
+    // release (back to Manual) writes the store, once.
+    const mappingLayers = modulationHandlers.mappingLayers?.() ?? [];
+    const armed = modulationHandlers.armedTracks?.();
+    const recording = !!armed && Object.keys(armed).length > 0;
+    const record = (owner: string, key: string, param: string, value: number) => {
+      if (recording && armed![`${owner}:${key}`]) modulationHandlers.recordArmed?.(owner, key, param, value);
+    };
+    const liveLayer = (layerIndex: number, key: string, value: number) => {
+      const layer = mappingLayers[layerIndex];
+      if (layer) live.layer(layer.id, layer.source?.id, key, value);
+      return layer;
+    };
+    const deckClipId = (bank: 'A' | 'B', layerIndex: number) =>
+      (bank === 'B' ? vjState.bankBLayerStates : vjState.layerStates)[layerIndex]?.activeClip?.id;
 
-    // Batch shader updates per (bank, layerIndex). Bank A and Bank B route
+    // Release writes (back to the slider), batched per (bank, layerIndex). Bank A and Bank B route
     // to separate state slices, so they need separate buckets.
     const vjBatchA = new Map<number, Record<string, number>>();
     const vjBatchB = new Map<number, Record<string, number>>();
@@ -1234,9 +1255,12 @@ class ModulationEngine {
           ? modulationHandlers.compositionReader?.(effectId, paramName)
           : (vjState.compositionEffects.find(effect => effect.id === effectId)?.params as Record<string, unknown> | undefined)?.[paramName];
         if (typeof current !== 'number') continue;
-        const value = release ? range.base : computeModulatedValue(mod, unit, range.base, range.min, range.max);
-        if (entry.target === 'mapping') modulationHandlers.compositionWriter?.(effectId, { [paramName]: value });
-        else vjClipLauncher.updateCompositionEffectParams(effectId, { [paramName]: value });
+        if (!release) {
+          live.composition(entry.target === 'mapping' ? 'map' : 'vj', effectId, paramName, computeModulatedValue(mod, unit, range.base, range.min, range.max));
+          continue;
+        }
+        if (entry.target === 'mapping') modulationHandlers.compositionWriter?.(effectId, { [paramName]: range.base });
+        else vjClipLauncher.updateCompositionEffectParams(effectId, { [paramName]: range.base });
         continue;
       }
 
@@ -1302,7 +1326,8 @@ class ModulationEngine {
         const eMax = edgeRange?.max ?? 1;
         const modulatedE = release ? edgeBase : computeModulatedValue(mod, unit, edgeBase, eMin, eMax);
 
-        modulationHandlers.mappingEdgeEffectUpdater(layerIndex, effectId, paramName, modulatedE);
+        if (release) modulationHandlers.mappingEdgeEffectUpdater(layerIndex, effectId, paramName, modulatedE);
+        else liveLayer(layerIndex, `edge:${effectId}:${paramName}`, modulatedE);
         if (release) forgetModCache(edgeKey);
         else lastModulatedValues.set(edgeKey, modulatedE);
       } else if (isGPU) {
@@ -1328,9 +1353,11 @@ class ModulationEngine {
           baseValues.set(gpuKey, gBase);
         }
         const modulatedG = release ? gBase : computeModulatedValue(mod, unit, gBase, gMin, gMax);
-        let gBatch = mappingGPUBatch.get(layerIndex);
-        if (!gBatch) { gBatch = {}; mappingGPUBatch.set(layerIndex, gBatch); }
-        gBatch[paramName] = modulatedG;
+        if (release) {
+          let gBatch = mappingGPUBatch.get(layerIndex);
+          if (!gBatch) { gBatch = {}; mappingGPUBatch.set(layerIndex, gBatch); }
+          gBatch[paramName] = modulatedG;
+        } else liveLayer(layerIndex, `gpu:${paramName}`, modulatedG);
         if (release) forgetModCache(gpuKey);
         else lastModulatedValues.set(gpuKey, modulatedG);
       } else if (isSplat) {
@@ -1349,12 +1376,14 @@ class ModulationEngine {
           baseValues.set(splatKey, sBase);
         }
         const modulatedSplat = release ? sBase : computeModulatedValue(mod, unit, sBase, sMin, sMax);
-        let splatBatch = mappingSplatBatch.get(layerIndex);
-        if (!splatBatch) {
-          splatBatch = {};
-          mappingSplatBatch.set(layerIndex, splatBatch);
-        }
-        splatBatch[paramName] = modulatedSplat;
+        if (release) {
+          let splatBatch = mappingSplatBatch.get(layerIndex);
+          if (!splatBatch) {
+            splatBatch = {};
+            mappingSplatBatch.set(layerIndex, splatBatch);
+          }
+          splatBatch[paramName] = modulatedSplat;
+        } else liveLayer(layerIndex, `splat:${paramName}`, modulatedSplat);
         if (release) forgetModCache(splatKey);
         else lastModulatedValues.set(splatKey, modulatedSplat);
       } else if (isEffect) {
@@ -1416,7 +1445,18 @@ class ModulationEngine {
         const fxMax = savedClipRange?.max ?? fxRange?.max ?? 1;
         const modulated = release ? fxBase : computeModulatedValue(mod, unit, fxBase, fxMin, fxMax);
 
-        if (isMapping) {
+        const fxLiveKey = `fx:${effectId}:${paramName}`;
+        if (isMapping && !release) {
+          const layer = liveLayer(layerIndex, fxLiveKey, modulated);
+          if (layer) record(layer.id, fxLiveKey, paramName, modulated);
+        } else if (!isMapping && !release) {
+          const clipId = deckClipId(bank, layerIndex);
+          if (clipId) {
+            live.deck(bank, layerIndex, clipId, fxLiveKey, modulated);
+            // A row's effect (not the clip's own) records into the clip's armed track.
+            if (!entry.clipId) record(`vj-${clipId}`, fxLiveKey, paramName, modulated);
+          }
+        } else if (isMapping) {
           if (modulationHandlers.mappingEffectUpdater) {
             modulationHandlers.mappingEffectUpdater(layerIndex, effectId, { [paramName]: modulated });
             // Debug only (window.__modCacheDebug = true): log each mod
@@ -1497,12 +1537,21 @@ class ModulationEngine {
         if (release) forgetModCache(bvKey);
         else lastModulatedValues.set(bvKey, modulated);
 
+        // Music motion drives this param: its audio response replaces the bump.
+        if (musicMotionOwnsParam(isMapping ? 'map' : bank, layerIndex, paramName)) continue;
+        if (!release) {
+          if (isMapping) {
+            if (mappingLayers[layerIndex]?.source?.shaderValues) liveLayer(layerIndex, `shader:${paramName}`, modulated);
+          } else {
+            const clipId = deckClipId(bank, layerIndex);
+            if (clipId) live.deck(bank, layerIndex, clipId, `shader:${paramName}`, modulated);
+          }
+          continue;
+        }
         // Batch by destination
         const batch = isMapping
           ? mappingBatch
           : (bank === 'B' ? vjBatchB : vjBatchA);
-        // Music motion drives this param: its audio response replaces the bump.
-        if (musicMotionOwnsParam(isMapping ? 'map' : bank, layerIndex, paramName)) continue;
         let layerBatch = batch.get(layerIndex);
         if (!layerBatch) {
           layerBatch = {};
@@ -1512,7 +1561,9 @@ class ModulationEngine {
       }
     }
 
-    // Apply batched VJ shader updates per bank
+    live.commit();
+
+    // Apply batched release writes per bank
     for (const [layerIndex, values] of vjBatchA) {
       vjClipLauncher.batchUpdateShaderValues(layerIndex, values, 'A');
     }
