@@ -4790,6 +4790,10 @@ struct RenderState {
     source_frame_mip_levels: u32,
     source_frame_blitter: TextureBlitter,
     hap_converter: hap_texture::HapTextureConverter,
+    /// Shared textures opened per source slot, so a camera's texture is
+    /// opened once per session instead of every frame.
+    #[cfg(target_os = "windows")]
+    dxgi_import_cache: Mutex<shared_texture::SharedTextureImportCache<wgpu::Texture>>,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     hap_upload_batch: Mutex<Option<NativeHapUploadBatch>>,
     #[cfg(target_os = "macos")]
@@ -17878,6 +17882,7 @@ impl App {
         if let Some(slot) = self.source_frame_slots.remove(source_id) {
             if let Some(renderer) = &self.renderer {
                 renderer.hap_converter.release(slot);
+                renderer.release_shared_texture_import(slot);
                 // A per-source slot gives its texture back.
                 renderer.slots.release(slot);
             }
@@ -22272,6 +22277,8 @@ impl RenderState {
             source_frame_mip_levels,
             source_frame_blitter,
             hap_converter,
+            #[cfg(target_os = "windows")]
+            dxgi_import_cache: Mutex::new(shared_texture::SharedTextureImportCache::new()),
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             hap_upload_batch: Mutex::new(None),
             #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -26575,6 +26582,7 @@ impl RenderState {
     /// per-source slot simply lets its texture go: an empty slot reads as the
     /// transparent placeholder.
     fn clear_source_frame_slot(&self, slot: usize) {
+        self.release_shared_texture_import(slot);
         self.slot_readiness(slot).invalidate();
         if self.slots.mode() == SourceFrameMode::PerSource {
             self.slots.release(slot);
@@ -26607,6 +26615,17 @@ impl RenderState {
             }));
         }
         self.queue.submit(Some(encoder.finish()));
+    }
+
+    /// Let go of the shared texture a slot kept open (the slot was released
+    /// or is being given to another source).
+    fn release_shared_texture_import(&self, slot: usize) {
+        #[cfg(target_os = "windows")]
+        if let Ok(mut cache) = self.dxgi_import_cache.lock() {
+            cache.release(slot);
+        }
+        #[cfg(not(target_os = "windows"))]
+        let _ = slot;
     }
 
     fn import_shared_texture_source_frame(
@@ -26780,6 +26799,20 @@ impl RenderState {
             return Err("DXGI shared texture HANDLE was zero".to_string());
         }
 
+        // The handle is a fresh duplicate on every upload, but a camera's
+        // texture behind it lasts the session: reuse the one already opened
+        // and only close the duplicate.
+        let import_key = shared_texture::SharedTextureImportKey::for_descriptor(descriptor);
+        if let Some(key) = import_key.as_ref() {
+            let cached = self.dxgi_import_cache.lock().ok().and_then(|cache| cache.get(slot, key));
+            if let Some(texture) = cached {
+                if descriptor.close_handle_after_import {
+                    let _ = unsafe { CloseHandle(HANDLE(shared_handle as *mut core::ffi::c_void)) };
+                }
+                return self.copy_imported_source_texture(slot, &texture, descriptor);
+            }
+        }
+
         let width = descriptor.width.max(1);
         let height = descriptor.height.max(1);
         let wgpu_format = descriptor.wgpu_texture_format();
@@ -26843,7 +26876,13 @@ impl RenderState {
                 wgpu::TextureUses::RESOURCE,
             )
         };
-        self.copy_imported_source_texture(slot, &imported_texture, descriptor)
+        let uploaded = self.copy_imported_source_texture(slot, &imported_texture, descriptor)?;
+        if let Some(key) = import_key {
+            if let Ok(mut cache) = self.dxgi_import_cache.lock() {
+                cache.insert(slot, key, imported_texture);
+            }
+        }
+        Ok(uploaded)
     }
 
     #[cfg(target_os = "windows")]

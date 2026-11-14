@@ -5519,6 +5519,9 @@ export function buildNativeSharedTextureSourceFrameCommand(args: {
   info: SpoutSharedTextureInfo & { handle: string };
   senderName?: string;
   seq: number;
+  /** Camera / screen capture: names the texture behind the handle (session
+   *  and the addon's own handle), so the core opens it once per session. */
+  cacheKey?: string;
 }): RendererCommand {
   return {
     type: 'upload_source_gpu_shared_texture',
@@ -5533,6 +5536,7 @@ export function buildNativeSharedTextureSourceFrameCommand(args: {
     frame: args.info.frame ?? undefined,
     sender_name: (args.info.senderName ?? args.senderName) || undefined,
     seq: args.seq,
+    ...(args.cacheKey ? { shared_texture_cache_key: args.cacheKey } : {}),
   };
 }
 
@@ -11936,6 +11940,12 @@ export class NativeRendererSync {
       info: info as SpoutSharedTextureInfo & { handle: string },
       senderName: sharedTextureSenderName(src),
       seq,
+      // Cameras and screen captures keep one texture per session (remade on a
+      // size change, which changes the handle). Spout and NDI senders can
+      // restart behind the same name, so they are opened every time.
+      ...(liveKind === 'webcam' || liveKind === 'capture'
+        ? { cacheKey: `${nativeLiveSourceIdentity(src)}:${info.handle}` }
+        : {}),
     }));
     return true;
   }

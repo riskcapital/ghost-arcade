@@ -252,6 +252,23 @@ describe('rejected sources back off', () => {
   });
 });
 
+describe('core texture cache key', () => {
+  it('a camera upload names its session texture so the core opens it once; Spout does not', () => {
+    const sync = makeSync();
+    vi.spyOn(sync, 'queueSharedTextureInfoRefresh').mockImplementation(() => {});
+    const src = camera();
+    sync.sharedTextureInfoCache.set(sync.sharedTextureInfoKey(src, 'live:webcam'), { info: frameInfo(1), updatedAt: 0, revision: 1 });
+    const commands: any[] = [];
+    sync.appendSharedTextureSourceFrameCommand(commands, src, 'live:webcam', 0, false, null);
+    expect(commands[0].shared_texture_cache_key).toBe('session-usb:0102030405060708');
+
+    const spout = { id: 'spout:1', name: 'Spout', type: 'spout', src: 'spout://Sender', spoutSource: 'Sender' } as any;
+    sync.sharedTextureInfoCache.set(sync.sharedTextureInfoKey(spout, 'spout'), { info: frameInfo(0), updatedAt: 0, revision: 1 });
+    sync.appendSharedTextureSourceFrameCommand(commands, spout, 'spout', 0, false, null);
+    expect(commands[1]).not.toHaveProperty('shared_texture_cache_key');
+  });
+});
+
 describe('backoff schedule', () => {
   it('starts at 1 s, doubles for the same texture, caps, and restarts for a new one', () => {
     const sent = { handle: 'h', width: 640, height: 480 };
