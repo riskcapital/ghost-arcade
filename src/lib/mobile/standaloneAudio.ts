@@ -6,7 +6,7 @@
 // so the standalone engine matches.
 //
 // 2026-06 — band scalars (Bass/Mid/High/Level) now flow through a
-// Milkdrop-style two-stage IIR smoother before being exposed as the
+// A smooth two-stage IIR follower before being exposed as the
 // `audio*` uniforms. The smoother gives:
 //   • asymmetric attack (rate=0.2) / release (rate=0.5) — fast rise on
 //     a hit, slow fall (no woofer-pulse back-and-forth)
@@ -48,7 +48,7 @@ export interface AudioUniforms {
   listening?: boolean;
 }
 
-/** Milkdrop-style smoother for one band. Maintains a fast short-term
+/** Smooth follower for one band. Maintains a fast short-term
  *  average (asymmetric attack/release) and a slow long-term baseline,
  *  exposes `current / longAverage` and `average / longAverage` as
  *  normalised ratios that float around 1.0. */
@@ -94,7 +94,7 @@ function adjustRate(rate30: number, dt: number): number {
   return Math.pow(perSecond, dt);
 }
 
-/** Map a Milkdrop normalised ratio (~0.5 quiet, ~1.0 normal, ~1.5 loud)
+/** Map a normalised loudness ratio (~0.5 quiet, ~1.0 normal, ~1.5 loud)
  *  back into a 0..1 range for the existing shader uniforms. Quiet
  *  sections sit near 0; a typical hit lifts the value to ~0.5; HUGE
  *  bass drops approach 1.0. Smooth at every point — no woofer pulse. */
@@ -202,7 +202,7 @@ export class StandaloneAudio {
   private beatStrength = 0;
   private lastBeatTime = 0;
 
-  // Milkdrop-style followers — one per band that flows to a uniform.
+  // Smooth followers — one per band that flows to a uniform.
   // The smoothed/normalised outputs feed `audioBass`/`audioMid`/etc.
   // so every shader on the mobile path automatically gets the
   // "elegant breath" feel without per-shader rewiring.

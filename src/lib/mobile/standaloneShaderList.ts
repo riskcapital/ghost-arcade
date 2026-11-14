@@ -92,7 +92,7 @@ export const MOBILE_SHADERS: MobileShader[] = [
   // main) so they still feel alive with audio.
   //
   // Patches are regex match/replace pairs against POST-parse GLSL.
-  // `audioBass` etc. are now Milkdrop-smoothed (see standaloneAudio.ts)
+  // `audioBass` etc. are now smoothed (see standaloneAudio.ts)
   // so even multiplicative modulators read as elegant breath, not pulse.
   {
     id: 'dm-plasma-flow', path: 'ISF/DM-PlasmaFlow.fs',
