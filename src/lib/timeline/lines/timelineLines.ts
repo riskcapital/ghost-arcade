@@ -190,13 +190,14 @@ const EMPTY_HELD: ReadonlyMap<string, number> = new Map();
 function syncRecordUi(): void {
   const r = session?.recorder;
   const pending = session?.controls.pendingBind() ?? null;
-  lineRecordState.update((x) => {
-    const armed = r?.armed ?? false;
-    const writing = (r?.openPasses() ?? 0) > 0;
-    const bindPending = pending ? (x.bindPending && sameTarget(x.bindPending.target, pending.target) && x.bindPending.key === pending.key ? x.bindPending : { ...pending, label: pending.key }) : null;
-    if (x.armed === armed && x.writing === writing && x.bindPending === bindPending) return x;
-    return { ...x, armed, writing, bindPending };
-  });
+  // Runs every frame while armed: a store's update() tells its subscribers
+  // even when it hands the same object back, so publish only a change.
+  const x = get(lineRecordState);
+  const armed = r?.armed ?? false;
+  const writing = (r?.openPasses() ?? 0) > 0;
+  const bindPending = pending ? (x.bindPending && sameTarget(x.bindPending.target, pending.target) && x.bindPending.key === pending.key ? x.bindPending : { ...pending, label: pending.key }) : null;
+  if (x.armed === armed && x.writing === writing && x.bindPending === bindPending) return;
+  lineRecordState.set({ ...x, armed, writing, bindPending });
 }
 
 function startSession(): void {

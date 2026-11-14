@@ -225,3 +225,15 @@ describe('selected line points', () => {
     expect(lines.selectedLinePoints(sel, replaced)).toEqual([]);
   });
 });
+
+describe('record state', () => {
+  it('is published only when it changes, not every frame while armed', () => {
+    lines.armLines('touch');
+    let notified = 0;
+    const off = lines.lineRecordState.subscribe(() => { notified++; });
+    notified = 0;
+    for (let i = 0; i < 30; i++) showTimeline.seek(i / 30);
+    off();
+    expect(notified).toBe(0);
+  });
+});
