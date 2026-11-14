@@ -86,7 +86,7 @@ import {
 } from '$lib/renderer/nativeJsCanvasHosts';
 import { resolveAssetRefForRuntime } from '$lib/storage/assetRegistry';
 import { shaderIsMusicMotionReady, withMusicFlow, withMusicTime, musicTimePhase, MUSIC_TIME_PHASE_INPUT, MUSIC_TIME_RATE_INPUT } from '$lib/audio/musicMotion';
-import { getMusicTimeOffset, getMusicTimeRate, hasMusicTime } from '$lib/audio/musicMotionEngine';
+import { getMusicTimeOffset, getMusicTimeRate, hasMusicTime, musicMotionLayerOverrides, musicMotionValuesFor } from '$lib/audio/musicMotionEngine';
 import {
   receiveSpoutTextureInfo,
   type SpoutSharedTextureInfo,
@@ -10032,7 +10032,11 @@ export class NativeRendererSync {
     // (timeline/lines/lineTargets.ts).
     const lineFrame = currentLineFrame();
     const hasLines = !!lineFrame && (lineFrame.layers.size > 0 || !!lineFrame.blocks?.size || !!lineFrame.looks?.size);
-    if (!kfOverrides && !seqOverrides && !hasShow && !hasLines) return layers;
+    // Music motion's values (musicMotionEngine.ts) go on first, where the
+    // stored values were: anything below wins over them on the same key. A
+    // Timeline copy showing the layer's shader follows the layer.
+    const hasMusic = musicMotionLayerOverrides().size > 0;
+    if (!kfOverrides && !seqOverrides && !hasShow && !hasLines && !hasMusic) return layers;
 
     let changed = false;
     const mapped = layers.map((layer) => {
@@ -10043,13 +10047,15 @@ export class NativeRendererSync {
       const lineParams = hasLines ? lineLayerValues(lineFrame, layer.id) : undefined;
       const blockParams = hasLines ? lineBlockValues(lineFrame, layer) : undefined;
       const lookLines = hasLines && wearsLookWithLines(lineFrame, layer);
-      if (!kf && seqMult === undefined && !showParams && showMul === undefined && !lineParams && !blockParams && !lookLines) return layer;
+      const musicParams = hasMusic ? musicMotionValuesFor(layer) : undefined;
+      if (!kf && seqMult === undefined && !showParams && showMul === undefined && !lineParams && !blockParams && !lookLines && !musicParams) return layer;
 
       changed = true;
       const next: any = { ...layer };
       if (seqMult !== undefined && seqMult < 1) {
         next.opacity = (next.opacity ?? 1) * seqMult;
       }
+      if (musicParams) applyParamOverrides(next as Layer, musicParams as ParamOverrideSet);
       if (kf) applyParamOverrides(next as Layer, kf as ParamOverrideSet);
       if (showParams) applyParamOverrides(next as Layer, showParams);
       if (lineParams) applyParamOverrides(next as Layer, lineParams);

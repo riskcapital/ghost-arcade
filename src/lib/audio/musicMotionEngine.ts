@@ -6,8 +6,13 @@
  * the smooth signals in musicMotion.ts, then for each target:
  *   - advances its flow clock, published as a time offset the renderers add
  *     to the shader's TIME (getMusicTimeOffset), and
- *   - writes its driven params as its own values moved by the music, through
- *     the same per-frame paths Auto and audio modulation use.
+ *   - works out its driven params as its own values moved by the music. A
+ *     layer's go into a per-frame override map the frame sync puts on over
+ *     the stored values (musicMotionLayerOverrides), as it does keyframes and
+ *     Timeline lines: never into the project, so nothing that watches the
+ *     project (recorders, undo, panels) wakes up every frame, and a saved
+ *     project keeps its own values. A VJ clip's still go through the
+ *     launcher, as Auto and audio modulation do.
  *
  * A driven param keeps its own value as the base: when the user (or anything
  * else) sets it, the new value becomes the base. Turning Music motion off puts
@@ -71,6 +76,34 @@ const inputCache = new Map<string, ISFInputDef[]>();
 const onsets = freshOnsets();
 let rafId: number | null = null;
 let lastTime = 0;
+/** This frame's driven values of a mapping layer: the shader source they were worked out for, and `shader:<name>` overrides. */
+export type MusicMotionLayerValues = { sourceId: string; values: Record<string, number> };
+/** By layer id. */
+let layerOverrides = new Map<string, MusicMotionLayerValues>();
+/** By shader source id, for sources only one driven layer shows. */
+let sourceOverrides = new Map<string, MusicMotionLayerValues>();
+
+/**
+ * The music's values for mapping layers this frame, by layer id. Live state
+ * only: never saved, never an undo step. Empty when nothing is driven.
+ */
+export function musicMotionLayerOverrides(): ReadonlyMap<string, MusicMotionLayerValues> {
+  return layerOverrides;
+}
+
+/**
+ * The music's values for a scene layer, keyed `shader:<name>` like the other
+ * param overrides: its own, or those of the driven layer whose shader it
+ * shows (a Timeline copy of that layer). A layer showing another source (a
+ * block's clip on the piece) gets none.
+ */
+export function musicMotionValuesFor(layer: { id: string; source?: { id?: string } | null }): Record<string, number> | undefined {
+  const sourceId = layer.source?.id;
+  if (!sourceId) return undefined;
+  const own = layerOverrides.get(layer.id);
+  if (own) return own.sourceId === sourceId ? own.values : undefined;
+  return sourceOverrides.get(sourceId)?.values;
+}
 
 /**
  * The music clock's offset (seconds) to add to this shader source's TIME at
@@ -223,6 +256,7 @@ function step(now: number): void {
   for (const t of targets.values()) t.seen = false;
 
   const p = get(project);
+  const overrides = new Map<string, MusicMotionLayerValues>();
   p.layers.forEach((layer, index) => {
     const src = layer.source;
     const mm = src?.musicMotion;
@@ -238,8 +272,21 @@ function step(now: number): void {
       `map:${index}`,
       now,
     );
-    if (Object.keys(writes).length && src.shaderValues) project.batchUpdateLayerShaderValues(layer.id, writes);
+    if (!src.shaderValues) return;
+    // Only what is driven: a param dropped from the set just shows its own
+    // (stored) value again.
+    const t = targets.get(`map:${layer.id}`);
+    let driven: Record<string, number> | null = null;
+    for (const name in writes) {
+      if (!t?.params.has(name) && !t?.ready?.includes(name)) continue;
+      (driven ??= {})[`shader:${name}`] = writes[name];
+    }
+    if (driven) overrides.set(layer.id, { sourceId: src.id, values: driven });
   });
+  layerOverrides = overrides;
+  const bySource = new Map<string, MusicMotionLayerValues | null>();
+  for (const entry of overrides.values()) bySource.set(entry.sourceId, bySource.has(entry.sourceId) ? null : entry);
+  sourceOverrides = new Map([...bySource].filter((e): e is [string, MusicMotionLayerValues] => e[1] !== null));
 
   const vj = get(vjClipLauncher);
   const decks = [
@@ -267,10 +314,9 @@ function step(now: number): void {
   }
 
   releaseTargets((key, values) => {
-    if (key.startsWith('map:')) {
-      project.batchUpdateLayerShaderValues(key.slice(4), values);
-      return;
-    }
+    // A layer's own values were never overwritten: dropping its overrides
+    // (above) is all it takes to give them back.
+    if (key.startsWith('map:')) return;
     const [, bank, index, clipId] = key.split(':');
     const states = bank === 'B' ? get(vjClipLauncher).bankBLayerStates : get(vjClipLauncher).layerStates;
     if (states?.[Number(index)]?.activeClip?.id === clipId) {
@@ -301,6 +347,8 @@ export function stopMusicMotionEngine(): void {
     cancelAnimationFrame(rafId);
     rafId = null;
   }
+  layerOverrides = new Map();
+  sourceOverrides = new Map();
 }
 
 /** For tests: run one frame at `now` ms. */
