@@ -12,6 +12,7 @@
  * Validation is strict, in the style of sceneModel.ts: a value outside its
  * range is clamped, a field of the wrong type throws with where and what.
  */
+import { validateRoom, type Room } from './roomModel';
 
 export const SURFACE_FINISHES = ['stone', 'matte', 'chrome', 'glass', 'neon', 'ink', 'light'] as const;
 export type SurfaceFinishPreset = (typeof SURFACE_FINISHES)[number];
@@ -21,11 +22,25 @@ export type SurfaceFinish = { preset: SurfaceFinishPreset; color: string };
 
 /** How the 2D effects meet the world: thrown onto it as projector light (lit,
  *  shadowed, wetted, hidden behind balls), laid over it, or left out. */
+/** Where the world's shape comes from: blocks standing out of a flat wall,
+ *  seen face-on, or the real objects in front of the projector (roomModel.ts). */
+export const WORLD_SOURCES = ['wall', 'room'] as const;
+export type WorldSource = (typeof WORLD_SOURCES)[number];
+
+/** How the world's surfaces are drawn: shaded with their finishes, or not at
+ *  all, so only the effects show (the real objects are the canvas). */
+export const WORLD_LOOKS = ['shaded', 'effects'] as const;
+export type WorldLook = (typeof WORLD_LOOKS)[number];
+
 export const FLAT_MODES = ['projected', 'over', 'off'] as const;
 export type FlatMode = (typeof FLAT_MODES)[number];
 
 export type ReliefWorld = {
   enabled: boolean;
+  source: WorldSource;
+  /** The real objects, when the source is `room`. */
+  room?: Room;
+  look: WorldLook;
   /** 0 a long lens (blocks barely show their sides) to 1 a wide one. */
   lens: number;
   /** Meters of depth per unit of an object's height. */
@@ -52,6 +67,8 @@ export const defaultSurfaceFinish = (): SurfaceFinish => ({ preset: 'stone', col
 export function defaultReliefWorld(): ReliefWorld {
   return {
     enabled: true,
+    source: 'wall',
+    look: 'shaded',
     lens: 0.3,
     depthScale: 1.6,
     gravity: 1,
@@ -105,9 +122,16 @@ export function validateReliefWorld(raw: unknown): ReliefWorld {
   const d = defaultReliefWorld();
   const wall = obj(w.wall, 'wall'), sun = obj(w.sun, 'sun'), fill = obj(w.fill, 'fill');
   const flat = w.flat === undefined ? d.flat : w.flat;
+  const source = w.source === undefined ? d.source : w.source;
+  if (!WORLD_SOURCES.includes(source as WorldSource)) fail('source', `unknown source ${String(source)}`);
+  const look = w.look === undefined ? d.look : w.look;
+  if (!WORLD_LOOKS.includes(look as WorldLook)) fail('look', `unknown look ${String(look)}`);
   if (!FLAT_MODES.includes(flat as FlatMode)) fail('flat', `unknown mode ${String(flat)}`);
   return {
     enabled: bool(w.enabled, 'enabled', d.enabled),
+    source: source as WorldSource,
+    ...(w.room !== undefined ? { room: validateRoom(w.room) } : {}),
+    look: look as WorldLook,
     lens: num(w.lens, 'lens', d.lens, 0, 1),
     depthScale: num(w.depthScale, 'depth', d.depthScale, 0.1, 4),
     gravity: num(w.gravity, 'gravity', d.gravity, 0, 2),

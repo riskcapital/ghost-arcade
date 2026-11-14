@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { defaultInteractive, validateScene, type InteractiveScene, type InteractiveSurface } from '../mobile/studio/interactive';
 import { buildSceneMeshes, VERTEX_FLOATS } from './sceneMeshes';
 import type { MeshNode, SceneNode, Vec3 } from './sceneModel';
-import { blockDepth, pickRelief, project, rayFromUv, reliefFrame, reliefScene, sunDirection } from './relief';
+import { blockDepth, project, reliefFrame, reliefScene, sunDirection } from './relief';
+import { pickWorld, rayThrough, wallProjector, worldGeometry } from './worldGeometry';
 import { defaultReliefWorld, validateReliefWorld } from './worldModel';
 
 const solid = (id: string, points: { x: number; y: number }[], height = 0.3): InteractiveSurface => ({ id, name: id, behavior: 'solid', points, height });
@@ -58,16 +59,17 @@ describe('the relief world', () => {
 
   it('picks the block under a point, its front or its side, else the wall', () => {
     const frame = reliefFrame(ASPECT, world.lens);
-    const front = pickRelief(s, world, ASPECT, rayFromUv(frame, { x: 0.7, y: 0.6 }));
+    const pick = (w: typeof world, p: { x: number; y: number }) =>
+      pickWorld(worldGeometry(s, w, ASPECT), rayThrough(wallProjector(reliefFrame(ASPECT, w.lens)), p));
+    const front = pick(world, { x: 0.7, y: 0.6 });
     expect(front.surfaceId).toBe('box');
     expect(front.normal).toEqual([0, 0, 1]);
     expect(front.point[2]).toBeCloseTo(blockDepth(s.surfaces[1], world, frame));
-    expect(pickRelief(s, world, ASPECT, rayFromUv(frame, { x: 0.5, y: 0.1 })).surfaceId).toBeNull();
+    expect(pick(world, { x: 0.5, y: 0.1 }).surfaceId).toBeNull();
     // Just outside the box's left edge (the side faces the centre), a wide lens
     // sees the side.
     const wide = { ...world, lens: 1, depthScale: 3 };
-    const wf = reliefFrame(ASPECT, wide.lens);
-    const side = pickRelief(s, wide, ASPECT, rayFromUv(wf, { x: 0.598, y: 0.6 }));
+    const side = pick(wide, { x: 0.598, y: 0.6 });
     expect(side.surfaceId).toBe('box');
     expect(side.normal[0]).toBeCloseTo(-1);
     expect(side.point[2]).toBeGreaterThan(0);

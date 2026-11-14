@@ -9,7 +9,8 @@
  * the 2D overlay stays the outline editor, and the flat effects line up with
  * the blocks.
  *
- * Pure and exported for tests; the same rays drive input (worldInput.ts).
+ * Pure and exported for tests. Physics, input and picking read the world
+ * through worldGeometry.ts, which this is one case of.
  */
 import type { InteractiveScene, InteractiveSurface, Point } from '../mobile/studio/interactive';
 import { defaultScene3D, identityTransform, material, type Material, type Scene3D, type SceneNode, type Transform, type Vec3 } from './sceneModel';
@@ -99,7 +100,7 @@ export function finishMaterial(finish: SurfaceFinish = defaultSurfaceFinish()): 
   }
 }
 
-const node = (id: string, name: string, body: Record<string, unknown>, transform: Partial<Transform> = {}): SceneNode =>
+export const node = (id: string, name: string, body: Record<string, unknown>, transform: Partial<Transform> = {}): SceneNode =>
   ({ id, name, visible: true, transform: { ...identityTransform(), ...transform }, ...body }) as SceneNode;
 
 /** Towards the sun: degrees round the wall from 12 o'clock, degrees up off it. */
@@ -118,7 +119,7 @@ function blockNode(surface: InteractiveSurface, world: ReliefWorld, frame: Relie
   const points = surface.points.map((p) => unproject(frame, p, d));
   return node(`block:${surface.id}`, surface.name || 'Block', {
     kind: 'mesh', shape: 'outline', material: finishMaterial(surface.finish), collider: 'static',
-    catcher: surface.finish?.preset === 'light', outline: { points, depth: d },
+    catcher: world.look === 'effects' || surface.finish?.preset === 'light', outline: { points, depth: d },
   }, { position: [0, 0, d] });
 }
 
@@ -147,11 +148,11 @@ export function reliefScene(scene: InteractiveScene, world: ReliefWorld, aspect:
   // The wall: a unit plane (its normal +Y) turned to face the camera.
   nodes.push(node('wall', 'Wall', {
     kind: 'mesh', shape: 'plane', material: material('matte', { base: world.wall.color, rough: world.wall.rough }),
-    collider: 'static', catcher: world.wall.catcher,
+    collider: 'static', catcher: world.wall.catcher || world.look === 'effects',
   }, { rotation: [90, 0, 0], scale: [frame.W * 1.04, 1, frame.H * 1.04] }));
   if (world.floor) {
     nodes.push(node('floor', 'Floor', {
-      kind: 'mesh', shape: 'box', material: material('matte', { base: world.wall.color, rough: world.wall.rough }), collider: 'static', catcher: world.wall.catcher,
+      kind: 'mesh', shape: 'box', material: material('matte', { base: world.wall.color, rough: world.wall.rough }), collider: 'static', catcher: world.wall.catcher || world.look === 'effects',
     }, ((d) => ({ position: [0, -frame.H / 2 - 0.05, d / 2] as Vec3, scale: [frame.W * 1.04, 0.1, d] as Vec3 }))(floorDepth(scene, world, frame))));
   }
   for (const s of reliefSolids(scene)) nodes.push(blockNode(s, world, frame));
@@ -173,69 +174,4 @@ export function reliefScene(scene: InteractiveScene, world: ReliefWorld, aspect:
     post: { ...base.post, bloom: world.bloom, exposure: world.exposure },
     react: { light: 0.25, particles: 0.3, bloom: 0.35, camera: 0 },
   };
-}
-
-// ── Picking ───────────────────────────────────────────────────────────────
-
-export type Ray = { origin: Vec3; dir: Vec3 };
-export type ReliefHit = { surfaceId: string | null; point: Vec3; normal: Vec3; t: number };
-
-/** The camera ray through a point of the output (0..1, y down). */
-export function rayFromUv(frame: ReliefFrame, p: Point): Ray {
-  const target = unproject(frame, p, 0);
-  const dir: Vec3 = [target.x, target.y, -frame.camZ];
-  const len = Math.hypot(...dir);
-  return { origin: [0, 0, frame.camZ], dir: [dir[0] / len, dir[1] / len, dir[2] / len] };
-}
-
-function inside(poly: { x: number; y: number }[], x: number, y: number): boolean {
-  let hit = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const a = poly[i], b = poly[j];
-    if (a.y > y !== b.y > y && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) hit = !hit;
-  }
-  return hit;
-}
-
-/**
- * What the ray meets first: a block's front face or side, or the wall. Blocks
- * are prisms along Z, so a block is hit at its front face when the ray's
- * crossing at z = d is inside the outline, else on a side where the ray
- * enters the prism between d and 0.
- */
-export function pickRelief(scene: InteractiveScene, world: ReliefWorld, aspect: number, ray: Ray): ReliefHit {
-  const frame = reliefFrame(aspect, world.lens);
-  const at = (t: number): Vec3 => [ray.origin[0] + ray.dir[0] * t, ray.origin[1] + ray.dir[1] * t, ray.origin[2] + ray.dir[2] * t];
-  const tWall = -ray.origin[2] / ray.dir[2];
-  let best: ReliefHit = { surfaceId: null, point: at(tWall), normal: [0, 0, 1], t: tWall };
-  for (const s of reliefSolids(scene)) {
-    const d = blockDepth(s, world, frame);
-    const poly = s.points.map((p) => unproject(frame, p, d));
-    const tFront = (d - ray.origin[2]) / ray.dir[2];
-    const f = at(tFront);
-    if (tFront > 0 && tFront < best.t && inside(poly, f[0], f[1])) {
-      best = { surfaceId: s.id, point: f, normal: [0, 0, 1], t: tFront };
-      continue;
-    }
-    // Sides: the first edge the ray crosses between the front and the wall.
-    for (let i = 0; i < poly.length; i++) {
-      const a = poly[i], b = poly[(i + 1) % poly.length];
-      const ex = b.x - a.x, ey = b.y - a.y;
-      const nx = ey, ny = -ex;
-      const denom = nx * ray.dir[0] + ny * ray.dir[1];
-      if (Math.abs(denom) < 1e-9) continue;
-      const t = (nx * (a.x - ray.origin[0]) + ny * (a.y - ray.origin[1])) / denom;
-      if (t <= 0 || t >= best.t) continue;
-      const p = at(t);
-      if (p[2] < 0 || p[2] > d) continue;
-      const along = ((p[0] - a.x) * ex + (p[1] - a.y) * ey) / (ex * ex + ey * ey);
-      if (along < 0 || along > 1) continue;
-      const len = Math.hypot(nx, ny) || 1;
-      const n: Vec3 = [nx / len, ny / len, 0];
-      // Face the normal back at the ray.
-      if (n[0] * ray.dir[0] + n[1] * ray.dir[1] > 0) { n[0] = -n[0]; n[1] = -n[1]; }
-      best = { surfaceId: s.id, point: p, normal: n, t };
-    }
-  }
-  return best;
 }

@@ -152,17 +152,18 @@ describe('the 3D world in an Interactive layer', () => {
   });
 
   it('drips from the upper edges of the block it is on', async () => {
-    const { dripSites } = await import('./scene3dWorld');
-    const { reliefFrame } = await import('../scene3d/relief');
+    const { faceSites, worldGeometry } = await import('../scene3d/worldGeometry');
     const s = scene();
-    const frame = reliefFrame(16 / 9, s.world!.lens);
-    const sites = dripSites(s, s.world!, frame, 'b');
+    const geo = worldGeometry(s, s.world!, 16 / 9);
+    const sites = faceSites(geo, 'b');
     // A rectangle has one upper edge: its top, which is the highest in the world (y up).
     expect(sites).toHaveLength(1);
-    expect(sites[0].a.y).toBeCloseTo(sites[0].b.y, 9);
+    expect(sites[0].a[1]).toBeCloseTo(sites[0].b[1], 9);
+    expect(sites[0].n).toEqual([0, 0, 1]);
     const tri = { ...block, id: 't', points: [{ x: 0.5, y: 0.2 }, { x: 0.7, y: 0.6 }, { x: 0.3, y: 0.6 }] };
-    expect(dripSites({ ...s, surfaces: [tri] }, s.world!, frame, 't')).toHaveLength(2);
-    expect(dripSites(s, s.world!, frame, 'nothing')).toEqual([]);
+    const triScene = { ...s, surfaces: [tri] };
+    expect(faceSites(worldGeometry(triScene, s.world!, 16 / 9), 't')).toHaveLength(2);
+    expect(faceSites(geo, 'nothing')).toEqual([]);
   });
 
   it('simulates fire, draws smoke under the flames, and lights the world with it', async () => {
@@ -178,16 +179,16 @@ describe('the 3D world in an Interactive layer', () => {
       expect(r.find((p) => p.name === name)!.bindings.find((b) => b.binding === 23), name).toMatchObject({ kind: 'uniform' });
     }
     const { fireLights, flameLayout } = await import('./scene3dWorld');
-    const { reliefFrame } = await import('../scene3d/relief');
+    const { worldGeometry } = await import('../scene3d/worldGeometry');
     const s = { ...scene(), effects: [flames] };
-    const frame = reliefFrame(16 / 9, s.world!.lens);
-    const lit = fireLights(s, s.world!, frame, 16 / 9, flameLayout(s));
+    const geo = worldGeometry(s, s.world!, 16 / 9);
+    const lit = fireLights(geo, flameLayout(s));
     expect(lit[0]).toBe(1);
     // Above the block it burns on.
     expect(lit[5]).toBeGreaterThan(0);
-    const spots = fireLights(s, s.world!, frame, 16 / 9, flameLayout(s), { pointers: [{ point: { x: 0.1, y: 0.1 }, velocity: { x: 0, y: 0 }, tool: 'ignite', strength: 1 }], throws: [] });
+    const spots = fireLights(geo, flameLayout(s), { pointers: [{ point: { x: 0.1, y: 0.1 }, velocity: { x: 0, y: 0 }, tool: 'ignite', strength: 1 }], throws: [] });
     expect(spots[0]).toBe(2);
-    expect(fireLights(s, s.world!, frame, 16 / 9, flameLayout({ ...s, effects: [{ ...flames, enabled: false }] }))[0]).toBe(0);
+    expect(fireLights(geo, flameLayout({ ...s, effects: [{ ...flames, enabled: false }] }))[0]).toBe(0);
   });
 
   it('counts balls coming into zones on the GPU, and has the core read the counts back', () => {

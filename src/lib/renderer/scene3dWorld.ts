@@ -1,6 +1,6 @@
 /**
- * The 3D world part of an Interactive layer's graph: the relief world
- * (relief.ts) drawn by the 3D engine, with the layer's 2D effects either
+ * The 3D world part of an Interactive layer's graph: the world (the flat-wall
+ * relief or a room of real objects, see worldGeometry.ts) drawn by the 3D engine, with the layer's 2D effects either
  * thrown onto it as light (Projected), drawn over it (Over) or left out (Off),
  * and the world's own elements: balls that fall, roll and bounce down the
  * blocks (scene3dWorldShaders.ts).
@@ -13,20 +13,21 @@
 import type { InteractiveScene } from '../mobile/studio/interactive';
 import { effectParams, MOD_SOURCES, type InteractiveEffect } from '../mobile/studio/interactiveEffects';
 import type { WorldInputState } from '../interactive/worldInput';
+import { floorDepth, type ReliefView } from '../scene3d/relief';
+import { add, dot, scale } from '../scene3d/roomModel';
 import {
-  blockDepth,
-  deepestBlock,
-  floorDepth,
-  frontPaneDepth,
-  pickRelief,
-  rayFromUv,
-  reliefFrame,
-  reliefScene,
-  reliefSolids,
-  unproject,
-  type ReliefFrame,
-  type ReliefView,
-} from '../scene3d/relief';
+  faceSites,
+  geoFace,
+  outputVelocity,
+  pickWorld,
+  rayThrough,
+  spawnZ,
+  unprojectAt,
+  upOf,
+  worldGeometry,
+  type WorldGeo,
+} from '../scene3d/worldGeometry';
+import { worldScene } from '../scene3d/worldScene';
 import type { ReliefWorld } from '../scene3d/worldModel';
 import { buildScene3DGraph, SCENE3D_TIERS, type Scene3DQuality } from './scene3dNative';
 import {
@@ -141,25 +142,27 @@ function writeKind(out: Float32Array, at: number, kind: 'balls3d' | 'drips' | 'f
   });
 }
 
-/** Where an effect emitting from a block drops its balls: just above its top. */
-function blockEmitter(scene: InteractiveScene, world: ReliefWorld, frame: ReliefFrame, effect: InteractiveEffect) {
-  const s = reliefSolids(scene).find((x) => x.id === effect.target);
-  if (!s) return null;
+/** Where an effect emitting from a block drops its balls: just above its top, on the output. */
+function blockEmitter(scene: InteractiveScene, geo: WorldGeo, effect: InteractiveEffect) {
+  const s = scene.surfaces.find((x) => x.id === effect.target);
+  const f = geoFace(geo, effect.target);
+  if (!s || !f) return null;
   const xs = s.points.map((p) => p.x), ys = s.points.map((p) => p.y);
   const lo = Math.min(...xs), hi = Math.max(...xs);
   return {
-    depth: blockDepth(s, world, frame),
+    // As far forward as the face comes (on the wall: its depth).
+    depth: Math.max(...f.points.map((p) => spawnZ(geo, add(f.origin, add(scale(f.u, p.x), scale(f.v, p.y)))))),
     params: { x: (lo + hi) / 2, y: Math.max(0, Math.min(...ys) - 0.04), radius: Math.max(0.005, ((hi - lo) / 2) * 0.8), direction: 90 },
   };
 }
 
-export function ballKinds(scene: InteractiveScene, world: ReliefWorld, frame: ReliefFrame, layout: BallLayout): Float32Array {
+export function ballKinds(scene: InteractiveScene, geo: WorldGeo, layout: BallLayout): Float32Array {
   const kinds = new Float32Array((1 + layout.effects.length) * BALL_KIND_FLOATS);
   // Kind 0: thrown balls, in the first effect's style.
   const first = layout.effects.find((e) => e.enabled) ?? layout.effects[0];
   writeKind(kinds, 0, 'balls3d', first, [0, THROWN_BALLS, 3, 0], [0, 0, 0, 1]);
   layout.effects.forEach((e, i) => {
-    const from = e.target !== 'point' ? blockEmitter(scene, world, frame, e) : null;
+    const from = e.target !== 'point' ? blockEmitter(scene, geo, e) : null;
     writeKind(
       kinds, (i + 1) * BALL_KIND_FLOATS, 'balls3d', e,
       [THROWN_BALLS + i * layout.perEffect, layout.perEffect, EMISSIONS.indexOf(e.emission), e.burst],
@@ -170,16 +173,18 @@ export function ballKinds(scene: InteractiveScene, world: ReliefWorld, frame: Re
   return kinds;
 }
 
-export function ballBlocks(scene: InteractiveScene, world: ReliefWorld, frame: ReliefFrame): Float32Array {
-  const solids = reliefSolids(scene);
-  const blocks = new Float32Array(Math.max(1, solids.length) * BALL_BLOCK_FLOATS);
-  solids.forEach((s, i) => {
-    const d = blockDepth(s, world, frame);
-    const pts = s.points.slice(0, 64).map((p) => unproject(frame, p, d));
+/** The faces things collide with: each one's outline bounds, depth, frame and outline. */
+export function ballBlocks(geo: WorldGeo): Float32Array {
+  const blocks = new Float32Array(Math.max(1, geo.faces.length) * BALL_BLOCK_FLOATS);
+  geo.faces.forEach((f, i) => {
+    const pts = f.points.slice(0, 64);
     const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
     const at = i * BALL_BLOCK_FLOATS;
-    blocks.set([Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys), d, pts.length, 0, 0], at);
-    pts.forEach((p, j) => blocks.set([p.x, p.y], at + 8 + j * 2));
+    blocks.set([
+      Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys), f.depth, pts.length, 0, 0,
+      ...f.origin, 0, ...f.u, 0, ...f.v, 0, ...f.n, 0,
+    ], at);
+    pts.forEach((p, j) => blocks.set([p.x, p.y], at + 24 + j * 2));
   });
   return blocks;
 }
@@ -215,42 +220,21 @@ export function dripLayout(scene: InteractiveScene): DripLayout {
   return { effects, perEffect, count: POURED_DRIPS + perEffect * effects.length };
 }
 
-/**
- * Where a block drips from: its upper edges (those that face up, as seen on
- * the output), on its front face. At most 16.
- */
-export function dripSites(scene: InteractiveScene, world: ReliefWorld, frame: ReliefFrame, surfaceId: string): { a: { x: number; y: number }; b: { x: number; y: number }; z: number }[] {
-  const s = reliefSolids(scene).find((x) => x.id === surfaceId);
-  if (!s) return [];
-  const z = blockDepth(s, world, frame);
-  const pts = s.points.map((p) => unproject(frame, p, z));
-  let area = 0;
-  pts.forEach((a, i) => { const b = pts[(i + 1) % pts.length]; area += a.x * b.y - b.x * a.y; });
-  const sites: { a: { x: number; y: number }; b: { x: number; y: number }; z: number }[] = [];
-  pts.forEach((a, i) => {
-    const b = pts[(i + 1) % pts.length];
-    const ex = b.x - a.x, ey = b.y - a.y, len = Math.hypot(ex, ey);
-    if (len < 1e-6) return;
-    // Outward: to the right of each edge when the outline runs counterclockwise.
-    const ny = (area > 0 ? -ex : ex) / len;
-    if (ny > 0.35) sites.push({ a, b, z });
-  });
-  return sites.slice(0, 16);
+/** A drop or flame kind's sites: three vec4 each, the edge's ends, then the face's normal and depth. */
+function writeSites(kinds: Float32Array, at: number, sites: ReturnType<typeof faceSites>): void {
+  sites.forEach((site, j) => kinds.set([...site.a, 0, ...site.b, 0, ...site.n, site.depth], at + 188 + j * 12));
 }
 
-export function dripKinds(scene: InteractiveScene, world: ReliefWorld, frame: ReliefFrame, layout: DripLayout): Float32Array {
+export function dripKinds(geo: WorldGeo, layout: DripLayout): Float32Array {
   const kinds = new Float32Array((1 + layout.effects.length) * DRIP_KIND_FLOATS);
   // Kind 0: poured paint, in the first effect's style.
   const first = layout.effects.find((e) => e.enabled) ?? layout.effects[0];
   writeKind(kinds, 0, 'drips', first, [0, POURED_DRIPS, 3, 0], [0, 0, 0, 1]);
   layout.effects.forEach((e, i) => {
     const at = (i + 1) * DRIP_KIND_FLOATS;
-    const sites = e.target !== 'point' ? dripSites(scene, world, frame, e.target) : [];
+    const sites = e.target !== 'point' ? faceSites(geo, e.target) : [];
     writeKind(kinds, at, 'drips', e, [POURED_DRIPS + i * layout.perEffect, layout.perEffect, EMISSIONS.indexOf(e.emission), e.burst], [sites.length, 0, 0, e.enabled ? 1 : 0]);
-    sites.forEach((site, j) => {
-      kinds.set([site.a.x, site.a.y, site.b.x, site.b.y], at + 188 + j * 4);
-      kinds[at + 252 + j] = site.z;
-    });
+    writeSites(kinds, at, sites);
   });
   return kinds;
 }
@@ -265,19 +249,16 @@ export function flameLayout(scene: InteractiveScene): FlameLayout {
   return { effects, perEffect, count: IGNITED_FLAMES + perEffect * effects.length };
 }
 
-export function flameKinds(scene: InteractiveScene, world: ReliefWorld, frame: ReliefFrame, layout: FlameLayout): Float32Array {
+export function flameKinds(geo: WorldGeo, layout: FlameLayout): Float32Array {
   const kinds = new Float32Array((1 + layout.effects.length) * FLAME_KIND_FLOATS);
   // Kind 0: fires lit by Ignite, in the first effect's style.
   const first = layout.effects.find((e) => e.enabled) ?? layout.effects[0];
   writeKind(kinds, 0, 'flames', first, [0, IGNITED_FLAMES, 3, 0], [0, 0, 0, 1]);
   layout.effects.forEach((e, i) => {
     const at = (i + 1) * FLAME_KIND_FLOATS;
-    const sites = e.target !== 'point' ? dripSites(scene, world, frame, e.target) : [];
+    const sites = e.target !== 'point' ? faceSites(geo, e.target) : [];
     writeKind(kinds, at, 'flames', e, [IGNITED_FLAMES + i * layout.perEffect, layout.perEffect, EMISSIONS.indexOf(e.emission), e.burst], [sites.length, 0, 0, e.enabled ? 1 : 0]);
-    sites.forEach((site, j) => {
-      kinds.set([site.a.x, site.a.y, site.b.x, site.b.y], at + 188 + j * 4);
-      kinds[at + 252 + j] = site.z;
-    });
+    writeSites(kinds, at, sites);
   });
   return kinds;
 }
@@ -293,7 +274,8 @@ function hueColor(hue: number): [number, number, number] {
  * Firelight: a flickering light above each Fire & Smoke effect and each spot
  * Ignite set burning, so a fire lights what is round it. At most 8.
  */
-export function fireLights(scene: InteractiveScene, world: ReliefWorld, frame: ReliefFrame, aspect: number, layout: FlameLayout, input?: WorldInputState): Float32Array {
+export function fireLights(geo: WorldGeo, layout: FlameLayout, input?: WorldInputState): Float32Array {
+  const up = upOf(geo);
   const data = new Float32Array(FIRE_LIGHT_FLOATS);
   const lights: { pos: number[]; power: number; color: [number, number, number] }[] = [];
   const tint = (e: InteractiveEffect | undefined) => {
@@ -302,22 +284,22 @@ export function fireLights(scene: InteractiveScene, world: ReliefWorld, frame: R
   };
   for (const e of layout.effects) {
     if (!e.enabled || (e.params.glow ?? 0) <= 0) continue;
-    const sites = e.target !== 'point' ? dripSites(scene, world, frame, e.target) : [];
+    const sites = e.target !== 'point' ? faceSites(geo, e.target) : [];
     let pos: number[];
     if (sites.length) {
-      const s0 = sites.reduce((a, b) => (a.a.y + a.b.y > b.a.y + b.b.y ? a : b));
-      pos = [(s0.a.x + s0.b.x) / 2, (s0.a.y + s0.b.y) / 2 + 0.3, s0.z / 2];
+      // Above the middle of the highest edge, halfway back across the top.
+      const s0 = sites.reduce((a, b) => (dot(add(a.a, a.b), up) > dot(add(b.a, b.b), up) ? a : b));
+      pos = add(add(scale(add(s0.a, s0.b), 0.5), scale(up, 0.3)), scale(s0.n, -s0.depth / 2));
     } else {
-      const p = unproject(frame, { x: e.params.x ?? 0.5, y: e.params.y ?? 0.85 }, 0.3);
-      pos = [p.x, p.y + 0.3, 0.3];
+      pos = add(unprojectAt(geo, { x: e.params.x ?? 0.5, y: e.params.y ?? 0.85 }, 0.3), scale(up, 0.3));
     }
     lights.push({ pos, power: (e.params.glow ?? 0) * (0.4 + 0.6 * (e.params.flow ?? 0.6)) * (e.params.heat ?? 1.2), color: tint(e) });
   }
   const style = layout.effects.find((e) => e.enabled) ?? layout.effects[0];
   for (const p of input?.pointers ?? []) {
     if (p.tool !== 'ignite') continue;
-    const hit = pickRelief(scene, world, aspect, rayFromUv(frame, p.point)).point;
-    lights.push({ pos: [hit[0], hit[1] + 0.25, hit[2] + 0.15], power: 0.8 * p.strength, color: tint(style) });
+    const hit = pickWorld(geo, rayThrough(geo.projector, p.point)).point;
+    lights.push({ pos: add(hit, add(scale(up, 0.25), scale(geo.projector.fwd, -0.15))), power: 0.8 * p.strength, color: tint(style) });
   }
   lights.slice(0, 8).forEach((l, i) => data.set([...l.pos, l.power, ...l.color, i * 1.37 + 0.5], 4 + i * 8));
   data[0] = Math.min(8, lights.length);
@@ -329,16 +311,20 @@ export function wetSize(aspect: number): { width: number; height: number } {
   return aspect >= 1 ? { width: 640, height: Math.max(8, Math.round(640 / aspect)) } : { width: Math.max(8, Math.round(640 * aspect)), height: 640 };
 }
 
-export function worldPhysics(scene: InteractiveScene, world: ReliefWorld, frame: ReliefFrame, balls: BallLayout, drips: DripLayout, flames: FlameLayout = { effects: [], perEffect: 0, count: 0 }): Float32Array {
-  const pane = world.frontPane ? frontPaneDepth(scene, world, frame) : 0;
+export function worldPhysics(scene: InteractiveScene, world: ReliefWorld, geo: WorldGeo, balls: BallLayout, drips: DripLayout, flames: FlameLayout = { effects: [], perEffect: 0, count: 0 }): Float32Array {
   const paint = drips.effects.find((e) => e.enabled) ?? drips.effects[0];
+  const frame = geo.frame;
+  const floor = !!frame && world.floor;
   return new Float32Array([
-    frame.W, frame.H, frame.camZ, 9.8 * world.gravity,
-    pane, world.floor ? -frame.H / 2 : -1e9, Math.max(0.5, deepestBlock(scene, world, frame)), world.floor ? floorDepth(scene, world, frame) : 0,
-    balls.count, 1 + balls.effects.length, reliefSolids(scene).length, BALL_SUBSTEPS,
-    -frame.H / 2 - 3, frame.W / 2 + 1, frame.camZ * 0.8, 0,
+    ...geo.down, 9.8 * world.gravity,
+    geo.pane, floor ? -frame!.H / 2 : -1e9, geo.deepest, floor ? floorDepth(scene, world, frame!) : 0,
+    balls.count, 1 + balls.effects.length, geo.faces.length, BALL_SUBSTEPS,
+    ...(frame ? [-frame.H / 2 - 3, frame.W / 2 + 1, frame.camZ * 0.8] : [0, 0, 0]), 0,
     drips.count, 1 + drips.effects.length, paint?.params.dry ?? effectParams('drips').find((d) => d.key === 'dry')!.value, GLOSS_SECONDS,
     flames.count, 1 + flames.effects.length, ballZones(scene).length, 0,
+    ...(geo.plane ? [...geo.plane.n, geo.plane.offset] : [0, 0, 0, 0]),
+    geo.mode === 'room' ? 1 : 0, geo.spawnRef, geo.radius, 0,
+    ...geo.center, 0,
   ]);
 }
 
@@ -348,38 +334,29 @@ const MAX_THROW_SPEED = 14;
 /**
  * This frame's touches as the GPU reads them: each point becomes the ray
  * through it and what that ray hits; a throw starts in front of what is
- * under the finger, as deep as the world allows, at the finger's speed.
+ * under the finger, as near as the world allows, at the finger's speed.
  */
-export function ballInput(scene: InteractiveScene, world: ReliefWorld, frame: ReliefFrame, aspect: number, layout: BallLayout, input?: WorldInputState): Float32Array {
+export function ballInput(geo: WorldGeo, layout: BallLayout, input?: WorldInputState): Float32Array {
   const data = new Float32Array(BALL_INPUT_FLOATS);
   if (!input) return data;
-  const pick = (p: { x: number; y: number }) => {
-    const ray = rayFromUv(frame, p);
-    return { ray, hit: pickRelief(scene, world, aspect, ray) };
-  };
-  // Output speed (per second) to meters per second at depth z.
-  const speed = (v: { x: number; y: number }, z: number): [number, number] => {
-    const k = 1 - z / frame.camZ;
-    return [v.x * frame.W * k, -v.y * frame.H * k];
-  };
+  const pick = (p: { x: number; y: number }) => pickWorld(geo, rayThrough(geo.projector, p));
   input.pointers.slice(0, 8).forEach((p, i) => {
-    const { hit } = pick(p.point);
-    const [vx, vy] = speed(p.velocity, hit.point[2]);
-    data.set([...hit.point, TOOL_CODES[p.tool], vx, vy, 0, p.strength], 4 + i * 8);
+    const hit = pick(p.point);
+    data.set([...hit.point, TOOL_CODES[p.tool], ...outputVelocity(geo, p.velocity, hit.point), p.strength], 4 + i * 8);
   });
   const size = (layout.effects.find((e) => e.enabled) ?? layout.effects[0])?.params.size ?? effectParams('balls3d').find((d) => d.key === 'size')!.value;
   const r = 0.03 + 0.17 * Math.max(0, Math.min(1, size));
-  const pane = world.frontPane ? frontPaneDepth(scene, world, frame) : Math.max(0.5, deepestBlock(scene, world, frame)) + 0.45;
+  const pane = geo.deepest + 0.45;
   input.throws.slice(-8).forEach((t, i) => {
-    const { ray, hit } = pick(t.point);
+    const hit = pick(t.point);
     const lift = 0.05 + ((t.number * 0.618034) % 1) * 0.25;
-    const z = Math.max(r + 0.01, Math.min(hit.point[2] + r + lift, pane - r - 0.01));
-    const at = (z - ray.origin[2]) / ray.dir[2];
-    const pos = [ray.origin[0] + ray.dir[0] * at, ray.origin[1] + ray.dir[1] * at, z];
-    let [vx, vy] = speed(t.velocity, z);
-    const fast = Math.hypot(vx, vy);
-    if (fast > MAX_THROW_SPEED) { vx *= MAX_THROW_SPEED / fast; vy *= MAX_THROW_SPEED / fast; }
-    data.set([...pos, t.number, vx, vy, -0.5, 0], 4 + 64 + i * 8);
+    const z = Math.max(r + 0.01, Math.min(spawnZ(geo, hit.point) + r + lift, pane - r - 0.01));
+    const pos = unprojectAt(geo, t.point, z);
+    let v = outputVelocity(geo, t.velocity, pos);
+    const fast = Math.hypot(...v);
+    if (fast > MAX_THROW_SPEED) v = scale(v, MAX_THROW_SPEED / fast);
+    // A little way in, away from the projector.
+    data.set([...pos, t.number, ...add(v, scale(geo.projector.fwd, 0.5)), 0], 4 + 64 + i * 8);
   });
   data.set([Math.min(8, input.pointers.length), Math.min(8, input.throws.length)], 0);
   return data;
@@ -388,17 +365,17 @@ export function ballInput(scene: InteractiveScene, world: ReliefWorld, frame: Re
 export function buildWorldPart(options: WorldPartOptions): WorldPart {
   const { world, width, height, scene } = options;
   const aspect = width / Math.max(1, height);
-  const frame = reliefFrame(aspect, world.lens);
+  const geo = worldGeometry(scene, world, aspect);
   const safe = options.sourceId.replace(/[^\w:-]+/g, '_').slice(0, 120);
   const id = (name: string) => `scene3d:${safe}:${name}`;
   const flatTexture = world.flat === 'projected' ? id('flat') : null;
   const graph = buildScene3DGraph({
-    scene: reliefScene(scene, world, aspect, options.view),
+    scene: worldScene(scene, world, geo, aspect, options.view),
     sourceId: options.sourceId,
     width,
     height,
     quality: options.quality ?? SCENE3D_TIERS.default,
-    relief: { flatTexture: flatTexture ?? undefined, gain: RELIEF_PROJECTOR_GAIN, sway: world.sun.sway, projector: { width: frame.W, height: frame.H, distance: frame.camZ } },
+    relief: { flatTexture: flatTexture ?? undefined, gain: RELIEF_PROJECTOR_GAIN, sway: world.sun.sway, projector: geo.projector },
   });
   const textures = [...graph.config.textures];
   if (flatTexture) textures.unshift({ id: flatTexture, ...flatSize(width, height), format: 'rgba16float' });
@@ -409,13 +386,13 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
   const fire = flameLayout(scene);
   const value = (name: string, kind: 'uniform' | 'storage', data: Float32Array) => ({ id: id(name), kind, byte_length: data.byteLength, initial_b64: b64(data) });
   const ballValues = [
-    value('ball-phys', 'uniform', worldPhysics(scene, world, frame, layout, paint, fire)),
-    value('ball-kinds', 'storage', ballKinds(scene, world, frame, layout)),
-    value('ball-blocks', 'storage', ballBlocks(scene, world, frame)),
-    value('ball-input', 'uniform', ballInput(scene, world, frame, aspect, layout, options.input)),
-    value('drip-kinds', 'storage', dripKinds(scene, world, frame, paint)),
-    value('flame-kinds', 'storage', flameKinds(scene, world, frame, fire)),
-    value('fire-lights', 'uniform', fireLights(scene, world, frame, aspect, fire, options.input)),
+    value('ball-phys', 'uniform', worldPhysics(scene, world, geo, layout, paint, fire)),
+    value('ball-kinds', 'storage', ballKinds(scene, geo, layout)),
+    value('ball-blocks', 'storage', ballBlocks(geo)),
+    value('ball-input', 'uniform', ballInput(geo, layout, options.input)),
+    value('drip-kinds', 'storage', dripKinds(geo, paint)),
+    value('flame-kinds', 'storage', flameKinds(geo, fire)),
+    value('fire-lights', 'uniform', fireLights(geo, fire, options.input)),
     value('ball-zones', 'storage', ballZoneOutlines(scene)),
   ];
   const ballBytes = layout.count * BALL_FLOATS * 4;
@@ -433,7 +410,7 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
   const frameBuffer = graph.config.buffers.find((b) => b.id.endsWith(':scene3d:frame'))!;
   const b = (binding: number, name: string, kind: string) => ({ binding, resource: id(name), kind });
   const simBindings = [
-    { binding: 1, resource: frameBuffer.id, kind: 'uniform' }, b(2, 'view', 'read-only-storage'),
+    b(0, 'settings', 'uniform'), { binding: 1, resource: frameBuffer.id, kind: 'uniform' }, b(2, 'view', 'read-only-storage'),
     b(13, 'balls', 'storage'), b(14, 'balls-prev', 'storage'), b(15, 'ball-kinds', 'read-only-storage'),
     b(16, 'ball-blocks', 'read-only-storage'), b(17, 'ball-phys', 'uniform'), b(18, 'ball-input', 'uniform'),
     b(26, 'ball-zones', 'read-only-storage'), b(27, 'zone-hits', 'storage'),
@@ -445,14 +422,14 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
   passes.push({
     name: 'drips', shader_id: 'scene3d/drips', entry: 'cs_drips', dispatch: [Math.ceil(paint.count / 64), 1, 1],
     bindings: [
-      { binding: 1, resource: frameBuffer.id, kind: 'uniform' }, b(2, 'view', 'read-only-storage'), b(16, 'ball-blocks', 'read-only-storage'),
+      b(0, 'settings', 'uniform'), { binding: 1, resource: frameBuffer.id, kind: 'uniform' }, b(2, 'view', 'read-only-storage'), b(16, 'ball-blocks', 'read-only-storage'),
       b(17, 'ball-phys', 'uniform'), b(18, 'ball-input', 'uniform'), b(21, 'drips', 'storage'), b(22, 'drip-kinds', 'read-only-storage'),
     ],
   });
   passes.push({
     name: 'flames', shader_id: 'scene3d/flames', entry: 'cs_flames', dispatch: [Math.ceil(fire.count / 64), 1, 1],
     bindings: [
-      { binding: 1, resource: frameBuffer.id, kind: 'uniform' }, b(2, 'view', 'read-only-storage'), b(16, 'ball-blocks', 'read-only-storage'),
+      b(0, 'settings', 'uniform'), { binding: 1, resource: frameBuffer.id, kind: 'uniform' }, b(2, 'view', 'read-only-storage'), b(16, 'ball-blocks', 'read-only-storage'),
       b(17, 'ball-phys', 'uniform'), b(18, 'ball-input', 'uniform'), b(24, 'flames', 'storage'), b(25, 'flame-kinds', 'read-only-storage'),
     ],
   });
@@ -532,7 +509,7 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
     passes,
     render_passes: renders,
     values: [...graph.values, ...ballValues.map(({ id, initial_b64 }) => ({ id, initial_b64 }))].map((v) => ({ ...v, key: v.initial_b64 })),
-    topology: `${world.flat}|${flatTexture ? JSON.stringify(flatSize(width, height)) : ''}|balls:${layout.count}:${layout.effects.length}|drips:${paint.count}:${paint.effects.length}:${JSON.stringify(wet)}|flames:${fire.count}:${fire.effects.length}|${graph.topology}`,
+    topology: `${geo.mode}|${world.flat}|${flatTexture ? JSON.stringify(flatSize(width, height)) : ''}|balls:${layout.count}:${layout.effects.length}|drips:${paint.count}:${paint.effects.length}:${JSON.stringify(wet)}|flames:${fire.count}:${fire.effects.length}|${graph.topology}`,
     flatTexture,
     zoneHits: ballZones(scene).length ? { bufferId: id('zone-hits'), zoneIds: ballZones(scene).map((z) => z.id) } : null,
   };
