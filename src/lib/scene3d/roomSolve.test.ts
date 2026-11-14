@@ -86,6 +86,15 @@ describe('solving a room by hand', () => {
     expect(effectiveRoom(fewer, room, ASPECT).faces).toHaveLength(truth.faces.length - 1);
     // A scanned room is as stored.
     expect(effectiveRoom(scene, defaultRoom(), ASPECT).faces).toEqual([]);
+    // Two layers' rooms keep their own answers: taking turns does not solve again.
+    const other = { ...defaultRoom(), setup: { ...setup, fov: 40 } };
+    const b = effectiveRoom(scene, other, ASPECT);
+    const a2 = effectiveRoom(scene, room, ASPECT);
+    expect(effectiveRoom(scene, other, ASPECT).faces).toBe(b.faces);
+    expect(effectiveRoom(scene, room, ASPECT).faces).toBe(a2.faces);
+    expect(b.faces).not.toBe(a2.faces);
+    // Equal outlines in a new scene object are the same answer.
+    expect(effectiveRoom({ ...scene, surfaces: scene.surfaces.map((x) => ({ ...x })) }, room, ASPECT).faces).toBe(a2.faces);
     // The setup survives saving.
     expect(validateRoom(JSON.parse(JSON.stringify(room))).setup).toEqual({ ...setup, arrow: { x: truth.arrow.x / Math.hypot(truth.arrow.x, truth.arrow.y), y: truth.arrow.y / Math.hypot(truth.arrow.x, truth.arrow.y) } });
     expect(() => validateRoom({ setup: { roles: { a: 'floor' } } })).toThrow(/unknown role/);

@@ -374,10 +374,15 @@ function buildTracks(
       // the window moves.
       const base = liveLayers.find((l) => l.id === c.pieceId);
       if (!base) continue;
-      const plain: Layer = { ...base, id: showWhereLayerId(c.pieceId, state.clip.clipId), visible: true, parentGroupId: null, blendMode: 'normal' };
+      // One copy of the piece per member: the crop of a span goes on it
+      // directly (`drive` makes the copy), not on a copy of a copy.
+      const crop = state.span ? stageCropOf(base) : null;
+      const plain: Layer = crop
+        ? { ...base, id: showWhereLayerId(c.pieceId, state.clip.clipId), visible: true, parentGroupId: null, blendMode: 'normal', cropRegion: crop, contentFit: 'stretch' }
+        : { ...base, id: showWhereLayerId(c.pieceId, state.clip.clipId), visible: true, parentGroupId: null, blendMode: 'normal' };
       delete plain._showOpacityMul;
       delete plain._showParams;
-      const copy = drive(state.span ? spanned(plain) : plain, { ...state, opacity: c.opacity }, source);
+      const copy = drive(plain, { ...state, opacity: c.opacity }, source);
       if (!state.clip.blendMode) copy.blendMode = 'normal';
       subsByPiece.set(c.pieceId, [copy, ...(subsByPiece.get(c.pieceId) ?? [])]);
     }
@@ -468,8 +473,26 @@ export function showTrackSceneShape(frame: ShowTrackFrame): string {
   return parts.join(';');
 }
 
-/** The show's own fields of a driven layer (what `drive` puts on it). */
+/** Same keys and values (lane values are numbers, booleans or strings). */
+function sameParams(a: ShowTrackState['params'] | undefined, b: ShowTrackState['params'] | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  for (const key of keys) if (a[key] !== b[key]) return false;
+  return true;
+}
+
+/**
+ * The show's own fields of a driven layer (what `drive` puts on it). The
+ * layer itself when it already carries them: a where line's copies over the
+ * pieces it is not lighting, and a layer holding still, are not copied again
+ * every frame.
+ */
 function withShowValues(layer: Layer, opacity: number, params: ShowTrackState['params']): Layer {
+  const mul = opacity < 1 ? Math.max(0, opacity) : undefined;
+  const lanes = params && Object.keys(params).length ? params : undefined;
+  if (layer._showOpacityMul === mul && sameParams(layer._showParams, lanes)) return layer;
   const next: Layer = { ...layer };
   if (opacity < 1) next._showOpacityMul = Math.max(0, opacity);
   else delete next._showOpacityMul;

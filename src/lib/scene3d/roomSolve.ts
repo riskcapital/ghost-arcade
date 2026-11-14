@@ -302,8 +302,13 @@ function solveOffsets(faces: SolveFace[], touches: { i: number; j: number; row: 
   return leastSquares(rows, k + 1);
 }
 
-let lastKey = '';
-let lastRoom: Room | null = null;
+/**
+ * The last answer for each stored room (each layer's world has its own room
+ * object, so two layers never take turns re-solving), and the inputs it was
+ * solved from: the same surfaces list and aspect are a hit without even
+ * building the key. Entries go with their room objects.
+ */
+const solvedRooms = new WeakMap<Room, { surfaces: InteractiveScene['surfaces']; aspect: number; key: string; room: Room }>();
 
 /**
  * The room the engine uses: one set up by hand is solved from its setup and
@@ -313,12 +318,15 @@ let lastRoom: Room | null = null;
 export function effectiveRoom(scene: InteractiveScene, room: Room, aspect: number): Room {
   const setup = room.setup;
   if (!setup) return room;
+  const memo = solvedRooms.get(room);
+  if (memo && memo.surfaces === scene.surfaces && memo.aspect === aspect) return { ...memo.room, setup };
   const surfaces = scene.surfaces.filter((s) => s.behavior === 'solid' && s.points.length >= 3).map((s) => ({ id: s.id, points: s.points, role: setup.roles[s.id] }));
   const key = JSON.stringify([surfaces, setup.arrow, setup.elevation, setup.fov, setup.distance, aspect, room.floor]);
-  if (key !== lastKey || !lastRoom) {
-    const solved = solveRoom({ surfaces, aspect, arrow: setup.arrow, elevation: setup.elevation, fov: setup.fov, distance: setup.distance });
-    lastRoom = { ...solved.room, floor: room.floor };
-    lastKey = key;
+  let solved = memo?.key === key ? memo.room : null;
+  if (!solved) {
+    const result = solveRoom({ surfaces, aspect, arrow: setup.arrow, elevation: setup.elevation, fov: setup.fov, distance: setup.distance });
+    solved = { ...result.room, floor: room.floor };
   }
-  return { ...lastRoom, setup };
+  solvedRooms.set(room, { surfaces: scene.surfaces, aspect, key, room: solved });
+  return { ...solved, setup };
 }

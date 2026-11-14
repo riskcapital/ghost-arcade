@@ -136,13 +136,22 @@ export type InteractiveGraphMeta={
  bufferPrefix:(effectId:string)=>string;
  /** The 3D world's ball zone counters, read back live (scene3dWorld.ts). */
  zoneHits?:{bufferId:string;zoneIds:string[]}|null;
+ /** The values that follow live input (touches, tracked points, the Orbit
+  * view, throws), worked out again for new input without rebuilding the
+  * graph. For the same input they equal what a full build puts in `values`
+  * under the same ids; every other value does not depend on live input. */
+ live?:(input:InteractiveLiveInput)=>InteractiveGraphValue[];
 };
+/** The live input a frame adds to an Interactive layer's params. Never saved. */
+export type InteractiveLiveInput={interactiveInputs?:unknown;interactiveView?:unknown;interactiveWorld?:unknown};
 export type InteractiveGraphBuildResult=NativePluginGraphBuildResult&{interactive:InteractiveGraphMeta};
 /** `key` never leaves the app: it is stripped before the graph is sent. */
 export type GraphBuffer={id:string;kind:string;byte_length:number;initial_b64?:string;key?:string;persistent?:boolean;clear?:boolean};
 type GraphPass={name:string;shader_id:string;entry:string;dispatch:number[];bindings:object[]};
 type GraphRender={name:string;instance_count:number;blend:string;clear:boolean;clear_color?:number[];[key:string]:unknown};
-export type InteractivePart={buffers:GraphBuffer[];passes:GraphPass[];render_passes:GraphRender[]};
+export type InteractivePart={buffers:GraphBuffer[];passes:GraphPass[];render_passes:GraphRender[];
+ /** The buffers of this part that follow the touches: the touch list, and the uniform that counts them (slot 17). */
+ live?:{touches:string;uniform:{id:string;data:Float32Array}}};
 /** Floats per surface: bounds, centroid/count/behaviour, then 64 points. */
 export const SHAPE_FLOATS=66*4;
 const MATERIALS=['none','fire','smoke','liquid','points'],BEHAVIORS=['solid','emitter','attractor','trigger'];
@@ -206,11 +215,13 @@ function buildPart(options:NativePluginGraphOptions,scene:InteractiveScene,effec
   {id:id('surfaces'),kind:'storage',byte_length:shapes.byteLength,initial_b64:shapesB64},
   {id:id('touches'),kind:'storage',byte_length:touches.data.byteLength,initial_b64:touchesB64},
  ];
- if(preset>=6||materials.size)return buildMatterPasses(options,scene,id,shared,materials,effect);
+ const live={touches:id('touches'),uniform:{id:id('uniform'),data:u}};
+ if(preset>=6||materials.size)return {...buildMatterPasses(options,scene,id,shared,materials,effect),live};
  const uniform={binding:0,resource:id('uniform'),kind:'uniform'},geometry={binding:1,resource:id('surfaces'),kind:'read-only-storage'},touch={binding:3,resource:id('touches'),kind:'read-only-storage'};
  const bindings=[uniform,geometry,{binding:2,resource:id('particles'),kind:'read-only-storage'},touch];
  const render=(name:string,vertex:string,fragment:string,blend:string,vertices:number,instances:number):GraphRender=>({name,shader_id:'interactive/render',vertex_entry:vertex,fragment_entry:fragment,target:'source_frame',source_id:options.sourceId,seq:options.frameIndex,clear:false,blend,vertex_count:vertices,instance_count:instances,bindings});
  return {
+  live,
   buffers:[...shared,{id:id('particles'),kind:'storage',byte_length:INTERACTIVE_PARTICLES*32,persistent:true,clear:!!options.reset}],
   passes:[{name:'interactive-simulate',shader_id:'interactive/compute',entry:'cs_main',dispatch:[INTERACTIVE_PARTICLES/64,1,1],bindings:[uniform,geometry,{binding:2,resource:id('particles'),kind:'storage'},touch]}],
   render_passes:[render('interactive-surfaces','vs_bg','fs_bg','alpha',3,1),render('interactive-particles','vs_particle','fs_particle','add',6,INTERACTIVE_PARTICLES)],
@@ -244,6 +255,7 @@ function buildLookPart(options:NativePluginGraphOptions,scene:InteractiveScene,i
   valueBuffer(id('particles'),'storage',new Float32Array(8)),
  ];
  part.render_passes[0]={...part.render_passes[0],name:'interactive-looks',fragment_entry:'fs_look'};
+ part.live={touches:id('touches'),uniform:{id:id('uniform'),data:u}};
  return part;
 }
 /**
@@ -295,6 +307,17 @@ export function buildInteractiveGraph(options:NativePluginGraphOptions):Interact
  // over it (Over) or not at all (Off). See scene3dWorld.ts.
  const world=scene.world?.enabled?buildWorldPart({scene,world:scene.world,sourceId:options.sourceId,width:options.width,height:options.height,view:worldView(options.params.interactiveView),input:worldInputParam(options.params.interactiveWorld)}):null;
  if(world&&scene.world?.flat==='off')parts.length=0;
+ const liveParts=parts.flatMap(p=>p.live?[p.live]:[]);
+ const live=(input:InteractiveLiveInput):InteractiveGraphValue[]=>{
+  const t=touchInputs(input.interactiveInputs),tb=interactiveB64(t.data),out:InteractiveGraphValue[]=[];
+  for(const part of liveParts){
+   const u=part.uniform.data.slice();u[17]=Math.min(8,t.count);
+   const uniform=valueBuffer(part.uniform.id,'uniform',u,UNIFORM_CORE_SLOTS);
+   out.push({id:uniform.id,initial_b64:uniform.initial_b64!,key:uniform.key!},{id:part.touches,initial_b64:tb,key:tb});
+  }
+  if(world)out.push(...world.live(worldView(input.interactiveView),worldInputParam(input.interactiveWorld)));
+  return out;
+ };
  const buffers=[...parts.flatMap(p=>p.buffers),...(world?.buffers??[])],passes=[...parts.flatMap(p=>p.passes),...(world?.passes??[]) as GraphPass[]];
  let render_passes=parts.flatMap(p=>p.render_passes);
  // Content over transparent: the first pass clears to zero alpha (the core's
@@ -315,5 +338,5 @@ export function buildInteractiveGraph(options:NativePluginGraphOptions):Interact
   render_passes.map(r=>`${r.name}:${r.instance_count}:${r.blend}`).join('|'),
   ...(world?[world.topology]:[]),
  ].join('#');
- return {state:options.state??{scene:'interactive',prevFrameTime:options.time,historyHead:0},config:{...(world?{textures:world.textures}:{}),...(world?.zoneHits?{live_readbacks:[world.zoneHits.bufferId]}:{}),buffers:buffers.map(({key:_key,...buffer}:GraphBuffer)=>buffer),passes,render_passes,readbacks:[]},interactive:{topology,values,effectIds,bufferPrefix,zoneHits:world?.zoneHits??null}};
+ return {state:options.state??{scene:'interactive',prevFrameTime:options.time,historyHead:0},config:{...(world?{textures:world.textures}:{}),...(world?.zoneHits?{live_readbacks:[world.zoneHits.bufferId]}:{}),buffers:buffers.map(({key:_key,...buffer}:GraphBuffer)=>buffer),passes,render_passes,readbacks:[]},interactive:{topology,values,effectIds,bufferPrefix,zoneHits:world?.zoneHits??null,live}};
 }

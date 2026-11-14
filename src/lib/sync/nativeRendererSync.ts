@@ -7,7 +7,7 @@ import { IsfAnchorResend } from './isfAnchorResend';
 const sharedIsfAnchors = new IsfAnchorResend();
 import { applyStageOverrides } from '../timeline/lines/stageLedParams';
 import { setTransformAspect } from '../keyframes/layerParamKeys';
-import type {InteractiveGraphBuildResult} from '../renderer/nativeInteractiveGraph';
+import type {InteractiveGraphBuildResult, InteractiveGraphMeta, InteractiveLiveInput} from '../renderer/nativeInteractiveGraph';
 import {showToast} from '../stores/errorToast';
 import { projectorCalibrationUniforms } from '../output/projectorCalibration';
 import { composeNativeGraphs } from '../renderer/nativeGraphComposition';
@@ -86,7 +86,7 @@ import {
 } from '$lib/renderer/nativeJsCanvasHosts';
 import { resolveAssetRefForRuntime } from '$lib/storage/assetRegistry';
 import { shaderIsMusicMotionReady, withMusicFlow, withMusicTime, musicTimePhase, MUSIC_TIME_PHASE_INPUT, MUSIC_TIME_RATE_INPUT } from '$lib/audio/musicMotion';
-import { getMusicTimeOffset, getMusicTimeRate, hasMusicTime } from '$lib/audio/musicMotionEngine';
+import { getMusicTimeOffset, getMusicTimeRate, hasMusicTime, musicMotionLayerOverrides, musicMotionValuesFor } from '$lib/audio/musicMotionEngine';
 import {
   receiveSpoutTextureInfo,
   type SpoutSharedTextureInfo,
@@ -694,6 +694,10 @@ type NativeGraphRouteState = {
   interactiveTopology?: string;
   interactiveValueKeys?: Map<string, string>;
   interactiveEffectIds?: string[];
+  /** The installed build's live values (touches, Orbit view, throws), and
+   *  the live input they were last sent for. */
+  interactiveLive?: InteractiveGraphMeta['live'];
+  interactiveLiveSig?: string;
   /** Message of the build failure already reported for this route. */
   reportedBuildFailure?: string;
 };
@@ -5194,6 +5198,39 @@ function ensureCameraTracking(owner: string, needs: { trackBody: boolean; trackF
   });
 }
 
+/**
+ * This frame's live input on an Interactive layer: tracked hands and body
+ * with the pointer, the Studio's Orbit view of its 3D world, and the throws
+ * and pushes on its balls. Kept out of the layer's graph params: it moves
+ * every frame and reaches the core as a few small value buffers
+ * (`interactive.live` in nativeInteractiveGraph.ts), not a graph rebuild.
+ */
+export function performerWorldLiveInput(layerId: string): InteractiveLiveInput | null {
+  const interactiveInputs = liveInteractiveInputs(layerId);
+  const interactiveView = liveWorldView(layerId);
+  const interactiveWorld = liveWorldInput(layerId);
+  if (!interactiveInputs && !interactiveView && !interactiveWorld) return null;
+  const live: InteractiveLiveInput = {};
+  if (interactiveInputs) live.interactiveInputs = interactiveInputs;
+  if (interactiveView) live.interactiveView = interactiveView;
+  if (interactiveWorld) live.interactiveWorld = interactiveWorld;
+  return live;
+}
+
+/** Resolved effect-graph params per effectSource object (one per scene revision) and quality. */
+const effectGraphParamsMemo = new WeakMap<object, { quality: string; params: Record<string, any> }>();
+/** `stableNativeGraphKey` per params object: an unchanged scene is not walked again every frame. */
+const graphParamsKeyMemo = new WeakMap<object, string>();
+
+function graphParamsKey(params: Record<string, any>): string {
+  let key = graphParamsKeyMemo.get(params);
+  if (key === undefined) {
+    key = stableNativeGraphKey(params);
+    graphParamsKeyMemo.set(params, key);
+  }
+  return key;
+}
+
 function nativeGraphParamsForLayer(
   layer: Layer,
   kind: NativeGraphRouteKind,
@@ -5206,19 +5243,15 @@ function nativeGraphParamsForLayer(
     || kind === 'videosynth'
     || kind === 'vj-crossfade'
     || kind === 'vj-mix';
-  let params: Record<string, any> = isEffectGraphKind
+  const params: Record<string, any> = isEffectGraphKind
     ? layer.source?.effectSource ?? {}
     : layer.gpuLayerContent?.params ?? {};
-  if (kind === 'performer-world') {
-    // Tracked hands and body join the pointer here, at frame rate.
-    const live = liveInteractiveInputs(layer.id);
-    if (live) params = { ...params, interactiveInputs: live };
-    // The Studio's Orbit view turns the 3D world's camera, live.
-    const view = liveWorldView(layer.id);
-    if (view) params = { ...params, interactiveView: view };
-    // Throws and pushes on its balls.
-    const world = liveWorldInput(layer.id);
-    if (world) params = { ...params, interactiveWorld: world };
+  // The store hands out a new effectSource object for every edit, so the
+  // same object is the same scene: resolve it (and key it) once.
+  const qualityKey = isEffectGraphKind ? `${kind}|${quality.tier}|${quality.capsTier}|${quality.adaptive}|${quality.qualityScale}` : '';
+  if (isEffectGraphKind) {
+    const memo = effectGraphParamsMemo.get(params);
+    if (memo && memo.quality === qualityKey) return memo.params;
   }
   // Everything instrument-shaped goes through the shared funnel in
   // `nativeGraphQuality`: instrument defaults, colour-preset expansion,
@@ -5226,7 +5259,7 @@ function nativeGraphParamsForLayer(
   // uses), numeric coercion for select-backed params, and finally the
   // continuous overload trim. Effect-graph kinds have no shader def and
   // fall through it unchanged.
-  return resolveNativeGraphInstrumentParams(
+  const resolved = resolveNativeGraphInstrumentParams(
     // Effect graphs read their params off `source.effectSource` and have
     // no shader def; passing the layer's shaderId here would let an
     // instrument budget clamp keys that mean something else entirely.
@@ -5235,6 +5268,8 @@ function nativeGraphParamsForLayer(
     params,
     quality,
   ).params;
+  if (isEffectGraphKind) effectGraphParamsMemo.set(params, { quality: qualityKey, params: resolved });
+  return resolved;
 }
 
 /**
@@ -8467,7 +8502,7 @@ export class NativeRendererSync {
           const surface = scene.surfaces.find((s) => s.id === zone.surfaceId)!;
           for (const action of zone.actions) if (action.kind === 'world') world.trigger(action.what, zoneMiddle(surface.points), at);
         }
-        if (fired.length) fireInteractiveZones(layerId, fired);
+        if (fired.length) this.fireZonesAfterFrame(layerId, fired);
       })
       .catch(() => {})
       .finally(() => { state.busy = false; });
@@ -8541,7 +8576,39 @@ export class NativeRendererSync {
         for (const action of zone.actions) if (action.kind === 'world') runtime.world.trigger(action.what, middle, now);
       }
     }
-    fireInteractiveZones(layer.id, fired);
+    this.fireZonesAfterFrame(layer.id, fired);
+  }
+
+  /**
+   * Zones that fired while a frame is being built. Their show actions and
+   * bursts change stores the frame is being built from (and `project.update`
+   * calls back into the sync), so they run once the frame's commands are
+   * sent (runQueuedZoneActions), in the order they fired.
+   */
+  private queuedZoneActions: Array<{ layerId: string; fired: FiredZone[] }> = [];
+  /** A frame that keeps failing cannot pile them up: the oldest go first. */
+  static readonly MAX_QUEUED_ZONE_ACTIONS = 64;
+
+  private fireZonesAfterFrame(layerId: string, fired: FiredZone[]): void {
+    if (!this.flushInFlight) {
+      fireInteractiveZones(layerId, fired);
+      return;
+    }
+    this.queuedZoneActions.push({ layerId, fired });
+    const over = this.queuedZoneActions.length - NativeRendererSync.MAX_QUEUED_ZONE_ACTIONS;
+    if (over > 0) this.queuedZoneActions.splice(0, over);
+  }
+
+  private runQueuedZoneActions(): void {
+    if (!this.queuedZoneActions.length) return;
+    const queued = this.queuedZoneActions.splice(0);
+    for (const { layerId, fired } of queued) {
+      try {
+        fireInteractiveZones(layerId, fired);
+      } catch (err) {
+        console.warn('[NativeRendererSync] a zone action failed', err);
+      }
+    }
   }
 
   private scheduleAudioSync() {
@@ -9997,7 +10064,11 @@ export class NativeRendererSync {
     // (timeline/lines/lineTargets.ts).
     const lineFrame = currentLineFrame();
     const hasLines = !!lineFrame && (lineFrame.layers.size > 0 || !!lineFrame.blocks?.size || !!lineFrame.looks?.size);
-    if (!kfOverrides && !seqOverrides && !hasShow && !hasLines) return layers;
+    // Music motion's values (musicMotionEngine.ts) go on first, where the
+    // stored values were: anything below wins over them on the same key. A
+    // Timeline copy showing the layer's shader follows the layer.
+    const hasMusic = musicMotionLayerOverrides().size > 0;
+    if (!kfOverrides && !seqOverrides && !hasShow && !hasLines && !hasMusic) return layers;
 
     let changed = false;
     const mapped = layers.map((layer) => {
@@ -10008,13 +10079,15 @@ export class NativeRendererSync {
       const lineParams = hasLines ? lineLayerValues(lineFrame, layer.id) : undefined;
       const blockParams = hasLines ? lineBlockValues(lineFrame, layer) : undefined;
       const lookLines = hasLines && wearsLookWithLines(lineFrame, layer);
-      if (!kf && seqMult === undefined && !showParams && showMul === undefined && !lineParams && !blockParams && !lookLines) return layer;
+      const musicParams = hasMusic ? musicMotionValuesFor(layer) : undefined;
+      if (!kf && seqMult === undefined && !showParams && showMul === undefined && !lineParams && !blockParams && !lookLines && !musicParams) return layer;
 
       changed = true;
       const next: any = { ...layer };
       if (seqMult !== undefined && seqMult < 1) {
         next.opacity = (next.opacity ?? 1) * seqMult;
       }
+      if (musicParams) applyParamOverrides(next as Layer, musicParams as ParamOverrideSet);
       if (kf) applyParamOverrides(next as Layer, kf as ParamOverrideSet);
       if (showParams) applyParamOverrides(next as Layer, showParams);
       if (lineParams) applyParamOverrides(next as Layer, lineParams);
@@ -10046,11 +10119,17 @@ export class NativeRendererSync {
     try {
       do {
         this.flushAgain = false;
-        await this.flushOnce(
-          this.desiredWidth,
-          this.desiredHeight,
-          this.applyTimelineOverrides(this.latestLayers),
-        );
+        try {
+          await this.flushOnce(
+            this.desiredWidth,
+            this.desiredHeight,
+            this.applyTimelineOverrides(this.latestLayers),
+          );
+        } finally {
+          // The frame's commands are sent: now the zones that fired while it
+          // was built may change the show (which asks for another frame).
+          this.runQueuedZoneActions();
+        }
       } while (this.running && this.startupReady && this.flushAgain);
     } catch (err) {
       // Every caller fires this without awaiting it, so a throw here was an
@@ -10277,8 +10356,14 @@ export class NativeRendererSync {
       const nativeGraphScaledParams = nativeGraphRoute
         ? nativeGraphParamsForLayer(layer, nativeGraphRoute.kind, nativeGraphQuality)
         : null;
+      // Live input on an Interactive layer moves every frame: it goes out as
+      // value buffers (below), not through the params that rebuild the graph.
+      // A core without in-place value updates still needs the rebuild.
+      const interactiveLive = nativeGraphRoute?.kind === 'performer-world' ? performerWorldLiveInput(layer.id) : null;
+      const interactiveLiveSig = interactiveLive ? JSON.stringify(interactiveLive) : '';
+      const interactiveLiveAsValues = this.supportsNativeFeature('native_interactive_value_updates');
       const nativeGraphParamsSig = nativeGraphScaledParams
-        ? stableNativeGraphKey(nativeGraphScaledParams)
+        ? graphParamsKey(nativeGraphScaledParams) + (interactiveLiveAsValues || !interactiveLive ? '' : `|live:${interactiveLiveSig}`)
         : 'none';
       // The params that decide what a VJ graph binds. Other kinds' params are
       // values only (graphParamsSig below) and do not rebind the source.
@@ -10569,6 +10654,8 @@ export class NativeRendererSync {
 
       // Set when this frame sends a core-owned layer's effect uniforms.
       let coreOwnedFxSent = false;
+      // Set when this frame built the layer's graph, live input included.
+      let graphBuiltThisFrame = false;
       if (
         nativeGraphRoute &&
         NATIVE_CORE_OWNED_GRAPH_KINDS.has(nativeGraphRoute.kind) &&
@@ -10791,6 +10878,7 @@ export class NativeRendererSync {
           }
         }
         if (nativeGraphRoute.kind === 'handfx') ensureHandFxTracking(nativeGraphScaledParams);
+        graphBuiltThisFrame = true;
         // A scene that cannot be built (damaged data that slipped past the
         // loaders) fails here for its own layer only. Thrown further up, it
         // aborted the whole frame batch, so no layer updated again.
@@ -10815,7 +10903,7 @@ export class NativeRendererSync {
           ? timedNativePluginGraph({
               kind: nativeGraphRoute.kind as 'ghostfx' | 'handfx' | 'performer-world',
               sourceId: graphSource.id,
-              params: nativeGraphScaledParams ?? {},
+              params: interactiveLive ? { ...nativeGraphScaledParams, ...interactiveLive } : nativeGraphScaledParams ?? {},
               width,
               height,
               time: graphTime,
@@ -10889,6 +10977,11 @@ export class NativeRendererSync {
           routeState.interactiveTopology = topology;
           routeState.interactiveValueKeys = new Map(interactive.values.map((value) => [value.id, value.key]));
           routeState.interactiveEffectIds = interactive.effectIds;
+          routeState.interactiveLive = interactive.live;
+          routeState.interactiveLiveSig = interactiveLiveSig;
+        } else if (!pluginGraphFailed) {
+          routeState.interactiveLive = undefined;
+          routeState.interactiveLiveSig = undefined;
         }
         const skipInstall = pluginGraphFailed || interactiveValuesOnly;
         const effectGraph = !skipInstall
@@ -10940,6 +11033,25 @@ export class NativeRendererSync {
           layer_id: layer.id,
         });
         this.forgetNativeGraphUploads(layer.id);
+      }
+      // Live input moved and the graph was not rebuilt: send the few value
+      // buffers it changed (touches, the Orbit camera, throws, fire lights).
+      if (nativeGraphRoute?.kind === 'performer-world' && !graphBuiltThisFrame && interactiveLiveAsValues) {
+        const routeState = this.nativeGraphRoutes.get(nativeGraphRoute.key);
+        const sent = routeState?.interactiveValueKeys;
+        if (routeState?.interactiveLive && sent && routeState.interactiveLiveSig !== interactiveLiveSig) {
+          for (const value of routeState.interactiveLive(interactiveLive ?? {})) {
+            if (sent.get(value.id) === value.key) continue;
+            sent.set(value.id, value.key);
+            commands.push({
+              type: 'update_native_graph_buffer',
+              layer_id: layer.id,
+              buffer_id: value.id,
+              initial_b64: value.initial_b64,
+            });
+          }
+          routeState.interactiveLiveSig = interactiveLiveSig;
+        }
       }
       // The effect chain a core-owned graph layer carries (and a VJ crossfade
       // or mix layer's own effects) is sent with the graph, so audio-driven

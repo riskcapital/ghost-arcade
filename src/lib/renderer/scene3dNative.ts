@@ -78,6 +78,9 @@ export type Scene3DGraph = {
   values: { id: string; initial_b64: string }[];
   /** Meshes left out because the vertex budget was full. */
   droppedMeshes: string[];
+  /** The `settings` uniform as sent, for callers that rewrite a few of its
+   *  slots in place (the 3D world's Orbit view turns only the camera). */
+  settings: Float32Array;
 };
 
 function b64(data: Float32Array): string {
@@ -335,5 +338,6 @@ export function buildScene3DGraph(options: Scene3DGraphOptions): Scene3DGraph {
     topology,
     values: buffers.filter((x) => x.initial_b64 !== undefined && x.id !== frame.id).map((x) => ({ id: x.id, initial_b64: x.initial_b64! })),
     droppedMeshes: data.droppedMeshes,
+    settings: data.settings,
   };
 }
