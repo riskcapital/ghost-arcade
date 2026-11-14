@@ -9534,11 +9534,13 @@ export class NativeRendererSync {
   }
 
   scheduleSync(width: number, height: number, layers: Layer[]) {
-    if (!this.running) return;
+    // Kept even before the core runs: a project opened or recovered while
+    // the core is still starting is sent when start() completes. Dropping it
+    // left the output empty until some other change re-sent the scene.
     this.desiredWidth = width;
     this.desiredHeight = height;
     this.latestLayers = layers;
-    if (!this.startupReady) return;
+    if (!this.running || !this.startupReady) return;
 
     // An offline render drives the world clock itself, frame by frame.
     // Letting the live RAF keep flushing during the export interleaves
@@ -9619,10 +9621,11 @@ export class NativeRendererSync {
   }
 
   syncNow(width: number, height: number, layers: Layer[]) {
-    if (!this.running) return;
+    // Kept before the core runs, like scheduleSync.
     this.desiredWidth = width;
     this.desiredHeight = height;
     this.latestLayers = layers;
+    if (!this.running) return;
     if (this.pendingSyncTimer !== null) {
       clearTimeout(this.pendingSyncTimer);
       this.pendingSyncTimer = null;
@@ -9774,10 +9777,11 @@ export class NativeRendererSync {
   }
 
   forceSync(width: number, height: number, layers: Layer[]) {
-    if (!this.running) return;
+    // Kept before the core runs, like scheduleSync.
     this.desiredWidth = width;
     this.desiredHeight = height;
     this.latestLayers = layers;
+    if (!this.running) return;
     this.sentWidth = 0;
     this.sentHeight = 0;
     this.lastLayers.clear();

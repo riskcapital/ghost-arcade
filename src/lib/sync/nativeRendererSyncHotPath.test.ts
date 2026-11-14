@@ -168,6 +168,22 @@ describe('frame scheduling', () => {
   });
 });
 
+describe('a scene that arrives while the core is starting', () => {
+  it('is kept, not dropped, so start-up sends it', () => {
+    const sync = new mod.NativeRendererSync() as any;
+    expect(sync.running).toBe(false);
+    const layer = imageLayer(1);
+    for (const send of ['scheduleSync', 'syncNow', 'forceSync'] as const) {
+      sync.latestLayers = [];
+      sync[send](1280, 720, [layer]);
+      expect(sync.latestLayers, send).toEqual([layer]);
+      expect([sync.desiredWidth, sync.desiredHeight], send).toEqual([1280, 720]);
+    }
+    // Nothing reaches a core that is not running yet.
+    expect(h.batches).toHaveLength(0);
+  });
+});
+
 describe('graph routes and effect passes', () => {
   it('looks each layer route up once per flush and still queues every chain', async () => {
     const sync = makeSync();
