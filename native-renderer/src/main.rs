@@ -9,6 +9,7 @@ mod capabilities;
 mod compositor;
 mod compute_graph;
 mod graph_textures;
+mod graph_readbacks;
 mod scene_frame;
 mod core_frame_counter;
 mod media_decode;
@@ -7071,6 +7072,10 @@ impl App {
             }
             "capabilities" | "get_capabilities" => Ok(self.capabilities()),
             "compute_probe" | "run_compute_probe" => self.compute_probe(&req.params),
+            "take_graph_readbacks" => match self.renderer.as_mut() {
+                Some(renderer) => graph_readbacks::take_readbacks(&mut renderer.graph_readback_results, &req.params),
+                None => Ok(serde_json::json!({ "readbacks": {} })),
+            },
             "compute_graph" | "run_compute_graph" => {
                 let result = self.compute_graph(&req.params);
                 if result.is_ok() {
@@ -14777,10 +14782,11 @@ impl App {
         let readbacks = compute_graph_readbacks(params, &buffer_specs);
         if !readbacks.is_empty() {
             return Err(
-                "queued compute_graph does not support readbacks; use run_compute_graph for probes"
+                "queued compute_graph does not support readbacks; use run_compute_graph for probes, or live_readbacks on a graph layer"
                     .to_string(),
             );
         }
+        let live_readbacks = graph_readbacks::live_readback_ids(params, &buffer_specs)?;
         // Install immutable LUT data before acknowledging a queued graph. Otherwise
         // coalescing could discard the first upload in favour of a reference-only job.
         // Resident jobs retain no table payload and never rewrite the table per frame.
@@ -14810,7 +14816,7 @@ impl App {
             buffers: buffer_specs,
             pass_plans,
             render_plans,
-            readback_buffer_ids: Vec::new(),
+            readback_buffer_ids: live_readbacks,
         })
     }
 

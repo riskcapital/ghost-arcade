@@ -46,6 +46,7 @@ function core() {
 }
 
 const W = 960, H = 540;
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const LEDGE = { x0: 0.2, x1: 0.8, y0: 0.6, y1: 0.72 };
 
 function scene(): InteractiveScene {
@@ -256,6 +257,104 @@ suite('Relief world balls on the GPU', () => {
         if (q[3] > 0 && Math.hypot(q[0] - want.x, q[1] - want.y) < 0.6) near++;
       }
       expect(near, 'a fire under the finger').toBeGreaterThan(40);
+    } finally {
+      await rpc.close();
+    }
+  }, 120000);
+
+  it('counts a ball each time it comes into a zone', async () => {
+    const rpc = core();
+    try {
+      await rpc.send('start', { config: { backend: platform.rendererBackend, width: W, height: H, target_fps: 60 } });
+      await rpc.send('submit_commands', { commands: [...scene3dPrecompileCommands(), ...scene3dWorldPrecompileCommands()] });
+      const s: InteractiveScene = {
+        ...defaultInteractive(),
+        surfaces: [{
+          id: 'zone', name: 'Zone', behavior: 'trigger',
+          points: [{ x: 0.05, y: 0.4 }, { x: 0.3, y: 0.4 }, { x: 0.3, y: 0.6 }, { x: 0.05, y: 0.6 }],
+          trigger: { actions: [{ kind: 'burst' }], rearm: 1, when: 'ball' },
+        }],
+        effects: [],
+        world: defaultReliefWorld(),
+      };
+      const world = s.world!;
+      let hitsId = '';
+      const step = async (n: number, throwAt?: { x: number; y: number }, number = 1, read = false) => {
+        const part = buildWorldPart({
+          scene: s, world, sourceId: 'zones-test', width: W, height: H,
+          input: throwAt ? { pointers: [], throws: [{ point: throwAt, velocity: { x: 0, y: 0 }, number, at: 0 }] } : undefined,
+        });
+        hitsId = part.zoneHits!.bufferId;
+        const buffers = part.buffers.map((b) => (b.id.endsWith(':scene3d:frame') ? { ...b, initial_b64: frameBlock(n) } : b));
+        const result = await rpc.send('compute_graph', {
+          buffers, passes: part.passes, render_passes: [], textures: [],
+          readbacks: read ? [{ id: hitsId, include_bytes: true }] : [],
+        });
+        if (!read) return [];
+        const bytes = Buffer.from(result.readbacks[hitsId].bytes_b64, 'base64');
+        return Array.from(new Uint32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4));
+      };
+      // Two balls dropped above the zone fall through it; one far from it does not.
+      await step(1, { x: 0.17, y: 0.2 }, 1);
+      await step(2, { x: 0.8, y: 0.2 }, 2);
+      for (let n = 3; n < 40; n++) await step(n);
+      await step(40, { x: 0.18, y: 0.15 }, 3);
+      for (let n = 41; n < 100; n++) await step(n);
+      const counts = await step(100, undefined, 1, true);
+      expect(counts[0], `zone counts: ${counts.slice(0, 2)}`).toBe(2);
+    } finally {
+      await rpc.close();
+    }
+  }, 120000);
+
+  it('reads a layer’s zone counts back live with take_graph_readbacks', async () => {
+    const rpc = core();
+    try {
+      await rpc.send('start', { config: { backend: platform.rendererBackend, width: W, height: H, target_fps: 60 } });
+      await rpc.send('submit_commands', { commands: [...scene3dPrecompileCommands(), ...scene3dWorldPrecompileCommands()] });
+      const s: InteractiveScene = {
+        ...defaultInteractive(),
+        surfaces: [{
+          id: 'zone', name: 'Zone', behavior: 'trigger',
+          points: [{ x: 0.05, y: 0.4 }, { x: 0.3, y: 0.4 }, { x: 0.3, y: 0.6 }, { x: 0.05, y: 0.6 }],
+          trigger: { actions: [{ kind: 'burst' }], rearm: 1, when: 'ball' },
+        }],
+        effects: [],
+        world: defaultReliefWorld(),
+      };
+      const part = (throws: { point: { x: number; y: number }; number: number }[] = []) => buildWorldPart({
+        scene: s, world: s.world!, sourceId: 'live-test', width: W, height: H,
+        input: { pointers: [], throws: throws.map((t) => ({ ...t, velocity: { x: 0, y: 0 }, at: 0 })) },
+      });
+      const first = part();
+      const config = { textures: first.textures, buffers: first.buffers, passes: first.passes, render_passes: first.render_passes, readbacks: [], live_readbacks: [first.zoneHits!.bufferId] };
+      // Compile the graph's pipelines once before installing it.
+      await rpc.send('compute_graph', { ...config, live_readbacks: undefined });
+      const full = { topLeft: { x: 0, y: 1 }, topRight: { x: 1, y: 1 }, bottomRight: { x: 1, y: 0 }, bottomLeft: { x: 0, y: 0 } };
+      await rpc.send('submit_commands', { commands: [
+        { type: 'upsert_layer', layer_id: 'w', z_index: 0, opacity: 1, blend_mode: 'normal', corners: full },
+        { type: 'set_layer_visibility', layer_id: 'w', visible: true },
+        { type: 'set_native_graph_layer', layer_id: 'w', kind: 'performer-world', instrument_source_id: 'live-test', composite_source_id: 'live-test', input_source_id: null, effect_graph: config, params: {} },
+        { type: 'bind_media_source', layer_id: 'w', source_id: 'live-test', uri: 'native-graph://performer-world/live-test', source_type: 'video' },
+      ] });
+      const input = (throws: { point: { x: number; y: number }; number: number }[]) => {
+        const v = part(throws).values.find((x) => x.id.endsWith(':ball-input'))!;
+        return { type: 'update_native_graph_buffer', layer_id: 'w', buffer_id: v.id, initial_b64: v.initial_b64 };
+      };
+      const frames = async (n: number) => { for (let i = 0; i < n; i++) { await rpc.send('submit_commands', { commands: [{ type: 'present' }] }); await wait(20); } };
+      await frames(10);
+      await rpc.send('submit_commands', { commands: [input([{ point: { x: 0.17, y: 0.2 }, number: 1 }, { point: { x: 0.2, y: 0.15 }, number: 2 }])] });
+      await frames(5);
+      await rpc.send('submit_commands', { commands: [input([])] });
+      let counts: number[] = [];
+      for (let tries = 0; tries < 60 && !(counts[0] >= 2); tries++) {
+        await frames(3);
+        const taken = await rpc.send('take_graph_readbacks', { ids: [first.zoneHits!.bufferId] });
+        const b64 = taken.readbacks[first.zoneHits!.bufferId];
+        if (b64) { const bytes = Buffer.from(b64, 'base64'); counts = Array.from(new Uint32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4)); }
+      }
+      const status = await rpc.send('status');
+      expect(counts[0], `live counts ${counts.slice(0, 2)} runs ${status.compute_graph_runs} err ${status.last_shader_error} ${status.last_frame_error}`).toBe(2);
     } finally {
       await rpc.close();
     }

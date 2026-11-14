@@ -105,4 +105,24 @@ describe('the world settings', () => {
     const t = validateZoneTrigger({ rearm: 1, actions: [{ kind: 'world', what: 'ignite' }, { kind: 'world', what: 'nuke' }, { kind: 'world', what: 'balls' }, { kind: 'burst' }] });
     expect(t.actions).toEqual([{ kind: 'world', what: 'ignite' }, { kind: 'world', what: 'balls' }, { kind: 'burst' }]);
   });
+
+  it('keeps what sets a zone off, touch when it says nothing sane', async () => {
+    const { validateZoneTrigger } = await import('../mobile/studio/interactive');
+    expect(validateZoneTrigger({ rearm: 1, actions: [], when: 'ball' }).when).toBe('ball');
+    expect(validateZoneTrigger({ rearm: 1, actions: [], when: 'either' }).when).toBe('either');
+    expect('when' in validateZoneTrigger({ rearm: 1, actions: [], when: 'touch' })).toBe(false);
+    expect('when' in validateZoneTrigger({ rearm: 1, actions: [], when: 'laser' })).toBe(false);
+  });
+
+  it('leaves zones only balls set off alone when touched', async () => {
+    const { ZoneTriggers } = await import('../interactive/interactiveRuntime');
+    const { defaultInteractive } = await import('../mobile/studio/interactive');
+    const zone = (id: string, when?: 'ball' | 'either') => ({
+      id, name: id, behavior: 'trigger' as const, points: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }],
+      trigger: { actions: [{ kind: 'burst' as const }], rearm: 1, ...(when ? { when } : {}) },
+    });
+    const scene = { ...defaultInteractive(), surfaces: [zone('t'), zone('b', 'ball'), zone('e', 'either')] };
+    const fired = new ZoneTriggers().update(scene, [{ id: 'p', point: { x: 0.5, y: 0.5 }, strength: 1 }], 0);
+    expect(fired.map((f) => f.surfaceId)).toEqual(['t', 'e']);
+  });
 });

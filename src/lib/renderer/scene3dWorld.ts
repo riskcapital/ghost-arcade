@@ -44,6 +44,8 @@ import {
   FLAME_FLOATS,
   FLAME_KIND_FLOATS,
   FLAME_PARAM_KEYS,
+  BALL_ZONE_FLOATS,
+  MAX_BALL_ZONES,
 } from './scene3dWorldShaders';
 
 /** Brightness of the projected 2D picture on the relief. */
@@ -74,6 +76,8 @@ export type WorldPart = {
   topology: string;
   /** Where the 2D passes draw when Projected; null when they draw on the output. */
   flatTexture: string | null;
+  /** The buffer the app reads back live: how many times a ball has come into each zone (ballZones order). */
+  zoneHits: { bufferId: string; zoneIds: string[] } | null;
 };
 
 export type WorldPartOptions = {
@@ -178,6 +182,27 @@ export function ballBlocks(scene: InteractiveScene, world: ReliefWorld, frame: R
     pts.forEach((p, j) => blocks.set([p.x, p.y], at + 8 + j * 2));
   });
   return blocks;
+}
+
+/** The trigger zones balls set off, in the order the GPU counts them. */
+export function ballZones(scene: InteractiveScene): InteractiveScene['surfaces'] {
+  return scene.surfaces
+    .filter((s) => s.behavior === 'trigger' && s.points.length >= 3 && (s.trigger?.when === 'ball' || s.trigger?.when === 'either'))
+    .slice(0, MAX_BALL_ZONES);
+}
+
+/** Those zones as outlines on the output, for the GPU. */
+export function ballZoneOutlines(scene: InteractiveScene): Float32Array {
+  const zones = ballZones(scene);
+  const out = new Float32Array(Math.max(1, zones.length) * BALL_ZONE_FLOATS);
+  zones.forEach((z, i) => {
+    const pts = z.points.slice(0, 64);
+    const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
+    const at = i * BALL_ZONE_FLOATS;
+    out.set([Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys), pts.length, 0, 0, 0], at);
+    pts.forEach((p, j) => out.set([p.x, p.y], at + 8 + j * 2));
+  });
+  return out;
 }
 
 // ── Paint drips ───────────────────────────────────────────────────────────
@@ -313,7 +338,7 @@ export function worldPhysics(scene: InteractiveScene, world: ReliefWorld, frame:
     balls.count, 1 + balls.effects.length, reliefSolids(scene).length, BALL_SUBSTEPS,
     -frame.H / 2 - 3, frame.W / 2 + 1, frame.camZ * 0.8, 0,
     drips.count, 1 + drips.effects.length, paint?.params.dry ?? effectParams('drips').find((d) => d.key === 'dry')!.value, GLOSS_SECONDS,
-    flames.count, 1 + flames.effects.length, 0, 0,
+    flames.count, 1 + flames.effects.length, ballZones(scene).length, 0,
   ]);
 }
 
@@ -391,6 +416,7 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
     value('drip-kinds', 'storage', dripKinds(scene, world, frame, paint)),
     value('flame-kinds', 'storage', flameKinds(scene, world, frame, fire)),
     value('fire-lights', 'uniform', fireLights(scene, world, frame, aspect, fire, options.input)),
+    value('ball-zones', 'storage', ballZoneOutlines(scene)),
   ];
   const ballBytes = layout.count * BALL_FLOATS * 4;
   const wet = wetSize(aspect);
@@ -401,6 +427,7 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
     { id: id('drips'), kind: 'storage', byte_length: paint.count * DRIP_FLOATS * 4, persistent: true },
     { id: id('flames'), kind: 'storage', byte_length: fire.count * FLAME_FLOATS * 4, persistent: true },
     { id: id('balls'), kind: 'storage', byte_length: ballBytes, persistent: true },
+    { id: id('zone-hits'), kind: 'storage', byte_length: MAX_BALL_ZONES * 4, persistent: true },
     { id: id('balls-prev'), kind: 'storage', byte_length: ballBytes, persistent: true },
   ];
   const frameBuffer = graph.config.buffers.find((b) => b.id.endsWith(':scene3d:frame'))!;
@@ -409,6 +436,7 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
     { binding: 1, resource: frameBuffer.id, kind: 'uniform' }, b(2, 'view', 'read-only-storage'),
     b(13, 'balls', 'storage'), b(14, 'balls-prev', 'storage'), b(15, 'ball-kinds', 'read-only-storage'),
     b(16, 'ball-blocks', 'read-only-storage'), b(17, 'ball-phys', 'uniform'), b(18, 'ball-input', 'uniform'),
+    b(26, 'ball-zones', 'read-only-storage'), b(27, 'zone-hits', 'storage'),
   ];
   const groups = [Math.ceil(layout.count / 64), 1, 1];
   const sim = (name: string, entry: string) => ({ name, shader_id: 'scene3d/balls', entry, dispatch: groups, bindings: simBindings });
@@ -506,5 +534,6 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
     values: [...graph.values, ...ballValues.map(({ id, initial_b64 }) => ({ id, initial_b64 }))].map((v) => ({ ...v, key: v.initial_b64 })),
     topology: `${world.flat}|${flatTexture ? JSON.stringify(flatSize(width, height)) : ''}|balls:${layout.count}:${layout.effects.length}|drips:${paint.count}:${paint.effects.length}:${JSON.stringify(wet)}|flames:${fire.count}:${fire.effects.length}|${graph.topology}`,
     flatTexture,
+    zoneHits: ballZones(scene).length ? { bufferId: id('zone-hits'), zoneIds: ballZones(scene).map((z) => z.id) } : null,
   };
 }

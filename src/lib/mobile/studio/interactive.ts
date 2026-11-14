@@ -83,8 +83,13 @@ export const ZONE_WORLD_ACTIONS = ['ignite', 'pour', 'balls'] as const;
 export type ZoneWorldAction = (typeof ZONE_WORLD_ACTIONS)[number];
 export type ZoneAction = { kind: 'burst' } | { kind: 'show'; action: ShowAction } | { kind: 'world'; what: ZoneWorldAction };
 export const MAX_ZONE_ACTIONS = 8;
+/** What sets a zone off: a touch (pointer, hand, body), a ball of the 3D world, or either. */
+export const ZONE_SOURCES = ['touch', 'ball', 'either'] as const;
+export type ZoneSource = (typeof ZONE_SOURCES)[number];
 export type ZoneTrigger = {
   actions: ZoneAction[];
+  /** Touch when missing. */
+  when?: ZoneSource;
   /** Seconds after firing before the zone can fire again. A touch held in the
    *  zone fires once; it fires again only after leaving and coming back. */
   rearm: number;
@@ -221,8 +226,10 @@ export function validateZoneTrigger(raw: unknown): ZoneTrigger {
     }
   }
   const rearm = Number(t?.rearm);
+  const when = (ZONE_SOURCES as readonly unknown[]).includes(t?.when) ? (t!.when as ZoneSource) : undefined;
   return {
     actions,
+    ...(when && when !== 'touch' ? { when } : {}),
     rearm: Number.isFinite(rearm) ? Math.max(ZONE_REARM_MIN, Math.min(ZONE_REARM_MAX, rearm)) : defaultZoneTrigger().rearm,
   };
 }

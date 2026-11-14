@@ -189,4 +189,24 @@ describe('the 3D world in an Interactive layer', () => {
     expect(spots[0]).toBe(2);
     expect(fireLights(s, s.world!, frame, 16 / 9, flameLayout({ ...s, effects: [{ ...flames, enabled: false }] }))[0]).toBe(0);
   });
+
+  it('counts balls coming into zones on the GPU, and has the core read the counts back', () => {
+    const zone = (id: string, when?: 'ball' | 'either') => ({
+      id, name: id, behavior: 'trigger' as const, points: [{ x: 0.1, y: 0.1 }, { x: 0.2, y: 0.1 }, { x: 0.2, y: 0.2 }],
+      trigger: { actions: [{ kind: 'burst' as const }], rearm: 1, ...(when ? { when } : {}) },
+    });
+    const g = build(scene({}, [block, zone('touch-only'), zone('z1', 'ball'), zone('z2', 'either')] as InteractiveScene['surfaces'] as typeof block[]));
+    expect(g.interactive.zoneHits?.zoneIds).toEqual(['z1', 'z2']);
+    const config = g.config as unknown as { live_readbacks?: string[]; buffers: { id: string; persistent?: boolean; byte_length: number }[] };
+    expect(config.live_readbacks).toEqual([g.interactive.zoneHits!.bufferId]);
+    const hits = config.buffers.find((b) => b.id === g.interactive.zoneHits!.bufferId)!;
+    expect(hits.persistent).toBe(true);
+    expect(hits.byte_length).toBeLessThanOrEqual(4096);
+    const life = (g.config.passes as unknown as Pass[]).find((p) => p.name === 'balls-life')!;
+    expect(life.bindings.find((b) => b.binding === 27)).toMatchObject({ kind: 'storage', resource: hits.id });
+    // No ball zones: nothing read back.
+    const none = build(scene());
+    expect(none.interactive.zoneHits).toBeNull();
+    expect('live_readbacks' in none.config).toBe(false);
+  });
 });

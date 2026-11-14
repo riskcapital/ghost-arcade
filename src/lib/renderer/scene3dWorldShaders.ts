@@ -21,8 +21,11 @@
 import { effectParams } from '../mobile/studio/interactiveEffects';
 import { SCENE3D_COMMON_WGSL, SCENE3D_RELIEF_WGSL, SCENE3D_WORLD_WGSL } from './scene3dShaders';
 
-/** Floats per ball: position + radius, velocity + age, kind / seed / number / span. */
-export const BALL_FLOATS = 12;
+/** Floats per ball: position + radius, velocity + age, kind / seed / number / span, zones it is in. */
+export const BALL_FLOATS = 16;
+/** The most zones balls can set off (a bit each in a float), and floats per zone. */
+export const MAX_BALL_ZONES = 24;
+export const BALL_ZONE_FLOATS = (2 + 32) * 4;
 /** Floats per ball kind: slots, emit, 5 vec4 of params, 40 vec4 of their mods. */
 export const BALL_KIND_FLOATS = (2 + 5 + 40) * 4;
 /** Floats per block: bounds, depth and count, 32 vec4 holding 64 points. */
@@ -43,7 +46,7 @@ struct Phys {
   counts: vec4f,  // balls, ball kinds, blocks, substeps
   kill: vec4f,    // below this y, beyond this |x|, nearer than this z
   drips: vec4f,   // drops, drop kinds, seconds a stain takes to fade, seconds paint stays wet
-  fire: vec4f,    // flame particles, flame kinds
+  fire: vec4f,    // flame particles, flame kinds, zones balls set off
 }
 @group(0) @binding(17) var<uniform> phys: Phys;
 
@@ -168,7 +171,8 @@ struct BallKind {
 }
 // pos.w radius (0: not in play). vel.w age, negative while waiting to be born.
 // info: kind, seed, birth number (throws) or burst seen, life span.
-struct Ball { pos: vec4f, vel: vec4f, info: vec4f }
+// extra.x: the zones it is in, a bit each.
+struct Ball { pos: vec4f, vel: vec4f, info: vec4f, extra: vec4f }
 @group(0) @binding(15) var<storage, read> kinds: array<BallKind>;
 
 ${PARAM_CONSTS}
@@ -191,6 +195,36 @@ ${BALL_COMMON}
 
 @group(0) @binding(13) var<storage, read_write> balls: array<Ball>;
 @group(0) @binding(14) var<storage, read_write> prev: array<Ball>;
+// Zones balls set off: outlines on the output (box: min, max), and how many
+// times a ball has come into each, which the app reads back.
+struct Zone { box: vec4f, info: vec4f, pts: array<vec4f, 32> }
+@group(0) @binding(26) var<storage, read> zones: array<Zone>;
+@group(0) @binding(27) var<storage, read_write> zone_hits: array<atomic<u32>>;
+
+fn zone_corner(z: u32, i: u32) -> vec2f {
+  let v = zones[z].pts[i / 2u];
+  return select(v.xy, v.zw, (i & 1u) == 1u);
+}
+
+// The zones a point of the output is in, a bit each.
+fn zones_at(uv: vec2f) -> u32 {
+  var mask = 0u;
+  for (var z = 0u; z < u32(phys.fire.z); z++) {
+    let box = zones[z].box;
+    if (any(uv < box.xy) || any(uv > box.zw)) { continue; }
+    let n = u32(zones[z].info.x);
+    var inside = false;
+    var j = n - 1u;
+    for (var i = 0u; i < n; i++) {
+      let a = zone_corner(z, i);
+      let c = zone_corner(z, j);
+      if (((a.y > uv.y) != (c.y > uv.y)) && (uv.x < (c.x - a.x) * (uv.y - a.y) / (c.y - a.y) + a.x)) { inside = !inside; }
+      j = i;
+    }
+    if (inside) { mask |= 1u << z; }
+  }
+  return mask;
+}
 
 fn kind_of(i: u32) -> i32 {
   for (var k = 0u; k < u32(phys.counts.y); k++) {
@@ -272,10 +306,22 @@ fn cs_balls_life(@builtin(global_invocation_id) gid: vec3u) {
     if (!on || age > b.info.w || gone) {
       b.pos = AWAY;
       b.vel = vec4f(0.0, 0.0, 0.0, -0.05);
+      b.extra.x = 0.0;
     } else {
       // Grows in, shrinks out.
       let fade = smoothstep(0.0, 0.12, age) * smoothstep(b.info.w, b.info.w - 0.5, age);
       b.pos.w = max(ball_radius(k, b.info.y) * fade, 0.004);
+      // Zones: count each one the ball has just come into, as seen on the output.
+      if (phys.fire.z > 0.0) {
+        let near = phys.frame.z / max(phys.frame.z - b.pos.z, 1e-3);
+        let uv = vec2f(0.5 + b.pos.x * near / phys.frame.x, 0.5 - b.pos.y * near / phys.frame.y);
+        let now_in = zones_at(uv);
+        let came = now_in & ~u32(b.extra.x);
+        for (var z = 0u; z < u32(phys.fire.z); z++) {
+          if ((came & (1u << z)) != 0u) { atomicAdd(&zone_hits[z], 1u); }
+        }
+        b.extra.x = f32(now_in);
+      }
       for (var p = 0u; p < u32(input.head.x); p++) {
         let ptr = input.pointers[p];
         let eye = vec3f(0.0, 0.0, phys.frame.z);

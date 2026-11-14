@@ -240,6 +240,7 @@ import {
   stopNativeRenderer,
   submitNativeRendererBatch,
   submitNativeRendererCommands,
+  takeNativeRendererGraphReadbacks,
   type RendererStatus,
   type NativeRendererCapabilities,
   type RendererReadinessReport,
@@ -8411,10 +8412,65 @@ export class NativeRendererSync {
       await this.clearNativeGraphBuffers(inactiveGraphBufferPrefixes);
     }
     pruneLiveInteractiveInputs(interactiveLayersSeen);
+    for (const id of Array.from(this.worldZoneReads.keys())) {
+      if (!interactiveLayersSeen.has(id)) { this.worldZoneReads.delete(id); this.worldZoneHits.delete(id); }
+    }
     for (const id of Array.from(this.interactiveRuntimes.keys())) {
       if (!interactiveLayersSeen.has(id)) this.interactiveRuntimes.delete(id);
     }
     return queuedCommands;
+  }
+
+  /** Per interactive layer, its ball zone counters (graph buffer id, zones in counter order). */
+  private worldZoneHits = new Map<string, { bufferId: string; zoneIds: string[] }>();
+  /** Per interactive layer: the counts last seen, whether a read is out, and when each zone last fired. */
+  private worldZoneReads = new Map<string, { seen: number[]; busy: boolean; at: number; fired: Map<string, number> }>();
+
+  /**
+   * Zones set off by balls: about ten times a second, take the counters the
+   * GPU keeps, and fire each zone whose count went up, once per re-arm time.
+   * A count that went down is a fresh graph: it is the new starting point.
+   */
+  private pollBallZones(layerId: string, scene: InteractiveScene, world: WorldInput, now: number): void {
+    const hits = this.worldZoneHits.get(layerId);
+    if (!hits || !scene.world?.enabled) return;
+    let read = this.worldZoneReads.get(layerId);
+    if (!read) {
+      read = { seen: [], busy: false, at: 0, fired: new Map() };
+      this.worldZoneReads.set(layerId, read);
+    }
+    if (read.busy || now - read.at < 0.1) return;
+    read.busy = true;
+    read.at = now;
+    const state = read;
+    void takeNativeRendererGraphReadbacks([hits.bufferId])
+      .then((bytes) => {
+        const b64 = bytes[hits.bufferId];
+        if (!b64) return;
+        const raw = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+        const counts = Array.from(new Uint32Array(raw.buffer, 0, Math.floor(raw.byteLength / 4)));
+        const fired: FiredZone[] = [];
+        const at = performance.now() / 1000;
+        hits.zoneIds.forEach((id, i) => {
+          const before = state.seen[i];
+          const count = counts[i] ?? 0;
+          if (before === undefined || count <= before) return;
+          const surface = scene.surfaces.find((s) => s.id === id);
+          if (!surface?.trigger?.actions.length) return;
+          const last = state.fired.get(id);
+          if (last !== undefined && at - last < surface.trigger.rearm) return;
+          state.fired.set(id, at);
+          fired.push({ surfaceId: id, actions: surface.trigger.actions });
+        });
+        state.seen = counts;
+        for (const zone of fired) {
+          const surface = scene.surfaces.find((s) => s.id === zone.surfaceId)!;
+          for (const action of zone.actions) if (action.kind === 'world') world.trigger(action.what, zoneMiddle(surface.points), at);
+        }
+        if (fired.length) fireInteractiveZones(layerId, fired);
+      })
+      .catch(() => {})
+      .finally(() => { state.busy = false; });
   }
 
   /** Per interactive layer: tracked-point smoothing and its trigger zones. */
@@ -8474,6 +8530,7 @@ export class NativeRendererSync {
     const asked = takeWorldActions(layer.id);
     if (scene.world?.enabled) for (const a of asked) runtime.world.trigger(a.what, a.point, now);
     setLiveWorldInput(layer.id, scene.world?.enabled ? runtime.world.update(points, now) : null);
+    this.pollBallZones(layer.id, scene, runtime.world, now);
     const fired = runtime.zones.update(scene, points, now);
     if (!fired.length) return;
     if (scene.world?.enabled) {
@@ -10793,6 +10850,9 @@ export class NativeRendererSync {
           ? (pluginGraph as InteractiveGraphBuildResult).interactive
           : null;
         let interactiveValuesOnly = false;
+        // Zones set off by the world's balls: counters the core reads back live.
+        if (interactive?.zoneHits) this.worldZoneHits.set(layer.id, interactive.zoneHits);
+        else this.worldZoneHits.delete(layer.id);
         if (interactive) {
           const topology = [
             interactive.topology, width, height, nativeGraphEffectSig,

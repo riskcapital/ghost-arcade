@@ -276,6 +276,7 @@ const RENDERER_COMMANDS = [
   'native_renderer_submit_commands',
   'native_renderer_schedule_launch', 'native_renderer_cancel_launch', 'native_renderer_launch_status',
   'native_renderer_run_compute_graph',
+  'native_renderer_take_graph_readbacks',
   'native_renderer_upload_source_gpu_shared_texture',
   'native_renderer_prefetch_media',
   'native_renderer_clear_prefetch_cache',
@@ -753,6 +754,8 @@ class NativeRendererBroker {
         return this.sendNativeCommandPayloadIfRunning('submit_commands', args, { fallback: null, timeoutMs: 5000 });
       case 'native_renderer_run_compute_graph':
         return this.sendNativeComputeGraphPayloadIfRunning('compute_graph', args, { fallback: null, timeoutMs: 10000 });
+      case 'native_renderer_take_graph_readbacks':
+        return this.sendNativeCommandPayloadIfRunning('take_graph_readbacks', args, { fallback: null, timeoutMs: 2000 });
       case 'native_renderer_upload_source_gpu_shared_texture':
         return this.uploadSourceGpuSharedTexture(args);
       case 'native_renderer_prefetch_media':

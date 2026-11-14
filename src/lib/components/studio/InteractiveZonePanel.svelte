@@ -12,6 +12,7 @@
     type ZoneAction,
     type ZoneTrigger,
     type ZoneWorldAction,
+    type ZoneSource,
   } from '../../mobile/studio/interactive';
   import type { ShowAction } from '../../show/showActions';
   import { describeShowAction } from '../../show/showActionLabels';
@@ -36,6 +37,17 @@
     balls: 'Drop balls from here',
   };
   const WORLD_ADD: Record<ZoneWorldAction, string> = { ignite: '+ Fire', pour: '+ Paint', balls: '+ Balls' };
+  const SOURCES: { value: ZoneSource; label: string }[] = [
+    { value: 'touch', label: 'Touch' },
+    { value: 'ball', label: 'Ball' },
+    { value: 'either', label: 'Either' },
+  ];
+  $: when = (world ? trigger.when : undefined) ?? 'touch';
+  $: heading = when === 'ball' ? 'When a ball comes in' : when === 'either' ? 'When touched or a ball comes in' : 'When touched';
+  function setWhen(value: ZoneSource) {
+    const { when: _old, ...rest } = trigger;
+    onchange(value === 'touch' ? rest : { ...rest, when: value }, true);
+  }
 
   let adding = false;
   let draft: ShowAction | null = null;
@@ -69,7 +81,14 @@
   }
 </script>
 
-<div class="group-label">When touched</div>
+{#if world}
+  <div class="world-flat zone-when" role="group" aria-label="What sets the zone off">
+    {#each SOURCES as source}
+      <button class:active={when === source.value} aria-pressed={when === source.value} onclick={() => setWhen(source.value)}>{source.label}</button>
+    {/each}
+  </div>
+{/if}
+<div class="group-label">{heading}</div>
 {#if trigger.actions.length}
   <ol class="zone-actions">
     {#each trigger.actions as a, i}
@@ -120,7 +139,11 @@
     oninput={(e) => onchange({ ...trigger, rearm: Math.max(ZONE_REARM_MIN, Math.min(ZONE_REARM_MAX, +e.currentTarget.value)) }, false)}
   />
 </label>
-<p class="hint">Fires once when something comes into the zone. A touch held there does not fire again until it leaves.</p>
+<p class="hint">
+  {when === 'touch'
+    ? 'Fires once when something comes into the zone. A touch held there does not fire again until it leaves.'
+    : 'Fires when a ball of the 3D world comes into the zone, as seen on the output, at most once per re-arm time.'}
+</p>
 <button class="wide" disabled={!trigger.actions.length} onclick={ontest}>Test</button>
 
 <style>

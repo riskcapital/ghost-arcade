@@ -134,6 +134,8 @@ export type InteractiveGraphMeta={
  effectIds:string[];
  /** Buffer id prefix of one effect. */
  bufferPrefix:(effectId:string)=>string;
+ /** The 3D world's ball zone counters, read back live (scene3dWorld.ts). */
+ zoneHits?:{bufferId:string;zoneIds:string[]}|null;
 };
 export type InteractiveGraphBuildResult=NativePluginGraphBuildResult&{interactive:InteractiveGraphMeta};
 /** `key` never leaves the app: it is stripped before the graph is sent. */
@@ -313,5 +315,5 @@ export function buildInteractiveGraph(options:NativePluginGraphOptions):Interact
   render_passes.map(r=>`${r.name}:${r.instance_count}:${r.blend}`).join('|'),
   ...(world?[world.topology]:[]),
  ].join('#');
- return {state:options.state??{scene:'interactive',prevFrameTime:options.time,historyHead:0},config:{...(world?{textures:world.textures}:{}),buffers:buffers.map(({key:_key,...buffer}:GraphBuffer)=>buffer),passes,render_passes,readbacks:[]},interactive:{topology,values,effectIds,bufferPrefix}};
+ return {state:options.state??{scene:'interactive',prevFrameTime:options.time,historyHead:0},config:{...(world?{textures:world.textures}:{}),...(world?.zoneHits?{live_readbacks:[world.zoneHits.bufferId]}:{}),buffers:buffers.map(({key:_key,...buffer}:GraphBuffer)=>buffer),passes,render_passes,readbacks:[]},interactive:{topology,values,effectIds,bufferPrefix,zoneHits:world?.zoneHits??null}};
 }
