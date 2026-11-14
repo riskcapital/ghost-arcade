@@ -43,8 +43,10 @@
   const set = (next: SurfaceMask) => onapply(withMask(surfaces, index, mask, next));
   function add(next: SurfaceMask) {
     if (!s || full) return;
+    // Its index before applying: the surfaces (and so `masks`) already hold it afterwards.
+    const at = masks.length;
     onapply(surfaces.map((x, i) => (i === index ? { ...x, masks: [...(x.masks ?? []), next] } : x)));
-    onmask(masks.length, 0, 'edit');
+    onmask(at, 0, 'edit');
   }
   function circle() {
     const box = s ? selectionBox(surfaces, [index]) : null;
