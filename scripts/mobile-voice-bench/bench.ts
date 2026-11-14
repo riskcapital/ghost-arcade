@@ -231,7 +231,17 @@ async function render(path: string) {
       for (let y = 0; y < HEIGHT; y++) img.data.set(px.subarray((HEIGHT - 1 - y) * WIDTH * 4, (HEIGHT - y) * WIDTH * 4), y * WIDTH * 4);
       for (let i = 3; i < img.data.length; i += 4) img.data[i] = 255;
       ctx.putImageData(img, 0, 0);
-      shots.push({ at, jpeg: out.toDataURL('image/jpeg', 0.92) });
+      // A smaller copy (thumbnails), scaled down smoothly from the full frame.
+      const [tw, th] = (params.get('out') ?? '').split('x').map(Number);
+      let shot = out;
+      if (tw > 0 && th > 0) {
+        shot = document.createElement('canvas');
+        shot.width = tw; shot.height = th;
+        const small = shot.getContext('2d')!;
+        small.imageSmoothingQuality = 'high';
+        small.drawImage(out, 0, 0, tw, th);
+      }
+      shots.push({ at, jpeg: shot.toDataURL('image/jpeg', 0.9) });
     }
     return { path, shots };
   } finally {

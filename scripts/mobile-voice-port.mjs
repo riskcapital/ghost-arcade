@@ -60,8 +60,9 @@ if (missing.length) throw new Error(`${ref} has no ${missing.map((v) => v.file).
 const chosen = new Set(record.voices.map((v) => v.file));
 for (const v of record.voices) {
   writeFileSync(join(folder, v.file), gitBytes('show', `${sha}:public/ISF/${v.file}`));
-  v.name = v.name ?? names.get(v.file) ?? spaced(v.file);
 }
+// A name in the record is the phone's own (where the desktop's would repeat a library name).
+const nameOf = (v) => v.name ?? names.get(v.file) ?? spaced(v.file);
 // Voice files are this script's: any not chosen is removed (a bench run with --all leaves them).
 let removed = 0;
 for (const file of readdirSync(folder)) if (/^VX-.*\.fs$/.test(file) && !chosen.has(file)) { rmSync(join(folder, file)); removed++; }
@@ -73,7 +74,7 @@ writeFileSync(recordFile, JSON.stringify(record, null, 2) + '\n');
 
 const id = (file) => 'voice-' + file.replace(/^VX-|\.fs$/g, '').replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
 const entries = record.voices.map((v) => {
-  const entry = { id: id(v.file), path: `ISF/${v.file}`, name: v.name, category: 'studio', audioNative: true, voice: true, motion: { flow: 0, breath: 0, glow: false } };
+  const entry = { id: id(v.file), path: `ISF/${v.file}`, name: nameOf(v), category: 'studio', audioNative: true, voice: true, motion: { flow: 0, breath: 0, glow: false } };
   // The phone plays a voice all the time; "comes and goes with its sound" stays an option.
   const defaults = { vxAuto: false, ...(v.source !== undefined ? { vxSource: v.source } : {}), ...(v.defaults ?? {}) };
   return { ...entry, defaults };

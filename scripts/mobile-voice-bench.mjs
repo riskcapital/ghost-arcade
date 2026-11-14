@@ -8,6 +8,9 @@
 //     The same in Safari on a booted simulator: the phone's own WebKit compiler.
 //   node scripts/mobile-voice-bench.mjs --render <dir> --music <wav> --at 30,52 [--size 640x360]
 //     Play the song into each voice and save JPEG frames at those seconds.
+//   node scripts/mobile-voice-bench.mjs --thumbnails --music <wav> --at 40 [--only ...]
+//     The library thumbnails: each voice at that second of the song, drawn by the phone's
+//     renderer at 640x360 and saved at 320x180 as public/ISF/thumbnails/VX-<name>.jpg.
 //   node scripts/mobile-voice-bench.mjs --app-bundle [--music <wav>] [--only ...] [--moments 8,40]
 //     Build the bench as the app's web content (dist-native-mobile), to measure on a
 //     phone: `cd native-mobile && npx cap copy ios`, build and install the app, launch it
@@ -26,13 +29,15 @@ const only = arg('--only')?.split(',').map((s) => s.trim()).filter(Boolean);
 let paths = readdirSync(join(root, 'public/ISF')).filter((f) => /^VX-.*\.fs$/.test(f)).sort().map((f) => `ISF/${f}`);
 if (only) paths = paths.filter((p) => only.some((o) => p === `ISF/VX-${o}.fs` || p === `ISF/${o}` || p === o));
 const music = arg('--music');
-const renderDir = arg('--render');
+const thumbnails = process.argv.includes('--thumbnails');
+const renderDir = thumbnails ? join(root, 'public/ISF/thumbnails') : arg('--render');
 const [w, h] = (arg('--size') ?? (renderDir ? '640x360' : '1280x720')).split('x').map(Number);
 const query = new URLSearchParams({ mode: renderDir ? 'render' : 'measure', w: String(w), h: String(h) });
 if (music) query.set('music', '/__bench-music');
 if (arg('--at')) query.set('at', JSON.stringify(arg('--at').split(',').map(Number)));
 if (arg('--moments')) query.set('moments', JSON.stringify(arg('--moments').split(',').map(Number)));
 if (process.argv.includes('--fps')) query.set('fps', '1');
+if (thumbnails) query.set('out', '320x180');
 if (arg('--step')) query.set('step', arg('--step'));
 
 if (process.argv.includes('--app-bundle')) {
@@ -66,7 +71,7 @@ function take(line) {
   if (line.startsWith('BENCH_ONE ')) {
     const r = JSON.parse(line.slice(10));
     results.push(r);
-    if (renderDir && r.shots) for (const shot of r.shots) writeFileSync(join(renderDir, `${r.path.slice(4, -3)}@${shot.at}.jpg`), Buffer.from(shot.jpeg.split(',')[1], 'base64'));
+    if (renderDir && r.shots) for (const shot of r.shots) writeFileSync(join(renderDir, thumbnails ? `${r.path.slice(4, -3)}.jpg` : `${r.path.slice(4, -3)}@${shot.at}.jpg`), Buffer.from(shot.jpeg.split(',')[1], 'base64'));
     process.stderr.write(`  ${results.length}/${paths.length} ${r.path.slice(7, -3)} ${r.error ? 'ERROR ' + r.error.split('\n')[0].slice(0, 160) : renderDir ? 'rendered' : `${r.ms} ms, lit ${r.lit}, luma ${r.luma}${r.fps ? ', ' + r.fps + ' fps' : ''}`}\n`);
   }
 }

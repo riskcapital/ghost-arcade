@@ -1,6 +1,174 @@
 {
   "ref": "origin/feat/music-studio-visuals",
-  "sha": "",
-  "copied": "",
-  "voices": []
+  "sha": "b31bdf651293faae49e555d83b6494b556062e6c",
+  "copied": "2026-11-14",
+  "voices": [
+    {
+      "file": "VX-AuroraWater.fs",
+      "referenceMs": 1.96,
+      "scale": 0.75
+    },
+    {
+      "file": "VX-Aperture.fs",
+      "referenceMs": 3.2,
+      "scale": 0.6
+    },
+    {
+      "file": "VX-BaitBall.fs",
+      "referenceMs": 2.86,
+      "scale": 0.6
+    },
+    {
+      "file": "VX-BeamOrgan.fs",
+      "referenceMs": 5.1,
+      "scale": 0.6
+    },
+    {
+      "file": "VX-ChromePool.fs",
+      "referenceMs": 7.51,
+      "scale": 0.6
+    },
+    {
+      "file": "VX-DrosteFrames.fs",
+      "referenceMs": 0.69,
+      "scale": 1
+    },
+    {
+      "file": "VX-EventHorizon.fs",
+      "referenceMs": 1,
+      "scale": 1
+    },
+    {
+      "file": "VX-Ferrofluid.fs",
+      "referenceMs": 0.84,
+      "scale": 1,
+      "name": "Ferrofluid Crown"
+    },
+    {
+      "file": "VX-InkBloom.fs",
+      "referenceMs": 2.2,
+      "scale": 0.7
+    },
+    {
+      "file": "VX-JuliaJewel.fs",
+      "referenceMs": 0.75,
+      "scale": 1
+    },
+    {
+      "file": "VX-Kaleidobloom.fs",
+      "referenceMs": 1.4,
+      "scale": 0.9
+    },
+    {
+      "file": "VX-LightRoom.fs",
+      "referenceMs": 3.29,
+      "scale": 0.6
+    },
+    {
+      "file": "VX-Louvers.fs",
+      "referenceMs": 0.74,
+      "scale": 1
+    },
+    {
+      "file": "VX-Mandala.fs",
+      "referenceMs": 1.98,
+      "scale": 0.75
+    },
+    {
+      "file": "VX-Marbling.fs",
+      "referenceMs": 3.28,
+      "scale": 0.6
+    },
+    {
+      "file": "VX-MeltBow.fs",
+      "referenceMs": 2.31,
+      "scale": 0.7
+    },
+    {
+      "file": "VX-MoltenChrome.fs",
+      "referenceMs": 2.21,
+      "scale": 0.7
+    },
+    {
+      "file": "VX-Moon.fs",
+      "referenceMs": 0.96,
+      "scale": 1
+    },
+    {
+      "file": "VX-Nebula.fs",
+      "referenceMs": 1.02,
+      "scale": 1
+    },
+    {
+      "file": "VX-Northlight.fs",
+      "referenceMs": 1.13,
+      "scale": 1
+    },
+    {
+      "file": "VX-OpBands.fs",
+      "referenceMs": 0.32,
+      "scale": 1
+    },
+    {
+      "file": "VX-OpDisc.fs",
+      "referenceMs": 2.09,
+      "scale": 0.75
+    },
+    {
+      "file": "VX-Paisley.fs",
+      "referenceMs": 1.76,
+      "scale": 0.8
+    },
+    {
+      "file": "VX-Pillars.fs",
+      "referenceMs": 2.62,
+      "scale": 0.65
+    },
+    {
+      "file": "VX-Pulsar.fs",
+      "referenceMs": 2.68,
+      "scale": 0.65
+    },
+    {
+      "file": "VX-Remnant.fs",
+      "referenceMs": 4.05,
+      "scale": 0.6
+    },
+    {
+      "file": "VX-RingedPlanet.fs",
+      "referenceMs": 1.07,
+      "scale": 1
+    },
+    {
+      "file": "VX-Riverlight.fs",
+      "referenceMs": 2.68,
+      "scale": 0.65
+    },
+    {
+      "file": "VX-Shallows.fs",
+      "referenceMs": 0.84,
+      "scale": 1
+    },
+    {
+      "file": "VX-Slabs.fs",
+      "referenceMs": 1.36,
+      "scale": 0.9
+    },
+    {
+      "file": "VX-SoapFilm.fs",
+      "referenceMs": 3.12,
+      "scale": 0.6
+    },
+    {
+      "file": "VX-SpiralGalaxy.fs",
+      "referenceMs": 0.3,
+      "scale": 1,
+      "name": "Golden Galaxy"
+    },
+    {
+      "file": "VX-Undertow.fs",
+      "referenceMs": 2.09,
+      "scale": 0.75
+    }
+  ]
 }
