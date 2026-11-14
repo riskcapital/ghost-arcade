@@ -20,12 +20,17 @@ const TARGET_MS=.9,MIN_SCALE=.6,REMOVE_MS=TARGET_MS/(MIN_SCALE*MIN_SCALE),measur
 const heldBack=new Set(JSON.parse(readFileSync(join(root,'native-mobile/shader-held-back.json'),'utf8')).paths);
 const measuredBudget=path=>{if(heldBack.has(path))return 'remove';const ms=measured[path];if(ms===undefined){console.warn(`Not measured: ${path}. Run scripts/mobile-shader-bench.mjs.`);return null;}if(ms<=TARGET_MS)return null;if(ms>REMOVE_MS)return 'remove';
  return {scale:Math.max(MIN_SCALE,Math.floor(Math.sqrt(TARGET_MS/ms)*20)/20),detail:.85};};
+// Studio voices (scripts/mobile-voice-port.mjs) are timed on a phone, not rated from their code:
+// each is in the library at the render scale its phone measurement gave it.
+const voices=new Map(JSON.parse(readFileSync(join(root,'native-mobile/studio-voices.json'),'utf8')).voices.map(v=>['ISF/'+v.file,v]));
 const paths=[],heavy=[],kept=[];let noThumbnail=0,imageSource=0;
 function visit(dir){for(const e of readdirSync(dir,{withFileTypes:true})){const file=join(dir,e.name);if(e.isDirectory()){if(e.name!=='thumbnails')visit(file);continue;}if(!e.name.endsWith('.fs'))continue;
  const path='ISF/'+relative(folder,file).replaceAll('\\','/'),thumb=path.slice(4,-3).replaceAll('/','_')+'.jpg';
  if(excluded.has(path))continue;
  if(!existsSync(join(folder,'thumbnails',thumb))){noThumbnail++;continue;}
- try{const source=readFileSync(file,'utf8'),header=source.match(/\/\*\s*(\{[\s\S]*?\})\s*\*\//);if(!header)continue;const meta=JSON.parse(header[1]);if(meta.INPUTS?.some(i=>String(i.TYPE).toLowerCase()==='image')){imageSource++;continue;}const cost=estimateShaderLoadRating(source,meta.INPUTS?.length??0);if(cost.level==='high'||cost.level==='extreme'){const entry={path,level:cost.level,score:cost.score,hints:cost.hints};if(budgeted[path])kept.push({...entry,budget:budgeted[path]});else{heavy.push(entry);continue;}}
+ try{const source=readFileSync(file,'utf8'),header=source.match(/\/\*\s*(\{[\s\S]*?\})\s*\*\//);if(!header)continue;const meta=JSON.parse(header[1]);if(meta.INPUTS?.some(i=>String(i.TYPE).toLowerCase()==='image')){imageSource++;continue;}
+ const voice=voices.get(path);if(voice){if(voice.scale<1)kept.push({path,level:'phone',score:voice.phoneMs,hints:[`${voice.phoneMs} ms per 1280x720 frame on an iPhone 12 Pro Max`],budget:{scale:voice.scale,detail:1}});paths.push(path);continue;}
+ const cost=estimateShaderLoadRating(source,meta.INPUTS?.length??0);if(cost.level==='high'||cost.level==='extreme'){const entry={path,level:cost.level,score:cost.score,hints:cost.hints};if(budgeted[path])kept.push({...entry,budget:budgeted[path]});else{heavy.push(entry);continue;}}
  else{const verdict=measuredBudget(path),entry={path,level:'measured',score:measured[path],hints:[`${measured[path]} ms per 720p frame on the reference GPU`]};if(verdict==='remove'){heavy.push(entry);continue;}if(verdict)kept.push({...entry,budget:verdict});}
  paths.push(path);}catch{continue;}
 }}
