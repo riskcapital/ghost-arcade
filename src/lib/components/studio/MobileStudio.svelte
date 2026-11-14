@@ -189,11 +189,35 @@
   let outputSettings=false;
   let outputPreferences=loadOutputPreferences();
   let outputStatus:OutputStatus={native:false,connected:false,state:'disconnected'};
-  import {snapMappingPoint,hitMappingScreens,grabOffset,draggedPoint,holdRepeat} from '../../mobile/studio/mappingInteraction';
+  import {hitMappingScreens} from '../../mobile/studio/mappingInteraction';
+  import MappingCanvas from './mapping/MappingCanvas.svelte';
+  import NudgePad from './mapping/NudgePad.svelte';
+  import SurfaceShapePanel from './mapping/SurfaceShapePanel.svelte';
+  import AddSurfaceSheet from './mapping/AddSurfaceSheet.svelte';
+  import {nudgeBasis} from '../../mobile/studio/mapping/viewport';
+  import {nudge as nudgeSurfaces,pointAt,selectablePoints,pruneWelds} from '../../mobile/studio/mapping/edit';
+  import {createDrawnSurface,createSurface,cornerView,kindLabel,resetGeometry,type NewSurfaceKind} from '../../mobile/studio/mapping/surfaceKinds';
   let mappingGrid=false, mappingSnap=false;
+  // Pro mapping tools: extra selected surfaces, outline drawing, the add sheet and the canvas (for its loupe).
+  let mapSelection:number[]=[], mapDraw=false, addSheet=false, mappingCanvas:MappingCanvas|undefined;
+  $: mapBasis=nudgeBasis(outputStatus.connected?outputStatus.display:null);
+  $: mapPoints=selectablePoints(show.surfaces[selectedSurface]);
+  function mapChange(next:Surface[]){show.surfaces=next;show={...show};}
+  function mapBegin(){checkpoint();show.mapping=true;}
+  /** One finished mapping edit: a single undo step. */
+  function mapApply(next:Surface[],point?:number){mapBegin();mapChange(next);if(point!==undefined)selectedPoint=point;persist();}
+  function addMappedSurface(kind:NewSurfaceKind){
+    if(show.surfaces.length>=16){flash('A set supports up to 16 surfaces.');return;}
+    addSheet=false;mapApply([...show.surfaces,createSurface(kind,show.surfaces.length)],0);selectedSurface=show.surfaces.length-1;mapSelection=[];
+  }
+  function drawnSurface(path:import('../../mobile/studio/mapping/pathGeometry').PathPoint[]){
+    mapDraw=false;
+    if(show.surfaces.length>=16){flash('A set supports up to 16 surfaces.');return;}
+    mapApply([...show.surfaces,createDrawnSurface(path,show.surfaces.length)],0);selectedSurface=show.surfaces.length-1;mapSelection=[];
+  }
   let lastScreenTap={x:-100,y:-100,time:0};
   function selectPreviewScreen(e:MouseEvent){
-    if(mappingTool==='paint'||tab!=='map'||(e.target as HTMLElement).closest('.warp-handle'))return;
+    if(mappingTool==='paint'||tab!=='map'||(e.target as HTMLElement).closest('.warp-handle,.mapping-canvas'))return;
     const r=preview.getBoundingClientRect(),p={x:(e.clientX-r.left)/r.width,y:(e.clientY-r.top)/r.height};
     const hits=hitMappingScreens(p,show.surfaces);if(!hits.length)return;
     const repeated=performance.now()-lastScreenTap.time<700&&Math.hypot(e.clientX-lastScreenTap.x,e.clientY-lastScreenTap.y)<12;
@@ -329,8 +353,6 @@
   let history = new History(),
     canUndo = false,
     canRedo = false;
-  let drag: { id: number; surface: number; point: number; offset: { x: number; y: number }; moved: boolean } | null = null;
-  let nudgeStep = 0.001;
   let taps: number[] = [];
   $: layer = show.layers[selectedLayer];
   // The set being played is always listed, even before its first save reaches the list.
@@ -804,45 +826,6 @@
     }
     persist();
   }
-  function beginDrag(e: PointerEvent, index: number) {
-    if (!surface || surface.locked) return;
-    e.preventDefault();
-    selectedPoint = index;
-    // Remember where inside the handle the finger landed: the corner then moves by the distance
-    // dragged. Touching a handle selects it and changes nothing.
-    const offset = grabOffset({ x: e.clientX, y: e.clientY }, surface.points[index], preview.getBoundingClientRect());
-    drag = { id: e.pointerId, surface: selectedSurface, point: index, offset, moved: false };
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-  }
-  function dragPoint(e: PointerEvent) {
-    if (!drag || drag.id !== e.pointerId) return;
-    const r = preview.getBoundingClientRect();
-    let point=draggedPoint({x:e.clientX,y:e.clientY},drag.offset,r);
-    if(!drag.moved){
-      const from=show.surfaces[drag.surface].points[drag.point];
-      if(Math.hypot((point.x-from.x)*r.width,(point.y-from.y)*r.height)<1)return;
-      drag.moved=true;checkpoint();show.mapping=true;
-    }
-    if(mappingSnap)point=snapMappingPoint(point,show.surfaces,drag.surface,r.width,r.height);
-    show.surfaces[drag.surface] = movePoint(show.surfaces[drag.surface], drag.point, point);
-    show = { ...show };
-  }
-  function endDrag(e: PointerEvent) {
-    if (drag?.id !== e.pointerId) return;
-    const moved = drag.moved;
-    drag = null;
-    if (moved) persist();
-  }
-  function nudge(dx: number, dy: number) {
-    if (!surface || surface.locked) return;
-    show.mapping = true;
-    const p = surface.points[selectedPoint];
-    show.surfaces[selectedSurface] = movePoint(surface, selectedPoint, { x: p.x + dx, y: p.y + dy });
-    persist();
-  }
-  function meshPath(s: Surface) {
-    return [0, 1, 2, 5, 8, 7, 6, 3, 0].map((i) => `${s.points[i].x * 1000},${s.points[i].y * 562.5}`).join(' ');
-  }
   function setBpm(value: number) {
     show.bpm = clamp(value, 30, 240);
     clockOrigin = performance.now();
@@ -1210,6 +1193,7 @@
     const next = new StudioEngine(output, () => show);
     next.beatClock = () => (performance.now() - clockOrigin) * show.bpm / 60000;
     next.onStats = (value) => (fps = value);
+    next.afterFrame = (canvas) => mappingCanvas?.loupeFrame(canvas);
     next.onError = (message) => (error = message);
     next.onStopped = (reason, message) => {
       if (engine !== next) return;
@@ -1575,36 +1559,9 @@
           {#key canvasGeneration}<canvas bind:this={output} aria-label="Live video output"></canvas>{/key}
           {#if visualsDown}<div class="visuals-down" role="alert"><strong>{visualsRestarting ? 'Restarting visuals…' : 'Visuals interrupted'}</strong><span>Your set is safe.</span><button data-restart-visuals disabled={visualsRestarting} onclick={() => restartVisuals(true)}>Restart visuals</button></div>{/if}
           {#if tab === 'map' && !clean}
-            <svg class="mapping-lines" viewBox="0 0 1000 562.5" aria-hidden="true">
-              {#if mappingGrid}<defs><pattern id="mapping-guide-grid" width="62.5" height="62.5" patternUnits="userSpaceOnUse"><path d="M62.5 0H0V62.5" fill="none" style="stroke:var(--ga-blue-200)" stroke-opacity=".4" stroke-width="1"/></pattern></defs><rect width="1000" height="562.5" fill="url(#mapping-guide-grid)"/>{/if}
-              {#each show.surfaces as s, i}<polyline
-                  points={meshPath(s)}
-                  class:chosen={i === selectedSurface}
-                  class:dim={!s.enabled}
-                /><text x={s.points[0].x * 1000 + 12} y={s.points[0].y * 562.5 + 28}>{i + 1} · {s.name}</text>{/each}
-              {#if surface?.mode === 'mesh'}{#each [0, 1, 2] as row}<polyline
-                    class="mesh-line"
-                    points={[0, 1, 2]
-                      .map((c) => `${surface.points[row * 3 + c].x * 1000},${surface.points[row * 3 + c].y * 562.5}`)
-                      .join(' ')}
-                  /><polyline
-                    class="mesh-line"
-                    points={[0, 1, 2]
-                      .map((c) => `${surface.points[c * 3 + row].x * 1000},${surface.points[c * 3 + row].y * 562.5}`)
-                      .join(' ')}
-                  />{/each}{/if}
-            </svg>
-            {#if mappingTool==='edit' && surface && !surface.locked}{#each surface.points as p, i}{#if surface.mode === 'mesh' || [0, 2, 6, 8].includes(i)}<button
-                    class="warp-handle"
-                    class:selected={selectedPoint === i}
-                    style:left={`${p.x * 100}%`}
-                    style:top={`${p.y * 100}%`}
-                    aria-label={`Warp point ${i + 1}`}
-                    onpointerdown={(e) => beginDrag(e, i)}
-                    onpointermove={dragPoint}
-                    onpointerup={endDrag}
-                    onpointercancel={endDrag}><span></span></button
-                  >{/if}{/each}{/if}
+            <MappingCanvas bind:this={mappingCanvas} surfaces={show.surfaces} selected={selectedSurface} selection={mapSelection} point={selectedPoint} snap={mappingSnap} grid={mappingGrid} multi={false} tool={mappingTool==='paint'?'view':mapDraw?'draw':'edit'} canvas={output} basis={mapBasis}
+              onchange={mapChange} onbegin={mapBegin} oncommit={persist} onnotice={message=>flash(message)} ondrawn={drawnSurface}
+              onselect={(index,point,selection)=>{selectedSurface=index;selectedPoint=point;mapSelection=selection;}}/>
           {/if}
           {#if (tab==='flux' || (tab==='perform' && fluxPerform)) && !clean && !visualsDown}<FluxPad value={flux} onchange={value=>{flux=value;if(engine)engine.flux=value;}}/>{/if}
           {#if tab==='map' && mappingTool==='paint' && show.mapping && !clean}
@@ -1710,7 +1667,7 @@
               <span class="eyebrow">PROJECTION WORKSPACE</span>
               <h1>Screen mapping</h1>
             </div>
-            <button class="icon-button primary" onclick={() => addSurface()} aria-label="Add surface"
+            <button class="icon-button primary" class:active={addSheet} onclick={() => {addSheet = !addSheet; mapDraw = false;}} aria-label="Add surface" aria-expanded={addSheet}
               ><Icon name="plus" /></button
             >
           </div>
@@ -1719,6 +1676,8 @@
             <button class:active={mappingTool==='paint'} aria-pressed={mappingTool==='paint'} onclick={paintMode}><Icon name="paint" size={17}/>Paint</button>
           </div>
           {#if mappingTool==='paint'}<PaintPanel onselect={index=>selectedSurface=index} value={paint} surfaces={show.surfaces} selected={selectedSurface} onchange={patchPaint} onundo={()=>{checkpoint();patchPaint({strokes:paint.strokes.slice(0,-1)});}} onclear={()=>{checkpoint();patchPaint({strokes:[],loop:false});}}/>{/if}
+          {#if addSheet && mappingTool==='edit'}<AddSurfaceSheet full={show.surfaces.length>=16} onadd={addMappedSurface} ondraw={()=>{addSheet=false;mapDraw=true;show.mapping=true;}} onclose={()=>addSheet=false}/>{/if}
+          {#if mapDraw}<p class="hint" role="status">Trace the outline of your object on the canvas above with one finger. <button onclick={()=>mapDraw=false}>Cancel</button></p>{/if}
           {#if !show.mapping}<p class="hint mapping-off-hint" role="status">Mapping is off, so your output is unchanged. Turn it on here, or move a corner to start.</p>{/if}
           <div class="mapping-toolbar">
             <button
@@ -1748,12 +1707,11 @@
                 onclick={() => {
                   selectedSurface = i;
                   selectedPoint = 0;
+                  mapSelection = [];
                 }}
                 ><span class="surface-index">{i + 1}</span><span
                   ><strong>{s.name}</strong><small
-                    >{s.source === 'mix' ? 'Full composition' : `Layer ${(show.dualDeck ? s.source % 4 : s.source) + 1}${show.dualDeck ? " · A/B" : ""}`} · {s.mode === 'mesh'
-                      ? 'Mesh'
-                      : 'Corners'}</small
+                    >{s.source === 'mix' ? 'Full composition' : `Layer ${(show.dualDeck ? s.source % 4 : s.source) + 1}${show.dualDeck ? " · A/B" : ""}`} · {kindLabel(s)}</small
                   ></span
                 >{#if s.locked}<Icon name="lock" size={16} />{/if}<i class:lit={s.enabled}></i></button
               >{/each}
@@ -1817,26 +1775,7 @@
                   ></label
                 >
               </div>
-              <div class="segmented wide">
-                <button
-                  class:active={surface.mode === 'corners'}
-                  aria-pressed={surface.mode === 'corners'}
-                  disabled={surface.locked}
-                  onclick={() => {
-                    checkpoint();
-                    patchSurface({ mode: 'corners' });
-                    selectedPoint = 0;
-                  }}>Corner warp</button
-                ><button
-                  class:active={surface.mode === 'mesh'}
-                  aria-pressed={surface.mode === 'mesh'}
-                  disabled={surface.locked}
-                  onclick={() => {
-                    checkpoint();
-                    patchSurface({ mode: 'mesh' });
-                  }}>3 × 3 mesh</button
-                >
-              </div>
+              <SurfaceShapePanel surfaces={show.surfaces} index={selectedSurface} point={selectedPoint} onapply={mapApply} onnotice={message=>flash(message)}/>
               <label class="range-row"
                 ><span>Edge fade</span><input
                   type="range"
@@ -1850,23 +1789,23 @@
                 /><output>{Math.round(surface.feather * 100)}%</output></label
               >
               <LookControls value={surface.look} onchange={(look) => { checkpoint(); patchSurface({look}); }} onapplyall={() => {checkpoint(); show.surfaces = show.surfaces.map(s => ({...s,look:copy(surface.look)}));persist();}} />
-              <div class="nudge">
-                <span>Point {selectedPoint + 1}<small>Tap to step, hold to repeat</small></span>
-                <div class="nudge-steps" role="group" aria-label="Nudge step size">{#each [{step:0.001,label:'0.1%'},{step:0.01,label:'1%'}] as option}<button data-nudge-step class:active={nudgeStep===option.step} aria-pressed={nudgeStep===option.step} onclick={()=>nudgeStep=option.step}>{option.label}</button>{/each}</div>
-                {#each [{x:-1,y:0,label:'Nudge left',glyph:'←'},{x:0,y:-1,label:'Nudge up',glyph:'↑'},{x:0,y:1,label:'Nudge down',glyph:'↓'},{x:1,y:0,label:'Nudge right',glyph:'→'}] as arrow}<button class="nudge-arrow" disabled={surface.locked} aria-label={arrow.label} use:holdRepeat={{start:checkpoint,step:()=>nudge(arrow.x*nudgeStep,arrow.y*nudgeStep)}}>{arrow.glyph}</button>{/each}
-              </div>
+              <NudgePad at={pointAt(surface,selectedPoint)} label="Point" points={mapPoints.length} index={Math.max(0,mapPoints.indexOf(selectedPoint))} disabled={surface.locked} basis={mapBasis}
+                onstart={mapBegin} onnudge={(dx,dy)=>{mapChange(nudgeSurfaces(show.surfaces,selectedSurface,selectedPoint,dx,dy,mapSelection));persist();}}
+                onpoint={step=>{const at=mapPoints.indexOf(selectedPoint);selectedPoint=mapPoints[(Math.max(0,at)+step+mapPoints.length)%mapPoints.length]??0;}}/>
               <div class="card-actions">
                 <button
                   disabled={surface.locked}
                   onclick={() => {
                     checkpoint();
-                    patchSurface({ points: fullFramePoints() });
+                    patchSurface(resetGeometry(surface));
                   }}>Reset geometry</button
                 ><button
                   onclick={() => {
                     checkpoint();
-                    show.surfaces = show.surfaces.filter((_, i) => i !== selectedSurface);
+                    show.surfaces = pruneWelds(show.surfaces.filter((_, i) => i !== selectedSurface));
                     selectedSurface = Math.max(0, selectedSurface - 1);
+                    selectedPoint = 0;
+                    mapSelection = [];
                     persist();
                   }}><Icon name="trash" size={16} />Remove</button
                 >
@@ -2011,8 +1950,8 @@
   {#if effectBrowser}<EffectBrowser effects={MOBILE_EFFECTS} scope={effectScopeName} onadd={chooseEffect} onclose={() => (effectBrowser = false)} />{/if}
   {#if clean}<button class="exit-clean" onclick={() => (clean = false)}>Return to studio</button>{/if}
 </div>
-{#if toolkitOpen}<CaptureToolkit mappingSurfaces={show.surfaces} oninteractive={()=>{toolkitOpen=false;openInteractive();}} oninteractiveoutput={interactiveOutput} {oncompanion} onclose={()=>toolkitOpen=false} onprepare={prepareCaptureTool} onshots={importCameraShots}/>{/if}
-{#if interactiveMounted}<MobileInteractiveWorkspace bind:this={interactiveWorkspace} open={interactiveOpen} outputLevel={show.master} outputHeld={frozen} outputBlackout={blackout} mappingSurfaces={show.surfaces} outputLabel={blackout&&interactiveLive?'Blackout active':frozen&&interactiveLive?'Output held':outputStatus.state==='live'?`Live · ${outputStatus.display?.name??'External display'}`:outputStatus.state==='connecting'?'Connecting…':outputStatus.state==='off'?'External output disabled':outputStatus.state==='error'?outputStatus.message??'Output needs attention':'No external display connected'} onpreparecamera={prepareCaptureTool} onoutput={interactiveOutput} onoutputsettings={()=>outputSettings=true} onclose={()=>interactiveOpen=false}><nav class="tabs in-studio" slot="nav" aria-label="Workspace">
+{#if toolkitOpen}<CaptureToolkit mappingSurfaces={cornerView(show.surfaces) as Surface[]} oninteractive={()=>{toolkitOpen=false;openInteractive();}} oninteractiveoutput={interactiveOutput} {oncompanion} onclose={()=>toolkitOpen=false} onprepare={prepareCaptureTool} onshots={importCameraShots}/>{/if}
+{#if interactiveMounted}<MobileInteractiveWorkspace bind:this={interactiveWorkspace} open={interactiveOpen} outputLevel={show.master} outputHeld={frozen} outputBlackout={blackout} mappingSurfaces={cornerView(show.surfaces)} outputLabel={blackout&&interactiveLive?'Blackout active':frozen&&interactiveLive?'Output held':outputStatus.state==='live'?`Live · ${outputStatus.display?.name??'External display'}`:outputStatus.state==='connecting'?'Connecting…':outputStatus.state==='off'?'External output disabled':outputStatus.state==='error'?outputStatus.message??'Output needs attention':'No external display connected'} onpreparecamera={prepareCaptureTool} onoutput={interactiveOutput} onoutputsettings={()=>outputSettings=true} onclose={()=>interactiveOpen=false}><nav class="tabs in-studio" slot="nav" aria-label="Workspace">
     {#each navItems as t}
       <button class:active={navActive(t.id,tab,mixerOpen,interactiveOpen,clipControlsOpen)} aria-pressed={navActive(t.id,tab,mixerOpen,interactiveOpen,clipControlsOpen)} aria-current={navActive(t.id,tab,mixerOpen,interactiveOpen,clipControlsOpen) ? 'page' : undefined}
         onclick={()=>navTo(t.id)}><Icon name={t.icon}/><span>{t.label}</span></button>
@@ -2920,67 +2859,6 @@
     max-width: 330px;
     margin: auto;
   }
-  .mapping-lines {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    overflow: visible;
-    pointer-events: none;
-  }
-  .mapping-lines polyline {
-    fill: none;
-    stroke: var(--ga-blue-300);
-    stroke-width: 1;
-    stroke-dasharray: 6 5;
-    vector-effect: non-scaling-stroke;
-  }
-  .mapping-lines polyline.chosen {
-    stroke: var(--ga-blue-200);
-    stroke-width: 2;
-    stroke-dasharray: none;
-  }
-  .mapping-lines polyline.dim {
-    opacity: 0.3;
-  }
-  .mapping-lines text {
-    font-size: 17px;
-    fill: #e3edff;
-    paint-order: stroke;
-    stroke: var(--ga-blue-900);
-    stroke-width: 3px;
-  }
-  .mapping-lines polyline.mesh-line {
-    stroke: var(--ga-blue-300);
-    opacity: 0.6;
-    stroke-width: 1;
-    stroke-dasharray: none;
-  }
-  .warp-handle {
-    box-shadow: none;
-    position: absolute;
-    transform: translate(-50%, -50%);
-    width: 44px;
-    height: 44px;
-    border: 0 !important;
-    background: none !important;
-    padding: 0;
-    touch-action: none;
-    z-index: 2;
-  }
-  .warp-handle span {
-    width: 14px;
-    height: 14px;
-    border: 2px solid #e4f0ff;
-    border-radius: 50%;
-    background: var(--ga-blue-400);
-    box-shadow: 0 0 0 4px #07101b66;
-  }
-  .warp-handle.selected span {
-    background: #91f0d0;
-    border-color: #fff;
-    box-shadow: 0 0 0 5px #7decc32a;
-  }
   .mapping-toolbar {
     display: flex;
     gap: 7px;
@@ -3044,36 +2922,6 @@
     display: flex;
     gap: 4px;
   }
-  .nudge {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    margin: 16px 0;
-  }
-  .nudge > span {
-    font-size: 11px;
-    margin-right: auto;
-    color: var(--ga-ink-1);
-  }
-  .nudge small {
-    display: block;
-    font-size: 8px;
-    color: var(--ga-ink-2);
-    margin-top: 3px;
-  }
-  .nudge button {
-    min-height: 36px;
-    width: 36px;
-    padding: 0;
-    font-size: 16px;
-  }
-  /* Label on its own line, then step size and the four arrows together on one row. */
-  .nudge { flex-wrap: wrap; row-gap: 8px; }
-  .nudge > span { flex: 1 1 100%; margin-right: 0; }
-  .nudge .nudge-arrow { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
-  .nudge-steps { display: flex; gap: 2px; margin-right: auto; }
-  .nudge .nudge-steps button { width: auto; min-width: 40px; padding: 0 7px; font-size: 11px; }
-  .nudge .nudge-steps button.active { background: var(--ga-selection-bg); border-color: var(--ga-selection-line); color: var(--ga-selection-ink); }
   .card-actions {
     display: flex;
     justify-content: space-between;
@@ -3656,10 +3504,6 @@
     }
     .surface-list strong {
       max-width: 95px;
-    }
-    .nudge button {
-      width: 35px;
-      height: 39px;
     }
     .modal-backdrop {
       padding: 12px;

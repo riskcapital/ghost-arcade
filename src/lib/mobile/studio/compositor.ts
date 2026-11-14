@@ -1,11 +1,17 @@
 import { DeckCrossfade } from './crossfade';
 import {PaintRenderer} from './paintRenderer';
 import { EdgeLookRenderer } from './looks/renderer';
-import { baseLayerGain, layerGain, type Show, type Surface, type Point } from './model';
+import { baseLayerGain, layerGain, type Show, type Surface } from './model';
+import { tessellate } from './mapping/meshGrid';
+import { isShape } from './mapping/surfaceShape';
+import { CoverageTextures } from './mapping/coverageTextures';
+export { quadPoint } from './mapping/meshGrid';
 const VERT = `attribute vec2 position; attribute vec2 uv; varying vec2 texCoord; void main(){texCoord=uv;gl_Position=vec4(position.x*2.-1.,1.-position.y*2.,0.,1.);}`;
 const FRAG = `precision highp float;
 varying vec2 texCoord; uniform sampler2D source; uniform sampler2D backdrop;
 uniform int mode; uniform float gain; uniform float feather; uniform vec2 fit; uniform bool contained; uniform bool grid; uniform vec2 gridSize;
+// Free-form outline and masks: how much of each point of the surface shows.
+uniform sampler2D coverage; uniform bool covered;
 // The alignment card, matching the desktop's empty-layer card: square grid
 // from the centre, frame, centre cross and circles, diagonals, corner
 // brackets, a grey step row and a colour row. Between the lines it is 0,0,0.
@@ -40,8 +46,9 @@ void main(){
  if(contained && (uv.x<0.||uv.x>1.||uv.y<0.||uv.y>1.)) s=vec4(0.);
  if(grid)s=vec4(alignmentCard(texCoord,max(gridSize,vec2(1.))),1.);
  float edge=min(min(texCoord.x,1.-texCoord.x),min(texCoord.y,1.-texCoord.y));
- s.a*=gain*(feather>0.?smoothstep(0.,feather,edge):1.);
- if(mode==-2)s.rgb*=gain*(feather>0.?smoothstep(0.,feather,edge):1.);
+ float cut=covered?texture2D(coverage,texCoord).r:1.;
+ s.a*=gain*(feather>0.?smoothstep(0.,feather,edge):1.)*cut;
+ if(mode==-2)s.rgb*=gain*(feather>0.?smoothstep(0.,feather,edge):1.)*cut;
  if(mode<0){gl_FragColor=s;return;}
  vec4 b=texture2D(backdrop,vec2(texCoord.x,1.-texCoord.y)); vec3 blend=s.rgb;
  if(mode==6){gl_FragColor=vec4(mix(s.rgb,b.rgb,gain),1.);return;}
@@ -54,49 +61,9 @@ void main(){
 }`;
 const MODES = ['normal', 'add', 'screen', 'multiply', 'difference'];
 
-/** Exact projective quadrilateral interpolation; never clips to the original rectangle. */
-export function quadPoint(c: Point[], u: number, v: number): Point {
-  const [a, b, d, e] = c;
-  const dx1 = b.x - d.x,
-    dx2 = e.x - d.x,
-    dy1 = b.y - d.y,
-    dy2 = e.y - d.y;
-  const dx3 = a.x - b.x + d.x - e.x,
-    dy3 = a.y - b.y + d.y - e.y,
-    det = dx1 * dy2 - dx2 * dy1;
-  const g = Math.abs(det) > 1e-8 ? (dx3 * dy2 - dx2 * dy3) / det : 0,
-    h = Math.abs(det) > 1e-8 ? (dx1 * dy3 - dx3 * dy1) / det : 0;
-  const den = g * u + h * v + 1;
-  return {
-    x: ((b.x - a.x + g * b.x) * u + (e.x - a.x + h * e.x) * v + a.x) / den,
-    y: ((b.y - a.y + g * b.y) * u + (e.y - a.y + h * e.y) * v + a.y) / den,
-  };
-}
+/** Triangles (x, y, u, v per vertex) of a surface's warp; the whole frame without one. */
 export function surfaceVertices(surface?: Surface): Float32Array {
-  const points = surface?.points;
-  const n = surface?.mode === 'corners' ? 16 : 2;
-  const vertex = (x: number, y: number) => {
-    const u = x / n,
-      v = y / n;
-    const p = !points
-      ? { x: u, y: v }
-      : surface?.mode === 'corners'
-        ? quadPoint([points[0], points[2], points[8], points[6]], u, v)
-        : points[y * 3 + x];
-    return [p.x, p.y, u, v];
-  };
-  const out: number[] = [];
-  for (let y = 0; y < n; y++)
-    for (let x = 0; x < n; x++)
-      out.push(
-        ...vertex(x, y),
-        ...vertex(x + 1, y),
-        ...vertex(x + 1, y + 1),
-        ...vertex(x, y),
-        ...vertex(x + 1, y + 1),
-        ...vertex(x, y + 1),
-      );
-  return new Float32Array(out);
+  return tessellate(surface);
 }
 export type TextureInput = { texture: WebGLTexture; width: number; height: number };
 export class StudioCompositor {
@@ -113,6 +80,10 @@ export class StudioCompositor {
   private width = 0;
   private height = 0;
   private geometry = new WeakMap<Surface, Float32Array>();
+  /** One vertex buffer per surface, uploaded only when its geometry changes. */
+  private buffers = new Map<string, { verts: Float32Array; buffer: WebGLBuffer; seen: number }>();
+  private coverage: CoverageTextures;
+  private frameCount = 0;
   private fullFrame = surfaceVertices();
   private locations: Record<string, WebGLUniformLocation | null> = {};
   constructor(readonly canvas: HTMLCanvasElement) {
@@ -139,7 +110,8 @@ export class StudioCompositor {
     gl.deleteShader(f);
     if (!gl.getProgramParameter(this.program, gl.LINK_STATUS)) throw new Error('Could not link the output compositor.');
     this.buffer = gl.createBuffer()!;
-    for (const name of ['source', 'backdrop', 'mode', 'gain', 'feather', 'fit', 'contained', 'grid', 'gridSize'])
+    this.coverage = new CoverageTextures(gl);
+    for (const name of ['source', 'backdrop', 'mode', 'gain', 'feather', 'fit', 'contained', 'grid', 'gridSize', 'coverage', 'covered'])
       this.locations[name] = gl.getUniformLocation(this.program, name);
     for (let i = 0; i < 8; i++) this.sources.push(this.texture());
     for (let i = 0; i < 2; i++) this.targets.push({ texture: this.texture(), frame: gl.createFramebuffer()! });
@@ -188,17 +160,31 @@ export class StudioCompositor {
     sourceAspect = 16 / 9,
     fitMode: Surface['fit'] = 'stretch',
     painted=false,
+    cut: WebGLTexture | null = null,
   ) {
     const g = this.gl,
       L = this.locations;
     g.useProgram(this.program);
-    g.bindBuffer(g.ARRAY_BUFFER, this.buffer);
-    let verts = surface ? this.geometry.get(surface) : this.fullFrame;
-    if (!verts) {
-      verts = surfaceVertices(surface);
-      this.geometry.set(surface!, verts);
+    const verts = surface ? this.surfaceGeometry(surface) : this.fullFrame;
+    if (surface) {
+      let cached = this.buffers.get(surface.id);
+      if (!cached) {
+        cached = { verts, buffer: g.createBuffer()!, seen: 0 };
+        this.buffers.set(surface.id, cached);
+        g.bindBuffer(g.ARRAY_BUFFER, cached.buffer);
+        g.bufferData(g.ARRAY_BUFFER, verts, g.STATIC_DRAW);
+      } else {
+        g.bindBuffer(g.ARRAY_BUFFER, cached.buffer);
+        if (cached.verts !== verts) {
+          cached.verts = verts;
+          g.bufferData(g.ARRAY_BUFFER, verts, g.STATIC_DRAW);
+        }
+      }
+      cached.seen = this.frameCount;
+    } else {
+      g.bindBuffer(g.ARRAY_BUFFER, this.buffer);
+      g.bufferData(g.ARRAY_BUFFER, verts, g.DYNAMIC_DRAW);
     }
-    g.bufferData(g.ARRAY_BUFFER, verts, g.DYNAMIC_DRAW);
     const pos = g.getAttribLocation(this.program, 'position'),
       uv = g.getAttribLocation(this.program, 'uv');
     g.enableVertexAttribArray(pos);
@@ -213,7 +199,13 @@ export class StudioCompositor {
     g.uniform1i(L.backdrop, 1);
     g.uniform1i(L.mode, mode);
     g.uniform1f(L.gain, gain);
-    g.uniform1f(L.feather, surface?.feather || 0);
+    // A free-form surface fades along its outline (in its coverage), not along its frame.
+    g.uniform1f(L.feather, surface && !isShape(surface) ? surface.feather || 0 : 0);
+    g.activeTexture(g.TEXTURE2);
+    g.bindTexture(g.TEXTURE_2D, cut ?? this.sources[0]);
+    g.uniform1i(L.coverage, 2);
+    g.uniform1i(L.covered, cut ? 1 : 0);
+    g.activeTexture(g.TEXTURE0);
     g.uniform1i(L.grid, grid ? 1 : 0);
     let fx = 1,
       fy = 1;
@@ -240,6 +232,14 @@ export class StudioCompositor {
     g.uniform1i(L.contained, fit === 'contain' ? 1 : 0);
     g.drawArrays(g.TRIANGLES, 0, verts.length / 4);
   }
+  private surfaceGeometry(surface: Surface): Float32Array {
+    let verts = this.geometry.get(surface);
+    if (!verts) {
+      verts = surfaceVertices(surface);
+      this.geometry.set(surface, verts);
+    }
+    return verts;
+  }
   render(show: Show, inputs: (TextureInput | null)[], blackout = false, testGrid = false, time = 0, audio = 0, transportBeat = time * show.bpm / 60, postProcess?: (input:TextureInput)=>TextureInput) {
     const g = this.gl;
     if (show.dualDeck && this.targets.length === 2) {
@@ -247,6 +247,14 @@ export class StudioCompositor {
       this.height = 0;
     }
     this.resize(show.quality);
+    this.frameCount++;
+    this.coverage.begin();
+    if (this.frameCount % 120 === 0)
+      for (const [id, b] of this.buffers)
+        if (this.frameCount - b.seen > 120) {
+          g.deleteBuffer(b.buffer);
+          this.buffers.delete(id);
+        }
     if(!show.paint?.enabled)this.paintFailed=false;
     try{
       if(show.paint?.enabled&&show.paint.strokes.length&&!this.paint&&!this.paintFailed)this.paint=new PaintRenderer(g);
@@ -349,6 +357,7 @@ export class StudioCompositor {
         const ink=this.paint?.texture(s.id);
         if (!available && !testGrid && !ink) continue;
         const paintOnly=show.paint?.enabled&&show.paint.isolate&&!this.paintFailed;
+        const cut = this.coverage.get(s, this.width, this.height);
         if((available&&!paintOnly)||testGrid)this.draw(
           paired
             ? this.targets[(Number(i) % 4) * 2 + (Number(i)%4>=2?2:0) + 1].texture
@@ -361,8 +370,11 @@ export class StudioCompositor {
           s,
           testGrid,
           paired || i === 'mix' ? 16 / 9 : (inputs[i]?.width || 16) / (inputs[i]?.height || 9),
+          'stretch',
+          false,
+          cut,
         );
-        const verts = this.geometry.get(s) || surfaceVertices(s);
+        const verts = this.surfaceGeometry(s);
 
         if(!paintOnly)this.looks.draw(
           s.look,
@@ -379,7 +391,7 @@ export class StudioCompositor {
         );
         if(ink){
           g.enable(g.BLEND);g.blendFuncSeparate(g.ONE,g.ONE_MINUS_SRC_ALPHA,g.ONE,g.ONE_MINUS_SRC_ALPHA);
-          this.draw(ink,this.sources[0],-2,outputGain,s,false,1,'stretch',true);
+          this.draw(ink,this.sources[0],-2,outputGain,s,false,1,'stretch',true,cut);
         }
         g.enable(g.BLEND);
         g.blendFuncSeparate(g.SRC_ALPHA, g.ONE_MINUS_SRC_ALPHA, g.ONE, g.ONE_MINUS_SRC_ALPHA);
@@ -392,6 +404,9 @@ export class StudioCompositor {
     const g = this.gl;
     this.looks.destroy();
     this.crossfade.destroy();
+    this.coverage.destroy();
+    for (const b of this.buffers.values()) g.deleteBuffer(b.buffer);
+    this.buffers.clear();
     this.paint?.destroy();
     g.deleteProgram(this.program);
     g.deleteBuffer(this.buffer);
