@@ -4,9 +4,9 @@ import type { MobileShader } from './standaloneShaderList';
 
 export const STUDIO_VOICE_SHADERS: MobileShader[] = [
   {
-    "id": "voice-aurora-water",
-    "path": "ISF/VX-AuroraWater.fs",
-    "name": "Aurora Over Water",
+    "id": "voice-aperture",
+    "path": "ISF/VX-Aperture.fs",
+    "name": "Aperture",
     "category": "voices",
     "audioNative": true,
     "voice": true,
@@ -20,9 +20,9 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     }
   },
   {
-    "id": "voice-aperture",
-    "path": "ISF/VX-Aperture.fs",
-    "name": "Aperture",
+    "id": "voice-aurora-water",
+    "path": "ISF/VX-AuroraWater.fs",
+    "name": "Aurora Over Water",
     "category": "voices",
     "audioNative": true,
     "voice": true,
@@ -68,57 +68,9 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     }
   },
   {
-    "id": "voice-chrome-pool",
-    "path": "ISF/VX-ChromePool.fs",
-    "name": "Chrome Pool",
-    "category": "voices",
-    "audioNative": true,
-    "voice": true,
-    "motion": {
-      "flow": 0,
-      "breath": 0,
-      "glow": false
-    },
-    "defaults": {
-      "vxAuto": false
-    }
-  },
-  {
-    "id": "voice-droste-frames",
-    "path": "ISF/VX-DrosteFrames.fs",
-    "name": "Droste",
-    "category": "voices",
-    "audioNative": true,
-    "voice": true,
-    "motion": {
-      "flow": 0,
-      "breath": 0,
-      "glow": false
-    },
-    "defaults": {
-      "vxAuto": false
-    }
-  },
-  {
     "id": "voice-event-horizon",
     "path": "ISF/VX-EventHorizon.fs",
     "name": "Event Horizon",
-    "category": "voices",
-    "audioNative": true,
-    "voice": true,
-    "motion": {
-      "flow": 0,
-      "breath": 0,
-      "glow": false
-    },
-    "defaults": {
-      "vxAuto": false
-    }
-  },
-  {
-    "id": "voice-ferrofluid",
-    "path": "ISF/VX-Ferrofluid.fs",
-    "name": "Ferrofluid Crown",
     "category": "voices",
     "audioNative": true,
     "voice": true,
@@ -148,41 +100,25 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     }
   },
   {
+    "id": "voice-inkwell",
+    "path": "ISF/VX-Inkwell.fs",
+    "name": "Inkwell",
+    "category": "voices",
+    "audioNative": true,
+    "voice": true,
+    "motion": {
+      "flow": 0,
+      "breath": 0,
+      "glow": false
+    },
+    "defaults": {
+      "vxAuto": false
+    }
+  },
+  {
     "id": "voice-julia-jewel",
     "path": "ISF/VX-JuliaJewel.fs",
     "name": "Julia Jewel",
-    "category": "voices",
-    "audioNative": true,
-    "voice": true,
-    "motion": {
-      "flow": 0,
-      "breath": 0,
-      "glow": false
-    },
-    "defaults": {
-      "vxAuto": false
-    }
-  },
-  {
-    "id": "voice-kaleidobloom",
-    "path": "ISF/VX-Kaleidobloom.fs",
-    "name": "Kaleidobloom",
-    "category": "voices",
-    "audioNative": true,
-    "voice": true,
-    "motion": {
-      "flow": 0,
-      "breath": 0,
-      "glow": false
-    },
-    "defaults": {
-      "vxAuto": false
-    }
-  },
-  {
-    "id": "voice-light-room",
-    "path": "ISF/VX-LightRoom.fs",
-    "name": "Light Room",
     "category": "voices",
     "audioNative": true,
     "voice": true,
@@ -231,54 +167,6 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-marbling",
     "path": "ISF/VX-Marbling.fs",
     "name": "Marbling",
-    "category": "voices",
-    "audioNative": true,
-    "voice": true,
-    "motion": {
-      "flow": 0,
-      "breath": 0,
-      "glow": false
-    },
-    "defaults": {
-      "vxAuto": false
-    }
-  },
-  {
-    "id": "voice-melt-bow",
-    "path": "ISF/VX-MeltBow.fs",
-    "name": "Melt Bow",
-    "category": "voices",
-    "audioNative": true,
-    "voice": true,
-    "motion": {
-      "flow": 0,
-      "breath": 0,
-      "glow": false
-    },
-    "defaults": {
-      "vxAuto": false
-    }
-  },
-  {
-    "id": "voice-molten-chrome",
-    "path": "ISF/VX-MoltenChrome.fs",
-    "name": "Molten Chrome",
-    "category": "voices",
-    "audioNative": true,
-    "voice": true,
-    "motion": {
-      "flow": 0,
-      "breath": 0,
-      "glow": false
-    },
-    "defaults": {
-      "vxAuto": false
-    }
-  },
-  {
-    "id": "voice-moon",
-    "path": "ISF/VX-Moon.fs",
-    "name": "Moon",
     "category": "voices",
     "audioNative": true,
     "voice": true,
@@ -375,38 +263,6 @@ export const STUDIO_VOICE_SHADERS: MobileShader[] = [
     "id": "voice-pillars",
     "path": "ISF/VX-Pillars.fs",
     "name": "Pillars",
-    "category": "voices",
-    "audioNative": true,
-    "voice": true,
-    "motion": {
-      "flow": 0,
-      "breath": 0,
-      "glow": false
-    },
-    "defaults": {
-      "vxAuto": false
-    }
-  },
-  {
-    "id": "voice-pulsar",
-    "path": "ISF/VX-Pulsar.fs",
-    "name": "Pulsar",
-    "category": "voices",
-    "audioNative": true,
-    "voice": true,
-    "motion": {
-      "flow": 0,
-      "breath": 0,
-      "glow": false
-    },
-    "defaults": {
-      "vxAuto": false
-    }
-  },
-  {
-    "id": "voice-remnant",
-    "path": "ISF/VX-Remnant.fs",
-    "name": "Remnant",
     "category": "voices",
     "audioNative": true,
     "voice": true,

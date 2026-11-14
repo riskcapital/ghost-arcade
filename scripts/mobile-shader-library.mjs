@@ -29,7 +29,7 @@ function visit(dir){for(const e of readdirSync(dir,{withFileTypes:true})){const 
  if(excluded.has(path))continue;
  if(!existsSync(join(folder,'thumbnails',thumb))){noThumbnail++;continue;}
  try{const source=readFileSync(file,'utf8'),header=source.match(/\/\*\s*(\{[\s\S]*?\})\s*\*\//);if(!header)continue;const meta=JSON.parse(header[1]);if(meta.INPUTS?.some(i=>String(i.TYPE).toLowerCase()==='image')){imageSource++;continue;}
- const voice=voices.get(path);if(voice){if(voice.scale<1)kept.push({path,level:'phone',score:voice.phoneMs??voice.referenceMs,hints:[voice.phoneMs?`${voice.phoneMs} ms per 1280x720 frame on an iPhone 12 Pro Max`:`${voice.referenceMs} ms per 1280x720 frame on the reference GPU`],budget:{scale:voice.scale,detail:1}});paths.push(path);continue;}
+ const voice=voices.get(path);if(voice){if(voice.scale<1)kept.push({path,level:'phone',score:voice.phoneFps?.['1'],hints:[`${voice.phoneFps?.['1']} frames a second at 1280x720 on an iPhone 12 Pro Max; drawn at ${voice.scale} of that size`],budget:{scale:voice.scale,detail:1}});paths.push(path);continue;}
  const cost=estimateShaderLoadRating(source,meta.INPUTS?.length??0);if(cost.level==='high'||cost.level==='extreme'){const entry={path,level:cost.level,score:cost.score,hints:cost.hints};if(budgeted[path])kept.push({...entry,budget:budgeted[path]});else{heavy.push(entry);continue;}}
  else{const verdict=measuredBudget(path),entry={path,level:'measured',score:measured[path],hints:[`${measured[path]} ms per 720p frame on the reference GPU`]};if(verdict==='remove'){heavy.push(entry);continue;}if(verdict)kept.push({...entry,budget:verdict});}
  paths.push(path);}catch{continue;}

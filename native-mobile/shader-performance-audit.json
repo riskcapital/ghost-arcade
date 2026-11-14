@@ -1,6 +1,6 @@
 {
   "method": "Static code cost: high/extreme excluded, comments ignored. Measured GPU cost: over 2.50 ms excluded; over 0.9 ms drawn smaller, at the scale that brings it to 0.9 ms (at least 0.6).",
-  "retained": 291,
+  "retained": 282,
   "budgeted": [
     {
       "path": "ISF/11_RadialShards.fs",
@@ -258,83 +258,11 @@
       }
     },
     {
-      "path": "ISF/VX-Aperture.fs",
-      "level": "phone",
-      "score": 3.2,
-      "hints": [
-        "3.2 ms per 1280x720 frame on the reference GPU"
-      ],
-      "budget": {
-        "scale": 0.6,
-        "detail": 1
-      }
-    },
-    {
       "path": "ISF/VX-AuroraWater.fs",
       "level": "phone",
-      "score": 1.96,
+      "score": 55,
       "hints": [
-        "1.96 ms per 1280x720 frame on the reference GPU"
-      ],
-      "budget": {
-        "scale": 0.75,
-        "detail": 1
-      }
-    },
-    {
-      "path": "ISF/VX-BaitBall.fs",
-      "level": "phone",
-      "score": 2.86,
-      "hints": [
-        "2.86 ms per 1280x720 frame on the reference GPU"
-      ],
-      "budget": {
-        "scale": 0.6,
-        "detail": 1
-      }
-    },
-    {
-      "path": "ISF/VX-BeamOrgan.fs",
-      "level": "phone",
-      "score": 5.1,
-      "hints": [
-        "5.1 ms per 1280x720 frame on the reference GPU"
-      ],
-      "budget": {
-        "scale": 0.6,
-        "detail": 1
-      }
-    },
-    {
-      "path": "ISF/VX-ChromePool.fs",
-      "level": "phone",
-      "score": 7.51,
-      "hints": [
-        "7.51 ms per 1280x720 frame on the reference GPU"
-      ],
-      "budget": {
-        "scale": 0.6,
-        "detail": 1
-      }
-    },
-    {
-      "path": "ISF/VX-InkBloom.fs",
-      "level": "phone",
-      "score": 2.2,
-      "hints": [
-        "2.2 ms per 1280x720 frame on the reference GPU"
-      ],
-      "budget": {
-        "scale": 0.7,
-        "detail": 1
-      }
-    },
-    {
-      "path": "ISF/VX-Kaleidobloom.fs",
-      "level": "phone",
-      "score": 1.4,
-      "hints": [
-        "1.4 ms per 1280x720 frame on the reference GPU"
+        "55 frames a second at 1280x720 on an iPhone 12 Pro Max; drawn at 0.9 of that size"
       ],
       "budget": {
         "scale": 0.9,
@@ -342,47 +270,11 @@
       }
     },
     {
-      "path": "ISF/VX-LightRoom.fs",
+      "path": "ISF/VX-BaitBall.fs",
       "level": "phone",
-      "score": 3.29,
+      "score": 45.3,
       "hints": [
-        "3.29 ms per 1280x720 frame on the reference GPU"
-      ],
-      "budget": {
-        "scale": 0.6,
-        "detail": 1
-      }
-    },
-    {
-      "path": "ISF/VX-Mandala.fs",
-      "level": "phone",
-      "score": 1.98,
-      "hints": [
-        "1.98 ms per 1280x720 frame on the reference GPU"
-      ],
-      "budget": {
-        "scale": 0.75,
-        "detail": 1
-      }
-    },
-    {
-      "path": "ISF/VX-Marbling.fs",
-      "level": "phone",
-      "score": 3.28,
-      "hints": [
-        "3.28 ms per 1280x720 frame on the reference GPU"
-      ],
-      "budget": {
-        "scale": 0.6,
-        "detail": 1
-      }
-    },
-    {
-      "path": "ISF/VX-MeltBow.fs",
-      "level": "phone",
-      "score": 2.31,
-      "hints": [
-        "2.31 ms per 1280x720 frame on the reference GPU"
+        "45.3 frames a second at 1280x720 on an iPhone 12 Pro Max; drawn at 0.7 of that size"
       ],
       "budget": {
         "scale": 0.7,
@@ -390,35 +282,59 @@
       }
     },
     {
-      "path": "ISF/VX-MoltenChrome.fs",
+      "path": "ISF/VX-Louvers.fs",
       "level": "phone",
-      "score": 2.21,
+      "score": 52,
       "hints": [
-        "2.21 ms per 1280x720 frame on the reference GPU"
+        "52 frames a second at 1280x720 on an iPhone 12 Pro Max; drawn at 0.85 of that size"
       ],
       "budget": {
-        "scale": 0.7,
+        "scale": 0.85,
         "detail": 1
       }
     },
     {
-      "path": "ISF/VX-OpDisc.fs",
+      "path": "ISF/VX-Nebula.fs",
       "level": "phone",
-      "score": 2.09,
+      "score": 42,
       "hints": [
-        "2.09 ms per 1280x720 frame on the reference GPU"
+        "42 frames a second at 1280x720 on an iPhone 12 Pro Max; drawn at 0.65 of that size"
       ],
       "budget": {
-        "scale": 0.75,
+        "scale": 0.65,
         "detail": 1
       }
     },
     {
-      "path": "ISF/VX-Paisley.fs",
+      "path": "ISF/VX-Northlight.fs",
       "level": "phone",
-      "score": 1.76,
+      "score": 42.3,
       "hints": [
-        "1.76 ms per 1280x720 frame on the reference GPU"
+        "42.3 frames a second at 1280x720 on an iPhone 12 Pro Max; drawn at 0.65 of that size"
+      ],
+      "budget": {
+        "scale": 0.65,
+        "detail": 1
+      }
+    },
+    {
+      "path": "ISF/VX-Pillars.fs",
+      "level": "phone",
+      "score": 41.3,
+      "hints": [
+        "41.3 frames a second at 1280x720 on an iPhone 12 Pro Max; drawn at 0.65 of that size"
+      ],
+      "budget": {
+        "scale": 0.65,
+        "detail": 1
+      }
+    },
+    {
+      "path": "ISF/VX-Riverlight.fs",
+      "level": "phone",
+      "score": 45.5,
+      "hints": [
+        "45.5 frames a second at 1280x720 on an iPhone 12 Pro Max; drawn at 0.8 of that size"
       ],
       "budget": {
         "scale": 0.8,
@@ -426,86 +342,26 @@
       }
     },
     {
-      "path": "ISF/VX-Pillars.fs",
-      "level": "phone",
-      "score": 2.62,
-      "hints": [
-        "2.62 ms per 1280x720 frame on the reference GPU"
-      ],
-      "budget": {
-        "scale": 0.65,
-        "detail": 1
-      }
-    },
-    {
-      "path": "ISF/VX-Pulsar.fs",
-      "level": "phone",
-      "score": 2.68,
-      "hints": [
-        "2.68 ms per 1280x720 frame on the reference GPU"
-      ],
-      "budget": {
-        "scale": 0.65,
-        "detail": 1
-      }
-    },
-    {
-      "path": "ISF/VX-Remnant.fs",
-      "level": "phone",
-      "score": 4.05,
-      "hints": [
-        "4.05 ms per 1280x720 frame on the reference GPU"
-      ],
-      "budget": {
-        "scale": 0.6,
-        "detail": 1
-      }
-    },
-    {
-      "path": "ISF/VX-Riverlight.fs",
-      "level": "phone",
-      "score": 2.68,
-      "hints": [
-        "2.68 ms per 1280x720 frame on the reference GPU"
-      ],
-      "budget": {
-        "scale": 0.65,
-        "detail": 1
-      }
-    },
-    {
-      "path": "ISF/VX-Slabs.fs",
-      "level": "phone",
-      "score": 1.36,
-      "hints": [
-        "1.36 ms per 1280x720 frame on the reference GPU"
-      ],
-      "budget": {
-        "scale": 0.9,
-        "detail": 1
-      }
-    },
-    {
       "path": "ISF/VX-SoapFilm.fs",
       "level": "phone",
-      "score": 3.12,
+      "score": 43.5,
       "hints": [
-        "3.12 ms per 1280x720 frame on the reference GPU"
+        "43.5 frames a second at 1280x720 on an iPhone 12 Pro Max; drawn at 0.65 of that size"
       ],
       "budget": {
-        "scale": 0.6,
+        "scale": 0.65,
         "detail": 1
       }
     },
     {
-      "path": "ISF/VX-Undertow.fs",
+      "path": "ISF/VX-SpiralGalaxy.fs",
       "level": "phone",
-      "score": 2.09,
+      "score": 48.5,
       "hints": [
-        "2.09 ms per 1280x720 frame on the reference GPU"
+        "48.5 frames a second at 1280x720 on an iPhone 12 Pro Max; drawn at 0.85 of that size"
       ],
       "budget": {
-        "scale": 0.75,
+        "scale": 0.85,
         "detail": 1
       }
     },

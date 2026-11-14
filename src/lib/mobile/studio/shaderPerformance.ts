@@ -174,88 +174,40 @@ export const mobileShaderBudgets: Record<string, { scale: number; detail: number
     "scale": 0.95,
     "detail": 0.85
   },
-  "ISF/VX-Aperture.fs": {
-    "scale": 0.6,
-    "detail": 1
-  },
   "ISF/VX-AuroraWater.fs": {
-    "scale": 0.75,
-    "detail": 1
-  },
-  "ISF/VX-BaitBall.fs": {
-    "scale": 0.6,
-    "detail": 1
-  },
-  "ISF/VX-BeamOrgan.fs": {
-    "scale": 0.6,
-    "detail": 1
-  },
-  "ISF/VX-ChromePool.fs": {
-    "scale": 0.6,
-    "detail": 1
-  },
-  "ISF/VX-InkBloom.fs": {
-    "scale": 0.7,
-    "detail": 1
-  },
-  "ISF/VX-Kaleidobloom.fs": {
     "scale": 0.9,
     "detail": 1
   },
-  "ISF/VX-LightRoom.fs": {
-    "scale": 0.6,
-    "detail": 1
-  },
-  "ISF/VX-Mandala.fs": {
-    "scale": 0.75,
-    "detail": 1
-  },
-  "ISF/VX-Marbling.fs": {
-    "scale": 0.6,
-    "detail": 1
-  },
-  "ISF/VX-MeltBow.fs": {
+  "ISF/VX-BaitBall.fs": {
     "scale": 0.7,
     "detail": 1
   },
-  "ISF/VX-MoltenChrome.fs": {
-    "scale": 0.7,
+  "ISF/VX-Louvers.fs": {
+    "scale": 0.85,
     "detail": 1
   },
-  "ISF/VX-OpDisc.fs": {
-    "scale": 0.75,
+  "ISF/VX-Nebula.fs": {
+    "scale": 0.65,
     "detail": 1
   },
-  "ISF/VX-Paisley.fs": {
-    "scale": 0.8,
+  "ISF/VX-Northlight.fs": {
+    "scale": 0.65,
     "detail": 1
   },
   "ISF/VX-Pillars.fs": {
     "scale": 0.65,
     "detail": 1
   },
-  "ISF/VX-Pulsar.fs": {
-    "scale": 0.65,
-    "detail": 1
-  },
-  "ISF/VX-Remnant.fs": {
-    "scale": 0.6,
-    "detail": 1
-  },
   "ISF/VX-Riverlight.fs": {
-    "scale": 0.65,
-    "detail": 1
-  },
-  "ISF/VX-Slabs.fs": {
-    "scale": 0.9,
+    "scale": 0.8,
     "detail": 1
   },
   "ISF/VX-SoapFilm.fs": {
-    "scale": 0.6,
+    "scale": 0.65,
     "detail": 1
   },
-  "ISF/VX-Undertow.fs": {
-    "scale": 0.75,
+  "ISF/VX-SpiralGalaxy.fs": {
+    "scale": 0.85,
     "detail": 1
   },
   "ISF/cube shaders/3D_09_CrystalCluster.fs": {
