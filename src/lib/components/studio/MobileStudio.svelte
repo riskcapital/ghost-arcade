@@ -323,6 +323,7 @@
   import StageBackdrop from './StageBackdrop.svelte';
   import SurfaceContentStrip from './SurfaceContentStrip.svelte';
   import SurfacePlacement from './SurfacePlacement.svelte';
+  import BlendPicker from './BlendPicker.svelte';
   import { withControl, sameSourceSurfaces, spanPlacements, sameOnSurfaces } from '../../mobile/studio/placement';
   import { forgetSurfaceClip } from '../../mobile/studio/model';
   import { mappingDemoShow, applyTemplate, stageMatches } from '../../mobile/studio/templates';
@@ -1572,17 +1573,14 @@
                   >{/each}</select
               ></label
             >
-            <label class="range-row"
-              ><span>Blend</span><select
+            <div class="range-row"
+              ><span>Blend</span><BlendPicker
                 value={layer.blend}
-                onchange={(e) => {
-                  checkpoint();
-                  patchLayer({ blend: e.currentTarget.value as typeof layer.blend });
-                }}
-                >{#each ['normal', 'add', 'screen', 'multiply', 'difference'] as mode}<option value={mode}
-                    >{mode[0].toUpperCase() + mode.slice(1)}</option
-                  >{/each}</select
-              ></label
+                scope={show.dualDeck ? `Layer ${rowName(selectedLayer)}` : `Layer ${selectedLayer + 1}`}
+                onstart={checkpoint}
+                onopen={() => engine?.prepareBlends()}
+                onchange={(blend) => patchLayer({ blend })}
+              /></div
             >
           </details>
           {/if}
@@ -1753,7 +1751,7 @@
           ><Icon name="blackout" size={16} /><span class="tool-label">Blackout</span></button
         >
       </div>
-      {#if tablet && tab==='perform' && !clean}<PerformanceMixer embedded {show} {selectedLayer} onstart={checkpoint} onselect={changeLayer} oncontrols={openControls} onclose={()=>mixerOpen=false} onchange={(i,patch)=>{show.layers[i]={...show.layers[i],...patch};persist();}} onmaster={value=>{show.master=value;persist();}} oncrossfade={value=>{show.crossfade=value;persist();}} oncrossfadesettings={value=>{show.crossfadeSettings=value;persist();}} />{/if}
+      {#if tablet && tab==='perform' && !clean}<PerformanceMixer embedded {show} {selectedLayer} onstart={checkpoint} onselect={changeLayer} oncontrols={openControls} onclose={()=>mixerOpen=false} onblendopen={()=>engine?.prepareBlends()} onchange={(i,patch)=>{show.layers[i]={...show.layers[i],...patch};persist();}} onmaster={value=>{show.master=value;persist();}} oncrossfade={value=>{show.crossfade=value;persist();}} oncrossfadesettings={value=>{show.crossfadeSettings=value;persist();}} />{/if}
     </section>
     <section class="control-panel">
 
@@ -1972,6 +1970,28 @@
                   oninput={(e) => patchSurface({ feather: Number(e.currentTarget.value) })}
                 /><output>{Math.round(surface.feather * 100)}%</output></label
               >
+              <label class="range-row"
+                ><span>Opacity</span><input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step=".01"
+                  data-default="1"
+                  aria-label="Surface opacity"
+                  value={surface.opacity ?? 1}
+                  onpointerdown={checkpoint}
+                  oninput={(e) => patchSurface({ opacity: Number(e.currentTarget.value) })}
+                /><output>{Math.round((surface.opacity ?? 1) * 100)}%</output></label
+              >
+              <div class="range-row"
+                ><span>Blend</span><BlendPicker
+                  value={surface.blend}
+                  scope={surface.name}
+                  onstart={checkpoint}
+                  onopen={() => engine?.prepareBlends()}
+                  onchange={(blend) => patchSurface({ blend })}
+                /></div
+              >
               <SurfacePlacement placement={surface.placement} disabled={surface.locked} sharing={sameSourceSurfaces(show.surfaces, selectedSurface).length} surfaces={show.surfaces.filter(s => s.enabled).length}
                 onstart={checkpoint} onchange={(control, value) => patchSurface({ placement: withControl(surface.placement, control, value) })}
                 onreset={() => { checkpoint(); show.surfaces[selectedSurface] = { ...surface, placement: undefined }; persist(); }}
@@ -2025,7 +2045,7 @@
         </section>
       {/if}
   </main>
-  {#if mixerOpen && !tablet}<PerformanceMixer {show} {selectedLayer} onstart={checkpoint} onselect={changeLayer} oncontrols={openControls} onclose={()=>mixerOpen=false} onchange={(i,patch)=>{show.layers[i]={...show.layers[i],...patch};persist();}} onmaster={value=>{show.master=value;persist();}} oncrossfade={value=>{show.crossfade=value;persist();}} oncrossfadesettings={value=>{show.crossfadeSettings=value;persist();}} />{/if}
+  {#if mixerOpen && !tablet}<PerformanceMixer {show} {selectedLayer} onstart={checkpoint} onselect={changeLayer} oncontrols={openControls} onclose={()=>mixerOpen=false} onblendopen={()=>engine?.prepareBlends()} onchange={(i,patch)=>{show.layers[i]={...show.layers[i],...patch};persist();}} onmaster={value=>{show.master=value;persist();}} oncrossfade={value=>{show.crossfade=value;persist();}} oncrossfadesettings={value=>{show.crossfadeSettings=value;persist();}} />{/if}
   {#if tempoOpen}<div class="sheet-scrim" data-sheet-scrim role="presentation" onclick={(e) => { if (e.target === e.currentTarget) tempoOpen = false; }}><div class="tempo-sheet" role="dialog" aria-label="Tempo and audio" use:focusSheet={()=>(tempoOpen=false)} style={`left:${tempoAnchor.left}px;bottom:${tempoAnchor.bottom}px;--sheet-bottom:${tempoAnchor.bottom}px`}>
     <header><strong>TEMPO AND AUDIO</strong><button class="icon-button" aria-label="Close tempo and audio" onclick={() => (tempoOpen = false)}><Icon name="close" size={18} /></button></header>
     <div class="tempo-sheet-row">
@@ -3886,7 +3906,7 @@
     .range-row {grid-template-columns:minmax(0,1fr) 46px;gap:0 10px;font-size:13px;margin:10px 0;}
     .range-row>span {grid-column:1;grid-row:1;}
     .range-row>output {grid-column:2;grid-row:1;}
-    .range-row>input[type='range'], .range-row>select {grid-column:1/-1;grid-row:2;min-height:48px;}
+    .range-row>input[type='range'], .range-row>select, .range-row>:global(.blend-trigger) {grid-column:1/-1;grid-row:2;min-height:48px;}
     .studio.mixing .monitor {display:block;}
     .mixing .workspace {padding-bottom:0;}
     .mixing .panel-scroll {padding-bottom:360px;}
@@ -3901,7 +3921,7 @@
   .clip-controls-header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex:none;padding:10px 14px;border-bottom:1px solid var(--ga-line-2);background:var(--ga-faceplate-bg);}
   .clip-controls-header>div{min-width:0;}.clip-controls-header h2{font-size:15px;line-height:1.3;overflow-wrap:anywhere;}.clip-controls-header .eyebrow{margin-bottom:3px;font-size:9px;}.clip-controls-header .icon-button{width:44px;height:44px;min-height:44px;}
   .clip-controls-body{flex:1;min-height:0;min-width:0;padding:12px 14px max(18px,env(safe-area-inset-bottom));overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;}
-  .clip-controls-body .segmented{margin:0 0 12px;}.clip-controls-body .segmented button{min-height:44px;font-size:12px;}.clip-controls-body .inspector-card{margin-top:12px;}.clip-controls-body .range-row{display:grid;min-width:0;grid-template-columns:minmax(0,1fr) 52px;gap:0 10px;}.clip-controls-body .range-row>span{width:auto;min-width:0;font-size:12px;grid-column:1;grid-row:1;overflow:visible;overflow-wrap:anywhere;}.clip-controls-body .range-row>output{width:auto;font-size:12px;grid-column:2;grid-row:1;}.clip-controls-body .range-row>input,.clip-controls-body .range-row>select{grid-column:1/-1;grid-row:2;width:100%;min-width:0;min-height:44px;}.clip-controls-body .section-heading{flex-wrap:wrap;gap:8px;}.clip-controls-body .section-heading button{min-height:44px;}.clip-controls-body .toggle-row{min-height:44px;gap:12px;}.clip-controls-body .toggle-row>span{min-width:0;overflow-wrap:anywhere;}
+  .clip-controls-body .segmented{margin:0 0 12px;}.clip-controls-body .segmented button{min-height:44px;font-size:12px;}.clip-controls-body .inspector-card{margin-top:12px;}.clip-controls-body .range-row{display:grid;min-width:0;grid-template-columns:minmax(0,1fr) 52px;gap:0 10px;}.clip-controls-body .range-row>span{width:auto;min-width:0;font-size:12px;grid-column:1;grid-row:1;overflow:visible;overflow-wrap:anywhere;}.clip-controls-body .range-row>output{width:auto;font-size:12px;grid-column:2;grid-row:1;}.clip-controls-body .range-row>input,.clip-controls-body .range-row>select,.clip-controls-body .range-row>:global(.blend-trigger){grid-column:1/-1;grid-row:2;width:100%;min-width:0;min-height:44px;}.clip-controls-body .section-heading{flex-wrap:wrap;gap:8px;}.clip-controls-body .section-heading button{min-height:44px;}.clip-controls-body .toggle-row{min-height:44px;gap:12px;}.clip-controls-body .toggle-row>span{min-width:0;overflow-wrap:anywhere;}
   .controls-notice{display:flex;align-items:center;gap:8px;flex:none;margin:0;padding:8px 14px;background:var(--ga-coral-soft);color:var(--ga-coral);font-size:11px;line-height:1.4;}.controls-notice button{min-height:44px;margin-left:auto;}
   @keyframes controls-in{from{transform:translateY(32px);opacity:0;}to{transform:translateY(0);opacity:1;}}
   .clip-controls-body .look-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px;}

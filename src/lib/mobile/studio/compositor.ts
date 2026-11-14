@@ -106,6 +106,7 @@ export function surfaceVertices(surface?: Surface): Float32Array {
   return new Float32Array(out);
 }
 export type TextureInput = { texture: WebGLTexture; width: number; height: number };
+const ALL_BLENDS_FRAG = '#define ALL_BLENDS\n' + FRAG;
 const UNIFORMS = ['source', 'backdrop', 'mode', 'gain', 'feather', 'fit', 'contained', 'grid', 'gridSize', 'placed', 'place', 'placeAngle', 'placeAspect'];
 type Linked = { program: WebGLProgram; locations: Record<string, WebGLUniformLocation | null>; position: number; uv: number };
 /** Where the surfaces draw while one of them blends, and the copy of what is beneath it. */
@@ -132,6 +133,7 @@ export class StudioCompositor {
   private program: Linked;
   /** Every blend mode. Compiled the first time a set uses one of the newer modes; null when this GPU cannot. */
   private allBlends?: Linked | null;
+  private pendingBlends?: ReturnType<StudioCompositor['start']>;
   /** Made the first time a surface blends; kept for the next frame. */
   private stage?: Stage;
   private stageFailedAt = 0;
@@ -154,14 +156,13 @@ export class StudioCompositor {
     for (let i = 0; i < 8; i++) this.sources.push(this.texture());
     for (let i = 0; i < 2; i++) this.targets.push({ texture: this.texture(), frame: gl.createFramebuffer()! });
   }
-  private link(fragment: string): Linked {
+  /** Compile and link; with `later`, the status checks wait for `finish` (see prepareBlends). */
+  private start(fragment: string) {
     const gl = this.gl;
     const compile = (type: number, code: string) => {
       const s = gl.createShader(type)!;
       gl.shaderSource(s, code);
       gl.compileShader(s);
-      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
-        throw new Error(gl.getShaderInfoLog(s) || 'Output shader failed');
       return s;
     };
     const program = gl.createProgram()!;
@@ -170,29 +171,51 @@ export class StudioCompositor {
     gl.attachShader(program, v);
     gl.attachShader(program, f);
     gl.linkProgram(program);
-    gl.deleteShader(v);
-    gl.deleteShader(f);
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error('Could not link the output compositor.');
+    return { program, v, f };
+  }
+  private finish({ program, v, f }: ReturnType<StudioCompositor['start']>): Linked {
+    const gl = this.gl;
+    try {
+      for (const s of [v, f])
+        if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) || 'Output shader failed');
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error('Could not link the output compositor.');
+    } catch (error) {
+      gl.deleteProgram(program);
+      throw error;
+    } finally {
+      gl.deleteShader(v);
+      gl.deleteShader(f);
+    }
     const locations: Linked['locations'] = {};
     for (const name of UNIFORMS) locations[name] = gl.getUniformLocation(program, name);
     return { program, locations, position: gl.getAttribLocation(program, 'position'), uv: gl.getAttribLocation(program, 'uv') };
+  }
+  private link(fragment: string): Linked {
+    return this.finish(this.start(fragment));
   }
   /** The shader that can draw `mode`: the small one for the first five, the full one for the rest. */
   private programFor(mode: number): Linked {
     if (basicBlendCode(mode)) return this.program;
     if (this.allBlends === undefined) {
       try {
-        this.allBlends = this.link('#define ALL_BLENDS\n' + FRAG);
+        this.allBlends = this.finish(this.pendingBlends ?? this.start(ALL_BLENDS_FRAG));
       } catch (error) {
         this.allBlends = null;
         this.onBlendError('This device cannot draw the newer blend modes, so those layers and surfaces show as Normal. ' + (error instanceof Error ? error.message : ''));
       }
+      this.pendingBlends = undefined;
     }
     return this.allBlends || this.program;
   }
-  /** Compile the full blend shader now, so the first use of a newer mode does not stall a frame. */
+  /**
+   * Start the full blend shader before a newer mode is first used. Where the GPU compiles in the
+   * background (KHR_parallel_shader_compile) nothing waits for it; elsewhere it compiles now,
+   * so the wait falls when the blend sheet opens, not on the output when a mode is chosen.
+   */
   prepareBlends() {
-    this.programFor(BLEND_CODE.overlay);
+    if (this.allBlends !== undefined || this.pendingBlends) return;
+    if (this.gl.getExtension('KHR_parallel_shader_compile')) this.pendingBlends = this.start(ALL_BLENDS_FRAG);
+    else this.programFor(BLEND_CODE.overlay);
   }
   /** The stage at the output size, or nothing when this GPU has no room for it at this size (said once). */
   private stageTarget(): Stage | undefined {
@@ -513,6 +536,11 @@ export class StudioCompositor {
     this.paint?.destroy();
     g.deleteProgram(this.program.program);
     if (this.allBlends) g.deleteProgram(this.allBlends.program);
+    if (this.pendingBlends) {
+      g.deleteProgram(this.pendingBlends.program);
+      g.deleteShader(this.pendingBlends.v);
+      g.deleteShader(this.pendingBlends.f);
+    }
     if (this.stage) {
       g.deleteTexture(this.stage.texture);
       g.deleteTexture(this.stage.under);
