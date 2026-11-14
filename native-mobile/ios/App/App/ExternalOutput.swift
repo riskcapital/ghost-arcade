@@ -74,6 +74,7 @@ final class StudioBridgeViewController: CAPBridgeViewController {
     override func capacitorDidLoad() {
         super.capacitorDidLoad()
         bridge?.registerPluginInstance(StudioCapturePlugin())
+        bridge?.registerPluginInstance(StudioOutputPlugin())
         guard let webView = webView else { return }
         let delegate = OutputUIDelegate(fallback: webView.uiDelegate)
         outputDelegate = delegate
@@ -111,6 +112,10 @@ final class StudioExternalOutput: NSObject, WKScriptMessageHandler {
     private var window: UIWindow?
     private var output: WKWebView?
     private var revision = 0
+    /// Use every pixel of the display (no TV overscan margin). Mapping needs the corners of the real raster.
+    private var fullFrame = true
+    /// A display mode the person chose, or nil for the display's own preferred mode.
+    private var chosenSize: CGSize?
     func isController(_ webView: WKWebView) -> Bool { controller === webView }
     func attachController(_ webView: WKWebView) {
         controller = webView
@@ -120,7 +125,16 @@ final class StudioExternalOutput: NSObject, WKScriptMessageHandler {
         closeOutputView()
         self.window = window
         revision += 1
+        applyDisplay()
         publishConnection()
+    }
+    /// Edge margin and display mode, applied whenever a display connects or the choice changes.
+    private func applyDisplay() {
+        guard let screen = window?.windowScene?.screen else { return }
+        screen.overscanCompensation = fullFrame ? .none : .scale
+        let wanted = chosenSize.flatMap { size in screen.availableModes.first { $0.size == size } } ?? screen.preferredMode
+        if let wanted = wanted, screen.currentMode != wanted { screen.currentMode = wanted }
+        if let window = window, let scene = window.windowScene { window.frame = scene.coordinateSpace.bounds }
     }
     func disconnect(_ window: UIWindow) {
         guard self.window === window else { return }
@@ -133,6 +147,12 @@ final class StudioExternalOutput: NSObject, WKScriptMessageHandler {
         if let screen = window?.windowScene?.screen {
             let size = screen.currentMode?.size ?? screen.bounds.size
             detail["display"] = ["name": "External display", "width": Int(size.width), "height": Int(size.height)]
+            var seen = Set<String>()
+            detail["modes"] = screen.availableModes.compactMap { mode -> [String: Int]? in
+                let key = "\(Int(mode.size.width))x\(Int(mode.size.height))"
+                guard mode.size.width > 0, mode.size.height > 0, seen.insert(key).inserted else { return nil }
+                return ["width": Int(mode.size.width), "height": Int(mode.size.height)]
+            }
         }
         guard let data = try? JSONSerialization.data(withJSONObject: detail), let json = String(data: data, encoding: .utf8) else { return }
         controller?.evaluateJavaScript("window.dispatchEvent(new CustomEvent('ghost-external-display',{detail:\(json)}));", completionHandler: nil)
@@ -151,6 +171,9 @@ final class StudioExternalOutput: NSObject, WKScriptMessageHandler {
         view.isOpaque = true
         view.backgroundColor = .black
         view.scrollView.backgroundColor = .black
+        // The display's own edge insets must not push the picture down: the video covers the whole raster.
+        view.scrollView.contentInsetAdjustmentBehavior = .never
+        view.scrollView.isScrollEnabled = false
         view.isUserInteractionEnabled = false
         view.uiDelegate = controller?.uiDelegate
         host.addSubview(view)
@@ -163,5 +186,13 @@ final class StudioExternalOutput: NSObject, WKScriptMessageHandler {
         guard message.webView === controller, let data = message.body as? [String: Any] else { return }
         if data["type"] as? String == "ready" { publishConnection() }
         if data["type"] as? String == "status" { NSLog("[GhostOutput] %@", data["state"] as? String ?? "unknown") }
+        if data["type"] as? String == "display" {
+            fullFrame = data["fullFrame"] as? Bool ?? true
+            let width = (data["width"] as? NSNumber)?.doubleValue ?? 0, height = (data["height"] as? NSNumber)?.doubleValue ?? 0
+            chosenSize = width > 0 && height > 0 ? CGSize(width: width, height: height) : nil
+            guard window != nil else { return }
+            applyDisplay()
+            publishConnection()
+        }
     }
 }

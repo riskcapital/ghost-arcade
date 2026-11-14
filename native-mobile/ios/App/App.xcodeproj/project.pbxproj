@@ -22,6 +22,7 @@
 		A83333333333333333333333 /* ExternalOutput.swift in Sources */ = {isa = PBXBuildFile; fileRef = A84444444444444444444444 /* ExternalOutput.swift */; };
 		B10000000000000000000000 /* ScanCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000000 /* ScanCore.swift */; };
 		B10000000000000000000001 /* StudioCapturePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* StudioCapturePlugin.swift */; };
+		0E7A0C1D0000000000000001 /* StudioOutputPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E7A0C1D0000000000000002 /* StudioOutputPlugin.swift */; };
 		B10000000000000000000002 /* ScanViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002 /* ScanViewController.swift */; };
 		B10000000000000000000003 /* DualCameraViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000003 /* DualCameraViewController.swift */; };
 		B10000000000000000000005 /* StudioLiveCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000005 /* StudioLiveCapture.swift */; };
@@ -75,6 +76,7 @@
 		B18491F82C127E7E4B2C5381 /* SampleHandler.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SampleHandler.swift; sourceTree = "<group>"; };
 		B20000000000000000000000 /* ScanCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanCore.swift; sourceTree = "<group>"; };
 		B20000000000000000000001 /* StudioCapturePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioCapturePlugin.swift; sourceTree = "<group>"; };
+		0E7A0C1D0000000000000002 /* StudioOutputPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioOutputPlugin.swift; sourceTree = "<group>"; };
 		B20000000000000000000002 /* ScanViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanViewController.swift; sourceTree = "<group>"; };
 		B20000000000000000000003 /* DualCameraViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DualCameraViewController.swift; sourceTree = "<group>"; };
 		B20000000000000000000005 /* StudioLiveCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioLiveCapture.swift; sourceTree = "<group>"; };
@@ -159,6 +161,7 @@
 				B20000000000000000000003 /* DualCameraViewController.swift */,
 				B20000000000000000000002 /* ScanViewController.swift */,
 				B20000000000000000000001 /* StudioCapturePlugin.swift */,
+				0E7A0C1D0000000000000002 /* StudioOutputPlugin.swift */,
 				B20000000000000000000000 /* ScanCore.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
@@ -329,6 +332,7 @@
 				B10000000000000000000003 /* DualCameraViewController.swift in Sources */,
 				B10000000000000000000002 /* ScanViewController.swift in Sources */,
 				B10000000000000000000001 /* StudioCapturePlugin.swift in Sources */,
+				0E7A0C1D0000000000000001 /* StudioOutputPlugin.swift in Sources */,
 				B10000000000000000000000 /* ScanCore.swift in Sources */,
 				4264FAFBC74A19D02AC5E2AD /* GhostAudio.swift in Sources */,
 				761D602A9BAB86621A26C4E2 /* AudioAnalysisCore.swift in Sources */,

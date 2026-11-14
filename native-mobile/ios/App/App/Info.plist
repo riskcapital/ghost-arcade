@@ -85,6 +85,8 @@
 	<string>Ghost Arcade uses your local network to connect to the Ghost Arcade desktop app you pair it with.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Ghost Arcade listens through the microphone so your visuals can react to sound.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Ghost Arcade saves the videos you record of your projection to Photos. It only adds videos and never reads your library.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
