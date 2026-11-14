@@ -396,3 +396,56 @@ nav.tabs.in-studio button {
   background: var(--ga-coral-400);
   box-shadow: 0 0 0 2px var(--ga-bar, #100f0d);
 }
+
+/* ---------- Settings: plain groups (icon header + rule), one sentence and one action each ---------- */
+:root[data-theme] .settings-dialog .settings-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -6px -6px 2px 0;
+}
+:root[data-theme] .settings-dialog .settings-head h1 {
+  flex: 1;
+  margin: 0;
+  font-size: 18px;
+  font-weight: 650;
+}
+:root[data-theme] .settings-dialog .settings-head .icon-button {
+  width: 44px;
+  height: 44px;
+}
+:root[data-theme] .settings-dialog > .ga-section.plain:first-of-type {
+  margin-top: 6px;
+  border-top: 0;
+}
+:root[data-theme] .settings-dialog .ga-section .field {
+  margin: 0 0 10px;
+}
+:root[data-theme] .settings-dialog .saved-sets {
+  margin: 0 0 10px;
+}
+:root[data-theme] .settings-dialog :is(.feel-card, .storage-card) {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+:root[data-theme] .settings-dialog .line {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ga-ink-1);
+}
+:root[data-theme] .settings-dialog .line + .wide-action,
+:root[data-theme] .settings-dialog .wide-action {
+  display: flex;
+  width: 100%;
+  min-height: 44px;
+  margin-top: 10px;
+  gap: 8px;
+}
+:root[data-theme] .settings-dialog > .subtle,
+:root[data-theme] .settings-dialog > .confirm-row {
+  margin-top: 18px;
+}

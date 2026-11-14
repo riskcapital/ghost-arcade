@@ -2159,18 +2159,17 @@
       aria-label="Set and output settings"
       tabindex="-1"
     >
-      <div class="panel-heading">
-        <div>
-          <span class="eyebrow">GHOST ARCADE</span>
-          <h1>Your set, your stage</h1>
-        </div>
+      <header class="settings-head">
+        <span class="ga-chip" data-tone="neutral" aria-hidden="true"><Icon name="settings" size={18} /></span>
+        <h1>Settings</h1>
         <button class="icon-button" onclick={() => (settings = false)} aria-label="Close settings"
           ><Icon name="close" /></button
         >
-      </div>
+      </header>
+      <Section plain title="This set" icon="save" tone="deck" subtitle={`${setList.length} of ${MAX_SAVED_SETS} on this device`} infoLabel="About saving and sharing sets"
+        info={setMedia.files ? 'Export with media puts this set and its photos and videos in one file, ready to open on another iPhone or iPad. Export set only leaves the media on this device. Open set reads both kinds.' : 'A set file holds your layout, clips and blocks. This set uses no imported photos or videos, so the file is complete. Open set reads set files of both kinds.'}>
       <label class="field">Set name<input bind:value={show.name} oninput={persist} /></label>
       <div class="saved-sets" role="group" aria-label="Sets saved on this device">
-        <span class="eyebrow">SAVED ON THIS DEVICE · {setList.length} OF {MAX_SAVED_SETS}</span>
         {#each setList as set (set.id)}{@const current = set.id === show.id}{@const name = current ? show.name : set.name}
           <div class="set-row" class:current data-set-row={set.id}>
             {#if setEdit?.id === set.id && setEdit.mode === 'rename'}
@@ -2194,9 +2193,10 @@
           ><Icon name="upload" />Open set</button
         >
       </div>
-      <p class="hint" data-export-hint>
-        Saved on this device as you work. {#if setMedia.files}Export with media puts this set and its photos and videos in one file, ready to open on another iPhone or iPad. Export set only leaves the media on this device.{:else}A set file holds your layout, clips and blocks. This set uses no imported photos or videos, so the file is complete.{/if} Open set reads both kinds.
-      </p>
+      <p class="line" data-export-hint>Saved on this device as you work. Export a set to open it on another device.</p>
+      </Section>
+      <Section plain title="Picture quality" icon="quality" tone="neutral" infoLabel="About picture quality"
+        info="This is the size of the picture. One playing shader renders at that size and several share it, each a little smaller. If the frame rate drops, shader detail lowers itself and the monitor shows it, then comes back when there is room.">
       <label class="field"
         >Output quality<select bind:value={show.quality} onchange={persist}
           ><option value={540}>540p · longer sessions</option><option value={720}>720p · balanced</option><option
@@ -2204,35 +2204,31 @@
           ></select
         ></label
       >
-      <p class="hint" data-quality-hint>This is the output size. One playing shader renders at that size and several share it, each a little smaller. If the frame rate drops, shader detail lowers itself and the monitor shows it, then returns when there is room.{#if detail < 1} Detail is at {Math.round(detail * 100)}% now.{/if}</p>
-      <div class="info-card">
-        <Icon name="output" />
-        <div>
-          <strong>Project with clean output</strong>
-          <p>
-            Open Output settings in the header to configure a wireless or wired display. Connected displays receive only the finished composition; controls stay on this device.
-          </p>
-          <button
-            onclick={() => {
-              settings = false;
-              outputSettings = true;
-            }}>Output settings</button
-          >
-        </div>
-      </div>
-      {#if needsRepair(setFix)}<div class="storage-card" role="group" aria-label="Fix this set" data-repair-settings>
-        <span class="eyebrow">SAVED BY AN OLDER VERSION</span>
-        <p>{repairSummary(setFix)}</p>
-        <button data-repair-fix onclick={fixSet}>Fix this set</button>
-        <p class="hint">Changes the blend of rows 1 to 3 to Screen{setFix.inset ? ' and sets the surface back to the full frame' : ''}. Your clips, blocks and looks stay as they are, and Undo brings the set back.</p>
-      </div>{/if}
+      <p class="line" data-quality-hint>Higher looks sharper; lower runs cooler and longer.{#if detail < 1} Detail is at {Math.round(detail * 100)}% now.{/if}</p>
+      </Section>
+      <Section plain title="Projector" icon="projector" tone="output" infoLabel="About projector output"
+        info="A projector or TV gets only the finished picture. The controls stay on this device.">
+        <p class="line">Choose how the picture reaches your projector or TV.</p>
+        <button class="wide-action"
+          onclick={() => {
+            settings = false;
+            outputSettings = true;
+          }}><Icon name="output" size={18} />Output settings</button
+        >
+      </Section>
+      {#if needsRepair(setFix)}<Section plain title="Saved by an older version" icon="warning" tone="output" role="group" aria-label="Fix this set" data-repair-settings infoLabel="What the fix changes"
+        info={`Changes the blend of rows 1 to 3 to Screen${setFix.inset ? ' and sets the surface back to the full frame' : ''}. Your clips, blocks and looks stay as they are, and Undo brings the set back.`}>
+        <p class="line">{repairSummary(setFix)}</p>
+        <button class="wide-action" data-repair-fix onclick={fixSet}>Fix this set</button>
+      </Section>{/if}
+      <Section plain title="Touch and feel" icon="sliders" tone="neutral">
       <div class="feel-card" role="group" aria-label="Touch and feel">
-        <span class="eyebrow">TOUCH AND FEEL</span>
         <label class="switch-row"><span><strong>Haptics</strong><small>A light tap when you launch, stop, black out or switch tabs. iPhone only.</small></span><input type="checkbox" role="switch" data-pref-haptics checked={prefs.haptics} onchange={(e)=>{setPrefs({haptics:e.currentTarget.checked});feel(prefs,'switch');}} /></label>
         <label class="switch-row"><span><strong>Launch on touch-down</strong><small>Clips start the moment your finger lands, not when it lifts. A swipe that starts on a clip launches it too.</small></span><input type="checkbox" role="switch" data-pref-touchdown checked={prefs.launchOnTouchDown} onchange={(e)=>setPrefs({launchOnTouchDown:e.currentTarget.checked})} /></label>
       </div>
+      </Section>
+      <Section plain title="Storage on this device" icon="save" tone="neutral">
       <div class="storage-card" role="group" aria-label="Storage on this device">
-        <span class="eyebrow">STORAGE ON THIS DEVICE</span>
         {#if storage}
           <p data-storage-summary>{setList.length} set{setList.length === 1 ? '' : 's'} · {storage.files} imported file{storage.files === 1 ? '' : 's'}, {formatBytes(storage.bytes)}{#if storage.unused.length}{' · '}{storage.unused.length} not used by any set, {formatBytes(storage.unusedBytes)}{/if}</p>
           {#if mediaConfirm}
@@ -2242,6 +2238,7 @@
           {:else}<p class="hint">Every imported file is used by a saved set.</p>{/if}
         {:else}<p class="hint">Media storage is not available right now.</p>{/if}
       </div>
+      </Section>
       {#if freshConfirm}
         <div class="confirm-row" role="alertdialog" aria-label="Start a fresh set"><span>Start a fresh set? “{show.name}” stays saved on this device.</span><button data-fresh-confirm onclick={startFreshSet}>Start fresh</button><button onclick={() => (freshConfirm = false)}>Cancel</button></div>
       {:else}
