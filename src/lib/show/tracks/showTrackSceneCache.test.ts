@@ -176,3 +176,53 @@ describe('showTrackFrameSignature', () => {
     expect(showTrackFrameSignature(frameAt(lanes, 30))).not.toBe(showTrackFrameSignature(frameAt(lanes, 30.5)));
   });
 });
+
+describe('ShowTrackSceneCache with no rows and no looks', () => {
+  const ctx = contextFor(new ShowClipSources({ now: () => 0 }), frameAt([], 0));
+  /** What Canvas does each build: reuse while it can, else build and keep it. */
+  function run(cache: ShowTrackSceneCache, list: Layer[], frame: ShowTrackFrame | null, deps: unknown[]) {
+    const prepared = cache.prepare(list, frame, ctx, deps);
+    if (prepared.reusable) return { reused: true, scene: prepared.reuse() };
+    const scene = prepared.build(list.map((l) => ({ ...l })));
+    prepared.commit(scene);
+    return { reused: false, scene };
+  }
+
+  it('reuses the scene while nothing it is built from changed (was: built every frame)', () => {
+    const cache = new ShowTrackSceneCache();
+    const list = [layer('A'), layer('B')];
+    const deps = [list, null];
+    const first = run(cache, list, frameAt([], 0), deps);
+    expect(first.reused).toBe(false);
+    let reused = 0;
+    for (let i = 1; i <= 300; i++) {
+      // An empty frame each time (a show with only lines), or none at all.
+      const r = run(cache, list, i % 2 ? frameAt([], i / 60) : null, [list, null]);
+      if (r.reused) reused++;
+      expect(r.scene).toBe(first.scene);
+    }
+    expect(reused).toBe(300);
+  });
+
+  it('builds again when an input changes, or a row starts showing, and after it', () => {
+    const cache = new ShowTrackSceneCache();
+    const list = [layer('A'), layer('B')];
+    run(cache, list, frameAt([], 0), [list]);
+    // Another live list: built from it.
+    const next = [layer('A', { opacity: 0.5 }), layer('B')];
+    const r1 = run(cache, next, frameAt([], 0), [next]);
+    expect(r1.reused).toBe(false);
+    expect(r1.scene[0].opacity).toBe(0.5);
+    expect(run(cache, next, frameAt([], 0), [next]).reused).toBe(true);
+    // A row with a clip: its own build, not the empty scene.
+    const rows = [track('ta', 'A', [clip('a1', 0, 4, image('red.png'))])];
+    const withRow = run(cache, next, frameAt(rows, 1), [next]);
+    expect(withRow.reused).toBe(false);
+    expect(withRow.scene).not.toBe(r1.scene);
+    // Back to nothing: built again (the cached scene is the row's).
+    expect(run(cache, next, frameAt([], 5), [next]).reused).toBe(false);
+    expect(run(cache, next, frameAt([], 5), [next]).reused).toBe(true);
+    cache.clear();
+    expect(run(cache, next, frameAt([], 5), [next]).reused).toBe(false);
+  });
+});
