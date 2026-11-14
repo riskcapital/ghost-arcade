@@ -121,12 +121,15 @@ export class StudioEngine {
   /** The browser restored the lost context. Every GPU resource is gone, so rebuild the engine. */
   onRestored: () => void = () => {};
   get stopped() { return this.contextFailed; }
+  /** Get the full blend shader ready before a newer blend mode is first chosen (the blend sheet calls this as it opens). */
+  prepareBlends() { if (!this.contextFailed) this.compositor.prepareBlends(); }
   constructor(
     canvas: HTMLCanvasElement,
     private getShow: () => Show,
   ) {
     this.compositor = new StudioCompositor(canvas);
     this.compositor.onPaintError=message=>this.onError(message);
+    this.compositor.onBlendError=message=>this.onError(message);
     this.compositionFX=new StandaloneRenderer(canvas,this.compositor.context);
     this.compositionFX.onEffectError=message=>this.onError(message);
     for (let i = 0; i < 8; i++) this.slots.push(this.newSlot());

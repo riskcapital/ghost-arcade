@@ -8,6 +8,7 @@ import { MOBILE_EDGE_STROKES, MOBILE_EDGE_FILLS } from './looks/renderer';
 import { MOBILE_SHADERS } from '../standaloneShaderList';
 import { MOBILE_EFFECTS, type MobileEffectInstance } from '../standaloneEffects';
 import { normalizePlacement, type Placement } from './placement';
+import { normalizeBlend, normalizeSurfaceMix, type BlendMode } from './blendModes';
 export type Point = { x: number; y: number };
 export type EffectChain = (MobileEffectInstance & { id: string })[];
 export type LookParams = Record<string, number | boolean | number[]>;
@@ -32,7 +33,8 @@ export type Layer = {
   enabled: boolean;
   opacity: number;
   fit: 'stretch' | 'contain' | 'fill';
-  blend: 'normal' | 'add' | 'screen' | 'multiply' | 'difference';
+  /** One of the desktop's blend modes (blendModes.ts). Sets before app 1.2 hold one of the first five. */
+  blend: BlendMode;
   speed: number;
   intensity: number;
   params: Record<string, number | boolean | number[]>;
@@ -52,6 +54,10 @@ export type Surface = {
   clipId?: string;
   /** Which part of the picture the surface shows, zoomed and turned (placement.ts). Absent: the whole picture. */
   placement?: Placement;
+  /** How much of the surface shows, 0..1. Absent: all of it (every set saved before app 1.2). */
+  opacity?: number;
+  /** How the surface mixes with the surfaces drawn before it (blendModes.ts). Absent: Normal. */
+  blend?: BlendMode;
   enabled: boolean;
   locked: boolean;
   fit: 'stretch' | 'contain' | 'fill';
@@ -275,7 +281,7 @@ function normalizeStored(raw: unknown): Show {
         fit: ['stretch', 'contain', 'fill'].includes(l.fit) ? l.fit : 'contain',
         speed: clamp(l.speed, 0, 3),
         intensity: clamp(l.intensity, 0, 2),
-        blend: ['normal', 'add', 'screen', 'multiply', 'difference'].includes(l.blend) ? l.blend : 'normal',
+        blend: normalizeBlend(l.blend),
         params: l.params && typeof l.params === 'object' ? l.params : {},
         effects: normalizeEffects(l.effects),
       } as Layer;
@@ -309,6 +315,7 @@ function normalizeStored(raw: unknown): Show {
         // Kept only while the clip is still in the set and is a kind a surface can play.
         ...(typeof s.clipId === 'string' && clips.some((c) => c.id === s.clipId && SURFACE_CLIP_KINDS.includes(c.kind)) ? { clipId: s.clipId } : {}),
         ...(s.placement ? { placement: normalizePlacement(s.placement) } : {}),
+        ...normalizeSurfaceMix(s),
       })),
     activeBlockId: typeof r.activeBlockId==='string' && r.scenes?.some(s=>s.id===r.activeBlockId) ? r.activeBlockId : undefined,
     scenes: (Array.isArray(r.scenes) ? r.scenes : [])
