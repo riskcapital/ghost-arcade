@@ -189,6 +189,30 @@
   let outputSettings=false;
   let outputPreferences=loadOutputPreferences();
   let outputStatus:OutputStatus={native:false,connected:false,state:'disconnected'};
+  // ── Projector setup, present mode, recording and the review prompt ─────────
+  import OutputBanner from './OutputBanner.svelte';
+  import PresentMode from './PresentMode.svelte';
+  import RecordControl from './RecordControl.svelte';
+  import {showNoDisplayBanner} from '../../mobile/studio/outputSetup';
+  import {appVersion,requestReview} from '../../mobile/studio/nativeOutput';
+  import {MapSaveWatch,loadReviewState,noteLaunch,reviewAfterSuccess,saveReviewState,type SuccessMoment} from '../../mobile/studio/reviewPrompt';
+  let outputSetup=false, presenting=false;
+  function openOutput(setup:boolean){outputSetup=setup;outputSettings=true;}
+  /** The setup's test pattern borrows the Test grid and gives back whatever it was. */
+  let setupPattern=false, patternBefore=false;
+  function setupTestPattern(on:boolean){
+    if(on===setupPattern)return;
+    setupPattern=on;
+    if(on)patternBefore=testGrid;
+    testGrid=on?true:patternBefore;
+    if(engine)engine.testGrid=testGrid;
+  }
+  /** What goes to the projector (the interactive scene when it is live), for the recorder. */
+  const programCanvas=()=>externalOutput?.source??output??null;
+  saveReviewState(noteLaunch(loadReviewState()));
+  const reviewWhen=(moment:SuccessMoment)=>void reviewAfterSuccess(moment,{version:()=>appVersion(''),request:requestReview});
+  const mapSaves=new MapSaveWatch();
+  $: if(mapSaves.update(tab,show.mapping,show.surfaces))reviewWhen('map-saved');
   import {snapMappingPoint,hitMappingScreens,grabOffset,draggedPoint,holdRepeat} from '../../mobile/studio/mappingInteraction';
   let mappingGrid=false, mappingSnap=false;
   let lastScreenTap={x:-100,y:-100,time:0};
@@ -1550,7 +1574,7 @@
         ><Icon name="undo" /></button
       ><button class="icon-button" disabled={!canRedo} onclick={() => undo(true)} aria-label="Redo"
         ><Icon name="redo" /></button
-      ><button class="icon-button" class:active={outputStatus.state==='live'} onclick={() => (outputSettings = true)} aria-label="Output settings"
+      ><button class="icon-button" class:active={outputStatus.state==='live'} onclick={() => openOutput(false)} aria-label="Output settings"
         ><Icon name="output" /></button
       ><button class="icon-button" onclick={() => (settings = true)} aria-label="Set settings"
         ><Icon name="settings" /></button
@@ -1570,6 +1594,7 @@
           >{show.quality}p <b>·</b> {#if detail < 1}<em class="detail-reduced" data-detail title="Detail lowered to hold the frame rate">DETAIL {Math.round(detail * 100)}%</em>{' '}<b>·</b>{' '}{/if}{fps} FPS</span
         >
       </div>
+      {#if showNoDisplayBanner(outputStatus) && !clean}<OutputBanner onconnect={() => openOutput(true)} />{/if}
       <div class="preview-frame">
         <div class="preview" bind:this={preview} onclick={selectPreviewScreen}>
           {#key canvasGeneration}<canvas bind:this={output} aria-label="Live video output"></canvas>{/key}
@@ -1611,6 +1636,7 @@
             <PaintPad surfaces={show.surfaces} config={paint} beat={()=>engine?.beatClock?.()??0} onstroke={startStroke} onfinish={finishStroke} onlimit={()=>flash('Paint memory is full. Clear or undo strokes to keep drawing.')}/>
           {/if}
         </div>
+        <RecordControl source={programCanvas} hidden={tab==='map' || clean || visualsDown} onsuccess={reviewWhen} />
         {#if tab==='perform' && !prefs.coachDone && !clean && !visualsDown}<CoachStrip step={coach.step} onclose={()=>setPrefs({coachDone:true})}/>{/if}
       </div>
       <div class="monitor-tools">
@@ -2018,7 +2044,8 @@
         onclick={()=>navTo(t.id)}><Icon name={t.icon}/><span>{t.label}</span></button>
     {/each}
   </nav></MobileInteractiveWorkspace>{/if}
-{#if outputSettings}<OutputPanel source={interactiveLive?'interactive':'mix'} status={outputStatus} preferences={outputPreferences} quality={show.quality} onpreferences={value=>{outputPreferences=value;externalOutput?.configure(value);}} onquality={quality=>{show.quality=quality;persist();}} onwireless={()=>externalOutput?.chooseWireless()} onclose={()=>outputSettings=false} onretry={()=>externalOutput?.retry()} onpreview={()=>{outputSettings=false;if(interactiveLive){interactiveOpen=true;interactiveWorkspace?.previewOutput();}else clean=true;}}/>{/if}
+{#if outputSettings}<OutputPanel source={interactiveLive?'interactive':'mix'} status={outputStatus} preferences={outputPreferences} quality={show.quality} wizard={outputSetup} {blackout} master={show.master} ontestpattern={setupTestPattern} onblackout={()=>{if(blackout)setBlackout();}} onmaster={()=>{checkpoint();show.master=1;persist();}} onpresent={()=>presenting=true} onmap={()=>{if(interactiveOpen)interactiveOpen=false;navTo('map');}} onpreferences={value=>{outputPreferences=value;externalOutput?.configure(value);}} onquality={quality=>{show.quality=quality;persist();}} onwireless={()=>externalOutput?.chooseWireless()} onclose={()=>{outputSettings=false;outputSetup=false;setupTestPattern(false);}} onretry={()=>externalOutput?.retry()} onpreview={()=>{outputSettings=false;if(interactiveLive){interactiveOpen=true;interactiveWorkspace?.previewOutput();}else clean=true;}}/>{/if}
+{#if presenting}<PresentMode status={outputStatus} {blackout} onblackout={setBlackout} onexit={()=>presenting=false} />{/if}
 {#if settings}<div class="modal-backdrop" role="presentation">
     <div
       class="settings-dialog"
