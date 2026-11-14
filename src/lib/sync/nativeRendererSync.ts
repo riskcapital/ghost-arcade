@@ -74,8 +74,14 @@ import {
 } from '$lib/renderer/nativeGraphQuality';
 import {
   cameraLayerSource,
+  noteCameraLiveSourceImport,
   pruneCameraLiveSources,
 } from '$lib/renderer/cameraLiveSource';
+import {
+  LiveCaptureNoticeLimiter,
+  liveCaptureImportNotice,
+  type LiveCaptureKind,
+} from '$lib/renderer/liveCaptureImportNotice';
 import { rasterizeSvg, svgRasterSignature, type SvgRaster } from '$lib/renderer/svgRaster';
 import { nativeShaderSourceFromJavascript } from '$lib/renderer/nativeJsShaderSource';
 import {
@@ -318,6 +324,8 @@ type SharedTextureUploadState = {
   previousSignature: string | undefined;
   previousSeq: number | undefined;
   submittedAt: number;
+  /** Set for a camera or screen capture, so a rejection can be explained. */
+  liveCapture?: { kind: LiveCaptureKind; adapterLuid: string | null };
 };
 
 type NativeImageDecodeState = {
@@ -6243,6 +6251,8 @@ export class NativeRendererSync {
   private sharedTextureLastRejectedUploads = 0;
   private sharedTextureLastSuccessfulUploads = 0;
   private sharedTextureRejectWarnings = 0;
+  /** Cameras and screen captures whose frames the core rejected, told once. */
+  private liveCaptureImportNotices = new LiveCaptureNoticeLimiter();
   private nativeImageDecodePending = new Map<string, NativeImageDecodeState>();
   private nativeImageDecodeBypass = new Set<string>();
   private nativeImageLastDecodeFailures = 0;
@@ -6421,6 +6431,7 @@ export class NativeRendererSync {
     this.sharedTextureLastRejectedUploads = 0;
     this.sharedTextureLastSuccessfulUploads = 0;
     this.sharedTextureRejectWarnings = 0;
+    this.liveCaptureImportNotices.clear();
   }
 
   private resetNativeImageDecodeTracking() {
@@ -6551,13 +6562,42 @@ export class NativeRendererSync {
         );
         this.sharedTextureRejectWarnings += 1;
       }
+      for (const [, upload] of pending) this.noteLiveCaptureImport(upload, status, false);
       this.sharedTextureUploadPending.clear();
     } else if (successful > this.sharedTextureLastSuccessfulUploads) {
+      for (const upload of this.sharedTextureUploadPending.values()) this.noteLiveCaptureImport(upload, status, true);
       this.sharedTextureUploadPending.clear();
     }
 
     this.sharedTextureLastRejectedUploads = rejected;
     this.sharedTextureLastSuccessfulUploads = successful;
+  }
+
+  /**
+   * A camera or screen capture whose frames the core could not open was
+   * blank with nothing but a console warning. Say why, once per source (not
+   * per frame), on the source itself where the panel shows one and as a
+   * notice; clear it when its frames import again.
+   */
+  private noteLiveCaptureImport(upload: SharedTextureUploadState, status: RendererStatus, imported: boolean) {
+    const live = upload.liveCapture;
+    if (!live) return;
+    if (imported) {
+      if (this.liveCaptureImportNotices.recovered(upload.sourceId)) noteCameraLiveSourceImport(upload.sourceId, null);
+      return;
+    }
+    const message = liveCaptureImportNotice({
+      kind: live.kind,
+      captureAdapterLuid: live.adapterLuid,
+      coreAdapterLuid: status.adapter_luid ?? null,
+      reason: status.source_frame_last_reject_reason ?? null,
+    });
+    noteCameraLiveSourceImport(upload.sourceId, message);
+    if (this.liveCaptureImportNotices.shouldNotify(upload.sourceId, Date.now())) {
+      console.warn(`[NativeRendererSync] live capture ${upload.sourceId} (${live.kind}) frames rejected: ${message}`
+        + ` capture adapter=${live.adapterLuid ?? 'unknown'} core adapter=${status.adapter_luid ?? 'unknown'}`);
+      showToast(message, 'warning');
+    }
   }
 
   private reconcileNativeImageDecodes(status: RendererStatus) {
@@ -11773,6 +11813,8 @@ export class NativeRendererSync {
     this.sourcePreviewSeq.set(sourceKey, seq);
     this.sourcePreviewSig.set(sourceKey, signature);
     this.sourcePreviewNextAt.set(sourceKey, now + LIVE_SHARED_TEXTURE_REFRESH_MS);
+    // Windows only (DXGI handles): macOS keeps its behaviour.
+    const liveKind = info.platform === 'dxgi' ? nativeLiveSourceType(src) : null;
     this.sharedTextureUploadPending.set(sourceKey, {
       sourceId: src.id,
       signature,
@@ -11780,6 +11822,9 @@ export class NativeRendererSync {
       previousSignature,
       previousSeq,
       submittedAt: now,
+      ...(liveKind === 'webcam' || liveKind === 'capture'
+        ? { liveCapture: { kind: liveKind, adapterLuid: info.adapterLuid ?? null } }
+        : {}),
     });
     if (budget) budget.dynamicRemaining -= 1;
 

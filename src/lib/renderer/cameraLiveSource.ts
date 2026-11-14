@@ -32,6 +32,10 @@ type CameraSession = {
   sessionId: string | null;
   state: 'idle' | 'starting' | 'live' | 'error';
   error: string | null;
+  /** The session is live but the render core cannot open its frames (on
+   *  Windows: most often a camera on the other GPU of a two-GPU laptop).
+   *  Shown like `error`, but does not stop or retry the session. */
+  importError: string | null;
   /** Epoch ms before which a failed session will not be retried. */
   retryAfter: number;
   retryDelay: number;
@@ -69,7 +73,19 @@ export function cameraDeviceIdFromLiveSourceId(id: string): string {
 }
 
 export function cameraLiveSourceError(deviceId: string | null | undefined): string | null {
-  return sessions.get(String(deviceId || ''))?.error ?? null;
+  const session = sessions.get(String(deviceId || ''));
+  return session?.error ?? session?.importError ?? null;
+}
+
+/**
+ * The sync's verdict on a camera layer source's frames: a message when the
+ * core rejected them, null once they import again. Ignores ids that are not
+ * camera sources and cameras with no session.
+ */
+export function noteCameraLiveSourceImport(sourceId: string, message: string | null): void {
+  if (!isCameraLiveSourceId(sourceId)) return;
+  const session = sessions.get(cameraDeviceIdFromLiveSourceId(sourceId));
+  if (session) session.importError = message;
 }
 
 /** Cameras the native addon can open. These ids are the addon's, NOT
@@ -101,6 +117,7 @@ function sessionFor(deviceId: string): CameraSession {
       sessionId: null,
       state: 'idle',
       error: null,
+      importError: null,
       retryAfter: 0,
       retryDelay: CAMERA_RETRY_MIN_MS,
     };

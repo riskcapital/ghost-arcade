@@ -59,6 +59,9 @@ export interface SpoutSharedTextureInfo {
   handle?: string;
   handleEncoding?: SpoutSharedTextureHandleEncoding;
   handleByteLength?: number;
+  /** Windows live capture: the adapter the frames live on (16 hex digits). */
+  adapterLuid?: string | null;
+  adapterName?: string;
 }
 
 interface ReceiverState {
