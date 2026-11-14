@@ -252,6 +252,28 @@ describe('rejected sources back off', () => {
   });
 });
 
+describe('MediaTray status from the core', () => {
+  it('a camera reads Starting when sent, Live once imported, No picture when rejected', async () => {
+    const { liveCaptureImportStates } = await import('../renderer/liveCaptureImportState');
+    const { get } = await import('svelte/store');
+    const sync = makeSync();
+    vi.spyOn(sync, 'queueSharedTextureInfoRefresh').mockImplementation(() => {});
+    vi.spyOn(performance, 'now').mockReturnValue(0);
+    const src = camera('tray');
+    const key = sync.sharedTextureInfoKey(src, 'live:webcam');
+    // macOS too: the state is not tied to DXGI.
+    sync.sharedTextureInfoCache.set(key, { info: { ...frameInfo(1), platform: 'iosurface' }, updatedAt: 0, revision: 1 });
+    sync.appendSharedTextureSourceFrameCommand([], src, 'live:webcam', 0, false, null);
+    expect(get(liveCaptureImportStates).get('session-tray')).toEqual({ state: 'sent' });
+    sync.reconcileSharedTextureUploads({ source_frame_shared_texture_rejected_uploads: 0, source_frame_shared_texture_uploads: 1 });
+    expect(get(liveCaptureImportStates).get('session-tray')).toEqual({ state: 'imported' });
+    sync.sharedTextureInfoCache.get(key).revision += 1;
+    sync.appendSharedTextureSourceFrameCommand([], src, 'live:webcam', 16, false, null);
+    sync.reconcileSharedTextureUploads({ source_frame_shared_texture_rejected_uploads: 1, source_frame_shared_texture_uploads: 1, source_frame_last_reject_reason: 'bad texture' });
+    expect(get(liveCaptureImportStates).get('session-tray')).toMatchObject({ state: 'rejected' });
+  });
+});
+
 describe('core texture cache key', () => {
   it('a camera upload names its session texture so the core opens it once; Spout does not', () => {
     const sync = makeSync();

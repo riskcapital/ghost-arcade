@@ -78,6 +78,11 @@ import {
   pruneCameraLiveSources,
 } from '$lib/renderer/cameraLiveSource';
 import {
+  noteLiveCaptureImported,
+  noteLiveCaptureRejected,
+  noteLiveCaptureSent,
+} from '$lib/renderer/liveCaptureImportState';
+import {
   LIVE_CAPTURE_NOTICE_INTERVAL_MS,
   LiveCaptureNoticeLimiter,
   liveCaptureImportNotice,
@@ -327,6 +332,9 @@ type SharedTextureUploadState = {
   submittedAt: number;
   /** Set for a camera or screen capture, so a rejection can be explained. */
   liveCapture?: { kind: LiveCaptureKind; adapterLuid: string | null };
+  /** Camera / screen capture session (any platform), for MediaTray's status. */
+  liveSessionId?: string;
+  liveSessionKind?: LiveCaptureKind;
   /** What was sent, so a rejected source is backed off until it changes. */
   infoKey: string;
   handle: string;
@@ -6629,6 +6637,14 @@ export class NativeRendererSync {
       if (pending.length && rejected - this.sharedTextureLastRejectedUploads >= pending.length) {
         const nowMs = performance.now();
         for (const [, upload] of pending) {
+          if (upload.liveSessionId) {
+            noteLiveCaptureRejected(upload.liveSessionId, liveCaptureImportNotice({
+              kind: upload.liveSessionKind ?? 'webcam',
+              captureAdapterLuid: upload.liveCapture?.adapterLuid ?? null,
+              coreAdapterLuid: status.adapter_luid ?? null,
+              reason: status.source_frame_last_reject_reason ?? null,
+            }));
+          }
           const next = nextSharedTextureRejectBackoff(this.sharedTextureRejectBackoff.get(upload.infoKey), upload, nowMs);
           this.sharedTextureRejectBackoff.delete(upload.infoKey);
           this.sharedTextureRejectBackoff.set(upload.infoKey, next);
@@ -6644,6 +6660,7 @@ export class NativeRendererSync {
       for (const upload of this.sharedTextureUploadPending.values()) {
         this.noteLiveCaptureImport(upload, status, true);
         this.sharedTextureRejectBackoff.delete(upload.infoKey);
+        if (upload.liveSessionId) noteLiveCaptureImported(upload.liveSessionId);
       }
       this.sharedTextureUploadPending.clear();
     }
@@ -11914,8 +11931,10 @@ export class NativeRendererSync {
     this.sourcePreviewSeq.set(sourceKey, seq);
     this.sourcePreviewSig.set(sourceKey, signature);
     this.sourcePreviewNextAt.set(sourceKey, now + LIVE_SHARED_TEXTURE_REFRESH_MS);
-    // Windows only (DXGI handles): macOS keeps its behaviour.
-    const liveKind = info.platform === 'dxgi' ? nativeLiveSourceType(src) : null;
+    const liveType = nativeLiveSourceType(src);
+    const liveSessionId = liveType === 'webcam' || liveType === 'capture' ? nativeLiveSourceIdentity(src) : '';
+    // Notices and the texture cache key are Windows only (DXGI handles).
+    const liveKind = info.platform === 'dxgi' ? liveType : null;
     this.sharedTextureUploadPending.set(sourceKey, {
       sourceId: src.id,
       signature,
@@ -11924,6 +11943,7 @@ export class NativeRendererSync {
       previousSeq,
       submittedAt: now,
       infoKey: cacheKey,
+      ...(liveSessionId ? { liveSessionId, liveSessionKind: liveType as LiveCaptureKind } : {}),
       handle: String(info.handle),
       width,
       height,
@@ -11947,6 +11967,7 @@ export class NativeRendererSync {
         ? { cacheKey: `${nativeLiveSourceIdentity(src)}:${info.handle}` }
         : {}),
     }));
+    if (liveSessionId) noteLiveCaptureSent(liveSessionId);
     return true;
   }
 

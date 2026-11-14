@@ -24,6 +24,7 @@
  */
 import { invoke, isElectron } from '$lib/bridge';
 import type { Layer } from '$lib/types';
+import { forgetLiveCaptureSession } from './liveCaptureImportState';
 
 export type CameraDevice = { id: string; name: string };
 
@@ -272,6 +273,7 @@ export function pruneCameraLiveSources(activeDeviceIds: Set<string>): void {
     reportedFailures.delete(deviceId);
     notifyCameraError(deviceId);
     if (session.sessionId) {
+      forgetLiveCaptureSession(session.sessionId);
       void invoke('native_live_capture_stop', { sessionId: session.sessionId }).catch(() => {});
       console.log(`[camera] ${cameraLiveSourceId(deviceId)} released`);
     }
