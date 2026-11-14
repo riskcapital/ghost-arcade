@@ -51,6 +51,20 @@ function roomScene(scene: InteractiveScene, world: ReliefWorld, geo: WorldGeo, v
       collider: 'static', catcher: world.wall.catcher || effectsOnly,
     }, { position: at, rotation: basisEuler(x, n, z), scale: [size * 2, 1, size * 2] }));
   }
+  {
+    // The backdrop: a wall behind everything, square to the projector and
+    // filling its view, so what the projector throws past the objects (the
+    // 2D effects, shadows) still lands somewhere, as it does on a real wall.
+    const pr = geo.projector;
+    const far = geo.spawnRef + Math.max(1, geo.radius * 0.5);
+    const n = scale(pr.fwd, -1);
+    const x = normalize(pr.right);
+    const span = far * (length(pr.right) + length(pr.up) + Math.abs(pr.shift[0]) + Math.abs(pr.shift[1])) * 3;
+    nodes.push(node('backdrop', 'Backdrop', {
+      kind: 'mesh', shape: 'plane', material: material('matte', { base: world.wall.color, rough: world.wall.rough }),
+      collider: 'none', catcher: world.wall.catcher || effectsOnly,
+    }, { position: add(pr.pos, scale(pr.fwd, far)), rotation: basisEuler(x, n, normalize(cross(x, n))), scale: [span, 1, span] }));
+  }
   for (const f of geo.faces) {
     nodes.push(node(`block:${f.surfaceId}`, f.name, {
       kind: 'mesh', shape: 'outline', material: finishMaterial(f.finish), collider: 'static',
