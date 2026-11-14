@@ -5,7 +5,7 @@
    * (a preset not picked). Any panel that fires show actions can use it.
    */
   import { compositions } from '../../stores/layers';
-  import { showTimeline } from '../../stores/showTimeline';
+  import { showSlice } from './timeline/timelineSlices';
   import { EDGE_LOOKS } from '../../looks/edgeLookCatalog';
   import type { ShowAction, ShowActionKind } from '../../show/showActions';
   import { PICKABLE_SHOW_ACTIONS, defaultShowAction } from '../../show/showActionLabels';
@@ -15,7 +15,9 @@
 
   $: kind = action?.kind ?? kindPicked;
   let kindPicked: ShowActionKind | '' = '';
-  $: sections = $showTimeline.sections ?? [];
+  // A slice: the whole show store publishes every playhead frame.
+  const sectionsSlice = showSlice('sections');
+  $: sections = $sectionsSlice ?? [];
 
   function pickKind(next: ShowActionKind) {
     kindPicked = next;

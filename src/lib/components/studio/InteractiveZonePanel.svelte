@@ -17,7 +17,7 @@
   import type { ShowAction } from '../../show/showActions';
   import { describeShowAction } from '../../show/showActionLabels';
   import { compositions } from '../../stores/layers';
-  import { showTimeline } from '../../stores/showTimeline';
+  import { showSlice } from '../show/timeline/timelineSlices';
   import ShowActionPicker from '../show/ShowActionPicker.svelte';
 
   export let trigger: ZoneTrigger;
@@ -52,9 +52,11 @@
   let adding = false;
   let draft: ShowAction | null = null;
 
+  // A slice: the whole show store publishes every playhead frame.
+  const sectionsSlice = showSlice('sections');
   const names = {
     preset: (id: string) => $compositions.find((c) => c.id === id)?.name,
-    section: (id: string) => ($showTimeline.sections ?? []).find((s) => s.id === id)?.name,
+    section: (id: string) => ($sectionsSlice ?? []).find((s) => s.id === id)?.name,
   };
   function label(a: ZoneAction): string {
     if (a.kind === 'world') return world ? WORLD_LABELS[a.what] : `${WORLD_LABELS[a.what]} · needs the 3D world`;
