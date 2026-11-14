@@ -1,0 +1,225 @@
+{
+  "ref": "origin/feat/music-studio-visuals",
+  "sha": "b31bdf651293faae49e555d83b6494b556062e6c",
+  "copied": "2026-11-14",
+  "measured": "On-screen frames a second at 1280x720 and at 0.75 and 0.6 of that size, iPhone 12 Pro Max (iOS 26.6.1), driven by a song; scale is the size each is drawn at so it holds 60. scripts/mobile-voice-bench.mjs --app-bundle --fpsscale 1,0.75,0.6.",
+  "voices": [
+    {
+      "file": "VX-Aperture.fs",
+      "phoneFps": {
+        "1": 60.5,
+        "0.75": 60,
+        "0.6": 60
+      },
+      "scale": 1
+    },
+    {
+      "file": "VX-AuroraWater.fs",
+      "phoneFps": {
+        "1": 55,
+        "0.75": 60.3,
+        "0.6": 60
+      },
+      "scale": 0.9
+    },
+    {
+      "file": "VX-BaitBall.fs",
+      "phoneFps": {
+        "1": 45.3,
+        "0.75": 57.8,
+        "0.6": 60.3
+      },
+      "scale": 0.7
+    },
+    {
+      "file": "VX-BeamOrgan.fs",
+      "phoneFps": {
+        "1": 60,
+        "0.75": 60.3,
+        "0.6": 60
+      },
+      "scale": 1
+    },
+    {
+      "file": "VX-EventHorizon.fs",
+      "phoneFps": {
+        "1": 60.3,
+        "0.75": 60,
+        "0.6": 60.3
+      },
+      "scale": 1
+    },
+    {
+      "file": "VX-InkBloom.fs",
+      "phoneFps": {
+        "1": 60,
+        "0.75": 60.3,
+        "0.6": 60
+      },
+      "scale": 1
+    },
+    {
+      "file": "VX-Inkwell.fs",
+      "phoneFps": {
+        "1": 60.3,
+        "0.75": 60.3,
+        "0.6": 60.3
+      },
+      "scale": 1
+    },
+    {
+      "file": "VX-JuliaJewel.fs",
+      "phoneFps": {
+        "1": 60.3,
+        "0.75": 60,
+        "0.6": 60.3
+      },
+      "scale": 1
+    },
+    {
+      "file": "VX-Louvers.fs",
+      "phoneFps": {
+        "1": 52,
+        "0.75": 60.3,
+        "0.6": 60.3
+      },
+      "scale": 0.85
+    },
+    {
+      "file": "VX-Mandala.fs",
+      "phoneFps": {
+        "1": 59.3,
+        "0.75": 60.3,
+        "0.6": 60
+      },
+      "scale": 1
+    },
+    {
+      "file": "VX-Marbling.fs",
+      "phoneFps": {
+        "1": 60.3,
+        "0.75": 60.3,
+        "0.6": 60
+      },
+      "scale": 1
+    },
+    {
+      "file": "VX-Nebula.fs",
+      "phoneFps": {
+        "1": 42,
+        "0.75": 51.5,
+        "0.6": 60.3
+      },
+      "scale": 0.65
+    },
+    {
+      "file": "VX-Northlight.fs",
+      "phoneFps": {
+        "1": 42.3,
+        "0.75": 52.3,
+        "0.6": 60.3
+      },
+      "scale": 0.65
+    },
+    {
+      "file": "VX-OpBands.fs",
+      "phoneFps": {
+        "1": 60.3,
+        "0.75": 60.3,
+        "0.6": 60.3
+      },
+      "scale": 1
+    },
+    {
+      "file": "VX-OpDisc.fs",
+      "phoneFps": {
+        "1": 60.3,
+        "0.75": 60,
+        "0.6": 60
+      },
+      "scale": 1
+    },
+    {
+      "file": "VX-Paisley.fs",
+      "phoneFps": {
+        "1": 60.3,
+        "0.75": 60.3,
+        "0.6": 60
+      },
+      "scale": 1
+    },
+    {
+      "file": "VX-Pillars.fs",
+      "phoneFps": {
+        "1": 41.3,
+        "0.75": 51.8,
+        "0.6": 60
+      },
+      "scale": 0.65
+    },
+    {
+      "file": "VX-RingedPlanet.fs",
+      "phoneFps": {
+        "1": 60.3,
+        "0.75": 60,
+        "0.6": 60.3
+      },
+      "scale": 1
+    },
+    {
+      "file": "VX-Riverlight.fs",
+      "phoneFps": {
+        "1": 45.5,
+        "0.75": 60,
+        "0.6": 60.3
+      },
+      "scale": 0.8
+    },
+    {
+      "file": "VX-Shallows.fs",
+      "phoneFps": {
+        "1": 60.3,
+        "0.75": 60,
+        "0.6": 60.3
+      },
+      "scale": 1
+    },
+    {
+      "file": "VX-Slabs.fs",
+      "phoneFps": {
+        "1": 60.3,
+        "0.75": 60,
+        "0.6": 60
+      },
+      "scale": 1
+    },
+    {
+      "file": "VX-SoapFilm.fs",
+      "phoneFps": {
+        "1": 43.5,
+        "0.75": 50.8,
+        "0.6": 60.3
+      },
+      "scale": 0.65
+    },
+    {
+      "file": "VX-SpiralGalaxy.fs",
+      "name": "Golden Galaxy",
+      "phoneFps": {
+        "1": 48.5,
+        "0.75": 60.3,
+        "0.6": 60.3
+      },
+      "scale": 0.85
+    },
+    {
+      "file": "VX-Undertow.fs",
+      "phoneFps": {
+        "1": 60.3,
+        "0.75": 60.3,
+        "0.6": 60.3
+      },
+      "scale": 1
+    }
+  ]
+}

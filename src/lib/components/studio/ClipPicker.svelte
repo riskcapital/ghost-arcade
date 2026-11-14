@@ -52,7 +52,9 @@
 
   $: categories = ['all', ...new Set(visuals.map((s) => s.category))];
   $: shown = searchVisuals(visuals, category, search).filter((s) => !failed.has(s.id));
-  const title = (cat: string) => (cat === 'all' ? 'All' : cat[0].toUpperCase() + cat.slice(1));
+  /** Groups whose name is more than their id. */
+  const GROUP_NAMES: Record<string, string> = { all: 'All', voices: 'Audio voices' };
+  const title = (cat: string) => GROUP_NAMES[cat] ?? cat[0].toUpperCase() + cat.slice(1);
 
   async function preview(visual: Visual) {
     if (chosen?.id === visual.id) { onvisual(visual.id); return; }

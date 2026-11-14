@@ -1,5 +1,8 @@
 // Desktop ISF catalog plus stable IDs for existing mobile sets. Device performance varies by shader.
-export type MobileShaderCategory = 'audio' | 'room' | 'pattern' | 'fluid' | 'kinetic' | 'generator' | 'simulation' | 'visual' | 'other';
+import { STUDIO_VOICE_SHADERS } from './studioVoiceList';
+
+/** `voices` (shown as "Audio voices"): the desktop's visual voices, each following one sound of the music (studioVoices.ts). */
+export type MobileShaderCategory = 'audio' | 'room' | 'pattern' | 'fluid' | 'kinetic' | 'generator' | 'simulation' | 'visual' | 'other' | 'voices';
 
 export interface MobileShader {
   id: string;
@@ -31,6 +34,8 @@ export interface MobileShader {
    * `glow` lifts brightness with the level. Defaults depend on `audioNative`.
    */
   motion?: { flow?: number; breath?: number; glow?: boolean };
+  /** A visual voice: the phone writes its `vx` signals every frame from what it hears (studioVoices.ts). */
+  voice?: boolean;
 }
 
 export const MOBILE_SHADERS: MobileShader[] = [
@@ -4020,6 +4025,9 @@ MOBILE_SHADERS.push(...[
     "requiresImage": false
   }
 ] as MobileShader[]);
+
+// The studio voices go last, so sets built from the catalog's order open as before.
+MOBILE_SHADERS.push(...STUDIO_VOICE_SHADERS);
 
 export const STARTING_SHADER_ID = 'room-ember-drift';
 

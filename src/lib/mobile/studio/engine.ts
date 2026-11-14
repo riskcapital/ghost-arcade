@@ -15,9 +15,12 @@ import { getAsset } from './assets';
 import { type Show, type Clip, type Layer, layerGain, clipUnavailable } from './model';
 import { QualityGovernor, shaderRenderHeight, SURFACE_CLIP_CAP } from './qualityGovernor';
 import { planSurfaceClips, planKey, type SurfaceClipPlan } from './surfaceClips';
+import { VoiceSignals, isVoiceDrivenInput, prepareVoiceSource } from '../studioVoices';
 
 type Prepared = { native?:NativeLiveSource; releaseCapture?:()=>void; clip: Clip; source?: string; media?: HTMLImageElement | HTMLVideoElement; url?: string };
 type Slot = {
+  /** A studio voice: the sound it follows by default (its vxSource), when the clip is one. */
+  voice?: number;
   /** Reduced internal scale and step count for a heavy shader kept on mobile. */
   budget?:{scale:number;detail:number};
   drift?:GhostFXFeedback;
@@ -57,6 +60,7 @@ export function shaderSource(id: string) {
         if (!r.ok) throw new Error(`Could not load ${shader.name}.`);
         return r.text();
       })
+      .then((text) => (shader.voice ? prepareVoiceSource(text) : text))
       .catch((e) => {
         shaderSources.delete(id);
         throw e;
@@ -82,6 +86,9 @@ export class StudioEngine {
   private raf = 0;
   private dead = false;
   private audio = new StandaloneAudio();
+  /** What the studio voices on the deck hear: one set of signals for all of them. */
+  private voices = new VoiceSignals();
+  private voiceFrame = 0;
   private mic = false;
   private frames = 0;
   private governor=new QualityGovernor();
@@ -248,6 +255,8 @@ export class StudioEngine {
         s.renderer.setShaderImage(p.media ?? null);
         s.params = parseISF(p.source).metadata.INPUTS;
         s.budget = mobileShaderBudgets[shader.path];
+        const follows = s.params.find((input) => input.NAME === 'vxSource');
+        s.voice = shader.voice ? Number(shader.defaults?.vxSource ?? follows?.DEFAULT ?? 0) : undefined;
       } else if (p.media) {
         if (p.media instanceof HTMLVideoElement) await p.media.play();
         if (this.dead || s.generation !== generation) {
@@ -258,7 +267,7 @@ export class StudioEngine {
         s.params = [];
       }
       this.releaseMedia(s);
-      if (!p.source) s.budget = undefined;
+      if (!p.source) { s.budget = undefined; s.voice = undefined; }
       s.native=p.native;
       s.video = p.media instanceof HTMLVideoElement ? p.media : undefined;
       s.image = p.media instanceof HTMLImageElement ? p.media : undefined;
@@ -302,6 +311,7 @@ export class StudioEngine {
     s.clipId = null;
     s.params = [];
     s.budget = undefined;
+    s.voice = undefined;
     this.releaseMedia(s);
     s.renderer.clearSource();
   }
@@ -312,11 +322,19 @@ export class StudioEngine {
     const value=typeof params.detail==='number'?params.detail:Number(input.DEFAULT??1);
     return {...params,detail:value*budget.detail};
   }
+  /** A slot's shader inputs this frame: its look (inside the mobile budget) and, for a studio voice, the voice signals. */
+  private slotInputs(s:Slot,look:Show['layers'][number]['params'],intensity:number){
+    const params=this.budgetInputs(s,look);
+    if(s.voice===undefined)return params;
+    return {...params,...this.voices.inputs(Number(params.vxSource??s.voice),params.vxAuto===true,intensity)};
+  }
   /** Internal render height of a row's shader, for tests and diagnostics. */
   renderBudget(index:number){return this.slots[index]?.budget;}
   ghostMovement(index:number){return this.slots[index]?.ghostMotion?.currentMovement;}
   parameters(index: number) {
-    return this.slots[index].params.filter(p=>!p.NAME.startsWith('_ghost'));
+    const slot = this.slots[index];
+    // A studio voice's signals are written every frame from what the phone hears: no control shows for them.
+    return slot.params.filter(p=>!p.NAME.startsWith('_ghost')&&!(slot.voice!==undefined&&isVoiceDrivenInput(p.NAME)));
   }
   videoTime(index: number) {
     const v = this.slots[index].video;
@@ -351,6 +369,10 @@ export class StudioEngine {
       const show = this.getShow();
       if (this.mic) this.audio.update(now);
       const audio = this.mic ? this.audio.uniforms : SILENT_AUDIO;
+      // One set of voice signals for every studio voice on the deck, from the live source or, with none, a quiet groove.
+      const voiceDt = this.voiceFrame ? Math.min(.1, (now - this.voiceFrame) / 1000) : 0;
+      this.voiceFrame = now;
+      if (!this.frozen && [...this.slots, ...this.surfaceSlots.values()].some(slot => slot.voice !== undefined && slot.clipId)) this.voices.update(this.mic ? this.audio.voiceFrame : null, voiceDt);
       if(this.previewSuspended){for(const slot of [...this.slots,...this.surfaceSlots.values()])if(slot.video&&!slot.releaseCapture&&!slot.video.paused)slot.video.pause();this.lastLookFrame=now;this.frames=0;this.lastReport=now;return;}
       const inputs: (TextureInput | null)[] = [];
       try {
@@ -436,7 +458,7 @@ export class StudioEngine {
         const response=s.ghostMotion.update(audio,dt*Math.max(0,l.speed),Number(l.params.movement)||0,Number(l.params.drift??.6),Number(l.params.morph??2.5),Number(l.params.reactivity??1),l.params.journey===true,Number(l.params.journeySeconds??24));
         s.ghostBass=response.audio.audioBass;s.renderer.setAudio(response.audio);
         s.renderer.setShaderInputs({...this.budgetInputs(s,l.params),...response.inputs});
-      }else s.renderer.setShaderInputs(this.budgetInputs(s,l.params));
+      }else s.renderer.setShaderInputs(this.slotInputs(s,l.params,l.intensity));
 
       const sourceWidth = s.video?.videoWidth || s.image?.naturalWidth || 16,
         sourceHeight = s.video?.videoHeight || s.image?.naturalHeight || 9;

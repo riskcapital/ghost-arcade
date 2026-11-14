@@ -174,6 +174,42 @@ export const mobileShaderBudgets: Record<string, { scale: number; detail: number
     "scale": 0.95,
     "detail": 0.85
   },
+  "ISF/VX-AuroraWater.fs": {
+    "scale": 0.9,
+    "detail": 1
+  },
+  "ISF/VX-BaitBall.fs": {
+    "scale": 0.7,
+    "detail": 1
+  },
+  "ISF/VX-Louvers.fs": {
+    "scale": 0.85,
+    "detail": 1
+  },
+  "ISF/VX-Nebula.fs": {
+    "scale": 0.65,
+    "detail": 1
+  },
+  "ISF/VX-Northlight.fs": {
+    "scale": 0.65,
+    "detail": 1
+  },
+  "ISF/VX-Pillars.fs": {
+    "scale": 0.65,
+    "detail": 1
+  },
+  "ISF/VX-Riverlight.fs": {
+    "scale": 0.8,
+    "detail": 1
+  },
+  "ISF/VX-SoapFilm.fs": {
+    "scale": 0.65,
+    "detail": 1
+  },
+  "ISF/VX-SpiralGalaxy.fs": {
+    "scale": 0.85,
+    "detail": 1
+  },
   "ISF/cube shaders/3D_09_CrystalCluster.fs": {
     "scale": 0.9,
     "detail": 0.85

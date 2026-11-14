@@ -12,6 +12,7 @@ import { parseISF, getInputDefault, type ParsedISF, type ISFInput } from '../isf
 import type { AudioUniforms } from './standaloneAudio';
 import { SILENT_AUDIO } from './standaloneAudio';
 import { findMobileEffect, type MobileEffectInstance } from './standaloneEffects';
+import { declarePasses, passSize, passSpecs, passTargets, rewriteBufferMacros, type PassSpec } from './isfPasses';
 
 /** Wedge audio reactivity into shaders that don't already reference audio
  *  uniforms. Inserts a brightness/color-tilt patch right before main()'s
@@ -200,6 +201,25 @@ interface FBO {
   h: number;
 }
 
+/** A multi-pass shader's buffer: drawn into one texture while passes read the other. */
+interface PassBuffer {
+  spec: PassSpec;
+  name: string;
+  read: FBO | null;
+  write: FBO | null;
+  sampler: WebGLUniformLocation | null;
+  size: WebGLUniformLocation | null;
+  unit: number;
+}
+
+/** How a buffer that holds values beyond 0..1 is stored on this GPU. */
+type FloatFormat = { type: number; linear: boolean } | null;
+const HALF_FLOAT_OES = 0x8d61;
+/** Buffers up to this many pixels hold state (clocks, counters): full float precision when the GPU has it. */
+const STATE_BUFFER_PIXELS = 256 * 256;
+/** The first texture unit buffers use (0-1 audio, 2 a shader's image input). */
+const FIRST_BUFFER_UNIT = 3;
+
 export class StandaloneRenderer {
   onEffectError: (message: string) => void = () => {};
   private gl: WebGLRenderingContext;
@@ -252,6 +272,12 @@ export class StandaloneRenderer {
   private inputValues: Record<string, number | boolean | number[]> = {};
   private effectCache = new Map<string, CompiledEffect>();
   private fbos: [FBO | null, FBO | null] = [null, null];
+  // Multi-pass shaders: the passes in order, the buffers they draw, PASSINDEX.
+  private passes: PassSpec[] = [];
+  private passBuffers: PassBuffer[] = [];
+  private passIndexLoc: WebGLUniformLocation | null = null;
+  private copyProgram: WebGLProgram | null = null;
+  private floatFormats: { state?: FloatFormat; picture?: FloatFormat } = {};
 
   constructor(private canvas: HTMLCanvasElement, private sharedContext?: WebGLRenderingContext) {
     const gl = sharedContext ?? canvas.getContext('webgl', { premultipliedAlpha: false, antialias: false });
@@ -286,8 +312,15 @@ export class StandaloneRenderer {
     audioInject?: { match: RegExp; replace: string }[],
     motion?: { flow?: number; breath?: number; glow?: boolean },
   ): Promise<void> {
+    // Multi-pass shaders (PASSES) draw into named buffers; ordinary shaders are untouched.
+    const header = source.match(/\/\*\s*(\{[\s\S]*?\})\s*\*\//);
+    let specs: PassSpec[] = [];
+    try { specs = header ? passSpecs(JSON.parse(header[1])) : []; } catch { specs = []; }
+    const targets = passTargets(specs);
+    if (targets.length) source = rewriteBufferMacros(source, targets.map((t) => t.target!));
     const parsed: ParsedISF = parseISF(source);
     let frag = parsed.fragmentShader;
+    if (specs.length) frag = declarePasses(frag, targets.map((t) => t.target!));
     // WebGL1 requires enabling derivatives on the context and putting extension
     // directives before precision/uniform declarations injected by the parser.
     if (/\b(fwidth|dFdx|dFdy)\s*\(/.test(frag)) {
@@ -320,6 +353,7 @@ export class StandaloneRenderer {
     this.mediaLocs = null;
     this.inputs = parsed.metadata.INPUTS ?? [];
     this.locs = this.cacheLocations(program, this.inputs);
+    this.setPasses(program, specs, targets);
     this.startTime = performance.now();
     this.frameIndex = 0;
     this.scaledTime = 0;
@@ -341,6 +375,7 @@ export class StandaloneRenderer {
     this.program = program;
     this.locs = null;
     this.inputs = [];
+    this.releasePasses();
     this.mediaElement = source;
     if (!this.mediaTexture) this.mediaTexture = this.createMediaTexture();
     this.mediaLocs = {
@@ -363,6 +398,7 @@ export class StandaloneRenderer {
     this.mediaLocs = null;
     this.mediaElement = null;
     this.inputs = [];
+    this.releasePasses();
   }
 
   /** Updated each frame by the host (StandaloneApp) before render. */
@@ -464,6 +500,8 @@ export class StandaloneRenderer {
       gl.deleteProgram(compiled.program);
     }
     this.effectCache.clear();
+    this.releasePasses();
+    if (this.copyProgram) { gl.deleteProgram(this.copyProgram); this.copyProgram = null; }
   }
 
   private render() {
@@ -496,6 +534,8 @@ export class StandaloneRenderer {
       this.outputFbo = this.createFBO(this.renderWidth, this.renderHeight);
     }
     gl.disable(gl.BLEND);
+    // A multi-pass shader's buffers follow the picture's size (made before any program is set up).
+    if (this.passes.length && !this.mediaElement) this.ensurePassBuffers();
 
     // Effect chain present? Render the source shader into FBO 0, then
     // ping-pong each effect, last writes to the default framebuffer
@@ -626,10 +666,137 @@ export class StandaloneRenderer {
       }
     }
 
-    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    if (this.passes.length) this.drawPasses(L, usingChain ? this.fbos[0]!.fb : (this.outputFbo?.fb ?? null));
+    else gl.drawArrays(gl.TRIANGLES, 0, 6);
     this.frameIndex++;
 
     if (usingChain) this.runEffectChain(time);
+  }
+
+  /** A multi-pass shader's frame: each pass in order, buffers into their own textures, the last into `output`. */
+  private drawPasses(L: UniformLoc, output: WebGLFramebuffer | null): void {
+    const gl = this.gl;
+    for (let i = 0; i < this.passes.length; i++) {
+      const pass = this.passes[i];
+      // Every buffer is read from the texture not being drawn, so a pass can read its own last frame.
+      for (const b of this.passBuffers) {
+        gl.activeTexture(gl.TEXTURE0 + b.unit);
+        gl.bindTexture(gl.TEXTURE_2D, b.read!.tex);
+        if (b.sampler) gl.uniform1i(b.sampler, b.unit);
+        if (b.size) gl.uniform2f(b.size, b.read!.w, b.read!.h);
+      }
+      const buffer = pass.target ? this.passBuffers.find((b) => b.name === pass.target) : undefined;
+      const w = buffer ? buffer.write!.w : this.renderWidth, h = buffer ? buffer.write!.h : this.renderHeight;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, buffer ? buffer.write!.fb : output);
+      gl.viewport(0, 0, w, h);
+      if (L.RENDERSIZE) gl.uniform2f(L.RENDERSIZE, w, h);
+      if (this.passIndexLoc) gl.uniform1i(this.passIndexLoc, i);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      if (buffer) [buffer.read, buffer.write] = [buffer.write, buffer.read];
+    }
+    gl.viewport(0, 0, this.renderWidth, this.renderHeight);
+  }
+
+  /** Takes on a newly loaded shader's passes; buffers are made at the first frame, at its size. */
+  private setPasses(program: WebGLProgram, specs: PassSpec[], targets: PassSpec[]): void {
+    this.releasePasses();
+    if (!specs.length) return;
+    const units = this.gl.getParameter(this.gl.MAX_TEXTURE_IMAGE_UNITS) as number;
+    if (FIRST_BUFFER_UNIT + targets.length > units) throw new Error('This visual needs more GPU texture units than this device has.');
+    this.passes = specs;
+    this.passIndexLoc = this.gl.getUniformLocation(program, 'PASSINDEX');
+    this.passBuffers = targets.map((spec, i) => ({
+      spec,
+      name: spec.target!,
+      read: null,
+      write: null,
+      sampler: this.gl.getUniformLocation(program, spec.target!),
+      size: this.gl.getUniformLocation(program, `_${spec.target}_imgSize`),
+      unit: FIRST_BUFFER_UNIT + i,
+    }));
+  }
+
+  /** Makes, or remakes at a new picture size, each pass buffer. A persistent one keeps its picture, scaled. */
+  private ensurePassBuffers(): void {
+    let clearColor: Float32Array | null = null;
+    for (const b of this.passBuffers) {
+      const w = passSize(b.spec.width, this.renderWidth, this.renderHeight, this.renderWidth);
+      const h = passSize(b.spec.height, this.renderWidth, this.renderHeight, this.renderHeight);
+      if (b.read && b.read.w === w && b.read.h === h) continue;
+      const format = b.spec.float ? this.floatFormat(w * h <= STATE_BUFFER_PIXELS ? 'state' : 'picture') : null;
+      const read = this.createFBO(w, h, format), write = this.createFBO(w, h, format);
+      clearColor ??= this.gl.getParameter(this.gl.COLOR_CLEAR_VALUE) as Float32Array;
+      for (const target of [read, write]) {
+        this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, target.fb);
+        this.gl.viewport(0, 0, w, h);
+        this.gl.clearColor(0, 0, 0, 0);
+        this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+        if (b.spec.persistent && b.read) this.copyInto(b.read.tex);
+      }
+      this.freeFBO(b.read); this.freeFBO(b.write);
+      b.read = read; b.write = write;
+    }
+    if (clearColor) this.gl.clearColor(clearColor[0], clearColor[1], clearColor[2], clearColor[3]);
+  }
+
+  /** Draws `texture` over the bound framebuffer, stretched to it. */
+  private copyInto(texture: WebGLTexture): void {
+    const gl = this.gl;
+    this.copyProgram ??= this.compile(VERTEX_SHADER, 'precision highp float; varying vec2 vUv; uniform sampler2D uInput; void main(){gl_FragColor=texture2D(uInput,vUv);}');
+    gl.useProgram(this.copyProgram);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuffer);
+    const pos = gl.getAttribLocation(this.copyProgram, 'position'), uv = gl.getAttribLocation(this.copyProgram, 'uv');
+    gl.enableVertexAttribArray(pos);
+    gl.vertexAttribPointer(pos, 3, gl.FLOAT, false, 5 * 4, 0);
+    if (uv >= 0) { gl.enableVertexAttribArray(uv); gl.vertexAttribPointer(uv, 2, gl.FLOAT, false, 5 * 4, 3 * 4); }
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.uniform1i(gl.getUniformLocation(this.copyProgram, 'uInput'), 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    gl.useProgram(this.program);
+  }
+
+  private releasePasses(): void {
+    for (const b of this.passBuffers) { this.freeFBO(b.read); this.freeFBO(b.write); }
+    this.passBuffers = [];
+    this.passes = [];
+    this.passIndexLoc = null;
+  }
+
+  private freeFBO(fbo: FBO | null): void {
+    if (!fbo) return;
+    this.gl.deleteFramebuffer(fbo.fb);
+    this.gl.deleteTexture(fbo.tex);
+  }
+
+  /**
+   * How this GPU stores a float buffer: state buffers (small) want full float precision for their
+   * clocks, pictures want half float, which filters smoothly and costs half the memory. Each falls
+   * back to the other, then to 8 bits. Tried once per renderer by drawing into a 1x1 target.
+   */
+  private floatFormat(kind: 'state' | 'picture'): FloatFormat {
+    if (kind in this.floatFormats) return this.floatFormats[kind] ?? null;
+    const gl = this.gl;
+    const full = gl.getExtension('OES_texture_float') ? { type: gl.FLOAT, linear: !!gl.getExtension('OES_texture_float_linear') } : null;
+    const half = gl.getExtension('OES_texture_half_float') ? { type: HALF_FLOAT_OES, linear: !!gl.getExtension('OES_texture_half_float_linear') } : null;
+    gl.getExtension('WEBGL_color_buffer_float');
+    gl.getExtension('EXT_color_buffer_half_float');
+    const renders = (format: FloatFormat) => {
+      if (!format) return false;
+      for (let i = 0; i < 8 && gl.getError() !== gl.NO_ERROR; i++) { /* earlier errors are not this test's */ }
+      const tex = gl.createTexture(), fb = gl.createFramebuffer();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, format.type, null);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      const ok = gl.getError() === gl.NO_ERROR && gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+      gl.deleteFramebuffer(fb); gl.deleteTexture(tex);
+      return ok;
+    };
+    const order = kind === 'state' ? [full, half] : [half, full];
+    const chosen = order.find(renders) ?? null;
+    this.floatFormats[kind] = chosen;
+    return chosen;
   }
 
   private renderMediaSource(): void {
@@ -790,15 +957,16 @@ export class StandaloneRenderer {
     }
   }
 
-  private createFBO(w: number, h: number): FBO {
+  private createFBO(w: number, h: number, format: FloatFormat = null): FBO {
     const gl = this.gl;
     const tex = gl.createTexture();
     const fb = gl.createFramebuffer();
     if (!tex || !fb) throw new Error('FBO alloc failed');
     gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, format?.type ?? gl.UNSIGNED_BYTE, null);
+    const filter = format && !format.linear ? gl.NEAREST : gl.LINEAR;
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.bindFramebuffer(gl.FRAMEBUFFER, fb);

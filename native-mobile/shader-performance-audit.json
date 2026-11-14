@@ -1,6 +1,6 @@
 {
   "method": "Static code cost: high/extreme excluded, comments ignored. Measured GPU cost: over 2.50 ms excluded; over 0.9 ms drawn smaller, at the scale that brings it to 0.9 ms (at least 0.6).",
-  "retained": 258,
+  "retained": 282,
   "budgeted": [
     {
       "path": "ISF/11_RadialShards.fs",
@@ -255,6 +255,114 @@
       "budget": {
         "scale": 0.95,
         "detail": 0.85
+      }
+    },
+    {
+      "path": "ISF/VX-AuroraWater.fs",
+      "level": "phone",
+      "score": 55,
+      "hints": [
+        "55 frames a second at 1280x720 on an iPhone 12 Pro Max; drawn at 0.9 of that size"
+      ],
+      "budget": {
+        "scale": 0.9,
+        "detail": 1
+      }
+    },
+    {
+      "path": "ISF/VX-BaitBall.fs",
+      "level": "phone",
+      "score": 45.3,
+      "hints": [
+        "45.3 frames a second at 1280x720 on an iPhone 12 Pro Max; drawn at 0.7 of that size"
+      ],
+      "budget": {
+        "scale": 0.7,
+        "detail": 1
+      }
+    },
+    {
+      "path": "ISF/VX-Louvers.fs",
+      "level": "phone",
+      "score": 52,
+      "hints": [
+        "52 frames a second at 1280x720 on an iPhone 12 Pro Max; drawn at 0.85 of that size"
+      ],
+      "budget": {
+        "scale": 0.85,
+        "detail": 1
+      }
+    },
+    {
+      "path": "ISF/VX-Nebula.fs",
+      "level": "phone",
+      "score": 42,
+      "hints": [
+        "42 frames a second at 1280x720 on an iPhone 12 Pro Max; drawn at 0.65 of that size"
+      ],
+      "budget": {
+        "scale": 0.65,
+        "detail": 1
+      }
+    },
+    {
+      "path": "ISF/VX-Northlight.fs",
+      "level": "phone",
+      "score": 42.3,
+      "hints": [
+        "42.3 frames a second at 1280x720 on an iPhone 12 Pro Max; drawn at 0.65 of that size"
+      ],
+      "budget": {
+        "scale": 0.65,
+        "detail": 1
+      }
+    },
+    {
+      "path": "ISF/VX-Pillars.fs",
+      "level": "phone",
+      "score": 41.3,
+      "hints": [
+        "41.3 frames a second at 1280x720 on an iPhone 12 Pro Max; drawn at 0.65 of that size"
+      ],
+      "budget": {
+        "scale": 0.65,
+        "detail": 1
+      }
+    },
+    {
+      "path": "ISF/VX-Riverlight.fs",
+      "level": "phone",
+      "score": 45.5,
+      "hints": [
+        "45.5 frames a second at 1280x720 on an iPhone 12 Pro Max; drawn at 0.8 of that size"
+      ],
+      "budget": {
+        "scale": 0.8,
+        "detail": 1
+      }
+    },
+    {
+      "path": "ISF/VX-SoapFilm.fs",
+      "level": "phone",
+      "score": 43.5,
+      "hints": [
+        "43.5 frames a second at 1280x720 on an iPhone 12 Pro Max; drawn at 0.65 of that size"
+      ],
+      "budget": {
+        "scale": 0.65,
+        "detail": 1
+      }
+    },
+    {
+      "path": "ISF/VX-SpiralGalaxy.fs",
+      "level": "phone",
+      "score": 48.5,
+      "hints": [
+        "48.5 frames a second at 1280x720 on an iPhone 12 Pro Max; drawn at 0.85 of that size"
+      ],
+      "budget": {
+        "scale": 0.85,
+        "detail": 1
       }
     },
     {
