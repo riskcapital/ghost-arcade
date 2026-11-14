@@ -1,6 +1,8 @@
 import { TRANSITIONS, applyFaderCurve } from '../../renderer/crossfadeTransitions';
 export { TRANSITIONS };
-export const CROSSFADE_BLENDS = ['normal','multiply','screen','add','difference','darken','lighten','overlay','exclusion'] as const;
+import type { BlendMode } from './blendModes';
+/** Blend at the middle of a crossfade: a few of the layer blend modes, with the same ids and formulas (blendModes.ts). */
+export const CROSSFADE_BLENDS = ['normal','multiply','screen','add','difference','darken','lighten','overlay','exclusion'] as const satisfies readonly BlendMode[];
 export const CROSSFADE_CURVES = ['linear','constant-power','sharp-cut'] as const;
 export type CrossfadeSettings = { transition:string; blend:string; curve:typeof CROSSFADE_CURVES[number] };
 export function normalizeCrossfade(value?:Partial<CrossfadeSettings>):CrossfadeSettings {

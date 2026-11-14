@@ -1,6 +1,8 @@
 <script lang="ts">
  import {TRANSITIONS,CROSSFADE_BLENDS,CROSSFADE_CURVES,normalizeCrossfade,type CrossfadeSettings} from '../../mobile/studio/crossfade';
  import TouchFader from './TouchFader.svelte';
+ import BlendPicker from './BlendPicker.svelte';
+ import {blendLabel} from '../../mobile/studio/blendModes';
  import type {Show,Layer} from '../../mobile/studio/model';
  export let show:Show;
  export let embedded=false;
@@ -17,6 +19,8 @@
  export let oncontrols:(index:number)=>void;
  export let onclose:()=>void;
  export let onstart:()=>void;
+ /** A blend sheet is opening: get the full blend shader ready. */
+ export let onblendopen:()=>void=()=>{};
  let startY:number|null=null;
  const name=(i:number)=>show.dualDeck?`${i<4?'A':'B'}${i%4+1}`:`L${i+1}`;
  function swipe(e:PointerEvent){if(startY!==null&&e.clientY-startY>45){startY=null;onclose();}}
@@ -29,7 +33,7 @@
  <button class="name" aria-label={`Select mixer ${name(i)}`} onclick={()=>onselect(i)}>{name(i)}<small>{Math.round(layer.opacity*100)}%</small></button>
  <TouchFader value={layer.opacity} label={`${name(i)} opacity`} {onstart} onchange={opacity=>onchange(i,{opacity})}/>
  <div class="switches"><button class:active={!layer.enabled} aria-label={`Mute ${name(i)}`} aria-pressed={!layer.enabled} onclick={()=>{onstart();onchange(i,{enabled:!layer.enabled});}}>M</button><button class:active={layer.solo} aria-label={`Solo ${name(i)}`} aria-pressed={!!layer.solo} onclick={()=>{onstart();onchange(i,{solo:!layer.solo});}}>S</button></div>
- <select aria-label={`${name(i)} blend`} value={layer.blend} onchange={e=>{onstart();onchange(i,{blend:e.currentTarget.value as Layer['blend']});}}>{#each ['normal','add','screen','multiply','difference'] as mode}<option value={mode}>{mode}</option>{/each}</select>
+ <BlendPicker compact value={layer.blend} scope={name(i)} {onstart} onopen={onblendopen} onchange={blend=>onchange(i,{blend})}/>
 
  </section>{/each}
  <section class="strip master"><span class="name">OUT<small>{Math.round(show.master*100)}%</small></span><TouchFader value={show.master} label="Master opacity" {onstart} onchange={onmaster}/><span class="master-label">Master</span></section>
@@ -37,7 +41,7 @@
  {#if show.dualDeck}<div class="crossfade"><button onclick={()=>oncrossfade(0)} aria-label="Mixer cut to A">A</button><input aria-label="Mixer A/B crossfader" type="range" min="0" max="1" step=".001" value={show.crossfade} onpointerdown={onstart} oninput={e=>oncrossfade(Number(e.currentTarget.value))}/><button onclick={()=>oncrossfade(1)} aria-label="Mixer cut to B">B</button></div>{/if}
 {#if show.dualDeck}<div class="crossfade-settings">
  <label>Crossfade FX<select aria-label="Crossfade FX" value={crossfadeSettings.transition} onchange={e=>{onstart();oncrossfadesettings({...crossfadeSettings,transition:e.currentTarget.value});}}>{#each TRANSITIONS as t}<option value={t.name}>{t.label}</option>{/each}</select></label>
- <label>Blend<select aria-label="Crossfade blend mode" value={crossfadeSettings.blend} onchange={e=>{onstart();oncrossfadesettings({...crossfadeSettings,blend:e.currentTarget.value});}}>{#each CROSSFADE_BLENDS as blend}<option value={blend}>{blend}</option>{/each}</select></label>
+ <label>Blend<select aria-label="Crossfade blend mode" value={crossfadeSettings.blend} onchange={e=>{onstart();oncrossfadesettings({...crossfadeSettings,blend:e.currentTarget.value});}}>{#each CROSSFADE_BLENDS as blend}<option value={blend}>{blendLabel(blend)}</option>{/each}</select></label>
  <label>Curve<select aria-label="Crossfade curve" value={crossfadeSettings.curve} onchange={e=>{onstart();oncrossfadesettings({...crossfadeSettings,curve:e.currentTarget.value as CrossfadeSettings['curve']});}}>{#each CROSSFADE_CURVES as curve}<option value={curve}>{curve}</option>{/each}</select></label>
  </div>{/if}
 </section>
@@ -54,6 +58,6 @@
  header .source-link{border:0;background:none;box-shadow:none;font-weight:700;min-width:72px;white-space:nowrap;padding:0 8px;}
  .crossfade{display:flex;gap:14px;align-items:center;margin-top:8px}.crossfade button{width:44px}.crossfade input{flex:1;min-width:0;height:44px;accent-color:var(--ga-slider-fill);touch-action:none}
  @media(max-width:600px){.mixer-tray{padding-left:max(8px,env(safe-area-inset-left));padding-right:max(8px,env(safe-area-inset-right))}.channels{gap:4px}.strip{padding:3px}.name{flex-direction:column;justify-content:center;gap:1px}.master .name{font-size:11px}.hint{display:none}}
-.embedded header{padding:6px 0}.embedded .switches button,.embedded .strip select{min-height:30px}.embedded .deck-select button{min-height:34px}.embedded .name{min-height:30px}.embedded .crossfade-settings select{min-height:34px}.embedded .crossfade{margin-top:3px}.embedded .crossfade-settings{margin-top:3px}
+.embedded header{padding:6px 0}.embedded .switches button,.embedded .strip :global(.blend-trigger){min-height:30px}.embedded .deck-select button{min-height:34px}.embedded .name{min-height:30px}.embedded .crossfade-settings select{min-height:34px}.embedded .crossfade{margin-top:3px}.embedded .crossfade-settings{margin-top:3px}
  .mixer-tray.embedded{display:flex;flex-direction:column}.embedded .channels{flex:1;min-height:190px;align-items:stretch}.embedded .strip{display:flex;flex-direction:column}.embedded :global(.touch-fader){flex:1;min-height:80px;height:auto}.embedded header,.embedded .deck-select,.embedded .crossfade,.embedded .crossfade-settings{flex:none}
 </style>

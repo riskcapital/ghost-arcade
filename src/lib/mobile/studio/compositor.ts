@@ -5,10 +5,11 @@ import { baseLayerGain, layerGain, type Show, type Surface } from './model';
 import { tessellate } from './mapping/meshGrid';
 import { isShape } from './mapping/surfaceShape';
 import { CoverageTextures } from './mapping/coverageTextures';
+import { BLEND_CODE, BLEND_GLSL, basicBlendCode, blendCode, surfaceOpacity } from './blendModes';
 export { quadPoint } from './mapping/meshGrid';
-const VERT = `attribute vec2 position; attribute vec2 uv; varying vec2 texCoord; void main(){texCoord=uv;gl_Position=vec4(position.x*2.-1.,1.-position.y*2.,0.,1.);}`;
+const VERT = `attribute vec2 position; attribute vec2 uv; varying vec2 texCoord; varying vec2 screenPos; void main(){texCoord=uv;screenPos=position;gl_Position=vec4(position.x*2.-1.,1.-position.y*2.,0.,1.);}`;
 const FRAG = `precision highp float;
-varying vec2 texCoord; uniform sampler2D source; uniform sampler2D backdrop;
+varying vec2 texCoord; varying vec2 screenPos; uniform sampler2D source; uniform sampler2D backdrop;
 uniform int mode; uniform float gain; uniform float feather; uniform vec2 fit; uniform bool contained; uniform bool grid; uniform vec2 gridSize;
 // Where the picture sits in a surface: region centre and size in the source, and its turn.
 uniform bool placed; uniform vec4 place; uniform float placeAngle; uniform float placeAspect;
@@ -16,6 +17,8 @@ uniform bool placed; uniform vec4 place; uniform float placeAngle; uniform float
 uniform sampler2D coverage; uniform bool covered;
 // A test pattern on one surface, for finding it on the wall: 1 card, 2 identify, 3 white.
 uniform int pattern; uniform float patternIndex;
+// What a layer or surface makes of its picture over what is beneath (blendModes.ts).
+${BLEND_GLSL}
 // The alignment card, matching the desktop's empty-layer card: square grid
 // from the centre, frame, centre cross and circles, diagonals, corner
 // brackets, a grey step row and a colour row. Between the lines it is 0,0,0.
@@ -93,16 +96,12 @@ void main(){
  s.a*=gain*(feather>0.?smoothstep(0.,feather,edge):1.)*cut;
  if(mode==-2)s.rgb*=gain*(feather>0.?smoothstep(0.,feather,edge):1.)*cut;
  if(mode<0){gl_FragColor=s;return;}
- vec4 b=texture2D(backdrop,vec2(texCoord.x,1.-texCoord.y)); vec3 blend=s.rgb;
- if(mode==6){gl_FragColor=vec4(mix(s.rgb,b.rgb,gain),1.);return;}
- if(mode==5){gl_FragColor=vec4(b.rgb+s.rgb*s.a,1.);return;}
- if(mode==1) blend=min(b.rgb+s.rgb,1.); if(mode==2) blend=1.-(1.-b.rgb)*(1.-s.rgb);
- if(mode==3) blend=b.rgb*s.rgb; if(mode==4) blend=abs(b.rgb-s.rgb);
+ // What is beneath this point of the output: a warped surface's own uv is not where it lands.
+ vec4 b=texture2D(backdrop,vec2(screenPos.x,1.-screenPos.y)); vec3 blend=blendColor(b.rgb,s.rgb);
  float a=s.a+b.a*(1.-s.a);
  vec3 c=((1.-s.a)*b.rgb*b.a+(1.-b.a)*s.rgb*s.a+b.a*s.a*blend)/max(a,.00001);
  gl_FragColor=vec4(c,a);
 }`;
-const MODES = ['normal', 'add', 'screen', 'multiply', 'difference'];
 
 /** Triangles (x, y, u, v per vertex) of a surface's warp; the whole frame without one. */
 export function surfaceVertices(surface?: Surface): Float32Array {
@@ -113,6 +112,22 @@ export type SurfacePattern = 'card' | 'identify' | 'white';
 /** What the mapping editor asks the output to show for a moment: only some surfaces, or test patterns on them. */
 export type MappingView = { solo?: string[]; identify?: boolean; patterns?: Record<string, SurfacePattern> };
 const PATTERN_CODE: Record<SurfacePattern, number> = { card: 1, identify: 2, white: 3 };
+const ALL_BLENDS_FRAG = '#define ALL_BLENDS\n' + FRAG;
+const UNIFORMS = ['source', 'backdrop', 'mode', 'gain', 'feather', 'fit', 'contained', 'grid', 'gridSize', 'placed', 'place', 'placeAngle', 'placeAspect', 'coverage', 'covered', 'pattern', 'patternIndex'];
+type Linked = { program: WebGLProgram; locations: Record<string, WebGLUniformLocation | null>; position: number; uv: number };
+/** Where the surfaces draw while one of them blends, and the copy of what is beneath it. */
+type Stage = { texture: WebGLTexture; frame: WebGLFramebuffer; under: WebGLTexture; width: number; height: number };
+/** The surface's warp in output pixels (bottom-left origin), one pixel wider all round: the only part a blend reads. */
+export function surfaceBounds(verts: Float32Array, width: number, height: number): [number, number, number, number] | null {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let i = 0; i < verts.length; i += 4) {
+    x0 = Math.min(x0, verts[i]); x1 = Math.max(x1, verts[i]);
+    y0 = Math.min(y0, verts[i + 1]); y1 = Math.max(y1, verts[i + 1]);
+  }
+  const left = Math.max(0, Math.floor(x0 * width) - 1), right = Math.min(width, Math.ceil(x1 * width) + 1);
+  const bottom = Math.max(0, Math.floor((1 - y1) * height) - 1), top = Math.min(height, Math.ceil((1 - y0) * height) + 1);
+  return right > left && top > bottom ? [left, bottom, right - left, top - bottom] : null;
+}
 export class StudioCompositor {
   private gl: WebGLRenderingContext;
   private crossfade: DeckCrossfade;
@@ -120,7 +135,15 @@ export class StudioCompositor {
   private paint?:PaintRenderer;
   private paintFailed=false;
   onPaintError:(message:string)=>void=()=>{};
-  private program: WebGLProgram;
+  /** The five blends of app 1.1, which every set without the newer ones uses. */
+  private program: Linked;
+  /** Every blend mode. Compiled the first time a set uses one of the newer modes; null when this GPU cannot. */
+  private allBlends?: Linked | null;
+  private pendingBlends?: ReturnType<StudioCompositor['start']>;
+  /** Made the first time a surface blends; kept for the next frame. */
+  private stage?: Stage;
+  private stageFailedAt = 0;
+  onBlendError: (message: string) => void = () => {};
   private buffer: WebGLBuffer;
   private sources: WebGLTexture[] = [];
   private targets: { texture: WebGLTexture; frame: WebGLFramebuffer }[] = [];
@@ -134,36 +157,101 @@ export class StudioCompositor {
   /** Set by the engine from the mapping editor; never saved with the set. */
   mappingView: MappingView | null = null;
   private fullFrame = surfaceVertices();
-  private locations: Record<string, WebGLUniformLocation | null> = {};
   constructor(readonly canvas: HTMLCanvasElement) {
     const gl = canvas.getContext('webgl', { alpha: false, antialias: false, preserveDrawingBuffer: false });
     if (!gl) throw new Error('This device could not start the video output.');
     this.gl = gl;
     this.crossfade = new DeckCrossfade(gl);
     this.looks = new EdgeLookRenderer(gl);
+    this.program = this.link(FRAG);
+    this.buffer = gl.createBuffer()!;
+    this.coverage = new CoverageTextures(gl);
+    for (let i = 0; i < 8; i++) this.sources.push(this.texture());
+    for (let i = 0; i < 2; i++) this.targets.push({ texture: this.texture(), frame: gl.createFramebuffer()! });
+  }
+  /** Compile and link; with `later`, the status checks wait for `finish` (see prepareBlends). */
+  private start(fragment: string) {
+    const gl = this.gl;
     const compile = (type: number, code: string) => {
       const s = gl.createShader(type)!;
       gl.shaderSource(s, code);
       gl.compileShader(s);
-      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
-        throw new Error(gl.getShaderInfoLog(s) || 'Output shader failed');
       return s;
     };
-    this.program = gl.createProgram()!;
+    const program = gl.createProgram()!;
     const v = compile(gl.VERTEX_SHADER, VERT),
-      f = compile(gl.FRAGMENT_SHADER, FRAG);
-    gl.attachShader(this.program, v);
-    gl.attachShader(this.program, f);
-    gl.linkProgram(this.program);
-    gl.deleteShader(v);
-    gl.deleteShader(f);
-    if (!gl.getProgramParameter(this.program, gl.LINK_STATUS)) throw new Error('Could not link the output compositor.');
-    this.buffer = gl.createBuffer()!;
-    this.coverage = new CoverageTextures(gl);
-    for (const name of ['source', 'backdrop', 'mode', 'gain', 'feather', 'fit', 'contained', 'grid', 'gridSize', 'placed', 'place', 'placeAngle', 'placeAspect', 'coverage', 'covered', 'pattern', 'patternIndex'])
-      this.locations[name] = gl.getUniformLocation(this.program, name);
-    for (let i = 0; i < 8; i++) this.sources.push(this.texture());
-    for (let i = 0; i < 2; i++) this.targets.push({ texture: this.texture(), frame: gl.createFramebuffer()! });
+      f = compile(gl.FRAGMENT_SHADER, fragment);
+    gl.attachShader(program, v);
+    gl.attachShader(program, f);
+    gl.linkProgram(program);
+    return { program, v, f };
+  }
+  private finish({ program, v, f }: ReturnType<StudioCompositor['start']>): Linked {
+    const gl = this.gl;
+    try {
+      for (const s of [v, f])
+        if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) || 'Output shader failed');
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error('Could not link the output compositor.');
+    } catch (error) {
+      gl.deleteProgram(program);
+      throw error;
+    } finally {
+      gl.deleteShader(v);
+      gl.deleteShader(f);
+    }
+    const locations: Linked['locations'] = {};
+    for (const name of UNIFORMS) locations[name] = gl.getUniformLocation(program, name);
+    return { program, locations, position: gl.getAttribLocation(program, 'position'), uv: gl.getAttribLocation(program, 'uv') };
+  }
+  private link(fragment: string): Linked {
+    return this.finish(this.start(fragment));
+  }
+  /** The shader that can draw `mode`: the small one for the first five, the full one for the rest. */
+  private programFor(mode: number): Linked {
+    if (basicBlendCode(mode)) return this.program;
+    if (this.allBlends === undefined) {
+      try {
+        this.allBlends = this.finish(this.pendingBlends ?? this.start(ALL_BLENDS_FRAG));
+      } catch (error) {
+        this.allBlends = null;
+        this.onBlendError('This device cannot draw the newer blend modes, so those layers and surfaces show as Normal. ' + (error instanceof Error ? error.message : ''));
+      }
+      this.pendingBlends = undefined;
+    }
+    return this.allBlends || this.program;
+  }
+  /**
+   * Start the full blend shader before a newer mode is first used. Where the GPU compiles in the
+   * background (KHR_parallel_shader_compile) nothing waits for it; elsewhere it compiles now,
+   * so the wait falls when the blend sheet opens, not on the output when a mode is chosen.
+   */
+  prepareBlends() {
+    if (this.allBlends !== undefined || this.pendingBlends) return;
+    if (this.gl.getExtension('KHR_parallel_shader_compile')) this.pendingBlends = this.start(ALL_BLENDS_FRAG);
+    else this.programFor(BLEND_CODE.overlay);
+  }
+  /** The stage at the output size, or nothing when this GPU has no room for it at this size (said once). */
+  private stageTarget(): Stage | undefined {
+    const g = this.gl;
+    if (this.stageFailedAt === this.height) return undefined;
+    if (!this.stage) this.stage = { texture: this.texture(), frame: g.createFramebuffer()!, under: this.texture(), width: 0, height: 0 };
+    const st = this.stage;
+    if (st.width !== this.width || st.height !== this.height) {
+      for (const t of [st.texture, st.under]) {
+        g.bindTexture(g.TEXTURE_2D, t);
+        g.texImage2D(g.TEXTURE_2D, 0, g.RGBA, this.width, this.height, 0, g.RGBA, g.UNSIGNED_BYTE, null);
+      }
+      g.bindFramebuffer(g.FRAMEBUFFER, st.frame);
+      g.framebufferTexture2D(g.FRAMEBUFFER, g.COLOR_ATTACHMENT0, g.TEXTURE_2D, st.texture, 0);
+      if (g.checkFramebufferStatus(g.FRAMEBUFFER) !== g.FRAMEBUFFER_COMPLETE) {
+        this.stageFailedAt = this.height;
+        this.onBlendError('Surface blend modes need more GPU memory than this device has free at this output quality, so surfaces show as Normal. A lower quality may help.');
+        return undefined;
+      }
+      st.width = this.width;
+      st.height = this.height;
+    }
+    return st;
   }
   private texture() {
     const g = this.gl,
@@ -214,8 +302,9 @@ export class StudioCompositor {
     patternIndex = 0,
   ) {
     const g = this.gl,
-      L = this.locations;
-    g.useProgram(this.program);
+      linked = this.programFor(mode),
+      L = linked.locations;
+    g.useProgram(linked.program);
     const verts = surface ? this.surfaceGeometry(surface) : this.fullFrame;
     if (surface) {
       let cached = this.buffers.get(surface.id);
@@ -236,8 +325,8 @@ export class StudioCompositor {
       g.bindBuffer(g.ARRAY_BUFFER, this.buffer);
       g.bufferData(g.ARRAY_BUFFER, verts, g.DYNAMIC_DRAW);
     }
-    const pos = g.getAttribLocation(this.program, 'position'),
-      uv = g.getAttribLocation(this.program, 'uv');
+    const pos = linked.position,
+      uv = linked.uv;
     g.enableVertexAttribArray(pos);
     g.vertexAttribPointer(pos, 2, g.FLOAT, false, 16, 0);
     g.enableVertexAttribArray(uv);
@@ -353,7 +442,7 @@ export class StudioCompositor {
       this.draw(
         inputs[i]?.texture || this.sources[i],
         this.targets[current].texture,
-        MODES.indexOf(show.layers[i].blend),
+        blendCode(show.layers[i].blend),
         gain,
         undefined,
         false,
@@ -412,6 +501,12 @@ export class StudioCompositor {
     if (blackout) {g.bindFramebuffer(g.FRAMEBUFFER,null);g.clear(g.COLOR_BUFFER_BIT);return;}
     g.enable(g.BLEND);
     g.blendFuncSeparate(g.SRC_ALPHA, g.ONE_MINUS_SRC_ALPHA, g.ONE, g.ONE_MINUS_SRC_ALPHA);
+    // A surface with a blend other than Normal mixes with what the surfaces before it left, so
+    // then the surfaces draw off screen and go to the screen at the end. Sets without one draw
+    // straight to the screen, as they always did.
+    const stage = mapped && !testGrid && show.surfaces.some((s) => s.enabled && blendCode(s.blend) !== 0) ? this.stageTarget() : undefined;
+    g.bindFramebuffer(g.FRAMEBUFFER, stage?.frame ?? null);
+    if (stage) g.clear(g.COLOR_BUFFER_BIT);
     if (!mapped) this.draw(mixTexture, this.sources[0], -1, outputGain, undefined, testGrid);
     else
       for (const [index, s] of show.surfaces.entries()) {
@@ -434,7 +529,21 @@ export class StudioCompositor {
         if (!available && !testGrid && !ink) continue;
         const paintOnly=show.paint?.enabled&&show.paint.isolate&&!this.paintFailed;
         const cut = this.coverage.get(s, this.width, this.height);
-        if((available&&!paintOnly)||testGrid)this.draw(
+        const drawn = (available && !paintOnly) || testGrid;
+        const opacity = surfaceOpacity(s);
+        // A blend reads what is beneath the surface: a copy of that part of the stage. Its outline
+        // and masks still cut it (the cut leaves what is beneath).
+        const code = stage && drawn ? blendCode(s.blend) : 0;
+        if (code) {
+          const bounds = surfaceBounds(this.surfaceGeometry(s), this.width, this.height);
+          g.disable(g.BLEND);
+          if (bounds) {
+            g.activeTexture(g.TEXTURE1);
+            g.bindTexture(g.TEXTURE_2D, stage!.under);
+            g.copyTexSubImage2D(g.TEXTURE_2D, 0, bounds[0], bounds[1], bounds[0], bounds[1], bounds[2], bounds[3]);
+          }
+        }
+        if(drawn)this.draw(
           own
             ? clip?.texture || this.sources[0]
             : paired
@@ -442,9 +551,9 @@ export class StudioCompositor {
             : i === 'mix'
               ? mixTexture
               : inputs[i]?.texture || this.sources[i],
-          this.sources[0],
-          -1,
-          outputGain * (own || paired || i === 'mix' ? 1 : layerGain(show, Number(i))),
+          code ? stage!.under : this.sources[0],
+          code || -1,
+          outputGain * opacity * (own || paired || i === 'mix' ? 1 : layerGain(show, Number(i))),
           s,
           testGrid,
           own ? (clip?.width || 16) / (clip?.height || 9) : paired || i === 'mix' ? 16 / 9 : (inputs[i]?.width || 16) / (inputs[i]?.height || 9),
@@ -452,6 +561,10 @@ export class StudioCompositor {
           false,
           cut,
         );
+        if (code) {
+          g.enable(g.BLEND);
+          g.blendFuncSeparate(g.SRC_ALPHA, g.ONE_MINUS_SRC_ALPHA, g.ONE, g.ONE_MINUS_SRC_ALPHA);
+        }
         const verts = this.surfaceGeometry(s);
 
         if(!paintOnly)this.looks.draw(
@@ -463,18 +576,23 @@ export class StudioCompositor {
           show.bpm,
           show.surfaces.indexOf(s),
           show.surfaces.length,
-          outputGain,
+          outputGain * opacity,
           audio,
           transportBeat,
           this.coverage.field(s),
         );
         if(ink){
           g.enable(g.BLEND);g.blendFuncSeparate(g.ONE,g.ONE_MINUS_SRC_ALPHA,g.ONE,g.ONE_MINUS_SRC_ALPHA);
-          this.draw(ink,this.sources[0],-2,outputGain,s,false,1,'stretch',true,cut);
+          this.draw(ink,this.sources[0],-2,outputGain*opacity,s,false,1,'stretch',true,cut);
         }
         g.enable(g.BLEND);
         g.blendFuncSeparate(g.SRC_ALPHA, g.ONE_MINUS_SRC_ALPHA, g.ONE, g.ONE_MINUS_SRC_ALPHA);
       }
+    if (stage) {
+      g.bindFramebuffer(g.FRAMEBUFFER, null);
+      g.disable(g.BLEND);
+      this.draw(stage.texture, this.sources[0], -1, 1);
+    }
     g.disable(g.BLEND);
 
   }
@@ -487,7 +605,18 @@ export class StudioCompositor {
     for (const b of this.buffers.values()) g.deleteBuffer(b.buffer);
     this.buffers.clear();
     this.paint?.destroy();
-    g.deleteProgram(this.program);
+    g.deleteProgram(this.program.program);
+    if (this.allBlends) g.deleteProgram(this.allBlends.program);
+    if (this.pendingBlends) {
+      g.deleteProgram(this.pendingBlends.program);
+      g.deleteShader(this.pendingBlends.v);
+      g.deleteShader(this.pendingBlends.f);
+    }
+    if (this.stage) {
+      g.deleteTexture(this.stage.texture);
+      g.deleteTexture(this.stage.under);
+      g.deleteFramebuffer(this.stage.frame);
+    }
     g.deleteBuffer(this.buffer);
     for (const t of this.sources) g.deleteTexture(t);
     for (const t of this.targets) {
