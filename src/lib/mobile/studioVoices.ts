@@ -174,7 +174,8 @@ interface SourceState {
 }
 
 const freshBand = (band: Band): BandState => ({ level: 0, smooth: 0, peak: SILENCE[band] * 4, floor: SILENCE[band], flux: 0, threshold: 0, fluxAvg: 0, fluxDev: 0, lastHit: -1e9, hit: 0 });
-const freshSource = (): SourceState => ({ env: 0, strikes: [], hit: 0, vel: 0, pitch: 0, glide: 0, phase: 0, count: 0, presence: 0, sinceActive: 1e9, notes: [], swell: 0, kick: 0, pulse: 0, flow: 0, hits: 0, morph: 0, morphVel: 0, att: 0, usual: 0 });
+const freshSource = (id: VoiceSourceId): SourceState => ({ ...blankSource(), pitch: (SOURCES[id].drum ?? 0) / 127, glide: (SOURCES[id].drum ?? 0) / 127 });
+const blankSource = (): SourceState => ({ env: 0, strikes: [], hit: 0, vel: 0, pitch: 0, glide: 0, phase: 0, count: 0, presence: 0, sinceActive: 1e9, notes: [], swell: 0, kick: 0, pulse: 0, flow: 0, hits: 0, morph: 0, morphVel: 0, att: 0, usual: 0 });
 const approach = (dt: number, seconds: number) => 1 - Math.exp(-dt / Math.max(1e-4, seconds));
 const clamp01 = (v: number) => Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0));
 const fract = (x: number) => x - Math.floor(x);
@@ -221,7 +222,7 @@ export function spectrumPeaks(spectrum: ArrayLike<number>, sampleRate: number, l
 
 export class VoiceSignals {
   private bands = Object.fromEntries((Object.keys(BANDS) as Band[]).map((b) => [b, freshBand(b)])) as Record<Band, BandState>;
-  private sources = Object.fromEntries(VOICE_SOURCE_IDS.map((id) => [id, freshSource()])) as Record<VoiceSourceId, SourceState>;
+  private sources = Object.fromEntries(VOICE_SOURCE_IDS.map((id) => [id, freshSource(id)])) as Record<VoiceSourceId, SourceState>;
   private previous = new Float32Array(0);
   private time = 0;
   private beat = 0;
@@ -240,7 +241,7 @@ export class VoiceSignals {
   /** Forget everything heard (a new source starts). */
   reset(): void {
     for (const b of Object.keys(this.bands) as Band[]) this.bands[b] = freshBand(b);
-    for (const id of VOICE_SOURCE_IDS) this.sources[id] = freshSource();
+    for (const id of VOICE_SOURCE_IDS) this.sources[id] = freshSource(id);
     this.previous = new Float32Array(0);
     this.energy = 0;
     this.surgeNow = {};
