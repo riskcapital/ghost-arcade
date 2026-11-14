@@ -128,6 +128,9 @@
   {#if pen && !moreOpen}
     <button class="lr-btn lr-pen on" onclick={() => linePenTool.set(false)} title="Drawing lines by hand: click to go back to points">✎ Drawing</button>
   {/if}
+  {#if rec.notice}
+    <span class="lr-notice" role="status" data-line-record-notice>{rec.notice}</span>
+  {/if}
   {#if rec.bindPending && !moreOpen}
     <button class="lr-btn lr-bind pending" onclick={toggleBind} title="Click to cancel">Touch a knob… ({rec.bindPending.label})</button>
   {/if}
@@ -135,6 +138,7 @@
 
 <style>
   .lr { display: inline-flex; align-items: center; gap: 4px; }
+  .lr-notice { color: var(--ga-rec, #ff4757); font-size: var(--ga-text-meta, 11px); white-space: nowrap; }
   .lr-btn {
     height: 24px;
     display: inline-flex;

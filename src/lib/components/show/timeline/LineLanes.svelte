@@ -41,6 +41,7 @@
     pointsInRect,
     setPointCurves,
     tracePath,
+    createTraceDrawer,
     valueToY,
     yToValue,
   } from './lineUi';
@@ -486,6 +487,17 @@
   });
 
   const traceTick = $derived($liveTraceVersion);
+
+  // A record pass grows every few frames: each lane extends its drawing of it
+  // (createTraceDrawer) instead of building the whole path again.
+  const passDrawers = new Map<string, ReturnType<typeof createTraceDrawer>>();
+  function passParts(laneId: string, line: ControlLine, pass: { samples: ReadonlyArray<{ t: number; v: number }>; count: number }, h: number): string[] {
+    const key = `${laneId}|${line.id}`;
+    let draw = passDrawers.get(key);
+    if (!draw) passDrawers.set(key, (draw = createTraceDrawer()));
+    return draw(pass.samples, pass.count, zoom, h, line.kind === 'colour' ? 0 : line.min, line.kind === 'colour' ? 1 : line.max);
+  }
+  $effect(() => { if (!$recordingPasses.size) passDrawers.clear(); });
   const blockTints = $derived(Object.entries(blockSpans).filter(([id]) => lines.some((l) => l.target.scope === 'block' && l.target.id === id)));
 </script>
 
@@ -541,8 +553,10 @@
       {#if ch === 'points'}
         {#each laneLines as line (line.id)}
           {@const pass = $recordingPasses.get(line.id)}
-          {#if pass?.length}
-            <path class="ll-rec" d={tracePath(pass, zoom, h, line.kind === 'colour' ? 0 : line.min, line.kind === 'colour' ? 1 : line.max)} data-line-recording={line.id} />
+          {#if pass?.count}
+            {#each passParts(laneId, line, pass, h) as d, i (i)}
+              <path class="ll-rec" {d} data-line-recording={line.id} />
+            {/each}
           {/if}
         {/each}
       {/if}

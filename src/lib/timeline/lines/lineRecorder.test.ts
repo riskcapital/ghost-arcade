@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createLineStore } from './lineStore';
-import { createLineRecorder, RELEASE_MS, RETURN_GLIDE } from './lineRecorder';
+import { createLineRecorder, MAX_PASS_SAMPLES, RELEASE_MS, RETURN_GLIDE } from './lineRecorder';
 import { createLineControls } from './lineControls';
 import { lineValueAt, pointsValueAt } from './lineEvaluator';
 import type { ParamEntry, ParamTarget, RegistrySource } from './paramRegistry';
@@ -392,5 +392,67 @@ describe('controls', () => {
       c.controls.observe(source(same));
       expect(c.recorder.openPasses()).toBe(0);
     });
+  });
+});
+
+describe('long takes', () => {
+  const sampleCount = (r: ReturnType<typeof rig>) => [...r.recorder.passSamples().values()].reduce((n, s) => n + s.length, 0);
+
+  it('a latched value held for 30 minutes keeps a few samples, not one a frame', () => {
+    const r = rig([{ id: 'a', target: L1, key: 'shader:speed', kind: 'continuous', min: 0, max: 10, points: [{ t: 0, v: 2 }, { t: 4000, v: 2 }] }]);
+    r.recorder.arm('latch');
+    r.clock.ms = 0;
+    r.recorder.input(L1, 'shader:speed', 6, 1);
+    let most = 0;
+    // 30 minutes at 60 fps.
+    for (let f = 0; f <= 30 * 60 * 60; f++) {
+      const t = 1 + f / 60;
+      r.clock.ms = t * 1000;
+      r.recorder.tick(t);
+      if (f % 600 === 0) most = Math.max(most, sampleCount(r));
+    }
+    expect(r.recorder.openPasses()).toBe(1);
+    expect(most).toBeLessThanOrEqual(2);
+    // The live view still reaches the playhead.
+    const live = [...r.recorder.passSamples().values()][0];
+    expect(live[live.length - 1].t).toBeCloseTo(1 + 30 * 60, 3);
+    r.recorder.stop(1 + 30 * 60);
+    const line = r.store.lines()[0];
+    expect(lineValueAt(line, 900)).toBeCloseTo(6);
+    expect(lineValueAt(line, 1800)).toBeCloseTo(6);
+    expect(line.points.length).toBeLessThan(8);
+  });
+
+  it('a control moving the whole take is written in parts at the sample cap, without a gap or a glide back', () => {
+    const r = rig([{ id: 'a', target: L1, key: 'shader:speed', kind: 'continuous', min: 0, max: 10, points: [{ t: 0, v: 2 }, { t: 4000, v: 2 }] }]);
+    r.recorder.arm('touch');
+    const wave = (t: number) => 5 + 4 * Math.sin(t * 2);
+    const frames = Math.ceil(MAX_PASS_SAMPLES * 2.5);
+    let most = 0;
+    for (let f = 0; f <= frames; f++) {
+      const t = f / 60;
+      r.clock.ms = t * 1000;
+      r.recorder.input(L1, 'shader:speed', wave(t), t);
+      r.recorder.tick(t);
+      most = Math.max(most, sampleCount(r));
+    }
+    expect(most).toBeLessThanOrEqual(MAX_PASS_SAMPLES);
+    // Two parts written at the cap, one still open.
+    expect(r.store.undoLabels()).toHaveLength(2);
+    expect(r.recorder.openPasses()).toBe(1);
+    const line = r.store.lines()[0];
+    // Where the first part ends the line goes on with the control, no dip back to 2.
+    const cut = (MAX_PASS_SAMPLES - 1) / 60;
+    for (const t of [cut - 0.05, cut, cut + 0.05, cut + 0.12]) expect(lineValueAt(line, t) as number).toBeCloseTo(wave(t), 0);
+  });
+
+  it('a held value with small moves inside the flat tolerance stays two samples; a real move adds one', () => {
+    const r = rig();
+    r.recorder.arm('latch');
+    r.recorder.input(L1, 'shader:speed', 5, 0);
+    for (let i = 1; i < 100; i++) r.recorder.input(L1, 'shader:speed', 5 + (i % 2) * 0.001, i / 60);
+    expect(sampleCount(r)).toBe(2);
+    r.recorder.input(L1, 'shader:speed', 6, 2);
+    expect(sampleCount(r)).toBe(3);
   });
 });

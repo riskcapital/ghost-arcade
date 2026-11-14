@@ -237,3 +237,36 @@ describe('record state', () => {
     expect(notified).toBe(0);
   });
 });
+
+describe('a long take', () => {
+  it('stops itself at the take cap and says why; the view gets the samples, not copies', async () => {
+    const A = { scope: 'layer' as const, id: 'A' };
+    lines.addLineWithPoint(A, 'shader:speed', 0, 1);
+    lines.armLines('latch');
+    showTimeline.seek(1);
+    showTimeline.play();
+    lines.lineControlInput(A, 'shader:speed', 3);
+    const lineId = get(showTimeline).lines[0].id;
+    let most = 0;
+    let shared = true;
+    for (let i = 1; i * 0.25 <= lines.MAX_TAKE_SECONDS + 2; i++) {
+      showTimeline.seek(1 + i * 0.25);
+      const pass = get(lines.recordingPasses).get(lineId);
+      if (!pass) continue;
+      most = Math.max(most, pass.samples.length);
+      if (pass.samples !== lines.currentLineSession()!.recorder.passSamples().get(lineId)) shared = false;
+    }
+    await Promise.resolve();
+    expect(shared).toBe(true);
+    expect(most).toBeLessThanOrEqual(3);
+    expect(get(showTimeline).isPlaying).toBe(false);
+    expect(get(showTimeline).currentTime).toBeLessThanOrEqual(lines.MAX_TAKE_SECONDS + 3);
+    expect(get(lines.lineRecordState).notice).toBe(lines.TAKE_CAP_NOTICE);
+    const line = get(showTimeline).lines.find((l) => l.id === lineId)!;
+    expect(lineValueAt(line, 900) as number).toBeCloseTo(3);
+    // The next take starts without the notice.
+    showTimeline.play();
+    showTimeline.seek(get(showTimeline).currentTime + 0.1);
+    expect(get(lines.lineRecordState).notice).toBeNull();
+  });
+});

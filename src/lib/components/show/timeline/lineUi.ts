@@ -203,6 +203,44 @@ export function tracePath(samples: ReadonlyArray<{ t: number; v: number }>, zoom
   return d;
 }
 
+/** Samples per part of a growing trace (see createTraceDrawer). */
+export const TRACE_CHUNK = 256;
+
+/**
+ * A trace that grows while it is drawn (a record pass), as path parts: each
+ * part holds TRACE_CHUNK samples and, once the samples after it exist, never
+ * changes again, so a new frame builds only the last part and the parts
+ * before it keep their exact text (the DOM is not touched for them). Only the
+ * last sample may move (a held value's run moving on); it is always in the
+ * last part. Another sample array, another scale or fewer samples start over.
+ */
+export function createTraceDrawer(): (samples: ReadonlyArray<{ t: number; v: number }>, count: number, zoom: number, h: number, min: number, max: number) => string[] {
+  let source: ReadonlyArray<{ t: number; v: number }> | null = null;
+  let scale = '';
+  let closed: string[] = [];
+  return (samples, count, zoom, h, min, max) => {
+    const n = Math.min(count, samples.length);
+    const key = `${zoom}|${h}|${min}|${max}`;
+    if (samples !== source || key !== scale || closed.length * TRACE_CHUNK > Math.max(0, n - 1)) {
+      source = samples;
+      scale = key;
+      closed = [];
+    }
+    const part = (from: number, to: number) => {
+      let d = '';
+      for (let i = from; i < to; i++) d += `${i === from ? 'M' : 'L'}${(samples[i].t * zoom).toFixed(1)} ${valueToY(samples[i].v, min, max, h).toFixed(1)}`;
+      return d;
+    };
+    // A part is done once its last sample is not the last one (which can still move).
+    while ((closed.length + 1) * TRACE_CHUNK < n - 1) {
+      const from = closed.length * TRACE_CHUNK;
+      closed.push(part(from, from + TRACE_CHUNK + 1));
+    }
+    const tail = part(closed.length * TRACE_CHUNK, n);
+    return tail ? [...closed, tail] : closed.slice();
+  };
+}
+
 // ── Hit testing ────────────────────────────────────────────────────────────
 
 /** The point under (x, y) within `radius` px (the nearest), or −1. */

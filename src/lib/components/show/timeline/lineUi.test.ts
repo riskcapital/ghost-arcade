@@ -10,6 +10,9 @@ import type { ControlLine } from '../../../timeline/lines/lineModel';
 import type { ParamEntry } from '../../../timeline/lines/paramRegistry';
 import {
   LINE_DEPTH_HEIGHT,
+  TRACE_CHUNK,
+  createTraceDrawer,
+  tracePath,
   LINE_LANE_HEIGHT,
   LINE_OVERLAY_HEIGHT,
   computeLineLayout,
@@ -180,5 +183,37 @@ describe('◆ next to a panel control', () => {
     expect(resolveControlTarget({ scope: 'piece', key: 'layer:opacity' }, { selectedLayerId: null, activeBlockClipId: null })).toBeNull();
     expect(resolveControlTarget({ scope: 'look', key: 'look:intensity', id: 'L' }, ctx)).toEqual({ scope: 'look', id: 'L' });
     expect(resolveControlTarget({ scope: 'stage', key: 'stage:fx:s:opacity' }, ctx)).toEqual({ scope: 'stage' });
+  });
+});
+
+describe('a growing record trace', () => {
+  const at = (i: number) => ({ t: i / 60, v: (i % 50) / 50 });
+
+  it('draws the same line as the whole path, in parts that stop changing', () => {
+    const draw = createTraceDrawer();
+    const samples: Array<{ t: number; v: number }> = [];
+    let before: string[] = [];
+    for (let i = 0; i < TRACE_CHUNK * 3 + 17; i++) {
+      samples.push(at(i));
+      const parts = draw(samples, samples.length, 20, 40, 0, 1);
+      // Every part but the last is exactly as it was the frame before.
+      for (let k = 0; k < Math.min(before.length, parts.length) - 1; k++) expect(parts[k]).toBe(before[k]);
+      before = parts;
+    }
+    expect(before).toHaveLength(4);
+    // Joined, the parts are the path of every sample (each part starts where the last ended).
+    const points = (d: string) => d.split(/[ML]/).filter(Boolean);
+    const all = points(tracePath(samples, 20, 40, 0, 1));
+    const joined = before.flatMap((d, k) => (k === 0 ? points(d) : points(d).slice(1)));
+    expect(joined).toEqual(all);
+  });
+
+  it('follows the last sample moving on, and starts over at another zoom', () => {
+    const draw = createTraceDrawer();
+    const samples = [{ t: 0, v: 0.5 }, { t: 1, v: 0.5 }];
+    expect(draw(samples, 2, 10, 40, 0, 1)).toEqual([tracePath(samples, 10, 40, 0, 1)]);
+    samples[1] = { t: 5, v: 0.5 };
+    expect(draw(samples, 2, 10, 40, 0, 1)).toEqual([tracePath(samples, 10, 40, 0, 1)]);
+    expect(draw(samples, 2, 30, 40, 0, 1)).toEqual([tracePath(samples, 30, 40, 0, 1)]);
   });
 });

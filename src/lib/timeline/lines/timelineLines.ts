@@ -137,12 +137,14 @@ export interface LineRecordUi {
   /** Follow edits: while armed, every parameter you change in the editor is
    *  recorded, not only the ones with a line or a bound control. */
   followEdits: boolean;
+  /** Why recording stopped on its own (a take at its length cap), until the next take. */
+  notice: string | null;
 }
 const FOLLOW_EDITS_KEY = 'ga.timeline.followEdits';
 function storedFollowEdits(): boolean {
   try { return typeof localStorage !== 'undefined' && localStorage.getItem(FOLLOW_EDITS_KEY) === '1'; } catch { return false; }
 }
-export const lineRecordState = writable<LineRecordUi>({ armed: false, mode: 'touch', bindPending: null, writing: false, followEdits: storedFollowEdits() });
+export const lineRecordState = writable<LineRecordUi>({ armed: false, mode: 'touch', bindPending: null, writing: false, followEdits: storedFollowEdits(), notice: null });
 // Armed, the Timeline plays even when empty and rolls on past its end.
 setShowRecordArm(() => get(lineRecordState).armed);
 
@@ -155,9 +157,28 @@ import { lineSelection } from './lineSelection';
 /** Live values of lines that follow a live source (for the faint trace). */
 export const liveTraces = new Map<string, Array<{ t: number; v: number }>>();
 export const liveTraceVersion = writable(0);
+/**
+ * A record pass being written, for the view: the recorder's own samples (not
+ * a copy; read them, never change them) and how many of them were there when
+ * this was published. The recorder only adds samples at the end and moves
+ * the last one on, so the view can draw what is new since it last looked.
+ */
+export interface RecordingPass {
+  samples: ReadonlyArray<{ t: number; v: number }>;
+  count: number;
+}
 /** Record passes being written right now, by line id (drawn as they grow). */
-export const recordingPasses = writable<ReadonlyMap<string, ReadonlyArray<{ t: number; v: number }>>>(new Map());
+export const recordingPasses = writable<ReadonlyMap<string, RecordingPass>>(new Map());
+let passesShown = false;
 const TRACE_SECONDS = 30;
+/** The longest take: a record run stops here on its own (show-time seconds of
+ *  recording, so it also ends a run rolling on past the end of the Timeline). */
+export const MAX_TAKE_SECONDS = 30 * 60;
+export const TAKE_CAP_NOTICE = 'Recording stopped: a take can be 30 minutes at most';
+/** Show time recorded in this take, and where the last frame was. */
+let takeSeconds = 0;
+let takeLast: number | null = null;
+let takeStopping = false;
 
 // ── Session ────────────────────────────────────────────────────────────────
 
@@ -300,12 +321,44 @@ function onTick(tick: ShowLineTick): void {
   contentRecorder.tick(tick.time, tick.playing);
   if (tick.playing) recordTraces(tick.time);
   if (session.recorder.armed || get(lineRecordState).bindPending) syncRecordUi();
+  countTake(tick.time, tick.playing && session.recorder.armed);
   const open = session.recorder.openPasses();
   if (open > 0) {
-    if (++traceTick % 3 === 0) recordingPasses.set(new Map([...session.recorder.passSamples()].map(([id, s]) => [id, s.slice()])));
-  } else if (get(recordingPasses).size) {
+    // The samples themselves, not copies: the view draws what is new.
+    if (++traceTick % 3 === 0) {
+      const out = new Map<string, RecordingPass>();
+      for (const [id, samples] of session.recorder.passSamples()) out.set(id, { samples, count: samples.length });
+      recordingPasses.set(out);
+      passesShown = true;
+    }
+  } else if (passesShown) {
+    passesShown = false;
     recordingPasses.set(new Map());
   }
+}
+
+/** A take is capped: at MAX_TAKE_SECONDS of recording the show stops, and says why. */
+function countTake(time: number, recording: boolean): void {
+  if (!recording) {
+    takeSeconds = 0;
+    takeLast = null;
+    takeStopping = false;
+    return;
+  }
+  if (takeLast === null) setRecordNotice(null);
+  const dt = takeLast === null ? 0 : time - takeLast;
+  // Play only: a loop wrap, a seek or a section jump is not recorded time.
+  if (dt > 0 && dt <= 0.5) takeSeconds += dt;
+  takeLast = time;
+  if (takeSeconds < MAX_TAKE_SECONDS || takeStopping) return;
+  takeStopping = true;
+  setRecordNotice(TAKE_CAP_NOTICE);
+  // After this frame: stopping ends every open pass (one undo step each).
+  queueMicrotask(() => { if (get(showTimeline).isPlaying) showTimeline.pause(); });
+}
+
+function setRecordNotice(notice: string | null): void {
+  if (get(lineRecordState).notice !== notice) lineRecordState.update((x) => ({ ...x, notice }));
 }
 
 function recordTraces(time: number): void {
@@ -418,7 +471,7 @@ export function installTimelineLines(): () => void {
 // ── Commands (the UI calls these) ──────────────────────────────────────────
 
 export function armLines(mode: RecordMode = get(lineRecordState).mode): void {
-  lineRecordState.update((x) => ({ ...x, mode, armed: true }));
+  lineRecordState.update((x) => ({ ...x, mode, armed: true, notice: null }));
   session?.arm(mode);
   retick();
   syncRecordUi();
@@ -427,7 +480,7 @@ export function armLines(mode: RecordMode = get(lineRecordState).mode): void {
 export function disarmLines(): void {
   contentRecorder.stop();
   session?.disarm();
-  lineRecordState.update((x) => ({ ...x, armed: false }));
+  lineRecordState.update((x) => ({ ...x, armed: false, notice: null }));
   syncRecordUi();
 }
 
@@ -562,8 +615,11 @@ export function addLineAtPlayhead(target: ParamTarget, key: string): string | nu
 /** Test seam. */
 export function _resetTimelineLinesForTest(): void {
   stopSession();
-  lineRecordState.set({ armed: false, mode: 'touch', bindPending: null, writing: false, followEdits: false });
+  lineRecordState.set({ armed: false, mode: 'touch', bindPending: null, writing: false, followEdits: false, notice: null });
   lineSelection.set(null);
   liveTraces.clear();
+  recordingPasses.set(new Map());
+  passesShown = false;
+  countTake(0, false);
   lastSongsKey = '';
 }

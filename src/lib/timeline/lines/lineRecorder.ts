@@ -33,6 +33,15 @@ export const RETURN_GLIDE = 0.12;
  *  a section jump), not play: the pass ends where it was (the evaluator's
  *  own jump rule). */
 export const JUMP_SECONDS = 0.5;
+/** Samples one open pass keeps at most. A longer pass is written to its line
+ *  at that point and carries on as a new pass from there (nothing is lost:
+ *  the open pass is the only thing in memory that grows). */
+export const MAX_PASS_SAMPLES = 20_000;
+/** Below this fraction of a parameter's range a value counts as unchanged
+ *  while recording, so a held value is kept as two points (where the run
+ *  started and how far it has got), not one sample per frame. Well under
+ *  the thinning on commit (half a percent of the range). */
+const FLAT_FRACTION = 0.0005;
 
 export interface RecorderHost {
   lines(): readonly ControlLine[];
@@ -80,7 +89,41 @@ export function createLineRecorder(host: RecorderHost, opts: { now?: () => numbe
   /** Where an open pass ends when the show is at `t`. */
   const endAt = (pass: Pass, t: number) => (jumped(pass, t) ? lastT(pass) : Math.max(t, lastT(pass)));
 
-  function commitPass(pass: Pass, endTime: number): void {
+  /** How far a value may move and still be "the same" for a pass's flat runs. */
+  const flatTol = (e: ParamEntry) => (e.kind === 'continuous' ? Math.abs(e.max - e.min) * FLAT_FRACTION : 0);
+
+  /**
+   * A sample onto an open pass. A run of the same value is kept as its first
+   * and latest sample: the latest moves on instead of a new one being added
+   * (the error stays under flatTol of where the run started).
+   */
+  function append(pass: Pass, t: number, v: number): void {
+    const s = pass.samples;
+    const n = s.length;
+    if (n >= 2) {
+      const tol = flatTol(pass.entry);
+      const anchor = s[n - 2].v;
+      if (Math.abs(s[n - 1].v - anchor) <= tol && Math.abs(v - anchor) <= tol) {
+        s[n - 1] = { t, v };
+        return;
+      }
+    }
+    s.push({ t, v });
+    if (s.length >= MAX_PASS_SAMPLES) carryOn(pass);
+  }
+
+  /** A pass at its sample cap: written to its line, and on from there as a new pass. */
+  function carryOn(pass: Pass): void {
+    const last = pass.samples[pass.samples.length - 1];
+    commitPass(pass, last.t, true);
+    const line = lineFor(host.lines(), pass.target, pass.key);
+    const next: Pass = { ...pass, lineId: line?.id ?? pass.lineId, samples: [{ t: last.t, v: last.v }], start: last.t };
+    passes.set(passKey(pass.target, pass.key), next);
+    touchMap.set(next.lineId, next.value);
+  }
+
+  /** `carried`: the pass goes on (its cap), so no glide back to the line at its end. */
+  function commitPass(pass: Pass, endTime: number, carried = false): void {
     passes.delete(passKey(pass.target, pass.key));
     touchMap.delete(pass.lineId);
     const existing = host.lines().find((l) => l.id === pass.lineId) ?? provisional.get(pass.lineId);
@@ -94,12 +137,12 @@ export function createLineRecorder(host: RecorderHost, opts: { now?: () => numbe
       ? holdStroke(samples)
       : strokeToPoints(samples, { min: e.min, max: e.max, smooth: 0.03, tolerance: (opts.tolerance ?? 0.005) * Math.abs(e.max - e.min) });
     const fresh = !host.lines().some((l) => l.id === pass.lineId);
-    const points = spliceStroke(fresh ? [] : existing.points, stroke, { glide: mode === 'touch' && !fresh ? RETURN_GLIDE : 0, colour: e.kind === 'colour' });
+    const points = spliceStroke(fresh ? [] : existing.points, stroke, { glide: mode === 'touch' && !fresh && !carried ? RETURN_GLIDE : 0, colour: e.kind === 'colour' });
     // A brand-new line keeps the parameter's own value outside the pass.
     if (fresh) {
       const base = Number(existing.points[0]?.v ?? e.default);
       if (points[0].t > 0) points.unshift({ t: Math.max(0, points[0].t - 1e-4), v: base });
-      if (mode === 'touch') points.push({ t: points[points.length - 1].t + RETURN_GLIDE, v: base });
+      if (mode === 'touch' && !carried) points.push({ t: points[points.length - 1].t + RETURN_GLIDE, v: base });
     }
     host.commit(fresh ? 'Record line' : 'Record into line', { ...existing, points });
   }
@@ -165,10 +208,10 @@ export function createLineRecorder(host: RecorderHost, opts: { now?: () => numbe
         commitPass(pass, last.t);
         return this.input(target, key, value, showTime);
       }
-      pass.samples.push({ t: showTime, v });
       pass.value = v;
       pass.lastInputMs = now();
-      touchMap.set(pass.lineId, v);
+      append(pass, showTime, v);
+      touchMap.set(passes.get(k)!.lineId, v);
       return true;
     },
 
@@ -189,9 +232,9 @@ export function createLineRecorder(host: RecorderHost, opts: { now?: () => numbe
           // the glide back to the line.
           commitPass(pass, Math.max(showTime, lastT(pass)));
         } else if (mode === 'latch' && showTime > pass.samples[pass.samples.length - 1].t) {
-          // Latched: keep writing the held value (for the live view; the
-          // thinning folds the flat run back to two points).
-          pass.samples.push({ t: showTime, v: pass.value });
+          // Latched: keep writing the held value (for the live view). A
+          // flat run stays two points: its start, and how far it has got.
+          append(pass, showTime, pass.value);
         }
       }
     },
