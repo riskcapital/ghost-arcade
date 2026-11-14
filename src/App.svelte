@@ -182,10 +182,17 @@
     studioPage='interactive';showInteractiveStudio=true;
     void studioTick().then(()=>studioDialog?.focus({preventScroll:true}));
   }
+  /** The scene object last written, and its text: the editor hands the same object back 20 times a second. */
+  let studioSceneRef:InteractiveScene|undefined,studioSceneText='';
   function editStudioScene(scene:InteractiveScene,inputs:Interaction[],active:boolean,paused:boolean){
     if(!showInteractiveStudio||studioEditorMuted||get(project).id!==studioEditorProject)return;
     const current=studioCurrentSource();if(!current?.interactiveScene)return;
-    const signature=JSON.stringify({scene,inputs,active,paused});if(signature===studioEditorSignature)return;
+    if(scene!==studioSceneRef){studioSceneRef=scene;studioSceneText=JSON.stringify(scene);}
+    // A layer's pointer reaches it every frame without the project (studioPointer):
+    // a moving touch is not a project change, only a touch starting or ending is.
+    // A VJ clip has no such path, so its touches still go with the scene.
+    const touches=studioEditorClip?JSON.stringify(inputs):inputs.length?'touching':'';
+    const signature=`${studioSceneText}|${touches}|${active}|${paused}`;if(signature===studioEditorSignature)return;
     const edited=mergeInteractiveEdit(studioPreviousEdit,validateInteractiveScene(scene),current.interactiveScene);
     studioPreviousEdit=structuredClone(scene);studioEditorSignature=signature;
     const effectSource={...current,interactiveScene:edited,interactiveInputs:inputs,interactivePaused:paused};
