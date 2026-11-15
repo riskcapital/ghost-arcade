@@ -1391,6 +1391,17 @@
     void tick().then(() => { if (gridEl) gridScrollLeft = gridEl.scrollLeft; });
   });
 
+  /** Room to work starts under the app's top bar (its height varies with the window frame). */
+  let roomTop = $state(48);
+  $effect(() => {
+    if (!(isTimeline && $roomToWork)) return;
+    const bar = typeof document !== 'undefined' ? document.querySelector('header.toolbar') : null;
+    const measure = () => { roomTop = Math.round(bar?.getBoundingClientRect().bottom ?? 48); };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  });
+
   let showClearConfirm = $state(false);
   function confirmClear() {
     showTimeline.clear();
@@ -1728,6 +1739,7 @@
     class:timeline-doc={isTimeline}
     class:room={isTimeline && $roomToWork}
     style:height={isTimeline && $roomToWork ? null : `${trayHeight}px`}
+    style:top={isTimeline && $roomToWork ? `${roomTop}px` : null}
     role="region"
     aria-label={isTimeline ? 'Timeline' : 'Show timeline'}
     data-show-doc={doc}
@@ -2165,7 +2177,7 @@
   .show-tray.resizing { animation: none; }
   /* Room to work: from the top bar to the status bar, over the canvas and
      the side panels (they keep their size underneath). */
-  .show-tray.room { top: var(--ga-bar-h, 48px); animation: none; z-index: 95; }
+  .show-tray.room { animation: none; z-index: 95; }
   .show-tray.room .tray-resize { display: none; }
   @keyframes slideUp {
     from { transform: translateY(100%); }
