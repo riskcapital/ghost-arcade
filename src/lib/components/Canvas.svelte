@@ -2045,7 +2045,8 @@
         // the copy only has to cover the pass-through case. The copies of
         // one list are reused by the coalesced builds (liveLayerCopies).
         const mappingLive = get(layers) as Layer[];
-        const xfade = get(compositionTransition).active;
+        // This instant's progress (a wall-clock ramp publishes only its start and end).
+        const xfade = compositionTransition.current();
         if (!xfade) {
           // While the show plays, a frame that only moves the values the
           // driven layers carry reuses the last scene (see
