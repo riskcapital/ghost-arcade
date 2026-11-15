@@ -2385,6 +2385,9 @@
     // Allow child components (e.g. VJ mode) to open settings via custom event
     const handleOpenSettings = () => { showSettings = true; };
     window.addEventListener('open-settings', handleOpenSettings);
+    // The Timeline's Help menu opens the keyboard sheet.
+    const handleOpenShortcuts = () => { showShortcutHelp = true; };
+    window.addEventListener('ga-open-shortcuts', handleOpenShortcuts);
     // Launch 3D Stage from inside VJ mode without minimizing the panel.
     // VJModePanel's header button dispatches this; we route to the same
     // openStage3D() that the toolbar button hits.
@@ -2967,6 +2970,7 @@
       if (typeof stopQuitRequests === 'function') stopQuitRequests();
       window.removeEventListener('hashchange', handleHashChange);
       window.removeEventListener('open-settings', handleOpenSettings);
+      window.removeEventListener('ga-open-shortcuts', handleOpenShortcuts);
       window.removeEventListener('open-stage3d', handleOpenStage3D);
       window.removeEventListener('ga-open-output-window', handleTourOpenOutput);
       window.removeEventListener(LIVE_OUTPUT_FULLSCREEN_EVENT, handleToggleOutputFullscreen);

@@ -40,6 +40,7 @@ const POPOVERS = [
   '[data-takeover-release-popover]',
   '[data-camera-clip-inspector]',
   '.kl-menu',
+  '[data-tl-popover]',
 ].join(',');
 
 export function showPopoverOpen(root: Pick<Document, 'querySelector'> | null = typeof document !== 'undefined' ? document : null): boolean {

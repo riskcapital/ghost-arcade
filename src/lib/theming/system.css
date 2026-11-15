@@ -60,6 +60,21 @@
   --ga-space-4: 12px;
   --ga-space-5: 16px;
   --ga-space-6: 24px;
+
+  /* ── Timeline ──────────────────────────────────────────────────────
+     The Timeline's own few tokens. "On" (playing, record, selected,
+     standby, taken over) is coral in every theme; structure stays blue. */
+  --tl-on: #ff725f;
+  --tl-on-soft: rgba(255, 114, 95, 0.13);
+  --tl-on-line: rgba(255, 114, 95, 0.46);
+  --tl-on-ink: #ffd9d2;
+  --tl-lane-bg: #0c0b09;
+  --tl-lane-alt: #0e0d0b;
+  --tl-toolbar-h: 40px;
+  --tl-header-w: 260px;
+  --tl-ruler-h: 26px;
+  --tl-band-h: 22px;
+  --tl-section-h: 24px;
 }
 
 /* ── Eyebrow: the one uppercase style ───────────────────────────────── */

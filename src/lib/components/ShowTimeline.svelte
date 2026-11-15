@@ -52,6 +52,9 @@
   import { clipAudioBus, clipAudioMaster, CLIP_AUDIO_BLOCK_TEXT } from '../audio/clipAudioBus';
   import CueListPanel from './show/CueListPanel.svelte';
   import TimelineIcon from './show/timeline/TimelineIcon.svelte';
+  import TimelineToolbar from './show/timeline/TimelineToolbar.svelte';
+  import { performShown } from './show/timeline/sideColumn';
+  import { roomToWork, toggleRoomToWork } from './show/timeline/roomToWork';
   import { openExternalUrl } from '$lib/bridge';
 
   /** The Timeline guide on the website (the ? in the Timeline's header). */
@@ -275,11 +278,6 @@
     return () => setShowTransportSink(null);
   });
 
-  const END_ACTION_LABELS: Record<ShowEndAction, string> = {
-    hold: 'At end: hold last look',
-    rewind: 'At end: back to start',
-    blackout: 'At end: blackout',
-  };
 
   // ── Cue list + markers ───────────────────────────────────────────────────
   // The cue list sits beside the lanes; whether it is showing is a per-user
@@ -355,61 +353,6 @@
       end: () => { if (moved) suppressNextClick = true; },
       cancel: () => { if (moved) cueList.updateMarker(id, { time }); },
     });
-  }
-
-  const LOCK_TEXT: Record<string, string> = {
-    searching: 'TC searching',
-    locked: 'TC locked',
-    freewheel: 'TC freewheel',
-    lost: 'TC lost',
-  };
-  // MIDI clock and Link: the badge names the source, not timecode.
-  const BEAT_LOCK_TEXT: Record<string, Record<string, string>> = {
-    link: { searching: 'Link searching', locked: 'Link', freewheel: 'Link freewheel', lost: 'Link lost' },
-    midiClock: { searching: 'Clock searching', locked: 'Clock', freewheel: 'Clock freewheel', lost: 'Clock lost' },
-    liveSong: { searching: 'Live searching', locked: 'Live', freewheel: 'Live freewheel', lost: 'Live lost' },
-  };
-  const chaseSettings = timecodeChase.settings;
-  const tcSource = $derived($chaseSettings.source);
-  const tcText = $derived((BEAT_LOCK_TEXT[tcSource] ?? LOCK_TEXT)[tc.lock] ?? tc.lock);
-  const tcSourceName = $derived(tcSource === 'link' ? 'Link' : tcSource === 'liveSong' ? 'Live' : 'MIDI clock');
-  const tcMismatchText = $derived(tc.mismatch && tc.sourceBpm !== null && tc.showBpm !== null
-    ? `${tcSourceName} is at ${tc.sourceBpm.toFixed(1)} BPM, the show's map at ${tc.showBpm.toFixed(1)} BPM. Still following; the audio plays at ${tcSourceName}'s tempo.`
-    : '');
-  // Play while following the Link session's own start: say why nothing moved.
-  const tcNoticeText = $derived(tc.notice === 'linkNoPeers'
-    ? 'No Link peers: start Live or another Link app, or set Link to start on the show\'s Play (Settings > Show control > Timecode).'
-    : tc.notice === 'linkStartsWithSession'
-      ? 'The show starts with the Link session: press Play in Live or another Link app.'
-      : tc.notice === 'liveNotConnected'
-        ? 'Live is not connected: open the Ableton panel and check the Ghost Arcade control surface in Live.'
-        : '');
-
-  // ── Audio output state ───────────────────────────────────────────────────
-  // The clip-audio master is a persisted, APP-WIDE control whose only other UI
-  // is a self-hiding button in the top bar. A mute set once (in VJ mode, weeks
-  // ago) silenced the show timeline forever with no visible cause — and zeroed
-  // the recording mixdown with it. Surface it here, where the audio is being
-  // authored, so a silent show always names its own reason and is one click
-  // from fixed.
-  const audioBlocked = $derived(audioTracks.length > 0 ? $clipAudioMaster.blocked : null);
-  const audioMuted = $derived($clipAudioMaster.muted);
-  const audioVolumePct = $derived(Math.round($clipAudioMaster.volume * 100));
-  const audioTitle = $derived(audioBlocked
-    ? `${CLIP_AUDIO_BLOCK_TEXT[audioBlocked]} — click to fix`
-    : `Show audio output — ${audioVolumePct}%`);
-
-  /** One click clears whatever is silencing the show, in the order a user
-   *  would try them by hand. */
-  function fixAudioOutput() {
-    if ($clipAudioMaster.muted) clipAudioBus.setMasterMuted(false);
-    if ($clipAudioMaster.volume <= 0) clipAudioBus.setMasterVolume(1);
-    clipAudioBus.resume();
-  }
-
-  function toggleAudioOutput() {
-    if (audioBlocked) fixAudioOutput();
-    else clipAudioBus.setMasterMuted(true);
   }
 
   // Content-creation tool: hide + auto-close in VJ mode, exactly like the
@@ -505,7 +448,8 @@
   /** Measured, not assumed: both bars wrap at narrow widths, and a wrapped
    *  transport that the height maths did not know about is exactly how the
    *  inspector ends up hanging out of the bottom of the tray. */
-  let transportH = $state(36);
+  /** The toolbar's height. */
+  const transportH = 40;
   let inspectorH = $state(0);
   /** The takeover pads' own height, when they are open. */
   let padsH = $state(0);
@@ -560,6 +504,18 @@
   const audioStackH = $derived(isTimeline ? $soundLayout.total : audioLaneCount * AUDIO_LANE_HEIGHT);
   const laneStackH = $derived(RULER_HEIGHT + topLaneH + looksLinesH + tracksH + stageRowH + ledRowsH + audioStackH + cameraLaneH);
   const hasTracks = $derived(isTimeline && layerTracks.length > 0);
+  /** Something to edit on the Timeline: the edit tools show once there is. */
+  const hasBlocks = $derived(audioTracks.length > 0 || presetClips.length > 0 || lookClips.length > 0
+    || stageClipsAll.length > 0 || ledClipsAll.length > 0 || layerTracks.some((t) => t.clips.length > 0));
+  /** The toolbar's compact GO: with sections or cues, while the Perform tab is not showing. */
+  const toolbarGoShown = $derived(isTimeline && (sections.length > 0 || cues.cues.length > 0) && !$performShown);
+  const toolbarGoWord = $derived.by(() => {
+    if (!isTimeline) return '';
+    const held = sections.find((x) => x.id === $showSectionStatus.holdId);
+    if (held) return held.name;
+    const next = sections.find((x) => x.start > currentTime + 1e-5);
+    return next?.name ?? '';
+  });
 
   const labelWidth = $derived(isTimeline ? TRACK_HEADER_WIDTH : 108);
   // The bound clientHeight keeps its last value after the inspector
@@ -925,7 +881,7 @@
   const inspectorRoom = $derived(hasTracks ? Math.max(TRACK_INSPECTOR_RESERVE, inspectorH) : inspectorVisible ? inspectorH : 0);
   // The takeover pads sit between the transport and the lanes. They make the
   // tray taller rather than taking the lanes' room.
-  const padsRoom = $derived(($takeoverPadsOpen && isTimeline) || phraseStripShown ? padsH : 0);
+  const padsRoom = $derived(isTimeline && $performShown ? padsH : 0);
   /** Everything but the lanes: transport, pads, inspector, top border. */
   const chromeH = $derived(transportH + padsRoom + inspectorRoom + 1);
   const lanesH = $derived(laneStackH + GRID_SCROLLBAR_ALLOWANCE);
@@ -1133,6 +1089,7 @@
       takeoverActive: s.doc === 'timeline' && (Object.keys(liveTakeover.state.surfaces).length > 0 || !!liveTakeover.state.overlay),
       hasSections: s.doc === 'timeline' && s.sections.length > 0,
       pointerOver: pointerInTray,
+      isTimeline: s.doc === 'timeline',
     });
     if (!action) return false;
     switch (action) {
@@ -1229,8 +1186,7 @@
         zoomAroundPlayhead(action === 'zoomIn' ? 1.25 : 1 / 1.25);
         return true;
       case 'zoomFit':
-        showTimeline.zoomToFit(Math.max(100, gridWidth - 24));
-        if (gridEl) gridEl.scrollLeft = 0;
+        zoomToFitView();
         return true;
       case 'trimStart':
       case 'trimEnd':
@@ -1260,8 +1216,17 @@
         return showTimeline.groupLayerClips(get(showTimeline).selectedClipIds);
       case 'ungroup':
         return showTimeline.ungroupLayerClips(get(showTimeline).selectedClipIds);
+      case 'roomToWork':
+        toggleRoomToWork();
+        return true;
     }
     return false;
+  }
+
+  /** Zoom so the whole show fits the lanes. */
+  function zoomToFitView() {
+    showTimeline.zoomToFit(Math.max(100, gridWidth - 24));
+    if (gridEl) gridEl.scrollLeft = 0;
   }
 
   /** = / -: zoom in or out, keeping the playhead where it is on screen. */
@@ -1292,15 +1257,6 @@
   });
 
   const MOD_KEY = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform) ? 'Cmd' : 'Ctrl';
-  // Without a tempo map the grid is a quarter second: nothing to choose.
-  const SNAP_GRID_CHOICES: Array<{ value: ShowSnapGrid; label: string }> = [
-    { value: 'bar', label: 'Bar' },
-    { value: 'beat', label: 'Beat' },
-    { value: 'half', label: '½ beat' },
-    { value: 'quarter', label: '¼ beat' },
-    { value: 'sixteenth', label: '1/16' },
-    { value: 'seconds', label: '¼ second' },
-  ];
 
   /**
    * Cmd/Ctrl + wheel, and a trackpad pinch (which arrives as Ctrl + wheel):
@@ -1371,14 +1327,6 @@
     void tick().then(() => { if (gridEl) gridScrollLeft = gridEl.scrollLeft; });
   });
 
-  // How tight the transport is (0 roomy … 4 tightest): stepped up by
-  // `transportFit` until the controls fit on one line. 1: the takeover's
-  // return mode in a popover, shorter labels; 2: icons for the add/edit
-  // chips, narrower pickers; 3: no dividers or total length, closer packing;
-  // 4: Return as its arrow alone.
-  const TRANSPORT_FIT_MAX = 4;
-  let transportFitLevel = $state(0);
-
   let showClearConfirm = $state(false);
   function confirmClear() {
     showTimeline.clear();
@@ -1387,6 +1335,67 @@
 </script>
 
 <svelte:window bind:innerHeight={viewportH} />
+
+{#snippet showDocTools()}
+  <select class="t-select t-preset" bind:value={addPresetId} title="Preset to add">
+    <option value="">Choose preset…</option>
+    {#each comps as comp}
+      <option value={comp.id}>{comp.name}</option>
+    {/each}
+  </select>
+  <button class="t-chip" onclick={addPreset} disabled={comps.length === 0} title="Append this preset to the end of the show">
+    + Preset
+  </button>
+  <button class="t-chip t-iconable" onclick={() => audioInput?.click()} title="Add audio from this computer at the playhead: a song, stems or a sound" aria-label="Add audio">
+    <TimelineIcon name="song" /><span class="t-label">Add audio</span>
+  </button>
+  <!-- Transition palette. Drag onto the junction between two touching
+       preset clips; the junction highlights as you pass over it. -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <span
+    class="t-chip t-transition-chip"
+    class:dragging={transitionDragActive}
+    class:disabled={junctions.length === 0}
+    draggable={junctions.length > 0}
+    role="button"
+    tabindex="0"
+    ondragstart={handleTransitionDragStart}
+    ondragend={handleTransitionDragEnd}
+    title={junctions.length === 0
+      ? 'Put two preset clips edge to edge first — a transition needs a junction'
+      : 'Drag onto the junction between two clips to add a transition'}
+  >
+    <svg width="15" height="10" viewBox="0 0 15 10" aria-hidden="true">
+      <path d="M0.5 0.5 L7.5 5 L0.5 9.5 Z M14.5 0.5 L7.5 5 L14.5 9.5 Z"
+            fill="currentColor" fill-opacity="0.35" stroke="currentColor" stroke-width="1"/>
+    </svg>
+    <span class="t-label">Transition</span>
+  </span>
+  <button class="t-chip t-iconable" onclick={() => showTimeline.compactPresetClips()} disabled={presetClips.length < 2} title="Close every gap on the preset lane" aria-label="Close every gap on the preset lane">
+    <span class="t-label">Compact</span>
+  </button>
+  <button class="t-chip t-iconable" class:active={cuesOpen} onclick={toggleCues} title="Show the cue list beside the timeline" aria-label="Cues" data-show-cues-toggle>
+    <TimelineIcon name="cues" /><span class="t-label">Cues</span>
+  </button>
+  <button class="t-chip t-iconable" onclick={addMarkerAtPlayhead} title="Add a marker at the playhead. It fires the selected cue when the timeline plays across it." aria-label="Add a marker at the playhead. It fires the selected cue when the timeline plays across it." data-show-add-marker>
+    <TimelineIcon name="marker" /><span class="t-label">Marker</span>
+  </button>
+{/snippet}
+
+{#snippet timelineInterimTools()}
+  <button class="t-chip t-iconable" onclick={() => audioInput?.click()} title="Add audio from this computer at the playhead: a song, stems or a sound" aria-label="Add audio">
+    <TimelineIcon name="song" /><span class="t-label">Add audio</span>
+  </button>
+  <button class="t-chip t-iconable" class:active={sectionCuesOpen} onclick={toggleSectionCues} title="The Timeline's sections and markers as a cue list, with a big GO" aria-label="Sections" data-section-cues-toggle>
+    <TimelineIcon name="sections" /><span class="t-label">Sections</span>
+  </button>
+  <button class="t-chip t-iconable" class:active={cuesOpen} onclick={toggleCues} title="Show the cue list beside the timeline" aria-label="Cues" data-show-cues-toggle>
+    <TimelineIcon name="cues" /><span class="t-label">Cues</span>
+  </button>
+  <button class="t-chip t-iconable" onclick={addMarkerAtPlayhead} title="Add a marker at the playhead. It fires the selected cue when the timeline plays across it." aria-label="Add a marker at the playhead. It fires the selected cue when the timeline plays across it." data-show-add-marker>
+    <TimelineIcon name="marker" /><span class="t-label">Marker</span>
+  </button>
+{/snippet}
 
 {#if !hiddenInVJ}
   <button data-help-page="show-timeline"
@@ -1409,7 +1418,8 @@
     class="show-tray"
     class:resizing={resizingTray}
     class:timeline-doc={isTimeline}
-    style="height: {trayHeight}px"
+    class:room={isTimeline && $roomToWork}
+    style:height={isTimeline && $roomToWork ? null : `${trayHeight}px`}
     role="region"
     aria-label={isTimeline ? 'Timeline' : 'Show timeline'}
     data-show-doc={doc}
@@ -1428,299 +1438,34 @@
       <div class="resize-grip"></div>
     </div>
 
-    <div class="show-header-btns">
-      <span class="show-doc-name" data-show-doc-name>{isTimeline ? 'Timeline' : 'Show'}</span>
-      <button class="show-help" onclick={() => void openExternalUrl(TIMELINE_HELP_URL)}
-        title="How the Timeline works: a guide with pictures, on ghostarcade.live" aria-label="Timeline help" data-timeline-help>
-        <TimelineIcon name="help" size={16} />
-      </button>
-      <button class="show-clear" onclick={() => showClearConfirm = true} title={isTimeline ? 'Clear the whole Timeline' : 'Clear the whole show'} aria-label={isTimeline ? 'Clear the whole Timeline' : 'Clear the whole show'}>
-        <TimelineIcon name="trash" size={15} />
-      </button>
-      <button class="show-close" onclick={() => showTimeline.setOpen(false)} title={isTimeline ? 'Close the Timeline' : 'Close show timeline'}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-        </svg>
-      </button>
-    </div>
+    <TimelineToolbar
+      {isTimeline}
+      zoomBy={zoomAroundPlayhead}
+      zoomFit={zoomToFitView}
+      onclear={() => (showClearConfirm = true)}
+      goShown={toolbarGoShown}
+      goTitle={`GO: ${goText}. Enter while the pointer is over the Timeline; MIDI/OSC show/go.`}
+      goWord={toolbarGoWord}
+      go={() => showTimeline.go()}
+      {hasBlocks}
+      showDocTools={isTimeline ? timelineInterimTools : showDocTools}
+    />
+    <input
+      class="hidden-file"
+      type="file"
+      accept="audio/*"
+      multiple
+      bind:this={audioInput}
+      onchange={handleAudioPick}
+    />
 
-    <!-- Transport -->
-    <div
-      class="show-transport"
-      class:fit1={transportFitLevel >= 1}
-      class:fit2={transportFitLevel >= 2}
-      class:fit3={transportFitLevel >= 3}
-      bind:clientHeight={transportH}
-      use:transportFit={{ max: TRANSPORT_FIT_MAX, set: (level) => (transportFitLevel = level) }}
-      data-transport-fit={transportFitLevel}
-    >
-      <button
-        class="t-btn"
-        class:active={isPlaying}
-        disabled={duration <= 0 && !(recordArmed && doc === 'timeline')}
-        onclick={() => showTimeline.togglePlay()}
-        title={isPlaying ? 'Pause show' : 'Play show'}
-      >
-        {#if isPlaying}
-          <svg width="12" height="12" viewBox="0 0 12 12"><rect x="1" y="1" width="3.5" height="10" fill="currentColor"/><rect x="7.5" y="1" width="3.5" height="10" fill="currentColor"/></svg>
-        {:else}
-          <svg width="12" height="12" viewBox="0 0 12 12"><polygon points="2,0 12,6 2,12" fill="currentColor"/></svg>
-        {/if}
-      </button>
-      <button class="t-btn" onclick={() => showTimeline.stop()} title="Stop and rewind">
-        <svg width="12" height="12" viewBox="0 0 12 12"><rect x="1" y="1" width="10" height="10" fill="currentColor"/></svg>
-      </button>
-      <button class="t-btn" class:active={loop} onclick={() => showTimeline.setLoop(!loop)} title="Loop the show">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-          <path d="M17 2l4 4-4 4"/><path d="M3 11V9a4 4 0 014-4h14"/>
-          <path d="M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/>
-        </svg>
-      </button>
-      {#if !loop}
-        <select
-          class="t-select t-end"
-          value={endAction}
-          onchange={(e) => showTimeline.setEndAction((e.currentTarget as HTMLSelectElement).value as ShowEndAction)}
-          title="What happens when the show reaches its end"
-          aria-label="At the end of the show"
-        >
-          {#each Object.entries(END_ACTION_LABELS) as [value, label]}
-            <option {value}>{label}</option>
-          {/each}
-        </select>
-      {/if}
-
-      <span class="t-time">{formatPrecise(currentTime)}</span>
-      <span class="t-sep t-fit-hide">/</span>
-      <span class="t-total t-fit-hide" title="Total programmed show length">{formatPrecise(duration)}</span>
-      {#if tempo}
-        <span class="t-bars" title="Bar, beat and sixteenth at the playhead" data-show-bars-readout>{formatBarsBeats(tempo, currentTime, true)}</span>
-      {/if}
-      {#if isTimeline && sections.length}
-        <button class="t-go" class:waiting={!!$showSectionStatus.holdId} onclick={() => showTimeline.go()} title={`GO: ${goText}. Enter while the pointer is over the Timeline; MIDI/OSC show/go.`} data-midi-path="show:go" data-section-go>GO</button>
-        {#if sectionText}<span class="t-section" class:hold={!!$showSectionStatus.holdId} data-section-status>{sectionText}</span>{/if}
-      {/if}
-      {#if phraseText}
-        <span class="t-phrase" class:waiting={!!$showPhraseStatus.pending} title="The A/V phrase playing, and the one waiting for its bar" data-phrase-status>{phraseText}</span>
-      {/if}
-
-      <!-- Show audio output. Never hidden while the show has audio: a muted
-           or blocked bus is exactly the state the user needs to SEE. -->
-      {#if audioTracks.length > 0}
-        <span class="t-divider"></span>
-        <button
-          class="t-btn t-audio"
-          class:blocked={audioBlocked !== null}
-          onclick={toggleAudioOutput}
-          title={audioTitle}
-          aria-label={audioTitle}
-        >
-          {#if audioBlocked !== null}
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-              <line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>
-            </svg>
-          {:else}
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-              <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
-              <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
-            </svg>
-          {/if}
-        </button>
-<!-- Wrapper, not a width on the input: the app-wide
-             `input[type="range"]:not(…)` skin in App.svelte sets width:100%
-             at a specificity this scoped rule cannot beat. Constraining the
-             parent keeps that shared track/thumb styling AND the size. -->
-        <span class="t-audio-level">
-          <input
-            type="range"
-            min="0" max="1" step="0.01"
-            value={$clipAudioMaster.volume}
-            disabled={audioMuted}
-            oninput={(e) => clipAudioBus.setMasterVolume(+(e.currentTarget as HTMLInputElement).value)}
-            title="Show audio output level"
-            aria-label="Show audio output level"
-          />
-        </span>
-        {#if $audioOutput.supported}
-          <select
-            class="t-select t-out"
-            class:missing={$audioOutput.missing}
-            value={$audioOutput.deviceId}
-            onchange={(e) => void selectAudioOutput((e.currentTarget as HTMLSelectElement).value)}
-            onfocus={() => startAudioOutputSelection()}
-            title={$audioOutput.missing
-              ? 'The chosen sound card is not connected: playing on the system default'
-              : $audioOutput.error ?? 'Sound card the show audio plays on'}
-            aria-label="Show audio output"
-          >
-            <option value="">System default</option>
-            {#each $audioOutput.devices as device (device.deviceId)}
-              <option value={device.deviceId} class="device-name">{device.label}</option>
-            {/each}
-            {#if $audioOutput.missing}
-              <option value={$audioOutput.deviceId}>Not connected</option>
-            {/if}
-          </select>
-        {/if}
-        {#if audioBlocked !== null}
-          <button class="t-audio-warn" onclick={fixAudioOutput} title="Click to restore show audio output">
-            {CLIP_AUDIO_BLOCK_TEXT[audioBlocked]}
-          </button>
-        {/if}
-      {/if}
-      <ShowAudioDelayBadge />
-
-      <span class="t-divider"></span>
-
-      <button class="t-btn" onclick={() => showTimeline.setZoom(zoom / 1.4)} disabled={zoom <= SHOW_MIN_ZOOM} title="Zoom out" aria-label="Zoom out"><TimelineIcon name="zoom-out" /></button>
-      <button class="t-btn" onclick={() => showTimeline.setZoom(zoom * 1.4)} disabled={zoom >= SHOW_MAX_ZOOM} title="Zoom in" aria-label="Zoom in"><TimelineIcon name="zoom-in" /></button>
-      <button
-        class="t-chip t-tempo"
-        class:active={selectedTempo}
-        class:has-map={!!tempo}
-        onclick={() => showTimeline.select(selectedTempo ? null : { kind: 'tempo', id: 'tempo' })}
-        title="The show's tempo map: BPM, time signature and where bar 1 is"
-        data-show-tempo
-      >
-        <TimelineIcon name="tempo" />
-        <span>{tempo ? `${Math.round(tempo.segments[0].bpm * 10) / 10} BPM` : 'Tempo'}</span>
-      </button>
-      <button class="t-chip t-iconable" class:active={snapEnabled} onclick={() => showTimeline.setSnapEnabled(!snapEnabled)} title="Snap to the grid, clip edges, the playhead and markers (S). Hold {MOD_KEY} while dragging to move freely." aria-label="Snap" data-show-snap>
-        <TimelineIcon name="snap" /><span class="t-label">Snap</span>
-      </button>
-      {#if isTimeline && layerTracks.length}
-        <select
-          class="t-select t-tool"
-          class:tool-on={$editTool !== 'select'}
-          value={$editTool}
-          onchange={(e) => editTool.set((e.currentTarget as HTMLSelectElement).value as typeof $editTool)}
-          title={EDIT_TOOLS.find((t) => t.id === $editTool)?.hint ?? ''}
-          aria-label="Editing tool"
-          data-show-tool
-        >
-          {#each EDIT_TOOLS as tool}
-            <option value={tool.id}>{tool.label} ({tool.key})</option>
-          {/each}
-        </select>
-      {/if}
-      {#if tempo}
-        <select
-          class="t-select t-grid"
-          value={snapGrid}
-          onchange={(e) => showTimeline.setSnapGrid((e.currentTarget as HTMLSelectElement).value as ShowSnapGrid)}
-          title="Snap grid"
-          aria-label="Snap grid"
-        >
-          {#each SNAP_GRID_CHOICES as grid}
-            <option value={grid.value}>{grid.label}</option>
-          {/each}
-        </select>
-        <span class="t-seg" role="group" aria-label="Ruler">
-          <button class="t-seg-btn" class:active={rulerMode === 'time'} onclick={() => showTimeline.setRulerMode('time')} title="Ruler in minutes and seconds">Time</button>
-          <button class="t-seg-btn" class:active={rulerMode === 'bars'} onclick={() => showTimeline.setRulerMode('bars')} title="Ruler in bars and beats" data-show-ruler-bars>Bars</button>
-        </span>
-      {/if}
-
-      <span class="t-divider"></span>
-
-      {#if !isTimeline}
-      <select class="t-select t-preset" bind:value={addPresetId} title="Preset to add">
-        <option value="">Choose preset…</option>
-        {#each comps as comp}
-          <option value={comp.id}>{comp.name}</option>
-        {/each}
-      </select>
-      <button class="t-chip" onclick={addPreset} disabled={comps.length === 0} title="Append this preset to the end of the show">
-        + Preset
-      </button>
-      {/if}
-      <button class="t-chip t-iconable" onclick={() => audioInput?.click()} title="Add audio from this computer at the playhead: a song, stems or a sound" aria-label="Add audio">
-        <TimelineIcon name="song" /><span class="t-label">Add audio</span>
-      </button>
-      {#if !isTimeline}
-      <!-- Transition palette. Drag onto the junction between two touching
-           preset clips; the junction highlights as you pass over it. -->
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <span
-        class="t-chip t-transition-chip"
-        class:dragging={transitionDragActive}
-        class:disabled={junctions.length === 0}
-        draggable={junctions.length > 0}
-        role="button"
-        tabindex="0"
-        ondragstart={handleTransitionDragStart}
-        ondragend={handleTransitionDragEnd}
-        title={junctions.length === 0
-          ? 'Put two preset clips edge to edge first — a transition needs a junction'
-          : 'Drag onto the junction between two clips to add a transition'}
-      >
-        <svg width="15" height="10" viewBox="0 0 15 10" aria-hidden="true">
-          <path d="M0.5 0.5 L7.5 5 L0.5 9.5 Z M14.5 0.5 L7.5 5 L14.5 9.5 Z"
-                fill="currentColor" fill-opacity="0.35" stroke="currentColor" stroke-width="1"/>
-        </svg>
-        <span class="t-label">Transition</span>
-      </span>
-      <button class="t-chip t-iconable" onclick={() => showTimeline.compactPresetClips()} disabled={presetClips.length < 2} title="Close every gap on the preset lane" aria-label="Close every gap on the preset lane">
-        <span class="t-label">Compact</span>
-        <svg class="t-icon" width="16" height="12" viewBox="0 0 16 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M1 6h4.5M3.5 3.5L6 6 3.5 8.5M15 6h-4.5M12.5 3.5L10 6l2.5 2.5M8 1v10"/>
-        </svg>
-      </button>
-      {/if}
-
-      <span class="t-divider"></span>
-
-      <button class="t-chip t-iconable" class:active={cuesOpen} onclick={toggleCues} title="Show the cue list beside the timeline" aria-label="Cues" data-show-cues-toggle>
-        <TimelineIcon name="cues" /><span class="t-label">Cues</span>
-      </button>
-      {#if isTimeline}
-        <button class="t-chip t-iconable" class:active={sectionCuesOpen} onclick={toggleSectionCues} title="The Timeline's sections and markers as a cue list, with a big GO" aria-label="Sections" data-section-cues-toggle>
-          <TimelineIcon name="sections" /><span class="t-label">Sections</span>
-        </button>
-        {#if hasPhrases}
-          <button class="t-chip t-iconable" class:active={phrasesPref} onclick={togglePhrases} title="The A/V phrase pads: published sections, launched on the next bar" aria-label="Phrases" data-phrases-toggle>
-            <TimelineIcon name="phrases" /><span class="t-label">Phrases</span>
-          </button>
-        {/if}
-      {/if}
-      <button class="t-chip t-iconable" onclick={addMarkerAtPlayhead} title="Add a marker at the playhead. It fires the selected cue when the timeline plays across it." aria-label="Add a marker at the playhead. It fires the selected cue when the timeline plays across it." data-show-add-marker>
-        <TimelineIcon name="marker" /><span class="t-label">Marker</span>
-      </button>
-      {#if tc.lock !== 'off'}
-        <span class="t-tc" class:locked={tc.lock === 'locked'} class:freewheel={tc.lock === 'freewheel'} class:lost={tc.lock === 'lost'} title={tc.error ?? `Timecode ${tc.lock}${tc.rate ? `, ${tc.rate} fps` : ''}`} data-show-tc-badge>
-          <span class="t-tc-dot"></span>{tcText}{tc.label ? ` ${tc.label}` : ''}{tc.waiting ? ' · next bar' : ''}
-        </span>
-        {#if tcNoticeText}
-          <span class="t-tc-warn" title={tcNoticeText} data-show-link-notice>⚠ {tc.notice === 'linkNoPeers' ? 'No Link peers' : tc.notice === 'liveNotConnected' ? 'Live not connected' : 'Start Link to play'}</span>
-        {/if}
-        {#if tcMismatchText}
-          <span class="t-tc-warn" title={tcMismatchText} data-show-tempo-mismatch>⚠ {tcSourceName} {tc.sourceBpm?.toFixed(1)} · show {tc.showBpm?.toFixed(1)} BPM</span>
-        {/if}
-      {/if}
-      {#if isTimeline}
-      <span class="t-divider"></span>
-      <LineRecordControls />
-      <span class="t-divider"></span>
-      <ShowTakeoverControls fit={transportFitLevel} />
-      {/if}
-      <input
-        class="hidden-file"
-        type="file"
-        accept="audio/*"
-        multiple
-        bind:this={audioInput}
-        onchange={handleAudioPick}
-      />
-    </div>
-
-    {#if ($takeoverPadsOpen && isTimeline) || phraseStripShown}
+    {#if isTimeline && $performShown}
       <!-- The outer box may give way in a tight tray; the inner one reports
            the pads' own height, which the tray grows by. -->
-      <div class="pads-wrap" class:phrases-only={!($takeoverPadsOpen && isTimeline)} style:max-height="{padsMax}px"><div bind:clientHeight={padsH}>
-        {#if phraseStripShown}<PhrasePads variant="timeline" />{/if}
-        {#if $takeoverPadsOpen && isTimeline}<TakeoverPads />{/if}
+      <div class="pads-wrap" style:max-height="{padsMax}px"><div bind:clientHeight={padsH}>
+        <div class="perform-interim"><ShowTakeoverControls /></div>
+        {#if hasPhrases}<PhrasePads variant="timeline" />{/if}
+        <TakeoverPads />
       </div></div>
     {/if}
 
@@ -2288,6 +2033,10 @@
   /* Suppress the entry animation mid-drag: re-running it on every reactive
      height change makes the panel visibly jitter under the pointer. */
   .show-tray.resizing { animation: none; }
+  /* Room to work: from the top bar to the status bar, over the canvas and
+     the side panels (they keep their size underneath). */
+  .show-tray.room { top: var(--ga-bar-h, 48px); animation: none; z-index: 95; }
+  .show-tray.room .tray-resize { display: none; }
   @keyframes slideUp {
     from { transform: translateY(100%); }
     to { transform: translateY(0); }
@@ -2315,88 +2064,8 @@
   .show-tray.resizing .resize-grip {
     background: var(--ga-ink-1, #aaa);
   }
-
-  .show-header-btns {
-    position: absolute;
-    top: 6px;
-    right: 10px;
-    z-index: 10;
-    display: flex;
-    gap: 6px;
-    align-items: center;
-  }
   /* Which tab the tray is showing: the Show or the Timeline. */
-  .show-doc-name {
-    font-size: var(--ga-text-eyebrow, 10px);
-    text-transform: uppercase;
-    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
-    font-weight: 700;
-    color: color-mix(in srgb, var(--ga-coral, #ff6f5e) 75%, #ffffff);
-    padding-right: 4px;
-  }
-  .show-tray.timeline-doc .show-doc-name { color: color-mix(in srgb, #8c78ff 75%, #ffffff); }
-  .show-clear,
-  .show-help {
-    width: var(--ga-control-h, 26px);
-    height: var(--ga-control-h, 26px);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    background: transparent;
-    border: 1px solid transparent;
-    color: var(--ga-ink-1, #aaa);
-    border-radius: var(--ga-r-hard, 4px);
-    cursor: pointer;
-  }
-  .show-help { color: var(--ga-icon, #5278ff); }
-  .show-help:hover { color: var(--ga-ink-0, #fff); border-color: var(--ga-line-2, rgba(255, 255, 255, 0.12)); }
-  .show-clear:hover { border-color: color-mix(in srgb, var(--ga-rec, #ff4438) 55%, transparent); color: var(--ga-rec, #ff4438); }
-  .show-close {
-    width: var(--ga-control-h, 26px);
-    height: var(--ga-control-h, 26px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
-    color: var(--ga-ink-1, #aaa);
-    border-radius: var(--ga-r-hard, 4px);
-    cursor: pointer;
-  }
-  .show-close:hover { border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24)); color: var(--ga-ink-0, #fff); }
 
-  .show-transport {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    /* 7px of top padding clears the resize strip so the transport buttons
-       are not sitting under an ns-resize cursor. */
-    padding: 7px 12px 5px;
-    padding-right: 180px;
-    border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
-    background: var(--ga-bar, #0a0a0e);
-    flex-shrink: 0;
-    flex-wrap: wrap;
-  }
-  .t-btn {
-    background: none;
-    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
-    color: var(--ga-ink-1, #888);
-    width: var(--ga-control-h, 26px);
-    height: var(--ga-control-h, 26px);
-    border-radius: var(--ga-r-hard, 4px);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    font-size: 14px;
-    font-family: inherit;
-  }
-  .t-btn:hover:not(:disabled):not(.active) { color: var(--ga-ink-0, #fff); border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24)); }
-  .t-btn:disabled { opacity: 0.35; cursor: default; }
-  .t-btn.active { color: var(--ga-selection-ink, #e0e8ff); background: var(--ga-selection-bg, #1f3170); border-color: var(--ga-selection-line, #5278ff); }
   .t-chip {
     display: inline-flex;
     align-items: center;
@@ -2432,24 +2101,9 @@
     font-family: inherit;
   }
   /* The editing tool: lit in the royal blue while it is not Select. */
-  .t-select.tool-on { border-color: var(--ga-icon, #5278ff); color: #fff; }
+
   /* The open list keeps the app's colours (a white tool name must not land on a white list). */
   .t-select option { background: var(--ga-raise, #14141a); color: var(--ga-ink-0, #ddd); }
-  .t-time {
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    font-size: var(--ga-text-control, 12px);
-    color: var(--ga-ink-0, #ddd);
-    min-width: 58px;
-    text-align: center;
-  }
-  .t-total {
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    font-size: var(--ga-text-control, 12px);
-    color: var(--ga-ink-2, #888);
-    min-width: 58px;
-  }
-  .t-sep { color: var(--ga-ink-3, #444); }
-  .t-divider { width: 1px; height: 18px; background: var(--ga-line-2, rgba(255, 255, 255, 0.12)); margin: 0 4px; }
   .hidden-file { display: none; }
 
   /* Audio output — amber when the show is audible, red when something is
@@ -2457,33 +2111,6 @@
      Literal hex rather than --ga-coral: that token resolves to a near-white
      (#e7eef5) on the current theme, which would render the warning state
      indistinguishable from every other control in this bar. */
-  .t-audio { color: #fbbf24; border-color: rgba(251, 191, 36, 0.35); }
-  .t-audio:hover:not(:disabled) { color: #fde68a; border-color: rgba(251, 191, 36, 0.6); }
-  .t-audio.blocked {
-    color: #f87171;
-    border-color: rgba(248, 113, 113, 0.6);
-    background: rgba(248, 113, 113, 0.15);
-  }
-  .t-audio.blocked:hover { color: #fca5a5; border-color: #f87171; }
-  .t-audio-level {
-    display: flex;
-    align-items: center;
-    flex: 0 0 62px;
-    width: 62px;
-    accent-color: #fbbf24;
-  }
-  .t-audio-warn {
-    font-size: var(--ga-text-meta, 11px);
-    font-weight: 600;
-    font-family: inherit;
-    color: #f87171;
-    background: rgba(248, 113, 113, 0.12);
-    border: 1px solid rgba(248, 113, 113, 0.45);
-    border-radius: 4px;
-    padding: 4px 8px;
-    cursor: pointer;
-  }
-  .t-audio-warn:hover { color: #fff; background: rgba(248, 113, 113, 0.25); border-color: #f87171; }
 
   /* `flex: 1` + `min-height: 0` is what lets the tray be short: the body
      takes whatever is left after the transport and the inspector have had
@@ -2571,63 +2198,9 @@
     z-index: 2;
   }
   .show-bar-line.beat { background: rgba(255, 255, 255, 0.03); }
-  .t-bars {
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    font-size: var(--ga-text-meta, 11px);
-    color: #FFD96B;
-    min-width: 52px;
-  }
-  .t-go {
-    height: 24px;
-    min-width: 52px;
-    padding: 0 12px;
-    border-radius: 4px;
-    border: 1px solid #2fa35a;
-    background: #1d6b3a;
-    color: #eaffef;
-    font: inherit;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    cursor: pointer;
-  }
-  .t-go.waiting { background: #2fa35a; box-shadow: 0 0 0 2px rgba(47, 163, 90, 0.45); }
-  .t-go:hover { filter: brightness(1.1); }
-  .t-section { font-size: var(--ga-text-meta, 11px); color: var(--ga-ink-1, #bbb); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .t-section.hold { color: #ffd36b; font-weight: 600; }
-  .t-phrase { font-size: var(--ga-text-meta, 11px); color: #9fe7ff; font-weight: 600; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .t-phrase.waiting { color: #ffd36b; }
-  .t-tempo.has-map { font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); }
-  .t-tc-warn {
-    display: inline-flex;
-    align-items: center;
-    height: var(--ga-control-h, 26px);
-    box-sizing: border-box;
-    padding: 0 8px;
-    font-size: var(--ga-text-meta, 11px);
-    color: #f0c674;
-    border: 1px solid rgba(240, 198, 116, 0.45);
-    border-radius: var(--ga-r-hard, 4px);
-    background: rgba(240, 198, 116, 0.08);
-  }
 
   /* Timecode lock badge in the transport. */
-  .t-tc {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    height: var(--ga-control-h, 26px);
-    box-sizing: border-box;
-    font-size: var(--ga-text-meta, 11px);
-    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
-    color: var(--ga-ink-1, #aaa);
-    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
-    border-radius: var(--ga-r-hard, 4px);
-    padding: 0 8px;
-  }
-  .t-tc-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ga-ink-3, #777); }
-  .t-tc.locked .t-tc-dot { background: #5fdc76; box-shadow: 0 0 6px #5fdc76; }
-  .t-tc.freewheel .t-tc-dot { background: #f0c674; }
-  .t-tc.lost .t-tc-dot { background: #f87171; }
+
   .lane-labels {
     width: 108px;
     flex: 0 0 auto;
@@ -2718,22 +2291,9 @@
   /* Ruler ticks: ShowRuler.svelte. */
 
   .lanes { position: relative; }
-  .t-end { max-width: 160px; }
-  .t-out { max-width: 150px; }
   /* Tighter, step by step, until the transport fits on one line. */
   /* Icons always; their labels while there is room. */
-  .t-iconable, .t-tempo { display: inline-flex; align-items: center; gap: 6px; }
-  .t-btn { display: inline-flex; align-items: center; justify-content: center; }
-  .t-icon { display: block; }
-  .fit2 .t-iconable { padding: 0 7px; }
-  .fit2 .t-iconable .t-label, .fit2 .t-transition-chip .t-label { display: none; }
-  .fit2 .t-end { max-width: 104px; }
-  .fit2 .t-out { max-width: 104px; }
-  .fit2 .t-preset { max-width: 104px; }
-  .fit3.show-transport { gap: 4px; }
-  .fit3 .t-divider, .fit3 .t-fit-hide { display: none; }
-  .fit3 .t-end, .fit3 .t-out, .fit3 .t-preset { max-width: 80px; }
-  .t-out.missing { border-color: rgba(251, 191, 36, 0.6); color: #fbbf24; }
+  .t-iconable { display: inline-flex; align-items: center; gap: 6px; }
 
   .t-transition-chip {
     display: inline-flex;
@@ -2767,23 +2327,6 @@
   /* In a tray at its cap the pads give way first, and scroll: every pad and
      setting stays reachable. */
   .pads-wrap { flex: 0 0 auto; min-height: 64px; overflow-x: hidden; overflow-y: auto; }
-  .pads-wrap.phrases-only { min-height: 0; flex-shrink: 0; }
-  .t-grid { max-width: 96px; }
-  .t-seg { display: inline-flex; }
-  .t-seg-btn {
-    height: var(--ga-control-h, 26px);
-    padding: 0 8px;
-    font: inherit;
-    font-size: var(--ga-text-control, 12px);
-    font-weight: var(--ga-weight-control, 600);
-    color: var(--ga-ink-1, #aaa);
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
-    cursor: pointer;
-  }
-  .t-seg-btn:first-child { border-radius: var(--ga-r-hard, 4px) 0 0 var(--ga-r-hard, 4px); }
-  .t-seg-btn:last-child { border-radius: 0 var(--ga-r-hard, 4px) var(--ga-r-hard, 4px) 0; border-left: 0; }
-  .t-seg-btn.active { color: var(--ga-selection-ink, #e0e8ff); background: var(--ga-selection-bg, #1f3170); border-color: var(--ga-selection-line, #5278ff); }
 
   /* Click-through below the ruler: a click in a lane seeks, and the line
      that lands under the pointer must not swallow the second click of a

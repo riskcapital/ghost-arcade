@@ -74,7 +74,9 @@ export type ShowKeyAction =
   | 'toggleLines'
   /** Ctrl+G / Ctrl+Shift+G: group the selected blocks, or ungroup them. */
   | 'group'
-  | 'ungroup';
+  | 'ungroup'
+  /** ` (backquote) with the pointer over the Timeline: room to work (the Timeline over the whole window) or back. */
+  | 'roomToWork';
 
 export interface ShowKeyContext {
   /** The tray is open and visible. */
@@ -96,6 +98,8 @@ export interface ShowKeyContext {
   /** The pointer itself is over the tray (not only focus left inside it):
    *  the arrows step the playhead only then, so they still nudge mapping points. */
   pointerOver?: boolean;
+  /** The Timeline document is showing (room to work is the Timeline's). */
+  isTimeline?: boolean;
 }
 
 interface KeyLike {
@@ -163,6 +167,10 @@ export function classifyShowKey(e: KeyLike, ctx: ShowKeyContext): ShowKeyAction 
   // Shift+B: B alone stays Blackout, which must work from anywhere in a show.
   if (key === 'b' && e.shiftKey) return ctx.hasTracks ? 'rippleTool' : null;
   if (e.shiftKey) return null;
+  // Backquote: only with the pointer over the Timeline. Elsewhere it is the
+  // VJ deck's Audio Lab switch and Performer's focus key (VJ mode, where the
+  // Timeline is closed).
+  if (key === '`') return ctx.isTimeline && ctx.pointerOver && !e.repeat ? 'roomToWork' : null;
   if (key === 'j') return 'shuttleBack';
   if (key === 'k') return 'shuttleStop';
   if (key === 'l') return 'shuttleForward';

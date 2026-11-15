@@ -36,6 +36,17 @@ describe('show keyboard', () => {
     expect(classifyShowKey({ key: 'Enter', target: { tagName: 'INPUT' } as unknown as EventTarget }, ctx)).toBeNull();
   });
 
+  it('backquote is room to work only with the pointer over the Timeline', () => {
+    const over = { ...engaged, pointerOver: true, isTimeline: true };
+    expect(classifyShowKey({ key: '`' }, over)).toBe('roomToWork');
+    expect(classifyShowKey({ key: '`', repeat: true }, over)).toBeNull();
+    // Focus left in the tray is not enough: the key is the VJ deck's elsewhere.
+    expect(classifyShowKey({ key: '`' }, { ...over, pointerOver: false })).toBeNull();
+    expect(classifyShowKey({ key: '`' }, { ...over, isTimeline: false })).toBeNull();
+    expect(classifyShowKey({ key: '`', shiftKey: true }, over)).toBeNull();
+    expect(classifyShowKey({ key: '`', metaKey: true }, over)).toBeNull();
+  });
+
   it('leaves keys typed into a field alone', () => {
     expect(classifyShowKey({ key: 'Delete', target: { tagName: 'INPUT' } as unknown as EventTarget }, engaged)).toBeNull();
     expect(classifyShowKey({ key: 'Backspace', target: { isContentEditable: true } as unknown as EventTarget }, engaged)).toBeNull();

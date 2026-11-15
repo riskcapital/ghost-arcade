@@ -100,10 +100,11 @@ describe('Timeline tray layout', () => {
     expect(tray).toMatch(/class="lane-labels"[^>]*onscroll=\{labelsScrolled\}/);
     expect(tray).toMatch(/gridEl\.scrollTop \+= dy/);
   });
-  it('the idle strip is one short hint; the full guide is the help link in the header', () => {
+  it('the idle strip is one short hint; the full guide is in the toolbar\'s help menu', () => {
     expect(tray).toMatch(/insp-idle-hint">Click a block to see its settings here\.</);
-    expect(tray).toMatch(/TIMELINE_HELP_URL = 'https:\/\/ghostarcade\.live\/docs\/timeline'/);
-    expect(tray).toMatch(/data-timeline-help/);
+    const bar = source('show/timeline/TimelineToolbar.svelte');
+    expect(bar).toMatch(/TIMELINE_HELP_URL = 'https:\/\/ghostarcade\.live\/docs\/timeline'/);
+    expect(bar).toMatch(/data-timeline-help/);
   });
   it('toasts rise above the open tray instead of covering the block inspector', () => {
     expect(tray).toMatch(/'--ga-tray-toast-lift', open \? `\$\{trayHeight \+ 52\}px` : '0px'/);

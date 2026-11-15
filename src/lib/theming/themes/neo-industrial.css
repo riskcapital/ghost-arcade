@@ -15,6 +15,10 @@ html[data-theme="neo-industrial"] {
   --ga-focus: #ffb17f;
   --ga-font-ui-weight: 450;
   --ga-font-ui-weight-strong: 650;
+  --tl-on: #ff975a;
+  --tl-on-soft: rgba(255, 151, 90, 0.13);
+  --tl-on-line: rgba(255, 151, 90, 0.46);
+  --tl-on-ink: #ffd8ba;
 }
 
 html[data-theme="neo-industrial"] body {
