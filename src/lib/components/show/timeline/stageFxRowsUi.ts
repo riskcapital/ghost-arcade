@@ -9,7 +9,7 @@ import { isNativeSelectableEffect } from '../../../renderer/nativeEffectCoverage
 import { generateUUID } from '../../../utils/uuid';
 import { stageClipEnd, stageClipName, type StageClipRow, type TimelineStageClip } from '../../../timeline/stagefx/stageClips';
 
-export const STAGE_FX_ROW_HEIGHT = 30;
+export const STAGE_FX_ROW_HEIGHT = 32;
 export const STAGE_FX_ROWS: readonly StageClipRow[] = ['screenfx', 'effects'];
 /** Both rows, under the Stage strip. */
 export const STAGE_FX_ROWS_HEIGHT = STAGE_FX_ROWS.length * STAGE_FX_ROW_HEIGHT;
@@ -33,9 +33,9 @@ export function stageRowOverlaps(clips: readonly TimelineStageClip[]): Record<St
   return out;
 }
 
-export function stageFxRowAtY(y: number): StageClipRow | null {
+export function stageFxRowAtY(y: number, rows: readonly StageClipRow[] = STAGE_FX_ROWS): StageClipRow | null {
   if (y < 0) return null;
-  return STAGE_FX_ROWS[Math.floor(y / STAGE_FX_ROW_HEIGHT)] ?? null;
+  return rows[Math.floor(y / STAGE_FX_ROW_HEIGHT)] ?? null;
 }
 
 /** Composition effects a block can switch on (those the native output runs). */

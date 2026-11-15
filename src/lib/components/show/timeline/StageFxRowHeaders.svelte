@@ -13,6 +13,13 @@
   import LinePicker from './LinePicker.svelte';
   import StageFxBlockPicker from './StageFxBlockPicker.svelte';
   import { STAGE_FX_ROWS, STAGE_FX_ROW_HEIGHT, STAGE_ROW_NAMES, blockName, newBlockEffect, newScreenFx, type StageBlockPick } from './stageFxRowsUi';
+  import TimelineIcon from './TimelineIcon.svelte';
+
+  interface Props {
+    /** The rows that show (a row appears once it has blocks, or was asked for). */
+    rows?: readonly StageClipRow[];
+  }
+  let { rows = STAGE_FX_ROWS }: Props = $props();
 
   let menu: { x: number; y: number; row: StageClipRow } | null = $state(null);
   let picker: { x: number; y: number; row: StageClipRow } | null = $state(null);
@@ -61,12 +68,14 @@
   }
 </script>
 
-{#each STAGE_FX_ROWS as row (row)}
+{#each rows as row (row)}
   <div class="sfx-row" class:effects={row === 'effects'} style:height="{STAGE_FX_ROW_HEIGHT}px" data-stage-fx-row={row}>
-    <span class="name" title={TIPS[row]}>└ {STAGE_ROW_NAMES[row]}</span>
-    <button type="button" class="add" onclick={(e) => openMenu(e, row)} title={row === 'screenfx' ? 'Put a Screen FX block here at the playhead' : 'Put an effect block here at the playhead'} data-stage-fx-add={row}>+</button>
+    <span class="sfx-stripe" aria-hidden="true"></span>
+    <span class="sfx-icon"><TimelineIcon name={row === 'screenfx' ? 'fx' : 'sliders'} size={15} /></span>
+    <span class="name" title={TIPS[row]}>{STAGE_ROW_NAMES[row]}</span>
+    <button type="button" class="add" onclick={(e) => openMenu(e, row)} title={row === 'screenfx' ? 'Put a Screen FX block here at the playhead' : 'Put an effect block here at the playhead'} aria-label={row === 'screenfx' ? 'Put a Screen FX block here at the playhead' : 'Put an effect block here at the playhead'} data-stage-fx-add={row}><TimelineIcon name="plus" size={14} /></button>
     {#if counts[row] > 0}
-      <button type="button" class="add line" onclick={(e) => openPicker(e, row)} title="Add a control line for a block on this row: any of its settings, colors or its where line" data-stage-fx-line-picker={row}>⌇+</button>
+      <button type="button" class="add" onclick={(e) => openPicker(e, row)} title="Add a control line for a block on this row: any of its settings, colors or its where line" aria-label="Add a control line" data-stage-fx-line-picker={row}><TimelineIcon name="line-add" size={14} /></button>
     {/if}
   </div>
 {/each}
@@ -80,16 +89,18 @@
 
 <style>
   .sfx-row {
-    display: flex; align-items: center; gap: 4px; padding: 0 6px 0 14px; box-sizing: border-box;
-    border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07)); font-size: 12px; color: var(--ga-ink-1, #bbb);
-    background: rgba(92, 225, 230, 0.03);
+    position: relative;
+    display: flex; align-items: center; gap: 6px; padding: 0 4px 0 12px; box-sizing: border-box;
+    border-bottom: 1px solid var(--ga-line, rgba(245, 236, 222, 0.07));
   }
-  .sfx-row.effects { background: rgba(167, 139, 250, 0.04); }
-  .name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sfx-row:hover { background: rgba(245, 236, 222, 0.035); }
+  .sfx-stripe { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: color-mix(in srgb, #ff6f5e 75%, transparent); }
+  .effects .sfx-stripe { background: color-mix(in srgb, #c77dff 75%, transparent); }
+  .sfx-icon { display: inline-flex; color: var(--ga-icon, #5278ff); }
+  .name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--ga-text-body, 13px); font-weight: 600; color: var(--ga-ink-0, #f2ede4); }
   .add {
-    background: var(--ga-sunk, #0c0c10); border: 1px solid rgba(92, 225, 230, 0.4); color: rgba(92, 225, 230, 0.9);
-    border-radius: 3px; font: inherit; font-size: 11px; line-height: 16px; padding: 0 5px; cursor: pointer;
+    width: 22px; height: 22px; display: grid; place-items: center; padding: 0;
+    background: transparent; border: 0; border-radius: 4px; color: var(--ga-ink-2, #89857e); cursor: pointer;
   }
-  .effects .add { border-color: rgba(167, 139, 250, 0.45); color: rgba(167, 139, 250, 0.95); }
-  .add.line, .effects .add.line { border-color: rgba(255, 217, 107, 0.4); color: rgba(255, 217, 107, 0.85); }
+  .add:hover { background: var(--ga-raise, #26221c); color: var(--ga-ink-0, #f2ede4); }
 </style>

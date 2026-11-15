@@ -13,7 +13,6 @@
   import { clipAudioBus, clipAudioMaster, CLIP_AUDIO_BLOCK_TEXT } from '../../../audio/clipAudioBus';
   import { audioOutput, selectAudioOutput, startAudioOutputSelection } from '../../../audio/audioOutputDevice';
   import { rehearsalAudioDelayActive } from '../../../show/rehearsal/editorRehearsal';
-  import ShowAudioDelayBadge from './ShowAudioDelayBadge.svelte';
   import TimelineIcon from './TimelineIcon.svelte';
   import TlPopover from './TlPopover.svelte';
 
@@ -105,9 +104,6 @@
           {/if}
         </select>
       </div>
-    {/if}
-    {#if delayed}
-      <div class="tl-pop-row"><ShowAudioDelayBadge /></div>
     {/if}
     <div class="tl-mi-sep"></div>
     <button class="tl-mi" class:on={muted} onclick={() => clipAudioBus.setMasterMuted(!muted)} aria-pressed={muted} data-show-audio-mute>

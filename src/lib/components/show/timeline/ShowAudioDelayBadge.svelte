@@ -25,8 +25,8 @@
     font-size: 10px;
     font-weight: 600;
     white-space: nowrap;
-    color: #fde68a;
-    background: rgba(251, 191, 36, 0.16);
-    border: 1px solid rgba(251, 191, 36, 0.55);
+    color: var(--tl-on-ink, #ffd9d2);
+    background: var(--tl-on-soft, rgba(255, 114, 95, 0.13));
+    border: 1px solid var(--tl-on-line, rgba(255, 114, 95, 0.46));
   }
 </style>

@@ -19,11 +19,16 @@ import type { ShowLayerTrack } from '../../../types';
 import { project } from '../../../stores/layers';
 import { showTimeline } from '../../../stores/showTimeline';
 import { showSlice, distinct } from './timelineSlices';
-import { ADD_TRACK_ROW_HEIGHT, focusedTrackId, laneKeySelection, trackHeight } from './trackLayout';
+import { focusedTrackId, laneKeySelection, trackHeight } from './trackLayout';
 import type { LineLayout } from './lineUi';
+import { sectionFolds, sendFold } from './rowSections';
 
-/** Height of the Layers header (and, folded, of its summary strip). */
-export const LAYERS_SECTION_HEIGHT = 26;
+/** Height of the Layers header while open (and of the Groups header). */
+export const LAYERS_SECTION_HEIGHT = 24;
+/** Folded, the Layers header is taller: its lane shows where each piece has blocks. */
+export const LAYERS_FOLDED_HEIGHT = 30;
+/** The Groups header above the group rows. */
+export const GROUPS_SECTION_HEIGHT = 24;
 
 type Row = Pick<ShowLayerTrack, 'id' | 'group' | 'subRow' | 'collapsed' | 'lanes' | 'row'>;
 
@@ -39,6 +44,8 @@ export interface RowStack<T extends Row = ShowLayerTrack> {
   groupCount: number;
   /** The layer rows are shown (the section is open). */
   open: boolean;
+  /** The group rows are shown (the Groups section is open). */
+  groupsOpen: boolean;
   /** The Layers header is drawn: there are layer rows. */
   section: boolean;
   /** What the header counts: the pieces (and mapping groups) under it. */
@@ -49,7 +56,7 @@ export interface RowStack<T extends Row = ShowLayerTrack> {
  * The rows as drawn. With no group rows this is the show's own list (same
  * array), so a show without groups draws exactly as before.
  */
-export function rowStack<T extends Row>(tracks: readonly T[], open: boolean): RowStack<T> {
+export function rowStack<T extends Row>(tracks: readonly T[], open: boolean, groupsOpen = true): RowStack<T> {
   let groups: T[] | null = null;
   let count = 0;
   for (const t of tracks) {
@@ -58,18 +65,28 @@ export function rowStack<T extends Row>(tracks: readonly T[], open: boolean): Ro
   }
   const layerRows = tracks.length - (groups?.length ?? 0);
   const rows = groups ? [...groups, ...tracks.filter((t) => !isGroupRow(t))] : tracks;
-  return { rows, groupCount: groups?.length ?? 0, open, section: layerRows > 0, count };
+  return { rows, groupCount: groups?.length ?? 0, open, groupsOpen, section: layerRows > 0, count };
 }
 
-/** The row is drawn: a group row always; a layer row while the section is
- *  open and its mapping group is not folded. */
-export function rowShown(stack: Pick<RowStack<Row>, 'open'>, t: Row): boolean {
-  if (isGroupRow(t)) return true;
+/** The row is drawn: a group row while the Groups section is open; a layer
+ *  row while the Layers section is open and its mapping group is not folded. */
+export function rowShown(stack: Pick<RowStack<Row>, 'open'> & Partial<Pick<RowStack<Row>, 'groupsOpen'>>, t: Row): boolean {
+  if (isGroupRow(t)) return stack.groupsOpen !== false;
   return stack.open && !t.row?.hidden;
 }
 
+/** Height of the Groups header (none without group rows). */
+export function groupsHeaderHeight(stack: Pick<RowStack<Row>, 'groupCount'>): number {
+  return stack.groupCount > 0 ? GROUPS_SECTION_HEIGHT : 0;
+}
+
+/** Height of the Layers header: taller folded, for its summary. */
+export function layersHeaderHeight(stack: Pick<RowStack<Row>, 'open' | 'section'>): number {
+  return stack.section ? (stack.open ? LAYERS_SECTION_HEIGHT : LAYERS_FOLDED_HEIGHT) : 0;
+}
+
 /** Height of a row in the stack (0 when it is not drawn). */
-export function stackRowHeight(stack: Pick<RowStack<Row>, 'open'>, t: Row, layout?: LineLayout): number {
+export function stackRowHeight(stack: Pick<RowStack<Row>, 'open'> & Partial<Pick<RowStack<Row>, 'groupsOpen'>>, t: Row, layout?: LineLayout): number {
   if (!rowShown(stack, t)) return 0;
   // A group row ignores its host's fold: it is not inside the mapping group.
   return trackHeight(t.row?.hidden ? { ...t, row: { ...t.row, hidden: false } } : t, layout);
@@ -77,7 +94,7 @@ export function stackRowHeight(stack: Pick<RowStack<Row>, 'open'>, t: Row, layou
 
 /** Top of the Layers header in the stack. */
 export function stackSectionTop(stack: RowStack<Row>, layout?: LineLayout): number {
-  let y = 0;
+  let y = groupsHeaderHeight(stack);
   for (let i = 0; i < stack.groupCount; i++) y += stackRowHeight(stack, stack.rows[i], layout);
   return y;
 }
@@ -85,18 +102,18 @@ export function stackSectionTop(stack: RowStack<Row>, layout?: LineLayout): numb
 /** Top of each row in the stack (the header sits between the groups and the layers). */
 export function stackTops(stack: RowStack<Row>, layout?: LineLayout): number[] {
   const tops: number[] = [];
-  let y = 0;
+  let y = groupsHeaderHeight(stack);
   stack.rows.forEach((t, i) => {
-    if (i === stack.groupCount && stack.section) y += LAYERS_SECTION_HEIGHT;
+    if (i === stack.groupCount) y += layersHeaderHeight(stack);
     tops.push(y);
     y += stackRowHeight(stack, t, layout);
   });
   return tops;
 }
 
-/** The rows' height with the header and the "+ Group row" strip under them. */
+/** The rows' height with the Groups and Layers headers. */
 export function stackHeight(stack: RowStack<Row>, layout?: LineLayout): number {
-  let h = ADD_TRACK_ROW_HEIGHT + (stack.section ? LAYERS_SECTION_HEIGHT : 0);
+  let h = groupsHeaderHeight(stack) + layersHeaderHeight(stack);
   for (const t of stack.rows) h += stackRowHeight(stack, t, layout);
   return h;
 }
@@ -114,7 +131,7 @@ export function stackIndexAt(stack: RowStack<Row>, y: number, layout?: LineLayou
   for (let i = 0; i < rows.length; i++) {
     const h = stackRowHeight(stack, rows[i], layout);
     if (h <= 0) continue;
-    if (y < tops[i]) return last >= 0 && y < tops[i] - LAYERS_SECTION_HEIGHT / 2 ? last : i;
+    if (y < tops[i]) return last >= 0 && y < tops[i] - layersHeaderHeight(stack) / 2 ? last : i;
     if (y < tops[i] + h) return i;
     last = i;
   }
@@ -136,6 +153,45 @@ export function layerBlockSpans(stack: RowStack<Pick<ShowLayerTrack, 'id' | 'gro
     const prev = out[out.length - 1];
     if (prev && s.start <= prev.end + 1e-6) prev.end = Math.max(prev.end, s.end);
     else out.push({ ...s });
+  }
+  return out;
+}
+
+/** One line of the folded summary: a piece's blocks, in the piece's colour. */
+export interface SummarySpan { lane: number; color: string; start: number; end: number }
+/** Lines the folded Layers header has room for. */
+export const SUMMARY_LANES = 3;
+
+/**
+ * Where each piece has blocks, for the folded Layers header: one thin line
+ * per piece (pieces past the third share the lines), its blocks merged and
+ * drawn in the piece's colour. A layer added on a piece shares its line.
+ */
+export function layerSummary(
+  stack: RowStack<Pick<ShowLayerTrack, 'id' | 'group' | 'subRow' | 'collapsed' | 'lanes' | 'row' | 'clips' | 'layerId' | 'color'>>,
+  colorOf: (t: Pick<ShowLayerTrack, 'color' | 'layerId'>) => string,
+  lanes = SUMMARY_LANES,
+): SummarySpan[] {
+  const pieceLane = new Map<string, number>();
+  const byLane = new Map<string, { lane: number; color: string; spans: Array<{ start: number; end: number }> }>();
+  for (let i = stack.groupCount; i < stack.rows.length; i++) {
+    const t = stack.rows[i];
+    if (!pieceLane.has(t.layerId)) pieceLane.set(t.layerId, pieceLane.size % lanes);
+    const lane = pieceLane.get(t.layerId)!;
+    const key = `${lane}:${t.layerId}`;
+    let entry = byLane.get(key);
+    if (!entry) byLane.set(key, (entry = { lane, color: colorOf(t), spans: [] }));
+    for (const c of t.clips) entry.spans.push({ start: c.startTime, end: c.startTime + c.duration });
+  }
+  const out: SummarySpan[] = [];
+  for (const { lane, color, spans } of byLane.values()) {
+    spans.sort((a, b) => a.start - b.start);
+    let cur: { start: number; end: number } | null = null;
+    for (const sp of spans) {
+      if (cur && sp.start <= cur.end + 1e-6) cur.end = Math.max(cur.end, sp.end);
+      else { if (cur) out.push({ lane, color, ...cur }); cur = { ...sp }; }
+    }
+    if (cur) out.push({ lane, color, ...cur });
   }
   return out;
 }
@@ -193,9 +249,27 @@ export const layersOpen: Readable<boolean> = derived([choice, hasGroups], ([c, g
 
 /** The rows as drawn, for the headers and the lanes alike. */
 export const timelineRowStack: Readable<RowStack> = derived(
-  [showSlice('layerTracks'), layersOpen],
-  ([tracks, open]) => rowStack(tracks, open),
+  [showSlice('layerTracks'), layersOpen, distinct(derived(sectionFolds, (f) => !f.groups))],
+  ([tracks, open, groupsOpen]) => rowStack(tracks, open, groupsOpen),
 );
+
+/**
+ * Fold or open the Groups section. Folding lets go of what sits on the
+ * group rows, as folding the Layers does.
+ */
+export function setGroupsOpen(open: boolean): void {
+  sendFold({ kind: open ? 'open' : 'fold', id: 'groups' });
+  if (open) return;
+  const s = get(showTimeline);
+  const groupIds = new Set(s.layerTracks.filter(isGroupRow).map((t) => t.id));
+  const onGroups = new Set(s.layerTracks.filter((t) => groupIds.has(t.id)).flatMap((t) => t.clips.map((c) => c.id)));
+  if (s.selectedClipIds.some((cid) => onGroups.has(cid))) showTimeline.selectLayerClips(s.selectedClipIds.filter((cid) => !onGroups.has(cid)));
+  if (s.selection?.kind === 'track' && groupIds.has(s.selection.id)) showTimeline.select(null);
+  const keys = get(laneKeySelection);
+  if (keys && groupIds.has(keys.trackId)) laneKeySelection.set(null);
+  const focused = get(focusedTrackId);
+  if (focused && groupIds.has(focused)) focusedTrackId.set(null);
+}
 
 /**
  * Open or fold the section (remembered for this project). Folding lets go
@@ -246,6 +320,23 @@ export function revealsLayerRow(
   return tracks.some((t) => !isGroupRow(t) && t.clips.some((c) => wanted.has(c.id)));
 }
 
+/** As revealsLayerRow, for the group rows (a folded Groups section). */
+export function revealsGroupRow(
+  tracks: readonly Pick<ShowLayerTrack, 'id' | 'group' | 'clips'>[],
+  prevClipIds: readonly string[],
+  nextClipIds: readonly string[],
+  prevTrackId: string | null = null,
+  nextTrackId: string | null = null,
+): boolean {
+  if (nextTrackId && nextTrackId !== prevTrackId) {
+    const t = tracks.find((x) => x.id === nextTrackId);
+    if (t && isGroupRow(t)) return true;
+  }
+  const before = new Set(prevClipIds);
+  const wanted = new Set(nextClipIds.filter((id) => !before.has(id)));
+  return wanted.size > 0 && tracks.some((t) => isGroupRow(t) && t.clips.some((c) => wanted.has(c.id)));
+}
+
 /**
  * While the section is folded, open it when the show's selection moves onto
  * a layer row. Returns the stop function (the Timeline calls it on unmount).
@@ -258,9 +349,11 @@ export function watchLayerReveal(): () => void {
     const s = get(showTimeline);
     const nextTrack = s.selection?.kind === 'track' ? s.selection.id : null;
     const reveal = !get(layersOpen) && revealsLayerRow(s.layerTracks, prevClips, s.selectedClipIds, prevTrack, nextTrack);
+    const revealGroups = get(sectionFolds).groups && revealsGroupRow(s.layerTracks, prevClips, s.selectedClipIds, prevTrack, nextTrack);
     prevClips = s.selectedClipIds;
     prevTrack = nextTrack;
     if (reveal) setLayersOpen(true);
+    if (revealGroups) sendFold({ kind: 'open', id: 'groups' });
   };
   const a = showSlice('selectedClipIds').subscribe(check);
   const b = showSlice('selection').subscribe(check);

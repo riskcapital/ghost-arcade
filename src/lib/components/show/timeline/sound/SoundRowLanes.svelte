@@ -43,7 +43,9 @@
   import { formatPrecise } from '../timeFormat';
   import { keepInWindow, portal, trimEdgeWidth } from '../trackLayout';
   import { showSlice } from '../timelineSlices';
-  import { liveColor, SOUND_FOOTER_HEIGHT, SOUND_ROW_HEIGHT, soundLayout, soundRowAt } from './soundRowLayout';
+  import { liveColor, soundLayout, soundRowAt } from './soundRowLayout';
+  import { autoShowOpen } from '../autoshow/autoShowUi';
+  import TimelineIcon from '../TimelineIcon.svelte';
 
   interface Props {
     zoom: number;
@@ -280,7 +282,7 @@
       class="sound-lane"
       class:live={row.kind === 'live'}
       class:muted={row.muted}
-      style="height: {SOUND_ROW_HEIGHT}px"
+      style="height: {layout.strips[lane]}px"
       oncontextmenu={(e) => openMenu(e, row)}
       ondragover={(e) => onDragOver(e, row)}
       ondrop={(e) => onDrop(e, row)}
@@ -288,11 +290,20 @@
     >
       {#if row.kind === 'audio'}
         {#if !rowTracks.length && !sound.builds.some((b) => b.lane === lane)}
-          {#if lane === 0 && !$tracksStore.length}
-            <span class="lane-hint song-hint" data-auto-show-song-hint>Drop audio here or
-              <button type="button" class="hint-pick" onmousedown={(e) => e.stopPropagation()}
-                onclick={(e) => { e.stopPropagation(); pickAudioFiles(row.id, 0); }} data-sound-pick-song>choose a file</button>,
-              then ✦ Auto show</span>
+          {#if lane === 0 && layout.empty}
+            <!-- The empty Timeline's first step: one card that takes the song. -->
+            <div class="audio-card" data-auto-show-song-hint data-audio-empty-card>
+              <span class="ac-icon"><TimelineIcon name="song" size={22} /></span>
+              <div class="ac-text">
+                <b>Drop audio here</b>
+                <span>A song or soundtrack. Its tempo becomes the grid, and Auto show can build a whole show on your mapping from it.</span>
+              </div>
+              <div class="ac-btns">
+                <button type="button" class="ac-primary" onmousedown={(e) => e.stopPropagation()}
+                  onclick={(e) => { e.stopPropagation(); pickAudioFiles(row.id, 0); }} data-sound-pick-song><TimelineIcon name="plus" size={13} />Choose audio…</button>
+                <button type="button" class="ac-then" disabled title="Once there is audio, Auto show builds sections, content on the pieces, looks and Screen FX from it" onclick={() => autoShowOpen.set(true)}><TimelineIcon name="sparkle" size={13} />Then: Auto show</button>
+              </div>
+            </div>
           {:else}
             <span class="lane-hint">Drop audio here or
               <button type="button" class="hint-pick" onmousedown={(e) => e.stopPropagation()}
@@ -388,7 +399,6 @@
       <LineLanes groupId={soundLineGroup(row.id)} {lines} expanded={$lineLayout.expanded.has(soundLineGroup(row.id))} {zoom} {viewStart} {viewEnd} />
     {/if}
   {/each}
-  <div class="sound-foot-strip" style="height: {SOUND_FOOTER_HEIGHT}px"></div>
 </div>
 
 {#if menu}
@@ -441,7 +451,6 @@
   }
   .sound-lane.live { background: rgba(255, 160, 60, 0.02); }
   .sound-lane.muted { opacity: 0.55; }
-  .lane-hint.song-hint { color: #ffd36b; opacity: 0.85; font-weight: 600; }
   .hidden-file { display: none; }
   /* The hint is click-through; its file link is not. */
   .hint-pick {
@@ -549,7 +558,6 @@
   .fade-handle.in { border-radius: 0 0 4px 0; }
   .fade-handle.out { border-radius: 0 0 0 4px; }
   .sound-block:hover .fade-handle, .sound-block.selected .fade-handle { opacity: 1; }
-  .sound-foot-strip { border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07)); box-sizing: border-box; }
   .sound-menu {
     position: fixed;
     z-index: 10000;
@@ -583,4 +591,44 @@
   }
   .sm-item:hover { background: rgba(255, 255, 255, 0.08); }
   .sm-swatch { width: 10px; height: 10px; border-radius: 2px; flex: 0 0 auto; }
+  .audio-card {
+    position: sticky;
+    left: 10px;
+    top: 0;
+    margin: 8px 0 0 10px;
+    width: min(660px, calc(100vw - 720px));
+    min-width: 380px;
+    height: 94px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 0 16px 0 20px;
+    border: 1px dashed var(--ga-line-3, rgba(245, 236, 222, 0.24));
+    border-radius: var(--ga-r-soft, 8px);
+    background: rgba(245, 236, 222, 0.02);
+  }
+  .ac-icon { flex: 0 0 48px; height: 48px; display: grid; place-items: center; border-radius: 8px; background: var(--ga-blue-900, #0a1020); color: var(--ga-icon, #5278ff); }
+  .ac-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+  .ac-text b { font-size: var(--ga-text-heading, 16px); font-weight: 650; color: var(--ga-ink-0, #f2ede4); }
+  .ac-text span { font-size: var(--ga-text-control, 12px); color: var(--ga-ink-1, #ada9a2); line-height: 1.45; }
+  .ac-btns { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; }
+  .ac-btns button {
+    height: var(--ga-control-h, 26px);
+    padding: 0 12px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border-radius: var(--ga-r-hard, 5px);
+    font: inherit;
+    font-size: var(--ga-text-control, 12px);
+    font-weight: 650;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .ac-primary { border: 0; background: var(--ga-accent-gradient, linear-gradient(135deg, #f6fafd 0%, #cfdde9 42%, #92aabf 100%)); color: #0b1020; }
+  .ac-primary:hover { filter: brightness(1.06); }
+  .ac-then { border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13)); background: transparent; color: var(--ga-ink-2, #89857e); }
+  .ac-then:disabled { cursor: default; opacity: 0.7; }
 </style>

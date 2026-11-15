@@ -10,12 +10,12 @@ import { lineRowsHeight, type LineLayout } from './lineUi';
 /** The part of a clip block a press grabbed. */
 export type ClipPart = 'body' | 'start' | 'end' | 'fadeIn' | 'fadeOut';
 
-export const TRACK_ROW_HEIGHT = 44;
+export const TRACK_ROW_HEIGHT = 40;
 export const LANE_ROW_HEIGHT = 30;
 /** The row under the rows (the stage camera lane button, a hint). */
 export const ADD_TRACK_ROW_HEIGHT = 28;
 /** Label column width once the show has tracks (headers need the room). */
-export const TRACK_HEADER_WIDTH = 204;
+export const TRACK_HEADER_WIDTH = 260;
 
 type RowShape = Pick<ShowLayerTrack, 'collapsed' | 'lanes' | 'row'> & { id?: string };
 

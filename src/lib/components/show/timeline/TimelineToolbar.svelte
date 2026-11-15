@@ -31,6 +31,8 @@
   import TimelineIcon, { type TimelineIconName } from './TimelineIcon.svelte';
   import TlPopover from './TlPopover.svelte';
   import OutputButton from './OutputButton.svelte';
+  import ShowAudioDelayBadge from './ShowAudioDelayBadge.svelte';
+  import { rehearsalAudioDelayActive } from '../../../show/rehearsal/editorRehearsal';
   import LineRecordControls from './LineRecordControls.svelte';
 
   interface Props {
@@ -249,9 +251,10 @@
 
   <span class="grow"></span>
 
-  {#if $audioTracks.length > 0}
+  {#if $audioTracks.length > 0 || $rehearsalAudioDelayActive > 0}
     <div class="cl" data-help="The show's audio output: level, sound card and mute. It turns coral and says why when the show is silent." data-toolbar-output>
-      <OutputButton hasAudio={$audioTracks.length > 0} />
+      <ShowAudioDelayBadge />
+      {#if $audioTracks.length > 0}<OutputButton hasAudio={$audioTracks.length > 0} />{/if}
     </div>
   {/if}
 

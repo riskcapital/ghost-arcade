@@ -22,8 +22,10 @@
     viewEnd: number;
     width: number;
     selection: ShowTimelineSelection | null;
+    /** The rows that show (a row appears once it has blocks, or was asked for). */
+    rows?: readonly StageClipRow[];
   }
-  let { zoom, viewStart, viewEnd, width, selection }: Props = $props();
+  let { zoom, viewStart, viewEnd, width, selection, rows = STAGE_FX_ROWS }: Props = $props();
 
   let root: HTMLDivElement | undefined = $state();
   let dropRow: StageClipRow | null = $state(null);
@@ -50,7 +52,7 @@
   }
   function rowAt(e: MouseEvent): StageClipRow | null {
     const r = root!.getBoundingClientRect();
-    return stageFxRowAtY(e.clientY - r.top);
+    return stageFxRowAtY(e.clientY - r.top, rows);
   }
 
   function pressBlock(e: MouseEvent, clip: TimelineStageClip, part: 'body' | 'start' | 'end') {
@@ -104,7 +106,7 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="sfx-lanes" bind:this={root} style:width="{width}px" ondragover={dragover} ondragleave={() => (dropRow = null)} ondrop={drop} data-stage-fx-lanes>
-  {#each STAGE_FX_ROWS as row (row)}
+  {#each rows as row (row)}
     <div class="sfx-lane" class:effects={row === 'effects'} class:drop={dropRow === row} style:height="{STAGE_FX_ROW_HEIGHT}px" data-stage-fx-lane={row}>
       {#each byRow[row] as clip (clip.id)}
         {@const w = Math.max(6, clip.duration * zoom)}

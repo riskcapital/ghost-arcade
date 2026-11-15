@@ -7,21 +7,22 @@
    * added layers (that is its drawing order; one undo step on release); a
    * piece's row moves when its layer moves in the Layers panel.
    *
-   * Group rows come first; the piece rows sit under the Layers header, which
-   * folds them away (layersSection.ts).
+   * Group rows come first, under a Groups header (+ Group); the piece rows
+   * sit under the Layers header, which folds them away (layersSection.ts).
    */
   import { get } from 'svelte/store';
   import { showTimeline } from '../../../stores/showTimeline';
   import { layers as liveLayersStore } from '../../../stores/layers';
   import ShowTrackHeader from './ShowTrackHeader.svelte';
-  import { ADD_TRACK_ROW_HEIGHT, reorderGapAt, reorderIndexForGap } from './trackLayout';
-  import { LAYERS_SECTION_HEIGHT, isGroupRow, rowShown, stackRowHeight, stackTops, timelineRowStack, toggleLayersOpen } from './layersSection';
+  import { reorderGapAt, reorderIndexForGap } from './trackLayout';
+  import { groupsHeaderHeight, isGroupRow, layersHeaderHeight, rowShown, setGroupsOpen, stackRowHeight, stackTops, timelineRowStack, toggleLayersOpen } from './layersSection';
   import { startGroupRow } from './groupRowUi';
+  import RowSectionHeader from './RowSectionHeader.svelte';
+  import TimelineIcon from './TimelineIcon.svelte';
   import { trackLaneInfo } from './trackParams';
   import { liveTakeover } from '../../../show/takeover/liveTakeover';
   import { showSlice } from './timelineSlices';
   import { followPointer } from './dragSession';
-  import { cameraLaneShown } from './cameraLaneUi';
 
   // Slices, not $showTimeline: the store publishes every playhead frame.
   const soloStore = showSlice('soloTrackId');
@@ -34,7 +35,13 @@
   const liveLayers = $derived($liveLayersStore);
   const liveById = $derived(new Map(liveLayers.map((l) => [l.id, l])));
 
-  const cameraLaneStore = showSlice('cameraLane');
+  /** Layers added on each piece (not group rows): its meta line counts them. */
+  const layersOnPiece = $derived.by(() => {
+    const m = new Map<string, number>();
+    for (const t of tracks) if (t.subRow && !t.group) m.set(t.layerId, (m.get(t.layerId) ?? 0) + 1);
+    return m;
+  });
+  const blockCount = $derived(tracks.reduce((n, t, i) => (i >= stack.groupCount ? n + t.clips.length : n), 0));
 
   // ── Reorder ──────────────────────────────────────────────────────────
   let listEl: HTMLDivElement | undefined = $state();
@@ -100,22 +107,27 @@
 </script>
 
 <div class="thl" bind:this={listEl} data-track-headers>
+{#if stack.groupCount > 0}
+  <RowSectionHeader id="groups" title="Groups" icon="group" count={stack.groupCount} folded={!stack.groupsOpen}
+    ontoggle={() => setGroupsOpen(!stack.groupsOpen)} height={groupsHeaderHeight(stack)}
+    summary={stack.groupsOpen ? '' : tracks.slice(0, stack.groupCount).map((t) => t.layerName).join(', ')}
+    help="Group rows: blocks that play across a group of pieces, as one picture or on each piece. Click a row to put Media Library cards on it.">
+    {#snippet actions()}
+      <button class="rsh-act" onmousedown={(e) => e.stopPropagation()} onclick={startGroupRow}
+        title="A row whose blocks play across a group of pieces you pick on the canvas (Left half, Top row…), as one picture or on each piece"
+        data-add-group-row><TimelineIcon name="plus" size={12} />Group</button>
+    {/snippet}
+  </RowSectionHeader>
+{/if}
 {#each tracks as tr, index (tr.id)}
   {#if index === stack.groupCount && stack.section}
-    <button
-      class="ths"
-      class:open={stack.open}
-      style:height="{LAYERS_SECTION_HEIGHT}px"
-      onmousedown={(e) => e.stopPropagation()}
-      onclick={toggleLayersOpen}
-      aria-expanded={stack.open}
-      title={stack.open ? 'Fold the layer rows away (group rows stay)' : 'Show the layer rows'}
-      data-layers-section
-    >
-      <span class="ths-fold" aria-hidden="true">▸</span>
-      <span class="ths-name">Layers</span>
-      <span class="ths-count" data-layers-count>{stack.count}</span>
-    </button>
+    <RowSectionHeader id="layers" title="Layers" icon="layers" count={stack.count} folded={!stack.open}
+      ontoggle={toggleLayersOpen} height={layersHeaderHeight(stack)}
+      help="One row per mapping layer, in the Layers panel's order, and the layers added on a piece. Fold them away when you work with groups.">
+      {#snippet actions()}
+        {#if !stack.open}<span class="ths-blocks" data-layers-count>{blockCount} {blockCount === 1 ? 'block' : 'blocks'}</span>{/if}
+      {/snippet}
+    </RowSectionHeader>
   {/if}
   {#if rowShown(stack, tr)}
   <ShowTrackHeader
@@ -129,6 +141,7 @@
     onpress={(e) => pressHeader(e, tr.id)}
     dragging={reorder?.trackId === tr.id}
     takeover={$liveTakeover.surfaces[tr.layerId] ?? null}
+    layersOn={tr.subRow ? 0 : layersOnPiece.get(tr.layerId) ?? 0}
   />
   {/if}
 {/each}
@@ -136,89 +149,18 @@
   <div class="thl-gap" style:top="{gapY - 1}px" data-track-reorder-gap={reorder.gap}></div>
 {/if}
 </div>
-<div class="tha" style:height="{ADD_TRACK_ROW_HEIGHT}px">
-  <button class="tha-btn tha-group" onmousedown={(e) => e.stopPropagation()} onclick={startGroupRow}
-    title="A row whose blocks play across a group of pieces you pick on the canvas (Left half, Top row…), as one picture or on each piece"
-    data-add-group-row>+ Group row</button>
-  {#if $cameraLaneStore.length === 0 && !$cameraLaneShown}
-    <button class="tha-btn" onmousedown={(e) => e.stopPropagation()} onclick={() => cameraLaneShown.set(true)} title="Shots from the Stage Sim's Demo reel that its camera follows while the show plays" data-add-camera-lane>+ Camera lane</button>
-  {:else}
-    <span class="tha-hint">Rows follow the mapping layers</span>
-  {/if}
-</div>
 
 <style>
   .thl { position: relative; }
-  .ths {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    width: 100%;
-    padding: 0 8px;
-    box-sizing: border-box;
-    font: inherit;
-    font-size: var(--ga-text-meta, 11px);
-    font-weight: var(--ga-weight-control, 600);
-    color: var(--ga-ink-1, #a8a8b3);
-    background: rgba(255, 255, 255, 0.025);
-    border: 0;
-    border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
-    cursor: pointer;
-    text-align: left;
-  }
-  .ths-fold { display: inline-block; width: 10px; font-size: 10px; transition: transform 0.12s; }
-  .ths.open .ths-fold { transform: rotate(90deg); }
-  .ths:hover { color: #fff; background: rgba(255, 255, 255, 0.05); }
-  .ths-name { text-transform: none; letter-spacing: 0.02em; }
-  .ths-count {
-    min-width: 16px;
-    padding: 0 5px;
-    border-radius: 8px;
-    font-size: 10px;
-    line-height: 15px;
-    text-align: center;
-    color: var(--ga-ink-1, #a8a8b3);
-    background: rgba(255, 255, 255, 0.07);
-  }
+  .ths-blocks { font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); font-size: 10px; color: var(--ga-ink-2, #89857e); padding-right: 2px; }
   .thl-gap {
     position: absolute;
     left: 0;
     right: 0;
     height: 2px;
-    background: #FFD96B;
-    box-shadow: 0 0 6px rgba(255, 217, 107, 0.7);
+    background: var(--tl-on, #ff725f);
+    box-shadow: 0 0 6px var(--tl-on-line, rgba(255, 114, 95, 0.46));
     pointer-events: none;
     z-index: 5;
   }
-  .tha {
-    display: flex;
-    align-items: center;
-    padding: 0 8px;
-    box-sizing: border-box;
-    border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
-  }
-  .tha-btn {
-    /* Shrinks (with an ellipsis) rather than overrun the header column in
-       languages with longer words; the title carries the full text. */
-    flex: 0 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    height: 20px;
-    padding: 0 8px;
-    font: inherit;
-    font-size: var(--ga-text-meta, 11px);
-    font-weight: var(--ga-weight-control, 600);
-    color: color-mix(in srgb, #8b7cff 70%, #ffffff);
-    background: rgba(139, 124, 255, 0.08);
-    border: 1px solid rgba(139, 124, 255, 0.4);
-    border-radius: var(--ga-r-hard, 3px);
-    cursor: pointer;
-  }
-  .tha-btn:hover { border-color: rgba(139, 124, 255, 0.8); color: #fff; }
-  .tha { gap: 6px; }
-  .tha-btn.tha-group { color: #fff; background: color-mix(in srgb, var(--ga-icon, #5278ff) 18%, transparent); border-color: color-mix(in srgb, var(--ga-icon, #5278ff) 60%, transparent); }
-  .tha-btn.tha-group:hover { border-color: var(--ga-icon, #5278ff); }
-  .tha-hint { font-size: var(--ga-text-meta, 11px); color: var(--ga-ink-2, #55555f); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 </style>

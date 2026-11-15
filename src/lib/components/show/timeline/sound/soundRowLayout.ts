@@ -8,14 +8,29 @@ import { soundRowsFor, type SoundRow } from '../../../../timeline/sound/soundMod
 import { lineLayout, soundLineGroup } from '../lineUi';
 import { showSlice } from '../timelineSlices';
 
-export const SOUND_ROW_HEIGHT = 52;
-/** The "+ Sound row / + Live row" strip under the rows. */
-export const SOUND_FOOTER_HEIGHT = 26;
+/** The first audio row (the song, with its waveform). */
+export const SOUND_ROW_HEIGHT = 56;
+/** Every other audio row. */
+export const SOUND_ROW_HEIGHT_SM = 40;
+/** The empty Audio row: a card that takes the first song. */
+export const SOUND_EMPTY_HEIGHT = 112;
+/** Nothing under the rows any more: "+ Row" adds audio and Ableton clips rows. */
+export const SOUND_FOOTER_HEIGHT = 0;
+
+/** A row's own strip (without its lines). */
+export function soundStripHeight(index: number, empty = false): number {
+  if (index === 0) return empty ? SOUND_EMPTY_HEIGHT : SOUND_ROW_HEIGHT;
+  return SOUND_ROW_HEIGHT_SM;
+}
 
 export interface SoundRowsLayout {
   rows: SoundRow[];
   /** Each row's strip + lines. */
   heights: number[];
+  /** Each row's own strip. */
+  strips: number[];
+  /** The show has no audio yet: the first row is the "Drop audio here" card. */
+  empty: boolean;
   /** Top of each row in the stack. */
   tops: number[];
   /** Lines height under each row. */
@@ -23,19 +38,23 @@ export interface SoundRowsLayout {
   total: number;
 }
 
-export function computeSoundLayout(rows: SoundRow[], lineHeight: (rowId: string) => number): SoundRowsLayout {
+export function computeSoundLayout(rows: SoundRow[], lineHeight: (rowId: string) => number, empty = false): SoundRowsLayout {
   const heights: number[] = [];
+  const strips: number[] = [];
   const tops: number[] = [];
   const lineHeights: number[] = [];
+  const isEmpty = empty && rows.length > 0 && rows[0].kind === 'audio';
   let y = 0;
-  for (const row of rows) {
+  rows.forEach((row, i) => {
     const lh = lineHeight(row.id);
+    const strip = soundStripHeight(i, isEmpty);
     tops.push(y);
     lineHeights.push(lh);
-    heights.push(SOUND_ROW_HEIGHT + lh);
-    y += SOUND_ROW_HEIGHT + lh;
-  }
-  return { rows, heights, tops, lineHeights, total: y + SOUND_FOOTER_HEIGHT };
+    strips.push(strip);
+    heights.push(strip + lh);
+    y += strip + lh;
+  });
+  return { rows, heights, strips, tops, lineHeights, empty: isEmpty, total: y + SOUND_FOOTER_HEIGHT };
 }
 
 /** The row under a y inside the stack (clamped), or -1 above it. */
@@ -47,7 +66,11 @@ export function soundRowAt(layout: Pick<SoundRowsLayout, 'tops' | 'heights'>, y:
 
 export const soundLayout: Readable<SoundRowsLayout> = derived(
   [showSlice('sound'), showSlice('audioTracks'), lineLayout],
-  ([sound, tracks, layout]) => computeSoundLayout(soundRowsFor(sound, tracks), (id) => layout.heights.get(soundLineGroup(id)) ?? 0),
+  ([sound, tracks, layout]) => computeSoundLayout(
+    soundRowsFor(sound, tracks),
+    (id) => layout.heights.get(soundLineGroup(id)) ?? 0,
+    tracks.length === 0 && !(sound?.builds?.length),
+  ),
 );
 
 /** 0xRRGGBB → css. */

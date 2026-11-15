@@ -46,7 +46,7 @@
     showTransitionWindow,
   } from '../stores/showTimeline';
   import { TRANSITION_OPTIONS } from '../stores/presetTransition';
-  import type { CompositionTransitionStyle, ShowAudioTrack, ShowLayerClip, ShowLayerTrack, ShowPresetClip } from '../types';
+  import type { CompositionTransitionStyle, Effect, ShowAudioTrack, ShowLayerClip, ShowLayerTrack, ShowPresetClip, StageEffect } from '../types';
   import { compositions } from '../stores/layers';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
   import { clipAudioBus, clipAudioMaster, CLIP_AUDIO_BLOCK_TEXT } from '../audio/clipAudioBus';
@@ -55,6 +55,10 @@
   import TimelineToolbar from './show/timeline/TimelineToolbar.svelte';
   import { performShown, sideColumn } from './show/timeline/sideColumn';
   import TimelineSide from './show/timeline/TimelineSide.svelte';
+  import RowSectionHeader from './show/timeline/RowSectionHeader.svelte';
+  import RowSectionLane from './show/timeline/RowSectionLane.svelte';
+  import AddRowMenu from './show/timeline/AddRowMenu.svelte';
+  import { SECTION_HEADER_HEIGHT, askedRows, rowPresence, sectionFolds, sendFold, setShowEveryRow, showEveryRow, stageSummary } from './show/timeline/rowSections';
   import { roomToWork, toggleRoomToWork } from './show/timeline/roomToWork';
   import { openExternalUrl } from '$lib/bridge';
 
@@ -131,7 +135,8 @@
   import StageFxRowHeaders from './show/timeline/StageFxRowHeaders.svelte';
   import StageFxRowLanes from './show/timeline/StageFxRowLanes.svelte';
   import StageFxBlockInspector from './show/timeline/StageFxBlockInspector.svelte';
-  import { STAGE_FX_ROWS_HEIGHT, blockName as stageBlockName } from './show/timeline/stageFxRowsUi';
+  import { STAGE_FX_ROWS, STAGE_FX_ROW_HEIGHT, blockName as stageBlockName, newBlockEffect, newScreenFx } from './show/timeline/stageFxRowsUi';
+  import { carriesStageDrag, readStageDrag } from '../timeline/stagefx/stageClips';
   import { ledRows, ledGroupFolded, ledGroupHeight } from './show/timeline/ledRowsUi';
   import { ledClipName } from '../timeline/leds/ledClips';
   import { edgeLook } from '../looks/edgeLookCatalog';
@@ -367,12 +372,17 @@
 
   const PRESET_LANE_HEIGHT = 46;
   /** The Timeline's Looks row. */
-  const LOOK_LANE_HEIGHT = 40;
-  const SECTION_LANE_HEIGHT = 28;
+  const LOOK_LANE_HEIGHT = 32;
   /** The Timeline's Presets row (shorter than the Show's preset lane). */
-  const PRESET_ROW_HEIGHT = 34;
+  const PRESET_ROW_HEIGHT = 32;
   const AUDIO_LANE_HEIGHT = 52;
-  const RULER_HEIGHT = 20;
+  const RULER_HEIGHT = 26;
+  /** The Timeline's sections band, pinned under the ruler. */
+  const BAND_HEIGHT = 22;
+  /** Ruler and band: the corner cell beside them. */
+  const HEAD_H = RULER_HEIGHT + BAND_HEIGHT;
+  /** The "+ Row" row at the end of the list. */
+  const ADD_ROW_HEIGHT = 28;
 
   // ── Tray height ────────────────────────────────────────────────────────
   // This is a bottom TRAY, not a takeover. It sizes to exactly the height its
@@ -470,7 +480,6 @@
   const looksLines = $derived(isTimeline ? $lineLayout.lines.get(LOOKS_GROUP) ?? [] : []);
   const stageLines = $derived(isTimeline ? $lineLayout.lines.get(STAGE_GROUP) ?? [] : []);
   const looksLinesH = $derived(isTimeline ? ($lineLayout.heights.get(LOOKS_GROUP) ?? 0) : 0);
-  const stageRowH = $derived(isTimeline ? STAGE_ROW_HEIGHT + STAGE_FX_ROWS_HEIGHT + ($lineLayout.heights.get(STAGE_GROUP) ?? 0) : 0);
   const stageBlockNames = $derived(Object.fromEntries(stageClipsAll.map((c) => [c.id, stageBlockName(c)])));
   const stageBlockSpans = $derived(Object.fromEntries(stageClipsAll.map((c) => [c.id, { start: c.startTime, end: c.startTime + c.duration }])));
   // The LEDs group (one row per WLED controller and range) and its blocks' lines.
@@ -499,9 +508,42 @@
     linePicker = linePicker ? null : { x: r.left, y: r.top - 4, group };
   }
   /** The lane under the ruler: Presets on the Show, Looks on the Timeline. */
-  const topLaneH = $derived(isTimeline ? SECTION_LANE_HEIGHT + PRESET_ROW_HEIGHT + LOOK_LANE_HEIGHT : PRESET_LANE_HEIGHT);
+  const topLaneH = PRESET_LANE_HEIGHT;
   // The Stage camera lane sits under the audio lanes once it has shots (or was asked for).
-  const cameraLaneH = $derived(cameraLane.length > 0 || $cameraLaneShown ? CAMERA_LANE_HEIGHT : 0);
+  // ── Sections of rows (rowSections.ts): what shows, what is folded ─────────
+  const folds = $derived($sectionFolds);
+  const presence = $derived(rowPresence({
+    presets: presetClips.length,
+    looks: lookClips.length,
+    looksLines: looksLines.length,
+    screenfx: stageClipsAll.filter((c) => c.row === 'screenfx').length,
+    effects: stageClipsAll.filter((c) => c.row === 'effects').length,
+    ledRows: $ledRows.length,
+    camera: cameraLane.length + ($cameraLaneShown ? 1 : 0),
+    groupRows: 0,
+    controlLines: stageLines.length,
+  }, $askedRows, $showEveryRow));
+  const stageFxRows = $derived(STAGE_FX_ROWS.filter((r) => presence[r]));
+  const stageRowCount = $derived([presence.presets, presence.looks, presence.screenfx, presence.effects, presence.camera].filter(Boolean).length + $ledRows.length);
+  const STAGE_ROW_LABELS = { presets: 'Presets', looks: 'Looks', screenfx: 'Screen FX', effects: 'Effects', leds: 'LEDs', camera: 'Camera' } as const;
+  const stageSummaryText = $derived(stageSummary(presence, STAGE_ROW_LABELS));
+  const audioSummary = $derived(audioTracks.map((t) => t.name.replace(/\.[a-z0-9]+$/i, '')).join(', '));
+  const cameraLaneH = $derived((isTimeline ? presence.camera : cameraLane.length > 0 || $cameraLaneShown) ? CAMERA_LANE_HEIGHT : 0);
+  /** Stage & FX: its header and (open) its rows. */
+  const stageSectionH = $derived(!isTimeline || !presence.stage ? 0 : SECTION_HEADER_HEIGHT + (folds.stage ? 0
+    : (presence.presets ? PRESET_ROW_HEIGHT : 0) + (presence.looks ? LOOK_LANE_HEIGHT + looksLinesH : 0)
+      + stageFxRows.length * STAGE_FX_ROW_HEIGHT + ledRowsH + cameraLaneH));
+  const stageLinesH = $derived(isTimeline && stageLines.length ? $lineLayout.heights.get(STAGE_GROUP) ?? 0 : 0);
+  /** Control: its header and (open) the stage-wide lines. */
+  const controlSectionH = $derived(!isTimeline || !presence.control ? 0 : SECTION_HEADER_HEIGHT + (folds.control ? 0 : stageLinesH));
+  /** The Audio section: its header and (open) its rows. */
+  const audioSectionH = $derived(isTimeline ? SECTION_HEADER_HEIGHT + (folds.audio ? 0 : $soundLayout.total) : 0);
+  /** Above the rows: the ruler (and the sections band on the Timeline). */
+  const headH = $derived(isTimeline ? HEAD_H : RULER_HEIGHT);
+  let addRowFrom: 'corner' | 'stage' | 'foot' | null = $state(null);
+  let cornerRowAnchor: HTMLElement | undefined = $state();
+  let stageRowAnchor: HTMLElement | undefined = $state();
+  let footRowAnchor: HTMLElement | undefined = $state();
   const audioLaneCount = $derived(Math.max(1, audioTracks.reduce((m, t) => Math.max(m, t.lane + 1), 0)));
   const audioLanes = $derived(Array.from({ length: audioLaneCount }, (_, i) => i));
   /** Each audio lane's tracks, in show order. */
@@ -512,7 +554,9 @@
   });
   // The Timeline's audio is its sound rows (their own heights, lines and footer).
   const audioStackH = $derived(isTimeline ? $soundLayout.total : audioLaneCount * AUDIO_LANE_HEIGHT);
-  const laneStackH = $derived(RULER_HEIGHT + topLaneH + looksLinesH + tracksH + stageRowH + ledRowsH + audioStackH + cameraLaneH);
+  const laneStackH = $derived(isTimeline
+    ? HEAD_H + audioSectionH + tracksH + stageSectionH + controlSectionH + ADD_ROW_HEIGHT
+    : RULER_HEIGHT + topLaneH + audioStackH + cameraLaneH);
   const hasTracks = $derived(isTimeline && layerTracks.length > 0);
   /** Something to edit on the Timeline: the edit tools show once there is. */
   const hasBlocks = $derived(audioTracks.length > 0 || presetClips.length > 0 || lookClips.length > 0
@@ -626,11 +670,15 @@
   function laneAt(e: DragEvent): number {
     if (!gridEl) return 0;
     const rect = gridEl.getBoundingClientRect();
-    // Lane order: ruler, presets / Looks (+ its lines), layer tracks, Stage row,
-    // LED rows, then the audio lanes (the Timeline's sound rows, each with its lines).
-    const y = e.clientY - rect.top + gridEl.scrollTop - RULER_HEIGHT - topLaneH - looksLinesH - tracksH - stageRowH - ledRowsH;
+    // The Timeline: ruler and band, then the Audio section's header and rows
+    // (each with its lines). The Show: ruler, presets, then the audio lanes.
+    if (isTimeline) {
+      if (folds.audio) return 0;
+      const y = e.clientY - rect.top + gridEl.scrollTop - HEAD_H - SECTION_HEADER_HEIGHT;
+      return y < 0 ? 0 : Math.max(0, soundRowAt($soundLayout, y));
+    }
+    const y = e.clientY - rect.top + gridEl.scrollTop - RULER_HEIGHT - topLaneH;
     if (y < 0) return 0;
-    if (isTimeline) return Math.max(0, soundRowAt($soundLayout, y));
     return Math.max(0, Math.min(audioLaneCount, Math.floor(y / AUDIO_LANE_HEIGHT)));
   }
 
@@ -746,6 +794,24 @@
     const dt = e.dataTransfer;
     if (!dt) return;
     const dropTime = timeAt(e);
+
+    // A Screen FX or effect card dropped off its row (the row may not show
+    // yet: rows appear when used): a block on its row at the drop.
+    if (isTimeline) {
+      for (const row of STAGE_FX_ROWS) {
+        if (!carriesStageDrag(dt, row)) continue;
+        const payload = readStageDrag(dt, row);
+        if (!payload) return;
+        if (row === 'screenfx') {
+          const fx = payload as StageEffect;
+          showTimeline.addStageClip('screenfx', dropTime, { screenFx: newScreenFx(fx.type, fx) });
+        } else {
+          const fx = payload as Effect;
+          showTimeline.addStageClip('effects', dropTime, { effect: newBlockEffect(fx.type, fx.params, fx) });
+        }
+        return;
+      }
+    }
 
     // A Look card from the Looks gallery: a block on the Looks row.
     const look = readEdgeLookDrag(dt);
@@ -1669,14 +1735,6 @@
   </button>
 {/snippet}
 
-{#snippet timelineInterimTools()}
-  <button class="t-chip t-iconable" onclick={() => audioInput?.click()} title="Add audio from this computer at the playhead: a song, stems or a sound" aria-label="Add audio">
-    <TimelineIcon name="song" /><span class="t-label">Add audio</span>
-  </button>
-  <button class="t-chip t-iconable" onclick={addMarkerAtPlayhead} title="Add a marker at the playhead. It fires the selected cue when the timeline plays across it." aria-label="Add a marker at the playhead. It fires the selected cue when the timeline plays across it." data-show-add-marker>
-    <TimelineIcon name="marker" /><span class="t-label">Marker</span>
-  </button>
-{/snippet}
 
 {#if !hiddenInVJ}
   <button data-help-page="show-timeline"
@@ -1729,7 +1787,7 @@
       goWord={toolbarGoWord}
       go={() => showTimeline.go()}
       {hasBlocks}
-      showDocTools={isTimeline ? timelineInterimTools : showDocTools}
+      showDocTools={isTimeline ? undefined : showDocTools}
     />
     <input
       class="hidden-file"
@@ -1746,66 +1804,113 @@
     <!-- Body: lane labels + scrolling grid -->
     <div class="show-body">
       <div class="lane-labels" style="width: {labelWidth}px; flex-basis: {labelWidth}px" onwheel={handleLabelWheel} onscroll={labelsScrolled}>
-        <div class="label-ruler-spacer" style="height: {RULER_HEIGHT}px"></div>
-        <!-- Translated, not scrolled: the grid owns the scroll and the ruler
-             spacer above has to stay pinned the way the sticky ruler does.
-             Matters now that a short tray really can clip the lane stack.
-             Order: presets, layer tracks, audio. -->
+        {#if isTimeline}
+          <!-- The corner cell, pinned beside the ruler and the sections band. -->
+          <div class="tl-corner" style="height: {HEAD_H}px" data-timeline-corner>
+            <div class="corner-top" style="height: {RULER_HEIGHT}px">
+              <button class="cbtn box" bind:this={cornerRowAnchor} onclick={() => (addRowFrom = addRowFrom === 'corner' ? null : 'corner')} title="Add a row: audio, a group, a layer on a piece, Presets, Looks, Screen FX, Effects, LEDs, camera or a control line" aria-expanded={addRowFrom === 'corner'} data-add-row-menu>
+                <TimelineIcon name="plus" size={12} />Row<TimelineIcon name="caret" size={11} />
+              </button>
+              <button class="cbtn" onclick={addMarkerAtPlayhead} title="Add a marker at the playhead (M). It fires the selected cue when the Timeline plays across it." aria-label="Add a marker at the playhead" data-show-add-marker>
+                <TimelineIcon name="flag" size={13} />Marker
+              </button>
+              <span class="corner-grow"></span>
+              <button class="cbtn icon" class:on={$showEveryRow} onclick={() => setShowEveryRow(!$showEveryRow)} title={$showEveryRow ? 'Showing every row: click to show only the rows in use' : 'Show every row, empty ones too'} aria-pressed={$showEveryRow} data-show-every-row><TimelineIcon name="pin" size={13} /></button>
+            </div>
+            <div class="corner-bot" style="height: {BAND_HEIGHT}px" data-sections-label>
+              <span class="corner-eyebrow" title="Named spans of the Timeline with what happens at their end: play through, hold for GO, loop until GO, jump, or hand to the VJ decks.">Sections</span>
+              <button class="cbtn icon" onclick={addSectionAtPlayhead} title="Add a section at the playhead (8 bars, or up to the next section)" aria-label="Add a section at the playhead" data-section-add><TimelineIcon name="plus" size={12} /></button>
+              <span class="corner-grow"></span>
+              <SectionsLiveMenu />
+            </div>
+          </div>
+        {:else}
+          <div class="label-ruler-spacer" style="height: {RULER_HEIGHT}px"></div>
+        {/if}
+        <!-- Translated, not scrolled: the grid owns the scroll and the corner
+             above has to stay pinned the way the sticky ruler does. -->
         <div class="label-rows" style="transform: translateY({-laneScrollTop}px)">
           {#if isTimeline}
-          <div class="lane-label sections" style="height: {SECTION_LANE_HEIGHT}px" data-sections-label>
-            <span class="lane-name" title="Named spans of the Timeline with what happens at their end: play through, hold for GO, loop until GO, jump, or Live (pieces to the VJ decks until GO).">Sections</span>
-            <button class="lane-line-add" onclick={addSectionAtPlayhead} title="Add a section at the playhead (8 bars, or up to the next section)" data-section-add>+</button>
-            <button class="lane-line-add score" onclick={() => autoShowOpen.set(true)} disabled={!audioTracks.length} title={audioTracks.length ? 'Auto show: a whole show on your mapping from the song on the Audio row (sections, content on the pieces, looks, Screen FX)' : 'Drop a song on the Audio row first'} data-auto-show-open><TimelineIcon name="sparkle" size={12} />Auto</button>
-            <SectionsLiveMenu />
-          </div>
-          <div class="lane-label preset timeline-presets" style="height: {PRESET_ROW_HEIGHT}px" data-presets-label>
-            <span class="lane-name" title="Presets along the Timeline: each block loads a saved preset (the whole stage, its groups and content) at its start, with transitions between them. Drag a preset here from the Presets tray. The rows below play over it.">Presets</span>
-            <select class="lane-preset-add" value="" disabled={comps.length === 0}
-              title={comps.length ? 'Put a preset on the Presets row at the playhead' : 'Save a preset in the Presets tray first'}
-              onchange={(e) => { const el = e.currentTarget as HTMLSelectElement; addPresetAtPlayhead(el.value); el.value = ''; }}
-              aria-label="Add a preset at the playhead" data-timeline-preset-add>
-              <option value="">+</option>
-              {#each comps as comp (comp.id)}<option value={comp.id}>{comp.name}</option>{/each}
-            </select>
-          </div>
-          <div class="lane-label look" style="height: {LOOK_LANE_HEIGHT}px">
-            <span class="lane-name" title="Shape Looks along the Timeline: drag a Look card from the Looks gallery here. The shapes wear it for the block's span; overlapping blocks crossfade.">Looks</span>
-            {#if lookClips.length > 0}
-              <button class="lane-line-add" onclick={(e) => openLinePicker(e, 'looks')} title="Add a control line for a look block: intensity, speed, color step, beat reaction, chase" data-line-picker-looks aria-label="Add a control line"><TimelineIcon name="line-add" size={13} /></button>
-            {/if}
-          </div>
-          {#if looksLines.length}
-            <LineHeaders groupId={LOOKS_GROUP} lines={looksLines} expanded={$lineLayout.expanded.has(LOOKS_GROUP)} blockNames={lookNames} />
-          {/if}
+          <RowSectionHeader id="audio" title="Audio" icon="wave" count={audioTracks.length} folded={folds.audio} ontoggle={() => sendFold({ kind: 'toggle', id: 'audio' })}
+            summary={audioSummary} help="Audio rows: the song, stems and one-shots, and Ableton clips rows. The first song's tempo is the grid.">
+            {#snippet actions()}
+              <button class="rsh-act" onclick={() => audioInput?.click()} title="Add audio from this computer at the playhead: a song, stems or a sound" data-add-audio><TimelineIcon name="plus" size={12} />Add audio</button>
+              <button class="rsh-act" onclick={() => autoShowOpen.set(true)} disabled={!audioTracks.length}
+                title={audioTracks.length ? 'Auto show: a whole show on your mapping from the song (sections, content on the pieces, looks, Screen FX)' : 'Add audio first'}
+                data-auto-show-open data-auto-show-song><TimelineIcon name="sparkle" size={12} />Auto show</button>
+            {/snippet}
+          </RowSectionHeader>
+          {#if !folds.audio}<SoundRowHeaders />{/if}
           <ShowTrackHeaders />
-          <div class="lane-label stage" style="height: {STAGE_ROW_HEIGHT}px" data-stage-row>
-            <span class="lane-name" title="The whole stage: Screen FX, composition effects and LEDs. Blocks on its rows and lines here drive them along the Timeline.">Stage</span>
-            <button class="lane-line-add" onclick={(e) => openLinePicker(e, 'stage')} title="Add a control line for a composition effect (Effects tab) or LED parameter" data-line-picker-stage>⌇+</button>
+          {#if presence.stage}
+            <RowSectionHeader id="stage" title="Stage & FX" icon="stage" count={stageRowCount} folded={folds.stage} ontoggle={() => sendFold({ kind: 'toggle', id: 'stage' })}
+              summary={stageSummaryText} help="The whole stage: Presets, Looks, Screen FX, composition effects, LEDs and the Stage Sim camera. A row shows once it is used; + Row adds one.">
+              {#snippet actions()}
+                <button class="rsh-act" bind:this={stageRowAnchor} onclick={() => (addRowFrom = addRowFrom === 'stage' ? null : 'stage')} title="Add a row" data-stage-add-row><TimelineIcon name="plus" size={12} />Row</button>
+              {/snippet}
+            </RowSectionHeader>
+            {#if !folds.stage}
+              {#if presence.presets}
+                <div class="lane-label row32 timeline-presets" style="height: {PRESET_ROW_HEIGHT}px" data-presets-label>
+                  <span class="row-stripe preset" aria-hidden="true"></span>
+                  <span class="row-icon"><TimelineIcon name="preset" size={15} /></span>
+                  <span class="lane-name" title="Presets along the Timeline: each block loads a saved preset (the whole stage, its groups and content) at its start, with transitions between them. Drag a preset here from the Presets tray. The rows below play over it.">Presets</span>
+                  <select class="lane-preset-add" value="" disabled={comps.length === 0}
+                    title={comps.length ? 'Put a preset on the Presets row at the playhead' : 'Save a preset in the Presets tray first'}
+                    onchange={(e) => { const el = e.currentTarget as HTMLSelectElement; addPresetAtPlayhead(el.value); el.value = ''; }}
+                    aria-label="Add a preset at the playhead" data-timeline-preset-add>
+                    <option value="">+</option>
+                    {#each comps as comp (comp.id)}<option value={comp.id}>{comp.name}</option>{/each}
+                  </select>
+                </div>
+              {/if}
+              {#if presence.looks}
+                <div class="lane-label row32 look" style="height: {LOOK_LANE_HEIGHT}px">
+                  <span class="row-stripe look" aria-hidden="true"></span>
+                  <span class="row-icon"><TimelineIcon name="look" size={15} /></span>
+                  <span class="lane-name" title="Shape Looks along the Timeline: drag a Look card from the Looks gallery here. The shapes wear it for the block's span; overlapping blocks crossfade.">Looks</span>
+                  {#if lookClips.length > 0}
+                    <button class="lane-line-add" onclick={(e) => openLinePicker(e, 'looks')} title="Add a control line for a look block: intensity, speed, colour step, beat reaction, chase" data-line-picker-looks aria-label="Add a control line"><TimelineIcon name="line-add" size={14} /></button>
+                  {/if}
+                </div>
+                {#if looksLines.length}
+                  <LineHeaders groupId={LOOKS_GROUP} lines={looksLines} expanded={$lineLayout.expanded.has(LOOKS_GROUP)} blockNames={lookNames} />
+                {/if}
+              {/if}
+              {#if stageFxRows.length}<StageFxRowHeaders rows={stageFxRows} />{/if}
+              <LedRowHeaders />
+              {#if ledLines.length && $ledRows.length}
+                <LineHeaders groupId={LEDS_GROUP} lines={ledLines} expanded={$lineLayout.expanded.has(LEDS_GROUP)} blockNames={ledNames} />
+              {/if}
+              {#if cameraLaneH > 0}<ShowCameraLaneLabel />{/if}
+            {/if}
+          {/if}
+          {#if presence.control}
+            <RowSectionHeader id="control" title="Control" icon="control" count={stageLines.length} folded={folds.control} ontoggle={() => sendFold({ kind: 'toggle', id: 'control' })}
+              summary={stageLines.map((l) => l.label ?? l.key).join(', ')} help="Stage-wide control lines: composition effects, LED settings, world settings. Each can follow the song, a stem, the beat or a knob.">
+              {#snippet actions()}
+                <button class="rsh-act" onclick={(e) => openLinePicker(e, 'stage')} title="Add a control line for a composition effect (Effects tab), an LED setting or a world setting" data-line-picker-stage><TimelineIcon name="plus" size={12} />Line</button>
+              {/snippet}
+            </RowSectionHeader>
+            {#if !folds.control && stageLines.length}
+              <LineHeaders groupId={STAGE_GROUP} lines={stageLines} expanded={$lineLayout.expanded.has(STAGE_GROUP)} blockNames={stageBlockNames} />
+            {/if}
+          {/if}
+          <div class="tl-addrow" style="height: {ADD_ROW_HEIGHT}px">
+            <button class="cbtn box" bind:this={footRowAnchor} onclick={() => (addRowFrom = addRowFrom === 'foot' ? null : 'foot')} title="Add a row" data-add-row-foot><TimelineIcon name="plus" size={12} />Row<TimelineIcon name="caret" size={11} /></button>
+            <span class="tl-addrow-hint">audio, group, looks, Screen FX, LEDs, camera, line</span>
           </div>
-          <StageFxRowHeaders />
-          {#if stageLines.length}
-            <LineHeaders groupId={STAGE_GROUP} lines={stageLines} expanded={$lineLayout.expanded.has(STAGE_GROUP)} blockNames={stageBlockNames} />
-          {/if}
-          <LedRowHeaders />
-          {#if ledLines.length && $ledRows.length}
-            <LineHeaders groupId={LEDS_GROUP} lines={ledLines} expanded={$lineLayout.expanded.has(LEDS_GROUP)} blockNames={ledNames} />
-          {/if}
           {:else}
           <div class="lane-label preset" style="height: {PRESET_LANE_HEIGHT}px">
             <span class="lane-name" title="Presets launched along the show, with transitions between them.">Presets</span>
           </div>
-          {/if}
-          {#if isTimeline}
-            <SoundRowHeaders />
-          {:else}
           {#each audioLanes as lane}
             <div class="lane-label audio" style="height: {AUDIO_LANE_HEIGHT}px">
               <span class="lane-name">Audio {lane + 1}</span>
             </div>
           {/each}
-          {/if}
           {#if cameraLaneH > 0}<ShowCameraLaneLabel />{/if}
+          {/if}
         </div>
       </div>
 
@@ -1850,54 +1955,73 @@
           {/each}
         </div>
 
+        {#if isTimeline}
+          <!-- The sections band, pinned under the ruler. -->
+          <div class="tl-band" style="width: {totalWidth}px; height: {BAND_HEIGHT}px; top: {RULER_HEIGHT}px">
+            <SectionLane {sections} {tempo} height={BAND_HEIGHT} {zoom} {viewStart} {viewEnd} {selection} snap={snapEnabled} />
+          </div>
+        {/if}
         <div class="lanes" style="width: {totalWidth}px">
           {#if isTimeline}
-          <SectionLane {sections} {tempo} height={SECTION_LANE_HEIGHT} {zoom} {viewStart} {viewEnd} {selection} snap={snapEnabled} />
-          <ShowPresetLane
-            clips={presetClips}
-            {junctions}
-            height={PRESET_ROW_HEIGHT}
-            emptyHint="Drop a preset card from the Presets tray here, or choose one with + (it goes in at the playhead)."
-            {zoom}
-            {viewStart}
-            {viewEnd}
-            {selection}
-            {activeClipId}
-            names={compositionNames}
-            {transitionDragActive}
-            {transitionDropTarget}
-            onblockdrag={(e, id, start) => startBlockDrag(e, 'preset', id, start)}
-            onblockresize={(e, id, edge) => startBlockResize(e, 'preset', id, edge)}
-            ontransitionresize={startTransitionResize}
-            oncreatetransition={createTransitionAt}
-            onselecttransition={(clipId) => showTimeline.select({ kind: 'transition', id: clipId })}
-            onremovetransition={(clipId) => showTimeline.removeTransitionAt(clipId)}
-          />
-          <ShowLookLane
-            clips={lookClips}
-            height={LOOK_LANE_HEIGHT}
-            {zoom}
-            {viewStart}
-            {viewEnd}
-            {selection}
-            dropActive={lookDropActive}
-            onblockdrag={(e, id, start) => startBlockDrag(e, 'look', id, start)}
-            onblockresize={(e, id, edge) => startBlockResize(e, 'look', id, edge)}
-          />
-
-          {#if looksLines.length}
-            <LineLanes groupId={LOOKS_GROUP} lines={looksLines} expanded={$lineLayout.expanded.has(LOOKS_GROUP)} {zoom} {viewStart} {viewEnd} blockSpans={lookSpans} />
-          {/if}
+          <RowSectionLane id="audio" />
+          {#if !folds.audio}<SoundRowLanes {zoom} {viewStart} {viewEnd} />{/if}
           <ShowTrackLanes {zoom} {viewStart} {viewEnd} width={totalWidth} />
-          <div class="stage-row-strip" style="height: {STAGE_ROW_HEIGHT}px"></div>
-          <StageFxRowLanes {zoom} {viewStart} {viewEnd} width={totalWidth} {selection} />
-          {#if stageLines.length}
-            <LineLanes groupId={STAGE_GROUP} lines={stageLines} expanded={$lineLayout.expanded.has(STAGE_GROUP)} {zoom} {viewStart} {viewEnd} blockSpans={stageBlockSpans} />
+          {#if presence.stage}
+            <RowSectionLane id="stage" />
+            {#if !folds.stage}
+              {#if presence.presets}
+                <ShowPresetLane
+                  clips={presetClips}
+                  {junctions}
+                  height={PRESET_ROW_HEIGHT}
+                  emptyHint="Drop a preset card from the Presets tray here, or choose one with + (it goes in at the playhead)."
+                  {zoom}
+                  {viewStart}
+                  {viewEnd}
+                  {selection}
+                  {activeClipId}
+                  names={compositionNames}
+                  {transitionDragActive}
+                  {transitionDropTarget}
+                  onblockdrag={(e, id, start) => startBlockDrag(e, 'preset', id, start)}
+                  onblockresize={(e, id, edge) => startBlockResize(e, 'preset', id, edge)}
+                  ontransitionresize={startTransitionResize}
+                  oncreatetransition={createTransitionAt}
+                  onselecttransition={(clipId) => showTimeline.select({ kind: 'transition', id: clipId })}
+                  onremovetransition={(clipId) => showTimeline.removeTransitionAt(clipId)}
+                />
+              {/if}
+              {#if presence.looks}
+                <ShowLookLane
+                  clips={lookClips}
+                  height={LOOK_LANE_HEIGHT}
+                  {zoom}
+                  {viewStart}
+                  {viewEnd}
+                  {selection}
+                  dropActive={lookDropActive}
+                  onblockdrag={(e, id, start) => startBlockDrag(e, 'look', id, start)}
+                  onblockresize={(e, id, edge) => startBlockResize(e, 'look', id, edge)}
+                />
+                {#if looksLines.length}
+                  <LineLanes groupId={LOOKS_GROUP} lines={looksLines} expanded={$lineLayout.expanded.has(LOOKS_GROUP)} {zoom} {viewStart} {viewEnd} blockSpans={lookSpans} />
+                {/if}
+              {/if}
+              {#if stageFxRows.length}<StageFxRowLanes {zoom} {viewStart} {viewEnd} width={totalWidth} {selection} rows={stageFxRows} />{/if}
+              <LedRowLanes {zoom} {viewStart} {viewEnd} width={totalWidth} {selection} />
+              {#if ledLines.length && $ledRows.length}
+                <LineLanes groupId={LEDS_GROUP} lines={ledLines} expanded={$lineLayout.expanded.has(LEDS_GROUP)} {zoom} {viewStart} {viewEnd} blockSpans={ledSpans} />
+              {/if}
+              {#if cameraLaneH > 0}<ShowCameraLane {zoom} />{/if}
+            {/if}
           {/if}
-          <LedRowLanes {zoom} {viewStart} {viewEnd} width={totalWidth} {selection} />
-          {#if ledLines.length && $ledRows.length}
-            <LineLanes groupId={LEDS_GROUP} lines={ledLines} expanded={$lineLayout.expanded.has(LEDS_GROUP)} {zoom} {viewStart} {viewEnd} blockSpans={ledSpans} />
+          {#if presence.control}
+            <RowSectionLane id="control" />
+            {#if !folds.control && stageLines.length}
+              <LineLanes groupId={STAGE_GROUP} lines={stageLines} expanded={$lineLayout.expanded.has(STAGE_GROUP)} {zoom} {viewStart} {viewEnd} blockSpans={stageBlockSpans} />
+            {/if}
           {/if}
+          <div class="tl-addrow-lane" style="height: {ADD_ROW_HEIGHT}px"></div>
           {:else}
           <ShowPresetLane
             clips={presetClips}
@@ -1918,11 +2042,6 @@
             onselecttransition={(clipId) => showTimeline.select({ kind: 'transition', id: clipId })}
             onremovetransition={(clipId) => showTimeline.removeTransitionAt(clipId)}
           />
-          {/if}
-
-          {#if isTimeline}
-            <SoundRowLanes {zoom} {viewStart} {viewEnd} />
-          {:else}
           {#each audioLanes as lane}
             <ShowAudioLane
               tracks={audioByLane[lane]}
@@ -1937,12 +2056,12 @@
               onblockresize={(e, id, edge) => startBlockResize(e, 'audio', id, edge)}
             />
           {/each}
-          {/if}
           {#if cameraLaneH > 0}<ShowCameraLane {zoom} />{/if}
+          {/if}
         </div>
 
         {#each barLines as line}
-          <div class="show-bar-line" class:beat={!line.bar} style="left: {line.x}px; top: {RULER_HEIGHT}px; height: {laneStackH - RULER_HEIGHT}px"></div>
+          <div class="show-bar-line" class:beat={!line.bar} style="left: {line.x}px; top: {headH}px; height: {laneStackH - headH}px"></div>
         {/each}
 
         {#each visibleMarkers as marker (marker.id)}
@@ -2006,6 +2125,12 @@
 
 {#if linePicker}
   <LinePicker targets={linePickerTargets} x={linePicker.x} y={linePicker.y} onclose={() => (linePicker = null)} />
+{/if}
+{#if addRowFrom}
+  <AddRowMenu anchor={addRowFrom === 'corner' ? cornerRowAnchor : addRowFrom === 'stage' ? stageRowAnchor : footRowAnchor}
+    placement={addRowFrom === 'foot' ? 'above' : 'below'}
+    onclose={() => (addRowFrom = null)}
+    online={(el) => { const r = el.getBoundingClientRect(); linePicker = { x: r.left, y: r.top - 4, group: 'stage' }; }} />
 {/if}
 
 <style>
@@ -2265,8 +2390,6 @@
   }
   .lane-label.preset .lane-name { color: color-mix(in srgb, var(--ga-coral, #ff6f5e) 75%, #ffffff); }
   .lane-label.look .lane-name { color: color-mix(in srgb, #8c78ff 75%, #ffffff); }
-  .lane-label.stage .lane-name { color: color-mix(in srgb, #5ce1e6 75%, #ffffff); }
-  .lane-label.stage { background: rgba(92, 225, 230, 0.03); }
   .lane-line-add {
     margin-left: auto;
     display: inline-flex;
@@ -2283,7 +2406,6 @@
     cursor: pointer;
   }
   .lane-line-add:hover { color: var(--ga-ink-0, #fff); border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24)); }
-  .lane-label.sections .lane-line-add + .lane-line-add { margin-left: 4px; }
   .lane-preset-add {
     margin-left: auto;
     width: 34px;
@@ -2298,9 +2420,84 @@
     cursor: pointer;
   }
   .lane-preset-add:disabled { opacity: 0.4; cursor: default; }
-  .lane-line-add.score { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; color: var(--ga-icon, #5278ff); border-color: color-mix(in srgb, var(--ga-icon, #5278ff) 55%, transparent); }
   .lane-line-add:disabled { opacity: 0.4; cursor: default; }
-  .stage-row-strip { border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07)); background: rgba(92, 225, 230, 0.03); box-sizing: border-box; }
+
+  /* ── Timeline: header column, corner cell, rows ─────────────────────── */
+  .timeline-doc .lane-labels { background: var(--ga-panel, #100f0d); border-right-color: var(--ga-line-2, rgba(245, 236, 222, 0.13)); position: relative; z-index: 3; }
+  .tl-corner {
+    position: relative;
+    z-index: 2;
+    box-sizing: border-box;
+    background: var(--ga-bar, #100f0d);
+    border-bottom: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+  }
+  .corner-top, .corner-bot { display: flex; align-items: center; gap: 4px; box-sizing: border-box; }
+  .corner-top { padding: 0 6px; }
+  .corner-bot { padding: 0 6px 0 10px; border-top: 1px solid var(--ga-line, rgba(245, 236, 222, 0.07)); }
+  .corner-grow { flex: 1; min-width: 0; }
+  .corner-eyebrow {
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    text-transform: uppercase;
+    color: var(--ga-ink-2, #89857e);
+  }
+  .cbtn {
+    height: 20px;
+    padding: 0 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--ga-ink-1, #ada9a2);
+    font: inherit;
+    font-size: var(--ga-text-meta, 11px);
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .cbtn :global(.tl-icon) { color: var(--ga-icon, #5278ff); }
+  .cbtn :global(.tl-icon:last-child:not(:first-child)) { color: var(--ga-ink-2, #89857e); }
+  .cbtn.box { border-color: var(--ga-line-2, rgba(245, 236, 222, 0.13)); background: var(--ga-card, #16140f); color: var(--ga-ink-0, #f2ede4); }
+  .cbtn.icon { width: 22px; padding: 0; justify-content: center; }
+  .cbtn:hover { background: var(--ga-raise, #26221c); color: var(--ga-ink-0, #f2ede4); }
+  .cbtn.on { background: var(--ga-selection-bg, #1f3170); }
+  .cbtn.on :global(.tl-icon) { color: var(--ga-selection-ink, #e0e8ff); }
+  .lane-label.row32 { position: relative; gap: 6px; padding: 0 4px 0 12px; }
+  .lane-label.row32:hover { background: rgba(245, 236, 222, 0.035); }
+  .lane-label.row32 .lane-name {
+    flex: 1 1 auto;
+    font-size: var(--ga-text-body, 13px);
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 600;
+    color: var(--ga-ink-0, #f2ede4);
+  }
+  .row-stripe { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
+  .row-stripe.preset { background: color-mix(in srgb, #f0c674 85%, transparent); }
+  .row-stripe.look { background: color-mix(in srgb, #8b7cff 85%, transparent); }
+  .row-icon { display: inline-flex; color: var(--ga-icon, #5278ff); }
+  .lane-label.row32 .lane-line-add { margin-left: 0; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--ga-ink-2, #89857e); }
+  .lane-label.row32 .lane-line-add:hover { background: var(--ga-raise, #26221c); color: var(--ga-ink-0, #f2ede4); }
+  .lane-label.row32 .lane-preset-add { margin-left: 0; width: 34px; height: 22px; background: var(--ga-slot, #060504); }
+  .tl-addrow { display: flex; align-items: center; gap: 8px; padding: 0 8px 0 10px; box-sizing: border-box; border-bottom: 1px solid var(--ga-line, rgba(245, 236, 222, 0.07)); }
+  .tl-addrow-hint { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--ga-text-meta, 11px); color: var(--ga-ink-3, #39342c); }
+  .tl-addrow-lane { box-sizing: border-box; border-bottom: 1px solid var(--ga-line, rgba(245, 236, 222, 0.07)); }
+  .tl-band {
+    position: sticky;
+    z-index: 4;
+    box-sizing: border-box;
+    background: var(--ga-panel, #100f0d);
+    border-bottom: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+  }
+  .timeline-doc .show-grid { background: var(--tl-lane-bg, #0c0b09); }
+  .timeline-doc .show-ruler { background: var(--ga-bar, #100f0d); }
+  .timeline-doc .playhead-handle { background: var(--tl-on, #ff725f); clip-path: polygon(0 0, 100% 0, 100% 55%, 50% 100%, 0 55%); }
+  .timeline-doc .playhead-line { background: var(--tl-on, #ff725f); opacity: 1; }
+  .timeline-doc .show-bar-line { background: rgba(245, 236, 222, 0.045); }
+  .timeline-doc .show-bar-line.beat { background: rgba(245, 236, 222, 0.02); }
 
   .show-grid {
     flex: 1;

@@ -25,8 +25,8 @@
   import { clipThumbnails } from './clipMedia';
   import { carriesTrackMedia, dropTrackMedia, mayCarryTrackMedia } from './trackDrops';
   import {
-    ADD_TRACK_ROW_HEIGHT,
     TRACK_ROW_HEIGHT,
+    rowColor,
     addsToSelection,
     dragRowOffset,
     movesFreely,
@@ -50,7 +50,8 @@
   import ShowTakeoverHatch from './ShowTakeoverHatch.svelte';
   import { editBlock } from '../../../show/tracks/showBlockEdit';
   import { selectRow } from './rowSelect';
-  import { LAYERS_SECTION_HEIGHT, layerBlockSpans, rowShown, stackIndexAt, stackRowHeight, stackTops, timelineRowStack, type RowStack } from './layersSection';
+  import { SUMMARY_LANES, groupsHeaderHeight, layerSummary, layersHeaderHeight, rowShown, stackIndexAt, stackRowHeight, stackTops, timelineRowStack, type RowStack } from './layersSection';
+  import RowSectionLane from './RowSectionLane.svelte';
 
   interface Props {
     zoom: number;
@@ -69,7 +70,7 @@
   // The rows as drawn: group rows, the Layers header, the layer rows.
   const stack = $derived($timelineRowStack);
   const rows = $derived(stack.rows);
-  const summary = $derived(stack.section && !stack.open ? layerBlockSpans(stack) : []);
+  const summary = $derived(stack.section && !stack.open ? layerSummary(stack, rowColor) : []);
   const summaryInView = $derived(summary.filter((sp) => sp.end >= viewStart && sp.start <= viewEnd));
   const selectedArr = $derived($selectedClipIdsStore);
   const selectedIds = $derived(new Set(selectedArr));
@@ -704,14 +705,16 @@
 <!-- data-help-disabled: the app's hover-help card would sit over the clip
      handles; the blocks keep their plain tooltips. -->
 <div class="tl-stack" bind:this={stackEl} style:width="{width}px" data-show-tracks data-help-disabled>
+  {#if stack.groupCount > 0}<RowSectionLane id="groups" height={groupsHeaderHeight(stack)} />{/if}
   {#each rows as tr, index (tr.id)}
     {#if index === stack.groupCount && stack.section}
-      <!-- The Layers header's lane; folded, where the layer rows have blocks. -->
-      <div class="tl-section" class:folded={!stack.open} style:height="{LAYERS_SECTION_HEIGHT}px" data-layers-section-lane>
-        {#each summaryInView as sp (sp.start)}
-          <span class="tl-summary" style:left="{sp.start * zoom}px" style:width="{Math.max(2, (sp.end - sp.start) * zoom)}px" data-layers-summary></span>
+      <!-- The Layers header's lane; folded, where each piece has blocks. -->
+      <RowSectionLane id="layers" height={layersHeaderHeight(stack)}>
+        {#each summaryInView as sp (`${sp.lane}:${sp.color}:${sp.start}`)}
+          <span class="tl-summary" style:left="{sp.start * zoom}px" style:width="{Math.max(2, (sp.end - sp.start) * zoom)}px"
+            style:top="{4 + sp.lane * (22 / SUMMARY_LANES)}px" style:background={sp.color} data-layers-summary></span>
         {/each}
-      </div>
+      </RowSectionLane>
     {/if}
     {#if rowShown(stack, tr)}
     <ShowLayerTrackLane
@@ -732,19 +735,6 @@
     {/if}
   {/each}
   <ShowTakeoverHatch {stack} {zoom} />
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div
-    class="tl-new"
-    style:height="{ADD_TRACK_ROW_HEIGHT}px"
-    ondragover={(e) => dragOver(e, null)}
-    ondragleave={dragLeave}
-    ondrop={(e) => dropOn(e, null)}
-    data-show-rows-foot
-  >
-    <span class="tl-new-hint">
-      {tracks.length ? 'Drop video, images, shaders or sketches on a piece\'s row' : 'Add layers in Mapping: each one gets a row here'}
-    </span>
-  </div>
   {#each ghosts as g, i (i)}
     <div class="tl-ghost" style:left="{g.left}px" style:top="{g.top}px" style:width="{g.width}px" style:height="{TRACK_ROW_HEIGHT - 8}px" data-show-copy-ghost></div>
   {/each}
@@ -767,41 +757,12 @@
 
 <style>
   .tl-stack { position: relative; }
-  .tl-section {
-    position: relative;
-    box-sizing: border-box;
-    border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
-    background: rgba(255, 255, 255, 0.025);
-  }
   .tl-summary {
     position: absolute;
-    top: 50%;
-    height: 6px;
-    margin-top: -3px;
+    height: 5px;
     border-radius: 2px;
-    background: color-mix(in srgb, #8b7cff 55%, transparent);
+    opacity: 0.75;
     pointer-events: none;
-  }
-  .tl-new {
-    position: relative;
-    box-sizing: border-box;
-    border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
-    background: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.015) 0 1px, transparent 1px 24px);
-  }
-  .tl-new.drop {
-    background: rgba(139, 124, 255, 0.12);
-    box-shadow: inset 0 0 0 1px rgba(139, 124, 255, 0.6);
-  }
-  .tl-new-hint {
-    position: sticky;
-    left: 12px;
-    display: inline-block;
-    line-height: 27px;
-    padding-left: 12px;
-    font-size: var(--ga-text-meta, 11px);
-    color: var(--ga-ink-2, #55555f);
-    pointer-events: none;
-    white-space: nowrap;
   }
   .tl-ghost {
     position: absolute;

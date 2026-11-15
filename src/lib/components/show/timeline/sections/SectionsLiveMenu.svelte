@@ -1,8 +1,13 @@
 <script lang="ts">
   /**
-   * The Sections row's Live menu: sections from Live's arrangement locators
-   * (once, or kept in sync), and the sections sent back to Live as locators.
+   * The Sections ⋯ menu (corner of the header column): Auto show, then
+   * Ableton Live: sections from Live's arrangement locators (once, or kept
+   * in sync), and the sections sent back to Live as locators.
    */
+  import { autoShowOpen } from '../autoshow/autoShowUi';
+  import { showSlice } from '../timelineSlices';
+  import TimelineIcon from '../TimelineIcon.svelte';
+  const audioTracks = showSlice('audioTracks');
   import { abletonBridge, LIVE_PHRASE_PROTOCOL } from '../../../../ableton/abletonBridge';
   import { showToast } from '../../../../stores/errorToast';
   import { locatorMessage, sectionsFromLive, sendSectionsToLive } from '../../../../timeline/phrases/liveArrangementRuntime';
@@ -59,13 +64,16 @@
   class:on={bridge.syncLocators}
   bind:this={btn}
   onclick={toggle}
-  title="Sections and Ableton Live's arrangement locators, both ways"
-  translate="no"
+  title="Sections: Auto show, and Ableton Live's arrangement locators both ways"
+  aria-label="Sections menu"
   data-sections-live
->Live</button>
+><TimelineIcon name="more" size={14} /></button>
 
 {#if open}
   <div class="slm" use:toBody use:keepInWindow={pos} style="left: {pos.x}px; top: {pos.y}px" role="menu" data-sections-live-menu data-help-disabled>
+    <button role="menuitem" disabled={!$audioTracks.length} onclick={() => { autoShowOpen.set(true); open = false; }}
+      title={$audioTracks.length ? 'A whole show on your mapping from the song: sections, content on the pieces, looks, Screen FX' : 'Add audio first'} data-sections-auto-show>Auto show…</button>
+    <p class="slm-head">Ableton Live</p>
     {#if !bridge.connected}
       <p class="slm-note">Live is not connected: open the Ableton panel (VJ mode → Ableton) and turn the connection on.</p>
     {/if}
@@ -84,22 +92,24 @@
 {/if}
 
 <style>
+  .slm-head { margin: 6px 8px 2px; font-size: var(--ga-text-eyebrow, 10px); font-weight: 700; letter-spacing: var(--ga-eyebrow-tracking, 0.08em); text-transform: uppercase; color: var(--ga-ink-2, #89857e); }
   .slm-btn {
-    margin-left: 4px;
-    background: var(--ga-sunk, #0c0c10);
-    border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
-    color: var(--ga-ink-1, #aaa);
-    border-radius: 3px;
+    width: 22px;
+    height: 20px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    color: var(--ga-ink-2, #89857e);
+    border-radius: 4px;
     font: inherit;
-    font-size: 11px;
-    padding: 0 6px;
-    height: 18px;
     flex: none;
     white-space: nowrap;
     cursor: pointer;
   }
-  .slm-btn:hover { color: var(--ga-ink-0, #fff); border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24)); }
-  .slm-btn.on { color: #5fdc76; border-color: rgba(95, 220, 118, 0.5); }
+  .slm-btn:hover { color: var(--ga-ink-0, #fff); background: var(--ga-raise, #26221c); }
+  .slm-btn.on { color: var(--tl-on, #ff725f); }
   .slm {
     position: fixed;
     z-index: 1200;
