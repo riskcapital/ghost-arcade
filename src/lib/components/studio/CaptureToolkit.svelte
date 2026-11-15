@@ -12,6 +12,7 @@
  import {captureCapabilities,captureFileURL,listScans,openScanner,openDualCamera,shareScan,deleteScan,readScanBytes,type CaptureCapabilities,type SavedScan,type CameraShot} from '../../mobile/studio/captureToolkit';
  import {rememberedDesktopSocket} from '../../mobile/studio/companionLink';
  import {sendScan,type ScanSendProgress,type ScanSocket} from '../../mobile/studio/scanTransfer';
+ import {capabilitiesRequest} from '../../mobile/studio/desktopCapabilities';
  import {canOpenAppSettings,mentionsSettings,openAppSettings} from '../../mobile/studio/nativeShare';
  export let oncompanion:()=>void=()=>{};
  export let onclose:()=>void;
@@ -57,7 +58,7 @@
   try{
    const bytes=await readScanBytes(scan);
    try{socket=await openDesktop(desktop.url);}catch{throw new Error(`Could not reach the desktop at ${desktop.host}. Open Ghost Arcade there and keep both devices on the same Wi-Fi.`);}
-   const job=sendScan({socket:socket as unknown as ScanSocket,bytes,name:scan.file||`${scan.name}.ply`,points:scan.points,voxelMm:scan.voxelMm,sizeM:scan.sizeM,preset:scan.preset,requestId:sendIds[scan.id],onProgress:sendProgress});
+   const job=sendScan({socket:socket as unknown as ScanSocket,bytes,name:scan.file||`${scan.name}.ply`,points:scan.points,voxelMm:scan.voxelMm,sizeM:scan.sizeM,preset:scan.preset,requestId:sendIds[scan.id],client:capabilitiesRequest().client,onProgress:sendProgress});
    sendIds[scan.id]=job.requestId;stopSend=job.abort;
    const outcome=await job.done;
    if(outcome.state==='saved'){delete sendIds[scan.id];note=`Saved on the desktop as ${outcome.name??'a new scan'}. Find it in the Media Library, Scan tab.`;}

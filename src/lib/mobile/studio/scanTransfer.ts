@@ -6,7 +6,7 @@
 //
 // Wire protocol (JSON over the pairing WebSocket; the server relays, it never
 // stores or opens anything):
-//   phone   -> studio_capabilities_request
+//   phone   -> studio_capabilities_request { client? }
 //   desktop -> studio_capabilities { ..., scanTransfer: { version, maxBytes, chunkBytes } }
 //   phone   -> studio_scan_offer  { requestId, version, name, bytes, points, sha256, chunkBytes, voxelMm?, sizeM?, preset? }
 //   desktop -> studio_scan_status { requestId, state, next?, received?, name?, error? }
@@ -185,6 +185,8 @@ export type ScanSendOptions = {
   preset?: string;
   /** Reuse the id of an interrupted send so the desktop does not ask again. */
   requestId?: string;
+  /** Which app is asking (`{ app, version, build, name }`), sent with the capabilities request as every other phone request does. */
+  client?: Record<string, string>;
   onProgress?: (progress: ScanSendProgress) => void;
   /** Test hooks. Defaults: 4 s for capabilities, 8 s for any answer, 3 tries. */
   capabilityMs?: number;
@@ -293,8 +295,9 @@ export function sendScan(options: ScanSendOptions): { done: Promise<ScanSendOutc
   socket.addEventListener('message', receive);
   socket.addEventListener('close', closed);
   progress('checking', 0);
-  post({ type: 'studio_capabilities_request' });
-  capabilityPoll = setInterval(() => post({ type: 'studio_capabilities_request' }), 1000);
+  const ask = { type: 'studio_capabilities_request', ...(options.client ? { client: options.client } : {}) };
+  post(ask);
+  capabilityPoll = setInterval(() => post(ask), 1000);
   // A desktop from before Interactive Studio never answers at all.
   timer = setTimeout(() => { if (!started) end({ state: 'unsupported', message: SCAN_UNSUPPORTED_MESSAGE }); }, capabilityMs);
   return {
