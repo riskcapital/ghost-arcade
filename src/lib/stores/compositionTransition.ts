@@ -13,8 +13,10 @@
  *   the middle of a transition lands fully resolved and the offline renderer
  *   gets the identical frame on every run. This is the authoritative path.
  * • `beginTimed()` — the preset tray, MIDI preset fires, anything with no
- *   timeline behind it. Wall-clock RAF ramp; there is no show time to derive
- *   from, so there is nothing to be deterministic against.
+ *   timeline behind it. A wall-clock ramp; there is no show time to derive
+ *   from, so there is nothing to be deterministic against. The store
+ *   publishes only its start and its end: `current()` works out the progress
+ *   from the clock when the frame sync asks, once per frame it sends.
  *
  * They are mutually exclusive: starting either cancels the other. The show
  * timeline wins ties because it is the programmed player.
@@ -24,7 +26,7 @@
  * of the project-store dependency cycle.
  */
 
-import { writable, get } from 'svelte/store';
+import { writable } from 'svelte/store';
 import type { CompositionTransitionStyle } from '../types';
 import type { ActiveCompositionTransition } from '../renderer/compositionTransitionLayers';
 
@@ -37,14 +39,29 @@ export interface CompositionTransitionState {
 
 const store = writable<CompositionTransitionState>({ active: null });
 
-/** RAF handle for the wall-clock (`beginTimed`) ramp. */
-let rafId: number | null = null;
+/** What the store last published (read without a subscription). */
+let published: ActiveCompositionTransition | null = null;
+
+/** The wall-clock (`beginTimed`) ramp: its clock, and the timer that ends it. */
+let timedEndTimer: ReturnType<typeof setTimeout> | null = null;
 let timedStartMs = 0;
 let timedDurationMs = 0;
 
+const clockNow = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+function timedRunning(): boolean {
+  return timedEndTimer !== null;
+}
+
 function cancelTimed(): void {
-  if (rafId !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(rafId);
-  rafId = null;
+  if (timedEndTimer !== null) clearTimeout(timedEndTimer);
+  timedEndTimer = null;
+}
+
+/** Wall-clock progress of the running ramp, 0..1. */
+function timedProgress(now: number): number {
+  if (timedDurationMs <= 0) return 1;
+  return Math.min(1, Math.max(0, (now - timedStartMs) / timedDurationMs));
 }
 
 function sameTransition(
@@ -62,27 +79,23 @@ function sameTransition(
 }
 
 function publish(active: ActiveCompositionTransition | null): void {
-  const current = get(store).active;
-  // Progress moves every frame during a transition, so a no-op guard is what
-  // keeps a settled scene from re-flushing the whole native layer stack.
-  if (sameTransition(current, active)) return;
+  // Progress moves every frame during a show-timeline transition, so a
+  // no-op guard is what keeps a settled scene from re-flushing the whole
+  // native layer stack.
+  if (sameTransition(published, active)) return;
+  published = active;
   store.set({ active });
 }
 
-function tick(now: number): void {
-  rafId = null;
-  const current = get(store).active;
-  if (!current || timedDurationMs <= 0) {
-    publish(null);
+/** The ramp's end: a timer can fire a moment before the clock says so. */
+function endTimed(): void {
+  timedEndTimer = null;
+  const remaining = timedStartMs + timedDurationMs - clockNow();
+  if (remaining > 0.5) {
+    timedEndTimer = setTimeout(endTimed, remaining);
     return;
   }
-  const progress = (now - timedStartMs) / timedDurationMs;
-  if (progress >= 1) {
-    publish(null);
-    return;
-  }
-  publish({ ...current, progress: Math.max(0, progress) });
-  if (typeof requestAnimationFrame === 'function') rafId = requestAnimationFrame(tick);
+  publish(null);
 }
 
 export const compositionTransition = {
@@ -94,7 +107,7 @@ export const compositionTransition = {
    * the programmed player owns the picture while it is running.
    */
   driveFromClock(active: ActiveCompositionTransition | null): void {
-    if (rafId !== null) cancelTimed();
+    cancelTimed();
     publish(active);
   },
 
@@ -117,19 +130,22 @@ export const compositionTransition = {
       fromCompositionId === toCompositionId ||
       !Number.isFinite(duration) ||
       duration <= 0 ||
+      // No frame loop here (a headless test): a hard cut, as before.
       typeof requestAnimationFrame !== 'function'
     ) {
       publish(null);
       return;
     }
-    timedStartMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    timedStartMs = clockNow();
     timedDurationMs = duration * 1000;
-    // Progress 0 on the first published frame: the outgoing composition is
-    // still the loaded one at this instant, and the caller swaps it a line
-    // later. `buildCompositionTransitionLayers` resolves which side is live
-    // by comparing against `activeCompositionId`, so it copes with both.
+    // Published once, at progress 0: the outgoing composition is still the
+    // loaded one at this instant, and the caller swaps it a line later.
+    // `buildCompositionTransitionLayers` resolves which side is live by
+    // comparing against `activeCompositionId`, so it copes with both. From
+    // here the progress is read from the clock (`current()`); the store
+    // publishes again only when the ramp ends.
     publish({ style, progress: 0, fromCompositionId, toCompositionId });
-    rafId = requestAnimationFrame(tick);
+    timedEndTimer = setTimeout(endTimed, timedDurationMs);
   },
 
   /** Drop any transition immediately — a hard cut from here on. */
@@ -138,9 +154,12 @@ export const compositionTransition = {
     publish(null);
   },
 
-  /** Non-reactive peek. */
-  current(): ActiveCompositionTransition | null {
-    return get(store).active;
+  /** Non-reactive peek, with the progress of this instant: the frame sync
+   *  reads it for every frame it sends. A wall-clock ramp's progress comes
+   *  from its clock here, not from a store publish per frame. */
+  current(now = clockNow()): ActiveCompositionTransition | null {
+    if (!published || !timedRunning()) return published;
+    return { ...published, progress: timedProgress(now) };
   },
 
   /** Test seam. */
@@ -148,6 +167,7 @@ export const compositionTransition = {
     cancelTimed();
     timedStartMs = 0;
     timedDurationMs = 0;
+    published = null;
     store.set({ active: null });
   },
 };

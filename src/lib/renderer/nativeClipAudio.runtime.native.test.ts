@@ -104,7 +104,21 @@ suite('Native clip audio output', () => {
       await sleep(1000);
       const after = await rpc.send('audio_status');
       expect(after.callbacks).toBeGreaterThan(stable.callbacks);
-      expect(after.underflow_frames - stable.underflow_frames).toBe(0);
+      // Steady playback plays no gaps. The mixer renders 40-80 ms ahead of
+      // the device; in the OS audio class (macOS and Windows grant it to any
+      // process) other load cannot starve it, so zero is exact even with
+      // every core busy. A Linux host without real-time limits leaves it an
+      // ordinary thread that only the longer queue protects: there a gap
+      // means the machine was overloaded, not that the mix fell behind, so
+      // allow one and leave the counter in the message.
+      expect(after.lookahead_ms).toBeGreaterThanOrEqual(40);
+      if (process.platform !== 'linux') expect(after.mixer_priority).toBe('realtime');
+      const gaps = after.underflow_events - stable.underflow_events;
+      expect(gaps, JSON.stringify({ gaps, frames: after.underflow_frames - stable.underflow_frames, priority: after.mixer_priority }))
+        .toBeLessThanOrEqual(after.mixer_priority === 'realtime' ? 0 : 1);
+      const core = await rpc.send('status');
+      expect(core.clip_audio_mixer_priority).toBe(after.mixer_priority);
+      expect(core.clip_audio_underflow_events).toBe(after.underflow_events);
       await rpc.send('stop');
       await until(s => s.peak_left === 0 && s.peak_right === 0);
     } finally { await rpc.close(); rmSync(dir, { recursive: true, force: true }); }

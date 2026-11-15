@@ -4,6 +4,7 @@ mod video_phase;
 mod launch_scheduler;
 mod transition_clock;
 mod clip_audio;
+mod audio_priority;
 mod audio;
 mod capabilities;
 mod compositor;
@@ -1112,6 +1113,12 @@ struct CoreStatus {
     native_video_trigger_last_latency_us: u64,
     native_video_trigger_max_latency_us: u64,
     native_video_stream_underflows: u64,
+    /// Clip audio: device buffers that played a gap, the silent frames in
+    /// them, the mixer's lookahead and its scheduling class.
+    clip_audio_underflow_events: u64,
+    clip_audio_underflow_frames: u64,
+    clip_audio_lookahead_ms: f64,
+    clip_audio_mixer_priority: &'static str,
     native_instrument_frame_renders: u64,
     compute_graph_runs: u64,
     compute_graph_passes: u64,
@@ -6225,6 +6232,8 @@ impl App {
     }
 
     fn status(&self) -> CoreStatus {
+        let clip_audio_health = self.clip_audio.as_ref().map(clip_audio::ClipAudio::health)
+            .unwrap_or((0, 0, 0.0, "idle"));
         let gpu_frames_submitted = self
             .renderer
             .as_ref()
@@ -6588,6 +6597,10 @@ impl App {
             native_video_trigger_last_latency_us: self.stats.native_video_trigger_last_latency_us,
             native_video_trigger_max_latency_us: self.stats.native_video_trigger_max_latency_us,
             native_video_stream_underflows: self.stats.native_video_stream_underflows,
+            clip_audio_underflow_events: clip_audio_health.0,
+            clip_audio_underflow_frames: clip_audio_health.1,
+            clip_audio_lookahead_ms: clip_audio_health.2,
+            clip_audio_mixer_priority: clip_audio_health.3,
             native_instrument_frame_renders: self.stats.native_instrument_frame_renders,
             compute_graph_runs: self.stats.compute_graph_runs,
             compute_graph_passes: self.stats.compute_graph_passes,

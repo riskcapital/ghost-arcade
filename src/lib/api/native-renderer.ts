@@ -804,6 +804,13 @@ export interface RendererStatus {
   native_video_trigger_last_latency_us: number;
   native_video_trigger_max_latency_us: number;
   native_video_stream_underflows: number;
+  /** Clip audio: device buffers that played a gap, the silent frames in
+   *  them, how far ahead the mixer renders, and its scheduling class
+   *  (realtime / raised / normal; idle before any clip audio played). */
+  clip_audio_underflow_events: number;
+  clip_audio_underflow_frames: number;
+  clip_audio_lookahead_ms: number;
+  clip_audio_mixer_priority: string;
   native_instrument_frame_renders: number;
   compute_graph_runs: number;
   compute_graph_passes: number;
@@ -1912,7 +1919,9 @@ export async function resetNativeRendererStats() {
   return invoke<void>('native_renderer_reset_stats');
 }
 
-export interface NativeClipAudioStatus { running: boolean; device?: string; error?: string; assets: Array<{ uri: string; seconds_ready: number; complete: boolean; error: string }> }
+export interface NativeClipAudioStatus { running: boolean; device?: string; error?: string;
+  underflow_frames?: number; underflow_events?: number; lookahead_ms?: number; buffered_ms?: number; mixer_priority?: string;
+  assets: Array<{ uri: string; seconds_ready: number; complete: boolean; error: string }> }
 export const getNativeAudioDevices = () => invoke<string[]>('native_renderer_audio_devices');
 export const getNativeAudioStatus = () => invoke<NativeClipAudioStatus>('native_renderer_audio_status');
 export const setNativeAudioOutput = (device: string) => invoke<boolean>('native_renderer_audio_output', { device });

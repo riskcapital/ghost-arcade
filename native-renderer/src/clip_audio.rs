@@ -2,12 +2,41 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde_json::{json, Value};
 use std::{collections::HashMap, fs::{File, OpenOptions}, io::{Read, Seek, SeekFrom, Write},
-    path::PathBuf, process::{Child, Command, Stdio}, sync::{Arc, Mutex, atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering}},
+    path::PathBuf, process::{Child, Command, Stdio}, sync::{Arc, Mutex, OnceLock, atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering}},
     thread, time::{Duration, Instant}};
+use crate::audio_priority::{self, MixerPriority};
 const RATE: f64 = 48_000.0;
 const CACHE_BUDGET: u64 = 2 * 1024 * 1024 * 1024;
 const FILE_BUDGET: u64 = 512 * 1024 * 1024;
-const RING: usize = 32768;
+/// Mix ring capacity in f32 slots: 32768 stereo frames, 680 ms at 48 kHz, 170 ms at 192 kHz.
+const RING: usize = 1 << 16;
+/// The mixer renders this many frames at a time.
+const BLOCK: usize = 128;
+/// Time from mixing a frame to hearing it: the frames waiting in the ring
+/// plus the device's own output latency. The mixer runs this far ahead so a
+/// stall of the mixer thread (other programs keeping every core busy) is
+/// ridden out instead of heard as a gap. The picture stays in step at any
+/// value: each block is mixed for the moment it will be heard. What it costs
+/// is how soon a change (pause, gain, a new clip) reaches the speakers.
+/// With the OS's audio class the mixer is not starved and 40 ms is ample;
+/// without it (refused, or switched off) it has to ride out scheduler stalls
+/// itself, and needed 80 ms under full load on every core.
+/// `GA_CLIP_AUDIO_LOOKAHEAD_MS` sets it (10 to 250 ms).
+pub const LOOKAHEAD_MS_REALTIME: f64 = 40.0;
+pub const LOOKAHEAD_MS_ORDINARY: f64 = 80.0;
+pub fn lookahead_setting(value: Option<&str>) -> Option<f64> {
+    value.and_then(|value| value.trim().parse::<f64>().ok()).filter(|value| value.is_finite()).map(|value| value.clamp(10.0, 250.0))
+}
+pub fn lookahead_ms(setting: Option<f64>, priority: MixerPriority) -> f64 {
+    setting.unwrap_or(if priority == MixerPriority::Realtime { LOOKAHEAD_MS_REALTIME } else { LOOKAHEAD_MS_ORDINARY })
+}
+/// Stereo frames the mixer keeps queued: the lookahead less what the device
+/// already holds, at least two device buffers and a block, at most what the ring holds.
+pub fn ring_target_frames(lookahead_ms: f64, rate: f64, device_latency_ns: u64, callback_frames: usize) -> usize {
+    let total = (lookahead_ms / 1000.0 * rate).round().max(0.0) as usize;
+    let device = (device_latency_ns as f64 / 1e9 * rate).round() as usize;
+    total.saturating_sub(device).max(callback_frames.max(1).min(4096) * 2 + BLOCK).min(RING / 2 - BLOCK)
+}
 /// Recording tap capacity in f32 slots: 262144 stereo frames, about 5.4 s at 48 kHz.
 const TAP_RING: usize = 1 << 19;
 const TAP_MAGIC: &[u8; 4] = b"GATP";
@@ -15,10 +44,15 @@ const TAP_MAGIC: &[u8; 4] = b"GATP";
 /// at 48 kHz). Always on while output runs; readers poll it by frame index.
 const SCOPE_RING: usize = 1 << 14;
 
-pub struct Ring { data: Vec<AtomicU32>, read: AtomicUsize, write: AtomicUsize }
+/// Single-producer (mixer) single-consumer (device callback) stereo ring.
+/// The consumer wakes the producer after each buffer it takes.
+pub struct Ring { data: Vec<AtomicU32>, read: AtomicUsize, write: AtomicUsize, waker: OnceLock<thread::Thread> }
 impl Ring {
-    fn new() -> Self { Self { data: (0..RING).map(|_| AtomicU32::new(0)).collect(), read: AtomicUsize::new(0), write: AtomicUsize::new(0) } }
+    fn new() -> Self { Self { data: (0..RING).map(|_| AtomicU32::new(0)).collect(), read: AtomicUsize::new(0), write: AtomicUsize::new(0), waker: OnceLock::new() } }
     fn len(&self) -> usize { self.write.load(Ordering::Acquire).wrapping_sub(self.read.load(Ordering::Acquire)) }
+    fn frames(&self) -> usize { self.len() / 2 }
+    /// Lock-free: one atomic swap, and a wake call only when the mixer is parked.
+    fn wake(&self) { if let Some(mixer) = self.waker.get() { mixer.unpark(); } }
     fn push(&self, left: f32, right: f32) {
         let w = self.write.load(Ordering::Relaxed);
         self.data[w % RING].store(left.to_bits(), Ordering::Relaxed);
@@ -108,13 +142,18 @@ impl TapResampler {
         self.phase -= 1.0; self.prev = Some((left, right));
     }
 }
+/// Frames the device played as silence because the ring was empty, and how
+/// many device buffers that happened in (each one an audible gap).
+#[derive(Default)]
+pub struct Underflows { pub frames: AtomicU64, pub events: AtomicU64 }
 /// One device callback: the ring feeds the device buffer and the tap mirrors
 /// exactly the clamped stereo frames the device receives. Returns block peaks.
 pub fn render_output<S: cpal::Sample + cpal::FromSample<f32>>(output: &mut [S], channels: usize, ring: &Ring, tap: &Tap,
-    resampler: &mut TapResampler, device_rate: u32, underflows: &AtomicU64) -> [f32; 2] {
+    resampler: &mut TapResampler, device_rate: u32, underflows: &Underflows) -> [f32; 2] {
     let mut peaks = [0.0_f32; 2];
+    let mut missing = 0_u64;
     for frame in output.chunks_mut(channels) {
-        let (left, right) = ring.pop().unwrap_or_else(|| { underflows.fetch_add(1, Ordering::Relaxed); (0.0, 0.0) });
+        let (left, right) = ring.pop().unwrap_or_else(|| { missing += 1; (0.0, 0.0) });
         peaks[0] = peaks[0].max(left.abs()); peaks[1] = peaks[1].max(right.abs());
         let (left, right) = (left.clamp(-1.0, 1.0), right.clamp(-1.0, 1.0));
         let (left, right) = if channels == 1 { ((left + right) * 0.5, (left + right) * 0.5) } else { (left, right) };
@@ -125,6 +164,8 @@ pub fn render_output<S: cpal::Sample + cpal::FromSample<f32>>(output: &mut [S], 
         resampler.push(tap, device_rate, left, right);
         tap.scope_push((left + right) * 0.5, device_rate);
     }
+    if missing > 0 { underflows.frames.fetch_add(missing, Ordering::Relaxed); underflows.events.fetch_add(1, Ordering::Relaxed); }
+    ring.wake();
     peaks
 }
 fn write_tap_chunk(stream: &mut std::net::TcpStream, rate: u32, frame_index: u64, dropped: u64, samples: &[f32]) -> std::io::Result<()> {
@@ -221,6 +262,59 @@ pub fn follow_cursor(cursor: Option<f64>, target: f64, advance: f64, period: Opt
     let limit = advance.abs() * 0.005;
     expected + (error * 0.02).clamp(-limit, limit)
 }
+/// The mixer thread's per-voice state: file readers, smoothed gains and read cursors.
+#[derive(Default)]
+struct Mixer { readers: HashMap<(String, PathBuf), Reader>, gains: HashMap<String, (f32, f32)>, cursors: HashMap<String, f64> }
+impl Mixer {
+    /// One block of the mix, for frames first heard `ahead` seconds from now;
+    /// `age` is how old the voices' times are.
+    fn block(&mut self, voices: &[MixVoice], age: f64, ahead: f64, rate: f64) -> [[f32; 2]; BLOCK] {
+        let Self { readers, gains, cursors } = self;
+        readers.retain(|(id, path), _| voices.iter().any(|v| v.voice.id == *id && v.asset.path == *path));
+        gains.retain(|id, _| voices.iter().any(|v| v.voice.id == *id));
+        cursors.retain(|id, _| voices.iter().any(|v| v.voice.id == *id));
+        for entry in voices { gains.entry(entry.voice.id.clone()).or_insert((0.0, 0.0)); }
+        let smoothing = (1.0 / (rate * 0.003)) as f32;
+        let mut block = [[0.0_f32; 2]; BLOCK];
+        // Mix each voice as a block: resolve its independent cursor and
+        // gain once, not 128 times. Assets remain shared and bounded.
+        for entry in voices {
+            let voice = &entry.voice;
+            let (left, right) = balance(voice.pan);
+            let target = if voice.playing && age <= 0.5 { voice.gain } else { 0.0 };
+            let gain = gains.get_mut(&voice.id).unwrap();
+            if target == 0.0 && gain.0.abs() + gain.1.abs() < 0.00001 { cursors.remove(&voice.id); continue; }
+            let period = if voice.bounce { Some(2.0 * (voice.hi - voice.lo)) } else if voice.looping { Some(voice.hi - voice.lo) } else { None };
+            let start = follow_cursor(cursors.get(&voice.id).copied(), voice.time + (age + ahead) * voice.rate, block.len() as f64 / rate * voice.rate, period);
+            cursors.insert(voice.id.clone(), start);
+            let key = voice_reader_key(entry);
+            if !readers.contains_key(&key) {
+                let Ok(file) = File::open(&key.1) else { continue; };
+                readers.insert(key.clone(), Reader { file, start: 0, samples: Vec::new(), bytes: Vec::new() });
+            }
+            let reader = readers.get_mut(&key).unwrap();
+            for (frame, sum) in block.iter_mut().enumerate() {
+                gain.0 += (target * left - gain.0) * smoothing;
+                gain.1 += (target * right - gain.1) * smoothing;
+                if gain.0.abs() + gain.1.abs() < 0.00001 { continue; }
+                let Some(time) = transport_time(start + frame as f64 / rate * voice.rate, voice.lo, voice.hi, voice.looping, voice.bounce) else { continue; };
+                let position = time.max(0.0) * RATE;
+                let a = reader.sample(&entry.asset, position.floor() as u64);
+                let next_time = transport_time(time + 1.0 / RATE, voice.lo, voice.hi, voice.looping, voice.bounce).unwrap_or(time);
+                let b = reader.sample(&entry.asset, (next_time.max(0.0) * RATE).floor() as u64);
+                let fraction = position.fract() as f32;
+                sum[0] += (a[0] + (b[0] - a[0]) * fraction) * gain.0;
+                sum[1] += (a[1] + (b[1] - a[1]) * fraction) * gain.1;
+            }
+        }
+        for sum in block.iter_mut() {
+            // Linked stereo peak protection preserves balance when layers sum above unity.
+            let peak = sum[0].abs().max(sum[1].abs()).max(1.0);
+            *sum = [sum[0] / peak, sum[1] / peak];
+        }
+        block
+    }
+}
 pub fn balance(pan: f32) -> (f32, f32) {
     // Stereo balance retains both channels at center; full pan attenuates the opposite channel.
     let p = pan.clamp(-1.0, 1.0); ((1.0 - p.max(0.0)).sqrt(), (1.0 + p.min(0.0)).sqrt())
@@ -262,7 +356,8 @@ pub struct ClipAudio {
     jobs: Option<std::sync::mpsc::SyncSender<(Arc<Asset>, PathBuf)>>,
     mix: Arc<Mutex<MixState>>, stop: Arc<AtomicBool>, ring: Arc<Ring>,
     stream: Option<cpal::Stream>, output_rate: u32, device: String,
-    error: Arc<Mutex<String>>, underflows: Arc<AtomicU64>, callbacks: Arc<AtomicU64>,
+    error: Arc<Mutex<String>>, underflows: Arc<Underflows>, callbacks: Arc<AtomicU64>,
+    priority: Arc<AtomicU8>, lookahead_setting: Option<f64>,
     latency: Arc<AtomicU64>, peak_left: Arc<AtomicU32>, peak_right: Arc<AtomicU32>, callback_frames: Arc<AtomicUsize>, last_attempt: Option<Instant>, decoders: Vec<thread::JoinHandle<()>>, worker: Option<thread::JoinHandle<()>>,
     tap: Arc<Tap>, stream_active: Arc<AtomicBool>, tap_session: Option<TapSession>, null_output: Option<thread::JoinHandle<()>>,
 }
@@ -277,7 +372,8 @@ impl ClipAudio {
         Self { assets: HashMap::new(), budget: Arc::new(AtomicU64::new(0)), serial: 0, directory, jobs: Some(tx),
             mix: Arc::new(Mutex::new(MixState { voices: Vec::new(), at: Instant::now() })), stop: Arc::new(AtomicBool::new(false)), ring: Arc::new(Ring::new()),
             stream: None, output_rate: 48000, device: "default".into(), error: Arc::new(Mutex::new(String::new())),
-            underflows: Arc::new(AtomicU64::new(0)), callbacks: Arc::new(AtomicU64::new(0)), latency: Arc::new(AtomicU64::new(0)), peak_left: Arc::new(AtomicU32::new(0)), peak_right: Arc::new(AtomicU32::new(0)), callback_frames: Arc::new(AtomicUsize::new(256)), last_attempt: None, decoders, worker: None,
+            underflows: Arc::new(Underflows::default()), callbacks: Arc::new(AtomicU64::new(0)),
+            priority: Arc::new(AtomicU8::new(MixerPriority::Unknown as u8)), lookahead_setting: lookahead_setting(std::env::var("GA_CLIP_AUDIO_LOOKAHEAD_MS").ok().as_deref()), latency: Arc::new(AtomicU64::new(0)), peak_left: Arc::new(AtomicU32::new(0)), peak_right: Arc::new(AtomicU32::new(0)), callback_frames: Arc::new(AtomicUsize::new(256)), last_attempt: None, decoders, worker: None,
             tap: Arc::new(Tap::new()), stream_active: Arc::new(AtomicBool::new(false)), tap_session: None, null_output: None }
     }
     pub fn devices() -> Value {
@@ -339,6 +435,8 @@ impl ClipAudio {
         let (stop, ring, tap, underflows, callbacks) = (self.stop.clone(), self.ring.clone(), self.tap.clone(), self.underflows.clone(), self.callbacks.clone());
         let (callback_frames, peak_left, peak_right) = (self.callback_frames.clone(), self.peak_left.clone(), self.peak_right.clone());
         self.null_output = Some(thread::spawn(move || {
+            // A hardware callback runs in the OS audio class; so does its stand-in.
+            let _priority = audio_priority::raise_current_thread(Duration::from_micros(5333));
             let mut resampler = TapResampler::default(); let mut buffer = vec![0.0_f32; 512];
             let started = Instant::now(); let mut frames: u64 = 0;
             while !stop.load(Ordering::Acquire) {
@@ -349,7 +447,7 @@ impl ClipAudio {
                 // a hardware clock never bursts, so give the mixer a moment to
                 // refill instead of reading an empty ring.
                 let wait_until = now + Duration::from_millis(5);
-                while ring.len() < 512 && Instant::now() < wait_until && !stop.load(Ordering::Acquire) { thread::sleep(Duration::from_micros(250)); }
+                while ring.frames() < 256 && Instant::now() < wait_until && !stop.load(Ordering::Acquire) { thread::sleep(Duration::from_micros(250)); }
                 callbacks.fetch_add(1, Ordering::Relaxed); callback_frames.store(256, Ordering::Relaxed);
                 let peaks = render_output(&mut buffer, 2, &ring, &tap, &mut resampler, 48000, &underflows);
                 peak_left.store(peaks[0].to_bits(), Ordering::Relaxed); peak_right.store(peaks[1].to_bits(), Ordering::Relaxed);
@@ -361,66 +459,36 @@ impl ClipAudio {
     }
     fn spawn_mixer(&mut self) {
         self.stop.store(false, Ordering::Release);
-        let stop = self.stop.clone(); let ring = self.ring.clone(); let mix = self.mix.clone(); let latency = self.latency.clone(); let rate = self.output_rate as f64; let callback_frames = self.callback_frames.clone();
+        let (stop, ring, mix, latency, callback_frames, priority) = (self.stop.clone(), self.ring.clone(), self.mix.clone(), self.latency.clone(), self.callback_frames.clone(), self.priority.clone());
+        let (rate, setting) = (self.output_rate as f64, self.lookahead_setting);
         self.worker = Some(thread::spawn(move || {
-            let mut readers: HashMap<(String, PathBuf), Reader> = HashMap::new();
-            let mut gains: HashMap<String, (f32, f32)> = HashMap::new();
-            let mut cursors: HashMap<String, f64> = HashMap::new();
+            let _ = ring.waker.set(thread::current());
+            // GA_CLIP_AUDIO_MIXER_PRIORITY=normal keeps the ordinary class (support switch).
+            let guard = if std::env::var_os("GA_CLIP_AUDIO_MIXER_PRIORITY").is_some_and(|v| v == "normal") { audio_priority::PriorityGuard::normal() }
+                else { audio_priority::raise_current_thread(Duration::from_secs_f64(callback_frames.load(Ordering::Relaxed).max(64) as f64 / rate)) };
+            priority.store(guard.priority as u8, Ordering::Release);
+            let lookahead = lookahead_ms(setting, guard.priority);
+            let mut mixer = Mixer::default();
             while !stop.load(Ordering::Acquire) {
-                if ring.len() >= (callback_frames.load(Ordering::Relaxed).saturating_mul(4).max(1024)).min(RING - 256) { thread::sleep(Duration::from_millis(1)); continue; }
-                let snapshot = mix.lock().ok().map(|s| (s.voices.clone(), s.at));
-                let Some((voices, at)) = snapshot else { continue; };
-                readers.retain(|(id, path), _| voices.iter().any(|v| v.voice.id == *id && v.asset.path == *path));
-                gains.retain(|id, _| voices.iter().any(|v| v.voice.id == *id));
-                cursors.retain(|id, _| voices.iter().any(|v| v.voice.id == *id));
-                for entry in &voices { gains.entry(entry.voice.id.clone()).or_insert((0.0, 0.0)); }
-                let age = at.elapsed().as_secs_f64();
-                let ahead = ring.len() as f64 / 2.0 / rate + latency.load(Ordering::Acquire) as f64 / 1e9;
-                let smoothing = (1.0 / (rate * 0.003)) as f32;
-                let mut block = [[0.0_f32; 2]; 128];
-                // Mix each voice as a block: resolve its independent cursor and
-                // gain once, not 128 times. Assets remain shared and bounded.
-                for entry in &voices {
-                    let voice = &entry.voice;
-                    let (left, right) = balance(voice.pan);
-                    let target = if voice.playing && age <= 0.5 { voice.gain } else { 0.0 };
-                    let gain = gains.get_mut(&voice.id).unwrap();
-                    if target == 0.0 && gain.0.abs() + gain.1.abs() < 0.00001 { cursors.remove(&voice.id); continue; }
-                    let period = if voice.bounce { Some(2.0 * (voice.hi - voice.lo)) } else if voice.looping { Some(voice.hi - voice.lo) } else { None };
-                    let start = follow_cursor(cursors.get(&voice.id).copied(), voice.time + (age + ahead) * voice.rate, block.len() as f64 / rate * voice.rate, period);
-                    cursors.insert(voice.id.clone(), start);
-                    let key = voice_reader_key(entry);
-                    if !readers.contains_key(&key) {
-                        let Ok(file) = File::open(&key.1) else { continue; };
-                        readers.insert(key.clone(), Reader { file, start: 0, samples: Vec::new(), bytes: Vec::new() });
-                    }
-                    let reader = readers.get_mut(&key).unwrap();
-                    for (frame, sum) in block.iter_mut().enumerate() {
-                        gain.0 += (target * left - gain.0) * smoothing;
-                        gain.1 += (target * right - gain.1) * smoothing;
-                        if gain.0.abs() + gain.1.abs() < 0.00001 { continue; }
-                        let Some(time) = transport_time(start + frame as f64 / rate * voice.rate, voice.lo, voice.hi, voice.looping, voice.bounce) else { continue; };
-                        let position = time.max(0.0) * RATE;
-                        let a = reader.sample(&entry.asset, position.floor() as u64);
-                        let next_time = transport_time(time + 1.0 / RATE, voice.lo, voice.hi, voice.looping, voice.bounce).unwrap_or(time);
-                        let b = reader.sample(&entry.asset, (next_time.max(0.0) * RATE).floor() as u64);
-                        let fraction = position.fract() as f32;
-                        sum[0] += (a[0] + (b[0] - a[0]) * fraction) * gain.0;
-                        sum[1] += (a[1] + (b[1] - a[1]) * fraction) * gain.1;
-                    }
-                }
-                for sum in block {
-                    // Linked stereo peak protection preserves balance when layers sum above unity.
-                    let peak = sum[0].abs().max(sum[1].abs()).max(1.0);
-                    ring.push(sum[0] / peak, sum[1] / peak);
+                let target = ring_target_frames(lookahead, rate, latency.load(Ordering::Acquire), callback_frames.load(Ordering::Relaxed));
+                // Full: wait for the device to take a buffer (it wakes this
+                // thread); the timeout only bounds how long a stop waits.
+                if ring.frames() >= target { thread::park_timeout(Duration::from_millis(20)); continue; }
+                let Some((voices, at)) = mix.lock().ok().map(|s| (s.voices.clone(), s.at)) else { thread::park_timeout(Duration::from_millis(20)); continue; };
+                while ring.frames() < target && !stop.load(Ordering::Acquire) {
+                    // Each block is mixed for the moment it will be heard: after
+                    // the frames already queued and the device's latency.
+                    let ahead = ring.frames() as f64 / rate + latency.load(Ordering::Acquire) as f64 / 1e9;
+                    for [left, right] in mixer.block(&voices, at.elapsed().as_secs_f64(), ahead, rate) { ring.push(left, right); }
                 }
             }
+            drop(guard);
         }));
     }
     fn stop_output(&mut self) {
         self.stream_active.store(false, Ordering::Release);
         self.stream = None; self.stop.store(true, Ordering::Release);
-        if let Some(worker) = self.worker.take() { let _ = worker.join(); }
+        if let Some(worker) = self.worker.take() { worker.thread().unpark(); let _ = worker.join(); }
         if let Some(null_output) = self.null_output.take() { let _ = null_output.join(); }
         self.ring = Arc::new(Ring::new());
     }
@@ -509,11 +577,20 @@ impl ClipAudio {
             "active": self.stream_active.load(Ordering::Acquire),
             "samples_b64": base64::engine::general_purpose::STANDARD.encode(bytes) })
     }
+    fn mixer_priority(&self) -> MixerPriority { MixerPriority::from_u8(self.priority.load(Ordering::Acquire)) }
+    fn lookahead_ms(&self) -> f64 { lookahead_ms(self.lookahead_setting, self.mixer_priority()) }
+    /// Totals for the core status (support logs): device buffers that played
+    /// a gap, the silent frames in them, the lookahead and the mixer's class.
+    pub fn health(&self) -> (u64, u64, f64, &'static str) {
+        (self.underflows.events.load(Ordering::Relaxed), self.underflows.frames.load(Ordering::Relaxed), self.lookahead_ms(), self.mixer_priority().label())
+    }
     pub fn status(&self) -> Value {
         json!({ "running": self.stream.is_some() || self.null_output.is_some(), "device": self.device, "sample_rate": self.output_rate,
             "peak_left": f32::from_bits(self.peak_left.load(Ordering::Relaxed)), "peak_right": f32::from_bits(self.peak_right.load(Ordering::Relaxed)),
             "voices": self.mix.lock().map(|s| s.voices.iter().map(|v| json!({"id": v.voice.id, "time": v.voice.time, "rate": v.voice.rate, "playing": v.voice.playing, "gain": v.voice.gain, "pan": v.voice.pan})).collect::<Vec<_>>()).unwrap_or_default(),
-            "callbacks": self.callbacks.load(Ordering::Relaxed), "underflow_frames": self.underflows.load(Ordering::Relaxed),
+            "callbacks": self.callbacks.load(Ordering::Relaxed), "underflow_frames": self.underflows.frames.load(Ordering::Relaxed),
+            "underflow_events": self.underflows.events.load(Ordering::Relaxed), "lookahead_ms": self.lookahead_ms(),
+            "buffered_ms": self.ring.frames() as f64 / self.output_rate.max(1) as f64 * 1000.0, "mixer_priority": self.mixer_priority().label(),
             "latency_ms": self.latency.load(Ordering::Acquire) as f64 / 1e6, "tap": self.tap_status(),
             "cache_bytes": self.budget.load(Ordering::Acquire), "error": self.error.lock().map(|s| s.clone()).unwrap_or_default(),
             "assets": self.assets.iter().map(|(uri, a)| json!({ "uri": uri, "seconds_ready": a.frames.load(Ordering::Acquire) as f64 / RATE,
@@ -555,7 +632,7 @@ impl Drop for ClipAudio {
     }
     #[test] fn output_is_written_for_integer_devices_too() {
         // A 32 bit integer device gets full-scale samples, not silence.
-        let (ring, tap, under) = (Ring::new(), Tap::new(), AtomicU64::new(0));
+        let (ring, tap, under) = (Ring::new(), Tap::new(), Underflows::default());
         ring.push(0.5, -0.5);
         let mut wide = [0_i32; 2];
         render_output(&mut wide, 2, &ring, &tap, &mut TapResampler::default(), 48000, &under);
@@ -565,6 +642,73 @@ impl Drop for ClipAudio {
         render_output(&mut bytes, 2, &ring, &tap, &mut TapResampler::default(), 48000, &under);
         assert!(bytes[0] >= 254 && (bytes[1] as i32 - 128).abs() <= 1);
     }
+    #[test] fn mixer_lookahead_is_sized_from_the_device_and_bounded() {
+        // 40 ms at 48 kHz less a 5.8 ms device: 1642 frames queued.
+        assert_eq!(ring_target_frames(40.0, 48000.0, 5_800_000, 256), 1920 - 278);
+        // Never under two device buffers and a block (the old fixed depth),
+        assert_eq!(ring_target_frames(10.0, 48000.0, 20_000_000, 256), 2 * 256 + BLOCK);
+        assert_eq!(ring_target_frames(40.0, 48000.0, 0, 512), 1920);
+        assert_eq!(ring_target_frames(40.0, 48000.0, 0, 2048), 2 * 2048 + BLOCK);
+        // never past what the ring holds, even at 192 kHz and the longest setting.
+        assert_eq!(ring_target_frames(250.0, 192000.0, 0, 256), RING / 2 - BLOCK);
+        assert!(ring_target_frames(250.0, 192000.0, 0, 256) + BLOCK <= RING / 2);
+        // Settings: clamped, and garbage falls back to the default for the mixer's class.
+        assert_eq!(lookahead_setting(Some(" 60 ")), Some(60.0));
+        assert_eq!(lookahead_setting(Some("2")), Some(10.0));
+        assert_eq!(lookahead_setting(Some("9000")), Some(250.0));
+        assert_eq!(lookahead_setting(Some("fast")), None);
+        assert_eq!(lookahead_setting(Some("NaN")), None);
+        assert_eq!(lookahead_ms(None, MixerPriority::Realtime), LOOKAHEAD_MS_REALTIME);
+        assert_eq!(lookahead_ms(None, MixerPriority::Raised), LOOKAHEAD_MS_ORDINARY);
+        assert_eq!(lookahead_ms(None, MixerPriority::Normal), LOOKAHEAD_MS_ORDINARY);
+        assert_eq!(lookahead_ms(Some(25.0), MixerPriority::Normal), 25.0);
+    }
+    #[test] fn a_deeper_queue_mixes_further_ahead_so_the_picture_stays_in_step() {
+        // A clip whose sample value is its own frame index (x 1e-5): the mixed
+        // value says which media position each queued frame carries.
+        let path = std::env::temp_dir().join(format!("ghost-mixer-ahead-{}.pcm", std::process::id()));
+        let bytes: Vec<u8> = (0..96000).flat_map(|i| { let x = i as f32 * 1e-5; [x.to_le_bytes(), x.to_le_bytes()].concat() }).collect();
+        std::fs::write(&path, bytes).unwrap();
+        let asset = Arc::new(Asset { path: path.clone(), frames: AtomicU64::new(96000), bytes: AtomicU64::new(0),
+            done: AtomicBool::new(true), cancelled: AtomicBool::new(false), error: Mutex::new(String::new()), child: Mutex::new(None), budget: Arc::new(AtomicU64::new(0)) });
+        let voices = vec![MixVoice { asset: asset.clone(), voice: Voice { id: "clip".into(), uri: "clip".into(), time: 0.25, rate: 1.0,
+            lo: 0.0, hi: 2.0, looping: false, bounce: false, gain: 1.0, pan: 0.0, playing: true } }];
+        let first_frame = |age: f64, ahead: f64| {
+            let mut mixer = Mixer::default();
+            mixer.gains.insert("clip".into(), (1.0, 1.0));
+            let block = mixer.block(&voices, age, ahead, 48000.0);
+            // Consecutive frames advance by one media frame.
+            assert!((block[1][0] - block[0][0] - 1e-5).abs() < 1e-6 && (block[0][0] - block[0][1]).abs() < 1e-9);
+            block[0][0] as f64 / 1e-5
+        };
+        // The frame mixed now is heard after the queue and the device latency:
+        // it carries the picture's position at that moment, whatever the depth.
+        assert!((first_frame(0.0, 0.017) - (0.25 + 0.017) * 48000.0).abs() < 0.05);
+        assert!((first_frame(0.0, 0.060) - (0.25 + 0.060) * 48000.0).abs() < 0.05);
+        assert!((first_frame(0.010, 0.040) - (0.25 + 0.050) * 48000.0).abs() < 0.05);
+        drop(voices); drop(asset);
+    }
+    #[test] fn the_device_callback_wakes_the_mixer_and_counts_each_gap_once() {
+        let (ring, tap, underflows) = (Ring::new(), Tap::new(), Underflows::default());
+        let _ = ring.waker.set(thread::current());
+        for _ in 0..256 { ring.push(0.1, 0.1); }
+        let mut device = vec![0.0_f32; 256 * 2];
+        render_output(&mut device, 2, &ring, &tap, &mut TapResampler::default(), 48000, &underflows);
+        assert_eq!((underflows.frames.load(Ordering::Relaxed), underflows.events.load(Ordering::Relaxed)), (0, 0));
+        // The callback left a wake for the mixer: parking returns at once.
+        let started = Instant::now(); thread::park_timeout(Duration::from_secs(5));
+        assert!(started.elapsed() < Duration::from_secs(1));
+        // An empty ring: one gap of 256 frames, one event.
+        render_output(&mut device, 2, &ring, &tap, &mut TapResampler::default(), 48000, &underflows);
+        assert_eq!((underflows.frames.load(Ordering::Relaxed), underflows.events.load(Ordering::Relaxed)), (256, 1));
+    }
+    #[test] fn the_mixer_thread_asks_for_the_audio_class() {
+        let priority = thread::spawn(|| audio_priority::raise_current_thread(Duration::from_micros(5333)).priority).join().unwrap();
+        assert_ne!(priority, MixerPriority::Unknown);
+        // macOS always grants the time-constraint class to a user process.
+        #[cfg(target_os = "macos")] assert_eq!(priority, MixerPriority::Realtime);
+        assert_eq!(audio_priority::PriorityGuard::normal().priority, MixerPriority::Normal);
+    }
     #[test] fn ring_is_ordered_and_nonblocking() {
         let ring = Ring::new(); assert_eq!(ring.pop(), None);
         for index in 0..1000 { ring.push(index as f32, -(index as f32)); }
@@ -572,14 +716,15 @@ impl Drop for ClipAudio {
         assert_eq!(ring.len(), 0);
     }
     #[test] fn recording_tap_mirrors_the_device_mix_including_clamp_and_underflow() {
-        let ring = Ring::new(); let tap = Tap::new(); let underflows = AtomicU64::new(0);
+        let ring = Ring::new(); let tap = Tap::new(); let underflows = Underflows::default();
         let mut resampler = TapResampler::default();
         tap.arm(48000);
         // 300 mixed frames, then the device asks for 320: the last 20 underflow to silence.
         for index in 0..300 { let x = (index as f32 / 300.0) * 2.5 - 1.25; ring.push(x, -x * 0.5); }
         let mut device = vec![0.0_f32; 320 * 2];
         let peaks = render_output(&mut device, 2, &ring, &tap, &mut resampler, 48000, &underflows);
-        assert_eq!(underflows.load(Ordering::Relaxed), 20);
+        assert_eq!(underflows.frames.load(Ordering::Relaxed), 20);
+        assert_eq!(underflows.events.load(Ordering::Relaxed), 1);
         assert!(peaks[0] > 1.0);
         assert_eq!(tap.pushed(), 320);
         for frame in device.chunks(2) { let (l, r) = tap.pop().unwrap(); assert_eq!((l, r), (frame[0], frame[1])); assert!(l.abs() <= 1.0); }
@@ -623,7 +768,7 @@ impl Drop for ClipAudio {
         assert!((back - (3.0 - block)).abs() < 1e-12);
     }
     #[test] fn analysis_scope_mirrors_the_device_mix_and_skips_ahead_when_behind() {
-        let (ring, tap, underflows) = (Ring::new(), Tap::new(), AtomicU64::new(0));
+        let (ring, tap, underflows) = (Ring::new(), Tap::new(), Underflows::default());
         let mut resampler = TapResampler::default();
         for i in 0..64 { ring.push(i as f32 / 128.0, 0.0); }
         let mut device = vec![0.0_f32; 128];
