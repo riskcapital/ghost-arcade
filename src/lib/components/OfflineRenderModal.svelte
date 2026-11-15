@@ -1,19 +1,24 @@
 <script lang="ts">
   /**
-   * Offline render-to-video modal.
+   * Render to video.
    *
-   * Settings form (duration / fps / resolution preset / quality /
-   * filename) → start button. While rendering, a progress bar and
-   * cancel button replace the form. On completion, a preview link +
-   * Done button.
+   * Settings form (how much of the show, frame rate, resolution, codec and
+   * its quality, filename, with the size and time it will take) → start.
+   * While rendering, the phase, a progress bar and Cancel. Then the result.
+   * The render's state is one explicit value (recording/renderFlow.ts).
    */
 
   import { offlineRender, revealOutputPath, DEFAULT_OFFLINE_SETTINGS, type OfflineRenderSettings } from '../recording/offlineRender';
+  import { isRunning as flowRunning } from '../recording/renderFlow';
+  import { RENDER_RATES } from '../recording/renderRate';
+  import { estimateRender, formatBytes, formatDuration, loadRateSample, qualityChoices, qualityFor } from '../recording/renderEstimate';
+  import { clockLabel, renderNotes, renderRanges } from '../recording/renderSetup';
   import { isDesktopApp, invoke } from '../bridge';
   import { mergeRecordingCodecAvailability, type RecordingCodecOption } from '../recording/recordingSources';
   import { getNativeRendererCapabilities } from '../api/native-renderer';
   import { project } from '../stores/layers';
   import { showTimeline } from '../stores/showTimeline';
+  import { showSlice } from './show/timeline/timelineSlices';
   import { audioInputType, audioIsActive } from '../stores/audio';
   import { isAudioDrivenMod, modulationStore } from '../audio/modulation';
 
@@ -33,7 +38,9 @@
   let nativeFrameCaptureMessage = 'Desktop only';
   let nativeProbeGeneration = 0;
   // Render to Video writes the opaque program output, so only the codecs
-  // without alpha are offered (H.264, ProRes 422 HQ, HAP).
+  // without alpha are offered (H.264, ProRes 422, HAP). ProRes picks its
+  // profile (LT / HQ / 4444 XQ) under Quality.
+  const codecLabel = (c: RecordingCodecOption) => (c.id === 'prores_hq' ? 'ProRes (MOV)' : c.label);
   let offlineCodecs: RecordingCodecOption[] = mergeRecordingCodecAvailability(null).filter(codec => !codec.alpha);
   if (isDesktopApp) {
     void invoke<{ codecs?: Array<{ id: string; available?: boolean; reason?: string }> }>('native_recording_codecs')
@@ -41,23 +48,35 @@
       .catch(() => {});
   }
 
-  // A programmed show already knows how long it is — seed the duration
-  // from it so "render my show" is one click. Falls back to the default
-  // when the show timeline is empty.
-  $: showDuration = $showTimeline.duration;
-  $: showIsProgrammed = showDuration > 0
-    && ($showTimeline.presetClips.length > 0 || $showTimeline.audioTracks.length > 0);
+  // How much to render: a programmed show knows its length (the Show or the
+  // Timeline, whichever is open), and the in/out points are offered when set.
+  // Slices: the show store publishes every playhead frame.
+  const durationSlice = showSlice('duration');
+  const workAreaSlice = showSlice('workArea');
+  const audioSlice = showSlice('audioTracks');
+  const docSlice = showSlice('doc');
+  $: ranges = isOpen ? rangesNow($durationSlice, $workAreaSlice, $audioSlice, $docSlice) : { show: null, area: null };
+  function rangesNow(duration: number, workArea: { start: number; end: number } | null, ..._changed: unknown[]) {
+    return renderRanges({ duration, workArea }, showTimeline.hasContent());
+  }
+  type RangeMode = 'show' | 'area' | 'custom';
+  let rangeMode: RangeMode = 'custom';
+  let customSeconds = DEFAULT_OFFLINE_SETTINGS.durationSeconds;
+  $: if (rangeMode === 'area' && !ranges.area) rangeMode = ranges.show ? 'show' : 'custom';
+  $: if (rangeMode === 'show' && !ranges.show) rangeMode = 'custom';
+  $: range = rangeMode === 'area' && ranges.area ? ranges.area
+    : rangeMode === 'show' && ranges.show ? ranges.show
+    : { start: 0, seconds: Math.max(0.5, Number(customSeconds) || 0.5) };
 
   function seedSettingsFromProject() {
     settings = {
       ...DEFAULT_OFFLINE_SETTINGS,
       width: $project.width || 1920,
       height: $project.height || 1080,
-      ...(showIsProgrammed
-        ? { durationSeconds: Math.max(0.5, Math.round(showDuration * 100) / 100) }
-        : {}),
     };
+    rangeMode = ranges.show ? 'show' : 'custom';
     captureBackendTouched = false;
+    rateSample = loadRateSample();
   }
   $: if (isOpen && !seededForOpen) {
     seedSettingsFromProject();
@@ -84,25 +103,42 @@
     { label: 'Square 1080',   fn: () => ({ w: 1080, h: 1080 }) },
     { label: 'Vertical 1080', fn: () => ({ w: 1080, h: 1920 }) },
   ];
-  const FPS_PRESETS = [24, 30, 60];
 
+  $: flow = $offlineRender.flow;
   $: state = $offlineRender;
   $: isFrameOutput = settings.outputMode === 'frames';
-  $: isRunning = state.status !== 'idle' && state.status !== 'complete' && state.status !== 'cancelled' && state.status !== 'error';
-  // Capture and encode report progress from different counters.
-  $: progressPct =
-    state.status === 'encoding'
-      ? Math.round(state.encodeProgress * 100)
-      : state.totalFrames > 0
-        ? Math.round((state.currentFrame / state.totalFrames) * 100)
-        : 0;
-  $: elapsedSec = state.startedAtMs > 0
-    ? Math.floor((performance.now() - state.startedAtMs) / 1000)
-    : 0;
-  $: estimatedTotalSec = state.totalFrames > 0 && state.currentFrame > 0
-    ? Math.round((elapsedSec / state.currentFrame) * state.totalFrames)
+  $: isRunning = flowRunning(flow);
+  $: stopping = flowRunning(flow) && flow.stopping;
+  $: codec = isDesktopApp && !isFrameOutput ? (settings.codec ?? 'h264') : 'h264';
+  $: qualities = qualityChoices(codec);
+  $: qualityHint = qualities.find((q) => q.value === settings.quality)?.hint ?? '';
+  // Rendering counts frames, encoding has its own progress.
+  $: progressPct = flow.kind === 'encoding'
+    ? Math.round(flow.progress * 100)
+    : flow.kind === 'rendering' && flow.total > 0
+      ? Math.round((flow.frame / flow.total) * 100)
+      : 0;
+  $: elapsedSec = elapsedSince(state.startedAtMs, _tickPulse);
+  function elapsedSince(startedAtMs: number, _pulse: number): number {
+    return startedAtMs > 0 ? Math.floor((performance.now() - startedAtMs) / 1000) : 0;
+  }
+  $: estimatedTotalSec = flow.kind === 'rendering' && flow.total > 0 && flow.frame > 0
+    ? Math.round((elapsedSec / flow.frame) * flow.total)
     : 0;
   $: remainingSec = Math.max(0, estimatedTotalSec - elapsedSec);
+  $: phaseText = flow.kind === 'preparing'
+    ? ({ folder: 'Choose an output folder…', encoder: 'Loading the encoder…', sound: 'Preparing the sound…', output: 'Getting the output ready…' } as const)[flow.step]
+    : flow.kind === 'rendering'
+      ? `${isFrameOutput ? 'Writing' : 'Rendering'} frame ${flow.frame} / ${flow.total}`
+      : flow.kind === 'encoding'
+        ? ({ video: 'Finishing the video…', sound: 'Adding the sound…', saving: isFrameOutput ? 'Finishing the frame sequence…' : 'Saving…' } as const)[flow.step]
+        : '';
+
+  let rateSample = loadRateSample();
+  $: estimate = estimateRender({
+    codec, quality: settings.quality, width: settings.width, height: settings.height, fps: settings.fps,
+    seconds: range.seconds, withSound: showHasAudio && !isFrameOutput && isDesktopApp, sample: rateSample,
+  });
 
   function fmtTime(sec: number): string {
     const m = Math.floor(sec / 60);
@@ -113,6 +149,10 @@
   function start() {
     offlineRender.start({
       ...settings,
+      startSeconds: range.start,
+      durationSeconds: range.seconds,
+      quality: qualityFor(codec, settings.quality),
+      codec,
       captureBackend: (settings.captureBackend === 'native' && nativeFrameCaptureAvailable) || !webglCaptureAvailable
         ? 'native'
         : 'webgl',
@@ -121,16 +161,16 @@
   function cancel() {
     offlineRender.cancel();
   }
-  // Esc closes when the modal is open AND we're not actively
-  // rendering — matches every other modal's behaviour and keeps
-  // keyboard-driven flows fast.
+  // Esc closes when the modal is open AND we're not actively rendering.
   function onKey(e: KeyboardEvent) {
     if (!isOpen) return;
     if (e.key === 'Escape' && !isRunning) closeAndReset();
   }
 
   function closeAndReset() {
+    if (isRunning) return;
     offlineRender.reset();
+    rateSample = loadRateSample();
     onClose();
   }
 
@@ -190,45 +230,27 @@
     }
   }
 
-  // Re-render the elapsed/remaining estimate periodically while
-  // the render runs — the store doesn't re-publish on a timer so
-  // we tick here for the display.
+  // The elapsed/remaining line re-reads the clock four times a second while
+  // a render runs (the store only publishes progress).
   let _tickInterval: ReturnType<typeof setInterval> | null = null;
+  let _tickPulse = 0;
   $: if (isRunning && _tickInterval === null) {
-    _tickInterval = setInterval(() => {
-      // Touch a reactive var so the elapsed/remaining derivations re-evaluate.
-      _tickPulse = (_tickPulse + 1) % 1000;
-    }, 250);
+    _tickInterval = setInterval(() => { _tickPulse = (_tickPulse + 1) % 1000; }, 250);
   }
   $: if (!isRunning && _tickInterval !== null) {
     clearInterval(_tickInterval);
     _tickInterval = null;
   }
-  let _tickPulse = 0;
-  // Reference _tickPulse so Svelte re-runs the elapsed derivations.
-  $: void _tickPulse;
 
-  // ─── Live audio input warning ──────────────────────────────────────
+  // ─── What cannot be made frame by frame ───────────────────────────
   //
-  // The render loop pins every clock it owns to the export's virtual
-  // timeline — including the visual-audio follower, so envelopes and LFOs
-  // always advance by exactly 1/fps per frame. What it CANNOT pin is the
-  // content of a live stream: a microphone or a system-audio capture only
-  // exists in the present, so frame N of the export sees whatever was
-  // playing when frame N happened to be captured, not what was playing
-  // N/fps seconds in. A file source is decoded and analysed at virtual
-  // time, so it comes out frame-accurate.
-  //
-  // Non-blocking on purpose — plenty of renders with a mic open aren't
-  // actually driving anything off it, and a user who wants the take
-  // should get the take.
+  // Everything the show plays is made frame by frame on the render's own
+  // clock. A microphone or a system-audio stream only exists in the
+  // present, so content reacting to one follows real time instead — warned
+  // when such content is in the show and the show has no audio of its own.
   $: liveAudioInput = $audioIsActive
     && ($audioInputType === 'microphone' || $audioInputType === 'system');
   $: liveAudioInputLabel = $audioInputType === 'system' ? 'System audio' : 'Microphone';
-  // Audio-reactive content is either an explicit modulation assignment
-  // fed by the analyser, or a visible layer whose renderer samples the
-  // audio snapshot every frame (lines / light painting / splat / 3D model
-  // / GPU instruments / pixel FX all do, unconditionally).
   $: hasAudioModulation = [...$modulationStore.values()].some(isAudioDrivenMod);
   $: hasAudioReactiveLayer = ($project.layers ?? []).some(layer => layer.visible && (
     !!layer.linesContent
@@ -241,8 +263,9 @@
   ));
   // A show with audio drives the render's reactivity from its own tracks,
   // at render time, whatever input is live.
-  $: showHasAudio = $showTimeline.audioTracks.some(t => !t.muted && t.volume > 0 && !!t.url);
+  $: showHasAudio = $audioSlice.some(t => !t.muted && t.volume > 0 && !!t.url);
   $: showLiveAudioWarning = liveAudioInput && !showHasAudio && (hasAudioModulation || hasAudioReactiveLayer);
+  $: notes = renderNotes($project.layers ?? []);
 </script>
 
 <!-- svelte:window must live at component root, not inside {#if}.
@@ -251,18 +274,18 @@
 
 {#if isOpen}
 <div data-help-page="frame-locked-export" class="modal-backdrop" onclick={closeAndReset} role="presentation"></div>
-<div data-help-page="frame-locked-export" class="modal-shell" role="dialog" aria-label="Render to video">
+<div data-help-page="frame-locked-export" class="modal-shell" role="dialog" aria-label="Render to video" data-render-modal>
   <header class="modal-head">
     <h2>Render to video</h2>
     <button class="close-btn" onclick={closeAndReset} disabled={isRunning} title={isRunning ? 'Cancel before closing' : 'Close'} aria-label="Close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button>
   </header>
 
-  {#if state.status === 'complete' && state.lastOutputKind === 'frames'}
+  {#if flow.kind === 'done' && state.lastOutputKind === 'frames'}
     <!-- Success state — frame sequence folder. -->
     <div class="modal-body success">
       <div class="success-icon">✓</div>
       <h3>Frames exported</h3>
-      <p class="success-meta">{state.lastOutputName ?? 'render'}_%06d.jpg · {state.totalFrames} frames · {fmtTime(elapsedSec)}</p>
+      <p class="success-meta">{state.lastOutputName ?? 'render'}_%06d.jpg · {state.lastFrames} frames · {fmtTime(Math.round(state.lastElapsedMs / 1000))}</p>
       {#if state.lastOutputPath}
         <p class="success-hint">Saved to</p>
         <p class="output-path" title={state.lastOutputPath}>{state.lastOutputPath}</p>
@@ -276,12 +299,12 @@
       </div>
     </div>
 
-  {:else if state.status === 'complete' && state.lastOutputUrl}
-    <!-- Success state — preview thumbnail + actions. -->
+  {:else if flow.kind === 'done' && state.lastOutputUrl}
+    <!-- Success state — preview + actions. -->
     <div class="modal-body success">
       <div class="success-icon">✓</div>
       <h3>Render complete</h3>
-      <p class="success-meta">{state.lastOutputName ?? 'render'}.mp4 · {state.totalFrames} frames · {fmtTime(elapsedSec)}</p>
+      <p class="success-meta">{state.lastFrames} frames · {fmtTime(Math.round(state.lastElapsedMs / 1000))}</p>
       <video class="preview" src={state.lastOutputUrl} controls muted loop></video>
       {#if state.lastOutputAudioNote}
         <p class="success-hint">{state.lastOutputAudioNote}</p>
@@ -304,21 +327,9 @@
     </div>
 
   {:else if isRunning}
-    <!-- Progress state — bar + phase + cancel. -->
-    <div class="modal-body progress">
-      <div class="phase">
-        {#if state.status === 'choosing-folder'}
-          Choose an output folder…
-        {:else if state.status === 'loading-ffmpeg'}
-          Loading FFmpeg encoder…
-        {:else if state.status === 'rendering'}
-          {isFrameOutput ? 'Writing' : 'Rendering'} frame {state.currentFrame} / {state.totalFrames}
-        {:else if state.status === 'encoding'}
-          Encoding to MP4…
-        {:else if state.status === 'saving'}
-          {isFrameOutput ? 'Finalizing frame sequence…' : 'Saving — choose where to keep your video…'}
-        {/if}
-      </div>
+    <!-- Progress — phase, bar, Cancel. -->
+    <div class="modal-body progress" data-render-progress>
+      <div class="phase">{stopping ? 'Stopping and cleaning up…' : phaseText}</div>
       <div class="progress-bar">
         <div class="progress-fill" style="width: {progressPct}%"></div>
       </div>
@@ -326,23 +337,25 @@
         <span>{progressPct}%</span>
         <span>
           {fmtTime(elapsedSec)} elapsed
-          {#if remainingSec > 0 && state.status === 'rendering'}
+          {#if remainingSec > 0 && flow.kind === 'rendering'}
             · ~{fmtTime(remainingSec)} remaining
           {/if}
         </span>
       </div>
       <div class="actions">
-        <button class="btn-secondary secondary-btn" onclick={cancel}>Cancel</button>
+        <button class="btn-secondary secondary-btn" onclick={cancel} disabled={stopping}>Cancel</button>
       </div>
     </div>
 
-  {:else if state.status === 'cancelled' || state.status === 'error'}
-    <!-- Error / cancelled state. -->
+  {:else if flow.kind === 'cancelled' || flow.kind === 'error'}
+    <!-- Error / cancelled. -->
     <div class="modal-body error">
-      <div class="error-icon">{state.status === 'error' ? '!' : '×'}</div>
-      <h3>{state.status === 'error' ? 'Render failed' : 'Render canceled'}</h3>
-      {#if state.errorMessage}
-        <p class="error-msg">{state.errorMessage}</p>
+      <div class="error-icon">{flow.kind === 'error' ? '!' : '×'}</div>
+      <h3>{flow.kind === 'error' ? 'Render failed' : 'Render canceled'}</h3>
+      {#if flow.kind === 'error'}
+        <p class="error-msg">{flow.message}</p>
+      {:else}
+        <p class="success-hint">Nothing was kept: the frames and the unfinished file are deleted.</p>
       {/if}
       <div class="actions">
         <button class="btn-secondary secondary-btn" onclick={() => offlineRender.reset()}>Back to settings</button>
@@ -354,35 +367,55 @@
     <!-- Settings form. -->
     <div class="modal-body">
       <div class="field">
-        <label>Filename</label>
-        <input type="text" bind:value={settings.filename} placeholder="render" />
+        <label for="render-filename">Filename</label>
+        <input id="render-filename" type="text" bind:value={settings.filename} placeholder="render" />
+      </div>
+
+      <div class="field">
+        <span class="field-label">Length</span>
+        <div class="range-grid" role="radiogroup" aria-label="Length" data-render-range>
+          {#if ranges.show}
+            <button type="button" role="radio" aria-checked={rangeMode === 'show'} class="preset-btn" class:active={rangeMode === 'show'} onclick={() => (rangeMode = 'show')} data-range-show>
+              <span class="preset-label">{$docSlice === 'timeline' ? 'The whole Timeline' : 'The whole show'}</span>
+              <span class="preset-dims">0:00 – {clockLabel(ranges.show.seconds)}</span>
+            </button>
+          {/if}
+          {#if ranges.area}
+            <button type="button" role="radio" aria-checked={rangeMode === 'area'} class="preset-btn" class:active={rangeMode === 'area'} onclick={() => (rangeMode = 'area')} data-range-area>
+              <span class="preset-label">In to out</span>
+              <span class="preset-dims">{clockLabel(ranges.area.start)} – {clockLabel(ranges.area.start + ranges.area.seconds)}</span>
+            </button>
+          {/if}
+          <button type="button" role="radio" aria-checked={rangeMode === 'custom'} class="preset-btn" class:active={rangeMode === 'custom'} onclick={() => (rangeMode = 'custom')} data-range-custom>
+            <span class="preset-label">Seconds from the start</span>
+            <span class="preset-dims">{rangeMode === 'custom' ? `${customSeconds} s` : 'Type a length'}</span>
+          </button>
+        </div>
+        {#if rangeMode === 'custom'}
+          <input type="number" min="0.5" max="3600" step="0.5" bind:value={customSeconds} aria-label="Seconds" />
+        {/if}
       </div>
 
       <div class="row">
         <div class="field">
-          <label>Duration (seconds)</label>
-          <input type="number" min="0.5" max="3600" step="0.5" bind:value={settings.durationSeconds} />
-          {#if showIsProgrammed}
-            <button
-              class="show-length-btn"
-              type="button"
-              onclick={() => settings.durationSeconds = Math.max(0.5, Math.round(showDuration * 100) / 100)}
-              title="Match the show timeline's total programmed length"
-            >Show length: {showDuration.toFixed(1)}s</button>
-          {/if}
+          <label for="render-fps">Frame rate</label>
+          <select id="render-fps" bind:value={settings.fps} data-render-fps>
+            {#each RENDER_RATES as rate}
+              <option value={rate.fps}>{rate.label}</option>
+            {/each}
+          </select>
         </div>
         <div class="field">
-          <label>Frame rate</label>
-          <select bind:value={settings.fps}>
-            {#each FPS_PRESETS as fps}
-              <option value={fps}>{fps} fps</option>
-            {/each}
+          <span class="field-label">Output</span>
+          <select bind:value={settings.outputMode} onchange={onOutputModeChange} aria-label="Output">
+            <option value="mp4">Video file</option>
+            <option value="frames">JPEG frame sequence</option>
           </select>
         </div>
       </div>
 
       <div class="field">
-        <label>Resolution</label>
+        <span class="field-label">Resolution</span>
         <div class="preset-grid">
           {#each RESOLUTION_PRESETS as preset}
             {@const p = preset.fn()}
@@ -399,26 +432,49 @@
         </div>
         <div class="row tight">
           <div class="field small">
-            <label>Width</label>
-            <input type="number" min="64" max="7680" step="2" bind:value={settings.width} />
+            <label for="render-w">Width</label>
+            <input id="render-w" type="number" min="64" max="7680" step="2" bind:value={settings.width} />
           </div>
           <div class="field small">
-            <label>Height</label>
-            <input type="number" min="64" max="4320" step="2" bind:value={settings.height} />
+            <label for="render-h">Height</label>
+            <input id="render-h" type="number" min="64" max="4320" step="2" bind:value={settings.height} />
           </div>
         </div>
       </div>
 
-      <div class="field">
-        <label>Output</label>
-        <select bind:value={settings.outputMode} onchange={onOutputModeChange}>
-          <option value="mp4">MP4 video</option>
-          <option value="frames">JPEG frame sequence</option>
-        </select>
-      </div>
+      {#if isDesktopApp && !isFrameOutput}
+        <div class="row">
+          <div class="field">
+            <label for="render-codec">Video codec</label>
+            <select id="render-codec" value={settings.codec ?? 'h264'} onchange={(e) => { const next = (e.currentTarget as HTMLSelectElement).value as OfflineRenderSettings['codec']; settings = { ...settings, codec: next, quality: qualityFor(next, settings.quality) }; }} data-render-codec>
+              {#each offlineCodecs as c}
+                <option value={c.id} disabled={!c.available}>{codecLabel(c)}{c.available ? '' : ' (unavailable)'}</option>
+              {/each}
+            </select>
+          </div>
+          <div class="field">
+            <label for="render-quality">Quality</label>
+            <select id="render-quality" bind:value={settings.quality} data-render-quality>
+              {#each qualities as q}
+                <option value={q.value}>{q.label}</option>
+              {/each}
+            </select>
+          </div>
+        </div>
+        <p class="field-hint">{qualityHint}</p>
+      {:else}
+        <div class="field">
+          <label for="render-quality">{isFrameOutput ? 'Compile quality preset' : 'Quality'}</label>
+          <select id="render-quality" bind:value={settings.quality}>
+            <option value="web">Smaller file (CRF 23)</option>
+            <option value="high">High (CRF 18, recommended)</option>
+            <option value="archive">Master (CRF 14, slow)</option>
+          </select>
+        </div>
+      {/if}
 
       <div class="field">
-        <label>Renderer</label>
+        <span class="field-label">Renderer</span>
         <div class="engine-grid">
           <button
             type="button"
@@ -445,40 +501,29 @@
         </div>
       </div>
 
-      {#if isDesktopApp && !isFrameOutput}
-        <div class="field">
-          <label>Video codec</label>
-          <select value={settings.codec ?? 'h264'} onchange={(e) => { settings = { ...settings, codec: (e.currentTarget as HTMLSelectElement).value as OfflineRenderSettings['codec'] }; }}>
-            {#each offlineCodecs as codec}
-              <option value={codec.id} disabled={!codec.available}>{codec.label}{codec.available ? '' : ' (unavailable)'}</option>
-            {/each}
-          </select>
-        </div>
-      {/if}
-
-      <div class="field">
-        <label>{isFrameOutput ? 'Compile quality preset' : 'Quality'}</label>
-        <select bind:value={settings.quality}>
-          <option value="web">Web (smaller file, CRF 23)</option>
-          <option value="high">High (recommended, CRF 18)</option>
-          <option value="archive">Archive (near-lossless, CRF 14, slow)</option>
-        </select>
-      </div>
-
-      <div class="summary">
-        {#if isFrameOutput}
-          Will write <strong>{Math.round(settings.durationSeconds * settings.fps)}</strong> JPEG frames at
-          <strong>{settings.width}×{settings.height}</strong> with
-          <strong>{settings.captureBackend === 'native' ? 'Native renderer' : 'WebGL'}</strong>.
-        {:else}
-          Will produce <strong>{Math.round(settings.durationSeconds * settings.fps)}</strong> frames at
-          <strong>{settings.width}×{settings.height}</strong> with
-          <strong>{settings.captureBackend === 'native' ? 'Native renderer' : 'WebGL'}</strong>.
+      <div class="summary" data-render-estimate>
+        <strong>{estimate.frames}</strong> {isFrameOutput ? 'JPEG frames' : 'frames'} at <strong>{settings.width}×{settings.height}</strong>, each one made in full (not recorded live).
+        {#if !isFrameOutput}
+          <br />Size: <strong>{estimate.ceiling ? 'up to ' : estimate.approximate ? 'up to about ' : ''}{formatBytes(estimate.bytes)}</strong>{estimate.approximate || estimate.ceiling ? ' (simple pictures come out much smaller)' : ''}.
         {/if}
+        Time: <strong>about {formatDuration(estimate.seconds)}</strong>{estimate.measured ? ' (from the last render here)' : ' (a first guess)'}.
       </div>
 
       {#if showHasAudio && !isFrameOutput && isDesktopApp}
-        <p class="audio-note">The show's audio is added to the video.</p>
+        <p class="audio-note">{$docSlice === 'timeline' ? "The Timeline's audio rows are in the video, as they play (levels, fades, effects, ducking)." : "The show's audio is added to the video."}</p>
+      {/if}
+
+      {#if notes.interactive}
+        <div class="warn-note subtle" role="note" data-render-interactive-note>
+          <span class="warn-icon">i</span>
+          <span>Interactive Studio worlds (balls, fire, paint, particles) are simulated frame by frame from the same start each time, so two renders match, but they won't match a live run exactly.</span>
+        </div>
+      {/if}
+      {#if notes.scriptPages}
+        <div class="warn-note subtle" role="note" data-render-script-note>
+          <span class="warn-icon">i</span>
+          <span>three.js and p5.js pages run on their own clock: in a render they keep moving in real time, not frame by frame.</span>
+        </div>
       {/if}
 
       {#if showLiveAudioWarning}
@@ -496,7 +541,7 @@
 
       <div class="actions">
         <button class="btn-secondary secondary-btn" onclick={closeAndReset}>Cancel</button>
-        <button class="btn-primary primary-btn" onclick={start} disabled={!settings.durationSeconds || !settings.fps}>
+        <button class="btn-primary primary-btn" onclick={start} disabled={!range.seconds || !settings.fps} data-render-start>
           Start render
         </button>
       </div>
@@ -506,6 +551,15 @@
 {/if}
 
 <style>
+  .field-label {
+    font-size: var(--ga-text-meta);
+    font-weight: var(--ga-weight-control);
+    color: var(--ga-ink-2, #89857e);
+  }
+  .field-hint { margin: -6px 0 12px; font-size: var(--ga-text-meta); color: var(--ga-ink-2, #89857e); }
+  .range-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 4px; }
+  .warn-note.subtle { background: var(--ga-card, #16140f); border-left-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)); }
+  .warn-note.subtle .warn-icon { background: var(--ga-raise, #26221c); color: var(--ga-ink-1, #ada9a2); }
   .show-length-btn {
     box-sizing: border-box;
     align-self: flex-start;

@@ -6,7 +6,12 @@
 //    folder and played from there. The project then refers to that copy.
 //  - show_audio_mux: "Render to Video" writes the picture only; this mixes
 //    the show's tracks (each at its place, trim and level, looped like the
-//    show) and adds them to the rendered file.
+//    show) and adds them to the rendered file, from the show time the render
+//    started at.
+//  - show_audio_soundtrack_save / show_audio_discard: the Timeline's sound
+//    rows rendered in the app (effects, fades, ducking) as a WAV in a temp
+//    folder of this process, used by the mux and deleted after it (or when
+//    the render is cancelled, or the app quits).
 //
 // The argument builders are pure so they can be tested without spawning.
 const crypto = require('crypto');
@@ -54,6 +59,7 @@ function buildShowAudioMuxArgs({
   tracks,
   showDuration,
   renderDuration,
+  renderStart = 0,
   loop = false,
   audioCodecArgs = ['-c:a', 'aac', '-b:a', '192k'],
   sampleRate = SAMPLE_RATE,
@@ -62,6 +68,10 @@ function buildShowAudioMuxArgs({
   if (usable.length === 0) throw new Error('No show audio to add');
   const show = Math.max(Number(showDuration) || 0, ...usable.map((t) => (Number(t.startTime) || 0) + Number(t.duration)));
   const render = Number(renderDuration) > 0 ? Number(renderDuration) : show;
+  // A render of the in/out work area starts part way into the show: the
+  // sound starts there too (frame 0 of the video is show time `start`).
+  const start = Math.max(0, Number(renderStart) || 0);
+  const end = start + render;
 
   const args = ['-hide_banner', '-loglevel', 'error', '-y', '-i', videoPath];
   for (const t of usable) args.push('-i', t.path);
@@ -86,10 +96,11 @@ function buildShowAudioMuxArgs({
     mix = 'mix';
   }
   filters.push(`[${mix}]apad=whole_dur=${seconds(show)},atrim=end=${seconds(show)}[show]`);
-  if (loop && render > show + 1e-3) {
-    filters.push(`[show]aloop=loop=-1:size=${Math.round(show * sampleRate)},atrim=end=${seconds(render)}[aout]`);
+  const cut = start > 0 ? `atrim=start=${seconds(start)}:end=${seconds(end)},asetpts=PTS-STARTPTS` : `atrim=end=${seconds(end)}`;
+  if (loop && end > show + 1e-3) {
+    filters.push(`[show]aloop=loop=-1:size=${Math.round(show * sampleRate)},${cut}[aout]`);
   } else {
-    filters.push(`[show]apad=whole_dur=${seconds(render)},atrim=end=${seconds(render)}[aout]`);
+    filters.push(`[show]apad=whole_dur=${seconds(end)},${cut}[aout]`);
   }
 
   args.push(
@@ -119,7 +130,58 @@ function runFfmpeg(spawn, ffmpegPath, args) {
  * it may read (picked, dropped or in a project), and the video must be a
  * rendered .mp4 / .mov that exists and that it may write (it is replaced).
  */
-function registerShowAudioIpc({ ipcMain, spawn, fs, path, ffmpegPath, pathGrants, convertDir, audioCodecArgs }) {
+/** A soundtrack the app rendered: only files in these folders may be discarded. */
+function createSoundtrackStore({ fs, path, tempRoot, pathGrants }) {
+  const dirs = new Set();
+  const owned = (file) => typeof file === 'string' && path.isAbsolute(file) && dirs.has(path.dirname(path.resolve(file)));
+  return {
+    save(bytes) {
+      const dir = fs.mkdtempSync(path.join(tempRoot, 'ghost-show-audio-'));
+      dirs.add(dir);
+      const file = path.join(dir, 'soundtrack.wav');
+      fs.writeFileSync(file, bytes);
+      pathGrants?.allowRead?.(file);
+      return file;
+    },
+    owned,
+    discard(file) {
+      if (!owned(file)) return false;
+      const dir = path.dirname(path.resolve(file));
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+      dirs.delete(dir);
+      return true;
+    },
+    discardAll() {
+      for (const dir of dirs) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ } }
+      dirs.clear();
+    },
+    count: () => dirs.size,
+  };
+}
+
+function bytesOf(value) {
+  if (Buffer.isBuffer(value)) return value;
+  if (value instanceof ArrayBuffer) return Buffer.from(value);
+  if (ArrayBuffer.isView(value)) return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+  return null;
+}
+
+function registerShowAudioIpc({ ipcMain, spawn, fs, path, ffmpegPath, pathGrants, convertDir, audioCodecArgs, tempRoot, onQuit }) {
+  const soundtracks = createSoundtrackStore({ fs, path, tempRoot: tempRoot || require('os').tmpdir(), pathGrants });
+  onQuit?.(() => soundtracks.discardAll());
+
+  ipcMain.handle('show_audio_soundtrack_save', async (_event, args = {}) => {
+    const bytes = bytesOf(args.bytes);
+    if (!bytes || bytes.length < 44 || bytes.toString('ascii', 0, 4) !== 'RIFF') return { success: false, error: 'Not a WAV file.' };
+    try {
+      return { success: true, path: soundtracks.save(bytes) };
+    } catch (err) {
+      return { success: false, error: err?.message || String(err) };
+    }
+  });
+
+  ipcMain.handle('show_audio_discard', async (_event, args = {}) => ({ success: soundtracks.discard(args.path) }));
+
   ipcMain.handle('show_audio_prepare', async (_event, args = {}) => {
     const source = typeof args.path === 'string' ? args.path : '';
     if (!source || !path.isAbsolute(source) || !pathGrants.canRead(source)) {
@@ -155,7 +217,7 @@ function registerShowAudioIpc({ ipcMain, spawn, fs, path, ffmpegPath, pathGrants
       return { success: false, error: 'Rendered video not found.' };
     }
     const tracks = (Array.isArray(args.tracks) ? args.tracks : [])
-      .filter((t) => t && typeof t.path === 'string' && path.isAbsolute(t.path) && pathGrants.canRead(t.path) && fs.existsSync(t.path));
+      .filter((t) => t && typeof t.path === 'string' && path.isAbsolute(t.path) && (pathGrants.canRead(t.path) || soundtracks.owned(t.path)) && fs.existsSync(t.path));
     if (tracks.length === 0) return { success: false, error: 'The show audio files could not be found.' };
     const ext = path.extname(videoPath);
     const muxedPath = `${videoPath}.audio${ext}`;
@@ -166,6 +228,7 @@ function registerShowAudioIpc({ ipcMain, spawn, fs, path, ffmpegPath, pathGrants
         tracks,
         showDuration: args.showDuration,
         renderDuration: args.renderDuration,
+        renderStart: args.renderStart,
         loop: args.loop === true,
         audioCodecArgs: audioCodecArgs(videoPath),
       }));
@@ -175,8 +238,11 @@ function registerShowAudioIpc({ ipcMain, spawn, fs, path, ffmpegPath, pathGrants
     } catch (err) {
       try { fs.rmSync(muxedPath, { force: true }); } catch { /* best effort */ }
       return { success: false, error: err?.message || String(err) };
+    } finally {
+      // A rendered soundtrack is used once.
+      for (const t of tracks) soundtracks.discard(t.path);
     }
   });
 }
 
-module.exports = { buildShowAudioConvertArgs, buildShowAudioMuxArgs, convertedAudioPath, registerShowAudioIpc, runFfmpeg };
+module.exports = { buildShowAudioConvertArgs, buildShowAudioMuxArgs, convertedAudioPath, createSoundtrackStore, registerShowAudioIpc, runFfmpeg };

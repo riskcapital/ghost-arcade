@@ -60,6 +60,26 @@ describe('recording encoder arguments', () => {
     expect(after(args('hap'), '-format')).toBe('hap');
   });
 
+  it('gives Render to video a quality choice per codec, and live recording what it always had', () => {
+    expect(after(args('prores_hq', { quality: 'web' }), '-profile:v')).toBe('1');
+    expect(after(args('prores_hq', { quality: 'archive' }), '-profile:v')).toBe('5');
+    expect(after(args('prores_hq', { quality: 'archive' }), '-pix_fmt')).toBe('bgra');
+    expect(args('prores_hq', { quality: 'archive' }).slice(-12)).toContain('yuv444p10le');
+    expect(after(args('prores_hq', { quality: 'high' }), '-profile:v')).toBe('3');
+    expect(after(args('hap', { quality: 'archive' }), '-format')).toBe('hap_q');
+    expect(after(args('hap', { quality: 'high' }), '-format')).toBe('hap');
+    expect(after(args('hap_alpha', { quality: 'archive' }), '-format')).toBe('hap_alpha');
+  });
+
+  it('tells ffmpeg the NTSC rates as exact fractions', () => {
+    expect(formats.ffmpegRate(30)).toBe('30');
+    expect(formats.ffmpegRate(120)).toBe('120');
+    expect(formats.ffmpegRate(30000 / 1001)).toBe('30000/1001');
+    expect(formats.ffmpegRate(24000 / 1001)).toBe('24000/1001');
+    expect(formats.ffmpegRate(60000 / 1001)).toBe('60000/1001');
+    expect(after(args('prores_hq', { fps: 30000 / 1001 }), '-framerate')).toBe('30000/1001');
+  });
+
   it('passes offline frame counts and pixel formats through', () => {
     const offline = args('prores_hq', { totalFrames: 300, pixelFormat: 'rgba' });
     expect(after(offline, '-frames:v')).toBe('300');

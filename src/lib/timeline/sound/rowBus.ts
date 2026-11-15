@@ -82,10 +82,12 @@ export class RowBus {
     return this.buildFx !== null;
   }
 
-  setLevel(v: number): void {
+  /** The row's level, glided (a step would click). `now`: set it at once (the start of an offline render). */
+  setLevel(v: number, now = false): void {
     if (Math.abs(v - this.lastLevel) < 1e-4) return;
     this.lastLevel = v;
-    this.level.gain.setTargetAtTime(v, this.ctx.currentTime, GAIN_TC);
+    if (now) this.level.gain.setValueAtTime(v, this.ctx.currentTime);
+    else this.level.gain.setTargetAtTime(v, this.ctx.currentTime, GAIN_TC);
   }
 
   setFx(row: SoundRow, values: Map<string, Record<string, number>>, bpm: number): void {

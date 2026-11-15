@@ -1305,7 +1305,7 @@ function startMp4FrameEncoderJob(args = {}) {
     '-f', 'rawvideo',
     '-pix_fmt', pixelFormat,
     '-s:v', `${width}x${height}`,
-    '-framerate', String(fps),
+    '-framerate', require('./recording-formats.cjs').ffmpegRate(fps),
     '-i', 'pipe:0',
     ...(totalFrames > 0 ? ['-frames:v', String(totalFrames)] : []),
     '-an',
@@ -3487,6 +3487,8 @@ require('./show-audio.cjs').registerShowAudioIpc({
   pathGrants,
   convertDir: path.join(app.getPath('userData'), 'project-assets', 'converted-audio'),
   audioCodecArgs: (videoPath) => require('./recording-formats.cjs').recordingAudioCodecArgs(videoPath),
+  tempRoot: app.getPath('temp'),
+  onQuit: (fn) => app.on('will-quit', fn),
 });
 
 /** Finish an in-core recording. The core wrote and finalized the MP4, so the

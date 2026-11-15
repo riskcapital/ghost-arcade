@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const require = createRequire(import.meta.url);
-const { buildShowAudioConvertArgs, buildShowAudioMuxArgs, convertedAudioPath, registerShowAudioIpc } = require('../../../electron/show-audio.cjs');
+const { buildShowAudioConvertArgs, buildShowAudioMuxArgs, convertedAudioPath, createSoundtrackStore, registerShowAudioIpc } = require('../../../electron/show-audio.cjs');
 
 function bundledFfmpeg(): string | null {
   try {
@@ -65,6 +65,38 @@ describe('show audio mux arguments', () => {
     }));
     expect(filter).toContain('[show]apad=whole_dur=25.000000,atrim=end=25.000000[aout]');
     expect(filter).not.toContain('aloop');
+  });
+
+  it('starts the sound where a work-area render starts in the show', () => {
+    const filter = filterOf(buildShowAudioMuxArgs({
+      ...base,
+      tracks: [{ path: '/m/a.wav', startTime: 0, offset: 0, duration: 60, volume: 1 }],
+      showDuration: 60,
+      renderDuration: 12.5,
+      renderStart: 30,
+    }));
+    expect(filter).toContain('[show]apad=whole_dur=42.500000,atrim=start=30.000000:end=42.500000,asetpts=PTS-STARTPTS[aout]');
+  });
+
+  it('a rendered soundtrack lives in its own temp folder and only those can be discarded', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'ga-st-'));
+    try {
+      const fsm = require('node:fs');
+      const store = createSoundtrackStore({ fs: fsm, path, tempRoot: root, pathGrants: { allowRead: () => {} } });
+      const file = store.save(Buffer.from('RIFF0000WAVE'));
+      expect(existsSync(file)).toBe(true);
+      expect(store.owned(file)).toBe(true);
+      expect(store.discard(path.join(root, 'elsewhere.wav'))).toBe(false);
+      expect(store.discard(file)).toBe(true);
+      expect(existsSync(path.dirname(file))).toBe(false);
+      store.save(Buffer.from('RIFF0000WAVE'));
+      store.save(Buffer.from('RIFF0000WAVE'));
+      expect(store.count()).toBe(2);
+      store.discardAll();
+      expect(store.count()).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('uses the given audio codec (PCM for a .mov master)', () => {

@@ -35,6 +35,30 @@ function presetForQuality(quality) {
   return 'fast';
 }
 
+/**
+ * A frame rate as ffmpeg should read it: whole rates as they are, the NTSC
+ * rates (23.976, 29.97, 59.94) as their exact fractions, so a long render's
+ * picture never drifts against its sound. Same rule as src/lib/recording/renderRate.ts.
+ */
+function ffmpegRate(fps) {
+  const n = Number(fps);
+  if (!Number.isFinite(n) || n <= 0) return '30';
+  const whole = Math.round(n);
+  if (Math.abs(n - whole) < 1e-9) return String(whole);
+  const ntsc = Math.round((n * 1001) / 1000);
+  if (Math.abs(n - (ntsc * 1000) / 1001) < 1e-6) return `${ntsc * 1000}/1001`;
+  return `${Math.round(n * 1000)}/1000`;
+}
+
+/** ProRes profile for a quality tier: Render to video offers LT / HQ / 4444 XQ;
+ *  everything else (live recording) is HQ as it always was. */
+function proresProfile(quality) {
+  const q = String(quality || 'high').trim().toLowerCase();
+  if (q === 'web') return { ks: '1', vt: 'lt', pix: 'yuv422p10le', vtPix: 'p210le', label: 'ProRes 422 LT' };
+  if (q === 'archive') return { ks: '5', vt: 'xq', pix: 'yuv444p10le', vtPix: 'p410le', label: 'ProRes 4444 XQ' };
+  return { ks: '3', vt: 'hq', pix: 'yuv422p10le', vtPix: 'p210le', label: 'ProRes 422 HQ' };
+}
+
 // ffmpeg converts RGB to YUV with BT.601 unless told otherwise; ProRes is an
 // editing format, so convert and tag BT.709 like every NLE expects.
 const BT709_TAGS = ['-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709'];
@@ -62,7 +86,7 @@ function recordingEncoderArgs({
     '-hide_banner', '-loglevel', 'warning', '-y',
     '-f', 'rawvideo', '-pix_fmt', pixelFormat,
     '-s:v', `${width}x${height}`,
-    '-framerate', String(fps),
+    '-framerate', ffmpegRate(fps),
     '-i', 'pipe:0',
     ...(totalFrames > 0 ? ['-frames:v', String(totalFrames)] : []),
     '-an',
@@ -77,17 +101,20 @@ function recordingEncoderArgs({
       '-pix_fmt', 'yuva444p10le', '-alpha_bits', '16', '-vendor', 'apl0', ...BT709_TAGS, outputPath];
   }
   if (format.id === 'prores_hq') {
+    const profile = proresProfile(quality);
     if (hardwareProRes) {
-      return [...base, '-vf', `pad=ceil(iw/2)*2:ceil(ih/2)*2,${TO_BT709},format=p210le`, '-c:v', 'prores_videotoolbox',
-        '-profile:v', 'hq', '-allow_sw', '1', ...BT709_TAGS, outputPath];
+      return [...base, '-vf', `pad=ceil(iw/2)*2:ceil(ih/2)*2,${TO_BT709},format=${profile.vtPix}`, '-c:v', 'prores_videotoolbox',
+        '-profile:v', profile.vt, '-allow_sw', '1', ...BT709_TAGS, outputPath];
     }
-    return [...base, '-vf', `pad=ceil(iw/2)*2:ceil(ih/2)*2,${TO_BT709},format=yuv422p10le`, '-c:v', 'prores_ks',
-      '-profile:v', '3', '-pix_fmt', 'yuv422p10le', '-vendor', 'apl0', ...BT709_TAGS, outputPath];
+    return [...base, '-vf', `pad=ceil(iw/2)*2:ceil(ih/2)*2,${TO_BT709},format=${profile.pix}`, '-c:v', 'prores_ks',
+      '-profile:v', profile.ks, '-pix_fmt', profile.pix, '-vendor', 'apl0', ...BT709_TAGS, outputPath];
   }
   if (format.id === 'hap' || format.id === 'hap_alpha') {
-    // DXT blocks are 4x4: pad with transparent pixels, never scale.
+    // DXT blocks are 4x4: pad with transparent pixels, never scale. HAP Q
+    // (Render to video's top tier) keeps colour gradients cleaner at twice the size.
+    const hapFormat = format.id === 'hap' && String(quality).toLowerCase() === 'archive' ? 'hap_q' : format.id;
     return [...base, '-vf', 'pad=ceil(iw/4)*4:ceil(ih/4)*4:0:0:color=black@0,format=rgba',
-      '-c:v', 'hap', '-format', format.id, '-compressor', 'snappy', '-chunks', '4', outputPath];
+      '-c:v', 'hap', '-format', hapFormat, '-compressor', 'snappy', '-chunks', '4', outputPath];
   }
   // H.264: exactly the recorder's arguments before other codecs existed.
   if (platform === 'darwin') {
@@ -250,6 +277,8 @@ module.exports = {
   RECORDING_CODECS,
   recordingCodec,
   recordingEncoderArgs,
+  ffmpegRate,
+  proresProfile,
   liveRecordingFps,
   parseEncoderList,
   recordingCodecAvailability,

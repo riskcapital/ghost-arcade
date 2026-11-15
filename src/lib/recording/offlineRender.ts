@@ -52,6 +52,7 @@ import { pumpVisualAudio, setVisualAudioManualTime } from '../audio/visualAudio'
 import { audioStore } from '../stores/audio';
 import { audioAnalyzer } from '../audio/analyzer';
 import {
+  OfflineFileAudioAnalyzer,
   offlineFileAudioTime,
   prepareOfflineFileAudio,
   type OfflineFileAudioSession,
@@ -63,7 +64,11 @@ import { layerSequencer } from '../stores/layerSequencer';
 import { vjLayerSequencer } from '../stores/vjLayerSequencer';
 import { showTimeline } from '../stores/showTimeline';
 import { showMuxTracks } from '../show/showAudioExport';
-import { timelineSoundtrackFile } from '../timeline/sound/soundExport';
+import { discardSoundtrackWav, renderTimelineSound, saveSoundtrackWav, soundtrackMono } from '../timeline/sound/soundExport';
+import { IDLE, isRunning, renderStep, type RenderEvent, type RenderFlow } from './renderFlow';
+import { analysisStepsUpTo, frameCount, frameTime, framesDuration } from './renderRate';
+import { beginRenderClock, endRenderClock, setRenderClockSeconds } from './renderClock';
+import { rateSampleFrom, saveRateSample } from './renderEstimate';
 import { mediaLibrary } from '../stores/media';
 import { generateUUID } from '../utils/uuid';
 import { createAssetRefFromGeneratedBlob, pathToFileUrl, type AssetRef } from '../storage/assetRegistry';
@@ -99,6 +104,8 @@ export interface OfflineRenderSettings {
    *  renderer output directly; desktop MP4 packaging streams raw frames
    *  through native FFmpeg while browser builds keep the wasm fallback. */
   captureBackend?: 'webgl' | 'native';
+  /** Show time of the first frame (a render of the in/out work area). 0: the start. */
+  startSeconds?: number;
   /** Desktop native encode only: H.264 MP4 (default), ProRes 422 HQ or HAP
    *  (MOV). Offline frames are the opaque program output, so the alpha
    *  codecs are not offered here. */
@@ -126,31 +133,13 @@ export function getOfflineSegmentFrameCount(settings: Pick<OfflineRenderSettings
   return Math.max(1, Math.min(MAX_SEGMENT_FRAMES, byTime, byPixels));
 }
 
-export type OfflineRenderStatus =
-  | 'idle'
-  | 'choosing-folder'
-  | 'loading-ffmpeg'
-  | 'rendering'
-  | 'encoding'
-  | 'saving'
-  | 'complete'
-  | 'cancelled'
-  | 'error';
-
+/** The render's state is one explicit value (renderFlow.ts): idle, preparing,
+ *  rendering, encoding, then done, cancelled or error. */
 export interface OfflineRenderState {
-  status: OfflineRenderStatus;
-  totalFrames: number;
-  currentFrame: number;
-  /** Encode-phase progress 0..1. Separate from currentFrame so the
-   *  modal can show meaningful progress during the libx264 wasm
-   *  pass (slow — ~1-3× clip duration). Previously the bar froze
-   *  at 100% (last captured-frame value) during encode and looked
-   *  stuck even though work was happening. */
-  encodeProgress: number;
+  flow: RenderFlow;
   /** Wall-clock ms when start() was called — drives the elapsed
    *  display in the modal. */
   startedAtMs: number;
-  errorMessage: string | null;
   /** Last completed output's blob URL (so the modal can show a
    *  preview + download link). Cleared on next start. */
   lastOutputUrl: string | null;
@@ -167,22 +156,28 @@ export interface OfflineRenderState {
   /** About the show's soundtrack in the last video: included, or why not.
    *  Null when the show has no audio. */
   lastOutputAudioNote: string | null;
+  /** Frames and wall time of the last finished render (the completion line). */
+  lastFrames: number;
+  lastElapsedMs: number;
 }
 
 const INITIAL_STATE: OfflineRenderState = {
-  status: 'idle',
-  totalFrames: 0,
-  currentFrame: 0,
-  encodeProgress: 0,
+  flow: IDLE,
   startedAtMs: 0,
-  errorMessage: null,
   lastOutputUrl: null,
   lastOutputName: null,
   lastOutputKind: null,
   lastOutputPath: null,
   lastOutputSavedPath: null,
   lastOutputAudioNote: null,
+  lastFrames: 0,
+  lastElapsedMs: 0,
 };
+
+/** Thrown inside a render when Cancel was pressed: the cleanup runs, then the state is `cancelled`. */
+class RenderCancelled extends Error {
+  constructor() { super('cancelled'); }
+}
 
 export interface FrameSequenceTarget {
   kind: 'electron' | 'browser';
@@ -441,6 +436,7 @@ export async function writeNativeRendererJpegSequenceFrame(
   session: NativeJpegSequenceSession,
   frameIndex: number,
   timeSeconds: number,
+  stepSeconds?: number,
 ): Promise<NativeRendererFrameSnapshotExportResult> {
   if (session.target.kind !== 'electron' || !session.target.path) {
     throw new Error('Native renderer frame capture requires the desktop app frame-sequence encoder');
@@ -450,6 +446,7 @@ export async function writeNativeRendererJpegSequenceFrame(
   const snapshot = await exportNativeRendererFrameSnapshot(rawPath, {
     time: timeSeconds,
     frame_index: frameIndex,
+    ...(stepSeconds ? { step_seconds: stepSeconds } : {}),
   });
   assertNativeRendererFrameExport(snapshot, frameIndex, session);
   await writeNativeJpegSequenceFrameFile(session, frameIndex, rawPath, true);
@@ -496,12 +493,14 @@ export async function encodeNativeRendererJpegFrame(
   session: NativeJpegFrameEncoderSession,
   frameIndex: number,
   timeSeconds: number,
+  stepSeconds?: number,
 ): Promise<Uint8Array> {
   const rawName = `native_frame_${session.jobId}_${String(frameIndex).padStart(6, '0')}.${session.pixelFormat}`;
   const rawPath = joinNativeTempPath(session.tempDir, rawName);
   const snapshot = await exportNativeRendererFrameSnapshot(rawPath, {
     time: timeSeconds,
     frame_index: frameIndex,
+    ...(stepSeconds ? { step_seconds: stepSeconds } : {}),
   });
   assertNativeRendererFrameExport(snapshot, frameIndex, session);
 
@@ -637,12 +636,14 @@ export async function writeNativeRendererMp4Frame(
   session: NativeMp4FrameEncoderSession,
   frameIndex: number,
   timeSeconds: number,
+  stepSeconds?: number,
 ): Promise<NativeRendererFrameSnapshotExportResult> {
   const rawName = `native_mp4_${session.jobId}_${String(frameIndex).padStart(6, '0')}.${session.pixelFormat}`;
   const rawPath = joinNativeTempPath(session.tempDir, rawName);
   const snapshot = await exportNativeRendererFrameSnapshot(rawPath, {
     time: timeSeconds,
     frame_index: frameIndex,
+    ...(stepSeconds ? { step_seconds: stepSeconds } : {}),
   });
   assertNativeRendererFrameExport(snapshot, frameIndex, session);
   await writeNativeMp4FrameFile(session, frameIndex, rawPath, true);
@@ -884,6 +885,8 @@ export async function concatOfflineSegments(ffmpeg: FFmpeg, segmentNames: string
 function createOfflineRenderStore() {
   const { subscribe, update, set } = writable<OfflineRenderState>({ ...INITIAL_STATE });
   let cancelRequested = false;
+  /** Each render's number: a render's late writes never land on a newer one. */
+  let renderToken = 0;
   /** Reference to the live RenderEngine. Set by Canvas.svelte on
    *  mount via registerEngine — the offline pipeline needs to
    *  resize() it + read its DOM canvas + restore size at the end. */
@@ -906,9 +909,6 @@ function createOfflineRenderStore() {
     canvasRef = null;
   }
 
-  function setStatus(status: OfflineRenderStatus, msg?: string) {
-    update(s => ({ ...s, status, errorMessage: msg ?? null }));
-  }
 
   /** Read the engine's composite render target as JPEG bytes.
    *
@@ -977,27 +977,48 @@ function createOfflineRenderStore() {
 
   /** `opts.promptSave: false` keeps a finished MP4 where the encoder wrote
    *  it (the media library has it either way) instead of asking where to
-   *  save a copy: for automation that reads the file itself. */
+   *  save a copy: for automation that reads the file itself.
+   *
+   *  Every frame is made, never captured live: frame i is show time
+   *  `start + i / fps` exactly (renderRate.ts), every clock the app has is
+   *  moved to it (renderClock.ts for the live engines, the show, lines,
+   *  keyframes, sequencers, Screen FX, the audio analysis at a fixed 60 a
+   *  second, the core's render clock), and the core steps its simulations
+   *  once to that time before the frame is read. Frames stream to the
+   *  encoder one at a time; none are kept. */
   async function start(settings: OfflineRenderSettings, opts: { promptSave?: boolean } = {}): Promise<boolean> {
+    if (isRunning(get({ subscribe }).flow)) return false;
+    const token = ++renderToken;
+    const dispatch = (event: RenderEvent) => {
+      if (token !== renderToken) return;
+      update((s) => ({ ...s, flow: renderStep(s.flow, event) }));
+    };
     // The WebGL engine only exists in non-native builds. Native capture
     // renders + reads frames entirely in the core, so it must not require it.
     if ((!engineRef || !canvasRef) && settings.captureBackend !== 'native') {
-      setStatus('error', 'Render engine not ready — this build renders natively; use the native capture backend.');
+      set({ ...INITIAL_STATE, flow: { kind: 'error', message: 'Render engine not ready — this build renders natively; use the native capture backend.' } });
       return false;
     }
     const engine = engineRef;
     const canvas = canvasRef;
     const outputMode = settings.outputMode ?? 'mp4';
     const useNativeMp4Encoder = outputMode === 'mp4' && isElectron;
-    const totalFrames = Math.max(1, Math.round(settings.durationSeconds * settings.fps));
+    const fps = settings.fps;
+    const startT = Math.max(0, Number(settings.startSeconds) || 0);
+    const totalFrames = frameCount(settings.durationSeconds, fps);
+    const renderSeconds = framesDuration(totalFrames, fps);
+    const step = framesDuration(1, fps);
     cancelRequested = false;
-    set({
-      ...INITIAL_STATE,
-      status: outputMode === 'frames' ? 'choosing-folder' : (useNativeMp4Encoder ? 'rendering' : 'loading-ffmpeg'),
-      totalFrames,
-      currentFrame: 0,
-      startedAtMs: performance.now(),
-    });
+    set({ ...INITIAL_STATE, flow: renderStep(IDLE, { type: 'start' }), startedAtMs: performance.now() });
+    const checkStop = () => { if (cancelRequested) throw new RenderCancelled(); };
+    // Progress for the modal, at most ten times a second.
+    let lastProgressAt = 0;
+    const progress = (frame: number) => {
+      const now = performance.now();
+      if (frame < totalFrames && now - lastProgressAt < 100) return;
+      lastProgressAt = now;
+      dispatch({ type: 'frame', frame, total: totalFrames });
+    };
 
     // Save state to restore after render so the live editor returns
     // to exactly how it was. Both engine size + the time overrides.
@@ -1011,160 +1032,92 @@ function createOfflineRenderStore() {
     let ffmpeg: FFmpeg | null = null;
     let frameTarget: FrameSequenceTarget | null = null;
     let nativeJpegSequence: NativeJpegSequenceSession | null = null;
-    let nativeJpegFrameEncoder: NativeJpegFrameEncoderSession | null = null;
     let nativeMp4FrameEncoder: NativeMp4FrameEncoderSession | null = null;
     let nativeJpegSequenceFinished = false;
-    let nativeJpegFrameEncoderFinished = false;
     let nativeMp4FrameEncoderFinished = false;
     let nativeFrameCaptureActive = false;
     let nativeOutputNeedsRestore = false;
     /** True once the live sync RAF has been suspended for this render. */
     let manualClockExportHeld = false;
-    /** Virtual-time analysis of a file audio source, when we could decode
-     *  one. Null for live inputs (mic / system), which cannot be
-     *  virtualized — see the warning in OfflineRenderModal. */
+    /** Virtual-time analysis of the sound, when there is a file to analyse.
+     *  Null for live inputs (mic / system), which cannot be virtualized —
+     *  see the warning in OfflineRenderModal. */
     let fileAudioSession: OfflineFileAudioSession | null = null;
-    /** True once the live analyser has been told to stand down because
-     *  `fileAudioSession` is supplying frames instead. */
+    /** A file-input session is relative to the render's first frame; a show
+     *  session is in show time. */
+    let analysisFromRenderStart = false;
     let liveAnalysisHeld = false;
-    /** Media element we paused for a file-audio export, so playback can be
-     *  handed back exactly as we found it. */
     let pausedAudioElement: HTMLAudioElement | HTMLVideoElement | null = null;
-    /** True when the show timeline was running live and we paused it so the
-     *  render loop's per-frame seek is the only thing driving it. */
-    let showTimelineWasPlaying = false;
+    /** The show as it was: playing (resumed after), or parked at a time (put back). */
+    let showWasPlaying = false;
+    let showParkedAt: number | null = null;
+    /** The Timeline's sound rows rendered up front, in a temp file of the desktop app. */
+    let soundtrackPath: string | null = null;
     let nativeCapturePixelFormat: 'rgba' | 'bgra' = 'rgba';
     const frameBaseName = frameSequenceBaseName(settings.filename, 'render');
-    if (outputMode === 'frames') {
-      try {
-        frameTarget = await chooseFrameSequenceTarget();
-        if (!frameTarget) { _finish('cancelled'); return false; }
-      } catch (err) {
-        setStatus('error', formatErr(err));
-        return false;
-      }
-    } else if (!useNativeMp4Encoder) {
-      try {
-        ffmpeg = await loadFFmpeg();
-      } catch (err) {
-        setStatus('error', `FFmpeg load failed: ${formatErr(err)}`);
-        return false;
-      }
-    }
-    if (cancelRequested) { _finish('cancelled'); return false; }
-
-    setStatus('rendering');
-    if (canvas) canvas.style.visibility = 'hidden';
     const segmentFrameCount = outputMode === 'frames' || useNativeMp4Encoder
       ? totalFrames
       : getOfflineSegmentFrameCount(settings);
     const segmentNames: string[] = [];
     let currentSegmentFrames = 0;
     let readableOutputName = '';
+    const sync = () => getActiveNativeRendererSync();
 
     try {
-      // Resize the engine to the offline resolution. Live editor will
-      // briefly show this size; restored at the end. The engine.resize
-      // path rebuilds all render targets cleanly.
-      engine?.resize(settings.width, settings.height);
-      if (canvas) {
-        canvas.width = settings.width;
-        canvas.height = settings.height;
-      }
-      if (settings.captureBackend === 'native') {
-        const caps = await getNativeRendererCapabilities();
-        if (
-          !caps?.features?.frame_snapshot_export ||
-          !caps?.features?.native_frame_sequence_export ||
-          !caps.implemented_methods?.includes('export_frame_snapshot')
-        ) {
-          throw new Error('Native frame capture is not available in this renderer build.');
+      if (outputMode === 'frames') {
+        dispatch({ type: 'prepare', step: 'folder' });
+        frameTarget = await chooseFrameSequenceTarget();
+        if (!frameTarget) throw new RenderCancelled();
+      } else if (!useNativeMp4Encoder) {
+        dispatch({ type: 'prepare', step: 'encoder' });
+        try {
+          ffmpeg = await loadFFmpeg();
+        } catch (err) {
+          throw new Error(`FFmpeg load failed: ${formatErr(err)}`);
         }
-        if (!engine) {
-          // No WebGL engine to read the pre-render size from; the core's
-          // status is the ground truth for what to restore.
-          const preStatus = await getNativeRendererStatus();
-          if (preStatus.output_width > 0) restoreWidth = preStatus.output_width;
-          if (preStatus.output_height > 0) restoreHeight = preStatus.output_height;
-        }
-        await submitNativeRendererCommands([
-          { type: 'set_output', width: settings.width, height: settings.height, refresh_hz: settings.fps },
-        ]);
-        nativeOutputNeedsRestore = true;
-        const nativeStatus = await getNativeRendererStatus();
-        nativeCapturePixelFormat = rawPixelFormatForNativeTextureFormat(nativeStatus.output_format);
-        nativeFrameCaptureActive = true;
-        // Lock the world clock to the render clock: from here until the
-        // finally block, the ONLY thing advancing the core is this loop's
-        // renderManualFrame() call. The live sync RAF would otherwise keep
-        // flushing presents at the export's virtual time, which used to
-        // stack extra simulation steps on top of each captured frame.
-        getActiveNativeRendererSync()?.beginManualClockExport();
-        manualClockExportHeld = true;
       }
-      if (outputMode === 'frames' && frameTarget) {
-        nativeJpegSequence = await startNativeJpegSequence(
-          frameTarget,
-          settings,
-          frameBaseName,
-          totalFrames,
-          nativeCapturePixelFormat,
-        );
-      } else if (outputMode === 'mp4' && nativeFrameCaptureActive) {
-        nativeMp4FrameEncoder = await startNativeMp4FrameEncoder(
-          settings,
-          totalFrames,
-          nativeCapturePixelFormat,
-        );
-      } else if (outputMode === 'mp4' && useNativeMp4Encoder) {
-        nativeMp4FrameEncoder = await startNativeMp4FrameEncoder(
-          settings,
-          totalFrames,
-          'rgba',
-        );
-      }
-      // ─── Audio: pin the reactive signal to the render clock ────────
-      //
-      // Two independent wall-clock couplings live here.
-      //
-      // (1) The visual-audio FOLLOWER integrates every envelope, LFO and
-      //     beat-phase on real seconds. Left alone, a 10 s export that
-      //     takes 15 s of wall time folds 15 s of reactive motion into
-      //     10 s of video. Pinning it to the virtual clock fixes that for
-      //     EVERY input type, so it always runs.
-      //
-      // (2) The audio CONTENT itself. Only a file source can be
-      //     virtualized — decode it once and analyse at virtual time
-      //     below. A microphone or system-audio stream has no virtual
-      //     time to seek to; its content necessarily follows real elapsed
-      //     time, which is what the render modal warns about.
-      // (3) THE SHOW TIMELINE'S OWN AUDIO takes priority over the analyser
-      //     input when the user has programmed one — that IS the show's
-      //     soundtrack, and it is the only signal whose position we can
-      //     reproduce exactly at any virtual time (we know every track's
-      //     offset). Mixed down once, then sampled per frame through the
-      //     same OfflineFileAudioAnalyzer the file-input path uses.
+      checkStop();
+
+      // ─── The show and its sound, before any frame ───────────────────
+      // The render owns the show's clock: a playing show is paused (its own
+      // frame loop would fight the per-frame seeks) and resumed after.
       const showState = get(showTimeline);
       blankFramesAreReal = showTimeline.hasContent();
-      if (showState.audioTracks.some(t => !t.muted && t.url && t.duration > 0)) {
-        // Its RAF would race the render loop's own seek() — the render owns
-        // the clock for the duration.
-        showTimelineWasPlaying = showState.isPlaying;
-        if (showTimelineWasPlaying) showTimeline.pause();
+      showWasPlaying = showState.isPlaying;
+      showParkedAt = showState.isPlaying ? null : showState.currentTime;
+      if (showWasPlaying) showTimeline.pause();
+      const endT = startT + renderSeconds;
+      if (showState.doc === 'timeline' && showState.audioTracks.some(t => !t.muted && t.url && t.volume > 0)) {
+        // The Timeline's sound rows as they play live (effects, fades, levels,
+        // ducking, mute and solo, lines): rendered once, put in the video,
+        // and what the audio-reactive content reacts to.
+        dispatch({ type: 'prepare', step: 'sound' });
+        const sound = await renderTimelineSound(showState, endT);
+        checkStop();
+        if (sound) {
+          if (outputMode === 'mp4' && isElectron) soundtrackPath = await saveSoundtrackWav(sound);
+          fileAudioSession = {
+            analyzer: new OfflineFileAudioAnalyzer(soundtrackMono(sound), sound.sampleRate, { bandSmoothing: audioAnalyzer.getSmoothing() }),
+            startOffsetSeconds: 0,
+            loop: false,
+            durationSeconds: sound.left.length / sound.sampleRate,
+            label: 'Timeline sound rows',
+          };
+        }
+      } else if (showState.audioTracks.some(t => !t.muted && t.url && t.duration > 0)) {
+        // The Show: its tracks mixed down once, sampled per frame.
+        dispatch({ type: 'prepare', step: 'sound' });
         fileAudioSession = await prepareShowOfflineAudio(
           showState.audioTracks,
           showState.duration,
           { loop: showState.loop, bandSmoothing: audioAnalyzer.getSmoothing() },
         );
-        if (fileAudioSession) {
-          audioAnalyzer.beginAnalysisHold();
-          liveAnalysisHeld = true;
-          console.info(
-            `[offlineRender] show timeline audio pinned to the render clock ` +
-            `(${fileAudioSession.durationSeconds.toFixed(2)}s): ${fileAudioSession.label}`,
-          );
-        }
       }
+      if (fileAudioSession) {
+        audioAnalyzer.beginAnalysisHold();
+        liveAnalysisHeld = true;
+      }
+      checkStop();
 
       const audioState = get(audioStore);
       if (!fileAudioSession && audioState.inputType === 'file') {
@@ -1185,51 +1138,92 @@ function createOfflineRenderStore() {
           },
         );
         if (fileAudioSession) {
-          // The live RAF would keep overwriting the store with wall-clock
-          // frames — and with the element paused, with silence. Stand it
-          // down for the duration.
+          analysisFromRenderStart = true;
           audioAnalyzer.beginAnalysisHold();
           liveAnalysisHeld = true;
           if (wasPlaying) pausedAudioElement = element;
-          console.info(
-            `[offlineRender] file audio pinned to the render clock (${fileAudioSession.durationSeconds.toFixed(2)}s @ +${fileAudioSession.startOffsetSeconds.toFixed(2)}s): ${fileAudioSession.label}`,
-          );
         } else if (wasPlaying && element) {
-          // Couldn't virtualize it after all — give the user their audio
-          // back and fall through to follower-only pinning.
           void element.play().catch(() => { /* user can hit play again */ });
         }
       }
-      setVisualAudioManualTime(0);
+      checkStop();
 
+      // ─── The output ───────────────────────────────────────────────
+      dispatch({ type: 'prepare', step: 'output' });
+      if (canvas) canvas.style.visibility = 'hidden';
+      engine?.resize(settings.width, settings.height);
+      if (canvas) {
+        canvas.width = settings.width;
+        canvas.height = settings.height;
+      }
+      if (settings.captureBackend === 'native') {
+        const caps = await getNativeRendererCapabilities();
+        if (
+          !caps?.features?.frame_snapshot_export ||
+          !caps?.features?.native_frame_sequence_export ||
+          !caps.implemented_methods?.includes('export_frame_snapshot')
+        ) {
+          throw new Error('Native frame capture is not available in this renderer build.');
+        }
+        if (!engine) {
+          const preStatus = await getNativeRendererStatus();
+          if (preStatus.output_width > 0) restoreWidth = preStatus.output_width;
+          if (preStatus.output_height > 0) restoreHeight = preStatus.output_height;
+        }
+        await submitNativeRendererCommands([
+          { type: 'set_output', width: settings.width, height: settings.height, refresh_hz: Math.round(fps) },
+        ]);
+        nativeOutputNeedsRestore = true;
+        const nativeStatus = await getNativeRendererStatus();
+        nativeCapturePixelFormat = rawPixelFormatForNativeTextureFormat(nativeStatus.output_format);
+        nativeFrameCaptureActive = true;
+        // Lock the world clock to the render clock: from here until the
+        // finally block, the ONLY thing advancing the core is this loop.
+        sync()?.beginManualClockExport({ width: settings.width, height: settings.height });
+        manualClockExportHeld = true;
+      }
+      if (outputMode === 'frames' && frameTarget) {
+        nativeJpegSequence = await startNativeJpegSequence(frameTarget, settings, frameBaseName, totalFrames, nativeCapturePixelFormat);
+      } else if (outputMode === 'mp4' && useNativeMp4Encoder) {
+        nativeMp4FrameEncoder = await startNativeMp4FrameEncoder(settings, totalFrames, nativeFrameCaptureActive ? nativeCapturePixelFormat : 'rgba');
+      }
+
+      // Every live engine reads the render's clock from here (renderClock.ts).
+      beginRenderClock(startT);
+      setVisualAudioManualTime(startT);
+      let analysisStep = 0;
+      checkStop();
+      dispatch({ type: 'frame', frame: 0, total: totalFrames });
       // Let the resize settle before the first capture.
       await nextFrame();
 
-      // Pump frames into ffmpeg's virtual filesystem. Names need
-      // %06d to support up to ~16 hour renders at 60fps without
-      // changing the format string.
       for (let segmentStart = 0; segmentStart < totalFrames; segmentStart += segmentFrameCount) {
         currentSegmentFrames = Math.min(segmentFrameCount, totalFrames - segmentStart);
         for (let localFrame = 0; localFrame < currentSegmentFrames; localFrame++) {
-        if (cancelRequested) { _finish('cancelled'); return false; }
-        const globalFrame = segmentStart + localFrame;
-        const virtualTime = globalFrame / settings.fps;
+          checkStop();
+          const globalFrame = segmentStart + localFrame;
+          const virtualTime = frameTime(globalFrame, fps, startT);
 
-        // Drive every time-dependent subsystem from the same virtual
-        // clock. Engine = shader iTime; ISF = ISF shaders' TIME;
-        // stage effects = per-slice brightness; keyframes + sequencer
-        // = parameter / opacity overrides.
-        if (engine) engine.manualTime = virtualTime;
-        setISFManualTime(virtualTime);
+          // Drive every time-dependent subsystem from the same virtual
+          // clock. Engine = shader iTime; ISF = ISF shaders' TIME;
+          // stage effects = per-slice brightness; keyframes + sequencer
+          // = parameter / opacity overrides; the live engines' own clock.
+          setRenderClockSeconds(virtualTime);
+          if (engine) engine.manualTime = virtualTime;
+          setISFManualTime(virtualTime);
           setStageEffectsManualTime(virtualTime);
-          // Audio-reactive content: publish this frame's spectrum (file
-          // sources only) and advance the follower by exactly 1/fps of
-          // virtual time. Must land BEFORE renderManualFrame() — the graph
-          // build reads getVisualAudioSnapshot() synchronously.
+          // Audio-reactive content: the analysis steps at a fixed 60 a
+          // second (whatever the frame rate, so a 120 fps render reacts like
+          // a 30 fps one), then the follower moves by exactly one frame.
+          // Must land BEFORE renderManualFrame() — the graph build reads
+          // getVisualAudioSnapshot() synchronously.
           if (fileAudioSession) {
-            audioStore.injectAnalysisFrame(
-              fileAudioSession.analyzer.frameAt(offlineFileAudioTime(fileAudioSession, virtualTime)),
-            );
+            const due = analysisStepsUpTo(startT, analysisStep, virtualTime);
+            analysisStep = due.nextStep;
+            for (const t of due.times) {
+              const at = analysisFromRenderStart ? t - startT : t;
+              audioStore.injectAnalysisFrame(fileAudioSession.analyzer.frameAt(offlineFileAudioTime(fileAudioSession, at)));
+            }
           }
           pumpVisualAudio(virtualTime);
           layerSequencer.seek(virtualTime);
@@ -1247,43 +1241,34 @@ function createOfflineRenderStore() {
           // first, then evaluate them at the same instant live playback would.
           await Promise.resolve();
           keyframeTimeline.seek(showTimeline.keyframeTimeFor(virtualTime));
-          // Native graphs (splat, model3d, text, GPU instruments…)
-          // animate from the render clock the sync sends — pin it to
-          // the virtual time and flush so this frame's compute lands
-          // in the core before the snapshot is taken. Without this,
-          // graph content keeps animating on the wall clock and
-          // exports play faster than intended.
+          // One animation frame: the engines that run on it (modulation,
+          // Auto, music motion, fades, Screen FX) take this frame's time.
+          await nextFrame();
           if (nativeFrameCaptureActive) {
-            await getActiveNativeRendererSync()?.renderManualFrame(virtualTime);
+            // This frame's scene, values and clock reach the core (awaited:
+            // a sync already running is waited for, never skipped).
+            await sync()?.renderManualFrame(virtualTime, { index: globalFrame, step });
           }
 
-        // Wait one RAF so the live render loop picks up the new
-        // state. (True offline-rate rendering — where we'd call
-        // engine.render() directly without waiting for RAF — is a
-        // follow-up; that path needs to bypass Canvas.svelte's
-        // texture-update + composite stages entirely.)
-        await nextFrame();
-
-        if (outputMode === 'frames') {
-          if (!frameTarget) throw new Error('Frame export folder not ready');
-          if (nativeJpegSequence) {
-            if (nativeFrameCaptureActive) {
-              await writeNativeRendererJpegSequenceFrame(nativeJpegSequence, globalFrame, virtualTime);
+          if (outputMode === 'frames') {
+            if (!frameTarget) throw new Error('Frame export folder not ready');
+            if (nativeJpegSequence) {
+              if (nativeFrameCaptureActive) {
+                await writeNativeRendererJpegSequenceFrame(nativeJpegSequence, globalFrame, virtualTime, step);
+              } else {
+                if (!engine) throw new Error('WebGL frame capture needs the render engine');
+                const pixels = (engine as any).readCompositePixels() as { width: number; height: number; data: Uint8Array };
+                await writeNativeJpegSequenceFrame(nativeJpegSequence, globalFrame, pixels);
+              }
             } else {
               if (!engine) throw new Error('WebGL frame capture needs the render engine');
-              const pixels = (engine as any).readCompositePixels() as { width: number; height: number; data: Uint8Array };
-              await writeNativeJpegSequenceFrame(nativeJpegSequence, globalFrame, pixels);
+              const jpegBytes = await captureFrameJPEG(engine, 0.92);
+              const frameName = `${frameBaseName}_${String(globalFrame).padStart(6, '0')}.jpg`;
+              await writeFrameTargetBytes(frameTarget, frameName, jpegBytes);
             }
-          } else {
-            if (!engine) throw new Error('WebGL frame capture needs the render engine');
-            const jpegBytes = await captureFrameJPEG(engine, 0.92);
-            const frameName = `${frameBaseName}_${String(globalFrame).padStart(6, '0')}.jpg`;
-            await writeFrameTargetBytes(frameTarget, frameName, jpegBytes);
-          }
-        } else {
-          if (nativeMp4FrameEncoder) {
+          } else if (nativeMp4FrameEncoder) {
             if (nativeFrameCaptureActive) {
-              await writeNativeRendererMp4Frame(nativeMp4FrameEncoder, globalFrame, virtualTime);
+              await writeNativeRendererMp4Frame(nativeMp4FrameEncoder, globalFrame, virtualTime, step);
             } else {
               if (!engine) throw new Error('WebGL frame capture needs the render engine');
               const pixels = (engine as any).readCompositePixels() as { width: number; height: number; data: Uint8Array };
@@ -1293,97 +1278,61 @@ function createOfflineRenderStore() {
             if (!ffmpeg) throw new Error('FFmpeg encoder not ready');
             // Browser fallback: compressed JPEG intermediates keep
             // ffmpeg.wasm below its ~2GB heap limit.
-            if (!engine && !(nativeJpegFrameEncoder && nativeFrameCaptureActive)) {
-              throw new Error('WebGL frame capture needs the render engine');
-            }
-            const jpegBytes = nativeJpegFrameEncoder && nativeFrameCaptureActive
-              ? await encodeNativeRendererJpegFrame(nativeJpegFrameEncoder, globalFrame, virtualTime)
-              : await captureFrameJPEG(engine!, 0.92);
+            if (!engine) throw new Error('WebGL frame capture needs the render engine');
+            const jpegBytes = await captureFrameJPEG(engine, 0.92);
             const frameName = `frame_${String(localFrame).padStart(6, '0')}.jpg`;
             await ffmpeg.writeFile(frameName, jpegBytes);
           }
+          progress(globalFrame + 1);
         }
 
-        update(s => ({ ...s, currentFrame: globalFrame + 1 }));
-        }
-
-        if (outputMode === 'frames') {
-          currentSegmentFrames = 0;
-          continue;
-        }
-
-        if (nativeMp4FrameEncoder) {
+        if (outputMode === 'frames' || nativeMp4FrameEncoder) {
           currentSegmentFrames = 0;
           continue;
         }
 
         if (!ffmpeg) throw new Error('FFmpeg encoder not ready');
-        setStatus('encoding');
         const segmentIndex = segmentNames.length;
+        const segmentCount = Math.max(1, Math.ceil(totalFrames / segmentFrameCount));
+        dispatch({ type: 'encode', step: 'video', progress: segmentIndex / segmentCount });
         const segmentName = `segment_${String(segmentIndex).padStart(4, '0')}.mp4`;
         segmentNames.push(segmentName);
-        await encodeOfflineJpegSegment(
-          ffmpeg,
-          currentSegmentFrames,
-          settings.fps,
-          settings.quality,
-          segmentName,
-          (progress) => {
-            const segmentCount = Math.max(1, Math.ceil(totalFrames / segmentFrameCount));
-            const p = (segmentIndex + progress) / segmentCount;
-            update(s => ({ ...s, encodeProgress: Math.max(0, Math.min(0.95, p)) }));
-          },
-        );
+        await encodeOfflineJpegSegment(ffmpeg, currentSegmentFrames, fps, settings.quality, segmentName, (p) => {
+          dispatch({ type: 'encode', step: 'video', progress: Math.min(0.95, (segmentIndex + p) / segmentCount) });
+        });
         await deleteOfflineFrameFiles(ffmpeg, currentSegmentFrames);
         currentSegmentFrames = 0;
-        if (cancelRequested) { _finish('cancelled'); return false; }
-        setStatus('rendering');
+        checkStop();
       }
-
-      if (cancelRequested) { _finish('cancelled'); return false; }
-      if (nativeJpegFrameEncoder && !nativeJpegFrameEncoderFinished) {
-        await finishNativeJpegFrameEncoder(nativeJpegFrameEncoder);
-        nativeJpegFrameEncoderFinished = true;
-      }
+      checkStop();
 
       if (outputMode === 'frames') {
         if (!frameTarget) throw new Error('Frame export folder not ready');
-        setStatus('saving');
+        dispatch({ type: 'encode', step: 'saving', progress: 1 });
         if (nativeJpegSequence) {
           await finishNativeJpegSequence(nativeJpegSequence);
           nativeJpegSequenceFinished = true;
         }
-        const manifestName = `${frameBaseName}_manifest.txt`;
-        await writeFrameTargetText(frameTarget, manifestName, frameSequenceManifest({
-          baseName: frameBaseName,
-          fps: settings.fps,
-          width: settings.width,
-          height: settings.height,
-          totalFrames,
-          quality: settings.quality,
+        await writeFrameTargetText(frameTarget, `${frameBaseName}_manifest.txt`, frameSequenceManifest({
+          baseName: frameBaseName, fps, width: settings.width, height: settings.height, totalFrames, quality: settings.quality,
         }));
-        update(s => ({
-          ...s,
-          status: 'complete',
-          lastOutputKind: 'frames',
-          lastOutputName: frameBaseName,
-          lastOutputPath: describeFrameTarget(frameTarget!),
-        }));
+        finishWith({ lastOutputKind: 'frames', lastOutputName: frameBaseName, lastOutputPath: describeFrameTarget(frameTarget) });
         return true;
       }
 
-      if (nativeMp4FrameEncoder && !nativeMp4FrameEncoderFinished) {
-        setStatus('encoding');
+      if (nativeMp4FrameEncoder) {
+        dispatch({ type: 'encode', step: 'video', progress: 0.5 });
         const encoded = await finishNativeMp4FrameEncoder(nativeMp4FrameEncoder);
         nativeMp4FrameEncoderFinished = true;
-        if (cancelRequested) { _finish('cancelled'); return false; }
-        const audioNote = await addShowSoundtrack(encoded.outputPath, settings.durationSeconds);
-        update(s => ({ ...s, encodeProgress: 1 }));
-        if (cancelRequested) { _finish('cancelled'); return false; }
+        checkStop();
+        dispatch({ type: 'encode', step: 'sound', progress: 0.8 });
+        const audioNote = await addShowSoundtrack(encoded.outputPath, { start: startT, seconds: renderSeconds, soundtrackPath });
+        soundtrackPath = null; // the mux deletes it
+        checkStop();
 
-        setStatus('saving');
+        dispatch({ type: 'encode', step: 'saving', progress: 1 });
         const url = pathToFileUrl(encoded.outputPath);
-        const thumbnail = await thumbnailFromVideoUrl(url, Math.min(2, settings.durationSeconds * 0.4));
+        const thumbnail = await thumbnailFromVideoUrl(url, Math.min(2, renderSeconds * 0.4));
         const niceName = `${settings.filename || 'Offline Render'} ${new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-')}`;
         const assetRef: AssetRef = {
           kind: 'local-file',
@@ -1393,130 +1342,85 @@ function createOfflineRenderStore() {
           size: encoded.size,
           lastModified: Date.now(),
         };
-        mediaLibrary.addItem({
-          id: generateUUID(),
-          name: niceName,
-          type: 'video',
-          src: url,
-          thumbnail,
-          _assetRef: assetRef,
-        });
+        mediaLibrary.addItem({ id: generateUUID(), name: niceName, type: 'video', src: url, thumbnail, _assetRef: assetRef });
         // Ask where the user wants their copy. The library entry above is
         // already committed, so cancelling just means "leave it in the
         // app folder" — the completion panel surfaces that path either way.
         const savedPath = opts.promptSave === false
           ? null
           : await promptSaveMp4(encoded.outputPath, niceName, 'Save Video', nativeMp4FrameEncoder.extension);
-        update(s => ({
-          ...s,
-          status: 'complete',
+        finishWith({
           lastOutputUrl: url,
           lastOutputName: niceName,
           lastOutputKind: 'video',
           lastOutputPath: encoded.outputPath,
           lastOutputSavedPath: savedPath,
           lastOutputAudioNote: audioNote,
-        }));
+        });
         return true;
       }
 
       if (!ffmpeg) throw new Error('FFmpeg encoder not ready');
-
-      // Encode. libx264 + yuv420p produces the broadest-compatible
-      // MP4 (Quicktime, browsers, ffmpeg-built-in decoders). crf
-      // picks quality vs. file size — lower = better.
-      //
-      // Subscribe to ffmpeg's progress events for the duration of
-      // this exec call so the modal's bar reflects actual encoder
-      // progress instead of staying frozen at the last captured-
-      // frame value (100%). filter_complex / xfade have known
-      // overshoot issues with this event but the straight-through
-      // image-sequence-to-libx264 pipeline gives clean 0..1.
-      setStatus('encoding');
+      dispatch({ type: 'encode', step: 'video', progress: 0.95 });
       readableOutputName = await concatOfflineSegments(ffmpeg, segmentNames, `${settings.filename || 'render'}.mp4`);
       const outputName = `${settings.filename || 'render'}.mp4`;
-      update(s => ({ ...s, encodeProgress: 1 }));
-      if (cancelRequested) { _finish('cancelled'); return false; }
-
-      setStatus('saving');
+      checkStop();
+      dispatch({ type: 'encode', step: 'saving', progress: 1 });
       const data = await ffmpeg.readFile(readableOutputName);
-      // ffmpeg.readFile returns Uint8Array; wrap in a Blob for save.
       const u8 = data instanceof Uint8Array ? data : new Uint8Array(data as any);
       const blob = new Blob([u8], { type: 'video/mp4' });
       const url = URL.createObjectURL(blob);
-
-      // Capture a thumbnail mid-clip for the media library row.
-      const thumbnail = await thumbnailFromBlob(blob, url, Math.min(2, settings.durationSeconds * 0.4));
-
+      const thumbnail = await thumbnailFromBlob(blob, url, Math.min(2, renderSeconds * 0.4));
       const niceName = `${settings.filename || 'Offline Render'} ${new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-')}`;
-      const { assetRef } = await createAssetRefFromGeneratedBlob(
-        blob, `${niceName}.mp4`, 'video/mp4', url,
-      );
-      mediaLibrary.addItem({
-        id: generateUUID(),
-        name: niceName,
-        type: 'video',
-        src: url,
-        thumbnail,
-        _assetRef: assetRef,
-      });
-
+      const { assetRef } = await createAssetRefFromGeneratedBlob(blob, `${niceName}.mp4`, 'video/mp4', url);
+      mediaLibrary.addItem({ id: generateUUID(), name: niceName, type: 'video', src: url, thumbnail, _assetRef: assetRef });
       // Trigger a download too — users usually want the file
       // outside the project's media library.
       downloadBlob(blob, `${niceName}.mp4`);
-
-      // Cleanup ffmpeg virtual filesystem so subsequent renders
-      // don't accumulate gigabytes of PNG state across sessions.
       try {
-        if (ffmpeg) {
-          await deleteOfflineFrameFiles(ffmpeg, currentSegmentFrames || segmentFrameCount);
-          for (const segmentName of segmentNames) await ffmpeg.deleteFile(segmentName);
-          if (readableOutputName === outputName) await ffmpeg.deleteFile(outputName);
-        }
-      } catch (e) { /* best-effort */ }
-
-      update(s => ({ ...s, status: 'complete', lastOutputUrl: url, lastOutputName: niceName, lastOutputKind: 'video' }));
+        for (const segmentName of segmentNames) await ffmpeg.deleteFile(segmentName);
+        if (readableOutputName === outputName) await ffmpeg.deleteFile(outputName);
+      } catch { /* best-effort */ }
+      finishWith({ lastOutputUrl: url, lastOutputName: niceName, lastOutputKind: 'video' });
       return true;
     } catch (err) {
-      console.error('[offlineRender] error:', err);
-      try {
-        if (ffmpeg) {
-          await deleteOfflineFrameFiles(ffmpeg, currentSegmentFrames || segmentFrameCount);
-          for (const segmentName of segmentNames) await ffmpeg.deleteFile(segmentName);
-        }
-      } catch { /* best-effort */ }
-      setStatus('error', formatErr(err));
+      if (err instanceof RenderCancelled) {
+        dispatch({ type: 'stopped' });
+      } else {
+        console.error('[offlineRender] error:', err);
+        dispatch({ type: 'fail', message: formatErr(err) });
+      }
       return false;
     } finally {
-      // Always restore engine state so the live editor returns to
-      // normal regardless of how the render ended.
-      if (nativeJpegSequence && !nativeJpegSequenceFinished) {
-        await cancelNativeJpegSequence(nativeJpegSequence);
+      // Always clean up and give the live editor its clocks back, however
+      // the render ended: temp frames, the encoder and its partial file,
+      // the sound file, the core's size and clock.
+      if (ffmpeg) {
+        try {
+          await deleteOfflineFrameFiles(ffmpeg, currentSegmentFrames || segmentFrameCount);
+          if (get({ subscribe }).flow.kind !== 'done') for (const segmentName of segmentNames) await ffmpeg.deleteFile(segmentName).catch(() => {});
+        } catch { /* best-effort */ }
       }
-      if (nativeJpegFrameEncoder && !nativeJpegFrameEncoderFinished) {
-        await cancelNativeJpegFrameEncoder(nativeJpegFrameEncoder);
-      }
-      if (nativeMp4FrameEncoder && !nativeMp4FrameEncoderFinished) {
-        await cancelNativeMp4FrameEncoder(nativeMp4FrameEncoder);
-      }
+      if (nativeJpegSequence && !nativeJpegSequenceFinished) await cancelNativeJpegSequence(nativeJpegSequence);
+      if (nativeMp4FrameEncoder && !nativeMp4FrameEncoderFinished) await cancelNativeMp4FrameEncoder(nativeMp4FrameEncoder);
+      if (soundtrackPath) await discardSoundtrackWav(soundtrackPath);
+      endRenderClock();
       if (nativeOutputNeedsRestore) {
         await submitNativeRendererCommands([
-          { type: 'set_output', width: restoreWidth, height: restoreHeight, refresh_hz: settings.fps },
+          { type: 'set_output', width: restoreWidth, height: restoreHeight, refresh_hz: Math.round(fps) },
         ]).catch(() => {});
       }
       if (engine && restoreManual !== null) engine.manualTime = restoreManual;
-      getActiveNativeRendererSync()?.setRenderClock(null);
+      sync()?.setRenderClock(null);
       if (manualClockExportHeld) {
         manualClockExportHeld = false;
-        getActiveNativeRendererSync()?.endManualClockExport();
+        sync()?.endManualClockExport();
       }
       if (canvas) canvas.style.visibility = restoreCanvasVisibility;
       setISFManualTime(null);
       setStageEffectsManualTime(null);
       // Hand the audio clock back. setVisualAudioManualTime(null) also
-      // resets the follower and restores the pre-export published state,
-      // so the live show doesn't resume mid-envelope on the export's
-      // virtual timeline.
+      // resets the follower and restores the pre-export published state.
       setVisualAudioManualTime(null);
       if (liveAnalysisHeld) {
         liveAnalysisHeld = false;
@@ -1527,29 +1431,38 @@ function createOfflineRenderStore() {
         pausedAudioElement = null;
         void element.play().catch(() => { /* user can hit play again */ });
       }
-      if (showTimelineWasPlaying) {
-        showTimelineWasPlaying = false;
+      if (showWasPlaying) {
         // Rewind first: the render left the playhead at the last virtual
         // frame, and resuming from there would drop the operator into the
         // middle of a show they were watching from somewhere else.
         showTimeline.stop();
         showTimeline.play();
+      } else if (showParkedAt !== null) {
+        showTimeline.seek(showParkedAt);
       }
       fileAudioSession = null;
-      try { engine?.resize(restoreWidth, restoreHeight); } catch (e) { /* nothing we can do */ }
+      try { engine?.resize(restoreWidth, restoreHeight); } catch { /* nothing we can do */ }
+    }
+
+    function finishWith(patch: Partial<OfflineRenderState>) {
+      if (token !== renderToken) return;
+      const elapsed = performance.now() - get({ subscribe }).startedAtMs;
+      saveRateSample(rateSampleFrom(elapsed, totalFrames, settings.width, settings.height));
+      update((s) => ({ ...s, ...patch, lastFrames: totalFrames, lastElapsedMs: elapsed, flow: renderStep(s.flow, { type: 'finish' }) }));
     }
   }
 
-  function _finish(status: OfflineRenderStatus) {
-    update(s => ({ ...s, status }));
-  }
-
+  /** Ask the running render to stop. It cleans up, then the state is `cancelled`. */
   function cancel() {
+    const flow = get({ subscribe }).flow;
+    if (!isRunning(flow)) return;
     cancelRequested = true;
+    update((s) => ({ ...s, flow: renderStep(s.flow, { type: 'stop' }) }));
   }
 
+  /** Back to the settings (only when no render is running). */
   function reset() {
-    set({ ...INITIAL_STATE });
+    update((s) => (isRunning(s.flow) ? s : { ...INITIAL_STATE }));
   }
 
   return {
@@ -1565,51 +1478,53 @@ function createOfflineRenderStore() {
 
 // Local helpers (not part of the store API surface).
 
-/** Coerce any thrown value into a useful display string. Native
- *  Error.message works in the common case but Emscripten's
- *  `ErrnoError` (what ffmpeg.wasm throws on FS failures) has
- *  `.message` empty + the useful text in `.name` or via String(err).
- *  Earlier rev showed a blank red banner when this fired; users
- *  saw "Render failed" with no clue what to do. */
 /**
- * Mix the show's audio tracks into a rendered video with the bundled ffmpeg
- * (desktop). The render runs from show time 0, so the soundtrack is the
- * show's own, looped like the show. Returns a note for the finished render,
- * or null when the show has no audio. A failed mix leaves the silent video
- * as it was.
+ * Add the show's sound to a rendered video with the bundled ffmpeg
+ * (desktop), from show time `start` for `seconds` (frame 0 of the video is
+ * show time `start`). The Timeline's sound rows come rendered
+ * (`soundtrackPath`, deleted by the mux); the Show mixes its files, looped
+ * like the show. Returns a note for the finished render, or null when the
+ * show has no audio. A failed mix leaves the silent video as it was.
  */
-async function addShowSoundtrack(videoPath: string, renderSeconds: number): Promise<string | null> {
+async function addShowSoundtrack(
+  videoPath: string,
+  range: { start: number; seconds: number; soundtrackPath: string | null },
+): Promise<string | null> {
   const show = get(showTimeline);
-  if (!show.audioTracks.some(t => !t.muted && t.volume > 0)) return null;
-  // The Timeline: its sound rows rendered as they play (effects, fades,
-  // levels, lines). Live clips are not in it; they play in Live.
-  let tracks = showMuxTracks(show.audioTracks);
-  if (show.doc === 'timeline') {
-    try {
-      const path = await timelineSoundtrackFile(show, show.duration);
-      if (path) tracks = [{ path, startTime: 0, offset: 0, duration: show.duration, volume: 1 }];
-    } catch (err) {
-      console.warn('[offlineRender] Timeline soundtrack render failed, mixing the files instead:', err);
-    }
+  if (!show.audioTracks.some(t => !t.muted && t.volume > 0)) {
+    await discardSoundtrackWav(range.soundtrackPath);
+    return null;
   }
+  const soundtrackLength = range.start + range.seconds;
+  const tracks = range.soundtrackPath
+    ? [{ path: range.soundtrackPath, startTime: 0, offset: 0, duration: soundtrackLength, volume: 1 }]
+    : showMuxTracks(show.audioTracks);
   if (tracks.length === 0) return 'Saved without sound: the show audio is not in a file on this computer.';
   try {
     const result = await invoke<{ success?: boolean; error?: string }>('show_audio_mux', {
       videoPath,
       tracks,
-      showDuration: show.duration,
-      renderDuration: renderSeconds,
-      loop: show.loop,
+      showDuration: range.soundtrackPath ? soundtrackLength : show.duration,
+      renderDuration: range.seconds,
+      renderStart: range.start,
+      loop: range.soundtrackPath ? false : show.loop,
     });
     if (result?.success) return 'The show audio is in the video.';
     console.warn('[offlineRender] show audio mux failed:', result?.error);
     return `Saved without sound: ${result?.error || 'the audio could not be added'}.`;
   } catch (err) {
     console.warn('[offlineRender] show audio mux failed:', err);
+    await discardSoundtrackWav(range.soundtrackPath);
     return `Saved without sound: ${formatErr(err)}.`;
   }
 }
 
+/** Coerce any thrown value into a useful display string. Native
+ *  Error.message works in the common case but Emscripten's
+ *  `ErrnoError` (what ffmpeg.wasm throws on FS failures) has
+ *  `.message` empty + the useful text in `.name` or via String(err).
+ *  Earlier rev showed a blank red banner when this fired; users
+ *  saw "Render failed" with no clue what to do. */
 export function formatErr(err: unknown): string {
   if (err && typeof err === 'object') {
     const e = err as { message?: unknown; name?: unknown; errno?: unknown };

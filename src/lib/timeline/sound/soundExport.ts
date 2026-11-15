@@ -66,7 +66,8 @@ export async function renderTimelineSound(
   const blocks = doc.audioTracks.filter((t) => t.url && !t.muted && t.volume > 0 && rows[t.lane]?.kind === 'audio');
   if (!Offline || !blocks.length || !(seconds > 0)) return null;
   const sampleRate = opts.sampleRate ?? EXPORT_SAMPLE_RATE;
-  const step = opts.step ?? 1 / 30;
+  // As often as the live engine applies them (once a 60 Hz frame).
+  const step = opts.step ?? 1 / 60;
   const ctx = new Offline(2, Math.ceil(seconds * sampleRate), sampleRate);
   await loadStudioFx(ctx);
   const master = ctx.createGain();
@@ -100,7 +101,12 @@ export async function renderTimelineSound(
     src.start(b.startTime, b.offset, b.duration);
   }
 
-  // Ducks: every hit up front.
+  // Ducks: every hit up front, at the depth the row has at that moment (a
+  // line can move it, as live).
+  const evaluator = createLineEvaluator();
+  const songs = await placedSongs(doc);
+  const frameAt = (t: number) => (doc.lines.length ? evaluator.evaluate(doc.lines, t, { tempo: doc.tempo, songs, liveInputs: false }) : null);
+  const duckDepthAt = (row: (typeof rows)[number], t: number) => rowValues(row, frameAt(t)?.sounds?.get(row.id)).duckDepth;
   for (const row of rows) {
     if (!row.duck) continue;
     const bus = buses.get(row.id)!;
@@ -115,7 +121,7 @@ export async function renderTimelineSound(
       }
       hits = rowKickTimes(placements).filter((t) => t < seconds);
     }
-    for (const h of hits) bus.ducker.duck(row.duck.depth, 1, row.duck.release, h);
+    for (const h of hits) bus.ducker.duck(duckDepthAt(row, h), 1, row.duck.release, h);
   }
 
   // Builds: started at their start, landing on their end.
@@ -133,20 +139,19 @@ export async function renderTimelineSound(
   }
 
   // Levels and effects with the lines on top, applied on the render's own clock.
-  const evaluator = createLineEvaluator();
-  const songs = await placedSongs(doc);
-  const apply = (t: number) => {
-    const frame = doc.lines.length ? evaluator.evaluate(doc.lines, t, { tempo: doc.tempo, songs, liveInputs: false }) : null;
+  const apply = (t: number, now = false) => {
+    const frame = frameAt(t);
     const bpm = bpmAt(doc.tempo, t);
     const values = rows.map((r) => rowValues(r, frame?.sounds?.get(r.id)));
     rows.forEach((row, i) => {
       const bus = buses.get(row.id)!;
       const audible = rowAudible({ muted: values[i].muted, solo: row.solo }, rows);
-      bus.setLevel(audible ? values[i].volume : 0);
+      bus.setLevel(audible ? values[i].volume : 0, now);
       bus.setFx(row, values[i].fx, bpm);
     });
   };
-  apply(0);
+  // The rows start at their levels: a muted row is silent from the first sample.
+  apply(0, true);
   const offline = ctx as OfflineAudioContext;
   for (let t = step; t < seconds; t += step) {
     const at = t;
@@ -161,14 +166,29 @@ export async function renderTimelineSound(
   return { left, right, sampleRate };
 }
 
-/** The rendered soundtrack as a WAV file on disk (desktop), for the render mux. */
-export async function timelineSoundtrackFile(doc: Doc, seconds: number): Promise<string | null> {
-  const w = globalThis as { electronAPI?: { invoke?: (ch: string, args: unknown) => Promise<{ success?: boolean; path?: string } | null> } };
+/**
+ * The rendered soundtrack as a WAV in a temp folder of the desktop app, for
+ * the render mux, which deletes it once the sound is in the video (or the
+ * render is cancelled: discardSoundtrackWav). Null off the desktop.
+ */
+export async function saveSoundtrackWav(sound: { left: Float32Array; right: Float32Array; sampleRate: number }): Promise<string | null> {
+  const w = globalThis as { electronAPI?: { invoke?: (ch: string, args: unknown) => Promise<{ success?: boolean; path?: string; error?: string } | null> } };
   if (!w.electronAPI?.invoke) return null;
-  const sound = await renderTimelineSound(doc, seconds);
-  if (!sound) return null;
   const bytes = encodeWav(sound.left, sound.right, sound.sampleRate);
-  const saved = await w.electronAPI.invoke('save_generated_asset', { filename: 'timeline-soundtrack.wav', mime: 'audio/wav', bytes: bytes.buffer });
-  return saved?.success && saved.path ? saved.path : null;
+  const saved = await w.electronAPI.invoke('show_audio_soundtrack_save', { bytes });
+  if (!saved?.success || !saved.path) throw new Error(saved?.error || 'the sound could not be saved for the video');
+  return saved.path;
 }
 
+export async function discardSoundtrackWav(path: string | null): Promise<void> {
+  const w = globalThis as { electronAPI?: { invoke?: (ch: string, args: unknown) => Promise<unknown> } };
+  if (path && w.electronAPI?.invoke) await w.electronAPI.invoke('show_audio_discard', { path }).catch(() => {});
+}
+
+/** The soundtrack downmixed to mono (what the live analyser hears): for the render's audio reactivity. */
+export function soundtrackMono(sound: { left: Float32Array; right: Float32Array }): Float32Array {
+  const n = Math.min(sound.left.length, sound.right.length);
+  const mono = new Float32Array(n);
+  for (let i = 0; i < n; i++) mono[i] = (sound.left[i] + sound.right[i]) * 0.5;
+  return mono;
+}
