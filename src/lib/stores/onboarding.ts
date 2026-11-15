@@ -7,7 +7,8 @@
  */
 import { writable } from 'svelte/store';
 
-export type TourPath = 'vj' | 'mapping' | 'music';
+/** 'timeline' is started from the Timeline's Help menu; the chooser offers the other three. */
+export type TourPath = 'vj' | 'mapping' | 'music' | 'timeline';
 
 export interface OnboardingState {
   tourOpen: boolean;

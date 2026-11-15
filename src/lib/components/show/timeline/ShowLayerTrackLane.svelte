@@ -156,7 +156,7 @@
     {/if}
     {#if track.clips.length === 0 && dropTime === null}
       <!-- The hint on the first piece row; the rest say it on hover, not all at once. -->
-      <span class="lt-empty" class:quiet={index > 0 && kind === 'piece'}>{kind === 'sub' ? 'Drop media here: it draws over the piece' : kind === 'missing' ? 'This layer is gone from the stage' : 'Shows its look. Drop media here to play it on this piece'}</span>
+      <span class="lt-empty" class:quiet={index > 0 && kind === 'piece'}>{track.group ? 'Drop media here, or click the row and then a Media card: it plays across the group' : kind === 'sub' ? 'Drop media here: it draws over the piece' : kind === 'missing' ? 'This layer is gone from the stage' : 'Shows its look. Drag media onto a piece: video, images, shaders or sketches'}</span>
     {/if}
   </div>
   {#if !track.collapsed && rowLines.length}

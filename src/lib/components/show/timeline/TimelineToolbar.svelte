@@ -18,9 +18,9 @@
   import { formatBarsBeats } from '../../../show/tempoMap';
   import { timecodeChase } from '../../../show/timecode/timecodeChase';
   import { liveTakeover, takeoverSummary } from '../../../show/takeover/liveTakeover';
-  import { lineRecordState } from '../../../timeline/lines/timelineLines';
   import { openExternalUrl } from '$lib/bridge';
   import { tooltipsEnabled } from '../../../help/preferences';
+  import { onboarding } from '../../../stores/onboarding';
   import { showSlice } from './timelineSlices';
   import { formatPrecise } from './timeFormat';
   import { EDIT_TOOLS, editTool, type EditTool } from './editTools';
@@ -71,8 +71,8 @@
   const audioTracks = showSlice('audioTracks');
   const layerTracks = showSlice('layerTracks');
 
-  // Armed (or on an empty Timeline) the show plays with nothing on it, so there is time to record into.
-  const canPlay = $derived($duration > 0 || ($lineRecordState.armed && isTimeline));
+  // The Timeline plays even empty (time to listen and to record into); the Show needs something on it.
+  const canPlay = $derived($duration > 0 || isTimeline);
 
   const END_ACTIONS: Array<{ value: ShowEndAction; label: string; short: string }> = [
     { value: 'hold', label: 'Hold the last look', short: 'Hold' },
@@ -142,7 +142,7 @@
   }
   function startTour() {
     menu = null;
-    window.dispatchEvent(new CustomEvent('ga-timeline-tour'));
+    onboarding.startTour('timeline');
   }
 
   // How tight the toolbar is (0 roomy … 3 tightest): stepped up until the

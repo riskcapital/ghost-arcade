@@ -113,11 +113,22 @@ describe('in and out points', () => {
 });
 
 describe('recording into the Timeline', () => {
-  it('armed, an empty Timeline plays and runs on; disarmed it stops where it got to', () => {
+  it('an empty Timeline plays and runs on (time to listen and to record into); Stop stops it', () => {
     showTimeline.openDoc('timeline');
     expect(get(showTimeline).duration).toBe(0);
     showTimeline.play();
+    expect(get(showTimeline).isPlaying).toBe(true);
+    frame(16);
+    for (let i = 0; i < 20; i++) frame(100);
+    expect(get(showTimeline).currentTime).toBeCloseTo(2, 1);
+    showTimeline.stop();
     expect(get(showTimeline).isPlaying).toBe(false);
+    expect(get(showTimeline).currentTime).toBe(0);
+  });
+
+  it('armed, the run goes on past the end of what is there; disarmed it stops where it got to', () => {
+    showTimeline.openDoc('timeline');
+    rows([['a', 0, 1]]);
     let armed = true;
     setShowRecordArm(() => armed);
     showTimeline.play();
@@ -128,6 +139,7 @@ describe('recording into the Timeline', () => {
     armed = false;
     frame(100);
     expect(get(showTimeline).isPlaying).toBe(false);
+    expect(get(showTimeline).currentTime).toBeGreaterThan(1.9);
   });
 });
 

@@ -374,6 +374,15 @@ export function setShowRecordArm(armed: (() => boolean) | null): void {
 function recordRun(s: Pick<ShowTimelineState, 'doc'>): boolean {
   return s.doc === 'timeline' && !externalClock && recordArmed();
 }
+/**
+ * The playhead rolls with nothing (or nothing yet) to play: recording is
+ * armed, or the Timeline is empty (Play works there, to listen for where
+ * things go and to have time to record into). Once the Timeline has
+ * something on it, an empty run that is past its end stops where it got to.
+ */
+function rollRun(s: Pick<ShowTimelineState, 'doc' | 'duration'>): boolean {
+  return recordRun(s) || (s.doc === 'timeline' && !externalClock && s.duration <= 0);
+}
 
 /** The span Loop plays: the in and out points when there are some. */
 function loopArea(s: Pick<ShowTimelineState, 'loop' | 'workArea'>): ShowWorkArea | null {
@@ -928,7 +937,7 @@ function publishTrackFrame(s: ShowTimelineState, evalTime: number, force = false
 function republishTracks(): void {
   const s = get(store);
   const dur = s.duration;
-  const evalTime = !recordRun(s) && !s.loop && dur > 0 && s.currentTime >= dur ? Math.max(0, dur - 1e-6) : s.currentTime;
+  const evalTime = !rollRun(s) && !s.loop && dur > 0 && s.currentTime >= dur ? Math.max(0, dur - 1e-6) : s.currentTime;
   publishTrackFrame(s, evalTime, true);
 }
 
@@ -1519,7 +1528,7 @@ function landPhrase(over: number, oldAt: number, next: number | null): void {
 function applyTime(time: number, bumpSeek: boolean): void {
   const s = get(store);
   const dur = s.duration;
-  const recording = recordRun(s);
+  const recording = rollRun(s);
 
   let t = Number.isFinite(time) ? Math.max(0, time) : 0;
   if (recording) {
@@ -1622,7 +1631,7 @@ function tick(now: number): void {
   }
 
   const dur = s.duration;
-  const recording = recordRun(s);
+  const recording = rollRun(s);
   if (recording) recordRunRolling = true;
   // Disarmed during a record run that was past the end (or on an empty
   // Timeline): the run is over and the playhead stays where it got to. Only a
@@ -2433,7 +2442,7 @@ export const showTimeline = {
     if (s.isPlaying) return;
     // An empty show has nothing to play — stay completely inert, unless
     // recording is armed: then the playhead runs so there is time to record into.
-    if (s.duration <= 0 && !recordRun(s)) return;
+    if (s.duration <= 0 && !rollRun(s)) return;
     syncAudioWiring(s.audioTracks);
     // Transport start is the moment audio has to be ready. A context built
     // outside a user gesture starts suspended (browser / mobile builds) and

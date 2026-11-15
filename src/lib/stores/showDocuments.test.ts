@@ -82,9 +82,10 @@ describe('two documents', () => {
     expect(get(showTimeline).isPlaying).toBe(false);
     expect(get(toasts).map((t) => t.message).join('\n')).toMatch(/Show stopped: only one plays at a time/);
     expect(get(parkedShowDoc).currentTime).toBeCloseTo(12, 1);
-    // The Timeline is empty: its own play does nothing.
+    // The Timeline is empty: its own play rolls the playhead (time to listen and record into).
     showTimeline.play();
-    expect(get(showTimeline).isPlaying).toBe(false);
+    expect(get(showTimeline).isPlaying).toBe(true);
+    // Back to the Show: the Timeline stops, the Show keeps its own playhead.
     showTimeline.openDoc('show');
     expect(get(showTimeline).currentTime).toBeCloseTo(12, 1);
     expect(get(showTimeline).isPlaying).toBe(false);

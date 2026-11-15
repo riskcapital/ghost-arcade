@@ -58,6 +58,7 @@
   import { buildCueStack, markerNumber, stackItemName } from '../timeline/perform/cueStack';
   import { goNowWords, handStandby, nowId, performGo, performStack, standbyId } from '../timeline/perform/performGo';
   import PerformPanel from './show/timeline/perform/PerformPanel.svelte';
+  import TimelineStart from './show/timeline/TimelineStart.svelte';
   import RowSectionHeader from './show/timeline/RowSectionHeader.svelte';
   import RowSectionLane from './show/timeline/RowSectionLane.svelte';
   import AddRowMenu from './show/timeline/AddRowMenu.svelte';
@@ -1645,9 +1646,7 @@
   {#if inspectorVisible}
     {@render inspectorChain()}
   {:else}
-    <div class="show-inspector insp-idle">
-      <span class="insp-hint insp-idle-hint">Click a block to see its settings here.</span>
-    </div>
+    <TimelineStart empty={!hasBlocks && !sections.length} onaddaudio={() => audioInput?.click()} />
   {/if}
 {/snippet}
 

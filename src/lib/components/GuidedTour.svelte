@@ -12,6 +12,7 @@
   import { project } from '$lib/stores/layers';
   import { isMac } from '$lib/bridge';
   import { leftSidebarTab } from '$lib/stores/uiState';
+  import { showTimeline } from '$lib/stores/showTimeline';
   import { addLibraryShaderToDeck, addMappingSurface } from '$lib/onboarding/templates';
 
   type TourStep = {
@@ -34,12 +35,18 @@
     /** VJ mode or the mapping workspace. */
     mode: 'vj' | 'mapping';
     steps: TourStep[];
+    /** Started from elsewhere (the Timeline's Help menu), not offered in the chooser. */
+    hidden?: boolean;
   };
 
   const mod = isMac ? 'Cmd' : 'Ctrl';
   const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
   const click = (selector: string) => (document.querySelector(selector) as HTMLElement | null)?.click();
 
+  function openTimeline() {
+    const s = get(showTimeline);
+    if (!s.isOpen || s.doc !== 'timeline') showTimeline.openDoc('timeline');
+  }
   function openOutput() {
     window.dispatchEvent(new CustomEvent('ga-open-output-window'));
   }
@@ -373,6 +380,57 @@
         outro,
       ],
     },
+    {
+      id: 'timeline',
+      name: 'The Timeline',
+      detail: 'Build a show to a song and run it with GO',
+      mode: 'mapping',
+      hidden: true,
+      steps: [
+        {
+          title: 'Add audio',
+          body: 'A show starts from a song or soundtrack. Its tempo becomes the grid.',
+          bullets: ['Drop a file on the Audio row, or Add audio on its header', 'Space plays and stops'],
+          targets: ['[data-audio-empty-card]', '[data-row-section="audio"]'],
+          prepare: openTimeline,
+        },
+        {
+          title: 'Fill the pieces',
+          body: 'Auto show builds sections, content on the pieces, looks and Screen FX from the music. Or drag media onto a piece\'s row yourself.',
+          bullets: ['Auto show is on the Audio header once there is audio', 'Drag cards from the Media Library onto any row'],
+          targets: ['[data-auto-show-open]', '[data-row-section="layers"]'],
+          prepare: openTimeline,
+        },
+        {
+          title: 'Sections and GO',
+          body: 'Sections are the named parts of the show along the band under the ruler. At its end a section can play through, hold or loop until GO, or hand the pieces to the VJ decks.',
+          bullets: ['Double-click the band to add a section, click one to edit it', 'Enter is GO while the pointer is over the Timeline'],
+          targets: ['[data-section-lane]', '[data-sections-label]'],
+          prepare: openTimeline,
+        },
+        {
+          title: 'Groups and the Media tab',
+          body: 'A group row plays across pieces you pick on the canvas, as one picture or on each piece. Click a row and the Media tab opens beside it: a card click puts it there at the playhead.',
+          bullets: ['+ Row adds a group row, a layer on a piece, Looks, Screen FX and more'],
+          targets: ['[data-row-section="groups"]', '[data-add-row-menu]'],
+          prepare: openTimeline,
+        },
+        {
+          title: 'Record',
+          body: 'With Record on, what you change in the editor goes onto the Timeline: held for Update when stopped, recorded as it plays.',
+          bullets: ['The caret next to Record holds Touch or Latch, Follow edits and binding a knob'],
+          targets: ['[data-live-edit]'],
+          prepare: openTimeline,
+        },
+        {
+          title: 'Perform',
+          body: 'The Perform tab runs the show: one big GO with the step on standby, the cue list, the pads and taking rows over live.',
+          bullets: ['Space or Enter is GO in the Perform tab, Shift+Space is Back', 'R returns every taken-over row to the Timeline'],
+          targets: ['[data-perform-toggle]', '[data-timeline-side]'],
+          prepare: openTimeline,
+        },
+      ],
+    },
   ];
 
   let rect: { x: number; y: number; w: number; h: number } | null = null;
@@ -518,7 +576,7 @@
         <h2 id="tour-title">What brings you to Ghost Arcade?</h2>
         <p class="tour-body">Pick a path and we’ll show you the parts that matter for it. You can take the others later from the ? button.</p>
         <div class="tour-paths">
-          {#each paths as option (option.id)}
+          {#each paths.filter((p) => !p.hidden) as option (option.id)}
             <button class="tour-path" onclick={() => onboarding.choosePath(option.id)}>
               <span class="tour-path-icon" aria-hidden="true">
                 {#if option.id === 'vj'}
