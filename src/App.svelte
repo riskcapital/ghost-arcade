@@ -85,10 +85,15 @@
   import {readMobileCalibration} from './lib/output/mobileCalibrationImport';
   import { openScreenOutputList, setScreenPatternFrames } from './lib/stores/screenOutputStatus';
   import { fluxRegionsFor, receivePhoneFlux, setFluxRegionsSource } from './lib/output/phoneFlux';
-  import { STRIPE_BLACK, STRIPE_CELLS } from './lib/mobile/studio/structuredLightCodes';
+  import { STRIPE_BLACK, STRIPE_CELLS, STRIPE_FRAME_LIMIT } from './lib/mobile/studio/structuredLightCodes';
   import {tick as studioTick} from 'svelte';
   import {defaultInteractive,validateScene as validateInteractiveScene,type InteractiveScene,type Interaction} from './lib/mobile/studio/interactive';
   import {queueWorldAction, setLivePointer, setLiveWorldView} from './lib/interactive/interactiveLive';
+  import {describePhoneClient,keepPhoneWorld,phoneWorldOn,studioCapabilities,withPhoneZoneDefaults} from './lib/mobile/studio/phoneWorld';
+  import {DEPTH_REQUEST_ID,DepthCaptureOffers,parseDepthCaptureOffer,type DepthCaptureOffer,type DepthCaptureStatus,type WaitingDepthOffer} from './lib/mobile/studio/depthCaptureOffer';
+  import {answersDepthScan,scanPhones,stepDepthScan,type DepthScanEvent,type DepthScanFlow,type ScanPhone} from './lib/mobile/studio/depthScanFlow';
+  import {ZONE_WORLD_ACTIONS,type ZoneWorldAction} from './lib/mobile/studio/interactive';
+  import PhoneDepthCaptureInbox from './lib/components/PhoneDepthCaptureInbox.svelte';
   import {mergeInteractiveEdit,editableEffects,interactiveEditSignature} from './lib/mobile/studio/interactiveEffects';
   import {PhoneSessions,PHONE_SCENE_MAX_BYTES,phoneSenderId,sanitizePhoneInputs,type PhoneSceneState} from './lib/mobile/studio/phoneSessions';
   import {pickEditorClipRow,pickEditorClipSlot,pickPhoneClipSlot,isPhoneInteractiveClip} from './lib/mobile/studio/studioTargets';
@@ -138,7 +143,8 @@
     stillKey:()=>{const source=studioCurrentSource();return source?.interactivePaused||!source?.interactiveScene?.effects?.some(e=>e.enabled)?studioEditorSignature:null;},
   });
 
-  function openInteractiveStudio(layerId?:string){
+  /** `notPhone`: never open (and so take over) a layer a phone is driving, even when it is selected. */
+  function openInteractiveStudio(layerId?:string,notPhone=false){
     if(showInteractiveStudio)closeInteractiveStudio();
     const p=get(project),vj=get(vjClipLauncher);studioEditorClip=null;studioEditorLayer='';
     // Keys are cut off while the Studio is open, so a held Space would never be released.
@@ -164,7 +170,7 @@
       // An older Interactive 3D layer chosen by name comes into the Studio as a 3D world.
       const older=layerId?p.layers.find(l=>l.id===layerId&&!!l.source?.effectSource?.scene3d):undefined;
       if(older)project.convertScene3DLayer(older.id);
-      const chosen=get(project).layers.find(l=>l.id===(layerId??p.selectedLayerId)&&scenic(l));
+      const chosen=get(project).layers.find(l=>l.id===(layerId??p.selectedLayerId)&&scenic(l)&&!(notPhone&&l.source?.effectSource?.interactiveRemote));
       // Without an explicit choice, never fall back to a layer a phone is driving.
       studioEditorLayer=chosen?.id??(!layerId?p.layers.find(l=>scenic(l)&&!l.source?.effectSource?.interactiveRemote)?.id:'')??'';
       if(!studioEditorLayer)studioEditorLayer=project.addLayer('Interactive Studio','interactive')??'';
@@ -223,12 +229,14 @@
   function studioWorldAction(what:import('./lib/mobile/studio/interactive').ZoneWorldAction,point:{x:number;y:number}){if(!studioEditorClip&&studioEditorLayer)queueWorldAction(studioEditorLayer,what,point);}
   function closeInteractiveStudio(){
     if(!showInteractiveStudio)return;
+    stepPhoneScan({type:'cancel',message:'Interactive Studio was closed on the desktop.'});
     studioEditor?.flush();showInteractiveStudio=false;recordDiscreteAction();studioUnrecordedEdit=false;
   }
   /** The layer or clip under the editor went away (deleted, undone, another
    *  project). There is nothing left to flush into, so close and say why. */
   function studioTargetLost(message:string){
     if(!showInteractiveStudio)return;
+    stepPhoneScan({type:'cancel',message:'Interactive Studio was closed on the desktop.'});
     showInteractiveStudio=false;studioUnrecordedEdit=false;showToast(message,'info');
   }
   /** The stored scene changed without the editor writing it (an undo, a
@@ -285,11 +293,13 @@
     window.addEventListener('open-interactive-studio',open);
     const root=document.documentElement;
     root.addEventListener('keydown',studioKeyGate);root.addEventListener('keyup',studioKeyGate);
-    const unwatch=[project.subscribe(studioQueueWatch),vjClipLauncher.subscribe(studioQueueWatch)];
+    const unwatch=[project.subscribe(studioQueueWatch),vjClipLauncher.subscribe(studioQueueWatch),
+      // Another project ends every room scan waiting or under way.
+      project.subscribe(p=>{if(p.id===depthOfferProject)return;depthOfferProject=p.id;depthOffers.cancelAll('Another project was opened on the desktop.');stepPhoneScan({type:'cancel',message:'Another project was opened on the desktop.'});})];
     return()=>{
       window.removeEventListener('open-interactive-studio',open);
       root.removeEventListener('keydown',studioKeyGate);root.removeEventListener('keyup',studioKeyGate);
-      unwatch.forEach(stop=>stop());phoneSessions.dispose();
+      unwatch.forEach(stop=>stop());phoneSessions.dispose();clearInterval(phoneScanTimer);
     };
   });
 
@@ -361,26 +371,56 @@
     apply(phone,state:PhoneSceneState,starting){
       const effectSource={effectType:'performer-world' as const,interactiveScene:state.scene,interactiveInputs:state.inputs,interactivePaused:state.paused,interactiveRemote:phone};
       // A phone app from before the 3D world sends scenes without one: the
-      // world set up here stays.
-      const keepWorld=(source:typeof effectSource|undefined)=>{const world=(source?.interactiveScene as InteractiveScene|undefined)?.world;return state.scene.world||!world?effectSource:{...effectSource,interactiveScene:{...state.scene,world}};};
+      // world set up here stays (phoneWorld.ts).
+      const keepWorld=(source:typeof effectSource|undefined)=>({...effectSource,interactiveScene:keepPhoneWorld(state.scene,source?.interactiveScene as InteractiveScene|undefined)});
       // A target the operator deleted is recreated like a fresh start.
       if(starting||!patchPhoneTargets(phone,source=>keepWorld(source as typeof effectSource|undefined)))startPhoneScene(phone,effectSource);
+      tellPhoneWorld(phone,starting);
     },
     hasTarget:phone=>!!phoneLayerId(phone)||!!phoneClipSlot(phone),
     releaseInputs(phone){patchPhoneTargets(phone,source=>({...source!,interactiveInputs:[]}));},
     stop(phone){
       // Hide the phone's own layer and stop its own clip. Touches go too, so a
       // finger held at disconnect is neither replayed nor saved with the project.
-      const slot=phoneClipSlot(phone);
+      const slot=phoneClipSlot(phone),layerId=phoneLayerId(phone);
+      phoneWorldSent.delete(phone);
+      if(layerId)setLiveWorldView(layerId,null);
       patchPhoneTargets(phone,source=>({...source!,interactiveInputs:[]}),{visible:false});
       if(slot&&get(vjClipLauncher).layerStates[slot.row]?.activeClip?.id===slot.id)vjClipLauncher.stopLayer(slot.row);
     },
   });
+  /** The scene on the phone's layer or clip. */
+  function phoneTargetScene(phone:string):InteractiveScene|undefined{
+    const layerId=phoneLayerId(phone);
+    if(layerId)return get(project).layers.find(l=>l.id===layerId)?.source?.effectSource?.interactiveScene as InteractiveScene|undefined;
+    const slot=phoneClipSlot(phone);
+    return slot?get(vjClipLauncher).clipGrid[slot.row][slot.col]?.effectSource?.interactiveScene as InteractiveScene|undefined:undefined;
+  }
+  /** Whether a 3D world plays on the phone's layer, told when it starts and when that changes. */
+  const phoneWorldSent=new Map<string,boolean>();
+  function tellPhoneWorld(phone:string,starting:boolean){
+    const on=phoneWorldOn(phoneTargetScene(phone));
+    if(!starting&&phoneWorldSent.get(phone)===on)return;
+    phoneWorldSent.set(phone,on);
+    sendPhoneVisionSignal({type:'studio_scene_status',to:phone,accepted:true,world:{on}});
+  }
+  /** The phone editor's zone Test on the world, and its Orbit view, reach the phone's own layer. */
+  function receivePhoneWorldMessage(msg:Record<string,any>){
+    const layerId=phoneLayerId(phoneSenderId(msg.from));if(!layerId)return;
+    const unit=(v:unknown)=>typeof v==='number'&&Number.isFinite(v)?Math.max(0,Math.min(1,v)):null;
+    if(msg.type==='studio_world_action'){
+      const x=unit(msg.point?.x),y=unit(msg.point?.y);
+      if(x!==null&&y!==null&&(ZONE_WORLD_ACTIONS as readonly unknown[]).includes(msg.what))queueWorldAction(layerId,msg.what as ZoneWorldAction,{x,y});
+      return;
+    }
+    const turn=(v:unknown)=>typeof v==='number'&&Number.isFinite(v)?Math.max(-70,Math.min(70,v)):0;
+    setLiveWorldView(layerId,msg.view&&typeof msg.view==='object'?{yaw:turn(msg.view.yaw),pitch:turn(msg.view.pitch)}:null);
+  }
   /** Opening a phone's layer in the desktop editor makes it a desktop scene;
    *  the phone gets a new layer of its own the next time it sends. */
   function adoptPhoneLayerForDesktop(layerId:string){
     const phone=get(project).layers.find(l=>l.id===layerId)?.source?.effectSource?.interactiveRemote;if(!phone)return;
-    phoneSessions.forget(phone);
+    phoneSessions.forget(phone);phoneWorldSent.delete(phone);setLiveWorldView(layerId,null);
     project.update(p=>({...p,layers:p.layers.map(l=>{if(l.id!==layerId||!l.source?.effectSource)return l;const {interactiveRemote:_owner,...effectSource}=l.source.effectSource;return {...l,source:{...l.source,effectSource:{...effectSource,interactiveInputs:[]}}};})}));
   }
   function receivePhoneScene(data:Record<string,any>){
@@ -394,8 +434,94 @@
     const size=JSON.stringify(data).length;
     if(size>PHONE_SCENE_MAX_BYTES){reject('too-large',`Scene is too large to send (${Math.round(size/1000)} KB, limit ${PHONE_SCENE_MAX_BYTES/1000} KB). Remove some objects or points.`);return;}
     let scene:InteractiveScene;
-    try{scene=validateInteractiveScene(data.scene);}catch(error){reject('invalid',error instanceof Error?error.message:'Invalid scene.');return;}
+    // Phone app 1.2's trigger zones carry no trigger: they fire as a new zone does.
+    try{scene=withPhoneZoneDefaults(validateInteractiveScene(data.scene));}catch(error){reject('invalid',error instanceof Error?error.message:'Invalid scene.');return;}
     phoneSessions.receive(phone,{scene,inputs:sanitizePhoneInputs(data.inputs),paused:data.paused===true},data.active===true);
+  }
+  // ── Room scans for Depth mode from paired phones ───────────────────────
+  // A scan the phone started (its own Auto-map with depth) waits for the
+  // operator's answer in a prompt; a scan asked for in Depth setup → Scan
+  // with the phone is applied as it arrives. See depthCaptureOffer.ts and
+  // depthScanFlow.ts for the states.
+  let depthOfferList:WaitingDepthOffer[]=[];
+  const depthOffers=new DepthCaptureOffers(status=>sendPhoneVisionSignal(status),()=>{depthOfferList=depthOffers.waiting();});
+  let phoneScanFlow:DepthScanFlow={kind:'idle'};
+  let phoneScanTimer:ReturnType<typeof setInterval>|undefined;
+  let scanPhoneList:ScanPhone[]=[];
+  let phonePair:{qr:string;url:string}|null=null;
+  /** The project the waiting offers belong to: opening another ends them. */
+  let depthOfferProject='';
+  function stepPhoneScan(event:DepthScanEvent){
+    const step=stepDepthScan(phoneScanFlow,event);
+    if(step.tell)sendPhoneVisionSignal(step.tell);
+    if(step.flow===phoneScanFlow)return;
+    phoneScanFlow=step.flow;
+    // A once-a-second check, only while the phone is asked or scanning.
+    const waiting=phoneScanFlow.kind==='asking'||phoneScanFlow.kind==='scanning';
+    if(waiting&&!phoneScanTimer)phoneScanTimer=setInterval(()=>stepPhoneScan({type:'tick',now:Date.now()}),1000);
+    else if(!waiting&&phoneScanTimer){clearInterval(phoneScanTimer);phoneScanTimer=undefined;}
+  }
+  /** What Depth setup scans for: the edited layer, or in VJ mode the clip. */
+  const studioScanTarget=()=>studioEditorClip?.id??studioEditorLayer;
+  function startPhoneScan(phone:string){
+    const target=studioScanTarget();if(!target||!scanPhoneList.some(p=>p.id===phone))return;
+    const requestId=crypto.randomUUID();
+    stepPhoneScan({type:'start',requestId,phone,target,now:Date.now()});
+    if(phoneScanFlow.kind!=='asking'||phoneScanFlow.requestId!==requestId)return;
+    const p=get(project),open=get(openScreenOutputList);
+    sendPhoneVisionSignal({type:'studio_depth_scan_request',to:phone,requestId,layerId:target,...(open.length===1?{screenId:open[0].id}:{}),output:{width:Math.round(p.width||1920),height:Math.round(p.height||1080)}});
+  }
+  async function showPhonePairing(){
+    await loadRemotePairing();await fetchLocalIPs();await generateQRCode();
+    if(!wsServerReady&&!ws)connectToServer();
+    phonePair=qrCodeDataUrl?{qr:qrCodeDataUrl,url:getMobileUrl(selectedIP)}:null;
+  }
+  $: studioPhoneScan={phones:scanPhoneList,flow:phoneScanFlow,pair:phonePair,
+    onstart:startPhoneScan,oncancel:()=>stepPhoneScan({type:'cancel'}),ondismiss:()=>stepPhoneScan({type:'dismiss'}),onpair:()=>void showPhonePairing()};
+  /** Apply a checked scan in the open editor. */
+  function applyDepthCapture(offer:DepthCaptureOffer):{ok:true;message:string}|{ok:false;message:string}{
+    if(!showInteractiveStudio||!studioEditor)return {ok:false,message:'Interactive Studio could not open on the desktop.'};
+    studioPage='interactive';
+    return studioEditor.applyPhoneCapture(offer.capture);
+  }
+  function receiveDepthCaptureOffer(msg:Record<string,any>){
+    const requestId=typeof msg.requestId==='string'&&DEPTH_REQUEST_ID.test(msg.requestId)?msg.requestId:null;if(!requestId)return;
+    const reply=(state:DepthCaptureStatus['state'],message?:string)=>sendPhoneVisionSignal({type:'studio_depth_capture_status',requestId,state,...(message?{message}:{})});
+    let offer:DepthCaptureOffer;
+    try{offer=parseDepthCaptureOffer(msg,JSON.stringify(msg.capture??null).length);}
+    catch(error){
+      const message=error instanceof Error?error.message:'The room scan could not be read.';
+      console.warn('[Depth scan] Refused a room scan:',message);
+      reply('error',message);
+      stepPhoneScan({type:'failed',requestId,message});
+      return;
+    }
+    if(answersDepthScan(phoneScanFlow,requestId)){
+      // The scan Depth setup asked for: no second question.
+      stepPhoneScan({type:'offer',requestId});
+      reply('received');
+      const target=phoneScanFlow.kind==='applying'?phoneScanFlow.target:'';
+      const result=target===studioScanTarget()?applyDepthCapture(offer):{ok:false as const,message:'Interactive Studio moved to another layer before the scan arrived.'};
+      reply(result.ok?'applied':'error',result.message);
+      stepPhoneScan(result.ok?{type:'applied',requestId,summary:result.message}:{type:'failed',requestId,message:result.message});
+      return;
+    }
+    depthOfferProject=get(project).id;
+    depthOffers.offer(phoneSenderId(msg.from),offer);
+  }
+  /** The operator said yes to a phone's scan: open the Studio on Depth setup and apply it there. */
+  async function acceptDepthCapture(phone:string){
+    const run=depthOffers.accept(phone);if(!run)return;
+    // A layer the desktop owns: a phone's own layer would be taken from it,
+    // and the phone's next scene would replace the room anyway.
+    if(!showInteractiveStudio)openInteractiveStudio(undefined,true);
+    else studioPage='interactive';
+    // The editor mounts on the next tick.
+    await studioTick();
+    if(!depthOffers.applying(phone,run.token))return;
+    const result=applyDepthCapture(run.offer);
+    depthOffers.finish(phone,run.token,result);
+    if(!result.ok)showToast(result.message,'warning');
   }
   import MediaPipeLearnHUD from './lib/components/MediaPipeLearnHUD.svelte';
   import MediaPipeLearnOverlay from './lib/components/MediaPipeLearnOverlay.svelte';
@@ -4476,6 +4602,8 @@
   // bank-aware case in handleServerMessage.
   function safeBank(b: any): 'A' | 'B' { return b === 'B' ? 'B' : 'A'; }
 
+  /** Phone apps already named in the log (a phone asks for capabilities until it is answered). */
+  const phoneClientsLogged=new Set<string>();
   function handleServerMessage(msg: { type: string; [key: string]: unknown }) {
     switch (msg.type) {
       case 'client_count':
@@ -4526,7 +4654,7 @@
         if (msg.op === 'frame') { const done = remote.pending.get(seq as number); remote.pending.delete(seq as number); done?.(msg); break; }
         if (msg.op === 'screens') {
           sendPhoneVisionSignal({ type: 'studio_automap_reply', requestId, seq, screens: open, cells: STRIPE_CELLS });
-        } else if (msg.op === 'show' && open.some(s => s.id === msg.screenId) && Number.isInteger(msg.frame) && (msg.frame as number) >= 0 && (msg.frame as number) < 500) {
+        } else if (msg.op === 'show' && open.some(s => s.id === msg.screenId) && Number.isInteger(msg.frame) && (msg.frame as number) >= 0 && (msg.frame as number) < STRIPE_FRAME_LIMIT) {
           setScreenPatternFrames(Object.fromEntries(open.map(s => [s.id, s.id === msg.screenId ? (msg.frame as number) : STRIPE_BLACK])));
           // Answer once the projector has had time to show it.
           setTimeout(() => sendPhoneVisionSignal({ type: 'studio_automap_reply', requestId, seq, shown: true }), 120);
@@ -4562,8 +4690,25 @@
       case 'studio_scan_abort':
         handlePhoneScanMessage(msg, sendPhoneVisionSignal);
         break;
-      case 'studio_capabilities_request':
-        sendPhoneVisionSignal({type:'studio_capabilities',version:1,visualFeeds:true,metricDepth:false,nativeInteractive:true,scanTransfer:phoneScanCapability()});
+      case 'studio_capabilities_request': {
+        const client=describePhoneClient(msg.client);
+        if(client&&!phoneClientsLogged.has(client)&&phoneClientsLogged.size<16){phoneClientsLogged.add(client);console.log('[Phone] Paired app:',client);}
+        const p=get(project);
+        sendPhoneVisionSignal(studioCapabilities(phoneScanCapability(),{width:p.width||1920,height:p.height||1080}));
+        break;
+      }
+      case 'studio_peers':
+        scanPhoneList=scanPhones(msg.peers);
+        break;
+      case 'studio_world_action':
+      case 'studio_world_view':
+        receivePhoneWorldMessage(msg as Record<string,any>);
+        break;
+      case 'studio_depth_capture_offer':
+        receiveDepthCaptureOffer(msg as Record<string,any>);
+        break;
+      case 'studio_depth_scan_progress':
+        stepPhoneScan({type:'progress',requestId:String(msg.requestId),stage:String(msg.stage),pct:msg.pct as number|undefined,message:msg.message as string|undefined,now:Date.now()});
         break;
 
       case 'phone_camera_offer': {
@@ -9111,7 +9256,7 @@
              would restore the scene it was opened with and publish that over
              every edit made since. -->
         <div class="studio-page" style:display={studioPage==='interactive'?'contents':'none'}>
-          {#key studioEditorRevision}<InteractiveStudio bind:this={studioEditor} aspect={canvasAspect} visible={studioPage==='interactive'} initialPaused={studioEditorPaused} nativeOutput nativeFrame={studioNativeFrame} initialActive={studioEditorActive} initialScene={studioEditorScene} onscene={editStudioScene} onpointer={studioPointer} onview={studioView} onworldaction={studioWorldAction} captureScene={captureStudioScene} onrestore={restoreStudioAnimation} onparam={studioParamRecord} liveValue={studioLiveValue} onkeyframe={studioAddKeyframe} ontimeline={studioToggleTimeline} mappingSurfaces={studioMappingSurfaces($project.layers,studioEditorLayer)} onclose={closeInteractiveStudio}><KeyframeTimeline slot="timeline" embedded targetId={studioTimelineId}/></InteractiveStudio>{/key}
+          {#key studioEditorRevision}<InteractiveStudio bind:this={studioEditor} aspect={canvasAspect} visible={studioPage==='interactive'} initialPaused={studioEditorPaused} nativeOutput nativeFrame={studioNativeFrame} initialActive={studioEditorActive} initialScene={studioEditorScene} phoneScan={studioPhoneScan} onscene={editStudioScene} onpointer={studioPointer} onview={studioView} onworldaction={studioWorldAction} captureScene={captureStudioScene} onrestore={restoreStudioAnimation} onparam={studioParamRecord} liveValue={studioLiveValue} onkeyframe={studioAddKeyframe} ontimeline={studioToggleTimeline} mappingSurfaces={studioMappingSurfaces($project.layers,studioEditorLayer)} onclose={closeInteractiveStudio}><KeyframeTimeline slot="timeline" embedded targetId={studioTimelineId}/></InteractiveStudio>{/key}
         </div>
         {#if studioPage==='calibration'}<DesktopCalibrationImport incoming={pendingPhoneCalibration}/>{/if}
       </section></div>
@@ -9325,6 +9470,7 @@
 <!-- Safe Mode in-app confirm popover (replaces window.confirm) -->
 <ConfirmPopover />
 <PhoneScanInbox />
+<PhoneDepthCaptureInbox offers={depthOfferList} onaccept={phone=>void acceptDepthCapture(phone)} ondecline={phone=>depthOffers.decline(phone)} />
 
 <!-- Close Confirmation Modal -->
 {#if showNewProjectModal}

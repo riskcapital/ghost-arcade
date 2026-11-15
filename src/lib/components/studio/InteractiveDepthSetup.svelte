@@ -6,7 +6,8 @@
    * things change, so the preview follows.
    */
   import type { RoomSetup } from '../../scene3d/roomModel';
-  import type { DepthStep } from './interactiveEditorTypes';
+  import type { DepthStep, PhoneDepthScan } from './interactiveEditorTypes';
+  import { depthScanLabel } from '../../mobile/studio/depthScanFlow';
   import Icon from './StudioIcon.svelte';
 
   export let step: DepthStep;
@@ -28,6 +29,14 @@
   export let ondone: () => void;
   /** A depth capture file the phone app saved: its text. */
   export let oncapture: (text: string) => void = () => {};
+  /** Scanning from a paired phone, started here. Null where there is no pairing (the phone's own editor). */
+  export let phoneScan: PhoneDepthScan | null = null;
+  let chosenPhone = '';
+  $: phones = phoneScan?.phones ?? [];
+  $: if (phones.length && !phones.some((p) => p.id === chosenPhone)) chosenPhone = phones[0].id;
+  $: flow = phoneScan?.flow ?? { kind: 'idle' as const };
+  $: running = flow.kind === 'asking' || flow.kind === 'scanning' || flow.kind === 'applying';
+  $: progress = flow.kind === 'scanning' && flow.pct !== undefined ? flow.pct : null;
   async function openCapture(e: Event) {
     const input = e.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
@@ -73,7 +82,45 @@
       </button>
     </div>
   {:else if step === 'scan'}
-    <p class="hint">On the phone, run Auto-map with depth from Calibration, with the phone held still where it sees the objects and the projection. Then open the depth capture it saved.</p>
+    {#if phoneScan}
+      {#if flow.kind === 'applied'}
+        <p class="depth-scan-done" role="status" data-depth-scan-done>{flow.summary}</p>
+        <div class="tools">
+          {#if phoneScan.canUndo}<button onclick={phoneScan.onundo}>Undo</button>{/if}
+          <button onclick={phoneScan.ondismiss}>Scan again</button>
+        </div>
+      {:else if running}
+        <p class="hint" role="status" data-depth-scan-status>{depthScanLabel(flow)}</p>
+        {#if progress !== null}<progress max="100" value={progress}></progress>{:else}<progress></progress>{/if}
+        {#if flow.kind !== 'applying'}<button class="wide" onclick={phoneScan.oncancel}>Cancel the scan</button>{/if}
+      {:else if phones.length}
+        {#if flow.kind === 'failed'}<p class="depth-scan-error" role="alert">{flow.message}</p>{/if}
+        <p class="hint">Start the scan here, then prop the phone up where it sees the objects and the projection and tap Start on it. The stripes show on the output while it measures.</p>
+        {#if phones.length > 1}
+          <label>
+            Phone
+            <select bind:value={chosenPhone}>
+              {#each phones as phone (phone.id)}<option value={phone.id} class="device-name">{phone.label}</option>{/each}
+            </select>
+          </label>
+        {:else}
+          <p class="depth-count"><span class="device-name">{phones[0].label}</span> is paired.</p>
+        {/if}
+        <button class="wide primary" data-depth-scan-start onclick={() => phoneScan?.onstart(chosenPhone)}>Start on phone</button>
+      {:else}
+        {#if flow.kind === 'failed'}<p class="depth-scan-error" role="alert">{flow.message}</p>{/if}
+        <p class="hint">No phone with depth scan is paired. Scan this code with an iPhone that has LiDAR, in the Ghost Arcade app.</p>
+        {#if phoneScan.pair?.qr}
+          <img class="depth-pair-qr" src={phoneScan.pair.qr} alt="Pairing code" />
+          {#if phoneScan.pair.url}<p class="hint depth-pair-url" translate="no">{phoneScan.pair.url}</p>{/if}
+        {:else}
+          <button class="wide" onclick={phoneScan.onpair}>Show the pairing code</button>
+        {/if}
+      {/if}
+      <p class="hint">Or, from a scan the phone saved:</p>
+    {:else}
+      <p class="hint">On the phone, run Auto-map with depth from Calibration, with the phone held still where it sees the objects and the projection. Then open the depth capture it saved.</p>
+    {/if}
     <label class="wide file-button">
       Open a depth capture
       <input type="file" accept=".json,application/json" onchange={openCapture} />
@@ -124,7 +171,7 @@
     {:else}
       <button onclick={() => onstep(at > 0 ? HAND[at - 1] : 'start')}>Back</button>
       {#if step === 'scan'}
-        <span></span>
+        {#if phoneScan?.flow.kind === 'applied'}<button onclick={ondone}>Done</button>{:else}<span></span>{/if}
       {:else if at < HAND.length - 1}
         <button disabled={step === 'surfaces' && faces === 0} onclick={() => onstep(HAND[at + 1])}>Next</button>
       {:else}

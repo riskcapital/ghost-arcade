@@ -1287,6 +1287,30 @@
 .interactive-workspace .depth-nav {
   margin-top: 14px;
 }
+/* Scan with the phone: progress, the result, the pairing code. */
+.interactive-workspace .depth-setup progress {
+  width: 100%;
+  margin: 4px 0 10px;
+}
+.interactive-workspace .depth-scan-done,
+.interactive-workspace .depth-scan-error {
+  margin: 0 0 8px;
+  font-size: var(--ga-text-control, 12px);
+}
+.interactive-workspace .depth-scan-error {
+  color: var(--ga-danger, #ff7a7a);
+}
+.interactive-workspace .depth-pair-qr {
+  display: block;
+  width: 160px;
+  height: 160px;
+  margin: 4px auto 6px;
+  border-radius: 6px;
+}
+.interactive-workspace .depth-pair-url {
+  text-align: center;
+  word-break: break-all;
+}
 .interactive-workspace .starter:disabled {
   opacity: 0.55;
   cursor: default;
