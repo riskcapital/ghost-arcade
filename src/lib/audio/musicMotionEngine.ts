@@ -22,6 +22,7 @@
  * a param with Auto playing is left to Auto.
  */
 
+import { engineNowMs, renderClockActive } from '../recording/renderClock';
 import { get } from 'svelte/store';
 import { musicMotionOwned, musicMotionOwnsParam } from './musicMotionOwned';
 import { project } from '../stores/layers';
@@ -113,7 +114,7 @@ export function musicMotionValuesFor(layer: { id: string; source?: { id?: string
  * `now` (ms), or 0. Read between frames it runs on at the clock's speed, so a
  * renderer drawing between the engine's steps never sees it hold or jump.
  */
-export function getMusicTimeOffset(sourceId: string | undefined, now = performance.now()): number {
+export function getMusicTimeOffset(sourceId: string | undefined, now = engineNowMs()): number {
   const c = sourceId ? clocks.get(sourceId) : undefined;
   if (!c) return 0;
   return c.offset + (c.rate - 1) * Math.max(0, Math.min(0.25, (now - c.at) / 1000));
@@ -333,7 +334,7 @@ function step(now: number): void {
 function tick(now: number): void {
   rafId = requestAnimationFrame(tick);
   try {
-    runAsAutomation(() => step(now));
+    runAsAutomation(() => step(renderClockActive() ? engineNowMs() : now));
   } catch (error) {
     console.error('[MusicMotion] frame skipped:', error);
   }

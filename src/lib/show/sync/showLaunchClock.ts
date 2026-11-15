@@ -7,6 +7,7 @@
  * position runs on at real time (at most a quarter second, so a stalled show
  * never runs away).
  */
+import { engineNowMs, renderClockActive } from '../../recording/renderClock';
 import type { ShowTempoMap } from '../../types';
 import { showTimeline } from '../../stores/showTimeline';
 import { setShowBeatSource } from '../../stores/launchClock';
@@ -38,14 +39,16 @@ export function showBeatAt(anchor: Anchor | null, nowMs: number): { beat: number
   };
 }
 
-export function installShowLaunchClock(now: () => number = () => performance.now()): () => void {
+export function installShowLaunchClock(now: () => number = () => engineNowMs()): () => void {
   let anchor: Anchor | null = null;
   // Re-anchored only when the playhead, play state or tempo map changes.
   // Other updates (selection, zoom) carry no new position: re-anchoring on
   // them moved `at` without moving `t`, so the beat stepped back by up to a
   // frame each time.
   const unsubscribe = showTimeline.subscribe((s) => {
-    if (!(s.isPlaying && s.tempo)) {
+    // Render to video seeks a paused show frame by frame: its bars still
+    // drive the clock, on the render's time.
+    if (!(s.tempo && (s.isPlaying || renderClockActive()))) {
       anchor = null;
       return;
     }

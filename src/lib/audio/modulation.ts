@@ -1,3 +1,4 @@
+import { engineNowMs } from '../recording/renderClock';
 import { launchClockPosition } from '../stores/launchClock';
 // Parameter Modulation Engine
 // Maps shader uniform parameters to modulation sources (audio bands, BPM, LFO/time)
@@ -1122,7 +1123,8 @@ class ModulationEngine {
 
   private applyModulations() {
     const audio = get(audioStore);
-    const now = (performance.now() - this.startTime) / 1000;
+    // engineNowMs: the render's own clock during Render to video.
+    const now = (engineNowMs() - this.startTime) / 1000;
     const frameBeat = launchClockPosition().beat;
     // Every ~1s, dump the full parsedCache contents so we can see
     // whether multiple mods are actually present and being iterated.

@@ -19,6 +19,7 @@
  * your stage, apply, switch to mapping/VJ mode, the pulse keeps going.
  */
 
+import { engineNowMs, engineRandom } from '../recording/renderClock';
 import { writable, get, derived } from 'svelte/store';
 import type { Layer, StageEffect, StageEffectType, Surface } from '../types';
 import { generateUUID } from '../utils/uuid';
@@ -780,7 +781,7 @@ function evalRandomHits(eff: StageEffect, cx: number, cy: number, tSec: number, 
   state._lastFireTimes.set(idx, nowSec);
   // Stochastic test — chance proportional to dt × per-slice rate.
   const perSliceRate = rate / Math.max(1, totalSlices);
-  if (Math.random() < perSliceRate * dt) {
+  if (engineRandom() < perSliceRate * dt) {
     state._hitTimes.set(idx, nowSec);
   }
   const hitAt = state._hitTimes.get(idx) ?? -10;
@@ -900,12 +901,20 @@ export function setStageEffectsManualTime(time: number | null) {
   if (time !== null) {
     // Mid-tick swaps would let one effect read wall clock and the
     // next read virtual time — force the runtime through a clean
-    // pass at the requested virtual time so all effects converge.
-    tick(0);
+    // pass at the requested virtual time so all effects converge. The
+    // automation scheduler runs on the render's clock, not the wall's.
+    runTick(engineNowMs());
   }
 }
 
 function tick(nowMs: number) {
+  // An offline render runs the effects itself, once per frame (above).
+  if (_manualTime !== null) { rafId = requestAnimationFrame(tick); return; }
+  rafId = null;
+  runTick(nowMs);
+}
+
+function runTick(nowMs: number) {
   // Offline render forces a deterministic virtual time via
   // _manualTime; in real-time mode tSec advances with the wall
   // clock. The advanceAutomation scheduler and per-effect tickers
@@ -954,6 +963,9 @@ function tick(nowMs: number) {
     stopIfIdle();
     return;
   }
+  // One frame loop: a manual pass (an offline render's frame) must not start
+  // a second one beside it.
+  if (rafId !== null) cancelAnimationFrame(rafId);
   rafId = requestAnimationFrame(tick);
 }
 

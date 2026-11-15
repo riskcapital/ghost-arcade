@@ -1,3 +1,4 @@
+import { engineRandom } from '../recording/renderClock';
 export type AutopilotTarget = 'none' | 'next' | 'previous' | 'random' | 'random-other' | 'random-bag' | 'first' | 'last' | 'column';
 export interface VJAutopilot {
   target: AutopilotTarget;
@@ -25,7 +26,7 @@ export function normalizeAutopilot(raw: unknown): VJAutopilot | undefined {
 
 /** Random bag tracks clip identities, so replacing a cell gives it a fresh turn. */
 export function chooseAutopilotColumn(ids: (string | null)[], current: number | null,
-  config: VJAutopilot, played: Set<string>, random = Math.random): number | null {
+  config: VJAutopilot, played: Set<string>, random = engineRandom): number | null {
   const candidates = ids.flatMap((id, i) => id ? [i] : []);
   if (!candidates.length) return null;
   const pick = (values: number[]) => values.length ? values[Math.min(values.length - 1, Math.max(0, Math.floor(random() * values.length)))] : null;

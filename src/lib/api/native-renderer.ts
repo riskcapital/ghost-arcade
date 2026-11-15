@@ -1833,7 +1833,9 @@ export async function getNativeRendererFrameSnapshot(
 
 export async function exportNativeRendererFrameSnapshot(
   path: string,
-  options: { time?: number; frame_index?: number; format?: string; source?: 'render' | 'output' } = {},
+  /** step_seconds (offline render, manual clock): the core steps every graph and
+   *  simulation by this much to `time` before reading the frame, once per frame. */
+  options: { time?: number; frame_index?: number; step_seconds?: number; format?: string; source?: 'render' | 'output' } = {},
 ) {
   return invoke<NativeRendererFrameSnapshotExportResult>('native_renderer_export_frame_snapshot', {
     path,

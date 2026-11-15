@@ -8,6 +8,7 @@
  * live position (vjClipLauncher.setCrossfaderValue), which does not publish
  * the launcher.
  */
+import { engineNowMs, renderClockActive } from '../recording/renderClock';
 import type { AutoConfig } from '../types';
 
 function clamp01(value: number): number {
@@ -92,6 +93,7 @@ export class CrossfaderAutoPlayer {
       return;
     }
     this.raf = this.requestFrame(this.tick);
+    if (renderClockActive()) now = engineNowMs();
     const dt = this.lastTime === 0 ? 0 : (now - this.lastTime) / 1000;
     this.lastTime = now;
     if (!this.host.enabled() || !auto.playing || dt <= 0 || dt > 0.1) return;

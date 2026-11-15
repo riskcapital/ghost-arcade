@@ -28,6 +28,7 @@
  *     plays into it.
  */
 
+import { engineNowMs, renderClockActive } from '../recording/renderClock';
 import { get } from 'svelte/store';
 import { launchClockPosition } from '../stores/launchClock';
 import { project } from '../stores/layers';
@@ -108,7 +109,7 @@ function tick(now: number) {
   rafId = requestAnimationFrame(tick);
   // Auto performs: nothing it writes is an undo step, except a recording
   // into an armed keyframe track (one step per take).
-  runAsAutomation(() => autoStep(now));
+  runAsAutomation(() => autoStep(renderClockActive() ? engineNowMs() : now));
 }
 
 /** Effects of an Interactive scene: each Auto'd param as a live `interactive:` value. */

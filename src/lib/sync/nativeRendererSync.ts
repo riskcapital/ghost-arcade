@@ -1,3 +1,4 @@
+import { engineDate } from '../recording/renderClock';
 import { applyParamOverrides, type ParamOverrideSet } from '../keyframes/applyParamOverrides';
 import { currentLineFrame } from '../timeline/lines/lineRuntime';
 import { timelineCompositionEffects } from '../timeline/stagefx/stageFxState';
@@ -6011,6 +6012,18 @@ export class NativeRendererSync {
   private pendingSyncTimer: ReturnType<typeof setTimeout> | null = null;
   private flushInFlight = false;
   private flushAgain = false;
+  /** The running flush loop: a flush asked for while one runs waits for it
+   *  (it picks the new state up on its next pass), so an offline render's
+   *  frame never reaches the snapshot before its own commands do. */
+  private flushLoop: Promise<void> | null = null;
+  /** Offline render: the frame being rendered and its length (set by
+   *  renderManualFrame). The core's frame index and step come from these,
+   *  never from this session's batch counter or the wall clock. */
+  private manualFrame: { index: number; step: number } | null = null;
+  /** Offline render: the output size it set. A frame sync during the render
+   *  keeps it (a re-sync used to put the project's size back, so a 4K render
+   *  read 1080p frames). */
+  private exportOutput: { width: number; height: number } | null = null;
   private urgentVideoRevision = 0;
   private desiredWidth = 0;
   private desiredHeight = 0;
@@ -8348,7 +8361,14 @@ export class NativeRendererSync {
                 : 0;
               const seekTo = duration > 0 ? manualClockTime % duration : 0;
               if (Math.abs(video.currentTime - seekTo) > 0.001) {
-                try { video.currentTime = seekTo; } catch { /* not seekable yet */ }
+                // Wait for the seek: drawing straight away drew the frame
+                // before it (a lag that changed with how fast the seek ran).
+                const seeked = new Promise<void>((resolve) => {
+                  const done = () => { clearTimeout(timer); video.removeEventListener('seeked', done); resolve(); };
+                  const timer = setTimeout(done, 2000);
+                  video.addEventListener('seeked', done);
+                });
+                try { video.currentTime = seekTo; await seeked; } catch { /* not seekable yet */ }
               }
               target.ctx.drawImage(video, 0, 0, target.width, target.height);
               state.texture = {
@@ -8795,11 +8815,14 @@ export class NativeRendererSync {
       return;
     }
     // The 3D world: touches, and what zones (or a zone's Test) asked of it.
-    const now = performance.now() / 1000;
+    // An offline render steps the world on its own clock; live input and
+    // the zones' GPU readback (which lands whenever it lands) stay out of it.
+    const rendering = this.manualClockExportDepth > 0 && this.latestRenderClockSeconds !== null;
+    const now = rendering ? this.latestRenderClockSeconds! : performance.now() / 1000;
     const asked = takeWorldActions(layer.id);
     if (scene.world?.enabled) for (const a of asked) runtime.world.trigger(a.what, a.point, now);
     setLiveWorldInput(layer.id, scene.world?.enabled ? runtime.world.update(points, now) : null);
-    this.pollBallZones(layer.id, scene, runtime.world, now);
+    if (!rendering) this.pollBallZones(layer.id, scene, runtime.world, now);
     const fired = runtime.zones.update(scene, points, now);
     if (!fired.length) return;
     if (scene.world?.enabled) {
@@ -9203,9 +9226,12 @@ export class NativeRendererSync {
       return noChain();
     }
 
-    const liveSeconds = Math.max(0, (performance.now() - this.liveClockOriginMs) / 1000);
+    // An offline render's composition effects run on its clock, frame by frame.
+    const liveSeconds = this.latestRenderClockSeconds ?? Math.max(0, (performance.now() - this.liveClockOriginMs) / 1000);
     const graphTime = nativeShaderClockSeconds(liveSeconds);
-    const frameIndex = Math.max(0, Math.round(liveSeconds * this.targetFps));
+    const frameIndex = this.latestRenderClockSeconds !== null && this.manualFrame
+      ? this.manualFrame.index
+      : Math.max(0, Math.round(liveSeconds * this.targetFps));
     try {
       const graph = buildCompositeEffectPassChainGraph({
         sourceId: 'composite-frame:0',
@@ -10120,9 +10146,20 @@ export class NativeRendererSync {
    * the live wall clock while frames are captured, so exported motion
    * runs at wall speed instead of the master render clock.
    */
-  async renderManualFrame(seconds: number): Promise<void> {
+  async renderManualFrame(seconds: number, frame?: { index: number; step: number }): Promise<void> {
     this.setRenderClock(seconds);
+    if (frame) this.manualFrame = { index: Math.max(0, Math.round(frame.index)), step: Math.max(0, frame.step) };
     if (!this.running || !this.startupReady) return;
+    if (frame) {
+      // The core's beat clock (beat-synced Looks and effects) at this frame,
+      // from the launch clock on the render's time: live it is pushed on the
+      // wall clock, which an offline render must not follow.
+      const { beat, beatMs } = launchClockPosition();
+      const bpm = beatMs > 0 ? 60000 / beatMs : 120;
+      if (Number.isFinite(beat) && Number.isFinite(bpm)) {
+        await submitNativeRendererCommands([{ type: 'set_beat_clock', beat, bpm, time: Number(seconds.toFixed(6)) }]).catch(() => {});
+      }
+    }
     await this.flush(this.desiredWidth, this.desiredHeight, this.latestLayers);
   }
 
@@ -10134,7 +10171,8 @@ export class NativeRendererSync {
    * being captured. Reference counted, and always paired with
    * endManualClockExport() in a finally block.
    */
-  beginManualClockExport(): void {
+  beginManualClockExport(output?: { width: number; height: number }): void {
+    if (output) this.exportOutput = { width: output.width, height: output.height };
     this.manualClockExportDepth += 1;
     if (this.manualClockExportDepth !== 1) return;
     this.stopShaderAnimation();
@@ -10150,6 +10188,8 @@ export class NativeRendererSync {
     if (this.manualClockExportDepth <= 0) return;
     this.manualClockExportDepth -= 1;
     if (this.manualClockExportDepth > 0) return;
+    this.manualFrame = null;
+    this.exportOutput = null;
     // The live clock must not jump forward by the export's wall time —
     // resume from where the live show left off.
     this.lastRenderClockSentSeconds = null;
@@ -10380,17 +10420,27 @@ export class NativeRendererSync {
     this.latestLayers = layers;
     if (this.flushInFlight) {
       this.flushAgain = true;
-      return;
+      return this.flushLoop ?? undefined;
     }
 
     this.flushInFlight = true;
+    const loop = this.flushLoopBody();
+    this.flushLoop = loop;
+    try {
+      await loop;
+    } finally {
+      if (this.flushLoop === loop) this.flushLoop = null;
+    }
+  }
+
+  private async flushLoopBody() {
     try {
       do {
         this.flushAgain = false;
         try {
           await this.flushOnce(
-            this.desiredWidth,
-            this.desiredHeight,
+            this.exportOutput?.width ?? this.desiredWidth,
+            this.exportOutput?.height ?? this.desiredHeight,
             this.applyTimelineOverrides(this.frameLayers ? this.frameLayers(this.latestLayers) : this.latestLayers),
           );
         } finally {
@@ -11496,7 +11546,7 @@ export class NativeRendererSync {
           typeof renderClock.frame_index === 'number' && Number.isFinite(renderClock.frame_index)
             ? Math.max(0, Math.round(renderClock.frame_index))
             : this.frameId;
-        const nowDate = new Date();
+        const nowDate = engineDate();
         const secsSinceMidnight =
           nowDate.getHours() * 3600 + nowDate.getMinutes() * 60 + nowDate.getSeconds() + nowDate.getMilliseconds() / 1000;
 
@@ -11924,8 +11974,12 @@ export class NativeRendererSync {
         ? manualTime
         : Math.max(0, (performance.now() - this.liveClockOriginMs) / 1000);
     const previous = this.lastRenderClockSentSeconds;
-    const timeDelta =
-      previous !== null && time >= previous
+    const manualFrame = manualTime !== null ? this.manualFrame : null;
+    // An offline render: one frame of the render's own rate, numbered from
+    // the render's first frame, so two renders of a show step identically.
+    const timeDelta = manualFrame
+      ? manualFrame.step
+      : previous !== null && time >= previous
         ? clampNumber(time - previous, 0, 0.1)
         : 1 / Math.max(1, this.targetFps);
     this.lastRenderClockSentSeconds = time;
@@ -11934,7 +11988,7 @@ export class NativeRendererSync {
       mode: manualTime !== null ? 'manual' : 'live',
       time: Number(time.toFixed(6)),
       time_delta: Number(timeDelta.toFixed(6)),
-      frame_index: this.frameId + 1,
+      frame_index: manualFrame ? manualFrame.index : this.frameId + 1,
     };
   }
 

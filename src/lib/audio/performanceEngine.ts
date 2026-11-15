@@ -3,6 +3,7 @@
 // Provides XY pad control, trigger buttons, momentum physics, and gesture tracking
 // Maps physical gestures to shader parameters with smooth, expressive motion
 
+import { engineNowMs, engineRandom } from '../recording/renderClock';
 import { writable, get } from 'svelte/store';
 import { vjClipLauncher } from '../stores/vjClipLauncher';
 import { runAsAutomation } from '../stores/historyHooks';
@@ -146,7 +147,7 @@ function createPerformanceStore() {
     if (!isRunning) return;
 
     update(state => {
-      const now = performance.now();
+      const now = engineNowMs();
 
       // Idle fast path: when nothing is happening (pad released + still, no
       // trail, all triggers faded out, no strobe), skip the full clone+map
@@ -314,7 +315,7 @@ function createPerformanceStore() {
 
     // Trigger buttons
     fireTrigger(triggerId: string) {
-      const now = performance.now();
+      const now = engineNowMs();
 
       update(s => {
         const triggers = s.triggers.map(t => {
@@ -342,7 +343,7 @@ function createPerformanceStore() {
     },
 
     executeTriggerAction(action: TriggerAction) {
-      const now = performance.now();
+      const now = engineNowMs();
 
       switch (action.type) {
         case 'strobe':
@@ -422,7 +423,7 @@ function createPerformanceStore() {
             if (grid[layer][col]) available.push(col);
           }
           if (available.length > 0) {
-            const col = available[Math.floor(Math.random() * available.length)];
+            const col = available[Math.floor(engineRandom() * available.length)];
             vjClipLauncher.triggerClip(layer, col);
           }
           break;

@@ -2,6 +2,7 @@
   import { localServerFetch } from '../remote/remotePairing';
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
+  import { engineNowMs } from '../recording/renderClock';
   import { RenderEngine, loadImageTexture, createVideoTexture, getThreeJSIframeContext, createThreeJSIframeContext, disposeThreeJSIframeContext, getJSAnimationContext, createJSAnimationContext, disposeJSAnimationContext } from '../renderer/engine';
   import { project, layers, compositions } from '../stores/layers';
   import { compositionTransition } from '../stores/compositionTransition';
@@ -153,7 +154,7 @@
    *  frame's Screen FX (stageFxFrame.ts). None of these rebuild the scene. */
   function nativeFrameLayers(list: Layer[]): Layer[] {
     let out = applyCrossfadeFrame(withStudioVoices(list), vjClipLauncherNow());
-    out = applyClipFadeFrame(out, performance.now());
+    out = applyClipFadeFrame(out, engineNowMs());
     out = applyCompositionFadeFrame(out, compositionTransition.current());
     return applyStageFxFrame(out, stageFxFrameValues);
   }
@@ -2398,7 +2399,7 @@
           }
         }
         if (mappingFx) {
-          collectMappingStageFx(mc, working, performance.now(), mappingStageFxDeps(), next, nextTint);
+          collectMappingStageFx(mc, working, engineNowMs(), mappingStageFxDeps(), next, nextTint);
         }
         stageFxNativeOpacity = next;
         stageFxNativeTint = nextTint;

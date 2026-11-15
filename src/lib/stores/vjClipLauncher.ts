@@ -1,3 +1,4 @@
+import { engineNowMs } from '../recording/renderClock';
 import { normalizeMusicMotion } from '../audio/musicMotion';
 import { getDefaultEffectParams } from '../renderer/effects';
 import { mergeBlockGrids } from './vjBlockMerge';
@@ -4207,7 +4208,7 @@ function scheduleAutopilot() {
   if (autopilotFrame !== null || !autopilotClock.active || typeof requestAnimationFrame === 'undefined') return;
   autopilotFrame = requestAnimationFrame(() => {
     autopilotFrame = null;
-    autopilotClock.sync(autopilotSamples(get(vjClipLauncher)), performance.now());
+    autopilotClock.sync(autopilotSamples(get(vjClipLauncher)), engineNowMs());
     for (const action of autopilotClock.takeDue()) {
       const current = autopilotSamples(get(vjClipLauncher)).find(s => s.key === action.key);
       if (!current?.running || current.token !== action.token) continue;
@@ -4228,7 +4229,7 @@ function scheduleAutopilot() {
   });
 }
 vjClipLauncher.subscribe(state => {
-  autopilotClock.sync(autopilotSamples(state), performance.now());
+  autopilotClock.sync(autopilotSamples(state), engineNowMs());
   if (!autopilotClock.active && autopilotFrame !== null) {
     cancelAnimationFrame(autopilotFrame); autopilotFrame = null;
   }

@@ -26,6 +26,7 @@
  * of the project-store dependency cycle.
  */
 
+import { engineNowMs } from '../recording/renderClock';
 import { writable } from 'svelte/store';
 import type { CompositionTransitionStyle } from '../types';
 import type { ActiveCompositionTransition } from '../renderer/compositionTransitionLayers';
@@ -47,7 +48,8 @@ let timedEndTimer: ReturnType<typeof setTimeout> | null = null;
 let timedStartMs = 0;
 let timedDurationMs = 0;
 
-const clockNow = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+// The render's own clock during Render to video (renderClock.ts).
+const clockNow = () => (typeof performance !== 'undefined' ? engineNowMs() : Date.now());
 
 function timedRunning(): boolean {
   return timedEndTimer !== null;

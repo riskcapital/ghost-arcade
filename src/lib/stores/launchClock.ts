@@ -16,6 +16,7 @@
  * Resync and nudge move the phase of (3) and (4).
  */
 
+import { engineNowMs } from '../recording/renderClock';
 import { writable, get } from 'svelte/store';
 import { audioStore } from './audio';
 import { abletonLink } from '../sync/abletonLink';
@@ -176,7 +177,7 @@ export function launchClockTempo(): number {
 
 /** Where the clock is: a beat position (integer = beat, multiple of 4 =
  *  downbeat) and how long one beat lasts from here on. */
-export function launchClockPosition(nowMs = performance.now()): { beat: number; beatMs: number } {
+export function launchClockPosition(nowMs = engineNowMs()): { beat: number; beatMs: number } {
   const link = linkTempo();
   if (link !== null) {
     // Continuous session beats retain two/four-bar phrase boundaries.
