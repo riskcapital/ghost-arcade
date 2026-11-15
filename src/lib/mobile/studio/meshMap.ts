@@ -20,7 +20,13 @@ import type { Decoded, UV } from './structuredLight';
 /** Normalised lens: fx = focal length / photo width, cx = principal point x / photo width (y likewise with the height). */
 export type Intrinsics = { fx: number; fy: number; cx: number; cy: number };
 /** Depth from the same camera as the photo: same field of view and orientation. 0 = no reading. */
-export type DepthScan = { width: number; height: number; meters: Float32Array; intrinsics: Intrinsics };
+export type DepthScan = {
+  width: number; height: number; meters: Float32Array; intrinsics: Intrinsics;
+  /** The ARKit camera transform of the depth frame (4x4, column-major, camera to gravity-aligned world), when the camera has one. */
+  pose?: ArrayLike<number>;
+  /** How far the depth was turned clockwise to be upright; `pose` is of the sensor's own orientation. */
+  turn?: 0 | 90 | 180 | 270;
+};
 
 /** The scan resampled on the depth grid. */
 export type ScanGrid = {

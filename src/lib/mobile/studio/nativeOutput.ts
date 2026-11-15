@@ -92,3 +92,15 @@ export async function requestReview(): Promise<boolean> {
     return false;
   }
 }
+
+let info: Promise<{ version: string; build: string }> | undefined;
+/** This app's version and build number ("1.2", "11"); in a browser, `fallback` and no build. */
+export function appInfo(fallback: string): Promise<{ version: string; build: string }> {
+  info ??= hasOutputMethod('appVersion')
+    ? callOutput<{ version?: string; build?: string }>('appVersion').then(
+        (r) => ({ version: r?.version || fallback, build: typeof r?.build === 'string' ? r.build : '' }),
+        () => ({ version: fallback, build: '' }),
+      )
+    : Promise.resolve({ version: fallback, build: '' });
+  return info;
+}

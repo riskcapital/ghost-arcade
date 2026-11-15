@@ -1,10 +1,13 @@
 import type { InteractiveScene, Interaction } from './interactive';
+import type { DesktopCapabilities } from './desktopCapabilities';
 
 export type PairedSession = {
   scene: InteractiveScene | null;
   active: boolean;
   paused: boolean;
   native: boolean | null;
+  /** What the desktop said it can do (studio_capabilities), once it has. */
+  capabilities?: DesktopCapabilities;
   lastSent?: number;
   heartbeat?: ReturnType<typeof setInterval>;
   closed?: () => void;
@@ -40,7 +43,7 @@ function maintainSession(socket: WebSocket, session: PairedSession) {
     sessions.delete(socket);
   };
   socket.addEventListener('close', session.closed, { once: true });
-  // Desktop expires remote sources after three seconds without an update.
+  // The desktop lets a held touch go after 2.5 s and the scene after a minute without an update.
   // Keep a launched scene alive between editors, without replaying touch input.
   session.heartbeat = setInterval(() => {
     if (socket.readyState !== WebSocket.OPEN) {

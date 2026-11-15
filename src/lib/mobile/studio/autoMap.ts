@@ -11,7 +11,8 @@ import { planPatterns, decodeCaptures, fitHomography, applyHomography, type Capt
 import { stripeFrameCode, STRIPE_CELL } from './structuredLightCodes';
 import type { DepthScan } from './meshMap';
 
-export type AutoMapScreen = { id: string; name: string; width: number; height: number };
+/** An open Screen. `region`, when the desktop sends it, is where its picture sits in the output (0..1). */
+export type AutoMapScreen = { id: string; name: string; width: number; height: number; region?: { x: number; y: number; width: number; height: number } };
 export type AutoMapLink = { request(op: 'screens' | 'show' | 'end', extra?: Record<string, unknown>): Promise<Record<string, any>> };
 export type AutoMapCamera = {
   turn?: number;
@@ -24,6 +25,8 @@ export type AutoMapCamera = {
 };
 export type AutoMapProjector = {
   id: string; name: string; width: number; height: number;
+  /** Where this Screen's picture sits in the output, when the desktop said. */
+  region?: AutoMapScreen['region'];
   corners: UV[];        // the full picture's corners in the photo, TL TR BR BL
   rmsPx: number;        // fit error in projector pixels
   coverage: number;     // share of the photo that saw this projector
@@ -48,11 +51,13 @@ export async function runAutoMap(
   link: AutoMapLink,
   camera: AutoMapCamera,
   progress: (text: string, fraction?: number) => void = () => {},
-  options: { settleMs?: number; encode?: (luma: Float32Array, width: number, height: number) => string } = {},
+  options: { settleMs?: number; encode?: (luma: Float32Array, width: number, height: number) => string; screenId?: string } = {},
 ): Promise<AutoMapResult> {
   const settle = options.settleMs ?? SETTLE_MS;
   const listed = await link.request('screens');
-  const screens: AutoMapScreen[] = Array.isArray(listed.screens) ? listed.screens : [];
+  const open: AutoMapScreen[] = Array.isArray(listed.screens) ? listed.screens : [];
+  // A desktop asking for one Screen (a room scan for Depth mode) gets only that one.
+  const screens = options.screenId && open.some((s) => s.id === options.screenId) ? open.filter((s) => s.id === options.screenId) : open;
   if (!screens.length) throw new Error('No Screen is open on a projector. On the desktop, use Open on display for each Screen first.');
   if (Array.isArray(listed.cells) && !listed.cells.includes(STRIPE_CELL)) throw new Error('This desktop uses a different pattern size. Update both apps.');
   const projectors: AutoMapProjector[] = [];
@@ -92,7 +97,7 @@ export async function runAutoMap(
         const fit = fitHomography(plan, decoded);
         if (fit.cornersInPhoto.every(p => p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1)) { corners = fit.cornersInPhoto; rmsPx = fit.rmsPx; }
       } catch { /* not one plane: expected for an object */ }
-      projectors.push({ id: screen.id, name: screen.name, width: screen.width, height: screen.height, corners, rmsPx, coverage: decoded.coverage, plan, decoded, white });
+      projectors.push({ id: screen.id, name: screen.name, width: screen.width, height: screen.height, ...(validRegion(screen.region) ? { region: screen.region } : {}), corners, rmsPx, coverage: decoded.coverage, plan, decoded, white });
     }
     // Depth last, with the projector dark so its light cannot disturb the LiDAR.
     if (camera.depth) {
@@ -115,6 +120,10 @@ export async function runAutoMap(
   }
   const encode = options.encode ?? lumaToJpeg;
   return { reference: { image: colour && !options.encode ? colour.image : encode(brightest!, width, height), width, height }, projectors, ...(depth ? { depth } : {}), ...(depthError ? { depthError } : {}) };
+}
+
+function validRegion(r: AutoMapScreen['region']): boolean {
+  return !!r && [r.x, r.y, r.width, r.height].every((v) => typeof v === 'number' && Number.isFinite(v)) && r.width > 0 && r.height > 0;
 }
 
 /** Grey photo from luma, stretched to its own range so a dim room still reads. */

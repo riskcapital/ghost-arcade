@@ -180,7 +180,8 @@ export async function openLidarAutoMapCamera(preview?: HTMLCanvasElement): Promi
       const scan = parsePatternDepth(await fetchBinary('ghostcapture://pattern/depth?frames=15', 8000));
       checkStill(scan.pose);
       const upright = turnRaster(scan.meters, scan.width, scan.height, turn);
-      return { width: upright.width, height: upright.height, meters: upright.data, intrinsics: turnIntrinsics(scan.intrinsics, turn) };
+      // The pose stays: it says which way gravity points (depthCapture.ts gravityInScan).
+      return { width: upright.width, height: upright.height, meters: upright.data, intrinsics: turnIntrinsics(scan.intrinsics, turn), pose: Array.from(scan.pose), turn };
     },
     stop() {
       if (stopped) return;
