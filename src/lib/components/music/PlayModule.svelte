@@ -116,7 +116,12 @@
     <StudioJack id="cv:keys.level" label="" title="How loud the keys are playing, as a control signal for visuals and macros" />
     <button class="fx-btn studio-btn" class:on={(s.inserts[s.instrument]?.length ?? 0) > 0} onclick={() => insertEditorChannel.set($insertEditorChannel === s.instrument ? null : s.instrument)} title="Effects on what the keys play">FX{s.inserts[s.instrument]?.length ? ` ${s.inserts[s.instrument].length}` : ''}</button>
     {#if s.instrument !== 'drums'}
-      {#if size === null}
+      {#if size === null && narrow}
+        <!-- A narrow column: the size switch as a menu, so the octave control stays inside the module. -->
+        <select class="size-pick" value={s.keyboardSize} onchange={(e) => musicStudio.setKeyboardSize((e.currentTarget as HTMLSelectElement).value as KeyboardSize)} aria-label="Keyboard size">
+          {#each KEYBOARD_SIZES as option}<option value={option.id} title={option.title}>{option.label}</option>{/each}
+        </select>
+      {:else if size === null}
         <div class="seg small" role="group" aria-label="Keyboard size">
           {#each KEYBOARD_SIZES as option}
             <button class:on={s.keyboardSize === option.id} onclick={() => musicStudio.setKeyboardSize(option.id)} title={option.title}>{option.label}</button>
@@ -145,6 +150,7 @@
   .visual-menu { position: relative; }
   /* The instrument name takes what width is left, so the octave control stays inside the module. */
   .instrument { flex: 1 1 140px; min-width: 36px; width: 0; text-overflow: ellipsis; }
+  .size-pick { flex: 0 0 auto; }
   .visual-pop {
     position: fixed;
     z-index: 100;
