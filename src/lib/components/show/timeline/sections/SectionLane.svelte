@@ -9,13 +9,31 @@
   import type { ShowTempoMap } from '../../../../types';
   import { showTimeline, showSectionStatus, showPhraseStatus, type ShowTimelineSelection } from '../../../../stores/showTimeline';
   import { phraseNumber } from '../../../../timeline/phrases/phraseModel';
-  import { SECTION_ACTION_GLYPHS, SECTION_ACTION_LABELS, SECTION_MIN_SECONDS, makeSection, nearestBar, placeNewSection, type TimelineSection } from '../../../../timeline/sections/sectionModel';
+  import { SECTION_ACTION_LABELS, SECTION_MIN_SECONDS, makeSection, nearestBar, placeNewSection, sectionAt, type TimelineSection } from '../../../../timeline/sections/sectionModel';
   import { followPointer } from '../dragSession';
   import { formatPrecise } from '../timeFormat';
   import { showSlice } from '../timelineSlices';
   import { isShowAudioFile } from '../../../../audio/showAudioImport';
   import { addFilesToRow } from '../../../../timeline/sound/soundCommands';
   import { soundLayout } from '../sound/soundRowLayout';
+  import { derived } from 'svelte/store';
+  import { distinct } from '../timelineSlices';
+  import TimelineIcon, { type TimelineIconName } from '../TimelineIcon.svelte';
+
+  // The section under the playhead (brighter): published only when it changes.
+  const hereId = distinct(derived([showSlice('sections'), showSlice('currentTime')], ([list, t]) => sectionAt(list, t)?.id ?? null));
+  const playing = showSlice('isPlaying');
+  const END_ICONS: Partial<Record<TimelineSection['action'], TimelineIconName>> = { vamp: 'loop', hold: 'hold', live: 'handoff', jump: 'jump' };
+  /** The end action in words, written at the section's end (Play through: nothing). */
+  function endWord(s: TimelineSection): string {
+    if (s.action === 'jump') return `Jump to ${sections.find((x) => x.id === s.jumpTo)?.name ?? '…'}`;
+    return s.action === 'through' ? '' : SECTION_ACTION_LABELS[s.action];
+  }
+  /** Waiting for GO: holding at its end, or looping now and not told to leave. */
+  function waiting(s: TimelineSection): boolean {
+    if (status.holdId === s.id) return true;
+    return s.action === 'vamp' && $hereId === s.id && $playing && status.vampExitId !== s.id;
+  }
 
   interface Props {
     sections: TimelineSection[];
@@ -135,6 +153,7 @@
       class:armed={status.armed.includes(s.id) || status.vampExitId === s.id}
       class:phrase-on={phrases.activeId === s.id}
       class:phrase-pending={phrases.pending?.id === s.id}
+      class:here={$hereId === s.id}
       style="left: {s.start * zoom}px; width: {Math.max(4, (s.end - s.start) * zoom)}px; --sec: {s.color}"
       onmousedown={(e) => startDrag(e, s)}
       title={title(s)}
@@ -144,15 +163,19 @@
       {#if s.phrase}<span class="sec-pad" title="Phrase pad {phraseNumber(sections, s.id)} (show:phrase:{phraseNumber(sections, s.id)})" data-section-phrase-badge>▣{phraseNumber(sections, s.id)}</span>{/if}
       <span class="sec-name item-name">{s.name}</span>
       {#if s.liveScene}<span class="sec-scene" title="Fires the Live scene “{s.liveScene.name || `Scene ${s.liveScene.scene + 1}`}” where it starts">▶ {s.liveScene.name || `Scene ${s.liveScene.scene + 1}`}</span>{/if}
-      {#if s.action !== 'through'}<span class="sec-action" aria-label={SECTION_ACTION_LABELS[s.action]}>{SECTION_ACTION_GLYPHS[s.action]}</span>{/if}
       {#if st}<span class="sec-state">{st}</span>{/if}
+      {#if s.action !== 'through'}
+        <span class="sec-end" class:waiting={waiting(s)} title={SECTION_ACTION_LABELS[s.action]} data-section-end={s.action}>
+          {#if END_ICONS[s.action]}<TimelineIcon name={END_ICONS[s.action]!} size={10} />{/if}{endWord(s)}
+        </span>
+      {/if}
     </div>
   {/each}
   {#if !sections.length}
     {#if noSong}
       <span class="sec-empty song" data-auto-show-hint>Drop audio here, then ✦ Auto show</span>
     {:else}
-      <span class="sec-empty">Double-click to add a section, or ✦ Auto show</span>
+      <span class="sec-empty">Double-click to add a section, or ✦ Auto show once there is audio</span>
     {/if}
   {/if}
 </div>
@@ -160,28 +183,45 @@
 <style>
   .sec-lane {
     position: relative;
-    border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
-    background: rgba(255, 255, 255, 0.015);
+    box-sizing: border-box;
   }
   .sec-block {
     position: absolute;
     top: 3px;
     bottom: 3px;
-    border-radius: 4px;
-    background: color-mix(in srgb, var(--sec) 38%, transparent);
-    border: 1px solid color-mix(in srgb, var(--sec) 80%, transparent);
-    border-left-width: 3px;
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--sec) 22%, var(--ga-panel, #100f0d));
+    border-left: 2px solid var(--sec);
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 0 6px;
+    padding: 0 3px 0 6px;
     overflow: hidden;
     white-space: nowrap;
     cursor: grab;
-    font-size: 11px;
-    color: var(--text-primary, #eee);
+    font-size: var(--ga-text-meta, 11px);
+    color: var(--ga-ink-0, #f2ede4);
     box-sizing: border-box;
   }
+  .sec-block.here { background: color-mix(in srgb, var(--sec) 36%, var(--ga-panel, #100f0d)); }
+  .sec-end {
+    margin-left: auto;
+    flex: 0 1 auto;
+    min-width: 0;
+    height: 13px;
+    padding: 0 5px;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    border-radius: 2px;
+    background: rgba(0, 0, 0, 0.35);
+    color: var(--ga-ink-0, #f2ede4);
+    font-size: 10px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sec-end.waiting { background: var(--tl-on, #ff725f); color: #1a0a06; }
   .sec-block::before,
   .sec-block::after {
     content: '';
@@ -193,7 +233,7 @@
   }
   .sec-block::before { left: -3px; }
   .sec-block::after { right: 0; }
-  .sec-block.selected { outline: 2px solid var(--accent-color, #5b8def); outline-offset: -1px; }
+  .sec-block.selected { outline: 1.5px solid var(--tl-on, #ff725f); outline-offset: -1px; }
   .sec-block.holding { animation: sec-pulse 1s ease-in-out infinite; }
   .sec-block.live { background: repeating-linear-gradient(45deg, color-mix(in srgb, var(--sec) 45%, transparent) 0 6px, color-mix(in srgb, var(--sec) 20%, transparent) 6px 12px); }
   .sec-block.armed { border-style: dashed; }
@@ -201,17 +241,17 @@
   .sec-block.phrase-pending { animation: sec-blink 0.5s steps(2, jump-none) infinite; }
   .sec-pad { font-size: 10px; font-weight: 700; padding: 0 3px; border-radius: 2px; background: color-mix(in srgb, var(--sec) 70%, #000); color: #fff; }
   .sec-scene { font-size: 10px; opacity: 0.8; overflow: hidden; text-overflow: ellipsis; }
-  .sec-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
-  .sec-action { opacity: 0.9; }
-  .sec-state { font-size: 10px; opacity: 0.85; color: #ffd36b; overflow: hidden; text-overflow: ellipsis; }
-  .sec-empty.song { opacity: 0.9; color: #ffd36b; font-weight: 600; }
+  .sec-name { font-weight: 650; overflow: hidden; text-overflow: ellipsis; }
+  .sec-state { font-size: 10px; opacity: 0.85; color: var(--tl-on-ink, #ffd9d2); overflow: hidden; text-overflow: ellipsis; }
+  .sec-empty.song { opacity: 0.9; color: var(--ga-ink-1, #ada9a2); font-weight: 600; }
   .sec-empty {
     position: sticky;
     left: 8px;
     top: 0;
-    line-height: 26px;
+    line-height: 20px;
     font-size: 11px;
-    opacity: 0.45;
+    color: var(--ga-ink-2, #89857e);
+    opacity: 0.8;
     pointer-events: none;
   }
   @keyframes sec-blink {

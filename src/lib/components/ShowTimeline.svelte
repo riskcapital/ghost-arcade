@@ -55,6 +55,7 @@
   import TimelineToolbar from './show/timeline/TimelineToolbar.svelte';
   import { performShown, sideColumn } from './show/timeline/sideColumn';
   import TimelineSide from './show/timeline/TimelineSide.svelte';
+  import { buildCueStack, markerNumber } from './show/timeline/perform/cueStack';
   import RowSectionHeader from './show/timeline/RowSectionHeader.svelte';
   import RowSectionLane from './show/timeline/RowSectionLane.svelte';
   import AddRowMenu from './show/timeline/AddRowMenu.svelte';
@@ -322,6 +323,8 @@
   // the right of its time, so the left edge keeps a wider margin.
   /** The active document's markers (each document has its own). */
   const docMarkers = $derived(cues.markers.filter((m) => (m.doc ?? 'show') === doc));
+  /** The Timeline's one cue list (sections, markers, cues), numbered once: the flags show the numbers. */
+  const cueStack = $derived(isTimeline ? buildCueStack(sections, docMarkers, cues.cues) : []);
   const visibleMarkers = $derived(docMarkers.filter((m) => {
     const x = m.time * zoom;
     return x >= viewStart * zoom - 400 && x <= viewEnd * zoom + 24;
@@ -1950,7 +1953,11 @@
               title={`Marker at ${formatPrecise(marker.time)}${marker.cueId ? `: fires ${cueLabel(cues.cues.find((c) => c.id === marker.cueId))}` : ' (no cue)'}. Drag to move.`}
               data-marker-id={marker.id}
             >
-              <span class="show-marker-flag">{marker.label || markerCueLabel(marker.cueId)}</span>
+              {#if isTimeline}
+                <span class="show-marker-flag tl-flag"><span class="flag-q">Q{markerNumber(cueStack, marker.id) ?? '?'}</span>{marker.label || cues.cues.find((c) => c.id === marker.cueId)?.name || ''}</span>
+              {:else}
+                <span class="show-marker-flag">{marker.label || markerCueLabel(marker.cueId)}</span>
+              {/if}
             </div>
           {/each}
         </div>
@@ -2320,6 +2327,27 @@
     font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
   .show-marker.unlinked .show-marker-flag { background: #7a7a86; color: #111; }
+  /* Timeline markers: blue cue flags with their number. */
+  .show-marker-flag.tl-flag {
+    top: 3px;
+    height: 16px;
+    line-height: 16px;
+    display: inline-flex;
+    gap: 4px;
+    padding: 0 5px 0 4px;
+    border-left: 2px solid var(--ga-blue, #5278ff);
+    border-radius: 0 3px 3px 0;
+    background: color-mix(in srgb, var(--ga-blue, #5278ff) 40%, #000);
+    color: var(--ga-selection-ink, #e0e8ff);
+    font-family: inherit;
+    font-size: 10px;
+    font-weight: 600;
+  }
+  .tl-flag .flag-q { font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); color: #aebfff; }
+  .show-marker.unlinked .show-marker-flag.tl-flag { background: var(--ga-raise, #26221c); color: var(--ga-ink-1, #ada9a2); border-left-color: var(--ga-ink-2, #89857e); }
+  .show-marker.selected .show-marker-flag.tl-flag { box-shadow: 0 0 0 1px var(--tl-on, #ff725f); }
+  .timeline-doc .show-marker-line { width: 0; background: none; border-left: 1px dashed rgba(82, 120, 255, 0.38); }
+  .timeline-doc .show-marker-line.selected { border-left-color: var(--ga-blue, #5278ff); }
   .show-marker.selected .show-marker-flag { box-shadow: 0 0 0 1px #fff; }
   /* In and out points: a band under the ruler and a faint line down each edge. */
   .show-work-area {

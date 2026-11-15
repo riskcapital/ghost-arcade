@@ -242,7 +242,7 @@ export const SECTION_ACTION_LABELS: Record<SectionAction, string> = {
   hold: 'Hold for GO',
   vamp: 'Loop until GO',
   jump: 'Jump',
-  live: 'Live (VJ decks)',
+  live: 'Hand to VJ decks',
 };
 
 export const SECTION_ACTION_GLYPHS: Record<SectionAction, string> = {
