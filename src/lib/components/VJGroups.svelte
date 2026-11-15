@@ -23,7 +23,7 @@
 </script>
 <svelte:window onresize={positionTray} />
 <div data-help-page="vj-mode" class="groups">
-  <button bind:this={trigger} class="groups-trigger" class:active={opened} aria-expanded={opened} onclick={toggleTray} data-help="Combine adjacent VJ layers into one image with shared level, blend, effects, and group-only column launches. Applies in Mix and Stage modes.">▸ Groups {groups.length || ''}</button>
+  <button bind:this={trigger} class="groups-trigger" class:active={opened} aria-expanded={opened} onclick={toggleTray} data-help="Combine adjacent VJ layers into one image with shared level, blend, effects, and group-only column launches. Applies in Mix and Stage modes.">▸ Groups{#if groups.length} {groups.length}{/if}</button>
   <div bind:this={tray} class="tray" popover="auto" role="group" aria-label="Layer groups" ontoggle={e => { opened = (e as ToggleEvent).newState === 'open'; positionTray(); }}>
     <strong>Layer groups</strong>
     <p>Combine adjacent layers after the deck crossfade. Group level and blend apply to the combined image.</p>

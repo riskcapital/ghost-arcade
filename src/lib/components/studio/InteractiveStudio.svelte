@@ -188,7 +188,7 @@
   $: if (orbit && !scene.world?.enabled) setOrbit(false);
 
   // ── Depth setup (real objects) ───────────────────────────────────────────
-  /** The step of depth setup in the 3D World tab; null when not setting up. */
+  /** The step of depth setup in the 3D world tab; null when not setting up. */
   let depthStep: DepthStep | null = null;
   $: roomSetup = scene.world?.source === 'room' ? scene.world.room?.setup : undefined;
   $: if (depthStep && depthStep !== 'start' && depthStep !== 'scan' && !roomSetup) depthStep = null;
@@ -1216,7 +1216,7 @@
     </div>
     <aside>
       <nav class="inspector-tabs" aria-label="Interactive tools">
-        {#each [['presets', 'Scenes'], ['effects', 'Effects'], ['objects', 'Objects'], ['world', '3D World'], ['scene', 'Setup']] as [id, label]}
+        {#each [['presets', 'Scenes'], ['effects', 'Effects'], ['objects', 'Objects'], ['world', '3D world'], ['scene', 'Setup']] as [id, label]}
           <button
             class:active={inspector === id}
             aria-current={inspector === id ? 'true' : undefined}

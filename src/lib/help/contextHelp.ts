@@ -5,6 +5,18 @@ import { tooltipsEnabled } from './preferences';
 
 const controls = 'button, input:not([type="hidden"]), select, textarea, summary, a[href], [role="button"], [role="slider"], [role="tab"], [data-help], [title]';
 
+/**
+ * What to do with a control that has no help of its own, by kind. Whole
+ * sentences without the control's name in them: the name is the card's
+ * heading, and a sentence built around it could not be translated.
+ */
+const ACTION_TEXT = {
+  select: 'Pick one of the options.',
+  checkbox: 'Turn it on or off.',
+  value: 'Drag or type to change the value.',
+  entry: 'Type here.',
+} as const;
+
 /** One delegated listener set, no per-frame work or subtree observers. */
 export function installContextHelp() {
   const card = document.createElement('div');
@@ -18,6 +30,10 @@ export function installContextHelp() {
   const heading = document.createElement('strong');
   const body = document.createElement('p');
   body.id = 'ga-context-help-description';
+  // Two parts, each its own text, so a translated interface finds both.
+  const action = document.createElement('span');
+  const about = document.createElement('span');
+  body.append(action, ' ', about);
   const link = document.createElement('a');
   link.textContent = 'Read documentation ↗';
   link.target = '_blank';
@@ -81,16 +97,18 @@ export function installContextHelp() {
     const page = target.closest<HTMLElement>('[data-help-page]')?.dataset.helpPage;
     const explicit = target.dataset.help;
     const data = helpContent(title || label, page, explicit || (title && title !== label ? title : ''));
+    let todo = '';
     if (!explicit && !title && label && data.description === helpContent('', page).description) {
-      const action = target.matches('select') ? `Choose ${label.toLowerCase()} from the available options.`
-        : input.type === 'checkbox' ? `Turn ${label.toLowerCase()} on or off.`
-        : target.matches('input[type="range"], input[type="number"]') ? `Adjust ${label.toLowerCase()}.`
-        : target.matches('input, textarea') ? `Enter ${label.toLowerCase()}.`
-        : `Use ${label} in ${helpContent('', page).title.toLowerCase()}.`;
-      data.description = `${action} ${data.description}`;
+      todo = target.matches('select') ? ACTION_TEXT.select
+        : input.type === 'checkbox' ? ACTION_TEXT.checkbox
+        : target.matches('input[type="range"], input[type="number"]') ? ACTION_TEXT.value
+        : target.matches('input, textarea') ? ACTION_TEXT.entry
+        : '';
     }
     heading.textContent = (label || title || data.title).slice(0, 160);
-    body.textContent = data.description;
+    action.textContent = todo;
+    action.hidden = !todo;
+    about.textContent = data.description;
     link.href = data.href;
     target.setAttribute('aria-describedby', [priorDescription, body.id].filter(Boolean).join(' '));
     card.hidden = false;

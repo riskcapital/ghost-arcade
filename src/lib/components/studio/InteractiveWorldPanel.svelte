@@ -49,10 +49,9 @@
   const sun = (patch: Partial<ReliefWorld['sun']>, step = false) => world && set({ sun: { ...world.sun, ...patch } }, step);
   const wall = (patch: Partial<ReliefWorld['wall']>, step = false) => world && set({ wall: { ...world.wall, ...patch } }, step);
   const fill = (patch: Partial<ReliefWorld['fill']>, step = false) => world && set({ fill: { ...world.fill, ...patch } }, step);
-  const compass = (deg: number) => {
-    const names = ['top', 'upper right', 'right', 'lower right', 'bottom', 'lower left', 'left', 'upper left'];
-    return names[Math.round((((deg % 360) + 360) % 360) / 45) % 8];
-  };
+  /** Where the sun shines from, clockwise from straight above (0°). */
+  const SUN_DIRECTION_LABELS = ['Above', 'Above right', 'Right', 'Below right', 'Below', 'Below left', 'Left', 'Above left'];
+  const compass = (deg: number) => SUN_DIRECTION_LABELS[Math.round((((deg % 360) + 360) % 360) / 45) % 8];
 </script>
 
 <label class="check world-switch">
@@ -107,7 +106,7 @@
 
   <div class="group-label">Sun</div>
   <label>
-    From the <output>{compass(world.sun.azimuth)}</output>
+    Direction <output>{compass(world.sun.azimuth)}</output>
     <input type="range" min="-180" max="180" step="1" value={world.sun.azimuth} onpointerdown={onstart} onkeydown={startKey} oninput={(e) => sun({ azimuth: +e.currentTarget.value })} />
   </label>
   <label>

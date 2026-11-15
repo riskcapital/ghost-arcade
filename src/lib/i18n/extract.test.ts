@@ -73,6 +73,17 @@ describe('i18n extractor', () => {
     expect(out.some((s) => s.startsWith('position:'))).toBe(false);
   });
 
+  it('reads text set on an element from code', async () => {
+    const { extractFrom } = await load();
+    const ts = [
+      "link.textContent = 'Read documentation ↗';",
+      "card.setAttribute('aria-label', 'Control help');",
+      "card.setAttribute('role', 'dialog');",
+      "el.className = 'ga-context-help';",
+    ].join('\n');
+    expect(extractFrom(ts, 'a.ts').sort()).toEqual(['Control help', 'Read documentation ↗']);
+  });
+
   it('still leaves code alone', async () => {
     const { extractFrom } = await load();
     const ts = [

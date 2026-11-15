@@ -92,12 +92,12 @@ export type LiveCaptureStatusLabel = { label: string; tone: 'live' | 'connecting
 
 /**
  * What MediaTray shows for a native camera or capture whose addon is
- * producing frames: "Ready" until it is on a layer, "Starting..." until the
+ * producing frames: "Ready" until it is on a layer, "Starting…" until the
  * core has shown a frame, then "Live" -- or "No picture" with the reason.
  */
 export function liveCaptureStatusLabel(state: LiveCaptureImportState | undefined): LiveCaptureStatusLabel {
   if (!state) return { label: 'Ready', tone: 'ready' };
-  if (state.state === 'sent') return { label: 'Starting...', tone: 'connecting' };
+  if (state.state === 'sent') return { label: 'Starting…', tone: 'connecting' };
   if (state.state === 'imported') return { label: 'Live', tone: 'live' };
   return { label: 'No picture', tone: 'error', title: state.message };
 }

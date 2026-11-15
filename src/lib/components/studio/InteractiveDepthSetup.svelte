@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Depth setup in the 3D World tab: how the world learns the real objects'
+   * Depth setup in the 3D world tab: how the world learns the real objects'
    * shape, a step at a time. The stage shows each step's control (roles on
    * the faces, the gravity arrow, the projector marker); the solve runs as
    * things change, so the preview follows.

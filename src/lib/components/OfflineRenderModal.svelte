@@ -161,7 +161,7 @@
   async function refreshNativeFrameCaptureAvailability() {
     const generation = ++nativeProbeGeneration;
     nativeFrameCaptureAvailable = false;
-    nativeFrameCaptureMessage = 'Checking...';
+    nativeFrameCaptureMessage = 'Checking…';
     const hasDesktopBridge = isDesktopApp || (typeof window !== 'undefined' && !!window.__ELECTRON__);
     if (!hasDesktopBridge) {
       nativeFrameCaptureMessage = 'Desktop only';

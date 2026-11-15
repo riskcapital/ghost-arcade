@@ -68,7 +68,7 @@ describe('store', () => {
 describe('MediaTray label', () => {
   it('Ready before it is used, Starting until the core shows a frame, then Live', () => {
     expect(liveCaptureStatusLabel(undefined)).toMatchObject({ label: 'Ready' });
-    expect(liveCaptureStatusLabel({ state: 'sent' })).toMatchObject({ label: 'Starting...', tone: 'connecting' });
+    expect(liveCaptureStatusLabel({ state: 'sent' })).toMatchObject({ label: 'Starting…', tone: 'connecting' });
     expect(liveCaptureStatusLabel({ state: 'imported' })).toMatchObject({ label: 'Live', tone: 'live' });
   });
 

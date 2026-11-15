@@ -1541,7 +1541,7 @@
   }
   function oscStatusLabel(): string {
     if (oscStatus === 'listening') return `Listening on ${state.osc?.port ?? currentOscPreset.port}`;
-    if (oscStatus === 'starting') return 'Starting...';
+    if (oscStatus === 'starting') return 'Starting…';
     if (oscStatus === 'error') return oscError ?? 'Could not start OSC';
     if (oscStatus === 'unavailable') return 'Native OSC unavailable';
     return 'Not listening';

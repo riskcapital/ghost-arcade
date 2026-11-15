@@ -254,6 +254,10 @@ function scanStrings(code, file, loose) {
   };
   literalAfter(new RegExp(`\\b(?:${PROP_KEYS})\\s*:\\s*`, 'g'));
   literalAfter(/\b(?:showToast|toast|alert|confirm|notify|setStatus|showError|showMessage)\(\s*/g);
+  // Text set on an element from code: `hint.textContent = 'Esc: dismiss'`,
+  // `card.setAttribute('aria-label', 'Control help')`.
+  literalAfter(/\.(?:textContent|innerText|title|placeholder)\s*=\s*/g);
+  literalAfter(/\.setAttribute\(\s*['"](?:aria-label|title|placeholder)['"]\s*,\s*/g);
   // A text prop's default: `let { emptyHint = 'Drop a card here' } = $props()`.
   literalAfter(/\b[a-z][A-Za-z]*(?:Hint|Label|Title|Text|Tooltip|Message|Placeholder|Caption|Heading)\s*=\s*/g);
   for (const init of textDeclarations(code)) {
