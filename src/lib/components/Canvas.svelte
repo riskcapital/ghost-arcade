@@ -34,7 +34,8 @@
   import { vjLayerSequencer } from '../stores/vjLayerSequencer';
   import { macros } from '../stores/macros';
   import { layerSequencer } from '../stores/layerSequencer';
-  import { evaluateStageEffectOutputForScreen, chaseOrderIndices, stageEffectsRuntime, resolveStageEffectForLayer } from '../stores/stageEffects';
+  import { stageEffectsRuntime, resolveStageEffectForLayer } from '../stores/stageEffects';
+  import { collectMappingStageFx, forEachMappingStageFx, type MappingStageFxDeps } from '../renderer/mappingStageFx';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
   import { controlLineFrame } from '../timeline/lines/lineRuntime';
   import { timelineScreenFx, timelineScreenFxFor, timelineStageFxFrame } from '../timeline/stagefx/stageFxState';
@@ -692,33 +693,6 @@
     beatsAccum?: number;
   } = {};
 
-  function getLayerCentroid01(layer: Layer): { x: number; y: number } {
-    const corners = layer.corners;
-    if (!corners) return { x: 0.5, y: 0.5 };
-    const points = [corners.topLeft, corners.topRight, corners.bottomLeft, corners.bottomRight];
-    const x = points.reduce((sum, p) => sum + (p?.x ?? 0.5), 0) / points.length;
-    const y = points.reduce((sum, p) => sum + (p?.y ?? 0.5), 0) / points.length;
-    return {
-      x: Math.max(0, Math.min(1, x)),
-      y: Math.max(0, Math.min(1, y)),
-    };
-  }
-
-  function getMappingCompositionStageLayers(renderLayers: Layer[]): Layer[] {
-    const seen = new Set<string>();
-    return renderLayers.filter((layer) => {
-      if (!layer.visible) return false;
-      // Group CHILDREN are the stage slices in the grouped-slice workflow —
-      // they must receive the effect chase. Only the group container itself
-      // and VJ feed layers are excluded.
-      if (String(layer.type) === 'group') return false;
-      if (String(layer.id).startsWith('vj-')) return false;
-      if (seen.has(layer.id)) return false;
-      seen.add(layer.id);
-      return true;
-    });
-  }
-
   function applyLayerOpacityModulation(layer: Layer, multiplier: number): void {
     const m = Math.max(0, Math.min(1, multiplier));
     if (m >= 0.999) return;
@@ -779,47 +753,22 @@
     project.setMappingStageEffectActive(cycle[idx], { history: false });
   }
 
+  /** What this frame's Screen FX read: the Timeline's Screen FX row when it
+   *  drives, else the project's own stage effects and their cycle. */
+  function mappingStageFxDeps(): MappingStageFxDeps {
+    return { timeline: timelineScreenFx() ? timelineScreenFxFor : null, advance: advanceMappingCompositionAutomation };
+  }
+
+  /** The browser render loop: Screen FX on its per-frame layer copies. */
   function applyMappingCompositionStageEffects(
     mappingComposition: MappingCompositionState | undefined,
     renderLayers: Layer[],
     nowMs: number,
   ): void {
-    // The Timeline's Screen FX row drives: its values (show time, pure), and
-    // the project's own Screen FX and their automation cycle wait.
-    if (timelineScreenFx()) {
-      for (const layer of getMappingCompositionStageLayers(renderLayers)) {
-        const out = timelineScreenFxFor(layer.id);
-        if (!out) continue;
-        applyLayerOpacityModulation(layer, out.brightness);
-        if (out.tint) layer._stageTint = out.tint;
-      }
-      return;
-    }
-    if (!mappingComposition?.enabled || mappingComposition.stageEffects.length === 0) return;
-    advanceMappingCompositionAutomation(mappingComposition, nowMs);
-    const live = mappingComposition.stageEffects.find((effect) => effect.id === mappingComposition.activeStageEffectId);
-    if (!live) return;
-    const stageLayers = getMappingCompositionStageLayers(renderLayers);
-    const sliceCount = stageLayers.length;
-    if (sliceCount === 0) return;
-
-    const tSec = nowMs / 1000;
-    // The user's clicked chase order, if any; the rest follow layer order.
-    const chaseIndex = chaseOrderIndices(stageLayers.map((layer) => [layer.id]), live.order);
-    for (let i = 0; i < sliceCount; i++) {
-      const layer = stageLayers[i];
-      const { x, y } = getLayerCentroid01(layer);
-      const out = evaluateStageEffectOutputForScreen(
-        `mapping-composition:${layer.id}`,
-        live,
-        x,
-        1 - y,
-        tSec,
-        { sliceIndex: chaseIndex[i], sliceCount },
-      );
-      applyLayerOpacityModulation(layer, out.brightness);
-      if (out.tint) layer._stageTint = out.tint;
-    }
+    forEachMappingStageFx(mappingComposition, renderLayers, nowMs, mappingStageFxDeps(), (layer, brightness, tint) => {
+      applyLayerOpacityModulation(layer, brightness);
+      if (tint) layer._stageTint = tint;
+    });
   }
 
   let canvas: HTMLCanvasElement;
@@ -2431,47 +2380,29 @@
         // Screens and slices only. The VJ feed layers are what every Screen
         // samples, so dimming one would dim every Screen at once; a
         // full-canvas slice can match them through the geometry fallback.
-        const working = (get(layers) as Layer[]).filter((layer) => !String(layer.id).startsWith('vj-'));
+        // Only the values are recorded: no layer is copied or changed.
+        const working = get(layers) as Layer[];
         const next = new Map<string, number>();
         const nextTint = new Map<string, [number, number, number]>();
-        let fxMatched = 0;
         if (surfaceFx) {
           for (const layer of working) {
+            if (String(layer.id).startsWith('vj-')) continue;
             // Direct slice binding OR geometry fallback — same resolver
             // the 3D LED path uses, so a stage whose slice→layer
             // bindings weren't persisted still gets FX in native output.
             const out = resolveStageEffectForLayer(layer, stageRt);
             if (!out.sliceId) continue;
-            fxMatched += 1;
             if (out.tint) nextTint.set(layer.id, out.tint);
             if (out.brightness >= 1) continue;
             next.set(layer.id, Math.max(0, out.brightness));
           }
         }
         if (mappingFx) {
-          // The composition engine modulates layers in place; run it on
-          // copies and keep only the multiplier it applied.
-          const copies = working.map((layer) => ({ ...layer }));
-          applyMappingCompositionStageEffects(mc, copies, performance.now());
-          for (const copy of copies) {
-            if (copy._stageTint) nextTint.set(copy.id, copy._stageTint);
-            const base = (copy as { _stageOrigOpacity?: number })._stageOrigOpacity;
-            if (base === undefined) continue;
-            const multiplier = base > 0 ? copy.opacity / base : 0;
-            next.set(copy.id, (next.get(copy.id) ?? 1) * multiplier);
-          }
+          collectMappingStageFx(mc, working, performance.now(), mappingStageFxDeps(), next, nextTint);
         }
         stageFxNativeOpacity = next;
         stageFxNativeTint = nextTint;
         publishStageFxFrame();
-        const nowDbg = performance.now();
-        if (nowDbg - ((window as unknown as { __stageFxNativeDbgAt?: number }).__stageFxNativeDbgAt ?? 0) > 2000) {
-          (window as unknown as { __stageFxNativeDbgAt?: number }).__stageFxNativeDbgAt = nowDbg;
-          console.log('[StageFX:native] surface=' + (surfaceFx ? stageRt.sliceOutputs.size : 0)
-            + ' mapping=' + (mappingFx ? 1 : 0)
-            + ' matched=' + fxMatched
-            + ' layers=' + working.length);
-        }
       };
       stageFxNativeRaf = requestAnimationFrame(stageFxNativeTick);
       const nativeVjLayersUnsub = vjOutputLayers.subscribe(() => scheduleNativeLayersSync());
