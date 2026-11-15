@@ -2642,6 +2642,12 @@
   }
   /* Lane names: eyebrow. */
   .lane-name {
+    /* One line in any language: a long translation ends in an ellipsis
+       instead of wrapping inside the row label. */
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     font-size: var(--ga-text-eyebrow, 10px);
     text-transform: uppercase;
     letter-spacing: var(--ga-eyebrow-tracking, 0.08em);

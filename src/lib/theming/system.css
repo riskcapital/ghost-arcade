@@ -82,7 +82,8 @@
   display: inline-grid;
   grid-template-columns: 1fr 1fr;
   align-items: stretch;
-  width: 148px;
+  /* At least 148px; wider (both halves alike) when a translated label needs it. */
+  min-width: 148px;
   height: var(--ga-bar-control-h);
   padding: 2px;
   gap: 2px;

@@ -132,7 +132,12 @@
     border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
   }
   .tha-btn {
-    flex: 0 0 auto;
+    /* Shrinks (with an ellipsis) rather than overrun the header column in
+       languages with longer words; the title carries the full text. */
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
     height: 20px;
     padding: 0 8px;

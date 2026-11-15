@@ -10,7 +10,7 @@ import { pathToFileURL } from 'node:url';
  * never looked at labels kept in tables (`const END_ACTION_LABELS = {...}`)
  * or in variables named for text (`const audioTitle = ...`).
  */
-type Extractor = { extractFrom(source: string, file?: string): string[]; templateText(body: string): string };
+type Extractor = { extractFrom(source: string, file?: string): string[]; templateText(body: string): string; extractAll(): string[] };
 const script = pathToFileURL(join(process.cwd(), 'scripts', 'i18n-extract.mjs')).href;
 const load = () => import(/* @vite-ignore */ script) as Promise<Extractor>;
 
@@ -59,6 +59,20 @@ describe('i18n extractor', () => {
     expect(out).not.toContain('Bearer {0}');
   });
 
+  it('reads text props by name, in markup and as defaults', async () => {
+    const { extractFrom } = await load();
+    const svelte = `<script lang="ts">
+  let { emptyHint = 'Drop a preset card here.', size = 'large' }: Props = $props();
+  el.style.cssText = 'position:absolute; top:-9px; width:';
+</script>
+<Pad playHint="Drag to play" emptyHint="Pick effects" mode="compact" />`;
+    const out = extractFrom(svelte, 'a.svelte');
+    expect(out).toEqual(expect.arrayContaining(['Drop a preset card here.', 'Drag to play', 'Pick effects']));
+    expect(out).not.toContain('large');
+    expect(out).not.toContain('compact');
+    expect(out.some((s) => s.startsWith('position:'))).toBe(false);
+  });
+
   it('still leaves code alone', async () => {
     const { extractFrom } = await load();
     const ts = [
@@ -85,4 +99,14 @@ describe('i18n extractor', () => {
     expect(list).toContain('Crossfade {0}s. Drag an edge to change its length, double-click to remove.');
     expect(list).toContain('At end: hold last look');
   });
+
+  // The language packs are checked against source.json (packCoverage.test.ts),
+  // so a stale source.json hides interface text no pack translates.
+  it('source.json lists exactly the interface text in the code (run npm run i18n:extract)', async () => {
+    const { extractAll } = await load();
+    const code = new Set(extractAll());
+    const listed = new Set(JSON.parse(readFileSync(join(process.cwd(), 'src', 'lib', 'i18n', 'source.json'), 'utf8')) as string[]);
+    expect([...code].filter((s) => !listed.has(s)), 'in the code, not in source.json').toEqual([]);
+    expect([...listed].filter((s) => !code.has(s)), 'in source.json, no longer in the code').toEqual([]);
+  }, 30_000);
 });
