@@ -53,7 +53,8 @@
   import CueListPanel from './show/CueListPanel.svelte';
   import TimelineIcon from './show/timeline/TimelineIcon.svelte';
   import TimelineToolbar from './show/timeline/TimelineToolbar.svelte';
-  import { performShown } from './show/timeline/sideColumn';
+  import { performShown, sideColumn } from './show/timeline/sideColumn';
+  import TimelineSide from './show/timeline/TimelineSide.svelte';
   import { roomToWork, toggleRoomToWork } from './show/timeline/roomToWork';
   import { openExternalUrl } from '$lib/bridge';
 
@@ -333,6 +334,7 @@
     const id = cueList.addMarker(get(showTimeline).currentTime, cueId, '', doc);
     showTimeline.select(null);
     selectedMarkerId = id;
+    if (doc === 'timeline') sideColumn.send({ kind: 'selected' });
   }
 
   function startMarkerDrag(e: MouseEvent, id: string, time: number) {
@@ -341,6 +343,7 @@
     e.stopPropagation();
     showTimeline.select(null);
     selectedMarkerId = id;
+    if (doc === 'timeline') sideColumn.send({ kind: 'selected' });
     const grab = timeAt(e) - time;
     let moved = false;
     followPointer({
@@ -414,6 +417,15 @@
     return Math.max(TRAY_MIN_HEIGHT, Math.round(Math.min(720, vh * 0.62)));
   }
 
+  /** Room the docked Timeline leaves above it (top bar and a canvas strip). */
+  const TIMELINE_CANVAS_ROOM = 300;
+  function timelineAutoHeight(vh: number): number {
+    return Math.max(TRAY_MIN_HEIGHT, Math.min(Math.round(vh * 0.66), vh - TIMELINE_CANVAS_ROOM));
+  }
+  function timelineDragCeiling(vh: number): number {
+    return Math.max(TRAY_MIN_HEIGHT, Math.round(vh * 0.85));
+  }
+
   function loadUserHeight(d: ShowDocKind = get(showTimeline).doc): number | null {
     if (typeof localStorage === 'undefined') return null;
     try {
@@ -451,8 +463,6 @@
   /** The toolbar's height. */
   const transportH = 40;
   let inspectorH = $state(0);
-  /** The takeover pads' own height, when they are open. */
-  let padsH = $state(0);
 
   // The rows as drawn: group rows, the Layers header and (open) the layer rows.
   const tracksH = $derived(isTimeline ? stackHeight($timelineRowStack, $lineLayout) : 0);
@@ -545,8 +555,8 @@
       move: (ev) => {
         // Top edge: dragging UP (a negative delta) makes the tray taller.
         // The pads are on top of the tray's own height, not part of it.
-        const next = startH - (ev.clientY - startY) - padsRoom;
-        userHeight = Math.max(TRAY_MIN_HEIGHT, Math.min(Math.round(next), dragCeiling(viewportH)));
+        const next = startH - (ev.clientY - startY);
+        userHeight = Math.max(TRAY_MIN_HEIGHT, Math.min(Math.round(next), isTimeline ? timelineDragCeiling(viewportH) : dragCeiling(viewportH)));
       },
       end: () => {
         resizingTray = false;
@@ -878,12 +888,10 @@
   const TRACK_INSPECTOR_RESERVE = 72;
   // The inspector wraps onto more rows in a narrow window (or at a large
   // interface scale), and then needs more than the reserve: its real height.
-  const inspectorRoom = $derived(hasTracks ? Math.max(TRACK_INSPECTOR_RESERVE, inspectorH) : inspectorVisible ? inspectorH : 0);
-  // The takeover pads sit between the transport and the lanes. They make the
-  // tray taller rather than taking the lanes' room.
-  const padsRoom = $derived(isTimeline && $performShown ? padsH : 0);
+  // The Timeline's inspector is in the side column, not under the lanes.
+  const inspectorRoom = $derived(isTimeline ? 0 : hasTracks ? Math.max(TRACK_INSPECTOR_RESERVE, inspectorH) : inspectorVisible ? inspectorH : 0);
   /** Everything but the lanes: transport, pads, inspector, top border. */
-  const chromeH = $derived(transportH + padsRoom + inspectorRoom + 1);
+  const chromeH = $derived(transportH + inspectorRoom + 1);
   const lanesH = $derived(laneStackH + GRID_SCROLLBAR_ALLOWANCE);
   // Lanes always get room for the ruler, the presets and a couple of tracks
   // (as far as the tray's hard limit allows), however much of the tray the
@@ -894,7 +902,7 @@
   const contentH = $derived(Math.max(
     chromeH + lanesH,
     // The cue list needs room for its status, a few rows and the editor.
-    cuesOpen ? transportH + padsRoom + CUE_PANEL_MIN_HEIGHT : 0,
+    cuesOpen ? transportH + CUE_PANEL_MIN_HEIGHT : 0,
   ));
   // Sizing itself (content, pads, phrase strip) the tray leaves the editor
   // its reserve; a height dragged by hand is kept, but the pads opening on
@@ -904,15 +912,16 @@
   const editorCap = $derived(Math.max(trayEditorCap(viewportH, TRAY_MAX_SHARE),
     transportH + inspectorRoom + RULER_HEIGHT + 2 * TRACK_ROW_HEIGHT + GRID_SCROLLBAR_ALLOWANCE + 1));
   const within = (cap: number): TrayLimits => ({ cap: Math.min(trayLimits.cap, cap), floor: Math.min(trayLimits.floor, cap) });
-  const autoH = $derived(clampTray(contentH, within(editorCap), (cuesOpen ? cueCeiling(viewportH) : autoCeiling(viewportH, hasTracks)) + padsRoom));
-  const trayHeight = $derived(userHeight === null
+  const autoH = $derived(clampTray(contentH, within(editorCap), (cuesOpen ? cueCeiling(viewportH) : autoCeiling(viewportH, hasTracks))));
+  const showTrayHeight = $derived(userHeight === null
     ? autoH
-    : clampTray(userHeight + padsRoom, within(Math.max(editorCap, userHeight)), dragCeiling(viewportH) + padsRoom));
-
-  // In a tray at its cap the pads (a performance surface) take what a ruler
-  // and two rows of lanes leave, and scroll past that; they used to give
-  // way to a 64 px sliver that showed no pads at all.
-  const padsMax = $derived(Math.max(64, trayHeight - transportH - inspectorRoom - (RULER_HEIGHT + 2 * TRACK_ROW_HEIGHT + GRID_SCROLLBAR_ALLOWANCE) - 1));
+    : clampTray(userHeight, within(Math.max(editorCap, userHeight)), dragCeiling(viewportH)));
+  // The Timeline is a workspace of its own (rows, the side column's
+  // inspector, the Perform tab): about two thirds of the window unless
+  // dragged, always leaving the canvas a strip above it.
+  const trayHeight = $derived(isTimeline
+    ? (userHeight === null ? timelineAutoHeight(viewportH) : Math.max(TRAY_MIN_HEIGHT, Math.min(userHeight, timelineDragCeiling(viewportH))))
+    : showTrayHeight);
 
   // Publish the live height so App.svelte can reserve viewport space for the
   // tray, the way it already does for the Presets / Sequencer / Keyframes
@@ -1246,6 +1255,24 @@
   onMount(() => setShowKeyHandler(handleShowKey));
   // A block picked on a folded layer row (select all, the inspector, undo) opens the Layers section.
   onMount(() => watchLayerReveal());
+  // Something new picked on the Timeline (not a row: that brings the Media
+  // tab) brings the side column's Inspector, unless Perform is showing.
+  onMount(() => {
+    let prevSel = get(showTimeline).selection;
+    let prevClips = get(showTimeline).selectedClipIds;
+    const check = () => {
+      const s = get(showTimeline);
+      const sel = s.selection;
+      const clips = s.selectedClipIds;
+      const fresh = (!!sel && sel !== prevSel && sel.kind !== 'track') || (clips !== prevClips && clips.some((id) => !prevClips.includes(id)));
+      prevSel = sel;
+      prevClips = clips;
+      if (fresh && s.doc === 'timeline' && s.isOpen) sideColumn.send({ kind: 'selected' });
+    };
+    const a = showSlice('selection').subscribe(check);
+    const b = showSlice('selectedClipIds').subscribe(check);
+    return () => { a(); b(); };
+  });
   // A backwards shuttle stops when the tray goes.
   onMount(() => () => stopShuttle());
   // Taken ahead of every other window listener (see installShowKeyCapture).
@@ -1336,6 +1363,266 @@
 
 <svelte:window bind:innerHeight={viewportH} />
 
+{#snippet inspectorChain()}
+  {#if selectedMarker}
+    <div class="show-inspector" bind:clientHeight={inspectorH} data-marker-inspector>
+      <span class="insp-title">Marker</span>
+      <label class="insp-field">
+        <span>At</span>
+        <input
+          type="number" min="0" step="0.25"
+          value={selectedMarker.time.toFixed(2)}
+          onchange={(e) => { const id = selectedMarker.id; commitNumber(e, (v) => cueList.updateMarker(id, { time: v || 0 }), () => cueList.state.markers.find((m) => m.id === id)?.time); }}
+        />
+        <span class="insp-unit">s</span>
+      </label>
+      <label class="insp-field insp-wide">
+        <span>Fires</span>
+        <select
+          value={selectedMarker.cueId ?? ''}
+          onchange={(e) => cueList.updateMarker(selectedMarker.id, { cueId: (e.target as HTMLSelectElement).value || null })}
+          data-marker-cue
+        >
+          <option value="">No cue</option>
+          {#each cues.cues as cue (cue.id)}
+            <option value={cue.id}>{cueLabel(cue)}</option>
+          {/each}
+        </select>
+      </label>
+      <label class="insp-field">
+        <span>Label</span>
+        <input
+          type="text"
+          value={selectedMarker.label}
+          placeholder={markerCueLabel(selectedMarker.cueId)}
+          onchange={(e) => cueList.updateMarker(selectedMarker.id, { label: (e.target as HTMLInputElement).value })}
+        />
+      </label>
+      <button class="insp-delete" onclick={deleteSelected}>Delete</button>
+      <button aria-label="Close marker inspector" class="insp-close" onclick={() => (selectedMarkerId = null)}>×</button>
+    </div>
+  {:else if selectedSection}
+    <div class="insp-wrap" bind:clientHeight={inspectorH}>
+      <SectionInspector section={selectedSection} {sections} rows={layerTracks} {tempo} onclose={() => showTimeline.select(null)} />
+    </div>
+  {:else if selectedTempo}
+    <div class="insp-wrap" bind:clientHeight={inspectorH}>
+      <ShowTempoInspector
+        tempo={tempo}
+        playhead={currentTime}
+        audioTracks={audioTracks}
+        onclose={() => showTimeline.select(null)}
+      />
+    </div>
+  {:else if selectedLedClip}
+    <div class="insp-wrap" bind:clientHeight={inspectorH}>
+      <LedBlockInspector clip={selectedLedClip} onclose={() => showTimeline.select(null)} />
+    </div>
+  {:else if selectedStageClip}
+    <div class="insp-wrap" bind:clientHeight={inspectorH}>
+      <StageFxBlockInspector clip={selectedStageClip} onclose={() => showTimeline.select(null)} />
+    </div>
+  {:else if soundSelection}
+    <div class="insp-wrap" bind:clientHeight={inspectorH}>
+      <SoundInspector selection={soundSelection} onclose={() => showTimeline.select(null)} />
+    </div>
+  {:else if selectedLookClip}
+    <div class="insp-wrap" bind:clientHeight={inspectorH}>
+      <ShowLookInspector clip={selectedLookClip} layers={$liveLayersStore} onclose={() => showTimeline.select(null)} />
+    </div>
+  {:else if layerClipInspector}
+    <div class="insp-wrap" bind:clientHeight={inspectorH}>
+      <ShowClipInspector
+        clip={selectedLayerClipFound?.clip ?? null}
+        track={selectedLayerClipFound?.track ?? null}
+        count={Math.max(selectedLayerClipCount, selectedLayerClipFound ? 1 : 0)}
+        ondelete={() => deleteTrackSelection(false)}
+        onclose={() => { clearTrackSelection(); showTimeline.select(null); }}
+      />
+    </div>
+  {:else if selectedTrack}
+    <div class="insp-wrap" bind:clientHeight={inspectorH}>
+      <ShowTrackInspector track={selectedTrack} onStage={selectedTrackOnStage} onclose={() => showTimeline.select(null)} />
+    </div>
+  {:else if selectedPreset}
+    <div class="show-inspector" bind:clientHeight={inspectorH}>
+      <span class="insp-title">Preset clip</span>
+      <label class="insp-field insp-wide">
+        <span>Composition</span>
+        <select
+          value={selectedPreset.compositionId}
+          onchange={(e) => showTimeline.updatePresetClip(selectedPreset.id, {
+            compositionId: (e.target as HTMLSelectElement).value,
+            label: comps.find((c) => c.id === (e.target as HTMLSelectElement).value)?.name,
+          })}
+        >
+          {#each comps as comp}
+            <option value={comp.id}>{comp.name}</option>
+          {/each}
+          {#if !comps.some((c) => c.id === selectedPreset.compositionId)}
+            <option value={selectedPreset.compositionId}>{selectedPreset.label ?? 'Missing preset'}</option>
+          {/if}
+        </select>
+      </label>
+      <label class="insp-field">
+        <span>Start</span>
+        <input
+          type="number" min="0" step="0.25"
+          value={selectedPreset.startTime.toFixed(2)}
+          onchange={(e) => { const id = selectedPreset.id; commitNumber(e, (v) => showTimeline.movePresetClip(id, v), () => livePreset(id)?.startTime); }}
+        />
+        <span class="insp-unit">s</span>
+      </label>
+      <label class="insp-field">
+        <span>Duration</span>
+        <input
+          type="number" min="0.25" step="0.25"
+          value={selectedPreset.duration.toFixed(2)}
+          onchange={(e) => { const clip = selectedPreset; commitNumber(e, (v) => showTimeline.resizePresetClip(clip.id, 'end', clip.startTime + v), () => livePreset(clip.id)?.duration); }}
+        />
+        <span class="insp-unit">s</span>
+      </label>
+
+      <button class="insp-delete" onclick={deleteSelected}>Delete</button>
+      <button aria-label="Close selected timeline item" class="insp-close" onclick={() => showTimeline.select(null)}>×</button>
+    </div>
+  {:else if selectedTransitionClip}
+    <!-- Transition inspector. The element on the timeline is the primary
+         control; this is where the exact numbers live. -->
+    <div class="show-inspector" bind:clientHeight={inspectorH}>
+      <span class="insp-title">Transition</span>
+      <span class="insp-junction">
+        {compositionName(selectedTransitionWindow?.prev.compositionId ?? '', selectedTransitionWindow?.prev.label)}
+        <span class="insp-arrow">→</span>
+        {compositionName(selectedTransitionClip.compositionId, selectedTransitionClip.label)}
+      </span>
+      <label class="insp-field">
+        <span>Type</span>
+        <select
+          class="insp-transition"
+          value={selectedTransitionWindow?.style ?? 'dissolve'}
+          onchange={(e) => showTimeline.setTransitionStyle(
+            selectedTransitionClip.id,
+            (e.target as HTMLSelectElement).value as CompositionTransitionStyle,
+          )}
+          title="How the two compositions blend. Every entry renders differently — see stores/presetTransition.ts."
+        >
+          {#each TRANSITION_OPTIONS as opt}
+            <option value={opt.value}>{opt.label}</option>
+          {/each}
+        </select>
+      </label>
+      <label class="insp-field">
+        <span>Duration</span>
+        <input
+          class="insp-fade"
+          type="number"
+          min={SHOW_MIN_TRANSITION_SECONDS}
+          max={selectedTransitionMax}
+          step="0.25"
+          value={(selectedTransitionWindow?.duration ?? 0).toFixed(2)}
+          onchange={(e) => { const clip = selectedTransitionClip; commitNumber(e, (v) => showTimeline.setTransitionDuration(clip.id, v || 0), () => {
+            const s = get(showTimeline); const c = s.presetClips.find((x) => x.id === clip.id);
+            return c ? showTransitionWindow(s.presetClips, c)?.duration ?? 0 : undefined;
+          }); }}
+        />
+        <span class="insp-unit">s</span>
+      </label>
+      <span class="insp-hint" title="The window is centered on the junction — half of it plays over the outgoing clip and half over the incoming one.">
+        {formatPrecise(selectedTransitionWindow?.start ?? 0)} → {formatPrecise(selectedTransitionWindow?.end ?? 0)}
+      </span>
+      {#if selectedTransitionClamped}
+        <span
+          class="insp-note"
+          title="Clamped to the shorter of the two clips it sits between — a transition can never be longer than the material it has to work with."
+        >clamped from {requestedTransitionDuration(selectedTransitionClip).toFixed(2)}s</span>
+      {/if}
+      <button class="insp-delete" onclick={deleteSelected} title="Remove the transition — the junction goes back to a hard cut">Delete</button>
+      <button aria-label="Close selected timeline item" class="insp-close" onclick={() => showTimeline.select(null)}>×</button>
+    </div>
+  {:else if selectedAudio}
+    <div class="show-inspector" bind:clientHeight={inspectorH}>
+      <span class="insp-title">Audio track</span>
+      <label class="insp-field insp-wide">
+        <span>Name</span>
+        <input
+          type="text"
+          value={selectedAudio.name}
+          onchange={(e) => showTimeline.renameAudioTrack(selectedAudio.id, (e.target as HTMLInputElement).value)}
+        />
+      </label>
+      <label class="insp-field">
+        <span>Start</span>
+        <input
+          type="number" min="0" step="0.25"
+          value={selectedAudio.startTime.toFixed(2)}
+          onchange={(e) => { const id = selectedAudio.id; commitNumber(e, (v) => showTimeline.moveAudioTrack(id, v), () => liveAudio(id)?.startTime); }}
+        />
+        <span class="insp-unit">s</span>
+      </label>
+      <label class="insp-field">
+        <span>Length</span>
+        <input
+          type="number" min="0.25" step="0.25"
+          value={selectedAudio.duration.toFixed(2)}
+          onchange={(e) => { const t = selectedAudio; commitNumber(e, (v) => showTimeline.resizeAudioTrack(t.id, 'end', t.startTime + v), () => liveAudio(t.id)?.duration); }}
+        />
+        <span class="insp-unit">s</span>
+      </label>
+      <label class="insp-field">
+        <span>Vol</span>
+        <input
+          class="insp-range"
+          type="range" min="0" max="1" step="0.01"
+          value={selectedAudio.volume}
+          oninput={(e) => showTimeline.setAudioTrackVolume(selectedAudio.id, parseFloat((e.target as HTMLInputElement).value))}
+        />
+      </label>
+      <button
+        class="insp-chip"
+        class:on={selectedAudio.muted}
+        onclick={() => showTimeline.setAudioTrackMuted(selectedAudio.id, !selectedAudio.muted)}
+      >{selectedAudio.muted ? 'Muted' : 'Mute'}</button>
+      {#if !selectedAudio.url}
+        <span class="insp-warn">Media missing — re-add the file</span>
+      {:else}
+        <button
+          class="insp-chip"
+          disabled={detectingTempo}
+          onclick={() => detectTempoFrom(selectedAudio.id)}
+          title="Find this song's tempo and beats and make them the show's grid"
+          data-audio-detect-tempo
+        >{detectingTempo ? 'Listening…' : 'Detect tempo'}</button>
+        {#if tempoNote}<span class="insp-tempo-note" class:warn={!tempoNote.ok} data-audio-tempo-note>{#if tempoNote.ok}{tempoNote.bpm} BPM: the grid follows the song{:else if tempoNote.reason === 'no-pulse'}No steady beat found{:else}This track could not be read{/if}</span>{/if}
+      {/if}
+      <button class="insp-delete" onclick={deleteSelected}>Delete</button>
+      <button aria-label="Close selected timeline item" class="insp-close" onclick={() => showTimeline.select(null)}>×</button>
+    </div>
+  {:else if hasTracks}
+    <div class="show-inspector insp-idle" bind:clientHeight={inspectorH}>
+      <span class="insp-hint insp-idle-hint">Click a block to see its settings here.</span>
+    </div>
+  {/if}
+{/snippet}
+
+{#snippet timelineInspector()}
+  {#if inspectorVisible}
+    {@render inspectorChain()}
+  {:else}
+    <div class="show-inspector insp-idle">
+      <span class="insp-hint insp-idle-hint">Click a block to see its settings here.</span>
+    </div>
+  {/if}
+{/snippet}
+
+{#snippet performInterim()}
+  <ShowTakeoverControls />
+  {#if sections.length || docMarkers.length}<SectionCueList {sections} {currentTime} playing={isPlaying} />{/if}
+  <CueListPanel />
+  {#if hasPhrases}<PhrasePads variant="timeline" />{/if}
+  <TakeoverPads />
+{/snippet}
+
 {#snippet showDocTools()}
   <select class="t-select t-preset" bind:value={addPresetId} title="Preset to add">
     <option value="">Choose preset…</option>
@@ -1385,12 +1672,6 @@
 {#snippet timelineInterimTools()}
   <button class="t-chip t-iconable" onclick={() => audioInput?.click()} title="Add audio from this computer at the playhead: a song, stems or a sound" aria-label="Add audio">
     <TimelineIcon name="song" /><span class="t-label">Add audio</span>
-  </button>
-  <button class="t-chip t-iconable" class:active={sectionCuesOpen} onclick={toggleSectionCues} title="The Timeline's sections and markers as a cue list, with a big GO" aria-label="Sections" data-section-cues-toggle>
-    <TimelineIcon name="sections" /><span class="t-label">Sections</span>
-  </button>
-  <button class="t-chip t-iconable" class:active={cuesOpen} onclick={toggleCues} title="Show the cue list beside the timeline" aria-label="Cues" data-show-cues-toggle>
-    <TimelineIcon name="cues" /><span class="t-label">Cues</span>
   </button>
   <button class="t-chip t-iconable" onclick={addMarkerAtPlayhead} title="Add a marker at the playhead. It fires the selected cue when the timeline plays across it." aria-label="Add a marker at the playhead. It fires the selected cue when the timeline plays across it." data-show-add-marker>
     <TimelineIcon name="marker" /><span class="t-label">Marker</span>
@@ -1459,15 +1740,6 @@
       onchange={handleAudioPick}
     />
 
-    {#if isTimeline && $performShown}
-      <!-- The outer box may give way in a tight tray; the inner one reports
-           the pads' own height, which the tray grows by. -->
-      <div class="pads-wrap" style:max-height="{padsMax}px"><div bind:clientHeight={padsH}>
-        <div class="perform-interim"><ShowTakeoverControls /></div>
-        {#if hasPhrases}<PhrasePads variant="timeline" />{/if}
-        <TakeoverPads />
-      </div></div>
-    {/if}
 
     <div class="show-main">
     <div class="show-main-col">
@@ -1693,252 +1965,12 @@
       </div>
     </div>
 
-    <!-- Inspector -->
-    {#if selectedMarker}
-      <div class="show-inspector" bind:clientHeight={inspectorH} data-marker-inspector>
-        <span class="insp-title">Marker</span>
-        <label class="insp-field">
-          <span>At</span>
-          <input
-            type="number" min="0" step="0.25"
-            value={selectedMarker.time.toFixed(2)}
-            onchange={(e) => { const id = selectedMarker.id; commitNumber(e, (v) => cueList.updateMarker(id, { time: v || 0 }), () => cueList.state.markers.find((m) => m.id === id)?.time); }}
-          />
-          <span class="insp-unit">s</span>
-        </label>
-        <label class="insp-field insp-wide">
-          <span>Fires</span>
-          <select
-            value={selectedMarker.cueId ?? ''}
-            onchange={(e) => cueList.updateMarker(selectedMarker.id, { cueId: (e.target as HTMLSelectElement).value || null })}
-            data-marker-cue
-          >
-            <option value="">No cue</option>
-            {#each cues.cues as cue (cue.id)}
-              <option value={cue.id}>{cueLabel(cue)}</option>
-            {/each}
-          </select>
-        </label>
-        <label class="insp-field">
-          <span>Label</span>
-          <input
-            type="text"
-            value={selectedMarker.label}
-            placeholder={markerCueLabel(selectedMarker.cueId)}
-            onchange={(e) => cueList.updateMarker(selectedMarker.id, { label: (e.target as HTMLInputElement).value })}
-          />
-        </label>
-        <button class="insp-delete" onclick={deleteSelected}>Delete</button>
-        <button aria-label="Close marker inspector" class="insp-close" onclick={() => (selectedMarkerId = null)}>×</button>
-      </div>
-    {:else if selectedSection}
-      <div class="insp-wrap" bind:clientHeight={inspectorH}>
-        <SectionInspector section={selectedSection} {sections} rows={layerTracks} {tempo} onclose={() => showTimeline.select(null)} />
-      </div>
-    {:else if selectedTempo}
-      <div class="insp-wrap" bind:clientHeight={inspectorH}>
-        <ShowTempoInspector
-          tempo={tempo}
-          playhead={currentTime}
-          audioTracks={audioTracks}
-          onclose={() => showTimeline.select(null)}
-        />
-      </div>
-    {:else if selectedLedClip}
-      <div class="insp-wrap" bind:clientHeight={inspectorH}>
-        <LedBlockInspector clip={selectedLedClip} onclose={() => showTimeline.select(null)} />
-      </div>
-    {:else if selectedStageClip}
-      <div class="insp-wrap" bind:clientHeight={inspectorH}>
-        <StageFxBlockInspector clip={selectedStageClip} onclose={() => showTimeline.select(null)} />
-      </div>
-    {:else if soundSelection}
-      <div class="insp-wrap" bind:clientHeight={inspectorH}>
-        <SoundInspector selection={soundSelection} onclose={() => showTimeline.select(null)} />
-      </div>
-    {:else if selectedLookClip}
-      <div class="insp-wrap" bind:clientHeight={inspectorH}>
-        <ShowLookInspector clip={selectedLookClip} layers={$liveLayersStore} onclose={() => showTimeline.select(null)} />
-      </div>
-    {:else if layerClipInspector}
-      <div class="insp-wrap" bind:clientHeight={inspectorH}>
-        <ShowClipInspector
-          clip={selectedLayerClipFound?.clip ?? null}
-          track={selectedLayerClipFound?.track ?? null}
-          count={Math.max(selectedLayerClipCount, selectedLayerClipFound ? 1 : 0)}
-          ondelete={() => deleteTrackSelection(false)}
-          onclose={() => { clearTrackSelection(); showTimeline.select(null); }}
-        />
-      </div>
-    {:else if selectedTrack}
-      <div class="insp-wrap" bind:clientHeight={inspectorH}>
-        <ShowTrackInspector track={selectedTrack} onStage={selectedTrackOnStage} onclose={() => showTimeline.select(null)} />
-      </div>
-    {:else if selectedPreset}
-      <div class="show-inspector" bind:clientHeight={inspectorH}>
-        <span class="insp-title">Preset clip</span>
-        <label class="insp-field insp-wide">
-          <span>Composition</span>
-          <select
-            value={selectedPreset.compositionId}
-            onchange={(e) => showTimeline.updatePresetClip(selectedPreset.id, {
-              compositionId: (e.target as HTMLSelectElement).value,
-              label: comps.find((c) => c.id === (e.target as HTMLSelectElement).value)?.name,
-            })}
-          >
-            {#each comps as comp}
-              <option value={comp.id}>{comp.name}</option>
-            {/each}
-            {#if !comps.some((c) => c.id === selectedPreset.compositionId)}
-              <option value={selectedPreset.compositionId}>{selectedPreset.label ?? 'Missing preset'}</option>
-            {/if}
-          </select>
-        </label>
-        <label class="insp-field">
-          <span>Start</span>
-          <input
-            type="number" min="0" step="0.25"
-            value={selectedPreset.startTime.toFixed(2)}
-            onchange={(e) => { const id = selectedPreset.id; commitNumber(e, (v) => showTimeline.movePresetClip(id, v), () => livePreset(id)?.startTime); }}
-          />
-          <span class="insp-unit">s</span>
-        </label>
-        <label class="insp-field">
-          <span>Duration</span>
-          <input
-            type="number" min="0.25" step="0.25"
-            value={selectedPreset.duration.toFixed(2)}
-            onchange={(e) => { const clip = selectedPreset; commitNumber(e, (v) => showTimeline.resizePresetClip(clip.id, 'end', clip.startTime + v), () => livePreset(clip.id)?.duration); }}
-          />
-          <span class="insp-unit">s</span>
-        </label>
-
-        <button class="insp-delete" onclick={deleteSelected}>Delete</button>
-        <button aria-label="Close selected timeline item" class="insp-close" onclick={() => showTimeline.select(null)}>×</button>
-      </div>
-    {:else if selectedTransitionClip}
-      <!-- Transition inspector. The element on the timeline is the primary
-           control; this is where the exact numbers live. -->
-      <div class="show-inspector" bind:clientHeight={inspectorH}>
-        <span class="insp-title">Transition</span>
-        <span class="insp-junction">
-          {compositionName(selectedTransitionWindow?.prev.compositionId ?? '', selectedTransitionWindow?.prev.label)}
-          <span class="insp-arrow">→</span>
-          {compositionName(selectedTransitionClip.compositionId, selectedTransitionClip.label)}
-        </span>
-        <label class="insp-field">
-          <span>Type</span>
-          <select
-            class="insp-transition"
-            value={selectedTransitionWindow?.style ?? 'dissolve'}
-            onchange={(e) => showTimeline.setTransitionStyle(
-              selectedTransitionClip.id,
-              (e.target as HTMLSelectElement).value as CompositionTransitionStyle,
-            )}
-            title="How the two compositions blend. Every entry renders differently — see stores/presetTransition.ts."
-          >
-            {#each TRANSITION_OPTIONS as opt}
-              <option value={opt.value}>{opt.label}</option>
-            {/each}
-          </select>
-        </label>
-        <label class="insp-field">
-          <span>Duration</span>
-          <input
-            class="insp-fade"
-            type="number"
-            min={SHOW_MIN_TRANSITION_SECONDS}
-            max={selectedTransitionMax}
-            step="0.25"
-            value={(selectedTransitionWindow?.duration ?? 0).toFixed(2)}
-            onchange={(e) => { const clip = selectedTransitionClip; commitNumber(e, (v) => showTimeline.setTransitionDuration(clip.id, v || 0), () => {
-              const s = get(showTimeline); const c = s.presetClips.find((x) => x.id === clip.id);
-              return c ? showTransitionWindow(s.presetClips, c)?.duration ?? 0 : undefined;
-            }); }}
-          />
-          <span class="insp-unit">s</span>
-        </label>
-        <span class="insp-hint" title="The window is centered on the junction — half of it plays over the outgoing clip and half over the incoming one.">
-          {formatPrecise(selectedTransitionWindow?.start ?? 0)} → {formatPrecise(selectedTransitionWindow?.end ?? 0)}
-        </span>
-        {#if selectedTransitionClamped}
-          <span
-            class="insp-note"
-            title="Clamped to the shorter of the two clips it sits between — a transition can never be longer than the material it has to work with."
-          >clamped from {requestedTransitionDuration(selectedTransitionClip).toFixed(2)}s</span>
-        {/if}
-        <button class="insp-delete" onclick={deleteSelected} title="Remove the transition — the junction goes back to a hard cut">Delete</button>
-        <button aria-label="Close selected timeline item" class="insp-close" onclick={() => showTimeline.select(null)}>×</button>
-      </div>
-    {:else if selectedAudio}
-      <div class="show-inspector" bind:clientHeight={inspectorH}>
-        <span class="insp-title">Audio track</span>
-        <label class="insp-field insp-wide">
-          <span>Name</span>
-          <input
-            type="text"
-            value={selectedAudio.name}
-            onchange={(e) => showTimeline.renameAudioTrack(selectedAudio.id, (e.target as HTMLInputElement).value)}
-          />
-        </label>
-        <label class="insp-field">
-          <span>Start</span>
-          <input
-            type="number" min="0" step="0.25"
-            value={selectedAudio.startTime.toFixed(2)}
-            onchange={(e) => { const id = selectedAudio.id; commitNumber(e, (v) => showTimeline.moveAudioTrack(id, v), () => liveAudio(id)?.startTime); }}
-          />
-          <span class="insp-unit">s</span>
-        </label>
-        <label class="insp-field">
-          <span>Length</span>
-          <input
-            type="number" min="0.25" step="0.25"
-            value={selectedAudio.duration.toFixed(2)}
-            onchange={(e) => { const t = selectedAudio; commitNumber(e, (v) => showTimeline.resizeAudioTrack(t.id, 'end', t.startTime + v), () => liveAudio(t.id)?.duration); }}
-          />
-          <span class="insp-unit">s</span>
-        </label>
-        <label class="insp-field">
-          <span>Vol</span>
-          <input
-            class="insp-range"
-            type="range" min="0" max="1" step="0.01"
-            value={selectedAudio.volume}
-            oninput={(e) => showTimeline.setAudioTrackVolume(selectedAudio.id, parseFloat((e.target as HTMLInputElement).value))}
-          />
-        </label>
-        <button
-          class="insp-chip"
-          class:on={selectedAudio.muted}
-          onclick={() => showTimeline.setAudioTrackMuted(selectedAudio.id, !selectedAudio.muted)}
-        >{selectedAudio.muted ? 'Muted' : 'Mute'}</button>
-        {#if !selectedAudio.url}
-          <span class="insp-warn">Media missing — re-add the file</span>
-        {:else}
-          <button
-            class="insp-chip"
-            disabled={detectingTempo}
-            onclick={() => detectTempoFrom(selectedAudio.id)}
-            title="Find this song's tempo and beats and make them the show's grid"
-            data-audio-detect-tempo
-          >{detectingTempo ? 'Listening…' : 'Detect tempo'}</button>
-          {#if tempoNote}<span class="insp-tempo-note" class:warn={!tempoNote.ok} data-audio-tempo-note>{#if tempoNote.ok}{tempoNote.bpm} BPM: the grid follows the song{:else if tempoNote.reason === 'no-pulse'}No steady beat found{:else}This track could not be read{/if}</span>{/if}
-        {/if}
-        <button class="insp-delete" onclick={deleteSelected}>Delete</button>
-        <button aria-label="Close selected timeline item" class="insp-close" onclick={() => showTimeline.select(null)}>×</button>
-      </div>
-    {:else if hasTracks}
-      <div class="show-inspector insp-idle" bind:clientHeight={inspectorH}>
-        <span class="insp-hint insp-idle-hint">Click a block to see its settings here.</span>
-      </div>
-    {/if}
+    {#if !isTimeline}{@render inspectorChain()}{/if}
 
     </div>
-    {#if isTimeline && sectionCuesOpen}
-      <SectionCueList {sections} {currentTime} playing={isPlaying} />
-    {/if}
-    {#if cuesOpen}
+    {#if isTimeline}
+      <TimelineSide inspector={timelineInspector} perform={performInterim} />
+    {:else if cuesOpen}
       <CueListPanel />
     {/if}
     </div>
@@ -2326,7 +2358,6 @@
   .insp-idle { min-height: 36px; }
   /* In a tray at its cap the pads give way first, and scroll: every pad and
      setting stays reachable. */
-  .pads-wrap { flex: 0 0 auto; min-height: 64px; overflow-x: hidden; overflow-y: auto; }
 
   /* Click-through below the ruler: a click in a lane seeks, and the line
      that lands under the pointer must not swallow the second click of a

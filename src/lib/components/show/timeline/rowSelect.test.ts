@@ -17,6 +17,8 @@ vi.mock('../../../stores/layers', () => ({
 const { showTimeline, setShowCompositionLoader, setShowTrackFrameSink } = await import('../../../stores/showTimeline');
 const { rowPanelLayer, selectRow, timelineRowTray } = await import('./rowSelect');
 const { placeOnSelectedGroupRow } = await import('./groupRowUi');
+const { mediaTabShown, sideColumn } = await import('./sideColumn');
+const { mediaTarget } = await import('./rowSelect');
 
 const media = (name: string): ShowClipMedia => ({ kind: 'image', name, src: `/img/${name}` });
 const layer = (id: string) => ({ id, name: id, type: 'media', opacity: 1, source: null }) as unknown as Layer;
@@ -51,18 +53,36 @@ describe('a row picked on the Timeline brings the Media Library', () => {
 
     const row = (id: string) => get(showTimeline).layerTracks.find((t) => t.id === id)!;
 
-    it('a group row: the row is selected, the mapping layer let go, and the sidebar shows the tray', () => {
+    it('a group row: the row is selected, the mapping layer let go, and the Media tab comes beside the rows', () => {
+      sideColumn.send({ kind: 'close' });
       expect(get(timelineRowTray)).toBe(false);
       selectRow(row(groupRow));
       expect(get(showTimeline).selection).toEqual({ kind: 'track', id: groupRow });
       expect(get(projectState).selectedLayerId).toBeNull();
-      expect(get(timelineRowTray)).toBe(true);
+      // The Timeline's own Media tab shows the library: the sidebar does not repeat it.
+      expect(get(mediaTabShown)).toBe(true);
+      expect(get(timelineRowTray)).toBe(false);
+      expect(get(mediaTarget)).toBe(groupRow);
       // A tray card clicked now goes onto the group row at the playhead.
       expect(placeOnSelectedGroupRow({ type: 'image', src: '/img/x.png', name: 'x' })).toBe(true);
       expect(row(groupRow).clips).toHaveLength(1);
-      // The new block is selected: the tray stays for the next one.
+      // With the Media tab closed, the sidebar falls back to the tray as before.
+      sideColumn.send({ kind: 'close' });
       showTimeline.selectLayerClips([row(groupRow).clips[0].id]);
       expect(get(timelineRowTray)).toBe(true);
+    });
+
+    it('a piece row is a Media target too, until the banner lets go of it', () => {
+      selectRow(row(pieceRow));
+      expect(placeOnSelectedGroupRow({ type: 'image', src: '/img/y.png', name: 'y' })).toBe(true);
+      expect(row(pieceRow).clips).toHaveLength(1);
+      selectRow(row(pieceRow));
+      mediaTarget.set(null);
+      expect(placeOnSelectedGroupRow({ type: 'image', src: '/img/z.png', name: 'z' })).toBe(false);
+      // Another row selected: the old target no longer counts.
+      selectRow(row(pieceRow));
+      showTimeline.select(null);
+      expect(placeOnSelectedGroupRow({ type: 'image', src: '/img/z.png', name: 'z' })).toBe(false);
     });
 
     it('a piece row: its piece is selected, as clicking one of its blocks does', () => {

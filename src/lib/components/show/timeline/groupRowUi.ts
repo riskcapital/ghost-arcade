@@ -8,6 +8,7 @@
 import { get } from 'svelte/store';
 import { project } from '../../../stores/layers';
 import { showTimeline } from '../../../stores/showTimeline';
+import { activeMediaTarget } from './rowSelect';
 import { slotsFromPieces, wherePick } from '../../../timeline/where/wherePick';
 import { holdContentEdit } from '../../../timeline/liveEdit';
 import { generateUUID } from '../../../utils/uuid';
@@ -92,12 +93,13 @@ export function selectedGroupRow(): ShowLayerTrack | null {
 }
 
 /**
- * A Media Library card clicked with a group row selected: its content goes on
- * the row at the playhead (Live edit parked: held until Update). True when
- * it did.
+ * A Media Library card clicked with a group row selected (or the row the
+ * Timeline's Media tab targets, a piece row too): its content goes on the
+ * row at the playhead, up to the next block (Live edit parked: held until
+ * Update). True when it did.
  */
 export function placeOnSelectedGroupRow(payload: unknown): boolean {
-  const track = selectedGroupRow();
+  const track = selectedGroupRow() ?? activeMediaTarget();
   if (!track || track.locked) return false;
   const media = clipMediaFromTrayPayload(payload);
   if (!media) return false;

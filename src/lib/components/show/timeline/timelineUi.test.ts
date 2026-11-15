@@ -406,10 +406,11 @@ describe('Esc with a menu open, and key labels (B11)', () => {
 describe('tray height (B7)', () => {
   const tray = readFileSync(join(process.cwd(), 'src/lib/components/ShowTimeline.svelte'), 'utf8');
 
-  it('counts the pads and the inspector’s real height, and keeps room for the lanes', () => {
-    expect(tray).toMatch(/const padsRoom = \$derived\(isTimeline && \$performShown \? padsH : 0\)/);
+  it('the Show counts its inspector strip\'s real height; the Timeline is about two thirds of the window', () => {
     expect(tray).toMatch(/Math\.max\(TRACK_INSPECTOR_RESERVE, inspectorH\)/);
-    expect(tray).toMatch(/const chromeH = \$derived\(transportH \+ padsRoom \+ inspectorRoom \+ 1\)/);
+    expect(tray).toMatch(/const inspectorRoom = \$derived\(isTimeline \? 0 :/);
+    expect(tray).toMatch(/const chromeH = \$derived\(transportH \+ inspectorRoom \+ 1\)/);
+    expect(tray).toMatch(/Math\.min\(Math\.round\(vh \* 0\.66\), vh - TIMELINE_CANVAS_ROOM\)/);
     expect(tray).toMatch(/insp-idle" bind:clientHeight=\{inspectorH\}/);
   });
 

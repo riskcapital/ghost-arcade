@@ -92,9 +92,11 @@ describe('tray menus and the hover help card', () => {
 
 describe('Timeline tray layout', () => {
   const tray = source('ShowTimeline.svelte');
-  it('the pads strip scrolls instead of hiding pads, and takes the room two rows of lanes leave', () => {
-    expect(tray).toMatch(/\.pads-wrap \{[^}]*overflow-y: auto/);
-    expect(tray).toMatch(/style:max-height="\{padsMax\}px"/);
+  it('the inspector, the Media Library and the pads live in the side column, which scrolls', () => {
+    const side = source('show/timeline/TimelineSide.svelte');
+    expect(tray).toMatch(/<TimelineSide inspector=\{timelineInspector\}/);
+    expect(side).toMatch(/\.side-body \{[^}]*overflow-y: auto/);
+    expect(side).toMatch(/<MediaTray embedded=\{true\} \/>/);
   });
   it('a header focused out of view scrolls the grid, not the label column', () => {
     expect(tray).toMatch(/class="lane-labels"[^>]*onscroll=\{labelsScrolled\}/);
