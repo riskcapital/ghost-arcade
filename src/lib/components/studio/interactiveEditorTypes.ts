@@ -1,5 +1,6 @@
 /** Small types shared by the Interactive Studio editor components. */
 import type { Point } from '../../mobile/studio/interactive';
+import type { DepthScanFlow, ScanPhone } from '../../mobile/studio/depthScanFlow';
 
 /** Select (edit shapes), Draw (outline a new shape) or Play (touch the simulation). */
 export type EditorMode = 'perform' | 'draw' | 'edit';
@@ -25,4 +26,19 @@ export type DepthStage = {
   elevation: number;
   /** Each solid object's role, guessed or chosen. */
   roles: Record<string, 'top' | 'side' | 'backdrop'>;
+};
+
+/** Depth setup's "Scan with the phone", run from the desktop (App.svelte owns the pairing). */
+export type PhoneDepthScan = {
+  phones: ScanPhone[];
+  flow: DepthScanFlow;
+  /** The pairing code, once asked for. */
+  pair: { qr: string; url: string } | null;
+  /** The scan just applied can still be undone (nothing was changed since). */
+  canUndo: boolean;
+  onstart: (phone: string) => void;
+  oncancel: () => void;
+  ondismiss: () => void;
+  onundo: () => void;
+  onpair: () => void;
 };

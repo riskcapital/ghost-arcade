@@ -31,7 +31,7 @@ const {
   pairingTokenMatches,
   presentedPairingToken,
 } = require('./pairing.cjs');
-const { HOST_MESSAGES, authorizedHost, permittedSource, scanMessageAllowed, scanMessageEnds } = require('./remote-access.cjs');
+const { HOST_MESSAGES, authorizedHost, permittedSource, scanMessageAllowed, scanMessageEnds, depthMessageAllowed, depthMessageEnds, describeClient } = require('./remote-access.cjs');
 const { writeFileAtomicSync } = require('../electron/atomic-write.cjs');
 
 // Shader library directory - in packaged Electron, extraResources land in resources/
@@ -528,6 +528,7 @@ wss.on('connection', (ws, req) => {
     console.log(`[-] Client disconnected: ${clientIp}`);
     clients.delete(ws);
     for (const [key, owner] of privateRoutes) if (owner === ws) privateRoutes.delete(key);
+    if (ws.studioClient) sendStudioPeers();
 
     if (ws === desktopClient) {
       desktopClient = null;
@@ -556,6 +557,7 @@ function handleMessage(sender, msg) {
       if (desktopClient && desktopClient !== sender) desktopClient.close(4409, 'host replaced');
       desktopClient = sender;
       sender.send(JSON.stringify({ type: 'desktop_registered' }));
+      sendStudioPeers();
       console.log('[*] Desktop client registered');
       break;
 
@@ -982,6 +984,17 @@ function handleMessage(sender, msg) {
       if (!scanMessageAllowed(msg)) break;
       relayPrivate(sender, msg, 'scan', msg.requestId, msg.type === 'studio_scan_offer');
       break;
+    // A room scan for Depth mode: one phone offers it, only that phone hears
+    // the desktop's answer. The offer is stamped with who sent it, so the
+    // desktop keeps one offer per phone.
+    case 'studio_depth_capture_offer':
+      if (!depthMessageAllowed(msg, JSON.stringify(msg.capture ?? null).length)) break;
+      relayPrivate(sender, { ...msg, from: studioPeerId(sender, msg) }, 'depth', msg.requestId, true);
+      break;
+    case 'studio_depth_capture_status':
+      if (!depthMessageAllowed(msg, 0)) break;
+      relayPrivate(sender, msg, 'depth', msg.requestId, false);
+      break;
     // Auto-map: one phone asks the desktop to show stripe frames on a Screen
     // while it photographs them; only that phone gets the answers.
     case 'studio_automap_request':
@@ -992,8 +1005,44 @@ function handleMessage(sender, msg) {
     case 'studio_flux':
       sendDesktop(msg);
       break;
-    case 'studio_capabilities_request':
-      sendDesktop(msg);
+    case 'studio_capabilities_request': {
+      // Stamped like a scene, so the desktop can name and ask this phone.
+      const from = studioPeerId(sender, msg);
+      const client = describeClient(msg.client);
+      const seen = JSON.stringify({ from, client });
+      if (client && sender.studioClientSeen !== seen) {
+        sender.studioClient = { id: from, ...client };
+        sender.studioClientSeen = seen;
+        sendStudioPeers();
+      }
+      sendDesktop({ ...msg, from });
+      break;
+    }
+    // The phone's editor: a zone's Test acting on the 3D world, and its Orbit view.
+    case 'studio_world_action':
+    case 'studio_world_view':
+      sendDesktop({ ...msg, from: studioPeerId(sender, msg) });
+      break;
+    // Interactive Studio's Depth setup asks one phone for a room scan. The
+    // route belongs to that phone from here on: only it can report progress
+    // and send the scan.
+    case 'studio_depth_scan_request': {
+      if (!depthMessageAllowed(msg, 0)) break;
+      let target = null;
+      for (const client of clients) if (client !== sender && client.readyState === WebSocket.OPEN && client.studioPeers?.has(msg.to)) { target = client; break; }
+      if (!target) {
+        sendDesktop({ type: 'studio_depth_scan_progress', requestId: msg.requestId, stage: 'error', message: 'That phone is no longer connected.' });
+        break;
+      }
+      const mine = [...privateRoutes].filter(([, peer]) => peer === target);
+      if (mine.length >= 8) privateRoutes.delete(mine[0][0]);
+      privateRoutes.set(`depth:${msg.requestId}`, target);
+      sendTo(target, JSON.stringify(msg));
+      break;
+    }
+    case 'studio_depth_scan_progress':
+      if (!depthMessageAllowed(msg, 0)) break;
+      relayPrivate(sender, msg, 'depth', msg.requestId, false);
       break;
     case 'studio_capabilities':
       broadcast(sender, msg);
@@ -1110,6 +1159,13 @@ function handleMessage(sender, msg) {
   }
 }
 
+/** Phones that said which app they are (capabilities request), for the desktop's list. */
+function sendStudioPeers() {
+  const peers = [];
+  for (const client of clients) if (client !== desktopClient && client.readyState === WebSocket.OPEN && client.studioClient && peers.length < 8) peers.push(client.studioClient);
+  sendDesktop({ type: 'studio_peers', peers });
+}
+
 function sendDesktop(msg) {
   if (desktopClient?.readyState === WebSocket.OPEN) sendTo(desktopClient, JSON.stringify(msg));
 }
@@ -1132,7 +1188,7 @@ function relayPrivate(sender, msg, kind, id, mayStart) {
     if (owner !== sender) return;
     sendDesktop(msg);
   }
-  if (msg.type === 'phone_camera_stop' || msg.type === 'studio_calibration_status' || (msg.type === 'studio_automap_reply' && msg.done === true) || (kind === 'scan' && scanMessageEnds(msg))) privateRoutes.delete(key);
+  if (msg.type === 'phone_camera_stop' || msg.type === 'studio_calibration_status' || (msg.type === 'studio_automap_reply' && msg.done === true) || (kind === 'scan' && scanMessageEnds(msg)) || (kind === 'depth' && depthMessageEnds(msg))) privateRoutes.delete(key);
 }
 
 /**

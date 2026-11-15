@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { boxPyramid, dirInProjector, inProjector, pyramidCapture } from './roomFixtures';
 import { dot, facePoint, faceNormal, length, normalize, sub } from './roomModel';
-import { fitPlane, roomFromCapture, solveProjector, symmetricEigen, validateDepthCapture } from './roomPhone';
+import { CAPTURE_LIMITS, fitCaptureToLimits, fitPlane, resampleEvenly, roomFromCapture, simplifyOutline, solveProjector, symmetricEigen, validateDepthCapture } from './roomPhone';
 import { projectorBasis, projectPoint } from './projector';
 
 const ASPECT = 16 / 9;
@@ -69,5 +69,94 @@ describe('the room from a phone scan', () => {
     expect(() => validateDepthCapture({ down: [0, -1, 0], surfaces: [] })).toThrow(/surfaces/);
     expect(() => validateDepthCapture({ down: [0, -1, 0], surfaces: [{ id: 'a', outline: [{ x: 0, y: 0 }], samples: [] }] })).toThrow(/fewer than three/);
     expect(() => solveProjector([], ASPECT)).toThrow(/six points/);
+  });
+});
+
+describe('a phone scan larger than the limits', () => {
+  /** Distance from p to the closed outline. */
+  const offOutline = (p: { x: number; y: number }, outline: { x: number; y: number }[]) => {
+    let best = Infinity;
+    outline.forEach((a, i) => {
+      const b = outline[(i + 1) % outline.length];
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
+      best = Math.min(best, Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy));
+    });
+    return best;
+  };
+
+  it('thins a list evenly, first and last kept, in order', () => {
+    const list = Array.from({ length: 10 }, (_, i) => i);
+    expect(resampleEvenly(list, 4)).toEqual([0, 3, 6, 9]);
+    expect(resampleEvenly(list, 10)).toEqual(list);
+    expect(resampleEvenly(list, 12)).not.toBe(list);
+    expect(resampleEvenly(list, 1)).toEqual([0]);
+    expect(resampleEvenly(list, 0)).toEqual([]);
+  });
+
+  it('keeps the corners of a densely traced square', () => {
+    const corners = [{ x: 0.2, y: 0.2 }, { x: 0.8, y: 0.2 }, { x: 0.8, y: 0.7 }, { x: 0.2, y: 0.7 }];
+    const traced = corners.flatMap((a, i) => {
+      const b = corners[(i + 1) % 4];
+      return Array.from({ length: 100 }, (_, k) => ({ x: a.x + ((b.x - a.x) * k) / 100, y: a.y + ((b.y - a.y) * k) / 100 }));
+    });
+    const out = simplifyOutline(traced);
+    expect(out.length).toBeLessThanOrEqual(64);
+    for (const c of corners) expect(out).toContainEqual(c);
+    // Kept in the outline's own order, every corner one of the original ones.
+    const at = out.map((p) => traced.indexOf(p));
+    expect(at.every((i) => i >= 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+  });
+
+  it('follows a round outline closely with 64 corners, where cutting the list off loses most of it', () => {
+    const circle = Array.from({ length: 900 }, (_, i) => ({ x: 0.5 + 0.3 * Math.cos((i / 900) * 2 * Math.PI), y: 0.5 + 0.3 * Math.sin((i / 900) * 2 * Math.PI) }));
+    const out = simplifyOutline(circle, 64);
+    expect(out).toHaveLength(64);
+    expect(Math.max(...circle.map((p) => offOutline(p, out)))).toBeLessThan(0.002);
+    // What the old .slice(0, 64) kept: a sliver of the circle.
+    expect(Math.max(...circle.map((p) => offOutline(p, circle.slice(0, 64))))).toBeGreaterThan(0.2);
+  });
+
+  it('thins samples over the whole face and keeps the busiest surfaces, still solving', () => {
+    const truth = boxPyramid([1.2, 1.0, 5], [0.1, 1.2, 0], 28, ASPECT, 7, [0, 0.6]);
+    const base = pyramidCapture(truth);
+    // Every face measured at 5000 points (36 repeated), plus 50 tiny extra surfaces of 3 points.
+    const dense = {
+      down: base.down,
+      surfaces: [
+        ...base.surfaces.map((s) => ({ ...s, samples: Array.from({ length: 5000 }, (_, i) => s.samples[Math.floor((i * s.samples.length) / 5000)]) })),
+        ...Array.from({ length: 50 }, (_, i) => ({ id: `speck${i}`, name: 'speck', outline: base.surfaces[0].outline, samples: base.surfaces[0].samples.slice(0, 3) })),
+      ],
+    };
+    const capture = validateDepthCapture(JSON.parse(JSON.stringify(dense)));
+    expect(capture.surfaces).toHaveLength(CAPTURE_LIMITS.surfaces);
+    // All the real faces stay; specks go first.
+    for (const s of base.surfaces) expect(capture.surfaces.some((x) => x.id === s.id)).toBe(true);
+    const total = capture.surfaces.reduce((a, s) => a + s.samples.length, 0);
+    expect(total).toBeLessThanOrEqual(CAPTURE_LIMITS.samplesTotal);
+    for (const s of capture.surfaces) expect(s.samples.length).toBeLessThanOrEqual(CAPTURE_LIMITS.samplesPerSurface);
+    // Thinned, not cut off: the last grid point of each face is still there.
+    for (const s of base.surfaces) expect(capture.surfaces.find((x) => x.id === s.id)!.samples.at(-1)).toEqual(s.samples.at(-1));
+    const { report } = roomFromCapture(capture, ASPECT);
+    expect(Math.abs(report.fov - 28)).toBeLessThan(0.001);
+  });
+
+  it('shares the total out evenly between surfaces', () => {
+    const outline = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }];
+    const surfaces = Array.from({ length: 20 }, (_, k) => ({ id: `s${k}`, name: '', outline, samples: Array.from({ length: 4500 }, (_, i) => ({ p: [k, i, 1] as [number, number, number], uv: { x: 0, y: 0 } })) }));
+    const fitted = fitCaptureToLimits({ down: [0, -1, 0], surfaces });
+    const counts = fitted.surfaces.map((s) => s.samples.length);
+    expect(counts.reduce((a, n) => a + n, 0)).toBeLessThanOrEqual(CAPTURE_LIMITS.samplesTotal);
+    expect(new Set(counts).size).toBe(1);
+    expect(counts[0]).toBe(3000);
+    // Ends kept, the middle spread evenly.
+    expect(fitted.surfaces[0].samples[0].p[1]).toBe(0);
+    expect(fitted.surfaces[0].samples.at(-1)!.p[1]).toBe(4499);
+  });
+
+  it('refuses a capture far past anything a phone makes', () => {
+    const big = { down: [0, -1, 0], surfaces: [{ id: 'a', outline: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }], samples: new Array(1_000_001).fill({ p: [0, 0, 1], uv: { x: 0, y: 0 } }) }] };
+    expect(() => validateDepthCapture(big)).toThrow(/million/);
   });
 });

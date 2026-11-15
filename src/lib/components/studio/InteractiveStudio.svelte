@@ -66,11 +66,11 @@
   import { DesktopFeedPreview } from '../../mobile/studio/desktopFeed';
   import { shareInteractiveScene } from '../../mobile/studio/captureToolkit';
   import { dialogHostOf, isCovered, keyTargetOf, trapTab } from './interactiveEditorFocus';
-  import type { DepthStage, DepthStep, EditorMode, EmitterMarker, InspectorTab, TouchTool } from './interactiveEditorTypes';
+  import type { DepthStage, DepthStep, EditorMode, EmitterMarker, InspectorTab, PhoneDepthScan, TouchTool } from './interactiveEditorTypes';
   import { defaultRoom, defaultRoomSetup, FACE_ROLES, type RoomSetup } from '../../scene3d/roomModel';
   import { solveRoom } from '../../scene3d/roomSolve';
-  import { roomFromCapture, validateDepthCapture } from '../../scene3d/roomPhone';
-  import type { ReliefWorld, WorldSource } from '../../scene3d/worldModel';
+  import { roomFromCapture, validateDepthCapture, type DepthCapture } from '../../scene3d/roomPhone';
+  import { defaultReliefWorld, type ReliefWorld, type WorldSource } from '../../scene3d/worldModel';
   import InteractiveHeader from './InteractiveHeader.svelte';
   import InteractiveToolbar from './InteractiveToolbar.svelte';
   import InteractiveStage from './InteractiveStage.svelte';
@@ -132,6 +132,8 @@
    * the output. Optional: 16:9 when the host does not pass it.
    */
   export let aspect = DEFAULT_ASPECT;
+  /** Depth setup's Scan with the phone, from the desktop (null on the phone itself). */
+  export let phoneScan: Omit<PhoneDepthScan, 'canUndo' | 'onundo'> | null = null;
 
   // ── Methods the host calls ───────────────────────────────────────────────
   export function previewOutput() {
@@ -257,21 +259,49 @@
     apply({ ...edit.setSceneWorld(scene, { ...world, room: { ...world.room, setup: { ...world.room.setup, linked: true } } }), surfaces });
     say('The mapped layers are the faces now, and follow the mapping.');
   }
-  /** A phone scan: its surfaces become the solid objects, the room is as measured. */
-  function applyCapture(text: string) {
-    const world = scene.world;
-    if (!world) return;
+  /** A phone scan: its surfaces become the solid objects, the room is as measured. One undo step. */
+  function applyCaptureData(capture: DepthCapture, world: ReliefWorld): { ok: true; message: string } | { ok: false; message: string } {
     try {
-      const capture = validateDepthCapture(JSON.parse(text));
       const { room, report } = roomFromCapture(capture, safeAspect, (id) => `scan:${id}`);
       const kept = scene.surfaces.filter((s) => !s.id.startsWith('scan:') && !(s.behavior === 'solid' && s.id.startsWith('mapped:')));
       const scanned = capture.surfaces.map((s) => ({ id: `scan:${s.id}`, name: s.name, behavior: 'solid' as const, points: s.outline.map((p) => ({ x: Math.max(0, Math.min(1, p.x)), y: Math.max(0, Math.min(1, p.y)) })) }));
       apply({ ...edit.setSceneWorld(scene, { ...world, source: 'room', look: 'effects', room }), surfaces: [...kept, ...scanned].slice(0, 32) });
-      openDepth(null);
-      say(`Scanned ${room.faces.length} faces. Lens ${Math.round(report.fov)}°, off by ${report.pixelError.toFixed(1)} px on average.`);
+      return { ok: true, message: `Scanned ${room.faces.length} faces. Lens ${Math.round(report.fov)}°, off by ${report.pixelError.toFixed(1)} px on average.` };
     } catch (e) {
-      say((e as Error).message);
+      return { ok: false, message: (e as Error).message };
     }
+  }
+  /** A depth capture file the phone app saved. */
+  function applyCapture(text: string) {
+    const world = scene.world;
+    if (!world) return;
+    let result: { ok: boolean; message: string };
+    try {
+      result = applyCaptureData(validateDepthCapture(JSON.parse(text)), world);
+    } catch (e) {
+      result = { ok: false, message: (e as Error).message };
+    }
+    if (result.ok) openDepth(null);
+    say(result.message);
+  }
+  /** The edit history right after a scan from the phone: Undo is offered until anything else is edited. */
+  let scannedHistory: typeof history | null = null;
+  /**
+   * A scan sent by a paired phone, already checked: opens 3D World → Depth
+   * setup → Scan with the phone, turns the world on if it is off and applies
+   * the scan there, with Undo.
+   */
+  export function applyPhoneCapture(capture: DepthCapture): { ok: true; message: string } | { ok: false; message: string } {
+    inspector = 'world';
+    openDepth('scan');
+    const result = applyCaptureData(capture, { ...(scene.world ?? defaultReliefWorld()), enabled: true });
+    scannedHistory = result.ok ? history : null;
+    say(result.message);
+    return result;
+  }
+  function undoPhoneCapture() {
+    if (scannedHistory && history === scannedHistory) undo();
+    scannedHistory = null;
   }
   function finishDepth() {
     setRoomSetup({ done: true }, true);
@@ -1338,6 +1368,7 @@
             ongravity={(gravity, undo) => scene.world && setWorld({ ...scene.world, gravity }, undo)}
             onlink={linkMapping}
             oncapture={applyCapture}
+            phoneScan={phoneScan && { ...phoneScan, canUndo: !!scannedHistory && history === scannedHistory, onundo: undoPhoneCapture }}
             onstart={beginEdit}
             ondone={finishDepth}
           />

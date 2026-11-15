@@ -16,6 +16,8 @@ export type StripeFrame =
  *  fit uses thousands of points, so accuracy does not depend on fine stripes. */
 export const STRIPE_CELLS = [8, 16, 32, 64, 128] as const;
 export const STRIPE_CELL = 32;
+/** Frame numbers the desktop shows are below this (the largest cell's codes end at 466). */
+export const STRIPE_FRAME_LIMIT = 500;
 /** Black on a Screen that is not being measured (any cell size). */
 export const STRIPE_BLACK = 1;
 

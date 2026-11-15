@@ -4,8 +4,8 @@ const { tokensEqual } = require('./pairing.cjs');
 const HOST_MESSAGES = new Set([
   'sync', 'library_sync', 'vj_clips_sync', 'compositions_sync', 'shader_library_sync',
   'beat_pulse', 'output_freeze_state', 'studio_scene_status', 'studio_capabilities',
-  'studio_calibration_status', 'studio_scan_status', 'phone_camera_answer', 'phone_vision_status',
-  'show_state',
+  'studio_calibration_status', 'studio_scan_status', 'studio_depth_capture_status', 'studio_depth_scan_request', 'phone_camera_answer',
+  'phone_vision_status', 'show_state',
 ]);
 const BUNDLED_SHADER = /^(\.?\/)?ISF\/([^/\\?#:]+\/)*[^/\\?#:]+\.fs$/;
 function isLoopback(address) {
@@ -59,4 +59,47 @@ function scanMessageAllowed(msg) {
 function scanMessageEnds(msg) {
   return msg.type === 'studio_scan_abort' || (msg.type === 'studio_scan_status' && SCAN_TERMINAL.has(msg.state));
 }
-module.exports = { HOST_MESSAGES, authorizedHost, isLoopback, permittedSource, scanMessageAllowed, scanMessageEnds };
+// A room scan for Depth mode (src/lib/mobile/studio/depthCaptureOffer.ts):
+// one message from the phone, answered by the desktop. The desktop checks
+// the scan itself; here only its size and shape, so the route cannot carry
+// anything else.
+const DEPTH_MAX_BYTES = 8000000;
+const DEPTH_TERMINAL = new Set(['applied', 'declined', 'error']);
+const DEPTH_STATES = new Set(['received', ...DEPTH_TERMINAL]);
+const DEPTH_STAGES = new Set(['ready', 'measuring', 'patterns', 'solving', 'sending', 'cancelled', 'error']);
+const shortText = (v, max) => v === undefined || (typeof v === 'string' && v.length <= max);
+/** `bytes` is the JSON size of the offer's capture. */
+function depthMessageAllowed(msg, bytes) {
+  if (!msg || typeof msg.requestId !== 'string' || !SCAN_ID.test(msg.requestId)) return false;
+  switch (msg.type) {
+    case 'studio_depth_capture_offer':
+      return !!msg.capture && typeof msg.capture === 'object' && !Array.isArray(msg.capture)
+        && Number.isFinite(bytes) && bytes > 0 && bytes <= DEPTH_MAX_BYTES;
+    case 'studio_depth_capture_status':
+      return DEPTH_STATES.has(msg.state) && shortText(msg.message, 500);
+    // The desktop asks one phone for a scan (Interactive Studio, Depth setup).
+    case 'studio_depth_scan_request':
+      return typeof msg.to === 'string' && msg.to.length <= 120 && typeof msg.layerId === 'string' && msg.layerId.length <= 128
+        && (msg.screenId === undefined || (typeof msg.screenId === 'string' && msg.screenId.length <= 128))
+        && !!msg.output && Number.isInteger(msg.output.width) && Number.isInteger(msg.output.height)
+        && msg.output.width > 0 && msg.output.width <= 32768 && msg.output.height > 0 && msg.output.height <= 32768;
+    case 'studio_depth_scan_progress':
+      return DEPTH_STAGES.has(msg.stage) && shortText(msg.message, 300)
+        && (msg.pct === undefined || (typeof msg.pct === 'number' && msg.pct >= 0 && msg.pct <= 100));
+    default:
+      return false;
+  }
+}
+/** True when the desktop's answer ends the scan's route. */
+function depthMessageEnds(msg) {
+  return (msg.type === 'studio_depth_capture_status' && DEPTH_TERMINAL.has(msg.state))
+    || (msg.type === 'studio_depth_scan_progress' && (msg.stage === 'cancelled' || msg.stage === 'error'));
+}
+/** The phone app a capabilities request names, kept short and plain. */
+function describeClient(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const part = (v) => (typeof v === 'string' || typeof v === 'number' ? String(v).replace(/[^\w.+ -]/g, '').slice(0, 40) : '');
+  const client = { app: part(raw.app), version: part(raw.version), build: part(raw.build), name: part(raw.name) };
+  return client.app || client.version ? client : null;
+}
+module.exports = { HOST_MESSAGES, authorizedHost, isLoopback, permittedSource, scanMessageAllowed, scanMessageEnds, depthMessageAllowed, depthMessageEnds, describeClient };
