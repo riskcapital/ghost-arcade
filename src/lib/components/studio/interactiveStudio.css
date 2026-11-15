@@ -714,6 +714,15 @@
   padding: 4px;
   font-size: 12px;
 }
+/* Select / Draw / Play stay 44 pt wide on a 375-wide phone; the toolbar closes up a little to fit them. */
+.interactive-workspace.handheld .segmented button:not(:where(.param *, .mt *, .studio-timeline *)) {
+  min-width: 44px;
+}
+@media (max-width: 379px) {
+  .interactive-workspace.handheld .canvas-toolbar {
+    gap: 4px;
+  }
+}
 .interactive-workspace.handheld .viewport {
   flex: 1;
   min-height: 0;
