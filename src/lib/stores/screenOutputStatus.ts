@@ -67,6 +67,20 @@ export function setScreenPatternFrames(frames: Record<string, number> | null) {
   if (frames) patternWatchdog = setTimeout(() => screenPatternFrames.set({}), 15000);
 }
 
+/** Where a Screen's picture sits in the output (0..1), from its crop. */
+export type ScreenRegion = { x: number; y: number; width: number; height: number };
+export type OpenScreenOutput = { id: string; name: string; width: number; height: number; region: ScreenRegion };
+
+/** The part of the output a Screen shows (its crop, kept inside the output). The whole output when the crop is unusable. */
+export function screenRegion(slice: { cropX?: unknown; cropY?: unknown; cropW?: unknown; cropH?: unknown } | null | undefined): ScreenRegion {
+  const n = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
+  const x = Math.min(1, Math.max(0, n(slice?.cropX, 0))), y = Math.min(1, Math.max(0, n(slice?.cropY, 0)));
+  const width = Math.min(1 - x, n(slice?.cropW, 1)), height = Math.min(1 - y, n(slice?.cropH, 1));
+  return width > 1e-3 && height > 1e-3 ? { x, y, width, height } : { x: 0, y: 0, width: 1, height: 1 };
+}
+
 /** Screens with an output window open, at the pixel size the core renders
- *  them. Kept current by the renderer sync; an auto-map capture reads it. */
-export const openScreenOutputList = writable<{ id: string; name: string; width: number; height: number }[]>([]);
+ *  them, and the part of the output each shows (a paired phone maps its
+ *  stripes through it). Kept current by the renderer sync; an auto-map
+ *  capture reads it. */
+export const openScreenOutputList = writable<OpenScreenOutput[]>([]);

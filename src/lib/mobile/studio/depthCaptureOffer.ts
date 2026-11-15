@@ -95,7 +95,8 @@ export function parseDepthCaptureOffer(msg: Record<string, unknown>, bytes: numb
       : {}),
     ...(text(s.capturedAt, 40) ? { capturedAt: text(s.capturedAt, 40) } : {}),
   };
-  const capture = validateDepthCapture({ down: c!.down, surfaces });
+  // The Screen's size and region go along: they decide the lens's shape over the output.
+  const capture = validateDepthCapture({ down: c!.down, surfaces, source: { screen } });
   return { requestId: requestId as string, capture, source, surfaces: capture.surfaces.length, samples };
 }
 

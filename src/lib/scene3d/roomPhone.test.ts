@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { boxPyramid, dirInProjector, inProjector, pyramidCapture } from './roomFixtures';
 import { dot, facePoint, faceNormal, length, normalize, sub } from './roomModel';
-import { CAPTURE_LIMITS, fitCaptureToLimits, fitPlane, resampleEvenly, roomFromCapture, simplifyOutline, solveProjector, symmetricEigen, validateDepthCapture } from './roomPhone';
+import { CAPTURE_LIMITS, fitCaptureToLimits, fitPlane, lensAspect, resampleEvenly, roomFromCapture, simplifyOutline, solveProjector, symmetricEigen, validateDepthCapture } from './roomPhone';
 import { projectorBasis, projectPoint } from './projector';
+import { worldGeometry } from './worldGeometry';
+import { defaultReliefWorld } from './worldModel';
+import { defaultInteractive } from '../mobile/studio/interactive';
 
 const ASPECT = 16 / 9;
 const deg = (a: number[], b: number[]) => (Math.acos(Math.max(-1, Math.min(1, dot(normalize(a as never), normalize(b as never))))) * 180) / Math.PI;
@@ -158,5 +161,80 @@ describe('a phone scan larger than the limits', () => {
   it('refuses a capture far past anything a phone makes', () => {
     const big = { down: [0, -1, 0], surfaces: [{ id: 'a', outline: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }], samples: new Array(1_000_001).fill({ p: [0, 0, 1], uv: { x: 0, y: 0 } }) }] };
     expect(() => validateDepthCapture(big)).toThrow(/million/);
+  });
+});
+
+/**
+ * A 16:9 projector (square pixels) on a Screen that shows the output, or a
+ * part of it, stretched over its own pixels: the phone maps each stripe pixel
+ * through the Screen's region into the OUTPUT (the contract's uv), and the
+ * solve must take the lens's shape over the output from the Screen, not the
+ * output's aspect.
+ */
+describe('a scan through a Screen of another shape than the output', () => {
+  const SCREEN = { width: 1920, height: 1080 };
+  function throughScreen(outputAspect: number, region = { x: 0, y: 0, width: 1, height: 1 }) {
+    const truth = boxPyramid([1.2, 1.0, 5], [0.1, 1.2, 0], 28, SCREEN.width / SCREEN.height, 7, [0, 0.6]);
+    const raw = pyramidCapture(truth);
+    const out = (p: { x: number; y: number }) => ({ x: region.x + p.x * region.width, y: region.y + p.y * region.height });
+    const capture = {
+      ...raw,
+      surfaces: raw.surfaces.map((s) => ({ ...s, outline: s.outline.map(out), samples: s.samples.map((q) => ({ p: q.p, uv: out(q.uv) })) })),
+      source: { device: 'Test', screen: { id: 'screen-1', ...SCREEN, region }, capturedAt: '' },
+    };
+    return { truth, capture: validateDepthCapture(JSON.parse(JSON.stringify(capture))), out, outputAspect };
+  }
+  /** Output pixels at 1920 wide between where the room puts each measured point and where it was measured. */
+  function worldMiss(t: ReturnType<typeof throughScreen>) {
+    const { room } = roomFromCapture(t.capture, t.outputAspect, (id) => id);
+    const scene = { ...defaultInteractive(), surfaces: t.capture.surfaces.map((s) => ({ id: s.id, name: s.name, behavior: 'solid' as const, points: s.outline })) };
+    const geo = worldGeometry(scene as never, { ...defaultReliefWorld(), enabled: true, source: 'room', room }, t.outputAspect);
+    let worst = 0;
+    for (const f of t.truth.faces) {
+      for (const p of f.points) {
+        const at = inProjector(t.truth.pr, facePoint(f, p));
+        const q = projectPoint(geo.projector, at);
+        const want = t.out(projectPoint(t.truth.pr, facePoint(f, p)));
+        worst = Math.max(worst, Math.hypot((q.x - want.x) * 1920, (q.y - want.y) * 1920 / t.outputAspect));
+      }
+    }
+    return { room, worst };
+  }
+
+  for (const [label, outputAspect] of [['16:10', 16 / 10], ['4:3', 4 / 3], ['16:9', 16 / 9]] as const) {
+    it(`solves a 16:9 Screen on a ${label} output within 1 px`, () => {
+      const t = throughScreen(outputAspect);
+      const { report } = roomFromCapture(t.capture, outputAspect);
+      expect(report.pixelError).toBeLessThan(1);
+      expect(Math.abs(report.fov - 28)).toBeLessThan(0.01);
+      // The world built from it puts every corner back on its pixel.
+      const { room, worst } = worldMiss(t);
+      expect(worst).toBeLessThan(1);
+      // The lens's shape is kept only when it is not the output's (old rooms are unchanged).
+      if (label === '16:9') expect(room.projector.aspect).toBeUndefined();
+      else expect(room.projector.aspect).toBeCloseTo(16 / 9, 6);
+    });
+  }
+
+  it('maps through a Screen showing part of the output', () => {
+    // The left half of a 32:10 output on a 16:9 projector.
+    const t = throughScreen(32 / 10, { x: 0, y: 0, width: 0.5, height: 1 });
+    expect(lensAspect(t.capture.screen, 32 / 10)).toBeCloseTo((16 / 9) * 2, 9);
+    const { report } = roomFromCapture(t.capture, 32 / 10);
+    expect(report.pixelError).toBeLessThan(1);
+    expect(worldMiss(t).worst).toBeLessThan(1);
+  });
+
+  it('was off by about 21 px before, with the output taken as the lens shape', () => {
+    const t = throughScreen(16 / 10);
+    const { report } = roomFromCapture({ ...t.capture, screen: undefined }, 16 / 10);
+    expect(report.pixelError).toBeGreaterThan(10);
+  });
+
+  it('keeps a capture without a Screen at the output shape, and reads a bad region as the whole output', () => {
+    expect(lensAspect(undefined, 1.6)).toBe(1.6);
+    const c = validateDepthCapture({ ...JSON.parse(JSON.stringify(pyramidCapture(boxPyramid([1.2, 1.0, 5], [0.1, 1.2, 0], 28, ASPECT)))), source: { screen: { width: 1280, height: 720, region: { x: 0, y: 0, width: 0, height: 1 } } } });
+    expect(c.screen).toEqual({ width: 1280, height: 720 });
+    expect(validateDepthCapture({ ...c, source: { screen: { width: 'wide' } } }).screen).toBeUndefined();
   });
 });

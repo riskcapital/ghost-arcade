@@ -16,7 +16,7 @@ import { vjGroupSourceId, buildVJGroupedMixGraph, type VJGroupedMixOptions } fro
 import { cubeLutHandle } from '../color/cubeLutAssets';
 import { nativeVideoLaunchTime, nativeVideoAnchorRate, nativeVideoMetadataPatch } from '../media/nativeTransport';
 import { get } from 'svelte/store';
-import { screenOutputError, screenAlignmentAids, screenPatternFrames, openScreenOutputList } from '../stores/screenOutputStatus';
+import { screenOutputError, screenAlignmentAids, screenPatternFrames, openScreenOutputList, screenRegion, type OpenScreenOutput } from '../stores/screenOutputStatus';
 import { createLayer } from '$lib/types';
 import {
   buildVJClipTransitionGraph,
@@ -9315,7 +9315,7 @@ export class NativeRendererSync {
 
   /** Screens with an output window open, at the pixel size the core renders
    *  them: what an auto-map capture can put stripes on. */
-  openScreenOutputs(): { id: string; name: string; width: number; height: number }[] {
+  openScreenOutputs(): OpenScreenOutput[] {
     const out = get(settings)?.output;
     return (out?.slices ?? [])
       .filter((s: any) => s?.enabled !== false && this.openSliceWindowIds.includes(s?.id))
@@ -9326,6 +9326,7 @@ export class NativeRendererSync {
           id: String(s.id), name: String(s.name ?? 'Screen'),
           width: Math.round((display?.width ?? out?.masterCanvasWidth ?? 1920) * scale),
           height: Math.round((display?.height ?? out?.masterCanvasHeight ?? 1080) * scale),
+          region: screenRegion(s),
         };
       });
   }

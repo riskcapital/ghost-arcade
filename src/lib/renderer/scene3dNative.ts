@@ -66,6 +66,8 @@ export type Scene3DRelief = {
   projector: { pos: Vec3; right: Vec3; up: Vec3; fwd: Vec3; shift: [number, number] };
   /** The camera's lens shift, when the camera is the projector. */
   cameraShift?: [number, number];
+  /** The camera lens's shape over the output, when not the output's (a Screen that stretches it). */
+  cameraAspect?: number;
 };
 
 type Buffer = { id: string; kind: 'uniform' | 'storage'; byte_length: number; initial_b64?: string; persistent?: boolean };
@@ -235,6 +237,7 @@ export function buildScene3DGraph(options: Scene3DGraphOptions): Scene3DGraph {
     const pr = options.relief.projector;
     data.settings.set([...pr.pos, 0, ...pr.right, pr.shift[0], ...pr.up, pr.shift[1], ...pr.fwd, 0], 48);
     data.settings.set(options.relief.cameraShift ?? [0, 0], 42);
+    if (options.relief.cameraAspect && Number.isFinite(options.relief.cameraAspect)) data.settings[23] = options.relief.cameraAspect;
   }
   const safe = options.sourceId.replace(/[^\w:-]+/g, '_').slice(0, 120);
   const id = (name: string) => `scene3d:${safe}:${name}`;

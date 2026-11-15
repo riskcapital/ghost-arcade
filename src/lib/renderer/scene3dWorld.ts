@@ -14,7 +14,7 @@ import type { InteractiveScene } from '../mobile/studio/interactive';
 import { effectParams, MOD_SOURCES, type InteractiveEffect } from '../mobile/studio/interactiveEffects';
 import type { WorldInputState } from '../interactive/worldInput';
 import { floorDepth, reliefCamera, type ReliefView } from '../scene3d/relief';
-import { add, dot, scale } from '../scene3d/roomModel';
+import { add, dot, length, scale } from '../scene3d/roomModel';
 import {
   faceSites,
   geoFace,
@@ -391,6 +391,8 @@ export function buildWorldPart(options: WorldPartOptions): WorldPart {
       flatTexture: flatTexture ?? undefined, gain: RELIEF_PROJECTOR_GAIN, sway: world.sun.sway, projector: geo.projector,
       // Face-on, the camera is the projector, lens shift and all.
       cameraShift: options.view && (options.view.yaw || options.view.pitch) ? [0, 0] : geo.projector.shift,
+      // In a room the lens keeps its own shape over the output (it differs when a Screen stretches the output).
+      ...(geo.mode === 'room' ? { cameraAspect: length(geo.projector.right) / Math.max(1e-9, length(geo.projector.up)) } : {}),
     },
   });
   const textures = [...graph.config.textures];

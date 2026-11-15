@@ -107,7 +107,8 @@ function wallGeometry(scene: InteractiveScene, world: ReliefWorld, aspect: numbe
 
 function roomGeometry(scene: InteractiveScene, room: Room, aspect: number): WorldGeo {
   const shift = room.projector.shift;
-  const projector = projectorBasis(room.projector.position, room.projector.target, room.projector.fov, aspect, shift ? [shift.x, shift.y] : [0, 0]);
+  // A Screen that stretches the output gives the lens another shape over it.
+  const projector = projectorBasis(room.projector.position, room.projector.target, room.projector.fov, room.projector.aspect ?? aspect, shift ? [shift.x, shift.y] : [0, 0]);
   const surfaces = new Map(scene.surfaces.map((s) => [s.id, s] as [string, InteractiveSurface]));
   const faces = room.faces.filter((f) => surfaces.has(f.surfaceId)).map((f): GeoFace => {
     const s = surfaces.get(f.surfaceId)!;

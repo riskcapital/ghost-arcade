@@ -210,4 +210,19 @@ describe('the 3D world in an Interactive layer', () => {
     expect(none.interactive.zoneHits).toBeNull();
     expect('live_readbacks' in none.config).toBe(false);
   });
+
+  it('gives the camera the lens shape a room keeps (a Screen that stretches the output), else the output shape', () => {
+    const room = { source: 'phone' as const, projector: { position: [0, 0, 0] as [number, number, number], target: [0, 0, -1] as [number, number, number], fov: 30 }, down: [0, -1, 0] as [number, number, number], floor: true, faces: [{ surfaceId: 'b', role: 'side' as const, origin: [0, 0, -4] as [number, number, number], u: [1, 0, 0] as [number, number, number], v: [0, 1, 0] as [number, number, number], points: [{ x: -0.5, y: -0.5 }, { x: 0.5, y: -0.5 }, { x: 0.5, y: 0.5 }], depth: 0.5 }] };
+    const aspectOf = (world: Partial<ReliefWorld>) => {
+      const g = buildInteractiveGraph({
+        kind: 'performer-world', sourceId: 'layer-1', params: { interactiveScene: scene({ source: 'room', ...world }) },
+        width: 1920, height: 1200, time: 0, frameDelta: 1 / 60, frameIndex: 1, audio, state: null, reset: false,
+      } as Parameters<typeof buildInteractiveGraph>[0]);
+      const b = (g.config.buffers as unknown as { id: string; initial_b64?: string }[]).find((x) => x.id === 'scene3d:layer-1:settings')!;
+      return new Float32Array(Uint8Array.from(atob(b.initial_b64!), (c) => c.charCodeAt(0)).buffer)[23];
+    };
+    expect(aspectOf({ room })).toBeCloseTo(1.6, 5);
+    expect(aspectOf({ room: { ...room, projector: { ...room.projector, aspect: 16 / 9 } } })).toBeCloseTo(16 / 9, 5);
+  });
 });
+
