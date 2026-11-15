@@ -124,8 +124,7 @@
     if (!takeover.surfaces.length) return takeover.overlay ? `The VJ mix is over the show at ${Math.round(takeover.overlay.level * 100)}%` : '';
     const rowName = (trackId: string | null | undefined) => $layerTracksS.find((t) => t.id === trackId)?.layerName ?? 'A row';
     const first = takeover.surfaces[0];
-    const more = takeover.surfaces.length > 1 ? ` and ${takeover.surfaces.length - 1} more` : '';
-    return `${rowName(first.trackId)} taken over by ${first.label}${more}.`;
+    return `${rowName(first.trackId)} taken over by ${first.label}.`;
   });
 
   // ── Pads or phrases ────────────────────────────────────────────────────
@@ -177,7 +176,7 @@
   {#if takeover.active}
     <div class="pf-taken" data-takeover-strip data-help="Taken over: rows playing the VJ decks instead of their blocks; the show runs on underneath. Return (R) hands them back, the way Return says.">
       <TimelineIcon name="live" size={16} />
-      <p>{takenText} The show runs on underneath.</p>
+      <p>{takenText}{#if takeover.surfaces.length > 1} <span>{takeover.surfaces.length - 1} more rows too.</span>{/if} <span>The show runs on underneath.</span></p>
       <label class="pf-ret-mode" title="How a row goes back to the Timeline: a cut, a fade, or on the next beat, bar, phrase (four bars) or marker">
         <span>Return:</span>
         <select value={release.mode} onchange={(e) => liveTakeover.setDefaultRelease({ mode: (e.currentTarget as HTMLSelectElement).value as TakeoverReleaseMode })} data-takeover-release-mode>

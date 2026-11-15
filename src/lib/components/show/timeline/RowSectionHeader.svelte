@@ -31,7 +31,7 @@
     onmousedown={(e) => e.stopPropagation()}
     onclick={ontoggle}
     aria-expanded={!folded}
-    title={folded ? `Show the ${title} rows` : `Fold the ${title} rows away`}
+    title={folded ? 'Show the rows' : 'Fold the rows away'}
     data-row-section-fold={id}
   >
     <span class="rsh-chev" aria-hidden="true"><TimelineIcon name="chevron" size={12} /></span>

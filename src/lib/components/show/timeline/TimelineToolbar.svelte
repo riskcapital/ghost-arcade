@@ -182,7 +182,7 @@
       </button>
       <button class="b caret" bind:this={loopAnchor} onclick={() => toggleMenu('loop')} title="At the end of the show" aria-label="At the end of the show" aria-expanded={menu === 'loop'} data-show-end-menu><TimelineIcon name="caret" size={12} /></button>
     </span>
-    <span class="readout" title="Time at the playhead / the show's length{$tempo ? ' │ bar, beat and sixteenth' : ''}">
+    <span class="readout" title={$tempo ? 'Time at the playhead / the show\'s length │ bar, beat and sixteenth' : 'Time at the playhead / the show\'s length'}>
       <span class="t">{formatPrecise($currentTime)}</span>
       <span class="tot hide2">/ {formatPrecise($duration)}</span>
       {#if $tempo}<span class="bars" data-show-bars-readout>{formatBarsBeats($tempo, $currentTime, true)}</span>{/if}
@@ -310,7 +310,7 @@
 {#if menu === 'tc'}
   <TlPopover anchor={tcAnchor} onclose={() => (menu = null)} width={320} label="Timecode">
     <div class="tl-mi-head">{tcText}</div>
-    <div class="tl-pop-row tc-text">{tc.error ?? `Following ${tcSourceName === 'MIDI clock' && tcSource !== 'midiClock' ? 'timecode' : tcSourceName}${tc.rate ? ` at ${tc.rate} fps` : ''}.`}</div>
+    {#if tc.error}<div class="tl-pop-row tc-text">{tc.error}</div>{/if}
     {#if tcNoticeText}<div class="tl-pop-row tc-text warn" data-show-link-notice>{tcNoticeText}</div>{/if}
     {#if tcMismatchText}<div class="tl-pop-row tc-text warn" data-show-tempo-mismatch>{tcMismatchText}</div>{/if}
     <div class="tl-mi-sep"></div>

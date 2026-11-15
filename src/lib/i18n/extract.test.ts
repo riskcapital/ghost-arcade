@@ -108,7 +108,7 @@ describe('i18n extractor', () => {
     expect(Array.isArray(list)).toBe(true);
     expect(raw).toBe(JSON.stringify(list, null, 1) + '\n');
     expect(list).toContain('Crossfade {0}s. Drag an edge to change its length, double-click to remove.');
-    expect(list).toContain('At end: hold last look');
+    expect(list).toContain('Hold the last look');
   });
 
   // The language packs are checked against source.json (packCoverage.test.ts),
