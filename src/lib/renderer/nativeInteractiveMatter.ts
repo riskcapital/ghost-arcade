@@ -52,7 +52,7 @@ export const MATTER_EMISSION=MATTER_COMMON.replace('var<storage,read> emissionSt
 // A rate accumulator allocates new birth tickets. Particle life.x is AGE, never
 // a retry timer: expired/dead slots cannot reactivate at their old positions.
 @compute @workgroup_size(1) fn cs_emission(){
- if(u.params.w>.5){return;}var state=emissionState[0];var births=emissionState[1];state.w=0.;
+ if(u.params.w>.5||u.view.w<=0.){return;}var state=emissionState[0];var births=emissionState[1];state.w=0.;
  if(state.z!=u.flags.x){state=vec4<f32>(m.clock.z,0.,u.flags.x,1.);births=vec4<f32>(0.);}
  let dt=clamp(u.view.w,0.,.05);if(state.x!=m.clock.z){state.x=m.clock.z;state.y=ctrl(23u,m.emission.w);}else{state.y=max(0.,state.y-dt);}
  // births.w (emission pulse time, birth tick) wraps with the shader clock (2^15 s): accumulated
@@ -92,7 +92,7 @@ export const MATTER_FLUID=MATTER_COMMON+/* wgsl */`
 @group(0) @binding(9) var<storage,read_write> pressureOut:array<vec2<f32>>;
 fn fluid(p:vec2<f32>)->vec4<f32>{let q=clamp(p*vec2<f32>(256.,144.)-.5,vec2<f32>(0.),vec2<f32>(255.,143.));let i=vec2<i32>(floor(q));let f=fract(q);return mix(mix(fieldIn[ix(i)],fieldIn[ix(i+vec2<i32>(1,0))],f.x),mix(fieldIn[ix(i+vec2<i32>(0,1))],fieldIn[ix(i+vec2<i32>(1,1))],f.x),f.y);}
 @compute @workgroup_size(8,8) fn cs_advect(@builtin(global_invocation_id) id:vec3<u32>){
- if(id.x>=256u||id.y>=144u){return;}let i=id.y*256u+id.x;if(u.params.w>.5){fieldOut[i]=fieldIn[i];return;}if(geometry[i].wall.x<0.){fieldOut[i]=vec4<f32>(0.);return;}
+ if(id.x>=256u||id.y>=144u){return;}let i=id.y*256u+id.x;if(u.params.w>.5||u.view.w<=0.){fieldOut[i]=fieldIn[i];return;}if(geometry[i].wall.x<0.){fieldOut[i]=vec4<f32>(0.);return;}
  let dt=clamp(u.view.w,.001,.033);let uv=(vec2<f32>(id.xy)+.5)/vec2<f32>(256.,144.);let current=fieldIn[i];var back=uv-current.xy*dt;
  // Stop back-traces at the first wall; checking the endpoint alone leaks smoke through thin blockers.
  for(var j=1u;j<=8u;j++){let q=mix(uv,back,f32(j)/8.);if(geometry[cell(q)].wall.x<0.){back=mix(uv,back,f32(j-1u)/8.);break;}}
@@ -116,7 +116,7 @@ fn pressure(p:vec2<i32>,own:f32)->f32{let i=ix(p);return select(pressureIn[i].x,
  if(id.x>=256u||id.y>=144u){return;}let p=vec2<i32>(id.xy);let i=ix(p);let v=pressureIn[i];let sum=pressure(p+vec2<i32>(1,0),v.x)+pressure(p-vec2<i32>(1,0),v.x)+pressure(p+vec2<i32>(0,1),v.x)+pressure(p-vec2<i32>(0,1),v.x);pressureOut[i]=vec2<f32>((sum-v.y)*.25,v.y);
 }
 @compute @workgroup_size(8,8) fn cs_project(@builtin(global_invocation_id) id:vec3<u32>){
- if(id.x>=256u||id.y>=144u){return;}let p=vec2<i32>(id.xy);let i=ix(p);var f=fieldIn[i];if(u.params.w>.5){fieldOut[i]=f;return;}let wall=geometry[i].wall;if(wall.x<0.){fieldOut[i]=vec4<f32>(0.);return;}
+ if(id.x>=256u||id.y>=144u){return;}let p=vec2<i32>(id.xy);let i=ix(p);var f=fieldIn[i];if(u.params.w>.5||u.view.w<=0.){fieldOut[i]=f;return;}let wall=geometry[i].wall;if(wall.x<0.){fieldOut[i]=vec4<f32>(0.);return;}
  let own=pressureIn[i].x;f=vec4<f32>(f.xy-(vec2<f32>(pressure(p+vec2<i32>(1,0),own)-pressure(p-vec2<i32>(1,0),own),pressure(p+vec2<i32>(0,1),own)-pressure(p-vec2<i32>(0,1),own))*.5),f.zw);
  if(wall.x<.012){let n=wall.yz;let inward=min(dot(f.xy*aspect(),n),0.);f=vec4<f32>(f.xy-(n*inward/aspect()),f.zw);}fieldOut[i]=f;
 }
@@ -128,7 +128,7 @@ export const MATTER_PARTICLES=MATTER_COMMON+/* wgsl */`
 @group(0) @binding(7) var<storage,read> mass:array<u32>;
 fn density(p:vec2<f32>)->f32{return f32(mass[cell(p)])/4096.;}
 @compute @workgroup_size(64) fn cs_step(@builtin(global_invocation_id) id:vec3<u32>){
- let i=id.x;if(i>=16384u){return;}var p=particles[i];if(u.params.w>.5){nextParticles[i]=p;return;}let asp=aspect();let ball=u.style.x==7.;let liquid=u.style.x==10.||m.material.w>.5;let cloud=u.style.x==9.||m.grid.z>.5;let count=particleCount();if(i>=count){p.life.x=0.;nextParticles[i]=p;return;}
+ let i=id.x;if(i>=16384u){return;}var p=particles[i];if(u.params.w>.5||u.view.w<=0.){nextParticles[i]=p;return;}let asp=aspect();let ball=u.style.x==7.;let liquid=u.style.x==10.||m.material.w>.5;let cloud=u.style.x==9.||m.grid.z>.5;let count=particleCount();if(i>=count){p.life.x=0.;nextParticles[i]=p;return;}
  let dt=clamp(u.view.w,0.,.05);let seed=hash(f32(i)+u.flags.x*53.);
  let radius=select(select(.0018,.0035+ctrl(9u,m.material.y)*.0025,liquid),.013+seed*.009+ctrl(9u,m.material.y)*.012,ball);
  if(p.life.z!=u.flags.x||emissionState[0].w>.5){p.life=vec4<f32>(0.,seed,u.flags.x,radius);}

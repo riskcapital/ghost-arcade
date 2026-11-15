@@ -1884,6 +1884,16 @@ impl NativeMediaSourceState {
     }
 }
 
+/// The start of the source frame showing at media time `time_seconds`:
+/// frame `floor(t * fps)` (with a hair for float error), or the time itself
+/// when the rate is unknown.
+fn manual_video_frame_time(time_seconds: f64, source_fps: Option<f64>) -> f64 {
+    match source_fps.filter(|fps| fps.is_finite() && *fps > 0.0) {
+        Some(fps) => ((time_seconds.max(0.0) * fps + 1.0e-6).floor()) / fps,
+        None => time_seconds,
+    }
+}
+
 /// Cache key for a manual-clock (offline export) video frame: the file,
 /// decode size and the exact timestamp in microseconds, so frames closer
 /// together than the live prefetch's 1/30 s buckets never alias.
@@ -5326,6 +5336,14 @@ struct App {
     /// frame, 0 on every repeat of it. Every graph builder reads this
     /// instead of `render_clock_delta` directly.
     native_graph_step_delta_this_render: f32,
+    /// Manual clock (offline render): true only while a frame snapshot steps
+    /// the world itself. The core's own paced renders in between re-run the
+    /// graphs with no step, so a frame is stepped exactly once, after its
+    /// videos are settled, whatever the wall clock does.
+    manual_snapshot_stepping: bool,
+    /// Source frame rate of each video file an offline render decodes, so a
+    /// frame is picked by index (floor), as live playback shows it.
+    video_source_fps: HashMap<PathBuf, Option<f64>>,
     isf_layer_bindings: HashMap<String, String>,
     /// Shader outputs rendered this frame, by output source id, with the
     /// frame they were rendered on. Layers bound to the same shader with the
@@ -5777,6 +5795,8 @@ impl App {
             render_clock_frame_index: None,
             last_native_graph_step_clock: None,
             native_graph_step_delta_this_render: 1.0 / 60.0,
+            manual_snapshot_stepping: false,
+            video_source_fps: HashMap::new(),
             isf_layer_bindings: HashMap::new(),
             isf_frame_outputs: HashMap::new(),
             isf_shared_footprints: HashMap::new(),
@@ -8111,7 +8131,12 @@ impl App {
             // Leaving or entering manual export: forget the last stepped
             // virtual frame so the next manual run always steps.
             self.last_native_graph_step_clock = None;
-            if next_mode == "manual" { self.enter_manual_clock_media(); } else { self.leave_manual_clock_media(); }
+            if next_mode == "manual" {
+                self.enter_manual_clock_media();
+                self.reset_native_graph_simulations();
+            } else {
+                self.leave_manual_clock_media();
+            }
         }
         self.render_clock_mode = next_mode.to_string();
         self.render_clock_time = number_at(params, &["time"])
@@ -8491,12 +8516,15 @@ impl App {
             self.native_graph_step_delta_this_render = self.render_clock_delta;
             return;
         }
-        let already_stepped = self.last_native_graph_step_clock == self.render_clock_time;
+        let already_stepped = self.last_native_graph_step_clock == self.render_clock_time
+            || !self.manual_snapshot_stepping;
         if already_stepped {
             self.stats.manual_clock_graph_steps_skipped =
                 self.stats.manual_clock_graph_steps_skipped.saturating_add(1);
         }
-        self.last_native_graph_step_clock = self.render_clock_time;
+        if self.manual_snapshot_stepping {
+            self.last_native_graph_step_clock = self.render_clock_time;
+        }
         self.native_graph_step_delta_this_render = if already_stepped {
             0.0
         } else {
@@ -13938,8 +13966,12 @@ impl App {
                 self.stats.max_render_gpu_ms = max_render_gpu_ms;
                 self.stats.gpu_timing_samples = gpu_timing_samples;
                 self.stats.gpu_timing_resolve_misses = gpu_timing_resolve_misses;
-                self.native_quality
-                    .observe_frame(ms + self.media_pump_ms, gpu_ms, self.target_fps, if self.output_frozen || output_gate <= 0.0 { 0 } else { native_task_count });
+                // An offline render takes as long as it takes: its slow frames
+                // must not lower the quality tier part way through the file.
+                if self.render_clock_mode != "manual" {
+                    self.native_quality
+                        .observe_frame(ms + self.media_pump_ms, gpu_ms, self.target_fps, if self.output_frozen || output_gate <= 0.0 { 0 } else { native_task_count });
+                }
                 if source_preview_pixels.is_some() {
                     self.source_preview_dirty = false;
                 }
@@ -14085,6 +14117,47 @@ impl App {
             .map(|value| value.round().clamp(0.0, u64::MAX as f64) as u64)
             .unwrap_or_else(|| self.native_frame_index());
         (snapshot_time, snapshot_frame_index)
+    }
+
+    /// Manual clock (offline render) with `step_seconds`: advance every graph,
+    /// simulation and bound shader to this frame's time by exactly one step,
+    /// here, after the videos are settled and before the snapshot reads the
+    /// composite. Without it the snapshot showed whatever the core's own
+    /// timer-paced render last produced, which depended on how fast the
+    /// export ran. A repeat snapshot of the same frame does not step again.
+    fn step_manual_snapshot_frame(&mut self, params: &Value, clock: Option<f64>, frame: u64) -> Result<(), String> {
+        if self.render_clock_mode != "manual" {
+            return Ok(());
+        }
+        let Some(step) = number_at(params, &["step_seconds"]).filter(|s| s.is_finite() && *s > 0.0) else {
+            return Ok(());
+        };
+        let Some(time) = clock else { return Ok(()); };
+        self.render_clock_time = Some(time);
+        self.render_clock_frame_index = Some(frame);
+        self.render_clock_delta = step.clamp(0.0, 1.0) as f32;
+        if self.last_native_graph_step_clock == Some(time) {
+            return Ok(());
+        }
+        // render() skips a frame while the GPU still has one in flight: wait
+        // it out (an export has all the time it needs, a stall is a fault).
+        let waited = Instant::now();
+        while self.renderer.as_ref().is_some_and(RenderState::frame_in_flight) {
+            if let Some(renderer) = self.renderer.as_mut() {
+                let _ = renderer.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: Some(Duration::from_millis(50)) });
+            }
+            if waited.elapsed() > Duration::from_secs(60) {
+                return Err("the GPU did not finish the previous frame for the render".to_string());
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        self.manual_snapshot_stepping = true;
+        self.render();
+        self.manual_snapshot_stepping = false;
+        if self.last_native_graph_step_clock != Some(time) && !self.output_frozen && self.output_gate() > 0.0 {
+            return Err("the render core could not step this frame".to_string());
+        }
+        Ok(())
     }
 
     fn render_frame_snapshot_texture(
@@ -14511,8 +14584,9 @@ impl App {
         let (snapshot_time, snapshot_frame_index) = if use_output_export {
             (self.render_clock_time, self.native_frame_index())
         } else {
-            let (clock, _) = self.snapshot_clock_from_params(params);
+            let (clock, frame) = self.snapshot_clock_from_params(params);
             self.settle_manual_video_frames(clock)?;
+            self.step_manual_snapshot_frame(params, clock, frame)?;
             self.render_frame_snapshot_texture(params)?
         };
         let (mut snapshot, pixels) = {
@@ -17363,7 +17437,13 @@ impl App {
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
-            let spectrum_live = self.isf_audio_spectrum.is_live(Instant::now());
+            // An offline render's frame can take longer than the live
+            // staleness window: its spectrum is this frame's, by definition.
+            let spectrum_live = if self.render_clock_mode == "manual" {
+                self.isf_audio_spectrum.active
+            } else {
+                self.isf_audio_spectrum.is_live(Instant::now())
+            };
             let spectrum = &self.isf_audio_spectrum;
             match self.renderer.as_mut() {
                 Some(renderer) => {
@@ -19892,6 +19972,29 @@ impl App {
         }
     }
 
+    /// An offline render starts every simulation (particles, fluids, the
+    /// Interactive Studio's worlds, GhostFX) from its first frame, not from
+    /// wherever the live show had taken it, so two renders of a show come out
+    /// the same. Each graph's persistent buffers are dropped and re-made from
+    /// its template on the next step; the layers themselves stay installed.
+    fn reset_native_graph_simulations(&mut self) {
+        let tokens: Vec<String> = self
+            .native_graph_layers
+            .values()
+            .map(|layer| format!(":{}:", native_graph_buffer_safe_id(&layer.source_id)))
+            .collect();
+        if let Some(renderer) = self.renderer.as_mut() {
+            for token in &tokens {
+                renderer.drop_native_compute_graph_buffers_containing(token);
+            }
+            self.stats.compute_graph_persistent_buffers = renderer.native_compute_graph_buffer_count() as u64;
+        }
+        self.native_plugin_templates_initialized.clear();
+        self.native_plugin_liquid_states.clear();
+        self.native_plugin_audio_smooth.clear();
+        self.scene_clock = scene_frame::SceneClock::default();
+    }
+
     fn leave_manual_clock_media(&mut self) {
         let Some(stash) = self.manual_clock_media_stash.take() else { return; };
         for (source_id, state) in stash {
@@ -19920,7 +20023,10 @@ impl App {
             let Some(path) = local_media_path_from_uri(&state.uri) else { continue; };
             let (decode_width, decode_height) =
                 (state.decode_width.unwrap_or(width), state.decode_height.unwrap_or(height));
-            let time_seconds = state.current_time_seconds(Some(clock));
+            // The frame live playback would show at this time: the last one
+            // that started by then (floor), never the next one.
+            let source_fps = self.video_source_fps_for(&path);
+            let time_seconds = manual_video_frame_time(state.current_time_seconds(Some(clock)), source_fps);
             let signature = manual_video_frame_signature(&path, decode_width, decode_height, time_seconds)?;
             if self.native_video_frame_signatures.get(&source_id) == Some(&signature)
                 && self.source_frames.contains_key(&source_id)
@@ -19953,6 +20059,18 @@ impl App {
             settled += 1;
         }
         Ok(settled)
+    }
+
+    fn video_source_fps_for(&mut self, path: &Path) -> Option<f64> {
+        if let Some(fps) = self.video_source_fps.get(path) {
+            return *fps;
+        }
+        let fps = media_decode::probe_video_source_fps(path);
+        if self.video_source_fps.len() >= 256 {
+            self.video_source_fps.clear();
+        }
+        self.video_source_fps.insert(path.to_path_buf(), fps);
+        fps
     }
 
     fn pump_native_video_decodes(&mut self) {
@@ -36105,6 +36223,46 @@ fn completed_gpu_frame_schedule(last: Instant, now: Instant, period: Duration, r
     // Retry it as soon as the GPU is free, without consuming the next slot.
     else if retry { Some(last) }
     else { None }
+}
+
+#[cfg(test)]
+mod manual_video_frame_tests {
+    use super::manual_video_frame_time;
+
+    /// At 120 fps a 30 fps clip shows each of its frames on exactly four
+    /// render frames, starting when the frame starts (floor), never early.
+    #[test]
+    fn a_30_fps_clip_at_120_fps_repeats_each_frame_four_times() {
+        let mut counts = std::collections::BTreeMap::new();
+        for i in 0..1200u32 {
+            let t = f64::from(i) / 120.0;
+            let shown = (manual_video_frame_time(t, Some(30.0)) * 30.0).round() as i64;
+            assert!(f64::from(shown as i32) / 30.0 <= t + 1e-9, "frame {shown} shown early at {t}");
+            *counts.entry(shown).or_insert(0) += 1;
+        }
+        assert!(counts.values().all(|&n| n == 4), "{counts:?}");
+        assert_eq!(counts.len(), 300);
+    }
+
+    #[test]
+    fn ntsc_and_odd_ratios_never_skip_or_go_back() {
+        let src = 30000.0 / 1001.0;
+        let mut last = -1i64;
+        for i in 0..6000u32 {
+            let t = f64::from(i) * 1001.0 / 60000.0; // 59.94 render
+            let k = (manual_video_frame_time(t, Some(src)) * src).round() as i64;
+            assert!(k == last || k == last + 1, "jump {last} -> {k} at frame {i}");
+            last = k;
+        }
+        // 25 fps clip at 120: 4.8 render frames per source frame, 4 or 5 each.
+        let mut counts = std::collections::BTreeMap::new();
+        for i in 0..1200u32 {
+            let k = (manual_video_frame_time(f64::from(i) / 120.0, Some(25.0)) * 25.0).round() as i64;
+            *counts.entry(k).or_insert(0) += 1;
+        }
+        assert!(counts.values().all(|&n| n == 4 || n == 5), "{counts:?}");
+        assert_eq!(manual_video_frame_time(1.234, None), 1.234);
+    }
 }
 
 #[cfg(test)]

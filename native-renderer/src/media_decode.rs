@@ -710,6 +710,34 @@ fn parse_video_fps(line: &str) -> Option<f64> {
     tbr
 }
 
+/// A rate as ffmpeg prints it ("29.97") snapped to the exact NTSC fraction
+/// (30000/1001) it stands for; whole and other rates are kept.
+pub(crate) fn snap_video_rate(fps: f64) -> f64 {
+    let whole = fps.round();
+    if (fps - whole).abs() < 1e-3 {
+        return whole;
+    }
+    let ntsc = (fps * 1001.0 / 1000.0).round();
+    let exact = ntsc * 1000.0 / 1001.0;
+    if (fps - exact).abs() < 0.006 { exact } else { fps }
+}
+
+/// The frame rate of a file's first video stream, from ffmpeg's listing of
+/// it, or None (an image, a file ffmpeg cannot read). Offline renders pick a
+/// video's frame by index with it.
+pub fn probe_video_source_fps(path: &Path) -> Option<f64> {
+    let output = Command::new(ffmpeg_binary())
+        .args(["-hide_banner", "-nostdin", "-i"])
+        .arg(path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .ok()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    stderr.lines().find_map(parse_video_fps).map(snap_video_rate)
+}
+
 fn parse_video_duration(line: &str) -> Option<f64> {
     let timestamp = line.trim().strip_prefix("Duration: ")?.split(',').next()?;
     let mut parts = timestamp.split(':');
@@ -2542,6 +2570,21 @@ fn bounded_output(command: &mut Command, expected: usize) -> std::io::Result<std
         stdout,
         stderr,
     })
+}
+
+#[cfg(test)]
+mod rate_tests {
+    use super::snap_video_rate;
+
+    #[test]
+    fn snaps_printed_ntsc_rates_to_their_fractions() {
+        assert_eq!(snap_video_rate(30.0), 30.0);
+        assert_eq!(snap_video_rate(25.0), 25.0);
+        assert!((snap_video_rate(29.97) - 30000.0 / 1001.0).abs() < 1e-12);
+        assert!((snap_video_rate(23.98) - 24000.0 / 1001.0).abs() < 1e-12);
+        assert!((snap_video_rate(59.94) - 60000.0 / 1001.0).abs() < 1e-12);
+        assert_eq!(snap_video_rate(12.5), 12.5);
+    }
 }
 
 #[cfg(test)]
