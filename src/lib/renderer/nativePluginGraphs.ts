@@ -22,6 +22,7 @@ import {
 import { buildRibbonsWgsl } from '$lib/effects/ghostfx/scenes/ribbons.wgsl';
 import { buildSpheresWgsl } from '$lib/effects/ghostfx/scenes/spheres.wgsl';
 import { POST_WGSL } from '$lib/effects/ghostfx/shaders/post.wgsl';
+import { GHOSTFX_DEFAULT_BG_ALPHA } from '$lib/effects/ghostfx/defaults';
 import type { SignalFrame } from '$lib/mediapipe/signals';
 import { PERFORMER_WORLD_RENDER_WGSL } from '$lib/performer/nativeWorldRender.wgsl';
 import {
@@ -722,7 +723,7 @@ function ghostFxUniform(options: NativePluginGraphOptions, state: NativePluginGr
   f[23] = clamp(params.ghostfxLightStrength, 0, 2, 0.9);
   f[24] = clamp(params.ghostfxAmbient, 0, 1, 0.3);
   f[25] = clamp(params.ghostfxRibbonSpawn, 0.2, 3, 1);
-  f[26] = clamp(params.ghostfxBgAlpha, 0, 1, 0);
+  f[26] = clamp(params.ghostfxBgAlpha, 0, 1, GHOSTFX_DEFAULT_BG_ALPHA);
   f[27] = clamp(params.ghostfxTrailIntensity, 0, 2, 1);
   const voyage = VOYAGE_SCENES.indexOf(scenePreset as typeof VOYAGE_SCENES[number]);
   if (voyage >= 0) {

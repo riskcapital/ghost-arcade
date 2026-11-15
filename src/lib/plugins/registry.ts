@@ -18,6 +18,7 @@ import type { IntegratedEffectType } from '../types';
 import { STUDIO_PLUGIN_ID, defaultStudioSource } from '../music/studioPlugin';
 import { MUSIC_STUDIO, ANALOG_SYNTH } from '../features';
 import { VIDEOSYNTH_DEFAULTS, VIDEOSYNTH_PARAMS } from '../videosynth/patch';
+import { GHOSTFX_DEFAULT_BG_ALPHA } from '../effects/ghostfx/defaults';
 
 // ─── Plugin Param Definitions ───────────────────────────────────────────────
 
@@ -415,7 +416,7 @@ registerPlugin({
     { name: 'Bloom threshold', param: 'ghostfxBloomThreshold', type: 'slider', min: 0, max: 2, step: 0.02, default: 0.45 },
     { name: 'Vignette', param: 'ghostfxVignette', type: 'slider', min: 0, max: 1, step: 0.02, default: 0.7 },
     { name: 'Exposure', param: 'ghostfxExposure', type: 'slider', min: -1, max: 1, step: 0.02, default: 0.1 },
-    { name: 'Background opacity', param: 'ghostfxBgAlpha', type: 'slider', min: 0, max: 1, step: 0.01, default: 0.0 },
+    { name: 'Background opacity', param: 'ghostfxBgAlpha', type: 'slider', min: 0, max: 1, step: 0.01, default: GHOSTFX_DEFAULT_BG_ALPHA },
   ],
   defaultSourceParams: {
     ghostfxScenePreset: 'drift',
@@ -456,7 +457,7 @@ registerPlugin({
     ghostfxBloomThreshold: 0.45,
     ghostfxVignette: 0.7,
     ghostfxExposure: 0.1,
-    ghostfxBgAlpha: 0.0,
+    ghostfxBgAlpha: GHOSTFX_DEFAULT_BG_ALPHA,
     ghostfxFeedbackAmount: 0.35,
     ghostfxFeedbackZoom: 1.003,
   },

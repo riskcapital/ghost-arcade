@@ -1,4 +1,5 @@
 import { VOYAGE_SCENES, VOYAGE_WGSL } from './scenes/voyage.wgsl';
+import { GHOSTFX_DEFAULT_BG_ALPHA } from './defaults';
 // GhostFX — original audio-reactive visualizer plugin.
 //
 // Phase 1 (this file) ships a single hero scene ("Liminal") — a
@@ -111,7 +112,7 @@ const DEFAULT_PARAMS: GhostFXParams = {
   bloomIntensity: 1.4,
   bloomThreshold: 0.45,
   vignette: 0.7,
-  bgAlpha: 0.0,
+  bgAlpha: GHOSTFX_DEFAULT_BG_ALPHA,
   vortexStrength: 2.0,
   latticeThreshold: 2.5,
   trailIntensity: 1.0,

@@ -7,6 +7,7 @@
   import { compositionTransition } from '../stores/compositionTransition';
   import { applyCompositionFadeFrame, buildCompositionTransitionLayers, compositionTransitionSceneKey } from '../renderer/compositionTransitionLayers';
   import { applyStageFxFrame, NO_STAGE_FX, type StageFxFrameValues } from '../renderer/stageFxFrame';
+  import { GHOSTFX_DEFAULT_BG_ALPHA } from '../effects/ghostfx/defaults';
   import { showTrackFrame, showClipSources } from '../stores/showTrackFrame';
   import { takeoverFrame, takeoverMediaSources, takeoverRenderHeld } from '../stores/takeoverFrame';
   import { buildTakeoverScene } from '../show/takeover/takeoverScene';
@@ -7013,7 +7014,7 @@
             bloomThreshold:     effectSource.ghostfxBloomThreshold     ?? 0.45,
             vignette:           effectSource.ghostfxVignette           ?? 0.7,
             exposure:           effectSource.ghostfxExposure           ?? 0.1,
-            bgAlpha:            effectSource.ghostfxBgAlpha            ?? 1.0,
+            bgAlpha:            effectSource.ghostfxBgAlpha            ?? GHOSTFX_DEFAULT_BG_ALPHA,
             vortexStrength:     effectSource.ghostfxVortexStrength     ?? 2.0,
             latticeThreshold:   effectSource.ghostfxLatticeThreshold   ?? 2.5,
             trailIntensity:     effectSource.ghostfxTrailIntensity     ?? 1.0,
@@ -7788,7 +7789,7 @@
           sensitivity:        effectSource.ghostfxSensitivity        ?? 1.4,
           hueDriftSpeed:      effectSource.ghostfxHueDriftSpeed      ?? 0.15,
           exposure:           effectSource.ghostfxExposure           ?? 0,
-          bgAlpha:            effectSource.ghostfxBgAlpha            ?? 1.0,
+          bgAlpha:            effectSource.ghostfxBgAlpha            ?? GHOSTFX_DEFAULT_BG_ALPHA,
           bloomIntensity:     effectSource.ghostfxBloomIntensity     ?? 1.4,
           bloomThreshold:     effectSource.ghostfxBloomThreshold     ?? 0.45,
           vignette:           effectSource.ghostfxVignette           ?? 0.7,
