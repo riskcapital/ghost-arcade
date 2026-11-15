@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { capabilitiesRequest, DEPTH_CAPTURE_LIMITS, outputAspect, readDesktopCapabilities } from './desktopCapabilities';
+import { capabilitiesRequest, DEPTH_CAPTURE_LIMITS, deviceName, outputAspect, readDesktopCapabilities, studioClientId, withClientId } from './desktopCapabilities';
 import { depthCaptureOffer, depthScanProgress, depthStatusText, readDepthCaptureStatus, readDepthScanRequest, stageOf } from './depthScan';
 import { CLASSIC_STARTERS, classicStarterScene, phoneStarters, phoneStarterScene } from './phoneStarters';
 import { INTERACTIVE_STARTERS, starterScene } from './interactiveLibrary';
@@ -30,7 +30,18 @@ describe('desktop capabilities', () => {
     expect(readDesktopCapabilities({ interactiveWorld: 1 }).world?.tools).toEqual(['attract', 'repel', 'vortex']);
   });
   it('the request says which app asks', () => {
-    expect(capabilitiesRequest()).toEqual({ type: 'studio_capabilities_request', client: { app: 'ios', version: '1.2', build: '' } });
+    expect(capabilitiesRequest()).toMatchObject({ type: 'studio_capabilities_request', client: { app: 'ios', version: '1.2', build: '' } });
+    expect(deviceName('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)')).toBe('iPhone');
+  });
+  it('every Studio message carries the same client id; others are left alone', () => {
+    const store = new Map<string, string>();
+    const storage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) };
+    const id = studioClientId(storage);
+    expect(id).toMatch(/^ios-[a-z0-9]+$/);
+    expect(JSON.parse(withClientId(JSON.stringify({ type: 'studio_scene', scene: {} }), id))).toEqual({ clientId: id, type: 'studio_scene', scene: {} });
+    expect(withClientId(JSON.stringify({ type: 'sync_request' }), id)).toBe('{"type":"sync_request"}');
+    const own = JSON.stringify({ type: 'studio_flux', clientId: 'x' });
+    expect(withClientId(own, id)).toBe(own);
   });
 });
 

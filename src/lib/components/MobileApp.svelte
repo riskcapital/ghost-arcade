@@ -5,7 +5,11 @@
   import CompanionMapping from "./studio/CompanionMapping.svelte";
   import { onMount, onDestroy, tick } from 'svelte';
   import PairedStudio from './studio/PairedStudio.svelte';
+  import {readDepthScanRequest,type DepthScanRequest} from '../mobile/studio/depthScan';
+  import {stampStudioMessages} from '../mobile/studio/desktopCapabilities';
   let showPairedStudio=false;
+  /** A room scan the desktop asked for while the desktop tools were closed: they open on its question. */
+  let depthScanRequest:DepthScanRequest|null=null;
   import { createDefaultLayerShape } from '../types';
   import type { Project, Point2D, WarpCorners, BlendMode, Effect, EffectType, EffectParams, LayerShape, LayerShapeParams, LayerShapeType } from '../types';
   import { EFFECT_CATALOG } from '../effects/effectCatalog';
@@ -1441,6 +1445,7 @@
 
     try {
       socket = new WebSocket(withPairingToken(targetUrl, token));
+      stampStudioMessages(socket);
     } catch (err) {
       error = 'Invalid URL format. Use format: ws://IP_ADDRESS:9001';
       connecting = false;
@@ -1615,6 +1620,12 @@
   function handleMessage(msg: { type: string; [key: string]: unknown }) {
     switch (msg.type) {
       case 'companion_capabilities': mappingVJSource=msg.mappingVJSource===true;break;
+      case 'studio_depth_scan_request': {
+        // Open the desktop tools on the question; once open, they answer requests themselves.
+        const request = readDepthScanRequest(msg);
+        if (request && !showPairedStudio && connected) { stopPhoneVision(); depthScanRequest = request; showPairedStudio = true; }
+        break;
+      }
       case 'sync': {
         const incomingProject = msg.project as Project;
         preserveMappingEffectDragValues(incomingProject);
@@ -3212,7 +3223,7 @@
   ontouchend={handleTouchEnd}
 />
 
-{#if showPairedStudio && ws && connected}<PairedStudio socket={ws} onclose={()=>showPairedStudio=false}/>{/if}
+{#if showPairedStudio && ws && connected}<PairedStudio socket={ws} depthRequest={depthScanRequest} onclose={()=>{showPairedStudio=false;depthScanRequest=null;}}/>{/if}
 <div data-help-page="mobile-control" class="mobile-app" class:native-companion={nativeShell}>
   {#if nativeShell}<header class="companion-brand"><img src="/icon-new.png" alt=""/><div><img class="companion-wordmark" src="/logo-wordmark.svg" alt="Ghost Arcade"/><small><span class:online={connected}></span>{connected?"DESKTOP CONNECTED":"DESKTOP CONNECT"}</small></div><button class="native-exit" disabled={!connected} onclick={()=>{stopPhoneVision();showPairedStudio=true;}}>Tools</button><button class="native-exit" onclick={onExit} aria-label="← Standalone">← Studio</button></header>{/if}
   {#if !connected}

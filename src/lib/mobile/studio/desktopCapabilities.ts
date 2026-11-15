@@ -81,10 +81,41 @@ export function outputAspect(capabilities: Pick<DesktopCapabilities, 'output'> |
 
 /** The version this build reports when the native app does not say. */
 export const PHONE_APP_VERSION = '1.2';
-let client = { app: 'ios', version: PHONE_APP_VERSION, build: '' };
-void appInfo(PHONE_APP_VERSION).then((i) => (client = { app: 'ios', version: i.version, build: i.build }), () => {});
+/** What the desktop's phone list calls this device (iOS gives apps no personal device name). */
+export function deviceName(ua = typeof navigator === 'undefined' ? '' : navigator.userAgent): string {
+  return /iPad/.test(ua) || (/Macintosh/.test(ua) && typeof navigator !== 'undefined' && navigator.maxTouchPoints > 1) ? 'iPad' : /iPhone/.test(ua) ? 'iPhone' : /Android/.test(ua) ? 'Android phone' : 'Phone';
+}
+let client = { app: 'ios', version: PHONE_APP_VERSION, build: '', name: deviceName() };
+void appInfo(PHONE_APP_VERSION).then((i) => (client = { ...client, version: i.version, build: i.build }), () => {});
 
-/** The request, with which app is asking (the desktop logs it). */
-export function capabilitiesRequest(): { type: 'studio_capabilities_request'; client: { app: string; version: string; build: string } } {
+/** The request, with which app is asking: the desktop lists phones that say (Depth setup → Start on phone). */
+export function capabilitiesRequest(): { type: 'studio_capabilities_request'; client: { app: string; version: string; build: string; name: string } } {
   return { type: 'studio_capabilities_request', client: { ...client } };
+}
+
+// ── One id for this phone on every Studio message ──────────────────────────
+// The pairing server tells phones apart by address plus `clientId`; scenes, the capabilities
+// request, scan offers, progress and world messages must all carry the same one.
+const CLIENT_KEY = 'ghost-studio-client-id';
+let clientId = '';
+/** This install's id for the desktop (kept on the device; letters, digits and dashes). */
+export function studioClientId(storage: Pick<Storage, 'getItem' | 'setItem'> | null = typeof localStorage === 'undefined' ? null : localStorage): string {
+  if (clientId) return clientId;
+  try { clientId = storage?.getItem(CLIENT_KEY) ?? ''; } catch { clientId = ''; }
+  if (!/^[\w-]{1,40}$/.test(clientId)) {
+    clientId = `ios-${Math.random().toString(36).slice(2, 12)}`;
+    try { storage?.setItem(CLIENT_KEY, clientId); } catch { /* private storage: one id for this run */ }
+  }
+  return clientId;
+}
+/** A Studio message (`studio_…`) with this phone's id added; anything else unchanged. */
+export function withClientId(data: string, id = studioClientId()): string {
+  // Added as text, not by parsing: a room scan is several hundred kilobytes.
+  if (!data.startsWith('{"type":"studio_') || data.includes('"clientId":')) return data;
+  return `{"clientId":${JSON.stringify(id)},${data.slice(1)}`;
+}
+/** Every Studio message this socket sends carries the phone's id, whichever tool sends it. */
+export function stampStudioMessages(socket: WebSocket): void {
+  const send = socket.send.bind(socket);
+  socket.send = (data: Parameters<WebSocket['send']>[0]) => send(typeof data === 'string' ? withClientId(data) : data);
 }

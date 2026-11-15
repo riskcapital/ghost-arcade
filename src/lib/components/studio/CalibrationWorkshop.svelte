@@ -9,13 +9,100 @@
  import {captureCalibrationReference,shareCalibrationPreparation} from '../../mobile/studio/captureToolkit';
  import {acquireNativeFeed} from '../../mobile/studio/nativeLive';
  import {openLidarAutoMapCamera} from '../../mobile/studio/lidarScan';
- import {mapCurvedSurfaces,buildCurvedSurface,type CurvedScan,type CurvedSurface,type MeshMode} from '../../mobile/studio/meshMap';
+ import {mapCurvedSurfaces,buildCurvedSurface,sampleScan,type CurvedScan,type CurvedSurface,type MeshMode} from '../../mobile/studio/meshMap';
+ import {buildDepthCapture,gravityInScan,DEPTH_CAPTURE_FILE,type DepthCapture,type CaptureReport} from '../../mobile/studio/depthCapture';
+ import {stageOf,type DepthScanRequest,type DepthScanStage} from '../../mobile/studio/depthScan';
+ import type {DepthCaptureLimits} from '../../mobile/studio/desktopCapabilities';
+ import {roomFromCapture,validateDepthCapture} from '../../scene3d/roomPhone';
+ import {shareFile} from '../../mobile/studio/nativeShare';
  export let onclose:()=>void;
  export let onsend:((json:string)=>void)|undefined=undefined;
  function sendDesktop(){try{const live=mapped.filter(m=>!skipped.has(m.surfaceId)&&surfaces.some(s=>s.id===m.surfaceId));const c=draft();let base:Record<string,unknown>;try{base=exportCalibration(c);}catch(e){if(!live.length)throw e;base={...c};}onsend?.(JSON.stringify({...base,mappedSurfaces:live.map(({name,screenId,screenName,points,rmsPx,curved})=>({name,screenId,screenName,points,rmsPx,...(curved?meshPayload(curved.surface):{})}))}));message=live.length?`Sent ${live.length} mapped surface${live.length===1?'':'s'}. On the desktop, choose Create layers.`:"Sent for desktop review; output geometry is not changed until applied there.";}catch(e){message=(e as Error).message;}}
  export let lidar=false;
  /** Runs the stripe capture against a paired desktop. Only set when paired. */
- export let automap:((camera:AutoMapCamera,progress:(text:string,fraction?:number)=>void)=>Promise<AutoMapResult>)|undefined=undefined;
+ export let automap:((camera:AutoMapCamera,progress:(text:string,fraction?:number)=>void,options?:{screenId?:string})=>Promise<AutoMapResult>)|undefined=undefined;
+ // ── Room scan for Depth mode ────────────────────────────────────────────
+ // The same auto-map, run with LiDAR, turned into the capture the desktop's
+ // Depth mode reads (depthCapture.ts). Offered when the paired desktop takes one.
+ /** The desktop's limits, when it takes a room scan (studio_capabilities.depthCapture). */
+ export let depthCapture:DepthCaptureLimits|null=null;
+ /** A scan the desktop asked for (studio_depth_scan_request): the workshop opens on it, ready to start. */
+ export let depthRequest:DepthScanRequest|null=null;
+ /** Send the capture; resolves with what the desktop said. */
+ export let ondepthsend:((capture:DepthCapture,requestId:string,later:(text:string)=>void)=>Promise<string>)|undefined=undefined;
+ /** The desktop output's size, for the preview's shape and the fit (studio_capabilities.output). */
+ export let output:{width:number;height:number}|null=null;
+ $: outputSize=depthRequest?.output??output;
+ export let ondepthprogress:(requestId:string,stage:DepthScanStage,pct?:number,message?:string)=>void=()=>{};
+ /** The desktop cancelled or gave up on the scan it asked for (studio_depth_capture_status). */
+ export let depthStop:{requestId:string;text:string}|null=null;
+ $: if(depthStop&&depthStop.requestId===depthId&&asked&&!depthResult)stopDepth(depthStop.text);
+ let depthStopped=false;
+ function stopDepth(text:string){depthStopped=true;asked=false;depthFailed=text;closeAuto();ondepthdone();}
+ // While the desktop waits, it hears from the phone at least every few seconds (it gives up after 90 s of silence).
+ let lastProgress:[DepthScanStage,number|undefined]|null=null;
+ const keepAlive=setInterval(()=>{if(asked&&lastProgress&&(busy||framing))ondepthprogress(depthId,lastProgress[0],lastProgress[1]);},5000);
+ onDestroy(()=>clearInterval(keepAlive));
+ function report(stage:DepthScanStage,pct?:number,text?:string){lastProgress=[stage,pct];ondepthprogress(depthId,stage,pct,text);}
+ /** The desktop's request is answered (sent, cancelled or failed). */
+ export let ondepthdone:()=>void=()=>{};
+ /** True while a scan runs: a request that arrives then waits (PairedStudio). */
+ export let busyScanning=false;
+ /** Open straight on the room scan (the World tab's Scan room for Depth mode). */
+ export let openDepth=false;
+ onMount(()=>{if(openDepth&&!depthRequest)void startDepth(null);});
+ /** Fixture build for the simulator, which has no LiDAR: a synthetic room stands in for the scan. */
+ const FIXTURE=import.meta.env.VITE_DEPTH_FIXTURE==='1';
+ let depth=false,depthId='',asked=false,depthResult:{capture:DepthCapture;report:CaptureReport;fitPx:number|null}|null=null,depthStatus='',depthSending=false,depthFailed='';
+ $: busyScanning=busy||depthSending;
+ $: depthReady=!!depthCapture&&(lidar||FIXTURE)&&!!automap;
+ let handledRequest='';
+ $: if(depthRequest&&depthRequest.requestId!==handledRequest){handledRequest=depthRequest.requestId;void startDepth(depthRequest);}
+ async function startDepth(request:DepthScanRequest|null){
+  painting=null;depth=true;depthStopped=false;lastProgress=null;depthId=request?.requestId??crypto.randomUUID();asked=!!request;depthResult=null;depthStatus='';depthFailed='';
+  if(!lidar&&!FIXTURE){depthFailed='Depth mode needs an iPhone or iPad with LiDAR.';if(asked){report('error',undefined,depthFailed);ondepthdone();}return;}
+  await openAuto();
+  if(asked)report(framing?'ready':'error',undefined,framing?undefined:message);
+  if(asked&&!framing)ondepthdone();
+ }
+ function leaveDepth(){
+  if(asked&&!depthResult&&!depthSending)report('cancelled');
+  if(asked)ondepthdone();
+  closeAuto();depth=false;asked=false;depthResult=null;depthStatus='';depthFailed='';message='';
+ }
+ /** The capture from a finished auto-map: the projector that saw most of the scene, its surfaces, gravity. */
+ function captureFrom(result:AutoMapResult,screenId?:string){
+  if(!result.depth)throw new Error(result.depthError?`Depth was not measured: ${result.depthError}`:'Depth was not measured. Keep the phone within about 4 m and scan again.');
+  if(!result.depth.pose)throw new Error('This scan has no gravity reading. Update the app and scan again.');
+  const lit=(p:AutoMapProjector)=>{let n=0;for(const v of p.decoded.valid)n+=v;return n;};
+  const projector=scan.find(p=>p.id===screenId)??[...scan].sort((a,b)=>lit(b)-lit(a))[0];
+  if(!projector)throw new Error('No projector was seen.');
+  const grid=sampleScan(projector.decoded,result.depth,projector.plan.cell);
+  const own=mapped.filter(m=>m.screenId===projector.id);
+  const built=buildDepthCapture({grid,screen:{id:projector.id,width:projector.width,height:projector.height,region:projector.region},
+   surfaces:own.map(m=>({id:m.surfaceId,name:m.name,photo:surfaces.find(s=>s.id===m.surfaceId)?.points??[],projector:m.curved?undefined:m.points})),
+   down:gravityInScan(result.depth.pose,result.depth.turn??0),limits:depthCapture??undefined,device:navigator.userAgent.includes('iPad')?'iPad':'iPhone'});
+  return {...built,fitPx:fit(built.capture)};
+ }
+ /** How well the desktop's own solve will line it up (output pixels at 1920 wide). */
+ function fit(capture:DepthCapture){try{return roomFromCapture(validateDepthCapture(capture),outputSize?outputSize.width/outputSize.height:16/9).report.pixelError;}catch{return null;}}
+ async function finishDepth(result:AutoMapResult|null){
+  report('solving',1);message='Building the room scan…';await tick();
+  if(FIXTURE&&!result){const {fixtureDepthCapture}=await import('../../mobile/studio/depthCaptureFixture');const f=fixtureDepthCapture();depthResult={...f,fitPx:fit(f.capture)};}
+  else depthResult=captureFrom(result!,depthRequest?.screenId);
+  message='';
+  if(asked)await sendDepth();
+ }
+ async function sendDepth(){
+  if(!depthResult||!ondepthsend)return;depthSending=true;report('sending',1);depthStatus='Sending to the desktop…';
+  try{depthStatus=await ondepthsend(depthResult.capture,depthId,text=>depthStatus=text);}catch(e){depthStatus=e instanceof Error?e.message:'The scan could not be sent.';}
+  finally{depthSending=false;if(asked){ondepthdone();asked=false;}}
+ }
+ async function saveDepth(e:MouseEvent){
+  if(!depthResult)return;
+  try{const done=await shareFile(DEPTH_CAPTURE_FILE,new Blob([JSON.stringify(depthResult.capture)],{type:'application/json'}),'application/json',e.currentTarget as HTMLElement);if(done)depthStatus='Saved. On the desktop: Interactive Studio → World → Depth setup → Open a depth capture.';}
+  catch(err){depthStatus=err instanceof Error?err.message:'The file could not be saved.';}
+ }
  let fraction=0,found:HTMLDivElement;
  /** Lets the paired desktop take photos through this phone while the preview is open. */
  export let remote:((camera:AutoMapCamera)=>()=>void)|undefined=undefined;
@@ -99,13 +186,15 @@
  let framing=false,preview:HTMLVideoElement,previewCanvas:HTMLCanvasElement,autoCamera:(AutoMapCamera&{stop():void})|undefined;
  // With LiDAR the scan runs on the depth camera, so curved forms get a mesh; otherwise the plain camera.
  async function openAuto(){framing=true;message='Starting the camera…';
+  if(FIXTURE&&depth){await tick();autoCamera={grab:()=>Promise.reject(new Error('Fixture')),stop(){}};message='';return;}
   // The motion permission must be asked straight from the tap, before anything else waits.
   const held=lidar?null:await uprightTurn();await tick();try{autoCamera=lidar?await openLidarAutoMapCamera(previewCanvas):await openAutoMapCamera(preview,held?.turn??0);stopRemote=remote?.(autoCamera);message='';}catch(e){framing=false;message=e instanceof Error?e.message:'The camera could not start.';}}
  function closeAuto(){stopRemote?.();stopRemote=undefined;autoCamera?.stop();autoCamera=undefined;framing=false;}
  async function startAuto(){
   if(!autoCamera||!automap)return;busy=true;
+  if(depth&&FIXTURE){try{for(let k=1;k<=20;k++){if(depthStopped)return;fraction=k/20*.85;message=k<18?`Screen 1: pattern ${k} of 17`:'Measuring depth';report(k<18?'patterns':'measuring',fraction);await new Promise(r=>setTimeout(r,90));}fraction=1;await finishDepth(null);}catch(e){depthFailed=e instanceof Error?e.message:'The scan failed.';}finally{busy=false;closeAuto();}return;}
   try{
-   fraction=0;const result=await automap(autoCamera,(text,part)=>{message=text;if(part!==undefined)fraction=part;});
+   fraction=0;const result=await automap(autoCamera,(text,part)=>{message=text;if(part!==undefined)fraction=part;if(depth)report(stageOf(text),part);},depth&&depthRequest?.screenId?{screenId:depthRequest.screenId}:undefined);
    reference=result.reference;surfaces=[];points=[];mode='surface';
    projectors=result.projectors.map(p=>({id:crypto.randomUUID(),name:p.name,width:p.width,height:p.height,corners:p.corners}));
    scan=result.projectors;mapped=[];skipped=new Set();painting=null;curvedScans=[];
@@ -132,8 +221,9 @@
    for(const item of [...flat.filter(f=>!dropped.has(f.surface.id)),...curved]){const name=`Surface ${surfaces.length+1}`;surfaces=[...surfaces,{...item.surface,name}];mapped=[...mapped,{...item.entry,name}];}
    skipped=skipped;
    const meshes=curved.length;
+   if(depth){if(!depthStopped)await finishDepth(result);return;}
    message=surfaces.length?(result.depthError?`Depth was not measured (${result.depthError}) Curved forms were not meshed.`:''):(meshes||result.depth?'Nothing the projector lights could be mapped. Dim the room and try again, or trace a surface by hand.':'No flat surface was found in the scan. Dim the room and try again, or trace a surface by hand.');
-  }catch(e){message=e instanceof Error?e.message:'Auto map failed.';}
+  }catch(e){message=e instanceof Error?e.message:'Auto map failed.';if(depth){depthFailed=depthStopped?depthFailed:message;message='';if(asked&&!depthStopped){report('error',undefined,depthFailed);ondepthdone();asked=false;}}}
   finally{busy=false;closeAuto();}
  }
  onDestroy(closeAuto);
@@ -161,9 +251,41 @@
  $: mapping=(()=>{try{return projectors.length?homography(projectors[0].corners,unitCorners):null;}catch{return null;}})();
 </script>
 <section aria-label="Projector calibration">
- <header><span class="ga-chip" data-tone="output" aria-hidden="true"><Icon name="scan" size={18}/></span><h2>{automap?'Auto map':'Projector calibration'}</h2><button class="quiet" onclick={onclose} disabled={busy}>Back</button></header>
+ <header><span class="ga-chip" data-tone="output" aria-hidden="true"><Icon name="scan" size={18}/></span><h2>{depth?'Room scan for Depth mode':automap?'Auto map':'Projector calibration'}</h2><button class="quiet" onclick={()=>depth?leaveDepth():onclose()} disabled={busy||depthSending}>Back</button></header>
  {#if automap}
- {#if framing}
+ {#if depth}
+  {#if depthFailed}
+   <p class="am-lead" role="alert">{depthFailed}</p>
+   <div class="am-actions">{#if lidar||FIXTURE}<button class="primary" onclick={()=>startDepth(null)}>Scan again</button>{/if}<button class="quiet" onclick={leaveDepth}>Back</button></div>
+  {:else if depthResult}
+   {@const r=depthResult.report}
+   <div class="am-stage depth-out" style:aspect-ratio={outputSize?`${outputSize.width}/${outputSize.height}`:'16/9'} role="img" aria-label={`${r.surfaces} surfaces on the desktop output`}>
+    <svg viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true">{#each depthResult.capture.surfaces as surface}<polygon points={surface.outline.map(v=>`${v.x*1000},${v.y*1000}`).join(' ')}/>{/each}</svg>
+    {#each depthResult.capture.surfaces as surface,i}{@const c=centre(surface.outline)}<b class="am-tag" style:left={`${c.x/10}%`} style:top={`${c.y/10}%`}>{i+1}</b>{/each}
+   </div>
+   <dl class="am-readout">
+    <div><dt>Surfaces</dt><dd>{r.surfaces}</dd></div>
+    <div><dt>Samples</dt><dd>{r.samples.toLocaleString()}</dd></div>
+    <div><dt>Coverage</dt><dd>{Math.round(r.coverage*100)}%</dd></div>
+    <div><dt>Fit</dt><dd>{depthResult.fitPx===null?'–':`${depthResult.fitPx.toFixed(1)} px`}</dd></div>
+   </dl>
+   <p class="am-note">{r.dropped?`${r.dropped} surface${r.dropped===1?' was':'s were'} left out: too few depth readings.`:'Where each surface lands on the desktop output.'}<InfoTip label="About the room scan"><p>The desktop places the projector and fits a face to each surface from these points, then Depth mode throws, pours and burns on the real objects.</p><p>Fit is how far the measured points land from where the projector shows them, in output pixels. Under 3 px lines up well.</p></InfoTip></p>
+   <p class="status" role="status">{depthStatus}</p>
+   <div class="am-actions">{#if ondepthsend}<button class="primary" onclick={sendDepth} disabled={depthSending}>{depthSending?'Sending…':depthStatus?'Send again':'Send to desktop'}</button>{/if}<button class="quiet" onclick={saveDepth}>Save / Share file</button></div>
+   <div class="am-actions"><button class="quiet wide" onclick={()=>startDepth(null)} disabled={depthSending}>Scan again</button></div>
+  {:else}
+   <div class="am-stage">{#if FIXTURE}<div class="am-preview am-fixture" aria-hidden="true"></div>{:else}<canvas class="am-preview" bind:this={previewCanvas}></canvas>{/if}{#if busy}<div class="am-veil"><strong>{Math.round(fraction*100)}%</strong><span>{message}</span></div>{/if}</div>
+   {#if busy}
+    <div class="am-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(fraction*100)}><i style:width={`${fraction*100}%`}></i></div>
+    <p class="am-hint">Keep the phone still and stay out of the beam.</p>
+   {:else}
+    <p class="am-lead">Prop the phone where it sees the objects and the projection, then tap Start.<InfoTip label="How the room scan works"><ol><li>The projector shows stripes while the phone watches.</li><li>Then it goes dark while the LiDAR measures depth.</li><li>The phone sends the room to the desktop's Depth mode.</li></ol></InfoTip></p>
+    <ul class="am-check"><li>The phone cannot move</li><li>The objects and the projection are in the picture</li><li>The room is dim, the objects within about 4 m</li></ul>
+    {#if asked}<p class="am-note">The desktop asked for this scan.</p>{/if}
+    <div class="am-actions"><button class="primary" onclick={startAuto} disabled={!autoCamera}>Start</button><button class="quiet" onclick={leaveDepth}>Cancel</button></div>
+   {/if}
+  {/if}
+ {:else if framing}
   <div class="am-stage">{#if lidar}<canvas class="am-preview" bind:this={previewCanvas}></canvas>{:else}<video bind:this={preview} playsinline muted></video>{/if}{#if busy}<div class="am-veil"><strong>{Math.round(fraction*100)}%</strong><span>{message}</span></div>{/if}</div>
   {#if busy}
    <div class="am-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(fraction*100)}><i style:width={`${fraction*100}%`}></i></div>
@@ -202,10 +324,11 @@
   <div class="am-hero">
    <p class="am-lead">The projector flashes stripes, the phone watches, and each flat surface it lights becomes a layer on the desktop.<InfoTip label="How auto map works"><ol><li>Open the Screen on the projector from the desktop.</li><li>Prop the phone near the projector, looking at what it lights.</li><li>Scan, then send the surfaces you want.</li></ol></InfoTip></p>
    <div class="am-actions"><button class="primary" onclick={openAuto} disabled={busy}>Open camera</button></div>
+   {#if depthReady}<button class="am-painting am-depth-entry" onclick={()=>startDepth(null)}><b>Scan room for Depth mode</b><span>Measure the real objects with LiDAR so the desktop's 3D world lands on them.</span></button>{/if}
   </div>
  {/if}
  <p class="status" role="status" class:quiet={busy}>{busy?'':message}</p>
- <details class="manual"><summary>Manual photo tools</summary>
+ <details class="manual" hidden={depth}><summary>Manual photo tools</summary>
  <p class="lead">Photograph the wall, trace its surfaces and mark the projector’s corners.<InfoTip label="About projector calibration" text="Export the preparation or send it to a paired desktop for review; the projector output changes only when you apply it there. Replacing the photo clears what you traced on it. Depth captures keep the photo, distances and coordinates lined up."/></p>
  <div class="row"><label class="file">Take / import photo<input type="file" accept="image/*" capture="environment" onchange={importPhoto} disabled={busy}/></label><button onclick={capture} disabled={!lidar||busy}>Capture RGB + depth</button></div>
  <label>Session name<input bind:value={name}/></label>
@@ -261,6 +384,14 @@
 </section>
 <style>
  .am-stage.painting{touch-action:none}
+ .am-stage .am-fixture{aspect-ratio:4/3;background:radial-gradient(circle at 50% 60%,#3a3f4a,#0b0d12 70%)}
+ .depth-out{background:#05070b}
+ .am-readout{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin:14px 0 0}
+ .am-readout div{display:grid;gap:2px;padding:4px 0;border-top:1px solid var(--ga-line-2)}
+ .am-readout dt{font-size:12px;color:var(--ga-ink-2)}.am-readout dd{margin:0;font:600 17px/1.2 system-ui;font-variant-numeric:tabular-nums}
+ .am-note{display:flex;align-items:center;gap:4px;font-size:12px;margin:10px 0 0}.am-note :global(.ga-info){margin:-12px 0}
+ .am-actions .wide{flex:1}
+ .am-depth-entry b{color:var(--ga-on-ink)}
  .am-handle{position:absolute;width:26px;height:26px;margin:-13px 0 0 -13px;border-radius:50%;border:2px solid #fff;background:var(--ga-blue,#5278ff);box-shadow:0 1px 8px #000c;pointer-events:none}
  .am-handle.held{transform:scale(1.35);background:#fff;border-color:var(--ga-blue,#5278ff)}
  .am-painting{display:grid;gap:3px;width:100%;margin-top:14px;padding:12px 14px;text-align:left;border-radius:10px;background:transparent;border:1px dashed var(--ga-line-3)}

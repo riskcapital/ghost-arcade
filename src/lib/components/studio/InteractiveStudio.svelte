@@ -26,6 +26,10 @@
   import { StandaloneAudio } from '../../mobile/standaloneAudio';
   import { hasNativeAudio, nativeAudioSource } from '../../mobile/nativeAudio';
   import { InteractiveProgram } from '../../mobile/studio/interactiveProgram';
+  import { createScenePublisher, SCENE_PUBLISH_MS } from '../../mobile/studio/scenePublisher';
+  import { classicStarterScene, phoneStarterScene } from '../../mobile/studio/phoneStarters';
+  import type { DesktopCapabilities } from '../../mobile/studio/desktopCapabilities';
+  import type { ReliefWorld, WorldSource } from '../../scene3d/worldModel';
   import {
     defaultInteractive,
     validateScene,
@@ -36,6 +40,7 @@
     type Point,
     type Interaction,
     type Behavior,
+    type ZoneWorldAction,
   } from '../../mobile/studio/interactive';
   import {
     effectParams,
@@ -46,7 +51,6 @@
     type InteractiveEffect,
   } from '../../mobile/studio/interactiveEffects';
   import {
-    starterScene,
     readInteractiveDraft,
     writeInteractiveDraft,
     readInteractivePresets,
@@ -73,6 +77,7 @@
   import InteractiveEffectParams from './InteractiveEffectParams.svelte';
   import InteractiveObjectsPanel from './InteractiveObjectsPanel.svelte';
   import InteractiveSetupPanel from './InteractiveSetupPanel.svelte';
+  import InteractiveWorldPanel from './InteractiveWorldPanel.svelte';
 
   // ── Props ────────────────────────────────────────────────────────────────
   export let outputLevel = 1,
@@ -114,6 +119,21 @@
    * the output. Optional: 16:9 when the host does not pass it.
    */
   export let aspect = DEFAULT_ASPECT;
+  /**
+   * Phone paired with a desktop: what the desktop said it can do. With the 3D
+   * world (`world`) the editor gains the World tab, the world's touch tools,
+   * looks, zone actions and block finishes, edited exactly as on the desktop.
+   * Without (alone, or an older desktop) it is the phone's editor as before.
+   */
+  export let desktop: DesktopCapabilities | null = null;
+  /** Phone: whether the desktop runs a 3D world on this phone's layer (studio_scene_status.world). */
+  export let desktopWorldOn: boolean | null = null;
+  /** Phone: open the room scan for Depth mode (Calibration). Set only when the desktop takes one. */
+  export let onscanroom: (() => void) | undefined = undefined;
+  /** A zone's world action, tested from the editor: acts on the layer's 3D world (studio_world_action). */
+  export let onworldaction: ((what: ZoneWorldAction, point: Point) => void) | undefined = undefined;
+  /** Orbit view: how far the 3D world's camera is turned; `null` is face-on (studio_world_view). */
+  export let onview: ((view: { yaw: number; pitch: number } | null) => void) | undefined = undefined;
 
   // ── Methods the host calls ───────────────────────────────────────────────
   export function previewOutput() {
@@ -126,7 +146,7 @@
   export function flush() {
     pointers.clear();
     motion = [];
-    onscene(scene, [], outputActive, paused);
+    publisher.now(performance.now(), scene, [], outputActive, paused);
   }
 
   // ── State ────────────────────────────────────────────────────────────────
@@ -190,8 +210,9 @@
     lastMobileFrame = 0;
   let raf = 0,
     last = 0,
-    lastPublish = 0,
     alive = true;
+  // The scene as the host last got it (onscene): only on change, a held touch every 50 ms.
+  const publisher = createScenePublisher((sc, inputs, active, p) => onscene(sc, inputs, active, p));
 
   // Live input: touches on the stage and motion seen by the camera.
   let pointers = new Map<number, Interaction>();
@@ -220,6 +241,7 @@
   let draftStatus = 'Saved on this device';
   let lastDraft = '';
   let saveTimer: ReturnType<typeof setInterval> | undefined;
+  let publishTimer: ReturnType<typeof setInterval> | undefined;
   let savedScenes: SavedInteractiveScene[] = [];
   let removedScene: SavedInteractiveScene | undefined;
 
@@ -253,6 +275,17 @@
   $: previewWidth = safeAspect >= 1 ? PREVIEW_LONG_SIDE : Math.round(PREVIEW_LONG_SIDE * safeAspect);
   $: previewHeight = safeAspect >= 1 ? Math.round(PREVIEW_LONG_SIDE / safeAspect) : PREVIEW_LONG_SIDE;
   $: if (ready) sizePreview(previewWidth, previewHeight);
+  /** A paired desktop with the 3D world. */
+  $: worldDesktop = !!desktop?.world;
+  $: worldOn = worldDesktop && !!scene.world?.enabled;
+  $: if (!worldDesktop && inspector === 'world') inspector = 'effects';
+  // With the 3D world on, a touch throws balls; without it, Throw, Push, Pour and Ignite do nothing.
+  let toolWorld = false;
+  $: if (worldOn !== toolWorld) {
+    toolWorld = worldOn;
+    if (toolWorld && tool === 'attract' && desktop?.world?.tools.includes('throw')) tool = 'throw';
+    else if (!toolWorld && (tool === 'throw' || tool === 'push' || tool === 'pour' || tool === 'ignite')) tool = 'attract';
+  }
 
   function emitterMarkerFor(
     effect: InteractiveEffect | undefined,
@@ -521,6 +554,8 @@
   function addEffect(kind: EffectKind, target = 'point') {
     const added = edit.addEffect(scene, kind, target);
     if (!added) return say(`All ${MAX_INTERACTIVE_EFFECTS} effect slots are in use. Remove one to add another.`);
+    // Following the music out of the box is the world desktop's behaviour; alone, a new effect starts still, as before.
+    if (!worldDesktop) added.scene = edit.patchEffect(added.scene, added.effect.id, { mods: {} });
     apply(added.scene);
     selectedEffect = added.effect.id;
     inspector = 'effects';
@@ -609,6 +644,57 @@
   function behavior(value: Behavior) {
     apply(edit.setSurfaceBehavior(scene, selected, value));
   }
+  /** Fire the selected zone's actions now, as a touch would. Not an undo step. Bursts are a
+   *  scene change; world actions go to the desktop's world; show actions fire only there. */
+  function testTrigger() {
+    const zone = scene.surfaces.find((s) => s.id === selected);
+    if (!zone?.trigger) return;
+    for (const action of zone.trigger.actions) {
+      if (action.kind === 'world') {
+        if (!worldOn) continue;
+        const n = Math.max(1, zone.points.length);
+        onworldaction?.(action.what, { x: zone.points.reduce((s, p) => s + p.x, 0) / n, y: zone.points.reduce((s, p) => s + p.y, 0) / n });
+      } else if (action.kind === 'burst') {
+        for (const e of scene.effects ?? []) {
+          if (e.enabled && e.target === zone.id) scene = edit.patchEffect(scene, e.id, { burst: e.burst + 1 });
+        }
+      }
+    }
+  }
+  /** Orbit view of the desktop's 3D world (live only, never saved). Dragging the preview turns it. */
+  let orbit = false;
+  let orbitView = { yaw: 0, pitch: 0 };
+  function setOrbit(on: boolean) {
+    orbit = on;
+    if (on) chooseMode('edit');
+    orbitView = { yaw: 0, pitch: 0 };
+    onview?.(null);
+  }
+  function turnOrbit(dx: number, dy: number) {
+    const clamp = (v: number) => Math.max(-70, Math.min(70, v));
+    orbitView = { yaw: clamp(orbitView.yaw - dx * 140), pitch: clamp(orbitView.pitch + dy * 100) };
+    onview?.(orbitView);
+  }
+  // Without a world there is nothing to orbit.
+  $: if (orbit && !worldOn) setOrbit(false);
+  function setWorld(world: ReliefWorld | undefined, undo: boolean) {
+    if (undo) apply(edit.setSceneWorld(scene, world));
+    else {
+      scene = edit.setSceneWorld(scene, world);
+      touchEdit();
+    }
+  }
+  /** The world's shape. Real objects need a room: on the phone it comes from a scan. */
+  function chooseSource(source: WorldSource) {
+    const world = scene.world;
+    if (!world || world.source === source) return;
+    if (source === 'wall') return setWorld({ ...world, source, look: 'shaded' }, true);
+    if (!world.room) {
+      say(onscanroom ? 'Scan the room first: tap Scan room for Depth mode.' : 'Set up the real objects on the desktop: World → Depth setup.');
+      return;
+    }
+    setWorld({ ...world, source, look: 'effects' }, true);
+  }
   function importMapping() {
     const surfaces = importCornerSurfaces(mappingSurfaces);
     if (!surfaces.length) return say('No corner-mapped surfaces to import.');
@@ -637,7 +723,7 @@
     }
   }
   function useStarter(id: InteractiveStarter) {
-    loadScene(starterScene(id), () => {
+    loadScene(phoneStarterScene(id, worldDesktop), () => {
       inspector = 'effects';
       setMode('perform');
       say('Scene ready. Drag the preview to interact. Undo restores your previous scene.');
@@ -770,7 +856,7 @@
     outputActive = !outputActive;
     try {
       if (!nativeOutput) onoutput(outputActive ? programCanvas! : null);
-      onscene(scene, liveInputs(), outputActive, paused);
+      publisher.now(performance.now(), scene, liveInputs(), outputActive, paused);
     } catch (e) {
       outputActive = false;
       say((e as Error).message);
@@ -887,6 +973,10 @@
   function frame(now: number) {
     if (!alive) return;
     raf = requestAnimationFrame(frame);
+    // To the host only when something changed; a held touch streams every 50 ms
+    // (ahead of the 30 fps preview limit, which would stretch that to 66 ms).
+    if (document.hidden) pointers.clear();
+    publisher.tick(now, scene, liveInputs(), outputActive, paused);
     if (!nativeOutput || referencePreview) {
       if (now - lastMobileFrame < 1000 / 30 - 1) return;
       lastMobileFrame = now;
@@ -897,10 +987,6 @@
       pointers.clear();
       motion = [];
       sensor.reset();
-    }
-    if (now - lastPublish > 50) {
-      lastPublish = now;
-      onscene(scene, liveInputs(), outputActive, paused);
     }
     if (document.hidden || (!visible && !outputActive)) return;
     sampleMotion(now);
@@ -915,7 +1001,7 @@
   onMount(() => {
     outputActive = initialActive;
     const restored = initialScene ?? (persistDraft ? readInteractiveDraft(localStorage) : null);
-    restore(restored ?? starterScene('balls'));
+    restore(restored ?? classicStarterScene('balls'));
     if (persistDraft && !restored) inspector = 'presets';
     savedScenes = readInteractivePresets(localStorage);
     fx = document.createElement('canvas');
@@ -925,13 +1011,18 @@
     sizePreview(previewWidth, previewHeight);
     ready = true;
     saveTimer = setInterval(draftSave, 1000);
+    // A held touch keeps streaming when the web view slows its animation frames (a hidden or
+    // low-power screen): the publisher still sends only on change, at most every 50 ms.
+    publishTimer = setInterval(() => publisher.tick(performance.now(), scene, liveInputs(), outputActive, paused), SCENE_PUBLISH_MS);
     window.addEventListener('keydown', onWindowKey, true);
     takeFocus();
     raf = requestAnimationFrame(frame);
   });
   onDestroy(() => {
+    if (orbit) onview?.(null);
     draftSave();
     clearInterval(saveTimer);
+    clearInterval(publishTimer);
     clearTimeout(messageTimer);
     window.removeEventListener('keydown', onWindowKey, true);
     world.dispose();
@@ -982,7 +1073,10 @@
         canUndo={past.canUndo(history)}
         canRedo={past.canRedo(history)}
         {paused}
-        onmode={chooseMode}
+        onmode={(m) => {
+          if (orbit) setOrbit(false);
+          chooseMode(m);
+        }}
         onundo={undo}
         onredo={redo}
         onpause={() => (paused = !paused)}
@@ -1032,12 +1126,16 @@
         onfinish={finishDraft}
         oninteract={interact}
         onrelease={(id) => pointers.delete(id)}
+        {orbit}
+        onorbitdrag={turnOrbit}
       />
       <InteractiveStageTools
         {mode}
         {placingEmitter}
         {handheld}
         bind:tool
+        world={worldOn}
+        worldTools={desktop?.world?.tools}
         draftLength={draft.length}
         markerName={emitterMarker?.label.toLowerCase() ?? ''}
         sourceLabel={referencePreview
@@ -1050,8 +1148,8 @@
       />
     </div>
     <aside>
-      <nav class="inspector-tabs" aria-label="Interactive tools">
-        {#each [['presets', 'Scenes'], ['effects', 'Effects'], ['objects', 'Objects'], ['scene', 'Setup']] as [id, label]}
+      <nav class="inspector-tabs" class:five={worldDesktop} aria-label="Interactive tools">
+        {#each worldDesktop ? [['presets', 'Scenes'], ['effects', 'Effects'], ['objects', 'Objects'], ['world', 'World'], ['scene', 'Setup']] : [['presets', 'Scenes'], ['effects', 'Effects'], ['objects', 'Objects'], ['scene', 'Setup']] as [id, label]}
           <button
             class:active={inspector === id}
             aria-current={inspector === id ? 'true' : undefined}
@@ -1081,6 +1179,7 @@
             {savedScenes}
             {removedScene}
             {persistDraft}
+            world={worldDesktop}
             onstarter={useStarter}
             onsave={savePreset}
             onrecall={recallSaved}
@@ -1092,6 +1191,7 @@
             {effects}
             surfaces={scene.surfaces}
             {selectedEffect}
+            world={worldOn}
             onadd={(kind) => addEffect(kind)}
             onselect={selectEffect}
             ontoggle={(id) => apply(edit.toggleEffect(scene, id))}
@@ -1137,6 +1237,42 @@
             onduplicate={duplicate}
             ondelete={removeSurface}
             onimportmapping={importMapping}
+            desktop={worldDesktop}
+            world={worldOn}
+            effectTargets={(scene.effects ?? []).filter((e) => e.enabled).map((e) => e.target)}
+            onlookstart={beginEdit}
+            onlook={(look, step) => {
+              if (step) apply(edit.setSurfaceLook(scene, selected, look));
+              else {
+                scene = edit.setSurfaceLook(scene, selected, look);
+                touchEdit();
+              }
+            }}
+            ontriggerstart={beginEdit}
+            ontrigger={(trigger, step) => {
+              if (step) apply(edit.setSurfaceTrigger(scene, selected, trigger));
+              else {
+                scene = edit.setSurfaceTrigger(scene, selected, trigger);
+                touchEdit();
+              }
+            }}
+            ontesttrigger={testTrigger}
+            onfinish={(finish) => apply(edit.setSurfaceFinish(scene, selected, finish))}
+          />
+        {:else if inspector === 'world'}
+          <InteractiveWorldPanel
+            handheld
+            world={scene.world}
+            {desktopWorldOn}
+            canScan={!!onscanroom}
+            canOrbit={!!onview}
+            {orbit}
+            onorbit={setOrbit}
+            onscan={() => onscanroom?.()}
+            ondepth={chooseSource}
+            blocks={scene.surfaces.filter((s) => s.behavior === 'solid').length}
+            onstart={beginEdit}
+            onchange={setWorld}
           />
         {:else}
           <InteractiveSetupPanel
