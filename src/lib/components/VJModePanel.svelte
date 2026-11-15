@@ -6104,9 +6104,9 @@
               title="Layer sequencer"
             >
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <rect x="3" y="5" width="4" height="14" rx="1.2" fill="#ff7a66"/>
-                <rect x="10" y="8" width="4" height="11" rx="1.2" fill="#ffd166"/>
-                <rect x="17" y="3" width="4" height="16" rx="1.2" fill="#46d18a"/>
+                <rect x="3" y="5" width="4" height="14" rx="1.2" fill="currentColor"/>
+                <rect x="10" y="8" width="4" height="11" rx="1.2" fill="currentColor"/>
+                <rect x="17" y="3" width="4" height="16" rx="1.2" fill="currentColor"/>
                 <path d="M4 20h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
               </svg>
               Sequencer
@@ -7377,6 +7377,11 @@
     cursor: pointer;
     transition: background 0.15s, color 0.15s, border-color 0.15s;
     flex: 0 0 auto;
+  }
+  /* The mark takes the shared icon blue in every state (as in the add-layer
+     menu, plugin cards and the Looks button); the label stays ink. */
+  .vj-seq-toggle-btn :global(svg) {
+    color: var(--ga-icon, #5278ff);
   }
   .ab-toggle-btn:hover,
   .vj-seq-toggle-btn:hover {

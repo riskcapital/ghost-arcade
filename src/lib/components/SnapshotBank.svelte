@@ -216,6 +216,12 @@
     border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24));
     color: var(--ga-ink-0, #fff);
   }
+  /* The mark takes the shared icon blue in every state, like the dock's
+     Sequencer and Audio Lab buttons; the label stays ink. */
+  .snap-handle svg {
+    color: var(--ga-icon, #5278ff);
+    flex: none;
+  }
   .snap-bank.inline .snap-handle {
     height: var(--vj-control-h, 30px);
     padding: 0 var(--vj-snap-pad-x, 9px) 0 calc(var(--vj-snap-pad-x, 9px) - 2px);
