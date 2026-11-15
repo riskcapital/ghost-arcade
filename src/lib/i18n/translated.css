@@ -34,3 +34,23 @@ html:not([lang='en']) .browse-library-btn {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* The VJ effects tabs (Comp, Layer, Clip, Stage): one line, never wrapped
+   mid-word (Japanese wrapped every label onto two lines). Translated labels
+   are longer than the English ones; without the icons all four fit. */
+html:not([lang='en']) .fx-tab {
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+html:not([lang='en']) .fx-tab svg {
+  display: none;
+}
+/* Audio Lab module heads: a longer translated module name gives way first
+   (ellipsis) so the controls after it stay inside the module. */
+html:not([lang='en']) .module .head h2 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

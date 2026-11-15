@@ -60,6 +60,7 @@
   bind:this={btn}
   onclick={toggle}
   title="Sections and Ableton Live's arrangement locators, both ways"
+  translate="no"
   data-sections-live
 >Live</button>
 
@@ -93,6 +94,8 @@
     font-size: 11px;
     padding: 0 6px;
     height: 18px;
+    flex: none;
+    white-space: nowrap;
     cursor: pointer;
   }
   .slm-btn:hover { color: var(--ga-ink-0, #fff); border-color: var(--ga-line-3, rgba(255, 255, 255, 0.24)); }
