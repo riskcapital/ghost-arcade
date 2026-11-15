@@ -118,6 +118,25 @@ function buildEntry(row: MapPresetRow): MapPresetCacheEntry {
   return { compositionRef: row.composition, group: createMapPresetGroup(row), layers };
 }
 
+type PresetGroup = Layer & { _postCompositeEffects?: Layer['effects'] };
+const NO_ROW_EFFECTS: NonNullable<Layer['effects']> = [];
+
+/** `group` with the row's settings: the same object when it has them. */
+function groupFor(group: PresetGroup, row: MapPresetRow): PresetGroup {
+  const name = `MAP ${row.label}: ${row.composition.name}`;
+  const effects = row.effects ?? NO_ROW_EFFECTS;
+  const tag = group._xfadeFrame?.opacity;
+  const sameFader = row.xfade
+    ? !!tag && tag.deck === row.xfade.deck && tag.base === row.xfade.base && !group._xfadeFrame?.mix && !group._xfadeFrame?.rows
+    : !group._xfadeFrame;
+  if (group.opacity === row.opacity && group.blendMode === row.blendMode && group.name === name
+    && group._postCompositeEffects === effects && sameFader) return group;
+  const next: PresetGroup = { ...group, opacity: row.opacity, blendMode: row.blendMode, name, _postCompositeEffects: effects };
+  if (row.xfade) next._xfadeFrame = { opacity: row.xfade };
+  else delete next._xfadeFrame;
+  return next;
+}
+
 /**
  * The MAP preset stack, row order top first. `cache` keeps the clones across
  * builds (rebuilt only when a row's composition object changes) and is pruned
@@ -141,13 +160,9 @@ export function buildMapPresetLayers(
       entry = buildEntry(row);
       context.cache.set(row.key, entry);
     }
-    // Scalars only: safe to update in place on the cached group.
-    entry.group.opacity = row.opacity;
-    if (row.xfade) entry.group._xfadeFrame = { opacity: row.xfade };
-    else delete entry.group._xfadeFrame;
-    entry.group.blendMode = row.blendMode;
-    entry.group.name = `MAP ${row.label}: ${row.composition.name}`;
-    (entry.group as Layer & { _postCompositeEffects?: Layer['effects'] })._postCompositeEffects = row.effects ?? [];
+    // The group the last build published is never changed: a row whose
+    // settings moved gets a new group, an unchanged row the same one.
+    entry.group = groupFor(entry.group, row);
     out.push(entry.group);
     for (const child of entry.layers) {
       out.push(withSurfaceLook(resolvePresetLayer(child, lookup), surfaceOfPresetLayerId(child.id), lookup.stored));
