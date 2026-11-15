@@ -1775,7 +1775,7 @@
       <div class="lane-labels" style="width: {labelWidth}px; flex-basis: {labelWidth}px" onwheel={handleLabelWheel} onscroll={labelsScrolled}>
         {#if isTimeline}
           <!-- The corner cell, pinned beside the ruler and the sections band. -->
-          <div class="tl-corner" style="height: {HEAD_H}px" data-timeline-corner>
+          <div class="tl-corner" style="height: {HEAD_H}px" data-timeline-corner data-help="Add a row of any kind, a marker at the playhead (M), or a section. The pin shows every row, empty ones too.">
             <div class="corner-top" style="height: {RULER_HEIGHT}px">
               <button class="cbtn box" bind:this={cornerRowAnchor} onclick={() => (addRowFrom = addRowFrom === 'corner' ? null : 'corner')} title="Add a row: audio, a group, a layer on a piece, Presets, Looks, Screen FX, Effects, LEDs, camera or a control line" aria-expanded={addRowFrom === 'corner'} data-add-row-menu>
                 <TimelineIcon name="plus" size={12} />Row<TimelineIcon name="caret" size={11} />
@@ -1930,7 +1930,7 @@
 
         {#if isTimeline}
           <!-- The sections band, pinned under the ruler. -->
-          <div class="tl-band" style="width: {totalWidth}px; height: {BAND_HEIGHT}px; top: {RULER_HEIGHT}px">
+          <div class="tl-band" style="width: {totalWidth}px; height: {BAND_HEIGHT}px; top: {RULER_HEIGHT}px" data-help="Sections: named parts of the show. At its end a section plays through, holds or loops until GO, hands the pieces to the VJ decks, or jumps. The word turns coral while it waits for GO. Double-click to add one.">
             <SectionLane {sections} {tempo} height={BAND_HEIGHT} {zoom} {viewStart} {viewEnd} {selection} snap={snapEnabled} />
           </div>
         {/if}

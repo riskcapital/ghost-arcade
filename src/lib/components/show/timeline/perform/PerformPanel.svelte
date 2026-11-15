@@ -175,7 +175,7 @@
   </div>
 
   {#if takeover.active}
-    <div class="pf-taken" data-takeover-strip>
+    <div class="pf-taken" data-takeover-strip data-help="Taken over: rows playing the VJ decks instead of their blocks; the show runs on underneath. Return (R) hands them back, the way Return says.">
       <TimelineIcon name="live" size={16} />
       <p>{takenText} The show runs on underneath.</p>
       <label class="pf-ret-mode" title="How a row goes back to the Timeline: a cut, a fade, or on the next beat, bar, phrase (four bars) or marker">
@@ -261,7 +261,7 @@
     {/if}
   </div>
 
-  <div class="pf-pads">
+  <div class="pf-pads" data-help="Pads: the VJ deck's clips. A row button takes the target row over with that row. Phrases: sections published as pads, launched on the next bar.">
     <div class="pf-head">
       <span class="pf-seg" role="tablist" aria-label="Pads or phrases">
         <button role="tab" class:on={padsTab === 'pads'} aria-selected={padsTab === 'pads'} onclick={() => (padsTab = 'pads')}><TimelineIcon name="pads" size={13} />Pads</button>
