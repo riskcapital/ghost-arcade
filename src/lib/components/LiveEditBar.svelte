@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * Live edit, made obvious: while it is on (or changes are held), a red
+   * Live key, made obvious: while it is on (or changes are held), a red
    * bar over the editor says where edits are going, with Update, Discard
    * and Stop, and a red frame runs round the canvas. See timeline/liveEdit.ts.
    */
@@ -35,7 +35,7 @@
   let message = $derived.by(() => {
     const n = `${held.length} ${held.length === 1 ? 'change' : 'changes'}`;
     if (state.notice) return state.notice;
-    if ($playing) return 'Recording your changes as it plays';
+    if ($playing) return 'Keying your changes live as it plays';
     if (held.length) return `${n} held at ${heldAt}`;
     return 'Changes are held for Update';
   });
@@ -44,14 +44,14 @@
 {#if shown}
   <div class="live-frame" style="left: {canvasX}px; top: {canvasY}px; width: {canvasWidth}px; height: {canvasHeight}px;" aria-hidden="true"></div>
   <div class="live-bar" role="status" aria-live="polite" data-live-edit-bar>
-    <span class="live-mark" class:recording={state.on && $playing}>Live edit</span>
-    <span class="live-msg" class:notice={!!state.notice} title={state.notice ?? 'Stopped, what you change is held: it shows on the stage now, and Update keys it on the Timeline where you made it. Playing, it is recorded as it happens.'}>{message}</span>
+    <span class="live-mark" class:recording={state.on && $playing}>Live key</span>
+    <span class="live-msg" class:notice={!!state.notice} title={state.notice ?? 'Stopped, what you change is held: it shows on the stage now, and Update keys it on the Timeline where you made it. Playing, it is keyed as it happens.'}>{message}</span>
     {#if held.length}
       <button type="button" class="primary" onclick={() => updateHeldEdits()} title="Key every held change on the Timeline where it was made" data-live-update>Update</button>
       <button type="button" onclick={() => discardHeldEdits()} title="Put back what the held changes changed. Other edits stay" data-live-discard>Discard</button>
     {/if}
     {#if state.on}
-      <button type="button" onclick={() => setLiveEdit(false)} title="Stop Live edit: changes no longer go onto the Timeline. Held changes stay in the editor, not on the Timeline" data-live-stop>Stop</button>
+      <button type="button" onclick={() => setLiveEdit(false)} title="Stop Live key: changes no longer go onto the Timeline. Held changes stay in the editor, not on the Timeline" data-live-stop>Stop</button>
     {/if}
   </div>
 {/if}

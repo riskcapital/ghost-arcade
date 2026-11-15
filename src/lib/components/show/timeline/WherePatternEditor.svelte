@@ -366,7 +366,7 @@
     { kind: 'kick', label: 'On the kick', hint: 'Steps to the next group on every kick of the song', cells: [[0], [0], [1], [2], [2], [3]] },
     { kind: 'reveal', label: 'One by one', hint: 'Groups light up one after another and stay lit', cells: [[0], [0, 1], [0, 1], [0, 1, 2], [0, 1, 2, 3], [0, 1, 2, 3]] },
     { kind: 'steps', label: 'Steps', hint: 'Your own steps: click squares in the grid, like the Sequencer', cells: [[0, 2], [1], [0, 3], [2], [1, 3], [0]] },
-    { kind: 'drawn', label: 'Draw it', hint: 'Draw where it is as a line on the block (or record it from a knob)' },
+    { kind: 'drawn', label: 'Draw it', hint: 'Draw where it is as a line on the block (or key it live from a knob)' },
   ];
   const motionKind = $derived(where?.motion.kind ?? null);
 </script>

@@ -4,12 +4,12 @@
    * it. Left: transport and time (home, play, stop, loop with what happens
    * at the end, the time readout, tempo, timecode). Middle: the editing
    * tools, snapping, the grid, the ruler and zoom (once there is something
-   * to edit). Right: the show's audio output, Record, a compact GO and
+   * to edit). Right: the show's audio output, Live key, a compact GO and
    * Perform, then the window buttons (room to work, help, more, close).
    *
    * It reads the show through slices; the time readout is the only part that
    * follows the playhead. Icons are blue (structure); coral only for what is
-   * live (Record on, Loop on, taken over).
+   * live (Live key on, Loop on, taken over).
    */
   import type { Snippet } from 'svelte';
   import { get } from 'svelte/store';
@@ -147,7 +147,7 @@
 
   // How tight the toolbar is (0 roomy … 3 tightest): stepped up until the
   // clusters fit on one row. 1: shorter labels; 2: icons only for Snap,
-  // Record's mode and Perform, no total; 3: the tools as one menu.
+  // Live key's mode and Perform, no total; 3: the tools as one menu.
   const FIT_MAX = 3;
   let fit = $state(0);
   const selectedTempo = $derived($selection?.kind === 'tempo');
@@ -259,7 +259,7 @@
   {/if}
 
   {#if isTimeline}
-    <div class="cl sep" data-help="Show control: Record what you change onto the Timeline, GO (the step on standby) and the Perform tab (cues, pads, takeover)." data-toolbar-show>
+    <div class="cl sep" data-help="Show control: Live key (what you change goes onto the Timeline), GO (the step on standby) and the Perform tab (cues, pads, takeover)." data-toolbar-show>
       <LineRecordControls />
       {#if goShown}
         <button class="go-mini" onclick={go} title={goTitle} data-midi-path="show:go" data-section-go data-toolbar-go>GO{#if goWord}<span class="go-sb hide2">{goWord}</span>{/if}</button>

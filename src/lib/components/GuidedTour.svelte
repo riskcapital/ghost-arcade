@@ -416,9 +416,9 @@
           prepare: openTimeline,
         },
         {
-          title: 'Record',
-          body: 'With Record on, what you change in the editor goes onto the Timeline: held for Update when stopped, recorded as it plays.',
-          bullets: ['The caret next to Record holds Touch or Latch, Follow edits and binding a knob'],
+          title: 'Live key',
+          body: 'With Live key on, what you change in the editor is keyed onto the Timeline: held for Update when stopped, keyed as it plays.',
+          bullets: ['The caret next to Live key holds Touch or Latch, Follow edits and binding a knob'],
           targets: ['[data-live-edit]'],
           prepare: openTimeline,
         },

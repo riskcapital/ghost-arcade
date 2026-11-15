@@ -1,5 +1,6 @@
 /**
- * Live edit: one switch for "what I change goes onto the Timeline".
+ * Live edit (called "Live key" in the app): one switch for "what I change
+ * goes onto the Timeline".
  *
  * On, it arms the line recorder with Follow edits (timelineLines.ts), so
  * every setting changed in the editor (Mapping, the panels, a controller)

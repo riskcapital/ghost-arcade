@@ -176,7 +176,7 @@ let passesShown = false;
 /** The longest take: a record run stops here on its own (show-time seconds of
  *  recording, so it also ends a run rolling on past the end of the Timeline). */
 export const MAX_TAKE_SECONDS = 30 * 60;
-export const TAKE_CAP_NOTICE = 'Recording stopped: a take can be 30 minutes at most';
+export const TAKE_CAP_NOTICE = 'Live key stopped: a take can be 30 minutes at most';
 /** Show time recorded in this take, and where the last frame was. */
 let takeSeconds = 0;
 let takeLast: number | null = null;

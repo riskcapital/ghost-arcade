@@ -7,7 +7,7 @@
    * Follow edits records every setting you change in the editor while
    * armed (Mapping, the panels, controllers), not only bound ones.
    *
-   * In the toolbar it is one split button: ● Record (Live edit; "Update"
+   * In the toolbar it is one split button: ● Live key ("Update"
    * while changes are held and the show is stopped) and the record mode
    * with a caret that opens the options. Notices show as a toast under it.
    */
@@ -100,32 +100,32 @@
       title={holding
         ? 'Update: key every held change on the Timeline where it was made'
         : $liveEditOn
-          ? 'Recording: what you change goes onto the Timeline (stopped: held for Update; playing: recorded). Click to stop'
-          : 'Record: what you change in the editor goes onto the Timeline. Stopped, changes are held until you press Update; playing, they are recorded'}
+          ? 'Live key on: what you change goes onto the Timeline (stopped: held for Update; playing: keyed as it plays). Click to stop'
+          : 'Live key: what you change in the editor is keyed onto the Timeline. Stopped, changes are held until you press Update; playing, they are keyed as it plays'}
       aria-pressed={$liveEditOn}
       data-live-edit
-    ><span class="lr-dot" class:writing={rec.writing}></span><span class="lr-label">{holding ? 'Update' : 'Record'}</span></button>
+    ><span class="lr-dot" class:writing={rec.writing}></span><span class="lr-label">{holding ? 'Update' : 'Live key'}</span></button>
     <button
       class="lr-caret"
       class:open={moreOpen}
       bind:this={moreAnchor}
       onclick={toggleMore}
-      title="Recording options: record lines, Touch or Latch, follow edits, bind a knob"
-      aria-label="Recording options"
+      title="Live key options: key lines live, Touch or Latch, follow edits, bind a knob"
+      aria-label="Live key options"
       aria-expanded={moreOpen}
       data-line-record-options
     ><span class="lr-mode" data-line-record-mode-word>{rec.mode === 'touch' ? 'Touch' : 'Latch'}</span><TimelineIcon name="caret" size={12} /></button>
   </span>
   {#if moreOpen}
-    <div class="lr-pop" style:left="{popPos.left}px" style:top="{popPos.top}px" role="dialog" aria-label="Recording options" data-line-record-pop data-tl-popover data-fit-ignore>
+    <div class="lr-pop" style:left="{popPos.left}px" style:top="{popPos.top}px" role="dialog" aria-label="Live key options" data-line-record-pop data-tl-popover data-fit-ignore>
       <div class="lr-row">
         <button class="lr-btn lr-arm" class:armed={rec.armed} class:writing={rec.writing} onclick={toggleArm} aria-pressed={rec.armed} data-line-arm>
-          <span class="lr-dot"></span>{rec.armed ? 'Recording lines' : 'Record lines'}
+          <span class="lr-dot"></span>{rec.armed ? 'Keying lines live' : 'Key lines live'}
         </button>
         <span class="lr-help">While it plays, moving a bound knob, a slider or the control of a line writes that line.</span>
       </div>
       <div class="lr-row">
-        <span class="lr-seg" role="radiogroup" aria-label="Record mode" data-line-record-mode>
+        <span class="lr-seg" role="radiogroup" aria-label="Live key mode" data-line-record-mode>
           <button type="button" role="radio" aria-checked={rec.mode === 'touch'} class:on={rec.mode === 'touch'} onclick={() => setRecordMode('touch')}>Touch</button>
           <button type="button" role="radio" aria-checked={rec.mode === 'latch'} class:on={rec.mode === 'latch'} onclick={() => setRecordMode('latch')}>Latch</button>
         </span>
@@ -143,7 +143,7 @@
       </div>
       {#if $liveEditOn}
         <div class="lr-row">
-          <button class="lr-btn" onclick={() => { setLiveEdit(false); moreOpen = false; }} data-live-edit-stop>Stop recording</button>
+          <button class="lr-btn" onclick={() => { setLiveEdit(false); moreOpen = false; }} data-live-edit-stop>Stop live key</button>
           <span class="lr-help">Changes no longer go onto the Timeline. Held changes stay in the editor.</span>
         </div>
       {/if}

@@ -69,7 +69,7 @@
 
 {#snippet actions(line: ControlLine)}
   <button class="lh-btn" class:on={!!line.follow} disabled={locked} onmousedown={(e) => e.stopPropagation()} onclick={(e) => openFollow(e, line)} title="What this line follows: the song, a stem, the beat, a Live knob, a MIDI CC" data-line-follow-btn>{followLabel(line.follow?.source)}</button>
-  <button class="lh-btn" class:armed={binding(line)} onmousedown={(e) => e.stopPropagation()} onclick={(e) => bind(e, line)} title="Touch a knob to bind: the next MIDI control you move drives this line (and records it when armed)" data-line-bind>{binding(line) ? 'touch…' : '🎛'}</button>
+  <button class="lh-btn" class:armed={binding(line)} onmousedown={(e) => e.stopPropagation()} onclick={(e) => bind(e, line)} title="Touch a knob to bind: the next MIDI control you move drives this line (and keys it live when armed)" data-line-bind>{binding(line) ? 'touch…' : '🎛'}</button>
   <button class="lh-btn" class:off={line.enabled === false} disabled={locked} onmousedown={(e) => e.stopPropagation()} onclick={() => toggleEnabled(line)} title={line.enabled === false ? 'Off: kept, drives nothing. Click to turn it on' : 'On: click to turn this line off without deleting it'} data-line-enable>{line.enabled === false ? 'off' : 'on'}</button>
   <button class="lh-btn" disabled={locked} onmousedown={(e) => e.stopPropagation()} onclick={() => remove(line)} title="Remove this line" aria-label="Remove this line" data-line-remove>×</button>
 {/snippet}
