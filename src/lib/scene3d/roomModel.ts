@@ -37,10 +37,16 @@ export type RoomFace = {
 export type RoomProjector = {
   position: Vec3;
   target: Vec3;
-  /** Vertical field of view, degrees. The aspect is the output's. */
+  /** Vertical field of view, degrees. */
   fov: number;
   /** Lens shift, in halves of the output (projector.ts). */
   shift?: { x: number; y: number };
+  /**
+   * The shape of its picture over the output (horizontal over vertical
+   * field). Unset: the output's aspect. Set by a phone scan whose Screen
+   * stretches the output (a 16:9 Screen showing a 16:10 output).
+   */
+  aspect?: number;
 };
 
 /**
@@ -197,6 +203,7 @@ export function validateRoom(raw: unknown): Room {
     const sh = obj(p.shift, 'projector shift');
     projector.shift = { x: num(sh.x, 'projector shift', 0, -3, 3), y: num(sh.y, 'projector shift', 0, -3, 3) };
   }
+  if (p.aspect !== undefined) projector.aspect = num(p.aspect, 'projector aspect', 16 / 9, 0.1, 10);
   if (length(sub(projector.target, projector.position)) < 1e-3) projector.target = add(projector.position, [0, 0, -1]);
   if (r.faces !== undefined && !Array.isArray(r.faces)) fail('faces', 'not a list');
   const faces = ((r.faces as unknown[] | undefined) ?? []).slice(0, MAX_ROOM_FACES).map(validateFace);

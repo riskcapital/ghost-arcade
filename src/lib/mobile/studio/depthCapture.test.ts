@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildDepthCapture, gravityInScan, outputCoverage, resampleEvenly, turnVector } from './depthCapture';
+import { buildDepthCapture, desktopFit, gravityInScan, outputCoverage, resampleEvenly, turnVector } from './depthCapture';
+import { fixtureDepthCapture } from './depthCaptureFixture';
 import { arCamera, BOX, PROJECTOR, SCREEN, syntheticRoomScan as scan, toWorld } from './depthCaptureFixture';
 import type { UV } from './structuredLight';
 import { fitPlane, roomFromCapture, validateDepthCapture } from '../../scene3d/roomPhone';
@@ -59,6 +60,24 @@ describe('depth capture for Depth mode', () => {
     const { capture } = buildDepthCapture({ grid: s.grid, screen: { ...SCREEN, region }, down: gravityInScan(s.depth.pose!, 0), surfaces: [{ id: 'wall', name: 'Wall', photo: s.wall }] });
     for (const p of capture.surfaces[0].samples) expect(p.uv.x).toBeGreaterThanOrEqual(0.5);
     for (const p of capture.surfaces[0].outline) expect(p.x).toBeGreaterThanOrEqual(0.5);
+  });
+
+  // The fixture's projector is 16:9 (square pixels) and shows the whole output; uv is on the OUTPUT.
+  for (const [label, aspect] of [['16:9', 16 / 9], ['16:10', 16 / 10], ['4:3', 4 / 3]] as const) {
+    it(`reads a Fit within 1 px for a 16:9 Screen on a ${label} output`, () => {
+      const { capture } = fixtureDepthCapture();
+      expect(capture.source.screen.region).toEqual({ x: 0, y: 0, width: 1, height: 1 });
+      expect(desktopFit(capture, aspect)!).toBeLessThan(1);
+      const { room } = roomFromCapture(validateDepthCapture(capture), aspect);
+      if (label === '16:9') expect(room.projector.aspect).toBeUndefined();
+      else expect(room.projector.aspect).toBeCloseTo(16 / 9, 6);
+    });
+  }
+
+  it('was off by many pixels on a 16:10 output when the Screen was not known', () => {
+    const { capture } = fixtureDepthCapture();
+    const { source: _source, ...bare } = capture;
+    expect(desktopFit(bare as typeof capture, 16 / 10)!).toBeGreaterThan(10);
   });
 
   it('keeps to the desktop’s limits by even resampling and simplifying, not truncating', () => {

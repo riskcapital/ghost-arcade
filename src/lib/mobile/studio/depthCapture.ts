@@ -29,6 +29,7 @@ import type { ScanGrid } from './meshMap';
 import { simplifyClosed } from './meshMap';
 import type { UV } from './structuredLight';
 import { DEPTH_CAPTURE_LIMITS, type DepthCaptureLimits } from './desktopCapabilities';
+import { roomFromCapture, validateDepthCapture } from '../../scene3d/roomPhone';
 
 export type Vec3 = [number, number, number];
 export type Turn = 0 | 90 | 180 | 270;
@@ -39,7 +40,8 @@ export type DepthCapture = {
   version: 1;
   down: Vec3;
   surfaces: DepthCaptureSurface[];
-  source: { device: string; screen: { id: string; width: number; height: number }; capturedAt: string };
+  /** `region`: the part of the output the Screen shows, which uv was mapped through (the desktop takes the lens's shape over the output from it). */
+  source: { device: string; screen: { id: string; width: number; height: number; region: OutputRegion }; capturedAt: string };
 };
 /** Where a Screen's picture sits in the desktop output (0..1). The whole output when not known. */
 export type OutputRegion = { x: number; y: number; width: number; height: number };
@@ -212,7 +214,7 @@ export function buildDepthCapture(input: CaptureInput): { capture: DepthCapture;
       version: 1,
       down: input.down.map((v) => round(v, 1e6)) as Vec3,
       surfaces,
-      source: { device, screen: { id: screen.id, width: screen.width, height: screen.height }, capturedAt: input.capturedAt ?? new Date().toISOString() },
+      source: { device, screen: { id: screen.id, width: screen.width, height: screen.height, region: { ...region } }, capturedAt: input.capturedAt ?? new Date().toISOString() },
     };
     return capture;
   };
@@ -237,3 +239,17 @@ export function buildDepthCapture(input: CaptureInput): { capture: DepthCapture;
 
 /** The file the desktop's "Open a depth capture" reads. */
 export const DEPTH_CAPTURE_FILE = 'Room-scan.ghostdepth.json';
+
+/**
+ * How well the desktop's own solve lines the scan up (output pixels at 1920
+ * wide), at the desktop output's aspect. The Screen's shape and region go
+ * with the capture, so a Screen of another shape than the output is solved
+ * as the desktop does. Null when it cannot be solved.
+ */
+export function desktopFit(capture: DepthCapture, outputAspect: number): number | null {
+  try {
+    return roomFromCapture(validateDepthCapture(capture), outputAspect).report.pixelError;
+  } catch {
+    return null;
+  }
+}

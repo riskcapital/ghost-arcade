@@ -10,10 +10,9 @@
  import {acquireNativeFeed} from '../../mobile/studio/nativeLive';
  import {openLidarAutoMapCamera} from '../../mobile/studio/lidarScan';
  import {mapCurvedSurfaces,buildCurvedSurface,sampleScan,type CurvedScan,type CurvedSurface,type MeshMode} from '../../mobile/studio/meshMap';
- import {buildDepthCapture,gravityInScan,DEPTH_CAPTURE_FILE,type DepthCapture,type CaptureReport} from '../../mobile/studio/depthCapture';
+ import {buildDepthCapture,desktopFit,gravityInScan,DEPTH_CAPTURE_FILE,type DepthCapture,type CaptureReport} from '../../mobile/studio/depthCapture';
  import {stageOf,type DepthScanRequest,type DepthScanStage} from '../../mobile/studio/depthScan';
  import type {DepthCaptureLimits} from '../../mobile/studio/desktopCapabilities';
- import {roomFromCapture,validateDepthCapture} from '../../scene3d/roomPhone';
  import {shareFile} from '../../mobile/studio/nativeShare';
  export let onclose:()=>void;
  export let onsend:((json:string)=>void)|undefined=undefined;
@@ -85,7 +84,7 @@
   return {...built,fitPx:fit(built.capture)};
  }
  /** How well the desktop's own solve will line it up (output pixels at 1920 wide). */
- function fit(capture:DepthCapture){try{return roomFromCapture(validateDepthCapture(capture),outputSize?outputSize.width/outputSize.height:16/9).report.pixelError;}catch{return null;}}
+ function fit(capture:DepthCapture){return desktopFit(capture,outputSize?outputSize.width/outputSize.height:16/9);}
  async function finishDepth(result:AutoMapResult|null){
   report('solving',1);message='Building the room scan…';await tick();
   if(FIXTURE&&!result){const {fixtureDepthCapture}=await import('../../mobile/studio/depthCaptureFixture');const f=fixtureDepthCapture();depthResult={...f,fitPx:fit(f.capture)};}

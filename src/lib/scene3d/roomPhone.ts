@@ -29,10 +29,20 @@ import type { Vec3 } from './sceneModel';
 
 export type CaptureSample = { p: Vec3; uv: Point };
 export type CaptureSurface = { id: string; name: string; outline: Point[]; samples: CaptureSample[] };
+/** Where a Screen's picture sits in the output (0..1 of the output). */
+export type CaptureRegion = { x: number; y: number; width: number; height: number };
+/**
+ * The Screen the stripes were shown on: its pixel size and the part of the
+ * output it shows (the whole output when not given). A Screen stretches its
+ * part of the output over its own pixels, so when the two shapes differ the
+ * output's pixels are not square through that projector.
+ */
+export type CaptureScreen = { width: number; height: number; region?: CaptureRegion };
 export type DepthCapture = {
   /** Which way gravity points in the phone's world. */
   down: Vec3;
   surfaces: CaptureSurface[];
+  screen?: CaptureScreen;
 };
 
 export type CaptureReport = {
@@ -45,8 +55,112 @@ export type CaptureReport = {
   samples: number;
 };
 
-const MAX_SURFACES = 48;
-const MAX_SAMPLES = 4000;
+/** What a capture may hold (the phone is told the same in the desktop's capabilities). */
+export const CAPTURE_LIMITS = { surfaces: 48, samplesPerSurface: 4000, samplesTotal: 60000, outline: 64 } as const;
+/** Larger than this is not a capture: refused before any work. */
+const RAW_LIMIT = 1_000_000;
+
+// ── Fitting a capture into the limits ─────────────────────────────────────
+
+/** `count` items spread evenly over the list, first and last kept, in order. */
+export function resampleEvenly<T>(items: readonly T[], count: number): T[] {
+  const n = items.length;
+  if (n <= count) return items.slice();
+  if (count <= 0) return [];
+  if (count === 1) return [items[0]];
+  const out: T[] = [];
+  for (let i = 0; i < count; i++) out.push(items[Math.round((i * (n - 1)) / (count - 1))]);
+  return out;
+}
+
+/** Distance from p to the segment a–b. */
+function segmentDistance(p: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 > 0 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0;
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+/**
+ * A closed outline cut down to at most `max` corners, keeping its shape:
+ * Ramer–Douglas–Peucker run by priority, so the corners that move the
+ * outline most are kept first. Starts from the two corners farthest apart,
+ * then keeps adding the corner furthest off the outline so far.
+ */
+export function simplifyOutline(points: readonly Point[], max: number = CAPTURE_LIMITS.outline): Point[] {
+  const n = points.length;
+  if (n <= max) return points.slice();
+  if (max < 3) throw new Error('An outline needs at least three corners.');
+  // The farthest corner from the first, then the farthest from that: two anchors across the shape.
+  const far = (from: number) => {
+    let best = from, d = -1;
+    for (let i = 0; i < n; i++) {
+      const di = Math.hypot(points[i].x - points[from].x, points[i].y - points[from].y);
+      if (di > d) { d = di; best = i; }
+    }
+    return best;
+  };
+  const a = far(0), b = far(a);
+  const kept = new Set<number>([a, b]);
+  // Each span runs from one kept corner forward (wrapping) to the next.
+  type Span = { from: number; to: number; at: number; off: number };
+  const measure = (from: number, to: number): Span => {
+    let at = -1, off = -1;
+    for (let i = (from + 1) % n; i !== to; i = (i + 1) % n) {
+      const d = segmentDistance(points[i], points[from], points[to]);
+      if (d > off) { off = d; at = i; }
+    }
+    return { from, to, at, off };
+  };
+  const spans: Span[] = [measure(a, b), measure(b, a)];
+  while (kept.size < max) {
+    let worst = 0;
+    for (let i = 1; i < spans.length; i++) if (spans[i].off > spans[worst].off) worst = i;
+    const span = spans[worst];
+    if (span.at < 0) break;
+    kept.add(span.at);
+    spans.splice(worst, 1, measure(span.from, span.at), measure(span.at, span.to));
+  }
+  return [...kept].sort((x, y) => x - y).map((i) => points[i]);
+}
+
+/**
+ * A capture inside the limits: the surfaces with the most samples, each
+ * surface's samples thinned evenly (to its own limit, then all together to
+ * the total), outlines simplified. Never cut off at the end of a list: a
+ * scan that runs over still covers every face end to end.
+ */
+export function fitCaptureToLimits(capture: DepthCapture): DepthCapture {
+  let surfaces = capture.surfaces;
+  if (surfaces.length > CAPTURE_LIMITS.surfaces) {
+    const keep = new Set(
+      surfaces.map((s, i) => ({ i, n: s.samples.length })).sort((x, y) => y.n - x.n || x.i - y.i).slice(0, CAPTURE_LIMITS.surfaces).map((x) => x.i),
+    );
+    surfaces = surfaces.filter((_, i) => keep.has(i));
+  }
+  surfaces = surfaces.map((s) => ({ ...s, outline: simplifyOutline(s.outline), samples: resampleEvenly(s.samples, CAPTURE_LIMITS.samplesPerSurface) }));
+  const total = surfaces.reduce((a, s) => a + s.samples.length, 0);
+  if (total > CAPTURE_LIMITS.samplesTotal) {
+    const share = CAPTURE_LIMITS.samplesTotal / total;
+    surfaces = surfaces.map((s) => ({ ...s, samples: resampleEvenly(s.samples, Math.floor(s.samples.length * share)) }));
+  }
+  return { down: capture.down, surfaces, ...(capture.screen ? { screen: capture.screen } : {}) };
+}
+
+/**
+ * The shape of the projector's picture over the whole output (the ratio of
+ * its horizontal to vertical field across the output). A Screen showing the
+ * part `region` of the output on `width` × `height` square pixels: the
+ * output's own aspect when the Screen keeps the shape, something else when
+ * it stretches (a 16:9 Screen showing a 16:10 output). Without a Screen, the
+ * output's aspect.
+ */
+export function lensAspect(screen: CaptureScreen | undefined, outputAspect: number): number {
+  if (!screen || !(screen.width > 0) || !(screen.height > 0)) return outputAspect;
+  const r = screen.region ?? { x: 0, y: 0, width: 1, height: 1 };
+  const a = (screen.width / screen.height) * (r.height / r.width);
+  return Number.isFinite(a) && a > 0.05 && a < 20 ? a : outputAspect;
+}
 
 // ── Validation ────────────────────────────────────────────────────────────
 
@@ -64,29 +178,51 @@ const point = (raw: unknown, where: string): Point => {
   return { x: p!.x as number, y: p!.y as number };
 };
 
+/**
+ * A capture from anywhere (a file the phone app saved, or one it sent),
+ * checked and fitted into the limits. Larger captures are thinned evenly,
+ * not cut off.
+ */
 export function validateDepthCapture(raw: unknown): DepthCapture {
-  const c = raw as { down?: unknown; surfaces?: unknown } | null;
+  const c = raw as { down?: unknown; surfaces?: unknown; source?: unknown } | null;
   if (!c || typeof c !== 'object') fail('', 'not an object');
   const down = normalize(vec(c!.down, 'down'));
   if (length(down) < 0.5) fail('down', 'no direction');
   if (!Array.isArray(c!.surfaces) || !c!.surfaces.length) fail('surfaces', 'none');
-  const surfaces = (c!.surfaces as unknown[]).slice(0, MAX_SURFACES).map((raw, i): CaptureSurface => {
+  if ((c!.surfaces as unknown[]).length > 1000) fail('surfaces', 'more than 1000');
+  let points = 0;
+  const surfaces = (c!.surfaces as unknown[]).map((raw, i): CaptureSurface => {
     const s = raw as { id?: unknown; name?: unknown; outline?: unknown; samples?: unknown };
     const where = `surface ${i + 1}`;
     if (!s || typeof s.id !== 'string' || !s.id) fail(where, 'no id');
     if (!Array.isArray(s.outline) || s.outline.length < 3) fail(where, 'outline of fewer than three points');
     if (!Array.isArray(s.samples)) fail(where, 'no samples');
+    points += (s.outline as unknown[]).length + (s.samples as unknown[]).length;
+    if (points > RAW_LIMIT) fail('', 'more than a million points');
     return {
       id: s.id as string,
       name: typeof s.name === 'string' ? s.name.slice(0, 80) : `Face ${i + 1}`,
-      outline: (s.outline as unknown[]).slice(0, 64).map((p, j) => point(p, `${where} outline ${j + 1}`)),
-      samples: (s.samples as unknown[]).slice(0, MAX_SAMPLES).map((q, j) => {
+      outline: (s.outline as unknown[]).map((p, j) => point(p, `${where} outline ${j + 1}`)),
+      samples: (s.samples as unknown[]).map((q, j) => {
         const sample = q as { p?: unknown; uv?: unknown };
         return { p: vec(sample?.p, `${where} sample ${j + 1}`), uv: point(sample?.uv, `${where} sample ${j + 1}`) };
       }),
     };
   });
-  return { down, surfaces };
+  const screen = captureScreen((c!.source as { screen?: unknown } | undefined)?.screen);
+  return fitCaptureToLimits({ down, surfaces, ...(screen ? { screen } : {}) });
+}
+
+/** The capture's Screen, when it names a usable size (and region); otherwise none (the output's shape is assumed). */
+function captureScreen(raw: unknown): CaptureScreen | undefined {
+  const s = raw as { width?: unknown; height?: unknown; region?: unknown } | null | undefined;
+  if (!s || typeof s !== 'object' || !finite(s.width) || !finite(s.height) || (s.width as number) < 1 || (s.height as number) < 1) return undefined;
+  const screen: CaptureScreen = { width: s.width as number, height: s.height as number };
+  const r = s.region as Partial<CaptureRegion> | null | undefined;
+  if (r && typeof r === 'object' && [r.x, r.y, r.width, r.height].every(finite) && r.width! > 1e-3 && r.height! > 1e-3) {
+    screen.region = { x: r.x!, y: r.y!, width: r.width!, height: r.height! };
+  }
+  return screen;
 }
 
 // ── Linear algebra ────────────────────────────────────────────────────────
@@ -160,6 +296,8 @@ export type SolvedProjector = {
  * The projector from points and the pixels they show at. Output points are
  * taken as x right, y up from −1 to 1 (a pixel's place on the output), so
  * a pinhole maps (camera x, y, z forward) to (fx·x/z + cx, fy·y/z + cy).
+ * `aspect` is the shape of the projector's picture over the output
+ * (lensAspect): fx·aspect = fy for a lens with square pixels.
  */
 export function solveProjector(pairs: CaptureSample[], aspect: number): SolvedProjector {
   if (pairs.length < 6) throw new Error('Depth capture: fewer than six points to place the projector.');
@@ -228,13 +366,16 @@ const TOP = Math.cos((35 * Math.PI) / 180);
  */
 export function roomFromCapture(capture: DepthCapture, aspect: number, surfaceId: (id: string) => string = (id) => id): { room: Room; report: CaptureReport } {
   const pairs = capture.surfaces.flatMap((s) => s.samples);
-  const pr = solveProjector(pairs, aspect);
+  // uv is on the output; the lens's own pixels are square, so through a
+  // Screen that stretches the output its shape over the output differs.
+  const lens = lensAspect(capture.screen, aspect);
+  const pr = solveProjector(pairs, lens);
   // Into the projector's frame: it at the origin, right +X, up +Y, looking down −Z.
   const into = (p: Vec3): Vec3 => { const r = sub(p, pr.position); return [dot(r, pr.right), dot(r, pr.up), -dot(r, pr.fwd)]; };
   const turn = (d: Vec3): Vec3 => [dot(d, pr.right), dot(d, pr.up), -dot(d, pr.fwd)];
   const down = normalize(turn(capture.down));
   const up = scale(down, -1);
-  const basis = projectorBasis([0, 0, 0], [0, 0, -1], pr.fov, aspect, [pr.shift.x, pr.shift.y]);
+  const basis = projectorBasis([0, 0, 0], [0, 0, -1], pr.fov, lens, [pr.shift.x, pr.shift.y]);
   let pixel = 0;
   let planeError = 0, planes = 0;
   for (const s of pairs) {
@@ -266,7 +407,11 @@ export function roomFromCapture(capture: DepthCapture, aspect: number, surfaceId
     faces.push({ surfaceId: surfaceId(s.id), role, origin, u, v, points: flat, depth: Math.max(0.05, Math.min(1.5, extent)) });
   }
   return {
-    room: { source: 'phone', projector: { position: [0, 0, 0], target: [0, 0, -1], fov: pr.fov, shift: { ...pr.shift } }, down, floor: true, faces },
+    room: {
+      source: 'phone',
+      projector: { position: [0, 0, 0], target: [0, 0, -1], fov: pr.fov, shift: { ...pr.shift }, ...(Math.abs(lens / aspect - 1) > 1e-3 ? { aspect: lens } : {}) },
+      down, floor: true, faces,
+    },
     report: { pixelError: pixel / Math.max(1, pairs.length), planeError: planeError / Math.max(1, planes), fov: pr.fov, shift: pr.shift, samples: pairs.length },
   };
 }
