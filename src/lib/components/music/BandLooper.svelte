@@ -115,7 +115,7 @@
     >Chop to pads</button>
     <button class="studio-btn" disabled={!padsChopped} onclick={putBackPads} title="Put back the sounds the FX pads had before they were chopped">Put back pads</button>
   </div>
-  <span class="hint">Chops play from the FX pads until the studio closes. They are not saved with the project.</span>
+  <span class="hint">Chops play from the FX pads until Audio Lab closes. They are not saved with the project.</span>
 </section>
 
 <style>

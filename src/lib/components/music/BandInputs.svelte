@@ -25,7 +25,7 @@
   const seconds = (v: number) => (v < 1 ? `${Math.round(v * 1000)} ms` : `${v.toFixed(2)} s`);
 
   const withBandHint = $derived(
-    fx.duckDepth > 0 && !hasKick ? 'Set an input to Kick for the studio to dip under it.'
+    fx.duckDepth > 0 && !hasKick ? 'Set an input to Kick for Audio Lab to dip under it.'
     : fx.followBass && !hasBass ? 'Set an input to Bass for the drone to follow it.'
     : fx.followBass ? 'Hold a chord on the drone: it moves to the bass note.'
     : 'Duck hears inputs set to Kick; Follow bass hears inputs set to Bass.',

@@ -715,13 +715,13 @@ registerPlugin({
   },
 });
 
-// ─── Music Studio — the studio's visual voices as one picture ─────────
+// ─── Audio Lab — its visual voices as one picture ───────────────────────
 // Its controls are the studio itself (open it from the clip or the layer);
 // the instance holds the voices, their sounds, looks and levels.
 if (MUSIC_STUDIO) registerPlugin({
   id: STUDIO_PLUGIN_ID,
-  name: 'Music Studio',
-  description: 'Visuals that follow the music: a stack of voices, each following one sound (the kick, the bass, the chords), mixed into one picture. Load a scene and change voices from the studio.',
+  name: 'Audio Lab',
+  description: 'Visuals that follow the music: a stack of voices, each following one sound (the kick, the bass, the chords), mixed into one picture. Load a scene and change voices in Audio Lab.',
   category: 'Generators',
   version: '1.0.0',
   author: 'Ghost Arcade',

@@ -24,6 +24,7 @@ import { createNativeVideoScratchController } from '../renderer/nativeVideoScrat
 import { runAsLiveControl } from '../stores/historyHooks';
 import { mappingHearsDevice, midiInputsInUse } from './midiInputs';
 import { STUDIO_SCOPE, runStudioControl, studioControl } from '../music/studioControls';
+import { missingAddon } from '../plugins/addons';
 
 // Controller, OSC, DMX and keyboard writes are performance, not edits: they
 // must not become undo steps (a fader would fill the undo history in a
@@ -646,7 +647,8 @@ class MidiRouter {
     // that wants toggle-style behaviour should use binding mode='latch'
     // which dispatches a flipping 0/1.
     if (contentType === 'plugin') {
-      if (!layer.source?.effectSource) return;
+      // A layer from an add-on this build leaves out keeps its settings.
+      if (!layer.source?.effectSource || missingAddon(layer.source.effectSource.effectType)) return;
       const paramKey = matchControlKey(names.slice(2).join(':'), layer.source.effectSource);
       if (!paramKey) return;
       if (mapping.mode === 'toggle' && value <= 0) return;
@@ -1164,7 +1166,7 @@ class MidiRouter {
         const grid = bank === 'B' ? state.bankBClipGrid : state.clipGrid;
         const layerState = layerStates[layerIndex];
         const clip = layerState?.activeClip;
-        if (!clip?.effectSource) break;
+        if (!clip?.effectSource || missingAddon(clip.effectSource.effectType)) break;
         let columnIndex = layerState.activeColumn;
         if (columnIndex === null || columnIndex === undefined) {
           const found = grid[layerIndex]?.findIndex(candidate => candidate?.id === clip.id) ?? -1;

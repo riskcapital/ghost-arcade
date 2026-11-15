@@ -2,6 +2,7 @@ import { arrayBufferToBase64 } from '../utils/bytesBase64';
 import { scene3dPrecompileCommands } from './scene3dShaders';
 import { scene3dWorldPrecompileCommands } from './scene3dWorldShaders';
 import { videosynthPrecompileCommands } from '../videosynth/shaders';
+import { ANALOG_SYNTH } from '$lib/features';
 import {MATTER_EMISSION,MATTER_GEOMETRY,MATTER_FLUID,MATTER_PARTICLES,MATTER_MASS,MATTER_LIGHT,MATTER_RENDER} from './nativeInteractiveMatter';
 import {buildInteractiveGraph,INTERACTIVE_COMPUTE,INTERACTIVE_RENDER} from './nativeInteractiveGraph';
 import { VOYAGE_SCENES, VOYAGE_WGSL } from '$lib/effects/ghostfx/scenes/voyage.wgsl';
@@ -631,7 +632,8 @@ export function buildNativePluginPrecompileCommands(): NativePluginPrecompileCom
     { type: 'precompile_shader', shader_id: 'performer-world/render', stage: 'render', source: PERFORMER_WORLD_RENDER_WGSL, entry: 'fs_main' },
     ...scene3dPrecompileCommands(),
     ...scene3dWorldPrecompileCommands(),
-    ...videosynthPrecompileCommands(),
+    // Analog Synth only in a build that has it: its shader stays out of one that does not.
+    ...(ANALOG_SYNTH ? videosynthPrecompileCommands() : []),
   ];
 }
 

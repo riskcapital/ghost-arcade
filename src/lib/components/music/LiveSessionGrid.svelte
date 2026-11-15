@@ -76,7 +76,7 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" /></svg>
             </button>
           </div>
-          <select aria-label="{track.name}: also plays as a studio sound" value={s.liveRoles[track.name] ?? ''} onchange={(e) => setRole(track.name, (e.target as HTMLSelectElement).value)} title="Visuals can follow this track itself (Visuals panel); it can also play as one of the studio's sounds, for visuals already following that sound">
+          <select aria-label="{track.name}: also plays as an Audio Lab sound" value={s.liveRoles[track.name] ?? ''} onchange={(e) => setRole(track.name, (e.target as HTMLSelectElement).value)} title="Visuals can follow this track itself (Visuals panel); it can also play as one of Audio Lab's sounds, for visuals already following that sound">
             <option value="">Its own visuals</option>
             {#each PART_SOURCES as v (v.id)}<option value={v.id}>{v.label}</option>{/each}
           </select>
@@ -85,10 +85,10 @@
       {#each Array.from({ length: rows }, (_, i) => i) as row (row)}
         {@const scene = live.scenes[row]}
         {@const studioScene = scene ? studioSceneName(row) : null}
-        <button class="scene" class:queued={scene?.queued} disabled={!scene} onclick={() => abletonBridge.launchScene(row)} title={scene ? `Launch ${scene.name || `scene ${row + 1}`} in Live${studioScene ? `; brings the studio scene ${studioScene}` : ''}` : ''}>
+        <button class="scene" class:queued={scene?.queued} disabled={!scene} onclick={() => abletonBridge.launchScene(row)} title={scene ? `Launch ${scene.name || `scene ${row + 1}`} in Live${studioScene ? `; brings Audio Lab scene ${studioScene}` : ''}` : ''}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5l12 7-12 7z" /></svg>
           <span>{scene?.name || `Scene ${row + 1}`}</span>
-          {#if studioScene}<span class="linked" aria-label="Brings studio scene {studioScene}">◆</span>{/if}
+          {#if studioScene}<span class="linked" aria-label="Brings Audio Lab scene {studioScene}">◆</span>{/if}
         </button>
         {#each live.tracks as track, t (t)}
           {@const clip = track.slots[row]}

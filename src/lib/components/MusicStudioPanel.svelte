@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * One Music Studio instance's visuals: its scene, its palette and its
+   * One Audio Lab instance's visuals: its scene, its palette and its
    * stack of voices (the shader, the sound it follows, whether it comes and
    * goes with that sound, its level and its look). The same panel edits a
    * studio clip in a VJ cell, a mapping layer showing the studio, and the
@@ -156,11 +156,11 @@
   <div class="msp-actions">
     <button class="msp-btn" onclick={addVoice}>+ Add voice</button>
     {#if showOpen && $vjClipLauncher.isOpen}
-      <button class="msp-btn" onclick={() => musicStudio.setStudioView(true)} title="Open the music studio: play the instruments, or let Ableton Live drive these voices">Open studio</button>
+      <button class="msp-btn" onclick={() => musicStudio.setStudioView(true)} title="Open Audio Lab: play the instruments, or let Ableton Live drive these voices">Open Audio Lab</button>
     {/if}
   </div>
   {#if showOpen && !$vjClipLauncher.isOpen}
-    <p class="msp-empty">The music comes from the studio in VJ mode, or Ableton Live through it. Until it plays, every voice shows at rest.</p>
+    <p class="msp-empty">The music comes from Audio Lab in VJ mode, or Ableton Live through it. Until it plays, every voice shows at rest.</p>
   {/if}
 </div>
 

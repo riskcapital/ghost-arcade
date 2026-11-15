@@ -108,7 +108,7 @@
           <div class="shortcut-row"><kbd>1</kbd>-<kbd>9</kbd><span>Trigger columns 1-9</span></div>
           <div class="shortcut-row"><kbd>0</kbd><span>Trigger column 10</span></div>
           <div class="shortcut-row"><kbd>F1</kbd>-<kbd>F8</kbd><span>Switch blocks 1-8</span></div>
-          {#if MUSIC_STUDIO}<div class="shortcut-row"><kbd>`</kbd><span>Studio view or VJ deck (the music keeps playing)</span></div>{/if}
+          {#if MUSIC_STUDIO}<div class="shortcut-row"><kbd>`</kbd><span>Audio Lab or VJ deck (the music keeps playing)</span></div>{/if}
         </div>
       </div>
       </div>

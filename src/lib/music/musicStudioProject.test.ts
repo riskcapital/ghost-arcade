@@ -280,6 +280,47 @@ describe('music studio in the project file', () => {
     expect(get(vjClipLauncher).clipGrid[0][1]?.effectSource).toEqual(source);
   });
 
+  it('opens a project saved before the rename to Audio Lab unchanged, and saves it back the same', () => {
+    // As 2.1.11 wrote it: a layer and its source named "Music Studio", and an Analog Synth layer.
+    const studioSource = {
+      effectType: 'music-studio',
+      musicSet: 'dub',
+      musicSceneId: null,
+      musicVoices: [{ file: 'VX-Scope.fs', source: 'lead', auto: false, level: 0.4, params: { scale: 2 } }],
+    };
+    const synthSource = { effectType: 'videosynth', vsFeedback: 0.42, vsMix: 1 };
+    const older = {
+      version: '2.1.11',
+      project: {
+        id: 'old', name: 'Old show', width: 1920, height: 1080,
+        layers: [
+          { id: 'old-studio', name: 'Music Studio', type: 'media', visible: true, opacity: 1,
+            source: { id: 'plugin-musicstudio-old', type: 'effect', name: 'Music Studio', src: 'plugin://musicstudio', effectSource: studioSource } },
+          { id: 'old-synth', name: 'Analog Synth', type: 'media', visible: true, opacity: 1,
+            source: { id: 'plugin-analog-old', type: 'effect', name: 'Analog Synth', src: 'plugin://analog-synth', effectSource: synthSource } },
+        ],
+      },
+      musicStudio: { schemaVersion: 1 },
+    };
+    const kept = (id: string) => {
+      const layer = get(layers.project).layers.find((l) => l.id === id);
+      return { name: layer?.name, source: layer?.source };
+    };
+    expect(layers.project.importProject(JSON.parse(JSON.stringify(older)))).toBe(true);
+    // The store adds its runtime fields (isPlaying…); what was saved is all there, as it was.
+    expect(kept('old-studio')).toMatchObject({ name: 'Music Studio', source: older.project.layers[0].source });
+    expect(kept('old-studio').source?.effectSource).toEqual(studioSource);
+    expect(kept('old-synth')).toMatchObject({ name: 'Analog Synth', source: older.project.layers[1].source });
+    expect(kept('old-synth').source?.effectSource).toEqual(synthSource);
+
+    const saved = JSON.parse(JSON.stringify(layers.project.exportProject())) as { project: { layers: Array<{ id: string; name: string; source: unknown }> } };
+    for (const original of older.project.layers) {
+      const out = saved.project.layers.find((l) => l.id === original.id);
+      expect(out?.name).toBe(original.name);
+      expect(out?.source).toMatchObject(original.source);
+    }
+  });
+
   it('File > New resets the studio', () => {
     playSomething();
     layers.PROJECT_SECTION_RESETS.musicStudio();

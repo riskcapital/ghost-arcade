@@ -316,9 +316,10 @@ jobs:
       - name: Build frontend
         run: npm run build
         # The installers are downloadable: built as a release is, without
-        # the Music Studio (src/lib/features.ts). The tests above keep it.
+        # the add-ons (src/lib/features.ts). The tests above keep them.
         env:
           VITE_MUSIC_STUDIO: 'off'
+          VITE_ANALOG_SYNTH: 'off'
       - name: Package (AppImage + deb)
         run: npx electron-builder --linux AppImage deb --publish never
         env:

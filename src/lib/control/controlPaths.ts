@@ -234,11 +234,11 @@ export function validateControlPath(path: string): ControlPathValidation {
   return { valid: false, normalized, reason: `Unknown VJ target "${target ?? ''}".` };
 }
 
-// The Music Studio's own paths, listed only in a build that has the Studio.
+// Audio Lab's own paths, listed only in a build that has it.
 if (MUSIC_STUDIO) CONTROL_PATH_EXAMPLES.push(
-  { path: 'studio:band.throw', label: "Throw the band into the studio's echo (hold)" },
+  { path: 'studio:band.throw', label: "Throw the band into Audio Lab's echo (hold)" },
   { path: 'studio:band.freeze', label: "Freeze the band's sound" },
-  { path: 'studio:pad.1', label: 'Studio FX pad 1' },
+  { path: 'studio:pad.1', label: 'Audio Lab FX pad 1' },
   { path: 'studio:voice.1.level', label: 'Level of the first look on the instrument feeds' },
   { path: 'studio:song.next', label: 'Next song in the set list' },
 );

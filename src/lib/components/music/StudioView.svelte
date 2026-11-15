@@ -253,7 +253,7 @@
         <span class="lower-key">{lowerSubtitle}</span>
         {#if !s.liveControl}<button class="text-btn small" onclick={() => loopBrowser.set({ track: null, row: null })} title="Browse every loop: preview, star, and add">Loops</button>{/if}
         {#snippet liveButton()}
-          <button class="text-btn small" class:on={s.liveControl} aria-pressed={s.liveControl} onclick={toggleLiveControl} title={s.liveControl ? "Go back to the studio's own loops and scenes" : "Play with Ableton Live: its clips and scenes launch from here, each Live track can drive visuals, and the studio's instruments play on top"}><span class="live-led" class:on={s.liveControl} class:linked={s.liveControl && $abletonBridge.connected} aria-hidden="true"></span>Ableton Live</button>
+          <button class="text-btn small" class:on={s.liveControl} aria-pressed={s.liveControl} onclick={toggleLiveControl} title={s.liveControl ? "Go back to Audio Lab's own loops and scenes" : "Play with Ableton Live: its clips and scenes launch from here, each Live track can drive visuals, and Audio Lab's instruments play on top"}><span class="live-led" class:on={s.liveControl} class:linked={s.liveControl && $abletonBridge.connected} aria-hidden="true"></span>Ableton Live</button>
         {/snippet}
         {#if !s.liveControl}<LoopRecorderBar split extra={liveButton} />{:else}<div class="live-row">{@render liveButton()}</div>{/if}
       {/if}
@@ -301,11 +301,11 @@
 {/snippet}
 
 {#if open}
-  <div class="studio-view studio-tokens set-{s.set}" class:lower-tall={lowerTall} role="region" aria-label="Studio view" bind:this={root}>
+  <div class="studio-view studio-tokens set-{s.set}" class:lower-tall={lowerTall} role="region" aria-label="Audio Lab" bind:this={root}>
     <header class="bar" use:windowCaption use:wheelScrollsSideways>
-      <span class="bar-title">Studio</span>
+      <span class="bar-title">Audio Lab</span>
       <div class="group">
-        <button class="transport" class:on={playing} onclick={toggleAll} title={playing ? 'Stop everything (effects ring out)' : 'Play: the beat, or what was playing when you stopped'} aria-label={playing ? 'Stop everything' : 'Play'} data-midi-path="studio:studio.play" data-midi-label="Play or stop the studio" data-midi-mode="toggle">
+        <button class="transport" class:on={playing} onclick={toggleAll} title={playing ? 'Stop everything (effects ring out)' : 'Play: the beat, or what was playing when you stopped'} aria-label={playing ? 'Stop everything' : 'Play'} data-midi-path="studio:studio.play" data-midi-label="Play or stop Audio Lab" data-midi-mode="toggle">
           {#if playing}
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
           {:else}
@@ -347,11 +347,11 @@
           <option value="" disabled>…</option>
           <option value="deck">Deck ({STUDIO_VIEW_KEY_LABEL})</option>
           <option value="tray">Tray</option>
-          <option value="exit">Exit the studio</option>
+          <option value="exit">Exit Audio Lab</option>
         </select>
-        <button class="text-btn wide-only" onclick={showDeck} title="Go to the VJ deck to mix; the music keeps playing ({STUDIO_VIEW_KEY_LABEL} switches back and forth)" data-midi-path="studio:studio.view" data-midi-label="Studio view or VJ deck" data-midi-mode="toggle">Deck</button>
-        <button class="text-btn wide-only" onclick={showTray} title="Back to the music tray under the deck; the music keeps playing">Tray</button>
-        <button class="text-btn wide-only" onclick={() => musicStudio.close()} title="Close the studio and stop the music">Exit</button>
+        <button class="text-btn wide-only" onclick={showDeck} title="Go to the VJ deck to mix; the music keeps playing ({STUDIO_VIEW_KEY_LABEL} switches back and forth)" data-midi-path="studio:studio.view" data-midi-label="Audio Lab or VJ deck" data-midi-mode="toggle">Deck</button>
+        <button class="text-btn wide-only" onclick={showTray} title="Back to the Audio Lab tray under the deck; the music keeps playing">Tray</button>
+        <button class="text-btn wide-only" onclick={() => musicStudio.close()} title="Close Audio Lab and stop the music">Exit</button>
       </div>
     </header>
 

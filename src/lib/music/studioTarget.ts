@@ -169,14 +169,14 @@ function studioClip() {
   return {
     id: generateUUID(),
     type: 'effect' as const,
-    name: 'Music Studio',
+    name: 'Audio Lab',
     src: `plugin://${STUDIO_PLUGIN_ID}`,
     effectSource: defaultStudioSource(),
   };
 }
 
 /**
- * Put a Music Studio instance in place: the first free cell on deck A (the
+ * Put an Audio Lab instance in place: the first free cell on deck A (the
  * selected row first), launched; in mapping, the selected media layer, or a
  * new media layer. Returns the instance, or null when there is no room.
  */
@@ -199,7 +199,7 @@ export function placeStudio(): StudioTarget | null {
   }
   const p = get(project);
   const selected = (p.layers as Layer[]).find((l) => l.id === p.selectedLayerId);
-  const layerId = selected && selected.type === 'media' ? selected.id : project.addLayer('Music Studio', 'media');
+  const layerId = selected && selected.type === 'media' ? selected.id : project.addLayer('Audio Lab', 'media');
   if (!layerId) return null;
   const clip = studioClip();
   project.setLayerSource(layerId, { id: `plugin-${STUDIO_PLUGIN_ID}-${layerId}-${Date.now()}`, type: 'effect', name: clip.name, src: clip.src, effectSource: clip.effectSource } as MediaSource);

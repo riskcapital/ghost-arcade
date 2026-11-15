@@ -61,10 +61,10 @@
 </script>
 
 {#if shown}
-  <div class="deck-strip studio-tokens" role="toolbar" aria-label="Studio on the deck">
+  <div class="deck-strip studio-tokens" role="toolbar" aria-label="Audio Lab on the deck">
     <div class="group">
-      <button class="text-btn small" onclick={showStudioView} title="Back to the Studio view; the music keeps playing ({STUDIO_VIEW_KEY_LABEL})" data-midi-path="studio:studio.view" data-midi-label="Studio view or VJ deck" data-midi-mode="toggle">Studio</button>
-      <button class="text-btn small" onclick={showTray} title="Show the music tray under the deck">Tray</button>
+      <button class="text-btn small" onclick={showStudioView} title="Back to Audio Lab; the music keeps playing ({STUDIO_VIEW_KEY_LABEL})" data-midi-path="studio:studio.view" data-midi-label="Audio Lab or VJ deck" data-midi-mode="toggle">Audio Lab</button>
+      <button class="text-btn small" onclick={showTray} title="Show the Audio Lab tray under the deck">Tray</button>
     </div>
     <span class="sep" aria-hidden="true"></span>
     <SongStrip />
@@ -97,7 +97,7 @@
       <button class="text-btn small hold" class:on={$bandState.frozen} aria-pressed={$bandState.frozen} onclick={() => void toggleFreeze()} title={$bandState.freezeError ?? ($bandState.frozen ? 'Let the frozen moment go' : 'Hold the last moment of sound as a texture')} data-midi-path="studio:band.freeze" data-midi-label="Freeze the band" data-midi-mode="toggle">{$bandState.frozen ? 'Frozen' : 'Freeze'}</button>
     </div>
     <span class="sep" aria-hidden="true"></span>
-    <div class="voices" role="group" aria-label="Studio looks">
+    <div class="voices" role="group" aria-label="Audio Lab looks">
       {#each voices as voice, i (i)}
         <div class="voice" title="{voiceName(voice.file)}, following {sourceName(voice.source).toLowerCase()}">
           <StudioKnob
@@ -114,7 +114,7 @@
           <span class="voice-name">{voiceName(voice.file)}</span>
         </div>
       {:else}
-        <span class="muted none">No studio looks on the deck</span>
+        <span class="muted none">No Audio Lab looks on the deck</span>
       {/each}
     </div>
   </div>

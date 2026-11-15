@@ -155,16 +155,16 @@ async function begin(opts: StudioRecOptions): Promise<void> {
   const engine = studioAudio();
   const master = engine.recordingNode();
   const ctx = master?.context as AudioContext | undefined;
-  takeName = `Studio ${new Date().toISOString().slice(0, 19).replace('T', ' ').replace(/:/g, '.')}`;
+  takeName = `Audio Lab ${new Date().toISOString().slice(0, 19).replace('T', ' ').replace(/:/g, '.')}`;
   try {
     if (opts.mode === 'video') {
       video = startRecording({
-        namePrefix: 'Studio',
+        namePrefix: 'Audio Lab',
         onComplete: () => {
           video = null;
           // The recorder keeps the file in the media library; list the newest studio one.
           const items = get(mediaLibrary) as unknown as Array<{ name: string; _assetRef?: { originalPath?: string } }>;
-          const item = [...items].reverse().find((i) => i.name.startsWith('Studio'));
+          const item = [...items].reverse().find((i) => i.name.startsWith('Audio Lab'));
           remember({ name: item?.name ?? takeName, kind: 'video', path: item?._assetRef?.originalPath ?? null });
           if (!captures.length) studioRec.set({ phase: 'idle', startedAt: 0, mode: opts.mode });
         },
