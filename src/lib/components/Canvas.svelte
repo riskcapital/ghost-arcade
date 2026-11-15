@@ -7,7 +7,7 @@
   import { compositionTransition } from '../stores/compositionTransition';
   import { applyCompositionFadeFrame, buildCompositionTransitionLayers, compositionTransitionSceneKey } from '../renderer/compositionTransitionLayers';
   import { applyStageFxFrame, NO_STAGE_FX, type StageFxFrameValues } from '../renderer/stageFxFrame';
-  import { GHOSTFX_DEFAULT_BG_ALPHA } from '../effects/ghostfx/defaults';
+  import { ghostfxFallbackParams } from '../effects/ghostfx/defaults';
   import { showTrackFrame, showClipSources } from '../stores/showTrackFrame';
   import { takeoverFrame, takeoverMediaSources, takeoverRenderHeld } from '../stores/takeoverFrame';
   import { buildTakeoverScene } from '../show/takeover/takeoverScene';
@@ -7002,38 +7002,7 @@
         } else if (effectSource.effectType === 'ghostfx') {
           const fx = new _GhostFXVisualizerCtor!(width, height);
           fx.init(renderer);
-          fx.setParams({
-            scenePreset:        effectSource.ghostfxScenePreset        ?? 'drift',
-            voyageMotion: effectSource.ghostfxVoyageMotion ?? 0.6,
-            voyageDetail: effectSource.ghostfxVoyageDetail ?? 6,
-            voyageDepth: effectSource.ghostfxVoyageDepth ?? 1,
-            voyagePalette: effectSource.ghostfxVoyagePalette ?? 0,
-            sensitivity:        effectSource.ghostfxSensitivity        ?? 1.4,
-            hueDriftSpeed:      effectSource.ghostfxHueDriftSpeed      ?? 0.15,
-            bloomIntensity:     effectSource.ghostfxBloomIntensity     ?? 1.4,
-            bloomThreshold:     effectSource.ghostfxBloomThreshold     ?? 0.45,
-            vignette:           effectSource.ghostfxVignette           ?? 0.7,
-            exposure:           effectSource.ghostfxExposure           ?? 0.1,
-            bgAlpha:            effectSource.ghostfxBgAlpha            ?? GHOSTFX_DEFAULT_BG_ALPHA,
-            vortexStrength:     effectSource.ghostfxVortexStrength     ?? 2.0,
-            latticeThreshold:   effectSource.ghostfxLatticeThreshold   ?? 2.5,
-            trailIntensity:     effectSource.ghostfxTrailIntensity     ?? 1.0,
-            feedbackAmount:     effectSource.ghostfxFeedbackAmount     ?? 0.35,
-            feedbackZoom:       effectSource.ghostfxFeedbackZoom       ?? 1.003,
-            ribbonWidth:        effectSource.ghostfxRibbonWidth        ?? 0.10,
-            ribbonSpawn:        effectSource.ghostfxRibbonSpawn        ?? 1.0,
-            ribbonTranslucency: effectSource.ghostfxRibbonTranslucency ?? 0.35,
-            ribbonBlend:        effectSource.ghostfxRibbonBlend        ?? 'additive',
-            lightAzimuth:       effectSource.ghostfxLightAzimuth       ?? 35,
-            lightElevation:     effectSource.ghostfxLightElevation     ?? 55,
-            lightStrength:      effectSource.ghostfxLightStrength      ?? 0.9,
-            ambient:            effectSource.ghostfxAmbient            ?? 0.30,
-            liquidSplatForce:   effectSource.ghostfxLiquidSplatForce   ?? 1.0,
-            liquidSplatRadius:  effectSource.ghostfxLiquidSplatRadius  ?? 0.08,
-            liquidDyeDecay:     effectSource.ghostfxLiquidDyeDecay     ?? 0.995,
-            liquidVelDecay:     effectSource.ghostfxLiquidVelDecay     ?? 0.992,
-            liquidBassRate:     effectSource.ghostfxLiquidBassRate     ?? 1.0,
-          });
+          fx.setParams(ghostfxFallbackParams(effectSource));
           effectCtx.ghostfx = fx;
         } else if (effectSource.effectType === 'ghostpilot') {
           const gpv = new _GhostPilotVisualizerCtor!(width, height);
@@ -7780,38 +7749,7 @@
         if (effectCtx.renderTarget.width !== width || effectCtx.renderTarget.height !== height) {
           fx.resize(width, height);
         }
-        fx.setParams({
-          scenePreset:        effectSource.ghostfxScenePreset        ?? 'drift',
-            voyageMotion: effectSource.ghostfxVoyageMotion ?? 0.6,
-            voyageDetail: effectSource.ghostfxVoyageDetail ?? 6,
-            voyageDepth: effectSource.ghostfxVoyageDepth ?? 1,
-            voyagePalette: effectSource.ghostfxVoyagePalette ?? 0,
-          sensitivity:        effectSource.ghostfxSensitivity        ?? 1.4,
-          hueDriftSpeed:      effectSource.ghostfxHueDriftSpeed      ?? 0.15,
-          exposure:           effectSource.ghostfxExposure           ?? 0,
-          bgAlpha:            effectSource.ghostfxBgAlpha            ?? GHOSTFX_DEFAULT_BG_ALPHA,
-          bloomIntensity:     effectSource.ghostfxBloomIntensity     ?? 1.4,
-          bloomThreshold:     effectSource.ghostfxBloomThreshold     ?? 0.45,
-          vignette:           effectSource.ghostfxVignette           ?? 0.7,
-          vortexStrength:     effectSource.ghostfxVortexStrength     ?? 2.0,
-          latticeThreshold:   effectSource.ghostfxLatticeThreshold   ?? 2.5,
-          trailIntensity:     effectSource.ghostfxTrailIntensity     ?? 1.0,
-          feedbackAmount:     effectSource.ghostfxFeedbackAmount     ?? 0.35,
-          feedbackZoom:       effectSource.ghostfxFeedbackZoom       ?? 1.003,
-          ribbonWidth:        effectSource.ghostfxRibbonWidth        ?? 0.10,
-          ribbonSpawn:        effectSource.ghostfxRibbonSpawn        ?? 1.0,
-          ribbonTranslucency: effectSource.ghostfxRibbonTranslucency ?? 0.35,
-          ribbonBlend:        effectSource.ghostfxRibbonBlend        ?? 'additive',
-          lightAzimuth:       effectSource.ghostfxLightAzimuth       ?? 35,
-          lightElevation:     effectSource.ghostfxLightElevation     ?? 55,
-          lightStrength:      effectSource.ghostfxLightStrength      ?? 0.9,
-          ambient:            effectSource.ghostfxAmbient            ?? 0.30,
-          liquidSplatForce:   effectSource.ghostfxLiquidSplatForce   ?? 1.0,
-          liquidSplatRadius:  effectSource.ghostfxLiquidSplatRadius  ?? 0.08,
-          liquidDyeDecay:     effectSource.ghostfxLiquidDyeDecay     ?? 0.995,
-          liquidVelDecay:     effectSource.ghostfxLiquidVelDecay     ?? 0.992,
-          liquidBassRate:     effectSource.ghostfxLiquidBassRate     ?? 1.0,
-        });
+        fx.setParams(ghostfxFallbackParams(effectSource));
         // Pass the raw AudioAnalysis through; GhostFX's internal
         // smoother + BPM-sync handle the "anticipate not react"
         // shaping. The shader never sees raw audio.

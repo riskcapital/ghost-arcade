@@ -1,5 +1,5 @@
 import { VOYAGE_SCENES, VOYAGE_WGSL } from './scenes/voyage.wgsl';
-import { GHOSTFX_DEFAULT_BG_ALPHA } from './defaults';
+import { GHOSTFX_DEFAULTS } from './defaults';
 // GhostFX — original audio-reactive visualizer plugin.
 //
 // Phase 1 (this file) ships a single hero scene ("Liminal") — a
@@ -103,35 +103,7 @@ export interface GhostFXParams {
   liquidBassRate: number;     // 0..2 — bass-driven ambient splat probability multiplier
 }
 
-const DEFAULT_PARAMS: GhostFXParams = {
-  scenePreset: 'drift',
-  voyageMotion: 0.6, voyageDetail: 6, voyageDepth: 1, voyagePalette: 0,
-  sensitivity: 1.4,
-  hueDriftSpeed: 0.15,
-  exposure: 0.1,
-  bloomIntensity: 1.4,
-  bloomThreshold: 0.45,
-  vignette: 0.7,
-  bgAlpha: GHOSTFX_DEFAULT_BG_ALPHA,
-  vortexStrength: 2.0,
-  latticeThreshold: 2.5,
-  trailIntensity: 1.0,
-  feedbackAmount: 0.35,
-  feedbackZoom: 1.003,
-  ribbonWidth: 0.10,
-  ribbonSpawn: 1.0,
-  ribbonTranslucency: 0.35,
-  ribbonBlend: 'additive',
-  lightAzimuth: 35,
-  lightElevation: 55,
-  lightStrength: 0.9,
-  ambient: 0.30,
-  liquidSplatForce: 1.0,
-  liquidSplatRadius: 0.08,
-  liquidDyeDecay: 0.995,
-  liquidVelDecay: 0.992,
-  liquidBassRate: 1.0,
-};
+const DEFAULT_PARAMS: GhostFXParams = { ...GHOSTFX_DEFAULTS };
 
 // Scene uniform layout — matches `Uniforms` struct in drift.wgsl /
 // ribbons.wgsl. Float index → field, with explicit offsets so the
