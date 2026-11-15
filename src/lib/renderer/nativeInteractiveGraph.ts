@@ -293,7 +293,12 @@ function worldView(raw:unknown):{yaw:number;pitch:number}|undefined{
  return v&&Number.isFinite(v.yaw)&&Number.isFinite(v.pitch)?{yaw:v.yaw as number,pitch:v.pitch as number}:undefined;
 }
 export function buildInteractiveGraph(options:NativePluginGraphOptions):InteractiveGraphBuildResult{
- const scene=validateScene(options.params.interactiveScene);
+ // Live values on effect params (Auto, keyframes, lines) go into this build,
+ // but `live` works from the stored scene, so values that stop moving go back
+ // to the stored ones even after a build made while they moved.
+ const stored=validateScene(options.params.interactiveScene);
+ const buildParams=options.params.interactiveLiveParams as InteractiveLiveParams|undefined;
+ const scene=buildParams&&stored.effects?applyInteractiveOverrides(stored,buildParams):stored;
  const source=`performer-world:${options.sourceId.replace(/[^a-zA-Z0-9:_-]+/g,'_').slice(0,120)}`;
  const bufferPrefix=(effectId:string)=>`${source}:${effectId}:interactive:`;
  const touches=touchInputs(options.params.interactiveInputs),touchesB64=interactiveB64(touches.data);
@@ -339,7 +344,7 @@ export function buildInteractiveGraph(options:NativePluginGraphOptions):Interact
   const t=touchInputs(input.interactiveInputs),tb=interactiveB64(t.data),out:InteractiveGraphValue[]=[];
   // Effects whose params the live values move: their parts are built again
   // (values only; interactiveParamsAreValues keeps the structure the same).
-  const moved=params&&scene.effects?applyInteractiveOverrides(scene,params):scene;
+  const moved=params&&stored.effects?applyInteractiveOverrides(stored,params):scene;
   const changed=new Map<string,InteractiveEffect>();
   if(moved!==scene)moved.effects!.forEach((e,i)=>{if(e!==scene.effects![i])changed.set(e.id,e);});
   const rebuilt=new Set<string>();

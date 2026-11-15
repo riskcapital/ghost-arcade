@@ -1183,32 +1183,75 @@ function liveValuesForSceneLayer(layer: Layer) {
   return liveValuesForRenderedLayer(layer);
 }
 
+type OverrideValues = Record<string, number | boolean>;
+
+/** One stripped source per source object: the same object every frame, so
+ *  the graph params and their key stay memoised (snapshot). */
+const interactiveSourcesWithoutMods = new WeakMap<object, { keys: string; source: NonNullable<Layer['source']> }>();
+
 /**
- * A layer's live values, split: the numbers on its Interactive scene's
- * effect params that only move value buffers (`params`, sent through the
- * installed graph's `interactive.live`, so the scene is not rebuilt every
- * frame an Auto plays on it) and the rest (`rest`, onto the scene copy as
- * before). A key a later override sets (keyframes, show lanes, lines) wins,
- * so it is left in `rest` to be overwritten the usual way.
+ * The source with the Core modulation taken off these params (their values
+ * stay the stored ones). A line or keyframe on a modulated param replaces the
+ * modulation, so while it plays the installed graph is the one without it,
+ * and the moving value goes out as value buffers like any other.
  */
-export function splitInteractiveLiveValues(
-  layer: Layer,
-  values: Record<string, number>,
-  later: ReadonlyArray<Record<string, number | boolean> | undefined>,
-): { rest: Record<string, number> | undefined; params: InteractiveLiveParams | undefined } {
-  const scene = layer.source?.effectSource?.interactiveScene;
-  if (!scene) return { rest: values, params: undefined };
-  let rest: Record<string, number> | undefined;
-  let params: InteractiveLiveParams | undefined;
-  for (const key in values) {
-    const value = values[key];
-    const own = key.startsWith('interactive:')
-      && !later.some((set) => set !== undefined && key in set)
-      && interactiveParamsAreValues(scene, { [key]: value });
-    if (own) (params ??= {})[key] = value;
-    else (rest ??= {})[key] = value;
+function interactiveSourceWithoutMods(source: NonNullable<Layer['source']>, keys: string[]): NonNullable<Layer['source']> {
+  const sig = keys.join('|');
+  const memo = interactiveSourcesWithoutMods.get(source);
+  if (memo?.keys === sig) return memo.source;
+  const scene = source.effectSource!.interactiveScene!;
+  const stored: Record<string, number> = {};
+  for (const key of keys) {
+    const [, effectId, param] = key.split(':');
+    const value = scene.effects?.find((e) => e?.id === effectId)?.params?.[param];
+    if (typeof value === 'number') stored[key] = value;
   }
-  return { rest, params };
+  const stripped = { ...source, effectSource: { ...source.effectSource!, interactiveScene: applyInteractiveOverrides(scene, stored) } };
+  interactiveSourcesWithoutMods.set(source, { keys: sig, source: stripped });
+  return stripped;
+}
+
+/**
+ * An Interactive layer's overrides for this frame (live values, keyframes,
+ * show lanes, Timeline lines; later sets win on the same key), split. The
+ * numbers on its scene's effect params (`params`) go out through the
+ * installed graph's `interactive.live` as value buffers, so nothing is rebuilt
+ * on the CPU while they move. They are taken out of `sets`, which keep what
+ * changes the graph (`enabled`, other layer keys) for the scene copy as
+ * before. A param with a Core modulation also has the modulation taken off
+ * the copy's `source` (one graph change when the line starts and when it
+ * stops), as the scene path does when it writes the value.
+ */
+export function splitInteractiveOverrides(
+  layer: Layer,
+  sets: ReadonlyArray<OverrideValues | undefined>,
+): { sets: Array<OverrideValues | undefined>; params: InteractiveLiveParams | undefined; source: Layer['source'] } {
+  const scene = layer.source?.effectSource?.interactiveScene;
+  if (!scene) return { sets: [...sets], params: undefined, source: layer.source };
+  let merged: Record<string, number | boolean> | null = null;
+  for (const set of sets) {
+    if (!set) continue;
+    for (const key in set) if (key.startsWith('interactive:')) (merged ??= {})[key] = set[key];
+  }
+  if (!merged) return { sets: [...sets], params: undefined, source: layer.source };
+  let params: InteractiveLiveParams | undefined;
+  const strip: string[] = [];
+  for (const key in merged) {
+    const value = merged[key];
+    if (typeof value !== 'number' || key.endsWith(':enabled')) continue;
+    if (!interactiveParamsAreValues(scene, { [key]: value })) strip.push(key);
+    (params ??= {})[key] = value;
+  }
+  if (!params) return { sets: [...sets], params: undefined, source: layer.source };
+  const out = sets.map((set) => {
+    if (!set) return set;
+    let rest: OverrideValues | null = null;
+    for (const key in set) {
+      if (key in params!) { rest ??= { ...set }; delete rest[key]; }
+    }
+    return rest === null ? set : Object.keys(rest).length ? rest : undefined;
+  });
+  return { sets: out, params, source: strip.length ? interactiveSourceWithoutMods(layer.source!, strip.sort()) : layer.source };
 }
 
 /** Composition effects with this frame's live values on their params. */
@@ -10277,27 +10320,31 @@ export class NativeRendererSync {
       const blockParams = hasLines ? lineBlockValues(lineFrame, layer) : undefined;
       const lookLines = hasLines && wearsLookWithLines(lineFrame, layer);
       const allLive = hasLive ? liveValuesForSceneLayer(layer) : undefined;
-      // An Auto on an Interactive scene's effect param: kept off the scene
-      // copy and sent as value buffers (no graph build per frame).
-      const split = allLive && interactiveLiveAsValues && layer.source?.effectSource?.interactiveScene
-        ? splitInteractiveLiveValues(layer, allLive, [kf as Record<string, number | boolean> | undefined, showParams, lineParams, blockParams])
+      // The numbers on an Interactive scene's effect params (Auto, keyframes,
+      // show lanes, lines) are kept off the scene copy and sent as value
+      // buffers: no graph build per frame while they move.
+      const split = interactiveLiveAsValues && layer.source?.effectSource?.interactiveScene
+        ? splitInteractiveOverrides(layer, [allLive, kf as OverrideValues | undefined, showParams, lineParams, blockParams])
         : null;
-      const liveParams = split ? split.rest : allLive;
+      const [liveParams, kfParams, showRest, lineRest, blockRest] = split
+        ? split.sets
+        : [allLive, kf as OverrideValues | undefined, showParams, lineParams, blockParams];
       const interactiveParams = split?.params;
       if (!kf && seqMult === undefined && !showParams && showMul === undefined && !lineParams && !blockParams && !lookLines && !liveParams && !interactiveParams && layer._interactiveLiveParams === undefined) return layer;
 
       changed = true;
       const next: any = { ...layer };
+      if (split && split.source !== layer.source) next.source = split.source;
       if (seqMult !== undefined && seqMult < 1) {
         next.opacity = (next.opacity ?? 1) * seqMult;
       }
       delete next._interactiveLiveParams;
       if (interactiveParams) next._interactiveLiveParams = interactiveParams;
       if (liveParams) applyParamOverrides(next as Layer, liveParams as ParamOverrideSet);
-      if (kf) applyParamOverrides(next as Layer, kf as ParamOverrideSet);
-      if (showParams) applyParamOverrides(next as Layer, showParams);
-      if (lineParams) applyParamOverrides(next as Layer, lineParams);
-      if (blockParams) applyParamOverrides(next as Layer, blockParams);
+      if (kfParams) applyParamOverrides(next as Layer, kfParams as ParamOverrideSet);
+      if (showRest) applyParamOverrides(next as Layer, showRest);
+      if (lineRest) applyParamOverrides(next as Layer, lineRest);
+      if (blockRest) applyParamOverrides(next as Layer, blockRest);
       if (lookLines) applyLookLines(next as Layer, lineFrame);
       if (showMul !== undefined) next.opacity = (next.opacity ?? 1) * Math.max(0, Math.min(1, showMul));
       // Applied once. A list that has been through here can come back (a
@@ -11125,9 +11172,8 @@ export class NativeRendererSync {
               params: interactiveLive || interactiveParams
                 ? {
                     ...nativeGraphScaledParams,
-                    ...(interactiveParams && nativeGraphScaledParams?.interactiveScene
-                      ? { interactiveScene: applyInteractiveOverrides(nativeGraphScaledParams.interactiveScene, interactiveParams) }
-                      : {}),
+                    // Built in; `interactive.live` works from the stored scene.
+                    ...(interactiveParams ? { interactiveLiveParams: interactiveParams } : {}),
                     ...interactiveLive,
                   }
                 : nativeGraphScaledParams ?? {},

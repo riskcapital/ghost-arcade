@@ -276,3 +276,171 @@ describe('Interactive zones: actions run after the frame is sent', () => {
     expect(sync.queuedZoneActions).toEqual([]);
   });
 });
+
+describe('Interactive scene: keyframes, show lanes and Timeline lines on an effect param without a graph rebuild', () => {
+  const base = { kind: 'performer-world', sourceId: 'plugin:world-layer:performer-world', width: 1920, height: 1080, time: 0, frameDelta: 1 / 60, frameIndex: 1, audio: { active: false, bass: 0, mid: 0, treble: 0, energy: 0, beatPhase: 0, beatPulse: 0, amplitude: 0 }, state: null, reset: false };
+  /** What the core holds for the layer's value buffers. */
+  const held = (sync: any) => sync.nativeGraphRoutes.values().next().value.interactiveValueKeys as Map<string, string>;
+  /** Every value buffer the core holds equals a full build of this scene. */
+  async function expectHeldEqualsFullBuild(sync: any, scene: any) {
+    const { buildInteractiveGraph } = await import('../renderer/nativeInteractiveGraph');
+    const full = buildInteractiveGraph({ ...base, params: { interactiveScene: scene } } as any);
+    const keys = held(sync);
+    let compared = 0;
+    for (const value of full.interactive.values) {
+      if (!keys.has(value.id)) continue;
+      expect([value.id, keys.get(value.id)]).toEqual([value.id, value.key]);
+      compared++;
+    }
+    expect(compared).toBeGreaterThan(3);
+  }
+  type Driver = { name: string; frame: (layers: any[], key: string, value: number) => Promise<any[]> | any[]; stop: (layers: any[]) => Promise<any[]> | any[] };
+  const drivers: Driver[] = [
+    {
+      name: 'a Timeline line',
+      frame: async (layers, key, value) => {
+        const lines = await import('../timeline/lines/lineRuntime');
+        lines.publishLineFrame({ time: value, layers: new Map([['world-layer', { [key]: value }]]), stage: null, leds: null } as any);
+        return layers;
+      },
+      stop: async (layers) => { (await import('../timeline/lines/lineRuntime')).publishLineFrame(null); return layers; },
+    },
+    {
+      name: 'keyframes',
+      frame: async (layers, key, value) => {
+        const { keyframeTimeline } = await import('../stores/keyframeTimeline');
+        if (!keyframeTimeline.hasKeyframes('world-layer')) {
+          keyframeTimeline.addKeyframe('world-layer', key, 0, 0.1, 'linear', 'Speed', 'number');
+          keyframeTimeline.addKeyframe('world-layer', key, 10, 0.9, 'linear', 'Speed', 'number');
+          keyframeTimeline.setOpen(true);
+        }
+        keyframeTimeline.seek(((value - 0.1) / 0.8) * 10);
+        return layers;
+      },
+      stop: async (layers) => { const { keyframeTimeline } = await import('../stores/keyframeTimeline'); keyframeTimeline.clearAll(); keyframeTimeline.setOpen(false); return layers; },
+    },
+    {
+      name: 'a show lane',
+      // The show's scene copies carry their lane values (showTrackScene.ts).
+      frame: (layers, key, value) => [{ ...layers[0], _showParams: { [key]: value } }],
+      stop: (layers) => layers,
+    },
+  ];
+
+  for (const driver of drivers) {
+    it(`${driver.name} on fire speed: 0 graph builds, and the core holds what a full build gives`, async () => {
+      const sync = makeSync();
+      const layers = [worldLayer()];
+      const scene = layers[0].source.effectSource.interactiveScene;
+      const fire = scene.effects.find((e: any) => e.kind === 'fire');
+      const key = `interactive:${fire.id}:speed`;
+      await sync.flush(1920, 1080, layers);
+      await sync.flush(1920, 1080, layers);
+      h.batches.length = 0;
+      (globalThis as any).__gaNativeIpcProbe = { types: {} };
+      let value = 0;
+      for (let i = 0; i < 30; i++) {
+        value = 0.1 + 0.8 * (i / 30);
+        await sync.flush(1920, 1080, await driver.frame(layers, key, value));
+      }
+      const probe = (globalThis as any).__gaNativeIpcProbe;
+      expect(ofType('set_native_graph_layer')).toEqual([]);
+      expect(probe.graphBuilds ?? 0).toBe(0);
+      expect(ofType('update_native_graph_buffer').some((c) => String(c.buffer_id).includes(`${fire.id}:interactive:`))).toBe(true);
+      // Keyframes are evaluated at the time seeked, so their last value is
+      // the track's value there; read it back from what was applied.
+      const applied = sync.applyTimelineOverrides(await driver.frame(layers, key, value))[0]._interactiveLiveParams?.[key];
+      expect(applied).toBeCloseTo(value, 5);
+      await expectHeldEqualsFullBuild(sync, fx.applyInteractiveOverrides(scene, { [key]: applied }));
+      // The stored scene is untouched.
+      expect(scene.effects.find((e: any) => e.id === fire.id).params.speed).toBe(fire.params.speed);
+      // Stopped: the stored values go back, still without a rebuild.
+      const after = await driver.stop(layers);
+      await sync.flush(1920, 1080, after);
+      expect(ofType('set_native_graph_layer')).toEqual([]);
+      await expectHeldEqualsFullBuild(sync, scene);
+      delete (globalThis as any).__gaNativeIpcProbe;
+    });
+  }
+
+  it('a line on a param with a Core modulation: one graph change when it starts, none while it plays, one when it stops', async () => {
+    const sync = makeSync();
+    const layers = [worldLayer()];
+    const scene = layers[0].source.effectSource.interactiveScene;
+    const arch = scene.effects.find((e: any) => e.kind === 'architecture');
+    arch.mods = { ...arch.mods, energy: { source: 'bass', amount: 0.5, speed: 0.15, invert: false, bpmSync: false } };
+    const key = `interactive:${arch.id}:energy`;
+    const lines = await import('../timeline/lines/lineRuntime');
+    await sync.flush(1920, 1080, layers);
+    h.batches.length = 0;
+    (globalThis as any).__gaNativeIpcProbe = { types: {} };
+    let value = 0;
+    for (let i = 0; i < 30; i++) {
+      value = 0.2 + 0.6 * (i / 30);
+      lines.publishLineFrame({ time: i, layers: new Map([['world-layer', { [key]: value }]]), stage: null, leds: null } as any);
+      await sync.flush(1920, 1080, layers);
+    }
+    expect(ofType('set_native_graph_layer').length).toBe(1);
+    expect((globalThis as any).__gaNativeIpcProbe.graphBuilds).toBe(1);
+    await expectHeldEqualsFullBuild(sync, fx.applyInteractiveOverrides(scene, { [key]: value }));
+    lines.publishLineFrame(null);
+    await sync.flush(1920, 1080, layers);
+    expect(ofType('set_native_graph_layer').length).toBe(2);
+    await expectHeldEqualsFullBuild(sync, scene);
+    delete (globalThis as any).__gaNativeIpcProbe;
+  });
+
+  it('a value that stops moving goes back to the stored one even after a build made while it moved', async () => {
+    const sync = makeSync();
+    const layers = [worldLayer()];
+    const scene = layers[0].source.effectSource.interactiveScene;
+    const fire = scene.effects.find((e: any) => e.kind === 'fire');
+    const key = `interactive:${fire.id}:speed`;
+    const lines = await import('../timeline/lines/lineRuntime');
+    lines.publishLineFrame({ time: 0, layers: new Map([['world-layer', { [key]: 0.85 }]]), stage: null, leds: null } as any);
+    // Installed (and, with this stub core, repaired once) while the line plays.
+    await sync.flush(1920, 1080, layers);
+    await sync.flush(1920, 1080, layers);
+    expect(ofType('set_native_graph_layer').length).toBeGreaterThan(0);
+    await expectHeldEqualsFullBuild(sync, fx.applyInteractiveOverrides(scene, { [key]: 0.85 }));
+    h.batches.length = 0;
+    lines.publishLineFrame(null);
+    await sync.flush(1920, 1080, layers);
+    expect(ofType('set_native_graph_layer')).toEqual([]);
+    await expectHeldEqualsFullBuild(sync, scene);
+  });
+
+  it('an Auto value goes back to the stored one when it stops, even after a build made while it played', async () => {
+    const sync = makeSync();
+    const layers = [worldLayer()];
+    const scene = layers[0].source.effectSource.interactiveScene;
+    const fire = scene.effects.find((e: any) => e.kind === 'fire');
+    const liveParams = await import('../audio/liveParams');
+    const writer = new liveParams.LiveFrameWriter('auto');
+    writer.layer('world-layer', 'world-src', `interactive:${fire.id}:speed`, 0.85);
+    writer.commit();
+    // Installed while the Auto plays.
+    await sync.flush(1920, 1080, layers);
+    await sync.flush(1920, 1080, layers);
+    await expectHeldEqualsFullBuild(sync, fx.applyInteractiveOverrides(scene, { [`interactive:${fire.id}:speed`]: 0.85 }));
+    h.batches.length = 0;
+    liveParams.clearLiveValues('auto');
+    await sync.flush(1920, 1080, layers);
+    expect(ofType('set_native_graph_layer')).toEqual([]);
+    await expectHeldEqualsFullBuild(sync, scene);
+  });
+
+  it('enabled stays a step change on the scene copy', async () => {
+    const sync = makeSync();
+    const layers = [worldLayer()];
+    const fire = layers[0].source.effectSource.interactiveScene.effects.find((e: any) => e.kind === 'fire');
+    const split = mod.splitInteractiveOverrides(layers[0], [{ [`interactive:${fire.id}:enabled`]: false }, { [`interactive:${fire.id}:speed`]: 0.3, 'layer:opacity': 0.5 }]);
+    expect(split.params).toEqual({ [`interactive:${fire.id}:speed`]: 0.3 });
+    expect(split.sets).toEqual([{ [`interactive:${fire.id}:enabled`]: false }, { 'layer:opacity': 0.5 }]);
+    expect(split.source).toBe(layers[0].source);
+    // A layer opacity line alone leaves the scene source as it is.
+    const copy = sync.applyTimelineOverrides([{ ...layers[0], _showParams: { 'layer:opacity': 0.4 } }])[0];
+    expect(copy.source).toBe(layers[0].source);
+    expect(copy.opacity).toBe(0.4);
+  });
+});

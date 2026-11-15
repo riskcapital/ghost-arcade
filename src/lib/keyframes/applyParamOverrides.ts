@@ -45,13 +45,16 @@ export function setDotPathClone(root: Record<string, any>, dotPath: string, valu
 export function applyParamOverrides(target: Layer, overrides: ParamOverrideSet): void {
   const next = target as any;
   if (next.source?.effectSource?.interactiveScene) {
-    next.source = {
-      ...next.source,
-      effectSource: {
-        ...next.source.effectSource,
-        interactiveScene: applyInteractiveOverrides(next.source.effectSource.interactiveScene, overrides),
-      },
-    };
+    // Only a set that changes the scene gives the copy a new source: the
+    // frame sync keys the graph's params by the source object, so a layer
+    // opacity line would otherwise re-key the whole scene every frame.
+    const scene = applyInteractiveOverrides(next.source.effectSource.interactiveScene, overrides);
+    if (scene !== next.source.effectSource.interactiveScene) {
+      next.source = {
+        ...next.source,
+        effectSource: { ...next.source.effectSource, interactiveScene: scene },
+      };
+    }
   }
   // Analog Synth's controls live flat on the effect source.
   if (next.source?.effectSource?.effectType === 'videosynth') {

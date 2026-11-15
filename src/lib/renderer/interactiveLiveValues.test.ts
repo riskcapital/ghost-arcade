@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildInteractiveGraph, interactiveParamsAreValues, type InteractiveGraphBuildResult, type InteractiveLiveInput, type InteractiveLiveParams } from './nativeInteractiveGraph';
 import { defaultInteractive, type InteractiveScene } from '../mobile/studio/interactive';
-import { applyInteractiveOverrides, effectParams, makeEffect } from '../mobile/studio/interactiveEffects';
+import { applyInteractiveOverrides, EFFECT_KINDS, effectParams, isWorldEffect, makeEffect } from '../mobile/studio/interactiveEffects';
 import { defaultReliefWorld, type ReliefWorld } from '../scene3d/worldModel';
 import { facePoint, type Room, type RoomFace } from '../scene3d/roomModel';
 import { projectPoint, worldGeometry } from '../scene3d/worldGeometry';
@@ -165,5 +165,62 @@ describe('Interactive graph: live params as their own values', () => {
     const modded = { ...scene, effects: scene.effects!.map((e) => e.id === fire.id ? { ...e, mods: { hue: { source: 'bass', amount: 0.5, speed: 0.15, invert: false, bpmSync: false } } } : e) } as InteractiveScene;
     expect(interactiveParamsAreValues(modded, { [`interactive:${fire.id}:hue`]: 120 })).toBe(false);
     expect(interactiveParamsAreValues(modded, { [`interactive:${fire.id}:flow`]: 0.2 })).toBe(true);
+  });
+});
+
+/**
+ * What the keyframe, show lane and Timeline line pickers offer on an
+ * Interactive layer (keyframes/paramDiscovery.ts): `enabled` as on/off, and
+ * every number param of every effect as a smooth line. Each number param, on
+ * its own at either end of its range, moves value buffers only (the same
+ * structure, Most balls/drops/particles included), and a build made while
+ * values moved still puts the stored ones back.
+ */
+describe('Interactive graph: every param a line can drive is a value', () => {
+  const withEffect = (kind: Parameters<typeof makeEffect>[0]): InteractiveScene => ({
+    ...defaultInteractive(),
+    surfaces: [block],
+    effects: [{ ...makeEffect(kind), mods: {} }],
+    ...(isWorldEffect(kind) ? { world: { ...defaultReliefWorld(), flat: 'projected' as const } } : {}),
+  });
+  for (const kind of EFFECT_KINDS) {
+    it(`${kind}: each param alone, at its min and max`, () => {
+      const scene = withEffect(kind);
+      const installed = build(scene);
+      const effect = scene.effects![0];
+      for (const d of effectParams(kind)) {
+        for (const value of [d.min, d.max]) {
+          const params = { [`interactive:${effect.id}:${d.key}`]: value };
+          expect(interactiveParamsAreValues(scene, params)).toBe(true);
+          const full = build(applyInteractiveOverrides(scene, params));
+          expect([d.key, full.interactive.topology]).toEqual([d.key, installed.interactive.topology]);
+          const byId = new Map(full.interactive.values.map((v) => [v.id, v]));
+          const fresh = installed.interactive.live!({}, params);
+          for (const v of fresh) expect({ id: v.id, key: v.key, initial_b64: v.initial_b64 }).toEqual(byId.get(v.id));
+          const liveIds = new Set(fresh.map((v) => v.id));
+          const before = new Map(installed.interactive.values.map((v) => [v.id, v.key]));
+          expect([d.key, full.interactive.values.filter((v) => !liveIds.has(v.id) && before.get(v.id) !== v.key).map((v) => v.id)]).toEqual([d.key, []]);
+        }
+      }
+    });
+  }
+
+  it('a build made while values moved gives the stored values back when they stop', () => {
+    const scene = wall({ flat: 'projected' });
+    const fire = scene.effects!.find((e) => e.kind === 'fire')!;
+    const balls = scene.effects!.find((e) => e.kind === 'balls3d')!;
+    const params = { [`interactive:${fire.id}:speed`]: 0.9, [`interactive:${balls.id}:glow`]: 0.8 };
+    const movedBuild = buildInteractiveGraph({
+      kind: 'performer-world', sourceId: 'layer-1', params: { interactiveScene: scene, interactiveLiveParams: params },
+      width: 1920, height: 1080, time: 0, frameDelta: 1 / 60, frameIndex: 1, audio, state: null, reset: false,
+    } as Parameters<typeof buildInteractiveGraph>[0]);
+    // The build itself is the moved scene.
+    const moved = build(applyInteractiveOverrides(scene, params));
+    expect(movedBuild.interactive.values).toEqual(moved.interactive.values);
+    // Stopped: every buffer the params fill goes back to the stored scene's.
+    const stored = new Map(build(scene).interactive.values.map((v) => [v.id, v]));
+    const back = movedBuild.interactive.live!({}, {});
+    expect(back.some((v) => v.id.endsWith(':matter'))).toBe(true);
+    for (const v of back) expect({ id: v.id, key: v.key, initial_b64: v.initial_b64 }).toEqual(stored.get(v.id));
   });
 });
