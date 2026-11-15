@@ -12,6 +12,7 @@
  import {DesktopSender} from '../../mobile/studio/desktopSender';
  import type {InteractiveScene,Interaction} from '../../mobile/studio/interactive';
  import {pairedSessionFor,recordPairedScene} from '../../mobile/studio/pairedSession';
+ import {readPairedDraft,writePairedDraft} from '../../mobile/studio/pairedDraft';
  import {capabilitiesRequest,outputAspect,readDesktopCapabilities,type DesktopCapabilities} from '../../mobile/studio/desktopCapabilities';
  import {depthCaptureOffer,depthScanProgress,depthStatusText,readDepthCaptureStatus,readDepthScanRequest,type DepthScanRequest,type DepthScanStage} from '../../mobile/studio/depthScan';
  import type {DepthCapture} from '../../mobile/studio/depthCapture';
@@ -57,6 +58,11 @@
    socket.addEventListener('message',answer);socket.send(json);
   });
  }
+ /** The paired editor's draft on this phone: a reconnect or a restart opens it again (a world draft only with a world desktop). */
+ const pairedDraft={read:()=>{try{return readPairedDraft(localStorage,!!capabilities?.world);}catch{return null;}},write:(scene:InteractiveScene)=>writePairedDraft(localStorage,scene)};
+ /** The editor asked for the desktop's lists again (its show actions): take them without touching the status line. */
+ let refreshing=false;
+ function refreshDesktop(){if(socket.readyState===WebSocket.OPEN&&capabilitiesReady){refreshing=true;socket.send(JSON.stringify(capabilitiesRequest()));}}
  let nativeInteractive=session.native===true,capabilitiesReady=session.native!==null,socketOpen=socket.readyState===WebSocket.OPEN,disposed=false;
  let capabilityTimer:ReturnType<typeof setInterval>|undefined,capabilityFallback:ReturnType<typeof setTimeout>|undefined;
  function sceneChanged(scene:InteractiveScene,inputs:Interaction[],active:boolean,paused:boolean){
@@ -74,7 +80,7 @@
  let page='interactive',status=nativeInteractive?'Native interactive controls ready · desktop renders the scene.':'Checking desktop render capabilities…',lidar=false,dual=false;
  let calibrationTimer:ReturnType<typeof setTimeout>|undefined,requestId='';
  function sendCalibration(json:string){if(new TextEncoder().encode(json).length>8_000_000)throw Error('Package is too large for live transfer. Export it using Files / AirDrop.');if(socket.readyState!==WebSocket.OPEN)throw Error('Desktop disconnected.');requestId=crypto.randomUUID();socket.send(JSON.stringify({type:'studio_calibration_offer',requestId,json}));status='Waiting for desktop to accept the calibration…';clearTimeout(calibrationTimer);calibrationTimer=setTimeout(()=>status='No desktop confirmation. Update desktop or export the package instead.',8000);}
- const receive=(e:MessageEvent)=>{try{const m=JSON.parse(String(e.data));if(m.type==='studio_capabilities'){capabilities=readDesktopCapabilities(m);session.capabilities=capabilities;nativeInteractive=m.nativeInteractive===true;capabilitiesReady=true;session.native=nativeInteractive;clearInterval(capabilityTimer);clearTimeout(capabilityFallback);status=nativeInteractive?'Native interactive controls ready · desktop renders the scene.':'Video sending ready · choose a source below.';}if(m.type==='studio_calibration_status'&&m.requestId===requestId){clearTimeout(calibrationTimer);status=m.accepted?'Received · open Interactive Studio → Phone calibration on desktop to review.':String(m.error||'Calibration rejected.');}if(m.type==='studio_scene_status'){if(m.accepted===false)status=String(m.error||'The desktop could not use this scene.');if(m.world&&typeof m.world.on==='boolean')desktopWorldOn=m.world.on;}const request=readDepthScanRequest(m);if(request)depthAsked(request);
+ const receive=(e:MessageEvent)=>{try{const m=JSON.parse(String(e.data));if(m.type==='studio_capabilities'&&refreshing){refreshing=false;capabilities=readDesktopCapabilities(m);session.capabilities=capabilities;}else if(m.type==='studio_capabilities'){capabilities=readDesktopCapabilities(m);session.capabilities=capabilities;nativeInteractive=m.nativeInteractive===true;capabilitiesReady=true;session.native=nativeInteractive;clearInterval(capabilityTimer);clearTimeout(capabilityFallback);status=nativeInteractive?'Native interactive controls ready · desktop renders the scene.':'Video sending ready · choose a source below.';}if(m.type==='studio_calibration_status'&&m.requestId===requestId){clearTimeout(calibrationTimer);status=m.accepted?'Received · open Interactive Studio → Phone calibration on desktop to review.':String(m.error||'Calibration rejected.');}if(m.type==='studio_scene_status'){if(m.accepted===false)status=String(m.error||'The desktop could not use this scene.');if(m.world&&typeof m.world.on==='boolean')desktopWorldOn=m.world.on;}const request=readDepthScanRequest(m);if(request)depthAsked(request);
    // The desktop cancelled the scan it asked for, or gave up waiting: stop it here too.
    if(m.type==='studio_depth_capture_status'&&(m.state==='declined'||m.state==='error')){
     if(askingDepth?.requestId===m.requestId)askingDepth=null;
@@ -118,7 +124,7 @@
   <div class="tool-content" class:interactive={page==='interactive'}>
    {#if !socketOpen}<p role="alert">Reconnect from the desktop controls to resume editing.</p>
    {:else if page==='interactive'}
-    {#if capabilitiesReady}{#key nativeInteractive}<InteractiveStudio handheld remoteOutput nativeOutput={nativeInteractive} referencePreview={nativeInteractive} desktop={nativeInteractive?capabilities:null} aspect={outputAspect(nativeInteractive?capabilities:null)} {desktopWorldOn} onworldaction={capabilities?.world?(what,point)=>sendWorld({type:'studio_world_action',what,point}):undefined} onview={capabilities?.world?view=>sendWorld({type:'studio_world_view',view}):undefined} onscanroom={capabilities?.depthCapture?()=>{scanRequest=null;select('calibration');depthHere=true;}:undefined} initialScene={session.scene} initialActive={session.active&&nativeInteractive} initialPaused={session.paused} onscene={sceneChanged} onoutput={c=>{if(!nativeInteractive)send(c,'interactive');}} {onclose}/>{/key}{/if}
+    {#if capabilitiesReady}{#key nativeInteractive}<InteractiveStudio handheld remoteOutput nativeOutput={nativeInteractive} referencePreview={nativeInteractive} desktop={nativeInteractive?capabilities:null} aspect={outputAspect(nativeInteractive?capabilities:null)} {desktopWorldOn} onworldaction={capabilities?.world?(what,point)=>sendWorld({type:'studio_world_action',what,point}):undefined} onview={capabilities?.world?view=>sendWorld({type:'studio_world_view',view}):undefined} onscanroom={capabilities?.depthCapture?()=>{scanRequest=null;select('calibration');depthHere=true;}:undefined} onrefreshdesktop={refreshDesktop} draftStore={nativeInteractive?pairedDraft:null} initialScene={session.scene} initialActive={session.active&&nativeInteractive} initialPaused={session.paused} onscene={sceneChanged} onoutput={c=>{if(!nativeInteractive)send(c,'interactive');}} {onclose}/>{/key}{/if}
    {:else if page==='flux'}<section class="flux-remote" aria-label="Flux on the desktop output">
      <div class="flux-surface"><p>{flux.active?'Playing on the desktop output':'Touch here to play Flux on the desktop output'}</p><FluxPad value={flux} onchange={fluxChanged}/></div>
      <FluxPanel value={flux} onchange={fluxChanged}/>

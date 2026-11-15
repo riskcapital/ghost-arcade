@@ -68,6 +68,7 @@
   import { shareInteractiveScene } from '../../mobile/studio/captureToolkit';
   import { dialogHostOf, isCovered, keyTargetOf, trapTab } from './interactiveEditorFocus';
   import type { EditorMode, EmitterMarker, InspectorTab, TouchTool } from './interactiveEditorTypes';
+  import { motionToolsFor, withTool } from '../../mobile/studio/motionTool';
   import InteractiveHeader from './InteractiveHeader.svelte';
   import InteractiveToolbar from './InteractiveToolbar.svelte';
   import InteractiveStage from './InteractiveStage.svelte';
@@ -88,6 +89,9 @@
   export let handheld = false;
   export let visible = true;
   export let persistDraft = false;
+  /** Phone paired: where its draft is kept instead (pairedDraft.ts), so a reconnect or restart opens it again. */
+  export let draftStore: { read(): InteractiveScene | null; write(scene: InteractiveScene): void } | null = null;
+  $: keepsDraft = persistDraft || !!draftStore;
   export let outputLabel = '';
   export let onoutputsettings: (() => void) | undefined = undefined;
   export let onclose: () => void;
@@ -126,6 +130,8 @@
    * Without (alone, or an older desktop) it is the phone's editor as before.
    */
   export let desktop: DesktopCapabilities | null = null;
+  /** Phone: ask the desktop for its capabilities again (its show-action lists change with its project). */
+  export let onrefreshdesktop: () => void = () => {};
   /** Phone: whether the desktop runs a 3D world on this phone's layer (studio_scene_status.world). */
   export let desktopWorldOn: boolean | null = null;
   /** Phone: open the room scan for Depth mode (Calibration). Set only when the desktop takes one. */
@@ -179,6 +185,8 @@
   let placingEmitter = false;
   let draft: Point[] = [];
   let tool: TouchTool = 'attract';
+  /** What camera motion does, as a touch with that tool would (Setup → Camera interaction). */
+  let motionTool: TouchTool = 'attract';
   let message = '';
   let messageTimer: ReturnType<typeof setTimeout> | undefined;
   let question: Question | null = null;
@@ -286,6 +294,9 @@
     if (toolWorld && tool === 'attract' && desktop?.world?.tools.includes('throw')) tool = 'throw';
     else if (!toolWorld && (tool === 'throw' || tool === 'push' || tool === 'pour' || tool === 'ignite')) tool = 'attract';
   }
+  // Camera motion drives any tool a touch can use now: the world tools only with the world on, on a desktop that acts on them.
+  $: motionTools = motionToolsFor(worldOn, desktop?.world?.tools);
+  $: if (!motionTools.includes(motionTool)) motionTool = 'attract';
 
   function emitterMarkerFor(
     effect: InteractiveEffect | undefined,
@@ -710,12 +721,13 @@
 
   // ── Scene library, drafts, files ─────────────────────────────────────────
   function draftSave() {
-    if (!persistDraft || !ready) return;
+    if (!keepsDraft || !ready) return;
     try {
       const next = captureScene(scene),
         json = JSON.stringify(next);
       if (json === lastDraft) return;
-      writeInteractiveDraft(localStorage, next);
+      if (draftStore) draftStore.write(next);
+      else writeInteractiveDraft(localStorage, next);
       lastDraft = json;
       draftStatus = 'Saved on this device';
     } catch {
@@ -742,7 +754,7 @@
       const found = savedScenes.find((s) => s.id === id);
       savedScenes = removeInteractivePreset(localStorage, id);
       removedScene = found;
-      say(`Saved scene removed. Your current ${persistDraft ? 'draft' : 'scene'} is unchanged.`);
+      say(`Saved scene removed. Your current ${keepsDraft ? 'draft' : 'scene'} is unchanged.`);
     } catch (e) {
       say((e as Error).message);
     }
@@ -901,7 +913,7 @@
       try {
         const c = small.getContext('2d', { willReadFrequently: true })!;
         c.drawImage(cameraCanvas!, 0, 0, 64, 36);
-        motion = sensor.sample(c.getImageData(0, 0, 64, 36).data, 64, 36, sensitivity);
+        motion = withTool(sensor.sample(c.getImageData(0, 0, 64, 36).data, 64, 36, sensitivity), motionTool);
       } catch {
         motion = [];
       }
@@ -1000,7 +1012,7 @@
 
   onMount(() => {
     outputActive = initialActive;
-    const restored = initialScene ?? (persistDraft ? readInteractiveDraft(localStorage) : null);
+    const restored = initialScene ?? (draftStore ? draftStore.read() : persistDraft ? readInteractiveDraft(localStorage) : null);
     restore(restored ?? classicStarterScene('balls'));
     if (persistDraft && !restored) inspector = 'presets';
     savedScenes = readInteractivePresets(localStorage);
@@ -1178,7 +1190,7 @@
           <InteractiveScenesPanel
             {savedScenes}
             {removedScene}
-            {persistDraft}
+            persistDraft={keepsDraft}
             world={worldDesktop}
             onstarter={useStarter}
             onsave={savePreset}
@@ -1239,6 +1251,8 @@
             onimportmapping={importMapping}
             desktop={worldDesktop}
             world={worldOn}
+            showMenu={desktop?.showActions ?? null}
+            onshowmenu={onrefreshdesktop}
             effectTargets={(scene.effects ?? []).filter((e) => e.enabled).map((e) => e.target)}
             onlookstart={beginEdit}
             onlook={(look, step) => {
@@ -1280,13 +1294,15 @@
             {handheld}
             {audioOn}
             sceneName={scene.name}
-            saveStatus={persistDraft
+            saveStatus={keepsDraft
               ? draftStatus
               : 'This scene is part of your project. Export to keep a separate copy.'}
             bind:facing
             {camera}
             {cameraBusy}
             bind:motionEnabled
+            bind:motionTool
+            {motionTools}
             bind:sensitivity
             bind:cameraOpacity
             ontoggleaudio={toggleAudio}
