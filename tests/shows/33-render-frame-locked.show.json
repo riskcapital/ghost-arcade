@@ -1,0 +1,27 @@
+{
+  "name": "Render to video: every frame made, the same every time",
+  "description": "A show with an Interactive Studio world, a 30 fps frame-numbered video on a row, a control line and a Screen FX block, rendered twice at 120 fps: the two files match frame for frame (GPU particle splats may differ by a few levels), and the video shows each of its frames exactly four times, in order, from its first.",
+  "steps": [
+    { "do": "app.start", "choice": "blank" },
+    { "do": "project.layer", "name": "Back", "colour": "blue", "wait": 1 },
+    {
+      "do": "eval",
+      "label": "An Interactive Studio world over it, and a strip along the top for the video",
+      "js": "(async () => { const g = __show.g(); g.project.addLayer('World', 'interactive'); await new Promise((r) => setTimeout(r, 500)); const id = g.project.addLayer('Strip', 'media'); await new Promise((r) => setTimeout(r, 300)); g.project.updateLayer(id, { corners: { topLeft: { x: 0, y: 1 }, topRight: { x: 1, y: 1 }, bottomLeft: { x: 0, y: 0.8 }, bottomRight: { x: 1, y: 0.8 } } }); return true; })()",
+      "wait": 1
+    },
+    { "do": "show.open", "doc": "timeline" },
+    { "do": "show.track", "name": "strip", "layer": "Strip" },
+    { "do": "show.clip", "track": "strip", "clip": "framecode.mp4", "seconds": 10, "at": 0, "duration": 10, "endBehaviour": "stop" },
+    { "do": "show.line", "layer": "Back", "key": "opacity", "points": [[0, 0.2], [3, 1]] },
+    { "do": "show.stageBlock", "row": "screenfx", "at": 1, "duration": 0.5, "type": "linear-sweep", "params": { "angle": 0, "speed": 0.5, "bandWidth": 0.2, "tail": 0 } },
+    { "do": "show.export", "as": "a", "seconds": 3, "fps": 120, "codec": "prores_hq", "quality": "web" },
+    { "do": "show.export", "as": "b", "seconds": 3, "fps": 120, "codec": "prores_hq", "quality": "web",
+      "label": "Rendered twice",
+      "expect": {
+        "export.same": { "a": "a", "b": "b", "maxDiff": 6, "frames": 60 },
+        "export.clipFrames": { "file": "a", "band": 0.2, "repeat": 4, "skip": [1, 1.5] }
+      }
+    }
+  ]
+}

@@ -497,17 +497,18 @@ const ACTIONS = {
     await sleep(400);
   },
   async 'show.export'(ctx, s) {
-    // A real offline render of the show (native capture, MP4), kept where
-    // the encoder wrote it.
+    // A real offline render of the show (native capture, MP4 or the codec
+    // asked for), kept where the encoder wrote it. { as } also keeps it by name.
     const result = await ctx.eval(`(async () => {
       const r = await __show.g().offlineRender();
-      const ok = await r.start({ durationSeconds: ${s.seconds ?? 2}, fps: ${s.fps ?? 30}, width: ${s.width ?? 640}, height: ${s.height ?? 360}, filename: 'show', outputMode: 'mp4', quality: 'archive', captureBackend: 'native' },
+      const ok = await r.start({ durationSeconds: ${s.seconds ?? 2}, fps: ${s.fps ?? 30}, width: ${s.width ?? 640}, height: ${s.height ?? 360}, filename: 'show', outputMode: 'mp4', quality: ${J(s.quality ?? 'archive')}, captureBackend: 'native'${s.codec ? `, codec: ${J(s.codec)}` : ''} },
         { promptSave: false });
       return { ok, state: __show.read(r) };
     })()`, 300000);
-    if (!result?.ok || !result.state?.lastOutputPath) throw new Error(`the render did not finish: ${result?.state?.status} ${result?.state?.errorMessage ?? ''}`);
+    if (!result?.ok || !result.state?.lastOutputPath) throw new Error(`the render did not finish: ${result?.state?.flow?.kind} ${result?.state?.flow?.message ?? ''}`);
     ctx.vars.exportFile = result.state.lastOutputPath;
     ctx.vars.exportFps = s.fps ?? 30;
+    if (s.as) ctx.vars['export:' + s.as] = result.state.lastOutputPath;
     await sleep(500);
   },
   async 'show.tempo'(ctx, s) {
@@ -748,6 +749,34 @@ function frameCode(file, frameIndex = 0) {
     if (sum / (h / 2) > 128) code |= 1 << bit;
   }
   return code;
+}
+
+/** Every frame of a video, small and grey: for comparing two renders. */
+function allFramesGrey(file, w = 160, h = 90) {
+  const ffmpeg = process.env.GA_FFMPEG_PATH || require('ffmpeg-static');
+  const raw = execFileSync(ffmpeg, ['-loglevel', 'error', '-i', file, '-map', '0:v:0', '-vf', `scale=${w}:${h}:flags=area,format=gray`, '-f', 'rawvideo', '-'], { maxBuffer: 1024 * 1024 * 1024 });
+  const frames = [];
+  for (let i = 0; i + w * h <= raw.length; i += w * h) frames.push(raw.subarray(i, i + w * h));
+  return frames;
+}
+
+/** The clip frame number in every frame of a render whose top `band` (0..1)
+ *  shows framecode.mp4 (nine bars, the frame number in binary). */
+function stripCodes(file, band) {
+  const ffmpeg = process.env.GA_FFMPEG_PATH || require('ffmpeg-static');
+  const w = 288; const h = 16;
+  const raw = execFileSync(ffmpeg, ['-loglevel', 'error', '-i', file, '-map', '0:v:0', '-vf', `crop=iw:ih*${band}:0:0,scale=${w}:${h}:flags=area,format=gray`, '-f', 'rawvideo', '-'], { maxBuffer: 256 * 1024 * 1024 });
+  const codes = [];
+  for (let f = 0; f + w * h <= raw.length; f += w * h) {
+    let code = 0;
+    for (let bit = 0; bit < 9; bit++) {
+      let sum = 0;
+      for (let y = 4; y < 12; y++) sum += raw[f + y * w + bit * 32 + 16];
+      if (sum / 8 > 128) code |= 1 << bit;
+    }
+    codes.push(code);
+  }
+  return codes;
 }
 
 /** Mean RGB (0..1) of one frame of a video (or an image), through the bundled ffmpeg. */
@@ -1052,6 +1081,44 @@ const CHECKS = {
     }
     const got = colourName(rgb);
     return { pass: got.name === s.is && got.distance < (s.tolerance ?? 0.25), detail: `${label} is ${got.name} (${rgb.map((v) => v.toFixed(2)).join(', ')})` };
+  },
+  async 'export.same'(ctx, s) {
+    // Two renders of the same show, frame by frame: { a, b, maxDiff (0..255), frames (how many may differ at all) }.
+    const fa = ctx.vars['export:' + s.a]; const fb = ctx.vars['export:' + s.b];
+    if (!fa || !fb) return { pass: false, detail: 'missing a render' };
+    const A = allFramesGrey(fa); const B = allFramesGrey(fb);
+    let differing = 0; let worst = 0;
+    for (let i = 0; i < Math.min(A.length, B.length); i++) {
+      let m = 0;
+      for (let p = 0; p < A[i].length; p++) { const d = Math.abs(A[i][p] - B[i][p]); if (d > m) m = d; }
+      if (m > 0) differing++;
+      worst = Math.max(worst, m);
+    }
+    const pass = A.length === B.length && A.length > 0 && worst <= (s.maxDiff ?? 0) && differing <= (s.frames ?? A.length);
+    return { pass, detail: `${A.length} / ${B.length} frames, ${differing} differ, largest difference ${worst}/255 (allowed ${s.maxDiff ?? 0})` };
+  },
+  async 'export.clipFrames'(ctx, s) {
+    // Every frame of a render whose top band shows framecode.mp4 (30 fps):
+    // each clip frame shown `repeat` times in order, none skipped. { file, band, repeat, skip: [from, to] s }.
+    const file = ctx.vars['export:' + s.file] ?? ctx.vars.exportFile;
+    if (!file) return { pass: false, detail: 'no render to read' };
+    const fps = ctx.vars.exportFps ?? 30;
+    // Frames in the skip window (e.g. under a Screen FX that darkens the strip) are not read.
+    const [from, to] = s.skip ?? [Infinity, Infinity];
+    const all = stripCodes(file, s.band ?? 0.2);
+    const parts = [all.slice(0, Math.min(all.length, Math.ceil(from * fps))), all.slice(Math.min(all.length, Math.ceil(to * fps)))].filter((p) => p.length);
+    let wrong = 0; let jumps = 0; let shown = 0;
+    for (const part of parts) {
+      const runs = [];
+      for (const c of part) { const last = runs[runs.length - 1]; if (last && last.c === c) last.n++; else runs.push({ c, n: 1 }); }
+      shown += runs.length;
+      // The first and last run of a part may be cut by its ends.
+      wrong += runs.slice(1, -1).filter((r) => r.n !== s.repeat).length;
+      jumps += runs.slice(1).filter((r, i) => r.c !== runs[i].c + 1).length;
+    }
+    const first = all[0];
+    return { pass: all.length > 0 && first === 0 && wrong === 0 && jumps === 0,
+      detail: `${all.length} frames, ${shown} clip frames read, first ${first}; ${wrong} shown other than ${s.repeat}x, ${jumps} skipped or out of order` };
   },
   async 'takeover.count'(ctx, s) {
     const sum = await ctx.eval('__show.g().takeover.summary()');
