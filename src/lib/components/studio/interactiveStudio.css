@@ -1205,6 +1205,22 @@
   flex: none;
   margin-left: auto;
 }
+/* A phone too narrow for seven 44 pt icons in a row (375 and 390 wide): two rows, the world's tools
+   (Throw, Push, Pour, Ignite) over the effects' (Attract, Repel, Vortex), each icon wider, never
+   smaller, and no sideways scrolling. The "i" stays at the right, beside both rows. */
+.interactive-workspace .tool-row {
+  container: tool-row / inline-size;
+}
+@container tool-row (max-width: 389px) {
+  .interactive-workspace .tool-strip {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(44px, 1fr));
+    overflow: visible;
+  }
+  .interactive-workspace .tool-strip button:not(:where(.param *, .mt *, .studio-timeline *)) {
+    width: auto;
+  }
+}
 .tool-help {
   margin: 0 0 8px;
   padding: 0;
