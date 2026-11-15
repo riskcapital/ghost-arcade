@@ -145,6 +145,17 @@ describe('scan transfer, phone to desktop', () => {
     expect(d.savedScans[0]).toMatchObject({ path: '/library/Room 2026-10-08 1432.ply', points: 4321 });
   });
 
+  it('names the app asking in its capabilities request when given, and only then', async () => {
+    const d = desktop();
+    const client = { app: 'ios', version: '1.2', build: '9', name: 'iPhone' };
+    const named = link(d.receiver, d.out);
+    await sendScan({ socket: named.socket, bytes: payload(5000), name: 'a', points: 1, client }).done;
+    expect(named.sent[0]).toEqual({ type: 'studio_capabilities_request', client });
+    const plain = link(d.receiver, d.out);
+    await sendScan({ socket: plain.socket, bytes: payload(5000), name: 'b', points: 1 }).done;
+    expect(plain.sent[0]).toEqual({ type: 'studio_capabilities_request' });
+  });
+
   it('falls back plainly when the desktop is too old to receive scans', async () => {
     const d = desktop();
     const old = link(d.receiver, d.out, { capabilities: { nativeInteractive: true } });
