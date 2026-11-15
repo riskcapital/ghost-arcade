@@ -129,6 +129,6 @@ describe('Screen FX values without copying layers', () => {
     const canvas = readFileSync(fileURLToPath(new URL('../components/Canvas.svelte', import.meta.url)), 'utf8');
     expect(canvas).not.toContain('[StageFX:native]');
     expect(canvas).not.toMatch(/working\.map\(\(layer\) => \(\{ \.\.\.layer \}\)\)/);
-    expect(canvas).toContain('collectMappingStageFx(mc, working, performance.now(), mappingStageFxDeps(), next, nextTint)');
+    expect(canvas).toContain('collectMappingStageFx(mc, working, engineNowMs(), mappingStageFxDeps(), next, nextTint)');
   });
 });
