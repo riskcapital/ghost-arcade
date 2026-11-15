@@ -59,12 +59,12 @@
                 {#each PART_SOURCES as source (source.id)}<option value={source.id}>{source.label}</option>{/each}
               </select>
             </label>
-            <label class="play" title="Its notes also play a studio instrument while the studio is open">
+            <label class="play" title="Its notes also play an Audio Lab instrument while Audio Lab is open">
               <input type="checkbox" checked={setup?.play === true} onchange={(e) => setMidiInputSetup(device.name, { play: (e.target as HTMLInputElement).checked })} />
-              Play the studio
+              Play Audio Lab
             </label>
-            <select value={setup?.instrument ?? ''} disabled={setup?.play !== true} onchange={(e) => setMidiInputSetup(device.name, { instrument: (e.target as HTMLSelectElement).value })} aria-label="Studio instrument {device.name} plays">
-              <option value="">Instrument picked in the studio</option>
+            <select value={setup?.instrument ?? ''} disabled={setup?.play !== true} onchange={(e) => setMidiInputSetup(device.name, { instrument: (e.target as HTMLSelectElement).value })} aria-label="Audio Lab instrument {device.name} plays">
+              <option value="">Instrument picked in Audio Lab</option>
               {#each instruments as id (id)}<option value={id}>{INSTRUMENT_LABELS[id]}</option>{/each}
             </select>
           </div>

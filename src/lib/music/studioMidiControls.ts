@@ -483,14 +483,14 @@ const MIX_CONTROLS: StudioControl[] = [
 
 const STUDIO: StudioControl[] = [
   {
-    id: 'studio.kill', label: 'Kill all sound', group: 'Studio', kind: 'trigger',
+    id: 'studio.kill', label: 'Kill all sound', group: 'Audio Lab', kind: 'trigger',
     run: () => {
       killAll();
       // Held throws, washes and bowls let go too.
       releaseStudioControls();
     },
   },
-  { id: 'studio.play', label: 'Play or stop the studio', group: 'Studio', kind: 'toggle', run: togglePlay },
+  { id: 'studio.play', label: 'Play or stop Audio Lab', group: 'Audio Lab', kind: 'toggle', run: togglePlay },
 ];
 
 /** Every control this module registers, in the order the learn list shows them. */

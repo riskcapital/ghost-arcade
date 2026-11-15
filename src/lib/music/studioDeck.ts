@@ -74,5 +74,5 @@ musicStudio.subscribe((s) => {
 });
 
 registerStudioControls([
-  { id: 'studio.view', label: 'Studio view or VJ deck', group: 'Studio', kind: 'trigger', run: () => toggleStudioView() },
+  { id: 'studio.view', label: 'Audio Lab or VJ deck', group: 'Audio Lab', kind: 'trigger', run: () => toggleStudioView() },
 ]);

@@ -4,7 +4,7 @@
    * Live set, as songs and their sections. A section launches its Live scene
    * (on Live's own quantize) and brings the studio look kept on it: its
    * visuals and sound. "Keep look" keeps what the studio shows now on a
-   * section. "Set up for the Studio" adds the role lanes the set lacks and
+   * section. "Set up for Audio Lab" adds the role lanes the set lacks and
    * "New song" adds a block of scenes, both through the Ghost Arcade script.
    * See liveShow.ts for the conventions.
    */
@@ -99,7 +99,7 @@
     <span class="now">{songNow >= 0 ? songs[songNow].title : songs.length ? `${songs.length} song${songs.length === 1 ? '' : 's'}` : 'No songs yet'}</span>
     <span class="spacer"></span>
     <button class="btn" class:on={newOpen} onclick={() => { newOpen = !newOpen; setupOpen = false; bpm = Math.round(live.tempo) || 120; }} disabled={!canSetUp} title="Add a song to the end of the set: a block of scenes, the first carrying its tempo">New song</button>
-    <button class="btn" class:on={setupOpen} onclick={() => { setupOpen = !setupOpen; newOpen = false; }} disabled={!canSetUp} title="Add the role lanes this set lacks (Drums, Bass, Chords, Lead, Pads & FX, Vocals). Nothing in the set is renamed, moved or deleted">Set up for the Studio</button>
+    <button class="btn" class:on={setupOpen} onclick={() => { setupOpen = !setupOpen; newOpen = false; }} disabled={!canSetUp} title="Add the role lanes this set lacks (Drums, Bass, Chords, Lead, Pads & FX, Vocals). Nothing in the set is renamed, moved or deleted">Set up for Audio Lab</button>
   </div>
 
   {#if scriptOld}
@@ -112,7 +112,7 @@
   {#if setupOpen}
     <div class="drawer">
       {#if missing.length}
-        <p class="hint">Lanes to add at the end of the set, each named and colored, playing as its studio sound:</p>
+        <p class="hint">Lanes to add at the end of the set, each named and colored, playing as its Audio Lab sound:</p>
         <div class="chips">
           {#each missing as lane (lane.id)}
             <label class="chip" style="--lane: #{lane.color.toString(16).padStart(6, '0')}">
@@ -165,9 +165,9 @@
             <div class="section" class:current={current === section.scene} class:queued={scene?.queued} style="--scene: {liveColor(scene?.color ?? 0)}">
               <button class="launch" onclick={() => abletonBridge.launchScene(section.scene)} title="Launch {scene?.name || section.label} in Live{kept ? `; brings the look ${kept}` : ''}">
                 <span class="label">{section.label}</span>
-                {#if kept}<span class="kept" aria-label="Has a studio look">◆</span>{/if}
+                {#if kept}<span class="kept" aria-label="Has an Audio Lab look">◆</span>{/if}
               </button>
-              <button class="keep" onclick={() => captureLiveLook(section.scene, section.label)} title={kept ? 'Keep what the studio shows now on this section (replaces its look)' : "Keep what the studio shows now (visuals and sound) on this section: launching it brings it back"} aria-label="Keep the look on {section.label}">
+              <button class="keep" onclick={() => captureLiveLook(section.scene, section.label)} title={kept ? 'Keep what Audio Lab shows now on this section (replaces its look)' : "Keep what Audio Lab shows now (visuals and sound) on this section: launching it brings it back"} aria-label="Keep the look on {section.label}">
                 <svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="3.2" /></svg>
               </button>
               {#if kept}

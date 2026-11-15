@@ -1283,7 +1283,7 @@ export function getRecordingAudioStream(options: RecordingAudioOptions = {}): Re
       const dest = sctx.createMediaStreamDestination();
       const joined: AudioNode[] = [studio];
       studio.connect(dest);
-      const sources = ['music studio'];
+      const sources = ['Audio Lab'];
       const clipMaster = clipAudioBus.hasActiveOutput() ? clipAudioBus.masterNode() : null;
       if (clipMaster && clipMaster.context === sctx) {
         clipMaster.connect(dest);

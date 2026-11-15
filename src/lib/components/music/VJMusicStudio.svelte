@@ -93,7 +93,7 @@
 {#if shown}
   <div class="music-tray studio-tokens set-{s.set}" class:minimized data-help-page="clip-launcher">
     <div class="music-head">
-      <span class="music-title">Music</span>
+      <span class="music-title">Audio Lab</span>
       <div class="ga-segmented compact" role="group" aria-label="Instrument set">
         {#each STUDIO_SETS as set}
           <button class:active={s.set === set.id} aria-pressed={s.set === set.id} onclick={() => musicStudio.setSet(set.id)}>{set.label}</button>
@@ -141,16 +141,16 @@
         </select>
       </div>
       <div class="group">
-        <button class="text-btn" onclick={() => musicStudio.setStudioView(true)} title="Open the full-screen Studio view">Studio</button>
+        <button class="text-btn" onclick={() => musicStudio.setStudioView(true)} title="Open Audio Lab full screen">Full view</button>
         <button class="kill-btn" onclick={killAll} title="Silence everything now, echoes and reverb included">Kill</button>
       </div>
       <div class="group window">
-        <button class="icon-btn" onclick={() => (minimized = !minimized)} title={minimized ? 'Expand' : 'Minimize'} aria-label={minimized ? 'Expand music studio' : 'Minimize music studio'}>
+        <button class="icon-btn" onclick={() => (minimized = !minimized)} title={minimized ? 'Expand' : 'Minimize'} aria-label={minimized ? 'Expand Audio Lab' : 'Minimize Audio Lab'}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
             {#if minimized}<path d="M6 15l6-6 6 6" />{:else}<path d="M6 9l6 6 6-6" />{/if}
           </svg>
         </button>
-        <button class="icon-btn" onclick={() => musicStudio.close()} title="Close the music studio and stop the music" aria-label="Close music studio">
+        <button class="icon-btn" onclick={() => musicStudio.close()} title="Close Audio Lab and stop the music" aria-label="Close Audio Lab">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
         </button>
       </div>

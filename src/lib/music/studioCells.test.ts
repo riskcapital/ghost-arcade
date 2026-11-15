@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cellSetupOf, pickStudioCell, playingStudioCells, studioCellLabel } from './studioCellsCore';
+import { DEFAULT_STUDIO_CELL_NAME, cellSetupOf, hasDefaultStudioCellName, pickStudioCell, playingStudioCells, studioCellLabel } from './studioCellsCore';
 import { STUDIO_EFFECT_TYPE } from './studioPlugin';
 
 const cell = (id: string) => ({ id, name: 'Music Studio', type: 'effect', effectSource: { effectType: STUDIO_EFFECT_TYPE } }) as never;
@@ -21,6 +21,14 @@ describe('one studio cell at a time', () => {
     const base = { set: 'machine' as const, key: { root: 2, scale: 'dorian' as const }, scenes: [], sceneId: null };
     expect(studioCellLabel(base)).toBe('Drum machine · D Dorian');
     expect(studioCellLabel({ ...base, scenes: [{ id: 's', name: 'Chorus' }] as never, sceneId: 's' })).toBe('Chorus');
+  });
+  it('gives a new cell the name Audio Lab, and still renames one saved as Music Studio', () => {
+    expect(DEFAULT_STUDIO_CELL_NAME).toBe('Audio Lab');
+    expect(hasDefaultStudioCellName('Audio Lab')).toBe(true);
+    // Its name in projects saved before the rename.
+    expect(hasDefaultStudioCellName('Music Studio')).toBe(true);
+    expect(hasDefaultStudioCellName('My set')).toBe(false);
+    expect(hasDefaultStudioCellName(undefined)).toBe(false);
   });
   it('reads a saved cell setup, or none', () => {
     expect(cellSetupOf({ effectType: STUDIO_EFFECT_TYPE })).toBeNull();

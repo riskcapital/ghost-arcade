@@ -17,7 +17,14 @@ interface ClipLike {
   effectSource?: unknown;
 }
 
-export const DEFAULT_STUDIO_CELL_NAME = 'Music Studio';
+export const DEFAULT_STUDIO_CELL_NAME = 'Audio Lab';
+/** The automatic name a cell got before Audio Lab had its name: still renamed after its setup. */
+export const OLD_STUDIO_CELL_DEFAULTS: readonly string[] = ['Music Studio'];
+
+/** Whether a cell still has the automatic name a new one gets (now or in an older version). */
+export function hasDefaultStudioCellName(name: unknown): boolean {
+  return name === DEFAULT_STUDIO_CELL_NAME || OLD_STUDIO_CELL_DEFAULTS.includes(String(name));
+}
 
 /** What a studio cell keeps. */
 export interface StudioCellSetup {
@@ -69,7 +76,7 @@ export function pickStudioCell(playing: PlayingCell[], current: string | null): 
 export function studioCellLabel(s: Pick<MusicStudioState, 'set' | 'key' | 'scenes' | 'sceneId'>): string {
   const scene = s.sceneId ? s.scenes.find((x) => x.id === s.sceneId) : undefined;
   if (scene?.name) return scene.name;
-  const set = STUDIO_SETS.find((x) => x.id === s.set)?.label ?? 'Studio';
+  const set = STUDIO_SETS.find((x) => x.id === s.set)?.label ?? 'Audio Lab';
   return `${set} · ${keyLabel(s.key)}`;
 }
 

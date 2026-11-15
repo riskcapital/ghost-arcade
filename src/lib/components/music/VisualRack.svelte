@@ -410,7 +410,7 @@
                     <option value={voice.live}>{voice.live.slice(5)} (not in this set)</option>
                   {/if}
                 </optgroup>
-                <optgroup label="Studio">
+                <optgroup label="Audio Lab">
                   {#each voiceSourcesFor($musicStudio.set, voice.source) as src (src.id)}<option value={src.id}>{src.label}</option>{/each}
                 </optgroup>
               {:else}
@@ -466,7 +466,7 @@
           {/if}
         </div>
       {/each}
-      <button class="add studio-btn dashed" onclick={addVoice} title="Add a voice to this studio">+ Voice</button>
+      <button class="add studio-btn dashed" onclick={addVoice} title="Add a voice to these visuals">+ Voice</button>
     </div>
   {/if}
 </StudioModule>

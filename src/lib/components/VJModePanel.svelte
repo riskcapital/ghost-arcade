@@ -111,6 +111,7 @@
   import { abletonConnected } from '../ableton/abletonBridge';
   import VJLayerSequencer from './VJLayerSequencer.svelte';
   import { MUSIC_STUDIO } from '../features';
+  import AudioLabIcon from './AudioLabIcon.svelte';
   import VJMusicStudio from './music/VJMusicStudio.svelte';
   import StudioDeckStrip from './music/StudioDeckStrip.svelte';
   import StudioView from './music/StudioView.svelte';
@@ -6116,14 +6117,10 @@
               class="vj-seq-toggle-btn dock-labelled-btn"
               class:active={$musicStudio.isOpen}
               onclick={() => musicStudio.toggleOpen()}
-              title="Music studio: play instruments and beats that drive note-reactive visuals"
+              title="Audio Lab: play instruments and beats that drive note-reactive visuals"
             >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true">
-                <rect x="3" y="5" width="18" height="14" rx="1.5"/>
-                <path d="M8 5v9M12 5v9M16 5v9"/>
-                <path d="M8 14v5M12 14v5M16 14v5" stroke-width="1.2"/>
-              </svg>
-              Music
+              <AudioLabIcon size={15} compact />
+              Audio Lab
             </button>
             {/if}
 

@@ -77,7 +77,7 @@ function chopDef(buffer: AudioBuffer, index: number, start: number, end: number,
     category: 'dub',
     kind: 'shot',
     pitched: false,
-    blurb: `Slice ${index + 1} of ${CHOP_COUNT} of ${from}. It lasts until the studio closes.`,
+    blurb: `Slice ${index + 1} of ${CHOP_COUNT} of ${from}. It lasts until Audio Lab closes.`,
     play: (sc, _note, velocity, time) => playChop(sc, buffer, start, end, velocity, time),
   };
 }

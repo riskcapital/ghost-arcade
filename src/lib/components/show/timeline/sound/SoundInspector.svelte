@@ -133,7 +133,7 @@
         <label class="insp-field fx-add">
           <select onchange={(e) => addEffect(e, row)} data-sound-add-fx>
             <option value="">+ Effect…</option>
-            <optgroup label="Studio">
+            <optgroup label="Audio Lab">
               {#each MACRO_FX.filter((d) => d.group !== 'wild') as d (d.type)}<option value={d.type}>{d.label}</option>{/each}
             </optgroup>
             <optgroup label="Wild">

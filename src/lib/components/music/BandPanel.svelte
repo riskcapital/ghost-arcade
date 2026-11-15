@@ -107,7 +107,7 @@
     <span class="ga-eyebrow">Band's key</span>
     <div class="row">
       <button class="hold" class:on={b.listening} aria-pressed={b.listening} onclick={() => listenForKey(!b.listening)} title={b.listening ? 'Stop listening' : "Listen to the band's notes for its key"} data-midi-path="studio:band.listen" data-midi-label="Listen for the band's key" data-midi-mode="toggle">{b.listening ? 'Listening' : 'Listen'}</button>
-      <button class="studio-btn" disabled={!b.heard} onclick={useHeardKey} title="Play the studio in the key heard">Use key</button>
+      <button class="studio-btn" disabled={!b.heard} onclick={useHeardKey} title="Play Audio Lab in the key heard">Use key</button>
     </div>
     <span class="heard">{#if b.heard}{heardName} <span class="hint">({sure})</span>{:else if b.listening}Play a few bars…{:else}Not listening{/if}</span>
   </section>

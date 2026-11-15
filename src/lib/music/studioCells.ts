@@ -1,12 +1,13 @@
 /**
- * Music Studio cells on the VJ deck: one plays at a time.
+ * Audio Lab cells on the VJ deck: one plays at a time.
  *
  * Each cell keeps its own setup (the sound, the drum machine's beat, the
  * tempo). Launching a cell puts its setup into the studio on the next bar
  * and stops any other studio cell that was playing. The cell that was
  * playing keeps what the studio had when it stopped, so going back to it
- * brings that back. A cell named "Music Studio" (or still carrying the name
- * it was given) is named after its scene or its set and key.
+ * brings that back. A cell named "Audio Lab" (or "Music Studio", its name in
+ * older projects, or still carrying the name it was given) is named after its
+ * scene or its set and key.
  */
 
 import { get } from 'svelte/store';
@@ -17,7 +18,7 @@ import { runAsLiveControl } from '../stores/historyHooks';
 import { musicStudio } from './musicStudioStore';
 import { captureSetup } from './songs';
 import {
-  DEFAULT_STUDIO_CELL_NAME, cellSetupOf, pickStudioCell, playingStudioCells, studioCellLabel,
+  hasDefaultStudioCellName, cellSetupOf, pickStudioCell, playingStudioCells, studioCellLabel,
   type PlayingCell, type StudioCellSetup,
 } from './studioCellsCore';
 
@@ -46,7 +47,7 @@ function storeInto(clipId: string): void {
   const s = get(musicStudio);
   const label = studioCellLabel(s);
   const before = cellSetupOf(cell.clip.effectSource);
-  const autoNamed = cell.clip.name === DEFAULT_STUDIO_CELL_NAME || (before && cell.clip.name === before.label);
+  const autoNamed = hasDefaultStudioCellName(cell.clip.name) || (before && cell.clip.name === before.label);
   const musicSetup: StudioCellSetup = {
     setup: JSON.parse(JSON.stringify(captureSetup(s))),
     machine: JSON.parse(JSON.stringify(s.machine)),

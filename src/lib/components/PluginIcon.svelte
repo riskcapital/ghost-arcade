@@ -9,6 +9,7 @@
    * glyph (manifest.icon) so a missing branch still draws something.
    */
   import { getPluginByEffectType } from '../plugins/registry';
+  import AudioLabIcon from './AudioLabIcon.svelte';
   import type { IntegratedEffectType } from '../types';
 
   /** Plugin id (preferred) OR an effectType that resolves to one. */
@@ -18,7 +19,9 @@
   export let size: number = 32;
 
   // Resolve pluginId from effectType if needed
-  $: resolvedId = pluginId ?? (effectType ? (getPluginByEffectType(effectType)?.id ?? null) : null);
+  // The add-ons keep their icons on a saved layer in a build without them (unregistered there).
+  const ADDON_PLUGIN_IDS: Partial<Record<string, string>> = { 'music-studio': 'musicstudio', videosynth: 'analog-synth' };
+  $: resolvedId = pluginId ?? (effectType ? (getPluginByEffectType(effectType)?.id ?? ADDON_PLUGIN_IDS[effectType] ?? null) : null);
   // Fallback unicode glyph if we have no custom SVG for this id
   $: fallbackGlyph = effectType
     ? (getPluginByEffectType(effectType)?.icon ?? '?')
@@ -76,13 +79,8 @@
   </svg>
 
 {:else if resolvedId === 'musicstudio'}
-  <!-- A note over a stack of voices: the studio's visuals. -->
-  <svg class="plugin-icon-svg" width={size} height={size} viewBox="0 0 24 24" fill="none">
-    <path d="M9 15V5l9-2v10" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
-    <circle cx="7" cy="15" r="2" stroke="currentColor" stroke-width="1.4"/>
-    <circle cx="16" cy="13" r="2" stroke="currentColor" stroke-width="1.4"/>
-    <path d="M3 19.5h18M5 22h14" stroke="currentColor" stroke-width="1" opacity="0.55" stroke-linecap="round"/>
-  </svg>
+  <!-- Audio Lab: its drawing lives in AudioLabIcon.svelte. -->
+  <span class="plugin-icon-svg"><AudioLabIcon {size} /></span>
 
 {:else if resolvedId === 'analog-synth'}
   <!-- A tube screen with a wave across it, and two patch jacks: the video synth. -->
