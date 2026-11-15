@@ -289,9 +289,9 @@
       {#if row.kind === 'audio'}
         {#if !rowTracks.length && !sound.builds.some((b) => b.lane === lane)}
           {#if lane === 0 && !$tracksStore.length}
-            <span class="lane-hint song-hint" data-auto-show-song-hint>Drop a song here or
+            <span class="lane-hint song-hint" data-auto-show-song-hint>Drop audio here or
               <button type="button" class="hint-pick" onmousedown={(e) => e.stopPropagation()}
-                onclick={(e) => { e.stopPropagation(); pickAudioFiles(row.id, 0); }} data-sound-pick-song>choose one</button>,
+                onclick={(e) => { e.stopPropagation(); pickAudioFiles(row.id, 0); }} data-sound-pick-song>choose a file</button>,
               then ✦ Auto show</span>
           {:else}
             <span class="lane-hint">Drop audio here or

@@ -136,10 +136,10 @@ describe('the dialog flow', () => {
   });
 
   it('a read that says no is an error without Try again', async () => {
-    const f = fakeDeps({ prepare: vi.fn(async (): Promise<AutoShowPrepResult> => ({ ok: false, reason: 'Drop a song on the Song row first.' })) });
+    const f = fakeDeps({ prepare: vi.fn(async (): Promise<AutoShowPrepResult> => ({ ok: false, reason: 'Drop a song on the Audio row first.' })) });
     const flow = createAutoShowFlow(f.deps);
     await flow.start();
-    expect(flow.current()).toMatchObject({ kind: 'error', message: 'Drop a song on the Song row first.', canRetry: false });
+    expect(flow.current()).toMatchObject({ kind: 'error', message: 'Drop a song on the Audio row first.', canRetry: false });
     await flow.retry();
     expect(f.deps.prepare).toHaveBeenCalledTimes(1);
   });

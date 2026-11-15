@@ -1636,8 +1636,8 @@
         + Preset
       </button>
       {/if}
-      <button class="t-chip t-iconable" onclick={() => audioInput?.click()} title="Add a song or a sound from this computer, at the playhead" aria-label="Add a song or sound">
-        <TimelineIcon name="song" /><span class="t-label">Add song</span>
+      <button class="t-chip t-iconable" onclick={() => audioInput?.click()} title="Add audio from this computer at the playhead: a song, stems or a sound" aria-label="Add audio">
+        <TimelineIcon name="song" /><span class="t-label">Add audio</span>
       </button>
       {#if !isTimeline}
       <!-- Transition palette. Drag onto the junction between two touching
@@ -1739,7 +1739,7 @@
           <div class="lane-label sections" style="height: {SECTION_LANE_HEIGHT}px" data-sections-label>
             <span class="lane-name" title="Named spans of the Timeline with what happens at their end: play through, hold for GO, loop until GO, jump, or Live (pieces to the VJ decks until GO).">Sections</span>
             <button class="lane-line-add" onclick={addSectionAtPlayhead} title="Add a section at the playhead (8 bars, or up to the next section)" data-section-add>+</button>
-            <button class="lane-line-add score" onclick={() => autoShowOpen.set(true)} disabled={!audioTracks.length} title={audioTracks.length ? 'Auto show: a whole show on your mapping from the song on the Song row (sections, content on the pieces, looks, Screen FX)' : 'Drop a song on the Song row first'} data-auto-show-open><TimelineIcon name="sparkle" size={12} />Auto</button>
+            <button class="lane-line-add score" onclick={() => autoShowOpen.set(true)} disabled={!audioTracks.length} title={audioTracks.length ? 'Auto show: a whole show on your mapping from the song on the Audio row (sections, content on the pieces, looks, Screen FX)' : 'Drop a song on the Audio row first'} data-auto-show-open><TimelineIcon name="sparkle" size={12} />Auto</button>
             <SectionsLiveMenu />
           </div>
           <div class="lane-label preset timeline-presets" style="height: {PRESET_ROW_HEIGHT}px" data-presets-label>

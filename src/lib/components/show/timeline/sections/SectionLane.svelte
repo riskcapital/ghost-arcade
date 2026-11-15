@@ -150,7 +150,7 @@
   {/each}
   {#if !sections.length}
     {#if noSong}
-      <span class="sec-empty song" data-auto-show-hint>Drop a song here, then ✦ Auto show</span>
+      <span class="sec-empty song" data-auto-show-hint>Drop audio here, then ✦ Auto show</span>
     {:else}
       <span class="sec-empty">Double-click to add a section, or ✦ Auto show</span>
     {/if}

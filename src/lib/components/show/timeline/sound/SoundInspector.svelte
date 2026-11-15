@@ -102,7 +102,7 @@
 
 <div class="show-inspector sound-inspector" data-sound-inspector>
   {#if row}
-    <span class="insp-title">{row.kind === 'live' ? 'Live row' : 'Sound row'}</span>
+    <span class="insp-title">{row.kind === 'live' ? 'Live row' : 'Audio row'}</span>
     <label class="insp-field">
       <span>Name</span>
       <input class="insp-text" type="text" value={row.name} onchange={(e) => renameRow(row.id, (e.currentTarget as HTMLInputElement).value)} />

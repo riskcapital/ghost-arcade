@@ -198,7 +198,7 @@
       {#if message.kind === 'ok'}{message.bpm} BPM from <span class="layer-name">{message.name}</span>. Check where bar 1 is, and ×2 or ÷2 if it reads half or double time.
       {:else if message.kind === 'no-pulse'}No steady beat found in that track.
       {:else if message.kind === 'undecodable'}That track could not be read.
-      {:else}Add a song to the show first.{/if}
+      {:else}Add audio to the show first.{/if}
     </span>
   {/if}
   {#if tempo}

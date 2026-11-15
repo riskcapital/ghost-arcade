@@ -107,7 +107,7 @@
         <span>From</span>
         <select value={follow.source.track ?? ''} onchange={(e) => { const v = (e.currentTarget as HTMLSelectElement).value; patchSource({ track: v }); }} data-line-follow-row>
           <option value="">The song</option>
-          {#each $soundLayout.rows.filter((r) => r.kind === 'audio') as r (r.id)}<option value={`${SOUND_ROW_TRACK_PREFIX}${r.id}`}>Sound row: {r.name}</option>{/each}
+          {#each $soundLayout.rows.filter((r) => r.kind === 'audio') as r (r.id)}<option value={`${SOUND_ROW_TRACK_PREFIX}${r.id}`}>Audio row: {r.name}</option>{/each}
         </select>
       </label>
     {/if}

@@ -206,7 +206,7 @@ export async function addLibrarySound(rowId: string, soundId: string, at: number
 export function bindLiveTrack(rowId: string, track: number, trackName: string): void {
   const row = soundRows().find((r) => r.id === rowId);
   if (!row) return;
-  updateRow(rowId, { kind: 'live', live: { ...(row.live ?? { launch: 'beat', latencyMs: 20 }), track, trackName } as SoundRow['live'], name: row.name.startsWith('Live') || row.name.startsWith('Sound') ? trackName || row.name : row.name });
+  updateRow(rowId, { kind: 'live', live: { ...(row.live ?? { launch: 'beat', latencyMs: 20 }), track, trackName } as SoundRow['live'], name: row.name.startsWith('Live') || row.name.startsWith('Sound') || row.name.startsWith('Audio') || row.name === 'Song' ? trackName || row.name : row.name });
 }
 
 export function setLiveOptions(rowId: string, patch: Partial<NonNullable<SoundRow['live']>>): void {

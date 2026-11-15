@@ -119,7 +119,7 @@ export async function prepareScore(opts: { shuffle?: number; signal?: AbortSigna
   const s = get(showTimeline);
   if (s.doc !== 'timeline') return { ok: false, reason: 'Open the Timeline first.' };
   const track = scoreSongTrack(s.audioTracks);
-  if (!track) return { ok: false, reason: 'Put a song on the Song row first (drop an audio file on it).' };
+  if (!track) return { ok: false, reason: 'Put a song on the Audio row first (drop an audio file on it).' };
   let tempo = s.tempo;
   let tempoDetected = false;
   if (!tempo) {

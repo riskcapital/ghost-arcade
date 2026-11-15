@@ -54,7 +54,7 @@
     onclick={() => showTimeline.select({ kind: 'soundRow', id: row.id })}
   >
     <div class="sh-top">
-      <span class="sh-kind" title={row.kind === 'live' ? 'Live row: plays clips in Ableton Live' : 'Sound row'}>{row.kind === 'live' ? 'L' : '♪'}</span>
+      <span class="sh-kind" title={row.kind === 'live' ? 'Live row: plays clips in Ableton Live' : 'Audio row'}>{row.kind === 'live' ? 'L' : '♪'}</span>
       <span class="sh-name" title={row.name}>{row.name}</span>
       {#if row.fx.length}<span class="sh-fx" title="Effects on this row">FX {row.fx.length}</span>{/if}
       <button class="sh-btn" class:on={row.muted} onclick={(e) => { e.stopPropagation(); toggleMute(row.id); }} title="Mute this row" data-sound-mute>M</button>
@@ -88,7 +88,7 @@
   {/if}
   {#if i === layout.rows.length - 1}
     <div class="sound-foot" style="height: {SOUND_FOOTER_HEIGHT}px">
-      <button class="sf-btn" onclick={() => addRow('audio')} title="A new sound row for songs, stems and one-shots" data-sound-add-row>+ Sound row</button>
+      <button class="sf-btn" onclick={() => addRow('audio')} title="A new audio row for songs, stems and one-shots" data-sound-add-row>+ Audio row</button>
       <button class="sf-btn" onclick={() => addRow('live')} title="A row that plays clips in Ableton Live, lined up with the Timeline" data-sound-add-live>+ Live row</button>
     </div>
   {/if}

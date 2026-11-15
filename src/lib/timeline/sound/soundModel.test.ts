@@ -29,7 +29,7 @@ describe('sound rows: the model', () => {
     const tracks = [{ lane: 0 }, { lane: 2 }];
     const rows = soundRowsFor(EMPTY_SOUND_DOC, tracks);
     expect(rows.map((r) => r.id)).toEqual(['row-0', 'row-1', 'row-2']);
-    expect(rows[0].name).toBe('Song');
+    expect(rows[0].name).toBe('Audio');
     const doc = updateSoundRow(EMPTY_SOUND_DOC, tracks, 'row-1', { volume: 0.5 });
     expect(doc.rows.map((r) => r.id)).toEqual(['row-0', 'row-1', 'row-2']);
     expect(doc.rows[1].volume).toBe(0.5);

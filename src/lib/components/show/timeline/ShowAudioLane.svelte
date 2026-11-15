@@ -44,8 +44,8 @@
 <div class="lane audio-lane" style="height: {height}px">
   {#if empty}
     <span class="lane-empty lane-empty-audio">
-      Drop a song here, or
-      <button class="lane-empty-btn" onclick={(e) => { e.stopPropagation(); onpicksong(); }}>build a show from a song…</button>
+      Drop audio here, or
+      <button class="lane-empty-btn" onclick={(e) => { e.stopPropagation(); onpicksong(); }}>build a show from audio…</button>
     </span>
   {/if}
   {#each visible as track (track.id)}

@@ -106,7 +106,7 @@ const unit = (v: unknown, d: number) => Math.max(0, Math.min(1, finite(v, d)));
 export function defaultSoundRow(index: number, kind: SoundRowKind = 'audio'): SoundRow {
   return {
     id: `row-${index}`,
-    name: kind === 'live' ? `Live ${index + 1}` : index === 0 ? 'Song' : `Sound ${index + 1}`,
+    name: kind === 'live' ? `Live ${index + 1}` : index === 0 ? 'Audio' : `Audio ${index + 1}`,
     kind,
     volume: 1,
     muted: false,

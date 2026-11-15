@@ -201,7 +201,7 @@ export async function prepareAutoShow(opts: { style?: ShowStyle; source?: AutoSh
   const s = get(showTimeline);
   if (s.doc !== 'timeline') return { ok: false, reason: 'Open the Timeline first.' };
   const track = scoreSongTrack(s.audioTracks);
-  if (!track) return { ok: false, reason: 'Drop a song on the Song row first.' };
+  if (!track) return { ok: false, reason: 'Drop a song on the Audio row first.' };
   let tempo = s.tempo;
   let tempoDetected = false;
   let pulse = true;
