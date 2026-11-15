@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { runAutoMap, mapSurface, type AutoMapLink, type AutoMapCamera } from './autoMap';
 import { planPatterns, patternValue, applyHomography, type PatternFrame } from './structuredLight';
-import { stripeFrameCode, STRIPE_CELL, STRIPE_CELLS } from './structuredLightCodes';
+import { stripeFrameCode, STRIPE_CELL, STRIPE_CELLS, STRIPE_FRAME_LIMIT } from './structuredLightCodes';
 
 /**
  * A whole auto-map run against a pretend desktop and camera: two projectors
@@ -134,3 +134,15 @@ describe('outlined surface', () => {
     expect(() => mapSurface(left, [{ x: 0.9, y: 0.02 }, { x: 0.98, y: 0.02 }, { x: 0.98, y: 0.08 }, { x: 0.9, y: 0.08 }])).toThrow(/does not light/);
   }, 30000);
 });
+
+describe('what phone app 1.2 asks the desktop to show', () => {
+  it('stays inside the frames the desktop shows, the dark frame before its depth step included', () => {
+    const codes = [stripeFrameCode({ kind: 'white' }), stripeFrameCode({ kind: 'black' })];
+    for (const axis of ['x', 'y'] as const) for (let bit = 0; bit < 16; bit++) for (const inverted of [false, true]) codes.push(stripeFrameCode({ kind: 'bit', axis, bit, inverted }));
+    for (const cell of STRIPE_CELLS) codes.push(stripeFrameCode({ kind: 'bit', axis: 'y', bit: 15, inverted: true }, cell));
+    for (const code of codes) expect(Number.isInteger(code) && code >= 0 && code < STRIPE_FRAME_LIMIT).toBe(true);
+    // The 1.2 phone darkens the projector with this before measuring LiDAR depth.
+    expect(stripeFrameCode({ kind: 'black' }, STRIPE_CELL)).toBe(201);
+  });
+});
+
