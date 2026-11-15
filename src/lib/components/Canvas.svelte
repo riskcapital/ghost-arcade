@@ -5,7 +5,8 @@
   import { RenderEngine, loadImageTexture, createVideoTexture, getThreeJSIframeContext, createThreeJSIframeContext, disposeThreeJSIframeContext, getJSAnimationContext, createJSAnimationContext, disposeJSAnimationContext } from '../renderer/engine';
   import { project, layers, compositions } from '../stores/layers';
   import { compositionTransition } from '../stores/compositionTransition';
-  import { buildCompositionTransitionLayers } from '../renderer/compositionTransitionLayers';
+  import { applyCompositionFadeFrame, buildCompositionTransitionLayers, compositionTransitionSceneKey } from '../renderer/compositionTransitionLayers';
+  import { applyStageFxFrame, NO_STAGE_FX, type StageFxFrameValues } from '../renderer/stageFxFrame';
   import { showTrackFrame, showClipSources } from '../stores/showTrackFrame';
   import { takeoverFrame, takeoverMediaSources, takeoverRenderHeld } from '../stores/takeoverFrame';
   import { buildTakeoverScene } from '../show/takeover/takeoverScene';
@@ -24,7 +25,7 @@
   import { vjOutputLayers, vjTransitionOutputLayers, vjClipLauncher, vjCrossfader, vjClipLauncherNow, type VJClipLauncherState } from '../stores/vjClipLauncher';
   import { buildMapPresetLayers, composeMapOutputLayers, mapPresetRows, type MapPresetCacheEntry } from '../renderer/mapPresetLayers';
   import { vjClipTransitions, vjClipTransitionKey } from '../stores/vjClipTransitions';
-  import { buildVJClipTransitionLayers, vjClipTransitionInputId, vjClipTransitionSourceId, type VJClipTransitionState } from '../renderer/vjClipTransitionNative';
+  import { applyClipFadeFrame, buildVJClipTransitionLayers, vjClipTransitionInputId, vjClipTransitionSourceId, type VJClipTransitionState } from '../renderer/vjClipTransitionNative';
   import { createNativeClipTransitionCoordinator } from '../renderer/nativeClipTransitionCoordinator';
   import { nativePerformerWorldOverlays } from '../stores/nativePerformerWorld';
   import { applyCrossfadeFrame, crossfadeSceneStep, crossfadeWeights } from '../renderer/vjCrossfadeFrame';
@@ -144,13 +145,23 @@
    *  (music/studioPlugin.ts). The frame sync does this on every frame it
    *  sends (setFrameLayers): the voices' signals move every frame, and
    *  reading them there needs no scene rebuild or store tick per frame. */
-  /** Applied by the frame sync to every frame it sends: Studio voices, and
-   *  the values that follow the A/B crossfader (vjCrossfadeFrame.ts). */
+  /** Applied by the frame sync to every frame it sends: Studio voices, the
+   *  values that follow the A/B crossfader (vjCrossfadeFrame.ts), running
+   *  clip transitions and composition crossfades (their progress), and this
+   *  frame's Screen FX (stageFxFrame.ts). None of these rebuild the scene. */
   function nativeFrameLayers(list: Layer[]): Layer[] {
-    return applyCrossfadeFrame(withStudioVoices(list), vjClipLauncherNow());
+    let out = applyCrossfadeFrame(withStudioVoices(list), vjClipLauncherNow());
+    out = applyClipFadeFrame(out, performance.now());
+    out = applyCompositionFadeFrame(out, compositionTransition.current());
+    return applyStageFxFrame(out, stageFxFrameValues);
   }
   // The fader step the published scene was built at (crossfadeSceneStep).
   let builtCrossfadeStep = '';
+  // The composition transition the published scene was built for
+  // (compositionTransitionSceneKey): its progress is a frame value.
+  let builtCompositionFadeKey = '';
+  // This frame's Screen FX (the Screen FX driver in the native sync setup).
+  let stageFxFrameValues: StageFxFrameValues = NO_STAGE_FX;
   function withStudioVoices(list: Layer[]): Layer[] {
     // Without the Studio in the build its layers draw nothing and keep their data.
     if (!MUSIC_STUDIO) return list;
@@ -298,9 +309,6 @@
   let spoutTargetW = 0;
   let spoutTargetH = 0;
   let nativeRendererSync: NativeRendererSync | null = null;
-  // Set once the native sync lifecycle arms; lets the render loop push
-  // per-frame layer updates (stage-FX opacity rides) into the native scene.
-  let nativeLayersSyncRef: (() => void) | null = null;
 // Native stage3d scene publishing intentionally removed: the 3D stage
   // window renders its view in WebGL and the recording flow manages the
   // native scene explicitly. Live publishing overlaid the venue onto the
@@ -1966,6 +1974,8 @@
             progress: current.startedAtMs === null ? 0
               : Math.max(0, Math.min(1, (performance.now() - current.startedAtMs) / (current.duration * 1000))),
             snapshotSourceId: current.frozenSourceId,
+            // The frame sync moves the mix from here (applyClipFadeFrame).
+            ...(current.startedAtMs !== null ? { clock: { startedAtMs: current.startedAtMs, durationMs: current.duration * 1000 } } : {}),
           });
         }
         const vjLayers = buildVJClipTransitionLayers(incomingLayers ?? [], clipFades, true);
@@ -1983,6 +1993,7 @@
       const nativeEffectiveLayers = (): Layer[] | null => {
         const vjState = vjClipLauncherNow();
         builtCrossfadeStep = crossfadeSceneStep(vjState);
+        builtCompositionFadeKey = compositionTransitionSceneKey(get(compositionTransition).active);
         // STAGE mode: the VJ feed layers render their frames invisibly while
         // the mapping scene's Screen layers sample those streams core-side
         // via vj_layer_index. Both lists must reach the native sync.
@@ -2054,6 +2065,8 @@
           activeCompositionId: get(project).vjMode?.activeCompositionId ?? null,
           transition: xfade,
           compositionLayers: (id) => comps.find((c) => c.id === id)?.layers ?? null,
+          // The weights follow progress on every frame (nativeFrameLayers).
+          frameWeights: true,
         });
         return withTakeover(buildShowTrackScene(
           effective === mappingLive ? liveLayerCopies(mappingLive) : effective,
@@ -2155,35 +2168,6 @@
           mixEffects: nativeCompositionEffects(vjState.compositionEffects),
         });
       };
-      // Stage FX opacity for the native scene: layerId → multiplier, refreshed
-      // once per frame by the Stage FX driver below. It is applied to EVERY
-      // native sync rather than to one sync the driver makes itself: the
-      // sync keeps only the newest layer list, and in VJ mode the launcher,
-      // keyframe and sequencer stores push their own unmodulated lists many
-      // times a second, so a one-shot modulated push was replaced before it
-      // was drawn and Screen FX showed up on the odd frame at best.
-      let stageFxNativeOpacity = new Map<string, number>();
-      // Screen FX colour chases: layerId → tint, refreshed with the opacity.
-      let stageFxNativeTint = new Map<string, [number, number, number]>();
-      const withStageFxOpacity = (list: Layer[]): Layer[] => {
-        if (stageFxNativeOpacity.size === 0 && stageFxNativeTint.size === 0) return list;
-        return list.map((layer) => {
-          let multiplier = stageFxNativeOpacity.get(layer.id);
-          let tint = stageFxNativeTint.get(layer.id);
-          if (multiplier === undefined && !tint && timelineScreenFx()) {
-            // The Timeline's copies of a piece (added layers, where copies) follow it.
-            const out = timelineScreenFxFor(layer.id);
-            if (out) {
-              if (out.brightness < 1) multiplier = Math.max(0, out.brightness);
-              if (out.tint) tint = out.tint;
-            }
-          }
-          if (multiplier === undefined && !tint) return layer;
-          const next = multiplier === undefined ? { ...layer } : { ...layer, opacity: layer.opacity * multiplier };
-          if (tint) next._stageTint = tint;
-          return next;
-        });
-      };
       let __vjFeedDebugAt = 0;
       type NativeVjLayersSyncDetail = {
         urgent?: boolean;
@@ -2193,6 +2177,13 @@
       };
       let deferredUrgent = false;
       let nativeClipSyncDisposed = false;
+      let nativeSceneBuildSkipped = false;
+      // A value the frame sync applies itself moved: a frame of the published
+      // scene, or a build when the last one was skipped.
+      const requestNativeSceneFrame = () => {
+        if (nativeSceneBuildSkipped) scheduleNativeLayersSync();
+        else nativeRendererSync?.requestFrame();
+      };
       let forceNativeSceneResync = false;
       const deferredVideoSources = new Set<string>();
       const deferredHandoffs = new Map<string, () => void>();
@@ -2221,8 +2212,11 @@
           if (triggeredAtMs !== undefined) deferredTriggerTime = triggeredAtMs;
         }
         const p = get(project);
-        const built = nativeEffectiveLayers();
-        const effective = built ? withStageFxOpacity(built) : null;
+        const effective = nativeEffectiveLayers();
+        // A skipped build leaves the last scene up: the frame-value ticks
+        // (clip transitions, composition crossfades, the fader) build again
+        // instead of only asking for a frame until one is published.
+        nativeSceneBuildSkipped = !effective;
         if (!effective) {
           // A trigger updates the launcher and derived VJ layers in adjacent
           // store emissions. Give the derived layer one microtask to settle,
@@ -2287,7 +2281,7 @@
               // Rebuild from current state instead of restoring stale inputs.
               const latest = nativeEffectiveLayers();
               const currentProject = get(project);
-              if (latest) publishNativeScene(currentProject.width || 1920, currentProject.height || 1080, withStageFxOpacity(latest));
+              if (latest) publishNativeScene(currentProject.width || 1920, currentProject.height || 1080, latest);
             });
           } else {
             callbacks.forEach(callback => callback());
@@ -2362,7 +2356,9 @@
         onFrozen: (task, id) => { vjClipTransitions.setFrozenSource(task.deck, task.layerIndex, task.token, id); },
         onReady: (task, now) => { vjClipTransitions.markReady(task.deck, task.layerIndex, task.token, now); },
         onComplete: task => { vjClipTransitions.complete(task.deck, task.layerIndex, task.token); },
-        onFrame: () => scheduleNativeLayersSync(),
+        // A running fade's mix is a frame value (applyClipFadeFrame); its
+        // start, end and readiness come through vjClipTransitions.
+        onFrame: requestNativeSceneFrame,
         onError: message => showToast(message, 'error'),
       });
       const releaseClipSnapshots = vjClipTransitions.setReleaseHandler(clipTransitionCoordinator.retire);
@@ -2386,23 +2382,30 @@
           scheduleNativePreviewWindowSync('project');
         }
       });
-      // Immediate: the browser render loop calls this while stage-FX
-      // opacities are applied in place, and restores them before a
-      // microtask would run. A build already queued is covered by this one,
-      // and running it later would push the restored values over it.
-      nativeLayersSyncRef = () => {
-        queuedNativeLayersSync.cancel();
-        runNativeLayersSync();
-      };
       const studioCodeUnsub = studioCodeTick.subscribe(() => scheduleNativeLayersSync());
       // ── Stage FX driver (native mode) ──
       // When the native core owns the frame, the WebGL animate() loop
       // never runs — so nothing was ticking the stage-effect engines
       // into the native scene. This RAF loop is the native-mode driver:
       // while either FX engine is live it works out this frame's opacity
-      // multiplier for each bound layer into stageFxNativeOpacity, which
-      // every native sync applies, then pushes the scene. Idle frames cost
-      // two map-size checks and nothing else.
+      // multiplier and tint for each bound layer (stageFxFrameValues). The
+      // frame sync puts them on every frame it sends (nativeFrameLayers), so
+      // a running effect asks for a frame and never rebuilds the scene.
+      // Idle frames cost two map-size checks and nothing else.
+      let stageFxNativeOpacity = new Map<string, number>();
+      let stageFxNativeTint = new Map<string, [number, number, number]>();
+      const publishStageFxFrame = () => {
+        const active = stageFxNativeOpacity.size > 0 || stageFxNativeTint.size > 0;
+        stageFxFrameValues = active
+          ? {
+              opacity: stageFxNativeOpacity,
+              tint: stageFxNativeTint,
+              // The Timeline's copies of a piece (added layers, where copies) follow it.
+              fallback: timelineScreenFx() ? timelineScreenFxFor : null,
+            }
+          : NO_STAGE_FX;
+        requestNativeSceneFrame();
+      };
       let stageFxNativeRaf: number | null = null;
       const stageFxNativeTick = () => {
         stageFxNativeRaf = requestAnimationFrame(stageFxNativeTick);
@@ -2419,7 +2422,7 @@
           if (stageFxNativeOpacity.size > 0 || stageFxNativeTint.size > 0) {
             stageFxNativeOpacity = new Map();
             stageFxNativeTint = new Map();
-            scheduleNativeLayersSync();
+            publishStageFxFrame();
           }
           return;
         }
@@ -2458,7 +2461,7 @@
         }
         stageFxNativeOpacity = next;
         stageFxNativeTint = nextTint;
-        scheduleNativeLayersSync();
+        publishStageFxFrame();
         const nowDbg = performance.now();
         if (nowDbg - ((window as unknown as { __stageFxNativeDbgAt?: number }).__stageFxNativeDbgAt ?? 0) > 2000) {
           (window as unknown as { __stageFxNativeDbgAt?: number }).__stageFxNativeDbgAt = nowDbg;
@@ -2476,6 +2479,7 @@
       // the fader crosses a step that changes its shape.
       const nativeCrossfaderUnsub = vjCrossfader.subscribe(() => {
         if (crossfadeSceneStep(vjClipLauncherNow()) !== builtCrossfadeStep) scheduleNativeLayersSync();
+        else requestNativeSceneFrame();
       });
       // The timeline, the sequencer and Timeline lines drive layer state
       // without touching the project store. The frame sync applies their
@@ -2487,20 +2491,24 @@
       const nativeSequencerUnsub = layerSequencer.subscribe(requestNativeFrame);
       const nativeKeyframeUnsub = keyframeTimeline.subscribe(requestNativeFrame);
       const nativeLineUnsub = controlLineFrame.subscribe(requestNativeFrame);
-      // The Timeline's Screen FX / Effects rows: apply this frame's values now
-      // (an offline render publishes once per virtual frame, between RAFs).
+      // The Timeline's Screen FX / Effects rows: work out this frame's values
+      // now (an offline render publishes once per virtual frame, between
+      // RAFs). Both are frame values: Screen FX via nativeFrameLayers, the
+      // Effects row on the sync's composite chain.
       const nativeStageFxRowsUnsub = timelineStageFxFrame.subscribe(() => {
         refreshStageFxNative();
-        scheduleNativeLayersSync();
+        requestNativeSceneFrame();
       });
-      // Composition crossfade: `progress` moves every frame of the window and
-      // it IS the layer opacities, so every publish has to reach the core.
-      // The store only emits on a real change, so a settled scene costs
-      // nothing — and an offline render, which publishes from its own
-      // per-frame `showTimeline.seek()`, gets one flush per virtual frame.
-      const nativeCompositionXfadeUnsub = compositionTransition.subscribe(() =>
-        scheduleNativeLayersSync(),
-      );
+      // Composition crossfade: `progress` moves every frame of the window;
+      // the scene carries both stacks tagged with their side and the frame
+      // sync weights them (nativeFrameLayers). The scene is built again only
+      // when a transition starts, ends or changes its pair or style. An
+      // offline render publishes from its per-frame `showTimeline.seek()`
+      // and gets one frame per virtual frame.
+      const nativeCompositionXfadeUnsub = compositionTransition.subscribe(($xfade) => {
+        if (compositionTransitionSceneKey($xfade.active) !== builtCompositionFadeKey) scheduleNativeLayersSync();
+        else requestNativeSceneFrame();
+      });
       const nativePerformerWorldUnsub = nativePerformerWorldOverlays.subscribe(() =>
         scheduleNativeLayersSync(),
       );
@@ -3662,13 +3670,9 @@
         const stageEffectNowMs = browserEditorPreviewActive() && renderClockSeconds !== null
           ? renderClockSeconds * 1000
           : performance.now();
+        // The native scene gets this frame's Screen FX from its own driver
+        // (stageFxFrameValues, applied by the frame sync), not from here.
         applyMappingCompositionStageEffects($project.mappingComposition, layersToRender, stageEffectNowMs);
-        // Stage FX animate per frame by riding layer opacity; the native
-        // scene only updates through the sync, so push while any effect
-        // output is live (values are captured by copy in the sync path).
-        const stageFxActive = stageRt.sliceOutputs.size > 0
-          || !!($project.mappingComposition?.enabled && ($project.mappingComposition?.stageEffects?.length ?? 0) > 0);
-        if (stageFxActive) nativeLayersSyncRef?.();
 
         if (seqOverrides) {
           // Continuous-mode rows take a separate side-channel path:

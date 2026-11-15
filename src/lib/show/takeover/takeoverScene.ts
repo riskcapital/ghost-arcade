@@ -312,6 +312,8 @@ export function buildTakeoverScene(list: Layer[], frame: TakeoverFrame | null, c
     };
     delete copy._showOpacityMul;
     delete copy._showParams;
+    // Its level is its own, not a composition crossfade's weight.
+    delete copy._compFadeFrame;
     applySource(copy, surface, surface.source, feeds, ctx);
     if (index >= 0) stage = [...stage.slice(0, index), copy, ...stage.slice(index)];
     else injected.push(copy);

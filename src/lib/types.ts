@@ -3281,6 +3281,14 @@ export interface Layer {
    *  sync puts the fader's position into them on every frame
    *  (renderer/vjCrossfadeFrame.ts). Never saved. */
   _xfadeFrame?: import('./renderer/vjCrossfadeFrame').CrossfadeFrameTag;
+  /** A layer of a running composition transition: the frame sync multiplies
+   *  its opacity by its stack's weight on every frame
+   *  (renderer/compositionTransitionLayers.ts). Never saved. */
+  _compFadeFrame?: import('./renderer/compositionTransitionLayers').CompositionFadeTag;
+  /** A clip transition carrier whose mix the frame sync moves with the
+   *  transition's clock on every frame (renderer/vjClipTransitionNative.ts).
+   *  Never saved. */
+  _clipFadeFrame?: import('./renderer/vjClipTransitionNative').ClipFadeClock;
 
   // ── Group nesting ──────────────────────────────────────────────────────
   /** ID of parent group layer (undefined/null = top-level layer) */

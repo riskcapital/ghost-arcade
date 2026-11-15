@@ -16,7 +16,43 @@ export type VJClipTransitionState = {
   token?: number | string;
   duration?: number;
   running?: boolean;
+  /** The running fade's clock: the carrier is tagged with it and the frame
+   *  sync moves its mix every frame (applyClipFadeFrame), so a running fade
+   *  needs no scene rebuild per frame. */
+  clock?: ClipFadeClock;
 };
+
+/** When a running clip transition started (performance.now() ms) and how
+ *  long it runs. Runtime only, never saved. */
+export type ClipFadeClock = { startedAtMs: number; durationMs: number; token?: number | string };
+
+const clamp01Mix = (v: number) => Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0;
+
+/** A running clip transition's progress at `nowMs`. */
+export function clipFadeProgress(clock: Pick<ClipFadeClock, 'startedAtMs' | 'durationMs'>, nowMs: number): number {
+  return clamp01Mix((nowMs - clock.startedAtMs) / clock.durationMs);
+}
+
+/**
+ * The scene with each running clip transition's mix at `nowMs`. Only the
+ * carrier the clock was put on moves (same transition token, still a clip
+ * transition); a layer copied from it with another source is left alone.
+ * Nothing to move, the same list.
+ */
+export function applyClipFadeFrame(layers: Layer[], nowMs: number): Layer[] {
+  let out: Layer[] | null = null;
+  for (let i = 0; i < layers.length; i++) {
+    const layer = layers[i];
+    const clock = layer._clipFadeFrame;
+    if (!clock) continue;
+    const es = layer.source?.effectSource as (Record<string, unknown> & { vjxfadeMix?: number }) | undefined;
+    if (!es || es.vjclipTransition !== true || es.vjclipClockToken !== clock.token) continue;
+    const mix = clipFadeProgress(clock, nowMs);
+    if (es.vjxfadeMix === mix) continue;
+    (out ??= layers.slice())[i] = { ...layer, source: { ...layer.source!, effectSource: { ...es, vjxfadeMix: mix } as any } };
+  }
+  return out ?? layers;
+}
 export type VJClipTransitionBranch = {
   layer: Layer;
   opacity: number;
@@ -148,13 +184,17 @@ export function buildVJClipTransitionLayers(
     // is bound directly; no scene layer or duplicate FX chain is needed.
     if (!state.snapshotSourceId) result.push(hide(state.outgoing, outgoingId));
     result.push(hide(incoming, incomingId));
-    result.push(makeVJClipTransitionCarrier(incoming, outgoingId, incomingId, state.progress, state.style, {
+    const carrier = makeVJClipTransitionCarrier(incoming, outgoingId, incomingId, state.progress, state.style, {
       sourceAId: state.snapshotSourceId,
       active: true,
       clockToken: state.token, clockDuration: state.duration, clockRunning: state.running,
       opacityA: state.snapshotSourceId ? 1 : state.outgoing.opacity,
       opacityB: incoming.opacity,
-    }));
+    });
+    if (state.clock && state.running && state.clock.durationMs > 0) {
+      carrier._clipFadeFrame = { startedAtMs: state.clock.startedAtMs, durationMs: state.clock.durationMs, token: state.token };
+    }
+    result.push(carrier);
   }
   return result;
 }

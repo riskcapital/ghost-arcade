@@ -147,6 +147,67 @@ function scaleOpacity(layer: Layer, weight: number, blend: BlendMode | null): La
 }
 
 /**
+ * A layer of a running transition whose stack weight the frame sync applies
+ * (`applyCompositionFadeFrame`). Runtime only, never saved.
+ */
+export interface CompositionFadeTag {
+  side: 'outgoing' | 'incoming';
+  /** The transition the scene was built for, and its progress then. */
+  style: CompositionTransitionStyle;
+  fromCompositionId: string;
+  toCompositionId: string;
+  progress: number;
+}
+
+/** The part of a transition the scene's shape depends on: which two
+ *  compositions and the style (order and blend). Progress only moves values. */
+export function compositionTransitionSceneKey(transition: ActiveCompositionTransition | null): string {
+  if (!transition) return '';
+  return `${transition.style}|${transition.fromCompositionId}|${transition.toCompositionId}`;
+}
+
+function tagForFrame(layer: Layer, tag: CompositionFadeTag, blend: BlendMode | null): Layer {
+  // The stored opacity stays as it is; the frame multiplies it by the
+  // stack's weight, so copies made from this layer later in the build
+  // (show tracks) follow the fade as they did when it was baked in.
+  const next = { ...layer, opacity: layer.opacity ?? 1, _compFadeFrame: tag } as Layer;
+  if (blend) next.blendMode = blend;
+  return next;
+}
+
+/**
+ * The scene with each tagged layer at its stack's weight for `transition`
+ * (the store's current state). When the scene was built for another
+ * transition (it is about to be rebuilt) the progress it was built at is
+ * used. Untagged layers come back as they are; nothing tagged, the same
+ * list.
+ */
+export function applyCompositionFadeFrame(layers: Layer[], transition: ActiveCompositionTransition | null): Layer[] {
+  let out: Layer[] | null = null;
+  let cachedKey = '';
+  let cached: CompositionTransitionWeights | null = null;
+  for (let i = 0; i < layers.length; i++) {
+    const layer = layers[i];
+    const tag = layer._compFadeFrame;
+    if (!tag) continue;
+    const live = transition
+      && transition.style === tag.style
+      && transition.fromCompositionId === tag.fromCompositionId
+      && transition.toCompositionId === tag.toCompositionId;
+    const progress = live ? transition!.progress : tag.progress;
+    const key = `${tag.style}|${progress}`;
+    if (!cached || cachedKey !== key) {
+      cachedKey = key;
+      cached = compositionTransitionWeights(tag.style, progress);
+    }
+    const opacity = clamp01((layer.opacity ?? 1) * cached[tag.side]);
+    if (opacity === layer.opacity) continue;
+    (out ??= layers.slice())[i] = { ...layer, opacity };
+  }
+  return out ?? layers;
+}
+
+/**
  * Rewrite a whole stack under `TRANSITION_LAYER_PREFIX`, keeping group
  * parentage consistent. All-or-nothing on purpose: renaming only the
  * colliding ids would orphan a group child from its container.
@@ -174,6 +235,10 @@ export interface BuildCompositionTransitionArgs {
   compositionLayers: (compositionId: string) => Layer[] | null;
   /** Test seam. Defaults to the core's own ceiling. */
   maxLayers?: number;
+  /** Leave each layer at its own opacity and tag it with its stack, for the
+   *  frame sync to weight on every frame (`applyCompositionFadeFrame`):
+   *  progress moves every frame, and this way it needs no scene rebuild. */
+  frameWeights?: boolean;
 }
 
 /**
@@ -232,7 +297,19 @@ export function buildCompositionTransitionLayers(
   }
 
   const w = compositionTransitionWeights(transition.style, transition.progress);
-  const outLayers = outgoing.map((l) => scaleOpacity(l, w.outgoing, null));
-  const inLayers = incoming.map((l) => scaleOpacity(l, w.incoming, w.incomingBlend));
+  let outLayers: Layer[];
+  let inLayers: Layer[];
+  if (args.frameWeights) {
+    const tag = (side: CompositionFadeTag['side']): CompositionFadeTag => ({
+      side, style: transition.style, fromCompositionId, toCompositionId, progress: transition.progress,
+    });
+    const outTag = tag('outgoing');
+    const inTag = tag('incoming');
+    outLayers = outgoing.map((l) => tagForFrame(l, outTag, null));
+    inLayers = incoming.map((l) => tagForFrame(l, inTag, w.incomingBlend));
+  } else {
+    outLayers = outgoing.map((l) => scaleOpacity(l, w.outgoing, null));
+    inLayers = incoming.map((l) => scaleOpacity(l, w.incoming, w.incomingBlend));
+  }
   return w.incomingOnTop ? [...inLayers, ...outLayers] : [...outLayers, ...inLayers];
 }
