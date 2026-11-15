@@ -7,6 +7,7 @@
  * Every new feature is a flag a phone may ignore.
  */
 import { CAPTURE_LIMITS } from '../../scene3d/roomPhone';
+import { PICKABLE_SHOW_ACTIONS } from '../../show/showActionLabels';
 import { defaultZoneTrigger, type InteractiveScene } from './interactive';
 
 /** Every tool a phone touch may use on the desktop (Throw, Push, Pour and Ignite act on the 3D world). */
@@ -34,11 +35,41 @@ export type StudioCapabilities = {
   depthCapture: typeof DEPTH_CAPTURE_CAPABILITY;
   /** The desktop output's size: the phone edits at this aspect. */
   output: { width: number; height: number };
+  /** What a phone's trigger zone may do on the desktop, with the names it needs to pick one. */
+  showActions: PhoneShowActions;
 };
+
+/** A thing a show action names, by id, with the name the desktop shows. */
+export type PhoneShowName = { id: string; name: string };
+/**
+ * The desktop's show-action menu for a paired phone: the kinds in the
+ * desktop picker's order with its labels, and the Looks, presets and
+ * Timeline sections there are now. A phone builds the actions itself (the
+ * desktop schema, `show/showActions.ts`); the desktop checks every scene.
+ */
+export type PhoneShowActions = { version: 1; kinds: { kind: string; label: string }[]; looks: PhoneShowName[]; presets: PhoneShowName[]; sections: PhoneShowName[] };
+/** At most this many of each list go to the phone. */
+export const PHONE_SHOW_NAMES_MAX = 200;
+
+/** The menu from the desktop's lists: names trimmed, empty ids left out, each list capped. */
+export function phoneShowActions(lists: { looks: readonly { id: string; name?: string }[]; presets: readonly { id: string; name?: string }[]; sections: readonly { id: string; name?: string }[] }): PhoneShowActions {
+  const names = (list: readonly { id: string; name?: string }[], fallback: string): PhoneShowName[] =>
+    list
+      .filter((x) => typeof x?.id === 'string' && x.id.length > 0 && x.id.length <= 128)
+      .slice(0, PHONE_SHOW_NAMES_MAX)
+      .map((x, i) => ({ id: x.id, name: (typeof x.name === 'string' && x.name.trim() ? x.name.trim() : `${fallback} ${i + 1}`).slice(0, 60) }));
+  return {
+    version: 1,
+    kinds: PICKABLE_SHOW_ACTIONS.map((k) => ({ kind: k.kind, label: k.label })),
+    looks: names(lists.looks, 'Look'),
+    presets: names(lists.presets, 'Preset'),
+    sections: names(lists.sections, 'Section'),
+  };
+}
 
 const size = (v: number, fallback: number) => (Number.isFinite(v) && v >= 16 && v <= 32768 ? Math.round(v) : fallback);
 
-export function studioCapabilities(scanTransfer: unknown, output: { width: number; height: number }): StudioCapabilities {
+export function studioCapabilities(scanTransfer: unknown, output: { width: number; height: number }, showActions: PhoneShowActions = phoneShowActions({ looks: [], presets: [], sections: [] })): StudioCapabilities {
   return {
     type: 'studio_capabilities',
     version: 1,
@@ -50,6 +81,7 @@ export function studioCapabilities(scanTransfer: unknown, output: { width: numbe
     worldTools: PHONE_WORLD_TOOLS,
     depthCapture: DEPTH_CAPTURE_CAPABILITY,
     output: { width: size(output.width, 1920), height: size(output.height, 1080) },
+    showActions,
   };
 }
 

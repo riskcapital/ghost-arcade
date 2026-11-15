@@ -4,7 +4,9 @@ import { defaultReliefWorld } from '../../scene3d/worldModel';
 import type { TouchTool } from '../../components/studio/interactiveEditorTypes';
 import { defaultInteractive, defaultZoneTrigger, validateScene as validateInteractiveScene, type InteractiveScene } from './interactive';
 import { sanitizePhoneInputs } from './phoneSessions';
-import { DEPTH_CAPTURE_CAPABILITY, PHONE_WORLD_TOOLS, describePhoneClient, keepPhoneWorld, phoneWorldOn, studioCapabilities, withPhoneZoneDefaults } from './phoneWorld';
+import { EDGE_LOOKS } from '../../looks/edgeLookCatalog';
+import { PICKABLE_SHOW_ACTIONS, defaultShowAction } from '../../show/showActionLabels';
+import { DEPTH_CAPTURE_CAPABILITY, PHONE_SHOW_NAMES_MAX, PHONE_WORLD_TOOLS, describePhoneClient, phoneShowActions, keepPhoneWorld, phoneWorldOn, studioCapabilities, withPhoneZoneDefaults } from './phoneWorld';
 
 /** A scene exactly as phone app 1.2 sends it: no trigger, look, input or world. */
 const phone12Scene = () => ({
@@ -34,6 +36,32 @@ describe('capabilities for a paired phone', () => {
     expect(caps.output).toEqual({ width: 3840, height: 1600 });
     expect(studioCapabilities(null, { width: NaN, height: 0 }).output).toEqual({ width: 1920, height: 1080 });
     expect(JSON.parse(JSON.stringify(caps)).depthCapture).toEqual(DEPTH_CAPTURE_CAPABILITY);
+  });
+
+  it('list the show actions a phone zone may add: the desktop picker\'s kinds and the names it needs', () => {
+    const menu = phoneShowActions({
+      looks: EDGE_LOOKS,
+      presets: [{ id: 'p1', name: '  Drop  ' }, { id: '', name: 'no id' }, { id: 'p2', name: '' }],
+      sections: [{ id: 's1', name: 'Intro'.repeat(20) }],
+    });
+    expect(menu.version).toBe(1);
+    expect(menu.kinds).toEqual(PICKABLE_SHOW_ACTIONS.map((k) => ({ kind: k.kind, label: k.label })));
+    expect(menu.looks[0]).toEqual({ id: EDGE_LOOKS[0].id, name: EDGE_LOOKS[0].name });
+    expect(menu.presets).toEqual([{ id: 'p1', name: 'Drop' }, { id: 'p2', name: 'Preset 2' }]);
+    expect(menu.sections[0].name).toHaveLength(60);
+    const many = Array.from({ length: 500 }, (_, i) => ({ id: `s${i}`, name: `S${i}` }));
+    expect(phoneShowActions({ looks: [], presets: many, sections: many }).sections).toHaveLength(PHONE_SHOW_NAMES_MAX);
+    // In the capabilities, still version 1; a phone without the flag adds none.
+    const caps = studioCapabilities(null, { width: 1920, height: 1080 }, menu);
+    expect(caps.version).toBe(1);
+    expect(caps.showActions).toBe(menu);
+    expect(studioCapabilities(null, { width: 1920, height: 1080 }).showActions.kinds.length).toBe(PICKABLE_SHOW_ACTIONS.length);
+    // Every kind's default action passes the desktop's own scene check.
+    for (const k of menu.kinds) {
+      const action = defaultShowAction(k.kind as never, menu.looks[0].id) ?? { kind: 'preset', compositionId: 'p1' };
+      const scene = validateInteractiveScene({ ...defaultInteractive(), surfaces: [{ id: 'z', name: 'Z', behavior: 'trigger', points: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }], trigger: { actions: [{ kind: 'show', action }], rearm: 1 } }] });
+      expect(scene.surfaces[0].trigger?.actions[0], k.kind).toEqual({ kind: 'show', action });
+    }
   });
 
   it('list every tool the editor and the desktop phone path take', () => {

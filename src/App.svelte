@@ -89,7 +89,7 @@
   import {tick as studioTick} from 'svelte';
   import {defaultInteractive,validateScene as validateInteractiveScene,type InteractiveScene,type Interaction} from './lib/mobile/studio/interactive';
   import {queueWorldAction, setLivePointer, setLiveWorldView} from './lib/interactive/interactiveLive';
-  import {describePhoneClient,keepPhoneWorld,phoneWorldOn,studioCapabilities,withPhoneZoneDefaults} from './lib/mobile/studio/phoneWorld';
+  import {describePhoneClient,keepPhoneWorld,phoneShowActions,phoneWorldOn,studioCapabilities,withPhoneZoneDefaults} from './lib/mobile/studio/phoneWorld';
   import {DEPTH_REQUEST_ID,DepthCaptureOffers,parseDepthCaptureOffer,type DepthCaptureOffer,type DepthCaptureStatus,type WaitingDepthOffer} from './lib/mobile/studio/depthCaptureOffer';
   import {answersDepthScan,scanPhones,stepDepthScan,type DepthScanEvent,type DepthScanFlow,type ScanPhone} from './lib/mobile/studio/depthScanFlow';
   import {ZONE_WORLD_ACTIONS,type ZoneWorldAction} from './lib/mobile/studio/interactive';
@@ -544,7 +544,8 @@
   import { guardAltRelease, noteAltArrow } from './lib/utils/altArrowGuard';
   import { paintMaskLayerId } from './lib/stores/paintMaskTool';
   import PaintMaskOverlay from './lib/components/PaintMaskOverlay.svelte';
-  import { resetProjectOwnedStores } from './lib/stores/layers';
+  import { compositions, resetProjectOwnedStores } from './lib/stores/layers';
+  import { EDGE_LOOKS } from './lib/looks/edgeLookCatalog';
   import { automatedRecalls, project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback, flushPendingHistorySnapshot, isProjectFileData } from './lib/stores/layers';
   import { keyframeTimeline, keyframeTrayOpen } from './lib/stores/keyframeTimeline';
   import ChaseOrderBadges from './lib/components/ChaseOrderBadges.svelte';
@@ -4694,7 +4695,9 @@
         const client=describePhoneClient(msg.client);
         if(client&&!phoneClientsLogged.has(client)&&phoneClientsLogged.size<16){phoneClientsLogged.add(client);console.log('[Phone] Paired app:',client);}
         const p=get(project);
-        sendPhoneVisionSignal(studioCapabilities(phoneScanCapability(),{width:p.width||1920,height:p.height||1080}));
+        // The show actions a phone's zone may add: the desktop picker's kinds, Looks, presets and sections now.
+        const showActions=phoneShowActions({looks:EDGE_LOOKS,presets:get(compositions),sections:get(showTimeline).sections??[]});
+        sendPhoneVisionSignal(studioCapabilities(phoneScanCapability(),{width:p.width||1920,height:p.height||1080},showActions));
         break;
       }
       case 'studio_peers':
