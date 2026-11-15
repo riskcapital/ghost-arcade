@@ -35,8 +35,10 @@
   import MilkdropPanel from './MilkdropPanel.svelte';
   import HydraPanel from './HydraPanel.svelte';
   import MusicStudioPanel from './MusicStudioPanel.svelte';
-  import AnalogSynthPanel from './AnalogSynthPanel.svelte';
-  import { MUSIC_STUDIO } from '../features';
+  import { missingAddon } from '../plugins/addons';
+  import AudioLabIcon from './AudioLabIcon.svelte';
+  import { STUDIO_PLUGIN_ID } from '../music/studioPlugin';
+  import { ANALOG_SYNTH } from '../features';
 
   export let source: MediaSource | null = null;
   export let onUpdateEffectSource: ((next: IntegratedEffectSource) => void) | null = null;
@@ -51,6 +53,12 @@
     ? getPluginByEffectType(effectSource.effectType)
     : null;
   $: panelLayerId = controlLayerId ?? $selectedLayerId ?? '';
+  // Analog Synth's panel loads only in a build that has the add-on, so a
+  // build without it carries none of its presets or controls.
+  let AnalogSynthPanel: typeof import('./AnalogSynthPanel.svelte').default | null = null;
+  if (ANALOG_SYNTH) void import('./AnalogSynthPanel.svelte').then((m) => { AnalogSynthPanel = m.default; });
+  // A layer from an add-on this build leaves out: say so, and offer nothing to change.
+  $: absentAddon = effectSource ? missingAddon(effectSource.effectType) : null;
 
   // Get current value of a param from the effectSource
   function getVal(paramKey: string, defaultVal: any): any {
@@ -153,7 +161,11 @@
   }
 </script>
 
-{#if !pluginManifest || !effectSource}
+{#if absentAddon}
+  <div data-help-page="custom-effects" class="panel-empty addon-missing" role="note">
+    <p>Made with {absentAddon}, an add-on that isn't installed. The layer's settings are kept.</p>
+  </div>
+{:else if !pluginManifest || !effectSource}
   <div data-help-page="custom-effects" class="panel-empty">
     <p>No plugin controls</p>
   </div>
@@ -161,7 +173,7 @@
   <div data-help-page="custom-effects" class="plugin-panel">
     <!-- Header -->
     <div class="panel-header">
-      <span class="header-icon">{pluginManifest.icon}</span>
+      <span class="header-icon">{#if pluginManifest.id === STUDIO_PLUGIN_ID}<AudioLabIcon size={18} />{:else}{pluginManifest.icon}{/if}</span>
       <div class="header-text">
         <span class="header-title">{pluginManifest.name}</span>
         <span class="header-version">v{pluginManifest.version} · {pluginManifest.author}</span>
@@ -206,9 +218,7 @@
         onPresetSelect={onUpdateEffectSource ? handleHydraPresetSelect : null}
       />
     {/if}
-    {#if effectSource.effectType === 'music-studio' && !MUSIC_STUDIO}
-      <p class="studio-missing">This layer was made with the Music Studio. It keeps its settings, and plays in a version of Ghost Arcade that has the Studio.</p>
-    {:else if effectSource.effectType === 'music-studio'}
+    {#if effectSource.effectType === 'music-studio'}
       <MusicStudioPanel source={effectSource} onchange={(next, gesture) => commitEffectSource(next as IntegratedEffectSource, gesture)} />
     {/if}
 
@@ -235,15 +245,18 @@
     {/if}
 
     {#if effectSource.effectType === 'videosynth'}
-      <AnalogSynthPanel
+      {#if AnalogSynthPanel}
+      <svelte:component
+        this={AnalogSynthPanel}
         effectSource={effectSource as unknown as Record<string, unknown>}
         layers={inputLayers ?? $project.layers.filter((l) => l.id !== panelLayerId).map((l) => ({ id: l.id, name: l.name }))}
         {midiPrefix}
-        onpatch={(patch, gesture) => {
+        onpatch={(patch: Record<string, unknown>, gesture?: string) => {
           const base = onUpdateEffectSource ? effectSource : ($selectedLayer?.source?.effectSource ?? effectSource);
           if (base) commitEffectSource({ ...base, ...patch } as IntegratedEffectSource, gesture);
         }}
       />
+      {/if}
     {:else}
     <!-- All controls, flat -->
     <div class="controls">
@@ -351,6 +364,8 @@
     color: var(--ga-ink-2);
     font-size: var(--ga-text-control);
   }
+  .panel-empty.addon-missing { text-align: left; line-height: 1.45; }
+  .panel-empty.addon-missing p { margin: 0; }
 
   .plugin-panel {
     min-width: 0;
@@ -584,5 +599,4 @@
     background: transparent;
     cursor: pointer;
   }
-  .studio-missing { margin: 0; font-size: var(--ga-text-meta, 11px); line-height: 1.4; color: var(--ga-ink-2, #8a93a8); }
 </style>

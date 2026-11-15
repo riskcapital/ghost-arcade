@@ -1,8 +1,16 @@
 import type { IntegratedEffectSource } from '$lib/types';
+import { ANALOG_SYNTH, MUSIC_STUDIO } from '$lib/features';
+import { missingAddon } from '$lib/plugins/addons';
 
-// The Music Studio is offered like the others but needs no graph of its own:
+// Audio Lab is offered like the others but needs no graph of its own:
 // it reaches the core as its voices plus a vj-mix (music/studioPlugin.ts).
-export const NATIVE_PLUGIN_IDS = ['ghostfx', 'handfx', 'musicstudio', 'analog-synth'] as const;
+// The add-ons are offered only in a build that has them (features.ts).
+export const NATIVE_PLUGIN_IDS: readonly string[] = [
+  'ghostfx',
+  'handfx',
+  ...(MUSIC_STUDIO ? ['musicstudio'] : []),
+  ...(ANALOG_SYNTH ? ['analog-synth'] : []),
+];
 export const NATIVE_PLUGIN_EFFECT_TYPES = ['ghostfx', 'handfx', 'performer-world', 'vj-crossfade', 'vj-mix', 'scene3d', 'videosynth'] as const;
 
 export type NativePluginEffectType = typeof NATIVE_PLUGIN_EFFECT_TYPES[number];
@@ -21,8 +29,11 @@ export function nativePluginEffectType(value: unknown): NativePluginEffectType |
     : null;
 }
 
+/**
+ * Why a plugin layer cannot draw, or null when it can. A layer from an
+ * add-on this build leaves out draws nothing; its settings stay as saved.
+ */
 export function nativePluginUnavailableReason(source: IntegratedEffectSource | null | undefined): string | null {
-  const effectType = nativePluginEffectType(source?.effectType);
-  if (!effectType) return null;
+  if (missingAddon(source?.effectType)) return `addon:${String(source?.effectType).trim().toLowerCase()}:not-installed`;
   return null;
 }
