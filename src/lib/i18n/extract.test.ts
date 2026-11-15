@@ -10,7 +10,7 @@ import { pathToFileURL } from 'node:url';
  * never looked at labels kept in tables (`const END_ACTION_LABELS = {...}`)
  * or in variables named for text (`const audioTitle = ...`).
  */
-type Extractor = { extractFrom(source: string, file?: string): string[]; templateText(body: string): string };
+type Extractor = { extractFrom(source: string, file?: string): string[]; templateText(body: string): string; extractAll(): string[] };
 const script = pathToFileURL(join(process.cwd(), 'scripts', 'i18n-extract.mjs')).href;
 const load = () => import(/* @vite-ignore */ script) as Promise<Extractor>;
 
@@ -85,4 +85,14 @@ describe('i18n extractor', () => {
     expect(list).toContain('Crossfade {0}s. Drag an edge to change its length, double-click to remove.');
     expect(list).toContain('At end: hold last look');
   });
+
+  // The language packs are checked against source.json (packCoverage.test.ts),
+  // so a stale source.json hides interface text no pack translates.
+  it('source.json lists exactly the interface text in the code (run npm run i18n:extract)', async () => {
+    const { extractAll } = await load();
+    const code = new Set(extractAll());
+    const listed = new Set(JSON.parse(readFileSync(join(process.cwd(), 'src', 'lib', 'i18n', 'source.json'), 'utf8')) as string[]);
+    expect([...code].filter((s) => !listed.has(s)), 'in the code, not in source.json').toEqual([]);
+    expect([...listed].filter((s) => !code.has(s)), 'in source.json, no longer in the code').toEqual([]);
+  }, 30_000);
 });

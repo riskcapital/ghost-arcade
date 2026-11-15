@@ -30,7 +30,28 @@ jobs:
   # exits 0 if the release already exists). Both build jobs declare
   # `needs: create-release` so they only kick off after the release is
   # there, eliminating the parallel-creation race too.
+  # Every interface string has an entry in every language pack, and
+  # source.json matches the code (npm run i18n:extract). Runs before
+  # anything is created or built, so a gap stops the whole release rather
+  # than one platform.
+  i18n-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Test language packs
+        run: npx vitest run src/lib/i18n
+
   create-release:
+    needs: i18n-check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
