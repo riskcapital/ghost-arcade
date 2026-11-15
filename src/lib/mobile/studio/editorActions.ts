@@ -4,7 +4,7 @@
  * Every function takes a scene and returns a new one; nothing here touches
  * component state, history or the DOM, so each edit can be unit tested.
  */
-import type { Behavior, InteractiveScene, InteractiveSurface, Point } from './interactive';
+import { defaultZoneTrigger, type Behavior, type InteractiveInput, type InteractiveScene, type InteractiveSurface, type Point, type SurfaceLook, type ZoneTrigger } from './interactive';
 import {
   MAX_INTERACTIVE_EFFECTS,
   makeEffect,
@@ -12,6 +12,7 @@ import {
   type EffectKind,
   type InteractiveEffect,
 } from './interactiveEffects';
+import type { ReliefWorld, SurfaceFinish } from '../../scene3d/worldModel';
 import { DEFAULT_ASPECT, makeSurface, spawnPoint, transformPoints, translatePoints } from './surfaceEditing';
 
 export const MAX_SURFACES = 32;
@@ -152,12 +153,41 @@ export function renameSurface(scene: InteractiveScene, id: string, name: string)
   return mapSurface(scene, id, (s) => ({ ...s, name: name.slice(0, 80) }));
 }
 
+/** A zone keeps its trigger while it is a zone, and starts with a burst. */
 export function setSurfaceBehavior(scene: InteractiveScene, id: string, behavior: Behavior): InteractiveScene {
-  return mapSurface(scene, id, (s) => ({ ...s, behavior }));
+  return mapSurface(scene, id, ({ trigger, ...s }) =>
+    behavior === 'trigger' ? { ...s, behavior, trigger: trigger ?? defaultZoneTrigger() } : { ...s, behavior },
+  );
+}
+
+/** What a trigger zone does when touched. */
+export function setSurfaceTrigger(scene: InteractiveScene, id: string, trigger: ZoneTrigger): InteractiveScene {
+  return mapSurface(scene, id, (s) => (s.behavior === 'trigger' ? { ...s, trigger } : s));
+}
+
+/** How tracked hands and body move the scene. */
+export function setSceneInput(scene: InteractiveScene, input: InteractiveInput): InteractiveScene {
+  return { ...scene, input };
+}
+
+/** Turn the 3D world on (with its settings) or off (`undefined` keeps nothing). */
+export function setSceneWorld(scene: InteractiveScene, world: ReliefWorld | undefined): InteractiveScene {
+  const { world: _old, ...rest } = scene;
+  return world ? { ...rest, world } : rest;
+}
+
+/** How an object looks as a block in the 3D world. */
+export function setSurfaceFinish(scene: InteractiveScene, id: string, finish: SurfaceFinish): InteractiveScene {
+  return mapSurface(scene, id, (s) => ({ ...s, finish }));
 }
 
 export function setSurfaceHeight(scene: InteractiveScene, id: string, height: number): InteractiveScene {
   return mapSurface(scene, id, (s) => ({ ...s, height }));
+}
+
+/** Give an object its own look, or hand it back to the effects with `undefined`. */
+export function setSurfaceLook(scene: InteractiveScene, id: string, look: SurfaceLook | undefined): InteractiveScene {
+  return mapSurface(scene, id, ({ look: _old, ...s }) => (look ? { ...s, look } : s));
 }
 
 /** New seed: every simulation starts over. */
@@ -168,7 +198,7 @@ export function reseed(scene: InteractiveScene): InteractiveScene {
 // ── Labels ─────────────────────────────────────────────────────────────────
 
 /** Effects that emit matter from a shape outline or from a free position. */
-export const EMITTER_KINDS: EffectKind[] = ['fire', 'smoke', 'liquid', 'balls', 'cloud'];
+export const EMITTER_KINDS: EffectKind[] = ['fire', 'smoke', 'liquid', 'balls', 'cloud', 'balls3d', 'drips', 'flames'];
 
 export function isEmitter(kind: EffectKind): boolean {
   return EMITTER_KINDS.includes(kind);

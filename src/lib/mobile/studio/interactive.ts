@@ -6,10 +6,15 @@ import {
   applyInteractiveOverrides,
   evaluateEffect,
   effectScene,
+  isWorldEffect,
+  type FlatEffectKind,
   type InteractiveEffect,
 } from './interactiveEffects';
 import { MatterPreview } from './matterPreview';
 import { createInteractiveQuality, interactiveFrameDelta, type InteractiveQualityBudget } from './interactiveQuality';
+import { validateShowAction } from '../../show/showActionValidate';
+import type { ShowAction } from '../../show/showActionTypes';
+import { validateReliefWorld, validateSurfaceFinish, type ReliefWorld, type SurfaceFinish } from '../../scene3d/worldModel';
 export type Point = { x: number; y: number };
 export type Behavior = 'solid' | 'emitter' | 'attractor' | 'trigger';
 export const INTERACTIVE_PRESETS = [
@@ -27,6 +32,71 @@ export const INTERACTIVE_PRESETS = [
   'fire',
 ] as const;
 export type SurfaceMaterial = 'none' | 'fire' | 'smoke' | 'liquid' | 'points';
+/** What can be drawn inside an object. `none` leaves the inside empty. */
+export const SURFACE_FILLS = [
+  'none',
+  'contours',
+  'weave',
+  'ripples',
+  'bands',
+  'spiral',
+  'grid',
+  'stripes',
+  'dots',
+  'checker',
+  'noise',
+  'glow',
+] as const;
+export type SurfaceFill = (typeof SURFACE_FILLS)[number];
+/**
+ * An object's own appearance. An object without one is drawn by the scene's
+ * effects, each in its own style. An object with one is drawn exactly as set
+ * here and the effects leave it alone, so `fill: 'none'` with `outline: 0` is
+ * an object that still blocks, emits, attracts or triggers but shows nothing.
+ */
+export type SurfaceLook = {
+  fill: SurfaceFill;
+  /** Fill strength, 0 to 1. */
+  brightness: number;
+  /** Pattern size, 0 (large) to 1 (fine). */
+  scale: number;
+  /** Pattern motion, 0 (still) to 1. */
+  speed: number;
+  /** Outline strength, 0 (hidden) to 1. */
+  outline: number;
+  /** Own colour in degrees. Without it the object takes the scene colour. */
+  hue?: number;
+};
+export const defaultSurfaceLook = (): SurfaceLook => ({ fill: 'contours', brightness: 0.5, scale: 0.5, speed: 0.5, outline: 0.6 });
+export const invisibleSurfaceLook = (): SurfaceLook => ({ ...defaultSurfaceLook(), fill: 'none', outline: 0 });
+/** Nothing of this object reaches the output. */
+export const surfaceHidden = (look: SurfaceLook | undefined) =>
+  !!look && look.outline <= 0 && (look.fill === 'none' || look.brightness <= 0);
+/**
+ * What a trigger zone does when someone touches it. `burst` fires every
+ * effect aimed at the zone; `show` fires anything the show can do (a Look, a
+ * VJ clip, a cue, a section, a Live clip…) through `fireShowAction`; `world`
+ * acts on the 3D world where the zone is: sets it on fire, pours paint on it
+ * or drops a handful of balls from it.
+ */
+export const ZONE_WORLD_ACTIONS = ['ignite', 'pour', 'balls'] as const;
+export type ZoneWorldAction = (typeof ZONE_WORLD_ACTIONS)[number];
+export type ZoneAction = { kind: 'burst' } | { kind: 'show'; action: ShowAction } | { kind: 'world'; what: ZoneWorldAction };
+export const MAX_ZONE_ACTIONS = 8;
+/** What sets a zone off: a touch (pointer, hand, body), a ball of the 3D world, or either. */
+export const ZONE_SOURCES = ['touch', 'ball', 'either'] as const;
+export type ZoneSource = (typeof ZONE_SOURCES)[number];
+export type ZoneTrigger = {
+  actions: ZoneAction[];
+  /** Touch when missing. */
+  when?: ZoneSource;
+  /** Seconds after firing before the zone can fire again. A touch held in the
+   *  zone fires once; it fires again only after leaving and coming back. */
+  rearm: number;
+};
+export const ZONE_REARM_MIN = 0.1;
+export const ZONE_REARM_MAX = 60;
+export const defaultZoneTrigger = (): ZoneTrigger => ({ actions: [{ kind: 'burst' }], rearm: 1 });
 export type InteractiveSurface = {
   id: string;
   name: string;
@@ -34,7 +104,29 @@ export type InteractiveSurface = {
   points: Point[];
   material?: SurfaceMaterial;
   height?: number;
+  look?: SurfaceLook;
+  /** Trigger zones only. */
+  trigger?: ZoneTrigger;
+  /** How the object looks as a block in the 3D world (scene.world). */
+  finish?: SurfaceFinish;
 };
+/**
+ * What moves the scene besides a pointer (the editor, a phone, which always
+ * work): tracked hands, a tracked body, or both, from the camera the app
+ * already uses for hand tracking. Works with the editor closed.
+ */
+export const TRACKING_SOURCES = ['off', 'hands', 'body', 'both'] as const;
+export type TrackingSource = (typeof TRACKING_SOURCES)[number];
+export const INPUT_FORCES = ['attract', 'repel', 'vortex'] as const;
+export type InputForce = (typeof INPUT_FORCES)[number];
+export type InteractiveInput = {
+  tracking: TrackingSource;
+  /** How a tracked point pushes the effects. */
+  force: InputForce;
+  /** 0 to 1. */
+  strength: number;
+};
+export const defaultInteractiveInput = (): InteractiveInput => ({ tracking: 'off', force: 'attract', strength: 0.8 });
 export type MatterSettings = {
   lightX: number;
   lightY: number;
@@ -68,6 +160,10 @@ export type InteractiveScene = {
   matter?: MatterSettings;
   effects?: InteractiveEffect[];
   animation?: InteractiveAnimation;
+  input?: InteractiveInput;
+  /** The 3D world the objects stand out of (worldModel.ts). Without it the
+   *  scene is flat, exactly as before. */
+  world?: ReliefWorld;
   surfaces: InteractiveSurface[];
   energy: number;
   gravity: number;
@@ -100,6 +196,7 @@ export function defaultInteractive(): InteractiveScene {
         id: 'portal',
         name: 'Portal',
         behavior: 'trigger',
+        trigger: defaultZoneTrigger(),
         points: [
           { x: 0.6, y: 0.25 },
           { x: 0.85, y: 0.25 },
@@ -108,6 +205,41 @@ export function defaultInteractive(): InteractiveScene {
         ],
       },
     ],
+  };
+}
+const unit = (v: number) => Math.max(0, Math.min(1, v));
+/** A zone's trigger from anywhere. Actions that do not validate are dropped
+ *  (one stale action must not cost the scene); a missing list is none. */
+export function validateZoneTrigger(raw: unknown): ZoneTrigger {
+  const t = raw as Partial<ZoneTrigger> | undefined;
+  const actions: ZoneAction[] = [];
+  for (const a of Array.isArray(t?.actions) ? t!.actions : []) {
+    if (actions.length >= MAX_ZONE_ACTIONS) break;
+    if ((a as ZoneAction)?.kind === 'burst') actions.push({ kind: 'burst' });
+    else if ((a as ZoneAction)?.kind === 'world') {
+      const what = (a as { what?: unknown }).what;
+      if ((ZONE_WORLD_ACTIONS as readonly unknown[]).includes(what)) actions.push({ kind: 'world', what: what as ZoneWorldAction });
+    }
+    else if ((a as ZoneAction)?.kind === 'show') {
+      const action = validateShowAction((a as { action?: unknown }).action);
+      if (action) actions.push({ kind: 'show', action });
+    }
+  }
+  const rearm = Number(t?.rearm);
+  const when = (ZONE_SOURCES as readonly unknown[]).includes(t?.when) ? (t!.when as ZoneSource) : undefined;
+  return {
+    actions,
+    ...(when && when !== 'touch' ? { when } : {}),
+    rearm: Number.isFinite(rearm) ? Math.max(ZONE_REARM_MIN, Math.min(ZONE_REARM_MAX, rearm)) : defaultZoneTrigger().rearm,
+  };
+}
+export function validateInteractiveInput(raw: unknown): InteractiveInput {
+  const i = raw as Partial<InteractiveInput> | undefined;
+  const base = defaultInteractiveInput();
+  return {
+    tracking: TRACKING_SOURCES.includes(i?.tracking as TrackingSource) ? (i!.tracking as TrackingSource) : base.tracking,
+    force: INPUT_FORCES.includes(i?.force as InputForce) ? (i!.force as InputForce) : base.force,
+    strength: Number.isFinite(i?.strength) ? unit(i!.strength!) : base.strength,
   };
 }
 /** Longest surface id or name kept in a scene. */
@@ -155,6 +287,17 @@ export function validateScene(raw: unknown): InteractiveScene {
       throw Error('Invalid surface material.');
     if (p.height !== undefined && (!Number.isFinite(p.height) || p.height < 0.02 || p.height > 0.9))
       throw Error('Invalid blocker depth.');
+    if (p.look !== undefined) {
+      const look = p.look;
+      if (
+        !look ||
+        typeof look !== 'object' ||
+        !SURFACE_FILLS.includes(look.fill) ||
+        (['brightness', 'scale', 'speed', 'outline'] as const).some((k) => !Number.isFinite(look[k])) ||
+        (look.hue !== undefined && !Number.isFinite(look.hue))
+      )
+        throw Error('Invalid object look.');
+    }
     ids.add(p.id);
   }
   const matter = defaultMatter();
@@ -172,7 +315,22 @@ export function validateScene(raw: unknown): InteractiveScene {
     points: p.points.map((v) => ({ x: v.x, y: v.y })),
     ...(p.material !== undefined ? { material: p.material } : {}),
     ...(p.height !== undefined ? { height: p.height } : {}),
+    ...(p.look !== undefined
+      ? {
+          look: {
+            fill: p.look.fill,
+            brightness: unit(p.look.brightness),
+            scale: unit(p.look.scale),
+            speed: unit(p.look.speed),
+            outline: unit(p.look.outline),
+            ...(p.look.hue !== undefined ? { hue: Math.max(0, Math.min(360, p.look.hue)) } : {}),
+          },
+        }
+      : {}),
+    ...(p.behavior === 'trigger' && p.trigger !== undefined ? { trigger: validateZoneTrigger(p.trigger) } : {}),
+    ...(p.finish !== undefined && p.finish !== null ? { finish: validateSurfaceFinish(p.finish) } : {}),
   }));
+  const world = s.world === undefined || s.world === null ? undefined : validateReliefWorld(s.world);
   return {
     schema: 'ghost-interactive',
     version: 1,
@@ -182,6 +340,8 @@ export function validateScene(raw: unknown): InteractiveScene {
     matter,
     ...(effects ? { effects } : {}),
     ...(animation ? { animation } : {}),
+    ...(s.input !== undefined && s.input !== null ? { input: validateInteractiveInput(s.input) } : {}),
+    ...(world ? { world } : {}),
     surfaces,
     energy: Math.max(0, Math.min(1, s.energy)),
     gravity: Math.max(-1, Math.min(1, s.gravity)),
@@ -255,7 +415,8 @@ export function collision(a: Point, b: Point, c: Point, d: Point) {
   return { t, x: a.x + v.x * t, y: a.y + v.y * t, nx: -w.y / len, ny: w.x / len };
 }
 type Particle = Point & { vx: number; vy: number; life: number; seed: number };
-export type Interaction = { id: string; point: Point; strength: number; mode?: 'attract' | 'repel' | 'vortex' };
+/** A touch on the scene. Throw, Push, Pour and Ignite only act on the 3D world. */
+export type Interaction = { id: string; point: Point; strength: number; mode?: 'attract' | 'repel' | 'vortex' | 'push' | 'throw' | 'pour' | 'ignite' };
 export class InteractiveWorld {
   private quality: InteractiveQualityBudget;
   constructor(quality = createInteractiveQuality()) {
@@ -350,7 +511,9 @@ export class InteractiveWorld {
       const effects = scene
         .effects!.slice(0, 8)
         .filter((e) => e.enabled)
-        .map((base) => evaluateEffect(base, this.clock, audio, bpm));
+        .map((base) => evaluateEffect(base, this.clock, audio, bpm))
+        // The 3D world's elements are drawn by the native world, not here.
+        .filter((e): e is InteractiveEffect & { kind: FlatEffectKind } => !isWorldEffect(e.kind));
       if (this.quality.activeLayers !== effects.length)
         this.setQuality({
           ...createInteractiveQuality(
@@ -554,6 +717,18 @@ export class InteractiveWorld {
     ctx.fillRect(0, 0, w, h);
     ctx.globalCompositeOperation = 'lighter';
     for (const s of scene.surfaces) {
+      if (s.look) {
+        // An object with its own look is not drawn in the effect's style.
+        if (s.look.outline > 0) {
+          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = `hsla(${s.look.hue ?? scene.hue},90%,65%,${0.5 * s.look.outline})`;
+          ctx.beginPath();
+          s.points.forEach((p, i) => (i ? ctx.lineTo(p.x * w, p.y * h) : ctx.moveTo(p.x * w, p.y * h)));
+          ctx.closePath();
+          ctx.stroke();
+        }
+        continue;
+      }
       const color = scene.hue + scene.surfaces.indexOf(s) * 37;
       ctx.lineWidth = 1.5;
       ctx.strokeStyle = `hsla(${color},90%,65%,.3)`;

@@ -1,5 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
-import { defaultInteractive, sanitizeStoredInteractive, validateScene, type InteractiveScene } from './interactive';
+import {
+  defaultInteractive,
+  defaultSurfaceLook,
+  invisibleSurfaceLook,
+  sanitizeStoredInteractive,
+  surfaceHidden,
+  validateScene,
+  type InteractiveScene,
+} from './interactive';
+import { setSurfaceLook } from './editorActions';
 import {
   EFFECT_NAME_LIMIT,
   advanceInteractiveAuto,
@@ -153,5 +162,32 @@ describe('telling an edit from Auto playback', () => {
     const holes = { ...defaultInteractive(), effects: [null, makeEffect('fire')] } as unknown as InteractiveScene;
     expect(() => advanceInteractiveAuto(holes, 0.1, 0)).not.toThrow();
     expect(() => applyInteractiveOverrides(holes, { 'interactive:x:opacity': 0.5 })).not.toThrow();
+  });
+});
+
+describe('object looks', () => {
+  const sceneWith = (look: unknown) => {
+    const scene = defaultInteractive();
+    return { ...scene, surfaces: scene.surfaces.map((s, i) => (i === 0 ? { ...s, look } : s)) };
+  };
+  it('keeps a look, clamped, and drops anything it does not know', () => {
+    const look = validateScene(sceneWith({ fill: 'dots', brightness: 4, scale: -1, speed: 0.3, outline: 0.5, hue: 720, extra: 'x' })).surfaces[0].look;
+    expect(look).toEqual({ fill: 'dots', brightness: 1, scale: 0, speed: 0.3, outline: 0.5, hue: 360 });
+  });
+  it('rejects an unknown fill or a missing number', () => {
+    expect(() => validateScene(sceneWith({ fill: 'plaid', brightness: 1, scale: 1, speed: 1, outline: 1 }))).toThrow();
+    expect(() => validateScene(sceneWith({ fill: 'dots', brightness: 1, scale: 1, speed: 1 }))).toThrow();
+  });
+  it('knows when nothing of an object is drawn', () => {
+    expect(surfaceHidden(invisibleSurfaceLook())).toBe(true);
+    expect(surfaceHidden({ ...invisibleSurfaceLook(), outline: 0.1 })).toBe(false);
+    expect(surfaceHidden({ ...defaultSurfaceLook(), outline: 0, brightness: 0 })).toBe(true);
+    expect(surfaceHidden(undefined)).toBe(false);
+  });
+  it('sets and clears a look from the editor', () => {
+    const scene = defaultInteractive();
+    const set = setSurfaceLook(scene, 'stage', invisibleSurfaceLook());
+    expect(set.surfaces[0].look?.fill).toBe('none');
+    expect('look' in setSurfaceLook(set, 'stage', undefined).surfaces[0]).toBe(false);
   });
 });
