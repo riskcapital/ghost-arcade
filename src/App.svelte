@@ -77,6 +77,7 @@
   import LayerSequencer from './lib/components/LayerSequencer.svelte';
   import KeyframeTimeline from './lib/components/KeyframeTimeline.svelte';
   import ShowTimeline from './lib/components/ShowTimeline.svelte';
+  import { timelineRowTray } from './lib/components/show/timeline/rowSelect';
   import ShowFromAudioModal from './lib/components/ShowFromAudioModal.svelte';
   import { pickSongForShow } from './lib/show/showFromAudio';
   import SettingsPanel from './lib/components/SettingsPanel.svelte';
@@ -9071,6 +9072,10 @@
           {:else}
             <MediaTray embedded={true} />
           {/if}
+        {:else if $timelineRowTray}
+          <!-- A Timeline row is selected (a group row is no mapping layer):
+               the Media Library, to drag media onto it. -->
+          <MediaTray embedded={true} />
         {/if}
       </div>
       {/if}

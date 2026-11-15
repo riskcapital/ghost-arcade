@@ -49,6 +49,7 @@
   import { liveTakeover } from '../../../show/takeover/liveTakeover';
   import ShowTakeoverHatch from './ShowTakeoverHatch.svelte';
   import { editBlock } from '../../../show/tracks/showBlockEdit';
+  import { selectRow } from './rowSelect';
   import { LAYERS_SECTION_HEIGHT, layerBlockSpans, rowShown, stackIndexAt, stackRowHeight, stackTops, timelineRowStack, type RowStack } from './layersSection';
 
   interface Props {
@@ -594,6 +595,9 @@
         showTimeline.selectLayerClips([]);
         laneKeySelection.set(null);
         clearSelectedKeys();
+        // A click on an empty spot of a row picks the row (and brings the
+        // Media Library, to drag media onto it).
+        if (tr) selectRow(tr);
       }
     }, 3, () => {
       // Cancelled: the selection from before the marquee.

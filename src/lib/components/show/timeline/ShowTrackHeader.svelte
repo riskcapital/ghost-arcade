@@ -12,6 +12,7 @@
    * or media dropped on the button). While it is taken over the header is
    * orange, says what is playing, and ↩ hands it back (Shift: instantly).
    */
+  import { selectRow } from './rowSelect';
   import type { Layer, ShowLayerTrack } from '../../../types';
   import TimelineIcon from './TimelineIcon.svelte';
   import { showTimeline } from '../../../stores/showTimeline';
@@ -108,8 +109,9 @@
     showTimeline.removeLayerTrack(track.id);
   }
 
+  /** The row, and the Media Library (or the piece's panel) beside the canvas. */
   function selectTrack() {
-    showTimeline.select({ kind: 'track', id: track.id });
+    selectRow(track);
   }
 
   // ── Control lines ────────────────────────────────────────────────────
