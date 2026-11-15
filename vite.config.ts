@@ -4,6 +4,8 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { resolve } from 'path';
 import { readFileSync, readdirSync, statSync, existsSync, writeFileSync, rmSync } from 'fs';
 
+const REALTIME_NATIVE_TESTS = 'src/**/*.runtime.native.test.ts';
+
 const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'));
 
 // Auto-discover built-in Three.js / p5.js animations from public/threejs/.
@@ -171,12 +173,26 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['src/**/*.test.ts'],
     // Several suites import the whole sync/layer graph or wait on real
     // timers. Vitest's 5 s / 10 s defaults pass on an idle machine and fail
     // whenever it is busy (a parallel build, a slower CI runner), on every
     // platform. These leave room without hiding a genuinely hung test.
     testTimeout: 20000,
     hookTimeout: 30000,
+    projects: [
+      {
+        extends: true,
+        test: { name: 'unit', include: ['src/**/*.test.ts'], exclude: ['**/node_modules/**', REALTIME_NATIVE_TESTS], sequence: { groupOrder: 0 } },
+      },
+      {
+        // Tests against the real render core that run on its wall clock
+        // (fades, playback, audio callbacks, deadlines). Alongside the rest
+        // of the suite, other files' cores and encoders took the CPU and
+        // GPU they time against, so a different case failed on each run.
+        // They run after everything else, one file at a time.
+        extends: true,
+        test: { name: 'realtime', include: [REALTIME_NATIVE_TESTS], fileParallelism: false, sequence: { groupOrder: 1 } },
+      },
+    ],
   },
 });

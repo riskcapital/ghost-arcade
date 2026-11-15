@@ -30,9 +30,9 @@ function core() {
     if (response.ok) request.resolve(response.result);
     else request.reject(new Error(`${response.error}: ${stderr}`));
   });
-  const send = (method: string, params: Command = {}): Promise<any> => new Promise((resolve, reject) => {
+  const send = (method: string, params: Command = {}, timeoutMs = 15000): Promise<any> => new Promise((resolve, reject) => {
     const id = ++nextId;
-    const timeout = setTimeout(() => { pending.delete(id); reject(new Error(`${method}: ${stderr}`)); }, 15000);
+    const timeout = setTimeout(() => { pending.delete(id); reject(new Error(`${method}: ${stderr}`)); }, timeoutMs);
     pending.set(id, {
       resolve(value) { clearTimeout(timeout); resolve(value); },
       reject(error) { clearTimeout(timeout); reject(error); },
@@ -41,7 +41,10 @@ function core() {
   });
   return {
     send, commands: (commands: Command[]) => send('submit_commands', { commands }),
-    async close() { try { await send('shutdown'); } finally { await closeNativeTestCore(child); } },
+    // The cases judge pictures, not how fast the core says goodbye: a late
+    // shutdown reply (a frame still in flight on a busy machine) ended a
+    // passing case in a 15 s timeout. The process is ended either way.
+    async close() { try { await send('shutdown', {}, 2000); } catch { /* ended below */ } finally { await closeNativeTestCore(child); } },
   };
 }
 type Core = ReturnType<typeof core>;
