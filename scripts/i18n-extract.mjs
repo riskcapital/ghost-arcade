@@ -9,7 +9,8 @@ import { fileURLToPath } from 'url';
 
 const ROOT = 'src';
 const SKIP_DIRS = new Set(['mobile', 'i18n', 'node_modules']);
-const ATTRS = /\b(title|placeholder|aria-label|data-help|alt)="([^"]*)"/g;
+// Also a component's text props by name: emptyHint="…", playLabel="…".
+const ATTRS = /\b(title|placeholder|aria-label|data-help|alt|[a-z][A-Za-z]*(?:Hint|Label|Title|Text|Tooltip|Message|Placeholder|Caption|Heading))="([^"]*)"/g;
 const PROP_KEYS = 'label|title|name|description|hint|text|message|tooltip|placeholder|help|subtitle|heading|caption|summary|detail|body';
 let found = new Map(); // text -> first file
 
@@ -201,6 +202,7 @@ function take(value, file) {
   if (/^[A-Z][a-zA-Z]+$/.test(value) && /[a-z][A-Z]/.test(value)) return; // CamelCase identifier
   if (/[\\<>$]|\.(svelte|ts|js|css|png|json)\b|^https?:|^[./]/.test(value)) return;
   if (/^[Mm][\d{}\s.,\-MmZzLlHhVvCcSsQqTtAa]*$/.test(value)) return; // SVG path data
+  if (/^[a-z-]+\s*:[^;]*;/.test(value)) return; // inline CSS (cssText = '…')
   add(value, file);
 }
 
@@ -252,6 +254,8 @@ function scanStrings(code, file, loose) {
   };
   literalAfter(new RegExp(`\\b(?:${PROP_KEYS})\\s*:\\s*`, 'g'));
   literalAfter(/\b(?:showToast|toast|alert|confirm|notify|setStatus|showError|showMessage)\(\s*/g);
+  // A text prop's default: `let { emptyHint = 'Drop a card here' } = $props()`.
+  literalAfter(/\b[a-z][A-Za-z]*(?:Hint|Label|Title|Text|Tooltip|Message|Placeholder|Caption|Heading)\s*=\s*/g);
   for (const init of textDeclarations(code)) {
     for (const [, , q, body] of literals(init)) take(literalText(q, body), file);
   }

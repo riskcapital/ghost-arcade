@@ -59,6 +59,20 @@ describe('i18n extractor', () => {
     expect(out).not.toContain('Bearer {0}');
   });
 
+  it('reads text props by name, in markup and as defaults', async () => {
+    const { extractFrom } = await load();
+    const svelte = `<script lang="ts">
+  let { emptyHint = 'Drop a preset card here.', size = 'large' }: Props = $props();
+  el.style.cssText = 'position:absolute; top:-9px; width:';
+</script>
+<Pad playHint="Drag to play" emptyHint="Pick effects" mode="compact" />`;
+    const out = extractFrom(svelte, 'a.svelte');
+    expect(out).toEqual(expect.arrayContaining(['Drop a preset card here.', 'Drag to play', 'Pick effects']));
+    expect(out).not.toContain('large');
+    expect(out).not.toContain('compact');
+    expect(out.some((s) => s.startsWith('position:'))).toBe(false);
+  });
+
   it('still leaves code alone', async () => {
     const { extractFrom } = await load();
     const ts = [
