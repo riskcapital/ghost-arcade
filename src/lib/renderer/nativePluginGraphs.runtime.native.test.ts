@@ -102,6 +102,13 @@ async function precompileAll(rpc: Rpc): Promise<any> {
   return status;
 }
 
+/** Remove every layer the core holds, so a case sees only its own. */
+async function clearLayers(rpc: Rpc): Promise<void> {
+  const snapshot = await rpc.send('layers_snapshot');
+  const ids = ((snapshot?.layers ?? []) as Array<{ layer_id: string }>).map((layer) => String(layer.layer_id));
+  if (ids.length) await rpc.send('submit_commands', { commands: ids.map((layer_id) => ({ type: 'remove_layer', layer_id })) });
+}
+
 describe('native plugin graphs (runtime, real core)', () => {
   let rpc: Rpc | null = null;
   /** The core's status once every plugin shader was compiled (beforeAll). */
@@ -716,6 +723,9 @@ describe('native plugin graphs (runtime, real core)', () => {
 
   itIfNativeCore('renders GhostFX Spheres visibly with shaded orbs', async () => {
     const sourceId = 'plugin:layer:ghostfx-spheres';
+    // Judged on its own picture: earlier cases leave layers on screen.
+    await clearLayers(rpc!);
+    try {
     await rpc!.send('submit_commands', {
       commands: [
         {
@@ -783,7 +793,11 @@ describe('native plugin graphs (runtime, real core)', () => {
       ],
     });
     await new Promise((resolve) => setTimeout(resolve, 150));
-    const snapshot = await rpc!.send('frame_snapshot', { include_pixels: false });
+    const dump = process.env.GA_SPHERES_DUMP;
+    const snapshot = await rpc!.send('frame_snapshot', { include_pixels: !!dump });
+    if (dump) writeFileSync(dump, JSON.stringify(snapshot));
+    const layers = await rpc!.send('layers_snapshot');
+    expect(((layers?.layers ?? []) as Array<{ layer_id: string }>).map((layer) => layer.layer_id)).toEqual(['plugin-spheres']);
     const status = await rpc!.send('status');
     // eslint-disable-next-line no-console
     console.log('[spheres-runtime]', JSON.stringify({
@@ -794,11 +808,34 @@ describe('native plugin graphs (runtime, real core)', () => {
       maxLuma: snapshot.max_luma,
     }));
     expect(Number(status.shader_precompile_failed ?? -1), String(status.last_shader_error ?? '')).toBe(0);
-    // Visible: backdrop + fluid puffs + orbs fill a large share of the
-    // frame (threshold leaves headroom for flow-timing variance).
-    expect(Number(snapshot.nonzero_pixels ?? 0)).toBeGreaterThan(320 * 180 * 0.35);
+    // Visible: with the default Background opacity (0, transparent) the
+    // picture is the orb cluster and its fluid puffs in the middle of the
+    // frame, about 17% of it here; 8% leaves headroom for flow timing.
+    expect(Number(snapshot.nonzero_pixels ?? 0)).toBeGreaterThan(320 * 180 * 0.08);
     expect(Number(snapshot.average_luma ?? 0)).toBeGreaterThan(0.02);
     // Shaded: studio-lit orbs carry bright specular cores.
     expect(Number(snapshot.max_luma ?? 0)).toBeGreaterThan(0.3);
+
+    // With the backdrop on, the studio backdrop fills the whole frame.
+    const params = { ghostfxScenePreset: 'spheres', ghostfxBgAlpha: 1 };
+    const lit = buildNativePluginGraph({
+      kind: 'ghostfx', sourceId, params, width: 320, height: 180, time: 1.6, frameDelta: 1 / 60, frameIndex: 96,
+      audio: { active: true, bass: 0.7, mid: 0.45, treble: 0.3, energy: 0.6, beatPhase: 0, beatPulse: 0.1, amplitude: 0.5 },
+      state: built.state,
+    });
+    await rpc!.send('submit_commands', { commands: [{
+      type: 'set_native_graph_layer', layer_id: 'plugin-spheres', kind: 'ghostfx',
+      instrument_source_id: sourceId, composite_source_id: sourceId, input_source_id: null,
+      effect_graph: lit.config, params,
+    }] });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const backdrop = await rpc!.send('frame_snapshot', { include_pixels: false });
+    expect(Number(backdrop.nonzero_pixels ?? 0)).toBeGreaterThan(320 * 180 * 0.95);
+    } finally {
+      await rpc!.send('submit_commands', { commands: [
+        { type: 'remove_native_graph_layer', layer_id: 'plugin-spheres' },
+        { type: 'remove_layer', layer_id: 'plugin-spheres' },
+      ] });
+    }
   }, 60000);
 });
