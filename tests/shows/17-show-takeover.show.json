@@ -259,8 +259,8 @@
           "within": 0.03
         },
         "eval.true": {
-          "js": "document.querySelector('[data-takeover-pill]')?.textContent.trim() === 'LIVE 1' && /LIVE \u00b7 VJ A2/.test(document.querySelector('[data-takeover-badge]')?.textContent ?? '')",
-          "label": "LIVE pill and the track header's LIVE \u00b7 VJ A2"
+          "js": "document.querySelector('[data-takeover-pill]')?.textContent.trim() === 'Taken over \u00b7 1' && /VJ A2/.test(document.querySelector('[data-takeover-badge]')?.title ?? '')",
+          "label": "Taken over pill on Perform and the row's Taken over (by VJ A2)"
         }
       }
     },
@@ -283,7 +283,7 @@
         },
         "eval.true": {
           "js": "!document.querySelector('[data-takeover-pill]')",
-          "label": "LIVE pill gone"
+          "label": "Taken over pill gone"
         }
       }
     },

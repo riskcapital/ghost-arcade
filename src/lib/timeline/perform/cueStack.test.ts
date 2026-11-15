@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { Cue, CueMarker } from '../../../../show/cueList';
-import type { TimelineSection } from '../../../../timeline/sections/sectionModel';
+import type { Cue, CueMarker } from '../../show/cueList';
+import type { TimelineSection } from '../sections/sectionModel';
 import { buildCueStack, markerNumber, stackItemName } from './cueStack';
 
 const section = (id: string, start: number, end: number, action: TimelineSection['action'] = 'through'): TimelineSection =>

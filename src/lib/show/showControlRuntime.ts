@@ -15,6 +15,7 @@
  * - Projector status polling while any projector is configured.
  */
 
+import { performBack, performReset, performStop } from '../timeline/perform/performGo';
 import { get } from 'svelte/store';
 import { cueList, type CueExecutor, type CueTimelineOp } from './cueList';
 import { projectors } from './projectors';
@@ -111,11 +112,17 @@ export function installShowControl(): () => void {
 
   // ── MIDI / OSC / keyboard ──────────────────────────────────────────
   registerShowControl((action, value = 1, inputId) => {
-    // GO: on the Timeline with sections, the sections' (hold, vamp, Live);
-    // else the cue list's. The rest of the cue list and the phrase pads go
-    // through the same action API; the takeover paths keep their own edge
-    // and latch handling.
+    // GO: on the Timeline its one GO (a holding or looping section lets go,
+    // else the step on standby); on the Show the cue list's. Back, Stop and
+    // Reset are the Perform tab's on the Timeline. The rest of the cue list
+    // and the phrase pads go through the same action API; the takeover paths
+    // keep their own edge and latch handling.
     if (action === 'go') fireShowAction({ kind: 'go' });
+    else if ((action === 'back' || action === 'stop' || action === 'reset') && get(showTimeline).doc === 'timeline') {
+      if (action === 'back') performBack();
+      else if (action === 'stop') performStop();
+      else performReset();
+    }
     else if (action === 'back' || action === 'stop' || action === 'reset') fireShowAction({ kind: 'cue', op: action });
     else if ('cue' in action) fireShowAction({ kind: 'cue', op: 'fire', index: action.cue });
     else if ('phrase' in action) fireShowAction(action.phrase === null ? { kind: 'phrase', stop: true } : { kind: 'phrase', pad: action.phrase + 1 });

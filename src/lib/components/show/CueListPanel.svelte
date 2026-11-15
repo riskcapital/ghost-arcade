@@ -26,6 +26,9 @@
   import { formatSecondsAsTimecode, parseTimecodeToSeconds, type TimecodeRate } from '../../show/timecode/timecode';
   import CueActionEditor from './CueActionEditor.svelte';
 
+  /** Only the selected cue's editor (the Timeline's Perform tab has its own list and GO). */
+  export let editorOnly = false;
+
   $: s = $cueList;
   $: cues = s.cues;
   $: current = cues.find((c) => c.id === s.currentCueId) ?? null;
@@ -151,8 +154,10 @@
   aria-label="Cue list. Space is GO, Shift+Space is Back."
   onkeydown={onKeydown}
   onkeyup={onKeyup}
+  class:editor-only={editorOnly}
   data-cue-panel
 >
+  {#if !editorOnly}
   <div class="cue-status">
     <div class="cue-lines">
       <div class="cue-line">
@@ -193,7 +198,9 @@
     </div>
   </div>
 
+  {/if}
   <div class="cue-body">
+    {#if !editorOnly}
     <div class="cue-list-col">
       <div class="cue-list" role="list">
         {#each cues as cue (cue.id)}
@@ -226,6 +233,7 @@
       </div>
     </div>
 
+    {/if}
     {#if selected}
       {@const target = resolveFollowTarget(cues, selected)}
       <div class="cue-editor" data-cue-editor>
@@ -294,6 +302,7 @@
           </select>
           <button class="ce-add" onclick={() => cueList.addAction(selected.id, addKind)} data-cue-add-action>+ Action</button>
           <button class="ce-fire" onclick={() => cueList.fire(selected.id, 'manual')} title="Fire this cue now">Fire now</button>
+          {#if editorOnly}<button class="ce-delete" onclick={deleteSelected} title="Delete this cue" data-cue-delete>Delete</button>{/if}
         </div>
       </div>
     {/if}
@@ -425,4 +434,7 @@
     font-family: inherit;
   }
   .ce-fire { margin-left: auto; }
+  .cue-panel.editor-only { width: auto; max-width: none; height: auto; border: 0; background: transparent; }
+  .cue-panel.editor-only .cue-body { display: block; }
+  .ce-delete { margin-left: auto; color: var(--tl-on, #ff725f); }
 </style>

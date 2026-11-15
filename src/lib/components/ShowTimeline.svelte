@@ -55,7 +55,9 @@
   import TimelineToolbar from './show/timeline/TimelineToolbar.svelte';
   import { performShown, sideColumn } from './show/timeline/sideColumn';
   import TimelineSide from './show/timeline/TimelineSide.svelte';
-  import { buildCueStack, markerNumber } from './show/timeline/perform/cueStack';
+  import { buildCueStack, markerNumber, stackItemName } from '../timeline/perform/cueStack';
+  import { goNowWords, handStandby, nowId, performGo, performStack, standbyId } from '../timeline/perform/performGo';
+  import PerformPanel from './show/timeline/perform/PerformPanel.svelte';
   import RowSectionHeader from './show/timeline/RowSectionHeader.svelte';
   import RowSectionLane from './show/timeline/RowSectionLane.svelte';
   import AddRowMenu from './show/timeline/AddRowMenu.svelte';
@@ -73,18 +75,14 @@
   import { offerShowFromAudio, pickSongForShow } from '../show/showFromAudio';
   import { classifyShowKey, installShowKeyCapture, setShowKeyHandler } from '../show/showKeyboard';
   import { showDropEffect } from '../show/showDrop';
-  import { setShowSnapEdgeProvider, showSectionStatus, showPhraseStatus } from '../stores/showTimeline';
-  import PhrasePads from './show/PhrasePads.svelte';
-  import { phraseSections } from '../timeline/phrases/phraseModel';
+  import { setShowSnapEdgeProvider, showSectionStatus } from '../stores/showTimeline';
   import SectionsLiveMenu from './show/timeline/sections/SectionsLiveMenu.svelte';
   import SectionLane from './show/timeline/sections/SectionLane.svelte';
   import SectionInspector from './show/timeline/sections/SectionInspector.svelte';
-  import SectionCueList from './show/timeline/sections/SectionCueList.svelte';
   import AutoShowDialog from './show/timeline/autoshow/AutoShowDialog.svelte';
   import WherePatternEditor from './show/timeline/WherePatternEditor.svelte';
   import { selectAllKeys } from './show/timeline/keyCommands';
   import { autoShowOpen } from './show/timeline/autoshow/autoShowUi';
-  import { goLabel, sectionStatusText } from './show/timeline/sections/sectionGoUi';
   import { makeSection, placeNewSection } from '../timeline/sections/sectionModel';
   import { layers as liveLayersStore } from '../stores/layers';
   import type { ShowSnapGrid } from '../types';
@@ -94,7 +92,6 @@
   import ShowTrackInspector from './show/timeline/ShowTrackInspector.svelte';
   import ShowRuler from './show/timeline/ShowRuler.svelte';
   import ShowTempoInspector from './show/timeline/ShowTempoInspector.svelte';
-  import ShowTakeoverControls from './show/timeline/ShowTakeoverControls.svelte';
   import ShowPresetLane from './show/timeline/ShowPresetLane.svelte';
   import ShowAudioLane from './show/timeline/ShowAudioLane.svelte';
   import SoundRowHeaders from './show/timeline/sound/SoundRowHeaders.svelte';
@@ -103,8 +100,7 @@
   import { soundLayout, soundRowAt } from './show/timeline/sound/soundRowLayout';
   import { removeBuildBlock, removeLiveBlock } from '../timeline/sound/soundCommands';
   import { transportFit } from './show/timeline/transportFit';
-  import TakeoverPads from './show/TakeoverPads.svelte';
-  import { takeoverPadsOpen, toggleTakeoverOnTarget } from './show/timeline/takeoverUi';
+  import { toggleTakeoverOnTarget } from './show/timeline/takeoverUi';
   import { liveTakeover } from '../show/takeover/liveTakeover';
   import { detectShowTempo } from '../show/tempoDetect';
   import { formatBarsBeats, rulerTicks } from '../show/tempoMap';
@@ -219,37 +215,6 @@
   const lookClips = $derived($lookClipsStore);
   const sections = $derived($sectionsStore);
   const selectedSection = $derived(selection?.kind === 'section' ? sections.find((x) => x.id === selection!.id) ?? null : null);
-  const goText = $derived(isTimeline && sections.length ? goLabel(sections, $showSectionStatus, currentTime, isPlaying) : '');
-  const sectionText = $derived(isTimeline && sections.length ? sectionStatusText(sections, $showSectionStatus, currentTime, isPlaying) : '');
-  // A/V phrases: the strip of pads under the transport (a view preference,
-  // on by default) once the Timeline has published sections.
-  const PHRASES_OPEN_KEY = 'ghostarcade-timeline-phrases-open';
-  let phrasesPref = $state((() => {
-    try { return localStorage.getItem(PHRASES_OPEN_KEY) !== '0'; } catch { return true; }
-  })());
-  function togglePhrases() {
-    phrasesPref = !phrasesPref;
-    try { localStorage.setItem(PHRASES_OPEN_KEY, phrasesPref ? '1' : '0'); } catch { /* private */ }
-  }
-  const hasPhrases = $derived(isTimeline && phraseSections(sections).length > 0);
-  const phraseStripShown = $derived(hasPhrases && phrasesPref);
-  const phraseText = $derived.by(() => {
-    if (!isTimeline) return '';
-    const st = $showPhraseStatus;
-    const name = (id: string | null) => sections.find((x) => x.id === id)?.name ?? '';
-    const playing = st.activeId ? `PHRASE · ${name(st.activeId)}` : '';
-    if (st.pending) return `${playing ? `${playing} → ` : ''}${st.pending.id ? name(st.pending.id) : 'stop'} on the bar`;
-    return playing;
-  });
-  /** The sections' cue list beside the Timeline (a view preference). */
-  const SECTION_CUES_KEY = 'ghostarcade-timeline-section-cues-open';
-  let sectionCuesOpen = $state((() => {
-    try { return localStorage.getItem(SECTION_CUES_KEY) === '1'; } catch { return false; }
-  })());
-  function toggleSectionCues() {
-    sectionCuesOpen = !sectionCuesOpen;
-    try { localStorage.setItem(SECTION_CUES_KEY, sectionCuesOpen ? '1' : '0'); } catch { /* private mode */ }
-  }
   function addSectionAtPlayhead() {
     const s = get(showTimeline);
     const span = placeNewSection(s.sections, s.tempo, s.currentTime);
@@ -567,11 +532,12 @@
   /** The toolbar's compact GO: with sections or cues, while the Perform tab is not showing. */
   const toolbarGoShown = $derived(isTimeline && (sections.length > 0 || cues.cues.length > 0) && !$performShown);
   const toolbarGoWord = $derived.by(() => {
-    if (!isTimeline) return '';
-    const held = sections.find((x) => x.id === $showSectionStatus.holdId);
-    if (held) return held.name;
-    const next = sections.find((x) => x.start > currentTime + 1e-5);
-    return next?.name ?? '';
+    const item = isTimeline ? $performStack.find((i) => i.id === $standbyId) : null;
+    return item ? stackItemName(item) : '';
+  });
+  const toolbarGoTitle = $derived.by(() => {
+    void $standbyId; void $nowId; void $showSectionStatus; void isPlaying; void $handStandby;
+    return isTimeline ? `GO: ${goNowWords()}. Enter while the pointer is over the Timeline; MIDI/OSC show/go.` : '';
   });
 
   const labelWidth = $derived(isTimeline ? TRACK_HEADER_WIDTH : 108);
@@ -1165,7 +1131,8 @@
       canPaste: canPasteClips() && s.doc === 'timeline' && s.layerTracks.length > 0,
       hasTracks: s.doc === 'timeline' && s.layerTracks.length > 0,
       takeoverActive: s.doc === 'timeline' && (Object.keys(liveTakeover.state.surfaces).length > 0 || !!liveTakeover.state.overlay),
-      hasSections: s.doc === 'timeline' && s.sections.length > 0,
+      // Enter is the Timeline's one GO: with sections, markers or cues to act on.
+      hasSections: s.doc === 'timeline' && (s.sections.length > 0 || cueList.state.cues.length > 0 || cueList.state.markers.some((m) => m.doc === 'timeline')),
       pointerOver: pointerInTray,
       isTimeline: s.doc === 'timeline',
     });
@@ -1226,7 +1193,7 @@
       case 'heldTakeoverKey':
         return true;
       case 'go':
-        showTimeline.go();
+        performGo();
         return true;
       case 'shuttleBack':
         shuttleBack();
@@ -1684,12 +1651,12 @@
   {/if}
 {/snippet}
 
-{#snippet performInterim()}
-  <ShowTakeoverControls />
-  {#if sections.length || docMarkers.length}<SectionCueList {sections} {currentTime} playing={isPlaying} />{/if}
-  <CueListPanel />
-  {#if hasPhrases}<PhrasePads variant="timeline" />{/if}
-  <TakeoverPads />
+{#snippet performTab()}
+  <PerformPanel {selectedMarkerId} onselectmarker={(id) => (selectedMarkerId = id)} onaddmarker={addMarkerAtPlayhead} />
+{/snippet}
+
+{#snippet performKeys()}
+  <span class="perform-keys" title="Keys for the Perform tab">Space / Enter <kbd>GO</kbd> · Shift+Space <kbd>Back</kbd></span>
 {/snippet}
 
 {#snippet showDocTools()}
@@ -1786,9 +1753,9 @@
       zoomFit={zoomToFitView}
       onclear={() => (showClearConfirm = true)}
       goShown={toolbarGoShown}
-      goTitle={`GO: ${goText}. Enter while the pointer is over the Timeline; MIDI/OSC show/go.`}
+      goTitle={toolbarGoTitle}
       goWord={toolbarGoWord}
-      go={() => showTimeline.go()}
+      go={() => performGo()}
       {hasBlocks}
       showDocTools={isTimeline ? undefined : showDocTools}
     />
@@ -2095,7 +2062,7 @@
 
     </div>
     {#if isTimeline}
-      <TimelineSide inspector={timelineInspector} perform={performInterim} />
+      <TimelineSide inspector={timelineInspector} perform={performTab} {performKeys} />
     {:else if cuesOpen}
       <CueListPanel />
     {/if}
@@ -2449,6 +2416,9 @@
   }
   .lane-preset-add:disabled { opacity: 0.4; cursor: default; }
   .lane-line-add:disabled { opacity: 0.4; cursor: default; }
+
+  .perform-keys { font-size: var(--ga-text-meta, 11px); color: var(--ga-ink-2, #89857e); white-space: nowrap; margin-right: 6px; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .perform-keys kbd { font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); font-size: 10px; color: var(--ga-ink-1, #ada9a2); border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13)); border-bottom-width: 2px; border-radius: 3px; padding: 0 4px; }
 
   /* ── Timeline: header column, corner cell, rows ─────────────────────── */
   .timeline-doc .lane-labels { background: var(--ga-panel, #100f0d); border-right-color: var(--ga-line-2, rgba(245, 236, 222, 0.13)); position: relative; z-index: 3; }

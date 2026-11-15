@@ -6,8 +6,8 @@
  * after the timed items in the cue list's own order. Pure: the Perform tab,
  * the marker flags on the ruler and GO all read the same numbering.
  */
-import type { Cue, CueMarker } from '../../../../show/cueList';
-import type { TimelineSection } from '../../../../timeline/sections/sectionModel';
+import type { Cue, CueMarker } from '../../show/cueList';
+import type { TimelineSection } from '../sections/sectionModel';
 
 export type StackItem =
   | { kind: 'section'; id: string; q: number; time: number; section: TimelineSection }

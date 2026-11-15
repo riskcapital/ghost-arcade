@@ -41,7 +41,7 @@ import { cueList } from './cueList';
 import type { ShowTakeoverSourceSpec } from '../control/showControlPaths';
 import { liveTakeover } from './takeover/liveTakeover';
 import { returnTrack, sourceFromSpec, takeOverTrack, trackAt, trackById } from './takeover/takeoverRuntime';
-import { timelineTakesGo } from '../timeline/sections/sectionRuntime';
+import { performGo } from '../timeline/perform/performGo';
 import { launchPhrase, launchPhraseNumber, stopPhrases } from '../timeline/phrases/phraseRuntime';
 import { phraseByNumber } from '../timeline/phrases/phraseModel';
 import type { ShowLayerTrack } from '../types';
@@ -125,11 +125,14 @@ export function recallPreset(compositionId: string): boolean {
   return true;
 }
 
-/** GO, as `show:go` from MIDI / OSC / keys has always done it. */
+/**
+ * GO from MIDI / OSC / keys. On the Timeline it is the Timeline's one GO
+ * (timeline/perform/goRule.ts: a holding or looping section lets go, else
+ * the step on standby goes); on the Show it fires the next cue as before.
+ */
 function go(): ShowActionResult {
-  if (timelineTakesGo()) {
-    const r = showTimeline.go();
-    return r.kind === 'none' ? fail('nothing-waits') : OK;
+  if (get(showTimeline).doc === 'timeline') {
+    return performGo('remote').kind === 'none' ? fail('nothing-waits') : OK;
   }
   return cueList.go('remote') ? OK : fail('nothing-waits');
 }
