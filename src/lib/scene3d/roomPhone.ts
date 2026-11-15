@@ -45,8 +45,97 @@ export type CaptureReport = {
   samples: number;
 };
 
-const MAX_SURFACES = 48;
-const MAX_SAMPLES = 4000;
+/** What a capture may hold (the phone is told the same in the desktop's capabilities). */
+export const CAPTURE_LIMITS = { surfaces: 48, samplesPerSurface: 4000, samplesTotal: 60000, outline: 64 } as const;
+/** Larger than this is not a capture: refused before any work. */
+const RAW_LIMIT = 1_000_000;
+
+// ── Fitting a capture into the limits ─────────────────────────────────────
+
+/** `count` items spread evenly over the list, first and last kept, in order. */
+export function resampleEvenly<T>(items: readonly T[], count: number): T[] {
+  const n = items.length;
+  if (n <= count) return items.slice();
+  if (count <= 0) return [];
+  if (count === 1) return [items[0]];
+  const out: T[] = [];
+  for (let i = 0; i < count; i++) out.push(items[Math.round((i * (n - 1)) / (count - 1))]);
+  return out;
+}
+
+/** Distance from p to the segment a–b. */
+function segmentDistance(p: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 > 0 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0;
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+/**
+ * A closed outline cut down to at most `max` corners, keeping its shape:
+ * Ramer–Douglas–Peucker run by priority, so the corners that move the
+ * outline most are kept first. Starts from the two corners farthest apart,
+ * then keeps adding the corner furthest off the outline so far.
+ */
+export function simplifyOutline(points: readonly Point[], max: number = CAPTURE_LIMITS.outline): Point[] {
+  const n = points.length;
+  if (n <= max) return points.slice();
+  if (max < 3) throw new Error('An outline needs at least three corners.');
+  // The farthest corner from the first, then the farthest from that: two anchors across the shape.
+  const far = (from: number) => {
+    let best = from, d = -1;
+    for (let i = 0; i < n; i++) {
+      const di = Math.hypot(points[i].x - points[from].x, points[i].y - points[from].y);
+      if (di > d) { d = di; best = i; }
+    }
+    return best;
+  };
+  const a = far(0), b = far(a);
+  const kept = new Set<number>([a, b]);
+  // Each span runs from one kept corner forward (wrapping) to the next.
+  type Span = { from: number; to: number; at: number; off: number };
+  const measure = (from: number, to: number): Span => {
+    let at = -1, off = -1;
+    for (let i = (from + 1) % n; i !== to; i = (i + 1) % n) {
+      const d = segmentDistance(points[i], points[from], points[to]);
+      if (d > off) { off = d; at = i; }
+    }
+    return { from, to, at, off };
+  };
+  const spans: Span[] = [measure(a, b), measure(b, a)];
+  while (kept.size < max) {
+    let worst = 0;
+    for (let i = 1; i < spans.length; i++) if (spans[i].off > spans[worst].off) worst = i;
+    const span = spans[worst];
+    if (span.at < 0) break;
+    kept.add(span.at);
+    spans.splice(worst, 1, measure(span.from, span.at), measure(span.at, span.to));
+  }
+  return [...kept].sort((x, y) => x - y).map((i) => points[i]);
+}
+
+/**
+ * A capture inside the limits: the surfaces with the most samples, each
+ * surface's samples thinned evenly (to its own limit, then all together to
+ * the total), outlines simplified. Never cut off at the end of a list: a
+ * scan that runs over still covers every face end to end.
+ */
+export function fitCaptureToLimits(capture: DepthCapture): DepthCapture {
+  let surfaces = capture.surfaces;
+  if (surfaces.length > CAPTURE_LIMITS.surfaces) {
+    const keep = new Set(
+      surfaces.map((s, i) => ({ i, n: s.samples.length })).sort((x, y) => y.n - x.n || x.i - y.i).slice(0, CAPTURE_LIMITS.surfaces).map((x) => x.i),
+    );
+    surfaces = surfaces.filter((_, i) => keep.has(i));
+  }
+  surfaces = surfaces.map((s) => ({ ...s, outline: simplifyOutline(s.outline), samples: resampleEvenly(s.samples, CAPTURE_LIMITS.samplesPerSurface) }));
+  const total = surfaces.reduce((a, s) => a + s.samples.length, 0);
+  if (total > CAPTURE_LIMITS.samplesTotal) {
+    const share = CAPTURE_LIMITS.samplesTotal / total;
+    surfaces = surfaces.map((s) => ({ ...s, samples: resampleEvenly(s.samples, Math.floor(s.samples.length * share)) }));
+  }
+  return { down: capture.down, surfaces };
+}
 
 // ── Validation ────────────────────────────────────────────────────────────
 
@@ -64,29 +153,38 @@ const point = (raw: unknown, where: string): Point => {
   return { x: p!.x as number, y: p!.y as number };
 };
 
+/**
+ * A capture from anywhere (a file the phone app saved, or one it sent),
+ * checked and fitted into the limits. Larger captures are thinned evenly,
+ * not cut off.
+ */
 export function validateDepthCapture(raw: unknown): DepthCapture {
   const c = raw as { down?: unknown; surfaces?: unknown } | null;
   if (!c || typeof c !== 'object') fail('', 'not an object');
   const down = normalize(vec(c!.down, 'down'));
   if (length(down) < 0.5) fail('down', 'no direction');
   if (!Array.isArray(c!.surfaces) || !c!.surfaces.length) fail('surfaces', 'none');
-  const surfaces = (c!.surfaces as unknown[]).slice(0, MAX_SURFACES).map((raw, i): CaptureSurface => {
+  if ((c!.surfaces as unknown[]).length > 1000) fail('surfaces', 'more than 1000');
+  let points = 0;
+  const surfaces = (c!.surfaces as unknown[]).map((raw, i): CaptureSurface => {
     const s = raw as { id?: unknown; name?: unknown; outline?: unknown; samples?: unknown };
     const where = `surface ${i + 1}`;
     if (!s || typeof s.id !== 'string' || !s.id) fail(where, 'no id');
     if (!Array.isArray(s.outline) || s.outline.length < 3) fail(where, 'outline of fewer than three points');
     if (!Array.isArray(s.samples)) fail(where, 'no samples');
+    points += (s.outline as unknown[]).length + (s.samples as unknown[]).length;
+    if (points > RAW_LIMIT) fail('', 'more than a million points');
     return {
       id: s.id as string,
       name: typeof s.name === 'string' ? s.name.slice(0, 80) : `Face ${i + 1}`,
-      outline: (s.outline as unknown[]).slice(0, 64).map((p, j) => point(p, `${where} outline ${j + 1}`)),
-      samples: (s.samples as unknown[]).slice(0, MAX_SAMPLES).map((q, j) => {
+      outline: (s.outline as unknown[]).map((p, j) => point(p, `${where} outline ${j + 1}`)),
+      samples: (s.samples as unknown[]).map((q, j) => {
         const sample = q as { p?: unknown; uv?: unknown };
         return { p: vec(sample?.p, `${where} sample ${j + 1}`), uv: point(sample?.uv, `${where} sample ${j + 1}`) };
       }),
     };
   });
-  return { down, surfaces };
+  return fitCaptureToLimits({ down, surfaces });
 }
 
 // ── Linear algebra ────────────────────────────────────────────────────────
