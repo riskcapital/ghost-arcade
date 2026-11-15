@@ -1,5 +1,7 @@
 <script lang="ts">
   /** Setup tab: audio input, scene name, save / export / import and the camera reference. */
+  import type { TouchTool } from './interactiveEditorTypes';
+  const TOOL_LABELS: Record<TouchTool, string> = { throw: 'Throw', push: 'Push', pour: 'Pour', ignite: 'Ignite', attract: 'Attract', repel: 'Repel', vortex: 'Vortex' };
   export let nativeOutput = false;
   /** Phone or tablet: the camera choice is rear / selfie. */
   export let handheld = false;
@@ -13,6 +15,9 @@
   export let camera = false;
   export let cameraBusy = false;
   export let motionEnabled = false;
+  /** Bound: the tool camera motion acts as, one of `motionTools`. */
+  export let motionTool: TouchTool = 'attract';
+  export let motionTools: TouchTool[] = ['attract', 'repel', 'vortex'];
   export let sensitivity = 0.6;
   export let cameraOpacity = 0.35;
 
@@ -64,6 +69,12 @@
   </div>
   <label class="check"><input type="checkbox" bind:checked={motionEnabled} /> Motion input</label>
   <label>
+    Motion acts as
+    <select bind:value={motionTool} disabled={!motionEnabled}>
+      {#each motionTools as t}<option value={t}>{TOOL_LABELS[t]}</option>{/each}
+    </select>
+  </label>
+  <label>
     Sensitivity
     <input type="range" min="0" max="1" step=".01" bind:value={sensitivity} />
   </label>
@@ -71,5 +82,5 @@
     Reference camera opacity
     <input type="range" min="0" max="1" step=".01" bind:value={cameraOpacity} />
   </label>
-  <p class="hint">Local movement sensing; not calibrated depth tracking.</p>
+  <p class="hint">Local movement sensing; not calibrated depth tracking. Movement acts where it is seen, as a held touch with that tool would{motionTools.length > 3 ? ', on the desktop’s 3D world too' : ''}.</p>
 </details>
