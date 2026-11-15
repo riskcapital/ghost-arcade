@@ -102,7 +102,8 @@
   import ShowCameraLane from './show/timeline/ShowCameraLane.svelte';
   import ShowCameraLaneLabel from './show/timeline/ShowCameraLaneLabel.svelte';
   import { CAMERA_LANE_HEIGHT, cameraLaneShown } from './show/timeline/cameraLaneUi';
-  import { TRACK_HEADER_WIDTH, TRACK_ROW_HEIGHT, TRAY_MIN_HEIGHT, laneKeySelection, showSnapGuide, trayEditorCap, tracksStackHeight } from './show/timeline/trackLayout';
+  import { TRACK_HEADER_WIDTH, TRACK_ROW_HEIGHT, TRAY_MIN_HEIGHT, laneKeySelection, showSnapGuide, trayEditorCap } from './show/timeline/trackLayout';
+  import { stackHeight, timelineRowStack, watchLayerReveal } from './show/timeline/layersSection';
   import { carriesTrackMedia, dropTrackMedia } from './show/timeline/trackDrops';
   import { presetJunctions, type PresetJunction } from './show/timeline/laneJunctions';
   import { distinct, showSlice } from './show/timeline/timelineSlices';
@@ -509,7 +510,8 @@
   /** The takeover pads' own height, when they are open. */
   let padsH = $state(0);
 
-  const tracksH = $derived(isTimeline ? tracksStackHeight(layerTracks, $lineLayout) : 0);
+  // The rows as drawn: group rows, the Layers header and (open) the layer rows.
+  const tracksH = $derived(isTimeline ? stackHeight($timelineRowStack, $lineLayout) : 0);
   // Control lines of the Looks row and the Stage row (Timeline only).
   const looksLines = $derived(isTimeline ? $lineLayout.lines.get(LOOKS_GROUP) ?? [] : []);
   const stageLines = $derived(isTimeline ? $lineLayout.lines.get(STAGE_GROUP) ?? [] : []);
@@ -1277,6 +1279,8 @@
     });
   }
   onMount(() => setShowKeyHandler(handleShowKey));
+  // A block picked on a folded layer row (select all, the inspector, undo) opens the Layers section.
+  onMount(() => watchLayerReveal());
   // A backwards shuttle stops when the tray goes.
   onMount(() => () => stopShuttle());
   // Taken ahead of every other window listener (see installShowKeyCapture).

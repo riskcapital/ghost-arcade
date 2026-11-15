@@ -4,27 +4,28 @@
    * takeover's start up to the playhead, over the track's clip row. Drawn
    * apart from the lanes, so the playhead moving re-renders only this.
    */
-  import type { ShowLayerTrack } from '../../../types';
   import { showSlice } from './timelineSlices';
   import { liveTakeover } from '../../../show/takeover/liveTakeover';
-  import { TRACK_ROW_HEIGHT, trackTops } from './trackLayout';
+  import { TRACK_ROW_HEIGHT } from './trackLayout';
   import { lineLayout } from './lineUi';
+  import { stackRowHeight, stackTops, type RowStack } from './layersSection';
 
   interface Props {
-    tracks: ShowLayerTrack[];
+    /** The rows as drawn (layersSection.ts). */
+    stack: RowStack;
     zoom: number;
   }
 
-  let { tracks, zoom }: Props = $props();
+  let { stack, zoom }: Props = $props();
 
-  const tops = $derived(trackTops(tracks, $lineLayout));
+  const tops = $derived(stackTops(stack, $lineLayout));
   const currentTimeStore = showSlice('currentTime');
   const playhead = $derived($currentTimeStore);
   const spans = $derived.by(() => {
     const out: Array<{ trackId: string; top: number; left: number; width: number; returning: boolean }> = [];
-    tracks.forEach((t, i) => {
+    stack.rows.forEach((t, i) => {
       const o = $liveTakeover.surfaces[t.layerId];
-      if (!o) return;
+      if (!o || stackRowHeight(stack, t) <= 0) return;
       const start = Math.min(o.startShowTime, playhead);
       const width = Math.max(0, (playhead - start) * zoom);
       out.push({ trackId: t.id, top: tops[i] ?? 0, left: start * zoom, width, returning: o.phase === 'pendingRelease' || o.phase === 'releasing' });

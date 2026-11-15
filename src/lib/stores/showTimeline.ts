@@ -3787,11 +3787,12 @@ export const showTimeline = {
    * Move clips together by `delta` seconds and `trackOffset` rows (a drag of
    * a selection, possibly onto other tracks). Keys inside each clip go with
    * it. Returns false when the move is refused (overlap, locked, off the
-   * track list) and nothing changed.
+   * track list) and nothing changed. `rowOrder` (track ids): the order the
+   * rows are drawn in, which `trackOffset` counts in.
    */
-  moveLayerClipsAcross(clipIds: string[], delta: number, trackOffset: number): boolean {
+  moveLayerClipsAcross(clipIds: string[], delta: number, trackOffset: number, rowOrder?: readonly string[]): boolean {
     const ids = new Set(clipIds);
-    const layerTracks = moveClipsAcrossTracks(get(store).layerTracks, ids, delta, trackOffset);
+    const layerTracks = moveClipsAcrossTracks(get(store).layerTracks, ids, delta, trackOffset, rowOrder);
     if (!layerTracks) return false;
     store.update((s) => withDuration({ ...s, layerTracks }));
     recordShowEdit(`layer-move:${[...ids].sort().join(',')}`);

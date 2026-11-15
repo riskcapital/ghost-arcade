@@ -422,12 +422,16 @@ export interface EditableTrack {
  * locked track, start before 0 or overlap a clip that stays. Keys inside a
  * moving clip's span go with it, onto the target track's lane with the same
  * key. Returns the whole track list, with unchanged tracks kept as they were.
+ * `order` (track ids) is the row order the offset counts in, when the rows
+ * are drawn in another order than the list (group rows above the layers);
+ * a moving clip on a track missing from it is refused.
  */
 export function moveClipsAcrossTracks<T extends EditableTrack>(
   tracks: readonly T[],
   ids: ReadonlySet<string>,
   delta: number,
   trackOffset: number,
+  order?: readonly string[],
 ): T[] | null {
   const offset = Math.round(trackOffset);
   if (!Number.isFinite(delta)) return null;
@@ -448,11 +452,29 @@ export function moveClipsAcrossTracks<T extends EditableTrack>(
     }
     return next;
   }
+  // Row order: position of each track index, and the track index at each position.
+  const indexAt: number[] = order ? [] : tracks.map((_, i) => i);
+  const positionOf = new Map<number, number>();
+  if (order) {
+    const byId = new Map(tracks.map((t, i) => [t.id, i]));
+    for (const id of order) {
+      const i = byId.get(id);
+      if (i !== undefined && !positionOf.has(i)) { positionOf.set(i, indexAt.length); indexAt.push(i); }
+    }
+  } else {
+    for (let i = 0; i < tracks.length; i++) positionOf.set(i, i);
+  }
+  const targetOf = new Map<number, number>();
   const staying = new Map<number, ShowLayerClip[]>();
   const arriving = new Map<number, ShowLayerClip[]>();
   for (const { track, index, moving } of sources) {
-    const target = index + offset;
-    if (track.locked || target < 0 || target >= tracks.length || tracks[target].locked) return null;
+    const pos = positionOf.get(index);
+    if (pos === undefined) return null;
+    const targetPos = pos + offset;
+    if (track.locked || targetPos < 0 || targetPos >= indexAt.length) return null;
+    const target = indexAt[targetPos];
+    if (tracks[target].locked) return null;
+    targetOf.set(index, target);
     staying.set(index, track.clips.filter((c) => !ids.has(c.id)));
     arriving.set(target, moving.map((c) => ({ ...c, startTime: c.startTime + delta })));
   }
@@ -468,12 +490,14 @@ export function moveClipsAcrossTracks<T extends EditableTrack>(
   const lanes = tracks.map((t) => t.lanes);
   // Empty each target before it receives keys, so keys carried onto a track
   // are never picked up again by that track's own moving clips.
-  const order = offset > 0 ? [...sources].reverse() : sources;
-  for (const { index, moving } of order) {
+  const byRow = [...sources].sort((a, b) => positionOf.get(a.index)! - positionOf.get(b.index)!);
+  const carryOrder = offset > 0 ? byRow.reverse() : byRow;
+  for (const { index, moving } of carryOrder) {
+    const target = targetOf.get(index)!;
     for (const c of moving) {
-      const carried = carryKeysAcross(lanes[index], lanes[index + offset], c.startTime, clipEnd(c), delta);
+      const carried = carryKeysAcross(lanes[index], lanes[target], c.startTime, clipEnd(c), delta);
       lanes[index] = carried.source;
-      lanes[index + offset] = carried.target;
+      lanes[target] = carried.target;
     }
   }
   return tracks.map((track, index) => {

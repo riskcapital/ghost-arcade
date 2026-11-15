@@ -34,9 +34,6 @@
     laneKeySelection,
     showSnapGuide,
     snapGuideAt,
-    trackHeight,
-    trackIndexAt,
-    trackTops,
     type ClipPart,
     type TrackLaneController,
   } from './trackLayout';
@@ -52,6 +49,7 @@
   import { liveTakeover } from '../../../show/takeover/liveTakeover';
   import ShowTakeoverHatch from './ShowTakeoverHatch.svelte';
   import { editBlock } from '../../../show/tracks/showBlockEdit';
+  import { LAYERS_SECTION_HEIGHT, layerBlockSpans, rowShown, stackIndexAt, stackRowHeight, stackTops, timelineRowStack, type RowStack } from './layersSection';
 
   interface Props {
     zoom: number;
@@ -67,6 +65,11 @@
   const selectedClipIdsStore = showSlice('selectedClipIds');
   const currentTimeStore = showSlice('currentTime');
   const tracks = $derived($layerTracksStore);
+  // The rows as drawn: group rows, the Layers header, the layer rows.
+  const stack = $derived($timelineRowStack);
+  const rows = $derived(stack.rows);
+  const summary = $derived(stack.section && !stack.open ? layerBlockSpans(stack) : []);
+  const summaryInView = $derived(summary.filter((sp) => sp.end >= viewStart && sp.start <= viewEnd));
   const selectedArr = $derived($selectedClipIdsStore);
   const selectedIds = $derived(new Set(selectedArr));
   const keySel = $derived($laneKeySelection);
@@ -138,8 +141,17 @@
     if (!stackEl) return 0;
     return clientY - stackOrigin().top;
   }
+  /** The rows in the order drawn (row indices below count in it). */
+  function currentStack(): RowStack {
+    return get(timelineRowStack);
+  }
   function currentTracks(): ShowLayerTrack[] {
-    return get(showTimeline).layerTracks;
+    return currentStack().rows as ShowLayerTrack[];
+  }
+  /** The order a row offset counts in, when it is not the show's own list. */
+  function rowOrder(): string[] | undefined {
+    const st = currentStack();
+    return st.groupCount ? st.rows.map((t) => t.id) : undefined;
   }
   function trackIndexOf(trackId: string): number {
     return currentTracks().findIndex((t) => t.id === trackId);
@@ -313,7 +325,7 @@
     let freeKeys = allKeys;
     follow(e, (ev) => {
       const list = currentTracks();
-      const row = trackIndexAt(list, yInStack(ev.clientY));
+      const row = stackIndexAt(currentStack(), yInStack(ev.clientY));
       const offset = dragRowOffset(row, startIndex, minIndex, maxIndex, list.length);
       const raw = Math.max(0, timeAt(ev.clientX) - grab);
       const start = movesFreely(ev) ? raw : snapMovingClip(snapper, raw, duration);
@@ -328,7 +340,7 @@
       }
       if (Math.abs(delta - applied.delta) > 1e-9 || offset !== applied.offset) {
         const step = delta - applied.delta;
-        if (showTimeline.moveLayerClipsAcross(ids, step, offset - applied.offset)) {
+        if (showTimeline.moveLayerClipsAcross(ids, step, offset - applied.offset, rowOrder())) {
           if (freeKeys.length && Math.abs(step) > 1e-9) {
             const r = shiftKeys(get(showTimeline).lines, freeKeys, step);
             if (r.lines !== get(showTimeline).lines) showTimeline.setLines(r.lines);
@@ -372,7 +384,7 @@
     // The originals stay put until the drop, so their edges hold still.
     const snapper = dragSnapper();
     const place = () => {
-      const tops = trackTops(currentTracks());
+      const tops = stackTops(currentStack());
       ghosts = picked.map((p) => ({
         left: (p.c.startTime + drop.delta) * zoom,
         top: (tops[p.i + drop.offset] ?? 0) + 4,
@@ -381,7 +393,7 @@
     };
     follow(e, (ev) => {
       const list = currentTracks();
-      const row = trackIndexAt(list, yInStack(ev.clientY));
+      const row = stackIndexAt(currentStack(), yInStack(ev.clientY));
       const offset = dragRowOffset(row, startIndex, minIndex, maxIndex, list.length);
       const raw = Math.max(0, timeAt(ev.clientX) - grab);
       const start = movesFreely(ev) ? raw : snapMovingClip(snapper, raw, duration);
@@ -552,18 +564,22 @@
       const y1 = yInStack(ev.clientY);
       const box = { x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) };
       marquee = box;
-      const list = currentTracks();
-      const tops = trackTops(list);
+      const st = currentStack();
+      const list = st.rows;
+      const tops = stackTops(st);
       const t0 = box.x / zoom;
       const t1 = (box.x + box.w) / zoom;
       const hits: string[] = [];
       const keyLines = new Set<string>();
       const layout = _currentLineLayout();
       list.forEach((t, i) => {
+        // A row out of sight (folded away) is never picked.
+        const h = stackRowHeight(st, t);
+        if (h <= 0) return;
         const top = tops[i] + 4;
         const bottom = tops[i] + TRACK_ROW_HEIGHT - 4;
         // The row and the line lanes under it: their keys in the box.
-        if (!(box.y > tops[i] + trackHeight(t) - 2 || box.y + box.h < top)) {
+        if (!(box.y > tops[i] + h - 2 || box.y + box.h < top)) {
           for (const l of layout.lines.get(t.id) ?? []) keyLines.add(l.id);
         }
         if (box.y > bottom || box.y + box.h < top) return;
@@ -684,8 +700,16 @@
 <!-- data-help-disabled: the app's hover-help card would sit over the clip
      handles; the blocks keep their plain tooltips. -->
 <div class="tl-stack" bind:this={stackEl} style:width="{width}px" data-show-tracks data-help-disabled>
-  {#each tracks as tr, index (tr.id)}
-    {#if !tr.row?.hidden}
+  {#each rows as tr, index (tr.id)}
+    {#if index === stack.groupCount && stack.section}
+      <!-- The Layers header's lane; folded, where the layer rows have blocks. -->
+      <div class="tl-section" class:folded={!stack.open} style:height="{LAYERS_SECTION_HEIGHT}px" data-layers-section-lane>
+        {#each summaryInView as sp (sp.start)}
+          <span class="tl-summary" style:left="{sp.start * zoom}px" style:width="{Math.max(2, (sp.end - sp.start) * zoom)}px" data-layers-summary></span>
+        {/each}
+      </div>
+    {/if}
+    {#if rowShown(stack, tr)}
     <ShowLayerTrackLane
       track={tr}
       {index}
@@ -703,7 +727,7 @@
     />
     {/if}
   {/each}
-  <ShowTakeoverHatch {tracks} {zoom} />
+  <ShowTakeoverHatch {stack} {zoom} />
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="tl-new"
@@ -739,6 +763,21 @@
 
 <style>
   .tl-stack { position: relative; }
+  .tl-section {
+    position: relative;
+    box-sizing: border-box;
+    border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
+    background: rgba(255, 255, 255, 0.025);
+  }
+  .tl-summary {
+    position: absolute;
+    top: 50%;
+    height: 6px;
+    margin-top: -3px;
+    border-radius: 2px;
+    background: color-mix(in srgb, #8b7cff 55%, transparent);
+    pointer-events: none;
+  }
   .tl-new {
     position: relative;
     box-sizing: border-box;

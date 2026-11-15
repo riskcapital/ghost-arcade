@@ -8,7 +8,7 @@ import { join } from 'node:path';
  * redrew its whole canvas (thousands of fills) each frame while a show
  * played. These read slices (timelineSlices.ts) instead.
  */
-const PARTS = ['WhereBand', 'WhereStageHighlight', 'WhereEditor', 'WherePatternEditor', 'LedRowLanes', 'LedRowHeaders', 'LineRecordControls'].map((name) => `show/timeline/${name}`);
+const PARTS = ['WhereBand', 'WhereStageHighlight', 'WhereEditor', 'WherePatternEditor', 'LedRowLanes', 'LedRowHeaders', 'LineRecordControls', 'ShowTrackHeaders', 'ShowTrackLanes', 'ShowTakeoverHatch'].map((name) => `show/timeline/${name}`);
 /** Panels outside the tray that read the show too (zone actions). */
 const PANELS = ['show/ShowActionPicker', 'studio/InteractiveZonePanel'];
 
