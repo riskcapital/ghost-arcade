@@ -91,21 +91,46 @@ let lastFrameTime = 0;
 // Module-level reference to the store for the RAF tick function
 let _storeRef: ReturnType<typeof writable<KeyframeTimelineState>> | null = null;
 
-// With no keyframes, playback only moves the playhead, and the store is
-// read by much of the UI: publish that ten times a second, not every frame,
-// carrying the time in between here.
-let pendingSeconds = 0;
-let lastPublishedTime = NaN;
-let lastPublishAt = 0;
+// The playhead as it plays. With keyframes the store publishes it with the
+// values every frame. With none, playback moves nothing but the playhead:
+// the store does not publish at all (the renderer and most of the UI read
+// it), and only `keyframePlayhead`, which the few views showing the time
+// read, publishes it ten times a second. The store's own time catches up
+// on its next change (pause, seek, any edit) and `currentTime()` is always
+// right.
+let liveTime = 0;
+let lastPlayheadPublishAt = 0;
 const PLAYHEAD_ONLY_PUBLISH_MS = 100;
+const playheadStore = writable(0);
 
+/** The playhead time, for views that show it (the store's own
+ *  `config.currentTime` lags while playing with no keyframes). */
+export const keyframePlayhead = { subscribe: playheadStore.subscribe };
+
+let keyframesMemo: { timelines: Record<string, LayerKeyframeTimeline> | null; any: boolean } = { timelines: null, any: false };
 function anyTrackHasKeyframes(timelines: Record<string, LayerKeyframeTimeline>): boolean {
-  for (const timeline of Object.values(timelines)) {
+  if (keyframesMemo.timelines === timelines) return keyframesMemo.any;
+  let any = false;
+  outer: for (const timeline of Object.values(timelines)) {
     for (const track of timeline.tracks) {
-      if (track.keyframes?.length || track.boolKeyframes?.length) return true;
+      if (track.keyframes?.length || track.boolKeyframes?.length) { any = true; break outer; }
     }
   }
-  return false;
+  keyframesMemo = { timelines, any };
+  return any;
+}
+
+/** A state with the playhead where it really is. */
+function withLiveTime(s: KeyframeTimelineState): KeyframeTimelineState {
+  return s.config.isPlaying && s.config.currentTime !== liveTime
+    ? { ...s, config: { ...s.config, currentTime: liveTime } }
+    : s;
+}
+
+/** The store changed: the playhead is what it now says. */
+function notePublishedTime(s: KeyframeTimelineState): void {
+  liveTime = s.config.currentTime;
+  playheadStore.set(liveTime);
 }
 
 function tick(now: number) {
@@ -118,17 +143,7 @@ function tick(now: number) {
 
   const dt = lastFrameTime > 0 ? (now - lastFrameTime) / 1000 : 0;
   lastFrameTime = now;
-  // A seek (or anything else that set the time) restarts the carry.
-  if (state.config.currentTime !== lastPublishedTime) pendingSeconds = 0;
-  pendingSeconds += dt;
-  if (!anyTrackHasKeyframes(state.timelines) && now - lastPublishAt < PLAYHEAD_ONLY_PUBLISH_MS) {
-    animFrameId = requestAnimationFrame(tick);
-    return;
-  }
-
-  let newTime = state.config.currentTime + pendingSeconds;
-  pendingSeconds = 0;
-  lastPublishAt = now;
+  let newTime = liveTime + dt;
 
   // Handle end of timeline
   if (newTime >= state.config.duration) {
@@ -143,9 +158,21 @@ function tick(now: number) {
         config: { ...s.config, isPlaying: false, currentTime: newTime },
         activeOverrides: evaluateAll(s.timelines, newTime),
       }));
+      notePublishedTime(get(_storeRef!));
       animFrameId = null;
       return;
     }
+  }
+
+  liveTime = newTime;
+  if (!anyTrackHasKeyframes(state.timelines)) {
+    // Nothing to evaluate: only the playhead moves.
+    if (now - lastPlayheadPublishAt >= PLAYHEAD_ONLY_PUBLISH_MS) {
+      lastPlayheadPublishAt = now;
+      playheadStore.set(newTime);
+    }
+    animFrameId = requestAnimationFrame(tick);
+    return;
   }
 
   // Evaluate all tracks at the current time
@@ -156,7 +183,7 @@ function tick(now: number) {
     config: { ...s.config, currentTime: newTime },
     activeOverrides: overrides,
   }));
-  lastPublishedTime = newTime;
+  playheadStore.set(newTime);
 
   animFrameId = requestAnimationFrame(tick);
 }
@@ -193,7 +220,17 @@ function evaluateAll(
 function createKeyframeTimelineStore() {
   const internalStore = writable<KeyframeTimelineState>(createInitialState());
   _storeRef = internalStore;
-  const { subscribe, set, update } = internalStore;
+  const { subscribe } = internalStore;
+  // Every change starts from the playhead where it really is, and leaves
+  // the playhead where the change put it.
+  const update = (fn: (s: KeyframeTimelineState) => KeyframeTimelineState) => {
+    internalStore.update((s) => fn(withLiveTime(s)));
+    notePublishedTime(get(internalStore));
+  };
+  const set = (s: KeyframeTimelineState) => {
+    internalStore.set(s);
+    notePublishedTime(s);
+  };
 
   return {
     subscribe,
@@ -570,6 +607,12 @@ function createKeyframeTimelineStore() {
       update(s=>({...s,config:{...s.config,duration:Number.isFinite(value.duration)?Math.max(1,Math.min(86400,value.duration!)):s.config.duration,isLooping:typeof value.isLooping==='boolean'?value.isLooping:s.config.isLooping}}));
     },
     // ── Utilities ──
+    /** The playhead now (the store's `config.currentTime` lags while
+     *  playing with no keyframes). */
+    currentTime(): number {
+      return withLiveTime(get({ subscribe })).config.currentTime;
+    },
+
     hasKeyframes(layerId: string): boolean {
       const state = get({ subscribe });
       const timeline = state.timelines[layerId];
@@ -620,7 +663,7 @@ function createKeyframeTimelineStore() {
       // Ensure track exists
       this.ensureTrack(layerId, trackKey, label, type);
       // Add/update keyframe at current playhead
-      this.addKeyframe(layerId, trackKey, state.config.currentTime, value, 'linear', label, type);
+      this.addKeyframe(layerId, trackKey, this.currentTime(), value, 'linear', label, type);
     },
 
     clearAll() {

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { KEYFRAME_EASINGS } from '../keyframes/easing';
-  import { keyframeTimeline } from '../stores/keyframeTimeline';
+  import { keyframePlayhead, keyframeTimeline } from '../stores/keyframeTimeline';
   import { project, selectedLayer } from '../stores/layers';
   import { vjClipLauncher, vjOutputLayers } from '../stores/vjClipLauncher';
   import { discoverKeyframeableParams, type KeyframeableParam } from '../keyframes/paramDiscovery';
@@ -63,7 +63,7 @@
     }
   }
   $: layerId = $keyframeTimeline.selectedLayerId;
-  $: currentTime = $keyframeTimeline.config.currentTime;
+  $: currentTime = $keyframePlayhead;
 
   // Determine VJ mode: use VJ layer selection when VJ panel is open and a layer is selected
   $: vjMode = $vjClipLauncher.isOpen;
@@ -229,7 +229,7 @@
   function addKeyframeForParam(param: KeyframeableParam) {
     if (!layerId) return;
     const value = getCurrentValue(param);
-    keyframeTimeline.addKeyframe(layerId, param.key, currentTime, value, 'linear', param.label, param.type);
+    keyframeTimeline.addKeyframe(layerId, param.key, keyframeTimeline.currentTime(), value, 'linear', param.label, param.type);
   }
 </script>
 

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { KEYFRAME_EASINGS } from '../../keyframes/easing';
-  import { keyframeTimeline } from '../../stores/keyframeTimeline';
+  import { keyframePlayhead, keyframeTimeline } from '../../stores/keyframeTimeline';
   import type { KeyframeableParam } from '../../keyframes/paramDiscovery';
   import type { KeyframeEasing } from '../../types';
   import { onMount, onDestroy } from 'svelte';
@@ -35,7 +35,7 @@
   $: timeline = layerId ? timelines[layerId] : null;
   $: zoom = config.zoom;
   $: totalWidth = config.duration * zoom;
-  $: playheadX = config.currentTime * zoom;
+  $: playheadX = $keyframePlayhead * zoom;
 
   // Reactive map: paramKey -> keyframe list. Rebuilds when timeline or timelines change.
   $: kfByParam = (() => {
@@ -305,7 +305,7 @@
 
   function pasteAtPlayhead() {
     if (!contextMenu) return;
-    const t = $keyframeTimeline.config.currentTime;
+    const t = keyframeTimeline.currentTime();
     pasteKeyframeAt(contextMenu.layerId, contextMenu.paramKey, t);
     contextMenu = null;
   }
@@ -347,7 +347,7 @@
     }
     if (e.key === 'v' || e.key === 'V') {
       if (!kfClipboard || !activeKeyframe) return;
-      const t = $keyframeTimeline.config.currentTime;
+      const t = keyframeTimeline.currentTime();
       if (pasteKeyframeAt(activeKeyframe.layerId, activeKeyframe.paramKey, t)) {
         e.preventDefault();
         e.stopPropagation();

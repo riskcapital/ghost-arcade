@@ -295,7 +295,7 @@
 
   function studioParamRecord(id:string,key:string,value:number,label:string){keyframeTimeline.autoRecord(studioTimelineId,`interactive:${id}:${key}`,value,label,'number');}
   function studioAddKeyframe(id:string,key:string,value:number,label:string){
-    keyframeTimeline.addKeyframe(studioTimelineId,`interactive:${id}:${key}`,get(keyframeTimeline).config.currentTime,value,'sine',label,'number');
+    keyframeTimeline.addKeyframe(studioTimelineId,`interactive:${id}:${key}`,keyframeTimeline.currentTime(),value,'sine',label,'number');
   }
   function captureStudioScene(scene:InteractiveScene):InteractiveScene{
     const k=get(keyframeTimeline),live=studioCurrentSource()?.interactiveScene;

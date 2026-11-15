@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { keyframeTimeline } from '../../stores/keyframeTimeline';
+  import { keyframePlayhead, keyframeTimeline } from '../../stores/keyframeTimeline';
   import { project } from '../../stores/layers';
 
   $: config = $keyframeTimeline.config;
@@ -37,7 +37,7 @@
         <path d="M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/>
       </svg>
     </button>
-    <span class="time-display">{formatTime(config.currentTime)}</span>
+    <span class="time-display">{formatTime($keyframePlayhead)}</span>
     <span class="time-sep">/</span>
     <select class="duration-select" value={config.duration}
       onchange={(e) => keyframeTimeline.setDuration(Number((e.target as HTMLSelectElement).value))}>

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { keyframeTimeline } from '../../stores/keyframeTimeline';
+  import { keyframePlayhead, keyframeTimeline } from '../../stores/keyframeTimeline';
   import type { KeyframeableParam } from '../../keyframes/paramDiscovery';
 
   type FlatRow = { kind: 'group'; group: string; expanded: boolean } | { kind: 'param'; param: KeyframeableParam };
@@ -10,7 +10,7 @@
   export let addKeyframeForParam: (param: KeyframeableParam) => void = () => {};
   export let scrollEl: HTMLDivElement | undefined = undefined;
 
-  $: currentTime = $keyframeTimeline.config.currentTime;
+  $: currentTime = $keyframePlayhead;
   $: timelines = $keyframeTimeline.timelines;
   $: timeline = layerId ? timelines[layerId] : null;
   $: armedTracks = $keyframeTimeline.armedTracks;
