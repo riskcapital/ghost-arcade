@@ -9873,6 +9873,14 @@ export class NativeRendererSync {
     }, 16);
   }
 
+  /** Values the frame applies itself changed (keyframes, the sequencer,
+   *  Timeline lines): send a frame of the published scene. Costs nothing
+   *  while the frame loop runs; otherwise the 16 ms timer carries it. */
+  requestFrame(): void {
+    if (!this.latestLayers.length) return;
+    this.scheduleSync(this.desiredWidth, this.desiredHeight, this.latestLayers);
+  }
+
   syncNow(width: number, height: number, layers: Layer[]) {
     // Kept before the core runs, like scheduleSync.
     this.desiredWidth = width;

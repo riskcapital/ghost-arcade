@@ -29,6 +29,9 @@ export interface MapPresetRow {
   blendMode: BlendMode;
   /** Row FX, applied by the browser group renderer to the whole preset. */
   effects?: Layer['effects'];
+  /** With the crossfader on: `opacity` is `base` times this deck's weight,
+   *  which the frame sync follows per frame (vjCrossfadeFrame.ts). */
+  xfade?: { deck: 'a' | 'b'; base: number };
 }
 
 export interface MapPresetCacheEntry {
@@ -140,6 +143,8 @@ export function buildMapPresetLayers(
     }
     // Scalars only: safe to update in place on the cached group.
     entry.group.opacity = row.opacity;
+    if (row.xfade) entry.group._xfadeFrame = { opacity: row.xfade };
+    else delete entry.group._xfadeFrame;
     entry.group.blendMode = row.blendMode;
     entry.group.name = `MAP ${row.label}: ${row.composition.name}`;
     (entry.group as Layer & { _postCompositeEffects?: Layer['effects'] })._postCompositeEffects = row.effects ?? [];
@@ -186,7 +191,8 @@ export function mapPresetRows(
       const composition = compositions.find((entry) => entry.id === clip.presetId);
       if (!composition) return;
       const sequenceOpacity = sequencer.isPlaying ? (overrides[index] ?? 1) : 1;
-      const opacity = row.opacity * sequenceOpacity * (state.masterOpacity ?? 1) * weight;
+      const base = row.opacity * sequenceOpacity * (state.masterOpacity ?? 1);
+      const opacity = base * weight;
       if (opacity <= 0) return;
       rows.push({
         key: deck === 'A' ? String(index) : `B${index}`,
@@ -195,6 +201,7 @@ export function mapPresetRows(
         opacity,
         blendMode: row.blendMode,
         effects: row.effects,
+        ...(weights ? { xfade: { deck: deck === 'A' ? 'a' as const : 'b' as const, base } } : {}),
       });
     });
   }

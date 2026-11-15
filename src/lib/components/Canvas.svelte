@@ -24,13 +24,11 @@
   import { vjOutputLayers, vjTransitionOutputLayers, vjClipLauncher, vjCrossfader, vjClipLauncherNow, type VJClipLauncherState } from '../stores/vjClipLauncher';
   import { buildMapPresetLayers, composeMapOutputLayers, mapPresetRows, type MapPresetCacheEntry } from '../renderer/mapPresetLayers';
   import { vjClipTransitions, vjClipTransitionKey } from '../stores/vjClipTransitions';
-  import { buildVJClipTransitionLayers, makeVJClipTransitionCarrier, vjClipTransitionInputId, vjClipTransitionSourceId, type VJClipTransitionState } from '../renderer/vjClipTransitionNative';
+  import { buildVJClipTransitionLayers, vjClipTransitionInputId, vjClipTransitionSourceId, type VJClipTransitionState } from '../renderer/vjClipTransitionNative';
   import { createNativeClipTransitionCoordinator } from '../renderer/nativeClipTransitionCoordinator';
-  import {
-    nativePerformerWorldOverlays,
-    type NativePerformerWorldOverlay,
-  } from '../stores/nativePerformerWorld';
-  import { applyFaderCurve } from '../renderer/crossfadeTransitions';
+  import { nativePerformerWorldOverlays } from '../stores/nativePerformerWorld';
+  import { applyCrossfadeFrame, crossfadeSceneStep, crossfadeWeights } from '../renderer/vjCrossfadeFrame';
+  import { buildVjCrossfadeScene } from '../renderer/vjCrossfadeScene';
   import { vjLayerSequencer } from '../stores/vjLayerSequencer';
   import { macros } from '../stores/macros';
   import { layerSequencer } from '../stores/layerSequencer';
@@ -136,7 +134,7 @@
   } from '$lib/sync/nativeCoreSupervisor';
   import { openLogFolder } from '$lib/utils/logFolder';
   import { installModeRunning } from '$lib/install/installSession';
-  import { appendNativeVjDeckCrossfade, appendNativeVjMixCarrier, vjStageScreenLayers } from '$lib/renderer/vjCompositionNative';
+  import { vjStageScreenLayers } from '$lib/renderer/vjCompositionNative';
   import { expandStudioLayers, noteStudioHosts, studioCodeTick, studioRenderInputs } from '$lib/music/studioPlugin';
   import { hasLiveValues, liveCompositionValues, liveValuesForRenderedLayer } from '$lib/audio/liveParams';
   import { wakeStudioVisuals } from '$lib/music/musicRuntime';
@@ -146,6 +144,13 @@
    *  (music/studioPlugin.ts). The frame sync does this on every frame it
    *  sends (setFrameLayers): the voices' signals move every frame, and
    *  reading them there needs no scene rebuild or store tick per frame. */
+  /** Applied by the frame sync to every frame it sends: Studio voices, and
+   *  the values that follow the A/B crossfader (vjCrossfadeFrame.ts). */
+  function nativeFrameLayers(list: Layer[]): Layer[] {
+    return applyCrossfadeFrame(withStudioVoices(list), vjClipLauncherNow());
+  }
+  // The fader step the published scene was built at (crossfadeSceneStep).
+  let builtCrossfadeStep = '';
   function withStudioVoices(list: Layer[]): Layer[] {
     // Without the Studio in the build its layers draw nothing and keep their data.
     if (!MUSIC_STUDIO) return list;
@@ -339,7 +344,7 @@
     if (canvasDestroyed) return;
     const sync = new NativeRendererSync();
     nativeRendererSync = sync;
-    sync.setFrameLayers(withStudioVoices);
+    sync.setFrameLayers(nativeFrameLayers);
     sync.onCoreLost = (reason) => handleNativeCoreLost(sync, reason);
     // Before start(), so the core starts with the chosen video memory.
     lastPushedVideoMemoryMb = get(settings).performance.videoMemoryMb ?? 0;
@@ -1908,70 +1913,6 @@
       // fader never re-warms sources), full-B mutes Bank A, and the middle
       // blends per the selected fader curve. Dissolve is the native v1 mix;
       // shader transitions (wipes etc.) need a core-side crossfade pass.
-      const nativeCrossfadeWeights = (vjState: {
-        crossfaderEnabled?: boolean;
-        crossfaderValue?: number;
-        crossfaderCurve?: 'linear' | 'constant-power' | 'sharp-cut';
-      }): { a: number; b: number } | null => {
-        if (!vjState.crossfaderEnabled) return null;
-        const value = Math.max(0, Math.min(1, vjState.crossfaderValue ?? 0));
-        const curve = vjState.crossfaderCurve || 'constant-power';
-        const shaped = applyFaderCurve(value, curve);
-        if (curve === 'constant-power') {
-          return { a: Math.cos(value * Math.PI / 2), b: Math.sin(value * Math.PI / 2) };
-        }
-        return { a: 1 - shaped, b: shaped };
-      };
-      const appendNativePerformerWorldLayers = (
-        baseLayers: Layer[],
-        vjLayers: Layer[],
-        weights: { a: number; b: number } | null,
-      ): Layer[] => {
-        const overlayState = get(nativePerformerWorldOverlays);
-        const overlays = (['A', 'B'] as const)
-          .map((deck): NativePerformerWorldOverlay | null => overlayState[deck])
-          .filter((overlay): overlay is NativePerformerWorldOverlay =>
-            !!overlay?.enabled,
-          )
-          .map((overlay): Layer | null => {
-            const sourceLayer = vjLayers.find((candidate) => {
-              const parsed = parseVjLayerId(candidate.id);
-              if (!parsed || parsed.idx !== overlay.layerIndex) return false;
-              return (parsed.bank ?? 'A') === overlay.deck;
-            });
-            if (!sourceLayer) return null;
-            const deckWeight = weights
-              ? overlay.deck === 'A' ? weights.a : weights.b
-              : 1;
-            return {
-              ...sourceLayer,
-              id: `performer-world-${overlay.deck}-${overlay.layerIndex}`,
-              name: 'Performer World',
-              opacity: sourceLayer.opacity * deckWeight,
-              blendMode: 'add',
-              source: {
-                id: `performer-world-src-${overlay.deck}-${overlay.layerIndex}`,
-                type: 'effect',
-                src: `plugin://performer-world/${overlay.deck}/${overlay.layerIndex}`,
-                name: 'Performer World',
-                effectSource: {
-                  effectType: 'performer-world',
-                  performerWorldIndex: overlay.worldIndex,
-                  performerWorldSpace: overlay.spaceIndex,
-                  performerWorldX: overlay.x,
-                  performerWorldY: overlay.y,
-                  performerWorldPointerDown: overlay.pointerDown,
-                  performerWorldParams: overlay.params,
-                  performerWorldPump: overlay.pump,
-                },
-              },
-              effects: [],
-              edgeEffects: null,
-            };
-          })
-          .filter((overlay): overlay is Layer => !!overlay);
-        return overlays.length ? [...overlays, ...baseLayers] : baseLayers;
-      };
       // True post-crossfade VJ Mix carrier: a synthetic feed-only layer that
       // makes the core render the full VJ row stack (bottom→top, per-row
       // opacity + blend, post-crossfade per row) into one source frame.
@@ -2003,10 +1944,6 @@
       // composition FX on the carrier; every live VJ mode passes false and
       // runs them once on the final output instead (nativeRendererSync).
       const buildNativeVjFeedLayers = (vjState: VJClipLauncherState, mixFx: boolean): Layer[] | null => {
-        const appendMix = (list: Layer[]) => {
-          const state = get(vjClipLauncher);
-          return appendNativeVjMixCarrier(list, state.groups ?? [], mixFx ? nativeCompositionEffects(state.compositionEffects) : []);
-        };
         const incomingLayers = get(vjOutputLayers);
         const transitions = get(vjClipTransitions);
         // Capture the already mixed picture before replacing any graph
@@ -2033,115 +1970,19 @@
         }
         const vjLayers = buildVJClipTransitionLayers(incomingLayers ?? [], clipFades, true);
         if (!vjLayers?.length) return [];
-        const weights = nativeCrossfadeWeights(vjState);
-        if (!weights) {
-          return appendMix(
-            appendNativePerformerWorldLayers(vjLayers, incomingLayers ?? [], weights),
-          );
-        }
-        // A/B crossfade with a paired transition shader: both banks stay
-        // composited at opacity 0 (their frames keep rendering — the mix
-        // pass samples them via layer-frame bindings) and a synthetic
-        // layer per index shows the transition output. Single-bank rows
-        // fall back to fader-weighted opacity.
-        const byIndex = new Map<number, { a?: Layer; b?: Layer }>();
-        const output: Layer[] = [];
-        for (const layer of vjLayers) {
-          const parsed = parseVjLayerId(layer.id);
-          if (!parsed?.bank) {
-            output.push(layer);
-            continue;
-          }
-          const slot = byIndex.get(parsed.idx) ?? {};
-          if (parsed.bank === 'A') slot.a = layer;
-          else slot.b = layer;
-          byIndex.set(parsed.idx, slot);
-        }
-        // Mix value handed to the native transition shader. Every WGSL
-        // transition applies its own constant-power (or equivalent) response
-        // to the incoming mix, so 'constant-power' must pass the RAW fader
-        // value — pre-shaping it here double-applied sin(v·π/2), which
-        // skewed the perceptual midpoint to ~35% travel and kept the
-        // incoming deck invisible until well past a third of the throw.
-        // 'linear' is identity and 'sharp-cut' genuinely wants its S-curve
-        // pre-shape, so those still go through applyFaderCurve.
-        const xfadeCurve = vjState.crossfaderCurve || 'constant-power';
-        const rawFader = Math.max(0, Math.min(1, vjState.crossfaderValue ?? 0));
-        const shapedMix = xfadeCurve === 'constant-power'
-          ? rawFader
-          : applyFaderCurve(rawFader, xfadeCurve);
-        const stateA = vjState.layerStates ?? [];
-        const stateB = vjState.bankBLayerStates ?? [];
-        // Mix output with both decks playing: the slider runs between the
-        // whole Deck A and Deck B pictures, so its transition and blend mode
-        // apply whatever rows each deck uses. Stage keeps the per-row pairing
-        // below, because each Screen shows one row's own A/B mix.
-        const slots = [...byIndex.values()];
-        if (!vjState.stageMode && slots.some(slot => slot.a) && slots.some(slot => slot.b)) {
-          const residents: Layer[] = [...output];
-          for (const slot of slots) {
-            if (slot.a) residents.push({ ...slot.a, _deckMonitorBank: 'a', _deckMonitorOpacity: slot.a.opacity });
-            if (slot.b) residents.push({ ...slot.b, _deckMonitorBank: 'b', _deckMonitorOpacity: slot.b.opacity });
-          }
-          const state = get(vjClipLauncher);
-          return appendNativeVjDeckCrossfade(
-            appendNativePerformerWorldLayers(residents, incomingLayers ?? [], null),
-            state.groups ?? [],
-            mixFx ? nativeCompositionEffects(state.compositionEffects) : [],
-            {
-              mix: shapedMix,
-              transition: vjState.crossfaderTransition || 'dissolve',
-              blendMode: vjState.crossfaderBlendMode || 'normal',
-            },
-          );
-        }
-        // A MAP preset occupies a row without producing a feed, so it never
-        // counts as the missing half of an A/B pair.
-        const visibleRow = (rows: typeof stateA, idx: number) => !!rows[idx]?.activeClip
-          && rows[idx].activeClip!.type !== 'preset'
-          && !rows[idx].mute && (!rows.some(row => row.solo) || rows[idx].solo);
-        for (const [idx, slot] of byIndex.entries()) {
-          // Derived-store lag guard: the launcher state says both decks
-          // hold a clip on this row, but vjOutputLayers has only one bank
-          // materialized. Emitting the single-bank weighted version now
-          // would flip the scene shape for one tick (visible as a black
-          // blink and constant template churn). Signal "stale" instead.
-          const bothActive = visibleRow(stateA, idx) && visibleRow(stateB, idx);
-          if (bothActive && (!slot.a || !slot.b)) {
-            return null;
-          }
-          if (slot.a && slot.b) {
-            output.push({ ...slot.a, opacity: 0, _deckMonitorBank: 'a', _deckMonitorOpacity: slot.a.opacity });
-            output.push({ ...slot.b, opacity: 0, _deckMonitorBank: 'b', _deckMonitorOpacity: slot.b.opacity });
-            const carrier = makeVJClipTransitionCarrier(
-              shapedMix < 0.5 ? slot.a : slot.b,
-              slot.a.id, slot.b.id, shapedMix,
-              vjState.crossfaderTransition || 'dissolve',
-              {
-                id: `vj-xfade-${idx}`,
-                opacityA: slot.a.opacity, opacityB: slot.b.opacity,
-                blendMode: vjState.crossfaderBlendMode || 'normal',
-              },
-            );
-            output.push(carrier);
-            continue;
-          }
-          const single = slot.a ?? slot.b;
-          if (!single) continue;
-          const weight = slot.a ? weights.a : weights.b;
-          output.push({
-            ...single,
-            opacity: single.opacity * weight,
-            _deckMonitorBank: slot.a ? 'a' : 'b',
-            _deckMonitorOpacity: single.opacity,
-          });
-        }
-        return appendMix(
-          appendNativePerformerWorldLayers(output, incomingLayers ?? [], weights),
-        );
+        const state = get(vjClipLauncher);
+        return buildVjCrossfadeScene({
+          vjLayers,
+          incomingLayers: incomingLayers ?? [],
+          state: vjState,
+          overlays: get(nativePerformerWorldOverlays),
+          groups: state.groups ?? [],
+          mixEffects: mixFx ? nativeCompositionEffects(state.compositionEffects) : [],
+        });
       };
       const nativeEffectiveLayers = (): Layer[] | null => {
         const vjState = vjClipLauncherNow();
+        builtCrossfadeStep = crossfadeSceneStep(vjState);
         // STAGE mode: the VJ feed layers render their frames invisibly while
         // the mapping scene's Screen layers sample those streams core-side
         // via vj_layer_index. Both lists must reach the native sync.
@@ -2169,7 +2010,7 @@
             if (!feeds) return null;
             const mappingLive = get(layers) as Layer[];
             const presetLayers = buildMapPresetLayers(
-              mapPresetRows(vjState, get(compositions), get(vjLayerSequencer), nativeCrossfadeWeights(vjState)),
+              mapPresetRows(vjState, get(compositions), get(vjLayerSequencer), crossfadeWeights(vjState)),
               { liveLayers: mappingLive, surfaces: get(project).mapSurfaces, cache: mapPresetLayerCache },
             );
             return composeMapOutputLayers(feeds, mappingLive, presetLayers, get(project).mapSurfaces);
@@ -2278,8 +2119,10 @@
       // changed. A running clip transition moves with the clock, so it is
       // never reused.
       let takeoverFeedsMemo: { key: unknown[]; feeds: Layer[] | null } | null = null;
+      // The fader's step, not its position: the frame sync moves the values
+      // that follow it (vjCrossfadeFrame.ts).
       const takeoverFeedDeps = (vjState: VJClipLauncherState): unknown[] => [
-        get(vjClipLauncher), vjState.crossfaderValue, get(vjOutputLayers), get(vjClipTransitions),
+        get(vjClipLauncher), crossfadeSceneStep(vjState), get(vjOutputLayers), get(vjClipTransitions),
         get(vjTransitionOutputLayers), get(nativePerformerWorldOverlays),
       ];
       const takeoverFeeds = (vjState: VJClipLauncherState): Layer[] | null => {
@@ -2628,16 +2471,22 @@
       stageFxNativeRaf = requestAnimationFrame(stageFxNativeTick);
       const nativeVjLayersUnsub = vjOutputLayers.subscribe(() => scheduleNativeLayersSync());
       const nativeVjStateUnsub = vjClipLauncher.subscribe(() => scheduleNativeLayersSync());
-      const nativeCrossfaderUnsub = vjCrossfader.subscribe(() => scheduleNativeLayersSync());
-      // The timeline and the sequencer drive layer state without touching the
-      // project store, so nothing here re-synced on their ticks. The sync's
-      // own RAF loop covers layers that animate continuously (shaders), but a
-      // media/image layer has no such loop — its sequencer step reached the
-      // core only if some unrelated sync happened to fire, which is why a
-      // sequenced layer would go dark and never come back.
-      const nativeSequencerUnsub = layerSequencer.subscribe(() => scheduleNativeLayersSync());
-      const nativeKeyframeUnsub = keyframeTimeline.subscribe(() => scheduleNativeLayersSync());
-      const nativeLineUnsub = controlLineFrame.subscribe(() => scheduleNativeLayersSync());
+      // A moving fader goes to the core as values the frame sync sets on
+      // every frame (setFrameLayers below). The scene is built again only when
+      // the fader crosses a step that changes its shape.
+      const nativeCrossfaderUnsub = vjCrossfader.subscribe(() => {
+        if (crossfadeSceneStep(vjClipLauncherNow()) !== builtCrossfadeStep) scheduleNativeLayersSync();
+      });
+      // The timeline, the sequencer and Timeline lines drive layer state
+      // without touching the project store. The frame sync applies their
+      // values itself on every frame it sends (applyTimelineOverrides), and
+      // the scene is not built from them, so a tick asks for a frame of the
+      // published scene, not a new one. Its own RAF loop runs while any layer
+      // is visible; the request covers a scene that has stopped it.
+      const requestNativeFrame = () => nativeRendererSync?.requestFrame();
+      const nativeSequencerUnsub = layerSequencer.subscribe(requestNativeFrame);
+      const nativeKeyframeUnsub = keyframeTimeline.subscribe(requestNativeFrame);
+      const nativeLineUnsub = controlLineFrame.subscribe(requestNativeFrame);
       // The Timeline's Screen FX / Effects rows: apply this frame's values now
       // (an offline render publishes once per virtual frame, between RAFs).
       const nativeStageFxRowsUnsub = timelineStageFxFrame.subscribe(() => {

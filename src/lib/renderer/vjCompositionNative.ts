@@ -1,5 +1,6 @@
 import { createLayer, type Layer, type Effect } from '../types';
 import type { VJGroup } from '../stores/vjGroups';
+import { hiddenCrossfadeLayer, type CrossfadeFrameTag } from './vjCrossfadeFrame';
 
 function parseRow(id: string) {
   const match = /^vj-layer-(\d+)(?:-([AB]))?$/.exec(id);
@@ -57,8 +58,16 @@ export function appendNativeVjMixCarrier(list: Layer[], groups: VJGroup[], compo
       }));
       return [{ ...entry, groupId }, ...worlds];
     });
+  // A single-deck row's weight follows the crossfader: its mix row does too,
+  // set per frame by the frame sync (vjCrossfadeFrame.ts), not by a rebuild.
+  const weighted = new Map(list.flatMap(layer => layer._xfadeFrame?.opacity ? [[String(layer.id), layer._xfadeFrame.opacity] as const] : []));
+  const xfadeRows: NonNullable<CrossfadeFrameTag['rows']> = [];
+  rows.forEach((row, index) => {
+    const weight = weighted.get(row.layerId);
+    if (weight) xfadeRows.push({ index, deck: weight.deck, base: weight.base });
+  });
   return [
-    ...list.map(layer => ({ ...layer, opacity: 0 })),
+    ...list.map(hiddenCrossfadeLayer),
     {
       ...createLayer('__vj-mix__', 'VJ Mix', 'media'),
       visible: true,
@@ -79,6 +88,7 @@ export function appendNativeVjMixCarrier(list: Layer[], groups: VJGroup[], compo
       // resident but must not also composite underneath it.
       effects: compositionEffects,
       edgeEffects: null,
+      ...(xfadeRows.length ? { _xfadeFrame: { rows: xfadeRows } } : {}),
     } as Layer,
   ];
 }
@@ -152,12 +162,14 @@ export function appendNativeVjDeckCrossfade(
     vjxfadeOpacityA: 1,
     vjxfadeOpacityB: 1,
   }, 0);
+  // Its mix follows the slider on every frame (vjCrossfadeFrame.ts).
+  crossfade._xfadeFrame = { mix: true };
   const mix = effectLayer('__vj-mix__', 'VJ Mix', 'plugin://vj-mix', {
     effectType: 'vj-mix',
     vjmixRows: [{ layerId: crossfade.id, opacity: 1, blendMode: 'normal' }],
     vjmixGroups: [],
   }, 1, compositionEffects);
-  return [...list.map(layer => ({ ...layer, opacity: 0 })), deckA, deckB, crossfade, mix];
+  return [...list.map(hiddenCrossfadeLayer), deckA, deckB, crossfade, mix];
 }
 
 /** Stage output contains screen slices and only their parent containers. */

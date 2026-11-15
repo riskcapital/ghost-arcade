@@ -318,6 +318,7 @@ const RUNTIME_ONLY_LAYER_FIELDS = new Set([
   '_showParams',
   '_showClipId',
   '_interactiveLiveParams', // Auto on an Interactive scene, set by the frame sync on its copy
+  '_xfadeFrame',         // crossfader-driven values, tagged on the scene copies
   'bank',                // assigned by vjOutputLayers when the crossfader is on
   'texture',             // live GPU/DOM object
   'videoElement',        // live DOM element

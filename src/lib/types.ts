@@ -3277,6 +3277,10 @@ export interface Layer {
   _interactiveLiveParams?: Record<string, number>;
   /** The Timeline block this scene copy shows right now (its lines apply). */
   _showClipId?: string;
+  /** Values on this scene layer that follow the A/B crossfader; the frame
+   *  sync puts the fader's position into them on every frame
+   *  (renderer/vjCrossfadeFrame.ts). Never saved. */
+  _xfadeFrame?: import('./renderer/vjCrossfadeFrame').CrossfadeFrameTag;
 
   // ── Group nesting ──────────────────────────────────────────────────────
   /** ID of parent group layer (undefined/null = top-level layer) */
