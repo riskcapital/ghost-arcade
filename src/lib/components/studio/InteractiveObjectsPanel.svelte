@@ -1,6 +1,7 @@
 <script lang="ts">
   /** Objects tab: the shapes in the scene and what can be done to the selected one. */
   import InteractiveZonePanel from './InteractiveZonePanel.svelte';
+  import type { ShowActionMenu } from '../../mobile/studio/showActionMenu';
   import {
     defaultSurfaceLook,
     defaultZoneTrigger,
@@ -49,6 +50,9 @@
   /** A paired desktop with the 3D world: objects get looks, zones get actions, blocks get finishes.
    *  Without one the tab is the phone's own, as it always was. */
   export let desktop = false;
+  /** The desktop's show actions a trigger zone may add (null: none here). */
+  export let showMenu: ShowActionMenu | null = null;
+  export let onshowmenu: () => void = () => {};
   /** The 3D world is on: solid objects are blocks with a finish. */
   export let world = false;
   export let onfinish: (finish: SurfaceFinish) => void = () => {};
@@ -139,6 +143,8 @@
       onrearmstart={ontriggerstart}
       ontest={ontesttrigger}
       {world}
+      {showMenu}
+      {onshowmenu}
     />
   {/if}
   {#if !desktop || chosen.behavior === 'solid'}

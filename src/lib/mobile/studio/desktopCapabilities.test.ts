@@ -7,7 +7,7 @@ import { INTERACTIVE_STARTERS, starterScene } from './interactiveLibrary';
 describe('desktop capabilities', () => {
   it('an older desktop (no flags) turns nothing new on', () => {
     const c = readDesktopCapabilities({ type: 'studio_capabilities', version: 1, nativeInteractive: true, visualFeeds: true });
-    expect(c).toEqual({ nativeInteractive: true, world: null, depthCapture: null, output: null });
+    expect(c).toEqual({ nativeInteractive: true, world: null, depthCapture: null, output: null, showActions: null });
     expect(outputAspect(c)).toBeCloseTo(16 / 9);
   });
   it('reads the world, its tools, the depth limits and the output', () => {

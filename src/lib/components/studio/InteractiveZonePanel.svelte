@@ -4,11 +4,12 @@
    * one, the re-arm time, and Test. The desktop fires the zone when a touch
    * (this phone's included), a tracked hand or body, or a ball comes into it.
    *
-   * The phone's version of the desktop panel: show actions (a Look, a VJ
-   * clip, a cue…) name things only the desktop has, so they are added there;
-   * the phone keeps and shows the ones a scene already has. Test fires the
-   * zone's bursts (a scene change) and its world actions (studio_world_action);
-   * show actions fire on the desktop when the zone is touched.
+   * The phone's version of the desktop panel. Show actions (a Look, a VJ
+   * clip, a cue…) name things only the desktop has: with a desktop that lists
+   * them (`showMenu`, from its capabilities) the phone adds them from that
+   * list; otherwise it keeps and shows the ones a scene already has. Test
+   * fires the zone's bursts (a scene change) and its world actions
+   * (studio_world_action); show actions fire on the desktop when the zone does.
    */
   import {
     MAX_ZONE_ACTIONS,
@@ -20,7 +21,9 @@
     type ZoneSource,
   } from '../../mobile/studio/interactive';
   import type { ShowAction } from '../../show/showActionTypes';
+  import { describeShowAction, type ShowActionMenu } from '../../mobile/studio/showActionMenu';
   import InfoTip from './ui/InfoTip.svelte';
+  import PhoneShowActionPicker from './PhoneShowActionPicker.svelte';
 
   export let trigger: ZoneTrigger;
   /** Effects aimed at this zone: what a burst fires. */
@@ -32,6 +35,10 @@
   export let ontest: () => void;
   /** The scene's 3D world is on: offer what the zone can do to it. */
   export let world = false;
+  /** The desktop's show actions (its kinds, Looks, presets, sections); null: none can be added here. */
+  export let showMenu: ShowActionMenu | null = null;
+  /** The picker opened: ask the desktop for its lists again (presets and sections change). */
+  export let onshowmenu: () => void = () => {};
 
   const WORLD_LABELS: Record<ZoneWorldAction, string> = {
     ignite: 'Set fire here',
@@ -51,34 +58,30 @@
     onchange(value === 'touch' ? rest : { ...rest, when: value }, true);
   }
 
-  /** A short line for a show action the desktop added (the desktop shows names; here the kind). */
-  function showLabel(a: ShowAction): string {
-    switch (a.kind) {
-      case 'look': return 'Look (set on the desktop)';
-      case 'preset': return 'Preset (set on the desktop)';
-      case 'clip': return `VJ clip · ${a.deck ?? 'A'} row ${a.row + 1}, column ${a.column + 1}`;
-      case 'clipColumn': return `VJ column · ${a.deck ?? 'A'} column ${a.column + 1}`;
-      case 'liveClip': return `Live clip · track ${a.track + 1}, slot ${a.slot + 1}`;
-      case 'liveScene': return `Live scene · ${a.scene + 1}`;
-      case 'section': return `Section · ${a.name ?? (a.index !== undefined ? `number ${a.index + 1}` : 'on the desktop')}`;
-      case 'go': return 'GO';
-      case 'transport': return `Transport · ${a.op}`;
-      case 'phrase': return a.stop ? 'Stop phrases' : `Phrase ${a.pad ?? ''}`.trim();
-      case 'blackout': return a.on === undefined ? 'Blackout · toggle' : `Blackout · ${a.on ? 'on' : 'off'}`;
-      case 'cue': return a.op === 'fire' ? `Cue ${(a.index ?? 0) + 1}` : `Cue list · ${a.op}`;
-      default: return 'Show action';
-    }
-  }
   function label(a: ZoneAction): string {
     if (a.kind === 'world') return world ? WORLD_LABELS[a.what] : `${WORLD_LABELS[a.what]} · needs the 3D world`;
     if (a.kind === 'burst') return burstTargets ? `Burst · ${burstTargets} effect${burstTargets === 1 ? '' : 's'} on this zone` : 'Burst · no effect is aimed at this zone';
-    return showLabel(a.action);
+    return describeShowAction(a.action, showMenu);
   }
   $: full = trigger.actions.length >= MAX_ZONE_ACTIONS;
   $: hasBurst = trigger.actions.some((a) => a.kind === 'burst');
 
   function remove(index: number) {
     onchange({ ...trigger, actions: trigger.actions.filter((_, i) => i !== index) }, true);
+  }
+  let adding = false;
+  let draft: ShowAction | null = null;
+  $: if (!showMenu && adding) { adding = false; draft = null; }
+  function startShow() {
+    adding = true;
+    draft = null;
+    onshowmenu();
+  }
+  function addShow() {
+    if (!draft) return;
+    onchange({ ...trigger, actions: [...trigger.actions, { kind: 'show', action: draft }] }, true);
+    draft = null;
+    adding = false;
   }
   function addWorld(what: ZoneWorldAction) {
     onchange({ ...trigger, actions: [...trigger.actions, { kind: 'world', what }] }, true);
@@ -100,7 +103,7 @@
   <InfoTip
     label="How trigger zones fire"
     text={when === 'touch'
-      ? 'The desktop fires the zone once when a touch, a tracked hand or a body comes into it. A touch held there does not fire again until it leaves. Show actions (a Look, a VJ clip, a cue) are added on the desktop.'
+      ? `The desktop fires the zone once when a touch, a tracked hand or a body comes into it. A touch held there does not fire again until it leaves. ${showMenu ? 'Show actions (a Look, a VJ clip, a cue) run on the desktop when the zone fires; Test here fires the bursts and world actions.' : 'Show actions (a Look, a VJ clip, a cue) are added on the desktop.'}`
       : 'The desktop fires the zone when a ball of the 3D world comes into it, as seen on the output, at most once per re-arm time.'}
   />
 </div>
@@ -117,17 +120,28 @@
   <p class="hint">Nothing happens yet. Add what this zone should do.</p>
 {/if}
 
-<div class="tools">
-  <button disabled={full || hasBurst} onclick={addBurst}>+ Burst</button>
-  {#if world}
-    {#each Object.keys(WORLD_ADD) as what}
-      <button
-        disabled={full || trigger.actions.some((a) => a.kind === 'world' && a.what === what)}
-        onclick={() => addWorld(what as ZoneWorldAction)}>{WORLD_ADD[what as ZoneWorldAction]}</button
-      >
-    {/each}
-  {/if}
-</div>
+{#if adding && showMenu}
+  <div class="add-show" role="group" aria-label="Add a show action">
+    <PhoneShowActionPicker menu={showMenu} action={draft} onchange={(a) => (draft = a)} />
+    <div class="tools">
+      <button class="primary" disabled={!draft} onclick={addShow}>Add</button>
+      <button onclick={() => { adding = false; draft = null; }}>Cancel</button>
+    </div>
+  </div>
+{:else}
+  <div class="tools">
+    {#if showMenu}<button disabled={full} onclick={startShow}>+ Show action</button>{/if}
+    <button disabled={full || hasBurst} onclick={addBurst}>+ Burst</button>
+    {#if world}
+      {#each Object.keys(WORLD_ADD) as what}
+        <button
+          disabled={full || trigger.actions.some((a) => a.kind === 'world' && a.what === what)}
+          onclick={() => addWorld(what as ZoneWorldAction)}>{WORLD_ADD[what as ZoneWorldAction]}</button
+        >
+      {/each}
+    {/if}
+  </div>
+{/if}
 
 <label>
   Re-arm after <output>{trigger.rearm.toFixed(1)} s</output>
@@ -177,5 +191,18 @@
   .zone-actions .remove {
     min-width: 44px;
     padding: 0;
+  }
+  .add-show {
+    display: grid;
+    gap: 8px;
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--ga-line-2, #34383f);
+  }
+  .add-show .primary:not(:disabled) {
+    background: var(--ga-act-bg);
+    border-color: var(--ga-act-line);
+    color: var(--ga-act-ink);
+    font-weight: 700;
   }
 </style>

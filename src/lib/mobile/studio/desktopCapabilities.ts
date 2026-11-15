@@ -9,8 +9,10 @@
  *   worldTools: [...]          which touch tools the desktop acts on
  *   depthCapture: { limits }   it takes a room scan for Depth mode
  *   output: { width, height }  the shape of its output, which the editor uses
+ *   showActions: { menu }      the show actions a trigger zone may add (showActionMenu.ts)
  */
 import { appInfo } from './nativeOutput';
+import { readShowActionMenu, type ShowActionMenu } from './showActionMenu';
 import type { TouchTool } from '../../components/studio/interactiveEditorTypes';
 
 export const WORLD_TOOLS: TouchTool[] = ['throw', 'push', 'pour', 'ignite', 'attract', 'repel', 'vortex'];
@@ -41,6 +43,8 @@ export type DesktopCapabilities = {
   depthCapture: DepthCaptureLimits | null;
   /** The desktop output's size, when it says. */
   output: { width: number; height: number } | null;
+  /** The show actions a trigger zone may add, with the desktop's names. Null: the phone adds none. */
+  showActions: ShowActionMenu | null;
 };
 
 const count = (raw: unknown, fallback: number, max: number) =>
@@ -70,7 +74,7 @@ export function readDesktopCapabilities(message: Record<string, unknown>): Deskt
     o && typeof o === 'object' && count(o.width, 0, 32768) && count(o.height, 0, 32768)
       ? { width: o.width as number, height: o.height as number }
       : null;
-  return { nativeInteractive: message.nativeInteractive === true, world, depthCapture, output };
+  return { nativeInteractive: message.nativeInteractive === true, world, depthCapture, output, showActions: readShowActionMenu(message.showActions) };
 }
 
 /** Width ÷ height of the desktop output, or the editor's own default. */
