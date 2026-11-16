@@ -3,7 +3,7 @@ import { scene3dPrecompileCommands } from './scene3dShaders';
 import { scene3dWorldPrecompileCommands } from './scene3dWorldShaders';
 import { videosynthPrecompileCommands } from '../videosynth/shaders';
 import { ANALOG_SYNTH } from '$lib/features';
-import {MATTER_EMISSION,MATTER_GEOMETRY,MATTER_FLUID,MATTER_PARTICLES,MATTER_MASS,MATTER_LIGHT,MATTER_RENDER} from './nativeInteractiveMatter';
+import {MATTER_EMISSION,MATTER_GEOMETRY,MATTER_FLUID,MATTER_FLUID_2,MATTER_PARTICLES,MATTER_MASS,MATTER_LIGHT,MATTER_RENDER} from './nativeInteractiveMatter';
 import {buildInteractiveGraph,INTERACTIVE_COMPUTE,INTERACTIVE_RENDER} from './nativeInteractiveGraph';
 import { VOYAGE_SCENES, VOYAGE_WGSL } from '$lib/effects/ghostfx/scenes/voyage.wgsl';
 import { worldPaletteIndex } from '../performer/worldPalettes';
@@ -623,6 +623,7 @@ export function buildNativePluginPrecompileCommands(): NativePluginPrecompileCom
     { type:'precompile_shader',shader_id:'interactive/emission',stage:'compute',source:MATTER_EMISSION,entry:'cs_emission' },
     { type:'precompile_shader',shader_id:'interactive/geometry',stage:'compute',source:MATTER_GEOMETRY,entry:'cs_geometry' },
     { type:'precompile_shader',shader_id:'interactive/fluid',stage:'compute',source:MATTER_FLUID,entry:'cs_advect' },
+    { type:'precompile_shader',shader_id:'interactive/fluid-2',stage:'compute',source:MATTER_FLUID_2,entry:'cs_advect' },
     { type:'precompile_shader',shader_id:'interactive/matter-particles',stage:'compute',source:MATTER_PARTICLES,entry:'cs_step' },
     { type:'precompile_shader',shader_id:'interactive/mass',stage:'compute',source:MATTER_MASS,entry:'cs_splat' },
     { type:'precompile_shader',shader_id:'interactive/light',stage:'compute',source:MATTER_LIGHT,entry:'cs_light' },

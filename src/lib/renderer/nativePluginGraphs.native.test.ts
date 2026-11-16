@@ -46,6 +46,7 @@ describe('native plugin graphs', () => {
       'interactive/emission',
       'interactive/geometry',
       'interactive/fluid',
+      'interactive/fluid-2',
       'interactive/matter-particles',
       'interactive/mass',
       'interactive/light',

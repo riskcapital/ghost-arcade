@@ -25,7 +25,7 @@ export const INTERACTIVE_COMPUTE=common+/* wgsl */`
 @group(0) @binding(2) var<storage,read_write> particles:array<Particle>;
 @compute @workgroup_size(64) fn cs_main(@builtin(global_invocation_id) id:vec3<u32>){
  let i=id.x;if(i>=16384u){return;}if(u.params.w>.5||u.view.w<=0.){return;}
- var p=particles[i];let dt=clamp(u.view.w,.001,.04);let seed=hash(f32(i)+u.flags.x*53.);
+ var p=particles[i];let dt=clamp(u.view.w,.001,.042);let seed=hash(f32(i)+u.flags.x*53.);
  if(p.life.x<=0.||p.state.x<-.15||p.state.x>1.15||p.state.y<-.15||p.state.y>1.15||p.life.z!=u.flags.x){
   var origin=vec2<f32>(hash(f32(i)*3.1+floor(u.view.z)),.01);
   for(var s=0u;s<u32(u.style.y);s++){if(shapes[s*66u+1u].w==1.&&hash(f32(i)+f32(s))>.4){origin=center(s);break;}}

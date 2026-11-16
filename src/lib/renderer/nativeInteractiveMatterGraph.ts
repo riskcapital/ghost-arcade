@@ -29,10 +29,14 @@ export function buildMatterPasses(options:NativePluginGraphOptions,scene:Interac
  pass('geometry','geometry','cs_geometry',[...common,write(5,'geometry')]);
  const fluid=scene.preset==='fire'||scene.preset==='smoke'||burning;
  if(fluid){
- pass('advect','fluid','cs_advect',[...common,G,read(2,'particles'),read(6,'fluid-a'),write(7,'fluid-b')]);
- pass('divergence','fluid','cs_divergence',[...common,G,read(6,'fluid-b'),write(9,'pressure-a')]);
- for(let i=0;i<16;i++)pass('pressure-'+i,'fluid','cs_jacobi',[...common,G,read(8,i%2?'pressure-b':'pressure-a'),write(9,i%2?'pressure-a':'pressure-b')]);
- pass('project','fluid','cs_project',[...common,G,read(6,'fluid-b'),write(7,'fluid-a'),read(8,'pressure-a')]);
+ // Two steps' worth of passes; the second is skipped on the GPU unless the
+ // frame is longer than a 30th of a second (MATTER_FLUID_MAX_STEP).
+ for(const [suffix,shader] of [['','fluid'],['-2','fluid-2']]){
+ pass('advect'+suffix,shader,'cs_advect',[...common,G,read(2,'particles'),read(6,'fluid-a'),write(7,'fluid-b')]);
+ pass('divergence'+suffix,shader,'cs_divergence',[...common,G,read(6,'fluid-b'),write(9,'pressure-a')]);
+ for(let i=0;i<16;i++)pass('pressure-'+i+suffix,shader,'cs_jacobi',[...common,G,read(8,i%2?'pressure-b':'pressure-a'),write(9,i%2?'pressure-a':'pressure-b')]);
+ pass('project'+suffix,shader,'cs_project',[...common,G,read(6,'fluid-b'),write(7,'fluid-a'),read(8,'pressure-a')]);
+ }
  }
  if(scene.preset!=='light'&&scene.preset!=='smoke'){
  pass('matter-step','matter-particles','cs_step',[...common,G,read(2,'particles'),write(6,'particle-next'),read(7,'mass')],[256,1,1]);

@@ -83,7 +83,17 @@ export const MATTER_GEOMETRY=MATTER_COMMON+/* wgsl */`
  geometry[id.y*256u+id.x]=Geo(wall,source);
 }
 `;
+/** The fluid's frame is split into steps of at most a 30th of a second (two
+ * at most): at 24 or 25 fps (a render, or a slow live frame) one 33 ms step
+ * moved smoke and fire at 80 % speed. At 30 fps and above there is one step,
+ * as before. The passes run twice in the graph (MATTER_FLUID, then
+ * MATTER_FLUID_2); the second does nothing when one step is enough. */
+export const MATTER_FLUID_MAX_STEP=.0334;
 export const MATTER_FLUID=MATTER_COMMON+/* wgsl */`
+const FLUID_SUBSTEP=0u;
+fn fluidSteps()->u32{return select(1u,2u,u.view.w>${MATTER_FLUID_MAX_STEP});}
+fn fluidActive()->bool{return FLUID_SUBSTEP<fluidSteps();}
+fn fluidDt()->f32{return clamp(u.view.w/f32(fluidSteps()),.001,${MATTER_FLUID_MAX_STEP});}
 @group(0) @binding(2) var<storage,read> particles:array<Particle>;
 @group(0) @binding(5) var<storage,read> geometry:array<Geo>;
 @group(0) @binding(6) var<storage,read> fieldIn:array<vec4<f32>>;
@@ -92,8 +102,8 @@ export const MATTER_FLUID=MATTER_COMMON+/* wgsl */`
 @group(0) @binding(9) var<storage,read_write> pressureOut:array<vec2<f32>>;
 fn fluid(p:vec2<f32>)->vec4<f32>{let q=clamp(p*vec2<f32>(256.,144.)-.5,vec2<f32>(0.),vec2<f32>(255.,143.));let i=vec2<i32>(floor(q));let f=fract(q);return mix(mix(fieldIn[ix(i)],fieldIn[ix(i+vec2<i32>(1,0))],f.x),mix(fieldIn[ix(i+vec2<i32>(0,1))],fieldIn[ix(i+vec2<i32>(1,1))],f.x),f.y);}
 @compute @workgroup_size(8,8) fn cs_advect(@builtin(global_invocation_id) id:vec3<u32>){
- if(id.x>=256u||id.y>=144u){return;}let i=id.y*256u+id.x;if(u.params.w>.5||u.view.w<=0.){fieldOut[i]=fieldIn[i];return;}if(geometry[i].wall.x<0.){fieldOut[i]=vec4<f32>(0.);return;}
- let dt=clamp(u.view.w,.001,.033);let uv=(vec2<f32>(id.xy)+.5)/vec2<f32>(256.,144.);let current=fieldIn[i];var back=uv-current.xy*dt;
+ if(id.x>=256u||id.y>=144u||!fluidActive()){return;}let i=id.y*256u+id.x;if(u.params.w>.5||u.view.w<=0.){fieldOut[i]=fieldIn[i];return;}if(geometry[i].wall.x<0.){fieldOut[i]=vec4<f32>(0.);return;}
+ let dt=fluidDt();let uv=(vec2<f32>(id.xy)+.5)/vec2<f32>(256.,144.);let current=fieldIn[i];var back=uv-current.xy*dt;
  // Stop back-traces at the first wall; checking the endpoint alone leaks smoke through thin blockers.
  for(var j=1u;j<=8u;j++){let q=mix(uv,back,f32(j)/8.);if(geometry[cell(q)].wall.x<0.){back=mix(uv,back,f32(j-1u)/8.);break;}}
  var f=fluid(back);if(emissionState[0].w>.5){f=vec4<f32>(0.);}
@@ -109,18 +119,20 @@ fn fluid(p:vec2<f32>)->vec4<f32>{let q=clamp(p*vec2<f32>(256.,144.)-.5,vec2<f32>
 }
 fn velocity(p:vec2<i32>,fallback:vec2<f32>)->vec2<f32>{let i=ix(p);return select(fieldIn[i].xy,vec2<f32>(0.),geometry[i].wall.x<0.);}
 @compute @workgroup_size(8,8) fn cs_divergence(@builtin(global_invocation_id) id:vec3<u32>){
- if(id.x>=256u||id.y>=144u){return;}let p=vec2<i32>(id.xy);let i=ix(p);let v=fieldIn[i].xy;let div=(velocity(p+vec2<i32>(1,0),v).x-velocity(p-vec2<i32>(1,0),v).x+velocity(p+vec2<i32>(0,1),v).y-velocity(p-vec2<i32>(0,1),v).y)*.5;pressureOut[i]=vec2<f32>(0.,select(div,0.,geometry[i].wall.x<0.));
+ if(id.x>=256u||id.y>=144u||!fluidActive()){return;}let p=vec2<i32>(id.xy);let i=ix(p);let v=fieldIn[i].xy;let div=(velocity(p+vec2<i32>(1,0),v).x-velocity(p-vec2<i32>(1,0),v).x+velocity(p+vec2<i32>(0,1),v).y-velocity(p-vec2<i32>(0,1),v).y)*.5;pressureOut[i]=vec2<f32>(0.,select(div,0.,geometry[i].wall.x<0.));
 }
 fn pressure(p:vec2<i32>,own:f32)->f32{let i=ix(p);return select(pressureIn[i].x,own,geometry[i].wall.x<0.);}
 @compute @workgroup_size(8,8) fn cs_jacobi(@builtin(global_invocation_id) id:vec3<u32>){
- if(id.x>=256u||id.y>=144u){return;}let p=vec2<i32>(id.xy);let i=ix(p);let v=pressureIn[i];let sum=pressure(p+vec2<i32>(1,0),v.x)+pressure(p-vec2<i32>(1,0),v.x)+pressure(p+vec2<i32>(0,1),v.x)+pressure(p-vec2<i32>(0,1),v.x);pressureOut[i]=vec2<f32>((sum-v.y)*.25,v.y);
+ if(id.x>=256u||id.y>=144u||!fluidActive()){return;}let p=vec2<i32>(id.xy);let i=ix(p);let v=pressureIn[i];let sum=pressure(p+vec2<i32>(1,0),v.x)+pressure(p-vec2<i32>(1,0),v.x)+pressure(p+vec2<i32>(0,1),v.x)+pressure(p-vec2<i32>(0,1),v.x);pressureOut[i]=vec2<f32>((sum-v.y)*.25,v.y);
 }
 @compute @workgroup_size(8,8) fn cs_project(@builtin(global_invocation_id) id:vec3<u32>){
- if(id.x>=256u||id.y>=144u){return;}let p=vec2<i32>(id.xy);let i=ix(p);var f=fieldIn[i];if(u.params.w>.5||u.view.w<=0.){fieldOut[i]=f;return;}let wall=geometry[i].wall;if(wall.x<0.){fieldOut[i]=vec4<f32>(0.);return;}
+ if(id.x>=256u||id.y>=144u||!fluidActive()){return;}let p=vec2<i32>(id.xy);let i=ix(p);var f=fieldIn[i];if(u.params.w>.5||u.view.w<=0.){fieldOut[i]=f;return;}let wall=geometry[i].wall;if(wall.x<0.){fieldOut[i]=vec4<f32>(0.);return;}
  let own=pressureIn[i].x;f=vec4<f32>(f.xy-(vec2<f32>(pressure(p+vec2<i32>(1,0),own)-pressure(p-vec2<i32>(1,0),own),pressure(p+vec2<i32>(0,1),own)-pressure(p-vec2<i32>(0,1),own))*.5),f.zw);
  if(wall.x<.012){let n=wall.yz;let inward=min(dot(f.xy*aspect(),n),0.);f=vec4<f32>(f.xy-(n*inward/aspect()),f.zw);}fieldOut[i]=f;
 }
 `;
+/** The fluid's second step: the same passes, run only when the frame needs two. */
+export const MATTER_FLUID_2=MATTER_FLUID.replace('const FLUID_SUBSTEP=0u;','const FLUID_SUBSTEP=1u;');
 export const MATTER_PARTICLES=MATTER_COMMON+/* wgsl */`
 @group(0) @binding(2) var<storage,read> particles:array<Particle>;
 @group(0) @binding(5) var<storage,read> geometry:array<Geo>;
