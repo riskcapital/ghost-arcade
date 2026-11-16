@@ -1180,8 +1180,15 @@ class NativeRendererBroker {
   }
 
   shutdownSync() {
+    // The app is quitting: its exit event may never come.
+    const pid = this.child?.pid;
     this.killProcess();
     this.cleanupTempFrameDir();
+    this.removeCoreAudioDirs(pid);
+  }
+
+  removeCoreAudioDirs(pid) {
+    try { require('./temp-dirs.cjs').removeCoreAudioDirs({ fs, path, root: os.tmpdir(), pid }); } catch { /* best effort */ }
   }
 
   async getStatus() {
@@ -2456,6 +2463,8 @@ class NativeRendererBroker {
       env: childEnv,
     });
     const child = this.child;
+    // However it ends (stopped, crashed), its decoded audio folder goes.
+    child.once('exit', () => this.removeCoreAudioDirs(child.pid));
     this.coreInstance += 1;
     this.coreLifecycle = {
       core_instance: this.coreInstance,

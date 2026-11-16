@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const require = createRequire(import.meta.url);
-const { markOwned, sweepStaleTempDirs, OWNER_FILE } = require('../../../electron/temp-dirs.cjs');
+const { markOwned, sweepStaleTempDirs, removeCoreAudioDirs, OWNER_FILE } = require('../../../electron/temp-dirs.cjs');
 const fs = require('node:fs');
 
 describe('stale temp folder sweep at launch', () => {
@@ -35,6 +35,28 @@ describe('stale temp folder sweep at launch', () => {
       expect(removed.sort()).toEqual([killed, killedOwned].sort());
       for (const dir of [killed, killedOwned]) expect(existsSync(dir)).toBe(false);
       for (const dir of [running, fresh, freshFile, mine, other]) expect(existsSync(dir)).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('a core that ends takes its decoded audio folders with it, and only its own', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'ga-core-audio-'));
+    try {
+      const make = (name: string) => {
+        const dir = path.join(root, name);
+        mkdirSync(dir);
+        writeFileSync(path.join(dir, '1.pcm'), 'x');
+        return dir;
+      };
+      const a = make('ghost-audio-4321-100');
+      const b = make('ghost-audio-4321-200');
+      const otherCore = make('ghost-audio-43210-300');
+      const otherKind = make('ghost-native-mp4-4321-');
+      expect(removeCoreAudioDirs({ fs, path, root, pid: 4321 }).sort()).toEqual([a, b].sort());
+      for (const dir of [a, b]) expect(existsSync(dir)).toBe(false);
+      for (const dir of [otherCore, otherKind]) expect(existsSync(dir)).toBe(true);
+      expect(removeCoreAudioDirs({ fs, path, root, pid: undefined })).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

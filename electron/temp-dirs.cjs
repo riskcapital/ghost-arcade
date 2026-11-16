@@ -52,4 +52,28 @@ async function sweepStaleTempDirs({ fs, path, root, now = Date.now(), maxAgeMs =
   return removed;
 }
 
-module.exports = { SWEPT_PREFIXES, OWNER_FILE, markOwned, processAlive, sweepStaleTempDirs };
+/** The render core keeps decoded clip audio in `ghost-audio-<its pid>-<ns>`.
+ *  It removes it when it shuts down; when it is stopped or dies, its parent
+ *  removes it here (the core also sweeps ones a day old at start). */
+const CORE_AUDIO_PREFIX = 'ghost-audio-';
+
+function removeCoreAudioDirs({ fs, path, root, pid }) {
+  const removed = [];
+  if (!Number.isSafeInteger(pid) || pid <= 0) return removed;
+  const prefix = `${CORE_AUDIO_PREFIX}${pid}-`;
+  let names;
+  try { names = fs.readdirSync(root); } catch { return removed; }
+  for (const name of names) {
+    if (!name.startsWith(prefix)) continue;
+    const dir = path.join(root, name);
+    try {
+      const stat = fs.lstatSync(dir);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) continue;
+      fs.rmSync(dir, { recursive: true, force: true });
+      removed.push(dir);
+    } catch { /* gone */ }
+  }
+  return removed;
+}
+
+module.exports = { SWEPT_PREFIXES, OWNER_FILE, CORE_AUDIO_PREFIX, markOwned, processAlive, sweepStaleTempDirs, removeCoreAudioDirs };

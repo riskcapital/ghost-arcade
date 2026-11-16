@@ -7499,6 +7499,8 @@ impl App {
             "audio_tap_stop" => Ok(self.clip_audio.as_mut().map(|audio| audio.stop_tap()).unwrap_or_else(|| json!({ "active": false, "frames": 0, "dropped": 0 }))),
             "shutdown" => {
                 self.running = false;
+                // Its decoded audio folder goes with it.
+                self.clip_audio = None;
                 event_loop.exit();
                 Ok(json!(true))
             }
@@ -21382,6 +21384,7 @@ impl ApplicationHandler<UserEvent> for App {
         match event {
             UserEvent::OwnerDisconnected => {
                 self.running = false;
+                self.clip_audio = None;
                 event_loop.exit();
             }
             UserEvent::Rpc(req) => {
@@ -28195,6 +28198,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     spawn_stdout_writer(response_rx);
     spawn_stdin_reader(proxy.clone(), response_tx.clone(), Arc::clone(&fast_path));
 
+    // Decoded clip audio left behind by cores that were killed.
+    thread::spawn(|| {
+        clip_audio::sweep_stale_temp_dirs(&std::env::temp_dir(), std::time::SystemTime::now(),
+            clip_audio::STALE_AFTER, clip_audio::process_alive);
+    });
     let mut app = App::new(response_tx, proxy, fast_path);
     event_loop.run_app(&mut app)?;
     Ok(())

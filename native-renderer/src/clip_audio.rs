@@ -363,8 +363,9 @@ pub struct ClipAudio {
 }
 impl ClipAudio {
     pub fn new() -> Self {
-        let directory = std::env::temp_dir().join(format!("ghost-audio-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos()));
+        let directory = std::env::temp_dir().join(format!("{TEMP_PREFIX}{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos()));
         let _ = std::fs::create_dir_all(&directory);
+        mark_owned(&directory);
         let (tx, rx) = std::sync::mpsc::sync_channel::<(Arc<Asset>, PathBuf)>(64);
         let rx = Arc::new(Mutex::new(rx));
         let mut decoders = Vec::new();
@@ -598,10 +599,125 @@ impl ClipAudio {
     }
 }
 impl Drop for ClipAudio {
-    fn drop(&mut self) { self.stop_tap(); self.stop_output(); for asset in self.assets.values() { asset.cancel(); } self.jobs.take(); for worker in self.decoders.drain(..) { let _ = worker.join(); } self.assets.clear(); if let Ok(mut mix) = self.mix.lock() { mix.voices.clear(); } let _ = std::fs::remove_dir(&self.directory); }
+    fn drop(&mut self) { self.stop_tap(); self.stop_output(); for asset in self.assets.values() { asset.cancel(); } self.jobs.take(); for worker in self.decoders.drain(..) { let _ = worker.join(); } self.assets.clear(); if let Ok(mut mix) = self.mix.lock() { mix.voices.clear(); } let _ = std::fs::remove_dir_all(&self.directory); }
+}
+
+/// Decoded clip audio lives in `ghost-audio-<pid>-<ns>` under the temp folder,
+/// removed when the core shuts down. A core that was killed cannot do that,
+/// so each core start sweeps the ones left behind: more than a day untouched
+/// and not owned by a core that is still running (another copy of the app).
+pub const TEMP_PREFIX: &str = "ghost-audio-";
+const OWNER_FILE: &str = ".ghost-owner";
+pub const STALE_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
+
+fn mark_owned(directory: &std::path::Path) {
+    let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis();
+    let _ = std::fs::write(directory.join(OWNER_FILE), json!({ "pid": std::process::id(), "at": at as u64 }).to_string());
+}
+
+/// The process a folder belongs to: its owner file, or (folders made before
+/// there was one) the pid in its name.
+fn folder_owner(directory: &std::path::Path, name: &str) -> Option<u32> {
+    std::fs::read_to_string(directory.join(OWNER_FILE)).ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .and_then(|owner| owner.get("pid").and_then(Value::as_u64))
+        .and_then(|pid| u32::try_from(pid).ok())
+        .or_else(|| name.strip_prefix(TEMP_PREFIX)?.split('-').next()?.parse().ok())
+}
+
+pub fn process_alive(pid: u32) -> bool {
+    if pid == 0 { return false; }
+    #[cfg(unix)]
+    {
+        unsafe extern "C" { fn kill(pid: i32, sig: i32) -> i32; }
+        let Ok(pid) = i32::try_from(pid) else { return false; };
+        // Signal 0 checks the process exists; EPERM: it does, as another user.
+        let alive = unsafe { kill(pid, 0) } == 0;
+        alive || std::io::Error::last_os_error().raw_os_error() == Some(1)
+    }
+    #[cfg(windows)]
+    {
+        use windows::Win32::{Foundation::{CloseHandle, STILL_ACTIVE}, System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION}};
+        // Access denied: it exists, as another user.
+        let handle = match unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) } {
+            Ok(handle) => handle,
+            Err(err) => return err.code() == windows::Win32::Foundation::E_ACCESSDENIED,
+        };
+        let mut code = 0u32;
+        let alive = unsafe { GetExitCodeProcess(handle, &mut code) }.is_ok() && code == STILL_ACTIVE.0 as u32;
+        let _ = unsafe { CloseHandle(handle) };
+        alive
+    }
+    #[cfg(not(any(unix, windows)))]
+    { let _ = pid; true }
+}
+
+/// Remove the stale clip-audio folders under `root`; returns those removed.
+/// A folder of this process, or of a process still running, is kept; so is
+/// one with anything in it touched in the last `max_age`.
+pub fn sweep_stale_temp_dirs(root: &std::path::Path, now: std::time::SystemTime, max_age: Duration, is_alive: impl Fn(u32) -> bool) -> Vec<PathBuf> {
+    let mut removed = Vec::new();
+    let Ok(entries) = std::fs::read_dir(root) else { return removed; };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !name.starts_with(TEMP_PREFIX) { continue; }
+        let directory = entry.path();
+        let Ok(meta) = std::fs::symlink_metadata(&directory) else { continue; };
+        if !meta.is_dir() { continue; }
+        if let Some(pid) = folder_owner(&directory, &name)
+            && (pid == std::process::id() || is_alive(pid)) { continue; }
+        let mut newest = meta.modified().ok();
+        if let Ok(files) = std::fs::read_dir(&directory) {
+            for file in files.flatten() {
+                if let Ok(modified) = file.metadata().and_then(|m| m.modified()) { newest = newest.max(Some(modified)); }
+            }
+        }
+        let Some(newest) = newest else { continue; };
+        if now.duration_since(newest).unwrap_or_default() < max_age { continue; }
+        if std::fs::remove_dir_all(&directory).is_ok() { removed.push(directory); }
+    }
+    removed
 }
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn stale_audio_folders_are_swept_but_live_and_recent_ones_kept() {
+        let root = std::env::temp_dir().join(format!("ghost-sweeptest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let make = |name: &str, owner: Option<u32>| {
+            let dir = root.join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("1.pcm"), [0u8; 64]).unwrap();
+            if let Some(pid) = owner { std::fs::write(dir.join(OWNER_FILE), json!({ "pid": pid, "at": 0 }).to_string()).unwrap(); }
+            dir
+        };
+        let dead = make("ghost-audio-111-1", Some(111));
+        let alive = make("ghost-audio-222-2", Some(222));
+        let ours = make(&format!("ghost-audio-{}-3", std::process::id()), None);
+        let old_dead_by_name = make("ghost-audio-333-4", None);
+        let old_alive_by_name = make("ghost-audio-444-5", None);
+        let other_kind = make("ghost-native-mp4-x", None);
+        let is_alive = |pid: u32| pid == 222 || pid == 444;
+        // Everything was just written: nothing is a day old yet.
+        assert!(sweep_stale_temp_dirs(&root, std::time::SystemTime::now(), STALE_AFTER, is_alive).is_empty());
+        let later = std::time::SystemTime::now() + STALE_AFTER + Duration::from_secs(60);
+        let mut removed = sweep_stale_temp_dirs(&root, later, STALE_AFTER, is_alive);
+        removed.sort();
+        assert_eq!(removed, vec![dead.clone(), old_dead_by_name.clone()]);
+        assert!(!dead.exists() && !old_dead_by_name.exists());
+        assert!(alive.exists() && ours.exists() && old_alive_by_name.exists() && other_kind.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+    #[test] fn the_folder_is_marked_and_removed_with_its_files_when_done() {
+        let audio = ClipAudio::new();
+        let directory = audio.directory.clone();
+        let owner = folder_owner(&directory, &directory.file_name().unwrap().to_string_lossy());
+        assert_eq!(owner, Some(std::process::id()));
+        std::fs::write(directory.join("9.pcm"), [0u8; 16]).unwrap();
+        drop(audio);
+        assert!(!directory.exists());
+        assert!(process_alive(std::process::id()));
+    }
     #[test] fn same_asset_voices_keep_independent_read_windows() {
         let path = std::env::temp_dir().join(format!("ghost-voice-reader-{}.pcm", std::process::id()));
         let samples: Vec<u8> = (0..96000).flat_map(|i| {
