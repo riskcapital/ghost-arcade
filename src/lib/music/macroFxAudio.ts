@@ -5,6 +5,7 @@
  */
 
 import { impulse, loopClip, softClip, wetDry } from './fxRack';
+import { effectRandom } from './audioRandom';
 import { division, effectiveValue, type MacroFxInstance, type MacroFxType } from './macroFx';
 import type { FxDspKind } from './fxDsp';
 
@@ -31,14 +32,24 @@ function lfo(ctx: AudioContext): { osc: OscillatorNode; depth: GainNode } {
 
 function delayUnit(ctx: AudioContext): Unit {
   // Ping-pong: left feeds right feeds left, panned apart by "spread".
+  //
+  // The right echo heard is a copy of the loop's right side, fed from the
+  // left tap, so the loop is entered from one place only. Web Audio closes a
+  // loop (one render quantum late) wherever its pull first comes back round;
+  // with both sides tapped that was the left or the right side depending on
+  // how the graph happened to be ordered, so the right echoes moved by 128
+  // samples between one run and the next (two renders of a show differed).
   const inSplit = ctx.createGain();
   const left = ctx.createDelay(4);
   const right = ctx.createDelay(4);
+  const rightOut = ctx.createDelay(4);
   const fbL = ctx.createGain();
   const fbR = ctx.createGain();
+  const fbOut = ctx.createGain();
   const toneL = ctx.createBiquadFilter();
   const toneR = ctx.createBiquadFilter();
-  toneL.type = toneR.type = 'lowpass';
+  const toneOut = ctx.createBiquadFilter();
+  toneL.type = toneR.type = toneOut.type = 'lowpass';
   const panL = ctx.createStereoPanner();
   const panR = ctx.createStereoPanner();
   const wetOut = ctx.createGain();
@@ -46,21 +57,18 @@ function delayUnit(ctx: AudioContext): Unit {
   left.connect(toneL).connect(fbL).connect(right);
   right.connect(toneR).connect(fbR).connect(left);
   toneL.connect(panL).connect(wetOut);
-  toneR.connect(panR).connect(wetOut);
+  toneL.connect(fbOut).connect(rightOut).connect(toneOut).connect(panR).connect(wetOut);
   const io = wetDry(ctx, inSplit, wetOut);
   return {
     input: io.input,
     output: io.output,
     set(v, tempo) {
       const seconds = (division(v.time).beats * 60) / Math.max(30, tempo);
-      glide(left.delayTime, seconds, ctx, 0.05);
-      glide(right.delayTime, seconds, ctx, 0.05);
+      for (const d of [left, right, rightOut]) glide(d.delayTime, seconds, ctx, 0.05);
       const fb = Math.min(0.95, v.feedback * 0.95);
-      glide(fbL.gain, fb, ctx);
-      glide(fbR.gain, fb, ctx);
+      for (const g of [fbL, fbR, fbOut]) glide(g.gain, fb, ctx);
       const tone = expRange(600, 16000, v.tone);
-      glide(toneL.frequency, tone, ctx);
-      glide(toneR.frequency, tone, ctx);
+      for (const f of [toneL, toneR, toneOut]) glide(f.frequency, tone, ctx);
       glide(panL.pan, -v.spread, ctx);
       glide(panR.pan, v.spread, ctx);
       io.mix(v.mix);
@@ -107,7 +115,7 @@ function reverbUnit(ctx: AudioContext): Unit {
       const next = [seconds.toFixed(1), v.decay.toFixed(1), v.damping.toFixed(1)].join(':');
       if (next !== shape) {
         shape = next;
-        convolver.buffer = impulse(ctx, seconds, 1.2 + (1 - v.decay) * 5, 1 - v.damping * 0.85);
+        convolver.buffer = impulse(ctx, seconds, 1.2 + (1 - v.decay) * 5, 1 - v.damping * 0.85, 1, effectRandom(ctx, `reverb:${next}`));
       }
       io.mix(v.mix);
     },
@@ -402,11 +410,12 @@ function springUnit(ctx: AudioContext): Unit {
   // A short, bright, drippy spring.
   const len = Math.floor(ctx.sampleRate * 1.6);
   const buf = ctx.createBuffer(2, len, ctx.sampleRate);
+  const random = effectRandom(ctx, 'spring');
   for (let ch = 0; ch < 2; ch++) {
     const d = buf.getChannelData(ch);
     for (let i = 0; i < len; i++) {
       const s = i / ctx.sampleRate;
-      d[i] = (Math.random() * 2 - 1) * Math.exp(-s * 3) * (1 + 0.6 * Math.sin(2 * Math.PI * (430 + ch * 31) * s * (1 + s * 0.4))) * 0.5;
+      d[i] = (random() * 2 - 1) * Math.exp(-s * 3) * (1 + 0.6 * Math.sin(2 * Math.PI * (430 + ch * 31) * s * (1 + s * 0.4))) * 0.5;
     }
   }
   verb.buffer = buf;
@@ -465,7 +474,11 @@ export class MacroFxChain {
 
   constructor(private ctx: AudioContext) {
     // Load the sample-by-sample effects now, so adding one later is instant.
-    void loadStudioFx(ctx);
+    // Not into an offline render's context: a context that has loaded a
+    // worklet module is never freed, and the render loads it itself when a
+    // row has such an effect.
+    const Offline = (globalThis as { OfflineAudioContext?: typeof OfflineAudioContext }).OfflineAudioContext;
+    if (!Offline || !(ctx instanceof Offline)) void loadStudioFx(ctx);
     this.input = ctx.createGain();
     this.output = ctx.createGain();
     this.input.connect(this.output);

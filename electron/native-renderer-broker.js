@@ -617,6 +617,12 @@ class NativeRendererBroker {
 
   sanitizeRendererArgs(command, args) {
     const cleaned = stripRendererFileHandoffFields(args);
+    // Only the main process may point the core at a frame sink.
+    if (cleaned && typeof cleaned === 'object') {
+      delete cleaned.stream_port;
+      delete cleaned.stream_token;
+      delete cleaned.stream_bytes;
+    }
     if (RENDERER_OUTPUT_PATH_COMMANDS.has(command)) {
       const target = typeof cleaned === 'string'
         ? cleaned
@@ -2395,7 +2401,7 @@ class NativeRendererBroker {
     try {
       if (!this.tempFrameDirPromise) {
         this.tempFrameDirPromise = fs.promises.mkdtemp(path.join(os.tmpdir(), 'ghost-render-core-frames-'))
-          .then(dir => { this.tempFrameDir = dir; return dir; })
+          .then(dir => { require('./temp-dirs.cjs').markOwned(fs, path, dir); this.tempFrameDir = dir; return dir; })
           .catch(error => { this.tempFrameDirPromise = null; throw error; });
       }
       const dir = await this.tempFrameDirPromise;

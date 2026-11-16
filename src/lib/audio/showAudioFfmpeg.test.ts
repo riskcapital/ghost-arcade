@@ -83,17 +83,49 @@ describe('show audio mux arguments', () => {
     try {
       const fsm = require('node:fs');
       const store = createSoundtrackStore({ fs: fsm, path, tempRoot: root, pathGrants: { allowRead: () => {} } });
-      const file = store.save(Buffer.from('RIFF0000WAVE'));
+      const file = store.open(48000);
       expect(existsSync(file)).toBe(true);
       expect(store.owned(file)).toBe(true);
       expect(store.discard(path.join(root, 'elsewhere.wav'))).toBe(false);
       expect(store.discard(file)).toBe(true);
       expect(existsSync(path.dirname(file))).toBe(false);
-      store.save(Buffer.from('RIFF0000WAVE'));
-      store.save(Buffer.from('RIFF0000WAVE'));
+      store.open(48000);
+      store.open(48000);
       expect(store.count()).toBe(2);
       store.discardAll();
       expect(store.count()).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('writes a soundtrack a piece at a time and puts its sizes in the header on close', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'ga-st-'));
+    try {
+      const fsm = require('node:fs');
+      const store = createSoundtrackStore({ fs: fsm, path, tempRoot: root, pathGrants: { allowRead: () => {} } });
+      const file = store.open(48000);
+      const piece = (frames: number, v: number) => { const b = Buffer.alloc(frames * 4); for (let i = 0; i < frames * 2; i++) b.writeInt16LE(v, i * 2); return b; };
+      store.append(file, piece(3, 7));
+      store.append(file, piece(2, -9));
+      expect(() => store.append(file, Buffer.alloc(3))).toThrow();
+      expect(store.close(file)).toBe(20);
+      const wav = fsm.readFileSync(file);
+      expect(wav.length).toBe(64);
+      expect(wav.toString('ascii', 0, 4)).toBe('RIFF');
+      expect(wav.readUInt32LE(4)).toBe(56);
+      expect(wav.readUInt32LE(24)).toBe(48000);
+      expect(wav.readUInt32LE(40)).toBe(20);
+      expect(wav.readInt16LE(44)).toBe(7);
+      expect(wav.readInt16LE(44 + 12)).toBe(-9);
+      // Closed: no more pieces, and it can still be thrown away.
+      expect(() => store.append(file, piece(1, 0))).toThrow();
+      expect(store.discard(file)).toBe(true);
+      // A soundtrack still open when the render is cancelled is closed and removed.
+      const open = store.open(48000);
+      store.append(open, piece(1, 1));
+      expect(store.discard(open)).toBe(true);
+      expect(existsSync(path.dirname(open))).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -89,3 +89,53 @@ describe('Ducker', () => {
     expect(gains[0].gain.linearRampToValueAtTime).not.toHaveBeenCalled();
   });
 });
+
+describe('ducking in an offline render', () => {
+  const gainParam = () => {
+    const calls: Array<[string, number, number]> = [];
+    const param = {
+      setValueAtTime: (v: number, t: number) => { calls.push(['set', v, t]); },
+      linearRampToValueAtTime: (v: number, t: number) => { calls.push(['ramp', v, t]); },
+      setTargetAtTime: (v: number, t: number) => { calls.push(['target', v, t]); },
+      cancelScheduledValues: (t: number) => { calls.push(['cancel', 0, t]); },
+      cancelAndHoldAtTime: (t: number) => { calls.push(['hold', 0, t]); },
+    };
+    return { calls, param };
+  };
+  const ducker = () => {
+    const { calls, param } = gainParam();
+    const ctx = { currentTime: 0, createGain: () => ({ gain: param, connect: () => {}, disconnect: () => {} }) };
+    const d = new Ducker(ctx as never);
+    d.after({ connect: () => {} } as never);
+    return { d, calls };
+  };
+
+  it('hits in order start from where the envelope is, with no cancel-and-hold', () => {
+    const { d, calls } = ducker();
+    d.duckInOrder(0.5, 1, 0.25, 1);
+    d.duckInOrder(0.5, 1, 0.25, 1.1);
+    expect(calls.some(([k]) => k === 'hold' || k === 'cancel')).toBe(false);
+    const first = nextDuck(null, 1, 0.5, 1, 0.25)!;
+    expect(calls[0]).toEqual(['set', 1, 1]);
+    expect(calls[3][0]).toBe('set');
+    expect(calls[3][1]).toBeCloseTo(duckGainAt(first, 1.1), 12);
+    expect(calls[3][2]).toBe(1.1);
+  });
+
+  it('a later piece carries on a dip that began before it', () => {
+    const { d, calls } = ducker();
+    const env = nextDuck(null, -0.1, 0.8, 1, 0.5)!;
+    d.restore(env);
+    expect(calls[0][0]).toBe('set');
+    expect(calls[0][1]).toBeCloseTo(duckGainAt(env, 0), 12);
+    expect(calls[1]).toEqual(['target', 1, 0]);
+    // The next hit's start matches the whole render's envelope.
+    d.duckInOrder(0.8, 1, 0.5, 0.2);
+    expect(calls[2][1]).toBeCloseTo(duckGainAt(env, 0.2), 12);
+    // A dip still in its attack at the piece's start ramps on down first.
+    const { d: d2, calls: c2 } = ducker();
+    const attacking = nextDuck(null, -0.002, 0.8, 1, 0.5)!;
+    d2.restore(attacking);
+    expect(c2.map(([k]) => k)).toEqual(['set', 'ramp', 'target']);
+  });
+});

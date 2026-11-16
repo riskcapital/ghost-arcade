@@ -62,7 +62,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'pick_directory', 'save_file_binary', 'save_file_bytes', 'save_file_text', 'save_project_dialog',
   'jpeg_sequence_start', 'jpeg_sequence_write_frame', 'jpeg_sequence_write_frame_file', 'jpeg_sequence_finish', 'jpeg_sequence_cancel',
   // Native frame encoders — offline render + native live REC
-  'mp4_frame_encoder_live_control', 'mp4_frame_encoder_capture_live', 'mp4_frame_encoder_start', 'mp4_frame_encoder_write_frame', 'mp4_frame_encoder_write_frame_file', 'mp4_frame_encoder_finish', 'mp4_frame_encoder_cancel',
+  'mp4_frame_encoder_live_control', 'mp4_frame_encoder_capture_live', 'mp4_frame_encoder_render_frame', 'mp4_frame_encoder_start', 'mp4_frame_encoder_write_frame', 'mp4_frame_encoder_write_frame_file', 'mp4_frame_encoder_finish', 'mp4_frame_encoder_cancel',
   'jpeg_frame_encoder_start', 'jpeg_frame_encoder_encode_file', 'jpeg_frame_encoder_finish', 'jpeg_frame_encoder_cancel',
   'save_generated_asset',
   // Scans sent from a paired phone (electron/phone-scan-store.cjs)
@@ -122,7 +122,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'native_renderer_upload_source_gpu_shared_texture',
   // Offscreen hosts for three.js / p5.js sources (js-source-host.js)
   'js_source_open', 'js_source_close', 'js_source_params', 'js_source_audio', 'js_source_status',
-  'js_source_thumbnail', 'js_source_trial',
+  'js_source_thumbnail', 'js_source_trial', 'js_source_render_clock', 'js_source_step',
   'native_renderer_prefetch_media', 'native_renderer_clear_prefetch_cache',
   'native_renderer_probe_video',
   'native_renderer_clear_decode_preview_cache', 'native_renderer_clear_runtime_caches',
@@ -176,7 +176,8 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'native_recording_codecs', 'native_renderer_set_record_target', 'native_renderer_get_record_target_state',
   // Show timeline audio: convert a song Chromium cannot play, add the
   // soundtrack to a rendered video
-  'show_audio_prepare', 'show_audio_mux', 'show_audio_soundtrack_save', 'show_audio_discard',
+  'show_audio_prepare', 'show_audio_mux', 'show_audio_discard',
+  'show_audio_soundtrack_open', 'show_audio_soundtrack_append', 'show_audio_soundtrack_close',
   'native_renderer_get_slice_output_state',
   'native_viewport_set_layer_interaction',
   // WLED — UDP DRGB packets to LED controllers on the LAN

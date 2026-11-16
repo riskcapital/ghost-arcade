@@ -87,6 +87,45 @@ export class Ducker {
     }
   }
 
+  /**
+   * A dip in an offline render, where hits come in time order: the gain is
+   * set to where the envelope is at the hit, then dips and releases. Live
+   * uses cancelAndHoldAtTime (a hit can land while the last dip is being
+   * scheduled); in an offline render the value it held was not the same on
+   * every run, so two renders of a show differed after a few seconds.
+   */
+  duckInOrder(depth: number, velocity: number, release: number, time: number): void {
+    const lastBottom = this.env ? this.env.time + DUCK_ATTACK_SECONDS : -Infinity;
+    const env = nextDuck(this.env, time, depth, velocity, release);
+    if (!env) return;
+    this.env = env;
+    const bottom = time + DUCK_ATTACK_SECONDS;
+    const tau = releaseConstant(release);
+    for (const { gain } of this.gains) {
+      if (time < lastBottom) gain.cancelScheduledValues(time);
+      gain.setValueAtTime(env.from, time);
+      gain.linearRampToValueAtTime(env.floor, bottom);
+      gain.setTargetAtTime(1, bottom, tau);
+    }
+  }
+
+  /**
+   * Carry on a dip that started before this context did (a later piece of
+   * an offline render): `env` is in this context's time and may start
+   * before 0; the gains take its value at 0 and follow it from there.
+   */
+  restore(env: DuckEnvelope | null): void {
+    this.env = env;
+    if (!env) return;
+    const bottom = env.time + DUCK_ATTACK_SECONDS;
+    const tau = releaseConstant(env.release);
+    for (const { gain } of this.gains) {
+      gain.setValueAtTime(duckGainAt(env, 0), 0);
+      if (bottom > 0) gain.linearRampToValueAtTime(env.floor, bottom);
+      gain.setTargetAtTime(1, Math.max(0, bottom), tau);
+    }
+  }
+
   /** Back to full at once. */
   reset(): void {
     const t = this.ctx.currentTime;

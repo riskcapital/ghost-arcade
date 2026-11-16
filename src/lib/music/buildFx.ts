@@ -8,6 +8,7 @@
  */
 
 import type { BuildSettings } from './buildDrop';
+import { effectRandom } from './audioRandom';
 
 export interface BuildPlanAudio {
   /** Audio times. */
@@ -24,9 +25,10 @@ const REST_LP = 20000;
 function reverbImpulse(ctx: BaseAudioContext, seconds: number): AudioBuffer {
   const len = Math.floor(ctx.sampleRate * seconds);
   const buf = ctx.createBuffer(2, len, ctx.sampleRate);
+  const random = effectRandom(ctx, 'build-verb');
   for (let ch = 0; ch < 2; ch++) {
     const d = buf.getChannelData(ch);
-    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3) * 0.6;
+    for (let i = 0; i < len; i++) d[i] = (random() * 2 - 1) * Math.pow(1 - i / len, 3) * 0.6;
   }
   return buf;
 }

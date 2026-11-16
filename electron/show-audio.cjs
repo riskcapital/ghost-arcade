@@ -8,10 +8,11 @@
 //    the show's tracks (each at its place, trim and level, looped like the
 //    show) and adds them to the rendered file, from the show time the render
 //    started at.
-//  - show_audio_soundtrack_save / show_audio_discard: the Timeline's sound
-//    rows rendered in the app (effects, fades, ducking) as a WAV in a temp
-//    folder of this process, used by the mux and deleted after it (or when
-//    the render is cancelled, or the app quits).
+//  - show_audio_soundtrack_open / _append / _close, show_audio_discard: the
+//    Timeline's sound rows rendered in the app (effects, fades, ducking) as a
+//    WAV in a temp folder of this process, written a piece at a time as the
+//    render makes them, used by the mux and deleted after it (or when the
+//    render is cancelled, or the app quits).
 //
 // The argument builders are pure so they can be tested without spawning.
 const crypto = require('crypto');
@@ -131,27 +132,79 @@ function runFfmpeg(spawn, ffmpegPath, args) {
  * rendered .mp4 / .mov that exists and that it may write (it is replaced).
  */
 /** A soundtrack the app rendered: only files in these folders may be discarded. */
+function wavHeader(sampleRate, dataBytes) {
+  const h = Buffer.alloc(44);
+  h.write('RIFF', 0, 'ascii');
+  h.writeUInt32LE(Math.min(0xffffffff, 36 + dataBytes), 4);
+  h.write('WAVEfmt ', 8, 'ascii');
+  h.writeUInt32LE(16, 16);
+  h.writeUInt16LE(1, 20);
+  h.writeUInt16LE(2, 22);
+  h.writeUInt32LE(sampleRate, 24);
+  h.writeUInt32LE(sampleRate * 4, 28);
+  h.writeUInt16LE(4, 32);
+  h.writeUInt16LE(16, 34);
+  h.write('data', 36, 'ascii');
+  h.writeUInt32LE(Math.min(0xffffffff, dataBytes), 40);
+  return h;
+}
+
 function createSoundtrackStore({ fs, path, tempRoot, pathGrants }) {
   const dirs = new Set();
+  /** Soundtracks being written a piece at a time: file -> { fd, sampleRate, bytes }. */
+  const open = new Map();
   const owned = (file) => typeof file === 'string' && path.isAbsolute(file) && dirs.has(path.dirname(path.resolve(file)));
+  const makeDir = () => {
+    const dir = fs.mkdtempSync(path.join(tempRoot, 'ghost-show-audio-'));
+    require('./temp-dirs.cjs').markOwned(fs, path, dir);
+    dirs.add(dir);
+    return path.join(dir, 'soundtrack.wav');
+  };
+  const closeFd = (file) => {
+    const w = open.get(file);
+    if (!w) return null;
+    open.delete(file);
+    try { fs.closeSync(w.fd); } catch { /* already closed */ }
+    return w;
+  };
   return {
-    save(bytes) {
-      const dir = fs.mkdtempSync(path.join(tempRoot, 'ghost-show-audio-'));
-      dirs.add(dir);
-      const file = path.join(dir, 'soundtrack.wav');
-      fs.writeFileSync(file, bytes);
-      pathGrants?.allowRead?.(file);
+    /** Start a 16-bit stereo WAV that pieces are appended to; its sizes are written on close. */
+    open(sampleRate) {
+      const rate = Math.round(Number(sampleRate));
+      if (!(rate >= 8000 && rate <= 192000)) throw new Error('Bad sample rate.');
+      const file = makeDir();
+      const fd = fs.openSync(file, 'w');
+      fs.writeSync(fd, wavHeader(rate, 0));
+      open.set(file, { fd, sampleRate: rate, bytes: 0 });
       return file;
+    },
+    append(file, bytes) {
+      const w = open.get(file);
+      if (!w || !owned(file)) throw new Error('That soundtrack is not open.');
+      if (bytes.length % 4) throw new Error('A soundtrack piece must be whole stereo frames.');
+      fs.writeSync(w.fd, bytes);
+      w.bytes += bytes.length;
+      return w.bytes;
+    },
+    close(file) {
+      const w = open.get(file);
+      if (!w || !owned(file)) throw new Error('That soundtrack is not open.');
+      fs.writeSync(w.fd, wavHeader(w.sampleRate, w.bytes), 0, 44, 0);
+      closeFd(file);
+      pathGrants?.allowRead?.(file);
+      return w.bytes;
     },
     owned,
     discard(file) {
       if (!owned(file)) return false;
+      closeFd(file);
       const dir = path.dirname(path.resolve(file));
       try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
       dirs.delete(dir);
       return true;
     },
     discardAll() {
+      for (const file of [...open.keys()]) closeFd(file);
       for (const dir of dirs) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ } }
       dirs.clear();
     },
@@ -170,14 +223,17 @@ function registerShowAudioIpc({ ipcMain, spawn, fs, path, ffmpegPath, pathGrants
   const soundtracks = createSoundtrackStore({ fs, path, tempRoot: tempRoot || require('os').tmpdir(), pathGrants });
   onQuit?.(() => soundtracks.discardAll());
 
-  ipcMain.handle('show_audio_soundtrack_save', async (_event, args = {}) => {
+  // The Timeline's soundtrack, a piece at a time as the render makes it.
+  ipcMain.handle('show_audio_soundtrack_open', async (_event, args = {}) => {
+    try { return { success: true, path: soundtracks.open(args.sampleRate) }; } catch (err) { return { success: false, error: err?.message || String(err) }; }
+  });
+  ipcMain.handle('show_audio_soundtrack_append', async (_event, args = {}) => {
     const bytes = bytesOf(args.bytes);
-    if (!bytes || bytes.length < 44 || bytes.toString('ascii', 0, 4) !== 'RIFF') return { success: false, error: 'Not a WAV file.' };
-    try {
-      return { success: true, path: soundtracks.save(bytes) };
-    } catch (err) {
-      return { success: false, error: err?.message || String(err) };
-    }
+    if (!bytes) return { success: false, error: 'No sound.' };
+    try { return { success: true, bytes: soundtracks.append(args.path, bytes) }; } catch (err) { return { success: false, error: err?.message || String(err) }; }
+  });
+  ipcMain.handle('show_audio_soundtrack_close', async (_event, args = {}) => {
+    try { return { success: true, bytes: soundtracks.close(args.path) }; } catch (err) { return { success: false, error: err?.message || String(err) }; }
   });
 
   ipcMain.handle('show_audio_discard', async (_event, args = {}) => ({ success: soundtracks.discard(args.path) }));

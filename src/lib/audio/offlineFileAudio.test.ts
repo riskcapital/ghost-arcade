@@ -130,3 +130,21 @@ describe('offlineFileAudioTime', () => {
     expect(offlineFileAudioTime(session({ loop: false }), 12)).toBeCloseTo(12);
   });
 });
+
+describe('OfflineFileAudioAnalyzer over streamed samples', () => {
+  it('reads a soundtrack kept piece by piece the same as the whole array', () => {
+    const sr = 48000;
+    const mono = new Float32Array(sr * 2);
+    for (let i = 0; i < mono.length; i++) mono[i] = Math.sin((2 * Math.PI * 110 * i) / sr) * (i % 24000 < 2400 ? 1 : 0.2);
+    const whole = new OfflineFileAudioAnalyzer(mono, sr);
+    const streamed = new OfflineFileAudioAnalyzer({ length: mono.length, sample: (i: number) => mono[i] }, sr);
+    for (let t = 0; t < 2; t += 1 / 60) {
+      const a = whole.frameAt(t);
+      const b = streamed.frameAt(t);
+      expect(b.amplitude).toBe(a.amplitude);
+      expect(b.bands).toEqual(a.bands);
+      expect([...b.fftData]).toEqual([...a.fftData]);
+    }
+  });
+});
+

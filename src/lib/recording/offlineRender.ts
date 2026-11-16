@@ -48,7 +48,9 @@ import ffmpegCoreUrl from '@ffmpeg/core?url';
 import ffmpegWasmUrl from '@ffmpeg/core/wasm?url';
 import { setISFManualTime } from '../isf/renderer';
 import { setStageEffectsManualTime } from '../stores/stageEffects';
-import { pumpVisualAudio, setVisualAudioManualTime } from '../audio/visualAudio';
+import { getVisualAudioSnapshot, pumpVisualAudio, setVisualAudioManualTime } from '../audio/visualAudio';
+import { nativeJsCanvasHosts, pageAudioFields } from '../renderer/nativeJsCanvasHosts';
+import { project } from '../stores/layers';
 import { audioStore } from '../stores/audio';
 import { audioAnalyzer } from '../audio/analyzer';
 import {
@@ -64,7 +66,7 @@ import { layerSequencer } from '../stores/layerSequencer';
 import { vjLayerSequencer } from '../stores/vjLayerSequencer';
 import { showTimeline } from '../stores/showTimeline';
 import { showMuxTracks } from '../show/showAudioExport';
-import { discardSoundtrackWav, renderTimelineSound, saveSoundtrackWav, soundtrackMono } from '../timeline/sound/soundExport';
+import { discardSoundtrackWav, EXPORT_SAMPLE_RATE, openSoundtrackWav, TimelineSoundStream } from '../timeline/sound/soundExport';
 import { IDLE, isRunning, renderStep, type RenderEvent, type RenderFlow } from './renderFlow';
 import { analysisStepsUpTo, frameCount, frameTime, framesDuration } from './renderRate';
 import { beginRenderClock, endRenderClock, setRenderClockSeconds } from './renderClock';
@@ -222,6 +224,9 @@ export interface NativeMp4FrameEncoderSession {
   /** Container of the encoded file: mp4 for H.264, mov for ProRes / HAP. */
   extension: string;
   mime: string;
+  /** False once the core turned out not to stream frames to the encoder:
+   *  the core's frames then go through a raw file each, as they used to. */
+  streamFrames?: boolean;
 }
 
 function rawPixelFormatForNativeTextureFormat(format: string): 'rgba' | 'bgra' {
@@ -638,6 +643,22 @@ export async function writeNativeRendererMp4Frame(
   timeSeconds: number,
   stepSeconds?: number,
 ): Promise<NativeRendererFrameSnapshotExportResult> {
+  // Straight from the core to the encoder (no raw file per frame). A core
+  // that cannot stream says so before sending anything: then files, as before.
+  if (session.streamFrames !== false) {
+    const result = await invoke<{ success?: boolean; error?: string; untouched?: boolean; snapshot?: NativeRendererFrameSnapshotExportResult }>(
+      'mp4_frame_encoder_render_frame',
+      { jobId: session.jobId, frameIndex, time: timeSeconds, frame_index: frameIndex, ...(stepSeconds ? { step_seconds: stepSeconds } : {}) },
+    );
+    if (result?.success && result.snapshot) {
+      assertNativeRendererFrameExport(result.snapshot, frameIndex, session);
+      return result.snapshot;
+    }
+    if (!(result?.untouched && frameIndex === 0 && /requires path|not allowed/i.test(result.error ?? ''))) {
+      throw new Error(result?.error || `Could not render frame ${frameIndex}`);
+    }
+    session.streamFrames = false;
+  }
   const rawName = `native_mp4_${session.jobId}_${String(frameIndex).padStart(6, '0')}.${session.pixelFormat}`;
   const rawPath = joinNativeTempPath(session.tempDir, rawName);
   const snapshot = await exportNativeRendererFrameSnapshot(rawPath, {
@@ -1051,8 +1072,12 @@ function createOfflineRenderStore() {
     /** The show as it was: playing (resumed after), or parked at a time (put back). */
     let showWasPlaying = false;
     let showParkedAt: number | null = null;
-    /** The Timeline's sound rows rendered up front, in a temp file of the desktop app. */
+    /** The Timeline's sound rows, rendered a piece at a time as the frames go
+     *  (TimelineSoundStream), into a temp file of the desktop app. */
     let soundtrackPath: string | null = null;
+    let soundStream: TimelineSoundStream | null = null;
+    let jsPagesOnRenderClock = false;
+    let soundtrackFile: Awaited<ReturnType<typeof openSoundtrackWav>> = null;
     let nativeCapturePixelFormat: 'rgba' | 'bgra' = 'rgba';
     const frameBaseName = frameSequenceBaseName(settings.filename, 'render');
     const segmentFrameCount = outputMode === 'frames' || useNativeMp4Encoder
@@ -1089,20 +1114,28 @@ function createOfflineRenderStore() {
       const endT = startT + renderSeconds;
       if (showState.doc === 'timeline' && showState.audioTracks.some(t => !t.muted && t.url && t.volume > 0)) {
         // The Timeline's sound rows as they play live (effects, fades, levels,
-        // ducking, mute and solo, lines): rendered once, put in the video,
-        // and what the audio-reactive content reacts to.
+        // ducking, mute and solo, lines): rendered as the frames go, a piece
+        // at a time (memory stays the same however long the show), put in
+        // the video, and what the audio-reactive content reacts to.
         dispatch({ type: 'prepare', step: 'sound' });
-        const sound = await renderTimelineSound(showState, endT);
+        if (outputMode === 'mp4' && isElectron) {
+          soundtrackFile = await openSoundtrackWav(EXPORT_SAMPLE_RATE);
+          soundtrackPath = soundtrackFile?.path ?? null;
+        }
+        soundStream = await TimelineSoundStream.open(showState, endT, { sampleRate: EXPORT_SAMPLE_RATE, sink: soundtrackFile });
         checkStop();
-        if (sound) {
-          if (outputMode === 'mp4' && isElectron) soundtrackPath = await saveSoundtrackWav(sound);
+        if (soundStream) {
           fileAudioSession = {
-            analyzer: new OfflineFileAudioAnalyzer(soundtrackMono(sound), sound.sampleRate, { bandSmoothing: audioAnalyzer.getSmoothing() }),
+            analyzer: new OfflineFileAudioAnalyzer(soundStream.mono, soundStream.sampleRate, { bandSmoothing: audioAnalyzer.getSmoothing() }),
             startOffsetSeconds: 0,
             loop: false,
-            durationSeconds: sound.left.length / sound.sampleRate,
+            durationSeconds: soundStream.frames / soundStream.sampleRate,
             label: 'Timeline sound rows',
           };
+        } else if (soundtrackPath) {
+          await discardSoundtrackWav(soundtrackPath);
+          soundtrackPath = null;
+          soundtrackFile = null;
         }
       } else if (showState.audioTracks.some(t => !t.muted && t.url && t.duration > 0)) {
         // The Show: its tracks mixed down once, sampled per frame.
@@ -1188,6 +1221,11 @@ function createOfflineRenderStore() {
         nativeMp4FrameEncoder = await startNativeMp4FrameEncoder(settings, totalFrames, nativeFrameCaptureActive ? nativeCapturePixelFormat : 'rgba');
       }
 
+      // three.js / p5.js pages: on the render's clock, a frame at a time.
+      if (nativeFrameCaptureActive) {
+        jsPagesOnRenderClock = true;
+        await nativeJsCanvasHosts.setRenderClock(true, Date.now());
+      }
       // Every live engine reads the render's clock from here (renderClock.ts).
       beginRenderClock(startT);
       setVisualAudioManualTime(startT);
@@ -1220,6 +1258,7 @@ function createOfflineRenderStore() {
           if (fileAudioSession) {
             const due = analysisStepsUpTo(startT, analysisStep, virtualTime);
             analysisStep = due.nextStep;
+            if (soundStream && due.times.length) await soundStream.ensure(due.times[due.times.length - 1]);
             for (const t of due.times) {
               const at = analysisFromRenderStart ? t - startT : t;
               audioStore.injectAnalysisFrame(fileAudioSession.analyzer.frameAt(offlineFileAudioTime(fileAudioSession, at)));
@@ -1248,6 +1287,8 @@ function createOfflineRenderStore() {
             // This frame's scene, values and clock reach the core (awaited:
             // a sync already running is waited for, never skipped).
             await sync()?.renderManualFrame(virtualTime, { index: globalFrame, step });
+            // The pages this frame shows draw it, and are in the core, before the snapshot.
+            await nativeJsCanvasHosts.stepRender(virtualTime, pageAudioFields(getVisualAudioSnapshot()), jsPageName);
           }
 
           if (outputMode === 'frames') {
@@ -1326,6 +1367,9 @@ function createOfflineRenderStore() {
         nativeMp4FrameEncoderFinished = true;
         checkStop();
         dispatch({ type: 'encode', step: 'sound', progress: 0.8 });
+        if (soundStream) await soundStream.finish();
+        await soundtrackFile?.close();
+        checkStop();
         const audioNote = await addShowSoundtrack(encoded.outputPath, { start: startT, seconds: renderSeconds, soundtrackPath });
         soundtrackPath = null; // the mux deletes it
         checkStop();
@@ -1404,6 +1448,7 @@ function createOfflineRenderStore() {
       if (nativeJpegSequence && !nativeJpegSequenceFinished) await cancelNativeJpegSequence(nativeJpegSequence);
       if (nativeMp4FrameEncoder && !nativeMp4FrameEncoderFinished) await cancelNativeMp4FrameEncoder(nativeMp4FrameEncoder);
       if (soundtrackPath) await discardSoundtrackWav(soundtrackPath);
+      if (jsPagesOnRenderClock) await nativeJsCanvasHosts.setRenderClock(false).catch(() => {});
       endRenderClock();
       if (nativeOutputNeedsRestore) {
         await submitNativeRendererCommands([
@@ -1477,6 +1522,12 @@ function createOfflineRenderStore() {
 }
 
 // Local helpers (not part of the store API surface).
+
+/** A three.js / p5.js source's layer name, for an error that says which page. */
+function jsPageName(sourceId: string): string {
+  const layer = get(project).layers.find((l) => l.source?.id === sourceId);
+  return layer?.name || layer?.source?.name || sourceId;
+}
 
 /**
  * Add the show's sound to a rendered video with the bundled ffmpeg

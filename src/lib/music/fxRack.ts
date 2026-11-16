@@ -37,7 +37,7 @@ export function wetDry(ctx: AudioContext, wetIn: AudioNode, wetOut: AudioNode): 
 }
 
 /** A decaying stereo noise burst: the impulse response of a room. */
-export function impulse(ctx: AudioContext, seconds: number, decay: number, bright: number, gateAt = 1): AudioBuffer {
+export function impulse(ctx: AudioContext, seconds: number, decay: number, bright: number, gateAt = 1, random: () => number = Math.random): AudioBuffer {
   const length = Math.max(1, Math.floor(ctx.sampleRate * seconds));
   const buffer = ctx.createBuffer(2, length, ctx.sampleRate);
   for (let c = 0; c < 2; c++) {
@@ -46,7 +46,7 @@ export function impulse(ctx: AudioContext, seconds: number, decay: number, brigh
     for (let i = 0; i < length; i++) {
       const t = i / length;
       const env = t > gateAt ? 0 : Math.pow(1 - t, decay);
-      const white = Math.random() * 2 - 1;
+      const white = random() * 2 - 1;
       // A one-pole filter darkens the tail when "bright" is low.
       last = last + (white - last) * (0.15 + bright * 0.85);
       data[i] = last * env;

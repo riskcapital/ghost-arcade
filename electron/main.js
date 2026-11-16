@@ -142,6 +142,7 @@ const pathGrants = require('./path-grants.cjs').createPathGrants({
 });
 const PATH_NOT_ALLOWED = { success: false, code: 'path-not-allowed', error: 'That location was not chosen in a file dialog, so the app will not write there.' };
 app.on('will-quit', () => pathGrants.flush());
+app.on('will-quit', () => removeEncoderTempDirsNow());
 const pjlinkClient = createPjlinkClient({ credentials: pjlinkCredentials });
 
 // Debug: measure main-thread event-loop lag (see main-lag-probe.js). Loaded
@@ -714,8 +715,28 @@ function presetForVideoQuality(quality) {
 
 function createMp4FrameEncoderTempDir() {
   const dir = fs.mkdtempSync(path.join(app.getPath('temp'), 'ghost-native-mp4-'));
+  require('./temp-dirs.cjs').markOwned(fs, path, dir);
   pathGrants.allowWriteDir(dir);
   return dir;
+}
+
+/**
+ * Temp folders of the encoder jobs still running (a sweep leaves them), and
+ * on quit: every job's ffmpeg stopped and its folder removed, there and then
+ * (an async cancel would not finish before the process exits).
+ */
+function liveEncoderTempDirs() {
+  return new Set([...activeMp4FrameEncoderJobs.values(), ...activeJpegFrameEncoderJobs.values()].map((job) => job.tempDir).filter(Boolean));
+}
+
+function removeEncoderTempDirsNow() {
+  for (const jobs of [activeMp4FrameEncoderJobs, activeJpegFrameEncoderJobs]) {
+    for (const job of jobs.values()) {
+      job.cancelled = true;
+      try { job.process?.kill('SIGKILL'); } catch { /* gone */ }
+      try { if (job.tempDir) fs.rmSync(job.tempDir, { recursive: true, force: true }); } catch { /* best effort */ }
+    }
+  }
 }
 
 function writeEncoderStdin(job, buffer, frameIndex, label) {
@@ -976,6 +997,7 @@ async function cancelJpegSequenceJob(jobIdInput) {
 
 function createJpegFrameEncoderTempDir() {
   const dir = fs.mkdtempSync(path.join(app.getPath('temp'), 'ghost-native-jpeg-'));
+  require('./temp-dirs.cjs').markOwned(fs, path, dir);
   pathGrants.allowWriteDir(dir);
   return dir;
 }
@@ -1031,7 +1053,6 @@ function startJpegFrameEncoderJob(args = {}) {
   const pixelFormat = normalizeRawVideoPixelFormat(
     args.pixelFormat || args.pixel_format || args.rawPixelFormat || args.raw_pixel_format,
   );
-  const tempDir = createJpegFrameEncoderTempDir();
   const ffmpegPath = resolveFfmpegPath();
   const ffmpegArgs = [
     '-hide_banner',
@@ -1049,7 +1070,14 @@ function startJpegFrameEncoderJob(args = {}) {
     'pipe:1',
   ];
 
-  const child = spawn(ffmpegPath, ffmpegArgs, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  const tempDir = createJpegFrameEncoderTempDir();
+  let child;
+  try {
+    child = spawn(ffmpegPath, ffmpegArgs, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  } catch (err) {
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    throw err;
+  }
   const job = {
     id: jobId,
     process: child,
@@ -1289,7 +1317,6 @@ function startMp4FrameEncoderJob(args = {}) {
   const captureSource = typeof args.captureSource === 'string'
     && (args.captureSource === 'record_target' || /^slice:[^\s]+$/.test(args.captureSource))
     ? args.captureSource : null;
-  const tempDir = createMp4FrameEncoderTempDir();
   const requestedName = String(args.outputName || args.filename || 'Offline Render.mp4');
   const outputPath = safeGeneratedVideoPath(codec.id === 'h264'
     ? requestedName
@@ -1317,7 +1344,15 @@ function startMp4FrameEncoderJob(args = {}) {
     outputPath,
   ];
 
-  const child = spawn(ffmpegPath, ffmpegArgs, { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] });
+  // Made last, so nothing above can throw and leave it behind.
+  const tempDir = createMp4FrameEncoderTempDir();
+  let child;
+  try {
+    child = spawn(ffmpegPath, ffmpegArgs, { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] });
+  } catch (err) {
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    throw err;
+  }
   const job = {
     id: jobId,
     process: child,
@@ -1490,6 +1525,60 @@ async function captureLiveMp4Frame(args = {}, clockOwned = false) {
       await cancelMp4FrameEncoderJob(job.id);
       return { success: false, error: error?.message || String(error) };
     } finally { job.captureBusy = false; }
+}
+
+/**
+ * An offline render's frame, straight from the render core to the encoder:
+ * the core makes the frame at `time` (stepping by `step_seconds`) and sends
+ * its pixels over the job's loopback frame sink into ffmpeg's stdin. No raw
+ * file per frame (33 MB at 4K) and no pixels through the renderer. The core
+ * waits for the sink's OK, which comes once ffmpeg has taken the bytes, so
+ * at most one frame is in flight.
+ */
+async function renderMp4FrameEncoderFrame(args = {}) {
+  const job = activeMp4FrameEncoderJobs.get(String(args.jobId || ''));
+  if (!job || job.settled || job.cancelled || job.closing) {
+    return { success: false, error: `MP4 frame encoder is not running.${job?.stderr ? ` ${job.stderr.trim()}` : ''}` };
+  }
+  if (job.liveClock) return { success: false, error: 'Recording capture is owned by the live clock' };
+  if (job.captureBusy) return { success: false, error: 'A frame is already being rendered' };
+  const frameIndex = Number(args.frameIndex);
+  if (!Number.isSafeInteger(frameIndex) || frameIndex !== job.writtenFrames) {
+    return { success: false, error: `MP4 frame order mismatch: got ${args.frameIndex}, expected ${job.writtenFrames}.` };
+  }
+  const params = {};
+  for (const key of ['time', 'frame_index', 'step_seconds']) {
+    if (Number.isFinite(Number(args[key]))) params[key] = Number(args[key]);
+  }
+  job.captureBusy = true;
+  job.streamedBytes = 0;
+  try {
+    const { createNativeFrameSink } = require('./native-frame-stream.cjs');
+    job.frameSink ??= await createNativeFrameSink({
+      write: (chunk) => { job.streamedBytes += chunk.length; return writeEncoderStdin(job, chunk, job.writtenFrames, 'MP4 frame'); },
+      timeoutMs: 60000 * nativeRendererBroker.rpcTimeoutScale(),
+    });
+    // send(), not invoke(): invoke turns the core's error into null, and the
+    // sink would then wait out its timeout for bytes that never come.
+    const snapshot = await job.frameSink.capture(job.frameBytes, async (sink) => {
+      const result = await nativeRendererBroker.send('export_frame_snapshot', {
+        ...params, stream_port: sink.port, stream_token: sink.token, stream_bytes: job.frameBytes,
+      }, { timeoutMs: 30000 });
+      if (!result) throw new Error('The render core is not running.');
+      return result;
+    });
+    job.writtenFrames++;
+    return { success: true, snapshot };
+  } catch (error) {
+    // Nothing reached ffmpeg: the job is still whole (the core may not stream).
+    if (!job.streamedBytes) return { success: false, error: error?.message || String(error), untouched: true };
+    // Part of a frame is in the encoder: the file cannot be continued.
+    console.warn(`[Encoder] offline frame ${frameIndex} failed part way; cancelling:`, error?.message || error);
+    await cancelMp4FrameEncoderJob(job.id);
+    return { success: false, error: error?.message || String(error) };
+  } finally {
+    job.captureBusy = false;
+  }
 }
 
 async function finishMp4FrameEncoderJob(jobIdInput) {
@@ -8547,6 +8636,7 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('mp4_frame_encoder_capture_live', (_, args) => captureLiveMp4Frame(args));
+  ipcMain.handle('mp4_frame_encoder_render_frame', (_, args) => renderMp4FrameEncoderFrame(args));
   ipcMain.handle('mp4_frame_encoder_live_control', async (event, args = {}) => {
     const job = activeMp4FrameEncoderJobs.get(String(args.jobId || ''));
     if (!job || job.cancelled || job.closing || job.settled) return { success: false, error: 'Recording encoder is not running' };
@@ -9485,6 +9575,10 @@ function registerIpcHandlers() {
   ipcMain.handle('js_source_status', () => jsSourceHost.status());
   ipcMain.handle('js_source_thumbnail', (_event, args = {}) => jsSourceHost.thumbnail(args));
   ipcMain.handle('js_source_trial', (_event, args = {}) => jsSourceHost.trial(args));
+  // Render to video: the pages on the render's clock, a frame at a time.
+  ipcMain.handle('js_source_render_clock', (_event, args = {}) => jsSourceHost.setRenderClock(args));
+  ipcMain.handle('js_source_step', (_event, args = {}) => jsSourceHost.step(args));
+  ipcMain.on('ghost-js:stepped', (event, n) => jsSourceHost.noteStepped(event.sender, n));
   // Public sketches from the p5.js Web Editor. The renderer passes only a
   // username and a sketch id; the URLs are built in p5-editor-import.cjs.
   const p5EditorImport = require('./p5-editor-import.cjs');
@@ -10666,6 +10760,14 @@ app.whenReady().then(async () => {
 
   setupPermissions();
   registerIpcHandlers();
+
+  // Temp folders a killed session left (raw frames, a soundtrack): swept a
+  // little after launch, off the startup path. Ours still in use are kept.
+  setTimeout(() => {
+    require('./temp-dirs.cjs').sweepStaleTempDirs({ fs, path, root: app.getPath('temp'), inUse: liveEncoderTempDirs() })
+      .then((removed) => { if (removed.length) console.log(`[Main] removed ${removed.length} stale temp folder(s) from earlier sessions`); })
+      .catch(() => {});
+  }, 15000).unref?.();
 
   // Wire up the ghost-asset:// protocol handler. The scheme was registered
   // as privileged at module top so the renderer treats URLs as standard

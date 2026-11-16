@@ -97,6 +97,14 @@ export function fftInPlace(re: Float32Array, im: Float32Array): void {
  *  floor keeps every number in the pipeline well-behaved. */
 const DB_FLOOR = -180;
 
+/** Mono samples read one at a time: a soundtrack made piece by piece as the
+ *  render goes keeps only its latest pieces (TimelineSoundStream). Samples it
+ *  no longer has, or does not have yet, read as silence. */
+export interface MonoSamples {
+  readonly length: number;
+  sample(index: number): number;
+}
+
 /**
  * Virtual-time analyser over already-decoded PCM.
  *
@@ -106,7 +114,7 @@ const DB_FLOOR = -180;
  * and the live state must not leak into the export.
  */
 export class OfflineFileAudioAnalyzer {
-  private readonly mono: Float32Array;
+  private readonly mono: Float32Array | MonoSamples;
   private readonly sampleRate: number;
   private readonly fftSize: number;
   private readonly binCount: number;
@@ -123,7 +131,7 @@ export class OfflineFileAudioAnalyzer {
   private started = false;
 
   constructor(
-    mono: Float32Array,
+    mono: Float32Array | MonoSamples,
     sampleRate: number,
     opts: { fftSize?: number; bandSmoothing?: number; fftSmoothing?: number } = {},
   ) {
@@ -162,9 +170,11 @@ export class OfflineFileAudioAnalyzer {
     const end = Math.round(Math.max(0, timeSec) * this.sampleRate);
     const start = end - this.fftSize;
 
+    const pcm = this.mono instanceof Float32Array ? this.mono : null;
+    const stream = pcm ? null : (this.mono as MonoSamples);
     for (let i = 0; i < this.fftSize; i++) {
       const idx = start + i;
-      const sample = idx >= 0 && idx < this.mono.length ? this.mono[idx] : 0;
+      const sample = idx < 0 || idx >= this.mono.length ? 0 : pcm ? pcm[idx] : stream!.sample(idx);
       this.re[i] = sample * this.window[i];
       this.im[i] = 0;
       if (i < this.binCount) this.waveform[i] = sample;
