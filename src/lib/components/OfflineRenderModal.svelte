@@ -522,7 +522,7 @@
       {#if notes.scriptPages}
         <div class="warn-note subtle" role="note" data-render-script-note>
           <span class="warn-icon">i</span>
-          <span>three.js and p5.js pages run on their own clock: in a render they keep moving in real time, not frame by frame.</span>
+          <span>A three.js or p5.js page here asks to keep its own clock: in a render it keeps moving in real time, not frame by frame.</span>
         </div>
       {/if}
 

@@ -20,7 +20,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { buildHostHtml, buildHostPage, hostLineToPageLine, uncaughtErrorMessage, wantsTransparentBackground } from './js-source-page.js';
+import { buildHostHtml, buildHostPage, hostLineToPageLine, uncaughtErrorMessage, wantsLiveClock, wantsTransparentBackground } from './js-source-page.js';
 
 export const JS_SOURCE_SCHEME = 'ghost-js';
 const PARTITION = 'ghost-js-sources';
@@ -47,6 +47,12 @@ const MAX_LOGGED_PAGE_ERRORS = 20;
 // A page that keeps crashing its renderer is not reopened every frame.
 const CRASH_LIMIT = 3;
 const CRASH_WINDOW_MS = 60_000;
+// Render to video: how long a page has to load, and to draw one step.
+const RENDER_LOAD_TIMEOUT_MS = 20_000;
+const RENDER_STEP_TIMEOUT_MS = 10_000;
+// In a render a page's own frames only carry a step to the screen: as fast
+// as Chromium allows, so a step's answer comes quickly.
+const RENDER_HOST_FPS = 240;
 
 const THREE_BUILD_FILES = new Map([
   ['/lib/three.module.min.js', 'three.module.min.js'],
@@ -114,6 +120,8 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
   // The core keeps the highest seq it has seen per source and drops older
   // frames, so this must keep rising across host restarts for the same id.
   let seq = Date.now() * 1000;
+  // Render to video: the render's clock for every page (null while live).
+  let renderClock = null;
 
   function ensureProtocol() {
     if (protocolReady) return;
@@ -166,6 +174,7 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
   function closeEntry(entry) {
     if (!entry || entry.closed) return;
     entry.closed = true;
+    failStep(entry, 'the page closed');
     if (hosts.get(entry.id) === entry) hosts.delete(entry.id);
     byToken.delete(entry.token);
     try {
@@ -218,6 +227,13 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
   function handlePaint(entry, image) {
     if (entry.closed) return;
     entry.paints += 1;
+    // In a render the host takes each frame itself: the first one painted
+    // after the page has drawn its step.
+    if (entry.manual) {
+      const waiter = entry.paintWaiter;
+      if (waiter) { entry.paintWaiter = null; waiter(image); }
+      return;
+    }
     // Until the page has loaded and drawn, its frames are blank. The core
     // keeps showing the layer's previous picture until this source's first
     // upload, so sending a blank one would flash the layers underneath.
@@ -242,10 +258,19 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
       entry.drawn = true;
     }
     entry.uploading += 1;
+    uploadFrame(entry, bitmap, width, height)
+      .catch(() => {})
+      .finally(() => {
+        entry.uploading -= 1;
+      });
+  }
+
+  /** A frame of a page to the core, as the source frame of its id. */
+  function uploadFrame(entry, bitmap, width, height) {
     entry.frameWidth = width;
     entry.frameHeight = height;
     seq += 1;
-    broker
+    return broker
       .invoke('native_renderer_submit_commands', {
         commands: [
           {
@@ -264,16 +289,15 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
         ],
       })
       .then((result) => {
-        if (result === null || result === undefined) return;
+        if (result === null || result === undefined) return false;
         entry.uploads += 1;
         entry.lastUploadAt = Date.now();
+        return true;
       })
       .catch((err) => {
         entry.errors += 1;
         entry.lastError = String(err?.message || err);
-      })
-      .finally(() => {
-        entry.uploading -= 1;
+        throw err;
       });
   }
 
@@ -313,7 +337,7 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
       }
       if (entry.fps !== fps) {
         entry.fps = fps;
-        entry.window.webContents.setFrameRate(fps);
+        if (!entry.manual) entry.window.webContents.setFrameRate(fps);
       }
       return { ok: true, reused: true, ...describe(entry) };
     }
@@ -324,6 +348,8 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
 
     const token = `s${(++tokenSerial).toString(36)}`;
     const transparent = wantsTransparentBackground(html);
+    const liveClock = wantsLiveClock(html);
+    const manual = !!renderClock && !liveClock;
     const win = new BrowserWindow({
       width,
       height,
@@ -350,7 +376,14 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
       id,
       token,
       hash,
-      html: buildHostHtml(html),
+      html: buildHostHtml(html, { renderClock: manual ? renderClock : null }),
+      pageHtml: html,
+      liveClock,
+      manual,
+      stepBase: null,
+      stepSerial: 0,
+      stepWaiter: null,
+      paintWaiter: null,
       window: win,
       transparent,
       width,
@@ -378,7 +411,7 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
 
     const current = entry;
     const wc = win.webContents;
-    wc.setFrameRate(fps);
+    wc.setFrameRate(manual ? RENDER_HOST_FPS : fps);
     wc.setWindowOpenHandler(() => ({ action: 'deny' }));
     wc.on('will-navigate', (event) => event.preventDefault());
     wc.on('did-finish-load', () => {
@@ -589,6 +622,8 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
   function setAudio(fields) {
     const clean = sanitizeValues(fields);
     for (const entry of hosts.values()) {
+      // In a render each step carries its own frame's analysis.
+      if (entry.manual) continue;
       if (entry.loaded && !entry.window.isDestroyed()) entry.window.webContents.send('ghost-js:audio', clean);
     }
     return { ok: true };
@@ -602,5 +637,109 @@ export function createJsSourceHost({ broker, libDir, threeDir, preloadPath, isPa
     for (const entry of Array.from(hosts.values())) closeEntry(entry);
   }
 
-  return { open, close, setParams, setAudio, status, closeAll, thumbnail, trial };
+  /**
+   * Render to video starts (`on`) or ends. Every page that keeps the render's
+   * clock is loaded again with it (so every render starts the page from its
+   * start, the same each time) and from then on moves only when stepped; at
+   * the end it is loaded again on the wall clock, as live. Pages that ask for
+   * their own clock (wantsLiveClock) are left running.
+   */
+  function setRenderClock({ on, dateMs } = {}) {
+    renderClock = on ? { dateMs: Math.round(Number(dateMs) || Date.now()), seed: 0x9e3779b9 } : null;
+    const live = [];
+    for (const entry of hosts.values()) {
+      if (entry.liveClock) { live.push(entry.id); continue; }
+      const manual = !!renderClock;
+      if (entry.manual === manual) continue;
+      entry.manual = manual;
+      entry.html = buildHostHtml(entry.pageHtml, { renderClock: manual ? renderClock : null });
+      entry.loaded = false;
+      entry.drawn = false;
+      entry.stepBase = null;
+      failStep(entry, 'the page was reloaded');
+      if (!entry.window.isDestroyed()) {
+        entry.window.webContents.setFrameRate(manual ? RENDER_HOST_FPS : entry.fps);
+        entry.window.webContents.reload();
+      }
+    }
+    return { ok: true, live };
+  }
+
+  function failStep(entry, reason) {
+    const waiter = entry.stepWaiter;
+    entry.stepWaiter = null;
+    if (waiter) { clearTimeout(waiter.timer); waiter.reject(new Error(reason)); }
+  }
+
+  /** The page's answer to a step (from its preload). */
+  function noteStepped(sender, n) {
+    for (const entry of hosts.values()) {
+      if (entry.window.isDestroyed() || entry.window.webContents !== sender) continue;
+      const waiter = entry.stepWaiter;
+      if (waiter && waiter.n === n) {
+        entry.stepWaiter = null;
+        clearTimeout(waiter.timer);
+        waiter.resolve();
+      }
+      return;
+    }
+  }
+
+  function waitLoaded(entry) {
+    if (entry.loaded) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const started = Date.now();
+      const poll = setInterval(() => {
+        if (entry.closed) { clearInterval(poll); reject(new Error('the page closed')); }
+        else if (entry.loaded) { clearInterval(poll); resolve(); }
+        else if (Date.now() - started > RENDER_LOAD_TIMEOUT_MS) { clearInterval(poll); reject(new Error(`the page did not load within ${RENDER_LOAD_TIMEOUT_MS / 1000} s`)); }
+      }, 10);
+    });
+  }
+
+  async function stepEntry(entry, time, audio) {
+    await waitLoaded(entry);
+    if (entry.stepBase === null) entry.stepBase = time;
+    const n = ++entry.stepSerial;
+    const answered = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => failStep(entry, `the page did not draw its frame within ${RENDER_STEP_TIMEOUT_MS / 1000} s`), RENDER_STEP_TIMEOUT_MS);
+      entry.stepWaiter = { n, resolve, reject, timer };
+    });
+    entry.window.webContents.send('ghost-js:step', { n, ms: (time - entry.stepBase) * 1000, audio });
+    await answered;
+    // The page has drawn and Chromium has run frames since: ask for a fresh
+    // paint (invalidate, so there is one even when nothing moved) and take
+    // the first that comes. A capture of the window could still read the
+    // frame before the step.
+    const painted = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { entry.paintWaiter = null; reject(new Error('the page did not paint its frame')); }, RENDER_STEP_TIMEOUT_MS);
+      entry.paintWaiter = (img) => { clearTimeout(timer); resolve(img); };
+    });
+    entry.window.webContents.invalidate();
+    const image = await painted;
+    const { width, height } = image.getSize();
+    const bitmap = image.toBitmap();
+    if (!width || !height || bitmap.length < width * height * 4) throw new Error('the page gave an empty frame');
+    entry.drawn = true;
+    if (!(await uploadFrame(entry, bitmap, width, height))) throw new Error('the render core did not take the frame');
+  }
+
+  /**
+   * One render frame for the pages in `ids` (the ones the frame shows): each
+   * moves to `time` (seconds of render), draws, and its frame reaches the
+   * core before this returns. A page that does not answer fails the step.
+   */
+  async function step({ ids = [], time = 0, audio = null } = {}) {
+    const clean = audio ? sanitizeValues(audio) : null;
+    const failed = [];
+    await Promise.all(ids.map(async (id) => {
+      const entry = hosts.get(id);
+      if (!entry || !entry.manual) return;
+      try { await stepEntry(entry, Number(time) || 0, clean); }
+      catch (err) { failed.push({ id, reason: String(err?.message || err) }); }
+    }));
+    return failed.length ? { ok: false, failed } : { ok: true };
+  }
+
+  return { open, close, setParams, setAudio, status, closeAll, thumbnail, trial, setRenderClock, step, noteStepped };
 }

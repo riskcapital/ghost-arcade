@@ -172,3 +172,37 @@ describe('NativeJsCanvasHosts', () => {
     });
   });
 });
+
+describe('pages in a render', () => {
+  it('steps only the pages the frame used, with the frame\'s time and audio, and holds the live audio', async () => {
+    const { hosts, of } = fakeHost();
+    await hosts.setRenderClock(true, 1234);
+    expect(of('js_source_render_clock')[0].args).toEqual({ on: true, dateMs: 1234 });
+    hosts.use(source('a', scenePage), 640, 360);
+    hosts.use(source('b', sketchPage, 'p5js'), 640, 360);
+    await settle();
+    await hosts.stepRender(0, { level: 0.2 });
+    expect(of('js_source_step')[0].args).toEqual({ ids: ['a', 'b'], time: 0, audio: { level: 0.2 } });
+    // Next frame shows only page a.
+    hosts.use(source('a', scenePage), 640, 360);
+    await hosts.stepRender(1 / 60, { level: 0 });
+    expect(of('js_source_step')[1].args.ids).toEqual(['a']);
+    // A frame with no page does not ask.
+    await hosts.stepRender(2 / 60, {});
+    expect(of('js_source_step')).toHaveLength(2);
+    hosts.pushAudio({} as never, 1e9);
+    expect(of('js_source_audio')).toHaveLength(0);
+    await hosts.setRenderClock(false);
+    await hosts.stepRender(3 / 60, {});
+    expect(of('js_source_step')).toHaveLength(2);
+  });
+
+  it('a page that does not answer fails the frame, naming it', async () => {
+    const call = vi.fn(async (command: string) => (command === 'js_source_step' ? { ok: false, failed: [{ id: 'a', reason: 'the page did not draw its frame within 10 s' }] } : { ok: true }));
+    const hosts = new NativeJsCanvasHosts(call);
+    await hosts.setRenderClock(true, 0);
+    hosts.use(source('a', scenePage), 640, 360);
+    await expect(hosts.stepRender(0, {}, () => 'Galaxy')).rejects.toThrow(/"Galaxy": the page did not draw/);
+  });
+});
+

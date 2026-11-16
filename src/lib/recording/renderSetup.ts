@@ -38,14 +38,21 @@ export function isScriptPageLayer(layer: Layer): boolean {
   return type === 'threejs' || type === 'p5js' || type === 'javascript' || !!(layer as { jsAnimation?: unknown }).jsAnimation;
 }
 
+/** A page that asks to keep its own clock in a render (js-source-page.js wantsLiveClock). */
+export function pageKeepsOwnClock(html: string | null | undefined): boolean {
+  return /<meta\b[^>]*\bname\s*=\s*["']ghost-arcade-clock["'][^>]*\bcontent\s*=\s*["']live["']/i.test(String(html ?? ''));
+}
+
 export interface RenderNotes {
   interactive: boolean;
+  /** A visible three.js / p5.js page keeps its own clock (it asked to): it is not rendered frame by frame. */
   scriptPages: boolean;
 }
 
 export function renderNotes(layers: readonly Layer[]): RenderNotes {
   const visible = layers.filter((l) => l.visible !== false);
-  return { interactive: visible.some(isInteractiveLayer), scriptPages: visible.some(isScriptPageLayer) };
+  const ownClock = (l: Layer) => isScriptPageLayer(l) && pageKeepsOwnClock((l.source as { jsAnimation?: { htmlCode?: string } } | undefined)?.jsAnimation?.htmlCode ?? (l as { jsAnimation?: { htmlCode?: string } }).jsAnimation?.htmlCode);
+  return { interactive: visible.some(isInteractiveLayer), scriptPages: visible.some(ownClock) };
 }
 
 /** "1:05" / "1:05.5" for a range label. */

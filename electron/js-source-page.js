@@ -20,6 +20,72 @@ export const HOST_BRIDGE_SCRIPT = `(function () {
   });
 })();`;
 
+/**
+ * The render's clock for a page (Render to video). Installed before any page
+ * script when the host serves the page for a render: performance.now,
+ * Date.now / new Date() and requestAnimationFrame stop following the wall
+ * clock and move only when the host steps the page, by exactly one render
+ * frame. A step sets the time, runs the animation frame callbacks the page
+ * asked for with that time (p5's draw, three.js's setAnimationLoop, a
+ * page's own loop), takes the frame's audio analysis as window.ghostAudio,
+ * then answers once Chromium has had two of its own frames to put the
+ * drawing on screen. Math.random is seeded, so two renders of a page match.
+ * Timers (setTimeout / setInterval) keep real time. A page opts out with
+ * <meta name="ghost-arcade-clock" content="live">.
+ */
+export function renderClockScript({ dateMs = 0, seed = 1 } = {}) {
+  return `(function () {
+  var host = window.ghostHost;
+  if (!host || !host.onStep) return;
+  var realRaf = window.requestAnimationFrame.bind(window);
+  var RealDate = Date;
+  var now = 0;
+  var dateMs = ${Number(dateMs) || 0};
+  var queue = [];
+  var nextId = 1;
+  Object.defineProperty(performance, 'now', { value: function () { return now; }, configurable: true });
+  function VDate() {
+    if (!(this instanceof VDate)) return new RealDate(dateMs + now).toString();
+    return arguments.length ? Reflect.construct(RealDate, Array.prototype.slice.call(arguments), VDate) : Reflect.construct(RealDate, [dateMs + now], VDate);
+  }
+  VDate.prototype = RealDate.prototype;
+  VDate.now = function () { return dateMs + now; };
+  VDate.parse = RealDate.parse;
+  VDate.UTC = RealDate.UTC;
+  window.Date = VDate;
+  var s = ${(Number(seed) >>> 0) || 1};
+  Math.random = function () {
+    s = (s + 0x6D2B79F5) | 0;
+    var t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  window.requestAnimationFrame = function (callback) {
+    var id = nextId++;
+    queue.push({ id: id, callback: callback });
+    return id;
+  };
+  window.cancelAnimationFrame = function (id) {
+    queue = queue.filter(function (q) { return q.id !== id; });
+  };
+  host.onStep(function (step) {
+    now = Number(step.ms) || 0;
+    if (step.audio && window.ghostAudio) Object.assign(window.ghostAudio, step.audio);
+    var due = queue;
+    queue = [];
+    for (var i = 0; i < due.length; i++) {
+      try { due[i].callback(now); } catch (error) { console.error(error); }
+    }
+    realRaf(function () { realRaf(function () { host.stepped(step.n); }); });
+  });
+})();`;
+}
+
+/** A page asks to keep its own clock in a render: <meta name="ghost-arcade-clock" content="live">. */
+export function wantsLiveClock(html) {
+  return /<meta\b[^>]*\bname\s*=\s*["']ghost-arcade-clock["'][^>]*\bcontent\s*=\s*["']live["']/i.test(String(html ?? ''));
+}
+
 // three, its addons (`three/addons/...`, the old `three/examples/jsm/...`
 // spelling too) and the WebGPU/TSL entry points all resolve to the app's own
 // copy of the package, so imports work offline and always match one version.
@@ -52,7 +118,7 @@ export function wantsTransparentBackground(html) {
  * a line of the served page can be traced back to the page as given
  * (hostLineToPageLine).
  */
-export function buildHostPage(html, { extraShims = [] } = {}) {
+export function buildHostPage(html, { extraShims = [], renderClock = null } = {}) {
   const source = String(html ?? '');
   const wantsP5 = /p5\.(min\.)?js|new\s+p5\s*\(/i.test(source);
   const breaks = (tag) => tag.replace(/[^\n]/g, '');
@@ -73,6 +139,7 @@ export function buildHostPage(html, { extraShims = [] } = {}) {
     '<script>(function(){try{Object.defineProperty(window,"devicePixelRatio",{value:1,configurable:true});}catch(e){}})();</script>',
     `<script type="importmap">${JSON.stringify(THREE_IMPORT_MAP)}</script>`,
     `<script>${HOST_BRIDGE_SCRIPT}</script>`,
+    renderClock ? `<script>${renderClockScript(renderClock)}</script>` : '',
     wantsP5 ? '<script src="/lib/p5.min.js"></script>' : '',
   ].filter(Boolean).join('\n');
   const shimLines = shims.split('\n').length;
@@ -88,8 +155,8 @@ export function buildHostPage(html, { extraShims = [] } = {}) {
   return { html: `${shims}\n${page}`, layout: { afterLine: 0, shimLines } };
 }
 
-export function buildHostHtml(html) {
-  return buildHostPage(html).html;
+export function buildHostHtml(html, options = {}) {
+  return buildHostPage(html, options).html;
 }
 
 /** The line of the page as given behind a line of the served page, or null for a line the host added. */

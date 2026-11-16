@@ -101,6 +101,27 @@ interface HostRecord {
   failedAt: number;
   /** The control values the page last received (open or setParams). */
   params: string;
+  /** Render to video: the render frame that last showed this page. */
+  usedFrame: number;
+}
+
+/** The fields a page reads as window.ghostAudio. */
+export function pageAudioFields(visual: VisualAudioState): Record<string, number | boolean> {
+  const f = ghostAudioCommandFieldsFromVisualAudio(visual);
+  return {
+    level: f.level,
+    bass: f.bass,
+    mid: f.mid,
+    treble: f.treble,
+    high: f.high,
+    beat: f.beat,
+    beatPhase: f.beat_phase,
+    bpm: f.bpm,
+    centroid: f.centroid,
+    kick: f.kick,
+    snare: f.snare,
+    active: f.active,
+  };
 }
 
 export class NativeJsCanvasHosts {
@@ -108,6 +129,9 @@ export class NativeJsCanvasHosts {
   private lastAudioAt = 0;
   private lastReconcileAt = 0;
   private reconciling = false;
+  /** Render to video: pages are on the render's clock, stepped a frame at a time. */
+  private renderClock = false;
+  private renderFrame = 0;
 
   constructor(private readonly call: Invoke) {}
 
@@ -122,6 +146,7 @@ export class NativeJsCanvasHosts {
     const record = this.records.get(src.id);
     if (record) {
       record.lastUsedAt = now;
+      record.usedFrame = this.renderFrame;
       if (record.opening) return false;
       if (record.signature === signature) {
         if (record.ready) {
@@ -137,7 +162,7 @@ export class NativeJsCanvasHosts {
         if (now - record.failedAt < RETRY_MS) return false;
       }
     }
-    const next: HostRecord = { signature, lastUsedAt: now, ready: false, opening: true, failedAt: 0, params: JSON.stringify(jsAnimation.paramValues ?? {}) };
+    const next: HostRecord = { signature, lastUsedAt: now, ready: false, opening: true, failedAt: 0, params: JSON.stringify(jsAnimation.paramValues ?? {}), usedFrame: this.renderFrame };
     this.records.set(src.id, next);
     this.call('js_source_open', {
       id: src.id,
@@ -196,25 +221,40 @@ export class NativeJsCanvasHosts {
 
   /** Live audio for the pages, as `window.ghostAudio`, about 30 times a second. */
   pushAudio(visual: VisualAudioState, now = Date.now()): void {
+    // In a render each step carries its frame's own analysis.
+    if (this.renderClock) return;
     if (this.records.size === 0 || now - this.lastAudioAt < AUDIO_PUSH_MS) return;
     this.lastAudioAt = now;
-    const f = ghostAudioCommandFieldsFromVisualAudio(visual);
-    void this.call('js_source_audio', {
-      fields: {
-        level: f.level,
-        bass: f.bass,
-        mid: f.mid,
-        treble: f.treble,
-        high: f.high,
-        beat: f.beat,
-        beatPhase: f.beat_phase,
-        bpm: f.bpm,
-        centroid: f.centroid,
-        kick: f.kick,
-        snare: f.snare,
-        active: f.active,
-      },
-    }).catch(() => {});
+    void this.call('js_source_audio', { fields: pageAudioFields(visual) }).catch(() => {});
+  }
+
+  /**
+   * Render to video: put the pages on the render's clock (they load again
+   * and start from their beginning) or back on the wall clock. `dateMs` is
+   * what Date.now() reads at the render's first frame.
+   */
+  async setRenderClock(on: boolean, dateMs = Date.now()): Promise<void> {
+    this.renderClock = on;
+    this.renderFrame = 0;
+    await this.call('js_source_render_clock', { on, dateMs });
+  }
+
+  /**
+   * One render frame for the pages it shows (the ones the frame's sync used):
+   * each moves to `time` (seconds), draws with `audio`, and its frame is in
+   * the core when this returns. Throws, naming the page, when one does not
+   * answer.
+   */
+  async stepRender(time: number, audio: Record<string, number | boolean>, nameOf: (id: string) => string = (id) => id): Promise<void> {
+    if (!this.renderClock) return;
+    const frame = this.renderFrame++;
+    const ids = [...this.records].filter(([, r]) => r.usedFrame === frame).map(([id]) => id);
+    if (!ids.length) return;
+    const result = await this.call('js_source_step', { ids, time, audio });
+    if (result?.ok) return;
+    const failed = (result?.failed ?? []) as Array<{ id: string; reason: string }>;
+    const what = failed.map((f) => `"${nameOf(f.id)}": ${f.reason}`).join('; ') || 'no answer';
+    throw new Error(`A three.js / p5.js page could not be rendered frame by frame (${what}). A page can keep its own clock with <meta name="ghost-arcade-clock" content="live">.`);
   }
 
   setParams(id: string, values: Record<string, ParamValue>): void {

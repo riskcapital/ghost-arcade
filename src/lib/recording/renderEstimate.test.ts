@@ -65,6 +65,8 @@ describe('render setup', () => {
     expect(renderNotes([layer({})])).toEqual({ interactive: false, scriptPages: false });
     expect(renderNotes([world]).interactive).toBe(true);
     expect(renderNotes([{ ...world, visible: false }]).interactive).toBe(false);
-    expect(renderNotes([layer({ source: { id: 's', type: 'threejs', src: 'x', name: 'x' } as Layer['source'] })]).scriptPages).toBe(true);
+    // Pages are rendered frame by frame now; only one that keeps its own clock gets the note.
+    expect(renderNotes([layer({ source: { id: 's', type: 'threejs', src: 'x', name: 'x', jsAnimation: { animationType: 'threejs', htmlCode: '<p>' } } as Layer['source'] })]).scriptPages).toBe(false);
+    expect(renderNotes([layer({ source: { id: 's', type: 'p5js', src: 'x', name: 'x', jsAnimation: { animationType: 'p5js', htmlCode: '<meta name="ghost-arcade-clock" content="live">' } } as Layer['source'] })]).scriptPages).toBe(true);
   });
 });
