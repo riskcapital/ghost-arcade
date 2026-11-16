@@ -1,5 +1,6 @@
 import { NativeLutResidency } from '../renderer/nativeLutResidency';
 import { invoke } from '$lib/bridge';
+import type { RenderFrameVideo } from '../recording/renderFrameHealth';
 
 const lutResidency = new NativeLutResidency();
 
@@ -1263,6 +1264,14 @@ export interface NativeRendererFrameSnapshotExportResult extends RendererFrameSn
   storage_format: 'raw-texture' | string;
   frame_index: number;
   time_seconds: number | null;
+  /** The core drew this frame itself (left out by older cores). */
+  drawn?: boolean;
+  alpha_mode?: 'opaque' | 'straight' | string;
+  /** The core's clock when it made the frame: 'manual' during a render. */
+  render_clock?: string;
+  layers?: number;
+  /** Each video the frame shows (manual clock only). */
+  videos?: RenderFrameVideo[];
 }
 
 export interface NativeRendererOutputSharedTexture {

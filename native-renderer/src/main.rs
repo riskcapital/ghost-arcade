@@ -1887,6 +1887,43 @@ impl NativeMediaSourceState {
     }
 }
 
+/// One video in a manual-clock snapshot: the media time and frame it shows,
+/// and whether its playback should be moving it (playing, at a rate, and not
+/// held at the far end of a clip that does not loop). A render fails when a
+/// moving one stops changing frame.
+fn manual_video_report_entry(id: &str, state: &NativeMediaSourceState, clock: f64, time: f64, fps: Option<f64>) -> Value {
+    let rate = state.current_playback_rate(Some(clock));
+    let mut moving = !state.paused && rate.abs() > 1e-9;
+    if moving && !state.loop_enabled && !state.bounce_enabled
+        && let Some(duration) = state.duration_seconds.filter(|d| *d > 0.0)
+    {
+        let lo = duration * state.trim_start.clamp(0.0, 1.0);
+        let hi = duration * state.trim_end.clamp(state.trim_start, 1.0);
+        let last = hi - fps.filter(|f| *f > 0.0).map_or(1.0e-3, |f| 1.0 / f);
+        moving = if rate > 0.0 { time < last } else { time > lo };
+    }
+    // A loop shorter than two of its frames may show one frame throughout.
+    if moving && (state.loop_enabled || state.bounce_enabled)
+        && let (Some(duration), Some(fps)) = (state.duration_seconds.filter(|d| *d > 0.0), fps.filter(|f| *f > 0.0))
+        && duration * (state.trim_end - state.trim_start).max(0.0) * fps < 2.0
+    {
+        moving = false;
+    }
+    json!({
+        "id": id,
+        "uri": state.uri,
+        "time": time,
+        "frame": fps.filter(|f| *f > 0.0).map(|f| (time * f + 1.0e-6).floor() as i64),
+        "fps": fps,
+        "rate": rate,
+        "moving": moving,
+        "paused": state.paused,
+        "anchor_time": state.playback_time_seconds,
+        "anchor_clock": state.clock_time_seconds,
+        "seek_generation": state.seek_generation,
+    })
+}
+
 /// The start of the source frame showing at media time `time_seconds`:
 /// frame `floor(t * fps)` (with a hair for float error), or the time itself
 /// when the rate is unknown.
@@ -5350,6 +5387,9 @@ struct App {
     /// Offline render: one ffmpeg per playing video source, read forward
     /// frame by frame (instead of one ffmpeg per frame).
     manual_video_readers: HashMap<String, media_decode::SequentialVideoReader>,
+    /// What each video showed in the last manual-clock snapshot (the render
+    /// checks a playing one keeps moving).
+    manual_video_report: Vec<Value>,
     isf_layer_bindings: HashMap<String, String>,
     /// Shader outputs rendered this frame, by output source id, with the
     /// frame they were rendered on. Layers bound to the same shader with the
@@ -5804,6 +5844,7 @@ impl App {
             manual_snapshot_stepping: false,
             video_source_fps: HashMap::new(),
             manual_video_readers: HashMap::new(),
+            manual_video_report: Vec::new(),
             isf_layer_bindings: HashMap::new(),
             isf_frame_outputs: HashMap::new(),
             isf_shared_footprints: HashMap::new(),
@@ -14508,6 +14549,8 @@ impl App {
                     for px in frame.pixels.chunks_exact_mut(4) { px.swap(0, 2); }
                 }
                 let mut value = frame.to_json(include_pixels);
+                // A straight-alpha target may be transparent on purpose.
+                value["alpha_mode"] = json!(alpha_mode);
                 if let Some((port, token, copies)) = sink {
                     send_to_frame_stream(port, &token, &frame.pixels, copies)?;
                     value["bytes_written"] = json!(frame.pixels.len());
@@ -14635,6 +14678,17 @@ impl App {
                 "time_seconds".to_string(),
                 snapshot_time.map_or(Value::Null, |time| json!(time)),
             );
+            // What the render checks a frame by, instead of how dark it is (a
+            // show may be black on purpose): the core drew this frame itself
+            // (an opaque output, never transparent), on which clock, from how
+            // many layers.
+            object.insert("drawn".to_string(), json!(!use_output_export));
+            object.insert("alpha_mode".to_string(), json!("opaque"));
+            object.insert("render_clock".to_string(), json!(self.render_clock_mode));
+            object.insert("layers".to_string(), json!(self.scene_layers.len()));
+            if !use_output_export && self.render_clock_mode == "manual" {
+                object.insert("videos".to_string(), Value::Array(self.manual_video_report.clone()));
+            }
         }
         Ok(snapshot)
     }
@@ -20030,6 +20084,7 @@ impl App {
         let clock = clock_seconds.unwrap_or_else(|| self.native_clock_seconds());
         let (width, height) = self.native_video_decode_dimensions();
         let mut settled = 0u32;
+        self.manual_video_report.clear();
         for source_id in self.active_video_source_ids() {
             let Some(state) = self.media_sources.get(&source_id).cloned() else { continue; };
             if state.source_type != "video" || state.seq == 0 { continue; }
@@ -20040,6 +20095,7 @@ impl App {
             // that started by then (floor), never the next one.
             let source_fps = self.video_source_fps_for(&path);
             let time_seconds = manual_video_frame_time(state.current_time_seconds(Some(clock)), source_fps);
+            self.manual_video_report.push(manual_video_report_entry(&source_id, &state, clock, time_seconds, source_fps));
             let signature = manual_video_frame_signature(&path, decode_width, decode_height, time_seconds)?;
             if self.native_video_frame_signatures.get(&source_id) == Some(&signature)
                 && self.source_frames.contains_key(&source_id)

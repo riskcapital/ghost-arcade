@@ -1570,12 +1570,15 @@ async function renderMp4FrameEncoderFrame(args = {}) {
     job.writtenFrames++;
     return { success: true, snapshot };
   } catch (error) {
+    let message = error?.message || String(error);
+    // The core hung up mid-frame: it quit or crashed.
+    if (message === 'Native frame stream closed') message = `The render core stopped while making frame ${frameIndex} (it quit or crashed), so the render could not go on.`;
     // Nothing reached ffmpeg: the job is still whole (the core may not stream).
-    if (!job.streamedBytes) return { success: false, error: error?.message || String(error), untouched: true };
+    if (!job.streamedBytes) return { success: false, error: message, untouched: true };
     // Part of a frame is in the encoder: the file cannot be continued.
-    console.warn(`[Encoder] offline frame ${frameIndex} failed part way; cancelling:`, error?.message || error);
+    console.warn(`[Encoder] offline frame ${frameIndex} failed part way; cancelling:`, message);
     await cancelMp4FrameEncoderJob(job.id);
-    return { success: false, error: error?.message || String(error) };
+    return { success: false, error: message };
   } finally {
     job.captureBusy = false;
   }

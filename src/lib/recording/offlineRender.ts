@@ -64,7 +64,8 @@ import { prepareShowOfflineAudio } from '../audio/showAudio';
 import { keyframeTimeline } from '../stores/keyframeTimeline';
 import { layerSequencer } from '../stores/layerSequencer';
 import { vjLayerSequencer } from '../stores/vjLayerSequencer';
-import { showTimeline } from '../stores/showTimeline';
+import { currentShowTrackFrame, showTimeline } from '../stores/showTimeline';
+import { showSourceId } from '../show/tracks/showClipSources';
 import { showMuxTracks } from '../show/showAudioExport';
 import { discardSoundtrackWav, EXPORT_SAMPLE_RATE, openSoundtrackWav, TimelineSoundStream } from '../timeline/sound/soundExport';
 import { IDLE, isRunning, renderStep, type RenderEvent, type RenderFlow } from './renderFlow';
@@ -77,6 +78,7 @@ import { createAssetRefFromGeneratedBlob, pathToFileUrl, type AssetRef } from '.
 import type { RenderEngine } from '../renderer/engine';
 import { invoke, isElectron } from '../bridge';
 import { recordingCodecOption, type RecordingCodecId } from './recordingSources';
+import { renderFrameProblem, VideoMotionWatch } from './renderFrameHealth';
 import {
   exportNativeRendererFrameSnapshot,
   getNativeRendererCapabilities,
@@ -84,6 +86,9 @@ import {
   submitNativeRendererCommands,
   type NativeRendererFrameSnapshotExportResult,
 } from '../api/native-renderer';
+
+/** How long a render waits for a core that is still starting. */
+const RENDER_SYNC_WAIT_MS = 30_000;
 
 // ─── Settings + state ───────────────────────────────────────
 
@@ -263,54 +268,28 @@ function sanitizeFilenamePart(input: string, fallback = 'render'): string {
     .slice(0, 80) || fallback;
 }
 
-function describeNativeFrameHealth(snapshot: NativeRendererFrameSnapshotExportResult): string {
-  const luma = Number(snapshot.average_luma ?? 0);
-  const maxLuma = Number(snapshot.max_luma ?? 0);
-  const nonzero = Number(snapshot.nonzero_pixels ?? 0);
-  const bright = Number(snapshot.bright_pixels ?? 0);
-  const byteLength = Number(snapshot.byte_length ?? 0);
-  const bytesWritten = Number(snapshot.bytes_written ?? 0);
-  return [
-    `checksum=${snapshot.checksum || 'missing'}`,
-    `luma=${luma.toFixed(4)}`,
-    `max=${maxLuma.toFixed(4)}`,
-    `nonzero=${nonzero}`,
-    `bright=${bright}`,
-    `bytes=${bytesWritten}/${byteLength}`,
-    `format=${snapshot.format || 'unknown'}`,
-  ].join(' ');
+/** The video sources the Timeline plays at the current frame (not paused,
+ *  not held at an end): the core must be moving each of them. */
+function timelinePlayingSources(): Set<string> {
+  const ids = new Set<string>();
+  for (const track of currentShowTrackFrame()?.tracks ?? []) {
+    for (const clip of [track.clip, track.xfade?.clip]) {
+      if (clip && clip.media.kind === 'video' && !clip.paused && Math.abs(clip.rate) > 1e-9) ids.add(showSourceId(clip.runId));
+    }
+  }
+  return ids;
 }
 
-/** A show render may go black on purpose (a row hides its piece between
- *  blocks, a blackout, a dip): its blank frames are real frames. Any other
- *  render that comes out blank has lost its picture. Set per render. */
-let blankFramesAreReal = false;
-
+/** Throws when the core did not really make this frame (dark frames are
+ *  fine: see renderFrameHealth.ts). */
 function assertNativeRendererFrameExport(
   snapshot: NativeRendererFrameSnapshotExportResult,
   frameIndex: number,
   expected: { width: number; height: number; pixelFormat: 'rgba' | 'bgra' },
+  manualClock: boolean,
 ): void {
-  if (snapshot.width !== expected.width || snapshot.height !== expected.height) {
-    throw new Error(
-      `Native renderer frame ${frameIndex} size mismatch: got ${snapshot.width}x${snapshot.height}, expected ${expected.width}x${expected.height} (${describeNativeFrameHealth(snapshot)})`,
-    );
-  }
-  const expectedBytes = expected.width * expected.height * 4;
-  if (Number(snapshot.byte_length ?? 0) !== expectedBytes || Number(snapshot.bytes_written ?? 0) !== expectedBytes) {
-    throw new Error(
-      `Native renderer frame ${frameIndex} byte count mismatch: expected ${expectedBytes} raw bytes (${describeNativeFrameHealth(snapshot)})`,
-    );
-  }
-  if ((snapshot.dark_frame || snapshot.nonzero_pixels <= 0) && !blankFramesAreReal) {
-    throw new Error(`Native renderer exported a blank frame at ${frameIndex} (${describeNativeFrameHealth(snapshot)})`);
-  }
-  const snapshotPixelFormat = rawPixelFormatForNativeTextureFormat(snapshot.format);
-  if (snapshotPixelFormat !== expected.pixelFormat) {
-    throw new Error(
-      `Native renderer frame ${frameIndex} format changed from ${expected.pixelFormat} to ${snapshotPixelFormat} (${describeNativeFrameHealth(snapshot)})`,
-    );
-  }
+  const problem = renderFrameProblem(snapshot, frameIndex, { ...expected, manualClock });
+  if (problem) throw new Error(problem);
 }
 
 export function describeFrameTarget(target: FrameSequenceTarget): string {
@@ -453,7 +432,7 @@ export async function writeNativeRendererJpegSequenceFrame(
     frame_index: frameIndex,
     ...(stepSeconds ? { step_seconds: stepSeconds } : {}),
   });
-  assertNativeRendererFrameExport(snapshot, frameIndex, session);
+  assertNativeRendererFrameExport(snapshot, frameIndex, session, !!stepSeconds);
   await writeNativeJpegSequenceFrameFile(session, frameIndex, rawPath, true);
   return snapshot;
 }
@@ -507,7 +486,7 @@ export async function encodeNativeRendererJpegFrame(
     frame_index: frameIndex,
     ...(stepSeconds ? { step_seconds: stepSeconds } : {}),
   });
-  assertNativeRendererFrameExport(snapshot, frameIndex, session);
+  assertNativeRendererFrameExport(snapshot, frameIndex, session, !!stepSeconds);
 
   const result = await invoke<{
     success?: boolean;
@@ -651,7 +630,7 @@ export async function writeNativeRendererMp4Frame(
       { jobId: session.jobId, frameIndex, time: timeSeconds, frame_index: frameIndex, ...(stepSeconds ? { step_seconds: stepSeconds } : {}) },
     );
     if (result?.success && result.snapshot) {
-      assertNativeRendererFrameExport(result.snapshot, frameIndex, session);
+      assertNativeRendererFrameExport(result.snapshot, frameIndex, session, !!stepSeconds);
       return result.snapshot;
     }
     if (!(result?.untouched && frameIndex === 0 && /requires path|not allowed/i.test(result.error ?? ''))) {
@@ -666,7 +645,7 @@ export async function writeNativeRendererMp4Frame(
     frame_index: frameIndex,
     ...(stepSeconds ? { step_seconds: stepSeconds } : {}),
   });
-  assertNativeRendererFrameExport(snapshot, frameIndex, session);
+  assertNativeRendererFrameExport(snapshot, frameIndex, session, !!stepSeconds);
   await writeNativeMp4FrameFile(session, frameIndex, rawPath, true);
   return snapshot;
 }
@@ -689,7 +668,7 @@ export async function writeNativeRendererMp4FrameLiveSpan(
       'mp4_frame_encoder_capture_live', { jobId: session.jobId, fromIndex: first, toIndex: Math.min(last, first + 119) });
     if (!result?.success) throw new Error(result?.error || 'Native live frame capture failed');
     snapshot = result.snapshot;
-    assertNativeRendererFrameExport(snapshot, first, session);
+    assertNativeRendererFrameExport(snapshot, first, session, false);
   }
   return snapshot;
 }
@@ -1107,7 +1086,6 @@ function createOfflineRenderStore() {
       // The render owns the show's clock: a playing show is paused (its own
       // frame loop would fight the per-frame seeks) and resumed after.
       const showState = get(showTimeline);
-      blankFramesAreReal = showTimeline.hasContent();
       showWasPlaying = showState.isPlaying;
       showParkedAt = showState.isPlaying ? null : showState.currentTime;
       if (showWasPlaying) showTimeline.pause();
@@ -1207,6 +1185,14 @@ function createOfflineRenderStore() {
           { type: 'set_output', width: settings.width, height: settings.height, refresh_hz: Math.round(fps) },
         ]);
         nativeOutputNeedsRestore = true;
+        // Every frame goes to the core through the scene sync: one that is
+        // still starting (just after launch, or after a core restart) would
+        // drop them, and the render would be of a stale, paused scene.
+        for (let waited = 0; !sync()?.readyForFrames(); waited += 100) {
+          if (waited >= RENDER_SYNC_WAIT_MS) throw new Error('The render core is still starting. Try the render again in a moment.');
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          checkStop();
+        }
         const nativeStatus = await getNativeRendererStatus();
         nativeCapturePixelFormat = rawPixelFormatForNativeTextureFormat(nativeStatus.output_format);
         nativeFrameCaptureActive = true;
@@ -1230,6 +1216,12 @@ function createOfflineRenderStore() {
       beginRenderClock(startT);
       setVisualAudioManualTime(startT);
       let analysisStep = 0;
+      // A playing video must keep changing frame (a frozen clip fails the render).
+      const videoMotion = new VideoMotionWatch(fps);
+      const checkVideoMotion = (snapshot: NativeRendererFrameSnapshotExportResult, at: number) => {
+        const problem = videoMotion.check(at - startT, snapshot.videos, timelinePlayingSources());
+        if (problem) throw new Error(problem);
+      };
       checkStop();
       dispatch({ type: 'frame', frame: 0, total: totalFrames });
       // Let the resize settle before the first capture.
@@ -1274,6 +1266,11 @@ function createOfflineRenderStore() {
           // show timeline passes under a manual clock) it will not fight the
           // next frame's seeks. A show with no clips is a no-op.
           showTimeline.seek(virtualTime);
+          // Its rows must be on the render's clock too: off it, every video
+          // block is evaluated as paused and stands still in the file.
+          if (currentShowTrackFrame()?.manualClock === false) {
+            throw new Error(`The Timeline left the render's clock at ${virtualTime.toFixed(2)} s, so its videos would stand still. Try the render again.`);
+          }
           // The keyframe tray runs on preset time, not show time: live, each
           // preset's keyframes restart at 0 on its boundary. The preset swap above
           // imports the incoming keyframes a microtask later, so let that land
@@ -1286,7 +1283,9 @@ function createOfflineRenderStore() {
           if (nativeFrameCaptureActive) {
             // This frame's scene, values and clock reach the core (awaited:
             // a sync already running is waited for, never skipped).
-            await sync()?.renderManualFrame(virtualTime, { index: globalFrame, step });
+            const frameSync = sync();
+            if (!frameSync) throw new Error('The render core is not connected, so this frame could not be made. Try the render again.');
+            await frameSync.renderManualFrame(virtualTime, { index: globalFrame, step });
             // The pages this frame shows draw it, and are in the core, before the snapshot.
             await nativeJsCanvasHosts.stepRender(virtualTime, pageAudioFields(getVisualAudioSnapshot()), jsPageName);
           }
@@ -1295,7 +1294,7 @@ function createOfflineRenderStore() {
             if (!frameTarget) throw new Error('Frame export folder not ready');
             if (nativeJpegSequence) {
               if (nativeFrameCaptureActive) {
-                await writeNativeRendererJpegSequenceFrame(nativeJpegSequence, globalFrame, virtualTime, step);
+                checkVideoMotion(await writeNativeRendererJpegSequenceFrame(nativeJpegSequence, globalFrame, virtualTime, step), virtualTime);
               } else {
                 if (!engine) throw new Error('WebGL frame capture needs the render engine');
                 const pixels = (engine as any).readCompositePixels() as { width: number; height: number; data: Uint8Array };
@@ -1309,7 +1308,7 @@ function createOfflineRenderStore() {
             }
           } else if (nativeMp4FrameEncoder) {
             if (nativeFrameCaptureActive) {
-              await writeNativeRendererMp4Frame(nativeMp4FrameEncoder, globalFrame, virtualTime, step);
+              checkVideoMotion(await writeNativeRendererMp4Frame(nativeMp4FrameEncoder, globalFrame, virtualTime, step), virtualTime);
             } else {
               if (!engine) throw new Error('WebGL frame capture needs the render engine');
               const pixels = (engine as any).readCompositePixels() as { width: number; height: number; data: Uint8Array };

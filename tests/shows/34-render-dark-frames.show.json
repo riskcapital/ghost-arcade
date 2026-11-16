@@ -1,0 +1,25 @@
+{
+  "name": "Render to video: black and dark frames are kept",
+  "description": "A render of an empty project (every frame black) and a Timeline that starts black, fades up, fades to black, holds black and ends on a fade to black: both renders finish, and the file has the black frames where the show has them.",
+  "steps": [
+    { "do": "app.start", "choice": "blank" },
+    {
+      "do": "show.export", "seconds": 1, "fps": 30,
+      "label": "Nothing on stage: a black render",
+      "expect": {
+        "export.frame": { "frame": 0, "brightness": [0, 0.02] }
+      }
+    },
+    { "do": "project.layer", "name": "Back", "colour": "red", "wait": 1 },
+    { "do": "show.open", "doc": "timeline" },
+    { "do": "show.track", "name": "back", "layer": "Back" },
+    { "do": "show.clip", "track": "back", "colour": "red", "at": 0, "duration": 7 },
+    { "do": "show.line", "layer": "Back", "key": "layer:opacity", "points": [[0, 0], [1, 0], [1.5, 1], [3, 1], [4, 0], [5, 0], [5.5, 1], [6, 1], [7, 0]] },
+    { "do": "show.export", "seconds": 7, "fps": 30, "label": "Black, up, a fade to black, black, up, a fade to black at the end" },
+    { "label": "Black at the start", "expect": { "export.frame": { "frame": 15, "brightness": [0, 0.02] } } },
+    { "label": "Up", "expect": { "export.frame": { "frame": 75, "is": "red" } } },
+    { "label": "Fading", "expect": { "export.frame": { "frame": 105, "brightness": [0.17, 0.08] } } },
+    { "label": "Black in the middle", "expect": { "export.frame": { "frame": 135, "brightness": [0, 0.02] } } },
+    { "label": "Faded to black at the end", "expect": { "export.frame": { "frame": 209, "brightness": [0, 0.03] } } }
+  ]
+}

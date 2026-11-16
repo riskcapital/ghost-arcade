@@ -10149,7 +10149,13 @@ export class NativeRendererSync {
   async renderManualFrame(seconds: number, frame?: { index: number; step: number }): Promise<void> {
     this.setRenderClock(seconds);
     if (frame) this.manualFrame = { index: Math.max(0, Math.round(frame.index)), step: Math.max(0, frame.step) };
-    if (!this.running || !this.startupReady) return;
+    if (!this.running || !this.startupReady) {
+      // A render's frame that never reaches the core is not made on the
+      // render's clock: its videos stand still and its scene is stale. Say
+      // so instead of writing it.
+      if (frame) throw new Error('The render core is not connected (it is starting or restarting), so this frame could not be made. Try the render again.');
+      return;
+    }
     if (frame) {
       // The core's beat clock (beat-synced Looks and effects) at this frame,
       // from the launch clock on the render's time: live it is pushed on the
@@ -10161,6 +10167,11 @@ export class NativeRendererSync {
       }
     }
     await this.flush(this.desiredWidth, this.desiredHeight, this.latestLayers);
+  }
+
+  /** Running and past its startup: a frame sent now reaches the core. */
+  readyForFrames(): boolean {
+    return this.running && this.startupReady;
   }
 
   /**
