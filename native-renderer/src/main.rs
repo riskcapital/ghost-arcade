@@ -1235,6 +1235,9 @@ struct CoreStats {
     native_image_decode_failures: u64,
     native_image_decode_bytes_uploaded: u64,
     native_image_decode_last_error: String,
+    /// ffmpeg processes an offline render started for its videos (one
+    /// reader per source, plus a one-frame decode where a reader could not).
+    manual_video_decoder_starts: u64,
     native_video_frame_decodes: u64,
     native_video_hardware_frames: u64,
     native_video_hap_frames: u64,
@@ -5344,6 +5347,9 @@ struct App {
     /// Source frame rate of each video file an offline render decodes, so a
     /// frame is picked by index (floor), as live playback shows it.
     video_source_fps: HashMap<PathBuf, Option<f64>>,
+    /// Offline render: one ffmpeg per playing video source, read forward
+    /// frame by frame (instead of one ffmpeg per frame).
+    manual_video_readers: HashMap<String, media_decode::SequentialVideoReader>,
     isf_layer_bindings: HashMap<String, String>,
     /// Shader outputs rendered this frame, by output source id, with the
     /// frame they were rendered on. Layers bound to the same shader with the
@@ -5797,6 +5803,7 @@ impl App {
             native_graph_step_delta_this_render: 1.0 / 60.0,
             manual_snapshot_stepping: false,
             video_source_fps: HashMap::new(),
+            manual_video_readers: HashMap::new(),
             isf_layer_bindings: HashMap::new(),
             isf_frame_outputs: HashMap::new(),
             isf_shared_footprints: HashMap::new(),
@@ -14500,26 +14507,7 @@ impl App {
                 }
                 let mut value = frame.to_json(include_pixels);
                 if let Some((port, token, copies)) = sink {
-                    use std::io::{Read, Write};
-                    let mut cached = LIVE_FRAME_STREAM.lock().map_err(|_| "frame stream lock poisoned")?;
-                    if cached.as_ref().is_none_or(|(p, t, _)| *p != port || *t != token) {
-                        let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
-                        let mut stream = std::net::TcpStream::connect_timeout(&address, Duration::from_secs(2)).map_err(|e| e.to_string())?;
-                        stream.set_write_timeout(Some(Duration::from_secs(10))).map_err(|e| e.to_string())?;
-                        stream.set_read_timeout(Some(Duration::from_secs(10))).map_err(|e| e.to_string())?;
-                        stream.set_nodelay(true).map_err(|e| e.to_string())?;
-                        stream.write_all(token.as_bytes()).map_err(|e| e.to_string())?;
-                        *cached = Some((port, token, stream));
-                    }
-                    let result = (|| -> Result<(), String> {
-                        let stream = &mut cached.as_mut().unwrap().2;
-                        for _ in 0..copies { stream.write_all(&frame.pixels).map_err(|e| e.to_string())?; }
-                        let mut ack = [0u8; 2]; stream.read_exact(&mut ack).map_err(|e| e.to_string())?;
-                        if &ack != b"OK" { return Err("encoder did not accept frame".to_string()); }
-                        Ok(())
-                    })();
-                    if result.is_err() { *cached = None; }
-                    result?;
+                    send_to_frame_stream(port, &token, &frame.pixels, copies)?;
                     value["bytes_written"] = json!(frame.pixels.len());
                     value["storage_format"] = json!("raw-texture");
                     value["transport"] = json!("native-binary-stream");
@@ -14558,10 +14546,15 @@ impl App {
     }
 
     fn export_frame_snapshot(&mut self, params: &Value) -> Result<Value, String> {
+        // An offline render's frame goes straight to the encoder through the
+        // main process's frame sink; otherwise it is written to `path`.
+        let stream = frame_stream_params(params)?;
         let output_path = string_at(params, &["path"])
             .or_else(|| string_at(params, &["file_path"]))
-            .or_else(|| string_at(params, &["output_path"]))
-            .ok_or_else(|| "export_frame_snapshot requires path".to_string())?;
+            .or_else(|| string_at(params, &["output_path"]));
+        if stream.is_none() && output_path.is_none() {
+            return Err("export_frame_snapshot requires path".to_string());
+        }
         let storage_format = string_at(params, &["format"])
             .or_else(|| string_at(params, &["storage_format"]))
             .unwrap_or_else(|| "raw-texture".to_string())
@@ -14605,16 +14598,31 @@ impl App {
         self.refresh_renderer_timing_stats();
         self.note_frame_snapshot(&snapshot);
 
-        let path = Path::new(&output_path);
-        if let Some(parent) = path.parent()
-            && !parent.as_os_str().is_empty()
-        {
-            fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+        if let Some((port, token)) = stream.as_ref() {
+            // The sink takes exactly one frame of the encoder's size: a frame
+            // of any other size is refused before a byte is sent.
+            if let Some(expected) = params.get("stream_bytes").and_then(Value::as_u64)
+                && expected != pixels.len() as u64
+            {
+                return Err(format!("frame has {} bytes; the encoder takes {expected}", pixels.len()));
+            }
+            send_to_frame_stream(*port, token, &pixels, 1)?;
+        } else if let Some(output_path) = output_path.as_ref() {
+            let path = Path::new(output_path);
+            if let Some(parent) = path.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+            }
+            fs::write(path, &pixels).map_err(|err| err.to_string())?;
         }
-        fs::write(path, &pixels).map_err(|err| err.to_string())?;
 
         if let Some(object) = snapshot.as_object_mut() {
-            object.insert("path".to_string(), Value::String(output_path));
+            match (stream.is_some(), output_path) {
+                (true, _) => { object.insert("transport".to_string(), json!("native-binary-stream")); }
+                (false, Some(path)) => { object.insert("path".to_string(), Value::String(path)); }
+                (false, None) => {}
+            }
             object.insert("bytes_written".to_string(), json!(pixels.len()));
             object.insert(
                 "storage_format".to_string(),
@@ -19959,6 +19967,7 @@ impl App {
     /// always shows the clip at N/fps and two renders of the same project
     /// match. The live transport is stashed and handed back on exit.
     fn enter_manual_clock_media(&mut self) {
+        self.manual_video_readers.clear();
         self.manual_clock_media_stash = Some(self.media_sources.clone());
         for state in self.media_sources.values_mut() {
             if state.source_type != "video" || state.paused { continue; }
@@ -19996,6 +20005,8 @@ impl App {
     }
 
     fn leave_manual_clock_media(&mut self) {
+        // The render's decoders end with it.
+        self.manual_video_readers.clear();
         let Some(stash) = self.manual_clock_media_stash.take() else { return; };
         for (source_id, state) in stash {
             if let Some(current) = self.media_sources.get_mut(&source_id)
@@ -20036,12 +20047,18 @@ impl App {
             let (frame_width, frame_height, rgba) = match self.cached_native_video_frame(&signature) {
                 Some(frame) => frame,
                 None => {
-                    // ffmpeg's input seek returns the first frame at or after
-                    // the requested time; back off a hair so float rounding
-                    // of an exact frame boundary cannot skip to the next one.
-                    let seek = (time_seconds - 1.0e-4).max(0.0);
-                    let frame = decode_native_video_frame_rgba(&path, decode_width, decode_height, seek)
-                        .map_err(|err| format!("video frame at {time_seconds:.3}s could not be decoded for export: {err}"))?;
+                    let frame = match self.read_manual_video_frame(&source_id, &path, decode_width, decode_height, time_seconds) {
+                        Some(frame) => frame,
+                        None => {
+                            // ffmpeg's input seek returns the first frame at or after
+                            // the requested time; back off a hair so float rounding
+                            // of an exact frame boundary cannot skip to the next one.
+                            let seek = (time_seconds - 1.0e-4).max(0.0);
+                            self.stats.manual_video_decoder_starts = self.stats.manual_video_decoder_starts.saturating_add(1);
+                            decode_native_video_frame_rgba(&path, decode_width, decode_height, seek)
+                                .map_err(|err| format!("video frame at {time_seconds:.3}s could not be decoded for export: {err}"))?
+                        }
+                    };
                     self.stats.native_video_frame_decodes = self.stats.native_video_frame_decodes.saturating_add(1);
                     self.store_native_video_frame_cache(signature.clone(), frame.0, frame.1, &frame.2);
                     frame
@@ -20058,7 +20075,57 @@ impl App {
             self.native_video_frame_signatures.insert(source_id, signature);
             settled += 1;
         }
+        // A video that stopped playing gives its decoder back.
+        if !self.manual_video_readers.is_empty() {
+            let active = self.active_video_source_ids();
+            self.manual_video_readers.retain(|id, _| active.contains(id));
+        }
         Ok(settled)
+    }
+
+    /// The frame at `time_seconds` from this source's long-running decoder
+    /// (started, or started again at this time, when it cannot get there by
+    /// reading on). None: fall back to a one-frame decode (the reader could
+    /// not start, or the file ended before this time).
+    fn read_manual_video_frame(
+        &mut self,
+        source_id: &str,
+        path: &Path,
+        width: usize,
+        height: usize,
+        time_seconds: f64,
+    ) -> Option<(usize, usize, Vec<u8>)> {
+        const MAX_READERS: usize = 8;
+        let reusable = self
+            .manual_video_readers
+            .get(source_id)
+            .is_some_and(|reader| reader.matches(path, width, height) && reader.can_reach(time_seconds));
+        if !reusable {
+            self.manual_video_readers.remove(source_id);
+            if self.manual_video_readers.len() >= MAX_READERS {
+                let victim = self.manual_video_readers.keys().next().cloned();
+                if let Some(victim) = victim { self.manual_video_readers.remove(&victim); }
+            }
+            let seek = (time_seconds - 1.0e-4).max(0.0);
+            self.stats.manual_video_decoder_starts = self.stats.manual_video_decoder_starts.saturating_add(1);
+            match media_decode::SequentialVideoReader::open(path, width, height, seek) {
+                Ok(reader) => { self.manual_video_readers.insert(source_id.to_string(), reader); }
+                Err(err) => {
+                    self.stats.native_video_frame_decode_last_error = err;
+                    return None;
+                }
+            }
+        }
+        let reader = self.manual_video_readers.get_mut(source_id)?;
+        match reader.frame_at(time_seconds) {
+            Ok(Some(frame)) => Some(frame),
+            Ok(None) => { self.manual_video_readers.remove(source_id); None }
+            Err(err) => {
+                self.stats.native_video_frame_decode_last_error = err;
+                self.manual_video_readers.remove(source_id);
+                None
+            }
+        }
     }
 
     fn video_source_fps_for(&mut self, path: &Path) -> Option<f64> {
@@ -34526,6 +34593,44 @@ impl SourcePreviewRequest {
 }
 
 static LIVE_FRAME_STREAM: Mutex<Option<(u16, String, std::net::TcpStream)>> = Mutex::new(None);
+
+/// Send a frame (`copies` times) to the main process's frame sink over the
+/// loopback connection kept for it, and wait for the sink's "OK": the sink
+/// answers once the encoder has taken the bytes, so a slow encoder slows the
+/// sender instead of piling frames up.
+fn send_to_frame_stream(port: u16, token: &str, pixels: &[u8], copies: u64) -> Result<(), String> {
+    use std::io::{Read, Write};
+    let mut cached = LIVE_FRAME_STREAM.lock().map_err(|_| "frame stream lock poisoned")?;
+    if cached.as_ref().is_none_or(|(p, t, _)| *p != port || t != token) {
+        let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+        let mut stream = std::net::TcpStream::connect_timeout(&address, Duration::from_secs(2)).map_err(|e| e.to_string())?;
+        stream.set_write_timeout(Some(Duration::from_secs(10))).map_err(|e| e.to_string())?;
+        stream.set_read_timeout(Some(Duration::from_secs(10))).map_err(|e| e.to_string())?;
+        stream.set_nodelay(true).map_err(|e| e.to_string())?;
+        stream.write_all(token.as_bytes()).map_err(|e| e.to_string())?;
+        *cached = Some((port, token.to_string(), stream));
+    }
+    let result = (|| -> Result<(), String> {
+        let stream = &mut cached.as_mut().unwrap().2;
+        for _ in 0..copies { stream.write_all(pixels).map_err(|e| e.to_string())?; }
+        let mut ack = [0u8; 2]; stream.read_exact(&mut ack).map_err(|e| e.to_string())?;
+        if &ack != b"OK" { return Err("encoder did not accept frame".to_string()); }
+        Ok(())
+    })();
+    if result.is_err() { *cached = None; }
+    result
+}
+
+/// A frame sink named in an RPC's params: `stream_port` + `stream_token`
+/// (from the main process, never the editor: the broker strips them).
+fn frame_stream_params(params: &Value) -> Result<Option<(u16, String)>, String> {
+    let Some(port) = params.get("stream_port") else { return Ok(None) };
+    let port = port.as_u64().filter(|p| *p > 0 && *p <= 65535).ok_or("invalid frame stream port")? as u16;
+    let token = params.get("stream_token").and_then(Value::as_str)
+        .filter(|s| s.len() == 64 && s.bytes().all(|c| c.is_ascii_hexdigit()))
+        .ok_or("invalid frame stream token")?.to_string();
+    Ok(Some((port, token)))
+}
 static LIVE_CAPTURE_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static LIVE_DIAGNOSTIC_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static LIVE_PREVIEW_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);

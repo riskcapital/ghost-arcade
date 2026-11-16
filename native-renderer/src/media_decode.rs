@@ -2008,6 +2008,157 @@ fn decode_native_video_frame_rgba_with_seek(
     Ok((target_width, target_height, rgba))
 }
 
+/// Pts of each frame from ffmpeg's showinfo filter ("... pts_time:1.234 ...").
+fn showinfo_pts_time(line: &str) -> Option<f64> {
+    if !line.contains("Parsed_showinfo") {
+        return None;
+    }
+    let rest = &line[line.find("pts_time:")? + "pts_time:".len()..];
+    rest.split_whitespace().next()?.parse::<f64>().ok().filter(|t| t.is_finite())
+}
+
+/// How far ahead a reader decodes its way forward rather than seeking.
+const SEQUENTIAL_VIDEO_MAX_SKIP_SECONDS: f64 = 2.0;
+/// A frame that takes longer than this fails like a single-frame decode.
+const SEQUENTIAL_VIDEO_FRAME_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// One video's frames, in order, from one long-running ffmpeg: what an offline
+/// render uses instead of starting ffmpeg for every frame. It hands out the
+/// same picture a single-frame decode at that time would (the first frame at
+/// or after it, by the frame's own timestamp, so a variable-rate file is read
+/// right too); asking for an earlier time, or one more than two seconds
+/// ahead, starts it again there. At most two decoded frames wait in it.
+pub struct SequentialVideoReader {
+    path: PathBuf,
+    width: usize,
+    height: usize,
+    child: Child,
+    frames: std::sync::mpsc::Receiver<Result<(f64, Vec<u8>), String>>,
+    /// The time the decode was started at; frame times are pts + this.
+    origin: f64,
+    /// The last frame read and its time, held while later requests still map to it.
+    current: Option<(f64, Vec<u8>)>,
+    ended: bool,
+}
+
+impl SequentialVideoReader {
+    pub fn open(path: &Path, width: usize, height: usize, time_seconds: f64) -> Result<Self, String> {
+        let width = width.clamp(16, MAX_NATIVE_VIDEO_FRAME_DECODE_DIMENSION);
+        let height = height.clamp(16, MAX_NATIVE_VIDEO_FRAME_DECODE_DIMENSION);
+        let origin = time_seconds.clamp(0.0, 3600.0);
+        let scale = format!("scale={width}:{height}:force_original_aspect_ratio=decrease");
+        let pad = format!("pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black");
+        let mut child = Command::new(ffmpeg_binary())
+            .args(["-hide_banner", "-loglevel", "info", "-nostdin", "-ss"])
+            .arg(format!("{origin:.6}"))
+            .arg("-i")
+            .arg(path)
+            .args(["-map", "0:v:0", "-an", "-fps_mode", "passthrough", "-vf"])
+            .arg(format!("showinfo,{scale},{pad},format=rgba"))
+            .args(["-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|err| format!("could not start ffmpeg for `{}`: {err}", path.display()))?;
+        let mut stdout = child.stdout.take().ok_or("ffmpeg stdout")?;
+        let stderr = child.stderr.take().ok_or("ffmpeg stderr")?;
+        let (pts_tx, pts_rx) = std::sync::mpsc::channel::<f64>();
+        let (log_tx, log_rx) = std::sync::mpsc::channel::<String>();
+        thread::spawn(move || {
+            let mut tail = String::new();
+            for line in std::io::BufReader::new(stderr).lines().map_while(Result::ok) {
+                if let Some(pts) = showinfo_pts_time(&line) {
+                    if pts_tx.send(pts).is_err() { break; }
+                } else if !line.contains("Parsed_showinfo") {
+                    tail.push_str(&line);
+                    tail.push('\n');
+                    if tail.len() > 4096 { tail.drain(..tail.len() - 4096); }
+                }
+            }
+            let _ = log_tx.send(tail);
+        });
+        // Back-pressure: one frame waits in the channel, one is being read.
+        let (frame_tx, frames) = std::sync::mpsc::sync_channel::<Result<(f64, Vec<u8>), String>>(1);
+        let bytes = width * height * 4;
+        thread::spawn(move || {
+            let mut sent = 0u64;
+            loop {
+                let mut frame = vec![0u8; bytes];
+                match stdout.read_exact(&mut frame) {
+                    Ok(()) => {
+                        let item = pts_rx.recv_timeout(SEQUENTIAL_VIDEO_FRAME_TIMEOUT)
+                            .map(|pts| (pts, frame))
+                            .map_err(|_| "ffmpeg sent a frame without its time".to_string());
+                        let failed = item.is_err();
+                        if frame_tx.send(item).is_err() || failed { break; }
+                        sent += 1;
+                    }
+                    Err(_) => {
+                        // The end of the file (empty), or ffmpeg failed before any
+                        // frame (its log).
+                        let log = if sent == 0 { log_rx.recv_timeout(Duration::from_secs(2)).unwrap_or_default() } else { String::new() };
+                        let log = log.trim();
+                        let _ = frame_tx.send(Err(if log.is_empty() && sent == 0 { "ffmpeg sent no frames".to_string() } else { log.to_string() }));
+                        break;
+                    }
+                }
+            }
+        });
+        Ok(Self { path: path.to_path_buf(), width, height, child, frames, origin, current: None, ended: false })
+    }
+
+    pub fn matches(&self, path: &Path, width: usize, height: usize) -> bool {
+        self.path == path
+            && self.width == width.clamp(16, MAX_NATIVE_VIDEO_FRAME_DECODE_DIMENSION)
+            && self.height == height.clamp(16, MAX_NATIVE_VIDEO_FRAME_DECODE_DIMENSION)
+    }
+
+    /// Whether `time_seconds` can be read by going forward from here.
+    pub fn can_reach(&self, time_seconds: f64) -> bool {
+        let at = self.current.as_ref().map_or(self.origin, |(t, _)| *t);
+        !self.ended && time_seconds + 1.0e-4 >= at && time_seconds - at <= SEQUENTIAL_VIDEO_MAX_SKIP_SECONDS
+    }
+
+    /// The picture a decode at `time_seconds` shows: the first frame whose
+    /// time is at or after it (less a hair for float rounding, as the
+    /// single-frame decode seeks). None when the file ends first.
+    pub fn frame_at(&mut self, time_seconds: f64) -> Result<Option<(usize, usize, Vec<u8>)>, String> {
+        let want = time_seconds - 1.0e-4;
+        loop {
+            if let Some((t, rgba)) = self.current.as_ref()
+                && *t >= want
+            {
+                return Ok(Some((self.width, self.height, rgba.clone())));
+            }
+            if self.ended {
+                return Ok(None);
+            }
+            match self.frames.recv_timeout(SEQUENTIAL_VIDEO_FRAME_TIMEOUT) {
+                Ok(Ok((pts, rgba))) => self.current = Some((self.origin + pts, rgba)),
+                Ok(Err(log)) if log.is_empty() => {
+                    self.ended = true;
+                }
+                Ok(Err(log)) => {
+                    self.ended = true;
+                    return Err(format!("ffmpeg failed reading `{}`: {log}", self.path.display()));
+                }
+                Err(_) => {
+                    self.ended = true;
+                    return Err(format!("ffmpeg stopped sending frames of `{}`", self.path.display()));
+                }
+            }
+        }
+    }
+}
+
+impl Drop for SequentialVideoReader {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 pub fn decode_native_video_frame_window_rgba(
     path: &Path,
     width: usize,
@@ -3106,5 +3257,76 @@ mod lifecycle_tests {
     fn diagnostics_keep_only_a_bounded_tail() {
         let mut bytes = std::io::Cursor::new(vec![42; 100_000]);
         assert_eq!(read_tail(&mut bytes, 16384), vec![42; 16384]);
+    }
+}
+
+#[cfg(test)]
+mod sequential_reader_tests {
+    use super::*;
+
+    /// A clip whose every frame is a different flat grey (frame n = n * 8), made
+    /// with the ffmpeg the core would use; None (the test is skipped) without one.
+    fn grey_clip(dir: &Path, name: &str, rate: &str, frames: u32) -> Option<PathBuf> {
+        let path = dir.join(name);
+        let expr = "geq=lum='mod(N*8,256)':cb=128:cr=128";
+        let ok = Command::new(ffmpeg_binary())
+            .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
+            .arg(format!("color=c=black:s=64x36:r={rate}"))
+            .args(["-frames:v", &frames.to_string(), "-vf", expr, "-c:v", "libx264", "-g", "12", "-pix_fmt", "yuv420p"])
+            .arg(&path)
+            .status()
+            .ok()?
+            .success();
+        ok.then_some(path)
+    }
+
+    fn grey(frame: &(usize, usize, Vec<u8>)) -> u8 {
+        frame.2[(frame.0 * frame.1 / 2 + frame.0 / 2) * 4]
+    }
+
+    /// Every frame the reader hands out is the one a single-frame decode at
+    /// that time gives, going forward at render rates above and below the
+    /// clip's, after a jump back, and after a jump far ahead.
+    #[test]
+    fn reads_the_same_frames_as_one_decode_per_frame() {
+        let dir = std::env::temp_dir().join(format!("ghost-seq-reader-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        for (rate, fps) in [("30", 30.0), ("25", 25.0), ("30000/1001", 30000.0 / 1001.0)] {
+            let Some(clip) = grey_clip(&dir, &format!("c{}.mp4", fps as u32), rate, 150) else {
+                eprintln!("ffmpeg not available: skipped");
+                return;
+            };
+            let mut reader = SequentialVideoReader::open(&clip, 64, 36, 0.0).unwrap();
+            let mut times: Vec<f64> = (0..120).map(|i| f64::from(i) / 60.0).collect();
+            times.extend([0.5, 0.6, 4.2, 4.25]);
+            let mut starts = 1;
+            for t in times {
+                // The frame a render shows at t: the one that started by then.
+                let frame_time = ((t * fps + 1e-6).floor()) / fps;
+                if !reader.can_reach(frame_time) {
+                    reader = SequentialVideoReader::open(&clip, 64, 36, (frame_time - 1e-4).max(0.0)).unwrap();
+                    starts += 1;
+                }
+                let got = reader.frame_at(frame_time).unwrap().expect("a frame");
+                let want = decode_native_video_frame_rgba(&clip, 64, 36, (frame_time - 1e-4).max(0.0)).unwrap();
+                assert_eq!(grey(&got), grey(&want), "{rate} fps clip at {t:.4}s (frame {frame_time:.4}s)");
+                assert_eq!(got.2, want.2, "{rate} fps clip at {t:.4}s: pixels differ");
+            }
+            // Started once, then again for the jump back and the jump ahead.
+            assert_eq!(starts, 3, "{rate}");
+            // Past the end: no frame (the caller falls back to a one-frame decode).
+            let end = 150.0 / fps;
+            let mut reader = SequentialVideoReader::open(&clip, 64, 36, end - 0.1).unwrap();
+            assert!(reader.frame_at(end - 0.1).unwrap().is_some());
+            assert!(reader.frame_at(end + 0.5).unwrap().is_none());
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reads_the_frame_time_from_showinfo() {
+        let line = "[Parsed_showinfo_0 @ 0x6000] n:   3 pts:   3072 pts_time:0.2      duration:1024 fmt:yuv420p";
+        assert_eq!(showinfo_pts_time(line), Some(0.2));
+        assert_eq!(showinfo_pts_time("frame=  10 fps=0.0 q=-0.0 size=N/A time=00:00:00.33"), None);
     }
 }
