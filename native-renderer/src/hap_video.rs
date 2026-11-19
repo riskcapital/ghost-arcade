@@ -110,140 +110,118 @@ pub struct HapVideoDecoder {
     end: f64,
 }
 impl HapVideoDecoder {
+    /// Like `open`, but says whether a refusal is about a HAP movie (its
+    /// reason is then the one to show) or about a file that is not HAP at
+    /// all (another decoder should try it).
+    #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
+    pub fn open_checked(path: &Path) -> std::result::Result<Self, HapOpenError> {
+        match Self::open(path) {
+            Ok(decoder) => Ok(decoder),
+            Err(reason) if sniff_hap_codec(path).is_some() => Err(HapOpenError::Unplayable(reason)),
+            Err(_) => Err(HapOpenError::NotHap),
+        }
+    }
     pub fn open(path: &Path) -> Result<Self> {
-        let mut file = File::open(path).map_err(|e| e.to_string())?;
-        let len = file.metadata().map_err(|e| e.to_string())?.len();
-        let mut offset = 0u64;
-        while offset.checked_add(8).is_some_and(|v| v <= len) {
-            file.seek(SeekFrom::Start(offset))
-                .map_err(|e| e.to_string())?;
-            let mut header = [0u8; 16];
-            file.read_exact(&mut header[..8])
-                .map_err(|e| e.to_string())?;
-            let short = be32(&header, 0)? as u64;
-            let (size, head) = if short == 1 {
-                file.read_exact(&mut header[8..])
-                    .map_err(|e| e.to_string())?;
-                (be64(&header, 8)?, 16)
-            } else if short == 0 {
-                (len - offset, 8)
-            } else {
-                (short, 8)
+        let (file, len, moov) = read_moov(path)?;
+        let mut unsupported: Option<&'static str> = None;
+        for (kind, track) in atoms(&moov)? {
+            if kind != *b"trak" {
+                continue;
+            }
+            let Ok(mdia) = atom(track, b"mdia") else {
+                continue;
             };
-            if size < head || offset.checked_add(size).is_none_or(|v| v > len) {
+            let Ok(minf) = atom(mdia, b"minf") else {
+                continue;
+            };
+            let Ok(stbl) = atom(minf, b"stbl") else {
+                continue;
+            };
+            let Ok(stsd) = atom(stbl, b"stsd") else {
+                continue;
+            };
+            if be32(stsd, 4)? != 1 {
+                continue;
+            }
+            let descriptions = atoms(stsd.get(8..).ok_or_else(bad)?)?;
+            let Some((codec, description)) = descriptions.first() else {
+                continue;
+            };
+            let format = match codec {
+                b"Hap1" => HapFormat::Rgb,
+                b"Hap5" => HapFormat::Alpha,
+                b"HapY" => HapFormat::YCoCg,
+                other => {
+                    if let Some(name) = unsupported_variant_name(other) {
+                        unsupported.get_or_insert(name);
+                    }
+                    continue;
+                }
+            };
+            let width = u16::from_be_bytes(
+                description.get(24..26).ok_or_else(bad)?.try_into().unwrap(),
+            ) as u32;
+            let height = u16::from_be_bytes(
+                description.get(26..28).ok_or_else(bad)?.try_into().unwrap(),
+            ) as u32;
+            if width == 0 || height == 0 || width > 8192 || height > 8192 {
+                return Err("HAP dimensions exceed the supported limit".into());
+            }
+            // The texture path currently uses the coded geometry. Do
+            // not silently ignore a container crop, aspect or rotation.
+            if let Ok(tkhd) = atom(track, b"tkhd") {
+                let matrix_at = match tkhd.first() { Some(0) => 40, Some(1) => 52, _ => return Err(bad()) };
+                for i in 0..9 {
+                    let expected = match i { 0 | 4 => 0x10000, 8 => 0x40000000, _ => 0 };
+                    if be32(tkhd, matrix_at + i * 4)? != expected { return Err("Transformed HAP tracks require compatibility playback".into()); }
+                }
+            }
+            for (kind, data) in atoms(description.get(78..).ok_or_else(bad)?)? {
+                if kind == *b"clap" || (kind == *b"pasp" && be32(data, 0)? != be32(data, 4)?) {
+                    return Err("Cropped or non-square-pixel HAP requires compatibility playback".into());
+                }
+            }
+            if let Ok(edts) = atom(track, b"edts") {
+                if !plays_from_first_frame(atom(edts, b"elst")?)? {
+                    return Err("HAP edit lists require compatibility playback".into());
+                }
+            }
+            let mdhd = atom(mdia, b"mdhd")?;
+            let scale_at = match mdhd.first() {
+                Some(0) => 12,
+                Some(1) => 20,
+                _ => return Err(bad()),
+            };
+            let timescale = be32(mdhd, scale_at)? as f64;
+            if timescale == 0.0 {
                 return Err(bad());
             }
-            if &header[4..8] == b"moov" {
-                if size - head > MAX_INDEX_BYTES {
-                    return Err("HAP movie index exceeds its memory limit".into());
-                }
-                let mut moov = vec![0u8; (size - head) as usize];
-                file.read_exact(&mut moov).map_err(|e| e.to_string())?;
-                for (kind, track) in atoms(&moov)? {
-                    if kind != *b"trak" {
-                        continue;
-                    }
-                    let Ok(mdia) = atom(track, b"mdia") else {
-                        continue;
-                    };
-                    let Ok(minf) = atom(mdia, b"minf") else {
-                        continue;
-                    };
-                    let Ok(stbl) = atom(minf, b"stbl") else {
-                        continue;
-                    };
-                    let Ok(stsd) = atom(stbl, b"stsd") else {
-                        continue;
-                    };
-                    if be32(stsd, 4)? != 1 {
-                        continue;
-                    }
-                    let descriptions = atoms(stsd.get(8..).ok_or_else(bad)?)?;
-                    let Some((codec, description)) = descriptions.first() else {
-                        continue;
-                    };
-                    let format = match codec {
-                        b"Hap1" => HapFormat::Rgb,
-                        b"Hap5" => HapFormat::Alpha,
-                        b"HapY" => HapFormat::YCoCg,
-                        _ => continue,
-                    };
-                    let width = u16::from_be_bytes(
-                        description.get(24..26).ok_or_else(bad)?.try_into().unwrap(),
-                    ) as u32;
-                    let height = u16::from_be_bytes(
-                        description.get(26..28).ok_or_else(bad)?.try_into().unwrap(),
-                    ) as u32;
-                    if width == 0 || height == 0 || width > 8192 || height > 8192 {
-                        return Err("HAP dimensions exceed the supported limit".into());
-                    }
-                    // The texture path currently uses the coded geometry. Do
-                    // not silently ignore a container crop, aspect or rotation.
-                    if let Ok(tkhd) = atom(track, b"tkhd") {
-                        let matrix_at = match tkhd.first() { Some(0) => 40, Some(1) => 52, _ => return Err(bad()) };
-                        for i in 0..9 {
-                            let expected = match i { 0 | 4 => 0x10000, 8 => 0x40000000, _ => 0 };
-                            if be32(tkhd, matrix_at + i * 4)? != expected { return Err("Transformed HAP tracks require compatibility playback".into()); }
-                        }
-                    }
-                    for (kind, data) in atoms(description.get(78..).ok_or_else(bad)?)? {
-                        if kind == *b"clap" || (kind == *b"pasp" && be32(data, 0)? != be32(data, 4)?) {
-                            return Err("Cropped or non-square-pixel HAP requires compatibility playback".into());
-                        }
-                    }
-                    if let Ok(edts) = atom(track, b"edts") {
-                        let elst = atom(edts, b"elst")?;
-                        let version = *elst.first().ok_or_else(bad)?;
-                        let media_time = if version == 0 {
-                            be32(elst, 12)? as u64
-                        } else if version == 1 {
-                            be64(elst, 16)?
-                        } else {
-                            return Err(bad());
-                        };
-                        let rate_at = if version == 0 { 16 } else { 24 };
-                        if be32(elst, 4)? != 1 || media_time != 0 || be32(elst, rate_at)? != 0x10000
-                        {
-                            return Err("HAP edit lists require compatibility playback".into());
-                        }
-                    }
-                    let mdhd = atom(mdia, b"mdhd")?;
-                    let scale_at = match mdhd.first() {
-                        Some(0) => 12,
-                        Some(1) => 20,
-                        _ => return Err(bad()),
-                    };
-                    let timescale = be32(mdhd, scale_at)? as f64;
-                    if timescale == 0.0 {
-                        return Err(bad());
-                    }
-                    let samples = sample_index(stbl, len)?;
-                    let duration_seconds = samples
-                        .last()
-                        .map(|s| (s.time + s.duration as u64) as f64 / timescale)
-                        .ok_or_else(bad)?;
-                    let fps = samples.len() as f64 / duration_seconds;
-                    return Ok(Self {
-                        file,
-                        packet: Vec::new(),
-                        metadata: HapMetadata {
-                            width,
-                            height,
-                            fps,
-                            duration_seconds,
-                        },
-                        format,
-                        samples,
-                        timescale,
-                        cursor: 0,
-                        end: duration_seconds,
-                    });
-                }
-                return Err("Movie has no supported HAP video track".into());
-            }
-            offset += size;
+            let samples = sample_index(stbl, len)?;
+            let duration_seconds = samples
+                .last()
+                .map(|s| (s.time + s.duration as u64) as f64 / timescale)
+                .ok_or_else(bad)?;
+            let fps = samples.len() as f64 / duration_seconds;
+            return Ok(Self {
+                file,
+                packet: Vec::new(),
+                metadata: HapMetadata {
+                    width,
+                    height,
+                    fps,
+                    duration_seconds,
+                },
+                format,
+                samples,
+                timescale,
+                cursor: 0,
+                end: duration_seconds,
+            });
         }
-        Err("Movie has no HAP sample index".into())
+        match unsupported {
+            Some(name) => Err(format!("{name} is not supported by GPU HAP playback yet")),
+            None => Err("Movie has no supported HAP video track".into()),
+        }
     }
     pub fn metadata(&self) -> HapMetadata {
         self.metadata
@@ -332,6 +310,119 @@ impl HapVideoDecoder {
         self.next_frame()
     }
 }
+/// Why the native HAP path did not take a file.
+#[derive(Debug)]
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
+pub enum HapOpenError {
+    /// Not a HAP movie: another decoder should try it.
+    NotHap,
+    /// A HAP movie this path cannot play; the reason is worth showing.
+    Unplayable(String),
+}
+
+/// HAP variants other tools write that this path does not decode yet.
+fn unsupported_variant_name(codec: &[u8; 4]) -> Option<&'static str> {
+    match codec {
+        b"HapM" => Some("HAP Q Alpha"),
+        b"HapA" => Some("HAP Alpha-Only"),
+        b"Hap7" => Some("HAP R"),
+        b"HapH" => Some("HAP HDR"),
+        other if other.starts_with(b"Hap") => Some("This HAP variant"),
+        _ => None,
+    }
+}
+
+/// The movie's `moov` box, read within the index memory limit.
+fn read_moov(path: &Path) -> Result<(File, u64, Vec<u8>)> {
+    let mut file = File::open(path).map_err(|e| e.to_string())?;
+    let len = file.metadata().map_err(|e| e.to_string())?.len();
+    let mut offset = 0u64;
+    while offset.checked_add(8).is_some_and(|v| v <= len) {
+        file.seek(SeekFrom::Start(offset))
+            .map_err(|e| e.to_string())?;
+        let mut header = [0u8; 16];
+        file.read_exact(&mut header[..8])
+            .map_err(|e| e.to_string())?;
+        let short = be32(&header, 0)? as u64;
+        let (size, head) = if short == 1 {
+            file.read_exact(&mut header[8..])
+                .map_err(|e| e.to_string())?;
+            (be64(&header, 8)?, 16)
+        } else if short == 0 {
+            (len - offset, 8)
+        } else {
+            (short, 8)
+        };
+        if size < head || offset.checked_add(size).is_none_or(|v| v > len) {
+            return Err(bad());
+        }
+        if &header[4..8] == b"moov" {
+            if size - head > MAX_INDEX_BYTES {
+                return Err("HAP movie index exceeds its memory limit".into());
+            }
+            let mut moov = vec![0u8; (size - head) as usize];
+            file.read_exact(&mut moov).map_err(|e| e.to_string())?;
+            return Ok((file, len, moov));
+        }
+        offset += size;
+    }
+    Err("Movie has no HAP sample index".into())
+}
+
+/// The first video sample description's codec when it is a HAP codec
+/// (`Hap1`, `Hap5`, `HapY`, `HapM`, ...). Tolerant: any parse problem is
+/// "not HAP".
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
+pub fn sniff_hap_codec(path: &Path) -> Option<[u8; 4]> {
+    let (_, _, moov) = read_moov(path).ok()?;
+    for (kind, track) in atoms(&moov).ok()? {
+        if kind != *b"trak" {
+            continue;
+        }
+        let stsd = atom(track, b"mdia")
+            .and_then(|m| atom(m, b"minf"))
+            .and_then(|m| atom(m, b"stbl"))
+            .and_then(|m| atom(m, b"stsd"));
+        let Ok(stsd) = stsd else { continue };
+        let Some(entries) = stsd.get(8..).and_then(|b| atoms(b).ok()) else { continue };
+        if let Some((codec, _)) = entries.first()
+            && codec.starts_with(b"Hap")
+        {
+            return Some(*codec);
+        }
+    }
+    None
+}
+
+/// True when an edit list plays the media from its first sample at normal
+/// speed: one edit at media time 0, optionally after one empty edit (a delay
+/// before the track starts, which encoders write for a stream whose first
+/// timestamp is not zero). The delay is dropped: a clip starts on its first
+/// frame. Anything else (trims, speed changes, several pieces) is refused.
+fn plays_from_first_frame(elst: &[u8]) -> Result<bool> {
+    let version = *elst.first().ok_or_else(bad)?;
+    let count = be32(elst, 4)? as usize;
+    let entry = match version {
+        0 => 12,
+        1 => 20,
+        _ => return Err(bad()),
+    };
+    let read = |i: usize| -> Result<(i64, u32)> {
+        let at = 8 + i * entry;
+        Ok(if version == 0 {
+            (be32(elst, at + 4)? as i32 as i64, be32(elst, at + 8)?)
+        } else {
+            (be64(elst, at + 8)? as i64, be32(elst, at + 16)?)
+        })
+    };
+    let normal = |(media_time, rate): (i64, u32)| media_time == 0 && rate == 0x10000;
+    Ok(match count {
+        1 => normal(read(0)?),
+        2 => read(0)?.0 == -1 && normal(read(1)?),
+        _ => false,
+    })
+}
+
 fn sample_index(stbl: &[u8], file_len: u64) -> Result<Vec<Sample>> {
     let sizes = atom(stbl, b"stsz")?;
     let fixed = be32(sizes, 4)? as usize;
@@ -649,5 +740,142 @@ mod tests {
             }
         }
         std::fs::remove_dir_all(dir).unwrap();
+    }
+    fn elst(version: u8, entries: &[(i64, u32)]) -> Vec<u8> {
+        let mut b = vec![version, 0, 0, 0];
+        b.extend_from_slice(&(entries.len() as u32).to_be_bytes());
+        for &(media_time, rate) in entries {
+            if version == 0 {
+                b.extend_from_slice(&1000u32.to_be_bytes());
+                b.extend_from_slice(&(media_time as i32).to_be_bytes());
+            } else {
+                b.extend_from_slice(&1000u64.to_be_bytes());
+                b.extend_from_slice(&media_time.to_be_bytes());
+            }
+            b.extend_from_slice(&rate.to_be_bytes());
+        }
+        b
+    }
+    #[test]
+    fn edit_lists_that_play_from_the_first_frame_are_accepted() {
+        for v in [0u8, 1] {
+            assert!(plays_from_first_frame(&elst(v, &[(0, 0x10000)])).unwrap());
+            // A start delay (empty edit) before the media: dropped.
+            assert!(plays_from_first_frame(&elst(v, &[(-1, 0x10000), (0, 0x10000)])).unwrap());
+            // Trims, speed changes and several pieces still need compatibility playback.
+            assert!(!plays_from_first_frame(&elst(v, &[(1500, 0x10000)])).unwrap());
+            assert!(!plays_from_first_frame(&elst(v, &[(0, 0x20000)])).unwrap());
+            assert!(!plays_from_first_frame(&elst(v, &[(0, 0x10000), (0, 0x10000)])).unwrap());
+            assert!(!plays_from_first_frame(&elst(v, &[(-1, 0x10000), (500, 0x10000)])).unwrap());
+            assert!(!plays_from_first_frame(&elst(v, &[])).unwrap());
+        }
+        assert!(plays_from_first_frame(&elst(2, &[(0, 0x10000)])).is_err());
+        assert!(plays_from_first_frame(&[0, 0, 0, 0, 0, 0, 0, 1]).is_err());
+    }
+    #[test]
+    fn unsupported_variants_are_named() {
+        assert_eq!(unsupported_variant_name(b"HapM"), Some("HAP Q Alpha"));
+        assert_eq!(unsupported_variant_name(b"HapA"), Some("HAP Alpha-Only"));
+        assert_eq!(unsupported_variant_name(b"Hap7"), Some("HAP R"));
+        assert_eq!(unsupported_variant_name(b"HapH"), Some("HAP HDR"));
+        assert_eq!(unsupported_variant_name(b"Hapz"), Some("This HAP variant"));
+        assert_eq!(unsupported_variant_name(b"avc1"), None);
+    }
+    #[test]
+    #[ignore = "Requires GA_TEST_FFMPEG pointing at the bundled FFmpeg"]
+    fn start_delays_unsupported_variants_and_other_codecs() {
+        let ffmpeg = std::env::var("GA_TEST_FFMPEG").expect("Set GA_TEST_FFMPEG");
+        let dir = std::env::temp_dir().join(format!("ghost-hap-variants-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let make = |name: &str, args: &[&str]| {
+            let path = dir.join(name);
+            let status = std::process::Command::new(&ffmpeg)
+                .args(["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=64x64:r=25:d=0.2"])
+                .args(args)
+                .arg(&path)
+                .status()
+                .unwrap();
+            assert!(status.success());
+            path
+        };
+        // An encoder start offset writes an empty edit first: it plays from its first frame.
+        let delayed = make("delayed.mov", &["-c:v", "hap", "-format", "hap_q", "-output_ts_offset", "0.5"]);
+        let mut decoder = HapVideoDecoder::open(&delayed).unwrap();
+        assert!((decoder.metadata().duration_seconds - 0.2).abs() < 1e-6);
+        assert!((decoder.next_frame().unwrap().unwrap().pts_seconds).abs() < 1e-9);
+        // A HAP Q Alpha sample description: refused by name, as a HAP movie.
+        let mut bytes = std::fs::read(&delayed).unwrap();
+        let stsd = bytes.windows(4).position(|w| w == b"stsd").unwrap();
+        let tag = stsd + bytes[stsd..].windows(4).position(|w| w == b"HapY").unwrap();
+        bytes[tag..tag + 4].copy_from_slice(b"HapM");
+        let q_alpha = dir.join("q-alpha.mov");
+        std::fs::write(&q_alpha, &bytes).unwrap();
+        assert_eq!(sniff_hap_codec(&q_alpha), Some(*b"HapM"));
+        match HapVideoDecoder::open_checked(&q_alpha) {
+            Err(HapOpenError::Unplayable(reason)) => assert!(reason.starts_with("HAP Q Alpha is not supported"), "{reason}"),
+            other => panic!("expected a named refusal, got {:?}", other.err()),
+        }
+        // Not HAP at all: left to the platform decoder.
+        let mjpeg = make("mjpeg.mov", &["-c:v", "mjpeg"]);
+        assert!(sniff_hap_codec(&mjpeg).is_none());
+        assert!(matches!(HapVideoDecoder::open_checked(&mjpeg), Err(HapOpenError::NotHap)));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    /// Opens and decodes every .mov under GA_HAP_SAMPLE_DIR and prints one
+    /// line per file: how the native HAP path takes it, or why not.
+    #[test]
+    #[ignore = "Requires GA_HAP_SAMPLE_DIR pointing at a folder of MOV files"]
+    fn sample_folder_report() {
+        let dir = std::env::var("GA_HAP_SAMPLE_DIR").expect("Set GA_HAP_SAMPLE_DIR");
+        let mut paths = Vec::new();
+        let mut stack = vec![std::path::PathBuf::from(dir)];
+        while let Some(at) = stack.pop() {
+            for entry in std::fs::read_dir(&at).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("mov")) {
+                    paths.push(path);
+                }
+            }
+        }
+        paths.sort();
+        let limit = std::env::var("GA_HAP_SAMPLE_FRAMES").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(usize::MAX);
+        for path in paths {
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            match HapVideoDecoder::open(&path) {
+                Err(err) => println!("REJECT {name}: {err}"),
+                Ok(mut decoder) => {
+                    let m = decoder.metadata();
+                    let mut frames = 0;
+                    let mut error = None;
+                    while frames < limit {
+                        match decoder.next_frame() {
+                            Ok(Some(_)) => frames += 1,
+                            Ok(None) => break,
+                            Err(err) => {
+                                error = Some(err);
+                                break;
+                            }
+                        }
+                    }
+                    let seek = decoder
+                        .seek(m.duration_seconds / 2.0, None)
+                        .and_then(|_| decoder.next_frame())
+                        .map(|f| f.is_some());
+                    println!(
+                        "{} {name}: {:?} {}x{} {:.3} fps {:.3} s, {frames} frames, seek {:?}{}",
+                        if error.is_none() && seek == Ok(true) { "OK" } else { "FAIL" },
+                        decoder.format,
+                        m.width,
+                        m.height,
+                        m.fps,
+                        m.duration_seconds,
+                        seek,
+                        error.map(|e| format!(", decode error: {e}")).unwrap_or_default()
+                    );
+                }
+            }
+        }
     }
 }

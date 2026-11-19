@@ -1,5 +1,5 @@
 //! Platform and HAP frames behind the shared preparation/transport policy.
-use crate::hap_video::{HapFrame, HapVideoDecoder};
+use crate::hap_video::{HapFrame, HapOpenError, HapVideoDecoder};
 #[cfg(target_os = "macos")]
 use crate::mac_video_decoder::{
     GpuVideoFrame as NativeGpuVideoFrame, MacVideoDecoder as NativeDecoder, VideoMetadata,
@@ -55,6 +55,23 @@ impl From<HapFrame> for GpuVideoFrame {
         }
     }
 }
+/// The native HAP path's answer for a file: a decoder, `None` when the file
+/// is not HAP (the platform decoder tries it), or why a HAP movie cannot play
+/// here. The platform decoders cannot read HAP, so trying one would only
+/// replace a useful reason with a vague one.
+pub fn open_hap(path: &Path, hap_supported: bool) -> Result<Option<HapVideoDecoder>, String> {
+    if !hap_supported {
+        return match crate::hap_video::sniff_hap_codec(path) {
+            Some(_) => Err("HAP needs a graphics adapter with BC texture compression, which this one does not offer".into()),
+            None => Ok(None),
+        };
+    }
+    match HapVideoDecoder::open_checked(path) {
+        Ok(hap) => Ok(Some(hap)),
+        Err(HapOpenError::NotHap) => Ok(None),
+        Err(HapOpenError::Unplayable(reason)) => Err(reason),
+    }
+}
 pub enum HardwareVideoDecoder {
     Native(NativeDecoder),
     Hap(HapVideoDecoder),
@@ -64,7 +81,7 @@ impl HardwareVideoDecoder {
     /// frames are uploaded compressed and always keep their size.
     #[cfg(target_os = "macos")]
     pub fn open(path: &Path, hap_supported: bool, max_edge: Option<u32>) -> Result<Self, String> {
-        if hap_supported && let Ok(hap) = HapVideoDecoder::open(path) {
+        if let Some(hap) = open_hap(path, hap_supported)? {
             return Ok(Self::Hap(hap));
         }
         NativeDecoder::open_scaled(path, max_edge).map(Self::Native)
@@ -76,7 +93,7 @@ impl HardwareVideoDecoder {
         hap_supported: bool,
         max_edge: Option<u32>,
     ) -> Result<Self, String> {
-        if hap_supported && let Ok(hap) = HapVideoDecoder::open(path) {
+        if let Some(hap) = open_hap(path, hap_supported)? {
             return Ok(Self::Hap(hap));
         }
         let mut decoder = NativeDecoder::open_with_device(path, &device?)?;
