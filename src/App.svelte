@@ -79,6 +79,7 @@
   import ShowTimeline from './lib/components/ShowTimeline.svelte';
   import { timelineRowTray } from './lib/components/show/timeline/rowSelect';
   import ShowFromAudioModal from './lib/components/ShowFromAudioModal.svelte';
+  import SurfaceLinkModal from './lib/components/SurfaceLinkModal.svelte';
   import { pickSongForShow } from './lib/show/showFromAudio';
   import SettingsPanel from './lib/components/SettingsPanel.svelte';
   import InteractiveStudio from './lib/components/studio/InteractiveStudio.svelte';
@@ -9115,6 +9116,8 @@
     <ShowTimeline />
     <!-- New show from audio (File menu, welcome screen, a song dropped on the workspace) -->
     <ShowFromAudioModal />
+    <!-- Link to existing surface (Geometry panel, a preset's menu) -->
+    <SurfaceLinkModal />
 
     <!-- Bottom dock pills (Presets / Sequencer / Keyframes) — coral-active. -->
     {#if !vjNativeUnderlayActive && !$vjStageEdit}

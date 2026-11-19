@@ -5,6 +5,8 @@
   //   Geometry - shared with every preset that uses this surface, or kept
   //              for this layer (and presets saved from it) only.
   import { project } from '../stores/layers';
+  import { surfaceIdOf } from '../stores/mapSurfaces';
+  import { openSurfaceLink } from '../stores/surfaceLinkRequest';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
   import { VJ_MIX_SOURCE_INDEX, type Layer } from '../types';
 
@@ -17,9 +19,14 @@
     : layer.vjLayerIndex == null ? 'own' : String(layer.vjLayerIndex);
   $: groups = $vjClipLauncher.groups ?? [];
   $: missingGroup = !!layer.vjGroupId && !groups.some((group) => group.id === layer.vjGroupId);
-  $: isSurface = ($project.mapSurfaces ?? []).some((surface) => surface.id === layer.id);
+  // A layer is its own surface unless it was linked to another one.
+  $: surfaceId = surfaceIdOf(layer);
+  $: isSurface = ($project.mapSurfaces ?? []).some((surface) => surface.id === surfaceId);
+  $: linkedTo = surfaceId !== layer.id
+    ? ($project.mapSurfaces ?? []).find((surface) => surface.id === surfaceId)?.name ?? null
+    : null;
   $: presetCount = ($project.vjMode?.compositions ?? [])
-    .filter((composition) => composition.layers.some((l) => (l.surfaceId || l.id) === layer.id)).length;
+    .filter((composition) => composition.layers.some((l) => surfaceIdOf(l) === surfaceId)).length;
 
   function setSource(value: string) {
     if (value.startsWith('group:')) project.setLayerVJGroup(layer.id, value.slice(6));
@@ -64,6 +71,9 @@
       <span class="surface-state" data-testid="surface-geometry-state">Shared{presetCount ? ` by ${presetCount} preset${presetCount === 1 ? '' : 's'}` : ''}</span>
     {/if}
   </div>
+  {#if linkedTo}
+    <p class="surface-hint" data-testid="surface-linked-to">Linked to <span class="surface-ref">{linkedTo}</span></p>
+  {/if}
   <div class="surface-actions">
     {#if layer.surfaceDetached}
       <button type="button" data-testid="surface-use-shared" onclick={() => project.setLayerSurfaceSharing(layer.id, 'use')}
@@ -74,6 +84,10 @@
       <button type="button" data-testid="surface-detach" onclick={() => project.setLayerSurfaceSharing(layer.id, 'detach')}
         title="Keep this layer's warp to itself; presets saved from it keep it too">Detach</button>
     {/if}
+  </div>
+  <div class="surface-actions">
+    <button type="button" data-testid="surface-link" onclick={() => openSurfaceLink({ surfaceId })}
+      title="Put layers of other presets on an existing surface, so its warp moves them all">Link to surface…</button>
   </div>
 {/if}
 
@@ -109,6 +123,9 @@
   }
   .surface-state.detached {
     color: #f0b35a;
+  }
+  .surface-ref {
+    color: var(--ga-blue-300, #7d9aff);
   }
   .surface-hint {
     font-size: var(--ga-text-meta, 11px);

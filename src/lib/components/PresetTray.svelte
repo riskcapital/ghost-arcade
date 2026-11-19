@@ -1,6 +1,7 @@
 <script lang="ts">
   import { project, compositions, activeCompositionId } from '../stores/layers';
   import { showTimelineIsPlaying } from '../stores/showTimeline';
+  import { openSurfaceLink } from '../stores/surfaceLinkRequest';
   import { presetTransition, TRANSITION_OPTIONS } from '../stores/presetTransition';
   import { audioBpm } from '../stores/audio';
   import type { Composition, CompositionTransitionStyle } from '../types';
@@ -601,6 +602,12 @@
           class="ctx-item"
           onclick={(e) => { e.stopPropagation(); const c = ctxMenu!.comp; closeCtxMenu(); startEdit(c, e); }}
         >✎ Rename</button>
+        <button
+          class="ctx-item"
+          data-testid="preset-link-surface"
+          onclick={(e) => { e.stopPropagation(); const id = ctxMenu!.comp.id; closeCtxMenu(); openSurfaceLink({ compositionIds: [id] }); }}
+          title="Put a layer of this preset on an existing shared surface"
+        >⇄ Link to surface…</button>
         <div class="ctx-divider"></div>
         <button
           class="ctx-item ctx-danger"
