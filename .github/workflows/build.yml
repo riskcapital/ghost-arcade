@@ -50,8 +50,24 @@ jobs:
       - name: Test language packs
         run: npx vitest run src/lib/i18n
 
+  # The AI models the app offers are still current: none deprecated, retired
+  # or scheduled to shut down (npm run check:ai-models). CI has no provider
+  # keys, so this reads the providers' public model and deprecation pages;
+  # run it locally with keys before tagging for the account-level check.
+  ai-models-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Check AI model list
+        run: node scripts/check-ai-models.mjs
+
   create-release:
-    needs: i18n-check
+    needs: [i18n-check, ai-models-check]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

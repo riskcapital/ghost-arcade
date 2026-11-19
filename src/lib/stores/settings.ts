@@ -8,6 +8,7 @@ import { writable, get } from 'svelte/store';
 import { invoke, isDesktopApp } from '$lib/bridge';
 import type { WarpCorners, MeshWarpGrid, Effect, Point2D, BezierPoint } from '../types';
 import { meshGridHasTangents } from '../utils/meshWarp';
+import { DEFAULT_CLAUDE_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_LUMA_MODEL, DEFAULT_OMNI_MODEL, restoreAIModelChoices } from '../api/ai-models';
 import type { MirrorMesh } from '../output/mirrorMesh';
 import { domeProjectorOf, type DomeProjector } from '../output/domeMath';
 
@@ -164,38 +165,8 @@ export function applyColorScheme(scheme: ColorScheme) {
 // AI MODEL LISTS
 // ============================================================================
 
-export interface AIModelOption {
-  id: string;
-  label: string;
-}
-
-export const CLAUDE_MODELS: AIModelOption[] = [
-  { id: 'claude-fable-5', label: 'Claude Fable 5' },
-  { id: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
-  { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
-  { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5 (Fast)' },
-];
-
-export const GEMINI_MODELS: AIModelOption[] = [
-  { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview' },
-  { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
-  { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash Preview' },
-  { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite' },
-  { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-  { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (Legacy)' },
-];
-
-export const VEO_MODELS: AIModelOption[] = [
-  { id: 'veo-3.1-generate-preview', label: 'Veo 3.1 Preview' },
-  { id: 'veo-3.1-fast-generate-preview', label: 'Veo 3.1 Fast Preview' },
-  { id: 'veo-3.1-lite-generate-preview', label: 'Veo 3.1 Lite Preview' },
-  { id: 'veo-2.0-generate-001', label: 'Veo 2.0 (Deprecated)' },
-];
-
-export const LUMA_MODELS: AIModelOption[] = [
-  { id: 'ray-2', label: 'Ray 2 (Quality)' },
-  { id: 'ray-flash-2', label: 'Ray Flash 2 (Fast)' },
-];
+// The model lists and their defaults live in api/ai-models.json.
+export { CLAUDE_MODELS, GEMINI_MODELS, OMNI_MODELS, LUMA_MODELS, type AIModelOption } from '../api/ai-models';
 
 // ============================================================================
 // SETTINGS INTERFACES
@@ -215,6 +186,7 @@ export interface AISettings {
   videoProvider: VideoAIProvider;
   lumaApiKey: string;
   lumaModel: string;
+  /** The Google video model (Gemini Omni). Named for the Veo models it replaced, so saved settings still load. */
   veoModel: string;
   // Replicate (SAM2 segmentation)
   replicateApiKey: string;
@@ -1215,13 +1187,14 @@ function createDefaultSettings(): AppSettings {
     ai: {
       shaderProvider: 'claude',
       claudeApiKey: '',
-      claudeModel: 'claude-sonnet-4-6',
+      claudeModel: DEFAULT_CLAUDE_MODEL,
       geminiApiKey: '',
-      geminiModel: 'gemini-3.5-flash',
+      geminiModel: DEFAULT_GEMINI_MODEL,
       videoProvider: 'veo',
       lumaApiKey: '',
-      lumaModel: 'ray-2',
-      veoModel: 'veo-3.1-generate-preview',
+      lumaModel: DEFAULT_LUMA_MODEL,
+      // The Google video model. The key keeps its old name so saved settings load.
+      veoModel: DEFAULT_OMNI_MODEL,
       replicateApiKey: '',
     },
     defaultLayerShader: 'grid',
@@ -1410,6 +1383,8 @@ function loadSettings(): AppSettings {
           claudeApiKey: parsed.ai?.claudeApiKey || legacyClaude || '',
           geminiApiKey: parsed.ai?.geminiApiKey || legacyGemini || '',
           shaderProvider: parsed.ai?.shaderProvider || (legacyProvider as ShaderAIProvider) || defaults.ai.shaderProvider,
+          // A model the providers retired becomes its current replacement.
+          ...restoreAIModelChoices(parsed.ai),
         },
         // S4: experimental flags. Spread defaults first so new
         // flags added in future sprints get merged in for users
