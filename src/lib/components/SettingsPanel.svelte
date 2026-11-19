@@ -859,11 +859,12 @@
           <div class="setting-row">
             <div class="setting-label">
               <label class="label-text" for="interface-scale">Interface size</label>
-              <span class="label-hint">Resize controls and text for your display. Projector output resolution stays unchanged.</span>
+              <span class="label-hint">Resize controls and text for your display. Auto fits everything to the window. Projector output resolution stays unchanged.</span>
             </div>
-            <select id="interface-scale" value={$interfaceScale} onchange={e => interfaceScale.set(Number(e.currentTarget.value))}>
+            <select id="interface-scale" value={String($interfaceScale)} onchange={e => interfaceScale.set(e.currentTarget.value === 'auto' ? 'auto' : Number(e.currentTarget.value))}>
+              <option value="auto">Auto · fits the window</option>
               {#each [0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2] as scale}
-                <option value={scale}>{Math.round(scale * 100)}%{scale === 1 ? ' · Default' : ''}</option>
+                <option value={String(scale)}>{Math.round(scale * 100)}%</option>
               {/each}
             </select>
           </div>

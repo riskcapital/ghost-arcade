@@ -36,17 +36,27 @@
     <span class="txt">Build</span>
   </button>
   <button class="go drop" onclick={dropNow} title="Drop on the next bar line" data-midi-path="studio:build.drop" data-midi-label="Drop on the next bar" data-midi-mode="toggle">Drop</button>
-  <select value={b.bars} onchange={(e) => musicStudio.setBuild({ bars: +(e.target as HTMLSelectElement).value as BuildLength })} aria-label="Build length" title="How long the build runs">
-    {#each BUILD_LENGTHS as n}<option value={n}>{n} bar{n === 1 ? '' : 's'}</option>{/each}
-  </select>
-  <select value={b.style} onchange={(e) => musicStudio.setBuild({ style: (e.target as HTMLSelectElement).value as BuildStyle })} aria-label="Build style">
-    {#each BUILD_STYLES as st (st.id)}<option value={st.id}>{st.label}</option>{/each}
-  </select>
+  {#snippet lengthMenu()}
+    <select value={b.bars} onchange={(e) => musicStudio.setBuild({ bars: +(e.target as HTMLSelectElement).value as BuildLength })} aria-label="Build length" title="How long the build runs">
+      {#each BUILD_LENGTHS as n}<option value={n}>{n === 1 ? '1 bar' : `${n} bars`}</option>{/each}
+    </select>
+  {/snippet}
+  {#snippet styleMenu()}
+    <select value={b.style} onchange={(e) => musicStudio.setBuild({ style: (e.target as HTMLSelectElement).value as BuildStyle })} aria-label="Build style">
+      {#each BUILD_STYLES as st (st.id)}<option value={st.id}>{st.label}</option>{/each}
+    </select>
+  {/snippet}
+  <!-- Short of room, these two fold into the editor (right-click Build). -->
+  <span class="menus">{@render lengthMenu()}{@render styleMenu()}</span>
   <StudioJack id="cv:build.progress" label="Build" title="How far the build has got, 0 to 1, as a control signal" />
   <StudioJack id="cv:build.drop" label="Drop" title="A hit on the drop, as a control signal" />
 
   {#if editing}
     <div class="editor" role="dialog" aria-label="Edit the build">
+      <div class="row folded">
+        <label>Length {@render lengthMenu()}</label>
+        <label>Style {@render styleMenu()}</label>
+      </div>
       <div class="row">
         <label>Roll
           <select value={b.roll} onchange={(e) => musicStudio.setBuild({ roll: (e.target as HTMLSelectElement).value as BuildRoll })}>
@@ -103,6 +113,9 @@
 
 <style>
   .build { position: relative; display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+  .menus { display: contents; }
+  /* Only shown in the editor when the menus have folded into it (OutputStrip.svelte). */
+  .row.folded { display: none; }
   .go {
     position: relative;
     height: var(--ga-control-h, 26px);

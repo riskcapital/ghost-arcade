@@ -5,8 +5,8 @@ import { interfaceScale, normalizeInterfaceScale, startInterfaceScale } from './
 
 describe('editor interface scaling', () => {
   beforeEach(() => { interfaceScale.set(1); invoke.mockClear(); });
-  it('defaults malformed saved values and limits the UI to usable sizes', () => {
-    for (const value of [null, undefined, '', 'bad', 0, -1, Infinity]) expect(normalizeInterfaceScale(value)).toBe(1);
+  it('fits the window when nothing usable is saved, and limits the UI to usable sizes', () => {
+    for (const value of [null, undefined, '', 'bad', 0, -1, Infinity, 'auto']) expect(normalizeInterfaceScale(value)).toBe('auto');
     expect(normalizeInterfaceScale(0.1)).toBe(0.75);
     expect(normalizeInterfaceScale(3)).toBe(2);
     expect(normalizeInterfaceScale('1.25')).toBe(1.25);
@@ -18,6 +18,10 @@ describe('editor interface scaling', () => {
     expect(invoke).toHaveBeenLastCalledWith('set_interface_scale', { scale: 1.25 });
     interfaceScale.set(1.5);
     expect(invoke).toHaveBeenLastCalledWith('set_interface_scale', { scale: 1.5 });
+    interfaceScale.set('auto');
+    expect(invoke).toHaveBeenLastCalledWith('set_interface_scale', { scale: 'auto' });
+    interfaceScale.set('auto');
+    expect(invoke).toHaveBeenLastCalledWith('set_interface_scale', { scale: 'auto' });
     stop(); invoke.mockClear(); interfaceScale.set(2);
     expect(invoke).not.toHaveBeenCalled();
   });

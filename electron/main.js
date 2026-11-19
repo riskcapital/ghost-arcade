@@ -6519,16 +6519,62 @@ function startOSC(port, win) {
   });
 }
 
+// --- Interface size ---
+// A size the user picked, or Auto: fit the editor to the window. The layout
+// is made for about 1600x900; smaller windows scale down to fit, and only a
+// window well past 1920x1040 scales up. Output pixels never change.
+let interfaceScaleAuto = false;
+let interfaceScaleTimer = null;
+let interfaceScaleWatched = null;
+
+function autoInterfaceScale(win) {
+  const { width, height } = win.getContentBounds();
+  if (!width || !height) return 1;
+  const fit = Math.min(width / 1600, height / 900);
+  const raw = fit < 1 ? fit : Math.max(1, Math.min(width / 1920, height / 1040));
+  return Math.max(0.75, Math.min(1.25, Math.floor(raw * 20) / 20));
+}
+
+function setInterfaceZoom(win, value) {
+  if (Math.abs(win.webContents.getZoomFactor() - value) < 0.001) return;
+  win.webContents.setZoomFactor(value);
+  nativePreviewLastRectSignature = '';
+}
+
+function refitInterfaceScale() {
+  interfaceScaleTimer = null;
+  if (!interfaceScaleAuto || !mainWindow || mainWindow.isDestroyed()) return;
+  setInterfaceZoom(mainWindow, autoInterfaceScale(mainWindow));
+}
+
+function watchInterfaceScale(win) {
+  if (interfaceScaleWatched === win) return;
+  interfaceScaleWatched = win;
+  const later = () => {
+    if (interfaceScaleTimer) clearTimeout(interfaceScaleTimer);
+    interfaceScaleTimer = setTimeout(refitInterfaceScale, 180);
+  };
+  for (const event of ['resize', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen', 'moved']) win.on(event, later);
+  try { require('electron').screen.on('display-metrics-changed', later); } catch { /* no screen events */ }
+}
+
 function registerIpcHandlers() {
   // --- Diagnostics ---
   ipcMain.handle('set_interface_scale', (event, { scale } = {}) => {
     if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
       throw new Error('Interface scale is only available in the main editor');
     }
+    if (scale === 'auto') {
+      interfaceScaleAuto = true;
+      watchInterfaceScale(mainWindow);
+      const value = autoInterfaceScale(mainWindow);
+      setInterfaceZoom(mainWindow, value);
+      return { scale: value, auto: true };
+    }
     const value = Number(scale);
     if (!Number.isFinite(value) || value < 0.75 || value > 2) throw new Error('Invalid interface scale');
-    mainWindow.webContents.setZoomFactor(value);
-    nativePreviewLastRectSignature = '';
+    interfaceScaleAuto = false;
+    setInterfaceZoom(mainWindow, value);
     return { scale: value };
   });
 

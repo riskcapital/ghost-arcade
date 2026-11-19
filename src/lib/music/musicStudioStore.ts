@@ -438,7 +438,8 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
     mixer: normalizeMixer(input.mixer),
     liveInputs: normalizeLiveInputs(input.liveInputs, (input as { liveInput?: unknown }).liveInput),
     liveControl: input.liveControl === true,
-    visualsHidden: input.visualsHidden === true,
+    // Hiding the visuals is gone from the panel: a project saved hidden shows them again.
+    visualsHidden: false,
     liveRoles: normalizeLiveRoles(input.liveRoles),
     liveStacks: normalizeLiveStacks(input.liveStacks),
     bowlSlots: normalizeBowlSlots(input.bowlSlots),

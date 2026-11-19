@@ -27,6 +27,7 @@ import type { MusicKey, StudioSet } from './studioSets';
 import type { MediaSource } from '../types';
 import type { ClipStack, StackItem } from './clipStack';
 import { auditionSolo, currentStacks } from './stackRuntime';
+import { normalizeStackOff, normalizeStackPlace, visualOrder } from './visualOrder';
 import { readableClipUri, staticClipSource } from '../show/tracks/showClipSources';
 
 export const STUDIO_PLUGIN_ID = 'musicstudio';
@@ -79,6 +80,10 @@ export interface StudioPluginSource {
   musicFinish?: StudioFinish;
   /** The palette the voices take their colours from (studioPalettes.ts). */
   musicPalette?: string;
+  /** Where each track's clip visuals sit among the voices (visualOrder.ts). */
+  musicStackPlace?: Record<string, number>;
+  /** Tracks whose clip visuals are switched off in the Visuals panel; the next clip on the track stays off too. */
+  musicStackOff?: string[];
 }
 
 /** Each set's original two colours, one ink and one accent (the Classic palette). */
@@ -146,6 +151,8 @@ export function normalizeStudioSource(raw: unknown): Required<StudioPluginSource
     musicFinish: normalizeFinish(r.musicFinish),
     // Saved before palettes: the set's original two colours.
     musicPalette: isPaletteId(r.musicPalette) ? r.musicPalette : CLASSIC_PALETTE,
+    musicStackPlace: normalizeStackPlace(r.musicStackPlace),
+    musicStackOff: normalizeStackOff(r.musicStackOff),
   };
 }
 
@@ -177,6 +184,8 @@ export function defaultStudioSource(): Required<StudioPluginSource> {
     musicSetup: null,
     musicFinish: normalizeFinish(null),
     musicPalette: AUTO_PALETTE,
+    musicStackPlace: {},
+    musicStackOff: [],
   };
 }
 
@@ -241,7 +250,9 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
     const studio = normalizeStudioSource(effectSource);
     const key = inputs.key?.() ?? DEFAULT_KEY;
     const palette = { id: studio.musicPalette, slots: resolvePalette(studio.musicPalette, studio.musicSet, key, studio.musicPalette === KEY_PALETTE ? keyGlide.step(keyHue(key), Date.now()) : undefined) };
-    const rows: Array<{ layerId: string; frameId?: string; opacity: number; blendMode: string }> = [];
+    type MixRow = { layerId: string; frameId?: string; opacity: number; blendMode: string };
+    const rows: MixRow[] = [];
+    const voiceRows = new Map<number, MixRow>();
     const driven = studio.musicVoices.map((voice) => inputs.driven(voice.source, voice.auto, voice.live));
     // Auto-mix works from the bar clock every voice shares.
     const clock = driven.find((d) => Number.isFinite(d.vxBars));
@@ -269,17 +280,25 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
           shaderValues: studioVoiceValues(voice, studio.musicSet, driven[index], palette),
         },
       } as Layer);
-      rows.push({ layerId: id, opacity: voice.level * (voiceMods.get(index) ?? 1) * mixed[index].gain, blendMode: voice.clear ? studioVoiceBlend(voice.blend, 'normal') : mixed[index].blend ?? studioVoiceBlend(voice.blend) });
+      voiceRows.set(index, { layerId: id, opacity: voice.level * (voiceMods.get(index) ?? 1) * mixed[index].gain, blendMode: voice.clear ? studioVoiceBlend(voice.blend, 'normal') : mixed[index].blend ?? studioVoiceBlend(voice.blend) });
     });
-    // The top of the list draws on top: the mix stacks its rows from the first up.
-    rows.reverse();
-    // The playing clips' visual stacks, over the voices, in track order:
-    // each its own mix, blended in as one row.
-    for (const { entry, stack, level } of currentStacks()) {
+    // The playing clips' visual stacks: each its own mix, blended in as one row.
+    const playing = currentStacks();
+    const stackRows = new Map<number, MixRow>();
+    const off = new Set(studio.musicStackOff);
+    playing.forEach(({ entry, stack, level }, i) => {
+      if (off.has(entry.track)) return;
       const stackLayers = expandStack(`${layer.id}:stack:${entry.uid}`, stack, studio.musicSet, inputs, palette, key);
-      if (!stackLayers) continue;
+      if (!stackLayers) return;
       out.push(...stackLayers.layers);
-      rows.push({ layerId: stackLayers.id, opacity: stack.opacity * level, blendMode: stack.blend });
+      stackRows.set(i, { layerId: stackLayers.id, opacity: stack.opacity * level, blendMode: stack.blend });
+    });
+    // One list, the top of it drawing on top: voices and stacks in the order
+    // set in the Visuals panel. The mix stacks its rows from the first up.
+    const order = visualOrder(studio.musicVoices.length, playing.map(({ entry }) => entry), studio.musicStackPlace);
+    for (let i = order.length - 1; i >= 0; i--) {
+      const row = order[i].kind === 'voice' ? voiceRows.get(order[i].index) : stackRows.get(order[i].index);
+      if (row) rows.push(row);
     }
     // Trails: last frame's mix, faded, under this frame's voices.
     const trail = trailsOpacity(studio.musicFinish);

@@ -42,7 +42,6 @@
   import AnalogModules from './AnalogModules.svelte';
   import RackModules from './RackModules.svelte';
   import VisualRack from './VisualRack.svelte';
-  import NowPlaying from './NowPlaying.svelte';
   import MacroStrip from './MacroStrip.svelte';
   import OutputStrip from './OutputStrip.svelte';
   import SessionGrid from './SessionGrid.svelte';
@@ -386,7 +385,6 @@
         <BathModules part="xy" />
       </div>
       <div class="rack right face">
-        <NowPlaying />
         <VisualRack />
         <RackModules />
       </div>
@@ -399,7 +397,6 @@
         <BerlinModules part="acid" />
       </div>
       <div class="rack right face">
-        <NowPlaying />
         <VisualRack />
         <RackModules />
       </div>
@@ -414,7 +411,6 @@
         <DubShotsModule />
       </div>
       <div class="rack right face">
-        <NowPlaying />
         <VisualRack />
         <RackModules />
       </div>
@@ -426,7 +422,6 @@
         <MachinePads bind:selected={machinePad} />
       </div>
       <div class="rack right face">
-        <NowPlaying />
         <VisualRack />
         <RackModules />
       </div>
@@ -437,7 +432,6 @@
         <PadsModule />
       </div>
       <div class="rack right face">
-        <NowPlaying />
         <VisualRack />
         <RackModules />
       </div>
@@ -524,7 +518,7 @@
   }
   .narrow-only { display: none; }
   /* Narrower windows: Deck, Tray and Exit fold into the … menu, the title goes, menus tighten. */
-  @media (max-width: 1599px) {
+  @media (max-width: 1799px) {
     .wide-only { display: none; }
     .narrow-only { display: inline-block; }
     .bar select.keymode { max-width: 108px; }

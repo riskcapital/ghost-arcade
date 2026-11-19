@@ -84,5 +84,25 @@
   .led.on { background: var(--studio-accent); box-shadow: 0 0 8px var(--studio-accent); }
   .hint { font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); white-space: nowrap; min-width: 112px; }
   .knobs { display: flex; gap: 12px; }
-  .spacer { flex: 1; }
+  .spacer { flex: 1; min-width: 0; }
+  /* Short of room, it gives way in steps instead of running under the racks:
+     the hint, then the jack names, then Build's two menus (into its editor,
+     right-click Build), then the scan knobs' names. */
+  .strip { container-type: inline-size; min-width: 0; }
+  @container (max-width: 1000px) {
+    .hint { display: none; }
+    .knobs { gap: 8px; }
+  }
+  @container (max-width: 860px) {
+    .strip :global(.jack-label) { display: none; }
+    .strip :global(.build select) { max-width: 88px; }
+  }
+  @container (max-width: 760px) {
+    .strip :global(.build .menus) { display: none; }
+    .strip :global(.build .row.folded) { display: flex; }
+  }
+  @container (max-width: 620px) {
+    .strip :global(.knobs .knob-label) { display: none; }
+    .knobs { gap: 6px; }
+  }
 </style>

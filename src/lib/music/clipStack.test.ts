@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { hasVisuals, liveStackKey, mediaItem, normalizeLiveStacks, normalizeStack, voiceItem, type ClipStack } from './clipStack';
 import { bringStack, clearStacks, currentStacks, dropStack, dropTracks, setStackClock } from './stackRuntime';
-import { expandStack } from './studioPlugin';
+import { defaultStudioSource, expandStack, expandStudioLayers, studioVoicesFromScene } from './studioPlugin';
+import { createLayer, type Layer } from '../types';
 import { CLASSIC_PALETTE, resolvePalette } from './studioPalettes';
 const DEFAULT_KEY = { root: 2, scale: 'dorian' as const };
 
@@ -111,5 +112,34 @@ describe('a stack as layers', () => {
     expect(byId.get('host:stack:s1:v1')!.source!.shaderValues).toMatchObject({ density: 0.3 });
     // A voice whose shader has not loaded waits; nothing at all to draw is no stack.
     expect(expandStack('h', { ...bassStack(), items: [voiceItem('v', 'VX-Panels.fs', 'all')] }, 'analog', inputs, palette, DEFAULT_KEY)).toBeNull();
+  });
+});
+
+describe('clips among the voices', () => {
+  afterEach(() => clearStacks());
+  it('draws a clip where it was placed in the Visuals list, between two voices', () => {
+    const lead: ClipStack = { items: [mediaItem('m', shader)!], blend: 'add', opacity: 1, effects: [] };
+    bringStack({ track: 'studio:lead', order: 2, trackName: 'Lead', clipName: 'Hook', clipId: 'c1', resolve: () => lead }, 0);
+    const inputs = { code: () => 'void main(){}', driven: () => ({}) };
+    const source = {
+      ...defaultStudioSource(),
+      musicVoices: studioVoicesFromScene([{ file: 'VX-Barcode.fs', source: 'kick' }, { file: 'VX-Panels.fs', source: 'hats' }]),
+      musicFinish: { glow: 0, trails: 0, grade: 'neutral' as const, grain: 0 },
+    };
+    const host = (place: Record<string, number>) => ({ ...createLayer('host', 'Studio', 'media'), source: { id: 'c', type: 'effect', name: 'S', src: 'plugin://musicstudio', effectSource: { ...source, musicStackPlace: place } } }) as Layer;
+    const rowsOf = (place: Record<string, number>) => {
+      const out = expandStudioLayers([host(place)], inputs);
+      const mix = out.find((l) => l.id === 'host')!;
+      return (mix.source!.effectSource as { vjmixRows: Array<{ layerId: string }> }).vjmixRows.map((r) => r.layerId.replace(/:stack:s\d+$/, ':stack'));
+    };
+    // Bottom first. With no place, the clip draws on top.
+    expect(rowsOf({})).toEqual([expect.stringContaining('1'), expect.stringContaining('0'), 'host:stack']);
+    // Placed just above the second voice: between the two.
+    const between = rowsOf({ 'studio:lead': 1 });
+    expect(between[1]).toBe('host:stack');
+    // Switched off in the Visuals panel: the track's clip visuals leave the mix.
+    const offHost = { ...host({}), source: { ...host({}).source!, effectSource: { ...source, musicStackOff: ['studio:lead'] } } } as Layer;
+    const offRows = (expandStudioLayers([offHost], inputs).find((l) => l.id === 'host')!.source!.effectSource as { vjmixRows: Array<{ layerId: string }> }).vjmixRows;
+    expect(offRows.some((r) => r.layerId.includes(':stack:'))).toBe(false);
   });
 });
