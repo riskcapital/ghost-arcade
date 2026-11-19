@@ -32,7 +32,7 @@
   const droneSounding = $derived([...t.held].some((k) => k.startsWith('drone:')));
 
   // Bowl sizes shrink with pitch, like a real set.
-  const BOWL_SIZES = [64, 58, 52, 47, 42];
+  const BOWL_SIZES = [48, 44, 40, 36, 32];
   const pressedBowls = new Map<number, number>();
 
   function bowlDown(e: PointerEvent, index: number) {
@@ -146,7 +146,7 @@
     {/snippet}
     <div class="knob-grid">
       {#each DRONE_PARAMS as p (p.key)}
-        <StudioKnob label={p.label} value={s.params[p.key]} defaultValue={p.default} size={44} onchange={(v) => musicStudio.setParam(p.key, v)} />
+        <StudioKnob label={p.label} value={s.params[p.key]} defaultValue={p.default} size={32} onchange={(v) => musicStudio.setParam(p.key, v)} />
       {/each}
     </div>
   </StudioModule>
@@ -270,13 +270,13 @@
 <style>
   .knob-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); row-gap: 10px; justify-items: center; }
   .knob-row { display: flex; justify-content: space-around; }
-  .bowls { display: flex; align-items: center; justify-content: space-around; min-height: 66px; }
+  .bowls { display: flex; align-items: center; justify-content: space-around; min-height: 52px; }
   .bowl {
     flex: 0 0 auto;
     padding: 0;
     border-radius: 50%;
     border: 2px solid var(--studio-edge);
-    background: radial-gradient(circle at 40% 35%, #34406a, #0b1020 72%);
+    background: var(--studio-knob-face);
     color: var(--studio-ink);
     font-family: var(--ga-font-mono, ui-monospace);
     font-size: 11px;

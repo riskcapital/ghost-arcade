@@ -219,8 +219,8 @@
           <button class="studio-btn" class:on={padFx > 0} onclick={() => insertEditorChannel.set(padChannel(selected))} title="This pad's own effects">FX{padFx ? ` ${padFx}` : ''}</button>
         </div>
       </div>
-      <StudioKnob label="Tune" value={beat.padTune[selected] ?? 0.5} defaultValue={0.5} size={32} onchange={(v) => setPad('padTune', v)} format={(v) => `${Math.round((v - 0.5) * 24)} st`} />
-      <StudioKnob label="Level" value={beat.padLevel[selected] ?? 0.5} defaultValue={0.5} size={32} onchange={(v) => setPad('padLevel', v)} />
+      <StudioKnob label="Tune" value={beat.padTune[selected] ?? 0.5} defaultValue={0.5} size={28} onchange={(v) => setPad('padTune', v)} format={(v) => `${Math.round((v - 0.5) * 24)} st`} />
+      <StudioKnob label="Level" value={beat.padLevel[selected] ?? 0.5} defaultValue={0.5} size={28} onchange={(v) => setPad('padLevel', v)} />
       <StudioJack id="cv:pad.{selected}" label="Hits" title="{kit.pads[selected]?.name} hits, as a control signal: patch it to a visual" />
     </div>
 

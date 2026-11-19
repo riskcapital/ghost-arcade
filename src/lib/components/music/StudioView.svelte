@@ -597,6 +597,8 @@
     gap: var(--ga-bar-group-gap, 14px);
     background: var(--ga-bar, #100f0d);
     border-bottom: 1px solid var(--studio-edge-soft);
+    /* The set that is on, as a strip of its colour along the top. */
+    box-shadow: inset 0 2px 0 var(--studio-set-tint, transparent);
     white-space: nowrap;
     font-size: var(--ga-text-body, 13px);
     /* A narrow window scrolls the bar sideways instead of cutting it off. */

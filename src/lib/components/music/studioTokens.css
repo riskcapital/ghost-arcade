@@ -1,11 +1,7 @@
-/* The music studio's look.
-   Chrome (the top bar, the output, the loop library, the tray's header) is
-   the app's own: warm near-black surfaces, warm white type, the blue accent.
-   Each set's instruments sit on a face of their own, so the mode reads at a
-   glance: Sound bath is deep blue glass and gold, Berlin is black, hairlines
-   and red, Dub is deep green and amber, Analog is a matte black panel with
-   cream legends, aluminium knobs and orange. A face is any element with the
-   `face` class inside a `set-*` studio.
+/* The music studio's look: the app's own, the same in every set (warm
+   near-black surfaces, warm white type, the royal blue accent). Which set
+   is on shows as a strip of its colour across the top of the studio
+   (--studio-set-tint), not as a different face.
 
    Type follows the app: sentence case on everything you press, and caps
    only as eyebrows (module titles, section names) and the 9px legends under
@@ -21,7 +17,7 @@
   /* Resting button text: secondary ink in the chrome, the face's ink on a face. */
   --studio-ink-1: var(--ga-ink1, #ada9a2);
   --studio-muted: var(--ga-ink2, #89857e);
-  --studio-accent: var(--ga-blue, #5278ff);
+  --studio-accent: var(--ga-icon, #5278ff);
   --studio-accent-soft: var(--ga-blue-a16, rgba(82, 120, 255, 0.16));
   --studio-on-accent: #ffffff;
   --studio-knob-face: radial-gradient(circle at 35% 30%, #3b362e, #13110e 70%);
@@ -59,99 +55,20 @@
   --mk-black: #12100d;
 }
 
-/* ── Faces ── */
+/* ── Sets ── */
 
-.studio-tokens.set-bath .face {
-  --studio-panel: #0b1124;
-  --studio-cell: #111a36;
-  --studio-slot: #070b19;
-  --studio-edge: rgba(140, 165, 255, 0.24);
-  --studio-edge-soft: rgba(140, 165, 255, 0.12);
-  --studio-ink: #e9eeff;
-  --studio-muted: #8e9ac6;
-  --studio-accent: #f0c46e;
-  --studio-accent-soft: rgba(240, 196, 110, 0.16);
-  --studio-on-accent: #1d1406;
-  --studio-knob-face: radial-gradient(circle at 35% 30%, #34447e, #0b1331 72%);
-  --studio-knob-edge: #3a4a86;
-  --studio-radius: 10px;
-  --mk-white: #dfe5f7;
-  --mk-black: #0d1430;
-}
+/* Each set's colour, for the strip across the top of the studio only. */
+.studio-tokens.set-bath { --studio-set-tint: #f0c46e; }
+.studio-tokens.set-berlin { --studio-set-tint: #ff2a1a; }
+.studio-tokens.set-dub { --studio-set-tint: #ffae42; }
+.studio-tokens.set-analog { --studio-set-tint: #ff7a1f; }
+.studio-tokens.set-machine { --studio-set-tint: #f0592f; }
 
-.studio-tokens.set-berlin .face {
-  --studio-panel: #000000;
-  --studio-cell: #0b0b0b;
-  --studio-slot: #000000;
-  --studio-edge: rgba(255, 255, 255, 0.32);
-  --studio-edge-soft: rgba(255, 255, 255, 0.15);
-  --studio-ink: #ffffff;
-  --studio-muted: #8f8f8f;
-  --studio-accent: #ff2a1a;
-  --studio-accent-soft: rgba(255, 42, 26, 0.16);
-  --studio-on-accent: #ffffff;
-  --studio-knob-face: #000000;
-  --studio-knob-edge: rgba(255, 255, 255, 0.7);
-  --studio-radius: 0px;
-  --studio-title-font: var(--ga-font-mono, ui-monospace, monospace);
-  --mk-white: #f4f4f4;
-  --mk-black: #000000;
-  font-family: var(--ga-font-mono, ui-monospace, monospace);
-}
-
-.studio-tokens.set-dub .face {
-  --studio-panel: #0a120d;
-  --studio-cell: #101c15;
-  --studio-slot: #060b08;
-  --studio-edge: rgba(150, 220, 175, 0.22);
-  --studio-edge-soft: rgba(150, 220, 175, 0.11);
-  --studio-ink: #f2e9d4;
-  --studio-muted: #8fa394;
-  --studio-accent: #ffae42;
-  --studio-accent-soft: rgba(255, 174, 66, 0.16);
-  --studio-on-accent: #1d1000;
-  --studio-knob-face: radial-gradient(circle at 35% 30%, #2b4434, #0b150f 72%);
-  --studio-knob-edge: #34543f;
-  --studio-radius: 12px;
-  --mk-white: #ece4d0;
-  --mk-black: #0c1610;
-}
-
-.studio-tokens.set-analog .face {
-  --studio-panel: #111111;
-  --studio-cell: #1b1b1b;
-  --studio-slot: #0a0a0a;
-  --studio-edge: rgba(241, 233, 216, 0.24);
-  --studio-edge-soft: rgba(241, 233, 216, 0.11);
-  --studio-ink: #f1e9d8;
-  --studio-muted: #a59e8e;
-  --studio-accent: #ff7a1f;
-  --studio-accent-soft: rgba(255, 122, 31, 0.16);
-  --studio-on-accent: #1d0b00;
-  --studio-knob-face: radial-gradient(circle at 38% 30%, #f2f2ef, #a7a7a2 52%, #5d5d59 100%);
-  --studio-knob-edge: #2a2a2a;
-  --studio-pointer: #141414;
-  --studio-radius: 3px;
-  --mk-white: #efe8d8;
-  --mk-black: #111111;
-}
-
-/* The drum machine: a warm charcoal case with cream legends, the step row's
-   reds, oranges and yellows, and a red-orange for what is on. */
-.studio-tokens.set-machine .face {
-  --studio-panel: #1c1b19;
-  --studio-cell: #272522;
-  --studio-slot: #121110;
-  --studio-edge: rgba(239, 230, 210, 0.22);
-  --studio-edge-soft: rgba(239, 230, 210, 0.1);
-  --studio-ink: #efe6d2;
-  --studio-muted: #a39a88;
-  --studio-accent: #f0592f;
-  --studio-accent-soft: rgba(240, 89, 47, 0.16);
-  --studio-on-accent: #1a0700;
-  --studio-knob-face: radial-gradient(circle at 38% 30%, #4a4741, #1b1a18 70%);
-  --studio-knob-edge: #3a3833;
-  --studio-radius: 3px;
+/* Scrollbars inside the studio: thin, in the app's line colour. */
+.studio-tokens,
+.studio-tokens * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)) transparent;
 }
 
 /* On a face, buttons read in the face's own ink. */

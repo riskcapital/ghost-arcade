@@ -95,12 +95,6 @@
 </StudioModule>
 
 <style>
-  /* Walnut cheeks, as on the synths this panel is modelled on. */
-  :global(.studio-tokens.set-analog .module.synth-panel) {
-    border-left: 12px solid #5b351d;
-    border-right: 12px solid #5b351d;
-    border-image: repeating-linear-gradient(177deg, #6e4224 0 3px, #5a331b 3px 8px, #7a4c2c 8px 10px, #4e2c17 10px 14px) 12;
-  }
   .synth { flex: 1; min-height: 0; display: flex; }
   .section {
     flex: 1 1 auto;
