@@ -150,6 +150,7 @@ import {
 import { clampShowTransitionDuration, findJunctionPredecessor } from '../show/showJunctions';
 import { resolveAssetTreeInPlace } from '../storage/assetRegistry';
 import { sameJson } from '../show/jsonEqual';
+import { surfaceIdOf } from './mapSurfaces';
 import {
   amendLastHistoryStep,
   isRestoringHistory,
@@ -1967,7 +1968,7 @@ export function trackTemplateFromLayer(layer: Layer): Layer {
     return value;
   })) as Layer;
   // Geometry is resolved live from the shared surface map it belongs to.
-  return { ...clean, surfaceId: layer.surfaceId || layer.id };
+  return { ...clean, surfaceId: surfaceIdOf(layer) };
 }
 
 /** Track copies of their layers, refreshed where they changed. */

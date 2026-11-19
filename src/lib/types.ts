@@ -3241,8 +3241,17 @@ export interface Layer {
   vjGroupId?: string;
 
   /** Shared map surface this layer's geometry comes from (see MapSurface).
-   *  Preset layers carry it; editor layers use their own id. */
+   *  A layer is its own surface (`surfaceId` equals its id) unless it was
+   *  linked to another surface; see `surfaceLinkFor`. */
   surfaceId?: string;
+  /** Set by "Link to existing surface": the id of the layer the link was
+   *  made for. A link only holds while it matches the layer's own id, so a
+   *  copy of the layer (paste, duplicate: a new id) gets its own surface, as
+   *  copies always have, and a `surfaceId` an older build left on a copy is
+   *  never mistaken for a link. Layer identity and surface identity stay
+   *  separate: the layer keeps its id (and every per-preset reference to
+   *  it); only the geometry it draws with comes from the linked surface. */
+  surfaceLinkFor?: string;
   /** True when this layer keeps its own geometry instead of the shared
    *  surface's. Set by the user ("This preset only") or by migration when an
    *  older preset's geometry disagreed with the shared map. */

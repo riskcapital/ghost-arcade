@@ -43,7 +43,8 @@ import { surfaceStore } from './surface';
 import { migrateStageLayerCorners } from '../utils/stageTextureOrientation';
 import { createPaintMask, migratePaintMask, PAINT_MASK_MAX_STROKES } from '../utils/paintMask';
 import type { PaintMaskConfig, PaintMaskStroke } from '../types';
-import { captureMapSurfaces, mapLookSurfaceIds, migrateMapSurfaces, presetLayersForEditing, registerMapSurfaces, setSurfaceLooks, tagPresetSurfaces } from './mapSurfaces';
+import { applySurfaceLink, type SurfaceLinkRequest, type SurfaceLinkResult } from './mapSurfaceLinks';
+import { captureMapSurfaces, mapLookSurfaceIds, migrateMapSurfaces, presetLayersForEditing, registerMapSurfaces, setSurfaceLooks, surfaceIdOf, tagPresetSurfaces, withSurfaceRef } from './mapSurfaces';
 import {
   captureStagePresetSurfaceState,
   cloneStagePresetSurface,
@@ -1634,13 +1635,34 @@ void main() {
             layers: project.layers.map((l) => (l.id === id ? attached : l)),
           };
         }
-        const [shared] = presetLayersForEditing([{ ...attached, surfaceId: id }], project.mapSurfaces);
+        const [shared] = presetLayersForEditing([withSurfaceRef(attached, surfaceIdOf(attached))], project.mapSurfaces);
         return {
           ...project,
-          layers: project.layers.map((l) => (l.id === id ? { ...shared, surfaceId: layer.surfaceId } : l)),
+          layers: project.layers.map((l) => (l.id === id
+            ? { ...shared, surfaceId: layer.surfaceId, surfaceLinkFor: layer.surfaceLinkFor }
+            : l)),
         };
       });
       recordDiscreteAction();
+    },
+
+    /**
+     * Link to existing surface: chosen layers of chosen presets (or a copy
+     * of the surface's layer, added to a preset that lacks it) take one
+     * existing shared surface, so its warp reaches all of them. Every row
+     * must be settled (see planSurfaceLink); otherwise nothing changes. One
+     * undo step for the whole link.
+     */
+    linkLayersToSurface(request: SurfaceLinkRequest): SurfaceLinkResult {
+      const result = applySurfaceLink(get({ subscribe }), request, generateUUID);
+      if (!result.ok) return result;
+      for (const id of result.addedEditorLayerIds) {
+        const added = result.project.layers.find((l) => l.id === id);
+        if (added && isVideoSource(added.source)) rehydrateVideoSource(added.source);
+      }
+      update(() => result.project);
+      recordDiscreteAction();
+      return result;
     },
 
     updateModel3DContent(layerId: string, updates: Partial<Model3DContent>) {
@@ -5558,6 +5580,7 @@ void main() {
         vjLayerIndex: layer.vjLayerIndex,
         vjGroupId: layer.vjGroupId,
         surfaceId: layer.surfaceId,
+        surfaceLinkFor: layer.surfaceLinkFor,
         surfaceDetached: layer.surfaceDetached,
         contentFit: layer.contentFit,
         renderQuality: layer.renderQuality,
@@ -6259,6 +6282,7 @@ void main() {
         vjLayerIndex: layer.vjLayerIndex,
         vjGroupId: layer.vjGroupId,
         ...(typeof layer.surfaceId === 'string' && layer.surfaceId ? { surfaceId: layer.surfaceId } : {}),
+        ...(typeof layer.surfaceLinkFor === 'string' && layer.surfaceLinkFor ? { surfaceLinkFor: layer.surfaceLinkFor } : {}),
         ...(layer.surfaceDetached === true ? { surfaceDetached: true } : {}),
         contentFit: layer.contentFit,
         renderQuality: layer.renderQuality,

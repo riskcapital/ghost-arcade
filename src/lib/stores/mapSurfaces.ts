@@ -8,10 +8,14 @@
  * at it with `surfaceId`; only a layer the user explicitly detached (or one an
  * older project disagreed on, see migrateMapSurfaces) keeps its own copy.
  *
+ * Layer identity and surface identity are separate: a layer is its own
+ * surface unless it was linked to another one (see surfaceIdOf and
+ * mapSurfaceLinks.ts), and then it keeps its own id.
+ *
  * Resolution order for a shared surface, used by the MAP output and by
  * loadComposition:
- *   1. the editor layer with that id, when it is present and not detached,
- *      so a warp being dragged moves every preset on the same frame;
+ *   1. the editor layer on that surface, when it is present and not
+ *      detached, so a warp being dragged moves every preset on the same frame;
  *   2. the stored `project.mapSurfaces` entry;
  *   3. the preset's own copy.
  *
@@ -104,14 +108,36 @@ export function withSurfaceGeometry<T extends Layer>(layer: T, geometry: MapSurf
   };
 }
 
-/** The shared surface a layer belongs to. Editor layers ARE their surface;
- *  preset layers carry `surfaceId`. */
-export function surfaceIdOf(layer: Pick<Layer, 'id' | 'surfaceId'>): string {
-  return layer.surfaceId || layer.id;
+/**
+ * The shared surface a layer belongs to: its own id, unless it was linked to
+ * another surface. A link holds only for the layer it was made for
+ * (`surfaceLinkFor` equals the layer's id), so a pasted or duplicated copy,
+ * or a `surfaceId` an older build carried along on one, never shares by
+ * accident.
+ */
+export function surfaceIdOf(layer: Pick<Layer, 'id' | 'surfaceId' | 'surfaceLinkFor'>): string {
+  const surfaceId = layer.surfaceId;
+  if (!surfaceId || surfaceId === layer.id) return layer.id;
+  return layer.surfaceLinkFor === layer.id ? surfaceId : layer.id;
+}
+
+/** True when the layer draws with another layer's surface. */
+export function isLinkedToSurface(layer: Pick<Layer, 'id' | 'surfaceId' | 'surfaceLinkFor'>): boolean {
+  return surfaceIdOf(layer) !== layer.id;
+}
+
+/** The layer pointing at `surfaceId`: a link when that is another
+ *  layer's surface, its own surface otherwise. */
+export function withSurfaceRef<T extends Layer>(layer: T, surfaceId: string): T {
+  const next = { ...layer, surfaceId };
+  if (surfaceId === layer.id) delete next.surfaceLinkFor;
+  else next.surfaceLinkFor = layer.id;
+  return next;
 }
 
 export interface SurfaceLookup {
-  /** Editor layers by id. */
+  /** Editor layers by the surface they are on (the first one not detached,
+   *  else the first one). */
   live: ReadonlyMap<string, Layer>;
   /** Stored surfaces by id. */
   stored: ReadonlyMap<string, MapSurface>;
@@ -119,9 +145,22 @@ export interface SurfaceLookup {
 
 export function createSurfaceLookup(liveLayers: readonly Layer[], surfaces: readonly MapSurface[] | undefined): SurfaceLookup {
   return {
-    live: new Map(liveLayers.map((layer) => [layer.id, layer])),
+    live: editorLayersBySurface(liveLayers),
     stored: new Map((surfaces ?? []).map((surface) => [surface.id, surface])),
   };
+}
+
+/** Editor layers keyed by surface. Linking never puts two layers of one
+ *  stack on a surface; should a file still have that, the first layer not
+ *  detached defines it. */
+function editorLayersBySurface(layers: readonly Layer[]): Map<string, Layer> {
+  const bySurface = new Map<string, Layer>();
+  for (const layer of layers) {
+    const id = surfaceIdOf(layer);
+    const held = bySurface.get(id);
+    if (!held || (held.surfaceDetached && !layer.surfaceDetached)) bySurface.set(id, layer);
+  }
+  return bySurface;
 }
 
 /** Current shared geometry for a surface, or null when nothing defines it. */
@@ -134,7 +173,9 @@ export function resolveSharedGeometry(surfaceId: string, lookup: SurfaceLookup):
 /**
  * A preset layer with the shared geometry applied. Layers without an explicit
  * `surfaceId` (never migrated) and detached layers keep their own copy, so
- * nothing moves unless it opted into the shared map.
+ * nothing moves unless it opted into the shared map. `surfaceId` is taken as
+ * given: render copies carry ids of their own, so whoever makes one sets it
+ * to the source layer's surfaceIdOf (see mapPresetLayers.buildEntry).
  */
 export function resolvePresetLayer<T extends Layer>(layer: T, lookup: SurfaceLookup): T {
   if (!layer.surfaceId || layer.surfaceDetached) return layer;
@@ -197,7 +238,7 @@ export function captureMapSurfaces(
   layers: readonly Layer[],
 ): MapSurface[] | undefined {
   if (!surfaces?.length) return surfaces;
-  const byId = new Map(layers.map((layer) => [layer.id, layer]));
+  const byId = editorLayersBySurface(layers);
   let changed = false;
   const next = surfaces.map((surface) => {
     const layer = byId.get(surface.id);
@@ -238,11 +279,12 @@ export function registerMapSurfaces(
   return next;
 }
 
-/** Tag a preset snapshot's layers with the surface they came from. An editor
- *  layer is its own surface; a stale `surfaceId` copied along by a duplicate
- *  must not make two layers share one. */
+/** Tag a preset snapshot's layers with the surface they are on. An editor
+ *  layer is its own surface unless it was linked to another one; a stale
+ *  `surfaceId` copied along by a duplicate must not make two layers share
+ *  one (surfaceIdOf). */
 export function tagPresetSurfaces(layers: Layer[]): Layer[] {
-  return layers.map((layer) => ({ ...layer, surfaceId: layer.id }));
+  return layers.map((layer) => withSurfaceRef(layer, surfaceIdOf(layer)));
 }
 
 /**
@@ -254,7 +296,7 @@ export function presetLayersForEditing(layers: Layer[], surfaces: readonly MapSu
   const stored = new Map((surfaces ?? []).map((surface) => [surface.id, surface]));
   return layers.map((layer) => {
     if (!layer.surfaceId || layer.surfaceDetached) return layer;
-    const surface = stored.get(layer.surfaceId);
+    const surface = stored.get(surfaceIdOf(layer));
     return surface ? withSurfaceGeometry(layer, deepCopy(surface.geometry)) : layer;
   });
 }
