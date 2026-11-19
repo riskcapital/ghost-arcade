@@ -64,12 +64,20 @@
 .studio-tokens.set-analog { --studio-set-tint: #ff7a1f; }
 .studio-tokens.set-machine { --studio-set-tint: #f0592f; }
 
-/* Scrollbars inside the studio: thin, in the app's line colour. */
+/* Scrollbars inside the studio: the app's slim thumb in its line colour, no
+   arrows. Chromium drops these styles on any element that sets the standard
+   scrollbar-width or scrollbar-color, so those go back to auto here. */
 .studio-tokens,
 .studio-tokens * {
-  scrollbar-width: thin;
-  scrollbar-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)) transparent;
+  scrollbar-width: auto !important;
+  scrollbar-color: auto !important;
 }
+.studio-tokens ::-webkit-scrollbar { width: 6px; height: 6px; }
+.studio-tokens ::-webkit-scrollbar-track,
+.studio-tokens ::-webkit-scrollbar-corner { background: transparent; }
+.studio-tokens ::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+.studio-tokens ::-webkit-scrollbar-thumb { background: var(--ga-line-2, rgba(245, 236, 222, 0.13)); border-radius: 3px; }
+.studio-tokens ::-webkit-scrollbar-thumb:hover { background: var(--ga-line-3, rgba(245, 236, 222, 0.24)); }
 
 /* On a face, buttons read in the face's own ink. */
 .studio-tokens .face {

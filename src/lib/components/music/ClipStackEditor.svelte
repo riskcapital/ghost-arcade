@@ -1,15 +1,15 @@
 <script lang="ts">
   /**
-   * A sound clip's visuals (music/clipStack.ts): a stack of layers, each a
-   * curated audio shader or anything from the library (video, image, shader,
-   * sketch), with its blend, opacity, settings and effects; the stack's own
+   * A sound clip's visuals (music/clipStack.ts): a few layers, each a curated
+   * audio shader or anything from the Media Library (video, image, shader,
+   * sketch), with blend, opacity, settings and effects; and the whole clip's
    * blend, opacity, effects and mood. Opens on a studio session clip or an
    * Ableton Live clip, like the clip editor.
    *
-   * While it is open the stack plays on top of the output (Solo: on its
-   * own). The editor's panels sit around the studio's own output frame, so
-   * the output stays in view and every change is seen at once (the native
-   * picture shows only where nothing on the page covers it).
+   * Laid out like the rest of the app: the layer list on the left (mapping
+   * mode's rows), the selected layer (or the whole clip) in the middle, the
+   * VJ Media Library on the right. While it is open the clip's visuals play
+   * on top of the output (Solo: on their own).
    */
   import { get } from 'svelte/store';
   import { musicStudio } from '../../music/musicStudioStore';
@@ -24,11 +24,11 @@
   import { abletonBridge } from '../../ableton/abletonBridge';
   import { STUDIO_PALETTE_LIST } from '../../music/studioPalettes';
   import { DEFAULT_FINISH, STUDIO_GRADES, type StudioGrade } from '../../music/studioFinish';
+  import { showToast } from '../../stores/errorToast';
   import { BLEND_MODE_ORDER, blendModeLabel, generateUUID, type BlendMode, type Effect, type ShowClipMedia } from '../../types';
-  import { MEDIA_SOURCE_DRAG_TYPE, clipMediaFromFile, clipMediaFromTrayPayload, isTrackMediaFile } from '../show/timeline/clipMedia';
-  import StudioKnob from './StudioKnob.svelte';
+  import { MEDIA_SOURCE_DRAG_TYPE, clipMediaFromFile, clipMediaFromTrayPayload, clipThumbnails, isTrackMediaFile, thumbnailFor } from '../show/timeline/clipMedia';
+  import MediaTray from '../MediaTray.svelte';
   import StackEffects from './StackEffects.svelte';
-  import StackLibrary from './StackLibrary.svelte';
 
   const target = $derived($stackEditor);
   const s = $derived($musicStudio);
@@ -39,15 +39,11 @@
   });
   let selectedId = $state<string | null>(null);
   const selected = $derived(stack.items.find((i) => i.id === selectedId) ?? stack.items[0] ?? null);
-  let library = $state(false);
+  /** The middle shows the selected layer, or the whole clip. */
+  let view = $state<'layer' | 'clip'>('layer');
   let solo = $state(false);
-  let error = $state('');
-  /** The studio's output frame on screen: the editor's panels go round it. */
-  let frame = $state<{ left: number; right: number; bottom: number } | null>(null);
-  function measure() {
-    const r = document.querySelector('.studio-view .frame')?.getBoundingClientRect();
-    frame = r && r.width > 120 ? { left: r.left, right: r.right, bottom: r.bottom } : null;
-  }
+  let dragFrom = $state<number | null>(null);
+  let dragOver = $state<{ index: number; below: boolean } | null>(null);
 
   function save(next: ClipStack) {
     const t = get(stackEditor);
@@ -61,51 +57,69 @@
   function addItem(item: StackItem | null) {
     if (!item) return;
     if (stack.items.length >= MAX_STACK_ITEMS) {
-      error = `A clip takes up to ${MAX_STACK_ITEMS} layers.`;
+      showToast(`A clip takes up to ${MAX_STACK_ITEMS} layers.`, 'info');
       return;
     }
-    error = '';
     // New layers go on top.
     save({ ...stack, items: [item, ...stack.items] });
     selectedId = item.id;
+    view = 'layer';
   }
-  const defaultFollow = () => {
-    const t = get(stackEditor);
-    return t?.kind === 'live' ? t.follow : 'all';
-  };
   function addVoice() {
-    visualPicker.set({ current: null, none: false, title: 'An audio shader for this clip', pick: (file) => file && addItem(voiceItem(generateUUID(), file, defaultFollow())) });
+    const t = get(stackEditor);
+    const follow = t?.kind === 'live' ? t.follow : 'all';
+    visualPicker.set({ current: null, none: false, title: 'An audio shader for this clip', pick: (file) => file && addItem(voiceItem(generateUUID(), file, follow)) });
   }
-  const addMedia = (media: ShowClipMedia | null) => media && addItem(mediaItem(generateUUID(), media));
-  function move(index: number, by: number) {
-    const items = [...stack.items];
-    const [it] = items.splice(index, 1);
-    items.splice(index + by, 0, it);
-    save({ ...stack, items });
+  function addMedia(media: ShowClipMedia | null) {
+    if (!media) {
+      showToast('A clip shows videos, images, shaders and sketches. Live inputs and plugins stay on the decks.', 'info');
+      return;
+    }
+    addItem(mediaItem(generateUUID(), media));
   }
   function remove(id: string) {
     save({ ...stack, items: stack.items.filter((i) => i.id !== id) });
     if (selectedId === id) selectedId = null;
   }
+  function moveTo(from: number, to: number) {
+    if (from === to) return;
+    const items = [...stack.items];
+    const [it] = items.splice(from, 1);
+    items.splice(to > from ? to - 1 : to, 0, it);
+    save({ ...stack, items });
+  }
 
-  // Media Library cards and files from the computer.
-  function dragOver(e: DragEvent) {
+  // Rows reorder by dragging, as in the mapping layer list.
+  function rowDragOver(e: DragEvent, index: number) {
+    if (dragFrom === null) return;
+    e.preventDefault();
+    const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    dragOver = { index, below: e.clientY > box.top + box.height / 2 };
+  }
+  function rowDrop(e: DragEvent) {
+    e.preventDefault();
+    if (dragFrom !== null && dragOver) moveTo(dragFrom, dragOver.index + (dragOver.below ? 1 : 0));
+    dragFrom = null;
+    dragOver = null;
+  }
+
+  // Media Library cards dragged in, and files from the computer.
+  function dragOverEditor(e: DragEvent) {
     const types = [...(e.dataTransfer?.types ?? [])];
     if (types.includes(MEDIA_SOURCE_DRAG_TYPE) || types.includes('Files')) {
       e.preventDefault();
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
     }
   }
-  async function drop(e: DragEvent) {
+  async function dropOnEditor(e: DragEvent) {
+    if (dragFrom !== null) return;
     const raw = e.dataTransfer?.getData(MEDIA_SOURCE_DRAG_TYPE);
     if (raw) {
       e.preventDefault();
       try {
-        const media = clipMediaFromTrayPayload(JSON.parse(raw));
-        if (!media) error = 'That card is not a picture a clip can show (live inputs and plugins stay on the decks).';
-        addMedia(media);
+        addMedia(clipMediaFromTrayPayload(JSON.parse(raw)));
       } catch {
-        error = 'Could not read that card.';
+        showToast('Could not read that card.', 'error');
       }
       return;
     }
@@ -114,13 +128,8 @@
     e.preventDefault();
     for (const file of files) addMedia(await clipMediaFromFile(file));
   }
-  async function pickFiles(e: Event) {
-    const input = e.currentTarget as HTMLInputElement;
-    for (const file of [...(input.files ?? [])].filter((f) => isTrackMediaFile(f))) addMedia(await clipMediaFromFile(file));
-    input.value = '';
-  }
 
-  // The stack plays on top while the editor is open; the output shows in the middle.
+  // The clip's visuals play on top while the editor is open.
   $effect(() => {
     if (!target) return;
     const t = target;
@@ -130,27 +139,21 @@
     }, solo);
     return () => auditionStack(null);
   });
-  $effect(() => {
-    if (!target) return;
-    measure();
-    window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
-  });
 
   function close() {
     stackEditor.set(null);
-    library = false;
     selectedId = null;
-    error = '';
+    view = 'layer';
   }
   function onKey(e: KeyboardEvent) {
     if (!target || e.key !== 'Escape') return;
-    if (library) library = false;
-    else close();
+    const el = e.target as HTMLElement | null;
+    if (el?.closest('input, textarea')) return;
+    close();
     e.stopPropagation();
   }
 
-  // ── The selected layer's settings ──
+  // ── The selected layer ──
   const SKIP = new Set(['vxSource', 'vxAuto', 'ink', 'accent']);
   function inputsOf(item: StackItem): ShaderInput[] {
     void $studioCodeTick;
@@ -163,7 +166,9 @@
   }
   const numberOf = (item: StackItem, input: ShaderInput) => Number(item.params[input.NAME] ?? input.DEFAULT ?? input.MIN ?? 0);
   const kindLabel = (item: StackItem) => (item.voice ? 'Audio shader' : ({ video: 'Video', image: 'Image', shader: 'Shader', sketch: 'Sketch' } as Record<string, string>)[item.media?.kind ?? ''] ?? 'Layer');
+  const thumbOf = (item: StackItem) => (item.voice ? `./ISF/voice-thumbs/${item.voice.file.replace(/\.fs$/, '.jpg')}` : item.media ? thumbnailFor($clipThumbnails, item.media) : null);
   const percent = (v: number) => `${Math.round(v * 100)}%`;
+  const shown = (v: number, input: ShaderInput) => ((input.MAX ?? 1) - (input.MIN ?? 0) > 4 ? String(Math.round(v)) : v.toFixed(2));
 
   // What an audio shader can follow: the studio's sounds, and Live's tracks while Live is in control.
   const liveTracks = $derived.by(() => {
@@ -178,217 +183,269 @@
 
 <svelte:window onkeydown={onKey} />
 
+{#snippet slider(label: string, value: number, min: number, max: number, text: string, onchange: (v: number) => void)}
+  <label class="param">
+    <span class="param-head"><span>{label}</span><output>{text}</output></span>
+    <input type="range" {min} {max} step={(max - min) / 200} {value} oninput={(e) => onchange(+(e.target as HTMLInputElement).value)} />
+  </label>
+{/snippet}
+
 {#if target}
-  <div
-    class="stack-editor"
-    class:framed={!!frame}
-    role="dialog"
-    aria-label="Visuals for {target.title}"
-    tabindex="-1"
-    ondragover={dragOver}
-    ondrop={drop}
-    style={frame ? `--fl: ${frame.left}px; --fr: ${frame.right}px; --fb: ${frame.bottom}px` : undefined}
-  >
-    <header class="bar">
-      <div class="title">
-        <span class="ga-eyebrow">Visuals</span>
-        <strong>{target.title}</strong>
-      </div>
-      <label class="check" title="Only this clip's visuals on the output while you edit">
-        <input type="checkbox" bind:checked={solo} /> Solo
-      </label>
-      <button class="studio-btn" onclick={close}>Done</button>
-    </header>
+  <div class="backdrop" role="presentation">
+    <div class="dialog" role="dialog" aria-modal="true" aria-label="Visuals for {target.title}" tabindex="-1" ondragover={dragOverEditor} ondrop={dropOnEditor}>
+      <header class="head">
+        <div class="title">
+          <span class="ga-eyebrow">Clip visuals</span>
+          <strong>{target.title}</strong>
+        </div>
+        <button class="btn" class:on={solo} aria-pressed={solo} onclick={() => (solo = !solo)} title="Only this clip's visuals on the output while you edit">Solo</button>
+        <button class="btn primary" onclick={close}>Done</button>
+        <button class="close" onclick={close} aria-label="Close" title="Close (Esc)">
+          <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3 3 9" /></svg>
+        </button>
+      </header>
 
-    <section class="layers panel" aria-label="Layers">
-      {#if library}
-        <StackLibrary onpick={(media) => { addMedia(media); }} onclose={() => (library = false)} />
-      {:else}
-        <div class="panel-head">
-          <span class="ga-eyebrow">Layers</span>
-          <span class="count">{stack.items.length} / {MAX_STACK_ITEMS}</span>
-        </div>
-        <ol class="list">
-          {#each stack.items as item, i (item.id)}
-            <li class:on={selected?.id === item.id}>
-              <button class="pick" onclick={() => (selectedId = item.id)} aria-pressed={selected?.id === item.id}>
-                <span class="name">{item.name}</span>
-                <span class="kind">{kindLabel(item)}</span>
-              </button>
-              <button class="icon" disabled={i === 0} onclick={() => move(i, -1)} aria-label="Move {item.name} up" title="Up (draws over more)">↑</button>
-              <button class="icon" disabled={i === stack.items.length - 1} onclick={() => move(i, 1)} aria-label="Move {item.name} down" title="Down (draws under more)">↓</button>
-              <button class="icon" onclick={() => remove(item.id)} aria-label="Remove {item.name}" title="Remove">×</button>
-            </li>
-          {:else}
-            <li class="empty">No layers yet. Add an audio shader, or anything from the library: a video, an image, a shader, a sketch. You can also drop Media Library cards or files here.</li>
-          {/each}
-        </ol>
-        <div class="adds">
-          <button class="studio-btn" onclick={addVoice}>+ Audio shader</button>
-          <button class="studio-btn" onclick={() => (library = true)}>+ Library</button>
-          <label class="studio-btn file">+ File<input type="file" multiple accept="video/*,image/*,.fs,.frag,.glsl" onchange={pickFiles} /></label>
-        </div>
-        {#if error}<p class="error" role="status">{error}</p>{/if}
-      {/if}
-    </section>
-
-    <section class="middle" aria-label="The whole stack">
-      <div class="panel whole">
-        <div class="panel-head"><span class="ga-eyebrow">Whole stack</span></div>
-        <div class="row">
-          <label>Blend
-            <select value={stack.blend} onchange={(e) => patchStack({ blend: (e.target as HTMLSelectElement).value as BlendMode })}>
-              {#each BLEND_MODE_ORDER as mode (mode)}<option value={mode}>{blendModeLabel(mode)}</option>{/each}
-            </select>
-          </label>
-          <StudioKnob label="Opacity" value={stack.opacity} defaultValue={1} size={22} format={percent} onchange={(v) => patchStack({ opacity: v })} />
-          <label>Colors
-            <select value={stack.mood?.palette ?? ''} onchange={(e) => { const v = (e.target as HTMLSelectElement).value; patchStack({ mood: { ...stack.mood, palette: v || undefined } }); }} title="The palette its audio shaders take their colors from">
-              <option value="">The studio's</option>
-              {#each STUDIO_PALETTE_LIST as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
-            </select>
-          </label>
-          <label class="check" title="Its own glow, trails, grade and grain over the stack">
-            <input type="checkbox" checked={!!finish} onchange={(e) => patchStack({ mood: { ...stack.mood, finish: (e.target as HTMLInputElement).checked ? { ...DEFAULT_FINISH } : undefined } })} /> Own look
-          </label>
-        </div>
-        {#if finish}
-          <div class="row">
-            <StudioKnob label="Glow" value={finish.glow} size={22} format={percent} onchange={(v) => setFinish({ glow: v })} />
-            <StudioKnob label="Trails" value={finish.trails} size={22} format={percent} onchange={(v) => setFinish({ trails: v })} />
-            <StudioKnob label="Grain" value={finish.grain} size={22} format={percent} onchange={(v) => setFinish({ grain: v })} />
-            <label>Grade
-              <select value={finish.grade} onchange={(e) => setFinish({ grade: (e.target as HTMLSelectElement).value as StudioGrade })}>
-                {#each STUDIO_GRADES as g (g.id)}<option value={g.id}>{g.label}</option>{/each}
-              </select>
-            </label>
+      <div class="body">
+        <section class="layers" aria-label="Layers">
+          <div class="col-head">
+            <span class="ga-eyebrow">Layers</span>
+            <span class="count">{stack.items.length} / {MAX_STACK_ITEMS}</span>
           </div>
-        {/if}
-        <StackEffects effects={stack.effects} note="Over the whole stack, after its layers are mixed." onchange={(effects: Effect[]) => patchStack({ effects })} />
-      </div>
-    </section>
-
-    <section class="inspector panel" aria-label="Selected layer">
-      {#if selected}
-        {@const inputs = inputsOf(selected)}
-        <div class="panel-head">
-          <span class="ga-eyebrow">{kindLabel(selected)}</span>
-          <strong class="sel-name">{selected.name}</strong>
-        </div>
-        <div class="row">
-          <label>Blend
-            <select value={selected.voice?.clear ? 'cut-out' : selected.blend} onchange={(e) => {
-              const v = (e.target as HTMLSelectElement).value;
-              if (v === 'cut-out' && selected.voice) patchItem(selected.id, { blend: 'normal', voice: { ...selected.voice, clear: true } });
-              else patchItem(selected.id, { blend: v as BlendMode, ...(selected.voice ? { voice: { ...selected.voice, clear: false } } : {}) });
-            }}>
-              {#if selected.voice}<option value="cut-out">Cut out</option>{/if}
-              {#each BLEND_MODE_ORDER as mode (mode)}<option value={mode}>{blendModeLabel(mode)}</option>{/each}
-            </select>
-          </label>
-          <StudioKnob label="Opacity" value={selected.opacity} defaultValue={1} size={22} format={percent} onchange={(v) => patchItem(selected.id, { opacity: v })} />
-        </div>
-        {#if selected.voice}
-          {@const voice = selected.voice}
-          <label class="wide">Follows
-            <select value={voice.follow} onchange={(e) => patchItem(selected.id, { voice: { ...voice, follow: (e.target as HTMLSelectElement).value } })}>
-              {#if liveTracks.length}
-                <optgroup label="Ableton Live">
-                  {#each liveTracks as t (t.name)}
-                    <option value={liveSource(t.name)}>{t.name}</option>
-                    {#if t.drums}{#each LIVE_DRUMS as d (d.id)}<option value={liveSource(t.name, d.id)}>{t.name}: {d.label}</option>{/each}{/if}
-                  {/each}
-                </optgroup>
-              {/if}
-              <optgroup label="Audio Lab">
-                {#each voiceSourcesFor(s.set, voice.follow) as src (src.id)}<option value={src.id}>{src.label}</option>{/each}
-              </optgroup>
-              {#if voice.follow.startsWith('live:') && !liveTracks.some((t) => voice.follow === liveSource(t.name) || voice.follow.startsWith(`${liveSource(t.name)}/`))}
-                <option value={voice.follow}>{voice.follow.slice(5)} (Live track)</option>
-              {/if}
-            </select>
-          </label>
-        {/if}
-        {#if inputs.length}
-          <div class="panel-head"><span class="ga-eyebrow">Settings</span></div>
-          <div class="knobs">
-            {#each inputs as input (input.NAME)}
-              <StudioKnob
-                label={input.LABEL ?? input.NAME}
-                value={numberOf(selected, input)}
-                min={input.MIN ?? 0}
-                max={input.MAX ?? 1}
-                defaultValue={Number(input.DEFAULT ?? input.MIN ?? 0)}
-                size={22}
-                onchange={(v) => patchItem(selected.id, { params: { ...selected.params, [input.NAME]: input.TYPE === 'long' ? Math.round(v) : v } })}
-              />
+          <div class="layer-list" role="list">
+            {#each stack.items as item, i (item.id)}
+              {@const thumb = thumbOf(item)}
+              <div
+                class="layer-item"
+                class:selected={view === 'layer' && selected?.id === item.id}
+                class:off={item.hidden}
+                class:drag-over-above={dragOver?.index === i && !dragOver.below}
+                class:drag-over-below={dragOver?.index === i && dragOver.below}
+                role="listitem"
+                draggable="true"
+                ondragstart={(e) => { dragFrom = i; e.dataTransfer?.setData('text/plain', item.id); }}
+                ondragend={() => { dragFrom = null; dragOver = null; }}
+                ondragover={(e) => rowDragOver(e, i)}
+                ondrop={rowDrop}
+              >
+                <span class="drag-handle" aria-hidden="true"><svg viewBox="0 0 8 12"><circle cx="2" cy="2" r="1" /><circle cx="6" cy="2" r="1" /><circle cx="2" cy="6" r="1" /><circle cx="6" cy="6" r="1" /><circle cx="2" cy="10" r="1" /><circle cx="6" cy="10" r="1" /></svg></span>
+                <button class="pick" onclick={() => { selectedId = item.id; view = 'layer'; }}>
+                  <span class="layer-thumbnail">{#if thumb}<img src={thumb} alt="" onerror={(e) => ((e.currentTarget as HTMLImageElement).style.visibility = 'hidden')} />{/if}</span>
+                  <span class="names"><span class="layer-name">{item.name}</span><span class="layer-kind">{kindLabel(item)}</span></span>
+                </button>
+                <button class="icon-btn" onclick={() => patchItem(item.id, { hidden: !item.hidden })} aria-label={item.hidden ? `Show ${item.name}` : `Hide ${item.name}`} title={item.hidden ? 'Show' : 'Hide'}>
+                  {#if item.hidden}
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8M9.4 5.4A9.7 9.7 0 0 1 12 5c5 0 9 5 10 7a14 14 0 0 1-3 3.8M6.2 6.2A14 14 0 0 0 2 12c1 2 5 7 10 7a9.7 9.7 0 0 0 4.2-.9" /></svg>
+                  {:else}
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></svg>
+                  {/if}
+                </button>
+                <button class="icon-btn" onclick={() => remove(item.id)} aria-label="Remove {item.name}" title="Remove">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+                </button>
+              </div>
+            {:else}
+              <p class="empty">No layers yet. Pick from the Media Library on the right, or add one of the audio shaders.</p>
             {/each}
           </div>
-        {/if}
-        <div class="panel-head"><span class="ga-eyebrow">Effects</span></div>
-        <StackEffects effects={selected.effects} note="On this layer before it is mixed with the others." onchange={(effects: Effect[]) => patchItem(selected.id, { effects })} />
-      {:else}
-        <p class="empty">Pick a layer to set it up.</p>
-      {/if}
-    </section>
+          <button class="btn wide" onclick={addVoice}>+ Audio shader</button>
+        </section>
+
+        <section class="props" aria-label="Settings">
+          <div class="ga-segmented tabs" role="tablist" aria-label="What to set">
+            <button role="tab" aria-selected={view === 'layer'} class:active={view === 'layer'} disabled={!selected} onclick={() => (view = 'layer')}>{selected ? selected.name : 'Layer'}</button>
+            <button role="tab" aria-selected={view === 'clip'} class:active={view === 'clip'} onclick={() => (view = 'clip')}>Whole clip</button>
+          </div>
+          <div class="scroll">
+            {#if view === 'layer' && selected}
+              {@const inputs = inputsOf(selected)}
+              <div class="group">
+                <label class="field">Blend
+                  <select value={selected.voice?.clear ? 'cut-out' : selected.blend} onchange={(e) => {
+                    const v = (e.target as HTMLSelectElement).value;
+                    if (v === 'cut-out' && selected.voice) patchItem(selected.id, { blend: 'normal', voice: { ...selected.voice, clear: true } });
+                    else patchItem(selected.id, { blend: v as BlendMode, ...(selected.voice ? { voice: { ...selected.voice, clear: false } } : {}) });
+                  }}>
+                    {#if selected.voice}<option value="cut-out">Cut out</option>{/if}
+                    {#each BLEND_MODE_ORDER as mode (mode)}<option value={mode}>{blendModeLabel(mode)}</option>{/each}
+                  </select>
+                </label>
+                {@render slider('Opacity', selected.opacity, 0, 1, percent(selected.opacity), (v) => patchItem(selected.id, { opacity: v }))}
+                {#if selected.voice}
+                  {@const voice = selected.voice}
+                  <label class="field">Follows
+                    <select value={voice.follow} onchange={(e) => patchItem(selected.id, { voice: { ...voice, follow: (e.target as HTMLSelectElement).value } })}>
+                      {#if liveTracks.length}
+                        <optgroup label="Ableton Live">
+                          {#each liveTracks as t (t.name)}
+                            <option value={liveSource(t.name)}>{t.name}</option>
+                            {#if t.drums}{#each LIVE_DRUMS as d (d.id)}<option value={liveSource(t.name, d.id)}>{t.name}: {d.label}</option>{/each}{/if}
+                          {/each}
+                        </optgroup>
+                      {/if}
+                      <optgroup label="Audio Lab">
+                        {#each voiceSourcesFor(s.set, voice.follow) as src (src.id)}<option value={src.id}>{src.label}</option>{/each}
+                      </optgroup>
+                      {#if voice.follow.startsWith('live:') && !liveTracks.some((t) => voice.follow === liveSource(t.name) || voice.follow.startsWith(`${liveSource(t.name)}/`))}
+                        <option value={voice.follow}>{voice.follow.slice(5)} (Live track)</option>
+                      {/if}
+                    </select>
+                  </label>
+                {/if}
+              </div>
+              {#if inputs.length}
+                <div class="group">
+                  <span class="ga-eyebrow">Settings</span>
+                  {#each inputs as input (input.NAME)}
+                    {@const v = numberOf(selected, input)}
+                    {@render slider(input.LABEL ?? input.NAME, v, input.MIN ?? 0, input.MAX ?? 1, shown(v, input), (nv) => patchItem(selected.id, { params: { ...selected.params, [input.NAME]: input.TYPE === 'long' ? Math.round(nv) : nv } }))}
+                  {/each}
+                </div>
+              {/if}
+              <div class="group">
+                <span class="ga-eyebrow">Effects</span>
+                <StackEffects effects={selected.effects} note="On this layer, before it is mixed with the others." onchange={(effects: Effect[]) => patchItem(selected.id, { effects })} />
+              </div>
+            {:else if view === 'layer'}
+              <p class="empty">Add a layer to set it up.</p>
+            {:else}
+              <div class="group">
+                <label class="field">Blend over the rest
+                  <select value={stack.blend} onchange={(e) => patchStack({ blend: (e.target as HTMLSelectElement).value as BlendMode })}>
+                    {#each BLEND_MODE_ORDER as mode (mode)}<option value={mode}>{blendModeLabel(mode)}</option>{/each}
+                  </select>
+                </label>
+                {@render slider('Opacity', stack.opacity, 0, 1, percent(stack.opacity), (v) => patchStack({ opacity: v }))}
+              </div>
+              <div class="group">
+                <span class="ga-eyebrow">Mood</span>
+                <label class="field">Colors
+                  <select value={stack.mood?.palette ?? ''} onchange={(e) => { const v = (e.target as HTMLSelectElement).value; patchStack({ mood: { ...stack.mood, palette: v || undefined } }); }} title="The palette its audio shaders take their colors from">
+                    <option value="">The studio's</option>
+                    {#each STUDIO_PALETTE_LIST as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
+                  </select>
+                </label>
+                <label class="check" title="Its own glow, trails, grade and grain over the stack">
+                  <input type="checkbox" checked={!!finish} onchange={(e) => patchStack({ mood: { ...stack.mood, finish: (e.target as HTMLInputElement).checked ? { ...DEFAULT_FINISH } : undefined } })} />
+                  Own look
+                </label>
+                {#if finish}
+                  {@render slider('Glow', finish.glow, 0, 1, percent(finish.glow), (v) => setFinish({ glow: v }))}
+                  {@render slider('Trails', finish.trails, 0, 1, percent(finish.trails), (v) => setFinish({ trails: v }))}
+                  {@render slider('Grain', finish.grain, 0, 1, percent(finish.grain), (v) => setFinish({ grain: v }))}
+                  <label class="field">Grade
+                    <select value={finish.grade} onchange={(e) => setFinish({ grade: (e.target as HTMLSelectElement).value as StudioGrade })}>
+                      {#each STUDIO_GRADES as g (g.id)}<option value={g.id}>{g.label}</option>{/each}
+                    </select>
+                  </label>
+                {/if}
+              </div>
+              <div class="group">
+                <span class="ga-eyebrow">Effects</span>
+                <StackEffects effects={stack.effects} note="Over the whole clip, after its layers are mixed." onchange={(effects: Effect[]) => patchStack({ effects })} />
+              </div>
+            {/if}
+          </div>
+        </section>
+
+        <section class="library" aria-label="Media Library">
+          <MediaTray embedded vjMode pickTitle="Click to add to this clip" onVJAddPayload={(p) => addMedia(clipMediaFromTrayPayload(p))} />
+        </section>
+      </div>
+    </div>
   </div>
 {/if}
 
 <style>
-  /* Panels round the studio's output frame (framed); without one, a plain dialog. */
-  .stack-editor {
+  .backdrop {
     position: fixed;
-    inset: 4vh 3vw;
+    inset: 0;
     /* Over the patch cables (96, earlier in the page), under the visual picker (97). */
     z-index: 96;
     display: grid;
-    grid-template-columns: 280px minmax(0, 1fr) 320px;
-    grid-template-rows: auto minmax(0, 1fr);
-    grid-template-areas: 'bar bar bar' 'layers middle inspector';
-    gap: 8px;
+    place-items: center;
+    background: rgba(0, 0, 0, 0.62);
+  }
+  .dialog {
+    width: min(1180px, 96vw);
+    height: min(700px, 90vh);
+    display: flex;
+    flex-direction: column;
+    background: var(--ga-panel, #100f0d);
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-soft, 8px);
+    box-shadow: 0 18px 60px rgba(0, 0, 0, 0.6);
     color: var(--ga-ink-0, #f2ede4);
     font-size: var(--ga-text-control, 12px);
+    overflow: hidden;
   }
-  .stack-editor.framed { display: block; inset: 0; pointer-events: none; }
-  .framed > * { position: absolute; pointer-events: auto; }
-  .framed .layers { left: 8px; top: 8px; bottom: 8px; width: calc(var(--fl) - 16px); }
-  .framed .inspector { left: calc(var(--fr) + 8px); right: 8px; top: 8px; bottom: 8px; }
-  .framed .bar { left: var(--fl); width: calc(var(--fr) - var(--fl)); top: calc(var(--fb) + 8px); box-sizing: border-box; }
-  .framed .middle { left: var(--fl); width: calc(var(--fr) - var(--fl)); top: calc(var(--fb) + 60px); bottom: 8px; }
-  .panel, .bar {
-    background: var(--ga-panel, #12110e);
+  .head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13)); }
+  .title { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px; }
+  .title strong { font-size: var(--ga-text-title, 14px); font-weight: var(--ga-weight-title, 650); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .btn {
+    height: var(--ga-control-h, 26px);
+    padding: 0 12px;
     border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
     border-radius: var(--ga-r-hard, 5px);
-    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+    background: var(--ga-card, #16140f);
+    color: var(--ga-ink-0, #f2ede4);
+    font: inherit;
+    font-weight: var(--ga-weight-control, 600);
+    cursor: pointer;
   }
-  .bar { grid-area: bar; display: flex; align-items: center; gap: 12px; padding: 8px 12px; }
-  .title { flex: 1; display: flex; align-items: baseline; gap: 10px; min-width: 0; }
-  .title strong { font-size: var(--ga-text-body, 13px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .layers { grid-area: layers; display: flex; flex-direction: column; min-height: 0; padding: 10px; gap: 8px; box-sizing: border-box; }
-  .inspector { grid-area: inspector; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 10px; box-sizing: border-box; }
-  .middle { grid-area: middle; display: flex; flex-direction: column; min-height: 0; }
-  .whole { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
-  .panel-head { display: flex; align-items: baseline; gap: 8px; }
-  .count { margin-left: auto; color: var(--ga-ink-2, #89857e); font-variant-numeric: tabular-nums; }
-  .sel-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .list { list-style: none; margin: 0; padding: 0; flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
-  .list li { display: flex; align-items: center; gap: 2px; border-radius: var(--ga-r-hard, 5px); }
-  .list li.on { background: var(--ga-selection-bg, #1f3170); }
-  .pick { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 5px 6px; background: none; border: 0; color: inherit; text-align: left; cursor: pointer; font: inherit; }
-  .pick .name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-  .pick .kind { color: var(--ga-ink-2, #89857e); font-size: var(--ga-text-meta, 11px); }
-  .icon { width: 22px; height: 22px; padding: 0; background: none; border: 0; color: var(--ga-ink-1, #ada9a2); cursor: pointer; }
-  .icon:disabled { opacity: 0.3; cursor: default; }
-  .icon:hover:not(:disabled) { color: var(--ga-ink-0, #f2ede4); }
-  .empty { color: var(--ga-ink-2, #89857e); font-size: var(--ga-text-meta, 11px); line-height: 1.5; padding: 6px; }
-  .adds { display: flex; flex-wrap: wrap; gap: 6px; }
-  .file { position: relative; overflow: hidden; }
-  .file input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
-  .error { margin: 0; color: #e4ba7b; font-size: var(--ga-text-meta, 11px); }
-  .row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
-  label { display: flex; flex-direction: column; gap: 3px; color: var(--ga-ink-1, #ada9a2); font-size: var(--ga-text-meta, 11px); }
-  label.check { flex-direction: row; align-items: center; gap: 6px; }
-  label.wide select { width: 100%; }
-  select { height: var(--ga-control-h-sm, 22px); background: var(--ga-slot, #060504); color: var(--ga-ink-0, #f2ede4); border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13)); border-radius: var(--ga-r-hard, 5px); font: inherit; font-size: var(--ga-text-control, 12px); }
-  .knobs { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 10px 6px; }
+  .btn:hover { border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)); }
+  .btn.on { border-color: var(--ga-icon, #5278ff); color: var(--ga-icon, #5278ff); }
+  .btn.primary { background: var(--ga-icon, #5278ff); border-color: var(--ga-icon, #5278ff); color: #fff; }
+  .btn.wide { width: 100%; }
+  .close { width: 26px; height: 26px; padding: 0; display: grid; place-items: center; background: none; border: 0; color: var(--ga-ink-1, #ada9a2); cursor: pointer; border-radius: var(--ga-r-hard, 5px); }
+  .close:hover { color: var(--ga-ink-0, #f2ede4); background: var(--ga-card, #16140f); }
+  .close svg, .icon-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .body { flex: 1; min-height: 0; display: grid; grid-template-columns: 250px minmax(0, 1fr) 360px; }
+  .layers, .props { display: flex; flex-direction: column; gap: 8px; min-height: 0; padding: 10px; border-right: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13)); }
+  .library { min-height: 0; overflow: hidden; display: flex; }
+  .library > :global(*) { flex: 1; min-width: 0; }
+  .col-head { display: flex; align-items: baseline; justify-content: space-between; }
+  .count { color: var(--ga-ink-2, #89857e); font-variant-numeric: tabular-nums; }
+
+  /* Rows as in the mapping layer list. */
+  .layer-list { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)) transparent; }
+  .layer-item {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 6px;
+    margin-bottom: 3px;
+    border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    border-radius: var(--ga-r-hard, 5px);
+    background: var(--ga-card, #16140f);
+  }
+  .layer-item.selected { border-color: var(--ga-icon, #5278ff); background: color-mix(in srgb, var(--ga-icon, #5278ff) 14%, var(--ga-card, #16140f)); }
+  .layer-item.off .layer-name, .layer-item.off .layer-thumbnail { opacity: 0.4; }
+  .layer-item.drag-over-above::after, .layer-item.drag-over-below::after { content: ''; position: absolute; left: 0; right: 0; height: 2px; background: var(--ga-icon, #5278ff); }
+  .layer-item.drag-over-above::after { top: -3px; }
+  .layer-item.drag-over-below::after { bottom: -3px; }
+  .drag-handle { flex: 0 0 auto; width: 8px; color: var(--ga-ink-2, #89857e); cursor: grab; }
+  .drag-handle svg { width: 8px; height: 12px; fill: currentColor; display: block; }
+  .pick { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 0; background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+  .layer-thumbnail { flex: 0 0 auto; width: 40px; height: 25px; border-radius: var(--ga-r-hard, 5px); border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13)); background: var(--ga-slot, #060504); overflow: hidden; }
+  .layer-thumbnail img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .names { min-width: 0; display: flex; flex-direction: column; }
+  .layer-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+  .layer-kind { color: var(--ga-ink-2, #89857e); font-size: var(--ga-text-meta, 11px); }
+  .icon-btn { flex: 0 0 auto; width: 22px; height: 22px; padding: 0; display: grid; place-items: center; background: none; border: 0; border-radius: var(--ga-r-hard, 5px); color: var(--ga-ink-2, #89857e); cursor: pointer; }
+  .icon-btn:hover { color: var(--ga-ink-0, #f2ede4); background: var(--ga-slot, #060504); }
+  .empty { margin: 4px 2px; color: var(--ga-ink-2, #89857e); font-size: var(--ga-text-meta, 11px); line-height: 1.5; }
+
+  .tabs { display: flex; }
+  .tabs button { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding-right: 4px; scrollbar-width: thin; scrollbar-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)) transparent; }
+  .group { display: flex; flex-direction: column; gap: 8px; }
+  .field { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--ga-ink-1, #ada9a2); }
+  .field select { flex: 0 1 60%; min-width: 0; }
+  select { height: var(--ga-control-h-sm, 22px); background: var(--ga-slot, #060504); color: var(--ga-ink-0, #f2ede4); border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13)); border-radius: var(--ga-r-hard, 5px); font: inherit; }
+  .check { display: flex; align-items: center; gap: 6px; color: var(--ga-ink-1, #ada9a2); }
+  .param { display: flex; flex-direction: column; gap: 3px; }
+  .param-head { display: flex; justify-content: space-between; color: var(--ga-ink-1, #ada9a2); }
+  .param-head output { color: var(--ga-ink-0, #f2ede4); font-variant-numeric: tabular-nums; }
+  .param input[type='range'] { width: 100%; accent-color: var(--ga-icon, #5278ff); }
 </style>

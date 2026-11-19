@@ -329,6 +329,7 @@ export function expandStack(id: string, stack: ClipStack, set: StudioSet, inputs
   const palette = stack.mood?.palette ? { id: stack.mood.palette, slots: resolvePalette(stack.mood.palette, set, key) } : studioPalette;
   // The top of the list draws on top.
   for (const item of [...stack.items].reverse()) {
+    if (item.hidden) continue;
     const itemId = `${id}:${item.id}`;
     let source: MediaSource | null = null;
     if (item.voice) {

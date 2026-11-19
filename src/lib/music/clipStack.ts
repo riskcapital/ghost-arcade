@@ -41,6 +41,8 @@ export interface StackItem {
   media?: ShowClipMedia;
   blend: BlendMode;
   opacity: number;
+  /** Turned off (the eye in the layer list): kept, not drawn. */
+  hidden?: boolean;
   /** Shader settings by input name (voices and library shaders). */
   params: Record<string, number>;
   effects: Effect[];
@@ -117,6 +119,7 @@ export function normalizeStackItem(raw: unknown): StackItem | null {
     ...(voice ? { voice } : { media }),
     blend: blend(r.blend, 'normal'),
     opacity: clamp01(r.opacity, 1),
+    ...(r.hidden === true ? { hidden: true } : {}),
     params: normalizeParams(r.params),
     effects: normalizeEffects(r.effects),
   };
