@@ -1,7 +1,7 @@
 <script lang="ts">
   // Welcome screen, shown on every launch. Picking up a saved show or
   // starting blank come first, since that is where most launches go; the
-  // guided tour, the starter templates and a show built around a song follow.
+  // guided tour and the starter templates follow.
   // None of them starts by itself.
   import { onMount } from 'svelte';
   // The loading screen's wordmark (index.html inlines the same file).
@@ -14,15 +14,13 @@
   export let onTour: () => void = () => {};
   export let onTemplates: () => void = () => {};
   export let onOpenProject: () => void = () => {};
-  export let onShowFromAudio: () => void = () => {};
 
-  type Choice = { id: 'open' | 'blank' | 'tour' | 'templates' | 'song'; title: string; detail: string; run: () => void };
+  type Choice = { id: 'open' | 'blank' | 'tour' | 'templates'; title: string; detail: string; run: () => void };
   const choices: Choice[] = [
     { id: 'open', title: 'Open a project', detail: 'Carry on with a saved show', run: () => onOpenProject() },
     { id: 'blank', title: 'Blank project', detail: 'Straight in, nothing set up', run: () => {} },
     { id: 'tour', title: 'Show me around', detail: 'Short hands-on tours for VJ, projection mapping or music', run: () => onTour() },
     { id: 'templates', title: 'Start from a template', detail: 'A deck already set up for a band, a club night, a light show or mapping', run: () => onTemplates() },
-    { id: 'song', title: 'Make a show to a song', detail: 'Pick a song and lay your looks over it', run: () => onShowFromAudio() },
   ];
   const blankChoice = choices.find((choice) => choice.id === 'blank')!;
   const version = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '';
@@ -112,13 +110,6 @@
               <rect class="solid" x="5.75" y="10.25" width="2.5" height="2.5" />
               <rect class="solid" x="23.75" y="10.25" width="2.5" height="2.5" />
               <rect class="solid" x="14.75" y="19.25" width="2.5" height="2.5" />
-            {:else}
-              <!-- a song, with looks laid along its beats -->
-              <path d="M7 11v4M10 8v10M13 6v14M16 10v6M19 7v12M22 11v4M25 9v8" />
-              <path d="M4 26h24" />
-              <rect class="solid" x="6.25" y="24.25" width="3.5" height="3.5" />
-              <rect class="solid" x="14.25" y="24.25" width="3.5" height="3.5" />
-              <rect class="solid" x="22.25" y="24.25" width="3.5" height="3.5" />
             {/if}
           </svg>
           <span class="choice-text">
