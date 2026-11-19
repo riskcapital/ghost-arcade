@@ -16,6 +16,7 @@
     linkCandidates,
     planSurfaceLink,
     presetSurfaceState,
+    type LinkableSurface,
     type SurfaceLinkDestination,
     type SurfaceLinkIssue,
     type SurfaceLinkPlanRow,
@@ -118,10 +119,23 @@
   function reviewDetail(row: SurfaceLinkPlanRow): string {
     if (row.action === 'add') return `Adds ${row.layerName ?? 'the layer'}, on the shared warp`;
     const warp = row.warp === 'own' ? 'keeps its own warp' : 'takes the shared warp';
-    return row.fromSurfaceName ? `Leaves “${row.fromSurfaceName}”, ${warp}` : warp;
+    const left = row.issues.find((issue) => issue.kind === 'shared-elsewhere');
+    if (left?.kind === 'shared-elsewhere') return `Leaves “${left.surfaceName}” (${presetsLabel(left.presetNames.length)} stay), ${warp}`;
+    return `Leaves its own surface, ${warp}`;
   }
 
   const presetsLabel = (n: number) => `${n} preset${n === 1 ? '' : 's'}`;
+
+  $: presetNames = new Map(presets.map((c) => [c.id, c.name]));
+  $: repeatedNames = new Set(surfaceList.map((s) => s.name).filter((name, i, all) => all.indexOf(name) !== i));
+
+  /** Surfaces often share a name (pasted copies): say where each one is. */
+  function surfaceLabel(s: LinkableSurface): string {
+    const first = s.presetIds.length ? presetNames.get(s.presetIds[0]) ?? '' : '';
+    if (s.presetIds.length === 0) return `${s.name} · editor only`;
+    if (s.presetIds.length === 1) return `${s.name} · in ${first}`;
+    return `${s.name} · ${presetsLabel(s.presetIds.length)}${repeatedNames.has(s.name) ? `, first in ${first}` : ''}`;
+  }
 </script>
 
 <svelte:window onkeydown={onKey} />
@@ -145,7 +159,7 @@
             <label class="sl-eyebrow" for="sl-surface">Surface</label>
             <select id="sl-surface" data-testid="surface-link-source" value={surfaceId} onchange={(e) => pickSurface(e.currentTarget.value)}>
               {#each surfaceList as s (s.id)}
-                <option value={s.id}>{s.name} · {presetsLabel(s.presetIds.length)}</option>
+                <option value={s.id}>{surfaceLabel(s)}</option>
               {/each}
             </select>
           </div>
