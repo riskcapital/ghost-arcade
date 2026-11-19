@@ -419,6 +419,18 @@ function refreshChromiumGpuInfo() {
     chromiumGpuInfo = info;
   }).catch(() => { /* logging only */ });
 }
+/** Once, after the editor's first page load (the GPU process is up by then):
+ *  Chromium's GPU, driver and compositing state, for the support log. */
+let chromiumGpuLogged = false;
+function logChromiumGpuOnce() {
+  if (chromiumGpuLogged || !app.isReady()) return;
+  chromiumGpuLogged = true;
+  app.getGPUInfo('basic').then((info) => {
+    chromiumGpuInfo = info;
+    const line = formatRecoveryDiagnostics({ gpuInfo: info, featureStatus: app.getGPUFeatureStatus(), systemMemory: process.getSystemMemoryInfo() });
+    console.log(`[Main] ${line.replace(/^core adapter=unknown \| /, '')}`);
+  }).catch((err) => console.warn('[Main] GPU info unavailable:', err?.message || err));
+}
 function describeRecoveryDiagnostics() {
   const read = (fn) => { try { return fn(); } catch { return undefined; } };
   return formatRecoveryDiagnostics({
@@ -10259,6 +10271,7 @@ function createMainWindow() {
   mainWindow.webContents.on('did-finish-load', () => {
     console.log('[Main] Main window loaded');
     editorRecovery.loaded();
+    logChromiumGpuOnce();
     installMode.pageLoaded();
 
     // Hot-reload: recreate OSR window when main window reloads (Vite HMR)
@@ -10805,11 +10818,7 @@ app.on('second-instance', (_event, argv) => {
 });
 
 app.whenReady().then(async () => {
-  // Chromium's view of the GPU, for the log and for recovery diagnostics.
-  app.getGPUInfo('basic').then((info) => {
-    chromiumGpuInfo = info;
-    console.log(`[Main] ${formatRecoveryDiagnostics({ gpuInfo: info, featureStatus: app.getGPUFeatureStatus(), systemMemory: process.getSystemMemoryInfo() }).replace(/^core adapter=unknown \| /, '')}`);
-  }).catch((err) => console.warn('[Main] GPU info unavailable:', err?.message || err));
+  refreshChromiumGpuInfo();
   startPowerSaveBlocker();
 
   app.setAboutPanelOptions({
