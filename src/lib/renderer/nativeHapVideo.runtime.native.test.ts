@@ -106,6 +106,11 @@ testSuite('HAP compressed textures through native output', () => {
       const reference=execFileSync(ffmpeg,['-v','error','-i',uri,'-pix_fmt','rgba','-f','rawvideo','pipe:1'],{maxBuffer:1024*1024,timeout:30000});
       fixtures.set(format,{uri,reference});
     }
+    // An encoder start offset writes an empty edit before the media: the clip
+    // plays from its first frame on the GPU path, like the same clip without it.
+    const delayed=join(directory,'hap_delayed.mov');
+    execFileSync(ffmpeg,['-v','error','-f','rawvideo','-pixel_format','rgba','-video_size','64x64','-framerate','25','-i',input,'-c:v','hap','-format','hap','-compressor','snappy','-chunks','4','-output_ts_offset','0.4',delayed],{timeout:30000});
+    fixtures.set('hap_delayed',{uri:delayed,reference:fixtures.get('hap')!.reference});
   },30000);
   afterAll(()=>{if(directory)rmSync(directory,{recursive:true,force:true});});
   it.each(['hap', 'hap_alpha', 'h264'])('applies video effects to %s without an extra raw-media layer', async (format) => {
@@ -186,7 +191,7 @@ testSuite('HAP compressed textures through native output', () => {
       expect((await rpc.send('status')).native_video_sessions.some((v:any) => v.source_id === 'raw-hap')).toBe(false);
     } finally { await rpc.close(); }
   }, 30000);
-  it.each(['hap','hap_alpha','hap_q'])('renders %s with reference colors and seeks on the prepared session',async format=>{
+  it.each(['hap','hap_alpha','hap_q','hap_delayed'])('renders %s with reference colors and seeks on the prepared session',async format=>{
     const rpc=core();const {uri,reference}=fixtures.get(format)!;
     const source='hap-video';
     const playback=(time=0,generation=1)=>({source_id:source,uri,source_type:'video',time_seconds:time,decode_width:64,decode_height:64,playback_rate:1,loop_enabled:true,duration_seconds:1,trim_start:0,trim_end:1,seek_generation:generation,seq:generation});
