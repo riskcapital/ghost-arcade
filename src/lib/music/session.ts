@@ -12,6 +12,7 @@
  * Pure: the store keeps the session, the runtime plays it.
  */
 
+import { hasVisuals, normalizeStack, stackFromVisual, type ClipStack } from './clipStack';
 import { INSTRUMENTS, clampNote, clampVelocity, type InstrumentId } from './noteEvents';
 import { changePatternGrid, normalizePattern, patternHasHits, type DrumPattern } from './drumPattern';
 import { SCALES, scaleNote, type MusicKey, type ScaleId, type StudioSet } from './studioSets';
@@ -53,8 +54,8 @@ export interface NotesClip {
   tone?: string;
   /** The preset it was made from. */
   preset?: string;
-  /** A visual that comes in while it plays. */
-  visual?: ClipVisual;
+  /** Its visuals: they come in while it plays (clipStack.ts). */
+  stack?: ClipStack;
 }
 
 export interface BeatClip {
@@ -64,11 +65,12 @@ export interface BeatClip {
   pattern: DrumPattern;
   kit?: string;
   preset?: string;
-  visual?: ClipVisual;
+  stack?: ClipStack;
 }
 
 /**
- * A clip's own visual: a visual voice (a VX shader, the sound it follows,
+ * The one visual a clip could carry before stacks (still an instrument's
+ * dress visual, instrumentDress.ts): a visual voice (a VX shader, the sound it follows,
  * its blend and opacity) that comes in with the clip and goes when it stops.
  * The clip's own effects live in the studio's inserts as "clip:<id>".
  */
@@ -260,6 +262,7 @@ interface RawClip {
   instrument?: unknown;
   tone?: unknown;
   visual?: unknown;
+  stack?: unknown;
 }
 
 /** A clip from saved data, or null. */
@@ -271,8 +274,8 @@ export function normalizeClip(raw: unknown): SessionClip | null {
   const preset = typeof input.preset === 'string' ? input.preset : undefined;
   if (input.kind === 'beat') {
     if (!input.pattern) return null;
-    const visual = normalizeClipVisual(input.visual);
-    return { kind: 'beat', id: input.id, name, pattern: normalizePattern(input.pattern), ...(typeof input.kit === 'string' && kitById(input.kit) ? { kit: input.kit } : {}), ...(preset ? { preset } : {}), ...(visual ? { visual } : {}) };
+    const stack = clipStackFrom(input);
+    return { kind: 'beat', id: input.id, name, pattern: normalizePattern(input.pattern), ...(typeof input.kit === 'string' && kitById(input.kit) ? { kit: input.kit } : {}), ...(preset ? { preset } : {}), ...(stack ? { stack } : {}) };
   }
   if (input.kind !== 'notes') return null;
   // Any length in quarter beats: a three-beat loop drifts against the bar on purpose.
@@ -298,8 +301,16 @@ export function normalizeClip(raw: unknown): SessionClip | null {
     : null;
   const instrument = INSTRUMENTS.includes(input.instrument as InstrumentId) ? (input.instrument as InstrumentId) : null;
   const tone = toneById(input.tone as string) ? (input.tone as string) : undefined;
+  const stack = clipStackFrom(input);
+  return { kind: 'notes', id: input.id, name, beats, notes, key, instrument, ...(tone ? { tone } : {}), ...(preset ? { preset } : {}), ...(stack ? { stack } : {}) };
+}
+
+/** A saved clip's stack; a clip saved with the one visual of before gets it as a one-layer stack. */
+function clipStackFrom(input: RawClip): ClipStack | undefined {
+  const stack = normalizeStack(input.stack);
+  if (hasVisuals(stack)) return stack;
   const visual = normalizeClipVisual(input.visual);
-  return { kind: 'notes', id: input.id, name, beats, notes, key, instrument, ...(tone ? { tone } : {}), ...(preset ? { preset } : {}), ...(visual ? { visual } : {}) };
+  return visual ? stackFromVisual(visual, `${String(input.id)}:visual`) : undefined;
 }
 
 /** A session from saved data. Beat clips only live on the beat track, notes clips on the others. */
