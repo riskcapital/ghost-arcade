@@ -6,7 +6,7 @@
   import { interfaceScale } from '../stores/interfaceScale';
   import { onMount, onDestroy } from 'svelte';
   import { tooltipsEnabled } from '../help/preferences';
-  import { NATIVE_ENGINE_ONLY, settings, getSupportedFormats, COLOR_SCHEMES, CLAUDE_MODELS, GEMINI_MODELS, VEO_MODELS, LUMA_MODELS, DEFAULT_LAYER_SHADERS, type RecordingSettings, type OutputSettings, type ColorSchemeId, type FluidQualityMode, type ShaderQualityMode, type GpuInstrumentQualityMode, type ShaderAIProvider, type VideoAIProvider } from '../stores/settings';
+  import { NATIVE_ENGINE_ONLY, settings, getSupportedFormats, COLOR_SCHEMES, CLAUDE_MODELS, GEMINI_MODELS, OMNI_MODELS, LUMA_MODELS, DEFAULT_LAYER_SHADERS, type RecordingSettings, type OutputSettings, type ColorSchemeId, type FluidQualityMode, type ShaderQualityMode, type GpuInstrumentQualityMode, type ShaderAIProvider, type VideoAIProvider } from '../stores/settings';
   // Theme template registry — full visual style swap (fonts + surfaces
   // + corners + accents). See src/lib/theming/themes/.
   import { activeThemeId, themes } from '../theming/store';
@@ -47,6 +47,7 @@
     .map(([path, health]) => ({ path, health, badge: decodeBadge(health) }))
     .filter((entry) => !!entry.badge);
   import { validateAPIKey, validateLumaKey } from '../api/ai-client';
+  import { isLumaAgentsModel } from '../api/ai-models';
   import { updateInfo } from '../stores/updateChecker';
   import { updateModalOpen } from '../stores/uiState';
   import { project } from '../stores/layers';
@@ -263,7 +264,7 @@
   async function testLumaKey() {
     if (!$settings.ai.lumaApiKey) { lumaKeyValid = false; return; }
     lumaKeyValidating = true;
-    lumaKeyValid = await validateLumaKey($settings.ai.lumaApiKey);
+    lumaKeyValid = await validateLumaKey($settings.ai.lumaApiKey, $settings.ai.lumaModel);
     lumaKeyValidating = false;
   }
 
@@ -3104,7 +3105,7 @@
             <div class="setting-label">
               <span class="label-text">Claude model</span>
             </div>
-            <select value={$settings.ai.claudeModel} onchange={(e) => settings.setClaudeModel((e.target as HTMLSelectElement).value)}>
+            <select value={$settings.ai.claudeModel} onchange={(e) => { settings.setClaudeModel((e.target as HTMLSelectElement).value); claudeKeyValid = null; }}>
               {#each CLAUDE_MODELS as model}
                 <option value={model.id}>{model.label}</option>
               {/each}
@@ -3117,7 +3118,7 @@
               <span class="label-text">Gemini API key
                 {#if geminiKeyValid === true}<span class="key-badge valid">Valid</span>{:else if geminiKeyValid === false}<span class="key-badge invalid">Invalid</span>{/if}
               </span>
-              <span class="label-hint">Also used for Veo video generation · <a href="https://aistudio.google.com/apikey" target="_blank" class="settings-link">aistudio.google.com</a></span>
+              <span class="label-hint">Also used for Gemini Omni video · <a href="https://aistudio.google.com/apikey" target="_blank" class="settings-link">aistudio.google.com</a></span>
             </div>
             <div class="key-row">
               <input
@@ -3138,7 +3139,7 @@
             <div class="setting-label">
               <span class="label-text">Gemini model</span>
             </div>
-            <select value={$settings.ai.geminiModel} onchange={(e) => settings.setGeminiModel((e.target as HTMLSelectElement).value)}>
+            <select value={$settings.ai.geminiModel} onchange={(e) => { settings.setGeminiModel((e.target as HTMLSelectElement).value); geminiKeyValid = null; }}>
               {#each GEMINI_MODELS as model}
                 <option value={model.id}>{model.label}</option>
               {/each}
@@ -3155,19 +3156,19 @@
               <span class="label-hint">Which AI to use when generating videos</span>
             </div>
             <select value={$settings.ai.videoProvider} onchange={(e) => settings.setVideoProvider((e.target as HTMLSelectElement).value as VideoAIProvider)}>
-              <option value="veo">Veo (Google)</option>
-              <option value="luma">Luma Dream Machine</option>
+              <option value="veo">Gemini Omni (Google)</option>
+              <option value="luma">Luma Ray</option>
             </select>
           </div>
 
-          <!-- Veo Model -->
+          <!-- Google video model (the settings key is still veoModel) -->
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Veo model</span>
+              <span class="label-text">Google video model</span>
               <span class="label-hint">Uses Gemini API key above</span>
             </div>
             <select value={$settings.ai.veoModel} onchange={(e) => settings.setVeoModel((e.target as HTMLSelectElement).value)}>
-              {#each VEO_MODELS as model}
+              {#each OMNI_MODELS as model}
                 <option value={model.id}>{model.label}</option>
               {/each}
             </select>
@@ -3179,7 +3180,7 @@
               <span class="label-text">Luma API key
                 {#if lumaKeyValid === true}<span class="key-badge valid">Valid</span>{:else if lumaKeyValid === false}<span class="key-badge invalid">Invalid</span>{/if}
               </span>
-              <span class="label-hint"><a href="https://lumalabs.ai/dream-machine/api/keys" target="_blank" class="settings-link">lumalabs.ai/api/keys</a></span>
+              <span class="label-hint">{#if isLumaAgentsModel($settings.ai.lumaModel)}Ray 3.2 needs a Luma Agents key · <a href="https://platform.lumalabs.ai/" target="_blank" class="settings-link">platform.lumalabs.ai</a>{:else}Ray 2 needs a Dream Machine key · <a href="https://lumalabs.ai/dream-machine/api/keys" target="_blank" class="settings-link">lumalabs.ai/api/keys</a>{/if}</span>
             </div>
             <div class="key-row">
               <input
@@ -3200,7 +3201,7 @@
             <div class="setting-label">
               <span class="label-text">Luma model</span>
             </div>
-            <select value={$settings.ai.lumaModel} onchange={(e) => settings.setLumaModel((e.target as HTMLSelectElement).value)}>
+            <select value={$settings.ai.lumaModel} onchange={(e) => { settings.setLumaModel((e.target as HTMLSelectElement).value); lumaKeyValid = null; }}>
               {#each LUMA_MODELS as model}
                 <option value={model.id}>{model.label}</option>
               {/each}

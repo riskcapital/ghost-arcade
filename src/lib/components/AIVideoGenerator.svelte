@@ -1,12 +1,10 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy } from 'svelte';
   import {
-    startVeoGeneration, pollVeoOperation, downloadVeoVideo,
-    startLumaGeneration, pollLumaGeneration, downloadLumaVideo,
-    enhancePromptForLoop,
-    type VeoModel, type LumaModel, type LumaAspectRatio, type LumaResolution
+    generateOmniVideo, generateLumaVideo, enhancePromptForLoop, isAbortError, lumaModelOptions,
+    type OmniModel, type LumaModel, type LumaAspectRatio, type LumaDuration, type LumaResolution
   } from '../api/ai-client';
-  import { settings, VEO_MODELS, LUMA_MODELS } from '../stores/settings';
+  import { settings, OMNI_MODELS, LUMA_MODELS } from '../stores/settings';
   import { downloadRecording } from '../recording/recorder';
   import { generateUUID } from '../types';
 
@@ -26,7 +24,7 @@
   let negativePrompt = '';
   let showAdvanced = false;
 
-  // Veo settings
+  // Gemini Omni settings
   let veoAspectRatio: '16:9' | '9:16' = '16:9';
   let veoDuration: 4 | 6 | 8 = 8;
   let veoFirstFrameFile: File | null = null;
@@ -36,15 +34,23 @@
 
   // Luma settings
   let lumaAspectRatio: LumaAspectRatio = '16:9';
-  let lumaDuration: '5s' | '9s' = '5s';
+  let lumaDuration: LumaDuration = '5s';
   let lumaResolution: LumaResolution = '720p';
   let loopEnabled = false;
+  // What the chosen Luma model accepts. A choice it does not take falls back
+  // to one it does when the model changes.
+  $: lumaOptions = lumaModelOptions(String(currentModel));
+  $: if (isLuma && !lumaOptions.aspectRatios.includes(lumaAspectRatio)) lumaAspectRatio = '16:9';
+  $: if (isLuma && !lumaOptions.resolutions.includes(lumaResolution)) lumaResolution = '720p';
+  $: if (isLuma && !lumaOptions.durations.includes(lumaDuration)) lumaDuration = '5s';
+  $: if (isLuma && loopEnabled && !lumaOptions.loopDurations.includes(lumaDuration)) lumaDuration = '5s';
 
   // Generation state
   let isGenerating = false;
   let error = '';
   let statusMessage = '';
-  let pollTimer: ReturnType<typeof setInterval> | null = null;
+  // Cancels the running request and its polling when the panel closes.
+  let job: AbortController | null = null;
   let elapsedSeconds = 0;
   let elapsedTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -123,81 +129,49 @@
         await generateVeo();
       }
     } catch (err) {
+      if (isAbortError(err)) return;
       error = err instanceof Error ? err.message : 'Generation failed';
       cleanup();
     }
   }
 
-  async function generateVeo() {
-    statusMessage = 'Submitting to Veo...';
-    if (veoLastFrameFile && !veoFirstFrameFile) {
-      error = 'Veo last frame requires a first frame too.';
-      cleanup();
-      return;
-    }
-    if (veoLastFrameFile && !String(currentModel).startsWith('veo-3.1')) {
-      error = 'Veo first/last frame generation requires a Veo 3.1 model.';
-      cleanup();
-      return;
-    }
+  function showVideo(blob: Blob) {
+    previewBlob = blob;
+    if (previewUrl) URL.revokeObjectURL(previewUrl); // prevent blob leak on re-generation
+    previewUrl = URL.createObjectURL(blob);
+    statusMessage = 'Video ready!';
+  }
 
-    const startResult = await startVeoGeneration({
+  async function generateVeo() {
+    if (veoLastFrameFile && !veoFirstFrameFile) {
+      error = 'Add a first frame before adding a last frame.';
+      cleanup();
+      return;
+    }
+    job = new AbortController();
+    const result = await generateOmniVideo({
       apiKey,
       prompt: prompt.trim(),
-      model: currentModel as VeoModel,
+      model: currentModel as OmniModel,
       aspectRatio: veoAspectRatio,
       durationSeconds: veoLastFrameFile ? 8 : veoDuration,
-      negativePrompt: negativePrompt.trim() || undefined,
+      avoid: negativePrompt.trim() || undefined,
       firstFrame: veoFirstFrameFile || undefined,
       lastFrame: veoLastFrameFile || undefined,
-    });
-
-    if (startResult.error || !startResult.operationName) {
-      error = startResult.error || 'Failed to start generation';
-      cleanup();
-      return;
-    }
-
-    statusMessage = 'Generating video... this may take a few minutes';
-    const opName = startResult.operationName;
-
-    pollTimer = setInterval(async () => {
-      const status = await pollVeoOperation(apiKey, opName);
-
-      if (status.error && status.done) {
-        error = status.error;
-        cleanup();
-        return;
-      }
-
-      if (status.done && status.videoUri) {
-        statusMessage = 'Downloading video...';
-        const downloadResult = await downloadVeoVideo(apiKey, status.videoUri);
-        if (downloadResult.error || !downloadResult.blob) {
-          error = downloadResult.error || 'Failed to download video';
-          cleanup();
-          return;
-        }
-        previewBlob = downloadResult.blob;
-        if (previewUrl) URL.revokeObjectURL(previewUrl); // prevent blob leak on re-generation
-        previewUrl = URL.createObjectURL(previewBlob);
-        statusMessage = 'Video ready!';
-        cleanup();
-      }
-    }, 10000);
+    }, { signal: job.signal, onStatus: (message) => { statusMessage = message; } });
+    if (result.blob) showVideo(result.blob);
+    else { error = result.error || 'Gemini Omni did not return a video.'; statusMessage = ''; }
+    cleanup();
   }
 
   async function generateLuma() {
-    statusMessage = 'Preparing Luma generation...';
-
     // Enhance prompt for loop if enabled
     const finalPrompt = loopEnabled
       ? enhancePromptForLoop(prompt.trim(), false)
       : prompt.trim();
 
-    statusMessage = 'Submitting to Luma Dream Machine...';
-
-    const startResult = await startLumaGeneration({
+    job = new AbortController();
+    const result = await generateLumaVideo({
       apiKey,
       prompt: finalPrompt,
       model: currentModel as LumaModel,
@@ -205,57 +179,23 @@
       duration: lumaDuration,
       resolution: lumaResolution,
       loop: loopEnabled,
-    });
-
-    if (startResult.error || !startResult.id) {
-      error = startResult.error || 'Failed to start Luma generation';
-      cleanup();
-      return;
-    }
-
-    statusMessage = 'Generating video... this may take a few minutes';
-    const genId = startResult.id;
-
-    pollTimer = setInterval(async () => {
-      const status = await pollLumaGeneration(apiKey, genId);
-
-      if (status.state === 'dreaming') {
-        statusMessage = 'Dreaming... AI is creating your video';
-      }
-
-      if (status.state === 'failed') {
-        error = status.error || 'Generation failed';
-        cleanup();
-        return;
-      }
-
-      if (status.state === 'completed' && status.videoUrl) {
-        statusMessage = 'Downloading video...';
-        const downloadResult = await downloadLumaVideo(status.videoUrl);
-        if (downloadResult.error || !downloadResult.blob) {
-          error = downloadResult.error || 'Failed to download video';
-          cleanup();
-          return;
-        }
-        previewBlob = downloadResult.blob;
-        if (previewUrl) URL.revokeObjectURL(previewUrl); // prevent blob leak on re-generation
-        previewUrl = URL.createObjectURL(previewBlob);
-        statusMessage = 'Video ready!';
-        cleanup();
-      }
-    }, 5000); // Luma polls faster
+    }, { signal: job.signal, onStatus: (message) => { statusMessage = message; } });
+    if (result.blob) showVideo(result.blob);
+    else { error = result.error || 'Luma did not return a video.'; statusMessage = ''; }
+    cleanup();
   }
 
   function cleanup() {
     isGenerating = false;
-    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    job?.abort();
+    job = null;
     if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
   }
 
   async function addToLibrary() {
     if (!previewBlob || !previewUrl) return;
 
-    const name = prompt.trim().slice(0, 40) || (isLuma ? 'Luma Video' : 'Veo Video');
+    const name = prompt.trim().slice(0, 40) || (isLuma ? 'Luma Video' : 'Gemini Omni Video');
     const blobRef = previewBlob;
     const urlRef = previewUrl;
     const dispatchId = generateUUID();
@@ -319,7 +259,7 @@
       class:active={!isLuma}
       onclick={() => settings.setVideoProvider('veo')}
     >
-      Veo
+      Gemini Omni
     </button>
     <button
       class="provider-tab"
@@ -365,7 +305,7 @@
     <div class="setting">
       <label>Model</label>
       <select value={currentModel} onchange={(e) => isLuma ? settings.setLumaModel((e.target as HTMLSelectElement).value) : settings.setVeoModel((e.target as HTMLSelectElement).value)} disabled={isGenerating}>
-        {#each (isLuma ? LUMA_MODELS : VEO_MODELS) as model}
+        {#each (isLuma ? LUMA_MODELS : OMNI_MODELS) as model}
           <option value={model.id}>{model.label}</option>
         {/each}
       </select>
@@ -376,13 +316,9 @@
       <label>Aspect</label>
       {#if isLuma}
         <select bind:value={lumaAspectRatio} disabled={isGenerating}>
-          <option value="16:9">16:9</option>
-          <option value="9:16">9:16</option>
-          <option value="1:1">1:1</option>
-          <option value="4:3">4:3</option>
-          <option value="3:4">3:4</option>
-          <option value="21:9">21:9</option>
-          <option value="9:21">9:21</option>
+          {#each lumaOptions.aspectRatios as ratio}
+            <option value={ratio}>{ratio}</option>
+          {/each}
         </select>
       {:else}
         <select bind:value={veoAspectRatio} disabled={isGenerating}>
@@ -397,8 +333,9 @@
       <label>Duration</label>
       {#if isLuma}
         <select bind:value={lumaDuration} disabled={isGenerating}>
-          <option value="5s">5s</option>
-          <option value="9s">9s</option>
+          {#each lumaOptions.durations as duration}
+            <option value={duration} disabled={loopEnabled && !lumaOptions.loopDurations.includes(duration)}>{duration}</option>
+          {/each}
         </select>
       {:else}
         <select bind:value={veoDuration} disabled={isGenerating || !!veoLastFrameFile}>
@@ -420,10 +357,9 @@
       <div class="setting">
         <label>Resolution</label>
         <select bind:value={lumaResolution} disabled={isGenerating}>
-          <option value="540p">540p</option>
-          <option value="720p">720p</option>
-          <option value="1080p">1080p</option>
-          <option value="4k">4K</option>
+          {#each lumaOptions.resolutions as resolution}
+            <option value={resolution}>{resolution === '4k' ? '4K' : resolution === '360p' ? '360p (draft)' : resolution}</option>
+          {/each}
         </select>
       </div>
       <label class="loop-toggle">
@@ -476,7 +412,7 @@
 
   {#if showAdvanced}
     <div class="advanced-section">
-      <!-- Negative prompt (Veo only) -->
+      <!-- Things to avoid (Gemini Omni only) -->
       {#if !isLuma}
         <div class="field">
           <label>Negative prompt</label>

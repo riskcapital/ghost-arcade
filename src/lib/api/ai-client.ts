@@ -1,9 +1,17 @@
 /**
- * AI API Client for shader/animation generation
- * Supports Claude Opus 4.8 / Sonnet 4.6 and Gemini 3.1+ models.
+ * AI API client for shader, sketch and video generation (Claude, Gemini,
+ * Gemini Omni video and Luma Ray). The model lists live in ./ai-models.
  */
 
 import { invoke } from '$lib/bridge';
+import {
+  DEFAULT_CLAUDE_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_LUMA_MODEL, DEFAULT_OMNI_MODEL,
+  geminiThinkingLevel, isLumaAgentsModel, modelLabel, type LumaModel, type OmniModel,
+} from './ai-models';
+
+export type { LumaModel, OmniModel } from './ai-models';
+
+const GOOGLE_API = 'https://generativelanguage.googleapis.com/v1beta';
 
 export type AIProvider = 'claude' | 'gemini';
 export type GenerationType = 'shader-isf' | 'threejs' | 'p5js';
@@ -450,16 +458,32 @@ Ghost Arcade Pro then runs that shader natively on the GPU. For everything else,
 Return ONLY the complete HTML. No markdown, no code fences, no explanations.`
 };
 
-/**
- * Call Claude API (Anthropic)
- */
 /** A reply's text, and whether it stopped at the token limit before it was finished. */
 export interface AIReply {
   text: string;
   truncated: boolean;
 }
 
-async function callClaude(apiKey: string, systemPrompt: string, userPrompt: string, model: string = 'claude-sonnet-4-6', maxTokens = 50000): Promise<AIReply> {
+/**
+ * A failed request as a sentence the user can act on: which key or model is
+ * the problem and what to do, followed by the provider's own message.
+ */
+export function describeAPIError(service: string, status: number, apiMessage: string | undefined, model?: string): string {
+  const name = model ? modelLabel(model) : service;
+  let advice: string;
+  if (status === 401) advice = `The ${service} API key was not accepted. Check it in Settings > AI.`;
+  else if (status === 402) advice = `The ${service} account has run out of credit.`;
+  else if (status === 403) advice = `This ${service} API key is not allowed to use ${name}. The account may need billing turned on.`;
+  else if (status === 404) advice = `${name} is not available to this API key or has been retired. Choose another model in Settings > AI.`;
+  else if (status === 410) advice = `${name} has been retired. Choose another model in Settings > AI.`;
+  else if (status === 429) advice = `${service} rate limit or quota reached. Wait a minute and try again.`;
+  else if (status >= 500) advice = `${service} is busy or having problems (${status}). Try again shortly.`;
+  else advice = `${service} rejected the request (${status}).`;
+  const detail = apiMessage?.trim();
+  return detail ? `${advice} ${service} says: ${detail}` : advice;
+}
+
+async function callClaude(apiKey: string, systemPrompt: string, userPrompt: string, model: string = DEFAULT_CLAUDE_MODEL, maxTokens = 50000): Promise<AIReply> {
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -480,12 +504,15 @@ async function callClaude(apiKey: string, systemPrompt: string, userPrompt: stri
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error?.message || `Claude API error: ${response.status}`);
+    throw new Error(describeAPIError('Claude', response.status, errorData.error?.message, model));
   }
 
   const data = await response.json();
-  // Models that think put a thinking block before the text, so the reply is
-  // every text block, not the first block.
+  // A safety decline is a normal 200 reply with no answer in it.
+  if (data.stop_reason === 'refusal') {
+    throw new Error(`${modelLabel(model)} declined this request. Try describing it another way.`);
+  }
+  // Current models think first, so the reply is every text block, not the first block.
   const blocks: Array<{ type?: string; text?: string }> = Array.isArray(data.content) ? data.content : [];
   return {
     text: blocks.filter((b) => b.type === 'text').map((b) => b.text ?? '').join(''),
@@ -494,10 +521,12 @@ async function callClaude(apiKey: string, systemPrompt: string, userPrompt: stri
 }
 
 /**
- * Call Gemini API (Google)
+ * Call Gemini API (Google). Thinking counts toward maxOutputTokens, so the
+ * limit leaves room for it.
  */
-async function callGemini(apiKey: string, systemPrompt: string, userPrompt: string, model: string = 'gemini-3.5-flash', maxTokens = 8192): Promise<AIReply> {
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+async function callGemini(apiKey: string, systemPrompt: string, userPrompt: string, model: string = DEFAULT_GEMINI_MODEL, maxTokens = 32768): Promise<AIReply> {
+  const thinkingLevel = geminiThinkingLevel(model);
+  const response = await fetch(`${GOOGLE_API}/models/${encodeURIComponent(model)}:generateContent`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -514,17 +543,19 @@ async function callGemini(apiKey: string, systemPrompt: string, userPrompt: stri
       ],
       generationConfig: {
         maxOutputTokens: maxTokens,
-        temperature: 0.7
+        ...(thinkingLevel ? { thinkingConfig: { thinkingLevel } } : {}),
       }
     })
   });
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error?.message || `Gemini API error: ${response.status}`);
+    throw new Error(describeAPIError('Gemini', response.status, errorData.error?.message, model));
   }
 
   const data = await response.json();
+  const blocked = data.promptFeedback?.blockReason;
+  if (blocked) throw new Error(`Gemini blocked this request (${blocked}). Try describing it another way.`);
   const candidate = data.candidates?.[0];
   const parts: Array<{ text?: string; thought?: boolean }> = candidate?.content?.parts ?? [];
   return {
@@ -803,18 +834,19 @@ Lean into what p5.js does best: agents with memory, expressive strokes, typograp
   }
 
   try {
-    let response: string;
+    const reply = provider === 'claude'
+      ? await callClaude(apiKey, systemPrompt, userPrompt, model || undefined)
+      : await callGemini(apiKey, systemPrompt, userPrompt, model || undefined);
 
-    if (provider === 'claude') {
-      response = (await callClaude(apiKey, systemPrompt, userPrompt, model)).text;
-    } else {
-      response = (await callGemini(apiKey, systemPrompt, userPrompt, model)).text;
-    }
-
-    const code = extractCode(response, generationType);
+    const code = extractCode(reply.text, generationType);
 
     if (!code) {
-      return { success: false, error: 'Failed to extract code from AI response' };
+      return {
+        success: false,
+        error: reply.truncated
+          ? 'The reply reached its length limit before the code was finished. Try a simpler description.'
+          : 'Failed to extract code from AI response',
+      };
     }
 
     const name = extractName(code, description, generationType);
@@ -844,287 +876,296 @@ Lean into what p5.js does best: agents with memory, expressive strokes, typograp
   }
 }
 
-// ─── Veo Video Generation ───────────────────────────────────────────────
-
-export type VeoModel =
-  | 'veo-3.1-generate-preview'
-  | 'veo-3.1-fast-generate-preview'
-  | 'veo-3.1-lite-generate-preview'
-  | 'veo-2.0-generate-001';
-
-export interface VeoGenerationRequest {
-  apiKey: string;
-  prompt: string;
-  model?: VeoModel;
-  aspectRatio?: '16:9' | '9:16';
-  durationSeconds?: 4 | 6 | 8;
-  negativePrompt?: string;
-  firstFrame?: Blob;
-  lastFrame?: Blob;
-}
-
-export interface VeoGenerationStatus {
-  done: boolean;
-  operationName: string;
-  videoUri?: string;
-  error?: string;
-}
-
-/**
- * Start a Veo video generation job.
- * Returns the operation name for polling.
- */
-type VeoImageEncoding = {
-  mimeType: string;
-  data: string;
-};
-
-type VeoImagePayloadStyle = 'bytes' | 'inline';
-
-async function blobToVeoImageEncoding(blob: Blob): Promise<VeoImageEncoding> {
-  const dataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(reader.error || new Error('Failed to read image.'));
-    reader.readAsDataURL(blob);
-  });
-  const match = dataUrl.match(/^data:([^;,]+);base64,(.*)$/);
-  if (!match) throw new Error('Failed to encode image for Veo.');
-  return {
-    mimeType: blob.type || match[1] || 'image/jpeg',
-    data: match[2],
-  };
-}
-
-function veoImagePayload(
-  image: VeoImageEncoding,
-  style: VeoImagePayloadStyle,
-): { bytesBase64Encoded: string; mimeType: string } | { inlineData: { mimeType: string; data: string } } {
-  if (style === 'inline') {
-    return {
-      inlineData: {
-        mimeType: image.mimeType,
-        data: image.data,
-      },
-    };
-  }
-  return {
-    bytesBase64Encoded: image.data,
-    mimeType: image.mimeType,
-  };
-}
-
-export async function startVeoGeneration(request: VeoGenerationRequest): Promise<{ operationName?: string; error?: string }> {
-  const {
-    apiKey,
-    prompt,
-    model = 'veo-3.1-generate-preview',
-    aspectRatio = '16:9',
-    durationSeconds = 8,
-    negativePrompt,
-    firstFrame,
-    lastFrame,
-  } = request;
-
-  if (lastFrame && !firstFrame) {
-    return { error: 'Veo last-frame generation requires a first frame too.' };
-  }
-  if (lastFrame && !String(model).startsWith('veo-3.1')) {
-    return { error: 'Veo first/last frame generation requires a Veo 3.1 model.' };
-  }
-
-  const params: Record<string, unknown> = {
-    aspectRatio,
-    durationSeconds: lastFrame ? 8 : durationSeconds,
-  };
-  if (negativePrompt) {
-    params.negativePrompt = negativePrompt;
-  }
-
-  try {
-    const firstImage = firstFrame ? await blobToVeoImageEncoding(firstFrame) : null;
-    const lastImage = lastFrame ? await blobToVeoImageEncoding(lastFrame) : null;
-
-    const postGenerationRequest = async (imagePayloadStyle: VeoImagePayloadStyle) => {
-      const instance: Record<string, unknown> = { prompt };
-      if (firstImage) instance.image = veoImagePayload(firstImage, imagePayloadStyle);
-      if (lastImage) instance.lastFrame = veoImagePayload(lastImage, imagePayloadStyle);
-
-      return fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:predictLongRunning`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': apiKey,
-          },
-          body: JSON.stringify({
-            instances: [instance],
-            parameters: params,
-          }),
-        }
-      );
-    };
-
-    const readStartError = async (response: Response) => {
-      const errorData = await response.json().catch(() => ({}));
-      return errorData.error?.message || `Veo API error: ${response.status}`;
-    };
-
-    let response = await postGenerationRequest('bytes');
-
-    if (!response.ok) {
-      let msg = await readStartError(response);
-      if ((firstImage || lastImage) && /bytesBase64Encoded/i.test(msg)) {
-        response = await postGenerationRequest('inline');
-        if (!response.ok) {
-          msg = await readStartError(response);
-        }
-      }
-      if (!response.ok) {
-        return { error: msg };
-      }
-    }
-
-    const data = await response.json();
-    const operationName = data.name;
-    if (!operationName) {
-      return { error: 'No operation name returned from Veo API' };
-    }
-    return { operationName };
-  } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Network error starting Veo generation' };
-  }
-}
-
-/**
- * Poll a Veo generation operation for completion.
- */
-export async function pollVeoOperation(apiKey: string, operationName: string): Promise<VeoGenerationStatus> {
-  try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/${operationName}`,
-      {
-        method: 'GET',
-        headers: {
-          'x-goog-api-key': apiKey,
-        },
-      }
-    );
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      return {
-        done: false,
-        operationName,
-        error: errorData.error?.message || `Poll error: ${response.status}`,
-      };
-    }
-
-    const data = await response.json();
-
-    if (data.done) {
-      const samples = data.response?.generateVideoResponse?.generatedSamples;
-      const videoUri = samples?.[0]?.video?.uri;
-      if (videoUri) {
-        return { done: true, operationName, videoUri };
-      }
-      // Check for error in response
-      if (data.error) {
-        return { done: true, operationName, error: data.error.message || 'Generation failed' };
-      }
-      return { done: true, operationName, error: 'No video URI in completed response' };
-    }
-
-    return { done: false, operationName };
-  } catch (err) {
-    return {
-      done: false,
-      operationName,
-      error: err instanceof Error ? err.message : 'Network error polling Veo',
-    };
-  }
-}
-
-/**
- * Download a Veo-generated video as a Blob.
- * The video URI requires the API key for authentication.
- */
-export async function downloadVeoVideo(apiKey: string, videoUri: string): Promise<{ blob?: Blob; error?: string }> {
-  try {
-    const response = await fetch(videoUri, {
-      headers: {
-        'x-goog-api-key': apiKey,
-      },
-    });
-
-    if (!response.ok) {
-      return { error: `Download failed: ${response.status}` };
-    }
-
-    let blob = await response.blob();
-    // Ensure blob has correct MIME type (Veo may not set Content-Type header)
-    if (!blob.type || !blob.type.startsWith('video/')) {
-      blob = new Blob([blob], { type: 'video/mp4' });
-    }
-    return { blob };
-  } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Network error downloading video' };
-  }
-}
-
-/**
- * Validate API key by making a minimal request
- */
+/** Check whether the chosen model is visible to this key, without paying for a request. */
 export async function validateAPIKey(provider: AIProvider, apiKey: string, model?: string): Promise<boolean> {
   try {
     if (provider === 'claude') {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
+      const id = encodeURIComponent(model || DEFAULT_CLAUDE_MODEL);
+      const response = await fetch(`https://api.anthropic.com/v1/models/${id}`, {
         headers: {
-          'Content-Type': 'application/json',
           'x-api-key': apiKey,
           'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true'
+          'anthropic-dangerous-direct-browser-access': 'true',
         },
-        body: JSON.stringify({
-          model: model || 'claude-sonnet-4-6',
-          max_tokens: 10,
-          messages: [{ role: 'user', content: 'Hi' }]
-        })
-      });
-      return response.ok;
-    } else {
-      const geminiModel = model || 'gemini-3.5-flash';
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: 'Hi' }] }],
-          generationConfig: { maxOutputTokens: 10 }
-        })
       });
       return response.ok;
     }
+    const id = encodeURIComponent(model || DEFAULT_GEMINI_MODEL);
+    const response = await fetch(`${GOOGLE_API}/models/${id}`, { headers: { 'x-goog-api-key': apiKey } });
+    if (!response.ok) return false;
+    const data = await response.json().catch(() => ({}));
+    return Array.isArray(data.supportedGenerationMethods) && data.supportedGenerationMethods.includes('generateContent');
   } catch {
     return false;
   }
 }
 
-// ─── Luma Video Generation ─────────────────────────────────────────────
-// All Luma API calls go through the Tauri http_fetch proxy command to
-// bypass CORS restrictions (the Luma API doesn't send CORS headers).
+// ─── Shared polling helpers ──────────────────────────────────────────────
 
-export type LumaModel = 'ray-2' | 'ray-flash-2';
+/** Resolves after `ms`, or rejects at once when the signal aborts. */
+function wait(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(new DOMException('Cancelled', 'AbortError')); return; }
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve(); }, ms);
+    const onAbort = () => { clearTimeout(timer); reject(new DOMException('Cancelled', 'AbortError')); };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+export function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === 'AbortError';
+}
+
+/** What a video job shows while it runs (a table, so the language packs translate it). */
+const VIDEO_STATUS_MESSAGES = {
+  omniGenerating: 'Generating with Gemini Omni… this can take a few minutes',
+  omniWaiting: 'Waiting for the Gemini Omni video file…',
+  lumaSubmitting: 'Submitting to Luma…',
+  lumaQueued: 'Waiting in the Luma queue…',
+  lumaDreaming: 'Luma is making your video…',
+  downloading: 'Downloading video…',
+};
+
+/** Progress for a video job, shown to the user as it runs. */
+export type VideoJobStatus = (message: string) => void;
+
+export interface VideoJobOptions {
+  signal?: AbortSignal;
+  onStatus?: VideoJobStatus;
+  /** Give up after this long. Default 15 minutes. */
+  timeoutMs?: number;
+  /** Time between status checks. */
+  pollMs?: number;
+}
+
+// ─── Gemini Omni video ──────────────────────────────────────────────────
+// Google retired the Veo preview models on the Gemini API; Gemini Omni
+// replaces them. One POST to /interactions makes the video, and with
+// delivery "uri" the reply names a file to wait for and download.
+
+export type OmniAspectRatio = '16:9' | '9:16';
+
+export interface OmniVideoRequest {
+  apiKey: string;
+  prompt: string;
+  model?: OmniModel;
+  aspectRatio?: OmniAspectRatio;
+  /** Whole seconds. Omni takes 3 to 15; with a last frame, 3 to 10. */
+  durationSeconds?: number;
+  /** Things to keep out of the video. Omni has no separate field, so it goes in the prompt. */
+  avoid?: string;
+  firstFrame?: Blob;
+  lastFrame?: Blob;
+}
+
+export interface OmniVideoStart {
+  /** The file to wait for, from a "uri" delivery. */
+  fileId?: string;
+  /** The finished video, when it came back inline. */
+  blob?: Blob;
+  /** An interaction still running, to check on until it finishes. */
+  interactionId?: string;
+  error?: string;
+}
+
+async function omniImagePart(blob: Blob): Promise<{ type: 'image'; mime_type: string; data: string }> {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return { type: 'image', mime_type: blob.type || 'image/png', data: btoa(binary) };
+}
+
+/** The file id in a Gemini file URL. Only Google's own API host is accepted, since the key goes with it. */
+export function omniFileId(uri: unknown): string | undefined {
+  if (typeof uri !== 'string') return undefined;
+  const match = /^(?:https:\/\/generativelanguage\.googleapis\.com\/v1beta\/)?files\/([a-z0-9][a-z0-9-]*)(?::download)?(?:\?.*)?$/i.exec(uri);
+  return match?.[1];
+}
+
+function base64ToBlob(data: string, type: string): Blob {
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: type.startsWith('video/') ? type : 'video/mp4' });
+}
+
+/** The video in an interaction, whether REST (`steps`) or the SDK's `output_video` shape. */
+function readOmniInteraction(data: Record<string, any>): OmniVideoStart {
+  const parts: Array<Record<string, any>> = (Array.isArray(data.steps) ? data.steps : [])
+    .filter((step: Record<string, any>) => step?.type === 'model_output')
+    .flatMap((step: Record<string, any>) => (Array.isArray(step.content) ? step.content : []));
+  if (data.output_video) parts.push({ type: 'video', ...data.output_video });
+  const video = parts.find((part) => part?.type === 'video' && (part.uri || part.data));
+  if (video?.uri) {
+    const fileId = omniFileId(video.uri);
+    return fileId ? { fileId } : { error: 'Gemini Omni returned a video link this app does not recognise.' };
+  }
+  if (video?.data) return { blob: base64ToBlob(video.data, video.mime_type ?? 'video/mp4') };
+  if (data.status === 'failed' || data.status === 'cancelled') {
+    return { error: data.error?.message || 'Gemini Omni could not make this video. Try another prompt.' };
+  }
+  if (data.id && data.status && data.status !== 'completed') return { interactionId: String(data.id) };
+  return { error: 'Gemini Omni finished without a video. Try another prompt.' };
+}
+
+/** Ask Gemini Omni for a video. Returns the file to wait for, or the video itself. */
+export async function startOmniVideo(request: OmniVideoRequest, signal?: AbortSignal): Promise<OmniVideoStart> {
+  const { apiKey, prompt, model = DEFAULT_OMNI_MODEL, aspectRatio = '16:9', avoid, firstFrame, lastFrame } = request;
+  if (lastFrame && !firstFrame) return { error: 'Add a first frame before adding a last frame.' };
+  const longest = lastFrame ? 10 : 15;
+  const durationSeconds = Math.min(longest, Math.max(3, Math.round(request.durationSeconds ?? 8)));
+
+  let text = prompt.trim();
+  if (lastFrame) text = `Start on the first image and end on the second image. ${text}`;
+  else if (firstFrame) text = `Start on this image. ${text}`;
+  if (avoid?.trim()) text += `\nAvoid: ${avoid.trim()}`;
+
+  try {
+    const frames = await Promise.all([firstFrame, lastFrame].filter((f): f is Blob => !!f).map(omniImagePart));
+    const response = await fetch(`${GOOGLE_API}/interactions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+      body: JSON.stringify({
+        model,
+        input: frames.length ? [...frames, { type: 'text', text }] : text,
+        response_format: { type: 'video', aspect_ratio: aspectRatio, duration: `${durationSeconds}s`, delivery: 'uri' },
+        background: false,
+        stream: false,
+      }),
+      signal,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) return { error: describeAPIError('Gemini', response.status, data.error?.message, model) };
+    return readOmniInteraction(data);
+  } catch (err) {
+    if (isAbortError(err)) throw err;
+    return { error: err instanceof Error ? `Could not reach Gemini Omni: ${err.message}` : 'Could not reach Gemini Omni.' };
+  }
+}
+
+export type OmniFileState = 'processing' | 'ready' | 'failed';
+
+/** Check a Gemini file. A network blip or a 5xx/429 reads as still processing. */
+export async function pollOmniFile(apiKey: string, fileId: string, signal?: AbortSignal): Promise<{ state: OmniFileState; error?: string }> {
+  if (!/^[a-z0-9][a-z0-9-]*$/i.test(fileId)) return { state: 'failed', error: 'Invalid Gemini file id.' };
+  try {
+    const response = await fetch(`${GOOGLE_API}/files/${fileId}`, { headers: { 'x-goog-api-key': apiKey }, signal });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (response.status === 429 || response.status >= 500) return { state: 'processing' };
+      return { state: 'failed', error: describeAPIError('Gemini', response.status, data.error?.message) };
+    }
+    if (data.state === 'ACTIVE') return { state: 'ready' };
+    if (data.state === 'FAILED') return { state: 'failed', error: data.error?.message || 'Google could not finish the video file.' };
+    return { state: 'processing' };
+  } catch (err) {
+    if (isAbortError(err)) throw err;
+    return { state: 'processing' };
+  }
+}
+
+export async function downloadOmniVideo(apiKey: string, fileId: string, signal?: AbortSignal): Promise<{ blob?: Blob; error?: string }> {
+  if (!/^[a-z0-9][a-z0-9-]*$/i.test(fileId)) return { error: 'Invalid Gemini file id.' };
+  try {
+    const response = await fetch(`${GOOGLE_API}/files/${fileId}:download?alt=media`, { headers: { 'x-goog-api-key': apiKey }, signal });
+    if (!response.ok) return { error: `Could not download the Gemini Omni video (${response.status}).` };
+    const blob = await response.blob();
+    return { blob: blob.type.startsWith('video/') ? blob : new Blob([blob], { type: 'video/mp4' }) };
+  } catch (err) {
+    if (isAbortError(err)) throw err;
+    return { error: err instanceof Error ? `Could not download the Gemini Omni video: ${err.message}` : 'Could not download the Gemini Omni video.' };
+  }
+}
+
+async function pollOmniInteraction(apiKey: string, id: string, signal?: AbortSignal): Promise<OmniVideoStart | null> {
+  try {
+    const response = await fetch(`${GOOGLE_API}/interactions/${encodeURIComponent(id)}`, { headers: { 'x-goog-api-key': apiKey }, signal });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (response.status === 429 || response.status >= 500) return null;
+      return { error: describeAPIError('Gemini', response.status, data.error?.message) };
+    }
+    const result = readOmniInteraction(data);
+    return result.interactionId ? null : result;
+  } catch (err) {
+    if (isAbortError(err)) throw err;
+    return null;
+  }
+}
+
+/**
+ * Make a Gemini Omni video from start to finish: submit, wait for the file,
+ * download. Throws an AbortError when the signal aborts.
+ */
+export async function generateOmniVideo(request: OmniVideoRequest, options: VideoJobOptions = {}): Promise<{ blob?: Blob; error?: string }> {
+  const { signal, onStatus, timeoutMs = 15 * 60_000, pollMs = 5_000 } = options;
+  const deadline = Date.now() + timeoutMs;
+  onStatus?.(VIDEO_STATUS_MESSAGES.omniGenerating);
+  let result = await startOmniVideo(request, signal);
+
+  while (result.interactionId) {
+    if (Date.now() > deadline) return { error: 'Gemini Omni took too long. Try again or choose a shorter video.' };
+    await wait(pollMs, signal);
+    result = (await pollOmniInteraction(request.apiKey, result.interactionId, signal)) ?? result;
+  }
+  if (result.error || result.blob) return result;
+  const fileId = result.fileId!;
+
+  onStatus?.(VIDEO_STATUS_MESSAGES.omniWaiting);
+  for (;;) {
+    const file = await pollOmniFile(request.apiKey, fileId, signal);
+    if (file.state === 'failed') return { error: file.error };
+    if (file.state === 'ready') break;
+    if (Date.now() > deadline) return { error: 'Timed out waiting for the Gemini Omni video file.' };
+    await wait(pollMs, signal);
+  }
+  onStatus?.(VIDEO_STATUS_MESSAGES.downloading);
+  return downloadOmniVideo(request.apiKey, fileId, signal);
+}
+
+// ─── Luma video ─────────────────────────────────────────────────────────
+// Ray 3.2 runs on the Luma Agents API (a Luma Agents key). Ray 2 and Ray 2
+// Flash run on the older Dream Machine API, which Luma is retiring; they
+// stay for keys that only reach it. All Luma calls go through the desktop
+// app's http_fetch proxy, since the Luma API sends no CORS headers.
+
 export type LumaAspectRatio = '16:9' | '9:16' | '1:1' | '4:3' | '3:4' | '21:9' | '9:21';
-export type LumaResolution = '540p' | '720p' | '1080p' | '4k';
+export type LumaResolution = '360p' | '540p' | '720p' | '1080p' | '4k';
+export type LumaDuration = '5s' | '9s' | '10s';
+
+export interface LumaModelOptions {
+  aspectRatios: LumaAspectRatio[];
+  resolutions: LumaResolution[];
+  durations: LumaDuration[];
+  /** Durations a seamless loop may use. */
+  loopDurations: LumaDuration[];
+}
+
+/** What each Luma model accepts, from Luma's API references. */
+export function lumaModelOptions(model: string): LumaModelOptions {
+  return isLumaAgentsModel(model)
+    ? {
+      aspectRatios: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'],
+      resolutions: ['360p', '540p', '720p', '1080p'],
+      durations: ['5s', '10s'],
+      loopDurations: ['5s'],
+    }
+    : {
+      aspectRatios: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', '9:21'],
+      resolutions: ['540p', '720p', '1080p', '4k'],
+      durations: ['5s', '9s'],
+      loopDurations: ['5s', '9s'],
+    };
+}
 
 export interface LumaGenerationRequest {
   apiKey: string;
   prompt: string;
   model?: LumaModel;
   aspectRatio?: LumaAspectRatio;
-  duration?: '5s' | '9s';
+  duration?: LumaDuration;
   resolution?: LumaResolution;
   loop?: boolean;
 }
@@ -1133,133 +1174,117 @@ export interface LumaGenerationStatus {
   id: string;
   state: 'queued' | 'dreaming' | 'completed' | 'failed';
   videoUrl?: string;
-  thumbnailUrl?: string;
   error?: string;
 }
 
-const LUMA_API_BASE = 'https://api.lumalabs.ai/dream-machine/v1';
+const LUMA_AGENTS_API = 'https://agents.lumalabs.ai/v1';
+const LUMA_DREAM_MACHINE_API = 'https://api.lumalabs.ai/dream-machine/v1';
 
-/**
- * Helper: call the Tauri http_fetch proxy (bypasses CORS).
- * Returns parsed JSON body + status.
- */
+function lumaApi(model: string): string {
+  return isLumaAgentsModel(model) ? LUMA_AGENTS_API : LUMA_DREAM_MACHINE_API;
+}
+
+/** Call the desktop app's http_fetch proxy. Returns the status and the parsed JSON body. */
 async function lumaFetch(
   method: string,
   url: string,
   apiKey: string,
   body?: Record<string, unknown>,
-): Promise<{ status: number; data: Record<string, unknown> }> {
-  const headers: Record<string, string> = {
-    'Authorization': `Bearer ${apiKey}`,
-  };
-  if (body) {
-    headers['Content-Type'] = 'application/json';
-  }
-
-  console.log('[lumaFetch] Invoking http_fetch:', method, url);
-  const result = await invoke<{ status: number; body: string; headers: Record<string, string> }>(
-    'http_fetch',
-    {
-      method,
-      url,
-      headers,
-      body: body ? JSON.stringify(body) : null,
-    },
-  );
-  console.log('[lumaFetch] Got result, status:', result.status);
-
-  let data: Record<string, unknown> = {};
-  try {
-    data = JSON.parse(result.body);
-  } catch {
-    // non-JSON response — leave data empty
-  }
+): Promise<{ status: number; data: Record<string, any> }> {
+  const headers: Record<string, string> = { Authorization: `Bearer ${apiKey}` };
+  if (body) headers['Content-Type'] = 'application/json';
+  const result = await invoke<{ status: number; body: string; headers: Record<string, string> }>('http_fetch', {
+    method,
+    url,
+    headers,
+    body: body ? JSON.stringify(body) : null,
+  });
+  let data: Record<string, any> = {};
+  try { data = JSON.parse(result.body); } catch { /* not JSON */ }
   return { status: result.status, data };
 }
 
-/**
- * Start a Luma video generation.
- */
+/** A failed Luma call as a sentence the user can act on. */
+function describeLumaError(status: number, data: Record<string, any>, model: string): string {
+  const detail = typeof data.detail === 'string' ? data.detail : data.error?.user_message || data.message;
+  if (isLumaAgentsModel(model) && (status === 401 || (status === 400 && /unknown model/i.test(String(detail))))) {
+    return `Ray 3.2 needs a Luma Agents API key with Ray 3.2 access (platform.lumalabs.ai). Luma says: ${detail || status}`;
+  }
+  if (!isLumaAgentsModel(model) && status === 401) {
+    return `${modelLabel(model)} needs a Dream Machine API key. Luma says: ${detail || status}`;
+  }
+  if (status === 402) return `The Luma account has run out of credit. Luma says: ${detail || status}`;
+  return describeAPIError('Luma', status, detail, model);
+}
+
 export async function startLumaGeneration(request: LumaGenerationRequest): Promise<{ id?: string; error?: string }> {
-  const {
-    apiKey,
-    prompt,
-    model = 'ray-2',
-    aspectRatio = '16:9',
-    duration = '5s',
-    resolution = '720p',
-    loop = false,
-  } = request;
+  const { apiKey, prompt, model = DEFAULT_LUMA_MODEL, aspectRatio = '16:9', duration = '5s', resolution = '720p', loop = false } = request;
+  const allowed = lumaModelOptions(model);
+  const name = modelLabel(model);
+  if (!allowed.aspectRatios.includes(aspectRatio)) return { error: `${name} does not take a ${aspectRatio} picture.` };
+  if (!allowed.resolutions.includes(resolution)) return { error: `${name} does not make ${resolution} video.` };
+  if (!allowed.durations.includes(duration)) return { error: `${name} does not make ${duration} video.` };
+  if (loop && !allowed.loopDurations.includes(duration)) return { error: `${name} loops must be ${allowed.loopDurations.join(' or ')} long.` };
 
-  const body: Record<string, unknown> = {
-    prompt,
-    model,
-    aspect_ratio: aspectRatio,
-    duration,
-    resolution,
-    loop,
-  };
-
+  const body = isLumaAgentsModel(model)
+    ? { model, type: 'video', prompt, aspect_ratio: aspectRatio, video: { resolution, duration, ...(loop ? { loop: true } : {}) } }
+    : { model, prompt, aspect_ratio: aspectRatio, resolution, duration, loop };
   try {
-    const { status, data } = await lumaFetch('POST', `${LUMA_API_BASE}/generations`, apiKey, body);
-
-    if (status < 200 || status >= 300) {
-      const msg = (data.detail || data.message || `Luma API error: ${status}`) as string;
-      return { error: msg };
-    }
-
-    if (!data.id) {
-      return { error: 'No generation ID returned from Luma API' };
-    }
-    return { id: data.id as string };
+    const { status, data } = await lumaFetch('POST', `${lumaApi(model)}/generations`, apiKey, body);
+    if (status < 200 || status >= 300) return { error: describeLumaError(status, data, model) };
+    if (typeof data.id !== 'string' || !data.id) return { error: 'Luma did not return a generation id.' };
+    return { id: data.id };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Network error starting Luma generation' };
+    return { error: err instanceof Error ? `Could not reach Luma: ${err.message}` : 'Could not reach Luma.' };
   }
 }
 
-/**
- * Poll a Luma generation for completion.
- */
-export async function pollLumaGeneration(apiKey: string, generationId: string): Promise<LumaGenerationStatus> {
+export async function pollLumaGeneration(apiKey: string, generationId: string, model: LumaModel = DEFAULT_LUMA_MODEL): Promise<LumaGenerationStatus> {
   try {
-    const { status, data } = await lumaFetch('GET', `${LUMA_API_BASE}/generations/${generationId}`, apiKey);
+    const { status, data } = await lumaFetch('GET', `${lumaApi(model)}/generations/${encodeURIComponent(generationId)}`, apiKey);
+    if (status === 429 || status >= 500) return { id: generationId, state: 'queued' };
+    if (status < 200 || status >= 300) return { id: generationId, state: 'failed', error: describeLumaError(status, data, model) };
 
-    if (status < 200 || status >= 300) {
-      return {
-        id: generationId,
-        state: 'failed',
-        error: (data.detail || `Poll error: ${status}`) as string,
-      };
-    }
-
-    const state = (data.state || data.status || 'queued') as string;
-
+    const state = String(data.state ?? 'queued');
     if (state === 'completed') {
-      const assets = data.assets as Record<string, string> | undefined;
-      const video = data.video as Record<string, string> | undefined;
-      return {
-        id: generationId,
-        state: 'completed',
-        videoUrl: assets?.video || video?.url,
-        thumbnailUrl: assets?.image || assets?.thumbnail,
-      };
+      const outputs: Array<{ type?: string; url?: string }> = Array.isArray(data.output) ? data.output : [];
+      const videoUrl = outputs.find((o) => o.type === 'video' && o.url)?.url || data.assets?.video || data.video?.url;
+      return videoUrl
+        ? { id: generationId, state: 'completed', videoUrl }
+        : { id: generationId, state: 'failed', error: 'Luma finished without a video.' };
     }
-
     if (state === 'failed') {
-      return {
-        id: generationId,
-        state: 'failed',
-        error: (data.failure_reason || 'Generation failed') as string,
-      };
+      return { id: generationId, state: 'failed', error: data.failure_reason || 'Luma could not make this video.' };
     }
+    return { id: generationId, state: state === 'processing' || state === 'dreaming' ? 'dreaming' : 'queued' };
+  } catch {
+    // A network blip: keep waiting.
+    return { id: generationId, state: 'queued' };
+  }
+}
 
-    return { id: generationId, state: state as 'queued' | 'dreaming' };
-  } catch (err) {
-    return {
-      id: generationId,
-      state: 'queued',
-      error: err instanceof Error ? err.message : 'Network error polling Luma',
-    };
+/** Make a Luma video from start to finish: submit, wait, download. Throws an AbortError when cancelled. */
+export async function generateLumaVideo(request: LumaGenerationRequest, options: VideoJobOptions = {}): Promise<{ blob?: Blob; error?: string }> {
+  const { signal, onStatus, timeoutMs = 15 * 60_000, pollMs = 5_000 } = options;
+  const model = request.model ?? DEFAULT_LUMA_MODEL;
+  const deadline = Date.now() + timeoutMs;
+  onStatus?.(VIDEO_STATUS_MESSAGES.lumaSubmitting);
+  const started = await startLumaGeneration(request);
+  if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
+  if (!started.id) return { error: started.error || 'Luma did not start the video.' };
+
+  onStatus?.(VIDEO_STATUS_MESSAGES.lumaQueued);
+  for (;;) {
+    await wait(pollMs, signal);
+    const status = await pollLumaGeneration(request.apiKey, started.id, model);
+    if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
+    if (status.state === 'failed') return { error: status.error };
+    if (status.state === 'completed' && status.videoUrl) {
+      onStatus?.(VIDEO_STATUS_MESSAGES.downloading);
+      return downloadLumaVideo(status.videoUrl);
+    }
+    if (status.state === 'dreaming') onStatus?.(VIDEO_STATUS_MESSAGES.lumaDreaming);
+    if (Date.now() > deadline) return { error: 'Luma took too long. Try again later.' };
   }
 }
 
@@ -1308,19 +1333,13 @@ export async function downloadLumaVideo(videoUrl: string): Promise<{ blob?: Blob
   }
 }
 
-/**
- * Validate a Luma API key by listing generations (via Tauri proxy).
- */
-export async function validateLumaKey(apiKey: string): Promise<boolean> {
-  console.log('[Luma] validateLumaKey called, key prefix:', apiKey?.slice(0, 8));
-  console.log('[Luma] URL:', `${LUMA_API_BASE}/generations?limit=1`);
+/** Check a Luma key against the API the chosen model runs on, without making a video. */
+export async function validateLumaKey(apiKey: string, model: string = DEFAULT_LUMA_MODEL): Promise<boolean> {
   try {
-    console.log('[Luma] Calling lumaFetch...');
-    const { status, data } = await lumaFetch('GET', `${LUMA_API_BASE}/generations?limit=1`, apiKey);
-    console.log('[Luma] Validation response:', status, JSON.stringify(data).slice(0, 200));
+    const path = isLumaAgentsModel(model) ? '/credits' : '/generations?limit=1';
+    const { status } = await lumaFetch('GET', `${lumaApi(model)}${path}`, apiKey);
     return status >= 200 && status < 300;
-  } catch (err) {
-    console.error('[Luma] Validation error:', err);
+  } catch {
     return false;
   }
 }

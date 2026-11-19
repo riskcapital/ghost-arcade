@@ -98,7 +98,10 @@ describe('running an action', () => {
 
   it('reports a failed request as an error result', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: { message: 'invalid x-api-key' } }), { status: 401 })));
-    expect(await runSketchAi('ideas', request, { provider: 'claude', apiKey: 'bad' })).toEqual({ kind: 'error', message: 'invalid x-api-key' });
+    expect(await runSketchAi('ideas', request, { provider: 'claude', apiKey: 'bad' })).toEqual({
+      kind: 'error',
+      message: 'The Claude API key was not accepted. Check it in Settings > AI. Claude says: invalid x-api-key',
+    });
   });
 });
 

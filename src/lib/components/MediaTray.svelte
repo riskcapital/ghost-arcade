@@ -29,12 +29,7 @@
   import { estimateShaderLoadRating, type ShaderLoadRating } from '../isf/loadRating';
   import { appendNativeVideoSegment, createLoopWithResult, runtimeVideoUrlToPath, type LoopProgress, type LoopTransitionType, LOOP_TRANSITIONS, LOOP_TRANSITION_GROUPS } from '../utils/videoLoop';
   import { downloadRecording } from '../recording/recorder';
-  import {
-    downloadVeoVideo,
-    pollVeoOperation,
-    startVeoGeneration,
-    type VeoModel,
-  } from '../api/ai-client';
+  import { generateOmniVideo, type OmniModel } from '../api/ai-client';
   import { settings } from '../stores/settings';
   import { TRAY_TAB_ORDER, TRAY_TAB_ALIASES, type TrayTab } from '../control/trayTabs';
   import { MEDIA_TRAY_REVEAL_EVENT, type MediaTrayRevealDetail } from './show/timeline/clipMenuActions';
@@ -3251,47 +3246,29 @@
     if (!ai.geminiApiKey) {
       throw new Error('Gemini API key required. Configure it in Settings > AI.');
     }
-    if (!String(ai.veoModel).startsWith('veo-3.1')) {
-      throw new Error('Veo Bridge requires a Veo 3.1 model.');
-    }
 
     loopProgress = { stage: 'processing', progress: 0.05, message: 'Capturing loop frames...' };
     const frames = await captureLoopBridgeFrames(item.src);
 
-    loopProgress = { stage: 'processing', progress: 0.15, message: 'Submitting Veo bridge...' };
-    const startResult = await startVeoGeneration({
+    // Gemini Omni draws the bridge from the clip's last frame back to its first.
+    const stepProgress = [0.15, 0.4, 0.8];
+    let step = 0;
+    const bridge = await generateOmniVideo({
       apiKey: ai.geminiApiKey,
       prompt: loopVeoPrompt.trim() || 'Create a smooth seamless visual transition.',
-      model: ai.veoModel as VeoModel,
+      model: ai.veoModel as OmniModel,
       aspectRatio: veoAspectFromSize(frames.width, frames.height),
       durationSeconds: 8,
       firstFrame: frames.lastFrame,
       lastFrame: frames.firstFrame,
+    }, {
+      timeoutMs: 10 * 60_000,
+      onStatus: (message) => {
+        loopProgress = { stage: 'processing', progress: stepProgress[Math.min(step++, stepProgress.length - 1)], message };
+      },
     });
-    if (startResult.error || !startResult.operationName) {
-      throw new Error(startResult.error || 'Failed to start Veo bridge generation.');
-    }
-
-    const opName = startResult.operationName;
-    const pollStarted = performance.now();
-    let bridgeBlob: Blob | null = null;
-    while (!bridgeBlob) {
-      await new Promise(resolve => setTimeout(resolve, 10000));
-      const elapsed = (performance.now() - pollStarted) / 1000;
-      loopProgress = {
-        stage: 'processing',
-        progress: Math.min(0.78, 0.18 + (1 - Math.exp(-elapsed / 120)) * 0.6),
-        message: 'Waiting for Veo bridge...',
-      };
-      const status = await pollVeoOperation(ai.geminiApiKey, opName);
-      if (status.error && status.done) throw new Error(status.error);
-      if (status.done && status.videoUri) {
-        loopProgress = { stage: 'processing', progress: 0.80, message: 'Downloading Veo bridge...' };
-        const download = await downloadVeoVideo(ai.geminiApiKey, status.videoUri);
-        if (download.error || !download.blob) throw new Error(download.error || 'Failed to download Veo bridge.');
-        bridgeBlob = download.blob;
-      }
-    }
+    if (!bridge.blob) throw new Error(bridge.error || 'Gemini Omni did not return a bridge video.');
+    const bridgeBlob = bridge.blob;
 
     const result = await appendNativeVideoSegment(item.src, bridgeBlob, (progress) => {
       loopProgress = {
@@ -3306,7 +3283,7 @@
       height: frames.height,
     });
 
-    await addLoopResultToLibrary(item, result, generatedName, 'Veo_Loop');
+    await addLoopResultToLibrary(item, result, generatedName, 'Omni_Loop');
   }
 
   // Create a seamless loop from a video
@@ -3320,7 +3297,7 @@
 
     const baseName = item.name.replace(/\.[^/.]+$/, '');
     const generatedName = loopCreationMode === 'veo'
-      ? `${baseName} (Veo Loop).mp4`
+      ? `${baseName} (Omni Loop).mp4`
       : `${baseName} (Loop).mp4`;
 
     try {
@@ -5728,7 +5705,7 @@
         <label for="loop-creation-mode">Mode</label>
         <select id="loop-creation-mode" bind:value={loopCreationMode}>
           <option value="crossfade">Crossfade</option>
-          <option value="veo">Veo bridge</option>
+          <option value="veo">Gemini Omni bridge</option>
         </select>
       </div>
       {#if loopCreationMode === 'crossfade'}
@@ -5762,7 +5739,7 @@
         </div>
       {/if}
       <button class="loop-create-btn" onclick={() => createLoopFromVideo(loopItem)}>
-        {loopCreationMode === 'veo' ? 'Create Veo loop' : 'Create loop'}
+        {loopCreationMode === 'veo' ? 'Create Omni loop' : 'Create loop'}
       </button>
     </div>
   {/if}
