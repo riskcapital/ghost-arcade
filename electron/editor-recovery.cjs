@@ -56,6 +56,7 @@ function describeReason(reason) {
  *   graceMs?: number,
  *   maxAttempts?: number,
  *   stableMs?: number,
+ *   reloadDelayMs?: number,
  * }} options
  */
 function createEditorRecovery(options) {
@@ -70,6 +71,7 @@ function createEditorRecovery(options) {
     graceMs = 10_000,
     maxAttempts = 3,
     stableMs = 60_000,
+    reloadDelayMs = 100,
   } = options;
   const log = {
     info: options.log?.info || (() => {}),
@@ -147,15 +149,20 @@ function createEditorRecovery(options) {
       exhaust(cause, reason, exitCode, attempts);
       return;
     }
-    cancelTimer();
     state = { kind: 'recovering', attempts: n, cause, reason };
     log.warn(`[Recovery] reloading the editor, attempt ${n} of ${maxAttempts} (cause=${cause} reason=${reason} exitCode=${exitCode ?? 'n/a'})`);
     flush();
-    try {
-      reload();
-    } catch (err) {
-      log.error(`[Recovery] reload failed: ${err?.message || err}`);
-    }
+    // Never reload from inside the crash event itself: reloading a crashed
+    // page synchronously in 'render-process-gone' takes the whole app down
+    // (Electron aborts the main process). The next task is safe.
+    startTimer(reloadDelayMs, () => {
+      if (state.kind !== 'recovering') return;
+      try {
+        reload();
+      } catch (err) {
+        log.error(`[Recovery] reload failed: ${err?.message || err}`);
+      }
+    });
   }
 
   function onGraceOver() {

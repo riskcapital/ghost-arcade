@@ -35,6 +35,7 @@ function harness(overrides: Record<string, unknown> = {}) {
     graceMs: 10_000,
     maxAttempts: 3,
     stableMs: 60_000,
+    reloadDelayMs: 100,
     ...overrides,
   });
   /** Move the clock on, firing due timers in order. */
@@ -82,15 +83,15 @@ describe('editor recovery', () => {
     h.recovery.unresponsive();
     h.recovery.unresponsive();
     expect(h.pending()).toBe(1);
-    h.advance(7_000);
-    expect(h.reloads).toEqual([10_000]);
+    h.advance(7_100);
+    expect(h.reloads).toEqual([10_100]);
   });
 
   it('a hang that outlasts the grace period reloads once', () => {
     const h = harness();
     h.recovery.unresponsive();
-    h.advance(10_000);
-    expect(h.reloads).toEqual([10_000]);
+    h.advance(10_100);
+    expect(h.reloads).toEqual([10_100]);
     expect(h.recovery.state()).toMatchObject({ kind: 'recovering', attempts: 1, cause: 'hang' });
     h.recovery.loaded();
     expect(h.recovery.state()).toEqual({ kind: 'healthy', attempts: 1 });
@@ -116,9 +117,8 @@ describe('editor recovery', () => {
     h.recovery.unresponsive();
     h.advance(5_000);
     h.recovery.gone({ reason: 'crashed', exitCode: -1073741819 });
-    expect(h.reloads).toEqual([5_000]);
     h.advance(60_000);
-    expect(h.reloads).toEqual([5_000]);
+    expect(h.reloads).toEqual([5_100]);
     expect(h.lines.some((l) => l.includes('exitCode=-1073741819') && l.includes('core adapter="Test GPU"'))).toBe(true);
   });
 
@@ -140,6 +140,22 @@ describe('editor recovery', () => {
     expect(h.recovery.state().kind).toBe('healthy');
   });
 
+  it('never reloads inside the crash event itself (that aborts the app)', () => {
+    const h = harness();
+    h.recovery.gone({ reason: 'crashed', exitCode: 5 });
+    expect(h.reloads).toEqual([]);
+    h.advance(100);
+    expect(h.reloads).toEqual([100]);
+  });
+
+  it('a window closed between the crash and the deferred reload is left alone', () => {
+    const h = harness();
+    h.recovery.gone({ reason: 'crashed', exitCode: 5 });
+    h.recovery.closed();
+    h.advance(60_000);
+    expect(h.reloads).toEqual([]);
+  });
+
   it('our own reload starting a navigation does not cancel the recovery', () => {
     const h = harness();
     h.recovery.gone({ reason: 'crashed', exitCode: 1 });
@@ -151,6 +167,7 @@ describe('editor recovery', () => {
     const h = harness();
     for (let i = 0; i < 3; i += 1) {
       h.recovery.gone({ reason: 'crashed', exitCode: 5 });
+      h.advance(100);
       h.recovery.loaded();
       h.advance(20_000);
     }
@@ -162,6 +179,7 @@ describe('editor recovery', () => {
     expect(h.lines.some((l) => l.includes('GAVE UP') && l.includes('reason=oom') && l.includes('exitCode=7') && l.includes('Test GPU'))).toBe(true);
     // Further crashes are logged but never reload or ask again.
     h.recovery.gone({ reason: 'crashed', exitCode: 5 });
+    h.advance(60_000);
     expect(h.reloads).toHaveLength(3);
     expect(h.exhausted).toHaveLength(1);
   });
@@ -169,13 +187,14 @@ describe('editor recovery', () => {
   it('hang and crash attempts share one budget', () => {
     const h = harness();
     h.recovery.unresponsive();
-    h.advance(10_000); // attempt 1 (hang)
+    h.advance(10_100); // attempt 1 (hang)
     h.recovery.gone({ reason: 'crashed', exitCode: 1 }); // attempt 2 while reloading
+    h.advance(100);
     h.recovery.unresponsive(); // the reloaded page hangs
-    h.advance(10_000); // attempt 3
+    h.advance(10_100); // attempt 3
     expect(h.reloads).toHaveLength(3);
     h.recovery.unresponsive();
-    h.advance(10_000);
+    h.advance(60_000);
     expect(h.reloads).toHaveLength(3);
     expect(h.recovery.state()).toMatchObject({ kind: 'exhausted', cause: 'hang' });
   });
@@ -183,6 +202,7 @@ describe('editor recovery', () => {
   it('attempts reset once the page has stayed healthy for a minute', () => {
     const h = harness();
     h.recovery.gone({ reason: 'crashed', exitCode: 1 });
+    h.advance(100);
     h.recovery.loaded();
     h.advance(59_000);
     expect(h.recovery.state()).toEqual({ kind: 'healthy', attempts: 1 });
@@ -205,10 +225,12 @@ describe('editor recovery', () => {
   it('try again from the message gives a fresh set of attempts', () => {
     const h = harness({ maxAttempts: 1 });
     h.recovery.gone({ reason: 'crashed', exitCode: 1 });
+    h.advance(100);
     h.recovery.gone({ reason: 'crashed', exitCode: 1 });
     expect(h.recovery.state().kind).toBe('exhausted');
     h.recovery.retry();
     expect(h.dismissed).toHaveLength(1);
+    h.advance(100);
     expect(h.reloads).toHaveLength(2);
     expect(h.recovery.state()).toMatchObject({ kind: 'recovering', attempts: 1, cause: 'user' });
     h.recovery.loaded();
@@ -238,6 +260,7 @@ describe('editor recovery', () => {
       diagnostics: () => { throw new Error('no gpu info'); },
     });
     h.recovery.gone({ reason: 'crashed', exitCode: 1 });
+    h.advance(100);
     expect(h.recovery.state().kind).toBe('recovering');
     expect(h.lines.some((l) => l.includes('reload failed'))).toBe(true);
     expect(h.lines.some((l) => l.includes('diagnostics failed'))).toBe(true);
