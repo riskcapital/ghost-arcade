@@ -48,6 +48,8 @@ export interface MelodicLoop {
   tone?: string;
   /** A drum groove (a beat loop id) it previews with when nothing else is playing. */
   groove?: string;
+  /** Highest MIDI note it may reach; in keys that would pass it, the whole loop drops an octave. */
+  ceiling?: number;
 }
 
 export interface BeatLoop {
@@ -164,6 +166,7 @@ export interface ScheduledLoopNote {
 export function loopNotesBetween(loop: MelodicLoop, key: MusicKey, startBeat: number, fromBeat: number, toBeat: number): ScheduledLoopNote[] {
   if (!(toBeat > fromBeat) || loop.beats <= 0) return [];
   const out: ScheduledLoopNote[] = [];
+  const base = ROLE_BASE[loop.role] - (loop.ceiling !== undefined && loopTop(loop, key) > loop.ceiling ? 12 : 0);
   const firstPass = Math.max(0, Math.floor((fromBeat - startBeat) / loop.beats));
   const lastPass = Math.floor((toBeat - startBeat) / loop.beats);
   for (let pass = firstPass; pass <= lastPass; pass++) {
@@ -172,11 +175,17 @@ export function loopNotesBetween(loop: MelodicLoop, key: MusicKey, startBeat: nu
       const beat = passStart + n.beat;
       if (beat < fromBeat || beat >= toBeat || beat < startBeat) continue;
       for (const degree of n.degrees) {
-        out.push({ beat, dur: n.dur, note: scaleNote(key, degree, ROLE_BASE[loop.role]), velocity: n.velocity });
+        out.push({ beat, dur: n.dur, note: scaleNote(key, degree, base), velocity: n.velocity });
       }
     }
   }
   return out.sort((a, b) => a.beat - b.beat);
+}
+
+function loopTop(loop: MelodicLoop, key: MusicKey): number {
+  let top = -Infinity;
+  for (const n of loop.notes) for (const d of n.degrees) top = Math.max(top, scaleNote(key, d, ROLE_BASE[loop.role]));
+  return top;
 }
 
 /** The first bar line at or after `beat` (a beat already on a bar line counts). */

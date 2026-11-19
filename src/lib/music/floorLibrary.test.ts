@@ -10,6 +10,7 @@ import { kitById } from './tone/kits';
 import { DRUM_VOICES } from './noteEvents';
 import { stepsBetween } from './drumPattern';
 import { encodeWav } from './wav';
+import { SCALES, type ScaleId } from './studioSets';
 const key = {root:5,scale:'minor' as const};
 const melodic = [...FLOOR_MELODIC,...FLOOR_LEADS];
 
@@ -42,9 +43,22 @@ describe('performance collections', () => {
       const bar = (b:number) => l.notes.filter(n => Math.round(n.beat*8)/8 >= b*4 && Math.round(n.beat*8)/8 < b*4+4).map(n => n.degrees[0]-c.roots[b]);
       expect(bar(0),c.id).toEqual(bar(2));
       expect(bar(1),c.id).not.toEqual(bar(0));
-      expect(l.notes.at(-1)!.degrees).toEqual([7]);
+      expect(l.notes.at(-1)!.degrees,c.id).toEqual([7+(c.leadOctave ?? 0)*7]);
     }
     for (const l of melodic) for (const n of l.notes) expect(n.beat+n.dur,l.id).toBeLessThanOrEqual(l.beats);
+  });
+  it('keeps the starter hooks low and stepwise in every key', () => {
+    const starters = ['chrome','oxide','magnet','blacksteel','aurora','cobalt','velvet','yard'];
+    for (const id of starters) {
+      const c = FLOOR_COLLECTIONS.find(c => c.id === id)!;
+      const span = [...c.hook,...c.answer].map(h => h[2]);
+      expect(Math.max(...span)-Math.min(...span),id).toBeLessThanOrEqual(5);
+      for (const scale of Object.keys(SCALES) as ScaleId[]) for (let root=0;root<12;root++) {
+        const clip = clipFromPreset(`floor-${id}-lead`,{root,scale},id)!;
+        const notes = clip.kind === 'notes' ? clip.notes.map(n => n.note) : [];
+        expect(Math.max(...notes),`${id} ${root} ${scale}`).toBeLessThanOrEqual(72);
+      }
+    }
   });
 
   for (const c of FLOOR_COLLECTIONS) it(`${c.name} renders a complete phrase with headroom and releases`, () => {

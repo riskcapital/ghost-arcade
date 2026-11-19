@@ -15,7 +15,6 @@ export const EXTRA_COLLECTIONS: FloorCollection[] = [
     ],
     "bassTone": "bass.roller-reese",
     "keysTone": "keys.liquid-tines",
-    "leadTone": "lead.hollow",
     "bass": [
       [
         0,
@@ -42,40 +41,10 @@ export const EXTRA_COLLECTIONS: FloorCollection[] = [
         0.65
       ]
     ],
-    "hook": [
-      [
-        0,
-        1.2,
-        4,
-        0.8
-      ],
-      [
-        2.5,
-        0.6,
-        6,
-        0.65
-      ]
-    ],
-    "answer": [
-      [
-        0,
-        1.2,
-        4,
-        0.8
-      ],
-      [
-        2,
-        0.5,
-        7,
-        0.75
-      ],
-      [
-        3,
-        0.6,
-        6,
-        0.6
-      ]
-    ],
+    "leadTone": "lead.summit",
+    "leadOctave": -1,
+    "hook": [[0,1.4,2,0.64],[1.5,0.4,3,0.48],[2,1.6,4,0.6]],
+    "answer": [[0,1,4,0.64],[1,0.5,5,0.52],[1.5,1,4,0.56],[2.75,1,3,0.52]],
     "chords": [
       [
         0,
@@ -319,7 +288,6 @@ export const EXTRA_COLLECTIONS: FloorCollection[] = [
     ],
     "bassTone": "bass.club-finger",
     "keysTone": "keys.filter-disco",
-    "leadTone": "lead.robot-reed",
     "bass": [
       [
         0.5,
@@ -352,58 +320,10 @@ export const EXTRA_COLLECTIONS: FloorCollection[] = [
         0.6
       ]
     ],
-    "hook": [
-      [
-        0.5,
-        0.3,
-        4,
-        0.8
-      ],
-      [
-        1.25,
-        0.2,
-        4,
-        0.6
-      ],
-      [
-        1.75,
-        0.5,
-        7,
-        0.85
-      ],
-      [
-        3,
-        0.5,
-        6,
-        0.65
-      ]
-    ],
-    "answer": [
-      [
-        0.5,
-        0.3,
-        4,
-        0.8
-      ],
-      [
-        1.25,
-        0.2,
-        4,
-        0.6
-      ],
-      [
-        1.75,
-        0.5,
-        9,
-        0.85
-      ],
-      [
-        3,
-        0.5,
-        7,
-        0.65
-      ]
-    ],
+    "leadTone": "keys.tine",
+    "leadOctave": -1,
+    "hook": [[0,0.25,2,0.36],[0.5,0.5,4,0.51],[1.25,0.5,3,0.42],[2,0.5,2,0.45],[2.75,0.75,1,0.39]],
+    "answer": [[0,0.25,1,0.36],[0.5,0.5,2,0.48],[1.25,0.5,3,0.42],[2,0.5,4,0.48],[2.75,0.75,3,0.42]],
     "chords": [
       [
         0,
@@ -585,7 +505,6 @@ export const EXTRA_COLLECTIONS: FloorCollection[] = [
     ],
     "bassTone": "bass.furnace",
     "keysTone": "keys.rave-chop",
-    "leadTone": "lead.robot-reed",
     "bass": [
       [
         0,
@@ -612,40 +531,10 @@ export const EXTRA_COLLECTIONS: FloorCollection[] = [
         0.7
       ]
     ],
-    "hook": [
-      [
-        0,
-        1.3,
-        0,
-        0.85
-      ],
-      [
-        2.75,
-        0.7,
-        4,
-        0.7
-      ]
-    ],
-    "answer": [
-      [
-        0,
-        1.3,
-        0,
-        0.85
-      ],
-      [
-        2,
-        0.4,
-        2,
-        0.65
-      ],
-      [
-        3,
-        0.6,
-        4,
-        0.75
-      ]
-    ],
+    "leadTone": "lead.pwm",
+    "leadOctave": -1,
+    "hook": [[0,0.75,2,0.59],[0.75,0.75,1,0.42],[1.5,1.5,0,0.56],[3.25,0.6,-1,0.39]],
+    "answer": [[0,0.75,2,0.59],[0.75,0.5,3,0.45],[1.5,1,4,0.56],[2.75,1,3,0.45]],
     "chords": [
       [
         0,
@@ -766,7 +655,6 @@ export const EXTRA_COLLECTIONS: FloorCollection[] = [
     ],
     "bassTone": "bass.octave-pluck",
     "keysTone": "keys.liquid-tines",
-    "leadTone": "lead.summit",
     "bass": [
       [
         0,
@@ -811,58 +699,10 @@ export const EXTRA_COLLECTIONS: FloorCollection[] = [
         0.8
       ]
     ],
-    "hook": [
-      [
-        0,
-        1.4,
-        4,
-        0.85
-      ],
-      [
-        1.5,
-        0.4,
-        6,
-        0.7
-      ],
-      [
-        2,
-        1.5,
-        7,
-        0.9
-      ]
-    ],
-    "answer": [
-      [
-        0,
-        0.4,
-        4,
-        0.8
-      ],
-      [
-        0.5,
-        0.4,
-        6,
-        0.65
-      ],
-      [
-        1,
-        1.4,
-        9,
-        0.9
-      ],
-      [
-        2.5,
-        0.4,
-        7,
-        0.75
-      ],
-      [
-        3,
-        0.65,
-        6,
-        0.7
-      ]
-    ],
+    "leadTone": "lead.fm-bell",
+    "leadOctave": -1,
+    "hook": [[0,0.5,0,0.52],[0.5,0.5,2,0.45],[1,1,4,0.59],[2.5,0.5,5,0.49],[3,0.75,4,0.49]],
+    "answer": [[0,0.5,4,0.56],[0.5,0.5,3,0.45],[1,1,2,0.56],[2.5,0.5,4,0.45],[3,0.75,3,0.49]],
     "chords": [
       [
         0,
@@ -1016,7 +856,6 @@ export const EXTRA_COLLECTIONS: FloorCollection[] = [
     ],
     "bassTone": "bass.chip-triangle",
     "keysTone": "keys.chip-arp",
-    "leadTone": "lead.chip-pulse",
     "bass": [
       [
         0,
@@ -1061,82 +900,10 @@ export const EXTRA_COLLECTIONS: FloorCollection[] = [
         0.75
       ]
     ],
-    "hook": [
-      [
-        0,
-        0.4,
-        7,
-        0.9
-      ],
-      [
-        0.5,
-        0.2,
-        6,
-        0.65
-      ],
-      [
-        0.75,
-        0.2,
-        4,
-        0.7
-      ],
-      [
-        1,
-        0.4,
-        2,
-        0.8
-      ],
-      [
-        1.5,
-        0.4,
-        4,
-        0.75
-      ],
-      [
-        2,
-        1.2,
-        7,
-        0.9
-      ]
-    ],
-    "answer": [
-      [
-        0,
-        0.4,
-        7,
-        0.9
-      ],
-      [
-        0.5,
-        0.2,
-        9,
-        0.7
-      ],
-      [
-        0.75,
-        0.2,
-        7,
-        0.65
-      ],
-      [
-        1,
-        0.4,
-        6,
-        0.8
-      ],
-      [
-        1.5,
-        0.4,
-        4,
-        0.7
-      ],
-      [
-        2,
-        1.2,
-        2,
-        0.85
-      ]
-    ],
+    "leadTone": "lead.pwm",
+    "leadOctave": -1,
+    "hook": [[0,0.75,2,0.59],[0.75,0.25,3,0.42],[1,0.5,4,0.52],[1.5,0.5,5,0.49],[2,1.25,4,0.59]],
+    "answer": [[0,0.75,4,0.59],[0.75,0.25,3,0.42],[1,0.5,2,0.52],[1.5,0.5,1,0.45],[2,1.25,3,0.56]],
     "chords": [
       [
         0,
