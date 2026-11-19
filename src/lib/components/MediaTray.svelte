@@ -24,6 +24,7 @@
   import { generateUUID } from '../types';
   import { videoLibrary, type SavedVideo } from '../stores/videoLibrary';
   import { armNativeLibraryVideo } from '../sync/nativeRendererSync';
+  import { isPhoneFeedUri, listedPhoneFeeds, phoneFeedMediaId, phoneFeedStatusLabel, phoneFeedUri, phoneFeeds, stopPhoneFeedFromDesktop, type PhoneFeedKey, type PhoneFeedSummary } from '../mobile/phoneFeeds';
   import { parseISF, getInputDefault } from '../isf/parser';
   import { generateCachedThumbnail as generateShaderThumbnail } from '../isf/thumbnail';
   import { estimateShaderLoadRating, type ShaderLoadRating } from '../isf/loadRating';
@@ -102,7 +103,9 @@
   type VJTrayLiveSourcePayload = {
     id: string;
     type: 'live-source';
-    sourceType: 'spout' | 'webcam' | 'capture' | 'ndi';
+    sourceType: 'spout' | 'webcam' | 'capture' | 'ndi' | 'phone';
+    /** A paired phone's feed (sourceType 'phone'). */
+    phoneFeedKey?: PhoneFeedKey;
     name: string;
     status: 'disconnected' | 'connecting' | 'live';
     stream?: MediaStream;
@@ -395,7 +398,7 @@
 
   function notifyVJLiveSourcesChanged() {
     if (!vjMode) return;
-    const payloads = liveSources.map(vjLiveSourcePayload);
+    const payloads = [...liveSources.map(vjLiveSourcePayload), ...phoneFeedSources.map(phoneFeedPayload)];
     (window as any).__ghostVJMediaTrayLiveSources = payloads;
     if (!onVJLiveSourcesChange) return;
     const signature = liveSources
@@ -408,13 +411,66 @@
         source.spoutSenderName ?? '',
         source.ndiSourceName ?? '',
       ].join(':'))
+      .concat(phoneFeedSources.map((feed) => `phone:${feed.key}:${feed.phase}:${feed.sessionId}`))
       .join('|');
     if (signature === lastVJLiveSourcesSignature) return;
     lastVJLiveSourcesSignature = signature;
     onVJLiveSourcesChange(payloads);
   }
 
-  $: notifyVJLiveSourcesChanged();
+  // Feeds a paired phone sends (Dual Camera, depth map, point cloud, …), each
+  // listed by name beside the other live sources. Changes on state
+  // transitions only.
+  $: phoneFeedSources = listedPhoneFeeds($phoneFeeds);
+  $: liveSourceCount = liveSources.filter(s => s.status === 'live').length + phoneFeedSources.filter(f => f.phase === 'live').length;
+
+  function phoneFeedPayload(feed: PhoneFeedSummary): VJTrayLiveSourcePayload {
+    return {
+      id: phoneFeedMediaId(feed.key),
+      type: 'live-source',
+      sourceType: 'phone',
+      phoneFeedKey: feed.key,
+      name: feed.label,
+      status: feed.phase === 'live' || feed.phase === 'stalled' ? 'live' : 'connecting',
+      thumbnail: feed.thumbnail || undefined,
+    };
+  }
+
+  /** Placed like any live source: on the VJ deck, or on the selected layers. */
+  function addPhoneFeedToCurrentMode(feed: PhoneFeedSummary) {
+    if (vjMode) {
+      notifyVJLiveSourcesChanged();
+      onVJAddPayload?.(phoneFeedPayload(feed));
+      return;
+    }
+    const targetIds = getTargetMediaLayerIds();
+    if (targetIds.length === 0) {
+      alert('Please select one or more media layers first');
+      return;
+    }
+    for (const layerId of targetIds) {
+      project.setLayerSource(layerId, {
+        id: `${phoneFeedMediaId(feed.key)}-${layerId}-${Date.now()}`,
+        type: 'video',
+        src: phoneFeedUri(feed.key),
+        name: feed.label,
+        isPlaying: true,
+        mirrorX: false,
+      });
+    }
+  }
+
+  function onPhoneFeedCardDragStart(feed: PhoneFeedSummary, e: DragEvent) {
+    if (!vjMode || !e.dataTransfer) return;
+    const payload = phoneFeedPayload(feed);
+    (window as any).__ghostVJMediaTrayDragPayload = payload;
+    e.dataTransfer.effectAllowed = 'copy';
+    e.dataTransfer.setData('application/x-ghost-media-source', JSON.stringify(payload));
+    e.dataTransfer.setData('application/x-ghost-vj-clip', JSON.stringify({ type: 'live-source', id: payload.id, pluginName: payload.name }));
+    e.dataTransfer.setData('text/plain', payload.id);
+  }
+
+  $: phoneFeedSources, notifyVJLiveSourcesChanged();
 
   // Subscribe to global Spout sender list
   $: availableSpoutSenders = $spoutSenders;
@@ -3418,7 +3474,7 @@
    *  zero decoder cold-start — the native core pre-rolls a paused `library:`
    *  session and hands it over at bind time (music-sync trigger latency). */
   function armTrayVideoItem(item: MediaItem | ShaderItem | JSAnimationItem) {
-    if (!('type' in item) || item.type !== 'video' || !item.src) return;
+    if (!('type' in item) || item.type !== 'video' || !item.src || isPhoneFeedUri(item.src)) return;
     armNativeLibraryVideo({
       id: item.id,
       src: item.src,
@@ -4382,7 +4438,7 @@
       {/if}
       <button class="tab" class:active={activeTab === 'sources'} data-midi-path="tray:tab:src" data-midi-label="Library tab: Sources" data-midi-mode="toggle" onclick={() => { activeTab = 'sources'; sourcesInitialized = true; enumerateWebcams(); }}>
         <span class="tab-label">Sources</span>
-        <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>{#if liveSources.filter(s => s.status === 'live').length > 0}<span class="tab-count tab-live">{liveSources.filter(s => s.status === 'live').length}</span>{/if}</span>
+        <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>{#if liveSourceCount > 0}<span class="tab-count tab-live">{liveSourceCount}</span>{/if}</span>
       </button>
       <button class="tab" class:active={activeTab === 'plugins'} data-midi-path="tray:tab:plug" data-midi-label="Library tab: Plugins" data-midi-mode="toggle" onclick={() => { activeTab = 'plugins'; }}>
         <span class="tab-label">Plugins</span>
@@ -4898,7 +4954,7 @@
           </div>
         {/if}
 
-        {#if liveSources.length === 0}
+        {#if liveSources.length === 0 && phoneFeedSources.length === 0}
           <div class="empty-state">
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
               <path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
@@ -4908,6 +4964,54 @@
           </div>
         {:else}
           <div class="sources-list">
+            {#each phoneFeedSources as feed (feed.key)}
+              {@const shown = phoneFeedStatusLabel(feed.phase)}
+              <div
+                class="source-card"
+                data-tray-id={phoneFeedMediaId(feed.key)}
+                class:live={feed.phase === 'live'}
+                class:connecting={feed.phase === 'offered' || feed.phase === 'connecting'}
+                draggable={vjMode ? 'true' : 'false'}
+                role="button"
+                tabindex="0"
+                onclick={() => vjMode && addPhoneFeedToCurrentMode(feed)}
+                ondblclick={() => !vjMode && addPhoneFeedToCurrentMode(feed)}
+                onkeydown={(e) => e.key === 'Enter' && addPhoneFeedToCurrentMode(feed)}
+                ondragstart={(e) => onPhoneFeedCardDragStart(feed, e)}
+                ondragend={clearVJMediaTrayDragPayload}
+                title={vjMode ? 'Click or drag to add to VJ deck' : 'Double-click to apply to layer'}
+              >
+                <div class="source-preview">
+                  {#if feed.thumbnail}
+                    <img class="source-video-preview" src={feed.thumbnail} alt="" draggable="false" />
+                  {:else}
+                    <div class="source-icon">
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <rect x="6" y="2" width="12" height="20" rx="2" ry="2"/><circle cx="12" cy="18" r="1"/>
+                      </svg>
+                    </div>
+                  {/if}
+                </div>
+                <div class="source-info">
+                  <span class="source-name">{feed.label}</span>
+                  <span class="source-status">
+                    <span class="status-dot {shown.tone}"></span> {shown.label}
+                  </span>
+                </div>
+                <div class="source-actions">
+                  <button class="source-apply-btn" onclick={(e) => { e.stopPropagation(); addPhoneFeedToCurrentMode(feed); }} title={vjMode ? 'Add to VJ deck' : 'Apply to selected layer'}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                  </button>
+                  <button class="source-stop-btn" onclick={(e) => { e.stopPropagation(); stopPhoneFeedFromDesktop(feed.key); }} title="Stop this phone feed">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            {/each}
             {#each liveSources as source, sourceIdx (source.id)}
               <div
                 class="source-card"

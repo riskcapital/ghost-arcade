@@ -1,3 +1,4 @@
+import { isPhoneFeedUri } from '../mobile/phoneFeeds';
 import { engineNowMs } from '../recording/renderClock';
 import { normalizeMusicMotion } from '../audio/musicMotion';
 import { getDefaultEffectParams } from '../renderer/effects';
@@ -949,6 +950,10 @@ function ensureClipVideoElement(clip: VJClip): HTMLVideoElement | undefined {
     clip.isPlaying = clip.isPlaying ?? true;
     return clip.videoElement;
   }
+
+  // A phone feed reaches the render core by upload; a <video> pointed at its
+  // live:// address would only fail to load.
+  if (isPhoneFeedUri(clip.src)) return undefined;
 
   if (!clip.src) return clip.videoElement;
 

@@ -604,8 +604,6 @@
   import { mediaLibrary } from './lib/stores/media';
   import { createAssetRefFromGeneratedBlob, type AssetRef } from './lib/storage/assetRegistry';
   import {
-    PHONE_CAMERA_MEDIA_ID,
-    PHONE_CAMERA_SOURCE_PREFIX,
     defaultPhoneVisionCapabilities,
     defaultPhoneVisionState,
     phoneVision,
@@ -619,6 +617,10 @@
     type PhoneVisionPointCloudPreset,
     type PhoneVisionSegmentationPipeline,
   } from './lib/stores/phoneVision';
+  import { PHONE_FEED_LABELS, phoneFeedKeyFromOffer, phoneFeedMediaId, phoneFeedUri, setPhoneFeedStopHandler } from './lib/mobile/phoneFeeds';
+  import { PhoneFeedReceiver, type PhoneFeedSessionView } from './lib/mobile/phoneFeedReceiver';
+  import { canvasScaler, phoneFeedThumbnail, trackFrameSource } from './lib/mobile/phoneFeedPump';
+  import { phoneFeedCoreSink, phoneFeedSlotEdge } from './lib/mobile/phoneFeedCore';
   import { history, canUndo, canRedo, outputHistoryPatch, showHistoryRestore, type HistorySnapshot } from './lib/stores/history';
   import { selectedScreenId, selectedScreenMaskId, screenMaskPlacing } from './lib/stores/screens';
   import { clearAutosaveSnapshot, findAutosave, hasAutosave, readAutosave, writeAutosave } from './lib/storage/autosaveStore';
@@ -2104,6 +2106,8 @@
         // tray and the offline renderer the export path uses.
         keyframeTimeline,
         offlineRender: () => import('./lib/recording/offlineRender').then((m) => m.offlineRender),
+        // Phone camera / depth feeds: open sessions, frame pacing and latency.
+        phoneFeeds: { sessions: () => phoneFeedReceiver.activeSessions(), stats: () => phoneFeedReceiver.stats() },
       };
     } catch { /* sealed */ }
 
@@ -3751,11 +3755,62 @@
   // Connect to WebSocket server as desktop host
   let connectionError = '';
 
-  let phoneVisionPeer: RTCPeerConnection | null = null;
+  /** The newest phone camera or Phone Vision session: what the Phone Vision tools act on. */
   let phoneVisionSessionId: string | null = null;
-  let phoneVisionVideoEl: HTMLVideoElement | null = null;
   let phoneVisionDataChannel: RTCDataChannel | null = null;
-  let pendingPhoneVisionIce: RTCIceCandidateInit[] = [];
+
+  // Phone camera / depth feeds (WebRTC): each a named live source whose frames
+  // go to the render core. See lib/mobile/phoneFeedReceiver.ts.
+  const phoneFeedReceiver = new PhoneFeedReceiver({
+    send: (payload) => sendPhoneVisionSignal(payload),
+    createPeer: () => new RTCPeerConnection(),
+    sink: phoneFeedCoreSink(),
+    maxEdge: phoneFeedSlotEdge,
+    frameSource: trackFrameSource,
+    scale: canvasScaler(),
+    thumbnail: (frame) => phoneFeedThumbnail(frame),
+    media: {
+      put: (item) => {
+        if (get(mediaLibrary).some(existing => existing.id === item.id)) mediaLibrary.updateItem(item.id, item);
+        else mediaLibrary.addItem(item);
+      },
+      remove: (id) => {
+        if (get(mediaLibrary).some(existing => existing.id === id)) mediaLibrary.removeItem(id);
+      },
+    },
+    onDataChannel: (sessionId, channel) => {
+      if (sessionId === phoneVisionSessionId) attachPhoneVisionDataChannel(channel);
+      else try { channel.close(); } catch {}
+    },
+    onChange: (session) => followPhoneFeedSession(session),
+  });
+  setPhoneFeedStopHandler((key) => phoneFeedReceiver.stopFromDesktop(key));
+  onDestroy(() => {
+    setPhoneFeedStopHandler(null);
+    phoneFeedReceiver.stopAll('stopped');
+  });
+
+  /** The Phone Vision panel follows the newest camera session's state. */
+  function followPhoneFeedSession(session: PhoneFeedSessionView) {
+    if (session.sessionId !== phoneVisionSessionId) return;
+    const state = session.state;
+    if (state.phase === 'ended') {
+      if (state.reason === 'failed') {
+        phoneVision.update(current => ({ ...current, status: 'failed', error: state.message }));
+        try { phoneVisionDataChannel?.close(); } catch {}
+        phoneVisionDataChannel = null;
+        phoneVisionSessionId = null;
+      } else {
+        destroyPhoneVisionSession(true);
+      }
+      return;
+    }
+    const status = state.phase === 'live' || state.phase === 'stalled' ? 'live' : 'connecting';
+    const error = state.phase === 'stalled' ? 'No frames from the phone.' : '';
+    phoneVision.update(current => (current.status === status && current.error === error && current.label === session.label
+      ? current
+      : { ...current, status, sessionId: session.sessionId, label: session.label, error }));
+  }
 
   function isPhoneVisionRecord(value: unknown): value is Record<string, unknown> {
     return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -4077,7 +4132,7 @@
       depthSource = 'saturation';
     }
     const base = {
-      source: { type: 'media', mediaId: PHONE_CAMERA_MEDIA_ID },
+      source: { type: 'media', mediaId: phoneFeedMediaId('camera') },
       mirrorX: phoneVisionFacingMode(raw) === 'user',
       captureProfile: profile,
       depthPipeline: capabilities.depthPipeline,
@@ -4167,12 +4222,6 @@
     return { ...base, ...presets[preset], ...pipelineTuning, ...nativeTuning };
   }
 
-  function phoneVisionMediaSrc(sessionId: string) {
-    return `${PHONE_CAMERA_SOURCE_PREFIX}/${sessionId}`;
-  }
-
-  let studioFeedLabel = 'Phone Camera';
-
   function sendPhoneVisionSignal(payload: Record<string, unknown>) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify(payload));
@@ -4193,76 +4242,28 @@
     } catch {}
   }
 
+  /** Lets go of the Phone Vision session (its data channel and panel state). Feeds end in the receiver. */
   function destroyPhoneVisionSession(updateState = true) {
     try { phoneVisionDataChannel?.close(); } catch {}
-    try { phoneVisionPeer?.close(); } catch {}
     phoneVisionDataChannel = null;
-    phoneVisionPeer = null;
-    pendingPhoneVisionIce = [];
-
-    const hadMedia = !!get(mediaLibrary).find(item => item.id === PHONE_CAMERA_MEDIA_ID);
-    if (hadMedia) {
-      mediaLibrary.removeItem(PHONE_CAMERA_MEDIA_ID);
-    } else if (phoneVisionVideoEl) {
-      try { phoneVisionVideoEl.pause(); } catch {}
-      try { phoneVisionVideoEl.srcObject = null; } catch {}
-    }
-    phoneVisionVideoEl = null;
     phoneVisionSessionId = null;
-
     if (updateState) {
       phoneVision.set(defaultPhoneVisionState());
     }
   }
 
-  async function publishPhoneCameraMedia(stream: MediaStream, sessionId: string) {
-    const video = document.createElement('video');
-    video.autoplay = true;
-    video.muted = true;
-    video.loop = false;
-    video.playsInline = true;
-    video.srcObject = stream;
-    phoneVisionVideoEl = video;
-
-    try { await video.play(); } catch {
-      // Metadata may not be ready yet on mobile WebRTC tracks; the
-      // renderer can still consume the element once playback starts.
-    }
-
-    if (phoneVisionSessionId !== sessionId) { video.pause(); video.srcObject=null; return; }
-    const existing = get(mediaLibrary).find(item => item.id === PHONE_CAMERA_MEDIA_ID);
-    const mediaItem = {
-      id: PHONE_CAMERA_MEDIA_ID,
-      name: studioFeedLabel,
-      src: phoneVisionMediaSrc(sessionId),
-      type: 'video' as const,
-      videoElement: video,
-    };
-    if (existing) mediaLibrary.updateItem(PHONE_CAMERA_MEDIA_ID, mediaItem);
-    else mediaLibrary.addItem(mediaItem);
-
-    phoneVision.update(state => ({
-      ...state,
-      status: 'live',
-      sessionId,
-      label: studioFeedLabel,
-      error: '',
-    }));
-    sendPhoneVisionStatus('live', {sourceReady:true,label:studioFeedLabel});
-  }
-
+  /** The newest phone feed with a picture on the desktop, as a layer source. */
   function phoneCameraMediaSource(emitError = true): MediaSource | null {
-    const item = get(mediaLibrary).find(i => i.id === PHONE_CAMERA_MEDIA_ID);
-    if (!item?.videoElement || !phoneVisionSessionId) {
+    const live = phoneFeedReceiver.newestLive();
+    if (!live) {
       if (emitError) sendPhoneVisionStatus('error', { error: 'Start the phone camera first.' });
       return null;
     }
     return {
       id: `phone-camera-${Date.now()}`,
       type: 'video',
-      src: item.src,
-      name: 'Phone Camera',
-      videoElement: item.videoElement,
+      src: phoneFeedUri(live.key),
+      name: live.label,
       isPlaying: true,
       mirrorX: false,
     };
@@ -4332,9 +4333,9 @@
   }
 
   function createPhonePointCloudLayer(raw: Record<string, unknown> = {}) {
-    const item = get(mediaLibrary).find(i => i.id === PHONE_CAMERA_MEDIA_ID);
-    const nativeOnly = !item?.videoElement && phoneVisionCanCreateNativeDepth(raw);
-    if ((!item?.videoElement && !nativeOnly) || !phoneVisionSessionId) {
+    const live = phoneFeedReceiver.newestLive();
+    const nativeOnly = !live && phoneVisionCanCreateNativeDepth(raw);
+    if ((!live && !nativeOnly) || !phoneVisionSessionId) {
       sendPhoneVisionStatus('error', { error: 'Start the phone camera first.' });
       return;
     }
@@ -4343,6 +4344,7 @@
     if (!layerId) return;
 
     const params: Record<string, any> = phoneVisionPointCloudParams(raw);
+    if (live) params.source = { type: 'media', mediaId: phoneFeedMediaId(live.key) };
     if (nativeOnly) {
       delete (params as Record<string, unknown>).source;
       params.depthSource = 'native-depth';
@@ -4451,99 +4453,37 @@
     offer: RTCSessionDescriptionInit,
     detail: Record<string, unknown> = {},
   ) {
-    destroyPhoneVisionSession(false);
-    phoneVisionSessionId = sessionId;
-    const feed = detail.studioFeed as any;
-    const labels:Record<string,string>={rear:'Mobile Rear Camera',front:'Mobile Selfie',dual:'Mobile Dual Camera',depth:'Mobile Depth Map',contours:'Mobile Depth Contours',points:'Mobile Point Cloud',interactive:'Interactive Studio'};
-    studioFeedLabel='Phone Camera';
-    if(feed){
-      if(feed.schema!=='ghost-mobile-feed'||feed.version!==1||!Object.hasOwn(labels,feed.kind)||feed.metricDepth!==false||feed.content!=='visual-rgba'){sendPhoneVisionStatus('failed',{error:'Unsupported Studio feed.'});destroyPhoneVisionSession(true);return;}
-      studioFeedLabel=labels[feed.kind];
-    }
-    const facingMode = phoneVisionFacingMode(detail);
-    const capabilityDetail = isPhoneVisionRecord(detail.capabilities)
-      ? {
-          ...detail.capabilities,
-          captureProfile: detail.capabilities.captureProfile ?? detail.captureProfile,
-        }
-      : {
-          captureProfile: detail.captureProfile,
-        };
-    const capabilities = phoneVisionCapabilitiesFrom(capabilityDetail, facingMode);
-    phoneVision.set({
-      status: 'connecting',
-      sessionId,
-      label: 'Phone Camera',
-      error: '',
-      capabilities,
-      nativeFrame: null,
-      calibrationPoints: [],
-      activeLayers: [],
-      lastEffect: null,
-    });
-
-    const peer = new RTCPeerConnection();
-    phoneVisionPeer = peer;
-
-    peer.onicecandidate = (event) => {
-      if (!event.candidate) return;
-      sendPhoneVisionSignal({
-        type: 'phone_camera_ice',
-        sessionId,
-        candidate: event.candidate.toJSON ? event.candidate.toJSON() : event.candidate,
-      });
-    };
-
-    peer.ondatachannel = (event) => attachPhoneVisionDataChannel(event.channel);
-
-    peer.ontrack = (event) => {
-      const stream = event.streams[0] || new MediaStream([event.track]);
-      void publishPhoneCameraMedia(stream, sessionId);
-    };
-
-    peer.onconnectionstatechange = () => {
-      if (phoneVisionPeer !== peer) return;
-      if (peer.connectionState === 'failed') {
-        phoneVision.update(state => ({ ...state, status: 'failed', error: 'Phone camera connection failed.' }));
-        sendPhoneVisionStatus('failed', { error: 'Phone camera connection failed.' });
-      } else if (peer.connectionState === 'disconnected') {
-        phoneVision.update(state => ({ ...state, status: 'connecting', error: 'Phone camera reconnecting.' }));
-        sendPhoneVisionStatus('reconnecting');
-      } else if (peer.connectionState === 'closed') {
-        destroyPhoneVisionSession(true);
-      }
-    };
-
-    try {
-      await peer.setRemoteDescription(new RTCSessionDescription(offer));
-      for (const candidate of pendingPhoneVisionIce.splice(0)) {
-        try { await peer.addIceCandidate(new RTCIceCandidate(candidate)); } catch {}
-      }
-      const answer = await peer.createAnswer();
-      await peer.setLocalDescription(answer);
-      sendPhoneVisionSignal({
-        type: 'phone_camera_answer',
-        sessionId,
-        sdp: peer.localDescription,
-      });
-    } catch (err: any) {
-      console.error('[PhoneVision] Failed to accept camera offer:', err);
-      phoneVision.update(state => ({ ...state, status: 'failed', error: err?.message || 'Failed to start phone camera.' }));
-      sendPhoneVisionStatus('failed', { error: err?.message || 'Failed to start phone camera.' });
+    const feed = phoneFeedKeyFromOffer(detail);
+    if (!('error' in feed)) {
+      // Phone Vision follows the newest camera session.
       destroyPhoneVisionSession(false);
+      phoneVisionSessionId = sessionId;
+      const facingMode = phoneVisionFacingMode(detail);
+      const capabilityDetail = isPhoneVisionRecord(detail.capabilities)
+        ? {
+            ...detail.capabilities,
+            captureProfile: detail.capabilities.captureProfile ?? detail.captureProfile,
+          }
+        : {
+            captureProfile: detail.captureProfile,
+          };
+      phoneVision.set({
+        status: 'connecting',
+        sessionId,
+        label: PHONE_FEED_LABELS[feed.key],
+        error: '',
+        capabilities: phoneVisionCapabilitiesFrom(capabilityDetail, facingMode),
+        nativeFrame: null,
+        calibrationPoints: [],
+        activeLayers: [],
+        lastEffect: null,
+      });
     }
+    await phoneFeedReceiver.offer(sessionId, offer, detail);
   }
 
   async function handlePhoneCameraIce(sessionId: string, candidate: RTCIceCandidateInit) {
-    if (!candidate || sessionId !== phoneVisionSessionId) return;
-    const peer = phoneVisionPeer;
-    if (!peer || !peer.remoteDescription) {
-      pendingPhoneVisionIce.push(candidate);
-      return;
-    }
-    try { await peer.addIceCandidate(new RTCIceCandidate(candidate)); } catch (err) {
-      console.warn('[PhoneVision] ICE candidate rejected:', err);
-    }
+    await phoneFeedReceiver.ice(sessionId, candidate);
   }
 
   function connectToServer() {
@@ -4738,10 +4678,14 @@
       }
 
       case 'phone_camera_stop': {
-        const { sessionId } = (msg as unknown) as { sessionId?: string };
-        if (!sessionId || sessionId === phoneVisionSessionId) {
-          destroyPhoneVisionSession(true);
-        }
+        const { sessionId, reason } = (msg as unknown) as { sessionId?: string; reason?: string };
+        if (!sessionId) break;
+        // From the phone, or from the pairing server when the phone's socket
+        // closed. A camera feed ends (the phone stops it then too); a Phone
+        // Vision data-only session carries on when its phone reconnects.
+        const socketGone = reason === 'phone-disconnected';
+        phoneFeedReceiver.phoneStopped(sessionId, socketGone ? 'disconnected' : 'stopped');
+        if (!socketGone && sessionId === phoneVisionSessionId) destroyPhoneVisionSession(true);
         break;
       }
 

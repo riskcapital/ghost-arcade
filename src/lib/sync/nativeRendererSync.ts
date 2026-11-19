@@ -1306,6 +1306,8 @@ import { ANALOG_SYNTH } from '$lib/features';
 import { domePlacementCommand, domeProjectorOf, domeRigPayload, nativeDomeStage, projectorFrustum } from '$lib/output/domeMath';
 import { domeView } from '$lib/stores/domeView';
 import { mirrorMeshCommand, type MirrorMesh } from '$lib/output/mirrorMesh';
+import { isPhoneFeedUri, notePhoneFeedInUse, phoneFeedActive, phoneFeedAspect, phoneFeedCoreSourceId, phoneFeedCoreUri, phoneFeedKeyFromUri, phoneFeedSummaries, type PhoneFeedKey } from '$lib/mobile/phoneFeeds';
+import { phoneFeedBlankCommand } from '$lib/mobile/phoneFeedPump';
 const NATIVE_EFFECT_PASS_IDS = new Set<NativeEffectPassId>(
   NATIVE_EFFECT_PASS_MANIFEST.map((entry) => entry.id),
 );
@@ -4929,6 +4931,10 @@ function nativeMediaSourceUnsupportedReason(
   src: NonNullable<Layer['source']>,
   options: NativeUnsupportedSourceOptions = {},
 ): string | null {
+  // A paired phone's camera / depth feed: frames arrive by upload under the
+  // feed's own source id (phoneFeedPump). A feed that is not connected shows
+  // nothing, never another layer's picture.
+  if (isPhoneFeedUri(src.src)) return null;
   const liveSourceType = nativeLiveSourceType(src);
   if (liveSourceType) {
     return nativeLiveSourceIdentity(src)
@@ -4970,6 +4976,21 @@ export function nativeLayerSourceFromMediaSource(
   src: NonNullable<Layer['source']>,
   previewElement: CanvasImageSource | null = null,
 ): NativeLayerSource {
+  const phoneFeed = phoneFeedKeyFromUri(src.src);
+  if (phoneFeed) {
+    // Every layer and deck cell showing this feed reads the one upload; the
+    // URI names the feed, not a session, so a reconnect needs no rebind.
+    return {
+      id: phoneFeedCoreSourceId(phoneFeed),
+      uri: phoneFeedCoreUri(phoneFeed),
+      sourceType: 'image',
+      source: src,
+      shouldPrefetch: false,
+      shouldPreview: false,
+      previewElement: null,
+      aspect: phoneFeedAspect(phoneFeed),
+    };
+  }
   const liveSourceType = nativeLiveSourceType(src);
   if (liveSourceType) {
     const identity = nativeLiveSourceIdentity(src);
@@ -5570,6 +5591,7 @@ function nativeLayerNeedsContinuousSync(layer: Layer): boolean {
 
   const src = layer.source;
   if (src && nativeLiveSourceType(src)) return true;
+  if (src && isPhoneFeedUri(src.src)) return true;
   if (src?.jsAnimation && (nativeShaderSourceFromJavascript(src.jsAnimation) || isNativeJsCanvasSource(src))) return true;
   if (src?.type === 'video' && isNativeLocalMediaUri(nativeReadableMediaUri(src))) return true;
   if (
@@ -5869,6 +5891,8 @@ export function pendingNativeLibraryVideoArms(): NativeLibraryVideoArmRequest[] 
  */
 export function armNativeLibraryVideo(item: NativeLibraryVideoArmRequest, force = false): void {
   if (!item?.id || !item?.src) return;
+  // A phone feed is live: nothing to decode ahead.
+  if (isPhoneFeedUri(item.src)) return;
   const armKey = nativeLibraryArmKey(item);
   for (const [key, pending] of pendingLibraryVideoArms) {
     if (pending.id !== item.id || key === armKey) continue;
@@ -6495,6 +6519,8 @@ export class NativeRendererSync {
   private activePointCloudKeys = new Set<string>();
   private nativePointCloudUploadSignatures = new Map<string, string>();
   private nativeSourceFrameSize = SOURCE_FRAME_SIZE_FALLBACK;
+  /** Phone feeds given their first (see-through) frame in this core. */
+  private phoneFeedsPrimed = new Set<PhoneFeedKey>();
   private latestNativeStatus: RendererStatus | null = null;
   private dynamicSourceFrameCaptureSize = SOURCE_FRAME_SIZE_FALLBACK;
   private presentProfile: PresentPolicyProfile = 'low-latency-safe';
@@ -7642,6 +7668,31 @@ export class NativeRendererSync {
     // uploaded input before they take the layer, so record that frames flow.
     const key = this.sourceCacheKey(src.id, src.src);
     if (!this.sourcePreviewSeq.has(key)) this.sourcePreviewSeq.set(key, 1);
+  }
+
+  /** A visible layer shows a phone feed: its frames go up while this keeps being said. */
+  private usePhoneFeed(src: NonNullable<Layer['source']>, now: number, commands: RendererCommand[]): void {
+    const key = phoneFeedKeyFromUri(src.src);
+    if (!key) return;
+    notePhoneFeedInUse(key, now);
+    // A cell whose phone is not connected (a saved project, a feed that has
+    // not come back) shows nothing, not the core's waiting card: give the
+    // feed a see-through frame once. A connected feed's own frames are newer.
+    if (!this.phoneFeedsPrimed.has(key)) {
+      this.phoneFeedsPrimed.add(key);
+      const feed = phoneFeedSummaries().get(key);
+      if (!feed || !phoneFeedActive(feed.phase)) commands.push(phoneFeedBlankCommand(phoneFeedCoreSourceId(key)) as unknown as RendererCommand);
+    }
+    // Effect routes wait for an uploaded input before they take the layer.
+    if (phoneFeedAspect(key) !== undefined) {
+      const cacheKey = this.sourceCacheKey(src.id, src.src);
+      if (!this.sourcePreviewSeq.has(cacheKey)) this.sourcePreviewSeq.set(cacheKey, 1);
+    }
+  }
+
+  /** The core's source slot edge: uploads larger than this are scaled down first. */
+  sourceFrameEdge(): number {
+    return this.nativeSourceFrameSize;
   }
 
   private nativeSourceFrameUploaded(source: NativeLayerSource | null): boolean {
@@ -9782,6 +9833,7 @@ export class NativeRendererSync {
     this.edgeEffectsMemo.clear();
     this.edgeContextMemo = null;
     this.sourcePreviewSeq.clear();
+    this.phoneFeedsPrimed.clear();
     this.sourcePreviewNextAt.clear();
     this.sourcePreviewSig.clear();
     this.sourcePreviewFailures.clear();
@@ -10676,6 +10728,9 @@ export class NativeRendererSync {
       const jsCanvasSource = nativeGraphRoute?.inputSource?.source ?? nativeSource.source;
       if (effectiveVisible && jsCanvasSource && isNativeJsCanvasSource(jsCanvasSource)) {
         this.useJsCanvasHost(jsCanvasSource, width, height, now);
+      }
+      if (effectiveVisible && jsCanvasSource && isPhoneFeedUri(jsCanvasSource.src)) {
+        this.usePhoneFeed(jsCanvasSource, now, commands);
       }
       const sourceType = nativeSource.sourceType;
       const nativeParams = nativeGpuParams(layer);

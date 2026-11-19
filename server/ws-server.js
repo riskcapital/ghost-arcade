@@ -527,7 +527,16 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => {
     console.log(`[-] Client disconnected: ${clientIp}`);
     clients.delete(ws);
-    for (const [key, owner] of privateRoutes) if (owner === ws) privateRoutes.delete(key);
+    for (const [key, owner] of privateRoutes) {
+      if (owner !== ws) continue;
+      privateRoutes.delete(key);
+      // A phone that goes away mid-feed never sends its stop: tell the desktop,
+      // so it lets go of the session at once instead of waiting for WebRTC to
+      // notice the silence.
+      if (key.startsWith('camera:') && ws !== desktopClient) {
+        sendDesktop({ type: 'phone_camera_stop', sessionId: key.slice('camera:'.length), reason: 'phone-disconnected' });
+      }
+    }
     if (ws.studioClient) sendStudioPeers();
 
     if (ws === desktopClient) {
