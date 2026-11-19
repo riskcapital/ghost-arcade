@@ -83,6 +83,30 @@
     loading = false;
   }
 
+  /**
+   * A baked picture that failed to load (the dev server busy, a file not
+   * synced yet): ask once more, then draw it here instead.
+   */
+  const retried = new Set<string>();
+  async function thumbFailed(file: string) {
+    const baked = `./ISF/voice-thumbs/${file.replace(/\.fs$/, '.jpg')}`;
+    if (!retried.has(file)) {
+      retried.add(file);
+      thumbs = { ...thumbs, [file]: `${baked}?again=${Date.now()}` };
+      return;
+    }
+    try {
+      const code = await fetch(`./ISF/${file}`).then((r) => r.text());
+      const url = await generateCachedThumbnail(demoVoiceCode(code));
+      if (await isBlank(url)) blank = { ...blank, [file]: true };
+      else thumbs = { ...thumbs, [file]: url };
+    } catch {
+      const { [file]: _gone, ...rest } = thumbs;
+      thumbs = rest;
+      blank = { ...blank, [file]: true };
+    }
+  }
+
   let opened = false;
   $effect(() => {
     if (req && !opened) {
@@ -201,7 +225,7 @@
             title={item.blurb}
           >
             <div class="pic">
-              {#if item.file && thumbs[item.file]}<img src={thumbs[item.file]} alt="" />{:else if item.file && blank[item.file]}<span class="words">{item.blurb}</span>{:else if !item.file}<span class="none-mark">None</span>{/if}
+              {#if item.file && thumbs[item.file]}<img src={thumbs[item.file]} alt="" onerror={() => thumbFailed(item.file!)} />{:else if item.file && blank[item.file]}<span class="words">{item.blurb}</span>{:else if !item.file}<span class="none-mark">None</span>{/if}
             </div>
             <div class="top">
               <span class="name">{item.name}</span>

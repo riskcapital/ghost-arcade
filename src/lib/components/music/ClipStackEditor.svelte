@@ -27,6 +27,10 @@
   import { showToast } from '../../stores/errorToast';
   import { BLEND_MODE_ORDER, blendModeLabel, generateUUID, type BlendMode, type Effect, type ShowClipMedia } from '../../types';
   import { MEDIA_SOURCE_DRAG_TYPE, clipMediaFromFile, clipMediaFromTrayPayload, clipThumbnails, isTrackMediaFile, thumbnailFor } from '../show/timeline/clipMedia';
+  import { createNativeSourcePreview } from '../../sync/nativeSourcePreview';
+  import { studioTargetNow } from '../../music/studioTarget';
+  import { vjClipLauncher } from '../../stores/vjClipLauncher';
+  import { project } from '../../stores/layers';
   import MediaTray from '../MediaTray.svelte';
   import StackEffects from './StackEffects.svelte';
 
@@ -41,7 +45,9 @@
   const selected = $derived(stack.items.find((i) => i.id === selectedId) ?? stack.items[0] ?? null);
   /** The middle shows the selected layer, or the whole clip. */
   let view = $state<'layer' | 'clip'>('layer');
-  let solo = $state(false);
+  // On by default: the preview (and the studio's output) shows only this clip
+  // while it is edited; off shows it over everything else that plays.
+  let solo = $state(true);
   let dragFrom = $state<number | null>(null);
   let dragOver = $state<{ index: number; below: boolean } | null>(null);
 
@@ -177,6 +183,39 @@
     return $abletonBridge.tracks.map((t, i) => ({ name: keys[i], drums: isDrumTrack(t, s.liveRoles[keys[i]] ?? null) }));
   });
 
+  // ── Preview: the studio's picture, read back from the renderer ──
+  // The clip plays on top while the editor is open (with Solo, on its own),
+  // so the studio's layer is the clip's look.
+  function hostLayerId(): string {
+    const t = studioTargetNow();
+    if (!t) return '';
+    if (t.kind === 'layer') return t.layerId;
+    return `vj-layer-${t.layer}${get(vjClipLauncher).crossfaderEnabled ? `-${t.deck}` : ''}`;
+  }
+  const preview = createNativeSourcePreview({ layerId: hostLayerId });
+  let previewCanvas = $state<HTMLCanvasElement | null>(null);
+  let previewShown = $state(false);
+  const outW = $derived(Math.max(1, $project.width || 1920));
+  const outH = $derived(Math.max(1, $project.height || 1080));
+  $effect(() => {
+    if (!target || !previewCanvas) return;
+    const canvas = previewCanvas;
+    let alive = true;
+    let frame = 0;
+    const tick = async () => {
+      if (!alive) return;
+      const shown = await preview(canvas);
+      if (!alive) return;
+      previewShown = shown;
+      frame = requestAnimationFrame(tick);
+    };
+    void tick();
+    return () => {
+      alive = false;
+      cancelAnimationFrame(frame);
+    };
+  });
+
   const finish = $derived(stack.mood?.finish);
   const setFinish = (patch: Partial<typeof DEFAULT_FINISH>) => patchStack({ mood: { ...stack.mood, finish: { ...(finish ?? DEFAULT_FINISH), ...patch } } });
 </script>
@@ -198,7 +237,7 @@
           <span class="ga-eyebrow">Clip visuals</span>
           <strong>{target.title}</strong>
         </div>
-        <button class="btn" class:on={solo} aria-pressed={solo} onclick={() => (solo = !solo)} title="Only this clip's visuals on the output while you edit">Solo</button>
+        <button class="btn" class:on={solo} aria-pressed={solo} onclick={() => (solo = !solo)} title="On: only this clip's visuals, in the preview and on the output. Off: this clip over everything else playing.">Solo</button>
         <button class="btn primary" onclick={close}>Done</button>
         <button class="close" onclick={close} aria-label="Close" title="Close (Esc)">
           <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3 3 9" /></svg>
@@ -244,13 +283,25 @@
                 </button>
               </div>
             {:else}
-              <p class="empty">No layers yet. Pick from the Media Library on the right, or add one of the audio shaders.</p>
+              <p class="empty">No layers yet.</p>
             {/each}
+            <div class="drop-hint" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 19h14" /></svg>
+              <span>Drag shaders, videos, images and sketches here from the Media Library on the right, or click one there.</span>
+            </div>
           </div>
-          <button class="btn wide" onclick={addVoice}>+ Audio shader</button>
+          <button class="btn add-voice" onclick={addVoice} title="Add one of the audio shaders, made to answer to the music">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h2M8 8v8M12 5v14M16 9v6M20 11v2" /></svg>
+            Add audio shader
+          </button>
         </section>
 
         <section class="props" aria-label="Settings">
+          <div class="preview" style="--out-w: {outW}; --out-h: {outH}">
+            <canvas bind:this={previewCanvas} aria-label="Preview of this clip's visuals"></canvas>
+            <span class="ga-eyebrow preview-label">{solo ? 'Preview · this clip' : 'Preview · with everything playing'}</span>
+            {#if !previewShown}<span class="preview-note">{stack.items.length ? 'The preview shows once the visuals are on a deck or layer (Show visuals in the studio).' : 'Add a layer to see it here.'}</span>{/if}
+          </div>
           <div class="ga-segmented tabs" role="tablist" aria-label="What to set">
             <button role="tab" aria-selected={view === 'layer'} class:active={view === 'layer'} disabled={!selected} onclick={() => (view = 'layer')}>{selected ? selected.name : 'Layer'}</button>
             <button role="tab" aria-selected={view === 'clip'} class:active={view === 'clip'} onclick={() => (view = 'clip')}>Whole clip</button>
@@ -395,7 +446,15 @@
   .btn:hover { border-color: var(--ga-line-3, rgba(245, 236, 222, 0.24)); }
   .btn.on { border-color: var(--ga-icon, #5278ff); color: var(--ga-icon, #5278ff); }
   .btn.primary { background: var(--ga-icon, #5278ff); border-color: var(--ga-icon, #5278ff); color: #fff; }
-  .btn.wide { width: 100%; }
+  .btn.add-voice { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; height: 32px; border-color: var(--ga-icon, #5278ff); color: var(--ga-ink-0, #f2ede4); background: color-mix(in srgb, var(--ga-icon, #5278ff) 16%, var(--ga-card, #16140f)); }
+  .btn.add-voice:hover { background: color-mix(in srgb, var(--ga-icon, #5278ff) 28%, var(--ga-card, #16140f)); }
+  .btn.add-voice svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+  .drop-hint { display: flex; gap: 8px; align-items: flex-start; margin-top: 6px; padding: 10px; border: 1px dashed var(--ga-line-3, rgba(245, 236, 222, 0.24)); border-radius: var(--ga-r-hard, 5px); color: var(--ga-ink-2, #89857e); font-size: var(--ga-text-meta, 11px); line-height: 1.45; }
+  .drop-hint svg { flex: 0 0 auto; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .preview { position: relative; flex: 0 0 auto; width: min(100%, calc(240px * var(--out-w) / var(--out-h))); align-self: center; aspect-ratio: var(--out-w) / var(--out-h); background: #000; border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13)); border-radius: var(--ga-r-hard, 5px); overflow: hidden; }
+  .preview canvas { width: 100%; height: 100%; display: block; }
+  .preview-label { position: absolute; left: 8px; top: 6px; }
+  .preview-note { position: absolute; inset: auto 10px 10px 10px; color: var(--ga-ink-2, #89857e); font-size: var(--ga-text-meta, 11px); line-height: 1.45; }
   .close { width: 26px; height: 26px; padding: 0; display: grid; place-items: center; background: none; border: 0; color: var(--ga-ink-1, #ada9a2); cursor: pointer; border-radius: var(--ga-r-hard, 5px); }
   .close:hover { color: var(--ga-ink-0, #f2ede4); background: var(--ga-card, #16140f); }
   .close svg, .icon-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
