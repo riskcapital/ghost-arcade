@@ -40,6 +40,27 @@ describe('video decode health', () => {
     expect(badge.title).toBe("Can't play: its video could not be decoded.");
   });
 
+  it('names an unsupported HAP variant and what to do about it', () => {
+    const playsInSoftware = decodeBadge(decodeHealthFromProbe({ backend: 'ffmpeg', hardware: false, reverse_supported: false,
+      reason: 'HAP Q Alpha is not supported by GPU HAP playback yet', codec: 'hap (HapM / 0x4D706148), rgba, 1920x1080' }))!;
+    expect(playsInSoftware).toMatchObject({ tone: 'warn', canConvert: true });
+    expect(playsInSoftware.title).toBe("Software decode — may lag: HAP Q Alpha isn't supported yet; convert it with Ghost Arcade's converter. Reverse and bounce will not play.");
+    const cannotPlay = decodeBadge(decodeHealthFromProbe({ backend: 'failed', hardware: false, reverse_supported: false,
+      reason: 'HAP R is not supported by GPU HAP playback yet', codec: 'none (Hap7 / 0x37706148)' }))!;
+    expect(cannotPlay).toMatchObject({ tone: 'error', canConvert: false });
+    expect(cannotPlay.title).toBe("Can't play: HAP R isn't supported yet; export it again as HAP, HAP Alpha or HAP Q.");
+    expect(plainDecodeReason('failed', 'This HAP variant is not supported by GPU HAP playback yet')).toBe(
+      "This HAP variant isn't supported yet; export it again as HAP, HAP Alpha or HAP Q");
+  });
+
+  it('explains HAP container refusals in words', () => {
+    expect(plainDecodeReason('ffmpeg', 'Transformed HAP tracks require compatibility playback', 'hap')).toBe('it is rotated or flipped');
+    expect(plainDecodeReason('ffmpeg', 'Cropped or non-square-pixel HAP requires compatibility playback', 'hap')).toBe('it has non-square pixels');
+    expect(plainDecodeReason('ffmpeg', 'HAP edit lists require compatibility playback', 'hap')).toBe('its timing needs the software decoder');
+    expect(plainDecodeReason('failed', 'HAP needs a graphics adapter with BC texture compression, which this one does not offer'))
+      .toBe('this graphics adapter cannot show HAP');
+  });
+
   it('explains the common reasons in words', () => {
     expect(plainDecodeReason('ffmpeg', 'x', 'h264 (High 10), yuv420p10le(tv), 1920x1080')).toMatch(/10-bit H.264/);
     expect(plainDecodeReason('ffmpeg', 'x', 'h264 (High 4:2:2), yuv422p(tv), 1920x1080')).toMatch(/4:2:2/);

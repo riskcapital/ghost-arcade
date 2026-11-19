@@ -34,12 +34,32 @@ export const videoDecodeHealth = writable<Record<string, VideoDecodeHealth>>({})
 
 const HARDWARE_BACKENDS = new Set(['videotoolbox', 'media-foundation', 'hap-texture']);
 
+/**
+ * A HAP movie the GPU HAP path refused (the core names the variant, or the
+ * container feature). An unsupported variant says what to do: convert it
+ * here when the software decoder can read it, else export it again.
+ */
+function hapReason(backend: string, reason: string): string | null {
+  const variant = reason.match(/^(HAP [\w -]+?|This HAP variant) is not supported by GPU HAP playback/i)?.[1];
+  if (variant) {
+    return backend === 'failed'
+      ? `${variant} isn't supported yet; export it again as HAP, HAP Alpha or HAP Q`
+      : `${variant} isn't supported yet; convert it with Ghost Arcade's converter`;
+  }
+  if (!/\bHAP\b/.test(reason)) return null;
+  if (/BC texture/i.test(reason)) return 'this graphics adapter cannot show HAP';
+  if (/transformed/i.test(reason)) return 'it is rotated or flipped';
+  return null;
+}
+
 /** Why software decoding (or no decoding) applies, in words a user can act on. */
 export function plainDecodeReason(backend: string, rawReason: string, codec = ''): string {
   const reason = String(rawReason || '');
   const stream = String(codec || '').toLowerCase();
   const name = stream.split(/[\s,(]/)[0];
-  if (/not found/i.test(reason)) return 'the file was not found';
+  if (/not found/i.test(reason) && !/decoder/i.test(reason)) return 'the file was not found';
+  const hap = hapReason(backend, reason);
+  if (hap) return hap;
   if (/(reverse|bounce) playback requires/i.test(reason)) return 'reverse and bounce play only with hardware decoding';
   if (/alpha|transparen/i.test(reason)) return 'it has transparency (alpha)';
   if (/media foundation is not installed|media feature pack/i.test(reason)) {
