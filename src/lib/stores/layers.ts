@@ -26,6 +26,7 @@ import { instantiateEdgeEffects } from './edgeEffectPresets';
 import { buildLookEffects, lookPalette } from '../looks/edgeLooks';
 import { edgeLook } from '../looks/edgeLookCatalog';
 import { mediaLibrary } from './media';
+import { isPhoneFeedUri } from '../mobile/phoneFeeds';
 import { vjClipLauncher, vjClipLauncherNow, type VJClip, type VJBlock, type VJLayerState, DEFAULT_VJ_LAYERS, DEFAULT_VJ_COLUMNS } from './vjClipLauncher';
 import { normalizedTransitionDuration, normalizedTransitionStyle } from './vjClipTransitions';
 import { disposeJSAnimationContext } from '../renderer/js-animation';
@@ -5766,7 +5767,9 @@ void main() {
       // Export media library (strip runtime objects). Carry `_assetRef` so
       // the library entries restore to the same disk file on reload — without
       // it the saved src is just a dead blob: URL.
-      const exportMedia = currentMedia.map(item => ({
+      // A paired phone's feed is only in the library while it is connected;
+      // deck cells and layers keep their own reference to it.
+      const exportMedia = currentMedia.filter(item => !isPhoneFeedUri(item.src)).map(item => ({
         durationSeconds: item.durationSeconds,
         videoWidth: item.videoWidth, videoHeight: item.videoHeight,
         id: item.id,

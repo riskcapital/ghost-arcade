@@ -40,6 +40,7 @@
   import { AUDIO_FILE_HINT, mediaFileKind, VIDEO_FILE_ACCEPT } from '../media/mediaFileKind';
   import { mediaLibrary, type MediaItem } from '../stores/media';
   import { vjClipLauncher, vjCrossfader, vjSlice, MAX_VJ_COLUMNS, type VJClip, type VJBlock, type VJDeck } from '../stores/vjClipLauncher';
+  import { isPhoneFeedUri, phoneFeedCellNotice, phoneFeedClip, phoneFeedKeyFromUri, phoneFeedSummaries, phoneFeeds, type PhoneFeedKey } from '../mobile/phoneFeeds';
   import { liveOutput, toggleOutputFullscreen, openOutputDisplayMenu } from '../stores/liveOutput';
   import { probeHasAudioTrack } from '../audio/clipAudioBus';
   import { vjLayerSequencer } from '../stores/vjLayerSequencer';
@@ -1301,7 +1302,9 @@
   type MediaTrayLiveSourcePayload = {
     id: string;
     type: 'live-source';
-    sourceType: 'spout' | 'webcam' | 'capture' | 'ndi';
+    sourceType: 'spout' | 'webcam' | 'capture' | 'ndi' | 'phone';
+    /** A paired phone's feed (sourceType 'phone'). */
+    phoneFeedKey?: PhoneFeedKey;
     name: string;
     status?: 'disconnected' | 'connecting' | 'live';
     stream?: MediaStream;
@@ -1728,7 +1731,8 @@
     return {
       id: source.id,
       name: source.name,
-      type: source.sourceType,
+      // Phone feeds never get here (createVJClipFromMediaTrayLiveSource).
+      type: source.sourceType as VJLiveSource['type'],
       status: source.status ?? 'live',
       stream: source.stream,
       videoEl,
@@ -1738,6 +1742,12 @@
   }
 
   function createVJClipFromMediaTrayLiveSource(source: MediaTrayLiveSourcePayload): VJClip | null {
+    if (source.sourceType === 'phone') {
+      // The cell names the feed, so it shows the phone's picture whenever
+      // that feed is on the desktop, and "Phone camera disconnected" otherwise.
+      const feed = source.phoneFeedKey ? phoneFeedSummaries().get(source.phoneFeedKey) : undefined;
+      return feed ? phoneFeedClip(feed, generateUUID()) : null;
+    }
     return createVJClipFromLiveSource(mediaTraySourceAsVJLiveSource(source));
   }
 
@@ -6376,9 +6386,11 @@
                 {@const isQueued = $deckPendingTriggers.some(p => (p.kind === 'column' ? (!states[layerIdx].locked && !states[layerIdx].ignoreColumnTrigger && (!p.layerIndices || p.layerIndices.includes(layerIdx))) : p.layerIndex === layerIdx) && p.columnIndex === colIdx && p.bank === bank)}
                 {@const isClipFirable = clip == null || clip.type !== 'preset' || $deckMapMode}
                 {@const isFileMissing = clipFileMissing(clip, $missingClipFiles)}
+                {@const phoneFeedNotice = clip != null && isPhoneFeedUri(clip.src) ? phoneFeedCellNotice($phoneFeeds.get(phoneFeedKeyFromUri(clip.src) ?? 'camera')) : null}
                 <div
                   class="clip-cell"
                   class:file-missing={isFileMissing}
+                  class:feed-offline={!!phoneFeedNotice}
                   class:fill-target={inFillRange(layerIdx, colIdx, bank, fillDrag)}
                   class:fill-source={fillDrag?.layer === layerIdx && fillDrag?.column === colIdx && fillDrag?.bank === bank}
                   data-column={colIdx}
@@ -6426,7 +6438,9 @@
                           onpointerdown={(e) => e.stopPropagation()}
                           onclick={(e) => { e.stopPropagation(); cellContextMenu = { x: e.clientX, y: e.clientY, layer: layerIdx, column: colIdx, bank }; }}
                         >?</button>
-                      {:else if clip.type === 'video'}
+                      {:else if phoneFeedNotice}
+                        <span class="phone-feed-notice" role="status">{phoneFeedNotice}</span>
+                      {:else if clip.type === 'video' && !isPhoneFeedUri(clip.src)}
                         <span class="decode-slot">
                           <VideoDecodeBadge path={clipFilePath(clip)} compact
                             onopen={(e) => { cellContextMenu = { x: e.clientX, y: e.clientY, layer: layerIdx, column: colIdx, bank }; }} />
@@ -10866,6 +10880,28 @@
     border-color: var(--ga-selection-line, #5278ff);
     box-shadow: inset 0 0 0 2px var(--ga-selection-line, #5278ff);
     background: color-mix(in srgb, var(--ga-selection-bg, #1f3170) 50%, transparent);
+  }
+
+  /* A phone feed that is not on the desktop right now. */
+  .clip-cell.feed-offline .clip-thumb,
+  .clip-cell.feed-offline .clip-placeholder {
+    opacity: 0.35;
+    filter: grayscale(1);
+  }
+  .phone-feed-notice {
+    position: absolute;
+    left: 2px;
+    right: 2px;
+    top: 2px;
+    z-index: 2;
+    padding: 1px 3px;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.72);
+    color: #ffb454;
+    font-size: 9px;
+    line-height: 1.25;
+    text-align: center;
+    pointer-events: none;
   }
 
   /* A clip whose file is not on disk. */
