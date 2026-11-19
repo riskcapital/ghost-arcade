@@ -8,6 +8,7 @@
  * them and visuals, cables and takes see a drum hit like any other.
  */
 
+import { beatTick, gridStep, nearestGridStep, stepsPerBeat, swingBeat } from '../grid';
 import { get, writable } from 'svelte/store';
 import { launchClockPosition } from '../../stores/launchClock';
 import { generateUUID } from '../../utils/uuid';
@@ -17,7 +18,7 @@ import { normalizeMacroFx, type MacroFxInstance } from '../macroFx';
 import type { NoteSource } from '../noteEvents';
 import type { DrumKit, DrumSound, DrumTweak } from '../tone/toneTypes';
 import {
-  STEPS_PER_BEAT, blockAt, clearPadEverywhere, normalizeBeat, trackOf, partHitsBetween, partSteps, setStep, songBars, songHitsBetween, starterBeat,
+  blockAt, clearPadEverywhere, normalizeBeat, trackOf, partHitsBetween, partSteps, setStep, songBars, songHitsBetween, starterBeat,
   type Beat, type Part,
 } from './machineBeat';
 import { BASE_PADS, DEFAULT_MACHINE_KIT, MAX_PADS, SOUND_MODELS, extendedPads, findKit, normalizeUserKit, padForNote, type MachineKit, type MachinePad, type UserKit } from './machineKits';
@@ -145,7 +146,7 @@ export function loadBeat(beat: Beat): void {
 }
 
 export function newBeat(): void {
-  loadBeat(starterBeat(currentBeat().kitId));
+  loadBeat(starterBeat(currentBeat().kitId, 32));
 }
 
 /** Pick a part: straight away when stopped, on the next bar while it plays. */
@@ -219,7 +220,7 @@ function tick(): void {
     const hits = part ? partHitsBetween(part, partOrigin, from, to, t.solo) : songHitsBetween(beatState, origin, from, to);
     for (const h of hits) {
       if (t.solo !== null && h.pad !== t.solo) continue;
-      if (heardLive.delete(`${h.pad}:${Math.round(h.beat * STEPS_PER_BEAT)}`)) continue;
+      if (heardLive.delete(`${h.pad}:${beatTick(h.beat)}`)) continue;
       const time = timeAt(h.beat);
       sendMachineHit(h.pad, kit.pads[h.pad]?.role ?? 'kick', h.velocity, 'sequencer', time);
       markHit(h.pad, h.velocity, (time - now) * 1000);
@@ -262,12 +263,12 @@ function updatePlayhead(beat: number): void {
           block = at.index;
           const part = b.parts.find((p) => p.id === b.song[at.index].partId);
           const startBeat = origin + Math.floor((beat - origin) / (total * 4)) * total * 4 + at.startBar * 4;
-          if (part) step = Math.floor((beat - startBeat) * STEPS_PER_BEAT) % partSteps(part);
+          if (part) step = gridStep(beat - startBeat, part.grid, part.swing) % partSteps(part);
         }
       }
     } else {
       const part = b.parts[t.part];
-      if (part) step = Math.floor((beat - origin) * STEPS_PER_BEAT) % partSteps(part);
+      if (part) step = gridStep(beat - origin, part.grid, part.swing) % partSteps(part);
     }
   }
   if (step !== t.step || songBar !== t.songBar || block !== t.block) machineTransport.update((x) => ({ ...x, step, songBar, block }));
@@ -301,26 +302,25 @@ export function playPad(pad: number, velocity: number, source: NoteSource = 'scr
   const t = get(machineTransport);
   if (!t.record || !t.playing) return;
   const { beat } = launchClockPosition();
-  const g = Math.round((beat - origin) * STEPS_PER_BEAT);
-  if (g < 0) return;
+  if (beat < origin) return;
   let partIndex = t.part;
-  let gInPart = g;
+  let partOrigin = origin;
   if (t.mode === 'song') {
     const total = songBars(b.song);
     if (!total) return;
-    const bar = Math.floor(g / 16) % total;
+    const bar = Math.floor((beat - origin) / 4) % total;
     const at = blockAt(b.song, bar);
     if (!at) return;
-    partIndex = b.parts.findIndex((p) => p.id === b.song[at.index].partId);
-    gInPart = g - (Math.floor(g / (total * 16)) * total * 16 + at.startBar * 16);
+    partIndex = b.parts.findIndex(p => p.id === b.song[at.index].partId);
+    partOrigin += Math.floor((beat - origin) / (total * 4)) * total * 4 + at.startBar * 4;
   }
   const part = b.parts[partIndex];
   if (!part) return;
-  const track = trackOf(part, pad);
-  const step = gInPart % track.length;
-  editPart((p) => setStep(p, pad, step, { vel: v }), partIndex);
-  // Hit a little early: the step has not been played yet, and should not sound twice.
-  if (g / STEPS_PER_BEAT + origin >= scheduled) heardLive.add(`${pad}:${Math.round(g + origin * STEPS_PER_BEAT)}`);
+  const g = nearestGridStep(beat - partOrigin, part.grid, part.swing);
+  const step = g % trackOf(part, pad).length;
+  editPart(p => setStep(p, pad, step, { vel: v }), partIndex);
+  const at = partOrigin + swingBeat(g / stepsPerBeat(part.grid), part.swing);
+  if (at >= scheduled) heardLive.add(`${pad}:${beatTick(at)}`);
 }
 
 /** A pad's control signal: up on each hit by its velocity, falling away after. "pad.any" is the loudest. */

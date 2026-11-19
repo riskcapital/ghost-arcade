@@ -33,7 +33,7 @@ describe('parts', () => {
     let p = setStep(emptyPart(), 1, 1, { vel: 1, roll: 2 });
     p = { ...p, swing: 0.5 };
     const hits = partHitsBetween(p, 0, 0, 1);
-    expect(hits.map((h) => h.beat)).toEqual([0.25 + 0.125, 0.25 + 0.125 + 0.125]);
+    expect(hits.map((h) => h.beat)).toEqual([0.375, 0.4375]);
   });
   it('a short track loops on its own length', () => {
     let p = toggleStep(emptyPart(), 2, 0);

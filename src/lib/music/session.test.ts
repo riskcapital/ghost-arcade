@@ -75,7 +75,14 @@ describe('the session grid', () => {
     expect(sessionRows(s)).toBe(8);
     expect(s.beats[0]?.kind).toBe('beat');
     expect(s.bass[0]?.kind).toBe('notes');
-    expect(s.lead[7]).toBeNull();
+    expect(s.lead[7]?.preset).toBe('floor-yard-lead');
+    expect(s.beats[0]?.preset).toBe('floor-chrome-beat');
+    expect(s.beats[1]?.name).toContain('170 BPM');
+    for (const clip of s.beats) if (clip?.kind === 'beat') expect(clip.pattern.grid).toBe(32);
+    for (let row = 0; row < 8; row++) {
+      const family=s.beats[row]!.preset!.replace(/-beat$/, '');
+      for (const role of ['bass', 'chords', 'lead'] as const) expect(s[role][row]?.preset).toBe(`${family}-${role}`);
+    }
   });
 
   it('places clips, growing every track together', () => {
@@ -85,7 +92,7 @@ describe('the session grid', () => {
     expect(sessionRows(next)).toBe(10);
     expect(next.beats).toHaveLength(10);
     expect(findClip(next, 'new')).toMatchObject({ track: 'lead', row: 9 });
-    expect(firstEmptySlot(next, 'lead')).toBe(4);
+    expect(firstEmptySlot(next, 'lead')).toBe(8);
   });
 
   it('updates and duplicates clips', () => {

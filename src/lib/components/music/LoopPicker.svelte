@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { noteGrid } from '../../music/grid';
   /**
    * The loop browser: every loop in a grid of tiles, filtered by part, style,
    * a search and the starred ones. Each tile shows the loop's shape, drawn
@@ -36,7 +37,7 @@
       id: l.id, name: l.name, track: l.role, style: styleLabel(l.id), bars: Math.max(1, Math.round(l.beats / 4)),
       tone: l.tone ? (toneById(l.tone)?.name ?? '') : '', loop: l,
     })),
-    ...BEAT_LOOPS.map((l): Item => ({ id: l.id, name: l.name, track: 'beats', style: styleLabel(l.id), bars: l.steps / 16, tone: '', loop: l })),
+    ...BEAT_LOOPS.map((l): Item => ({ id: l.id, name: l.name, track: 'beats', style: styleLabel(l.id), bars: l.steps / noteGrid(l.grid), tone: '', loop: l })),
   ];
   const STYLES = [...new Set(ITEMS.map((i) => i.style))].sort();
 

@@ -24,6 +24,7 @@ export const SONG_SETUP_GROUPS = {
     'dress',
     'pattern',
     'acidSteps',
+    'acidRate',
     'acidOn',
     'drumMutes',
     'bowlSlots',

@@ -6,9 +6,10 @@
  * can check exactly which hits land in a window.
  */
 
+import { gridStep, noteGrid, stepsPerBeat, swingBeat, type NoteGrid } from './grid';
 import { DRUM_NOTES, DRUM_VOICES, type DrumVoice } from './noteEvents';
 
-export const PATTERN_LENGTHS = [8, 16, 32, 64] as const;
+export const PATTERN_LENGTHS = [8, 16, 32, 64, 128, 256, 512, 1024] as const;
 export type PatternLength = (typeof PATTERN_LENGTHS)[number];
 
 /** Sixteenth-note steps. */
@@ -18,7 +19,9 @@ export const ACCENT_STEP_VELOCITY = 1;
 
 export interface DrumPattern {
   steps: PatternLength;
-  /** 0 (straight) to 0.5: how late every second step lands, as a share of a step. */
+  /** Note denominator; absent in legacy sixteenth-note patterns. */
+  grid?: NoteGrid;
+  /** 0 (straight) to 0.5: how late every second sixteenth lands, as a share of a step. */
   swing: number;
   tracks: Record<DrumVoice, number[]>;
 }
@@ -33,9 +36,10 @@ export interface ScheduledStep {
   velocity: number;
 }
 
-export function createPattern(steps: PatternLength = 16): DrumPattern {
+export function createPattern(steps: PatternLength = 16, grid: NoteGrid = 16): DrumPattern {
   return {
     steps,
+    ...(grid === 16 ? {} : { grid }),
     swing: 0,
     tracks: Object.fromEntries(DRUM_VOICES.map((v) => [v, new Array(steps).fill(0)])) as Record<DrumVoice, number[]>,
   };
@@ -56,7 +60,7 @@ export function normalizePattern(raw: unknown): DrumPattern {
   const steps = (PATTERN_LENGTHS as readonly number[]).includes(Number(input.steps))
     ? (Number(input.steps) as PatternLength)
     : 16;
-  const pattern = createPattern(steps);
+  const pattern = createPattern(steps, noteGrid(input.grid));
   pattern.swing = clamp(Number(input.swing) || 0, 0, 0.5);
   const tracks = (input.tracks ?? {}) as Partial<Record<DrumVoice, unknown>>;
   for (const voice of DRUM_VOICES) {
@@ -77,7 +81,7 @@ export function toggleStep(pattern: DrumPattern, voice: DrumVoice, step: number,
 /** Change the length, keeping the steps that still fit and repeating short patterns. */
 export function resizePattern(pattern: DrumPattern, steps: PatternLength): DrumPattern {
   if (steps === pattern.steps) return pattern;
-  const next = createPattern(steps);
+  const next = createPattern(steps, noteGrid(pattern.grid));
   next.swing = pattern.swing;
   for (const voice of DRUM_VOICES) {
     for (let s = 0; s < steps; s++) next.tracks[voice][s] = pattern.tracks[voice][s % pattern.steps] ?? 0;
@@ -86,20 +90,41 @@ export function resizePattern(pattern: DrumPattern, steps: PatternLength): DrumP
 }
 
 export function clearPattern(pattern: DrumPattern): DrumPattern {
-  const next = createPattern(pattern.steps);
+  const next = createPattern(pattern.steps, noteGrid(pattern.grid));
   next.swing = pattern.swing;
   return next;
 }
 
+/** Finer grids preserve duration, velocity and swing. Coarser grids quantize; collisions keep the louder hit. */
+export function changePatternGrid(pattern: DrumPattern, grid: NoteGrid): DrumPattern {
+  if (noteGrid(pattern.grid) === grid) return pattern;
+  const ratio = stepsPerBeat(grid) / stepsPerBeat(pattern.grid);
+  const steps = pattern.steps * ratio;
+  if (!(PATTERN_LENGTHS as readonly number[]).includes(steps)) return pattern;
+  const next = createPattern(steps as PatternLength, grid);
+  next.swing = pattern.swing;
+  for (const voice of DRUM_VOICES) {
+    for (let i = 0; i < pattern.steps; i++) {
+      const at = Math.round(i * ratio) % steps;
+      next.tracks[voice][at] = Math.max(next.tracks[voice][at], pattern.tracks[voice][i]);
+    }
+  }
+  return next;
+}
+
+/** Up to sixteen bars, independent of resolution. */
+export function patternLengths(grid?: NoteGrid): readonly PatternLength[] {
+  return PATTERN_LENGTHS.filter(n => n >= stepsPerBeat(grid) * 2 && n <= stepsPerBeat(grid) * 64);
+}
+
 /** Beat at which step `index` of loop `loop` lands, swing included. */
 export function stepBeat(pattern: DrumPattern, loop: number, index: number): number {
-  const straight = (loop * pattern.steps + index) / STEPS_PER_BEAT;
-  return index % 2 === 1 ? straight + pattern.swing / STEPS_PER_BEAT : straight;
+  return swingBeat((loop * pattern.steps + index) / stepsPerBeat(pattern.grid), pattern.swing);
 }
 
 /** Length of one pass through the pattern, in beats. */
 export function patternBeats(pattern: DrumPattern): number {
-  return pattern.steps / STEPS_PER_BEAT;
+  return pattern.steps / stepsPerBeat(pattern.grid);
 }
 
 /**
@@ -130,7 +155,7 @@ export function stepsBetween(pattern: DrumPattern, fromBeat: number, toBeat: num
 /** Which step is playing at `beat`, for the playhead. */
 export function stepAt(pattern: DrumPattern, beat: number): number {
   if (!(beat >= 0)) return 0;
-  return Math.floor(beat * STEPS_PER_BEAT) % pattern.steps;
+  return gridStep(beat, pattern.grid, pattern.swing) % pattern.steps;
 }
 
 export function patternHasHits(pattern: DrumPattern): boolean {

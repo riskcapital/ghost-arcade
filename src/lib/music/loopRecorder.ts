@@ -14,6 +14,7 @@
  * Everything here is pure; the runtime feeds it beats.
  */
 
+import { NOTE_GRIDS, nearestGridStep, stepsPerBeat, swingBeat, type NoteGrid } from './grid';
 import { INSTRUMENTS, clampNote, clampVelocity, type DrumVoice, type InstrumentId } from './noteEvents';
 import { DRUM_VOICES } from './noteEvents';
 import { PATTERN_LENGTHS, STEPS_PER_BEAT, normalizePattern, resizePattern, type DrumPattern, type PatternLength } from './drumPattern';
@@ -63,6 +64,8 @@ export const MAX_LOOP_BARS = 16;
 
 export const QUANTIZE_GRIDS = [
   { id: 'off', label: 'Off', beats: 0 },
+  { id: '1/64', label: '1/64', beats: 1 / 16 },
+  { id: '1/32', label: '1/32', beats: 1 / 8 },
   { id: '1/16', label: '1/16', beats: 1 / 4 },
   { id: '1/8', label: '1/8', beats: 1 / 2 },
   { id: '1/8T', label: '1/8T', beats: 1 / 3 },
@@ -174,7 +177,7 @@ export function takeLoop(played: readonly PlayedNote[], startBeat: number, beats
     if (n.beat < startBeat - EARLY_GRACE_BEATS || n.beat >= end) continue;
     const offset = Math.max(0, n.beat - startBeat);
     if (n.drum) {
-      hits.push({ beat: startBeat + quantizeBeat(offset, grid || 1 / STEPS_PER_BEAT, beats), voice: n.drum, velocity: n.velocity });
+      hits.push({ beat: startBeat + quantizeBeat(offset, grid, beats), voice: n.drum, velocity: n.velocity });
       continue;
     }
     const beat = quantizeBeat(offset, grid, beats);
@@ -270,15 +273,26 @@ export function recordedNotesBetween(loop: RecordedLoop, startBeat: number, from
   return out.sort((a, b) => a.beat - b.beat);
 }
 
+/** Recording quantize is independent of the editor's resolution. Fine divisions follow its swing. */
+export function quantizeDrumHit(pattern: DrumPattern, beat: number, quantize: QuantizeId): number {
+  const duration = quantizeBeats(quantize);
+  if (!duration) return beat;
+  const grid = 4 / duration;
+  if (NOTE_GRIDS.includes(grid as NoteGrid)) {
+    return swingBeat(nearestGridStep(beat, grid, pattern.swing) / stepsPerBeat(grid), pattern.swing);
+  }
+  return Math.round(beat / duration) * duration;
+}
+
 /** The grid step a hit at `beat` lands on: the nearest one, as the pattern loops from beat 0. */
 export function stepForBeat(pattern: DrumPattern, beat: number): number {
-  const step = Math.round(beat * STEPS_PER_BEAT);
+  const step = nearestGridStep(beat, pattern.grid, pattern.swing);
   return ((step % pattern.steps) + pattern.steps) % pattern.steps;
 }
 
 /** The pattern length that holds `beats`, up to the longest grid. */
-export function patternLengthFor(beats: number): PatternLength {
-  const steps = beats * STEPS_PER_BEAT;
+export function patternLengthFor(beats: number, grid?: NoteGrid): PatternLength {
+  const steps = Math.min(MAX_LOOP_BARS * BEATS_PER_BAR, beats) * stepsPerBeat(grid);
   return PATTERN_LENGTHS.find((n) => n >= steps) ?? PATTERN_LENGTHS[PATTERN_LENGTHS.length - 1];
 }
 
@@ -290,7 +304,7 @@ export function patternLengthFor(beats: number): PatternLength {
 export function writeHits(pattern: DrumPattern, hits: LoopTake['hits'], beats = 0): DrumPattern {
   let next = pattern;
   if (beats > 0) {
-    const steps = patternLengthFor(beats);
+    const steps = patternLengthFor(beats, next.grid);
     if (steps > next.steps) next = resizePattern(next, steps);
   }
   if (!hits.length) return next;

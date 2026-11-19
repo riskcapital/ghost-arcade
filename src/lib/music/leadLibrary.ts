@@ -11,6 +11,7 @@
  * made from it plays on that tone until another is picked.
  */
 
+import { FLOOR_LEADS } from './floorLibrary';
 import type { LoopNote, MelodicLoop } from './loops';
 import { FEELS, applyGroove } from './groove';
 import type { LoopStyle } from './loopLibrary';
@@ -33,6 +34,7 @@ function lead(id: string, name: string, style: LeadLoop['style'], tone: string, 
 const arp = (start: number, seq: number[], dur = 0.22): H[] => seq.map((d, i): H => [start + i * 0.25, dur, d, i % 4 === 0 ? 0.95 : 0.72]);
 
 export const LEADS: LeadLoop[] = [
+  ...FLOOR_LEADS,
   // ── Techno ──
   lead('lead-signal-flare', 'Signal Flare', 'techno', 'lead.pluck-delay', 8, [
     [0, 0.25, 7, 1], [0.75, 0.25, 7], [1.5, 0.5, 9], [2.5, 0.25, 7], [3, 0.75, 4],

@@ -52,15 +52,15 @@ describe('takeLoop', () => {
     expect(takeLoop(p.all(), 8, 4, 0).melodic.get('synth')![0].beat).toBe(0);
   });
 
-  it('keeps drum hits apart, on sixteenths, in clock beats', () => {
+  it('keeps unsnapped drum hits in clock beats when quantize is off', () => {
     const p = new PlayedNotes();
     p.hit('kick', 36, 1, 8.04);
     p.hit('hatClosed', 42, 0.5, 9.38);
     const take = takeLoop(p.all(), 8, 4, 0);
     expect(take.melodic.size).toBe(0);
     expect(take.hits).toEqual([
-      { beat: 8, voice: 'kick', velocity: 1 },
-      { beat: 9.5, voice: 'hatClosed', velocity: 0.5 },
+      { beat: 8.04, voice: 'kick', velocity: 1 },
+      { beat: 9.38, voice: 'hatClosed', velocity: 0.5 },
     ]);
   });
 });

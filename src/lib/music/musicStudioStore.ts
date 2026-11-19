@@ -1,3 +1,4 @@
+import { noteGrid, type NoteGrid } from './grid';
 /**
  * Music studio state.
  *
@@ -21,6 +22,7 @@ import {
   resizePattern,
   starterPattern,
   toggleStep,
+  changePatternGrid,
   type DrumPattern,
   type PatternLength,
 } from './drumPattern';
@@ -158,6 +160,7 @@ export interface MusicStudioProjectState {
   /** What the keys do with the key: mark it, lock to it, or play the scale on the white keys. */
   keyMode: KeyMode;
   acidSteps: AcidStep[];
+  acidRate: NoteGrid;
   /** The acid line plays with the beat only when switched on. */
   acidOn: boolean;
   /** Each instrument's own tone, pad axes and visual (instrumentDress.ts). */
@@ -306,14 +309,14 @@ export function defaultProjectState(): MusicStudioProjectState {
     synthTone: null,
     keysTone: null,
     drumKit: null,
-    machine: starterBeat(DEFAULT_MACHINE_KIT),
+    machine: starterBeat(DEFAULT_MACHINE_KIT, 32),
     volumes: { ...DEFAULT_VOLUMES },
     masterVolume: 0.85,
     returns: { reverb: 0.7, echo: 0.7, spring: 0.7 },
     visuals: cloneVisuals(DEFAULT_VISUAL_SETTINGS),
     octave: DEFAULT_OCTAVE,
     velocity: 0.8,
-    pattern: starterPattern(),
+    pattern: changePatternGrid(starterPattern(), 32),
     takes: [],
     scenes: [],
     set: 'bath',
@@ -322,6 +325,7 @@ export function defaultProjectState(): MusicStudioProjectState {
     scaleLock: true,
     keyMode: 'show',
     acidSteps: defaultAcidSteps(),
+    acidRate: 16,
     acidOn: false,
     dress: {},
     drumMutes: [],
@@ -330,7 +334,7 @@ export function defaultProjectState(): MusicStudioProjectState {
     inserts: {},
     session: defaultSession({ root: 2, scale: 'dorian' }, generateUUID),
     recordLength: 2,
-    quantize: '1/16',
+    quantize: '1/32',
     mixer: {},
     liveInputs: [defaultLiveInput()],
     liveControl: false,
@@ -417,6 +421,7 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
     scaleLock: input.scaleLock === undefined ? d.scaleLock : input.scaleLock === true,
     keyMode: KEY_MODES.some((m) => m.id === input.keyMode) ? (input.keyMode as KeyMode) : d.keyMode,
     acidSteps: normalizeAcidSteps(input.acidSteps),
+    acidRate: noteGrid(input.acidRate),
     acidOn: input.acidOn === true,
     dress: normalizeDress(input.dress),
     drumMutes: Array.isArray(input.drumMutes) ? DRUM_VOICES.filter((v) => (input.drumMutes as unknown[]).includes(v)) : [],
@@ -553,6 +558,7 @@ function createMusicStudioStore() {
     setScaleLock: (scaleLock: boolean) => set({ scaleLock }),
     setKeyMode: (keyMode: KeyMode) => set({ keyMode }),
     /** Start or stop the acid line (with the beat, from the next bar). */
+    setAcidRate: (acidRate: NoteGrid) => set({ acidRate: noteGrid(acidRate) }),
     setAcidOn: (acidOn: boolean) => set({ acidOn }),
     /** Change an instrument's tone, pad axis or visual; an empty patch value takes it off. */
     setDress: (instrument: InstrumentId, patch: InstrumentDress) =>
@@ -891,6 +897,7 @@ function createMusicStudioStore() {
         keyMode: s.keyMode,
         acidSteps: s.acidSteps.map((st) => ({ ...st })),
         acidOn: s.acidOn,
+        acidRate: s.acidRate,
         dress: JSON.parse(JSON.stringify(s.dress)),
         drumMutes: [...s.drumMutes],
         cables: Object.fromEntries(Object.entries(s.cables).map(([set, list]) => [set, list.map((c) => ({ ...c }))])) as Record<StudioSet, Cable[]>,
@@ -956,6 +963,7 @@ export const musicStudio = createMusicStudioStore();
 /** What the runtime publishes for the UI: the playhead and held notes. */
 export interface MusicTransportState {
   step: number;
+  acidStep?: number;
   /** 0-1 through the playing take. */
   takeProgress: number;
   /** `${instrument}:${note}` of every sounding note. */

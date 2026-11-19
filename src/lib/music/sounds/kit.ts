@@ -43,7 +43,7 @@ export interface SoundHandle {
   stop(at: number, fade?: number): void;
 }
 
-export type SoundCategory = 'resonant' | 'dub' | 'rise' | 'impact' | 'atmos';
+export type SoundCategory = 'chiptune' | 'resonant' | 'dub' | 'rise' | 'impact' | 'atmos';
 
 /**
  * strike: a struck, pitched resonance that rings out (bowls, bells, kalimba).
@@ -67,6 +67,7 @@ export interface SoundDef {
 }
 
 export const SOUND_CATEGORY_LABELS: Record<SoundCategory, string> = {
+  chiptune: '8-bit console',
   resonant: 'Bowls and bells',
   dub: 'Dub',
   rise: 'Risers and drops',

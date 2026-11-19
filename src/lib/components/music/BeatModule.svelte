@@ -1,6 +1,7 @@
 <script lang="ts">
   /** The step sequencer, with its own play button so the beat can start and stop right here. */
-  import { PATTERN_LENGTHS, type PatternLength } from '../../music/drumPattern';
+  import { NOTE_GRIDS, noteGrid, stepsPerBeat, type NoteGrid } from '../../music/grid';
+  import { changePatternGrid, patternLengths, type PatternLength } from '../../music/drumPattern';
   import { musicStudio } from '../../music/musicStudioStore';
   import { startSequencer, stopSequencer } from '../../music/musicRuntime';
   import { DRUM_KITS } from '../../music/tone/kits';
@@ -27,8 +28,11 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4l13 8-13 8z" /></svg>
       {/if}
     </button>
+    <select value={noteGrid(s.pattern.grid)} onchange={(e) => musicStudio.setPattern(changePatternGrid(s.pattern, +(e.target as HTMLSelectElement).value as NoteGrid))} aria-label="Beat grid" title="Finer grids keep timing. Coarser grids quantize existing hits.">
+      {#each NOTE_GRIDS as grid}<option value={grid}>1/{grid}</option>{/each}
+    </select>
     <select value={s.pattern.steps} onchange={(e) => musicStudio.setPatternLength(+(e.target as HTMLSelectElement).value as PatternLength)} aria-label="Steps">
-      {#each PATTERN_LENGTHS as n}<option value={n}>{n} steps</option>{/each}
+      {#each patternLengths(s.pattern.grid) as n}<option value={n}>{n / stepsPerBeat(s.pattern.grid)} beats</option>{/each}
     </select>
     <select class="kit" value={s.drumKit ?? ''} onchange={(e) => musicStudio.setDrumKit((e.target as HTMLSelectElement).value || null)} aria-label="Drum kit" title={DRUM_KITS.find((k) => k.id === s.drumKit)?.blurb ?? 'The simple built-in kit'}>
       <option value="">Simple kit</option>

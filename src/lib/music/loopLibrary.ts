@@ -11,20 +11,23 @@
 
 import type { DrumVoice } from './noteEvents';
 import type { BeatLoop, LoopNote, LoopRole, MelodicLoop } from './loops';
+import { FLOOR_BEATS, FLOOR_MELODIC } from './floorLibrary';
 import { LEADS } from './leadLibrary';
 import { FEELS, applyGroove, voiceLead, type GrooveFeel } from './groove';
 
-export type LoopStyle = 'dub' | 'reggae' | 'techno' | 'house' | 'acid' | 'funk' | 'livetronica' | 'garage' | 'breaks' | 'ambient' | 'pop' | 'jazz' | 'trance' | 'synthwave' | 'minimal';
+export type LoopStyle = 'jungle' | 'french' | 'industrial' | 'jamtronica' | 'chiptune' | 'dnb' | 'dubstep' | 'dub' | 'reggae' | 'techno' | 'house' | 'acid' | 'funk' | 'livetronica' | 'garage' | 'breaks' | 'ambient' | 'pop' | 'jazz' | 'trance' | 'synthwave' | 'minimal';
 
 export const LOOP_STYLE_LABELS: Record<LoopStyle, string> = {
-  dub: 'Dub', reggae: 'Roots', techno: 'Techno', house: 'House', acid: 'Acid', funk: 'Funk',
+  jungle: 'Jungle breaks', french: 'French touch', industrial: 'Industrial hip-hop', jamtronica: 'Jamtronica', chiptune: '8-bit',
+  dnb: 'DnB', dubstep: 'Dubstep', dub: 'Dub', reggae: 'Roots', techno: 'Techno', house: 'House', acid: 'Acid', funk: 'Funk',
   livetronica: 'Livetronica', garage: 'UK garage', breaks: 'Breaks', ambient: 'Ambient', pop: 'Anthem', jazz: 'Jazz',
   trance: 'Trance', synthwave: 'Synthwave', minimal: 'Minimal',
 };
 
 /** Typical tempo for each style, in BPM. */
 const STYLE_BPM: Record<LoopStyle, [number, number]> = {
-  dub: [66, 80], reggae: [68, 84], techno: [124, 138], house: [118, 128], acid: [125, 140], funk: [95, 115],
+  jungle: [160, 178], french: [115, 128], industrial: [80, 105], jamtronica: [118, 140], chiptune: [130, 170],
+  dnb: [164, 178], dubstep: [136, 144], dub: [66, 80], reggae: [68, 84], techno: [124, 138], house: [118, 128], acid: [125, 140], funk: [95, 115],
   livetronica: [100, 128], garage: [128, 136], breaks: [120, 140], ambient: [60, 100], pop: [100, 128], jazz: [80, 120],
   trance: [128, 140], synthwave: [90, 118], minimal: [118, 128],
 };
@@ -353,6 +356,7 @@ function groove(id: string, name: string, style: LoopStyle, swing: number, rows:
 }
 
 export const LIBRARY_BEATS: LibBeat[] = [
+  ...FLOOR_BEATS,
   groove('lib-beat-onedrop-deep', 'Deep One Drop', 'dub', 0.08, { kick: '........x.......', rim: '........x.......', hatClosed: 'o.x.o.x.o.x.o.x.', hatOpen: '..............o.' }),
   groove('lib-beat-onedrop-rim', 'Rim Drop', 'dub', 0.1, { kick: '........x.......', rim: '........x.....o.', hatClosed: '..x...x...x...x.' }),
   groove('lib-beat-steppers-heavy', 'Heavy Steppers', 'dub', 0.04, { kick: 'x...x...x...x...', snare: '........x.......', hatClosed: 'o.x.o.x.o.x.o.x.', crash: 'x...............' }),
@@ -376,7 +380,7 @@ export const LIBRARY_BEATS: LibBeat[] = [
   groove('lib-beat-ambient', 'Pulse Only', 'ambient', 0, { kick: 'x.......x.......', hatClosed: '....o.......o...', rim: '..........o.....' }),
 ];
 
-export const LIBRARY_MELODIC: LibMelodic[] = [...BASS, ...CHORDS, ...TEXTURES];
+export const LIBRARY_MELODIC: LibMelodic[] = [...FLOOR_MELODIC, ...BASS, ...CHORDS, ...TEXTURES];
 
 /** The library's style for a loop id, if it is one of its loops. */
 const STYLE_BY_ID = new Map<string, LoopStyle>([...LIBRARY_MELODIC, ...LIBRARY_BEATS, ...LEADS].map((l) => [l.id, l.style]));

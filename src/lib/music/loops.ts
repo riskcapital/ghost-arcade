@@ -10,7 +10,8 @@
  */
 
 import { DRUM_VOICES, type DrumVoice, type InstrumentId } from './noteEvents';
-import { createPattern, type DrumPattern } from './drumPattern';
+import type { NoteGrid } from './grid';
+import { createPattern, type PatternLength, type DrumPattern } from './drumPattern';
 import { scaleNote, type MusicKey, type StudioSet } from './studioSets';
 import { LIBRARY_BEATS, LIBRARY_MELODIC, libraryAlias } from './loopLibrary';
 import { LEADS, leadAlias } from './leadLibrary';
@@ -52,7 +53,10 @@ export interface MelodicLoop {
 export interface BeatLoop {
   id: string;
   name: string;
-  steps: 16 | 32;
+  steps: PatternLength;
+  grid?: NoteGrid;
+  /** Kit selected with this factory groove. */
+  kit?: string;
   swing: number;
   /** Per kit voice, a 16 or 32 character row: x = hit, o = soft hit, . = rest. */
   rows: Partial<Record<DrumVoice, string>>;
@@ -120,7 +124,7 @@ export function isBeatLoop(loop: MelodicLoop | BeatLoop): loop is BeatLoop {
 
 /** The step pattern of a beat loop. */
 export function beatPattern(loop: BeatLoop): DrumPattern {
-  const p = createPattern(loop.steps);
+  const p = createPattern(loop.steps, loop.grid);
   p.swing = loop.swing;
   for (const voice of DRUM_VOICES) {
     const row = loop.rows[voice] ?? '';

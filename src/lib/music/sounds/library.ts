@@ -3,13 +3,14 @@
  * the drone's pad patches.
  */
 import { SOUND_CATEGORY_LABELS, type PadPatchDef, type SoundCategory, type SoundDef } from './kit';
+import { CHIP_SOUNDS } from './chiptune';
 import { RESONANT_SOUNDS } from './resonant';
 import { ONE_SHOT_SOUNDS } from './oneShots';
 import { ATMOS_SOUNDS } from './atmos';
 import { PAD_PATCHES } from './padPatches';
 import { chopSound } from './chops';
 
-export const SOUND_LIBRARY: readonly SoundDef[] = [...RESONANT_SOUNDS, ...ONE_SHOT_SOUNDS, ...ATMOS_SOUNDS];
+export const SOUND_LIBRARY: readonly SoundDef[] = [...CHIP_SOUNDS, ...RESONANT_SOUNDS, ...ONE_SHOT_SOUNDS, ...ATMOS_SOUNDS];
 
 const byId = new Map(SOUND_LIBRARY.map((s) => [s.id, s]));
 
@@ -20,7 +21,7 @@ export function soundById(id: string | null | undefined): SoundDef | undefined {
 
 /** The library grouped for a menu, in category order. */
 export function soundGroups(filter?: (s: SoundDef) => boolean): { category: SoundCategory; label: string; sounds: SoundDef[] }[] {
-  const order: SoundCategory[] = ['resonant', 'dub', 'rise', 'impact', 'atmos'];
+  const order: SoundCategory[] = ['chiptune', 'resonant', 'dub', 'rise', 'impact', 'atmos'];
   return order
     .map((category) => ({ category, label: SOUND_CATEGORY_LABELS[category], sounds: SOUND_LIBRARY.filter((s) => s.category === category && (!filter || filter(s))) }))
     .filter((g) => g.sounds.length > 0);

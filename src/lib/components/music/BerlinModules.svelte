@@ -3,6 +3,7 @@
    * The Berlin set's own instruments: the drum mixer and the acid line.
    * Rendered in pieces by `part` for the set's layout.
    */
+  import { NOTE_GRIDS, type NoteGrid } from '../../music/grid';
   import { musicStudio, musicTransport } from '../../music/musicStudioStore';
   import { ACID_PARAMS, ACID_RANGE } from '../../music/studioSets';
   import { DRUM_LABELS, DRUM_NOTES, DRUM_VOICES, noteName } from '../../music/noteEvents';
@@ -66,6 +67,9 @@
         data-midi-label="Acid line on or off"
         data-midi-mode="toggle"
       >{s.acidOn ? 'On' : 'Off'}</button>
+      <label>Rate <select value={s.acidRate} onchange={(e) => musicStudio.setAcidRate(+(e.target as HTMLSelectElement).value as NoteGrid)} aria-label="Acid note rate" title="Note length of each of the sixteen acid steps">
+        {#each NOTE_GRIDS as grid}<option value={grid}>1/{grid}</option>{/each}
+      </select></label>
       <StudioJack id="cv:acid.level" label="Level" title="Acid line level, as a control signal" />
       <StudioJack id="cv:acid.cutoff" label="Cutoff" title="Acid filter, as a control signal" />
       <StudioJack id="audio:acid" label="Out" title="Acid sound" />
@@ -77,7 +81,7 @@
     </div>
     <div class="acid-steps">
       {#each s.acidSteps as step, i (i)}
-        <div class="acid-step" class:bar={i % 4 === 0} class:playhead={t.step >= 0 && i === t.step % 16}>
+        <div class="acid-step" class:bar={i % 4 === 0} class:playhead={i === t.acidStep}>
           <button
             class="pitch"
             onpointerdown={(e) => setAcidNote(e, i)}

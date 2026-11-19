@@ -8,9 +8,10 @@
    * its chance (100, 75, 50, 25%). A track's length handle makes it loop on
    * fewer steps than the part, for patterns that drift across the bar.
    */
+  import { NOTE_GRIDS, noteGrid, stepsPerBeat, type NoteGrid } from '../../music/grid';
   import { musicStudio } from '../../music/musicStudioStore';
   import {
-    MAX_PARTS, PART_BARS, PART_KINDS, STEPS_PER_BAR, addBlock, clearTrack, duplicatePart, emptyPart, moveBlock,
+    MAX_PARTS, PART_BARS, PART_KINDS, changePartGrid, addBlock, clearTrack, duplicatePart, emptyPart, moveBlock,
     nudgeTrack, partSteps, removeBlock, resizeBlock, resizePart, setStep, setTrackLength, songBars, spreadHits,
     toggleMute, toggleStep, trackOf, type PartBars, type PartKind,
   } from '../../music/drumMachine/machineBeat';
@@ -32,6 +33,7 @@
   const spare = $derived(kit.pads.map((p, i) => ({ p, i })).filter(({ i }) => !beat.trackPads.includes(i)));
   const partIndex = $derived(Math.min(t.part, beat.parts.length - 1));
   const part = $derived(beat.parts[partIndex]);
+  const stepsPerBar = $derived(noteGrid(part?.grid));
   const steps = $derived(part ? partSteps(part) : 16);
 
   let view = $state<'pattern' | 'song'>('pattern');
@@ -39,7 +41,7 @@
   let page = $state(0);
   let follow = $state(true);
   const pages = $derived(part ? part.bars : 1);
-  const playingPage = $derived(t.step >= 0 && t.mode === 'part' ? Math.floor(t.step / STEPS_PER_BAR) : -1);
+  const playingPage = $derived(t.step >= 0 && t.mode === 'part' ? Math.floor(t.step / stepsPerBar) : -1);
   const shownPage = $derived(follow && playingPage >= 0 ? playingPage : Math.min(page, pages - 1));
 
   // ── Steps ──
@@ -129,7 +131,7 @@
   function lenMove(e: PointerEvent) {
     if (!lenDrag) return;
     const share = (e.clientX - lenDrag.left) / lenDrag.width;
-    const length = shownPage * STEPS_PER_BAR + Math.max(1, Math.min(STEPS_PER_BAR, Math.round(share * STEPS_PER_BAR)));
+    const length = shownPage * stepsPerBar + Math.max(1, Math.min(stepsPerBar, Math.round(share * stepsPerBar)));
     const pad = lenDrag.pad;
     editPart((p) => setTrackLength(p, pad, length));
   }
@@ -139,7 +141,7 @@
     if (beat.parts.length >= MAX_PARTS) return;
     const kinds: PartKind[] = ['loop', 'fill', 'break', 'build', 'drop'];
     const kind = kinds[beat.parts.length % kinds.length];
-    const p = emptyPart(PART_KINDS.find((k) => k.id === kind)!.label, kind);
+    const p = emptyPart(PART_KINDS.find((k) => k.id === kind)!.label, kind, 1, noteGrid(part?.grid));
     editBeat((b) => ({ ...b, parts: [...b.parts, p] }));
     selectPart(beat.parts.length);
   }
@@ -332,6 +334,9 @@
           <select value={part.kind} onchange={(e) => editPart((p) => ({ ...p, kind: (e.target as HTMLSelectElement).value as PartKind }))} aria-label="What the part is">
             {#each PART_KINDS as k (k.id)}<option value={k.id}>{k.label}</option>{/each}
           </select>
+          <label>Grid <select value={noteGrid(part.grid)} onchange={(e) => editPart(p => changePartGrid(p, +(e.target as HTMLSelectElement).value as NoteGrid))} aria-label="Drum machine grid" title="Finer grids keep timing and rolls. Coarser grids quantize existing hits.">
+            {#each NOTE_GRIDS as grid}<option value={grid}>1/{grid}</option>{/each}
+          </select></label>
           <div class="seg small" role="radiogroup" aria-label="Length in bars">
             {#each PART_BARS as n (n)}
               <button role="radio" aria-checked={part.bars === n} class:on={part.bars === n} onclick={() => editPart((p) => resizePart(p, n as PartBars))}>{n} bar{n > 1 ? 's' : ''}</button>
@@ -350,7 +355,7 @@
           <span class="hint">Drag a step for velocity · right-click: roll · Alt-click: chance</span>
         </div>
 
-        <div class="rows" role="grid" aria-label="Steps">
+        <div class="rows" style="--steps: {stepsPerBar}" role="grid" aria-label="Steps">
           {#each beat.trackPads as pad, row (pad)}
             {@const tr = trackOf(part, pad)}
             {@const solo = t.solo === pad}
@@ -360,14 +365,15 @@
               <button class="tiny" class:on={tr.mute} aria-pressed={tr.mute} onclick={() => editPart((p) => toggleMute(p, pad))} title="Mute this track">M</button>
               <button class="tiny" class:on={solo} aria-pressed={solo} onclick={() => machineTransport.update((x) => ({ ...x, solo: x.solo === pad ? null : pad }))} title="Hear only this track">S</button>
               <div class="cells" role="presentation">
-                {#each Array.from({ length: STEPS_PER_BAR }, (_, i) => shownPage * STEPS_PER_BAR + i) as st (st)}
+                {#each Array.from({ length: stepsPerBar }, (_, i) => shownPage * stepsPerBar + i) as st (st)}
                   {@const vel = tr.vel[st] ?? 0}
                   {@const outside = st >= tr.length}
                   <button
-                    class="cell g{Math.floor((st % 16) / 4)}"
+                    class="cell g{Math.floor((st % stepsPerBar) / stepsPerBeat(part.grid))}"
+                    class:beat-start={st % stepsPerBeat(part.grid) === 0}
                     class:on={vel > 0}
                     class:outside
-                    class:head={t.step >= 0 && (t.mode === 'part' || t.block >= 0) && st === t.step % steps && !outside}
+                    class:head={t.step >= 0 && (t.mode === 'part' || beat.song[t.block]?.partId === part.id) && st === t.step % steps && !outside}
                     class:chance={vel > 0 && tr.chance[st] < 1}
                     style="--vel: {vel}"
                     onpointerdown={(e) => stepDown(e, pad, st)}
@@ -379,8 +385,8 @@
                     title={vel > 0 ? `${Math.round(vel * 100)}%${tr.roll[st] > 1 ? `, roll of ${tr.roll[st]}` : ''}${tr.chance[st] < 1 ? `, plays ${Math.round(tr.chance[st] * 100)}% of the time` : ''}` : ''}
                   >{#if vel > 0 && tr.roll[st] > 1}<span class="roll">{tr.roll[st]}</span>{/if}</button>
                 {/each}
-                {#if tr.length < steps && Math.floor((tr.length - 1) / STEPS_PER_BAR) === shownPage}
-                  <span class="len" style="left: calc({((tr.length - shownPage * STEPS_PER_BAR) / STEPS_PER_BAR) * 100}% - 3px)" onpointerdown={(e) => lenDown(e, pad)} onpointermove={lenMove} onpointerup={() => (lenDrag = null)} role="slider" aria-label="Track length" aria-valuenow={tr.length} tabindex="-1" title="Track length: {tr.length} steps. Drag to change."></span>
+                {#if tr.length < steps && Math.floor((tr.length - 1) / stepsPerBar) === shownPage}
+                  <span class="len" style="left: calc({((tr.length - shownPage * stepsPerBar) / stepsPerBar) * 100}% - 3px)" onpointerdown={(e) => lenDown(e, pad)} onpointermove={lenMove} onpointerup={() => (lenDrag = null)} role="slider" aria-label="Track length" aria-valuenow={tr.length} tabindex="-1" title="Track length: {tr.length} steps. Drag to change."></span>
                 {/if}
               </div>
               <span class="lenval" title="Steps before this track loops; drag the handle on the right of a step to set">
@@ -497,7 +503,7 @@
   .hint { font-size: 10px; color: var(--studio-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
 
   .rows { display: flex; flex-direction: column; gap: 1px; flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
-  .row { display: flex; align-items: center; gap: 3px; height: 13px; flex: 0 0 auto; }
+  .row { min-width: calc(250px + var(--steps) * 15px); display: flex; align-items: center; gap: 3px; height: 13px; flex: 0 0 auto; }
   .row.muted { opacity: 0.4; }
   .row.moving { opacity: 0.5; }
   .row.drop { box-shadow: 0 -2px 0 var(--studio-accent); }
@@ -509,8 +515,8 @@
   .row.sel .rname { color: var(--studio-accent); }
   .tiny { flex: 0 0 auto; width: 15px; height: 13px; padding: 0; border: 1px solid var(--studio-edge-soft); border-radius: 2px; background: transparent; color: var(--studio-muted); font: inherit; font-size: 8px; cursor: pointer; line-height: 1; }
   .tiny.on { color: var(--studio-on-accent); background: var(--studio-accent); border-color: var(--studio-accent); }
-  .cells { position: relative; flex: 1; display: grid; grid-template-columns: repeat(16, 1fr); gap: 2px; height: 13px; }
-  .cells > .cell:nth-child(4n + 1):not(:first-child) { margin-left: 3px; }
+  .cells { position: relative; flex: 1; display: grid; grid-template-columns: repeat(var(--steps), minmax(12px, 1fr)); gap: 2px; height: 13px; }
+  .cells > .cell.beat-start:not(:first-child) { margin-left: 3px; }
   .cell { position: relative; padding: 0; border: 1px solid var(--studio-edge-soft); border-radius: 2px; background: var(--studio-slot); cursor: pointer; overflow: hidden; touch-action: none; }
   /* The four groups of a bar, each in its own tint, as on the old rhythm machines. */
   .cell.g0 { --tint: #e8492f; }

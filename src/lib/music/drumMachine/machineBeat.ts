@@ -2,7 +2,7 @@
  * The drum machine's beats: parts and the song they make.
  *
  * A part is a pattern of sixteen tracks, one per pad, one to four bars of
- * sixteenth steps. Each step has a velocity (0 = off), a roll (1 to 4 hits
+ * selectable 1/16, 1/32 or 1/64 steps. Each step has a velocity (0 = off), a roll (1 to 4 hits
  * inside the step) and a chance (how often it plays). A track can be shorter
  * than the part and loop on its own length, so a three-step track drifts
  * across a four-beat bar.
@@ -12,6 +12,7 @@
  * scheduler can look ahead and a test can check exactly what lands where.
  */
 
+import { noteGrid, stepsPerBeat, swingBeat, unswingBeat, type NoteGrid } from '../grid';
 import { BASE_PADS, MAX_PADS, PAD_COUNT, normalizePad, normalizeUserKit, type MachinePad, type UserKit } from './machineKits';
 
 export const STEPS_PER_BAR = 16;
@@ -39,6 +40,8 @@ export interface Track {
   vel: number[];
   /** Hits per step, 1-4. */
   roll: number[];
+  /** Optional roll duration in straight beats; retained when the grid is refined. */
+  rollBeats?: number[];
   /** Chance a step plays, 0-1. */
   chance: number[];
   /** Steps before the track loops, 1 to the part's length. */
@@ -51,6 +54,7 @@ export interface Part {
   name: string;
   kind: PartKind;
   bars: PartBars;
+  grid?: NoteGrid;
   /** 0 (straight) to 0.5: how late every second sixteenth lands, as a share of a step. */
   swing: number;
   tracks: Track[];
@@ -97,13 +101,13 @@ export function emptyTrack(steps: number): Track {
   return { vel: new Array(steps).fill(0), roll: new Array(steps).fill(1), chance: new Array(steps).fill(1), length: steps, mute: false };
 }
 
-export function partSteps(part: Pick<Part, 'bars'>): number {
-  return part.bars * STEPS_PER_BAR;
+export function partSteps(part: Pick<Part, 'bars' | 'grid'>): number {
+  return part.bars * noteGrid(part.grid);
 }
 
-export function emptyPart(name = 'Loop', kind: PartKind = 'loop', bars: PartBars = 1): Part {
-  const steps = bars * STEPS_PER_BAR;
-  return { id: newId('part'), name, kind, bars, swing: 0, tracks: Array.from({ length: PAD_COUNT }, () => emptyTrack(steps)) };
+export function emptyPart(name = 'Loop', kind: PartKind = 'loop', bars: PartBars = 1, grid: NoteGrid = 16): Part {
+  const steps = bars * grid;
+  return { id: newId('part'), name, kind, bars, ...(grid === 16 ? {} : { grid }), swing: 0, tracks: Array.from({ length: PAD_COUNT }, () => emptyTrack(steps)) };
 }
 
 function withHits(part: Part, hits: Record<number, Array<number | [number, number]>>): Part {
@@ -117,7 +121,7 @@ function withHits(part: Part, hits: Record<number, Array<number | [number, numbe
 }
 
 /** A beat to start from: a loop, a fill and a break, already laid out as a short song. */
-export function starterBeat(kitId: string): Beat {
+export function starterBeat(kitId: string, grid: NoteGrid = 16): Beat {
   const loop = withHits(emptyPart('Loop', 'loop'), {
     0: [[0, 1], [10, 0.8]], 2: [4, 12], 4: [0, 2, 4, 6, 8, 10, 12, 14].map((s) => [s, s % 4 === 2 ? 0.75 : 0.5] as [number, number]), 5: [[14, 0.6]],
   });
@@ -133,7 +137,7 @@ export function starterBeat(kitId: string): Beat {
   return {
     name: 'New beat',
     kitId,
-    parts: [loop, fill, brk],
+    parts: [loop, fill, brk].map(p => changePartGrid(p, grid)),
     song: [
       { id: 'blk-1', partId: loop.id, bars: 3 },
       { id: 'blk-2', partId: fill.id, bars: 1 },
@@ -170,7 +174,10 @@ export function setStep(part: Part, pad: number, step: number, change: { vel?: n
   return mapTrack(part, pad, (t) => {
     const next = { ...t, vel: [...t.vel], roll: [...t.roll], chance: [...t.chance] };
     if (change.vel !== undefined) next.vel[step] = clamp(change.vel, 0, 1);
-    if (change.roll !== undefined) next.roll[step] = Math.round(clamp(change.roll, 1, 4));
+    if (change.roll !== undefined) {
+      next.roll[step] = Math.round(clamp(change.roll, 1, 4));
+      if (next.rollBeats) { next.rollBeats = [...next.rollBeats]; next.rollBeats[step] = 1 / stepsPerBeat(part.grid); }
+    }
     if (change.chance !== undefined) next.chance[step] = clamp(change.chance, 0, 1);
     return next;
   });
@@ -197,7 +204,7 @@ export function clearTrack(part: Part, pad: number): Part {
 /** Change the length in bars, repeating a shorter part to fill the new one. */
 export function resizePart(part: Part, bars: PartBars): Part {
   if (bars === part.bars) return part;
-  const steps = bars * STEPS_PER_BAR;
+  const steps = bars * noteGrid(part.grid);
   const old = partSteps(part);
   const fit = (row: number[], fill: number) => Array.from({ length: steps }, (_, i) => (bars > part.bars ? row[i % old] : row[i]) ?? fill);
   return {
@@ -206,6 +213,7 @@ export function resizePart(part: Part, bars: PartBars): Part {
     tracks: part.tracks.map((t) => ({
       vel: fit(t.vel, 0),
       roll: fit(t.roll, 1),
+      ...(t.rollBeats ? { rollBeats: fit(t.rollBeats, 1 / stepsPerBeat(part.grid)) } : {}),
       chance: fit(t.chance, 1),
       length: t.length === old ? steps : Math.min(t.length, steps),
       mute: t.mute,
@@ -213,12 +221,36 @@ export function resizePart(part: Part, bars: PartBars): Part {
   };
 }
 
+/** Resample step positions and polymetric lengths without changing the part's duration.
+ * Existing ratchets retain their duration, including triplet rolls. Coarsening quantizes hits.
+ */
+export function changePartGrid(part: Part, grid: NoteGrid): Part {
+  if (noteGrid(part.grid) === grid) return part;
+  const ratio = grid / noteGrid(part.grid);
+  const count = part.bars * grid;
+  return { ...part, grid, tracks: part.tracks.map(t => {
+    const next = emptyTrack(count);
+    next.length = Math.max(1, Math.round(t.length * ratio));
+    next.mute = t.mute;
+    next.rollBeats = new Array(count).fill(1 / stepsPerBeat(grid));
+    for (let i = 0; i < t.vel.length; i++) {
+      const at = Math.round(i * ratio) % count;
+      if (t.vel[i] <= next.vel[at]) continue;
+      next.vel[at] = t.vel[i];
+      next.roll[at] = t.roll[i];
+      next.chance[at] = t.chance[i];
+      next.rollBeats[at] = t.rollBeats?.[i] ?? 1 / stepsPerBeat(part.grid);
+    }
+    return next;
+  }) };
+}
+
 /** Shift a track's hits by `by` steps, wrapping within its length. */
 export function nudgeTrack(part: Part, pad: number, by: number): Part {
   return mapTrack(part, pad, (t) => {
     const n = t.length;
     const rot = (row: number[]) => row.map((v, i) => (i < n ? row[(((i - by) % n) + n) % n] : v));
-    return { ...t, vel: rot(t.vel), roll: rot(t.roll), chance: rot(t.chance) };
+    return { ...t, vel: rot(t.vel), roll: rot(t.roll), chance: rot(t.chance), ...(t.rollBeats ? { rollBeats: rot(t.rollBeats) } : {}) };
   });
 }
 
@@ -232,11 +264,12 @@ export function spreadHits(part: Part, pad: number, hits: number, vel = 0.85): P
   return mapTrack(part, pad, (t) => {
     const n = t.length;
     const k = Math.round(clamp(hits, 0, n));
-    const next = { ...t, vel: [...t.vel], roll: [...t.roll], chance: [...t.chance] };
+    const next = { ...t, vel: [...t.vel], roll: [...t.roll], chance: [...t.chance], ...(t.rollBeats ? { rollBeats: [...t.rollBeats] } : {}) };
     for (let i = 0; i < n; i++) {
       const on = k > 0 && (i * k) % n < k;
       next.vel[i] = on ? vel : 0;
       next.roll[i] = 1;
+      if (next.rollBeats) next.rollBeats[i] = 1 / stepsPerBeat(part.grid);
       next.chance[i] = 1;
     }
     return next;
@@ -307,22 +340,22 @@ function dice(loop: number, step: number, pad: number): number {
 export function partHitsBetween(part: Part, originBeat: number, fromBeat: number, toBeat: number, solo: number | null = null): MachineHit[] {
   if (!(toBeat > fromBeat)) return [];
   const out: MachineHit[] = [];
-  const stepBeats = 1 / STEPS_PER_BEAT;
-  const firstStep = Math.max(0, Math.floor((fromBeat - originBeat) / stepBeats) - 1);
-  const lastStep = Math.ceil((toBeat - originBeat) / stepBeats);
+  const stepBeats = 1 / stepsPerBeat(part.grid);
+  // A preserved roll may span up to a sixteenth after refining the grid.
+  const firstStep = Math.max(0, Math.floor(unswingBeat(fromBeat - originBeat, part.swing) / stepBeats) - Math.ceil(0.25 / stepBeats));
+  const lastStep = Math.ceil(unswingBeat(toBeat - originBeat, part.swing) / stepBeats);
   for (let g = firstStep; g <= lastStep; g++) {
-    const straight = originBeat + g * stepBeats;
-    const beat = g % 2 === 1 ? straight + part.swing * stepBeats : straight;
+    const straight = g * stepBeats;
     for (let pad = 0; pad < part.tracks.length; pad++) {
       const t = part.tracks[pad];
       if (t.mute || (solo !== null && solo !== pad)) continue;
       const step = g % t.length;
       const vel = t.vel[step] ?? 0;
       if (vel <= 0) continue;
-      if ((t.chance[step] ?? 1) < 1 && dice(Math.floor(g / t.length), step, pad) >= t.chance[step]) continue;
+      if ((t.chance[step] ?? 1) < 1 && dice(Math.floor(g / t.length), step * 16 / noteGrid(part.grid), pad) >= t.chance[step]) continue;
       const roll = t.roll[step] ?? 1;
       for (let r = 0; r < roll; r++) {
-        const b = beat + (r * stepBeats) / roll;
+        const b = originBeat + swingBeat(straight + (r * (t.rollBeats?.[step] ?? stepBeats)) / roll, part.swing);
         if (b >= fromBeat && b < toBeat) out.push({ beat: b, pad, velocity: r === 0 ? vel : vel * (0.7 + 0.3 * (r / roll)) });
       }
     }
@@ -371,6 +404,7 @@ function normalizeTrack(raw: unknown, steps: number): Track {
   return {
     vel: row(t.vel, 0, 0, 1),
     roll: row(t.roll, 1, 1, 4).map(Math.round),
+    ...(Array.isArray(t.rollBeats) ? { rollBeats: row(t.rollBeats, 0.25, 1 / 16, 0.25) } : {}),
     chance: row(t.chance, 1, 0, 1),
     length: Math.round(num(t.length, steps, 1, steps)),
     mute: t.mute === true,
@@ -381,13 +415,15 @@ export function normalizePart(raw: unknown): Part | null {
   if (!raw || typeof raw !== 'object') return null;
   const p = raw as Partial<Record<keyof Part, unknown>>;
   const bars = (PART_BARS as readonly number[]).includes(Number(p.bars)) ? (Number(p.bars) as PartBars) : 1;
-  const steps = bars * STEPS_PER_BAR;
+  const grid = noteGrid(p.grid);
+  const steps = bars * grid;
   const tracks = Array.isArray(p.tracks) ? p.tracks : [];
   return {
     id: typeof p.id === 'string' && p.id ? p.id : newId('part'),
     name: typeof p.name === 'string' ? p.name.slice(0, 40) : 'Part',
     kind: PART_KINDS.some((k) => k.id === p.kind) ? (p.kind as PartKind) : 'loop',
     bars,
+    ...(grid === 16 ? {} : { grid }),
     swing: num(p.swing, 0, 0, 0.5),
     tracks: Array.from({ length: Math.max(PAD_COUNT, Math.min(MAX_PADS, tracks.length)) }, (_, i) => normalizeTrack(tracks[i], steps)),
   };

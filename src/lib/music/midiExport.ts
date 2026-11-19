@@ -5,6 +5,7 @@
  * every other part a notes clip on the track for it).
  */
 
+import { gridForBeats, stepsPerBeat } from './grid';
 import { drumVoiceForNote, type InstrumentId } from './noteEvents';
 import { INSTRUMENT_LABELS } from './instruments';
 import { createPattern, patternBeats, stepsBetween, type DrumPattern } from './drumPattern';
@@ -32,7 +33,7 @@ export function patternTrack(pattern: DrumPattern, name = 'Drums'): MidiTrack {
   return {
     name,
     channel: DRUM_CHANNEL_INDEX,
-    notes: stepsBetween(pattern, 0, patternBeats(pattern)).map((step) => ({ beat: step.beat, dur: 0.25, note: step.note, velocity: step.velocity })),
+    notes: stepsBetween(pattern, 0, patternBeats(pattern)).map((step) => ({ beat: step.beat, dur: 1 / stepsPerBeat(pattern.grid), note: step.note, velocity: step.velocity })),
   };
 }
 
@@ -129,8 +130,8 @@ export interface ImportedClip {
 
 /**
  * Turn a MIDI file into session clips. Each track is cut to whole bars (up
- * to the longest loop). Drum-channel tracks become beat clips (up to four
- * bars, on sixteenths); other tracks become notes clips on the track for the
+ * to the longest loop). Drum-channel tracks become beat clips (up to sixteen
+ * bars, choosing a grid down to 1/64 to retain fine hits); other tracks become notes clips on the track for the
  * part they sound like, keeping their pitches and playing on that track's
  * instrument.
  */
@@ -145,8 +146,9 @@ export function importMidi(song: MidiSong, fileName: string, existing: ReadonlyA
     const length = Math.min(bars, MAX_LOOP_BARS) * BEATS_PER_BAR;
     const label = track.name?.trim() || base;
     if (track.channel === DRUM_CHANNEL_INDEX) {
-      const gridBeats = Math.min(length, 16);
-      let pattern: DrumPattern = createPattern(patternLengthFor(gridBeats));
+      const gridBeats = length;
+      const grid = gridForBeats(track.notes.filter(n => n.beat < gridBeats).map(n => n.beat));
+      let pattern: DrumPattern = createPattern(patternLengthFor(gridBeats, grid), grid);
       pattern = writeHits(
         pattern,
         track.notes.filter((n) => n.beat < gridBeats).map((n) => ({ beat: n.beat, voice: drumVoiceForNote(n.note), velocity: n.velocity })),

@@ -3,6 +3,8 @@
  * from our own oscillators, filters and effects. Each is plain patch data.
  */
 
+import { EXPANSION_TONES } from './expansionTones';
+import { FLOOR_TONES } from './floorTones';
 import type { Env, TonePatch } from './toneTypes';
 
 export type ToneFamily = 'bass' | 'pad' | 'lead' | 'arp';
@@ -18,6 +20,8 @@ export interface Tone {
 const env = (a: number, d: number, s: number, r: number): Env => ({ a, d, s, r });
 
 export const TONES: Tone[] = [
+  ...FLOOR_TONES,
+  ...EXPANSION_TONES,
   // ── Basses ──
   {
     id: 'bass.fat-mono', name: 'Fat mono', family: 'bass', blurb: 'Two saws and a sub through a growling ladder, a filter pluck on every note',

@@ -51,7 +51,8 @@ import {
 } from './visualVoices';
 import type { DrumKit, DrumSound, DrumTweak } from './tone/toneTypes';
 import { TakeRecorder, takeEventsBetween, type Take } from './recording';
-import { STEPS_PER_BEAT, patternBeats, patternHasHits, stepAt, stepsBetween, type DrumPattern } from './drumPattern';
+import { beatTick, gridForBeats, nearestGridStep, stepsPerBeat, swingBeat } from './grid';
+import { changePatternGrid, patternBeats, patternHasHits, stepAt, stepsBetween, type DrumPattern } from './drumPattern';
 import {
   BEATS_PER_BAR,
   CAPTURE_WINDOW_BEATS,
@@ -60,6 +61,7 @@ import {
   capturePhrase,
   nextRecordedName,
   quantizeBeats,
+  quantizeDrumHit,
   recordedLoopLabel,
   recordedNotesBetween,
   roleForRecording,
@@ -607,7 +609,7 @@ export function stopSequencer(): void {
   if (acidHeld !== null) send(noteOff('acid', acidHeld, 'sequencer', audio.peekNow() ?? 0));
   acidHeld = null;
   musicStudio.setTransport({ sequencerPlaying: false });
-  musicTransport.update((s) => ({ ...s, step: -1 }));
+  musicTransport.update((s) => ({ ...s, step: -1, acidStep: -1 }));
 }
 
 function scheduleSequencer(): void {
@@ -624,7 +626,7 @@ function scheduleSequencer(): void {
   for (const step of stepsBetween(s.pattern, sequencer.scheduledBeat, horizon)) {
     if (s.drumMutes.includes(step.voice)) continue;
     // A hit just recorded onto this step was already heard live.
-    if (heardLive.delete(`${step.voice}:${Math.round(step.beat * STEPS_PER_BEAT)}`)) continue;
+    if (heardLive.delete(`${step.voice}:${beatTick(step.beat)}`)) continue;
     send(noteOn('drums', step.note, step.velocity, 'sequencer', timeAt(step.beat)));
   }
   // The acid line plays only when switched on, and comes in on a bar line.
@@ -646,11 +648,12 @@ let acidHeld: number | null = null;
 let acidWasOn = false;
 let acidFromBeat = 0;
 
-/** The acid row plays sixteenths with the beat; a glide ties into the next note. */
+/** The acid row follows its selected note rate; a glide ties into the next note. */
 function scheduleAcid(fromBeat: number, toBeat: number, timeAt: (beat: number) => number): void {
-  const steps = get(musicStudio).acidSteps;
-  for (let k = Math.ceil(fromBeat * 4 - 1e-9); k < toBeat * 4; k++) {
-    const beatPos = k / 4;
+  const { acidSteps: steps, acidRate } = get(musicStudio);
+  const rate = stepsPerBeat(acidRate);
+  for (let k = Math.ceil(fromBeat * rate - 1e-9); k < toBeat * rate; k++) {
+    const beatPos = k / rate;
     const step = steps[((k % ACID_STEPS) + ACID_STEPS) % ACID_STEPS];
     const time = timeAt(beatPos);
     if (step.note === null) {
@@ -665,10 +668,10 @@ function scheduleAcid(fromBeat: number, toBeat: number, timeAt: (beat: number) =
     // A glide keeps the voice: the old note ends as the new one slides in.
     if (previous !== null && step.glide && previous !== note) send(noteOff('acid', previous, 'sequencer', time));
     acidHeld = note;
-    // Untied notes end before the next sixteenth.
+    // Untied notes end before the next step at every rate.
     const next = steps[(((k + 1) % ACID_STEPS) + ACID_STEPS) % ACID_STEPS];
     if (!(next.glide && next.note !== null)) {
-      send(noteOff('acid', note, 'sequencer', timeAt(beatPos + 0.16)));
+      send(noteOff('acid', note, 'sequencer', timeAt(beatPos + 0.64 / rate)));
       acidHeld = null;
     }
   }
@@ -959,7 +962,7 @@ export function launchLoop(id: string, now = false): void {
   // A factory preset that is not in the session (a scene saved before it was).
   const loop = loopById(id);
   if (!loop) return;
-  if ('rows' in loop) launchBeatLoop(beatPattern(loop), loop.id, now);
+  if ('rows' in loop) launchBeatLoop(beatPattern(loop), loop.id, now, loop.kit);
   else startMelodic(loop, ROLE_INSTRUMENTS[s.set][loop.role], now);
 }
 
@@ -1074,7 +1077,7 @@ function msToClipStart(now: boolean): number {
 function startClip(track: TrackId, clip: SessionClip, now: boolean): void {
   dressTrack(track, clip, msToClipStart(now));
   const s = get(musicStudio);
-  if (clip.kind === 'beat') launchBeatLoop(clip.pattern, clip.id, now);
+  if (clip.kind === 'beat') launchBeatLoop(clip.pattern, clip.id, now, clip.kit);
   else if (track !== 'beats') {
     const loop = clipLoop(clip, track, s.set, s.key);
     startMelodic(loop, loop.instrument, now);
@@ -1140,11 +1143,12 @@ function isRecorded(loop: MelodicLoop | RecordedLoop): loop is RecordedLoop {
   return 'kind' in loop && loop.kind === 'recorded';
 }
 
-function launchBeatLoop(pattern: DrumPattern, id: string, now: boolean): void {
+function launchBeatLoop(pattern: DrumPattern, id: string, now: boolean, kit?: string): void {
   if (beatLoopTimer) clearTimeout(beatLoopTimer);
   beatLoopTimer = null;
   const apply = () => {
     beatLoopTimer = null;
+    if (kit) musicStudio.setDrumKit(kit);
     musicStudio.setPattern(pattern);
     musicTransport.update((t) => ({ ...t, beatLoop: id, queuedBeat: null }));
     if (!sequencer) startSequencer();
@@ -1282,9 +1286,13 @@ function trackPlayed(event: NoteEvent): void {
 function recordHit(voice: DrumVoice, velocity: number, beat: number): void {
   const s = get(musicStudio);
   const beats = loopRec?.endBeat != null ? loopRec.endBeat - loopRec.startBeat : 0;
-  musicStudio.setPattern(writeHits(s.pattern, [{ beat, voice, velocity }], beats));
-  const step = Math.round(beat * STEPS_PER_BEAT);
-  if (sequencer && step / STEPS_PER_BEAT >= sequencer.scheduledBeat) heardLive.add(`${voice}:${step}`);
+  const grid = s.quantize === 'off' || s.quantize === '1/64' ? 64 : s.quantize === '1/32' ? 32 : s.pattern.grid ?? 16;
+  const pattern = changePatternGrid(s.pattern, Math.max(grid, s.pattern.grid ?? 16) as 16 | 32 | 64);
+  const snapped = quantizeDrumHit(pattern, beat, s.quantize);
+  musicStudio.setPattern(writeHits(pattern, [{ beat: snapped, voice, velocity }], beats));
+  const step = nearestGridStep(snapped, pattern.grid, pattern.swing);
+  const at = swingBeat(step / stepsPerBeat(pattern.grid), pattern.swing);
+  if (sequencer && at >= sequencer.scheduledBeat) heardLive.add(`${voice}:${beatTick(at)}`);
   if (!sequencer) startSequencer();
 }
 
@@ -1379,7 +1387,9 @@ function keepTake(take: LoopTake, fromBeat: number, writeDrums: boolean): number
     made++;
   }
   if (writeDrums && take.hits.length) {
-    musicStudio.setPattern(writeHits(get(musicStudio).pattern, take.hits, take.beats));
+    const pattern = get(musicStudio).pattern;
+    const grid = Math.max(pattern.grid ?? 16, gridForBeats(take.hits.map(h => h.beat))) as 16 | 32 | 64;
+    musicStudio.setPattern(writeHits(changePatternGrid(pattern, grid), take.hits, take.beats));
     if (!sequencer) startSequencer();
     made++;
   }
@@ -1472,6 +1482,7 @@ export const REPEAT_RATES = [
   { id: '1/8', beats: 1 / 2 },
   { id: '1/16', beats: 1 / 4 },
   { id: '1/32', beats: 1 / 8 },
+  { id: '1/64', beats: 1 / 16 },
   { id: '1/8T', beats: 1 / 3 },
   { id: '1/16T', beats: 1 / 6 },
 ] as const;
@@ -1602,6 +1613,8 @@ let preview: {
   tone?: string;
   /** The drum groove it locks with, played along when nothing else is. */
   groove?: BeatLoop;
+  auditionKit?: string;
+  previousKit?: string | null;
   pending: Array<{ note: number; offBeat: number; instrument: InstrumentId }>;
 } | null = null;
 let previewTimer: ReturnType<typeof setInterval> | null = null;
@@ -1622,7 +1635,7 @@ export function previewLoop(id: string | null): void {
   const { beat } = launchClockPosition();
   const playing = !!sequencer || loopSlots.size > 0;
   const start = playing ? Math.ceil(beat - 1e-6) : beat;
-  const beats = 'rows' in loop ? loop.steps / 4 : loop.beats;
+  const beats = 'rows' in loop ? patternBeats(beatPattern(loop)) : loop.beats;
   const s = get(musicStudio);
   preview = {
     loop,
@@ -1634,6 +1647,12 @@ export function previewLoop(id: string | null): void {
     groove: !playing && !('rows' in loop) && loop.groove ? (loopById(loop.groove) as BeatLoop | undefined) : undefined,
     pending: [],
   };
+  const auditionKit = 'rows' in loop ? loop.kit : preview.groove?.kit;
+  if (!playing && auditionKit) {
+    preview.previousKit = s.drumKit;
+    preview.auditionKit = auditionKit;
+    musicStudio.setDrumKit(auditionKit);
+  }
   previewingLoop.set(id);
   previewTimer = setInterval(schedulePreview, 40);
   schedulePreview();
@@ -1646,6 +1665,9 @@ export function stopPreview(): void {
     const t = audio.peekNow() ?? 0;
     const beatNow = launchClockPosition().beat;
     for (const p of preview.pending) if (p.offBeat > beatNow) send(previewEvent(noteOff(p.instrument, p.note, 'sequencer', t)));
+  }
+  if (preview?.auditionKit && !sequencer && get(musicStudio).drumKit === preview.auditionKit) {
+    musicStudio.setDrumKit(preview.previousKit ?? null);
   }
   preview = null;
   if (get(previewingLoop) !== null) previewingLoop.set(null);
@@ -1669,13 +1691,8 @@ function schedulePreview(): void {
   if (until <= p.scheduled) return;
   const drums = (loop: BeatLoop) => {
     const pattern = beatPattern(loop);
-    for (let step = Math.ceil((p.scheduled - p.start) * 4 - 1e-6); step < (until - p.start) * 4 - 1e-6; step++) {
-      const b = p.start + step / 4;
-      const i = step % pattern.steps;
-      for (const voice of DRUM_VOICES) {
-        const vel = pattern.tracks[voice][i];
-        if (vel > 0) send(noteOn('drums', DRUM_NOTES[voice], vel, 'sequencer', timeAt(b)));
-      }
+    for (const hit of stepsBetween(pattern, p.scheduled - p.start, until - p.start)) {
+      send(noteOn('drums', DRUM_NOTES[hit.voice], hit.velocity, 'sequencer', timeAt(p.start + hit.beat)));
     }
   };
   if (p.groove) drums(p.groove);
@@ -1963,13 +1980,15 @@ function frame(): void {
 
 function publishTransport(now: number): void {
   const s = get(musicStudio);
-  const step = sequencer ? stepAt(s.pattern, launchClockPosition().beat) : -1;
+  const beat = launchClockPosition().beat;
+  const step = sequencer ? stepAt(s.pattern, beat) : -1;
+  const acidStep = sequencer && s.acidOn && beat >= acidFromBeat ? Math.floor(beat * stepsPerBeat(s.acidRate)) % ACID_STEPS : -1;
   const progress = replay && replay.take.length > 0
     ? Math.max(0, Math.min(1, (replay.loop ? (now - replay.origin) % replay.take.length : now - replay.origin) / replay.take.length))
     : 0;
   const t = get(musicTransport);
-  if (t.step !== step || Math.abs(t.takeProgress - progress) > 0.002) {
-    musicTransport.set({ ...t, step, takeProgress: progress });
+  if (t.step !== step || t.acidStep !== acidStep || Math.abs(t.takeProgress - progress) > 0.002) {
+    musicTransport.set({ ...t, step, acidStep, takeProgress: progress });
   }
 }
 

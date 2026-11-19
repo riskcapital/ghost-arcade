@@ -21,7 +21,8 @@
   const TONE_FAMILIES: ToneFamily[] = ['bass', 'lead', 'arp', 'pad'];
   import { SCALES, keyLabel } from '../../music/studioSets';
   import { DRUM_LABELS, DRUM_VOICES, isBlackKey, noteName, type InstrumentId } from '../../music/noteEvents';
-  import { PATTERN_LENGTHS, STEPS_PER_BEAT, normalizePattern, resizePattern, type DrumPattern, type PatternLength } from '../../music/drumPattern';
+  import { NOTE_GRIDS, noteGrid, stepsPerBeat, type NoteGrid } from '../../music/grid';
+  import { changePatternGrid, patternBeats, patternLengths, stepAt, normalizePattern, resizePattern, type DrumPattern, type PatternLength } from '../../music/drumPattern';
   import { clipPosition, launchClip, playNote, releaseNote, stopTrack } from '../../music/musicRuntime';
   import { userPresets } from '../../music/presetLibrary';
   import { clipTrack, downloadMidi } from '../../music/midiExport';
@@ -32,6 +33,7 @@
   const ROW = 13;
   const VELOCITY_LANE = 46;
   const SNAPS = [
+    { id: '1/64', beats: 1 / 16 },
     { id: '1/32', beats: 1 / 8 },
     { id: '1/16', beats: 1 / 4 },
     { id: '1/8', beats: 1 / 2 },
@@ -50,8 +52,10 @@
   const playingIt = $derived(!!clip && (track === 'beats' ? s.sequencerPlaying && $musicTransport.beatLoop === clip.id : s.playingLoops[track] === clip.id));
   const instrument = $derived<InstrumentId>(clip?.kind === 'notes' ? (clip.instrument ?? (track === 'beats' ? 'drums' : ROLE_INSTRUMENTS[s.set][track])) : 'drums');
 
-  let snap = $state(1 / 4);
-  let gridWidth = $state(800);
+  let snap = $state(1 / 8);
+  let viewportWidth = $state(844);
+  let zoom = $state(1);
+  const gridWidth = $derived(Math.max(100, viewportWidth - 44) * zoom);
   let range = $state({ lo: 48, hi: 84 });
   let draft = $state<RecordedNote[] | null>(null);
   let position = $state<number | null>(null);
@@ -90,7 +94,7 @@
 
   const notesClip = $derived(clip?.kind === 'notes' ? (clip as NotesClip) : null);
   const notes = $derived(draft ?? notesClip?.notes ?? []);
-  const beats = $derived(clip?.kind === 'notes' ? clip.beats : clip ? clip.pattern.steps / STEPS_PER_BEAT : 4);
+  const beats = $derived(clip?.kind === 'notes' ? clip.beats : clip ? patternBeats(clip.pattern) : 4);
   const ppb = $derived(Math.max(8, gridWidth / beats));
   const pitches = $derived(Array.from({ length: range.hi - range.lo + 1 }, (_, i) => range.hi - i));
   const scaleSteps = $derived(SCALES[s.key.scale].steps);
@@ -360,6 +364,9 @@
               {#each SNAPS as g}<option value={g.beats}>{g.id}</option>{/each}
             </select>
           </label>
+          <label class="labelled">Zoom
+            <select bind:value={zoom} aria-label="Piano roll zoom">{#each [1, 2, 4, 8] as z}<option value={z}>{z}×</option>{/each}</select>
+          </label>
           <button class="text-btn" onclick={quantize} disabled={snap <= 0} title="Snap every note's start to the grid">Quantize</button>
           <div class="nudge" role="group" aria-label="Transpose">
             <button class="text-btn" onclick={() => transpose(-12)} title="Down an octave">−12</button>
@@ -369,9 +376,14 @@
           </div>
           <button class="text-btn" onclick={clearNotes} title="Remove every note">Clear</button>
         {:else}
-          <label class="labelled">Steps
+          <label class="labelled">Grid
+            <select value={noteGrid(clip.pattern.grid)} onchange={(e) => editPattern(p => changePatternGrid(p, +(e.target as HTMLSelectElement).value as NoteGrid))} title="Finer grids keep timing. Coarser grids quantize existing hits.">
+              {#each NOTE_GRIDS as grid}<option value={grid}>1/{grid}</option>{/each}
+            </select>
+          </label>
+          <label class="labelled">Length
             <select value={clip.pattern.steps} onchange={(e) => editPattern((p) => resizePattern(p, +(e.target as HTMLSelectElement).value as PatternLength))}>
-              {#each PATTERN_LENGTHS as n}<option value={n}>{n}</option>{/each}
+              {#each patternLengths(clip.pattern.grid) as n}<option value={n}>{n / stepsPerBeat(clip.pattern.grid)} beats</option>{/each}
             </select>
           </label>
           <label class="labelled">Swing
@@ -381,6 +393,8 @@
       </header>
 
       {#if notesClip}
+        <div class="note-scroll" bind:clientWidth={viewportWidth}>
+        <div class="note-content" style="width: {gridWidth + 44}px">
         <div class="roll-wrap">
           <div class="keys" style="height: {pitches.length * ROW}px">
             {#each pitches as p (p)}
@@ -389,8 +403,7 @@
           </div>
           <div
             class="roll"
-            bind:clientWidth={gridWidth}
-            style="height: {pitches.length * ROW}px; --ppb: {ppb}px; --bar: {ppb * 4}px"
+            style="height: {pitches.length * ROW}px; --ppb: {ppb}px; --bar: {ppb * 4}px; --snap: {ppb * (snap || 1)}px"
             role="application"
             aria-label="Piano roll"
             onpointerdown={rollDown}
@@ -427,10 +440,12 @@
             {/each}
           </div>
         </div>
+        </div>
+        </div>
         <p class="hint muted">Click to draw · drag to move · drag the right edge to lengthen · double-click to delete · drag a velocity bar to set how hard it plays</p>
       {:else if clip.kind === 'beat'}
         {@const steps = Array.from({ length: clip.pattern.steps }, (_, i) => i)}
-        <div class="beat" style="--steps: {clip.pattern.steps}">
+        <div class="beat" style="--steps: {clip.pattern.steps}; --grid-min: {78 + clip.pattern.steps * 14}px">
           {#each DRUM_VOICES as voice (voice)}
             <span class="voice">{DRUM_LABELS[voice]}</span>
             <div class="cells">
@@ -438,11 +453,11 @@
                 {@const v = clip.pattern.tracks[voice][step]}
                 <button
                   class="cell"
-                  class:bar={step % 16 === 0}
-                  class:beat-start={step % 4 === 0}
+                  class:bar={step % noteGrid(clip.pattern.grid) === 0}
+                  class:beat-start={step % stepsPerBeat(clip.pattern.grid) === 0}
                   class:on={v > 0}
                   class:accent={v >= 1}
-                  class:now={position !== null && Math.floor(position * STEPS_PER_BEAT) % clip.pattern.steps === step}
+                  class:now={position !== null && stepAt(clip.pattern, position) === step}
                   onpointerdown={(e) => stepDown(e, voice, step)}
                   oncontextmenu={(e) => e.preventDefault()}
                   aria-label="{DRUM_LABELS[voice]} step {step + 1}"
@@ -509,6 +524,8 @@
   .nudge .text-btn { padding: 0 7px; font-variant-numeric: tabular-nums; }
   .text-btn:disabled { opacity: 0.4; cursor: default; }
 
+  .note-scroll { overflow: auto; min-height: 160px; flex: 1; }
+  .note-content { display: flex; flex-direction: column; gap: 4px; }
   .roll-wrap { flex: 1; min-height: 160px; overflow: auto; display: flex; border: 1px solid var(--studio-edge-soft); border-radius: var(--studio-radius); background: var(--studio-slot); }
   .keys { flex: 0 0 44px; position: sticky; left: 0; z-index: 2; background: var(--studio-cell); border-right: 1px solid var(--studio-edge); }
   .key { box-sizing: border-box; padding-right: 4px; font-family: var(--ga-font-mono, ui-monospace); font-size: 9px; line-height: 13px; text-align: right; color: var(--studio-muted); border-bottom: 1px solid var(--studio-edge-soft); }
@@ -525,8 +542,9 @@
     pointer-events: none;
     background-image:
       linear-gradient(to right, var(--studio-edge) 1px, transparent 1px),
-      linear-gradient(to right, var(--studio-edge-soft) 1px, transparent 1px);
-    background-size: var(--bar) 100%, var(--ppb) 100%;
+      linear-gradient(to right, var(--studio-edge-soft) 1px, transparent 1px),
+      linear-gradient(to right, rgba(255,255,255,0.035) 1px, transparent 1px);
+    background-size: var(--bar) 100%, var(--ppb) 100%, var(--snap) 100%;
   }
   .note {
     position: absolute;
@@ -545,9 +563,9 @@
   .vbar { position: absolute; bottom: 0; width: 5px; margin-left: -2px; background: var(--studio-accent); border-radius: 1px 1px 0 0; cursor: ns-resize; }
   .hint { margin: 0; font-size: var(--ga-text-meta, 11px); }
 
-  .beat { display: grid; grid-template-columns: 70px 1fr; gap: 4px 8px; align-items: center; }
+  .beat { display: grid; grid-template-columns: 70px minmax(calc(var(--grid-min) - 78px), 1fr); overflow-x: auto; gap: 4px 8px; align-items: center; }
   .voice { font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); }
-  .cells { display: grid; grid-template-columns: repeat(var(--steps), minmax(0, 1fr)); gap: 2px; }
+  .cells { display: grid; grid-template-columns: repeat(var(--steps), minmax(12px, 1fr)); gap: 2px; }
   .cell { height: 22px; padding: 0; border: 1px solid var(--studio-edge-soft); background: var(--studio-cell); border-radius: 2px; cursor: pointer; }
   .cell.beat-start { border-color: var(--studio-edge); }
   .cell.on { background: color-mix(in srgb, var(--studio-accent) 70%, var(--studio-cell)); border-color: var(--studio-accent); }

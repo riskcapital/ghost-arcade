@@ -13,10 +13,12 @@
  */
 
 import { INSTRUMENTS, clampNote, clampVelocity, type InstrumentId } from './noteEvents';
-import { normalizePattern, patternHasHits, type DrumPattern } from './drumPattern';
+import { changePatternGrid, normalizePattern, patternHasHits, type DrumPattern } from './drumPattern';
 import { SCALES, scaleNote, type MusicKey, type ScaleId, type StudioSet } from './studioSets';
 import { BEAT_LOOPS, LOOP_ROLES, MELODIC_LOOPS, ROLE_INSTRUMENTS, beatPattern, loopById, loopNotesBetween, type LoopRole } from './loops';
+import { kitById } from './tone/kits';
 import { toneById } from './tone/tones';
+import { FLOOR_COLLECTIONS } from './floorLibrary';
 import { LOOP_STYLE_LABELS, loopStyle } from './loopLibrary';
 import { BEATS_PER_BAR, MAX_LOOP_BARS, type RecordedLoop, type RecordedNote } from './loopRecorder';
 
@@ -60,6 +62,7 @@ export interface BeatClip {
   id: string;
   name: string;
   pattern: DrumPattern;
+  kit?: string;
   preset?: string;
   visual?: ClipVisual;
 }
@@ -100,7 +103,7 @@ export type Session = Record<TrackId, Array<SessionClip | null>>;
 export function clipFromPreset(presetId: string, key: MusicKey, id: string): SessionClip | null {
   const loop = loopById(presetId);
   if (!loop) return null;
-  if ('rows' in loop) return { kind: 'beat', id, name: loop.name, pattern: beatPattern(loop), preset: loop.id };
+  if ('rows' in loop) return { kind: 'beat', id, name: loop.name, pattern: beatPattern(loop), ...(loop.kit ? { kit: loop.kit } : {}), preset: loop.id };
   const notes = loopNotesBetween(loop, key, 0, 0, loop.beats).map((n) => ({ beat: n.beat, dur: n.dur, note: n.note, velocity: n.velocity }));
   return { kind: 'notes', id, name: loop.name, beats: loop.beats, notes, key: { ...key }, instrument: null, ...(loop.tone ? { tone: loop.tone } : {}), preset: loop.id };
 }
@@ -170,12 +173,7 @@ export function clipLoop(clip: NotesClip, track: LoopRole, set: StudioSet, key: 
 }
 
 /** The rows a new session starts with: grooves that work together across a row. */
-const STARTER_ROWS: Array<Partial<Record<TrackId, string>>> = [
-  { beats: 'beat-four', bass: 'bass-rolling', lead: 'lead-starboard', chords: 'chords-epic', texture: 'tex-swell' },
-  { beats: 'beat-techno', bass: 'bass-offbeat', lead: 'lead-signal-flare', chords: 'chords-stab', texture: 'tex-pulse' },
-  { beats: 'beat-onedrop', bass: 'bass-dub-root', lead: 'lead-rooftop-melodica', chords: 'chords-skank', texture: 'tex-drops' },
-  { beats: 'beat-pulse', bass: 'bass-sub', lead: 'lead-morse-bell', chords: 'chords-float', texture: 'tex-ritual' },
-];
+const STARTER_COLLECTIONS = ['chrome', 'oxide', 'magnet', 'blacksteel', 'aurora', 'cobalt', 'velvet', 'yard'];
 
 export function emptySession(rows = SESSION_ROWS): Session {
   return Object.fromEntries(TRACK_IDS.map((t) => [t, Array.from({ length: rows }, () => null)])) as Session;
@@ -183,10 +181,16 @@ export function emptySession(rows = SESSION_ROWS): Session {
 
 export function defaultSession(key: MusicKey, makeId: () => string): Session {
   const session = emptySession();
-  STARTER_ROWS.forEach((row, r) => {
-    for (const track of TRACK_IDS) {
-      const id = row[track];
-      if (id) session[track][r] = clipFromPreset(id, key, makeId());
+  STARTER_COLLECTIONS.forEach((collection, row) => {
+    const bank = FLOOR_COLLECTIONS.find(c => c.id === collection)!;
+    for (const track of ['beats', 'bass', 'chords', 'lead'] as const) {
+      const preset = `floor-${collection}-${track === 'beats' ? 'beat' : track}`;
+      const clip = clipFromPreset(preset, key, makeId());
+      if (clip?.kind === 'beat') {
+        clip.name += ` · ${bank.bpm} BPM`;
+        clip.pattern = changePatternGrid(clip.pattern, 32);
+      }
+      session[track][row] = clip;
     }
   });
   return session;
@@ -249,6 +253,7 @@ interface RawClip {
   name?: unknown;
   preset?: unknown;
   pattern?: unknown;
+  kit?: unknown;
   beats?: unknown;
   notes?: unknown;
   key?: { root?: unknown; scale?: unknown } | null;
@@ -267,7 +272,7 @@ export function normalizeClip(raw: unknown): SessionClip | null {
   if (input.kind === 'beat') {
     if (!input.pattern) return null;
     const visual = normalizeClipVisual(input.visual);
-    return { kind: 'beat', id: input.id, name, pattern: normalizePattern(input.pattern), ...(preset ? { preset } : {}), ...(visual ? { visual } : {}) };
+    return { kind: 'beat', id: input.id, name, pattern: normalizePattern(input.pattern), ...(typeof input.kit === 'string' && kitById(input.kit) ? { kit: input.kit } : {}), ...(preset ? { preset } : {}), ...(visual ? { visual } : {}) };
   }
   if (input.kind !== 'notes') return null;
   // Any length in quarter beats: a three-beat loop drifts against the bar on purpose.

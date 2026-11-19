@@ -1,5 +1,6 @@
 <script lang="ts">
   /** The drum pattern: a row per kit voice, a cell per step, the playhead on the VJ clock. */
+  import { stepsPerBeat } from '../../music/grid';
   import { DRUM_LABELS, DRUM_NOTES, DRUM_VOICES, type DrumVoice } from '../../music/noteEvents';
   import { musicStudio, musicTransport } from '../../music/musicStudioStore';
   import { hitDrum } from '../../music/musicRuntime';
@@ -14,7 +15,7 @@
   const held = $derived($musicTransport.held);
   const steps = $derived(Array.from({ length: pattern.steps }, (_, i) => i));
   // Zero means "fill the width"; otherwise a fixed cell size.
-  const columns = $derived(cell > 0 ? `repeat(${pattern.steps}, ${cell}px)` : `repeat(${pattern.steps}, minmax(0, 1fr))`);
+  const columns = $derived(cell > 0 ? `repeat(${pattern.steps}, ${cell}px)` : `repeat(${pattern.steps}, minmax(12px, 1fr))`);
 
   function audition(e: PointerEvent, voice: DrumVoice) {
     e.preventDefault();
@@ -29,7 +30,7 @@
       <button
         class="step"
         class:on={pattern.tracks[voice][step] > 0}
-        class:bar={step % 4 === 0}
+        class:bar={step % stepsPerBeat(pattern.grid) === 0}
         class:playhead={step === playStep}
         onclick={() => musicStudio.toggleStep(voice, step)}
         aria-label="{DRUM_LABELS[voice]} step {step + 1}"
