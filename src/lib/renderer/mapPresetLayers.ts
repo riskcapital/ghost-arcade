@@ -104,7 +104,12 @@ function buildEntry(row: MapPresetRow): MapPresetCacheEntry {
   const groupId = mapPresetGroupId(row.key);
   const layers = row.composition.layers.map((layer) => {
     const cloned = cleanPresetLayerClone(layer);
-    cloned.id = mapPresetLayerId(row.key, surfaceIdOf(layer));
+    const surfaceId = surfaceIdOf(layer);
+    cloned.id = mapPresetLayerId(row.key, surfaceId);
+    // The copy has an id of its own, so its surface is written out here
+    // (a layer linked to another surface draws with that one).
+    if (cloned.surfaceId) cloned.surfaceId = surfaceId;
+    delete cloned.surfaceLinkFor;
     // Flat under the row group, as before shared surfaces: the native scene
     // has one level of grouping and the row fader must reach every child.
     cloned.parentGroupId = groupId;
@@ -250,7 +255,7 @@ export function mapLiveSurfaceLayers(projectLayers: readonly Layer[], presetLaye
   const boundGroups = new Set<string>();
   for (const layer of projectLayers) {
     if (!hasLiveSource(layer)) continue;
-    if (presetBySurface.get(layer.id)?.some((preset) => sameLiveSource(preset, layer))) continue;
+    if (presetBySurface.get(surfaceIdOf(layer))?.some((preset) => sameLiveSource(preset, layer))) continue;
     include.add(layer.id);
     if (layer.type === 'group') boundGroups.add(layer.id);
     if (layer.parentGroupId) include.add(layer.parentGroupId);
@@ -277,8 +282,8 @@ export function composeMapOutputLayers(
   const stored = new Map((surfaces ?? []).map((surface) => [surface.id, surface]));
   return [
     ...feeds.map((layer) => ({ ...layer, opacity: 0 })),
-    // An editor layer is its own surface, so it wears that surface's Look.
-    ...mapLiveSurfaceLayers(editorLayers, presetLayers).map((layer) => withSurfaceLook(layer, layer.id, stored)),
+    // An editor layer wears the Look of the surface it is on.
+    ...mapLiveSurfaceLayers(editorLayers, presetLayers).map((layer) => withSurfaceLook(layer, surfaceIdOf(layer), stored)),
     ...presetLayers,
   ];
 }

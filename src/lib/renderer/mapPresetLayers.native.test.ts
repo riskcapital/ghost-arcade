@@ -165,6 +165,39 @@ describe('VJ MAP presets on the shared map', () => {
     }
   });
 
+  it('draws a layer linked to another surface with that surface, from either editor layer', async () => {
+    const shared = surfaceLayer('stage-left', [0.1, 0.1, 0.4, 0.6]);
+    // B's layer was pasted (its own id, its own clip) and then linked.
+    const pasted = { ...surfaceLayer('pasted', [0.12, 0.08, 0.42, 0.58], { id: 'src-b', src: '/media/b.png' }), surfaceId: 'stage-left', surfaceLinkFor: 'pasted' };
+    const project = migrateMapSurfaces({ layers: [shared], vjMode: { compositions: [preset('A', [shared])] } } as unknown as Project);
+    const comps = [...project.vjMode!.compositions, preset('B', [pasted])];
+    const state = launcher(['A', 'B']);
+    const sync = readySync();
+    try {
+      const cache = new Map();
+      const before = await flushPayload(sync, mapOutput(state, comps, project.layers, project.mapSurfaces, cache));
+      // One surface, one native id per row, the shared corners on both.
+      expect(before.upserts.get('mapvj-1::stage-left').corners).toEqual(shared.corners);
+      expect(before.upserts.has('mapvj-1::pasted')).toBe(false);
+      // B keeps its own clip.
+      expect(mapOutput(state, comps, project.layers, project.mapSurfaces, cache).find((l) => l.id === 'mapvj-1::stage-left')!.source!.src).toBe('/media/b.png');
+
+      // B loaded in the editor: dragging its (linked) layer moves A too.
+      const moved = corners(0.05, 0.2, 0.45, 0.7);
+      const editor = [{ ...pasted, corners: moved }];
+      const after = await flushPayload(sync, mapOutput(state, comps, editor, project.mapSurfaces, cache));
+      expect(after.upserts.get('mapvj-0::stage-left').corners).toEqual(moved);
+      expect(after.upserts.get('mapvj-1::stage-left').corners).toEqual(moved);
+
+      // A copy of B's layer (a paste: new id, same fields) is not linked.
+      const copy = { ...pasted, id: 'copy', corners: corners(0.6, 0.6, 0.9, 0.9) };
+      const withCopy = mapOutput(state, comps, [copy], project.mapSurfaces, cache);
+      expect(withCopy.find((l) => l.id === 'mapvj-0::stage-left')!.corners).toEqual(shared.corners);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it('keeps a detached preset surface where it is', () => {
     const shared = surfaceLayer('s', [0.1, 0.1, 0.4, 0.6]);
     const own = { ...clone(shared), corners: corners(0.5, 0.5, 0.9, 0.9), surfaceId: 's', surfaceDetached: true };
