@@ -72,7 +72,7 @@
     {/if}
   </div>
   {#if linkedTo}
-    <p class="surface-hint" data-testid="surface-linked-to">Linked to <span class="surface-ref">{linkedTo}</span></p>
+    <p class="surface-hint" data-testid="surface-linked-to">Linked to <span class="surface-ref layer-name">{linkedTo}</span></p>
   {/if}
   <div class="surface-actions">
     {#if layer.surfaceDetached}

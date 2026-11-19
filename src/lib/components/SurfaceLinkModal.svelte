@@ -89,7 +89,8 @@
       phase = 'choose';
       return;
     }
-    showToast(`Linked ${result.changed} preset${result.changed === 1 ? '' : 's'} to ${name}. Undo reverts it.`, 'info');
+    const doneMessage = result.changed === 1 ? `Linked 1 preset to ${name}. Undo reverts it.` : `Linked ${result.changed} presets to ${name}. Undo reverts it.`;
+    showToast(doneMessage, 'info');
     close();
   }
 
@@ -124,7 +125,7 @@
     return `Leaves its own surface, ${warp}`;
   }
 
-  const presetsLabel = (n: number) => `${n} preset${n === 1 ? '' : 's'}`;
+  const presetsLabel = (n: number) => (n === 1 ? '1 preset' : `${n} presets`);
 
   $: presetNames = new Map(presets.map((c) => [c.id, c.name]));
   $: repeatedNames = new Set(surfaceList.map((s) => s.name).filter((name, i, all) => all.indexOf(name) !== i));
@@ -180,10 +181,14 @@
                     disabled={state.kind === 'on' && !choice.selected}
                     onchange={(e) => patch(c.id, { selected: e.currentTarget.checked })}
                   />
-                  <span class="sl-name" title={c.name}>{c.name}</span>
+                  <span class="sl-name preset-name" title={c.name}>{c.name}</span>
                 </label>
                 {#if state.kind === 'on'}
-                  <span class="sl-state">On this surface · {state.layerName}{state.detached ? ' (own warp)' : ''}</span>
+                  {#if state.detached}
+                    <span class="sl-state">On this surface, own warp · <span class="layer-name">{state.layerName}</span></span>
+                  {:else}
+                    <span class="sl-state">On this surface · <span class="layer-name">{state.layerName}</span></span>
+                  {/if}
                 {:else}
                   <select
                     class="sl-dest"
@@ -224,15 +229,19 @@
         {:else if plan}
           <p class="sl-review-source">
             <span class="sl-eyebrow">Surface</span>
-            <span class="sl-surface-name">{plan.surfaceName}</span>
+            <span class="sl-surface-name layer-name">{plan.surfaceName}</span>
             {#if source}<span class="sl-muted-inline">used by {presetsLabel(source.presetIds.length)} now</span>{/if}
           </p>
           <ul class="sl-review" data-testid="surface-link-review">
             {#each changes as row (row.compositionId)}
               <li>
                 <span class="sl-arrow" aria-hidden="true">→</span>
-                <span class="sl-name">{row.presetName}</span>
-                <span class="sl-layer">{row.action === 'add' ? 'new layer' : row.layerName}</span>
+                <span class="sl-name preset-name">{row.presetName}</span>
+                {#if row.action === 'add'}
+                  <span class="sl-layer">new layer</span>
+                {:else}
+                  <span class="sl-layer layer-name">{row.layerName}</span>
+                {/if}
                 <span class="sl-detail">{reviewDetail(row)}</span>
               </li>
             {/each}
