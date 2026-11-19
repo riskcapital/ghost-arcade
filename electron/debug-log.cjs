@@ -33,8 +33,11 @@ function rotatedLogName(file, n) {
  * becomes .2, and the oldest falls off. A problem reported after a restart
  * is no longer lost with the log that would have shown it.
  *
- * Never throws: a log that cannot be moved (another copy of the app has it
- * open, a read-only folder) is simply overwritten as before.
+ * Never throws. Returns true when the newest log was moved away (or there
+ * was none), false when it is still there: it could not be moved (a virus
+ * scanner or another program has it open, a read-only folder). The caller
+ * then appends to it instead of starting it afresh, so the launch that
+ * failed is not wiped by the next one.
  */
 function rotateDebugLogs(file, keep = 3, fsImpl = fs) {
   const count = Math.max(1, Math.floor(keep));
@@ -49,6 +52,30 @@ function rotateDebugLogs(file, keep = 3, fsImpl = fs) {
       /* keep going: the newest log still gets written */
     }
   }
+  try {
+    return !fsImpl.existsSync(file);
+  } catch {
+    return true;
+  }
 }
 
-module.exports = { debugLogLocation, rotatedLogName, rotateDebugLogs };
+/**
+ * Start this launch's log: a fresh file after a rotation, or a separator
+ * appended to a log that could not be rotated (unless that log is already
+ * over `maxBytes`, so a log that can never be moved still cannot grow
+ * without end). Never throws.
+ */
+function startDebugLog(file, header, rotated, fsImpl = fs, maxBytes = 32 * 1024 * 1024) {
+  try {
+    let fresh = rotated;
+    if (!fresh) {
+      try { fresh = fsImpl.statSync(file).size > maxBytes; } catch { fresh = true; }
+    }
+    if (fresh) fsImpl.writeFileSync(file, header);
+    else fsImpl.appendFileSync(file, `\n${header}`);
+  } catch {
+    /* a read-only log folder must not stop the app */
+  }
+}
+
+module.exports = { debugLogLocation, rotatedLogName, rotateDebugLogs, startDebugLog };

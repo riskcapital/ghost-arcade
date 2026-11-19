@@ -112,6 +112,8 @@ jobs:
         run: cargo test --manifest-path native-renderer/Cargo.toml --locked windows_video
       - name: Test native Screen presentation capability
         run: cargo test --manifest-path native-renderer/Cargo.toml --locked slice_presentation
+      - name: Test the HAP reader (variants, edit lists, packet checks)
+        run: cargo test --manifest-path native-renderer/Cargo.toml --locked hap_video
       # Written to pass with or without Media Foundation (Windows N and
       # Server images can lack it) and with no display attached.
       - name: Test Media Foundation loading, the frame counter and display rates

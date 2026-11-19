@@ -831,9 +831,9 @@ pub fn spawn_native_video_stream(
                 // Without Media Foundation (Windows N/KN) say so plainly; the
                 // stream then plays through ffmpeg. HAP needs no Media Foundation.
                 if let Err(reason) = crate::windows_media_foundation::availability()
-                    && !(hap_supported && crate::hap_video::HapVideoDecoder::open(&path).is_ok())
+                    && !matches!(crate::hardware_video::open_hap(&path, hap_supported), Ok(Some(_)))
                 {
-                    return Err(reason);
+                    return Err(crate::hardware_video::open_hap(&path, hap_supported).err().unwrap_or(reason));
                 }
                 let mut decoder = crate::hardware_video::HardwareVideoDecoder::open_with_device(&path, video_device, hap_supported, hardware_max_edge)?;
                 // Require real decoder output before reporting hardware. Admit the
@@ -2412,9 +2412,9 @@ pub fn probe_native_video(
         #[cfg(target_os = "windows")]
         let opened = (|| {
             if let Err(reason) = crate::windows_media_foundation::availability()
-                && !(hap_supported && crate::hap_video::HapVideoDecoder::open(path).is_ok())
+                && !matches!(crate::hardware_video::open_hap(path, hap_supported), Ok(Some(_)))
             {
-                return Err(reason);
+                return Err(crate::hardware_video::open_hap(path, hap_supported).err().unwrap_or(reason));
             }
             let mut decoder = crate::hardware_video::HardwareVideoDecoder::open_with_device(
                 path, video_device, hap_supported, None)?;
@@ -2488,6 +2488,10 @@ pub fn probe_native_video(
                 probe.backend = "failed".into();
                 probe.reason = if probe.codec.is_empty() {
                     "The file has no video that can be read".into()
+                } else if crate::hap_video::sniff_hap_codec(path).is_some() && hardware_error.contains("HAP") {
+                    // A HAP movie neither path can read: the HAP path's
+                    // reason names the variant; ffmpeg's only says it failed.
+                    hardware_error
                 } else {
                     let tail = stderr.lines().rev().find(|line| !line.trim().is_empty()).unwrap_or("").trim();
                     format!("The video could not be decoded ({tail})")

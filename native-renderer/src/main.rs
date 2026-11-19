@@ -21714,10 +21714,14 @@ impl RenderState {
             );
         }
         eprintln!(
-            "[ghost-core] adapter selected: name={} backend={:?} driver={} reported_backend_name={}",
+            "[ghost-core] adapter selected: name={} backend={:?} driver={} driver_info={} vendor={:#06x} device={:#06x} type={:?} reported_backend_name={}",
             adapter_info.name,
             adapter_info.backend,
             adapter_info.driver,
+            adapter_info.driver_info,
+            adapter_info.vendor,
+            adapter_info.device,
+            adapter_info.device_type,
             native_backend_name()
         );
         let adapter_limits = adapter.limits();
@@ -21765,6 +21769,21 @@ impl RenderState {
             })
             .await
             .map_err(|err| err.to_string())?;
+        // A driver reset (Windows TDR), a hung GPU or an unplugged external
+        // GPU ends the device. Say so in the log with the adapter, so a support
+        // log tells a GPU fault from a fault in the app.
+        {
+            let adapter_label = format!(
+                "{} ({:?}, driver {} {})",
+                adapter_info.name, adapter_info.backend, adapter_info.driver, adapter_info.driver_info
+            );
+            device.set_device_lost_callback(move |reason, message| {
+                if matches!(reason, wgpu::DeviceLostReason::Destroyed) {
+                    return;
+                }
+                eprintln!("[ghost-core] GPU DEVICE LOST on {adapter_label}: reason={reason:?} {message}");
+            });
+        }
 
         let caps = surface.get_capabilities(&adapter);
         // Boundary contract: render linear internally, then store/publish
