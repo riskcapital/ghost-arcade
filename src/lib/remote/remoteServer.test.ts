@@ -310,6 +310,20 @@ describe('paired devices cannot become the host or access other phones', () => {
     } finally { for (const peer of [host,a,b]) peer.ws!.close(); }
   });
 
+  it('tells the desktop when a phone goes away in the middle of a camera feed', async () => {
+    const host = await openDesktop(); const phone = await openSocket(`?pair=${TOKEN}`); const other = await openSocket(`?pair=${TOKEN}`);
+    try {
+      phone.ws!.send(JSON.stringify({type:'phone_camera_offer',sessionId:'feed-1',sdp:'offer'}));
+      other.ws!.send(JSON.stringify({type:'phone_camera_offer',sessionId:'feed-2',sdp:'offer'}));
+      await waitFor(() => host.received!.filter(m => m.type === 'phone_camera_offer').length === 2 || undefined);
+      const gone = closed(phone.ws!); phone.ws!.close(); await gone;
+      const stop = await waitFor(() => host.received!.find(m => m.type === 'phone_camera_stop'));
+      expect(stop).toEqual({type:'phone_camera_stop',sessionId:'feed-1',reason:'phone-disconnected'});
+      // Only that phone's session.
+      expect(host.received!.filter(m => m.type === 'phone_camera_stop')).toHaveLength(1);
+    } finally { host.ws!.close(); other.ws!.close(); }
+  });
+
   it('keeps an app 1.0 phone working: query-string token, bundled shader path, camera after a reconnect', async () => {
     const host = await openDesktop(); let phone = await openSocket(`?pair=${TOKEN}`);
     try {
