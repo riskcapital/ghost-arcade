@@ -288,7 +288,7 @@ app.commandLine.appendSwitch('high-dpi-support', '1');
 // Debug log to file (stdout doesn't always flush from background Electron)
 // In production, __dirname is inside the asar (read-only), so write to %LOCALAPPDATA%
 const _isAsar = __dirname.includes('app.asar');
-const { debugLogLocation, rotateDebugLogs } = require('./debug-log.cjs');
+const { debugLogLocation, rotateDebugLogs, startDebugLog } = require('./debug-log.cjs');
 const { dir: _logDir, file: _logFile } = debugLogLocation({
   packaged: _isAsar,
   platform: process.platform,
@@ -297,12 +297,8 @@ const { dir: _logDir, file: _logFile } = debugLogLocation({
 });
 // The last three launches stay readable (.log, .1.log, .2.log): a problem
 // reported after restarting the app used to be overwritten with its log.
-rotateDebugLogs(_logFile, 3);
-try {
-  fs.writeFileSync(_logFile, `=== Electron started ${new Date().toISOString()} ===\n`);
-} catch {
-  /* a read-only log folder must not stop the app */
-}
+// A log that cannot be moved is appended to, never wiped.
+startDebugLog(_logFile, `=== Electron started ${new Date().toISOString()} (${app.getVersion()}, ${process.platform} ${process.getSystemVersion?.() || ''}) ===\n`, rotateDebugLogs(_logFile, 3));
 // Buffered async log writes. The old appendFileSync-per-line blocked the
 // main thread 1-5ms per console call — IPC handling, window management,
 // and native sends all jank when logging gets busy mid-show. Lines queue
