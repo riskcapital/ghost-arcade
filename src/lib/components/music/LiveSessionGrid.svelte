@@ -11,10 +11,21 @@
   import { guessRole } from '../../music/liveControl';
   import { studioSceneForLive } from '../../music/scenes';
   import { livePlatform, liveSetupWords } from '../../ableton/liveSetup';
-  import { PART_SOURCES, type VoiceSourceId } from '../../music/visualVoices';
+  import { PART_SOURCES, liveSource, type VoiceSourceId } from '../../music/visualVoices';
+  import { liveStackKey } from '../../music/clipStack';
+  import { liveTrackKeys } from '../../music/liveControl';
+  import { stackEditor } from '../../music/studioUi';
 
   const s = $derived($musicStudio);
   const live = $derived($abletonBridge);
+  const trackKeys = $derived(liveTrackKeys(live.tracks));
+  /** A Live clip's visuals are kept by its track and name (or slot). */
+  const stackKey = (t: number, row: number) => liveStackKey(trackKeys[t], row, live.tracks[t].slots.map((c) => c?.name));
+  const layersOf = (t: number, row: number) => s.liveStacks[stackKey(t, row)]?.items.length ?? 0;
+  function openVisuals(t: number, row: number) {
+    const track = live.tracks[t];
+    stackEditor.set({ kind: 'live', key: stackKey(t, row), title: `${track.name || `Track ${t + 1}`} · ${track.slots[row]?.name || `Clip ${row + 1}`}`, follow: liveSource(trackKeys[t]) });
+  }
   const words = $derived(liveSetupWords(livePlatform(), live.script?.liveVersions));
   const rows = $derived(Math.max(live.scenes.length, ...live.tracks.map((t) => t.slots.length), 0));
 
@@ -93,17 +104,24 @@
         {#each live.tracks as track, t (t)}
           {@const clip = track.slots[row]}
           {#if clip}
-            <button
-              class="clip"
-              class:playing={track.playing === row}
-              class:queued={track.fired === row}
-              style="--clip: {liveColor(clip.color)}"
-              onclick={() => abletonBridge.launchClip(t, row)}
-              title="Launch {clip.name || 'clip'} in Live"
-            >
-              <span class="clip-state" aria-hidden="true"></span>
-              <span class="clip-name">{clip.name || 'Clip'}</span>
-            </button>
+            {@const layers = layersOf(t, row)}
+            <div class="cell">
+              <button
+                class="clip"
+                class:playing={track.playing === row}
+                class:queued={track.fired === row}
+                style="--clip: {liveColor(clip.color)}"
+                onclick={() => abletonBridge.launchClip(t, row)}
+                ondblclick={() => openVisuals(t, row)}
+                title="Launch {clip.name || 'clip'} in Live · double-click for its visuals"
+              >
+                <span class="clip-state" aria-hidden="true"></span>
+                <span class="clip-name">{clip.name || 'Clip'}</span>
+              </button>
+              <button class="visuals" class:has={layers > 0} onclick={() => openVisuals(t, row)} aria-label="Visuals for {clip.name || 'clip'}" title={!layers ? 'Give it visuals' : layers === 1 ? 'Its visuals: 1 layer' : `Its visuals: ${layers} layers`}>
+                <svg viewBox="0 0 12 12" aria-hidden="true"><rect x="1.5" y="2.5" width="9" height="7" rx="1" /><path d="M1.5 7.5l3-2.5 2.5 2 1.5-1 2 1.5" /></svg>
+              </button>
+            </div>
           {:else}
             <span class="empty"></span>
           {/if}
@@ -191,6 +209,12 @@
   .clip.playing { background: color-mix(in srgb, var(--clip) 22%, var(--studio-cell)); }
   .clip.playing .clip-state { background: var(--studio-accent); box-shadow: 0 0 6px var(--studio-accent); }
   .clip.queued .clip-state { background: var(--studio-accent); animation: blink 0.5s steps(2) infinite; }
+  .cell { position: relative; display: flex; gap: 2px; min-width: 0; }
+  .cell .clip { flex: 1; }
+  .visuals { flex: 0 0 20px; display: none; place-items: center; padding: 0; border: 1px solid var(--studio-edge-soft); background: transparent; color: var(--studio-muted); border-radius: var(--studio-radius); cursor: pointer; }
+  .visuals svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linejoin: round; }
+  .cell:hover .visuals, .visuals:focus-visible, .visuals.has { display: inline-grid; }
+  .visuals.has { color: var(--ga-icon, #5278ff); border-color: color-mix(in srgb, var(--ga-icon, #5278ff) 45%, var(--studio-edge-soft)); }
   .empty { height: 28px; border: 1px dashed var(--studio-edge-soft); border-radius: var(--studio-radius); opacity: 0.5; }
   @keyframes blink { 50% { opacity: 0.2; } }
 </style>

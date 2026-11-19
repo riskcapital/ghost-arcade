@@ -42,10 +42,12 @@
   import AnalogModules from './AnalogModules.svelte';
   import RackModules from './RackModules.svelte';
   import VisualRack from './VisualRack.svelte';
+  import NowPlaying from './NowPlaying.svelte';
   import MacroStrip from './MacroStrip.svelte';
   import OutputStrip from './OutputStrip.svelte';
   import SessionGrid from './SessionGrid.svelte';
   import ClipEditor from './ClipEditor.svelte';
+  import ClipStackEditor from './ClipStackEditor.svelte';
   import LoopPicker from './LoopPicker.svelte';
   import MixerDesk from './MixerDesk.svelte';
   import StudioRecordControls from './StudioRecordControls.svelte';
@@ -384,6 +386,7 @@
         <BathModules part="xy" />
       </div>
       <div class="rack right face">
+        <NowPlaying />
         <VisualRack />
         <RackModules />
       </div>
@@ -396,6 +399,7 @@
         <BerlinModules part="acid" />
       </div>
       <div class="rack right face">
+        <NowPlaying />
         <VisualRack />
         <RackModules />
       </div>
@@ -410,6 +414,7 @@
         <DubShotsModule />
       </div>
       <div class="rack right face">
+        <NowPlaying />
         <VisualRack />
         <RackModules />
       </div>
@@ -421,6 +426,7 @@
         <MachinePads bind:selected={machinePad} />
       </div>
       <div class="rack right face">
+        <NowPlaying />
         <VisualRack />
         <RackModules />
       </div>
@@ -431,6 +437,7 @@
         <PadsModule />
       </div>
       <div class="rack right face">
+        <NowPlaying />
         <VisualRack />
         <RackModules />
       </div>
@@ -441,7 +448,7 @@
     <CableLayer {root} />
     <MacroEditor />
     <InsertEditor />
-    <ClipEditor />
+    <ClipEditor /><ClipStackEditor />
     <LoopPicker />
   </div>
 {/if}
@@ -616,7 +623,8 @@
   .rack.right { grid-area: right; }
   .rack > :global(.module) { flex: 0 0 auto; }
   .rack > :global(.module.grow), .rack > :global(.play), .rack > :global(.beat) { flex: 1 1 0; }
-  .rack > :global(.module.grow) { min-height: 140px; }
+  /* The visuals keep room for a few voices with their controls; a short window scrolls the rack instead. */
+  .rack > :global(.module.grow) { min-height: 300px; }
   .centre { grid-area: centre; display: flex; flex-direction: column; gap: var(--studio-gap); min-width: 0; min-height: 0; }
   .centre > :global(.lower) { flex: 0 0 auto; height: 36%; min-height: 200px; }
   /* The lower panel's tabs keep their row; its actions (Loops, Rec, length, snap, capture, MIDI) wrap to a second row when they do not fit. */

@@ -24,6 +24,10 @@ import { AUTO_PALETTE, CLASSIC_COLORS, CLASSIC_PALETTE, KEY_PALETTE, KeyHueGlide
 import { BLEND_MODE_ORDER, createLayer, type BlendMode, type Layer } from '../types';
 import { isLiveSource, VOICE_AUTO_INPUT, VOICE_SOURCE_INPUT, VOICE_SOURCES, voiceSourceIndex, type LiveSourceId, type VoiceSourceId } from './visualVoices';
 import type { MusicKey, StudioSet } from './studioSets';
+import type { MediaSource } from '../types';
+import type { ClipStack, StackItem } from './clipStack';
+import { auditionSolo, currentStacks } from './stackRuntime';
+import { readableClipUri, staticClipSource } from '../show/tracks/showClipSources';
 
 export const STUDIO_PLUGIN_ID = 'musicstudio';
 export const STUDIO_EFFECT_TYPE = 'music-studio';
@@ -244,7 +248,10 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
     const barPos = clock ? (clock.vxBars ?? 0) + (clock.vxBar ?? 0) : 0;
     const muted = studio.musicVoices.map((v) => v.level <= 0);
     const mixed = studio.musicMix.follow ? followerFor(layer.id).step(studio.musicMix, barPos, muted, inputs.feel?.()) : mixAt(studio.musicMix, barPos, muted);
+    // A stack auditioned on its own: the studio's own voices step aside.
+    const solo = auditionSolo();
     studio.musicVoices.forEach((voice, index) => {
+      if (solo) return;
       const code = inputs.code(voice.file);
       if (!code) return;
       const id = studioVoiceLayerId(layer, index);
@@ -266,6 +273,14 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
     });
     // The top of the list draws on top: the mix stacks its rows from the first up.
     rows.reverse();
+    // The playing clips' visual stacks, over the voices, in track order:
+    // each its own mix, blended in as one row.
+    for (const { entry, stack, level } of currentStacks()) {
+      const stackLayers = expandStack(`${layer.id}:stack:${entry.uid}`, stack, studio.musicSet, inputs, palette, key);
+      if (!stackLayers) continue;
+      out.push(...stackLayers.layers);
+      rows.push({ layerId: stackLayers.id, opacity: stack.opacity * level, blendMode: stack.blend });
+    }
     // Trails: last frame's mix, faded, under this frame's voices.
     const trail = trailsOpacity(studio.musicFinish);
     if (trail > 0 && rows.length) rows.unshift({ layerId: '', frameId: `plugin:${layer.id}:vj-mix`, opacity: trail, blendMode: 'normal' });
@@ -283,6 +298,71 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
   onHosts?.(hosts);
   // No instance: the list as it came (it runs on every frame sent).
   return hosts ? out : layers;
+}
+
+// ── Clip visual stacks (clipStack.ts) ───────────────────────────────────
+
+/** The library media of a stack layer as a source, under a stable id (a video keeps decoding, a sketch keeps its page). */
+function stackMediaSource(item: StackItem, id: string): MediaSource | null {
+  const media = item.media!;
+  const sourceId = `${id}:${media.libraryId ?? media.src ?? media.name}`;
+  if (media.kind === 'video') {
+    return {
+      id: sourceId, type: 'video', name: media.name, src: readableClipUri(media), _assetRef: media._assetRef,
+      isPlaying: true, playbackMode: 'loop', playbackRate: 1, trimStart: 0, trimEnd: 1,
+      durationSeconds: media.sourceDuration, videoWidth: media.videoWidth, videoHeight: media.videoHeight,
+    } as MediaSource;
+  }
+  const source = staticClipSource(media, sourceId);
+  if (source && media.kind === 'shader') source.shaderValues = { ...(source.shaderValues ?? {}), ...item.params };
+  return source;
+}
+
+/**
+ * A playing stack as layers: each of its layers rendered hidden (with its own
+ * effects), and a mix of them (with the stack's effects and mood finish) the
+ * studio's mix takes as one row. Null when nothing in it can draw yet.
+ */
+export function expandStack(id: string, stack: ClipStack, set: StudioSet, inputs: StudioRenderInputs, studioPalette: { id: string; slots: PaletteSlots }, key: MusicKey): { id: string; layers: Layer[] } | null {
+  const layers: Layer[] = [];
+  const rows: Array<{ layerId: string; opacity: number; blendMode: string }> = [];
+  const palette = stack.mood?.palette ? { id: stack.mood.palette, slots: resolvePalette(stack.mood.palette, set, key) } : studioPalette;
+  // The top of the list draws on top.
+  for (const item of [...stack.items].reverse()) {
+    const itemId = `${id}:${item.id}`;
+    let source: MediaSource | null = null;
+    if (item.voice) {
+      const code = inputs.code(item.voice.file);
+      if (!code) continue;
+      const follow = item.voice.follow;
+      const live = isLiveSource(follow) ? (follow as LiveSourceId) : undefined;
+      const sourceId = (live ? 'all' : VOICE_SOURCES.some((v) => v.id === follow) ? follow : 'all') as VoiceSourceId;
+      const voice: StudioVoice = { file: item.voice.file, source: sourceId, ...(live ? { live } : {}), auto: false, level: 1, params: item.params, clear: item.voice.clear };
+      source = {
+        id: `${itemId}:${item.voice.file}`, type: 'shader', name: item.voice.file, src: `ISF/${item.voice.file}`, shaderCode: code,
+        shaderValues: studioVoiceValues(voice, set, inputs.driven(sourceId, false, live), palette),
+      } as MediaSource;
+    } else if (item.media) {
+      source = stackMediaSource(item, itemId);
+    }
+    if (!source) continue;
+    layers.push({ ...createLayer(itemId, item.name, 'media'), opacity: 0, source, effects: item.effects } as Layer);
+    rows.push({ layerId: itemId, opacity: item.opacity, blendMode: item.blend });
+  }
+  if (!rows.length) return null;
+  const finish = stack.mood?.finish ? finishEffectsFor(id, stack.mood.finish) : [];
+  const effects = [...finish, ...stack.effects];
+  layers.push({
+    ...createLayer(id, 'Clip visuals', 'media'),
+    // Rendered for the studio's mix, never composited on its own.
+    opacity: 0,
+    source: {
+      id: `${id}:mix`, type: 'effect', src: 'plugin://vj-mix', name: 'Clip visuals',
+      effectSource: { effectType: 'vj-mix', vjmixRows: rows, vjmixGroups: [], ...(effects.length ? { vjmixLayerEffectChain: true } : {}) },
+    } as NonNullable<Layer['source']>,
+    effects,
+  } as Layer);
+  return { id, layers };
 }
 
 // ── Shared runtime hooks ────────────────────────────────────────────────

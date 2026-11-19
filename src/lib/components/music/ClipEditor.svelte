@@ -9,11 +9,8 @@
    */
   import { onDestroy } from 'svelte';
   import { musicStudio, musicTransport } from '../../music/musicStudioStore';
-  import { clipEditorId, insertEditorChannel } from '../../music/studioUi';
-  import VisualPickButton from './VisualPickButton.svelte';
-  import { voiceSourcesFor } from '../../music/visualVoices';
-  import { BLEND_MODE_ORDER, blendModeLabel } from '../../types';
-  import { clipFxKey, findClip, playableNotes, type ClipVisual, type NotesClip, type TrackId } from '../../music/session';
+  import { clipEditorId, insertEditorChannel, stackEditor } from '../../music/studioUi';
+  import { TRACKS, clipFxKey, findClip, playableNotes, type NotesClip, type TrackId } from '../../music/session';
   import type { RecordedNote } from '../../music/loopRecorder';
   import { ROLE_INSTRUMENTS } from '../../music/loops';
   import { INSTRUMENT_LABELS } from '../../music/instruments';
@@ -133,17 +130,13 @@
 
   const clipFxCount = $derived(clip ? ($musicStudio.inserts[clipFxKey(clip.id)]?.length ?? 0) : 0);
 
-  /** The clip's visual: picking None takes it off; the rest edit it. */
-  function setVisual(patch: Partial<ClipVisual>) {
+  /** The clip's visuals open in their own editor (a stack of layers). */
+  function openVisuals() {
     if (!clip) return;
-    const track = found?.track ?? 'lead';
-    musicStudio.updateSessionClip(clip.id, (c) => {
-      const { visual: old, ...rest } = c;
-      if (patch.file === '') return rest as typeof c;
-      const base: ClipVisual = old ?? { file: patch.file ?? '', source: track === 'beats' ? 'kick' : track === 'texture' ? 'pad' : track, blend: 'screen', level: 0.9 };
-      return { ...rest, visual: { ...base, ...patch } } as typeof c;
-    });
+    const track = TRACKS.find((t) => t.id === found?.track)?.label ?? 'Clip';
+    stackEditor.set({ kind: 'clip', clipId: clip.id, title: `${track} · ${clip.name}` });
   }
+  const layerCount = $derived(clip?.stack?.items.length ?? 0);
 
   /** The clip's own tone from the tone library, or '' for the track's sound. */
   function setTone(value: string) {
@@ -321,24 +314,7 @@
       <!-- What comes in with the clip: a visual and its own effects. -->
       <div class="dressing">
         <span class="eyebrow">With this clip</span>
-        <label class="labelled">Visual
-          <VisualPickButton file={clip.visual?.file ?? null} none placeholder="None" title="A visual for {clip.name}" onpick={(f) => setVisual({ file: f ?? '' })} />
-        </label>
-        {#if clip.visual}
-          <label class="labelled">Follows
-            <select value={clip.visual.source} onchange={(e) => setVisual({ source: (e.target as HTMLSelectElement).value })}>
-              {#each voiceSourcesFor(s.set, clip.visual.source) as src (src.id)}<option value={src.id}>{src.label}</option>{/each}
-            </select>
-          </label>
-          <label class="labelled">Blend
-            <select value={clip.visual.blend} onchange={(e) => setVisual({ blend: (e.target as HTMLSelectElement).value })}>
-              {#each BLEND_MODE_ORDER as m (m)}<option value={m}>{blendModeLabel(m)}</option>{/each}
-            </select>
-          </label>
-          <label class="labelled">Opacity
-            <input type="range" min="0" max="1" step="0.01" value={clip.visual.level} oninput={(e) => setVisual({ level: +(e.target as HTMLInputElement).value })} />
-          </label>
-        {/if}
+        <button class="text-btn" class:on={layerCount > 0} onclick={openVisuals} title="The visuals that come in while this clip plays: videos, shaders, audio shaders and sketches, layered, with effects">{layerCount ? `Visuals ${layerCount}` : 'Visuals'}</button>
         <span class="spacer"></span>
         <button class="text-btn" class:on={clipFxCount > 0} onclick={() => insertEditorChannel.set($insertEditorChannel === clipFxKey(clip.id) ? null : clipFxKey(clip.id))} title="Effects that come in on this clip's instrument while it plays">Clip FX{clipFxCount ? ` ${clipFxCount}` : ''}</button>
       </div>
@@ -503,7 +479,6 @@
   .lhs .where { overflow: hidden; text-overflow: ellipsis; }
   .dressing { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 6px 8px; border: 1px solid var(--studio-edge-soft); border-radius: var(--studio-radius); background: var(--studio-slot); }
   .dressing .eyebrow { font-size: var(--ga-text-eyebrow, 10px); font-weight: 700; letter-spacing: var(--ga-eyebrow-tracking, 0.08em); text-transform: uppercase; color: var(--studio-muted); }
-  .dressing input[type='range'] { width: 90px; }
   .name {
     width: 180px;
     height: 26px;

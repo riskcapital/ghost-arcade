@@ -301,6 +301,10 @@ export interface StudioFeed {
   onLevel: (track: number, level: number) => void;
   /** A Live scene launched (by Live, a controller or the studio). */
   onScene?: (scene: number, name: string) => void;
+  /** A clip started playing on a track (its visuals come in). */
+  onClip?: (track: number, slot: number) => void;
+  /** A track stopped playing. */
+  onClipStop?: (track: number) => void;
 }
 
 type LiveMessage = Record<string, any> & { t: string };
@@ -492,6 +496,7 @@ function createAbletonBridge() {
       startMix(pendingMix);
       pendingMix = null;
     }
+    studioFeed?.onClip?.(track, slot);
     fire(linksForClip(read().links, track, slot), `${t?.name || `Track ${track + 1}`} · ${clip?.name || 'Clip'}`);
   }
 
@@ -1069,7 +1074,10 @@ function createAbletonBridge() {
         const track = Number(message.i);
         const slot = Number(message.s) >= 0 ? Number(message.s) : -1;
         if (slot >= 0) clipStarted(track, slot);
-        else setTrack(track, { playing: -1, fired: -1 });
+        else {
+          setTrack(track, { playing: -1, fired: -1 });
+          studioFeed?.onClipStop?.(track);
+        }
         break;
       }
       case 'fired': {

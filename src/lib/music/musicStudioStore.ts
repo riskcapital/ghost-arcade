@@ -1,3 +1,4 @@
+import { hasVisuals, normalizeLiveStacks, type ClipStack } from './clipStack';
 import { noteGrid, type NoteGrid } from './grid';
 /**
  * Music studio state.
@@ -186,6 +187,8 @@ export interface MusicStudioProjectState {
   visualsHidden: boolean;
   /** Live track name -> the sound it feeds the visual voices as. */
   liveRoles: LiveRoles;
+  /** Ableton Live clips' visuals, by track and clip name (clipStack.ts liveStackKey). */
+  liveStacks: Record<string, ClipStack>;
   /** The sound and octave of each of the five bowls. */
   bowlSlots: BowlSlot[];
   /** The sound on each of a set's eight FX pads. */
@@ -340,6 +343,7 @@ export function defaultProjectState(): MusicStudioProjectState {
     liveControl: false,
     visualsHidden: false,
     liveRoles: {},
+    liveStacks: {},
     bowlSlots: defaultBowlSlots(),
     fxPads: defaultFxPads(),
     dubShots: defaultDubShots(),
@@ -436,6 +440,7 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
     liveControl: input.liveControl === true,
     visualsHidden: input.visualsHidden === true,
     liveRoles: normalizeLiveRoles(input.liveRoles),
+    liveStacks: normalizeLiveStacks(input.liveStacks),
     bowlSlots: normalizeBowlSlots(input.bowlSlots),
     // Chops are this session's audio; a file saved with one on a pad gets the set's default there.
     fxPads: unchoppedFxPads(normalizeFxPads(input.fxPads), false),
@@ -795,6 +800,21 @@ function createMusicStudioStore() {
         return { ...s, liveRoles };
       }),
 
+    /** A Live clip's visuals, by its key; null or an empty stack removes them. */
+    setLiveStack: (key: string, stack: ClipStack | null) =>
+      update((s) => {
+        const liveStacks = { ...s.liveStacks };
+        if (hasVisuals(stack)) liveStacks[key] = stack;
+        else delete liveStacks[key];
+        return { ...s, liveStacks };
+      }),
+    /** A session clip's visuals; null or an empty stack removes them. */
+    setClipStack: (clipId: string, stack: ClipStack | null) =>
+      update((s) => ({ ...s, session: updateClip(s.session, clipId, (clip) => {
+        const { stack: _old, ...rest } = clip;
+        return (hasVisuals(stack) ? { ...rest, stack } : rest) as SessionClip;
+      }) })),
+
     setVisual: (instrument: InstrumentId, patch: Partial<NoteVisualSettings>) =>
       update((s) => ({
         ...s,
@@ -911,6 +931,7 @@ function createMusicStudioStore() {
         liveControl: s.liveControl,
         visualsHidden: s.visualsHidden,
         liveRoles: { ...s.liveRoles },
+        liveStacks: JSON.parse(JSON.stringify(s.liveStacks)),
         bowlSlots: s.bowlSlots.map((slot) => ({ ...slot })),
         // What the pads held before any chops went on them (chops are not saved).
         fxPads: unchoppedFxPads(s.fxPads),

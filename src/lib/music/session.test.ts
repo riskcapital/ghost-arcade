@@ -138,11 +138,16 @@ describe('a clip with its own visual', () => {
   it('keeps a good visual, drops a bad one', async () => {
     const { normalizeClip } = await import('./session');
     const base = { kind: 'notes', id: 'c9', name: 'Lead', beats: 4, notes: [{ beat: 0, dur: 1, note: 60, velocity: 0.8 }], key: null, instrument: null };
+    // The one visual of before becomes a one-layer stack.
     const kept = normalizeClip({ ...base, visual: { file: 'VX-Barcode.fs', source: 'lead', blend: 'add', level: 0.6 } });
-    expect(kept && 'visual' in kept && kept.visual).toEqual({ file: 'VX-Barcode.fs', source: 'lead', blend: 'add', level: 0.6 });
+    expect(kept?.stack).toMatchObject({ blend: 'add', opacity: 0.6, items: [{ voice: { file: 'VX-Barcode.fs', follow: 'lead' }, blend: 'normal', opacity: 1 }] });
+    expect(kept && 'visual' in kept).toBe(false);
     const bad = normalizeClip({ ...base, visual: { file: '../evil.fs' } });
-    expect(bad && 'visual' in bad).toBe(false);
+    expect(bad?.stack).toBeUndefined();
     const beat = normalizeClip({ kind: 'beat', id: 'b1', name: 'Beat', pattern: { steps: 16 }, visual: { file: 'VX-Panels.fs', source: 'kick', blend: 'screen', level: 1 } });
-    expect(beat && 'visual' in beat && beat.visual?.file).toBe('VX-Panels.fs');
+    expect(beat?.stack?.items[0].voice?.file).toBe('VX-Panels.fs');
+    // A stack saved as one comes back as it was.
+    const again = normalizeClip(JSON.parse(JSON.stringify(kept)));
+    expect(again?.stack).toEqual(kept?.stack);
   });
 });

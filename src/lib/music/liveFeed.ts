@@ -22,6 +22,8 @@ import { applyLiveScene, noteLiveScene, keepLiveSources, pushLiveNote, pushOutsi
 import { studioSceneForLive } from './scenes';
 import { isDrumTrack, LevelHits, liveTrackKeys, mappedTracks } from './liveControl';
 import { gmDrum, liveSource, type AnySourceId, type VoiceSourceId } from './visualVoices';
+import { liveStackKey } from './clipStack';
+import { bringStack, dropStack, dropTracks } from './stackRuntime';
 
 /** Audio tracks have no pitch; their hits sit mid-range. */
 const LEVEL_NOTE = 60;
@@ -84,6 +86,28 @@ function onScene(scene: number): void {
   else if (studio.queuedSceneId) musicStudio.setTransport({ queuedSceneId: null });
 }
 
+/** A Live clip started: its visuals come in (and the track's previous clip's go). */
+function onClip(track: number, slot: number): void {
+  const bridge = get(abletonBridge);
+  const t = bridge.tracks[track];
+  if (!t) return;
+  const name = liveTrackKeys(bridge.tracks)[track];
+  const key = liveStackKey(name, slot, t.slots.map((c) => c?.name));
+  bringStack({
+    track: `live:${name}`,
+    order: 100 + track,
+    trackName: t.name || name,
+    clipName: t.slots[slot]?.name || `Clip ${slot + 1}`,
+    liveKey: key,
+    resolve: () => get(musicStudio).liveStacks[key],
+  });
+}
+
+function onClipStop(track: number): void {
+  const name = liveTrackKeys(get(abletonBridge).tracks)[track];
+  if (name) dropStack(`live:${name}`);
+}
+
 function sync(): void {
   const studio = get(musicStudio);
   const bridge = get(abletonBridge);
@@ -107,6 +131,8 @@ function sync(): void {
   const key = JSON.stringify([hosting, on, [...next.entries()]]);
   if (key === feedKey) return;
   feedKey = key;
+  // Live let go: its clips' visuals go too.
+  if (!on) dropTracks('live:');
   const previous = fed;
   fed = next;
   setLiveFeedActive(on);
@@ -136,6 +162,8 @@ function sync(): void {
       onNotes,
       onLevel,
       onScene,
+      onClip,
+      onClipStop,
     }
     : null);
 }

@@ -59,3 +59,13 @@ visualFavourites.subscribe((ids) => {
     // Private windows keep them for the session only.
   }
 });
+
+/**
+ * The clip visuals editor (ClipStackEditor): open on a studio session clip,
+ * or on an Ableton Live clip by its stack key (clipStack.ts liveStackKey),
+ * with the Live track's sound its new audio shaders follow. Closed: null.
+ */
+export type StackEditorTarget =
+  | { kind: 'clip'; clipId: string; title: string }
+  | { kind: 'live'; key: string; title: string; follow: string };
+export const stackEditor = writable<StackEditorTarget | null>(null);
