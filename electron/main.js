@@ -400,7 +400,78 @@ app.on('gpu-process-crashed', (_ev, killed) => {
 app.on('child-process-gone', (_ev, details) => {
   if (!details) return;
   console.error(`[Main] child-process-gone: type=${details.type} reason=${details.reason} exitCode=${details.exitCode} name=${details.name || ''}`);
+  // A GPU process that keeps dying is the usual cause of a white editor on
+  // Windows; say what Chromium is left with (it may have turned the GPU off).
+  if (details.type === 'GPU') {
+    console.error(`[Main] after GPU process loss: ${describeRecoveryDiagnostics()}`);
+    _flushLogBuffer(true);
+    refreshChromiumGpuInfo();
+  }
 });
+
+// What support needs in the log when the editor fails (electron/editor-recovery.cjs):
+// the render core's adapter and driver, Chromium's GPU and driver, memory.
+const { createEditorRecovery, describeReason: describeEditorFailure, formatRecoveryDiagnostics } = require('./editor-recovery.cjs');
+let chromiumGpuInfo = null;
+function refreshChromiumGpuInfo() {
+  if (!app.isReady()) return;
+  app.getGPUInfo('basic').then((info) => {
+    chromiumGpuInfo = info;
+  }).catch(() => { /* logging only */ });
+}
+function describeRecoveryDiagnostics() {
+  const read = (fn) => { try { return fn(); } catch { return undefined; } };
+  return formatRecoveryDiagnostics({
+    coreStatus: nativeRendererBroker.lastStatus,
+    gpuInfo: chromiumGpuInfo,
+    featureStatus: app.isReady() ? read(() => app.getGPUFeatureStatus()) : undefined,
+    systemMemory: read(() => process.getSystemMemoryInfo()),
+    appMetrics: app.isReady() ? read(() => app.getAppMetrics()) : undefined,
+  });
+}
+
+/** Recovery gave up: tell the user what happened and what to do next. */
+function showEditorRecoveryMessage(win, recovery, info) {
+  const controller = new AbortController();
+  const ask = () => {
+    if (controller.signal.aborted) return;
+    const parent = win && !win.isDestroyed() ? win : undefined;
+    const what = describeEditorFailure(info.cause === 'hang' ? 'hang' : info.reason);
+    const lines = [
+      `${what.charAt(0).toUpperCase()}${what.slice(1)}${info.attempts > 0 ? `, and reloading it did not help (tried ${info.attempts} times)` : ''}.`,
+      '',
+      'Choose Reload editor to try again. If it keeps happening, choose Show log file and send ghost-arcade-debug.log to support before restarting the app.',
+    ];
+    if (isWin) {
+      lines.push('', 'On a laptop with two graphics chips, set Ghost Arcade to High performance in Windows Settings > System > Display > Graphics, then restart it.');
+    }
+    const options = {
+      type: 'error',
+      title: 'Ghost Arcade',
+      message: 'The editor stopped working',
+      detail: lines.join('\n'),
+      buttons: ['Reload editor', 'Show log file', 'Quit'],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+      signal: controller.signal,
+    };
+    const shown = parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options);
+    shown.then(({ response }) => {
+      if (controller.signal.aborted) return;
+      if (response === 0) {
+        recovery.retry();
+      } else if (response === 1) {
+        try { shell.showItemInFolder(_logFile); } catch { /* the folder may be gone */ }
+        ask();
+      } else {
+        app.quit();
+      }
+    }).catch(() => { /* closed with the window */ });
+  };
+  ask();
+  return () => controller.abort();
+}
 
 // ============================================================
 // Custom protocol: ghost-asset://
@@ -10101,79 +10172,64 @@ function createMainWindow() {
     });
   });
 
-  // Main-window renderer-process crash recovery.
-  //
-  // Before this, an unrecoverable renderer crash (out-of-memory, D3D device
-  // lost from an HDMI yank, driver TDR that Chromium can't recover from, etc.)
-  // would leave the main window frozen with a sad-tab icon and no telemetry.
-  // The hidden OSR window already has a crash handler — extending it to the
-  // main window so a live VJ set isn't dead-in-the-water after a single
-  // render-process fault. We auto-reload once; if it crashes again within a
-  // short window we give up (prevents a reload-loop eating CPU).
-  let _rendererCrashReloads = 0;
-  let _lastRendererCrashAt = 0;
-  // At most one reload waits on an unresponsive editor. It is dropped when
-  // the editor answers again, crashes (that reloads on its own) or starts a
-  // new page, and checked once more before it fires.
-  let unresponsiveReloadTimer = null;
-  let editorUnresponsive = false;
-  const cancelUnresponsiveReload = () => {
-    editorUnresponsive = false;
-    if (unresponsiveReloadTimer) {
-      clearTimeout(unresponsiveReloadTimer);
-      unresponsiveReloadTimer = null;
-    }
-  };
+  // Main-window renderer recovery (electron/editor-recovery.cjs): a crashed
+  // or hung editor page is reloaded at most three times in a row; a page
+  // that answers again, closes or starts loading by itself is never reloaded
+  // by an old timer. When the attempts are used up the user is told what
+  // happened and what to do, and the log says why (reason, exit code, the
+  // render core's adapter and driver, Chromium's GPU, memory).
+  const recoveryWindow = mainWindow;
+  const editorRecovery = createEditorRecovery({
+    reload: () => {
+      if (!recoveryWindow.isDestroyed()) recoveryWindow.reload();
+    },
+    canReload: () => {
+      if (recoveryWindow.isDestroyed() || recoveryWindow !== mainWindow) return false;
+      const wc = recoveryWindow.webContents;
+      return !wc.isDestroyed() && !wc.isCrashed() && !wc.isLoading();
+    },
+    diagnostics: describeRecoveryDiagnostics,
+    log: { info: (m) => console.log(m), warn: (m) => console.warn(m), error: (m) => console.error(m) },
+    flush: () => _flushLogBuffer(true),
+    onExhausted: (info) => showEditorRecoveryMessage(recoveryWindow, editorRecovery, info),
+  });
   // JavaScript sources run for the editor that opened them. A crashed or
   // reloaded editor reopens the ones it still uses; until then the hidden
   // windows would keep painting for nobody.
   // A quit the old page was asked about would never be answered either.
-  mainWindow.webContents.on('render-process-gone', () => {
-    cancelUnresponsiveReload();
-    jsSourceHost.closeAll();
-    quitGuard.reset();
-  });
   mainWindow.webContents.on('did-start-navigation', (details) => {
     if (!details?.isMainFrame || details.isSameDocument) return;
-    cancelUnresponsiveReload();
+    editorRecovery.navigationStarted();
     jsSourceHost.closeAll();
     quitGuard.reset();
   });
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
-    // Install mode restarts it under its own rate limit, escalating to a
-    // relaunch instead of giving up after three crashes.
-    if (installMode.rendererGone(details)) return;
-    const now = Date.now();
-    const wasRecent = (now - _lastRendererCrashAt) < 30_000;
-    _lastRendererCrashAt = now;
-    if (wasRecent) _rendererCrashReloads++; else _rendererCrashReloads = 1;
-    console.error(`[Main] MAIN renderer process gone (reason=${details.reason}, exitCode=${details.exitCode}). Reload attempt #${_rendererCrashReloads}`);
-    if (_rendererCrashReloads > 3) {
-      console.error('[Main] Too many renderer crashes in a row — not reloading to avoid a crash loop.');
+    jsSourceHost.closeAll();
+    quitGuard.reset();
+    if (isQuitting || recoveryWindow.isDestroyed()) {
+      editorRecovery.closed();
       return;
     }
-    try { mainWindow.reload(); } catch (e) { console.error('[Main] reload() threw:', e); }
+    // Install mode restarts it under its own rate limit, escalating to a
+    // relaunch instead of giving up after three crashes.
+    if (installMode.rendererGone(details)) {
+      console.error(`[Main] MAIN renderer process gone (reason=${details?.reason}, exitCode=${details?.exitCode}); install mode recovers it. ${describeRecoveryDiagnostics()}`);
+      editorRecovery.handedOff('install mode');
+      return;
+    }
+    editorRecovery.gone(details);
   });
   mainWindow.webContents.on('unresponsive', () => {
     // Install mode's heartbeat watchdog handles a hung editor.
-    if (installMode.ownsRendererRecovery()) return;
-    editorUnresponsive = true;
-    if (unresponsiveReloadTimer) return;
-    console.warn('[Main] MAIN renderer unresponsive (>30s). Giving it another 10s before we reload...');
-    const win = mainWindow;
-    unresponsiveReloadTimer = setTimeout(() => {
-      unresponsiveReloadTimer = null;
-      if (!editorUnresponsive || !win || win !== mainWindow || win.isDestroyed()) return;
-      const wc = win.webContents;
-      if (wc.isDestroyed() || wc.isCrashed() || wc.isLoading()) return;
-      editorUnresponsive = false;
-      console.warn('[Main] MAIN renderer still unresponsive. Reloading.');
-      try { win.reload(); } catch {}
-    }, 10_000);
+    if (installMode.ownsRendererRecovery()) {
+      console.warn('[Main] MAIN renderer unresponsive; install mode watchdog handles it');
+      editorRecovery.handedOff('install mode');
+      return;
+    }
+    editorRecovery.unresponsive();
   });
   mainWindow.webContents.on('responsive', () => {
-    cancelUnresponsiveReload();
-    console.log('[Main] MAIN renderer responsive again.');
+    editorRecovery.responsive();
   });
 
   // Forward renderer console messages to main process log
@@ -10202,6 +10258,7 @@ function createMainWindow() {
 
   mainWindow.webContents.on('did-finish-load', () => {
     console.log('[Main] Main window loaded');
+    editorRecovery.loaded();
     installMode.pageLoaded();
 
     // Hot-reload: recreate OSR window when main window reloads (Vite HMR)
@@ -10223,7 +10280,7 @@ function createMainWindow() {
     if (installMode.holdQuit()) event.preventDefault();
   });
   mainWindow.on('closed', () => {
-    cancelUnresponsiveReload();
+    editorRecovery.closed();
     quitGuard.reset();
     mainWindow = null;
     // Close every performer/display pop-out so the app can actually exit.
@@ -10748,6 +10805,11 @@ app.on('second-instance', (_event, argv) => {
 });
 
 app.whenReady().then(async () => {
+  // Chromium's view of the GPU, for the log and for recovery diagnostics.
+  app.getGPUInfo('basic').then((info) => {
+    chromiumGpuInfo = info;
+    console.log(`[Main] ${formatRecoveryDiagnostics({ gpuInfo: info, featureStatus: app.getGPUFeatureStatus(), systemMemory: process.getSystemMemoryInfo() }).replace(/^core adapter=unknown \| /, '')}`);
+  }).catch((err) => console.warn('[Main] GPU info unavailable:', err?.message || err));
   startPowerSaveBlocker();
 
   app.setAboutPanelOptions({
