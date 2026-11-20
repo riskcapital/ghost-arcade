@@ -24,6 +24,9 @@
             </intent-filter>
 
             <intent-filter><action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/><data android:scheme="ghostarcade" android:host="pair"/></intent-filter>
+            <!-- The desktop's Mobile Control QR (https://ghostarcade.live/connect#...) opens the app when it is installed.
+                 Verified against https://ghostarcade.live/.well-known/assetlinks.json. -->
+            <intent-filter android:autoVerify="true"><action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/><data android:scheme="https" android:host="ghostarcade.live" android:path="/connect"/></intent-filter>
         </activity>
 
         <provider

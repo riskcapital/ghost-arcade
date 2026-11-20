@@ -1,10 +1,14 @@
 // Desktop pairing links for the native app.
 //
-// A pairing link arrives from a QR scan, a paste or a ghostarcade:// deep link, any of which can be
-// supplied by someone other than the performer. So a link is only ever decoded here (the WebView
-// never navigates to it), it must point at a machine on the performer's own network, and the app
-// asks "Connect to <host>?" before it leaves the standalone set. The wire protocol is untouched:
-// the same http://<host>:<port>/?pair=<code>&ws=<port> link every released desktop shows.
+// A pairing link arrives from a QR scan, a paste, a ghostarcade:// deep link or an opened
+// https://ghostarcade.live/connect link, any of which can be supplied by someone other than the
+// performer. So a link is only ever decoded here (the WebView never navigates to it), it must point
+// at a machine on the performer's own network, and the app asks "Connect to <host>?" before it
+// leaves the standalone set. The wire protocol is untouched: every form comes down to the same
+// http://<host>:<port>/?pair=<code>&ws=<port> link every released desktop shows.
+//
+// The ghostarcade.live/connect link carries the desktop in its fragment
+// (#host=<lan host:port>&pair=<code>&ws=<port>), so the pairing code never reaches the website.
 
 const NOT_A_LINK = 'That is not a pairing link. Scan the QR code or paste the URL from Mobile Control on your desktop.';
 
@@ -39,18 +43,45 @@ export function isLocalNetworkHost(hostname: string): boolean {
   return host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local');
 }
 
+/** The website hosts a desktop's Mobile Control link may name. */
+const CONNECT_HOSTS = new Set(['ghostarcade.live', 'www.ghostarcade.live']);
+
+/** True for a link to the website's /connect page, wherever it is hosted. */
+function isConnectPage(u: URL): boolean {
+  return u.protocol === 'https:' && /^\/connect\/?$/.test(u.pathname);
+}
+
+/**
+ * The desktop's LAN link inside a https://ghostarcade.live/connect#host=…&pair=…&ws=… link. The host
+ * is an address and port only: anything that would change the path or add credentials is refused.
+ */
+function lanLinkFromConnect(u: URL): URL {
+  if (!CONNECT_HOSTS.has(u.hostname.toLowerCase())) throw Error(`This link points to ${u.hostname}, not ghostarcade.live. Scan the QR code in your desktop's Mobile Control.`);
+  const params = new URLSearchParams(u.hash.replace(/^#/, ''));
+  const host = (params.get('host') || '').trim();
+  if (!host || /[\/?#@\\\s]/.test(host)) throw Error('The link is missing the desktop address.');
+  const lan = new URL(`http://${host}/`);
+  lan.searchParams.set('pair', params.get('pair') || '');
+  const ws = params.get('ws');
+  if (ws) lan.searchParams.set('ws', ws);
+  return lan;
+}
+
 /** Decode only pairing links, never navigate the app WebView to supplied content. */
 export function parseCompanionLink(raw: string): string {
   let u: URL;
+  const own = new Set(['This is not a desktop pairing link.', 'The link is missing the desktop address.']);
   try {
     u = new URL(raw.trim());
     if (u.protocol === 'ghostarcade:') {
       if (u.hostname !== 'pair') throw Error('This is not a desktop pairing link.');
       u = new URL(u.searchParams.get('url') || '');
     }
+    if (isConnectPage(u)) u = lanLinkFromConnect(u);
   } catch (e) {
     // The platform's own message ("Failed to construct 'URL': Invalid URL") means nothing to a performer.
-    throw Error(e instanceof Error && e.message === 'This is not a desktop pairing link.' ? e.message : NOT_A_LINK);
+    if (e instanceof Error && (own.has(e.message) || e.message.startsWith('This link points to'))) throw e;
+    throw Error(NOT_A_LINK);
   }
   if (!['http:', 'https:'].includes(u.protocol) || !u.hostname || u.username || u.password) throw Error('Use the URL from Mobile Control on your desktop.');
   const token = (u.searchParams.get('pair') || '').replace(/[\s-]/g, '').toUpperCase();

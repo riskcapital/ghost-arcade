@@ -65,3 +65,36 @@ describe('the remembered desktop',()=>{
   expect(rememberedDesktop(s)).toBeNull();
  });
 });
+describe('the ghostarcade.live/connect link from Mobile Control',()=>{
+ const lan='http://192.168.1.3:9002/?pair=ABCD-EFGH-1234-5678&ws=9003#/mobile';
+ const smart='https://ghostarcade.live/connect#host=192.168.1.3%3A9002&pair=ABCDEFGH12345678&ws=9003';
+ it('comes down to the same desktop as the old LAN link',()=>{
+  expect(parseCompanionLink(smart)).toBe(parseCompanionLink(lan));
+  expect(parseCompanionLink('https://www.ghostarcade.live/connect/#host=192.168.1.3:9002&pair=ABCDEFGH12345678&ws=9003')).toBe(parseCompanionLink(lan));
+  expect(parseCompanionLink('ghostarcade://pair?url='+encodeURIComponent(smart))).toBe(parseCompanionLink(lan));
+ });
+ it('keeps the default socket port implicit and accepts IPv6 and .local desktops',()=>{
+  const u=new URL(parseCompanionLink('https://ghostarcade.live/connect#host=studio.local:9002&pair=ABCDEFGH12345678'));
+  expect(u.host).toBe('studio.local:9002');expect(u.searchParams.has('ws')).toBe(false);
+  expect(companionHost(parseCompanionLink('https://ghostarcade.live/connect#host=%5Bfe80%3A%3A1%5D%3A9002&pair=ABCDEFGH12345678'))).toBe('fe80::1');
+ });
+ it('refuses the link on any other website',()=>{
+  for(const site of ['https://evil.example','https://ghostarcade.live.evil.example','https://ghostarcade.com'])
+   expect(()=>parseCompanionLink(`${site}/connect#host=192.168.1.3:9002&pair=ABCDEFGH12345678`),site).toThrow(/not ghostarcade\.live/);
+  // Plain http is not the website: it falls back to the LAN rules and has no pairing code.
+  expect(()=>parseCompanionLink('http://ghostarcade.live/connect#host=192.168.1.3:9002&pair=ABCDEFGH12345678')).toThrow();
+ });
+ it('refuses a desktop that is not on the local network, and a malformed one',()=>{
+  expect(()=>parseCompanionLink('https://ghostarcade.live/connect#host=203.0.113.5:9002&pair=ABCDEFGH12345678')).toThrow(/not on your local network/);
+  expect(()=>parseCompanionLink('https://ghostarcade.live/connect#host=evil.example&pair=ABCDEFGH12345678')).toThrow(/not on your local network/);
+  for(const value of ['https://ghostarcade.live/connect','https://ghostarcade.live/connect#pair=ABCDEFGH12345678','https://ghostarcade.live/connect#host=192.168.1.3/evil&pair=ABCDEFGH12345678','https://ghostarcade.live/connect#host=user@192.168.1.3&pair=ABCDEFGH12345678'])
+   expect(()=>parseCompanionLink(value),value).toThrow(/desktop address/);
+  expect(()=>parseCompanionLink('https://ghostarcade.live/connect#host=192.168.1.3:9002')).toThrow(/pairing code/);
+  expect(()=>parseCompanionLink('https://ghostarcade.live/connect#host=192.168.1.3:9002&pair=ABCDEFGH12345678&ws=99999')).toThrow(/port/);
+  expect(()=>parseCompanionLink('https://ghostarcade.live/connect#host=192.168.1.3:99999&pair=ABCDEFGH12345678')).toThrow(/pairing link/);
+ });
+ it('drops anything else in the fragment',()=>{
+  const u=new URL(parseCompanionLink(smart+'&next=https%3A%2F%2Fevil.example'));
+  expect(u.pathname).toBe('/');expect([...u.searchParams.keys()].sort()).toEqual(['pair','ws']);expect(u.hash).toBe('#/mobile');
+ });
+});
