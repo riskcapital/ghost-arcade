@@ -147,3 +147,55 @@ export function folderSize(dir, { maxFiles = 200000 } = {}) {
   }
   return { mb: Math.round(bytes / 1048576 * 10) / 10, files };
 }
+
+/** `16.0M` / `240K` / `1.2G` (vmmap sizes) to MB. */
+export function vmSizeMB(s) {
+  const m = String(s).match(/^([\d.]+)([KMGT]?)$/);
+  if (!m) return 0;
+  const n = Number(m[1]);
+  return { '': n / 1048576, K: n / 1024, M: n, G: n * 1024, T: n * 1048576 }[m[2]];
+}
+
+/**
+ * macOS: what a process's memory is made of, from `vmmap --summary`.
+ * `footprintMB` is the physical footprint (what Activity Monitor calls Memory,
+ * and what memory pressure acts on); `rss` from ps also counts clean pages of
+ * shared libraries, which grow as more code runs and are not a leak.
+ * `regions` keeps every region type with at least 1 MB resident or dirty:
+ * { type: { res, dirty, swap } } in MB. `malloc` is the bytes allocated per zone.
+ * Null elsewhere or when vmmap fails.
+ */
+export async function vmSummary(pid) {
+  if (process.platform !== 'darwin' || !pid) return null;
+  const out = await run('vmmap', ['--summary', String(pid)], 60000);
+  return out ? parseVmmapSummary(out) : null;
+}
+
+/** The parts of `vmmap --summary` output that vmSummary keeps. */
+export function parseVmmapSummary(out) {
+  const r1 = (x) => Math.round(x * 10) / 10;
+  const fp = out.match(/^Physical footprint:\s+(\S+)/m);
+  const regions = {};
+  const malloc = {};
+  let table = null;
+  for (const line of out.split('\n')) {
+    if (/^REGION TYPE/.test(line)) { table = 'region'; continue; }
+    if (/^MALLOC ZONE/.test(line)) { table = 'malloc'; continue; }
+    if (!table || /^=+/.test(line) || !line.trim()) continue;
+    if (/^TOTAL/.test(line)) { table = null; continue; }
+    const tok = line.trim().split(/\s+/);
+    const isSize = (x) => /^[\d.]+[KMGT]$/.test(x ?? '');
+    if (table === 'region') {
+      // name (may have spaces), virtual, resident, dirty, swapped, volatile, nonvol, empty, count
+      const i = tok.findIndex((_, k) => k > 0 && [0, 1, 2, 3, 4, 5, 6].every((j) => isSize(tok[k + j])) && /^\d+$/.test(tok[k + 7] ?? ''));
+      if (i < 0) continue;
+      const res = vmSizeMB(tok[i + 1]); const dirty = vmSizeMB(tok[i + 2]); const swap = vmSizeMB(tok[i + 3]);
+      if (res >= 1 || dirty + swap >= 1) regions[tok.slice(0, i).join(' ')] = { res: r1(res), dirty: r1(dirty), swap: r1(swap) };
+    } else {
+      // zone, virtual, resident, dirty, swapped, allocation count, bytes allocated, ...
+      if (tok.length < 7 || !isSize(tok[1]) || !/^\d+$/.test(tok[5])) continue;
+      malloc[tok[0].replace(/_0x[0-9a-f]+$/, '')] = { count: Number(tok[5]), allocMB: r1(vmSizeMB(tok[6])), dirtyMB: r1(vmSizeMB(tok[3]) + vmSizeMB(tok[4])) };
+    }
+  }
+  return { footprintMB: fp ? r1(vmSizeMB(fp[1])) : null, regions, malloc };
+}

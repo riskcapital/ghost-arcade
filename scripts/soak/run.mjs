@@ -16,8 +16,8 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { makeRng, randomSeed } from './lib/rng.mjs';
 import { ensureDevServer, resolveTarget, launchApp, setWindowSize, debugLogPath } from './lib/app.mjs';
-import { listTargets, waitForTarget } from './lib/cdp.mjs';
-import { sampleTree, folderSize, killTree, alive } from './lib/proc.mjs';
+import { listTargets, waitForTarget, memoryInfraDump } from './lib/cdp.mjs';
+import { sampleTree, folderSize, killTree, alive, vmSummary } from './lib/proc.mjs';
 import { ACTIONS, AREAS, STATE_JS, MONKEY_DENY } from './lib/actions.mjs';
 import { analyse } from './lib/detect.mjs';
 import { writeReport } from './lib/report.mjs';
@@ -329,6 +329,16 @@ async function main() {
       st.prevProc = full;
       const { pids, ...rest } = full;
       out.proc = rest;
+      // macOS checkpoints: what each process's memory is made of (vmmap), so
+      // growth can be told apart: heap, GPU/IOSurface, or shared code pages.
+      if (checkpoint && process.platform === 'darwin') {
+        out.vm = {};
+        for (const role of ['main', 'renderer', 'core', 'gpu']) {
+          const pid = Object.entries(pids).find(([, info]) => info.role === role)?.[0];
+          const vm = pid ? await vmSummary(Number(pid)).catch(() => null) : null;
+          if (vm) out.vm[role] = vm;
+        }
+      }
     } catch (err) { out.procError = err.message; }
     try {
       const m = await withTimeout(s.metrics(), 8000);
@@ -359,6 +369,13 @@ async function main() {
       }
       st.prevStatus = { ...c, _at: Date.now() };
     } catch { /* core busy */ }
+    // Checkpoints: the sizes of the core's maps and GPU resources (absent on
+    // builds without the call), to see which one grows.
+    if (checkpoint) {
+      try { out.coreMem = await s.eval(`window.electronAPI.invoke('native_renderer_memory_stats', {})`, 8000); } catch { /* core busy */ }
+      // Chromium's own breakdown (DOM, JS, images, canvases, compositor, GPU buffers) per process.
+      try { out.chromeMem = await memoryInfraDump(opts.port); } catch (err) { out.chromeMemError = err.message; }
+    }
     try { out.publish = await s.eval('window.__soak.publishRates()', 5000); } catch { /* page busy */ }
     out.temp = { tmpMB: folderSize(h.tmp).mb, tmpFiles: folderSize(h.tmp).files, profileMB: folderSize(h.profile).mb };
     out.errors = { errors: st.consoleCount.error - st.consoleSince.error, warnings: st.consoleCount.warning - st.consoleSince.warning, exceptions: st.consoleCount.exception - st.consoleSince.exception };

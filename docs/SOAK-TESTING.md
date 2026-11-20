@@ -91,7 +91,7 @@ Each run gets a folder, by default `~/.ghost-arcade/soak/<time>-seed<seed>/` (on
 | `report.html` | The summary: pass/fail per check and per area, charts of memory, frame rate, GPU time, errors, dropped frames and folder sizes over time, every incident, every failed action with its replay command and screenshots, top console errors. |
 | `report.json` | The same, for scripts. |
 | `trace.jsonl` | Every step: action, arguments, result, time, warnings. |
-| `telemetry.jsonl` | A sample every 15 s: memory and CPU per process (main, editor, GPU, render core, utilities), JS heap, DOM nodes, event listeners, editor and core fps, GPU and CPU ms per frame, dropped frames, audio gap counters, GPU memory, store updates per second, temp and profile folder sizes, console error counts. Checkpoints are marked `"checkpoint": true`. |
+| `telemetry.jsonl` | A sample every 15 s: memory and CPU per process (main, editor, GPU, render core, utilities), JS heap, DOM nodes, event listeners, editor and core fps, GPU and CPU ms per frame, dropped frames, audio gap counters, GPU memory, store updates per second, temp and profile folder sizes, console error counts. Checkpoints are marked `"checkpoint": true` and also carry, to tell what grows: `vm` (macOS: each process's footprint and memory regions, from `vmmap --summary`), `chromeMem` (Chromium's own accounting per process: DOM, JS, images, canvases, compositor tiles, GPU buffers) and `coreMem` (the render core's maps, decoded video, pipelines and GPU resource counts). |
 | `console.jsonl` | Every console error and warning and uncaught exception from the editor. |
 | `incidents.jsonl` | Crashes, hangs (with a stack sample on macOS), editor reloads, render core restarts, child processes that died. |
 | `logs/` | The app's own output and its debug log for each launch, the runner's log, Vite's log. |
@@ -109,7 +109,11 @@ Thresholds live in `scripts/soak/soak.config.json`:
 
 - any crash, hang, editor crash or recovery reload, render core restart, or GPU/utility process that died;
 - memory growing at checkpoints faster than the per-process limit (MB per hour; needs at least 4 checkpoints over
-  half an hour), DOM nodes or event listeners growing;
+  half an hour), DOM nodes or event listeners growing. On macOS the per-process numbers are the **physical
+  footprint** (what Activity Monitor calls Memory), read with `vmmap` at every checkpoint; elsewhere, resident memory.
+  On macOS resident memory also counts shared code pages and pages an allocator has freed but the system has not
+  taken back yet (both grow with use and are not leaks), and leaves out GPU memory the process owns, so it is shown
+  for reading only;
 - the reference scene's frame rate dropping, or its GPU time rising, between early and late checkpoints, or its frame
   rate under the minimum;
 - clip audio gaps, console errors or uncaught exceptions above their rates, or an error spike;

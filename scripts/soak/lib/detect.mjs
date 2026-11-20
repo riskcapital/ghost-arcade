@@ -70,16 +70,31 @@ export function analyse({ samples, baselines, incidents, trace, console: console
   const leak = th.leakMBPerHour;
   const spanH = baselines.length > 1 ? (baselines[baselines.length - 1].t - baselines[0].t) / H : 0;
   const enough = baselines.length >= th.minCheckpointsForLeak && spanH >= th.minHoursForLeak;
-  const series = {
-    'main MB': (b) => b.proc?.roles?.main?.rssMB,
-    'renderer MB': (b) => b.proc?.roles?.renderer?.rssMB,
-    'gpu MB': (b) => b.proc?.roles?.gpu?.rssMB,
-    'core MB': (b) => b.proc?.roles?.core?.rssMB,
-    'JS heap MB': (b) => b.renderer?.heapMB,
-    'total MB': (b) => b.proc?.totalMB,
-  };
-  const limits = { 'main MB': leak.main, 'renderer MB': leak.renderer, 'gpu MB': leak.gpu, 'core MB': leak.core, 'JS heap MB': leak.jsHeap, 'total MB': leak.total };
-  for (const [name, get] of Object.entries(series)) {
+  // Per process: the physical footprint where the run measured it (macOS
+  // checkpoints, from vmmap), else resident memory. Resident memory on macOS
+  // also counts clean pages of shared code and pages the allocator has freed
+  // but the system has not taken back yet, both of which grow with use and
+  // are not a leak; and it leaves out GPU memory the process owns. The
+  // footprint is what the system charges the process (Activity Monitor's
+  // Memory), so the leak checks use it, and resident memory is shown for reading.
+  const ROLES = [['main', 'main', leak.main], ['renderer', 'renderer', leak.renderer], ['gpu', 'gpu', leak.gpu], ['core', 'core', leak.core]];
+  const hasFootprint = (role) => baselines.length > 0 && baselines.every((b) => Number.isFinite(b.vm?.[role]?.footprintMB));
+  const series = {};
+  const limits = {};
+  for (const [label, role, limit] of ROLES) {
+    const fp = hasFootprint(role);
+    series[`${label} MB`] = { get: fp ? (b) => b.vm?.[role]?.footprintMB : (b) => b.proc?.roles?.[role]?.rssMB, kind: fp ? 'footprint' : 'resident' };
+    limits[`${label} MB`] = limit;
+    if (fp) { series[`${label} resident MB`] = { get: (b) => b.proc?.roles?.[role]?.rssMB, kind: 'resident', info: true }; limits[`${label} resident MB`] = limit; }
+  }
+  series['JS heap MB'] = { get: (b) => b.renderer?.heapMB, kind: 'heap' };
+  limits['JS heap MB'] = leak.jsHeap;
+  const allFootprint = ROLES.every(([, role]) => hasFootprint(role));
+  series['total MB'] = allFootprint
+    ? { get: (b) => ROLES.reduce((sum, [, role]) => sum + b.vm[role].footprintMB, 0), kind: 'footprint of main, editor, GPU and core' }
+    : { get: (b) => b.proc?.totalMB, kind: 'resident' };
+  limits['total MB'] = leak.total;
+  for (const [name, { get, kind, info }] of Object.entries(series)) {
     // Only checkpoints within one app run compare like with like.
     const byRun = new Map();
     for (const b of baselines) { const v = get(b); if (Number.isFinite(v)) (byRun.get(b.run) ?? byRun.set(b.run, []).get(b.run)).push([b.t / H, v]); }
@@ -90,10 +105,10 @@ export function analyse({ samples, baselines, incidents, trace, console: console
     const over = enough && longest.length >= th.minCheckpointsForLeak && reg.slope > limit && reg.r2 > 0.5;
     add({
       id: `memory.${name.replace(/ /g, '-')}`, area: 'memory',
-      title: `${name} growth at checkpoints`,
+      title: `${name} growth at checkpoints (${kind}${info ? ', for reading' : ''})`,
       value: longest.length > 1 ? `${reg.slope.toFixed(1)} MB/h (r² ${reg.r2.toFixed(2)}, +${growth.toFixed(0)} MB over ${longest.length} checkpoints)` : 'not enough checkpoints',
-      threshold: `≤ ${limit} MB/h`,
-      severity: !enough ? 'info' : over ? 'fail' : 'pass',
+      threshold: info ? 'for reading' : `≤ ${limit} MB/h`,
+      severity: info || !enough ? 'info' : over ? 'fail' : 'pass',
     });
   }
   for (const [name, key, limit] of [['DOM nodes', 'nodes', th.domNodesPerHour], ['Event listeners', 'listeners', th.listenersPerHour]]) {

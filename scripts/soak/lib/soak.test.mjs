@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { makeRng } from './rng.mjs';
 import { regression, errorKey, analyse, median } from './detect.mjs';
-import { treeOf, roleOf, folderSize } from './proc.mjs';
+import { treeOf, roleOf, folderSize, vmSizeMB, parseVmmapSummary } from './proc.mjs';
 
 const config = JSON.parse(fs.readFileSync(new URL('../soak.config.json', import.meta.url), 'utf8'));
 
@@ -46,6 +46,25 @@ test('a steady leak at checkpoints fails; flat memory passes', () => {
   assert.ok(flat.pass, flat.findings.filter((f) => f.severity === 'fail').map((f) => f.title).join(', '));
 });
 
+test('with footprints measured, the leak check uses them, and resident memory is for reading', () => {
+  const H = 3600000;
+  // Resident memory climbs 400 MB/h (freed pages, shared code); the footprint climbs `fpPerHour`.
+  const mk = (fpPerHour) => Array.from({ length: 8 }, (_, i) => ({ t: (i * H) / 4, run: 1, step: i * 60, checkpoint: true, sinceLaunchMs: (i * H) / 4 + 120000,
+    proc: { totalMB: 2000, roles: { main: { rssMB: 200 + i * 100 }, renderer: { rssMB: 1000 }, gpu: { rssMB: 100 }, core: { rssMB: 150 } } },
+    vm: { main: { footprintMB: 80 + (i * fpPerHour) / 4 }, renderer: { footprintMB: 400 }, gpu: { footprintMB: 300 }, core: { footprintMB: 350 } },
+    renderer: { heapMB: 80, nodes: 5000, listeners: 900 }, refFps: 60, refGpuMs: 2 }));
+  const run = (baselines) => analyse({ samples: baselines, baselines, incidents: [], trace: [], console: [], config, durationMs: 2 * H, hidden: false });
+  const flat = run(mk(0));
+  const main = flat.findings.find((f) => f.id === 'memory.main-MB');
+  assert.equal(main.severity, 'pass');
+  assert.match(main.title, /footprint/);
+  assert.equal(flat.findings.find((f) => f.id === 'memory.main-resident-MB').severity, 'info');
+  assert.equal(run(mk(200)).findings.find((f) => f.id === 'memory.main-MB').severity, 'fail');
+  // A run without footprints (Windows, Linux) still judges resident memory.
+  const noVm = mk(0).map(({ vm, ...b }) => b);
+  assert.equal(run(noVm).findings.find((f) => f.id === 'memory.main-MB').severity, 'fail');
+});
+
 test('a crash fails the run; area failure rates are judged per area', () => {
   const trace = [
     ...Array.from({ length: 9 }, (_, i) => ({ kind: 'action', area: 'vj', status: 'pass', step: i })),
@@ -74,4 +93,34 @@ test('folder size', () => {
   assert.deepEqual(folderSize(dir), { mb: 2, files: 1 });
   fs.rmSync(dir, { recursive: true, force: true });
   assert.deepEqual(folderSize(dir), { mb: 0, files: 0 });
+});
+
+test('vmmap summary parsing', () => {
+  assert.equal(vmSizeMB('16.0M'), 16);
+  assert.equal(vmSizeMB('512K'), 0.5);
+  assert.equal(vmSizeMB('1.5G'), 1536);
+  const text = [
+    'Physical footprint:         332.1M',
+    '                                VIRTUAL RESIDENT    DIRTY  SWAPPED VOLATILE   NONVOL    EMPTY   REGION ',
+    'REGION TYPE                        SIZE     SIZE     SIZE     SIZE     SIZE     SIZE     SIZE    COUNT (non-coalesced) ',
+    '===========                     ======= ========    =====  ======= ========   ======    =====  ======= ',
+    'owned unmapped (graphics)         141.8M   141.8M   141.8M       0K       0K       0K       0K        1 ',
+    'MALLOC_SMALL                      48.0M    39.9M    39.9M       0K       0K       0K       0K        6         see MALLOC ZONE table below',
+    'Memory Tag 253                    80.0M    41.5M    34.4M       0K       0K       0K       0K       10 ',
+    'tiny                                16K      16K      16K       0K       0K       0K       0K        1 ',
+    '===========                     ======= ========    =====  ======= ========   ======    =====  ======= ',
+    'TOTAL                             1.0G     500M     300M       0K       0K       0K       0K      100 ',
+    '',
+    '                                 VIRTUAL   RESIDENT      DIRTY    SWAPPED ALLOCATION      BYTES DIRTY+SWAP          REGION',
+    'MALLOC ZONE                         SIZE       SIZE       SIZE       SIZE      COUNT  ALLOCATED  FRAG SIZE  % FRAG   COUNT',
+    '===========                      =======  =========  =========  =========  =========  =========  =========  ======  ======',
+    'DefaultMallocZone_0x100c14000      96.0M      80.0M      76.0M         0K      62843      59.4M      16.6M     22%       8',
+  ].join('\n');
+  const vm = parseVmmapSummary(text);
+  assert.equal(vm.footprintMB, 332.1);
+  assert.deepEqual(vm.regions['owned unmapped (graphics)'], { res: 141.8, dirty: 141.8, swap: 0 });
+  assert.deepEqual(vm.regions['Memory Tag 253'], { res: 41.5, dirty: 34.4, swap: 0 });
+  assert.equal(vm.regions.tiny, undefined);
+  assert.equal(vm.regions.TOTAL, undefined);
+  assert.deepEqual(vm.malloc.DefaultMallocZone, { count: 62843, allocMB: 59.4, dirtyMB: 76 });
 });

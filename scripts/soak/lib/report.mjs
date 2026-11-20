@@ -48,7 +48,9 @@ export function writeReport(sessionDir, data) {
   const roles = ['main', 'renderer', 'gpu', 'core', 'utility', 'audio'];
   const charts = [
     chart('Memory by process (MB, resident)', roles.map((r) => ({ name: r, points: S((s) => s.proc?.roles?.[r]?.rssMB) })), { unit: '', marks }),
-    chart('Memory at checkpoints (same blank state, after GC)', [
+    ...(baselines.some((b) => b.vm) ? [chart('Footprint at checkpoints (MB, what the system charges each process)',
+      roles.slice(0, 4).map((r, i) => ({ name: `${r} MB`, points: baselines.map((b) => [b.t, b.vm?.[r]?.footprintMB]), dots: true, color: COLORS[i] })), { marks })] : []),
+    chart('Resident memory at checkpoints (same blank state, after GC)', [
       ...roles.slice(0, 4).map((r, i) => ({ name: `${r} MB`, points: baselines.map((b) => [b.t, b.proc?.roles?.[r]?.rssMB]), dots: true, color: COLORS[i] })),
       { name: 'JS heap MB', points: baselines.map((b) => [b.t, b.renderer?.heapMB]), dots: true, color: COLORS[4] },
     ], { marks }),

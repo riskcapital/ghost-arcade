@@ -223,3 +223,61 @@ export async function browserCall(port, method, params = {}) {
     });
   } finally { ws.close(); }
 }
+
+/**
+ * Chromium's own memory accounting (memory-infra) for every process of the
+ * app, through the browser target: { 'Renderer': { 'partition_alloc': MB,
+ * 'cc/tile_memory': MB, ... }, ... }. Keeps allocators two levels deep with at
+ * least 1 MB. Shows what a process's memory is (DOM, JS, images, canvases,
+ * compositor tiles, GPU transfer buffers), which the OS numbers cannot.
+ * Processes with the same name are numbered (`Renderer`, `Renderer#2`).
+ */
+export async function memoryInfraDump(port, timeoutMs = 30000) {
+  const ver = await (await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(5000) })).json();
+  const ws = new WebSocket(ver.webSocketDebuggerUrl, { maxPayload: 512 * 1024 * 1024 });
+  await new Promise((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); });
+  let id = 0;
+  const pend = new Map();
+  const events = [];
+  let complete;
+  const completed = new Promise((resolve) => (complete = resolve));
+  ws.on('message', (data) => {
+    const m = JSON.parse(String(data));
+    if (m.id && pend.has(m.id)) { const p = pend.get(m.id); pend.delete(m.id); if (m.error) p.reject(new Error(m.error.message)); else p.resolve(m.result); }
+    else if (m.method === 'Tracing.dataCollected') events.push(...m.params.value);
+    else if (m.method === 'Tracing.tracingComplete') complete();
+  });
+  const call = (method, params = {}) => new Promise((resolve, reject) => { const i = ++id; pend.set(i, { resolve, reject }); ws.send(JSON.stringify({ id: i, method, params })); });
+  const timer = new Promise((_, reject) => setTimeout(() => reject(new Error('memory dump timed out')), timeoutMs));
+  try {
+    return await Promise.race([timer, (async () => {
+      await call('Tracing.start', { traceConfig: { includedCategories: ['disabled-by-default-memory-infra'], excludedCategories: ['*'], memoryDumpConfig: { triggers: [] } }, transferMode: 'ReportEvents' });
+      await call('Tracing.requestMemoryDump', { deterministic: true, levelOfDetail: 'detailed' });
+      await call('Tracing.end');
+      await completed;
+      const names = {};
+      for (const e of events) if (e.ph === 'M' && e.name === 'process_name') names[e.pid] = e.args.name.split(' ')[0];
+      const out = {};
+      const seen = {};
+      for (const e of events) {
+        const al = e.ph === 'v' ? e.args?.dumps?.allocators : null;
+        if (!al) continue;
+        const base = names[e.pid] ?? String(e.pid);
+        seen[base] = (seen[base] ?? 0) + 1;
+        const key = seen[base] > 1 ? `${base}#${seen[base]}` : base;
+        const row = {};
+        for (const [name, v] of Object.entries(al)) {
+          // Shared memory segments and cross-process globals are listed one by one; keep their totals.
+          if (name.split('/').length > 2 || /^(shared_memory|global)\//.test(name)) continue;
+          const s = v.attrs?.effective_size ?? v.attrs?.size;
+          const mb = s ? parseInt(s.value, 16) / 1048576 : 0;
+          if (mb >= 1) row[name] = Math.round(mb * 10) / 10;
+        }
+        out[key] = row;
+      }
+      return out;
+    })()]);
+  } finally {
+    ws.close();
+  }
+}
