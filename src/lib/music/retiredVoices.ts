@@ -12,7 +12,7 @@ const RETIRED: Record<string, string> = {
   'VX-Aperture.fs': 'VX-Breath.fs',
   'VX-LightRoom.fs': 'VX-Slabs.fs',
   'VX-ChromePool.fs': 'VX-MoltenChrome.fs',
-  'VX-Prism.fs': 'VX-Slabs.fs',
+  'VX-Prism.fs': 'VX-PrismBeam.fs',
   'VX-Harp.fs': 'VX-LightLines.fs',
   'VX-DiodeField.fs': 'VX-LedWall.fs',
   'VX-LightField.fs': 'VX-Silk.fs',

@@ -164,6 +164,21 @@ export const VOICE_SHADERS: readonly VoiceShader[] = [
   // Glass: light seen through it.
   { file: 'VX-LiquidGlass.fs', name: 'Liquid Glass', family: 'dub', pack: 'form', blurb: 'A clear thick liquid poured over a lit backdrop, bending it with a spectral fringe' },
   { file: 'VX-GlassBlocks.fs', name: 'Glass Blocks', family: 'analog', pack: 'form', blurb: 'A wall of wavy glass blocks, each a lens on the lights behind it' },
+  { file: 'VX-GlassSpheres.fs', name: 'Glass Spheres', family: 'bath', pack: 'form', blurb: 'Solid glass balls under hard lights, each throwing a focused ring on the floor' },
+  { file: 'VX-Crystal.fs', name: 'Crystal', family: 'bath', pack: 'form', blurb: 'A cut gem full of spectral shards, scattering light across the floor' },
+  { file: 'VX-PrismBeam.fs', name: 'Prism', family: 'analog', pack: 'form', blurb: 'A glass bar splitting a white beam into a spectrum across the table' },
+  { file: 'VX-Caustic.fs', name: 'Caustic Glass', family: 'dub', pack: 'form', blurb: 'Light through a rippling glass sheet, gathered into a net of bright filaments' },
+  // Intricate: built to be looked at for a long time.
+  { file: 'VX-Megastructure.fs', name: 'Megastructure', family: 'berlin', pack: 'form', blurb: 'A flight down an endless concrete canyon of slabs, bridges and lit windows' },
+  { file: 'VX-Morphogen.fs', name: 'Morphogen', family: 'dub', pack: 'form', blurb: 'A living pattern of mazes and spots, carved in porcelain relief' },
+  { file: 'VX-Circuit.fs', name: 'Circuit', family: 'berlin', pack: 'form', blurb: 'A dense circuit board with signals running its buses from chip to chip' },
+  { file: 'VX-Engraving.fs', name: 'Engraving', family: 'analog', pack: 'form', blurb: 'A turning sculpture drawn entirely in engraved hatch lines' },
+  { file: 'VX-Waterfall.fs', name: 'Waterfall', family: 'analog', pack: 'form', blurb: 'The music itself as a receding landscape of lines, hits as crests' },
+  { file: 'VX-InfinityRoom.fs', name: 'Infinity Room', family: 'bath', pack: 'form', blurb: 'A mirrored room of hanging lights repeating to infinity' },
+  { file: 'VX-Hyperbolic.fs', name: 'Hyperbolic', family: 'bath', pack: 'form', blurb: 'An engraved disc of tiles that crowd endlessly toward its rim' },
+  { file: 'VX-Clockwork.fs', name: 'Clockwork', family: 'analog', pack: 'form', blurb: 'A wall of meshing steel gears that ticks forward on every hit' },
+  { file: 'VX-Plotter.fs', name: 'Plotter', family: 'analog', pack: 'form', blurb: 'A pen plotter drawing a stream of hairlines round eddies, sheet after sheet' },
+  { file: 'VX-Bismuth.fs', name: 'Bismuth', family: 'dub', pack: 'form', blurb: 'Stepped hopper crystals with an iridescent film that shifts on hits' },
 ];
 
 export const voiceShaderByFile = (file: string): VoiceShader | undefined => VOICE_SHADERS.find((v) => v.file === file);
@@ -324,6 +339,18 @@ export const VISUAL_SCENES: readonly VisualScene[] = [
   { id: 'form-ridge', name: 'Ridge', set: 'dub', palette: 'bone-ink', voices: [
     { file: 'VX-Ridgelines.fs', source: 'bass', auto: false },
     { file: 'VX-Swarm.fs', source: 'lead', level: 0.6 },
+  ] },
+  { id: 'form-megastructure', name: 'Megastructure', set: 'berlin', palette: 'mono-accent', voices: [
+    { file: 'VX-Megastructure.fs', source: 'kick', auto: false },
+    { file: 'VX-Circuit.fs', source: 'hats', level: 0.4 },
+  ] },
+  { id: 'form-crystal', name: 'Crystal', set: 'bath', palette: 'arctic', voices: [
+    { file: 'VX-Crystal.fs', source: 'chords', auto: false },
+    { file: 'VX-Caustic.fs', source: 'bass', level: 0.5 },
+  ] },
+  { id: 'form-workshop', name: 'Workshop', set: 'analog', palette: 'tungsten', voices: [
+    { file: 'VX-Clockwork.fs', source: 'kick', auto: false },
+    { file: 'VX-Engraving.fs', source: 'chords', level: 0.6 },
   ] },
   { id: 'form-led-wall', name: 'LED wall', set: 'berlin', palette: 'mono-accent', voices: [
     { file: 'VX-LedWall.fs', source: 'kick', auto: false },

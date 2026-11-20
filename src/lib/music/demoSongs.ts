@@ -79,34 +79,34 @@ interface DemoDef {
 const DEMOS: DemoDef[] = [
   // Warm house: cloth, slats and light on water.
   { collection: 'velvet', key: { root: 2, scale: 'dorian' }, form: 'club',
-    visuals: { intro: 'Silk', verse: 'Louvers', bridge: 'KineticLights', drop: 'PulseBars', dropBass: 'SpeakerCone', chorus: 'LiquidLight', rest: 'Caustics', verse2: 'RoseCurves' } },
+    visuals: { intro: 'Silk', verse: 'Louvers', bridge: 'KineticLights', drop: 'PulseBars', dropBass: 'SpeakerCone', chorus: 'LiquidLight', rest: 'GlassSpheres', verse2: 'RoseCurves' } },
   // French touch: chrome, op art and mirrors.
   { collection: 'chrome', key: { root: 9, scale: 'minor' }, form: 'club',
-    visuals: { intro: 'MoltenChrome', verse: 'OpBands', bridge: 'TunnelLines', drop: 'Stack', dropBass: 'Quicksilver', chorus: 'Kaleidobloom', rest: 'SoapFilm', verse2: 'OpDisc' } },
+    visuals: { intro: 'MoltenChrome', verse: 'OpBands', bridge: 'TunnelLines', drop: 'Stack', dropBass: 'Quicksilver', chorus: 'Kaleidobloom', rest: 'Crystal', verse2: 'OpDisc' } },
   // Jam band lift: sky, horizon and stars.
   { collection: 'aurora', key: { root: 4, scale: 'dorian' }, form: 'club',
-    visuals: { intro: 'Aurora', verse: 'LightLines', bridge: 'Ridgelines', drop: 'Starburst', dropBass: 'Horizon', chorus: 'SpiralGalaxy', rest: 'Riverlight', verse2: 'Fireflies' } },
+    visuals: { intro: 'Aurora', verse: 'LightLines', bridge: 'Ridgelines', drop: 'Starburst', dropBass: 'Horizon', chorus: 'SpiralGalaxy', rest: 'PrismBeam', verse2: 'Fireflies' } },
   // Industrial: stone, beams and scopes.
   { collection: 'blacksteel', key: { root: 4, scale: 'minor' }, form: 'bass',
-    visuals: { intro: 'HazeBeams', verse: 'Pillars', bridge: 'Scanner', drop: 'Monolith', dropBass: 'SpeakerStack', chorus: 'Oscillogram', rest: 'Remnant', verse2: 'WireCorrupt' } },
+    visuals: { intro: 'HazeBeams', verse: 'Pillars', bridge: 'Scanner', drop: 'Megastructure', dropBass: 'SpeakerStack', chorus: 'Oscillogram', rest: 'Remnant', verse2: 'Engraving' } },
   // Dubstep: LED slabs, shock fronts and tearing signal.
   { collection: 'magnet', key: { root: 5, scale: 'minor' }, form: 'bass',
-    visuals: { intro: 'Ferrofluid', verse: 'LedMonolith', bridge: 'SignalTear', drop: 'Shockwave', dropBass: 'Maelstrom', chorus: 'NeonFault', rest: 'EventHorizon', verse2: 'RadialTear' } },
+    visuals: { intro: 'Ferrofluid', verse: 'LedMonolith', bridge: 'SignalTear', drop: 'Shockwave', dropBass: 'Maelstrom', chorus: 'NeonFault', rest: 'InfinityRoom', verse2: 'RadialTear' } },
   // Chiptune: pixels, counters and memory.
   { collection: 'cobalt', key: { root: 0, scale: 'minor' }, form: 'club',
-    visuals: { intro: 'Glyphs', verse: 'LedGrid', bridge: 'BitCounter', drop: 'PixelBurst', dropBass: 'Stairs', chorus: 'PixelDrip', rest: 'Automaton', verse2: 'HexDump' } },
+    visuals: { intro: 'Glyphs', verse: 'LedGrid', bridge: 'BitCounter', drop: 'PixelBurst', dropBass: 'Stairs', chorus: 'PixelDrip', rest: 'Circuit', verse2: 'HexDump' } },
   // Jungle: bar codes, data and sorted pixels.
   { collection: 'oxide', key: { root: 7, scale: 'minor' }, form: 'breaks',
-    visuals: { intro: 'Moire', verse: 'Barcode', bridge: 'DataPlot', drop: 'Sorter', dropBass: 'Datamosh', chorus: 'DataStream', rest: 'ScanField', verse2: 'GlitchCollage' } },
+    visuals: { intro: 'Moire', verse: 'Barcode', bridge: 'Waterfall', drop: 'Sorter', dropBass: 'Datamosh', chorus: 'DataStream', rest: 'ScanField', verse2: 'GlitchCollage' } },
   // Psychedelic dub: deep water, living forms and jewels.
   { collection: 'moss', key: { root: 2, scale: 'minor' }, form: 'dub',
-    visuals: { intro: 'Nebula', verse: 'Shallows', bridge: 'Medusa', drop: 'PlasmaCells', dropBass: 'FractalCoral', chorus: 'JuliaJewel', rest: 'RingedPlanet', verse2: 'BaitBall' } },
+    visuals: { intro: 'Nebula', verse: 'Shallows', bridge: 'Medusa', drop: 'PlasmaCells', dropBass: 'Morphogen', chorus: 'Hyperbolic', rest: 'Bismuth', verse2: 'BaitBall' } },
   // Hard roots dub: the sound system itself.
   { collection: 'current', key: { root: 9, scale: 'minor' }, form: 'dub',
-    visuals: { intro: 'Vinyl', verse: 'EchoRings', bridge: 'Spring', drop: 'TapeLoop', dropBass: 'Undertow', chorus: 'Cymatics', rest: 'Smoke', verse2: 'Knotwork' } },
+    visuals: { intro: 'Vinyl', verse: 'EchoRings', bridge: 'Spring', drop: 'TapeLoop', dropBass: 'Undertow', chorus: 'Cymatics', rest: 'Smoke', verse2: 'Clockwork' } },
   // Smoky studio dub: ink, paisley and feedback.
   { collection: 'tinroof', key: { root: 7, scale: 'minor' }, form: 'dub',
-    visuals: { intro: 'Inkwell', verse: 'RippleTank', bridge: 'Paisley', drop: 'Feedback', dropBass: 'Marbling', chorus: 'Mandala', rest: 'Moon', verse2: 'MeltBow' } },
+    visuals: { intro: 'Inkwell', verse: 'RippleTank', bridge: 'Paisley', drop: 'Feedback', dropBass: 'Caustic', chorus: 'Mandala', rest: 'Moon', verse2: 'Plotter' } },
 ];
 
 /** Every look the starter set uses, as shader file names (for checking them against the library). */
