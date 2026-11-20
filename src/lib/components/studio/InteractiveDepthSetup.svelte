@@ -109,7 +109,7 @@
         <button class="wide primary" data-depth-scan-start onclick={() => phoneScan?.onstart(chosenPhone)}>Start on phone</button>
       {:else}
         {#if flow.kind === 'failed'}<p class="depth-scan-error" role="alert">{flow.message}</p>{/if}
-        <p class="hint">No phone with depth scan is paired. Scan this code with an iPhone that has LiDAR, in the Ghost Arcade app.</p>
+        <p class="hint">No phone with depth scan is paired. On an iPhone that has LiDAR, open the Ghost Arcade app, then Tools → Mobile Control → Scan desktop QR, and scan this code.</p>
         {#if phoneScan.pair?.qr}
           <img class="depth-pair-qr" src={phoneScan.pair.qr} alt="Pairing code" />
           {#if phoneScan.pair.url}<p class="hint depth-pair-url" translate="no">{phoneScan.pair.url}</p>{/if}
@@ -119,7 +119,7 @@
       {/if}
       <p class="hint">Or, from a scan the phone saved:</p>
     {:else}
-      <p class="hint">On the phone, run Auto-map with depth from Calibration, with the phone held still where it sees the objects and the projection. Then open the depth capture it saved.</p>
+      <p class="hint">On the phone, tap Scan room for Depth mode and prop the phone where it sees the objects and the projection. When it is done, tap Save / Share file there and open that file here.</p>
     {/if}
     <label class="wide file-button">
       Open a depth capture
