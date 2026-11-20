@@ -34,7 +34,7 @@ class Assert extends Error {}
 
 // ── Arguments ───────────────────────────────────────────────────────────
 function parseArgs(argv) {
-  const o = { hours: 4, app: null, seed: null, areas: null, exclude: [], only: null, out: null, port: 9420, devPort: 1430, config: path.join(here, 'soak.config.json'), hidden: false, steps: null, keepOpen: false, reportOnly: null, replay: null, label: '' };
+  const o = { hours: 4, app: null, seed: null, areas: null, exclude: [], only: null, out: null, port: 9420, devPort: 1430, config: path.join(here, 'soak.config.json'), hidden: false, steps: null, keepOpen: false, reportOnly: null, replay: null, label: '', heapSnapshots: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const v = () => argv[++i];
@@ -54,6 +54,7 @@ function parseArgs(argv) {
     else if (a === '--visible') o.hidden = false;
     else if (a === '--steps') o.steps = Number(v());
     else if (a === '--keep-open') o.keepOpen = true;
+    else if (a === '--heap-snapshots') o.heapSnapshots = true;
     else if (a === '--label') o.label = v();
     else if (a === '--report-only') o.reportOnly = v();
     else if (a === '--replay') o.replay = v();
@@ -677,6 +678,11 @@ async function main() {
       // the runner's own connection never shows up as a leak.
       await s.call('Runtime.discardConsoleEntries', {}, 10000).catch(() => {});
       await s.call('HeapProfiler.collectGarbage', {}, 30000).catch(() => {});
+      if (opts.heapSnapshots) {
+        // Compare two of these in DevTools (Memory → Load → Comparison) to see what keeps memory alive.
+        const file = path.join(sessionDir, `heap-run${st.run}-step${st.step}.heapsnapshot`);
+        await s.heapSnapshot(file, fs).then(() => log(`heap snapshot: ${file}`), (err) => log(`heap snapshot failed: ${err.message}`));
+      }
       st.busy = false;
       const b = await sample({ checkpoint: true });
       // The like-for-like frame rate: one full-frame animated shader on the

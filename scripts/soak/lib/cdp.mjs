@@ -32,6 +32,28 @@ export class PageSession {
     this.closed = false;
     this.crashed = false;
     this.reloads = 0;
+    this.handlers = new Map();
+  }
+
+  /** Listen for one CDP event (e.g. HeapProfiler.addHeapSnapshotChunk); returns an off(). */
+  on(method, fn) {
+    if (!this.handlers.has(method)) this.handlers.set(method, new Set());
+    this.handlers.get(method).add(fn);
+    return () => this.handlers.get(method)?.delete(fn);
+  }
+
+  /** Write a heap snapshot of the page to `file` (for a retainer diff in DevTools' Memory panel). */
+  async heapSnapshot(file, fsMod) {
+    const out = fsMod.createWriteStream(file);
+    const off = this.on('HeapProfiler.addHeapSnapshotChunk', (p) => out.write(p.chunk));
+    try {
+      await this.call('HeapProfiler.enable', {}, 30000);
+      await this.call('HeapProfiler.takeHeapSnapshot', { reportProgress: false, captureNumericValue: false }, 600000);
+    } finally {
+      off();
+      await new Promise((resolve) => out.end(resolve));
+      await this.call('HeapProfiler.disable', {}, 30000).catch(() => {});
+    }
   }
 
   async connect() {
@@ -64,6 +86,8 @@ export class PageSession {
       return;
     }
     const p = msg.params ?? {};
+    const handlers = msg.method && this.handlers.get(msg.method);
+    if (handlers) for (const fn of handlers) { try { fn(p); } catch { /* a listener's own problem */ } }
     switch (msg.method) {
       case 'Runtime.exceptionThrown': {
         const d = p.exceptionDetails ?? {};
