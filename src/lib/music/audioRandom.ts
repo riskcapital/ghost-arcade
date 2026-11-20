@@ -21,7 +21,7 @@ export function hashString(id: string): number {
   return h >>> 0;
 }
 
-function isOffline(ctx: BaseAudioContext): boolean {
+export function isOffline(ctx: BaseAudioContext): boolean {
   const Offline = (globalThis as { OfflineAudioContext?: typeof OfflineAudioContext }).OfflineAudioContext;
   return !!Offline && ctx instanceof Offline;
 }

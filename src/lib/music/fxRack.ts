@@ -6,13 +6,15 @@
  */
 
 import { FX_RACKS, type FxKind, type StudioSet } from './studioSets';
+import { LazyConvolver } from './lazyConvolver';
 
 type Params = Record<string, number>;
 
 interface Unit {
   input: GainNode;
   output: GainNode;
-  set(params: Params, tempo: number): void;
+  /** `immediate`: the rack is new and nothing plays through it yet. */
+  set(params: Params, tempo: number, immediate?: boolean): void;
 }
 
 /** A unit with a dry path and a wet path, crossfaded by its "mix" knob. */
@@ -107,19 +109,20 @@ export function loopClip(amount: number): Float32Array<ArrayBuffer> {
 const ECHO_DIVISIONS = [0.25, 0.375, 0.5, 0.75, 1, 1.5, 2];
 
 function reverbUnit(ctx: AudioContext, key: (p: string) => string, kind: FxKind): Unit {
-  const convolver = ctx.createConvolver();
+  // The room is built when its mix first comes up (a few MB of FFT buffers each).
+  const convolver = new LazyConvolver(ctx, () => ctx.createBuffer(2, 1, ctx.sampleRate));
   const pre = ctx.createBiquadFilter();
   pre.type = 'highpass';
   pre.frequency.value = kind === 'shimmer' ? 500 : 120;
   const post = ctx.createGain();
   post.gain.value = kind === 'shimmer' ? 1.4 : 1;
-  pre.connect(convolver).connect(post);
+  pre.connect(convolver.input);
+  convolver.output.connect(post);
   const io = wetDry(ctx, pre, post);
-  let shape = '';
   return {
     input: io.input,
     output: io.output,
-    set(p) {
+    set(p, _tempo, immediate = false) {
       let next: string;
       let build: () => AudioBuffer;
       if (kind === 'spring') {
@@ -137,11 +140,10 @@ function reverbUnit(ctx: AudioContext, key: (p: string) => string, kind: FxKind)
         build = () => impulse(ctx, seconds, 1.5 + (1 - decay) * 5, bright, gate);
       }
       // Rebuilding the room is costly, so only when the knobs moved enough to hear.
-      if (next !== shape) {
-        shape = next;
-        convolver.buffer = build();
-      }
-      io.mix(p[key('mix')] ?? 0);
+      convolver.setImpulse(next, build);
+      const mix = p[key('mix')] ?? 0;
+      if (mix > 0) convolver.arm(immediate);
+      io.mix(mix);
     },
   };
 }
@@ -351,9 +353,10 @@ export class FxRack {
     node.connect(this.output);
   }
 
-  setParams(params: Params, tempo = this.tempo): void {
+  /** `immediate` for a new rack, before anything is patched into it. */
+  setParams(params: Params, tempo = this.tempo, immediate = false): void {
     this.tempo = tempo;
-    for (const unit of this.units) unit.set(params, tempo);
+    for (const unit of this.units) unit.set(params, tempo, immediate);
   }
 
   dispose(): void {

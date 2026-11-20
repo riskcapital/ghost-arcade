@@ -17,6 +17,7 @@
 
 import { ECHO_TIMES, type BandFxSettings } from './soundSlots';
 import { impulse } from './fxRack';
+import { LazyConvolver } from './lazyConvolver';
 import { holdAt, softCurve } from './sounds/kit';
 
 const MAX_ECHO_SECONDS = 4;
@@ -35,6 +36,8 @@ export class BandFx {
   private readonly wow: OscillatorNode;
   private readonly returnGain: GainNode;
   private readonly freezeGain: GainNode;
+  /** The room: built the first time the band sends into the echo or the reverb, washes, throws or freezes. */
+  private readonly verb: LazyConvolver;
   private settings: BandFxSettings | null = null;
   private tempo = 120;
   private throwing = false;
@@ -79,25 +82,28 @@ export class BandFx {
     // Reverb: a long, soft room.
     this.verbSend = ctx.createGain();
     this.verbSend.gain.value = 0;
-    const verb = ctx.createConvolver();
-    verb.buffer = impulse(ctx, 4.5, 2.6, 0.45);
+    const verb = new LazyConvolver(ctx, () => impulse(ctx, 4.5, 2.6, 0.45));
+    this.verb = verb;
     const verbOut = ctx.createGain();
     verbOut.gain.value = 0.8;
-    this.input.connect(this.verbSend).connect(verb).connect(verbOut).connect(this.returnGain);
+    this.input.connect(this.verbSend).connect(verb.input);
+    verb.output.connect(verbOut).connect(this.returnGain);
     // The repeats wash into the room a little.
     const echoToVerb = ctx.createGain();
     echoToVerb.gain.value = 0.25;
-    tape.connect(echoToVerb).connect(verb);
+    tape.connect(echoToVerb).connect(verb.input);
 
     this.freezeGain = ctx.createGain();
     this.freezeGain.gain.value = 0;
     this.freezeGain.connect(this.returnGain);
     const freezeToVerb = ctx.createGain();
     freezeToVerb.gain.value = 0.35;
-    this.freezeGain.connect(freezeToVerb).connect(verb);
+    this.freezeGain.connect(freezeToVerb).connect(verb.input);
   }
 
-  setSettings(settings: BandFxSettings, tempo: number): void {
+  /** `immediate` when the studio is being set up: a saved send gets its room at full level from the start. */
+  setSettings(settings: BandFxSettings, tempo: number, immediate = false): void {
+    if (settings.verbSend > 0 || settings.echoSend > 0) this.verb.arm(immediate);
     const before = this.settings;
     this.settings = settings;
     this.tempo = tempo;
@@ -115,6 +121,7 @@ export class BandFx {
 
   /** Throw the band into the echo while held; the repeats run on after. */
   setThrow(on: boolean): void {
+    if (on) this.verb.arm();
     this.throwing = on;
     const t = this.ctx.currentTime;
     holdAt(this.echoSend.gain, t);
@@ -124,6 +131,7 @@ export class BandFx {
 
   /** Wash the band into the reverb while held. */
   setWash(on: boolean): void {
+    if (on) this.verb.arm();
     this.washing = on;
     const t = this.ctx.currentTime;
     holdAt(this.verbSend.gain, t);
@@ -148,6 +156,7 @@ export class BandFx {
     const samples = await this.snapshot(capture, 1.6);
     if (!samples || samples.length < this.ctx.sampleRate * 0.3) return false;
     this.releaseFreeze(0.4);
+    this.verb.arm();
     const buffer = this.ctx.createBuffer(1, samples.length, this.ctx.sampleRate);
     buffer.copyToChannel(new Float32Array(samples), 0);
     const out = this.ctx.createGain();
