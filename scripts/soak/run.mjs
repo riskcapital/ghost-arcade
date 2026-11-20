@@ -18,7 +18,7 @@ import { makeRng, randomSeed } from './lib/rng.mjs';
 import { ensureDevServer, resolveTarget, launchApp, setWindowSize, debugLogPath } from './lib/app.mjs';
 import { listTargets, waitForTarget, memoryInfraDump } from './lib/cdp.mjs';
 import { sampleTree, folderSize, killTree, alive, vmSummary } from './lib/proc.mjs';
-import { ACTIONS, AREAS, STATE_JS, MONKEY_DENY } from './lib/actions.mjs';
+import { ACTIONS, AREAS, STATE_JS, MONKEY_DENY, PROFILES } from './lib/actions.mjs';
 import { analyse } from './lib/detect.mjs';
 import { writeReport } from './lib/report.mjs';
 import { PAGE_HELPERS as SHOW_HELPERS, runAction as runShowAction } from '../show-runner/steps.mjs';
@@ -34,7 +34,7 @@ class Assert extends Error {}
 
 // ── Arguments ───────────────────────────────────────────────────────────
 function parseArgs(argv) {
-  const o = { hours: 4, app: null, seed: null, areas: null, exclude: [], only: null, out: null, port: 9420, devPort: 1430, config: path.join(here, 'soak.config.json'), hidden: false, steps: null, keepOpen: false, reportOnly: null, replay: null, label: '', heapSnapshots: false };
+  const o = { hours: 4, app: null, seed: null, areas: null, exclude: [], only: null, out: null, port: 9420, devPort: 1430, config: path.join(here, 'soak.config.json'), hidden: false, steps: null, keepOpen: false, reportOnly: null, replay: null, label: '', heapSnapshots: false, profile: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const v = () => argv[++i];
@@ -55,6 +55,7 @@ function parseArgs(argv) {
     else if (a === '--steps') o.steps = Number(v());
     else if (a === '--keep-open') o.keepOpen = true;
     else if (a === '--heap-snapshots') o.heapSnapshots = true;
+    else if (a === '--profile') o.profile = v();
     else if (a === '--label') o.label = v();
     else if (a === '--report-only') o.reportOnly = v();
     else if (a === '--replay') o.replay = v();
@@ -83,11 +84,14 @@ function gitInfo() {
 
 async function portFree(port) {
   const net = await import('node:net');
-  return new Promise((resolve) => {
+  // Chromium's debug port listens on 127.0.0.1 only, which a listen on every
+  // interface does not collide with on macOS: try both.
+  const tryListen = (host) => new Promise((resolve) => {
     const s = net.createServer();
     s.once('error', () => resolve(false));
-    s.listen(port, () => s.close(() => resolve(true)));
+    s.listen(port, host, () => s.close(() => resolve(true)));
   });
+  return (await tryListen('127.0.0.1')) && (await tryListen(undefined));
 }
 
 const readJsonl = (file) => { try { return fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean); } catch { return []; } };
@@ -138,10 +142,16 @@ async function main() {
     const dir = path.resolve(opts.replay);
     const old = JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8'));
     opts.seed = old.seed;
+    opts.profile ??= old.profile ?? null;
     replayPlan = readJsonl(path.join(dir, 'trace.jsonl')).filter((e) => ['action', 'rest', 'checkpoint'].includes(e.kind)).sort((a, b) => a.step - b.step);
     opts.label ||= 'replay';
     if (!Number.isFinite(opts.hours) || opts.hours === 4) opts.hours = 24;
   }
+  // --profile <name>: a named kind of run (lib/actions.mjs PROFILES): its own
+  // actions and weights, a set built once per launch, its own checkpoints.
+  const profile = opts.profile ? PROFILES[opts.profile] : null;
+  if (opts.profile && !profile) throw new Error(`unknown profile "${opts.profile}" (profiles: ${Object.keys(PROFILES).join(', ')})`);
+  if (opts.profile) opts.label ||= opts.profile;
   const seed = Number.isFinite(opts.seed) ? opts.seed >>> 0 : randomSeed();
   const master = makeRng(seed);
   const areas = (opts.areas ?? AREAS).filter((a) => !opts.exclude.includes(a));
@@ -161,9 +171,9 @@ async function main() {
   }
   const target = resolveTarget({ root, appPath: opts.app, sessionDir, log });
   const replayBase = (step) => `npm run soak -- --replay "${sessionDir}" --steps ${step} --keep-open${opts.app ? ` --app "${opts.app}"` : ''}   (or: ${seedReplay} --steps ${step} --keep-open)`;
-  const seedReplay = ['npm run soak --', `--seed ${seed}`, opts.areas || opts.exclude.length ? `--areas ${areas.join(',')}` : '', opts.only ? `--only ${opts.only.join(',')}` : '', opts.app ? `--app "${opts.app}"` : ''].filter(Boolean).join(' ');
+  const seedReplay = ['npm run soak --', `--seed ${seed}`, opts.profile ? `--profile ${opts.profile}` : '', opts.areas || opts.exclude.length ? `--areas ${areas.join(',')}` : '', opts.only ? `--only ${opts.only.join(',')}` : '', opts.app ? `--app "${opts.app}"` : ''].filter(Boolean).join(' ');
   const meta = {
-    startedAt: new Date(startAt).toISOString(), seed, hours: opts.hours, areas, only: opts.only, app: opts.app ? path.resolve(opts.app) : 'source checkout',
+    startedAt: new Date(startAt).toISOString(), seed, hours: opts.hours, areas, only: opts.only, profile: opts.profile, app: opts.app ? path.resolve(opts.app) : 'source checkout',
     packaged: target.packaged, git: gitInfo(), hidden: opts.hidden, command: `node scripts/soak/run.mjs ${process.argv.slice(2).join(' ')}`.trim(), sessionDir,
     machine: { platform: `${process.platform} ${os.release()} ${os.arch()}`, cpu: os.cpus()[0]?.model ?? '', cores: os.cpus().length, memGB: Math.round(os.totalmem() / 1073741824) },
     config, appVersion: target.packaged ? target.version : JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version,
@@ -241,6 +251,7 @@ async function main() {
         st.missed = 0; st.hang = false; st.prevStatus = null; st.prevProc = null; st.launchedAt = Date.now();
         await dismissStartup();
         await session().eval('window.__soak.instrument()').catch(() => {});
+        await profileSetup();
         const s = await session().eval('window.__soak.status()', 10000).catch(() => null);
         if (s && !meta.machine.adapter) { meta.machine.adapter = s.adapter_name ?? 'unknown'; meta.machine.backend = s.backend ?? ''; saveMeta(); }
         log(`launch #${st.run} ready in ${(h.readyMs / 1000).toFixed(1)} s (pid ${h.pid})`);
@@ -257,6 +268,27 @@ async function main() {
   }
 
   const session = () => st.handle?.session;
+
+  /** A profile's set, built after every launch. A set that cannot be built
+   *  is a failed launch (retried, and counted). */
+  async function profileSetup() {
+    if (!profile?.setup) return;
+    const rec = { kind: 'setup', step: st.step, t: T(), run: st.run, profile: opts.profile, status: 'pass', note: '', warnings: [], error: null };
+    const t0 = Date.now();
+    try {
+      await Promise.race([
+        profile.setup(makeCtx(st.step, master.fork(1e9 + st.run), rec)),
+        sleep(10 * 60000).then(() => { throw new Assert('timed out after 10 minutes'); }),
+      ]);
+    } catch (err) {
+      rec.status = 'fail'; rec.error = err.message;
+      Object.assign(rec, await screenshot(`${opts.profile} setup failed`, 'fail'));
+    }
+    rec.ms = Date.now() - t0;
+    files.trace.write(J(rec) + '\n');
+    log(`${opts.profile} setup ${rec.status === 'pass' ? 'done' : 'FAILED'} in ${(rec.ms / 1000).toFixed(1)}s: ${rec.note}${rec.error ? ` — ${rec.error}` : ''}${rec.warnings.length ? ` (${rec.warnings.join('; ').slice(0, 300)})` : ''}`);
+    if (rec.status === 'fail') throw new Error(`${opts.profile} setup failed: ${rec.error}`);
+  }
 
   async function dismissStartup() {
     await session().eval(`(async () => {
@@ -640,9 +672,9 @@ async function main() {
     let state = null;
     try { state = await session().eval(STATE_JS, 10000); } catch { /* checked below */ }
     if (!state) { await sleep(2000); return; }
-    const weightOf = (a) => config.actionWeights?.[a.name] ?? a.weight;
-    const pool = ACTIONS.filter((a) => areas.includes(a.area) && (!opts.only || opts.only.includes(a.name)) && weightOf(a) > 0 && (!a.when || a.when(state)))
-      .map((a) => ({ a, weight: weightOf(a) * (config.areaWeights?.[a.area] ?? 1) }));
+    const weightOf = (a) => config.actionWeights?.[a.name] ?? (profile ? profile.weights[a.name] ?? 0 : a.weight);
+    const pool = ACTIONS.filter((a) => (profile || areas.includes(a.area)) && (!opts.only || opts.only.includes(a.name)) && weightOf(a) > 0 && (!a.when || a.when(state)))
+      .map((a) => ({ a, weight: weightOf(a) * (profile ? 1 : config.areaWeights?.[a.area] ?? 1) }));
     const pick = rng.weighted(pool);
     if (!pick) { await sleep(1000); return; }
     return runAction(pick.a, rng);
@@ -681,8 +713,39 @@ async function main() {
     if (action.area === 'output') await keepFramesRunning(action.name);
   }
 
+  /** A profile that keeps its set: measure it as it plays, after GC (the
+   *  same state every time is the set itself). */
+  async function playingCheckpoint() {
+    const s = session();
+    log(`checkpoint #${st.step}: measuring the set as it plays`);
+    const t0 = Date.now();
+    st.busy = true;
+    try {
+      if (st.emulated) { await s.call('Emulation.clearDeviceMetricsOverride').catch(() => {}); st.emulated = false; }
+      await keepFramesRunning('checkpoint');
+      const state = await s.eval(STATE_JS, 10000).catch(() => null);
+      await sleep(5000);
+      await s.call('Runtime.discardConsoleEntries', {}, 10000).catch(() => {});
+      await s.call('HeapProfiler.collectGarbage', {}, 30000).catch(() => {});
+      if (opts.heapSnapshots) {
+        const file = path.join(sessionDir, `heap-run${st.run}-step${st.step}.heapsnapshot`);
+        await s.heapSnapshot(file, fs).then(() => log(`heap snapshot: ${file}`), (err) => log(`heap snapshot failed: ${err.message}`));
+      }
+      st.busy = false;
+      const b = await sample({ checkpoint: true });
+      files.trace.write(J({ kind: 'checkpoint', step: st.step, t: T(), run: st.run, ms: Date.now() - t0, playing: state }) + '\n');
+      if (b) log(`checkpoint: total ${b.proc?.totalMB} MB, renderer ${b.proc?.roles?.renderer?.rssMB} MB, heap ${b.renderer?.heapMB} MB, DOM ${b.renderer?.nodes}, core ${b.proc?.roles?.core?.rssMB} MB; layers ${state?.layers}, deck clips ${state?.filled?.length}, Timeline ${state?.playing ? 'playing' : 'stopped'}, Output Window ${state?.outputOpen ? 'open' : 'closed'}`);
+      await screenshot('checkpoint', 'checkpoint');
+    } catch (err) {
+      log(`checkpoint failed: ${err.message}`);
+      files.trace.write(J({ kind: 'checkpoint', step: st.step, t: T(), run: st.run, error: err.message }) + '\n');
+    } finally { st.busy = false; }
+    try { buildReport(sessionDir, { durationMs: T(), steps: st.step, launches: st.launches, interrupted: 'still running (report as of the last checkpoint)' }); } catch (err) { log(`interim report: ${err.message}`); }
+  }
+
   /** Back to the same blank state, let it settle, GC, and take the memory baseline. */
   async function checkpoint() {
+    if (profile && profile.blankCheckpoints === false) return playingCheckpoint();
     const s = session();
     log(`checkpoint #${st.step}: back to a blank project`);
     const t0 = Date.now();

@@ -792,6 +792,100 @@ def('monkey', 'monkey.keys', 3, 20, async (ctx) => {
   await ctx.page(`if (G.settings.get().output?.blackout) G.settings.update((s) => ({ ...s, output: { ...s.output, blackout: false } }));`);
 });
 
+// ── Live set (only with --profile live-set) ──────────────────────────
+// Weight 0: never picked by an ordinary run.
+def('live', 'live.keepPlaying', 0, 60, async (ctx) => {
+  // A set does not stop: the Timeline plays again when its song ends (or a
+  // transport step stopped it), and the deck keeps a column running.
+  const r = await ctx.page(`
+    const sh = S.show(), d = S.deck();
+    const out = { playing: !!sh.isPlaying, clips: Object.values(d.activeClips ?? {}).filter(Boolean).length };
+    if (!sh.isPlaying) { G.showTimeline.seek(A.from); G.showTimeline.play(); out.restarted = true; }
+    if (!out.clips) { G.vjClipLauncher.triggerColumn(A.col); out.column = A.col; }
+    return out;`, { from: ctx.rng.int(0, 20), col: ctx.rng.int(0, 3) });
+  ctx.note(`${r.restarted ? 'Timeline played again' : 'Timeline playing'}; ${r.column !== undefined ? `column ${r.column} launched` : `${r.clips} clips live`}`);
+  // Just watching the show for a while, as most of a set is.
+  await sleep(ctx.rng.int(5000, 20000));
+  await ctx.expectFrames('live set');
+}, (st) => st.deckOpen);
+
+/** Builds the set once per launch: the Output Window open, a song on the
+ *  Timeline with an Auto show on it, a 4 x 4 deck of shaders and Full HD
+ *  clips (H.264 and HAP) with a column playing, then the Timeline playing. */
+async function liveSetSetup(ctx) {
+  const done = [];
+  // The Output Window first: its toolbar button is under the deck once that is open.
+  // A just-started app can miss the first click while the core is still
+  // coming up: one more try before calling it a failure.
+  const isOpen = `!!document.querySelector('button.output-btn[title="Close Output Window"]')`;
+  for (let attempt = 0; attempt < 2 && !(await ctx.waitFor(isOpen, 100)); attempt++) {
+    if (!(await ctx.clickExpr(`document.querySelector('button.output-btn[title="Open Output Window"]')`))) break;
+    await ctx.waitFor(isOpen, 30000);
+  }
+  ctx.assert(await ctx.waitFor(isOpen, 100), 'the Output Window did not open');
+  ctx.rehide();
+  done.push('Output Window');
+  // One mapped layer with a shader, as a set's stage would have.
+  await ctx.page(`
+    const id = G.project.addLayer('Stage', 'media');
+    const clip = await S.shaderClip('DM-ColorBreath');
+    G.project.setLayerSource(id, { id: crypto.randomUUID(), type: 'shader', src: clip.src, name: clip.name, shaderCode: clip.shaderCode, shaderValues: {} });`);
+  await ctx.showStep({ do: 'show.open', doc: 'timeline' });
+  await ctx.showStep({ do: 'show.song', file: 'song-driving.wav', at: 0 });
+  done.push('song');
+  try {
+    await ctx.showStep({ do: 'show.autoShow', style: 'driving' });
+    done.push('Auto show');
+  } catch (err) { ctx.warn(`Auto show: ${err.message}`); await ctx.click('.auto-modal .auto-cancel'); }
+  await ctx.showStep({ do: 'deck.open' });
+  await ctx.showStep({ do: 'deck.rows', count: 4 });
+  const grid = [
+    ['shader', 'DM-PlasmaFlow'], ['shader', 'DM-AuroraBorealis'], ['shader', 'DM-Tunnel'], ['shader', 'DM-Kaleidoscope'],
+    ['clip', 'bars1080.mp4'], ['clip', 'bars1080.mov'], ['clip', 'ramp.mp4'], ['clip', 'framecode.mp4'],
+    ['shader', 'DM-NoiseCloud'], ['shader', 'DM-LiquidMetal'], ['shader', 'DM-NeonLines'], ['shader', 'DM-ConcentricRipples'],
+    ['clip', 'red.mov'], ['clip', 'blue.mp4'], ['clip', 'bars.mp4'], ['clip', 'green.mov'],
+  ];
+  const have = new Set(shaders(ctx.root));
+  const fallback = shaders(ctx.root);
+  for (let i = 0; i < grid.length; i++) {
+    const row = Math.floor(i / 4); const col = i % 4;
+    const [kind, name] = grid[i];
+    if (kind === 'clip') await ctx.showStep({ do: 'deck.drop', row, col, clip: name });
+    else await ctx.showStep({ do: 'deck.shader', row, col, shader: have.has(name) ? name : fallback[(i * 7) % fallback.length] });
+  }
+  await sleep(1000);
+  const filled = await ctx.page(`return (S.deck().clipGrid ?? []).flat().filter(Boolean).length;`);
+  ctx.assert(filled >= 12, `the deck has ${filled} clips, wanted 16`);
+  done.push(`${filled} deck clips`);
+  await ctx.page(`G.vjClipLauncher.setCrossfaderEnabled(true); G.vjClipLauncher.triggerColumn(0);`);
+  await ctx.showStep({ do: 'show.play', from: 0 });
+  await sleep(2000);
+  const st = await ctx.page(`return { playing: S.show().isPlaying, output: !!document.querySelector('button.output-btn[title="Close Output Window"]') };`);
+  ctx.assert(st.playing, 'the Timeline is not playing');
+  ctx.note(`set up: ${done.join(', ')}; Timeline playing; Output Window ${st.output ? 'open' : 'closed'}`);
+}
+
+/** Named run profiles: which actions, how the run is set up, and how a
+ *  checkpoint measures. Weights replace the actions' own. */
+export const PROFILES = {
+  'live-set': {
+    // Steady playback, as a VJ set (up to ~4 hours) or an installation
+    // (8-10 hours a day) runs: most of the time the set just plays (the
+    // Timeline's song again and again, deck clips looping), with deck triggers
+    // and columns, crossfades, layer and composition effects, Timeline cues,
+    // GO and takeovers in between; the Output Window open throughout. No
+    // editing churn (templates, mapping, renders, projects, settings, monkey).
+    weights: {
+      'live.keepPlaying': 8, 'vj.trigger': 4, 'vj.triggerColumn': 2, 'vj.crossfader': 2, 'vj.crossfaderAuto': 1,
+      'vj.effects': 1, 'timeline.transport': 1, 'timeline.sections': 1, 'timeline.takeover': 1,
+    },
+    setup: liveSetSetup,
+    // Checkpoints measure the set as it plays (no return to a blank project,
+    // which would throw the set away), after garbage collection.
+    blankCheckpoints: false,
+  },
+};
+
 export const ACTIONS = A;
 export const AREAS = [...new Set(A.map((a) => a.area))];
 export { MONKEY_DENY };

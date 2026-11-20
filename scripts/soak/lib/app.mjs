@@ -217,6 +217,10 @@ export async function launchApp({ target, root, devUrl, cdpPort, runIndex, sessi
     env.HTTP_PORT = String(cdpPort + 2);
   }
   if (process.platform === 'linux') args.push('--no-sandbox');
+  // macOS: a throwaway profile has no keychain entry for Chromium's storage
+  // key, and asking for one puts a keychain dialog in front of the person at
+  // the Mac. The mock keychain keeps the run silent.
+  if (IS_MAC) args.push('--use-mock-keychain');
   const logPath = path.join(sessionDir, 'logs', `app-run${runIndex}.log`);
   const out = fs.openSync(logPath, 'a');
   log(`launch #${runIndex}: ${target.label}`);
