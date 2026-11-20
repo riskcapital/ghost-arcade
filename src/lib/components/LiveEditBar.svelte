@@ -6,6 +6,7 @@
    */
   import { liveEdit, discardHeldEdits, setLiveEdit, updateHeldEdits } from '../timeline/liveEdit';
   import { showSlice } from './show/timeline/timelineSlices';
+  import { liveEditBarPlace } from './liveEditBarPlace';
 
   interface Props {
     canvasX: number;
@@ -19,6 +20,7 @@
   let state = $derived($liveEdit);
   let held = $derived(state.held);
   let shown = $derived(state.on);
+  let place = $derived(liveEditBarPlace({ x: canvasX, y: canvasY, width: canvasWidth, height: canvasHeight }));
 
   function clock(t: number): string {
     const m = Math.floor(t / 60);
@@ -43,7 +45,7 @@
 
 {#if shown}
   <div class="live-frame" style="left: {canvasX}px; top: {canvasY}px; width: {canvasWidth}px; height: {canvasHeight}px;" aria-hidden="true"></div>
-  <div class="live-bar" role="status" aria-live="polite" data-live-edit-bar>
+  <div class="live-bar" class:centered={place.centered} class:above={place.above} style="left: {place.left}px; top: {place.top}px;" style:max-width={place.maxWidth ? `${place.maxWidth}px` : null} role="status" aria-live="polite" data-live-edit-bar>
     <span class="live-mark" class:recording={state.on && $playing}>Live key</span>
     <span class="live-msg" class:notice={!!state.notice} title={state.notice ?? 'Stopped, what you change is held: it shows on the stage now, and Update keys it on the Timeline where you made it. Playing, it is keyed as it happens.'}>{message}</span>
     {#if held.length}
@@ -65,10 +67,7 @@
   }
   .live-bar {
     position: absolute;
-    left: 50%;
-    top: 10px;
     z-index: 70;
-    transform: translateX(-50%);
     display: flex;
     align-items: center;
     gap: 8px;
@@ -80,6 +79,8 @@
     color: var(--ga-ink-0, #f2ede4);
     font-size: var(--ga-text-control, 12px);
   }
+  .live-bar.centered { transform: translateX(-50%); }
+  .live-bar.centered.above { transform: translate(-50%, -100%); }
   .live-mark {
     flex-shrink: 0;
     display: inline-flex;
