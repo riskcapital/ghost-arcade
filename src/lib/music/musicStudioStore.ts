@@ -222,6 +222,8 @@ export interface MusicStudioState extends MusicStudioProjectState {
   midiInput: string;
   /** How much of the piano the panel shows. A view preference, kept per computer. */
   keyboardSize: KeyboardSize;
+  /** The keyboard on screen shows the same keys as the MIDI keyboard being played (controllerKeys.ts). */
+  keyboardMatch: boolean;
   sequencerPlaying: boolean;
   recording: boolean;
   /** performance.now() when recording started, for the timer. */
@@ -257,6 +259,7 @@ export interface MusicStudioProjectSection extends MusicStudioProjectState {
 
 const MIDI_INPUT_KEY = 'ghostarcade-music-midi-input';
 const KEYBOARD_SIZE_KEY = 'ghostarcade-music-keyboard-size';
+const KEYBOARD_MATCH_KEY = 'ghostarcade-music-keyboard-match';
 const INPUT_DEVICE_KEY = 'ghostarcade-music-input-device';
 const INPUT_DEVICES_KEY = 'ghostarcade-music-input-devices';
 
@@ -550,6 +553,7 @@ function initialState(): MusicStudioState {
     keysArmed: true,
     midiInput: loadPref(MIDI_INPUT_KEY),
     keyboardSize: loadKeyboardSize(),
+    keyboardMatch: loadPref(KEYBOARD_MATCH_KEY) === '1',
     inputDevices: loadInputDevices(),
     inputOn: false,
     inputError: null,
@@ -869,6 +873,10 @@ function createMusicStudioStore() {
     setMidiInput: (midiInput: string) => {
       savePref(MIDI_INPUT_KEY, midiInput);
       set({ midiInput });
+    },
+    setKeyboardMatch: (keyboardMatch: boolean) => {
+      savePref(KEYBOARD_MATCH_KEY, keyboardMatch ? '1' : '0');
+      set({ keyboardMatch });
     },
     setKeyboardSize: (keyboardSize: KeyboardSize) => {
       savePref(KEYBOARD_SIZE_KEY, keyboardSize);

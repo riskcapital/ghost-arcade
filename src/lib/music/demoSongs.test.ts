@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { buildDemoSongs } from './demoSongs';
+import { buildDemoSongs, demoLooks } from './demoSongs';
+import { hasVisuals } from './clipStack';
+import { voiceShaderByFile } from './visualScenes';
 import { patternBeats } from './drumPattern';
 import { TRACK_IDS, normalizeSession } from './session';
 import { normalizeSections, sectionAtBar, sectionsBars } from './songs';
@@ -9,8 +11,8 @@ let n = 0;
 const songs = buildDemoSongs(() => `id${n++}`);
 
 describe('starter songs', () => {
-  it('is a set of eight songs, each with eight rows and an arrangement over them', () => {
-    expect(songs).toHaveLength(8);
+  it('is a set of ten songs, each with eight rows and an arrangement over them', () => {
+    expect(songs).toHaveLength(10);
     for (const song of songs) {
       for (const track of TRACK_IDS) expect(song.session[track]).toHaveLength(8);
       expect(song.sections.length).toBeGreaterThanOrEqual(8);
@@ -62,6 +64,27 @@ describe('starter songs', () => {
     for (const song of songs) {
       expect(normalizeSession(JSON.parse(JSON.stringify(song.session)))).toEqual(song.session);
       expect(normalizeSections(JSON.parse(JSON.stringify(song.sections)))).toEqual(song.sections);
+    }
+  });
+});
+
+describe('the starter set\'s pictures', () => {
+  it('uses only shaders the library has, and no song shares one with another', () => {
+    const looks = demoLooks();
+    for (const file of looks) expect(voiceShaderByFile(file), file).toBeDefined();
+    expect(new Set(looks).size).toBe(looks.length);
+  });
+
+  it('gives every section of every song a look of its own', () => {
+    for (const song of songs) {
+      const seen: string[] = [];
+      for (let row = 0; row < 8; row++) {
+        const files = TRACK_IDS.flatMap((t) => { const stack = song.session[t][row]?.stack; return hasVisuals(stack) ? stack.items.map((i) => i.voice?.file ?? '') : []; });
+        expect(files.length, `${song.name} row ${row + 1}`).toBeGreaterThan(0);
+        seen.push(files.sort().join('+'));
+      }
+      // Intro and outro share a look on purpose, and the two verses share their drum look; no other two rows match.
+      expect(new Set(seen).size, song.name).toBeGreaterThanOrEqual(7);
     }
   });
 });

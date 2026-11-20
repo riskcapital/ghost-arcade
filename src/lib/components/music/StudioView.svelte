@@ -669,6 +669,11 @@
   .lower-tall .b12 { grid-column: 1; }
   /* The analog synth needs the full width, so the panel covers it (the keyboard is in the left rack). */
   .set-analog.lower-tall .b12 { display: none; }
+  /* Dub: the wide keyboard has no room beside the expanded panel, so it steps aside too, and the left rack
+     (bass, siren, pads, shots) takes its place down to the bottom. */
+  .set-dub.lower-tall .b12 { display: none; }
+  .set-dub.lower-tall .rack.left,
+  .set-analog.lower-tall .rack.left { grid-row: 2 / 5; }
   .tall-btn { margin-left: auto; flex: 0 0 auto; width: 24px; height: 22px; padding: 0; display: inline-grid; place-items: center; border-radius: 6px; border: 1px solid var(--studio-line, rgba(255,255,255,.14)); background: transparent; color: var(--studio-muted); cursor: pointer; }
   .tall-btn:hover, .tall-btn.on { color: var(--studio-text, #fff); border-color: var(--studio-accent, #8af); }
   .tall-btn svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }

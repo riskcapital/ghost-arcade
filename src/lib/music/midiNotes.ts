@@ -11,6 +11,7 @@
  */
 
 import { get, writable } from 'svelte/store';
+import { heardControllerNote } from './controllerKeys';
 import { midiStore } from '../midi/midiStore';
 import { mappingHearsDevice, midiInputSetup, midiInputsInUse, type MidiInputsInUse } from '../midi/midiInputs';
 
@@ -60,6 +61,7 @@ type Listener = (message: MidiNoteMessage, inputId: string) => void;
 
 type MidiAccessLike = MIDIAccess;
 
+
 /**
  * True when the app's MIDI mapping already uses this note from this input
  * (a pad mapped to launch a clip, say) or MIDI learn is listening: then the
@@ -96,6 +98,8 @@ export class MusicMidiInput {
     const message = parseMidiNoteMessage(e.data);
     if (!message || claimedByControlMapping(input, message, this.inUse)) return;
     this.listener(message, input.id);
+    // After the note has sounded: keep the keyboard on screen on the same keys as this one.
+    if (message.kind === 'on') heardControllerNote(message.note, input.name);
   };
   private readonly onStateChange = () => this.refresh();
 

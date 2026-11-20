@@ -41,26 +41,78 @@ const FORMS: Record<Form, { bridge: 4 | 8; order: Array<[Row, number]> }> = {
   dub: { bridge: 4, order: [['Intro', 4], ['Verse', 16], ['Bridge', 4], ['Drop', 16], ['Chorus', 8], ['Break', 8], ['Verse 2', 16], ['Bridge', 4], ['Chorus', 8], ['Outro', 4]] },
 };
 
+/**
+ * A song's pictures, planned section by section (audio shader names, without "VX-" and ".fs").
+ * A look comes in with the clip it is on and goes when the section changes, so the picture moves
+ * through the song as the music does: something quiet for the intro, the verse's drum look, a new
+ * one for the bridge, the drop's own pair, the hook's look in the chorus, a held one for the break.
+ * No song shares a look with another.
+ */
+interface VisualPlan {
+  /** With the held chords of the intro, and again in the outro. */
+  intro: string;
+  /** With the drums of both verses. */
+  verse: string;
+  /** With the hook's calls in the bridge. */
+  bridge: string;
+  /** With the drums of the drop and the chorus. */
+  drop: string;
+  /** With the bass in the drop. */
+  dropBass: string;
+  /** With the hook in the chorus. */
+  chorus: string;
+  /** With the held chords of the break. */
+  rest: string;
+  /** With the hook's answers in the second verse. */
+  verse2: string;
+}
+
 interface DemoDef {
   /** The floor collection its parts come from. */
   collection: string;
   key: MusicKey;
   form: Form;
-  /** Audio shaders its clips bring: with the drums, with the hook, with the held chords. */
-  looks: [beat: string, lead: string, pad: string];
+  visuals: VisualPlan;
 }
 
-/** The set, in playing order: it climbs from house to jungle and comes down in dub. */
+/** The set, in playing order: it climbs from house to jungle and comes down through three kinds of dub. */
 const DEMOS: DemoDef[] = [
-  { collection: 'velvet', key: { root: 2, scale: 'dorian' }, form: 'club', looks: ['VX-Louvers.fs', 'VX-LiquidLight.fs', 'VX-Caustics.fs'] },
-  { collection: 'chrome', key: { root: 9, scale: 'minor' }, form: 'club', looks: ['VX-OpBands.fs', 'VX-MoltenChrome.fs', 'VX-Breath.fs'] },
-  { collection: 'aurora', key: { root: 4, scale: 'dorian' }, form: 'club', looks: ['VX-LightLines.fs', 'VX-Aurora.fs', 'VX-Riverlight.fs'] },
-  { collection: 'blacksteel', key: { root: 4, scale: 'minor' }, form: 'bass', looks: ['VX-Pillars.fs', 'VX-Oscillogram.fs', 'VX-HazeBeams.fs'] },
-  { collection: 'magnet', key: { root: 5, scale: 'minor' }, form: 'bass', looks: ['VX-Monolith.fs', 'VX-NeonFault.fs', 'VX-Ferrofluid.fs'] },
-  { collection: 'cobalt', key: { root: 0, scale: 'minor' }, form: 'club', looks: ['VX-LedGrid.fs', 'VX-PixelBurst.fs', 'VX-Glyphs.fs'] },
-  { collection: 'oxide', key: { root: 7, scale: 'minor' }, form: 'breaks', looks: ['VX-Barcode.fs', 'VX-DataStream.fs', 'VX-Moire.fs'] },
-  { collection: 'yard', key: { root: 7, scale: 'dorian' }, form: 'dub', looks: ['VX-EchoRings.fs', 'VX-Cymatics.fs', 'VX-Nebula.fs'] },
+  // Warm house: cloth, slats and light on water.
+  { collection: 'velvet', key: { root: 2, scale: 'dorian' }, form: 'club',
+    visuals: { intro: 'Silk', verse: 'Louvers', bridge: 'KineticLights', drop: 'PulseBars', dropBass: 'SpeakerCone', chorus: 'LiquidLight', rest: 'Caustics', verse2: 'RoseCurves' } },
+  // French touch: chrome, op art and mirrors.
+  { collection: 'chrome', key: { root: 9, scale: 'minor' }, form: 'club',
+    visuals: { intro: 'MoltenChrome', verse: 'OpBands', bridge: 'TunnelLines', drop: 'Stack', dropBass: 'Quicksilver', chorus: 'Kaleidobloom', rest: 'SoapFilm', verse2: 'OpDisc' } },
+  // Jam band lift: sky, horizon and stars.
+  { collection: 'aurora', key: { root: 4, scale: 'dorian' }, form: 'club',
+    visuals: { intro: 'Aurora', verse: 'LightLines', bridge: 'Ridgelines', drop: 'Starburst', dropBass: 'Horizon', chorus: 'SpiralGalaxy', rest: 'Riverlight', verse2: 'Fireflies' } },
+  // Industrial: stone, beams and scopes.
+  { collection: 'blacksteel', key: { root: 4, scale: 'minor' }, form: 'bass',
+    visuals: { intro: 'HazeBeams', verse: 'Pillars', bridge: 'Scanner', drop: 'Monolith', dropBass: 'SpeakerStack', chorus: 'Oscillogram', rest: 'Remnant', verse2: 'WireCorrupt' } },
+  // Dubstep: LED slabs, shock fronts and tearing signal.
+  { collection: 'magnet', key: { root: 5, scale: 'minor' }, form: 'bass',
+    visuals: { intro: 'Ferrofluid', verse: 'LedMonolith', bridge: 'SignalTear', drop: 'Shockwave', dropBass: 'Maelstrom', chorus: 'NeonFault', rest: 'EventHorizon', verse2: 'RadialTear' } },
+  // Chiptune: pixels, counters and memory.
+  { collection: 'cobalt', key: { root: 0, scale: 'minor' }, form: 'club',
+    visuals: { intro: 'Glyphs', verse: 'LedGrid', bridge: 'BitCounter', drop: 'PixelBurst', dropBass: 'Stairs', chorus: 'PixelDrip', rest: 'Automaton', verse2: 'HexDump' } },
+  // Jungle: bar codes, data and sorted pixels.
+  { collection: 'oxide', key: { root: 7, scale: 'minor' }, form: 'breaks',
+    visuals: { intro: 'Moire', verse: 'Barcode', bridge: 'DataPlot', drop: 'Sorter', dropBass: 'Datamosh', chorus: 'DataStream', rest: 'ScanField', verse2: 'GlitchCollage' } },
+  // Psychedelic dub: deep water, living forms and jewels.
+  { collection: 'moss', key: { root: 2, scale: 'minor' }, form: 'dub',
+    visuals: { intro: 'Nebula', verse: 'Shallows', bridge: 'Medusa', drop: 'PlasmaCells', dropBass: 'FractalCoral', chorus: 'JuliaJewel', rest: 'RingedPlanet', verse2: 'BaitBall' } },
+  // Hard roots dub: the sound system itself.
+  { collection: 'current', key: { root: 9, scale: 'minor' }, form: 'dub',
+    visuals: { intro: 'Vinyl', verse: 'EchoRings', bridge: 'Spring', drop: 'TapeLoop', dropBass: 'Undertow', chorus: 'Cymatics', rest: 'Smoke', verse2: 'Knotwork' } },
+  // Smoky studio dub: ink, paisley and feedback.
+  { collection: 'tinroof', key: { root: 7, scale: 'minor' }, form: 'dub',
+    visuals: { intro: 'Inkwell', verse: 'RippleTank', bridge: 'Paisley', drop: 'Feedback', dropBass: 'Marbling', chorus: 'Mandala', rest: 'Moon', verse2: 'MeltBow' } },
 ];
+
+/** Every look the starter set uses, as shader file names (for checking them against the library). */
+export function demoLooks(): string[] {
+  return DEMOS.flatMap((d) => Object.values(d.visuals).map((name) => `VX-${name}.fs`));
+}
 
 export interface DemoSong {
   name: string;
@@ -178,7 +230,8 @@ export function buildDemoSong(def: DemoDef, makeId: () => string): DemoSong {
   const tones: Record<LoopRole, string | undefined> = { bass: c.bassTone, chords: c.keysTone, lead: c.leadTone, texture: undefined };
   const session = Object.fromEntries((['beats', 'bass', 'lead', 'chords', 'texture'] as TrackId[]).map((t) => [t, ROWS.map(() => null)])) as Session;
   const rowName = (row: Row) => (dub && row === 'Drop' ? 'Dub' : row);
-  const [beatLook, leadLook, padLook] = def.looks;
+  const plan = def.visuals;
+  const file = (name: string) => `VX-${name}.fs`;
 
   ROWS.forEach((row, index) => {
     const name = rowName(row);
@@ -186,8 +239,9 @@ export function buildDemoSong(def: DemoDef, makeId: () => string): DemoSong {
     if (pattern) {
       const id = makeId();
       const beat: BeatClip = { kind: 'beat', id, name: `${name} / ${TRACK_LABEL.beats}`, pattern, kit: c.kit };
-      // The drums bring their picture in from the drop on.
-      if (row === 'Drop' || row === 'Chorus' || row === 'Verse 2') beat.stack = look(id, beatLook, 'kick', 0.9);
+      // The drums carry the verse's look, and the drop's from the drop through the chorus.
+      if (row === 'Verse' || row === 'Verse 2') beat.stack = look(id, file(plan.verse), 'kick', 0.9);
+      if (row === 'Drop' || row === 'Chorus') beat.stack = look(id, file(plan.drop), 'kick', 0.95);
       session.beats[index] = beat;
     }
     const parts = partsFor(c, row, dub);
@@ -198,8 +252,12 @@ export function buildDemoSong(def: DemoDef, makeId: () => string): DemoSong {
       const loop = { id, name: '', role, beats: BARS * 4, notes: applyGroove(written, feel).sort((a, b) => a.beat - b.beat), ...(role === 'lead' && ceiling ? { ceiling } : {}) };
       const notes = loopNotesBetween(loop, def.key, 0, 0, loop.beats).map((n) => ({ beat: n.beat, dur: n.dur, note: n.note, velocity: n.velocity }));
       const clip: NotesClip = { kind: 'notes', id, name: `${name} / ${TRACK_LABEL[role]}`, beats: loop.beats, notes, key: { ...def.key }, instrument: null, ...(tones[role] ? { tone: tones[role] } : {}) };
-      if (role === 'lead' && row === 'Chorus') clip.stack = look(id, leadLook, 'lead');
-      if (role === 'chords' && (row === 'Intro' || row === 'Break' || row === 'Outro')) clip.stack = look(id, padLook, 'chords', 0.85);
+      if (role === 'lead' && row === 'Bridge') clip.stack = look(id, file(plan.bridge), 'lead', 0.9);
+      if (role === 'lead' && row === 'Chorus') clip.stack = look(id, file(plan.chorus), 'lead');
+      if (role === 'lead' && row === 'Verse 2') clip.stack = look(id, file(plan.verse2), 'lead', 0.85);
+      if (role === 'bass' && row === 'Drop') clip.stack = look(id, file(plan.dropBass), 'bass', 0.85);
+      if (role === 'chords' && (row === 'Intro' || row === 'Outro')) clip.stack = look(id, file(plan.intro), 'chords', 0.85);
+      if (role === 'chords' && row === 'Break') clip.stack = look(id, file(plan.rest), 'chords', 0.85);
       session[role][index] = clip;
     }
   });

@@ -10,6 +10,8 @@
   import { addStudioVoice } from '../../music/studioTarget';
   import { musicStudio } from '../../music/musicStudioStore';
   import { KEY_MODES, type KeyMode } from '../../music/keyMode';
+  import { controllerRange, sawController } from '../../music/controllerKeys';
+  import { midiStore } from '../../midi/midiStore';
   import { TONES, TONE_FAMILY_LABELS, type ToneFamily } from '../../music/tone/tones';
   import { insertEditorChannel } from '../../music/studioUi';
   import StudioModule from './StudioModule.svelte';
@@ -46,7 +48,13 @@
       };
     });
   }
-  const range = $derived(keyboardRange(size ?? s.keyboardSize, s.octave));
+  // Match on: the keys of the MIDI keyboard being played, once a keyboard or a note has been seen.
+  const matched = $derived(s.keyboardMatch ? $controllerRange : null);
+  const range = $derived(matched ?? keyboardRange(size ?? s.keyboardSize, s.octave));
+  $effect(() => {
+    // A connected keyboard that says its size in its name sets the layout before a note is played.
+    if (s.keyboardMatch) for (const d of $midiStore.devices) if (d.state === 'connected') sawController(d.name);
+  });
 
   const FAMILIES: ToneFamily[] = ['bass', 'lead', 'arp', 'pad'];
 
@@ -121,7 +129,13 @@
     <StudioJack id="cv:keys.level" label="" title="How loud the keys are playing, as a control signal for visuals and macros" />
     <button class="fx-btn studio-btn" class:on={(s.inserts[s.instrument]?.length ?? 0) > 0} onclick={() => insertEditorChannel.set($insertEditorChannel === s.instrument ? null : s.instrument)} title="Effects on what the keys play">FX{s.inserts[s.instrument]?.length ? ` ${s.inserts[s.instrument].length}` : ''}</button>
     {#if s.instrument !== 'drums'}
-      {#if size === null && narrow}
+      <button class="studio-btn match" class:on={s.keyboardMatch} aria-pressed={s.keyboardMatch} onclick={() => musicStudio.setKeyboardMatch(!s.keyboardMatch)}
+        title={s.keyboardMatch
+          ? (matched ? `Showing your MIDI keyboard's keys, ${noteName(matched.low)} to ${noteName(matched.high)}. Its octave buttons move these keys too. Click to go back to the size you pick.` : 'Matching your MIDI keyboard: play a note on it and the keys here line up with it.')
+          : "Match your MIDI keyboard: show the same number of keys, at the octave it is set to"}>MIDI keys</button>
+      {#if matched}
+        <!-- The keyboard sets the size while it is matched. -->
+      {:else if size === null && narrow}
         <!-- A narrow column: the size switch as a menu, so the octave control stays inside the module. -->
         <select class="size-pick" value={s.keyboardSize} onchange={(e) => musicStudio.setKeyboardSize((e.currentTarget as HTMLSelectElement).value as KeyboardSize)} aria-label="Keyboard size">
           {#each KEYBOARD_SIZES as option}<option value={option.id} title={option.title}>{option.label}</option>{/each}
@@ -171,6 +185,7 @@
   }
   .surface { flex: 1; min-height: 56px; display: flex; }
   .keymode { flex: 0 0 auto; max-width: 104px; }
+  .match { flex: 0 0 auto; white-space: nowrap; }
   /* The keybed sits between two wooden end blocks. */
   .surface.cheeks { padding: 0 14px; background: var(--studio-wood); border-radius: var(--studio-radius); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.5); }
   /* Fade / Build and the visual picker sit in the header, beside the module's name. */
