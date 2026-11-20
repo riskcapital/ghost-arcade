@@ -37,6 +37,7 @@
     hitOverlay,
     hitPoint,
     insertPoint,
+    lineDrawEnd,
     linePenTool,
     pointsInRect,
     setPointCurves,
@@ -48,6 +49,7 @@
     yToValue,
   } from './lineUi';
   import { portal } from './trackLayout';
+  import { showSlice } from './timelineSlices';
   import { followPointer } from './dragSession';
 
   interface Props {
@@ -71,7 +73,8 @@
   const x0 = $derived(Math.max(0, viewStart) * zoom);
   const w = $derived(Math.max(1, (viewEnd - Math.max(0, viewStart)) * zoom + 8));
   const t0 = $derived(Math.max(0, viewStart));
-  const t1 = $derived(Math.max(t0 + 0.001, viewEnd));
+  const showEnd = showSlice('duration');
+  const t1 = $derived(lineDrawEnd(viewStart, viewEnd, $showEnd));
   const CURVE_NAMES: Record<LineCurve, string> = {
     hold: 'Hold', linear: 'Linear', smooth: 'Smooth', 'ease-in': 'Ease in', 'ease-out': 'Ease out', 'ease-in-out': 'Ease in and out',
     sine: 'Sine', exponential: 'Exponential', bounce: 'Bounce', elastic: 'Elastic', bezier: 'Bezier (drag its handles)',

@@ -593,3 +593,14 @@ export function followLabel(source: import('../../../timeline/lines/lineModel').
   const id = followChoiceId(source);
   return FOLLOW_CHOICES.find((c) => c.id === id)?.label ?? followChoices().find((c) => c.id === id)?.label ?? lineSource(source.kind)?.label ?? FOLLOWS_LABEL;
 }
+
+/**
+ * How far a line lane draws: the visible stretch, but not past the end of
+ * the show (the Energy line ran on to the window's edge while every other
+ * row stopped at the end of the song). An empty show draws what is visible.
+ */
+export function lineDrawEnd(viewStart: number, viewEnd: number, showEnd: number): number {
+  const t0 = Math.max(0, viewStart);
+  const end = showEnd > 0 ? Math.min(viewEnd, showEnd) : viewEnd;
+  return Math.max(t0 + 0.001, end);
+}
