@@ -2,14 +2,15 @@
   import { vjClipLauncher, type VJDeck, type VJLayerState } from '../stores/vjClipLauncher';
   import VJAutopilotControls from './VJAutopilotControls.svelte';
   import VJTransitionControls from './VJTransitionControls.svelte';
-  export let layer: VJLayerState;
-  export let index: number;
-  export let deck: VJDeck;
-  export let columns: number;
+  // Runes props: getters, no per-instance derived. As legacy props each row's
+  // `columns` derived stayed subscribed to the deck's column count after the
+  // row was destroyed, keeping the whole row's DOM alive (one per VJ deck
+  // re-render, without bound).
+  let { layer, index, deck, columns }: { layer: VJLayerState; index: number; deck: VJDeck; columns: number } = $props();
   let tray: HTMLDivElement;
-  let open = false;
-  let left = 0;
-  let top = 0;
+  let open = $state(false);
+  let left = $state(0);
+  let top = $state(0);
   function toggle(event: MouseEvent) {
     event.stopPropagation();
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();

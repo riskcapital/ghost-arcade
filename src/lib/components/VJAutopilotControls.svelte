@@ -1,9 +1,10 @@
 <script lang="ts">
   import { autopilotTargets, type VJAutopilot, type AutopilotTarget } from '../stores/vjAutopilot';
-  export let value: VJAutopilot | undefined = undefined;
-
-  export let columns = 8;
-  export let onChange: (value: VJAutopilot | undefined) => void;
+  let { value = undefined, columns = 8, onChange }: {
+    value?: VJAutopilot | undefined;
+    columns?: number;
+    onChange: (value: VJAutopilot | undefined) => void;
+  } = $props();
   function change(patch: Partial<VJAutopilot>) {
     onChange({ target: 'next', unit: 'beats', count: 4, ...value, ...patch });
   }
