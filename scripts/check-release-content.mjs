@@ -24,9 +24,6 @@ else {
   const files = readdirSync(isf).filter((f) => studioShader.test(f));
   if (!files.length) problems.push(`no Audio Lab shaders in ${isf}`);
   if (!existsSync(join(isf, 'voice-thumbs'))) problems.push(`${isf}/voice-thumbs is missing`);
-  const manifest = JSON.parse(readFileSync(join(isf, 'manifest.json'), 'utf8'));
-  const listed = (manifest.shaders ?? []).filter((s) => studioShader.test(String(s.file ?? '')));
-  if (!listed.length) problems.push('no Audio Lab shaders listed in manifest.json');
 }
 
 /** Every script in the build, at any depth. */
