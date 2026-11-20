@@ -701,7 +701,7 @@
     if (!world || world.source === source) return;
     if (source === 'wall') return setWorld({ ...world, source, look: 'shaded' }, true);
     if (!world.room) {
-      say(onscanroom ? 'Scan the room first: tap Scan room for Depth mode.' : 'Set up the real objects on the desktop: World → Depth setup.');
+      say(onscanroom ? 'Scan the room first: tap Scan room for Depth mode.' : 'Set up the real objects on the desktop: Interactive Studio → 3D world → Real objects.');
       return;
     }
     setWorld({ ...world, source, look: 'effects' }, true);
@@ -1161,7 +1161,7 @@
     </div>
     <aside>
       <nav class="inspector-tabs" class:five={worldDesktop} aria-label="Interactive tools">
-        {#each worldDesktop ? [['presets', 'Scenes'], ['effects', 'Effects'], ['objects', 'Objects'], ['world', 'World'], ['scene', 'Setup']] : [['presets', 'Scenes'], ['effects', 'Effects'], ['objects', 'Objects'], ['scene', 'Setup']] as [id, label]}
+        {#each worldDesktop ? [['presets', 'Scenes'], ['effects', 'Effects'], ['objects', 'Objects'], ['world', '3D world'], ['scene', 'Setup']] : [['presets', 'Scenes'], ['effects', 'Effects'], ['objects', 'Objects'], ['scene', 'Setup']] as [id, label]}
           <button
             class:active={inspector === id}
             aria-current={inspector === id ? 'true' : undefined}

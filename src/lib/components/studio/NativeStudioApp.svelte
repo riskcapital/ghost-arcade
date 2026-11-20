@@ -32,7 +32,7 @@
  async function scan(){
   scanning=true;error='';note='';
   try{
-   if(cap?.getPlatform?.()!=='ios')throw new Error('Use your camera to scan the desktop QR, or paste its pairing link below. In-app scanning is currently available on iPhone and iPad.');
+   if(cap?.getPlatform?.()!=='ios')throw new Error('Use your camera to scan the QR code in the desktop’s Mobile Control, or paste its URL below. In-app scanning is currently available on iPhone and iPad.');
    const result=await cap.nativePromise('StudioCapture','scanPairingCode',{});
    if(result.url)review(result.url);
   }catch(e){error=e instanceof Error?e.message:'Could not open camera.';}
@@ -68,10 +68,10 @@
    <button class="plain" onclick={()=>pending=null}>Cancel</button>
   </div>
  {:else}
-  <p>On your desktop, open Connect Mobile → App Connect. Keep both devices on the same Wi-Fi network.</p>
+  <p>On your desktop, click Mobile in the toolbar to open Mobile Control. Keep both devices on the same Wi-Fi network.</p>
   <button class="connect" disabled={scanning} onclick={scan}>{scanning?"Scanner open…":"Scan desktop QR"}</button>
-  <p>Or paste the desktop pairing link below.</p>
-  <label>Pairing link<input type="url" bind:value={draft} placeholder="Paste desktop pairing link" autocapitalize="off" autocomplete="off" spellcheck="false"/></label>
+  <p>Or paste the URL from Mobile Control below.</p>
+  <label>Pairing link<input type="url" bind:value={draft} placeholder="Paste the URL from Mobile Control" autocapitalize="off" autocomplete="off" spellcheck="false"/></label>
   {#if error}<p role="alert">{error}</p>{/if}
   <button class="connect" disabled={!draft.trim()} onclick={()=>review(draft)}>Connect to desktop</button>
   {#if remembered}<div class="remembered" data-remembered><span>Last desktop<strong>{remembered.host}</strong></span><button data-reconnect onclick={()=>remembered&&review(remembered.link)}>Reconnect</button><button data-forget onclick={forget}>Forget this desktop</button></div>{/if}

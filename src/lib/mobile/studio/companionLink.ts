@@ -6,7 +6,7 @@
 // asks "Connect to <host>?" before it leaves the standalone set. The wire protocol is untouched:
 // the same http://<host>:<port>/?pair=<code>&ws=<port> link every released desktop shows.
 
-const NOT_A_LINK = 'That is not a pairing link. Scan the QR code or paste the link from Connect Mobile on your desktop.';
+const NOT_A_LINK = 'That is not a pairing link. Scan the QR code or paste the URL from Mobile Control on your desktop.';
 
 function ipv4(host: string): number[] | null {
   const parts = host.split('.');
@@ -52,7 +52,7 @@ export function parseCompanionLink(raw: string): string {
     // The platform's own message ("Failed to construct 'URL': Invalid URL") means nothing to a performer.
     throw Error(e instanceof Error && e.message === 'This is not a desktop pairing link.' ? e.message : NOT_A_LINK);
   }
-  if (!['http:', 'https:'].includes(u.protocol) || !u.hostname || u.username || u.password) throw Error('Use the pairing link from Connect Mobile on your desktop.');
+  if (!['http:', 'https:'].includes(u.protocol) || !u.hostname || u.username || u.password) throw Error('Use the URL from Mobile Control on your desktop.');
   const token = (u.searchParams.get('pair') || '').replace(/[\s-]/g, '').toUpperCase();
   if (!/^[A-Z0-9]{8,128}$/.test(token)) throw Error('The link is missing a valid desktop pairing code.');
   const port = u.searchParams.get('ws');

@@ -390,7 +390,7 @@ private final class PairingScannerViewController: UIViewController, AVCaptureMet
         navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .cancel, target: self, action: #selector(cancel))
         preview.videoGravity = .resizeAspectFill
         view.layer.addSublayer(preview)
-        hint.text = "Point at the QR in desktop Connect Mobile"
+        hint.text = "Point at the QR code in the desktop's Mobile Control"
         hint.textColor = .white
         hint.backgroundColor = UIColor.black.withAlphaComponent(0.75)
         hint.textAlignment = .center
@@ -418,13 +418,13 @@ private final class PairingScannerViewController: UIViewController, AVCaptureMet
             session.startRunning()
         }
     }
-    private func showError() { DispatchQueue.main.async { self.hint.text = "Camera unavailable. Cancel and try again, or paste the pairing link." } }
+    private func showError() { DispatchQueue.main.async { self.hint.text = "Camera unavailable. Cancel and try again, or paste the URL from Mobile Control." } }
     // Capture notifications arrive on any thread. The session resumes by itself after an interruption.
     @objc private func paused() { DispatchQueue.main.async { self.hint.text = "Camera paused. It comes back when it is free." } }
     @objc private func resumed() {
         DispatchQueue.main.async {
             guard !self.finished else { return } // never restart the camera after the scanner has closed
-            self.hint.text = "Point at the QR in desktop Connect Mobile"
+            self.hint.text = "Point at the QR code in the desktop's Mobile Control"
             self.queue.async { if !self.session.isRunning { self.session.startRunning() } }
         }
     }

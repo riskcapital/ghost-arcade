@@ -2,7 +2,7 @@
  * The room scan for Depth mode over the pairing socket.
  *
  *   desktop -> studio_depth_scan_request  { requestId, layerId, screenId?, output: { width, height } }
- *              (its Interactive Studio → World → Depth setup → Scan with the phone → Start on phone)
+ *              (its Interactive Studio → 3D world → Real objects → Scan with the phone → Start on phone)
  *   phone   -> studio_depth_scan_progress { requestId, stage, pct?, message? }
  *              stage: ready | patterns | measuring | solving | sending | cancelled | error
  *   phone   -> studio_depth_capture_offer { requestId, capture }   (depthCapture.ts)
@@ -54,10 +54,10 @@ export function readDepthCaptureStatus(msg: Record<string, unknown>, requestId: 
 /** What the phone says about the desktop's answer. */
 export function depthStatusText(state: DepthCaptureState, message?: string): string {
   switch (state) {
-    case 'received': return 'The desktop has the scan. Confirm it there: Use it for Depth mode.';
+    case 'received': return 'The desktop has the scan. Confirm it there: Use for Depth mode.';
     case 'applied': return 'Depth mode is set up on the desktop. Throw, pour or ignite to try it.';
     case 'declined': return 'The desktop did not use the scan.';
-    default: return message || 'The desktop could not use the scan. Save the file and open it there.';
+    default: return message || 'The desktop could not use the scan. Save the file, then on the desktop: Interactive Studio → 3D world → Real objects → Scan with the phone → Open a depth capture.';
   }
 }
 

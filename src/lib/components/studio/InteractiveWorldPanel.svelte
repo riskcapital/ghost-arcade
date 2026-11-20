@@ -90,7 +90,7 @@
       </div>
     {/if}
     {#if canScan}
-      <div class="group-label world-heading">Depth mode<InfoTip label="About Depth mode" text="Depth mode lands the world on the real objects in front of the projector. The scan sets it up in the layer the desktop's Interactive Studio is editing (World, Depth setup), not in this phone's own layer." /></div>
+      <div class="group-label world-heading">Depth mode<InfoTip label="About Depth mode" text="Depth mode lands the world on the real objects in front of the projector. The scan sets it up in the layer the desktop's Interactive Studio is editing (3D world → Real objects → Scan with the phone), not in this phone's own layer." /></div>
       <button class="wide" onclick={onscan}>Scan room for Depth mode</button>
     {/if}
   {:else}

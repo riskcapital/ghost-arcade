@@ -99,7 +99,7 @@
  }
  async function saveDepth(e:MouseEvent){
   if(!depthResult)return;
-  try{const done=await shareFile(DEPTH_CAPTURE_FILE,new Blob([JSON.stringify(depthResult.capture)],{type:'application/json'}),'application/json',e.currentTarget as HTMLElement);if(done)depthStatus='Saved. On the desktop: Interactive Studio → World → Depth setup → Open a depth capture.';}
+  try{const done=await shareFile(DEPTH_CAPTURE_FILE,new Blob([JSON.stringify(depthResult.capture)],{type:'application/json'}),'application/json',e.currentTarget as HTMLElement);if(done)depthStatus='Saved. On the desktop: Interactive Studio → 3D world → Real objects → Scan with the phone → Open a depth capture.';}
   catch(err){depthStatus=err instanceof Error?err.message:'The file could not be saved.';}
  }
  let fraction=0,found:HTMLDivElement;

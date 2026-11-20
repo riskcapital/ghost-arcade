@@ -42,7 +42,7 @@
  /** Send a room scan and wait for the desktop's answer. */
  function sendDepth(capture:DepthCapture,id:string,later:(text:string)=>void=()=>{}):Promise<string>{
   return new Promise((resolve,reject)=>{
-   if(socket.readyState!==WebSocket.OPEN)return reject(new Error('Desktop disconnected. Save the file and open it on the desktop.'));
+   if(socket.readyState!==WebSocket.OPEN)return reject(new Error('Desktop disconnected. Save the file, then on the desktop: Interactive Studio → 3D world → Real objects → Scan with the phone → Open a depth capture.'));
    const json=JSON.stringify(depthCaptureOffer(id,capture));
    if(json.length>(capabilities?.depthCapture?.maxBytes??8_000_000))return reject(new Error('The scan is too large to send. Save the file instead.'));
    let settled=false;
