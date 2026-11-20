@@ -152,7 +152,7 @@ async function main() {
     startedAt: new Date(startAt).toISOString(), seed, hours: opts.hours, areas, only: opts.only, app: opts.app ? path.resolve(opts.app) : 'source checkout',
     packaged: target.packaged, git: gitInfo(), hidden: opts.hidden, command: `node scripts/soak/run.mjs ${process.argv.slice(2).join(' ')}`.trim(), sessionDir,
     machine: { platform: `${process.platform} ${os.release()} ${os.arch()}`, cpu: os.cpus()[0]?.model ?? '', cores: os.cpus().length, memGB: Math.round(os.totalmem() / 1073741824) },
-    config, appVersion: target.packaged ? null : JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version,
+    config, appVersion: target.packaged ? target.version : JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version,
   };
   const saveMeta = () => fs.writeFileSync(path.join(sessionDir, 'meta.json'), JSON.stringify(meta, null, 2));
   saveMeta();
@@ -549,18 +549,13 @@ async function main() {
         return s.eval(`(() => { const p = window.__soak.project(); const d = window.__soak.deck(); return p.layers.some((l) => l.visible !== false && (l.opacity ?? 1) > 0.05) || (d.isOpen && Object.values(d.activeClips ?? {}).some(Boolean)); })()`, 5000).catch(() => false);
       },
       async resizeWindow(w, h) {
-        // Electron's DevTools has no Browser.setWindowBounds. window.resizeTo
-        // works on Electron windows; when it does not, the viewport is resized
-        // through device-metrics emulation (layout, canvases and the native
-        // preview geometry still follow it).
-        const before = await s.eval('({ w: outerWidth, h: outerHeight })', 5000);
-        await s.eval(`window.resizeTo(${w}, ${h})`, 5000).catch(() => {});
-        await sleep(500);
-        const after = await s.eval('({ w: outerWidth, h: outerHeight })', 5000);
-        if (after.w !== before.w || after.h !== before.h || (Math.abs(after.w - w) < 4 && Math.abs(after.h - h) < 4)) { st.emulated = false; return 'window.resizeTo'; }
-        await s.call('Emulation.setDeviceMetricsOverride', { width: w, height: h - 28, deviceScaleFactor: 0, mobile: false });
+        // Electron's DevTools has no Browser.setWindowBounds and window.resizeTo
+        // does not reliably move an app window, so the editor's viewport is
+        // resized through device-metrics emulation: layout, canvases and the
+        // native preview geometry all follow it, on every platform.
+        await s.call('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 0, mobile: false });
         st.emulated = true;
-        return 'viewport emulation';
+        return 'viewport';
       },
       waitForTarget: (match, ms) => waitForTarget(opts.port, match, ms).catch(() => null),
       rehide: () => st.handle.rehide(),
@@ -647,7 +642,6 @@ async function main() {
         await sleep(1500);
       })()`, 10000);
       if (st.emulated) { await s.call('Emulation.clearDeviceMetricsOverride').catch(() => {}); st.emulated = false; }
-      await s.eval(`window.resizeTo(${config.windowSize.width}, ${config.windowSize.height})`).catch(() => {});
       const blank = await s.eval(STATE_JS, 10000).catch(() => null);
       await sleep(15000);
       await s.call('HeapProfiler.collectGarbage', {}, 30000).catch(() => {});

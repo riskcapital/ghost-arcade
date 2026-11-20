@@ -89,7 +89,9 @@ export function resolveTarget({ root, appPath, sessionDir, log }) {
     if (!found) throw new Error(`no Ghost Arcade executable in ${p}`);
     exe = path.join(p, found);
   }
-  return { packaged: true, exe, args: [], label: exe, cleanup };
+  let version = null;
+  if (IS_MAC && p.endsWith('.app')) { try { version = execFileSync('plutil', ['-extract', 'CFBundleShortVersionString', 'raw', path.join(p, 'Contents', 'Info.plist')]).toString().trim(); } catch { /* unknown */ } }
+  return { packaged: true, exe, args: [], label: exe, version, cleanup };
 }
 
 function hideMacProcess(pid) {
@@ -175,6 +177,11 @@ export async function launchApp({ target, root, devUrl, cdpPort, runIndex, sessi
   const tmp = path.join(sandbox, 'tmp');
   const home = path.join(sandbox, 'home');
   for (const d of [profile, tmp, home]) fs.mkdirSync(d, { recursive: true });
+  // A packaged app copies an older install's settings (and autosave) into a
+  // new profile on first launch; the marker says that already happened, so
+  // every run starts from a clean profile, not this machine's own.
+  const marker = path.join(profile, '.ga-profile-migrated.json');
+  if (!fs.existsSync(marker)) fs.writeFileSync(marker, JSON.stringify({ from: 'soak test', migrated: false, reason: 'soak test profile', at: new Date().toISOString() }));
   const env = {
     ...process.env,
     ELECTRON_ENABLE_LOGGING: '1',
@@ -191,7 +198,7 @@ export async function launchApp({ target, root, devUrl, cdpPort, runIndex, sessi
     args.push(`--user-data-dir=${profile}`);
     // The packaged debug log goes to ~/Library/Logs (macOS) or %LOCALAPPDATA%
     // (Windows): point those at the sandbox so an installed copy's log is never rotated.
-    if (IS_MAC) env.HOME = home;
+    if (IS_MAC) { env.HOME = home; fs.mkdirSync(path.join(home, 'Library', 'Logs'), { recursive: true }); }
     if (IS_WIN) env.LOCALAPPDATA = home;
   } else {
     env.GA_USER_DATA_DIR = profile;

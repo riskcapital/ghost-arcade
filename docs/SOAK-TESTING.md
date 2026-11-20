@@ -18,7 +18,7 @@ What it does, over and over, in a seeded random order:
 - **Render to video**: short renders in several sizes, frame rates and codecs, each checked with ffmpeg (size and
   frame count; ffprobe is used when it is on the PATH).
 - **Projects**: saves, reopens and compares.
-- **Settings**, **window size**, **output window** open and close.
+- **Settings**, **window size** (the editor viewport, resized through DevTools device-metrics emulation, since Electron has no window-bounds call over DevTools), the **Output Window** button.
 - **Monkey**: real mouse clicks, drags, slider moves and keys on whatever is on screen (never on anything that quits,
   opens a file dialog, buys, signs in or leaves the app).
 
