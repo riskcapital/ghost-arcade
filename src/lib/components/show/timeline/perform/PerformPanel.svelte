@@ -258,7 +258,7 @@
           </div>
         {/if}
         {#if selectedItem.kind === 'cue' || (selectedItem.kind === 'marker' && selectedItem.marker.cueId)}
-          <CueListPanel editorOnly />
+          <CueListPanel editorOnly stepNumber={selectedItem.q} />
         {/if}
       </div>
     {/if}
