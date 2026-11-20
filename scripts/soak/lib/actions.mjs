@@ -384,13 +384,13 @@ def('vj', 'vj.close', 1, 20, async (ctx) => {
 // ── Add-ons (only when the build has them) ────────────────────────────
 def('addons', 'addons.audioLab', 2, 40, async (ctx) => {
   if (!(await ctx.click('button[title^="Audio Lab:"]'))) return ctx.skip('no Audio Lab in this build');
-  const open = await ctx.waitFor(`/Audio Lab/.test(document.querySelector('.music-title, .bar-title')?.textContent ?? '')`, 10000);
+  // Open = the dock button is lit, or Audio Lab's title is on screen.
+  const open = await ctx.waitFor(`!!document.querySelector('button[title^="Audio Lab:"].active') || [...document.querySelectorAll('.music-title, .bar-title')].some((e) => /Audio Lab/.test(e.textContent))`, 10000);
   ctx.assert(open, 'Audio Lab did not open');
   await sleep(ctx.rng.int(2000, 6000));
   // Play with a few of its controls through real clicks.
   for (let i = 0; i < ctx.rng.int(1, 4); i++) await ctx.monkeyClick({ within: '.music-studio, .audio-lab, .music-root, main' });
-  await ctx.click('button[title^="Audio Lab:"]');
-  if (await ctx.page(`return /Audio Lab/.test(document.querySelector('.music-title, .bar-title')?.textContent ?? '');`)) await ctx.key('Backquote', { code: 'Backquote', key: '`', keyCode: 192 });
+  if (await ctx.page(`return !!document.querySelector('button[title^="Audio Lab:"].active');`)) await ctx.click('button[title^="Audio Lab:"]');
   await sleep(500);
 }, (st) => st.deckOpen);
 

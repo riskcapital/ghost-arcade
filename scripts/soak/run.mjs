@@ -673,6 +673,9 @@ async function main() {
       if (st.emulated) { await s.call('Emulation.clearDeviceMetricsOverride').catch(() => {}); st.emulated = false; }
       const blank = await s.eval(STATE_JS, 10000).catch(() => null);
       await sleep(15000);
+      // DevTools keeps every console message's arguments alive; drop them so
+      // the runner's own connection never shows up as a leak.
+      await s.call('Runtime.discardConsoleEntries', {}, 10000).catch(() => {});
       await s.call('HeapProfiler.collectGarbage', {}, 30000).catch(() => {});
       st.busy = false;
       const b = await sample({ checkpoint: true });
