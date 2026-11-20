@@ -274,11 +274,13 @@ async function main() {
   /** Close whatever an action (or the monkey) left open that would block the next one. */
   /** Hidden runs on macOS: an editor stuck at ~1 animation frame a second
    *  (a hidden app's window can stay throttled after its Output Window
-   *  closes) makes every timing check fail. Measure, and if so, show and
-   *  re-hide the app once and note it in the trace. */
-  async function keepFramesRunning(where) {
+   *  closes, and sometimes from launch) makes every timing check fail.
+   *  Measured before every step (300 ms), after output steps and at
+   *  checkpoints; when stuck, the app is shown and hidden once and the trace
+   *  notes it. */
+  async function keepFramesRunning(where, ms = 600) {
     if (!opts.hidden || !IS_MAC || !st.handle?.refreshHidden) return;
-    const fps = await session()?.eval('window.__soak.editorFps(600)', 5000).catch(() => null);
+    const fps = await session()?.eval(`window.__soak.editorFps(${ms})`, 5000).catch(() => null);
     if (fps === null || fps === undefined || fps >= 10) return;
     st.handle.refreshHidden();
     await sleep(800);
@@ -630,6 +632,7 @@ async function main() {
   }
 
   async function runAction(action, rng) {
+    await keepFramesRunning(`before step ${st.step}`, 300);
     const rec = { kind: 'action', step: st.step, t: T(), run: st.run, area: action.area, action: action.name, status: 'pass', note: '', warnings: [], error: null };
     const errMark = st.lastErrors.length ? st.lastErrors[st.lastErrors.length - 1] : null;
     const t0 = Date.now();
