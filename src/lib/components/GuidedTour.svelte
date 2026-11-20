@@ -178,7 +178,7 @@
             'Quantize: set it to 1 bar and the clips you click wait for the next bar',
             'Nudge: push the beat earlier or later to line it up with the band',
           ],
-          targets: ['.bpm-tap-widget'],
+          targets: ['.bpm-tap-widget', '.tempo-btn'],
         },
         {
           title: 'Two decks and a crossfader',
@@ -340,7 +340,7 @@
             'Detect tempo: follow the music coming into your audio input',
             'Or let your DAW set it, which is the next step',
           ],
-          targets: ['.bpm-tap-widget'],
+          targets: ['.bpm-tap-widget', '.tempo-btn'],
           prepare: closeSettings,
         },
         {
