@@ -8091,11 +8091,11 @@
               <div class="connection-details">
                 <div class="detail-row">
                   <span class="detail-label">URL:</span>
-                  <code class="detail-value">{getMobileUrl() || 'No network address available. Connect to Wi-Fi or Ethernet and reopen Mobile Control.'}</code>
+                  <code class="detail-value">{getMobileUrl(selectedIP) || 'No network address available. Connect to Wi-Fi or Ethernet and reopen Mobile Control.'}</code>
                 </div>
                 <div class="detail-row">
                   <span class="detail-label">WebSocket:</span>
-                  <code class="detail-value">{getWebSocketUrl() || 'Waiting for network address'}</code>
+                  <code class="detail-value">{getWebSocketUrl(selectedIP) || 'Waiting for network address'}</code>
                 </div>
               </div>
 
