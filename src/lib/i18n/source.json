@@ -5406,7 +5406,7 @@
  "keyPressed() and keyIsPressed react to the keyboard. Ghost Arcade does not pass keys to sketches during a show; a control or the music can do the same job.",
  "Keys",
  "Keys · {0}",
- "Keys {0}–{1} pick a row, Esc starts blank.",
+ "Keys 1–{0} pick a row, Esc starts blank.",
  "Keys for the Perform tab",
  "Keys on this row",
  "Kick",
