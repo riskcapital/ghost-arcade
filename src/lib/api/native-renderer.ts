@@ -452,6 +452,10 @@ export type RendererCommand =
       active: boolean;
       fft_b64?: string;
       waveform_b64?: string;
+      /** Audio packet for the audio-reactive instruments (audioVisualData.ts). */
+      visual_b64?: string;
+      /** false: the packet stopped; the core goes back to silence. */
+      visual_active?: boolean;
     }
   | { type: 'upload_source_preview'; source_id: string; width: number; height: number; rgba: number[]; seq: number }
   | {
@@ -585,7 +589,8 @@ export interface NativeGraphInstrumentManifestEntry {
   label?: string;
   source_uri_prefix?: string;
   /** 'runtime': the shaders come with each graph and shader_ids is empty. */
-  shader_source?: 'builtin' | 'runtime';
+  /** 'core': compiled into the core, nothing for the app to precompile. */
+  shader_source?: 'builtin' | 'runtime' | 'core';
   shader_ids?: string[];
   shader_count?: number;
   features?: string[];

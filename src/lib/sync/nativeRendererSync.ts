@@ -63,6 +63,7 @@ import { getVisualAudioSnapshot, visualAudio, type VisualAudioState } from '$lib
 import { mediaPipeSource } from '$lib/mediapipe/mediaPipeSource';
 import { ghostAudioCommandFieldsFromVisualAudio } from '$lib/audio/ghostAudioUniform';
 import { createIsfAudioRowEncoder } from '$lib/audio/isfAudioRows';
+import { createAudioVisualPacker } from '$lib/audio/audioVisualData';
 import { getLastRawAnalysis } from '$lib/stores/audio';
 import { shaderUsesISFAudioRows } from '$lib/isf/parser';
 import { WGSL_STDLIB, resolveGhostWgsl } from '$lib/renderer/wgsl';
@@ -871,6 +872,9 @@ function nativeGraphRouteRequirementErrors(
   }
   return missing;
 }
+
+/** Native graph instruments that read the audio packet (audioVisualData.ts). */
+const NATIVE_AUDIO_VISUAL_KINDS: ReadonlySet<string> = new Set(['strands', 'cloud-pulse', 'cloud-flock', 'depth-lights']);
 
 const SOURCE_PREVIEW_SIZE = 256;
 const SOURCE_FRAME_SIZE_FALLBACK = 2048;
@@ -6095,6 +6099,13 @@ export class NativeRendererSync {
   /** ISF audio / audioFFT rows: reused encoder, per-source usage cache, and
    *  whether the core currently holds a live spectrum from us. */
   private isfAudioRowEncoder = createIsfAudioRowEncoder();
+  /** Audio packet for the core's audio-reactive instruments (Strands,
+   *  Cloud Pulse): packed from the same analysis, sent with the ISF rows. */
+  private audioVisualPacker = createAudioVisualPacker();
+  private audioVisualLive = false;
+  /** A visible layer this frame reads the packet; used by the next frame's
+   *  audio command, which goes out before the layer routes are known. */
+  private audioVisualSeen = false;
   private isfAudioRowUsage = new Map<string, boolean>();
   private isfAudioRowsLive = false;
   /** Last beat-clock anchor sent to the core (beat, bpm, performance.now()). */
@@ -7082,17 +7093,40 @@ export class NativeRendererSync {
    * analyser frame); one `active: false` hands the core back to its
    * band-level fallback when either stops.
    */
-  private audioSpectrumCommand(layers: Layer[], audio: VisualAudioState): RendererCommand | null {
+  private audioSpectrumCommand(
+    layers: Layer[],
+    audio: VisualAudioState,
+    timeSeconds: number,
+  ): RendererCommand | null {
     const needed = audio.isActive && layers.some((layer) => this.layerNeedsIsfAudioRows(layer));
-    const rows = needed ? this.isfAudioRowEncoder.encode(getLastRawAnalysis()) : null;
-    if (!rows) {
-      if (!this.isfAudioRowsLive) return null;
+    const analysis = getLastRawAnalysis();
+    const rows = needed ? this.isfAudioRowEncoder.encode(analysis) : null;
+    const visualWanted = audio.isActive && this.audioVisualSeen;
+    this.audioVisualSeen = false;
+    const visual = visualWanted ? this.audioVisualPacker.encode(analysis, timeSeconds) : null;
+    const command: Extract<RendererCommand, { type: 'set_audio_spectrum' }> = { type: 'set_audio_spectrum', active: false };
+    let send = false;
+    if (rows) {
+      this.isfAudioRowsLive = true;
+      Object.assign(command, { active: true, ...rows });
+      send = true;
+    } else {
+      if (this.isfAudioRowsLive) send = true;
       this.isfAudioRowsLive = false;
-      return { type: 'set_audio_spectrum', active: false };
     }
-    this.isfAudioRowsLive = true;
-    return { type: 'set_audio_spectrum', active: true, ...rows };
+    if (visual) {
+      this.audioVisualLive = true;
+      command.visual_b64 = visual;
+      send = true;
+    } else if (this.audioVisualLive) {
+      this.audioVisualLive = false;
+      this.audioVisualPacker.reset();
+      command.visual_active = false;
+      send = true;
+    }
+    return send ? command : null;
   }
+
 
   private nativeGraphRouteKey(kind: NativeGraphRouteKind, sourceId: string): string {
     return `${kind}:${sourceId}`;
@@ -9664,6 +9698,8 @@ export class NativeRendererSync {
     this.lastRenderClockSentSeconds = null;
     this.lastAudioSig = '';
     this.isfAudioRowsLive = false;
+    this.audioVisualLive = false;
+    this.audioVisualPacker.reset();
     this.nativeCommandDropWarnings = 0;
     this.lastStatusLogAt = performance.now();
     this.lastStatusFrameCount = Number(startupStatus?.frames_presented ?? 0);
@@ -9829,6 +9865,8 @@ export class NativeRendererSync {
     this.audioUnsub = null;
     this.lastAudioSig = '';
     this.isfAudioRowsLive = false;
+    this.audioVisualLive = false;
+    this.audioVisualPacker.reset();
     if (this.beatClockTimer) clearInterval(this.beatClockTimer);
     this.beatClockTimer = null;
     this.lastBeatClock = null;
@@ -10257,6 +10295,9 @@ export class NativeRendererSync {
     if (output) this.exportOutput = { width: output.width, height: output.height };
     this.manualClockExportDepth += 1;
     if (this.manualClockExportDepth !== 1) return;
+    // The audio packet's hit times follow the clock it is packed on; the
+    // render starts its own, so start the onset history afresh with it.
+    this.audioVisualPacker.reset();
     this.stopShaderAnimation();
     if (this.pendingSyncTimer !== null) {
       clearTimeout(this.pendingSyncTimer);
@@ -10273,6 +10314,7 @@ export class NativeRendererSync {
     this.manualFrame = null;
     this.exportOutput = null;
     this.latestRenderClockSeconds = null;
+    this.audioVisualPacker.reset();
     // The live clock must not jump forward by the export's wall time —
     // resume from where the live show left off.
     this.lastRenderClockSentSeconds = null;
@@ -10590,7 +10632,7 @@ export class NativeRendererSync {
 
     const audioCommand = this.audioCommand(visual);
     if (audioCommand) commands.push(audioCommand);
-    const audioSpectrumCommand = this.audioSpectrumCommand(layers, visual);
+    const audioSpectrumCommand = this.audioSpectrumCommand(layers, visual, renderClock.time ?? performance.now() / 1000);
     if (audioSpectrumCommand) commands.push(audioSpectrumCommand);
     // The beat clock is anchored by its own timer (pushBeatClock), not in
     // this batch: a scene batch can take long enough to land that the
@@ -10742,6 +10784,9 @@ export class NativeRendererSync {
       }
       const effectiveVisible = layer.visible && !nativeLayerBlocked;
       const nativeGraphRoute = nativeLayerBlocked ? null : nativeGraphRouteCandidate;
+      if (effectiveVisible && nativeGraphRoute && NATIVE_AUDIO_VISUAL_KINDS.has(nativeGraphRoute.kind)) {
+        this.audioVisualSeen = true;
+      }
       const nativeSource = nativeGraphRoute?.source ?? nativeLayerSource(layer);
       // A three.js / p5 page keeps running while its layer is visible,
       // including behind an effect route, whose input is the page.
