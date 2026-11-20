@@ -164,6 +164,22 @@ export const PAGE_HELPERS = `(() => {
       }
       return null;
     },
+    /**
+     * What a click at the centre of the first visible match would land on
+     * instead of it (a label for the covering element), or null when the
+     * click reaches it. A click by coordinates goes to whatever is on top.
+     */
+    coveredBy(sel) {
+      const r = this.rect(sel);
+      if (!r) return null;
+      const hit = document.elementFromPoint(r.x, r.y);
+      const target = [...document.querySelectorAll(sel)].find((el) => el === hit || el.contains(hit));
+      if (target) return null;
+      const owner = hit?.closest('[role="dialog"], [aria-modal], [class*="modal"], [class*="backdrop"], [class*="overlay"], [class*="panel"]') ?? hit;
+      if (!owner) return 'nothing';
+      const cls = typeof owner.className === 'string' ? owner.className.split(/\\s+/).filter((c) => c && !c.startsWith('svelte-')).slice(0, 2).join('.') : '';
+      return (owner.getAttribute('aria-label') || (cls ? owner.tagName.toLowerCase() + '.' + cls : owner.tagName.toLowerCase())).slice(0, 80);
+    },
     modalOpen() {
       return !!document.querySelector('.close-modal-backdrop, .tp-backdrop, .welcome, .tour-card, [role="dialog"][aria-modal="true"]');
     },

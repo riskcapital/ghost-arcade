@@ -382,8 +382,37 @@ def('vj', 'vj.close', 1, 20, async (ctx) => {
 }, (st) => st.deckOpen);
 
 // ── Add-ons (only when the build has them) ────────────────────────────
+const AUDIO_LAB_BUTTON = 'button[title^="Audio Lab:"]';
+
+/**
+ * What to do with a toggle button in the dock, from what the page says about
+ * it: { skip } with the reason, or { click } (false when it is already on).
+ * The click is a real one by coordinates: under a dialog (the Shader Library
+ * a monkey step opened, Settings…) it lands on that instead, and a click on a
+ * toggle that is already on turns it off.
+ */
+export function dockTogglePlan(button) {
+  switch (button?.state) {
+    case 'absent': return { skip: 'not in this build' };
+    case 'hidden': return { skip: 'the dock is not on screen' };
+    case 'covered': return { skip: `the button is under ${button.by}` };
+    case 'open': return { click: false };
+    case 'closed': return { click: true };
+    default: return { skip: 'the page did not answer' };
+  }
+}
+
 def('addons', 'addons.audioLab', 2, 40, async (ctx) => {
-  if (!(await ctx.click('button[title^="Audio Lab:"]'))) return ctx.skip('no Audio Lab in this build');
+  const button = await ctx.page(`
+    if (!document.querySelector(A.sel)) return { state: 'absent' };
+    if (!S.rect(A.sel)) return { state: 'hidden' };
+    const covered = S.coveredBy(A.sel);
+    if (covered) return { state: 'covered', by: covered };
+    return { state: document.querySelector(A.sel).classList.contains('active') ? 'open' : 'closed' };`, { sel: AUDIO_LAB_BUTTON });
+  const plan = dockTogglePlan(button);
+  if (plan.skip) return ctx.skip(`Audio Lab: ${plan.skip}`);
+  if (!plan.click) ctx.note('already open');
+  else ctx.assert(await ctx.click(AUDIO_LAB_BUTTON), 'the Audio Lab button went away');
   // Open = the dock button is lit, or Audio Lab's title is on screen.
   const open = await ctx.waitFor(`!!document.querySelector('button[title^="Audio Lab:"].active') || [...document.querySelectorAll('.music-title, .bar-title')].some((e) => /Audio Lab/.test(e.textContent))`, 10000);
   ctx.assert(open, 'Audio Lab did not open');

@@ -147,3 +147,15 @@ test('vmmap summary parsing', () => {
   assert.equal(vm.regions.TOTAL, undefined);
   assert.deepEqual(vm.malloc.DefaultMallocZone, { count: 62843, allocMB: 59.4, dirtyMB: 76 });
 });
+
+test('the Audio Lab dock button: covered or already on is not clicked', async () => {
+  const { dockTogglePlan } = await import('./actions.mjs');
+  // Under the Shader Library (left open by a monkey step) the click would land on a shader card.
+  assert.deepEqual(dockTogglePlan({ state: 'covered', by: 'div.shader-library-modal' }), { skip: 'the button is under div.shader-library-modal' });
+  // Already open: a click on the toggle would close it.
+  assert.deepEqual(dockTogglePlan({ state: 'open' }), { click: false });
+  assert.deepEqual(dockTogglePlan({ state: 'closed' }), { click: true });
+  assert.ok(dockTogglePlan({ state: 'hidden' }).skip);
+  assert.ok(dockTogglePlan({ state: 'absent' }).skip);
+  assert.ok(dockTogglePlan(null).skip);
+});
