@@ -86,7 +86,7 @@ export const DUB_DIVISIONS: { id: DubDivision; beats: number }[] = [
   { id: '1 bar', beats: 4 },
 ];
 
-export const DUB_SHOT_COUNT = 48;
+export const DUB_SHOT_COUNT = 56;
 /** Notes the shots send for visuals, on the Shots instrument above its FX pads (they make no sound there). */
 export const DUB_SHOT_NOTE = 76;
 
@@ -148,6 +148,15 @@ export function defaultDubShots(): DubShot[] {
     shot('Rewind', 'spinback', 'spring', '1/8', 0.4, 0.5),
     shot('Bird call', 'bird', 'tape', '1/4.', 0.6, 0.75, { tone: 0.6 }),
     shot('Radio static', 'static', 'swell', '1/2', 0.5, 0.8, { mix: 0.65 }),
+    // Answers and rain
+    shot('Skank echo', 'skank', 'tape', '1/4.', 0.6, 0.7, { tone: 0.45 }),
+    shot('Steel answer', 'steel', 'pingpong', '1/8t', 0.55, 0.6, { pitch: 5 }),
+    shot('Whistle call', 'whistle', 'pingpong', '1/8.', 0.6, 0.7, { pitch: 3 }),
+    shot('Horn blast', 'airhorn', 'digital', '1/8', 0.62, 0.5, { tone: 0.5 }),
+    shot('Crowd oi', 'oi', 'pingpong', '1/8t', 0.6, 0.65, { pitch: -3 }),
+    shot('Cowbell rain', 'cowbell', 'digital', '1/16', 0.8, 0.45, { tone: 0.65 }),
+    shot('Shaker wash', 'shaker', 'swell', '1/2', 0.6, 0.85, { mix: 0.7 }),
+    shot('Storm', 'thunder', 'swell', '1 bar', 0.55, 1, { tone: 0.25, mix: 0.75 }),
   ];
 }
 

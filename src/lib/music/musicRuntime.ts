@@ -1573,7 +1573,8 @@ export function fireDubShot(index: number, velocity = 0.85): void {
   if (!shot) return;
   const repeat = audio.fireDubShot(index, velocity);
   audio.holdDubShot(index, true);
-  const note = DUB_SHOT_NOTE + index;
+  // The last few shots share the top note: it only tells the visuals a shot fired.
+  const note = Math.min(127, DUB_SHOT_NOTE + index);
   const t = audio.now();
   let vel = velocity;
   const echoes = repeat > 0 ? Math.min(8, Math.max(1, Math.round(1 + shot.feedback * 7))) : 0;
