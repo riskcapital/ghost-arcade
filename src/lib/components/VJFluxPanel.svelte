@@ -162,6 +162,15 @@
       </div>
       <div class="stage">
         <div class="pad">
+          <!-- Three conduits meeting in a Y: light runs down them to the middle while Flux is on. -->
+          <svg class="conduits" class:live viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+            {#each [[20, 20], [80, 20], [50, 94]] as [x, y] (x)}
+              <line class="tube" x1={x} y1={y} x2="50" y2="56" />
+              <line class="flow" x1={x} y1={y} x2="50" y2="56" />
+              <circle class="cap" cx={x} cy={y} r="3.2" />
+            {/each}
+            <circle class="hub" cx="50" cy="56" r="4.5" />
+          </svg>
           <!-- The pad's own header: its name and the latch that belongs to it. -->
           <div class="pad-head">
             <span class="title" aria-hidden="true">Flux <i class:live></i></span>
@@ -282,11 +291,18 @@
     position: absolute; inset: 0; border-radius: var(--ga-r-hard, 5px); overflow: hidden;
     border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
     background:
-      linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px) 0 0 / 25% 25%,
-      linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px) 0 0 / 25% 25%,
-      radial-gradient(circle at 50% 100%, var(--ga-blue-a16, rgba(82, 120, 255, 0.16)), transparent 70%),
+      radial-gradient(circle at 50% 56%, var(--ga-blue-a16, rgba(82, 120, 255, 0.16)), transparent 62%),
       var(--ga-slot, #060504);
   }
+  .conduits { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .conduits .tube { stroke: rgba(245, 236, 222, 0.07); stroke-width: 5; stroke-linecap: round; }
+  .conduits .flow { stroke: var(--ga-icon, #5278ff); stroke-width: 1.1; stroke-linecap: round; stroke-dasharray: 0.1 5; opacity: 0.45; }
+  .conduits .cap { fill: var(--ga-slot, #060504); stroke: rgba(245, 236, 222, 0.16); stroke-width: 0.8; }
+  .conduits .hub { fill: var(--ga-slot, #060504); stroke: var(--ga-icon, #5278ff); stroke-width: 0.8; opacity: 0.6; }
+  .conduits.live .flow { opacity: 1; animation: conduit-flow 0.5s linear infinite; }
+  .conduits.live .hub { opacity: 1; fill: var(--ga-blue-a45, rgba(82, 120, 255, 0.45)); }
+  @keyframes conduit-flow { to { stroke-dashoffset: -5.1; } }
+  @media (prefers-reduced-motion: reduce) { .conduits.live .flow { animation: none; } }
   .pad-head {
     position: absolute; top: 4px; left: 8px; right: 4px; z-index: 5;
     display: flex; align-items: center; justify-content: space-between; gap: 6px;

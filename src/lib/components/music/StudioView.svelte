@@ -59,7 +59,6 @@
   import PlayModule from './PlayModule.svelte';
   import BeatModule from './BeatModule.svelte';
   import CableLayer from './CableLayer.svelte';
-  import { KEY_MODES, type KeyMode } from '../../music/keyMode';
   import PatchBay from './PatchBay.svelte';
   import { CABLE_VIEW_LABELS, cableView, cycleCableView } from '../../music/cableView';
   import MacroEditor from './MacroEditor.svelte';
@@ -328,9 +327,6 @@
         <select value={s.key.scale} onchange={(e) => musicStudio.setKey({ ...s.key, scale: (e.target as HTMLSelectElement).value as ScaleId })} aria-label="Scale">
           {#each Object.entries(SCALES) as [id, scale]}<option value={id}>{scale.label}</option>{/each}
         </select>
-        <select class="keymode" value={s.keyMode} onchange={(e) => musicStudio.setKeyMode((e.target as HTMLSelectElement).value as KeyMode)} aria-label="Keyboard mode" title={KEY_MODES.find((m) => m.id === s.keyMode)?.title} data-midi-path="studio:keys.mode-next" data-midi-label="Next keyboard mode" data-midi-mode="toggle">
-          {#each KEY_MODES as m (m.id)}<option value={m.id} title={m.title}>{m.label}</option>{/each}
-        </select>
       </div>
       <SceneBar />
       <span class="spacer"></span>
@@ -345,15 +341,18 @@
       <div class="group">
         <button class="text-btn" class:on={$cableView !== 'show'} aria-pressed={$cableView !== 'show'} onclick={cycleCableView} title="{$cableView === 'show' ? 'Fade the cables' : $cableView === 'fade' ? 'Hide the cables' : 'Show the cables'} (connections keep working)">{CABLE_VIEW_LABELS[$cableView]}</button>
         <button class="kill-btn" onclick={killAll} title="Silence everything now, echoes and reverb included" data-midi-path="studio:studio.kill" data-midi-label="Kill all sound" data-midi-mode="toggle">Kill</button>
-        <select class="more narrow-only" value="" onchange={(e) => { const v = (e.target as HTMLSelectElement).value; (e.target as HTMLSelectElement).value = ''; if (v === 'deck') showDeck(); else if (v === 'tray') showTray(); else if (v === 'exit') musicStudio.close(); }} aria-label="More" title="Deck, tray or exit">
-          <option value="" disabled>…</option>
-          <option value="deck">Deck ({STUDIO_VIEW_KEY_LABEL})</option>
-          <option value="tray">Tray</option>
-          <option value="exit">Exit Audio Lab</option>
-        </select>
-        <button class="text-btn wide-only" onclick={showDeck} title="Go to the VJ deck to mix; the music keeps playing ({STUDIO_VIEW_KEY_LABEL} switches back and forth)" data-midi-path="studio:studio.view" data-midi-label="Audio Lab or VJ deck" data-midi-mode="toggle">Deck</button>
-        <button class="text-btn wide-only" onclick={showTray} title="Back to the Audio Lab tray under the deck; the music keeps playing">Tray</button>
-        <button class="text-btn wide-only" onclick={() => musicStudio.close()} title="Close Audio Lab and stop the music">Exit</button>
+      </div>
+      <!-- Where to go from here: always on screen, as icons so they fit any width. -->
+      <div class="group nav">
+        <button class="nav-btn" onclick={showDeck} aria-label="VJ deck" title="Deck: go to the VJ deck to mix; the music keeps playing ({STUDIO_VIEW_KEY_LABEL} switches back and forth)" data-midi-path="studio:studio.view" data-midi-label="Audio Lab or VJ deck" data-midi-mode="toggle">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="5" height="4.5" rx="0.8" /><rect x="9" y="2.5" width="5" height="4.5" rx="0.8" /><rect x="2" y="9" width="5" height="4.5" rx="0.8" /><rect x="9" y="9" width="5" height="4.5" rx="0.8" /></svg>
+        </button>
+        <button class="nav-btn" onclick={showTray} aria-label="Tray" title="Tray: back to the Audio Lab tray under the deck; the music keeps playing">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="1.2" /><path d="M2 9.5h12" /></svg>
+        </button>
+        <button class="nav-btn" onclick={() => musicStudio.close()} aria-label="Exit Audio Lab" title="Exit: close Audio Lab and stop the music">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+        </button>
       </div>
     </header>
 
@@ -517,13 +516,16 @@
     .subbar :global(.macros .macro .side) { flex-direction: row; gap: 1px; }
     .subbar :global(.macros .macro .jack-wrap) { margin: -3px -2px; }
   }
-  .narrow-only { display: none; }
-  /* Narrower windows: Deck, Tray and Exit fold into the … menu, the title goes, menus tighten. */
+  .nav { flex: 0 0 auto; gap: 2px; }
+  .nav-btn {
+    flex: 0 0 auto; width: var(--ga-bar-control-h, 30px); height: var(--ga-bar-control-h, 30px); padding: 0; display: inline-grid; place-items: center;
+    border: 1px solid var(--studio-edge); border-radius: var(--studio-radius); background: transparent; color: var(--studio-ink); cursor: pointer;
+  }
+  .nav-btn:hover { border-color: var(--studio-ink); }
+  .nav-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+  /* Narrower windows: the title goes and the menus tighten, so everything stays on the bar. */
   @media (max-width: 1799px) {
-    .wide-only { display: none; }
-    .narrow-only { display: inline-block; }
-    .bar select.keymode { max-width: 108px; }
-    .bar select.more { width: 46px; }
+    .bar-title { display: none; }
   }
   .set-menu { display: none; }
   /* Narrow: the set tabs become one menu. */
@@ -581,6 +583,8 @@
   }
 
   .bar, .rack, .slot, .centre > :global(.module) { position: relative; z-index: 1; }
+  /* The bar's dropdowns open over the racks under it. */
+  .bar { z-index: 3; }
 
   /* ── Top bar: the app's top bar (48px, 30px controls, 13px text), in groups ── */
   .bar {

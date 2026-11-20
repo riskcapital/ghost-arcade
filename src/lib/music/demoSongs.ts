@@ -53,8 +53,8 @@ interface DemoDef {
 /** The set, in playing order: it climbs from house to jungle and comes down in dub. */
 const DEMOS: DemoDef[] = [
   { collection: 'velvet', key: { root: 2, scale: 'dorian' }, form: 'club', looks: ['VX-Louvers.fs', 'VX-LiquidLight.fs', 'VX-Caustics.fs'] },
-  { collection: 'chrome', key: { root: 9, scale: 'minor' }, form: 'club', looks: ['VX-OpBands.fs', 'VX-ChromePool.fs', 'VX-Aperture.fs'] },
-  { collection: 'aurora', key: { root: 4, scale: 'dorian' }, form: 'club', looks: ['VX-LightLines.fs', 'VX-Aurora.fs', 'VX-Northlight.fs'] },
+  { collection: 'chrome', key: { root: 9, scale: 'minor' }, form: 'club', looks: ['VX-OpBands.fs', 'VX-MoltenChrome.fs', 'VX-Breath.fs'] },
+  { collection: 'aurora', key: { root: 4, scale: 'dorian' }, form: 'club', looks: ['VX-LightLines.fs', 'VX-Aurora.fs', 'VX-Riverlight.fs'] },
   { collection: 'blacksteel', key: { root: 4, scale: 'minor' }, form: 'bass', looks: ['VX-Pillars.fs', 'VX-Oscillogram.fs', 'VX-HazeBeams.fs'] },
   { collection: 'magnet', key: { root: 5, scale: 'minor' }, form: 'bass', looks: ['VX-Monolith.fs', 'VX-NeonFault.fs', 'VX-Ferrofluid.fs'] },
   { collection: 'cobalt', key: { root: 0, scale: 'minor' }, form: 'club', looks: ['VX-LedGrid.fs', 'VX-PixelBurst.fs', 'VX-Glyphs.fs'] },

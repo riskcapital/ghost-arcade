@@ -12,14 +12,17 @@ import { beatTick, gridStep, nearestGridStep, stepsPerBeat, swingBeat } from '..
 import { get, writable } from 'svelte/store';
 import { launchClockPosition } from '../../stores/launchClock';
 import { generateUUID } from '../../utils/uuid';
-import { musicStudio } from '../musicStudioStore';
+import { musicStudio, musicTransport } from '../musicStudioStore';
+import { beatPattern, loopById } from '../loops';
+import type { DrumPattern } from '../drumPattern';
+import { CLIP_PART_PREFIX, RANDOM_PART_PREFIX, partFromPattern, randomPart, type RandomStyle } from './machineImport';
 import { auditionMachineSound, musicNow, sendMachineHit, setMachineHooks, setMachineSound } from '../musicRuntime';
 import { normalizeMacroFx, type MacroFxInstance } from '../macroFx';
 import type { NoteSource } from '../noteEvents';
 import type { DrumKit, DrumSound, DrumTweak } from '../tone/toneTypes';
 import {
   blockAt, clearPadEverywhere, normalizeBeat, trackOf, partHitsBetween, partSteps, setStep, songBars, songHitsBetween, starterBeat,
-  type Beat, type Part,
+  MAX_PARTS, type Beat, type Part,
 } from './machineBeat';
 import { BASE_PADS, DEFAULT_MACHINE_KIT, MAX_PADS, SOUND_MODELS, extendedPads, findKit, normalizeUserKit, padForNote, type MachineKit, type MachinePad, type UserKit } from './machineKits';
 
@@ -137,6 +140,70 @@ export function editBeat(fn: (b: Beat) => Beat): void {
 /** Change the part being edited. */
 export function editPart(fn: (p: Part) => Part, index = get(machineTransport).part): void {
   editBeat((b) => ({ ...b, parts: b.parts.map((p, i) => (i === index ? fn(p) : p)) }));
+}
+
+/** The pads on the sequencer, each with the drum it plays. */
+function sequencerPads(beat: Beat = currentBeat()) {
+  const kit = playingKit(beat);
+  return beat.trackPads.map((index) => ({ index, role: kit.pads[index]?.role ?? 'tom' }));
+}
+
+/**
+ * Put a part on the beat and show it: in place of the part with its id (or
+ * `replace`), else as a new one. False when the beat is full.
+ */
+function placePart(part: Part, replace?: string): boolean {
+  const beat = currentBeat();
+  const at = beat.parts.findIndex((p) => p.id === part.id || (replace !== undefined && p.id === replace));
+  if (at < 0 && beat.parts.length >= MAX_PARTS) return false;
+  const old = at >= 0 ? beat.parts[at].id : null;
+  editBeat((b) => ({
+    ...b,
+    parts: at >= 0 ? b.parts.map((p, i) => (i === at ? part : p)) : [...b.parts, part],
+    // Blocks of a part that was replaced play the new one.
+    song: old && old !== part.id ? b.song.map((blk) => (blk.partId === old ? { ...blk, partId: part.id } : blk)) : b.song,
+  }));
+  selectPart(at >= 0 ? at : beat.parts.length);
+  return true;
+}
+
+/** A step pattern (a session clip's, a library beat's) as a part of this beat. */
+export function bringInPattern(pattern: DrumPattern, name: string, id?: string): boolean {
+  return placePart(partFromPattern(pattern, sequencerPads(), name, id));
+}
+
+/** A beat from the loop library, as a part. */
+export function bringInLibraryBeat(loopId: string): boolean {
+  const loop = loopById(loopId);
+  return !!loop && 'rows' in loop && bringInPattern(beatPattern(loop), loop.name);
+}
+
+/** A beat clip of the session, as a part; brought in before, it is shown again as it was left. */
+export function bringInSessionBeat(clipId: string, refresh = false): boolean {
+  const clip = get(musicStudio).session.beats.find((c) => c?.id === clipId);
+  if (!clip || clip.kind !== 'beat') return false;
+  const id = CLIP_PART_PREFIX + clip.id;
+  const at = currentBeat().parts.findIndex((p) => p.id === id);
+  if (at >= 0 && !refresh) {
+    selectPart(at);
+    return true;
+  }
+  return bringInPattern(clip.pattern, clip.name, id);
+}
+
+/** The session beat playing now, shown in the sequencer. False when none plays. */
+export function bringInPlayingBeat(): boolean {
+  const s = get(musicStudio);
+  const id = get(musicTransport).beatLoop;
+  return !!id && s.sequencerPlaying && bringInSessionBeat(id);
+}
+
+/** A beat made up in a style: a new part, or a new roll of the random part on screen. */
+export function addRandomPart(style: RandomStyle): boolean {
+  const beat = currentBeat();
+  const shown = beat.parts[Math.min(get(machineTransport).part, beat.parts.length - 1)];
+  const part = randomPart(style, sequencerPads(beat), Math.random, RANDOM_PART_PREFIX + generateUUID());
+  return placePart(part, shown?.id.startsWith(RANDOM_PART_PREFIX) ? shown.id : undefined);
 }
 
 export function loadBeat(beat: Beat): void {

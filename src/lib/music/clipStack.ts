@@ -18,6 +18,7 @@ import { BLEND_MODE_ORDER, type BlendMode, type Effect, type ShowClipMedia } fro
 import { normalizeClipMedia } from '../stores/showTimeline';
 import { normalizeFinish, type StudioFinish } from './studioFinish';
 import type { ClipVisual } from './session';
+import { currentVoiceFile } from './retiredVoices';
 
 /** Layers in one stack (each is rendered every frame while it plays). */
 export const MAX_STACK_ITEMS = 8;
@@ -106,7 +107,7 @@ export function normalizeStackItem(raw: unknown): StackItem | null {
   let media: ShowClipMedia | undefined;
   const v = r.voice as Record<string, unknown> | undefined;
   if (v && typeof v.file === 'string' && VOICE_FILE.test(v.file)) {
-    voice = { file: v.file, follow: typeof v.follow === 'string' && v.follow ? v.follow : 'all', ...(v.clear === true ? { clear: true } : {}) };
+    voice = { file: currentVoiceFile(v.file), follow: typeof v.follow === 'string' && v.follow ? v.follow : 'all', ...(v.clear === true ? { clear: true } : {}) };
   } else {
     const m = normalizeClipMedia(r.media);
     if (!m || m.kind === 'layer') return null;

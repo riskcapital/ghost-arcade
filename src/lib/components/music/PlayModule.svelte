@@ -9,6 +9,7 @@
   import VisualPickButton from './VisualPickButton.svelte';
   import { addStudioVoice } from '../../music/studioTarget';
   import { musicStudio } from '../../music/musicStudioStore';
+  import { KEY_MODES, type KeyMode } from '../../music/keyMode';
   import { TONES, TONE_FAMILY_LABELS, type ToneFamily } from '../../music/tone/tones';
   import { insertEditorChannel } from '../../music/studioUi';
   import StudioModule from './StudioModule.svelte';
@@ -97,6 +98,10 @@
     {:else}
       <div class="foot">{@render visualControls()}</div>
     {/if}
+    <!-- How the keys treat the song's key: show it, lock to it, or play freely. -->
+    <select class="keymode" value={s.keyMode} onchange={(e) => musicStudio.setKeyMode((e.target as HTMLSelectElement).value as KeyMode)} aria-label="Keyboard mode" title={KEY_MODES.find((m) => m.id === s.keyMode)?.title} data-midi-path="studio:keys.mode-next" data-midi-label="Next keyboard mode" data-midi-mode="toggle">
+      {#each KEY_MODES as m (m.id)}<option value={m.id} title={m.title}>{m.label}</option>{/each}
+    </select>
     <select class="instrument" value={current} onchange={choose} aria-label="Instrument the keys play" title={TONES.find((t) => current === `tone:${t.id}`)?.blurb ?? 'What the keys play, whatever the set'}>
       <optgroup label="Synth">
         {#each SYNTH_PATCHES as p (p.id)}<option value="synth:{p.id}">Synth · {p.label}</option>{/each}
@@ -165,6 +170,7 @@
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
   }
   .surface { flex: 1; min-height: 56px; display: flex; }
+  .keymode { flex: 0 0 auto; max-width: 104px; }
   /* Fade / Build and the visual picker sit in the header, beside the module's name. */
   .foot { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 0 1 260px; }
   .stepper button { display: inline-grid; place-items: center; }

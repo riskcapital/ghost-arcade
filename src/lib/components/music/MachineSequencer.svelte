@@ -16,7 +16,13 @@
     toggleMute, toggleStep, trackOf, type PartBars, type PartKind,
   } from '../../music/drumMachine/machineBeat';
   import { factoryBeats } from '../../music/drumMachine/machineFactory';
+  import { CLIP_PART_PREFIX, RANDOM_STYLES, type RandomStyle } from '../../music/drumMachine/machineImport';
+  import { presetsFor } from '../../music/session';
+  import { stopTrack } from '../../music/musicRuntime';
+  import { showToast } from '../../stores/errorToast';
+  import { onMount } from 'svelte';
   import {
+    addRandomPart, bringInLibraryBeat, bringInPlayingBeat, bringInSessionBeat,
     addPad, addTrack, deleteSavedBeat, loadSavedBeat, padChannel, editBeat, editPart, loadBeat, machinePicker, machineTransport, moveTrack, newBeat, playPad,
     playingKit, removeTrack, saveBeatAs, savedBeats, savedKits, selectPart, setMachineMode, toggleMachine,
   } from '../../music/drumMachine/machineRuntime';
@@ -172,8 +178,41 @@
     saveProblem = r.ok ? '' : r.reason;
     if (r.ok) saving = false;
   }
+  // ── Beats from the session and the library, and random ones ──
+  const sessionBeats = $derived($musicStudio.session.beats.filter((c) => !!c));
+  /** The library's beats, grouped by style. */
+  const libraryBeats = (() => {
+    const groups: Array<{ style: string; beats: Array<{ id: string; name: string }> }> = [];
+    for (const b of presetsFor('beats')) {
+      let g = groups.find((x) => x.style === b.style);
+      if (!g) groups.push((g = { style: b.style, beats: [] }));
+      g.beats.push({ id: b.id, name: b.name });
+    }
+    return groups;
+  })();
+  const full = () => showToast('This beat has all the parts it can hold. Delete one to add another.', 'info');
+
+  // Coming to the drum machine with a beat playing in the session: it is on the steps.
+  onMount(() => {
+    bringInPlayingBeat();
+  });
+
+  /** Start or stop. Started on a part that came from the session, the machine takes over from the session's beat. */
+  function play() {
+    if (!t.playing && part?.id.startsWith(CLIP_PART_PREFIX) && $musicStudio.sequencerPlaying) stopTrack('beats');
+    toggleMachine();
+  }
+
+  function onRandom(style: string) {
+    if (style && !addRandomPart(style as RandomStyle)) full();
+  }
+
   function onBeatMenu(value: string) {
-    if (value === 'new') newBeat();
+    if (value.startsWith('c:')) {
+      if (!bringInSessionBeat(value.slice(2), true)) full();
+    } else if (value.startsWith('l:')) {
+      if (!bringInLibraryBeat(value.slice(2))) full();
+    } else if (value === 'new') newBeat();
     else if (value === 'save') {
       saveName = beat.name;
       saveProblem = '';
@@ -284,10 +323,20 @@
         {#if saveProblem}<span class="save-problem" role="alert">{saveProblem}</span>{/if}
       </form>
     {/if}
-    <select class="beats" value="" onchange={(e) => { const el = e.target as HTMLSelectElement; onBeatMenu(el.value); el.value = ''; }} aria-label="Beats" title="Load a beat, start a new one or save this one">
+    <select class="beats" value="" onchange={(e) => { const el = e.target as HTMLSelectElement; onBeatMenu(el.value); el.value = ''; }} aria-label="Beats" title="Load a beat, bring one in from the session or the library as a part, start a new one or save this one">
       <option value="" disabled>Beats…</option>
       <option value="save">Save beat as…</option>
       <option value="new">New beat</option>
+      {#if sessionBeats.length}
+        <optgroup label="Add from the session">
+          {#each sessionBeats as c (c.id)}<option value="c:{c.id}">{c.name}</option>{/each}
+        </optgroup>
+      {/if}
+      {#each libraryBeats as g (g.style)}
+        <optgroup label="Add from the library: {g.style}">
+          {#each g.beats as b (b.id)}<option value="l:{b.id}">{b.name}</option>{/each}
+        </optgroup>
+      {/each}
       <optgroup label="Factory">
         {#each factory as f, i (i)}<option value="f:{i}">{f.name}</option>{/each}
       </optgroup>
@@ -300,12 +349,16 @@
         </optgroup>
       {/if}
     </select>
+    <select class="beats" value="" onchange={(e) => { const el = e.target as HTMLSelectElement; onRandom(el.value); el.value = ''; }} aria-label="Random beat" title="Make up a beat in a style. On a random part, it rolls again in place.">
+      <option value="" disabled>Random…</option>
+      {#each RANDOM_STYLES as st (st.id)}<option value={st.id}>{st.label}</option>{/each}
+    </select>
     <div class="seg" role="radiogroup" aria-label="What plays">
       <button role="radio" aria-checked={t.mode === 'part'} class:on={t.mode === 'part'} onclick={() => setMachineMode('part')} title="Loop the selected part; picking another part switches on the next bar">Loop part</button>
       <button role="radio" aria-checked={t.mode === 'song'} class:on={t.mode === 'song'} onclick={() => setMachineMode('song')} title="Play the song timeline from the top, then round again">Play song</button>
     </div>
     <button class="studio-btn rec" class:on={t.record} aria-pressed={t.record} onclick={() => machineTransport.update((x) => ({ ...x, record: !x.record }))} title="Pads you play go onto the part, on the nearest step, while it plays">Rec</button>
-    <button class="studio-btn play" class:on={t.playing} aria-pressed={t.playing} onclick={toggleMachine} title={t.playing ? 'Stop the drum machine' : 'Start the drum machine; it keeps playing in every set'} data-midi-path="studio:machine.toggle" data-midi-label="Drum machine play or stop" data-midi-mode="toggle">{t.playing ? 'Stop' : 'Play'}</button>
+    <button class="studio-btn play" class:on={t.playing} aria-pressed={t.playing} onclick={play} title={t.playing ? 'Stop the drum machine' : 'Start the drum machine; it keeps playing in every set'} data-midi-path="studio:machine.toggle" data-midi-label="Drum machine play or stop" data-midi-mode="toggle">{t.playing ? 'Stop' : 'Play'}</button>
   {/snippet}
 
   {#if view === 'pattern' && part}

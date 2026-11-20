@@ -27,6 +27,7 @@ import type { MusicKey, StudioSet } from './studioSets';
 import type { MediaSource } from '../types';
 import type { ClipStack, StackItem } from './clipStack';
 import { auditionSolo, currentStacks } from './stackRuntime';
+import { currentVoiceFile } from './retiredVoices';
 import { normalizeStackOff, normalizeStackPlace, visualOrder } from './visualOrder';
 import { readableClipUri, staticClipSource } from '../show/tracks/showClipSources';
 
@@ -103,7 +104,7 @@ export function isStudioSource(source: unknown): source is StudioPluginSource {
 export function normalizeStudioVoice(raw: unknown): StudioVoice | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Partial<Record<keyof StudioVoice, unknown>>;
-  const file = typeof r.file === 'string' ? r.file : '';
+  const file = typeof r.file === 'string' ? currentVoiceFile(r.file) : '';
   // Only shipped VX shaders: the name goes into a fetch path.
   if (!/^VX-[A-Za-z0-9_-]+\.fs$/.test(file)) return null;
   const params: Record<string, number> = {};
