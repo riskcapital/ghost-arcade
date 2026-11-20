@@ -29,7 +29,8 @@ export async function ensureDevServer({ root, port, sessionDir, log }) {
   const wrapper = path.join(sessionDir, 'vite.soak.config.mjs');
   const projectConfig = path.join(root, 'vite.config.ts').replace(/\\/g, '/');
   const cacheDir = path.join(sessionDir, 'vite-cache').replace(/\\/g, '/');
-  fs.writeFileSync(wrapper, `import base from ${JSON.stringify(IS_WIN ? `file:///${projectConfig}` : projectConfig)};
+  // An absolute path with forward slashes resolves on every platform (C:/... on Windows).
+  fs.writeFileSync(wrapper, `import base from ${JSON.stringify(projectConfig)};
 export default async (env) => {
   const c = typeof base === 'function' ? await base(env) : base;
   return { ...c, cacheDir: ${JSON.stringify(cacheDir)}, clearScreen: false, server: { ...(c.server ?? {}), port: ${port}, strictPort: true, open: false } };
@@ -268,7 +269,12 @@ export async function launchApp({ target, root, devUrl, cdpPort, runIndex, sessi
       if (isAlive()) {
         // Ask the main process to quit; it closes its own children. The
         // whole tree is killed only if it does not.
-        if (graceful) { try { process.kill(child.pid, 'SIGTERM'); } catch { /* gone */ } }
+        // (On Windows a signal would end only the main process, so taskkill
+        // closes the tree's windows instead.)
+        if (graceful) {
+          if (IS_WIN) await killTree(child.pid, 'SIGTERM');
+          else { try { process.kill(child.pid, 'SIGTERM'); } catch { /* gone */ } }
+        }
         else await killTree(child.pid, 'SIGKILL');
         await Promise.race([exited, sleep(10000)]);
         if (isAlive()) { await killTree(child.pid, 'SIGKILL'); await Promise.race([exited, sleep(5000)]); }

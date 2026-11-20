@@ -52,7 +52,7 @@ export function writeReport(sessionDir, data) {
       ...roles.slice(0, 4).map((r, i) => ({ name: `${r} MB`, points: baselines.map((b) => [b.t, b.proc?.roles?.[r]?.rssMB]), dots: true, color: COLORS[i] })),
       { name: 'JS heap MB', points: baselines.map((b) => [b.t, b.renderer?.heapMB]), dots: true, color: COLORS[4] },
     ], { marks }),
-    chart('Blank project at checkpoints: core fps and GPU ms', [{ name: 'fps', points: baselines.map((b) => [b.t, b.blankFps]), dots: true }, { name: 'GPU ms', points: baselines.map((b) => [b.t, b.blankGpuMs]), dots: true }], { marks }),
+    chart('Reference scene at checkpoints: core fps and GPU ms', [{ name: 'fps', points: baselines.map((b) => [b.t, b.refFps]), dots: true }, { name: 'GPU ms', points: baselines.map((b) => [b.t, b.refGpuMs]), dots: true }], { marks }),
     chart('Editor JS heap (MB)', [{ name: 'used', points: S((s) => s.renderer?.heapMB) }, { name: 'total', points: S((s) => s.renderer?.heapTotalMB), dashed: true }], { marks }),
     chart('Frame rate', [{ name: 'render core fps', points: S((s) => s.core?.fps) }, { name: 'editor fps', points: S((s) => s.editorFps) }], { marks }),
     chart('Render core frame cost (ms)', [{ name: 'GPU avg', points: S((s) => s.core?.gpuMs) }, { name: 'GPU max', points: S((s) => s.core?.gpuMaxMs), dashed: true }, { name: 'CPU avg', points: S((s) => s.core?.cpuMs) }], { marks }),

@@ -42,7 +42,7 @@ const SETTING_TOGGLES = [
 ];
 // Monkey clicks never touch anything that leaves the app, opens a system
 // dialog, quits, or throws work away wholesale.
-const MONKEY_DENY = /quit|exit|close app|open|save|import|export|browse|choose|locate|licen|activate|buy|purchase|upgrade|sign|log ?in|account|update|download|website|docs|help|feedback|report|support|uninstall|restart|reload|folder|reveal|finder|explorer|show in|send|share|pair|phone|camera|microphone|webcam|capture|record|render|stream|ndi|spout|syphon|midi learn|ableton|connect|email|copy link|delete all|reset all|clear all|new project|discard|\.\.\.|…/i;
+const MONKEY_DENY = /quit|exit|full ?screen|close app|open|save|import|export|browse|choose|locate|licen|activate|buy|purchase|upgrade|sign|log ?in|account|update|download|website|docs|help|feedback|report|support|uninstall|restart|reload|folder|reveal|finder|explorer|show in|send|share|pair|phone|camera|microphone|webcam|capture|record|render|stream|ndi|spout|syphon|midi learn|ableton|connect|email|copy link|delete all|reset all|clear all|new project|discard|\.\.\.|…/i;
 
 let shaderList = null;
 function shaders(root) {
@@ -72,7 +72,7 @@ export const STATE_JS = `(() => {
     tracks: sh.layerTracks.length,
     playing: !!sh.isPlaying,
     lines: (sh.lines ?? []).length,
-    outputOpen: !!G.settings.get().output?.outputWindowOpen,
+    outputOpen: !!document.querySelector('button.output-btn[title="Close Output Window"]'),
     studioOpen: !!document.querySelector('[aria-label="Close Interactive Studio"]'),
     modal: S.modalOpen(),
   };
@@ -270,6 +270,8 @@ def('vj', 'vj.triggerColumn', 2, 20, async (ctx) => {
 def('vj', 'vj.crossfader', 3, 20, async (ctx) => {
   const values = Array.from({ length: ctx.rng.int(3, 10) }, () => ctx.rng.float(0, 1));
   await ctx.page(`G.vjClipLauncher.setCrossfaderEnabled(true); for (const v of A.values) { G.vjClipLauncher.setCrossfaderValue(v); await new Promise((r) => setTimeout(r, 80)); }`, { values });
+  // A moving fader stays out of the deck state until it rests (120 ms).
+  await sleep(400);
   const v = await ctx.page(`return S.deck().crossfaderValue;`);
   ctx.assert(Math.abs(v - values[values.length - 1]) < 0.02, `crossfader at ${v}, set to ${values[values.length - 1].toFixed(2)}`);
   if (ctx.rng.bool(0.3)) await ctx.page(`G.vjClipLauncher.glideCrossfaderTo(A.t);`, { t: ctx.rng.float(0, 1) });
@@ -400,7 +402,7 @@ def('addons', 'addons.analogSynth', 1, 40, async (ctx) => {
   await sleep(500);
   await ctx.expectFrames('analog synth layer');
   if (ctx.rng.bool(0.6)) await ctx.page(`G.project.removeLayer(A.id);`, { id });
-}, (st) => st.layers < 40);
+}, (st) => st.layers < 40 && !st.deckOpen);
 
 def('addons', 'addons.phoneCameraFake', 0, 40, async (ctx) => {
   // A fake phone: a second page joins the LAN relay as a phone would and
@@ -729,17 +731,17 @@ def('window', 'window.resize', 2, 20, async (ctx) => {
 });
 
 def('output', 'output.toggle', 2, 40, async (ctx) => {
-  const st = await ctx.state();
-  await ctx.page(`window.dispatchEvent(new CustomEvent('ga-toggle-output-window'));`);
-  const want = !st.outputOpen;
-  const ok = await ctx.waitFor(`!!window.__ghostArcade.settings.get().output?.outputWindowOpen === ${want}`, 15000);
-  ctx.note(want ? 'open' : 'close');
-  ctx.assert(ok, `output window did not ${want ? 'open' : 'close'}`);
-  if (want) {
-    const target = await ctx.waitForTarget((t) => t.url.includes('mode=webgpu-display'), 15000);
-    ctx.assert(target, 'no output window page appeared');
-    ctx.rehide();
-  }
+  // The toolbar's own Output Window button, clicked for real; its title says
+  // which way it will go next.
+  const open = await ctx.page(`return !!document.querySelector('button.output-btn[title="Close Output Window"]');`);
+  const sel = open ? 'button.output-btn[title="Close Output Window"]' : 'button.output-btn[title="Open Output Window"]';
+  if (!(await ctx.click(sel))) return ctx.skip('no Output Window button on screen');
+  ctx.note(open ? 'close' : 'open');
+  const flipped = await ctx.waitFor(`!!document.querySelector('button.output-btn[title="${open ? 'Open' : 'Close'} Output Window"]')`, 15000);
+  ctx.assert(flipped, `the output window did not ${open ? 'close' : 'open'}`);
+  ctx.rehide();
+  await sleep(ctx.rng.int(1000, 5000));
+  await ctx.expectFrames(open ? 'output window closed' : 'output window open');
 });
 
 // ── Monkey (seeded real input on whatever is on screen) ───────────────

@@ -117,17 +117,17 @@ export function analyse({ samples, baselines, incidents, trace, console: console
   // the same blank project at every checkpoint.
   cmp((s) => s.core?.fps, 'Render core fps over the run', th.maxFpsDrop, 'warn');
   cmp((s) => s.editorFps, 'Editor fps over the run', th.maxFpsDrop, 'warn');
-  const cps = baselines.filter((b) => Number.isFinite(b.blankFps) && b.sinceLaunchMs > 60000);
+  const cps = baselines.filter((b) => Number.isFinite(b.refFps) && b.sinceLaunchMs > 60000);
   if (cps.length >= 2) {
     const half = Math.max(1, Math.floor(cps.length / 2));
-    const a = median(cps.slice(0, half).map((b) => b.blankFps)); const b = median(cps.slice(-half).map((b) => b.blankFps));
+    const a = median(cps.slice(0, half).map((b) => b.refFps)); const b = median(cps.slice(-half).map((b) => b.refFps));
     const drop = a > 0 ? (a - b) / a : 0;
-    add({ id: 'performance.blank-fps-drop', area: 'performance', title: 'Render core fps on the blank project: early vs late checkpoints', value: `${a.toFixed(1)} → ${b.toFixed(1)}`, threshold: `drop ≤ ${(th.maxFpsDrop * 100).toFixed(0)}%`, severity: drop > th.maxFpsDrop ? 'fail' : 'pass' });
-    const ga = median(cps.slice(0, half).map((x) => x.blankGpuMs)); const gb = median(cps.slice(-half).map((x) => x.blankGpuMs));
-    if (ga !== null && gb !== null) add({ id: 'performance.blank-gpu-ms', area: 'performance', title: 'GPU ms per frame on the blank project: early vs late checkpoints', value: `${ga.toFixed(2)} → ${gb.toFixed(2)} ms`, threshold: `rise ≤ ${(th.maxGpuMsRise * 100).toFixed(0)}% (or under 4 ms)`, severity: ga > 0 && (gb - ga) / ga > th.maxGpuMsRise && gb > 4 ? 'fail' : 'pass' });
+    add({ id: 'performance.blank-fps-drop', area: 'performance', title: 'Render core fps in the reference scene: early vs late checkpoints', value: `${a.toFixed(1)} → ${b.toFixed(1)}`, threshold: `drop ≤ ${(th.maxFpsDrop * 100).toFixed(0)}%`, severity: drop > th.maxFpsDrop ? 'fail' : 'pass' });
+    const ga = median(cps.slice(0, half).map((x) => x.refGpuMs)); const gb = median(cps.slice(-half).map((x) => x.refGpuMs));
+    if (ga !== null && gb !== null) add({ id: 'performance.blank-gpu-ms', area: 'performance', title: 'GPU ms per frame in the reference scene: early vs late checkpoints', value: `${ga.toFixed(2)} → ${gb.toFixed(2)} ms`, threshold: `rise ≤ ${(th.maxGpuMsRise * 100).toFixed(0)}% (or under 4 ms)`, severity: ga > 0 && (gb - ga) / ga > th.maxGpuMsRise && gb > 4 ? 'fail' : 'pass' });
   }
-  const blankMed = median(baselines.map((b) => b.blankFps));
-  if (blankMed !== null) add({ id: 'performance.blank-fps', area: 'performance', title: 'Render core fps on the blank project (median of checkpoints)', value: blankMed.toFixed(1), threshold: `≥ ${th.minCoreFpsMedian}`, severity: blankMed < th.minCoreFpsMedian ? 'fail' : 'pass' });
+  const blankMed = median(baselines.map((b) => b.refFps));
+  if (blankMed !== null) add({ id: 'performance.blank-fps', area: 'performance', title: 'Render core fps in the reference scene (median of checkpoints)', value: blankMed.toFixed(1), threshold: `≥ ${th.minCoreFpsMedian}`, severity: blankMed < th.minCoreFpsMedian ? 'fail' : 'pass' });
   const slow = steady.filter((s) => Number.isFinite(s.core?.fps) && s.core.fps < 20);
   if (steady.length) add({ id: 'performance.slow-samples', area: 'performance', title: 'Samples with the render core under 20 fps (heavy content)', value: `${slow.length} of ${steady.length}${slow.length ? ` (worst ${Math.min(...slow.map((s) => s.core.fps)).toFixed(1)} fps at step ${slow.sort((x, y) => x.core.fps - y.core.fps)[0].step})` : ''}`, threshold: 'for reading', severity: 'info' });
   const dropped = samples.reduce((s, x) => s + (x.deltas?.droppedFrames ?? 0), 0);

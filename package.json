@@ -24,6 +24,7 @@
     "soak": "node scripts/soak/run.mjs",
     "soak:smoke": "node scripts/soak/run.mjs --smoke",
     "soak:watch": "node scripts/soak/watch.mjs",
+    "soak:selftest": "node --test scripts/soak/lib/soak.test.mjs",
     "dev:native-mobile": "vite --config vite.config.native-mobile.ts",
     "desktop": "concurrently \"npm run dev\" \"electron .\"",
     "desktop:app": "node scripts/dev-desktop-app.mjs",

@@ -94,8 +94,14 @@ const readJsonl = (file) => { try { return fs.readFileSync(file, 'utf8').split('
 function buildReport(sessionDir, extraMeta = {}) {
   const meta = { ...JSON.parse(fs.readFileSync(path.join(sessionDir, 'meta.json'), 'utf8')), ...extraMeta };
   const config = meta.config;
-  const samples = readJsonl(path.join(sessionDir, 'telemetry.jsonl'));
+  const rows = readJsonl(path.join(sessionDir, 'telemetry.jsonl'));
+  const samples = rows.filter((r) => r.kind !== 'reference');
   const baselines = samples.filter((s) => s.checkpoint);
+  // Each checkpoint's reference-scene frame rate is written just after it.
+  for (const ref of rows.filter((r) => r.kind === 'reference')) {
+    const b = [...baselines].reverse().find((x) => x.step === ref.step && x.run === ref.run);
+    if (b) { b.refFps = ref.fps ?? null; b.refGpuMs = ref.gpuMs ?? null; b.refCpuMs = ref.cpuMs ?? null; }
+  }
   const incidents = readJsonl(path.join(sessionDir, 'incidents.jsonl'));
   const trace = readJsonl(path.join(sessionDir, 'trace.jsonl'));
   const consoleLog = readJsonl(path.join(sessionDir, 'console.jsonl'));
@@ -273,11 +279,11 @@ async function main() {
 
   // ── Telemetry and heartbeat ──
   let telemetryRunning = true;
-  async function sample({ checkpoint = false, blankFps = null, blankGpuMs = null } = {}) {
+  async function sample({ checkpoint = false } = {}) {
     const h = st.handle;
     if (!h) return null;
     const s = session();
-    const out = { t: T(), at: new Date().toISOString(), run: st.run, step: st.step, sinceLaunchMs: Date.now() - (st.launchedAt ?? Date.now()), checkpoint, ...(checkpoint ? { blankFps, blankGpuMs } : {}) };
+    const out = { t: T(), at: new Date().toISOString(), run: st.run, step: st.step, sinceLaunchMs: Date.now() - (st.launchedAt ?? Date.now()), checkpoint };
     const withTimeout = (p, ms) => Promise.race([p, sleep(ms).then(() => { throw new Error('timeout'); })]);
     try {
       const full = await sampleTree(h.pid, st.prevProc);
@@ -434,7 +440,7 @@ async function main() {
       async openPage(match) { const t = await waitForTarget(opts.port, match, 30000); st.handle.rehide(); const { PageSession } = await import('./lib/cdp.mjs'); return new PageSession(t).connect(); },
     });
     const page = (body, args = {}, timeoutMs = 30000) => s.eval(`(async (A) => { const G = window.__ghostArcade, S = window.__soak; ${body} })(${J(args)})`, timeoutMs);
-    const rectOf = async (expr) => s.eval(`(() => { const el = (${expr}); if (!el || el.disabled) return null; el.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }); const r = el.getBoundingClientRect(); return r.width > 1 && r.height > 1 ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null; })()`, 10000).catch(() => null);
+    const rectOf = async (expr) => s.eval(`(() => { const el = (${expr}); if (!el || el.disabled) return null; el.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }); const r = el.getBoundingClientRect(); if (r.width <= 1 || r.height <= 1) return null; const x = r.left + r.width / 2, y = r.top + r.height / 2; const hit = document.elementFromPoint(x, y); return hit && (hit === el || el.contains(hit)) ? { x, y } : null; })()`, 10000).catch(() => null);
     const ctx = {
       rng, step, root,
       note: (m) => { rec.note = rec.note ? `${rec.note}; ${m}` : String(m); },
@@ -528,13 +534,13 @@ async function main() {
         return true;
       },
       async expectFrames(label) {
-        const a = await s.eval('window.__soak.status()', 10000);
-        await sleep(800);
-        const b = await s.eval('window.__soak.status()', 10000);
-        ctx.assert(b.running !== false, `${label}: the render core is not running`);
-        ctx.assert((b.frames_presented ?? 0) > (a.frames_presented ?? 0) || b.core_instance !== a.core_instance, `${label}: the render core presented no frames in 0.8 s`);
+        // The core renders on demand (a still scene presents rarely), so the
+        // check is that it is up and draws a frame when asked.
+        const c = await s.eval('window.__soak.status()', 10000);
+        ctx.assert(c && c.running !== false && !c.core_exited_unexpectedly, `${label}: the render core is not running${c?.core_failure_hint ? ` (${c.core_failure_hint})` : ''}`);
         const snap = await s.eval('window.__soak.snapshot()', 15000).catch(() => null);
-        if (snap && await ctx.contentExpected()) {
+        ctx.assert(snap, `${label}: the render core gave no frame when asked`);
+        if (await ctx.contentExpected()) {
           const mean = (snap.mean_rgba[0] + snap.mean_rgba[1] + snap.mean_rgba[2]) / 3;
           if (mean < 0.004) ctx.warn(`${label}: the output is black (mean ${mean.toFixed(4)})`);
         }
@@ -577,8 +583,9 @@ async function main() {
     let state = null;
     try { state = await session().eval(STATE_JS, 10000); } catch { /* checked below */ }
     if (!state) { await sleep(2000); return; }
-    const pool = ACTIONS.filter((a) => areas.includes(a.area) && (!opts.only || opts.only.includes(a.name)) && a.weight > 0 && (!a.when || a.when(state)))
-      .map((a) => ({ a, weight: a.weight * (config.areaWeights?.[a.area] ?? 1) }));
+    const weightOf = (a) => config.actionWeights?.[a.name] ?? a.weight;
+    const pool = ACTIONS.filter((a) => areas.includes(a.area) && (!opts.only || opts.only.includes(a.name)) && weightOf(a) > 0 && (!a.when || a.when(state)))
+      .map((a) => ({ a, weight: weightOf(a) * (config.areaWeights?.[a.area] ?? 1) }));
     const pick = rng.weighted(pool);
     if (!pick) { await sleep(1000); return; }
     const action = pick.a;
@@ -624,7 +631,7 @@ async function main() {
         try { G.showTimeline.stop(); } catch {}
         try { G.takeover?.store?.release('all'); } catch {}
         try { G.vjClipLauncher.stopAll(); G.vjClipLauncher.setOpen(false); } catch {}
-        try { if (G.settings.get().output?.outputWindowOpen) window.dispatchEvent(new CustomEvent('ga-toggle-output-window')); } catch {}
+        document.querySelector('button.output-btn[title="Close Output Window"]')?.click();
         document.querySelector('[aria-label="Close Interactive Studio"]')?.click();
         try { G.showTimeline.setOpen(false); } catch {}
         await sleep(800);
@@ -644,16 +651,30 @@ async function main() {
       const blank = await s.eval(STATE_JS, 10000).catch(() => null);
       await sleep(15000);
       await s.call('HeapProfiler.collectGarbage', {}, 30000).catch(() => {});
-      // Frame rate of the blank project over 3 s, the like-for-like number.
-      const a = await s.eval('window.__soak.status()', 10000).catch(() => null);
-      const ta = Date.now();
-      await sleep(3000);
-      const c = await s.eval('window.__soak.status()', 10000).catch(() => null);
-      const blankFps = a && c && a.core_instance === c.core_instance ? +((c.frames_presented - a.frames_presented) / ((Date.now() - ta) / 1000)).toFixed(1) : null;
       st.busy = false;
-      const b = await sample({ checkpoint: true, blankFps, blankGpuMs: c?.avg_render_gpu_ms ?? null });
+      const b = await sample({ checkpoint: true });
+      // The like-for-like frame rate: one full-frame animated shader on the
+      // blank project (a still scene is drawn on demand, so it has no fps).
+      st.busy = true;
+      const ref = await s.eval(`(async () => {
+        const G = window.__ghostArcade, S = window.__soak; const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const id = G.project.addLayer('Soak reference', 'media');
+        const clip = await S.shaderClip('DM-ColorBreath');
+        G.project.setLayerSource(id, { id: crypto.randomUUID(), type: 'shader', src: clip.src, name: clip.name, shaderCode: clip.shaderCode, shaderValues: {} });
+        await sleep(4000);
+        const a = await S.status(); const t0 = performance.now();
+        await sleep(3000);
+        const c = await S.status(); const secs = (performance.now() - t0) / 1000;
+        G.project.removeLayer(id);
+        return a.core_instance === c.core_instance ? { fps: +((c.frames_presented - a.frames_presented) / secs).toFixed(1), gpuMs: c.avg_render_gpu_ms, cpuMs: c.avg_render_cpu_ms } : null;
+      })()`, 30000).catch(() => null);
+      st.busy = false;
+      if (b) {
+        b.refFps = ref?.fps ?? null; b.refGpuMs = ref?.gpuMs ?? null; b.refCpuMs = ref?.cpuMs ?? null;
+        files.telemetry.write(J({ kind: 'reference', t: T(), run: st.run, step: st.step, ...ref }) + '\n');
+      }
       files.trace.write(J({ kind: 'checkpoint', step: st.step, t: T(), run: st.run, ms: Date.now() - t0, blank }) + '\n');
-      if (b) log(`checkpoint: total ${b.proc?.totalMB} MB, renderer ${b.proc?.roles?.renderer?.rssMB} MB, heap ${b.renderer?.heapMB} MB, core ${b.proc?.roles?.core?.rssMB} MB; layers ${blank?.layers}, tracks ${blank?.tracks}, songs ${blank?.songs}`);
+      if (b) log(`checkpoint: reference scene ${b.refFps} fps, GPU ${b.refGpuMs?.toFixed?.(2)} ms; total ${b.proc?.totalMB} MB, renderer ${b.proc?.roles?.renderer?.rssMB} MB, heap ${b.renderer?.heapMB} MB, core ${b.proc?.roles?.core?.rssMB} MB; layers ${blank?.layers}, tracks ${blank?.tracks}, songs ${blank?.songs}`);
       await screenshot('checkpoint', 'checkpoint');
     } catch (err) {
       log(`checkpoint failed: ${err.message}`);
