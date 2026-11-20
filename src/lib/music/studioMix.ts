@@ -15,9 +15,17 @@
  * sparse or quiet playing changes slower (see MixFollower). Muted
  * visuals (level 0) sit out. A visual's own Auto (shows while its sound
  * plays) still applies on top.
+ *
+ * The turns are taken by the visuals in the Visuals list, top first: each
+ * audio shader, and each track's clip visuals (clipStack.ts). A clip's stack
+ * is one visual, as a clip's single visual was before stacks: when its turn
+ * comes every layer in it shows, each with its own blend and opacity, and in
+ * shuffle the stack as a whole takes the shuffle's blend. A new clip on the
+ * same track takes the turn of the one it replaces (see mixSlots).
  */
 
 import type { BlendMode } from '../types';
+import type { VisualRow } from './visualOrder';
 
 export type MixMode = 'all' | 'order' | 'random' | 'shuffle';
 export const MIX_MODES: readonly { id: MixMode; label: string; title: string }[] = [
@@ -55,6 +63,52 @@ export function normalizeMix(raw: unknown): StudioMix {
     bars: MIX_BARS.includes(Number(r.bars) as (typeof MIX_BARS)[number]) ? Number(r.bars) : DEFAULT_MIX.bars,
     follow: r.follow === true,
   };
+}
+
+/** Who takes the turns: one slot per voice and one per track with clip visuals playing, in list order. */
+export interface MixSlots {
+  /** Per slot: sits out (a voice at level 0, clip visuals turned down to nothing or switched off). */
+  muted: boolean[];
+  /** The slot of each voice, by its index in the studio's list. */
+  voice: number[];
+  /** The slot of each track's clip visuals, by track key. */
+  track: Map<string, number>;
+}
+
+/**
+ * The slots auto-mix picks among, from the Visuals list (`order`, top first,
+ * visualOrder.ts). Stacks on the same track (a clip coming in while the last
+ * fades out) share one slot, so a clip is counted once whatever it holds, and
+ * a slot sits out only when every stack in it does. With no clips playing the
+ * slots are the voices, in their own order, as before stacks.
+ */
+export function mixSlots(order: readonly VisualRow[], voiceMuted: readonly boolean[], stacks: readonly { track: string; muted: boolean }[]): MixSlots {
+  const muted: boolean[] = [];
+  const voice: number[] = Array.from({ length: voiceMuted.length }, () => -1);
+  const track = new Map<string, number>();
+  for (const row of order) {
+    if (row.kind === 'voice') {
+      if (row.index >= voiceMuted.length) continue;
+      voice[row.index] = muted.length;
+      muted.push(voiceMuted[row.index]);
+    } else {
+      const s = stacks[row.index];
+      if (!s) continue;
+      const at = track.get(s.track);
+      if (at === undefined) {
+        track.set(s.track, muted.length);
+        muted.push(s.muted);
+      } else muted[at] = muted[at] && s.muted;
+    }
+  }
+  // A voice missing from the order (should not happen) still gets a slot of its own.
+  voice.forEach((slot, i) => {
+    if (slot < 0) {
+      voice[i] = muted.length;
+      muted.push(voiceMuted[i]);
+    }
+  });
+  return { muted, voice, track };
 }
 
 /** Blends that suit light on black: none of them darkens the stack away. */

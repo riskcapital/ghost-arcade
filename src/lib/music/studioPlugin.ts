@@ -18,7 +18,7 @@
 import { writable } from 'svelte/store';
 import { VOICE_CLEAR_INPUT, withClearOption } from './voiceClear';
 import { DEFAULT_TEXT_EVERY, normalizePhrases, normalizeTextEvery, shaderTextValues } from './shaderText';
-import { DEFAULT_MIX, MixFollower, mixAt, normalizeMix, type MixFeel, type StudioMix } from './studioMix';
+import { DEFAULT_MIX, MixFollower, mixAt, mixSlots, normalizeMix, type MixFeel, type StudioMix } from './studioMix';
 import { finishEffectsFor, normalizeFinish, trailsOpacity, type StudioFinish } from './studioFinish';
 import { AUTO_PALETTE, CLASSIC_COLORS, CLASSIC_PALETTE, KEY_PALETTE, KeyHueGlide, isPaletteId, keyHue, resolvePalette, voiceColors, type PaletteSlots } from './studioPalettes';
 import { BLEND_MODE_ORDER, createLayer, type BlendMode, type Layer } from '../types';
@@ -258,8 +258,20 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
     // Auto-mix works from the bar clock every voice shares.
     const clock = driven.find((d) => Number.isFinite(d.vxBars));
     const barPos = clock ? (clock.vxBars ?? 0) + (clock.vxBar ?? 0) : 0;
-    const muted = studio.musicVoices.map((v) => v.level <= 0);
-    const mixed = studio.musicMix.follow ? followerFor(layer.id).step(studio.musicMix, barPos, muted, inputs.feel?.()) : mixAt(studio.musicMix, barPos, muted);
+    // The playing clips' visual stacks, and the one list they share with the voices.
+    const playing = currentStacks();
+    const off = new Set(studio.musicStackOff);
+    const order = visualOrder(studio.musicVoices.length, playing.map(({ entry }) => entry), studio.musicStackPlace);
+    // Auto-mix takes turns among the voices and the clips (each track's stack one visual).
+    const slots = mixSlots(
+      order,
+      studio.musicVoices.map((v) => v.level <= 0),
+      playing.map(({ entry, stack }) => ({ track: entry.track, muted: off.has(entry.track) || stack.opacity <= 0 })),
+    );
+    const mixed = studio.musicMix.follow ? followerFor(layer.id).step(studio.musicMix, barPos, slots.muted, inputs.feel?.()) : mixAt(studio.musicMix, barPos, slots.muted);
+    const voiceMix = (index: number) => mixed[slots.voice[index]] ?? { gain: 1 };
+    const trackMix = (track: string) => mixed[slots.track.get(track) ?? -1] ?? { gain: 1 };
+    lastMix = { voices: studio.musicVoices.map((_, i) => voiceMix(i).gain), tracks: new Map([...slots.track.keys()].map((t) => [t, trackMix(t).gain])) };
     // A stack auditioned on its own: the studio's own voices step aside.
     const solo = auditionSolo();
     studio.musicVoices.forEach((voice, index) => {
@@ -281,22 +293,21 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
           shaderValues: studioVoiceValues(voice, studio.musicSet, driven[index], palette),
         },
       } as Layer);
-      voiceRows.set(index, { layerId: id, opacity: voice.level * (voiceMods.get(index) ?? 1) * mixed[index].gain, blendMode: voice.clear ? studioVoiceBlend(voice.blend, 'normal') : mixed[index].blend ?? studioVoiceBlend(voice.blend) });
+      const m = voiceMix(index);
+      voiceRows.set(index, { layerId: id, opacity: voice.level * (voiceMods.get(index) ?? 1) * m.gain, blendMode: voice.clear ? studioVoiceBlend(voice.blend, 'normal') : m.blend ?? studioVoiceBlend(voice.blend) });
     });
-    // The playing clips' visual stacks: each its own mix, blended in as one row.
-    const playing = currentStacks();
+    // Each playing stack: its own mix, blended in as one row, whole, when auto-mix gives its clip a turn.
     const stackRows = new Map<number, MixRow>();
-    const off = new Set(studio.musicStackOff);
     playing.forEach(({ entry, stack, level }, i) => {
       if (off.has(entry.track)) return;
       const stackLayers = expandStack(`${layer.id}:stack:${entry.uid}`, stack, studio.musicSet, inputs, palette, key);
       if (!stackLayers) return;
       out.push(...stackLayers.layers);
-      stackRows.set(i, { layerId: stackLayers.id, opacity: stack.opacity * level, blendMode: stack.blend });
+      const m = trackMix(entry.track);
+      stackRows.set(i, { layerId: stackLayers.id, opacity: stack.opacity * level * m.gain, blendMode: m.blend ?? stack.blend });
     });
     // One list, the top of it drawing on top: voices and stacks in the order
     // set in the Visuals panel. The mix stacks its rows from the first up.
-    const order = visualOrder(studio.musicVoices.length, playing.map(({ entry }) => entry), studio.musicStackPlace);
     for (let i = order.length - 1; i >= 0; i--) {
       const row = order[i].kind === 'voice' ? voiceRows.get(order[i].index) : stackRows.get(order[i].index);
       if (row) rows.push(row);
@@ -456,6 +467,13 @@ function followerFor(hostId: string): MixFollower {
 /** The mix the last music-following instance worked out, for the rack's lights. */
 export function followedMix(): readonly { gain: number }[] {
   return lastFollower?.current ?? [];
+}
+
+/** What the last rendered instance's auto-mix showed: each voice's share and each track's clip visuals'. */
+let lastMix: { voices: number[]; tracks: Map<string, number> } = { voices: [], tracks: new Map() };
+/** For the Visuals panel's lights (read in its own frame loop, never a store). */
+export function lastStudioMix(): { readonly voices: readonly number[]; readonly tracks: ReadonlyMap<string, number> } {
+  return lastMix;
 }
 
 /** Instances in the last rendered scene. */

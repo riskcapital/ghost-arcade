@@ -7,7 +7,7 @@
    * (visualOrder.ts). Each audio shader shows what it follows and its main
    * controls; a clip opens to its layers, and Edit opens the clip visuals
    * editor. Look sets the colors and finish over everything; auto-mix, under
-   * the list, lets the audio shaders take turns. With no instance yet, one is
+   * the list, lets the visuals take turns (a clip's visuals as one). With no instance yet, one is
    * put on the deck (or the selected layer).
    */
   import { onDestroy, tick as nextTick, untrack } from 'svelte';
@@ -22,7 +22,7 @@
   import { BLEND_MODE_ORDER, blendModeLabel, type BlendMode } from '../../types';
   import { MIX_BAR_OPTIONS, MIX_MODES, mixAt, normalizeMix, type MixMode } from '../../music/studioMix';
   import { DEFAULT_TEXT_EVERY, TEXT_EVERY, normalizePhrases } from '../../music/shaderText';
-  import { followedMix, studioCodeTick, studioVoiceBlend, studioRenderInputs, studioVoiceCode, type StudioVoice } from '../../music/studioPlugin';
+  import { lastStudioMix, studioCodeTick, studioVoiceBlend, studioRenderInputs, studioVoiceCode, type StudioVoice } from '../../music/studioPlugin';
   import {
     addStudioVoice,
     editStudio,
@@ -63,6 +63,8 @@
   const autoName = $derived(STUDIO_PALETTE_LIST.find((p) => p.id === SET_PALETTE[s.set])?.name ?? '');
   let open = $state<number | null>(null);
   let activity = $state<number[]>([]);
+  /** Each track's clip visuals' light: dark while auto-mix has them sitting out. */
+  let clipActivity = $state<Record<string, number>>({});
   let codeTick = $state(0);
 
   const familyLabel = (id: string) => STUDIO_SETS.find((set) => set.id === id)?.label ?? id;
@@ -169,13 +171,20 @@
   let frame = 0;
   function tick() {
     const driven = voices.map((v) => studioRenderInputs.driven(v.source, v.auto, v.live));
-    // With auto-mix on, a visual sitting out shows a dark light.
+    // With auto-mix on, a visual sitting out shows a dark light: the mix the
+    // renderer worked out last (voices and clips take turns together), or,
+    // before it has drawn this instance, the voices' turns on their own.
+    const rendered = lastStudioMix();
     const clock = driven[0];
-    const followed = mix.follow ? followedMix() : [];
-    const mixed = followed.length === voices.length ? followed : mixAt(mix, clock ? (clock.vxBars ?? 0) + (clock.vxBar ?? 0) : 0, voices.map((v) => v.level <= 0));
-    const next = driven.map((d, i) => Math.min(1, (0.25 + 0.75 * (d.vxEnv ?? 0)) * (d.vxPresence ?? 1) * (mixed[i]?.gain ?? 1)));
+    const gains = rendered.voices.length === voices.length
+      ? rendered.voices
+      : mixAt(mix, clock ? (clock.vxBars ?? 0) + (clock.vxBar ?? 0) : 0, voices.map((v) => v.level <= 0)).map((m) => m.gain);
+    const next = driven.map((d, i) => Math.min(1, (0.25 + 0.75 * (d.vxEnv ?? 0)) * (d.vxPresence ?? 1) * (gains[i] ?? 1)));
     // Only repaint the lights when one has visibly changed.
     if (next.length !== activity.length || next.some((a, i) => Math.abs(a - activity[i]) > 0.01)) activity = next;
+    const clipNext: Record<string, number> = {};
+    for (const { entry } of stacks) clipNext[entry.track] = 0.6 * (rendered.tracks.get(entry.track) ?? 1);
+    if (Object.keys(clipNext).length !== Object.keys(clipActivity).length || Object.entries(clipNext).some(([t, a]) => Math.abs(a - (clipActivity[t] ?? -1)) > 0.01)) clipActivity = clipNext;
     frame = requestAnimationFrame(tick);
   }
   frame = requestAnimationFrame(tick);
@@ -385,7 +394,7 @@
             <button
               class="led"
               class:on={!stacksOff.has(entry.track)}
-              style="--a: 0.6"
+              style="--a: {clipActivity[entry.track] ?? 0.6}"
               onclick={() => setStackOff(entry.track, !stacksOff.has(entry.track))}
               aria-pressed={stacksOff.has(entry.track)}
               aria-label="Turn {entry.trackName}'s clip visuals on or off"
@@ -527,7 +536,7 @@
   </div>
   {#if target}
     <div class="automix" role="group" aria-label="Auto-mix">
-      <span class="ga-eyebrow" title="Let the audio shaders take turns on the beat">Auto-mix</span>
+      <span class="ga-eyebrow" title="Let the visuals take turns on the beat: a clip's visuals take their turn together">Auto-mix</span>
       <select value={mix.mode} onchange={(e) => setStudioMix({ mode: (e.target as HTMLSelectElement).value as MixMode })} aria-label="Auto-mix" title={MIX_MODES.find((m) => m.id === mix.mode)?.title} data-midi-path="studio:visuals.automix-next" data-midi-label="Next auto-mix mode" data-midi-mode="toggle">
         {#each MIX_MODES as m (m.id)}<option value={m.id} title={m.title}>{m.label}</option>{/each}
       </select>
