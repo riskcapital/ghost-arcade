@@ -6,7 +6,7 @@
    * plugged in) is marked in its menu.
    */
   import StudioKnob from './music/StudioKnob.svelte';
-  import { CABLE_COLORS } from '../music/cableLook';
+  import { cableColor } from '../videosynth/cables';
   import { INPUT_JACKS, SOURCES, paramValue, type InputJack } from '../videosynth/patch';
   import { formatParam, paramSpec } from '../videosynth/labels';
 
@@ -22,7 +22,6 @@
 
   const sourceOf = (j: InputJack) => paramValue(effectSource, paramSpec(j.srcKey));
   const amountOf = (j: InputJack) => paramValue(effectSource, paramSpec(j.amtKey));
-  const cableColor = (source: number) => CABLE_COLORS[(source - 1 + CABLE_COLORS.length) % CABLE_COLORS.length];
 
   const MODULES = ['Osc A', 'Osc B', 'Osc C', 'Picture', 'Feedback', 'Tube'];
   const byModule = MODULES.map((m) => ({ module: m, jacks: INPUT_JACKS.filter((j) => j.module === m) }));
@@ -84,11 +83,13 @@
     display: grid;
     gap: 4px;
   }
+  /* Module names print in the accent, as Audio Lab's section names do. */
   .module {
     font-size: var(--ga-text-micro, 9px);
+    font-weight: 700;
     letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
     text-transform: uppercase;
-    color: var(--studio-muted);
+    color: var(--studio-accent);
   }
   .row {
     display: grid;
@@ -96,16 +97,18 @@
     gap: 8px;
     align-items: center;
   }
-  /* The cable's color, as in the full view; a ring when nothing is plugged in. */
+  /* The cable's plug, as drawn in the full view (a ring in the cable's colour); an empty socket when nothing is plugged in. */
   .plug {
     width: 10px;
     height: 10px;
+    box-sizing: border-box;
     border-radius: 50%;
-    background: var(--cable);
-    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.4);
+    background: #0d1224;
+    border: 2.5px solid var(--cable);
   }
   .plug.empty {
-    box-shadow: inset 0 0 0 1px var(--studio-edge);
+    background: var(--studio-slot);
+    border: 2px solid var(--studio-edge);
   }
   .plug.normal {
     opacity: 0.45;
@@ -116,15 +119,7 @@
     white-space: nowrap;
   }
   select {
-    height: var(--ga-control-h-sm, 24px);
     min-width: 0;
-    background: var(--studio-slot);
-    color: var(--studio-ink);
-    border: 1px solid var(--studio-edge);
-    border-radius: var(--studio-radius);
-    font: inherit;
-    font-size: var(--ga-text-control, 12px);
-    padding: 0 6px;
   }
   select:focus-visible {
     outline: 2px solid var(--ga-focus, var(--studio-accent));

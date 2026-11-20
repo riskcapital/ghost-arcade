@@ -3,7 +3,8 @@
    * Analog Synth in the deck tray, condensed: presets, the modules as
    * collapsible sections of knobs, the patch as a list, the input layer and
    * the snapshot pad. "Open the synth" opens the full instrument, where the
-   * same patch is made with cables. Every knob answers MIDI learn.
+   * same patch is made with cables. Every knob answers MIDI learn. Dressed
+   * as Audio Lab is: its buttons, section heads, fold arrows and XY pad.
    */
   import './music/studioTokens.css';
   import StudioKnob from './music/StudioKnob.svelte';
@@ -120,6 +121,11 @@
   const CORNERS = ['Top left', 'Top right', 'Bottom left', 'Bottom right'];
 </script>
 
+<!-- Audio Lab's fold arrow. -->
+{#snippet fold(isOpen: boolean)}
+  <svg class="fold" viewBox="0 0 12 12" aria-hidden="true"><path d={isOpen ? 'M3 4.5l3 3 3-3' : 'M4.5 3l3 3-3 3'} /></svg>
+{/snippet}
+
 {#if studioOpen}
   <AnalogSynthStudio {effectSource} {layers} {midiPrefix} {onpatch} onclose={() => (studioOpen = false)} />
 {/if}
@@ -135,15 +141,15 @@
         {/each}
       </select>
     </label>
-    <button class="btn" onclick={randomize} title="A new patch, kept within ranges that make a picture">Randomize</button>
-    <button class="btn open" onclick={() => (studioOpen = true)} title="The whole instrument full screen, patched with cables">Open the synth</button>
+    <button class="text-btn" onclick={randomize} title="A new patch, kept within ranges that make a picture">Randomize</button>
+    <button class="studio-btn open" onclick={() => (studioOpen = true)} title="The whole instrument full screen, patched with cables">Open the synth</button>
   </div>
 
   {#each SECTIONS as section (section.name)}
     <section class="section">
       <button class="section-head" aria-expanded={!!open[section.name]} onclick={() => (open[section.name] = !open[section.name])}>
-        <span class="ga-eyebrow">{section.name}</span>
-        <span class="chev" aria-hidden="true">{open[section.name] ? '−' : '+'}</span>
+        {@render fold(!!open[section.name])}
+        <span class="title">{section.name}</span>
       </button>
       {#if open[section.name]}
         {#if section.menus.length}
@@ -191,8 +197,8 @@
 
   <section class="section">
     <button class="section-head" aria-expanded={!!open.Patch} onclick={() => (open.Patch = !open.Patch)}>
-      <span class="ga-eyebrow">Patch</span>
-      <span class="chev" aria-hidden="true">{open.Patch ? '−' : '+'}</span>
+      {@render fold(!!open.Patch)}
+      <span class="title">Patch</span>
     </button>
     {#if open.Patch}
       <AnalogPatchBay {effectSource} {midiPrefix} {onpatch} />
@@ -201,7 +207,7 @@
   </section>
 
   <section class="section">
-    <div class="section-head static"><span class="ga-eyebrow">Input</span></div>
+    <div class="section-head static"><span class="title">Input</span></div>
     <label class="field">
       <span>Input layer</span>
       <select value={String(effectSource[INPUT_LAYER_KEY] ?? '')} onchange={(e) => onpatch(chooseInputPatch(effectSource, e.currentTarget.value))}>
@@ -215,7 +221,7 @@
   </section>
 
   <section class="section">
-    <div class="section-head static"><span class="ga-eyebrow">Snapshots</span></div>
+    <div class="section-head static"><span class="title">Snapshots</span></div>
     <div
       class="pad"
       class:empty={!snapshots.some(Boolean)}
@@ -231,14 +237,14 @@
       {#each CORNERS as name, i}
         <span class="corner c{i}" class:stored={!!snapshots[i]}>{['1', '2', '3', '4'][i]}</span>
       {/each}
-      <span class="dot" style:left={`${morph.x * 100}%`} style:top={`${morph.y * 100}%`}></span>
+      <span class="puck" class:hidden={!snapshots.some(Boolean)} style:left={`${morph.x * 100}%`} style:top={`${morph.y * 100}%`}></span>
     </div>
     <div class="corner-buttons">
       {#each CORNERS as name, i}
         <div class="corner-row">
           <span>{i + 1} · {name}</span>
-          <button class="btn small" onclick={() => store(i)}>Store</button>
-          <button class="btn small" disabled={!snapshots[i]} onclick={() => clearCorner(i)}>Clear</button>
+          <button class="studio-btn" onclick={() => store(i)}>Store</button>
+          <button class="studio-btn" disabled={!snapshots[i]} onclick={() => clearCorner(i)}>Clear</button>
         </div>
       {/each}
     </div>
@@ -249,7 +255,7 @@
 <style>
   .analog-synth {
     display: grid;
-    gap: 2px;
+    gap: 0;
     padding: 8px 12px 12px;
   }
   .bar {
@@ -257,49 +263,59 @@
     grid-template-columns: 1fr auto auto;
     gap: 8px;
     align-items: end;
-    margin-bottom: 6px;
+    margin-bottom: 8px;
   }
+  /* The one call to action, in the accent, as Audio Lab's Load patch is. */
+  .studio-btn.open { height: var(--ga-control-h, 26px); color: var(--studio-accent); border-color: var(--studio-accent); background: var(--studio-accent-soft); }
+  /* Each section is headed like an Audio Lab module: fold arrow and the eyebrow title in the face's ink. */
   .section {
     border-top: 1px solid var(--studio-edge-soft);
-    padding: 6px 0;
+    padding: 0 0 8px;
   }
   .section-head {
     display: flex;
     width: 100%;
-    justify-content: space-between;
+    gap: var(--ga-space-2, 6px);
     align-items: center;
+    height: 32px;
     background: none;
     border: 0;
-    padding: 4px 0;
+    padding: 0;
     color: var(--studio-muted);
     cursor: pointer;
     font: inherit;
   }
-  .section-head.static {
-    cursor: default;
+  .section-head:hover { color: var(--studio-ink); }
+  .section-head.static { cursor: default; }
+  .title {
+    font-family: var(--studio-title-font, inherit);
+    font-size: var(--ga-text-eyebrow, 10px);
+    font-weight: 700;
+    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
+    line-height: 1.2;
+    text-transform: uppercase;
+    color: var(--studio-ink);
   }
+  .fold { width: 10px; height: 10px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   .section-head:focus-visible,
-  .btn:focus-visible,
+  .text-btn:focus-visible,
+  .studio-btn:focus-visible,
   .pad:focus-visible {
     outline: 2px solid var(--ga-focus, var(--studio-accent));
     outline-offset: 2px;
-  }
-  .chev {
-    color: var(--studio-muted);
-    font-size: 14px;
   }
   .knobs {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
     gap: 8px 4px;
     justify-items: center;
-    padding: 6px 0 2px;
+    padding: 4px 0 2px;
   }
   .menus {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 6px 8px;
-    padding: 4px 0;
+    padding: 2px 0 4px;
   }
   .field {
     display: grid;
@@ -310,35 +326,6 @@
   .field select {
     height: var(--ga-control-h, 26px);
     min-width: 0;
-    background: var(--studio-slot);
-    color: var(--studio-ink);
-    border: 1px solid var(--studio-edge);
-    border-radius: var(--studio-radius);
-    font: inherit;
-    font-size: var(--ga-text-control, 12px);
-    padding: 0 6px;
-  }
-  .btn {
-    height: var(--ga-control-h, 26px);
-    padding: 0 10px;
-    background: var(--studio-cell);
-    color: var(--studio-ink-1);
-    border: 1px solid var(--studio-edge);
-    border-radius: var(--studio-radius);
-    font: inherit;
-    font-size: var(--ga-text-control, 12px);
-    cursor: pointer;
-  }
-  .btn:hover:not(:disabled) {
-    color: var(--studio-ink);
-  }
-  .btn:disabled {
-    opacity: 0.4;
-    cursor: default;
-  }
-  .btn.small {
-    height: var(--ga-control-h-sm, 22px);
-    padding: 0 8px;
   }
   .hint {
     margin: 6px 0 0;
@@ -346,19 +333,21 @@
     font-size: var(--ga-text-meta, 11px);
     line-height: 1.45;
   }
+  /* Audio Lab's XY pad: a grid on the slot, an accent puck that glows. */
   .pad {
     position: relative;
     aspect-ratio: 1;
     max-width: 220px;
     margin: 6px auto 8px;
-    background:
-      linear-gradient(var(--studio-edge-soft) 1px, transparent 1px) 0 0 / 25% 25%,
-      linear-gradient(90deg, var(--studio-edge-soft) 1px, transparent 1px) 0 0 / 25% 25%,
-      var(--studio-slot);
+    box-sizing: border-box;
     border: 1px solid var(--studio-edge);
     border-radius: var(--studio-radius);
+    background-color: var(--studio-slot);
+    background-image: linear-gradient(var(--studio-edge-soft) 1px, transparent 1px), linear-gradient(90deg, var(--studio-edge-soft) 1px, transparent 1px);
+    background-size: 12.5% 12.5%;
     cursor: crosshair;
     touch-action: none;
+    overflow: hidden;
   }
   .pad.empty {
     cursor: default;
@@ -366,6 +355,7 @@
   .corner {
     position: absolute;
     font-size: var(--ga-text-micro, 9px);
+    font-weight: 700;
     color: var(--studio-muted);
     padding: 4px 6px;
   }
@@ -376,15 +366,19 @@
   .c1 { right: 0; top: 0; }
   .c2 { left: 0; bottom: 0; }
   .c3 { right: 0; bottom: 0; }
-  .dot {
+  .puck {
     position: absolute;
-    width: 12px;
-    height: 12px;
-    margin: -6px 0 0 -6px;
+    width: 22px;
+    height: 22px;
+    box-sizing: border-box;
     border-radius: 50%;
-    background: var(--studio-accent);
+    border: 2px solid var(--studio-accent);
+    background: var(--studio-accent-soft);
+    box-shadow: 0 0 18px var(--studio-accent);
+    transform: translate(-50%, -50%);
     pointer-events: none;
   }
+  .puck.hidden { opacity: 0.35; box-shadow: none; }
   .corner-buttons {
     display: grid;
     gap: 4px;

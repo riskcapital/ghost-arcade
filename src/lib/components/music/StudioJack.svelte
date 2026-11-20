@@ -2,10 +2,12 @@
   /**
    * A patch jack. Drag from an output to an input to patch a cable; drag a
    * plugged input to move its cable, or drop it on nothing to unplug it.
+   * The look is PatchJack's, shared with Analog Synth.
    */
   import { cableDrag, lastUnplugged } from '../../music/cablePatching';
   import { canConnect, isOutputJack, jackKind } from '../../music/studioSets';
   import { musicStudio } from '../../music/musicStudioStore';
+  import PatchJack from './PatchJack.svelte';
 
   /** `labelAbove`: the label sits over the jack, so a cable going down from it does not cover the name. */
   let { id, label = '', title = '', labelAbove = false }: { id: string; label?: string; title?: string; labelAbove?: boolean } = $props();
@@ -43,66 +45,16 @@
   }
 </script>
 
-<span class="jack-wrap" class:output class:accepts class:dim class:label-above={labelAbove}>
-  <button
-    class="jack {kind}"
-    class:plugged
-    class:accepts
-    class:source
-    data-jack={id}
-    aria-label={title || label || id}
-    title={plugged ? `${title || label} (drag a cable off to move or unplug it; Alt-click unplugs all; right-click for the list)` : title || label}
-    onpointerdown={down}
-  ></button>
-  {#if label}<span class="jack-label">{label}</span>{/if}
-</span>
-
-<style>
-  .jack-wrap {
-    display: inline-flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 3px;
-    flex: 0 0 auto;
-  }
-  .jack-wrap.label-above { flex-direction: column-reverse; }
-  .jack {
-    width: 18px;
-    height: 18px;
-    padding: 0;
-    box-sizing: border-box;
-    border-radius: 50%;
-    border: 3px solid var(--studio-jack-ring, #c9d3ee);
-    background: var(--studio-slot);
-    box-shadow: inset 0 0 0 2px var(--studio-cell), 0 1px 0 rgba(255, 255, 255, 0.06);
-    cursor: grab;
-    touch-action: none;
-    transition: transform 120ms ease;
-  }
-  .jack.control { border-color: var(--studio-jack-cv, #7ec8e3); }
-  /* A patched jack shows a lit centre, so what is connected reads even with the cables hidden. */
-  .jack.plugged { background: radial-gradient(circle, var(--studio-accent) 0 3px, #03050b 3.5px); }
-  .jack.accepts {
-    border-color: var(--studio-accent);
-    transform: scale(1.25);
-    box-shadow: 0 0 0 3px var(--studio-accent-soft), 0 0 12px var(--studio-accent);
-    animation: invite 0.9s ease-in-out infinite alternate;
-  }
-  .jack.source { border-color: var(--studio-ink); box-shadow: 0 0 0 3px var(--studio-accent-soft); }
-  .jack-wrap.accepts .jack-label { color: var(--studio-accent); }
-  .jack-wrap.dim { opacity: 0.22; transition: opacity 120ms ease; }
-  @keyframes invite {
-    from { box-shadow: 0 0 0 2px var(--studio-accent-soft), 0 0 6px var(--studio-accent); }
-    to { box-shadow: 0 0 0 5px var(--studio-accent-soft), 0 0 16px var(--studio-accent); }
-  }
-  .jack:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
-  .jack-label {
-    font-size: var(--ga-text-micro, 9px);
-    font-weight: 700;
-    letter-spacing: var(--ga-eyebrow-tracking, 0.08em);
-    line-height: 1.2;
-    color: var(--studio-muted);
-    text-transform: uppercase;
-    white-space: nowrap;
-  }
-</style>
+<PatchJack
+  jack={id}
+  {kind}
+  {label}
+  ariaLabel={title || label || id}
+  title={plugged ? `${title || label} (drag a cable off to move or unplug it; Alt-click unplugs all; right-click for the list)` : title || label}
+  {labelAbove}
+  {plugged}
+  {accepts}
+  {source}
+  {dim}
+  onpointerdown={down}
+/>
