@@ -1,4 +1,5 @@
 import {sanitizeStoredInteractive} from '../mobile/studio/interactive';
+import { checkAddons } from '../addons/addonAccess';
 import {introScene} from '../mobile/studio/interactiveLibrary';
 import { buildWorld, WORLDS, type StageShape, type WorldId } from '../scene3d/worlds';
 import { interactiveFromScene3D, reliefStarterScene } from '../scene3d/reliefStarter';
@@ -6308,6 +6309,9 @@ void main() {
      */
     importProject(data: unknown, projectDir?: string, options: { live?: boolean } = {}): boolean {
       const openingFile = !options.live;
+      // Add-on licences are looked at when a project opens (and at launch),
+      // never in between. Its layers keep their data either way.
+      if (openingFile) void checkAddons();
       importingProject = true;
       try {
         const parsed = data as {

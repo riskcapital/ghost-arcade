@@ -12,7 +12,7 @@ import { noteGrid, type NoteGrid } from './grid';
  * VJ clips live in musicRuntime.ts.
  */
 
-import { MUSIC_STUDIO } from '../features';
+import { addonUsable, offerAddon } from '../addons/addonAccess';
 import { get, writable } from 'svelte/store';
 import { INSTRUMENTS, type InstrumentId } from './noteEvents';
 import { DEFAULT_VISUAL_SETTINGS, type NoteVisualMode, type NoteVisualSettings } from './noteVisuals';
@@ -534,6 +534,13 @@ export function nextTakeName(takes: Take[]): string {
   return `Take ${Math.max(highest, takes.length) + 1}`;
 }
 
+/** True when Audio Lab may open; when it is locked, offer it instead. */
+function audioLabOpens(): boolean {
+  if (addonUsable('addon.audio-lab')) return true;
+  offerAddon('addon.audio-lab');
+  return false;
+}
+
 function createMusicStudioStore() {
   const store = writable<MusicStudioState>(initialState());
   const { subscribe, update } = store;
@@ -542,12 +549,13 @@ function createMusicStudioStore() {
   return {
     subscribe,
 
-    // A build without the Music Studio never opens it: nothing could close it again.
-    open: () => { if (MUSIC_STUDIO) set({ isOpen: true }); },
+    // Locked (no licence or trial on this computer), Audio Lab never opens:
+    // the ask offers the trial and the purchase instead.
+    open: () => { if (audioLabOpens()) set({ isOpen: true }); },
     close: () => set({ isOpen: false, studioView: false }),
-    toggleOpen: () => { if (MUSIC_STUDIO) update((s) => ({ ...s, isOpen: !s.isOpen, studioView: false })); },
+    toggleOpen: () => { if (audioLabOpens()) update((s) => ({ ...s, isOpen: !s.isOpen, studioView: false })); },
     /** Show the full-screen Studio view, or go back to the tray. The studio stays open either way. */
-    setStudioView: (studioView: boolean) => { if (MUSIC_STUDIO) set({ studioView, isOpen: true }); },
+    setStudioView: (studioView: boolean) => { if (audioLabOpens()) set({ studioView, isOpen: true }); },
     // The keys switch to the set's own voice: the dub bass in the dub set, the synth in the analog set.
     setSet: (studioSet: StudioSet) =>
       // The keys keep what they play: a set changes instruments around them, not under them.

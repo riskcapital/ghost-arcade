@@ -111,7 +111,8 @@
   import AbletonCountdown from './ableton/AbletonCountdown.svelte';
   import { abletonConnected } from '../ableton/abletonBridge';
   import VJLayerSequencer from './VJLayerSequencer.svelte';
-  import { MUSIC_STUDIO } from '../features';
+  import { addonAccess, offerAddon, type AddonProductId } from '../addons/addonAccess';
+  import AddonLock from './addons/AddonLock.svelte';
   import AudioLabIcon from './AudioLabIcon.svelte';
   import VJMusicStudio from './music/VJMusicStudio.svelte';
   import StudioDeckStrip from './music/StudioDeckStrip.svelte';
@@ -165,6 +166,8 @@
     clipType: 'effect' | 'splat' | 'model3d' | 'gpu' | 'text' | 'synthvision';
     effectType?: IntegratedEffectType;
     inlineIcon?: 'splat' | 'model3d' | 'gpu' | 'text' | 'synthvision';
+    /** A paid add-on: locked until this computer has a licence or trial. */
+    addon?: AddonProductId;
   };
 
   const vjPluginCards: VJPluginCard[] = [
@@ -177,6 +180,7 @@
       tier: p.tier,
       clipType: 'effect',
       effectType: p.effectType,
+      addon: p.addon,
     })),
     { id: 'performer', name: 'Performer', description: 'Keyboard-launched worlds, shaders and clips', tier: 'free', clipType: 'synthvision', inlineIcon: 'synthvision' },
     { id: 'pointcloud', name: 'Point Cloud', description: 'PLY point cloud / splat', tier: 'free', clipType: 'splat', inlineIcon: 'splat' },
@@ -6122,7 +6126,7 @@
               Sequencer
             </button>
 
-            {#if MUSIC_STUDIO}
+            {#if $addonAccess['addon.audio-lab']}
             <button
               class="vj-seq-toggle-btn dock-labelled-btn"
               class:active={$musicStudio.isOpen}
@@ -6131,6 +6135,17 @@
             >
               <AudioLabIcon size={15} compact />
               Audio Lab
+            </button>
+            {:else}
+            <button
+              class="vj-seq-toggle-btn dock-labelled-btn addon-locked"
+              onclick={() => offerAddon('addon.audio-lab')}
+              title="Audio Lab is a paid add-on: try it free for 3 days"
+              data-addon-dock="addon.audio-lab"
+            >
+              <AudioLabIcon size={15} compact />
+              Audio Lab
+              <svg class="dock-lock" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
             </button>
             {/if}
 
@@ -6999,12 +7014,15 @@
             <!-- Plugins Panel (FluidGen, Particles3D) - Integrated WebGL effects -->
             <div class="vj-plugins-panel">
               {#each vjPluginCards as plugin (plugin.id)}
+                {@const locked = !!plugin.addon && !$addonAccess[plugin.addon]}
                 <div
                   class="vj-plugin-card running"
-                  draggable="true"
-                  ondragstart={(e) => handleDragStart(e, { type: plugin.clipType, id: plugin.id, effectType: plugin.effectType, pluginName: plugin.name })}
+                  class:locked
+                  draggable={locked ? 'false' : 'true'}
+                  ondragstart={(e) => { if (locked) { e.preventDefault(); return; } handleDragStart(e, { type: plugin.clipType, id: plugin.id, effectType: plugin.effectType, pluginName: plugin.name }); }}
                   ondragend={handleDragEnd}
                   title="Drag {plugin.name} onto a clip slot"
+                  data-plugin-card={plugin.id}
                 >
                   <div class="vj-plugin-icon">
                     {#if plugin.inlineIcon === 'gpu'}
@@ -7052,7 +7070,11 @@
                   <div class="vj-plugin-info">
                     <span class="vj-plugin-name">{plugin.name}</span>
                     <span class="vj-plugin-desc">{plugin.description}</span>
-                    <span class="vj-plugin-status live">{plugin.tier.toUpperCase()}</span>
+                    {#if locked && plugin.addon}
+                      <AddonLock product={plugin.addon} />
+                    {:else}
+                      <span class="vj-plugin-status live">{plugin.tier.toUpperCase()}</span>
+                    {/if}
                   </div>
                 </div>
               {/each}
@@ -7183,7 +7205,7 @@
     </div>
 
     <VJLayerSequencer />
-    {#if MUSIC_STUDIO}
+    {#if $addonAccess['addon.audio-lab']}
       <VJMusicStudio />
       <StudioDeckStrip />
       <StudioView nativePreview={nativePreviewActive} />
@@ -11839,6 +11861,16 @@
     border-color: var(--accent-primary, #FF6B6B);
     background: rgba(255, 107, 107, 0.05);
   }
+
+  /* A paid add-on that is locked here: not draggable, its card offers Try / Buy. */
+  .vj-plugin-card.locked {
+    cursor: default;
+    border-color: var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    background: #0a0a0d;
+  }
+  .vj-plugin-card.locked .vj-plugin-icon { opacity: 0.6; }
+  .addon-locked { opacity: 0.75; }
+  .dock-lock { margin-left: 2px; opacity: 0.8; }
 
   .vj-plugin-icon {
     width: 40px;

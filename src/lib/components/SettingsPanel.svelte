@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { MUSIC_STUDIO } from '../features';
+  import { addonAccess } from '../addons/addonAccess';
   import NdiOutputSettings from './NdiOutputSettings.svelte';
   import { uiLanguage, UI_LANGUAGES } from '../i18n';
   import { isMac } from '$lib/bridge';
@@ -93,7 +93,7 @@
   import AbletonLinkMonitor from './AbletonLinkMonitor.svelte';
   import { oscStore } from '../osc/oscStore';
   import { mcpStore } from '../mcp/mcpStore';
-  import { CONTROL_PATH_EXAMPLES, normalizeControlPath, validateControlPath } from '../control/controlPaths';
+  import { controlPathExamples, normalizeControlPath, validateControlPath } from '../control/controlPaths';
   import { keyboardStore, formatKeyCombo, type KeyActionMode } from '../keyboard/keyboardStore';
   import WLEDMappingPanel from './WLEDMappingPanel.svelte';
   import WLEDGroupsPanel from './WLEDGroupsPanel.svelte';
@@ -101,12 +101,15 @@
   import DmxInputPanel from './DmxInputPanel.svelte';
   import ShowControlSettings from './show/ShowControlSettings.svelte';
   import InstallSettings from './install/InstallSettings.svelte';
+  import AddonsSettings from './addons/AddonsSettings.svelte';
 
   // ── MIDI mappings table ──
   // Grouped by the control rather than by the parameter, because a parameter
   // holds at most one mapping but a pad can be bound to any number of them,
   // and "unlearn this pad" is the thing that was impossible before this.
   $: midiMappingGroups = groupMappingsByControl($midiStore.mappings);
+  // Audio Lab's paths join the list once it is unlocked.
+  $: pathExamples = controlPathExamples($addonAccess['addon.audio-lab']);
   let confirmClearMidiMappings = false;
 
   function clearMidiControl(group: MidiControlGroup) {
@@ -363,7 +366,7 @@
   //   • Advanced sections always visible; the Show-Advanced checkbox
   //     was demoted to a power-user no-op.
   type SectionId =
-    | 'app:appearance' | 'app:updates'
+    | 'app:appearance' | 'app:updates' | 'app:addons'
     | 'output:display' | 'output:ndi'
     | 'performance:gpu' | 'performance:render-quality' | 'performance:video-decoding'
     | 'recording'
@@ -376,6 +379,7 @@
     { id: 'app', label: 'App', sections: [
       { id: 'app:appearance', label: 'Appearance' },
       { id: 'app:updates', label: 'Updates' },
+      { id: 'app:addons', label: 'Add-ons' },
     ]},
     { id: 'output', label: 'Output', sections: [
       // Display is the single global-output section: cursor overlay,
@@ -435,6 +439,7 @@
     install: 'show:install',
     projectors: 'show:projectors',
     ai: 'ai',
+    addons: 'app:addons',
   };
 
   let selectedSection: SectionId = 'app:appearance';
@@ -1024,6 +1029,15 @@
           </div>
         </section>
 
+        {/if}
+        {#if selectedSection === 'app:addons'}
+        <section class="settings-section">
+          <h3>Add-ons</h3>
+          <p class="settings-hint">
+            Audio Lab ($25) and Analog Synth ($10) are paid add-ons, each with a free 3-day trial. Buy once, keep them; a licence works on 2 computers. They check in with ghostarcade.live about once a week and keep working for 30 days offline.
+          </p>
+          <AddonsSettings />
+        </section>
         {/if}
         <!-- Updates Section -->
         {#if selectedSection === 'app:updates'}
@@ -2080,7 +2094,7 @@
             <div class="setting-row">
               <div class="setting-label">
                 <span class="label-text">MIDI inputs</span>
-                <span class="label-hint">{MUSIC_STUDIO ? "Use any number at once: controllers run the app through MIDI Learn, and band keys play a band member's notes into the visuals" : 'Use any number at once: controllers run the app through MIDI Learn'}</span>
+                <span class="label-hint">{$addonAccess['addon.audio-lab'] ? "Use any number at once: controllers run the app through MIDI Learn, and band keys play a band member's notes into the visuals" : 'Use any number at once: controllers run the app through MIDI Learn'}</span>
                 <MidiInputList />
               </div>
             </div>
@@ -2721,7 +2735,7 @@
                 <span class="osc-path-error">{validateControlPath(oscLearnPath).reason}</span>
               {/if}
               <datalist id="osc-path-examples">
-                {#each CONTROL_PATH_EXAMPLES as example}
+                {#each pathExamples as example}
                   <option value={example.path}>{example.label}</option>
                 {/each}
               </datalist>
@@ -2731,7 +2745,7 @@
           <details class="osc-path-reference">
             <summary>Parameter path reference</summary>
             <div class="osc-path-grid">
-              {#each CONTROL_PATH_EXAMPLES as example}
+              {#each pathExamples as example}
                 <button type="button" onclick={() => { oscLearnPath = example.path; oscLearnOpen = true; }}>
                   <code>{example.path}</code>
                   <span>{example.label}</span>

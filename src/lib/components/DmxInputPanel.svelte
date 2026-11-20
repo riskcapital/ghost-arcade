@@ -15,7 +15,7 @@
     type DmxMergeMode,
     type DmxProtocol,
   } from '../dmx/dmxBindings';
-  import { CONTROL_PATH_EXAMPLES, normalizeControlPath, validateControlPath } from '../control/controlPaths';
+  import { controlPathExamples, normalizeControlPath, validateControlPath } from '../control/controlPaths';
 
   const PROTOCOL_LABEL: Record<DmxProtocol, string> = { artnet: 'Art-Net', sacn: 'sACN' };
   const MODE_LABEL: Record<DmxBindingMode, string> = { '8bit': '8-bit', '16bit': '16-bit', trigger: 'Button' };
@@ -96,7 +96,7 @@
   /** Every control on screen that MIDI can map is a valid DMX target too. */
   function collectPathOptions() {
     const found = new Map<string, string>();
-    for (const example of CONTROL_PATH_EXAMPLES) found.set(example.path, example.label);
+    for (const example of controlPathExamples()) found.set(example.path, example.label);
     for (let macro = 1; macro <= 8; macro += 1) found.set(`vj:macro:${macro}:value`, `Macro ${macro}`);
     if (typeof document !== 'undefined') {
       for (const element of document.querySelectorAll<HTMLElement>('[data-midi-path]')) {

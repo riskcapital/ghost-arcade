@@ -11,6 +11,7 @@ import { get, writable, type Readable } from 'svelte/store';
 import { musicStudio } from './musicStudioStore';
 import { isTypingTarget } from './musicKeyboard';
 import { registerStudioControls } from './studioControls';
+import { addonUsable } from '../addons/addonAccess';
 import { vjClipLauncher } from '../stores/vjClipLauncher';
 import { synthVisionStore } from '../stores/synthVision';
 
@@ -49,6 +50,8 @@ export function toggleStudioView(): void {
 /** True for the switch key when nothing else wants it (typing, Performer's keys, a shortcut with modifiers). */
 export function isStudioViewKey(e: KeyboardEvent): boolean {
   if (e.code !== STUDIO_VIEW_KEY || e.repeat || e.defaultPrevented) return false;
+  // Locked, the key is left to whatever else uses it.
+  if (!addonUsable('addon.audio-lab')) return false;
   if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return false;
   if (get(synthVisionStore).keyboardActive) return false;
   return !(typeof document !== 'undefined' && isTypingTarget(document.activeElement));

@@ -14,7 +14,7 @@
  */
 
 import { writable } from 'svelte/store';
-import { MUSIC_STUDIO } from '../features';
+import { addonUsable } from '../addons/addonAccess';
 
 export const STUDIO_SCOPE = 'studio:';
 
@@ -57,9 +57,6 @@ export function studioControlPath(id: string): string {
 
 /** Register controls; returns a function that takes them away again. */
 export function registerStudioControls(list: readonly StudioControl[]): () => void {
-  // A build without the Music Studio offers none of its controls, so no
-  // controller, OSC, DMX or MCP path can reach it.
-  if (!MUSIC_STUDIO) return () => {};
   for (const control of list) {
     if (!ID.test(control.id)) throw new Error(`Bad studio control id: ${control.id}`);
     controls.set(control.id, control);
@@ -82,12 +79,18 @@ export function registerStudioControl(control: StudioControl): () => void {
   return registerStudioControls([control]);
 }
 
+// Locked, Audio Lab offers none of its controls, so no controller, OSC, DMX
+// or MCP path can reach it. They are registered either way and answer once
+// it is unlocked.
+const unlocked = () => addonUsable('addon.audio-lab');
+
 export function studioControl(id: string): StudioControl | undefined {
-  return controls.get(id);
+  return unlocked() ? controls.get(id) : undefined;
 }
 
 /** Every control, grouped and in the order registered. */
 export function studioControls(): StudioControl[] {
+  if (!unlocked()) return [];
   const groups = new Map<string, StudioControl[]>();
   for (const control of controls.values()) {
     const list = groups.get(control.group) ?? [];
@@ -105,6 +108,7 @@ const PRESS = 0.04;
  * that id (the studio's code is not loaded, or a mapping outlived it).
  */
 export function runStudioControl(id: string, value: number): boolean {
+  if (!unlocked()) return false;
   const control = controls.get(id);
   if (!control) return false;
   const v = Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;

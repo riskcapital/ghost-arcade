@@ -9,7 +9,7 @@
   import { midiInputSetups, midiInputsInUse, setMidiInputSetup, setupFor } from '../midi/midiInputs';
   import type { MidiDevice, MidiInputUse } from '../midi/midiTypes';
   import { BAND_KEYS_DEFAULT_ROLE } from '../music/bandKeys';
-  import { MUSIC_STUDIO } from '../features';
+  import { addonAccess } from '../addons/addonAccess';
   import { INSTRUMENT_LABELS } from '../music/instruments';
   import { PLAYABLE_INSTRUMENTS } from '../music/noteEvents';
   import { PART_SOURCES } from '../music/visualVoices';
@@ -48,10 +48,10 @@
           {/if}
           <select value={use === 'keys' ? 'keys' : 'control'} disabled={use === 'off'} onchange={(e) => setUse(device, (e.target as HTMLSelectElement).value as MidiInputUse)} aria-label="Use of {device.name}">
             <option value="control">Controller</option>
-            {#if MUSIC_STUDIO || use === 'keys'}<option value="keys">Band keys</option>{/if}
+            {#if $addonAccess['addon.audio-lab'] || use === 'keys'}<option value="keys">Band keys</option>{/if}
           </select>
         </div>
-        {#if use === 'keys' && MUSIC_STUDIO}
+        {#if use === 'keys' && $addonAccess['addon.audio-lab']}
           <div class="row keys">
             <label title="The sound its notes count as: visual voices following it move with them. Notes on channel 10 count as drums.">
               Counts as

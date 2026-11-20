@@ -142,7 +142,7 @@
   import { expandStudioLayers, noteStudioHosts, studioCodeTick, studioRenderInputs } from '$lib/music/studioPlugin';
   import { hasLiveValues, liveCompositionValues, liveValuesForRenderedLayer } from '$lib/audio/liveParams';
   import { wakeStudioVisuals } from '$lib/music/musicRuntime';
-  import { MUSIC_STUDIO } from '$lib/features';
+  import { addonAccess, addonUsable } from '$lib/addons/addonAccess';
 
   /** Music Studio clips and layers reach the core as their voices plus a mix
    *  (music/studioPlugin.ts). The frame sync does this on every frame it
@@ -166,8 +166,8 @@
   // This frame's Screen FX (the Screen FX driver in the native sync setup).
   let stageFxFrameValues: StageFxFrameValues = NO_STAGE_FX;
   function withStudioVoices(list: Layer[]): Layer[] {
-    // Without the Studio in the build its layers draw nothing and keep their data.
-    if (!MUSIC_STUDIO) return list;
+    // Locked, Audio Lab's layers draw nothing and keep their data.
+    if (!addonUsable('addon.audio-lab')) return list;
     return expandStudioLayers(list, studioRenderInputs, (count) => {
       noteStudioHosts(count);
       if (count > 0) wakeStudioVisuals();
@@ -2335,6 +2335,8 @@
         }
       });
       const studioCodeUnsub = studioCodeTick.subscribe(() => scheduleNativeLayersSync());
+      // An add-on unlocked in Settings draws its layers without a project change.
+      const addonAccessUnsub = addonAccess.subscribe(() => scheduleNativeLayersSync());
       // ── Stage FX driver (native mode) ──
       // When the native core owns the frame, the WebGL animate() loop
       // never runs — so nothing was ticking the stage-effect engines
@@ -2489,6 +2491,7 @@
         nativeTakeoverUnsub();
         nativeTakeoverHoldUnsub();
         studioCodeUnsub();
+        addonAccessUnsub();
         // No scene is showing a studio now, so its frame loop can rest.
         noteStudioHosts(0);
         if (stageFxNativeRaf !== null) {

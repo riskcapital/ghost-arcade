@@ -25,6 +25,10 @@ import { midiStore } from './midiStore';
 import { midiRouter } from './midiRouter';
 import { midiInputsInUse, onBandKeys, setMidiInputSetup } from './midiInputs';
 import { audioStore } from '../stores/audio';
+import { setAddonsStatusForTests } from '../addons/addonAccess';
+
+// Audio Lab is a paid add-on: these tests run it unlocked.
+setAddonsStatusForTests({ 'addon.audio-lab': true });
 
 /** Deterministic jitter in [-1, 1). */
 function jitter(seed: number) {

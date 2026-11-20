@@ -35,10 +35,11 @@
   import MilkdropPanel from './MilkdropPanel.svelte';
   import HydraPanel from './HydraPanel.svelte';
   import MusicStudioPanel from './MusicStudioPanel.svelte';
-  import { missingAddon } from '../plugins/addons';
+  import { addonFor } from '../plugins/addons';
+  import { addonAccess } from '../addons/addonAccess';
+  import AddonLock from './addons/AddonLock.svelte';
   import AudioLabIcon from './AudioLabIcon.svelte';
   import { STUDIO_PLUGIN_ID } from '../music/studioPlugin';
-  import { ANALOG_SYNTH } from '../features';
 
   export let source: MediaSource | null = null;
   export let onUpdateEffectSource: ((next: IntegratedEffectSource) => void) | null = null;
@@ -53,12 +54,19 @@
     ? getPluginByEffectType(effectSource.effectType)
     : null;
   $: panelLayerId = controlLayerId ?? $selectedLayerId ?? '';
-  // Analog Synth's panel loads only in a build that has the add-on, so a
-  // build without it carries none of its presets or controls.
+  // Analog Synth's panel (its presets and controls) loads once the add-on is
+  // unlocked and a synth layer is shown.
   let AnalogSynthPanel: typeof import('./AnalogSynthPanel.svelte').default | null = null;
-  if (ANALOG_SYNTH) void import('./AnalogSynthPanel.svelte').then((m) => { AnalogSynthPanel = m.default; });
-  // A layer from an add-on this build leaves out: say so, and offer nothing to change.
-  $: absentAddon = effectSource ? missingAddon(effectSource.effectType) : null;
+  let synthPanelLoading = false;
+  $: if (!AnalogSynthPanel && !synthPanelLoading && $addonAccess['addon.analog-synth'] && effectSource?.effectType === 'videosynth') {
+    synthPanelLoading = true;
+    void import('./AnalogSynthPanel.svelte').then((m) => { AnalogSynthPanel = m.default; });
+  }
+  // A layer from an add-on that is locked here: say so, offer Try / Buy, change nothing.
+  $: absentAddon = (() => {
+    const addon = effectSource ? addonFor(effectSource.effectType) : null;
+    return addon && !$addonAccess[addon.id] ? addon : null;
+  })();
 
   // Get current value of a param from the effectSource
   function getVal(paramKey: string, defaultVal: any): any {
@@ -163,7 +171,8 @@
 
 {#if absentAddon}
   <div data-help-page="custom-effects" class="panel-empty addon-missing" role="note">
-    <p>Made with {absentAddon}, an add-on that isn't installed. The layer's settings are kept.</p>
+    <p>Made with {absentAddon.name}, an add-on that isn't unlocked on this computer. The layer's settings are kept.</p>
+    <AddonLock product={absentAddon.id} />
   </div>
 {:else if !pluginManifest || !effectSource}
   <div data-help-page="custom-effects" class="panel-empty">
@@ -364,7 +373,7 @@
     color: var(--ga-ink-2);
     font-size: var(--ga-text-control);
   }
-  .panel-empty.addon-missing { text-align: left; line-height: 1.45; }
+  .panel-empty.addon-missing { text-align: left; line-height: 1.45; display: flex; flex-direction: column; gap: 8px; }
   .panel-empty.addon-missing p { margin: 0; }
 
   .plugin-panel {

@@ -4,6 +4,10 @@
  */
 
 import { beforeAll, describe, expect, it } from 'vitest';
+import { setAddonsStatusForTests } from '../addons/addonAccess';
+
+// Audio Lab is a paid add-on: these tests run it unlocked.
+setAddonsStatusForTests({ 'addon.audio-lab': true });
 
 let controls: typeof import('./studioMidiControls');
 let registry: typeof import('./studioControls');

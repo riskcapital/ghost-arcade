@@ -16,7 +16,7 @@
 
 import type { IntegratedEffectType } from '../types';
 import { STUDIO_PLUGIN_ID, defaultStudioSource } from '../music/studioPlugin';
-import { MUSIC_STUDIO, ANALOG_SYNTH } from '../features';
+import type { AddonProductId } from '../addons/addonAccess';
 import { VIDEOSYNTH_DEFAULTS, VIDEOSYNTH_PARAMS } from '../videosynth/patch';
 import { GHOSTFX_DEFAULT_BG_ALPHA } from '../effects/ghostfx/defaults';
 
@@ -67,6 +67,8 @@ export interface PluginManifest {
   paramDefs: PluginParamDef[];         // UI parameter definitions (flat, no groups)
   defaultSourceParams: Record<string, any>;  // Default effectSource params
   poweredBy?: PluginCredit;            // Third-party engine credit (omit for originals)
+  /** A paid add-on: its card is locked until this computer has a licence or trial for it. */
+  addon?: AddonProductId;
 }
 
 // ─── Registry ───────────────────────────────────────────────────────────────
@@ -718,8 +720,9 @@ registerPlugin({
 // ─── Audio Lab — its visual voices as one picture ───────────────────────
 // Its controls are the studio itself (open it from the clip or the layer);
 // the instance holds the voices, their sounds, looks and levels.
-if (MUSIC_STUDIO) registerPlugin({
+registerPlugin({
   id: STUDIO_PLUGIN_ID,
+  addon: 'addon.audio-lab',
   name: 'Audio Lab',
   description: 'Visuals that follow the music: a stack of voices, each following one sound (the kick, the bass, the chords), mixed into one picture. Load a scene and change voices in Audio Lab.',
   category: 'Generators',
@@ -738,8 +741,9 @@ if (MUSIC_STUDIO) registerPlugin({
 // Three raster oscillators, a mixer, feedback and a tube finish, drawn by
 // the native core. Every control is a plain parameter, so MIDI learn,
 // presets and Timeline lines reach all of them.
-if (ANALOG_SYNTH) registerPlugin({
+registerPlugin({
   id: 'analog-synth',
+  addon: 'addon.analog-synth',
   name: 'Analog Synth',
   description: 'A video synthesizer. Three oscillators draw across the picture like a beam, locked into bands or drifting free, bent by each other, the music and their own feedback, and finished like a tube.',
   category: 'Generators',

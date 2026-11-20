@@ -12,6 +12,10 @@ import { musicStudio } from './musicStudioStore';
 import { DEFAULT_FX_PADS } from './soundSlots';
 import { soundById } from './sounds/library';
 import { studioControl } from './studioControls';
+import { setAddonsStatusForTests } from '../addons/addonAccess';
+
+// Audio Lab is a paid add-on: these tests run it unlocked.
+setAddonsStatusForTests({ 'addon.audio-lab': true });
 
 const CHOPS = Array.from({ length: 8 }, (_, i) => `chop-${i + 1}`);
 

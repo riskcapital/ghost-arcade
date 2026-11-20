@@ -1,5 +1,5 @@
 import { paramValue, VIDEOSYNTH_PARAMS } from '../videosynth/patch';
-import { ANALOG_SYNTH } from '../features';
+import { addonUsable } from '../addons/addonAccess';
 import {effectParams,effectLabels} from '../mobile/studio/interactiveEffects';
 import { EDGE_STROKE_SHAPE_PARAMS, EDGE_TRIM_PARAMS, edgeTypeDef } from '../drawing/edgeEffectCatalog';
 import type { Layer } from '../types';
@@ -46,8 +46,8 @@ export function discoverKeyframeableParams(layer: Layer): KeyframeableParam[] {
     params.push({key:`interactive:${effect.id}:enabled`,label:'Enabled',type:'boolean',defaultValue:effect.enabled,group});
     for(const d of effectParams(effect.kind))params.push({key:`interactive:${effect.id}:${d.key}`,label:d.label,type:'number',min:d.min,max:d.max,step:d.step,defaultValue:effect.params[d.key]??d.value,group});
   }
-  // ── Analog Synth controls (only in a build that has the add-on) ──
-  if (ANALOG_SYNTH && layer.source?.effectSource?.effectType === 'videosynth') {
+  // ── Analog Synth controls (only while the add-on is unlocked) ──
+  if (addonUsable('addon.analog-synth') && layer.source?.effectSource?.effectType === 'videosynth') {
     const es = layer.source.effectSource as unknown as Record<string, unknown>;
     for (const p of VIDEOSYNTH_PARAMS) {
       params.push({

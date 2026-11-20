@@ -1,6 +1,6 @@
 // MIDI Manager - Web MIDI API wrapper with device detection and hot-plug
 import { runMidiTaps } from './midiTaps';
-import { MUSIC_STUDIO } from '../features';
+import { addonUsable } from '../addons/addonAccess';
 import { midiStore } from './midiStore';
 import { midiRouter } from './midiRouter';
 import { audioStore } from '../stores/audio';
@@ -557,7 +557,7 @@ export class MidiManager {
     // mappings or MIDI learn.
     if (entry?.role === 'keys') {
       const setup = setupFor(this.setups, entry.name);
-      if (setup && MUSIC_STUDIO) emitBandKeys(data, setup);
+      if (setup && addonUsable('addon.audio-lab')) emitBandKeys(data, setup);
       return;
     }
     // An input listened to only for its clock controls nothing.

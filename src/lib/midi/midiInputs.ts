@@ -11,7 +11,7 @@
  * given a use stands in for one without being saved, as it always has.
  */
 
-import { MUSIC_STUDIO } from '../features';
+import { addonUsable } from '../addons/addonAccess';
 import { writable } from 'svelte/store';
 import type { MidiDevice, MidiInputSetup, MidiInputUse, MidiMapping } from './midiTypes';
 
@@ -103,8 +103,8 @@ export function resolveMidiInputs(devices: readonly MidiDevice[], setups: readon
   const connected = devices.filter((d) => d.state === 'connected');
   const useOf = (d: MidiDevice): MidiInputUse | undefined => {
     const use = setupFor(setups, d.name)?.use ?? (d.id === chosenId ? 'control' : undefined);
-    // Band keys play the Music Studio; a build without it treats them as a controller.
-    return use === 'keys' && !MUSIC_STUDIO ? 'control' : use;
+    // Band keys play Audio Lab; while it is locked they work as a controller.
+    return use === 'keys' && !addonUsable('addon.audio-lab') ? 'control' : use;
   };
   const controllers = connected.filter((d) => useOf(d) === 'control');
   const keys = connected.filter((d) => useOf(d) === 'keys').map((d) => d.id);
