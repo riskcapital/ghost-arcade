@@ -1513,7 +1513,8 @@ html[data-theme="arcade"] :is(
 
 /* A plain chip that is switched on (a pressed toggle): the selection colours. */
 html[data-theme] :is(.secondary-btn, .text-btn, .tool-btn, .icon-btn)[aria-pressed="true"],
-html[data-theme] :is(.secondary-btn, .text-btn).active {
+html[data-theme] :is(.secondary-btn, .text-btn).active,
+html[data-theme] :is(.secondary-btn, .text-btn).on {
   background: var(--ga-selection-bg) !important;
   border-color: var(--ga-selection-line) !important;
   color: var(--ga-selection-ink) !important;
