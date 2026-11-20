@@ -59,6 +59,7 @@ Other options:
 | `--steps N` | Stop after step N (for replays). |
 | `--replay DIR` | Run the steps recorded in an earlier session's folder again (see below). |
 | `--keep-open` | Leave the app running at the end, for a look around (debug port as `--port`). |
+| `--heap-snapshots` | Write a heap snapshot of the editor at every checkpoint (`heap-run<N>-step<N>.heapsnapshot`, 100-300 MB each). Load two in DevTools' Memory panel and compare them to see what keeps memory alive. |
 | `--hidden` | macOS: hide the app's window so the run does not cover the screen. The render core and the editor keep running; frame rates may be lower than on screen. |
 | `--port N`, `--dev-port N` | The debug port (the app also takes N+1 and N+2) and the Vite port. Defaults 9420 and 1430. |
 | `--out DIR` | Where the session goes. |
