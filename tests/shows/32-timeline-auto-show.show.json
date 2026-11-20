@@ -66,7 +66,7 @@
       "expect": {
         "text.contains": {
           "var": "autoShowHeard",
-          "pattern": "Heard: 128 BPM · Driving · 7 sections · [6-9][0-9] pieces in [4-9] groups"
+          "pattern": "^128 BPM Driving 7 sections: Intro · Build 1 · Drop 1 · Breakdown · Build 2 · Drop 2 · Outro [6-9][0-9] pieces in [4-9] groups$"
         },
         "eval.true": {
           "js": "(() => { const s = __show.show(); const rows = s.layerTracks.filter((t) => t.subRow && t.layerName.startsWith('✦')); const host = rows[0]?.layerId; const hostName = __show.project().layers.find((l) => l.id === host)?.name ?? ''; return rows.map((r) => r.layerName).join('|') === '✦ Stage|✦ Set A|✦ Set B|✦ Hero' && rows.every((r) => r.layerId === host) && /Central screen face/.test(hostName) && s.sections.map((x) => x.name).join(',') === 'Intro,Build 1,Drop 1,Breakdown,Build 2,Drop 2,Outro' && ['autoshow:sets','autoshow:hero','autoshow:rows'].every((id) => s.whereOrders.some((o) => o.id === id)) && s.lookClips.length >= 1 && s.lookClips.every((c) => c.where?.namedOrder?.startsWith('autoshow:')) && s.stageClips.length > 6; })()",
