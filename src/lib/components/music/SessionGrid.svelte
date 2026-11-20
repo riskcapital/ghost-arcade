@@ -27,6 +27,12 @@
   const s = $derived($musicStudio);
   const t = $derived($musicTransport);
   const rows = $derived(Array.from({ length: sessionRows(s.session) }, (_, i) => i));
+  /** Each row's section in the song up now (its timeline names the rows). */
+  const sectionNames = $derived.by(() => {
+    const names: Record<number, string> = {};
+    for (const section of s.songs.find((x) => x.id === s.currentSongId)?.grid?.sections ?? []) names[section.row] ??= section.name;
+    return names;
+  });
 
   function voiceLabel(track: TrackId): string {
     if (track === 'beats') return 'Drums';
@@ -156,7 +162,8 @@
   {/each}
 
   {#each rows as row (row)}
-    <button class="row-go" onclick={() => launchRow(row)} aria-label="Launch row {row + 1}" title="Launch row {row + 1} on the next bar">
+    {@const section = sectionNames[row]}
+    <button class="row-go" onclick={() => launchRow(row)} aria-label="Launch row {row + 1}{section ? `, ${section}` : ''}" title="Launch {section ? `${section} (row ${row + 1})` : `row ${row + 1}`} on the next bar">
       <span>{row + 1}</span>
       <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 2l7 4-7 4z" /></svg>
     </button>

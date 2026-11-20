@@ -19,6 +19,8 @@ import type { MusicStudioProjectState } from './musicStudioStore';
 import { normalizeStudioVoice, MAX_STUDIO_VOICES, type StudioVoice } from './studioPlugin';
 import { unchoppedFxPads } from './sounds/chops';
 import { SONG_SETUP_GROUPS } from './songGroups';
+import { MAX_SESSION_ROWS, normalizeSession, type Session } from './session';
+import { SCALES, type MusicKey, type ScaleId } from './studioSets';
 
 export { SONG_SETUP_GROUPS };
 
@@ -44,6 +46,65 @@ export interface SongVisuals {
   stagePresetId: string | null;
 }
 
+/** One stretch of a song's arrangement: a row of its clip grid, played for some bars. */
+export interface SongSection {
+  name: string;
+  /** The grid row it launches. */
+  row: number;
+  bars: number;
+}
+
+/**
+ * A song's own clip grid: its clips, the key they are in, and the order its
+ * rows play in (the song timeline). Calling the song up puts the grid on the
+ * session; leaving the song keeps what was changed.
+ */
+export interface SongGrid {
+  session: Session;
+  key: MusicKey;
+  sections: SongSection[];
+}
+
+export const MAX_SONG_SECTIONS = 64;
+export const MAX_SECTION_BARS = 256;
+
+/** How long an arrangement plays, in bars. */
+export const sectionsBars = (sections: readonly SongSection[]) => sections.reduce((sum, s) => sum + s.bars, 0);
+
+/** The section a bar of the arrangement falls in, and the bar it starts on; null past the end. */
+export function sectionAtBar(sections: readonly SongSection[], bar: number): { index: number; start: number } | null {
+  let start = 0;
+  for (let index = 0; index < sections.length; index++) {
+    if (bar < start + sections[index].bars) return { index, start };
+    start += sections[index].bars;
+  }
+  return null;
+}
+
+export function normalizeSections(raw: unknown): SongSection[] {
+  const out: SongSection[] = [];
+  for (const item of Array.isArray(raw) ? raw : []) {
+    if (!item || typeof item !== 'object') continue;
+    const r = item as Partial<Record<keyof SongSection, unknown>>;
+    const row = Number(r.row);
+    const bars = Math.round(Number(r.bars));
+    if (!Number.isInteger(row) || row < 0 || row >= MAX_SESSION_ROWS || !(bars >= 1)) continue;
+    out.push({ name: text(r.name, 40, `Row ${row + 1}`), row, bars: Math.min(MAX_SECTION_BARS, bars) });
+    if (out.length >= MAX_SONG_SECTIONS) break;
+  }
+  return out;
+}
+
+function normalizeGrid(raw: unknown): SongGrid | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as { session?: unknown; key?: { root?: unknown; scale?: unknown }; sections?: unknown };
+  const session = normalizeSession(r.session);
+  const root = Number(r.key?.root);
+  const scale = r.key?.scale;
+  if (!session || !Number.isInteger(root) || typeof scale !== 'string' || !(scale in SCALES)) return null;
+  return { session, key: { root: ((root % 12) + 12) % 12, scale: scale as ScaleId }, sections: normalizeSections(r.sections) };
+}
+
 export interface Song {
   id: string;
   name: string;
@@ -57,6 +118,8 @@ export interface Song {
   visuals: SongVisuals;
   /** Which parts calling it up puts back. */
   recall: Record<SongRecallGroup, boolean>;
+  /** Its own clip grid and arrangement; a song without one leaves the grid as it is. */
+  grid?: SongGrid | null;
 }
 
 export interface Setlist {
@@ -188,6 +251,7 @@ export function normalizeSong(raw: unknown, normalizeSetup: (raw: unknown) => So
     setup: normalizeSetup(r.setup),
     visuals: normalizeSongVisuals(r.visuals),
     recall: Object.fromEntries(SONG_RECALL_GROUPS.map((g) => [g, recall[g] !== false])) as Record<SongRecallGroup, boolean>,
+    grid: normalizeGrid(r.grid),
   };
 }
 

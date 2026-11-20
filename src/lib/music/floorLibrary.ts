@@ -108,13 +108,10 @@ export const FLOOR_COLLECTIONS: FloorCollection[] = [
 ];
 
 type StyledMelodic = MelodicLoop & { style: LoopStyle; bpm: [number, number]; tone: string };
-function parts(c: FloorCollection): StyledMelodic[] {
-  const feel = (c.style === 'house' || c.style === 'french') ? FEELS.house : c.style === 'dub' ? FEELS.roots : FEELS.straight;
-  const build = (role: LoopRole, tone: string, notes: LoopNote[], ceiling?: number): StyledMelodic => ({
-    id: `floor-${c.id}-${role}`, name: `${c.name} / ${role === 'lead' ? 'Hook' : role === 'bass' ? 'Bass' : 'Chords'}`,
-    role, tone, style: c.style, bpm: [c.bpm-4,c.bpm+4], beats: 16, groove: `floor-${c.id}-beat`,
-    notes: applyGroove(notes, feel).sort((a,b) => a.beat-b.beat), ...(ceiling ? { ceiling } : {}),
-  });
+/** The feel a collection's written notes are played with. */
+export const floorFeel = (c: FloorCollection) => (c.style === 'house' || c.style === 'french') ? FEELS.house : c.style === 'dub' ? FEELS.roots : FEELS.straight;
+/** A collection's four bars as written, before the feel: the song builder (demoSongs.ts) cuts its sections from these. */
+export function floorMaterial(c: FloorCollection): { bass: LoopNote[]; chords: LoopNote[]; hook: LoopNote[]; voicings: number[][]; ceiling?: number } {
   const phrase = (hits: Hit[], bar: number, root: number): LoopNote[] => hits.map(([beat,dur,d,velocity]) => ({
     beat: bar*4+beat, dur, degrees: [root+d], velocity: bar === 1 ? velocity*0.92 : velocity,
   }));
@@ -132,7 +129,17 @@ function parts(c: FloorCollection): StyledMelodic[] {
   const shift = (c.leadOctave ?? 0)*7;
   const hook = c.roots.flatMap((r,b) => phrase(b === 1 || b === 3 ? c.answer : c.hook,b,r+shift));
   hook[hook.length-1].degrees = [7+shift]; // return to the tonic above the next bass root
-  return [build('bass',c.bassTone,bass), build('chords',c.keysTone,chords), build('lead',c.leadTone,hook,shift < 0 ? 72 : undefined)];
+  return { bass, chords, hook, voicings, ...(shift < 0 ? { ceiling: 72 } : {}) };
+}
+function parts(c: FloorCollection): StyledMelodic[] {
+  const feel = floorFeel(c);
+  const build = (role: LoopRole, tone: string, notes: LoopNote[], ceiling?: number): StyledMelodic => ({
+    id: `floor-${c.id}-${role}`, name: `${c.name} / ${role === 'lead' ? 'Hook' : role === 'bass' ? 'Bass' : 'Chords'}`,
+    role, tone, style: c.style, bpm: [c.bpm-4,c.bpm+4], beats: 16, groove: `floor-${c.id}-beat`,
+    notes: applyGroove(notes, feel).sort((a,b) => a.beat-b.beat), ...(ceiling ? { ceiling } : {}),
+  });
+  const { bass, chords, hook, ceiling } = floorMaterial(c);
+  return [build('bass',c.bassTone,bass), build('chords',c.keysTone,chords), build('lead',c.leadTone,hook,ceiling)];
 }
 const ALL_PARTS = FLOOR_COLLECTIONS.flatMap(parts);
 export const FLOOR_MELODIC = ALL_PARTS.filter(l => l.role !== 'lead');

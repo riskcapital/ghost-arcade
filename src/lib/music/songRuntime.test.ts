@@ -110,7 +110,7 @@ beforeEach(() => {
   clock.link = false;
   clock.tempo = 120;
   clock.wait = 1000;
-  studio.musicStudio.hydrate(null);
+  studio.musicStudio.hydrate({});
   audio.audioStore.setManualBPM(120);
 });
 

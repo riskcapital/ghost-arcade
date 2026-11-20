@@ -45,6 +45,7 @@
   import MacroStrip from './MacroStrip.svelte';
   import OutputStrip from './OutputStrip.svelte';
   import SessionGrid from './SessionGrid.svelte';
+  import SongTimeline from './SongTimeline.svelte';
   import ClipEditor from './ClipEditor.svelte';
   import ClipStackEditor from './ClipStackEditor.svelte';
   import LoopPicker from './LoopPicker.svelte';
@@ -263,7 +264,7 @@
       </button>
     {/snippet}
     {#if lowerTab === 'session'}
-      {#if s.liveControl}<LiveSessionGrid />{:else}<SessionGrid />{/if}
+      {#if s.liveControl}<LiveSessionGrid />{:else}<SongTimeline /><SessionGrid />{/if}
     {:else if lowerTab === 'mixer'}
       <MixerPanel />
     {:else if lowerTab === 'band'}
