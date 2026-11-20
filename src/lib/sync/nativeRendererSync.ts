@@ -10184,6 +10184,10 @@ export class NativeRendererSync {
   }
 
   setRenderClock(seconds: number | null | undefined) {
+    // While Render to video holds the clock, only its frames set it: the
+    // editor's frame loop handing it back to live between a frame's start
+    // and its flush sent that frame on the live clock and stopped the render.
+    if (this.manualClockExportDepth > 0 && !(typeof seconds === 'number' && Number.isFinite(seconds))) return;
     this.latestRenderClockSeconds =
       typeof seconds === 'number' && Number.isFinite(seconds)
         ? Math.max(0, seconds)
@@ -10253,6 +10257,7 @@ export class NativeRendererSync {
     if (this.manualClockExportDepth > 0) return;
     this.manualFrame = null;
     this.exportOutput = null;
+    this.latestRenderClockSeconds = null;
     // The live clock must not jump forward by the export's wall time —
     // resume from where the live show left off.
     this.lastRenderClockSentSeconds = null;

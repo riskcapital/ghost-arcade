@@ -61,17 +61,24 @@
     return order?.slots ? order.slots.reduce((n, slot) => n + slot.length, 0) : 0;
   });
   /** The line under the name: what the row is doing. */
-  const meta = $derived.by(() => {
-    if (track.group) return `${pieces} ${pieces === 1 ? 'piece' : 'pieces'} · ${track.group.unified ? 'one picture' : 'each piece'}`;
+  // Whole phrases, so each language pack has the sentence to translate
+  // (named …Text so the extractor reads them).
+  const metaText = $derived.by(() => {
+    if (track.group) {
+      if (track.group.unified) return pieces === 1 ? '1 piece · one picture' : `${pieces} pieces · one picture`;
+      return pieces === 1 ? '1 piece · each piece' : `${pieces} pieces · each piece`;
+    }
     if (kind === 'missing') return 'missing piece';
     if (track.muted) return 'hidden for the whole show';
-    if (kind === 'sub') return `on ${live?.name ?? 'its piece'}`;
+    if (kind === 'sub') return live?.name ? `layer on ${live.name}` : 'layer on its piece';
     if (kind === 'group') return 'a group of layers';
     if (!onStage) return 'not in the current look';
-    if (layersOn > 0) return `${layersOn} ${layersOn === 1 ? 'layer' : 'layers'} on it`;
+    if (layersOn > 0) return layersOn === 1 ? '1 layer on it' : `${layersOn} layers on it`;
     if (track.gap === 'layer' && track.clips.length > 0) return 'look between blocks';
-    return track.clips.length ? `${track.clips.length} ${track.clips.length === 1 ? 'block' : 'blocks'}` : 'shows its look';
+    if (!track.clips.length) return 'shows its look';
+    return track.clips.length === 1 ? '1 block' : `${track.clips.length} blocks`;
   });
+
 
   // ── ⋯ menu ───────────────────────────────────────────────────────────
   let moreAnchor: HTMLButtonElement | undefined = $state();
@@ -254,9 +261,9 @@
           <button class="th-meta-btn" disabled={track.locked} onmousedown={(e) => e.stopPropagation()}
             onclick={(e) => { e.stopPropagation(); showTimeline.setGroupRowUnified(track.id, !track.group!.unified); }}
             title={track.group.unified ? 'One picture across the pieces. Click for each piece (the whole picture on each)' : 'The whole picture on each piece. Click for one picture across them'}
-            aria-pressed={track.group.unified} data-group-row-mode>{meta}</button>
+            aria-pressed={track.group.unified} data-group-row-mode>{metaText}</button>
         {:else}
-          <span class:warn={kind === 'missing'}>{meta}</span>
+          <span class:warn={kind === 'missing'}>{metaText}</span>
         {/if}
       </span>
     </div>

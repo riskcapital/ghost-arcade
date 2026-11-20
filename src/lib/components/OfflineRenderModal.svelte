@@ -62,26 +62,31 @@
   type RangeMode = 'show' | 'area' | 'custom';
   let rangeMode: RangeMode = 'custom';
   let customSeconds = DEFAULT_OFFLINE_SETTINGS.durationSeconds;
-  $: if (rangeMode === 'area' && !ranges.area) rangeMode = ranges.show ? 'show' : 'custom';
-  $: if (rangeMode === 'show' && !ranges.show) rangeMode = 'custom';
-  $: range = rangeMode === 'area' && ranges.area ? ranges.area
-    : rangeMode === 'show' && ranges.show ? ranges.show
-    : { start: 0, seconds: Math.max(0.5, Number(customSeconds) || 0.5) };
 
-  function seedSettingsFromProject() {
+  /** Seeds the form for a fresh open and returns the length to start on. */
+  function seedSettingsFromProject(opening: typeof ranges): RangeMode {
     settings = {
       ...DEFAULT_OFFLINE_SETTINGS,
       width: $project.width || 1920,
       height: $project.height || 1080,
     };
-    rangeMode = ranges.show ? 'show' : 'custom';
     captureBackendTouched = false;
     rateSample = loadRateSample();
+    return opening.show ? 'show' : 'custom';
   }
+  // `rangeMode` is assigned here, in the statement itself, so Svelte orders
+  // this block before `range` (an assignment inside a called function is
+  // invisible to it, and `range` kept the 10 s default while "The whole
+  // Timeline" was highlighted).
   $: if (isOpen && !seededForOpen) {
-    seedSettingsFromProject();
+    rangeMode = seedSettingsFromProject(ranges);
     seededForOpen = true;
   }
+  $: if (rangeMode === 'area' && !ranges.area) rangeMode = ranges.show ? 'show' : 'custom';
+  $: if (rangeMode === 'show' && !ranges.show) rangeMode = 'custom';
+  $: range = rangeMode === 'area' && ranges.area ? ranges.area
+    : rangeMode === 'show' && ranges.show ? ranges.show
+    : { start: 0, seconds: Math.max(0.5, Number(customSeconds) || 0.5) };
   $: if (!isOpen && seededForOpen) {
     seededForOpen = false;
     nativeProbeStartedForOpen = false;
@@ -103,6 +108,16 @@
     { label: 'Square 1080',   fn: () => ({ w: 1080, h: 1080 }) },
     { label: 'Vertical 1080', fn: () => ({ w: 1080, h: 1920 }) },
   ];
+
+  // One tile lit: the first that matches (Project size wins over 1080p when
+  // they are the same size).
+  $: activePreset = firstPresetAt(settings.width, settings.height, $project.width, $project.height);
+  function firstPresetAt(w: number, h: number, ..._projectSize: unknown[]): number {
+    return RESOLUTION_PRESETS.findIndex((preset) => {
+      const p = preset.fn();
+      return p.w === w && p.h === h;
+    });
+  }
 
   $: flow = $offlineRender.flow;
   $: state = $offlineRender;
@@ -417,9 +432,9 @@
       <div class="field">
         <span class="field-label">Resolution</span>
         <div class="preset-grid">
-          {#each RESOLUTION_PRESETS as preset}
+          {#each RESOLUTION_PRESETS as preset, i}
             {@const p = preset.fn()}
-            {@const active = settings.width === p.w && settings.height === p.h}
+            {@const active = i === activePreset}
             <button
               class="preset-btn"
               class:active

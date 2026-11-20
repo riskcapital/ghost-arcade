@@ -327,3 +327,23 @@ export function tempoFromAnalysis(
   if (track.id) map.analysedTrackId = track.id;
   return map;
 }
+
+/**
+ * A grid detected from a song (`analysedTrackId`) moves with that song: when
+ * the song's audio moves on the show (its start, less its in-point), bar 1
+ * moves by the same amount. A grid set by hand, or a song that is gone,
+ * leaves the map as it is (the same object).
+ */
+export function tempoFollowingSong(
+  tempo: ShowTempoMap | null,
+  before: readonly { id: string; startTime: number; offset: number }[],
+  after: readonly { id: string; startTime: number; offset: number }[],
+): ShowTempoMap | null {
+  if (!tempo || tempo.source !== 'analysis' || !tempo.analysedTrackId) return tempo;
+  const a = before.find((t) => t.id === tempo.analysedTrackId);
+  const b = after.find((t) => t.id === tempo.analysedTrackId);
+  if (!a || !b) return tempo;
+  const delta = (b.startTime - b.offset) - (a.startTime - a.offset);
+  if (Math.abs(delta) < 1e-9) return tempo;
+  return { ...tempo, offset: tempo.offset + delta };
+}

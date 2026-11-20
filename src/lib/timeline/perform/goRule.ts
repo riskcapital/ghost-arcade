@@ -11,13 +11,16 @@
  *      - one put on standby by hand (double-click in the list): a manual
  *        cue or a marker's cue fires, a section is jumped to;
  *      - else the next timed step after the playhead (a section or a
- *        marker): the sections' own GO (arms a hold ahead; stopped, plays).
- *        GO never fires a marker early: markers fire as the playhead
- *        crosses them;
+ *        marker): the sections' own GO when the section here holds, goes
+ *        Live or loops (arms it; stopped, plays); playing through a plain
+ *        section, GO goes to a section on standby. GO never fires a marker
+ *        early: markers fire as the playhead crosses them;
  *      - else, past every timed step, the next manual cue fires;
  *   3. nothing left: stopped, GO plays; playing, it does nothing.
  *
  * Takeover and phrases do not change it (Return is R; phrases are pads).
+ *
+ * @ui-text: the extractor reads every string here (they are shown).
  */
 import type { TimelineSection } from '../sections/sectionModel';
 import type { StackItem } from './cueStack';
@@ -73,7 +76,16 @@ export function goDecision(i: GoInput): GoDecision {
   }
   const s = i.standby;
   if (s?.kind === 'cue') return { kind: 'fireCue', cueId: s.cue.id };
-  if (s && i.sectionsRun && i.sections.length) return { kind: 'sections' };
+  if (s && i.sectionsRun && i.sections.length) {
+    // The sections' own GO arms the section here when it holds, goes Live or
+    // loops, and plays when stopped. Playing through a plain section it has
+    // nothing to arm, so GO goes to the section on standby (an Auto show is
+    // all play-through sections). A marker ahead waits for the playhead.
+    const here = i.hereId ? i.sections.find((x) => x.id === i.hereId) ?? null : null;
+    const arms = !i.playing || here?.action === 'hold' || here?.action === 'live' || here?.action === 'vamp';
+    if (arms) return { kind: 'sections' };
+    if (s.kind === 'section') return { kind: 'jumpTo', sectionId: s.id };
+  }
   if (!i.playing) return { kind: 'play' };
   return { kind: 'none' };
 }
@@ -123,6 +135,6 @@ export function goWords(d: GoDecision, sections: readonly TimelineSection[], sta
     case 'jumpTo': return `Goes to ${name(d.sectionId)}`;
     case 'sections': return standbyName ? `Next: ${standbyName}` : 'Nothing waits yet';
     case 'play': return 'Plays the show';
-    case 'none': return 'Nothing waits';
+    case 'none': return standbyName ? `${standbyName} fires when the playhead gets there` : 'Nothing waits';
   }
 }

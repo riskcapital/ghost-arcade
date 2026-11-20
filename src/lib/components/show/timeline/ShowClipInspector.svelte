@@ -345,7 +345,7 @@
         <div class="ci-line">
           <TimelineIcon name="control" size={14} />
           <button class="ci-line-name" onclick={() => lineSelection.set({ lineId: line.id, points: [] })} title="Select this line">{line.label ?? line.key}</button>
-          <small>{line.follow ? 'follows' : 'drawn'}, {line.points.length} {line.points.length === 1 ? 'point' : 'points'}</small>
+          <small><span>{line.follow ? 'Follows' : 'Drawn'}</span>, <span>{line.points.length === 1 ? '1 point' : `${line.points.length} points`}</span></small>
           <button class="ci-toggle" class:on={line.enabled !== false} onclick={() => toggleLine(line.id)} disabled={locked} aria-pressed={line.enabled !== false}
             title={line.enabled === false ? 'Off: kept, drives nothing. Click to turn it on' : 'On: click to turn this line off without deleting it'} aria-label="Line on"></button>
         </div>

@@ -534,7 +534,7 @@
   .group { display: flex; flex-direction: column; gap: 8px; }
   .field { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--ga-ink-1, #ada9a2); }
   .field select { flex: 0 1 60%; min-width: 0; }
-  select { height: var(--ga-control-h-sm, 22px); background: var(--ga-slot, #060504); color: var(--ga-ink-0, #f2ede4); border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13)); border-radius: var(--ga-r-hard, 5px); font: inherit; }
+  select { height: var(--ga-control-h-sm, 22px); padding-top: 0; padding-bottom: 0; background: var(--ga-slot, #060504); color: var(--ga-ink-0, #f2ede4); border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13)); border-radius: var(--ga-r-hard, 5px); font: inherit; }
   .check { display: flex; align-items: center; gap: 6px; color: var(--ga-ink-1, #ada9a2); }
   .param { display: flex; flex-direction: column; gap: 3px; }
   /* Drift: on is coral. */

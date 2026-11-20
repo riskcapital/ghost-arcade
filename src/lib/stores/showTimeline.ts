@@ -135,7 +135,7 @@ import {
   showTrackFrameSignature,
   type ShowTrackFrame,
 } from '../show/tracks/showTrackEval';
-import { nearestGridTime, normalizeTempoMap } from '../show/tempoMap';
+import { nearestGridTime, normalizeTempoMap, tempoFollowingSong } from '../show/tempoMap';
 import {
   addLane,
   evaluateLanes,
@@ -1697,6 +1697,12 @@ function withDuration(s: ShowTimelineState): ShowTimelineState {
   return { ...s, duration: s.sections.length ? Math.max(duration, sectionsEnd(s.sections)) : duration };
 }
 
+/** The audio blocks changed: a beat grid detected from one of them follows it. */
+function withSongGrid(before: ShowTimelineState, next: ShowTimelineState): ShowTimelineState {
+  const tempo = tempoFollowingSong(next.tempo, before.audioTracks, next.audioTracks);
+  return tempo === next.tempo ? next : { ...next, tempo };
+}
+
 function normalizeTrack(raw: unknown, index: number): ShowAudioTrack | null {
   if (!raw || typeof raw !== 'object') return null;
   const t = raw as Record<string, unknown>;
@@ -3022,12 +3028,12 @@ export const showTimeline = {
       const placed = placeOnLane(others, snapped, track.duration);
       if (placed === null) return s;
       if (placed === track.startTime && targetLane === track.lane) return s;
-      return withDuration({
+      return withSongGrid(s, withDuration({
         ...s,
         audioTracks: s.audioTracks.map((t) =>
           t.id === trackId ? { ...t, startTime: placed, lane: targetLane } : t,
         ),
-      });
+      }));
     });
     recordShowEdit(`audio-move:${trackId}`);
   },
@@ -3075,10 +3081,10 @@ export const showTimeline = {
       ) {
         return s;
       }
-      return withDuration({
+      return withSongGrid(s, withDuration({
         ...s,
         audioTracks: s.audioTracks.map((t) => (t.id === trackId ? { ...t, startTime, duration, offset } : t)),
-      });
+      }));
     });
     recordShowEdit(`audio-resize:${trackId}`);
   },
@@ -4450,12 +4456,12 @@ export const showTimeline = {
     const s = get(store);
     if (audioTracks === s.audioTracks && sound === s.sound) return;
     const lanesBefore = new Map(s.audioTracks.map((t) => [t.id, t.lane]));
-    store.update((x) => withDuration({
+    store.update((x) => withSongGrid(x, withDuration({
       ...x,
       audioTracks,
       sound,
       selection: x.selection && x.selection.kind === 'audio' && !audioTracks.some((t) => t.id === x.selection!.id) ? null : x.selection,
-    }));
+    })));
     syncAudioWiring(audioTracks);
     for (const t of audioTracks) if (lanesBefore.has(t.id) && lanesBefore.get(t.id) !== t.lane) rewireShowAudioTrack(t.id);
     republishTracks();
