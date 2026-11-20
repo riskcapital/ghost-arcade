@@ -14,6 +14,7 @@
     play: 'm8 5 11 7-11 7Z',
     pause: 'M8 5v14M16 5v14',
     grid: 'M3 3h7v7H3ZM14 3h7v7h-7ZM3 14h7v7H3ZM14 14h7v7h-7Z',
+    home: 'm3 11 9-7 9 7M5 9.5V20h5v-6h4v6h5V9.5',
     map: 'm3 5 7-2 5 3 6-2v15l-6 2-5-3-7 2ZM10 3v15M15 6v15',
     mixer: 'M5 3v6m0 6v6M2 9h6v6H2ZM12 3v11m0 5v2M9 14h6v5H9ZM19 3v3m0 6v9M16 6h6v6h-6Z',
     flux: 'M3 16C5 3 9 3 12 12s7 9 9-4M3 8c2 13 6 13 9 4s7-9 9 4',

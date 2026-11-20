@@ -1,6 +1,8 @@
 <script lang="ts">
   import {ghostMovements} from '../../mobile/studio/ghostFXMotion';
   export let oncompanion:()=>void=()=>{};
+  /** The header's home button: back to the welcome screen. The studio stays running behind it. */
+  export let onhome:(()=>void)|null=null;
   import PaintPad from './PaintPad.svelte';
   import PaintPanel from './PaintPanel.svelte';
   import {defaultPaint,type PaintConfig,type PaintStroke} from '../../mobile/studio/paint';
@@ -309,7 +311,7 @@
   import PerformanceMixer from "./PerformanceMixer.svelte";
   import LookControls from "./LookControls.svelte";
   import { onDestroy, onMount, tick } from 'svelte';
-  import { takeLaunchPath } from '../../mobile/studio/launchIntent';
+  import { takeLaunchPath, onLaunchPath } from '../../mobile/studio/launchIntent';
 
   function sliderFill(value: number, min: number, max: number): number {
     return max > min ? Math.max(0, Math.min(1, (value - min) / (max - min))) : 0;
@@ -450,7 +452,18 @@
   const launchPath = takeLaunchPath();
   let tab: 'perform' | 'map' | 'fx' | 'flux' = launchPath === 'mapping' ? 'map' : launchPath ? 'perform' : firstRun || coachStep(coach)?.tab === 'map' && !prefs.coachDone ? 'map' : 'perform';
   // Mobile Control opens the existing desktop pairing over the VJ screen.
-  onMount(() => { if (launchPath === 'control') oncompanion(); });
+  onMount(() => {
+    if (launchPath === 'control') oncompanion();
+    // Paths picked after the home button reach the running studio here. The welcome screen
+    // locks rotation as it closes, so the studio states its own rule again afterwards.
+    return onLaunchPath(async (signal) => {
+      if (signal === 'mapping') navTo('map');
+      else if (signal === 'vj' || signal === 'control') { toolkitOpen = false; if (tab !== 'perform' || interactiveOpen) navTo('perform'); }
+      await tick();
+      void allowMappingRotation(rotationAllowed);
+      if (signal === 'control') oncompanion();
+    });
+  });
   let mixerOpen=false;
   let clipControlsOpen=false;
   let controlsReturnFocus:HTMLElement|null=null;
@@ -1679,10 +1692,14 @@
 <input class="file-input" type="file" accept=".ghostset,application/json,application/octet-stream" aria-label="Open a set file" bind:this={setInput} onchange={importSet} />
 <div class="studio" data-layout={layoutInfo.layout} data-inspector={layoutInfo.inspector} class:compact-preview={compactPreview && tab!=='map' && tab!=='flux'} class:flux-tab={tab==='flux'} class:flux-perform={tab==='perform'&&fluxPerform} class:tempo-open={tempoOpen} class:docked-inspector={dockedInspector} class:tablet use:touchSliders={show} use:secondFingerTaps class:clip-editing={clipControlsOpen} class:performance={tab === 'perform'} class:mixing={mixerOpen} class:clean class:mapping={tab === 'map'}>
   <header class="app-header">
-    <div class="brand">
+    {#if onhome}<button class="brand home" onclick={onhome} aria-label="Home" title="Back to the welcome screen">
+      <Icon name="home" size={17} />
       <img class="brand-mark" src="./icon-new.png" alt="" />
       <img class="brand-wordmark" src="./logo-wordmark.svg" alt="Ghost Arcade" />
-    </div>
+    </button>{:else}<div class="brand">
+      <img class="brand-mark" src="./icon-new.png" alt="" />
+      <img class="brand-wordmark" src="./logo-wordmark.svg" alt="Ghost Arcade" />
+    </div>{/if}
     <button class="flux-live" class:active={fluxPerform} aria-pressed={fluxPerform} aria-label={fluxPerform?'Flux on the preview: on':'Flux on the preview: off'} title="Play Flux on the preview while performing"
       onclick={()=>{fluxPerform=!fluxPerform;feel(prefs,'switch');if(!fluxPerform&&tab!=='flux'&&flux.active){flux={...flux,active:false,latch:false};if(engine)engine.flux=flux;}}}><Icon name="flux" size={18}/><span>{fluxPerform?'ON':'FLUX'}</span></button>
     <button class="flux-live scramble" aria-label="Scramble shader and effect settings" title="Scramble every playing shader and effect" onclick={scramble}><Icon name="fx" size={16}/><span>RND</span></button>
@@ -2497,6 +2514,20 @@
     letter-spacing: 0.8px;
   }
   .brand-wordmark { width: 180px; height: 28px; object-fit: contain; }
+  /* The logo is the way home: a plain button, no outline, with a small blue home glyph. */
+  .brand.home {
+    min-height: 44px;
+    margin: 0;
+    padding: 0 6px 0 0;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .brand.home:active { opacity: 0.7; }
   .brand-mark {
     width: 30px;
     height: 30px;

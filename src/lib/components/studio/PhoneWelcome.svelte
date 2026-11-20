@@ -36,13 +36,23 @@
     void allowMappingRotation(true);
     return () => {
       orientation.removeEventListener('change', sync);
-      void allowMappingRotation(false);
+      release();
     };
   });
+
+  // The lock goes back on the moment a path is picked, before the studio states its own rule
+  // (Mapping allows rotation), so the studio's call is always the later one.
+  let released = false;
+  function release() {
+    if (released) return;
+    released = true;
+    void allowMappingRotation(false);
+  }
 
   function choose(choice: Choice) {
     if (leaving) return;
     leaving = true;
+    release();
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     // The fade is short; the studio only starts once the field has stopped drawing.
     window.setTimeout(() => onchoose(choice.id), reduce ? 0 : 220);

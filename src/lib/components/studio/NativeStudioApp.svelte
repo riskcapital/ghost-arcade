@@ -4,6 +4,12 @@
  import MobileApp from '../MobileApp.svelte';
  import {parseCompanionLink,companionHost,rememberedDesktop,forgetDesktop} from '../../mobile/studio/companionLink';
 
+ /** A pairing link the app was opened with; reviewed as soon as the studio starts. */
+ export let launchLink='';
+ /** Called whenever a pairing link is put up for review, so the welcome screen can step aside. */
+ export let onpairing:()=>void=()=>{};
+ /** The studio's home button. */
+ export let onhome:(()=>void)|null=null;
  let remote=false,dialog=false,scanning=false,link='',draft='',error='',note='';
  // A pairing link is never acted on by itself. It waits here until the performer confirms the
  // host, so a stray QR code or a tapped link cannot pull them out of a running set.
@@ -16,7 +22,7 @@
  function closeDialog(){dialog=false;pending=null;error='';note='';}
  /** Decode a scanned, pasted or deep-linked pairing link and ask before using it. */
  function review(raw:string){
-  note='';
+  note='';onpairing();
   try{const next=parseCompanionLink(raw);pending={link:next,host:companionHost(next)};error='';}
   catch(e){pending=null;error=e instanceof Error?e.message:'That is not a pairing link.';}
   dialog=true;
@@ -39,6 +45,7 @@
   finally{scanning=false;}
  }
  onMount(()=>{
+  if(launchLink)review(launchLink);
   let disposed=false,busy=false;
   const poll=async()=>{
    if(busy||disposed||!native())return;
@@ -57,7 +64,7 @@
   return()=>{disposed=true;clearInterval(timer);window.removeEventListener('ghost-pairing-link',poll);document.removeEventListener('visibilitychange',wake);window.removeEventListener('focus',wake);};
  });
 </script>
-{#if remote}{#key link}<MobileApp nativeShell pairingLink={link} onExit={()=>{remote=false;remembered=rememberedDesktop();}}/>{/key}{:else}<MobileStudio oncompanion={openDialog}/>{/if}
+{#if remote}{#key link}<MobileApp nativeShell pairingLink={link} onExit={()=>{remote=false;remembered=rememberedDesktop();}}/>{/key}{:else}<MobileStudio oncompanion={openDialog} {onhome}/>{/if}
 {#if dialog}<div class="backdrop"><div class="pair-panel" role="dialog" tabindex="-1" aria-modal="true" aria-label="Mobile Control">
  <header><h2>Mobile Control</h2><button onclick={closeDialog} aria-label="Close Mobile Control">×</button></header>
  {#if pending}

@@ -1,39 +1,90 @@
 <script lang="ts">
-  // The phone app's front door: the welcome screen, then the studio on the chosen path.
-  // Mock-up stage: native-mobile-main only mounts this when the preview flag is set, so the
-  // app still opens straight into the studio by default.
+  // The phone app's front door. Every cold launch opens on the welcome screen, unless the app
+  // was opened by a pairing link: then it goes straight to the studio with Mobile Control
+  // pairing open. The studio starts on the first choice and then stays mounted: the home
+  // button lays the welcome screen over it, so the set, the decks and a live output keep
+  // running, and the welcome screen's shader only runs while it is showing.
   import { onMount } from 'svelte';
   import NativeStudioApp from './NativeStudioApp.svelte';
   import PhoneWelcome from './PhoneWelcome.svelte';
-  import { setLaunchPath, type LaunchPath } from '../../mobile/studio/launchIntent';
-  import { frameStats } from '../../mobile/studio/frameStats';
+  import { launchScreen, setLaunchPath, type LaunchPath } from '../../mobile/studio/launchIntent';
 
-  /** Measuring build only: 'welcome' times the welcome screen and the studio after it; 'baseline' the studio alone. */
-  export let bench: '' | 'welcome' | 'baseline' = '';
+  let deciding = true;
+  let welcome = false;
+  let studio = false;
+  let launchLink = '';
 
-  let chosen = bench === 'baseline';
+  const cap = (window as any).Capacitor;
+  const native = () => ['ios', 'android'].includes(cap?.getPlatform?.());
+
+  /** The link waiting in the pairing inbox, taken (it is only handed out once). */
+  async function takeInbox(): Promise<string | null> {
+    if (!native()) return null;
+    try {
+      const plugin = cap.getPlatform() === 'ios' ? 'StudioCapture' : 'CompanionLink';
+      const result = await Promise.race([
+        cap.nativePromise(plugin, 'takePairingLink', {}),
+        new Promise<{ url?: string }>((resolve) => setTimeout(() => resolve({}), 600)),
+      ]);
+      return result?.url || null;
+    } catch {
+      return null;
+    }
+  }
+
+  function openStudioForPairing(link: string) {
+    launchLink = link;
+    welcome = false;
+    studio = true;
+  }
 
   function choose(path: LaunchPath) {
     setLaunchPath(path);
-    chosen = true;
-    if (bench) void report('studio-after-welcome', 3000, 0);
+    welcome = false;
+    studio = true;
   }
 
-  async function report(phase: string, ms: number, skip: number) {
-    const stats = await frameStats(ms, skip);
-    const field = document.querySelector('canvas.beam-field');
-    console.log('[ga-bench] ' + JSON.stringify({ phase, ...stats, fieldCanvasInDom: !!field }));
+  function home() {
+    welcome = true;
   }
 
   onMount(() => {
-    if (bench === 'baseline') void report('studio-alone', 3000, 0);
-    if (bench === 'welcome') {
-      // Leave the field 2 s to compile and settle, time 6 s of it, then take the VJ path.
-      void report('welcome', 6000, 2000).then(() => {
-        (document.querySelector('[data-choice="vj"]') as HTMLButtonElement | null)?.click();
-      });
-    }
+    let disposed = false;
+    void takeInbox().then((link) => {
+      if (disposed) return;
+      deciding = false;
+      if (link && launchScreen(link) === 'pairing') openStudioForPairing(link);
+      else welcome = true;
+    });
+    // A link that arrives while the welcome screen is up, before the studio has started, is
+    // taken here. Once the studio runs, its own inbox watcher takes it and calls onpairing.
+    const arrived = async () => {
+      if (studio || deciding) return;
+      const link = await takeInbox();
+      if (!disposed && link && !studio) openStudioForPairing(link);
+    };
+    window.addEventListener('ghost-pairing-link', arrived);
+    return () => {
+      disposed = true;
+      window.removeEventListener('ghost-pairing-link', arrived);
+    };
   });
+
+  function pairingArrived() {
+    if (welcome) {
+      welcome = false;
+      setLaunchPath('resume');
+    }
+  }
 </script>
 
-{#if chosen}<NativeStudioApp />{:else}<PhoneWelcome onchoose={choose} />{/if}
+{#if studio}
+  <div class="studio-host" inert={welcome}>
+    <NativeStudioApp {launchLink} onpairing={pairingArrived} onhome={home} />
+  </div>
+{/if}
+{#if welcome}<PhoneWelcome onchoose={choose} />{/if}
+
+<style>
+  .studio-host { display: contents; }
+</style>
