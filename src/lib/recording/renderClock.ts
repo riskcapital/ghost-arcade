@@ -42,6 +42,11 @@ export function renderClockActive(): boolean {
   return originMs !== null;
 }
 
+/** The show time being rendered, seconds (meaningful while a render runs). */
+export function renderClockSeconds(): number {
+  return seconds;
+}
+
 /** performance.now() live; the render's time while one runs. */
 export function engineNowMs(): number {
   return originMs === null ? performance.now() : originMs + (seconds - startSeconds) * 1000;

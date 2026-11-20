@@ -19,6 +19,7 @@ import { normalizeClipMedia } from '../stores/showTimeline';
 import { normalizeFinish, type StudioFinish } from './studioFinish';
 import type { ClipVisual } from './session';
 import { currentVoiceFile } from './retiredVoices';
+import { normalizeDrift, type VisualDrift } from './visualDrift';
 
 /** Layers in one stack (each is rendered every frame while it plays). */
 export const MAX_STACK_ITEMS = 8;
@@ -47,6 +48,8 @@ export interface StackItem {
   /** Shader settings by input name (voices and library shaders). */
   params: Record<string, number>;
   effects: Effect[];
+  /** Its settings slowly wander on their own (visualDrift.ts); none in projects from before. */
+  drift?: VisualDrift;
 }
 
 export interface StackMood {
@@ -113,6 +116,7 @@ export function normalizeStackItem(raw: unknown): StackItem | null {
     if (!m || m.kind === 'layer') return null;
     media = m;
   }
+  const drift = normalizeDrift(r.drift);
   const name = typeof r.name === 'string' && r.name.trim() ? r.name.trim().slice(0, 80) : voice ? voice.file.replace(/^VX-|\.fs$/g, '') : media!.name;
   return {
     id: r.id,
@@ -123,6 +127,7 @@ export function normalizeStackItem(raw: unknown): StackItem | null {
     ...(r.hidden === true ? { hidden: true } : {}),
     params: normalizeParams(r.params),
     effects: normalizeEffects(r.effects),
+    ...(drift ? { drift } : {}),
   };
 }
 

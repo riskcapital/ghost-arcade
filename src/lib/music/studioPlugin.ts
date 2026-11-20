@@ -30,6 +30,8 @@ import { auditionSolo, currentStacks } from './stackRuntime';
 import { currentVoiceFile } from './retiredVoices';
 import { normalizeStackOff, normalizeStackPlace, visualOrder } from './visualOrder';
 import { readableClipUri, staticClipSource } from '../show/tracks/showClipSources';
+import { applyDrift, driftEasing, driftRanges, driftSeconds, normalizeDrift, type DriftRange, type VisualDrift } from './visualDrift';
+import { hasLiveValues, liveValuesForLayer } from '../audio/liveParams';
 
 export const STUDIO_PLUGIN_ID = 'musicstudio';
 export const STUDIO_EFFECT_TYPE = 'music-studio';
@@ -65,6 +67,8 @@ export interface StudioVoice {
   textEvery?: number;
   /** Transparent background: only its subject draws, stacked over the voices below like a drawing. */
   clear?: boolean;
+  /** Its settings slowly wander on their own (visualDrift.ts); none in projects from before. */
+  drift?: VisualDrift;
 }
 
 /** The plugin's fields on an effect source. */
@@ -107,6 +111,7 @@ export function normalizeStudioVoice(raw: unknown): StudioVoice | null {
   const file = typeof r.file === 'string' ? currentVoiceFile(r.file) : '';
   // Only shipped VX shaders: the name goes into a fetch path.
   if (!/^VX-[A-Za-z0-9_-]+\.fs$/.test(file)) return null;
+  const drift = normalizeDrift(r.drift);
   const params: Record<string, number> = {};
   if (r.params && typeof r.params === 'object') {
     for (const [name, value] of Object.entries(r.params as Record<string, unknown>)) {
@@ -126,6 +131,7 @@ export function normalizeStudioVoice(raw: unknown): StudioVoice | null {
     ...(normalizePhrases(r.text).length ? { text: normalizePhrases(r.text) } : {}),
     ...(r.textEvery !== undefined ? { textEvery: normalizeTextEvery(r.textEvery) } : {}),
     ...(r.clear === true ? { clear: true } : {}),
+    ...(drift ? { drift } : {}),
   };
 }
 
@@ -202,6 +208,8 @@ export interface StudioRenderInputs {
   feel?(): MixFeel;
   /** The song key, for the Key colour palette. */
   key?(): MusicKey;
+  /** The drift clock, seconds (visualDrift.ts driftSeconds); tests set their own. */
+  seconds?(): number;
 }
 
 export function studioVoiceLayerId(host: Layer, index: number): string {
@@ -274,23 +282,27 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
     lastMix = { voices: studio.musicVoices.map((_, i) => voiceMix(i).gain), tracks: new Map([...slots.track.keys()].map((t) => [t, trackMix(t).gain])) };
     // A stack auditioned on its own: the studio's own voices step aside.
     const solo = auditionSolo();
+    const t = inputs.seconds?.() ?? driftSeconds();
     studio.musicVoices.forEach((voice, index) => {
       if (solo) return;
       const code = inputs.code(voice.file);
       if (!code) return;
       const id = studioVoiceLayerId(layer, index);
+      const sourceId = `${id}:${voice.file}`;
+      // Drift under the sound: the wandered settings are the base the driven inputs go on.
+      const params = driftedParams(`${layer.id}:voice:${voice.drift?.seed ?? 0}:${voice.file}`, id, sourceId, voice.params, driftRanges(code), voice.drift, t);
       out.push({
         ...createLayer(id, voice.file.replace(/^VX-|\.fs$/g, ''), 'media'),
         // Rendered for the mix, never composited on its own.
         opacity: 0,
         source: {
           // The file is part of the id so a different shader is a different source.
-          id: `${id}:${voice.file}`,
+          id: sourceId,
           type: 'shader',
           name: voice.file,
           src: `ISF/${voice.file}`,
           shaderCode: code,
-          shaderValues: studioVoiceValues(voice, studio.musicSet, driven[index], palette),
+          shaderValues: studioVoiceValues(params === voice.params ? voice : { ...voice, params }, studio.musicSet, driven[index], palette),
         },
       } as Layer);
       const m = voiceMix(index);
@@ -300,7 +312,7 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
     const stackRows = new Map<number, MixRow>();
     playing.forEach(({ entry, stack, level }, i) => {
       if (off.has(entry.track)) return;
-      const stackLayers = expandStack(`${layer.id}:stack:${entry.uid}`, stack, studio.musicSet, inputs, palette, key);
+      const stackLayers = expandStack(`${layer.id}:stack:${entry.uid}`, stack, studio.musicSet, inputs, palette, key, t);
       if (!stackLayers) return;
       out.push(...stackLayers.layers);
       const m = trackMix(entry.track);
@@ -354,7 +366,7 @@ function stackMediaSource(item: StackItem, id: string): MediaSource | null {
  * effects), and a mix of them (with the stack's effects and mood finish) the
  * studio's mix takes as one row. Null when nothing in it can draw yet.
  */
-export function expandStack(id: string, stack: ClipStack, set: StudioSet, inputs: StudioRenderInputs, studioPalette: { id: string; slots: PaletteSlots }, key: MusicKey): { id: string; layers: Layer[] } | null {
+export function expandStack(id: string, stack: ClipStack, set: StudioSet, inputs: StudioRenderInputs, studioPalette: { id: string; slots: PaletteSlots }, key: MusicKey, t = inputs.seconds?.() ?? driftSeconds()): { id: string; layers: Layer[] } | null {
   const layers: Layer[] = [];
   const rows: Array<{ layerId: string; opacity: number; blendMode: string }> = [];
   const palette = stack.mood?.palette ? { id: stack.mood.palette, slots: resolvePalette(stack.mood.palette, set, key) } : studioPalette;
@@ -369,13 +381,17 @@ export function expandStack(id: string, stack: ClipStack, set: StudioSet, inputs
       const follow = item.voice.follow;
       const live = isLiveSource(follow) ? (follow as LiveSourceId) : undefined;
       const sourceId = (live ? 'all' : VOICE_SOURCES.some((v) => v.id === follow) ? follow : 'all') as VoiceSourceId;
-      const voice: StudioVoice = { file: item.voice.file, source: sourceId, ...(live ? { live } : {}), auto: false, level: 1, params: item.params, clear: item.voice.clear };
+      const shaderSourceId = `${itemId}:${item.voice.file}`;
+      const params = driftedParams(itemId, itemId, shaderSourceId, item.params, driftRanges(code), item.drift, t);
+      const voice: StudioVoice = { file: item.voice.file, source: sourceId, ...(live ? { live } : {}), auto: false, level: 1, params, clear: item.voice.clear };
       source = {
-        id: `${itemId}:${item.voice.file}`, type: 'shader', name: item.voice.file, src: `ISF/${item.voice.file}`, shaderCode: code,
+        id: shaderSourceId, type: 'shader', name: item.voice.file, src: `ISF/${item.voice.file}`, shaderCode: code,
         shaderValues: studioVoiceValues(voice, set, inputs.driven(sourceId, false, live), palette),
       } as MediaSource;
     } else if (item.media) {
-      source = stackMediaSource(item, itemId);
+      const media = item.media;
+      const drifting = item.drift && media.kind === 'shader' ? driftedParams(itemId, itemId, undefined, item.params, driftRanges(media.shaderCode, media.shaderInputs as never), item.drift, t) : item.params;
+      source = stackMediaSource(drifting === item.params ? item : { ...item, params: drifting }, itemId);
     }
     if (!source) continue;
     layers.push({ ...createLayer(itemId, item.name, 'media'), opacity: 0, source, effects: item.effects } as Layer);
@@ -395,6 +411,19 @@ export function expandStack(id: string, stack: ClipStack, set: StudioSet, inputs
     effects,
   } as Layer);
   return { id, layers };
+}
+
+// ── Drift ───────────────────────────────────────────────────────────────
+
+/**
+ * A visual's settings with its drift on them this frame. A setting another
+ * engine drives on the rendered layer this frame (a live value, liveParams.ts)
+ * keeps that engine's value: drift steps aside for it.
+ */
+function driftedParams(key: string, layerId: string, sourceId: string | undefined, params: Record<string, number>, ranges: DriftRange[], drift: VisualDrift | undefined, t: number): Record<string, number> {
+  if (!drift?.on && !driftEasing(key)) return params;
+  const live = hasLiveValues() ? liveValuesForLayer({ id: layerId, source: sourceId ? { id: sourceId } : null }) : undefined;
+  return applyDrift(key, params, ranges, drift, t, live ? (name) => `shader:${name}` in live : undefined);
 }
 
 // ── Shared runtime hooks ────────────────────────────────────────────────
