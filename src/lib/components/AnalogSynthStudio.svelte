@@ -499,7 +499,7 @@
 
 {#snippet moduleView(m: Module)}
   <div class="cell" style:flex-basis={`${m.width}px`}>
-    <StudioModule title={m.title} foldKey={`Analog Synth ${m.title}`} led={m.input ? inputUse.drawnBy.length + inputUse.patchedTo.length > 0 : null}>
+    <StudioModule title={m.title} foldKey={`synth.${m.id}`} led={m.input ? inputUse.drawnBy.length + inputUse.patchedTo.length > 0 : null}>
       {@render moduleBody(m)}
     </StudioModule>
   </div>
@@ -537,7 +537,7 @@
             {@render moduleView(m)}
           {/each}
           <div class="cell monitor-cell">
-            <StudioModule title="Output" foldKey="Analog Synth Output" class="monitor">
+            <StudioModule title="Output" foldKey="synth.output" class="monitor">
               <div class="frame-well" style="--out-w: {Math.max(1, $project.width || 1920)}; --out-h: {Math.max(1, $project.height || 1080)}">
                 <div class="screen" bind:this={hole}>
                   <span class="frame-label ga-eyebrow">Live output</span>
@@ -553,7 +553,7 @@
             {@render moduleView(m)}
           {/each}
           <div class="cell morph-cell">
-            <StudioModule title="Morph" foldKey="Analog Synth Morph" led={stored >= 2}>
+            <StudioModule title="Morph" foldKey="synth.morph" led={stored >= 2}>
               <div class="morph">
                 <div
                   class="pad"
