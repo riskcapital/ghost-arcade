@@ -65,6 +65,27 @@ test('with footprints measured, the leak check uses them, and resident memory is
   assert.equal(run(noVm).findings.find((f) => f.id === 'memory.main-MB').severity, 'fail');
 });
 
+test('growth in the warm-up minutes is shown but not judged; growth after it is', () => {
+  const M = 60000;
+  // Checkpoints every 5 minutes for an hour. The footprint climbs 300 MB in the
+  // first 15 minutes (first use of features), then `after` MB per hour.
+  const mk = (after) => Array.from({ length: 13 }, (_, i) => {
+    const min = i * 5;
+    const fp = 150 + Math.min(min, 15) * 20 + (Math.max(0, min - 15) / 60) * after;
+    return { t: min * M, run: 1, step: i * 60, checkpoint: true, sinceLaunchMs: min * M + 60000,
+      proc: { totalMB: 2000, roles: { main: { rssMB: 200 }, renderer: { rssMB: 600 }, gpu: { rssMB: 100 }, core: { rssMB: 150 } } },
+      vm: { main: { footprintMB: 80 }, renderer: { footprintMB: fp }, gpu: { footprintMB: 300 }, core: { footprintMB: 350 } },
+      renderer: { heapMB: 80, nodes: 5000, listeners: 900 }, refFps: 60, refGpuMs: 2 };
+  });
+  const run = (baselines) => analyse({ samples: baselines, baselines, incidents: [], trace: [], console: [], config, durationMs: 3600000, hidden: false });
+  const warm = run(mk(0)).findings;
+  assert.equal(warm.find((f) => f.id === 'memory.renderer-MB').severity, 'pass');
+  const whole = warm.find((f) => f.id === 'memory.renderer-MB-whole-run');
+  assert.equal(whole.severity, 'info');
+  assert.ok(parseFloat(whole.value) > config.thresholds.leakMBPerHour.renderer, whole.value);
+  assert.equal(run(mk(200)).findings.find((f) => f.id === 'memory.renderer-MB').severity, 'fail');
+});
+
 test('a crash fails the run; area failure rates are judged per area', () => {
   const trace = [
     ...Array.from({ length: 9 }, (_, i) => ({ kind: 'action', area: 'vj', status: 'pass', step: i })),

@@ -94,22 +94,40 @@ export function analyse({ samples, baselines, incidents, trace, console: console
     ? { get: (b) => ROLES.reduce((sum, [, role]) => sum + b.vm[role].footprintMB, 0), kind: 'footprint of main, editor, GPU and core' }
     : { get: (b) => b.proc?.totalMB, kind: 'resident' };
   limits['total MB'] = leak.total;
+  // Warm-up: the first use of a feature allocates once what it then keeps for
+  // the session (Audio Lab's audio graph, the deck's interface, compiled
+  // pipelines, decoder pre-rolls, GPU tiles), so memory climbs steeply in the
+  // first minutes whatever the build. The leak checks fit only the checkpoints
+  // from `leakWarmupMinutes` after the app started; the whole-run slope is
+  // shown for reading.
+  const warmupMs = (th.leakWarmupMinutes ?? 0) * 60000;
+  const fit = (points) => {
+    const reg = regression(points);
+    const growth = points.length > 1 ? points[points.length - 1][1] - points[0][1] : 0;
+    const spanH = points.length > 1 ? points[points.length - 1][0] - points[0][0] : 0;
+    return { reg, growth, spanH, n: points.length };
+  };
+  const describe = (f) => (f.n > 1 ? `${f.reg.slope.toFixed(1)} MB/h (r² ${f.reg.r2.toFixed(2)}, +${f.growth.toFixed(0)} MB over ${f.n} checkpoints)` : 'not enough checkpoints');
   for (const [name, { get, kind, info }] of Object.entries(series)) {
     // Only checkpoints within one app run compare like with like.
     const byRun = new Map();
-    for (const b of baselines) { const v = get(b); if (Number.isFinite(v)) (byRun.get(b.run) ?? byRun.set(b.run, []).get(b.run)).push([b.t / H, v]); }
+    for (const b of baselines) { const v = get(b); if (Number.isFinite(v)) (byRun.get(b.run) ?? byRun.set(b.run, []).get(b.run)).push({ x: b.t / H, v, since: b.sinceLaunchMs ?? Infinity }); }
     const longest = [...byRun.values()].sort((a, b) => b.length - a.length)[0] ?? [];
-    const reg = regression(longest);
-    const growth = longest.length > 1 ? longest[longest.length - 1][1] - longest[0][1] : 0;
+    const whole = fit(longest.map((p) => [p.x, p.v]));
+    const steady = fit(longest.filter((p) => p.since >= warmupMs).map((p) => [p.x, p.v]));
     const limit = limits[name];
-    const over = enough && longest.length >= th.minCheckpointsForLeak && reg.slope > limit && reg.r2 > 0.5;
+    const judged = steady.n >= th.minCheckpointsForLeak && steady.spanH >= th.minHoursForLeak;
+    const over = enough && judged && steady.reg.slope > limit && steady.reg.r2 > 0.5;
     add({
       id: `memory.${name.replace(/ /g, '-')}`, area: 'memory',
-      title: `${name} growth at checkpoints (${kind}${info ? ', for reading' : ''})`,
-      value: longest.length > 1 ? `${reg.slope.toFixed(1)} MB/h (r² ${reg.r2.toFixed(2)}, +${growth.toFixed(0)} MB over ${longest.length} checkpoints)` : 'not enough checkpoints',
+      title: `${name} growth at checkpoints after ${th.leakWarmupMinutes ?? 0} min warm-up (${kind}${info ? ', for reading' : ''})`,
+      value: judged ? describe(steady) : `not enough checkpoints after warm-up (${steady.n})`,
       threshold: info ? 'for reading' : `≤ ${limit} MB/h`,
-      severity: info || !enough ? 'info' : over ? 'fail' : 'pass',
+      severity: info || !enough || !judged ? 'info' : over ? 'fail' : 'pass',
     });
+    if (warmupMs > 0) {
+      add({ id: `memory.${name.replace(/ /g, '-')}-whole-run`, area: 'memory', title: `${name} growth over the whole run, warm-up included (${kind}, for reading)`, value: describe(whole), threshold: 'for reading', severity: 'info' });
+    }
   }
   for (const [name, key, limit] of [['DOM nodes', 'nodes', th.domNodesPerHour], ['Event listeners', 'listeners', th.listenersPerHour]]) {
     const pts = baselines.filter((b) => Number.isFinite(b.renderer?.[key])).map((b) => [b.t / H, b.renderer[key]]);

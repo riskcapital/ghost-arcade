@@ -32,6 +32,7 @@
     "maxLaunchFailures": 0,
     "minCheckpointsForLeak": 4,
     "minHoursForLeak": 0.5,
+    "leakWarmupMinutes": 20,
     "leakMBPerHour": { "main": 40, "renderer": 80, "gpu": 120, "core": 120, "jsHeap": 25, "total": 250 },
     "domNodesPerHour": 5000,
     "listenersPerHour": 2000,

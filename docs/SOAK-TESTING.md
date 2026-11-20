@@ -113,7 +113,10 @@ Thresholds live in `scripts/soak/soak.config.json`:
   footprint** (what Activity Monitor calls Memory), read with `vmmap` at every checkpoint; elsewhere, resident memory.
   On macOS resident memory also counts shared code pages and pages an allocator has freed but the system has not
   taken back yet (both grow with use and are not leaks), and leaves out GPU memory the process owns, so it is shown
-  for reading only;
+  for reading only. The checks fit only the checkpoints from 20 minutes after the app started
+  (`leakWarmupMinutes`): the first use of a feature allocates once what it keeps for the session (Audio Lab's audio
+  graph is about 200 MB, the deck's interface, compiled shader pipelines, video pre-rolls), so memory climbs steeply in
+  the first minutes of any run. The whole-run slope, warm-up included, is in the report for reading;
 - the reference scene's frame rate dropping, or its GPU time rising, between early and late checkpoints, or its frame
   rate under the minimum;
 - clip audio gaps, console errors or uncaught exceptions above their rates, or an error spike;
