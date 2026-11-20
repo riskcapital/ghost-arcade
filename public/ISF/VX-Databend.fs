@@ -5,7 +5,7 @@
         "Visual Voices",
         "Generator"
     ],
-    "DESCRIPTION": "A photograph opened as if it were sound and run through audio effects. The picture is a still life: three lit spheres on a table against a graded wall. The frame is cut into bands, the way a file is processed in chunks, and each band gets one treatment: an echo that repeats the picture sideways and fades, a comb of bright and dark ripples, a crush down to a few flat tones, or its color channels read out of step. Each hit gives some of the bands a new treatment; the sound's level turns the effects up. With no sound most of the picture is clean, with one or two bands quietly wrong.",
+    "DESCRIPTION": "A test sheet opened as if it were sound and run through audio effects. The sheet is hard black and white: bar codes, a gray step wedge, a target of rings, a hatched block, a sweep of bars from coarse to fine and a field of bits. The frame is cut into bands, the way a file is processed in chunks, and each band gets one treatment: an echo that repeats the sheet sideways and fades, a comb of bright and dark ripples, a crush down to a few flat tones read in short repeated chunks, or its color channels read out of step. Each hit gives some of the bands a new treatment; the sound's level turns the effects up. With no sound most of the sheet is clean, with one or two bands quietly wrong.",
     "PASSES": [
         {}
     ],
@@ -17,8 +17,8 @@
         { "NAME": "damage", "LABEL": "Damage", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
         { "NAME": "echo", "LABEL": "Echo length", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
         { "NAME": "split", "LABEL": "Channel split", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0, "MAX": 1 },
-        { "NAME": "ink", "LABEL": "Light", "TYPE": "color", "DEFAULT": [0.86, 0.9, 1.0, 1.0] },
-        { "NAME": "accent", "LABEL": "Second light", "TYPE": "color", "DEFAULT": [1.0, 0.3, 0.12, 1.0] },
+        { "NAME": "ink", "LABEL": "Sheet", "TYPE": "color", "DEFAULT": [0.9, 0.94, 1.0, 1.0] },
+        { "NAME": "accent", "LABEL": "Marked block", "TYPE": "color", "DEFAULT": [1.0, 0.3, 0.12, 1.0] },
         { "NAME": "vxSwell", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
         { "NAME": "vxPulse", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1 },
         { "NAME": "vxFlow", "TYPE": "float", "DEFAULT": 0, "MIN": 0, "MAX": 1000 },
@@ -42,39 +42,65 @@ float hash21(vec2 q) {
     return fract((p3.x + p3.y) * p3.z);
 }
 
-// One lit sphere of the still life: adds its shaded disc and the shadow it throws on the table.
-void sphere(vec2 p, vec2 c, float r, vec3 tone, inout vec3 col) {
-    // Its shadow, stretched to the right along the table.
-    vec2 sh = (p - vec2(c.x + r * 0.9, -0.22)) / vec2(r * 1.7, r * 0.28);
-    col *= 1.0 - 0.6 * exp(-dot(sh, sh));
-    float d = length(p - c);
-    float px = 1.5 / RENDERSIZE.y;
-    float disc = smoothstep(r + px, r - px, d);
-    // Lit from the upper left, with a soft terminator and a little light bounced up from the table.
-    vec2 q = (p - c) / r;
-    float z = sqrt(max(1.0 - dot(q, q), 0.0));
-    vec3 nrm = vec3(q, z);
-    float lit = max(dot(nrm, normalize(vec3(-0.55, 0.6, 0.58))), 0.0);
-    float bounce = max(-nrm.y, 0.0) * 0.12;
-    float spec = pow(max(dot(nrm, normalize(vec3(-0.35, 0.45, 0.82))), 0.0), 40.0);
-    vec3 body = tone * (0.04 + 0.95 * lit * lit + bounce) + vec3(1.0) * spec * 0.5;
-    col = mix(col, body, disc);
-}
-
-// The photograph: a graded wall, a table edge, three spheres. x is in frame heights from the middle.
+// The test sheet, in three registers. Top: bar codes in groups of different heights. Middle: a gray step
+// wedge, a target of rings that tighten outward, and a hatched block marked in the accent. Bottom: a sweep of
+// bars from coarse to fine, and a field of bits. x runs in frame heights.
 vec3 photo(vec2 uv, float asp) {
     uv = fract(uv);
-    vec2 p = vec2((uv.x - 0.5) * asp, uv.y - 0.5);
-    // Wall: a pool of light from the upper left falling off to the right.
-    vec2 w = p - vec2(-0.45, 0.3);
-    vec3 col = ink.rgb * (0.02 + 0.5 * exp(-dot(w, w) / 0.28));
-    // Table: lighter than the wall near the front, with a hard back edge.
-    float table = smoothstep(0.003, -0.003, p.y + 0.2);
-    vec3 top = ink.rgb * (0.16 + 0.3 * smoothstep(-0.5, -0.2, p.y)) * (0.6 + 0.4 * exp(-pow(p.x + 0.2, 2.0) / 0.6));
-    col = mix(col, top, table);
-    sphere(p, vec2(-0.42, -0.02), 0.2, ink.rgb, col);
-    sphere(p, vec2(0.05, -0.1), 0.12, accent.rgb, col);
-    sphere(p, vec2(0.46, 0.0), 0.22, ink.rgb * 0.55 + 0.1, col);
+    float x = uv.x * asp;
+    float y = uv.y;
+    float v = 0.0;
+    float mark = 0.0;
+    if (y > 0.6) {
+        // Bar codes: bars one to three units wide, in groups with a quiet zone between, each group its own height.
+        float unit = 0.0055;
+        float ix = floor(x / unit);
+        float grp = floor(ix / 28.0);
+        float wide = 1.0 + floor(hash11(grp * 3.7 + 1.0) * 2.99);
+        float m = floor(ix / wide);
+        float top = 0.74 + 0.22 * hash11(grp * 5.1 + 2.0);
+        v = step(hash21(vec2(m, grp + 3.0)), 0.48) * step(y, top) * step(0.64, y) * step(3.0, mod(ix, 28.0));
+        // A row of small ticks under each code, as the digits would sit.
+        float tick = step(hash21(vec2(floor(x / 0.011), grp + 9.0)), 0.6) * step(0.3, fract(x / 0.011));
+        v = max(v, tick * step(0.612, y) * step(y, 0.628) * step(3.0, mod(ix, 28.0)) * 0.7);
+    } else if (y > 0.3) {
+        float left = asp * 0.44;
+        float mid = asp * 0.7;
+        if (x < left) {
+            // The step wedge: eleven steps from black to full, with a hairline under it.
+            float sIdx = floor(x / left * 11.0);
+            v = sIdx / 10.0 * step(0.35, y) * step(y, 0.54) * step(0.04, fract(x / left * 11.0));
+            v = max(v, step(0.33, y) * step(y, 0.334) * 0.6);
+        } else if (x < mid) {
+            // The target: rings that tighten toward the rim, with a cross through the middle.
+            vec2 c = vec2((left + mid) * 0.5, 0.445);
+            vec2 q = vec2(x, y) - c;
+            float d = length(q);
+            v = step(d, 0.108) * step(0.5, fract(d * d * 400.0));
+            v = max(v, step(abs(q.x), 0.0012) * step(abs(q.y), 0.125) + step(abs(q.y), 0.0012) * step(abs(q.x), 0.125));
+        } else {
+            // The marked block: diagonal hatching inside a frame.
+            vec2 q = vec2((x - mid) / (asp - mid), (y - 0.34) / 0.21);
+            float inside = step(0.08, q.x) * step(q.x, 0.92) * step(0.0, q.y) * step(q.y, 1.0);
+            float frame = 1.0 - step(0.115, q.x) * step(q.x, 0.885) * step(0.06, q.y) * step(q.y, 0.94);
+            float hatch = step(0.5, fract((x + y) * 46.0));
+            v = inside * max(frame, hatch);
+            mark = inside;
+        }
+    } else {
+        if (y > 0.17) {
+            // The sweep: bars from coarse on the left to fine on the right.
+            float u = x / asp;
+            v = step(0.5, fract(u * u * 70.0 + u * 6.0)) * step(0.19, y) * step(y, 0.275);
+        } else {
+            // Bits: a field of small cells, two in five lit, in blocks with gaps between.
+            vec2 cell = floor(vec2(x, y) / 0.0125);
+            v = step(hash21(cell + 40.0), 0.4) * step(0.03, y) * step(y, 0.15) * step(2.0, mod(cell.x, 18.0)) * step(0.15, fract(x / 0.0125)) * 0.85;
+        }
+    }
+    vec3 col = mix(ink.rgb, accent.rgb, mark) * v;
+    // The sheet itself: black, a touch lighter toward the upper left.
+    col += ink.rgb * 0.016 * (1.0 - uv.x) * uv.y;
     return col;
 }
 

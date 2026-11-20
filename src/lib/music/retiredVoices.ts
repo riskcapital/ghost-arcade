@@ -15,6 +15,8 @@ const RETIRED: Record<string, string> = {
   'VX-Prism.fs': 'VX-Slabs.fs',
   'VX-Harp.fs': 'VX-LightLines.fs',
   'VX-DiodeField.fs': 'VX-LedWall.fs',
+  'VX-LightField.fs': 'VX-Silk.fs',
+  'VX-ReededGlass.fs': 'VX-GlassBlocks.fs',
 };
 
 /** The shader a saved file name stands for now. */
