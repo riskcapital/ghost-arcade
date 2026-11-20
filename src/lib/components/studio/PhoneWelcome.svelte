@@ -7,6 +7,7 @@
   import wordmark from '$lib/brand/wordmark.svg?url';
   import BeamField from '../BeamField.svelte';
   import type { LaunchPath } from '../../mobile/studio/launchIntent';
+  import { allowMappingRotation } from '../../mobile/studio/captureToolkit';
 
   export let onchoose: (path: LaunchPath) => void = () => {};
 
@@ -30,7 +31,13 @@
     sync();
     orientation.addEventListener('change', sync);
     requestAnimationFrame(() => { ready = true; });
-    return () => orientation.removeEventListener('change', sync);
+    // The phone app is held upright outside Map; the welcome screen may turn. The studio sets
+    // its own rule again once it opens, so the lock goes back on as this screen leaves.
+    void allowMappingRotation(true);
+    return () => {
+      orientation.removeEventListener('change', sync);
+      void allowMappingRotation(false);
+    };
   });
 
   function choose(choice: Choice) {
