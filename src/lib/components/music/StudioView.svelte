@@ -301,6 +301,23 @@
   </StudioModule>
 {/snippet}
 
+<!-- A small mark for each set: a bowl, a saw wave, a speaker, a sine wave, a drum. -->
+{#snippet setMark(id: string)}
+  <svg class="set-mark" viewBox="0 0 16 16" aria-hidden="true">
+    {#if id === 'bath'}
+      <path d="M2.5 7.5c0 3.2 2.4 5.5 5.5 5.5s5.5-2.3 5.5-5.5z" /><path d="M11.5 2.5l-3 3" />
+    {:else if id === 'berlin'}
+      <path d="M1.5 11l4-6v6l4-6v6l4-6v6" />
+    {:else if id === 'dub'}
+      <circle cx="8" cy="8" r="5.5" /><circle cx="8" cy="8" r="1.8" />
+    {:else if id === 'analog'}
+      <path d="M1.5 8c1.6-5.5 3.4-5.5 5 0s3.4 5.5 5 0 2.2-3.6 3-3.6" />
+    {:else}
+      <ellipse cx="8" cy="5" rx="5.5" ry="2.2" /><path d="M2.5 5v6c0 1.2 2.5 2.2 5.5 2.2s5.5-1 5.5-2.2V5" />
+    {/if}
+  </svg>
+{/snippet}
+
 {#if open}
   <div class="studio-view studio-tokens set-{s.set}" class:lower-tall={lowerTall} role="region" aria-label="Audio Lab" bind:this={root}>
     <header class="bar" use:windowCaption use:wheelScrollsSideways>
@@ -335,7 +352,7 @@
       </select>
       <div class="ga-segmented set-tabs" role="group" aria-label="Instrument set">
         {#each STUDIO_SETS as set}
-          <button class:active={s.set === set.id} aria-pressed={s.set === set.id} onclick={() => musicStudio.setSet(set.id)} data-midi-path="studio:set.{set.id}" data-midi-label="{set.label} set" data-midi-mode="toggle">{set.label}</button>
+          <button class:active={s.set === set.id} aria-pressed={s.set === set.id} onclick={() => musicStudio.setSet(set.id)} data-midi-path="studio:set.{set.id}" data-midi-label="{set.label} set" data-midi-mode="toggle">{@render setMark(set.id)}{set.label}</button>
         {/each}
       </div>
       <div class="group">
@@ -344,11 +361,13 @@
       </div>
       <!-- Where to go from here: always on screen, as icons so they fit any width. -->
       <div class="group nav">
-        <button class="nav-btn" onclick={showDeck} aria-label="VJ deck" title="Deck: go to the VJ deck to mix; the music keeps playing ({STUDIO_VIEW_KEY_LABEL} switches back and forth)" data-midi-path="studio:studio.view" data-midi-label="Audio Lab or VJ deck" data-midi-mode="toggle">
+        <button class="nav-btn worded" onclick={showDeck} aria-label="VJ deck" title="VJ deck: go to the deck to mix; the music keeps playing ({STUDIO_VIEW_KEY_LABEL} switches back and forth)" data-midi-path="studio:studio.view" data-midi-label="Audio Lab or VJ deck" data-midi-mode="toggle">
           <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="5" height="4.5" rx="0.8" /><rect x="9" y="2.5" width="5" height="4.5" rx="0.8" /><rect x="2" y="9" width="5" height="4.5" rx="0.8" /><rect x="9" y="9" width="5" height="4.5" rx="0.8" /></svg>
+          <span class="nav-word">VJ deck</span>
         </button>
-        <button class="nav-btn" onclick={showTray} aria-label="Tray" title="Tray: back to the Audio Lab tray under the deck; the music keeps playing">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="1.2" /><path d="M2 9.5h12" /></svg>
+        <button class="nav-btn worded" onclick={showTray} aria-label="Tray" title="Tray: fold Audio Lab down into the tray under the deck; the music keeps playing">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v9M4 8l4 4 4-4" /></svg>
+          <span class="nav-word">Tray</span>
         </button>
         <button class="nav-btn" onclick={() => musicStudio.close()} aria-label="Exit Audio Lab" title="Exit: close Audio Lab and stop the music">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
@@ -414,7 +433,7 @@
         <VisualRack />
         <RackModules />
       </div>
-      <div class="slot b12 face"><PlayModule size="wide" /></div>
+      <div class="slot b2 face"><PlayModule /></div>
       <div class="slot b3 face"><BeatModule /></div>
     {:else if s.set === 'machine'}
       <!-- No keyboard here: the pads are the instrument. -->
@@ -546,6 +565,19 @@
     border: 1px solid var(--studio-edge); border-radius: var(--studio-radius); background: transparent; color: var(--studio-ink); cursor: pointer;
   }
   .nav-btn:hover { border-color: var(--studio-ink); }
+  /* Deck and Tray carry their mark in the icon blue and a word beside it. */
+  .nav-btn.worded { width: auto; padding: 0 10px; display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: var(--ga-text-body, 13px); white-space: nowrap; }
+  .nav-btn.worded svg { color: var(--ga-icon, #5278ff); }
+  /* Each set's mark, in the icon blue, before its name. */
+  .set-tabs button { display: inline-flex; align-items: center; gap: 6px; }
+  .set-tabs :global(.set-mark) { flex: 0 0 auto; width: 14px; height: 14px; fill: none; stroke: var(--ga-icon, #5278ff); stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+  /* Tighter windows: Deck and Tray keep their marks and drop their words, and the sets drop their marks,
+     so the bar still fits without scrolling. */
+  @media (max-width: 1899px) {
+    .nav-word { display: none; }
+    .nav-btn.worded { width: var(--ga-bar-control-h, 30px); padding: 0; justify-content: center; }
+    .set-tabs :global(.set-mark) { display: none; }
+  }
   .nav-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
   /* Narrower windows: the title goes and the menus tighten, so everything stays on the bar. */
   @media (max-width: 1799px) {
@@ -669,10 +701,9 @@
   .lower-tall .b12 { grid-column: 1; }
   /* The analog synth needs the full width, so the panel covers it (the keyboard is in the left rack). */
   .set-analog.lower-tall .b12 { display: none; }
-  /* Dub: the wide keyboard has no room beside the expanded panel, so it steps aside too, and the left rack
-     (bass, siren, pads, shots) takes its place down to the bottom. */
-  .set-dub.lower-tall .b12 { display: none; }
-  .set-dub.lower-tall .rack.left,
+  /* Dub: the keys sit under the centre column only, and the left rack (bass, siren, pads and all the echo
+     shots) runs the whole side down to the bottom. */
+  .set-dub .rack.left,
   .set-analog.lower-tall .rack.left { grid-row: 2 / 5; }
   .tall-btn { margin-left: auto; flex: 0 0 auto; width: 24px; height: 22px; padding: 0; display: inline-grid; place-items: center; border-radius: 6px; border: 1px solid var(--studio-line, rgba(255,255,255,.14)); background: transparent; color: var(--studio-muted); cursor: pointer; }
   .tall-btn:hover, .tall-btn.on { color: var(--studio-text, #fff); border-color: var(--studio-accent, #8af); }
