@@ -9,6 +9,8 @@
  *  - control: a moving 0-1 signal into something that can follow one ("cv:xy.x"
  *    -> "dest:macro:<id>" turns a macro knob; "-> dest:layer:2" pulses a VJ
  *    layer's opacity).
+ *
+ * @ui-text: the knob labels here are shown (the extractor reads them).
  */
 
 import { DRUM_VOICES, type DrumVoice, type InstrumentId } from './noteEvents';
