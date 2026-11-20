@@ -104,6 +104,9 @@ export const VOICE_SHADERS: readonly VoiceShader[] = [
   { file: 'VX-BeamBurn.fs', name: 'Beam Burn', family: 'analog', pack: 'glitch', blurb: 'A phosphor beam that flares, skips and scorches the glass on hits' },
   { file: 'VX-NeonFault.fs', name: 'Neon Fault', family: 'dub', pack: 'glitch', blurb: 'A neon sign that buzzes and drops letters on hits' },
   { file: 'VX-LiquidSignal.fs', name: 'Liquid Signal', family: 'bath', pack: 'glitch', blurb: 'A bold picture melting into glossy streaks, stirred on hits' },
+  { file: 'VX-Sorter.fs', name: 'Sorter', family: 'berlin', pack: 'glitch', blurb: 'A dusk sky pixel-sorted live: its bright parts pour into long clean gradients' },
+  { file: 'VX-Databend.fs', name: 'Databend', family: 'analog', pack: 'glitch', blurb: 'A still life run through audio effects, band by band' },
+  { file: 'VX-TimeSlice.fs', name: 'Time Slice', family: 'berlin', pack: 'glitch', blurb: 'A tumbling frame of light, every row taken at a different moment' },
   // Cosmos: psychedelia, deep space, light through glass and water, point clouds,
   // flocks and nebulas. Each has its own transparent background (Cut out).
   { file: 'VX-LiquidLight.fs', name: 'Liquid Light', family: 'dub', pack: 'cosmos', blurb: 'Glossy oil blobs drifting between glass plates that split in two on every hit' },
@@ -150,6 +153,19 @@ export const VOICE_SHADERS: readonly VoiceShader[] = [
   { file: 'VX-LedMonolith.fs', name: 'LED Monolith', family: 'berlin', pack: 'form', blurb: 'A freestanding LED slab whose diode data re-rolls on every hit' },
   { file: 'VX-LedWall.fs', name: 'LED Wall', family: 'berlin', pack: 'form', blurb: 'A whole wall of diodes, edge to edge, its bands of data re-rolling on every hit' },
   { file: 'VX-TileWall.fs', name: 'Tile Wall', family: 'analog', pack: 'form', blurb: 'A kinetic wall of two-sided tiles that flip over in patches on each hit' },
+  { file: 'VX-LaserLattice.fs', name: 'Laser Lattice', family: 'berlin', pack: 'form', blurb: 'Hairline laser beams crossing a hazy room, re-aimed on hits' },
+  { file: 'VX-Ridgelines.fs', name: 'Ridgelines', family: 'dub', pack: 'form', blurb: 'Stacked mountain lines in perspective; a line of light rolls in on each hit' },
+  { file: 'VX-KineticLights.fs', name: 'Kinetic Lights', family: 'bath', pack: 'form', blurb: 'A grid of glowing spheres on cables, rising and falling as one wave' },
+  { file: 'VX-Contour.fs', name: 'Contour', family: 'bath', pack: 'form', blurb: 'A slowly morphing topographic map; hits light an elevation band' },
+  { file: 'VX-LightField.fs', name: 'Light Field', family: 'bath', pack: 'form', blurb: 'A glowing aperture flooding a quiet room with color' },
+  { file: 'VX-Loom.fs', name: 'Loom', family: 'analog', pack: 'form', blurb: 'One luminous thread tracing a turning 3D figure' },
+  { file: 'VX-Silk.fs', name: 'Silk', family: 'bath', pack: 'form', blurb: 'Translucent satin ribbons drifting and crossing' },
+  { file: 'VX-Swarm.fs', name: 'Swarm', family: 'dub', pack: 'form', blurb: 'Points on tilted orbits leaving fine trails that a current smears' },
+  { file: 'VX-Armillary.fs', name: 'Armillary', family: 'berlin', pack: 'form', blurb: 'Nested rings turning on their own axes, a bead of light on each' },
+  // Glass: light seen through it.
+  { file: 'VX-LiquidGlass.fs', name: 'Liquid Glass', family: 'dub', pack: 'form', blurb: 'A clear thick liquid poured over a lit backdrop, bending it with a spectral fringe' },
+  { file: 'VX-GlassBlocks.fs', name: 'Glass Blocks', family: 'analog', pack: 'form', blurb: 'A wall of wavy glass blocks, each a lens on the lights behind it' },
+  { file: 'VX-ReededGlass.fs', name: 'Reeded Glass', family: 'analog', pack: 'form', blurb: 'Soft light shapes broken into slivers by fluted glass' },
 ];
 
 export const voiceShaderByFile = (file: string): VoiceShader | undefined => VOICE_SHADERS.find((v) => v.file === file);
@@ -295,6 +311,22 @@ export const VISUAL_SCENES: readonly VisualScene[] = [
     { file: 'VX-Stairs.fs', source: 'hats', level: 0.6 },
   ] },
   // Form and Light scenes, after the studio's visual guide.
+  { id: 'form-glass', name: 'Glass', set: 'dub', palette: 'arctic', voices: [
+    { file: 'VX-LiquidGlass.fs', source: 'bass', auto: false },
+    { file: 'VX-ReededGlass.fs', source: 'lead', level: 0.5 },
+  ] },
+  { id: 'form-lasers', name: 'Lasers', set: 'berlin', palette: 'mono-accent', voices: [
+    { file: 'VX-LaserLattice.fs', source: 'kick', auto: false },
+    { file: 'VX-Armillary.fs', source: 'hats', level: 0.5 },
+  ] },
+  { id: 'form-light-room', name: 'Light room', set: 'bath', palette: 'tungsten', voices: [
+    { file: 'VX-LightField.fs', source: 'pad', auto: false },
+    { file: 'VX-Silk.fs', source: 'chords', level: 0.5 },
+  ] },
+  { id: 'form-ridge', name: 'Ridge', set: 'dub', palette: 'bone-ink', voices: [
+    { file: 'VX-Ridgelines.fs', source: 'bass', auto: false },
+    { file: 'VX-Swarm.fs', source: 'lead', level: 0.6 },
+  ] },
   { id: 'form-led-wall', name: 'LED wall', set: 'berlin', palette: 'mono-accent', voices: [
     { file: 'VX-LedWall.fs', source: 'kick', auto: false },
     { file: 'VX-Stack.fs', source: 'hats', level: 0.3 },

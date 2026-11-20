@@ -106,6 +106,10 @@ function phraseAt(t) {
     vxPitch: 0.3 + 0.4 * (((notes * 5) % 7) / 6),
     vxGlide: 0.4,
     vxCount: notes,
+    // The newer voices follow these three: the level, the latest hit dying away, and a clock that runs with the sound.
+    vxSwell: 0.6 + 0.2 * Math.sin(t * 1.3),
+    vxPulse: Math.max(0, 1 - since * 1.4),
+    vxFlow: t * 1.2,
     vxPhase: t,
     vxBeat: beat % 4,
     vxBar: Math.floor(beat / 4),
