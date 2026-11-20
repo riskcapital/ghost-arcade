@@ -54,6 +54,7 @@
   <div class="shade" aria-hidden="true"></div>
 
   <div class="content">
+    <div class="group">
     <header class="brand">
       <h1 class="wordmark"><img src={wordmark} alt="Ghost Arcade" /></h1>
       <p class="edition">Mobile</p>
@@ -101,8 +102,9 @@
           </button>
         {/each}
       </div>
-      <p class="hint">Map is in the bar at the bottom; Mobile Control is under Tools.</p>
     </section>
+    </div>
+    <p class="hint">Map is in the bar at the bottom; Mobile Control is under Tools.</p>
   </div>
 </div>
 
@@ -138,24 +140,28 @@
     position: absolute;
     inset: 0;
     pointer-events: none;
-    background: radial-gradient(ellipse 70% 60% at 50% 62%, rgba(7, 8, 9, 0.74) 0%, rgba(7, 8, 9, 0.56) 55%, rgba(7, 8, 9, 0) 100%);
+    background: radial-gradient(ellipse 75% 50% at 50% 50%, rgba(7, 8, 9, 0.74) 0%, rgba(7, 8, 9, 0.56) 55%, rgba(7, 8, 9, 0) 100%);
   }
 
   .content {
     position: relative;
     display: flex;
     flex-direction: column;
-    justify-content: space-between;
+    /* The mark, the question and the rows are one group, centred in the screen; the hint
+       keeps to the bottom, with the same room left at the top so the centre stays true. */
+    justify-content: center;
     width: min(520px, 100%);
     min-height: 100%;
+    padding-block: 34px;
+    box-sizing: border-box;
     margin: 0 auto;
     opacity: 0;
     transition: opacity 0.5s ease 0.1s;
   }
   .ready .content { opacity: 1; }
 
-  /* Portrait: the mark sits in the upper third, the rows down where a thumb reaches. */
-  .brand { margin-top: 12vh; }
+  .group { display: flex; flex-direction: column; }
+  .brand { margin-bottom: 28px; }
   .wordmark { margin: 0; line-height: 0; }
   .wordmark img { display: block; width: 100%; height: auto; }
   .edition {
@@ -166,7 +172,6 @@
     color: #5e6571;
   }
 
-  .start { padding-top: 32px; }
   .start-title {
     margin: 0 0 12px;
     font-size: 20px;
@@ -237,28 +242,28 @@
   /* The row under the finger is the one place the coral shows, as on the desktop. */
   .choice:is(:active, :focus-visible) .choice-arrow { color: var(--accent-primary, #ff725f); transform: translateX(3px); }
 
-  .hint { margin: 12px 0 0; font-size: 12px; line-height: 1.45; color: #5e6571; }
+  .hint { position: absolute; left: 0; right: 0; bottom: 0; margin: 0; font-size: 12px; line-height: 1.45; color: #5e6571; }
 
-  /* Landscape: the mark on the left, the rows on the right, both centred in the height. */
-  @media (orientation: landscape) {
-    .content {
+  /* A phone on its side is too short for the stack: the mark on the left, the rows on the
+     right, both centred in the height. Taller landscape screens keep the stack. */
+  @media (orientation: landscape) and (max-height: 600px) {
+    .content { width: min(900px, 100%); }
+    .group {
       flex-direction: row;
       align-items: center;
       justify-content: center;
       gap: clamp(24px, 6vw, 64px);
-      width: min(900px, 100%);
     }
-    .brand { flex: 1 1 0; margin-top: 0; max-width: 380px; }
-    .start { flex: 1 1 0; padding-top: 0; max-width: 420px; }
+    .brand { flex: 1 1 0; margin-bottom: 0; max-width: 380px; }
+    .start { flex: 1 1 0; max-width: 420px; }
     .shade { background: radial-gradient(ellipse 60% 75% at 50% 50%, rgba(7, 8, 9, 0.74) 0%, rgba(7, 8, 9, 0.56) 55%, rgba(7, 8, 9, 0) 100%); }
     .choice { min-height: 64px; padding-block: 10px; }
     .start-title { font-size: 18px; margin-bottom: 8px; }
   }
 
-  /* Short portrait screens (iPhone SE): less air above the mark. */
+  /* Short portrait screens (iPhone SE): a little tighter. */
   @media (orientation: portrait) and (max-height: 700px) {
-    .brand { margin-top: 6vh; }
-    .start { padding-top: 20px; }
+    .brand { margin-bottom: 22px; }
     .choice { min-height: 68px; padding-block: 10px; }
   }
 
