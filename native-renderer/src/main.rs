@@ -14,6 +14,7 @@ mod graph_readbacks;
 mod scene_frame;
 mod core_frame_counter;
 mod media_decode;
+mod media_orphans;
 mod hap_video;
 mod hap_texture;
 mod isf_passes;
@@ -5324,6 +5325,8 @@ struct App {
     link_clock: Option<(f64, f64, Instant)>,
     link_phase_anchors: HashMap<String, Value>,
     deferred_source_releases: HashSet<String>,
+    /// Plain media sources nothing has referenced for a while (media_orphans.rs).
+    orphan_sweep: media_orphans::OrphanSweep,
     /// Sources that lost a layer during the command batch being applied.
     /// A row reorder rebinds every row in one batch, so a source can be
     /// without a layer for a moment before a later command gives it one.
@@ -5817,6 +5820,7 @@ impl App {
             link_clock: None,
             link_phase_anchors: HashMap::new(),
             deferred_source_releases: HashSet::new(),
+            orphan_sweep: media_orphans::OrphanSweep::default(),
             batch_orphan_candidates: None,
             native_video_decode_pending: HashSet::new(),
             native_video_decode_failed: HashSet::new(),
@@ -6956,6 +6960,7 @@ impl App {
         counts.insert("evicted_shader_ids".into(), json!(self.evicted_shader_ids.len()));
         counts.insert("manual_clock_media_stash".into(), json!(self.manual_clock_media_stash.as_ref().map_or(0, |m| m.len())));
         counts.insert("batch_orphan_candidates".into(), json!(self.batch_orphan_candidates.as_ref().map_or(0, |m| m.len())));
+        counts.insert("media_sources.unreferenced_tracked".into(), json!(self.orphan_sweep.tracked()));
         counts.insert("media_sources.library".into(), json!(self.media_sources.keys().filter(|id| id.starts_with("library:")).count()));
         counts.insert("media_sources.without_session".into(), json!(self.media_sources.keys().filter(|id| !self.native_video_streams.contains_key(*id)).count()));
         counts.insert("native_video_streams.library".into(), json!(self.native_video_streams.keys().filter(|id| id.starts_with("library:")).count()));
@@ -18202,6 +18207,23 @@ impl App {
         }
     }
 
+    /// Release plain media sources nothing has referenced for
+    /// `media_orphans::ORPHAN_GRACE` (at most once a second).
+    fn sweep_orphan_media_sources(&mut self, now: Instant) {
+        if !self.orphan_sweep.due(now) {
+            return;
+        }
+        let sources = self.media_sources.keys()
+            .map(|id| (id.clone(), self.media_source_is_referenced(id)
+                || self.prepared_launch_sources.get(id).is_some_and(|expires| *expires > now)))
+            .collect::<Vec<_>>();
+        let release = self.orphan_sweep.pass(
+            sources.iter().map(|(id, referenced)| (id.as_str(), *referenced)), EMPTY_SOURCE_FRAME_ID, now);
+        for id in release {
+            self.release_media_source_if_orphaned(&id);
+        }
+    }
+
     fn release_media_source_if_orphaned(&mut self, source_id: &str) {
         if source_id.is_empty()
             || source_id.starts_with("library:")
@@ -19611,6 +19633,7 @@ impl App {
         for id in self.deferred_source_releases.iter().cloned().collect::<Vec<_>>() {
             self.release_media_source_if_orphaned(&id);
         }
+        self.sweep_orphan_media_sources(Instant::now());
         self.refresh_link_phase();
         let now = Instant::now();
         let source_ids = self
