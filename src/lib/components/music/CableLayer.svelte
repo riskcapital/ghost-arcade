@@ -14,17 +14,15 @@
   import { canConnect } from '../../music/studioSets';
   import { musicStudio } from '../../music/musicStudioStore';
   import { generateUUID } from '../../utils/uuid';
-  import { CABLE_COLORS, CABLE_LIVE_COLOR, cablePath } from '../../music/cableLook';
-  import './cableStyles.css';
+  import { CABLE_COLORS, CABLE_LIVE_COLOR, cablePath, type DrawnCable } from '../../music/cableLook';
+  import CableStrands from './CableStrands.svelte';
 
   let { root }: { root: HTMLElement | null } = $props();
 
-  interface Drawn { id: string; d: string; color: string; ends: [number, number, number, number] }
-
   const COLORS = CABLE_COLORS;
 
-  let drawn = $state<Drawn[]>([]);
-  let live = $state<{ d: string; color: string } | null>(null);
+  let drawn = $state<DrawnCable[]>([]);
+  let live = $state<DrawnCable | null>(null);
   let frame: number | null = null;
   let signature = '';
   /** Something may have moved a jack: measure on the next frame. */
@@ -75,7 +73,7 @@
       const id = el.dataset.jack;
       if (id && !jacks.has(id)) jacks.set(id, el);
     }
-    const next: Drawn[] = [];
+    const next: DrawnCable[] = [];
     cables.forEach((c, i) => {
       const a = centre(jacks, c.from, origin);
       const b = centre(jacks, c.to, origin);
@@ -85,7 +83,7 @@
     let nextLive: typeof live = null;
     if (drag) {
       const a = centre(jacks, drag.from, origin);
-      if (a) nextLive = { d: path(a[0], a[1], drag.x - origin.left, drag.y - origin.top), color: CABLE_LIVE_COLOR };
+      if (a) nextLive = { id: 'live', d: path(a[0], a[1], drag.x - origin.left, drag.y - origin.top), color: CABLE_LIVE_COLOR, ends: [a[0], a[1], drag.x - origin.left, drag.y - origin.top], live: true };
     }
     const sig = next.map((n) => n.d).join('|') + (nextLive?.d ?? '');
     if (sig === signature) return;
@@ -221,21 +219,8 @@
 <svelte:window onpointermove={onMove} onpointerup={onUp} onpointercancel={() => cableDrag.set(null)} oncontextmenucapture={onContext} />
 
 <svg class="cables" aria-hidden="true" bind:this={svgEl}>
-  <g class="patched {$cableView}">
-  {#each drawn as c (c.id)}
-    <path d={c.d} class="hit" data-cable={c.id} />
-    <path d={c.d} class="shadow studio-cable-shadow" />
-    <path d={c.d} stroke={c.color} class="cable studio-cable" class:hover={hovered === c.id} />
-    <circle cx={c.ends[0]} cy={c.ends[1]} r={hovered === c.id ? 9 : 6} class="plug studio-cable-plug" class:hover={hovered === c.id} stroke={c.color} />
-    <circle cx={c.ends[2]} cy={c.ends[3]} r={hovered === c.id ? 9 : 6} class="plug studio-cable-plug" class:hover={hovered === c.id} stroke={c.color} />
-  {/each}
-  </g>
-  <g>
-  {#if live}
-    <path d={live.d} class="shadow studio-cable-shadow" />
-    <path d={live.d} stroke={live.color} class="cable studio-cable live" />
-  {/if}
-  </g>
+  <g class="patched {$cableView}"><CableStrands cables={drawn} {hovered} /></g>
+  <g>{#if live}<CableStrands cables={[live]} />{/if}</g>
 </svg>
 
 {#if editing && editCable}
@@ -291,9 +276,6 @@
 {/if}
 
 <style>
-  .hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: none; }
-  .cable.hover { stroke-width: 8; }
-  .plug.hover { stroke-width: 4; }
   .cable-editor .row { gap: 6px; }
   .undo {
     position: fixed;

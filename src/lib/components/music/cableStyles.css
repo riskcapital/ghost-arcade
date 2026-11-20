@@ -4,3 +4,9 @@
 .studio-cable.live { stroke-dasharray: 2 8; }
 .studio-cable-shadow { fill: none; stroke: rgba(0, 0, 0, 0.5); stroke-width: 8; transform: translate(2px, 4px); }
 .studio-cable-plug { fill: #0d1224; stroke-width: 3; }
+.studio-cable.hover { stroke-width: 8; }
+.studio-cable-plug.hover { stroke-width: 4; }
+/* An invisible wide stroke, for finding the cable under the pointer. */
+.studio-cable-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: none; }
+/* A normal: the connection an input has with nothing plugged in. */
+.studio-cable.normal { stroke-width: 2; stroke-dasharray: 3 5; opacity: 0.4; }

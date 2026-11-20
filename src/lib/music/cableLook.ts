@@ -6,6 +6,18 @@
 
 export const CABLE_COLORS = ['#5278ff', '#a8bcff', '#7ec8e3', '#ff8577', '#e6ebf7'];
 
+/** A cable ready to draw: its path, colour and the centres of its two plugs. */
+export interface DrawnCable {
+  id: string;
+  d: string;
+  color: string;
+  ends: [number, number, number, number];
+  /** An input's connection with nothing plugged in, drawn faint and dashed. */
+  normal?: boolean;
+  /** The cable in the hand, before it is plugged. */
+  live?: boolean;
+}
+
 /** The color of the cable in a drag, before it is plugged. */
 export const CABLE_LIVE_COLOR = '#a8bcff';
 
