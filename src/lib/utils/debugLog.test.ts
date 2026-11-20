@@ -21,6 +21,13 @@ describe('debug log rotation', () => {
       .toBe(join('/src', 'electron-debug.log'));
   });
 
+  it('lets a development test run keep its log elsewhere, never a packaged app', () => {
+    expect(debugLogLocation({ packaged: false, platform: 'darwin', env: { GA_DEBUG_LOG_DIR: '/tmp/soak' }, sourceRoot: '/src' }).file)
+      .toBe(join('/tmp/soak', 'electron-debug.log'));
+    expect(debugLogLocation({ packaged: true, platform: 'darwin', env: { HOME: '/Users/a', GA_DEBUG_LOG_DIR: '/tmp/soak' }, sourceRoot: '/src' }).file)
+      .toBe(join('/Users/a', 'Library', 'Logs', 'ghost-arcade-debug.log'));
+  });
+
   it('names older logs .1 and .2', () => {
     expect(rotatedLogName('/l/ghost-arcade-debug.log', 0)).toBe('/l/ghost-arcade-debug.log');
     expect(rotatedLogName('/l/ghost-arcade-debug.log', 2)).toBe('/l/ghost-arcade-debug.2.log');
