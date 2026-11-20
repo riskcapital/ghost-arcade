@@ -104,7 +104,6 @@
       </div>
     </section>
     </div>
-    <p class="hint">Map is in the bar at the bottom; Mobile Control is under Tools.</p>
   </div>
 </div>
 
@@ -147,8 +146,7 @@
     position: relative;
     display: flex;
     flex-direction: column;
-    /* The mark, the question and the rows are one group, centred in the screen; the hint
-       keeps to the bottom, with the same room left at the top so the centre stays true. */
+    /* The mark, the question and the rows are one group, centred in the screen. */
     justify-content: center;
     width: min(520px, 100%);
     min-height: 100%;
@@ -242,7 +240,6 @@
   /* The row under the finger is the one place the coral shows, as on the desktop. */
   .choice:is(:active, :focus-visible) .choice-arrow { color: var(--accent-primary, #ff725f); transform: translateX(3px); }
 
-  .hint { position: absolute; left: 0; right: 0; bottom: 0; margin: 0; font-size: 12px; line-height: 1.45; color: #5e6571; }
 
   /* A phone on its side is too short for the stack: the mark on the left, the rows on the
      right, both centred in the height. Taller landscape screens keep the stack. */
