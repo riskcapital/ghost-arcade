@@ -729,6 +729,9 @@
    * it is the one shortcut a live show must never lose.
    */
   function keyGate(event: KeyboardEvent) {
+    // File → New and Open still reach the app (each asks first, and a new
+    // project closes this editor, keeping unsaved edits as a draft).
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && /^[no]$/i.test(event.key)) return;
     event.stopPropagation();
     if (event.type !== 'keydown' || event.defaultPrevented || event.repeat) return;
     if (event.ctrlKey || event.metaKey || event.altKey || (event.key !== 'b' && event.key !== 'B')) return;

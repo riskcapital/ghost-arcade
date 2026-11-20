@@ -27,6 +27,7 @@ import { buildLookEffects, lookPalette } from '../looks/edgeLooks';
 import { edgeLook } from '../looks/edgeLookCatalog';
 import { mediaLibrary } from './media';
 import { isPhoneFeedUri } from '../mobile/phoneFeeds';
+import { closeSketchEditor } from '../sketchEditor/sketchEditorStore';
 import { vjClipLauncher, vjClipLauncherNow, type VJClip, type VJBlock, type VJLayerState, DEFAULT_VJ_LAYERS, DEFAULT_VJ_COLUMNS } from './vjClipLauncher';
 import { normalizedTransitionDuration, normalizedTransitionStyle } from './vjClipTransitions';
 import { disposeJSAnimationContext } from '../renderer/js-animation';
@@ -518,6 +519,11 @@ export const PROJECT_SECTION_RESETS = {
   showTimeline: () => showTimeline.hydrate(null),
   showControl: () => hydrateShowControl(null),
   surfaces: () => hydrateSurfaceStore([], null),
+  // The sketch editor edits the old project's layers or tray item; left open
+  // over a new project it held the key focus (File → New's shortcut never
+  // reached the app) and saved into layers that were gone. Unsaved edits stay
+  // as a draft that comes back the next time that sketch is opened.
+  sketchEditor: () => closeSketchEditor(),
 } as const;
 
 export type ProjectSection = keyof typeof PROJECT_SECTION_RESETS;
@@ -6475,6 +6481,7 @@ void main() {
         const proj = parsed.project!;
         // Keeps importing even if VJ runtime cleanup fails.
         resetProjectSection('vjClipLauncher');
+        resetProjectSection('sketchEditor');
 
         // Import vjMode with compositions (presets)
         let importedVjMode: VJModeState | null = null;
