@@ -1,8 +1,28 @@
 use serde_json::{Value, json};
 
+/// Where an instrument's shaders come from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShaderSource {
+    /// Shaders built into the core, listed in `shader_ids` and warmed up front.
+    Builtin,
+    /// Shaders the app sends with each graph (an Interactive 3D scene, a
+    /// video synthesizer patch); `shader_ids` is empty by design.
+    Runtime,
+}
+
+impl ShaderSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ShaderSource::Builtin => "builtin",
+            ShaderSource::Runtime => "runtime",
+        }
+    }
+}
+
 pub struct NativeGraphInstrumentSpec {
     pub id: &'static str,
     pub label: &'static str,
+    pub shader_source: ShaderSource,
     pub shader_ids: &'static [&'static str],
     pub features: &'static [&'static str],
     pub parity: &'static str,
@@ -12,6 +32,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
     NativeGraphInstrumentSpec {
         id: "svg",
         label: "SVG",
+        shader_source: ShaderSource::Builtin,
         shader_ids: &["svg/render-v6", "svg/transform-v6"],
         features: &[
             "compute_graph_host",
@@ -25,6 +46,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
     NativeGraphInstrumentSpec {
         id: "lines",
         label: "Lines",
+        shader_source: ShaderSource::Builtin,
         shader_ids: &["lines/render"],
         features: &[
             "compute_graph_host",
@@ -38,6 +60,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
     NativeGraphInstrumentSpec {
         id: "light-painting",
         label: "Light Painting",
+        shader_source: ShaderSource::Builtin,
         shader_ids: &["light-painting/render-v8"],
         features: &[
             "compute_graph_host",
@@ -51,6 +74,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
     NativeGraphInstrumentSpec {
         id: "text",
         label: "Text",
+        shader_source: ShaderSource::Builtin,
         shader_ids: &["text/render-v1"],
         features: &[
             "compute_graph_host",
@@ -66,6 +90,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
     NativeGraphInstrumentSpec {
         id: "splat",
         label: "Splat / Point Cloud",
+        shader_source: ShaderSource::Builtin,
         shader_ids: &["splat/render-v1", "splat/shadowvol-v1"],
         features: &[
             "compute_graph_host",
@@ -81,6 +106,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
     NativeGraphInstrumentSpec {
         id: "model3d",
         label: "3D Model",
+        shader_source: ShaderSource::Builtin,
         shader_ids: &["model3d/render-v1"],
         features: &[
             "compute_graph_host",
@@ -97,6 +123,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
     NativeGraphInstrumentSpec {
         id: "planet",
         label: "Planet",
+        shader_source: ShaderSource::Builtin,
         shader_ids: &["planet/render"],
         features: &[
             "compute_graph_host",
@@ -111,6 +138,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
     NativeGraphInstrumentSpec {
         id: "smoke-3d",
         label: "3D Smoke",
+        shader_source: ShaderSource::Builtin,
         shader_ids: &[
             "3d-smoke/splat",
             "3d-smoke/advect-velocity",
@@ -139,6 +167,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
     NativeGraphInstrumentSpec {
         id: "particle-field",
         label: "Particle Field",
+        shader_source: ShaderSource::Builtin,
         shader_ids: &[
             "particle-field/behavior",
             "particle-field/edges",
@@ -164,6 +193,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
     NativeGraphInstrumentSpec {
         id: "volumetric-spheres",
         label: "Volumetric Spheres",
+        shader_source: ShaderSource::Builtin,
         shader_ids: &[
             "volumetric-spheres/sim",
             "volumetric-spheres/links",
@@ -185,6 +215,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
     NativeGraphInstrumentSpec {
         id: "fluid-riders",
         label: "Fluid Riders",
+        shader_source: ShaderSource::Builtin,
         shader_ids: &[
             "3d-smoke/splat",
             "3d-smoke/advect-velocity",
@@ -215,6 +246,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
     NativeGraphInstrumentSpec {
         id: "smoke-riders",
         label: "Smoke Riders",
+        shader_source: ShaderSource::Builtin,
         shader_ids: &[
             "3d-smoke/splat",
             "3d-smoke/advect-velocity",
@@ -245,6 +277,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
     NativeGraphInstrumentSpec {
         id: "ink-cloud",
         label: "Ink Cloud",
+        shader_source: ShaderSource::Builtin,
         shader_ids: &["ink-cloud/sim", "ink-cloud/render", "ink-cloud/background"],
         features: &[
             "compute_graph_host",
@@ -261,6 +294,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
     NativeGraphInstrumentSpec {
         id: "flythrough",
         label: "Flythrough",
+        shader_source: ShaderSource::Builtin,
         shader_ids: &[
             "flythrough/curl-bake",
             "flythrough/compute",
@@ -283,6 +317,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
     NativeGraphInstrumentSpec {
         id: "pixel-particles",
         label: "Pixel Particles",
+        shader_source: ShaderSource::Builtin,
         shader_ids: &[
             "pixel-particles/compute",
             "pixel-particles/render",
@@ -304,6 +339,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
     NativeGraphInstrumentSpec {
         id: "point-cloud-fx",
         label: "Point Cloud FX",
+        shader_source: ShaderSource::Builtin,
         shader_ids: &[
             "point-cloud-fx/compute",
             "point-cloud-fx/sort-fill",
@@ -326,6 +362,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
     NativeGraphInstrumentSpec {
         id: "ghostfx",
         label: "GhostFX",
+        shader_source: ShaderSource::Builtin,
         shader_ids: &[
             "ghostfx/drift-compute",
             "ghostfx/drift-render",
@@ -361,6 +398,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
     NativeGraphInstrumentSpec {
         id: "vj-crossfade",
         label: "VJ Crossfade",
+        shader_source: ShaderSource::Builtin,
         shader_ids: &["vj-crossfade/render"],
         features: &[
             "compute_graph_host",
@@ -378,6 +416,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
     NativeGraphInstrumentSpec {
         id: "vj-mix",
         label: "VJ Mix",
+        shader_source: ShaderSource::Builtin,
         shader_ids: &["vj-mix/render"],
         features: &[
             "compute_graph_host",
@@ -395,6 +434,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
     NativeGraphInstrumentSpec {
         id: "handfx",
         label: "HandFX",
+        shader_source: ShaderSource::Builtin,
         shader_ids: &[
             "handfx/compute",
             "handfx/render",
@@ -418,6 +458,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
     NativeGraphInstrumentSpec {
         id: "performer-world",
         label: "Performer World Overlay",
+        shader_source: ShaderSource::Builtin,
         shader_ids: &["performer-world/render"],
         features: &[
             "compute_graph_host",
@@ -435,6 +476,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
         id: "scene3d",
         label: "Interactive 3D",
         // A scene brings its own shaders with its graph; none are built in.
+        shader_source: ShaderSource::Runtime,
         shader_ids: &[],
         features: &[
             "compute_graph_host",
@@ -453,6 +495,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
         id: "videosynth",
         label: "Video synthesizer",
         // Its shaders come with its graph.
+        shader_source: ShaderSource::Runtime,
         shader_ids: &[],
         features: &[
             "compute_graph_host",
@@ -487,6 +530,7 @@ pub fn native_graph_instrument_manifest() -> Value {
                     "id": spec.id,
                     "label": spec.label,
                     "source_uri_prefix": format!("native-graph://{}/", spec.id),
+                    "shader_source": spec.shader_source.as_str(),
                     "shader_ids": spec.shader_ids,
                     "shader_count": spec.shader_ids.len(),
                     "features": spec.features,
@@ -518,5 +562,43 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(ids, native_graph_instrument_ids());
+    }
+
+    /// A builtin instrument lists the shaders it warms up; a runtime one gets
+    /// its shaders with each graph and lists none. Either way the app's
+    /// readiness check can tell a complete route from a broken one.
+    #[test]
+    fn every_instrument_says_where_its_shaders_come_from() {
+        for spec in NATIVE_GRAPH_INSTRUMENT_SPECS {
+            match spec.shader_source {
+                ShaderSource::Builtin => assert!(!spec.shader_ids.is_empty(), "{} is builtin with no shaders", spec.id),
+                ShaderSource::Runtime => assert!(spec.shader_ids.is_empty(), "{} gets its shaders at runtime but lists some", spec.id),
+            }
+        }
+        let manifest = native_graph_instrument_manifest();
+        for entry in manifest.as_array().unwrap() {
+            let source = entry.get("shader_source").and_then(Value::as_str);
+            assert!(matches!(source, Some("builtin") | Some("runtime")), "{entry}");
+        }
+    }
+
+    /// Every feature an instrument needs must be one the core advertises in
+    /// `get_capabilities`, or the route can never be ready and the Output
+    /// Window never opens (scene3d and videosynth needed a feature name the
+    /// core did not advertise).
+    #[test]
+    fn every_required_feature_is_advertised_by_the_core() {
+        let main = include_str!("main.rs");
+        let start = main.find("let features = json!({").expect("capabilities feature map");
+        let block = &main[start..start + main[start..].find("\n        });").expect("end of feature map")];
+        for spec in NATIVE_GRAPH_INSTRUMENT_SPECS {
+            for feature in spec.features {
+                assert!(
+                    block.contains(&format!("\"{feature}\": true")) || block.contains(&format!("\"{feature}\":")),
+                    "{} needs {feature}, which the core does not advertise",
+                    spec.id,
+                );
+            }
+        }
     }
 }

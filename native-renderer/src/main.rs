@@ -6051,6 +6051,9 @@ impl App {
             "compute_graph_instanced_render": true,
             "compute_graph_indirect_render": true,
             "compute_graph_texture_sampling": true,
+            // Graph-owned textures (upsert_compute_graph_textures): an
+            // Interactive 3D scene's and a video synthesizer's own targets.
+            "compute_graph_textures": true,
             "compute_graph_depth_render": true,
             "compute_graph_line_render": true,
             "compute_graph_clear_color": true,
