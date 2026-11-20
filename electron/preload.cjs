@@ -123,7 +123,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   // Offscreen hosts for three.js / p5.js sources (js-source-host.js)
   'js_source_open', 'js_source_close', 'js_source_params', 'js_source_audio', 'js_source_status',
   'js_source_thumbnail', 'js_source_trial', 'js_source_render_clock', 'js_source_step',
-  'native_renderer_prefetch_media', 'native_renderer_clear_prefetch_cache',
+  'native_renderer_prefetch_media', 'native_renderer_clear_prefetch_cache', 'native_renderer_release_library_prerolls',
   'native_renderer_probe_video',
   'native_renderer_clear_decode_preview_cache', 'native_renderer_clear_runtime_caches',
   'native_renderer_set_vram_budget', 'native_renderer_set_target_fps',
