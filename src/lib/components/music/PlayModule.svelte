@@ -140,7 +140,7 @@
       </div>
     {/if}
   {/snippet}
-  <div class="surface" bind:clientWidth={surfaceWidth}>
+  <div class="surface" class:cheeks={s.instrument !== 'drums'} bind:clientWidth={surfaceWidth}>
     {#if s.instrument === 'drums'}
       <DrumPads />
     {:else}
@@ -171,6 +171,8 @@
   }
   .surface { flex: 1; min-height: 56px; display: flex; }
   .keymode { flex: 0 0 auto; max-width: 104px; }
+  /* The keybed sits between two wooden end blocks. */
+  .surface.cheeks { padding: 0 14px; background: var(--studio-wood); border-radius: var(--studio-radius); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.5); }
   /* Fade / Build and the visual picker sit in the header, beside the module's name. */
   .foot { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 0 1 260px; }
   .stepper button { display: inline-grid; place-items: center; }

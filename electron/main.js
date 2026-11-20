@@ -6535,7 +6535,12 @@ function autoInterfaceScale(win) {
   return Math.max(0.75, Math.min(1.25, Math.floor(raw * 20) / 20));
 }
 
-function setInterfaceZoom(win, value) {
+// The interface is drawn a little smaller than the system's 100%, so the whole
+// editor fits a laptop screen: a size of 100% in Settings is this zoom.
+const INTERFACE_BASE_ZOOM = 0.9;
+
+function setInterfaceZoom(win, size) {
+  const value = size * INTERFACE_BASE_ZOOM;
   if (Math.abs(win.webContents.getZoomFactor() - value) < 0.001) return;
   win.webContents.setZoomFactor(value);
   nativePreviewLastRectSignature = '';

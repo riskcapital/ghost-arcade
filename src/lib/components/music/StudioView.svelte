@@ -454,6 +454,20 @@
     visibility: hidden;
   }
 
+  /* Wooden end cheeks down both sides, as on a synth cabinet. */
+  .studio-view::before,
+  .studio-view::after {
+    content: '';
+    position: absolute;
+    top: var(--ga-bar-h, 48px);
+    bottom: 0;
+    width: 8px;
+    background: var(--studio-wood);
+    z-index: 2;
+    pointer-events: none;
+  }
+  .studio-view::before { left: 0; box-shadow: inset -1px 0 0 rgba(0, 0, 0, 0.6); }
+  .studio-view::after { right: 0; box-shadow: inset 1px 0 0 rgba(0, 0, 0, 0.6); }
   .studio-view {
     position: fixed;
     inset: 0;
@@ -500,10 +514,20 @@
   .sub-left { justify-content: flex-start; }
   .subbar { container-type: inline-size; }
   .sub-right .ico { display: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
-  /* Space runs short: the macros keep their knobs and side tags but tighten, Record and Mixer fold to icons (tooltips stay). */
-  @container (max-width: 880px) {
+  /* The macros never run under their neighbors: on a window too narrow for all eight, their row scrolls sideways. */
+  .sub-centre { overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; scrollbar-color: var(--studio-edge) transparent; justify-content: flex-start; }
+  .sub-centre > :global(*) { margin: 0 auto; flex: 0 0 auto; }
+  /* First to go: the next song's name, then Record and Mixer fold to icons (tooltips stay). */
+  @container (max-width: 1240px) {
+    .subbar :global(.song-strip .up) { display: none; }
+  }
+  @container (max-width: 1120px) {
     .sub-right .ico { display: block; }
-    .sub-right .lbl, .subbar :global(.rec .go .lbl), .subbar :global(.song-strip .up) { display: none; }
+    .sub-right .lbl, .subbar :global(.rec .go .lbl) { display: none; }
+    .subbar :global(.song-strip .now) { min-width: 52px; max-width: 120px; }
+  }
+  /* Space runs short: the macros keep their knobs and side tags but tighten. */
+  @container (max-width: 940px) {
     .subbar :global(.song-strip .now) { min-width: 52px; max-width: 92px; }
     .subbar :global(.macros) { gap: 2px; }
     .subbar :global(.macros .macro .knob-wrap) { min-width: 34px; }
@@ -529,7 +553,7 @@
   }
   .set-menu { display: none; }
   /* Narrow: the set tabs become one menu. */
-  @media (max-width: 1279px) {
+  @media (max-width: 1399px) {
     .set-tabs { display: none; }
     .set-menu { display: inline-block; }
   }
@@ -596,8 +620,6 @@
     gap: var(--ga-bar-group-gap, 14px);
     background: var(--ga-bar, #100f0d);
     border-bottom: 1px solid var(--studio-edge-soft);
-    /* The set that is on, as a strip of its colour along the top. */
-    box-shadow: inset 0 3px 0 var(--studio-set-tint, transparent);
     white-space: nowrap;
     font-size: var(--ga-text-body, 13px);
     /* A narrow window scrolls the bar sideways instead of cutting it off. */

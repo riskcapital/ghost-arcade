@@ -149,7 +149,6 @@ export const VOICE_SHADERS: readonly VoiceShader[] = [
   { file: 'VX-OpBands.fs', name: 'Op Bands', family: 'berlin', pack: 'form', blurb: 'Black and white op-art bands that bend into waves with the bass' },
   { file: 'VX-LedMonolith.fs', name: 'LED Monolith', family: 'berlin', pack: 'form', blurb: 'A freestanding LED slab whose diode data re-rolls on every hit' },
   { file: 'VX-LedWall.fs', name: 'LED Wall', family: 'berlin', pack: 'form', blurb: 'A whole wall of diodes, edge to edge, its bands of data re-rolling on every hit' },
-  { file: 'VX-DiodeField.fs', name: 'Diode Field', family: 'dub', pack: 'form', blurb: 'Crossing waves shown on a wall of diodes; each hit drops a ring in the accent color' },
   { file: 'VX-TileWall.fs', name: 'Tile Wall', family: 'analog', pack: 'form', blurb: 'A kinetic wall of two-sided tiles that flip over in patches on each hit' },
 ];
 
@@ -298,7 +297,7 @@ export const VISUAL_SCENES: readonly VisualScene[] = [
   // Form and Light scenes, after the studio's visual guide.
   { id: 'form-led-wall', name: 'LED wall', set: 'berlin', palette: 'mono-accent', voices: [
     { file: 'VX-LedWall.fs', source: 'kick', auto: false },
-    { file: 'VX-DiodeField.fs', source: 'bass', level: 0.5 },
+    { file: 'VX-Stack.fs', source: 'hats', level: 0.3 },
   ] },
   { id: 'form-tile-wall', name: 'Tile wall', set: 'analog', palette: 'bone-ink', voices: [
     { file: 'VX-TileWall.fs', source: 'kick', auto: false },

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const invoke = vi.hoisted(() => vi.fn().mockResolvedValue({ scale: 1 }));
 vi.mock('../bridge', () => ({ isDesktopApp: true, invoke }));
-import { interfaceScale, normalizeInterfaceScale, startInterfaceScale } from './interfaceScale';
+import { interfaceScale, migrateInterfaceScale, normalizeInterfaceScale, startInterfaceScale } from './interfaceScale';
 
 describe('editor interface scaling', () => {
   beforeEach(() => { interfaceScale.set(1); invoke.mockClear(); });
@@ -10,6 +10,13 @@ describe('editor interface scaling', () => {
     expect(normalizeInterfaceScale(0.1)).toBe(0.75);
     expect(normalizeInterfaceScale(3)).toBe(2);
     expect(normalizeInterfaceScale('1.25')).toBe(1.25);
+  });
+  it('reads a size saved on the old scale as the one that looks the same now', () => {
+    expect(migrateInterfaceScale(null)).toBe('auto');
+    expect(migrateInterfaceScale('auto')).toBe('auto');
+    expect(migrateInterfaceScale('0.9')).toBe(1);
+    expect(migrateInterfaceScale('1')).toBe(1.1);
+    expect(migrateInterfaceScale('2')).toBe(2);
   });
   it('only sends scale changes while the main editor owns the subscription', () => {
     interfaceScale.set(1.25);

@@ -14,6 +14,7 @@ const RETIRED: Record<string, string> = {
   'VX-ChromePool.fs': 'VX-MoltenChrome.fs',
   'VX-Prism.fs': 'VX-Slabs.fs',
   'VX-Harp.fs': 'VX-LightLines.fs',
+  'VX-DiodeField.fs': 'VX-LedWall.fs',
 };
 
 /** The shader a saved file name stands for now. */

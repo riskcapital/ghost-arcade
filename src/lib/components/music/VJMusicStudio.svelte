@@ -212,7 +212,6 @@
     gap: var(--ga-space-4, 12px);
     background: var(--ga-bar, #100f0d);
     border-bottom: 1px solid var(--studio-edge-soft);
-    box-shadow: inset 0 3px 0 var(--studio-set-tint, transparent);
     white-space: nowrap;
   }
   .group { display: flex; align-items: center; gap: var(--ga-space-2, 6px); flex: 0 0 auto; }

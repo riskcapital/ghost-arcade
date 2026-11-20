@@ -3,7 +3,7 @@
   import NdiOutputSettings from './NdiOutputSettings.svelte';
   import { uiLanguage, UI_LANGUAGES } from '../i18n';
   import { isMac } from '$lib/bridge';
-  import { interfaceScale } from '../stores/interfaceScale';
+  import { INTERFACE_SIZES, interfaceScale } from '../stores/interfaceScale';
   import { onMount, onDestroy } from 'svelte';
   import { tooltipsEnabled } from '../help/preferences';
   import { NATIVE_ENGINE_ONLY, settings, getSupportedFormats, COLOR_SCHEMES, CLAUDE_MODELS, GEMINI_MODELS, OMNI_MODELS, LUMA_MODELS, DEFAULT_LAYER_SHADERS, type RecordingSettings, type OutputSettings, type ColorSchemeId, type FluidQualityMode, type ShaderQualityMode, type GpuInstrumentQualityMode, type ShaderAIProvider, type VideoAIProvider } from '../stores/settings';
@@ -863,7 +863,7 @@
             </div>
             <select id="interface-scale" value={String($interfaceScale)} onchange={e => interfaceScale.set(e.currentTarget.value === 'auto' ? 'auto' : Number(e.currentTarget.value))}>
               <option value="auto">Auto · fits the window</option>
-              {#each [0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2] as scale}
+              {#each INTERFACE_SIZES as scale}
                 <option value={String(scale)}>{Math.round(scale * 100)}%</option>
               {/each}
             </select>

@@ -158,7 +158,7 @@
       <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <rect x="2" y="4" width="20" height="13" rx="1.5" /><path d="M8 21h8M12 17v4M11 8h7v5h-7zM5 8h3M5 12h3" />
       </svg>
-      <span>Preview</span>
+      <span class="lbl">Preview</span>
     </button>
     {#if menuOpen}
       <div class="menu" role="dialog" aria-label="Preview monitor">
