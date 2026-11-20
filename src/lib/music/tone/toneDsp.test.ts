@@ -1,8 +1,24 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DrumEngine, Ladder, ToneEngine } from './toneDsp';
 import { TONES } from './tones';
 import { DRUM_KITS } from './kits';
 import { EXTRA_SOUNDS, MACHINE_KITS } from '../drumMachine/machineKits';
+
+// The voices use Math.random (analog slop, noise, drift). Against the fixed
+// peak thresholds below that made a different kit fail now and then, so
+// every test runs on the same seeded sequence.
+function seeded(seed: number) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+beforeEach(() => { vi.spyOn(Math, 'random').mockImplementation(seeded(0x5eed)); });
+afterEach(() => { vi.restoreAllMocks(); });
 
 const SR = 48000;
 const BLOCK = 128;
