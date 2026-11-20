@@ -50,13 +50,34 @@ describe('the one GO', () => {
     expect(goDecision(base({ hand: { kind: 'section', id: 'Drop' } }))).toEqual({ kind: 'jumpTo', sectionId: 'Drop' });
     expect(goDecision(base({ hand: { kind: 'cue', id: 'encore' } }))).toEqual({ kind: 'fireCue', cueId: 'encore' });
     expect(goDecision(base({ hand: { kind: 'marker', id: 'm1', cueId: 'c1' } }))).toEqual({ kind: 'fireCue', cueId: 'c1' });
-    // A marker with no cue has nothing to fire: GO falls through to the sections.
-    expect(goDecision(base({ hand: { kind: 'marker', id: 'm1', cueId: null }, standby: STACK[1] }))).toEqual({ kind: 'sections' });
+    // A marker with no cue has nothing to fire: GO falls through (a marker
+    // ahead is never fired early, so playing there is nothing to do).
+    expect(goDecision(base({ hand: { kind: 'marker', id: 'm1', cueId: null }, standby: STACK[1] }))).toEqual({ kind: 'jumpTo', sectionId: 'Build' });
   });
 
-  it('never fires a marker early: a marker on standby (not by hand) is the sections\' GO', () => {
+  it('never fires a marker early: a marker on standby (not by hand) waits for the playhead', () => {
     const m = STACK.find((i) => i.kind === 'marker')!;
-    expect(goDecision(base({ standby: m }))).toEqual({ kind: 'sections' });
+    expect(goDecision(base({ standby: m }))).toEqual({ kind: 'none' });
+    expect(goWords({ kind: 'none' }, SECTIONS, 'm1')).toBe('m1 fires when the playhead gets there');
+    // Inside a section that holds, GO still arms it.
+    expect(goDecision(base({ hereId: 'Outro', standby: m }))).toEqual({ kind: 'sections' });
+  });
+
+  it('playing through a section (an Auto show), GO goes to the section on standby', () => {
+    const autoShow = [section('Intro', 0, 8), section('Drop 2', 8, 20), section('Drop 3', 20, 30)];
+    const stack = buildCueStack(autoShow, [], []);
+    const drop3 = stack.find((i) => i.id === 'Drop 3')!;
+    const d = goDecision(base({ sections: autoShow, hereId: 'Drop 2', standby: drop3 }));
+    expect(d).toEqual({ kind: 'jumpTo', sectionId: 'Drop 3' });
+    expect(goWords(d, autoShow, 'Drop 3')).toBe('Goes to Drop 3');
+    // Stopped, the sections' GO still plays from where the playhead is.
+    expect(goDecision(base({ sections: autoShow, hereId: 'Drop 2', standby: drop3, playing: false }))).toEqual({ kind: 'sections' });
+  });
+
+  it('a section here that holds, goes Live or loops keeps the sections\' GO (arms it)', () => {
+    const outro = STACK.find((i) => i.id === 'Break')!;
+    expect(goDecision(base({ hereId: 'Outro', standby: outro }))).toEqual({ kind: 'sections' });
+    expect(goDecision(base({ hereId: 'Break', standby: null, sections: SECTIONS }))).toEqual({ kind: 'none' });
   });
 
   it('a manual cue on standby fires', () => {
@@ -77,7 +98,7 @@ describe('the one GO', () => {
 
   it('takeover and phrases are not inputs: GO decides the same with them on (Return is R; phrases are pads)', () => {
     const input = base({ hereId: 'Drop', standby: STACK.find((i) => i.id === 'Outro')! });
-    expect(goDecision(input)).toEqual({ kind: 'sections' });
+    expect(goDecision(input)).toEqual({ kind: 'jumpTo', sectionId: 'Outro' });
     expect(Object.keys(input)).not.toContain('takeover');
   });
 });
