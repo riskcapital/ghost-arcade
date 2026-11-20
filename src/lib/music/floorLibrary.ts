@@ -15,10 +15,75 @@ export interface FloorCollection {
   bass: Hit[]; hook: Hit[]; answer: Hit[];
   chords: Array<[number, number, number]>;
   drums: BeatLoop['rows']; swing: number;
+  /** Octaves (seven degrees each) to move the hook by; a lowered hook also stays at or under C5 in every key. */
+  leadOctave?: number;
+  /** The bass written out over all four bars (beats 0-16, degrees from the key note). Takes the place of `bass`. */
+  bassLine?: Hit[];
+  /** The hook written out over all four bars. Takes the place of `hook` and `answer`. */
+  hookLine?: Hit[];
+}
+
+/** An arpeggio up and back through each bar's chord, in eighth notes, for a hook line. */
+function arpLine(roots: number[], velocity = 0.42): Hit[] {
+  const shape = [0, 2, 4, 7, 4, 2, 4, 7];
+  return roots.flatMap((r, b) => shape.map((d, i): Hit => [b * 4 + i * 0.5, 0.42, r + d, velocity * (i % 4 === 0 ? 1.1 : i % 2 ? 0.8 : 0.92)]));
 }
 // Drum strings are two independently written bars. o is a ghost, not another accent.
 export const FLOOR_COLLECTIONS: FloorCollection[] = [
   ...EXTRA_COLLECTIONS,
+  // ── Dub, three ways. Each is written out bar by bar: the bass is the song. ──
+  // Hard roots reggae with a rockers push: a busy, singing bass under a one drop with a cracking rim,
+  // a clean double-stroke guitar skank on two and four, and a plain minor guitar line answering itself.
+  { id: 'current', name: 'Positive Current', style: 'dub', bpm: 76, kit: 'kit.roots-session', roots: [0,0,3,4],
+    bassTone: 'bass.rockers-growl', keysTone: 'keys.skank-guitar', leadTone: 'lead.hollow', leadOctave: -1, swing: 0.07,
+    bass: [], hook: [], answer: [],
+    bassLine: [
+      [0,0.9,0,1],[1,0.4,0,0.7],[1.5,0.4,2,0.75],[2,0.9,4,0.95],[3,0.4,2,0.7],[3.5,0.45,0,0.85],
+      [4.5,0.4,0,0.9],[5,0.4,-1,0.75],[5.5,0.4,0,0.8],[6,1.3,2,0.95],[7.5,0.45,1,0.8],
+      [8,0.9,3,1],[9,0.4,3,0.7],[9.5,0.4,5,0.75],[10,0.9,7,0.95],[11,0.4,5,0.7],[11.5,0.45,3,0.85],
+      [12,0.4,4,1],[12.5,0.4,4,0.7],[13,0.4,6,0.85],[14,0.4,4,0.9],[14.5,0.4,2,0.75],[15,0.4,1,0.8],[15.5,0.4,-1,0.85],
+    ],
+    hookLine: [
+      [0.5,0.75,4,0.5],[1.5,0.4,6,0.4],[2,1.4,7,0.5],
+      [4.5,0.4,7,0.45],[5,0.4,6,0.4],[5.5,0.4,4,0.42],[6,1.5,2,0.48],
+      [8.5,0.75,5,0.5],[9.5,0.4,7,0.4],[10,1.4,9,0.5],
+      [12.5,0.4,8,0.45],[13,0.4,7,0.4],[13.5,0.4,6,0.42],[14,1.6,4,0.5],
+    ],
+    chords: [[1,0.12,0.85],[1.25,0.08,0.4],[3,0.12,0.75],[3.25,0.08,0.38]],
+    drums: { kick:'........x...............x.....o.',snare:'........x...............x.......',rim:'..............o...............o.',hatClosed:'x.oxx.o.x.oxx.o.x.oxx.o.x.oxx.ox',hatOpen:'......o...............o.........',tom:'.............................o.o' } },
+  // Slow, smoky studio dub: a deep, sparse bass that leaves the one empty every other bar, an organ bubble,
+  // long horn notes over two chords, and a loose one drop with hand-drum fills.
+  { id: 'tinroof', name: 'Tin Roof Echo', style: 'dub', bpm: 68, kit: 'kit.roots-session', roots: [0,0,6,0],
+    bassTone: 'bass.dub-round', keysTone: 'keys.bubble-organ', leadTone: 'pad.brass', leadOctave: -1, swing: 0.1,
+    bass: [], hook: [], answer: [],
+    bassLine: [
+      [1,1.3,0,1],[2.5,0.4,4,0.7],[3,0.4,-1,0.8],[3.5,0.4,0,0.85],
+      [4.75,0.4,0,0.8],[5.5,0.4,2,0.7],[6,1.5,4,0.95],
+      [9,1.3,-1,1],[10.5,0.4,1,0.7],[11,0.4,3,0.8],[11.5,0.4,1,0.7],
+      [12.75,0.4,0,0.85],[13.5,0.4,-1,0.7],[14,0.9,0,0.95],[15,0.4,2,0.75],[15.5,0.4,-1,0.8],
+    ],
+    hookLine: [
+      [0,1.8,4,0.4],[2,1.8,7,0.56],
+      [4,0.9,6,0.44],[5,0.9,4,0.34],[6,1.8,2,0.5],
+      [8,1.8,3,0.4],[10,1.8,6,0.56],
+      [12,0.9,4,0.44],[13,0.9,2,0.34],[14,1.7,0,0.52],
+    ],
+    chords: [[0.5,0.1,0.45],[1,0.14,0.8],[1.5,0.1,0.45],[2.5,0.1,0.45],[3,0.14,0.75],[3.5,0.1,0.45]],
+    drums: { kick:'........x...............x.......',rim:'........x.....o.........x..o....',hatClosed:'o.x.o.x.o.x.o.xxo.x.o.x.o.x.o.x.',hatOpen:'..............o...............o.',tom:'...o..........................oo' } },
+  // Psychedelic dub: a round sub that slides and jumps the octave over four chords, wide held pads,
+  // a glassy arpeggio through each chord, and a half-time steppers beat full of small percussion.
+  { id: 'moss', name: 'Moss Cathedral', style: 'dub', bpm: 86, kit: 'kit.halfstep', roots: [0,5,3,4],
+    bassTone: 'bass.pedal-sub', keysTone: 'pad.lush-80s', leadTone: 'lead.pluck-delay', leadOctave: -1, swing: 0.1,
+    bass: [], hook: [], answer: [],
+    bassLine: [
+      [0,1.2,0,1],[1.5,0.4,7,0.7],[2,0.4,0,0.9],[2.75,0.4,4,0.75],[3.5,0.45,2,0.8],
+      [4,1.2,5,1],[5.5,0.4,7,0.7],[6,0.4,5,0.9],[6.75,0.4,2,0.75],[7.5,0.45,1,0.8],
+      [8,1.2,3,1],[9.5,0.4,7,0.7],[10,0.4,3,0.9],[10.75,0.4,5,0.75],[11.5,0.45,4,0.8],
+      [12,0.9,4,1],[13,0.4,4,0.7],[13.5,0.4,6,0.8],[14,0.9,4,0.9],[15,0.3,2,0.75],[15.25,0.3,1,0.7],[15.5,0.45,-1,0.85],
+    ],
+    hookLine: arpLine([0,5,3,4]),
+    chords: [[0,2.6,0.5]],
+    drums: { kick:'x.....x...x.....x.....x...x..o..',snare:'........x...............x.......',clap:'........o...............o.......',hatClosed:'x.xox.x.x.xox.xox.xox.x.x.xox.xx',hatOpen:'....o.......o.......o.......o...',rim:'...o.....o.o.......o.....o.o....',tom:'.............................oo.' } },
   { id: 'kinetic', name: 'Kinetic Relay', style: 'dnb', bpm: 174, kit: 'kit.roller', roots: [0,0,0,6],
     bassTone: 'bass.roller-reese', keysTone: 'keys.liquid-tines', leadTone: 'lead.signal-pluck', swing: 0.02,
     bass: [[0,0.6,0,0.95],[0.75,0.2,0,0.42],[1.5,0.4,7,0.8],[2.25,0.6,0,0.9],[3.25,0.35,4,0.7]],
@@ -41,10 +106,10 @@ export const FLOOR_COLLECTIONS: FloorCollection[] = [
     chords: [[0.75,0.2,0.8],[2.5,0.2,0.6]],
     drums: { kick:'x.x.......x.....x......x..x..o..',snare:'....x..o.o..x.o.....x.o..o..x.ox',hatClosed:'x.x.o.x.x.o.x.oxx.o.x.x.o.x.x.o.',tom:'.............................o.o' } },
   { id: 'magnet', name: 'Magnet Mouth', style: 'dubstep', bpm: 140, kit: 'kit.halfstep', roots: [0,0,5,4],
-    bassTone: 'bass.vowel-crush', keysTone: 'keys.rave-chop', leadTone: 'lead.signal-pluck', swing: 0,
+    bassTone: 'bass.vowel-crush', keysTone: 'keys.rave-chop', leadTone: 'lead.fat-saw', leadOctave: -1, swing: 0,
     bass: [[0,0.6,0,1],[0.75,0.2,7,0.65],[1.5,0.3,0,0.9],[2.75,0.6,4,0.85],[3.5,0.25,2,0.65]],
-    hook: [[0.5,0.3,7,0.85],[1.25,0.2,7,0.6],[3,0.6,4,0.8]],
-    answer: [[0.5,0.3,7,0.85],[1.25,0.2,9,0.65],[2.75,0.3,7,0.75],[3.5,0.3,6,0.6]],
+    hook: [[0,1.25,0,0.51],[1.5,0.5,1,0.36],[2,1,2,0.48],[3.25,0.5,1,0.36]],
+    answer: [[0,1.25,4,0.51],[1.5,0.5,5,0.36],[2,1,4,0.45],[3.25,0.5,3,0.36]],
     chords: [[0,0.35,0.7],[3,0.3,0.5]],
     drums: { kick:'x.....x....o....x......x......x.',snare:'........x...............x.....o.',clap:'........o...............o.......',hatClosed:'x.x.o.xxx.x.o.x.x.x.o.x.x.x.oxox',rim:'.....o...............o..........' } },
   { id: 'substation', name: 'Substation', style: 'dubstep', bpm: 138, kit: 'kit.halfstep', roots: [0,6,0,4],
@@ -62,10 +127,10 @@ export const FLOOR_COLLECTIONS: FloorCollection[] = [
     chords: [[0,0.25,0.75],[1.5,0.2,0.55]],
     drums: { kick:'x..o..x.........x....x....x.....',snare:'........x......o........x....o.o',hatClosed:'x.x.x.xxx.x.xxoxx.x.x.x.x.x.xxxx',clap:'........o...............o.......' } },
   { id: 'velvet', name: 'Velvet Elevator', style: 'house', bpm: 124, kit: 'kit.club-pocket', roots: [0,3,5,4],
-    bassTone: 'bass.club-finger', keysTone: 'keys.liquid-tines', leadTone: 'lead.signal-pluck', swing: 0.12,
+    bassTone: 'bass.club-finger', keysTone: 'keys.liquid-tines', leadTone: 'keys.filter-disco', leadOctave: -1, swing: 0.12,
     bass: [[0.5,0.3,0,0.95],[1.25,0.18,7,0.5],[1.75,0.3,4,0.8],[2.5,0.3,0,0.9],[3.25,0.18,2,0.55],[3.5,0.3,4,0.8]],
-    hook: [[0.5,0.35,4,0.85],[1.5,0.35,4,0.65],[2.25,0.6,7,0.9],[3.5,0.3,6,0.7]],
-    answer: [[0.5,0.35,4,0.85],[1.5,0.35,4,0.65],[2.25,0.6,9,0.85],[3.5,0.3,7,0.7]],
+    hook: [[0.5,0.5,4,0.85],[1.25,0.25,5,0.6],[1.5,0.75,4,0.8],[2.75,0.75,2,0.7]],
+    answer: [[0.5,0.5,2,0.8],[1.25,0.25,3,0.6],[1.5,0.75,4,0.8],[2.75,0.75,3,0.7]],
     chords: [[0.5,0.25,0.8],[1.75,0.18,0.55],[2.5,0.3,0.75],[3.5,0.2,0.6]],
     drums: { kick:'x...x...x...x...x...x...x...x...',clap:'....x.......x.......x.......x...',hatClosed:'o..o..o.o..o..o.o..o..o.o..o.o..',hatOpen:'..x...x...x...x...x...x...x...x.',rim:'.......o.......o.......o.....o..' } },
   { id: 'copper', name: 'Copper Disco', style: 'house', bpm: 122, kit: 'kit.club-pocket', roots: [0,0,3,4],
@@ -83,10 +148,10 @@ export const FLOOR_COLLECTIONS: FloorCollection[] = [
     chords: [[0.5,0.15,0.8],[1.5,0.15,0.6],[2.5,0.15,0.75],[3.25,0.12,0.5]],
     drums: { kick:'x...x...x...x...x...x...x...x...',clap:'....x.......x.......x.......x..o',hatClosed:'x.ox..o.x.ox..o.x.ox..o.x.ox..o.',hatOpen:'..x...x...x...x...x...x...x...x.',rim:'...o.....o.........o.....o....o.' } },
   { id: 'yard', name: 'Yard Lanterns', style: 'dub', bpm: 74, kit: 'kit.roots-session', roots: [0,0,3,4],
-    bassTone: 'bass.yard-wood', keysTone: 'keys.dub-skank', leadTone: 'lead.hollow', swing: 0.06,
+    bassTone: 'bass.yard-wood', keysTone: 'keys.dub-skank', leadTone: 'keys.bubble-organ', leadOctave: -1, swing: 0.06,
     bass: [[0.5,0.7,0,0.95],[1.5,0.3,2,0.65],[2,1,4,0.9],[3.5,0.3,2,0.7]],
-    hook: [[0.5,0.6,4,0.85],[1.5,0.3,2,0.65],[2.5,0.6,0,0.8]],
-    answer: [[0.5,0.6,4,0.85],[1.5,0.3,6,0.7],[2.5,0.3,4,0.8],[3.25,0.4,2,0.6]],
+    hook: [[0.5,0.75,2,0.4],[1.5,0.4,1,0.3],[2,1,0,0.38]],
+    answer: [[0.5,0.75,2,0.4],[1.5,0.4,3,0.33],[2,0.75,4,0.4],[3,0.5,3,0.33]],
     chords: [[1,0.12,0.8],[3,0.1,0.6]],
     drums: { kick:'........x...............x.......',rim:'........x...............x.....o.',hatClosed:'o.x.o.x.o.x.o.x.o.x.o.x.o.x.o.x.',hatOpen:'..............o.................',tom:'.............................o.o' } },
   { id: 'tower', name: 'Tower Steppers', style: 'dub', bpm: 78, kit: 'kit.roots-session', roots: [0,3,0,4],
@@ -106,30 +171,49 @@ export const FLOOR_COLLECTIONS: FloorCollection[] = [
 ];
 
 type StyledMelodic = MelodicLoop & { style: LoopStyle; bpm: [number, number]; tone: string };
-function parts(c: FloorCollection): StyledMelodic[] {
-  const feel = (c.style === 'house' || c.style === 'french') ? FEELS.house : c.style === 'dub' ? FEELS.roots : FEELS.straight;
-  const build = (role: LoopRole, tone: string, notes: LoopNote[]): StyledMelodic => ({
-    id: `floor-${c.id}-${role}`, name: `${c.name} / ${role === 'lead' ? 'Hook' : role === 'bass' ? 'Bass' : 'Chords'}`,
-    role, tone, style: c.style, bpm: [c.bpm-4,c.bpm+4], beats: 16, groove: `floor-${c.id}-beat`,
-    notes: applyGroove(notes, feel).sort((a,b) => a.beat-b.beat),
-  });
+/** The feel a collection's written notes are played with. */
+export const floorFeel = (c: FloorCollection) => (c.style === 'house' || c.style === 'french') ? FEELS.house : c.style === 'dub' ? FEELS.roots : FEELS.straight;
+/** A collection's four bars as written, before the feel: the song builder (demoSongs.ts) cuts its sections from these. */
+export function floorMaterial(c: FloorCollection): { bass: LoopNote[]; chords: LoopNote[]; hook: LoopNote[]; voicings: number[][]; ceiling?: number } {
   const phrase = (hits: Hit[], bar: number, root: number): LoopNote[] => hits.map(([beat,dur,d,velocity]) => ({
     beat: bar*4+beat, dur, degrees: [root+d], velocity: bar === 1 ? velocity*0.92 : velocity,
   }));
-  const bass = c.roots.flatMap((r,b) => phrase(c.bass,b,r));
-  // End on the home fifth, then a short root pickup; leave an audible breath.
-  const last = bass[bass.length-1]; last.dur = Math.min(last.dur, 15.5-last.beat);
-  if (last.dur <= 0) bass.pop();
-  bass.push({beat:15.5,dur:0.18,degrees:[4],velocity:0.7},{beat:15.75,dur:0.16,degrees:[0],velocity:0.55});
+  const line = (hits: Hit[], shiftBy = 0): LoopNote[] => hits.map(([beat,dur,d,velocity]) => ({ beat, dur, degrees: [d+shiftBy], velocity }));
+  let bass: LoopNote[];
+  if (c.bassLine) {
+    // Written out in full: played as it stands.
+    bass = line(c.bassLine);
+  } else {
+    bass = c.roots.flatMap((r,b) => phrase(c.bass,b,r));
+    // End on the home fifth, then a short root pickup; leave an audible breath.
+    const last = bass[bass.length-1]; last.dur = Math.min(last.dur, 15.5-last.beat);
+    if (last.dur <= 0) bass.pop();
+    bass.push({beat:15.5,dur:0.18,degrees:[4],velocity:0.7},{beat:15.75,dur:0.16,degrees:[0],velocity:0.55});
+  }
   // Open voicings keep the chord root out of the bass register. Adjacent
   // chords share upper tones; sevenths provide colour without a low cluster.
   const voicings = voiceLead(c.roots.map(r => [r,r+2,r+4,r+6]), [2,4,6,7]);
   const chords = c.roots.flatMap((_r,b) => c.chords.map(([beat,dur,velocity]): LoopNote => ({
     beat:b*4+beat,dur,velocity:velocity*[1,.82,.94,.88][b],degrees:voicings[b],
   })));
-  const hook = c.roots.flatMap((r,b) => phrase(b === 1 || b === 3 ? c.answer : c.hook,b,r));
-  hook[hook.length-1].degrees = [7]; // return to the tonic above the next bass root
-  return [build('bass',c.bassTone,bass), build('chords',c.keysTone,chords), build('lead',c.leadTone,hook)];
+  const shift = (c.leadOctave ?? 0)*7;
+  let hook: LoopNote[];
+  if (c.hookLine) hook = line(c.hookLine, shift);
+  else {
+    hook = c.roots.flatMap((r,b) => phrase(b === 1 || b === 3 ? c.answer : c.hook,b,r+shift));
+    hook[hook.length-1].degrees = [7+shift]; // return to the tonic above the next bass root
+  }
+  return { bass, chords, hook, voicings, ...(shift < 0 ? { ceiling: 72 } : {}) };
+}
+function parts(c: FloorCollection): StyledMelodic[] {
+  const feel = floorFeel(c);
+  const build = (role: LoopRole, tone: string, notes: LoopNote[], ceiling?: number): StyledMelodic => ({
+    id: `floor-${c.id}-${role}`, name: `${c.name} / ${role === 'lead' ? 'Hook' : role === 'bass' ? 'Bass' : 'Chords'}`,
+    role, tone, style: c.style, bpm: [c.bpm-4,c.bpm+4], beats: 16, groove: `floor-${c.id}-beat`,
+    notes: applyGroove(notes, feel).sort((a,b) => a.beat-b.beat), ...(ceiling ? { ceiling } : {}),
+  });
+  const { bass, chords, hook, ceiling } = floorMaterial(c);
+  return [build('bass',c.bassTone,bass), build('chords',c.keysTone,chords), build('lead',c.leadTone,hook,ceiling)];
 }
 const ALL_PARTS = FLOOR_COLLECTIONS.flatMap(parts);
 export const FLOOR_MELODIC = ALL_PARTS.filter(l => l.role !== 'lead');

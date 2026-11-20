@@ -58,7 +58,7 @@
     {/snippet}
     <div class="knob-row">
       {#each DUBBASS_PARAMS as p (p.key)}
-        <StudioKnob label={p.label} value={s.params[p.key]} defaultValue={p.default} size={34} onchange={(v) => musicStudio.setParam(p.key, v)} />
+        <StudioKnob label={p.label} value={s.params[p.key]} defaultValue={p.default} size={28} onchange={(v) => musicStudio.setParam(p.key, v)} />
       {/each}
     </div>
   </StudioModule>
@@ -82,7 +82,7 @@
       </div>
       <div class="knob-row grow">
         {#each SIREN_PARAMS as p (p.key)}
-          <StudioKnob label={p.label} value={s.params[p.key]} defaultValue={p.default} size={34} onchange={(v) => musicStudio.setParam(p.key, v)} />
+          <StudioKnob label={p.label} value={s.params[p.key]} defaultValue={p.default} size={28} onchange={(v) => musicStudio.setParam(p.key, v)} />
         {/each}
       </div>
     </div>
@@ -101,7 +101,7 @@
       </div>
       <div class="shot-knobs">
         {#each SHOT_PARAMS as p (p.key)}
-          <StudioKnob label={p.label} value={s.params[p.key]} defaultValue={p.default} size={30} onchange={(v) => musicStudio.setParam(p.key, v)} />
+          <StudioKnob label={p.label} value={s.params[p.key]} defaultValue={p.default} size={26} onchange={(v) => musicStudio.setParam(p.key, v)} />
         {/each}
       </div>
     </div>

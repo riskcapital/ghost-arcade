@@ -45,7 +45,9 @@
   import MacroStrip from './MacroStrip.svelte';
   import OutputStrip from './OutputStrip.svelte';
   import SessionGrid from './SessionGrid.svelte';
+  import SongTimeline from './SongTimeline.svelte';
   import ClipEditor from './ClipEditor.svelte';
+  import ClipStackEditor from './ClipStackEditor.svelte';
   import LoopPicker from './LoopPicker.svelte';
   import MixerDesk from './MixerDesk.svelte';
   import StudioRecordControls from './StudioRecordControls.svelte';
@@ -57,7 +59,6 @@
   import PlayModule from './PlayModule.svelte';
   import BeatModule from './BeatModule.svelte';
   import CableLayer from './CableLayer.svelte';
-  import { KEY_MODES, type KeyMode } from '../../music/keyMode';
   import PatchBay from './PatchBay.svelte';
   import { CABLE_VIEW_LABELS, cableView, cycleCableView } from '../../music/cableView';
   import MacroEditor from './MacroEditor.svelte';
@@ -262,7 +263,7 @@
       </button>
     {/snippet}
     {#if lowerTab === 'session'}
-      {#if s.liveControl}<LiveSessionGrid />{:else}<SessionGrid />{/if}
+      {#if s.liveControl}<LiveSessionGrid />{:else}<SongTimeline /><SessionGrid />{/if}
     {:else if lowerTab === 'mixer'}
       <MixerPanel />
     {:else if lowerTab === 'band'}
@@ -300,6 +301,23 @@
   </StudioModule>
 {/snippet}
 
+<!-- A small mark for each set: a bowl, a saw wave, a speaker, a sine wave, a drum. -->
+{#snippet setMark(id: string)}
+  <svg class="set-mark" viewBox="0 0 16 16" aria-hidden="true">
+    {#if id === 'bath'}
+      <path d="M2.5 7.5c0 3.2 2.4 5.5 5.5 5.5s5.5-2.3 5.5-5.5z" /><path d="M11.5 2.5l-3 3" />
+    {:else if id === 'berlin'}
+      <path d="M1.5 11l4-6v6l4-6v6l4-6v6" />
+    {:else if id === 'dub'}
+      <circle cx="8" cy="8" r="5.5" /><circle cx="8" cy="8" r="1.8" />
+    {:else if id === 'analog'}
+      <path d="M1.5 8c1.6-5.5 3.4-5.5 5 0s3.4 5.5 5 0 2.2-3.6 3-3.6" />
+    {:else}
+      <ellipse cx="8" cy="5" rx="5.5" ry="2.2" /><path d="M2.5 5v6c0 1.2 2.5 2.2 5.5 2.2s5.5-1 5.5-2.2V5" />
+    {/if}
+  </svg>
+{/snippet}
+
 {#if open}
   <div class="studio-view studio-tokens set-{s.set}" class:lower-tall={lowerTall} role="region" aria-label="Audio Lab" bind:this={root}>
     <header class="bar" use:windowCaption use:wheelScrollsSideways>
@@ -326,9 +344,6 @@
         <select value={s.key.scale} onchange={(e) => musicStudio.setKey({ ...s.key, scale: (e.target as HTMLSelectElement).value as ScaleId })} aria-label="Scale">
           {#each Object.entries(SCALES) as [id, scale]}<option value={id}>{scale.label}</option>{/each}
         </select>
-        <select class="keymode" value={s.keyMode} onchange={(e) => musicStudio.setKeyMode((e.target as HTMLSelectElement).value as KeyMode)} aria-label="Keyboard mode" title={KEY_MODES.find((m) => m.id === s.keyMode)?.title} data-midi-path="studio:keys.mode-next" data-midi-label="Next keyboard mode" data-midi-mode="toggle">
-          {#each KEY_MODES as m (m.id)}<option value={m.id} title={m.title}>{m.label}</option>{/each}
-        </select>
       </div>
       <SceneBar />
       <span class="spacer"></span>
@@ -337,21 +352,26 @@
       </select>
       <div class="ga-segmented set-tabs" role="group" aria-label="Instrument set">
         {#each STUDIO_SETS as set}
-          <button class:active={s.set === set.id} aria-pressed={s.set === set.id} onclick={() => musicStudio.setSet(set.id)}>{set.label}</button>
+          <button class:active={s.set === set.id} aria-pressed={s.set === set.id} onclick={() => musicStudio.setSet(set.id)} data-midi-path="studio:set.{set.id}" data-midi-label="{set.label} set" data-midi-mode="toggle">{@render setMark(set.id)}{set.label}</button>
         {/each}
       </div>
       <div class="group">
         <button class="text-btn" class:on={$cableView !== 'show'} aria-pressed={$cableView !== 'show'} onclick={cycleCableView} title="{$cableView === 'show' ? 'Fade the cables' : $cableView === 'fade' ? 'Hide the cables' : 'Show the cables'} (connections keep working)">{CABLE_VIEW_LABELS[$cableView]}</button>
         <button class="kill-btn" onclick={killAll} title="Silence everything now, echoes and reverb included" data-midi-path="studio:studio.kill" data-midi-label="Kill all sound" data-midi-mode="toggle">Kill</button>
-        <select class="more narrow-only" value="" onchange={(e) => { const v = (e.target as HTMLSelectElement).value; (e.target as HTMLSelectElement).value = ''; if (v === 'deck') showDeck(); else if (v === 'tray') showTray(); else if (v === 'exit') musicStudio.close(); }} aria-label="More" title="Deck, tray or exit">
-          <option value="" disabled>…</option>
-          <option value="deck">Deck ({STUDIO_VIEW_KEY_LABEL})</option>
-          <option value="tray">Tray</option>
-          <option value="exit">Exit Audio Lab</option>
-        </select>
-        <button class="text-btn wide-only" onclick={showDeck} title="Go to the VJ deck to mix; the music keeps playing ({STUDIO_VIEW_KEY_LABEL} switches back and forth)" data-midi-path="studio:studio.view" data-midi-label="Audio Lab or VJ deck" data-midi-mode="toggle">Deck</button>
-        <button class="text-btn wide-only" onclick={showTray} title="Back to the Audio Lab tray under the deck; the music keeps playing">Tray</button>
-        <button class="text-btn wide-only" onclick={() => musicStudio.close()} title="Close Audio Lab and stop the music">Exit</button>
+      </div>
+      <!-- Where to go from here: always on screen, as icons so they fit any width. -->
+      <div class="group nav">
+        <button class="nav-btn worded" onclick={showDeck} aria-label="VJ deck" title="VJ deck: go to the deck to mix; the music keeps playing ({STUDIO_VIEW_KEY_LABEL} switches back and forth)" data-midi-path="studio:studio.view" data-midi-label="Audio Lab or VJ deck" data-midi-mode="toggle">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="5" height="4.5" rx="0.8" /><rect x="9" y="2.5" width="5" height="4.5" rx="0.8" /><rect x="2" y="9" width="5" height="4.5" rx="0.8" /><rect x="9" y="9" width="5" height="4.5" rx="0.8" /></svg>
+          <span class="nav-word">VJ deck</span>
+        </button>
+        <button class="nav-btn worded" onclick={showTray} aria-label="Tray" title="Tray: fold Audio Lab down into the tray under the deck; the music keeps playing">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v9M4 8l4 4 4-4" /></svg>
+          <span class="nav-word">Tray</span>
+        </button>
+        <button class="nav-btn" onclick={() => musicStudio.close()} aria-label="Exit Audio Lab" title="Exit: close Audio Lab and stop the music">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+        </button>
       </div>
     </header>
 
@@ -413,7 +433,7 @@
         <VisualRack />
         <RackModules />
       </div>
-      <div class="slot b12 face"><PlayModule size="wide" /></div>
+      <div class="slot b2 face"><PlayModule /></div>
       <div class="slot b3 face"><BeatModule /></div>
     {:else if s.set === 'machine'}
       <!-- No keyboard here: the pads are the instrument. -->
@@ -441,7 +461,7 @@
     <CableLayer {root} />
     <MacroEditor />
     <InsertEditor />
-    <ClipEditor />
+    <ClipEditor /><ClipStackEditor />
     <LoopPicker />
   </div>
 {/if}
@@ -453,6 +473,20 @@
     visibility: hidden;
   }
 
+  /* Wooden end cheeks down both sides, as on a synth cabinet. */
+  .studio-view::before,
+  .studio-view::after {
+    content: '';
+    position: absolute;
+    top: var(--ga-bar-h, 48px);
+    bottom: 0;
+    width: 8px;
+    background: var(--studio-wood);
+    z-index: 2;
+    pointer-events: none;
+  }
+  .studio-view::before { left: 0; box-shadow: inset -1px 0 0 rgba(0, 0, 0, 0.6); }
+  .studio-view::after { right: 0; box-shadow: inset 1px 0 0 rgba(0, 0, 0, 0.6); }
   .studio-view {
     position: fixed;
     inset: 0;
@@ -499,10 +533,20 @@
   .sub-left { justify-content: flex-start; }
   .subbar { container-type: inline-size; }
   .sub-right .ico { display: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
-  /* Space runs short: the macros keep their knobs and side tags but tighten, Record and Mixer fold to icons (tooltips stay). */
-  @container (max-width: 880px) {
+  /* The macros never run under their neighbors: on a window too narrow for all eight, their row scrolls sideways. */
+  .sub-centre { overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; scrollbar-color: var(--studio-edge) transparent; justify-content: flex-start; }
+  .sub-centre > :global(*) { margin: 0 auto; flex: 0 0 auto; }
+  /* First to go: the next song's name, then Record and Mixer fold to icons (tooltips stay). */
+  @container (max-width: 1240px) {
+    .subbar :global(.song-strip .up) { display: none; }
+  }
+  @container (max-width: 1120px) {
     .sub-right .ico { display: block; }
-    .sub-right .lbl, .subbar :global(.rec .go .lbl), .subbar :global(.song-strip .up) { display: none; }
+    .sub-right .lbl, .subbar :global(.rec .go .lbl) { display: none; }
+    .subbar :global(.song-strip .now) { min-width: 52px; max-width: 120px; }
+  }
+  /* Space runs short: the macros keep their knobs and side tags but tighten. */
+  @container (max-width: 940px) {
     .subbar :global(.song-strip .now) { min-width: 52px; max-width: 92px; }
     .subbar :global(.macros) { gap: 2px; }
     .subbar :global(.macros .macro .knob-wrap) { min-width: 34px; }
@@ -515,17 +559,33 @@
     .subbar :global(.macros .macro .side) { flex-direction: row; gap: 1px; }
     .subbar :global(.macros .macro .jack-wrap) { margin: -3px -2px; }
   }
-  .narrow-only { display: none; }
-  /* Narrower windows: Deck, Tray and Exit fold into the … menu, the title goes, menus tighten. */
-  @media (max-width: 1599px) {
-    .wide-only { display: none; }
-    .narrow-only { display: inline-block; }
-    .bar select.keymode { max-width: 108px; }
-    .bar select.more { width: 46px; }
+  .nav { flex: 0 0 auto; gap: 2px; }
+  .nav-btn {
+    flex: 0 0 auto; width: var(--ga-bar-control-h, 30px); height: var(--ga-bar-control-h, 30px); padding: 0; display: inline-grid; place-items: center;
+    border: 1px solid var(--studio-edge); border-radius: var(--studio-radius); background: transparent; color: var(--studio-ink); cursor: pointer;
+  }
+  .nav-btn:hover { border-color: var(--studio-ink); }
+  /* Deck and Tray carry their mark in the icon blue and a word beside it. */
+  .nav-btn.worded { width: auto; padding: 0 10px; display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: var(--ga-text-body, 13px); white-space: nowrap; }
+  .nav-btn.worded svg { color: var(--ga-icon, #5278ff); }
+  /* Each set's mark, in the icon blue, before its name. */
+  .set-tabs button { display: inline-flex; align-items: center; gap: 6px; }
+  .set-tabs :global(.set-mark) { flex: 0 0 auto; width: 14px; height: 14px; fill: none; stroke: var(--ga-icon, #5278ff); stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+  /* Tighter windows: Deck and Tray keep their marks and drop their words, and the sets drop their marks,
+     so the bar still fits without scrolling. */
+  @media (max-width: 1899px) {
+    .nav-word { display: none; }
+    .nav-btn.worded { width: var(--ga-bar-control-h, 30px); padding: 0; justify-content: center; }
+    .set-tabs :global(.set-mark) { display: none; }
+  }
+  .nav-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+  /* Narrower windows: the title goes and the menus tighten, so everything stays on the bar. */
+  @media (max-width: 1799px) {
+    .bar-title { display: none; }
   }
   .set-menu { display: none; }
   /* Narrow: the set tabs become one menu. */
-  @media (max-width: 1279px) {
+  @media (max-width: 1399px) {
     .set-tabs { display: none; }
     .set-menu { display: inline-block; }
   }
@@ -579,6 +639,8 @@
   }
 
   .bar, .rack, .slot, .centre > :global(.module) { position: relative; z-index: 1; }
+  /* The bar's dropdowns open over the racks under it. */
+  .bar { z-index: 3; }
 
   /* ── Top bar: the app's top bar (48px, 30px controls, 13px text), in groups ── */
   .bar {
@@ -616,7 +678,8 @@
   .rack.right { grid-area: right; }
   .rack > :global(.module) { flex: 0 0 auto; }
   .rack > :global(.module.grow), .rack > :global(.play), .rack > :global(.beat) { flex: 1 1 0; }
-  .rack > :global(.module.grow) { min-height: 140px; }
+  /* The visuals keep room for a few voices with their controls; a short window scrolls the rack instead. */
+  .rack > :global(.module.grow) { min-height: 300px; }
   .centre { grid-area: centre; display: flex; flex-direction: column; gap: var(--studio-gap); min-width: 0; min-height: 0; }
   .centre > :global(.lower) { flex: 0 0 auto; height: 36%; min-height: 200px; }
   /* The lower panel's tabs keep their row; its actions (Loops, Rec, length, snap, capture, MIDI) wrap to a second row when they do not fit. */
@@ -638,6 +701,10 @@
   .lower-tall .b12 { grid-column: 1; }
   /* The analog synth needs the full width, so the panel covers it (the keyboard is in the left rack). */
   .set-analog.lower-tall .b12 { display: none; }
+  /* Dub: the keys sit under the centre column only, and the left rack (bass, siren, pads and all the echo
+     shots) runs the whole side down to the bottom. */
+  .set-dub .rack.left,
+  .set-analog.lower-tall .rack.left { grid-row: 2 / 5; }
   .tall-btn { margin-left: auto; flex: 0 0 auto; width: 24px; height: 22px; padding: 0; display: inline-grid; place-items: center; border-radius: 6px; border: 1px solid var(--studio-line, rgba(255,255,255,.14)); background: transparent; color: var(--studio-muted); cursor: pointer; }
   .tall-btn:hover, .tall-btn.on { color: var(--studio-text, #fff); border-color: var(--studio-accent, #8af); }
   .tall-btn svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }

@@ -89,6 +89,9 @@
   export let onVJAddPayload: ((payload: VJTrayAddPayload) => void) | null = null;
   export let onVJLiveSourcesChange: ((sources: VJTrayLiveSourcePayload[]) => void) | null = null;
   export let isVJLiveSourceInUse: ((sourceId: string) => boolean) | null = null;
+  /** Picking for something other than the deck (a clip's visuals): the cards'
+   *  hover text, and only the media tabs (no live sources, plugins or scans). */
+  export let pickTitle: string | null = null;
 
   // Active tab
   let activeTab: 'videos' | 'images' | 'shaders' | 'js' | 'library' | 'sources' | 'plugins' | 'scans' = 'shaders';
@@ -3721,6 +3724,7 @@
   }
 
   function trayItemActionTitle(): string {
+    if (pickTitle) return pickTitle;
     return vjMode ? 'Click to add to VJ deck' : $activeBlock ? 'Click to replace the selected Timeline block' : 'Click to apply to selected layer';
   }
 
@@ -4436,13 +4440,14 @@
         <span class="tab-label">Images</span>
         <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>{#if images.length}<span class="tab-count">{images.length}</span>{/if}</span>
       </button>
-      {#if $phoneScanLibrary.length}
+      {#if $phoneScanLibrary.length && !pickTitle}
         <!-- Scans sent from a paired phone. Only shown once there is one. -->
         <button class="tab" class:active={activeTab === 'scans'} onclick={() => activeTab = 'scans'} data-tray-tab="scans">
           <span class="tab-label">Scans</span>
           <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="6" r="1.5"/><circle cx="12" cy="4" r="1.5"/><circle cx="19" cy="7" r="1.5"/><circle cx="7" cy="13" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="10" cy="20" r="1.5"/><circle cx="18" cy="18" r="1.5"/></svg><span class="tab-count">{$phoneScanLibrary.length}</span></span>
         </button>
       {/if}
+      {#if !pickTitle}
       <button class="tab" class:active={activeTab === 'sources'} data-midi-path="tray:tab:src" data-midi-label="Library tab: Sources" data-midi-mode="toggle" onclick={() => { activeTab = 'sources'; sourcesInitialized = true; enumerateWebcams(); }}>
         <span class="tab-label">Sources</span>
         <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>{#if liveSourceCount > 0}<span class="tab-count tab-live">{liveSourceCount}</span>{/if}</span>
@@ -4451,6 +4456,7 @@
         <span class="tab-label">Plugins</span>
         <span class="tab-glyph"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></span>
       </button>
+      {/if}
     </div>
   </div>
 

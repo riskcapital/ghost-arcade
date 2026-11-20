@@ -173,6 +173,7 @@
               />
               <span class="unit" class:link={linkTempo && song.bpm !== null}>{linkTempo && song.bpm !== null ? 'Link' : 'BPM'}</span>
             </span>
+            <span class="recall-label" title="What calling this song up puts back, besides its clips, key and tempo">Brings back</span>
             <div class="ga-segmented small recall" role="group" aria-label="What calling it up puts back">
               {#each RECALL as r (r.id)}
                 <button class:active={song.recall[r.id]} aria-pressed={song.recall[r.id]} onclick={() => toggleRecall(song, r.id)} title={r.title}>{r.label}</button>
@@ -374,4 +375,5 @@
   .tag.accent { border-color: currentColor; color: inherit; }
   .cue { flex: 0 0 auto; margin: 0; padding: 4px 6px; border-left: 2px solid var(--studio-accent); font-size: var(--ga-text-control, 12px); color: var(--studio-ink); line-height: 1.4; max-height: 54px; overflow: auto; }
   .cue .ga-eyebrow { margin-right: 6px; }
+  .recall-label { flex: 0 0 auto; font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); white-space: nowrap; }
 </style>

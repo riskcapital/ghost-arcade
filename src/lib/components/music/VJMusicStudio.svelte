@@ -26,6 +26,7 @@
   import BeatModule from './BeatModule.svelte';
   import SessionGrid from './SessionGrid.svelte';
   import ClipEditor from './ClipEditor.svelte';
+  import ClipStackEditor from './ClipStackEditor.svelte';
   import LoopRecorderBar from './LoopRecorderBar.svelte';
   import PadsModule from './PadsModule.svelte';
   import BathModules from './BathModules.svelte';
@@ -188,7 +189,7 @@
   </div>
 {/if}
 
-{#if shown}<ClipEditor />{/if}
+{#if shown}<ClipEditor /><ClipStackEditor />{/if}
 
 <style>
   .music-tray {

@@ -1,17 +1,21 @@
 <script lang="ts">
   /**
-   * The studio's visuals: the voices of the Music Studio instance it plays
-   * to (a studio clip in a VJ cell, or a mapping layer showing the studio).
-   * Each voice shows which visual it is, which sound it follows and its main
-   * controls; open it for the rest. Scenes load a whole stack at once. With
-   * no instance yet, one is put on the deck (or the selected layer).
+   * The studio's visuals as one list, the top drawing on top: the audio
+   * shaders of the instance it plays to (a studio clip in a VJ cell, or a
+   * mapping layer showing the studio) and the visuals of the clips playing
+   * now (clip stacks, studio and Ableton Live clips alike), in any order
+   * (visualOrder.ts). Each audio shader shows what it follows and its main
+   * controls; a clip opens to its layers, and Edit opens the clip visuals
+   * editor. Look sets the colors and finish over everything; auto-mix, under
+   * the list, lets the audio shaders take turns. With no instance yet, one is
+   * put on the deck (or the selected layer).
    */
   import { onDestroy, tick as nextTick, untrack } from 'svelte';
   import { musicStudio } from '../../music/musicStudioStore';
   import { STUDIO_SETS } from '../../music/studioSets';
-  import { voiceSourcesFor, isVoiceDrivenInput, isLiveSource, liveSource, LIVE_DRUMS, type LiveDrum, type LiveSourceId, type VoiceSourceId } from '../../music/visualVoices';
+  import { voiceSourcesFor, isVoiceDrivenInput, isLiveSource, liveSource, LIVE_DRUMS, type LiveSourceId, type VoiceSourceId } from '../../music/visualVoices';
   import { abletonBridge } from '../../ableton/abletonBridge';
-  import { guessRole, isDrumTrack, liveMatchFor, liveTrackKeys } from '../../music/liveControl';
+  import { isDrumTrack, liveMatchFor, liveTrackKeys } from '../../music/liveControl';
   import { VISUAL_SCENES, VOICE_SHADERS, shaderInputs, voiceShaderByFile, type ShaderInput } from '../../music/visualScenes';
   import { visualPicker } from '../../music/studioUi';
   import VisualPickButton from './VisualPickButton.svelte';
@@ -23,8 +27,8 @@
     addStudioVoice,
     editStudio,
     loadSceneIntoStudio,
-    moveStudioVoice,
-    hideStudioVisuals,
+    arrangeStudioVisuals,
+    setStackOff,
     placeStudio,
     removeStudioVoice,
     showStudioVisuals,
@@ -37,6 +41,10 @@
   } from '../../music/studioTarget';
   import { vjClipLauncher } from '../../stores/vjClipLauncher';
   import { stepVoiceLook, toggledVoiceLevel } from '../../music/studioMidiControls';
+  import { playingStacks, stayingStacks, type StackEntry } from '../../music/stackRuntime';
+  import { hasVisuals, type ClipStack, type StackItem } from '../../music/clipStack';
+  import { stackEditor } from '../../music/studioUi';
+  import { arrangeVisuals, moveVisualRow, visualOrder } from '../../music/visualOrder';
   import StudioModule from './StudioModule.svelte';
   import StudioKnob from './StudioKnob.svelte';
   import { STUDIO_GRADES, normalizeFinish, type StudioGrade } from '../../music/studioFinish';
@@ -78,11 +86,9 @@
       return { name: keys[i], color: t.color, midi: t.midi, drums: isDrumTrack(t, role), role, playing: playing?.name ?? null, queued: queued?.name ?? null };
     });
   });
-  let liveListOpen = $state(true);
   const liveColor = (c: number) => `#${(c & 0xffffff).toString(16).padStart(6, '0')}`;
   /** A voice's follow value in the menu: its Live source while Live leads, its studio sound otherwise. */
   const followValue = (v: StudioVoice) => (liveOn && v.live ? v.live : v.source);
-  const following = (src: LiveSourceId) => voices.filter((v) => v.live === src || (v.live?.startsWith(`${src}/`) ?? false)).length;
 
   /** A Live source's track colour, for the swatch on the visuals following it. */
   const liveColorOf = (src: LiveSourceId | undefined) => {
@@ -115,36 +121,9 @@
     }));
   });
 
-  /** Show the visuals on a Live track: scroll to the first and open its controls. */
-  function showVisualsFor(src: LiveSourceId) {
-    const i = voices.findIndex((v) => v.live === src || (v.live?.startsWith(`${src}/`) ?? false));
-    if (i < 0) return;
-    open = i;
-    void nextTick().then(() => document.querySelectorAll<HTMLElement>('.voices .voice')[i]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
-  }
-
   function setFollow(i: number, value: string) {
     if (isLiveSource(value)) setStudioVoice(i, { live: value });
     else setStudioVoice(i, { source: value as VoiceSourceId, live: undefined });
-  }
-
-  /** The studio sound a voice on a Live track falls back to without Live. */
-  function fallbackFor(track: { name: string; role: VoiceSourceId | null }, drum?: LiveDrum): VoiceSourceId {
-    return drum ?? track.role ?? guessRole(track.name) ?? 'all';
-  }
-
-  function addForTrack(track: (typeof liveTracks)[number], drum?: LiveDrum) {
-    const live = liveSource(track.name, drum);
-    const what = drum ? `${track.name}: ${LIVE_DRUMS.find((d) => d.id === drum)?.label}` : track.name;
-    visualPicker.set({ current: null, none: false, title: `A visual for ${what}`, pick: (f) => { const at = voices.length; if (f && addStudioVoice(f, fallbackFor(track, drum), live)) { open = at; void nextTick().then(() => document.querySelectorAll<HTMLElement>('.voices .voice')[at]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })); } } });
-  }
-
-  function addFromMenu(track: (typeof liveTracks)[number], e: Event) {
-    const el = e.target as HTMLSelectElement;
-    const value = el.value;
-    el.value = '';
-    if (value === 'track') addForTrack(track);
-    else if (value) addForTrack(track, value as LiveDrum);
   }
 
   const where = $derived(
@@ -206,17 +185,22 @@
     unsub();
   });
 
-  function pickScene(e: Event) {
+  const ADD_VOICE = '__voice';
+  function pickAdd(e: Event) {
     const el = e.target as HTMLSelectElement;
-    const scene = VISUAL_SCENES.find((sc) => sc.id === el.value);
+    const value = el.value;
     el.value = '';
+    if (value === ADD_VOICE) {
+      addVoice();
+      return;
+    }
+    const scene = VISUAL_SCENES.find((sc) => sc.id === value);
     // A scene loads in the studio's own palette.
     if (scene) loadSceneIntoStudio({ ...scene, set: s.set });
   }
 
   /** A new instance starts with this set's first scene, in its palette. */
   function putInPlace() {
-    musicStudio.setVisualsHidden(false);
     if (target) {
       showStudioVisuals();
       return;
@@ -226,30 +210,71 @@
     if (scene) loadSceneIntoStudio(scene);
   }
 
-  /** Visible: the studio's clip plays. Hiding stops it and keeps the music from bringing it back. */
-  const visible = $derived(!!target && (target.kind !== 'vj' || target.playing));
-  function hideVisuals() {
-    musicStudio.setVisualsHidden(true);
-    hideStudioVisuals();
-  }
+  // ── The playing clips' visuals ──
+  // Read through the studio store so an edit shows here at once.
+  const stacks = $derived(stayingStacks($playingStacks).map((entry) => {
+    void s;
+    return { entry, stack: entry.resolve() };
+  }).filter((x): x is { entry: StackEntry; stack: ClipStack } => hasVisuals(x.stack)));
+  const places = $derived(target?.source.musicStackPlace ?? {});
+  const stacksOff = $derived(new Set(target?.source.musicStackOff ?? []));
+  /** The whole list, top first. */
+  const rows = $derived(visualOrder(voices.length, stacks.map((x) => x.entry), places));
+  let openStack = $state<string | null>(null);
+  let itemFrom = $state<{ uid: string; k: number } | null>(null);
 
-  // Reordering: the voice being dragged, and the gap it would land in (0 = before the first).
+  function saveStack(entry: StackEntry, stack: ClipStack) {
+    if (entry.clipId) musicStudio.setClipStack(entry.clipId, stack);
+    else if (entry.liveKey) musicStudio.setLiveStack(entry.liveKey, stack);
+  }
+  function edit(entry: StackEntry) {
+    const title = `${entry.trackName} · ${entry.clipName}`;
+    if (entry.clipId) stackEditor.set({ kind: 'clip', clipId: entry.clipId, title });
+    else if (entry.liveKey) stackEditor.set({ kind: 'live', key: entry.liveKey, title, follow: liveSource(entry.track.replace(/^live:/, '')) });
+  }
+  function moveItem(entry: StackEntry, stack: ClipStack, from: number, to: number) {
+    if (from === to) return;
+    const items = [...stack.items];
+    const [moved] = items.splice(from, 1);
+    items.splice(to, 0, moved);
+    saveStack(entry, { ...stack, items });
+  }
+  const itemKind = (item: StackItem) => (item.voice ? 'Audio shader' : ({ video: 'Video', image: 'Image', shader: 'Shader', sketch: 'Sketch' } as Record<string, string>)[item.media?.kind ?? ''] ?? 'Layer');
+
+  // ── Look ──
+  let lookOpen = $state(false);
+  const paletteName = $derived(
+    paletteId === AUTO_PALETTE ? autoName : paletteId === KEY_PALETTE ? 'Key color' : paletteId === CLASSIC_PALETTE ? 'Classic' : (STUDIO_PALETTE_LIST.find((p) => p.id === paletteId)?.name ?? 'Look'),
+  );
+  const lookSummary = $derived(`${paletteName} · ${STUDIO_GRADES.find((g) => g.id === finish.grade)?.label ?? ''}`);
+
+  // ── Reordering the list: the row being dragged, and the gap it would land in (0 = before the first). ──
   let dragFrom = $state<number | null>(null);
   let dropAt = $state<number | null>(null);
-  function dropVoice() {
-    if (dragFrom !== null && dropAt !== null) {
-      const to = dropAt > dragFrom ? dropAt - 1 : dropAt;
-      if (to !== dragFrom) {
-        moveStudioVoice(dragFrom, to);
-        if (open === dragFrom) open = to;
-      }
-    }
+  function reorder(from: number, to: number) {
+    if (to === from || from < 0 || from >= rows.length) return false;
+    const next = moveVisualRow(rows, from, to);
+    const { voices: order, places: placed } = arrangeVisuals(next, stacks.map((x) => x.entry));
+    // The open audio shader stays open under its new number.
+    const opened = open;
+    if (!arrangeStudioVisuals(order, placed)) return false;
+    if (opened !== null) open = order.indexOf(opened);
+    return true;
+  }
+  function dropRow() {
+    if (dragFrom !== null && dropAt !== null) reorder(dragFrom, dropAt > dragFrom ? dropAt - 1 : dropAt);
     dragFrom = null;
     dropAt = null;
   }
+  function nudge(r: number, by: number) {
+    const to = r + by;
+    if (to < 0 || to >= rows.length || !reorder(r, to)) return;
+    void nextTick().then(() => document.querySelectorAll<HTMLElement>('.list .grip')[to]?.focus());
+  }
 
   function addVoice() {
-    visualPicker.set({ current: null, none: false, title: 'Add a voice', pick: (f) => { const at = voices.length; if (f && addStudioVoice(f, 'all')) open = at; } });
+    if (!target && !placeStudio()) return;
+    visualPicker.set({ current: null, none: false, title: 'Add an audio shader', pick: (f) => { const at = voices.length; if (f && addStudioVoice(f, 'all')) open = at; } });
   }
 
   const numberOf = (voice: StudioVoice, input: ShaderInput) => Number(voice.params[input.NAME] ?? input.DEFAULT ?? input.MIN ?? 0);
@@ -275,110 +300,138 @@
   />
 {/snippet}
 
+{#snippet grip(r: number, name: string)}
+  <span
+    class="grip"
+    draggable="true"
+    role="button"
+    tabindex="0"
+    aria-label="Move {name} (Alt+Up or Alt+Down)"
+    title="Drag to reorder: the top of the list draws on top"
+    ondragstart={(e) => { dragFrom = r; e.dataTransfer?.setData('text/plain', name); if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'; }}
+    ondragend={() => { dragFrom = null; dropAt = null; }}
+    onkeydown={(e) => { if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return; e.preventDefault(); nudge(r, e.key === 'ArrowUp' ? -1 : 1); }}
+  >⋮⋮</span>
+{/snippet}
+
 <StudioModule title="Visuals" subtitle={where} grow>
   {#snippet head()}
     {#if target}
-      <button class="text-btn small" onclick={visible ? hideVisuals : putInPlace} title={visible ? 'Stop the visuals; the music no longer puts them back on the deck' : 'Play the visuals again'}>{visible ? 'Hide visuals' : 'Show visuals'}</button>
+      <button class="text-btn small look-btn" class:on={lookOpen} aria-expanded={lookOpen} onclick={() => (lookOpen = !lookOpen)} title="Colors, glow, trails, grain and grade over all the visuals">
+        <span class="look-name">{lookSummary}</span>
+        <svg viewBox="0 0 12 12" aria-hidden="true"><path d={lookOpen ? 'M3 7.5L6 4.5 9 7.5' : 'M3 4.5L6 7.5 9 4.5'} /></svg>
+      </button>
     {/if}
-    <select class="scene" value="" onchange={pickScene} aria-label="Load a visual scene" title="Load a stack of voices for this set" data-midi-path="studio:visuals.scene-next" data-midi-label="Next visual scene" data-midi-mode="toggle">
-      <option value="" disabled>Load scene…</option>
-      {#each ownScenes as sc (sc.id)}<option value={sc.id}>{sc.name}</option>{/each}
+    <select class="add-menu" value="" onchange={pickAdd} aria-label="Add visuals" title="Add an audio shader, or load a scene of them" data-midi-path="studio:visuals.scene-next" data-midi-label="Next visual scene" data-midi-mode="toggle">
+      <option value="" disabled>+ Add</option>
+      <option value={ADD_VOICE}>Audio shader…</option>
+      <optgroup label="Load a scene">
+        {#each ownScenes as sc (sc.id)}<option value={sc.id}>{sc.name}</option>{/each}
+      </optgroup>
       {#if otherScenes.length}
-        <optgroup label="Other sets">
+        <optgroup label="Scenes from other sets">
           {#each otherScenes as sc (sc.id)}<option value={sc.id}>{familyLabel(sc.set)} · {sc.name}</option>{/each}
         </optgroup>
       {/if}
     </select>
   {/snippet}
-  {#if liveOn}
-    <section class="live" aria-label="Live tracks">
-      <button class="live-head" onclick={() => (liveListOpen = !liveListOpen)} aria-expanded={liveListOpen} title={liveListOpen ? 'Fold the Live tracks away' : 'Show the Live tracks'}>
-        <svg viewBox="0 0 12 12" aria-hidden="true"><path d={liveListOpen ? 'M3 4.5l3 3 3-3' : 'M4.5 3l3 3-3 3'} /></svg>
-        <span class="ga-eyebrow">In Live now</span>
-        <span class="live-count">{liveTracks.length} tracks</span>
-      </button>
-      {#if liveListOpen}
-        <div class="live-tracks">
-          {#each liveTracks as t, ti (ti)}
-            <div class="live-track" class:quiet={!t.playing}>
-              <span class="swatch" style="background: {liveColor(t.color)}"></span>
-              <span class="live-name" title={t.name}>{t.name}</span>
-              <span class="live-clip" title={t.playing ? `Playing ${t.playing}${t.queued ? `, ${t.queued} next` : ''}` : 'Nothing playing'}>{t.playing ?? '—'}{#if t.queued} → {t.queued}{/if}</span>
-              {#if following(liveSource(t.name))}<button class="live-n" onclick={() => showVisualsFor(liveSource(t.name))} title="Show the visuals following this track">{following(liveSource(t.name))}</button>{/if}
-              {#if t.drums}
-                <select class="live-add" value="" onchange={(e) => addFromMenu(t, e)} aria-label="Add a visual for {t.name}" title="Add a visual that follows this track, or one of its drums">
-                  <option value="" disabled>+ Visual</option>
-                  <option value="track">Whole track</option>
-                  {#each LIVE_DRUMS as d (d.id)}<option value={d.id}>{d.label}</option>{/each}
-                </select>
-              {:else}
-                <button class="live-add studio-btn" onclick={() => addForTrack(t)} title="Add a visual that follows this track">+ Visual</button>
-              {/if}
-            </div>
-          {/each}
-        </div>
-      {/if}
-    </section>
+  {#if target && lookOpen}
+    <div class="look" role="group" aria-label="Look">
+      <label class="look-row">
+        <span class="ga-eyebrow">Color</span>
+        <select value={paletteId} onchange={(e) => setStudioPalette((e.target as HTMLSelectElement).value)} title="The colors every audio shader takes, each by the role of what it follows">
+          <option value={AUTO_PALETTE}>Auto · {autoName}</option>
+          <option value={KEY_PALETTE}>Key color</option>
+          {#each STUDIO_PALETTE_LIST as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
+          <option value={CLASSIC_PALETTE}>Classic</option>
+        </select>
+      </label>
+      <div class="look-row finish">
+        <StudioKnob label="Glow" title="Bloom around bright things" value={finish.glow} defaultValue={0.5} size={20} format={levelFormat} midiPath="studio:visuals.glow" onchange={(v) => setStudioFinish({ glow: v }, 'finish:glow')} />
+        <StudioKnob label="Trails" title="How long each hit leaves a fading tail" value={finish.trails} defaultValue={0.35} size={20} format={levelFormat} midiPath="studio:visuals.trails" onchange={(v) => setStudioFinish({ trails: v }, 'finish:trails')} />
+        <StudioKnob label="Grain" title="Film grain and a soft vignette" value={finish.grain} defaultValue={0.3} size={20} format={levelFormat} midiPath="studio:visuals.grain" onchange={(v) => setStudioFinish({ grain: v }, 'finish:grain')} />
+        <label class="grade-wrap">
+          <span class="ga-eyebrow">Grade</span>
+          <select class="grade" value={finish.grade} onchange={(e) => setStudioFinish({ grade: (e.target as HTMLSelectElement).value as StudioGrade })} title="One look over every visual">
+            {#each STUDIO_GRADES as g (g.id)}<option value={g.id}>{g.label}</option>{/each}
+          </select>
+        </label>
+      </div>
+    </div>
   {/if}
+  <div class="body">
   {#if !target}
     <div class="none">
-      <p>{s.visualsHidden ? 'The visuals are hidden.' : $vjClipLauncher.isOpen ? 'The visuals go on a free deck row when the music starts.' : 'The visuals play on a layer.'}</p>
-      <button class="studio-btn" onclick={putInPlace}>{$vjClipLauncher.isOpen ? 'Show visuals' : 'Show them on the selected layer'}</button>
+      <p>{$vjClipLauncher.isOpen ? 'The visuals go on a free deck row when the music starts.' : 'The visuals play on the selected layer.'}</p>
+      <button class="studio-btn" onclick={putInPlace}>{$vjClipLauncher.isOpen ? 'Start the visuals now' : 'Put them on the selected layer'}</button>
     </div>
   {:else}
-    <div class="automix">
-      <span class="ga-eyebrow">Auto-mix</span>
-      <select value={mix.mode} onchange={(e) => setStudioMix({ mode: (e.target as HTMLSelectElement).value as MixMode })} aria-label="Auto-mix" title={MIX_MODES.find((m) => m.id === mix.mode)?.title} data-midi-path="studio:visuals.automix-next" data-midi-label="Next auto-mix mode" data-midi-mode="toggle">
-        {#each MIX_MODES as m (m.id)}<option value={m.id} title={m.title}>{m.label}</option>{/each}
-      </select>
-      <select value={String(mix.bars)} onchange={(e) => setStudioMix({ bars: Number((e.target as HTMLSelectElement).value) })} disabled={mix.mode === 'all'} aria-label="Auto-mix changes every" title={mix.follow ? 'The usual pace; the music speeds it up or slows it down' : 'How often the mix changes, on the beat grid'}>
-        {#each MIX_BAR_OPTIONS as o (o.bars)}<option value={String(o.bars)}>{o.label}</option>{/each}
-      </select>
-      <button class="text-btn small follow" class:on={mix.follow} aria-pressed={mix.follow} disabled={mix.mode === 'all'} onclick={() => setStudioMix({ follow: !mix.follow })} title="Follow the music: busy, loud playing changes faster (and shuffle shows more at once); sparse, quiet playing changes slower. Up to two steps either side of the pace you set." data-midi-path="studio:visuals.automix-follow" data-midi-label="Auto-mix follows the music" data-midi-mode="toggle">Follow</button>
-    </div>
-    <div class="palette">
-      <span class="ga-eyebrow">Color</span>
-      <select value={paletteId} onchange={(e) => setStudioPalette((e.target as HTMLSelectElement).value)} aria-label="Palette" title="The colors every voice takes, each by the role of what it follows">
-        <option value={AUTO_PALETTE}>Auto · {autoName}</option>
-        <option value={KEY_PALETTE}>Key color</option>
-        {#each STUDIO_PALETTE_LIST as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
-        <option value={CLASSIC_PALETTE}>Classic</option>
-      </select>
-    </div>
-    <div class="finish" role="group" aria-label="Overall look">
-      <span class="ga-eyebrow">Overall look</span>
-      <StudioKnob label="Glow" title="Bloom around bright things" value={finish.glow} defaultValue={0.5} size={20} format={levelFormat} midiPath="studio:visuals.glow" onchange={(v) => setStudioFinish({ glow: v }, 'finish:glow')} />
-      <StudioKnob label="Trails" title="How long each hit leaves a fading tail" value={finish.trails} defaultValue={0.35} size={20} format={levelFormat} midiPath="studio:visuals.trails" onchange={(v) => setStudioFinish({ trails: v }, 'finish:trails')} />
-      <StudioKnob label="Grain" title="Film grain and a soft vignette" value={finish.grain} defaultValue={0.3} size={20} format={levelFormat} midiPath="studio:visuals.grain" onchange={(v) => setStudioFinish({ grain: v }, 'finish:grain')} />
-      <select class="grade" value={finish.grade} onchange={(e) => setStudioFinish({ grade: (e.target as HTMLSelectElement).value as StudioGrade })} aria-label="Grade" title="One look over every voice">
-        {#each STUDIO_GRADES as g (g.id)}<option value={g.id}>{g.label}</option>{/each}
-      </select>
-    </div>
-    <p class="order">Top of the list draws on top · drag ⋮⋮ or Alt+↑↓ to reorder</p>
-    <div class="voices">
-      {#each voices as voice, i (i)}
-        {@const all = looks(voice.file)}
+    <div class="list" role="list" aria-label="Visuals, top drawing on top">
+      {#each rows as row, r (row.kind === 'voice' ? `v${row.index}` : stacks[row.index].entry.uid)}
         <div
-          class="voice"
-          class:dragging={dragFrom === i}
-          class:drop-before={dropAt === i && dragFrom !== null && dragFrom !== i && dragFrom !== i - 1}
-          class:drop-after={dropAt === voices.length && i === voices.length - 1 && dragFrom !== null && dragFrom !== i}
+          class="row"
+          class:off={row.kind === 'stack' && stacksOff.has(stacks[row.index].entry.track)}
+          class:dragging={dragFrom === r}
+          class:drop-before={dropAt === r && dragFrom !== null && dragFrom !== r && dragFrom !== r - 1}
+          class:drop-after={dropAt === rows.length && r === rows.length - 1 && dragFrom !== null && dragFrom !== r}
           role="listitem"
-          ondragover={(e) => { if (dragFrom === null) return; e.preventDefault(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); dropAt = e.clientY < r.top + r.height / 2 ? i : i + 1; }}
-          ondrop={(e) => { e.preventDefault(); dropVoice(); }}
+          ondragover={(e) => { if (dragFrom === null) return; e.preventDefault(); const box = (e.currentTarget as HTMLElement).getBoundingClientRect(); dropAt = e.clientY < box.top + box.height / 2 ? r : r + 1; }}
+          ondrop={(e) => { if (dragFrom === null) return; e.preventDefault(); dropRow(); }}
         >
+        {#if row.kind === 'stack'}
+          {@const { entry, stack } = stacks[row.index]}
           <div class="line">
-            <span
-              class="grip"
-              draggable="true"
-              role="button"
-              tabindex="0"
-              aria-label="Move voice {i + 1} (Alt+Up or Alt+Down)"
-              title="Drag to reorder: the top of the list draws on top"
-              ondragstart={(e) => { dragFrom = i; e.dataTransfer?.setData('text/plain', `voice ${i + 1}`); if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'; }}
-              ondragend={() => { dragFrom = null; dropAt = null; }}
-              onkeydown={(e) => { if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return; e.preventDefault(); const to = i + (e.key === 'ArrowUp' ? -1 : 1); if (to >= 0 && to < voices.length && moveStudioVoice(i, to)) void nextTick().then(() => document.querySelectorAll<HTMLElement>('.voices .grip')[to]?.focus()); }}
-            >⋮⋮</span>
+            {@render grip(r, `${entry.trackName} visuals`)}
+            <button
+              class="led"
+              class:on={!stacksOff.has(entry.track)}
+              style="--a: 0.6"
+              onclick={() => setStackOff(entry.track, !stacksOff.has(entry.track))}
+              aria-pressed={stacksOff.has(entry.track)}
+              aria-label="Turn {entry.trackName}'s clip visuals on or off"
+              title={stacksOff.has(entry.track) ? "Bring this track's clip visuals back" : "Switch this track's clip visuals off (its next clips stay off too)"}
+            ></button>
+            <button class="fold" onclick={() => (openStack = openStack === entry.uid ? null : entry.uid)} aria-expanded={openStack === entry.uid} aria-label="Layers of {entry.clipName}" title="Its layers">
+              <svg viewBox="0 0 12 12" aria-hidden="true"><path d={openStack === entry.uid ? 'M3 4.5l3 3 3-3' : 'M4.5 3l3 3-3 3'} /></svg>
+            </button>
+            <span class="who" title="{entry.trackName} · {entry.clipName}: this clip's own visuals, while it plays"><span class="track">{entry.trackName}</span> {entry.clipName}</span>
+            <button class="studio-btn edit" onclick={() => edit(entry)} title="Edit this clip's visuals">Edit</button>
+          </div>
+          <div class="controls stack-controls">
+            <span class="clip-note">{stack.items.length === 1 ? 'Clip · 1 layer' : `Clip · ${stack.items.length} layers`}</span>
+            <select class="blend" value={stack.blend} onchange={(e) => saveStack(entry, { ...stack, blend: (e.target as HTMLSelectElement).value as BlendMode })} aria-label="Blend of {entry.clipName}'s visuals" title="How this clip's visuals blend over the rows below">
+              {#each BLEND_MODE_ORDER as mode (mode)}<option value={mode}>{blendModeLabel(mode)}</option>{/each}
+            </select>
+            <StudioKnob label="Opacity" title="How much of this clip's visuals show" value={stack.opacity} defaultValue={1} size={20} format={levelFormat} onchange={(v) => saveStack(entry, { ...stack, opacity: v })} />
+          </div>
+          {#if openStack === entry.uid}
+            <ul class="layers">
+              {#each stack.items as item, k (item.id)}
+                <li
+                  class:dragging={itemFrom?.uid === entry.uid && itemFrom.k === k}
+                  draggable="true"
+                  ondragstart={(e) => { e.stopPropagation(); itemFrom = { uid: entry.uid, k }; e.dataTransfer?.setData('text/plain', item.name); if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'; }}
+                  ondragend={() => (itemFrom = null)}
+                  ondragover={(e) => { if (itemFrom?.uid !== entry.uid) return; e.preventDefault(); e.stopPropagation(); }}
+                  ondrop={(e) => { if (!itemFrom || itemFrom.uid !== entry.uid) return; e.preventDefault(); e.stopPropagation(); moveItem(entry, stack, itemFrom.k, k); itemFrom = null; }}
+                  title="Drag to reorder this clip's layers"
+                >
+                  <button class="eye" class:off={item.hidden} onclick={() => saveStack(entry, { ...stack, items: stack.items.map((x) => (x.id === item.id ? { ...x, hidden: !x.hidden } : x)) })} aria-pressed={!item.hidden} aria-label={item.hidden ? `Show ${item.name}` : `Hide ${item.name}`} title={item.hidden ? 'Show this layer' : 'Hide this layer'}>
+                    <svg viewBox="0 0 16 16" aria-hidden="true">{#if item.hidden}<path d="M2 8s2.2-4 6-4 6 4 6 4-2.2 4-6 4-6-4-6-4zM3 13 13 3" />{:else}<path d="M2 8s2.2-4 6-4 6 4 6 4-2.2 4-6 4-6-4-6-4z" /><circle cx="8" cy="8" r="1.8" />{/if}</svg>
+                  </button>
+                  <span class="kind">{itemKind(item)}</span>
+                  <span class="item-name">{item.name}</span>
+                  <StudioKnob label="" title="How much of {item.name} shows" value={item.opacity} defaultValue={1} size={16} format={levelFormat} onchange={(v) => saveStack(entry, { ...stack, items: stack.items.map((x) => (x.id === item.id ? { ...x, opacity: v } : x)) })} />
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        {:else}
+          {@const i = row.index}
+          {@const voice = voices[i]}
+          {@const all = looks(voice.file)}
+          <div class="line">
+            {@render grip(r, `voice ${i + 1}`)}
             <button
               class="led"
               class:on={voice.level > 0}
@@ -464,50 +517,79 @@
               {#each all.slice(MAIN_CONTROLS) as input (input.NAME)}{@render knob(i, voice, input)}{/each}
             </div>
           {/if}
+        {/if}
         </div>
       {/each}
-      <button class="add studio-btn dashed" onclick={addVoice} title="Add a voice to these visuals">+ Voice</button>
+      {#if !rows.length}<p class="empty">Nothing here yet. Add an audio shader, load a scene, or give a clip visuals with its picture button in the session grid.</p>{/if}
+    </div>
+    <p class="order">Top draws on top · drag ⋮⋮ or Alt+↑↓ to reorder</p>
+  {/if}
+  </div>
+  {#if target}
+    <div class="automix" role="group" aria-label="Auto-mix">
+      <span class="ga-eyebrow" title="Let the audio shaders take turns on the beat">Auto-mix</span>
+      <select value={mix.mode} onchange={(e) => setStudioMix({ mode: (e.target as HTMLSelectElement).value as MixMode })} aria-label="Auto-mix" title={MIX_MODES.find((m) => m.id === mix.mode)?.title} data-midi-path="studio:visuals.automix-next" data-midi-label="Next auto-mix mode" data-midi-mode="toggle">
+        {#each MIX_MODES as m (m.id)}<option value={m.id} title={m.title}>{m.label}</option>{/each}
+      </select>
+      <select value={String(mix.bars)} onchange={(e) => setStudioMix({ bars: Number((e.target as HTMLSelectElement).value) })} disabled={mix.mode === 'all'} aria-label="Auto-mix changes every" title={mix.follow ? 'The usual pace; the music speeds it up or slows it down' : 'How often the mix changes, on the beat grid'}>
+        {#each MIX_BAR_OPTIONS as o (o.bars)}<option value={String(o.bars)}>{o.label}</option>{/each}
+      </select>
+      <button class="text-btn small follow" class:on={mix.follow} aria-pressed={mix.follow} disabled={mix.mode === 'all'} onclick={() => setStudioMix({ follow: !mix.follow })} title="Follow the music: busy, loud playing changes faster (and shuffle shows more at once); sparse, quiet playing changes slower. Up to two steps either side of the pace you set." data-midi-path="studio:visuals.automix-follow" data-midi-label="Auto-mix follows the music" data-midi-mode="toggle">Follow</button>
     </div>
   {/if}
 </StudioModule>
 
 <style>
-  .automix { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; }
+  /* Head: Look (a summary of the colors and grade) and + Add. */
+  .look-btn { display: inline-flex; align-items: center; gap: 4px; max-width: 150px; min-width: 0; }
+  .look-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .look-btn svg { flex: 0 0 auto; width: 9px; height: 9px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .add-menu { flex: 0 0 auto; width: 74px; height: 22px; font-size: var(--ga-text-meta, 11px); }
+  /* The Look drawer, under the head, over the list. */
+  .look { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; padding: 2px 0 8px; margin-bottom: 4px; border-bottom: 1px solid var(--studio-edge-soft); }
+  .look-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .look-row .ga-eyebrow { color: var(--studio-muted); flex: 0 0 auto; }
+  .look-row select { flex: 1 1 0; min-width: 0; height: 22px; font-size: var(--ga-text-meta, 11px); }
+  .grade-wrap { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 6px; }
+  /* Auto-mix: a line under the list, since it decides which audio shaders show. */
+  .automix { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding-top: 6px; margin-top: 2px; border-top: 1px solid var(--studio-edge-soft); }
   .automix .ga-eyebrow { color: var(--studio-muted); flex: 0 0 auto; }
   .automix select { flex: 1 1 0; min-width: 0; height: 22px; font-size: var(--ga-text-meta, 11px); }
   .automix .follow { flex: 0 0 auto; height: 22px; padding: 0 7px; }
-  .palette { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; }
-  .palette .ga-eyebrow { color: var(--studio-muted); flex: 0 0 auto; }
-  .palette select { flex: 1 1 0; min-width: 0; height: 22px; font-size: var(--ga-text-meta, 11px); }
-  .finish { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; }
-  .finish .ga-eyebrow { color: var(--studio-muted); flex: 0 0 auto; }
-  .finish .grade { flex: 1 1 0; min-width: 0; height: 22px; font-size: var(--ga-text-meta, 11px); }
-  .live { flex: 0 0 auto; margin-bottom: 6px; border-bottom: 1px solid var(--studio-edge-soft); padding-bottom: 4px; }
-  .live-head { display: flex; align-items: center; gap: 6px; width: 100%; padding: 2px 0; border: 0; background: none; color: var(--studio-ink); cursor: pointer; text-align: left; }
-  .live-head svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; flex: 0 0 auto; }
-  .live-count { margin-left: auto; font-size: var(--ga-text-micro, 9px); color: var(--studio-muted); }
-  /* A long set scrolls here rather than pushing the visuals away. */
-  .live-tracks { max-height: 168px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; padding-top: 2px; }
-  .live-track { display: flex; align-items: center; gap: 6px; min-width: 0; height: 22px; font-size: var(--ga-text-meta, 11px); }
-  .live-track.quiet .live-name, .live-track.quiet .live-clip { color: var(--studio-muted); }
-  .swatch { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 2px; }
-  .live-name { flex: 0 1 38%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--studio-ink); }
-  .live-clip { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--studio-muted); }
+  /* A clip's row: its track and name, Edit, then its blend and opacity; open, its layers. */
+  .fold { flex: 0 0 auto; width: 16px; height: 18px; padding: 0; border: 0; background: none; color: var(--studio-muted); cursor: pointer; }
+  .fold svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .who { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--ga-text-control, 12px); color: var(--studio-ink); }
+  .track { color: var(--studio-muted); font-size: var(--ga-text-micro, 9px); text-transform: uppercase; letter-spacing: var(--ga-eyebrow-tracking, 0.08em); margin-right: 2px; }
+  .edit { flex: 0 0 auto; height: 22px; padding: 0 9px; font-size: var(--ga-text-meta, 11px); }
+  /* Same columns as an audio shader's row: the blend and opacity line up. */
+  .controls.stack-controls { align-items: flex-end; }
+  .clip-note { flex: 1 1 0; min-width: 0; align-self: center; font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .layers { list-style: none; margin: 4px 0 0 15px; padding: 0; display: flex; flex-direction: column; }
+  .layers li { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 2px 0; font-size: var(--ga-text-meta, 11px); color: var(--studio-ink); cursor: grab; }
+  .layers li.dragging { opacity: 0.4; }
+  .kind { flex: 0 0 auto; color: var(--studio-muted); font-size: var(--ga-text-micro, 9px); text-transform: uppercase; letter-spacing: var(--ga-eyebrow-tracking, 0.08em); }
+  .item-name { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .eye { flex: 0 0 auto; width: 20px; height: 20px; padding: 0; display: grid; place-items: center; border: 0; background: none; color: var(--studio-ink); cursor: pointer; }
+  .eye.off { color: var(--studio-muted); }
+  .eye svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+  .empty { margin: 4px 2px; font-size: var(--ga-text-meta, 11px); line-height: 1.45; color: var(--studio-muted); }
   .follow-swatch { flex: 0 0 auto; width: 6px; align-self: stretch; margin: 3px -2px 3px 0; border-radius: 2px; }
-  .live-n { cursor: pointer; border: 0; flex: 0 0 auto; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px; background: var(--studio-accent-soft, rgba(255,255,255,0.1)); color: var(--studio-accent); font-size: 9px; line-height: 14px; text-align: center; }
-  .live-add { flex: 0 0 auto; height: 20px; padding: 0 6px; font-size: var(--ga-text-meta, 11px); }
-  select.live-add { width: 74px; }
   .follows.live { color: var(--studio-accent); }
-  .voices { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
-  .voice { padding: 4px 0; border-bottom: 1px solid var(--studio-edge-soft); }
-  .voice.dragging { opacity: 0.4; }
-  /* Where a dragged voice will land: a line in the gap. */
-  .voice.drop-before { box-shadow: inset 0 2px 0 var(--studio-accent); }
-  .voice.drop-after { box-shadow: inset 0 -2px 0 var(--studio-accent); }
+  /* Everything under the head scrolls as one, so no row is ever squeezed. */
+  .body { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; display: flex; flex-direction: column; }
+  .list { flex: 0 0 auto; display: flex; flex-direction: column; }
+  .row { padding: 5px 0; border-bottom: 1px solid var(--studio-edge-soft); }
+  .row.dragging { opacity: 0.4; }
+  /* A track's clip visuals switched off: the row stays, dimmed. */
+  .row.off .who, .row.off .controls, .row.off .layers { opacity: 0.45; }
+  /* Where a dragged row will land: a line in the gap. */
+  .row.drop-before { box-shadow: inset 0 2px 0 var(--studio-accent); }
+  .row.drop-after { box-shadow: inset 0 -2px 0 var(--studio-accent); }
   .grip { flex: 0 0 auto; cursor: grab; color: var(--studio-muted); font-size: 10px; letter-spacing: -2px; padding: 0 2px; user-select: none; }
   .grip:focus-visible { outline: 1px solid var(--studio-accent); border-radius: 2px; }
-  .order { margin: 0 0 4px; font-size: var(--ga-text-micro, 9px); color: var(--studio-muted); }
-  .voice:last-of-type { border-bottom: 0; }
+  .order { margin: 6px 0 2px; font-size: var(--ga-text-micro, 9px); color: var(--studio-muted); }
+  .row:last-of-type { border-bottom: 0; }
   .line { display: flex; align-items: center; gap: 6px; min-width: 0; }
   .led {
     position: relative;
@@ -580,7 +662,6 @@
   .text-row select { flex: 0 1 auto; min-width: 0; height: 22px; font-size: var(--ga-text-meta, 11px); }
   .text-note { font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); }
   .all { display: flex; flex-wrap: wrap; gap: 8px 6px; padding: 8px 0 2px 15px; }
-  .add { align-self: flex-start; margin-top: 6px; }
   .none { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 4px 2px; }
   .none p { margin: 0; font-size: var(--ga-text-meta, 11px); line-height: 1.45; color: var(--studio-muted); }
 </style>

@@ -28,6 +28,9 @@ import {
   fireDubShot,
   hearBassNote,
   killAll,
+  launchClip,
+  launchRow,
+  stopTrack,
   listenForKey,
   lockToKey,
   playAll,
@@ -55,6 +58,7 @@ import { AUTO_PALETTE, CLASSIC_PALETTE, KEY_PALETTE, STUDIO_PALETTE_LIST } from 
 import { MIDI_VOICE_SLOTS, studioVoiceBlend } from './studioPlugin';
 import { BLEND_MODE_ORDER } from '../types';
 import { STUDIO_SETS } from './studioSets';
+import { MAX_SESSION_ROWS, TRACKS } from './session';
 import { editStudio, loadSceneIntoStudio, replaceStudioVoice, setStudioFinish, setStudioMix, setStudioPalette, setStudioVoice, studioTargetNow } from './studioTarget';
 import { MIX_MODES, normalizeMix } from './studioMix';
 import { VOICE_SHADERS, scenesForSet } from './visualScenes';
@@ -497,6 +501,23 @@ const STUDIO: StudioControl[] = [
 export const STUDIO_MIDI_CONTROLS: readonly StudioControl[] = [...BAND, ...PADS, ...BOWL_CONTROLS, ...VOICES, ...SCENES, ...TONE_CONTROLS, ...DUB_SHOT_CONTROLS, ...KEY_MODE_CONTROLS, ...SEQUENCE_CONTROLS, ...XY_CONTROLS, ...TEMPO_CONTROLS, ...BUILD_CONTROLS, ...MIX_CONTROLS, ...STUDIO];
 
 registerStudioControls(STUDIO_MIDI_CONTROLS);
+
+// The session grid and the sets: every clip slot, every row, each track's stop, each set.
+const SESSION_CONTROLS: StudioControl[] = [
+  ...TRACKS.flatMap((track): StudioControl[] => [
+    { id: `track.${track.id}.stop`, label: `Stop ${track.label}`, group: 'Session', kind: 'trigger', run: () => stopTrack(track.id) },
+    ...Array.from({ length: MAX_SESSION_ROWS }, (_x, row): StudioControl => ({
+      id: `clip.${track.id}.${row + 1}`, label: `${track.label} clip ${row + 1}`, group: 'Session', kind: 'trigger', run: () => launchClip(track.id, row),
+    })),
+  ]),
+  ...Array.from({ length: MAX_SESSION_ROWS }, (_x, row): StudioControl => ({
+    id: `row.${row + 1}`, label: `Launch row ${row + 1}`, group: 'Session', kind: 'trigger', run: () => launchRow(row),
+  })),
+  ...STUDIO_SETS.map((set): StudioControl => ({
+    id: `set.${set.id}`, label: `${set.label} set`, group: 'Sets', kind: 'trigger', run: () => musicStudio.setSet(set.id),
+  })),
+];
+registerStudioControls(SESSION_CONTROLS);
 
 // ── The band's keys ─────────────────────────────────────────────────────
 

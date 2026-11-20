@@ -24,6 +24,12 @@ import { AUTO_PALETTE, CLASSIC_COLORS, CLASSIC_PALETTE, KEY_PALETTE, KeyHueGlide
 import { BLEND_MODE_ORDER, createLayer, type BlendMode, type Layer } from '../types';
 import { isLiveSource, VOICE_AUTO_INPUT, VOICE_SOURCE_INPUT, VOICE_SOURCES, voiceSourceIndex, type LiveSourceId, type VoiceSourceId } from './visualVoices';
 import type { MusicKey, StudioSet } from './studioSets';
+import type { MediaSource } from '../types';
+import type { ClipStack, StackItem } from './clipStack';
+import { auditionSolo, currentStacks } from './stackRuntime';
+import { currentVoiceFile } from './retiredVoices';
+import { normalizeStackOff, normalizeStackPlace, visualOrder } from './visualOrder';
+import { readableClipUri, staticClipSource } from '../show/tracks/showClipSources';
 
 export const STUDIO_PLUGIN_ID = 'musicstudio';
 export const STUDIO_EFFECT_TYPE = 'music-studio';
@@ -75,6 +81,10 @@ export interface StudioPluginSource {
   musicFinish?: StudioFinish;
   /** The palette the voices take their colours from (studioPalettes.ts). */
   musicPalette?: string;
+  /** Where each track's clip visuals sit among the voices (visualOrder.ts). */
+  musicStackPlace?: Record<string, number>;
+  /** Tracks whose clip visuals are switched off in the Visuals panel; the next clip on the track stays off too. */
+  musicStackOff?: string[];
 }
 
 /** Each set's original two colours, one ink and one accent (the Classic palette). */
@@ -94,7 +104,7 @@ export function isStudioSource(source: unknown): source is StudioPluginSource {
 export function normalizeStudioVoice(raw: unknown): StudioVoice | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Partial<Record<keyof StudioVoice, unknown>>;
-  const file = typeof r.file === 'string' ? r.file : '';
+  const file = typeof r.file === 'string' ? currentVoiceFile(r.file) : '';
   // Only shipped VX shaders: the name goes into a fetch path.
   if (!/^VX-[A-Za-z0-9_-]+\.fs$/.test(file)) return null;
   const params: Record<string, number> = {};
@@ -142,6 +152,8 @@ export function normalizeStudioSource(raw: unknown): Required<StudioPluginSource
     musicFinish: normalizeFinish(r.musicFinish),
     // Saved before palettes: the set's original two colours.
     musicPalette: isPaletteId(r.musicPalette) ? r.musicPalette : CLASSIC_PALETTE,
+    musicStackPlace: normalizeStackPlace(r.musicStackPlace),
+    musicStackOff: normalizeStackOff(r.musicStackOff),
   };
 }
 
@@ -173,6 +185,8 @@ export function defaultStudioSource(): Required<StudioPluginSource> {
     musicSetup: null,
     musicFinish: normalizeFinish(null),
     musicPalette: AUTO_PALETTE,
+    musicStackPlace: {},
+    musicStackOff: [],
   };
 }
 
@@ -237,14 +251,19 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
     const studio = normalizeStudioSource(effectSource);
     const key = inputs.key?.() ?? DEFAULT_KEY;
     const palette = { id: studio.musicPalette, slots: resolvePalette(studio.musicPalette, studio.musicSet, key, studio.musicPalette === KEY_PALETTE ? keyGlide.step(keyHue(key), Date.now()) : undefined) };
-    const rows: Array<{ layerId: string; frameId?: string; opacity: number; blendMode: string }> = [];
+    type MixRow = { layerId: string; frameId?: string; opacity: number; blendMode: string };
+    const rows: MixRow[] = [];
+    const voiceRows = new Map<number, MixRow>();
     const driven = studio.musicVoices.map((voice) => inputs.driven(voice.source, voice.auto, voice.live));
     // Auto-mix works from the bar clock every voice shares.
     const clock = driven.find((d) => Number.isFinite(d.vxBars));
     const barPos = clock ? (clock.vxBars ?? 0) + (clock.vxBar ?? 0) : 0;
     const muted = studio.musicVoices.map((v) => v.level <= 0);
     const mixed = studio.musicMix.follow ? followerFor(layer.id).step(studio.musicMix, barPos, muted, inputs.feel?.()) : mixAt(studio.musicMix, barPos, muted);
+    // A stack auditioned on its own: the studio's own voices step aside.
+    const solo = auditionSolo();
     studio.musicVoices.forEach((voice, index) => {
+      if (solo) return;
       const code = inputs.code(voice.file);
       if (!code) return;
       const id = studioVoiceLayerId(layer, index);
@@ -262,10 +281,26 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
           shaderValues: studioVoiceValues(voice, studio.musicSet, driven[index], palette),
         },
       } as Layer);
-      rows.push({ layerId: id, opacity: voice.level * (voiceMods.get(index) ?? 1) * mixed[index].gain, blendMode: voice.clear ? studioVoiceBlend(voice.blend, 'normal') : mixed[index].blend ?? studioVoiceBlend(voice.blend) });
+      voiceRows.set(index, { layerId: id, opacity: voice.level * (voiceMods.get(index) ?? 1) * mixed[index].gain, blendMode: voice.clear ? studioVoiceBlend(voice.blend, 'normal') : mixed[index].blend ?? studioVoiceBlend(voice.blend) });
     });
-    // The top of the list draws on top: the mix stacks its rows from the first up.
-    rows.reverse();
+    // The playing clips' visual stacks: each its own mix, blended in as one row.
+    const playing = currentStacks();
+    const stackRows = new Map<number, MixRow>();
+    const off = new Set(studio.musicStackOff);
+    playing.forEach(({ entry, stack, level }, i) => {
+      if (off.has(entry.track)) return;
+      const stackLayers = expandStack(`${layer.id}:stack:${entry.uid}`, stack, studio.musicSet, inputs, palette, key);
+      if (!stackLayers) return;
+      out.push(...stackLayers.layers);
+      stackRows.set(i, { layerId: stackLayers.id, opacity: stack.opacity * level, blendMode: stack.blend });
+    });
+    // One list, the top of it drawing on top: voices and stacks in the order
+    // set in the Visuals panel. The mix stacks its rows from the first up.
+    const order = visualOrder(studio.musicVoices.length, playing.map(({ entry }) => entry), studio.musicStackPlace);
+    for (let i = order.length - 1; i >= 0; i--) {
+      const row = order[i].kind === 'voice' ? voiceRows.get(order[i].index) : stackRows.get(order[i].index);
+      if (row) rows.push(row);
+    }
     // Trails: last frame's mix, faded, under this frame's voices.
     const trail = trailsOpacity(studio.musicFinish);
     if (trail > 0 && rows.length) rows.unshift({ layerId: '', frameId: `plugin:${layer.id}:vj-mix`, opacity: trail, blendMode: 'normal' });
@@ -283,6 +318,72 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
   onHosts?.(hosts);
   // No instance: the list as it came (it runs on every frame sent).
   return hosts ? out : layers;
+}
+
+// ── Clip visual stacks (clipStack.ts) ───────────────────────────────────
+
+/** The library media of a stack layer as a source, under a stable id (a video keeps decoding, a sketch keeps its page). */
+function stackMediaSource(item: StackItem, id: string): MediaSource | null {
+  const media = item.media!;
+  const sourceId = `${id}:${media.libraryId ?? media.src ?? media.name}`;
+  if (media.kind === 'video') {
+    return {
+      id: sourceId, type: 'video', name: media.name, src: readableClipUri(media), _assetRef: media._assetRef,
+      isPlaying: true, playbackMode: 'loop', playbackRate: 1, trimStart: 0, trimEnd: 1,
+      durationSeconds: media.sourceDuration, videoWidth: media.videoWidth, videoHeight: media.videoHeight,
+    } as MediaSource;
+  }
+  const source = staticClipSource(media, sourceId);
+  if (source && media.kind === 'shader') source.shaderValues = { ...(source.shaderValues ?? {}), ...item.params };
+  return source;
+}
+
+/**
+ * A playing stack as layers: each of its layers rendered hidden (with its own
+ * effects), and a mix of them (with the stack's effects and mood finish) the
+ * studio's mix takes as one row. Null when nothing in it can draw yet.
+ */
+export function expandStack(id: string, stack: ClipStack, set: StudioSet, inputs: StudioRenderInputs, studioPalette: { id: string; slots: PaletteSlots }, key: MusicKey): { id: string; layers: Layer[] } | null {
+  const layers: Layer[] = [];
+  const rows: Array<{ layerId: string; opacity: number; blendMode: string }> = [];
+  const palette = stack.mood?.palette ? { id: stack.mood.palette, slots: resolvePalette(stack.mood.palette, set, key) } : studioPalette;
+  // The top of the list draws on top.
+  for (const item of [...stack.items].reverse()) {
+    if (item.hidden) continue;
+    const itemId = `${id}:${item.id}`;
+    let source: MediaSource | null = null;
+    if (item.voice) {
+      const code = inputs.code(item.voice.file);
+      if (!code) continue;
+      const follow = item.voice.follow;
+      const live = isLiveSource(follow) ? (follow as LiveSourceId) : undefined;
+      const sourceId = (live ? 'all' : VOICE_SOURCES.some((v) => v.id === follow) ? follow : 'all') as VoiceSourceId;
+      const voice: StudioVoice = { file: item.voice.file, source: sourceId, ...(live ? { live } : {}), auto: false, level: 1, params: item.params, clear: item.voice.clear };
+      source = {
+        id: `${itemId}:${item.voice.file}`, type: 'shader', name: item.voice.file, src: `ISF/${item.voice.file}`, shaderCode: code,
+        shaderValues: studioVoiceValues(voice, set, inputs.driven(sourceId, false, live), palette),
+      } as MediaSource;
+    } else if (item.media) {
+      source = stackMediaSource(item, itemId);
+    }
+    if (!source) continue;
+    layers.push({ ...createLayer(itemId, item.name, 'media'), opacity: 0, source, effects: item.effects } as Layer);
+    rows.push({ layerId: itemId, opacity: item.opacity, blendMode: item.blend });
+  }
+  if (!rows.length) return null;
+  const finish = stack.mood?.finish ? finishEffectsFor(id, stack.mood.finish) : [];
+  const effects = [...finish, ...stack.effects];
+  layers.push({
+    ...createLayer(id, 'Clip visuals', 'media'),
+    // Rendered for the studio's mix, never composited on its own.
+    opacity: 0,
+    source: {
+      id: `${id}:mix`, type: 'effect', src: 'plugin://vj-mix', name: 'Clip visuals',
+      effectSource: { effectType: 'vj-mix', vjmixRows: rows, vjmixGroups: [], ...(effects.length ? { vjmixLayerEffectChain: true } : {}) },
+    } as NonNullable<Layer['source']>,
+    effects,
+  } as Layer);
+  return { id, layers };
 }
 
 // ── Shared runtime hooks ────────────────────────────────────────────────

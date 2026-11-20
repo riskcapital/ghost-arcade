@@ -15,7 +15,7 @@
   import { userPresets } from '../../music/presetLibrary';
   import { launchClip, launchRow, saveBeat, stopTrack } from '../../music/musicRuntime';
   import { clipTrack, downloadMidi } from '../../music/midiExport';
-  import { clipEditorId, insertEditorChannel, loopBrowser } from '../../music/studioUi';
+  import { clipEditorId, insertEditorChannel, loopBrowser, stackEditor } from '../../music/studioUi';
   import { loopById } from '../../music/loops';
   import { launchClockTempo } from '../../stores/launchClock';
   import { showToast } from '../../stores/errorToast';
@@ -27,6 +27,12 @@
   const s = $derived($musicStudio);
   const t = $derived($musicTransport);
   const rows = $derived(Array.from({ length: sessionRows(s.session) }, (_, i) => i));
+  /** Each row's section in the song up now (its timeline names the rows). */
+  const sectionNames = $derived.by(() => {
+    const names: Record<number, string> = {};
+    for (const section of s.songs.find((x) => x.id === s.currentSongId)?.grid?.sections ?? []) names[section.row] ??= section.name;
+    return names;
+  });
 
   function voiceLabel(track: TrackId): string {
     if (track === 'beats') return 'Drums';
@@ -108,11 +114,17 @@
     if (clip) musicStudio.setSessionClip(track, row, clip);
   }
 
+  /** The clip's visuals open in their editor (ClipStackEditor). */
+  function openVisuals(track: TrackId, clip: SessionClip) {
+    stackEditor.set({ kind: 'clip', clipId: clip.id, title: `${TRACKS.find((t) => t.id === track)?.label ?? 'Clip'} · ${clip.name}` });
+  }
+
   function act(track: TrackId, row: number, clip: SessionClip, e: Event) {
     const el = e.target as HTMLSelectElement;
     const action = el.value;
     el.value = '';
     if (action === 'edit') clipEditorId.set(clip.id);
+    else if (action === 'visuals') openVisuals(track, clip);
     else if (action === 'duplicate') {
       const rowsNow = get(musicStudio).session[track];
       const below = rowsNow.findIndex((c, i) => i > row && !c);
@@ -143,14 +155,15 @@
         <button class="mini-btn studio-btn" class:on={(s.inserts[ch]?.length ?? 0) > 0} onclick={() => insertEditorChannel.set($insertEditorChannel === ch ? null : ch)} title="Effects on the {track.label.toLowerCase()} track's instrument">FX</button>
       {/if}
       {#if track.id !== 'beats'}<StudioJack id="cv:track.{track.id}.level" title="{track.label} track out: its level, as a control signal" />{/if}
-      <button class="stop" disabled={!trackActive(track.id)} onclick={() => stopTrack(track.id)} aria-label="Stop {track.label}" title="Stop {track.label.toLowerCase()}">
+      <button class="stop" disabled={!trackActive(track.id)} onclick={() => stopTrack(track.id)} data-midi-path="studio:track.{track.id}.stop" data-midi-label="Stop {track.label}" data-midi-mode="toggle" aria-label="Stop {track.label}" title="Stop {track.label.toLowerCase()}">
         <svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="2" width="8" height="8" rx="1" /></svg>
       </button>
     </div>
   {/each}
 
   {#each rows as row (row)}
-    <button class="row-go" onclick={() => launchRow(row)} aria-label="Launch row {row + 1}" title="Launch row {row + 1} on the next bar">
+    {@const section = sectionNames[row]}
+    <button class="row-go" onclick={() => launchRow(row)} data-midi-path="studio:row.{row + 1}" data-midi-label="Launch row {row + 1}" data-midi-mode="toggle" aria-label="Launch row {row + 1}{section ? `, ${section}` : ''}" title="Launch {section ? `${section} (row ${row + 1})` : `row ${row + 1}`} on the next bar">
       <span>{row + 1}</span>
       <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 2l7 4-7 4z" /></svg>
     </button>
@@ -160,16 +173,20 @@
         {@const on = playing(track.id, clip)}
         {@const next = queued(track.id, clip)}
         <div class="slot" class:on class:next role="gridcell" class:over={dropOver === `${track.id}:${row}`} ondragover={(e) => over(e, track.id, row)} ondragleave={() => (dropOver = null)} ondrop={(e) => dropLoop(e, track.id, row)}>
-          <button class="clip" onclick={() => launchClip(track.id, row)} ondblclick={() => clipEditorId.set(clip.id)} aria-pressed={on} title={next ? 'Starts on the next bar' : on ? 'Playing · double-click to edit' : 'Start on the next bar · double-click to edit'}>
+          <button class="clip" onclick={() => launchClip(track.id, row)} data-midi-path="studio:clip.{track.id}.{row + 1}" data-midi-label="{track.label} clip {row + 1}" data-midi-mode="toggle" ondblclick={() => clipEditorId.set(clip.id)} aria-pressed={on} title={next ? 'Starts on the next bar' : on ? 'Playing · double-click to edit' : 'Start on the next bar · double-click to edit'}>
             <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 2l7 4-7 4z" /></svg>
             <span>{clip.name}</span>
           </button>
           <button class="edit" onclick={() => clipEditorId.set(clip.id)} aria-label="Edit {clip.name}" title="Edit the notes">
             <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 10l1-3 5-5 2 2-5 5zM7 3l2 2" /></svg>
           </button>
+          <button class="edit visuals" class:has={!!clip.stack?.items.length} onclick={() => openVisuals(track.id, clip)} aria-label="Visuals for {clip.name}" title={!clip.stack?.items.length ? 'Give it visuals' : clip.stack.items.length === 1 ? 'Its visuals: 1 layer' : `Its visuals: ${clip.stack.items.length} layers`}>
+            <svg viewBox="0 0 12 12" aria-hidden="true"><rect x="1.5" y="2.5" width="9" height="7" rx="1" /><path d="M1.5 7.5l3-2.5 2.5 2 1.5-1 2 1.5" /></svg>
+          </button>
           <select class="more" value="" onchange={(e) => act(track.id, row, clip, e)} aria-label="More for {clip.name}" title="More">
             <option value="" disabled>⋯</option>
             <option value="edit">Edit notes…</option>
+            <option value="visuals">Visuals…</option>
             <option value="duplicate">Duplicate</option>
             <option value="preset">Add to my presets</option>
             <option value="midi">Save as MIDI</option>
@@ -286,6 +303,8 @@
     cursor: pointer;
   }
   .slot:hover .edit, .slot:hover .more, .edit:focus-visible, .more:focus-visible { display: inline-grid; }
+  /* A clip with visuals always shows its mark, in the accent. */
+  .edit.visuals.has { display: inline-grid; color: var(--ga-icon, #5278ff); border-color: color-mix(in srgb, var(--ga-icon, #5278ff) 45%, var(--studio-edge-soft)); }
   .browse {
     flex: 1;
     min-width: 0;

@@ -228,12 +228,6 @@ export function autoPlaceStudio(set: StudioSet, sceneFor: (set: StudioSet) => Pa
 }
 
 
-/** Hide the visuals: the studio's clip stops (its voices are kept) and the music no longer brings it back. */
-export function hideStudioVisuals(): void {
-  const target = studioTargetNow();
-  if (target?.kind === 'vj' && target.playing) vjClipLauncher.stopLayer(target.layer, target.deck);
-}
-
 /** Show the visuals again: the studio's clip plays, or one is put in place. */
 export function showStudioVisuals(): StudioTarget | null {
   const target = studioTargetNow();
@@ -310,6 +304,26 @@ export function moveStudioVoice(from: number, to: number): boolean {
     const [moved] = voices.splice(from, 1);
     voices.splice(Math.max(0, Math.min(voices.length, to)), 0, moved);
     return { ...s, musicVoices: voices };
+  });
+}
+
+/**
+ * The Visuals list put in a new order: the voices in their new order (old
+ * indexes, top first) and the places of the playing clips' stacks
+ * (visualOrder.ts arrangeVisuals). Other tracks keep their places.
+ */
+export function arrangeStudioVisuals(order: number[], places: Record<string, number>): boolean {
+  return editStudio((s) => {
+    if (order.length !== s.musicVoices.length) return s;
+    return { ...s, musicVoices: order.map((i) => s.musicVoices[i]).filter(Boolean), musicStackPlace: { ...s.musicStackPlace, ...places } };
+  });
+}
+
+/** Switch a track's clip visuals off or back on (the track's next clip follows). */
+export function setStackOff(track: string, off: boolean): boolean {
+  return editStudio((s) => {
+    const rest = s.musicStackOff.filter((t) => t !== track);
+    return { ...s, musicStackOff: off ? [...rest, track] : rest };
   });
 }
 

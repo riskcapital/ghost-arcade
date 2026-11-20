@@ -161,7 +161,8 @@ describe('music studio in the project file', () => {
   it('keeps the band inputs, the songs and the set lists', async () => {
     const { captureSetup, defaultRecall, emptySongVisuals } = await import('./songs');
     const s = studio.musicStudio;
-    s.hydrate(null);
+    // A studio with no songs on it yet (a new project comes with the starter set).
+    s.hydrate({});
     s.setLiveInput(0, { name: 'Bass', channel: 0, role: 'bass' });
     expect(s.addLiveInput({ name: 'Guitar', channel: 1, role: 'lead', fxSend: 0.4 })).toBe(1);
     s.setStrip('input2', { pan: 0.5 });
@@ -172,7 +173,7 @@ describe('music studio in the project file', () => {
     s.addSetlist({ id: 'set-1', name: 'Friday', songIds: ['song-b', 'song-a', 'song-b'] });
     s.setCurrentSong('song-a', 1);
     const saved = JSON.parse(JSON.stringify(layers.project.exportProject()));
-    s.hydrate(null);
+    s.hydrate({});
     expect(get(s).songs).toHaveLength(0);
     expect(layers.project.importProject(saved)).toBe(true);
     const after = get(s);

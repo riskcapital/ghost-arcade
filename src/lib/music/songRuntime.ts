@@ -11,8 +11,9 @@
  */
 
 import { get, writable, type Readable } from 'svelte/store';
-import { musicStudio, type MusicStudioState } from './musicStudioStore';
-import { ensureMusicRuntime, freshStart, launchScene, onKill } from './musicRuntime';
+import { isStudioPlaying, musicStudio, type MusicStudioState } from './musicStudioStore';
+import { ensureMusicRuntime, freshStart, launchRow, launchScene, onKill, stopAll } from './musicRuntime';
+import { nextBar } from './loops';
 import {
   MAX_SONG_BPM,
   MIN_SONG_BPM,
@@ -34,7 +35,7 @@ import { noteAutomatedRecall, project } from '../stores/layers';
 import type { RecallSection } from '../stores/projectDirty';
 import { globalStagePresets } from '../stores/globalPresets';
 import { audioStore } from '../stores/audio';
-import { launchClockFollowsLink, launchClockTempo, nextLaunchBoundary } from '../stores/launchClock';
+import { launchClockFollowsLink, launchClockPosition, launchClockTempo, nextLaunchBoundary } from '../stores/launchClock';
 import { recordDiscreteAction, runAsLiveControl } from '../stores/historyHooks';
 import { generateUUID } from '../utils/uuid';
 import type { StagePreset } from '../types';
@@ -131,7 +132,10 @@ export function saveSong(name?: string): Song | null {
     setup: captureSetup(s),
     visuals: captureVisuals(),
     recall: defaultRecall(),
+    // The clip grid as it is now, and the arrangement of the song it was made from.
+    grid: { session: JSON.parse(JSON.stringify(s.session)), key: { ...s.key }, sections: (s.songs.find((x) => x.id === s.currentSongId)?.grid?.sections ?? []).map((sec) => ({ ...sec })) },
   };
+  keepGrid();
   if (!musicStudio.addSong(song)) return null;
   const list = activeSetlist(get(musicStudio));
   let cursor = -1;
@@ -206,10 +210,22 @@ function fire(id: string, cursor: number, history: boolean): void {
   if (song) applySong(song, cursor, history);
 }
 
+/** The song up now keeps the clip grid as it is on the session (its clips are edited there). */
+function keepGrid(): void {
+  const s = get(musicStudio);
+  const up = s.songs.find((x) => x.id === s.currentSongId);
+  if (up?.grid) musicStudio.updateSong(up.id, { grid: { ...up.grid, session: JSON.parse(JSON.stringify(s.session)), key: { ...s.key } } });
+}
+
 function applySong(song: Song, cursor: number, history: boolean): void {
   ensureMusicRuntime();
   notice.set(null);
   let mapChanged = false;
+  const before = get(musicStudio);
+  const another = before.currentSongId !== song.id;
+  const wasPlaying = isStudioPlaying(before);
+  const wasPlayingThrough = get(playback) !== null;
+  if (another) keepGrid();
   runAsLiveControl(() => {
     // A song is a new song: when it brings up another set, what was playing
     // stops and nothing is left held. (The set buttons alone keep the music
@@ -217,6 +233,8 @@ function applySong(song: Song, cursor: number, history: boolean): void {
     const setup = recalledSetup(song);
     if (setup.set !== undefined && setup.set !== get(musicStudio).set) freshStart();
     if (Object.keys(setup).length) musicStudio.applySetup(setup, song.recall);
+    // Its own clips take the grid, in their key.
+    if (song.grid && another) musicStudio.setSessionGrid(song.grid.session, song.grid.key);
     applyTempo(song.bpm);
     // The block first, so the scene's own VJ column fires on it.
     if (song.recall.visuals) showBlock(song.visuals);
@@ -226,6 +244,15 @@ function applySong(song: Song, cursor: number, history: boolean): void {
     if (song.recall.visuals) mapChanged = showVisuals(song.visuals, history);
   });
   musicStudio.setCurrentSong(song.id, cursor);
+  // With music playing, the new song takes over from the old one: its first section comes in.
+  if (another) {
+    const first = song.grid?.sections[0];
+    if (first && wasPlayingThrough) beginSection(song.id, 0, true);
+    else {
+      stopSongPlay();
+      if (first && wasPlaying) launchRow(first.row);
+    }
+  }
   if (history && mapChanged) recordDiscreteAction();
   // Calling a song up is playing the show: the parts it put back read as saved until edited.
   const recalled: RecallSection[] = [];
@@ -315,6 +342,106 @@ export function songGo(): boolean {
   return nextSong({ now: true });
 }
 
+// ── Playing a song through ──────────────────────────────────────────────
+
+/** The song playing through its arrangement: which section, and the launch-clock beat it started on. */
+export interface SongPlayback {
+  songId: string;
+  index: number;
+  startBeat: number;
+}
+
+const playback = writable<SongPlayback | null>(null);
+export const songPlayback: Readable<SongPlayback | null> = { subscribe: playback.subscribe };
+
+/** At the end of a song, go on to the next one in the set list. */
+export const songPlayThrough = writable(true);
+
+/** Beats before the bar line the next row is queued (it starts on the line). */
+const QUEUE_LEAD_BEATS = 1;
+/** Beats before the bar line the next song comes up: late, as its tempo and key change at once. */
+const SONG_LEAD_BEATS = 0.3;
+
+let playTimer: ReturnType<typeof setTimeout> | null = null;
+
+function sectionsOf(songId: string) {
+  return get(musicStudio).songs.find((x) => x.id === songId)?.grid?.sections ?? [];
+}
+
+/** Launch a section's row and make it the one playing. `busy`: music is playing, so the row starts on the next bar. */
+function beginSection(songId: string, index: number, busy: boolean): boolean {
+  const section = sectionsOf(songId)[index];
+  if (!section) return false;
+  if (playTimer) clearTimeout(playTimer);
+  const { beat } = launchClockPosition();
+  launchRow(section.row);
+  playback.set({ songId, index, startBeat: busy ? nextBar(beat) : Math.floor(beat / 4) * 4 });
+  playTimer = setTimeout(watchSection, 50);
+  return true;
+}
+
+function watchSection(): void {
+  playTimer = null;
+  const p = get(playback);
+  if (!p) return;
+  const sections = sectionsOf(p.songId);
+  const section = sections[p.index];
+  const s = get(musicStudio);
+  const { beat, beatMs } = launchClockPosition();
+  // The song was taken off, or the music was stopped: playing through ends there.
+  if (!section || s.currentSongId !== p.songId || (beat > p.startBeat + 1 && !isStudioPlaying(s))) {
+    playback.set(null);
+    return;
+  }
+  const end = p.startBeat + section.bars * 4;
+  const last = p.index + 1 >= sections.length;
+  const along = last && get(songPlayThrough) ? songAlongSetlist(s, 1) : null;
+  const onward = along?.song.grid?.sections.length ? along : null;
+  const lead = !last ? QUEUE_LEAD_BEATS : onward ? SONG_LEAD_BEATS : 0;
+  const wait = end - lead - beat;
+  if (wait > 0.01) {
+    // Short sleeps, so a tempo change on the way is followed.
+    playTimer = setTimeout(watchSection, Math.max(5, Math.min(1500, wait * beatMs)));
+    return;
+  }
+  if (!last) {
+    launchRow(sections[p.index + 1].row);
+    playback.set({ songId: p.songId, index: p.index + 1, startBeat: end });
+    playTimer = setTimeout(watchSection, 50);
+  } else if (onward) {
+    fire(onward.song.id, onward.cursor, false);
+  } else {
+    playback.set(null);
+    stopAll();
+  }
+}
+
+/** Play the song up now through its arrangement, from a section (the first when left out). */
+export function playSong(index = 0): boolean {
+  const s = get(musicStudio);
+  const song = s.songs.find((x) => x.id === s.currentSongId);
+  if (!song?.grid?.sections[index]) return false;
+  ensureMusicRuntime();
+  runAsLiveControl(() => applyTempo(song.bpm));
+  return beginSection(song.id, index, isStudioPlaying(s));
+}
+
+/** Stop following the arrangement; what is playing keeps playing. */
+export function stopSongPlay(): void {
+  if (playTimer) clearTimeout(playTimer);
+  playTimer = null;
+  if (get(playback)) playback.set(null);
+}
+
+/** Where the song playing through is: its section and the bars played of it. */
+export function songPlaybackPosition(): { index: number; bar: number } | null {
+  const p = get(playback);
+  if (!p) return null;
+  return { index: p.index, bar: Math.max(0, (launchClockPosition().beat - p.startBeat) / 4) };
+}
+
+onKill(stopSongPlay);
+
 // A song waiting when the studio closes, or whose song went (deleted, another project), never comes up.
 let wasOpen = false;
 musicStudio.subscribe((s) => {
@@ -329,4 +456,5 @@ registerStudioControls([
   { id: 'song.next', label: 'Next song', group: 'Songs', kind: 'trigger', run: () => void nextSong() },
   { id: 'song.prev', label: 'Previous song', group: 'Songs', kind: 'trigger', run: () => void prevSong() },
   { id: 'song.go', label: 'Go: the waiting or next song now', group: 'Songs', kind: 'trigger', run: () => void songGo() },
+  { id: 'song.play', label: 'Play the song through', group: 'Songs', kind: 'trigger', run: () => void (get(playback) ? stopSongPlay() : playSong()) },
 ]);

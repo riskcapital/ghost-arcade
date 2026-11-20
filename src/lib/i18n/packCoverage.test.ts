@@ -52,7 +52,6 @@ const ROUND = [
   'Listening for sections and beats…',
   'Longest edge',
   'Looks over the song',
-  'Make a show to a song',
   'Makes an H.{0} copy beside the file and switches this media to it.',
   'Move the selected point (or the layers) one pixel',
   'New show from audio',

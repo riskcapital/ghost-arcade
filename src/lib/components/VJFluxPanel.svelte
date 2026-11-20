@@ -281,11 +281,11 @@
   .pad {
     position: absolute; inset: 0; border-radius: var(--ga-r-hard, 5px); overflow: hidden;
     border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13));
+    /* Black, with a dark gray grid. */
     background:
-      linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px) 0 0 / 25% 25%,
-      linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px) 0 0 / 25% 25%,
-      radial-gradient(circle at 50% 100%, var(--ga-blue-a16, rgba(82, 120, 255, 0.16)), transparent 70%),
-      var(--ga-slot, #060504);
+      linear-gradient(#1c1c1c 1px, transparent 1px) 0 0 / 25% 25%,
+      linear-gradient(90deg, #1c1c1c 1px, transparent 1px) 0 0 / 25% 25%,
+      #000;
   }
   .pad-head {
     position: absolute; top: 4px; left: 8px; right: 4px; z-index: 5;

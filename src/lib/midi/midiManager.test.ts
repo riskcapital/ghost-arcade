@@ -162,7 +162,9 @@ describe('MIDI input unplug and replug', () => {
     access.onstatechange();
     expect(get(midiStore).selectedDeviceId).toBe('chosen');
     expect(chosen.onmidimessage).toBeTypeOf('function');
-    expect(other.onmidimessage).toBe(null);
+    // The other input is listened to as well (it can teach MIDI learn), but it is not a controller.
+    expect(other.onmidimessage).toBeTypeOf('function');
+    expect(get(midiInputsInUse).control).toEqual(['chosen']);
     expect(storage.get('ghost-arcade_midi_device')).toBe('chosen');
   });
 
@@ -215,7 +217,26 @@ describe('several MIDI inputs at once', () => {
     const saved = JSON.parse(storage.get('ghost-arcade_midi_inputs') ?? '[]');
     expect(saved).toContainEqual({ name: 'Pads', use: 'control' });
     expect(pads.onmidimessage).toBeTypeOf('function');
-    expect(knobs.onmidimessage).toBe(null);
+    // An input with no use set is listened to, but what it sends reaches no mapping it did not teach.
+    expect(knobs.onmidimessage).toBeTypeOf('function');
+    send(knobs, [0xB0, 74, 100]);
+    expect(midiRouter.routeMessage).not.toHaveBeenCalled();
+  });
+
+  it('lets an input with no use set teach MIDI learn, and then answers the control it taught', () => {
+    midiStore.setEditMode(true);
+    midiStore.startLearn('studio:song.next', 'Next song', 0, 1, 0, 'toggle');
+    send(knobs, [0x90, 60, 100]);
+    expect(get(midiStore).learn.active).toBe(false);
+    expect(get(midiStore).mappings).toContainEqual(expect.objectContaining({ path: 'studio:song.next', type: 'note', number: 60, device: 'Knobs' }));
+    midiStore.setEditMode(false);
+    send(knobs, [0x90, 60, 100]);
+    expect(midiRouter.routeMessage).toHaveBeenLastCalledWith(0, 'note', 60, 100, { id: 'knobs', name: 'Knobs' });
+    // A key it did not teach still does nothing here (the Audio Lab plays it).
+    vi.mocked(midiRouter.routeMessage).mockClear();
+    send(knobs, [0x90, 62, 100]);
+    expect(midiRouter.routeMessage).not.toHaveBeenCalled();
+    midiStore.removeMapping('studio:song.next');
   });
 
   it('listens to every controller, and says which one a message came from', () => {

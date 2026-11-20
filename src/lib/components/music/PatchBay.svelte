@@ -141,7 +141,7 @@
     box-sizing: border-box;
     border-radius: 50%;
     border: 2px solid var(--studio-jack-ring, #c9d3ee);
-    background: #03050b;
+    background: var(--studio-slot);
   }
   .hole.control { border-color: var(--studio-jack-cv, #7ec8e3); }
   .target:hover .hole { border-color: var(--studio-accent); }

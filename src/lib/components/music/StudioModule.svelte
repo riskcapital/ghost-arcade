@@ -6,6 +6,7 @@
    * can make room for the module that matters now.
    */
   import type { Snippet } from 'svelte';
+  import { midiSlug, setMidiModule } from '../../music/autoMidi';
 
   const FOLD_KEY = 'ga.studio.folded';
   function readFolded(): Set<string> {
@@ -36,6 +37,10 @@
     foldKey?: string;
   } = $props();
 
+  // The controls inside are named after this module in MIDI learn.
+  const midiModule = midiSlug(foldKey || title, 'lab');
+  setMidiModule(midiModule);
+
   const key = $derived(foldKey || title);
   let folded = $state(false);
   $effect(() => { folded = !!key && readFolded().has(key); });
@@ -49,7 +54,7 @@
   }
 </script>
 
-<section class="module {extra}" class:grow class:folded>
+<section class="module {extra}" class:grow class:folded data-midi-module={midiModule}>
   <div class="head">
     {#if key}
       <button class="fold" onclick={toggleFold} aria-expanded={!folded} aria-label={folded ? `Open ${key}` : `Fold ${key} away`} title={folded ? 'Open this panel' : 'Fold this panel away to make room'}>

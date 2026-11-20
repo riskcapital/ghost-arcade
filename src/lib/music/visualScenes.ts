@@ -104,6 +104,9 @@ export const VOICE_SHADERS: readonly VoiceShader[] = [
   { file: 'VX-BeamBurn.fs', name: 'Beam Burn', family: 'analog', pack: 'glitch', blurb: 'A phosphor beam that flares, skips and scorches the glass on hits' },
   { file: 'VX-NeonFault.fs', name: 'Neon Fault', family: 'dub', pack: 'glitch', blurb: 'A neon sign that buzzes and drops letters on hits' },
   { file: 'VX-LiquidSignal.fs', name: 'Liquid Signal', family: 'bath', pack: 'glitch', blurb: 'A bold picture melting into glossy streaks, stirred on hits' },
+  { file: 'VX-Sorter.fs', name: 'Sorter', family: 'berlin', pack: 'glitch', blurb: 'A sheet of data pixel-sorted live: whole panels pour into long clean gradients' },
+  { file: 'VX-Databend.fs', name: 'Databend', family: 'analog', pack: 'glitch', blurb: 'A black and white test sheet run through audio effects, band by band' },
+  { file: 'VX-TimeSlice.fs', name: 'Time Slice', family: 'berlin', pack: 'glitch', blurb: 'A tumbling frame of light, every row taken at a different moment' },
   // Cosmos: psychedelia, deep space, light through glass and water, point clouds,
   // flocks and nebulas. Each has its own transparent background (Cut out).
   { file: 'VX-LiquidLight.fs', name: 'Liquid Light', family: 'dub', pack: 'cosmos', blurb: 'Glossy oil blobs drifting between glass plates that split in two on every hit' },
@@ -140,23 +143,42 @@ export const VOICE_SHADERS: readonly VoiceShader[] = [
   { file: 'VX-Marbling.fs', name: 'Marbling', family: 'bath', pack: 'cosmos', blurb: 'Living paper marbling: drops of ink folded into veins by slow eddies' },
   { file: 'VX-Inkwell.fs', name: 'Inkwell', family: 'bath', pack: 'cosmos', blurb: 'Colored ink dropped into milky water, rolling into plumes on slow currents' },
   { file: 'VX-Riverlight.fs', name: 'Riverlight', family: 'bath', pack: 'cosmos', blurb: 'Threads and veils of light rising through water, merging and parting as they climb' },
-  { file: 'VX-Northlight.fs', name: 'Northlight', family: 'dub', pack: 'cosmos', blurb: 'Folded curtains of polar light drifting over a starry sky, pulses racing along their hems' },
   { file: 'VX-MoltenChrome.fs', name: 'Molten Chrome', family: 'berlin', pack: 'cosmos', blurb: 'Polished liquid metal pours down and folds over itself; hits ripple through the pool' },
   { file: 'VX-PlasmaCells.fs', name: 'Plasma Cells', family: 'analog', pack: 'cosmos', blurb: 'Drifting living cells whose nuclei breathe light out to soft, wavering membranes' },
   // Form and Light: lit, finished voices made to the studio's visual guide.
-  { file: 'VX-BeamOrgan.fs', name: 'Beam Organ', family: 'bath', pack: 'form', blurb: 'A fan of beams through haze, one per chord note, crossing as chords change' },
   { file: 'VX-Louvers.fs', name: 'Louvers', family: 'dub', pack: 'form', blurb: 'Lit vertical slats that open with the bass and ripple on every hit' },
   { file: 'VX-Slabs.fs', name: 'Slabs', family: 'analog', pack: 'form', blurb: 'A hard-edge construction of colored slabs that slides on each chord' },
   { file: 'VX-Stack.fs', name: 'Stack', family: 'berlin', pack: 'form', blurb: 'Black and white bar stacks that re-roll on hits, capped in red' },
   { file: 'VX-OpBands.fs', name: 'Op Bands', family: 'berlin', pack: 'form', blurb: 'Black and white op-art bands that bend into waves with the bass' },
   { file: 'VX-LedMonolith.fs', name: 'LED Monolith', family: 'berlin', pack: 'form', blurb: 'A freestanding LED slab whose diode data re-rolls on every hit' },
-  { file: 'VX-AuroraWater.fs', name: 'Aurora Over Water', family: 'bath', pack: 'form', blurb: 'Aurora curtains, one per chord note, mirrored in still black water' },
-  { file: 'VX-Lighthouse.fs', name: 'Lighthouse', family: 'dub', pack: 'form', blurb: 'A lighthouse beam sweeping a night sea, blooming as it faces you' },
-  { file: 'VX-Aperture.fs', name: 'Aperture', family: 'bath', pack: 'form', blurb: 'An iris of light that opens with the pads, trailed by lens ghosts' },
-  { file: 'VX-LightRoom.fs', name: 'Light Room', family: 'analog', pack: 'form', blurb: 'A room of glowing planes and frames that rebuilds on each chord' },
-  { file: 'VX-ChromePool.fs', name: 'Chrome Pool', family: 'dub', pack: 'form', blurb: 'A pool of liquid chrome that swells and ripples in a soft studio' },
-  { file: 'VX-Prism.fs', name: 'Pyramid', family: 'bath', pack: 'form', blurb: 'Chord notes as light beams split into spectra by a glass pyramid' },
-  { file: 'VX-Harp.fs', name: 'Harp', family: 'bath', pack: 'form', blurb: 'Lit harp strings plucked by each note, ringing and settling' },
+  { file: 'VX-LedWall.fs', name: 'LED Wall', family: 'berlin', pack: 'form', blurb: 'A whole wall of diodes, edge to edge, its bands of data re-rolling on every hit' },
+  { file: 'VX-TileWall.fs', name: 'Tile Wall', family: 'analog', pack: 'form', blurb: 'A kinetic wall of two-sided tiles that flip over in patches on each hit' },
+  { file: 'VX-LaserLattice.fs', name: 'Laser Lattice', family: 'berlin', pack: 'form', blurb: 'Hairline laser beams crossing a hazy room, re-aimed on hits' },
+  { file: 'VX-Ridgelines.fs', name: 'Ridgelines', family: 'dub', pack: 'form', blurb: 'Stacked mountain lines in perspective; a line of light rolls in on each hit' },
+  { file: 'VX-KineticLights.fs', name: 'Kinetic Lights', family: 'bath', pack: 'form', blurb: 'A grid of glowing spheres on cables, rising and falling as one wave' },
+  { file: 'VX-Contour.fs', name: 'Contour', family: 'bath', pack: 'form', blurb: 'A slowly morphing topographic map; hits light an elevation band' },
+  { file: 'VX-Loom.fs', name: 'Loom', family: 'analog', pack: 'form', blurb: 'One luminous thread tracing a turning 3D figure' },
+  { file: 'VX-Silk.fs', name: 'Silk', family: 'bath', pack: 'form', blurb: 'Translucent satin ribbons drifting and crossing' },
+  { file: 'VX-Swarm.fs', name: 'Swarm', family: 'dub', pack: 'form', blurb: 'Points on tilted orbits leaving fine trails that a current smears' },
+  { file: 'VX-Armillary.fs', name: 'Armillary', family: 'berlin', pack: 'form', blurb: 'Nested rings turning on their own axes, a bead of light on each' },
+  // Glass: light seen through it.
+  { file: 'VX-LiquidGlass.fs', name: 'Liquid Glass', family: 'dub', pack: 'form', blurb: 'A clear thick liquid poured over a lit backdrop, bending it with a spectral fringe' },
+  { file: 'VX-GlassBlocks.fs', name: 'Glass Blocks', family: 'analog', pack: 'form', blurb: 'A wall of wavy glass blocks, each a lens on the lights behind it' },
+  { file: 'VX-GlassSpheres.fs', name: 'Glass Spheres', family: 'bath', pack: 'form', blurb: 'Solid glass balls under hard lights, each throwing a focused ring on the floor' },
+  { file: 'VX-Crystal.fs', name: 'Crystal', family: 'bath', pack: 'form', blurb: 'A cut gem full of spectral shards, scattering light across the floor' },
+  { file: 'VX-PrismBeam.fs', name: 'Prism', family: 'analog', pack: 'form', blurb: 'A glass bar splitting a white beam into a spectrum across the table' },
+  { file: 'VX-Caustic.fs', name: 'Caustic Glass', family: 'dub', pack: 'form', blurb: 'Light through a rippling glass sheet, gathered into a net of bright filaments' },
+  // Intricate: built to be looked at for a long time.
+  { file: 'VX-Megastructure.fs', name: 'Megastructure', family: 'berlin', pack: 'form', blurb: 'A flight down an endless concrete canyon of slabs, bridges and lit windows' },
+  { file: 'VX-Morphogen.fs', name: 'Morphogen', family: 'dub', pack: 'form', blurb: 'A living pattern of mazes and spots, carved in porcelain relief' },
+  { file: 'VX-Circuit.fs', name: 'Circuit', family: 'berlin', pack: 'form', blurb: 'A dense circuit board with signals running its buses from chip to chip' },
+  { file: 'VX-Engraving.fs', name: 'Engraving', family: 'analog', pack: 'form', blurb: 'A turning sculpture drawn entirely in engraved hatch lines' },
+  { file: 'VX-Waterfall.fs', name: 'Waterfall', family: 'analog', pack: 'form', blurb: 'The music itself as a receding landscape of lines, hits as crests' },
+  { file: 'VX-InfinityRoom.fs', name: 'Infinity Room', family: 'bath', pack: 'form', blurb: 'A mirrored room of hanging lights repeating to infinity' },
+  { file: 'VX-Hyperbolic.fs', name: 'Hyperbolic', family: 'bath', pack: 'form', blurb: 'An engraved disc of tiles that crowd endlessly toward its rim' },
+  { file: 'VX-Clockwork.fs', name: 'Clockwork', family: 'analog', pack: 'form', blurb: 'A wall of meshing steel gears that ticks forward on every hit' },
+  { file: 'VX-Plotter.fs', name: 'Plotter', family: 'analog', pack: 'form', blurb: 'A pen plotter drawing a stream of hairlines round eddies, sheet after sheet' },
+  { file: 'VX-Bismuth.fs', name: 'Bismuth', family: 'dub', pack: 'form', blurb: 'Stepped hopper crystals with an iridescent film that shifts on hits' },
 ];
 
 export const voiceShaderByFile = (file: string): VoiceShader | undefined => VOICE_SHADERS.find((v) => v.file === file);
@@ -302,34 +324,53 @@ export const VISUAL_SCENES: readonly VisualScene[] = [
     { file: 'VX-Stairs.fs', source: 'hats', level: 0.6 },
   ] },
   // Form and Light scenes, after the studio's visual guide.
-  { id: 'form-chrome-pool', name: 'Chrome pool', set: 'dub', palette: 'cobalt-chrome', voices: [
-    { file: 'VX-ChromePool.fs', source: 'bass', auto: false },
-    { file: 'VX-Aperture.fs', source: 'pad', level: 0.45 },
+  { id: 'form-glass', name: 'Glass', set: 'dub', palette: 'arctic', voices: [
+    { file: 'VX-LiquidGlass.fs', source: 'bass', auto: false },
+    { file: 'VX-GlassBlocks.fs', source: 'lead', level: 0.5 },
   ] },
-  { id: 'form-beam-organ', name: 'Beam organ', set: 'bath', palette: 'tungsten', voices: [
-    { file: 'VX-Aperture.fs', source: 'pad', level: 0.5, auto: false },
-    { file: 'VX-BeamOrgan.fs', source: 'chords' },
-    { file: 'VX-Harp.fs', source: 'lead', level: 0.6 },
+  { id: 'form-lasers', name: 'Lasers', set: 'berlin', palette: 'mono-accent', voices: [
+    { file: 'VX-LaserLattice.fs', source: 'kick', auto: false },
+    { file: 'VX-Armillary.fs', source: 'hats', level: 0.5 },
+  ] },
+  { id: 'form-silk', name: 'Silk', set: 'bath', palette: 'tungsten', voices: [
+    { file: 'VX-Silk.fs', source: 'chords', auto: false },
+    { file: 'VX-Contour.fs', source: 'pad', level: 0.5 },
+  ] },
+  { id: 'form-ridge', name: 'Ridge', set: 'dub', palette: 'bone-ink', voices: [
+    { file: 'VX-Ridgelines.fs', source: 'bass', auto: false },
+    { file: 'VX-Swarm.fs', source: 'lead', level: 0.6 },
+  ] },
+  { id: 'form-megastructure', name: 'Megastructure', set: 'berlin', palette: 'mono-accent', voices: [
+    { file: 'VX-Megastructure.fs', source: 'kick', auto: false },
+    { file: 'VX-Circuit.fs', source: 'hats', level: 0.4 },
+  ] },
+  { id: 'form-crystal', name: 'Crystal', set: 'bath', palette: 'arctic', voices: [
+    { file: 'VX-Crystal.fs', source: 'chords', auto: false },
+    { file: 'VX-Caustic.fs', source: 'bass', level: 0.5 },
+  ] },
+  { id: 'form-workshop', name: 'Workshop', set: 'analog', palette: 'tungsten', voices: [
+    { file: 'VX-Clockwork.fs', source: 'kick', auto: false },
+    { file: 'VX-Engraving.fs', source: 'chords', level: 0.6 },
+  ] },
+  { id: 'form-led-wall', name: 'LED wall', set: 'berlin', palette: 'mono-accent', voices: [
+    { file: 'VX-LedWall.fs', source: 'kick', auto: false },
+    { file: 'VX-Stack.fs', source: 'hats', level: 0.3 },
+  ] },
+  { id: 'form-tile-wall', name: 'Tile wall', set: 'analog', palette: 'bone-ink', voices: [
+    { file: 'VX-TileWall.fs', source: 'kick', auto: false },
+    { file: 'VX-Stack.fs', source: 'hats', level: 0.35 },
   ] },
   { id: 'form-led-monolith', name: 'LED monolith', set: 'berlin', palette: 'mono-accent', voices: [
     { file: 'VX-LedMonolith.fs', source: 'kick', auto: false },
     { file: 'VX-Stack.fs', source: 'hats', level: 0.35 },
   ] },
-  { id: 'form-aurora-water', name: 'Aurora over water', set: 'bath', palette: 'arctic', voices: [
-    { file: 'VX-AuroraWater.fs', source: 'chords', auto: false },
-    { file: 'VX-Lighthouse.fs', source: 'kick', level: 0.5 },
-  ] },
   { id: 'form-hard-edge', name: 'Hard edge', set: 'analog', palette: 'blood-orange', voices: [
     { file: 'VX-Slabs.fs', source: 'chords', auto: false },
     { file: 'VX-Stack.fs', source: 'kick', level: 0.45 },
   ] },
-  { id: 'form-light-room', name: 'Light room', set: 'analog', palette: 'rose-gold', voices: [
-    { file: 'VX-LightRoom.fs', source: 'chords', auto: false },
-    { file: 'VX-Prism.fs', source: 'lead', level: 0.6 },
-  ] },
   { id: 'form-louvers', name: 'Louvers', set: 'dub', palette: 'sodium-street', voices: [
     { file: 'VX-Louvers.fs', source: 'bass', auto: false },
-    { file: 'VX-Lighthouse.fs', source: 'kick', level: 0.55 },
+    { file: 'VX-HazeBeams.fs', source: 'kick', level: 0.55 },
   ] },
   { id: 'form-op', name: 'Op bands', set: 'berlin', palette: 'bone-ink', voices: [
     { file: 'VX-OpBands.fs', source: 'bass', level: 0.9, auto: false },

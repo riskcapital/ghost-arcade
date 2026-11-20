@@ -4,7 +4,7 @@ import { addonUsable } from '../addons/addonAccess';
 import { midiStore } from './midiStore';
 import { midiRouter } from './midiRouter';
 import { audioStore } from '../stores/audio';
-import type { MidiDevice, MidiInputSetup, MidiMessageType } from './midiTypes';
+import type { MidiDevice, MidiInputSetup, MidiMessageType, MidiStoreState } from './midiTypes';
 import {
   emitBandKeys,
   mappingHearsDevice,
@@ -119,7 +119,9 @@ export class ClockTempoTracker {
   }
 }
 
-type InputRole = 'control' | 'keys';
+// control: a controller. keys: the band's keys. spare: connected with no use of its own (a keyboard played
+// in the Audio Lab, say): it can teach MIDI learn, and a control learned from it answers it.
+type InputRole = 'control' | 'keys' | 'spare';
 
 export class MidiManager {
   private access: MIDIAccess | null = null;
@@ -475,6 +477,12 @@ export class MidiManager {
     const wanted = new Map<string, InputRole>();
     for (const id of plan.control) wanted.set(id, 'control');
     for (const id of plan.keys) wanted.set(id, 'keys');
+    // Every other connected input is listened to as well, unless it is set to Off.
+    this.access.inputs.forEach((port, id) => {
+      if (wanted.has(id) || port.state === 'disconnected') return;
+      if (setupFor(this.setups, port.name || 'Unknown Device')?.use === 'off') return;
+      wanted.set(id, 'spare');
+    });
     for (const [id, entry] of [...this.inputs]) {
       if (wanted.get(id) !== entry.role || this.access.inputs.get(id) !== entry.port) this.detachInput(id);
     }
@@ -484,7 +492,7 @@ export class MidiManager {
       if (!port) continue;
       port.onmidimessage = this.boundMessageHandler;
       this.inputs.set(id, { port, role, name: port.name || 'Unknown Device' });
-      console.log(`[MIDI] Attached to: ${port.name}${role === 'keys' ? ' (band keys)' : ''}`);
+      console.log(`[MIDI] Attached to: ${port.name}${role === 'keys' ? ' (band keys)' : role === 'spare' ? ' (learn and learned controls)' : ''}`);
     }
     const inUse: MidiInputsInUse = { control: plan.control, keys: plan.keys, standIn: plan.standIn, controlNames: plan.controlNames };
     if (!sameInputsInUse(inUse, this.inUse)) {
@@ -507,7 +515,9 @@ export class MidiManager {
         this.gridHolds.clear();
       }
     } else {
-      releaseBandKeys(entry.name);
+      // What a control learned from it holds lets go; the band's keys let go of their notes.
+      midiRouter.releaseInputs(`midi:${id}:`);
+      if (entry.role === 'keys') releaseBandKeys(entry.name);
     }
     if (entry.port !== this.activeClockInput) entry.port.onmidimessage = null;
   }
@@ -553,11 +563,16 @@ export class MidiManager {
     }
 
     const entry = inputId ? this.inputs.get(inputId) : undefined;
-    // The band's keys play notes into the visuals; they never reach the
-    // mappings or MIDI learn.
-    if (entry?.role === 'keys') {
-      const setup = setupFor(this.setups, entry.name);
-      if (setup && addonUsable('addon.audio-lab')) emitBandKeys(data, setup);
+    // An input that is not a controller (the band's keys, a keyboard with no
+    // use set) teaches MIDI learn, and a control learned from it answers it.
+    // Anything else it sends goes to its own job: the band's keys play notes
+    // into the visuals.
+    if (entry && entry.role !== 'control') {
+      if (this.learnOrRouteFromOtherInput(data, state, inputId, entry.name)) return;
+      if (entry.role === 'keys') {
+        const setup = setupFor(this.setups, entry.name);
+        if (setup && addonUsable('addon.audio-lab')) emitBandKeys(data, setup);
+      }
       return;
     }
     // An input listened to only for its clock controls nothing.
@@ -597,11 +612,13 @@ export class MidiManager {
         return; // Ignore sysex, active sensing, etc.
     }
 
-    // Update last message for display (throttled — see field docs above)
+    // Update last message for display (throttled — see field docs above).
+    // Out of this event: the store write wakes every panel that shows MIDI,
+    // and a note must not wait for them before it sounds.
     const nowMs = performance.now();
     if (nowMs - this._lastMsgTs >= MidiManager._LAST_MSG_MIN_INTERVAL_MS) {
       this._lastMsgTs = nowMs;
-      midiStore.setLastMessage({ channel, type, number, value });
+      setTimeout(() => midiStore.setLastMessage({ channel, type, number, value }), 0);
     }
 
     // A held pad must release its original deck/page even after navigation.
@@ -630,6 +647,40 @@ export class MidiManager {
     if (!state.editMode && !state.identifyMode) {
       midiRouter.routeMessage(channel, type, number, value, from);
     }
+  }
+
+  /**
+   * A message from an input that is not a controller. True when MIDI learn
+   * took it or a control learned from this input answered it (so it does
+   * nothing else).
+   */
+  private learnOrRouteFromOtherInput(data: Uint8Array, state: MidiStoreState, inputId: string | null, name: string): boolean {
+    if (data.length < 2) return false;
+    const status = data[0];
+    const channel = status & 0x0F;
+    const kind = status & 0xF0;
+    let type: MidiMessageType;
+    let number: number;
+    let value: number;
+    if (kind === 0xB0) { type = 'cc'; number = data[1]; value = data[2]; }
+    else if (kind === 0x90) { type = 'note'; number = data[1]; value = data[2]; }
+    else if (kind === 0x80) { type = 'note'; number = data[1]; value = 0; }
+    else if (kind === 0xE0) { type = 'pitchbend'; number = 0; value = (data[2] << 7) | data[1]; }
+    else return false;
+
+    if (state.learn.active && state.learn.targetPath) {
+      // A note teaches on its press; its release is used up with it.
+      if (!(type === 'note' && value === 0)) midiStore.completeLearn(channel, type, number, name);
+      return true;
+    }
+    // While the learn overlay is up, nothing from this input plays.
+    if (state.editMode) return true;
+    if (state.identifyMode) return false;
+    // Only a control learned from this very input answers it, so its other keys still play.
+    const learned = state.mappings.some((m) => m.type === type && m.number === number && (m.channel === -1 || m.channel === channel) && m.device === name);
+    if (!learned) return false;
+    midiRouter.routeMessage(channel, type, number, value, { id: inputId, name });
+    return true;
   }
 
   /** Process a System Real-Time clock byte (0xF8 tick / 0xFA start /

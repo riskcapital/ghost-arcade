@@ -4593,11 +4593,11 @@
             <path d="M7.2 8.6 12 11.5l4.8-2.9" />
             <path d="M12 5.5v6" />
           </svg>
-          Stage Sim
+          <span class="hdr-lbl">Stage Sim</span>
         </button>
         <button class="minimize-btn stage-sim-btn" onclick={openLiveStageEditor} title="Edit live 2D stage screens, warp, and VJ routing" aria-label="Edit live 2D stage">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="15" rx="2"/><path d="M7 15 17 8M17 8l-1 4M17 8l-4 1"/></svg>
-          Stage Edit
+          <span class="hdr-lbl">Stage Edit</span>
         </button>
         <span class="vj-divider" aria-hidden="true"></span>
         <div class="rec-split">
@@ -6440,9 +6440,17 @@
                       {#if clip.thumbnail}
                         <img src={clip.thumbnail} alt={clip.name} class="clip-thumb" draggable="false" />
                       {:else}
+                        {#if clip.type === 'effect' && clip.effectSource?.effectType}
+                          <!-- A plugin has no picture of its own: its mark, large and faint behind, small and sharp in front. -->
+                          <div class="clip-plugin">
+                            <span class="ghost" aria-hidden="true"><PluginIcon effectType={clip.effectSource.effectType} size={120} /></span>
+                            <PluginIcon effectType={clip.effectSource.effectType} size={30} />
+                          </div>
+                        {:else}
                         <div class="clip-placeholder {clip.type}">
                           {clip.type === 'shader' ? 'ISF' : clip.type === 'video' ? 'VID' : clip.type === 'spout' ? 'SPT' : clip.type === 'threejs' ? '3JS' : clip.type === 'splat' ? 'PLY' : clip.type === 'model3d' ? '3DM' : clip.type === 'gpu' ? 'GPU' : clip.type === 'text' ? 'TXT' : clip.type === 'effect' ? 'FX' : clip.type === 'preset' ? 'MAP' : clip.type === 'synthvision' ? 'PERF' : 'IMG'}
                         </div>
+                        {/if}
                       {/if}
                       <span class="clip-name">{#if clip.type === 'shader' && clip.musicMotion?.on}<MusicMotionMark size={11} live title="Music motion is on" /> {:else if clip.type === 'shader' && shaderIsMusicMotionReady(clip.shaderCode)}<MusicMotionMark size={10} /> {/if}{clip.name}</span>
                       {#if isFileMissing}
@@ -7856,7 +7864,8 @@
      matter how wide either side's contents are. */
   .vj-header {
     display: grid;
-    grid-template-columns: 1fr auto 1fr;
+    /* Each side is at least as wide as what is in it, so the macro bank never sits on its neighbors. */
+    grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
     align-items: center;
     position: relative;
     gap: var(--ga-bar-group-gap, 14px);
@@ -8297,6 +8306,16 @@
       --vj-amp-bar-w: 5px;
       --vj-amp-bar-gap: 3px;
     }
+  }
+
+  /* Before anything is squeezed: Preview, Stage Sim and Stage Edit show their icons alone (tooltips name them). */
+  @media (max-width: 2040px) {
+    .vj-header .hdr-lbl,
+    .vj-header :global(.pm-btn .lbl) { display: none; }
+  }
+  /* Next, the master level keeps its mute and number and drops the slider. */
+  @media (max-width: 1720px) {
+    .vj-header :global(.master-slider) { display: none; }
   }
 
   @media (max-width: 1500px) {
@@ -10100,6 +10119,25 @@
   .clip-placeholder.model3d {
     background: linear-gradient(135deg, #3a3a1a, #3a2a1a);
     color: #fbbf24;
+  }
+
+  .clip-plugin {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    background: #060504;
+    color: var(--ga-icon, #5278ff);
+  }
+  .clip-plugin .ghost {
+    position: absolute;
+    right: -34px;
+    top: 50%;
+    opacity: 0.14;
+    transform: translateY(-50%) rotate(-12deg);
+    pointer-events: none;
   }
 
   .clip-placeholder.effect {

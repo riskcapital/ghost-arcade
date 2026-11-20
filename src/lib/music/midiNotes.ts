@@ -11,6 +11,7 @@
  */
 
 import { get, writable } from 'svelte/store';
+import { heardControllerNote } from './controllerKeys';
 import { midiStore } from '../midi/midiStore';
 import { mappingHearsDevice, midiInputSetup, midiInputsInUse, type MidiInputsInUse } from '../midi/midiInputs';
 
@@ -60,6 +61,7 @@ type Listener = (message: MidiNoteMessage, inputId: string) => void;
 
 type MidiAccessLike = MIDIAccess;
 
+
 /**
  * True when the app's MIDI mapping already uses this note from this input
  * (a pad mapped to launch a clip, say) or MIDI learn is listening: then the
@@ -69,7 +71,10 @@ function claimedByControlMapping(input: { id: string; name?: string | null }, me
   if (message.kind !== 'on' && message.kind !== 'off') return false;
   const midi = get(midiStore);
   if (midi.learn.active || midi.editMode || midi.identifyMode) return true;
-  if (inUse.control.length && !inUse.control.includes(input.id)) return false;
+  // An input that is not a controller keeps its notes, except the ones a control was learned on from it.
+  if (inUse.control.length && !inUse.control.includes(input.id)) {
+    return midi.mappings.some((m) => m.type === 'note' && m.number === message.note && (m.channel === -1 || m.channel === message.channel) && !!input.name && m.device === input.name);
+  }
   return midi.mappings.some(
     (m) => m.type === 'note' && m.number === message.note && (m.channel === -1 || m.channel === message.channel)
       && mappingHearsDevice(m, input.name ?? undefined, inUse.controlNames),
@@ -93,6 +98,8 @@ export class MusicMidiInput {
     const message = parseMidiNoteMessage(e.data);
     if (!message || claimedByControlMapping(input, message, this.inUse)) return;
     this.listener(message, input.id);
+    // After the note has sounded: keep the keyboard on screen on the same keys as this one.
+    if (message.kind === 'on') heardControllerNote(message.note, input.name);
   };
   private readonly onStateChange = () => this.refresh();
 

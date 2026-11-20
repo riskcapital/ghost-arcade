@@ -73,8 +73,8 @@
     box-sizing: border-box;
     border-radius: 50%;
     border: 3px solid var(--studio-jack-ring, #c9d3ee);
-    background: #03050b;
-    box-shadow: inset 0 0 0 2px #121833, 0 1px 0 rgba(255, 255, 255, 0.06);
+    background: var(--studio-slot);
+    box-shadow: inset 0 0 0 2px var(--studio-cell), 0 1px 0 rgba(255, 255, 255, 0.06);
     cursor: grab;
     touch-action: none;
     transition: transform 120ms ease;

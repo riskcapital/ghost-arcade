@@ -5,6 +5,7 @@
   import { showToast } from '../stores/errorToast';
   import { MAPPING_FILE_MAX_BYTES, parseMappingFile, serializeMappingFile } from '../midi/mappingFile';
   import type { MidiMappingMode } from '../midi/midiTypes';
+  import { markAutoButtons } from '../music/autoMidi';
 
   interface OverlayItem {
     path: string;
@@ -18,10 +19,13 @@
     clipRect: DOMRect;    // rect intersected with all scroll-clipping ancestors — what we actually render
     element: HTMLElement;
     visible: boolean;
+    /** Unique per box: two elements can carry the same path (a control drawn in two layouts). */
+    key: string;
+    /** Something else is drawn over it (a hidden deck under the Audio Lab, a panel under a dialog). */
+    covered: boolean;
   }
 
   let overlayItems: OverlayItem[] = [];
-  let overlayRevision = 0; // Bump to trigger selective re-renders
   let rafId: number | null = null;
   let scanTimer: ReturnType<typeof setInterval> | null = null;
   let scanning = false;
@@ -84,13 +88,32 @@
     return clipRect.width >= 4 && clipRect.height >= 4;
   }
 
+  // True when the control is what you would actually click at its middle: nothing else is drawn over it.
+  // The Audio Lab covers the whole VJ deck, and a dialog covers the page under it; their controls get no box.
+  function isOnTop(el: HTMLElement, clipRect: DOMRect): boolean {
+    const x = clipRect.left + clipRect.width / 2;
+    const y = clipRect.top + clipRect.height / 2;
+    if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) return false;
+    for (const hit of document.elementsFromPoint(x, y)) {
+      if (hit.closest('.midi-overlay-root')) continue;
+      if (hit === el || el.contains(hit) || hit.contains(el)) return true;
+      // A decoration drawn over the control inside its own holder (a knob's arc over its dial) is still the control.
+      const holder = el.parentElement;
+      return !!holder && holder.contains(hit) && holder.querySelectorAll('[data-midi-path]').length === 1;
+    }
+    return false;
+  }
+
   // Scan DOM for mappable controls (debounced — skip if already scanning)
   function scanControls() {
     if (scanning) return;
     scanning = true;
     try {
+      // Audio Lab buttons with no path of their own get one, so anything on screen can be assigned.
+      markAutoButtons();
       const elements = document.querySelectorAll<HTMLElement>('[data-midi-path]');
       const newItems: OverlayItem[] = [];
+      const seen = new Map<string, number>();
 
       elements.forEach(el => {
         const path = el.dataset.midiPath!;
@@ -103,12 +126,15 @@
         const discreteValues = discreteStr ? discreteStr.split(',') : undefined;
         const rect = el.getBoundingClientRect();
         const clipRect = computeClipRect(el, rect);
-        const visible = isEffectivelyVisible(el, clipRect);
-        newItems.push({ path, label, min, max, step, mode, discreteValues, rect, clipRect, element: el, visible });
+        const covered = !isOnTop(el, clipRect);
+        const visible = isEffectivelyVisible(el, clipRect) && !covered;
+        const nth = seen.get(path) ?? 0;
+        seen.set(path, nth + 1);
+        newItems.push({ path, label, min, max, step, mode, discreteValues, rect, clipRect, element: el, visible, covered, key: nth ? `${path}#${nth}` : path });
       });
 
+      // Boxes are kept by key, so one under the pointer is not torn down between press and release.
       overlayItems = newItems;
-      overlayRevision++;
     } finally {
       scanning = false;
     }
@@ -130,7 +156,7 @@
       const newRect = item.element.getBoundingClientRect();
       const newClipRect = computeClipRect(item.element, newRect);
       const wasVisible = item.visible;
-      item.visible = isEffectivelyVisible(item.element, newClipRect);
+      item.visible = isEffectivelyVisible(item.element, newClipRect) && !item.covered;
       if (Math.abs(newRect.left - item.rect.left) > 1 || Math.abs(newRect.top - item.rect.top) > 1 ||
           Math.abs(newRect.width - item.rect.width) > 1 || Math.abs(newRect.height - item.rect.height) > 1 ||
           Math.abs(newClipRect.left - item.clipRect.left) > 1 || Math.abs(newClipRect.top - item.clipRect.top) > 1 ||
@@ -141,7 +167,7 @@
         changed = true;
       }
     }
-    if (changed) overlayRevision++; // trigger re-render via {#key}
+    if (changed) overlayItems = overlayItems; // the boxes move; they are not rebuilt
     rafId = requestAnimationFrame(updatePositions);
   }
 
@@ -153,6 +179,8 @@
   function handleControlClick(e: MouseEvent, item: OverlayItem) {
     e.stopPropagation();
     e.preventDefault();
+    // Picked on the press (left button), not on the click that may never come if the page shifts.
+    if (e.button !== 0) return;
 
     if ($midiStore.learn.active && $midiStore.learn.targetPath === item.path) {
       midiStore.cancelLearn();
@@ -190,7 +218,7 @@
         rafSkipCount = 0;
         rafId = requestAnimationFrame(updatePositions);
       });
-      scanTimer = setInterval(scanControls, 2000); // Re-scan every 2s (not 1s)
+      scanTimer = setInterval(scanControls, 1000);
       // Instant rescan when <details> sections toggle
       document.addEventListener('toggle', handleDetailsToggle, true);
     } else if (!isEdit && wasEditMode) {
@@ -200,7 +228,6 @@
       if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
       document.removeEventListener('toggle', handleDetailsToggle, true);
       overlayItems = [];
-      overlayRevision++;
     }
   }
 
@@ -270,9 +297,8 @@
 
 {#if $midiStore.editMode}
   <div data-help-page="midi-audio" class="midi-overlay-root">
-    <!-- Overlay indicators on each control — keyed by revision to batch position updates -->
-    {#key overlayRevision}
-      {#each overlayItems as item (item.path)}
+    <!-- A box over each control. Kept by key and moved in place, never rebuilt. -->
+      {#each overlayItems as item (item.key)}
         {#if item.visible}
           {@const mappingLabel = getMappingLabel(item.path)}
           {@const isLearning = $midiStore.learn.active && $midiStore.learn.targetPath === item.path}
@@ -283,7 +309,8 @@
             class:mapped={!!mappingLabel}
             class:learning={isLearning}
             style="left:{item.clipRect.left}px; top:{item.clipRect.top}px; width:{Math.max(item.clipRect.width, 4)}px; height:{Math.max(item.clipRect.height, 4)}px;"
-            onclick={(e) => handleControlClick(e, item)}
+            onpointerdown={(e) => handleControlClick(e, item)}
+            onclick={(e) => { e.stopPropagation(); e.preventDefault(); }}
             oncontextmenu={(e) => handleControlRightClick(e, item)}
             title={mappingLabel ? `${item.label}: ${mappingLabel} (right-click to clear)` : `Click to learn: ${item.label}`}
           >
@@ -296,7 +323,6 @@
           </div>
         {/if}
       {/each}
-    {/key}
 
     <!-- Status bar at bottom -->
     <div class="midi-status-bar">
@@ -304,7 +330,7 @@
       {#if $midiStore.learn.active && $midiStore.learn.targetLabel}
         <span class="midi-learn-status">Waiting: <strong>{$midiStore.learn.targetLabel}</strong> &mdash; move a control on your MIDI device</span>
       {:else}
-        <span class="midi-hint">Click a control to assign · Right-click to clear · Esc to exit</span>
+        <span class="midi-hint">Click a control, then move a knob or press a key or pad on any MIDI device · Right-click a control to clear · Esc or Ctrl+M to exit</span>
       {/if}
       {#if $midiStore.lastMessage}
         <span class="midi-last-msg">
@@ -334,7 +360,8 @@
     left: 0;
     width: 100vw;
     height: 100vh;
-    z-index: 99999;
+    /* Over everything, the Settings dialog included, so the boxes and the way out are always reachable. */
+    z-index: 300000;
     pointer-events: none;
   }
 

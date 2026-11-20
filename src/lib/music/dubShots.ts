@@ -86,7 +86,7 @@ export const DUB_DIVISIONS: { id: DubDivision; beats: number }[] = [
   { id: '1 bar', beats: 4 },
 ];
 
-export const DUB_SHOT_COUNT = 32;
+export const DUB_SHOT_COUNT = 56;
 /** Notes the shots send for visuals, on the Shots instrument above its FX pads (they make no sound there). */
 export const DUB_SHOT_NOTE = 76;
 
@@ -131,6 +131,32 @@ export function defaultDubShots(): DubShot[] {
     shot('Tape stop', 'tapestop', 'tape', '1/2', 0.45, 0.6, { tone: 0.4 }),
     shot('Noise sweep', 'sweep', 'swell', '1 bar', 0.6, 0.8, { mix: 0.7 }),
     shot('Thunder', 'thunder', 'spring', '1/2', 0.4, 0.9, { tone: 0.3 }),
+    // More throws: sirens, lickshots and washes
+    shot('Dub siren', 'blip', 'pingpong', '1/8.', 0.68, 0.75, { pitch: 7, tone: 0.55 }),
+    shot('Low siren', 'blip', 'tape', '1/2', 0.7, 0.9, { pitch: -12, tone: 0.3 }),
+    shot('Lickshot', 'gun', 'digital', '1/16', 0.72, 0.4, { tone: 0.5 }),
+    shot('Snare bomb', 'snare', 'spring', '1/4', 0.5, 0.8, { mix: 0.8, tone: 0.4 }),
+    shot('Hat rain', 'hat', 'digital', '1/16', 0.8, 0.5, { tone: 0.7 }),
+    shot('Clap wash', 'clap', 'swell', '1 bar', 0.6, 0.9, { mix: 0.75 }),
+    shot('Crash wash', 'crash', 'swell', '1 bar', 0.55, 1, { tone: 0.4, mix: 0.75 }),
+    shot('Tom tumble', 'tom', 'pingpong', '1/8t', 0.6, 0.6, { pitch: -5 }),
+    shot('Stab ladder', 'stab', 'pingpong', '1/8t', 0.55, 0.55, { tone: 0.6 }),
+    shot('Horn answer', 'horn', 'tape', '1/8.', 0.55, 0.65, { pitch: 5 }),
+    shot('Melodica reply', 'melodica', 'pingpong', '1/4', 0.5, 0.7, { pitch: 7 }),
+    shot('Organ swell', 'organ', 'swell', '1/2', 0.55, 0.8, { mix: 0.7 }),
+    shot('Sub drop', 'boom', 'tape', '1 bar', 0.3, 0.8, { pitch: -5, tone: 0.2, mix: 0.4 }),
+    shot('Rewind', 'spinback', 'spring', '1/8', 0.4, 0.5),
+    shot('Bird call', 'bird', 'tape', '1/4.', 0.6, 0.75, { tone: 0.6 }),
+    shot('Radio static', 'static', 'swell', '1/2', 0.5, 0.8, { mix: 0.65 }),
+    // Answers and rain
+    shot('Skank echo', 'skank', 'tape', '1/4.', 0.6, 0.7, { tone: 0.45 }),
+    shot('Steel answer', 'steel', 'pingpong', '1/8t', 0.55, 0.6, { pitch: 5 }),
+    shot('Whistle call', 'whistle', 'pingpong', '1/8.', 0.6, 0.7, { pitch: 3 }),
+    shot('Horn blast', 'airhorn', 'digital', '1/8', 0.62, 0.5, { tone: 0.5 }),
+    shot('Crowd oi', 'oi', 'pingpong', '1/8t', 0.6, 0.65, { pitch: -3 }),
+    shot('Cowbell rain', 'cowbell', 'digital', '1/16', 0.8, 0.45, { tone: 0.65 }),
+    shot('Shaker wash', 'shaker', 'swell', '1/2', 0.6, 0.85, { mix: 0.7 }),
+    shot('Storm', 'thunder', 'swell', '1 bar', 0.55, 1, { tone: 0.25, mix: 0.75 }),
   ];
 }
 

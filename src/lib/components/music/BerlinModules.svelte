@@ -76,7 +76,7 @@
     {/snippet}
     <div class="knob-row">
       {#each ACID_PARAMS as p (p.key)}
-        <StudioKnob label={p.label} value={s.params[p.key]} defaultValue={p.default} size={38} onchange={(v) => musicStudio.setParam(p.key, v)} />
+        <StudioKnob label={p.label} value={s.params[p.key]} defaultValue={p.default} size={30} onchange={(v) => musicStudio.setParam(p.key, v)} />
       {/each}
     </div>
     <div class="acid-steps">

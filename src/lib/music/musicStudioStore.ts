@@ -1,3 +1,4 @@
+import { hasVisuals, normalizeLiveStacks, type ClipStack } from './clipStack';
 import { noteGrid, type NoteGrid } from './grid';
 /**
  * Music studio state.
@@ -39,6 +40,7 @@ import {
   MAX_SESSION_ROWS,
   clipFromRecording,
   defaultSession,
+  emptySession,
   firstEmptySlot,
   normalizeSession,
   sessionRows,
@@ -127,6 +129,7 @@ import {
   type Song,
   type SongSetup,
 } from './songs';
+import { buildDemoSongs } from './demoSongs';
 
 export const MUSIC_STUDIO_SCHEMA = 1;
 
@@ -186,6 +189,8 @@ export interface MusicStudioProjectState {
   visualsHidden: boolean;
   /** Live track name -> the sound it feeds the visual voices as. */
   liveRoles: LiveRoles;
+  /** Ableton Live clips' visuals, by track and clip name (clipStack.ts liveStackKey). */
+  liveStacks: Record<string, ClipStack>;
   /** The sound and octave of each of the five bowls. */
   bowlSlots: BowlSlot[];
   /** The sound on each of a set's eight FX pads. */
@@ -217,6 +222,8 @@ export interface MusicStudioState extends MusicStudioProjectState {
   midiInput: string;
   /** How much of the piano the panel shows. A view preference, kept per computer. */
   keyboardSize: KeyboardSize;
+  /** The keyboard on screen shows the same keys as the MIDI keyboard being played (controllerKeys.ts). */
+  keyboardMatch: boolean;
   sequencerPlaying: boolean;
   recording: boolean;
   /** performance.now() when recording started, for the timer. */
@@ -252,6 +259,7 @@ export interface MusicStudioProjectSection extends MusicStudioProjectState {
 
 const MIDI_INPUT_KEY = 'ghostarcade-music-midi-input';
 const KEYBOARD_SIZE_KEY = 'ghostarcade-music-keyboard-size';
+const KEYBOARD_MATCH_KEY = 'ghostarcade-music-keyboard-match';
 const INPUT_DEVICE_KEY = 'ghostarcade-music-input-device';
 const INPUT_DEVICES_KEY = 'ghostarcade-music-input-devices';
 
@@ -301,7 +309,42 @@ function clampGain(v: unknown, fallback: number): number {
   return Number.isFinite(n) ? Math.max(0, Math.min(MAX_FADER_GAIN, n)) : fallback;
 }
 
+/**
+ * A new project's studio: the blank studio with the starter set on it. The
+ * starter songs are whole songs (demoSongs.ts), each with its own clip grid
+ * and arrangement, in one set list; the first is up, so its rows are the grid.
+ */
 export function defaultProjectState(): MusicStudioProjectState {
+  const base = blankProjectState();
+  const setup = pickSetup(base);
+  const songs: Song[] = buildDemoSongs(generateUUID).map((demo) => ({
+    id: generateUUID(),
+    name: demo.name,
+    bpm: demo.bpm,
+    sceneId: null,
+    notes: '',
+    setup: { ...JSON.parse(JSON.stringify(setup)), key: { ...demo.key } },
+    visuals: { voices: null, sceneId: null, vjBlockId: null, vjColumn: null, stagePresetId: null },
+    // A starter song brings its clips, key and tempo and leaves the sound, the band and the looks alone.
+    recall: { sound: false, band: false, visuals: false },
+    grid: { session: demo.session, key: { ...demo.key }, sections: demo.sections },
+  }));
+  const first = songs[0];
+  const setlist: Setlist = { id: generateUUID(), name: 'Starter set', songIds: songs.map((s) => s.id) };
+  return {
+    ...base,
+    key: { ...first.grid!.key },
+    session: JSON.parse(JSON.stringify(first.grid!.session)),
+    songs,
+    setlists: [setlist],
+    activeSetlistId: setlist.id,
+    currentSongId: first.id,
+    setlistCursor: 0,
+  };
+}
+
+/** The studio with nothing of the user's or the starter set's on it: what saved data is read against. */
+function blankProjectState(): MusicStudioProjectState {
   return {
     instrument: 'synth',
     synthPatch: 'pad',
@@ -332,7 +375,7 @@ export function defaultProjectState(): MusicStudioProjectState {
     cables: defaultCables(),
     macroFx: {},
     inserts: {},
-    session: defaultSession({ root: 2, scale: 'dorian' }, generateUUID),
+    session: emptySession(),
     recordLength: 2,
     quantize: '1/32',
     mixer: {},
@@ -340,6 +383,7 @@ export function defaultProjectState(): MusicStudioProjectState {
     liveControl: false,
     visualsHidden: false,
     liveRoles: {},
+    liveStacks: {},
     bowlSlots: defaultBowlSlots(),
     fxPads: defaultFxPads(),
     dubShots: defaultDubShots(),
@@ -379,8 +423,8 @@ function normalizeVisual(raw: unknown, fallback: NoteVisualSettings): NoteVisual
 
 /** Read the saved section back, filling in anything missing or out of range. */
 export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
-  const d = defaultProjectState();
-  if (!raw || typeof raw !== 'object') return d;
+  if (!raw || typeof raw !== 'object') return defaultProjectState();
+  const d = blankProjectState();
   const input = raw as Partial<MusicStudioProjectSection>;
   const volumes = (input.volumes ?? {}) as Partial<Record<InstrumentId, number>>;
   const visuals = (input.visuals ?? {}) as Partial<Record<InstrumentId, unknown>>;
@@ -434,8 +478,10 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
     mixer: normalizeMixer(input.mixer),
     liveInputs: normalizeLiveInputs(input.liveInputs, (input as { liveInput?: unknown }).liveInput),
     liveControl: input.liveControl === true,
-    visualsHidden: input.visualsHidden === true,
+    // Hiding the visuals is gone from the panel: a project saved hidden shows them again.
+    visualsHidden: false,
     liveRoles: normalizeLiveRoles(input.liveRoles),
+    liveStacks: normalizeLiveStacks(input.liveStacks),
     bowlSlots: normalizeBowlSlots(input.bowlSlots),
     // Chops are this session's audio; a file saved with one on a pad gets the set's default there.
     fxPads: unchoppedFxPads(normalizeFxPads(input.fxPads), false),
@@ -449,7 +495,7 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
 
 /** A song's setup, read the way the studio reads its own state. */
 export function normalizeSongSetup(raw: unknown): SongSetup {
-  return pickSetup(normalizeProjectState(raw && typeof raw === 'object' ? { ...(raw as object), songs: [], setlists: [] } : null));
+  return pickSetup(raw && typeof raw === 'object' ? normalizeProjectState({ ...(raw as object), songs: [], setlists: [] }) : blankProjectState());
 }
 
 /** The sound part of a setup, as a scene keeps it. */
@@ -507,6 +553,7 @@ function initialState(): MusicStudioState {
     keysArmed: true,
     midiInput: loadPref(MIDI_INPUT_KEY),
     keyboardSize: loadKeyboardSize(),
+    keyboardMatch: loadPref(KEYBOARD_MATCH_KEY) === '1',
     inputDevices: loadInputDevices(),
     inputOn: false,
     inputError: null,
@@ -803,6 +850,21 @@ function createMusicStudioStore() {
         return { ...s, liveRoles };
       }),
 
+    /** A Live clip's visuals, by its key; null or an empty stack removes them. */
+    setLiveStack: (key: string, stack: ClipStack | null) =>
+      update((s) => {
+        const liveStacks = { ...s.liveStacks };
+        if (hasVisuals(stack)) liveStacks[key] = stack;
+        else delete liveStacks[key];
+        return { ...s, liveStacks };
+      }),
+    /** A session clip's visuals; null or an empty stack removes them. */
+    setClipStack: (clipId: string, stack: ClipStack | null) =>
+      update((s) => ({ ...s, session: updateClip(s.session, clipId, (clip) => {
+        const { stack: _old, ...rest } = clip;
+        return (hasVisuals(stack) ? { ...rest, stack } : rest) as SessionClip;
+      }) })),
+
     setVisual: (instrument: InstrumentId, patch: Partial<NoteVisualSettings>) =>
       update((s) => ({
         ...s,
@@ -819,6 +881,10 @@ function createMusicStudioStore() {
     setMidiInput: (midiInput: string) => {
       savePref(MIDI_INPUT_KEY, midiInput);
       set({ midiInput });
+    },
+    setKeyboardMatch: (keyboardMatch: boolean) => {
+      savePref(KEYBOARD_MATCH_KEY, keyboardMatch ? '1' : '0');
+      set({ keyboardMatch });
     },
     setKeyboardSize: (keyboardSize: KeyboardSize) => {
       savePref(KEYBOARD_SIZE_KEY, keyboardSize);
@@ -866,6 +932,9 @@ function createMusicStudioStore() {
 
     /** A fresh session: the starter clips in the current key and no scenes. Takes, songs and the sound stay. */
     newSession: () => update((s) => ({ ...s, session: defaultSession(s.key, generateUUID), scenes: [], sceneId: null, queuedSceneId: null })),
+    /** Put a song's clip grid on the session, in its key. */
+    setSessionGrid: (session: Session, key: MusicKey) =>
+      update((s) => ({ ...s, session: JSON.parse(JSON.stringify(session)), key: { ...key } })),
     addScene: (scene: MusicScene) => update((s) => ({ ...s, scenes: [...s.scenes, scene] })),
     updateScene: (id: string, patch: Partial<Omit<MusicScene, 'id'>>) =>
       update((s) => ({ ...s, scenes: s.scenes.map((sc) => (sc.id === id ? { ...sc, ...patch } : sc)) })),
@@ -919,6 +988,7 @@ function createMusicStudioStore() {
         liveControl: s.liveControl,
         visualsHidden: s.visualsHidden,
         liveRoles: { ...s.liveRoles },
+        liveStacks: JSON.parse(JSON.stringify(s.liveStacks)),
         bowlSlots: s.bowlSlots.map((slot) => ({ ...slot })),
         // What the pads held before any chops went on them (chops are not saved).
         fxPads: unchoppedFxPads(s.fxPads),

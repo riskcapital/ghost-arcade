@@ -15,6 +15,7 @@
  * clip that declares note inputs.
  */
 
+import { bringStack, dropStack } from './stackRuntime';
 import { derived, get, writable } from 'svelte/store';
 import { project } from '../stores/layers';
 import { hostWatch, studioHosted } from './studioHostWatch';
@@ -90,7 +91,7 @@ import {
   type MelodicLoop,
 } from './loops';
 import { SCAN_PARTIALS, columnBands, scanPosition } from './scanSynth';
-import { TRACK_IDS, clipFromRecording, clipFxKey, clipLoop, findClip, type Session, type SessionClip, type TrackId } from './session';
+import { TRACKS, TRACK_IDS, clipFromRecording, clipFxKey, clipLoop, findClip, type Session, type SessionClip, type TrackId } from './session';
 import type { AnalogDest, AnalogSource } from './analogSynth';
 import { INPUT_CHANNELS, MAX_LIVE_INPUTS, stripFor, type ChannelId } from './mixer';
 import { LiveInputs, type BandInputSpec } from './liveInput';
@@ -111,7 +112,7 @@ import { getDefaultEffectParams } from '../renderer/effects';
 import type { Effect } from '../types';
 import { captureSetup, type SongSetup } from './songs';
 import { editStudio, studioTargetNow } from './studioTarget';
-import { MAX_STUDIO_VOICES, normalizeStudioSource, type StudioVoice } from './studioPlugin';
+import { normalizeStudioSource } from './studioPlugin';
 import { soundById } from './sounds/library';
 import { KeyFinder, type KeyGuess } from './keyFinder';
 import { attachLooper, killLooper, stopLooper } from './looperRuntime';
@@ -134,7 +135,7 @@ import {
 const LOOKAHEAD_SECONDS = 0.12;
 const SCHEDULER_INTERVAL_MS = 25;
 /** Live notes start this far after "now" so a burst of input keeps its spacing. */
-const LIVE_OFFSET_SECONDS = 0.005;
+const LIVE_OFFSET_SECONDS = 0.002;
 /** How long a drum pad stays lit in the panel. */
 const PAD_FLASH_MS = 110;
 
@@ -1021,18 +1022,6 @@ function clipChannel(track: TrackId, clip: SessionClip): string {
   return clip.instrument ?? ROLE_INSTRUMENTS[get(musicStudio).set][track];
 }
 
-/** Ease a clip voice's opacity to `to` over about half a second (a crossfade, not a cut). */
-function fadeClipVoice(clipId: string, to: number, then?: () => void): void {
-  const steps = 6;
-  for (let i = 1; i <= steps; i++) {
-    setTimeout(() => {
-      if (!studioTargetNow()) return;
-      editStudio((src) => ({ ...src, musicVoices: src.musicVoices.map((v) => (v.clip === clipId ? { ...v, level: to * (i / steps) + (1 - i / steps) * (to === 0 ? v.level : 0) } : v)) }));
-      if (i === steps) then?.();
-    }, (i * 480) / steps);
-  }
-}
-
 function undressTrack(track: TrackId): void {
   const timer = dressingTimers.get(track);
   if (timer) clearTimeout(timer);
@@ -1042,12 +1031,10 @@ function undressTrack(track: TrackId): void {
   clipDressing.delete(track);
   const found = findClip(get(musicStudio).session, id);
   audio.setClipInserts(found ? clipChannel(track, found.clip) : track === 'beats' ? 'drums' : ROLE_INSTRUMENTS[get(musicStudio).set][track], null);
-  if (studioTargetNow()?.source.musicVoices.some((v) => v.clip === id)) {
-    fadeClipVoice(id, 0, () => editStudio((src) => ({ ...src, musicVoices: src.musicVoices.filter((v) => v.clip !== id) })));
-  }
+  dropStack(`studio:${track}`);
 }
 
-/** On the clip's start (`atMs` from now): its effects go in on its channel and its visual fades in. */
+/** On the clip's start (`atMs` from now): its effects go in on its channel and its visuals fade in (stackRuntime.ts). */
 function dressTrack(track: TrackId, clip: SessionClip, atMs: number): void {
   // Every playing clip is noted on its track, effects or not, so effects
   // added to it while it plays come in at once.
@@ -1058,12 +1045,15 @@ function dressTrack(track: TrackId, clip: SessionClip, atMs: number): void {
     if (clipDressing.get(track) !== clip.id) undressTrack(track);
     clipDressing.set(track, clip.id);
     audio.setClipInserts(clipChannel(track, clip), get(musicStudio).inserts[clipFxKey(clip.id)] ?? null);
-    const v = clip.visual;
-    const target = studioTargetNow();
-    if (v && target && !target.source.musicVoices.some((x) => x.clip === clip.id) && target.source.musicVoices.length < MAX_STUDIO_VOICES) {
-      editStudio((src) => ({ ...src, musicVoices: [...src.musicVoices, { file: v.file, source: v.source as VoiceSourceId, auto: true, level: 0, blend: v.blend as StudioVoice['blend'], params: {}, clip: clip.id }] }));
-      fadeClipVoice(clip.id, v.level);
-    }
+    // Noted even without visuals: visuals added while it plays come in at once.
+    bringStack({
+      track: `studio:${track}`,
+      order: TRACK_IDS.indexOf(track),
+      trackName: TRACKS.find((t) => t.id === track)?.label ?? track,
+      clipName: clip.name,
+      clipId: clip.id,
+      resolve: () => findClip(get(musicStudio).session, clip.id)?.clip.stack,
+    });
   }, atMs));
 }
 
@@ -1583,7 +1573,8 @@ export function fireDubShot(index: number, velocity = 0.85): void {
   if (!shot) return;
   const repeat = audio.fireDubShot(index, velocity);
   audio.holdDubShot(index, true);
-  const note = DUB_SHOT_NOTE + index;
+  // The last few shots share the top note: it only tells the visuals a shot fired.
+  const note = Math.min(127, DUB_SHOT_NOTE + index);
   const t = audio.now();
   let vel = velocity;
   const echoes = repeat > 0 ? Math.min(8, Math.max(1, Math.round(1 + shot.feedback * 7))) : 0;

@@ -9176,7 +9176,6 @@
         onTour={() => onboarding.startTour()}
         onTemplates={() => onboarding.openTemplates()}
         onOpenProject={loadComposition}
-        onShowFromAudio={pickSongForShow}
       />
     {/if}
 
