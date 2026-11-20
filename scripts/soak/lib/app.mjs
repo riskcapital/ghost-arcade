@@ -94,6 +94,13 @@ export function resolveTarget({ root, appPath, sessionDir, log }) {
   return { packaged: true, exe, args: [], label: exe, version, cleanup };
 }
 
+function showMacProcess(pid) {
+  try {
+    execFileSync('osascript', ['-e', `tell application "System Events" to set visible of (first process whose unix id is ${pid}) to true`], { stdio: 'ignore', timeout: 5000 });
+    return true;
+  } catch { return false; }
+}
+
 function hideMacProcess(pid) {
   try {
     execFileSync('osascript', ['-e', `tell application "System Events" to set visible of (first process whose unix id is ${pid}) to false`], { stdio: 'ignore', timeout: 5000 });
@@ -260,6 +267,16 @@ export async function launchApp({ target, root, devUrl, cdpPort, runIndex, sessi
     exited,
     isAlive,
     rehide() { if (hidden && IS_MAC) hideMacProcess(child.pid); },
+    /** Show the hidden app for a moment and hide it again. macOS can leave a
+     *  hidden app's editor window throttled to one animation frame a second
+     *  (seen after its Output Window closed while hidden); showing it once
+     *  restores normal frames, and they stay after it is hidden again. */
+    refreshHidden() {
+      if (!hidden || !IS_MAC) return false;
+      showMacProcess(child.pid);
+      execFileSync('sleep', ['0.5']);
+      return hideMacProcess(child.pid);
+    },
     /** Reconnect after the editor reloaded itself (recovery), keeping the same process. */
     async reconnect() {
       try { session.close(); } catch { /* gone */ }
