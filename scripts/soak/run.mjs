@@ -34,7 +34,7 @@ class Assert extends Error {}
 
 // ── Arguments ───────────────────────────────────────────────────────────
 function parseArgs(argv) {
-  const o = { hours: 4, app: null, seed: null, areas: null, exclude: [], only: null, out: null, port: 9420, devPort: 1430, config: path.join(here, 'soak.config.json'), hidden: false, steps: null, keepOpen: false, reportOnly: null, label: '' };
+  const o = { hours: 4, app: null, seed: null, areas: null, exclude: [], only: null, out: null, port: 9420, devPort: 1430, config: path.join(here, 'soak.config.json'), hidden: false, steps: null, keepOpen: false, reportOnly: null, replay: null, label: '' };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const v = () => argv[++i];
@@ -56,6 +56,7 @@ function parseArgs(argv) {
     else if (a === '--keep-open') o.keepOpen = true;
     else if (a === '--label') o.label = v();
     else if (a === '--report-only') o.reportOnly = v();
+    else if (a === '--replay') o.replay = v();
     else if (a === '--help' || a === '-h') { console.log(fs.readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(0, 12).join('\n')); process.exit(0); }
     else throw new Error(`unknown argument ${a}`);
   }
@@ -129,6 +130,17 @@ async function main() {
     process.exit(analysis.pass ? 0 : 1);
   }
   const config = loadConfig(opts.config);
+  // --replay <session>: the same actions, in the same order, with the same
+  // arguments as that run (its trace), whatever state the app is in.
+  let replayPlan = null;
+  if (opts.replay) {
+    const dir = path.resolve(opts.replay);
+    const old = JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8'));
+    opts.seed = old.seed;
+    replayPlan = readJsonl(path.join(dir, 'trace.jsonl')).filter((e) => ['action', 'rest', 'checkpoint'].includes(e.kind)).sort((a, b) => a.step - b.step);
+    opts.label ||= 'replay';
+    if (!Number.isFinite(opts.hours) || opts.hours === 4) opts.hours = 24;
+  }
   const seed = Number.isFinite(opts.seed) ? opts.seed >>> 0 : randomSeed();
   const master = makeRng(seed);
   const areas = (opts.areas ?? AREAS).filter((a) => !opts.exclude.includes(a));
@@ -147,7 +159,8 @@ async function main() {
     if (!(await portFree(p))) throw new Error(`port ${p} is in use (another app or soak run?). Pick other ports with --port / --dev-port.`);
   }
   const target = resolveTarget({ root, appPath: opts.app, sessionDir, log });
-  const replayBase = ['npm run soak --', `--seed ${seed}`, opts.areas || opts.exclude.length ? `--areas ${areas.join(',')}` : '', opts.only ? `--only ${opts.only.join(',')}` : '', opts.app ? `--app "${opts.app}"` : ''].filter(Boolean).join(' ');
+  const replayBase = (step) => `npm run soak -- --replay "${sessionDir}" --steps ${step} --keep-open${opts.app ? ` --app "${opts.app}"` : ''}   (or: ${seedReplay} --steps ${step} --keep-open)`;
+  const seedReplay = ['npm run soak --', `--seed ${seed}`, opts.areas || opts.exclude.length ? `--areas ${areas.join(',')}` : '', opts.only ? `--only ${opts.only.join(',')}` : '', opts.app ? `--app "${opts.app}"` : ''].filter(Boolean).join(' ');
   const meta = {
     startedAt: new Date(startAt).toISOString(), seed, hours: opts.hours, areas, only: opts.only, app: opts.app ? path.resolve(opts.app) : 'source checkout',
     packaged: target.packaged, git: gitInfo(), hidden: opts.hidden, command: `node scripts/soak/run.mjs ${process.argv.slice(2).join(' ')}`.trim(), sessionDir,
@@ -580,8 +593,14 @@ async function main() {
     return ctx;
   }
 
-  async function runOneAction() {
+  async function runOneAction(forced = null) {
     const rng = master.fork(st.step);
+    if (forced) {
+      const action = ACTIONS.find((a) => a.name === forced);
+      if (!action) { log(`replay: no action ${forced} in this version`); return; }
+      rng.next(); // the draw that picked it in the original run
+      return runAction(action, rng);
+    }
     let state = null;
     try { state = await session().eval(STATE_JS, 10000); } catch { /* checked below */ }
     if (!state) { await sleep(2000); return; }
@@ -590,7 +609,10 @@ async function main() {
       .map((a) => ({ a, weight: weightOf(a) * (config.areaWeights?.[a.area] ?? 1) }));
     const pick = rng.weighted(pool);
     if (!pick) { await sleep(1000); return; }
-    const action = pick.a;
+    return runAction(pick.a, rng);
+  }
+
+  async function runAction(action, rng) {
     const rec = { kind: 'action', step: st.step, t: T(), run: st.run, area: action.area, action: action.name, status: 'pass', note: '', warnings: [], error: null };
     const errMark = st.lastErrors.length ? st.lastErrors[st.lastErrors.length - 1] : null;
     const t0 = Date.now();
@@ -613,7 +635,7 @@ async function main() {
     if (exceptions.length && rec.status !== 'fail') { rec.status = 'fail'; rec.error = `uncaught exception: ${exceptions[0].text.slice(0, 300)}`; }
     if (rec.status === 'fail') {
       Object.assign(rec, await screenshot(`${action.name} failed`, 'fail'));
-      rec.replay = `${replayBase} --steps ${st.step} --keep-open`;
+      rec.replay = replayBase(st.step);
     }
     files.trace.write(J(rec) + '\n');
     const icon = rec.status === 'pass' ? 'ok  ' : rec.status === 'skip' ? 'skip' : 'FAIL';
@@ -729,9 +751,22 @@ async function main() {
   try {
     await startApp();
     await sample({ checkpoint: true }).catch(() => null);
+    if (replayPlan) log(`replaying ${replayPlan.length} steps from ${opts.replay}`);
+    let planIndex = 0;
     while (Date.now() < deadline && !st.stopReason) {
       await checkHealth();
       if (opts.steps && st.step >= opts.steps) { log(`stopping after step ${st.step} (--steps)`); break; }
+      if (replayPlan) {
+        const e = replayPlan[planIndex++];
+        if (!e) { log('replay: end of the recorded steps'); break; }
+        st.step = e.step;
+        if (e.kind === 'checkpoint') await checkpoint();
+        else if (e.kind === 'rest') { files.trace.write(J({ kind: 'rest', step: st.step, t: T(), run: st.run, seconds: e.seconds }) + '\n'); await sleep(e.seconds * 1000); }
+        else await runOneAction(e.action);
+        const [p0, p1] = config.paceSeconds;
+        await sleep(master.fork(st.step + 1e6).float(p0, p1) * 1000);
+        continue;
+      }
       st.step++;
       if (st.step % config.checkpointEverySteps === 0) await checkpoint();
       else if (st.step % config.restEverySteps === 0) {

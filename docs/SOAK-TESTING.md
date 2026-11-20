@@ -53,10 +53,11 @@ Other options:
 | Option | What it does |
 | --- | --- |
 | `--hours N`, `--minutes N` | How long to run (default 4 hours). |
-| `--seed N` | The random seed. Every run prints its seed; the same seed replays the same actions. |
+| `--seed N` | The random seed. Every run prints its seed; the same seed makes the same choices. |
 | `--areas a,b` / `--exclude a,b` | Only some areas: `templates, mapping, vj, addons, timeline, interactive, render, project, settings, window, output, monkey`. |
 | `--only name,name` | Only these actions (e.g. `vj.trigger,timeline.autoShow`). |
 | `--steps N` | Stop after step N (for replays). |
+| `--replay DIR` | Run the steps recorded in an earlier session's folder again (see below). |
 | `--keep-open` | Leave the app running at the end, for a look around (debug port as `--port`). |
 | `--hidden` | macOS: hide the app's window so the run does not cover the screen. The render core and the editor keep running; frame rates may be lower than on screen. |
 | `--port N`, `--dev-port N` | The debug port (the app also takes N+1 and N+2) and the Vite port. Defaults 9420 and 1430. |
@@ -122,13 +123,16 @@ the random actions put on screen.
 Every failed action in the report has its command, for example:
 
 ```sh
-npm run soak -- --seed 1234 --steps 87 --keep-open
+npm run soak -- --replay ~/.ghost-arcade/soak/<session> --steps 87 --keep-open
 ```
 
-That runs the same steps with the same arguments and stops right after step 87 with the app still open. Steps
-depend on the app's state, so a replay is exact while the run had no crash before that step; after a restart it is
-close but not identical. To narrow it down, add `--areas` or `--only` (the step numbers then change; the seed still
-makes it repeatable).
+That runs the recorded steps of that session again (the same actions in the same order with the same arguments,
+the same rests and checkpoints) and stops right after step 87 with the app still open, so you can look at it.
+Monkey steps click whatever is on screen at that moment, so they can land somewhere else on a replay; everything else
+repeats exactly.
+
+`npm run soak -- --seed 1234 --steps 87` also works: it makes the same random choices from the start, but each step
+is picked from what the app's state allows, so once a step goes differently the rest of the run can too.
 
 ## Before a release
 

@@ -202,6 +202,9 @@ export async function launchApp({ target, root, devUrl, cdpPort, runIndex, sessi
     if (IS_WIN) env.LOCALAPPDATA = home;
   } else {
     env.GA_USER_DATA_DIR = profile;
+    // The debug log in the session, not the checkout's electron-debug.log
+    // (which another copy started from the same checkout would rotate).
+    env.GA_DEBUG_LOG_DIR = home;
     env.VITE_DEV_SERVER_URL = devUrl;
     env.WS_PORT = String(cdpPort + 1);
     env.HTTP_PORT = String(cdpPort + 2);
@@ -305,7 +308,7 @@ export async function setWindowSize(cdpPort, targetId, { width, height }) {
 
 /** Where this copy writes its main-process debug log. */
 export function debugLogPath({ target, root, handle }) {
-  if (!target.packaged) return path.join(root, 'electron-debug.log');
+  if (!target.packaged) return path.join(handle.home, 'electron-debug.log');
   if (IS_MAC) return path.join(handle.home, 'Library', 'Logs', 'ghost-arcade-debug.log');
   if (IS_WIN) return path.join(handle.home, 'ghost-arcade-debug.log');
   // Linux: LOCALAPPDATA is unset, so the log follows TEMP (the session's temp folder).
