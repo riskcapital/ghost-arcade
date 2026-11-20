@@ -349,7 +349,7 @@
   .pf-return :global(.tl-icon) { color: var(--tl-on, #ff725f); }
   .pf-key { font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); font-size: 10px; padding: 0 4px; border: 1px solid var(--tl-on-line, rgba(255, 114, 95, 0.46)); border-radius: 3px; }
   .pf-head { display: flex; align-items: center; gap: 8px; min-height: 24px; }
-  .pf-eyebrow { font-size: var(--ga-text-eyebrow, 10px); font-weight: 700; letter-spacing: var(--ga-eyebrow-tracking, 0.08em); text-transform: uppercase; color: var(--ga-ink-2, #89857e); }
+  .pf-eyebrow { white-space: nowrap; flex: 0 0 auto; font-size: var(--ga-text-eyebrow, 10px); font-weight: 700; letter-spacing: var(--ga-eyebrow-tracking, 0.08em); text-transform: uppercase; color: var(--ga-ink-2, #89857e); }
   .pf-hint { font-size: var(--ga-text-meta, 11px); color: var(--ga-ink-2, #89857e); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .pf-grow { flex: 1; }
   .pf-add { height: 22px; padding: 0 6px; border-color: transparent; background: transparent; color: var(--ga-ink-1, #ada9a2); font-size: var(--ga-text-meta, 11px); }

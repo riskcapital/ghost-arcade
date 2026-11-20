@@ -69,7 +69,10 @@
     font: inherit;
     cursor: pointer;
     min-width: 0;
-    flex: 0 0 auto;
+    /* Gives way first (the title ellipsizes) so the actions stay whole in
+       languages with longer button labels. */
+    flex: 0 1 auto;
+    overflow: hidden;
   }
   .rsh-fold:hover:not(:disabled) { background: var(--ga-raise, #26221c); }
   .rsh-fold:disabled { cursor: default; }
@@ -85,6 +88,7 @@
     color: var(--ga-ink-2, #89857e);
     overflow: hidden;
     text-overflow: ellipsis;
+    min-width: 0;
   }
   .rsh-count { font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); font-size: 10px; color: var(--ga-ink-2, #89857e); }
   .rsh-sum { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: var(--ga-text-meta, 11px); color: var(--ga-ink-2, #89857e); text-align: right; }
