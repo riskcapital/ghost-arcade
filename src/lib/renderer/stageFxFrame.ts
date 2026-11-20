@@ -54,3 +54,50 @@ export function applyStageFxFrame(list: Layer[], values: StageFxFrameValues): La
   }
   return out ?? list;
 }
+
+const q = (v: number) => Math.round(v * 2048);
+
+function sameOpacity(a: ReadonlyMap<string, number>, b: ReadonlyMap<string, number>): boolean {
+  if (a.size !== b.size) return false;
+  for (const [id, v] of a) {
+    const w = b.get(id);
+    if (w === undefined || q(v) !== q(w)) return false;
+  }
+  return true;
+}
+
+function sameTint(a: ReadonlyMap<string, [number, number, number]>, b: ReadonlyMap<string, [number, number, number]>): boolean {
+  if (a.size !== b.size) return false;
+  for (const [id, v] of a) {
+    const w = b.get(id);
+    if (!w || q(v[0]) !== q(w[0]) || q(v[1]) !== q(w[1]) || q(v[2]) !== q(w[2])) return false;
+  }
+  return true;
+}
+
+/**
+ * The Screen FX driver's last published values. `offer` says whether this
+ * frame's values differ from them (and keeps them when they do), so an idle
+ * frame (a Timeline Screen FX row with no block under the playhead, a paused
+ * show, a held colour) asks the core for nothing.
+ */
+export class StageFxFrameGate {
+  private opacity: ReadonlyMap<string, number> = new Map();
+  private tint: ReadonlyMap<string, [number, number, number]> = new Map();
+  private follows = false;
+  private primed = false;
+
+  offer(opacity: ReadonlyMap<string, number>, tint: ReadonlyMap<string, [number, number, number]>, followsTimeline: boolean): boolean {
+    if (this.primed && this.follows === followsTimeline && sameOpacity(this.opacity, opacity) && sameTint(this.tint, tint)) return false;
+    this.primed = true;
+    this.opacity = opacity;
+    this.tint = tint;
+    this.follows = followsTimeline;
+    return true;
+  }
+
+  /** Forget the last values (the next offer publishes). */
+  reset(): void {
+    this.primed = false;
+  }
+}

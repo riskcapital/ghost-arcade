@@ -7,7 +7,7 @@
   import { project, layers, compositions } from '../stores/layers';
   import { compositionTransition } from '../stores/compositionTransition';
   import { applyCompositionFadeFrame, buildCompositionTransitionLayers, compositionTransitionSceneKey } from '../renderer/compositionTransitionLayers';
-  import { applyStageFxFrame, NO_STAGE_FX, type StageFxFrameValues } from '../renderer/stageFxFrame';
+  import { applyStageFxFrame, NO_STAGE_FX, StageFxFrameGate, type StageFxFrameValues } from '../renderer/stageFxFrame';
   import { ghostfxFallbackParams } from '../effects/ghostfx/defaults';
   import { showTrackFrame, showClipSources } from '../stores/showTrackFrame';
   import { takeoverFrame, takeoverMediaSources, takeoverRenderHeld } from '../stores/takeoverFrame';
@@ -2343,10 +2343,14 @@
       // multiplier and tint for each bound layer (stageFxFrameValues). The
       // frame sync puts them on every frame it sends (nativeFrameLayers), so
       // a running effect asks for a frame and never rebuilds the scene.
-      // Idle frames cost two map-size checks and nothing else.
+      // Idle frames cost two map-size checks and nothing else; frames whose
+      // values match the last ones sent ask the core for nothing (a Screen FX
+      // row with no block under the playhead, a paused show).
       let stageFxNativeOpacity = new Map<string, number>();
       let stageFxNativeTint = new Map<string, [number, number, number]>();
+      const stageFxGate = new StageFxFrameGate();
       const publishStageFxFrame = () => {
+        if (!stageFxGate.offer(stageFxNativeOpacity, stageFxNativeTint, !!timelineScreenFx())) return;
         const active = stageFxNativeOpacity.size > 0 || stageFxNativeTint.size > 0;
         stageFxFrameValues = active
           ? {
