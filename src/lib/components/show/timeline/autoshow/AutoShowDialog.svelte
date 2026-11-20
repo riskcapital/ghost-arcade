@@ -13,6 +13,7 @@
   import type { ShowStyle } from '../../../../timeline/autoshow/songStyle';
   import { createAutoShowFlow, type AutoShowContent } from './autoShowFlow';
   import TimelineIcon from '../TimelineIcon.svelte';
+  import { autoShowDockInset } from './autoShowUi';
 
   interface Props { onclose: () => void }
   let { onclose }: Props = $props();
@@ -82,12 +83,24 @@
   const heardStyle = $derived(prep?.reading.style ?? null);
   /** An earlier Auto show is under the song: this one only fills gaps. */
   const earlierShow = $derived(skips.some((line) => /earlier Auto show/.test(line)));
+  // Docked once built: over the grid, clear of the side column and the
+  // status bar (it covered the Inspector and the frame rate). Measured when
+  // it docks and when the window changes size, not every frame.
+  let dock = $state({ right: 16, bottom: 16 });
+  $effect(() => {
+    if (phase !== 'done' || typeof window === 'undefined') return;
+    const rect = (sel: string) => document.querySelector(sel)?.getBoundingClientRect() ?? null;
+    const measure = () => { dock = autoShowDockInset({ width: window.innerWidth, height: window.innerHeight }, rect('[data-timeline-side]'), rect('.statusbar')); };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  });
   const MOD = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform) ? 'Cmd' : 'Ctrl';
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <!-- svelte-ignore a11y_click_events_have_key_events -->
-<div class="auto-backdrop" class:docked={phase === 'done'} onclick={() => { if (phase !== 'done') onclose(); }} data-auto-show-dialog>
+<div class="auto-backdrop" class:docked={phase === 'done'} style:right={phase === 'done' ? `${dock.right}px` : null} style:bottom={phase === 'done' ? `${dock.bottom}px` : null} onclick={() => { if (phase !== 'done') onclose(); }} data-auto-show-dialog>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div class="auto-modal" onclick={(e) => e.stopPropagation()} data-auto-phase={phase} data-auto-state={st.kind}>
