@@ -19,6 +19,8 @@
  *   3. nothing left: stopped, GO plays; playing, it does nothing.
  *
  * Takeover and phrases do not change it (Return is R; phrases are pads).
+ *
+ * @ui-text: the extractor reads every string here (they are shown).
  */
 import type { TimelineSection } from '../sections/sectionModel';
 import type { StackItem } from './cueStack';

@@ -72,11 +72,10 @@
       const here = item.id === $nowId && $playingS;
       return sectionWords(item.section, $sectionsS, status.passes[item.id] ?? 0, here && item.section.action === 'vamp');
     }
-    if (item.kind === 'marker') return cueWords(item.cue, names);
-    return `Waits for GO · ${cueWords(item.cue, names)}`;
+    return cueWords(item.cue, names);
   }
   function at(item: StackItem): { bar: string; time: string } {
-    if (item.time === null) return { bar: 'on', time: 'GO' };
+    if (item.time === null) return { bar: '', time: '' };
     return { bar: $tempoS ? formatBarsBeats($tempoS, item.time).split('.')[0] : '', time: formatPrecise(item.time) };
   }
   function isSelected(item: StackItem): boolean {
@@ -230,8 +229,13 @@
             <span class="item-name">{stackItemName(item)}</span>
           </span>
           <span class="pf-badge">{#if item.id === $nowId}<b class="now">NOW</b>{:else if item.id === $standbyId}<b class="sb">STANDBY</b>{/if}</span>
-          <span class="pf-at"><span>{a.bar}</span><span class="pf-dot">·</span><span>{a.time}</span></span>
-          <span class="pf-then">{then(item)}</span>
+          {#if item.time === null}
+            <span class="pf-at"><span>On GO</span></span>
+            <span class="pf-then"><span>Waits for GO</span> · <span>{then(item)}</span></span>
+          {:else}
+            <span class="pf-at"><span>{a.bar}</span><span class="pf-dot">·</span><span>{a.time}</span></span>
+            <span class="pf-then">{then(item)}</span>
+          {/if}
         </div>
       {:else}
         <p class="pf-none">No steps yet: + Section, + Marker or + Cue, or ✦ Auto show.</p>

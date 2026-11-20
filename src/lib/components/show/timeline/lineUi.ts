@@ -582,11 +582,14 @@ export function followChoiceId(source: import('../../../timeline/lines/lineModel
   return source.kind;
 }
 
+/** The header button of a line that follows nothing yet. */
+const FOLLOWS_LABEL = 'Follows';
+
 /** A short name for what a line follows (header button). */
 export function followLabel(source: import('../../../timeline/lines/lineModel').FollowSource | null | undefined): string {
-  if (!source) return 'follows';
+  if (!source) return FOLLOWS_LABEL;
   if (source.kind === 'midi') return `CC ${source.cc}`;
   if (source.kind === 'beat') return `LFO ${source.beats / 4} bar`;
   const id = followChoiceId(source);
-  return FOLLOW_CHOICES.find((c) => c.id === id)?.label ?? followChoices().find((c) => c.id === id)?.label ?? lineSource(source.kind)?.label ?? 'follows';
+  return FOLLOW_CHOICES.find((c) => c.id === id)?.label ?? followChoices().find((c) => c.id === id)?.label ?? lineSource(source.kind)?.label ?? FOLLOWS_LABEL;
 }
