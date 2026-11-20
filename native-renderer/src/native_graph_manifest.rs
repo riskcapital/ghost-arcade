@@ -8,6 +8,9 @@ pub enum ShaderSource {
     /// Shaders the app sends with each graph (an Interactive 3D scene, a
     /// video synthesizer patch); `shader_ids` is empty by design.
     Runtime,
+    /// Shaders compiled into the core itself: listed in `shader_ids`, nothing
+    /// for the app to precompile.
+    Core,
 }
 
 impl ShaderSource {
@@ -15,6 +18,7 @@ impl ShaderSource {
         match self {
             ShaderSource::Builtin => "builtin",
             ShaderSource::Runtime => "runtime",
+            ShaderSource::Core => "core",
         }
     }
 }
@@ -508,6 +512,86 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
         ],
         parity: "native-videosynth-template-with-feedback-textures-and-frame-block",
     },
+    NativeGraphInstrumentSpec {
+        id: "strands",
+        label: "Strands",
+        shader_source: ShaderSource::Core,
+        shader_ids: &["strands/sim-v1", "strands/draw-v1", "audio-visuals/hdr-post-v1"],
+        features: &[
+            "compute_graph_host",
+            "compute_graph_render",
+            "compute_graph_multi_render",
+            "compute_graph_instanced_render",
+            "compute_graph_texture_sampling",
+            "compute_graph_textures",
+            "compute_graph_source_frame_target",
+            "persistent_compute_buffers",
+            "native_audio_visual_data",
+            "native_hdr_post_chain",
+            "native_strands_graph",
+        ],
+        parity: "core-wgsl-onset-shapes-hdr-feedback-bloom",
+    },
+    NativeGraphInstrumentSpec {
+        id: "cloud-pulse",
+        label: "Cloud Pulse",
+        shader_source: ShaderSource::Core,
+        shader_ids: &["cloud-pulse/draw-v1", "audio-visuals/hdr-post-v1"],
+        features: &[
+            "compute_graph_host",
+            "compute_graph_render",
+            "compute_graph_multi_render",
+            "compute_graph_instanced_render",
+            "compute_graph_texture_sampling",
+            "compute_graph_textures",
+            "compute_graph_source_frame_target",
+            "persistent_compute_buffers",
+            "native_audio_visual_data",
+            "native_hdr_post_chain",
+            "native_cloud_pulse_graph",
+        ],
+        parity: "core-wgsl-point-cloud-band-waves-hdr-bloom",
+    },
+    NativeGraphInstrumentSpec {
+        id: "cloud-flock",
+        label: "Cloud Flock",
+        shader_source: ShaderSource::Core,
+        shader_ids: &["cloud-flock/sim-v1", "cloud-flock/draw-v1", "audio-visuals/hdr-post-v1"],
+        features: &[
+            "compute_graph_host",
+            "compute_graph_render",
+            "compute_graph_multi_render",
+            "compute_graph_instanced_render",
+            "compute_graph_texture_sampling",
+            "compute_graph_textures",
+            "compute_graph_source_frame_target",
+            "persistent_compute_buffers",
+            "native_audio_visual_data",
+            "native_hdr_post_chain",
+            "native_cloud_flock_graph",
+        ],
+        parity: "core-wgsl-point-cloud-kick-scatter-spring-reform",
+    },
+    NativeGraphInstrumentSpec {
+        id: "depth-lights",
+        label: "Depth Lights",
+        shader_source: ShaderSource::Core,
+        shader_ids: &["depth-lights/draw-v1", "audio-visuals/hdr-post-v1"],
+        features: &[
+            "compute_graph_host",
+            "compute_graph_render",
+            "compute_graph_multi_render",
+            "compute_graph_instanced_render",
+            "compute_graph_texture_sampling",
+            "compute_graph_textures",
+            "compute_graph_source_frame_target",
+            "persistent_compute_buffers",
+            "native_audio_visual_data",
+            "native_hdr_post_chain",
+            "native_depth_lights_graph",
+        ],
+        parity: "core-wgsl-point-cloud-depth-slices-spectrum-onsets",
+    },
 ];
 
 pub fn native_graph_instruments_note() -> &'static str {
@@ -571,14 +655,14 @@ mod tests {
     fn every_instrument_says_where_its_shaders_come_from() {
         for spec in NATIVE_GRAPH_INSTRUMENT_SPECS {
             match spec.shader_source {
-                ShaderSource::Builtin => assert!(!spec.shader_ids.is_empty(), "{} is builtin with no shaders", spec.id),
+                ShaderSource::Builtin | ShaderSource::Core => assert!(!spec.shader_ids.is_empty(), "{} is builtin with no shaders", spec.id),
                 ShaderSource::Runtime => assert!(spec.shader_ids.is_empty(), "{} gets its shaders at runtime but lists some", spec.id),
             }
         }
         let manifest = native_graph_instrument_manifest();
         for entry in manifest.as_array().unwrap() {
             let source = entry.get("shader_source").and_then(Value::as_str);
-            assert!(matches!(source, Some("builtin") | Some("runtime")), "{entry}");
+            assert!(matches!(source, Some("builtin") | Some("runtime") | Some("core")), "{entry}");
         }
     }
 

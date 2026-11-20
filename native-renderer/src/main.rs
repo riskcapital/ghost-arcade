@@ -6,6 +6,7 @@ mod transition_clock;
 mod clip_audio;
 mod audio_priority;
 mod audio;
+mod audio_visuals;
 mod capabilities;
 mod compositor;
 mod compute_graph;
@@ -1051,6 +1052,7 @@ struct CoreStatus {
     isf_pass_target_bytes: u64,
     isf_audio_spectrum_live: bool,
     isf_audio_spectrum_seq: u64,
+    audio_visual_seq: u64,
     isf_audio_fft_bins: u32,
     isf_audio_waveform_samples: u32,
     native_shader_layers: u32,
@@ -3714,6 +3716,10 @@ enum NativeGraphLayerKind {
     SmokeRiders,
     FluidRiders,
     VolumetricSpheres,
+    Strands,
+    CloudPulse,
+    CloudFlock,
+    DepthLights,
     GhostFx,
     HandFx,
     PerformerWorld,
@@ -3747,6 +3753,10 @@ impl NativeGraphLayerKind {
             "smoke-riders" => Self::SmokeRiders,
             "fluid-riders" => Self::FluidRiders,
             "volumetric-spheres" | "volumetric-balls" => Self::VolumetricSpheres,
+            "strands" => Self::Strands,
+            "cloud-pulse" => Self::CloudPulse,
+            "cloud-flock" => Self::CloudFlock,
+            "depth-lights" => Self::DepthLights,
             "ghostfx" => Self::GhostFx,
             "handfx" => Self::HandFx,
             "performer-world" => Self::PerformerWorld,
@@ -3776,6 +3786,10 @@ impl NativeGraphLayerKind {
             Self::SmokeRiders => "smoke-riders",
             Self::FluidRiders => "fluid-riders",
             Self::VolumetricSpheres => "volumetric-spheres",
+            Self::Strands => "strands",
+            Self::CloudPulse => "cloud-pulse",
+            Self::CloudFlock => "cloud-flock",
+            Self::DepthLights => "depth-lights",
             Self::GhostFx => "ghostfx",
             Self::HandFx => "handfx",
             Self::PerformerWorld => "performer-world",
@@ -3821,6 +3835,10 @@ impl NativeGraphLayerKind {
                 | Self::SmokeRiders
                 | Self::FluidRiders
                 | Self::VolumetricSpheres
+                | Self::Strands
+                | Self::CloudPulse
+                | Self::CloudFlock
+                | Self::DepthLights
                 | Self::GhostFx
                 | Self::HandFx
                 | Self::PerformerWorld
@@ -4019,6 +4037,8 @@ struct NativeGraphLayer {
     point_cloud_state: NativePointCloudGraphState,
     volumetric_spheres_state: NativeVolumetricSpheresGraphState,
     smoke_riders_state: NativeSmokeRidersGraphState,
+    strands_state: audio_visuals::jobs::StrandsState,
+    cloud_pulse_state: audio_visuals::jobs::CloudPulseState,
 }
 
 enum NativeGraphLayerState {
@@ -4031,6 +4051,8 @@ enum NativeGraphLayerState {
     PointCloudFx(NativePointCloudGraphState),
     SmokeRiders(NativeSmokeRidersGraphState),
     VolumetricSpheres(NativeVolumetricSpheresGraphState),
+    Strands(audio_visuals::jobs::StrandsState),
+    CloudPulse(audio_visuals::jobs::CloudPulseState),
 }
 
 /// One asynchronous graph buffer readback: a MAP_READ copy made in the frame's
@@ -5481,6 +5503,9 @@ struct App {
     isf_shader_generation: u64,
     /// Latest analyser spectrum for ISF audio / audioFFT inputs.
     isf_audio_spectrum: IsfAudioSpectrum,
+    /// Spectrum, waveform, onset envelopes and recent hits for the
+    /// audio-reactive instruments (`set_audio_spectrum.visual_b64`).
+    audio_visual: audio_visuals::audio_data::AudioVisualData,
     isf_multipass_renders: u64,
     isf_audio_decode_scratch: Vec<u8>,
     shader_precompile_queue_cap: u32,
@@ -5908,6 +5933,7 @@ impl App {
             evicted_shader_ids: HashSet::new(),
             isf_shader_generation: 0,
             isf_audio_spectrum: IsfAudioSpectrum::default(),
+            audio_visual: audio_visuals::audio_data::AudioVisualData::default(),
             isf_multipass_renders: 0,
             isf_audio_decode_scratch: Vec::new(),
             shader_precompile_queue_cap: 4096,
@@ -6116,6 +6142,12 @@ impl App {
             "native_3d_smoke_graph": true,
             "native_particle_field_graph": true,
             "native_volumetric_spheres_graph": true,
+            "native_strands_graph": true,
+            "native_cloud_pulse_graph": true,
+            "native_cloud_flock_graph": true,
+            "native_depth_lights_graph": true,
+            "native_audio_visual_data": true,
+            "native_hdr_post_chain": true,
             "native_smoke_riders_graph": true,
             "native_ink_cloud_graph": true,
             "native_flythrough_graph": true,
@@ -6591,6 +6623,7 @@ impl App {
                 .unwrap_or(0),
             isf_audio_spectrum_live: self.isf_audio_spectrum.is_live(Instant::now()),
             isf_audio_spectrum_seq: self.isf_audio_spectrum.seq,
+            audio_visual_seq: self.audio_visual.seq,
             isf_audio_fft_bins: self.isf_audio_spectrum.fft.len() as u32,
             isf_audio_waveform_samples: self.isf_audio_spectrum.waveform.len() as u32,
             native_shader_layers: self
@@ -8852,6 +8885,16 @@ impl App {
                 NativeGraphLayerKind::VolumetricSpheres => {
                     self.build_native_volumetric_spheres_graph_job(&graph_layer)
                 }
+                NativeGraphLayerKind::Strands => self.build_native_strands_graph_job(&graph_layer),
+                NativeGraphLayerKind::CloudPulse => {
+                    self.build_native_cloud_graph_job(&graph_layer, audio_visuals::jobs::CloudInstrument::Pulse)
+                }
+                NativeGraphLayerKind::CloudFlock => {
+                    self.build_native_cloud_graph_job(&graph_layer, audio_visuals::jobs::CloudInstrument::Flock)
+                }
+                NativeGraphLayerKind::DepthLights => {
+                    self.build_native_cloud_graph_job(&graph_layer, audio_visuals::jobs::CloudInstrument::DepthLights)
+                }
                 NativeGraphLayerKind::GhostFx
                 | NativeGraphLayerKind::HandFx
                 | NativeGraphLayerKind::PerformerWorld
@@ -8885,6 +8928,10 @@ impl App {
                             }
                             NativeGraphLayerState::VolumetricSpheres(state) => {
                                 entry.volumetric_spheres_state = state
+                            }
+                            NativeGraphLayerState::Strands(state) => entry.strands_state = state,
+                            NativeGraphLayerState::CloudPulse(state) => {
+                                entry.cloud_pulse_state = state
                             }
                         }
                     }
@@ -16984,6 +17031,12 @@ impl App {
                     time,
                 )
             });
+        let previous_audio_visual = self
+            .native_graph_layers
+            .get(&layer_id)
+            .filter(|existing| existing.kind == kind && existing.source_id == source_id)
+            .map(|existing| (existing.strands_state.clone(), existing.cloud_pulse_state.clone()))
+            .unwrap_or_default();
         let replaced_graph = self.native_graph_layers.insert(
             layer_id.clone(),
             NativeGraphLayer {
@@ -17002,6 +17055,8 @@ impl App {
                 point_cloud_state: previous_point_cloud_state,
                 volumetric_spheres_state: previous_sphere_state,
                 smoke_riders_state: previous_smoke_riders_state,
+                strands_state: previous_audio_visual.0,
+                cloud_pulse_state: previous_audio_visual.1,
             },
         );
         let entry = self
@@ -17851,6 +17906,21 @@ impl App {
         spectrum.active = active;
         spectrum.seq = spectrum.seq.wrapping_add(1);
         spectrum.received_at = Some(Instant::now());
+        // Audio-reactive instruments: one fixed-size packet, only while a
+        // layer that reads it is showing (the editor decides). Independent of
+        // the ISF rows above: either can be live without the other.
+        if bool_at(command, &["visual_active"]) == Some(false) {
+            self.audio_visual.set_inactive();
+        } else if let Some(encoded) = command.get("visual_b64").and_then(Value::as_str) {
+            let scratch = &mut self.isf_audio_decode_scratch;
+            scratch.clear();
+            if base64::engine::general_purpose::STANDARD.decode_vec(encoded, scratch).is_ok()
+                && let Err(err) = self.audio_visual.set_from_bytes(scratch)
+                && self.last_shader_error.as_deref() != Some(err.as_str())
+            {
+                self.last_shader_error = Some(err);
+            }
+        }
     }
 
     fn apply_audio_state(&mut self, command: &Value) {
