@@ -3,6 +3,8 @@
    * A panel knob: drag up or down, scroll, or use the arrow keys; double-click
    * returns it to its default. The value is 0-1 unless min and max say otherwise.
    */
+  import { autoValueControl } from '../../music/autoMidi';
+
   let {
     label,
     value,
@@ -29,6 +31,10 @@
     /** Keep the label for screen readers but do not print it (a row of identical knobs). */
     hideLabel?: boolean;
   } = $props();
+
+  // No path given: the knob registers itself, so it can still be assigned in MIDI learn.
+  const autoPath = midiPath ? '' : autoValueControl(label, (position) => onchange(min + Math.max(0, Math.min(1, position)) * (max - min)));
+  const path = $derived(midiPath || autoPath);
 
   const span = $derived(max - min);
   const amount = $derived(span > 0 ? Math.max(0, Math.min(1, (value - min) / span)) : 0);
@@ -91,10 +97,10 @@
     aria-valuenow={value}
     aria-valuetext={format(value)}
     title={title ? `${title} · ${format(value)}` : `${label} ${format(value)}`}
-    data-midi-path={midiPath || undefined}
-    data-midi-label={midiPath ? label : undefined}
-    data-midi-min={midiPath ? min : undefined}
-    data-midi-max={midiPath ? max : undefined}
+    data-midi-path={path || undefined}
+    data-midi-label={path ? label : undefined}
+    data-midi-min={path ? min : undefined}
+    data-midi-max={path ? max : undefined}
     onpointerdown={onPointerDown}
     onpointermove={onPointerMove}
     onpointerup={onPointerUp}

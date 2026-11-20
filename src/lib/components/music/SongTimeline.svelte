@@ -163,7 +163,7 @@
 
 <div class="timeline" role="group" aria-label="Song timeline">
   <div class="head">
-    <button class="play" class:on={!!playing} disabled={!sections.length} onclick={toggle} aria-pressed={!!playing} title={playing ? 'Stop the song' : 'Play the song through: each section comes in on its bar'}>
+    <button class="play" class:on={!!playing} disabled={!sections.length} onclick={toggle} data-midi-path="studio:song.play" data-midi-label="Play the song through" data-midi-mode="toggle" aria-pressed={!!playing} title={playing ? 'Stop the song' : 'Play the song through: each section comes in on its bar'}>
       <svg viewBox="0 0 12 12" aria-hidden="true">{#if playing}<rect x="2.5" y="2.5" width="7" height="7" rx="1" />{:else}<path d="M3 2l7 4-7 4z" />{/if}</svg>
       {playing ? 'Stop' : 'Play song'}
     </button>

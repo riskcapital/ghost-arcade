@@ -155,7 +155,7 @@
         <button class="mini-btn studio-btn" class:on={(s.inserts[ch]?.length ?? 0) > 0} onclick={() => insertEditorChannel.set($insertEditorChannel === ch ? null : ch)} title="Effects on the {track.label.toLowerCase()} track's instrument">FX</button>
       {/if}
       {#if track.id !== 'beats'}<StudioJack id="cv:track.{track.id}.level" title="{track.label} track out: its level, as a control signal" />{/if}
-      <button class="stop" disabled={!trackActive(track.id)} onclick={() => stopTrack(track.id)} aria-label="Stop {track.label}" title="Stop {track.label.toLowerCase()}">
+      <button class="stop" disabled={!trackActive(track.id)} onclick={() => stopTrack(track.id)} data-midi-path="studio:track.{track.id}.stop" data-midi-label="Stop {track.label}" data-midi-mode="toggle" aria-label="Stop {track.label}" title="Stop {track.label.toLowerCase()}">
         <svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="2" width="8" height="8" rx="1" /></svg>
       </button>
     </div>
@@ -163,7 +163,7 @@
 
   {#each rows as row (row)}
     {@const section = sectionNames[row]}
-    <button class="row-go" onclick={() => launchRow(row)} aria-label="Launch row {row + 1}{section ? `, ${section}` : ''}" title="Launch {section ? `${section} (row ${row + 1})` : `row ${row + 1}`} on the next bar">
+    <button class="row-go" onclick={() => launchRow(row)} data-midi-path="studio:row.{row + 1}" data-midi-label="Launch row {row + 1}" data-midi-mode="toggle" aria-label="Launch row {row + 1}{section ? `, ${section}` : ''}" title="Launch {section ? `${section} (row ${row + 1})` : `row ${row + 1}`} on the next bar">
       <span>{row + 1}</span>
       <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 2l7 4-7 4z" /></svg>
     </button>
@@ -173,7 +173,7 @@
         {@const on = playing(track.id, clip)}
         {@const next = queued(track.id, clip)}
         <div class="slot" class:on class:next role="gridcell" class:over={dropOver === `${track.id}:${row}`} ondragover={(e) => over(e, track.id, row)} ondragleave={() => (dropOver = null)} ondrop={(e) => dropLoop(e, track.id, row)}>
-          <button class="clip" onclick={() => launchClip(track.id, row)} ondblclick={() => clipEditorId.set(clip.id)} aria-pressed={on} title={next ? 'Starts on the next bar' : on ? 'Playing · double-click to edit' : 'Start on the next bar · double-click to edit'}>
+          <button class="clip" onclick={() => launchClip(track.id, row)} data-midi-path="studio:clip.{track.id}.{row + 1}" data-midi-label="{track.label} clip {row + 1}" data-midi-mode="toggle" ondblclick={() => clipEditorId.set(clip.id)} aria-pressed={on} title={next ? 'Starts on the next bar' : on ? 'Playing · double-click to edit' : 'Start on the next bar · double-click to edit'}>
             <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 2l7 4-7 4z" /></svg>
             <span>{clip.name}</span>
           </button>

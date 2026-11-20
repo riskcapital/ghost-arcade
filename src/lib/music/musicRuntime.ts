@@ -135,7 +135,7 @@ import {
 const LOOKAHEAD_SECONDS = 0.12;
 const SCHEDULER_INTERVAL_MS = 25;
 /** Live notes start this far after "now" so a burst of input keeps its spacing. */
-const LIVE_OFFSET_SECONDS = 0.005;
+const LIVE_OFFSET_SECONDS = 0.002;
 /** How long a drum pad stays lit in the panel. */
 const PAD_FLASH_MS = 110;
 

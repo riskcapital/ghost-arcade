@@ -69,7 +69,10 @@ function claimedByControlMapping(input: { id: string; name?: string | null }, me
   if (message.kind !== 'on' && message.kind !== 'off') return false;
   const midi = get(midiStore);
   if (midi.learn.active || midi.editMode || midi.identifyMode) return true;
-  if (inUse.control.length && !inUse.control.includes(input.id)) return false;
+  // An input that is not a controller keeps its notes, except the ones a control was learned on from it.
+  if (inUse.control.length && !inUse.control.includes(input.id)) {
+    return midi.mappings.some((m) => m.type === 'note' && m.number === message.note && (m.channel === -1 || m.channel === message.channel) && !!input.name && m.device === input.name);
+  }
   return midi.mappings.some(
     (m) => m.type === 'note' && m.number === message.note && (m.channel === -1 || m.channel === message.channel)
       && mappingHearsDevice(m, input.name ?? undefined, inUse.controlNames),

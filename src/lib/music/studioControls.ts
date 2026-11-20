@@ -82,8 +82,14 @@ export function registerStudioControl(control: StudioControl): () => void {
   return registerStudioControls([control]);
 }
 
+/** Controls that are worked out from their id when asked for, not registered (autoMidi.ts). */
+let fallback: ((id: string) => StudioControl | undefined) | null = null;
+export function setStudioControlFallback(find: ((id: string) => StudioControl | undefined) | null): void {
+  fallback = find;
+}
+
 export function studioControl(id: string): StudioControl | undefined {
-  return controls.get(id);
+  return controls.get(id) ?? fallback?.(id);
 }
 
 /** Every control, grouped and in the order registered. */
@@ -105,7 +111,7 @@ const PRESS = 0.04;
  * that id (the studio's code is not loaded, or a mapping outlived it).
  */
 export function runStudioControl(id: string, value: number): boolean {
-  const control = controls.get(id);
+  const control = studioControl(id);
   if (!control) return false;
   const v = Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
   if (control.kind === 'value') {

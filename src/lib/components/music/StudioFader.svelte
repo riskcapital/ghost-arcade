@@ -1,11 +1,18 @@
 <script lang="ts">
   /** A vertical channel fader: drag the cap, scroll, or use the arrow keys; double-click resets. */
+  import { autoValueControl } from '../../music/autoMidi';
+
   let {
     label,
     value,
     defaultValue = 0.8,
     onchange,
-  }: { label: string; value: number; defaultValue?: number; onchange: (value: number) => void } = $props();
+    midiPath = '',
+  }: { label: string; value: number; defaultValue?: number; onchange: (value: number) => void; midiPath?: string } = $props();
+
+  // No path given: the fader registers itself, so it can still be assigned in MIDI learn.
+  const autoPath = midiPath ? '' : autoValueControl(label, (position) => onchange(Math.max(0, Math.min(1, position))));
+  const path = $derived(midiPath || autoPath);
 
   let track = $state<HTMLElement | null>(null);
   let dragging = false;
@@ -48,6 +55,10 @@
   aria-valuemax={100}
   aria-valuenow={Math.round(value * 100)}
   title="{label} {Math.round(value * 100)}%"
+  data-midi-path={path || undefined}
+  data-midi-label={path ? label : undefined}
+  data-midi-min={path ? 0 : undefined}
+  data-midi-max={path ? 1 : undefined}
   onpointerdown={down}
   onpointermove={(e) => dragging && fromPointer(e)}
   onpointerup={() => (dragging = false)}

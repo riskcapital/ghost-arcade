@@ -335,7 +335,7 @@
       </select>
       <div class="ga-segmented set-tabs" role="group" aria-label="Instrument set">
         {#each STUDIO_SETS as set}
-          <button class:active={s.set === set.id} aria-pressed={s.set === set.id} onclick={() => musicStudio.setSet(set.id)}>{set.label}</button>
+          <button class:active={s.set === set.id} aria-pressed={s.set === set.id} onclick={() => musicStudio.setSet(set.id)} data-midi-path="studio:set.{set.id}" data-midi-label="{set.label} set" data-midi-mode="toggle">{set.label}</button>
         {/each}
       </div>
       <div class="group">

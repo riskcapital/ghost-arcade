@@ -1108,14 +1108,17 @@ export class MusicAudioEngine {
     // Brighter with velocity and a little with pitch, like a played synth.
     const base = Math.min(18000, p.cutoff * (0.7 + 0.6 * velocity) * Math.pow(freq / 261.6, 0.3));
     const top = Math.min(18000, base + p.envAmount * (0.4 + 0.6 * velocity));
+    // A slow patch (the pad) swells in on a soft touch and speaks quickly when played firmly,
+    // so a keyboard does not feel late.
+    const attack = p.attack > 0.1 ? p.attack * Math.max(0.15, 1.15 - velocity) : p.attack;
     filter.frequency.setValueAtTime(base, time);
-    filter.frequency.linearRampToValueAtTime(top, time + Math.max(0.003, p.attack));
-    filter.frequency.setTargetAtTime(base + (top - base) * p.sustain, time + p.attack, Math.max(0.01, p.decay / 3));
+    filter.frequency.linearRampToValueAtTime(top, time + Math.max(0.003, attack));
+    filter.frequency.setTargetAtTime(base + (top - base) * p.sustain, time + attack, Math.max(0.01, p.decay / 3));
 
     const amp = ctx.createGain();
     amp.gain.setValueAtTime(0, time);
-    amp.gain.linearRampToValueAtTime(peak, time + Math.max(0.003, p.attack));
-    amp.gain.setTargetAtTime(peak * p.sustain, time + p.attack, Math.max(0.01, p.decay / 3));
+    amp.gain.linearRampToValueAtTime(peak, time + Math.max(0.003, attack));
+    amp.gain.setTargetAtTime(peak * p.sustain, time + attack, Math.max(0.01, p.decay / 3));
 
     osc1.connect(filter);
     osc2.connect(osc2Gain).connect(filter);

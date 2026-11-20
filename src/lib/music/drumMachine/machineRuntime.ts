@@ -13,6 +13,7 @@ import { get, writable } from 'svelte/store';
 import { launchClockPosition } from '../../stores/launchClock';
 import { generateUUID } from '../../utils/uuid';
 import { musicStudio, musicTransport } from '../musicStudioStore';
+import { registerStudioControl } from '../studioControls';
 import { beatPattern, loopById } from '../loops';
 import type { DrumPattern } from '../drumPattern';
 import { CLIP_PART_PREFIX, RANDOM_PART_PREFIX, partFromPattern, randomPart, type RandomStyle } from './machineImport';
@@ -271,6 +272,9 @@ export function toggleMachine(): void {
   if (get(machineTransport).playing) stopMachine();
   else startMachine();
 }
+
+// The sequencer's Play button, for a controller: it answers on the VJ deck too.
+registerStudioControl({ id: 'machine.toggle', label: 'Drum machine play or stop', group: 'Drum machine', kind: 'trigger', run: toggleMachine });
 
 function tick(): void {
   const t = get(machineTransport);
