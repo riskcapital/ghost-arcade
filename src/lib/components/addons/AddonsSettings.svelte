@@ -94,7 +94,7 @@
         <div class="sc-label">
           <span class="sc-title key" translate="no">{licence.key}</span>
           <span class="sc-hint">
-            {#if licence.email}<span translate="no">{licence.email}</span> · {/if}{#if licence.checkedAt}Last checked {day(licence.checkedAt)}{:else}Not activated on this computer{/if}
+            {#if licence.email}<span translate="no">{licence.email}</span>&nbsp;·&nbsp;{/if}{#if licence.checkedAt}Last checked {day(licence.checkedAt)}{:else}Not activated on this computer{/if}
           </span>
         </div>
         <div class="row-buttons">

@@ -15,7 +15,7 @@
   {:else if current.kind === 'offline-grace'}{#if current.daysLeft === 1}Licensed · check in within 1 day{:else}Licensed · check in within {current.daysLeft} days{/if}
   {:else if current.why === 'trial-ended'}Trial ended
   {:else}Not checked in for 30 days
-  {/if}{#if carriedOver}<span class="carried"> · keeps working until you quit</span>{/if}
+  {/if}{#if carriedOver}<span class="carried">&nbsp;· keeps working until you quit</span>{/if}
 </span>
 
 <style>
