@@ -116,7 +116,7 @@
   import { watchShowSelection } from './show/timeline/selectionChecks';
   import { cancelActiveDrag, followPointer } from './show/timeline/dragSession';
   import { showPopoverOpen } from './show/timeline/keyLabels';
-  import { anchoredScrollLeft, followScrollLeft, wheelPixels, wheelZoomFactor } from './show/timeline/gridView';
+  import { anchoredScrollLeft, followScrollLeft, GridScrollMirror, wheelPixels, wheelZoomFactor } from './show/timeline/gridView';
   import { devicePixel, formatPrecise } from './show/timeline/timeFormat';
   import ShowAudioDelayBadge from './show/timeline/ShowAudioDelayBadge.svelte';
   import ShowLookLane from './show/timeline/ShowLookLane.svelte';
@@ -599,6 +599,7 @@
   // Visible stretch of the grid, for the ruler and the tracks (they draw
   // only what is on screen).
   let gridScrollLeft = $state(0);
+  const scrollMirror = new GridScrollMirror();
   let gridWidth = $state(800);
   const viewStart = $derived(Math.max(0, gridScrollLeft / zoom - 2));
   const viewEnd = $derived((gridScrollLeft + gridWidth) / zoom + 2);
@@ -1286,7 +1287,7 @@
     void tick().then(() => {
       if (!gridEl) return;
       gridEl.scrollLeft = anchoredScrollLeft(time, to, Math.max(0, Math.min(gridEl.clientWidth, screenX)));
-      gridScrollLeft = gridEl.scrollLeft;
+      gridScrollLeft = scrollMirror.read();
     });
   }
   onMount(() => setShowKeyHandler(handleShowKey));
@@ -1343,7 +1344,7 @@
     void tick().then(() => {
       if (!gridEl) return;
       gridEl.scrollLeft = anchoredScrollLeft(time, to, pointerX);
-      gridScrollLeft = gridEl.scrollLeft;
+      gridScrollLeft = scrollMirror.read();
     });
   }
 
@@ -1378,17 +1379,25 @@
       const next = followScrollLeft(prev, x, gridScrollLeft, gridWidth);
       if (next !== null) {
         gridEl.scrollLeft = next;
-        gridScrollLeft = gridEl.scrollLeft;
+        gridScrollLeft = scrollMirror.read();
       }
     });
   });
   let followZoom = 0;
 
-  // A zoom change can clamp the grid's scroll without a scroll event; keep
-  // the mirrored value (what the lanes draw from) true to it.
+  // The grid is made again (the Timeline closed and opened, VJ mode and
+  // back) at scroll 0: put it back where the view was, or the lanes drew
+  // from the old scroll and the first seconds of every row went missing.
   $effect(() => {
-    void zoom;
-    void tick().then(() => { if (gridEl) gridScrollLeft = gridEl.scrollLeft; });
+    const el = gridEl;
+    void tick().then(() => { if (el && gridEl === el) gridScrollLeft = scrollMirror.attach(el); });
+  });
+  // A zoom change or a wider or narrower view can clamp the grid's scroll
+  // without a scroll event; keep the mirrored value (what the lanes draw
+  // from) true to it.
+  $effect(() => {
+    void zoom; void gridWidth; void totalWidth;
+    void tick().then(() => { if (gridEl) gridScrollLeft = scrollMirror.read(); });
   });
 
   /** Room to work starts under the app's top bar (its height varies with the window frame). */
@@ -1903,7 +1912,7 @@
         bind:this={gridEl}
         bind:clientWidth={gridWidth}
         onclick={seekFromClick}
-        onscroll={() => { laneScrollTop = gridEl?.scrollTop ?? 0; gridScrollLeft = gridEl?.scrollLeft ?? 0; }}
+        onscroll={() => { laneScrollTop = gridEl?.scrollTop ?? 0; gridScrollLeft = scrollMirror.read(); }}
         onwheel={handleWheel}
         ondragover={handleDragOver}
         ondragleave={() => { dragHover = false; lookDropActive = false; }}
