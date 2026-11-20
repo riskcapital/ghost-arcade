@@ -78,6 +78,9 @@ export function fixture(name) {
     return file;
   }
   if (base === 'bars') input = ['-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30'];
+  // Full HD moving bars (`bars1080.mp4`, `bars1080.mov` = HAP): what a real
+  // set's clips cost to decode and upload.
+  else if (base === 'bars1080') input = ['-f', 'lavfi', '-i', 'testsrc2=size=1920x1080:rate=30'];
   else if (FIXTURE_COLOURS[base]) input = ['-f', 'lavfi', '-i', `color=c=${FIXTURE_COLOURS[base]}:size=640x360:rate=30`];
   else throw new Error(`unknown fixture ${name}`);
   const codec = ext === 'mov' ? ['-c:v', 'hap'] : ['-c:v', 'libx264', '-pix_fmt', 'yuv420p'];

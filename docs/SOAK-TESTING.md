@@ -59,6 +59,7 @@ Other options:
 | `--steps N` | Stop after step N (for replays). |
 | `--replay DIR` | Run the steps recorded in an earlier session's folder again (see below). |
 | `--keep-open` | Leave the app running at the end, for a look around (debug port as `--port`). |
+| `--profile live-set` | A steady-playback run instead of the random mix (see "Live set" below). |
 | `--heap-snapshots` | Write a heap snapshot of the editor at every checkpoint (`heap-run<N>-step<N>.heapsnapshot`, 100-300 MB each). Load two in DevTools' Memory panel and compare them to see what keeps memory alive. |
 | `--hidden` | macOS: hide the app's window so the run does not cover the screen. The render core and the editor keep running; frame rates may be lower than on screen. |
 | `--port N`, `--dev-port N` | The debug port (the app also takes N+1 and N+2) and the Vite port. Defaults 9420 and 1430. |
@@ -80,6 +81,28 @@ npm run soak:watch -- <session folder> --pid <runner pid>
 exits 0 when the run finishes, 3 when its heartbeat stops for 10 minutes (`--stall N`), 5 when the runner died
 without finishing (it rebuilds the report from the files first), and with `--on-incident`, 4 on any crash, hang or
 recovery. Use it for overnight runs: a run that dies half way must not look finished.
+
+### Live set
+
+`--profile live-set` measures what matters for a show: does memory hold flat while a set plays for hours (a VJ set
+of up to about 4 hours, an installation playing 8-10 hours a day)? After each launch it builds a set once: the Output
+Window open, a song on the Timeline with an Auto show on it, a 4 x 4 deck of shaders and Full HD clips (H.264 and
+HAP) with a column playing, and the Timeline playing. Then it mostly lets the set play (`live.keepPlaying`: plays the
+song again when it ends, keeps a column running, watches for 5-20 s), with deck triggers and columns, crossfades
+(Auto included), layer and composition effects, Timeline transport, section jumps, GO and takeovers in between. It
+never does the editing churn of the ordinary run (templates, mapping, renders, projects, settings, monkey).
+
+Its checkpoints measure the set as it plays (after garbage collection), instead of returning to a blank project,
+which would throw the set away. A failed set-up counts as a failed launch.
+
+```sh
+caffeinate -dims npm run soak -- --profile live-set --minutes 30 --hidden --config probe.json
+```
+
+For a 30-minute probe, checkpoint more often and shorten the warm-up in the config file, for example
+`{ "checkpointEverySteps": 20, "thresholds": { "leakWarmupMinutes": 10, "minHoursForLeak": 0.25 } }`. The per-process
+slopes after the warm-up, times 10, are the growth to expect over an installation's day. `--only live.keepPlaying`
+with the profile is a fixed busy scene (nothing triggered after the set-up): use it to measure the render core alone.
 
 ## Results
 

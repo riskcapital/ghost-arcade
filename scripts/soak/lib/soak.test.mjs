@@ -159,3 +159,21 @@ test('the Audio Lab dock button: covered or already on is not clicked', async ()
   assert.ok(dockTogglePlan({ state: 'absent' }).skip);
   assert.ok(dockTogglePlan(null).skip);
 });
+
+test('the live-set profile plays a set: only performing actions, every one of them real', async () => {
+  const { ACTIONS, PROFILES } = await import('./actions.mjs');
+  const live = PROFILES['live-set'];
+  assert.ok(live && typeof live.setup === 'function');
+  assert.equal(live.blankCheckpoints, false);
+  const names = Object.keys(live.weights);
+  for (const name of names) assert.ok(ACTIONS.some((a) => a.name === name), `no action ${name}`);
+  const areas = new Set(names.map((n) => ACTIONS.find((a) => a.name === n).area));
+  for (const editing of ['templates', 'mapping', 'render', 'project', 'settings', 'window', 'monkey', 'interactive', 'addons']) {
+    assert.ok(!areas.has(editing), `${editing} is editing churn, not a set`);
+  }
+  // Most of a set is just playing.
+  const total = names.reduce((s, n) => s + live.weights[n], 0);
+  assert.ok(live.weights['live.keepPlaying'] / total >= 0.3);
+  // An ordinary run never picks the live-set-only action.
+  assert.equal(ACTIONS.find((a) => a.name === 'live.keepPlaying').weight, 0);
+});

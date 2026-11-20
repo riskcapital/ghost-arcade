@@ -821,6 +821,8 @@ pub fn spawn_native_video_stream(
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     let thread_capacity = effective_capacity.clone();
     thread::spawn(move || {
+        // Opening the decoder autoreleases too; each stream turn has its own pool.
+        let _pool = crate::autorelease_pool::IterationPool::new();
         let backend_policy = std::env::var("GA_NATIVE_VIDEO_BACKEND").unwrap_or_else(|_| "auto".into());
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         if backend_policy != "software" {
@@ -1352,6 +1354,8 @@ fn run_hardware_stream(
         ended = true;
     }
     while !stop.load(Ordering::Acquire) {
+        // One pool per turn: this thread lives as long as the clip plays.
+        let _pool = crate::autorelease_pool::IterationPool::new();
         if accounted_surface_bytes > 0 {
             let mut queue = frames.lock().map_err(|_| "Video queue lock poisoned")?;
             let mut state = control.lock().map_err(|_| "Video control lock poisoned")?;
@@ -1662,6 +1666,8 @@ fn run_reverse_hardware_stream(
     let mut opening_start = cursor;
     let mut first_pass = true;
     while !stop.load(Ordering::Acquire) {
+        // One pool per turn: this thread lives as long as the clip plays.
+        let _pool = crate::autorelease_pool::IterationPool::new();
         let reset = {
             let mut state = control.lock().map_err(|_| "Video control lock poisoned")?;
             state.reset.take().map(|r| (state.generation, r))
@@ -2353,6 +2359,7 @@ pub fn spawn_probe(job: impl FnOnce() + Send + 'static) {
             let _ = thread::Builder::new().name(format!("video-probe-{index}")).spawn(move || loop {
                 let job = receiver.lock().unwrap_or_else(|e| e.into_inner()).recv();
                 let Ok(job) = job else { break };
+                let _pool = crate::autorelease_pool::IterationPool::new();
                 // A probe that panics must not take its worker with it.
                 let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job));
             });
