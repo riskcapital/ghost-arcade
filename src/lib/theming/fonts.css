@@ -1,4 +1,20 @@
 /* Theme webfonts. Loaded once at boot so every workspace uses the same
    typographic voice: Geist for UI/display, Geist Mono for
    values, shortcuts, status, and other technical readouts. */
-@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600;700&display=swap');
+/* Bundled with the app (public/fonts, SIL Open Font License 1.1, see
+   public/fonts/OFL-Geist.txt) so a show machine with no internet gets the
+   same type. Both are variable fonts covering every weight the UI uses. */
+@font-face {
+  font-family: 'Geist';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/geist.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Geist Mono';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/geist-mono.woff2') format('woff2');
+}
