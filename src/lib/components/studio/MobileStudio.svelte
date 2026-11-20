@@ -309,6 +309,7 @@
   import PerformanceMixer from "./PerformanceMixer.svelte";
   import LookControls from "./LookControls.svelte";
   import { onDestroy, onMount, tick } from 'svelte';
+  import { takeLaunchPath } from '../../mobile/studio/launchIntent';
 
   function sliderFill(value: number, min: number, max: number): number {
     return max > min ? Math.max(0, Math.min(1, (value - min) / (max - min))) : 0;
@@ -445,7 +446,11 @@
   if (firstRun) try { saveCurrentShow(show); } catch { /* storage full: the demo is rebuilt next time */ }
   let setBank = savedSets();
   // The mapping coach's first steps happen in Map, so the app opens there until they are done.
-  let tab: 'perform' | 'map' | 'fx' | 'flux' = firstRun || coachStep(coach)?.tab === 'map' && !prefs.coachDone ? 'map' : 'perform';
+  // A path picked on the welcome screen decides where the studio opens; without one it opens as before.
+  const launchPath = takeLaunchPath();
+  let tab: 'perform' | 'map' | 'fx' | 'flux' = launchPath === 'mapping' ? 'map' : launchPath ? 'perform' : firstRun || coachStep(coach)?.tab === 'map' && !prefs.coachDone ? 'map' : 'perform';
+  // Mobile Control opens the existing desktop pairing over the VJ screen.
+  onMount(() => { if (launchPath === 'control') oncompanion(); });
   let mixerOpen=false;
   let clipControlsOpen=false;
   let controlsReturnFocus:HTMLElement|null=null;

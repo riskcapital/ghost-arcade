@@ -3,6 +3,7 @@ import { ARCADE_THEME } from './lib/theming/themes/arcade';
 import './lib/mobile/studio/blueScale.css';
 import './lib/mobile/studio/theme.css';
 import NativeStudioApp from './lib/components/studio/NativeStudioApp.svelte';
+import PhoneLaunch from './lib/components/studio/PhoneLaunch.svelte';
 
 // Reuse the desktop's pure theme definition without importing desktop stores.
 for (const [name, value] of Object.entries(ARCADE_THEME.tokens)) {
@@ -15,7 +16,12 @@ document.documentElement.dataset.theme = 'arcade';
 // Native shell switches between the saved standalone set and authenticated companion mode.
 // Desktop and legacy remote surfaces keep their existing entry points.
 try {
-  mount(NativeStudioApp, { target: document.getElementById('app')! });
+  // The welcome screen is a mock-up for now: it only shows in builds made with
+  // VITE_PHONE_WELCOME=1 (or 'welcome' / 'baseline' to measure it).
+  const welcome = import.meta.env.VITE_PHONE_WELCOME as string | undefined;
+  const target = document.getElementById('app')!;
+  if (welcome) mount(PhoneLaunch, { target, props: { bench: welcome === 'welcome' || welcome === 'baseline' ? welcome : '' } });
+  else mount(NativeStudioApp, { target });
 } catch (error) {
   const app = document.getElementById('app')!;
   const message = document.createElement('p');
