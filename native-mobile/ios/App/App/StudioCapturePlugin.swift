@@ -4,14 +4,27 @@ import AVFoundation
 import UniformTypeIdentifiers
 import Capacitor
 
-/// A tapped `ghostarcade://pair?...` link waits here until the web layer takes it.
+/// A tapped `ghostarcade://pair?...` link, or a `https://ghostarcade.live/connect#...` link the
+/// system opened in the app (a Universal Link from the desktop's Mobile Control QR), waits here
+/// until the web layer takes it. The web layer decodes and checks it before asking to connect.
 /// One slot, taken once: the newest link wins and no link is ever delivered twice.
 enum PairingLinkInbox {
     /// Posted on the main queue when a link arrives, so the web layer can be told to collect it.
     static let arrived = Notification.Name("GhostPairingLinkArrived")
     private static let lock = NSLock()
     private static var pending: String?
-    static func accepts(_ url: URL) -> Bool { url.scheme?.lowercased() == "ghostarcade" && url.host?.lowercased() == "pair" }
+    static func accepts(_ url: URL) -> Bool { isAppLink(url) || isConnectLink(url) }
+    static func isAppLink(_ url: URL) -> Bool { url.scheme?.lowercased() == "ghostarcade" && url.host?.lowercased() == "pair" }
+    /// The website's Mobile Control page. The pairing details are in the fragment.
+    static func isConnectLink(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "https", let host = url.host?.lowercased() else { return false }
+        return ["ghostarcade.live", "www.ghostarcade.live"].contains(host) && url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) == "connect"
+    }
+    /// A Universal Link arrives as a web-browsing activity rather than an opened URL.
+    @discardableResult static func receive(_ activity: NSUserActivity) -> Bool {
+        guard activity.activityType == NSUserActivityTypeBrowsingWeb, let url = activity.webpageURL else { return false }
+        return receive(url)
+    }
     /// Returns true when the URL was a pairing link (and so must not be forwarded anywhere else).
     @discardableResult static func receive(_ url: URL) -> Bool {
         guard accepts(url) else { return false }
@@ -385,7 +398,7 @@ private final class PairingScannerViewController: UIViewController, AVCaptureMet
     private var finished = false
     override func viewDidLoad() {
         super.viewDidLoad()
-        title = "Desktop Connect"
+        title = "Mobile Control"
         view.backgroundColor = .black
         navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .cancel, target: self, action: #selector(cancel))
         preview.videoGravity = .resizeAspectFill
@@ -459,7 +472,9 @@ private final class PairingScannerViewController: UIViewController, AVCaptureMet
         let scheme = url.scheme?.lowercased() ?? ""
         let isWeb = ["http", "https"].contains(scheme) && url.queryItems?.contains(where: { $0.name == "pair" && !($0.value ?? "").isEmpty }) == true
         let isApp = scheme == "ghostarcade" && url.host == "pair"
-        guard isWeb || isApp else { hint.text = "Use a Ghost Arcade desktop pairing QR."; return }
+        // The desktop's QR is a ghostarcade.live/connect link; its pairing details are in the fragment.
+        let isConnect = url.url.map(PairingLinkInbox.isConnectLink) == true && (url.fragment ?? "").contains("pair=")
+        guard isWeb || isApp || isConnect else { hint.text = "Use a Ghost Arcade desktop pairing QR."; return }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         finish(raw)
     }

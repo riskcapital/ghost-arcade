@@ -58,8 +58,8 @@
  });
 </script>
 {#if remote}{#key link}<MobileApp nativeShell pairingLink={link} onExit={()=>{remote=false;remembered=rememberedDesktop();}}/>{/key}{:else}<MobileStudio oncompanion={openDialog}/>{/if}
-{#if dialog}<div class="backdrop"><div class="pair-panel" role="dialog" tabindex="-1" aria-modal="true" aria-label="Desktop Companion">
- <header><h2>Desktop Connect</h2><button onclick={closeDialog} aria-label="Close companion setup">×</button></header>
+{#if dialog}<div class="backdrop"><div class="pair-panel" role="dialog" tabindex="-1" aria-modal="true" aria-label="Mobile Control">
+ <header><h2>Mobile Control</h2><button onclick={closeDialog} aria-label="Close Mobile Control">×</button></header>
  {#if pending}
   <div class="confirm" data-pair-confirm role="alertdialog" aria-label="Confirm desktop">
    <h3>Connect to {pending.host}?</h3>

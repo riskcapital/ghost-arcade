@@ -15,6 +15,8 @@ final class StudioSceneDelegate: UIResponder, UIWindowSceneDelegate {
         }
         // A link that launched the app arrives here, not through openURLContexts.
         open(connectionOptions.urlContexts)
+        // So does a Universal Link (the desktop's Mobile Control QR) that launched it.
+        for activity in connectionOptions.userActivities { continueActivity(activity) }
     }
     func sceneDidBecomeActive(_ scene: UIScene) {
         // A live set must never dim or lock while the app is on screen, with or without a second display.
@@ -33,7 +35,10 @@ final class StudioSceneDelegate: UIResponder, UIWindowSceneDelegate {
             _ = ApplicationDelegateProxy.shared.application(UIApplication.shared, open: context.url, options: [:])
         }
     }
-    func scene(_ scene: UIScene, continue userActivity: NSUserActivity) {
+    func scene(_ scene: UIScene, continue userActivity: NSUserActivity) { continueActivity(userActivity) }
+    private func continueActivity(_ userActivity: NSUserActivity) {
+        // A Mobile Control link carries a pairing code, so it goes only to the pairing inbox.
+        if PairingLinkInbox.receive(userActivity) { return }
         _ = ApplicationDelegateProxy.shared.application(UIApplication.shared, continue: userActivity, restorationHandler: { _ in })
     }
 }
