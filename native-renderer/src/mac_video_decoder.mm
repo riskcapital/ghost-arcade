@@ -814,5 +814,9 @@ extern "C" void ghost_mac_video_close(GhostMacVideoDecoder *decoder) {
 }
 
 extern "C" void ghost_mac_video_release_pixel_buffer(void *pixel_buffer) {
-    if (pixel_buffer) CVPixelBufferRelease(static_cast<CVPixelBufferRef>(pixel_buffer));
+    // The last release of a frame can free the reader that made it, which
+    // autoreleases; the caller may be a thread with no pool.
+    @autoreleasepool {
+        if (pixel_buffer) CVPixelBufferRelease(static_cast<CVPixelBufferRef>(pixel_buffer));
+    }
 }

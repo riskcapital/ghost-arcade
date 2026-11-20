@@ -15,6 +15,7 @@ mod scene_frame;
 mod core_frame_counter;
 mod media_decode;
 mod media_orphans;
+mod autorelease_pool;
 mod hap_video;
 mod hap_texture;
 mod isf_passes;
@@ -1673,6 +1674,36 @@ fn video_decode_scale_for_layers<'a>(layers: impl Iterator<Item = &'a SceneLayer
 /// Fill `out` with the tile bins for these cull bounds (see LAYER_TILES).
 /// Pixels outside the 0..1 canvas (a dome, an output warp) are not binned
 /// and walk every layer, so a layer that only reaches there is left out.
+/// Layer slots the upload scratch keeps even for an empty scene, so a set
+/// that adds and removes a few layers never reallocates.
+const LAYER_UPLOAD_SCRATCH_MIN_SLOTS: usize = 16;
+
+/// Sizes the layer upload scratch to `upload_len` slots: it grows to what the
+/// scene uploads and gives memory back once the scene has shrunk to under a
+/// quarter of what it holds (down to LAYER_UPLOAD_SCRATCH_MIN_SLOTS), so one
+/// big scene earlier in a set does not keep its size for the rest of it.
+fn fit_layer_upload_scratch(scratch: &mut Vec<LayerGpu>, upload_len: usize) {
+    let upload_len = upload_len.min(MAX_SCENE_LAYERS);
+    if scratch.len() < upload_len {
+        scratch.resize(upload_len, LayerGpu::zeroed());
+        return;
+    }
+    let keep = upload_len.max(LAYER_UPLOAD_SCRATCH_MIN_SLOTS);
+    if scratch.capacity() > keep.saturating_mul(4) {
+        scratch.truncate(keep);
+        scratch.shrink_to(keep);
+    }
+}
+
+/// The same rule for a byte buffer that mirrors the last upload.
+fn fit_byte_scratch(scratch: &mut Vec<u8>, bytes: usize) {
+    let keep = bytes.max(LAYER_UPLOAD_SCRATCH_MIN_SLOTS * std::mem::size_of::<LayerGpu>());
+    if scratch.capacity() > keep.saturating_mul(4) {
+        scratch.truncate(keep.min(scratch.len()));
+        scratch.shrink_to(keep);
+    }
+}
+
 fn build_layer_tiles(culls: &[[f32; 4]], out: &mut Vec<u32>) {
     out.clear();
     out.resize(LAYER_TILE_HEADER + LAYER_TILE_CELLS + 1, 0);
@@ -4824,11 +4855,13 @@ struct RenderState {
     layer_buffer: wgpu::Buffer,
     source_preview_buffer: wgpu::Buffer,
     /// Reused staging for the per-frame layer upload. `write_frame_inputs` used
-    /// to allocate a fresh `vec![LayerGpu::zeroed(); MAX_SCENE_LAYERS]` (270 KB)
-    /// and upload all 64 slots every frame no matter how many layers the scene
-    /// actually had. Every `write_buffer` also costs a fresh Metal staging
-    /// buffer, which is an IOKit kernel round-trip — so the redundant upload was
-    /// the single largest CPU item in the render encode path.
+    /// to allocate a fresh full-size array every frame and upload every slot no
+    /// matter how many layers the scene had. Every `write_buffer` also costs a
+    /// fresh Metal staging buffer, which is an IOKit kernel round-trip, so the
+    /// redundant upload was the single largest CPU item in the render encode
+    /// path. Sized to the slots the scene uploads (`fit_layer_upload_scratch`),
+    /// not to MAX_SCENE_LAYERS: a LayerGpu is ~30 KB, so the full array would
+    /// hold 30 MB for a scene of a handful of layers.
     layer_upload_scratch: Vec<LayerGpu>,
     /// Bytes of the last layer-buffer upload. An identical re-upload is skipped:
     /// buffer contents persist, and the compositor only reads slots below
@@ -21691,6 +21724,9 @@ impl ApplicationHandler<UserEvent> for App {
         window_id: WindowId,
         event: WindowEvent,
     ) {
+        // With the Output Window attached, its frame renders here
+        // (RedrawRequested): one pool per frame, like about_to_wait.
+        let _pool = autorelease_pool::IterationPool::new();
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
@@ -21753,6 +21789,9 @@ impl ApplicationHandler<UserEvent> for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // A frame's autoreleased Metal objects go when the frame is done, not
+        // whenever the run loop next drains.
+        let _pool = autorelease_pool::IterationPool::new();
         let now = Instant::now();
         let mut expired = Vec::new();
         self.image_prefetch_waiters.retain(|_, waiters| {
@@ -22656,6 +22695,10 @@ impl RenderState {
                 const GPU_COMPLETION_WAIT_SLICE: Duration = Duration::from_secs(2);
                 const GPU_COMPLETION_HARD_LIMIT: Duration = Duration::from_secs(60);
                 'completion: while let Ok(submission) = gpu_completion_rx.recv() {
+                    // This thread lives for the whole session and polls the
+                    // device every frame: without a pool of its own, what
+                    // the poll autoreleases is never released.
+                    let _pool = autorelease_pool::IterationPool::new();
                     let started = Instant::now();
                     let mut slow_reported = false;
                     loop {
@@ -22713,7 +22756,7 @@ impl RenderState {
             native_shader_uniform_buffer,
             layer_buffer,
             source_preview_buffer,
-            layer_upload_scratch: vec![LayerGpu::zeroed(); MAX_SCENE_LAYERS],
+            layer_upload_scratch: Vec::new(),
             layer_upload_last: Vec::new(),
             layer_tile_buffer,
             layer_tile_scratch: Vec::with_capacity(LAYER_TILE_HEADER + LAYER_TILE_CELLS + 1),
@@ -27732,6 +27775,8 @@ impl RenderState {
         // full-array upload did.
         let filled = scene_layers.len().min(MAX_SCENE_LAYERS);
         let upload_len = (layers_seen as usize).max(filled).min(MAX_SCENE_LAYERS);
+        fit_layer_upload_scratch(&mut self.layer_upload_scratch, upload_len);
+        fit_byte_scratch(&mut self.layer_upload_last, upload_len * std::mem::size_of::<LayerGpu>());
         for (slot, layer) in self.layer_upload_scratch[..filled]
             .iter_mut()
             .zip(scene_layers.iter())
@@ -36632,6 +36677,33 @@ mod manual_video_frame_tests {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn layer_upload_scratch_follows_the_scene_not_the_layer_limit() {
+        use super::{fit_byte_scratch, fit_layer_upload_scratch, LayerGpu, LAYER_UPLOAD_SCRATCH_MIN_SLOTS, MAX_SCENE_LAYERS};
+        let slot = std::mem::size_of::<LayerGpu>();
+        let mut scratch = Vec::new();
+        // A new render state holds nothing; a five-layer scene holds five slots.
+        fit_layer_upload_scratch(&mut scratch, 5);
+        assert_eq!(scratch.len(), 5);
+        assert!(scratch.capacity() * slot < MAX_SCENE_LAYERS * slot / 8, "scratch must not be sized to the layer limit");
+        // Growing and staying: no reallocation for small changes.
+        fit_layer_upload_scratch(&mut scratch, 200);
+        assert_eq!(scratch.len(), 200);
+        fit_layer_upload_scratch(&mut scratch, 120);
+        assert_eq!(scratch.len(), 200, "a scene a little smaller keeps the slots");
+        // Shrunk to under a quarter: memory goes back, down to the floor.
+        fit_layer_upload_scratch(&mut scratch, 3);
+        assert_eq!(scratch.len(), LAYER_UPLOAD_SCRATCH_MIN_SLOTS);
+        assert!(scratch.capacity() <= LAYER_UPLOAD_SCRATCH_MIN_SLOTS * 2);
+        // Never past the layer limit.
+        fit_layer_upload_scratch(&mut scratch, MAX_SCENE_LAYERS + 50);
+        assert_eq!(scratch.len(), MAX_SCENE_LAYERS);
+        let mut bytes = vec![1u8; 300 * slot];
+        fit_byte_scratch(&mut bytes, 2 * slot);
+        assert!(bytes.capacity() <= LAYER_UPLOAD_SCRATCH_MIN_SLOTS * slot * 2);
+        assert!(bytes.iter().all(|b| *b == 1), "what is kept is a prefix of the last upload");
+    }
 
     #[test]
     fn deck_monitor_width_is_even_and_bounded() {
