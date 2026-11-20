@@ -405,11 +405,15 @@ def('addons', 'addons.analogSynth', 1, 40, async (ctx) => {
   await sleep(1500);
   const opened = await ctx.clickText('button', /Open the synth/i);
   if (opened) {
-    const shown = await ctx.waitFor(`[...document.querySelectorAll('.app-title')].some((e) => /Analog Synth/.test(e.textContent))`, 10000);
+    // The studio is a full-screen dialog named Analog Synth; its Close is the
+    // bar's nav button (aria-label "Close"), Esc closes it too.
+    const dialog = '[role="dialog"][aria-label="Analog Synth"]';
+    const shown = await ctx.waitFor(`!!document.querySelector('${dialog}')`, 10000);
     ctx.assert(shown, 'Analog Synth did not open');
     await sleep(ctx.rng.int(2000, 5000));
-    for (let i = 0; i < ctx.rng.int(0, 3); i++) await ctx.monkeyClick({ selector: '[role="radiogroup"] button, .knob, input[type="range"]' });
-    await ctx.clickText('button.bar-btn', /^Close$/);
+    for (let i = 0; i < ctx.rng.int(0, 3); i++) await ctx.monkeyClick({ within: dialog, selector: '[role="radiogroup"] button, .knob, input[type="range"]' });
+    if (!(await ctx.click(`${dialog} button[aria-label="Close"]`))) await ctx.key('Escape', { code: 'Escape', keyCode: 27 });
+    ctx.assert(await ctx.waitFor(`!document.querySelector('${dialog}')`, 5000), 'Analog Synth did not close');
   } else ctx.note('no Open the synth button (add-on not in this build)');
   await sleep(500);
   await ctx.expectFrames('analog synth layer');
@@ -748,14 +752,16 @@ def('output', 'output.toggle', 2, 40, async (ctx) => {
   // which way it will go next.
   const open = await ctx.page(`return !!document.querySelector('button.output-btn[title="Close Output Window"]');`);
   const sel = open ? 'button.output-btn[title="Close Output Window"]' : 'button.output-btn[title="Open Output Window"]';
-  if (!(await ctx.click(sel))) return ctx.skip('no Output Window button on screen');
+  // The toolbar button sits under the VJ deck while the deck is open: only a
+  // click that lands on the button counts.
+  if (!(await ctx.clickExpr(`document.querySelector(${JSON.stringify(sel)})`))) return ctx.skip('the Output Window button is not on screen (covered or absent)');
   ctx.note(open ? 'close' : 'open');
   const flipped = await ctx.waitFor(`!!document.querySelector('button.output-btn[title="${open ? 'Open' : 'Close'} Output Window"]')`, 15000);
   ctx.assert(flipped, `the output window did not ${open ? 'close' : 'open'}`);
   ctx.rehide();
   await sleep(ctx.rng.int(1000, 5000));
   await ctx.expectFrames(open ? 'output window closed' : 'output window open');
-});
+}, (st) => !st.deckOpen);
 
 // ── Monkey (seeded real input on whatever is on screen) ───────────────
 def('monkey', 'monkey.click', 6, 20, async (ctx) => {

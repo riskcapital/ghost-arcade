@@ -575,6 +575,8 @@ export interface NativeGraphInstrumentManifestEntry {
   id: string;
   label?: string;
   source_uri_prefix?: string;
+  /** 'runtime': the shaders come with each graph and shader_ids is empty. */
+  shader_source?: 'builtin' | 'runtime';
   shader_ids?: string[];
   shader_count?: number;
   features?: string[];

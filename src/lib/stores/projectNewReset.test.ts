@@ -156,6 +156,22 @@ describe('File > New', () => {
   });
 });
 
+describe('the sketch editor and a new project', () => {
+  it('closes when the project is reset, as File > New and opening a file do', async () => {
+    const sketch = await import('../sketchEditor/sketchEditorStore');
+    sketch.openSketchEditor({ layerId: 'old-layer' });
+    expect(get(sketch.sketchEditorTarget)).not.toBeNull();
+    layers.resetProjectOwnedStores();
+    expect(get(sketch.sketchEditorTarget)).toBeNull();
+  });
+
+  it('lets File > New and Open through its key gate', () => {
+    const editor = readFileSync(join(process.cwd(), 'src/lib/sketchEditor/SketchEditor.svelte'), 'utf8');
+    const gate = editor.slice(editor.indexOf('function keyGate('), editor.indexOf('event.stopPropagation();', editor.indexOf('function keyGate(')));
+    expect(gate).toMatch(/\^\[no\]\$/);
+  });
+});
+
 describe('New and opening an older file share one list', () => {
   const root = process.cwd();
   const layersSource = readFileSync(join(root, 'src/lib/stores/layers.ts'), 'utf8');

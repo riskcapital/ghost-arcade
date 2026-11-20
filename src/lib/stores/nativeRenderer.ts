@@ -184,7 +184,7 @@ export function inferNativeGraphRuntimeFlags(
           graphInstrumentIds.has(id) &&
           entryFeatures.length > 0 &&
           entryFeatures.every((feature) => !!nativeFeatures[feature]) &&
-          entryShaderIds.size > 0 &&
+          (entryShaderIds.size > 0 || entry?.shader_source === 'runtime') &&
           Number.isFinite(expectedShaderCount) &&
           expectedShaderCount === entryShaderIds.size &&
           entry?.render_target === 'source_frame' &&

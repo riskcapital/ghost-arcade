@@ -34,7 +34,7 @@ class Assert extends Error {}
 
 // ── Arguments ───────────────────────────────────────────────────────────
 function parseArgs(argv) {
-  const o = { hours: 4, app: null, seed: null, areas: null, exclude: [], only: null, out: null, port: 9420, devPort: 1430, config: path.join(here, 'soak.config.json'), hidden: false, steps: null, keepOpen: false, reportOnly: null, replay: null, label: '' };
+  const o = { hours: 4, app: null, seed: null, areas: null, exclude: [], only: null, out: null, port: 9420, devPort: 1430, config: path.join(here, 'soak.config.json'), hidden: false, steps: null, keepOpen: false, reportOnly: null, replay: null, label: '', heapSnapshots: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const v = () => argv[++i];
@@ -54,6 +54,7 @@ function parseArgs(argv) {
     else if (a === '--visible') o.hidden = false;
     else if (a === '--steps') o.steps = Number(v());
     else if (a === '--keep-open') o.keepOpen = true;
+    else if (a === '--heap-snapshots') o.heapSnapshots = true;
     else if (a === '--label') o.label = v();
     else if (a === '--report-only') o.reportOnly = v();
     else if (a === '--replay') o.replay = v();
@@ -271,6 +272,23 @@ async function main() {
   }
 
   /** Close whatever an action (or the monkey) left open that would block the next one. */
+  /** Hidden runs on macOS: an editor stuck at ~1 animation frame a second
+   *  (a hidden app's window can stay throttled after its Output Window
+   *  closes, and sometimes from launch) makes every timing check fail.
+   *  Measured before every step (300 ms), after output steps and at
+   *  checkpoints; when stuck, the app is shown and hidden once and the trace
+   *  notes it. */
+  async function keepFramesRunning(where, ms = 600) {
+    if (!opts.hidden || !IS_MAC || !st.handle?.refreshHidden) return;
+    const fps = await session()?.eval(`window.__soak.editorFps(${ms})`, 5000).catch(() => null);
+    if (fps === null || fps === undefined || fps >= 10) return;
+    st.handle.refreshHidden();
+    await sleep(800);
+    const after = await session()?.eval('window.__soak.editorFps(600)', 5000).catch(() => null);
+    log(`hidden editor was throttled to ${fps} fps (${where}); shown and hidden again: ${after} fps`);
+    files.trace.write(J({ kind: 'note', t: T(), step: st.step, run: st.run, note: `hidden editor throttled to ${fps} fps after ${where}; refreshed to ${after} fps` }) + '\n');
+  }
+
   async function unstick() {
     await session()?.eval(`(async () => {
       const G = window.__ghostArcade; if (!G) return;
@@ -285,6 +303,7 @@ async function main() {
       if (auto && auto.dataset.autoPhase !== 'done') auto.querySelector('.auto-cancel, .auto-x')?.click();
       else document.querySelector('[data-auto-done]')?.click();
       [...document.querySelectorAll('button.bar-btn')].find((b) => b.textContent.trim() === 'Close' && b.closest('*')?.parentElement?.querySelector('.app-title'))?.click();
+      document.querySelector('[role="dialog"][aria-label="Analog Synth"] button[aria-label="Close"]')?.click();
       try { if (G.settings.get().output?.blackout) G.settings.update((s) => ({ ...s, output: { ...s.output, blackout: false } })); } catch {}
       await sleep(100);
     })()`, 10000).catch(() => {});
@@ -613,6 +632,7 @@ async function main() {
   }
 
   async function runAction(action, rng) {
+    await keepFramesRunning(`before step ${st.step}`, 300);
     const rec = { kind: 'action', step: st.step, t: T(), run: st.run, area: action.area, action: action.name, status: 'pass', note: '', warnings: [], error: null };
     const errMark = st.lastErrors.length ? st.lastErrors[st.lastErrors.length - 1] : null;
     const t0 = Date.now();
@@ -641,6 +661,7 @@ async function main() {
     const icon = rec.status === 'pass' ? 'ok  ' : rec.status === 'skip' ? 'skip' : 'FAIL';
     log(`${icon} #${st.step} ${action.name}${rec.note ? ` [${rec.note.slice(0, 120)}]` : ''}${rec.error ? ` — ${rec.error}` : ''}${rec.warnings.length ? ` (${rec.warnings.length} warning(s))` : ''} ${(rec.ms / 1000).toFixed(1)}s`);
     await unstick();
+    if (action.area === 'output') await keepFramesRunning(action.name);
   }
 
   /** Back to the same blank state, let it settle, GC, and take the memory baseline. */
@@ -671,12 +692,18 @@ async function main() {
         await sleep(1500);
       })()`, 10000);
       if (st.emulated) { await s.call('Emulation.clearDeviceMetricsOverride').catch(() => {}); st.emulated = false; }
+      await keepFramesRunning('checkpoint');
       const blank = await s.eval(STATE_JS, 10000).catch(() => null);
       await sleep(15000);
       // DevTools keeps every console message's arguments alive; drop them so
       // the runner's own connection never shows up as a leak.
       await s.call('Runtime.discardConsoleEntries', {}, 10000).catch(() => {});
       await s.call('HeapProfiler.collectGarbage', {}, 30000).catch(() => {});
+      if (opts.heapSnapshots) {
+        // Compare two of these in DevTools (Memory → Load → Comparison) to see what keeps memory alive.
+        const file = path.join(sessionDir, `heap-run${st.run}-step${st.step}.heapsnapshot`);
+        await s.heapSnapshot(file, fs).then(() => log(`heap snapshot: ${file}`), (err) => log(`heap snapshot failed: ${err.message}`));
+      }
       st.busy = false;
       const b = await sample({ checkpoint: true });
       // The like-for-like frame rate: one full-frame animated shader on the

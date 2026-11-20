@@ -246,6 +246,9 @@ function nativeGraphReadinessSpecs(capabilities) {
       return {
         id,
         label: String(entry?.label || `Native ${id} graph`),
+        // 'runtime': the app sends the shaders with each graph (Interactive
+        // 3D, video synthesizer), so an empty shader list is complete.
+        shaderSource: entry?.shader_source === 'runtime' ? 'runtime' : 'builtin',
         shaderIds: Array.isArray(entry?.shader_ids) ? entry.shader_ids.map(String) : [],
         shaderCount: Number(entry?.shader_count ?? NaN),
         features: Array.isArray(entry?.features) ? entry.features.map(String) : [],
@@ -1425,6 +1428,7 @@ class NativeRendererBroker {
     const graphChecks = graphSpecs.map(({
       id,
       label,
+      shaderSource,
       shaderIds,
       shaderCount,
       features: requiredFeatures,
@@ -1441,7 +1445,7 @@ class NativeRendererBroker {
         renderTarget === 'source_frame' ? null : 'source_frame target',
         sourceUriPrefix === `native-graph://${id}/` ? null : 'native-graph URI prefix',
         parity.length > 0 ? null : 'parity metadata',
-        shaderIds.length ? null : 'shader_ids missing',
+        shaderIds.length || shaderSource === 'runtime' ? null : 'shader_ids missing',
         Number.isFinite(shaderCount) && shaderCount === shaderIds.length
           ? null
           : `shader_count ${shaderCount || 'missing'} != ${shaderIds.length}`,
@@ -1452,7 +1456,9 @@ class NativeRendererBroker {
         label,
         ok,
         ok
-          ? `implemented via compute_graph source-frame route (${shaderIds.length} shared WGSL shader(s))`
+          ? shaderSource === 'runtime'
+            ? 'implemented via compute_graph source-frame route (shaders arrive with each graph)'
+            : `implemented via compute_graph source-frame route (${shaderIds.length} shared WGSL shader(s))`
           : `missing ${missing.join('; ')}`,
       ];
     });
