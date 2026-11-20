@@ -265,6 +265,7 @@ import {
   type PresentPolicyConfig,
   type BackendKind,
   type DecodeBackendKind,
+  NATIVE_PIPELINE_CACHE_CAP,
 } from '$lib/api/native-renderer';
 
 type LayerSnapshot = {
@@ -9568,7 +9569,7 @@ export class NativeRendererSync {
       max_frame_latency: 1,
       use_waitable_object: true,
       shader_metadata_cache_cap: 16384,
-      pipeline_metadata_cache_cap: 512,
+      pipeline_metadata_cache_cap: NATIVE_PIPELINE_CACHE_CAP,
       vram_budget_mb: 4096,
       decode_upload_queue_cap_mb: this.decodeUploadQueueCapMb,
       decode_handoff_byte_cap_mb: this.decodeHandoffByteCapMb,

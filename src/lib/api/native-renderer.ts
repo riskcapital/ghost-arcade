@@ -4,6 +4,15 @@ import type { RenderFrameVideo } from '../recording/renderFrameHealth';
 
 const lutResidency = new NativeLutResidency();
 
+/**
+ * How many compiled shader pipelines the render core keeps for shaders no
+ * layer shows right now. Each holds about a quarter of a megabyte of driver
+ * memory, so at the old 512 a long session that kept loading new shaders grew
+ * the core by ~130 MB; 128 bounds it near 32 MB and still covers every shader
+ * a large deck shows at once. Same as the core's NATIVE_PIPELINE_CACHE_CAP.
+ */
+export const NATIVE_PIPELINE_CACHE_CAP = 128;
+
 export type BackendKind = 'd3d11' | 'd3d12' | 'vulkan' | 'metal';
 export type DecodeBackendKind = 'synthetic' | 'ffmpeg_software' | 'ffmpeg_d3d11va';
 export type PresentMode = 'vsync' | 'immediate';
@@ -1453,7 +1462,7 @@ export async function startNativeRenderer(config?: Partial<RendererStartConfig>)
       shader_precompile_queue_cap: config?.shader_precompile_queue_cap ?? 4096,
       shader_precompile_per_frame: config?.shader_precompile_per_frame ?? 4,
       shader_metadata_cache_cap: config?.shader_metadata_cache_cap ?? 16384,
-      pipeline_metadata_cache_cap: config?.pipeline_metadata_cache_cap ?? 512,
+      pipeline_metadata_cache_cap: config?.pipeline_metadata_cache_cap ?? NATIVE_PIPELINE_CACHE_CAP,
       texture_pool_cap_mb: config?.texture_pool_cap_mb ?? 512,
       native_quality_policy: config?.native_quality_policy ?? 'fixed',
       ffmpeg_path: config?.ffmpeg_path ?? null,

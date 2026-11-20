@@ -223,6 +223,15 @@ const NATIVE_VIDEO_SESSION_MAX_PLAYING: usize = 32;
 // A full four-row/four-column grid needs sixteen preparations, in addition
 // to paused on-stage sources. The shared byte budget still bounds residency.
 const NATIVE_LIBRARY_SESSION_CAP: usize = 16;
+/// Compiled render and compute pipelines kept for shaders no layer shows
+/// right now, so going back to one does not compile it again. Each costs about
+/// a quarter of a megabyte of driver memory on Apple GPUs (measured: 229
+/// pipelines held 118 MB of malloc, and evicting down to 32 gave back 52 MB).
+/// At 512 a long session that keeps loading new shaders grew the core by
+/// ~130 MB before the cache was full; 128 bounds it near 32 MB and still holds
+/// every shader a large deck shows at once. Shows and editors can raise it
+/// with `set_metadata_cache_caps`.
+const NATIVE_PIPELINE_CACHE_CAP: u32 = 128;
 const NATIVE_VIDEO_SESSION_MAX_ARMED: usize = NATIVE_VIDEO_SESSION_MAX_PLAYING + NATIVE_LIBRARY_SESSION_CAP;
 const NATIVE_VIDEO_FRAME_INTERVAL: Duration = Duration::from_nanos(16_666_667);
 const SOURCE_FRAME_FORMAT_FALLBACK: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -5871,7 +5880,7 @@ impl App {
             shader_precompile_queue_cap: 4096,
             shader_precompile_per_frame: 4,
             shader_metadata_cache_cap: 16384,
-            pipeline_metadata_cache_cap: 512,
+            pipeline_metadata_cache_cap: NATIVE_PIPELINE_CACHE_CAP,
             texture_pool_cap_mb: 512,
             last_shader_error: None,
             audio0: [0.0; 4],
@@ -22735,7 +22744,7 @@ impl RenderState {
             dome_layer_pass: [0.0; 4],
             creative_frame_index: 0,
             frame_epoch: 0,
-            pipeline_cap: 512,
+            pipeline_cap: NATIVE_PIPELINE_CACHE_CAP as usize,
             pipeline_used: HashMap::new(),
             graph_budget_bytes: 512 * 1024 * 1024,
             pinned_buffers: HashSet::new(),
