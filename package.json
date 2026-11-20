@@ -21,6 +21,9 @@
   "scripts": {
     "dev": "vite",
     "show": "node scripts/show-runner/run.mjs",
+    "soak": "node scripts/soak/run.mjs",
+    "soak:smoke": "node scripts/soak/run.mjs --smoke",
+    "soak:watch": "node scripts/soak/watch.mjs",
     "dev:native-mobile": "vite --config vite.config.native-mobile.ts",
     "desktop": "concurrently \"npm run dev\" \"electron .\"",
     "desktop:app": "node scripts/dev-desktop-app.mjs",
