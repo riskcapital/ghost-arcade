@@ -269,6 +269,13 @@ async function main() {
 
   const session = () => st.handle?.session;
 
+  /** A reloaded editor has lost the profile's set: build it again (a failure
+   *  is an incident, and the run goes on). */
+  async function rebuildProfileSet() {
+    if (!profile?.setup) return;
+    try { await profileSetup(); } catch (err) { incident('setup-failed', err.message); }
+  }
+
   /** A profile's set, built after every launch. A set that cannot be built
    *  is a failed launch (retried, and counted). */
   async function profileSetup() {
@@ -496,6 +503,7 @@ async function main() {
         incident(kind, `the editor page ${s.crashed ? 'crashed' : 'went away'} and came back (reloaded)`);
         await dismissStartup();
         await session().eval('window.__soak.instrument()').catch(() => {});
+        await rebuildProfileSet();
       } catch (err) {
         incident(kind, `the editor page ${s.crashed ? 'crashed' : 'went away'} and did not come back: ${err.message}`);
         await stopApp({ graceful: false });
@@ -515,6 +523,7 @@ async function main() {
       await s.eval((await import('./lib/app.mjs')).PAGE_HELPERS).catch(() => {});
       await dismissStartup();
       await s.eval('window.__soak.instrument()').catch(() => {});
+      await rebuildProfileSet();
     }
   }
 
