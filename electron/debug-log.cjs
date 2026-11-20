@@ -12,7 +12,10 @@ const path = require('path');
  */
 function debugLogLocation({ packaged, platform, env, sourceRoot }) {
   if (!packaged) {
-    return { dir: sourceRoot, file: path.join(sourceRoot, 'electron-debug.log') };
+    // A test run (the soak runner) can keep its own log, so two copies
+    // started from one checkout never rotate each other's.
+    const dir = env.GA_DEBUG_LOG_DIR || sourceRoot;
+    return { dir, file: path.join(dir, 'electron-debug.log') };
   }
   const dir = platform === 'darwin'
     ? path.join(env.HOME || '/tmp', 'Library', 'Logs')
