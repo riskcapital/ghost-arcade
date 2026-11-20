@@ -80,9 +80,41 @@ impl OrphanSweep {
     }
 }
 
+/// One source as File > New sees it.
+pub(crate) struct LibraryPreroll<'a> {
+    pub id: &'a str,
+    /// A playing session is on stage, whatever its id.
+    pub playing: bool,
+    /// A layer, binding, graph or launch uses it.
+    pub referenced: bool,
+}
+
+/// The media tray's pre-rolls to release when the project is replaced:
+/// every `library:` source that is neither playing nor referenced.
+pub(crate) fn library_prerolls_to_release(sources: &[LibraryPreroll<'_>]) -> Vec<String> {
+    sources.iter()
+        .filter(|s| s.id.starts_with("library:") && !s.playing && !s.referenced)
+        .map(|s| s.id.to_string())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_project_releases_idle_library_prerolls_only() {
+        let src = |id, playing, referenced| LibraryPreroll { id, playing, referenced };
+        let release = library_prerolls_to_release(&[
+            src("library:a:g1", false, false),
+            src("library:b:g1", true, false),
+            src("library:c:g2", false, true),
+            src("4b3249fe-d6ac-44d4-a4ca-005397d2fce2", false, false),
+            src("show:run-1", false, false),
+            src("library:d:g1", false, false),
+        ]);
+        assert_eq!(release, vec!["library:a:g1".to_string(), "library:d:g1".to_string()]);
+    }
 
     const EMPTY: &str = "__empty__";
 

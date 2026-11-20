@@ -6,6 +6,7 @@
  */
 
 import { impulse, loopClip } from './fxRack';
+import { LazyConvolver } from './lazyConvolver';
 
 export type ReturnId = 'reverb' | 'echo' | 'spring';
 export const RETURN_IDS: ReturnId[] = ['reverb', 'echo', 'spring'];
@@ -30,6 +31,8 @@ export class SendReturns {
   private levels: Record<ReturnId, GainNode>;
   private delay: DelayNode;
   private ctx: AudioContext;
+  /** The reverb and the spring are built when a channel first sends to them. */
+  private rooms: Record<'reverb' | 'spring', LazyConvolver>;
 
   constructor(ctx: AudioContext, out: AudioNode) {
     this.ctx = ctx;
@@ -37,9 +40,9 @@ export class SendReturns {
     this.inputs = { reverb: mk(), echo: mk(), spring: mk() };
     this.levels = { reverb: mk(), echo: mk(), spring: mk() };
     // Reverb: a long, soft hall.
-    const verb = ctx.createConvolver();
-    verb.buffer = impulse(ctx, 3.2, 2.4, 0.45);
-    this.inputs.reverb.connect(verb).connect(this.levels.reverb);
+    const verb = new LazyConvolver(ctx, () => impulse(ctx, 3.2, 2.4, 0.45));
+    this.inputs.reverb.connect(verb.input);
+    verb.output.connect(this.levels.reverb);
     // Echo: a dotted-eighth tape echo that darkens and saturates instead of running away.
     this.delay = ctx.createDelay(3);
     const tone = ctx.createBiquadFilter();
@@ -57,10 +60,21 @@ export class SendReturns {
     sat.connect(fb).connect(this.delay);
     sat.connect(this.levels.echo);
     // Spring: short and drippy.
-    const spring = ctx.createConvolver();
-    spring.buffer = springBuffer(ctx);
-    this.inputs.spring.connect(spring).connect(this.levels.spring);
+    const spring = new LazyConvolver(ctx, () => springBuffer(ctx));
+    this.inputs.spring.connect(spring.input);
+    spring.output.connect(this.levels.spring);
+    this.rooms = { reverb: verb, spring };
     for (const id of RETURN_IDS) this.levels[id].connect(out);
+  }
+
+  /**
+   * Which returns some channel sends to. The reverb and spring are built the
+   * first time one does; `immediate` when the engine is being set up, so a
+   * saved mix comes back at full level from the first note.
+   */
+  route(used: Record<ReturnId, boolean>, immediate = false): void {
+    if (used.reverb) this.rooms.reverb.arm(immediate);
+    if (used.spring) this.rooms.spring.arm(immediate);
   }
 
   /** Each return's level into the master, 0-1, and the echo's time from the tempo. */

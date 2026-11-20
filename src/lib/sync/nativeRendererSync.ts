@@ -233,6 +233,7 @@ import {
   getNativeRendererLayersSnapshot,
   getNativeRendererStatus,
   prefetchNativeRendererMedia,
+  releaseNativeRendererLibraryPrerolls,
   resetNativeRendererStats,
   setNativeRendererDecodeCpuBackupPolicy,
   setNativeRendererDecodeSyntheticFallbackPolicy,
@@ -5877,6 +5878,19 @@ function flushPendingLibraryVideoArms(sync: NativeRendererSync): void {
 /** The arm requests a core start would replay (for tests). */
 export function pendingNativeLibraryVideoArms(): NativeLibraryVideoArmRequest[] {
   return [...pendingLibraryVideoArms.values()];
+}
+
+/**
+ * File > New and opening a project: forget the media tray's arm requests (a
+ * core start would replay them) and have the core release its pre-rolled
+ * library videos that no layer is using (up to 16, ~100 MB of decoded
+ * frames). Hovering a tray item arms it again.
+ */
+export function releaseNativeLibraryPrerolls(): void {
+  pendingLibraryVideoArms.clear();
+  armedLibraryVideoAt.clear();
+  armedLibraryVideoSignatures.clear();
+  void releaseNativeRendererLibraryPrerolls().catch(() => { /* no core running */ });
 }
 
 /**

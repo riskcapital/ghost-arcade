@@ -164,6 +164,22 @@ export const PAGE_HELPERS = `(() => {
       }
       return null;
     },
+    /**
+     * What a click at the centre of the first visible match would land on
+     * instead of it (a label for the covering element), or null when the
+     * click reaches it. A click by coordinates goes to whatever is on top.
+     */
+    coveredBy(sel) {
+      const r = this.rect(sel);
+      if (!r) return null;
+      const hit = document.elementFromPoint(r.x, r.y);
+      const target = [...document.querySelectorAll(sel)].find((el) => el === hit || el.contains(hit));
+      if (target) return null;
+      const owner = hit?.closest('[role="dialog"], [aria-modal], [class*="modal"], [class*="backdrop"], [class*="overlay"], [class*="panel"]') ?? hit;
+      if (!owner) return 'nothing';
+      const cls = typeof owner.className === 'string' ? owner.className.split(/\\s+/).filter((c) => c && !c.startsWith('svelte-')).slice(0, 2).join('.') : '';
+      return (owner.getAttribute('aria-label') || (cls ? owner.tagName.toLowerCase() + '.' + cls : owner.tagName.toLowerCase())).slice(0, 80);
+    },
     modalOpen() {
       return !!document.querySelector('.close-modal-backdrop, .tp-backdrop, .welcome, .tour-card, [role="dialog"][aria-modal="true"]');
     },
@@ -216,6 +232,10 @@ export async function launchApp({ target, root, devUrl, cdpPort, runIndex, sessi
     env.WS_PORT = String(cdpPort + 1);
     env.HTTP_PORT = String(cdpPort + 2);
   }
+  // The sandboxed HOME and profile have no login keychain: without this,
+  // Chromium's storage encryption asks macOS for one and a "Keychain Not
+  // Found" dialog appears on the user's screen, even for a hidden run.
+  if (IS_MAC) args.push('--use-mock-keychain');
   if (process.platform === 'linux') args.push('--no-sandbox');
   const logPath = path.join(sessionDir, 'logs', `app-run${runIndex}.log`);
   const out = fs.openSync(logPath, 'a');

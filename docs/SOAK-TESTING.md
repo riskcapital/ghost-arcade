@@ -167,12 +167,19 @@ def('area', 'area.name', weight, timeoutSeconds, async (ctx) => {
 Draw every random number from `ctx.rng` and nothing else, check something the user would see, and leave the app in a
 state the next action can use.
 
+Clicks are real clicks by coordinates, so they land on whatever is on top. A toggle in the deck's dock (Audio Lab) is
+checked first (`dockTogglePlan` in `actions.mjs`, `__soak.coveredBy` in the page): under a dialog such as the Shader
+Library a monkey step left open, the step is skipped with what covers it, and a toggle already on is not clicked off.
+
 ## Platform notes
 
 - Process memory and CPU come from `ps` on macOS and Linux and from PowerShell (`Win32_Process`) on Windows.
 - On Windows the app is stopped with `taskkill /T`; the debug log is read from the session's sandbox (the runner
   points `LOCALAPPDATA` there for a packaged app).
 - `--hidden` only does something on macOS.
+- On macOS every launch adds `--use-mock-keychain`: the run's own profile and HOME have no login keychain, and
+  without it Chromium's storage encryption puts a "Keychain Not Found" dialog on screen. Test-only; the app
+  itself does not use the switch.
 - The fake phone camera (`addons.phoneCameraFake`) has weight 0. Include it with a config file holding
   `{ "actionWeights": { "addons.phoneCameraFake": 1 } }` (any action's weight can be changed the same way); it joins
   the app's LAN relay from the editor itself and needs nothing else.

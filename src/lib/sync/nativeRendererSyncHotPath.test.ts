@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   batches: [] as Array<Array<Record<string, any>>>,
   clears: [] as Array<Record<string, any>>,
   prefetches: [] as Array<Record<string, any>>,
+  libraryReleases: 0,
 }));
 
 vi.mock('../bridge', async (original) => ({
@@ -26,6 +27,10 @@ vi.mock('../bridge', async (original) => ({
     if (command === 'native_renderer_prefetch_media') {
       h.prefetches.push(args);
       return null;
+    }
+    if (command === 'native_renderer_release_library_prerolls') {
+      h.libraryReleases++;
+      return { released: 0, kept: 0 };
     }
     if (command === 'native_renderer_get_layers_snapshot') return { layers: [] };
     return null;
@@ -432,6 +437,16 @@ describe('library video arms', () => {
     expect(pending[pending.length - 1].id).toBe('tray-49');
     expect(pending.every((item) => !('videoElement' in item))).toBe(true);
     expect(pending[0]).toMatchObject({ durationSeconds: 12, videoWidth: 1280, videoHeight: 720 });
+  });
+
+  it('File > New forgets the arms and has the core release its pre-rolls', () => {
+    mod.releaseNativeLibraryPrerolls();
+    for (let i = 0; i < 5; i++) mod.armNativeLibraryVideo({ id: `tray-${i}`, src: `file:///clips/tray-${i}.mp4` });
+    expect(mod.pendingNativeLibraryVideoArms()).toHaveLength(5);
+    const before = h.libraryReleases;
+    mod.releaseNativeLibraryPrerolls();
+    expect(mod.pendingNativeLibraryVideoArms()).toHaveLength(0);
+    expect(h.libraryReleases).toBe(before + 1);
   });
 });
 

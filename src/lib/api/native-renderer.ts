@@ -1589,6 +1589,11 @@ export async function clearNativeRendererPrefetchCache() {
   return invoke<void>('native_renderer_clear_prefetch_cache');
 }
 
+/** Release the media tray's pre-rolled videos no layer is using (File > New, opening a project). */
+export async function releaseNativeRendererLibraryPrerolls() {
+  return invoke<{ released: number; kept: number } | null>('native_renderer_release_library_prerolls');
+}
+
 export async function clearNativeRendererDecodePreviewCache() {
   return invoke<void>('native_renderer_clear_decode_preview_cache');
 }

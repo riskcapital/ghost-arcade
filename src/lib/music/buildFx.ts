@@ -8,7 +8,8 @@
  */
 
 import type { BuildSettings } from './buildDrop';
-import { effectRandom } from './audioRandom';
+import { effectRandom, isOffline } from './audioRandom';
+import { LazyConvolver } from './lazyConvolver';
 
 export interface BuildPlanAudio {
   /** Audio times. */
@@ -46,6 +47,8 @@ export class BuildFx {
   private fb: GainNode;
   /** The roll, riser and impact: after the filter, into the send too. */
   private fxBus: GainNode;
+  /** The send's reverb: built by the first build-up. */
+  private verb: LazyConvolver;
   private sources = new Set<AudioScheduledSourceNode>();
 
   constructor(ctx: AudioContext, noise: AudioBuffer) {
@@ -69,8 +72,8 @@ export class BuildFx {
     this.delay = ctx.createDelay(2);
     this.fb = ctx.createGain();
     this.fb.gain.value = 0.45;
-    const verb = ctx.createConvolver();
-    verb.buffer = reverbImpulse(ctx, 2.5);
+    const verb = new LazyConvolver(ctx, () => reverbImpulse(ctx, 2.5));
+    this.verb = verb;
     const clip = ctx.createWaveShaper();
     const curve = new Float32Array(new ArrayBuffer(512 * 4));
     for (let i = 0; i < 512; i++) curve[i] = Math.tanh(((i / 511) * 2 - 1) * 1.2) / Math.tanh(1.2);
@@ -78,7 +81,8 @@ export class BuildFx {
     this.input.connect(this.send);
     this.send.connect(this.delay).connect(clip).connect(this.fb).connect(this.delay);
     clip.connect(this.output);
-    this.send.connect(verb).connect(this.output);
+    this.send.connect(verb.input);
+    verb.output.connect(this.output);
     this.fxBus = ctx.createGain();
     this.fxBus.connect(this.output);
     this.fxBus.connect(this.send);
@@ -87,6 +91,8 @@ export class BuildFx {
   /** Start (or restart) a build. Anything scheduled by an earlier one is dropped. */
   start(plan: BuildPlanAudio): void {
     this.cancel(plan.start, true);
+    // A render builds it at full level, so every render of a show is the same.
+    this.verb.arm(isOffline(this.ctx));
     const { start, land, beatSeconds: beat, settings: s } = plan;
     const t0 = Math.max(this.ctx.currentTime, start);
     // The whole mix: filter sweep and the send opening, snapping back on the downbeat.

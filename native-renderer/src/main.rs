@@ -7262,6 +7262,7 @@ impl App {
             "export_frame_snapshot" => self.export_frame_snapshot(&req.params),
             "prefetch_media" => self.prefetch_media(&req.params),
             "clear_prefetch_cache" => Ok(self.clear_prefetch_cache()),
+            "release_library_prerolls" => Ok(self.release_library_prerolls()),
             "clear_decode_preview_cache" => Ok(self.clear_decode_preview_cache()),
             "decode_capabilities" | "get_decode_capabilities" => Ok(self.decode_capabilities()),
             "upload_source_gpu_shared_texture" => {
@@ -18240,6 +18241,13 @@ impl App {
         {
             return;
         }
+        self.drop_media_source(source_id);
+        self.stats.media_source_orphan_releases =
+            self.stats.media_source_orphan_releases.saturating_add(1);
+    }
+
+    /// Every per-source record and resource of one media source.
+    fn drop_media_source(&mut self, source_id: &str) {
         self.media_sources.remove(source_id);
         self.link_phase_anchors.remove(source_id);
         self.deferred_source_releases.remove(source_id);
@@ -18249,8 +18257,29 @@ impl App {
         self.source_frames.remove(source_id);
         self.source_frame_signatures.remove(source_id);
         self.native_video_frame_signatures.remove(source_id);
-        self.stats.media_source_orphan_releases =
-            self.stats.media_source_orphan_releases.saturating_add(1);
+    }
+
+    /// File > New and opening a project: the media tray's pre-rolled videos
+    /// (`library:` sources, up to `NATIVE_LIBRARY_SESSION_CAP`, ~100 MB of
+    /// decoded frames) belong to the project that was open. Release every one
+    /// no layer is playing or using; the tray arms them again on hover.
+    fn release_library_prerolls(&mut self) -> Value {
+        let ids = self.media_sources.keys().chain(self.native_video_streams.keys())
+            .map(|id| id.as_str())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .map(|id| media_orphans::LibraryPreroll {
+                id,
+                playing: self.native_video_streams.get(id).is_some_and(|session| session.playing),
+                referenced: self.media_source_is_referenced(id),
+            })
+            .collect::<Vec<_>>();
+        let release = media_orphans::library_prerolls_to_release(&ids);
+        for id in &release {
+            self.drop_media_source(id);
+        }
+        let kept = self.native_video_streams.keys().filter(|id| id.starts_with("library:")).count();
+        json!({ "released": release.len(), "kept": kept })
     }
 
     fn source_frame_readiness(&self, params: &Value) -> Result<Value, String> {

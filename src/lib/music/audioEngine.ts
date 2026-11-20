@@ -732,10 +732,20 @@ export class MusicAudioEngine {
     return out;
   }
 
+  /** Which shared returns any channel sends to (their reverbs are built on first use). */
+  private returnsInUse(): Record<ReturnId, boolean> {
+    const used = { reverb: false, echo: false, spring: false };
+    for (const strip of Object.values(this.mixer)) {
+      for (const r of RETURN_IDS) if ((strip?.sends?.[r] ?? 0) > 0) used[r] = true;
+    }
+    return used;
+  }
+
   private applyMixer(): void {
     const ctx = this.ctx;
     if (!ctx) return;
     const t = ctx.currentTime;
+    this.returns?.route(this.returnsInUse());
     for (const [id, strip] of this.strips) {
       const settings = stripFor(this.mixer, id);
       for (const band of EQ_BAND_IDS) strip.eq[band].gain.setTargetAtTime(settings[band], t, MIXER_RAMP_SECONDS);
@@ -834,7 +844,7 @@ export class MusicAudioEngine {
     let rack = this.racks[this.activeSet];
     if (!rack) {
       rack = new FxRack(this.ctx, this.activeSet);
-      rack.setParams(this.params, this.tempo);
+      rack.setParams(this.params, this.tempo, true);
       rack.output.connect(this.masterGain);
       this.racks[this.activeSet] = rack;
     }
@@ -1007,6 +1017,8 @@ export class MusicAudioEngine {
     // The returns before the strips, so every strip gets its sends.
     this.returns = new SendReturns(ctx, master);
     this.returns.set(this.returnLevels, this.tempo);
+    // A saved mix that already sends to a reverb gets it at full level now, before any sound.
+    this.returns.route(this.returnsInUse(), true);
     this.inputSends.clear();
     const ducker = new Ducker(ctx);
     this.ducker = ducker;
@@ -1047,7 +1059,7 @@ export class MusicAudioEngine {
     // Each band input's strip, with its send into the band effects (and into the looper's bus).
     this.syncInputStrips();
     master.connect(this.bandFx.freezeInput);
-    this.bandFx.setSettings(this.bandSettings, this.tempo);
+    this.bandFx.setSettings(this.bandSettings, this.tempo, true);
     // The looper records every band input at its own level (a send turned down
     // does not quiet it in a loop) and plays its loops into the mix.
     this.looper?.dispose();

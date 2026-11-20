@@ -283,6 +283,8 @@ const RENDERER_COMMANDS = [
   'native_renderer_upload_source_gpu_shared_texture',
   'native_renderer_prefetch_media',
   'native_renderer_clear_prefetch_cache',
+  // File > New / open: let go of the media tray's pre-rolled videos.
+  'native_renderer_release_library_prerolls',
   'native_renderer_clear_decode_preview_cache',
   'native_renderer_clear_runtime_caches',
   'native_renderer_set_vram_budget',
@@ -775,6 +777,8 @@ class NativeRendererBroker {
         return this.prefetchMedia(args);
       case 'native_renderer_clear_prefetch_cache':
         return this.clearPrefetchCache();
+      case 'native_renderer_release_library_prerolls':
+        return this.sendIfRunning('release_library_prerolls', args, { fallback: null, timeoutMs: 5000 });
       case 'native_renderer_set_target_fps':
         return this.sendIfRunning('set_target_fps', args, { fallback: null });
       case 'native_renderer_set_present_policy':

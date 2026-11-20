@@ -555,6 +555,7 @@
   import { beginHistoryRestore, endHistoryRestore, cancelPendingHistorySnapshot, setProjectReplacedCallback, amendLastHistoryStep, hasPendingHistorySnapshot, noteLiveChange } from './lib/stores/historyHooks';
   import { isProjectDirty, projectSettingsSections, recallSectionSignature, withRecallsAsSaved, type ProjectDirtySnapshot, type RecallSection } from './lib/stores/projectDirty';
   import { musicStudio } from './lib/music/musicStudioStore';
+  import { releaseNativeLibraryPrerolls } from './lib/sync/nativeRendererSync';
   import { stage3dScene } from './lib/stage3d/store';
   import { showTimeline, setShowTransitionSink, parkedShowDoc } from './lib/stores/showTimeline';
   import { handleShowKeydown } from './lib/show/showKeyboard';
@@ -6445,6 +6446,8 @@
     // drift apart. Machine wiring (OSC and DMX listeners, the Ableton
     // connection, the audio input) stays as it is.
     resetProjectOwnedStores();
+    // The media tray's pre-rolled videos belong to the project that was open.
+    releaseNativeLibraryPrerolls();
     // Output settings are global rather than per-project, so without this a
     // new project inherits the last one's screens (the project saves
     // outputSlices and restores them, but a new project has none to overwrite
@@ -6487,6 +6490,7 @@
     try { sessionClipCache.clear(); } catch {}
     try { isfShaderCache.clear(); } catch {}
     try { modulationStore.clearAll(); } catch {}
+    try { releaseNativeLibraryPrerolls(); } catch {}
   }
 
   /** Open a .gha from disk by path (Electron). Throws when it cannot be
