@@ -43,7 +43,7 @@
   import { formatPrecise } from '../timeFormat';
   import { keepInWindow, portal, trimEdgeWidth } from '../trackLayout';
   import { showSlice } from '../timelineSlices';
-  import { liveColor, soundLayout, soundRowAt } from './soundRowLayout';
+  import { liveColor, songDropTime, soundLayout, soundRowAt } from './soundRowLayout';
   import { autoShowOpen } from '../autoshow/autoShowUi';
   import TimelineIcon from '../TimelineIcon.svelte';
 
@@ -266,7 +266,7 @@
     if (row.kind !== 'audio' || !files.length) return;
     e.preventDefault();
     e.stopPropagation();
-    void addFilesToRow(files, row.id, timeAt(e));
+    void addFilesToRow(files, row.id, songDropTime(layout, layout.rows.indexOf(row), timeAt(e)));
   }
 
   const selected = (kind: string, id: string) => $selection?.kind === kind && $selection.id === id;
