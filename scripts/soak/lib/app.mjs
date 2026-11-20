@@ -216,6 +216,10 @@ export async function launchApp({ target, root, devUrl, cdpPort, runIndex, sessi
     env.WS_PORT = String(cdpPort + 1);
     env.HTTP_PORT = String(cdpPort + 2);
   }
+  // The sandboxed HOME and profile have no login keychain: without this,
+  // Chromium's storage encryption asks macOS for one and a "Keychain Not
+  // Found" dialog appears on the user's screen, even for a hidden run.
+  if (IS_MAC) args.push('--use-mock-keychain');
   if (process.platform === 'linux') args.push('--no-sandbox');
   const logPath = path.join(sessionDir, 'logs', `app-run${runIndex}.log`);
   const out = fs.openSync(logPath, 'a');

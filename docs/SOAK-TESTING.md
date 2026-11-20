@@ -173,6 +173,9 @@ state the next action can use.
 - On Windows the app is stopped with `taskkill /T`; the debug log is read from the session's sandbox (the runner
   points `LOCALAPPDATA` there for a packaged app).
 - `--hidden` only does something on macOS.
+- On macOS every launch adds `--use-mock-keychain`: the run's own profile and HOME have no login keychain, and
+  without it Chromium's storage encryption puts a "Keychain Not Found" dialog on screen. Test-only; the app
+  itself does not use the switch.
 - The fake phone camera (`addons.phoneCameraFake`) has weight 0. Include it with a config file holding
   `{ "actionWeights": { "addons.phoneCameraFake": 1 } }` (any action's weight can be changed the same way); it joins
   the app's LAN relay from the editor itself and needs nothing else.
