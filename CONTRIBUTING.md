@@ -35,6 +35,13 @@ After the first run, `npm run desktop` starts the app, and `npm run native:build
 
 Run `npm test`, `npm run check` and `npm run lint` before opening a pull request, and `npm run native:test` if you changed Rust.
 
+## Before a release
+
+Every release candidate gets a 4-hour soak test on a Mac and on a Windows PC, against the packaged builds:
+`npm run soak -- --app <the build>` on each. Both must pass. [docs/SOAK-TESTING.md](docs/SOAK-TESTING.md) has the steps, what
+the run checks, where its report goes and how to replay a failure. `npm run soak:smoke` is a 10-minute version for
+development.
+
 ## Where p5.js developers start
 
 The p5.js stack is plain TypeScript with about 190 tests, and it doesn't touch the GPU or the Rust core:
