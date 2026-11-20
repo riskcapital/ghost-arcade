@@ -661,7 +661,6 @@
   .bar-hint { color: var(--studio-muted); font-size: var(--ga-text-meta, 11px); }
   .bar select { height: var(--ga-bar-control-h, 30px); padding: 0 8px; font-size: var(--ga-text-body, 13px); }
   .bar .text-btn { height: var(--ga-bar-control-h, 30px); padding: 0 12px; font-size: var(--ga-text-body, 13px); }
-  .bar .text-btn.on { color: var(--studio-accent); border-color: var(--studio-accent); background: var(--studio-accent-soft); }
   .nav-btn {
     flex: 0 0 auto; width: var(--ga-bar-control-h, 30px); height: var(--ga-bar-control-h, 30px); padding: 0; display: inline-grid; place-items: center;
     border: 1px solid var(--studio-edge); border-radius: var(--studio-radius); background: transparent; color: var(--studio-ink); cursor: pointer;
