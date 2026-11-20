@@ -109,6 +109,16 @@
     { label: 'Vertical 1080', fn: () => ({ w: 1080, h: 1920 }) },
   ];
 
+  // One tile lit: the first that matches (Project size wins over 1080p when
+  // they are the same size).
+  $: activePreset = firstPresetAt(settings.width, settings.height, $project.width, $project.height);
+  function firstPresetAt(w: number, h: number, ..._projectSize: unknown[]): number {
+    return RESOLUTION_PRESETS.findIndex((preset) => {
+      const p = preset.fn();
+      return p.w === w && p.h === h;
+    });
+  }
+
   $: flow = $offlineRender.flow;
   $: state = $offlineRender;
   $: isFrameOutput = settings.outputMode === 'frames';
@@ -422,9 +432,9 @@
       <div class="field">
         <span class="field-label">Resolution</span>
         <div class="preset-grid">
-          {#each RESOLUTION_PRESETS as preset}
+          {#each RESOLUTION_PRESETS as preset, i}
             {@const p = preset.fn()}
-            {@const active = settings.width === p.w && settings.height === p.h}
+            {@const active = i === activePreset}
             <button
               class="preset-btn"
               class:active

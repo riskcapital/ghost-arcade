@@ -30,3 +30,10 @@ describe('Render to video: the length it opens with', () => {
   });
 });
 
+describe('Render to video: resolution tiles', () => {
+  it('lights one tile when the project is 1920×1080 (not Project size and 1080p both)', () => {
+    const { body } = render(OfflineRenderModal, { props: { isOpen: true } });
+    const grid = body.slice(body.indexOf('preset-grid'), body.indexOf('render-w'));
+    expect(grid.match(/preset-btn[^"]*\bactive\b/g) ?? []).toHaveLength(1);
+  });
+});
