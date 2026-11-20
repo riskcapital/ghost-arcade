@@ -275,6 +275,13 @@ async function main() {
       try { if (G.settings.get().output?.blackout) G.settings.update((s) => ({ ...s, output: { ...s.output, blackout: false } })); } catch {}
       await sleep(100);
     })()`, 10000).catch(() => {});
+    // Audio Lab's full studio view covers the deck; its key (\`) takes it back.
+    const studioView = await session()?.eval(`[...document.querySelectorAll('.bar-title')].some((e) => /Audio Lab/.test(e.textContent) && e.getBoundingClientRect().width > 0)`, 5000).catch(() => false);
+    if (studioView) {
+      await session().eval('document.activeElement?.blur?.()').catch(() => {});
+      await session().key('`', { code: 'Backquote', keyCode: 192, text: '`' }).catch(() => {});
+      await sleep(300);
+    }
   }
 
   // ── Telemetry and heartbeat ──
