@@ -33,6 +33,7 @@
   import { project } from '../../stores/layers';
   import MediaTray from '../MediaTray.svelte';
   import StackEffects from './StackEffects.svelte';
+  import { driftCycleSeconds, driftRanges, toggledDrift, toggledHold } from '../../music/visualDrift';
 
   const target = $derived($stackEditor);
   const s = $derived($musicStudio);
@@ -170,6 +171,18 @@
     if (item.media?.kind === 'shader') return ((item.media.shaderInputs ?? []) as ShaderInput[]).filter((i) => i.TYPE === 'float' || i.TYPE === 'long');
     return [];
   }
+  /** The settings of a layer that can drift (visualDrift.ts): decimal settings, not counts or what the sound drives. */
+  function driftNamesOf(item: StackItem): Set<string> {
+    void $studioCodeTick;
+    if (item.voice) return new Set(driftRanges(studioVoiceCode(item.voice.file)).map((r) => r.name));
+    if (item.media?.kind === 'shader') return new Set(driftRanges(item.media.shaderCode, item.media.shaderInputs as never).map((r) => r.name));
+    return new Set();
+  }
+  /** Drift speed as the time of one swing, m:ss. */
+  const cycleText = (v: number) => {
+    const sec = Math.round(driftCycleSeconds(v));
+    return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+  };
   const numberOf = (item: StackItem, input: ShaderInput) => Number(item.params[input.NAME] ?? input.DEFAULT ?? input.MIN ?? 0);
   const kindLabel = (item: StackItem) => (item.voice ? 'Audio shader' : ({ video: 'Video', image: 'Image', shader: 'Shader', sketch: 'Sketch' } as Record<string, string>)[item.media?.kind ?? ''] ?? 'Layer');
   const thumbOf = (item: StackItem) => (item.voice ? `./ISF/voice-thumbs/${item.voice.file.replace(/\.fs$/, '.jpg')}` : item.media ? thumbnailFor($clipThumbnails, item.media) : null);
@@ -352,6 +365,26 @@
                   {/each}
                 </div>
               {/if}
+              {@const free = driftNamesOf(selected)}
+              {#if free.size}
+                {@const d = selected.drift}
+                <div class="group">
+                  <div class="drift-head">
+                    <span class="ga-eyebrow">Drift</span>
+                    <button class="btn drift-btn" class:on={!!d?.on} aria-pressed={!!d?.on} onclick={() => patchItem(selected.id, { drift: toggledDrift(d) })} title={d?.on ? 'Drift is on: its settings slowly wander on their own, under the sound. Click to ease back to your settings.' : 'Drift: let its settings slowly wander on their own, so it keeps changing while it plays'}>{d?.on ? 'On' : 'Off'}</button>
+                  </div>
+                  {#if d?.on}
+                    {@render slider('Amount', d.amount, 0, 1, percent(d.amount), (v) => patchItem(selected.id, { drift: { ...d, amount: v } }))}
+                    {@render slider('Speed', d.speed, 0, 1, cycleText(d.speed), (v) => patchItem(selected.id, { drift: { ...d, speed: v } }))}
+                    <div class="drift-params" role="group" aria-label="Settings that drift">
+                      {#each inputs.filter((input) => free.has(input.NAME)) as input (input.NAME)}
+                        {@const held = d.hold?.includes(input.NAME) ?? false}
+                        <button class="drift-chip" class:on={!held} aria-pressed={!held} onclick={() => patchItem(selected.id, { drift: toggledHold(d, input.NAME) })} title={held ? 'Kept where you set it. Click to let it drift.' : 'Drifts. Click to keep it where you set it.'}>{input.LABEL ?? input.NAME}</button>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+              {/if}
               <div class="group">
                 <span class="ga-eyebrow">Effects</span>
                 <StackEffects effects={selected.effects} note="On this layer, before it is mixed with the others." onchange={(effects: Effect[]) => patchItem(selected.id, { effects })} />
@@ -504,6 +537,14 @@
   select { height: var(--ga-control-h-sm, 22px); background: var(--ga-slot, #060504); color: var(--ga-ink-0, #f2ede4); border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13)); border-radius: var(--ga-r-hard, 5px); font: inherit; }
   .check { display: flex; align-items: center; gap: 6px; color: var(--ga-ink-1, #ada9a2); }
   .param { display: flex; flex-direction: column; gap: 3px; }
+  /* Drift: on is coral. */
+  .drift-head { display: flex; align-items: center; justify-content: space-between; }
+  .btn.drift-btn { height: 22px; padding: 0 10px; color: var(--ga-ink-2, #89857e); }
+  .btn.drift-btn.on { color: var(--tl-on, #ff725f); border-color: var(--tl-on-line, rgba(255, 114, 95, 0.46)); background: var(--tl-on-soft, rgba(255, 114, 95, 0.13)); }
+  .drift-params { display: flex; flex-wrap: wrap; gap: 4px; }
+  .drift-chip { height: 22px; padding: 0 8px; border: 1px solid var(--ga-line-2, rgba(245, 236, 222, 0.13)); border-radius: var(--ga-r-hard, 5px); background: none; color: var(--ga-ink-2, #89857e); font: inherit; font-size: var(--ga-text-meta, 11px); cursor: pointer; }
+  .drift-chip:hover { color: var(--ga-ink-0, #f2ede4); }
+  .drift-chip.on { color: var(--tl-on, #ff725f); border-color: var(--tl-on-line, rgba(255, 114, 95, 0.46)); background: var(--tl-on-soft, rgba(255, 114, 95, 0.13)); }
   .param-head { display: flex; justify-content: space-between; color: var(--ga-ink-1, #ada9a2); }
   .param-head output { color: var(--ga-ink-0, #f2ede4); font-variant-numeric: tabular-nums; }
   .param input[type='range'] { width: 100%; accent-color: var(--ga-icon, #5278ff); }

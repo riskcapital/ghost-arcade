@@ -45,6 +45,7 @@
   import { hasVisuals, type ClipStack, type StackItem } from '../../music/clipStack';
   import { stackEditor } from '../../music/studioUi';
   import { arrangeVisuals, moveVisualRow, visualOrder } from '../../music/visualOrder';
+  import { DRIFT_DEFAULTS, driftCycleSeconds, driftRanges, toggledDrift, toggledHold } from '../../music/visualDrift';
   import StudioModule from './StudioModule.svelte';
   import StudioKnob from './StudioKnob.svelte';
   import { STUDIO_GRADES, normalizeFinish, type StudioGrade } from '../../music/studioFinish';
@@ -286,6 +287,24 @@
     visualPicker.set({ current: null, none: false, title: 'Add an audio shader', pick: (f) => { const at = voices.length; if (f && addStudioVoice(f, 'all')) open = at; } });
   }
 
+  // ── Drift: its settings slowly wander on their own (visualDrift.ts) ──
+  function toggleDrift(i: number, voice: StudioVoice) {
+    const next = toggledDrift(voice.drift);
+    setStudioVoice(i, { drift: next });
+    // Turned on: show its amount, speed and which settings drift.
+    if (next.on) open = i;
+  }
+  /** The settings of a visual that can drift (decimal settings, not counts or what the sound drives). */
+  function driftNames(file: string): Set<string> {
+    void codeTick;
+    return new Set(driftRanges(studioVoiceCode(file)).map((r) => r.name));
+  }
+  /** Speed as the time of one swing, m:ss. */
+  const cycleFormat = (v: number) => {
+    const sec = Math.round(driftCycleSeconds(v));
+    return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+  };
+
   const numberOf = (voice: StudioVoice, input: ShaderInput) => Number(voice.params[input.NAME] ?? input.DEFAULT ?? input.MIN ?? 0);
   const levelFormat = (v: number) => `${Math.round(v * 100)}%`;
   const valueFormat = (input: ShaderInput) => (v: number) => {
@@ -294,6 +313,26 @@
     return max - min > 4 ? String(Math.round(v)) : `${Math.round(((v - min) / (max - min || 1)) * 100)}%`;
   };
 </script>
+
+{#snippet driftEdit(i: number, voice: StudioVoice, all: ShaderInput[])}
+  {@const d = voice.drift!}
+  {@const free = driftNames(voice.file)}
+  <div class="drift-edit" role="group" aria-label="Drift for voice {i + 1}">
+    <span class="ga-eyebrow">Drift</span>
+    <StudioKnob label="Amount" title="How far its settings wander from where you set them" value={d.amount} defaultValue={DRIFT_DEFAULTS.amount} size={20} format={levelFormat} onchange={(v) => setStudioVoice(i, { drift: { ...d, amount: v } }, `voice:${i}:drift-amount`)} />
+    <StudioKnob label="Speed" title="How fast they wander: the time for one slow swing, in minutes and seconds" value={d.speed} defaultValue={DRIFT_DEFAULTS.speed} size={20} format={cycleFormat} onchange={(v) => setStudioVoice(i, { drift: { ...d, speed: v } }, `voice:${i}:drift-speed`)} />
+    {#if free.size}
+      <div class="drift-params" role="group" aria-label="Settings that drift">
+        {#each all.filter((input) => free.has(input.NAME)) as input (input.NAME)}
+          {@const held = d.hold?.includes(input.NAME) ?? false}
+          <button class="drift-chip" class:on={!held} aria-pressed={!held} onclick={() => setStudioVoice(i, { drift: toggledHold(d, input.NAME) })} title={held ? 'Kept where you set it. Click to let it drift.' : 'Drifts. Click to keep it where you set it.'}>{input.LABEL ?? input.NAME}</button>
+        {/each}
+      </div>
+    {:else}
+      <span class="text-note">This visual has no settings that can drift.</span>
+    {/if}
+  </div>
+{/snippet}
 
 {#snippet knob(i: number, voice: StudioVoice, input: ShaderInput)}
   <StudioKnob
@@ -480,6 +519,7 @@
               {/if}
             </select>
             <button class="auto studio-btn" class:on={voice.auto} onclick={() => setStudioVoice(i, { auto: !voice.auto })} aria-pressed={voice.auto} title={voice.auto ? 'Shows only while its sound plays' : 'Always shows'}>Auto</button>
+            <button class="drift-btn studio-btn" class:on={!!voice.drift?.on} onclick={() => toggleDrift(i, voice)} aria-pressed={!!voice.drift?.on} title={voice.drift?.on ? 'Drift is on: its settings slowly wander on their own, under the sound. Click to ease back to your settings.' : 'Drift: let its settings slowly wander on their own, so it keeps changing while it plays'}>Drift</button>
             <button class="icon" onclick={() => removeStudioVoice(i)} aria-label="Remove voice {i + 1}" title="Remove this voice">
               <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3 3 9" /></svg>
             </button>
@@ -493,7 +533,7 @@
               </optgroup>
             </select>
             <StudioKnob label="Opacity" title="How much of this voice shows" value={voice.level} defaultValue={1} size={20} format={levelFormat} midiPath="studio:voice.{i + 1}.level" onchange={(v) => setStudioVoice(i, { level: v }, `voice:${i}:level`)} />
-            {#if all.length > MAIN_CONTROLS || takesText(voice.file)}
+            {#if all.length > MAIN_CONTROLS || takesText(voice.file) || voice.drift?.on}
               <button class="icon more" class:on={open === i} onclick={() => (open = open === i ? null : i)} aria-expanded={open === i} aria-label="All controls for voice {i + 1}" title="All controls">
                 <svg viewBox="0 0 12 12" aria-hidden="true"><path d={open === i ? 'M3 7.5L6 4.5 9 7.5' : 'M3 4.5L6 7.5 9 4.5'} /></svg>
               </button>
@@ -521,7 +561,8 @@
               </div>
             </div>
           {/if}
-          {#if open === i}
+          {#if open === i && voice.drift?.on}{@render driftEdit(i, voice, all)}{/if}
+          {#if open === i && all.length > MAIN_CONTROLS}
             <div class="all">
               {#each all.slice(MAIN_CONTROLS) as input (input.NAME)}{@render knob(i, voice, input)}{/each}
             </div>
@@ -624,6 +665,17 @@
   .blend { flex: 0 0 74px; min-width: 0; height: 20px; padding: 0 4px; align-self: center; font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); }
   .line .auto { flex: 0 0 auto; padding: 0 7px; font-size: var(--ga-text-meta, 11px); }
   .line .auto:not(.on) { color: var(--studio-muted); }
+  /* Drift: on is coral, like the app's other "running on its own" states. */
+  .line .drift-btn { flex: 0 0 auto; padding: 0 7px; font-size: var(--ga-text-meta, 11px); }
+  .line .drift-btn:not(.on) { color: var(--studio-muted); }
+  .line .drift-btn.on { color: var(--tl-on, #ff725f); border-color: var(--tl-on-line, rgba(255, 114, 95, 0.46)); background: var(--tl-on-soft, rgba(255, 114, 95, 0.13)); }
+  .drift-edit { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 8px 0 0 15px; }
+  .drift-edit .ga-eyebrow { color: var(--tl-on, #ff725f); flex: 0 0 auto; }
+  .drift-edit :global(.knob-wrap) { flex: 0 0 52px; }
+  .drift-params { flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 4px; }
+  .drift-chip { height: 20px; padding: 0 7px; border: 1px solid var(--studio-edge-soft); border-radius: var(--ga-r-hard, 5px); background: none; color: var(--studio-muted); font: inherit; font-size: var(--ga-text-meta, 11px); cursor: pointer; }
+  .drift-chip:hover { color: var(--studio-ink); }
+  .drift-chip.on { color: var(--tl-on, #ff725f); border-color: var(--tl-on-line, rgba(255, 114, 95, 0.46)); background: var(--tl-on-soft, rgba(255, 114, 95, 0.13)); }
   .controls { display: flex; align-items: flex-end; justify-content: space-between; gap: 4px; padding: 3px 0 0 15px; }
   .controls :global(.knob-wrap), .all :global(.knob-wrap) { gap: 1px; min-width: 0; flex: 1 1 0; }
   .all :global(.knob-wrap) { flex: 0 0 52px; }
