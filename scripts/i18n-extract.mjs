@@ -278,7 +278,10 @@ export function extractFrom(source, file = 'x.svelte') {
 }
 
 function scanFile(source, file) {
-  if (file.endsWith('.ts')) { scanStrings(source, file, false); return; }
+  // A module that is all interface words (what GO will do, a cue's actions
+  // in words) says so with `@ui-text` in a comment: every UI-looking string
+  // in it is read, not only labels by name.
+  if (file.endsWith('.ts')) { scanStrings(source, file, /@ui-text\b/.test(source)); return; }
   let template = source.replace(/<!--[^]*?-->/g, '');
   for (const m of template.matchAll(/<script[^>]*>([^]*?)<\/script>/g)) scanStrings(m[1], file, false);
   template = template.replace(/<script[^>]*>[^]*?<\/script>/g, '').replace(/<style[^>]*>[^]*?<\/style>/g, '');

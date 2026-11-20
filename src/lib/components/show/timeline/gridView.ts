@@ -50,3 +50,38 @@ export function followScrollLeft(prevX: number | null, x: number, scrollLeft: nu
   if (x >= scrollLeft && x <= right) return null;
   return Math.max(0, x - Math.round(width * 0.1));
 }
+
+/** The grid's scroller as far as the mirror needs it. */
+export interface GridScroller {
+  scrollLeft: number;
+}
+
+/**
+ * The lanes draw only the visible stretch, from a mirrored scrollLeft
+ * (reading the element's own on every frame would force a layout). The
+ * mirror has to follow the element when nothing scrolls: the grid is made
+ * again at 0 when the Timeline closes and opens, or VJ mode comes and goes,
+ * and a narrower or wider view can clamp the scroll without a scroll event.
+ * Left stale, the first seconds of every row stopped drawing.
+ */
+export class GridScrollMirror {
+  value = 0;
+  private el: GridScroller | null = null;
+
+  /** A grid element bound (or the same one again). A new element is put
+   *  back where the view was, as far as it can go. Returns the mirror. */
+  attach(el: GridScroller | null): number {
+    if (!el) { this.el = null; return this.value; }
+    if (el !== this.el) {
+      this.el = el;
+      if (el.scrollLeft !== this.value) el.scrollLeft = this.value;
+    }
+    return this.read();
+  }
+
+  /** The element's scroll as it is now (after a resize, a clamp, a scroll). */
+  read(): number {
+    if (this.el) this.value = this.el.scrollLeft;
+    return this.value;
+  }
+}

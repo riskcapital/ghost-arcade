@@ -84,6 +84,13 @@ describe('i18n extractor', () => {
     expect(extractFrom(ts, 'a.ts').sort()).toEqual(['Control help', 'Read documentation ↗']);
   });
 
+  it('reads every UI-looking string in a module marked @ui-text', async () => {
+    const { extractFrom } = await load();
+    const body = "export function words(k: string) {\n  if (k === 'cue') return `Fires ${k}`;\n  return 'Moves the list along';\n}";
+    expect(extractFrom(body, 'a.ts')).toEqual([]);
+    expect(extractFrom(`/** @ui-text */\n${body}`, 'a.ts').sort()).toEqual(['Fires {0}', 'Moves the list along']);
+  });
+
   it('still leaves code alone', async () => {
     const { extractFrom } = await load();
     const ts = [

@@ -28,6 +28,9 @@
 
   /** Only the selected cue's editor (the Timeline's Perform tab has its own list and GO). */
   export let editorOnly = false;
+  /** The step's number in the Perform list (Q7): shown instead of the cue's
+   *  own number, so one screen has one numbering. */
+  export let stepNumber: number | null = null;
 
   $: s = $cueList;
   $: cues = s.cues;
@@ -238,9 +241,13 @@
       {@const target = resolveFollowTarget(cues, selected)}
       <div class="cue-editor" data-cue-editor>
         <div class="ce-row">
-          <label class="ce-field ce-num">No.
-            <input type="text" value={selected.number} onchange={(e) => cueList.updateCue(selected.id, { number: e.currentTarget.value.trim() || selected.number })} />
-          </label>
+          {#if stepNumber !== null}
+            <span class="ce-field ce-num ce-q" title="Its number in the cue list" data-cue-step-number>Q{stepNumber}</span>
+          {:else}
+            <label class="ce-field ce-num">No.
+              <input type="text" value={selected.number} onchange={(e) => cueList.updateCue(selected.id, { number: e.currentTarget.value.trim() || selected.number })} />
+            </label>
+          {/if}
           <label class="ce-field ce-grow">Name
             <input type="text" value={selected.name} placeholder="Untitled" onchange={(e) => cueList.updateCue(selected.id, { name: e.currentTarget.value })} data-cue-name />
           </label>
@@ -418,6 +425,7 @@
   .ce-grow { flex: 1; min-width: 0; }
   .ce-grow input { flex: 1; min-width: 0; }
   .ce-num input { width: 42px; }
+  .ce-q { color: var(--ga-ink-0, #f2ede4); font-weight: 600; font-variant-numeric: tabular-nums; }
   .ce-wait { width: 56px; }
   .ce-tc { width: 96px; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); }
   .ce-hint { color: var(--ga-ink-2, #888); font-size: var(--ga-text-meta, 11px); }

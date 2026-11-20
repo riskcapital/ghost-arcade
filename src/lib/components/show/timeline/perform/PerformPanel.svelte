@@ -72,11 +72,10 @@
       const here = item.id === $nowId && $playingS;
       return sectionWords(item.section, $sectionsS, status.passes[item.id] ?? 0, here && item.section.action === 'vamp');
     }
-    if (item.kind === 'marker') return cueWords(item.cue, names);
-    return `Waits for GO · ${cueWords(item.cue, names)}`;
+    return cueWords(item.cue, names);
   }
   function at(item: StackItem): { bar: string; time: string } {
-    if (item.time === null) return { bar: 'on', time: 'GO' };
+    if (item.time === null) return { bar: '', time: '' };
     return { bar: $tempoS ? formatBarsBeats($tempoS, item.time).split('.')[0] : '', time: formatPrecise(item.time) };
   }
   function isSelected(item: StackItem): boolean {
@@ -230,8 +229,13 @@
             <span class="item-name">{stackItemName(item)}</span>
           </span>
           <span class="pf-badge">{#if item.id === $nowId}<b class="now">NOW</b>{:else if item.id === $standbyId}<b class="sb">STANDBY</b>{/if}</span>
-          <span class="pf-at"><span>{a.bar}</span><span class="pf-dot">·</span><span>{a.time}</span></span>
-          <span class="pf-then">{then(item)}</span>
+          {#if item.time === null}
+            <span class="pf-at"><span>On GO</span></span>
+            <span class="pf-then"><span>Waits for GO</span> · <span>{then(item)}</span></span>
+          {:else}
+            <span class="pf-at"><span>{a.bar}</span><span class="pf-dot">·</span><span>{a.time}</span></span>
+            <span class="pf-then">{then(item)}</span>
+          {/if}
         </div>
       {:else}
         <p class="pf-none">No steps yet: + Section, + Marker or + Cue, or ✦ Auto show.</p>
@@ -254,7 +258,7 @@
           </div>
         {/if}
         {#if selectedItem.kind === 'cue' || (selectedItem.kind === 'marker' && selectedItem.marker.cueId)}
-          <CueListPanel editorOnly />
+          <CueListPanel editorOnly stepNumber={selectedItem.q} />
         {/if}
       </div>
     {/if}
@@ -345,7 +349,7 @@
   .pf-return :global(.tl-icon) { color: var(--tl-on, #ff725f); }
   .pf-key { font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); font-size: 10px; padding: 0 4px; border: 1px solid var(--tl-on-line, rgba(255, 114, 95, 0.46)); border-radius: 3px; }
   .pf-head { display: flex; align-items: center; gap: 8px; min-height: 24px; }
-  .pf-eyebrow { font-size: var(--ga-text-eyebrow, 10px); font-weight: 700; letter-spacing: var(--ga-eyebrow-tracking, 0.08em); text-transform: uppercase; color: var(--ga-ink-2, #89857e); }
+  .pf-eyebrow { white-space: nowrap; flex: 0 0 auto; font-size: var(--ga-text-eyebrow, 10px); font-weight: 700; letter-spacing: var(--ga-eyebrow-tracking, 0.08em); text-transform: uppercase; color: var(--ga-ink-2, #89857e); }
   .pf-hint { font-size: var(--ga-text-meta, 11px); color: var(--ga-ink-2, #89857e); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .pf-grow { flex: 1; }
   .pf-add { height: 22px; padding: 0 6px; border-color: transparent; background: transparent; color: var(--ga-ink-1, #ada9a2); font-size: var(--ga-text-meta, 11px); }

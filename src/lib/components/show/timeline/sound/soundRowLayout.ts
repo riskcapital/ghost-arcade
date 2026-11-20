@@ -77,3 +77,12 @@ export const soundLayout: Readable<SoundRowsLayout> = derived(
 export function liveColor(color: number): string {
   return `#${(color & 0xffffff).toString(16).padStart(6, '0')}`;
 }
+
+/**
+ * Where a dropped song lands: on the empty Timeline's first row (the "Drop
+ * audio here" card) at 0, as "Choose audio…" on the same card does; on a row
+ * that already has audio, where it was dropped.
+ */
+export function songDropTime(layout: Pick<SoundRowsLayout, 'empty'>, rowIndex: number, pointerTime: number): number {
+  return layout.empty && rowIndex === 0 ? 0 : Math.max(0, pointerTime);
+}

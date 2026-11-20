@@ -2,6 +2,8 @@
  * What a step does, in words, for the Perform list's "Then" column: a
  * section's end action, or a cue's actions ("Screen FX Strobe, Blackout").
  * Pure; the names of presets and layers come in through `names`.
+ *
+ * @ui-text: the extractor reads every string here (they are shown).
  */
 import type { Cue, CueAction } from '../../show/cueList';
 import { SECTION_ACTION_LABELS, type TimelineSection } from '../sections/sectionModel';

@@ -122,7 +122,7 @@
     </div>
     <footer class="welcome-hint">
       <span>The tour and templates are always under the ? button.</span>
-      <span>Keys 1–5 pick a row, Esc starts blank.</span>
+      <span>Keys 1–{choices.length} pick a row, Esc starts blank.</span>
     </footer>
   </div>
 </div>

@@ -8,7 +8,7 @@
    */
   import { vjClipLauncher } from '../../stores/vjClipLauncher';
   import { showSlice } from './timeline/timelineSlices';
-  import { BLEND_MODE_ORDER, type BlendMode } from '../../types';
+  import { BLEND_MODE_ORDER, blendModeLabel, type BlendMode } from '../../types';
   import { liveTakeover } from '../../show/takeover/liveTakeover';
   import { takeOverTrack } from '../../show/takeover/takeoverRuntime';
   import { focusedTrackId } from './timeline/trackLayout';
@@ -110,7 +110,7 @@
     <label class="tp-field">
       <span>Blend</span>
       <select value={overlayBlend} onchange={(e) => liveTakeover.setOverlay({ blend: (e.currentTarget as HTMLSelectElement).value as BlendMode })} aria-label="Overlay blend">
-        {#each BLEND_MODE_ORDER as mode (mode)}<option value={mode}>{mode}</option>{/each}
+        {#each BLEND_MODE_ORDER as mode (mode)}<option value={mode}>{blendModeLabel(mode)}</option>{/each}
       </select>
     </label>
     <div class="tp-field">
