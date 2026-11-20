@@ -144,7 +144,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'native_renderer_get_layer_source_readiness',
   'native_renderer_get_source_frame_readiness',
   'native_renderer_release_source_frame',
-  'native_renderer_get_stats', 'native_renderer_get_snapshot',
+  'native_renderer_get_stats', 'native_renderer_memory_stats', 'native_renderer_get_snapshot',
 	  'native_renderer_get_frame_snapshot',
 	  'native_renderer_export_frame_snapshot',
 	  'native_renderer_get_output_shared_texture',

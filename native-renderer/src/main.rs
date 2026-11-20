@@ -4965,8 +4965,8 @@ struct RenderState {
     /// editor has sent that Screen's first frame.
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     linux_slice_windows: HashMap<String, LinuxSliceWindow>,
-    /// Needed to create those presenters' surfaces after start-up.
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    /// Linux: creates the Screen presenters' surfaces after start-up.
+    /// Everywhere: the resource counts in `memory_stats`.
     wgpu_instance: wgpu::Instance,
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     wgpu_adapter: wgpu::Adapter,
@@ -6893,6 +6893,129 @@ impl App {
         json!({ "layers": layers })
     }
 
+    /// Sizes of the core's maps, lists and GPU resource registries: cheap
+    /// (lengths and a few sums), for the soak test's checkpoints, to see which
+    /// one grows over a long session.
+    fn memory_stats(&self) -> Value {
+        let mut counts = serde_json::Map::new();
+        counts.insert("mirror_meshes".into(), json!(self.mirror_meshes.len()));
+        counts.insert("scene_layers".into(), json!(self.scene_layers.len()));
+        counts.insert("pending_media_bindings".into(), json!(self.pending_media_bindings.len()));
+        counts.insert("native_graph_layers".into(), json!(self.native_graph_layers.len()));
+        counts.insert("native_graph_workload".into(), json!(self.native_graph_workload.len()));
+        counts.insert("native_plugin_liquid_states".into(), json!(self.native_plugin_liquid_states.len()));
+        counts.insert("native_plugin_templates_initialized".into(), json!(self.native_plugin_templates_initialized.len()));
+        counts.insert("native_plugin_audio_smooth".into(), json!(self.native_plugin_audio_smooth.len()));
+        counts.insert("native_point_cloud_assets".into(), json!(self.native_point_cloud_assets.len()));
+        counts.insert("pending_native_graph_jobs".into(), json!(self.pending_native_graph_jobs.len()));
+        counts.insert("pending_composite_graph_jobs".into(), json!(self.pending_composite_graph_jobs.len()));
+        counts.insert("ready_composite_graph_jobs".into(), json!(self.ready_composite_graph_jobs.len()));
+        counts.insert("source_previews".into(), json!(self.source_previews.len()));
+        counts.insert("source_preview_slots".into(), json!(self.source_preview_slots.len()));
+        counts.insert("source_frames".into(), json!(self.source_frames.len()));
+        counts.insert("source_frame_slots".into(), json!(self.source_frame_slots.len()));
+        counts.insert("captured_graph_holds".into(), json!(self.captured_graph_holds.len()));
+        counts.insert("source_frame_signatures".into(), json!(self.source_frame_signatures.len()));
+        counts.insert("image_decode_queue".into(), json!(self.image_decode_queue.len()));
+        counts.insert("video_prefetch_versions".into(), json!(self.video_prefetch_versions.len()));
+        counts.insert("image_prefetch_waiters".into(), json!(self.image_prefetch_waiters.len()));
+        counts.insert("native_video_frame_signatures".into(), json!(self.native_video_frame_signatures.len()));
+        counts.insert("native_video_frame_cache".into(), json!(self.native_video_frame_cache.len()));
+        counts.insert("native_video_frame_cache_order".into(), json!(self.native_video_frame_cache_order.len()));
+        counts.insert("media_sources".into(), json!(self.media_sources.len()));
+        counts.insert("clip_audio_fades".into(), json!(self.clip_audio_fades.len()));
+        counts.insert("scheduled_transition_tokens".into(), json!(self.scheduled_transition_tokens.len()));
+        counts.insert("transition_clocks".into(), json!(self.transition_clocks.len()));
+        counts.insert("scheduled_binding_guards".into(), json!(self.scheduled_binding_guards.len()));
+        counts.insert("prepared_launch_sources".into(), json!(self.prepared_launch_sources.len()));
+        counts.insert("link_phase_anchors".into(), json!(self.link_phase_anchors.len()));
+        counts.insert("deferred_source_releases".into(), json!(self.deferred_source_releases.len()));
+        counts.insert("native_video_decode_pending".into(), json!(self.native_video_decode_pending.len()));
+        counts.insert("native_video_decode_failed".into(), json!(self.native_video_decode_failed.len()));
+        counts.insert("native_video_streams".into(), json!(self.native_video_streams.len()));
+        counts.insert("native_video_scrub_requests".into(), json!(self.native_video_scrub_requests.len()));
+        counts.insert("projection_sim_meshes".into(), json!(self.projection_sim_meshes.len()));
+        counts.insert("projection_sim_overlays".into(), json!(self.projection_sim_overlays.len()));
+        counts.insert("composite_effects".into(), json!(self.composite_effects.len()));
+        counts.insert("slice_outputs".into(), json!(self.slice_outputs.len()));
+        counts.insert("video_source_fps".into(), json!(self.video_source_fps.len()));
+        counts.insert("manual_video_readers".into(), json!(self.manual_video_readers.len()));
+        counts.insert("manual_video_report".into(), json!(self.manual_video_report.len()));
+        counts.insert("isf_layer_bindings".into(), json!(self.isf_layer_bindings.len()));
+        counts.insert("isf_frame_outputs".into(), json!(self.isf_frame_outputs.len()));
+        counts.insert("isf_shared_footprints".into(), json!(self.isf_shared_footprints.len()));
+        counts.insert("isf_uniforms".into(), json!(self.isf_uniforms.len()));
+        counts.insert("isf_time_anchors".into(), json!(self.isf_time_anchors.len()));
+        counts.insert("shader_registry".into(), json!(self.shader_registry.len()));
+        counts.insert("shader_sources".into(), json!(self.shader_sources.len()));
+        counts.insert("shader_isf_inputs".into(), json!(self.shader_isf_inputs.len()));
+        counts.insert("shader_isf_hosts".into(), json!(self.shader_isf_hosts.len()));
+        counts.insert("shader_reads_inputs".into(), json!(self.shader_reads_inputs.len()));
+        counts.insert("isf_shader_last_used".into(), json!(self.isf_shader_last_used.len()));
+        counts.insert("isf_shader_first_frame".into(), json!(self.isf_shader_first_frame.len()));
+        counts.insert("evicted_shader_ids".into(), json!(self.evicted_shader_ids.len()));
+        counts.insert("manual_clock_media_stash".into(), json!(self.manual_clock_media_stash.as_ref().map_or(0, |m| m.len())));
+        counts.insert("batch_orphan_candidates".into(), json!(self.batch_orphan_candidates.as_ref().map_or(0, |m| m.len())));
+        counts.insert("media_sources.library".into(), json!(self.media_sources.keys().filter(|id| id.starts_with("library:")).count()));
+        counts.insert("media_sources.without_session".into(), json!(self.media_sources.keys().filter(|id| !self.native_video_streams.contains_key(*id)).count()));
+        counts.insert("native_video_streams.library".into(), json!(self.native_video_streams.keys().filter(|id| id.starts_with("library:")).count()));
+        let mut bytes = serde_json::Map::new();
+        bytes.insert("shader_sources".into(), json!(self.shader_sources.values().map(|src| src.len() as u64).sum::<u64>()));
+        bytes.insert("native_video_reserved".into(), json!(self.native_video_streams.values().map(|v| v.stream.memory_bytes() as u64).sum::<u64>()));
+        bytes.insert("native_video_optional".into(), json!(self.native_video_streams.values().map(|v| v.stream.optional_memory_bytes() as u64).sum::<u64>()));
+        bytes.insert("isf_audio_decode_scratch".into(), json!(self.isf_audio_decode_scratch.capacity()));
+        bytes.insert("manual_video_report".into(), json!(self.manual_video_report.len()));
+        let mut gpu = serde_json::Map::new();
+        if let Some(r) = self.renderer.as_ref() {
+            counts.insert("render.pipeline_used".into(), json!(r.pipeline_used.len()));
+            counts.insert("render.pinned_buffers".into(), json!(r.pinned_buffers.len()));
+            counts.insert("render.frame_uniform_pool".into(), json!(r.frame_uniform_pool.len()));
+            counts.insert("render.pipeline_work".into(), json!(r.pipeline_work.len()));
+            counts.insert("render.pipeline_failures".into(), json!(r.pipeline_failures.len()));
+            counts.insert("render.isf_audio_rows".into(), json!(r.isf_audio_rows.len()));
+            counts.insert("render.isf_pass_states".into(), json!(r.isf_pass_states.len()));
+            counts.insert("render.native_shader_pipelines".into(), json!(r.native_shader_pipelines.len()));
+            counts.insert("render.native_compute_pipelines".into(), json!(r.native_compute_pipelines.len()));
+            counts.insert("render.native_graph_render_pipelines".into(), json!(r.native_graph_render_pipelines.len()));
+            counts.insert("render.native_compute_graph_buffers".into(), json!(r.native_compute_graph_buffers.len()));
+            counts.insert("render.pending_graph_readbacks".into(), json!(r.pending_graph_readbacks.len()));
+            counts.insert("render.graph_readback_results".into(), json!(r.graph_readback_results.len()));
+            counts.insert("render.slice_targets".into(), json!(r.slice_targets.len()));
+            counts.insert("render.source_frame_gpu_readiness".into(), json!(r.source_frame_gpu_readiness.borrow().len()));
+            counts.insert("render.graph_textures".into(), json!(r.native_graph_textures.len()));
+            bytes.insert("render.graph_textures".into(), json!(r.native_graph_textures.total_bytes()));
+            bytes.insert("render.source_frame_slots".into(), json!(r.slots.resident_bytes()));
+            bytes.insert("render.graph_readback_results".into(), json!(r.graph_readback_results.values().map(|v| v.len() as u64).sum::<u64>()));
+            bytes.insert("render.layer_upload_scratch".into(), json!(r.layer_upload_scratch.capacity() * std::mem::size_of::<LayerGpu>()));
+            counts.insert("render.source_frame_capacity".into(), json!(r.slots.capacity()));
+            if let Some(report) = r.wgpu_instance.generate_report() {
+                let hub = report.hub_report();
+                for (name, reg) in [
+                    ("buffers", &hub.buffers), ("textures", &hub.textures), ("texture_views", &hub.texture_views),
+                    ("samplers", &hub.samplers), ("bind_groups", &hub.bind_groups),
+                    ("bind_group_layouts", &hub.bind_group_layouts), ("pipeline_layouts", &hub.pipeline_layouts),
+                    ("shader_modules", &hub.shader_modules), ("render_pipelines", &hub.render_pipelines),
+                    ("compute_pipelines", &hub.compute_pipelines), ("query_sets", &hub.query_sets),
+                    ("command_encoders", &hub.command_encoders), ("command_buffers", &hub.command_buffers),
+                ] {
+                    gpu.insert(name.into(), json!(reg.num_kept_from_user));
+                }
+            }
+        }
+        // A few ids of the maps that should empty on a blank project, to tell
+        // what stays behind (ids only, at most 32 each).
+        let ids = |keys: Vec<&String>| keys.into_iter().take(32).cloned().collect::<Vec<_>>();
+        let held_by = self.media_sources.keys().filter(|id| !id.starts_with("library:")).take(32)
+            .map(|id| (id.clone(), json!(self.media_source_holders(id)))).collect::<serde_json::Map<_, _>>();
+        let samples = json!({
+            "media_source_holders": held_by,
+            "media_sources": ids(self.media_sources.keys().collect()),
+            "native_video_streams": ids(self.native_video_streams.keys().collect()),
+            "source_frames": ids(self.source_frames.keys().collect()),
+        });
+        json!({ "counts": counts, "bytes": bytes, "wgpu": gpu, "samples": samples })
+    }
+
     fn stats_payload(&mut self) -> Value {
         self.stats.avg_render_cpu_ms = self.render_cpu_ema_ms;
         if let Some(renderer) = self.renderer.as_ref() {
@@ -7110,6 +7233,7 @@ impl App {
             // wedging the picture until the next unrelated edit.
             "layers_snapshot" | "get_layers_snapshot" => Ok(self.layers_snapshot_payload()),
             "stats" | "get_stats" => Ok(self.stats_payload()),
+            "memory_stats" => Ok(self.memory_stats()),
             "snapshot" | "get_snapshot" => Ok(json!({
                 "timestamp_ms": epoch_ms(),
                 "status": self.status(),
@@ -17986,6 +18110,25 @@ impl App {
         }
     }
 
+    /// What keeps a media source referenced, by name (empty when nothing
+    /// does): the same checks as `media_source_is_referenced`.
+    fn media_source_holders(&self, source_id: &str) -> Vec<&'static str> {
+        let mut holders = Vec::new();
+        if self.launch_scheduler.references_source(source_id) { holders.push("launch_scheduler"); }
+        if self.scene_layers.values().any(|layer| layer.source_id.as_deref() == Some(source_id)) { holders.push("layer_source"); }
+        if self.scene_layers.values().any(|layer| layer.effect_input_source_id.as_deref() == Some(source_id)
+            || layer.shader_source_id.as_deref() == Some(source_id)) { holders.push("layer_effect_or_shader"); }
+        if self.scene_layers.values().any(|layer| layer.held.as_ref().is_some_and(|held| held.source_id == source_id)) { holders.push("layer_held"); }
+        if self.pending_media_bindings.values().any(|binding| binding.source_id == source_id) { holders.push("pending_binding"); }
+        if self.native_graph_layers.values().any(|layer| layer.input_source_id == source_id || layer.source_id == source_id
+            || layer.effect_job_template.as_ref().is_some_and(|job| graph_job_references_source(job, source_id))) { holders.push("graph_layer"); }
+        if self.pending_native_graph_jobs.iter().any(|job| graph_job_references_source(job, source_id)) { holders.push("pending_graph_job"); }
+        if self.prepared_launch_sources.contains_key(source_id) { holders.push("prepared_launch"); }
+        if self.native_video_streams.contains_key(source_id) { holders.push("has_session"); }
+        if self.source_frames.contains_key(source_id) { holders.push("has_frame"); }
+        holders
+    }
+
     fn media_source_is_referenced(&self, source_id: &str) -> bool {
         if source_id == EMPTY_SOURCE_FRAME_ID {
             return true;
@@ -22629,7 +22772,6 @@ impl RenderState {
             slice_targets: HashMap::new(),
             #[cfg(not(any(target_os = "macos", target_os = "windows")))]
             linux_slice_windows: HashMap::new(),
-            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
             wgpu_instance: instance.clone(),
             #[cfg(not(any(target_os = "macos", target_os = "windows")))]
             wgpu_adapter: adapter.clone(),

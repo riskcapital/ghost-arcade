@@ -319,6 +319,8 @@ const RENDERER_COMMANDS = [
   'native_renderer_get_source_frame_readiness',
   'native_renderer_release_source_frame',
   'native_renderer_get_stats',
+  // Sizes of the core's maps and GPU resources (soak test checkpoints).
+  'native_renderer_memory_stats',
   'native_renderer_get_snapshot',
   'native_renderer_get_frame_snapshot',
   'native_renderer_export_frame_snapshot',
@@ -694,6 +696,8 @@ class NativeRendererBroker {
         return this.getStats();
       case 'native_renderer_get_snapshot':
         return this.snapshot();
+      case 'native_renderer_memory_stats':
+        return this.sendIfRunning('memory_stats', args, { fallback: null, timeoutMs: 5000 });
       case 'native_renderer_capture_layer_source_frame':
         return this.sendIfRunning('capture_layer_source_frame', args, { fallback: null, timeoutMs: 5000 });
       case 'native_renderer_get_layer_source_readiness':
