@@ -69,16 +69,18 @@ test('growth in the warm-up minutes is shown but not judged; growth after it is'
   const M = 60000;
   // Checkpoints every 5 minutes for an hour. The footprint climbs 300 MB in the
   // first 15 minutes (first use of features), then `after` MB per hour.
-  const mk = (after) => Array.from({ length: 13 }, (_, i) => {
+  const mk = (after, nodesAfter = 0) => Array.from({ length: 13 }, (_, i) => {
     const min = i * 5;
     const fp = 150 + Math.min(min, 15) * 20 + (Math.max(0, min - 15) / 60) * after;
     return { t: min * M, run: 1, step: i * 60, checkpoint: true, sinceLaunchMs: min * M + 60000,
       proc: { totalMB: 2000, roles: { main: { rssMB: 200 }, renderer: { rssMB: 600 }, gpu: { rssMB: 100 }, core: { rssMB: 150 } } },
       vm: { main: { footprintMB: 80 }, renderer: { footprintMB: fp }, gpu: { footprintMB: 300 }, core: { footprintMB: 350 } },
-      renderer: { heapMB: 80, nodes: 5000, listeners: 900 }, refFps: 60, refGpuMs: 2 };
+      renderer: { heapMB: 80, nodes: min < 15 ? 2000 + min * 3000 : 50000 + (min - 15) * nodesAfter, listeners: 900 }, refFps: 60, refGpuMs: 2 };
   });
   const run = (baselines) => analyse({ samples: baselines, baselines, incidents: [], trace: [], console: [], config, durationMs: 3600000, hidden: false });
   const warm = run(mk(0)).findings;
+  assert.equal(warm.find((f) => f.id === 'memory.nodes').severity, 'pass');
+  assert.equal(run(mk(0, 500)).findings.find((f) => f.id === 'memory.nodes').severity, 'fail');
   assert.equal(warm.find((f) => f.id === 'memory.renderer-MB').severity, 'pass');
   const whole = warm.find((f) => f.id === 'memory.renderer-MB-whole-run');
   assert.equal(whole.severity, 'info');

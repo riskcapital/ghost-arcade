@@ -129,10 +129,17 @@ export function analyse({ samples, baselines, incidents, trace, console: console
       add({ id: `memory.${name.replace(/ /g, '-')}-whole-run`, area: 'memory', title: `${name} growth over the whole run, warm-up included (${kind}, for reading)`, value: describe(whole), threshold: 'for reading', severity: 'info' });
     }
   }
+  // The same warm-up: the first time the deck or a studio opens, the editor
+  // keeps some of its interface for the session.
   for (const [name, key, limit] of [['DOM nodes', 'nodes', th.domNodesPerHour], ['Event listeners', 'listeners', th.listenersPerHour]]) {
-    const pts = baselines.filter((b) => Number.isFinite(b.renderer?.[key])).map((b) => [b.t / H, b.renderer[key]]);
-    const reg = regression(pts);
-    add({ id: `memory.${key}`, area: 'memory', title: `${name} growth at checkpoints`, value: pts.length > 1 ? `${reg.slope.toFixed(0)}/h (r² ${reg.r2.toFixed(2)})` : 'not enough checkpoints', threshold: `≤ ${limit}/h`, severity: !enough ? 'info' : reg.slope > limit && reg.r2 > 0.5 ? 'fail' : 'pass' });
+    const all = baselines.filter((b) => Number.isFinite(b.renderer?.[key]));
+    const show = (pts) => { const reg = regression(pts); return { reg, text: pts.length > 1 ? `${reg.slope.toFixed(0)}/h (r² ${reg.r2.toFixed(2)}, ${pts.length} checkpoints)` : 'not enough checkpoints' }; };
+    const steadyPts = all.filter((b) => (b.sinceLaunchMs ?? Infinity) >= warmupMs).map((b) => [b.t / H, b.renderer[key]]);
+    const steady = show(steadyPts);
+    const span = steadyPts.length > 1 ? steadyPts[steadyPts.length - 1][0] - steadyPts[0][0] : 0;
+    const judged = steadyPts.length >= th.minCheckpointsForLeak && span >= th.minHoursForLeak;
+    add({ id: `memory.${key}`, area: 'memory', title: `${name} growth at checkpoints after ${th.leakWarmupMinutes ?? 0} min warm-up`, value: judged ? steady.text : `not enough checkpoints after warm-up (${steadyPts.length})`, threshold: `≤ ${limit}/h`, severity: !enough || !judged ? 'info' : steady.reg.slope > limit && steady.reg.r2 > 0.5 ? 'fail' : 'pass' });
+    if (warmupMs > 0) add({ id: `memory.${key}-whole-run`, area: 'memory', title: `${name} growth over the whole run, warm-up included (for reading)`, value: show(all.map((b) => [b.t / H, b.renderer[key]])).text, threshold: 'for reading', severity: 'info' });
   }
 
   // ── Performance: first vs last fifth of the run ──
