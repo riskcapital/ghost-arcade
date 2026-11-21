@@ -20,11 +20,24 @@
   const load = $derived(
     Object.entries($nativeCloudLoadStates).find(([id]) => id.endsWith(layerSuffix))?.[1],
   );
-  // A picked scan that came back as the default was refused or never sent.
-  const failed = $derived(!!load && (load.state === 'failed' || (!!scan && load.state === 'ready' && !!load.isDefault)));
+  // Right after a pick the core still reports the scan it had: give the new
+  // file a few seconds to reach it before calling a default scan a failure.
+  let settled = $state(true);
+  let firstRun = true;
+  const scanPath = $derived(scan?.assetRef.originalPath);
+  $effect(() => {
+    void scanPath;
+    if (firstRun) { firstRun = false; return; }
+    settled = false;
+    const timer = setTimeout(() => (settled = true), 4000);
+    return () => clearTimeout(timer);
+  });
+  // A picked scan that still came back as the default was refused or never sent.
+  const failed = $derived(!!load && (load.state === 'failed' || (settled && !!scan && load.state === 'ready' && !!load.isDefault)));
+  const stale = $derived(!settled && !!scan && load?.state === 'ready' && !!load.isDefault);
   const failReason = $derived(load?.state === 'failed' ? load.reason : failed ? 'The file was not sent to the renderer' : undefined);
   const status = $derived(
-    !load ? '' : failed ? 'Could not read this file' : load.state === 'loading' ? 'Loading…' : load.state === 'ready' ? `Ready · ${load.points.toLocaleString()} points` : '',
+    !load ? '' : failed ? 'Could not read this file' : load.state === 'loading' || stale ? 'Loading…' : load.state === 'ready' ? `Ready · ${load.points.toLocaleString()} points` : '',
   );
   $effect(() => {
     if (failed) console.warn('[EngineScanPicker] scan failed to load', scan?.assetRef.originalPath ?? '(default)', failReason);

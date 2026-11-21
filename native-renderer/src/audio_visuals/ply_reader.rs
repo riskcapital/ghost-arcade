@@ -52,31 +52,70 @@ impl Scalar {
         }
     }
 
-    fn read(self, b: &[u8]) -> f32 {
+    fn read(self, b: &[u8], big: bool) -> f32 {
+        macro_rules! num {
+            ($t:ty, $n:expr) => {{
+                let mut a = [0_u8; $n];
+                a.copy_from_slice(&b[..$n]);
+                if big { <$t>::from_be_bytes(a) } else { <$t>::from_le_bytes(a) }
+            }};
+        }
         match self {
             Self::I8 => b[0] as i8 as f32,
             Self::U8 => b[0] as f32,
-            Self::I16 => i16::from_le_bytes([b[0], b[1]]) as f32,
-            Self::U16 => u16::from_le_bytes([b[0], b[1]]) as f32,
-            Self::I32 => i32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f32,
-            Self::U32 => u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f32,
-            Self::F32 => f32::from_le_bytes([b[0], b[1], b[2], b[3]]),
-            Self::F64 => f64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]) as f32,
+            Self::I16 => num!(i16, 2) as f32,
+            Self::U16 => num!(u16, 2) as f32,
+            Self::I32 => num!(i32, 4) as f32,
+            Self::U32 => num!(u32, 4) as f32,
+            Self::F32 => num!(f32, 4),
+            Self::F64 => num!(f64, 8) as f32,
         }
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Format {
+    Ascii,
+    BinaryLittle,
+    BinaryBig,
+}
+
+/// One property: its byte offset (binary, fixed rows), its column (ASCII
+/// rows) and its type.
+#[derive(Clone, Copy, Debug)]
+struct Prop {
+    offset: usize,
+    column: usize,
+    scalar: Scalar,
+}
+
+/// An element in the header: scalars, and list properties as (count type, item type).
+#[derive(Debug)]
+struct Element {
+    name: String,
+    count: usize,
+    props: Vec<(String, Prop)>,
+    lists: Vec<(Scalar, Scalar)>,
+    /// Byte size of a row when it has no lists.
+    stride: usize,
+    /// A list property comes before a scalar one (columns and offsets unknown).
+    list_first: bool,
+}
+
 struct Layout {
+    format: Format,
+    /// Elements before the vertices, to skip.
+    before: Vec<Element>,
     count: usize,
     stride: usize,
-    /// Bytes of fixed-size elements before the vertices.
-    skip: usize,
-    x: (usize, Scalar),
-    y: (usize, Scalar),
-    z: (usize, Scalar),
-    rgb: Option<[(usize, Scalar); 3]>,
-    dc: Option<[(usize, Scalar); 3]>,
-    opacity: Option<(usize, Scalar)>,
+    vertex_lists: bool,
+    x: Prop,
+    y: Prop,
+    z: Prop,
+    rgb: Option<[Prop; 3]>,
+    dc: Option<[Prop; 3]>,
+    opacity: Option<Prop>,
+    alpha: Option<Prop>,
 }
 
 fn parse_header(header: &str) -> Result<Layout, String> {
@@ -84,51 +123,55 @@ fn parse_header(header: &str) -> Result<Layout, String> {
     if lines.next().map(str::trim) != Some("ply") {
         return Err("not a PLY file".to_string());
     }
-    let mut format_ok = false;
-    // (name, count, properties: (name, offset, scalar), stride, fixed size)
-    let mut elements: Vec<(String, usize, Vec<(String, usize, Scalar)>, usize, bool)> = Vec::new();
+    let mut format = None;
+    let mut elements: Vec<Element> = Vec::new();
     for line in lines {
         let parts: Vec<&str> = line.split_whitespace().collect();
         match parts.as_slice() {
-            ["format", "binary_little_endian", _] => format_ok = true,
-            ["format", other, _] => return Err(format!("PLY format `{other}` is not supported (binary little endian only)")),
+            ["format", "ascii", _] => format = Some(Format::Ascii),
+            ["format", "binary_little_endian", _] => format = Some(Format::BinaryLittle),
+            ["format", "binary_big_endian", _] => format = Some(Format::BinaryBig),
+            ["format", other, ..] => return Err(format!("PLY format `{other}` is not supported")),
             ["element", name, count] => {
                 let count = count.parse::<usize>().map_err(|_| "bad element count".to_string())?;
-                elements.push((name.to_string(), count, Vec::new(), 0, true));
+                elements.push(Element { name: name.to_string(), count, props: Vec::new(), lists: Vec::new(), stride: 0, list_first: false });
             }
-            ["property", "list", ..] => {
+            ["property", "list", count_ty, item_ty, _name] => {
+                let count = Scalar::parse(count_ty).ok_or_else(|| format!("unknown PLY type `{count_ty}`"))?;
+                let item = Scalar::parse(item_ty).ok_or_else(|| format!("unknown PLY type `{item_ty}`"))?;
                 if let Some(element) = elements.last_mut() {
-                    element.4 = false;
+                    element.lists.push((count, item));
                 }
             }
             ["property", ty, name] => {
                 let scalar = Scalar::parse(ty).ok_or_else(|| format!("unknown PLY type `{ty}`"))?;
                 if let Some(element) = elements.last_mut() {
-                    let offset = element.3;
-                    element.2.push((name.to_string(), offset, scalar));
-                    element.3 += scalar.size();
+                    if !element.lists.is_empty() {
+                        element.list_first = true;
+                    }
+                    let prop = Prop { offset: element.stride, column: element.props.len(), scalar };
+                    element.props.push((name.to_string(), prop));
+                    element.stride += scalar.size();
                 }
             }
             _ => {}
         }
     }
-    if !format_ok {
-        return Err("PLY has no supported format line".to_string());
-    }
-    let mut skip = 0;
-    for (name, count, properties, stride, fixed) in elements {
-        if name != "vertex" {
-            if !fixed {
-                return Err(format!("PLY element `{name}` before the vertices has lists"));
-            }
-            skip += count * stride;
+    let format = format.ok_or("PLY has no format line")?;
+    let mut before = Vec::new();
+    for element in elements {
+        if element.name != "vertex" {
+            before.push(element);
             continue;
         }
-        let find = |key: &str| properties.iter().find(|p| p.0 == key).map(|p| (p.1, p.2));
+        if element.list_first {
+            return Err("PLY vertices have a list before their coordinates".to_string());
+        }
+        let find = |key: &str| element.props.iter().find(|p| p.0 == key).map(|p| p.1);
         let x = find("x").ok_or("PLY vertices have no x")?;
         let y = find("y").ok_or("PLY vertices have no y")?;
         let z = find("z").ok_or("PLY vertices have no z")?;
-        let rgb = match (find("red"), find("green"), find("blue")) {
+        let rgb = match (find("red").or(find("diffuse_red")), find("green").or(find("diffuse_green")), find("blue").or(find("diffuse_blue"))) {
             (Some(r), Some(g), Some(b)) => Some([r, g, b]),
             _ => None,
         };
@@ -136,7 +179,20 @@ fn parse_header(header: &str) -> Result<Layout, String> {
             (Some(r), Some(g), Some(b)) => Some([r, g, b]),
             _ => None,
         };
-        return Ok(Layout { count, stride, skip, x, y, z, rgb, dc, opacity: find("opacity") });
+        return Ok(Layout {
+            format,
+            count: element.count,
+            stride: element.stride,
+            vertex_lists: !element.lists.is_empty(),
+            before,
+            x,
+            y,
+            z,
+            rgb,
+            dc,
+            opacity: find("opacity"),
+            alpha: find("alpha"),
+        });
     }
     Err("PLY has no vertex element".to_string())
 }
@@ -173,6 +229,37 @@ fn read_header(reader: &mut impl BufRead) -> Result<(String, usize), String> {
     }
 }
 
+/// Reads one row of an element in a binary file into `row` (scalars, then
+/// lists skipped). Rows with lists are read field by field.
+fn read_binary_row(reader: &mut impl Read, element_stride: usize, lists: &[(Scalar, Scalar)], big: bool, row: &mut Vec<u8>) -> std::io::Result<()> {
+    row.resize(element_stride, 0);
+    reader.read_exact(row)?;
+    let mut buf = [0_u8; 8];
+    for (count_ty, item_ty) in lists {
+        reader.read_exact(&mut buf[..count_ty.size()])?;
+        let n = count_ty.read(&buf, big).max(0.0) as u64;
+        std::io::copy(&mut reader.take(n * item_ty.size() as u64), &mut std::io::sink())?;
+    }
+    Ok(())
+}
+
+/// One ASCII row's numbers (only the scalar columns are kept).
+fn read_ascii_row(reader: &mut impl BufRead, line: &mut String, values: &mut Vec<f32>) -> Result<bool, String> {
+    loop {
+        line.clear();
+        let n = reader.read_line(line).map_err(|err| err.to_string())?;
+        if n == 0 {
+            return Ok(false);
+        }
+        if line.trim().is_empty() {
+            continue;
+        }
+        values.clear();
+        values.extend(line.split_whitespace().map(|t| t.parse::<f64>().map_or(f32::NAN, |v| v as f32)));
+        return Ok(true);
+    }
+}
+
 pub fn read_cloud(reader: impl Read, max_points: u32) -> Result<CloudPoints, String> {
     let mut reader = BufReader::with_capacity(1 << 20, reader);
     let (header, _) = read_header(&mut reader)?;
@@ -180,36 +267,80 @@ pub fn read_cloud(reader: impl Read, max_points: u32) -> Result<CloudPoints, Str
     if layout.count == 0 {
         return Err("PLY has no points".to_string());
     }
-    std::io::copy(&mut (&mut reader).take(layout.skip as u64), &mut std::io::sink()).map_err(|err| err.to_string())?;
+    let big = layout.format == Format::BinaryBig;
+    let ascii = layout.format == Format::Ascii;
+    let mut row: Vec<u8> = Vec::new();
+    let mut line = String::new();
+    let mut values: Vec<f32> = Vec::new();
+    // Elements before the vertices (rare): skipped row by row.
+    for element in &layout.before {
+        for _ in 0..element.count {
+            if ascii {
+                if !read_ascii_row(&mut reader, &mut line, &mut values)? {
+                    return Err("PLY ended before its vertices".to_string());
+                }
+            } else {
+                read_binary_row(&mut reader, element.stride, &element.lists, big, &mut row).map_err(|err| err.to_string())?;
+            }
+        }
+    }
     let wanted = (max_points.clamp(1, CLOUD_MAX_POINTS) as usize).min(layout.count);
     // Every n-th point, evenly over the file, so a capped read still covers
-    // the whole scan.
+    // the whole scan. Memory stays at the cap whatever the file's size.
     let mut positions: Vec<[f32; 3]> = Vec::with_capacity(wanted);
     let mut colors: Vec<u32> = Vec::with_capacity(wanted);
-    let mut row = vec![0_u8; layout.stride];
     let mut next_pick = 0.0_f64;
     let step = layout.count as f64 / wanted as f64;
+    let vertex_lists: Vec<(Scalar, Scalar)> = Vec::new();
     for index in 0..layout.count {
-        reader.read_exact(&mut row).map_err(|err| format!("PLY ended at point {index}: {err}"))?;
-        if (index as f64) < next_pick {
+        let picked = (index as f64) >= next_pick;
+        if ascii {
+            // Rows not picked are read but not parsed.
+            let more = if picked {
+                read_ascii_row(&mut reader, &mut line, &mut values)?
+            } else {
+                line.clear();
+                reader.read_line(&mut line).map_err(|err| err.to_string())? > 0
+            };
+            if !more {
+                return Err(format!("PLY ended at point {index}"));
+            }
+        } else if layout.vertex_lists {
+            return Err("PLY vertices with list properties are not supported in binary files".to_string());
+        } else {
+            read_binary_row(&mut reader, layout.stride, &vertex_lists, big, &mut row).map_err(|err| format!("PLY ended at point {index}: {err}"))?;
+        }
+        if !picked {
             continue;
         }
         next_pick += step;
-        let get = |(offset, scalar): (usize, Scalar)| scalar.read(&row[offset..]);
+        let get = |p: Prop| -> f32 {
+            if ascii { values.get(p.column).copied().unwrap_or(f32::NAN) } else { p.scalar.read(&row[p.offset..], big) }
+        };
         let p = [get(layout.x), get(layout.y), get(layout.z)];
         if !p.iter().all(|v| v.is_finite()) {
             continue;
         }
+        let unit = |s: Scalar| match s {
+            Scalar::U8 => 1.0 / 255.0,
+            Scalar::U16 => 1.0 / 65535.0,
+            _ => 1.0,
+        };
         let (r, g, b) = if let Some([r, g, b]) = layout.rgb {
-            let scale = if r.1 == Scalar::U8 { 1.0 / 255.0 } else if r.1 == Scalar::U16 { 1.0 / 65535.0 } else { 1.0 };
+            let scale = unit(r.scalar);
             (get(r) * scale, get(g) * scale, get(b) * scale)
         } else if let Some([r, g, b]) = layout.dc {
             (0.5 + SH_C0 * get(r), 0.5 + SH_C0 * get(g), 0.5 + SH_C0 * get(b))
         } else {
             (0.8, 0.8, 0.8)
         };
-        let a = layout.opacity.map_or(1.0, |o| 1.0 / (1.0 + (-get(o)).exp()));
-        let pack = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
+        let a = match (layout.opacity, layout.alpha) {
+            (Some(o), _) => 1.0 / (1.0 + (-get(o)).exp()),
+            (None, Some(al)) => get(al) * unit(al.scalar),
+            _ => 1.0,
+        };
+        let finite = |v: f32| if v.is_finite() { v } else { 0.8 };
+        let pack = |v: f32| (finite(v).clamp(0.0, 1.0) * 255.0).round() as u32;
         positions.push(p);
         colors.push(pack(r) | (pack(g) << 8) | (pack(b) << 16) | (pack(a) << 24));
         if positions.len() >= wanted {
@@ -436,5 +567,70 @@ mod default_scan_tests {
         let p = scan_path_or_default("");
         assert!(p.ends_with("default-scan.ply"), "bundled default scan found from the test binary: {p:?}");
         assert!(std::path::Path::new(&p).is_file());
+    }
+
+    fn header(format: &str, props: &str, n: usize, after: &str) -> String {
+        format!("ply\nformat {format} 1.0\ncomment test\nelement vertex {n}\n{props}{after}end_header\n")
+    }
+
+    #[test]
+    fn reads_ascii_points_with_faces_after() {
+        let props = "property float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\n";
+        let mut text = header("ascii", props, 3, "element face 1\nproperty list uchar int vertex_indices\n");
+        text.push_str("0 0 0 255 0 0\n1 2 3 0 255 0\n-1.5e0 2 0.25 0 0 255\n3 0 1 2\n");
+        let cloud = read_cloud(text.as_bytes(), 1000).unwrap();
+        assert_eq!(cloud.count, 3);
+        let color = u32::from_le_bytes(cloud.bytes[12..16].try_into().unwrap());
+        assert_eq!(color & 0xff, 255);
+    }
+
+    #[test]
+    fn reads_big_endian_doubles_with_float_colour_and_a_face_element_before() {
+        let props = "property double x\nproperty double y\nproperty double z\nproperty float red\nproperty float green\nproperty float blue\n";
+        let mut out = format!("ply\nformat binary_big_endian 1.0\nelement face 1\nproperty list uchar int vertex_indices\nelement vertex 2\n{props}end_header\n").into_bytes();
+        out.push(3);
+        for v in [0_i32, 1, 2] {
+            out.extend_from_slice(&v.to_be_bytes());
+        }
+        for i in 0..2 {
+            for v in [i as f64 * 2.0, 1.0, -1.0] {
+                out.extend_from_slice(&v.to_be_bytes());
+            }
+            for v in [0.0_f32, 1.0, 0.5] {
+                out.extend_from_slice(&v.to_be_bytes());
+            }
+        }
+        let cloud = read_cloud(&out[..], 1000).unwrap();
+        assert_eq!(cloud.count, 2);
+        let color = u32::from_le_bytes(cloud.bytes[12..16].try_into().unwrap());
+        assert_eq!((color >> 8) & 0xff, 255);
+        assert_eq!(color & 0xff, 0);
+        let x0 = f32::from_le_bytes(cloud.bytes[0..4].try_into().unwrap());
+        let x1 = f32::from_le_bytes(cloud.bytes[16..20].try_into().unwrap());
+        assert!(x1 > x0);
+    }
+
+    #[test]
+    fn caps_a_large_ascii_file_evenly() {
+        let props = "property float x\nproperty float y\nproperty float z\n";
+        let mut text = header("ascii", props, 10_000, "");
+        for i in 0..10_000 {
+            text.push_str(&format!("{i} 0 0\n"));
+        }
+        let cloud = read_cloud(text.as_bytes(), 100).unwrap();
+        assert_eq!(cloud.count, 100);
+        assert_eq!(cloud.source_count, 10_000);
+    }
+
+    /// `GA_PLY_PROBE=a.ply:b.ply cargo test --release probe_files -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn probe_files() {
+        for path in std::env::var("GA_PLY_PROBE").unwrap_or_default().split(':').filter(|p| !p.is_empty()) {
+            let t = std::time::Instant::now();
+            let cloud = read_cloud(File::open(path).unwrap(), 400_000).unwrap();
+            let lit = cloud.bytes.chunks(16).filter(|c| (c[12] as u32 + c[13] as u32 + c[14] as u32) > 30).count();
+            println!("{path}: {} of {} points, {lit} coloured, {:?}", cloud.count, cloud.source_count, t.elapsed());
+        }
     }
 }
