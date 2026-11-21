@@ -5232,9 +5232,10 @@ struct NativePointCloudAsset {
     point_count: u32,
     sort_count: u32,
     depth_sort_enabled: bool,
-    home_bytes: Vec<u8>,
-    live_bytes: Vec<u8>,
-    sort_bytes: Vec<u8>,
+    // Shared so the per-frame job build clones a pointer, not tens of MB.
+    home_bytes: Arc<[u8]>,
+    live_bytes: Arc<[u8]>,
+    sort_bytes: Arc<[u8]>,
 }
 
 /// Audio follower of one clip voice across picture transitions (see
@@ -12051,7 +12052,7 @@ impl App {
                 byte_length: asset.home_bytes.len() as u64,
                 kind: NativeComputeBufferBindingKind::StorageRead,
                 initial_bytes: if reset {
-                    asset.home_bytes.clone()
+                    asset.home_bytes.to_vec()
                 } else {
                     Vec::new()
                 },
@@ -12064,7 +12065,7 @@ impl App {
                 byte_length: asset.live_bytes.len() as u64,
                 kind: NativeComputeBufferBindingKind::StorageReadWrite,
                 initial_bytes: if reset {
-                    asset.live_bytes.clone()
+                    asset.live_bytes.to_vec()
                 } else {
                     Vec::new()
                 },
@@ -12077,7 +12078,7 @@ impl App {
                 byte_length: asset.sort_bytes.len() as u64,
                 kind: NativeComputeBufferBindingKind::StorageReadWrite,
                 initial_bytes: if reset {
-                    asset.sort_bytes.clone()
+                    asset.sort_bytes.to_vec()
                 } else {
                     Vec::new()
                 },
@@ -17224,9 +17225,9 @@ impl App {
                 point_count,
                 sort_count,
                 depth_sort_enabled: bool_at(command, &["depth_sort_enabled"]).unwrap_or(false),
-                home_bytes,
-                live_bytes,
-                sort_bytes,
+                home_bytes: home_bytes.into(),
+                live_bytes: live_bytes.into(),
+                sort_bytes: sort_bytes.into(),
             },
         );
         Ok(())
