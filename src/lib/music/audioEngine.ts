@@ -28,7 +28,6 @@ import { padPatchById, soundById } from './sounds/library';
 import type { PadVoice, SoundContext, SoundHandle } from './sounds/kit';
 import { DEFAULT_DRONE_PATCH, DEFAULT_FX_PADS, defaultBandFx, type BandFxSettings } from './soundSlots';
 import { BandFx } from './bandFx';
-import { BandLooper } from './bandLooper';
 import { ToneHost } from './tone/toneHost';
 import { DubShotBank } from './dubShotAudio';
 import { BuildFx, type BuildPlanAudio } from './buildFx';
@@ -115,8 +114,6 @@ export class MusicAudioEngine {
   private inputs: readonly Pick<LiveInputSettings, 'volume' | 'monitor' | 'fxSend'>[] = [{ volume: 0.5, monitor: true, fxSend: 1 }];
   /** Each band input's send into the band effects. */
   private inputSends = new Map<InputChannelId, GainNode>();
-  /** Every band input after its EQ and pan, before its effects send: what the looper records. */
-  private looperBus: GainNode | null = null;
   /** Dips the drone, bowls, FX pads and synth under the band's kick (ducking.ts). */
   private ducker: Ducker | null = null;
   private meterBuffer: Float32Array<ArrayBuffer> | null = null;
@@ -195,8 +192,6 @@ export class MusicAudioEngine {
   private barClock: (() => { toNextBar: number; barSeconds: number }) | null = null;
   /** The band's echo, reverb and freeze (bandFx.ts). */
   private bandFx: BandFx | null = null;
-  /** Bars of the band recorded and looped (bandLooper.ts). */
-  private looper: BandLooper | null = null;
   private bandSettings: BandFxSettings = defaultBandFx();
 
   /** The music clock, in seconds. Creates the audio graph on first use. */
@@ -547,12 +542,6 @@ export class MusicAudioEngine {
     return this.strips.get(INPUT_CHANNELS[index] ?? 'input')?.pan ?? null;
   }
 
-  /** The band looper. Creates the audio graph on first use. */
-  bandLooper(): BandLooper {
-    this.ensure();
-    return this.looper!;
-  }
-
   /** When the sound last fired on a pad ends, on the music clock (Infinity while an atmosphere plays). */
   padEnd(index: number): number | null {
     return this.padEnds.get(index) ?? null;
@@ -723,7 +712,6 @@ export class MusicAudioEngine {
         send = ctx.createGain();
         send.gain.value = settings.fxSend;
         strip.pan.connect(send).connect(this.bandFx.input);
-        if (this.looperBus) strip.pan.connect(this.looperBus);
         this.inputSends.set(id, send);
       }
       strip.input.gain.setTargetAtTime(Math.max(0, Math.min(1, settings.volume)) * 2, t, 0.02);
@@ -992,8 +980,6 @@ export class MusicAudioEngine {
     this.allNotesOff();
     this.bandFx?.dispose();
     this.bandFx = null;
-    this.looper?.dispose();
-    this.looper = null;
     this.tones?.dispose();
     this.tones = null;
     this.unsubscribeGraph?.();
@@ -1005,7 +991,6 @@ export class MusicAudioEngine {
     this.bus = null;
     this.strips.clear();
     this.inputSends.clear();
-    this.looperBus = null;
     this.ducker?.dispose();
     this.ducker = null;
     this.ctx = null;
@@ -1086,15 +1071,10 @@ export class MusicAudioEngine {
     // The band comes in after its EQ and pan, before the monitor gate: its
     // effects work whether or not its dry sound is played here.
     this.bandFx = new BandFx(ctx, master);
-    this.looperBus = ctx.createGain();
-    // Each band input's strip, with its send into the band effects (and into the looper's bus).
+    // Each band input's strip, with its send into the band effects.
     this.syncInputStrips();
     master.connect(this.bandFx.freezeInput);
     this.bandFx.setSettings(this.bandSettings, this.tempo, true);
-    // The looper records every band input at its own level (a send turned down
-    // does not quiet it in a loop) and plays its loops into the mix.
-    this.looper?.dispose();
-    this.looper = new BandLooper(ctx, this.looperBus, master);
     this.applyRouting();
     this.applyMixer();
     this.syncAnalyserTap();

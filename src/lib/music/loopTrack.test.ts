@@ -31,6 +31,7 @@ import {
   rescaleBeats,
   undoLayer,
   uniqueName,
+  trackForProgram,
   type TrackPhase,
 } from './loopTrack';
 import type { PlayedNote } from './loopRecorder';
@@ -210,5 +211,18 @@ describe('saved state', () => {
   it('names a save and keeps names unique', () => {
     expect(autoLoopName('Keys 3', 4, 120, { root: 9, scale: 'minor' })).toBe('Keys 3 · 4 bars · 120 · A min');
     expect(uniqueName('Riff', ['riff', 'Riff 2'])).toBe('Riff 3');
+  });
+});
+
+describe('Program Change track select', () => {
+  it('maps PC offset+n on the channel to track n+1', () => {
+    const pc = { on: true, channel: 2, offset: 10 };
+    expect(trackForProgram(pc, 2, 10)).toBe(0);
+    expect(trackForProgram(pc, 2, 15)).toBe(5);
+    expect(trackForProgram(pc, 2, 16)).toBe(-1);
+    expect(trackForProgram(pc, 3, 10)).toBe(-1);
+    expect(trackForProgram({ ...pc, channel: -1 }, 7, 11)).toBe(1);
+    expect(trackForProgram({ ...pc, on: false }, 2, 10)).toBe(-1);
+    expect(normalizeStationData({ pc: { on: true, channel: 99, offset: -4 } }).pc).toEqual({ on: true, channel: 15, offset: 0 });
   });
 });

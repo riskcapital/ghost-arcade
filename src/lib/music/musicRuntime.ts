@@ -115,7 +115,6 @@ import { editStudio, studioTargetNow } from './studioTarget';
 import { normalizeStudioSource } from './studioPlugin';
 import { soundById } from './sounds/library';
 import { KeyFinder, type KeyGuess } from './keyFinder';
-import { attachLooper, killLooper, stopLooper } from './looperRuntime';
 import { attachLoopStation, killLoopStation, scheduleStation, stationBusy, stationOldestBeat, stopAllLoopTracks } from './loopStation';
 import { audioLoopTracksFor, existingAudioLoopTracks } from './audioLoopEngine';
 import { registerLoopControls } from './loopControls';
@@ -373,7 +372,6 @@ export function killAll(): void {
   stopAll();
   resumable = null;
   audio.kill();
-  killLooper();
   killLoopStation();
   bandVisuals.releaseAll();
   bandState.update((b) => ({ ...b, frozen: false, freezeError: null, throwing: false, washing: false }));
@@ -2338,7 +2336,6 @@ function stopEverything(): void {
   // Also cancels an input still waiting to open (its permission prompt up).
   stopLiveInput();
   releaseBand();
-  stopLooper();
   stopAllLoopTracks(true);
   cancelQueuedScene();
   cancelLoopRecord();
@@ -2781,8 +2778,6 @@ export function ensureMusicRuntime(): void {
   // One studio cell plays at a time, each with its own setup.
   watchStudioCells();
   derived([vjClipLauncher, project], ([vj, p]) => studioHosted(vj, p.layers)).subscribe(hosted);
-  // The band looper's actions and MIDI controls (looperRuntime.ts).
-  attachLooper(audio);
   // The live looper's six tracks (loopStation.ts), and their MIDI controls.
   registerLoopControls();
   attachLoopStation({

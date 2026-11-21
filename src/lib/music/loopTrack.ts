@@ -386,6 +386,21 @@ export interface LoopStationData {
   latencyMs: number;
   sections: LoopSection[];
   pedal: PedalPreset;
+  /** Program Change selects a track: PC (offset + n) on `channel` (-1: any) selects track n+1. */
+  pc: ProgramSelect;
+}
+
+export interface ProgramSelect {
+  on: boolean;
+  channel: number;
+  offset: number;
+}
+
+/** The track a Program Change selects, or -1. */
+export function trackForProgram(pc: ProgramSelect, channel: number, program: number): number {
+  if (!pc.on || (pc.channel >= 0 && pc.channel !== channel)) return -1;
+  const i = program - pc.offset;
+  return i >= 0 && i < LOOP_TRACK_COUNT ? i : -1;
 }
 
 export function blankTrack(i: number, kind: LoopTrackKind = i < 4 ? 'midi' : 'audio'): LoopTrackData {
@@ -411,6 +426,7 @@ export function defaultStationData(): LoopStationData {
     latencyMs: 0,
     sections: [],
     pedal: 'off',
+    pc: { on: false, channel: -1, offset: 0 },
   };
 }
 
@@ -474,6 +490,11 @@ export function normalizeStationData(raw: unknown): LoopStationData {
     latencyMs: clamp(finite(r.latencyMs, 0), -200, 500),
     sections: sections.slice(0, 16),
     pedal: PEDAL_PRESETS.includes(r.pedal as PedalPreset) ? (r.pedal as PedalPreset) : 'off',
+    pc: {
+      on: r.pc?.on === true,
+      channel: clamp(Math.round(finite(r.pc?.channel, -1)), -1, 15),
+      offset: clamp(Math.round(finite(r.pc?.offset, 0)), 0, 127),
+    },
   };
 }
 

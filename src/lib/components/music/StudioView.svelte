@@ -128,7 +128,7 @@
           : lowerTab === 'band'
             ? "Throw, wash and freeze the band's sound; play in its key"
             : lowerTab === 'looper'
-              ? 'Bars of the band, recorded in time, looped and chopped onto the pads'
+              ? 'Six loop tracks: record, overdub and play in time'
               : lowerTab === 'songs'
                 ? 'A setup kept for each song, and the set list to play them in'
                 : 'Recorded performances',
@@ -688,8 +688,8 @@
   /* A short window scrolls the rack rather than squeezing a module under its neighbours. */
   .rack { display: flex; flex-direction: column; gap: var(--studio-gap); min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; }
   .rack.left { grid-area: left; }
-  .looper-page .centre, .looper-page .subbar { display: none; }
-  .looper-main { grid-column: 1 / 3; grid-row: 2 / 5; min-width: 0; min-height: 0; display: flex; flex-direction: column; border: 1px solid var(--studio-edge); border-radius: var(--ga-r-soft, 8px); overflow: hidden; background: var(--studio-panel); }
+  .looper-page .centre { display: none; }
+  .looper-main { grid-column: 1 / 3; grid-row: 3 / 5; min-width: 0; min-height: 0; display: flex; flex-direction: column; border: 1px solid var(--studio-edge); border-radius: var(--ga-r-soft, 8px); overflow: hidden; background: var(--studio-panel); }
   .looper-page .rack.right { grid-row: 2 / 5; }
   .loops-running { display: inline-flex; align-items: center; gap: 6px; }
   .loops-running .led { width: 7px; height: 7px; border-radius: 50%; background: var(--studio-accent); box-shadow: 0 0 6px var(--studio-accent); }

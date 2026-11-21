@@ -29,6 +29,18 @@
   import { showToast } from '../../stores/errorToast';
   import { generateUUID } from '../../utils/uuid';
   import LoopTrackButton from './LoopTrackButton.svelte';
+  import { cancelProgramLearn, learnProgramSelect } from '../../music/loopControls';
+
+  let pcLearning = $state(false);
+  function learnPc() {
+    if (pcLearning) {
+      cancelProgramLearn();
+      pcLearning = false;
+      return;
+    }
+    pcLearning = true;
+    learnProgramSelect(() => (pcLearning = false));
+  }
   import { setStudioVoice, studioTarget } from '../../music/studioTarget';
   import { loopTrackSource } from '../../music/visualVoices';
 
@@ -99,6 +111,17 @@
         {#each PEDAL_PRESETS as p}<option value={p}>{p === 'off' ? 'Off' : p === '2-switch' ? '2-switch' : '3-switch'}</option>{/each}
       </select>
     </label>
+    <label class="pedal" title="Program Change from a pedal selects a loop track: the first program selects track 1">
+      <input type="checkbox" checked={station.pc.on} onchange={(e) => musicStudio.updateLoopStation((d) => ({ ...d, pc: { ...d.pc, on: (e.target as HTMLInputElement).checked } }))} /> PC select
+    </label>
+    {#if station.pc.on}
+      <select value={station.pc.channel} onchange={(e) => musicStudio.updateLoopStation((d) => ({ ...d, pc: { ...d.pc, channel: Number((e.target as HTMLSelectElement).value) } }))} aria-label="Program Change channel">
+        <option value={-1}>Any channel</option>
+        {#each { length: 16 } as _, c}<option value={c}>Ch {c + 1}</option>{/each}
+      </select>
+      <label class="pedal">From PC <input class="pc-off" type="number" min="0" max="127" value={station.pc.offset} onchange={(e) => musicStudio.updateLoopStation((d) => ({ ...d, pc: { ...d.pc, offset: Math.max(0, Math.min(127, Number((e.target as HTMLInputElement).value) || 0)) } }))} /></label>
+      <button class="text-btn small" class:on={pcLearning} onclick={learnPc} title="Press the pedal that should select track 1">{pcLearning ? 'Press a pedal…' : 'Learn'}</button>
+    {/if}
     <span class="keys">Keys 1–6</span>
   </div>
   <div class="phrase" aria-hidden="true"><i style="width: {phrase}%"></i></div>
@@ -157,6 +180,7 @@
   .bpm { font-variant-numeric: tabular-nums; font-size: var(--ga-text-control, 12px); }
   .pedal, .keys { font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); display: inline-flex; align-items: center; gap: 4px; }
   .sp { flex: 1; }
+  .pc-off { width: 46px; height: 22px; }
   .phrase { height: 3px; background: var(--studio-edge-soft); }
   .phrase i { display: block; height: 100%; background: var(--studio-accent); }
   .cols { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); overflow: auto; }

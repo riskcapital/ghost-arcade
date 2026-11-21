@@ -1,3 +1,4 @@
+import { emitProgramChange } from './programChange';
 // MIDI Manager - Web MIDI API wrapper with device detection and hot-plug
 import { runMidiTaps } from './midiTaps';
 import { MUSIC_STUDIO } from '../features';
@@ -582,6 +583,11 @@ export class MidiManager {
     if (data.length < 2) return;
     const channel = status & 0x0F;
     const msgType = status & 0xF0;
+    // Program Change (pedals selecting loop tracks): not a learnable control of its own.
+    if (msgType === 0xC0) {
+      emitProgramChange(channel, data[1]);
+      return;
+    }
 
     let type: MidiMessageType;
     let number: number;

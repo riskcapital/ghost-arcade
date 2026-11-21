@@ -23,12 +23,14 @@ import {
   selectedLoopTrack,
   setLoopLevel,
   startAllLoopTracks,
+  startLoopTrack,
   stopAllLoopTracks,
   stopLoopTrack,
   toggleLoopMute,
   undoLoopLayer,
 } from './loopStation';
-import { LOOP_TRACK_COUNT, type PedalPreset } from './loopTrack';
+import { LOOP_TRACK_COUNT, trackForProgram, type PedalPreset } from './loopTrack';
+import { onProgramChange } from '../midi/programChange';
 
 /** A footswitch held this long undoes instead of pressing. */
 export const PEDAL_HOLD_MS = 500;
@@ -83,11 +85,42 @@ function pedal(n: 1 | 2 | 3, value: number): void {
   if (!state.fired) run(pedalResolve(preset, n, performance.now() - state.at));
 }
 
+function toggleTrackPlay(i: number): void {
+  const phase = get(loopStationView).tracks[i]?.phase;
+  if (phase === 'play' || phase === 'overdub') stopLoopTrack(i);
+  else if (phase === 'stopped') startLoopTrack(i);
+}
+
+let learning: ((done: boolean) => void) | null = null;
+
+/** The next Program Change sets the channel and offset: that program selects track 1. */
+export function learnProgramSelect(done?: (ok: boolean) => void): void {
+  learning = (ok) => done?.(ok);
+}
+
+export function cancelProgramLearn(): void {
+  learning?.(false);
+  learning = null;
+}
+
+function onProgram(channel: number, program: number): void {
+  if (learning) {
+    const done = learning;
+    learning = null;
+    musicStudio.updateLoopStation((d) => ({ ...d, pc: { on: true, channel, offset: program } }));
+    done(true);
+    return;
+  }
+  const i = trackForProgram(get(musicStudio).loopStation.pc, channel, program);
+  if (i >= 0) selectLoopTrack(i);
+}
+
 let registered = false;
 
 export function registerLoopControls(): void {
   if (registered) return;
   registered = true;
+  onProgramChange(onProgram);
   const list: StudioControl[] = [];
   const g = 'Live looper';
   for (let i = 0; i < LOOP_TRACK_COUNT; i++) {
@@ -112,6 +145,10 @@ export function registerLoopControls(): void {
     { id: 'loop.prev', label: 'Previous loop track', group: g, kind: 'trigger', run: () => selectLoopTrack((selectedLoopTrack() + LOOP_TRACK_COUNT - 1) % LOOP_TRACK_COUNT) },
     { id: 'loop.start-all', label: 'Start all loops', group: g, kind: 'trigger', run: () => startAllLoopTracks() },
     { id: 'loop.stop-all', label: 'Stop all loops', group: g, kind: 'trigger', run: () => stopAllLoopTracks() },
+    // The old band looper's controls (A and B were its two loops): mappings learned on them drive the loop tracks.
+    { id: 'looper.record', label: 'Looper record (selected loop track)', group: g, kind: 'trigger', run: () => pressLoopTrack(selectedLoopTrack()) },
+    { id: 'looper.play-a', label: 'Play loop A (loop track 5)', group: g, kind: 'toggle', run: () => toggleTrackPlay(4) },
+    { id: 'looper.play-b', label: 'Play loop B (loop track 6)', group: g, kind: 'toggle', run: () => toggleTrackPlay(5) },
     { id: 'loop.pedal.1', label: 'Loop pedal 1', group: g, kind: 'hold', run: (v) => pedal(1, v) },
     { id: 'loop.pedal.2', label: 'Loop pedal 2', group: g, kind: 'hold', run: (v) => pedal(2, v) },
     { id: 'loop.pedal.3', label: 'Loop pedal 3', group: g, kind: 'hold', run: (v) => pedal(3, v) },
