@@ -73,7 +73,7 @@
   import LoopRail from './LoopRail.svelte';
   import LoopVisualsList from './LoopVisualsList.svelte';
   import QuickClipEditor from './QuickClipEditor.svelte';
-  import { loopStationView, selectLoopTrack } from '../../music/loopStation';
+  import { loopStationView, selectLoopTrack, setLooperFocus } from '../../music/loopStation';
   import SongStrip from './SongStrip.svelte';
   import SceneBar from './SceneBar.svelte';
   import LiveSessionGrid from './LiveSessionGrid.svelte';
@@ -109,6 +109,10 @@
   let looperPage = $state(false);
   /** The loop track the quick editor is open on, on the Looper page. */
   let loopEditing = $state<number | null>(null);
+  $effect(() => {
+    setLooperFocus(looperPage);
+    return () => setLooperFocus(false);
+  });
   const loopsRunning = $derived($loopStationView.tracks.filter((t) => t.phase === 'play' || t.phase === 'overdub' || t.phase === 'record').length);
   /** The output's own shape, so the frame shows exactly what the output gets. */
   const outW = $derived(Math.max(1, $project.width || 1920));

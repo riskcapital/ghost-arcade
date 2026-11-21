@@ -195,7 +195,8 @@ describe('older projects', () => {
   it('load with six empty loop tracks, keeping their recorded loops and session', async () => {
     const { normalizeProjectState } = await import('./musicStudioStore');
     const old = normalizeProjectState({ myLoops: [{ id: 'a', instrument: 'keys', beats: 8, notes: [{ beat: 0, dur: 1, note: 60, velocity: 0.5 }] }], recordLength: 4 });
-    expect(old.loopStation.tracks).toHaveLength(6);
+    expect(old.loopStation.tracks).toHaveLength(8);
+    expect(old.loopStation.trackCount).toBe(6);
     expect(old.loopStation.tracks.every((t) => t.layers.length === 0)).toBe(true);
     expect(Object.values(old.session).flat().some((c) => c?.id === 'a')).toBe(true);
     expect(old.recordLength).toBe(4);
@@ -261,5 +262,23 @@ describe('sections on the rail', () => {
     expect(_trackRuntime(0).phase).toBe('stopped');
     nextLoopSection();
     expect(get(loopSectionState).next).toBe('a');
+  });
+});
+
+describe('MIDI follows the selected track', () => {
+  it('plays the selected MIDI track, a locked channel its own track, and only with the looper in front', async () => {
+    const { loopMidiInstrument, setLooperFocus, selectLoopTrack } = await import('./loopStation');
+    const { applyStationPreset } = await import('./loopTrack');
+    musicStudio.updateLoopStation((d) => applyStationPreset(d, 'band', () => false));
+    expect(loopMidiInstrument(0, 'kbd')).toBeNull();
+    setLooperFocus(true);
+    selectLoopTrack(1);
+    expect(loopMidiInstrument(0, 'kbd')).toBe('dubbass');
+    expect(get(musicStudio).instrument).toBe('dubbass');
+    // E-drums on channel 10 stay on the drums.
+    expect(loopMidiInstrument(9, 'edrums')).toBe('drums');
+    selectLoopTrack(4);
+    expect(loopMidiInstrument(0, 'kbd')).toBeNull();
+    setLooperFocus(false);
   });
 });

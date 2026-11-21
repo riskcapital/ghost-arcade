@@ -113,6 +113,7 @@ function onProgram(channel: number, program: number): void {
     return;
   }
   const i = trackForProgram(get(musicStudio).loopStation.pc, channel, program);
+  if (i >= get(musicStudio).loopStation.trackCount) return;
   if (i >= 0) selectLoopTrack(i);
 }
 
@@ -159,7 +160,7 @@ export function registerLoopControls(): void {
 }
 
 /**
- * The looper panel's keys: 1–6 select, Space the selected track's button,
+ * The looper panel's keys: 1–8 select, Space the selected track's button,
  * Shift+Space stops it, Cmd+Z / Shift+Cmd+Z undo and redo its layer, M
  * mutes, S saves, Backspace clears, Cmd+. stops all. Returns true when the
  * key was the looper's.
@@ -178,7 +179,8 @@ export function loopKey(e: Pick<KeyboardEvent, 'key' | 'code' | 'shiftKey' | 'me
     return true;
   }
   if (mod || e.altKey) return false;
-  if (/^Digit[1-6]$/.test(e.code)) {
+  if (/^Digit[1-8]$/.test(e.code)) {
+    // Past the tracks showing, the key does nothing (selectLoopTrack checks).
     selectLoopTrack(Number(e.code.slice(5)) - 1);
     return true;
   }

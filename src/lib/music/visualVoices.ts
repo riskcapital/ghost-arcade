@@ -90,7 +90,7 @@ export function loopTrackSource(index: number): LiveSourceId {
 
 /** The live-looper track a source follows, or -1. */
 export function loopTrackOfSource(id: unknown): number {
-  const m = typeof id === 'string' ? /^live:Looper ([1-6])$/.exec(id) : null;
+  const m = typeof id === 'string' ? /^live:Looper ([1-8])$/.exec(id) : null;
   return m ? Number(m[1]) - 1 : -1;
 }
 

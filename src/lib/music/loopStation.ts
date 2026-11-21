@@ -27,6 +27,7 @@ import { launchClockPosition, launchClockTempo, resyncLaunchClock } from '../sto
 import { audioStore } from '../stores/audio';
 import {
   LOOP_TRACK_COUNT,
+  lockedTrack,
   MAX_MIDI_LOOP_BARS,
   MIN_FREE_BEATS,
   autoLoopName,
@@ -270,8 +271,36 @@ export function stationOldestBeat(fallback: number): number {
 }
 
 export function selectLoopTrack(i: number): void {
-  if (i < 0 || i >= LOOP_TRACK_COUNT) return;
+  if (i < 0 || i >= data().trackCount) return;
   loopStationView.update((v) => ({ ...v, selected: i }));
+  // The keys and the on-screen keyboard play the selected MIDI track's instrument.
+  const t = track(i);
+  if (looperFocus && t?.kind === 'midi' && t.instrument && get(musicStudio).instrument !== t.instrument) musicStudio.setInstrument(t.instrument);
+}
+
+let looperFocus = false;
+/** The Looper page is showing: MIDI follows the selected loop track. */
+export function setLooperFocus(on: boolean): void {
+  looperFocus = on;
+  if (on) selectLoopTrack(get(loopStationView).selected);
+}
+
+/**
+ * The instrument a MIDI note plays as for the looper: a locked device or
+ * channel plays its track's instrument; otherwise the selected MIDI track's
+ * instrument when it has one. Null leaves the studio's own routing.
+ */
+export function loopMidiInstrument(channel: number, device: string): InstrumentId | null {
+  // Only while the looper is in front or recording: on the other tabs MIDI plays as it always has.
+  if (!looperFocus && !rts.some((r) => r.phase === 'armed' || r.phase === 'record' || r.phase === 'overdub')) return null;
+  const d = data();
+  const locked = lockedTrack(d.locks, channel, device, d.trackCount);
+  if (locked >= 0) {
+    const t = d.tracks[locked];
+    return t.kind === 'midi' ? t.instrument : null;
+  }
+  const t = d.tracks[get(loopStationView).selected];
+  return t?.kind === 'midi' && t.instrument ? t.instrument : null;
 }
 
 export function selectedLoopTrack(): number {

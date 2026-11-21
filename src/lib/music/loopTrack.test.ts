@@ -32,6 +32,11 @@ import {
   undoLayer,
   uniqueName,
   trackForProgram,
+  applyStationPreset,
+  lockedTrack,
+  setTrackKind,
+  blankTrack,
+  defaultStationData,
   type TrackPhase,
 } from './loopTrack';
 import type { PlayedNote } from './loopRecorder';
@@ -191,8 +196,9 @@ describe('audio memory', () => {
 describe('saved state', () => {
   it('gives a project from before the station six empty tracks', () => {
     const d = normalizeStationData(undefined);
-    expect(d.tracks).toHaveLength(6);
-    expect(d.tracks.map((t) => t.kind)).toEqual(['midi', 'midi', 'midi', 'midi', 'audio', 'audio']);
+    expect(d.tracks).toHaveLength(8);
+    expect(d.trackCount).toBe(6);
+    expect(d.tracks.slice(0, 6).map((t) => t.kind)).toEqual(['midi', 'midi', 'midi', 'midi', 'audio', 'audio']);
     expect(d.tracks[4].afterRecord).toBe('overdub');
   });
 
@@ -219,10 +225,51 @@ describe('Program Change track select', () => {
     const pc = { on: true, channel: 2, offset: 10 };
     expect(trackForProgram(pc, 2, 10)).toBe(0);
     expect(trackForProgram(pc, 2, 15)).toBe(5);
-    expect(trackForProgram(pc, 2, 16)).toBe(-1);
+    expect(trackForProgram(pc, 2, 17)).toBe(7);
+    expect(trackForProgram(pc, 2, 18)).toBe(-1);
     expect(trackForProgram(pc, 3, 10)).toBe(-1);
     expect(trackForProgram({ ...pc, channel: -1 }, 7, 11)).toBe(1);
     expect(trackForProgram({ ...pc, on: false }, 2, 10)).toBe(-1);
     expect(normalizeStationData({ pc: { on: true, channel: 99, offset: -4 } }).pc).toEqual({ on: true, channel: 15, offset: 0 });
+  });
+});
+
+describe('track types, count and the band setup', () => {
+  it('changes a track type only while it is empty', () => {
+    const t = { ...blankTrack(0, 'midi'), instrument: 'keys' as const, name: 'Keys' };
+    expect(setTrackKind(t, 0, 'audio', false)).toBe(t);
+    const a = setTrackKind(t, 0, 'audio', true);
+    expect(a.kind).toBe('audio');
+    expect(a.afterRecord).toBe('overdub');
+    expect(a.name).toBe('Keys');
+  });
+
+  it('keeps 4 to 8 tracks, older projects showing their six', () => {
+    expect(normalizeStationData({ trackCount: 12 }).trackCount).toBe(8);
+    expect(normalizeStationData({ trackCount: 1 }).trackCount).toBe(4);
+    const old = normalizeStationData({ tracks: Array.from({ length: 6 }, (_, i) => ({ kind: i < 4 ? 'midi' : 'audio' })) });
+    expect(old.tracks).toHaveLength(8);
+    expect(old.trackCount).toBe(6);
+    expect(old.locks).toEqual([]);
+  });
+
+  it('routes a locked channel or device to its track', () => {
+    const locks = [{ track: 0, channel: 9, device: '' }, { track: 2, channel: -1, device: 'kbd' }];
+    expect(lockedTrack(locks, 9, 'pads')).toBe(0);
+    expect(lockedTrack(locks, 0, 'kbd')).toBe(2);
+    expect(lockedTrack(locks, 0, 'other')).toBe(-1);
+    expect(lockedTrack(locks, 9, 'x', 0)).toBe(-1);
+  });
+
+  it('sets up a live band on the empty tracks, keeping tracks with loops', () => {
+    const d = applyStationPreset(defaultStationData(), 'band', (i) => i === 2);
+    expect(d.tracks.slice(0, 6).map((t) => [t.kind, t.instrument, t.name])).toEqual([
+      ['midi', 'drums', 'Drums'], ['midi', 'dubbass', 'Bass'], ['midi', null, ''], ['midi', 'drone', 'Pads'], ['audio', null, 'Guitar'], ['audio', null, 'Spare'],
+    ]);
+    expect(d.tracks[4].input).toBe(0);
+    expect(d.locks).toEqual([{ track: 0, channel: 9, device: '' }]);
+    const back = applyStationPreset(d, 'default', () => false);
+    expect(back.tracks[0].instrument).toBeNull();
+    expect(back.locks).toEqual([]);
   });
 });

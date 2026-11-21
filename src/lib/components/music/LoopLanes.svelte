@@ -33,7 +33,7 @@
   const s = $derived($musicStudio);
   const view = $derived($loopStationView);
   /** The window: two passes of the longest loop, at least two bars. */
-  const windowBeats = $derived(Math.max(8, 2 * Math.max(4, ...view.tracks.map((t) => t.beats || 0))));
+  const windowBeats = $derived(Math.max(8, 2 * Math.max(4, ...view.tracks.slice(0, s.loopStation.trackCount).map((t) => t.beats || 0))));
 
   $effect(() => {
     // Anything the lanes show changing redraws them once.
@@ -64,7 +64,8 @@
     const accent = css('--studio-accent', '#5278ff');
     const rec = css('--studio-rec', '#ff6b57');
     const ruler = 20;
-    const laneH = (height - ruler) / LOOP_TRACK_COUNT;
+    const count = s.loopStation.trackCount;
+    const laneH = (height - ruler) / count;
     const plotW = width - HEAD_W;
     const x = (beat: number) => HEAD_W + ((beat - startBeat) / windowBeats) * plotW;
     g.font = '10px system-ui, sans-serif';
@@ -83,7 +84,7 @@
     }
     g.fillStyle = edge;
     g.fillRect(0, ruler, width, 1);
-    for (let i = 0; i < LOOP_TRACK_COUNT; i++) {
+    for (let i = 0; i < count; i++) {
       const t = s.loopStation.tracks[i];
       const v = view.tracks[i];
       const y0 = ruler + i * laneH;
@@ -206,7 +207,8 @@
   function laneAt(e: MouseEvent): number {
     const r = box!.getBoundingClientRect();
     const y = e.clientY - r.top - 20;
-    return Math.max(0, Math.min(LOOP_TRACK_COUNT - 1, Math.floor(y / ((r.height - 20) / LOOP_TRACK_COUNT))));
+    const count = s.loopStation.trackCount;
+    return Math.max(0, Math.min(count - 1, Math.floor(y / ((r.height - 20) / count))));
   }
 
   let observer: IntersectionObserver | null = null;

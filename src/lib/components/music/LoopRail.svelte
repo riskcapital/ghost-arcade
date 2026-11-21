@@ -85,7 +85,7 @@
           {#if now}<span class="tag now">Playing</span>{:else if next}<span class="tag next">Next · bar {Math.floor((sec.at ?? 0) / 4) + 1}</span>{/if}
           <button class="x" onclick={(e) => { e.stopPropagation(); remove(x.id); }} aria-label="Remove section {x.name}">×</button>
         </div>
-        <div class="dots">{#each { length: LOOP_TRACK_COUNT } as _, k}<i class:on={x.tracks.includes(k)}></i>{/each}</div>
+        <div class="dots">{#each { length: $musicStudio.loopStation.trackCount } as _, k}<i class:on={x.tracks.includes(k)}></i>{/each}</div>
       </div>
     {:else}
       <p class="empty">Play some loops, then Snapshot: a section keeps which tracks play, to bring back on the bar.</p>

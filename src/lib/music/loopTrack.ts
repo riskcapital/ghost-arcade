@@ -19,7 +19,10 @@
 import { BEATS_PER_BAR, EARLY_GRACE_BEATS, type PlayedNote, type RecordedNote } from './loopRecorder';
 import { INSTRUMENTS, clampNote, clampVelocity, type InstrumentId } from './noteEvents';
 
-export const LOOP_TRACK_COUNT = 6;
+/** Tracks kept (the most a station shows); how many show is the station's `trackCount`. */
+export const LOOP_TRACK_COUNT = 8;
+export const MIN_TRACKS = 4;
+export const DEFAULT_TRACKS = 6;
 /** Layers kept for undo, per track. */
 export const MAX_LAYERS = 8;
 /** Lengths offered, in bars; 0 is Free. */
@@ -414,6 +417,27 @@ export interface LoopStationData {
   pedal: PedalPreset;
   /** Program Change selects a track: PC (offset + n) on `channel` (-1: any) selects track n+1. */
   pc: ProgramSelect;
+  /** Tracks showing, 4-8. */
+  trackCount: number;
+  /** A device or channel that always plays (and records into) one track, whichever is selected. */
+  locks: MidiLock[];
+}
+
+export interface MidiLock {
+  track: number;
+  /** MIDI channel 0-15, or -1 for any. */
+  channel: number;
+  /** Input device id, or '' for any. */
+  device: string;
+}
+
+/** The track a MIDI message belongs to by a lock, or -1. */
+export function lockedTrack(locks: readonly MidiLock[], channel: number, device: string, count = LOOP_TRACK_COUNT): number {
+  for (const l of locks) {
+    if (l.track >= count) continue;
+    if ((l.channel < 0 || l.channel === channel) && (!l.device || l.device === device)) return l.track;
+  }
+  return -1;
 }
 
 export interface ProgramSelect {
@@ -453,6 +477,8 @@ export function defaultStationData(): LoopStationData {
     sections: [],
     pedal: 'off',
     pc: { on: false, channel: -1, offset: 0 },
+    trackCount: DEFAULT_TRACKS,
+    locks: [],
   };
 }
 
@@ -522,6 +548,12 @@ export function normalizeStationData(raw: unknown): LoopStationData {
       channel: clamp(Math.round(finite(r.pc?.channel, -1)), -1, 15),
       offset: clamp(Math.round(finite(r.pc?.offset, 0)), 0, 127),
     },
+    // A project from before the count shows the six it had.
+    trackCount: clamp(Math.round(finite(r.trackCount, DEFAULT_TRACKS)), MIN_TRACKS, LOOP_TRACK_COUNT),
+    locks: (Array.isArray(r.locks) ? r.locks : [])
+      .filter((l) => l && typeof l === 'object')
+      .map((l) => ({ track: clamp(Math.round(finite(l.track, 0)), 0, LOOP_TRACK_COUNT - 1), channel: clamp(Math.round(finite(l.channel, -1)), -1, 15), device: typeof l.device === 'string' ? l.device.slice(0, 200) : '' }))
+      .slice(0, 16),
   };
 }
 
@@ -546,4 +578,41 @@ export function uniqueName(name: string, taken: Iterable<string>): string {
     if (!set.has(candidate.toLowerCase())) return candidate;
   }
   return `${base} ${Date.now()}`;
+}
+
+// ── Presets ───────────────────────────────────────────────────────────
+
+export type StationPreset = 'default' | 'band';
+
+/**
+ * Track setups to start from. "Live band": drums on the kit (MIDI channel 10
+ * always plays it), bass, keys and pads on MIDI, guitar on input 1 and a
+ * spare input. Tracks that hold a loop keep it and their setup.
+ */
+export function applyStationPreset(d: LoopStationData, preset: StationPreset, hasLoop: (i: number) => boolean): LoopStationData {
+  const fresh = defaultStationData();
+  const setups: Array<Partial<LoopTrackData> & { kind: LoopTrackKind }> =
+    preset === 'band'
+      ? [
+          { kind: 'midi', instrument: 'drums', name: 'Drums' },
+          { kind: 'midi', instrument: 'dubbass', name: 'Bass' },
+          { kind: 'midi', instrument: 'keys', name: 'Keys' },
+          { kind: 'midi', instrument: 'drone', name: 'Pads' },
+          { kind: 'audio', input: 0, name: 'Guitar' },
+          { kind: 'audio', input: 1, name: 'Spare' },
+        ]
+      : fresh.tracks.slice(0, DEFAULT_TRACKS).map((t) => ({ kind: t.kind }));
+  const tracks = d.tracks.map((t, i) => {
+    if (hasLoop(i)) return t;
+    const setup = setups[i];
+    return setup ? { ...blankTrack(i, setup.kind), ...setup } : blankTrack(i);
+  });
+  const locks = preset === 'band' ? [{ track: 0, channel: 9, device: '' }] : [];
+  return { ...d, tracks, trackCount: Math.max(MIN_TRACKS, setups.length), locks };
+}
+
+/** Change a track's type: only an empty track changes, so no loop is ever thrown away. */
+export function setTrackKind(t: LoopTrackData, i: number, kind: LoopTrackKind, empty: boolean): LoopTrackData {
+  if (!empty || t.kind === kind) return t;
+  return { ...blankTrack(i, kind), name: t.name, level: t.level };
 }

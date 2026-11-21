@@ -115,7 +115,7 @@ import { editStudio, studioTargetNow } from './studioTarget';
 import { normalizeStudioSource } from './studioPlugin';
 import { soundById } from './sounds/library';
 import { KeyFinder, type KeyGuess } from './keyFinder';
-import { attachLoopStation, killLoopStation, scheduleStation, stationBusy, stationOldestBeat, stopAllLoopTracks } from './loopStation';
+import { loopMidiInstrument, attachLoopStation, killLoopStation, scheduleStation, stationBusy, stationOldestBeat, stopAllLoopTracks } from './loopStation';
 import { audioLoopTracksFor, existingAudioLoopTracks } from './audioLoopEngine';
 import { registerLoopControls } from './loopControls';
 import { SessionAudio } from './sessionAudio';
@@ -471,7 +471,7 @@ function syncKeyboard(s: MusicStudioState): void {
 
 // ── MIDI ────────────────────────────────────────────────────────────────
 
-function onMidi(message: MidiNoteMessage): void {
+function onMidi(message: MidiNoteMessage, inputId = ''): void {
   if (message.kind === 'sustain') {
     sustainDown = message.down;
     if (!sustainDown) {
@@ -494,8 +494,10 @@ function onMidi(message: MidiNoteMessage): void {
   // In the drum machine set, a pad controller's notes play the pads.
   if (get(musicStudio).set === 'machine' && machineHooks?.midiPad(message.note, message.kind === 'on' ? message.velocity : 0, message.kind === 'on')) return;
   // Channel 10 plays the kit, as on any GM device; other channels play the selected instrument.
+  // The live looper routes notes first: a locked device or channel plays its track, else the selected loop track's instrument.
+  const routed = loopMidiInstrument(message.channel, inputId);
   const selected = get(musicStudio).instrument;
-  const instrument: InstrumentId = message.channel === DRUM_CHANNEL ? 'drums' : selected;
+  const instrument: InstrumentId = routed ?? (message.channel === DRUM_CHANNEL ? 'drums' : selected);
   const raw = `${message.channel}:${message.note}`;
   if (message.kind === 'on') {
     // A key pressed again before its note-off lets go of what it started first.

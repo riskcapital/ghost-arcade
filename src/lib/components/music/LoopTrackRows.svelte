@@ -19,7 +19,8 @@
     audioPeaks,
   } from '../../music/loopStation';
   import { beatNow, trackProgress } from '../../music/loopUi';
-  import { blankTrack, LOOP_TRACK_COUNT, type LoopTrackKind } from '../../music/loopTrack';
+  import { setTrackKind, type LoopTrackKind } from '../../music/loopTrack';
+  import { musicMidiDevices } from '../../music/midiNotes';
   import { INSTRUMENT_LABELS } from '../../music/instruments';
   import { INSTRUMENTS, type InstrumentId } from '../../music/noteEvents';
   import { showToast } from '../../stores/errorToast';
@@ -57,8 +58,22 @@
   }
 
   function setKind(i: number, kind: LoopTrackKind) {
-    musicStudio.updateLoopTrack(i, { ...blankTrack(i, kind) });
+    musicStudio.updateLoopStation((d) => ({ ...d, tracks: d.tracks.map((t, k) => (k === i ? setTrackKind(t, i, kind, view.tracks[i].phase === 'empty') : t)) }));
   }
+
+  /** A device or channel that always plays this track. */
+  function setLock(i: number, value: string) {
+    musicStudio.updateLoopStation((d) => {
+      const locks = d.locks.filter((l) => l.track !== i);
+      if (value.startsWith('ch:')) locks.push({ track: i, channel: Number(value.slice(3)), device: '' });
+      else if (value.startsWith('dev:')) locks.push({ track: i, channel: -1, device: value.slice(4) });
+      return { ...d, locks };
+    });
+  }
+  const lockValue = (i: number) => {
+    const l = s.loopStation.locks.find((x) => x.track === i);
+    return !l ? '' : l.device ? `dev:${l.device}` : `ch:${l.channel}`;
+  };
 
   /** Notes as thin bars, high notes higher, coral for the newest layer while overdubbing. */
   function noteRects(i: number) {
@@ -93,7 +108,7 @@
 </script>
 
 <div class="rows">
-  {#each { length: LOOP_TRACK_COUNT } as _, i}
+  {#each { length: $musicStudio.loopStation.trackCount } as _, i}
     {@const t = tracks[i]}
     {@const v = view.tracks[i]}
     {@const bars = Math.max(1, Math.round((v.beats || 16) / 4))}
@@ -127,6 +142,13 @@
               {#each { length: v.layers } as _, li}<b class:new={v.phase === 'overdub' && li === v.layers - 1}>L{li + 1}</b>{/each}
               <button onclick={() => undoLoopLayer(i)} disabled={!v.layers} title="Undo the last layer (Cmd+Z)">Undo</button>
               <button onclick={() => redoLoopLayer(i)} disabled={!v.redo} title="Redo the layer (Shift+Cmd+Z)">Redo</button>
+              {#if t.kind === 'midi'}
+                <select class="lock" value={lockValue(i)} onchange={(e) => setLock(i, (e.target as HTMLSelectElement).value)} aria-label="MIDI lock for track {i + 1}" title="Always play this track from one device or channel, whichever track is selected">
+                  <option value="">Any MIDI (selected)</option>
+                  {#each { length: 16 } as _, c}<option value={`ch:${c}`}>Channel {c + 1}{c === 9 ? ' (drums)' : ''}</option>{/each}
+                  {#each $musicMidiDevices as dev (dev.id)}<option value={`dev:${dev.id}`}>{dev.name}</option>{/each}
+                </select>
+              {/if}
               {#if t.kind === 'midi'}<button class:on={editing === i} onclick={() => (editing = editing === i ? null : i)} title="Edit the notes under the tracks">Edit</button>{/if}
               <button onclick={() => openSave(i)} title="Save it to My loops">Save</button>
               <button onclick={() => clearLoopTrack(i)} title="Empty the track (Undo brings it back)">Clear</button>
@@ -187,6 +209,7 @@
   .chips b, .chips button { font-weight: 500; font-size: 10px; padding: 1px 6px; border: 1px solid var(--studio-edge); border-radius: 3px; color: var(--studio-ink); background: transparent; font-family: inherit; line-height: 16px; }
   .chips button { cursor: pointer; }
   .chips button:disabled { opacity: 0.4; cursor: default; }
+  .chips select.lock { height: 18px; font-size: 10px; max-width: 120px; }
   .chips button.on { border-color: var(--studio-accent); color: var(--studio-accent); }
   .chips b.new { border-color: var(--studio-rec); color: var(--studio-rec); }
   .lane { position: relative; background: var(--studio-slot); min-height: 84px; }

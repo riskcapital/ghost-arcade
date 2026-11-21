@@ -19,7 +19,7 @@ import type { AudioLoopTracks } from './audioLoopTracks';
 
 /** An audio-track engine with layers in memory only. */
 function fakeEngine() {
-  const layers: Array<Array<[Float32Array, Float32Array]>> = Array.from({ length: 6 }, () => []);
+  const layers: Array<Array<[Float32Array, Float32Array]>> = Array.from({ length: 8 }, () => []);
   const e = {
     onLayersChanged: null as ((i: number) => void) | null,
     layersOf: (i: number) => (layers[i].length ? { layers: layers[i], bars: 2, beatMs: 500, originBeat: 0, sampleRate: 48000 } : null),

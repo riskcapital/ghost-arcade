@@ -519,7 +519,7 @@
               {:else}
                 {#each voiceSourcesFor($musicStudio.set, voice.source) as src (src.id)}<option value={src.id}>{src.label}</option>{/each}
                 <optgroup label="Live looper">
-                  {#each [0, 1, 2, 3, 4, 5] as lt}<option value={loopTrackSource(lt)}>Loop {lt + 1}</option>{/each}
+                  {#each { length: $musicStudio.loopStation.trackCount } as _, lt}<option value={loopTrackSource(lt)}>Loop {lt + 1}</option>{/each}
                 </optgroup>
               {/if}
             </select>

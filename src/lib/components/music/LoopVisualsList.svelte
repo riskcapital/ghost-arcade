@@ -21,7 +21,7 @@
     return (t?.name || (t?.kind === 'audio' ? `Audio ${i + 1}` : t?.instrument ? INSTRUMENT_LABELS[t.instrument] : `Track ${i + 1}`)).split(' · ')[0];
   };
   const rows = $derived(
-    Array.from({ length: LOOP_TRACK_COUNT }, (_, i) => ({ i, k: voices.findIndex((v) => v.live === loopTrackSource(i)) })).filter((r) => r.k >= 0 || r.i === sel),
+    Array.from({ length: $musicStudio.loopStation.trackCount }, (_, i) => ({ i, k: voices.findIndex((v) => v.live === loopTrackSource(i)) })).filter((r) => r.k >= 0 || r.i === sel),
   );
 
   function assign(i: number) {

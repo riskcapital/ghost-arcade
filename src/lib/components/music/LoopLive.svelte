@@ -29,6 +29,28 @@
   import { showToast } from '../../stores/errorToast';
   import { generateUUID } from '../../utils/uuid';
   import LoopTrackButton from './LoopTrackButton.svelte';
+  import { applyStationPreset, setTrackKind, type LoopTrackKind, type StationPreset } from '../../music/loopTrack';
+  import { INSTRUMENTS, type InstrumentId } from '../../music/noteEvents';
+
+  /** A track's type changes only while it is empty (the selector shows only then). */
+  function setKind(i: number, kind: LoopTrackKind) {
+    musicStudio.updateLoopStation((d) => ({ ...d, tracks: d.tracks.map((t, k) => (k === i ? setTrackKind(t, i, kind, $loopStationView.tracks[i].phase === 'empty') : t)) }));
+  }
+
+  function setCount(n: number) {
+    const keep = $loopStationView.tracks.findLastIndex((t) => t.phase !== 'empty') + 1;
+    if (n < keep) {
+      showToast(`Track ${keep} holds a loop: clear it first to show fewer tracks.`, 'info');
+      return;
+    }
+    musicStudio.updateLoopStation((d) => ({ ...d, trackCount: n }));
+  }
+
+  function applyPreset(p: StationPreset) {
+    if (!p) return;
+    musicStudio.updateLoopStation((d) => applyStationPreset(d, p, (i) => $loopStationView.tracks[i]?.phase !== 'empty'));
+    selectLoopTrack(0);
+  }
   import { cancelProgramLearn, learnProgramSelect } from '../../music/loopControls';
 
   let pcLearning = $state(false);
@@ -103,6 +125,15 @@
     <select value={station.fadeBars} onchange={(e) => musicStudio.updateLoopStation((d) => ({ ...d, fadeBars: Number((e.target as HTMLSelectElement).value) }))} aria-label="Fade out on stop" title="Audio loops fade out over this many bars when stopped">
       {#each [0, 1, 2, 4] as f}<option value={f}>{f === 0 ? 'Cut' : f === 1 ? '1 bar' : `${f} bars`}</option>{/each}
     </select>
+    <span class="ga-eyebrow">Tracks</span>
+    <select value={station.trackCount} onchange={(e) => setCount(Number((e.target as HTMLSelectElement).value))} aria-label="Number of loop tracks">
+      {#each [4, 5, 6, 7, 8] as n}<option value={n}>{n}</option>{/each}
+    </select>
+    <select value="" onchange={(e) => { applyPreset((e.target as HTMLSelectElement).value as StationPreset); (e.target as HTMLSelectElement).value = ''; }} aria-label="Track setup" title="Set the empty tracks up for a way of playing; tracks holding a loop keep it">
+      <option value="" disabled>Setup…</option>
+      <option value="band">Live band</option>
+      <option value="default">Default</option>
+    </select>
     <span class="sp"></span>
     <button class="text-btn small" onclick={() => startAllLoopTracks()} title="Start every stopped loop on the next bar">Start all</button>
     <button class="text-btn small" onclick={() => stopAllLoopTracks()} title="Stop every loop on the next bar (Cmd+.)">Stop all</button>
@@ -123,12 +154,12 @@
       <label class="pedal">From PC <input class="pc-off" type="number" min="0" max="127" value={station.pc.offset} onchange={(e) => musicStudio.updateLoopStation((d) => ({ ...d, pc: { ...d.pc, offset: Math.max(0, Math.min(127, Number((e.target as HTMLInputElement).value) || 0)) } }))} /></label>
       <button class="text-btn small" class:on={pcLearning} onclick={learnPc} title="Press the pedal that should select track 1">{pcLearning ? 'Press a pedal…' : 'Learn'}</button>
     {/if}
-    <span class="keys">Keys 1–6</span>
+    <span class="keys">Keys 1–{station.trackCount}</span>
   </div>
   <div class="phrase" aria-hidden="true"><i style="width: {phrase}%"></i></div>
 
-  <div class="cols">
-    {#each { length: LOOP_TRACK_COUNT } as _, i}
+  <div class="cols" style="grid-template-columns: repeat({station.trackCount}, minmax(0, 1fr))">
+    {#each { length: $musicStudio.loopStation.trackCount } as _, i}
       {@const t = station.tracks[i]}
       {@const v = view.tracks[i]}
       {@const bars = Math.max(1, Math.round(v.beats / 4))}
@@ -137,8 +168,23 @@
         <LoopTrackButton index={i} size={compact ? 74 : 96} ring />
         <div class="txt">
         {#if v.phase === 'empty'}
-          <div class="name empty">Empty</div>
-          <div class="ga-eyebrow meta">{t.kind === 'audio' ? `Input ${t.input + 1}` : t.instrument ? INSTRUMENT_LABELS[t.instrument] : 'Follows what you play'}</div>
+          <div class="name empty">{t.name || 'Empty'}</div>
+          <div class="pick">
+            <select value={t.kind} onchange={(e) => setKind(i, (e.target as HTMLSelectElement).value as LoopTrackKind)} aria-label="Track {i + 1} type" title="MIDI plays an instrument (drums, bass, keys, pads…); audio records a band input">
+              <option value="midi">MIDI</option>
+              <option value="audio">Audio</option>
+            </select>
+            {#if t.kind === 'midi'}
+              <select value={t.instrument ?? ''} onchange={(e) => musicStudio.updateLoopTrack(i, { instrument: ((e.target as HTMLSelectElement).value || null) as InstrumentId | null })} aria-label="Track {i + 1} instrument" title="What it plays and records; MIDI from any device plays it while the track is selected">
+                <option value="">Follow played</option>
+                {#each INSTRUMENTS as id}<option value={id}>{INSTRUMENT_LABELS[id]}</option>{/each}
+              </select>
+            {:else}
+              <select value={t.input} onchange={(e) => musicStudio.updateLoopTrack(i, { input: Number((e.target as HTMLSelectElement).value) })} aria-label="Track {i + 1} input" title="The band input it records">
+                {#each { length: Math.max(s.liveInputs.length, 2, t.input + 1) } as _, k}<option value={k}>Input {k + 1}{s.liveInputs[k]?.name ? ` · ${s.liveInputs[k].name}` : ''}</option>{/each}
+              </select>
+            {/if}
+          </div>
         {:else}
           <div class="name">{t.name || (t.kind === 'audio' ? `Audio ${i + 1}` : INSTRUMENT_LABELS[t.instrument ?? s.instrument])}</div>
           <div class="ga-eyebrow meta">{t.kind === 'audio' ? `Input ${t.input + 1}` : INSTRUMENT_LABELS[t.instrument ?? s.instrument]} · {bars} bar{bars === 1 ? '' : 's'} · {v.phase === 'overdub' ? `layer ${v.layers + 1} recording` : `${v.layers} layer${v.layers === 1 ? '' : 's'}`}</div>
@@ -168,13 +214,13 @@
     <span class="ga-eyebrow">Sections</span>
     {#each station.sections as sec (sec.id)}
       <span class="sec" class:on={isActive(sec.tracks)}>
-        <button onclick={() => playLoopSection(sec.tracks)} title="Play these tracks from the next bar; the others stop">{sec.name} · {sec.tracks.length === LOOP_TRACK_COUNT ? 'all' : sec.tracks.map((x) => x + 1).join(' ')}</button>
+        <button onclick={() => playLoopSection(sec.tracks)} title="Play these tracks from the next bar; the others stop">{sec.name} · {sec.tracks.length === $musicStudio.loopStation.trackCount ? 'all' : sec.tracks.map((x) => x + 1).join(' ')}</button>
         <button class="x" onclick={() => removeSection(sec.id)} aria-label="Remove section {sec.name}">×</button>
       </span>
     {/each}
     <button class="text-btn small" onclick={snapshot} title="Keep which tracks play now as a section">+ Snapshot</button>
     <span class="sp"></span>
-    <span class="hint">Space = selected track · hold = undo layer · 1–6 select</span>
+    <span class="hint">Space = selected track · hold = undo layer · 1–{station.trackCount} select</span>
   </div>
   {/if}
 </div>
@@ -221,4 +267,6 @@
   .compact .btns { flex-wrap: wrap; }
   .num { position: absolute; top: 5px; left: 8px; font-size: 10px; color: var(--studio-muted); }
   .compact { height: auto; }
+  .pick { display: flex; gap: 4px; flex-wrap: wrap; }
+  .pick select { height: 22px; max-width: 120px; font-size: var(--ga-text-meta, 11px); }
 </style>
