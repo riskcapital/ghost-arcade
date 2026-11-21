@@ -1,4 +1,13 @@
 <script lang="ts">
+  // The window's macOS buttons would sit on the synth's title bar: hide them
+  // while it is open.
+  import { onMount as onMountWindowButtons } from 'svelte';
+  onMountWindowButtons(() => {
+    const api = (globalThis as any).electronAPI;
+    void api?.invoke?.('set_window_buttons_visible', { visible: false })?.catch?.(() => {});
+    return () => { void api?.invoke?.('set_window_buttons_visible', { visible: true })?.catch?.(() => {}); };
+  });
+
   /**
    * Analog Synth, full screen: the instrument as a two-row rack fitted to
    * the window, in Audio Lab's look (its modules, knobs, jacks, cables, bar

@@ -8226,6 +8226,16 @@ function registerIpcHandlers() {
   // --- Open file picker for projects ---
   // Returns the chosen absolute path so the renderer can call
   // read_project_file separately. Reusable for any "open .gha" need.
+  // Full-screen in-app surfaces (the Analog Synth) hide the macOS window
+  // buttons, which otherwise sit on top of their title bar.
+  ipcMain.handle('set_window_buttons_visible', (event, args) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (process.platform === 'darwin' && win && win === mainWindow && !win.isDestroyed()) {
+      win.setWindowButtonVisibility(args?.visible !== false);
+    }
+    return true;
+  });
+
   ipcMain.handle('open_project_dialog', async (_, args) => {
     const { title, filters } = args || {};
     const win = mainWindow || BrowserWindow.getFocusedWindow();

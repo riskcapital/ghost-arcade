@@ -83,6 +83,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'export_project_package', 'cancel_project_package', 'open_project_package',
   'inspect_video_import',
   'open_project_dialog',
+  'set_window_buttons_visible',
   'download_demo_zip', 'read_project_file',
   'open_external_url',
   // Texture sharing info (Spout/Syphon)
