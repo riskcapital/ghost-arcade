@@ -43,7 +43,9 @@
 
   const s = $derived($musicStudio);
   const id = $derived($clipEditorId);
-  const found = $derived(id ? findClip(s.session, id) : null);
+  // Audio clips have no notes to edit: the editor stays closed for them.
+  const anyFound = $derived(id ? findClip(s.session, id) : null);
+  const found = $derived(anyFound && anyFound.clip.kind !== 'audio' ? (anyFound as typeof anyFound & { clip: Exclude<typeof anyFound.clip, { kind: 'audio' }> }) : null);
   const clip = $derived(found?.clip ?? null);
   const track = $derived(found?.track ?? 'lead');
   const playingIt = $derived(!!clip && (track === 'beats' ? s.sequencerPlaying && $musicTransport.beatLoop === clip.id : s.playingLoops[track] === clip.id));

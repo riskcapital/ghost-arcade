@@ -118,6 +118,8 @@ export class AudioLoopEngine implements AudioLoopTracks {
   private serial = 0;
   private ticker: ReturnType<typeof setInterval> | null = null;
   private failed = false;
+  /** Told when a track's layers change (to keep them with the project). */
+  onLayersChanged: ((i: number) => void) | null = null;
 
   readonly ctx: AudioContext;
   private readonly out: AudioNode;
@@ -336,6 +338,7 @@ export class AudioLoopEngine implements AudioLoopTracks {
       t.mix = null;
       t.buffer = null;
       t.state = 'empty';
+      this.onLayersChanged?.(i);
       return true;
     }
     this.rebuild(i, true);
@@ -361,6 +364,7 @@ export class AudioLoopEngine implements AudioLoopTracks {
     t.mix = null;
     t.buffer = null;
     t.state = 'empty';
+    this.onLayersChanged?.(i);
   }
 
   kill(): void {
@@ -442,6 +446,28 @@ export class AudioLoopEngine implements AudioLoopTracks {
       console.warn('[LoopTracks] Could not load the audio loop:', err);
       return false;
     }
+  }
+
+  /** A track's layers (each the loop's length, stereo) and its timing, for saving with the project. */
+  layersOf(i: number): { layers: Array<[Float32Array, Float32Array]>; bars: number; beatMs: number; originBeat: number; sampleRate: number } | null {
+    const t = this.tracks[i];
+    return t.layers.length ? { layers: t.layers, bars: t.bars, beatMs: t.beatMs, originBeat: t.originBeat, sampleRate: this.ctx.sampleRate } : null;
+  }
+
+  /** Put saved layers back on a track (stopped), as a project opens. */
+  restoreLayers(i: number, layers: Array<[Float32Array, Float32Array]>, bars: number, beatMs: number, originBeat: number): void {
+    if (!layers.length) return;
+    const frames = Math.min(...layers.map((l) => l[0].length));
+    const t = this.tracks[i];
+    this.clear(i);
+    t.cleared = null;
+    t.layers = layers.map((l) => [l[0].slice(0, frames), l[1].slice(0, frames)] as Stereo);
+    t.bars = bars;
+    t.beatMs = beatMs;
+    t.originBeat = originBeat;
+    this.rebuild(i, false);
+    t.state = 'stopped';
+    this.budget();
   }
 
   /** The loopback Measure: a click out, listen on track `i`'s input; the round trip in ms, or null. */
@@ -624,6 +650,7 @@ export class AudioLoopEngine implements AudioLoopTracks {
   /** The mix from the layers; a playing loop swaps to it in place, in phase. */
   private rebuild(i: number, swap: boolean): void {
     const t = this.tracks[i];
+    this.onLayersChanged?.(i);
     if (!t.layers.length) return;
     const frames = t.layers[0][0].length;
     const mix: Stereo = [new Float32Array(frames), new Float32Array(frames)];

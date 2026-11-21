@@ -31,6 +31,9 @@ export interface AudioLoopTracks {
   info(i: number): AudioTrackInfo | null;
   layerCount(i: number): number;
   bars(i: number): number;
+  onLayersChanged: ((i: number) => void) | null;
+  layersOf(i: number): { layers: Array<[Float32Array, Float32Array]>; bars: number; beatMs: number; originBeat: number; sampleRate: number } | null;
+  restoreLayers(i: number, layers: Array<[Float32Array, Float32Array]>, bars: number, beatMs: number, originBeat: number): void;
   /** The input latency applied to recordings, in ms (reported + manual). */
   latencyMs(): number;
   /** Loopback: a click out, heard back on track `i`'s input; the round trip in ms. */

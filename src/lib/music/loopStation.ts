@@ -53,6 +53,8 @@ import {
   type TrackPhase,
 } from './loopTrack';
 import type { AudioLoopTracks } from './audioLoopTracks';
+import { encodeWav } from './wav';
+import { createAssetRefFromGeneratedBlob, pathToFileUrl, resolveAssetRefForRuntime, type AssetRef } from '../storage/assetRegistry';
 
 /** What the music runtime lends the station. */
 export interface StationHost {
@@ -133,6 +135,102 @@ export function attachLoopStation(h: StationHost): void {
   host = h;
 }
 
+// ── Audio loops kept with the project ──
+
+let wiredEngine: AudioLoopTracks | null = null;
+let restoring = false;
+let restored = false;
+const saveTimers = new Map<number, ReturnType<typeof setTimeout>>();
+/** The saved file of each layer already written, by its left channel. */
+const layerFiles = new WeakMap<Float32Array, { src: string; _assetRef?: unknown }>();
+/** How long after the last change a track's layers are written (a long overdub writes once, not every pass). */
+export const AUDIO_SAVE_DELAY_MS = 4000;
+
+/** The audio tracks, wired to keep their layers with the project. */
+function audioEngine(): AudioLoopTracks | null {
+  const a = host?.audioTracks() ?? null;
+  if (a && wiredEngine !== a) {
+    wiredEngine = a;
+    a.onLayersChanged = (i) => {
+      if (!restoring) scheduleAudioSave(i);
+    };
+    restored = false;
+  }
+  if (a && !restored) {
+    restored = true;
+    void restoreAudioLoops(a);
+  }
+  return a;
+}
+
+function scheduleAudioSave(i: number): void {
+  clearTimeout(saveTimers.get(i));
+  saveTimers.set(i, setTimeout(() => {
+    saveTimers.delete(i);
+    void saveAudioLayers(i);
+  }, AUDIO_SAVE_DELAY_MS));
+}
+
+async function saveAudioLayers(i: number): Promise<void> {
+  const a = wiredEngine;
+  if (!a) return;
+  const d = a.layersOf(i);
+  if (!d) {
+    if (track(i).audio) musicStudio.updateLoopTrack(i, { audio: undefined });
+    return;
+  }
+  const layers: Array<{ src: string; _assetRef?: unknown }> = [];
+  for (const [k, l] of d.layers.entries()) {
+    let file = layerFiles.get(l[0]);
+    if (!file) {
+      const wav = encodeWav(l[0], l[1], d.sampleRate);
+      const captured = await createAssetRefFromGeneratedBlob(new Blob([wav.buffer as ArrayBuffer], { type: 'audio/wav' }), `Loop track ${i + 1} layer ${k + 1}.wav`, 'audio/wav');
+      const path = captured.assetRef.originalPath;
+      file = { src: path ? pathToFileUrl(path) : captured.runtimeUrl, _assetRef: captured.assetRef };
+      layerFiles.set(l[0], file);
+    }
+    layers.push(file);
+  }
+  // Changed again while writing: the next save has it.
+  if (a.layersOf(i)?.layers.length !== layers.length) return;
+  musicStudio.updateLoopTrack(i, { audio: { bars: d.bars, beatMs: d.beatMs, originBeat: d.originBeat, layers } });
+}
+
+/** Write every audio track's layers now (before a save that cannot wait). */
+export async function flushAudioLoops(): Promise<void> {
+  const pending = [...saveTimers.keys()];
+  for (const i of pending) {
+    clearTimeout(saveTimers.get(i));
+    saveTimers.delete(i);
+    await saveAudioLayers(i);
+  }
+}
+
+async function restoreAudioLoops(a: AudioLoopTracks): Promise<void> {
+  for (let i = 0; i < LOOP_TRACK_COUNT; i++) {
+    const saved = track(i)?.audio;
+    if (track(i)?.kind !== 'audio' || !saved || a.layerCount(i) > 0) continue;
+    try {
+      const ctx = new OfflineAudioContext(2, 1, 48000);
+      const layers: Array<[Float32Array, Float32Array]> = [];
+      for (const l of saved.layers) {
+        const url = l._assetRef ? resolveAssetRefForRuntime(l._assetRef as AssetRef, undefined, l.src) ?? l.src : l.src;
+        const decoded = await ctx.decodeAudioData(await (await fetch(url)).arrayBuffer());
+        layers.push([new Float32Array(decoded.getChannelData(0)), new Float32Array(decoded.numberOfChannels > 1 ? decoded.getChannelData(1) : decoded.getChannelData(0))]);
+      }
+      restoring = true;
+      a.restoreLayers(i, layers, saved.bars, saved.beatMs, saved.originBeat);
+      a.layersOf(i)?.layers.forEach((l, k) => saved.layers[k] && layerFiles.set(l[0], saved.layers[k]));
+    } catch (err) {
+      console.warn(`[LoopStation] Could not bring back loop track ${i + 1}'s audio:`, err);
+    } finally {
+      restoring = false;
+    }
+    if (rts[i].phase === 'empty' && a.layerCount(i)) rts[i].phase = 'stopped';
+  }
+  publish();
+}
+
 onMusicHydrate(() => resetLoopStation());
 
 const data = () => get(musicStudio).loopStation;
@@ -144,7 +242,7 @@ function stackOf(i: number): LayerStack<MidiLayer> {
 }
 
 function hasContent(i: number): boolean {
-  if (isAudio(i)) return (host?.audioTracks()?.layerCount(i) ?? 0) > 0;
+  if (isAudio(i)) return (audioEngine()?.layerCount(i) ?? 0) > 0;
   return track(i).layers.length > 0 && track(i).beats > 0;
 }
 
@@ -197,7 +295,7 @@ export function pressLoopTrack(i: number): void {
       arm(i, beat);
       break;
     case 'cancel':
-      if (isAudio(i)) host.audioTracks()?.cancel(i);
+      if (isAudio(i)) audioEngine()?.cancel(i);
       rt.phase = hasContent(i) ? 'stopped' : 'empty';
       break;
     case 'close-record':
@@ -205,7 +303,7 @@ export function pressLoopTrack(i: number): void {
       break;
     case 'punch-in':
       if (isAudio(i)) {
-        if (!host.audioTracks()?.overdub(i, true)) break;
+        if (!audioEngine()?.overdub(i, true)) break;
         rt.phase = 'overdub';
         break;
       }
@@ -215,7 +313,7 @@ export function pressLoopTrack(i: number): void {
       break;
     case 'punch-out':
       if (isAudio(i)) {
-        host.audioTracks()?.overdub(i, false);
+        audioEngine()?.overdub(i, false);
         rt.phase = 'play';
         break;
       }
@@ -241,7 +339,7 @@ function arm(i: number, beat: number): void {
     start = rts[recording].recEnd ?? start;
   }
   if (isAudio(i)) {
-    const audio = host!.audioTracks();
+    const audio = audioEngine();
     if (!audio || !audio.canRecord(i)) {
       publish();
       return;
@@ -275,7 +373,7 @@ function arm(i: number, beat: number): void {
 function closeRecord(i: number, beat: number): void {
   const rt = rts[i];
   if (isAudio(i)) {
-    const end = host!.audioTracks()?.closeRecording(i);
+    const end = audioEngine()?.closeRecording(i);
     if (end !== undefined && end !== null) rt.recEnd = end;
     return;
   }
@@ -343,7 +441,7 @@ function startTrack(i: number): void {
   const rt = rts[i];
   const { beat } = clockNow();
   if (isAudio(i)) {
-    host!.audioTracks()?.play(i);
+    audioEngine()?.play(i);
     rt.phase = 'play';
     return;
   }
@@ -362,11 +460,11 @@ export function stopLoopTrack(i: number, now = false): void {
   const rt = rts[i];
   const phase = phaseOf(i);
   if (phase === 'armed' || phase === 'record') {
-    if (isAudio(i)) host.audioTracks()?.cancel(i);
+    if (isAudio(i)) audioEngine()?.cancel(i);
     rt.phase = hasContent(i) ? 'stopped' : 'empty';
   } else if (phase === 'play' || phase === 'overdub') {
     if (isAudio(i)) {
-      host.audioTracks()?.stop(i, data().fadeBars, now);
+      audioEngine()?.stop(i, data().fadeBars, now);
       rt.phase = 'stopped';
     } else {
       if (phase === 'overdub') rt.dubTo = Math.max(rt.dubFrom, punchAt(clockNow().beat));
@@ -406,21 +504,21 @@ export function playLoopSection(tracks: readonly number[]): void {
 export function toggleLoopMute(i: number): void {
   const muted = !track(i).muted;
   musicStudio.updateLoopTrack(i, { muted });
-  if (isAudio(i)) host?.audioTracks()?.setLevel(i, muted ? 0 : track(i).level);
+  if (isAudio(i)) audioEngine()?.setLevel(i, muted ? 0 : track(i).level);
   else if (muted) cutPending(i, clockNow().beat);
 }
 
 export function setLoopLevel(i: number, level: number): void {
   const v = Math.max(0, Math.min(1, level));
   musicStudio.updateLoopTrack(i, { level: v });
-  if (isAudio(i) && !track(i).muted) host?.audioTracks()?.setLevel(i, v);
+  if (isAudio(i) && !track(i).muted) audioEngine()?.setLevel(i, v);
 }
 
 /** Undo the last layer. Undoing the first layer empties the track. */
 export function undoLoopLayer(i: number): boolean {
   const rt = rts[i];
   if (isAudio(i)) {
-    const ok = host?.audioTracks()?.undo(i) ?? false;
+    const ok = audioEngine()?.undo(i) ?? false;
     if (ok && !hasContent(i)) rt.phase = 'empty';
     publish();
     return ok;
@@ -453,7 +551,7 @@ export function undoLoopLayer(i: number): boolean {
 export function redoLoopLayer(i: number): boolean {
   const rt = rts[i];
   if (isAudio(i)) {
-    const ok = host?.audioTracks()?.redo(i) ?? false;
+    const ok = audioEngine()?.redo(i) ?? false;
     if (ok && rt.phase === 'empty') rt.phase = 'stopped';
     publish();
     return ok;
@@ -472,7 +570,7 @@ export function clearLoopTrack(i: number): void {
   const rt = rts[i];
   stopLoopTrack(i, true);
   if (isAudio(i)) {
-    host?.audioTracks()?.clear(i);
+    audioEngine()?.clear(i);
   } else {
     const t = track(i);
     rt.cleared = t.layers.length ? { layers: t.layers, beats: t.beats } : null;
@@ -576,7 +674,7 @@ export function killLoopStation(): void {
       rt.phase = 'stopped';
     }
   }
-  host?.audioTracks()?.kill();
+  audioEngine()?.kill();
   publish();
 }
 
@@ -587,7 +685,13 @@ export function resetLoopStation(): void {
     if (rt.phase === 'play' || rt.phase === 'overdub') endTrack(i, clockNow().beat);
     rts[i] = freshRt();
   }
-  host?.audioTracks()?.clearAll();
+  for (const t of saveTimers.values()) clearTimeout(t);
+  saveTimers.clear();
+  // Clearing the old project's audio must not write over the new project's saved loops.
+  restoring = true;
+  wiredEngine?.clearAll();
+  restoring = false;
+  restored = false;
   publish();
 }
 
@@ -729,7 +833,7 @@ function scheduleClicks(beat: number, horizon: number, timeAt: (b: number) => nu
 /** Audio tracks: their recorder says when a take has come back. */
 function syncAudioPhase(i: number): boolean {
   const rt = rts[i];
-  const audio = host!.audioTracks();
+  const audio = audioEngine();
   if (!audio) return false;
   const state = audio.state(i);
   let next = rt.phase;
@@ -751,7 +855,7 @@ function syncAudioPhase(i: number): boolean {
 
 /** The latency audio recordings are shifted by, in ms; null before the audio runs. */
 export function loopLatencyMs(): number | null {
-  return host?.audioTracks()?.latencyMs() ?? null;
+  return audioEngine()?.latencyMs() ?? null;
 }
 
 /**
@@ -759,7 +863,7 @@ export function loopLatencyMs(): number | null {
  * total matches the round trip heard. Returns the round trip in ms, or null.
  */
 export async function measureLoopLatency(i: number): Promise<number | null> {
-  const audio = host?.audioTracks();
+  const audio = audioEngine();
   if (!audio) return null;
   const roundTrip = await audio.measureLatency(i);
   if (roundTrip === null) return null;
@@ -771,14 +875,14 @@ export async function measureLoopLatency(i: number): Promise<number | null> {
 
 /** An audio track's shape, for the panels. */
 export function audioPeaks(i: number, n: number): number[] {
-  return isAudio(i) ? host?.audioTracks()?.peaks(i, n) ?? [] : [];
+  return isAudio(i) ? audioEngine()?.peaks(i, n) ?? [] : [];
 }
 
 /** The name a save starts with: "Keys 3 · 4 bars · 120 · A min". */
 export function suggestedLoopName(i: number): string {
   const t = track(i);
   const s = get(musicStudio);
-  const bars = isAudio(i) ? host?.audioTracks()?.bars(i) ?? 0 : Math.round(t.beats / BEATS_PER_BAR);
+  const bars = isAudio(i) ? audioEngine()?.bars(i) ?? 0 : Math.round(t.beats / BEATS_PER_BAR);
   const label = t.name.split(' · ')[0] || (isAudio(i) ? `Audio ${i + 1}` : INSTRUMENT_LABELS[t.instrument ?? s.instrument]);
   return autoLoopName(label, Math.max(1, bars), launchClockTempo(), isAudio(i) ? null : s.key);
 }
@@ -791,11 +895,12 @@ export async function saveLoopTrack(i: number, name = suggestedLoopName(i)): Pro
   const t = track(i);
   const s = get(musicStudio);
   if (isAudio(i)) {
-    const audio = host?.audioTracks();
+    const audio = audioEngine();
     const wav = audio?.wav(i) ?? null;
     if (!audio || !wav) return null;
     const id = await saveUserLoop({ kind: 'audio', name, bars: audio.bars(i), beats: audio.bars(i) * BEATS_PER_BAR, bpm: audio.bpm(i), key: null, instrument: null, notes: [], createdAt: Date.now() }, wav);
     musicStudio.updateLoopTrack(i, { savedId: id, name: t.name || name });
+    await audioTrackToSession(i, name).catch((err) => console.warn('[LoopStation] Could not put the loop in the session:', err));
     publish();
     return id;
   }
@@ -821,6 +926,24 @@ export async function saveLoopTrack(i: number, name = suggestedLoopName(i)): Pro
   return id;
 }
 
+/**
+ * An audio track's loop as an audio clip in the session grid (its WAV a
+ * project asset), in the texture part's first empty slot. Returns the clip id.
+ */
+export async function audioTrackToSession(i: number, name = suggestedLoopName(i)): Promise<string | null> {
+  const audio = audioEngine();
+  const wav = audio?.wav(i) ?? null;
+  if (!audio || !wav) return null;
+  const captured = await createAssetRefFromGeneratedBlob(new Blob([wav.buffer as ArrayBuffer], { type: 'audio/wav' }), `${name}.wav`, 'audio/wav');
+  const path = captured.assetRef.originalPath;
+  const id = generateUUID();
+  musicStudio.addSessionClip('texture', {
+    kind: 'audio', id, name, bars: audio.bars(i), bpm: Math.round(audio.bpm(i) * 100) / 100,
+    src: path ? pathToFileUrl(path) : captured.runtimeUrl, _assetRef: captured.assetRef, level: track(i).level,
+  });
+  return id;
+}
+
 /** Put a My loops loop on a track (the selected one when it fits, else the first empty one of its kind) and play it. */
 export async function loadUserLoopToTrack(id: string, target?: number): Promise<number> {
   const loop = await readUserLoop(id);
@@ -833,7 +956,7 @@ export async function loadUserLoopToTrack(id: string, target?: number): Promise<
     return -1;
   }
   if (kind === 'audio') {
-    const audio = host?.audioTracks();
+    const audio = audioEngine();
     if (!audio || !loop.wav || !(await audio.load(i, loop.wav, loop.bars))) return -1;
     musicStudio.updateLoopTrack(i, { name: loop.name, savedId: loop.id });
     rts[i].phase = 'stopped';
@@ -869,7 +992,7 @@ export function onLoopNotice(listener: ((message: string) => void) | null): void
 // ── Publishing ──
 
 export function publish(): void {
-  const audio = host?.audioTracks() ?? null;
+  const audio = audioEngine() ?? null;
   const tracks = rts.map((rt, i): TrackView => {
     const phase = phaseOf(i);
     const t = track(i);

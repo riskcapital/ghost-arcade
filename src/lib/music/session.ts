@@ -97,7 +97,30 @@ export function normalizeClipVisual(raw: unknown): ClipVisual | undefined {
   };
 }
 
-export type SessionClip = NotesClip | BeatClip;
+/**
+ * A recorded audio loop in the session (from a live-looper audio track):
+ * its WAV is a project asset beside the project, so the project's media
+ * handling saves, packages and finds it like any other file.
+ */
+export interface AudioClip {
+  kind: 'audio';
+  id: string;
+  name: string;
+  /** Length in bars, and the tempo it was recorded at. */
+  bars: number;
+  bpm: number;
+  /** Where the WAV plays from (rebuilt from the asset when a project opens). */
+  src: string;
+  _assetRef?: import('../storage/assetRegistry').AssetRef;
+  /** 0-1. */
+  level: number;
+  stack?: ClipStack;
+  preset?: string;
+}
+
+export type SessionClip = NotesClip | BeatClip | AudioClip;
+
+export const isAudioClip = (clip: SessionClip | null | undefined): clip is AudioClip => clip?.kind === 'audio';
 
 export type Session = Record<TrackId, Array<SessionClip | null>>;
 
@@ -243,6 +266,7 @@ export function clipFromRecording(loop: RecordedLoop): NotesClip {
 
 /** A copy of a clip under a new id. */
 export function duplicateClip(clip: SessionClip, id: string, name = `${clip.name} copy`): SessionClip {
+  if (clip.kind === 'audio') return { ...clip, id, name, ...(clip._assetRef ? { _assetRef: { ...clip._assetRef } } : {}) };
   return clip.kind === 'beat'
     ? { ...clip, id, name, pattern: normalizePattern(clip.pattern) }
     : { ...clip, id, name, notes: clip.notes.map((n) => ({ ...n })), key: clip.key ? { ...clip.key } : null };
@@ -276,6 +300,24 @@ export function normalizeClip(raw: unknown): SessionClip | null {
     if (!input.pattern) return null;
     const stack = clipStackFrom(input);
     return { kind: 'beat', id: input.id, name, pattern: normalizePattern(input.pattern), ...(typeof input.kit === 'string' && kitById(input.kit) ? { kit: input.kit } : {}), ...(preset ? { preset } : {}), ...(stack ? { stack } : {}) };
+  }
+  if (input.kind === 'audio') {
+    const r = raw as Partial<AudioClip>;
+    const src = typeof r.src === 'string' ? r.src : '';
+    const ref = r._assetRef && typeof r._assetRef === 'object' ? r._assetRef : undefined;
+    if (!src && !ref) return null;
+    const bars = Math.round(Number(r.bars));
+    const bpm = Number(r.bpm);
+    const level = Number(r.level);
+    const stack = clipStackFrom(input);
+    return {
+      kind: 'audio', id: input.id, name, src,
+      bars: Number.isFinite(bars) ? Math.max(1, Math.min(64, bars)) : 4,
+      bpm: Number.isFinite(bpm) && bpm > 20 && bpm < 400 ? bpm : 120,
+      level: Number.isFinite(level) ? Math.max(0, Math.min(1, level)) : 0.8,
+      ...(ref ? { _assetRef: ref } : {}),
+      ...(stack ? { stack } : {}),
+    };
   }
   if (input.kind !== 'notes') return null;
   // Any length in quarter beats: a three-beat loop drifts against the bar on purpose.
@@ -335,7 +377,7 @@ export function normalizeSession(raw: unknown): Session | null {
 
 /** True when a beat clip has any hits, for showing empty ones dimmed. */
 export function clipHasNotes(clip: SessionClip): boolean {
-  return clip.kind === 'beat' ? patternHasHits(clip.pattern) : clip.notes.length > 0;
+  return clip.kind === 'beat' ? patternHasHits(clip.pattern) : clip.kind === 'audio' ? true : clip.notes.length > 0;
 }
 
 /** Every track's id is a loop role except the beat. */

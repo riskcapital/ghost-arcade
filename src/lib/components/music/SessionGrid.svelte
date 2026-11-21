@@ -13,7 +13,7 @@
   import { INSTRUMENT_LABELS } from '../../music/instruments';
   import { TRACKS, clipFromPreset, duplicateClip, presetsFor, sessionRows, type SessionClip, type TrackId } from '../../music/session';
   import { userPresets } from '../../music/presetLibrary';
-  import { launchClip, launchRow, saveBeat, stopTrack } from '../../music/musicRuntime';
+  import { launchClip, launchRow, saveBeat, setAudioClipLevel, stopTrack } from '../../music/musicRuntime';
   import { clipTrack, downloadMidi } from '../../music/midiExport';
   import { clipEditorId, insertEditorChannel, loopBrowser, stackEditor } from '../../music/studioUi';
   import { loopById } from '../../music/loops';
@@ -173,23 +173,29 @@
         {@const on = playing(track.id, clip)}
         {@const next = queued(track.id, clip)}
         <div class="slot" class:on class:next role="gridcell" class:over={dropOver === `${track.id}:${row}`} ondragover={(e) => over(e, track.id, row)} ondragleave={() => (dropOver = null)} ondrop={(e) => dropLoop(e, track.id, row)}>
-          <button class="clip" onclick={() => launchClip(track.id, row)} data-midi-path="studio:clip.{track.id}.{row + 1}" data-midi-label="{track.label} clip {row + 1}" data-midi-mode="toggle" ondblclick={() => clipEditorId.set(clip.id)} aria-pressed={on} title={next ? 'Starts on the next bar' : on ? 'Playing · double-click to edit' : 'Start on the next bar · double-click to edit'}>
+          <button class="clip" onclick={() => launchClip(track.id, row)} data-midi-path="studio:clip.{track.id}.{row + 1}" data-midi-label="{track.label} clip {row + 1}" data-midi-mode="toggle" ondblclick={() => clip.kind !== 'audio' && clipEditorId.set(clip.id)} aria-pressed={on} title={next ? 'Starts on the next bar' : on ? 'Playing · double-click to edit' : 'Start on the next bar · double-click to edit'}>
             <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 2l7 4-7 4z" /></svg>
             <span>{clip.name}</span>
           </button>
+          {#if clip.kind === 'audio'}
+            <input class="audio-level" type="range" min="0" max="1" step="0.01" value={clip.level} oninput={(e) => setAudioClipLevel(clip.id, Number((e.target as HTMLInputElement).value))} aria-label="Level of {clip.name}" title="Level of this audio loop" />
+          {:else}
           <button class="edit" onclick={() => clipEditorId.set(clip.id)} aria-label="Edit {clip.name}" title="Edit the notes">
             <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 10l1-3 5-5 2 2-5 5zM7 3l2 2" /></svg>
           </button>
+          {/if}
           <button class="edit visuals" class:has={!!clip.stack?.items.length} onclick={() => openVisuals(track.id, clip)} aria-label="Visuals for {clip.name}" title={!clip.stack?.items.length ? 'Give it visuals' : clip.stack.items.length === 1 ? 'Its visuals: 1 layer' : `Its visuals: ${clip.stack.items.length} layers`}>
             <svg viewBox="0 0 12 12" aria-hidden="true"><rect x="1.5" y="2.5" width="9" height="7" rx="1" /><path d="M1.5 7.5l3-2.5 2.5 2 1.5-1 2 1.5" /></svg>
           </button>
           <select class="more" value="" onchange={(e) => act(track.id, row, clip, e)} aria-label="More for {clip.name}" title="More">
             <option value="" disabled>⋯</option>
-            <option value="edit">Edit notes…</option>
+            {#if clip.kind !== 'audio'}<option value="edit">Edit notes…</option>{/if}
             <option value="visuals">Visuals…</option>
             <option value="duplicate">Duplicate</option>
+            {#if clip.kind !== 'audio'}
             <option value="preset">Add to my presets</option>
             <option value="midi">Save as MIDI</option>
+            {/if}
             <option value="remove">Remove</option>
           </select>
         </div>
@@ -289,6 +295,7 @@
   .on .clip { border-color: var(--studio-accent); background: var(--studio-accent); color: var(--studio-on-accent); }
   .on .clip svg { fill: var(--studio-on-accent); }
   .edit { width: 20px; border-color: var(--studio-edge-soft); color: var(--studio-muted); display: none; }
+  .audio-level { width: 44px; margin: 0 2px; }
   .edit svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linejoin: round; }
   .more {
     width: 20px;

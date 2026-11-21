@@ -169,5 +169,7 @@ export function importMidi(song: MidiSong, fileName: string, existing: ReadonlyA
 /** One clip as a MIDI track: beat clips on the drum channel, notes clips as they play in `key`. */
 export function clipTrack(clip: SessionClip, key: MusicKey): MidiTrack {
   if (clip.kind === 'beat') return patternTrack(clip.pattern, clip.name);
+  // Audio has no notes to write.
+  if (clip.kind === 'audio') return { name: clip.name, channel: 0, notes: [] };
   return { name: clip.name, channel: 0, notes: playableNotes(clip, key).map((n) => ({ ...n })) };
 }

@@ -364,6 +364,32 @@ export interface LoopTrackData {
   layers: MidiLayer[];
   /** The library loop it was saved as, when it was. */
   savedId?: string;
+  /** Audio: its layers as WAV files kept with the project (project assets), and its timing. */
+  audio?: SavedAudioLoop;
+}
+
+export interface SavedAudioLoop {
+  bars: number;
+  beatMs: number;
+  originBeat: number;
+  /** One entry per layer, oldest first: `src` with its `_assetRef`, as the project's media handling expects. */
+  layers: Array<{ src: string; _assetRef?: unknown }>;
+}
+
+function normalizeSavedAudio(raw: unknown): SavedAudioLoop | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const r = raw as Partial<SavedAudioLoop>;
+  const layers = (Array.isArray(r.layers) ? r.layers : [])
+    .filter((l) => l && typeof l === 'object' && (typeof l.src === 'string' || (l._assetRef && typeof l._assetRef === 'object')))
+    .slice(-MAX_LAYERS)
+    .map((l) => ({ src: typeof l.src === 'string' ? l.src : '', ...(l._assetRef && typeof l._assetRef === 'object' ? { _assetRef: l._assetRef } : {}) }));
+  if (!layers.length) return undefined;
+  return {
+    bars: clamp(Math.round(finite(r.bars, 4)), 1, MAX_AUDIO_LOOP_BARS),
+    beatMs: clamp(finite(r.beatMs, 500), 100, 3000),
+    originBeat: finite(r.originBeat, 0),
+    layers,
+  };
 }
 
 export interface LoopSection {
@@ -464,6 +490,7 @@ export function normalizeTrack(raw: unknown, i: number): LoopTrackData {
     beats: layers.length ? beats : 0,
     layers,
     ...(typeof r.savedId === 'string' && r.savedId ? { savedId: r.savedId } : {}),
+    ...(kind === 'audio' && normalizeSavedAudio(r.audio) ? { audio: normalizeSavedAudio(r.audio) } : {}),
   };
 }
 

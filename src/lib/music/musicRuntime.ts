@@ -91,7 +91,7 @@ import {
   type MelodicLoop,
 } from './loops';
 import { SCAN_PARTIALS, columnBands, scanPosition } from './scanSynth';
-import { TRACKS, TRACK_IDS, clipFromRecording, clipFxKey, clipLoop, findClip, type Session, type SessionClip, type TrackId } from './session';
+import { type AudioClip, TRACKS, TRACK_IDS, clipFromRecording, clipFxKey, clipLoop, findClip, type Session, type SessionClip, type TrackId } from './session';
 import type { AnalogDest, AnalogSource } from './analogSynth';
 import { INPUT_CHANNELS, MAX_LIVE_INPUTS, stripFor, type ChannelId } from './mixer';
 import { LiveInputs, type BandInputSpec } from './liveInput';
@@ -118,6 +118,7 @@ import { KeyFinder, type KeyGuess } from './keyFinder';
 import { attachLoopStation, killLoopStation, scheduleStation, stationBusy, stationOldestBeat, stopAllLoopTracks } from './loopStation';
 import { audioLoopTracksFor, existingAudioLoopTracks } from './audioLoopEngine';
 import { registerLoopControls } from './loopControls';
+import { SessionAudio } from './sessionAudio';
 import type { AnySourceId, LiveSourceId, VoiceSourceId } from './visualVoices';
 import { BandFxVisuals } from './bandFxVisuals';
 // The studio's MIDI controls and the band's keys answer while the Studio view is hidden.
@@ -1025,6 +1026,7 @@ const dressingTimers = new Map<TrackId, ReturnType<typeof setTimeout>>();
 
 function clipChannel(track: TrackId, clip: SessionClip): string {
   if (track === 'beats' || clip.kind === 'beat') return 'drums';
+  if (clip.kind === 'audio') return ROLE_INSTRUMENTS[get(musicStudio).set][track];
   return clip.instrument ?? ROLE_INSTRUMENTS[get(musicStudio).set][track];
 }
 
@@ -1066,15 +1068,75 @@ function dressTrack(track: TrackId, clip: SessionClip, atMs: number): void {
 /** Ms until a clip launched now starts: the next bar when music plays, at once otherwise. */
 function msToClipStart(now: boolean): number {
   const { beat, beatMs } = launchClockPosition();
-  const busy = !!sequencer || !!replay || loopSlots.size > 0;
+  const busy = !!sequencer || !!replay || loopSlots.size > 0 || audioParts.size > 0;
   return busy && !now ? Math.max(0, (nextBar(beat) - beat) * beatMs) : 0;
+}
+
+// ── Audio clips in the session (sessionAudio.ts) ──
+
+let sessionAudio: SessionAudio | null = null;
+/** Parts playing an audio clip, and the clip. */
+const audioParts = new Map<LoopRole, string>();
+
+function sessionAudioPlayer(): SessionAudio {
+  const { ctx, out } = audio.loopGraph();
+  if (!sessionAudio || (sessionAudio as unknown as { ctx: AudioContext }).ctx !== ctx) sessionAudio = new SessionAudio(ctx, out);
+  return sessionAudio;
+}
+
+function startAudioClip(role: LoopRole, clip: AudioClip, now: boolean): void {
+  const atMs = msToClipStart(now);
+  stopLoop(role);
+  const player = sessionAudioPlayer();
+  audioParts.set(role, clip.id);
+  const s = get(musicStudio);
+  if (atMs > 0) musicStudio.setTransport({ queuedLoops: { ...s.queuedLoops, [role]: clip.id } });
+  void player.play(role, clip, audio.now() + atMs / 1000, launchClockTempo()).then((ok) => {
+    if (audioParts.get(role) !== clip.id) return;
+    if (!ok) {
+      audioParts.delete(role);
+      return;
+    }
+    setTimeout(() => {
+      if (audioParts.get(role) !== clip.id) return;
+      const t = get(musicStudio);
+      const queued = { ...t.queuedLoops };
+      delete queued[role];
+      musicStudio.setTransport({ playingLoops: { ...t.playingLoops, [role]: clip.id }, queuedLoops: queued });
+    }, atMs);
+  });
+  ensureScheduler();
+  ensureFrameLoop();
+}
+
+function stopAudioPart(role: LoopRole): void {
+  if (!audioParts.has(role)) return;
+  audioParts.delete(role);
+  sessionAudio?.stop(role);
+}
+
+/** An audio clip's level changed in the grid: a playing one follows at once. */
+export function setAudioClipLevel(id: string, level: number): void {
+  musicStudio.updateSessionClip(id, (c) => (c.kind === 'audio' ? { ...c, level: Math.max(0, Math.min(1, level)) } : c));
+  sessionAudio?.setLevel(id, level);
+}
+
+let audioTempo = 0;
+function followAudioTempo(): void {
+  if (!audioParts.size || !sessionAudio) return;
+  const tempo = launchClockTempo();
+  if (Math.abs(tempo - audioTempo) < 0.01) return;
+  audioTempo = tempo;
+  sessionAudio.setTempo(tempo);
 }
 
 function startClip(track: TrackId, clip: SessionClip, now: boolean): void {
   dressTrack(track, clip, msToClipStart(now));
   const s = get(musicStudio);
   if (clip.kind === 'beat') launchBeatLoop(clip.pattern, clip.id, now, clip.kit);
-  else if (track !== 'beats') {
+  else if (clip.kind === 'audio') {
+    if (track !== 'beats') startAudioClip(track, clip, now);
+  } else if (track !== 'beats') {
     const loop = clipLoop(clip, track, s.set, s.key);
     startMelodic(loop, loop.instrument, now);
   }
@@ -1092,6 +1154,7 @@ function startMelodic(loop: MelodicLoop | RecordedLoop, instrument: InstrumentId
   const busy = !!sequencer || !!replay || loopSlots.size > 0;
   const startBeat = busy && !now ? nextBar(beat) : Math.floor(beat / 4 + 1e-6) * 4;
   const from = Math.max(startBeat, beat);
+  stopAudioPart(loop.role);
   const old = loopSlots.get(loop.role);
   if (old) {
     old.stopBeat = from;
@@ -1160,6 +1223,7 @@ function launchBeatLoop(pattern: DrumPattern, id: string, now: boolean, kit?: st
 
 /** Stop the loop in a slot (and one handing over to it); notes they were holding let go now. */
 export function stopLoop(role: LoopRole): void {
+  stopAudioPart(role);
   const beat = launchClockPosition().beat;
   const slot = loopSlots.get(role);
   if (slot) endLoopSlot(slot, beat);
@@ -1178,7 +1242,7 @@ export function stopLoop(role: LoopRole): void {
 }
 
 export function stopAllLoops(): void {
-  for (const role of [...loopSlots.keys()]) stopLoop(role);
+  for (const role of [...new Set([...loopSlots.keys(), ...audioParts.keys()])]) stopLoop(role);
   for (const slot of endingSlots.splice(0)) endLoopSlot(slot, launchClockPosition().beat);
   if (beatLoopTimer) clearTimeout(beatLoopTimer);
   beatLoopTimer = null;
@@ -1916,7 +1980,7 @@ async function scanTick(): Promise<void> {
 function ensureScheduler(): void {
   if (schedulerHandle !== null) return;
   const tick = () => {
-    if (!sequencer && !replay && !loopSlots.size && !endingSlots.length && !loopRec && !repeats.size && !stationBusy()) {
+    if (!sequencer && !replay && !loopSlots.size && !endingSlots.length && !loopRec && !repeats.size && !stationBusy() && !audioParts.size) {
       clearInterval(schedulerHandle!);
       schedulerHandle = null;
       return;
@@ -1928,6 +1992,7 @@ function ensureScheduler(): void {
       scheduleLoopRecorder();
       scheduleRepeats();
       scheduleStation(LOOKAHEAD_SECONDS);
+      followAudioTempo();
     } catch (err) {
       console.warn('[Music] scheduler failed:', err);
     }
