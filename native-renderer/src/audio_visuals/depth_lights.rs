@@ -6,7 +6,7 @@
 use serde_json::Value;
 
 use super::audio_data::AudioVisualData;
-use super::params::num;
+use super::controls::{ParamDef, slider};
 
 pub const MAX_SLICES: usize = 32;
 
@@ -20,21 +20,33 @@ pub struct DepthLightParams {
     pub hold: f32,
     /// Size of a lit point, times the point size (lights stay small and sharp).
     pub on_size: f32,
-    /// Camera drift: slow up-down sway in degrees.
-    pub sway: f32,
     /// Share of points that are lights (the rest are the dim scan).
     pub light_share: f32,
 }
 
+/// Depth Lights' own controls (cloud_pulse::cloud_defs adds the shared ones).
+pub fn depth_light_defs() -> Vec<ParamDef> {
+    vec![
+        slider("slices", "Depth slices", "Lights", 4.0, MAX_SLICES as f32, 1.0, 24.0),
+        slider("lights", "Light share", "Lights", 0.0, 1.0, 0.005, 0.05),
+        slider("lightSize", "Light size", "Lights", 0.0, 6.0, 0.05, 1.6),
+        slider("lightThreshold", "Light threshold", "Lights", 0.0, 0.9, 0.01, 0.12),
+        slider("decay", "Blink decay (s)", "Lights", 0.02, 5.0, 0.01, 0.35),
+        slider("gain", "Blink gain", "Lights", 0.0, 50.0, 0.1, 4.0),
+        slider("hold", "Glow between hits", "Lights", 0.0, 2.0, 0.01, 0.05),
+    ]
+}
+
 pub fn normalize_depth_light_params(params: &Value) -> DepthLightParams {
+    let d = super::cloud_pulse::cloud_defs(super::cloud_pulse::CloudKind::DepthLights);
+    let n = |key: &str| d.num(params, key);
     DepthLightParams {
-        slices: num(params, "slices", 24.0).round().clamp(4.0, MAX_SLICES as f32) as usize,
-        decay: num(params, "decay", 0.35).clamp(0.02, 5.0),
-        gain: num(params, "gain", 4.0).clamp(0.0, 50.0),
-        hold: num(params, "hold", 0.05).clamp(0.0, 2.0),
-        on_size: num(params, "lightSize", 1.6).clamp(0.0, 6.0),
-        sway: num(params, "sway", 4.0).clamp(0.0, 45.0),
-        light_share: num(params, "lights", 0.05).clamp(0.0, 1.0),
+        slices: n("slices").round() as usize,
+        decay: n("decay"),
+        gain: n("gain"),
+        hold: n("hold"),
+        on_size: n("lightSize"),
+        light_share: n("lights"),
     }
 }
 
@@ -42,11 +54,13 @@ pub fn normalize_depth_light_params(params: &Value) -> DepthLightParams {
 pub struct DepthSlices {
     pub average: [f32; MAX_SLICES],
     pub envelope: [f32; MAX_SLICES],
+    /// Newest hit already shown.
+    pub last_seq: u32,
 }
 
 impl Default for DepthSlices {
     fn default() -> Self {
-        Self { average: [0.0; MAX_SLICES], envelope: [0.0; MAX_SLICES] }
+        Self { average: [0.0; MAX_SLICES], envelope: [0.0; MAX_SLICES], last_seq: 0 }
     }
 }
 
@@ -74,6 +88,24 @@ impl DepthSlices {
             let target = onset.max(level * params.hold).min(1.0);
             self.envelope[k] = (self.envelope[k] * fall).max(target);
         }
+        // Hits light their band's third of the depth: bass near, mid in the
+        // middle, high far.
+        if data.active() {
+            for event in data.events_after(self.last_seq, 4) {
+                let band = event.band as usize;
+                for k in (band * n / 3)..((band + 1) * n / 3) {
+                    self.envelope[k] = self.envelope[k].max((event.strength * 0.8).min(1.0));
+                }
+            }
+            if let Some(last) = data.event(0) {
+                self.last_seq = self.last_seq.max(last.seq);
+            }
+        }
+    }
+
+    /// A manual hit (the Trigger control): every slice flashes on.
+    pub fn flash(&mut self) {
+        self.envelope.iter_mut().for_each(|e| *e = 1.0);
     }
 
     /// The `C.data` block: 32 envelopes, then near, far, slice count, on size.

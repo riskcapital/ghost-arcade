@@ -605,6 +605,16 @@ pub fn native_graph_instrument_ids() -> Vec<&'static str> {
         .collect()
 }
 
+/// Live control definitions an instrument publishes for the layer panel, in
+/// the app's `ParamControl` shape (kind, key, label, group, range, default).
+/// Instruments without any publish an empty list. Additive: an instrument
+/// adds one provider line here.
+const PARAM_DEF_PROVIDERS: &[fn(&str) -> Option<Value>] = &[crate::audio_visuals::controls::param_defs_json];
+
+pub fn native_graph_param_defs(id: &str) -> Value {
+    PARAM_DEF_PROVIDERS.iter().find_map(|provider| provider(id)).unwrap_or_else(|| Value::Array(Vec::new()))
+}
+
 pub fn native_graph_instrument_manifest() -> Value {
     Value::Array(
         NATIVE_GRAPH_INSTRUMENT_SPECS
@@ -619,7 +629,8 @@ pub fn native_graph_instrument_manifest() -> Value {
                     "shader_count": spec.shader_ids.len(),
                     "features": spec.features,
                     "render_target": "source_frame",
-                    "parity": spec.parity
+                    "parity": spec.parity,
+                    "param_defs": native_graph_param_defs(spec.id)
                 })
             })
             .collect(),

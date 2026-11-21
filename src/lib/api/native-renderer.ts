@@ -591,6 +591,10 @@ export interface NativeGraphInstrumentManifestEntry {
   /** 'runtime': the shaders come with each graph and shader_ids is empty. */
   /** 'core': compiled into the core, nothing for the app to precompile. */
   shader_source?: 'builtin' | 'runtime' | 'core';
+  /** Live controls the instrument publishes for the layer panel, in the
+   *  `ParamControl` shape (gpuShaderTypes.ts); `resets: true` marks a control
+   *  that rebuilds the simulation. Empty for instruments without any. */
+  param_defs?: Array<Record<string, unknown> & { kind: string; key: string; label: string; group?: string; resets?: boolean }>;
   shader_ids?: string[];
   shader_count?: number;
   features?: string[];

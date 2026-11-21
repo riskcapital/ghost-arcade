@@ -7,7 +7,11 @@ use serde_json::Value;
 
 use super::audio_data::{AudioVisualData, H_ENV_HIGH, H_LEVEL, OnsetBand, OnsetEvent};
 use super::hdr_post::HdrPostSettings;
-use super::params::{CloudPalette, cloud_palette_by_name, num, quality_from, text};
+use super::controls::{
+    AudioControls, Defs, Kind, MotionControls, ParamDef, PostDefaults, QUALITY_OPTIONS, audio_defs, look_defs, motion_defs, post_defs, select,
+    slider,
+};
+use super::params::{CloudPalette, cloud_palette_by_name, num, quality_from};
 
 pub const MAX_WAVES: usize = 24;
 pub const MAX_WAVES_PER_BAND: usize = 8;
@@ -20,11 +24,93 @@ pub enum WaveMetric {
     Height = 2,
 }
 
+/// Which cloud instrument a set of params is for (defaults differ).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CloudKind {
+    Pulse,
+    Flock,
+    DepthLights,
+}
+
+const PULSE_PALETTES: &[(&str, &str)] = &[("survey", "Survey"), ("ice-and-oxblood", "Ice and Oxblood"), ("thermal", "Thermal")];
+const FLOCK_PALETTES: &[(&str, &str)] = &[("nightjar", "Nightjar"), ("starling", "Starling"), ("ember-swarm", "Ember Swarm")];
+const DEPTH_PALETTES: &[(&str, &str)] = &[("harbour", "Harbour"), ("glacier", "Glacier")];
+const METRIC_OPTIONS: &[(&str, &str)] = &[("radius", "Radius"), ("depth", "Depth"), ("height", "Height")];
+
+/// Every control of a cloud instrument, as the panel shows it.
+pub fn cloud_defs(kind: CloudKind) -> Defs {
+    let (palettes, palette, base_glow, post, sway) = match kind {
+        CloudKind::Pulse => (PULSE_PALETTES, "survey", 0.003,
+            PostDefaults { bloom: 0.25, threshold: 1.5, trails: 0.4, drift: 0.0, swirl: 0.0, split: 0.0025 }, 0.0),
+        CloudKind::Flock => (FLOCK_PALETTES, "nightjar", 0.012,
+            PostDefaults { bloom: 0.25, threshold: 1.5, trails: 0.0, drift: 0.0, swirl: 0.0, split: 0.0 }, 0.0),
+        CloudKind::DepthLights => (DEPTH_PALETTES, "harbour", 0.004,
+            PostDefaults { bloom: 0.25, threshold: 1.5, trails: 0.4, drift: 0.0, swirl: 0.0, split: 0.0025 }, 4.0),
+    };
+    let mut d = vec![
+        ParamDef { key: "path", label: "Point cloud (.ply)", group: "Scan", kind: Kind::File, resets: true },
+        slider("orientX", "Scan orientation X", "Scan", -180.0, 180.0, 1.0, 0.0),
+        slider("orientY", "Scan orientation Y", "Scan", -180.0, 180.0, 1.0, 0.0),
+        slider("orientZ", "Scan orientation Z", "Scan", -180.0, 180.0, 1.0, 0.0),
+        slider("scale", "Scan scale", "Scan", 0.01, 10.0, 0.01, 1.0),
+        slider("autoRotateX", "Auto-rotate X (deg/s)", "Camera", -90.0, 90.0, 0.5, 0.0),
+        slider("autoRotateY", "Auto-rotate Y (deg/s)", "Camera", -90.0, 90.0, 0.5, 0.0),
+        slider("autoRotateZ", "Auto-rotate Z (deg/s)", "Camera", -90.0, 90.0, 0.5, 0.0),
+        slider("rotateX", "Rotation X", "Camera", -180.0, 180.0, 1.0, 0.0),
+        slider("rotateY", "Rotation Y", "Camera", -180.0, 180.0, 1.0, 0.0),
+        slider("rotateZ", "Rotation Z", "Camera", -180.0, 180.0, 1.0, 0.0),
+        slider("distance", "Distance", "Camera", 0.05, 10.0, 0.01, 1.15),
+        slider("fov", "Field of view", "Camera", 10.0, 120.0, 0.5, 45.0),
+        slider("yaw", "Orbit angle", "Camera", -180.0, 180.0, 1.0, 30.0),
+        slider("pitch", "Orbit height", "Camera", -89.0, 89.0, 1.0, 14.0),
+        slider("orbit", "Orbit speed (deg/s)", "Camera", -90.0, 90.0, 0.5, 4.0),
+        slider("sway", "Sway (deg)", "Camera", 0.0, 45.0, 0.5, sway),
+        slider("offsetX", "Offset X", "Camera", -2.0, 2.0, 0.01, 0.0),
+        slider("offsetY", "Offset Y", "Camera", -2.0, 2.0, 0.01, 0.0),
+        slider("offsetZ", "Offset Z", "Camera", -2.0, 2.0, 0.01, 0.0),
+        select("quality", "Quality", "Points", QUALITY_OPTIONS, "medium").resetting(),
+        slider("pointSize", "Point size (px)", "Points", 0.3, 8.0, 0.05, 1.3),
+        slider("sizeVariation", "Size variation", "Points", 0.0, 1.0, 0.01, 0.0),
+        slider("opacity", "Opacity", "Points", 0.0, 1.0, 0.01, 1.0),
+        slider("baseGlow", "Scan brightness", "Points", 0.0, 0.2, 0.001, base_glow),
+        slider("waveGain", "Light gain", "Points", 0.0, 8.0, 0.01, 0.5),
+    ];
+    match kind {
+        CloudKind::Pulse => d.extend([
+            select("metric", "Wave travels by", "Waves", METRIC_OPTIONS, "radius"),
+            slider("originX", "Origin X", "Waves", -2.0, 2.0, 0.01, 0.0),
+            slider("originY", "Origin Y", "Waves", -2.0, 2.0, 0.01, 0.0),
+            slider("originZ", "Origin Z", "Waves", -2.0, 2.0, 0.01, 0.0),
+            slider("waveSpeed", "Wave speed", "Waves", 0.02, 8.0, 0.01, 0.75),
+            slider("waveWidth", "Wave width", "Waves", 0.002, 1.0, 0.001, 0.006),
+            slider("wake", "Wake falloff", "Waves", 0.1, 3.0, 0.01, 0.7),
+            slider("maxWaves", "Waves per band", "Waves", 1.0, 8.0, 1.0, 8.0),
+            slider("reach", "Reach", "Waves", 0.2, 20.0, 0.01, 1.2),
+            slider("twinkle", "Twinkle", "Waves", 0.0, 4.0, 0.01, 0.6),
+            slider("displacement", "Ripple", "Waves", 0.0, 0.5, 0.001, 0.012),
+        ]),
+        CloudKind::Flock => d.extend(super::flock::flock_defs()),
+        CloudKind::DepthLights => d.extend(super::depth_lights::depth_light_defs()),
+    }
+    d.extend(look_defs(palettes, palette, [1.0, 0.92, 0.78], [0.16, 0.09, 0.05]));
+    d.extend(post_defs(post));
+    d.extend(audio_defs());
+    d.extend(motion_defs());
+    let mut defs = Defs(d);
+    if kind == CloudKind::Flock {
+        // Kicks scatter the flock: bass hits by default.
+        for def in defs.0.iter_mut().filter(|def| def.key == "hitsFrom") {
+            if let Kind::Select(options, _) = def.kind {
+                def.kind = Kind::Select(options, "bass");
+            }
+        }
+    }
+    defs
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct CloudPulseParams {
     pub accum_scale: f32,
-    /// Which bands launch waves: bit 0 bass, 1 mid, 2 high.
-    pub band_mask: u32,
     /// The PLY to read, and how many of its points (spread over the file).
     pub path: String,
     pub max_points: u32,
@@ -36,8 +122,11 @@ pub struct CloudPulseParams {
     pub width: [f32; 3],
     /// Strength lost per second.
     pub fade: [f32; 3],
+    pub wake: f32,
+    pub max_per_band: usize,
     pub reach: f32,
     pub point_px: f32,
+    pub size_variation: f32,
     pub base_glow: f32,
     pub wave_gain: f32,
     pub exposure: f32,
@@ -45,48 +134,56 @@ pub struct CloudPulseParams {
     pub twinkle: f32,
     pub yaw: f32,
     pub pitch: f32,
+    pub sway: f32,
     pub distance: f32,
     pub fov: f32,
     pub orbit: f32,
     pub target: [f32; 3],
     pub orient: [f32; 3],
+    pub rotate: [f32; 3],
+    pub auto_rotate: [f32; 3],
     pub scale: f32,
+    /// Depth Lights: the level a light needs before it starts to come on.
+    pub light_threshold: f32,
+    pub audio: AudioControls,
+    pub motion: MotionControls,
     pub post: HdrPostSettings,
 }
 
-fn vec3_param(params: &Value, key: &str, fallback: [f32; 3]) -> [f32; 3] {
-    let Some(values) = params.get(key).and_then(Value::as_array) else {
-        return fallback;
-    };
-    let mut out = fallback;
-    for (slot, value) in out.iter_mut().zip(values.iter()) {
-        if let Some(v) = value.as_f64().filter(|v| v.is_finite()) {
-            *slot = (v as f32).clamp(-1000.0, 1000.0);
-        }
-    }
-    out
-}
-
-pub fn normalize_cloud_pulse_params(params: &Value) -> CloudPulseParams {
+pub fn normalize_cloud_params(params: &Value, kind: CloudKind) -> CloudPulseParams {
+    let d = cloud_defs(kind);
+    let n = |key: &str| d.num(params, key);
     let (budget, scale) = quality_from(params, [400_000, 750_000, 1_000_000, 2_000_000]);
-    let metric = match text(params, "metric").as_str() {
-        "depth" => WaveMetric::Depth,
-        "height" => WaveMetric::Height,
-        _ => WaveMetric::Radius,
+    let metric = if kind == CloudKind::Pulse {
+        match d.choice(params, "metric") {
+            "depth" => WaveMetric::Depth,
+            "height" => WaveMetric::Height,
+            _ => WaveMetric::Radius,
+        }
+    } else {
+        WaveMetric::Radius
     };
-    let speed = num(params, "waveSpeed", 0.75).clamp(0.02, 8.0);
-    let width = num(params, "waveWidth", 0.006).clamp(0.002, 1.0);
-    let band_mask = match text(params, "bands").as_str() {
-        "bass" => 1,
-        "mid" => 2,
-        "high" => 4,
-        "bass-mid" => 3,
-        "mid-high" => 6,
-        _ => 7,
+    let pulse = |key: &str, fallback: f32| if kind == CloudKind::Pulse { n(key) } else { fallback };
+    let speed = pulse("waveSpeed", 0.75);
+    let width = pulse("waveWidth", 0.006);
+    // The older array form of the scan orientation still loads.
+    let legacy_orient = params.get("orient").and_then(Value::as_array).map(|v| {
+        let at = |i: usize| v.get(i).and_then(Value::as_f64).unwrap_or(0.0) as f32;
+        [at(0), at(1), at(2)]
+    });
+    let orient_axis = |key: &str, i: usize| {
+        if params.get(key).is_none() && let Some(o) = legacy_orient { o[i].clamp(-180.0, 180.0) } else { n(key) }
     };
+    let mut palette = cloud_palette_by_name(d.choice(params, "palette"));
+    if d.flag(params, "customColors") {
+        let a = d.rgb(params, "colorA");
+        let b = d.rgb(params, "colorB");
+        palette.high = [a[0], a[1], a[2], palette.high[3]];
+        palette.mid = [b[0], b[1], b[2], palette.mid[3]];
+    }
+    let light_threshold = if kind == CloudKind::DepthLights { n("lightThreshold") } else { 0.12 };
     CloudPulseParams {
         accum_scale: scale,
-        band_mask,
         path: params
             .get("path")
             .or_else(|| params.get("plyPath"))
@@ -97,42 +194,59 @@ pub fn normalize_cloud_pulse_params(params: &Value) -> CloudPulseParams {
             .round()
             .clamp(10_000.0, super::ply_reader::CLOUD_MAX_POINTS as f32) as u32,
         metric,
-        palette: cloud_palette_by_name(&text(params, "palette")),
-        origin: vec3_param(params, "origin", [0.0, 0.0, 0.0]),
+        palette,
+        origin: if kind == CloudKind::Pulse { [n("originX"), n("originY"), n("originZ")] } else { [0.0; 3] },
         // Bass rolls slow and wide, highs flick fast and thin.
         speed: [speed * 0.8, speed, speed * 1.35],
         width: [width * 1.6, width, width * 0.55],
         fade: [1.2, 1.6, 2.2],
-        reach: num(params, "reach", 1.2).clamp(0.2, 20.0),
-        point_px: num(params, "pointSize", 1.3).clamp(0.3, 8.0),
-        base_glow: num(params, "baseGlow", 0.003).clamp(0.0, 2.0),
-        wave_gain: num(params, "waveGain", 0.5).clamp(0.0, 8.0),
-        exposure: num(params, "intensity", 1.0).clamp(0.0, 8.0),
-        displacement: num(params, "displacement", 0.012).clamp(0.0, 0.5),
-        twinkle: num(params, "twinkle", 0.6).clamp(0.0, 4.0),
-        yaw: num(params, "yaw", 30.0).to_radians(),
-        pitch: num(params, "pitch", 14.0).clamp(-89.0, 89.0).to_radians(),
-        distance: num(params, "distance", 1.15).clamp(0.05, 50.0),
-        fov: num(params, "fov", 45.0).clamp(10.0, 120.0).to_radians(),
-        orbit: num(params, "orbit", 4.0).clamp(-90.0, 90.0).to_radians(),
-        target: vec3_param(params, "target", [0.0, 0.0, 0.0]),
-        orient: vec3_param(params, "orient", [0.0, 0.0, 0.0]),
-        scale: num(params, "scale", 1.0).clamp(0.01, 100.0),
+        wake: pulse("wake", 0.7),
+        max_per_band: pulse("maxWaves", 8.0).round() as usize,
+        reach: pulse("reach", 1.2),
+        point_px: n("pointSize"),
+        size_variation: n("sizeVariation"),
+        base_glow: n("baseGlow"),
+        wave_gain: n("waveGain"),
+        exposure: n("intensity"),
+        displacement: pulse("displacement", 0.012),
+        twinkle: pulse("twinkle", 0.6),
+        yaw: n("yaw").to_radians(),
+        pitch: n("pitch").to_radians(),
+        sway: n("sway").to_radians(),
+        distance: n("distance"),
+        fov: n("fov").to_radians(),
+        orbit: n("orbit").to_radians(),
+        target: [n("offsetX"), n("offsetY"), n("offsetZ")],
+        orient: [orient_axis("orientX", 0), orient_axis("orientY", 1), orient_axis("orientZ", 2)],
+        rotate: [n("rotateX"), n("rotateY"), n("rotateZ")],
+        auto_rotate: [n("autoRotateX"), n("autoRotateY"), n("autoRotateZ")],
+        scale: n("scale"),
+        light_threshold,
+        audio: AudioControls::read(&d, params),
+        motion: MotionControls::read(&d, params),
         post: HdrPostSettings {
-            decay: num(params, "trails", 0.4).clamp(0.0, 0.97),
-            zoom: 0.0,
-            swirl: 0.0,
+            decay: n("trails"),
+            zoom: n("drift"),
+            swirl: n("swirl"),
             flow: 0.0,
-            bloom_strength: num(params, "bloom", 0.25).clamp(0.0, 4.0),
-            threshold: num(params, "bloomThreshold", 1.5).clamp(0.0, 4.0),
-            split: num(params, "split", 0.0025).clamp(0.0, 0.03),
-            exposure: num(params, "exposure", 1.0).clamp(0.05, 8.0),
+            bloom_strength: n("bloom"),
+            threshold: n("bloomThreshold"),
+            split: n("split"),
+            exposure: n("exposure"),
             vignette: num(params, "vignette", 0.35).clamp(0.0, 1.0),
             dither: 1.0,
             tint: [1.0, 1.0, 1.0],
             burn: num(params, "burn", 0.45).clamp(0.0, 1.0),
+            contrast: n("contrast"),
+            opacity: n("opacity"),
         },
     }
+}
+
+/// Cloud Pulse's params (tests).
+#[cfg(test)]
+pub fn normalize_cloud_pulse_params(params: &Value) -> CloudPulseParams {
+    normalize_cloud_params(params, CloudKind::Pulse)
 }
 
 /// One travelling wave. Explicit life: Travelling until it leaves the cloud
@@ -148,6 +262,8 @@ pub struct Wave {
 pub struct WaveQueue {
     pub waves: Vec<Wave>,
     pub last_seq: u32,
+    /// Live cap per band (0 = MAX_WAVES_PER_BAND).
+    pub max_per_band: usize,
 }
 
 impl WaveQueue {
@@ -155,6 +271,7 @@ impl WaveQueue {
         if !data.active() {
             return;
         }
+        // The audio controls already kept only the chosen bands' hits.
         let mut fresh = data.events_after(self.last_seq, MAX_LAUNCHES_PER_FRAME * 2);
         fresh.retain(|event| band_mask & (1 << event.band as u32) != 0);
         let skip = fresh.len().saturating_sub(MAX_LAUNCHES_PER_FRAME);
@@ -170,7 +287,8 @@ impl WaveQueue {
 
     pub fn launch(&mut self, event: &OnsetEvent, born: f32) {
         let band_count = self.waves.iter().filter(|w| w.band == event.band).count();
-        if band_count >= MAX_WAVES_PER_BAND || self.waves.len() >= MAX_WAVES {
+        let cap = if self.max_per_band == 0 { MAX_WAVES_PER_BAND } else { self.max_per_band.min(MAX_WAVES_PER_BAND) };
+        if band_count >= cap || self.waves.len() >= MAX_WAVES {
             // Drop the oldest of this band (or of all, if the band has none).
             let victim = self
                 .waves
@@ -238,7 +356,8 @@ pub struct OrbitCamera {
 pub fn orbit_camera(params: &CloudPulseParams, time: f32, aspect: f32) -> OrbitCamera {
     let yaw = params.yaw + params.orbit * time;
     let (sy, cy) = yaw.sin_cos();
-    let (sp, cp) = params.pitch.sin_cos();
+    // Sway: the camera drifts slowly up and down.
+    let (sp, cp) = (params.pitch + params.sway * (time * 0.11).sin()).clamp(-1.55, 1.55).sin_cos();
     let t = params.target;
     let eye = [t[0] + params.distance * cp * sy, t[1] + params.distance * sp, t[2] + params.distance * cp * cy];
     let f = norm(sub(t, eye));
@@ -279,7 +398,7 @@ pub fn model_matrix(orient_deg: [f32; 3], scale: f32) -> Mat4 {
 /// (`data: array<vec4<f32>, 24>`): waves for Cloud Pulse, depth slice levels
 /// for Depth Lights, flock forces for Cloud Flock.
 pub const CLOUD_DATA_FLOATS: usize = MAX_WAVES * 4;
-pub const CLOUD_UNIFORM_FLOATS: usize = 32 + 10 * 4 + CLOUD_DATA_FLOATS;
+pub const CLOUD_UNIFORM_FLOATS: usize = 32 + 11 * 4 + CLOUD_DATA_FLOATS;
 
 /// The view half of `CloudU`, shared by every cloud instrument, followed by
 /// the instrument's own block. `audio_w` is the fourth float of the audio
@@ -297,7 +416,10 @@ pub fn cloud_view_uniform(
 ) -> Vec<f32> {
     let aspect = width as f32 / height.max(1) as f32;
     let camera = orbit_camera(params, time, aspect);
-    let model = model_matrix(params.orient, params.scale);
+    // Manual rotation plus auto-rotation, applied after the scan's own
+    // orientation (which fixes its up axis).
+    let turn = [0, 1, 2].map(|i| params.rotate[i] + params.auto_rotate[i] * time);
+    let model = mat_mul(&model_matrix(turn, 1.0), &model_matrix(params.orient, params.scale));
     let mut u = Vec::with_capacity(CLOUD_UNIFORM_FLOATS);
     for column in camera.view_proj.iter().chain(model.iter()) {
         u.extend_from_slice(column);
@@ -315,6 +437,7 @@ pub fn cloud_view_uniform(
     u.extend_from_slice(&p.high);
     u.extend_from_slice(&p.base);
     u.extend_from_slice(&[time, data.header(H_LEVEL), data.header(H_ENV_HIGH), audio_w]);
+    u.extend_from_slice(&[params.size_variation, params.wake, params.light_threshold, 0.0]);
     u.extend_from_slice(&block[..block.len().min(CLOUD_DATA_FLOATS)]);
     u.resize(CLOUD_UNIFORM_FLOATS, 0.0);
     u
@@ -405,7 +528,7 @@ mod tests {
 
     #[test]
     fn camera_puts_the_target_in_the_middle_of_the_frame() {
-        let params = normalize_cloud_pulse_params(&serde_json::json!({ "target": [0.1, 0.2, -0.3] }));
+        let params = normalize_cloud_pulse_params(&serde_json::json!({ "offsetX": 0.1, "offsetY": 0.2, "offsetZ": -0.3 }));
         let camera = orbit_camera(&params, 0.0, 16.0 / 9.0);
         let m = camera.view_proj;
         let p = [0.1_f32, 0.2, -0.3, 1.0];
@@ -422,10 +545,10 @@ mod tests {
         let mut queue = WaveQueue::default();
         queue.launch(&event(1, OnsetBand::High), 0.0);
         let u = cloud_uniform(&params, &queue, &AudioVisualData::default(), 1920, 1080, 500_000, 0.1);
-        // 2 mat4 + 10 vec4 + 24 waves.
-        assert_eq!(u.len(), 32 + 40 + MAX_WAVES * 4);
+        // 2 mat4 + 11 vec4 + 24 waves.
+        assert_eq!(u.len(), 32 + 44 + MAX_WAVES * 4);
         assert_eq!(u[32 + 36 + 3], 1.0, "one wave");
-        assert!(u[32 + 40] > 0.0, "the wave has left the origin");
+        assert!(u[32 + 44] > 0.0, "the wave has left the origin");
     }
 
     #[test]
@@ -434,5 +557,78 @@ mod tests {
         let y = [0.0_f32, 1.0, 0.0, 1.0];
         let out: Vec<f32> = (0..4).map(|r| (0..4).map(|c| m[c][r] * y[c]).sum()).collect();
         assert!(out[1].abs() < 1e-5 && (out[2] - 1.0).abs() < 1e-5);
+    }
+}
+
+/// The CPU state of one cloud instrument layer, whichever it is.
+#[derive(Clone, Debug, Default)]
+pub struct CloudSim {
+    pub waves: WaveQueue,
+    pub flock: super::flock::FlockState,
+    pub slices: super::depth_lights::DepthSlices,
+    /// The instrument's own clock: scaled by Speed, held by Freeze.
+    pub clock: f32,
+    pub shaper: super::controls::AudioShaper,
+}
+
+/// One frame of a cloud instrument on the CPU: clock, shaped audio, the
+/// manual trigger, the instrument's state machine, and the uniform. Pure,
+/// so tests drive it exactly as the job builder does. `dt` is the frame
+/// step (0 on a repeat render).
+#[allow(clippy::too_many_arguments)]
+pub fn step_cloud_frame(
+    sim: &mut CloudSim,
+    kind: CloudKind,
+    params: &CloudPulseParams,
+    raw: &Value,
+    data: &AudioVisualData,
+    dt: f32,
+    width: u32,
+    height: u32,
+    point_count: u32,
+) -> Vec<f32> {
+    let sim_dt = params.motion.sim_dt(dt);
+    sim.clock += sim_dt;
+    let now = sim.clock;
+    let shaped = sim.shaper.shape(data, &params.audio, sim_dt);
+    let fired = sim.shaper.take_trigger(params.audio.trigger);
+    match kind {
+        CloudKind::Pulse => {
+            sim.waves.max_per_band = params.max_per_band;
+            if fired {
+                for band in [OnsetBand::Bass, OnsetBand::Mid, OnsetBand::High] {
+                    sim.waves.launch(&OnsetEvent { time: shaped.time(), band, strength: 1.0, seq: 0 }, now);
+                }
+            }
+            sim.waves.ingest(&shaped, now, params.audio.hits_mask);
+            sim.waves.step(params, now);
+            cloud_uniform(params, &sim.waves, &shaped, width, height, point_count, now)
+        }
+        CloudKind::Flock => {
+            let flock_params = super::flock::normalize_flock_params(raw);
+            if fired {
+                sim.flock.trigger(now, &flock_params);
+            }
+            sim.flock.ingest(&shaped, now, &flock_params);
+            sim.flock.step(now, &flock_params);
+            let block = sim.flock.block(&shaped, now, sim_dt, &flock_params);
+            // The shader reads "displacement" as the speed that reads hot.
+            let mut view = params.clone();
+            view.displacement = flock_params.heat;
+            cloud_view_uniform(&view, &shaped, width, height, point_count, now, 0.0, &block)
+        }
+        CloudKind::DepthLights => {
+            let depth_params = super::depth_lights::normalize_depth_light_params(raw);
+            sim.slices.step(&shaped, sim_dt, &depth_params);
+            if fired {
+                sim.slices.flash();
+            }
+            // The shader reads "twinkle" as the share of points that are lights.
+            let mut view = params.clone();
+            view.twinkle = depth_params.light_share;
+            let reach = 0.6 * params.scale;
+            let block = sim.slices.block(params.distance - reach, params.distance + reach, &depth_params);
+            cloud_view_uniform(&view, &shaped, width, height, point_count, now, 0.0, &block)
+        }
     }
 }

@@ -44,13 +44,13 @@ fn cs_depth(@builtin(global_invocation_id) gid: vec3<u32>) {
   // Only some points are lights; each switches on at its own level, so a
   // slice fills up light by light as its envelope rises.
   let is_light = hash11(ii * 1597334677u + 5u) < C.forward.w;
-  let threshold = 0.12 + pow(hash11(ii * 2654435761u + 17u), 0.5) * 0.86;
+  let threshold = C.look2.z + pow(hash11(ii * 2654435761u + 17u), 0.5) * (0.98 - C.look2.z);
   let on = select(0.0, smoothstep(threshold - 0.03, threshold + 0.03, level), is_light);
   // Slice colour runs between the two tones front to back.
   let tone = mix(C.mid.rgb * C.mid.w, C.high.rgb * C.high.w, s / slices);
   let scan = mix(C.base.rgb, rgba.rgb * C.base.rgb * 2.0, C.base.w) * C.look.x;
   // A lit point is a small, hot pinpoint; an unlit one a dim speck.
-  let size = select(sprite_size(clip.w, 1.0), C.cam.w * info.w, on > 0.01);
+  let size = select(sprite_size(clip.w, 1.0, ii), C.cam.w * info.w, on > 0.01);
   let color = (scan + tone * on * C.look.y) * C.look.z * rgba.a * depth_fade(clip.w);
   sprites[ii] = Sprite(clip, vec4<f32>(color, size));
 }

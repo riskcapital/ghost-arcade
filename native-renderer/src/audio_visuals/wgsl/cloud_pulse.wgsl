@@ -33,7 +33,7 @@ fn cs_pulse(@builtin(global_invocation_id) gid: vec3<u32>) {
     let wave = C.data[w];
     let x = (metric - wave.x) / max(wave.y, 1e-3);
     // A sharp leading edge, then a wake that dies away behind it.
-    let front = select(exp(-x * x * 1.5), exp(x * 0.7) * 0.6 + exp(-x * x * 1.5) * 0.4, x < 0.0);
+    let front = select(exp(-x * x * 1.5), exp(x * C.look2.y) * 0.6 + exp(-x * x * 1.5) * 0.4, x < 0.0);
     let e = front * wave.z;
     // The very front burns toward white, so the wavefront reads as a line.
     let crest = exp(-x * x * 6.0) * wave.z;
@@ -53,5 +53,5 @@ fn cs_pulse(@builtin(global_invocation_id) gid: vec3<u32>) {
     return;
   }
   let color = (scan * C.look.x + light * C.look.y) * C.look.z * rgba.a * depth_fade(clip.w);
-  sprites[ii] = Sprite(clip, vec4<f32>(color, sprite_size(clip.w, 1.0 + min(energy, 3.0) * 0.35)));
+  sprites[ii] = Sprite(clip, vec4<f32>(color, sprite_size(clip.w, 1.0 + min(energy, 3.0) * 0.35, ii)));
 }

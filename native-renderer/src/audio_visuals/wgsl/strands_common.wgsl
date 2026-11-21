@@ -21,6 +21,8 @@ struct StrandsU {
   mid: vec4<f32>,
   fringe: vec4<f32>,
   shape_count: vec4<f32>,
+  view: vec4<f32>,     // cos, sin of the picture's turn, zoom, width variation
+  pan: vec4<f32>,      // offset xy, curl scale, trail segments drawn
   shapes: array<StrandShape, 8>,
 }
 

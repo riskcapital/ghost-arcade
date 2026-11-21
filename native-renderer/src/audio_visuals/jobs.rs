@@ -11,15 +11,15 @@ use crate::{App, NativeGraphFrameJob, NativeGraphLayer, NativeGraphLayerState, S
 
 use std::sync::Arc;
 
-use super::cloud_pulse::{WaveQueue, cloud_uniform, normalize_cloud_pulse_params};
+use super::cloud_pulse::{CloudKind, CloudSim, normalize_cloud_params, step_cloud_frame};
 use super::ply_reader::{CLOUD_POINT_BYTES, CloudLoad};
-use super::cloud_pulse::cloud_view_uniform;
-use super::depth_lights::{DepthSlices, normalize_depth_light_params};
-use super::flock::{FLOCK_POINT_BYTES, FlockState, normalize_flock_params};
+use super::flock::FLOCK_POINT_BYTES;
 use super::shaders::{CLOUD_PULSE_LIGHT, DEPTH_LIGHTS_LIGHT, FLOCK_SIM, SPRITE_DRAW};
 use super::hdr_post::{accumulation_size, buffer_binding, plan_hdr_post, render_plan, uniform_spec};
 use super::shaders::{STRANDS_DRAW, STRANDS_SIM, core_shader};
-use super::strands::{STRANDS_PARTICLE_BYTES, STRANDS_TRAIL_SEGMENTS, ShapeQueue, normalize_strands_params, strands_uniform};
+use super::audio_data::AudioVisualData;
+use super::controls::AudioShaper;
+use super::strands::{STRANDS_PARTICLE_BYTES, STRANDS_TRAIL_SEGMENTS, ShapeQueue, normalize_strands_params, step_strands_frame};
 
 #[derive(Clone, Debug, Default)]
 pub struct StrandsState {
@@ -27,6 +27,9 @@ pub struct StrandsState {
     /// must redraw exactly what that frame drew, trails included.
     pub post_dt: f32,
     pub queue: ShapeQueue,
+    /// The instrument's own clock: scaled by Speed, held by Freeze.
+    pub clock: f32,
+    pub shaper: AudioShaper,
     pub particle_count: u32,
     pub frame: u64,
     pub prev_frame_time: f32,
@@ -56,12 +59,10 @@ impl CloudInstrument {
 /// State of a cloud instrument layer (Cloud Pulse, Cloud Flock, Depth Lights).
 #[derive(Clone, Debug, Default)]
 pub struct CloudPulseState {
-    pub flock: FlockState,
-    pub slices: DepthSlices,
+    pub sim: CloudSim,
     /// The last real frame step. A repeat render of the same frame (dt 0)
     /// must redraw exactly what that frame drew, trails included.
     pub post_dt: f32,
-    pub waves: WaveQueue,
     /// The cloud being read (or read) for this layer.
     pub load: Option<Arc<CloudLoad>>,
     pub frame: u64,
@@ -92,8 +93,8 @@ impl App {
         Ok(NativeComputeGraphRenderTarget::SourceFrame { source_id: source_id.to_string(), slot: output_slot, seq })
     }
 
-    fn audio_visual_buffer(&self, prefix: &str) -> NativeComputeGraphBufferSpec {
-        let bytes = self.audio_visual.gpu_bytes();
+    fn audio_visual_buffer(&self, prefix: &str, data: &AudioVisualData) -> NativeComputeGraphBufferSpec {
+        let bytes = data.gpu_bytes();
         NativeComputeGraphBufferSpec {
             id: format!("{prefix}:audio"),
             byte_length: bytes.len() as u64,
@@ -135,12 +136,13 @@ impl App {
         }
         let post_dt = if dt > 0.0 { dt } else { state.post_dt };
         let (width, height) = accumulation_size(self.pending_width, self.pending_height, params.accum_scale);
-        let aspect = width as f32 / height as f32;
-        state.queue.ingest(&self.audio_visual, time, params.mode, aspect, params.size);
-        state.queue.step(time);
+        let (uniform, shaped) = step_strands_frame(
+            &mut state.queue, &mut state.shaper, &mut state.clock, &params, &self.audio_visual,
+            dt, width, height, state.frame,
+        );
 
         let uniform_id = format!("{prefix}:uniform");
-        let audio = self.audio_visual_buffer(&prefix);
+        let audio = self.audio_visual_buffer(&prefix, &shaped);
         let audio_id = audio.id.clone();
         let mut buffers = vec![
             NativeComputeGraphBufferSpec {
@@ -153,10 +155,7 @@ impl App {
                 clear: reset,
                 indirect: false,
             },
-            uniform_spec(
-                uniform_id.clone(),
-                &strands_uniform(&params, &state.queue, &self.audio_visual, width, height, time, dt, state.frame),
-            ),
+            uniform_spec(uniform_id.clone(), &uniform),
             audio,
         ];
 
@@ -225,21 +224,12 @@ impl App {
         graph_layer: &NativeGraphLayer,
         instrument: CloudInstrument,
     ) -> Result<(NativeGraphLayerState, NativeGraphFrameJob), String> {
-        let mut params = normalize_cloud_pulse_params(&graph_layer.params);
-        // The flock and the lights show the scan itself more than Cloud Pulse
-        // does: the formed flock must read as the subject.
-        if instrument != CloudInstrument::Pulse && graph_layer.params.get("baseGlow").is_none() {
-            params.base_glow = if instrument == CloudInstrument::Flock { 0.012 } else { 0.004 };
-        }
-        // The swarm is crisp grain: no trail smear, no colour split.
-        if instrument == CloudInstrument::Flock {
-            if graph_layer.params.get("trails").is_none() {
-                params.post.decay = 0.0;
-            }
-            if graph_layer.params.get("split").is_none() {
-                params.post.split = 0.0;
-            }
-        }
+        let kind = match instrument {
+            CloudInstrument::Pulse => CloudKind::Pulse,
+            CloudInstrument::Flock => CloudKind::Flock,
+            CloudInstrument::DepthLights => CloudKind::DepthLights,
+        };
+        let params = normalize_cloud_params(&graph_layer.params, kind);
         if params.path.is_empty() {
             return Err(format!("{} needs a point cloud file", instrument.prefix()));
         }
@@ -276,9 +266,7 @@ impl App {
             .is_none_or(|renderer| !renderer.native_compute_graph_buffers.contains_key(&home_id));
         if home_missing {
             // A new cloud, a lost device or an offline render starting.
-            state.waves = WaveQueue::default();
-            state.flock = FlockState::default();
-            state.slices = DepthSlices::default();
+            state.sim = CloudSim::default();
             state.frame = 0;
             state.prev_frame_time = 0.0;
         }
@@ -298,24 +286,15 @@ impl App {
         let sprite_id = format!("{prefix}:sprites:{point_count}");
         let mut extra_buffers = Vec::new();
         let mut grid: Option<(Vec<NativeComputeGraphPassPlan>, String)> = None;
+        let uniform = step_cloud_frame(
+            &mut state.sim, kind, &params, &graph_layer.params, &self.audio_visual, dt, width, height, drawn,
+        );
         // Each instrument's compute pass works out every point once a frame
         // (position, colour, size) into the sprite buffer; the draw only
         // places quads.
-        let (uniform, light_shader, light_entry) = match instrument {
-            CloudInstrument::Pulse => {
-                state.waves.ingest(&self.audio_visual, time, params.band_mask);
-                state.waves.step(&params, time);
-                let u = cloud_uniform(&params, &state.waves, &self.audio_visual, width, height, drawn, time);
-                (u, core_shader(CLOUD_PULSE_LIGHT), "cs_pulse")
-            }
+        let (light_shader, light_entry) = match instrument {
+            CloudInstrument::Pulse => (core_shader(CLOUD_PULSE_LIGHT), "cs_pulse"),
             CloudInstrument::Flock => {
-                let flock_params = normalize_flock_params(&graph_layer.params);
-                state.flock.ingest(&self.audio_visual, time, &flock_params);
-                state.flock.step(time, &flock_params);
-                let block = state.flock.block(&self.audio_visual, time, dt, &flock_params);
-                // The shader reads "displacement" as the speed that reads hot.
-                params.displacement = flock_params.heat;
-                let u = cloud_view_uniform(&params, &self.audio_visual, width, height, drawn, time, 0.0, &block);
                 let flock_missing = self
                     .renderer
                     .as_ref()
@@ -333,20 +312,9 @@ impl App {
                 let (grid_buffer, grid_passes, grid_id) = super::flock::flock_grid_plan(&prefix, &uniform_id, &flock_id, point_count);
                 extra_buffers.push(grid_buffer);
                 grid = Some((grid_passes, grid_id));
-                (u, core_shader(FLOCK_SIM), "cs_flock")
+                (core_shader(FLOCK_SIM), "cs_flock")
             }
-            CloudInstrument::DepthLights => {
-                let depth_params = normalize_depth_light_params(&graph_layer.params);
-                state.slices.step(&self.audio_visual, dt, &depth_params);
-                // Slow drift: the orbit turns, and the camera sways up and down.
-                params.pitch += depth_params.sway.to_radians() * (time * 0.11).sin();
-                // The shader reads "twinkle" as the share of points that are lights.
-                params.twinkle = depth_params.light_share;
-                let reach = 0.6 * params.scale;
-                let block = state.slices.block(params.distance - reach, params.distance + reach, &depth_params);
-                let u = cloud_view_uniform(&params, &self.audio_visual, width, height, drawn, time, 0.0, &block);
-                (u, core_shader(DEPTH_LIGHTS_LIGHT), "cs_depth")
-            }
+            CloudInstrument::DepthLights => (core_shader(DEPTH_LIGHTS_LIGHT), "cs_depth"),
         };
         let mut buffers = vec![
             NativeComputeGraphBufferSpec {

@@ -76,7 +76,7 @@ fn flock_sprite(i: u32, f: FlockPoint, edge: f32) -> Sprite {
   let color = mix(rest_col, hot * 1.2, smoothstep(0.15, 0.9, heat)) * C.look.z * rgba.a * depth_fade(clip.w);
   // Moving points draw finer and fainter each, so the swarm reads as crisp
   // grain with dense bands, not an additive haze.
-  return Sprite(clip, vec4<f32>(color, sprite_size(clip.w, mix(1.0, 0.45, heat))));
+  return Sprite(clip, vec4<f32>(color, sprite_size(clip.w, mix(1.0, 0.45, heat), i)));
 }
 
 @compute @workgroup_size(64)

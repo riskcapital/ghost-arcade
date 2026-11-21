@@ -7,6 +7,7 @@
 #[allow(dead_code)]
 pub mod audio_data;
 pub mod cloud_pulse;
+pub mod controls;
 pub mod depth_lights;
 // CPU reference of `wgsl/emitter.wgsl`; its tests pin what the GPU copy does.
 #[allow(dead_code)]
@@ -18,3 +19,6 @@ pub mod params;
 pub mod ply_reader;
 pub mod shaders;
 pub mod strands;
+
+#[cfg(test)]
+mod param_tests;

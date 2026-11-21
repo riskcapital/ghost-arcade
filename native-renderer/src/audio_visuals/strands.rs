@@ -10,7 +10,10 @@ use serde_json::Value;
 use super::audio_data::{AudioVisualData, H_ENV_BASS, H_ENV_HIGH, H_ENV_MID, H_LEVEL, OnsetBand, OnsetEvent};
 use super::emitter::EmitterKind;
 use super::hdr_post::HdrPostSettings;
-use super::params::{num, text, Palette3, palette_by_name, quality_from};
+use super::controls::{
+    AudioControls, AudioShaper, Defs, MotionControls, PostDefaults, QUALITY_OPTIONS, audio_defs, look_defs, motion_defs, post_defs, select, slider,
+};
+use super::params::{num, Palette3, palette_by_name, quality_from};
 
 /// Particle state, colour and an 8-point trail (`Particle` in strands_common.wgsl).
 pub const STRANDS_PARTICLE_BYTES: u64 = 128;
@@ -39,6 +42,63 @@ pub enum ShapeMode {
     Fixed(EmitterKind, u32),
 }
 
+const STRANDS_PALETTE_OPTIONS: &[(&str, &str)] = &[
+    ("ice-and-oxblood", "Ice and Oxblood"),
+    ("molten-brass", "Molten Brass"),
+    ("verdigris", "Verdigris"),
+    ("violet-hour", "Violet Hour"),
+];
+const SHAPE_OPTIONS: &[(&str, &str)] = &[
+    ("cycle", "Cycle"),
+    ("band", "Follow the band"),
+    ("line", "Line"),
+    ("ring", "Ring"),
+    ("square", "Square"),
+    ("polygon", "Polygon"),
+    ("strata", "Strata"),
+];
+
+/// Every Strands control, as the panel shows it.
+pub fn strands_defs() -> Defs {
+    let mut d = vec![
+        // Camera (2D: the picture turns, zooms and pans).
+        slider("rotateZ", "Rotation", "Camera", -180.0, 180.0, 1.0, 0.0),
+        slider("autoRotateZ", "Auto-rotate (deg/s)", "Camera", -90.0, 90.0, 0.5, 0.0),
+        slider("zoom", "Zoom", "Camera", 0.25, 4.0, 0.01, 1.0),
+        slider("offsetX", "Offset X", "Camera", -1.0, 1.0, 0.01, 0.0),
+        slider("offsetY", "Offset Y", "Camera", -1.0, 1.0, 0.01, 0.0),
+        // Points.
+        select("quality", "Quality", "Points", QUALITY_OPTIONS, "medium").resetting(),
+        slider("width", "Strand width (px)", "Points", 0.4, 4.0, 0.05, 0.6),
+        slider("sizeVariation", "Width variation", "Points", 0.0, 1.0, 0.01, 0.0),
+        slider("opacity", "Opacity", "Points", 0.0, 1.0, 0.01, 1.0),
+        // Strands.
+        select("shape", "Shape", "Strands", SHAPE_OPTIONS, "cycle"),
+        slider("maxShapes", "Shapes on screen", "Strands", 1.0, 8.0, 1.0, 3.0),
+        slider("trail", "Fibre length (segments)", "Strands", 1.0, 8.0, 1.0, 8.0),
+        slider("fray", "Fray", "Strands", 0.0, 8.0, 0.01, 1.0),
+        slider("curl", "Curl scale", "Strands", 0.2, 6.0, 0.01, 1.5),
+        slider("coreShare", "Contour vs strands", "Strands", 0.0, 1.0, 0.01, 0.35),
+        slider("size", "Shape scale", "Strands", 0.2, 2.0, 0.01, 1.0),
+        slider("sides", "Polygon sides", "Strands", 3.0, 12.0, 1.0, 4.0),
+        slider("strataLines", "Strata lines (0 = auto)", "Strands", 0.0, 12.0, 1.0, 0.0),
+        slider("cooldown", "Launch cooldown (s)", "Strands", 0.0, 1.0, 0.01, 0.06),
+        slider("speed", "Strand speed", "Strands", 0.0, 4.0, 0.01, 0.5),
+        slider("drag", "Drag", "Strands", 0.0, 12.0, 0.01, 1.2),
+        slider("displacement", "Spectrum push", "Strands", 0.0, 1.0, 0.005, 0.07),
+        slider("waveform", "Waveform bend", "Strands", 0.0, 2.0, 0.01, 0.6),
+        slider("lifetime", "Lifetime (s)", "Strands", 0.1, 6.0, 0.01, 1.1),
+        slider("fibres", "Fibres", "Strands", 16.0, 20000.0, 1.0, 420.0),
+        slider("cooling", "Cooling", "Strands", 0.0, 12.0, 0.01, 1.5),
+        slider("inward", "Inward share", "Strands", 0.0, 1.0, 0.01, 0.06),
+    ];
+    d.extend(look_defs(STRANDS_PALETTE_OPTIONS, "ice-and-oxblood", [0.85, 0.97, 1.0], [0.55, 0.12, 0.1]));
+    d.extend(post_defs(PostDefaults { bloom: 0.8, threshold: 0.6, trails: 0.86, drift: 0.003, swirl: 0.0006, split: 0.0035 }));
+    d.extend(audio_defs());
+    d.extend(motion_defs());
+    Defs(d)
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct StrandsParams {
     pub particle_count: u32,
@@ -49,7 +109,6 @@ pub struct StrandsParams {
     pub fray: f32,
     pub drag: f32,
     pub displacement: f32,
-    pub streak: f32,
     pub width_px: f32,
     pub brightness: f32,
     pub lifetime: f32,
@@ -63,25 +122,45 @@ pub struct StrandsParams {
     pub core_life: f32,
     /// Share of strands on closed shapes that stream inward.
     pub inward: f32,
+    pub max_shapes: usize,
+    pub trail_segments: f32,
+    pub curl_scale: f32,
+    pub size_variation: f32,
+    pub strata_lines: u32,
+    pub merge_seconds: f32,
+    pub rotate_z: f32,
+    pub auto_rotate_z: f32,
+    pub zoom: f32,
+    pub offset: [f32; 2],
+    pub audio: AudioControls,
+    pub motion: MotionControls,
     pub post: HdrPostSettings,
 }
 
 pub fn normalize_strands_params(params: &Value) -> StrandsParams {
+    let d = strands_defs();
+    let n = |key: &str| d.num(params, key);
     let (count, scale) = quality_from(params, [65_536, 131_072, 262_144, 524_288]);
     let particle_count = num(params, "particleCount", count as f32)
         .round()
         .clamp(STRANDS_MIN_PARTICLES as f32, STRANDS_MAX_PARTICLES as f32) as u32;
-    let sides = num(params, "sides", 4.0).round().clamp(3.0, 12.0) as u32;
-    let mode = match text(params, "shape").as_str() {
+    let sides = n("sides").round() as u32;
+    let mode = match d.choice(params, "shape") {
         "band" => ShapeMode::Band,
         "line" => ShapeMode::Fixed(EmitterKind::Line, 0),
-        "ring" | "circle" => ShapeMode::Fixed(EmitterKind::Ring, 0),
+        "ring" => ShapeMode::Fixed(EmitterKind::Ring, 0),
         "square" => ShapeMode::Fixed(EmitterKind::Polygon, 4),
         "polygon" => ShapeMode::Fixed(EmitterKind::Polygon, sides),
         "strata" => ShapeMode::Fixed(EmitterKind::Strata, 0),
         _ => ShapeMode::Cycle,
     };
-    let palette = palette_by_name(&text(params, "palette"));
+    let mut palette = palette_by_name(d.choice(params, "palette"));
+    if d.flag(params, "customColors") {
+        let a = d.rgb(params, "colorA");
+        let b = d.rgb(params, "colorB");
+        palette.core = [a[0], a[1], a[2], palette.core[3]];
+        palette.fringe = [b[0], b[1], b[2], palette.fringe[3]];
+    }
     // The glow takes the palette's mid tone, half way to white.
     let tint = {
         let m = palette.mid;
@@ -91,41 +170,53 @@ pub fn normalize_strands_params(params: &Value) -> StrandsParams {
     // Brightness is per particle; keep the overall picture steady across
     // particle budgets.
     let density = (particle_count as f32 / 262_144.0).max(0.0625);
-    let trails = num(params, "trails", 0.86).clamp(0.0, 0.97);
     StrandsParams {
         particle_count,
         accum_scale: scale,
         mode,
         palette,
-        speed: num(params, "speed", 0.5).clamp(0.0, 4.0),
-        fray: num(params, "fray", 1.0).clamp(0.0, 8.0),
-        drag: num(params, "drag", 1.2).clamp(0.0, 12.0),
-        displacement: num(params, "displacement", 0.07).clamp(0.0, 1.0),
-        streak: num(params, "streak", 0.03).clamp(0.0, 0.2),
-        width_px: num(params, "width", 0.6).clamp(0.4, 4.0),
-        brightness: num(params, "intensity", 1.0).clamp(0.0, 8.0) * 0.045 / density,
-        lifetime: num(params, "lifetime", 1.1).clamp(0.1, 6.0),
-        fibres: num(params, "fibres", 420.0).clamp(16.0, 20_000.0),
+        speed: n("speed"),
+        fray: n("fray"),
+        drag: n("drag"),
+        displacement: n("displacement"),
+        width_px: n("width"),
+        brightness: n("intensity") * 0.045 / density,
+        lifetime: n("lifetime"),
+        fibres: n("fibres"),
         jitter: num(params, "jitter", 0.05).clamp(0.0, 1.0),
-        cooling: num(params, "cooling", 1.5).clamp(0.0, 12.0),
-        wave_mix: num(params, "waveform", 0.6).clamp(0.0, 2.0),
-        size: num(params, "size", 1.0).clamp(0.2, 2.0),
-        core_share: num(params, "coreShare", 0.35).clamp(0.0, 1.0),
+        cooling: n("cooling"),
+        wave_mix: n("waveform"),
+        size: n("size"),
+        core_share: n("coreShare"),
         core_life: num(params, "coreLife", 0.22).clamp(0.02, 2.0),
-        inward: num(params, "inward", 0.06).clamp(0.0, 1.0),
+        inward: n("inward"),
+        max_shapes: n("maxShapes").round() as usize,
+        trail_segments: n("trail").round(),
+        curl_scale: n("curl"),
+        size_variation: n("sizeVariation"),
+        strata_lines: n("strataLines").round() as u32,
+        merge_seconds: n("cooldown"),
+        rotate_z: n("rotateZ").to_radians(),
+        auto_rotate_z: n("autoRotateZ").to_radians(),
+        zoom: n("zoom"),
+        offset: [n("offsetX"), n("offsetY")],
+        audio: AudioControls::read(&d, params),
+        motion: MotionControls::read(&d, params),
         post: HdrPostSettings {
-            decay: trails,
-            zoom: num(params, "drift", 0.003).clamp(0.0, 0.02),
-            swirl: num(params, "swirl", 0.0006).clamp(-0.02, 0.02),
+            decay: n("trails"),
+            zoom: n("drift"),
+            swirl: n("swirl"),
             flow: num(params, "smear", 0.0004).clamp(0.0, 0.01),
-            bloom_strength: num(params, "bloom", 0.8).clamp(0.0, 4.0),
-            threshold: num(params, "bloomThreshold", 0.6).clamp(0.0, 4.0),
-            split: num(params, "split", 0.0035).clamp(0.0, 0.03),
-            exposure: num(params, "exposure", 1.0).clamp(0.05, 8.0),
+            bloom_strength: n("bloom"),
+            threshold: n("bloomThreshold"),
+            split: n("split"),
+            exposure: n("exposure"),
             vignette: num(params, "vignette", 0.3).clamp(0.0, 1.0),
             dither: 1.0,
             tint,
             burn: num(params, "burn", 0.5).clamp(0.0, 1.0),
+            contrast: n("contrast"),
+            opacity: n("opacity"),
         },
     }
 }
@@ -178,12 +269,28 @@ fn hash01(seed: u32) -> f32 {
     x as f32 / u32::MAX as f32
 }
 
+/// Live limits on how shapes launch and stay (from the params each frame).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShapeRules {
+    pub merge_seconds: f32,
+    /// 0 = a random 4..6 lines.
+    pub strata_lines: u32,
+    pub max_visible: usize,
+}
+
+impl Default for ShapeRules {
+    fn default() -> Self {
+        Self { merge_seconds: MERGE_SECONDS, strata_lines: 0, max_visible: MAX_VISIBLE_SHAPES }
+    }
+}
+
 /// Launched shapes, bounded to `MAX_SHAPES`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ShapeQueue {
     pub shapes: Vec<LaunchedShape>,
     pub last_seq: u32,
     pub launches: u32,
+    pub rules: ShapeRules,
 }
 
 impl ShapeQueue {
@@ -206,7 +313,7 @@ impl ShapeQueue {
 
     pub fn launch(&mut self, event: &OnsetEvent, born: f32, mode: ShapeMode, aspect: f32, size: f32) {
         if let Some(newest) = self.shapes.last_mut()
-            && born - newest.born < MERGE_SECONDS
+            && born - newest.born < self.rules.merge_seconds
         {
             newest.strength = newest.strength.max(event.strength.clamp(0.3, 1.6));
             return;
@@ -243,7 +350,7 @@ impl ShapeQueue {
                 ([jitter(1, 0.05), jitter(2, 0.03)], [radius, radius], 1, tilt)
             }
             EmitterKind::Strata => {
-                let lines = 4 + (r(5) * 3.0) as u32;
+                let lines = if self.rules.strata_lines > 0 { self.rules.strata_lines } else { 4 + (r(5) * 3.0) as u32 };
                 ([jitter(1, 0.04), jitter(2, 0.04)], [aspect * 0.78 * size, 0.42 * size], lines, 0.0)
             }
         };
@@ -290,9 +397,43 @@ impl ShapeQueue {
             ShapePhase::Release { since } => now - since < RELEASE_SECONDS,
             _ => true,
         });
-        let excess = self.shapes.len().saturating_sub(MAX_VISIBLE_SHAPES);
+        let excess = self.shapes.len().saturating_sub(self.rules.max_visible.clamp(1, MAX_SHAPES));
         self.shapes.drain(..excess);
     }
+}
+
+/// One frame of Strands on the CPU: the instrument's clock (scaled, or held
+/// while frozen), the shaped audio, the manual trigger, the shapes, and the
+/// uniform. Pure, so tests drive it exactly as the job builder does.
+#[allow(clippy::too_many_arguments)]
+pub fn step_strands_frame(
+    queue: &mut ShapeQueue,
+    shaper: &mut AudioShaper,
+    clock: &mut f32,
+    params: &StrandsParams,
+    data: &AudioVisualData,
+    dt: f32,
+    width: u32,
+    height: u32,
+    frame: u64,
+) -> (Vec<f32>, AudioVisualData) {
+    let sim_dt = params.motion.sim_dt(dt);
+    *clock += sim_dt;
+    let now = *clock;
+    let shaped = shaper.shape(data, &params.audio, sim_dt);
+    let aspect = width as f32 / height.max(1) as f32;
+    queue.rules = ShapeRules {
+        merge_seconds: params.merge_seconds,
+        strata_lines: params.strata_lines,
+        max_visible: params.max_shapes,
+    };
+    if shaper.take_trigger(params.audio.trigger) {
+        let manual = OnsetEvent { time: shaped.time(), band: OnsetBand::Bass, strength: 1.0, seq: 0 };
+        queue.launch(&manual, now, params.mode, aspect, params.size);
+    }
+    queue.ingest(&shaped, now, params.mode, aspect, params.size);
+    queue.step(now);
+    (strands_uniform(params, queue, &shaped, width, height, now, sim_dt, frame), shaped)
 }
 
 /// The uniform both strands shaders read (`StrandsU`), as floats.
@@ -346,7 +487,7 @@ pub fn strands_uniform(
         width as f32, height as f32, width as f32 / height.max(1) as f32, params.particle_count as f32,
         time, dt, (frame % 16_777_216) as f32, total,
         params.speed, params.fray, params.drag, params.displacement,
-        params.streak, params.width_px, params.brightness, params.lifetime,
+        0.0, params.width_px, params.brightness, params.lifetime,
         params.fibres, params.jitter, params.cooling, params.wave_mix,
         level, data.header(H_ENV_BASS), data.header(H_ENV_MID), data.header(H_ENV_HIGH),
         p.core[0], p.core[1], p.core[2], p.core[3],
@@ -354,6 +495,10 @@ pub fn strands_uniform(
         p.fringe[0], p.fringe[1], p.fringe[2], p.fringe[3],
         live as f32, params.core_share, params.core_life, params.inward,
     ];
+    // The 2D camera: the whole picture turns, zooms and pans.
+    let angle = params.rotate_z + params.auto_rotate_z * time;
+    u.extend_from_slice(&[angle.cos(), angle.sin(), params.zoom, params.size_variation]);
+    u.extend_from_slice(&[params.offset[0], params.offset[1], params.curl_scale, params.trail_segments]);
     u.extend_from_slice(&shapes);
     u
 }
@@ -454,8 +599,8 @@ mod tests {
         let mut queue = ShapeQueue::default();
         queue.launch(&event(1, OnsetBand::Bass), 0.0, ShapeMode::Cycle, 1.78, 1.0);
         let u = strands_uniform(&params, &queue, &AudioVisualData::default(), 1920, 1080, 0.01, 1.0 / 60.0, 1);
-        // 10 vec4 header + 8 shapes x 4 vec4.
-        assert_eq!(u.len(), 10 * 4 + MAX_SHAPES * 16);
+        // 12 vec4 header + 8 shapes x 4 vec4.
+        assert_eq!(u.len(), 12 * 4 + MAX_SHAPES * 16);
         assert_eq!(u[36], 1.0, "one live shape");
         assert!(u[7] > 0.5, "an attacking shape fires the pool");
     }

@@ -35,7 +35,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var pos = pt.p.xy;
     var vel = pt.p.zw;
     let t = pt.q.x / max(pt.q.y, 1e-3);
-    let flow = curl2(pos * 1.5, U.clock.x * 0.3);
+    let flow = curl2(pos * U.pan.z, U.clock.x * 0.3);
     vel += flow * U.motion.y * (0.25 + t * 1.5) * dt;
     vel *= exp(-U.motion.z * dt);
     pos += vel * dt;

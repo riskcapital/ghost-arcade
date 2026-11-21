@@ -14,6 +14,7 @@ struct CloudU {
   high: vec4<f32>,
   base: vec4<f32>,     // base tint rgb, how much the scan's own colour shows
   audio: vec4<f32>,    // time, level, high env, wave count
+  look2: vec4<f32>,    // size variation, wave wake, light threshold, 0
   data: array<vec4<f32>, 24>, // the instrument's own block
 }
 
@@ -55,8 +56,9 @@ fn no_sprite() -> Sprite {
 }
 
 /// Perspective size: nearer points draw larger, within limits.
-fn sprite_size(clip_w: f32, scale: f32) -> f32 {
-  return C.cam.w * clamp(1.6 / clip_w, 0.55, 2.2) * scale;
+fn sprite_size(clip_w: f32, scale: f32, index: u32) -> f32 {
+  let vary = mix(1.0, 0.4 + 1.2 * hash11(index * 2246822519u + 77u), C.look2.x);
+  return C.cam.w * clamp(1.6 / clip_w, 0.55, 2.2) * scale * vary;
 }
 
 fn depth_fade(clip_w: f32) -> f32 {

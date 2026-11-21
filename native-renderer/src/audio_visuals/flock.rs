@@ -5,8 +5,8 @@
 
 use serde_json::Value;
 
-use super::audio_data::{AudioVisualData, H_BASS, OnsetBand};
-use super::params::num;
+use super::audio_data::{AudioVisualData, H_BASS};
+use super::controls::{ParamDef, slider};
 
 pub const FLOCK_POINT_BYTES: u64 = 32;
 
@@ -43,24 +43,48 @@ pub struct FlockParams {
     pub edge_light: f32,
 }
 
+/// Cloud Flock's own controls (cloud_pulse::cloud_defs adds the shared ones).
+pub fn flock_defs() -> Vec<ParamDef> {
+    vec![
+        slider("scatter", "Scatter strength", "Flock", 0.0, 10.0, 0.01, 0.35),
+        slider("cohesion", "Cohesion", "Flock", 0.0, 20.0, 0.01, 1.6),
+        slider("align", "Alignment", "Flock", 0.0, 30.0, 0.1, 3.0),
+        slider("cruise", "Swarm speed", "Flock", 0.0, 5.0, 0.01, 0.45),
+        slider("swarm", "Swarm flow", "Flock", 0.0, 20.0, 0.01, 3.0),
+        slider("flowSpeed", "Flow change speed", "Flock", 0.0, 10.0, 0.01, 0.6),
+        slider("flowScale", "Flow scale", "Flock", 0.1, 40.0, 0.01, 0.6),
+        slider("hold", "Hold before re-form (s)", "Flock", 0.0, 10.0, 0.01, 0.35),
+        slider("reform", "Re-form time (s)", "Flock", 0.05, 20.0, 0.01, 0.9),
+        slider("spring", "Spring", "Flock", 0.0, 200.0, 0.5, 40.0),
+        slider("cooldown", "Scatter cooldown (s)", "Flock", 0.0, 30.0, 0.05, 1.6),
+        slider("banding", "Banding", "Flock", 0.0, 10.0, 0.01, 0.5),
+        slider("separation", "Separation", "Flock", 0.0, 10.0, 0.01, 0.2),
+        slider("edgeLight", "Edge light", "Flock", 0.0, 4.0, 0.01, 1.0),
+        slider("hotSpeed", "Speed that reads hot", "Flock", 0.01, 10.0, 0.01, 1.2),
+        slider("drag", "Drag", "Flock", 0.0, 20.0, 0.01, 3.0),
+    ]
+}
+
 pub fn normalize_flock_params(params: &Value) -> FlockParams {
+    let d = super::cloud_pulse::cloud_defs(super::cloud_pulse::CloudKind::Flock);
+    let n = |key: &str| d.num(params, key);
     FlockParams {
-        scatter: num(params, "scatter", 0.35).clamp(0.0, 10.0),
-        spring: num(params, "spring", 40.0).clamp(0.0, 200.0),
-        hold: num(params, "hold", 0.35).clamp(0.0, 10.0),
-        reform: num(params, "reform", 0.9).clamp(0.05, 20.0),
-        curl: num(params, "swarm", 3.0).clamp(0.0, 20.0),
-        flow_scale: num(params, "flowScale", 0.6).clamp(0.1, 40.0),
-        flow_speed: num(params, "flowSpeed", 0.6).clamp(0.0, 10.0),
-        drag: num(params, "drag", 3.0).clamp(0.0, 20.0),
-        cohesion: num(params, "cohesion", 1.6).clamp(0.0, 20.0),
-        heat: 1.0 / num(params, "hotSpeed", 1.2).clamp(0.01, 10.0),
-        cooldown: num(params, "cooldown", 1.6).clamp(0.0, 30.0),
-        banding: num(params, "banding", 0.5).clamp(0.0, 10.0),
-        align: num(params, "align", 3.0).clamp(0.0, 30.0),
-        cruise: num(params, "cruise", 0.45).clamp(0.0, 5.0),
-        separation: num(params, "separation", 0.2).clamp(0.0, 10.0),
-        edge_light: num(params, "edgeLight", 1.0).clamp(0.0, 4.0),
+        scatter: n("scatter"),
+        spring: n("spring"),
+        hold: n("hold"),
+        reform: n("reform"),
+        curl: n("swarm"),
+        flow_scale: n("flowScale"),
+        flow_speed: n("flowSpeed"),
+        drag: n("drag"),
+        cohesion: n("cohesion"),
+        heat: 1.0 / n("hotSpeed"),
+        cooldown: n("cooldown"),
+        banding: n("banding"),
+        align: n("align"),
+        cruise: n("cruise"),
+        separation: n("separation"),
+        edge_light: n("edgeLight"),
     }
 }
 
@@ -90,6 +114,13 @@ impl Default for FlockState {
 }
 
 impl FlockState {
+    /// A manual hit (the Trigger control): scatter now, cooldown or not.
+    pub fn trigger(&mut self, now: f32, params: &FlockParams) {
+        self.last_scatter = now;
+        self.pending_impulse = (self.pending_impulse + params.scatter).min(params.scatter * 2.5);
+        self.phase = FlockPhase::Scattered { since: now };
+    }
+
     pub fn ingest(&mut self, data: &AudioVisualData, now: f32, params: &FlockParams) {
         // The clock went back (a new render, a new song position): start
         // formed again rather than waiting out a cooldown from the future.
@@ -103,7 +134,8 @@ impl FlockState {
         if let Some(last) = data.event(0) {
             self.last_seq = self.last_seq.max(last.seq);
         }
-        for event in fresh.iter().filter(|e| e.band == OnsetBand::Bass) {
+        // The audio controls choose which bands' hits scatter (bass by default).
+        for event in fresh.iter() {
             if now - self.last_scatter < params.cooldown {
                 continue;
             }

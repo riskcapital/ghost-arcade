@@ -15,9 +15,9 @@ struct PostU {
   finish: vec4<f32>,
   // feedback: decay, outward zoom, swirl, aspect
   feedback: vec4<f32>,
-  // time, flow amount, bloom level count, 0
+  // time, flow amount, bloom level count, contrast
   misc: vec4<f32>,
-  // bloom tint rgb, 0
+  // bloom tint rgb, opacity
   tint: vec4<f32>,
 }
 
@@ -188,9 +188,13 @@ fn fs_composite(in: FullOut) -> @location(0) vec4<f32> {
   let vig = 1.0 - P.finish.x * smoothstep(0.25, 0.95, length(c * vec2<f32>(P.feedback.w, 1.0)) / max(P.feedback.w * 0.5, 0.5));
   hdr *= P.grade.z * vig;
   var ldr = srgb_encode(tone_map(hdr));
+  // Contrast around mid grey; black stays black so the layer keeps its cut.
+  let contrast = max(P.misc.w, 0.01);
+  ldr = clamp((ldr - 0.5) * contrast + 0.5, vec3<f32>(0.0), vec3<f32>(1.0)) * smoothstep(0.0, 0.02, max(max(ldr.r, ldr.g), ldr.b));
   // Triangular dither, one 8-bit step wide, breaks up banding in the glow.
   let n = post_hash(in.position.xy, P.finish.z) + post_hash(in.position.xy + 17.0, P.finish.z) - 1.0;
   ldr = clamp(ldr + n * P.finish.y / 255.0, vec3<f32>(0.0), vec3<f32>(1.0));
-  let alpha = clamp(max(max(ldr.r, ldr.g), ldr.b) * 1.5, 0.0, 1.0);
-  return vec4<f32>(ldr, alpha);
+  let opacity = clamp(P.tint.w, 0.0, 1.0);
+  let alpha = clamp(max(max(ldr.r, ldr.g), ldr.b) * 1.5, 0.0, 1.0) * opacity;
+  return vec4<f32>(ldr * opacity, alpha);
 }

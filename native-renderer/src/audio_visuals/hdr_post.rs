@@ -45,6 +45,10 @@ pub struct HdrPostSettings {
     pub burn: f32,
     /// Colour of the glow (linear rgb).
     pub tint: [f32; 3],
+    /// Contrast around mid grey after the tone map (1 = none).
+    pub contrast: f32,
+    /// Layer opacity.
+    pub opacity: f32,
 }
 
 impl Default for HdrPostSettings {
@@ -62,6 +66,8 @@ impl Default for HdrPostSettings {
             dither: 1.0,
             burn: 0.55,
             tint: [1.0, 1.0, 1.0],
+            contrast: 1.0,
+            opacity: 1.0,
         }
     }
 }
@@ -225,8 +231,8 @@ pub fn plan_hdr_post(
             settings.bloom_strength, settings.split, settings.exposure, settings.threshold,
             settings.vignette, settings.dither, (frame % 4096) as f32, settings.burn,
             decay, zoom, swirl, aspect,
-            time, settings.flow * steps, BLOOM_LEVELS as f32, 0.0,
-            settings.tint[0], settings.tint[1], settings.tint[2], 0.0,
+            time, settings.flow * steps, BLOOM_LEVELS as f32, settings.contrast,
+            settings.tint[0], settings.tint[1], settings.tint[2], settings.opacity,
         ]
     };
     let mut buffers = Vec::new();

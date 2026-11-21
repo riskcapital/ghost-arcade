@@ -131,6 +131,11 @@ impl AudioVisualData {
         self.floats[H_EVENT_SEQ] = event_seq;
     }
 
+    /// The raw packet, for per-instrument shaping (controls.rs).
+    pub fn floats_mut(&mut self) -> &mut [f32] {
+        &mut self.floats
+    }
+
     pub fn header(&self, index: usize) -> f32 {
         self.floats[index]
     }

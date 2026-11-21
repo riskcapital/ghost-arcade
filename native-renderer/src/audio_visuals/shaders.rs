@@ -46,13 +46,13 @@ fn all() -> &'static [CoreShader; 8] {
     SHADERS.get_or_init(|| {
         [
             build(STRANDS_SIM, &[NOISE, EMITTER, AUDIO_DATA, STRANDS_COMMON, STRANDS_SIM_SRC]),
-            build(STRANDS_DRAW, &[STRANDS_COMMON, STRANDS_DRAW_SRC]),
+            build(STRANDS_DRAW, &[NOISE, STRANDS_COMMON, STRANDS_DRAW_SRC]),
             build(CLOUD_PULSE_LIGHT, &[NOISE, CLOUD_COMMON, CLOUD_SRC]),
             build(HDR_POST, &[POST_SRC]),
             build(FLOCK_SIM, &[NOISE, CLOUD_COMMON, FLOCK_COMMON, FLOCK_SIM_SRC]),
-            build(FLOCK_GRID, &[CLOUD_COMMON, FLOCK_COMMON, FLOCK_GRID_SRC]),
+            build(FLOCK_GRID, &[NOISE, CLOUD_COMMON, FLOCK_COMMON, FLOCK_GRID_SRC]),
             build(DEPTH_LIGHTS_LIGHT, &[NOISE, CLOUD_COMMON, DEPTH_SRC]),
-            build(SPRITE_DRAW, &[CLOUD_COMMON, SPRITE_SRC]),
+            build(SPRITE_DRAW, &[NOISE, CLOUD_COMMON, SPRITE_SRC]),
         ]
     })
 }
