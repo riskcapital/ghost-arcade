@@ -56,8 +56,11 @@ const BANDS: ReadonlyArray<{ lo: number; hi: number; minGap: number; floor: numb
 ];
 const SPECTRUM_LO_HZ = 30;
 const SPECTRUM_HI_HZ = 16000;
-/** Flux history per band: about 0.7 s at 60 analyser frames per second. */
-const FLUX_HISTORY = 42;
+/** Flux history per band: the last 0.7 s, whatever the frame rate (a 30 fps
+ *  render must find the same hits as the 60 Hz live analyser). Capacity
+ *  covers 0.7 s at up to 180 frames per second. */
+const FLUX_HISTORY_SECONDS = 0.7;
+const FLUX_HISTORY = 128;
 const THRESHOLD_SIGMAS = 1.6;
 /** Seconds for the loudness followers (spectrum and per-band peaks) to fall
  *  back after a loud passage. */
@@ -102,6 +105,7 @@ const normalizeDb = (db: number) => {
 
 class FluxBand {
   readonly history = new Float32Array(FLUX_HISTORY);
+  readonly times = new Float64Array(FLUX_HISTORY);
   filled = 0;
   head = 0;
   previous = -1;
@@ -114,6 +118,7 @@ class FluxBand {
 
   reset() {
     this.history.fill(0);
+    this.times.fill(0);
     this.filled = 0;
     this.head = 0;
     this.previous = -1;
@@ -127,22 +132,32 @@ class FluxBand {
   step(energy: number, time: number, dt: number, band: (typeof BANDS)[number]): number {
     const flux = this.previous < 0 ? 0 : Math.max(0, energy - this.previous);
     this.previous = energy;
+    // Statistics over the entries still inside the time window.
     let mean = 0;
-    for (let i = 0; i < this.filled; i += 1) mean += this.history[i];
-    mean = this.filled ? mean / this.filled : 0;
+    let used = 0;
+    for (let i = 0; i < this.filled; i += 1) {
+      if (time - this.times[i] > FLUX_HISTORY_SECONDS) continue;
+      mean += this.history[i];
+      used += 1;
+    }
+    mean = used ? mean / used : 0;
     let variance = 0;
-    for (let i = 0; i < this.filled; i += 1) variance += (this.history[i] - mean) ** 2;
-    const sigma = this.filled ? Math.sqrt(variance / this.filled) : 0;
+    for (let i = 0; i < this.filled; i += 1) {
+      if (time - this.times[i] > FLUX_HISTORY_SECONDS) continue;
+      variance += (this.history[i] - mean) ** 2;
+    }
+    const sigma = used ? Math.sqrt(variance / used) : 0;
     this.peak = Math.max(energy, this.peak * Math.exp(-dt / PEAK_RELEASE_SECONDS));
     const floor = band.floor * Math.max(0.15, Math.min(1, this.peak / 0.5));
     const threshold = Math.max(floor, mean + THRESHOLD_SIGMAS * sigma);
     this.history[this.head] = flux;
+    this.times[this.head] = time;
     this.head = (this.head + 1) % FLUX_HISTORY;
     this.filled = Math.min(FLUX_HISTORY, this.filled + 1);
     this.envelope *= Math.exp(-dt / band.decay);
     const target = Math.max(0, Math.min(1, (energy - 0.15) / 0.6));
     this.level += (target - this.level) * (target > this.level ? 0.5 : 0.08);
-    if (this.filled < 8 || flux <= threshold || time - this.lastOnset < band.minGap) return 0;
+    if (used < 4 || flux <= threshold || time - this.lastOnset < band.minGap) return 0;
     this.lastOnset = time;
     const strength = Math.max(0.3, Math.min(1.6, flux / (threshold * 1.5)));
     this.envelope = Math.max(this.envelope, Math.min(1, strength));

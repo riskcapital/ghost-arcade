@@ -84,6 +84,20 @@ describe('audio visual packer', () => {
     expect(packet[AV_H.envHigh]).toBe(0);
   });
 
+  it('finds the same hit at 30 fps as at 60 fps', () => {
+    const packer = createAudioVisualPacker({ sampleRate: SR });
+    let packet: Float32Array | null = null;
+    // A loud start (the kind of jump that used to sit in the history for
+    // twice as long at 30 fps), then quiet, then a kick at 1 s.
+    for (let f = 0; f < 45; f += 1) {
+      const t = f / 30;
+      const frameData = f < 3 ? frame(-30) : f === 30 ? frame(-60, 35, 30, 160) : frame(-60);
+      packet = packer.pack(frameData, t);
+    }
+    const bass = events(packet!).filter((hit) => hit.band === 0);
+    expect(bass.some((hit) => Math.abs(hit.time - 1) < 1e-6)).toBe(true);
+  });
+
   it('is deterministic for the same frames and times (offline render)', () => {
     const a = runKick();
     const b = runKick();
