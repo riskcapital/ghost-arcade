@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { rpcDeadlineScale } from '../renderer/nativeHardwareTestPlatform';
 import type { Layer } from '../types';
 import { layerRenderMeshGrid } from '../utils/meshWarp';
-import { perspectiveMeshLayer, phoneMeshLayer, type PhoneMesh } from './mobileMeshImport';
+import { phoneMeshLayer, type PhoneMesh } from './mobileMeshImport';
 
 /**
  * A curved surface measured by the phone (LiDAR + stripes) on the native
@@ -201,36 +201,43 @@ describe('a curved surface from the phone on the native core', () => {
 });
 
 describe('a flat face from the phone on the native core', () => {
-  itIfNativeCore('puts the inside of a slanted face where its perspective does, not where a bilinear warp would', async () => {
+  itIfNativeCore('pins a checker on a slanted quad with four corners: straight lines, a true perspective inside', async () => {
     const rpc = createNativeRpc();
-    // A strongly slanted face in the projector picture, and the true perspective onto it.
+    // A strongly slanted face in the projector picture (top-left origin), and the true perspective onto it.
     const quad = [{ x: 0.2, y: 0.15 }, { x: 0.85, y: 0.25 }, { x: 0.8, y: 0.9 }, { x: 0.3, y: 0.6 }];
     const a: number[][] = [];
     [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }].forEach((p, i) => { const q = quad[i]; a.push([p.x, p.y, 1, 0, 0, 0, -q.x * p.x, -q.x * p.y, q.x], [0, 0, 0, p.x, p.y, 1, -q.y * p.x, -q.y * p.y, q.y]); });
     for (let c = 0; c < 8; c++) { let k = c; for (let r = c + 1; r < 8; r++) if (Math.abs(a[r][c]) > Math.abs(a[k][c])) k = r; [a[c], a[k]] = [a[k], a[c]]; const d = a[c][c]; for (let m = c; m < 9; m++) a[c][m] /= d; for (let r = 0; r < 8; r++) if (r !== c) { const f = a[r][c]; for (let m = c; m < 9; m++) a[r][m] -= f * a[c][m]; } }
     const h = [...a.map(r => r[8]), 1];
     const P = (u: number, v: number) => { const w = h[6] * u + h[7] * v + 1; return { x: (h[0] * u + h[1] * v + h[2]) / w, y: (h[3] * u + h[4] * v + h[5]) / w }; };
+    const B = (u: number, v: number) => ({ x: quad[0].x * (1 - u) * (1 - v) + quad[1].x * u * (1 - v) + quad[2].x * u * v + quad[3].x * (1 - u) * v, y: quad[0].y * (1 - u) * (1 - v) + quad[1].y * u * (1 - v) + quad[2].y * u * v + quad[3].y * (1 - u) * v });
     try {
       const started = await rpc.send('start', { config: { backend: nativeBackend, width: SIZE, height: SIZE, source_frame_size: SOURCE, target_fps: 30 } }, 20000);
       expect(started?.backend_ready).toBe(true);
       await rpc.send('submit_commands', { commands: [{ type: 'upload_source_frame', source_id: 'flat-src', width: SOURCE, height: SOURCE, seq: 1, rgba_b64: gradientFrame() }] });
-      const fields = perspectiveMeshLayer(quad, { x: 0, y: 0, w: 1, h: 1 })!;
-      const layer: Layer = { ...createLayer('phone', 'Surface 1 (mapped)', 'media'), warpMode: 'mesh', ...fields, contentFit: 'fill' };
+      const up = (p: { x: number; y: number }) => ({ x: p.x, y: 1 - p.y });
+      const layer: Layer = { ...createLayer('phone', 'Surface 1 (mapped)', 'media'), warpMode: 'corners', corners: { topLeft: up(quad[0]), topRight: up(quad[1]), bottomRight: up(quad[2]), bottomLeft: up(quad[3]) }, cornerPerspective: true, contentFit: 'fill' };
       const shape = nativeLayerShapeState(layer);
       await rpc.send('submit_commands', { commands: [
-        { type: 'upsert_layer', layer_id: layer.id, opacity: 1, z_index: 0, corners: layer.corners, shape: shape.shape, shape2: shape.shape2, shape_meta: shape.shapeMeta, shape_points: shape.shapePoints, mesh_grid: layerRenderMeshGrid(layer) },
+        { type: 'upsert_layer', layer_id: layer.id, opacity: 1, z_index: 0, corners: layer.corners, corner_perspective: true, shape: shape.shape, shape2: shape.shape2, shape_meta: shape.shapeMeta, shape_points: shape.shapePoints },
         { type: 'bind_media_source', layer_id: layer.id, source_id: 'flat-src', source_type: 'image', uri: 'memory://flat-src' },
         { type: 'present' },
       ] });
       await expect.poll(async () => { const s = await snapshot(rpc); return pixel(s, P(0.5, 0.5), s.blue); }, { timeout: 5000 * rpcDeadlineScale, interval: 30, message: 'the layer must show' }).toBeGreaterThan(100);
       const shot = await snapshot(rpc);
+      // Content lands where the perspective puts it, not where the bilinear map would (they differ by many pixels here).
       for (const [u, v] of [[0.5, 0.5], [0.25, 0.25], [0.75, 0.3], [0.7, 0.75], [0.3, 0.7]]) {
-        const p = P(u, v);
+        const p = P(u, v), b = B(u, v);
+        expect(Math.hypot((p.x - b.x) * SIZE, (p.y - b.y) * SIZE)).toBeGreaterThan(2);
         expect(Math.abs(pixel(shot, p, shot.red) - u * 255), `red at content ${u},${v}`).toBeLessThan(10);
         expect(Math.abs(pixel(shot, p, shot.green) - v * 255), `green at content ${u},${v}`).toBeLessThan(10);
       }
-      // Outside the face: nothing.
+      // A straight line of content (u = 0.5) stays straight: sampled along it, red holds at the middle.
+      for (const v of [0.1, 0.3, 0.6, 0.9]) expect(Math.abs(pixel(shot, P(0.5, v), shot.red) - 128), `u = 0.5 at v ${v}`).toBeLessThan(10);
+      // Outside the face: nothing, and the edge is clean (just outside a side, nothing).
       expect(pixel(shot, { x: 0.05, y: 0.95 }, shot.blue)).toBeLessThan(20);
+      const mid = P(0.5, 0), out = { x: mid.x, y: mid.y - 3 / SIZE };
+      expect(pixel(shot, out, shot.blue), 'just outside the top side').toBeLessThan(20);
     } finally { await rpc.close(); }
   }, 60000);
 });

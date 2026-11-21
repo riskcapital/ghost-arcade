@@ -108,7 +108,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   // Error reporting
   'report_error',
   // Debug log forwarding to main-process log file
-  'debug_log', 'open_log_folder',
+  'debug_log', 'open_log_folder', 'save_automap_diagnostics',
   // Director AI agent streaming
   'http_fetch_stream',
   // License machine ID

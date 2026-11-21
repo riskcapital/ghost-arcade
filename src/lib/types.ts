@@ -3203,6 +3203,8 @@ export interface Layer {
   // Warping
   warpMode: WarpMode;
   corners: WarpCorners;
+  /** The corner pin is a true perspective (homography), not the bilinear map: set for flat faces the phone measured. Absent = bilinear, as every older corner warp. */
+  cornerPerspective?: boolean;
   meshGrid: MeshWarpGrid | null;
 
   // Mask (click-point polygon mask)

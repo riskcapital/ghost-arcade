@@ -612,6 +612,34 @@ fn quad_local_uv(p: vec2<f32>, tl: vec2<f32>, tr: vec2<f32>, br: vec2<f32>, bl: 
   return vec3<f32>(0.0);
 }
 
+// A perspective corner pin: the homography taking the unit square to the
+// quad (tl, tr, br, bl), inverted at p. A flat face seen at a slant lands
+// exactly, straight lines stay straight, and nothing is meshed.
+fn quad_local_uv_perspective(p: vec2<f32>, tl: vec2<f32>, tr: vec2<f32>, br: vec2<f32>, bl: vec2<f32>) -> vec3<f32> {
+  // Square -> quad (Heckbert): x = (a u + b v + c) / (g u + h v + 1), likewise y.
+  let s = tl - tr + br - bl;
+  let d1 = tr - br;
+  let d2 = bl - br;
+  let den = cross2(d1, d2);
+  if (abs(den) < 1e-12) { return quad_local_uv(p, tl, tr, br, bl); }
+  let g = cross2(s, d2) / den;
+  let h = cross2(d1, s) / den;
+  let m = mat3x3<f32>(
+    vec3<f32>(tr.x - tl.x + g * tr.x, tr.y - tl.y + g * tr.y, g),
+    vec3<f32>(bl.x - tl.x + h * bl.x, bl.y - tl.y + h * bl.y, h),
+    vec3<f32>(tl.x, tl.y, 1.0));
+  // Invert by the adjugate (scale does not matter for a projective map).
+  let c0 = m[0]; let c1 = m[1]; let c2 = m[2];
+  let r0 = cross(c1, c2); let r1 = cross(c2, c0); let r2 = cross(c0, c1);
+  let q = vec3<f32>(dot(r0, vec3<f32>(p, 1.0)), dot(r1, vec3<f32>(p, 1.0)), dot(r2, vec3<f32>(p, 1.0)));
+  if (abs(q.z) < 1e-12) { return vec3<f32>(0.0); }
+  let uv = q.xy / q.z;
+  if (all(uv >= vec2<f32>(-0.0005)) && all(uv <= vec2<f32>(1.0005))) {
+    return vec3<f32>(1.0, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)));
+  }
+  return vec3<f32>(0.0);
+}
+
 // A Bezier layer mesh can bulge past its corner quad, so its pixels are
 // bounded by the surface's reach (mesh_bounds) instead. The corner pin is
 // the bilinear map of the quad, continued outward: this inverts it on that
@@ -4075,7 +4103,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     if (layers[layer_index].style.x >= 25.5 && layers[layer_index].style.x < 26.5) {
       let mask_enabled = layers[layer_index].mask_info.x > 0.5 && layers[layer_index].mask_info.w >= 2.5;
       if (mask_enabled) {
-        let mask_local = quad_local_uv(layer_uv, tl, tr, br, bl);
+        let mask_local = select(quad_local_uv(layer_uv, tl, tr, br, bl), quad_local_uv_perspective(layer_uv, tl, tr, br, bl), (layers[layer_index].fast_flags.w & 2u) != 0u);
         var coverage = select(0.0, 1.0, layers[layer_index].mask_info.y > 0.5);
         if (mask_local.x > 0.5) {
           coverage = native_polygon_mask(mask_local.yz, layer_index);
@@ -4133,6 +4161,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
       var local: vec3<f32>;
       if (bezier_mesh) {
         local = quad_local_uv_reach(layer_uv, tl, tr, br, bl, layers[layer_index].mesh_bounds);
+      } else if ((layers[layer_index].fast_flags.w & 2u) != 0u) {
+        local = quad_local_uv_perspective(layer_uv, tl, tr, br, bl);
       } else {
         local = quad_local_uv(layer_uv, tl, tr, br, bl);
       }

@@ -9759,6 +9759,35 @@ function registerIpcHandlers() {
     return true;
   });
 
+  // A phone's auto-map run, for debugging real scans: its photos, decode and
+  // faces as the phone sent them, plus the overlay and verification photos.
+  // Written to userData/diagnostics/automap/<stamp>/ (plain names only), with
+  // a one-line summary in the debug log.
+  ipcMain.handle('save_automap_diagnostics', (_e, args) => {
+    try {
+      const stamp = String(args?.stamp ?? '');
+      if (!/^[\w.-]{1,80}$/.test(stamp)) return { success: false, error: 'Invalid run name' };
+      const dir = path.join(app.getPath('userData'), 'diagnostics', 'automap', stamp);
+      fs.mkdirSync(dir, { recursive: true });
+      const written = [];
+      let total = 0;
+      for (const [name, value] of Object.entries(args?.files ?? {})) {
+        if (!/^[\w.-]{1,64}\.(json|jpg|png|txt)$/.test(name) || typeof value !== 'string') continue;
+        // Images arrive as data URLs; everything else as text.
+        const match = /^data:image\/(jpeg|png);base64,([A-Za-z0-9+/=]+)$/.exec(value);
+        const body = match ? Buffer.from(match[2], 'base64') : Buffer.from(value, 'utf8');
+        total += body.length;
+        if (total > 80 * 1024 * 1024) break;
+        fs.writeFileSync(path.join(dir, name), body);
+        written.push(name);
+      }
+      if (typeof args?.summary === 'string') fs.appendFileSync(_logFile, `[AUTOMAP] ${new Date().toISOString()} ${args.summary.slice(0, 2000)} -> ${dir} (${written.join(', ')})\n`);
+      return { success: true, path: dir, files: written };
+    } catch (err) {
+      return { success: false, error: err?.message || String(err) };
+    }
+  });
+
   // Help and the render-core error both offer the log: show the folder with
   // the current log selected, so the user can attach it to a report.
   ipcMain.handle('open_log_folder', async () => {

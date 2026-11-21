@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { perspectiveMeshLayer, phoneMeshLayer, type PhoneMesh } from './mobileMeshImport';
+import { phoneMeshLayer, type PhoneMesh } from './mobileMeshImport';
 import { evaluateMeshGrid } from '../utils/meshWarp';
 
 // Where content (u, v: the layer's picture, top-left origin) lands in the projector picture
@@ -78,38 +78,3 @@ describe('a curved surface from the phone', () => {
   });
 });
 
-describe('a flat face from the phone', () => {
-  // A slanted box top as the projector sees it (pixels at 1080p): a strong trapezoid.
-  const W = 1920, H = 1080;
-  const quad = [{ x: 1085, y: 169 }, { x: 1481, y: 222 }, { x: 1425, y: 747 }, { x: 1072, y: 675 }].map(p => ({ x: p.x / W, y: p.y / H }));
-  /** The true perspective: content (u, v) -> projector, normalised. */
-  const truth = (() => {
-    const s = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }];
-    const a: number[][] = [];
-    s.forEach((p, i) => { const q = quad[i]; a.push([p.x, p.y, 1, 0, 0, 0, -q.x * p.x, -q.x * p.y, q.x], [0, 0, 0, p.x, p.y, 1, -q.y * p.x, -q.y * p.y, q.y]); });
-    for (let c = 0; c < 8; c++) { let p = c; for (let r = c + 1; r < 8; r++) if (Math.abs(a[r][c]) > Math.abs(a[p][c])) p = r; [a[c], a[p]] = [a[p], a[c]]; const d = a[c][c]; for (let k = c; k < 9; k++) a[c][k] /= d; for (let r = 0; r < 8; r++) if (r !== c) { const f = a[r][c]; for (let k = c; k < 9; k++) a[r][k] -= f * a[c][k]; } }
-    const h = [...a.map(r => r[8]), 1];
-    return (u: number, v: number) => { const w = h[6] * u + h[7] * v + 1; return { x: (h[0] * u + h[1] * v + h[2]) / w, y: (h[3] * u + h[4] * v + h[5]) / w }; };
-  })();
-  const worst = (at: (u: number, v: number) => { x: number; y: number }) => {
-    let e = 0;
-    for (let a = 0; a <= 16; a++) for (let b = 0; b <= 16; b++) { const t = truth(a / 16, b / 16), g = at(a / 16, b / 16); e = Math.max(e, Math.hypot((g.x - t.x) * W, (g.y - t.y) * H)); }
-    return e;
-  };
-
-  it('lands the inside of the face where the perspective puts it, not just its corners', () => {
-    const layer = perspectiveMeshLayer(quad, crop)!;
-    expect(layer).not.toBeNull();
-    const meshed = worst((u, v) => { const p = evaluateMeshGrid(layer.meshGrid, u, 1 - v); return { x: p.x, y: 1 - p.y }; });
-    // What the four-corner (bilinear) warp did before.
-    const bilinear = worst((u, v) => ({ x: quad[0].x * (1 - u) * (1 - v) + quad[1].x * u * (1 - v) + quad[2].x * u * v + quad[3].x * (1 - u) * v, y: quad[0].y * (1 - u) * (1 - v) + quad[1].y * u * (1 - v) + quad[2].y * u * v + quad[3].y * (1 - u) * v }));
-    expect(bilinear).toBeGreaterThan(10);
-    expect(meshed).toBeLessThan(0.5);
-    // Corners exactly where the phone measured them.
-    expect(layer.meshGrid.points[0][0]).toEqual({ x: quad[0].x, y: 1 - quad[0].y });
-  });
-
-  it('declines a crossed quad', () => {
-    expect(perspectiveMeshLayer([quad[0], quad[2], quad[1], quad[3]], crop)).toBeNull();
-  });
-});

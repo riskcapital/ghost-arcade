@@ -31,7 +31,7 @@ const {
   pairingTokenMatches,
   presentedPairingToken,
 } = require('./pairing.cjs');
-const { HOST_MESSAGES, authorizedHost, permittedSource, scanMessageAllowed, scanMessageEnds, depthMessageAllowed, depthMessageEnds, describeClient } = require('./remote-access.cjs');
+const { HOST_MESSAGES, authorizedHost, permittedSource, scanMessageAllowed, scanMessageEnds, depthMessageAllowed, depthMessageEnds, diagnosticsMessageAllowed, describeClient } = require('./remote-access.cjs');
 const { writeFileAtomicSync } = require('../electron/atomic-write.cjs');
 
 // Shader library directory - in packaged Electron, extraResources land in resources/
@@ -1006,6 +1006,11 @@ function handleMessage(sender, msg) {
       break;
     // Auto-map: one phone asks the desktop to show stripe frames on a Screen
     // while it photographs them; only that phone gets the answers.
+    // One auto-map run's diagnostics, phone to desktop only, in chunks.
+    case 'studio_automap_diagnostics':
+      if (sender === desktopClient || !diagnosticsMessageAllowed(msg)) break;
+      sendDesktop({ ...msg, from: studioPeerId(sender, msg) });
+      break;
     case 'studio_automap_request':
     case 'studio_automap_reply':
       relayPrivate(sender, msg, 'automap', msg.requestId, msg.type === 'studio_automap_request');
