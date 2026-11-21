@@ -654,8 +654,8 @@ function sendNote(i: number, n: RecordedNote, at: number, timeAt: (b: number) =>
   const t = track(i);
   const instrument = t.instrument ?? 'synth';
   const offBeat = rt.stopAt === null ? at + n.dur : Math.min(at + n.dur, rt.stopAt);
-  host!.send(withTone(noteOn(instrument, n.note, n.velocity * (0.25 + 0.75 * t.level), 'sequencer', timeAt(at)), t.tone));
-  host!.send(withTone(noteOff(instrument, n.note, 'sequencer', timeAt(offBeat)), t.tone));
+  host!.send({ ...withTone(noteOn(instrument, n.note, n.velocity * (0.25 + 0.75 * t.level), 'sequencer', timeAt(at)), t.tone), loopTrack: i });
+  host!.send({ ...withTone(noteOff(instrument, n.note, 'sequencer', timeAt(offBeat)), t.tone), loopTrack: i });
   rt.pendingOffs.push({ note: n.note, offBeat, instrument, tone: t.tone });
 }
 
@@ -724,7 +724,7 @@ export function suggestedLoopName(i: number): string {
   const t = track(i);
   const s = get(musicStudio);
   const bars = isAudio(i) ? host?.audioTracks()?.bars(i) ?? 0 : Math.round(t.beats / BEATS_PER_BAR);
-  const label = t.name || (isAudio(i) ? `Audio ${i + 1}` : INSTRUMENT_LABELS[t.instrument ?? s.instrument]);
+  const label = t.name.split(' · ')[0] || (isAudio(i) ? `Audio ${i + 1}` : INSTRUMENT_LABELS[t.instrument ?? s.instrument]);
   return autoLoopName(label, Math.max(1, bars), launchClockTempo(), isAudio(i) ? null : s.key);
 }
 

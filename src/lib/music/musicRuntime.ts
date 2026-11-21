@@ -117,7 +117,7 @@ import { soundById } from './sounds/library';
 import { KeyFinder, type KeyGuess } from './keyFinder';
 import { attachLooper, killLooper, stopLooper } from './looperRuntime';
 import { attachLoopStation, killLoopStation, scheduleStation, stationBusy, stationOldestBeat, stopAllLoopTracks } from './loopStation';
-import { audioLoopTracksFor } from './audioLoopEngine';
+import { audioLoopTracksFor, existingAudioLoopTracks } from './audioLoopEngine';
 import { registerLoopControls } from './loopControls';
 import type { AnySourceId, LiveSourceId, VoiceSourceId } from './visualVoices';
 import { BandFxVisuals } from './bandFxVisuals';
@@ -125,7 +125,7 @@ import { BandFxVisuals } from './bandFxVisuals';
 import './studioMidiControls';
 import { analysisFromAnalyser, setVoiceSourceAudioFeed } from '../audio/voiceSourceAudio';
 import { getLastRawAnalysis } from '../stores/audio';
-import { isLiveSource as isLiveVoiceSource } from './visualVoices';
+import { isLiveSource as isLiveVoiceSource, loopTrackSource } from './visualVoices';
 import {
   ACID_STEPS,
   bowlNotes,
@@ -187,7 +187,8 @@ function send(event: NoteEvent): void {
 noteBus.subscribe((event) => {
   audio.play(event);
   visuals.push(event);
-  voices.push(event, sourcesForEvent(event, sourceContext()));
+  const heard = sourcesForEvent(event, sourceContext());
+  voices.push(event, event.loopTrack === undefined ? heard : [...heard, loopTrackSource(event.loopTrack)]);
   recorder.capture(event);
   trackPlayed(event);
   showInPanel(event);
@@ -1937,6 +1938,11 @@ function ensureScheduler(): void {
   tick();
 }
 
+/** The audio loop tracks when they exist (never created by the frame loop). */
+function audioLoopTracksForFrame() {
+  return audio.peekNow() === null ? null : existingAudioLoopTracks(audio);
+}
+
 function ensureFrameLoop(): void {
   if (frameHandle !== null || typeof requestAnimationFrame === 'undefined') return;
   frameHandle = requestAnimationFrame(frame);
@@ -1960,6 +1966,8 @@ function frame(): void {
     routeControlCables();
     syncMacroFx();
     publishTransport(now);
+    const loopAudio = audioLoopTracksForFrame();
+    if (loopAudio) for (let i = 0; i < 6; i++) { const level = loopAudio.levelOf(i); if (level !== null) voices.setLevel(loopTrackSource(i), level); }
     if (loopRec) publishLoopRec(launchClockPosition().beat);
   } else if (studioHostsLive() > 0) {
     // No audio yet (the studio has not been opened this session): a studio

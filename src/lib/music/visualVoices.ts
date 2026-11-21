@@ -83,6 +83,17 @@ export const LIVE_DRUMS: readonly { id: LiveDrum; label: string }[] = [
 export function liveSource(track: string, drum?: LiveDrum): LiveSourceId {
   return `live:${track}${drum ? `/${drum}` : ''}`;
 }
+/** The source a visual follows for a live-looper track: a Live-style source of its own, so voices keep it like a Live track. */
+export function loopTrackSource(index: number): LiveSourceId {
+  return `live:Looper ${index + 1}`;
+}
+
+/** The live-looper track a source follows, or -1. */
+export function loopTrackOfSource(id: unknown): number {
+  const m = typeof id === 'string' ? /^live:Looper ([1-6])$/.exec(id) : null;
+  return m ? Number(m[1]) - 1 : -1;
+}
+
 export function isLiveSource(id: unknown): id is LiveSourceId {
   return typeof id === 'string' && id.startsWith('live:') && id.length > 5;
 }

@@ -68,6 +68,7 @@ interface Voice extends Faded {
 }
 
 interface Track {
+  meter: AnalyserNode;
   state: AudioTrackState;
   level: GainNode;
   /** The loop: its layers (each the loop's length) and their sum. */
@@ -129,7 +130,10 @@ export class AudioLoopEngine implements AudioLoopTracks {
       const level = ctx.createGain();
       level.gain.value = 0.8;
       level.connect(out);
-      return { state: 'empty', level, layers: [], redo: [], cleared: null, mix: null, buffer: null, bars: 0, originBeat: 0, beatMs: 500, voice: null, dubbing: false };
+      const meter = ctx.createAnalyser();
+      meter.fftSize = 512;
+      level.connect(meter);
+      return { meter, state: 'empty', level, layers: [], redo: [], cleared: null, mix: null, buffer: null, bars: 0, originBeat: 0, beatMs: 500, voice: null, dubbing: false };
     });
     void this.ensureCapture();
   }
@@ -155,6 +159,18 @@ export class AudioLoopEngine implements AudioLoopTracks {
   }
 
   // ── AudioLoopTracks ──
+
+  private meterBuf = new Float32Array(512);
+
+  /** How loud a playing audio track is now, 0–1 (for the visuals following it); null when silent. */
+  levelOf(i: number): number | null {
+    const t = this.tracks[i];
+    if (!t?.voice) return null;
+    t.meter.getFloatTimeDomainData(this.meterBuf);
+    let sum = 0;
+    for (let k = 0; k < this.meterBuf.length; k++) sum += this.meterBuf[k] * this.meterBuf[k];
+    return Math.min(1, Math.sqrt(sum / this.meterBuf.length) * 3);
+  }
 
   latencyMs(): number {
     return (this.latencyFrames() / this.ctx.sampleRate) * 1000;
@@ -780,6 +796,11 @@ function sum(a: Stereo, b: Stereo): Stereo {
   const out: Stereo = [new Float32Array(a[0]), new Float32Array(a[1])];
   for (let c = 0; c < 2; c++) for (let f = 0; f < out[c].length; f++) out[c][f] += b[c][f] ?? 0;
   return out;
+}
+
+/** The audio loop tracks if they were made already (the frame loop never makes them). */
+export function existingAudioLoopTracks(audio: MusicAudioEngine): AudioLoopEngine | null {
+  return engines.get(audio) ?? null;
 }
 
 const engines = new WeakMap<MusicAudioEngine, AudioLoopEngine>();

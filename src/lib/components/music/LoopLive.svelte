@@ -29,6 +29,20 @@
   import { showToast } from '../../stores/errorToast';
   import { generateUUID } from '../../utils/uuid';
   import LoopTrackButton from './LoopTrackButton.svelte';
+  import { setStudioVoice, studioTarget } from '../../music/studioTarget';
+  import { loopTrackSource } from '../../music/visualVoices';
+
+  const voices = $derived($studioTarget?.source.musicVoices ?? []);
+  /** The visual voice following loop track `i`, or -1. */
+  const voiceFor = (i: number) => voices.findIndex((v) => v.live === loopTrackSource(i));
+  const voiceName = (file: string) => file.replace(/^VX-/, '').replace(/\.fs$/, '').replace(/[-_]/g, ' ');
+
+  /** Point voice `k` at loop track `i` (and any voice that followed it back at everything). */
+  function assignVisual(i: number, k: number) {
+    const was = voiceFor(i);
+    if (was >= 0 && was !== k) setStudioVoice(was, { live: undefined });
+    if (k >= 0) setStudioVoice(k, { live: loopTrackSource(i) });
+  }
 
   let { onpicktrack }: { onpicktrack?: (i: number) => void } = $props();
 
@@ -103,7 +117,11 @@
           <div class="name">{t.name || (t.kind === 'audio' ? `Audio ${i + 1}` : INSTRUMENT_LABELS[t.instrument ?? s.instrument])}</div>
           <div class="ga-eyebrow meta">{t.kind === 'audio' ? `Input ${t.input + 1}` : INSTRUMENT_LABELS[t.instrument ?? s.instrument]} · {bars} bar{bars === 1 ? '' : 's'} · {v.layers} layer{v.layers === 1 ? '' : 's'}</div>
         {/if}
-        <input class="fader" type="range" min="0" max="1" step="0.01" value={t.level} oninput={(e) => setLoopLevel(i, Number((e.target as HTMLInputElement).value))} aria-label="Loop {i + 1} level" />
+        <div class="fwrap"><input class="fader" type="range" min="0" max="1" step="0.01" value={t.level} oninput={(e) => setLoopLevel(i, Number((e.target as HTMLInputElement).value))} aria-label="Loop {i + 1} level" /></div>
+        <select class="visual" value={voiceFor(i)} onchange={(e) => assignVisual(i, Number((e.target as HTMLSelectElement).value))} aria-label="Visual for loop {i + 1}" title={voices.length ? 'The visual voice that follows this loop (pick the look in the visuals rack)' : 'Add a visual in the visuals rack first'}>
+          <option value={-1}>No visual</option>
+          {#each voices as voice, k}<option value={k}>Voice {k + 1}: {voiceName(voice.file)}</option>{/each}
+        </select>
         <div class="btns">
           {#if v.phase === 'empty'}
             <button onclick={() => onpicktrack?.(i)} title="Choose what the track records">Input</button>
@@ -148,8 +166,10 @@
   .name { margin-top: 6px; font-weight: 600; font-size: var(--ga-text-control, 12px); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .name.empty { color: var(--studio-muted); font-weight: 500; }
   .meta { margin: 0; text-align: center; }
-  .fader { writing-mode: vertical-lr; direction: rtl; width: 22px; height: 110px; margin: 8px 0; }
+  .fwrap { width: 24px; height: 110px; margin: 8px 0; position: relative; }
+  .fader { position: absolute; left: 50%; top: 50%; width: 110px; height: 22px; margin: 0; transform: translate(-50%, -50%) rotate(-90deg); }
   .btns { display: flex; gap: 4px; }
+  .visual { max-width: 100%; height: 22px; font-size: var(--ga-text-meta, 11px); }
   .btns button { height: 22px; min-width: 24px; padding: 0 7px; border: 1px solid var(--studio-edge); background: transparent; color: var(--studio-ink); border-radius: var(--studio-radius); font: inherit; font-size: var(--ga-text-meta, 11px); cursor: pointer; display: inline-grid; place-items: center; }
   .btns button.on { background: var(--studio-accent-soft); border-color: var(--studio-accent); }
   .btns svg { width: 9px; height: 9px; fill: currentColor; }

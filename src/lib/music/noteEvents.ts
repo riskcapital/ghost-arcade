@@ -79,6 +79,8 @@ export interface NoteEvent {
   tone?: string;
   /** A drum machine pad (0-15): it sounds on the machine's kit; `drum` is the voice it acts as for visuals. */
   pad?: number;
+  /** Played by a live-looper track (0-5): visuals following that track see it. */
+  loopTrack?: number;
   source: NoteSource;
   /**
    * When the note sounds, in seconds on the music clock (the audio context's

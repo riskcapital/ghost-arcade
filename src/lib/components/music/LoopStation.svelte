@@ -16,7 +16,9 @@
   import { loopKey } from '../../music/loopControls';
   import { selectLoopTrack } from '../../music/loopStation';
 
-  let mode = $state<'tracks' | 'live'>('tracks');
+  let { initialMode = 'tracks' }: { initialMode?: 'tracks' | 'live' } = $props();
+  // svelte-ignore state_referenced_locally
+  let mode = $state<'tracks' | 'live'>(initialMode);
   let root = $state<HTMLDivElement | null>(null);
 
   /** A click in the panel (not in a field) gives it the keys. */

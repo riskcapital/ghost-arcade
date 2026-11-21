@@ -204,3 +204,17 @@ describe('older projects', () => {
     expect(again.loopStation.tracks[0].layers[0][0].note).toBe(62);
   });
 });
+
+describe('visuals per loop track', () => {
+  it('tags each loop note with its track, and names a source per track', async () => {
+    const { loopTrackSource, loopTrackOfSource, isLiveSource } = await import('./visualVoices');
+    pressLoopTrack(2);
+    runTo(4);
+    notes.push({ instrument: 'keys', note: 60, velocity: 0.8, beat: 4, end: 4.5 });
+    runTo(21);
+    expect(sent.filter((e) => e.type === 'on').every((e) => e.loopTrack === 2)).toBe(true);
+    expect(isLiveSource(loopTrackSource(2))).toBe(true);
+    expect(loopTrackOfSource(loopTrackSource(5))).toBe(5);
+    expect(loopTrackOfSource('live:Bass')).toBe(-1);
+  });
+});
