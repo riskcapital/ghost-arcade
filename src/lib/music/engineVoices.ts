@@ -103,7 +103,7 @@ export const engineThumbName = (id: string) => `engine-${id}.jpg`;
  * control keeps its default.
  */
 export const ENGINE_VOICE_KEYS: Readonly<Record<string, readonly string[]>> = {
-  strands: ['size', 'width', 'trail', 'speed', 'fibres', 'autoRotateZ', 'palette'],
+  strands: ['shape', 'changeEvery', 'size', 'width', 'trail', 'speed', 'fibres', 'autoRotateZ', 'palette'],
   'cloud-pulse': ['waveGain', 'pointSize', 'displacement', 'intensity', 'baseGlow', 'scale', 'autoRotateY', 'palette'],
   'cloud-flock': ['scatter', 'swarm', 'reform', 'intensity', 'edgeLight', 'autoRotateY', 'timeScale', 'palette'],
   'depth-lights': ['lights', 'lightSize', 'decay', 'intensity', 'autoRotateY', 'timeScale', 'palette'],

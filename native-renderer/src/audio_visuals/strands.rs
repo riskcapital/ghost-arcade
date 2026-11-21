@@ -38,6 +38,8 @@ pub const MERGE_SECONDS: f32 = 0.06;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ShapeMode {
     Cycle,
+    /// Line, ring, ring + lines, square, square + lines, strata, strata + ring.
+    Sequence,
     Band,
     Fixed(EmitterKind, u32),
 }
@@ -48,8 +50,32 @@ const STRANDS_PALETTE_OPTIONS: &[(&str, &str)] = &[
     ("verdigris", "Verdigris"),
     ("violet-hour", "Violet Hour"),
 ];
+/// How long Cycle and Sequence hold each step, in beats ("hit" = every launch).
+const CHANGE_EVERY_OPTIONS: &[(&str, &str)] = &[
+    ("hit", "Every hit"),
+    ("1", "1 beat"),
+    ("2", "2 beats"),
+    ("4", "1 bar"),
+    ("8", "2 bars"),
+    ("16", "4 bars"),
+    ("32", "8 bars"),
+    ("64", "16 bars"),
+];
+
+/// Sequence steps: one or two shapes launched together.
+const SEQUENCE_STEPS: &[&[(EmitterKind, u32)]] = &[
+    &[(EmitterKind::Line, 0)],
+    &[(EmitterKind::Ring, 0)],
+    &[(EmitterKind::Ring, 0), (EmitterKind::Line, 0)],
+    &[(EmitterKind::Polygon, 4)],
+    &[(EmitterKind::Polygon, 4), (EmitterKind::Line, 0)],
+    &[(EmitterKind::Strata, 0)],
+    &[(EmitterKind::Strata, 0), (EmitterKind::Ring, 0)],
+];
+
 const SHAPE_OPTIONS: &[(&str, &str)] = &[
     ("cycle", "Cycle"),
+    ("sequence", "Sequence (with combos)"),
     ("band", "Follow the band"),
     ("line", "Line"),
     ("ring", "Ring"),
@@ -74,6 +100,7 @@ pub fn strands_defs() -> Defs {
         slider("opacity", "Opacity", "Points", 0.0, 1.0, 0.01, 1.0),
         // Strands.
         select("shape", "Shape", "Strands", SHAPE_OPTIONS, "cycle"),
+        select("changeEvery", "Change shape every", "Strands", CHANGE_EVERY_OPTIONS, "hit"),
         slider("maxShapes", "Shapes on screen", "Strands", 1.0, 8.0, 1.0, 3.0),
         slider("trail", "Fibre length (segments)", "Strands", 1.0, 8.0, 1.0, 8.0),
         slider("fray", "Fray", "Strands", 0.0, 8.0, 0.01, 1.0),
@@ -123,6 +150,8 @@ pub struct StrandsParams {
     /// Share of strands on closed shapes that stream inward.
     pub inward: f32,
     pub max_shapes: usize,
+    /// Beats each Cycle/Sequence step holds (0 = every hit).
+    pub change_every: f32,
     pub trail_segments: f32,
     pub curl_scale: f32,
     pub size_variation: f32,
@@ -147,6 +176,7 @@ pub fn normalize_strands_params(params: &Value) -> StrandsParams {
     let sides = n("sides").round() as u32;
     let mode = match d.choice(params, "shape") {
         "band" => ShapeMode::Band,
+        "sequence" => ShapeMode::Sequence,
         "line" => ShapeMode::Fixed(EmitterKind::Line, 0),
         "ring" => ShapeMode::Fixed(EmitterKind::Ring, 0),
         "square" => ShapeMode::Fixed(EmitterKind::Polygon, 4),
@@ -191,6 +221,7 @@ pub fn normalize_strands_params(params: &Value) -> StrandsParams {
         core_life: num(params, "coreLife", 0.22).clamp(0.02, 2.0),
         inward: n("inward"),
         max_shapes: n("maxShapes").round() as usize,
+        change_every: d.choice(params, "changeEvery").parse::<f32>().unwrap_or(0.0),
         trail_segments: n("trail").round(),
         curl_scale: n("curl"),
         size_variation: n("sizeVariation"),
@@ -276,11 +307,13 @@ pub struct ShapeRules {
     /// 0 = a random 4..6 lines.
     pub strata_lines: u32,
     pub max_visible: usize,
+    /// Beats each Cycle/Sequence step holds; 0 = advance on every launch.
+    pub change_every: f32,
 }
 
 impl Default for ShapeRules {
     fn default() -> Self {
-        Self { merge_seconds: MERGE_SECONDS, strata_lines: 0, max_visible: MAX_VISIBLE_SHAPES }
+        Self { merge_seconds: MERGE_SECONDS, strata_lines: 0, max_visible: MAX_VISIBLE_SHAPES, change_every: 0.0 }
     }
 }
 
@@ -291,6 +324,9 @@ pub struct ShapeQueue {
     pub last_seq: u32,
     pub launches: u32,
     pub rules: ShapeRules,
+    /// Beats elapsed on the music clock (from the packet's bpm), for steps
+    /// that hold a number of beats.
+    pub beats: f32,
 }
 
 impl ShapeQueue {
@@ -299,6 +335,10 @@ impl ShapeQueue {
     pub fn ingest(&mut self, data: &AudioVisualData, now: f32, mode: ShapeMode, aspect: f32, size: f32) {
         if !data.active() {
             return;
+        }
+        let bpm = data.header(super::audio_data::H_BPM);
+        if bpm.is_finite() && bpm > 1.0 {
+            self.beats = data.time().max(0.0) * bpm / 60.0;
         }
         let fresh = data.events_after(self.last_seq, MAX_LAUNCHES_PER_FRAME);
         if let Some(last) = data.event(0) {
@@ -320,11 +360,23 @@ impl ShapeQueue {
         }
         let n = self.launches;
         self.launches = self.launches.wrapping_add(1);
-        let seed = hash01(event.seq.wrapping_mul(31).wrapping_add(7));
-        let r = |salt: u32| hash01(event.seq.wrapping_mul(977).wrapping_add(salt));
+        // Which step of Cycle/Sequence: every launch, or held for N beats.
+        let step = if self.rules.change_every > 0.0 {
+            (self.beats / self.rules.change_every).floor().max(0.0) as u32
+        } else {
+            n
+        };
+        if mode == ShapeMode::Sequence {
+            let parts = SEQUENCE_STEPS[step as usize % SEQUENCE_STEPS.len()];
+            for (index, &(kind, sides)) in parts.iter().enumerate() {
+                self.push_shape(event, born, kind, sides, aspect, size, index as u32);
+            }
+            return;
+        }
         let (kind, sides) = match mode {
             ShapeMode::Fixed(kind, sides) => (kind, sides),
-            ShapeMode::Cycle => match n % 4 {
+            ShapeMode::Sequence => unreachable!(),
+            ShapeMode::Cycle => match step % 4 {
                 0 => (EmitterKind::Line, 0),
                 1 => (EmitterKind::Ring, 0),
                 2 => (EmitterKind::Polygon, 4),
@@ -337,6 +389,13 @@ impl ShapeQueue {
                 OnsetBand::High => (EmitterKind::Strata, 0),
             },
         };
+        self.push_shape(event, born, kind, sides, aspect, size, 0);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn push_shape(&mut self, event: &OnsetEvent, born: f32, kind: EmitterKind, sides: u32, aspect: f32, size: f32, salt: u32) {
+        let seed = hash01(event.seq.wrapping_mul(31).wrapping_add(7 + salt * 101));
+        let r = |k: u32| hash01(event.seq.wrapping_mul(977).wrapping_add(k + salt * 53));
         let jitter = |salt: u32, amount: f32| (r(salt) - 0.5) * 2.0 * amount;
         let (center, shape_size, count, rotation) = match kind {
             EmitterKind::Line => ([jitter(1, aspect * 0.15), jitter(2, 0.03)], [0.0, 0.86 * size], 1, 0.0),
@@ -381,11 +440,11 @@ impl ShapeQueue {
 
     /// Advance every shape's phase to `now` and drop the finished ones.
     pub fn step(&mut self, now: f32) {
-        let newest = self.shapes.len().saturating_sub(1);
-        for (index, shape) in self.shapes.iter_mut().enumerate() {
+        let newest_born = self.shapes.last().map(|s| s.born);
+        for shape in self.shapes.iter_mut() {
             shape.phase = match shape.phase {
                 ShapePhase::Attack if now - shape.born >= ATTACK_SECONDS => ShapePhase::Hold,
-                ShapePhase::Hold if index != newest || now - shape.born > MAX_HOLD_SECONDS => {
+                ShapePhase::Hold if Some(shape.born) != newest_born || now - shape.born > MAX_HOLD_SECONDS => {
                     ShapePhase::Release { since: now }
                 }
                 phase => phase,
@@ -426,6 +485,7 @@ pub fn step_strands_frame(
         merge_seconds: params.merge_seconds,
         strata_lines: params.strata_lines,
         max_visible: params.max_shapes,
+        change_every: params.change_every,
     };
     if shaper.take_trigger(params.audio.trigger) {
         let manual = OnsetEvent { time: shaped.time(), band: OnsetBand::Bass, strength: 1.0, seq: 0 };
@@ -574,6 +634,37 @@ mod tests {
         queue.launch(&OnsetEvent { strength: 1.2, ..event(2, OnsetBand::High) }, 0.03, ShapeMode::Cycle, 1.78, 1.0);
         assert_eq!(queue.shapes.len(), 1);
         assert_eq!(queue.shapes[0].strength, 1.2);
+    }
+
+    #[test]
+    fn sequence_holds_each_step_for_the_chosen_beats_and_launches_combos() {
+        let mut queue = ShapeQueue::default();
+        queue.rules.change_every = 4.0;
+        queue.rules.max_visible = 8;
+        // Beats 0..3: step 0 (a line), every hit.
+        for seq in 0..3u32 {
+            queue.beats = seq as f32;
+            queue.launch(&event(seq + 1, OnsetBand::Bass), seq as f32, ShapeMode::Sequence, 1.78, 1.0);
+            assert_eq!(queue.shapes.last().unwrap().kind, EmitterKind::Line);
+        }
+        // Beats 8..: step 2 = ring + lines, launched together and both held.
+        queue.beats = 8.5;
+        let before = queue.shapes.len();
+        queue.launch(&event(10, OnsetBand::Bass), 10.0, ShapeMode::Sequence, 1.78, 1.0);
+        let added: Vec<_> = queue.shapes[before..].iter().map(|s| s.kind).collect();
+        assert_eq!(added, vec![EmitterKind::Ring, EmitterKind::Line]);
+        queue.step(10.5);
+        queue.step(10.6);
+        let held = queue.shapes.iter().filter(|s| matches!(s.phase, ShapePhase::Hold | ShapePhase::Attack)).count();
+        assert_eq!(held, 2);
+        // Cycle held for a bar keeps one shape over many hits.
+        let mut cycle = ShapeQueue::default();
+        cycle.rules.change_every = 4.0;
+        for seq in 0..4u32 {
+            cycle.beats = 1.0 + seq as f32 * 0.5;
+            cycle.launch(&event(seq + 1, OnsetBand::Bass), seq as f32, ShapeMode::Cycle, 1.78, 1.0);
+        }
+        assert!(cycle.shapes.iter().all(|s| s.kind == EmitterKind::Line));
     }
 
     #[test]
