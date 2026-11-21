@@ -955,16 +955,39 @@ export function mapCurvedSurfaces(
   const curved = all.filter(r => !r.planar);
   curved.forEach((region, index) => { for (const c of region.cells) curvedOf[c] = index; });
   const taken = new Uint8Array(w * h);
+  // A flat outline stays when the depth inside it is flat. Judged on the
+  // outline's own cells, not on the region it falls in: smoothed normals bend
+  // gradually across a box's edge, so a box's faces (and the floor they stand
+  // on) can grow into one region that is not planar, though each face is.
   const keepFlat = flatOutlines.map(outline => {
+    const cx = outline.reduce((s, p) => s + p.x, 0) / outline.length, cy = outline.reduce((s, p) => s + p.y, 0) / outline.length;
+    // A little inside the outline: its edge cells straddle the next surface.
+    const inner = outline.map(p => ({ x: cx + (p.x - cx) * 0.85, y: cy + (p.y - cy) * 0.85 }));
     let lit = 0, onCurved = 0;
-    const inside: number[] = [];
+    const inside: number[] = [], points: number[][] = [];
     for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
       const g = j * w + i;
       if (!grid.hasProj[g] || !insidePolygon(outline, (i + 0.5) / w, (j + 0.5) / h)) continue;
       lit++; inside.push(g);
       if (curvedOf[g] >= 0) onCurved++;
+      if (grid.hasXyz[g] && insidePolygon(inner, (i + 0.5) / w, (j + 0.5) / h)) points.push([grid.xyz[g * 3], grid.xyz[g * 3 + 1], grid.xyz[g * 3 + 2]]);
     }
-    const keep = !(lit > 0 && onCurved > 0.5 * lit);
+    let keep = !(lit > 0 && onCurved > 0.5 * lit);
+    if (!keep && points.length >= 12) {
+      // Robustly: the outline is four corners round a surface, so it can take in
+      // a little of what is in front of or behind it (a floor's outline round
+      // the boxes on it). Flat when most of its depth lies on one plane.
+      let use = points, share = 0;
+      for (let round = 0; round < 4 && use.length >= 12; round++) {
+        const { mean, matrix } = covariance(use);
+        const n = symmetricEigen(matrix, 3).vectors[0];
+        const off = (p: number[]) => Math.abs((p[0] - mean[0]) * n[0] + (p[1] - mean[1]) * n[1] + (p[2] - mean[2]) * n[2]);
+        const on = points.filter(p => off(p) < 0.01);
+        share = on.length / points.length;
+        use = on;
+      }
+      keep = share >= 0.7;
+    }
     if (keep) for (const g of inside) taken[g] = 1;
     return keep;
   });
@@ -973,7 +996,8 @@ export function mapCurvedSurfaces(
   const minCells = Math.max(60, Math.round(w * h * 0.004));
   for (const region of curved) {
     const cells = Int32Array.from(Array.from(region.cells).filter(c => !taken[c]));
-    if (cells.length < minCells) continue;
+    // Mostly explained by flat faces: what is left is their seams, not a curved form.
+    if (cells.length < minCells || cells.length < 0.5 * region.cells.length) continue;
     try {
       surfaces.push(buildCurvedSurface(grid, cells, { width: projector.width, height: projector.height, model }, mode, options));
       regions.push(cells);

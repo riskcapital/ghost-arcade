@@ -8,7 +8,7 @@
  *
  * Pure maths on the decoded scan: no network, runs on the phone.
  */
-import { applyHomography, invertHomography, type Decoded, type PatternPlan, type UV } from './structuredLight';
+import { applyHomography, invertHomography, type Decoded, type PatternPlan, type StripeEdges, type UV } from './structuredLight';
 
 export type DetectedSurface = {
   outline: UV[];   // four corners on the photo, normalised, clockwise from top left
@@ -17,27 +17,41 @@ export type DetectedSurface = {
   rmsPx: number;   // how well its measurements fit one plane, projector pixels
   samples: number;
   solid: number;   // how much of the outline the scan actually filled, 0..1: low means a ragged or partly hidden surface
+  /** How far the stripe edges on it land from its plane, projector pixels (RMS): the fit's real accuracy, where `rmsPx` is mostly the stripes' rounding. */
+  edgePx?: number;
 };
 
 type Sample = { x: number; y: number; u: number; v: number; gx: number; gy: number };
 
+/** One coordinate of a correspondence: photo (x, y) lands on projector column (axis 0) or row (axis 1) `value`. */
+type AxisSample = { x: number; y: number; axis: number; value: number };
+
 /** Least-squares homography (x, y) -> (u, v) with h33 = 1, or null if the points are degenerate. */
 function solveHomography(points: Sample[]): number[] | null {
+  if (points.length < 4) return null;
+  const rows: AxisSample[] = [];
+  for (const p of points) rows.push({ x: p.x, y: p.y, axis: 0, value: p.u }, { x: p.x, y: p.y, axis: 1, value: p.v });
+  return solveAxes(rows);
+}
+
+/** The same fit from single coordinates (the stripe edges give one exact coordinate each). */
+function solveAxes(points: AxisSample[]): number[] | null {
   const n = points.length;
-  if (n < 4) return null;
+  if (n < 8) return null;
   // Normalise both sides to about unit scale so the solve stays well conditioned.
-  let mx = 0, my = 0, mu = 0, mv = 0;
-  for (const p of points) { mx += p.x; my += p.y; mu += p.u; mv += p.v; }
-  mx /= n; my /= n; mu /= n; mv /= n;
+  let mx = 0, my = 0, mu = 0, mv = 0, nu = 0, nv = 0;
+  for (const p of points) { mx += p.x; my += p.y; if (p.axis) { mv += p.value; nv++; } else { mu += p.value; nu++; } }
+  if (nu < 3 || nv < 3) return null;
+  mx /= n; my /= n; mu /= nu; mv /= nv;
   let sc = 0, sp = 0;
-  for (const p of points) { sc += Math.hypot(p.x - mx, p.y - my); sp += Math.hypot(p.u - mu, p.v - mv); }
+  for (const p of points) { sc += Math.hypot(p.x - mx, p.y - my); sp += Math.abs(p.value - (p.axis ? mv : mu)) * Math.SQRT2; }
   sc = sc / n || 1; sp = sp / n || 1;
   const ata = new Float64Array(64), atb = new Float64Array(8), row = new Float64Array(8);
   const add = (rhs: number) => { for (let i = 0; i < 8; i++) { atb[i] += row[i] * rhs; for (let j = 0; j < 8; j++) ata[i * 8 + j] += row[i] * row[j]; } };
   for (const p of points) {
-    const x = (p.x - mx) / sc, y = (p.y - my) / sc, u = (p.u - mu) / sp, v = (p.v - mv) / sp;
-    row[0] = x; row[1] = y; row[2] = 1; row[3] = 0; row[4] = 0; row[5] = 0; row[6] = -u * x; row[7] = -u * y; add(u);
-    row[0] = 0; row[1] = 0; row[2] = 0; row[3] = x; row[4] = y; row[5] = 1; row[6] = -v * x; row[7] = -v * y; add(v);
+    const x = (p.x - mx) / sc, y = (p.y - my) / sc;
+    if (p.axis === 0) { const u = (p.value - mu) / sp; row[0] = x; row[1] = y; row[2] = 1; row[3] = 0; row[4] = 0; row[5] = 0; row[6] = -u * x; row[7] = -u * y; add(u); }
+    else { const v = (p.value - mv) / sp; row[0] = 0; row[1] = 0; row[2] = 0; row[3] = x; row[4] = y; row[5] = 1; row[6] = -v * x; row[7] = -v * y; add(v); }
   }
   // Gaussian elimination with partial pivoting on the 8x8 normal equations.
   const a = Array.from({ length: 8 }, (_, i) => [...ata.subarray(i * 8, i * 8 + 8), atb[i]]);
@@ -106,6 +120,62 @@ export function enclosingQuad(hull: { x: number; y: number }[]): { x: number; y:
   return poly.length === 4 ? poly : null;
 }
 
+/**
+ * Four sides from a convex outline: runs of hull edges that point the same
+ * way are one side, the four longest runs are the quad's sides, and its
+ * corners are where they meet. Unlike shaving the hull down edge by edge,
+ * this ignores the rounded corners a ragged scan leaves (they are short
+ * runs), so a thin face keeps its true sides. Null when there are not four
+ * clear sides.
+ */
+export function quadFromSides(hull: { x: number; y: number }[], bendDeg = 14): { x: number; y: number }[] | null {
+  const n = hull.length;
+  if (n < 4) return null;
+  const edges = hull.map((a, i) => { const b = hull[(i + 1) % n]; return { a, b, length: Math.hypot(b.x - a.x, b.y - a.y), angle: Math.atan2(b.y - a.y, b.x - a.x) }; });
+  const turn = (p: number, q: number) => { let d = q - p; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return Math.abs(d); };
+  // Start a run at the sharpest bend so no run wraps round the end of the list.
+  let start = 0, sharpest = -1;
+  for (let i = 0; i < n; i++) { const t = turn(edges[(i - 1 + n) % n].angle, edges[i].angle); if (t > sharpest) { sharpest = t; start = i; } }
+  const limit = (bendDeg * Math.PI) / 180;
+  const runs: { edges: typeof edges; length: number; angle: number }[] = [];
+  for (let k = 0; k < n; k++) {
+    const e = edges[(start + k) % n];
+    const run = runs[runs.length - 1];
+    if (run && turn(run.angle, e.angle) < limit) {
+      // Length-weighted mean direction of the run.
+      const x = Math.cos(run.angle) * run.length + Math.cos(e.angle) * e.length, y = Math.sin(run.angle) * run.length + Math.sin(e.angle) * e.length;
+      run.edges.push(e); run.length += e.length; run.angle = Math.atan2(y, x);
+    } else runs.push({ edges: [e], length: e.length, angle: e.angle });
+  }
+  if (runs.length < 4) return null;
+  const sides = runs.map((run, index) => ({ run, index })).sort((p, q) => q.run.length - p.run.length).slice(0, 4).sort((p, q) => p.index - q.index).map(p => p.run);
+  // Each side's line: least squares through points spread along its edges.
+  const lines = sides.map(run => {
+    const pts: { x: number; y: number }[] = [];
+    for (const e of run.edges) { const steps = Math.max(1, Math.ceil(e.length / 2)); for (let k = 0; k <= steps; k++) pts.push({ x: e.a.x + (e.b.x - e.a.x) * k / steps, y: e.a.y + (e.b.y - e.a.y) * k / steps }); }
+    const mx = pts.reduce((t, p) => t + p.x, 0) / pts.length, my = pts.reduce((t, p) => t + p.y, 0) / pts.length;
+    let sxx = 0, sxy = 0, syy = 0;
+    for (const p of pts) { sxx += (p.x - mx) ** 2; sxy += (p.x - mx) * (p.y - my); syy += (p.y - my) ** 2; }
+    const angle = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+    return { a: { x: mx, y: my }, b: { x: mx + Math.cos(angle), y: my + Math.sin(angle) } };
+  });
+  const quad: { x: number; y: number }[] = [];
+  for (let i = 0; i < 4; i++) {
+    const p = lines[(i + 3) % 4], q = lines[i];
+    const den = (p.a.x - p.b.x) * (q.a.y - q.b.y) - (p.a.y - p.b.y) * (q.a.x - q.b.x);
+    if (Math.abs(den) < 1e-6) return null;
+    const t = ((p.a.x - q.a.x) * (q.a.y - q.b.y) - (p.a.y - q.a.y) * (q.a.x - q.b.x)) / den;
+    quad.push({ x: p.a.x + t * (p.b.x - p.a.x), y: p.a.y + t * (p.b.y - p.a.y) });
+  }
+  // A real face: convex, and no corner flung far beyond the outline.
+  const cross = quad.map((a, i) => { const b = quad[(i + 1) % 4], c = quad[(i + 2) % 4]; return (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x); });
+  if (!cross.every(c => c > 0) && !cross.every(c => c < 0)) return null;
+  const xs = hull.map(p => p.x), ys = hull.map(p => p.y);
+  const span = Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+  if (quad.some(c => Math.min(...hull.map(p => Math.hypot(p.x - c.x, p.y - c.y))) > 0.25 * span)) return null;
+  return quad;
+}
+
 /** Moves every side of a convex quad outward by `distance`, keeping its angles. */
 function pushOut(quad: { x: number; y: number }[], distance: number): { x: number; y: number }[] {
   if (!distance) return quad;
@@ -126,36 +196,97 @@ function pushOut(quad: { x: number; y: number }[], distance: number): { x: numbe
 }
 
 /**
- * The line in the photo where two measured planes meet (a fold between two
- * faces), as a*x + b*y + c = 0 with a unit normal, or null. Two planes seen
- * by the same camera and projector differ by a transform that leaves exactly
- * the points of their shared edge where they were: that fixed line is the fold.
+ * The fold between two faces from where their planes agree: across the
+ * photo the two homographies send a point to places whose difference is
+ * nearly one fixed direction times the signed distance from the fold, so
+ * that distance comes straight from a least-squares fit near the faces.
+ * As a*x + b*y + c = 0 with a unit normal, or null.
  */
-function foldLine(h1: number[], h2: number[]): [number, number, number] | null {
-  const inverse = invertHomography(h2);
-  const g = new Array(9).fill(0);
-  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) for (let k = 0; k < 3; k++) g[i * 3 + j] += inverse[i * 3 + k] * h1[k * 3 + j];
-  const scale = Math.cbrt(Math.abs(g[0] * (g[4] * g[8] - g[5] * g[7]) - g[1] * (g[3] * g[8] - g[5] * g[6]) + g[2] * (g[3] * g[7] - g[4] * g[6]))) || 1;
-  for (let i = 0; i < 9; i++) g[i] /= scale;
-  // G = k*I + e*l^T. The repeated eigenvalue k makes G - k*I rank one, every row a multiple of l.
-  // Try the candidates for k and keep the one that leaves the flattest remainder.
-  let best: [number, number, number] | null = null, bestRatio = Infinity, bestK = 0;
-  const trace = g[0] + g[4] + g[8];
-  const attempt = (k: number) => {
-    const m = [g[0] - k, g[1], g[2], g[3], g[4] - k, g[5], g[6], g[7], g[8] - k];
-    const rows = [m.slice(0, 3), m.slice(3, 6), m.slice(6, 9)].sort((p, q) => Math.hypot(...q) - Math.hypot(...p));
-    const top = rows[0], norm = Math.hypot(...top);
-    if (norm < 1e-9) return;
-    // How far the other rows are from being multiples of the largest one.
-    let off = 0;
-    for (const row of rows.slice(1)) { const dot = (row[0] * top[0] + row[1] * top[1] + row[2] * top[2]) / (norm * norm); off += Math.hypot(row[0] - dot * top[0], row[1] - dot * top[1], row[2] - dot * top[2]); }
-    const ratio = off / norm;
-    if (ratio < bestRatio) { bestRatio = ratio; bestK = k; const n = Math.hypot(top[0], top[1]) || 1; best = [top[0] / n, top[1] / n, top[2] / n]; }
-  };
-  // Coarse sweep, then two finer sweeps around the best value.
-  for (let step = 0; step <= 400; step++) attempt(trace / 3 * (0.5 + step / 400));
-  for (const width of [1 / 400, 1 / 16000]) { const centre = bestK; for (let step = -40; step <= 40; step++) attempt(centre + trace / 3 * width * step / 40); }
-  return bestRatio < 0.05 ? best : null;
+function foldBetween(h1: number[], h2: number[], around: { x: number; y: number }[]): [number, number, number] | null {
+  const xs = around.map(p => p.x), ys = around.map(p => p.y);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const pts: { x: number; y: number; fx: number; fy: number }[] = [];
+  for (let a = 0; a <= 30; a++) for (let b = 0; b <= 30; b++) {
+    const x = x0 + (x1 - x0) * a / 30, y = y0 + (y1 - y0) * b / 30;
+    const p = applyHomography(h1, x, y), q = applyHomography(h2, x, y);
+    if ([p.x, p.y, q.x, q.y].every(Number.isFinite)) pts.push({ x, y, fx: p.x - q.x, fy: p.y - q.y });
+  }
+  if (pts.length < 20) return null;
+  let line: [number, number, number] | null = null;
+  let limit = Infinity;
+  for (let round = 0; round < 4; round++) {
+    const use = line ? pts.filter(p => Math.abs(line![0] * p.x + line![1] * p.y + line![2]) < limit) : pts;
+    if (use.length < 12) return line;
+    // The common direction of the differences, signed consistently.
+    let sxx = 0, sxy = 0, syy = 0;
+    for (const p of use) { sxx += p.fx * p.fx; sxy += p.fx * p.fy; syy += p.fy * p.fy; }
+    const angle = 0.5 * Math.atan2(2 * sxy, sxx - syy), dx = Math.cos(angle), dy = Math.sin(angle);
+    // s = difference along that direction, fitted as a plane over the photo: s = a x + b y + c.
+    const m = new Float64Array(9), r = new Float64Array(3);
+    const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+    for (const p of use) {
+      const v = [p.x - mx, p.y - my, 1], t = p.fx * dx + p.fy * dy;
+      for (let i = 0; i < 3; i++) { r[i] += v[i] * t; for (let j = 0; j < 3; j++) m[i * 3 + j] += v[i] * v[j]; }
+    }
+    const det = (q: Float64Array | number[]) => q[0] * (q[4] * q[8] - q[5] * q[7]) - q[1] * (q[3] * q[8] - q[5] * q[6]) + q[2] * (q[3] * q[7] - q[4] * q[6]);
+    const d = det(m);
+    if (Math.abs(d) < 1e-12) return line;
+    const solve = (k: number) => { const q = Array.from(m); for (let i = 0; i < 3; i++) q[i * 3 + k] = r[i]; return det(q) / d; };
+    const a = solve(0), b = solve(1), c = solve(2) - a * mx - b * my;
+    const n = Math.hypot(a, b);
+    if (!(n > 1e-9)) return line;
+    line = [a / n, b / n, c / n];
+    limit = Math.max(8, 0.06 * Math.hypot(x1 - x0, y1 - y0));
+  }
+  return line;
+}
+
+/** How far a homography puts an edge from its exact projector column or row, pixels. */
+function edgeResidual(m: number[], p: AxisSample): number {
+  const w = m[6] * p.x + m[7] * p.y + m[8];
+  return Math.abs((p.axis ? m[3] * p.x + m[4] * p.y + m[5] : m[0] * p.x + m[1] * p.y + m[2]) / w - p.value);
+}
+
+/** An edge sits in the thin unreadable line between two cells: it belongs to whoever owns the grid all round it. */
+function edgeOwnedBy(ownerAt: Int16Array | Int32Array | Uint8Array, gw: number, gh: number, step: number, x: number, y: number, id: number, none = -1): boolean {
+  const gx = Math.floor(x / step), gy = Math.floor(y / step);
+  let mine = 0;
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+    const cx = gx + dx, cy = gy + dy;
+    if (cx < 0 || cy < 0 || cx >= gw || cy >= gh) continue;
+    const owner = ownerAt[cy * gw + cx];
+    if (owner === id) mine++;
+    else if (owner !== none) return false;
+  }
+  return mine >= 3;
+}
+
+/**
+ * Refits a surface's homography on the stripe edges inside it. Cell centres
+ * are off by up to half a cell wherever a face's edge cuts a cell (and that is
+ * most of a small face), which tilts the fit; the edges are exact.
+ */
+function refineWithEdges(h: number[], edges: StripeEdges | undefined, mine: (x: number, y: number) => boolean, cell: number): number[] {
+  if (!edges?.count) return h;
+  let points: AxisSample[] = [];
+  for (let k = 0; k < edges.count; k++) {
+    const x = edges.x[k], y = edges.y[k];
+    if (mine(x, y)) points.push({ x, y, axis: edges.axis[k], value: edges.value[k] });
+  }
+  // Start from the cell-centre fit, then tighten: edges that disagree are misread stripes or another surface.
+  let fit = h;
+  for (const limit of [cell * 0.75, cell * 0.25, 0]) {
+    let kept = points.filter(p => edgeResidual(fit, p) < (limit || Infinity));
+    if (!limit) {
+      const errors = kept.map(p => edgeResidual(fit, p)).sort((a, b) => a - b);
+      const bound = Math.max(1.5, 3 * (errors[errors.length >> 1] ?? 0) * 1.4826);
+      kept = kept.filter(p => edgeResidual(fit, p) < bound);
+    }
+    if (kept.filter(p => p.axis === 0).length < 12 || kept.filter(p => p.axis === 1).length < 12) return fit;
+    fit = solveAxes(kept) ?? fit;
+    points = kept;
+  }
+  return fit;
 }
 
 export type Photo = { width: number; height: number; luma: Uint8Array | Uint8ClampedArray | Float32Array };
@@ -170,9 +301,12 @@ export type Photo = { width: number; height: number; luma: Uint8Array | Uint8Cla
 export function snapToEdges(quad: { x: number; y: number }[], photo: Photo, locked: boolean[] = []): { x: number; y: number }[] {
   const reach = Math.max(6, Math.round(Math.max(photo.width, photo.height) / 110));
   const cx = quad.reduce((sum, p) => sum + p.x, 0) / 4, cy = quad.reduce((sum, p) => sum + p.y, 0) / 4;
+  // Bilinear, so a side can settle between pixels. Pixel centres sit at +0.5.
   const at = (x: number, y: number) => {
-    const px = Math.min(photo.width - 1, Math.max(0, Math.round(x))), py = Math.min(photo.height - 1, Math.max(0, Math.round(y)));
-    return photo.luma[py * photo.width + px];
+    const fx = Math.min(photo.width - 1, Math.max(0, x - 0.5)), fy = Math.min(photo.height - 1, Math.max(0, y - 0.5));
+    const x0 = Math.floor(fx), y0 = Math.floor(fy), x1 = Math.min(photo.width - 1, x0 + 1), y1 = Math.min(photo.height - 1, y0 + 1);
+    const tx = fx - x0, ty = fy - y0, l = photo.luma, w = photo.width;
+    return (l[y0 * w + x0] * (1 - tx) + l[y0 * w + x1] * tx) * (1 - ty) + (l[y1 * w + x0] * (1 - tx) + l[y1 * w + x1] * tx) * ty;
   };
   const lines: { a: { x: number; y: number }; b: { x: number; y: number } }[] = [];
   for (let side = 0; side < 4; side++) {
@@ -195,6 +329,14 @@ export function snapToEdges(quad: { x: number; y: number }[], photo: Photo, lock
       // A small pull toward the measured position keeps a faint texture from winning.
       const value = score(d0, d1) - 0.08 * (Math.abs(d0) + Math.abs(d1));
       if (value > best.value) best = { d0, d1, value };
+    }
+    // Then to a quarter of a pixel around the best whole-pixel fit.
+    if (!locked[side]) {
+      const whole = best;
+      for (let d0 = whole.d0 - 1; d0 <= whole.d0 + 1; d0 += 0.25) for (let d1 = whole.d1 - 1; d1 <= whole.d1 + 1; d1 += 0.25) {
+        const value = score(d0, d1) - 0.08 * (Math.abs(d0) + Math.abs(d1));
+        if (value > best.value) best = { d0, d1, value };
+      }
     }
     lines.push({ a: { x: a.x + nx * best.d0, y: a.y + ny * best.d0 }, b: { x: b.x + nx * best.d1, y: b.y + ny * best.d1 } });
   }
@@ -228,11 +370,11 @@ export function detectSurfaces(
   let state = (options.seed ?? 7) >>> 0;
   const random = () => ((state = (state * 1664525 + 1013904223) >>> 0) / 4294967296);
   const tolerance = plan.cell * 0.6 + 2;
-  const minPoints = Math.max(120, Math.floor(samples.length * (options.minShare ?? 0.012)));
+  const minPoints = Math.max(120, Math.floor(samples.length * (options.minShare ?? 0.003)));
   const taken = new Uint8Array(samples.length);
   const planes: number[][] = [];
   const reach = 14; // seeds are drawn close together, so they usually share a surface
-  for (let found = 0; found < (options.maxSurfaces ?? 10); found++) {
+  for (let found = 0; found < (options.maxSurfaces ?? 16); found++) {
     const open: number[] = [];
     for (let i = 0; i < samples.length; i++) if (!taken[i]) open.push(i);
     if (open.length < minPoints) break;
@@ -270,42 +412,133 @@ export function detectSurfaces(
     for (const i of members) taken[i] = 1;
     planes.push(best);
   }
-  // Two finds that are really one surface (a face found in two halves) fit a
-  // single plane together: merge them.
-  for (let merged = true; merged;) {
-    merged = false;
-    const members = planes.map(h => samples.filter(sample => miss(h, sample) < tolerance));
-    search: for (let i = 0; i < planes.length; i++) for (let j = i + 1; j < planes.length; j++) {
-      const both = [...new Set([...members[i], ...members[j]])];
-      const joint = solveHomography(both);
-      if (!joint) continue;
-      const agree = both.filter(sample => miss(joint, sample) < tolerance).length;
-      if (agree >= both.length * 0.9) { planes[i] = joint; planes.splice(j, 1); merged = true; break search; }
-    }
-  }
-  // Along a fold the two faces are nearly the same plane, and the rounding in
-  // the scan can make a thin in-between "surface" there. A find whose points
-  // mostly sit close to a bigger find is that seam, not a surface: drop it.
-  {
-    const sizes = planes.map(h => samples.filter(sample => miss(h, sample) < tolerance));
-    const order = planes.map((_, i) => i).sort((a, b) => sizes[b].length - sizes[a].length);
-    const keep: number[] = [];
-    for (const i of order) {
-      const seam = keep.some(k => sizes[i].filter(sample => miss(planes[k], sample) < tolerance * 1.6).length > sizes[i].length * 0.6);
-      if (!seam) keep.push(i);
-    }
-    const kept = keep.map(i => planes[i]);
-    planes.length = 0; planes.push(...kept);
-  }
-  // Every sample goes to the plane it fits best; then each plane splits into connected patches.
+  // Every sample goes to the plane it fits best.
   const owner = new Int16Array(samples.length).fill(-1);
-  for (let i = 0; i < samples.length; i++) {
-    let bestError = tolerance;
-    for (let p = 0; p < planes.length; p++) { const error = miss(planes[p], samples[i]); if (error < bestError) { bestError = error; owner[i] = p; } }
+  const assign = () => {
+    for (let i = 0; i < samples.length; i++) {
+      let bestError = tolerance;
+      owner[i] = -1;
+      for (let p = 0; p < planes.length; p++) { const error = miss(planes[p], samples[i]); if (error < bestError) { bestError = error; owner[i] = p; } }
+    }
+  };
+  assign();
+  const edges = decoded.edges?.count ? decoded.edges : undefined;
+  if (!edges) {
+    // Two finds that are really one surface (a face found in two halves) fit a
+    // single plane together: merge them.
+    for (let merged = true; merged;) {
+      merged = false;
+      const members = planes.map(h => samples.filter(sample => miss(h, sample) < tolerance));
+      search: for (let i = 0; i < planes.length; i++) for (let j = i + 1; j < planes.length; j++) {
+        const both = [...new Set([...members[i], ...members[j]])];
+        const joint = solveHomography(both);
+        if (!joint) continue;
+        const agree = both.filter(sample => miss(joint, sample) < tolerance).length;
+        if (agree >= both.length * 0.9) { planes[i] = joint; planes.splice(j, 1); merged = true; break search; }
+      }
+    }
+    // Along a fold the two faces are nearly the same plane, and the rounding in
+    // the scan can make a thin in-between "surface" there. A find whose points
+    // mostly sit close to a bigger find is that seam, not a surface: drop it.
+    {
+      const sizes = planes.map(h => samples.filter(sample => miss(h, sample) < tolerance));
+      const order = planes.map((_, i) => i).sort((a, b) => sizes[b].length - sizes[a].length);
+      const keep: number[] = [];
+      for (const i of order) {
+        const seam = keep.some(k => sizes[i].filter(sample => miss(planes[k], sample) < tolerance * 1.6).length > sizes[i].length * 0.6);
+        if (!seam) keep.push(i);
+      }
+      const kept = keep.map(i => planes[i]);
+      planes.length = 0; planes.push(...kept);
+    }
+    assign();
+  } else {
+    // Each plane made exact on the stripe edges among its samples: a plane
+    // then lands inside the very cell a sample decoded, or it is not that
+    // sample's plane. That decides what the rounded cell centres cannot: two
+    // faces of a box nearly agree near their fold, a small face (a box top
+    // seen at a slant) nearly agrees with its neighbour.
+    const fits = (h: number[], sample: Sample) => miss(h, sample) <= plan.cell / 2 + 4;
+    const ownerMap = () => {
+      const ownerAt = new Int16Array(gw * gh).fill(-1);
+      for (let i = 0; i < samples.length; i++) ownerAt[samples[i].gy * gw + samples[i].gx] = owner[i];
+      return ownerAt;
+    };
+    const exactAll = () => { const ownerAt = ownerMap(); return planes.map((h, p) => refineWithEdges(h, edges, (x, y) => edgeOwnedBy(ownerAt, gw, gh, step, x, y, p), plan.cell)); };
+    planes.splice(0, planes.length, ...exactAll());
+    // The edges each plane owns: what decides whether two finds are one surface.
+    const edgesOf = () => {
+      const ownerAt = ownerMap();
+      const lists: AxisSample[][] = planes.map(() => []);
+      for (let k = 0; k < edges.count; k++) {
+        const x = edges.x[k], y = edges.y[k];
+        for (let p = 0; p < planes.length; p++) if (edgeOwnedBy(ownerAt, gw, gh, step, x, y, p)) { lists[p].push({ x, y, axis: edges.axis[k], value: edges.value[k] }); break; }
+      }
+      return lists;
+    };
+    const good = (h: number[], list: AxisSample[]) => list.filter(e => edgeResidual(h, e) < 2).length;
+    // Two finds that are one surface (a face found in two halves): one exact
+    // plane fits both finds' edges as well as their own planes do. Two faces
+    // meeting at a fold never do, however small one of them is.
+    for (let merged = true; merged;) {
+      merged = false;
+      assign();
+      const lists = edgesOf();
+      search: for (let i = 0; i < planes.length; i++) for (let j = i + 1; j < planes.length; j++) {
+        const both = [...lists[i], ...lists[j]];
+        if (both.length < 24) continue;
+        const joint = solveAxes(both);
+        if (!joint) continue;
+        const own = good(planes[i], lists[i]) + good(planes[j], lists[j]);
+        if (good(joint, both) >= 0.95 * own) { planes[i] = refineWithEdges(joint, { count: both.length, x: Float32Array.from(both, e => e.x), y: Float32Array.from(both, e => e.y), axis: Uint8Array.from(both, e => e.axis), value: Float32Array.from(both, e => e.value) }, () => true, plan.cell); planes.splice(j, 1); merged = true; break search; }
+      }
+    }
+    // A find whose edges a bigger find's plane already fits is a seam along a fold, not a surface.
+    {
+      assign();
+      const lists = edgesOf();
+      const order = planes.map((_, i) => i).sort((p, q) => lists[q].length - lists[p].length);
+      const keep: number[] = [];
+      for (const i of order) {
+        const mine = good(planes[i], lists[i]);
+        const explained = keep.some(k => good(planes[k], lists[i]) >= 0.8 * mine);
+        if (!explained && mine >= 12) keep.push(i);
+      }
+      const kept = keep.map(i => planes[i]);
+      planes.length = 0; planes.push(...kept);
+    }
+    assign();
+    planes.splice(0, planes.length, ...exactAll());
+    const exact = planes;
+    const candidates: number[][] = [];
+    const unique = new Int16Array(gw * gh).fill(-1);
+    for (let i = 0; i < samples.length; i++) {
+      const list: number[] = [];
+      for (let p = 0; p < exact.length; p++) if (fits(exact[p], samples[i])) list.push(p);
+      candidates.push(list);
+      if (list.length === 1) unique[samples[i].gy * gw + samples[i].gx] = list[0];
+    }
+    // Two planes also agree along the line where one's plane would cut the
+    // other, far from any fold (a box top's height across the other box): a
+    // sample is only in doubt when another candidate really is close by.
+    const nearby = (sample: Sample, p: number) => {
+      for (let dy = -6; dy <= 6; dy++) for (let dx = -6; dx <= 6; dx++) {
+        const x = sample.gx + dx, y = sample.gy + dy;
+        if (x >= 0 && y >= 0 && x < gw && y < gh && unique[y * gw + x] === p) return true;
+      }
+      return false;
+    };
+    for (let i = 0; i < samples.length; i++) {
+      const list = candidates[i];
+      if (list.length <= 1) { owner[i] = list.length ? list[0] : -1; continue; }
+      const near = list.filter(p => nearby(samples[i], p));
+      owner[i] = near.length === 1 ? near[0] : near.length ? -1 : list.reduce((a, b) => (miss(exact[a], samples[i]) <= miss(exact[b], samples[i]) ? a : b));
+    }
   }
   const seen = new Uint8Array(samples.length);
+  const patchOf = new Int32Array(gw * gh);
   const surfaces: DetectedSurface[] = [];
-  const rough: { h: number[]; quad: { x: number; y: number }[]; locked: boolean[]; samples: number; rmsPx: number }[] = [];
+  const rough: { h: number[]; quad: { x: number; y: number }[]; locked: boolean[]; samples: number; rmsPx: number; edgePx?: number }[] = [];
   for (let start = 0; start < samples.length; start++) {
     if (seen[start] || owner[start] < 0) continue;
     const plane = owner[start], patch: Sample[] = [], stack = [start];
@@ -321,7 +554,18 @@ export function detectSurfaces(
       }
     }
     if (patch.length < minPoints) continue;
-    const h = solveHomography(patch) ?? planes[plane];
+    let h = solveHomography(patch) ?? planes[plane];
+    const patchId = rough.length + 1;
+    for (const sample of patch) patchOf[sample.gy * gw + sample.gx] = patchId;
+    const inPatch = (x: number, y: number) => edgeOwnedBy(patchOf, gw, gh, step, x, y, patchId, 0);
+    h = refineWithEdges(h, decoded.edges, inPatch, plan.cell);
+    let edgeSum = 0, edgeCount = 0;
+    if (decoded.edges) for (let k = 0; k < decoded.edges.count; k++) {
+      const e = { x: decoded.edges.x[k], y: decoded.edges.y[k], axis: decoded.edges.axis[k], value: decoded.edges.value[k] };
+      if (!inPatch(e.x, e.y)) continue;
+      const r = edgeResidual(h, e);
+      if (r < plan.cell / 4) { edgeSum += r * r; edgeCount++; }
+    }
     // Box the solid part of the patch: stray samples on its fringe would
     // drag a corner out, so only samples surrounded by their own patch count.
     let core = patch, trimmed = 0;
@@ -335,10 +579,13 @@ export function detectSurfaces(
       if (kept.length < Math.max(12, patch.length * 0.25)) break;
       core = kept; trimmed++;
     }
-    const tight = enclosingQuad(convexHull(core.length >= 12 ? core : patch));
+    // The sides of the whole patch's outline (a ragged edge and rounded corners
+    // do not move them); else the trimmed core shaved to four sides, pushed back
+    // out by the trimming.
+    const sides = quadFromSides(convexHull(patch));
+    const tight = sides ?? enclosingQuad(convexHull(core.length >= 12 ? core : patch));
     if (!tight) continue;
-    // Trimming pulled every side in by one grid step per pass: push them back out.
-    const quad = pushOut(tight, trimmed * step);
+    const quad = sides ?? pushOut(tight, trimmed * step);
     let error = 0;
     for (const s of patch) { const q = applyHomography(h, s.x, s.y); error += (q.x - s.u) ** 2 + (q.y - s.v) ** 2; }
     // Clockwise from the corner nearest the photo's top left.
@@ -346,13 +593,13 @@ export function detectSurfaces(
     const around = [...quad].sort((a, b) => Math.atan2(a.y - cy, a.x - cx) - Math.atan2(b.y - cy, b.x - cx));
     let first = 0;
     for (let i = 1; i < 4; i++) if (around[i].x + around[i].y < around[first].x + around[first].y) first = i;
-    rough.push({ h, quad: [0, 1, 2, 3].map(i => around[(first + i) % 4]), locked: [false, false, false, false], samples: patch.length, rmsPx: Math.sqrt(error / patch.length) });
+    rough.push({ h, quad: [0, 1, 2, 3].map(i => around[(first + i) % 4]), locked: [false, false, false, false], samples: patch.length, rmsPx: Math.sqrt(error / patch.length), ...(edgeCount >= 24 ? { edgePx: Math.sqrt(edgeSum / edgeCount) } : {}) });
   }
   // Folds: where two faces share a side, both take the calculated line where
   // their planes meet. It is exact, and the same for both, so they join.
   const near = Math.max(decoded.width, decoded.height) / 22;
   for (let i = 0; i < rough.length; i++) for (let j = i + 1; j < rough.length; j++) {
-    const line = foldLine(rough[i].h, rough[j].h);
+    const line = foldBetween(rough[i].h, rough[j].h, [...rough[i].quad, ...rough[j].quad]);
     if (!line) continue;
     const distance = (p: { x: number; y: number }) => line[0] * p.x + line[1] * p.y + line[2];
     // The side lying along the fold: the closest one, and only if the face's
@@ -364,8 +611,34 @@ export function detectSurfaces(
     };
     const a = sideOn(rough[i]), b = sideOn(rough[j]);
     if (a === undefined || b === undefined) continue;
+    // A real fold: the two faces lie either side of it and their sides along
+    // it run side by side, close together. Any two planes have such a line
+    // (parallel faces too), but only touching faces share it.
+    {
+      const qa = rough[i].quad, qb = rough[j].quad;
+      const centre = (q: { x: number; y: number }[]) => ({ x: q.reduce((t, p) => t + p.x, 0) / 4, y: q.reduce((t, p) => t + p.y, 0) / 4 });
+      if (distance(centre(qa)) * distance(centre(qb)) >= 0) continue;
+      const along = (p: { x: number; y: number }) => -line[1] * p.x + line[0] * p.y;
+      const sa = [along(qa[a]), along(qa[(a + 1) % 4])].sort((p, q) => p - q), sb = [along(qb[b]), along(qb[(b + 1) % 4])].sort((p, q) => p - q);
+      const overlap = Math.min(sa[1], sb[1]) - Math.max(sa[0], sb[0]);
+      if (overlap < 0.3 * Math.min(sa[1] - sa[0], sb[1] - sb[0])) continue;
+      const gap = Math.max(...[qa[a], qa[(a + 1) % 4]].map(p => Math.abs(distance(p)))) + Math.max(...[qb[b], qb[(b + 1) % 4]].map(p => Math.abs(distance(p))));
+      if (gap > near) continue;
+    }
     for (const [surface, side] of [[rough[i], a], [rough[j], b]] as const) {
-      for (const k of [side, (side + 1) % 4]) { const d = distance(surface.quad[k]); surface.quad[k] = { x: surface.quad[k].x - line[0] * d, y: surface.quad[k].y - line[1] * d }; }
+      // The side becomes the fold line; its corners are where the fold meets the neighbouring sides.
+      const q = surface.quad, k0 = side, k1 = (side + 1) % 4;
+      const meetFold = (from: { x: number; y: number }, to: { x: number; y: number }) => {
+        const df = distance(from), dt = distance(to);
+        if (Math.abs(df - dt) < 1e-9) return null;
+        const t = df / (df - dt);
+        return { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t };
+      };
+      const c0 = meetFold(q[(k0 + 3) % 4], q[k0]), c1 = meetFold(q[(k1 + 1) % 4], q[k1]);
+      const onLine = (p: { x: number; y: number }) => { const d = distance(p); return { x: p.x - line[0] * d, y: p.y - line[1] * d }; };
+      // A neighbouring side nearly along the fold would send its corner far off: then just drop the corner onto the line.
+      const sane = (c: { x: number; y: number } | null, was: { x: number; y: number }) => c && Math.hypot(c.x - was.x, c.y - was.y) < near ? c : onLine(was);
+      q[k0] = sane(c0, q[k0]); q[k1] = sane(c1, q[k1]);
       surface.locked[side] = true;
     }
   }
@@ -381,6 +654,7 @@ export function detectSurfaces(
       area: surface.samples * step * step / (decoded.width * decoded.height),
       rmsPx: surface.rmsPx,
       samples: surface.samples,
+      ...(surface.edgePx !== undefined ? { edgePx: surface.edgePx } : {}),
       solid: Math.min(1, surface.samples * step * step / Math.max(1, Math.abs(ordered.reduce((sum, p, i) => sum + p.x * ordered[(i + 1) % 4].y - ordered[(i + 1) % 4].x * p.y, 0)) / 2)),
     });
   }

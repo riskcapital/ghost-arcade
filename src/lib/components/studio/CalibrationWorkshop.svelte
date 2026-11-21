@@ -2,21 +2,21 @@
  import {onMount,onDestroy,tick} from 'svelte';
  import Icon from './StudioIcon.svelte';
  import InfoTip from './ui/InfoTip.svelte';
- import {detectSurfaces} from '../../mobile/studio/surfaceDetect';
  import {findPainting,paintingSize,rectifyPainting,clockwiseFromTopLeft} from '../../mobile/studio/painting';
  import {openAutoMapCamera,uprightTurn,mapSurface,type AutoMapCamera,type AutoMapProjector,type AutoMapResult} from '../../mobile/studio/autoMap';
  import {surfaceDepthQuality,homography,unitCorners,project,exportCalibration,grayPatternPlan,type Calibration,type UV,type Reference} from '../../mobile/studio/calibration';
  import {captureCalibrationReference,shareCalibrationPreparation} from '../../mobile/studio/captureToolkit';
  import {acquireNativeFeed} from '../../mobile/studio/nativeLive';
  import {openLidarAutoMapCamera} from '../../mobile/studio/lidarScan';
- import {mapCurvedSurfaces,buildCurvedSurface,sampleScan,type CurvedScan,type CurvedSurface,type MeshMode} from '../../mobile/studio/meshMap';
+ import {autoMapSurfaces} from '../../mobile/studio/autoMapSurfaces';
+ import {buildCurvedSurface,sampleScan,type CurvedScan,type CurvedSurface,type MeshMode} from '../../mobile/studio/meshMap';
  import {buildDepthCapture,desktopFit,gravityInScan,DEPTH_CAPTURE_FILE,type DepthCapture,type CaptureReport} from '../../mobile/studio/depthCapture';
  import {stageOf,type DepthScanRequest,type DepthScanStage} from '../../mobile/studio/depthScan';
  import type {DepthCaptureLimits} from '../../mobile/studio/desktopCapabilities';
  import {shareFile} from '../../mobile/studio/nativeShare';
  export let onclose:()=>void;
  export let onsend:((json:string)=>void)|undefined=undefined;
- function sendDesktop(){try{const live=mapped.filter(m=>!skipped.has(m.surfaceId)&&surfaces.some(s=>s.id===m.surfaceId));const c=draft();let base:Record<string,unknown>;try{base=exportCalibration(c);}catch(e){if(!live.length)throw e;base={...c};}onsend?.(JSON.stringify({...base,mappedSurfaces:live.map(({name,screenId,screenName,points,rmsPx,curved})=>({name,screenId,screenName,points,rmsPx,...(curved?meshPayload(curved.surface):{})}))}));message=live.length?`Sent ${live.length} mapped surface${live.length===1?'':'s'}. On the desktop, choose Create layers.`:"Sent for desktop review; output geometry is not changed until applied there.";}catch(e){message=(e as Error).message;}}
+ function sendDesktop(){try{const live=mapped.filter(m=>!skipped.has(m.surfaceId)&&surfaces.some(s=>s.id===m.surfaceId));const c=draft();let base:Record<string,unknown>;try{base=exportCalibration(c);}catch(e){if(!live.length)throw e;base={...c};}onsend?.(JSON.stringify({...base,mappedSurfaces:live.map(({name,screenId,screenName,points,rmsPx,edgePx,curved})=>({name,screenId,screenName,points,rmsPx,...(edgePx!==undefined?{edgePx:Math.round(edgePx*100)/100}:{}),...(curved?meshPayload(curved.surface):{})}))}));message=live.length?`Sent ${live.length} mapped surface${live.length===1?'':'s'}. On the desktop, choose Create layers.`:"Sent for desktop review; output geometry is not changed until applied there.";}catch(e){message=(e as Error).message;}}
  export let lidar=false;
  /** Runs the stripe capture against a paired desktop. Only set when paired. */
  export let automap:((camera:AutoMapCamera,progress:(text:string,fraction?:number)=>void,options?:{screenId?:string})=>Promise<AutoMapResult>)|undefined=undefined;
@@ -110,7 +110,7 @@
  let scan:AutoMapProjector[]=[];
  /** A curved surface found with LiDAR: which projector scan and region it came from, and its current mesh. */
  type Curved={scan:number;region:number;surface:CurvedSurface};
- type Mapped={surfaceId:string;name:string;screenId:string;screenName:string;points:UV[];rmsPx:number;curved?:Curved};
+ type Mapped={surfaceId:string;name:string;screenId:string;screenName:string;points:UV[];rmsPx:number;edgePx?:number;curved?:Curved};
  /** Per projector, the LiDAR side of the scan, kept so a surface can be rebuilt in the other mode. */
  let curvedScans:(CurvedScan&{projector:AutoMapProjector})[]=[];
  const round=(n:number)=>Math.round(n*1e5)/1e5;
@@ -197,27 +197,14 @@
    reference=result.reference;surfaces=[];points=[];mode='surface';
    projectors=result.projectors.map(p=>({id:crypto.randomUUID(),name:p.name,width:p.width,height:p.height,corners:p.corners}));
    scan=result.projectors;mapped=[];skipped=new Set();painting=null;curvedScans=[];
-   // Find the flat surfaces in the scan; nobody has to tap corners.
-   const flat:{projector:AutoMapProjector;surface:Calibration['surfaces'][number];entry:Mapped}[]=[];
-   for(const projector of scan)for(const found of detectSurfaces(projector,{photo:projector.white})){
-    const surface={id:crypto.randomUUID(),name:'',points:found.outline.map(p=>({x:Math.max(0,Math.min(1,p.x)),y:Math.max(0,Math.min(1,p.y))}))};
-    flat.push({projector,surface,entry:{surfaceId:surface.id,name:'',screenId:projector.id,screenName:projector.name,points:found.points,rmsPx:found.rmsPx}});
-   }
-   // With depth, curved forms get a mesh, and a flat fit drawn across one gives way to it.
-   const curved:{surface:Calibration['surfaces'][number];entry:Mapped}[]=[];
-   const dropped=new Set<string>();
-   if(result.depth){
-    message='Finding curved surfaces…';fraction=1;await tick();await new Promise(r=>setTimeout(r,30));
-    for(const [index,projector] of scan.entries()){
-     const own=flat.filter(f=>f.projector===projector);
-     const found=mapCurvedSurfaces({width:projector.width,height:projector.height,cell:projector.plan.cell,decoded:projector.decoded},result.depth,own.map(f=>f.surface.points),'wrap');
-     curvedScans[index]={...found,projector};
-     found.keepFlat.forEach((keep,k)=>{if(!keep)dropped.add(own[k].surface.id);});
-     found.surfaces.forEach((c,region)=>{const surface={id:crypto.randomUUID(),name:'',points:c.outline};
-      curved.push({surface,entry:{surfaceId:surface.id,name:'',screenId:projector.id,screenName:projector.name,points:c.corners,rmsPx:c.rmsPx,curved:{scan:index,region,surface:c}}});});
-    }
-   }
-   for(const item of [...flat.filter(f=>!dropped.has(f.surface.id)),...curved]){const name=`Surface ${surfaces.length+1}`;surfaces=[...surfaces,{...item.surface,name}];mapped=[...mapped,{...item.entry,name}];}
+   // Find the flat surfaces in the scan (nobody has to tap corners); with depth, curved forms get a mesh,
+   // and a flat fit drawn across one gives way to it. The stripes decide the flat faces either way.
+   if(result.depth){message='Finding curved surfaces…';fraction=1;await tick();await new Promise(r=>setTimeout(r,30));}
+   const found=autoMapSurfaces(scan.map(p=>({id:p.id,width:p.width,height:p.height,plan:p.plan,decoded:p.decoded,white:p.white})),result.depth,'wrap');
+   (found.curvedScans??[]).forEach((c,index)=>{curvedScans[index]={...c,projector:scan[index]};});
+   const curved=found.filter(f=>f.curved);
+   for(const item of found){const projector=scan[item.scan];const surface={id:crypto.randomUUID(),name:`Surface ${surfaces.length+1}`,points:item.outline};
+    surfaces=[...surfaces,surface];mapped=[...mapped,{surfaceId:surface.id,name:surface.name,screenId:projector.id,screenName:projector.name,points:item.points,rmsPx:item.rmsPx,...(item.edgePx!==undefined?{edgePx:item.edgePx}:{}),...(item.curved?{curved:{scan:item.scan,region:item.curved.region,surface:item.curved.surface}}:{})}];}
    skipped=skipped;
    const meshes=curved.length;
    if(depth){if(!depthStopped)await finishDepth(result);return;}
