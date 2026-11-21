@@ -4614,6 +4614,10 @@
         }
         break;
       }
+      case 'studio_automap_diagnostics':
+        // One auto-map run from the phone, in chunks: saved to userData/diagnostics/automap and logged.
+        void import('./lib/output/autoMapDiagnostics').then(m => m.receiveDiagnosticsChunk(msg as any)).catch(e => console.warn('[AutoMap] diagnostics not saved:', e));
+        break;
       case 'studio_calibration_offer': {
         try{
           if(typeof msg.json!=='string'||msg.json.length>8_000_000)throw Error('Invalid calibration size.');

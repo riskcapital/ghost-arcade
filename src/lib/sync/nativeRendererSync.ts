@@ -10226,6 +10226,8 @@ export class NativeRendererSync {
           deck_monitor_bank: layer._deckMonitorBank ?? null,
           deck_monitor_opacity: layer._deckMonitorOpacity ?? 1,
           corners: layer.corners,
+          // Perspective corner pin (a flat face from the phone); plain corner warps stay bilinear.
+          corner_perspective: layer.warpMode !== 'mesh' && layer.cornerPerspective === true,
           uv_transform: nativeUv.uvTransform,
           uv_flags: nativeUv.uvFlags,
           shape: nativeShape.shape,
@@ -11045,6 +11047,8 @@ export class NativeRendererSync {
           deck_monitor_bank: layer._deckMonitorBank ?? null,
           deck_monitor_opacity: layer._deckMonitorOpacity ?? 1,
           corners: layer.corners,
+          // Perspective corner pin (a flat face from the phone); plain corner warps stay bilinear.
+          corner_perspective: layer.warpMode !== 'mesh' && layer.cornerPerspective === true,
           uv_transform: nativeUv.uvTransform,
           uv_flags: nativeUv.uvFlags,
           shape: nativeShape.shape,

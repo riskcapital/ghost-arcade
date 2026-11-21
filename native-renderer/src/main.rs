@@ -3251,6 +3251,10 @@ struct SceneLayer {
     /// placeholder an empty layer shows, which the shader deliberately dims.
     explicit_color: bool,
     corners: [[f32; 2]; 4],
+    /// The corner pin is a true perspective (homography) instead of the
+    /// bilinear map: a flat face seen at a slant, measured by the phone.
+    /// Off by default so existing corner warps draw exactly as before.
+    corner_perspective: bool,
     native_params: [f32; 8],
     blend_code: f32,
     uv0: [f32; 4],
@@ -4168,6 +4172,7 @@ impl SceneLayer {
             shader_frame_slot: None,
             shader_source_id: None,
             corners: [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
+            corner_perspective: false,
             native_params: default_native_params(),
             blend_code: 0.0,
             uv0: [0.0, 0.0, 1.0, 1.0],
@@ -4308,7 +4313,8 @@ impl SceneLayer {
             mesh_tangents: self.mesh_tangents_gpu(),
             mesh_bounds: self.mesh_bounds_gpu(),
             source_rect: held.map_or(self.source_rect, |held| held.rect),
-            fast_flags: [u32::from(plain_fill), u32::from(self.mesh_is_bezier()), u32::from(self.dome.is_some()), 0],
+            // w bit 1: perspective corner pin (bit 0 is the painted mask's inversion).
+            fast_flags: [u32::from(plain_fill), u32::from(self.mesh_is_bezier()), u32::from(self.dome.is_some()), u32::from(self.corner_perspective) << 1],
             tint: [self.tint[0], self.tint[1], self.tint[2], self.color[3].clamp(0.0, 1.0)],
             dome: self.dome.unwrap_or([0.0; 4]),
         }
@@ -16585,6 +16591,9 @@ impl App {
         if let Some(corners) = corners_at(command, &["corners"]) {
             entry.corners = corners;
         }
+        if let Some(perspective) = command.get("corner_perspective").and_then(|v| v.as_bool()) {
+            entry.corner_perspective = perspective;
+        }
         if let Some(uv_transform) = vec4_path_at(command, &["uv_transform"]) {
             entry.uv0 = [
                 uv_transform[0].clamp(-8.0, 8.0),
@@ -21680,7 +21689,7 @@ impl App {
         if slot != 0 {
             gpu.fast_flags[0] = 0;
             gpu.fast_flags[2] = slot;
-            gpu.fast_flags[3] = flags;
+            gpu.fast_flags[3] = flags | (gpu.fast_flags[3] & 2);
         }
         gpu
     }

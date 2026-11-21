@@ -9,7 +9,9 @@
  import {createAssetRefFromGeneratedBlob} from '../../storage/assetRegistry';
  import {traceShapes,type TracedShape} from '../../painting/vectorize';
  import {createShapeLayers,picturePixels} from '../../painting/paintingShapes';
- import {perspectiveMeshLayer,phoneMeshLayer} from '../../output/mobileMeshImport';
+ import {phoneMeshLayer} from '../../output/mobileMeshImport';
+ import {lastAutoMapRun} from '../../output/autoMapDiagnostics';
+ import {invoke} from '../../bridge';
  // Surfaces the phone measured with the stripe scan: each outline is already
  // in its projector's own picture, so it becomes a layer pinned to that face.
  // A curved surface (measured with LiDAR) also brings a mesh and its edge in the layer's picture.
@@ -77,12 +79,8 @@
    // ('fill' keeps the native mask a plain cut). Anything malformed falls back to the corners.
    const curved=phoneMeshLayer(surface,crop);
    if(curved){project.updateLayer(layerId,{warpMode:'mesh',...curved,contentFit:'fill'});meshes++;}
-   else{
-    // A flat face: a mesh carrying the true perspective, so the inside lands too (a four-corner warp is bilinear and bows it).
-    const flat=perspectiveMeshLayer(surface.points,crop);
-    if(flat)project.updateLayer(layerId,{warpMode:'mesh',...flat,contentFit:'fill'});
-    else project.updateLayer(layerId,{warpMode:'corners',corners:{topLeft,topRight,bottomRight,bottomLeft}});
-   }
+   // A flat face: a plain four-corner pin (four handles), drawn as a true perspective so the inside lands too.
+   else project.updateLayer(layerId,{warpMode:'corners',corners:{topLeft,topRight,bottomRight,bottomLeft},cornerPerspective:true});
    made++;
    // A painting arrives with its own photo, cut to land exactly on it: put that on the layer.
    const picture=pictureOf(surface);
@@ -100,6 +98,52 @@
   }
   recordDiscreteAction();createdFor=incoming;
   message=`${made} layer${made===1?'':'s'} created and pinned in place.${meshes?` ${meshes===made?(meshes===1?'It follows':'They follow'):meshes===1?'One follows':`${meshes} follow`} a curved surface with a mesh, masked to its edge.`:''}${skipped?` ${skipped} skipped: only four-corner surfaces can be pinned.`:''} ${pictures?`The painting’s photo is on its layer, lined up and cropped: add effects to it.`:'Drop a shader or video on each one.'}${pictureFailed?' The photo could not be saved; the layer is in place without it.':''}${straightened?' The Screen’s own corner correction was turned off so the layers sit where they were measured.':''}`;
+ }
+ // Verification: each mapped layer shows a checker in its own colour with a white edge, the phone
+ // photographs it from where it scanned, and both photos (plain and with the measured outlines) are kept
+ // beside the run's diagnostics. Misalignment shows at a glance; the same photo feeds Tighten later.
+ const VERIFY_COLOURS=['#4da3ff','#ff7a45','#36cfc9','#ffc53d','#9254de','#73d13d','#f759ab','#ffa940'];
+ let verifying=false,verifyNote='',verifyShot='';
+ function checker(colour:string):Promise<Blob>{
+  const c=document.createElement('canvas');c.width=c.height=512;const g=c.getContext('2d')!;
+  for(let y=0;y<8;y++)for(let x=0;x<8;x++){g.fillStyle=(x+y)%2?'#000':colour;g.fillRect(x*64,y*64,64,64);}
+  g.strokeStyle='#fff';g.lineWidth=16;g.strokeRect(8,8,496,496);
+  return new Promise((ok,no)=>c.toBlob(b=>b?ok(b):no(new Error('No picture')),'image/png'));
+ }
+ async function outlined(image:string,width:number,height:number):Promise<string>{
+  const img=new Image();img.src=image;await img.decode();
+  const c=document.createElement('canvas');c.width=img.naturalWidth||width;c.height=img.naturalHeight||height;const g=c.getContext('2d')!;g.drawImage(img,0,0,c.width,c.height);
+  g.lineWidth=Math.max(2,c.width/500);
+  mappedSurfaces.forEach((m,i)=>{const o=scene.outlines.get(m.name);if(!o)return;g.strokeStyle=VERIFY_COLOURS[i%VERIFY_COLOURS.length];g.beginPath();o.forEach((p,k)=>k?g.lineTo(p.x*c.width,p.y*c.height):g.moveTo(p.x*c.width,p.y*c.height));g.closePath();g.stroke();});
+  return c.toDataURL('image/jpeg',0.88);
+ }
+ async function verifyWithPhone(){
+  const remote=(window as any).__gaAutoMap;
+  if(verifying)return;
+  if(!remote?.camera){verifyNote='Keep the phone where it scanned, on its results screen (its camera stays on for 5 minutes), then try again.';return;}
+  verifying=true;verifyNote='Showing the checkers…';
+  const layers=$project.layers.filter(l=>l.name.endsWith('(mapped)'));
+  const before=new Map(layers.map(l=>[l.id,(l as any).source??null]));
+  try{
+   for(const [i,layer] of layers.entries()){
+    const blob=await checker(VERIFY_COLOURS[i%VERIFY_COLOURS.length]);
+    const name=`verify-${i+1}.png`;
+    const ref=await createAssetRefFromGeneratedBlob(blob,name,'image/png');
+    const item={id:crypto.randomUUID(),name,src:ref.runtimeUrl,type:'image' as const,thumbnail:ref.runtimeUrl,_assetRef:ref.assetRef};
+    mediaLibrary.addItem(item);
+    project.setLayerSource(layer.id,{id:item.id,type:'image',src:item.src,name:item.name,_assetRef:item._assetRef},{history:false});
+   }
+   await new Promise(r=>setTimeout(r,1200));
+   verifyNote='Photographing from the phone…';
+   const frame=await remote.grab();
+   if(typeof frame?.image!=='string')throw new Error('The phone sent no photo.');
+   const overlay=await outlined(frame.image,Number(frame.width)||0,Number(frame.height)||0);
+   verifyShot=overlay;
+   const stamp=$lastAutoMapRun?.stamp??new Date().toISOString().replace(/[:.]/g,'-');
+   await invoke('save_automap_diagnostics',{stamp,files:{'verify.jpg':frame.image,'verify-overlay.jpg':overlay},summary:`verification shot: ${layers.length} mapped layers as checkers`}).catch(()=>{});
+   verifyNote='Saved. Coloured outlines are where the phone measured each face: each checker should fill its outline exactly.';
+  }catch(e){verifyNote=e instanceof Error?e.message:'The verification failed.';}
+  finally{for(const layer of layers)project.setLayerSource(layer.id,before.get(layer.id)??null,{history:false});verifying=false;}
  }
  export let incoming='';
  let seen='';
@@ -128,6 +172,9 @@
    <label class="am-option"><input type="checkbox" bind:checked={replaceOld}/>Replace layers from the last scan</label>
    <button class="am-go" onclick={createLayers} disabled={!chosen||creating||createdFor===incoming}>{createdFor===incoming?'Layers created':`Create ${chosen} layer${chosen===1?'':'s'}`}</button>
    <p class="am-status" role="status">{message}</p>
+   {#if createdFor===incoming}<button class="am-go" onclick={verifyWithPhone} disabled={verifying}>{verifying?'Verifying…':'Verify with the phone'}</button>
+    {#if verifyNote}<p class="am-status" role="status">{verifyNote}</p>{/if}
+    {#if verifyShot}<img class="am-verify" src={verifyShot} alt="The phone's view of the checkers, with the measured outlines"/>{/if}{/if}
   </div>
  </div>
  {#if paintingSrc}<div class="am-shapes">
@@ -152,6 +199,7 @@
 {#if !shape?.corners}<p role="alert">Choose a convex four-corner surface within the supported projector raster. Polygons and non-planar objects cannot be applied as a corner calibration.</p>{/if}<button disabled={!target||!shape?.corners} onclick={apply}>Apply geometry to selected output</button>{/if}<p class="note">This is a planar photo calibration. Match the selected display’s resolution to the measured projector. Depth measurements do not make this an automatic 3D projector solve. Verify alignment at the venue; overlap blending remains a separate step.</p>{/if}
 {#if !mappedSurfaces.length}<p role="status">{message}</p>{/if}</section>
 <style>
+ .am-verify{width:100%;border-radius:8px;margin-top:8px}
  .am header small{font-size:var(--ga-text-eyebrow,10px);font-weight:700;letter-spacing:var(--ga-eyebrow-tracking,.08em);color:var(--ga-ink-2)}.am header h2{margin:4px 0 6px;font-size:var(--ga-text-display,20px);font-weight:var(--ga-weight-title,650)}.am header p{margin:0;color:var(--ga-ink-1);max-width:60ch}
  .am-body{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(260px,1fr);gap:28px;margin-top:22px;align-items:start}
  @media (max-width:820px){.am-body{grid-template-columns:1fr}}

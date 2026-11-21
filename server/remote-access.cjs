@@ -96,10 +96,18 @@ function depthMessageEnds(msg) {
     || (msg.type === 'studio_depth_scan_progress' && (msg.stage === 'cancelled' || msg.stage === 'error'));
 }
 /** The phone app a capabilities request names, kept short and plain. */
+// Auto-map diagnostics from a phone: one run's photos, decode and faces, in
+// chunks (the socket takes 10 MB a message). Only the desktop receives them.
+const DIAG_CHUNK_MAX = 4 * 1024 * 1024;
+function diagnosticsMessageAllowed(msg) {
+  return !!msg && msg.type === 'studio_automap_diagnostics' && typeof msg.requestId === 'string' && SCAN_ID.test(msg.requestId)
+    && Number.isInteger(msg.count) && msg.count >= 1 && msg.count <= 64 && Number.isInteger(msg.index) && msg.index >= 0 && msg.index < msg.count
+    && typeof msg.data === 'string' && msg.data.length <= DIAG_CHUNK_MAX;
+}
 function describeClient(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const part = (v) => (typeof v === 'string' || typeof v === 'number' ? String(v).replace(/[^\w.+ -]/g, '').slice(0, 40) : '');
   const client = { app: part(raw.app), version: part(raw.version), build: part(raw.build), name: part(raw.name) };
   return client.app || client.version ? client : null;
 }
-module.exports = { HOST_MESSAGES, authorizedHost, isLoopback, permittedSource, scanMessageAllowed, scanMessageEnds, depthMessageAllowed, depthMessageEnds, describeClient };
+module.exports = { HOST_MESSAGES, authorizedHost, isLoopback, permittedSource, scanMessageAllowed, scanMessageEnds, depthMessageAllowed, depthMessageEnds, diagnosticsMessageAllowed, describeClient };

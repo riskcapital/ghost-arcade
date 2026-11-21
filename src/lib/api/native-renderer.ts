@@ -345,6 +345,8 @@ export type RendererCommand =
        *  into ('a'/'b'), at deck_monitor_opacity (true pre-crossfader level). */
       deck_monitor_bank?: 'a' | 'b' | null;
       deck_monitor_opacity?: number;
+      /** The corner pin is a true perspective, not the bilinear map (flat faces from the phone). */
+      corner_perspective?: boolean;
       corners?: {
         topLeft: { x: number; y: number };
         topRight: { x: number; y: number };
