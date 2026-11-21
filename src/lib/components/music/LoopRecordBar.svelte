@@ -118,6 +118,7 @@
       {#each QUANTIZE_GRIDS as g}<option value={g.id}>{g.id === 'off' ? 'No snap' : g.label}</option>{/each}
     </select>
   {/if}
+  {#if !compact && station.length === 0 && !s.sequencerPlaying && !Object.keys(s.playingLoops).length && !$loopStationView.tracks.some((t) => t.phase === 'play' || t.phase === 'overdub')}<span class="tempo-hint" title="With nothing playing, a free first loop sets the tempo: its length is read as 1, 2, 4 or 8 bars between 80 and 160 BPM">First loop sets tempo</span>{/if}
   <button class="text-btn small" onclick={capture} title="Keep what you just played as a loop, without having recorded it">Capture</button>
   {#if !compact && !split}<span class="pos">{launchClockTempo().toFixed(1)} BPM · {keyLabel(s.key)} · {position}</span>{/if}
   </span>
@@ -135,6 +136,7 @@
   .divider { width: 1px; height: 16px; margin: 0 2px; background: var(--studio-edge-soft); }
   .grp { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; row-gap: 4px; }
   .ey { margin-left: 4px; }
+  .tempo-hint { font-size: var(--ga-text-meta, 11px); color: var(--studio-rec); }
   .pos { margin-left: 8px; font-variant-numeric: tabular-nums; font-size: var(--ga-text-meta, 11px); color: var(--studio-ink); }
   /* Split: the record group left, the MIDI group right; each wraps only as a whole, the MIDI one keeping to the right. */
   .bar.split { flex: 1 1 100%; flex-wrap: wrap; row-gap: 4px; }
