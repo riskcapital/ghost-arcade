@@ -149,6 +149,7 @@ export class MusicAudioEngine {
   private returns: SendReturns | null = null;
   private returnLevels: Record<ReturnId, number> = { reverb: 0.7, echo: 0.7, spring: 0.7 };
   private masterMeters: [AnalyserNode, AnalyserNode] | null = null;
+  private masterTap: AnalyserNode | null = null;
   private kickOutUntil = 0;
   private toneChoice: { synth: string | null; keys: string | null; kit: string | null } = { synth: null, keys: null, kit: null };
   private synthPatch: SynthPatch = 'pad';
@@ -797,6 +798,19 @@ export class MusicAudioEngine {
       for (const x of buf) peak = Math.max(peak, Math.abs(x));
       return peak <= 0.001 ? 0 : Math.max(0, Math.min(1, (20 * Math.log10(peak) + 60) / 60));
     }) as [number, number];
+  }
+
+  /** An analyser on the master mix (null before audio starts): the studio's own sound, whatever the app's audio input is. */
+  masterAnalyser(): AnalyserNode | null {
+    if (!this.ctx || !this.output) return null;
+    if (!this.masterTap) {
+      const a = this.ctx.createAnalyser();
+      a.fftSize = 2048;
+      a.smoothingTimeConstant = 0.5;
+      this.output.connect(a);
+      this.masterTap = a;
+    }
+    return this.masterTap;
   }
 
   /** The shared returns' levels into the master. */

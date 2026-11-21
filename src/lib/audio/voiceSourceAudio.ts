@@ -19,10 +19,21 @@ export interface VoiceSourceAudio {
 
 type Feed = (key: string) => VoiceSourceAudio | null;
 let feed: Feed | null = null;
+let masterFeed: (() => AudioAnalysis | null) | null = null;
 
-/** The studio runtime supplies each source's audio. */
-export function setVoiceSourceAudioFeed(fn: Feed | null): void {
+/** The studio runtime supplies each source's audio, and its master mix's. */
+export function setVoiceSourceAudioFeed(fn: Feed | null, master: (() => AudioAnalysis | null) | null = null): void {
   feed = fn;
+  masterFeed = fn ? master : null;
+}
+
+/**
+ * The studio's master mix, analysed: what instruments read when the app has
+ * no audio input of its own (Audio Lab plays, the input is "none"). Null
+ * while the studio's audio has not started.
+ */
+export function studioMasterAnalysis(): AudioAnalysis | null {
+  return masterFeed ? masterFeed() : null;
 }
 
 export function voiceSourceAudio(key: string): VoiceSourceAudio | null {

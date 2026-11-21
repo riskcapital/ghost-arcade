@@ -64,7 +64,7 @@ import { mediaPipeSource } from '$lib/mediapipe/mediaPipeSource';
 import { ghostAudioCommandFieldsFromVisualAudio } from '$lib/audio/ghostAudioUniform';
 import { createIsfAudioRowEncoder } from '$lib/audio/isfAudioRows';
 import { createAudioVisualPacker, type AudioVisualPacker } from '$lib/audio/audioVisualData';
-import { sourceHitBand, voiceSourceAudio } from '$lib/audio/voiceSourceAudio';
+import { sourceHitBand, studioMasterAnalysis, voiceSourceAudio } from '$lib/audio/voiceSourceAudio';
 import { getLastRawAnalysis } from '$lib/stores/audio';
 import { shaderUsesISFAudioRows } from '$lib/isf/parser';
 import { WGSL_STDLIB, resolveGhostWgsl } from '$lib/renderer/wgsl';
@@ -7165,11 +7165,16 @@ export class NativeRendererSync {
     const needed = audio.isActive && layers.some((layer) => this.layerNeedsIsfAudioRows(layer));
     const analysis = getLastRawAnalysis();
     const rows = needed ? this.isfAudioRowEncoder.encode(analysis) : null;
-    const visualWanted = audio.isActive && this.audioVisualSeen;
+    // With no audio input of its own the app still hears Audio Lab: its
+    // instruments read the studio's master mix (an export keeps the input's
+    // analysis, which the render replays from the file).
+    const studioMaster = this.audioVisualSeen && !audio.isActive && this.manualClockExportDepth === 0 ? studioMasterAnalysis() : null;
+    const masterAnalysis = audio.isActive ? analysis : studioMaster;
+    const visualWanted = !!masterAnalysis && this.audioVisualSeen;
     this.audioVisualSeen = false;
     const followedSources = this.audioVisualSourcesSeen;
     this.audioVisualSourcesSeen = new Set();
-    const visual = visualWanted ? this.audioVisualPacker.encode(analysis, timeSeconds) : null;
+    const visual = visualWanted ? this.audioVisualPacker.encode(masterAnalysis, timeSeconds) : null;
     const command: Extract<RendererCommand, { type: 'set_audio_spectrum' }> = { type: 'set_audio_spectrum', active: false };
     let send = false;
     if (rows) {
@@ -7194,7 +7199,7 @@ export class NativeRendererSync {
           if (!feed) continue;
           let packer = this.audioVisualSourcePackers.get(key);
           if (!packer) this.audioVisualSourcePackers.set(key, (packer = createAudioVisualPacker()));
-          const own = feed.analysis ?? analysis;
+          const own = feed.analysis ?? masterAnalysis;
           const encoded = packer.encode(own, timeSeconds, { hit: feed.hit, env: feed.env, band: sourceHitBand(key) });
           if (encoded) sources[key] = encoded;
         }

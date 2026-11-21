@@ -2539,6 +2539,12 @@ const SOURCE_CHANNEL: Partial<Record<string, ChannelId>> = {
 };
 
 /** A followed sound's audio for an instrument voice (voiceSourceAudio.ts): `audioSource` is the source id or Live source. */
+/** The studio's master mix as an analysis frame (null before its audio starts). */
+function studioMasterFor() {
+  const node = audio.masterAnalyser();
+  return node ? analysisFromAnalyser(node, null) : null;
+}
+
 function voiceAudioFor(key: string) {
   const live = isLiveVoiceSource(key) ? key : undefined;
   const source = (live ? 'all' : key) as VoiceSourceId;
@@ -2755,7 +2761,7 @@ export function ensureMusicRuntime(): void {
   if (started) return;
   started = true;
   setStudioDriver(drivenForStudio, () => voices.feel(), () => get(musicStudio).key);
-  setVoiceSourceAudioFeed(voiceAudioFor);
+  setVoiceSourceAudioFeed(voiceAudioFor, studioMasterFor);
   // The music stops with its last host: a studio clip cleared or stopped on the deck, or its mapping layer removed.
   const hosted = hostWatch(stopForGoneHost);
   // One studio cell plays at a time, each with its own setup.
