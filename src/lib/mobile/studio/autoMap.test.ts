@@ -109,9 +109,9 @@ describe('auto-map run', () => {
     expect(ended()).toBe(true);
   }, 30000);
 
-  it('says what to do when no Screen is open', async () => {
+  it('says what to do when nothing is on a projector', async () => {
     const none: AutoMapLink = { async request() { return { screens: [] }; } };
-    await expect(runAutoMap(none, { async grab() { throw new Error('unused'); } })).rejects.toThrow(/Open on display/);
+    await expect(runAutoMap(none, { async grab() { throw new Error('unused'); } })).rejects.toThrow(/open the output/);
   });
 });
 

@@ -9,6 +9,7 @@
  import {acquireNativeFeed} from '../../mobile/studio/nativeLive';
  import {openLidarAutoMapCamera} from '../../mobile/studio/lidarScan';
  import {autoMapSurfaces} from '../../mobile/studio/autoMapSurfaces';
+ import {holdMappingRotation} from '../../mobile/studio/captureToolkit';
  import {buildCurvedSurface,sampleScan,type CurvedScan,type CurvedSurface,type MeshMode} from '../../mobile/studio/meshMap';
  import {buildDepthCapture,desktopFit,gravityInScan,DEPTH_CAPTURE_FILE,type DepthCapture,type CaptureReport} from '../../mobile/studio/depthCapture';
  import {stageOf,type DepthScanRequest,type DepthScanStage} from '../../mobile/studio/depthScan';
@@ -189,6 +190,12 @@
   // The motion permission must be asked straight from the tap, before anything else waits.
   const held=lidar?null:await uprightTurn();await tick();try{autoCamera=lidar?await openLidarAutoMapCamera(previewCanvas):await openAutoMapCamera(preview,held?.turn??0);stopRemote=remote?.(autoCamera);message='';}catch(e){framing=false;message=e instanceof Error?e.message:'The camera could not start.';}}
  function closeAuto(){stopRemote?.();stopRemote=undefined;autoCamera?.stop();autoCamera=undefined;framing=false;}
+ // The camera screen may turn sideways (a projection is wide, and the layout reflows); the photos are
+ // turned upright by gravity, not by the screen, so the scan is the same either way.
+ let releaseRotation:(()=>void)|undefined,portrait=false;
+ $: if((framing||busy)&&!releaseRotation)releaseRotation=holdMappingRotation();else if(!(framing||busy)&&releaseRotation){releaseRotation();releaseRotation=undefined;}
+ onMount(()=>{const q=window.matchMedia?.('(orientation: portrait)');if(!q)return;const set=()=>portrait=q.matches;set();q.addEventListener?.('change',set);return()=>q.removeEventListener?.('change',set);});
+ onDestroy(()=>releaseRotation?.());
  async function startAuto(){
   if(!autoCamera||!automap)return;busy=true;
   if(depth&&FIXTURE){try{for(let k=1;k<=20;k++){if(depthStopped)return;fraction=k/20*.85;message=k<18?`Screen 1: pattern ${k} of 17`:'Measuring depth';report(k<18?'patterns':'measuring',fraction);await new Promise(r=>setTimeout(r,90));}fraction=1;await finishDepth(null);}catch(e){depthFailed=e instanceof Error?e.message:'The scan failed.';}finally{busy=false;closeAuto();}return;}
@@ -266,6 +273,7 @@
     <p class="am-hint">Keep the phone still and stay out of the beam.</p>
    {:else}
     <p class="am-lead">Prop the phone where it sees the objects and the projection, then tap Start.<InfoTip label="How the room scan works"><ol><li>The projector shows stripes while the phone watches.</li><li>Then it goes dark while the LiDAR measures depth.</li><li>The phone sends the room to the desktop's Depth mode.</li></ol></InfoTip></p>
+    {#if portrait}<p class="am-note">Turn the phone sideways: the projection is wide, so the surfaces fill more of the picture.</p>{/if}
     <ul class="am-check"><li>The phone cannot move</li><li>The objects and the projection are in the picture</li><li>The room is dim, the objects within about 4 m</li></ul>
     {#if asked}<p class="am-note">The desktop asked for this scan.</p>{/if}
     <div class="am-actions"><button class="primary" onclick={startAuto} disabled={!autoCamera}>Start</button><button class="quiet" onclick={leaveDepth}>Cancel</button></div>
@@ -277,6 +285,7 @@
    <div class="am-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(fraction*100)}><i style:width={`${fraction*100}%`}></i></div>
    <p class="am-hint">Keep the phone still and stay out of the beam.</p>
   {:else}
+   {#if portrait}<p class="am-note">Turn the phone sideways: the projection is wide, so the surfaces fill more of the picture.</p>{/if}
    <ul class="am-check"><li>Every surface you want is in the picture</li><li>The phone is propped so it cannot move</li><li>The room is dim</li>{#if lidar}<li>Curved and organic forms get a mesh from LiDAR, within about 4 m</li>{/if}</ul>
    <div class="am-actions"><button class="primary" onclick={startAuto} disabled={!autoCamera}>Start scan</button><button class="quiet" onclick={closeAuto}>Cancel</button></div>
   {/if}
@@ -383,6 +392,14 @@
  .am-painting{display:grid;gap:3px;width:100%;margin-top:14px;padding:12px 14px;text-align:left;border-radius:10px;background:transparent;border:1px dashed var(--ga-line-3)}
  .am-painting b{font-size:13px;font-weight:600}.am-painting span{font-size:12px;color:var(--ga-ink-2)}
  .am-stage{position:relative;width:100%;background:#000;border-radius:10px;overflow:hidden;border:1px solid var(--ga-line-3)}
+ /* Sideways phone: the camera on the left, the guides and buttons beside it, all on screen. */
+ @media (orientation: landscape) and (max-height: 560px){
+  section:has(> .am-stage){display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);column-gap:14px;align-content:start}
+  section:has(> .am-stage) > *{grid-column:2;min-width:0}
+  section:has(> .am-stage) > header{grid-column:1 / -1}
+  section:has(> .am-stage) > .am-stage{grid-column:1;grid-row:2 / span 12;align-self:start}
+  .am-stage video,.am-stage .am-preview{max-height:calc(100dvh - 96px)}
+ }
  .am-stage video,.am-stage .am-preview{display:block;width:100%;max-height:52vh;object-fit:contain;background:#000}
  .am-mode{display:grid;grid-template-columns:auto 1fr 1fr;gap:6px;align-items:center;margin-top:10px}
  .am-mode span{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ga-ink-2);padding-right:4px}

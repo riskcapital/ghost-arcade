@@ -58,7 +58,7 @@ export async function runAutoMap(
   const open: AutoMapScreen[] = Array.isArray(listed.screens) ? listed.screens : [];
   // A desktop asking for one Screen (a room scan for Depth mode) gets only that one.
   const screens = options.screenId && open.some((s) => s.id === options.screenId) ? open.filter((s) => s.id === options.screenId) : open;
-  if (!screens.length) throw new Error('No Screen is open on a projector. On the desktop, use Open on display for each Screen first.');
+  if (!screens.length) throw new Error('Nothing is on a projector. On the desktop, open the output (one projector) or a Screen for each projector first.');
   if (Array.isArray(listed.cells) && !listed.cells.includes(STRIPE_CELL)) throw new Error('This desktop uses a different pattern size. Update both apps.');
   const projectors: AutoMapProjector[] = [];
   let brightest: Float32Array | undefined, width = 0, height = 0;

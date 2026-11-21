@@ -15,9 +15,17 @@ export async function captureCapabilities():Promise<CaptureCapabilities> {
  return call<CaptureCapabilities>('capabilities');
 }
 /** iPhone: let the app turn sideways while mapping (true) or bring it back upright (false). No-op elsewhere. */
-export async function allowMappingRotation(allow:boolean):Promise<void>{
+let rotationBase=false,rotationHolds=0;
+async function applyRotation():Promise<void>{
  if(bridge()?.getPlatform?.()!=='ios')return;
- try{await call('mappingRotation',{allow});}catch{/* an older native shell without it stays upright */}
+ try{await call('mappingRotation',{allow:rotationBase||rotationHolds>0});}catch{/* an older native shell without it stays upright */}
+}
+export async function allowMappingRotation(allow:boolean):Promise<void>{rotationBase=allow;await applyRotation();}
+/** Lets the phone turn sideways while a screen needs it (the auto-map camera: a projection is wide), whatever the tab says; call the result to let go. */
+export function holdMappingRotation():()=>void{
+ rotationHolds++;void applyRotation();
+ let held=true;
+ return()=>{if(!held)return;held=false;rotationHolds=Math.max(0,rotationHolds-1);void applyRotation();};
 }
 export const listScans=()=>call<{scans:SavedScan[]}>('listScans');
 export const openScanner=(mode:'scan'|'live')=>call<void>('openScanner',{mode});

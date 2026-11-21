@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { decodeCaptures } from './structuredLight';
+import { decodeCaptures, type Capture } from './structuredLight';
+import { turnIntrinsics, turnRaster, type Turn } from './lidarScan';
 import { autoMapSurfaces, type AutoMapped } from './autoMapSurfaces';
 import { faceTruth, renderDepth, renderScan, twoBoxRoom, type FaceTruth, type RenderOptions, type Room } from './syntheticRoom';
 
@@ -49,11 +50,17 @@ export function scoreFaces(room: Room, mapped: AutoMapped[], truth: FaceTruth[])
   });
 }
 
-export function runRoom(room: Room, options: { depth?: boolean; render?: RenderOptions } = {}) {
-  const { plan, captures } = renderScan(room, options.render);
+export function runRoom(room: Room, options: { depth?: boolean; render?: RenderOptions; turn?: Turn } = {}) {
+  const rendered = renderScan(room, options.render);
+  const { plan } = rendered;
+  // The phone turns every photo (and the depth with its lens) upright by gravity: a sideways phone's sensor
+  // frames reach the solver turned, all by the same amount.
+  const turn = options.turn ?? 0;
+  const captures: Capture[] = rendered.captures.map(c => { const t = turnRaster(c.luma as Uint8Array, c.width, c.height, turn); return { width: t.width, height: t.height, luma: t.data }; });
   const decoded = decodeCaptures(plan, captures);
   const { width, height } = room.projector.lens;
-  const depth = options.depth === false ? undefined : renderDepth(room);
+  const flat = options.depth === false ? undefined : renderDepth(room);
+  const depth = flat && (() => { const t = turnRaster(flat.meters, flat.width, flat.height, turn); return { ...flat, width: t.width, height: t.height, meters: t.data, intrinsics: turnIntrinsics(flat.intrinsics, turn), turn }; })();
   const mapped = autoMapSurfaces([{ id: 'p', width, height, plan, decoded, white: captures[0] }], depth);
   const truth = faceTruth(room);
   return { mapped, truth, faces: scoreFaces(room, mapped, truth), coverage: decoded.coverage };
@@ -97,4 +104,12 @@ describe('two boxes, four lit faces, end to end', () => {
     expect(faces.length).toBeGreaterThanOrEqual(5);
     check(faces);
   }, 120_000);
+  it('maps the same whichever way the phone is held (photos and depth turned upright)', () => {
+    for (const turn of [90, 270] as Turn[]) {
+      const { faces } = runRoom(twoBoxRoom(), { turn });
+      console.log(`turn ${turn}:\n${summary(faces)}`);
+      expect(faces.length).toBe(4);
+      check(faces);
+    }
+  }, 180_000);
 });
