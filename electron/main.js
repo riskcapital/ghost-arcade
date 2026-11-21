@@ -8019,7 +8019,9 @@ function registerIpcHandlers() {
       // The sketch editor's learning links: the p5.js reference, The Nature
       // of Code and The Coding Train.
       const isLearning = ['p5js.org', 'natureofcode.com', 'thecodingtrain.com'].includes(url.hostname.replace(/^www\./, ''));
-      if (url.protocol !== 'https:' || (!isGhostArcade && !isReleaseRepo && !isLearning)) {
+      // Mobile Control's "Get the iPhone app": this app's own App Store listing only.
+      const isIphoneApp = url.hostname === 'apps.apple.com' && /^\/(?:[a-z]{2}\/)?app\/ghost-arcade\/id6783072881$/.test(url.pathname);
+      if (url.protocol !== 'https:' || (!isGhostArcade && !isReleaseRepo && !isLearning && !isIphoneApp)) {
         throw new Error('URL is not allowed');
       }
       await shell.openExternal(url.toString());

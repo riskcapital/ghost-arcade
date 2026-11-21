@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { mobileConnectionUrl } from './lib/remote/mobileConnectionUrl';
+  import { mobileConnectionUrl, mobileControlAppLink, IPHONE_APP_STORE_URL } from './lib/remote/mobileConnectionUrl';
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import Canvas from './lib/components/Canvas.svelte';
@@ -5977,12 +5977,27 @@
     }
   }
 
+  // Which link Mobile Control's QR carries. 'app' is the ghostarcade.live/connect link: the phone's
+  // camera opens the iPhone app if it is installed, the browser version otherwise. Both of those
+  // need the phone to have had internet at some point (the browser page loads from the website), so
+  // 'direct' carries the plain LAN link for venues with no internet. One code at a time: two codes
+  // side by side would leave the phone camera to pick whichever it frames first.
+  const MOBILE_QR_KIND_KEY = 'ga-mobile-qr-kind';
+  let mobileQrKind: 'app' | 'direct' = (() => {
+    try { return localStorage.getItem(MOBILE_QR_KIND_KEY) === 'direct' ? 'direct' : 'app'; } catch { return 'app'; }
+  })();
+  function setMobileQrKind(kind: 'app' | 'direct') {
+    mobileQrKind = kind;
+    try { localStorage.setItem(MOBILE_QR_KIND_KEY, kind); } catch { /* storage unavailable: the choice lasts this session */ }
+  }
+
   // Generate QR code for the mobile URL
   async function generateQRCode() {
     if (!selectedIP && localIPs.length > 0) {
       selectedIP = localIPs[0];
     }
-    const url = getMobileUrl(selectedIP);
+    const lanUrl = getMobileUrl(selectedIP);
+    const url = mobileQrKind === 'direct' ? lanUrl : (mobileControlAppLink(lanUrl) || lanUrl);
     qrCodeDataUrl = '';
     if (!url) return;
     try {
@@ -6000,8 +6015,8 @@
     }
   }
 
-  // Regenerate QR when IP selection changes
-  $: if (selectedIP && showMobileInfo) {
+  // Regenerate QR when the IP selection or the kind of link changes
+  $: if (selectedIP && showMobileInfo && mobileQrKind) {
     generateQRCode();
   }
 
@@ -8025,8 +8040,18 @@
               <!-- QR Code -->
               {#if qrCodeDataUrl}
                 <div class="qr-container">
+                  <div class="qr-kind" role="group" aria-label="QR code link">
+                    <button class:active={mobileQrKind === 'app'} aria-pressed={mobileQrKind === 'app'} onclick={() => setMobileQrKind('app')}>App or browser</button>
+                    <button class:active={mobileQrKind === 'direct'} aria-pressed={mobileQrKind === 'direct'} onclick={() => setMobileQrKind('direct')}>No internet</button>
+                  </div>
                   <img src={qrCodeDataUrl} alt="QR Code for mobile connection" class="qr-code" />
-                  <p class="qr-hint">Scan with your phone/iPad camera</p>
+                  {#if mobileQrKind === 'app'}
+                    <p class="qr-hint">Scan with your phone's camera. It opens the Ghost Arcade app if it is installed, or the browser version.</p>
+                  {:else}
+                    <p class="qr-hint">For a venue with no internet: this code goes straight to this computer and opens the browser version.</p>
+                  {/if}
+                  <p class="qr-fallback">Browser version acting up? In the Ghost Arcade app, open Tools → Mobile Control → Scan desktop QR, and scan this code there instead of with the camera.</p>
+                  <button class="qr-store" onclick={() => openExternalUrl(IPHONE_APP_STORE_URL)}>Get the iPhone app</button>
                   {#if pairingToken}
                     <!-- The QR link carries this already; it is shown for devices
                          that cannot scan, such as the native app. -->
@@ -8070,19 +8095,19 @@
               <div class="connection-details">
                 <div class="detail-row">
                   <span class="detail-label">URL:</span>
-                  <code class="detail-value">{getMobileUrl() || 'No network address available. Connect to Wi-Fi or Ethernet and reopen Connect Mobile.'}</code>
+                  <code class="detail-value">{getMobileUrl(selectedIP) || 'No network address available. Connect to Wi-Fi or Ethernet and reopen Mobile Control.'}</code>
                 </div>
                 <div class="detail-row">
                   <span class="detail-label">WebSocket:</span>
-                  <code class="detail-value">{getWebSocketUrl() || 'Waiting for network address'}</code>
+                  <code class="detail-value">{getWebSocketUrl(selectedIP) || 'Waiting for network address'}</code>
                 </div>
               </div>
 
               <div class="instructions">
                 <p><strong>Quick Setup:</strong></p>
                 <ol>
-                  <li>Connect iPad to same WiFi/hotspot</li>
-                  <li>Scan QR code or enter URL manually</li>
+                  <li>Connect the phone or iPad to the same Wi-Fi or hotspot</li>
+                  <li>Scan the QR code, or enter the URL manually</li>
                   <li>If asked, enter the WebSocket URL and pairing code</li>
                   <li>Tap Connect - drag corners to warp!</li>
                 </ol>
@@ -11064,6 +11089,44 @@
     font-size: 12px;
     color: #666;
     text-align: center;
+  }
+
+  /* Which link the QR carries: one code at a time. */
+  .qr-kind {
+    display: flex;
+    width: 100%;
+    gap: 2px;
+    padding: 2px;
+    margin-bottom: 12px;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 6px;
+  }
+
+  .mobile-info-popup .qr-kind button {
+    flex: 1;
+    margin-top: 0;
+    padding: 5px 6px;
+    font-size: 12px;
+    background: transparent;
+    color: #999;
+  }
+
+  .mobile-info-popup .qr-kind button.active {
+    background: rgba(125, 154, 255, 0.18);
+    color: var(--text-primary, #eee);
+  }
+
+  .mobile-info-popup .qr-fallback {
+    margin: 4px 0 0;
+    font-size: 11px;
+    line-height: 1.45;
+    color: #777;
+    text-align: center;
+  }
+
+  .mobile-info-popup .qr-store {
+    margin-top: 10px;
+    color: #7d9aff;
   }
 
   /* IP Selector */
