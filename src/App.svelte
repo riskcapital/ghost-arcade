@@ -96,6 +96,7 @@
   import {answersDepthScan,scanPhones,stepDepthScan,type DepthScanEvent,type DepthScanFlow,type ScanPhone} from './lib/mobile/studio/depthScanFlow';
   import {ZONE_WORLD_ACTIONS,type ZoneWorldAction} from './lib/mobile/studio/interactive';
   import PhoneDepthCaptureInbox from './lib/components/PhoneDepthCaptureInbox.svelte';
+  import {interactiveFeatureEnabled} from './lib/features';
   import {mergeInteractiveEdit,editableEffects,interactiveEditSignature} from './lib/mobile/studio/interactiveEffects';
   import {PhoneSessions,PHONE_SCENE_MAX_BYTES,phoneSenderId,sanitizePhoneInputs,type PhoneSceneState} from './lib/mobile/studio/phoneSessions';
   import {pickEditorClipRow,pickEditorClipSlot,pickPhoneClipSlot,isPhoneInteractiveClip} from './lib/mobile/studio/studioTargets';
@@ -110,6 +111,8 @@
   if (import.meta.env.DEV && typeof window !== 'undefined') window.addEventListener('ga-dev-phone-calibration', (event) => {
     pendingPhoneCalibration = String((event as CustomEvent).detail); showInteractiveStudio = true; studioPage = 'calibration';
   });
+  // Hidden in releases (lib/features.ts): the workshop then opens on phone calibration only.
+  const interactiveOn=interactiveFeatureEnabled();
   let showInteractiveStudio=false, studioPage:'interactive'|'calibration'='interactive';
   let studioDialog:HTMLElement|undefined;
   /** The layer being edited, or in VJ mode the clip. Exactly one is set while open. */
@@ -147,6 +150,7 @@
 
   /** `notPhone`: never open (and so take over) a layer a phone is driving, even when it is selected. */
   function openInteractiveStudio(layerId?:string,notPhone=false){
+    if(!interactiveOn)return;
     if(showInteractiveStudio)closeInteractiveStudio();
     const p=get(project),vj=get(vjClipLauncher);studioEditorClip=null;studioEditorLayer='';
     // Keys are cut off while the Studio is open, so a held Space would never be released.
@@ -498,6 +502,8 @@
       stepPhoneScan({type:'failed',requestId,message});
       return;
     }
+    // Room scans feed the Interactive Studio's Depth mode, hidden in this build.
+    if(!interactiveOn){reply('error','This desktop version does not take room scans for Depth mode.');return;}
     if(answersDepthScan(phoneScanFlow,requestId)){
       // The scan Depth setup asked for: no second question.
       stepPhoneScan({type:'offer',requestId});
@@ -7864,16 +7870,16 @@
         <button
           class="output-btn sim-launch-btn interactive-studio-btn"
           class:active={showInteractiveStudio}
-          onclick={() => openInteractiveStudio()}
-          title="Interactive Studio and phone calibration"
-          aria-label="Interactive Studio"
+          onclick={() => {if(interactiveOn)openInteractiveStudio();else{studioPage='calibration';showInteractiveStudio=true;}}}
+          title={interactiveOn?'Interactive Studio and phone calibration':'Phone calibration'}
+          aria-label={interactiveOn?'Interactive Studio':'Phone calibration'}
         >
           <svg class="sim-launch-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <rect x="3" y="3" width="18" height="18" rx="3" />
             <circle cx="9" cy="9" r="2" />
             <path d="m6 18 5-5 3 3 4-6" />
           </svg>
-          <span class="tb-label">Interactive</span>
+          <span class="tb-label">{interactiveOn?'Interactive':'Calibration'}</span>
         </button>
       </div>
 
@@ -9232,10 +9238,10 @@
 
     <!-- Settings Panel — output transforms now read from $settings.output -->
     {#if showInteractiveStudio}
-      <div class="studio-workshop-backdrop"><section bind:this={studioDialog} class="studio-workshop" role="dialog" aria-label="Interactive Studio tools" aria-modal="true" tabindex="-1">
+      <div class="studio-workshop-backdrop"><section bind:this={studioDialog} class="studio-workshop" role="dialog" aria-label={interactiveOn?'Interactive Studio tools':'Phone calibration'} aria-modal="true" tabindex="-1">
         <nav>
           <div class="ga-segmented" role="group" aria-label="Interactive Studio pages">
-            <button class:active={studioPage==='interactive'} aria-pressed={studioPage==='interactive'} onclick={()=>studioPage='interactive'}>Interactive Studio</button>
+            {#if interactiveOn}<button class:active={studioPage==='interactive'} aria-pressed={studioPage==='interactive'} onclick={()=>studioPage='interactive'}>Interactive Studio</button>{/if}
             <button class:active={studioPage==='calibration'} aria-pressed={studioPage==='calibration'} onclick={()=>studioPage='calibration'}>Phone calibration{pendingPhoneCalibration?' •':''}</button>
           </div>
           <!-- The editor's own header closes it; the calibration page needs a way out. -->
@@ -9244,9 +9250,9 @@
         <!-- The editor stays mounted behind the calibration page: remounting it
              would restore the scene it was opened with and publish that over
              every edit made since. -->
-        <div class="studio-page" style:display={studioPage==='interactive'?'contents':'none'}>
+        {#if interactiveOn}<div class="studio-page" style:display={studioPage==='interactive'?'contents':'none'}>
           {#key studioEditorRevision}<InteractiveStudio bind:this={studioEditor} aspect={canvasAspect} visible={studioPage==='interactive'} initialPaused={studioEditorPaused} nativeOutput nativeFrame={studioNativeFrame} initialActive={studioEditorActive} initialScene={studioEditorScene} phoneScan={studioPhoneScan} onscene={editStudioScene} onpointer={studioPointer} onview={studioView} onworldaction={studioWorldAction} captureScene={captureStudioScene} onrestore={restoreStudioAnimation} onparam={studioParamRecord} liveValue={studioLiveValue} onkeyframe={studioAddKeyframe} ontimeline={studioToggleTimeline} mappingSurfaces={studioMappingSurfaces($project.layers,studioEditorLayer)} onclose={closeInteractiveStudio}><KeyframeTimeline slot="timeline" embedded targetId={studioTimelineId}/></InteractiveStudio>{/key}
-        </div>
+        </div>{/if}
         {#if studioPage==='calibration'}<DesktopCalibrationImport incoming={pendingPhoneCalibration}/>{/if}
       </section></div>
     {/if}

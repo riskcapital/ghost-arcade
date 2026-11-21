@@ -74,6 +74,7 @@
   import { nativeEffectChainWarning } from '../renderer/nativeEffectChainPolicy';
   import { openSketchEditor } from '../sketchEditor/sketchEditorStore';
   import MapSurfaceControls from './MapSurfaceControls.svelte';
+  import { interactiveFeatureEnabled } from '../features';
 
   /** Which non-group layers offer the VJ Source select. See the call site. */
   function layerShowsVJSource(layer: Layer): boolean {
@@ -1016,12 +1017,14 @@
               </svg>
               Media layer
             </button>
+            {#if interactiveFeatureEnabled()}
             <button onclick={()=>{const layerId=project.addLayer('Interactive Studio','interactive');showAddLayerMenu=false;if(layerId)window.dispatchEvent(new CustomEvent('open-interactive-studio',{detail:{layerId}}));}}>
               <PluginIcon effectType="performer-world" size={14}/> Interactive
             </button>
             <button onclick={()=>{const id=project.addInteractive3DLayer();showAddLayerMenu=false;if(id)window.dispatchEvent(new CustomEvent('open-interactive-studio',{detail:{layerId:id}}));}}>
               <PluginIcon effectType="scene3d" size={14}/> Interactive 3D
             </button>
+            {/if}
             <button
               title="Add custom shape media layer"
               onclick={() => { project.addLayer(undefined, 'media', 'custom'); showAddLayerMenu = false; }}
@@ -2531,10 +2534,10 @@
           </div>
         {/if}
 
-        {#if layer.source?.effectSource?.interactiveScene}
+        {#if interactiveFeatureEnabled() && layer.source?.effectSource?.interactiveScene}
           <button class="btn-small" onclick={()=>window.dispatchEvent(new CustomEvent('open-interactive-studio',{detail:{layerId:layer.id}}))}>Edit Interactive Studio</button>
         {/if}
-        {#if layer.source?.effectSource?.scene3d}
+        {#if interactiveFeatureEnabled() && layer.source?.effectSource?.scene3d}
           <Scene3DProperties {layer} />
         {/if}
         <!-- Content Fit Mode (for media/screen/shader layers) -->
