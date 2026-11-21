@@ -3722,6 +3722,12 @@ enum NativeGraphLayerKind {
     CloudPulse,
     CloudFlock,
     DepthLights,
+    RibbonField,
+    ShockwaveRings,
+    FluidInk,
+    LightningArcs,
+    SpectralTerrain,
+    MeshShatter,
     GhostFx,
     HandFx,
     PerformerWorld,
@@ -3759,6 +3765,12 @@ impl NativeGraphLayerKind {
             "cloud-pulse" => Self::CloudPulse,
             "cloud-flock" => Self::CloudFlock,
             "depth-lights" => Self::DepthLights,
+            "ribbon-field" => Self::RibbonField,
+            "shockwave-rings" => Self::ShockwaveRings,
+            "fluid-ink" => Self::FluidInk,
+            "lightning-arcs" => Self::LightningArcs,
+            "spectral-terrain" => Self::SpectralTerrain,
+            "mesh-shatter" => Self::MeshShatter,
             "ghostfx" => Self::GhostFx,
             "handfx" => Self::HandFx,
             "performer-world" => Self::PerformerWorld,
@@ -3792,6 +3804,12 @@ impl NativeGraphLayerKind {
             Self::CloudPulse => "cloud-pulse",
             Self::CloudFlock => "cloud-flock",
             Self::DepthLights => "depth-lights",
+            Self::RibbonField => "ribbon-field",
+            Self::ShockwaveRings => "shockwave-rings",
+            Self::FluidInk => "fluid-ink",
+            Self::LightningArcs => "lightning-arcs",
+            Self::SpectralTerrain => "spectral-terrain",
+            Self::MeshShatter => "mesh-shatter",
             Self::GhostFx => "ghostfx",
             Self::HandFx => "handfx",
             Self::PerformerWorld => "performer-world",
@@ -3841,6 +3859,12 @@ impl NativeGraphLayerKind {
                 | Self::CloudPulse
                 | Self::CloudFlock
                 | Self::DepthLights
+                | Self::RibbonField
+                | Self::ShockwaveRings
+                | Self::FluidInk
+                | Self::LightningArcs
+                | Self::SpectralTerrain
+                | Self::MeshShatter
                 | Self::GhostFx
                 | Self::HandFx
                 | Self::PerformerWorld
@@ -4041,6 +4065,7 @@ struct NativeGraphLayer {
     smoke_riders_state: NativeSmokeRidersGraphState,
     strands_state: audio_visuals::jobs::StrandsState,
     cloud_pulse_state: audio_visuals::jobs::CloudPulseState,
+    av2_state: audio_visuals::jobs2::Av2State,
 }
 
 enum NativeGraphLayerState {
@@ -4055,6 +4080,7 @@ enum NativeGraphLayerState {
     VolumetricSpheres(NativeVolumetricSpheresGraphState),
     Strands(audio_visuals::jobs::StrandsState),
     CloudPulse(audio_visuals::jobs::CloudPulseState),
+    Av2(audio_visuals::jobs2::Av2State),
 }
 
 /// One asynchronous graph buffer readback: a MAP_READ copy made in the frame's
@@ -6148,6 +6174,12 @@ impl App {
             "native_cloud_pulse_graph": true,
             "native_cloud_flock_graph": true,
             "native_depth_lights_graph": true,
+            "native_ribbon_field_graph": true,
+            "native_shockwave_rings_graph": true,
+            "native_fluid_ink_graph": true,
+            "native_lightning_arcs_graph": true,
+            "native_spectral_terrain_graph": true,
+            "native_mesh_shatter_graph": true,
             "native_audio_visual_data": true,
             "native_hdr_post_chain": true,
             "native_smoke_riders_graph": true,
@@ -8898,6 +8930,16 @@ impl App {
                 NativeGraphLayerKind::DepthLights => {
                     self.build_native_cloud_graph_job(&graph_layer, audio_visuals::jobs::CloudInstrument::DepthLights)
                 }
+                NativeGraphLayerKind::RibbonField
+                | NativeGraphLayerKind::ShockwaveRings
+                | NativeGraphLayerKind::FluidInk
+                | NativeGraphLayerKind::LightningArcs
+                | NativeGraphLayerKind::SpectralTerrain
+                | NativeGraphLayerKind::MeshShatter => {
+                    let instrument = audio_visuals::jobs2::Instrument2::from_kind(graph_layer.kind.signature())
+                        .expect("second-set instrument kind");
+                    self.build_native_av2_graph_job(&graph_layer, instrument)
+                }
                 NativeGraphLayerKind::GhostFx
                 | NativeGraphLayerKind::HandFx
                 | NativeGraphLayerKind::PerformerWorld
@@ -8936,6 +8978,7 @@ impl App {
                             NativeGraphLayerState::CloudPulse(state) => {
                                 entry.cloud_pulse_state = state
                             }
+                            NativeGraphLayerState::Av2(state) => entry.av2_state = state,
                         }
                     }
                     jobs.push(job);
@@ -17040,6 +17083,12 @@ impl App {
             .filter(|existing| existing.kind == kind && existing.source_id == source_id)
             .map(|existing| (existing.strands_state.clone(), existing.cloud_pulse_state.clone()))
             .unwrap_or_default();
+        let previous_av2 = self
+            .native_graph_layers
+            .get(&layer_id)
+            .filter(|existing| existing.kind == kind && existing.source_id == source_id)
+            .map(|existing| existing.av2_state.clone())
+            .unwrap_or_default();
         let replaced_graph = self.native_graph_layers.insert(
             layer_id.clone(),
             NativeGraphLayer {
@@ -17060,6 +17109,7 @@ impl App {
                 smoke_riders_state: previous_smoke_riders_state,
                 strands_state: previous_audio_visual.0,
                 cloud_pulse_state: previous_audio_visual.1,
+                av2_state: previous_av2,
             },
         );
         let entry = self

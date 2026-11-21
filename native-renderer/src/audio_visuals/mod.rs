@@ -19,6 +19,18 @@ pub mod params;
 pub mod ply_reader;
 pub mod shaders;
 pub mod strands;
+// The second set: Ribbon Field, Shockwave Rings, Fluid Ink, Lightning Arcs,
+// Spectral Terrain and Mesh Shatter, with their live controls.
+pub mod arcs;
+pub mod controls2;
+pub mod fluid_ink;
+pub mod jobs2;
+pub mod kit;
+pub mod ribbons;
+pub mod shaders2;
+pub mod shatter;
+pub mod shockwave;
+pub mod terrain;
 
 #[cfg(test)]
 mod param_tests;
