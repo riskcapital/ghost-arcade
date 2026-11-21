@@ -53,7 +53,7 @@
   import StudioRecordControls from './StudioRecordControls.svelte';
   import StudioTempoControls from './StudioTempoControls.svelte';
   import { loopBrowser } from '../../music/studioUi';
-  import LoopRecorderBar from './LoopRecorderBar.svelte';
+  import LoopRecordBar from './LoopRecordBar.svelte';
   import PadsModule from './PadsModule.svelte';
   import DubShotsModule from './DubShotsModule.svelte';
   import PlayModule from './PlayModule.svelte';
@@ -67,7 +67,8 @@
   import MixerPanel from './MixerPanel.svelte';
   import BandPanel from './BandPanel.svelte';
   import SongsPanel from './SongsPanel.svelte';
-  import BandLooper from './BandLooper.svelte';
+  import LoopStation from './LoopStation.svelte';
+  import { loopStationView } from '../../music/loopStation';
   import SongStrip from './SongStrip.svelte';
   import SceneBar from './SceneBar.svelte';
   import LiveSessionGrid from './LiveSessionGrid.svelte';
@@ -99,6 +100,9 @@
   const LOWER_TITLES = { session: 'Session', scenes: 'Scenes', takes: 'Takes', mixer: 'Mixer', band: 'Live band', looper: 'Looper', songs: 'Songs' } as const;
 
   const s = $derived($musicStudio);
+  /** The Looper page: the live looper over the whole studio, beside the visuals rack. A view only: the loops play on whatever page shows. */
+  let looperPage = $state(false);
+  const loopsRunning = $derived($loopStationView.tracks.filter((t) => t.phase === 'play' || t.phase === 'overdub' || t.phase === 'record').length);
   /** The output's own shape, so the frame shows exactly what the output gets. */
   const outW = $derived(Math.max(1, $project.width || 1920));
   const outH = $derived(Math.max(1, $project.height || 1080));
@@ -256,7 +260,7 @@
         {#snippet liveButton()}
           <button class="text-btn small" class:on={s.liveControl} aria-pressed={s.liveControl} onclick={toggleLiveControl} title={s.liveControl ? "Go back to Audio Lab's own loops and scenes" : "Play with Ableton Live: its clips and scenes launch from here, each Live track can drive visuals, and Audio Lab's instruments play on top"}><span class="live-led" class:on={s.liveControl} class:linked={s.liveControl && $abletonBridge.connected} aria-hidden="true"></span>Ableton Live</button>
         {/snippet}
-        {#if !s.liveControl}<LoopRecorderBar split extra={liveButton} />{:else}<div class="live-row">{@render liveButton()}</div>{/if}
+        {#if !s.liveControl}<LoopRecordBar split extra={liveButton} />{:else}<div class="live-row">{@render liveButton()}</div>{/if}
       {/if}
       <button class="tall-btn" class:on={lowerTall} aria-pressed={lowerTall} onclick={toggleLowerTall} title={lowerTall ? 'Shrink this panel back above the bottom row' : 'Expand this panel down over the bottom row'} aria-label={lowerTall ? 'Shrink panel' : 'Expand panel'}>
         <svg viewBox="0 0 16 16" aria-hidden="true">{#if lowerTall}<path d="M4 6l4-4 4 4M4 14l4-4 4 4" />{:else}<path d="M4 2l4 4 4-4M4 10l4 4 4-4" />{/if}</svg>
@@ -269,7 +273,7 @@
     {:else if lowerTab === 'band'}
       <BandPanel />
     {:else if lowerTab === 'looper'}
-      <div class="scroll"><BandLooper /></div>
+      <LoopStation />
     {:else if lowerTab === 'songs'}
       <SongsPanel />
     {:else if lowerTab === 'takes'}
@@ -319,7 +323,7 @@
 {/snippet}
 
 {#if open}
-  <div class="studio-view studio-tokens set-{s.set}" class:lower-tall={lowerTall} role="region" aria-label="Audio Lab" bind:this={root}>
+  <div class="studio-view studio-tokens set-{s.set}" class:lower-tall={lowerTall} class:looper-page={looperPage} role="region" aria-label="Audio Lab" bind:this={root}>
     <header class="bar" use:windowCaption use:wheelScrollsSideways>
       <span class="bar-title">Audio Lab</span>
       <div class="group">
@@ -352,9 +356,13 @@
       </select>
       <div class="ga-segmented set-tabs" role="group" aria-label="Instrument set">
         {#each STUDIO_SETS as set}
-          <button class:active={s.set === set.id} aria-pressed={s.set === set.id} onclick={() => musicStudio.setSet(set.id)} data-midi-path="studio:set.{set.id}" data-midi-label="{set.label} set" data-midi-mode="toggle">{@render setMark(set.id)}{set.label}</button>
+          <button class:active={!looperPage && s.set === set.id} aria-pressed={!looperPage && s.set === set.id} onclick={() => { looperPage = false; musicStudio.setSet(set.id); }} data-midi-path="studio:set.{set.id}" data-midi-label="{set.label} set" data-midi-mode="toggle">{@render setMark(set.id)}{set.label}</button>
         {/each}
+        <button class:active={looperPage} aria-pressed={looperPage} onclick={() => (looperPage = true)} title="The live looper: six loop tracks, their visuals and sections. Loops keep playing on the other tabs." data-midi-path="studio:set.looper" data-midi-label="Looper tab" data-midi-mode="toggle">Looper</button>
       </div>
+      {#if !looperPage && loopsRunning}
+        <button class="text-btn loops-running" onclick={() => (looperPage = true)} title="Loops are playing: back to the Looper tab"><span class="led" aria-hidden="true"></span>Loops {loopsRunning}</button>
+      {/if}
       <div class="group">
         <button class="text-btn" class:on={$cableView !== 'show'} aria-pressed={$cableView !== 'show'} onclick={cycleCableView} title="{$cableView === 'show' ? 'Fade the cables' : $cableView === 'fade' ? 'Hide the cables' : 'Show the cables'} (connections keep working)">{CABLE_VIEW_LABELS[$cableView]}</button>
         <button class="kill-btn" onclick={killAll} title="Silence everything now, echoes and reverb included" data-midi-path="studio:studio.kill" data-midi-label="Kill all sound" data-midi-mode="toggle">Kill</button>
@@ -396,7 +404,12 @@
       {@render lower()}
     </div>
 
-    {#if s.set === 'bath'}
+    {#if looperPage}
+      <div class="looper-main face"><LoopStation initialMode="live" /></div>
+      <div class="rack right face">
+        <VisualRack />
+      </div>
+    {:else if s.set === 'bath'}
       <div class="rack left face">
         <BathModules part="drone" />
         <BathModules part="bowls" />
@@ -675,6 +688,11 @@
   /* A short window scrolls the rack rather than squeezing a module under its neighbours. */
   .rack { display: flex; flex-direction: column; gap: var(--studio-gap); min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; }
   .rack.left { grid-area: left; }
+  .looper-page .centre, .looper-page .subbar { display: none; }
+  .looper-main { grid-column: 1 / 3; grid-row: 2 / 5; min-width: 0; min-height: 0; display: flex; flex-direction: column; border: 1px solid var(--studio-edge); border-radius: var(--ga-r-soft, 8px); overflow: hidden; background: var(--studio-panel); }
+  .looper-page .rack.right { grid-row: 2 / 5; }
+  .loops-running { display: inline-flex; align-items: center; gap: 6px; }
+  .loops-running .led { width: 7px; height: 7px; border-radius: 50%; background: var(--studio-accent); box-shadow: 0 0 6px var(--studio-accent); }
   .rack.right { grid-area: right; }
   .rack > :global(.module) { flex: 0 0 auto; }
   .rack > :global(.module.grow), .rack > :global(.play), .rack > :global(.beat) { flex: 1 1 0; }

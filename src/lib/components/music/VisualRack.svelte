@@ -13,7 +13,7 @@
   import { onDestroy, tick as nextTick, untrack } from 'svelte';
   import { musicStudio } from '../../music/musicStudioStore';
   import { STUDIO_SETS } from '../../music/studioSets';
-  import { voiceSourcesFor, isVoiceDrivenInput, isLiveSource, liveSource, LIVE_DRUMS, type LiveSourceId, type VoiceSourceId } from '../../music/visualVoices';
+  import { voiceSourcesFor, isVoiceDrivenInput, isLiveSource, liveSource, loopTrackOfSource, loopTrackSource, LIVE_DRUMS, type LiveSourceId, type VoiceSourceId } from '../../music/visualVoices';
   import { abletonBridge } from '../../ableton/abletonBridge';
   import { isDrumTrack, liveMatchFor, liveTrackKeys } from '../../music/liveControl';
   import { VISUAL_SCENES, VOICE_SHADERS, shaderInputs, voiceShaderByFile, type ShaderInput } from '../../music/visualScenes';
@@ -93,7 +93,7 @@
   });
   const liveColor = (c: number) => `#${(c & 0xffffff).toString(16).padStart(6, '0')}`;
   /** A voice's follow value in the menu: its Live source while Live leads, its studio sound otherwise. */
-  const followValue = (v: StudioVoice) => (liveOn && v.live ? v.live : v.source);
+  const followValue = (v: StudioVoice) => ((liveOn && v.live) || loopTrackOfSource(v.live) >= 0 ? v.live! : v.source);
 
   /** A Live source's track colour, for the swatch on the visuals following it. */
   const liveColorOf = (src: LiveSourceId | undefined) => {
@@ -518,6 +518,9 @@
                 </optgroup>
               {:else}
                 {#each voiceSourcesFor($musicStudio.set, voice.source) as src (src.id)}<option value={src.id}>{src.label}</option>{/each}
+                <optgroup label="Live looper">
+                  {#each [0, 1, 2, 3, 4, 5] as lt}<option value={loopTrackSource(lt)}>Loop track {lt + 1}</option>{/each}
+                </optgroup>
               {/if}
             </select>
             <button class="auto studio-btn" class:on={voice.auto} onclick={() => setStudioVoice(i, { auto: !voice.auto })} aria-pressed={voice.auto} title={voice.auto ? 'Shows only while its sound plays' : 'Always shows'}>Auto</button>

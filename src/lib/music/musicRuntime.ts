@@ -116,13 +116,16 @@ import { normalizeStudioSource } from './studioPlugin';
 import { soundById } from './sounds/library';
 import { KeyFinder, type KeyGuess } from './keyFinder';
 import { attachLooper, killLooper, stopLooper } from './looperRuntime';
+import { attachLoopStation, killLoopStation, scheduleStation, stationBusy, stationOldestBeat, stopAllLoopTracks } from './loopStation';
+import { audioLoopTracksFor, existingAudioLoopTracks } from './audioLoopEngine';
+import { registerLoopControls } from './loopControls';
 import type { AnySourceId, LiveSourceId, VoiceSourceId } from './visualVoices';
 import { BandFxVisuals } from './bandFxVisuals';
 // The studio's MIDI controls and the band's keys answer while the Studio view is hidden.
 import './studioMidiControls';
 import { analysisFromAnalyser, setVoiceSourceAudioFeed } from '../audio/voiceSourceAudio';
 import { getLastRawAnalysis } from '../stores/audio';
-import { isLiveSource as isLiveVoiceSource } from './visualVoices';
+import { isLiveSource as isLiveVoiceSource, loopTrackSource } from './visualVoices';
 import {
   ACID_STEPS,
   bowlNotes,
@@ -184,7 +187,8 @@ function send(event: NoteEvent): void {
 noteBus.subscribe((event) => {
   audio.play(event);
   visuals.push(event);
-  voices.push(event, sourcesForEvent(event, sourceContext()));
+  const heard = sourcesForEvent(event, sourceContext());
+  voices.push(event, event.loopTrack === undefined ? heard : [...heard, loopTrackSource(event.loopTrack)]);
   recorder.capture(event);
   trackPlayed(event);
   showInPanel(event);
@@ -370,6 +374,7 @@ export function killAll(): void {
   resumable = null;
   audio.kill();
   killLooper();
+  killLoopStation();
   bandVisuals.releaseAll();
   bandState.update((b) => ({ ...b, frozen: false, freezeError: null, throwing: false, washing: false }));
   for (const listener of killListeners) listener();
@@ -1272,7 +1277,7 @@ function trackPlayed(event: NoteEvent): void {
   } else {
     played.noteOff(event.instrument, event.note, beat);
   }
-  played.forgetBefore(beat - CAPTURE_WINDOW_BEATS);
+  played.forgetBefore(Math.min(beat - CAPTURE_WINDOW_BEATS, stationOldestBeat(beat)));
 }
 
 /** Touch drumming while recording writes each hit into the beat grid, which keeps playing it. */
@@ -1913,7 +1918,7 @@ async function scanTick(): Promise<void> {
 function ensureScheduler(): void {
   if (schedulerHandle !== null) return;
   const tick = () => {
-    if (!sequencer && !replay && !loopSlots.size && !endingSlots.length && !loopRec && !repeats.size) {
+    if (!sequencer && !replay && !loopSlots.size && !endingSlots.length && !loopRec && !repeats.size && !stationBusy()) {
       clearInterval(schedulerHandle!);
       schedulerHandle = null;
       return;
@@ -1924,12 +1929,18 @@ function ensureScheduler(): void {
       scheduleLoopWindow();
       scheduleLoopRecorder();
       scheduleRepeats();
+      scheduleStation(LOOKAHEAD_SECONDS);
     } catch (err) {
       console.warn('[Music] scheduler failed:', err);
     }
   };
   schedulerHandle = setInterval(tick, SCHEDULER_INTERVAL_MS);
   tick();
+}
+
+/** The audio loop tracks when they exist (never created by the frame loop). */
+function audioLoopTracksForFrame() {
+  return audio.peekNow() === null ? null : existingAudioLoopTracks(audio);
 }
 
 function ensureFrameLoop(): void {
@@ -1955,6 +1966,8 @@ function frame(): void {
     routeControlCables();
     syncMacroFx();
     publishTransport(now);
+    const loopAudio = audioLoopTracksForFrame();
+    if (loopAudio) for (let i = 0; i < 6; i++) { const level = loopAudio.levelOf(i); if (level !== null) voices.setLevel(loopTrackSource(i), level); }
     if (loopRec) publishLoopRec(launchClockPosition().beat);
   } else if (studioHostsLive() > 0) {
     // No audio yet (the studio has not been opened this session): a studio
@@ -1969,7 +1982,7 @@ function frame(): void {
   // instance's scene sync wakes the loop): never queue a second one, or the
   // loop doubles every frame.
   if (frameHandle !== null) return;
-  if (s.isOpen || sequencer || replay || loopSlots.size || loopRec || visualsWereActive || studioHostsLive() > 0) frameHandle = requestAnimationFrame(frame);
+  if (s.isOpen || sequencer || replay || loopSlots.size || loopRec || stationBusy() || visualsWereActive || studioHostsLive() > 0) frameHandle = requestAnimationFrame(frame);
 }
 
 function publishTransport(now: number): void {
@@ -2326,6 +2339,7 @@ function stopEverything(): void {
   stopLiveInput();
   releaseBand();
   stopLooper();
+  stopAllLoopTracks(true);
   cancelQueuedScene();
   cancelLoopRecord();
   stopAllLoops();
@@ -2769,6 +2783,21 @@ export function ensureMusicRuntime(): void {
   derived([vjClipLauncher, project], ([vj, p]) => studioHosted(vj, p.layers)).subscribe(hosted);
   // The band looper's actions and MIDI controls (looperRuntime.ts).
   attachLooper(audio);
+  // The live looper's six tracks (loopStation.ts), and their MIDI controls.
+  registerLoopControls();
+  attachLoopStation({
+    send,
+    now: () => audio.now(),
+    click: (time, accent) => audio.click(time, accent),
+    played: () => played.all(),
+    clockBusy: () => !!sequencer || !!replay || loopSlots.size > 0,
+    wake: () => {
+      ensureScheduler();
+      ensureFrameLoop();
+    },
+    // Audio tracks once the studio's audio is running.
+    audioTracks: () => (audio.peekNow() === null ? null : audioLoopTracksFor(audio)),
+  });
   // Risers land on the next bar line of the launch clock.
   audio.setBarClock(() => {
     const { beat, beatMs } = launchClockPosition();

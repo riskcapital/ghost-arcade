@@ -67,6 +67,8 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'save_generated_asset',
   // Scans sent from a paired phone (electron/phone-scan-store.cjs)
   'phone_scan_begin', 'phone_scan_write', 'phone_scan_finish', 'phone_scan_abort', 'phone_scan_list',
+  // My loops, saved from the live looper (electron/user-loops-store.cjs)
+  'user_loops_list', 'user_loops_save', 'user_loops_read', 'user_loops_rename', 'user_loops_delete',
   'video_loop_create', 'video_append_segment',
   // Native FFmpeg converter
   'video_converter_pick_webm', 'video_converter_pick_sequence_folder', 'video_converter_pick_output',

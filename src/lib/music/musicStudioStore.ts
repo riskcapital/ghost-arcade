@@ -50,6 +50,7 @@ import {
   type SessionClip,
   type TrackId,
 } from './session';
+import { defaultStationData, normalizeStationData, type LoopStationData, type LoopTrackData } from './loopTrack';
 import { generateUUID } from '../utils/uuid';
 import { normalizeScene, type MusicScene } from './scenes';
 import type { LoopRole } from './loops';
@@ -179,6 +180,8 @@ export interface MusicStudioProjectState {
   /** Bars the loop recorder takes (0 = until stopped), and how it snaps notes. */
   recordLength: RecordLength;
   quantize: QuantizeId;
+  /** The live looper's six tracks and its settings (loopTrack.ts). */
+  loopStation: LoopStationData;
   /** EQ, pan, mute and solo per channel. */
   mixer: MixerState;
   /** The band inputs, one to four (each one's device is kept per computer). */
@@ -378,6 +381,7 @@ function blankProjectState(): MusicStudioProjectState {
     session: emptySession(),
     recordLength: 2,
     quantize: '1/32',
+    loopStation: defaultStationData(),
     mixer: {},
     liveInputs: [defaultLiveInput()],
     liveControl: false,
@@ -475,6 +479,7 @@ export function normalizeProjectState(raw: unknown): MusicStudioProjectState {
     session: normalizeSession((input as { session?: unknown }).session) ?? legacySession(input as Record<string, unknown>, normalizeKey(input.key, d.key)),
     recordLength: (RECORD_LENGTHS as readonly number[]).includes(Number(input.recordLength)) ? (Number(input.recordLength) as RecordLength) : d.recordLength,
     quantize: QUANTIZE_GRIDS.some((g) => g.id === input.quantize) ? (input.quantize as QuantizeId) : d.quantize,
+    loopStation: normalizeStationData((input as { loopStation?: unknown }).loopStation),
     mixer: normalizeMixer(input.mixer),
     liveInputs: normalizeLiveInputs(input.liveInputs, (input as { liveInput?: unknown }).liveInput),
     liveControl: input.liveControl === true,
@@ -921,6 +926,10 @@ function createMusicStudioStore() {
       }),
     setRecordLength: (recordLength: RecordLength) => set({ recordLength }),
     setQuantize: (quantize: QuantizeId) => set({ quantize }),
+    /** Change the live looper's settings or tracks. */
+    updateLoopStation: (patch: (d: LoopStationData) => LoopStationData) => update((s) => ({ ...s, loopStation: patch(s.loopStation) })),
+    updateLoopTrack: (index: number, patch: Partial<LoopTrackData>) =>
+      update((s) => ({ ...s, loopStation: { ...s.loopStation, tracks: s.loopStation.tracks.map((t, i) => (i === index ? { ...t, ...patch } : t)) } })),
 
     /** A fresh session: the starter clips in the current key and no scenes. Takes, songs and the sound stay. */
     newSession: () => update((s) => ({ ...s, session: defaultSession(s.key, generateUUID), scenes: [], sceneId: null, queuedSceneId: null })),
@@ -975,6 +984,7 @@ function createMusicStudioStore() {
         session: JSON.parse(JSON.stringify(s.session)),
         recordLength: s.recordLength,
         quantize: s.quantize,
+        loopStation: JSON.parse(JSON.stringify(s.loopStation)),
         mixer: JSON.parse(JSON.stringify(s.mixer)),
         liveInputs: s.liveInputs.map((input) => ({ ...input })),
         liveControl: s.liveControl,
@@ -1012,8 +1022,16 @@ function createMusicStudioStore() {
         queuedLoops: {},
         scanOn: false,
       }));
+      for (const listener of hydrateListeners) listener();
     },
   };
+}
+
+const hydrateListeners = new Set<() => void>();
+/** Run `listener` after a project's studio is loaded. */
+export function onMusicHydrate(listener: () => void): () => void {
+  hydrateListeners.add(listener);
+  return () => hydrateListeners.delete(listener);
 }
 
 /**

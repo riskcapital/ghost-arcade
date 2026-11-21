@@ -12,7 +12,7 @@ export const clipEditorId = writable<string | null>(null);
 export const insertEditorChannel = writable<string | null>(null);
 
 /** The loop browser: open on a session slot (a track, and a row or null for its first empty slot), or closed. */
-export const loopBrowser = writable<{ track: import('./session').TrackId | null; row: number | null } | null>(null);
+export const loopBrowser = writable<{ track: import('./session').TrackId | null; row: number | null; mine?: boolean } | null>(null);
 
 const FAVS_KEY = 'ga.studio.loopFavourites';
 function loadFavs(): string[] {
