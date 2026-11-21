@@ -20,6 +20,11 @@ import { normalizeFinish, type StudioFinish } from './studioFinish';
 import type { ClipVisual } from './session';
 import { currentVoiceFile } from './retiredVoices';
 import { normalizeDrift, type VisualDrift } from './visualDrift';
+import { engineInstrumentOf, isEngineVoiceFile } from './engineVoices';
+
+/** A voice's name: an engine instrument's, or the VX file's without its wrapping. */
+const voiceName = (file: string) => engineInstrumentOf(file)?.name ?? file.replace(/^VX-|\.fs$/g, '');
+
 
 /** Layers in one stack (each is rendered every frame while it plays). */
 export const MAX_STACK_ITEMS = 8;
@@ -109,7 +114,7 @@ export function normalizeStackItem(raw: unknown): StackItem | null {
   let voice: StackVoice | undefined;
   let media: ShowClipMedia | undefined;
   const v = r.voice as Record<string, unknown> | undefined;
-  if (v && typeof v.file === 'string' && VOICE_FILE.test(v.file)) {
+  if (v && typeof v.file === 'string' && (VOICE_FILE.test(v.file) || isEngineVoiceFile(v.file))) {
     voice = { file: currentVoiceFile(v.file), follow: typeof v.follow === 'string' && v.follow ? v.follow : 'all', ...(v.clear === true ? { clear: true } : {}) };
   } else {
     const m = normalizeClipMedia(r.media);
@@ -117,7 +122,7 @@ export function normalizeStackItem(raw: unknown): StackItem | null {
     media = m;
   }
   const drift = normalizeDrift(r.drift);
-  const name = typeof r.name === 'string' && r.name.trim() ? r.name.trim().slice(0, 80) : voice ? voice.file.replace(/^VX-|\.fs$/g, '') : media!.name;
+  const name = typeof r.name === 'string' && r.name.trim() ? r.name.trim().slice(0, 80) : voice ? voiceName(voice.file) : media!.name;
   return {
     id: r.id,
     name,
@@ -171,7 +176,7 @@ export const hasVisuals = (stack: ClipStack | undefined | null): stack is ClipSt
 
 /** A new layer of a curated audio shader. */
 export const voiceItem = (id: string, file: string, follow: string): StackItem => ({
-  id, name: file.replace(/^VX-|\.fs$/g, ''), voice: { file, follow }, blend: 'normal', opacity: 1, params: {}, effects: [],
+  id, name: voiceName(file), voice: { file, follow }, blend: 'normal', opacity: 1, params: {}, effects: [],
 });
 
 /** A new layer of library media (a Media Library drag, a picked shader, video or sketch). */

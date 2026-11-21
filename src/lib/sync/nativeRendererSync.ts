@@ -63,11 +63,14 @@ import { getVisualAudioSnapshot, visualAudio, type VisualAudioState } from '$lib
 import { mediaPipeSource } from '$lib/mediapipe/mediaPipeSource';
 import { ghostAudioCommandFieldsFromVisualAudio } from '$lib/audio/ghostAudioUniform';
 import { createIsfAudioRowEncoder } from '$lib/audio/isfAudioRows';
-import { createAudioVisualPacker } from '$lib/audio/audioVisualData';
+import { createAudioVisualPacker, type AudioVisualPacker } from '$lib/audio/audioVisualData';
+import { sourceHitBand, voiceSourceAudio } from '$lib/audio/voiceSourceAudio';
 import { getLastRawAnalysis } from '$lib/stores/audio';
 import { shaderUsesISFAudioRows } from '$lib/isf/parser';
 import { WGSL_STDLIB, resolveGhostWgsl } from '$lib/renderer/wgsl';
-import { CLOUD_INSTRUMENT_IDS, isNativeReadyGpuShaderId } from '$lib/renderer/gpuShaderCatalog';
+import { isNativeReadyGpuShaderId } from '$lib/renderer/gpuShaderCatalog';
+import { CLOUD_INSTRUMENT_IDS, isEngineVoiceLayer } from '$lib/music/engineVoices';
+import { audioReactiveInstrumentsAvailable } from '$lib/plugins/addons';
 import {
   DEFAULT_NATIVE_GRAPH_QUALITY,
   describeNativeGraphQuality,
@@ -4008,9 +4011,8 @@ function nativeGpuSourceParamUnsupportedReason(
   if (layer.type !== 'gpu' || !layer.gpuLayerContent) return null;
   const shaderId = String(layer.gpuLayerContent.shaderId || 'gpu').trim().toLowerCase();
   const params = layer.gpuLayerContent.params ?? {};
-  if (CLOUD_INSTRUMENT_IDS.has(shaderId)) {
-    return cloudScanPath(params.path) ? null : `gpu-shader:${shaderId}:scan-file-required`;
-  }
+  // Cloud instruments read the picked scan, or the core's default scan.
+  if (CLOUD_INSTRUMENT_IDS.has(shaderId)) return null;
   const sourceParam = params.source;
   const requiresSource =
     shaderId === 'pixel-particles' ||
@@ -6161,6 +6163,9 @@ export class NativeRendererSync {
   /** Audio packet for the core's audio-reactive instruments (Strands,
    *  Cloud Pulse): packed from the same analysis, sent with the ISF rows. */
   private audioVisualPacker = createAudioVisualPacker();
+  /** One packer per sound an instrument voice follows (its `audioSource`). */
+  private audioVisualSourcePackers = new Map<string, AudioVisualPacker>();
+  private audioVisualSourcesSeen = new Set<string>();
   private audioVisualLive = false;
   /** A visible layer this frame reads the packet; used by the next frame's
    *  audio command, which goes out before the layer routes are known. */
@@ -7162,6 +7167,8 @@ export class NativeRendererSync {
     const rows = needed ? this.isfAudioRowEncoder.encode(analysis) : null;
     const visualWanted = audio.isActive && this.audioVisualSeen;
     this.audioVisualSeen = false;
+    const followedSources = this.audioVisualSourcesSeen;
+    this.audioVisualSourcesSeen = new Set();
     const visual = visualWanted ? this.audioVisualPacker.encode(analysis, timeSeconds) : null;
     const command: Extract<RendererCommand, { type: 'set_audio_spectrum' }> = { type: 'set_audio_spectrum', active: false };
     let send = false;
@@ -7177,6 +7184,23 @@ export class NativeRendererSync {
       this.audioVisualLive = true;
       command.visual_b64 = visual;
       send = true;
+      // Each followed sound's own packet. An offline render keeps the master
+      // packet for every layer (the file's analysis is what it replays), so
+      // a render packs the same hits every run.
+      const sources: Record<string, string> = {};
+      if (this.manualClockExportDepth === 0) {
+        for (const key of [...followedSources].slice(0, 32)) {
+          const feed = voiceSourceAudio(key);
+          if (!feed) continue;
+          let packer = this.audioVisualSourcePackers.get(key);
+          if (!packer) this.audioVisualSourcePackers.set(key, (packer = createAudioVisualPacker()));
+          const own = feed.analysis ?? analysis;
+          const encoded = packer.encode(own, timeSeconds, { hit: feed.hit, env: feed.env, band: sourceHitBand(key) });
+          if (encoded) sources[key] = encoded;
+        }
+      }
+      for (const key of this.audioVisualSourcePackers.keys()) if (!(key in sources)) this.audioVisualSourcePackers.delete(key);
+      command.visual_sources = sources;
     } else if (this.audioVisualLive) {
       this.audioVisualLive = false;
       this.audioVisualPacker.reset();
@@ -7671,14 +7695,13 @@ export class NativeRendererSync {
     if (layer.type !== 'gpu' || !layer.gpuLayerContent) return null;
     const shaderId = String(layer.gpuLayerContent.shaderId || '').trim();
     const normalizedShaderId = shaderId.toLowerCase();
-    if (!isNativeReadyGpuShaderId(normalizedShaderId)) return null;
+    // Audio Lab's instruments render only as studio voices (engineVoices.ts).
+    const audioVoice = AUDIO_REACTIVE_ROUTE_KINDS.has(normalizedShaderId);
+    if (audioVoice && (!isEngineVoiceLayer(layer) || !audioReactiveInstrumentsAvailable() || !this.supportsNativeGraphRoute(normalizedShaderId as NativeGraphRouteKind))) return null;
+    if (!audioVoice && !isNativeReadyGpuShaderId(normalizedShaderId)) return null;
     let kind: NativeGraphRouteKind | null = null;
-    if (AUDIO_REACTIVE_ROUTE_KINDS.has(normalizedShaderId)) {
-      const audioKind = normalizedShaderId as NativeGraphRouteKind;
-      if (!this.supportsNativeGraphRoute(audioKind)) return null;
-      // A cloud instrument draws nothing until it has a scan file.
-      if (CLOUD_INSTRUMENT_IDS.has(audioKind) && !cloudScanPath(layer.gpuLayerContent.params?.path)) return null;
-      kind = audioKind;
+    if (audioVoice) {
+      kind = normalizedShaderId as NativeGraphRouteKind;
     } else if (
       normalizedShaderId === 'planet' &&
       this.supportsNativeGraphRoute('planet')
@@ -10851,6 +10874,8 @@ export class NativeRendererSync {
       const nativeGraphRoute = nativeLayerBlocked ? null : nativeGraphRouteCandidate;
       if (effectiveVisible && nativeGraphRoute && NATIVE_AUDIO_VISUAL_KINDS.has(nativeGraphRoute.kind)) {
         this.audioVisualSeen = true;
+        const followed = layer.gpuLayerContent?.params?.audioSource;
+        if (typeof followed === 'string' && followed) this.audioVisualSourcesSeen.add(followed);
       }
       const nativeSource = nativeGraphRoute?.source ?? nativeLayerSource(layer);
       // A three.js / p5 page keeps running while its layer is visible,

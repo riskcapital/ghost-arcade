@@ -2099,6 +2099,8 @@
         // the same bindings and clip state the router writes.
         dmxStore,
         vjClipLauncher,
+        // Audio Lab, so a CDP check can open it and add visuals from its rack.
+        musicStudio,
         // First-run tour and templates, and the modulation links templates
         // create, for CDP checks of those flows.
         onboarding,

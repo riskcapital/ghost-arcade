@@ -32,6 +32,8 @@ import { normalizeStackOff, normalizeStackPlace, visualOrder } from './visualOrd
 import { readableClipUri, staticClipSource } from '../show/tracks/showClipSources';
 import { applyDrift, driftEasing, driftRanges, driftSeconds, normalizeDrift, type DriftRange, type VisualDrift } from './visualDrift';
 import { hasLiveValues, liveValuesForLayer } from '../audio/liveParams';
+import { engineVoiceCode, engineVoiceLayer, isEngineVoiceFile } from './engineVoices';
+import { nativeGraphParamDefs } from '../renderer/manifestParams';
 
 export const STUDIO_PLUGIN_ID = 'musicstudio';
 export const STUDIO_EFFECT_TYPE = 'music-studio';
@@ -109,8 +111,8 @@ export function normalizeStudioVoice(raw: unknown): StudioVoice | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Partial<Record<keyof StudioVoice, unknown>>;
   const file = typeof r.file === 'string' ? currentVoiceFile(r.file) : '';
-  // Only shipped VX shaders: the name goes into a fetch path.
-  if (!/^VX-[A-Za-z0-9_-]+\.fs$/.test(file)) return null;
+  // Only shipped VX shaders (the name goes into a fetch path) or the core's instruments.
+  if (!/^VX-[A-Za-z0-9_-]+\.fs$/.test(file) && !isEngineVoiceFile(file)) return null;
   const drift = normalizeDrift(r.drift);
   const params: Record<string, number> = {};
   if (r.params && typeof r.params === 'object') {
@@ -291,6 +293,16 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
       const sourceId = `${id}:${voice.file}`;
       // Drift under the sound: the wandered settings are the base the driven inputs go on.
       const params = driftedParams(`${layer.id}:voice:${voice.drift?.seed ?? 0}:${voice.file}`, id, sourceId, voice.params, driftRanges(code), voice.drift, t);
+      const m = voiceMix(index);
+      const row = { layerId: id, opacity: voice.level * (voiceMods.get(index) ?? 1) * m.gain, blendMode: voice.clear ? studioVoiceBlend(voice.blend, 'normal') : m.blend ?? studioVoiceBlend(voice.blend) };
+      if (isEngineVoiceFile(voice.file)) {
+        // The core's instrument, drawn into this hidden layer, following the voice's sound.
+        // Auto: shows only while its sound plays, as a VX voice does.
+        const presence = voice.auto ? Math.min(1, driven[index].vxPresence ?? 1) : 1;
+        out.push(engineVoiceLayer(id, voice.file, params, voice.live ?? voice.source));
+        voiceRows.set(index, { ...row, opacity: row.opacity * presence });
+        return;
+      }
       out.push({
         ...createLayer(id, voice.file.replace(/^VX-|\.fs$/g, ''), 'media'),
         // Rendered for the mix, never composited on its own.
@@ -305,8 +317,7 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
           shaderValues: studioVoiceValues(params === voice.params ? voice : { ...voice, params }, studio.musicSet, driven[index], palette),
         },
       } as Layer);
-      const m = voiceMix(index);
-      voiceRows.set(index, { layerId: id, opacity: voice.level * (voiceMods.get(index) ?? 1) * m.gain, blendMode: voice.clear ? studioVoiceBlend(voice.blend, 'normal') : m.blend ?? studioVoiceBlend(voice.blend) });
+      voiceRows.set(index, row);
     });
     // Each playing stack: its own mix, blended in as one row, whole, when auto-mix gives its clip a turn.
     const stackRows = new Map<number, MixRow>();
@@ -383,6 +394,11 @@ export function expandStack(id: string, stack: ClipStack, set: StudioSet, inputs
       const sourceId = (live ? 'all' : VOICE_SOURCES.some((v) => v.id === follow) ? follow : 'all') as VoiceSourceId;
       const shaderSourceId = `${itemId}:${item.voice.file}`;
       const params = driftedParams(itemId, itemId, shaderSourceId, item.params, driftRanges(code), item.drift, t);
+      if (isEngineVoiceFile(item.voice.file)) {
+        layers.push({ ...engineVoiceLayer(itemId, item.voice.file, params, live ?? sourceId), effects: item.effects } as Layer);
+        rows.push({ layerId: itemId, opacity: item.opacity, blendMode: item.blend });
+        continue;
+      }
       const voice: StudioVoice = { file: item.voice.file, source: sourceId, ...(live ? { live } : {}), auto: false, level: 1, params, clear: item.voice.clear };
       source = {
         id: shaderSourceId, type: 'shader', name: item.voice.file, src: `ISF/${item.voice.file}`, shaderCode: code,
@@ -436,6 +452,8 @@ export function setStudioVoiceMods(mods: Map<number, number>): void {
 
 /** Bumped when a voice's shader has loaded: its controls can show and the scene resyncs. Panels watch this, not the frame tick. */
 export const studioCodeTick = writable(0);
+// An instrument's controls arrive with the core's manifest: its voices can show then.
+nativeGraphParamDefs.subscribe(() => studioCodeTick.update((n) => n + 1));
 
 const codeCache = new Map<string, string>();
 const loading = new Set<string>();
@@ -444,6 +462,7 @@ const missing = new Set<string>();
 
 /** Voice shader code, fetched on first use; the scene resyncs when it arrives. */
 export function studioVoiceCode(file: string): string | undefined {
+  if (isEngineVoiceFile(file)) return engineVoiceCode(file);
   const cached = codeCache.get(file);
   if (cached !== undefined) return cached;
   if (!loading.has(file) && !missing.has(file) && typeof fetch !== 'undefined' && /^VX-[A-Za-z0-9_-]+\.fs$/.test(file)) {

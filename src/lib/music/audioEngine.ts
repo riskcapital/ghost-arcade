@@ -772,6 +772,11 @@ export class MusicAudioEngine {
     return new Map([...this.strips].map(([id, strip]) => [id, strip.gate as AudioNode]));
   }
 
+  /** A channel's own post-fader analyser, for visuals that follow that sound (null before it exists). */
+  channelAnalyser(id: ChannelId): AnalyserNode | null {
+    return this.strips.get(id)?.meter ?? null;
+  }
+
   /** The master's left and right peaks, 0-1 on the meters' scale (-60 to 0 dB). */
   masterLevels(): [number, number] {
     if (!this.ctx || !this.output) return [0, 0];

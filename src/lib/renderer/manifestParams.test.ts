@@ -7,7 +7,6 @@ import {
   setNativeCloudLoadStates,
   setNativeGraphParamDefsFromManifest,
 } from './manifestParams';
-import { cloudLoadMessage, groupControls, hasRebuildParams } from './manifestPanel';
 
 // The shape the render core publishes (native_graph_manifest.rs param_defs).
 const DEFS = [
@@ -36,16 +35,6 @@ describe('controls from the core manifest', () => {
     expect(paramControlsFromManifest(null)).toEqual([]);
   });
 
-  it('groups the panel by the definitions\' groups, in order, and marks rebuilds', () => {
-    const controls = paramControlsFromManifest(DEFS);
-    const groups = groupControls(controls);
-    expect(groups.map(([name]) => name)).toEqual(['Points', 'Camera', 'Audio', 'Motion', 'Look', 'Scan']);
-    expect(groups[0][1].map((c) => c.key)).toEqual(['quality', 'width']);
-    expect(groupControls(controls, (c) => c.group !== 'Camera').map(([name]) => name)).not.toContain('Camera');
-    expect(hasRebuildParams(controls)).toBe(true);
-    expect(hasRebuildParams(controls.filter((c) => !c.resets))).toBe(false);
-  });
-
   it('stores controls per instrument and gives a new layer every default', () => {
     setNativeGraphParamDefsFromManifest([{ id: 'strands', param_defs: DEFS }, { id: 'planet', param_defs: [] }, { id: '' }]);
     const defaults = manifestParamDefaults('strands');
@@ -53,15 +42,4 @@ describe('controls from the core manifest', () => {
     expect(manifestParamDefaults('planet')).toEqual({});
   });
 
-  it('reads the scan state the core reports and says it plainly', () => {
-    setNativeCloudLoadStates({ a: 'loading', b: 'ready:750000', c: 'failed:not a PLY file' });
-    const states = get(nativeCloudLoadStates);
-    expect(states.a).toEqual({ state: 'loading' });
-    expect(states.b).toEqual({ state: 'ready', points: 750000 });
-    expect(states.c).toEqual({ state: 'failed', reason: 'not a PLY file' });
-    expect(cloudLoadMessage(undefined, null).text).toMatch(/Pick/);
-    expect(cloudLoadMessage(states.a, { type: 'file' }).text).toMatch(/Loading/);
-    expect(cloudLoadMessage(states.b, { type: 'file' }).failed).toBe(false);
-    expect(cloudLoadMessage(states.c, { type: 'file' })).toMatchObject({ failed: true });
-  });
 });

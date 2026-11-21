@@ -120,6 +120,9 @@ import type { AnySourceId, LiveSourceId, VoiceSourceId } from './visualVoices';
 import { BandFxVisuals } from './bandFxVisuals';
 // The studio's MIDI controls and the band's keys answer while the Studio view is hidden.
 import './studioMidiControls';
+import { analysisFromAnalyser, setVoiceSourceAudioFeed } from '../audio/voiceSourceAudio';
+import { getLastRawAnalysis } from '../stores/audio';
+import { isLiveSource as isLiveVoiceSource } from './visualVoices';
 import {
   ACID_STEPS,
   bowlNotes,
@@ -2528,6 +2531,23 @@ function releaseBand(): void {
 /** This frame's signals per sound, shared by every voice following it. */
 const studioDriven = new Map<string, Record<string, number>>();
 
+/** The mixer channel a studio sound plays through, for its own spectrum (none: the master's). */
+const SOURCE_CHANNEL: Partial<Record<string, ChannelId>> = {
+  kick: 'drums', snare: 'drums', hats: 'drums', perc: 'drums',
+  lead: 'synth', chords: 'keys', bowls: 'bowls', drone: 'drone', xy: 'xy', analog: 'analog', scan: 'scan',
+  acid: 'acid', dubbass: 'dubbass', siren: 'siren', echo: 'shots', fx: 'shots',
+};
+
+/** A followed sound's audio for an instrument voice (voiceSourceAudio.ts): `audioSource` is the source id or Live source. */
+function voiceAudioFor(key: string) {
+  const live = isLiveVoiceSource(key) ? key : undefined;
+  const source = (live ? 'all' : key) as VoiceSourceId;
+  const d = drivenForStudio(source, false, live);
+  const channel = live ? undefined : SOURCE_CHANNEL[key];
+  const node = channel ? audio.channelAnalyser(channel) : null;
+  return { analysis: node ? analysisFromAnalyser(node, getLastRawAnalysis()) : null, hit: d.vxHit ?? 0, env: d.vxEnv ?? 0 };
+}
+
 function drivenForStudio(source: VoiceSourceId, auto: boolean, live?: LiveSourceId): Record<string, number> {
   // With the studio closed nothing plays, so a voice on Auto would never
   // show (a studio on a mapping layer would stay black): it shows at rest.
@@ -2735,6 +2755,7 @@ export function ensureMusicRuntime(): void {
   if (started) return;
   started = true;
   setStudioDriver(drivenForStudio, () => voices.feel(), () => get(musicStudio).key);
+  setVoiceSourceAudioFeed(voiceAudioFor);
   // The music stops with its last host: a studio clip cleared or stopped on the deck, or its mapping layer removed.
   const hosted = hostWatch(stopForGoneHost);
   // One studio cell plays at a time, each with its own setup.

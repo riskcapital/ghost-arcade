@@ -454,6 +454,8 @@ export type RendererCommand =
       waveform_b64?: string;
       /** Audio packet for the audio-reactive instruments (audioVisualData.ts). */
       visual_b64?: string;
+      /** Per-source packets for instruments following one sound, keyed like their `audioSource` param. */
+      visual_sources?: Record<string, string>;
       /** false: the packet stopped; the core goes back to silence. */
       visual_active?: boolean;
     }

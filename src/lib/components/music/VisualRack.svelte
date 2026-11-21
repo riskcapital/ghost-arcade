@@ -11,12 +11,7 @@
    * put on the deck (or the selected layer).
    */
   import { onDestroy, tick as nextTick, untrack } from 'svelte';
-  // Engine visuals: the render core's audio-reactive instruments, each added
-  // as its own layer (empty when this build or core does not offer them).
-  const engineVisuals = AUDIO_REACTIVE_GPU_SHADER_DEFS.filter((def) => isNativeReadyGpuShaderId(def.id));
   import { musicStudio } from '../../music/musicStudioStore';
-  import { AUDIO_REACTIVE_GPU_SHADER_DEFS, isNativeReadyGpuShaderId } from '../../renderer/gpuShaderCatalog';
-  import { project as editorProject } from '../../stores/layers';
   import { STUDIO_SETS } from '../../music/studioSets';
   import { voiceSourcesFor, isVoiceDrivenInput, isLiveSource, liveSource, LIVE_DRUMS, type LiveSourceId, type VoiceSourceId } from '../../music/visualVoices';
   import { abletonBridge } from '../../ableton/abletonBridge';
@@ -413,14 +408,6 @@
     </div>
   {/if}
   <div class="body">
-  {#if engineVisuals.length}
-    <div class="engine-visuals" role="group" aria-label="Engine visuals">
-      <span class="engine-label">Engine visuals</span>
-      {#each engineVisuals as def (def.id)}
-        <button class="text-btn small" onclick={() => editorProject.addGPULayer(def.label, def.id)} title={def.description}>{def.label}</button>
-      {/each}
-    </div>
-  {/if}
   {#if !target}
     <div class="none">
       <p>{$vjClipLauncher.isOpen ? 'The visuals go on a free deck row when the music starts.' : 'The visuals play on the selected layer.'}</p>
@@ -738,6 +725,4 @@
   .all { display: flex; flex-wrap: wrap; gap: 8px 6px; padding: 8px 0 2px 15px; }
   .none { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 4px 2px; }
   .none p { margin: 0; font-size: var(--ga-text-meta, 11px); line-height: 1.45; color: var(--studio-muted); }
-  .engine-visuals { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 0 10px; }
-  .engine-label { color: var(--ga-ink-2); font-size: var(--ga-text-eyebrow); text-transform: uppercase; letter-spacing: var(--ga-eyebrow-tracking); margin-right: 4px; }
 </style>

@@ -69,6 +69,17 @@ const PEAK_RELEASE_SECONDS = 6;
  *  (u = 0 and u = 1) reads the same value on both sides. */
 const WAVE_TAPER = 0.08;
 
+/**
+ * Hits from one sound's own notes instead of the spectrum's onsets (a voice
+ * following a source): a rising `hit` (vxHit) is one hit in `band`, and `env`
+ * (vxEnv) is the level and that band's envelope.
+ */
+export interface SourceHits {
+  hit: number;
+  env: number;
+  band: OnsetBand;
+}
+
 export interface AudioVisualPackerOptions {
   /** The analyser's sample rate; sets where the FFT bins fall in Hz. */
   sampleRate?: number;
@@ -78,9 +89,9 @@ export interface AudioVisualPacker {
   /** Pack the frame at `timeSeconds` (the render clock). Returns the packet,
    *  or null when there is no analysis. A repeat call at the same or an
    *  earlier time returns the previous packet unchanged. */
-  pack(analysis: AudioAnalysis | null | undefined, timeSeconds: number): Float32Array | null;
+  pack(analysis: AudioAnalysis | null | undefined, timeSeconds: number, hits?: SourceHits): Float32Array | null;
   /** `pack`, base64-encoded for the command. */
-  encode(analysis: AudioAnalysis | null | undefined, timeSeconds: number): string | null;
+  encode(analysis: AudioAnalysis | null | undefined, timeSeconds: number, hits?: SourceHits): string | null;
   /** Forget onset history (a new song, playback stopped). Keeps the event
    *  sequence so the core never sees an old sequence number as new. */
   reset(): void;
@@ -178,6 +189,8 @@ export function createAudioVisualPacker(options: AudioVisualPackerOptions = {}):
   let hasPacket = false;
   /** Spectrum loudness follower: a quiet mix still fills the 0..1 range. */
   let spectrumPeak = 0;
+  /** The last source hit flash, so only a rising one counts. */
+  let lastHit = 0;
 
   const pushEvent = (time: number, band: OnsetBand, strength: number) => {
     ring.copyWithin(AV_EVENT_FLOATS, 0, (AV_EVENT_CAPACITY - 1) * AV_EVENT_FLOATS);
@@ -191,7 +204,7 @@ export function createAudioVisualPacker(options: AudioVisualPackerOptions = {}):
 
   const binAt = (hz: number, bins: number) => (hz / (sampleRate / 2)) * bins;
 
-  const pack: AudioVisualPacker['pack'] = (analysis, timeSeconds) => {
+  const pack: AudioVisualPacker['pack'] = (analysis, timeSeconds, hits) => {
     if (!analysis?.fftData?.length) return null;
     if (hasPacket && !(timeSeconds > lastTime)) return floats;
     const dt = Number.isFinite(lastTime) ? Math.min(0.25, timeSeconds - lastTime) : 1 / 60;
@@ -237,7 +250,7 @@ export function createAudioVisualPacker(options: AudioVisualPackerOptions = {}):
       let sum = 0;
       for (let i = i0; i < i1; i += 1) sum += normalizeDb(fft[i]);
       const strength = bands[b].step(sum / (i1 - i0), timeSeconds, dt, band);
-      if (strength > 0) pushEvent(timeSeconds, b as OnsetBand, strength);
+      if (strength > 0 && !hits) pushEvent(timeSeconds, b as OnsetBand, strength);
     }
 
     // Waveform from a rising zero crossing (a stable trace frame to frame),
@@ -264,11 +277,20 @@ export function createAudioVisualPacker(options: AudioVisualPackerOptions = {}):
       floats.fill(0, AV_WAVEFORM_OFFSET, AV_WAVEFORM_OFFSET + AV_WAVEFORM_SAMPLES);
     }
 
+    if (hits) {
+      const hit = Math.max(0, Math.min(1, hits.hit || 0));
+      if (hit > 0.5 && hit > lastHit + 0.05) pushEvent(timeSeconds, hits.band, Math.max(0.3, hit));
+      lastHit = hit;
+      const env = Math.max(0, Math.min(1, hits.env || 0));
+      for (let b = 0; b < bands.length; b += 1) {
+        bands[b].envelope = b === hits.band ? Math.max(env, bands[b].envelope) : 0;
+      }
+    }
     floats[AV_H.version] = AV_VERSION;
     floats[AV_H.time] = timeSeconds;
     floats[AV_H.active] = 1;
     floats[AV_H.eventCount] = ringCount;
-    floats[AV_H.level] = Math.max(0, Math.min(1.5, analysis.amplitude || 0));
+    floats[AV_H.level] = Math.max(0, Math.min(1.5, hits ? Math.max(hits.env || 0, analysis.amplitude || 0) : analysis.amplitude || 0));
     floats[AV_H.envBass] = bands[0].envelope;
     floats[AV_H.envMid] = bands[1].envelope;
     floats[AV_H.envHigh] = bands[2].envelope;
@@ -286,8 +308,8 @@ export function createAudioVisualPacker(options: AudioVisualPackerOptions = {}):
 
   return {
     pack,
-    encode(analysis, timeSeconds) {
-      return pack(analysis, timeSeconds) ? bytesToBase64(bytes) : null;
+    encode(analysis, timeSeconds, hits) {
+      return pack(analysis, timeSeconds, hits) ? bytesToBase64(bytes) : null;
     },
     reset() {
       for (const band of bands) band.reset();
@@ -296,6 +318,7 @@ export function createAudioVisualPacker(options: AudioVisualPackerOptions = {}):
       lastTime = Number.NEGATIVE_INFINITY;
       hasPacket = false;
       spectrumPeak = 0;
+      lastHit = 0;
     },
   };
 }

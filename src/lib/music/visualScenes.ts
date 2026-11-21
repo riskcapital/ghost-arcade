@@ -12,6 +12,7 @@ import { parseISF } from '../isf/parser';
 import { VOICE_SOURCE_INPUT, type VoiceSourceId } from './visualVoices';
 import type { StudioSet } from './studioSets';
 import { STUDIO_PALETTES } from './studioPlugin';
+import { ENGINE_INSTRUMENTS, engineVoiceFile, offeredEngineInstruments } from './engineVoices';
 
 export interface VoiceShader {
   file: string;
@@ -24,8 +25,8 @@ export interface VoiceShader {
   pack?: VoicePack;
 }
 
-export type VoicePack = 'glitch' | 'cosmos' | 'form';
-export const VOICE_PACKS: readonly { id: VoicePack; label: string }[] = [{ id: 'glitch', label: 'Glitch' }, { id: 'cosmos', label: 'Cosmos' }, { id: 'form', label: 'Form and Light' }];
+export type VoicePack = 'glitch' | 'cosmos' | 'form' | 'engine';
+export const VOICE_PACKS: readonly { id: VoicePack; label: string }[] = [{ id: 'glitch', label: 'Glitch' }, { id: 'cosmos', label: 'Cosmos' }, { id: 'form', label: 'Form and Light' }, { id: 'engine', label: 'Engine' }];
 
 export const VOICE_SHADERS: readonly VoiceShader[] = [
   { file: 'VX-Barcode.fs', name: 'Barcode', family: 'berlin', blurb: 'Black and white data stripes that re-roll on every hit' },
@@ -181,7 +182,16 @@ export const VOICE_SHADERS: readonly VoiceShader[] = [
   { file: 'VX-Bismuth.fs', name: 'Bismuth', family: 'dub', pack: 'form', blurb: 'Stepped hopper crystals with an iridescent film that shifts on hits' },
 ];
 
-export const voiceShaderByFile = (file: string): VoiceShader | undefined => VOICE_SHADERS.find((v) => v.file === file);
+/**
+ * The render core's instruments as voices (engineVoices.ts), in the Engine
+ * tab. Drawn for no one set; `family` only files them under the Machine set.
+ */
+const asVoice = (i: (typeof ENGINE_INSTRUMENTS)[number]): VoiceShader => ({ file: engineVoiceFile(i.id), name: i.name, family: 'machine', blurb: i.blurb, pack: 'engine' });
+export const ENGINE_VOICE_SHADERS: readonly VoiceShader[] = ENGINE_INSTRUMENTS.map(asVoice);
+/** The engine voices this build offers (the Audio Lab gate). */
+export const offeredEngineVoiceShaders = (): VoiceShader[] => offeredEngineInstruments().map(asVoice);
+
+export const voiceShaderByFile = (file: string): VoiceShader | undefined => VOICE_SHADERS.find((v) => v.file === file) ?? ENGINE_VOICE_SHADERS.find((v) => v.file === file);
 
 /** Each set's palette: one ink and one accent. */
 export const SET_PALETTES = STUDIO_PALETTES;

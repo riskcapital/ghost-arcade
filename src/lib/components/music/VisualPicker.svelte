@@ -7,7 +7,8 @@
    * chooses, Esc closes. Pictures are rendered once and cached.
    */
   import { tick } from 'svelte';
-  import { VOICE_PACKS, VOICE_SHADERS, type VoicePack } from '../../music/visualScenes';
+  import { VOICE_PACKS, VOICE_SHADERS, offeredEngineVoiceShaders, type VoicePack } from '../../music/visualScenes';
+  import { engineInstrumentOf, engineThumbName } from '../../music/engineVoices';
   import { STUDIO_SETS, type StudioSet } from '../../music/studioSets';
   import { visualFavourites, visualPicker } from '../../music/studioUi';
   import { demoVoiceCode, voiceRespondsTo } from '../../music/voiceThumbnails';
@@ -15,7 +16,7 @@
 
   interface Item { file: string | null; name: string; family: StudioSet | null; pack?: VoicePack; blurb: string }
 
-  const ITEMS: Item[] = VOICE_SHADERS.map((v) => ({ file: v.file, name: v.name, family: v.family, pack: v.pack, blurb: v.blurb }));
+  const ITEMS: Item[] = [...VOICE_SHADERS, ...offeredEngineVoiceShaders()].map((v) => ({ file: v.file, name: v.name, family: v.family, pack: v.pack, blurb: v.blurb }));
   const NONE: Item = { file: null, name: 'None', family: null, blurb: 'No visual' };
   // Pack tabs appear once a pack has visuals in it.
   const PACK_TABS = VOICE_PACKS.filter((p) => ITEMS.some((i) => i.pack === p.id));
@@ -62,6 +63,14 @@
     loading = true;
     // Pictures baked through the native core (scripts/build-voice-thumbnails.mjs) come first.
     const baked = new Set<string>(await fetch('./ISF/voice-thumbs/index.json').then((r) => (r.ok ? r.json() : [])).catch(() => []));
+    // The render core's instruments: pictures baked through the core only.
+    for (const v of offeredEngineVoiceShaders()) {
+      const inst = engineInstrumentOf(v.file);
+      if (!inst || thumbs[v.file]) continue;
+      responds = { ...responds, [v.file]: 'audio spectrum hits' };
+      if (baked.has(engineThumbName(inst.id))) thumbs = { ...thumbs, [v.file]: `./ISF/voice-thumbs/${engineThumbName(inst.id)}` };
+      else blank = { ...blank, [v.file]: true };
+    }
     for (const v of VOICE_SHADERS) {
       if (thumbs[v.file]) continue;
       try {
@@ -89,6 +98,12 @@
    */
   const retried = new Set<string>();
   async function thumbFailed(file: string) {
+    if (engineInstrumentOf(file)) {
+      const { [file]: _gone, ...rest } = thumbs;
+      thumbs = rest;
+      blank = { ...blank, [file]: true };
+      return;
+    }
     const baked = `./ISF/voice-thumbs/${file.replace(/\.fs$/, '.jpg')}`;
     if (!retried.has(file)) {
       retried.add(file);
