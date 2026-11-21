@@ -1,5 +1,6 @@
 <script lang="ts">
  import {screens,screenActions} from '../../stores/screens';
+ import {MAIN_OUTPUT_ID} from '../../stores/screenOutputStatus';
  import {recordDiscreteAction} from '../../stores/historyHooks';
  import {readMobileCalibration,type ImportedCalibration} from '../../output/mobileCalibrationImport';
  import {inverseProjectorHomography} from '../../output/projectorCalibration';
@@ -8,11 +9,11 @@
  import {createAssetRefFromGeneratedBlob} from '../../storage/assetRegistry';
  import {traceShapes,type TracedShape} from '../../painting/vectorize';
  import {createShapeLayers,picturePixels} from '../../painting/paintingShapes';
- import {phoneMeshLayer} from '../../output/mobileMeshImport';
+ import {perspectiveMeshLayer,phoneMeshLayer} from '../../output/mobileMeshImport';
  // Surfaces the phone measured with the stripe scan: each outline is already
  // in its projector's own picture, so it becomes a layer pinned to that face.
  // A curved surface (measured with LiDAR) also brings a mesh and its edge in the layer's picture.
- type MappedSurface={name:string;screenId:string;screenName:string;points:{x:number;y:number}[];rmsPx:number;image?:string;mesh?:unknown;contentOutline?:unknown};
+ type MappedSurface={name:string;screenId:string;screenName:string;points:{x:number;y:number}[];rmsPx:number;edgePx?:number;image?:string;mesh?:unknown;contentOutline?:unknown};
  // A painting's photo travels as a JPEG or PNG data URL: nothing else is accepted, and not above 6 MB.
  const pictureOf=(m:MappedSurface)=>typeof m.image==='string'&&m.image.length<8_500_000&&/^data:image\/(jpeg|png);base64,[A-Za-z0-9+/=]+$/.test(m.image)?m.image:'';
  $: mappedSurfaces=(()=>{try{const list=JSON.parse(incoming||'{}').mappedSurfaces;return Array.isArray(list)?list.filter((m:any)=>Array.isArray(m?.points)&&m.points.length>=3&&m.points.every((p:any)=>Number.isFinite(p?.x)&&Number.isFinite(p?.y))) as MappedSurface[]:[];}catch{return [] as MappedSurface[];}})();
@@ -27,6 +28,8 @@
  $: chosen=mappedSurfaces.filter((_,i)=>!off.has(i)).length;
  // 0.4 of a stripe is the best a scan can report; well past that means the surface is not flat or moved.
  const quality=(rms:number)=>rms<17?'Clean':rms<26?'Fair':'Rough';
+ // Newer phones also send how far the stripe edges on the face land from its fitted plane (sub-pixel when the face is flat and the phone held still).
+ const fitQuality=(m:MappedSurface)=>{const e=Number(m.edgePx);if(Number.isFinite(e)&&e>=0)return{label:e<1.5?'Clean':e<4?'Fair':'Rough',px:` ±${e.toFixed(1)} px`,title:`Stripe edges land ${e.toFixed(2)} projector pixels (RMS) from this face's fitted plane`};const r=Number(m.rmsPx);return{label:quality(r),px:'',title:`Fit ${r.toFixed(1)} projector pixels`};};
  const centre=(points:{x:number;y:number}[])=>({x:points.reduce((t,p)=>t+p.x,0)/points.length*100,y:points.reduce((t,p)=>t+p.y,0)/points.length*100});
  let creating=false;
  // Cutting the painting into shapes: its patches of colour, each one a mapping layer.
@@ -61,7 +64,8 @@
    if(off.has(index))continue;
    if(surface.points.length!==4){skipped++;continue;}
    // Projector picture -> composition, through the part of it the Screen shows.
-   const screen=$screens.find(s=>s.id===surface.screenId)??$screens.find(s=>s.name===surface.screenName)??($screens.length===1?$screens[0]:undefined);
+   // Measured on the main output (no Screen was open): the composition itself, no crop.
+   const screen=surface.screenId===MAIN_OUTPUT_ID?undefined:$screens.find(s=>s.id===surface.screenId)??$screens.find(s=>s.name===surface.screenName)??($screens.length===1?$screens[0]:undefined);
    // The surfaces were measured in the projector's own picture. A whole-Screen
    // corner correction would move every layer off its surface, so it goes off.
    if(screen?.projectorCalibration?.enabled){screenActions.update(screen.id,{projectorCalibration:{...screen.projectorCalibration,enabled:false}});straightened=true;}
@@ -73,7 +77,12 @@
    // ('fill' keeps the native mask a plain cut). Anything malformed falls back to the corners.
    const curved=phoneMeshLayer(surface,crop);
    if(curved){project.updateLayer(layerId,{warpMode:'mesh',...curved,contentFit:'fill'});meshes++;}
-   else project.updateLayer(layerId,{warpMode:'corners',corners:{topLeft,topRight,bottomRight,bottomLeft}});
+   else{
+    // A flat face: a mesh carrying the true perspective, so the inside lands too (a four-corner warp is bilinear and bows it).
+    const flat=perspectiveMeshLayer(surface.points,crop);
+    if(flat)project.updateLayer(layerId,{warpMode:'mesh',...flat,contentFit:'fill'});
+    else project.updateLayer(layerId,{warpMode:'corners',corners:{topLeft,topRight,bottomRight,bottomLeft}});
+   }
    made++;
    // A painting arrives with its own photo, cut to land exactly on it: put that on the layer.
    const picture=pictureOf(surface);
@@ -115,7 +124,7 @@
   <div class="am-side">
    <ul>{#each mappedSurfaces as m,i}<li class:off={off.has(i)} class:hot={hover===i} onmouseenter={()=>hover=i} onmouseleave={()=>hover=-1}>
     <label><input type="checkbox" checked={!off.has(i)} onchange={()=>flip(i)}/><b>{i+1}</b><span>{m.name}{pictureOf(m)?' · with its photo':''}{m.mesh?' · curved, meshed':''}</span></label>
-    <em class={quality(Number(m.rmsPx)).toLowerCase()} title={`Fit ${Number(m.rmsPx).toFixed(1)} projector pixels`}>{quality(Number(m.rmsPx))}</em></li>{/each}</ul>
+    <em class={fitQuality(m).label.toLowerCase()} title={fitQuality(m).title}>{fitQuality(m).label}{fitQuality(m).px}</em></li>{/each}</ul>
    <label class="am-option"><input type="checkbox" bind:checked={replaceOld}/>Replace layers from the last scan</label>
    <button class="am-go" onclick={createLayers} disabled={!chosen||creating||createdFor===incoming}>{createdFor===incoming?'Layers created':`Create ${chosen} layer${chosen===1?'':'s'}`}</button>
    <p class="am-status" role="status">{message}</p>

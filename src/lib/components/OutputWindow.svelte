@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import { get } from 'svelte/store';
+  import { mainOutputRaster } from '$lib/stores/screenOutputStatus';
   import { liveOutputDisplay, resolveDisplayForSurface } from '$lib/output/displayAssignment';
   import { invoke, isDesktopApp, isMac, isWindows } from '$lib/bridge';
   import {
@@ -307,6 +308,9 @@
       mark('first frame');
       if (activeStatus) void publishNativeRuntimeHandshake(activeStatus).catch(() => {});
       isOpen = true;
+      // A phone can auto-map this output directly when no Screen is open (one projector, no Screens setup).
+      const scale = Number(target?.scaleFactor) > 0 ? Number(target.scaleFactor) : 1;
+      mainOutputRaster.set({ width: Math.round(winW * scale), height: Math.round(winH * scale) });
       startNativeOutputMonitor();
       if (expectedLayerCount > 0 && Number(activeStatus?.output_last_presented_layer_count ?? 0) <= 0) {
         console.warn(`[Output] Opened before the scene reached it: ${nativeOutputActivationDetail(activeStatus, expectedLayerCount)}`);
@@ -579,6 +583,7 @@
     stopNativeOutputMonitor();
     invoke('close_output_window').catch(() => {});
     setNativeRendererOutputWindow({ attached: false, visible: false }).catch(() => {});
+    mainOutputRaster.set(null);
     isOpen = false;
     onClose();
   }

@@ -17,7 +17,7 @@ import { vjGroupSourceId, buildVJGroupedMixGraph, type VJGroupedMixOptions } fro
 import { cubeLutHandle } from '../color/cubeLutAssets';
 import { nativeVideoLaunchTime, nativeVideoAnchorRate, nativeVideoMetadataPatch } from '../media/nativeTransport';
 import { get } from 'svelte/store';
-import { screenOutputError, screenAlignmentAids, screenPatternFrames, openScreenOutputList, screenRegion, type OpenScreenOutput } from '../stores/screenOutputStatus';
+import { screenOutputError, screenAlignmentAids, screenPatternFrames, openScreenOutputList, screenRegion, autoMapTargets, mainOutputRaster, MAIN_OUTPUT_ID, type OpenScreenOutput } from '../stores/screenOutputStatus';
 import { createLayer } from '$lib/types';
 import {
   buildVJClipTransitionGraph,
@@ -9502,6 +9502,13 @@ export class NativeRendererSync {
       edgeBlendBottom: out.edgeBlendBottom ?? 0,
       edgeBlendGamma: out.edgeBlendGamma ?? 2.2,
       ...nativeDomeStage(out),
+      // A phone's auto-map stripes on the main output (single projector, no Screen open),
+      // drawn at the raster size the phone was told.
+      ...(() => {
+        const frame = get(screenPatternFrames)[MAIN_OUTPUT_ID];
+        const raster = get(mainOutputRaster);
+        return frame !== undefined && raster ? { structuredLight: frame, structuredLightWidth: raster.width, structuredLightHeight: raster.height } : {};
+      })(),
       // Alignment pattern drawn by the compositor's output stage, so it
       // reaches the projector (the DOM overlay only ever covered the
       // editor preview).
@@ -9551,6 +9558,11 @@ export class NativeRendererSync {
   /** Screens with an output window open, at the pixel size the core renders
    *  them: what an auto-map capture can put stripes on. */
   openScreenOutputs(): OpenScreenOutput[] {
+    const out = get(settings)?.output;
+    return autoMapTargets(this.openSliceScreens(), get(mainOutputRaster), !!out?.outputWindowOpen);
+  }
+
+  private openSliceScreens(): OpenScreenOutput[] {
     const out = get(settings)?.output;
     return (out?.slices ?? [])
       .filter((s: any) => s?.enabled !== false && this.openSliceWindowIds.includes(s?.id))
@@ -9850,7 +9862,8 @@ export class NativeRendererSync {
     this.outputStateUnsubs.push(settings.subscribe(() => this.pushSliceOutputs()));
     this.outputStateUnsubs.push(recordingScreenIds.subscribe(() => this.pushSliceOutputs()));
     this.outputStateUnsubs.push(screenAlignmentAids.subscribe(() => this.pushSliceOutputs()));
-    this.outputStateUnsubs.push(screenPatternFrames.subscribe(() => this.pushSliceOutputs()));
+    this.outputStateUnsubs.push(screenPatternFrames.subscribe(() => { this.pushSliceOutputs(); this.pushOutputStage(); }));
+    this.outputStateUnsubs.push(mainOutputRaster.subscribe(() => { this.pushSliceOutputs(); this.pushOutputStage(); }));
     // Map Sim projector views for Screens that show one. Loaded lazily so
     // the 3D loaders stay out of the startup path.
     {

@@ -88,3 +88,46 @@ export function phoneMeshLayer(surface: PhoneMeshSurface, crop: { x: number; y: 
   };
   return { corners, meshGrid, layerShape };
 }
+
+/** Points a side of the mesh that carries a flat face's perspective (bilinear cells; 9 keeps the bend under 0.2 px at 1080p). */
+const PERSPECTIVE_SIDE = 9;
+
+/**
+ * A flat face measured by the phone: four corners in the projector's picture.
+ * The face and the projector picture are related by a perspective
+ * (homography), but a four-corner warp is bilinear: the edges land, the
+ * inside does not (a grid on a slanted box face bows by 3-15 px at 1080p).
+ * So the face becomes a mesh sampled from the true perspective: the same
+ * corners, with the picture where the face really is in between. Null for a
+ * crossed or collapsed quad (the caller then uses the four corners).
+ */
+export function perspectiveMeshLayer(points: Point2D[], crop: { x: number; y: number; w: number; h: number }): Omit<PhoneMeshLayer, 'layerShape'> | null {
+  if (points.length !== 4 || !points.every(finite)) return null;
+  const cross = points.map((a, i) => { const b = points[(i + 1) % 4], c = points[(i + 2) % 4]; return (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x); });
+  if (!cross.every(c => c > 1e-9) && !cross.every(c => c < -1e-9)) return null;
+  // Unit square (content, top-left origin) -> the quad, in the projector picture.
+  const a: number[][] = [];
+  const unit = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }];
+  unit.forEach((p, i) => { const q = points[i]; a.push([p.x, p.y, 1, 0, 0, 0, -q.x * p.x, -q.x * p.y, q.x], [0, 0, 0, p.x, p.y, 1, -q.y * p.x, -q.y * p.y, q.y]); });
+  for (let c = 0; c < 8; c++) {
+    let pivot = c;
+    for (let r = c + 1; r < 8; r++) if (Math.abs(a[r][c]) > Math.abs(a[pivot][c])) pivot = r;
+    if (Math.abs(a[pivot][c]) < 1e-12) return null;
+    [a[c], a[pivot]] = [a[pivot], a[c]];
+    const d = a[c][c];
+    for (let k = c; k < 9; k++) a[c][k] /= d;
+    for (let r = 0; r < 8; r++) if (r !== c) { const f = a[r][c]; for (let k = c; k < 9; k++) a[r][k] -= f * a[c][k]; }
+  }
+  const h = [...a.map(row => row[8]), 1];
+  const n = PERSPECTIVE_SIDE;
+  const meshPoints: Point2D[] = [];
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
+    const u = c / (n - 1), v = r / (n - 1), w = h[6] * u + h[7] * v + h[8];
+    if (!(Math.abs(w) > 1e-9)) return null;
+    meshPoints.push({ x: (h[0] * u + h[1] * v + h[2]) / w, y: (h[3] * u + h[4] * v + h[5]) / w });
+  }
+  const layer = phoneMeshLayer({ mesh: { rows: n, cols: n, points: meshPoints, tangents: null, rest: { u0: 0, v0: 0, u1: 1, v1: 1 } }, contentOutline: unit }, crop);
+  if (!layer) return null;
+  const { layerShape: _unused, ...fields } = layer;
+  return fields;
+}
