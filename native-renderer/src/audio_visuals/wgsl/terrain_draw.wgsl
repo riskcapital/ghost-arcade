@@ -96,7 +96,8 @@ fn fs_terrain(in: TerrOut) -> @location(0) vec4<f32> {
   // The live edge burns, and fresh ridges glow as they arrive.
   let fresh = exp(-in.age * 0.25);
   col += hot * smoothstep(0.25, 0.9, height) * fresh * 0.08;
-  col += hot * (1.0 - smoothstep(0.0, 1.2 + T.extra.z * 2.0, in.age)) * (0.15 + height) * 0.6 * (0.5 + T.extra.y + T.extra.z);
+  // The live edge: a thin hot line along the newest row, drawn over the fade.
+  let edge_glow = hot * (1.0 - smoothstep(0.0, 1.2 + T.extra.z * 2.0, in.age)) * (0.15 + height) * 0.35 * (0.5 + T.extra.y + T.extra.z);
   let lw = T.look.w;
   if ((flags & 1u) != 0u) {
     // Wireframe: a dark surface under a glowing grid.
@@ -111,6 +112,9 @@ fn fs_terrain(in: TerrOut) -> @location(0) vec4<f32> {
   }
   // The far edge of the history fades into the dark.
   col *= 1.0 - smoothstep(T.clock.w * 0.7, T.clock.w - 1.0, in.age);
+  // The near edge fades in over the first rows, so there is no hard cut
+  // through the hills at the bottom of the picture.
+  col = col * smoothstep(0.0, 7.0, in.age) + edge_glow;
   col *= exp(-max(dist - 1.5, 0.0) * T.eye.w);
   return vec4<f32>(col, 1.0);
 }

@@ -2,6 +2,7 @@
 //   [0] spread amount, spin, crack heat, explode distance
 //   [1] shard size, fracture seed, crack glow, glint
 //   [2] size variation, drive level, mid level, high level
+//   [3] break spread (stagger), scan brightness gain
 
 fn shard_hash(pivot: vec3<f32>, salt: u32) -> f32 {
   let b = bitcast<vec3<u32>>(pivot);

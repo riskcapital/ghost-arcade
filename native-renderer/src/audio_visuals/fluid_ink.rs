@@ -16,7 +16,7 @@ use super::controls2::{
     view2_floats,
 };
 use super::hdr_post::HdrPostSettings;
-use super::kit::{glow_tint, hash01, palette_floats, palette_named, pick};
+use super::kit::{glow_tint, hash01, palette_floats, palette_named, pick_or};
 use super::params::Palette3;
 
 pub const MAX_JETS: usize = 8;
@@ -29,7 +29,7 @@ pub const KICKS_PER_TURN: u32 = 8;
 pub const INK_PALETTES: &[(&str, Palette3)] = &[
     (
         "vermilion-indigo",
-        Palette3 { core: [1.0, 0.85, 0.7, 2.5], mid: [1.0, 0.22, 0.05, 1.0], fringe: [0.16, 0.16, 1.0, 1.0] },
+        Palette3 { core: [1.0, 0.8, 0.6, 2.5], mid: [1.0, 0.14, 0.02, 1.3], fringe: [0.1, 0.08, 1.0, 1.3] },
     ),
     (
         "jade-gold",
@@ -54,6 +54,7 @@ pub const INK_PALETTE_NAMES: &[&str] = &["vermilion-indigo", "jade-gold", "ultra
 fn defaults() -> CommonDefaults {
     CommonDefaults {
         camera: CameraKind::Picture2D,
+        quality: "low",
         fov: 40.0,
         post: HdrPostSettings {
             decay: 0.0,
@@ -115,7 +116,7 @@ pub struct InkParams {
 
 pub fn normalize_ink_params(params: &Value) -> InkParams {
     let r = Reader::new(params, ink_defs());
-    let (sim_h, dye_scale, jacobi) = pick(params, [(144u32, 0.5f32, 14u32), (216, 0.75, 22), (288, 1.0, 32)]);
+    let (sim_h, dye_scale, jacobi) = pick_or(params, [(144u32, 0.5f32, 14u32), (216, 0.75, 22), (288, 1.0, 32)], 0);
     let d = defaults();
     let palette = palette_with_overrides(palette_named(INK_PALETTES, params), params);
     let look = if r.s("look") == "backlit" { InkLook::Backlit } else { InkLook::Glow };
@@ -356,7 +357,7 @@ mod tests {
             assert_eq!(p.jacobi % 2, 0, "the pressure must end where it started");
         }
         let (w, h) = sim_size(&params(), 16.0 / 9.0);
-        assert_eq!((w, h), (384, 216));
+        assert_eq!((w, h), (256, 144), "low by default: a base M1 keeps 60 fps");
     }
 
     fn probe_frame(json: &Value) -> Vec<f32> {

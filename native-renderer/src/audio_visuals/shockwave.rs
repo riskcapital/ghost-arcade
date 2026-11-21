@@ -53,9 +53,11 @@ pub const SHOCK_PALETTE_NAMES: &[&str] = &["plasma", "solar", "nacre"];
 fn defaults() -> CommonDefaults {
     CommonDefaults {
         camera: CameraKind::Picture2D,
+        quality: "medium",
         fov: 40.0,
         post: HdrPostSettings {
-            decay: 0.5,
+            // Short: an HDR-hot front left in long trails stacks into echoes.
+            decay: 0.2,
             zoom: 0.0,
             swirl: 0.0,
             flow: 0.0,
@@ -79,7 +81,7 @@ pub fn shock_defs() -> Vec<ParamDef> {
         slider("width", "Ring width", "Rings", 0.005, 0.5, 0.001, 0.03),
         slider("reach", "Reach", "Rings", 0.1, 4.0, 0.01, 1.7),
         slider("maxRings", "Max rings", "Rings", 1.0, MAX_RINGS as f32, 1.0, MAX_RINGS as f32),
-        slider("refract", "Refraction", "Rings", 0.0, 0.3, 0.001, 0.06),
+        slider("refract", "Refraction", "Rings", 0.0, 0.14, 0.001, 0.1),
         slider("chroma", "Refraction colour split", "Rings", 0.0, 2.0, 0.01, 0.12),
         slider("shell", "Ring vs shell", "Rings", 0.0, 1.0, 0.01, 0.12),
         select("layout", "Layout", "Rings", &["center", "scatter"], "center"),
@@ -220,8 +222,8 @@ impl RingQueue {
         let strength = strength.clamp(0.3, 1.6);
         // Kicks are wide, heavy and slow; snares thin and fast; hats tiny.
         let (reach, rate, width) = match band {
-            OnsetBand::Bass => (params.reach * (0.75 + 0.25 * strength.min(1.2)), 1.5, params.width),
-            OnsetBand::Mid => (params.reach * 0.85, 2.6, params.width * 0.35),
+            OnsetBand::Bass => (params.reach * (0.75 + 0.25 * strength.min(1.2)), 2.6, params.width),
+            OnsetBand::Mid => (params.reach * 0.85, 3.6, params.width * 0.35),
             OnsetBand::High => (params.reach * 0.35, 4.0, params.width * 0.25),
         };
         let center = match (params.layout, band) {
@@ -272,6 +274,7 @@ pub struct ShockState {
     pub audio: AudioConditioner,
     pub motion: MotionClock,
     pub rings: RingQueue,
+    pub blur_dt: f32,
 }
 
 pub struct ShockFrame {
@@ -291,6 +294,13 @@ pub fn shock_frame(json: &Value, state: &mut ShockState, data: &AudioVisualData,
         state.rings.step(now);
     }
     let view = view2_floats(&params.camera, state.motion.angles(&params.camera), now);
+    // Motion blur covers about one frame of travel at whatever rate frames
+    // come (a repeat render keeps the last real step's length).
+    if step > 0.0 {
+        state.blur_dt = core_dt;
+    }
+    let mut params = params;
+    params.streak *= (state.blur_dt * 60.0).clamp(0.25, 4.0);
     let uniform = shock_uniform(&params, &state.rings, &audio, &view, size, now);
     ShockFrame { live: state.rings.rings.len().min(MAX_RINGS) as u32, params, uniform }
 }

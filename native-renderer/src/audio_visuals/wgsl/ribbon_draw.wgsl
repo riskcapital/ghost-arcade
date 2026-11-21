@@ -81,14 +81,15 @@ fn fs_ribbon(in: RibOut) -> @location(0) vec4<f32> {
   let half_v = normalize(key + v);
   // Anisotropic sheen along the ribbon (silk) and a tight highlight.
   let th = dot(t, half_v);
-  let sheen = pow(sqrt(max(1.0 - th * th, 0.0)), 220.0);
-  let spec = pow(max(dot(nrm, half_v), 0.0), 180.0);
+  // Sheen only: it follows the ribbon's direction, not its twist, so a
+  // twisting ribbon does not flash in dashes.
+  let sheen = pow(sqrt(max(1.0 - th * th, 0.0)), 90.0);
   let rim = pow(1.0 - abs(dot(nrm, v)), 4.0);
   let hem = smoothstep(0.7, 1.0, abs(in.across));
   var col = base * diffuse + base * rim * 1.3;
-  col += mix(base, U.core.rgb, 0.6) * (sheen * 0.5 + spec * 1.2) * U.env.w;
+  col += mix(base, U.core.rgb, 0.5) * sheen * 0.45 * U.env.w;
   // A hit's light rides down the ribbon with the history.
-  col += U.core.rgb * U.core.w * in.heat * (0.05 + 0.25 * hem);
+  col += U.core.rgb * U.core.w * in.heat * (0.16 + 0.5 * hem);
   col *= exp(-max(dist - 2.0, 0.0) * U.eye.w);
   col *= in.fade;
   return vec4<f32>(col, 1.0);

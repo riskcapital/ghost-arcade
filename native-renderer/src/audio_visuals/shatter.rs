@@ -19,7 +19,7 @@ use super::controls2::{
     palette_with_overrides, post_from, resets, slider,
 };
 use super::hdr_post::HdrPostSettings;
-use super::kit::{glow_tint, hash01, palette_named, pick};
+use super::kit::{glow_tint, hash01, palette_named, pick_or};
 use super::params::Palette3;
 
 pub const SHARD_BYTES: u64 = 16;
@@ -47,6 +47,7 @@ pub const SHATTER_PALETTE_NAMES: &[&str] = &["obsidian-magma", "ice-shard", "gil
 fn defaults() -> CommonDefaults {
     CommonDefaults {
         camera: CameraKind::Orbit3D,
+        quality: "low",
         fov: 45.0,
         post: HdrPostSettings {
             decay: 0.12,
@@ -77,7 +78,7 @@ pub fn shatter_defs() -> Vec<ParamDef> {
             default: ParamDefault::Str(""),
             resets: true,
         },
-        resets(slider("maxPoints", "Points", "Shatter", 10_000.0, super::ply_reader::CLOUD_MAX_POINTS as f32, 1000.0, 750_000.0)),
+        resets(slider("maxPoints", "Points", "Shatter", 10_000.0, super::ply_reader::CLOUD_MAX_POINTS as f32, 1000.0, 400_000.0)),
         slider("orientX", "Scan orientation X", "Shatter", -180.0, 180.0, 0.5, 180.0),
         slider("orientY", "Scan orientation Y", "Shatter", -180.0, 180.0, 0.5, 0.0),
         slider("orientZ", "Scan orientation Z", "Shatter", -180.0, 180.0, 0.5, 0.0),
@@ -88,7 +89,8 @@ pub fn shatter_defs() -> Vec<ParamDef> {
         slider("hold", "Hold apart (s)", "Shatter", 0.0, 10.0, 0.01, 0.3),
         slider("reform", "Re-form time (s)", "Shatter", 0.1, 10.0, 0.01, 1.0),
         slider("cooldown", "Cooldown (s)", "Shatter", 0.0, 10.0, 0.01, 1.6),
-        slider("breakThreshold", "Break on hits over", "Shatter", 0.0, 2.0, 0.01, 1.2),
+        slider("stagger", "Break spread", "Shatter", 0.0, 4.0, 0.01, 1.5),
+        slider("breakThreshold", "Break on hits over", "Shatter", 0.0, 2.0, 0.01, 0.8),
         slider("pointSize", "Point size", "Shatter", 0.3, 8.0, 0.01, 1.3),
         slider("sizeVariation", "Size variation", "Shatter", 0.0, 1.0, 0.01, 0.3),
         slider("crackGlow", "Crack glow", "Shatter", 0.0, 8.0, 0.01, 1.0),
@@ -96,10 +98,10 @@ pub fn shatter_defs() -> Vec<ParamDef> {
         slider("scanGlow", "Scan brightness", "Shatter", 0.0, 4.0, 0.01, 1.0),
     ];
     let mut common = common_defs(&defaults());
-    // A shatter breaks on kicks unless asked otherwise.
+    // A shatter breaks on kicks and snares unless asked otherwise.
     for d in &mut common {
         if d.key == "launchBands" {
-            d.default = ParamDefault::Str("bass");
+            d.default = ParamDefault::Str("bass-mid");
         }
     }
     defs.extend(common);
@@ -118,6 +120,7 @@ pub struct ShatterParams {
     pub hold: f32,
     pub reform: f32,
     pub cooldown: f32,
+    pub stagger: f32,
     pub break_threshold: f32,
     pub point_px: f32,
     pub size_var: f32,
@@ -137,11 +140,11 @@ pub fn normalize_shatter_params(params: &Value) -> ShatterParams {
     let palette = palette_with_overrides(palette_named(SHATTER_PALETTES, params), params);
     let mut audio = audio_controls(params, &d);
     if params.get("launchBands").is_none() {
-        audio.launch_mask = 1;
+        audio.launch_mask = 3;
     }
     ShatterParams {
         path: params.get("path").or_else(|| params.get("plyPath")).and_then(Value::as_str).unwrap_or("").to_string(),
-        max_points: r.count("maxPoints", pick(params, [400_000u32, 750_000, 1_000_000])),
+        max_points: r.count("maxPoints", pick_or(params, [400_000u32, 750_000, 1_000_000], 0)),
         orient: [r.f("orientX"), r.f("orientY"), r.f("orientZ")],
         scale: r.f("scale"),
         shard: r.f("shardSize"),
@@ -150,6 +153,7 @@ pub fn normalize_shatter_params(params: &Value) -> ShatterParams {
         hold: r.f("hold"),
         reform: r.f("reform"),
         cooldown: r.f("cooldown"),
+        stagger: r.f("stagger"),
         break_threshold: r.f("breakThreshold"),
         point_px: r.f("pointSize"),
         size_var: r.f("sizeVariation"),
@@ -257,6 +261,29 @@ pub struct ShatterState {
     pub audio: AudioConditioner,
     pub motion: MotionClock,
     pub shatter: Shatter,
+    /// Brightness that brings this scan's mean colour to a common level.
+    pub scan_gain: f32,
+}
+
+pub const SHATTER_DRAWN_BYTES: u64 = 32;
+
+/// A gain that brings a cloud's mean colour (the packed RGBA in each
+/// point's `w`) to a common level, so every scan reads alike.
+pub fn scan_gain(bytes: &[u8]) -> f32 {
+    let floats: &[f32] = bytemuck::cast_slice(bytes);
+    let mut sum = 0.0_f64;
+    let mut n = 0u32;
+    for point in floats.chunks_exact(4).step_by(97) {
+        let c = point[3].to_bits().to_le_bytes();
+        if c[3] > 5 {
+            sum += f64::from(0.2126 * f32::from(c[0]) + 0.7152 * f32::from(c[1]) + 0.0722 * f32::from(c[2])) / 255.0;
+            n += 1;
+        }
+    }
+    if n == 0 {
+        return 1.0;
+    }
+    (0.6 / (sum / f64::from(n)) as f32).clamp(0.4, 4.0)
 }
 
 pub struct ShatterFrame {
@@ -295,7 +322,8 @@ pub fn shatter_frame(
         state.shatter.step(now, step, &params);
     }
     let amount = state.shatter.amount(now, &params);
-    let uniform = shatter_uniform(&params, &state.shatter, &audio, state.motion.angles(&params.camera), size, points, now);
+    let gain = if state.scan_gain > 0.0 { state.scan_gain } else { 1.0 };
+    let uniform = shatter_uniform(&params, &state.shatter, &audio, state.motion.angles(&params.camera), size, points, now, gain);
     ShatterFrame { params, uniform, amount }
 }
 
@@ -308,6 +336,7 @@ pub fn shatter_uniform(
     size: (u32, u32),
     points: u32,
     time: f32,
+    gain: f32,
 ) -> Vec<f32> {
     let (width, height) = size;
     let aspect = width as f32 / height.max(1) as f32;
@@ -332,6 +361,7 @@ pub fn shatter_uniform(
         amount, shatter.spin, shatter.heat(time), params.explode * shatter.power.max(0.3),
         params.shard, shatter.seed, params.crack, params.glint,
         params.size_var, audio.drive, audio.levels[1], audio.levels[2],
+        params.stagger, gain, 0.0, 0.0,
     ];
     u.extend_from_slice(&block);
     u.resize(32 + 10 * 4 + SHATTER_DATA_VEC4 * 4, 0.0);
@@ -420,5 +450,22 @@ mod tests {
         // The path is a file, checked by the loader; the rest must all reach the GPU.
         probe::check_all("mesh-shatter", &shatter_defs(), probe_frame, &["path"]);
         assert_eq!(normalize_shatter_params(&serde_json::json!({"path": "/x.ply"})).path, "/x.ply");
+    }
+
+    #[test]
+    fn scan_gain_brings_dark_and_bright_scans_together() {
+        let cloud = |grey: u8| -> Vec<u8> {
+            (0..1000)
+                .flat_map(|_| {
+                    let c = f32::from_bits(u32::from_le_bytes([grey, grey, grey, 255]));
+                    [0.0_f32, 0.0, 0.0, c]
+                })
+                .flat_map(f32::to_le_bytes)
+                .collect()
+        };
+        let dark = scan_gain(&cloud(40));
+        let bright = scan_gain(&cloud(200));
+        assert!(dark > bright);
+        assert!(((40.0 / 255.0) * dark - (200.0 / 255.0) * bright).abs() < 0.1);
     }
 }

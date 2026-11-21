@@ -12,7 +12,9 @@ fn shock_lens(uv: vec2<f32>) -> vec2<f32> {
   for (var r = 0u; r < live; r = r + 1u) {
     let ring = shock_seen(S.rings[r], S.view);
     let d = shock_d(p, ring);
-    off += d.xy * S.field.y * ring.b.x * d.z * exp(-d.z * d.z);
+    // Small, fast rings bend less, so hat rings never blob.
+    let size = smoothstep(0.08, 0.45, ring.a.z);
+    off += d.xy * S.field.y * min(ring.b.x, 1.2) * size * d.z * exp(-d.z * d.z);
   }
   return vec2<f32>(off.x / (2.0 * aspect), -off.y * 0.5);
 }

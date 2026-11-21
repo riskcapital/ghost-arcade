@@ -30,7 +30,7 @@ pub const MAX_ROWS_PER_FRAME: u32 = 2;
 pub const TERRAIN_PALETTES: &[(&str, Palette3)] = &[
     (
         "nightfall",
-        Palette3 { core: [0.55, 0.85, 1.0, 5.0], mid: [0.95, 0.35, 0.75, 0.55], fringe: [0.03, 0.04, 0.14, 1.0] },
+        Palette3 { core: [0.7, 0.86, 1.0, 4.0], mid: [0.34, 0.5, 0.74, 0.32], fringe: [0.012, 0.02, 0.05, 1.0] },
     ),
     (
         "ember-ridge",
@@ -47,6 +47,7 @@ pub const TERRAIN_PALETTE_NAMES: &[&str] = &["nightfall", "ember-ridge", "polar"
 fn defaults() -> CommonDefaults {
     CommonDefaults {
         camera: CameraKind::Orbit3D,
+        quality: "medium",
         fov: 52.0,
         post: HdrPostSettings {
             decay: 0.0,

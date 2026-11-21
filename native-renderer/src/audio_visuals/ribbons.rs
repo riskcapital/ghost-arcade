@@ -46,6 +46,7 @@ pub const RIBBON_PALETTE_NAMES: &[&str] = &["obsidian-silk", "glacier-silk", "ro
 fn defaults() -> CommonDefaults {
     CommonDefaults {
         camera: CameraKind::Orbit3D,
+        quality: "medium",
         fov: 42.0,
         post: HdrPostSettings {
             decay: 0.35,
@@ -74,7 +75,7 @@ pub fn ribbon_defs() -> Vec<ParamDef> {
         slider("width", "Width", "Ribbons", 0.002, 0.2, 0.001, 0.012),
         slider("widthVariation", "Width variation", "Ribbons", 0.0, 1.0, 0.01, 0.8),
         slider("twist", "Twist", "Ribbons", 0.0, 60.0, 0.1, 3.0),
-        slider("kink", "Kink on hits", "Ribbons", 0.0, 4.0, 0.01, 0.3),
+        slider("kink", "Kink on hits", "Ribbons", 0.0, 1.0, 0.01, 0.3),
         slider("travel", "Travel speed", "Ribbons", 0.0, 4.0, 0.01, 1.1),
         slider("flowScale", "Flow scale", "Ribbons", 0.05, 8.0, 0.01, 0.55),
         slider("flowSpeed", "Flow speed", "Ribbons", 0.0, 4.0, 0.01, 0.08),
@@ -190,6 +191,9 @@ pub fn ribbon_camera(params: &RibbonParams, time: f32, angles: [f32; 3], aspect:
     // A slow deterministic swing across the river with a gentle rise and fall.
     let sway = params.camera.sway;
     let yaw = 0.55 + 0.21 * sway * (time * 0.05).sin();
+    // Rotation about Y swings across the river and back instead of going
+    // round: seen end-on the river reads as a tangle.
+    let angles = [angles[0], 0.5 * angles[1].sin(), angles[2]];
     let h = 0.7 + 0.25 * sway * (time * 0.13).sin();
     let r = 3.6 * (1.0 + 0.04 * sway * (time * 0.09).sin());
     let eye = [r * yaw.sin(), h, r * yaw.cos()];

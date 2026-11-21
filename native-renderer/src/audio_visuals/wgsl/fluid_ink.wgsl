@@ -165,7 +165,9 @@ fn fs_advect_dye(in: FullOut) -> @location(0) vec4<f32> {
   let v = textureSampleLevel(aux_tex, ink_sampler, in.uv, 0.0).xy;
   let back = in.uv - v * I.clock.y * I.sim.zw;
   let d = textureSampleLevel(src_tex, ink_sampler, back, 0.0);
-  let keep = pow(I.solve.y, I.clock.y);
+  // Ink that reaches the tank walls thins away instead of piling up there.
+  let wall = smoothstep(0.0, 0.05, min(min(in.uv.x, 1.0 - in.uv.x), min(in.uv.y, 1.0 - in.uv.y)));
+  let keep = pow(I.solve.y, I.clock.y) * pow(mix(0.03, 1.0, wall), I.clock.y);
   return vec4<f32>(d.r * keep, d.g * keep, d.b * pow(0.25, I.clock.y), 1.0);
 }
 
@@ -214,8 +216,11 @@ fn ink_shade(uv: vec2<f32>) -> vec4<f32> {
   }
   var col = mixc * thick * diffuse;
   // Dense, fresh ink burns toward the core light; thin edges stay dark.
-  col += I.core.rgb * I.core.w * spec * thick * 0.35;
-  col += I.core.rgb * I.core.w * min(d.b, 2.0) * thick * 0.3;
+  col += I.core.rgb * I.core.w * spec * thick * 0.2;
+  col += I.core.rgb * I.core.w * min(d.b, 2.0) * thick * 0.16;
+  // Keep the inks rich: lift saturation a little around their own luminance.
+  let luma = dot(col, vec3<f32>(0.2126, 0.7152, 0.0722));
+  col = max(mix(vec3<f32>(luma), col, 1.3), vec3<f32>(0.0));
   return vec4<f32>(col, 1.0);
 }
 

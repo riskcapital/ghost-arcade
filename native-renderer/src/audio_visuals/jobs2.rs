@@ -28,10 +28,10 @@ use super::ply_reader::{CLOUD_POINT_BYTES, CloudLoad};
 use super::ribbons::{RIBBON_HEAD_BYTES, RIBBON_POINT_BYTES, RibbonState, ribbon_frame};
 use super::shaders::{CoreShader, core_shader};
 use super::shaders2::{
-    ARCS_DRAW, AV2_FINISH, FLUID_INK, RIBBON_DRAW, RIBBON_SIM, SHATTER_DRAW, SHATTER_SHARDS, SHOCKWAVE_DRAW,
+    ARCS_DRAW, AV2_FINISH, FLUID_INK, RIBBON_DRAW, RIBBON_SIM, SHATTER_DRAW, SHATTER_POINTS, SHATTER_SHARDS, SHOCKWAVE_DRAW,
     SHOCKWAVE_REFRACT, TERRAIN_DRAW, TERRAIN_ROW,
 };
-use super::shatter::{SHARD_BYTES, ShatterState, normalize_shatter_params, shard_key, shatter_frame};
+use super::shatter::{SHARD_BYTES, SHATTER_DRAWN_BYTES, ShatterState, normalize_shatter_params, scan_gain, shard_key, shatter_frame};
 use super::shockwave::{ShockState, shock_frame};
 use super::terrain::{TERRAIN_BINS, TerrainState, terrain_frame};
 
@@ -646,11 +646,13 @@ impl App {
         let count = points.count;
         let home_id = format!("{prefix}:points:{count}");
         let shards_id = format!("{prefix}:shards:{count}");
+        let drawn_id = format!("{prefix}:drawn:{count}");
         let home_missing = self.av2_buffer_missing(&home_id);
         if home_missing {
             // A new cloud, a lost device or an offline render starting.
             let load = state.load.take();
             state = Av2State { load, ..Av2State::default() };
+            state.shatter.scan_gain = scan_gain(&points.bytes);
         }
         let frame = self.av2_clock(&mut state.clock);
         let size = accumulation_size(self.pending_width, self.pending_height, 1.0);
@@ -668,6 +670,7 @@ impl App {
                 indirect: false,
             },
             storage(&shards_id, u64::from(count) * SHARD_BYTES, home_missing),
+            storage(&drawn_id, u64::from(count) * SHATTER_DRAWN_BYTES, home_missing),
             uniform_spec(uniform_id.clone(), &f.uniform),
         ];
         // Assign shards once per cloud and shard size (a live change of the
@@ -682,6 +685,21 @@ impl App {
                 "cs_shards",
                 count,
                 vec![read_binding(0, &home_id), uniform_binding(1, &uniform_id), write_binding(2, &shards_id)],
+            ));
+        }
+        // Shade every point once (a repeat render reuses the last frame's).
+        if frame.dt > 0.0 || home_missing {
+            pass_plans.push(compute(
+                format!("{prefix}:shade"),
+                core_shader(SHATTER_POINTS),
+                "cs_shatter_points",
+                count,
+                vec![
+                    read_binding(0, &home_id),
+                    uniform_binding(1, &uniform_id),
+                    read_binding(2, &shards_id),
+                    write_binding(3, &drawn_id),
+                ],
             ));
         }
         let (post, extra) =
@@ -699,7 +717,7 @@ impl App {
             NativeComputeGraphRenderBlend::Add,
             6,
             count,
-            vec![read_binding(0, &home_id), uniform_binding(1, &uniform_id), read_binding(2, &shards_id)],
+            vec![read_binding(0, &drawn_id), uniform_binding(1, &uniform_id)],
         ));
         render_plans.extend(post.finish);
         Ok((state, job(post.textures, buffers, pass_plans, render_plans)))

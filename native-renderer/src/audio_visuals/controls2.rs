@@ -77,6 +77,8 @@ pub enum CameraKind {
 #[derive(Clone, Copy, Debug)]
 pub struct CommonDefaults {
     pub camera: CameraKind,
+    /// The default quality tier: "low" where a base M1 would miss 60 fps.
+    pub quality: &'static str,
     pub fov: f32,
     pub post: HdrPostSettings,
     pub level_band: &'static str,
@@ -87,7 +89,7 @@ pub struct CommonDefaults {
 /// instrument's own group: Camera, Look, Post, Audio, Motion.
 pub fn common_defs(d: &CommonDefaults) -> Vec<ParamDef> {
     let mut defs = vec![
-        resets(select("quality", "Quality", "Look", QUALITY, "medium")),
+        resets(select("quality", "Quality", "Look", QUALITY, d.quality)),
         select("palette", "Palette", "Look", d.palettes, d.palettes[0]),
         ParamDef { key: "colorA", label: "Colour A", group: "Look", kind: ParamKind::Color, default: ParamDefault::Str(""), resets: false },
         ParamDef { key: "colorB", label: "Colour B", group: "Look", kind: ParamKind::Color, default: ParamDefault::Str(""), resets: false },
@@ -153,9 +155,20 @@ pub fn defs_json(defs: &[ParamDef]) -> Value {
                         out["options"] = json!(options);
                     }
                     ParamKind::Toggle => out["type"] = json!("toggle"),
-                    ParamKind::Color => out["type"] = json!("color"),
+                    // "#rrggbb" in sRGB; empty = the palette's own colour.
+                    ParamKind::Color => {
+                        out["type"] = json!("color");
+                        out["format"] = json!("#rrggbb");
+                        out["allowEmpty"] = json!(true);
+                    }
                     ParamKind::Text => out["type"] = json!("text"),
-                    ParamKind::Button => out["type"] = json!("button"),
+                    // A momentary button: the panel bumps the number on each
+                    // press; each change of value fires once.
+                    ParamKind::Button => {
+                        out["type"] = json!("button");
+                        out["momentary"] = json!(true);
+                        out["fire"] = json!("increment");
+                    }
                 }
                 out
             })
@@ -527,6 +540,7 @@ mod tests {
     fn defaults() -> CommonDefaults {
         CommonDefaults {
             camera: CameraKind::Picture2D,
+            quality: "medium",
             fov: 45.0,
             post: HdrPostSettings::default(),
             level_band: "bass",

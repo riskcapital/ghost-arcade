@@ -49,8 +49,11 @@ fn vs_ring(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> 
   let a = (f32(j) + h1) / f32(per) * 6.28318530718;
   let around = vec2<f32>(cos(a), sin(a));
   // Most hug the front; a thin wake trails behind it.
-  let lag = -width * (pow(h2, 3.0) * 3.0 + h3 * 0.5);
-  let wobble = gnoise2(around * 2.5 + vec2<f32>(f32(seed % 97u)), seed).x * 0.025 * radius;
+  // Three in four sit exactly on the front (a crisp edge); the rest trail
+  // behind it in a thin wake.
+  let in_wake = h3 < 0.25;
+  let lag = select(-width * 0.12 * h2, -width * (0.3 + pow(h2, 2.0) * 2.5), in_wake);
+  let wobble = gnoise2(around * 2.5 + vec2<f32>(f32(seed % 97u)), seed).x * 0.012 * radius;
   var dir = around;
   var pos = ring.a.xy + around * max(radius + lag + wobble, 0.0);
   var bright = 1.0;
@@ -66,7 +69,9 @@ fn vs_ring(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> 
   let speed = ring.b.z;
   // About one frame of travel: motion blur, so a fast thin front stays one
   // continuous band in the trails instead of a stack of copies.
-  let len = max(speed * S.look.z, 0.0015);
+  // About half a frame of travel: enough blur to join a fast front into one
+  // band, short enough that the edge stays crisp.
+  let len = max(speed * S.look.z * select(0.5, 0.9, in_wake), 0.001);
   let head = shock_ndc(pos);
   let tail = shock_ndc(pos - dir * len);
   let px = vec2<f32>(2.0 / S.res.x, 2.0 / S.res.y);

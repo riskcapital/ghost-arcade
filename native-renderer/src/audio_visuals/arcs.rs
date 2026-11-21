@@ -52,6 +52,7 @@ pub const ARC_PALETTE_NAMES: &[&str] = &["storm", "sodium", "toxic"];
 fn defaults() -> CommonDefaults {
     CommonDefaults {
         camera: CameraKind::Picture2D,
+        quality: "medium",
         fov: 40.0,
         post: HdrPostSettings {
             decay: 0.8,
@@ -85,6 +86,7 @@ pub fn arc_defs() -> Vec<ParamDef> {
         slider("coreWidth", "Core thickness", "Arcs", 0.5, 6.0, 0.01, 1.4),
         slider("glowWidth", "Glow width", "Arcs", 1.0, 64.0, 0.1, 12.0),
         slider("nodeGlow", "Point glow", "Arcs", 0.0, 4.0, 0.01, 1.0),
+        slider("maxArcs", "Max arcs at once", "Arcs", 1.0, MAX_ARCS as f32, 1.0, 7.0),
     ];
     defs.extend(common_defs(&defaults()));
     defs
@@ -107,6 +109,7 @@ pub struct ArcParams {
     pub core_px: f32,
     pub glow_px: f32,
     pub node_glow: f32,
+    pub max_arcs: usize,
     pub brightness: f32,
     pub camera: CameraControls,
     pub audio: AudioControls,
@@ -137,6 +140,7 @@ pub fn normalize_arc_params(params: &Value) -> ArcParams {
         core_px: r.f("coreWidth"),
         glow_px: r.f("glowWidth"),
         node_glow: r.f("nodeGlow"),
+        max_arcs: r.f("maxArcs").round() as usize,
         brightness: 1.0,
         camera: camera_controls(params, &d),
         audio: audio_controls(params, &d),
@@ -239,6 +243,8 @@ impl Arc {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ArcQueue {
     pub arcs: Vec<Arc>,
+    /// The live cap (`maxArcs`): busy passages never pile into a web.
+    pub cap: usize,
     /// The strike-rate limit: a bucket of strikes that refills at the rate
     /// (up to 3, so a kick and a snare together both strike), and when it
     /// was last topped up.
@@ -268,7 +274,7 @@ impl ArcQueue {
         let n = nodes.max(3);
         let s = seq as usize;
         let mut push = |from: ArcEnd, to: ArcEnd, strength: f32, salt: u32| {
-            if self.arcs.len() >= MAX_ARCS {
+            if self.arcs.len() >= if self.cap == 0 { MAX_ARCS } else { self.cap.min(MAX_ARCS) } {
                 let victim = self.arcs.iter().position(|a| a.phase == ArcPhase::Fading).unwrap_or(0);
                 self.arcs.remove(victim);
             }
@@ -347,6 +353,10 @@ pub fn arc_frame(json: &Value, state: &mut ArcState, data: &AudioVisualData, siz
     let now = state.motion.time;
     let audio = state.audio.step_with(data, &params.audio, now, step, core_dt > 0.0, MAX_LAUNCHES_PER_FRAME * 2);
     if step > 0.0 {
+        state.arcs.cap = params.max_arcs;
+        while state.arcs.arcs.len() > params.max_arcs.max(1) {
+            state.arcs.arcs.remove(0);
+        }
         state.arcs.ingest(&audio.hits, params.nodes as usize, params.strike_rate);
         state.arcs.step(now, params.life);
     }

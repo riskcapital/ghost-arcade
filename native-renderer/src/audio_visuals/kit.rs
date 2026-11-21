@@ -30,6 +30,16 @@ pub fn pick<T: Copy>(params: &Value, tiers: [T; 3]) -> T {
     tiers[tier(params)]
 }
 
+/// Like `pick`, with the instrument's own default tier when none is set.
+pub fn pick_or<T: Copy>(params: &Value, tiers: [T; 3], default_tier: usize) -> T {
+    match text(params, "quality").as_str() {
+        "low" | "performance" => tiers[0],
+        "medium" => tiers[1],
+        "high" | "ultra" | "insane" => tiers[2],
+        _ => tiers[default_tier.min(2)],
+    }
+}
+
 pub fn palette_named(table: &[(&str, Palette3)], params: &Value) -> Palette3 {
     let name = text(params, "palette");
     table.iter().find(|(id, _)| *id == name).map(|(_, p)| *p).unwrap_or(table[0].1)

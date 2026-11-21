@@ -9,7 +9,10 @@
  *     "shots": [ { "name", "kind": "strands" | "cloud-pulse", "params": {..},
  *                  "ply": "cloud.ply" (Cloud Pulse: becomes params.path),
  *                  "wav": "other.wav" (optional, per shot),
- *                  "at": [seconds, ..], "perfSeconds": 4 } ] }
+ *                  "at": [seconds, ..], "perfSeconds": 4,
+ *                  "video": 8 (seconds from 0: an H.264 clip at the plan's
+ *                  fps with the track muxed in, written to <out>/<name>.mp4;
+ *                  needs ffmpeg on the PATH; "crf" defaults to 24) } ] }
  *
  * Audio goes through the editor's own code: the file is decoded here, the
  * offline analyser (`offlineFileAudio.ts`) produces each frame's analysis on
@@ -223,7 +226,20 @@ try {
     const analyzer = new offline.OfflineFileAudioAnalyzer(mono, rate);
     const packer = packing.createAudioVisualPacker({ sampleRate: rate });
     const shots = [...(shot.at ?? [])].sort((a, b) => a - b);
-    const lastFrame = Math.round((shots.at(-1) ?? 0) * fps);
+    const videoFrames = shot.video ? Math.round(shot.video * fps) : 0;
+    const lastFrame = Math.max(Math.round((shots.at(-1) ?? 0) * fps), videoFrames - 1);
+    // A clip: raw frames into ffmpeg, the track muxed in from 0.
+    let encoder = null;
+    const clipStats = { black: 0, stalls: 0, frames: 0, prev: -1 };
+    if (videoFrames) {
+      const clip = path.join(outDir, `${shot.name}.mp4`);
+      encoder = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', `${width}x${height}`,
+        '-r', String(fps), '-i', '-', '-i', path.resolve(planDir, shot.wav ?? plan.wav), '-t', String(shot.video),
+        '-map', '0:v', '-map', '1:a', '-c:v', 'libx264', '-preset', 'medium', '-crf', String(shot.crf ?? 24),
+        '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-c:a', 'aac', '-b:a', '160k', '-shortest', clip],
+        { stdio: ['pipe', 'inherit', 'inherit'] });
+      encoder.clip = clip;
+    }
     const wanted = new Map(shots.map((t) => [Math.round(t * fps), t]));
     const step = 1 / fps;
     for (let frame = 0; frame <= lastFrame; frame++) {
@@ -233,7 +249,7 @@ try {
         { type: 'set_render_clock', mode: 'manual', time: t, time_delta: step, frame_index: frame },
         { type: 'set_audio_spectrum', active: false, ...(visual ? { visual_b64: visual } : {}) },
       ]);
-      const take = wanted.has(frame);
+      const take = wanted.has(frame) || (encoder && frame < videoFrames);
       // The offline render's own call: steps every graph by exactly one frame
       // at `t`, then reads the composite back (BGRA, top row first).
       const rawPath = path.join(outDir, '.frame.raw');
@@ -242,6 +258,21 @@ try {
         const raw = readFileSync(rawPath);
         const { w, h, out } = snapshotPixels({ ...snap, rgba_b64: raw.toString('base64'),
           padded_bytes_per_row: raw.length / Number(snap.height) });
+        if (encoder && frame < videoFrames) {
+          // Black frames and stalls (a frame identical to the one before).
+          let sum = 0;
+          let sig = 0;
+          for (let i = 0; i < out.length; i += 4 * 61) {
+            sum += out[i] + out[i + 1] + out[i + 2];
+            sig = (sig * 31 + out[i] + out[i + 1] * 7 + out[i + 2] * 13) >>> 0;
+          }
+          if (sum / (out.length / (4 * 61)) / 3 < 1) clipStats.black++;
+          if (sig === clipStats.prev) clipStats.stalls++;
+          clipStats.prev = sig;
+          clipStats.frames++;
+          if (!encoder.stdin.write(out)) await new Promise((resolve) => encoder.stdin.once('drain', resolve));
+          if (!wanted.has(frame)) continue;
+        }
         const file = path.join(outDir, `${shot.name}-${wanted.get(frame).toFixed(2)}s.png`);
         writePng(file, w, h, out);
         const lum = (x, y) => { const i = (y * w + x) * 4; return Math.round(0.2126 * out[i] + 0.7152 * out[i + 1] + 0.0722 * out[i + 2]); };
@@ -260,6 +291,14 @@ try {
         results.push(row);
         console.log(`${path.basename(file)}  luma ${row.mean_luma}  clipped ${row.clipped_pct}%`);
       }
+    }
+    if (encoder) {
+      encoder.stdin.end();
+      await new Promise((resolve) => encoder.on('close', resolve));
+      const { size } = (await import('node:fs')).statSync(encoder.clip);
+      const row = { name: shot.name, clip: encoder.clip, mb: Number((size / 1048576).toFixed(1)), ...clipStats, prev: undefined };
+      results.push(row);
+      console.log(`${path.basename(encoder.clip)}  ${row.mb} MB  frames ${row.frames}  black ${row.black}  stalls ${row.stalls}`);
     }
     const status = await rpc('status');
     if (String(status.last_shader_error || '').length) console.log(`  core: ${status.last_shader_error}`);

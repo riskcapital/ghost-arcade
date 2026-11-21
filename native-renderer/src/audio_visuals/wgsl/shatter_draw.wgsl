@@ -1,23 +1,33 @@
-// Draws each point carried by its shard: out along a direction from the
-// cloud's middle, turned about the shard's own axis, lit by a glint off the
-// shard's face, with glowing cracks along the shard edges after a break.
+// Per point, once per frame (cs_shatter_points): the point carried by its
+// shard, out along a direction from the cloud's middle and turned about the
+// shard's own axis, lit by a glint off the shard's face, with glowing cracks
+// along the shard edges after a break. Shards near the fracture's epicentre
+// break first and furthest, so the scan's silhouette still reads mid-break.
+// The result (clip position, colour, size) goes to `drawn`; the vertex
+// shader only expands it into a sprite.
 @group(0) @binding(0) var<storage, read> points: array<vec4<f32>>;
 @group(0) @binding(1) var<uniform> C: CloudU;
 @group(0) @binding(2) var<storage, read> shards: array<vec4<f32>>;
+@group(0) @binding(3) var<storage, read_write> drawn: array<vec4<f32>>;
 
-@vertex
-fn vs_shatter(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> PointOut {
-  var out: PointOut;
-  out.position = vec4<f32>(2.0, 2.0, 0.0, 1.0);
+struct Shaded {
+  clip: vec4<f32>,
+  color: vec3<f32>,
+  size_px: f32,
+}
+
+fn shade_point(ii: u32) -> Shaded {
+  var out: Shaded;
+  out.clip = vec4<f32>(0.0, 0.0, 0.0, -1.0);
   out.color = vec3<f32>(0.0);
-  out.quad = vec2<f32>(0.0);
+  out.size_px = 0.0;
   let point = points[ii];
   let rgba = unpack_point_color(point.w);
   if (rgba.a <= 0.02) {
     return out;
   }
   let sh = shards[ii];
-  let amount = C.data[0].x;
+  let whole = C.data[0].x;
   let spin = C.data[0].y;
   let heat = C.data[0].z;
   let seed = u32(C.data[1].y * 65535.0);
@@ -28,6 +38,11 @@ fn vs_shatter(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) 
     pivot = point.xyz;
     edge = 1.0;
   }
+  // The break spreads out from an epicentre on the cloud's surface.
+  let stagger = C.data[3].x;
+  let epicentre = shard_unit(vec3<f32>(C.data[1].y, 0.37, 0.71), 3u) * 0.45;
+  let reach01 = clamp(length(pivot - epicentre) / 1.1, 0.0, 1.0);
+  let amount = clamp(whole * (1.0 + stagger) - stagger * reach01, 0.0, 1.0);
   var pos = point.xyz;
   var nrm = shard_unit(pivot, 7u + seed);
   if (amount > 0.0) {
@@ -43,14 +58,12 @@ fn vs_shatter(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) 
   if (clip.w <= 0.01) {
     return out;
   }
-  let crack = (1.0 - smoothstep(0.0, 0.09, edge));
-  let corner = SPRITE_CORNERS[vi];
+  let crack = (1.0 - smoothstep(0.0, 0.09, edge)) * step(0.001, whole);
   let variation = 1.0 + C.data[2].x * (hash11(ii * 2654435761u) - 0.5) * 1.6;
-  let size_px = C.cam.w * clamp(1.6 / clip.w, 0.55, 2.2) * variation * (1.0 + crack * heat * 0.6);
-  let px = vec2<f32>(2.0 / C.res.x, 2.0 / C.res.y) * size_px;
-  out.position = vec4<f32>(clip.xy + corner * px * clip.w, clip.z, clip.w);
-  out.quad = corner;
-  let scan = mix(C.bass.rgb * C.bass.w, rgba.rgb * C.base.rgb * 2.0 * C.bass.w, C.base.w) * C.look.x;
+  out.clip = clip;
+  out.size_px = C.cam.w * clamp(1.6 / clip.w, 0.55, 2.2) * variation * (1.0 + crack * heat * 0.6);
+  // The scan's own brightness is normalised per cloud (C.data[3].y).
+  let scan = mix(C.bass.rgb * C.bass.w, rgba.rgb * C.base.rgb * 2.0 * C.bass.w, C.base.w) * C.look.x * C.data[3].y;
   // A glint when a tumbling shard's face turns toward the camera.
   let to_eye = normalize(C.cam.xyz - world);
   let light = normalize(vec3<f32>(0.4, 0.8, 0.45));
@@ -62,3 +75,15 @@ fn vs_shatter(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) 
     * C.look.z * rgba.a * depth_fade * 0.028;
   return out;
 }
+
+@compute @workgroup_size(64)
+fn cs_shatter_points(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i = gid.x;
+  if (i >= u32(C.res.w)) {
+    return;
+  }
+  let s = shade_point(i);
+  drawn[i * 2u] = s.clip;
+  drawn[i * 2u + 1u] = vec4<f32>(s.color, s.size_px);
+}
+

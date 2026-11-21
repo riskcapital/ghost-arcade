@@ -14,7 +14,8 @@ pub const ARCS_DRAW: &str = "arcs/draw-v1";
 pub const TERRAIN_ROW: &str = "spectral-terrain/row-v1";
 pub const TERRAIN_DRAW: &str = "spectral-terrain/draw-v1";
 pub const SHATTER_SHARDS: &str = "mesh-shatter/shards-v1";
-pub const SHATTER_DRAW: &str = "mesh-shatter/draw-v1";
+pub const SHATTER_POINTS: &str = "mesh-shatter/points-v1";
+pub const SHATTER_DRAW: &str = "mesh-shatter/draw-v2";
 pub const AV2_FINISH: &str = "audio-visuals/finish-v1";
 
 static NOISE: &str = include_str!("wgsl/noise.wgsl");
@@ -36,7 +37,8 @@ static TERRAIN_ROW_SRC: &str = include_str!("wgsl/terrain_row.wgsl");
 static TERRAIN_DRAW_SRC: &str = include_str!("wgsl/terrain_draw.wgsl");
 static SHATTER_COMMON: &str = include_str!("wgsl/shatter_common.wgsl");
 static SHATTER_SHARDS_SRC: &str = include_str!("wgsl/shatter_shards.wgsl");
-static SHATTER_DRAW_SRC: &str = include_str!("wgsl/shatter_draw.wgsl");
+static SHATTER_POINTS_SRC: &str = include_str!("wgsl/shatter_draw.wgsl");
+static SHATTER_SPRITE_SRC: &str = include_str!("wgsl/shatter_sprite.wgsl");
 
 fn build(id: &'static str, parts: &[&str]) -> CoreShader {
     let source: String = parts.join("\n");
@@ -58,7 +60,8 @@ pub(super) fn all() -> &'static [CoreShader] {
             build(TERRAIN_ROW, &[AUDIO_DATA, TERRAIN_COMMON, TERRAIN_ROW_SRC]),
             build(TERRAIN_DRAW, &[NOISE, TERRAIN_COMMON, TERRAIN_DRAW_SRC]),
             build(SHATTER_SHARDS, &[NOISE, CLOUD_COMMON, SHATTER_COMMON, SHATTER_SHARDS_SRC]),
-            build(SHATTER_DRAW, &[NOISE, CLOUD_COMMON, SHATTER_COMMON, SHATTER_DRAW_SRC]),
+            build(SHATTER_POINTS, &[NOISE, CLOUD_COMMON, SHATTER_COMMON, SHATTER_POINTS_SRC]),
+            build(SHATTER_DRAW, &[CLOUD_COMMON, SHATTER_SPRITE_SRC]),
         ]
     })
 }
@@ -101,6 +104,7 @@ mod tests {
             (TERRAIN_ROW, &["cs_row"]),
             (TERRAIN_DRAW, &["vs_terrain", "fs_terrain"]),
             (SHATTER_SHARDS, &["cs_shards"]),
+            (SHATTER_POINTS, &["cs_shatter_points"]),
             (SHATTER_DRAW, &["vs_shatter", "fs_point"]),
         ];
         for (id, entries) in wants {
