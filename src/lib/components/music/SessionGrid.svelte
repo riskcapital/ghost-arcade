@@ -295,7 +295,8 @@
   .on .clip { border-color: var(--studio-accent); background: var(--studio-accent); color: var(--studio-on-accent); }
   .on .clip svg { fill: var(--studio-on-accent); }
   .edit { width: 20px; border-color: var(--studio-edge-soft); color: var(--studio-muted); display: none; }
-  .audio-level { width: 44px; margin: 0 2px; }
+  /* The level stays narrow so the clip keeps its name. */
+  .slot .audio-level { flex: 0 0 40px; width: 40px; max-width: 40px; min-width: 0; margin: 0 2px; }
   .edit svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linejoin: round; }
   .more {
     width: 20px;

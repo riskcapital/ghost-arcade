@@ -68,7 +68,12 @@
   import BandPanel from './BandPanel.svelte';
   import SongsPanel from './SongsPanel.svelte';
   import LoopStation from './LoopStation.svelte';
-  import { loopStationView } from '../../music/loopStation';
+  import LoopLive from './LoopLive.svelte';
+  import LoopLanes from './LoopLanes.svelte';
+  import LoopRail from './LoopRail.svelte';
+  import LoopVisualsList from './LoopVisualsList.svelte';
+  import QuickClipEditor from './QuickClipEditor.svelte';
+  import { loopStationView, selectLoopTrack } from '../../music/loopStation';
   import SongStrip from './SongStrip.svelte';
   import SceneBar from './SceneBar.svelte';
   import LiveSessionGrid from './LiveSessionGrid.svelte';
@@ -102,6 +107,8 @@
   const s = $derived($musicStudio);
   /** The Looper page: the live looper over the whole studio, beside the visuals rack. A view only: the loops play on whatever page shows. */
   let looperPage = $state(false);
+  /** The loop track the quick editor is open on, on the Looper page. */
+  let loopEditing = $state<number | null>(null);
   const loopsRunning = $derived($loopStationView.tracks.filter((t) => t.phase === 'play' || t.phase === 'overdub' || t.phase === 'record').length);
   /** The output's own shape, so the frame shows exactly what the output gets. */
   const outW = $derived(Math.max(1, $project.width || 1920));
@@ -399,13 +406,28 @@
     <VisualPicker />
 
     <div class="centre">
-      {@render frame()}
-      <OutputStrip layers={false} />
-      {@render lower()}
+      {#if looperPage}
+        <div class="looper-stage">
+          {@render frame()}
+          <div class="loop-visuals face"><LoopVisualsList /></div>
+        </div>
+        <div class="looper-cols face"><LoopLive compact onpicktrack={(i) => { selectLoopTrack(i); looperPage = false; lowerTab = 'looper'; }} /></div>
+      {:else}
+        {@render frame()}
+        <OutputStrip layers={false} />
+        {@render lower()}
+      {/if}
     </div>
 
     {#if looperPage}
-      <div class="looper-main face"><LoopStation initialMode="live" /></div>
+      <div class="rack left face looper-rail"><LoopRail /></div>
+      <div class="looper-lanes face">
+        {#if loopEditing !== null && $musicStudio.loopStation.tracks[loopEditing]?.beats > 0}
+          <div class="lane-editor"><QuickClipEditor index={loopEditing} onclose={() => (loopEditing = null)} /></div>
+        {:else}
+          <LoopLanes onedit={(i) => (loopEditing = i)} />
+        {/if}
+      </div>
       <div class="rack right face">
         <VisualRack />
       </div>
@@ -688,8 +710,13 @@
   /* A short window scrolls the rack rather than squeezing a module under its neighbours. */
   .rack { display: flex; flex-direction: column; gap: var(--studio-gap); min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; }
   .rack.left { grid-area: left; }
-  .looper-page .centre { display: none; }
-  .looper-main { grid-column: 1 / 3; grid-row: 3 / 5; min-width: 0; min-height: 0; display: flex; flex-direction: column; border: 1px solid var(--studio-edge); border-radius: var(--ga-r-soft, 8px); overflow: hidden; background: var(--studio-panel); }
+    .looper-page { grid-template-rows: var(--ga-bar-h, 48px) auto minmax(0, 1fr) minmax(220px, 34%); }
+  .looper-page .rack.left.looper-rail { grid-row: 2 / 5; padding: 0; }
+  .looper-lanes { grid-column: 2; grid-row: 4; min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; z-index: 1; }
+  .lane-editor { min-height: 0; overflow: auto; border: 1px solid var(--studio-edge); border-radius: var(--studio-radius); }
+  .looper-stage { position: relative; flex: 1; min-height: 0; display: flex; }
+  .loop-visuals { position: absolute; right: 0; top: 0; width: 250px; z-index: 1; background: var(--studio-panel); border: 1px solid var(--studio-edge); border-radius: var(--studio-radius); padding: 6px 8px; }
+  .looper-cols { flex: 0 0 auto; position: relative; z-index: 1; border: 1px solid var(--studio-edge); border-radius: var(--studio-radius); overflow: hidden; }
   .looper-page .rack.right { grid-row: 2 / 5; }
   .loops-running { display: inline-flex; align-items: center; gap: 6px; }
   .loops-running .led { width: 7px; height: 7px; border-radius: 50%; background: var(--studio-accent); box-shadow: 0 0 6px var(--studio-accent); }

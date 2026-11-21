@@ -38,6 +38,8 @@ export interface AudioLoopTracks {
   latencyMs(): number;
   /** Loopback: a click out, heard back on track `i`'s input; the round trip in ms. */
   measureLatency(i: number): Promise<number | null>;
+  /** Each layer's shape, `n` peaks 0-1, cached per layer. */
+  layerPeaks(i: number, n?: number): Float32Array[];
   /** The loop's shape: `n` peak levels 0–1 across it. */
   peaks(i: number, n: number): number[];
   /** The tempo it was recorded at. */

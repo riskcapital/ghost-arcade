@@ -419,6 +419,27 @@ export class AudioLoopEngine implements AudioLoopTracks {
     return out;
   }
 
+  private peakCache = new WeakMap<Float32Array, Float32Array>();
+
+  /** Each layer's shape: `n` peak levels 0-1, worked out once per layer and kept with it (gone with it). */
+  layerPeaks(i: number, n = 512): Float32Array[] {
+    return this.tracks[i].layers.map((l) => {
+      let peaks = this.peakCache.get(l[0]);
+      if (!peaks || peaks.length !== n) {
+        peaks = new Float32Array(n);
+        const step = l[0].length / n;
+        for (let k = 0; k < n; k++) {
+          let p = 0;
+          const to = Math.min(l[0].length, Math.floor((k + 1) * step));
+          for (let f = Math.floor(k * step); f < to; f += 4) p = Math.max(p, Math.abs(l[0][f]), Math.abs(l[1][f]));
+          peaks[k] = Math.min(1, p);
+        }
+        this.peakCache.set(l[0], peaks);
+      }
+      return peaks;
+    });
+  }
+
   wav(i: number): Uint8Array | null {
     const mix = this.tracks[i].mix;
     return mix ? encodeWav(mix[0], mix[1], this.ctx.sampleRate) : null;

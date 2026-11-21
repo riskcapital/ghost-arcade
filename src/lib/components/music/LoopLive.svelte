@@ -56,7 +56,8 @@
     if (k >= 0) setStudioVoice(k, { live: loopTrackSource(i) });
   }
 
-  let { onpicktrack }: { onpicktrack?: (i: number) => void } = $props();
+  /** compact: tray-height columns (ring beside the controls), no sections footer (the rail has them). */
+  let { onpicktrack, compact = false }: { onpicktrack?: (i: number) => void; compact?: boolean } = $props();
 
   const s = $derived($musicStudio);
   const station = $derived(s.loopStation);
@@ -84,7 +85,7 @@
   }
 </script>
 
-<div class="live">
+<div class="live" class:compact>
   <div class="topbar">
     <span class="ga-eyebrow">Loop station</span>
     <b class="bpm">{launchClockTempo().toFixed(1)} BPM</b>
@@ -132,13 +133,15 @@
       {@const v = view.tracks[i]}
       {@const bars = Math.max(1, Math.round(v.beats / 4))}
       <div class="col" class:sel={view.selected === i} role="presentation" onpointerdown={() => selectLoopTrack(i)}>
-        <LoopTrackButton index={i} size={96} ring />
+        {#if compact}<span class="num">{i + 1}</span>{/if}
+        <LoopTrackButton index={i} size={compact ? 74 : 96} ring />
+        <div class="txt">
         {#if v.phase === 'empty'}
           <div class="name empty">Empty</div>
           <div class="ga-eyebrow meta">{t.kind === 'audio' ? `Input ${t.input + 1}` : t.instrument ? INSTRUMENT_LABELS[t.instrument] : 'Follows what you play'}</div>
         {:else}
           <div class="name">{t.name || (t.kind === 'audio' ? `Audio ${i + 1}` : INSTRUMENT_LABELS[t.instrument ?? s.instrument])}</div>
-          <div class="ga-eyebrow meta">{t.kind === 'audio' ? `Input ${t.input + 1}` : INSTRUMENT_LABELS[t.instrument ?? s.instrument]} · {bars} bar{bars === 1 ? '' : 's'} · {v.layers} layer{v.layers === 1 ? '' : 's'}</div>
+          <div class="ga-eyebrow meta">{t.kind === 'audio' ? `Input ${t.input + 1}` : INSTRUMENT_LABELS[t.instrument ?? s.instrument]} · {bars} bar{bars === 1 ? '' : 's'} · {v.phase === 'overdub' ? `layer ${v.layers + 1} recording` : `${v.layers} layer${v.layers === 1 ? '' : 's'}`}</div>
         {/if}
         <input class="fader" type="range" min="0" max="1" step="0.01" value={t.level} oninput={(e) => setLoopLevel(i, Number((e.target as HTMLInputElement).value))} aria-label="Loop {i + 1} level" />
         <select class="visual" value={voiceFor(i)} onchange={(e) => assignVisual(i, Number((e.target as HTMLSelectElement).value))} aria-label="Visual for loop {i + 1}" title={voices.length ? 'The visual voice that follows this loop (pick the look in the visuals rack)' : 'Add a visual in the visuals rack first'}>
@@ -155,10 +158,12 @@
             <button onclick={() => save(i)} title="Save it to My loops (S)">Save</button>
           {/if}
         </div>
+        </div>
       </div>
     {/each}
   </div>
 
+  {#if !compact}
   <div class="foot">
     <span class="ga-eyebrow">Sections</span>
     {#each station.sections as sec (sec.id)}
@@ -171,6 +176,7 @@
     <span class="sp"></span>
     <span class="hint">Space = selected track · hold = undo layer · 1–6 select</span>
   </div>
+  {/if}
 </div>
 
 <style>
@@ -203,4 +209,16 @@
   .sec.on { border-color: var(--studio-accent); }
   .sec.on button:first-child { background: var(--studio-accent); color: var(--studio-on-accent); }
   .hint { font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); }
+  .txt { display: contents; }
+  .compact .cols { flex: 0 0 auto; overflow: visible; }
+  .compact .col { flex-direction: row; align-items: center; gap: 12px; padding: 14px 12px 12px; min-width: 0; position: relative; }
+  .compact .col.sel { box-shadow: inset 0 -2px 0 var(--studio-rec); }
+  .compact .txt { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; flex: 1; }
+  .compact .name { margin-top: 0; }
+  .compact .meta { text-align: left; }
+  .compact .fader { width: 100%; margin: 4px 0; }
+  .compact .visual { width: 100%; }
+  .compact .btns { flex-wrap: wrap; }
+  .num { position: absolute; top: 5px; left: 8px; font-size: 10px; color: var(--studio-muted); }
+  .compact { height: auto; }
 </style>

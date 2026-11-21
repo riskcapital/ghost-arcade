@@ -502,7 +502,7 @@
               <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 3 7.5 6l-3 3" /></svg>
             </button>
             {#if liveOn && liveColorOf(voice.live)}<span class="follow-swatch" style="background: {liveColorOf(voice.live)}" aria-hidden="true"></span>{/if}
-            <select class="follows" class:live={liveOn && !!voice.live} value={followValue(voice)} onchange={(e) => setFollow(i, (e.target as HTMLSelectElement).value)} aria-label="Sound voice {i + 1} follows" title={liveOn && voice.live ? 'The Live track this voice follows' : 'The sound this voice follows'} data-midi-path="studio:voice.{i + 1}.follow-next" data-midi-label="Voice {i + 1} next sound to follow" data-midi-mode="toggle">
+            <select class="follows" class:live={liveOn && !!voice.live} class:loop={loopTrackOfSource(voice.live) >= 0} value={followValue(voice)} onchange={(e) => setFollow(i, (e.target as HTMLSelectElement).value)} aria-label="Sound voice {i + 1} follows" title={liveOn && voice.live ? 'The Live track this voice follows' : 'The sound this voice follows'} data-midi-path="studio:voice.{i + 1}.follow-next" data-midi-label="Voice {i + 1} next sound to follow" data-midi-mode="toggle">
               {#if liveOn}
                 <optgroup label="Ableton Live">
                   {#each liveTracks as t, ti (ti)}
@@ -519,7 +519,7 @@
               {:else}
                 {#each voiceSourcesFor($musicStudio.set, voice.source) as src (src.id)}<option value={src.id}>{src.label}</option>{/each}
                 <optgroup label="Live looper">
-                  {#each [0, 1, 2, 3, 4, 5] as lt}<option value={loopTrackSource(lt)}>Loop track {lt + 1}</option>{/each}
+                  {#each [0, 1, 2, 3, 4, 5] as lt}<option value={loopTrackSource(lt)}>Loop {lt + 1}</option>{/each}
                 </optgroup>
               {/if}
             </select>
@@ -634,6 +634,8 @@
   .empty { margin: 4px 2px; font-size: var(--ga-text-meta, 11px); line-height: 1.45; color: var(--studio-muted); }
   .follow-swatch { flex: 0 0 auto; width: 6px; align-self: stretch; margin: 3px -2px 3px 0; border-radius: 2px; }
   .follows.live { color: var(--studio-accent); }
+  /* Following a loop track: tagged like the Looper page's Loop N. */
+  .follows.loop { color: var(--studio-accent); border-color: var(--studio-accent); }
   /* Everything under the head scrolls as one, so no row is ever squeezed. */
   .body { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; display: flex; flex-direction: column; }
   .list { flex: 0 0 auto; display: flex; flex-direction: column; }

@@ -244,3 +244,22 @@ describe('full editor on a loop track', () => {
     expect(findClip(get(musicStudio).session, id)).toBeNull();
   });
 });
+
+describe('sections on the rail', () => {
+  it('launch on the next bar, show next until then, and step with Next section', async () => {
+    const { launchLoopSection, loopSectionState, nextLoopSection } = await import('./loopStation');
+    pressLoopTrack(0);
+    runTo(4);
+    play(4);
+    runTo(20);
+    musicStudio.updateLoopStation((d) => ({ ...d, sections: [{ id: 'a', name: 'Intro', tracks: [0] }, { id: 'b', name: 'Verse', tracks: [] }] }));
+    clock.beat = 21;
+    launchLoopSection('b');
+    expect(get(loopSectionState)).toEqual({ now: null, next: 'b', at: 24 });
+    runTo(24.5);
+    expect(get(loopSectionState).now).toBe('b');
+    expect(_trackRuntime(0).phase).toBe('stopped');
+    nextLoopSection();
+    expect(get(loopSectionState).next).toBe('a');
+  });
+});

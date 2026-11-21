@@ -28,6 +28,7 @@ import {
   stopLoopTrack,
   toggleLoopMute,
   undoLoopLayer,
+  nextLoopSection,
 } from './loopStation';
 import { LOOP_TRACK_COUNT, trackForProgram, type PedalPreset } from './loopTrack';
 import { onProgramChange } from '../midi/programChange';
@@ -149,6 +150,7 @@ export function registerLoopControls(): void {
     { id: 'looper.record', label: 'Looper record (selected loop track)', group: g, kind: 'trigger', run: () => pressLoopTrack(selectedLoopTrack()) },
     { id: 'looper.play-a', label: 'Play loop A (loop track 5)', group: g, kind: 'toggle', run: () => toggleTrackPlay(4) },
     { id: 'looper.play-b', label: 'Play loop B (loop track 6)', group: g, kind: 'toggle', run: () => toggleTrackPlay(5) },
+    { id: 'loop.section.next', label: 'Next loop section', group: g, kind: 'trigger', run: () => nextLoopSection() },
     { id: 'loop.pedal.1', label: 'Loop pedal 1', group: g, kind: 'hold', run: (v) => pedal(1, v) },
     { id: 'loop.pedal.2', label: 'Loop pedal 2', group: g, kind: 'hold', run: (v) => pedal(2, v) },
     { id: 'loop.pedal.3', label: 'Loop pedal 3', group: g, kind: 'hold', run: (v) => pedal(3, v) },

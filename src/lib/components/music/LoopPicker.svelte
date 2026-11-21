@@ -19,6 +19,7 @@
   import { DRUM_VOICES } from '../../music/noteEvents';
   import { generateUUID } from '../../utils/uuid';
   import MyLoopsList from './MyLoopsList.svelte';
+  import { userLoops } from '../../music/userLoops';
 
   type Role = TrackId | 'all' | 'dub' | 'mine';
   interface Item { id: string; name: string; track: TrackId; style: string; bars: number; tone: string; loop: MelodicLoop | BeatLoop }
@@ -190,7 +191,7 @@
         <input class="search" type="search" placeholder="Search" bind:value={query} bind:this={searchEl} aria-label="Search loops" />
         <button class="text-btn" class:on={favsOnly} aria-pressed={favsOnly} onclick={() => (favsOnly = !favsOnly)} title="Only the loops you starred">★ Starred</button>
         <span class="spacer"></span>
-        <span class="count">{shown.length} loops</span>
+        <span class="count">{role === 'mine' ? $userLoops.length : shown.length} loops</span>
         <button class="close" onclick={close} aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
       </header>
 

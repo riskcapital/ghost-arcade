@@ -496,7 +496,10 @@ export function playLoopSection(tracks: readonly number[]): void {
   for (let i = 0; i < LOOP_TRACK_COUNT; i++) {
     const want = tracks.includes(i);
     const p = phaseOf(i);
-    if (want && p === 'stopped') startLoopTrack(i);
+    if (want && (p === 'stopped' || (p === 'play' && rts[i].stopAt !== null))) {
+      rts[i].stopAt = null;
+      if (p === 'stopped') startLoopTrack(i);
+    }
     else if (!want && (p === 'play' || p === 'overdub')) stopLoopTrack(i);
   }
 }
@@ -729,6 +732,7 @@ export function scheduleStation(lookaheadSeconds: number): void {
     changed = stepMidi(i, beat, horizon, timeAt) || changed;
   }
   scheduleClicks(beat, horizon, timeAt);
+  stepSections(beat);
   if (changed) publish();
 }
 
@@ -871,6 +875,46 @@ export async function measureLoopLatency(i: number): Promise<number | null> {
   const reported = audio.latencyMs() - manual;
   musicStudio.updateLoopStation((d) => ({ ...d, latencyMs: Math.max(-200, Math.min(500, Math.round(roundTrip - reported))) }));
   return roundTrip;
+}
+
+/** An audio track's layers' shapes, for the loop lanes. */
+export function audioLayerPeaks(i: number, n = 512): Float32Array[] {
+  return isAudio(i) ? audioEngine()?.layerPeaks(i, n) ?? [] : [];
+}
+
+// ── Sections ──
+
+export interface SectionState {
+  /** The section playing, the one waiting for its bar, and that bar's beat. */
+  now: string | null;
+  next: string | null;
+  at: number | null;
+}
+export const loopSectionState = writable<SectionState>({ now: null, next: null, at: null });
+
+/** Launch a section on the next bar: its tracks start, the others stop. */
+export function launchLoopSection(id: string): void {
+  const sec = data().sections.find((x) => x.id === id);
+  if (!sec || !host) return;
+  host.now();
+  playLoopSection(sec.tracks);
+  loopSectionState.update((st) => ({ ...st, next: id, at: punchAt(clockNow().beat) }));
+  host.wake();
+}
+
+/** The section after the one playing (or the first), on the next bar. */
+export function nextLoopSection(): void {
+  const list = data().sections;
+  if (!list.length) return;
+  const st = get(loopSectionState);
+  const from = st.next ?? st.now;
+  const i = list.findIndex((x) => x.id === from);
+  launchLoopSection(list[(i + 1) % list.length].id);
+}
+
+function stepSections(beat: number): void {
+  const st = get(loopSectionState);
+  if (st.next && st.at !== null && beat >= st.at) loopSectionState.set({ now: st.next, next: null, at: null });
 }
 
 /** An audio track's shape, for the panels. */
