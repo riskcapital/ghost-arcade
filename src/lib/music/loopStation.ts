@@ -17,8 +17,11 @@
 
 import { get, writable } from 'svelte/store';
 import { musicStudio, onMusicHydrate } from './musicStudioStore';
-import { BEATS_PER_BAR, quantizeBeats, type PlayedNote, type RecordedNote } from './loopRecorder';
-import { noteOff, noteOn, type InstrumentId, type NoteEvent } from './noteEvents';
+import { BEATS_PER_BAR, MAX_LOOP_BARS, quantizeBeats, roleForRecording, type PlayedNote, type RecordedLoop, type RecordedNote } from './loopRecorder';
+import { clipFromRecording } from './session';
+import { readUserLoop, saveUserLoop } from './userLoops';
+import { generateUUID } from '../utils/uuid';
+import { INSTRUMENTS, noteOff, noteOn, type InstrumentId, type NoteEvent } from './noteEvents';
 import { INSTRUMENT_LABELS } from './instruments';
 import { launchClockPosition, launchClockTempo, resyncLaunchClock } from '../stores/launchClock';
 import { audioStore } from '../stores/audio';
@@ -698,6 +701,79 @@ export function suggestedLoopName(i: number): string {
   const bars = isAudio(i) ? host?.audioTracks()?.bars(i) ?? 0 : Math.round(t.beats / BEATS_PER_BAR);
   const label = t.name || (isAudio(i) ? `Audio ${i + 1}` : INSTRUMENT_LABELS[t.instrument ?? s.instrument]);
   return autoLoopName(label, Math.max(1, bars), launchClockTempo(), isAudio(i) ? null : s.key);
+}
+
+/**
+ * Save a track to My loops (it stays on the track). MIDI goes in as notes
+ * and is also kept in the session as a clip; audio as a WAV. Returns the id.
+ */
+export async function saveLoopTrack(i: number, name = suggestedLoopName(i)): Promise<string | null> {
+  const t = track(i);
+  const s = get(musicStudio);
+  if (isAudio(i)) {
+    const audio = host?.audioTracks();
+    const wav = audio?.wav(i) ?? null;
+    if (!audio || !wav) return null;
+    const id = await saveUserLoop({ kind: 'audio', name, bars: audio.bars(i), beats: audio.bars(i) * BEATS_PER_BAR, bpm: audio.bpm(i), key: null, instrument: null, notes: [], createdAt: Date.now() }, wav);
+    musicStudio.updateLoopTrack(i, { savedId: id, name: t.name || name });
+    publish();
+    return id;
+  }
+  if (!t.layers.length || !(t.beats > 0)) return null;
+  const notes = flattenMidi({ layers: t.layers, redo: [] }).map(({ layer: _layer, ...n }) => n);
+  const instrument = t.instrument ?? s.instrument;
+  const id = await saveUserLoop({
+    kind: 'midi',
+    name,
+    bars: Math.max(1, Math.round(t.beats / BEATS_PER_BAR)),
+    beats: t.beats,
+    bpm: launchClockTempo(),
+    key: { ...s.key },
+    instrument,
+    ...(t.tone ? { tone: t.tone } : {}),
+    notes,
+    createdAt: Date.now(),
+  });
+  const loop: RecordedLoop = { kind: 'recorded', id: generateUUID(), name, role: roleForRecording(instrument, notes), instrument, beats: t.beats, notes, createdAt: Date.now() };
+  musicStudio.addSessionClip(loop.role, clipFromRecording(loop));
+  musicStudio.updateLoopTrack(i, { savedId: id, name: t.name || name.split(' · ')[0] });
+  publish();
+  return id;
+}
+
+/** Put a My loops loop on a track (the selected one when it fits, else the first empty one of its kind) and play it. */
+export async function loadUserLoopToTrack(id: string, target?: number): Promise<number> {
+  const loop = await readUserLoop(id);
+  if (!loop) return -1;
+  const kind = loop.kind;
+  let i = target ?? selectedLoopTrack();
+  if (track(i)?.kind !== kind || phaseOf(i) !== 'empty') i = firstEmptyTrack(kind);
+  if (i < 0) {
+    loopNotice('No empty loop track');
+    return -1;
+  }
+  if (kind === 'audio') {
+    const audio = host?.audioTracks();
+    if (!audio || !loop.wav || !(await audio.load(i, loop.wav, loop.bars))) return -1;
+    musicStudio.updateLoopTrack(i, { name: loop.name, savedId: loop.id });
+    rts[i].phase = 'stopped';
+    startLoopTrack(i);
+    return i;
+  }
+  const instrument = INSTRUMENTS.includes(loop.instrument as InstrumentId) ? (loop.instrument as InstrumentId) : null;
+  loadMidiIntoTrack(i, { name: loop.name, beats: loop.beats, notes: loop.notes, instrument, tone: loop.tone, savedId: loop.id });
+  selectLoopTrack(i);
+  return i;
+}
+
+/** Put a MIDI loop from My loops into the session grid, in its part's first empty slot. */
+export async function insertUserLoopInSession(id: string): Promise<boolean> {
+  const loop = await readUserLoop(id);
+  if (!loop || loop.kind !== 'midi') return false;
+  const instrument = INSTRUMENTS.includes(loop.instrument as InstrumentId) ? (loop.instrument as InstrumentId) : get(musicStudio).instrument;
+  const rec: RecordedLoop = { kind: 'recorded', id: generateUUID(), name: loop.name, role: roleForRecording(instrument, loop.notes), instrument, beats: Math.min(loop.beats, MAX_LOOP_BARS * BEATS_PER_BAR), notes: loop.notes.filter((n) => n.beat < MAX_LOOP_BARS * BEATS_PER_BAR), createdAt: Date.now() };
+  musicStudio.addSessionClip(rec.role, { ...clipFromRecording(rec), ...(loop.tone ? { tone: loop.tone } : {}) });
+  return true;
 }
 
 function loopNotice(message: string): void {

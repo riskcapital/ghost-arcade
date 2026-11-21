@@ -18,8 +18,9 @@
   import { toneById } from '../../music/tone/tones';
   import { DRUM_VOICES } from '../../music/noteEvents';
   import { generateUUID } from '../../utils/uuid';
+  import MyLoopsList from './MyLoopsList.svelte';
 
-  type Role = TrackId | 'all' | 'dub';
+  type Role = TrackId | 'all' | 'dub' | 'mine';
   interface Item { id: string; name: string; track: TrackId; style: string; bars: number; tone: string; loop: MelodicLoop | BeatLoop }
 
   const ROLES: { id: Role; label: string }[] = [
@@ -30,6 +31,7 @@
     { id: 'texture', label: 'Textures' },
     { id: 'beats', label: 'Drums' },
     { id: 'dub', label: 'Dub specials' },
+    { id: 'mine', label: 'My loops' },
   ];
 
   const ITEMS: Item[] = [
@@ -62,7 +64,7 @@
     if (key === openedFor) return;
     openedFor = key;
     if (target) {
-      role = target.track ?? 'all';
+      role = target.mine ? 'mine' : (target.track ?? 'all');
       focus = 0;
       void tick().then(() => searchEl?.focus());
     } else stopPreview();
@@ -70,6 +72,7 @@
 
   const shown = $derived.by(() => {
     const q = query.trim().toLowerCase();
+    if (role === 'mine') return [];
     return ITEMS.filter((i) => {
       if (role === 'dub' ? !(i.style === 'Dub' || i.style === 'Roots') : role !== 'all' && i.track !== role) return false;
       if (style && i.style !== style) return false;
@@ -191,6 +194,9 @@
         <button class="close" onclick={close} aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
       </header>
 
+      {#if role === 'mine'}
+        <MyLoopsList {query} onadded={close} />
+      {:else}
       <div class="grid" bind:this={grid} role="listbox" aria-label="Loops">
         {#each shown as item, i (item.id)}
           {@const playing = $previewingLoop === item.id}
@@ -226,6 +232,7 @@
           <p class="empty">No loops match. Clear the search or pick another style.</p>
         {/each}
       </div>
+      {/if}
       <p class="hint">Arrows move · Space previews · Enter adds · drag a tile onto a session slot</p>
     </div>
   </div>

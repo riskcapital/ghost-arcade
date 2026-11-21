@@ -125,6 +125,7 @@ ipcMain.handle('linux_gpu_setup', () => (process.platform === 'linux' ? collectL
 // files and never sent back to the renderer (electron/pjlink-credentials.cjs).
 const { createPjlinkClient } = require('./pjlink.cjs');
 const { createPhoneScanStore } = require('./phone-scan-store.cjs');
+const { createUserLoopsStore } = require('./user-loops-store.cjs');
 const { createPjlinkCredentials } = require('./pjlink-credentials.cjs');
 const pjlinkCredentials = createPjlinkCredentials({ safeStorage, dir: app.getPath('userData') });
 // The disk paths the renderer may write, copy to, or read back through
@@ -8390,6 +8391,28 @@ function registerIpcHandlers() {
       try {
         const result = phoneScans()[method](args && typeof args === 'object' ? args : {});
         return method === 'list' ? { success: true, scans: result } : { success: true, ...result };
+      } catch (err) {
+        return { success: false, error: err?.message || String(err) };
+      }
+    });
+  }
+
+  // --- My loops (electron/user-loops-store.cjs) ---
+  // Loops saved from the live looper, shared by every project. The renderer
+  // names a loop only by the id the store issued; the folder is fixed here.
+  let userLoopsStore = null;
+  const userLoops = () => {
+    if (!userLoopsStore) userLoopsStore = createUserLoopsStore(path.join(app.getPath('userData'), 'My Loops'));
+    return userLoopsStore;
+  };
+  for (const [channel, method] of [
+    ['user_loops_list', 'list'], ['user_loops_save', 'save'], ['user_loops_read', 'read'],
+    ['user_loops_rename', 'rename'], ['user_loops_delete', 'remove'],
+  ]) {
+    ipcMain.handle(channel, async (_, args) => {
+      try {
+        const result = userLoops()[method](args && typeof args === 'object' ? args : {});
+        return method === 'list' ? { success: true, loops: result } : { success: true, ...result };
       } catch (err) {
         return { success: false, error: err?.message || String(err) };
       }

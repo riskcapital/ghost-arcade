@@ -23,7 +23,11 @@ import {
   scheduleStation,
   stopLoopTrack,
   undoLoopLayer,
+  saveLoopTrack,
+  loadUserLoopToTrack,
+  insertUserLoopInSession,
 } from './loopStation';
+import { memoryBackend, setUserLoopsBackend, userLoops } from './userLoops';
 import type { PlayedNote } from './loopRecorder';
 import type { NoteEvent } from './noteEvents';
 
@@ -166,5 +170,23 @@ describe('a MIDI loop track', () => {
     expect(track0().beats).toBe(8);
     expect(track0().layers[0].map((n) => n.beat)).toEqual([0, 3]);
     expect(_trackRuntime(0).phase).toBe('play');
+  });
+
+  it('saves to My loops with an auto-name and loads back onto a track', async () => {
+    setUserLoopsBackend(memoryBackend(null));
+    pressLoopTrack(0);
+    runTo(4);
+    play(4);
+    play(7, 64);
+    runTo(20);
+    const id = await saveLoopTrack(0);
+    expect(id).toBeTruthy();
+    const saved = get(userLoops)[0];
+    expect(saved.name).toMatch(/^Keys · 4 bars · 120/);
+    expect(saved.noteCount).toBe(2);
+    clearLoopTrack(0);
+    expect(await loadUserLoopToTrack(id!)).toBe(0);
+    expect(track0().layers[0].map((n) => n.beat)).toEqual([0, 3]);
+    expect(await insertUserLoopInSession(id!)).toBe(true);
   });
 });

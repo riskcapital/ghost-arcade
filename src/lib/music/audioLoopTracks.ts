@@ -31,4 +31,10 @@ export interface AudioLoopTracks {
   info(i: number): AudioTrackInfo | null;
   layerCount(i: number): number;
   bars(i: number): number;
+  /** The tempo it was recorded at. */
+  bpm(i: number): number;
+  /** The loop as it plays, as a WAV file. */
+  wav(i: number): Uint8Array | null;
+  /** Put a WAV loop of `bars` bars on a track (stopped). */
+  load(i: number, wav: Uint8Array, bars: number): Promise<boolean>;
 }
