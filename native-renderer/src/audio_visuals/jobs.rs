@@ -74,7 +74,8 @@ impl App {
     pub(crate) fn audio_visual_cloud_loads(&self) -> std::collections::BTreeMap<String, String> {
         let mut out = std::collections::BTreeMap::new();
         for (layer_id, layer) in &self.native_graph_layers {
-            let Some(load) = layer.cloud_pulse_state.load.as_ref() else { continue };
+            // Cloud Pulse / Flock / Depth Lights keep their scan here, Mesh Shatter in its av2 state.
+            let Some(load) = layer.cloud_pulse_state.load.as_ref().or(layer.av2_state.load.as_ref()) else { continue };
             let state = match load.ready() {
                 Ok(None) => "loading".to_string(),
                 Ok(Some(points)) => format!("ready:{}", points.count),

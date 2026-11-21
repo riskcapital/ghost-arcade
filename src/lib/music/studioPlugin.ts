@@ -32,7 +32,7 @@ import { normalizeStackOff, normalizeStackPlace, visualOrder } from './visualOrd
 import { readableClipUri, staticClipSource } from '../show/tracks/showClipSources';
 import { applyDrift, driftEasing, driftRanges, driftSeconds, normalizeDrift, type DriftRange, type VisualDrift } from './visualDrift';
 import { hasLiveValues, liveValuesForLayer } from '../audio/liveParams';
-import { engineVoiceCode, engineVoiceLayer, isEngineVoiceFile } from './engineVoices';
+import { engineVoiceCode, engineVoiceLayer, isEngineVoiceFile, normalizeEngineScan, type EngineScan } from './engineVoices';
 import { nativeGraphParamDefs } from '../renderer/manifestParams';
 
 export const STUDIO_PLUGIN_ID = 'musicstudio';
@@ -69,6 +69,8 @@ export interface StudioVoice {
   textEvery?: number;
   /** Transparent background: only its subject draws, stacked over the voices below like a drawing. */
   clear?: boolean;
+  /** A cloud engine voice's own .ply scan; none draws the default scan. */
+  scan?: EngineScan;
   /** Its settings slowly wander on their own (visualDrift.ts); none in projects from before. */
   drift?: VisualDrift;
 }
@@ -133,6 +135,7 @@ export function normalizeStudioVoice(raw: unknown): StudioVoice | null {
     ...(normalizePhrases(r.text).length ? { text: normalizePhrases(r.text) } : {}),
     ...(r.textEvery !== undefined ? { textEvery: normalizeTextEvery(r.textEvery) } : {}),
     ...(r.clear === true ? { clear: true } : {}),
+    ...(normalizeEngineScan(r.scan) ? { scan: normalizeEngineScan(r.scan) } : {}),
     ...(drift ? { drift } : {}),
   };
 }
@@ -299,7 +302,7 @@ export function expandStudioLayers(layers: Layer[], inputs: StudioRenderInputs, 
         // The core's instrument, drawn into this hidden layer, following the voice's sound.
         // Auto: shows only while its sound plays, as a VX voice does.
         const presence = voice.auto ? Math.min(1, driven[index].vxPresence ?? 1) : 1;
-        out.push(engineVoiceLayer(id, voice.file, params, voice.live ?? voice.source));
+        out.push(engineVoiceLayer(id, voice.file, params, voice.live ?? voice.source, voice.scan));
         voiceRows.set(index, { ...row, opacity: row.opacity * presence });
         return;
       }
@@ -395,7 +398,7 @@ export function expandStack(id: string, stack: ClipStack, set: StudioSet, inputs
       const shaderSourceId = `${itemId}:${item.voice.file}`;
       const params = driftedParams(itemId, itemId, shaderSourceId, item.params, driftRanges(code), item.drift, t);
       if (isEngineVoiceFile(item.voice.file)) {
-        layers.push({ ...engineVoiceLayer(itemId, item.voice.file, params, live ?? sourceId), effects: item.effects } as Layer);
+        layers.push({ ...engineVoiceLayer(itemId, item.voice.file, params, live ?? sourceId, item.voice.scan), effects: item.effects } as Layer);
         rows.push({ layerId: itemId, opacity: item.opacity, blendMode: item.blend });
         continue;
       }

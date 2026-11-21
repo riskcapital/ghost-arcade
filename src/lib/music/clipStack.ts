@@ -20,7 +20,7 @@ import { normalizeFinish, type StudioFinish } from './studioFinish';
 import type { ClipVisual } from './session';
 import { currentVoiceFile } from './retiredVoices';
 import { normalizeDrift, type VisualDrift } from './visualDrift';
-import { engineInstrumentOf, isEngineVoiceFile } from './engineVoices';
+import { engineInstrumentOf, isEngineVoiceFile, normalizeEngineScan, type EngineScan } from './engineVoices';
 
 /** A voice's name: an engine instrument's, or the VX file's without its wrapping. */
 const voiceName = (file: string) => engineInstrumentOf(file)?.name ?? file.replace(/^VX-|\.fs$/g, '');
@@ -38,6 +38,8 @@ export interface StackVoice {
   follow: string;
   /** Only its subject draws (transparent background). */
   clear?: boolean;
+  /** A cloud engine voice's own .ply scan; none draws the default scan. */
+  scan?: EngineScan;
 }
 
 export interface StackItem {
@@ -115,7 +117,7 @@ export function normalizeStackItem(raw: unknown): StackItem | null {
   let media: ShowClipMedia | undefined;
   const v = r.voice as Record<string, unknown> | undefined;
   if (v && typeof v.file === 'string' && (VOICE_FILE.test(v.file) || isEngineVoiceFile(v.file))) {
-    voice = { file: currentVoiceFile(v.file), follow: typeof v.follow === 'string' && v.follow ? v.follow : 'all', ...(v.clear === true ? { clear: true } : {}) };
+    voice = { file: currentVoiceFile(v.file), follow: typeof v.follow === 'string' && v.follow ? v.follow : 'all', ...(v.clear === true ? { clear: true } : {}), ...(normalizeEngineScan(v.scan) ? { scan: normalizeEngineScan(v.scan) } : {}) };
   } else {
     const m = normalizeClipMedia(r.media);
     if (!m || m.kind === 'layer') return null;

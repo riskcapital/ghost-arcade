@@ -12,6 +12,8 @@
    * on top of the output (Solo: on their own).
    */
   import { get } from 'svelte/store';
+  import EngineScanPicker from './EngineScanPicker.svelte';
+  import { engineInstrumentOf } from '../../music/engineVoices';
   import { musicStudio } from '../../music/musicStudioStore';
   import { stackEditor, visualPicker } from '../../music/studioUi';
   import { findClip } from '../../music/session';
@@ -354,6 +356,9 @@
                       {/if}
                     </select>
                   </label>
+                  {#if engineInstrumentOf(voice.file)?.cloud}
+                    <EngineScanPicker scan={voice.scan} layerSuffix=":{selected.id}" onpick={(scan) => patchItem(selected.id, { voice: { ...voice, scan } })} />
+                  {/if}
                 {/if}
               </div>
               {#if inputs.length}

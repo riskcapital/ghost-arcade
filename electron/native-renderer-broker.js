@@ -3117,6 +3117,8 @@ export function normalizeStatus(status, previous = makeDefaultStatus()) {
     backend_ready: !!status.backend_ready,
     adapter_name: status.adapter_name ?? previous.adapter_name ?? null,
     adapter_luid: status.adapter_luid ?? previous.adapter_luid ?? null,
+    // Cloud instruments' scan loads by layer (loading / ready:<points> / failed:<reason>).
+    audio_visual_cloud_loads: status.audio_visual_cloud_loads && typeof status.audio_visual_cloud_loads === 'object' ? status.audio_visual_cloud_loads : {},
     // The core's own verdict, else the adapter's name (a core that predates
     // the flag): the renderer tells the user when no GPU is doing the work.
     adapter_is_software: typeof status.adapter_is_software === 'boolean'

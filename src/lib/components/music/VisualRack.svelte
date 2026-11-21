@@ -22,6 +22,8 @@
   import { BLEND_MODE_ORDER, blendModeLabel, type BlendMode } from '../../types';
   import { MIX_BAR_OPTIONS, MIX_MODES, mixAt, normalizeMix, type MixMode } from '../../music/studioMix';
   import { DEFAULT_TEXT_EVERY, TEXT_EVERY, normalizePhrases } from '../../music/shaderText';
+  import EngineScanPicker from './EngineScanPicker.svelte';
+  import { engineInstrumentOf } from '../../music/engineVoices';
   import { lastStudioMix, studioCodeTick, studioVoiceBlend, studioRenderInputs, studioVoiceCode, type StudioVoice } from '../../music/studioPlugin';
   import {
     addStudioVoice,
@@ -533,7 +535,7 @@
               </optgroup>
             </select>
             <StudioKnob label="Opacity" title="How much of this voice shows" value={voice.level} defaultValue={1} size={20} format={levelFormat} midiPath="studio:voice.{i + 1}.level" onchange={(v) => setStudioVoice(i, { level: v }, `voice:${i}:level`)} />
-            {#if all.length > MAIN_CONTROLS || takesText(voice.file) || voice.drift?.on}
+            {#if all.length > MAIN_CONTROLS || takesText(voice.file) || voice.drift?.on || engineInstrumentOf(voice.file)?.cloud}
               <button class="icon more" class:on={open === i} onclick={() => (open = open === i ? null : i)} aria-expanded={open === i} aria-label="All controls for voice {i + 1}" title="All controls">
                 <svg viewBox="0 0 12 12" aria-hidden="true"><path d={open === i ? 'M3 7.5L6 4.5 9 7.5' : 'M3 4.5L6 7.5 9 4.5'} /></svg>
               </button>
@@ -560,6 +562,9 @@
                 {#if !voice.text?.length}<span class="text-note">Shows its own words</span>{/if}
               </div>
             </div>
+          {/if}
+          {#if open === i && engineInstrumentOf(voice.file)?.cloud}
+            <EngineScanPicker scan={voice.scan} layerSuffix=":{i}" onpick={(scan) => setStudioVoice(i, { scan })} />
           {/if}
           {#if open === i && voice.drift?.on}{@render driftEdit(i, voice, all)}{/if}
           {#if open === i && all.length > MAIN_CONTROLS}

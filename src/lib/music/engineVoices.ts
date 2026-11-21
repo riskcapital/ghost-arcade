@@ -29,6 +29,29 @@ import { createDefaultGPULayerContent, createLayer, type Layer } from '../types'
 
 export const ENGINE_VOICE_PREFIX = 'engine:';
 
+/**
+ * A cloud voice's own scan: a .ply the user picked (the main process granted
+ * it then). Saved as an asset ref so a reopened project grants it again.
+ */
+export interface EngineScan {
+  type: 'file';
+  name: string;
+  assetRef: { kind: 'local-file'; originalPath: string; name: string };
+}
+
+export function engineScanFromPath(path: string): EngineScan {
+  const name = path.split(/[\\/]/).pop() || path;
+  return { type: 'file', name, assetRef: { kind: 'local-file', originalPath: path, name } };
+}
+
+/** A saved scan, or undefined when it is not a usable .ply reference. */
+export function normalizeEngineScan(raw: unknown): EngineScan | undefined {
+  const ref = (raw as { assetRef?: { originalPath?: unknown } } | null)?.assetRef;
+  const path = ref?.originalPath;
+  if (typeof path !== 'string' || path.length > 4096 || !/\.ply$/i.test(path)) return undefined;
+  return engineScanFromPath(path);
+}
+
 export interface EngineInstrument {
   id: string;
   name: string;
@@ -73,9 +96,31 @@ export function engineInstrumentOf(file: string): EngineInstrument | undefined {
 /** The picture baked through the core (scripts/build-voice-thumbnails.mjs). */
 export const engineThumbName = (id: string) => `engine-${id}.jpg`;
 
-/** Controls a voice exposes: no rebuilds, no file, no button. */
-function voiceControls(controls: readonly ParamControl[]): ParamControl[] {
-  return controls.filter((c) => !c.resets && !c.button && (c.kind === 'slider' || c.kind === 'select'));
+/**
+ * The controls each voice shows, in order: the first four are its main
+ * knobs, the rest sit under "more". Each was checked to change the picture
+ * clearly across its range (a still sweep through the core). Every other
+ * control keeps its default.
+ */
+export const ENGINE_VOICE_KEYS: Readonly<Record<string, readonly string[]>> = {
+  strands: ['size', 'width', 'trail', 'speed', 'fibres', 'autoRotateZ', 'palette'],
+  'cloud-pulse': ['waveGain', 'pointSize', 'displacement', 'intensity', 'baseGlow', 'scale', 'autoRotateY', 'palette'],
+  'cloud-flock': ['scatter', 'swarm', 'reform', 'intensity', 'edgeLight', 'autoRotateY', 'timeScale', 'palette'],
+  'depth-lights': ['lights', 'lightSize', 'decay', 'intensity', 'autoRotateY', 'timeScale', 'palette'],
+  'ribbon-field': ['width', 'kink', 'flowSpeed', 'travel', 'sheen', 'fog', 'speed', 'palette'],
+  'shockwave-rings': ['reach', 'width', 'streak', 'particleSize', 'ringSpeed', 'dust', 'speed', 'palette'],
+  'fluid-ink': ['burstSize', 'force', 'swirl', 'dissipation', 'curl', 'speed', 'palette'],
+  'lightning-arcs': ['strikeRate', 'size', 'glowWidth', 'jagged', 'coreWidth', 'speed', 'palette'],
+  'spectral-terrain': ['heightScale', 'flightSpeed', 'lineGlow', 'fog', 'cameraHeight', 'speed', 'palette'],
+  'mesh-shatter': ['explode', 'shardSize', 'crackGlow', 'pointSize', 'breakThreshold', 'autoRotateY', 'speed', 'palette'],
+};
+
+/** Controls a voice exposes: its curated few (no rebuilds, no file, no button). */
+function voiceControls(id: string, controls: readonly ParamControl[]): ParamControl[] {
+  const usable = controls.filter((c) => !c.resets && !c.button && (c.kind === 'slider' || c.kind === 'select'));
+  const keys = ENGINE_VOICE_KEYS[id];
+  if (!keys) return usable;
+  return keys.map((k) => usable.find((c) => c.key === k)).filter((c): c is ParamControl => !!c);
 }
 
 /** The core's controls for an instrument, or null before its manifest arrives. */
@@ -98,7 +143,7 @@ export function engineVoiceCode(file: string): string | undefined {
   if (!defs) return undefined;
   const cached = codeCache.get(inst.id);
   if (cached && cached.defs === defs) return cached.code;
-  const inputs = voiceControls(defs).map((c) => {
+  const inputs = voiceControls(inst.id, defs).map((c) => {
     if (c.kind === 'slider') return { NAME: c.key, LABEL: c.label, TYPE: 'float', MIN: c.min, MAX: c.max, DEFAULT: c.default };
     const select = c as Extract<ParamControl, { kind: 'select' }>;
     return {
@@ -119,9 +164,12 @@ export function engineVoiceCode(file: string): string | undefined {
  */
 export function engineLayerParams(id: string, params: Record<string, number>, follows: string): Record<string, unknown> {
   const out: Record<string, unknown> = {};
+  const keys = ENGINE_VOICE_KEYS[id];
   for (const c of engineControls(id) ?? []) {
     if (c.kind === 'media-source') continue;
     if ('default' in c) out[c.key] = Array.isArray(c.default) ? [...c.default] : c.default;
+    // Only the voice's own controls move; the rest stay at their defaults.
+    if (keys && !keys.includes(c.key)) continue;
     const v = params[c.key];
     if (typeof v !== 'number' || !Number.isFinite(v)) continue;
     if (c.kind === 'slider') out[c.key] = Math.min(c.max, Math.max(c.min, v));
@@ -154,7 +202,7 @@ void main() {
  * A hidden layer the studio's mix samples: the instrument drawn by the core,
  * or the placeholder where the core cannot draw it.
  */
-export function engineVoiceLayer(id: string, file: string, params: Record<string, number>, follows: string): Layer {
+export function engineVoiceLayer(id: string, file: string, params: Record<string, number>, follows: string, scan?: EngineScan): Layer {
   const inst = engineInstrumentOf(file)!;
   if (!engineControls(inst.id)) {
     return {
@@ -165,6 +213,9 @@ export function engineVoiceLayer(id: string, file: string, params: Record<string
   }
   const content = createDefaultGPULayerContent();
   content.shaderId = inst.id;
-  content.params = engineLayerParams(inst.id, params, follows) as typeof content.params;
+  const coreParams = engineLayerParams(inst.id, params, follows);
+  // No scan: the core draws its bundled default.
+  if (inst.cloud && scan) coreParams.path = scan;
+  content.params = coreParams as typeof content.params;
   return { ...createLayer(id, inst.name, 'gpu'), opacity: 0, gpuLayerContent: content, [ENGINE_VOICE_MARK]: true } as Layer;
 }
