@@ -31,6 +31,8 @@ export interface AudioLoopTracks {
   info(i: number): AudioTrackInfo | null;
   layerCount(i: number): number;
   bars(i: number): number;
+  /** The loop's shape: `n` peak levels 0–1 across it. */
+  peaks(i: number, n: number): number[];
   /** The tempo it was recorded at. */
   bpm(i: number): number;
   /** The loop as it plays, as a WAV file. */

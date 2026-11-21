@@ -20,6 +20,9 @@
   --studio-accent: var(--ga-icon, #5278ff);
   --studio-accent-soft: var(--ga-blue-a16, rgba(82, 120, 255, 0.16));
   --studio-on-accent: #ffffff;
+  /* Recording and overdubbing (the live looper): coral, the one other accent. */
+  --studio-rec: #ff6b57;
+  --studio-rec-soft: rgba(255, 107, 87, 0.16);
   --studio-knob-face: radial-gradient(circle at 35% 30%, #3b362e, #13110e 70%);
   --studio-knob-edge: #3d382f;
   --studio-pointer: var(--studio-ink);

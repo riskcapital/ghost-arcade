@@ -27,7 +27,7 @@
   import SessionGrid from './SessionGrid.svelte';
   import ClipEditor from './ClipEditor.svelte';
   import ClipStackEditor from './ClipStackEditor.svelte';
-  import LoopRecorderBar from './LoopRecorderBar.svelte';
+  import LoopRecordBar from './LoopRecordBar.svelte';
   import PadsModule from './PadsModule.svelte';
   import BathModules from './BathModules.svelte';
   import BerlinModules from './BerlinModules.svelte';
@@ -86,7 +86,7 @@
 
 {#snippet loops()}
   <StudioModule title="Session" class="loops">
-    {#snippet head()}<LoopRecorderBar compact />{/snippet}
+    {#snippet head()}<LoopRecordBar compact />{/snippet}
     <SessionGrid compact />
   </StudioModule>
 {/snippet}

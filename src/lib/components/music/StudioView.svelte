@@ -53,7 +53,7 @@
   import StudioRecordControls from './StudioRecordControls.svelte';
   import StudioTempoControls from './StudioTempoControls.svelte';
   import { loopBrowser } from '../../music/studioUi';
-  import LoopRecorderBar from './LoopRecorderBar.svelte';
+  import LoopRecordBar from './LoopRecordBar.svelte';
   import PadsModule from './PadsModule.svelte';
   import DubShotsModule from './DubShotsModule.svelte';
   import PlayModule from './PlayModule.svelte';
@@ -67,7 +67,7 @@
   import MixerPanel from './MixerPanel.svelte';
   import BandPanel from './BandPanel.svelte';
   import SongsPanel from './SongsPanel.svelte';
-  import BandLooper from './BandLooper.svelte';
+  import LoopStation from './LoopStation.svelte';
   import SongStrip from './SongStrip.svelte';
   import SceneBar from './SceneBar.svelte';
   import LiveSessionGrid from './LiveSessionGrid.svelte';
@@ -256,7 +256,7 @@
         {#snippet liveButton()}
           <button class="text-btn small" class:on={s.liveControl} aria-pressed={s.liveControl} onclick={toggleLiveControl} title={s.liveControl ? "Go back to Audio Lab's own loops and scenes" : "Play with Ableton Live: its clips and scenes launch from here, each Live track can drive visuals, and Audio Lab's instruments play on top"}><span class="live-led" class:on={s.liveControl} class:linked={s.liveControl && $abletonBridge.connected} aria-hidden="true"></span>Ableton Live</button>
         {/snippet}
-        {#if !s.liveControl}<LoopRecorderBar split extra={liveButton} />{:else}<div class="live-row">{@render liveButton()}</div>{/if}
+        {#if !s.liveControl}<LoopRecordBar split extra={liveButton} />{:else}<div class="live-row">{@render liveButton()}</div>{/if}
       {/if}
       <button class="tall-btn" class:on={lowerTall} aria-pressed={lowerTall} onclick={toggleLowerTall} title={lowerTall ? 'Shrink this panel back above the bottom row' : 'Expand this panel down over the bottom row'} aria-label={lowerTall ? 'Shrink panel' : 'Expand panel'}>
         <svg viewBox="0 0 16 16" aria-hidden="true">{#if lowerTall}<path d="M4 6l4-4 4 4M4 14l4-4 4 4" />{:else}<path d="M4 2l4 4 4-4M4 10l4 4 4-4" />{/if}</svg>
@@ -269,7 +269,7 @@
     {:else if lowerTab === 'band'}
       <BandPanel />
     {:else if lowerTab === 'looper'}
-      <div class="scroll"><BandLooper /></div>
+      <LoopStation />
     {:else if lowerTab === 'songs'}
       <SongsPanel />
     {:else if lowerTab === 'takes'}

@@ -694,6 +694,11 @@ function syncAudioPhase(i: number): boolean {
 
 // ── Saving ──
 
+/** An audio track's shape, for the panels. */
+export function audioPeaks(i: number, n: number): number[] {
+  return isAudio(i) ? host?.audioTracks()?.peaks(i, n) ?? [] : [];
+}
+
 /** The name a save starts with: "Keys 3 · 4 bars · 120 · A min". */
 export function suggestedLoopName(i: number): string {
   const t = track(i);
