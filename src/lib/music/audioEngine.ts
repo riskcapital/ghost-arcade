@@ -535,6 +535,18 @@ export class MusicAudioEngine {
     return this.bandFx?.frozen ?? false;
   }
 
+  /** The audio context and the mix the loop tracks play into. Creates the graph on first use. */
+  loopGraph(): { ctx: AudioContext; out: AudioNode } {
+    const ctx = this.ensure();
+    return { ctx, out: this.masterGain! };
+  }
+
+  /** Band input `index` after its EQ and pan (what a loop track records), or null when it is not set up. */
+  inputTap(index: number): AudioNode | null {
+    if (!this.ctx) return null;
+    return this.strips.get(INPUT_CHANNELS[index] ?? 'input')?.pan ?? null;
+  }
+
   /** The band looper. Creates the audio graph on first use. */
   bandLooper(): BandLooper {
     this.ensure();

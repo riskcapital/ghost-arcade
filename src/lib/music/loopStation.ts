@@ -694,6 +694,26 @@ function syncAudioPhase(i: number): boolean {
 
 // ── Saving ──
 
+/** The latency audio recordings are shifted by, in ms; null before the audio runs. */
+export function loopLatencyMs(): number | null {
+  return host?.audioTracks()?.latencyMs() ?? null;
+}
+
+/**
+ * The loopback Measure on track `i`'s input: sets the manual offset so the
+ * total matches the round trip heard. Returns the round trip in ms, or null.
+ */
+export async function measureLoopLatency(i: number): Promise<number | null> {
+  const audio = host?.audioTracks();
+  if (!audio) return null;
+  const roundTrip = await audio.measureLatency(i);
+  if (roundTrip === null) return null;
+  const manual = data().latencyMs;
+  const reported = audio.latencyMs() - manual;
+  musicStudio.updateLoopStation((d) => ({ ...d, latencyMs: Math.max(-200, Math.min(500, Math.round(roundTrip - reported))) }));
+  return roundTrip;
+}
+
 /** An audio track's shape, for the panels. */
 export function audioPeaks(i: number, n: number): number[] {
   return isAudio(i) ? host?.audioTracks()?.peaks(i, n) ?? [] : [];
@@ -810,7 +830,7 @@ export function publish(): void {
         redo: info?.redo ?? 0,
         pending: null,
         setsTempo: rt.freeSince !== null,
-        noInput: audio ? !audio.canRecord(i) : true,
+        noInput: audio ? !audio.canRecord(i) && !(info?.layers) : false,
       };
     }
     return {

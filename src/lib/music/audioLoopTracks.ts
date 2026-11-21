@@ -31,6 +31,10 @@ export interface AudioLoopTracks {
   info(i: number): AudioTrackInfo | null;
   layerCount(i: number): number;
   bars(i: number): number;
+  /** The input latency applied to recordings, in ms (reported + manual). */
+  latencyMs(): number;
+  /** Loopback: a click out, heard back on track `i`'s input; the round trip in ms. */
+  measureLatency(i: number): Promise<number | null>;
   /** The loop's shape: `n` peak levels 0–1 across it. */
   peaks(i: number, n: number): number[];
   /** The tempo it was recorded at. */

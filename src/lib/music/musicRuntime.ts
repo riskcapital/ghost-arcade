@@ -2785,7 +2785,8 @@ export function ensureMusicRuntime(): void {
       ensureScheduler();
       ensureFrameLoop();
     },
-    audioTracks: () => audioLoopTracksFor(audio),
+    // Audio tracks once the studio's audio is running.
+    audioTracks: () => (audio.peekNow() === null ? null : audioLoopTracksFor(audio)),
   });
   // Risers land on the next bar line of the launch clock.
   audio.setBarClock(() => {

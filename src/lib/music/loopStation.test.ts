@@ -190,3 +190,17 @@ describe('a MIDI loop track', () => {
     expect(await insertUserLoopInSession(id!)).toBe(true);
   });
 });
+
+describe('older projects', () => {
+  it('load with six empty loop tracks, keeping their recorded loops and session', async () => {
+    const { normalizeProjectState } = await import('./musicStudioStore');
+    const old = normalizeProjectState({ myLoops: [{ id: 'a', instrument: 'keys', beats: 8, notes: [{ beat: 0, dur: 1, note: 60, velocity: 0.5 }] }], recordLength: 4 });
+    expect(old.loopStation.tracks).toHaveLength(6);
+    expect(old.loopStation.tracks.every((t) => t.layers.length === 0)).toBe(true);
+    expect(Object.values(old.session).flat().some((c) => c?.id === 'a')).toBe(true);
+    expect(old.recordLength).toBe(4);
+    // And a station round-trips through a save.
+    const again = normalizeProjectState({ loopStation: { tracks: [{ kind: 'midi', instrument: 'keys', beats: 16, layers: [[{ beat: 2, dur: 1, note: 62, velocity: 0.7 }]] }] } });
+    expect(again.loopStation.tracks[0].layers[0][0].note).toBe(62);
+  });
+});
