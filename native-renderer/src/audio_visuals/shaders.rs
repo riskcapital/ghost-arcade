@@ -55,7 +55,11 @@ fn all() -> &'static [CoreShader; 7] {
 }
 
 pub fn core_shader(id: &str) -> &'static CoreShader {
-    all().iter().find(|shader| shader.id == id).expect("audio visual shader id")
+    all()
+        .iter()
+        .find(|shader| shader.id == id)
+        .or_else(|| super::shaders2::find(id))
+        .expect("audio visual shader id")
 }
 
 #[cfg(test)]
@@ -100,7 +104,8 @@ mod tests {
         for spec in crate::native_graph_manifest::NATIVE_GRAPH_INSTRUMENT_SPECS {
             if spec.shader_source == crate::native_graph_manifest::ShaderSource::Core {
                 for id in spec.shader_ids {
-                    assert!(all().iter().any(|shader| shader.id == *id), "{} lists {id}", spec.id);
+                    let compiled = all().iter().any(|shader| shader.id == *id) || super::super::shaders2::find(id).is_some();
+                    assert!(compiled, "{} lists {id}", spec.id);
                 }
             }
         }
