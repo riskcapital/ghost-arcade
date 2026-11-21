@@ -42,6 +42,27 @@ fn unpack_point_color(bits: f32) -> vec4<f32> {
   return unpack4x8unorm(bitcast<u32>(bits));
 }
 
+// A point worked out once per frame by an instrument's compute pass and
+// drawn as a quad by sprite_draw.wgsl: clip position, colour, size in px
+// (size 0 = not drawn).
+struct Sprite {
+  clip: vec4<f32>,
+  color: vec4<f32>,
+}
+
+fn no_sprite() -> Sprite {
+  return Sprite(vec4<f32>(0.0, 0.0, 0.0, 1.0), vec4<f32>(0.0));
+}
+
+/// Perspective size: nearer points draw larger, within limits.
+fn sprite_size(clip_w: f32, scale: f32) -> f32 {
+  return C.cam.w * clamp(1.6 / clip_w, 0.55, 2.2) * scale;
+}
+
+fn depth_fade(clip_w: f32) -> f32 {
+  return clamp(2.2 / clip_w, 0.25, 1.0);
+}
+
 @fragment
 fn fs_point(in: PointOut) -> @location(0) vec4<f32> {
   let d = dot(in.quad, in.quad);

@@ -41,6 +41,10 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     pos += vel * dt;
     pt.p = vec4<f32>(pos, vel);
     pt.q.x = age;
+    if (frame % TRAIL_STEP == 0u) {
+      pt.trail[trail_head(frame)] = pos;
+    }
+    pt.col = particle_color(pt);
     particles[i] = pt;
     return;
   }
@@ -50,6 +54,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let roll = hash21(i, frame * 3u + 1u);
   if (roll >= min(total, 1.0) || u32(U.shape_count.x) == 0u) {
     pt.q = vec4<f32>(1.0, 0.0, 0.0, pt.q.w);
+    pt.col = vec4<f32>(0.0);
     particles[i] = pt;
     return;
   }
@@ -121,6 +126,10 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   pt.p = vec4<f32>(pos, vel);
   pt.q = vec4<f32>(0.0, life, heat, f32(slot));
   pt.r = vec4<f32>(at.spectral, side, select(0.0, 1.0, is_core), 0.0);
+  // A new life starts with its whole trail at the birth point.
+  for (var k = 0u; k < TRAIL_POINTS; k = k + 1u) {
+    pt.trail[k] = pos;
+  }
+  pt.col = particle_color(pt);
   particles[i] = pt;
 }
-

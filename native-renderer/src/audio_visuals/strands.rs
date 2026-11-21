@@ -12,8 +12,11 @@ use super::emitter::EmitterKind;
 use super::hdr_post::HdrPostSettings;
 use super::params::{num, text, Palette3, palette_by_name, quality_from};
 
-pub const STRANDS_PARTICLE_BYTES: u64 = 48;
-pub const STRANDS_MAX_PARTICLES: u32 = 2 * 1024 * 1024;
+/// Particle state, colour and an 8-point trail (`Particle` in strands_common.wgsl).
+pub const STRANDS_PARTICLE_BYTES: u64 = 128;
+/// Trail segments drawn per particle.
+pub const STRANDS_TRAIL_SEGMENTS: u32 = 8;
+pub const STRANDS_MAX_PARTICLES: u32 = 1024 * 1024;
 pub const STRANDS_MIN_PARTICLES: u32 = 16 * 1024;
 pub const MAX_SHAPES: usize = 8;
 /// At most this many hits launch shapes in one frame (a burst of events
@@ -61,7 +64,7 @@ pub struct StrandsParams {
 }
 
 pub fn normalize_strands_params(params: &Value) -> StrandsParams {
-    let (count, scale) = quality_from(params, [262_144, 524_288, 1_048_576, 2_097_152]);
+    let (count, scale) = quality_from(params, [65_536, 131_072, 262_144, 524_288]);
     let particle_count = num(params, "particleCount", count as f32)
         .round()
         .clamp(STRANDS_MIN_PARTICLES as f32, STRANDS_MAX_PARTICLES as f32) as u32;
@@ -84,7 +87,7 @@ pub fn normalize_strands_params(params: &Value) -> StrandsParams {
     };
     // Brightness is per particle; keep the overall picture steady across
     // particle budgets.
-    let density = (particle_count as f32 / 524_288.0).max(0.125);
+    let density = (particle_count as f32 / 262_144.0).max(0.0625);
     let trails = num(params, "trails", 0.9).clamp(0.0, 0.97);
     StrandsParams {
         particle_count,
@@ -278,6 +281,8 @@ impl ShapeQueue {
                 phase => phase,
             };
         }
+        // Shapes from a clock that has since jumped back go at once.
+        self.shapes.retain(|shape| shape.born <= now + 0.1);
         self.shapes.retain(|shape| match shape.phase {
             ShapePhase::Release { since } => now - since < RELEASE_SECONDS,
             _ => true,
@@ -428,8 +433,8 @@ mod tests {
         assert_eq!(p.particle_count, STRANDS_MAX_PARTICLES);
         assert_eq!(p.mode, ShapeMode::Fixed(EmitterKind::Polygon, 4));
         let low = normalize_strands_params(&serde_json::json!({ "quality": "low" }));
-        assert_eq!(low.particle_count, 262_144);
+        assert_eq!(low.particle_count, 65_536);
         let ultra = normalize_strands_params(&serde_json::json!({ "quality": "ultra" }));
-        assert_eq!(ultra.particle_count, 2_097_152);
+        assert_eq!(ultra.particle_count, 524_288);
     }
 }

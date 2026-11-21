@@ -18,7 +18,7 @@ pub struct DepthLightParams {
     pub gain: f32,
     /// How much of the slice's plain level keeps lights glowing between hits.
     pub hold: f32,
-    /// Extra sprite size of a lit point.
+    /// Size of a lit point, times the point size (lights stay small and sharp).
     pub on_size: f32,
     /// Camera drift: slow up-down sway in degrees.
     pub sway: f32,
@@ -32,7 +32,7 @@ pub fn normalize_depth_light_params(params: &Value) -> DepthLightParams {
         decay: num(params, "decay", 0.35).clamp(0.02, 5.0),
         gain: num(params, "gain", 4.0).clamp(0.0, 50.0),
         hold: num(params, "hold", 0.05).clamp(0.0, 2.0),
-        on_size: num(params, "lightSize", 0.4).clamp(0.0, 6.0),
+        on_size: num(params, "lightSize", 1.6).clamp(0.0, 6.0),
         sway: num(params, "sway", 4.0).clamp(0.0, 45.0),
         light_share: num(params, "lights", 0.05).clamp(0.0, 1.0),
     }

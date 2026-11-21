@@ -1,10 +1,42 @@
-// Cloud Flock update. Block (C.data):
+// Cloud Flock: update every point and write its sprite, one pass.
+// Block (C.data):
 //   [0] dt, spring, curl strength, drag
 //   [1] scatter impulse (this frame), cohesion, flow speed, time
 //   [2] flock centre xyz, flow scale
+//   [3] banding (pull toward the flow's ridges), 0, 0, 0
 @group(0) @binding(0) var<storage, read> points: array<vec4<f32>>;
 @group(0) @binding(1) var<uniform> C: CloudU;
 @group(0) @binding(2) var<storage, read_write> flock: array<FlockPoint>;
+@group(0) @binding(3) var<storage, read_write> sprites: array<Sprite>;
+
+// Uphill direction of a smooth 3D field built from three planar noises.
+// Following it gathers points onto sheets: the dense bands of a murmuration
+// with clear air between them (a curl flow alone keeps density even).
+fn ridge3(p: vec3<f32>, t: f32) -> vec3<f32> {
+  let a = gnoise2(p.xy + vec2<f32>(t * 0.2, 0.0), 41u);
+  let b = gnoise2(p.yz + vec2<f32>(0.0, t * 0.17), 59u);
+  let c = gnoise2(p.zx + vec2<f32>(t * 0.13, 3.0), 73u);
+  return vec3<f32>(a.y + c.z, a.z + b.y, b.z + c.y);
+}
+
+fn flock_sprite(i: u32, f: FlockPoint) -> Sprite {
+  let rgba = unpack_point_color(points[i].w);
+  if (rgba.a <= 0.02) {
+    return no_sprite();
+  }
+  let world = (C.model * vec4<f32>(f.p.xyz, 1.0)).xyz;
+  let clip = C.view_proj * vec4<f32>(world, 1.0);
+  if (clip.w <= 0.01) {
+    return no_sprite();
+  }
+  let heat = clamp(f.p.w * C.look.w, 0.0, 1.0);
+  let scan = mix(C.base.rgb, rgba.rgb * C.base.rgb * 2.0, C.base.w);
+  let rest_col = scan * C.look.x;
+  let hot = mix(C.mid.rgb * C.mid.w, C.high.rgb * C.high.w, smoothstep(0.5, 1.0, heat)) * C.look.y;
+  let color = mix(rest_col, hot, smoothstep(0.15, 0.9, heat)) * C.look.z * rgba.a * depth_fade(clip.w);
+  // Moving points draw finer, so the swarm stays crisp.
+  return Sprite(clip, vec4<f32>(color, sprite_size(clip.w, mix(1.0, 0.7, heat))));
+}
 
 @compute @workgroup_size(64)
 fn cs_flock(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -20,27 +52,34 @@ fn cs_flock(@builtin(global_invocation_id) gid: vec3<u32>) {
     f.p = vec4<f32>(rest, 0.0);
     f.v = vec4<f32>(0.0, 0.0, 0.0, 1.0 + hash11(i * 747796405u + 1u));
     flock[i] = f;
-    return;
+  } else if (dt > 0.0) {
+    // dt 0 is a repeat render of the same frame: nothing moves.
+    var pos = f.p.xyz;
+    var vel = f.v.xyz;
+    let seed = f.v.w;
+    let center = C.data[2].xyz;
+    let impulse = C.data[1].x;
+    if (impulse > 0.0) {
+      // A kick: burst out from the flock's centre, each point at its own pace.
+      let jitter = vec3<f32>(hash11(i * 3u + 7u), hash11(i * 5u + 11u), hash11(i * 7u + 13u)) - 0.5;
+      let out_dir = normalize(pos - center + jitter * 0.35);
+      vel += out_dir * impulse * mix(0.4, 1.4, fract(seed * 7.13));
+    }
+    var acc = (rest - pos) * C.data[0].y + (center - pos) * C.data[1].y;
+    // The swarm's flow is most of this pass's cost; a formed flock skips it.
+    if (C.data[0].z > 0.0) {
+      let t = C.data[1].w * C.data[1].z;
+      let q = pos * C.data[2].w;
+      // curl3 peaks around 4; scaled so "swarm" 1 is a strong but bounded flow.
+      acc += curl3(q, t) * (C.data[0].z * 0.25);
+      if (C.data[3].x > 0.0) {
+        acc += ridge3(q * 1.7, t) * (C.data[0].z * C.data[3].x * 0.25);
+      }
+    }
+    vel = vel * exp(-C.data[0].w * dt) + acc * dt;
+    pos += vel * dt;
+    f = FlockPoint(vec4<f32>(pos, length(vel)), vec4<f32>(vel, seed));
+    flock[i] = f;
   }
-  if (dt <= 0.0) {
-    // A repeat render of the same frame: leave every point as it is.
-    return;
-  }
-  var pos = f.p.xyz;
-  var vel = f.v.xyz;
-  let seed = f.v.w;
-  let center = C.data[2].xyz;
-  let impulse = C.data[1].x;
-  if (impulse > 0.0) {
-    // A kick: burst out from the flock's centre, each point at its own pace.
-    let jitter = vec3<f32>(hash11(i * 3u + 7u), hash11(i * 5u + 11u), hash11(i * 7u + 13u)) - 0.5;
-    let out_dir = normalize(pos - center + jitter * 0.35);
-    vel += out_dir * impulse * mix(0.4, 1.4, fract(seed * 7.13));
-  }
-  let flow = curl3(pos * C.data[2].w + vec3<f32>(seed * 0.05), C.data[1].w * C.data[1].z);
-  // curl3 peaks around 4; scaled so "swarm" 1 is a strong but bounded flow.
-  let acc = (rest - pos) * C.data[0].y + flow * (C.data[0].z * 0.25) + (center - pos) * C.data[1].y;
-  vel = vel * exp(-C.data[0].w * dt) + acc * dt;
-  pos += vel * dt;
-  flock[i] = FlockPoint(vec4<f32>(pos, length(vel)), vec4<f32>(vel, seed));
+  sprites[i] = flock_sprite(i, f);
 }

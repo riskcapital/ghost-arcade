@@ -193,7 +193,7 @@ impl WaveQueue {
 
     pub fn step(&mut self, params: &CloudPulseParams, now: f32) {
         self.waves.retain(|wave| {
-            Self::radius(params, wave, now) < params.reach && Self::strength(params, wave, now) > 0.01
+            wave.born <= now + 0.1 && Self::radius(params, wave, now) < params.reach && Self::strength(params, wave, now) > 0.01
         });
     }
 }

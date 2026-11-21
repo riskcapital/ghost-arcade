@@ -30,6 +30,8 @@ pub struct FlockParams {
     /// Kicks sooner than this after a scatter are ignored, so the flock
     /// gets to re-form between bursts.
     pub cooldown: f32,
+    /// How strongly the swarm gathers into bands (0 = even dust).
+    pub banding: f32,
 }
 
 pub fn normalize_flock_params(params: &Value) -> FlockParams {
@@ -45,6 +47,7 @@ pub fn normalize_flock_params(params: &Value) -> FlockParams {
         cohesion: num(params, "cohesion", 0.8).clamp(0.0, 20.0),
         heat: 1.0 / num(params, "hotSpeed", 1.2).clamp(0.01, 10.0),
         cooldown: num(params, "cooldown", 1.6).clamp(0.0, 30.0),
+        banding: num(params, "banding", 1.5).clamp(0.0, 10.0),
     }
 }
 
@@ -75,6 +78,11 @@ impl Default for FlockState {
 
 impl FlockState {
     pub fn ingest(&mut self, data: &AudioVisualData, now: f32, params: &FlockParams) {
+        // The clock went back (a new render, a new song position): start
+        // formed again rather than waiting out a cooldown from the future.
+        if now + 0.1 < self.last_scatter {
+            *self = Self { last_seq: self.last_seq, ..Self::default() };
+        }
         if !data.active() {
             return;
         }
@@ -119,11 +127,12 @@ impl FlockState {
         let impulse = if dt > 0.0 { std::mem::take(&mut self.pending_impulse) } else { 0.0 };
         let free = !matches!(self.phase, FlockPhase::Formed);
         // The swarm's own flow: full while scattered, fading out as the scan
-        // re-forms, a gentle shimmer once formed.
+        // re-forms, none once formed.
         let flow_share = match self.phase {
             FlockPhase::Scattered { .. } => 1.0,
             FlockPhase::Reforming { since } => (1.0 - (now - since) / params.reform).clamp(0.15, 1.0),
-            FlockPhase::Formed => 0.15,
+            // Formed: held by the spring alone, and the flow is not computed.
+            FlockPhase::Formed => 0.0,
         };
         let curl = params.curl * (0.25 + bass * 1.2) * flow_share;
         // Near-critical damping on the way back, so points settle into the
@@ -134,6 +143,8 @@ impl FlockState {
             dt, spring, curl, drag,
             impulse, params.cohesion * bass * if free { 1.0 } else { 0.0 }, params.flow_speed * (0.5 + bass), now,
             0.0, 0.0, 0.0, params.flow_scale,
+            // Bands only form in the swarm; the formed scan stays put.
+            if free { params.banding * flow_share } else { 0.0 }, 0.0, 0.0, 0.0,
         ]
     }
 }
@@ -170,6 +181,16 @@ mod tests {
         assert!(half > params.spring * 0.3 && half < params.spring * 0.7);
         flock.step(2.32, &params);
         assert_eq!(flock.phase, FlockPhase::Formed);
+    }
+
+    #[test]
+    fn a_clock_that_jumps_back_does_not_freeze_the_flock() {
+        let params = normalize_flock_params(&serde_json::json!({}));
+        let mut flock = FlockState::default();
+        flock.ingest(&kick(1), 8.0, &params);
+        assert_eq!(flock.last_scatter, 8.0);
+        flock.ingest(&kick(2), 1.0, &params);
+        assert_eq!(flock.last_scatter, 1.0, "the kick at 1 s scatters again");
     }
 
     #[test]

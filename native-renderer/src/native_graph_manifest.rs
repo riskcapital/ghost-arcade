@@ -516,7 +516,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
         id: "strands",
         label: "Strands",
         shader_source: ShaderSource::Core,
-        shader_ids: &["strands/sim-v1", "strands/draw-v1", "audio-visuals/hdr-post-v1"],
+        shader_ids: &["strands/sim-v2", "strands/draw-v2", "audio-visuals/hdr-post-v1"],
         features: &[
             "compute_graph_host",
             "compute_graph_render",
@@ -536,7 +536,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
         id: "cloud-pulse",
         label: "Cloud Pulse",
         shader_source: ShaderSource::Core,
-        shader_ids: &["cloud-pulse/draw-v1", "audio-visuals/hdr-post-v1"],
+        shader_ids: &["cloud-pulse/light-v2", "audio-visuals/sprite-draw-v1", "audio-visuals/hdr-post-v1"],
         features: &[
             "compute_graph_host",
             "compute_graph_render",
@@ -556,7 +556,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
         id: "cloud-flock",
         label: "Cloud Flock",
         shader_source: ShaderSource::Core,
-        shader_ids: &["cloud-flock/sim-v1", "cloud-flock/draw-v1", "audio-visuals/hdr-post-v1"],
+        shader_ids: &["cloud-flock/sim-v2", "audio-visuals/sprite-draw-v1", "audio-visuals/hdr-post-v1"],
         features: &[
             "compute_graph_host",
             "compute_graph_render",
@@ -576,7 +576,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
         id: "depth-lights",
         label: "Depth Lights",
         shader_source: ShaderSource::Core,
-        shader_ids: &["depth-lights/draw-v1", "audio-visuals/hdr-post-v1"],
+        shader_ids: &["depth-lights/light-v2", "audio-visuals/sprite-draw-v1", "audio-visuals/hdr-post-v1"],
         features: &[
             "compute_graph_host",
             "compute_graph_render",

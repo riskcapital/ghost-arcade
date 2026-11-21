@@ -5,13 +5,13 @@
 
 use std::sync::{Arc, OnceLock};
 
-pub const STRANDS_SIM: &str = "strands/sim-v1";
-pub const STRANDS_DRAW: &str = "strands/draw-v1";
-pub const CLOUD_PULSE_DRAW: &str = "cloud-pulse/draw-v1";
+pub const STRANDS_SIM: &str = "strands/sim-v2";
+pub const STRANDS_DRAW: &str = "strands/draw-v2";
+pub const CLOUD_PULSE_LIGHT: &str = "cloud-pulse/light-v2";
 pub const HDR_POST: &str = "audio-visuals/hdr-post-v1";
-pub const FLOCK_SIM: &str = "cloud-flock/sim-v1";
-pub const FLOCK_DRAW: &str = "cloud-flock/draw-v1";
-pub const DEPTH_LIGHTS_DRAW: &str = "depth-lights/draw-v1";
+pub const FLOCK_SIM: &str = "cloud-flock/sim-v2";
+pub const DEPTH_LIGHTS_LIGHT: &str = "depth-lights/light-v2";
+pub const SPRITE_DRAW: &str = "audio-visuals/sprite-draw-v1";
 
 static NOISE: &str = include_str!("wgsl/noise.wgsl");
 static EMITTER: &str = include_str!("wgsl/emitter.wgsl");
@@ -24,7 +24,7 @@ static POST_SRC: &str = include_str!("wgsl/post.wgsl");
 static CLOUD_COMMON: &str = include_str!("wgsl/cloud_common.wgsl");
 static FLOCK_COMMON: &str = include_str!("wgsl/flock_common.wgsl");
 static FLOCK_SIM_SRC: &str = include_str!("wgsl/flock_sim.wgsl");
-static FLOCK_DRAW_SRC: &str = include_str!("wgsl/flock_draw.wgsl");
+static SPRITE_SRC: &str = include_str!("wgsl/sprite_draw.wgsl");
 static DEPTH_SRC: &str = include_str!("wgsl/depth_lights.wgsl");
 
 pub struct CoreShader {
@@ -45,11 +45,11 @@ fn all() -> &'static [CoreShader; 7] {
         [
             build(STRANDS_SIM, &[NOISE, EMITTER, AUDIO_DATA, STRANDS_COMMON, STRANDS_SIM_SRC]),
             build(STRANDS_DRAW, &[STRANDS_COMMON, STRANDS_DRAW_SRC]),
-            build(CLOUD_PULSE_DRAW, &[NOISE, AUDIO_DATA, CLOUD_COMMON, CLOUD_SRC]),
+            build(CLOUD_PULSE_LIGHT, &[NOISE, CLOUD_COMMON, CLOUD_SRC]),
             build(HDR_POST, &[POST_SRC]),
             build(FLOCK_SIM, &[NOISE, CLOUD_COMMON, FLOCK_COMMON, FLOCK_SIM_SRC]),
-            build(FLOCK_DRAW, &[NOISE, CLOUD_COMMON, FLOCK_COMMON, FLOCK_DRAW_SRC]),
-            build(DEPTH_LIGHTS_DRAW, &[NOISE, CLOUD_COMMON, DEPTH_SRC]),
+            build(DEPTH_LIGHTS_LIGHT, &[NOISE, CLOUD_COMMON, DEPTH_SRC]),
+            build(SPRITE_DRAW, &[CLOUD_COMMON, SPRITE_SRC]),
         ]
     })
 }
@@ -79,11 +79,11 @@ mod tests {
     fn entry_points_the_builders_use_exist() {
         let wants: &[(&str, &[&str])] = &[
             (STRANDS_SIM, &["cs_main"]),
-            (STRANDS_DRAW, &["vs_streak", "fs_streak"]),
-            (CLOUD_PULSE_DRAW, &["vs_point", "fs_point"]),
+            (STRANDS_DRAW, &["vs_trail", "fs_trail"]),
+            (CLOUD_PULSE_LIGHT, &["cs_pulse"]),
             (FLOCK_SIM, &["cs_flock"]),
-            (FLOCK_DRAW, &["vs_flock", "fs_point"]),
-            (DEPTH_LIGHTS_DRAW, &["vs_depth", "fs_point"]),
+            (DEPTH_LIGHTS_LIGHT, &["cs_depth"]),
+            (SPRITE_DRAW, &["vs_sprite", "fs_point"]),
             (HDR_POST, &["vs_full", "fs_feedback", "fs_down_first", "fs_down", "fs_up", "fs_composite"]),
         ];
         for (id, entries) in wants {

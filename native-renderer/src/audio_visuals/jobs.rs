@@ -16,10 +16,10 @@ use super::ply_reader::{CLOUD_POINT_BYTES, CloudLoad};
 use super::cloud_pulse::cloud_view_uniform;
 use super::depth_lights::{DepthSlices, normalize_depth_light_params};
 use super::flock::{FLOCK_POINT_BYTES, FlockState, normalize_flock_params};
-use super::shaders::{DEPTH_LIGHTS_DRAW, FLOCK_DRAW, FLOCK_SIM};
+use super::shaders::{CLOUD_PULSE_LIGHT, DEPTH_LIGHTS_LIGHT, FLOCK_SIM, SPRITE_DRAW};
 use super::hdr_post::{accumulation_size, buffer_binding, plan_hdr_post, render_plan, uniform_spec};
-use super::shaders::{CLOUD_PULSE_DRAW, STRANDS_DRAW, STRANDS_SIM, core_shader};
-use super::strands::{STRANDS_PARTICLE_BYTES, ShapeQueue, normalize_strands_params, strands_uniform};
+use super::shaders::{STRANDS_DRAW, STRANDS_SIM, core_shader};
+use super::strands::{STRANDS_PARTICLE_BYTES, STRANDS_TRAIL_SEGMENTS, ShapeQueue, normalize_strands_params, strands_uniform};
 
 #[derive(Clone, Debug, Default)]
 pub struct StrandsState {
@@ -31,6 +31,9 @@ pub struct StrandsState {
     pub frame: u64,
     pub prev_frame_time: f32,
 }
+
+/// One prepared sprite: clip position and colour + size (`Sprite`).
+const SPRITE_BYTES: u64 = 32;
 
 /// The three instruments drawn from a point cloud file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -190,15 +193,15 @@ impl App {
         let mut render_plans = Vec::with_capacity(post.finish.len() + 2);
         render_plans.push(post.feedback);
         render_plans.push(render_plan(
-            format!("{prefix}:streaks"),
+            format!("{prefix}:trails"),
             draw,
-            "vs_streak",
-            "fs_streak",
+            "vs_trail",
+            "fs_trail",
             NativeComputeGraphRenderTarget::GraphTexture { id: post.scene_id.clone() },
             false,
             NativeComputeGraphRenderBlend::Add,
             6,
-            params.particle_count,
+            params.particle_count * STRANDS_TRAIL_SEGMENTS,
             vec![
                 buffer_binding(0, &particle_id, NativeComputeBufferBindingKind::StorageRead),
                 buffer_binding(1, &uniform_id, NativeComputeBufferBindingKind::Uniform),
@@ -223,6 +226,11 @@ impl App {
         instrument: CloudInstrument,
     ) -> Result<(NativeGraphLayerState, NativeGraphFrameJob), String> {
         let mut params = normalize_cloud_pulse_params(&graph_layer.params);
+        // The flock and the lights show the scan itself more than Cloud Pulse
+        // does: the formed flock must read as the subject.
+        if instrument != CloudInstrument::Pulse && graph_layer.params.get("baseGlow").is_none() {
+            params.base_glow = if instrument == CloudInstrument::Flock { 0.012 } else { 0.004 };
+        }
         if params.path.is_empty() {
             return Err(format!("{} needs a point cloud file", instrument.prefix()));
         }
@@ -278,21 +286,24 @@ impl App {
         let (width, height) = accumulation_size(self.pending_width, self.pending_height, params.accum_scale);
         let drawn = point_count;
         let flock_id = format!("{prefix}:flock:{point_count}");
-        let mut pass_plans = Vec::new();
+        let sprite_id = format!("{prefix}:sprites:{point_count}");
         let mut extra_buffers = Vec::new();
-        let (uniform, draw, vertex_entry, third_binding) = match instrument {
+        // Each instrument's compute pass works out every point once a frame
+        // (position, colour, size) into the sprite buffer; the draw only
+        // places quads.
+        let (uniform, light_shader, light_entry) = match instrument {
             CloudInstrument::Pulse => {
                 state.waves.ingest(&self.audio_visual, time, params.band_mask);
                 state.waves.step(&params, time);
                 let u = cloud_uniform(&params, &state.waves, &self.audio_visual, width, height, drawn, time);
-                (u, core_shader(CLOUD_PULSE_DRAW), "vs_point", None)
+                (u, core_shader(CLOUD_PULSE_LIGHT), "cs_pulse")
             }
             CloudInstrument::Flock => {
                 let flock_params = normalize_flock_params(&graph_layer.params);
                 state.flock.ingest(&self.audio_visual, time, &flock_params);
                 state.flock.step(time, &flock_params);
                 let block = state.flock.block(&self.audio_visual, time, dt, &flock_params);
-                // The draw shader reads "displacement" as the speed that reads hot.
+                // The shader reads "displacement" as the speed that reads hot.
                 params.displacement = flock_params.heat;
                 let u = cloud_view_uniform(&params, &self.audio_visual, width, height, drawn, time, 0.0, &block);
                 let flock_missing = self
@@ -309,22 +320,7 @@ impl App {
                     clear: home_missing || flock_missing,
                     indirect: false,
                 });
-                let sim = core_shader(FLOCK_SIM);
-                let bindings = vec![
-                    buffer_binding(0, &home_id, NativeComputeBufferBindingKind::StorageRead),
-                    buffer_binding(1, &uniform_id, NativeComputeBufferBindingKind::Uniform),
-                    buffer_binding(2, &flock_id, NativeComputeBufferBindingKind::StorageReadWrite),
-                ];
-                let layout = crate::native_graph_binding_layout_signature(&bindings);
-                pass_plans.push(NativeComputeGraphPassPlan {
-                    name: format!("{prefix}:flock"),
-                    cache_key: format!("graph:{}:{}:cs_flock:{layout}", sim.id, sim.hash),
-                    source: sim.source.clone(),
-                    entry: "cs_flock".to_string(),
-                    dispatch: [point_count.div_ceil(64).max(1), 1, 1],
-                    bindings,
-                });
-                (u, core_shader(FLOCK_DRAW), "vs_flock", Some(flock_id.clone()))
+                (u, core_shader(FLOCK_SIM), "cs_flock")
             }
             CloudInstrument::DepthLights => {
                 let depth_params = normalize_depth_light_params(&graph_layer.params);
@@ -336,11 +332,9 @@ impl App {
                 let reach = 0.6 * params.scale;
                 let block = state.slices.block(params.distance - reach, params.distance + reach, &depth_params);
                 let u = cloud_view_uniform(&params, &self.audio_visual, width, height, drawn, time, 0.0, &block);
-                (u, core_shader(DEPTH_LIGHTS_DRAW), "vs_depth", None)
+                (u, core_shader(DEPTH_LIGHTS_LIGHT), "cs_depth")
             }
         };
-        let audio = self.audio_visual_buffer(&prefix);
-        let audio_id = audio.id.clone();
         let mut buffers = vec![
             NativeComputeGraphBufferSpec {
                 id: home_id.clone(),
@@ -352,9 +346,34 @@ impl App {
                 indirect: false,
             },
             uniform_spec(uniform_id.clone(), &uniform),
-            audio,
+            NativeComputeGraphBufferSpec {
+                id: sprite_id.clone(),
+                byte_length: u64::from(point_count) * SPRITE_BYTES,
+                kind: NativeComputeBufferBindingKind::StorageReadWrite,
+                initial_bytes: Vec::new(),
+                persistent: true,
+                clear: false,
+                indirect: false,
+            },
         ];
         buffers.extend(extra_buffers);
+        let mut light_bindings = vec![
+            buffer_binding(0, &home_id, NativeComputeBufferBindingKind::StorageRead),
+            buffer_binding(1, &uniform_id, NativeComputeBufferBindingKind::Uniform),
+        ];
+        if instrument == CloudInstrument::Flock {
+            light_bindings.push(buffer_binding(2, &flock_id, NativeComputeBufferBindingKind::StorageReadWrite));
+        }
+        light_bindings.push(buffer_binding(3, &sprite_id, NativeComputeBufferBindingKind::StorageReadWrite));
+        let layout = crate::native_graph_binding_layout_signature(&light_bindings);
+        let pass_plans = vec![NativeComputeGraphPassPlan {
+            name: format!("{prefix}:{light_entry}"),
+            cache_key: format!("graph:{}:{}:{light_entry}:{layout}", light_shader.id, light_shader.hash),
+            source: light_shader.source.clone(),
+            entry: light_entry.to_string(),
+            dispatch: [point_count.div_ceil(64).max(1), 1, 1],
+            bindings: light_bindings,
+        }];
         let output = self.audio_visual_output(&graph_layer.source_id)?;
         let post = plan_hdr_post(&prefix, width, height, state.frame % 2 == 1, &params.post, post_dt, time, state.frame, output);
         buffers.extend(post.buffers);
@@ -362,8 +381,8 @@ impl App {
         render_plans.push(post.feedback);
         render_plans.push(render_plan(
             format!("{prefix}:points"),
-            draw,
-            vertex_entry,
+            core_shader(SPRITE_DRAW),
+            "vs_sprite",
             "fs_point",
             NativeComputeGraphRenderTarget::GraphTexture { id: post.scene_id.clone() },
             false,
@@ -371,12 +390,8 @@ impl App {
             6,
             drawn,
             vec![
-                buffer_binding(0, &home_id, NativeComputeBufferBindingKind::StorageRead),
+                buffer_binding(0, &sprite_id, NativeComputeBufferBindingKind::StorageRead),
                 buffer_binding(1, &uniform_id, NativeComputeBufferBindingKind::Uniform),
-                match third_binding.as_deref() {
-                    Some(flock) => buffer_binding(2, flock, NativeComputeBufferBindingKind::StorageRead),
-                    None => buffer_binding(2, &audio_id, NativeComputeBufferBindingKind::StorageRead),
-                },
             ],
         ));
         render_plans.extend(post.finish);

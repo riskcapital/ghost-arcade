@@ -6,6 +6,7 @@
 // C.forward.w is the share of points that are lights.
 @group(0) @binding(0) var<storage, read> points: array<vec4<f32>>;
 @group(0) @binding(1) var<uniform> C: CloudU;
+@group(0) @binding(3) var<storage, read_write> sprites: array<Sprite>;
 
 fn slice_level(k: u32) -> f32 {
   let v = C.data[k / 4u];
@@ -16,21 +17,23 @@ fn slice_level(k: u32) -> f32 {
   return v.w;
 }
 
-@vertex
-fn vs_depth(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> PointOut {
-  var out: PointOut;
-  out.position = vec4<f32>(2.0, 2.0, 0.0, 1.0);
-  out.color = vec3<f32>(0.0);
-  out.quad = vec2<f32>(0.0);
+@compute @workgroup_size(64)
+fn cs_depth(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let ii = gid.x;
+  if (ii >= u32(C.res.w)) {
+    return;
+  }
   let point = points[ii];
   let rgba = unpack_point_color(point.w);
   if (rgba.a <= 0.02) {
-    return out;
+    sprites[ii] = no_sprite();
+    return;
   }
   let world = (C.model * vec4<f32>(point.xyz, 1.0)).xyz;
   let clip = C.view_proj * vec4<f32>(world, 1.0);
   if (clip.w <= 0.01) {
-    return out;
+    sprites[ii] = no_sprite();
+    return;
   }
   let info = C.data[8];
   let slices = max(info.z, 1.0);
@@ -45,13 +48,9 @@ fn vs_depth(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) ->
   let on = select(0.0, smoothstep(threshold - 0.03, threshold + 0.03, level), is_light);
   // Slice colour runs between the two tones front to back.
   let tone = mix(C.mid.rgb * C.mid.w, C.high.rgb * C.high.w, s / slices);
-  let corner = SPRITE_CORNERS[vi];
-  let size_px = C.cam.w * clamp(1.6 / clip.w, 0.55, 2.2) * (1.0 + on * info.w);
-  let px = vec2<f32>(2.0 / C.res.x, 2.0 / C.res.y) * size_px;
-  out.position = vec4<f32>(clip.xy + corner * px * clip.w, clip.z, clip.w);
-  out.quad = corner;
   let scan = mix(C.base.rgb, rgba.rgb * C.base.rgb * 2.0, C.base.w) * C.look.x;
-  let depth_fade = clamp(2.2 / clip.w, 0.25, 1.0);
-  out.color = (scan + tone * on * C.look.y) * C.look.z * rgba.a * depth_fade;
-  return out;
+  // A lit point is a small, hot pinpoint; an unlit one a dim speck.
+  let size = select(sprite_size(clip.w, 1.0), C.cam.w * info.w, on > 0.01);
+  let color = (scan + tone * on * C.look.y) * C.look.z * rgba.a * depth_fade(clip.w);
+  sprites[ii] = Sprite(clip, vec4<f32>(color, size));
 }

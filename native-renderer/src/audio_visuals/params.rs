@@ -43,7 +43,7 @@ pub struct Palette3 {
 pub const STRANDS_PALETTES: &[(&str, Palette3)] = &[
     (
         "ice-and-oxblood",
-        Palette3 { core: [0.80, 0.95, 1.0, 5.0], mid: [0.10, 0.55, 1.0, 1.6], fringe: [0.45, 0.0, 0.006, 1.2] },
+        Palette3 { core: [0.80, 0.95, 1.0, 5.0], mid: [0.10, 0.55, 1.0, 1.6], fringe: [0.45, 0.045, 0.035, 0.75] },
     ),
     (
         "molten-brass",

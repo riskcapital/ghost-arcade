@@ -24,9 +24,40 @@ struct StrandsU {
   shapes: array<StrandShape, 8>,
 }
 
+const TRAIL_POINTS: u32 = 8u;
+/// Frames between trail samples.
+const TRAIL_STEP: u32 = 2u;
+
 struct Particle {
   p: vec4<f32>, // pos xy, vel xy
   q: vec4<f32>, // age, life, heat, shape
   r: vec4<f32>, // spectral, side, birth level, 0
+  col: vec4<f32>, // this frame's colour (rgb), w = 1 while alive
+  // Where the particle was, one sample every TRAIL_STEP frames; the newest
+  // is at (frame / TRAIL_STEP) % TRAIL_POINTS.
+  trail: array<vec2<f32>, 8>,
+}
+
+fn trail_head(frame: u32) -> u32 {
+  return (frame / TRAIL_STEP) % TRAIL_POINTS;
+}
+
+fn palette(t: f32) -> vec3<f32> {
+  // Mostly fringe; the mid tone is a thin band on the way to the core.
+  let s1 = smoothstep(0.55, 0.85, t);
+  let s2 = smoothstep(1.0, 1.5, t);
+  var col = mix(U.fringe.rgb * U.fringe.w, U.mid.rgb * U.mid.w, s1);
+  col = mix(col, U.core.rgb * U.core.w, s2);
+  return col * smoothstep(0.0, 0.12, t);
+}
+
+fn particle_color(pt: Particle) -> vec4<f32> {
+  if (pt.q.x >= pt.q.y || pt.q.y <= 0.0) {
+    return vec4<f32>(0.0);
+  }
+  let t = pt.q.x / pt.q.y;
+  let fade = smoothstep(0.0, 0.06, t) * pow(1.0 - t, 1.6);
+  let heat = pt.q.z * exp(-pt.q.x * U.fibre.z);
+  return vec4<f32>(palette(heat) * fade * U.look.z, 1.0);
 }
 

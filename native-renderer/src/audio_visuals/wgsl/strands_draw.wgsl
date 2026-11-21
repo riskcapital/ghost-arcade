@@ -1,64 +1,62 @@
 @group(0) @binding(0) var<storage, read> particles: array<Particle>;
 @group(0) @binding(1) var<uniform> U: StrandsU;
 
-struct StreakOut {
+// One instance per trail segment: particle = instance / TRAIL_POINTS,
+// segment k counts back from the particle's head. The colour was worked
+// out once per particle by the simulation, so a vertex only places a quad.
+
+struct TrailOut {
   @builtin(position) position: vec4<f32>,
   @location(0) color: vec3<f32>,
   @location(1) across: f32,
 }
 
-fn palette(t: f32) -> vec3<f32> {
-  // Mostly fringe; the mid tone is a thin band on the way to the core.
-  let s1 = smoothstep(0.55, 0.85, t);
-  let s2 = smoothstep(1.0, 1.5, t);
-  var col = mix(U.fringe.rgb * U.fringe.w, U.mid.rgb * U.mid.w, s1);
-  col = mix(col, U.core.rgb * U.core.w, s2);
-  return col * smoothstep(0.0, 0.12, t);
-}
-
 @vertex
-fn vs_streak(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> StreakOut {
-  var out: StreakOut;
-  let pt = particles[ii];
+fn vs_trail(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> TrailOut {
+  var out: TrailOut;
   out.position = vec4<f32>(2.0, 2.0, 0.0, 1.0);
   out.color = vec3<f32>(0.0);
   out.across = 0.0;
-  if (pt.q.x >= pt.q.y || pt.q.y <= 0.0) {
+  let index = ii / TRAIL_POINTS;
+  let k = ii % TRAIL_POINTS;
+  // Field by field, never the whole 128-byte particle: this runs six times
+  // per segment, and copying the struct made the draw bandwidth-bound.
+  let col = particles[index].col;
+  if (col.w <= 0.0) {
     return out;
   }
-  let aspect = U.res.z;
-  let t = pt.q.x / pt.q.y;
-  let head = pt.p.xy;
-  var trail = pt.p.zw * U.look.x;
-  let trail_len = length(trail);
-  if (trail_len > 0.03) {
-    trail *= 0.03 / trail_len;
+  let head = trail_head(u32(U.clock.z));
+  var a = particles[index].p.xy;
+  if (k > 0u) {
+    a = particles[index].trail[(head + TRAIL_POINTS - (k - 1u)) % TRAIL_POINTS];
   }
-  let tail = head - trail;
-  let to_ndc = vec2<f32>(1.0 / aspect, 1.0);
-  let h = head * to_ndc;
-  let tl = tail * to_ndc;
-  var dir = h - tl;
+  let b = particles[index].trail[(head + TRAIL_POINTS - k) % TRAIL_POINTS];
+  let to_ndc = vec2<f32>(1.0 / U.res.z, 1.0);
+  let pa = a * to_ndc;
+  let pb = b * to_ndc;
   let px = vec2<f32>(2.0 / U.res.x, 2.0 / U.res.y);
-  if (length(dir / px) < 0.5) {
-    dir = vec2<f32>(0.0, px.y * 0.5);
+  var dir = (pa - pb) / px;
+  let len = length(dir);
+  if (len < 0.35 && k > 0u) {
+    return out;
   }
-  let n = normalize(vec2<f32>(-dir.y, dir.x) / px) * px * U.look.y;
-  // Two triangles: corners 0..3 = (tail,-), (tail,+), (head,-), (head,+).
+  if (len < 0.35) {
+    dir = vec2<f32>(0.0, 1.0);
+  }
+  let n = normalize(vec2<f32>(-dir.y, dir.x)) * px * U.look.y;
   let corner = array<u32, 6>(0u, 1u, 2u, 2u, 1u, 3u)[vi];
   let along = f32(corner / 2u);
   let side = f32(corner % 2u) * 2.0 - 1.0;
-  let base = mix(tl, h, along);
-  out.position = vec4<f32>(base + n * side, 0.0, 1.0);
+  out.position = vec4<f32>(mix(pb, pa, along) + n * side, 0.0, 1.0);
   out.across = side;
-  let fade = smoothstep(0.0, 0.06, t) * pow(1.0 - t, 1.6);
-  let heat = pt.q.z * exp(-pt.q.x * U.fibre.z);
-  out.color = palette(heat) * fade * U.look.z * mix(0.35, 1.0, along);
+  // The trail fades toward its tail.
+  let tail = (f32(k) + 1.0 - along) / f32(TRAIL_POINTS);
+  out.color = col.rgb * pow(1.0 - tail, 1.3);
   return out;
 }
 
 @fragment
-fn fs_streak(in: StreakOut) -> @location(0) vec4<f32> {
+fn fs_trail(in: TrailOut) -> @location(0) vec4<f32> {
   let a = exp(-in.across * in.across * 2.8);
   return vec4<f32>(in.color * a, 0.0);
 }
