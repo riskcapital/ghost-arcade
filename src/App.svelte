@@ -7871,20 +7871,22 @@
           </svg>
           <span class="tb-label">Map Sim</span>
         </button>
+        {#if interactiveOn}
         <button
           class="output-btn sim-launch-btn interactive-studio-btn"
           class:active={showInteractiveStudio}
-          onclick={() => {if(interactiveOn)openInteractiveStudio();else{studioPage='calibration';showInteractiveStudio=true;}}}
-          title={interactiveOn?'Interactive Studio and phone calibration':'Phone calibration'}
-          aria-label={interactiveOn?'Interactive Studio':'Phone calibration'}
+          onclick={() => openInteractiveStudio()}
+          title="Interactive Studio and phone calibration"
+          aria-label="Interactive Studio"
         >
           <svg class="sim-launch-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <rect x="3" y="3" width="18" height="18" rx="3" />
             <circle cx="9" cy="9" r="2" />
             <path d="m6 18 5-5 3 3 4-6" />
           </svg>
-          <span class="tb-label">{interactiveOn?'Interactive':'Calibration'}</span>
+          <span class="tb-label">Interactive</span>
         </button>
+        {/if}
       </div>
 
 
