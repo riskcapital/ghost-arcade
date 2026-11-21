@@ -9,6 +9,7 @@
  import {acquireNativeFeed} from '../../mobile/studio/nativeLive';
  import {openLidarAutoMapCamera} from '../../mobile/studio/lidarScan';
  import {autoMapSurfaces} from '../../mobile/studio/autoMapSurfaces';
+ import {buildDiagnostics,diagnosticsSummary,type AutoMapDiagnostics} from '../../mobile/studio/autoMapDiagnostics';
  import {holdMappingRotation} from '../../mobile/studio/captureToolkit';
  import {buildCurvedSurface,sampleScan,type CurvedScan,type CurvedSurface,type MeshMode} from '../../mobile/studio/meshMap';
  import {buildDepthCapture,desktopFit,gravityInScan,DEPTH_CAPTURE_FILE,type DepthCapture,type CaptureReport} from '../../mobile/studio/depthCapture';
@@ -17,6 +18,34 @@
  import {shareFile} from '../../mobile/studio/nativeShare';
  export let onclose:()=>void;
  export let onsend:((json:string)=>void)|undefined=undefined;
+ /** Each auto-map run's diagnostics (photos, decode, faces, timings) and its overlay picture, for the desktop to keep. */
+ export let ondiagnostics:((bundle:AutoMapDiagnostics,files:Record<string,string>)=>void)|undefined=undefined;
+ let lastDiagnostics:{bundle:AutoMapDiagnostics;files:Record<string,string>}|null=null;
+ const RANK_COLOURS=['#4da3ff','#ff7a45','#36cfc9','#ffc53d','#9254de','#73d13d','#f759ab','#ffa940'];
+ /** The scan photo with every found surface outlined, coloured by rank and labelled with its fit. */
+ async function overlayPicture(image:string,items:{outline:UV[];label:string;minor:boolean}[]):Promise<string>{
+  const img=new Image();img.src=image;await img.decode();
+  const c=document.createElement('canvas');c.width=img.naturalWidth;c.height=img.naturalHeight;const g=c.getContext('2d')!;g.drawImage(img,0,0);
+  const px=Math.max(2,c.width/400);g.lineWidth=px;g.font=`${Math.round(px*7)}px -apple-system,sans-serif`;
+  items.forEach((it,i)=>{const col=RANK_COLOURS[i%RANK_COLOURS.length];g.strokeStyle=col;g.setLineDash(it.minor?[px*3,px*3]:[]);g.beginPath();it.outline.forEach((p,k)=>k?g.lineTo(p.x*c.width,p.y*c.height):g.moveTo(p.x*c.width,p.y*c.height));g.closePath();g.stroke();
+   const cx=it.outline.reduce((t,p)=>t+p.x,0)/it.outline.length*c.width,cy=it.outline.reduce((t,p)=>t+p.y,0)/it.outline.length*c.height;g.fillStyle='#000a';const w=g.measureText(it.label).width;g.fillRect(cx-w/2-px,cy-px*6,w+px*2,px*8);g.fillStyle=col;g.fillText(it.label,cx-w/2,cy);});
+  return c.toDataURL('image/jpeg',0.85);
+ }
+ async function keepDiagnostics(result:AutoMapResult,found:ReturnType<typeof autoMapSurfaces>,solveMs:number){
+  try{
+   const projector=result.projectors[0];if(!projector)return;
+   const bundle=await buildDiagnostics({projector,depth:result.depth,found:found.filter(f=>f.scan===0),turn:Number(autoCamera?.turn??0),gravity:result.depth?.pose?gravityInScan(result.depth.pose,result.depth.turn??0):null,device:navigator.userAgent.includes('iPad')?'iPad':'iPhone',solveMs});
+   const files:Record<string,string>={'photo.jpg':result.reference.image};
+   files['overlay.jpg']=await overlayPicture(result.reference.image,found.map((f,i)=>({outline:f.outline,minor:f.minor,label:`${i+1}${f.curved?' mesh':''} ${(f.edgePx??f.rmsPx).toFixed(1)}px`})));
+   lastDiagnostics={bundle,files};
+   ondiagnostics?.(bundle,files);
+  }catch{/* diagnostics never stop a scan */}
+ }
+ async function saveDiagnostics(e:MouseEvent){
+  if(!lastDiagnostics)return;
+  try{await shareFile(`automap-${lastDiagnostics.bundle.createdAt.replace(/[:.]/g,'-')}.json`,new Blob([JSON.stringify({...lastDiagnostics.bundle,files:lastDiagnostics.files})],{type:'application/json'}),'application/json',e.currentTarget as HTMLElement);}
+  catch(err){message=err instanceof Error?err.message:'The diagnostics could not be saved.';}
+ }
  function sendDesktop(){try{const live=mapped.filter(m=>!skipped.has(m.surfaceId)&&surfaces.some(s=>s.id===m.surfaceId));const c=draft();let base:Record<string,unknown>;try{base=exportCalibration(c);}catch(e){if(!live.length)throw e;base={...c};}onsend?.(JSON.stringify({...base,mappedSurfaces:live.map(({name,screenId,screenName,points,rmsPx,edgePx,curved})=>({name,screenId,screenName,points,rmsPx,...(edgePx!==undefined?{edgePx:Math.round(edgePx*100)/100}:{}),...(curved?meshPayload(curved.surface):{})}))}));message=live.length?`Sent ${live.length} mapped surface${live.length===1?'':'s'}. On the desktop, choose Create layers.`:"Sent for desktop review; output geometry is not changed until applied there.";}catch(e){message=(e as Error).message;}}
  export let lidar=false;
  /** Runs the stripe capture against a paired desktop. Only set when paired. */
@@ -185,7 +214,7 @@
   if(!best)throw new Error(why||'This surface could not be mapped.');return best;}
  let framing=false,preview:HTMLVideoElement,previewCanvas:HTMLCanvasElement,autoCamera:(AutoMapCamera&{stop():void})|undefined;
  // With LiDAR the scan runs on the depth camera, so curved forms get a mesh; otherwise the plain camera.
- async function openAuto(){framing=true;message='Starting the camera…';
+ async function openAuto(){clearTimeout(verifyTimer);if(autoCamera)closeAuto();framing=true;message='Starting the camera…';
   if(FIXTURE&&depth){await tick();autoCamera={grab:()=>Promise.reject(new Error('Fixture')),stop(){}};message='';return;}
   // The motion permission must be asked straight from the tap, before anything else waits.
   const held=lidar?null:await uprightTurn();await tick();try{autoCamera=lidar?await openLidarAutoMapCamera(previewCanvas):await openAutoMapCamera(preview,held?.turn??0);stopRemote=remote?.(autoCamera);message='';}catch(e){framing=false;message=e instanceof Error?e.message:'The camera could not start.';}}
@@ -207,18 +236,26 @@
    // Find the flat surfaces in the scan (nobody has to tap corners); with depth, curved forms get a mesh,
    // and a flat fit drawn across one gives way to it. The stripes decide the flat faces either way.
    if(result.depth){message='Finding curved surfaces…';fraction=1;await tick();await new Promise(r=>setTimeout(r,30));}
+   const solveStarted=Date.now();
    const found=autoMapSurfaces(scan.map(p=>({id:p.id,width:p.width,height:p.height,plan:p.plan,decoded:p.decoded,white:p.white})),result.depth,'wrap');
+   void keepDiagnostics(result,found,Date.now()-solveStarted);
    (found.curvedScans??[]).forEach((c,index)=>{curvedScans[index]={...c,projector:scan[index]};});
    const curved=found.filter(f=>f.curved);
+   // Ranked: the real faces first; slivers, scraps and small blobs listed after them and off until turned on.
    for(const item of found){const projector=scan[item.scan];const surface={id:crypto.randomUUID(),name:`Surface ${surfaces.length+1}`,points:item.outline};
-    surfaces=[...surfaces,surface];mapped=[...mapped,{surfaceId:surface.id,name:surface.name,screenId:projector.id,screenName:projector.name,points:item.points,rmsPx:item.rmsPx,...(item.edgePx!==undefined?{edgePx:item.edgePx}:{}),...(item.curved?{curved:{scan:item.scan,region:item.curved.region,surface:item.curved.surface}}:{})}];}
+    surfaces=[...surfaces,surface];mapped=[...mapped,{surfaceId:surface.id,name:surface.name,screenId:projector.id,screenName:projector.name,points:item.points,rmsPx:item.rmsPx,...(item.edgePx!==undefined?{edgePx:item.edgePx}:{}),...(item.curved?{curved:{scan:item.scan,region:item.curved.region,surface:item.curved.surface}}:{})}];if(item.minor)skipped.add(surface.id);}
    skipped=skipped;
    const meshes=curved.length;
    if(depth){if(!depthStopped)await finishDepth(result);return;}
    message=surfaces.length?(result.depthError?`Depth was not measured (${result.depthError}) Curved forms were not meshed.`:''):(meshes||result.depth?'Nothing the projector lights could be mapped. Dim the room and try again, or trace a surface by hand.':'No flat surface was found in the scan. Dim the room and try again, or trace a surface by hand.');
   }catch(e){message=e instanceof Error?e.message:'Auto map failed.';if(depth){depthFailed=depthStopped?depthFailed:message;message='';if(asked&&!depthStopped){report('error',undefined,depthFailed);ondepthdone();asked=false;}}}
-  finally{busy=false;closeAuto();}
+  finally{busy=false;
+   // After a scan the camera stays on for a few minutes while the results show, so the desktop can
+   // photograph its verification pattern from the same pose (Calibration → Verify with the phone).
+   if(!depth&&surfaces.length&&autoCamera){framing=false;clearTimeout(verifyTimer);verifyTimer=setTimeout(closeAuto,5*60_000);}else closeAuto();}
  }
+ let verifyTimer:ReturnType<typeof setTimeout>|undefined;
+ onDestroy(()=>clearTimeout(verifyTimer));
  onDestroy(closeAuto);
  let name='Stage calibration',reference:Reference|undefined,mode:'corners'|'surface'='corners',points:UV[]=[],surfaces:Calibration['surfaces']=[],projectors:Calibration['projectors']=[];
  let projectorName='Projector 1',width=1080,height=1920,message='',busy=false,saved:Calibration[]=[],photo:HTMLDivElement;
@@ -313,7 +350,7 @@
     <button role="radio" aria-checked={m.curved?.surface.mode==='camera'} class:on={m.curved?.surface.mode==='camera'} onclick={()=>setMode(m,'camera')}>Match camera view</button>
    </div>
   {/each}
-  <div class="am-actions">{#if onsend}<button class="primary" onclick={sendDesktop} disabled={!sending}>Send {sending} to desktop</button>{/if}<button class="quiet" onclick={openAuto}>Scan again</button></div>
+  <div class="am-actions">{#if onsend}<button class="primary" onclick={sendDesktop} disabled={!sending}>Send {sending} to desktop</button>{/if}<button class="quiet" onclick={openAuto}>Scan again</button>{#if lastDiagnostics}<button class="quiet" onclick={saveDiagnostics}>Save diagnostics</button>{/if}</div>
   <button class="am-painting" onclick={startPainting}><b>Painting on this wall?</b><span>Outline it and send its photo, already lined up and cropped.</span></button>
  {:else}
   <div class="am-hero">

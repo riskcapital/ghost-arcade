@@ -66,6 +66,17 @@ export function turnIntrinsics(k: Intrinsics, turn: Turn): Intrinsics {
   return { ...k };
 }
 
+/**
+ * The clockwise turn that makes a LiDAR camera frame upright, from its pose
+ * (4x4 column-major camera-to-world, ARKit: camera x right and y up in the
+ * sensor's own landscape image, world y up). World up seen in the image
+ * (x right, y down) decides it; the native side uses the same rule.
+ */
+export function turnFromPose(pose: ArrayLike<number>): Turn {
+  const upX = pose[1], upY = -pose[5];
+  return (Math.abs(upX) > Math.abs(upY) ? (upX < 0 ? 90 : 270) : upY > 0 ? 180 : 0) as Turn;
+}
+
 /** How far the camera moved between two poses (4x4, column-major). */
 export function poseChange(a: ArrayLike<number>, b: ArrayLike<number>): { metres: number; degrees: number } {
   const metres = Math.hypot(a[12] - b[12], a[13] - b[13], a[14] - b[14]);
@@ -118,7 +129,10 @@ export async function openLidarAutoMapCamera(preview?: HTMLCanvasElement): Promi
     lease.release();
     throw error;
   }
-  const turn = ([0, 90, 180, 270].includes(info.turn) ? info.turn : 0) as Turn;
+  // Which way is up follows the phone until the scan starts (the preview turns with it, whatever the
+  // screen does), then holds: every photo and the depth of one scan share one turn.
+  let turn = ([0, 90, 180, 270].includes(info.turn) ? info.turn : 0) as Turn;
+  let turnHeld = false;
   let firstPose: Float32Array | null = null;
   const checkStill = (pose: Float32Array) => {
     if (!firstPose) { firstPose = pose; return; }
@@ -132,6 +146,7 @@ export async function openLidarAutoMapCamera(preview?: HTMLCanvasElement): Promi
     while (previewing && !stopped) {
       try {
         const frame = parsePatternLuma(await fetchBinary('ghostcapture://pattern/luma?frames=1&width=480', 3000));
+        if (!turnHeld) turn = turnFromPose(frame.pose);
         const upright = turnRaster(frame.luma, frame.width, frame.height, turn);
         const canvas = preview!;
         if (canvas.width !== upright.width || canvas.height !== upright.height) { canvas.width = upright.width; canvas.height = upright.height; }
@@ -148,10 +163,11 @@ export async function openLidarAutoMapCamera(preview?: HTMLCanvasElement): Promi
   void drawPreview();
 
   return {
-    turn,
+    get turn() { return turn; },
     async grab(): Promise<Capture> {
       previewing = false;
       const frame = parsePatternLuma(await fetchBinary('ghostcapture://pattern/luma?frames=3&width=1280', 6000));
+      if (!turnHeld) { turn = turnFromPose(frame.pose); turnHeld = true; }
       checkStill(frame.pose);
       const upright = turnRaster(frame.luma, frame.width, frame.height, turn);
       return { width: upright.width, height: upright.height, luma: upright.data };

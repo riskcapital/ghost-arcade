@@ -33,6 +33,10 @@ export type AutoMapProjector = {
   plan: PatternPlan;    // kept so each outlined surface can be fitted on its own
   decoded: Decoded;
   white: Capture;       // the fully lit photo, for finding visible edges
+  /** Every stripe photo, in plan order: kept for the run's diagnostics (replayed offline). */
+  captures?: Capture[];
+  /** Milliseconds: photographing the stripes, decoding them. */
+  timings?: { captureMs: number; decodeMs: number };
 };
 export type AutoMapResult = {
   reference: { image: string; width: number; height: number };
@@ -68,6 +72,7 @@ export async function runAutoMap(
     for (const [index, screen] of screens.entries()) {
       const plan = planPatterns(screen.width, screen.height, STRIPE_CELL);
       const captures: Capture[] = [];
+      const startedAt = Date.now();
       for (const [step, frame] of plan.frames.entries()) {
         progress(`${screen.name}: pattern ${step + 1} of ${plan.frames.length}`, (index + (step + 1) / plan.frames.length) / screens.length);
         await link.request('show', { screenId: screen.id, frame: stripeFrameCode(frame as PatternFrame, STRIPE_CELL) });
@@ -86,7 +91,9 @@ export async function runAutoMap(
       for (let i = 0; i < brightest.length; i++) brightest[i] = Math.max(brightest[i], white.luma[i]);
       progress(`${screen.name}: finding surfaces`, (index + 1) / screens.length);
       await wait(0);
+      const capturedAt = Date.now();
       const decoded = decodeCaptures(plan, captures);
+      const timings = { captureMs: capturedAt - startedAt, decodeMs: Date.now() - capturedAt };
       let seen = 0;
       for (let i = 0; i < decoded.valid.length; i++) seen += decoded.valid[i];
       if (seen < 400) throw new Error(`${screen.name}: the stripes could not be read. Check the projector is in the photo, dim the room, and keep the phone still.`);
@@ -97,7 +104,7 @@ export async function runAutoMap(
         const fit = fitHomography(plan, decoded);
         if (fit.cornersInPhoto.every(p => p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1)) { corners = fit.cornersInPhoto; rmsPx = fit.rmsPx; }
       } catch { /* not one plane: expected for an object */ }
-      projectors.push({ id: screen.id, name: screen.name, width: screen.width, height: screen.height, ...(validRegion(screen.region) ? { region: screen.region } : {}), corners, rmsPx, coverage: decoded.coverage, plan, decoded, white });
+      projectors.push({ id: screen.id, name: screen.name, width: screen.width, height: screen.height, ...(validRegion(screen.region) ? { region: screen.region } : {}), corners, rmsPx, coverage: decoded.coverage, plan, decoded, white, captures, timings });
     }
     // Depth last, with the projector dark so its light cannot disturb the LiDAR.
     if (camera.depth) {

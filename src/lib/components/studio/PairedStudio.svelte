@@ -77,10 +77,19 @@
   return worldless.to;
  }
  const sendWorld=(message:Record<string,unknown>)=>{if(socket.readyState===WebSocket.OPEN)socket.send(JSON.stringify(message));};
- let page='interactive',status=nativeInteractive?'Native interactive controls ready · desktop renders the scene.':'Checking desktop render capabilities…',lidar=false,dual=false;
+ // Interactive is hidden on the desktop for this release; the phone hides its tab too (the code stays).
+ const INTERACTIVE_TAB=false;
+ let page=INTERACTIVE_TAB?'interactive':'calibration',status=nativeInteractive?'Native interactive controls ready · desktop renders the scene.':'Checking desktop render capabilities…',lidar=false,dual=false;
  let calibrationTimer:ReturnType<typeof setTimeout>|undefined,requestId='';
+ /** One auto-map run's diagnostics to the desktop, in chunks the socket takes (it keeps them in userData/diagnostics/automap). */
+ function sendDiagnostics(bundle:unknown,files:Record<string,string>){
+  if(socket.readyState!==WebSocket.OPEN)return;
+  const text=JSON.stringify({bundle,files}),size=3_500_000,count=Math.ceil(text.length/size),id=crypto.randomUUID();
+  if(count>64)return;
+  for(let index=0;index<count;index++)socket.send(JSON.stringify({type:'studio_automap_diagnostics',requestId:id,index,count,data:text.slice(index*size,(index+1)*size)}));
+ }
  function sendCalibration(json:string){if(new TextEncoder().encode(json).length>8_000_000)throw Error('Package is too large for live transfer. Export it using Files / AirDrop.');if(socket.readyState!==WebSocket.OPEN)throw Error('Desktop disconnected.');requestId=crypto.randomUUID();socket.send(JSON.stringify({type:'studio_calibration_offer',requestId,json}));status='Waiting for desktop to accept the calibration…';clearTimeout(calibrationTimer);calibrationTimer=setTimeout(()=>status='No desktop confirmation. Update desktop or export the package instead.',8000);}
- const receive=(e:MessageEvent)=>{try{const m=JSON.parse(String(e.data));if(m.type==='studio_capabilities'&&refreshing){refreshing=false;capabilities=readDesktopCapabilities(m);session.capabilities=capabilities;}else if(m.type==='studio_capabilities'){capabilities=readDesktopCapabilities(m);session.capabilities=capabilities;nativeInteractive=m.nativeInteractive===true;capabilitiesReady=true;session.native=nativeInteractive;clearInterval(capabilityTimer);clearTimeout(capabilityFallback);status=nativeInteractive?'Native interactive controls ready · desktop renders the scene.':'Video sending ready · choose a source below.';}if(m.type==='studio_calibration_status'&&m.requestId===requestId){clearTimeout(calibrationTimer);status=m.accepted?'Received · open Interactive Studio → Phone calibration on desktop to review.':String(m.error||'Calibration rejected.');}if(m.type==='studio_scene_status'){if(m.accepted===false)status=String(m.error||'The desktop could not use this scene.');if(m.world&&typeof m.world.on==='boolean')desktopWorldOn=m.world.on;}const request=readDepthScanRequest(m);if(request)depthAsked(request);
+ const receive=(e:MessageEvent)=>{try{const m=JSON.parse(String(e.data));if(m.type==='studio_capabilities'&&refreshing){refreshing=false;capabilities=readDesktopCapabilities(m);session.capabilities=capabilities;}else if(m.type==='studio_capabilities'){capabilities=readDesktopCapabilities(m);session.capabilities=capabilities;nativeInteractive=m.nativeInteractive===true;capabilitiesReady=true;session.native=nativeInteractive;clearInterval(capabilityTimer);clearTimeout(capabilityFallback);status=nativeInteractive?'Native interactive controls ready · desktop renders the scene.':'Video sending ready · choose a source below.';}if(m.type==='studio_calibration_status'&&m.requestId===requestId){clearTimeout(calibrationTimer);status=m.accepted?'Received · on the desktop, open Calibration to review and create the layers.':String(m.error||'Calibration rejected.');}if(m.type==='studio_scene_status'){if(m.accepted===false)status=String(m.error||'The desktop could not use this scene.');if(m.world&&typeof m.world.on==='boolean')desktopWorldOn=m.world.on;}const request=readDepthScanRequest(m);if(request)depthAsked(request);
    // The desktop cancelled the scan it asked for, or gave up waiting: stop it here too.
    if(m.type==='studio_depth_capture_status'&&(m.state==='declined'||m.state==='error')){
     if(askingDepth?.requestId===m.requestId)askingDepth=null;
@@ -106,7 +115,7 @@
 <div class="backdrop">
  <div class="paired-dialog" role="dialog" aria-modal="true" aria-label="Desktop Studio tools" tabindex="-1">
   {#if !socketOpen||(page==='interactive'&&!capabilitiesReady)}<header><strong>Desktop Studio</strong><button onclick={onclose}>Back to controls</button></header>{/if}
-  <nav aria-label="Desktop Studio tools">{#each [['interactive','Interactive'],['flux','Flux'],['feeds','Camera / depth'],['calibration','Calibration']] as [id,label]}<button class:active={page===id} aria-pressed={page===id} disabled={!socketOpen} onclick={()=>select(id)}>{label}</button>{/each}</nav>
+  <nav aria-label="Desktop Studio tools">{#each [...(INTERACTIVE_TAB?[['interactive','Interactive']]:[]),['flux','Flux'],['feeds','Camera / depth'],['calibration','Calibration']] as [id,label]}<button class:active={page===id} aria-pressed={page===id} disabled={!socketOpen} onclick={()=>select(id)}>{label}</button>{/each}</nav>
   <div class="paired-context">
    {#if askingDepth&&!calibrationBusy}
     <div class="depth-ask" role="alertdialog" aria-label="Room scan for Depth mode">
@@ -130,7 +139,7 @@
      <FluxPanel value={flux} onchange={fluxChanged}/>
     </section>
    {:else if page==='feeds'}<DesktopFeedWorkshop {lidar} {dual} onsend={send} {onclose}/>
-   {:else}<CalibrationWorkshop {lidar} {onclose} onsend={sendCalibration} automap={(camera,progress,options)=>runAutoMap(socketAutoMapLink(socket),camera,progress,options)} remote={camera=>serveRemoteCapture(socket,camera)}
+   {:else}<CalibrationWorkshop {lidar} {onclose} onsend={sendCalibration} ondiagnostics={sendDiagnostics} automap={(camera,progress,options)=>runAutoMap(socketAutoMapLink(socket),camera,progress,options)} remote={camera=>serveRemoteCapture(socket,camera)}
      depthCapture={capabilities?.depthCapture??null} output={capabilities?.output??null} depthRequest={scanRequest} openDepth={depthHere} bind:busyScanning={calibrationBusy}
      ondepthsend={sendDepth} {depthStop} ondepthprogress={(id,stage,pct,message)=>{if(scanRequest?.requestId===id)progress(id,stage,pct,message);}} ondepthdone={()=>{scanRequest=null;}}/>{/if}
   </div>

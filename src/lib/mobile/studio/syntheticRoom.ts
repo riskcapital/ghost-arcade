@@ -113,7 +113,17 @@ function mulberry32(seed: number) {
   return () => { t = (t + 0x6d2b79f5) >>> 0; let r = Math.imul(t ^ (t >>> 15), 1 | t); r ^= r + Math.imul(r ^ (r >>> 7), 61 | r); return ((r ^ (r >>> 14)) >>> 0) / 4294967296; };
 }
 
-export type RenderOptions = { supersample?: number; ambient?: number; exposure?: number; noise?: number; seed?: number; cell?: number };
+export type RenderOptions = {
+  supersample?: number; ambient?: number; exposure?: number; noise?: number; seed?: number; cell?: number;
+  /** Auto-exposure drift: each photo's gain varies by up to this share (0.1 = ±10%). */
+  gainJitter?: number;
+  /** Hand-held phone: each photo shifts by up to this many pixels, and smears by half of it. */
+  shake?: number;
+  /** Glare: this share of each photo's light spreads over `bloomRadius` pixels round it (lens and projector bloom). */
+  bloom?: number; bloomRadius?: number;
+  /** Glossy boxes: a specular lobe of this strength (exponent `shininess`) on box faces. */
+  specular?: number; shininess?: number;
+};
 
 /**
  * The stripe photos (one per frame of the plan, in order) and, per camera
@@ -126,7 +136,7 @@ export function renderScan(room: Room, options: RenderOptions = {}): { plan: Pat
   const cam = frameOf(cp), proj = frameOf(pp);
   const W = cl.width, H = cl.height, S = ss * ss;
   // Per subsample: albedo, irradiance from the projector (0 when shadowed or outside its picture), projector pixel.
-  const albedo = new Float32Array(W * H * S), light = new Float32Array(W * H * S), pu = new Float32Array(W * H * S), pv = new Float32Array(W * H * S);
+  const albedo = new Float32Array(W * H * S), light = new Float32Array(W * H * S), pu = new Float32Array(W * H * S), pv = new Float32Array(W * H * S), gloss = new Float32Array(W * H * S);
   const ids: string[] = [];
   const idOf = new Int16Array(W * H).fill(-1);
   for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) for (let sy = 0; sy < ss; sy++) for (let sx = 0; sx < ss; sx++) {
@@ -148,33 +158,63 @@ export function renderScan(room: Room, options: RenderOptions = {}): { plan: Pat
     if (!(q[2] > 0) || u < 0 || v < 0 || u >= pl.width || v >= pl.height) continue;
     light[k] = cos / (dist * dist) * 4; // 1 at 2 m head on
     pu[k] = u; pv[k] = v;
+    if (options.specular && hit.id !== 'wall' && hit.id !== 'floor') {
+      // Mirror direction of the projector's light against the direction to the camera.
+      const r = sub(mul(hit.n, 2 * cos), l), toCam = unit(sub(cam.o, p));
+      gloss[k] = options.specular * Math.pow(Math.max(0, dot(r, toCam)), options.shininess ?? 40) / (dist * dist) * 4;
+    }
   }
   const random = mulberry32(options.seed ?? 3);
   const gauss = () => { let s = 0; for (let n = 0; n < 4; n++) s += random(); return (s - 2) * Math.sqrt(3); };
-  const captures: Capture[] = plan.frames.map(frame => {
+  const captures: Capture[] = plan.frames.map(() => null as unknown as Capture);
+  plan.frames.forEach((frame, index) => {
     const raw = new Float32Array(W * H);
     for (let g = 0; g < W * H; g++) {
       let sum = 0;
       for (let s = 0; s < S; s++) {
         const k = g * S + s;
         const on = light[k] > 0 ? patternValue(plan, frame, pu[k], pv[k]) : 0;
-        sum += albedo[k] * (ambient + light[k] * on);
+        sum += albedo[k] * ambient + (albedo[k] * light[k] + gloss[k]) * on;
       }
       raw[g] = sum / S;
     }
+    // Glare: a wide blur of the light added back (separable box, twice).
+    if (options.bloom) {
+      const r = options.bloomRadius ?? 12;
+      let glow = Float32Array.from(raw);
+      const pass = (src: Float32Array, horizontal: boolean) => {
+        const out = new Float32Array(W * H);
+        for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
+          let t = 0, n = 0;
+          for (let d = -r; d <= r; d++) { const x = horizontal ? i + d : i, y = horizontal ? j : j + d; if (x < 0 || y < 0 || x >= W || y >= H) continue; t += src[y * W + x]; n++; }
+          out[j * W + i] = t / n;
+        }
+        return out;
+      };
+      for (let k = 0; k < 2; k++) glow = pass(pass(glow, true), false);
+      for (let g = 0; g < W * H; g++) raw[g] += options.bloom * glow[g];
+    }
+    // Hand-held: this photo shifted (bilinear) and smeared along the shift.
+    const shake = options.shake ?? 0;
+    const sx = shake * (random() * 2 - 1), sy = shake * (random() * 2 - 1);
+    const gain = 1 + (options.gainJitter ?? 0) * (random() * 2 - 1);
+    const sample = (x: number, y: number) => {
+      x = Math.min(W - 1, Math.max(0, x)); y = Math.min(H - 1, Math.max(0, y));
+      const x0 = Math.floor(x), y0 = Math.floor(y), x1 = Math.min(W - 1, x0 + 1), y1 = Math.min(H - 1, y0 + 1), tx = x - x0, ty = y - y0;
+      return (raw[y0 * W + x0] * (1 - tx) + raw[y0 * W + x1] * tx) * (1 - ty) + (raw[y1 * W + x0] * (1 - tx) + raw[y1 * W + x1] * tx) * ty;
+    };
     // A little lens blur (3x3), then sensor noise and 8-bit clipping.
     const luma = new Uint8ClampedArray(W * H);
     for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
       let sum = 0, n = 0;
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-        const x = i + dx, y = j + dy;
-        if (x < 0 || y < 0 || x >= W || y >= H) continue;
         const w = dx === 0 && dy === 0 ? 4 : dx === 0 || dy === 0 ? 2 : 1;
-        sum += raw[y * W + x] * w; n += w;
+        const v = shake ? (sample(i + dx + sx, j + dy + sy) + sample(i + dx + sx * 0.5, j + dy + sy * 0.5)) / 2 : raw[Math.min(H - 1, Math.max(0, j + dy)) * W + Math.min(W - 1, Math.max(0, i + dx))];
+        sum += v * w; n += w;
       }
-      luma[j * W + i] = Math.round(sum / n * exposure + noise * gauss());
+      luma[j * W + i] = Math.round(sum / n * exposure * gain + noise * gauss());
     }
-    return { width: W, height: H, luma };
+    captures[index] = { width: W, height: H, luma };
   });
   return { plan, captures, ids, idOf };
 }
@@ -227,4 +267,28 @@ export function faceTruth(room: Room, minShare = 0.6, grid = 24): FaceTruth[] {
     out.push({ id: face.id, projector: face.corners.map(p => { const q = project(pl, pp, p); return { x: q.u, y: q.v }; }), samples });
   }
   return out;
+}
+
+/**
+ * The owner's real setup (2026-11-21 photo): two boxes stacked close against
+ * a wall, the projector lighting them and the wall round them, a dark room
+ * with clutter (small objects and a shelf) beside the boxes.
+ */
+export function stackedRoom(overrides: Partial<Room> = {}): Room {
+  const base = twoBoxRoom();
+  return {
+    ...base,
+    boxes: [
+      { name: 'A', centre: [0, 0.15, -0.95], size: [0.5, 0.3, 0.4], yawDeg: 0, albedo: 0.4 },
+      { name: 'B', centre: [-0.05, 0.42, -1.0], size: [0.32, 0.24, 0.26], yawDeg: 12, albedo: 0.4 },
+      // Clutter: low objects beside the boxes, some caught by the edge of the light.
+      { name: 'c1', centre: [0.45, 0.06, -0.8], size: [0.12, 0.12, 0.1], yawDeg: 30, albedo: 0.2 },
+      { name: 'c2', centre: [0.38, 0.03, -0.6], size: [0.25, 0.06, 0.15], yawDeg: -10, albedo: 0.15 },
+      { name: 'c3', centre: [-0.6, 0.2, -1.1], size: [0.2, 0.4, 0.25], yawDeg: 0, albedo: 0.25 },
+    ],
+    wallZ: -1.2, wallAlbedo: 0.75, floorAlbedo: 0.25,
+    projector: { ...base.projector, pose: { position: [0.1, 1.0, 1.2], target: [0, 0.0, -1.0] } },
+    camera: { ...base.camera, pose: { position: [-0.35, 0.9, 0.9], target: [0, 0.25, -1.0] } },
+    ...overrides,
+  };
 }

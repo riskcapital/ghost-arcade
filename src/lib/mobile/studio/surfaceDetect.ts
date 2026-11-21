@@ -247,6 +247,36 @@ function edgeResidual(m: number[], p: AxisSample): number {
   return Math.abs((p.axis ? m[3] * p.x + m[4] * p.y + m[5] : m[0] * p.x + m[1] * p.y + m[2]) / w - p.value);
 }
 
+/**
+ * The plane most of these edges fit to a pixel: seeds are a few edges close
+ * together (one surface), the consensus is counted over all of them, and the
+ * winner is refitted on its own. Null when no seed fits enough of them.
+ */
+function edgeRansac(list: AxisSample[], random: () => number, tolerance = 1.0): { h: number[]; inliers: AxisSample[] } | null {
+  if (list.length < 16) return null;
+  // Counted on an even subsample: plenty to rank candidates, and fast on a phone.
+  const stride = Math.max(1, Math.floor(list.length / 1500));
+  const probe = list.filter((_, i) => i % stride === 0);
+  let best: number[] | null = null, bestCount = 0;
+  for (let iteration = 0; iteration < 120; iteration++) {
+    const seed = probe[Math.floor(random() * probe.length)];
+    const near = probe.filter(e => Math.abs(e.x - seed.x) < 48 && Math.abs(e.y - seed.y) < 48);
+    if (near.filter(e => e.axis === 0).length < 4 || near.filter(e => e.axis === 1).length < 4) continue;
+    const pick: AxisSample[] = [];
+    for (let k = 0; k < 24 && pick.length < 12; k++) { const e = near[Math.floor(random() * near.length)]; if (!pick.includes(e)) pick.push(e); }
+    const h = solveAxes(pick);
+    if (!h) continue;
+    let count = 0;
+    for (const e of probe) if (edgeResidual(h, e) < tolerance) count++;
+    if (count > bestCount) { bestCount = count; best = h; }
+  }
+  if (!best) return null;
+  let h = best;
+  for (let round = 0; round < 3; round++) h = solveAxes(list.filter(e => edgeResidual(h, e) < tolerance * 1.5)) ?? h;
+  const inliers = list.filter(e => edgeResidual(h, e) < tolerance * 1.5);
+  return inliers.length >= 12 ? { h, inliers } : null;
+}
+
 /** An edge sits in the thin unreadable line between two cells: it belongs to whoever owns the grid all round it. */
 function edgeOwnedBy(ownerAt: Int16Array | Int32Array | Uint8Array, gw: number, gh: number, step: number, x: number, y: number, id: number, none = -1): boolean {
   const gx = Math.floor(x / step), gy = Math.floor(y / step);
@@ -486,12 +516,41 @@ export function detectSurfaces(
       const lists = edgesOf();
       search: for (let i = 0; i < planes.length; i++) for (let j = i + 1; j < planes.length; j++) {
         const both = [...lists[i], ...lists[j]];
-        if (both.length < 24) continue;
+        // Each find must keep its own edges under the joint plane: judged on the sum, a small face beside a big one vanishes into it.
+        if (lists[i].length < 24 || lists[j].length < 24) continue;
         const joint = solveAxes(both);
         if (!joint) continue;
-        const own = good(planes[i], lists[i]) + good(planes[j], lists[j]);
-        if (good(joint, both) >= 0.95 * own) { planes[i] = refineWithEdges(joint, { count: both.length, x: Float32Array.from(both, e => e.x), y: Float32Array.from(both, e => e.y), axis: Uint8Array.from(both, e => e.axis), value: Float32Array.from(both, e => e.value) }, () => true, plan.cell); planes.splice(j, 1); merged = true; break search; }
+        if (good(joint, lists[i]) >= 0.9 * good(planes[i], lists[i]) && good(joint, lists[j]) >= 0.9 * good(planes[j], lists[j])) { planes[i] = refineWithEdges(joint, { count: both.length, x: Float32Array.from(both, e => e.x), y: Float32Array.from(both, e => e.y), axis: Uint8Array.from(both, e => e.axis), value: Float32Array.from(both, e => e.value) }, () => true, plan.cell); planes.splice(j, 1); merged = true; break search; }
       }
+    }
+    // A find whose own edges do not all fit it covers two surfaces that look
+    // alike in the rounded cell centres: two box fronts at different depths,
+    // a face and the wall just behind it. The edges are exact, so the
+    // biggest set of them one plane fits (to a pixel) is one surface, and a
+    // big enough rest is another.
+    const whole = new Set<number[]>();
+    for (let round = 0; round < 8; round++) {
+      assign();
+      const lists = edgesOf();
+      let split = false;
+      for (let p = 0; p < planes.length && !split; p++) {
+        const list = lists[p];
+        if (list.length < 80 || whole.has(planes[p])) continue;
+        whole.add(planes[p]);
+        const first = edgeRansac(list, random);
+        if (!first || first.inliers.length >= 0.95 * list.length) continue;
+        const inside = new Set(first.inliers);
+        const rest = list.filter(e => !inside.has(e));
+        const second = edgeRansac(rest, random);
+        if (!second || second.inliers.length < 60) continue;
+        // A real second surface sits well off the first plane, not in the noise round it (a dim face's edges scatter).
+        const off = second.inliers.map(e => edgeResidual(first.h, e)).sort((a, b) => a - b);
+        if (off[off.length >> 1] < 4) continue;
+        planes[p] = first.h;
+        planes.push(second.h);
+        split = true;
+      }
+      if (!split) break;
     }
     // A find whose edges a bigger find's plane already fits is a seam along a fold, not a surface.
     {
@@ -528,9 +587,34 @@ export function detectSurfaces(
       }
       return false;
     };
+    // Where two planes both fit a cell, the exact edges round the sample say which: the plane they fit best.
+    const bucket = new Map<number, number[]>();
+    for (let k = 0; k < edges.count; k++) {
+      const key = Math.floor(edges.y[k] / step) * gw + Math.floor(edges.x[k] / step);
+      const list = bucket.get(key); if (list) list.push(k); else bucket.set(key, [k]);
+    }
+    const edgeVote = (sample: Sample, list: number[]): number => {
+      const cost = new Float64Array(list.length);
+      let seen = 0;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+        for (const k of bucket.get((sample.gy + dy) * gw + sample.gx + dx) ?? []) {
+          const e = { x: edges.x[k], y: edges.y[k], axis: edges.axis[k], value: edges.value[k] };
+          list.forEach((p, n) => { cost[n] += Math.min(3, edgeResidual(exact[p], e)); });
+          seen++;
+        }
+      }
+      if (seen < 4) return -1;
+      let best = 0;
+      for (let n = 1; n < list.length; n++) if (cost[n] < cost[best]) best = n;
+      // Only a clear winner: along a fold both fit, and the fold line decides there.
+      const sorted = Array.from(cost).sort((a, b) => a - b);
+      return sorted[1] - sorted[0] > 0.6 * seen ? list[best] : -1;
+    };
     for (let i = 0; i < samples.length; i++) {
       const list = candidates[i];
       if (list.length <= 1) { owner[i] = list.length ? list[0] : -1; continue; }
+      const voted = edgeVote(samples[i], list);
+      if (voted >= 0) { owner[i] = voted; continue; }
       const near = list.filter(p => nearby(samples[i], p));
       owner[i] = near.length === 1 ? near[0] : near.length ? -1 : list.reduce((a, b) => (miss(exact[a], samples[i]) <= miss(exact[b], samples[i]) ? a : b));
     }

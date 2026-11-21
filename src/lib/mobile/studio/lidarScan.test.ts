@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parsePatternDepth, parsePatternLuma, poseChange, turnIntrinsics, turnRaster, type Turn } from './lidarScan';
+import { parsePatternDepth, parsePatternLuma, poseChange, turnFromPose, turnIntrinsics, turnRaster, type Turn } from './lidarScan';
 import { runAutoMap, type AutoMapCamera, type AutoMapLink } from './autoMap';
 import { planPatterns, patternValue } from './structuredLight';
 import { STRIPE_CELL } from './structuredLightCodes';
@@ -119,5 +119,27 @@ describe('a scan with the LiDAR camera', () => {
     expect(result.projectors).toHaveLength(1);
     expect(result.depth).toBeUndefined();
     expect(result.depthError).toMatch(/LiDAR/);
+  });
+});
+
+describe('the preview follows the phone when it turns', () => {
+  // Pose columns: x and y of the camera in the world. World up seen in the image is (pose[1], -pose[5]) (x right, y down).
+  const poseWithUp = (ux: number, uy: number) => { const p = new Float32Array(16); p[1] = ux; p[5] = -uy; p[15] = 1; return p; };
+  it('turns each way the phone is held so world up lands at the top of the picture', () => {
+    const w = 8, h = 6;
+    for (const [ux, uy] of [[0, -1], [-1, 0], [0, 1], [1, 0]]) {
+      const turn = turnFromPose(poseWithUp(ux, uy));
+      // A mark at the image edge the world's up points to.
+      const raster = new Uint8Array(w * h);
+      const x = ux < 0 ? 0 : ux > 0 ? w - 1 : w >> 1, y = uy < 0 ? 0 : uy > 0 ? h - 1 : h >> 1;
+      raster[y * w + x] = 255;
+      const up = turnRaster(raster, w, h, turn);
+      const at = up.data.indexOf(255);
+      expect(Math.floor(at / up.width), `held with up at (${ux}, ${uy}): turn ${turn}`).toBe(0);
+    }
+  });
+  it('agrees with a sideways phone: landscape sensor frames need no turn, portrait ones a quarter', () => {
+    expect(turnFromPose(poseWithUp(0, -1))).toBe(0);
+    expect(turnFromPose(poseWithUp(-0.98, 0.1))).toBe(90);
   });
 });
