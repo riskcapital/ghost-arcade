@@ -538,7 +538,10 @@ function stripRendererFileHandoffFields(value, depth = 0) {
  * user picked or dropped them, or a project referred to them) go through; any
  * other is blanked, and the instrument reports that it has no file.
  */
-function guardGraphLayerReadPaths(value, canReadPath, depth = 0) {
+/** Sent in place of a refused scan path: the core fails that load instead of drawing its default. */
+const DENIED_SCAN_PATH = 'denied:not-granted';
+
+export function guardGraphLayerReadPaths(value, canReadPath, depth = 0) {
   if (!value || typeof value !== 'object' || depth > 32) return;
   if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) return;
   if (Array.isArray(value)) {
@@ -549,7 +552,11 @@ function guardGraphLayerReadPaths(value, canReadPath, depth = 0) {
   if (value.type === 'set_native_graph_layer' && value.params && typeof value.params === 'object') {
     for (const key of ['path', 'plyPath']) {
       const target = value.params[key];
-      if (typeof target === 'string' && target && !canReadPath(target)) value.params[key] = '';
+      if (typeof target === 'string' && target && !canReadPath(target)) {
+        // The core reports the layer's scan as failed (not the default scan).
+        console.warn(`[native-renderer] scan path not granted, refused: ${target}`);
+        value.params[key] = DENIED_SCAN_PATH;
+      }
     }
     return;
   }

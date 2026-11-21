@@ -5495,7 +5495,9 @@ function nativeGraphParamsForLayer(
   if (CLOUD_INSTRUMENT_IDS.has(kind)) {
     // The core reads the scan itself: hand it the picked file's absolute path
     // (the broker drops any path the user did not grant).
-    return { ...resolved, path: cloudScanPath(params.path) ?? '' };
+    const path = cloudScanPath(params.path);
+    if (params.path && !path) warnCloudScanOnce(layer.id, params.path);
+    return { ...resolved, path: path ?? '' };
   }
   return resolved;
 }
@@ -5508,12 +5510,26 @@ const AUDIO_REACTIVE_ROUTE_KINDS = new Set<string>([
 
 /** A cloud instrument's scan as an absolute local path, from the picked file
  *  (or an already plain path); null when there is none the core can read. */
+const warnedCloudScans = new Set<string>();
+function warnCloudScanOnce(layerId: string, value: unknown): void {
+  const key = `${layerId}|${JSON.stringify(value)}`;
+  if (warnedCloudScans.has(key) || warnedCloudScans.size > 64) return;
+  warnedCloudScans.add(key);
+  console.warn('[NativeRendererSync] cloud scan has no readable path; the default scan draws instead', layerId, value);
+}
+
 export function cloudScanPath(value: unknown): string | null {
   let uri: string | null = null;
   if (typeof value === 'string') uri = value;
-  else if (value && typeof value === 'object' && (value as any).type === 'file') uri = nativeReadableFileParamUri(value as Record<string, any>);
+  else if (value && typeof value === 'object' && (value as any).type === 'file') {
+    // A picked file's own absolute path first: in the app the runtime URL is
+    // ghost-asset://, which the core cannot read.
+    const original = (value as any).assetRef?.originalPath;
+    uri = typeof original === 'string' && original ? original : nativeReadableFileParamUri(value as Record<string, any>);
+  }
   if (!uri) return null;
   let path = uri.trim();
+  if (/^ghost-asset:\/\/localhost\//i.test(path)) path = `file://${path.slice('ghost-asset://localhost'.length)}`;
   if (/^file:\/\//i.test(path)) {
     try {
       const url = new URL(path);

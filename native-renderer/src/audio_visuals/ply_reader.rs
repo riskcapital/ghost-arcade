@@ -405,6 +405,11 @@ pub fn scan_path_or_default(picked: &str) -> String {
     default_scan_path().unwrap_or_default()
 }
 
+/// Whether `path` is the bundled default scan.
+pub fn is_default_scan(path: &str) -> bool {
+    default_scan_path().is_some_and(|d| d == path)
+}
+
 fn default_scan_path() -> Option<String> {
     if let Ok(env) = std::env::var("GA_DEFAULT_SCAN")
         && !env.trim().is_empty()

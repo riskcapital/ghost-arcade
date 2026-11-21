@@ -78,6 +78,8 @@ impl App {
             let Some(load) = layer.cloud_pulse_state.load.as_ref().or(layer.av2_state.load.as_ref()) else { continue };
             let state = match load.ready() {
                 Ok(None) => "loading".to_string(),
+                // `:default` when the bundled scan drew (none picked).
+                Ok(Some(points)) if super::ply_reader::is_default_scan(&load.path) => format!("ready:{}:default", points.count),
                 Ok(Some(points)) => format!("ready:{}", points.count),
                 Err(err) => format!("failed:{err}"),
             };

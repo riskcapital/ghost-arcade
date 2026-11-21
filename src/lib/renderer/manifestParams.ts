@@ -92,7 +92,7 @@ export function manifestParamDefaults(id: string): Record<string, any> {
 }
 
 /** A cloud instrument's scan file, as the core reports it per layer. */
-export type CloudLoadState = { state: 'loading' } | { state: 'ready'; points: number } | { state: 'failed'; reason: string };
+export type CloudLoadState = { state: 'loading' } | { state: 'ready'; points: number; isDefault?: boolean } | { state: 'failed'; reason: string };
 
 export const nativeCloudLoadStates = writable<Record<string, CloudLoadState>>({});
 
@@ -109,7 +109,10 @@ export function setNativeCloudLoadStates(raw: unknown): void {
   for (const [layerId, value] of entries) {
     const text = String(value ?? '');
     if (text === 'loading') next[layerId] = { state: 'loading' };
-    else if (text.startsWith('ready:')) next[layerId] = { state: 'ready', points: Number(text.slice(6)) || 0 };
+    else if (text.startsWith('ready:')) {
+      const [points, tag] = text.slice(6).split(':');
+      next[layerId] = { state: 'ready', points: Number(points) || 0, ...(tag === 'default' ? { isDefault: true } : {}) };
+    }
     else if (text.startsWith('failed:')) next[layerId] = { state: 'failed', reason: text.slice(7) };
   }
   nativeCloudLoadStates.set(next);

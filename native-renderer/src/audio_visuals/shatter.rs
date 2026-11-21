@@ -81,7 +81,7 @@ pub fn shatter_defs() -> Vec<ParamDef> {
             resets: true,
         },
         resets(slider("maxPoints", "Points", "Shatter", 10_000.0, super::ply_reader::CLOUD_MAX_POINTS as f32, 1000.0, 400_000.0)),
-        slider("orientX", "Scan orientation X", "Shatter", -180.0, 180.0, 0.5, 180.0),
+        slider("orientX", "Scan orientation X", "Shatter", -180.0, 180.0, 0.5, 0.0),
         slider("orientY", "Scan orientation Y", "Shatter", -180.0, 180.0, 0.5, 0.0),
         slider("orientZ", "Scan orientation Z", "Shatter", -180.0, 180.0, 0.5, 0.0),
         slider("scale", "Scan scale", "Shatter", 0.05, 10.0, 0.01, 1.0),
