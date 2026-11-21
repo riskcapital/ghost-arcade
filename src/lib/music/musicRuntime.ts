@@ -118,6 +118,7 @@ import { KeyFinder, type KeyGuess } from './keyFinder';
 import { attachLooper, killLooper, stopLooper } from './looperRuntime';
 import { attachLoopStation, killLoopStation, scheduleStation, stationBusy, stationOldestBeat, stopAllLoopTracks } from './loopStation';
 import { audioLoopTracksFor } from './audioLoopEngine';
+import { registerLoopControls } from './loopControls';
 import type { AnySourceId, LiveSourceId, VoiceSourceId } from './visualVoices';
 import { BandFxVisuals } from './bandFxVisuals';
 // The studio's MIDI controls and the band's keys answer while the Studio view is hidden.
@@ -2774,7 +2775,8 @@ export function ensureMusicRuntime(): void {
   derived([vjClipLauncher, project], ([vj, p]) => studioHosted(vj, p.layers)).subscribe(hosted);
   // The band looper's actions and MIDI controls (looperRuntime.ts).
   attachLooper(audio);
-  // The live looper's six tracks (loopStation.ts).
+  // The live looper's six tracks (loopStation.ts), and their MIDI controls.
+  registerLoopControls();
   attachLoopStation({
     send,
     now: () => audio.now(),

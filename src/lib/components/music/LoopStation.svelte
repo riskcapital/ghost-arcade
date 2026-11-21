@@ -1,7 +1,9 @@
 <script lang="ts">
   /**
    * The live looper: six loop tracks. Tracks shows them as rows across the
-   * bars with the record bar above and the quick editor below.
+   * bars with the record bar above and the quick editor below; Live shows
+   * them as columns for playing (LoopLive.svelte). With the panel focused
+   * the keys drive it (loopControls.ts loopKey).
    */
   import { onDestroy, onMount } from 'svelte';
   import { ensureMusicRuntime } from '../../music/musicRuntime';
@@ -10,6 +12,26 @@
   import { showToast } from '../../stores/errorToast';
   import LoopRecordBar from './LoopRecordBar.svelte';
   import LoopTrackRows from './LoopTrackRows.svelte';
+  import LoopLive from './LoopLive.svelte';
+  import { loopKey } from '../../music/loopControls';
+  import { selectLoopTrack } from '../../music/loopStation';
+
+  let mode = $state<'tracks' | 'live'>('tracks');
+  let root = $state<HTMLDivElement | null>(null);
+
+  /** A click in the panel (not in a field) gives it the keys. */
+  function focusRoot(e: PointerEvent) {
+    if (!(e.target as HTMLElement)?.closest?.('input, select, textarea')) root?.focus({ preventScroll: true });
+  }
+
+  function key(e: KeyboardEvent) {
+    const target = e.target as HTMLElement | null;
+    if (target?.closest?.('input, select, textarea, [contenteditable="true"]')) return;
+    if (loopKey(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }
 
   onMount(() => {
     ensureMusicRuntime();
@@ -39,7 +61,17 @@
   }
 </script>
 
-<div class="station">
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+<div class="station" bind:this={root} tabindex="0" role="region" aria-label="Live looper" onkeydown={key} onpointerdown={focusRoot}>
+  <div class="modes">
+    <div class="ga-segmented small" role="tablist" aria-label="Looper view">
+      <button role="tab" aria-selected={mode === 'tracks'} class:active={mode === 'tracks'} onclick={() => (mode = 'tracks')}>Tracks</button>
+      <button role="tab" aria-selected={mode === 'live'} class:active={mode === 'live'} onclick={() => (mode = 'live')}>Live</button>
+    </div>
+  </div>
+  {#if mode === 'live'}
+    <LoopLive onpicktrack={(i) => { selectLoopTrack(i); mode = 'tracks'; }} />
+  {:else}
   <div class="top"><LoopRecordBar /></div>
   <div class="lat">
     <span class="ga-eyebrow">Audio latency</span>
@@ -48,10 +80,12 @@
     <button class="text-btn small" onclick={measure} disabled={measuring} title="Play a click and listen for it on the input: loop an output into it first">{measuring ? 'Measuring…' : 'Measure'}</button>
   </div>
   <LoopTrackRows />
+  {/if}
 </div>
 
 <style>
-  .station { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+  .station { display: flex; flex-direction: column; min-height: 0; height: 100%; outline: none; }
+  .modes { display: flex; padding: 6px 10px 0; background: var(--studio-panel); }
   .lat { display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-bottom: 1px solid var(--studio-edge-soft); font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); }
   .lat input { width: 56px; height: 22px; }
   .top { padding: 6px 10px; border-bottom: 1px solid var(--studio-edge); background: var(--studio-panel); overflow-x: auto; }
