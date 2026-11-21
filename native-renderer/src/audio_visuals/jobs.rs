@@ -70,6 +70,21 @@ pub struct CloudPulseState {
 }
 
 impl App {
+    /// Each cloud instrument layer's scan file state, for the status.
+    pub(crate) fn audio_visual_cloud_loads(&self) -> std::collections::BTreeMap<String, String> {
+        let mut out = std::collections::BTreeMap::new();
+        for (layer_id, layer) in &self.native_graph_layers {
+            let Some(load) = layer.cloud_pulse_state.load.as_ref() else { continue };
+            let state = match load.ready() {
+                Ok(None) => "loading".to_string(),
+                Ok(Some(points)) => format!("ready:{}", points.count),
+                Err(err) => format!("failed:{err}"),
+            };
+            out.insert(layer_id.clone(), state);
+        }
+        out
+    }
+
     fn audio_visual_step(&self, prev_frame_time: f32, time: f32) -> f32 {
         let dt = if self.render_clock_mode == "manual" {
             self.native_graph_step_delta_this_render

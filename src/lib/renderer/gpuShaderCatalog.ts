@@ -32,6 +32,7 @@ import {
 } from './shaders/webgpuSmokeRidersShader';
 import { WebGPUFluidRidersShader, fluidRidersParamSchema, fluidRidersParamDefaults } from './shaders/webgpuFluidRidersShader';
 import { WebGPUWarpLoom, warpLoomParamSchema, warpLoomParamDefaults } from './shaders/webgpuWarpLoom';
+import { audioReactiveInstrumentsAvailable } from '../plugins/addons';
 
 const PLANET_DEF: GpuShaderDef = {
   id: 'planet',
@@ -494,6 +495,38 @@ const WARP_LOOM_DEF: GpuShaderDef = {
   create: (device, presentFormat) => new WebGPUWarpLoom(device, presentFormat),
 };
 
+// Audio Lab's audio-reactive instruments, drawn only by the native render
+// core. Their controls come from the core's manifest (manifestParams.ts), so a
+// new core instrument needs one entry here and no panel code.
+function audioReactiveDef(id: string, label: string, description: string): GpuShaderDef {
+  return {
+    id,
+    label,
+    description,
+    category: 'Audio Lab',
+    paramSchema: [],
+    defaultParams: {},
+    needsSource: false,
+    paramsFromManifest: true,
+    nativeOnly: true,
+    create: () => {
+      throw new Error(`${label} is drawn by the native render core only`);
+    },
+  };
+}
+
+export const AUDIO_REACTIVE_GPU_SHADER_DEFS: GpuShaderDef[] = [
+  audioReactiveDef('strands', 'Strands', 'Each hit launches a line, ring, square or strata; burning fibres stream off it, shaped by the spectrum and waveform.'),
+  audioReactiveDef('cloud-pulse', 'Cloud Pulse', 'Waves of light travel through a scanned point cloud, one family per band.'),
+  audioReactiveDef('cloud-flock', 'Cloud Flock', 'Kicks scatter a scanned point cloud into a swarm that re-forms into the scan.'),
+  audioReactiveDef('depth-lights', 'Depth Lights', 'A point cloud as lights in space: depth slices switch on and off with the music.'),
+];
+
+/** Audio-reactive instruments that read a point cloud file (`path`). */
+export const CLOUD_INSTRUMENT_IDS = new Set<string>(['cloud-pulse', 'cloud-flock', 'depth-lights']);
+
+const AUDIO_REACTIVE_OFFERED: GpuShaderDef[] = audioReactiveInstrumentsAvailable() ? AUDIO_REACTIVE_GPU_SHADER_DEFS : [];
+
 export const GPU_SHADER_CATALOG: GpuShaderDef[] = [
   PLANET_DEF,
   WARP_LOOM_DEF,
@@ -507,6 +540,7 @@ export const GPU_SHADER_CATALOG: GpuShaderDef[] = [
   GRAVITY_WELLS_DEF,
   INK_CLOUD_DEF,
   SMOKE_3D_DEF,
+  ...AUDIO_REACTIVE_OFFERED,
 ];
 
 // Native v2 picker surface.
@@ -522,6 +556,7 @@ export const NATIVE_READY_GPU_SHADER_IDS = new Set<string>([
   'ink-cloud',
   'smoke-3d',
   'volumetric-balls',
+  ...AUDIO_REACTIVE_OFFERED.map((def) => def.id),
 ]);
 
 /**
@@ -553,7 +588,7 @@ export const NATIVE_READY_GPU_SHADER_CATALOG: GpuShaderDef[] = GPU_SHADER_CATALO
 
 /** Picker surface for the non-native path, minus anything archived. */
 export const PICKER_GPU_SHADER_CATALOG: GpuShaderDef[] = GPU_SHADER_CATALOG.filter(
-  (shader) => !ARCHIVED_GPU_SHADER_IDS.has(shader.id),
+  (shader) => !ARCHIVED_GPU_SHADER_IDS.has(shader.id) && !shader.nativeOnly,
 );
 
 export function isNativeReadyGpuShaderId(id: string | undefined | null): boolean {

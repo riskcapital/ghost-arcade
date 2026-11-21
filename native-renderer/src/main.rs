@@ -1053,6 +1053,8 @@ struct CoreStatus {
     isf_audio_spectrum_live: bool,
     isf_audio_spectrum_seq: u64,
     audio_visual_seq: u64,
+    /// Cloud instruments' scan files by layer: loading, ready:<points>, failed:<reason>.
+    audio_visual_cloud_loads: std::collections::BTreeMap<String, String>,
     isf_audio_fft_bins: u32,
     isf_audio_waveform_samples: u32,
     native_shader_layers: u32,
@@ -6624,6 +6626,7 @@ impl App {
             isf_audio_spectrum_live: self.isf_audio_spectrum.is_live(Instant::now()),
             isf_audio_spectrum_seq: self.isf_audio_spectrum.seq,
             audio_visual_seq: self.audio_visual.seq,
+            audio_visual_cloud_loads: self.audio_visual_cloud_loads(),
             isf_audio_fft_bins: self.isf_audio_spectrum.fft.len() as u32,
             isf_audio_waveform_samples: self.isf_audio_spectrum.waveform.len() as u32,
             native_shader_layers: self

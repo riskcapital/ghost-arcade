@@ -481,6 +481,7 @@ export function createNativeRendererBroker({
   nativeFrameEncoderStatusProvider = null,
   sharedTextureHandlePreparer = null,
   canWritePath = null,
+  canReadPath = null,
   onCoreStarted = null,
 }) {
   return new NativeRendererBroker({
@@ -494,6 +495,7 @@ export function createNativeRendererBroker({
     nativeFrameEncoderStatusProvider,
     sharedTextureHandlePreparer,
     canWritePath,
+    canReadPath,
     onCoreStarted,
   });
 }
@@ -530,6 +532,30 @@ function stripRendererFileHandoffFields(value, depth = 0) {
   return value;
 }
 
+/**
+ * A native graph layer may name a file for the core to read (a cloud
+ * instrument's scan, `params.path`). Only paths the main process granted (the
+ * user picked or dropped them, or a project referred to them) go through; any
+ * other is blanked, and the instrument reports that it has no file.
+ */
+function guardGraphLayerReadPaths(value, canReadPath, depth = 0) {
+  if (!value || typeof value !== 'object' || depth > 32) return;
+  if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) return;
+  if (Array.isArray(value)) {
+    if (value.length > 0 && typeof value[0] === 'number') return;
+    for (const item of value) guardGraphLayerReadPaths(item, canReadPath, depth + 1);
+    return;
+  }
+  if (value.type === 'set_native_graph_layer' && value.params && typeof value.params === 'object') {
+    for (const key of ['path', 'plyPath']) {
+      const target = value.params[key];
+      if (typeof target === 'string' && target && !canReadPath(target)) value.params[key] = '';
+    }
+    return;
+  }
+  for (const key of Object.keys(value)) guardGraphLayerReadPaths(value[key], canReadPath, depth + 1);
+}
+
 class NativeRendererBroker {
   constructor({
     appRoot,
@@ -542,6 +568,7 @@ class NativeRendererBroker {
     nativeFrameEncoderStatusProvider,
     sharedTextureHandlePreparer,
     canWritePath,
+    canReadPath,
     onCoreStarted,
   }) {
     this.appRoot = appRoot;
@@ -560,6 +587,7 @@ class NativeRendererBroker {
     // Decides which disk paths a renderer-originated export may write.
     // Without one, renderer input cannot name an output path at all.
     this.canWritePath = typeof canWritePath === 'function' ? canWritePath : () => false;
+    this.canReadPath = typeof canReadPath === 'function' ? canReadPath : () => false;
     // Told the core instance after every start that returns, whoever asked
     // for it (the editor, or the GPU-fault restart below).
     this.onCoreStarted = typeof onCoreStarted === 'function' ? onCoreStarted : null;
@@ -624,6 +652,7 @@ class NativeRendererBroker {
 
   sanitizeRendererArgs(command, args) {
     const cleaned = stripRendererFileHandoffFields(args);
+    guardGraphLayerReadPaths(cleaned, this.canReadPath);
     // Only the main process may point the core at a frame sink.
     if (cleaned && typeof cleaned === 'object') {
       delete cleaned.stream_port;

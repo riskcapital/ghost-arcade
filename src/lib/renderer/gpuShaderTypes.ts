@@ -108,7 +108,13 @@ export interface GpuShaderQualityApplyResult {
 // 'Depth Shift' params when mode === 'depth-shift'). The renderer
 // keeps reading every param from the schema so toggling the mode
 // is non-destructive — values stay around even when hidden.
-type CommonParam = { showWhen?: Record<string, any> };
+type CommonParam = {
+  showWhen?: Record<string, any>;
+  /** Changing it rebuilds the instrument's simulation (budget, file). */
+  resets?: boolean;
+  /** A toggle drawn as a momentary button: each press flips it (Trigger). */
+  button?: boolean;
+};
 
 export type ParamControl =
   | (CommonParam & { kind: 'slider'; key: string; label: string; min: number; max: number; step: number; default: number; group?: string })
@@ -169,6 +175,11 @@ export interface GpuShaderDef {
   /** True if the shader consumes a source texture (media/video/
    *  another layer). The panel renders the source picker when set. */
   needsSource?: boolean;
+  /** The controls come from the render core's instrument manifest
+   *  (`param_defs`) instead of `paramSchema`. */
+  paramsFromManifest?: boolean;
+  /** Drawn only by the native render core; there is no browser renderer. */
+  nativeOnly?: boolean;
 }
 
 /** Build a `defaultParams` object from a paramSchema array.

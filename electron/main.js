@@ -177,6 +177,7 @@ const nativeRendererBroker = createNativeRendererBroker({
   nativeFrameEncoderStatusProvider: () => getNativeFrameEncoderStatus(),
   sharedTextureHandlePreparer: prepareSharedTextureHandlesForNativeCore,
   canWritePath: target => pathGrants.canWrite(target),
+  canReadPath: target => pathGrants.canRead(target),
   onCoreStarted: coreInstance => reattachLinuxSlicesToCore(coreInstance),
 });
 

@@ -2281,3 +2281,28 @@ describe('Stage Designer surfaces belong to the project that is open', () => {
     await vi.waitFor(() => expect((get(layers.project).surfaces ?? []).map((s: any) => s.name)).toEqual(['New stage']));
   });
 });
+
+describe('Audio-reactive instrument layers', () => {
+  it('round-trip their manifest controls and scan file through a save and reopen', () => {
+    const params = {
+      shape: 'polygon', sides: 6, zoom: 1.25, trigger: true, freeze: false, colorA: [255, 227, 160],
+      palette: 'verdigris', path: { type: 'file', name: 'orchid.ply', assetRef: { kind: 'local-file', originalPath: '/scans/orchid.ply', name: 'orchid.ply' } },
+    };
+    const project = {
+      version: '2.1.12',
+      project: {
+        id: 'av', name: 'AV', width: 1920, height: 1080,
+        layers: [{ ...types.createLayer('l1', 'Strands', 'gpu'), gpuLayerContent: { shaderId: 'strands', params } }],
+      },
+    };
+    expect(layers.project.importProject(project)).toBe(true);
+    const saved = JSON.parse(JSON.stringify(layers.project.exportProject()));
+    const savedLayer = saved.project.layers.find((l: any) => l.id === 'l1');
+    expect(savedLayer.gpuLayerContent.shaderId).toBe('strands');
+    expect(savedLayer.gpuLayerContent.params).toMatchObject({ ...params, path: { type: 'file', name: 'orchid.ply' } });
+    expect(savedLayer.gpuLayerContent.params.path.assetRef.originalPath).toBe('/scans/orchid.ply');
+    expect(layers.project.importProject(saved)).toBe(true);
+    const reopened = get(layers.project).layers.find((l: any) => l.id === 'l1')!;
+    expect(reopened.gpuLayerContent!.params).toMatchObject({ shape: 'polygon', sides: 6, zoom: 1.25, colorA: [255, 227, 160] });
+  });
+});

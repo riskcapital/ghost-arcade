@@ -67,7 +67,7 @@ import { createAudioVisualPacker } from '$lib/audio/audioVisualData';
 import { getLastRawAnalysis } from '$lib/stores/audio';
 import { shaderUsesISFAudioRows } from '$lib/isf/parser';
 import { WGSL_STDLIB, resolveGhostWgsl } from '$lib/renderer/wgsl';
-import { isNativeReadyGpuShaderId } from '$lib/renderer/gpuShaderCatalog';
+import { CLOUD_INSTRUMENT_IDS, isNativeReadyGpuShaderId } from '$lib/renderer/gpuShaderCatalog';
 import {
   DEFAULT_NATIVE_GRAPH_QUALITY,
   describeNativeGraphQuality,
@@ -446,7 +446,7 @@ type NativeRenderClockCommand = {
 
 export type PresentPolicyProfile = 'vsync-live' | 'low-latency-safe' | 'low-latency-aggressive';
 
-type NativeGraphRouteKind = 'planet' | 'fluid-riders' | 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders' | 'ink-cloud' | 'flythrough' | 'pixel-particles' | 'point-cloud-fx' | 'ghostfx' | 'handfx' | 'performer-world' | 'scene3d' | 'videosynth' | 'vj-crossfade' | 'vj-mix' | 'effect-pass' | 'lines' | 'svg' | 'light-painting' | 'text' | 'splat' | 'model3d';
+type NativeGraphRouteKind = 'strands' | 'cloud-pulse' | 'cloud-flock' | 'depth-lights' | 'planet' | 'fluid-riders' | 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders' | 'ink-cloud' | 'flythrough' | 'pixel-particles' | 'point-cloud-fx' | 'ghostfx' | 'handfx' | 'performer-world' | 'scene3d' | 'videosynth' | 'vj-crossfade' | 'vj-mix' | 'effect-pass' | 'lines' | 'svg' | 'light-painting' | 'text' | 'splat' | 'model3d';
 
 export type NativeEffectPassRuntime = {
   effect: NativeEffectPassId;
@@ -463,6 +463,10 @@ export type NativeGraphRouteRequirement = {
 };
 
 const NATIVE_CORE_OWNED_GRAPH_KINDS = new Set<NativeGraphRouteKind>([
+  'strands',
+  'cloud-pulse',
+  'cloud-flock',
+  'depth-lights',
   'planet',
   'particle-field',
   'pixel-particles',
@@ -500,6 +504,10 @@ export function isNativeExternallyQueuedGraphKind(kind: string): boolean {
 }
 
 const NATIVE_GRAPH_ROUTE_REQUIREMENTS: ReadonlyArray<NativeGraphRouteRequirement> = [
+  { kind: 'strands', feature: 'native_strands_graph', instrument: 'strands', shaderIds: ['strands/sim-v2', 'strands/draw-v2'] },
+  { kind: 'cloud-pulse', feature: 'native_cloud_pulse_graph', instrument: 'cloud-pulse', shaderIds: ['cloud-pulse/light-v2'] },
+  { kind: 'cloud-flock', feature: 'native_cloud_flock_graph', instrument: 'cloud-flock', shaderIds: ['cloud-flock/sim-v3'] },
+  { kind: 'depth-lights', feature: 'native_depth_lights_graph', instrument: 'depth-lights', shaderIds: ['depth-lights/light-v2'] },
   { kind: 'planet', feature: 'native_planet_graph', instrument: 'planet', shaderIds: ['planet/render'] },
   { kind: 'lines', feature: 'native_lines_graph', instrument: 'lines', shaderIds: ['lines/render'] },
   { kind: 'svg', feature: 'native_svg_graph', instrument: 'svg', shaderIds: ['svg/render-v6', 'svg/transform-v6'] },
@@ -3985,6 +3993,9 @@ function nativeGpuSourceParamUnsupportedReason(
   if (layer.type !== 'gpu' || !layer.gpuLayerContent) return null;
   const shaderId = String(layer.gpuLayerContent.shaderId || 'gpu').trim().toLowerCase();
   const params = layer.gpuLayerContent.params ?? {};
+  if (CLOUD_INSTRUMENT_IDS.has(shaderId)) {
+    return cloudScanPath(params.path) ? null : `gpu-shader:${shaderId}:scan-file-required`;
+  }
   const sourceParam = params.source;
   const requiresSource =
     shaderId === 'pixel-particles' ||
@@ -5464,7 +5475,37 @@ function nativeGraphParamsForLayer(
     quality,
   ).params;
   if (isEffectGraphKind) effectGraphParamsMemo.set(params, { quality: qualityKey, params: resolved });
+  if (CLOUD_INSTRUMENT_IDS.has(kind)) {
+    // The core reads the scan itself: hand it the picked file's absolute path
+    // (the broker drops any path the user did not grant).
+    return { ...resolved, path: cloudScanPath(params.path) ?? '' };
+  }
   return resolved;
+}
+
+/** Audio-reactive instruments, routed straight from their gpu shader id. */
+const AUDIO_REACTIVE_ROUTE_KINDS = new Set<string>(['strands', 'cloud-pulse', 'cloud-flock', 'depth-lights']);
+
+/** A cloud instrument's scan as an absolute local path, from the picked file
+ *  (or an already plain path); null when there is none the core can read. */
+export function cloudScanPath(value: unknown): string | null {
+  let uri: string | null = null;
+  if (typeof value === 'string') uri = value;
+  else if (value && typeof value === 'object' && (value as any).type === 'file') uri = nativeReadableFileParamUri(value as Record<string, any>);
+  if (!uri) return null;
+  let path = uri.trim();
+  if (/^file:\/\//i.test(path)) {
+    try {
+      const url = new URL(path);
+      path = decodeURIComponent(url.pathname);
+      // file:///C:/x -> C:/x
+      if (/^\/[A-Za-z]:\//.test(path)) path = path.slice(1);
+    } catch {
+      return null;
+    }
+  }
+  if (path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path)) return path;
+  return null;
 }
 
 /**
@@ -7614,7 +7655,13 @@ export class NativeRendererSync {
     const normalizedShaderId = shaderId.toLowerCase();
     if (!isNativeReadyGpuShaderId(normalizedShaderId)) return null;
     let kind: NativeGraphRouteKind | null = null;
-    if (
+    if (AUDIO_REACTIVE_ROUTE_KINDS.has(normalizedShaderId)) {
+      const audioKind = normalizedShaderId as NativeGraphRouteKind;
+      if (!this.supportsNativeGraphRoute(audioKind)) return null;
+      // A cloud instrument draws nothing until it has a scan file.
+      if (CLOUD_INSTRUMENT_IDS.has(audioKind) && !cloudScanPath(layer.gpuLayerContent.params?.path)) return null;
+      kind = audioKind;
+    } else if (
       normalizedShaderId === 'planet' &&
       this.supportsNativeGraphRoute('planet')
     ) {

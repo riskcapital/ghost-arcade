@@ -23,3 +23,13 @@ export function missingAddon(effectType: unknown): string | null {
   const addon = addonFor(effectType);
   return addon && !addon.installed ? addon.name : null;
 }
+
+/**
+ * Whether the audio-reactive engine instruments (Strands, Cloud Pulse, Cloud
+ * Flock, Depth Lights, and later ones) are offered. They are part of Audio
+ * Lab, so they follow its gate; this is the one place to change when add-on
+ * licensing replaces the build flag.
+ */
+export function audioReactiveInstrumentsAvailable(): boolean {
+  return addonFor('music-studio')?.installed === true;
+}

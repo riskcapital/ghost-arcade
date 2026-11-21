@@ -154,6 +154,11 @@ const EXPECTED_NATIVE_GRAPH_MANIFEST: NativeGraphManifestExpectation[] = [
     // unified raymarch) plus the new coupled passes.
     shaderIds: [...SMOKE_RIDERS_NATIVE_GRAPH_SHADER_IDS],
   },
+  // Audio-reactive instruments: WGSL compiled into the core.
+  { id: 'strands', feature: 'native_strands_graph', shaderIds: ['strands/sim-v2', 'strands/draw-v2', 'audio-visuals/hdr-post-v1'] },
+  { id: 'cloud-pulse', feature: 'native_cloud_pulse_graph', shaderIds: ['cloud-pulse/light-v2', 'audio-visuals/sprite-draw-v1', 'audio-visuals/hdr-post-v1'] },
+  { id: 'cloud-flock', feature: 'native_cloud_flock_graph', shaderIds: ['cloud-flock/sim-v3', 'cloud-flock/grid-v1', 'audio-visuals/sprite-draw-v1', 'audio-visuals/hdr-post-v1'] },
+  { id: 'depth-lights', feature: 'native_depth_lights_graph', shaderIds: ['depth-lights/light-v2', 'audio-visuals/sprite-draw-v1', 'audio-visuals/hdr-post-v1'] },
   {
     id: 'fluid-riders',
     feature: 'native_smoke_riders_graph',

@@ -163,7 +163,7 @@ fn every_declared_control_parses_clamps_and_reaches_the_gpu() {
                         probe(id, &with(base.clone(), def.key, json!(default)), false), "{id}: `{}` bad value is not the default", def.key);
                 }
                 Kind::Color(_) => {
-                    let dark = probe(id, &with(base.clone(), def.key, json!([0.0, 0.0, 0.0])), false);
+                    let dark = probe(id, &with(base.clone(), def.key, json!([0, 0, 0])), false);
                     let light = probe(id, &with(base.clone(), def.key, json!("#ffffff")), false);
                     assert_ne!(dark, light, "{id}: `{}` does not reach the GPU", def.key);
                 }

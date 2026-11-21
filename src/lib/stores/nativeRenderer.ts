@@ -1,4 +1,5 @@
 import { writable } from 'svelte/store';
+import { setNativeGraphParamDefsFromManifest, setNativeCloudLoadStates } from '../renderer/manifestParams';
 import type {
   NativeRendererCapabilities,
   RendererReadinessCheck,
@@ -613,6 +614,10 @@ export function updateNativeRendererRuntimeFromStartup(
     graphCatalogComplete,
     nativeGraphSourceFrames,
   }));
+  // Layer controls the core's instruments publish (manifestParams.ts).
+  setNativeGraphParamDefsFromManifest(
+    (capabilities ?? readiness?.capabilities)?.native_graph_instrument_manifest,
+  );
 }
 
 /*
@@ -686,6 +691,7 @@ export function updateNativeRendererRuntimeFromStatus(
   } = {},
 ) {
   const measuredFps = measureOutputFps(status);
+  setNativeCloudLoadStates((status as any)?.audio_visual_cloud_loads);
   nativeRendererRuntime.update((current) => {
     const next = deriveNativeRendererRuntimeState(
       status,

@@ -75,7 +75,8 @@ impl ParamDef {
                 "options": options.iter().map(|(value, label)| json!({ "value": value, "label": label })).collect::<Vec<_>>(),
                 "default": default,
             }),
-            Kind::Color(default) => json!({ "kind": "color", "default": default }),
+            // The panel stores colours as 0..255 (as every colour control does).
+            Kind::Color(default) => json!({ "kind": "color", "default": default.map(|c| (c * 255.0).round()) }),
             Kind::File => json!({ "kind": "media-source", "sources": ["file"], "accept": ".ply" }),
         };
         out["key"] = json!(self.key);
@@ -83,6 +84,10 @@ impl ParamDef {
         out["group"] = json!(self.group);
         if self.resets {
             out["resets"] = json!(true);
+        }
+        // The Trigger flips on each press: the panel draws it as a button.
+        if self.key == "trigger" {
+            out["button"] = json!(true);
         }
         out
     }
@@ -136,7 +141,8 @@ impl Defs {
         options.iter().find(|(value, _)| *value == wanted).map_or(default, |(value, _)| *value)
     }
 
-    /// A colour as linear rgb, from `[r, g, b]` (0..1) or `"#rrggbb"` (sRGB).
+    /// A colour as linear rgb, from `[r, g, b]` (0..255, the panel's colour
+    /// control) or `"#rrggbb"` (sRGB).
     pub fn rgb(&self, params: &Value, key: &str) -> [f32; 3] {
         let Kind::Color(default) = self.def(key).kind else { panic!("`{key}` is not a colour") };
         let srgb_to_linear = |c: f32| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
@@ -144,7 +150,7 @@ impl Defs {
             Some(Value::Array(values)) if values.len() >= 3 => {
                 let mut out = [0.0; 3];
                 for (slot, v) in out.iter_mut().zip(values) {
-                    *slot = srgb_to_linear(v.as_f64().unwrap_or(0.0).clamp(0.0, 1.0) as f32);
+                    *slot = srgb_to_linear((v.as_f64().unwrap_or(0.0) / 255.0).clamp(0.0, 1.0) as f32);
                 }
                 out
             }
@@ -405,8 +411,8 @@ mod tests {
         assert!(d.flag(&json!({ "freeze": true }), "freeze"));
         let white = d.rgb(&json!({ "colorA": "#ffffff" }), "colorA");
         assert!((white[0] - 1.0).abs() < 1e-5);
-        let mid = d.rgb(&json!({ "colorA": [0.5, 0.5, 0.5] }), "colorA");
-        assert!((mid[0] - 0.214).abs() < 0.01, "sRGB 0.5 is linear ~0.214");
+        let mid = d.rgb(&json!({ "colorA": [128, 128, 128] }), "colorA");
+        assert!((mid[0] - 0.216).abs() < 0.01, "sRGB 128 is linear ~0.216");
         let json = d.json();
         assert!(json.as_array().unwrap().iter().all(|p| p["key"].is_string() && p["label"].is_string() && p["group"].is_string()));
     }
