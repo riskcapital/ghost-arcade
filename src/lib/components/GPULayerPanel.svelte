@@ -31,9 +31,6 @@
   import { carryGpuShaderInput, gpuLayerAwaitingInput } from '../renderer/gpuShaderInput';
   import { listNativeCameras, subscribeCameraLiveSourceError } from '../renderer/cameraLiveSource';
   import NumericInput from './NumericInput.svelte';
-  import { CLOUD_INSTRUMENT_IDS } from '../renderer/gpuShaderCatalog';
-  import { manifestParamDefaults, nativeCloudLoadStates, nativeGraphParamDefs } from '../renderer/manifestParams';
-  import { cloudLoadMessage, groupControls, hasRebuildParams } from '../renderer/manifestPanel';
 
   // Media-source picker support (for shaders with kind: 'media-source'
   // controls, e.g. pixel-particles). Lists media library items + the
@@ -202,15 +199,6 @@
   $: content = (layer && layer.type === 'gpu' ? layer.gpuLayerContent : null) as GPULayerContent | null;
   $: layerId = layer?.id ?? null;
   $: shaderDef = content ? getShaderDef(content.shaderId) : null;
-  // Audio-reactive instruments publish their controls in the core's
-  // manifest; the rest carry a static schema.
-  $: paramSchema = shaderDef?.paramsFromManifest
-    ? ($nativeGraphParamDefs[shaderDef.id] ?? [])
-    : (shaderDef?.paramSchema ?? []);
-  $: showsRebuildNote = hasRebuildParams(paramSchema);
-  $: cloudLoad = layerId && shaderDef && CLOUD_INSTRUMENT_IDS.has(shaderDef.id)
-    ? cloudLoadMessage($nativeCloudLoadStates[layerId], content?.params?.path)
-    : null;
   $: nativeOutputCoreEnabled = !!$settings.experimental?.outputNativeCore;
   $: nativeSourceInventoryLocked = NATIVE_ENGINE_ONLY && nativeOutputCoreEnabled;
   // Both surfaces exclude archived shaders; an archived id already saved in
@@ -313,7 +301,17 @@
   // Group VISIBLE params by their `group` property. Empty groups
   // (everything filtered) are dropped so the panel doesn't show
   // bare section headings with nothing underneath.
-  $: groupedParams = shaderDef && content ? groupControls(paramSchema, isParamVisible) : [];
+  $: groupedParams = (() => {
+    if (!shaderDef) return [];
+    const groups = new Map<string, ParamControl[]>();
+    for (const p of shaderDef.paramSchema) {
+      if (!isParamVisible(p)) continue;
+      const g = p.group ?? '';
+      if (!groups.has(g)) groups.set(g, []);
+      groups.get(g)!.push(p);
+    }
+    return Array.from(groups.entries());
+  })();
 
   /** Read a param value, falling back to the schema default if the
    *  user hasn't edited it yet. */
@@ -347,10 +345,9 @@
     if (prevId) stash[prevId] = prevParams;
     const restored = stash[id];
     // The picked input comes along to another input-driven shader.
-    const defaults = def.paramsFromManifest ? manifestParamDefaults(id) : def.defaultParams;
     const nextParams = carryGpuShaderInput(prevId, prevParams, id, restored
-      ? { ...defaults, ...restored }
-      : { ...defaults }, def);
+      ? { ...def.defaultParams, ...restored }
+      : { ...def.defaultParams }, def);
     project.updateGPULayerContent(layerId, {
       shaderId: id,
       params: nextParams,
@@ -446,7 +443,7 @@
           {#each params as p}
             {#if p.kind === 'slider'}
             <EffectParamRow
-              label={p.resets ? `${p.label} ↻` : p.label}
+              label={p.label}
               value={paramValue(p)}
               min={p.min}
               max={p.max}
@@ -473,10 +470,6 @@
               displayValue={(v) => `${v.toFixed(1)}°`}
               onChange={(v) => setParam(p.key, v)}
             />
-          {:else if p.kind === 'toggle' && p.button}
-            <!-- A momentary control (Trigger): each press flips the stored
-                 value, which the instrument reads as one hit. -->
-            <button class="mini-action wide" onclick={() => setParam(p.key, !paramValue(p))}>{p.label}</button>
           {:else if p.kind === 'toggle'}
             <label class="toggle-row">
               <input type="checkbox" checked={paramValue(p)}
@@ -505,7 +498,6 @@
                   <option value={opt.value}>{opt.label}</option>
                 {/each}
               </select>
-              {#if p.resets}<span class="rebuild-mark" title="Changing this rebuilds the instrument">↻</span>{/if}
             </div>
           {:else if p.kind === 'media-source'}
             <!-- Media-source picker: thumbnail grid of media library
@@ -517,9 +509,6 @@
                  Cloud FX sets `sources: ['file']` because PLY/.splat
                  only meaningfully arrive via file upload. -->
             {@const _src = paramValue(p)}
-            {#if cloudLoad}
-              <div class="cloud-load" class:failed={cloudLoad.failed}>{cloudLoad.text}</div>
-            {/if}
             {@const _allowed = (p as any).sources as ('media' | 'layer' | 'file' | 'live')[] | undefined}
             {@const _showMedia = (!_allowed || _allowed.includes('media')) && libraryItems.length > 0}
             {@const _showLayer = (!_allowed || _allowed.includes('layer')) && mediaLayers.length > 0}
@@ -658,9 +647,6 @@
           {/each}
         </div>
       {/each}
-      {#if showsRebuildNote}
-        <div class="rebuild-note">↻ Changing this rebuilds the instrument</div>
-      {/if}
     {/if}
   </div>
   <!-- accept includes .ply / .splat for the Point Cloud FX shader.
@@ -738,10 +724,6 @@
   .live-label { font-size: var(--ga-text-eyebrow); font-weight: 700; text-transform: uppercase; letter-spacing: var(--ga-eyebrow-tracking); color: var(--ga-ink-2); margin-bottom: 4px; }
   .mini-action.wide { width: 100%; height: var(--ga-control-h); background: var(--ga-sub); border: 1px solid var(--ga-line-2); color: var(--ga-ink-1); padding: 0 10px; border-radius: var(--ga-r-hard); cursor: pointer; font-size: var(--ga-text-control); font-weight: var(--ga-weight-control); margin-top: 6px; }
   .mini-action.wide:hover { color: var(--ga-ink-0); border-color: var(--ga-line-3); }
-  .rebuild-mark { color: var(--ga-ink-2); margin-left: 6px; }
-  .rebuild-note { color: var(--ga-ink-2); font-size: var(--ga-text-small, 11px); margin-top: 8px; }
-  .cloud-load { color: var(--ga-ink-1); font-size: var(--ga-text-small, 11px); margin: 4px 0; }
-  .cloud-load.failed { color: var(--ga-danger, #e66); }
   .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 4px; max-height: 200px; overflow-y: auto; padding: 4px; margin-top: 6px; background: var(--ga-slot); border: 1px solid var(--ga-line-2); border-radius: var(--ga-r-hard); }
   .media-cell { position: relative; background: var(--ga-card); border: 1px solid var(--ga-line-1); border-radius: var(--ga-r-hard); padding: 0; cursor: pointer; overflow: hidden; aspect-ratio: 1; display: flex; flex-direction: column; }
   .media-cell:hover { border-color: var(--ga-line-3); }

@@ -152,7 +152,7 @@ impl App {
         let post_dt = if dt > 0.0 { dt } else { state.post_dt };
         let (width, height) = accumulation_size(self.pending_width, self.pending_height, params.accum_scale);
         let (uniform, shaped) = step_strands_frame(
-            &mut state.queue, &mut state.shaper, &mut state.clock, &params, &self.audio_visual,
+            &mut state.queue, &mut state.shaper, &mut state.clock, &params, self.audio_visual_for(&graph_layer.params),
             dt, width, height, state.frame,
         );
 
@@ -302,7 +302,7 @@ impl App {
         let mut extra_buffers = Vec::new();
         let mut grid: Option<(Vec<NativeComputeGraphPassPlan>, String)> = None;
         let uniform = step_cloud_frame(
-            &mut state.sim, kind, &params, &graph_layer.params, &self.audio_visual, dt, width, height, drawn,
+            &mut state.sim, kind, &params, &graph_layer.params, self.audio_visual_for(&graph_layer.params), dt, width, height, drawn,
         );
         // Each instrument's compute pass works out every point once a frame
         // (position, colour, size) into the sprite buffer; the draw only

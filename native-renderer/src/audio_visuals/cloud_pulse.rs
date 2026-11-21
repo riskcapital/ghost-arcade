@@ -184,12 +184,9 @@ pub fn normalize_cloud_params(params: &Value, kind: CloudKind) -> CloudPulsePara
     let light_threshold = if kind == CloudKind::DepthLights { n("lightThreshold") } else { 0.12 };
     CloudPulseParams {
         accum_scale: scale,
-        path: params
-            .get("path")
-            .or_else(|| params.get("plyPath"))
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string(),
+        path: super::ply_reader::scan_path_or_default(
+            params.get("path").or_else(|| params.get("plyPath")).and_then(Value::as_str).unwrap_or(""),
+        ),
         max_points: num(params, "maxPoints", budget as f32)
             .round()
             .clamp(10_000.0, super::ply_reader::CLOUD_MAX_POINTS as f32) as u32,

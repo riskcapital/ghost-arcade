@@ -5535,6 +5535,9 @@ struct App {
     /// Spectrum, waveform, onset envelopes and recent hits for the
     /// audio-reactive instruments (`set_audio_spectrum.visual_b64`).
     audio_visual: audio_visuals::audio_data::AudioVisualData,
+    /// One packet per sound an instrument follows (`set_audio_spectrum.visual_sources`,
+    /// keyed like the layer's `audioSource` param); a layer without one reads `audio_visual`.
+    audio_visual_sources: HashMap<String, audio_visuals::audio_data::AudioVisualData>,
     isf_multipass_renders: u64,
     isf_audio_decode_scratch: Vec<u8>,
     shader_precompile_queue_cap: u32,
@@ -5963,6 +5966,7 @@ impl App {
             isf_shader_generation: 0,
             isf_audio_spectrum: IsfAudioSpectrum::default(),
             audio_visual: audio_visuals::audio_data::AudioVisualData::default(),
+            audio_visual_sources: HashMap::new(),
             isf_multipass_renders: 0,
             isf_audio_decode_scratch: Vec::new(),
             shader_precompile_queue_cap: 4096,
@@ -17965,6 +17969,7 @@ impl App {
         // the ISF rows above: either can be live without the other.
         if bool_at(command, &["visual_active"]) == Some(false) {
             self.audio_visual.set_inactive();
+            self.audio_visual_sources.clear();
         } else if let Some(encoded) = command.get("visual_b64").and_then(Value::as_str) {
             let scratch = &mut self.isf_audio_decode_scratch;
             scratch.clear();
@@ -17975,6 +17980,35 @@ impl App {
                 self.last_shader_error = Some(err);
             }
         }
+        if bool_at(command, &["visual_active"]) != Some(false) {
+            self.apply_audio_visual_sources(command);
+        }
+    }
+
+    /// Per-source packets: every key sent is decoded into its own packet;
+    /// keys no longer sent are dropped (nothing follows them any more).
+    fn apply_audio_visual_sources(&mut self, command: &Value) {
+        let Some(sources) = command.get("visual_sources").and_then(Value::as_object) else { return };
+        self.audio_visual_sources.retain(|key, _| sources.contains_key(key));
+        for (key, encoded) in sources.iter().take(64) {
+            let Some(encoded) = encoded.as_str() else { continue };
+            let scratch = &mut self.isf_audio_decode_scratch;
+            scratch.clear();
+            if base64::engine::general_purpose::STANDARD.decode_vec(encoded, scratch).is_err() {
+                continue;
+            }
+            let packet = self.audio_visual_sources.entry(key.clone()).or_default();
+            if let Err(err) = packet.set_from_bytes(scratch)
+                && self.last_shader_error.as_deref() != Some(err.as_str())
+            {
+                self.last_shader_error = Some(err);
+            }
+        }
+    }
+
+    /// The packet an instrument layer reads: its own source's when it follows one.
+    pub(crate) fn audio_visual_for(&self, params: &Value) -> &audio_visuals::audio_data::AudioVisualData {
+        audio_visual_packet_for(&self.audio_visual, &self.audio_visual_sources, params)
     }
 
     fn apply_audio_state(&mut self, command: &Value) {
@@ -38832,5 +38866,39 @@ fn wait_for_gpu_map(device: &wgpu::Device, rx: &Receiver<Result<(), String>>) ->
             Err(mpsc::RecvTimeoutError::Timeout) if Instant::now() < deadline => {}
             Err(_) => return Err("GPU mapping timed out or disconnected".to_string()),
         }
+    }
+}
+
+/// A layer's `audioSource` packet, or the master packet when it follows none
+/// (or its source has not been sent yet).
+pub(crate) fn audio_visual_packet_for<'a>(
+    master: &'a audio_visuals::audio_data::AudioVisualData,
+    sources: &'a HashMap<String, audio_visuals::audio_data::AudioVisualData>,
+    params: &Value,
+) -> &'a audio_visuals::audio_data::AudioVisualData {
+    params
+        .get("audioSource")
+        .and_then(Value::as_str)
+        .filter(|key| !key.is_empty())
+        .and_then(|key| sources.get(key))
+        .unwrap_or(master)
+}
+
+#[cfg(test)]
+mod audio_visual_source_tests {
+    use super::*;
+    use audio_visuals::audio_data::AudioVisualData;
+
+    #[test]
+    fn a_layer_reads_its_own_source_packet_or_the_master() {
+        let master = AudioVisualData::default();
+        let mut kick = AudioVisualData::default();
+        kick.seq = 42;
+        let mut sources = HashMap::new();
+        sources.insert("kick".to_string(), kick);
+        let pick = |p: Value| audio_visual_packet_for(&master, &sources, &p).seq;
+        assert_eq!(pick(json!({ "audioSource": "kick" })), 42);
+        assert_eq!(pick(json!({ "audioSource": "bass" })), master.seq, "unsent source falls back");
+        assert_eq!(pick(json!({})), master.seq);
     }
 }

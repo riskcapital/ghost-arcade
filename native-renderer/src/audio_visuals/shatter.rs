@@ -145,7 +145,7 @@ pub fn normalize_shatter_params(params: &Value) -> ShatterParams {
         audio.launch_mask = 3;
     }
     ShatterParams {
-        path: params.get("path").or_else(|| params.get("plyPath")).and_then(Value::as_str).unwrap_or("").to_string(),
+        path: super::ply_reader::scan_path_or_default(params.get("path").or_else(|| params.get("plyPath")).and_then(Value::as_str).unwrap_or("")),
         max_points: r.count("maxPoints", pick_or(params, [400_000u32, 750_000, 1_000_000], 0)),
         orient: [r.f("orientX"), r.f("orientY"), r.f("orientZ")],
         scale: r.f("scale"),
@@ -358,6 +358,8 @@ pub fn shatter_uniform(
     u.extend_from_slice(&p.core);
     u.extend_from_slice(&[p.fringe[0], p.fringe[1], p.fringe[2], 0.6]);
     u.extend_from_slice(&[time, audio.levels[3], audio.env[2], 0.0]);
+    // look2 (CloudU in cloud_common.wgsl): the block must start at data[0].
+    u.extend_from_slice(&[params.size_var, 0.0, 0.0, 0.0]);
     let amount = shatter.amount(time, params);
     let block = [
         amount, shatter.spin, shatter.heat(time), params.explode * shatter.power.max(0.3),
@@ -366,7 +368,7 @@ pub fn shatter_uniform(
         params.stagger, gain, 0.0, 0.0,
     ];
     u.extend_from_slice(&block);
-    u.resize(32 + 10 * 4 + SHATTER_DATA_VEC4 * 4, 0.0);
+    u.resize(32 + 11 * 4 + SHATTER_DATA_VEC4 * 4, 0.0);
     u
 }
 
@@ -388,6 +390,13 @@ mod tests {
 
     fn kick(seq: u32, strength: f32) -> OnsetEvent {
         OnsetEvent { time: 0.0, band: OnsetBand::Bass, strength, seq }
+    }
+
+    #[test]
+    fn the_uniform_matches_the_shared_cloud_layout() {
+        let u = shatter_uniform(&params(), &Shatter::default(), &Default::default(), [0.0; 3], (640, 360), 1000, 0.0, 1.0);
+        assert_eq!(u.len(), super::super::cloud_pulse::CLOUD_UNIFORM_FLOATS, "CloudU is 688 bytes");
+        assert_eq!(u[32 + 11 * 4 + 13], 1.0, "scan gain lands in data[3].y");
     }
 
     #[test]

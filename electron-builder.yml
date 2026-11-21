@@ -50,6 +50,12 @@ extraResources:
       - ghost-render-core.exe
       - dxcompiler.dll
       - dxil.dll
+  # The cloud instruments' default scan (ply_reader.rs scan_path_or_default
+  # finds it beside the core).
+  - from: native-renderer/assets/
+    to: native-renderer/assets/
+    filter:
+      - default-scan.ply
 
   # Shaders (all platforms)
   - from: ISF/

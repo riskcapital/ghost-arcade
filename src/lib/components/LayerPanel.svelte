@@ -29,7 +29,6 @@
     recordDiscreteAction();
   }
   import { confirmDeleteIfSafeMode } from '../utils/safeMode';
-  import { AUDIO_REACTIVE_GPU_SHADER_DEFS } from '../renderer/gpuShaderCatalog';
   import ShowBlockBanner from './show/ShowBlockBanner.svelte';
   import { activeBlock, setBlockBlendMode, setBlockOpacity } from '../show/tracks/showBlockEdit';
   import { layerRenderMeshGrid } from '../utils/meshWarp';
@@ -1156,18 +1155,6 @@
                 </svg>
                 GPU shader
               </button>
-            {/if}
-            {#if nativeInventoryLocked}
-              <!-- Audio Lab's audio-reactive instruments (offered only where
-                   the Audio Lab gate lets them into the catalog). -->
-              {#each AUDIO_REACTIVE_GPU_SHADER_DEFS.filter((def) => isNativeReadyGpuShaderId(def.id)) as def (def.id)}
-                <button data-add-audio-visual={def.id} onclick={() => { project.addGPULayer(def.label, def.id); showAddLayerMenu = false; }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M3 12h3l2-6 4 12 3-9 2 3h4"/>
-                  </svg>
-                  {def.label}
-                </button>
-              {/each}
             {/if}
             <button
               title="Add screen layer"

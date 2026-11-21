@@ -394,3 +394,42 @@ mod tests {
         assert!(load.ready().is_err());
     }
 }
+
+/// The scan a cloud instrument reads: the picked file, or with none picked the
+/// small default scan that ships beside the core (`assets/default-scan.ply`),
+/// so a new cloud layer or voice draws at once. `GA_DEFAULT_SCAN` overrides it.
+pub fn scan_path_or_default(picked: &str) -> String {
+    if !picked.trim().is_empty() {
+        return picked.to_string();
+    }
+    default_scan_path().unwrap_or_default()
+}
+
+fn default_scan_path() -> Option<String> {
+    if let Ok(env) = std::env::var("GA_DEFAULT_SCAN")
+        && !env.trim().is_empty()
+    {
+        return Some(env);
+    }
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    // Packaged: {resources}/native-renderer/assets. Dev: target/{profile}/ -> native-renderer/assets.
+    [dir.join("assets"), dir.join("../../assets"), dir.join("../../../assets")]
+        .into_iter()
+        .map(|d| d.join("default-scan.ply"))
+        .find(|p| p.is_file())
+        .map(|p| p.to_string_lossy().into_owned())
+}
+
+#[cfg(test)]
+mod default_scan_tests {
+    use super::*;
+
+    #[test]
+    fn a_picked_file_wins_and_the_bundled_scan_is_found() {
+        assert_eq!(scan_path_or_default("/x/a.ply"), "/x/a.ply");
+        let p = scan_path_or_default("");
+        assert!(p.ends_with("default-scan.ply"), "bundled default scan found from the test binary: {p:?}");
+        assert!(std::path::Path::new(&p).is_file());
+    }
+}

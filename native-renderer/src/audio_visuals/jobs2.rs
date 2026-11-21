@@ -209,8 +209,8 @@ impl App {
         Ok(NativeComputeGraphRenderTarget::SourceFrame { source_id: source_id.to_string(), slot: output_slot, seq })
     }
 
-    fn av2_audio_buffer(&self, prefix: &str) -> NativeComputeGraphBufferSpec {
-        let bytes = self.audio_visual.gpu_bytes();
+    fn av2_audio_buffer(&self, prefix: &str, params: &serde_json::Value) -> NativeComputeGraphBufferSpec {
+        let bytes = self.audio_visual_for(params).gpu_bytes();
         NativeComputeGraphBufferSpec {
             id: format!("{prefix}:audio"),
             byte_length: bytes.len() as u64,
@@ -311,7 +311,7 @@ impl App {
         }
         let frame = self.av2_clock(&mut state.clock);
         let size = accumulation_size(self.pending_width, self.pending_height, 1.0);
-        let f = ribbon_frame(&graph_layer.params, &mut state.ribbon, &self.audio_visual, size, frame.dt);
+        let f = ribbon_frame(&graph_layer.params, &mut state.ribbon, self.audio_visual_for(&graph_layer.params), size, frame.dt);
         let params = f.params;
         let uniform_id = format!("{prefix}:uniform");
         let mut buffers = vec![
@@ -370,7 +370,7 @@ impl App {
         }
         let frame = self.av2_clock(&mut state.clock);
         let size = accumulation_size(self.pending_width, self.pending_height, 1.0);
-        let f = shock_frame(&graph_layer.params, &mut state.shock, &self.audio_visual, size, frame.dt);
+        let f = shock_frame(&graph_layer.params, &mut state.shock, self.audio_visual_for(&graph_layer.params), size, frame.dt);
         let params = f.params;
         let mut buffers = vec![uniform_spec(uniform_id.clone(), &f.uniform)];
         let refract = core_shader(SHOCKWAVE_REFRACT);
@@ -440,7 +440,7 @@ impl App {
             state = Av2State { key: key.clone(), ..Av2State::default() };
         }
         let frame = self.av2_clock(&mut state.clock);
-        let f = ink_frame(&graph_layer.params, &mut state.ink, &self.audio_visual, sim, dye, aspect, frame.dt);
+        let f = ink_frame(&graph_layer.params, &mut state.ink, self.audio_visual_for(&graph_layer.params), sim, dye, aspect, frame.dt);
         let params = f.params;
         let shader = core_shader(FLUID_INK);
         let tex = |name: &str| format!("{prefix}:{name}:{key}");
@@ -525,7 +525,7 @@ impl App {
         }
         let frame = self.av2_clock(&mut state.clock);
         let size = accumulation_size(self.pending_width, self.pending_height, 1.0);
-        let f = arc_frame(&graph_layer.params, &mut state.arcs, &self.audio_visual, size, frame.dt);
+        let f = arc_frame(&graph_layer.params, &mut state.arcs, self.audio_visual_for(&graph_layer.params), size, frame.dt);
         let params = f.params;
         let mut buffers = vec![uniform_spec(uniform_id.clone(), &f.uniform)];
         let (post, extra) =
@@ -581,10 +581,10 @@ impl App {
         }
         let frame = self.av2_clock(&mut state.clock);
         let size = accumulation_size(self.pending_width, self.pending_height, 1.0);
-        let f = terrain_frame(&graph_layer.params, &mut state.terrain, &self.audio_visual, size, frame.dt);
+        let f = terrain_frame(&graph_layer.params, &mut state.terrain, self.audio_visual_for(&graph_layer.params), size, frame.dt);
         let params = f.params;
         let uniform_id = format!("{prefix}:uniform");
-        let audio = self.av2_audio_buffer(prefix);
+        let audio = self.av2_audio_buffer(prefix, &graph_layer.params);
         let audio_id = audio.id.clone();
         let mut buffers = vec![
             storage(&rows_id, u64::from(params.rows) * u64::from(TERRAIN_BINS) * 4, reset),
@@ -662,7 +662,7 @@ impl App {
         }
         let frame = self.av2_clock(&mut state.clock);
         let size = accumulation_size(self.pending_width, self.pending_height, 1.0);
-        let f = shatter_frame(&graph_layer.params, &mut state.shatter, &self.audio_visual, size, count, frame.dt);
+        let f = shatter_frame(&graph_layer.params, &mut state.shatter, self.audio_visual_for(&graph_layer.params), size, count, frame.dt);
         let params = f.params;
         let uniform_id = format!("{prefix}:uniform");
         let mut buffers = vec![
