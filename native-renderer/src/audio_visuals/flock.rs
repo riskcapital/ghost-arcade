@@ -32,6 +32,11 @@ pub struct FlockParams {
     pub cooldown: f32,
     /// How strongly the swarm gathers into bands (0 = even dust).
     pub banding: f32,
+    /// How fast points turn to fly with the flow (per second): neighbours
+    /// share a heading, so the swarm moves in sheets, not dust.
+    pub align: f32,
+    /// Speed the aligned swarm cruises at.
+    pub cruise: f32,
 }
 
 pub fn normalize_flock_params(params: &Value) -> FlockParams {
@@ -41,13 +46,15 @@ pub fn normalize_flock_params(params: &Value) -> FlockParams {
         hold: num(params, "hold", 0.35).clamp(0.0, 10.0),
         reform: num(params, "reform", 0.9).clamp(0.05, 20.0),
         curl: num(params, "swarm", 3.0).clamp(0.0, 20.0),
-        flow_scale: num(params, "flowScale", 1.2).clamp(0.1, 40.0),
+        flow_scale: num(params, "flowScale", 0.6).clamp(0.1, 40.0),
         flow_speed: num(params, "flowSpeed", 0.6).clamp(0.0, 10.0),
         drag: num(params, "drag", 3.0).clamp(0.0, 20.0),
-        cohesion: num(params, "cohesion", 0.8).clamp(0.0, 20.0),
+        cohesion: num(params, "cohesion", 0.3).clamp(0.0, 20.0),
         heat: 1.0 / num(params, "hotSpeed", 1.2).clamp(0.01, 10.0),
         cooldown: num(params, "cooldown", 1.6).clamp(0.0, 30.0),
-        banding: num(params, "banding", 1.5).clamp(0.0, 10.0),
+        banding: num(params, "banding", 4.0).clamp(0.0, 10.0),
+        align: num(params, "align", 3.0).clamp(0.0, 30.0),
+        cruise: num(params, "cruise", 0.45).clamp(0.0, 5.0),
     }
 }
 
@@ -144,7 +151,10 @@ impl FlockState {
             impulse, params.cohesion * bass * if free { 1.0 } else { 0.0 }, params.flow_speed * (0.5 + bass), now,
             0.0, 0.0, 0.0, params.flow_scale,
             // Bands only form in the swarm; the formed scan stays put.
-            if free { params.banding * flow_share } else { 0.0 }, 0.0, 0.0, 0.0,
+            if free { params.banding * flow_share } else { 0.0 },
+            if free { params.align * flow_share } else { 0.0 },
+            params.cruise * (0.6 + bass * 0.6),
+            0.0,
         ]
     }
 }

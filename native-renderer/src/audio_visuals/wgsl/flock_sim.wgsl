@@ -3,7 +3,7 @@
 //   [0] dt, spring, curl strength, drag
 //   [1] scatter impulse (this frame), cohesion, flow speed, time
 //   [2] flock centre xyz, flow scale
-//   [3] banding (pull toward the flow's ridges), 0, 0, 0
+//   [3] banding (pull toward the flow's ridges), alignment rate, cruise speed, 0
 @group(0) @binding(0) var<storage, read> points: array<vec4<f32>>;
 @group(0) @binding(1) var<uniform> C: CloudU;
 @group(0) @binding(2) var<storage, read_write> flock: array<FlockPoint>;
@@ -33,9 +33,10 @@ fn flock_sprite(i: u32, f: FlockPoint) -> Sprite {
   let scan = mix(C.base.rgb, rgba.rgb * C.base.rgb * 2.0, C.base.w);
   let rest_col = scan * C.look.x;
   let hot = mix(C.mid.rgb * C.mid.w, C.high.rgb * C.high.w, smoothstep(0.5, 1.0, heat)) * C.look.y;
-  let color = mix(rest_col, hot, smoothstep(0.15, 0.9, heat)) * C.look.z * rgba.a * depth_fade(clip.w);
-  // Moving points draw finer, so the swarm stays crisp.
-  return Sprite(clip, vec4<f32>(color, sprite_size(clip.w, mix(1.0, 0.7, heat))));
+  let color = mix(rest_col, hot * 1.2, smoothstep(0.15, 0.9, heat)) * C.look.z * rgba.a * depth_fade(clip.w);
+  // Moving points draw finer and fainter each, so the swarm reads as crisp
+  // grain with dense bands, not an additive haze.
+  return Sprite(clip, vec4<f32>(color, sprite_size(clip.w, mix(1.0, 0.45, heat))));
 }
 
 @compute @workgroup_size(64)
@@ -71,9 +72,16 @@ fn cs_flock(@builtin(global_invocation_id) gid: vec3<u32>) {
       let t = C.data[1].w * C.data[1].z;
       let q = pos * C.data[2].w;
       // curl3 peaks around 4; scaled so "swarm" 1 is a strong but bounded flow.
-      acc += curl3(q, t) * (C.data[0].z * 0.25);
+      let flow = curl3(q, t);
+      acc += flow * (C.data[0].z * 0.25);
+      // Alignment: turn toward the local flow heading at cruise speed, so
+      // nearby points share a direction and the swarm moves in sheets.
+      let heading = flow / max(length(flow), 1e-3);
+      vel += (heading * C.data[3].z - vel) * min(1.0, C.data[3].y * dt);
       if (C.data[3].x > 0.0) {
-        acc += ridge3(q * 1.7, t) * (C.data[0].z * C.data[3].x * 0.25);
+        // Drift straight onto the ridges (position, not force, so the
+        // alignment above cannot smooth it away): dense bands, empty gaps.
+        pos += ridge3(q * 6.0, t) * (C.data[3].x * 0.03 * dt);
       }
     }
     vel = vel * exp(-C.data[0].w * dt) + acc * dt;

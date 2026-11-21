@@ -23,7 +23,10 @@ pub const MAX_SHAPES: usize = 8;
 /// after a stall would otherwise flush every live shape at once).
 pub const MAX_LAUNCHES_PER_FRAME: usize = 2;
 pub const ATTACK_SECONDS: f32 = 0.07;
-pub const RELEASE_SECONDS: f32 = 0.9;
+pub const RELEASE_SECONDS: f32 = 0.45;
+/// At most this many shapes stay on screen: the newest and two fading
+/// ghosts, so a busy passage reads as one shape, not a thicket.
+pub const MAX_VISIBLE_SHAPES: usize = 3;
 pub const MAX_HOLD_SECONDS: f32 = 6.0;
 /// Hits closer together than this feed the newest shape instead of making
 /// a new one.
@@ -88,7 +91,7 @@ pub fn normalize_strands_params(params: &Value) -> StrandsParams {
     // Brightness is per particle; keep the overall picture steady across
     // particle budgets.
     let density = (particle_count as f32 / 262_144.0).max(0.0625);
-    let trails = num(params, "trails", 0.9).clamp(0.0, 0.97);
+    let trails = num(params, "trails", 0.86).clamp(0.0, 0.97);
     StrandsParams {
         particle_count,
         accum_scale: scale,
@@ -101,7 +104,7 @@ pub fn normalize_strands_params(params: &Value) -> StrandsParams {
         streak: num(params, "streak", 0.03).clamp(0.0, 0.2),
         width_px: num(params, "width", 0.6).clamp(0.4, 4.0),
         brightness: num(params, "intensity", 1.0).clamp(0.0, 8.0) * 0.045 / density,
-        lifetime: num(params, "lifetime", 1.4).clamp(0.1, 6.0),
+        lifetime: num(params, "lifetime", 1.1).clamp(0.1, 6.0),
         fibres: num(params, "fibres", 420.0).clamp(16.0, 20_000.0),
         jitter: num(params, "jitter", 0.05).clamp(0.0, 1.0),
         cooling: num(params, "cooling", 1.5).clamp(0.0, 12.0),
@@ -287,6 +290,8 @@ impl ShapeQueue {
             ShapePhase::Release { since } => now - since < RELEASE_SECONDS,
             _ => true,
         });
+        let excess = self.shapes.len().saturating_sub(MAX_VISIBLE_SHAPES);
+        self.shapes.drain(..excess);
     }
 }
 
@@ -321,7 +326,20 @@ pub fn strands_uniform(
             shape.band as u32 as f32, 1.0, band_speed, spread,
         ]);
     }
-    let live = queue.shapes.len().min(MAX_SHAPES);
+    let mut live = queue.shapes.len().min(MAX_SHAPES);
+    if live == 0 {
+        // Silence: a faint resting ring keeps breathing, so a set never
+        // opens on black. It draws only the dim fringe tone.
+        let emission = 0.03;
+        total += emission;
+        shapes.extend_from_slice(&[
+            EmitterKind::Ring as u32 as f32, 0.0, 1.0, 0.37,
+            0.0, 0.0, 0.46, 0.46,
+            0.0, emission, 0.7, 1.0,
+            0.0, 0.8, 0.6, 0.25,
+        ]);
+        live = 1;
+    }
     shapes.resize(MAX_SHAPES * 16, 0.0);
     let p = &params.palette;
     let mut u = vec![
@@ -387,6 +405,21 @@ mod tests {
             assert!(queue.shapes.len() <= MAX_SHAPES);
         }
         assert_eq!(queue.shapes.last().unwrap().born, 1.9);
+    }
+
+    #[test]
+    fn only_three_shapes_stay_visible_and_silence_keeps_a_resting_ring() {
+        let mut queue = ShapeQueue::default();
+        for seq in 0..6 {
+            queue.launch(&event(seq + 1, OnsetBand::Bass), seq as f32 * 0.1, ShapeMode::Cycle, 1.78, 1.0);
+            queue.step(seq as f32 * 0.1);
+        }
+        assert_eq!(queue.shapes.len(), MAX_VISIBLE_SHAPES);
+        assert_eq!(queue.shapes.last().unwrap().born, 0.5);
+        let params = normalize_strands_params(&serde_json::json!({}));
+        let quiet = strands_uniform(&params, &ShapeQueue::default(), &AudioVisualData::default(), 1920, 1080, 0.0, 1.0 / 60.0, 1);
+        assert_eq!(quiet[36], 1.0, "one resting shape");
+        assert!(quiet[7] > 0.0 && quiet[7] < 0.1, "a faint one");
     }
 
     #[test]
