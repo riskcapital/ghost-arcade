@@ -874,7 +874,10 @@ function nativeGraphRouteRequirementErrors(
 }
 
 /** Native graph instruments that read the audio packet (audioVisualData.ts). */
-const NATIVE_AUDIO_VISUAL_KINDS: ReadonlySet<string> = new Set(['strands', 'cloud-pulse', 'cloud-flock', 'depth-lights']);
+const NATIVE_AUDIO_VISUAL_KINDS: ReadonlySet<string> = new Set([
+  'strands', 'cloud-pulse', 'cloud-flock', 'depth-lights',
+  'ribbon-field', 'shockwave-rings', 'fluid-ink', 'lightning-arcs', 'spectral-terrain', 'mesh-shatter',
+]);
 
 const SOURCE_PREVIEW_SIZE = 256;
 const SOURCE_FRAME_SIZE_FALLBACK = 2048;

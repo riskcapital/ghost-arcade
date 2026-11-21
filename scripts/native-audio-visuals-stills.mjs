@@ -185,7 +185,7 @@ let vite;
 const results = [];
 mkdirSync(outDir, { recursive: true });
 try {
-  vite = await createServer({ root, server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' });
+  vite = await createServer({ root, server: { middlewareMode: true, hmr: false }, appType: 'custom', logLevel: 'error' });
   const offline = await vite.ssrLoadModule('/src/lib/audio/offlineFileAudio.ts');
   const packing = await vite.ssrLoadModule('/src/lib/audio/audioVisualData.ts');
 
