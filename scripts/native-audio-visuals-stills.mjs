@@ -9,7 +9,8 @@
  *     "shots": [ { "name", "kind": "strands" | "cloud-pulse", "params": {..},
  *                  "ply": "cloud.ply" (Cloud Pulse: becomes params.path),
  *                  "wav": "other.wav" (optional, per shot),
- *                  "at": [seconds, ..], "perfSeconds": 4 } ] }
+ *                  "at": [seconds, ..], "perfSeconds": 4,
+ *                  "video": 8 (seconds; writes <name>.mp4 with the track, needs ffmpeg) } ] }
  *
  * Audio goes through the editor's own code: the file is decoded here, the
  * offline analyser (`offlineFileAudio.ts`) produces each frame's analysis on
@@ -197,6 +198,7 @@ try {
   }, 30_000);
 
   const tracks = new Map();
+  const packer = packing.createAudioVisualPacker({ sampleRate: Number(plan.sampleRate ?? 48000) });
   const track = (file) => {
     const resolved = path.resolve(planDir, file);
     if (!tracks.has(resolved)) tracks.set(resolved, readWavMono(resolved));
@@ -208,6 +210,8 @@ try {
     const { mono, rate } = track(shot.wav ?? plan.wav);
     const layerId = `avfx-${shot.name}`;
     const sourceId = `avfx:${shot.name}:out`;
+    // The last shot's audio stops before this layer appears.
+    await submit([{ type: 'set_audio_spectrum', active: false, visual_active: false }]);
     // Cloud Pulse reads its PLY itself (bounded, on a worker thread).
     const params = { ...(shot.params ?? {}) };
     if (shot.ply) params.path = path.resolve(planDir, shot.ply);
@@ -221,12 +225,34 @@ try {
     await delay(2500);
 
     const analyzer = new offline.OfflineFileAudioAnalyzer(mono, rate);
-    const packer = packing.createAudioVisualPacker({ sampleRate: rate });
+    // One packer for the whole run, reset per shot like the app does when an
+    // offline render starts: hit numbers keep rising, so a new layer never
+    // mistakes the last shot's hits for its own.
+    packer.reset();
     const shots = [...(shot.at ?? [])].sort((a, b) => a - b);
     const lastFrame = Math.round((shots.at(-1) ?? 0) * fps);
     const wanted = new Map(shots.map((t) => [Math.round(t * fps), t]));
     const step = 1 / fps;
-    for (let frame = 0; frame <= lastFrame; frame++) {
+    // "video": seconds -> an H.264 mp4 of every frame, with the track muxed.
+    const videoSeconds = Number(shot.video ?? 0);
+    const totalFrames = videoSeconds > 0 ? Math.round(videoSeconds * fps) : lastFrame + 1;
+    let encoder = null;
+    let encoderDone = null;
+    const encoderInput = (snap) => {
+      if (encoder || !(videoSeconds > 0)) return;
+      const pixFmt = /Bgra/i.test(String(snap.format || 'bgra')) ? 'bgra' : 'rgba';
+      const file = path.join(outDir, `${shot.name}.mp4`);
+      encoder = spawn(process.env.FFMPEG || 'ffmpeg', [
+        '-y', '-loglevel', 'error',
+        '-f', 'rawvideo', '-pix_fmt', pixFmt, '-s', `${snap.width}x${snap.height}`, '-r', String(fps), '-i', '-',
+        '-t', String(videoSeconds), '-i', path.resolve(planDir, shot.wav ?? plan.wav),
+        '-map', '0:v', '-map', '1:a', '-c:v', 'libx264', '-preset', 'slow', '-crf', '16', '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', file,
+      ], { stdio: ['pipe', 'inherit', 'inherit'] });
+      encoderDone = new Promise((resolve) => encoder.on('exit', resolve));
+      console.log(`encoding ${path.basename(file)}`);
+    };
+    for (let frame = 0; frame < totalFrames; frame++) {
       const t = frame * step;
       const visual = packer.encode(analyzer.frameAt(t), t);
       await submit([
@@ -238,6 +264,18 @@ try {
       // at `t`, then reads the composite back (BGRA, top row first).
       const rawPath = path.join(outDir, '.frame.raw');
       const snap = await rpc('export_frame_snapshot', { path: rawPath, time: t, frame_index: frame, step_seconds: step }, 60_000);
+      if (videoSeconds > 0) {
+        encoderInput(snap);
+        const raw = readFileSync(rawPath);
+        const rowBytes = Number(snap.width) * 4;
+        const padded = raw.length / Number(snap.height);
+        let tight = raw;
+        if (padded !== rowBytes) {
+          tight = Buffer.alloc(rowBytes * Number(snap.height));
+          for (let y = 0; y < Number(snap.height); y++) raw.copy(tight, y * rowBytes, y * padded, y * padded + rowBytes);
+        }
+        if (!encoder.stdin.write(tight)) await new Promise((resolve) => encoder.stdin.once('drain', resolve));
+      }
       if (take) {
         const raw = readFileSync(rawPath);
         const { w, h, out } = snapshotPixels({ ...snap, rgba_b64: raw.toString('base64'),
@@ -261,13 +299,19 @@ try {
         console.log(`${path.basename(file)}  luma ${row.mean_luma}  clipped ${row.clipped_pct}%`);
       }
     }
+    if (encoder) {
+      encoder.stdin.end();
+      const code = await encoderDone;
+      if (code) throw new Error(`ffmpeg exited ${code}`);
+    }
     const status = await rpc('status');
     if (String(status.last_shader_error || '').length) console.log(`  core: ${status.last_shader_error}`);
     if (args.includes('--debug')) console.log(`  stderr: ${stderrTail.slice(-1500)}`);
 
     if (shot.perfSeconds) {
       await submit([{ type: 'set_render_clock', mode: 'reset' }]);
-      const livePacker = packing.createAudioVisualPacker({ sampleRate: rate });
+      packer.reset();
+      const livePacker = packer;
       const liveAnalyzer = new offline.OfflineFileAudioAnalyzer(mono, rate);
       const started = performance.now();
       const duration = mono.length / rate;
