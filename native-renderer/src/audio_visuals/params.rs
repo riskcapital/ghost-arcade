@@ -125,6 +125,16 @@ pub const CLOUD_PALETTES: &[(&str, CloudPalette)] = &[
             base: [0.36, 0.34, 0.33, 0.25],
         },
     ),
+    // Cloud Flock: a near-black swarm whose edges burn white-gold.
+    (
+        "nightjar",
+        CloudPalette {
+            bass: [1.0, 0.5, 0.1, 3.0],
+            mid: [0.16, 0.09, 0.05, 0.12],
+            high: [1.0, 0.92, 0.78, 6.0],
+            base: [0.36, 0.4, 0.48, 0.45],
+        },
+    ),
     // Depth Lights: sodium near, cold white far, over a deep blue scan.
     (
         "harbour",

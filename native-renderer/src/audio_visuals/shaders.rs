@@ -9,7 +9,8 @@ pub const STRANDS_SIM: &str = "strands/sim-v2";
 pub const STRANDS_DRAW: &str = "strands/draw-v2";
 pub const CLOUD_PULSE_LIGHT: &str = "cloud-pulse/light-v2";
 pub const HDR_POST: &str = "audio-visuals/hdr-post-v1";
-pub const FLOCK_SIM: &str = "cloud-flock/sim-v2";
+pub const FLOCK_SIM: &str = "cloud-flock/sim-v3";
+pub const FLOCK_GRID: &str = "cloud-flock/grid-v1";
 pub const DEPTH_LIGHTS_LIGHT: &str = "depth-lights/light-v2";
 pub const SPRITE_DRAW: &str = "audio-visuals/sprite-draw-v1";
 
@@ -24,6 +25,7 @@ static POST_SRC: &str = include_str!("wgsl/post.wgsl");
 static CLOUD_COMMON: &str = include_str!("wgsl/cloud_common.wgsl");
 static FLOCK_COMMON: &str = include_str!("wgsl/flock_common.wgsl");
 static FLOCK_SIM_SRC: &str = include_str!("wgsl/flock_sim.wgsl");
+static FLOCK_GRID_SRC: &str = include_str!("wgsl/flock_grid.wgsl");
 static SPRITE_SRC: &str = include_str!("wgsl/sprite_draw.wgsl");
 static DEPTH_SRC: &str = include_str!("wgsl/depth_lights.wgsl");
 
@@ -39,8 +41,8 @@ fn build(id: &'static str, parts: &[&str]) -> CoreShader {
     CoreShader { id, source: Arc::from(source), hash }
 }
 
-fn all() -> &'static [CoreShader; 7] {
-    static SHADERS: OnceLock<[CoreShader; 7]> = OnceLock::new();
+fn all() -> &'static [CoreShader; 8] {
+    static SHADERS: OnceLock<[CoreShader; 8]> = OnceLock::new();
     SHADERS.get_or_init(|| {
         [
             build(STRANDS_SIM, &[NOISE, EMITTER, AUDIO_DATA, STRANDS_COMMON, STRANDS_SIM_SRC]),
@@ -48,6 +50,7 @@ fn all() -> &'static [CoreShader; 7] {
             build(CLOUD_PULSE_LIGHT, &[NOISE, CLOUD_COMMON, CLOUD_SRC]),
             build(HDR_POST, &[POST_SRC]),
             build(FLOCK_SIM, &[NOISE, CLOUD_COMMON, FLOCK_COMMON, FLOCK_SIM_SRC]),
+            build(FLOCK_GRID, &[CLOUD_COMMON, FLOCK_COMMON, FLOCK_GRID_SRC]),
             build(DEPTH_LIGHTS_LIGHT, &[NOISE, CLOUD_COMMON, DEPTH_SRC]),
             build(SPRITE_DRAW, &[CLOUD_COMMON, SPRITE_SRC]),
         ]
@@ -82,6 +85,7 @@ mod tests {
             (STRANDS_DRAW, &["vs_trail", "fs_trail"]),
             (CLOUD_PULSE_LIGHT, &["cs_pulse"]),
             (FLOCK_SIM, &["cs_flock"]),
+            (FLOCK_GRID, &["cs_grid_clear", "cs_grid_splat"]),
             (DEPTH_LIGHTS_LIGHT, &["cs_depth"]),
             (SPRITE_DRAW, &["vs_sprite", "fs_point"]),
             (HDR_POST, &["vs_full", "fs_feedback", "fs_down_first", "fs_down", "fs_up", "fs_composite"]),

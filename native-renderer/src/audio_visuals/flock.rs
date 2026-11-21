@@ -37,6 +37,10 @@ pub struct FlockParams {
     pub align: f32,
     /// Speed the aligned swarm cruises at.
     pub cruise: f32,
+    /// Push out of crowded grid cells (keeps sheets thin, gaps dark).
+    pub separation: f32,
+    /// How bright the swarm's edges burn against its dark body.
+    pub edge_light: f32,
 }
 
 pub fn normalize_flock_params(params: &Value) -> FlockParams {
@@ -49,12 +53,14 @@ pub fn normalize_flock_params(params: &Value) -> FlockParams {
         flow_scale: num(params, "flowScale", 0.6).clamp(0.1, 40.0),
         flow_speed: num(params, "flowSpeed", 0.6).clamp(0.0, 10.0),
         drag: num(params, "drag", 3.0).clamp(0.0, 20.0),
-        cohesion: num(params, "cohesion", 0.3).clamp(0.0, 20.0),
+        cohesion: num(params, "cohesion", 1.6).clamp(0.0, 20.0),
         heat: 1.0 / num(params, "hotSpeed", 1.2).clamp(0.01, 10.0),
         cooldown: num(params, "cooldown", 1.6).clamp(0.0, 30.0),
-        banding: num(params, "banding", 4.0).clamp(0.0, 10.0),
+        banding: num(params, "banding", 0.5).clamp(0.0, 10.0),
         align: num(params, "align", 3.0).clamp(0.0, 30.0),
         cruise: num(params, "cruise", 0.45).clamp(0.0, 5.0),
+        separation: num(params, "separation", 0.2).clamp(0.0, 10.0),
+        edge_light: num(params, "edgeLight", 1.0).clamp(0.0, 4.0),
     }
 }
 
@@ -148,13 +154,14 @@ impl FlockState {
         let drag = params.drag.max(1.8 * spring.sqrt());
         vec![
             dt, spring, curl, drag,
-            impulse, params.cohesion * bass * if free { 1.0 } else { 0.0 }, params.flow_speed * (0.5 + bass), now,
+            impulse, params.cohesion * (0.5 + bass) * if free { 1.0 } else { 0.0 }, params.flow_speed * (0.5 + bass), now,
             0.0, 0.0, 0.0, params.flow_scale,
             // Bands only form in the swarm; the formed scan stays put.
             if free { params.banding * flow_share } else { 0.0 },
             if free { params.align * flow_share } else { 0.0 },
             params.cruise * (0.6 + bass * 0.6),
-            0.0,
+            params.separation,
+            params.edge_light, 0.0, 0.0, 0.0,
         ]
     }
 }
@@ -218,4 +225,55 @@ mod tests {
         let next = flock.block(&kick(1), 1.02, 1.0 / 60.0, &params);
         assert_eq!(next[4], 0.0, "one burst per kick");
     }
+}
+
+/// Cells per side of the neighbour grid (`FLOCK_GRID_N` in flock_common.wgsl).
+pub const FLOCK_GRID_N: u32 = 32;
+/// Bytes of the grid: vx, vy, vz, count as i32 per cell.
+pub const FLOCK_GRID_BYTES: u64 = (FLOCK_GRID_N as u64).pow(3) * 16;
+
+/// The neighbour grid's buffer and its two passes (clear, then splat), to
+/// run before the flock update, which reads the grid at binding 4.
+pub fn flock_grid_plan(
+    prefix: &str,
+    uniform_id: &str,
+    flock_id: &str,
+    point_count: u32,
+) -> (crate::compute_graph::NativeComputeGraphBufferSpec, Vec<crate::compute_graph::NativeComputeGraphPassPlan>, String) {
+    use crate::compute_graph::{NativeComputeBufferBindingKind as Kind, NativeComputeGraphBufferSpec, NativeComputeGraphPassPlan};
+    use super::hdr_post::buffer_binding;
+    use super::shaders::{FLOCK_GRID, core_shader};
+    let grid_id = format!("{prefix}:flock-grid");
+    let buffer = NativeComputeGraphBufferSpec {
+        id: grid_id.clone(),
+        byte_length: FLOCK_GRID_BYTES,
+        kind: Kind::StorageReadWrite,
+        initial_bytes: Vec::new(),
+        persistent: true,
+        clear: false,
+        indirect: false,
+    };
+    let shader = core_shader(FLOCK_GRID);
+    let pass = |entry: &str, groups: u32, with_flock: bool| {
+        let mut bindings = vec![buffer_binding(1, uniform_id, Kind::Uniform)];
+        if with_flock {
+            bindings.push(buffer_binding(2, flock_id, Kind::StorageRead));
+        }
+        bindings.push(buffer_binding(4, &grid_id, Kind::StorageReadWrite));
+        let layout = crate::native_graph_binding_layout_signature(&bindings);
+        NativeComputeGraphPassPlan {
+            name: format!("{prefix}:{entry}"),
+            cache_key: format!("graph:{}:{}:{entry}:{layout}", shader.id, shader.hash),
+            source: shader.source.clone(),
+            entry: entry.to_string(),
+            dispatch: [groups.max(1), 1, 1],
+            bindings,
+        }
+    };
+    let cells = FLOCK_GRID_N.pow(3) * 4;
+    let passes = vec![
+        pass("cs_grid_clear", cells.div_ceil(64), false),
+        pass("cs_grid_splat", point_count.div_ceil(64), true),
+    ];
+    (buffer, passes, grid_id)
 }

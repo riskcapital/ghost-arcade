@@ -556,7 +556,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
         id: "cloud-flock",
         label: "Cloud Flock",
         shader_source: ShaderSource::Core,
-        shader_ids: &["cloud-flock/sim-v2", "audio-visuals/sprite-draw-v1", "audio-visuals/hdr-post-v1"],
+        shader_ids: &["cloud-flock/sim-v3", "cloud-flock/grid-v1", "audio-visuals/sprite-draw-v1", "audio-visuals/hdr-post-v1"],
         features: &[
             "compute_graph_host",
             "compute_graph_render",

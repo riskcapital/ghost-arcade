@@ -231,6 +231,15 @@ impl App {
         if instrument != CloudInstrument::Pulse && graph_layer.params.get("baseGlow").is_none() {
             params.base_glow = if instrument == CloudInstrument::Flock { 0.012 } else { 0.004 };
         }
+        // The swarm is crisp grain: no trail smear, no colour split.
+        if instrument == CloudInstrument::Flock {
+            if graph_layer.params.get("trails").is_none() {
+                params.post.decay = 0.0;
+            }
+            if graph_layer.params.get("split").is_none() {
+                params.post.split = 0.0;
+            }
+        }
         if params.path.is_empty() {
             return Err(format!("{} needs a point cloud file", instrument.prefix()));
         }
@@ -288,6 +297,7 @@ impl App {
         let flock_id = format!("{prefix}:flock:{point_count}");
         let sprite_id = format!("{prefix}:sprites:{point_count}");
         let mut extra_buffers = Vec::new();
+        let mut grid: Option<(Vec<NativeComputeGraphPassPlan>, String)> = None;
         // Each instrument's compute pass works out every point once a frame
         // (position, colour, size) into the sprite buffer; the draw only
         // places quads.
@@ -320,6 +330,9 @@ impl App {
                     clear: home_missing || flock_missing,
                     indirect: false,
                 });
+                let (grid_buffer, grid_passes, grid_id) = super::flock::flock_grid_plan(&prefix, &uniform_id, &flock_id, point_count);
+                extra_buffers.push(grid_buffer);
+                grid = Some((grid_passes, grid_id));
                 (u, core_shader(FLOCK_SIM), "cs_flock")
             }
             CloudInstrument::DepthLights => {
@@ -365,15 +378,20 @@ impl App {
             light_bindings.push(buffer_binding(2, &flock_id, NativeComputeBufferBindingKind::StorageReadWrite));
         }
         light_bindings.push(buffer_binding(3, &sprite_id, NativeComputeBufferBindingKind::StorageReadWrite));
+        let mut pass_plans = Vec::with_capacity(3);
+        if let Some((grid_passes, grid_id)) = grid {
+            light_bindings.push(buffer_binding(4, &grid_id, NativeComputeBufferBindingKind::StorageRead));
+            pass_plans.extend(grid_passes);
+        }
         let layout = crate::native_graph_binding_layout_signature(&light_bindings);
-        let pass_plans = vec![NativeComputeGraphPassPlan {
+        pass_plans.push(NativeComputeGraphPassPlan {
             name: format!("{prefix}:{light_entry}"),
             cache_key: format!("graph:{}:{}:{light_entry}:{layout}", light_shader.id, light_shader.hash),
             source: light_shader.source.clone(),
             entry: light_entry.to_string(),
             dispatch: [point_count.div_ceil(64).max(1), 1, 1],
             bindings: light_bindings,
-        }];
+        });
         let output = self.audio_visual_output(&graph_layer.source_id)?;
         let post = plan_hdr_post(&prefix, width, height, state.frame % 2 == 1, &params.post, post_dt, time, state.frame, output);
         buffers.extend(post.buffers);
