@@ -446,7 +446,7 @@ type NativeRenderClockCommand = {
 
 export type PresentPolicyProfile = 'vsync-live' | 'low-latency-safe' | 'low-latency-aggressive';
 
-type NativeGraphRouteKind = 'strands' | 'cloud-pulse' | 'cloud-flock' | 'depth-lights' | 'planet' | 'fluid-riders' | 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders' | 'ink-cloud' | 'flythrough' | 'pixel-particles' | 'point-cloud-fx' | 'ghostfx' | 'handfx' | 'performer-world' | 'scene3d' | 'videosynth' | 'vj-crossfade' | 'vj-mix' | 'effect-pass' | 'lines' | 'svg' | 'light-painting' | 'text' | 'splat' | 'model3d';
+type NativeGraphRouteKind = 'strands' | 'cloud-pulse' | 'cloud-flock' | 'depth-lights' | 'ribbon-field' | 'shockwave-rings' | 'fluid-ink' | 'lightning-arcs' | 'spectral-terrain' | 'mesh-shatter' | 'planet' | 'fluid-riders' | 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders' | 'ink-cloud' | 'flythrough' | 'pixel-particles' | 'point-cloud-fx' | 'ghostfx' | 'handfx' | 'performer-world' | 'scene3d' | 'videosynth' | 'vj-crossfade' | 'vj-mix' | 'effect-pass' | 'lines' | 'svg' | 'light-painting' | 'text' | 'splat' | 'model3d';
 
 export type NativeEffectPassRuntime = {
   effect: NativeEffectPassId;
@@ -467,6 +467,12 @@ const NATIVE_CORE_OWNED_GRAPH_KINDS = new Set<NativeGraphRouteKind>([
   'cloud-pulse',
   'cloud-flock',
   'depth-lights',
+  'ribbon-field',
+  'shockwave-rings',
+  'fluid-ink',
+  'lightning-arcs',
+  'spectral-terrain',
+  'mesh-shatter',
   'planet',
   'particle-field',
   'pixel-particles',
@@ -508,6 +514,12 @@ const NATIVE_GRAPH_ROUTE_REQUIREMENTS: ReadonlyArray<NativeGraphRouteRequirement
   { kind: 'cloud-pulse', feature: 'native_cloud_pulse_graph', instrument: 'cloud-pulse', shaderIds: ['cloud-pulse/light-v2'] },
   { kind: 'cloud-flock', feature: 'native_cloud_flock_graph', instrument: 'cloud-flock', shaderIds: ['cloud-flock/sim-v3'] },
   { kind: 'depth-lights', feature: 'native_depth_lights_graph', instrument: 'depth-lights', shaderIds: ['depth-lights/light-v2'] },
+  { kind: 'ribbon-field', feature: 'native_ribbon_field_graph', instrument: 'ribbon-field', shaderIds: ['ribbon-field/sim-v1', 'ribbon-field/draw-v1'] },
+  { kind: 'shockwave-rings', feature: 'native_shockwave_rings_graph', instrument: 'shockwave-rings', shaderIds: ['shockwave-rings/draw-v1', 'shockwave-rings/refract-v1'] },
+  { kind: 'fluid-ink', feature: 'native_fluid_ink_graph', instrument: 'fluid-ink', shaderIds: ['fluid-ink/solve-v1'] },
+  { kind: 'lightning-arcs', feature: 'native_lightning_arcs_graph', instrument: 'lightning-arcs', shaderIds: ['arcs/draw-v1'] },
+  { kind: 'spectral-terrain', feature: 'native_spectral_terrain_graph', instrument: 'spectral-terrain', shaderIds: ['spectral-terrain/row-v1', 'spectral-terrain/draw-v1'] },
+  { kind: 'mesh-shatter', feature: 'native_mesh_shatter_graph', instrument: 'mesh-shatter', shaderIds: ['mesh-shatter/shards-v1', 'mesh-shatter/points-v1', 'mesh-shatter/draw-v2'] },
   { kind: 'planet', feature: 'native_planet_graph', instrument: 'planet', shaderIds: ['planet/render'] },
   { kind: 'lines', feature: 'native_lines_graph', instrument: 'lines', shaderIds: ['lines/render'] },
   { kind: 'svg', feature: 'native_svg_graph', instrument: 'svg', shaderIds: ['svg/render-v6', 'svg/transform-v6'] },
@@ -5487,7 +5499,10 @@ function nativeGraphParamsForLayer(
 }
 
 /** Audio-reactive instruments, routed straight from their gpu shader id. */
-const AUDIO_REACTIVE_ROUTE_KINDS = new Set<string>(['strands', 'cloud-pulse', 'cloud-flock', 'depth-lights']);
+const AUDIO_REACTIVE_ROUTE_KINDS = new Set<string>([
+  'strands', 'cloud-pulse', 'cloud-flock', 'depth-lights',
+  'ribbon-field', 'shockwave-rings', 'fluid-ink', 'lightning-arcs', 'spectral-terrain', 'mesh-shatter',
+]);
 
 /** A cloud instrument's scan as an absolute local path, from the picked file
  *  (or an already plain path); null when there is none the core can read. */

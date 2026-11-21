@@ -61,7 +61,7 @@ pub(super) fn all() -> &'static [CoreShader] {
             build(TERRAIN_DRAW, &[NOISE, TERRAIN_COMMON, TERRAIN_DRAW_SRC]),
             build(SHATTER_SHARDS, &[NOISE, CLOUD_COMMON, SHATTER_COMMON, SHATTER_SHARDS_SRC]),
             build(SHATTER_POINTS, &[NOISE, CLOUD_COMMON, SHATTER_COMMON, SHATTER_POINTS_SRC]),
-            build(SHATTER_DRAW, &[CLOUD_COMMON, SHATTER_SPRITE_SRC]),
+            build(SHATTER_DRAW, &[NOISE, CLOUD_COMMON, SHATTER_SPRITE_SRC]),
         ]
     })
 }

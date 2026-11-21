@@ -744,10 +744,10 @@ mod tests {
                 .iter()
                 .find(|e| e["id"] == instrument.prefix())
                 .unwrap_or_else(|| panic!("{} is not in the manifest", instrument.prefix()));
-            let params = entry["params"].as_array().expect("params");
+            let params = entry["param_defs"].as_array().expect("param_defs");
             assert_eq!(params.len(), instrument.defs().len());
             for p in params {
-                assert!(p["key"].is_string() && p["label"].is_string() && p["group"].is_string() && p["type"].is_string());
+                assert!(p["key"].is_string() && p["label"].is_string() && p["group"].is_string() && p["kind"].is_string());
             }
             for group in ["Camera", "Look", "Post", "Audio", "Motion"] {
                 assert!(params.iter().any(|p| p["group"] == group), "{} lacks {group}", instrument.prefix());

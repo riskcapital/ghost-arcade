@@ -69,6 +69,8 @@ fn defaults() -> CommonDefaults {
             dither: 1.0,
             burn: 0.5,
             tint: [1.0; 3],
+            contrast: 1.0,
+            opacity: 1.0,
         },
         level_band: "bass",
         palettes: SHOCK_PALETTE_NAMES,

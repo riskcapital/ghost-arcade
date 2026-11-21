@@ -62,6 +62,8 @@ fn defaults() -> CommonDefaults {
             dither: 1.0,
             burn: 0.45,
             tint: [1.0; 3],
+            contrast: 1.0,
+            opacity: 1.0,
         },
         level_band: "level",
         palettes: SHATTER_PALETTE_NAMES,

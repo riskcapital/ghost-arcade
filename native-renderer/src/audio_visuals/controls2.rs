@@ -299,6 +299,9 @@ pub fn post_from(params: &Value, d: &CommonDefaults, tint: [f32; 3]) -> HdrPostS
         dither: 1.0,
         burn: d.post.burn,
         tint,
+        // Contrast and opacity are applied by the instruments' own composite.
+        contrast: 1.0,
+        opacity: 1.0,
     }
 }
 

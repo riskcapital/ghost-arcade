@@ -159,6 +159,12 @@ const EXPECTED_NATIVE_GRAPH_MANIFEST: NativeGraphManifestExpectation[] = [
   { id: 'cloud-pulse', feature: 'native_cloud_pulse_graph', shaderIds: ['cloud-pulse/light-v2', 'audio-visuals/sprite-draw-v1', 'audio-visuals/hdr-post-v1'] },
   { id: 'cloud-flock', feature: 'native_cloud_flock_graph', shaderIds: ['cloud-flock/sim-v3', 'cloud-flock/grid-v1', 'audio-visuals/sprite-draw-v1', 'audio-visuals/hdr-post-v1'] },
   { id: 'depth-lights', feature: 'native_depth_lights_graph', shaderIds: ['depth-lights/light-v2', 'audio-visuals/sprite-draw-v1', 'audio-visuals/hdr-post-v1'] },
+  { id: 'ribbon-field', feature: 'native_ribbon_field_graph', shaderIds: ['ribbon-field/sim-v1', 'ribbon-field/draw-v1', 'audio-visuals/hdr-post-v1'] },
+  { id: 'shockwave-rings', feature: 'native_shockwave_rings_graph', shaderIds: ['shockwave-rings/draw-v1', 'shockwave-rings/refract-v1', 'audio-visuals/hdr-post-v1'] },
+  { id: 'fluid-ink', feature: 'native_fluid_ink_graph', shaderIds: ['fluid-ink/solve-v1', 'audio-visuals/hdr-post-v1'] },
+  { id: 'lightning-arcs', feature: 'native_lightning_arcs_graph', shaderIds: ['arcs/draw-v1', 'audio-visuals/hdr-post-v1'] },
+  { id: 'spectral-terrain', feature: 'native_spectral_terrain_graph', shaderIds: ['spectral-terrain/row-v1', 'spectral-terrain/draw-v1', 'audio-visuals/hdr-post-v1'] },
+  { id: 'mesh-shatter', feature: 'native_mesh_shatter_graph', shaderIds: ['mesh-shatter/shards-v1', 'mesh-shatter/points-v1', 'mesh-shatter/draw-v2', 'audio-visuals/hdr-post-v1'] },
   {
     id: 'fluid-riders',
     feature: 'native_smoke_riders_graph',
