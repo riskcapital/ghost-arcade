@@ -618,7 +618,7 @@ export class AudioLoopEngine implements AudioLoopTracks {
     if (total && length > 0) {
       // Only a pass that heard something becomes a layer.
       let loud = false;
-      for (let f = 0; f < length && !loud; f += 16) loud = Math.abs(channels[0][f]) > 1e-4 || Math.abs(channels[1][f]) > 1e-4;
+      for (let f = 0; f < length && !loud; f += 16) loud = Math.abs(channels[0][f]) > 1e-3 || Math.abs(channels[1][f]) > 1e-3;
       if (loud) {
         const layer: Stereo = [new Float32Array(total), new Float32Array(total)];
         for (let c = 0; c < 2; c++) {
