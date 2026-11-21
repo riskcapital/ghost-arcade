@@ -18,7 +18,7 @@
 import { get, writable } from 'svelte/store';
 import { musicStudio, onMusicHydrate } from './musicStudioStore';
 import { BEATS_PER_BAR, MAX_LOOP_BARS, quantizeBeats, roleForRecording, type PlayedNote, type RecordedLoop, type RecordedNote } from './loopRecorder';
-import { clipFromRecording } from './session';
+import { clipFromRecording, findClip } from './session';
 import { readUserLoop, saveUserLoop } from './userLoops';
 import { generateUUID } from '../utils/uuid';
 import { INSTRUMENTS, noteOff, noteOn, type InstrumentId, type NoteEvent } from './noteEvents';
@@ -118,13 +118,15 @@ interface Rt {
   /** What Clear took, for one undo. */
   cleared: { layers: MidiLayer[]; beats: number } | null;
   clickBeat: number;
+  /** The layers before the full editor changed them: one undo brings them back. */
+  editBefore: MidiLayer[] | null;
 }
 
 let host: StationHost | null = null;
 const rts: Rt[] = Array.from({ length: LOOP_TRACK_COUNT }, () => freshRt());
 
 function freshRt(): Rt {
-  return { phase: 'empty', recStart: 0, recEnd: null, freeSince: null, origin: 0, dubFrom: 0, dubTo: null, playAt: null, stopAt: null, scheduledBeat: 0, pendingOffs: [], redo: [], cleared: null, clickBeat: 0 };
+  return { phase: 'empty', recStart: 0, recEnd: null, freeSince: null, origin: 0, dubFrom: 0, dubTo: null, playAt: null, stopAt: null, scheduledBeat: 0, pendingOffs: [], redo: [], cleared: null, clickBeat: 0, editBefore: null };
 }
 
 export function attachLoopStation(h: StationHost): void {
@@ -423,6 +425,13 @@ export function undoLoopLayer(i: number): boolean {
     publish();
     return ok;
   }
+  if (rt.editBefore) {
+    musicStudio.updateLoopTrack(i, { layers: rt.editBefore });
+    rt.editBefore = null;
+    cutPending(i, clockNow().beat);
+    publish();
+    return true;
+  }
   if (rt.cleared && !track(i).layers.length) {
     musicStudio.updateLoopTrack(i, { layers: rt.cleared.layers, beats: rt.cleared.beats });
     rt.cleared = null;
@@ -501,6 +510,51 @@ export function setTrackLayers(i: number, layers: MidiLayer[], beats = track(i).
   cutPending(i, clockNow().beat);
   // Notes already scheduled ahead play as they were; the next window reads the edit.
   publish();
+}
+
+/**
+ * The full clip editor on a MIDI track: the loop goes into the session as a
+ * clip for the editor to work on, and every edit there replaces the track's
+ * layers with the edited notes (one undo restores the layers as they were).
+ * When the editor moves on, the clip leaves the session again.
+ */
+export function openTrackInFullEditor(i: number, setEditorId: (id: string | null) => void, editorId: { subscribe: (fn: (v: string | null) => void) => () => void }): void {
+  const t = track(i);
+  if (!(t.beats > 0) || !t.layers.length) return;
+  const st = get(musicStudio);
+  const instrument = t.instrument ?? st.instrument;
+  const notes = flattenMidi({ layers: t.layers, redo: [] }).map(({ layer: _l, ...n }) => n);
+  const loop: RecordedLoop = { kind: 'recorded', id: generateUUID(), name: t.name || INSTRUMENT_LABELS[instrument], role: roleForRecording(instrument, notes), instrument, beats: t.beats, notes, createdAt: Date.now() };
+  const clip = clipFromRecording(loop);
+  musicStudio.addSessionClip(loop.role, clip);
+  const before = t.layers;
+  let last = clip.notes;
+  let lastBeats = clip.beats;
+  let opened = false;
+  let stopStudio: (() => void) | null = null;
+  let stopEditor: (() => void) | null = null;
+  const finish = () => {
+    stopStudio?.();
+    stopEditor?.();
+    const s = get(musicStudio);
+    const found = findClip(s.session, clip.id);
+    if (found) musicStudio.setSessionClip(found.track, found.row, null);
+  };
+  stopStudio = musicStudio.subscribe((s) => {
+    const found = findClip(s.session, clip.id);
+    if (!found || found.clip.kind !== 'notes') return;
+    if (found.clip.notes === last && found.clip.beats === lastBeats) return;
+    last = found.clip.notes;
+    lastBeats = found.clip.beats;
+    const beats = Math.max(BEATS_PER_BAR, Math.round(found.clip.beats / BEATS_PER_BAR) * BEATS_PER_BAR);
+    rts[i].editBefore ??= before;
+    queueMicrotask(() => setTrackLayers(i, [found.clip.kind === 'notes' ? found.clip.notes.filter((n) => n.beat < beats).map((n) => ({ ...n })) : []], beats));
+  });
+  stopEditor = editorId.subscribe((id) => {
+    if (id === clip.id) opened = true;
+    else if (opened) queueMicrotask(finish);
+  });
+  setEditorId(clip.id);
 }
 
 /** The first track with nothing on it, of a kind (or any), or -1. */
@@ -613,6 +667,7 @@ function stepOverdub(i: number, beat: number): boolean {
   if (layer.length) {
     const next = pushLayer(stackOf(i), layer, mergeMidiLayers);
     rt.redo = next.redo;
+    rt.editBefore = null;
     musicStudio.updateLoopTrack(i, { layers: next.layers, savedId: undefined });
     // Its notes from the window already scheduled ahead go out now.
     catchUp(i, layer, end);

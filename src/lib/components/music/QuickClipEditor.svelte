@@ -10,18 +10,14 @@
    * time (edits then go to it). Open full editor puts the loop in the session
    * and opens the clip editor on it.
    */
-  import { get } from 'svelte/store';
   import { musicStudio } from '../../music/musicStudioStore';
-  import { loopStationView, setTrackLayers } from '../../music/loopStation';
+  import { loopStationView, openTrackInFullEditor, setTrackLayers } from '../../music/loopStation';
   import { beatNow, trackProgress } from '../../music/loopUi';
   import { flattenMidi, type MidiLayer } from '../../music/loopTrack';
   import { addNote, doubleLoop, halveLoop, nudgeNote, quantizeLayer, removeNote, resizeNote, setVelocity, transposeLayer } from '../../music/quickEdit';
   import { isBlackKey, noteName } from '../../music/noteEvents';
   import { INSTRUMENT_LABELS } from '../../music/instruments';
   import { clipEditorId } from '../../music/studioUi';
-  import { clipFromRecording } from '../../music/session';
-  import { roleForRecording, type RecordedLoop } from '../../music/loopRecorder';
-  import { generateUUID } from '../../utils/uuid';
 
   let { index, onclose, onsave }: { index: number; onclose?: () => void; onsave?: () => void } = $props();
 
@@ -180,14 +176,9 @@
     commit(r.layers, r.beats);
   }
 
-  /** The full clip editor works on session clips: the loop goes into the session and opens there. */
+  /** The full clip editor, live on this track: its edits come back as the track's notes. */
   function openFull() {
-    const st = get(musicStudio);
-    const instrument = t.instrument ?? st.instrument;
-    const flat = notes.map(({ layer: _l, ...n }) => n);
-    const loop: RecordedLoop = { kind: 'recorded', id: generateUUID(), name: t.name || INSTRUMENT_LABELS[instrument], role: roleForRecording(instrument, flat), instrument, beats, notes: flat, createdAt: Date.now() };
-    musicStudio.addSessionClip(loop.role, clipFromRecording(loop));
-    clipEditorId.set(loop.id);
+    openTrackInFullEditor(index, (id) => clipEditorId.set(id), clipEditorId);
     onclose?.();
   }
 
@@ -226,7 +217,7 @@
       {#each t.layers as _, li}<button class:active={shownLayer === li} onclick={() => (shownLayer = li)}>L{li + 1}</button>{/each}
     </div>
     <span class="sp"></span>
-    <button class="text-btn small" onclick={openFull} title="Put the loop in the session and open it in the clip editor">Open full editor</button>
+    <button class="text-btn small" onclick={openFull} title="Edit the loop in the full piano roll: edits play on the track at once (Undo brings back what it was)">Open full editor</button>
     <button class="text-btn small pri" onclick={() => onsave?.()}>Save to library</button>
     <button class="text-btn small" onclick={() => onclose?.()} aria-label="Close the editor">Close</button>
   </div>

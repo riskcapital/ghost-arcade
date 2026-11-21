@@ -218,3 +218,29 @@ describe('visuals per loop track', () => {
     expect(loopTrackOfSource('live:Bass')).toBe(-1);
   });
 });
+
+describe('full editor on a loop track', () => {
+  it('edits flow back as one undoable change, and the editor copy leaves the session', async () => {
+    const { writable } = await import('svelte/store');
+    const { openTrackInFullEditor } = await import('./loopStation');
+    const { findClip } = await import('./session');
+    pressLoopTrack(0);
+    runTo(4);
+    play(4);
+    play(6, 64);
+    runTo(20);
+    const editor = writable<string | null>(null);
+    openTrackInFullEditor(0, (id) => editor.set(id), editor);
+    const id = get(editor)!;
+    expect(findClip(get(musicStudio).session, id)).toBeTruthy();
+    musicStudio.updateSessionClip(id, (c) => (c.kind === 'notes' ? { ...c, notes: [...c.notes, { beat: 8, dur: 1, note: 70, velocity: 0.9 }] } : c));
+    await Promise.resolve();
+    expect(track0().layers).toHaveLength(1);
+    expect(track0().layers[0].map((n) => n.note)).toEqual([60, 64, 70]);
+    expect(undoLoopLayer(0)).toBe(true);
+    expect(track0().layers[0].map((n) => n.note)).toEqual([60, 64]);
+    editor.set(null);
+    await Promise.resolve();
+    expect(findClip(get(musicStudio).session, id)).toBeNull();
+  });
+});
