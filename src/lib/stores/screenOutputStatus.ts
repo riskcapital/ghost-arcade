@@ -84,3 +84,19 @@ export function screenRegion(slice: { cropX?: unknown; cropY?: unknown; cropW?: 
  *  stripes through it). Kept current by the renderer sync; an auto-map
  *  capture reads it. */
 export const openScreenOutputList = writable<OpenScreenOutput[]>([]);
+
+/** The id a phone uses for the main output when no Screen is open (single projector, no Screens tab). */
+export const MAIN_OUTPUT_ID = 'main';
+/** The main output's raster while its native window is open, in device pixels; null when closed. */
+export const mainOutputRaster = writable<{ width: number; height: number } | null>(null);
+
+/**
+ * What a phone's auto map can light: the open Screens, or with none open,
+ * the main output itself, so one projector needs no Screens setup.
+ */
+export function autoMapTargets(screens: OpenScreenOutput[], main: { width: number; height: number } | null, mainOpen: boolean): OpenScreenOutput[] {
+  if (screens.length || !mainOpen || !main) return screens;
+  const width = Math.round(main.width), height = Math.round(main.height);
+  if (!(width >= 2 && height >= 2)) return screens;
+  return [{ id: MAIN_OUTPUT_ID, name: 'Main output', width, height, region: { x: 0, y: 0, width: 1, height: 1 } }];
+}

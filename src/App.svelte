@@ -4610,7 +4610,7 @@
           setScreenPatternFrames(null);
           sendPhoneVisionSignal({ type: 'studio_automap_reply', requestId, seq, done: true });
         } else {
-          sendPhoneVisionSignal({ type: 'studio_automap_reply', requestId, seq, error: open.length ? 'That Screen is not open on a display.' : 'No Screen is open on a display. Use Open on display first.' });
+          sendPhoneVisionSignal({ type: 'studio_automap_reply', requestId, seq, error: open.length ? 'That Screen is not open on a display.' : 'Nothing is on a projector. Open the output (or a Screen, for several projectors) first.' });
         }
         break;
       }

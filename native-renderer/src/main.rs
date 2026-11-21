@@ -7943,6 +7943,10 @@ impl App {
     /// Projector output transform from the editor's output settings.
     fn apply_output_stage(&mut self, params: &Value) -> Result<Value, String> {
         let read = |keys: &[&str], fallback: f64| number_at(params, keys).unwrap_or(fallback);
+        // A phone's auto map stripe frame on the main output: (frame, planned width, planned height).
+        let structured_light = params.get("structuredLight").and_then(|v| v.as_f64()).filter(|f| f.is_finite() && *f >= 0.0 && *f < 500.0).map(|frame| {
+            (frame.round() as f32, read(&["structuredLightWidth"], 0.0).clamp(0.0, 16384.0) as f32, read(&["structuredLightHeight"], 0.0).clamp(0.0, 16384.0) as f32)
+        });
         let crop_x = read(&["cropX"], 0.0).clamp(0.0, 0.99) as f32;
         let crop_y = read(&["cropY"], 0.0).clamp(0.0, 0.99) as f32;
         let crop_w = read(&["cropWidth"], 1.0).clamp(0.01, 1.0 - crop_x as f64) as f32;
@@ -8004,8 +8008,9 @@ impl App {
                 // Slice mode off: the main output uses the single-projector
                 // grade, not blendRenderer's multi-projector one.
                 0.0,
-                // Alignment test pattern code (TestPatternType index).
-                read(&["testPattern"], 0.0).clamp(0.0, 6.0) as f32,
+                // Alignment test pattern code (TestPatternType index), or 9
+                // while a phone's auto map shows its stripes on the main output.
+                if structured_light.is_some() { 9.0 } else { read(&["testPattern"], 0.0).clamp(0.0, 6.0) as f32 },
             ],
             dome3: [
                 read(&["domeSource"], 0.0).round().clamp(0.0, 2.0) as f32,
@@ -8028,8 +8033,13 @@ impl App {
             edge_gamma: [2.2; 4],
             black_level: [0.0; 4],
             // The main output never carries a per-slice screen warp; that is
-            // a projector-alignment transform and belongs to the slice.
-            projector_calibration: [[0.0; 4]; 5],
+            // a projector-alignment transform and belongs to the slice. While
+            // a phone maps the main output, row 0 names the raster size it
+            // planned for and row 4 w the stripe frame (calibration stays off).
+            projector_calibration: match structured_light {
+                Some((frame, width, height)) => [[width, height, 0.0, 0.0], [0.0; 4], [0.0; 4], [0.0; 4], [0.0, 0.0, 0.0, frame]],
+                None => [[0.0; 4]; 5],
+            },
             swarp: [0.0; 4],
             swarp_c0: [0.0, 0.0, 1.0, 0.0],
             swarp_c1: [1.0, 1.0, 0.0, 1.0],

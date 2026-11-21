@@ -1840,9 +1840,15 @@ fn screen_alignment_aid(screen_uv: vec2<f32>, comp_uv: vec2<f32>, comp_dims: vec
   let fade_uv = slice_warp_uv(output_rotate_uv(projector_local_uv(screen_uv).xy));
   if (u.dome2.z > 0.5 && code == 7) { return vec4<f32>(alignment_grid(comp_uv, comp_dims, fade_uv) * mask, 1.0); }
   if (u.dome2.z > 0.5 && code == 8) { return vec4<f32>(alignment_identify(screen_uv, aspect), 1.0); }
-  if (u.dome2.z > 0.5 && code == 9) {
-    // The raster's own size, from how fast its UV crosses a pixel.
-    let dims = vec2<f32>(floor(1.0 / max(abs(dpdx(screen_uv.x)), 0.0000001) + 0.5), floor(1.0 / max(abs(dpdy(screen_uv.y)), 0.0000001) + 0.5));
+  // Stripes for a phone's auto map: on a Screen, or on the main output (no
+  // slice mode there; code 9 only ever comes from a scan).
+  if (code == 9) {
+    // The raster's own size, from how fast its UV crosses a pixel; the main
+    // output names the size the phone planned for (row 0, calibration off),
+    // so a resized window still shows the stripes the phone expects.
+    var dims = vec2<f32>(floor(1.0 / max(abs(dpdx(screen_uv.x)), 0.0000001) + 0.5), floor(1.0 / max(abs(dpdy(screen_uv.y)), 0.0000001) + 0.5));
+    let planned = u.projector_calibration[0].xy;
+    if (abs(u.projector_calibration[2].w) < 0.5 && planned.x > 1.5 && planned.y > 1.5) { dims = planned; }
     return vec4<f32>(vec3<f32>(structured_light_pattern(screen_uv, dims)), 1.0);
   }
   return vec4<f32>(0.0);

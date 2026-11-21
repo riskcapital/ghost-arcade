@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { rpcDeadlineScale } from '../renderer/nativeHardwareTestPlatform';
 import type { Layer } from '../types';
 import { layerRenderMeshGrid } from '../utils/meshWarp';
-import { phoneMeshLayer, type PhoneMesh } from './mobileMeshImport';
+import { perspectiveMeshLayer, phoneMeshLayer, type PhoneMesh } from './mobileMeshImport';
 
 /**
  * A curved surface measured by the phone (LiDAR + stripes) on the native
@@ -196,6 +196,70 @@ describe('a curved surface from the phone on the native core', () => {
       // Off the mesh altogether: nothing.
       expect(pixel(shot, { x: 0.03, y: 0.03 }, shot.blue)).toBeLessThan(20);
       expect(pixel(shot, { x: 0.97, y: 0.97 }, shot.blue)).toBeLessThan(20);
+    } finally { await rpc.close(); }
+  }, 60000);
+});
+
+describe('a flat face from the phone on the native core', () => {
+  itIfNativeCore('puts the inside of a slanted face where its perspective does, not where a bilinear warp would', async () => {
+    const rpc = createNativeRpc();
+    // A strongly slanted face in the projector picture, and the true perspective onto it.
+    const quad = [{ x: 0.2, y: 0.15 }, { x: 0.85, y: 0.25 }, { x: 0.8, y: 0.9 }, { x: 0.3, y: 0.6 }];
+    const a: number[][] = [];
+    [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }].forEach((p, i) => { const q = quad[i]; a.push([p.x, p.y, 1, 0, 0, 0, -q.x * p.x, -q.x * p.y, q.x], [0, 0, 0, p.x, p.y, 1, -q.y * p.x, -q.y * p.y, q.y]); });
+    for (let c = 0; c < 8; c++) { let k = c; for (let r = c + 1; r < 8; r++) if (Math.abs(a[r][c]) > Math.abs(a[k][c])) k = r; [a[c], a[k]] = [a[k], a[c]]; const d = a[c][c]; for (let m = c; m < 9; m++) a[c][m] /= d; for (let r = 0; r < 8; r++) if (r !== c) { const f = a[r][c]; for (let m = c; m < 9; m++) a[r][m] -= f * a[c][m]; } }
+    const h = [...a.map(r => r[8]), 1];
+    const P = (u: number, v: number) => { const w = h[6] * u + h[7] * v + 1; return { x: (h[0] * u + h[1] * v + h[2]) / w, y: (h[3] * u + h[4] * v + h[5]) / w }; };
+    try {
+      const started = await rpc.send('start', { config: { backend: nativeBackend, width: SIZE, height: SIZE, source_frame_size: SOURCE, target_fps: 30 } }, 20000);
+      expect(started?.backend_ready).toBe(true);
+      await rpc.send('submit_commands', { commands: [{ type: 'upload_source_frame', source_id: 'flat-src', width: SOURCE, height: SOURCE, seq: 1, rgba_b64: gradientFrame() }] });
+      const fields = perspectiveMeshLayer(quad, { x: 0, y: 0, w: 1, h: 1 })!;
+      const layer: Layer = { ...createLayer('phone', 'Surface 1 (mapped)', 'media'), warpMode: 'mesh', ...fields, contentFit: 'fill' };
+      const shape = nativeLayerShapeState(layer);
+      await rpc.send('submit_commands', { commands: [
+        { type: 'upsert_layer', layer_id: layer.id, opacity: 1, z_index: 0, corners: layer.corners, shape: shape.shape, shape2: shape.shape2, shape_meta: shape.shapeMeta, shape_points: shape.shapePoints, mesh_grid: layerRenderMeshGrid(layer) },
+        { type: 'bind_media_source', layer_id: layer.id, source_id: 'flat-src', source_type: 'image', uri: 'memory://flat-src' },
+        { type: 'present' },
+      ] });
+      await expect.poll(async () => { const s = await snapshot(rpc); return pixel(s, P(0.5, 0.5), s.blue); }, { timeout: 5000 * rpcDeadlineScale, interval: 30, message: 'the layer must show' }).toBeGreaterThan(100);
+      const shot = await snapshot(rpc);
+      for (const [u, v] of [[0.5, 0.5], [0.25, 0.25], [0.75, 0.3], [0.7, 0.75], [0.3, 0.7]]) {
+        const p = P(u, v);
+        expect(Math.abs(pixel(shot, p, shot.red) - u * 255), `red at content ${u},${v}`).toBeLessThan(10);
+        expect(Math.abs(pixel(shot, p, shot.green) - v * 255), `green at content ${u},${v}`).toBeLessThan(10);
+      }
+      // Outside the face: nothing.
+      expect(pixel(shot, { x: 0.05, y: 0.95 }, shot.blue)).toBeLessThan(20);
+    } finally { await rpc.close(); }
+  }, 60000);
+});
+
+describe('auto map on the main output (one projector, no Screen)', () => {
+  itIfNativeCore('shows the phone’s stripes on the main output at the size the phone planned', async () => {
+    const rpc = createNativeRpc();
+    try {
+      const started = await rpc.send('start', { config: { backend: nativeBackend, width: SIZE, height: SIZE, source_frame_size: SOURCE, target_fps: 30 } }, 20000);
+      expect(started?.backend_ready).toBe(true);
+      // Most significant x bit at 32-pixel cells for a 1920-wide plan: lit from cell 32 (x = 1024 of 1920) on.
+      const frame = 2 + (0 * 2 + 0); // axis x, bit 0, not inverted (structuredLightCodes)
+      await rpc.send('submit_commands', { commands: [{ type: 'set_output_stage', structuredLight: frame, structuredLightWidth: 1920, structuredLightHeight: 1080 }, { type: 'present' }] });
+      const edge = 1024 / 1920;
+      await expect.poll(async () => { const s = await snapshot(rpc); return pixel(s, { x: edge + 0.1, y: 0.5 }, s.red); }, { timeout: 5000 * rpcDeadlineScale, interval: 30, message: 'the stripes must show' }).toBeGreaterThan(200);
+      const shot = await snapshot(rpc);
+      for (const y of [0.1, 0.5, 0.9]) {
+        expect(pixel(shot, { x: edge - 0.03, y }, shot.red), `dark left of the edge at ${y}`).toBeLessThan(30);
+        expect(pixel(shot, { x: edge + 0.03, y }, shot.red), `lit right of the edge at ${y}`).toBeGreaterThan(200);
+      }
+      // The y code counts from the top, as the phone's plan does: its most significant bit lights y >= 1024 of 1080.
+      await rpc.send('submit_commands', { commands: [{ type: 'set_output_stage', structuredLight: 2 + 16 * 2, structuredLightWidth: 1920, structuredLightHeight: 1080 }, { type: 'present' }] });
+      await expect.poll(async () => { const s = await snapshot(rpc); return pixel(s, { x: 0.5, y: 0.985 }, s.red); }, { timeout: 5000 * rpcDeadlineScale, interval: 30, message: 'the y stripes must show' }).toBeGreaterThan(200);
+      const ys = await snapshot(rpc);
+      expect(pixel(ys, { x: 0.5, y: 0.9 }, ys.red)).toBeLessThan(30);
+      expect(pixel(ys, { x: 0.5, y: 0.1 }, ys.red)).toBeLessThan(30);
+      // Scan over: the stage goes back to the picture (no stripes).
+      await rpc.send('submit_commands', { commands: [{ type: 'set_output_stage' }, { type: 'present' }] });
+      await expect.poll(async () => { const s = await snapshot(rpc); return pixel(s, { x: edge + 0.1, y: 0.5 }, s.red); }, { timeout: 5000 * rpcDeadlineScale, interval: 30 }).toBeLessThan(30);
     } finally { await rpc.close(); }
   }, 60000);
 });
