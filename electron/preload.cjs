@@ -65,6 +65,8 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'mp4_frame_encoder_live_control', 'mp4_frame_encoder_capture_live', 'mp4_frame_encoder_render_frame', 'mp4_frame_encoder_start', 'mp4_frame_encoder_write_frame', 'mp4_frame_encoder_write_frame_file', 'mp4_frame_encoder_finish', 'mp4_frame_encoder_cancel',
   'jpeg_frame_encoder_start', 'jpeg_frame_encoder_encode_file', 'jpeg_frame_encoder_finish', 'jpeg_frame_encoder_cancel',
   'save_generated_asset',
+  // WAVs written as they record (electron/wav-stream-store.cjs)
+  'wav_stream_begin', 'wav_stream_write', 'wav_stream_finish', 'wav_stream_abort',
   // Scans sent from a paired phone (electron/phone-scan-store.cjs)
   'phone_scan_begin', 'phone_scan_write', 'phone_scan_finish', 'phone_scan_abort', 'phone_scan_list',
   // My loops, saved from the live looper (electron/user-loops-store.cjs)

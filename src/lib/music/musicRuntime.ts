@@ -119,6 +119,8 @@ import { loopMidiInstrument, attachLoopStation, killLoopStation, scheduleStation
 import { audioLoopTracksFor, existingAudioLoopTracks } from './audioLoopEngine';
 import { registerLoopControls } from './loopControls';
 import { SessionAudio } from './sessionAudio';
+import { launchAudioClip } from './audioClipLaunch';
+import { showToast } from '../stores/errorToast';
 import type { AnySourceId, LiveSourceId, VoiceSourceId } from './visualVoices';
 import { BandFxVisuals } from './bandFxVisuals';
 // The studio's MIDI controls and the band's keys answer while the Studio view is hidden.
@@ -1088,24 +1090,47 @@ function sessionAudioPlayer(): SessionAudio {
 
 function startAudioClip(role: LoopRole, clip: AudioClip, now: boolean): void {
   const atMs = msToClipStart(now);
-  stopLoop(role);
+  const { beat, beatMs } = launchClockPosition();
+  const deadline = audio.now() + atMs / 1000;
+  // What plays in the part keeps playing until the new clip takes over at the deadline.
   const player = sessionAudioPlayer();
+  const was = audioParts.get(role);
   audioParts.set(role, clip.id);
   const s = get(musicStudio);
   if (atMs > 0) musicStudio.setTransport({ queuedLoops: { ...s.queuedLoops, [role]: clip.id } });
-  void player.play(role, clip, audio.now() + atMs / 1000, launchClockTempo()).then((ok) => {
-    if (audioParts.get(role) !== clip.id) return;
-    if (!ok) {
-      audioParts.delete(role);
-      return;
-    }
-    setTimeout(() => {
-      if (audioParts.get(role) !== clip.id) return;
+  const unqueue = () => {
+    const t = get(musicStudio);
+    if (t.queuedLoops[role] !== clip.id) return;
+    const queued = { ...t.queuedLoops };
+    delete queued[role];
+    musicStudio.setTransport({ queuedLoops: queued });
+  };
+  void launchAudioClip(deadline, {
+    now: () => audio.now(),
+    play: (at) => player.play(role, clip, at, launchClockTempo()),
+    current: () => audioParts.get(role) === clip.id,
+    handOver: (at) => {
+      const old = loopSlots.get(role);
+      if (!old) return;
+      // The notes loop ends on the beat the clip starts on.
+      old.stopBeat = Math.max(launchClockPosition().beat, beat + ((at - (deadline - atMs / 1000)) * 1000) / beatMs);
+      endingSlots.push(old);
+      loopSlots.delete(role);
+    },
+    announce: () => {
       const t = get(musicStudio);
       const queued = { ...t.queuedLoops };
       delete queued[role];
       musicStudio.setTransport({ playingLoops: { ...t.playingLoops, [role]: clip.id }, queuedLoops: queued });
-    }, atMs);
+    },
+    failed: () => {
+      // The old clip carries on; the part goes back to it.
+      if (was !== undefined && player.clipIn(role) === was) audioParts.set(role, was);
+      else audioParts.delete(role);
+      unqueue();
+      showToast(`Could not load the audio clip "${clip.name}": the part keeps playing what it was.`, 'warning');
+    },
+    later: (fn, ms) => { setTimeout(fn, ms); },
   });
   ensureScheduler();
   ensureFrameLoop();

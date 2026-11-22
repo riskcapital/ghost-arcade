@@ -125,6 +125,7 @@ ipcMain.handle('linux_gpu_setup', () => (process.platform === 'linux' ? collectL
 // files and never sent back to the renderer (electron/pjlink-credentials.cjs).
 const { createPjlinkClient } = require('./pjlink.cjs');
 const { createPhoneScanStore } = require('./phone-scan-store.cjs');
+const { createWavStreamStore } = require('./wav-stream-store.cjs');
 const { createUserLoopsStore } = require('./user-loops-store.cjs');
 const { createPjlinkCredentials } = require('./pjlink-credentials.cjs');
 const pjlinkCredentials = createPjlinkCredentials({ safeStorage, dir: app.getPath('userData') });
@@ -8370,6 +8371,23 @@ function registerIpcHandlers() {
       return { success: false, error: err?.message || String(err) };
     }
   });
+
+  // --- WAVs written as they record (electron/wav-stream-store.cjs) ---
+  // Audio Lab's Record A/V streams its mix and stems here in blocks, so a long
+  // take is never held whole in the renderer.
+  let wavStreams = null;
+  for (const [channel, method] of [
+    ['wav_stream_begin', 'begin'], ['wav_stream_write', 'write'], ['wav_stream_finish', 'finish'], ['wav_stream_abort', 'abort'],
+  ]) {
+    ipcMain.handle(channel, async (_, args) => {
+      try {
+        wavStreams ??= createWavStreamStore(path.join(app.getPath('userData'), 'project-assets'));
+        return { success: true, ...wavStreams[method](args && typeof args === 'object' ? args : {}) };
+      } catch (err) {
+        return { success: false, error: err?.message || String(err) };
+      }
+    });
+  }
 
   // --- Scans sent from a paired phone ---
   // The renderer relays the transfer; this side owns the folder (inside the
