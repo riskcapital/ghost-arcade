@@ -1334,6 +1334,7 @@ import { runAsAutomation } from '$lib/stores/historyHooks';
 import { buildScene3DGraph } from '$lib/renderer/scene3dNative';
 import { validateScene3D } from '$lib/scene3d/sceneModel';
 import { buildVideoSynthGraph } from '$lib/videosynth/graph';
+import { videosynthIdPrefix } from '$lib/videosynth/ids';
 import { ANALOG_SYNTH } from '$lib/features';
 import { domePlacementCommand, domeProjectorOf, domeRigPayload, nativeDomeStage, projectorFrustum } from '$lib/output/domeMath';
 import { domeView } from '$lib/stores/domeView';
@@ -5256,7 +5257,7 @@ function nativeGraphBufferPrefixesForRoute(route: NativeGraphLayerRoute): string
       prefixes = [`scene3d:${safeSourceId}`];
       break;
     case 'videosynth':
-      prefixes = [`videosynth:${safeSourceId}`];
+      prefixes = [videosynthIdPrefix(sourceId)];
       break;
     case 'vj-crossfade':
       prefixes = [`vjxfade:${safeSourceId}`];
@@ -5330,7 +5331,7 @@ function videosynthPluginGraph(params: Record<string, any>, sourceId: string, wi
       topology: graph.topology,
       values: graph.values.map((v) => ({ ...v, key: v.initial_b64 })),
       effectIds: [],
-      bufferPrefix: () => `videosynth:${nativeGraphBufferSafeId(sourceId)}:`,
+      bufferPrefix: () => videosynthIdPrefix(sourceId),
     },
   } as InteractiveGraphBuildResult;
 }

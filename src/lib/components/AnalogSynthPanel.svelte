@@ -12,8 +12,10 @@
   import AnalogSynthStudio from './AnalogSynthStudio.svelte';
   import {
     INPUT_LAYER_KEY,
+    MORPH_BASE_KEY,
     MORPH_KEY,
     MORPHABLE,
+    morphBase,
     morphValues,
     paramValue,
     presetValues,
@@ -106,16 +108,20 @@
     onpatch({ [SNAPSHOTS_KEY]: [0, 1, 2, 3].map((i) => (i === corner ? null : snapshots[i] ?? null)) });
   }
   let pad: HTMLDivElement | undefined = $state();
+  /** What the empty corners hold, fixed for the whole gesture. */
+  let padBase: Record<string, number> | null = null;
   function movePad(e: PointerEvent) {
     if (!pad) return;
     const r = pad.getBoundingClientRect();
     const x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
     const y = Math.max(0, Math.min(1, (e.clientY - r.top) / r.height));
-    onpatch({ ...morphValues(snapshots, x, y, current()), [MORPH_KEY]: [x, y] }, 'analog-synth-pad');
+    const base = (padBase ??= morphBase(effectSource, snapshots));
+    onpatch({ ...morphValues(snapshots, x, y, base), [MORPH_KEY]: [x, y], [MORPH_BASE_KEY]: base }, 'analog-synth-pad');
   }
   function padDown(e: PointerEvent) {
     if (!snapshots.some(Boolean)) return;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    padBase = morphBase(effectSource, snapshots);
     movePad(e);
   }
   const CORNERS = ['Top left', 'Top right', 'Bottom left', 'Bottom right'];
@@ -233,6 +239,8 @@
       aria-valuenow={Math.round(morph.x * 100)}
       onpointerdown={padDown}
       onpointermove={(e) => { if (e.buttons & 1 && snapshots.some(Boolean)) movePad(e); }}
+      onpointerup={() => { padBase = null; }}
+      onlostpointercapture={() => { padBase = null; }}
     >
       {#each CORNERS as name, i}
         <span class="corner c{i}" class:stored={!!snapshots[i]}>{['1', '2', '3', '4'][i]}</span>

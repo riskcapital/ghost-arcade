@@ -154,20 +154,63 @@ export type Snapshots = (Record<string, number> | null)[];
 /** Controls a snapshot holds and the pad blends: every knob, not the choices. */
 export const MORPHABLE = (): ParamSpec[] => VIDEOSYNTH_PARAMS.filter((p) => !p.options && p.step !== 1);
 
+/** The patch the empty corners hold while the pad moves (see morphBase). */
+export const MORPH_BASE_KEY = 'vsMorphBase';
+
+/** Controls that go round a circle: 0 and 1 are the same color. */
+const CIRCULAR = new Set(['vsAHue', 'vsBHue', 'vsCHue']);
+
 /**
  * Blend the four corner patches at (x, y): 0,0 is top left (corner 0), then
- * top right, bottom left, bottom right. An empty corner holds `current`.
+ * top right, bottom left, bottom right. An empty corner holds `base`, which
+ * must stay the same through a gesture (morphBase), so the same point always
+ * gives the same patch. Colors blend the short way round the color wheel.
  */
-export function morphValues(snapshots: Snapshots, x: number, y: number, current: Record<string, number>): Record<string, number> {
-  const fx = Math.max(0, Math.min(1, x)), fy = Math.max(0, Math.min(1, y));
+export function morphValues(snapshots: Snapshots, x: number, y: number, base: Record<string, number>): Record<string, number> {
+  const fx = Math.max(0, Math.min(1, Number.isFinite(x) ? x : 0)), fy = Math.max(0, Math.min(1, Number.isFinite(y) ? y : 0));
   const w = [(1 - fx) * (1 - fy), fx * (1 - fy), (1 - fx) * fy, fx * fy];
+  const whole = w.indexOf(1);
   const out: Record<string, number> = {};
   for (const p of MORPHABLE()) {
+    const at = (i: number) => snapshots[i]?.[p.key] ?? base[p.key] ?? p.default;
+    // Right on a corner: exactly that corner.
+    if (whole >= 0) { out[p.key] = at(whole); continue; }
     let v = 0;
-    for (let i = 0; i < 4; i++) v += w[i] * (snapshots[i]?.[p.key] ?? current[p.key] ?? p.default);
+    if (CIRCULAR.has(p.key)) {
+      // Each corner's color as a step from corner 1's, the short way round
+      // (at most half a turn), blended, then back onto the wheel. Corner 1
+      // is a fixed reference, so the blend moves smoothly across the pad.
+      const ref = at(0);
+      for (let i = 0; i < 4; i++) { const d = at(i) - ref; v += w[i] * (d - Math.round(d)); }
+      v = (((ref + v) % 1) + 1) % 1;
+    } else {
+      for (let i = 0; i < 4; i++) v += w[i] * at(i);
+    }
     out[p.key] = v;
   }
   return out;
+}
+
+const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+
+/**
+ * The patch the empty corners hold for a pad gesture starting now. It is the
+ * one the pad last used, so going back to a point brings back the same
+ * patch, except for controls turned since the pad last moved (they no longer
+ * match what the pad set): those take their new value. The first time, it is
+ * the patch as it stands.
+ */
+export function morphBase(source: Record<string, unknown> | null | undefined, snapshots: Snapshots): Record<string, number> {
+  const current: Record<string, number> = Object.fromEntries(MORPHABLE().map((p) => [p.key, paramValue(source, p)]));
+  const stored = source?.[MORPH_BASE_KEY] as Record<string, unknown> | undefined;
+  const at = source?.[MORPH_KEY];
+  if (!stored || typeof stored !== 'object' || !Array.isArray(at) || at.length !== 2) return current;
+  const base: Record<string, number> = Object.fromEntries(MORPHABLE().map((p) => [p.key, finite(stored[p.key]) ? stored[p.key] as number : current[p.key]]));
+  const set = morphValues(snapshots, Number(at[0]) || 0, Number(at[1]) || 0, base);
+  for (const p of MORPHABLE()) {
+    if (Math.abs(current[p.key] - set[p.key]) > 1e-6 * Math.max(1, p.max - p.min)) base[p.key] = current[p.key];
+  }
+  return base;
 }
 
 /** Slots the app fills after the controls. */

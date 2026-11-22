@@ -72,8 +72,13 @@ fn wave(phase: f32, shape: f32) -> f32 {
 // Picture-wide state the sources read.
 var<private> feedback_luma: f32;
 var<private> osc_values: vec3f;
+// Each oscillator's level as drawn: its knob plus its patched level input.
+var<private> osc_levels: vec3f;
 var<private> input_luma: f32;
 var<private> input_rgb: vec3f;
+
+/** Whether an input has a source at all (Off, or anything out of range, is none). */
+fn plugged(k: f32) -> bool { let i = u32(k + 0.5); return i >= 1u && i <= 13u; }
 
 fn source(k: f32) -> f32 {
   let i = u32(k + 0.5);
@@ -100,8 +105,12 @@ fn oscillator(n: u32, uv: vec2f) -> vec4f {
   let react = prm(58u);
   // Frequency: 15 Hz to the line rate, ten octaves on the knob, plus fine.
   var freq = 60.0 * pow(2.0, prm(b) * 10.0 - 2.0) + prm(b + 1u) * 2.0;
-  let fm = prm(b + 7u) + react * frame.bass * 0.25;
-  freq *= 1.0 + (source(prm(b + 8u)) * 2.0 - 1.0) * fm;
+  // FM swings the frequency both ways about the knob; with no source there is
+  // nothing to swing it (the music only deepens FM that has a source).
+  if (plugged(prm(b + 8u))) {
+    let fm = prm(b + 7u) + react * frame.bass * 0.25;
+    freq *= 1.0 + (source(prm(b + 8u)) * 2.0 - 1.0) * fm;
+  }
   var phase = osc_phase(freq, prm(b + 2u), uv);
   let mode = u32(prm(b + 4u) + 0.5);
   let m = source(prm(b + 6u)) * prm(b + 5u);
@@ -112,15 +121,18 @@ fn oscillator(n: u32, uv: vec2f) -> vec4f {
   let draws_input = prm(61u + n) > 0.5;
   if (draws_input) { v = input_luma; }
   if (mode == 1u) {
-    // Key: the wave shape sets the threshold; the source pushes past it.
+    // Key: the wave shape sets the threshold; the source pushes past it,
+    // either way about its middle. With no source the threshold stays put.
     let th = 0.5;
-    v = smoothstep(th - 0.01, th + 0.01, v + (m - prm(b + 5u) * 0.5));
+    let push = select(0.0, m - prm(b + 5u) * 0.5, plugged(prm(b + 6u)));
+    v = smoothstep(th - 0.01, th + 0.01, v + push);
   } else if (mode == 2u) {
     hue += m;
   }
   // Level, plus whatever is patched into this oscillator's level input.
   var level = prm(b + 11u);
   if (prm(64u + n * 2u) > 0.5) { level = clamp(level + source(prm(64u + n * 2u)) * prm(65u + n * 2u), 0.0, 1.0); }
+  osc_levels[n] = level;
   var rgb = hsv(hue, prm(b + 10u), v * level);
   if (draws_input && mode != 1u) { rgb = mix(input_rgb, hsv(hue, 1.0, v), prm(b + 10u)) * level; }
   return vec4f(rgb, v);
@@ -196,10 +208,11 @@ fn fs_synth(in: VsOut) -> @location(0) vec4f {
     col = mix(a.rgb, b.rgb, smoothstep(0.15, 0.3, luma(b.rgb)));
     col = mix(col, c.rgb, smoothstep(0.15, 0.3, luma(c.rgb)));
   } else {
-    // YUV: A is brightness, B and C the color.
-    let y = a.w * prm(11u);
-    let u = (b.w - 0.5) * prm(23u) * 0.9;
-    let vv = (c.w - 0.5) * prm(35u) * 0.9;
+    // YUV: A is brightness, B and C the color, each at its level as drawn
+    // (knob plus patched level input).
+    let y = a.w * osc_levels.x;
+    let u = (b.w - 0.5) * osc_levels.y * 0.9;
+    let vv = (c.w - 0.5) * osc_levels.z * 0.9;
     col = vec3f(y + 1.14 * vv, y - 0.395 * u - 0.581 * vv, y + 2.032 * u);
   }
   // Trails keep the brighter of now and the fed-back last frame.

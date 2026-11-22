@@ -37,8 +37,10 @@
   import {
     INPUT_JACKS,
     INPUT_LAYER_KEY,
+    MORPH_BASE_KEY,
     MORPH_KEY,
     MORPHABLE,
+    morphBase,
     morphValues,
     paramValue,
     presetValues,
@@ -165,12 +167,21 @@
   const store = (i: number) => onpatch({ [SNAPSHOTS_KEY]: [0, 1, 2, 3].map((k) => (k === i ? current() : snapshots[k] ?? null)) });
   const clearCorner = (i: number) => onpatch({ [SNAPSHOTS_KEY]: [0, 1, 2, 3].map((k) => (k === i ? null : snapshots[k] ?? null)) });
   let pad: HTMLDivElement | undefined = $state();
+  /** What the empty corners hold, fixed for the whole gesture. */
+  let padBase: Record<string, number> | null = null;
   function movePad(e: PointerEvent) {
     if (!pad || !stored) return;
     const r = pad.getBoundingClientRect();
     const x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
     const y = Math.max(0, Math.min(1, (e.clientY - r.top) / r.height));
-    onpatch({ ...morphValues(snapshots, x, y, current()), [MORPH_KEY]: [x, y] }, 'analog-synth-pad');
+    const base = (padBase ??= morphBase(effectSource, snapshots));
+    onpatch({ ...morphValues(snapshots, x, y, base), [MORPH_KEY]: [x, y], [MORPH_BASE_KEY]: base }, 'analog-synth-pad');
+  }
+  function padDown(e: PointerEvent) {
+    if (!stored) return;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    padBase = morphBase(effectSource, snapshots);
+    movePad(e);
   }
 
   // ── The output in the monitor ──
@@ -573,8 +584,10 @@
                   aria-label="Morph between the stored snapshots"
                   aria-valuetext={`${Math.round(morph.x * 100)}% across, ${Math.round(morph.y * 100)}% down`}
                   aria-valuenow={Math.round(morph.x * 100)}
-                  onpointerdown={(e) => { if (stored) { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); movePad(e); } }}
+                  onpointerdown={padDown}
                   onpointermove={(e) => { if (e.buttons & 1) movePad(e); }}
+                  onpointerup={() => { padBase = null; }}
+                  onlostpointercapture={() => { padBase = null; }}
                 >
                   {#each [0, 1, 2, 3] as i}
                     <span class="corner ga-eyebrow c{i}" class:stored={!!snapshots[i]}>{i + 1}</span>

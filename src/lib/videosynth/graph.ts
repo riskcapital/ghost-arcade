@@ -10,6 +10,9 @@
 import { scene3dFrameBuffer } from '../renderer/scene3dFrame';
 import { INPUT_LAYER_KEY, PARAM_FLOATS, paramBlock } from './patch';
 import { VIDEOSYNTH_SHADER_ID } from './shaders';
+import { videosynthIdPrefix } from './ids';
+
+export { videosynthIdPrefix };
 
 export type VideoSynthGraph = {
   config: { textures: object[]; buffers: object[]; passes: object[]; render_passes: object[]; readbacks: [] };
@@ -24,7 +27,13 @@ function b64(data: Float32Array): string {
   return btoa(s);
 }
 
-/** The picture is drawn at the output's shape, long side at most `maxSide`. */
+/** The longest side the synth draws at when the output is bigger. */
+export const VIDEOSYNTH_MAX_SIDE = 1920;
+
+/**
+ * The picture is drawn at the output's size, long side at most
+ * VIDEOSYNTH_MAX_SIDE. `maxSide` sets the long side outright.
+ */
 export function buildVideoSynthGraph(options: {
   params: Record<string, unknown> | null | undefined;
   sourceId: string;
@@ -32,12 +41,13 @@ export function buildVideoSynthGraph(options: {
   height: number;
   maxSide?: number;
 }): VideoSynthGraph {
-  const safe = options.sourceId.replace(/[^\w:-]+/g, '_').slice(0, 120);
-  const id = (name: string) => `videosynth:${safe}:${name}`;
-  const aspect = options.width / Math.max(1, options.height);
-  const side = options.maxSide ?? 1920;
-  const w = Math.round(aspect >= 1 ? side : side * aspect);
-  const h = Math.round(aspect >= 1 ? side / aspect : side);
+  const prefix = videosynthIdPrefix(options.sourceId);
+  const id = (name: string) => `${prefix}${name}`;
+  const outW = Math.max(1, options.width || 0), outH = Math.max(1, options.height || 0);
+  const aspect = outW / outH;
+  const side = options.maxSide ?? Math.min(VIDEOSYNTH_MAX_SIDE, Math.max(outW, outH));
+  const w = Math.max(1, Math.round(aspect >= 1 ? side : side * aspect));
+  const h = Math.max(1, Math.round(aspect >= 1 ? side / aspect : side));
   const textures = [
     { id: id('next'), width: w, height: h, format: 'rgba16float' },
     { id: id('prev'), width: w, height: h, format: 'rgba16float' },
