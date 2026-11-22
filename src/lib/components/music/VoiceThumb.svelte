@@ -34,13 +34,15 @@
 
 <button class="thumb" {onclick} aria-label="{label}: {name}. Choose another visual" title="{name}: click to choose another visual">
   {#if src}<img {src} alt="" draggable="false" onerror={failed} />{:else}<span class="initial" aria-hidden="true">{name.slice(0, 1)}</span>{/if}
+  <span class="badge" aria-hidden="true">+</span>
 </button>
 
 <style>
   .thumb {
     flex: 0 0 auto;
-    width: 64px;
-    height: 36px;
+    position: relative;
+    width: 96px;
+    height: 54px;
     padding: 0;
     border: 1px solid var(--studio-edge);
     border-radius: var(--studio-radius);
@@ -52,5 +54,21 @@
   }
   .thumb:hover { border-color: var(--studio-muted); }
   img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .badge {
+    position: absolute;
+    right: 3px;
+    bottom: 3px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-size: 11px;
+    line-height: 1;
+    font-weight: 600;
+    color: var(--studio-on-accent, #fff);
+    background: var(--studio-accent);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+  }
   .initial { font-size: 14px; font-weight: 600; color: var(--studio-muted); }
 </style>
