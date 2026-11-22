@@ -363,7 +363,6 @@
         </select>
       </div>
       <SceneBar />
-      <span class="spacer"></span>
       <select class="set-menu" value={s.set} onchange={(e) => musicStudio.setSet((e.target as HTMLSelectElement).value as typeof s.set)} aria-label="Instrument set">
         {#each STUDIO_SETS as set}<option value={set.id}>{set.label}</option>{/each}
       </select>
@@ -613,7 +612,8 @@
   .nav-btn.worded { width: auto; padding: 0 10px; display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: var(--ga-text-body, 13px); white-space: nowrap; }
   .nav-btn.worded svg { color: var(--ga-icon, #5278ff); }
   /* Each set's mark, in the icon blue, before its name. */
-  .set-tabs button { display: inline-flex; align-items: center; gap: 6px; }
+  .set-tabs { flex: 1 1 auto; display: flex; min-width: 0; margin-left: 12px; }
+  .set-tabs button { flex: 1 1 0; justify-content: center; display: inline-flex; align-items: center; gap: 6px; }
   .set-tabs :global(.set-mark) { flex: 0 0 auto; width: 14px; height: 14px; fill: none; stroke: var(--ga-icon, #5278ff); stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
   /* Tighter windows: Deck and Tray keep their marks and drop their words, and the sets drop their marks,
      so the bar still fits without scrolling. */
@@ -631,7 +631,7 @@
   /* Narrow: the set tabs become one menu. */
   @media (max-width: 1399px) {
     .set-tabs { display: none; }
-    .set-menu { display: inline-block; }
+    .set-menu { display: inline-block; margin-right: auto; }
   }
   @media (max-width: 1439px) {
     .bar-title { display: none; }
