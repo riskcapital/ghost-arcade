@@ -16,7 +16,7 @@
   import { voiceSourcesFor, isVoiceDrivenInput, isLiveSource, liveSource, loopTrackOfSource, loopTrackSource, LIVE_DRUMS, type LiveSourceId, type VoiceSourceId } from '../../music/visualVoices';
   import { abletonBridge } from '../../ableton/abletonBridge';
   import { isDrumTrack, liveMatchFor, liveTrackKeys } from '../../music/liveControl';
-  import { VISUAL_SCENES, VOICE_SHADERS, shaderInputs, voiceShaderByFile, type ShaderInput } from '../../music/visualScenes';
+  import { VISUAL_SCENES, VOICE_SHADERS, shaderInputs, type ShaderInput } from '../../music/visualScenes';
   import { visualPicker } from '../../music/studioUi';
   import { BLEND_MODE_ORDER, blendModeLabel, type BlendMode } from '../../types';
   import { MIX_BAR_OPTIONS, MIX_MODES, mixAt, normalizeMix, type MixMode } from '../../music/studioMix';
@@ -490,9 +490,7 @@
           {@const voice = voices[i]}
           {@const all = looks(voice.file)}
           {@const open = openRows.has(i)}
-          {@const name = voiceShaderByFile(voice.file)?.name ?? voice.file.replace(/^VX-/, '').replace(/\.fs$/, '')}
           <div class="voice">
-            {@render grip(r, `voice ${i + 1}`)}
             <button
               class="onoff"
               class:on={voice.level > 0}
@@ -505,15 +503,11 @@
               data-midi-label="Voice {i + 1} mute"
               data-midi-mode="toggle"
             ><span class="led" aria-hidden="true"></span></button>
-            <VoiceThumb file={voice.file} label="Voice {i + 1}" onclick={() => visualPicker.set({ current: voice.file, none: false, title: `Visual for voice ${i + 1}`, pick: (f) => { if (f) replaceStudioVoice(i, f); } })} />
-            <span class="vname" title={name}>{name}</span>
-            <StudioKnob label="Opacity" title="How much of this voice shows" value={voice.level} defaultValue={1} size={22} format={levelFormat} midiPath="studio:voice.{i + 1}.level" onchange={(v) => setStudioVoice(i, { level: v }, `voice:${i}:level`)} />
-            <button class="icon fold-btn" class:open onclick={() => toggleOpen(i)} aria-expanded={open} aria-label="Settings of voice {i + 1}" title="This visual's own settings">
-              <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5L6 7.5 9 4.5" /></svg>
-            </button>
-            <button class="icon" onclick={() => removeStudioVoice(i)} aria-label="Remove voice {i + 1}" title="Remove this voice">
-              <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3 3 9" /></svg>
-            </button>
+            <!-- The drag handle lies over the picture's left edge, showing on hover or focus. -->
+            <span class="thumb-wrap">
+              <VoiceThumb file={voice.file} label="Voice {i + 1}" onclick={() => visualPicker.set({ current: voice.file, none: false, title: `Visual for voice ${i + 1}`, pick: (f) => { if (f) replaceStudioVoice(i, f); } })} />
+              {@render grip(r, `voice ${i + 1}`)}
+            </span>
             <div class="pair">
                 <select class="follows" class:swatch={liveOn && !!liveColorOf(voice.live)} style:--follow={liveOn ? liveColorOf(voice.live) : undefined} class:live={liveOn && !!voice.live} class:loop={loopTrackOfSource(voice.live) >= 0} value={followValue(voice)} onchange={(e) => setFollow(i, (e.target as HTMLSelectElement).value)} aria-label="Sound voice {i + 1} follows" title={liveOn && voice.live ? 'The Live track this voice follows' : 'The sound this voice follows'} data-midi-path="studio:voice.{i + 1}.follow-next" data-midi-label="Voice {i + 1} next sound to follow" data-midi-mode="toggle">
               {#if liveOn}
@@ -543,6 +537,13 @@
               </optgroup>
             </select>
             </div>
+            <StudioKnob label="Opacity" title="How much of this voice shows" value={voice.level} defaultValue={1} size={22} format={levelFormat} midiPath="studio:voice.{i + 1}.level" onchange={(v) => setStudioVoice(i, { level: v }, `voice:${i}:level`)} />
+            <button class="icon fold-btn" class:open onclick={() => toggleOpen(i)} aria-expanded={open} aria-label="Settings of voice {i + 1}" title="This visual's own settings">
+              <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5L6 7.5 9 4.5" /></svg>
+            </button>
+            <button class="icon" onclick={() => removeStudioVoice(i)} aria-label="Remove voice {i + 1}" title="Remove this voice">
+              <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3 3 9" /></svg>
+            </button>
           </div>
           {#if open}
             <div class="expanded">
@@ -659,25 +660,38 @@
   .row:last-of-type { border-bottom: 0; }
   .line { display: flex; align-items: center; gap: 6px; min-width: 0; }
   /*
-   * An audio shader's row, on one grid so every row's columns line up. The
-   * right rack is 356px (--studio-right-w) less the module's border and
-   * padding: about 334px of content, ~326px with a scrollbar.
-   *   handle 12 · on/off 20 · picture 96 · name 1fr (~62-70px) · opacity 48 · fold 20 · remove 20, gaps 8
-   * (48 holds the knob and its OPACITY label, about 46px wide.)
-   * The two selects do not fit beside the knob, so they take their own line
-   * under the picture, from its left edge to the row's right edge.
+   * An audio shader's row: one line on one grid, so every row's columns line
+   * up. The right rack is 356px (--studio-right-w) less the module's border
+   * and padding: about 334px of content, ~326px with a scrollbar.
+   *   on/off 20 · picture 96 · Follows/Output stacked 1fr (~82-90px) · opacity 48 · fold 20 · remove 20, gaps 8
+   * (48 holds the knob and its OPACITY label, about 46px wide.) The drag
+   * handle lies over the picture's left edge, so it takes no column.
    */
   .voice {
     display: grid;
-    grid-template-columns: 12px 20px 96px minmax(0, 1fr) 48px 20px 20px;
+    grid-template-columns: 20px 96px minmax(0, 1fr) 48px 20px 20px;
     column-gap: 8px;
-    row-gap: 8px;
     align-items: center;
     padding: 8px 0;
     min-width: 0;
   }
-  .voice .grip { opacity: 0; transition: opacity 0.12s; justify-self: center; }
-  .row:hover .grip, .grip:focus-visible { opacity: 1; }
+  .thumb-wrap { position: relative; display: block; width: 96px; height: 54px; }
+  .thumb-wrap .grip {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 14px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    color: var(--studio-ink);
+    background: rgba(0, 0, 0, 0.55);
+    border-radius: var(--studio-radius) 0 0 var(--studio-radius);
+    opacity: 0;
+    transition: opacity 0.12s;
+  }
+  .row:hover .thumb-wrap .grip, .thumb-wrap .grip:focus-visible { opacity: 1; }
   .onoff { width: 20px; height: 28px; padding: 0; border: 0; background: none; display: grid; place-items: center; cursor: pointer; }
   .onoff .led { pointer-events: none; }
   .led.on, .onoff.on .led {
@@ -685,16 +699,16 @@
     background: color-mix(in srgb, var(--studio-accent) calc(25% + var(--a) * 75%), transparent);
     box-shadow: 0 0 calc(var(--a) * 8px) var(--studio-accent);
   }
-  .vname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--ga-text-control, 12px); color: var(--studio-ink); }
   .voice :global(.knob-wrap) { min-width: 0; width: 48px; justify-self: center; }
   .voice .icon { width: 20px; height: 28px; justify-self: center; }
   .fold-btn svg { transition: transform 0.15s; }
   .fold-btn.open svg { transform: rotate(180deg); }
-  .pair { grid-column: 3 / -1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+  /* Follows over Output, together the picture's height (25 + 4 + 25 = 54). */
+  .pair { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
   .pair select.swatch { border-left: 3px solid var(--follow); }
-  .pair select { width: 100%; min-width: 0; height: 28px; font-size: var(--ga-text-control, 12px); }
-  /* Opened: its left edge on the picture's (handle 12 + 8 + on/off 20 + 8). */
-  .expanded { display: flex; flex-direction: column; gap: 8px; padding: 0 0 8px 48px; }
+  .pair select { flex: 0 0 25px; align-self: stretch; width: 100%; min-width: 0; height: 25px; padding-top: 0; padding-bottom: 0; font-size: var(--ga-text-meta, 11px); }
+  /* Opened: its left edge on the picture's (on/off 20 + 8). */
+  .expanded { display: flex; flex-direction: column; gap: 8px; padding: 0 0 8px 28px; }
   .toggles { display: flex; gap: 8px; }
   .toggles .studio-btn { height: 28px; padding: 0 12px; font-size: var(--ga-text-meta, 11px); }
   .toggles .auto:not(.on), .toggles .drift-btn:not(.on) { color: var(--studio-muted); }
