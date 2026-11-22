@@ -239,13 +239,9 @@
         e.stopPropagation();
       }}
     >
-      {#if !xyDress.tone && xyAxis === 'space'}
-        <span class="corner bl ga-eyebrow">Drone · near</span>
-        <span class="corner tr ga-eyebrow">Bowls · vast</span>
-      {:else}
-        <span class="corner bl ga-eyebrow">Low</span>
-        <span class="corner tr ga-eyebrow">High · {Y_AXES.find((a) => a.id === xyAxis)?.label.replace(' (as built)', '')}</span>
-      {/if}
+      <!-- The pad plays its own tone; it no longer turns the drone or bowls up or down. -->
+      <span class="corner bl ga-eyebrow">Low</span>
+      <span class="corner tr ga-eyebrow">High · {Y_AXES.find((a) => a.id === xyAxis)?.label.replace(' (as built)', '')}</span>
       {#each trail as p, i (i)}
         <span class="trail" style="left: calc(13px + {p.x} * (100% - 26px)); top: calc(13px + {1 - p.y} * (100% - 26px)); opacity: {(i + 1) / (trail.length + 4)}"></span>
       {/each}

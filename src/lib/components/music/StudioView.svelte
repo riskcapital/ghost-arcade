@@ -425,7 +425,7 @@
     </div>
 
     {#if looperPage}
-      <div class="rack left face looper-rail"><LoopRail /></div>
+      <div class="rack left face looper-rail"><LoopRail /><BathModules part="chords" /></div>
       <div class="looper-lanes face">
         {#if loopEditing !== null && $musicStudio.loopStation.tracks[loopEditing]?.beats > 0}
           <div class="lane-editor"><QuickClipEditor index={loopEditing} onclose={() => (loopEditing = null)} /></div>
@@ -457,6 +457,7 @@
       <div class="rack left face">
         <BerlinModules part="drums" />
         <BerlinModules part="acid" />
+        <BathModules part="chords" />
       </div>
       <div class="rack right face">
         <VisualRack />
@@ -471,6 +472,7 @@
         <DubModules part="siren" />
         <PadsModule />
         <DubShotsModule />
+        <BathModules part="chords" />
       </div>
       <div class="rack right face">
         <VisualRack />
@@ -482,6 +484,7 @@
       <!-- No keyboard here: the pads are the instrument. -->
       <div class="rack left face">
         <MachinePads bind:selected={machinePad} />
+        <BathModules part="chords" />
       </div>
       <div class="rack right face">
         <VisualRack />
@@ -492,6 +495,7 @@
       <div class="rack left face">
         <PlayModule />
         <PadsModule />
+        <BathModules part="chords" />
       </div>
       <div class="rack right face">
         <VisualRack />
@@ -723,6 +727,8 @@
   .looper-page .rack.left.looper-rail { grid-row: 2 / 4; padding: 0; }
   /* The keys sit in the 336px side column: their header wraps onto more rows there rather than running
      over the lanes (and the lane editor) beside them. */
+  /* The rail shares its column with the chord pads: it takes what they leave. */
+  .looper-rail > :global(.rail) { height: auto; flex: 1 1 0; min-height: 180px; }
   .looper-keys { grid-column: 1; grid-row: 4; overflow: hidden; }
   .looper-keys > :global(.module) { overflow: hidden; }
   .looper-keys > :global(.module > .head) { height: auto; min-height: 32px; flex-wrap: wrap; row-gap: 4px; padding-top: 4px; padding-bottom: 4px; white-space: normal; }

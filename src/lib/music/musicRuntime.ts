@@ -120,6 +120,7 @@ import { audioLoopTracksFor, existingAudioLoopTracks } from './audioLoopEngine';
 import { registerLoopControls } from './loopControls';
 import { SessionAudio } from './sessionAudio';
 import { launchAudioClip } from './audioClipLaunch';
+import { morphedVolumesFor, soundParamsFor } from './soundMorph';
 import { showToast } from '../stores/errorToast';
 import type { AnySourceId, LiveSourceId, VoiceSourceId } from './visualVoices';
 import { BandFxVisuals } from './bandFxVisuals';
@@ -410,11 +411,8 @@ export function freshStart(): void {
 
 export function changeSetSounds(from: StudioSet, to: StudioSet): void {
   if (from === to) return;
-  if (to !== 'bath') {
-    // The drone's chords and the XY tone live in the Sound bath.
-    releaseChords();
-    audio.releaseXy();
-  }
+  // The XY tone lives in the Sound bath; the chords are on every tab and keep ringing.
+  if (to !== 'bath') audio.releaseXy();
   // The siren lives in the Dub set.
   if (to !== 'dub') setSiren(false);
   syncPlayingClips(get(musicStudio), false, false);
@@ -2266,39 +2264,9 @@ export function dropFxAmountNow(saved: number): number {
   return cableMods.get('dest:dropfx.amount') ?? saved;
 }
 
-/**
- * The knobs as the sound engine hears them: the XY pad morphs the drone
- * against the bowls (X) and opens the space (Y) on top of the knob settings.
- */
-function soundParams(s: MusicStudioState): Record<string, number> {
-  if (s.set === 'dub' && throwHeld) {
-    return {
-      ...s.params,
-      'fx.echo.mix': 1,
-      'fx.echo.feedback': Math.min(1, (s.params['fx.echo.feedback'] ?? 0.6) + 0.25),
-    };
-  }
-  if (s.set !== 'bath') return s.params;
-  const y = s.params['xy.y'] ?? 0.5;
-  const clamp = (v: number) => Math.max(0, Math.min(1, v));
-  return {
-    ...s.params,
-    'fx.reverb.mix': clamp((s.params['fx.reverb.mix'] ?? 0.5) + (y - 0.5) * 0.7),
-    'fx.shimmer.mix': clamp((s.params['fx.shimmer.mix'] ?? 0.35) + (y - 0.5) * 0.6),
-    'fx.reverb.space': clamp((s.params['fx.reverb.space'] ?? 0.85) + (y - 0.5) * 0.3),
-  };
-}
-
-function morphedVolumes(s: MusicStudioState): Record<InstrumentId, number> {
-  if (s.set === 'dub' && dropHeld) return { ...s.volumes, drums: 0, dubbass: 0 };
-  if (s.set !== 'bath') return s.volumes;
-  const x = s.params['xy.x'] ?? 0.5;
-  return {
-    ...s.volumes,
-    drone: s.volumes.drone * Math.min(1, 2 * (1 - x)),
-    bowls: s.volumes.bowls * Math.min(1, 2 * x),
-  };
-}
+/** The knobs and faders as the sound engine hears them (soundMorph.ts). */
+const soundParams = (s: MusicStudioState) => soundParamsFor(s, throwHeld);
+const morphedVolumes = (s: MusicStudioState) => morphedVolumesFor(s, dropHeld);
 
 // ── Shader clips ────────────────────────────────────────────────────────
 
@@ -2449,7 +2417,9 @@ function stopEverything(): void {
 export function mixerChannels(set: StudioSet, inputs = get(musicStudio).liveInputs.length, keys = get(musicStudio).instrument): ChannelId[] {
   // The keys can play an instrument from another set: it gets a strip here too.
   const own = AUDIO_SOURCES[set];
-  return [...own, ...(own.includes(keys) ? [] : [keys]), ...INPUT_CHANNELS.slice(0, Math.max(1, inputs))];
+  // The chord pads play the drone on every tab: its strip is on every tab too.
+  const extra = [keys, 'drone' as const].filter((id, k, all) => !own.includes(id) && all.indexOf(id) === k);
+  return [...own, ...extra, ...INPUT_CHANNELS.slice(0, Math.max(1, inputs))];
 }
 
 /** Meter levels after each channel's strip, 0-1. An input's meter also reads its signal before its fader. */
