@@ -83,46 +83,55 @@
 
 <div class="bar" class:compact class:split>
   <span class="grp">
-  {#if !compact}<span class="ga-eyebrow ey">Loop record</span>{/if}
-  <button
-    class="loop-rec"
-    class:on={v.phase === 'record' || v.phase === 'overdub'}
-    class:count={v.phase === 'armed'}
-    onclick={press}
-    aria-pressed={v.phase === 'record' || v.phase === 'overdub' || v.phase === 'armed'}
-    title="Loop track {sel + 1}: record, overdub or play it (Space in the looper)"
-  >
-    <span class="dot"></span>
-    {#if v.phase === 'armed'}In {left}{:else if v.phase === 'record'}{#if v.endBeat !== null}Rec {left}{:else}Rec{/if}{:else if v.phase === 'overdub'}Dub{:else if v.phase === 'play'}Overdub{:else if v.phase === 'stopped'}Play{:else}Rec{/if}
-  </button>
-  {#if !compact}<span class="ga-eyebrow ey">Length</span>{/if}
-  <div class="ga-segmented small" role="group" aria-label="Loop length">
-    {#each LOOP_LENGTHS as bars}
-      <button class:active={station.length === bars} aria-pressed={station.length === bars} onclick={() => musicStudio.updateLoopStation((d) => ({ ...d, length: bars as LoopLength }))} title={bars ? `Record ${bars} bar${bars === 1 ? '' : 's'}` : 'Record until pressed again; with nothing playing, the first loop sets the tempo'}>{bars || 'Free'}</button>
-    {/each}
-  </div>
-  {#if !compact}
-    <span class="ga-eyebrow ey">Count-in</span>
-    <div class="ga-segmented small" role="group" aria-label="Count-in">
-      {#each COUNT_INS as c}
-        <button class:active={station.countIn === c} aria-pressed={station.countIn === c} onclick={() => musicStudio.updateLoopStation((d) => ({ ...d, countIn: c as CountIn }))} title="Bars of clicks before a recording when nothing is playing">{c === 0 ? 'Off' : c === 1 ? '1 bar' : '2'}</button>
+  <span class="pair">
+    {#if !compact}<span class="ga-eyebrow ey">Loop record</span>{/if}
+    <button
+      class="loop-rec"
+      class:on={v.phase === 'record' || v.phase === 'overdub'}
+      class:count={v.phase === 'armed'}
+      onclick={press}
+      aria-pressed={v.phase === 'record' || v.phase === 'overdub' || v.phase === 'armed'}
+      aria-label="Loop record"
+      title="Loop track {sel + 1}: record, overdub or play it (Space in the looper)"
+    >
+      <span class="dot"></span>
+      {#if v.phase === 'armed'}In {left}{:else if v.phase === 'record'}{#if v.endBeat !== null}Rec {left}{:else}Rec{/if}{:else if v.phase === 'overdub'}Dub{:else if v.phase === 'play'}Overdub{:else if v.phase === 'stopped'}Play{:else}Rec{/if}
+    </button>
+  </span>
+  <span class="pair">
+    {#if !compact}<span class="ga-eyebrow ey">Length</span>{/if}
+    <div class="ga-segmented small" role="group" aria-label="Loop length">
+      {#each LOOP_LENGTHS as bars}
+        <button class:active={station.length === bars} aria-pressed={station.length === bars} onclick={() => musicStudio.updateLoopStation((d) => ({ ...d, length: bars as LoopLength }))} title={bars ? `Record ${bars} bar${bars === 1 ? '' : 's'}` : 'Record until pressed again; with nothing playing, the first loop sets the tempo'}>{bars || 'Free'}</button>
       {/each}
     </div>
-    <span class="ga-eyebrow ey">After record</span>
-    <div class="ga-segmented small" role="group" aria-label="After record">
-      <button class:active={selTrack?.afterRecord === 'play'} aria-pressed={selTrack?.afterRecord === 'play'} onclick={() => musicStudio.updateLoopTrack(sel, { afterRecord: 'play' })} title="When the recording closes, the track plays it">Play</button>
-      <button class:active={selTrack?.afterRecord === 'overdub'} aria-pressed={selTrack?.afterRecord === 'overdub'} onclick={() => musicStudio.updateLoopTrack(sel, { afterRecord: 'overdub' })} title="When the recording closes, the track keeps recording layers over it">Overdub</button>
-    </div>
-    <span class="ga-eyebrow ey">Quantise</span>
-    <select value={s.quantize} onchange={(e) => musicStudio.setQuantize((e.target as HTMLSelectElement).value as QuantizeId)} aria-label="Quantize" title="Snap recorded notes to">
-      {#each QUANTIZE_GRIDS as g}<option value={g.id}>{g.id === 'off' ? 'No snap' : g.label}</option>{/each}
-    </select>
+  </span>
+  {#if !compact}
+    <span class="pair">
+      <span class="ga-eyebrow ey">Count-in</span>
+      <select value={station.countIn} onchange={(e) => musicStudio.updateLoopStation((d) => ({ ...d, countIn: Number((e.target as HTMLSelectElement).value) as CountIn }))} aria-label="Count-in" title="Bars of clicks before a recording when nothing is playing">
+        {#each COUNT_INS as c}<option value={c}>{c === 0 ? 'Off' : c === 1 ? '1 bar' : '2 bars'}</option>{/each}
+      </select>
+    </span>
+    <span class="pair">
+      <span class="ga-eyebrow ey">After record</span>
+      <select value={selTrack?.afterRecord ?? 'play'} onchange={(e) => musicStudio.updateLoopTrack(sel, { afterRecord: (e.target as HTMLSelectElement).value as 'play' | 'overdub' })} aria-label="After record" title="When the recording closes: the track plays it, or keeps recording layers over it">
+        <option value="play">Play</option>
+        <option value="overdub">Overdub</option>
+      </select>
+    </span>
+    <span class="pair">
+      <span class="ga-eyebrow ey">Quantise</span>
+      <select value={s.quantize} onchange={(e) => musicStudio.setQuantize((e.target as HTMLSelectElement).value as QuantizeId)} aria-label="Quantize" title="Snap recorded notes to">
+        {#each QUANTIZE_GRIDS as g}<option value={g.id}>{g.id === 'off' ? 'No snap' : g.label}</option>{/each}
+      </select>
+    </span>
   {/if}
-  {#if !compact && station.length === 0 && !s.sequencerPlaying && !Object.keys(s.playingLoops).length && !$loopStationView.tracks.some((t) => t.phase === 'play' || t.phase === 'overdub')}<span class="tempo-hint" title="With nothing playing, a free first loop sets the tempo: its length is read as 1, 2, 4 or 8 bars between 80 and 160 BPM">First loop sets tempo</span>{/if}
+  {#if !compact && !split && station.length === 0 && !s.sequencerPlaying && !Object.keys(s.playingLoops).length && !$loopStationView.tracks.some((t) => t.phase === 'play' || t.phase === 'overdub')}<span class="tempo-hint" title="With nothing playing, a free first loop sets the tempo: its length is read as 1, 2, 4 or 8 bars between 80 and 160 BPM">First loop sets tempo</span>{/if}
   <button class="text-btn small" onclick={capture} title="Keep what you just played as a loop, without having recorded it">Capture</button>
   {#if !compact && !split}<span class="pos">{launchClockTempo().toFixed(1)} BPM · {keyLabel(s.key)} · {position}</span>{/if}
   </span>
-  <span class="divider" class:grow={split}></span>
+  {#if !split}<span class="divider"></span>{/if}
   <span class="grp midi">
   <button class="text-btn small" onclick={exportPlaying} title="Save the beat and the playing loops as a MIDI file">MIDI out</button>
   <button class="text-btn small" onclick={() => fileInput?.click()} title="Add clips to the session from a MIDI file">MIDI in</button>
@@ -135,13 +144,28 @@
   .bar { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
   .divider { width: 1px; height: 16px; margin: 0 2px; background: var(--studio-edge-soft); }
   .grp { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; row-gap: 4px; }
+  .pair { display: inline-flex; align-items: center; gap: 6px; }
   .ey { margin-left: 4px; }
   .tempo-hint { font-size: var(--ga-text-meta, 11px); color: var(--studio-rec); }
   .pos { margin-left: 8px; font-variant-numeric: tabular-nums; font-size: var(--ga-text-meta, 11px); color: var(--studio-ink); }
-  /* Split: the record group left, the MIDI group right; each wraps only as a whole, the MIDI one keeping to the right. */
-  .bar.split { flex: 1 1 100%; flex-wrap: wrap; row-gap: 4px; }
-  .bar.split .midi { margin-left: auto; }
-  .divider.grow { flex: 1; min-width: 12px; height: 1px; background: transparent; }
+  /*
+   * Split (the session panel's second row): the record controls left, MIDI
+   * out / in / Ableton Live right, on one line. Every control is 28px; a
+   * label sits 8px from its control, groups 16px apart. When the line is too
+   * short the labels go first (the controls keep their aria-labels), then the
+   * MIDI group moves under as a whole, still on the right.
+   */
+  .bar.split { flex: 1 1 100%; flex-wrap: wrap; row-gap: 8px; column-gap: 16px; container-type: inline-size; }
+  .split .grp { flex-wrap: nowrap; gap: 16px; }
+  .split .grp:not(.midi) { flex-wrap: wrap; row-gap: 8px; }
+  .split .grp.midi { gap: 8px; margin-left: auto; }
+  .split .pair { gap: 8px; }
+  .split .ey { margin-left: 0; line-height: 28px; }
+  .split :is(button, select, .ga-segmented) { height: 28px; box-sizing: border-box; }
+  .split select { padding-top: 0; padding-bottom: 0; }
+  @container (max-width: 1290px) {
+    .split .ey { display: none; }
+  }
   /* Wide enough for "Rec 4" and "Overdub", so the bar does not shift while recording. */
   .loop-rec { min-width: 72px; }
   .loop-rec.on, .loop-rec.count { color: var(--studio-rec); border-color: var(--studio-rec); }

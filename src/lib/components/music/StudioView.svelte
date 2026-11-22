@@ -748,9 +748,17 @@
   .rack > :global(.module.grow) { min-height: 300px; }
   .centre { grid-area: centre; display: flex; flex-direction: column; gap: var(--studio-gap); min-width: 0; min-height: 0; }
   .centre > :global(.lower) { flex: 0 0 auto; height: 36%; min-height: 200px; }
-  /* The lower panel's tabs keep their row; its actions (Loops, Rec, length, snap, capture, MIDI) wrap to a second row when they do not fit. */
-  .centre > :global(.lower > .head) { height: auto; min-height: 32px; flex-wrap: wrap; row-gap: 4px; padding-top: 4px; padding-bottom: 4px; white-space: normal; }
+  /*
+   * The lower panel's header, two rows: the tabs with the key, Loops and the
+   * expand arrow on the right; under them the loop record controls left and
+   * MIDI out / in / Ableton Live right. One control height (28px), 8px apart,
+   * the second row's first label under the first tab.
+   */
+  .centre > :global(.lower > .head) { height: auto; min-height: 44px; flex-wrap: wrap; align-items: center; row-gap: 8px; column-gap: 8px; padding: 8px 10px; white-space: normal; }
   .centre > :global(.lower > .head > *) { white-space: nowrap; }
+  .centre > :global(.lower > .head :is(.ga-segmented, .text-btn, .tall-btn)) { height: 28px; box-sizing: border-box; }
+  .centre > :global(.lower > .head > .tall-btn) { order: 1; width: 28px; margin-left: 0; }
+  .centre > :global(.lower > .head > :is(.bar, .live-row)) { order: 2; }
   .lower-key { font-size: var(--ga-text-meta, 11px); color: var(--studio-muted); }
   .live-row { flex: 1 1 100%; display: flex; justify-content: flex-end; }
   .slot { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
