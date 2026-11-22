@@ -113,8 +113,13 @@ export async function createAssetRefFromGeneratedBlob(
   name: string,
   mime?: string,
   existingRuntimeUrl?: string,
+  opts: { preferFile?: boolean } = {},
 ): Promise<CapturedAsset> {
-  const runtimeUrl = existingRuntimeUrl || URL.createObjectURL(blob);
+  // preferFile: a caller that plays the saved file gets its file URL, and no
+  // object URL is made for it (nothing would revoke it). Others get a preview
+  // URL as before, made only when they did not bring one.
+  let made: string | null = null;
+  const preview = () => existingRuntimeUrl || (made ??= URL.createObjectURL(blob));
   const baseRef: AssetRef = {
     kind: 'embedded',
     name,
@@ -134,7 +139,7 @@ export async function createAssetRefFromGeneratedBlob(
       });
       if (result?.success && result.path) {
         return {
-          runtimeUrl,
+          runtimeUrl: opts.preferFile ? pathToFileUrl(result.path) : preview(),
           assetRef: {
             ...baseRef,
             kind: 'local-file',
@@ -150,7 +155,7 @@ export async function createAssetRefFromGeneratedBlob(
 
   try {
     return {
-      runtimeUrl,
+      runtimeUrl: preview(),
       assetRef: {
         ...baseRef,
         kind: 'embedded',
@@ -159,7 +164,7 @@ export async function createAssetRefFromGeneratedBlob(
     };
   } catch (err) {
     console.warn('[AssetRef] Failed to embed generated asset:', err);
-    return { runtimeUrl, assetRef: baseRef };
+    return { runtimeUrl: preview(), assetRef: baseRef };
   }
 }
 

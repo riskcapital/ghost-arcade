@@ -33,6 +33,8 @@ export interface AudioLoopTracks {
   bars(i: number): number;
   onLayersChanged: ((i: number) => void) | null;
   layersOf(i: number): { layers: Array<[Float32Array, Float32Array]>; bars: number; beatMs: number; originBeat: number; sampleRate: number } | null;
+  /** The rate the tracks play their samples at (the live audio context's). */
+  sampleRate(): number;
   restoreLayers(i: number, layers: Array<[Float32Array, Float32Array]>, bars: number, beatMs: number, originBeat: number): void;
   /** The input latency applied to recordings, in ms (reported + manual). */
   latencyMs(): number;

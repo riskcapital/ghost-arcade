@@ -475,6 +475,10 @@ export class AudioLoopEngine implements AudioLoopTracks {
     return t.layers.length ? { layers: t.layers, bars: t.bars, beatMs: t.beatMs, originBeat: t.originBeat, sampleRate: this.ctx.sampleRate } : null;
   }
 
+  sampleRate(): number {
+    return this.ctx.sampleRate;
+  }
+
   /** Put saved layers back on a track (stopped), as a project opens. */
   restoreLayers(i: number, layers: Array<[Float32Array, Float32Array]>, bars: number, beatMs: number, originBeat: number): void {
     if (!layers.length) return;

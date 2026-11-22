@@ -340,6 +340,14 @@ describe('editing a recorded MIDI loop', () => {
     expect(ons.every((e) => e.instrument === 'synth' && e.tone === 'some-tone' && e.patch === undefined)).toBe(true);
   });
 
+  it('sends nothing with its fader at 0', () => {
+    record([4]);
+    musicStudio.updateLoopTrack(0, { level: 0 });
+    sent = [];
+    runTo(40);
+    expect(sent.filter((e) => e.type === 'on')).toHaveLength(0);
+  });
+
   it('keeps a new name on the loop, in the project and when saved to My loops', async () => {
     setUserLoopsBackend(memoryBackend(null));
     record([4]);

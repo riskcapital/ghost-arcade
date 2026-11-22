@@ -630,6 +630,7 @@
  "A look on the whole output: creeps in with the build, hits on the drop, then lets go",
  "A loop inside a loop visits every combination, like every cell of a grid. The inner block runs (outer count × inner count) times every frame, so keep it light.",
  "A loop over the whole screen",
+ "A looper track's newest audio could not be written, so this save does not have it.",
  "A manifest with an FFmpeg compile command was written beside the frames.",
  "A marker at the playhead: it fires the selected cue as the Timeline plays across it (M)",
  "A new column replaces the one on the same deck.",

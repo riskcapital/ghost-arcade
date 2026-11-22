@@ -147,6 +147,17 @@ let wiredEngine: AudioLoopTracks | null = null;
 let restoring = false;
 let restored = false;
 const saveTimers = new Map<number, ReturnType<typeof setTimeout>>();
+/** Writes under way, by track: a project save waits for them too. */
+const inflight = new Map<number, Promise<void>>();
+/**
+ * Per track: `gen` moves on when what a track holds stops being the same
+ * take (a project reset or load, Clear, a new recording), `rev` on every
+ * change of its layers. A write or a restore that finds either moved after
+ * an await leaves the track alone.
+ */
+const gens: number[] = Array.from({ length: LOOP_TRACK_COUNT }, () => 0);
+const revs: number[] = Array.from({ length: LOOP_TRACK_COUNT }, () => 0);
+const bumpGen = (i: number) => { gens[i]++; revs[i]++; };
 /** The saved file of each layer already written, by its left channel. */
 const layerFiles = new WeakMap<Float32Array, { src: string; _assetRef?: unknown }>();
 /** How long after the last change a track's layers are written (a long overdub writes once, not every pass). */
@@ -158,6 +169,7 @@ function audioEngine(): AudioLoopTracks | null {
   if (a && wiredEngine !== a) {
     wiredEngine = a;
     a.onLayersChanged = (i) => {
+      revs[i]++;
       if (!restoring) scheduleAudioSave(i);
     };
     restored = false;
@@ -173,13 +185,25 @@ function scheduleAudioSave(i: number): void {
   clearTimeout(saveTimers.get(i));
   saveTimers.set(i, setTimeout(() => {
     saveTimers.delete(i);
-    void saveAudioLayers(i);
+    void runAudioSave(i).catch((err) => console.warn(`[LoopStation] Could not keep loop track ${i + 1}'s audio:`, err));
   }, AUDIO_SAVE_DELAY_MS));
+}
+
+/** One write of a track's layers, kept in `inflight` until it settles (a later one queues behind it). */
+function runAudioSave(i: number): Promise<void> {
+  const before = inflight.get(i) ?? Promise.resolve();
+  const p: Promise<void> = before.catch(() => {}).then(() => saveAudioLayers(i));
+  inflight.set(i, p);
+  const done = () => { if (inflight.get(i) === p) inflight.delete(i); };
+  p.then(done, done);
+  return p;
 }
 
 async function saveAudioLayers(i: number): Promise<void> {
   const a = wiredEngine;
   if (!a) return;
+  const gen = gens[i];
+  const rev = revs[i];
   const d = a.layersOf(i);
   if (!d) {
     if (track(i).audio) musicStudio.updateLoopTrack(i, { audio: undefined });
@@ -190,43 +214,58 @@ async function saveAudioLayers(i: number): Promise<void> {
     let file = layerFiles.get(l[0]);
     if (!file) {
       const wav = encodeWav(l[0], l[1], d.sampleRate);
-      const captured = await createAssetRefFromGeneratedBlob(new Blob([wav.buffer as ArrayBuffer], { type: 'audio/wav' }), `Loop track ${i + 1} layer ${k + 1}.wav`, 'audio/wav');
+      const captured = await createAssetRefFromGeneratedBlob(new Blob([wav.buffer as ArrayBuffer], { type: 'audio/wav' }), `Loop track ${i + 1} layer ${k + 1}.wav`, 'audio/wav', undefined, { preferFile: true });
       const path = captured.assetRef.originalPath;
       file = { src: path ? pathToFileUrl(path) : captured.runtimeUrl, _assetRef: captured.assetRef };
       layerFiles.set(l[0], file);
+      // Another take or project now: this write is not its.
+      if (gens[i] !== gen) return;
     }
     layers.push(file);
   }
   // Changed again while writing: the next save has it.
-  if (a.layersOf(i)?.layers.length !== layers.length) return;
+  if (gens[i] !== gen || revs[i] !== rev) return;
   musicStudio.updateLoopTrack(i, { audio: { bars: d.bars, beatMs: d.beatMs, originBeat: d.originBeat, layers } });
 }
 
-/** Write every audio track's layers now (before a save that cannot wait). */
+/**
+ * Write every audio track's waiting layers now and wait for writes already
+ * under way, before a save that cannot wait. Rejects when any write failed
+ * (the project then saves without that track's newest audio).
+ */
 export async function flushAudioLoops(): Promise<void> {
-  const pending = [...saveTimers.keys()];
-  for (const i of pending) {
+  for (const i of [...saveTimers.keys()]) {
     clearTimeout(saveTimers.get(i));
     saveTimers.delete(i);
-    await saveAudioLayers(i);
+    void runAudioSave(i).catch(() => {});
   }
+  const results = await Promise.allSettled([...inflight.values()]);
+  const failed = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+  if (failed.length) throw failed[0].reason instanceof Error ? failed[0].reason : new Error(String(failed[0].reason));
 }
 
 async function restoreAudioLoops(a: AudioLoopTracks): Promise<void> {
   for (let i = 0; i < LOOP_TRACK_COUNT; i++) {
     const saved = track(i)?.audio;
     if (track(i)?.kind !== 'audio' || !saved || a.layerCount(i) > 0) continue;
+    const gen = gens[i];
     try {
-      const ctx = new OfflineAudioContext(2, 1, 48000);
+      // Decoded at the live context's rate, which the engine plays the samples at.
+      const ctx = new OfflineAudioContext(2, 1, a.sampleRate());
       const layers: Array<[Float32Array, Float32Array]> = [];
       for (const l of saved.layers) {
         const url = l._assetRef ? resolveAssetRefForRuntime(l._assetRef as AssetRef, undefined, l.src) ?? l.src : l.src;
         const decoded = await ctx.decodeAudioData(await (await fetch(url)).arrayBuffer());
+        if (gens[i] !== gen) break;
         layers.push([new Float32Array(decoded.getChannelData(0)), new Float32Array(decoded.numberOfChannels > 1 ? decoded.getChannelData(1) : decoded.getChannelData(0))]);
       }
+      // A reset, a load, Clear or a new recording while decoding: not this track's any more.
+      if (gens[i] !== gen || wiredEngine !== a || a.layerCount(i) > 0 || track(i)?.audio !== saved) continue;
       restoring = true;
       a.restoreLayers(i, layers, saved.bars, saved.beatMs, saved.originBeat);
       a.layersOf(i)?.layers.forEach((l, k) => saved.layers[k] && layerFiles.set(l[0], saved.layers[k]));
+      // The engine's tracks start at its default level: the project's level and mute.
+      a.setLevel(i, track(i).muted ? 0 : track(i).level);
     } catch (err) {
       console.warn(`[LoopStation] Could not bring back loop track ${i + 1}'s audio:`, err);
     } finally {
@@ -381,6 +420,8 @@ function arm(i: number, beat: number): void {
     const bars = d.length || 0;
     const ok = audio.record(i, { startBeat: start, bars, free: bars === 0 && !busy });
     if (!ok) return;
+    // A new take: a write or restore of what was here before must not land on it.
+    bumpGen(i);
     rt.recStart = start;
     rt.recEnd = bars ? start + bars * BEATS_PER_BAR : null;
     rt.freeSince = bars === 0 && !busy ? performance.now() : null;
@@ -653,6 +694,9 @@ export function clearLoopTrack(i: number): void {
   const rt = rts[i];
   stopLoopTrack(i, true);
   if (isAudio(i)) {
+    clearTimeout(saveTimers.get(i));
+    saveTimers.delete(i);
+    bumpGen(i);
     audioEngine()?.clear(i);
   } else {
     const t = track(i);
@@ -770,6 +814,7 @@ export function resetLoopStation(): void {
   }
   for (const t of saveTimers.values()) clearTimeout(t);
   saveTimers.clear();
+  for (let i = 0; i < LOOP_TRACK_COUNT; i++) bumpGen(i);
   // Clearing the old project's audio must not write over the new project's saved loops.
   restoring = true;
   wiredEngine?.clearAll();
@@ -892,14 +937,23 @@ function schedulePlay(i: number, beat: number, horizon: number, timeAt: (b: numb
   rt.pendingOffs = rt.pendingOffs.filter((p) => p.offBeat > beat);
 }
 
+/** A loop note's velocity at fader `level` (0–1): scaled straight, 0 silent. */
+export function loopNoteVelocity(velocity: number, level: number): number {
+  const v = velocity * Math.max(0, Math.min(1, level));
+  return v > 1e-4 ? v : 0;
+}
+
 function sendNote(i: number, n: RecordedNote, at: number, timeAt: (b: number) => number): void {
   const rt = rts[i];
   const t = track(i);
   const instrument = t.instrument ?? 'synth';
+  // The fader scales the note straight (no floor): at 0 the track is silent and sends nothing.
+  const velocity = loopNoteVelocity(n.velocity, t.level);
+  if (velocity <= 0) return;
   const offBeat = rt.stopAt === null ? at + n.dur : Math.min(at + n.dur, rt.stopAt);
   // Its own sound: the track's patch, and its own effects chain before the instrument's.
   const own = { loopTrack: i, insertChannel: loopFxChannel(i), ...(t.patch && !t.tone ? { patch: t.patch } : {}) };
-  host!.send({ ...withTone(noteOn(instrument, n.note, n.velocity * (0.25 + 0.75 * t.level), 'sequencer', timeAt(at)), t.tone), ...own });
+  host!.send({ ...withTone(noteOn(instrument, n.note, velocity, 'sequencer', timeAt(at)), t.tone), ...own });
   host!.send({ ...withTone(noteOff(instrument, n.note, 'sequencer', timeAt(offBeat)), t.tone), ...own });
   rt.pendingOffs.push({ note: n.note, offBeat, instrument, tone: t.tone });
 }
@@ -1061,7 +1115,7 @@ export async function audioTrackToSession(i: number, name = suggestedLoopName(i)
   const audio = audioEngine();
   const wav = audio?.wav(i) ?? null;
   if (!audio || !wav) return null;
-  const captured = await createAssetRefFromGeneratedBlob(new Blob([wav.buffer as ArrayBuffer], { type: 'audio/wav' }), `${name}.wav`, 'audio/wav');
+  const captured = await createAssetRefFromGeneratedBlob(new Blob([wav.buffer as ArrayBuffer], { type: 'audio/wav' }), `${name}.wav`, 'audio/wav', undefined, { preferFile: true });
   const path = captured.assetRef.originalPath;
   const id = generateUUID();
   musicStudio.addSessionClip('texture', {

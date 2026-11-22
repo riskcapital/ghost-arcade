@@ -36,6 +36,20 @@ import { modulationStore, type ParamModulation } from '../audio/modulation';
 import { audioStore } from './audio';
 import { keyframeTimeline, timelinesHaveKeyframes } from './keyframeTimeline';
 import { showToast } from './errorToast';
+
+/**
+ * Wait for the live looper's audio to be on disk before a project save
+ * snapshots it. A failed write still saves the rest, and says so.
+ */
+export async function flushLooperAudio(): Promise<void> {
+  try {
+    const { flushAudioLoops } = await import('../music/loopStation');
+    await flushAudioLoops();
+  } catch (err) {
+    console.warn('[Store] Looper audio could not be written before saving:', err);
+    showToast('A looper track\'s newest audio could not be written, so this save does not have it.', 'error');
+  }
+}
 import { macros } from './macros';
 import { snapshots } from './snapshots';
 import { layerSequencer } from './layerSequencer';
@@ -6127,6 +6141,9 @@ void main() {
      * and video textures survive across sessions.
      */
     async exportProjectForSave(): Promise<object> {
+      // The looper's audio layers are written a few seconds after they change:
+      // write what is waiting, and wait for writes under way, before the snapshot.
+      await flushLooperAudio();
       const currentProject = get({ subscribe });
       // Start with the sync export (strips blob URLs)
       const syncExport = this.exportProject() as any;
