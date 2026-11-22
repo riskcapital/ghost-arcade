@@ -73,6 +73,8 @@ export interface StudioVoice {
   scan?: EngineScan;
   /** Its settings slowly wander on their own (visualDrift.ts); none in projects from before. */
   drift?: VisualDrift;
+  /** Its own settings are open in the visuals rack (kept with the voice, so it survives reorder and reopening). */
+  paramsOpen?: boolean;
 }
 
 /** The plugin's fields on an effect source. */
@@ -137,6 +139,7 @@ export function normalizeStudioVoice(raw: unknown): StudioVoice | null {
     ...(r.clear === true ? { clear: true } : {}),
     ...(normalizeEngineScan(r.scan) ? { scan: normalizeEngineScan(r.scan) } : {}),
     ...(drift ? { drift } : {}),
+    ...(r.paramsOpen === true ? { paramsOpen: true } : {}),
   };
 }
 

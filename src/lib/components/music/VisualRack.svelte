@@ -64,12 +64,9 @@
   const finish = $derived(normalizeFinish(target?.source.musicFinish));
   const paletteId = $derived(target?.source.musicPalette ?? CLASSIC_PALETTE);
   const autoName = $derived(STUDIO_PALETTE_LIST.find((p) => p.id === SET_PALETTE[s.set])?.name ?? '');
-  /** Voices whose own settings are showing (by row), kept while the rack is open. */
-  let openRows = $state<Set<number>>(new Set());
+  /** Open or close a voice's own settings: kept on the voice, so it moves with it and saves with the project. */
   function toggleOpen(i: number) {
-    const next = new Set(openRows);
-    if (next.has(i)) next.delete(i); else next.add(i);
-    openRows = next;
+    setStudioVoice(i, { paramsOpen: !voices[i]?.paramsOpen });
   }
   let activity = $state<number[]>([]);
   /** Each track's clip visuals' light: dark while auto-mix has them sitting out. */
@@ -273,11 +270,8 @@
     if (to === from || from < 0 || from >= rows.length) return false;
     const next = moveVisualRow(rows, from, to);
     const { voices: order, places: placed } = arrangeVisuals(next, stacks.map((x) => x.entry));
-    // Open audio shaders stay open under their new numbers.
-    const opened = [...openRows];
-    if (!arrangeStudioVisuals(order, placed)) return false;
-    openRows = new Set(opened.map((k) => order.indexOf(k)).filter((k) => k >= 0));
-    return true;
+    // A voice's open settings travel with it (paramsOpen is on the voice).
+    return arrangeStudioVisuals(order, placed);
   }
   function dropRow() {
     if (dragFrom !== null && dropAt !== null) reorder(dragFrom, dropAt > dragFrom ? dropAt - 1 : dropAt);
@@ -292,15 +286,14 @@
 
   function addVoice() {
     if (!target && !placeStudio()) return;
-    visualPicker.set({ current: null, none: false, title: 'Add an audio shader', pick: (f) => { const at = voices.length; if (f && addStudioVoice(f, 'all')) openRows = new Set([...openRows, at]); } });
+    visualPicker.set({ current: null, none: false, title: 'Add an audio shader', pick: (f) => { const at = voices.length; if (f && addStudioVoice(f, 'all')) setStudioVoice(at, { paramsOpen: true }); } });
   }
 
   // ── Drift: its settings slowly wander on their own (visualDrift.ts) ──
   function toggleDrift(i: number, voice: StudioVoice) {
     const next = toggledDrift(voice.drift);
-    setStudioVoice(i, { drift: next });
     // Turned on: show its amount, speed and which settings drift.
-    if (next.on) openRows = new Set([...openRows, i]);
+    setStudioVoice(i, next.on ? { drift: next, paramsOpen: true } : { drift: next });
   }
   /** The settings of a visual that can drift (decimal settings, not counts or what the sound drives). */
   function driftNames(file: string): Set<string> {
@@ -489,7 +482,7 @@
           {@const i = row.index}
           {@const voice = voices[i]}
           {@const all = looks(voice.file)}
-          {@const open = openRows.has(i)}
+          {@const open = !!voice.paramsOpen}
           <div class="voice">
             <button
               class="onoff"
