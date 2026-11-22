@@ -327,6 +327,8 @@
       <circle cx="8" cy="8" r="5.5" /><circle cx="8" cy="8" r="1.8" />
     {:else if id === 'analog'}
       <path d="M1.5 8c1.6-5.5 3.4-5.5 5 0s3.4 5.5 5 0 2.2-3.6 3-3.6" />
+    {:else if id === 'looper'}
+      <path d="M13 6.5A5.5 5.5 0 1 0 13.5 9" /><path d="M13.5 3.5v3h-3" />
     {:else}
       <ellipse cx="8" cy="5" rx="5.5" ry="2.2" /><path d="M2.5 5v6c0 1.2 2.5 2.2 5.5 2.2s5.5-1 5.5-2.2V5" />
     {/if}
@@ -369,7 +371,7 @@
         {#each STUDIO_SETS as set}
           <button class:active={!looperPage && s.set === set.id} aria-pressed={!looperPage && s.set === set.id} onclick={() => { looperPage = false; musicStudio.setSet(set.id); }} data-midi-path="studio:set.{set.id}" data-midi-label="{set.label} set" data-midi-mode="toggle">{@render setMark(set.id)}{set.label}</button>
         {/each}
-        <button class:active={looperPage} aria-pressed={looperPage} onclick={() => (looperPage = true)} title="The live looper: six loop tracks, their visuals and sections. Loops keep playing on the other tabs." data-midi-path="studio:set.looper" data-midi-label="Looper tab" data-midi-mode="toggle">Looper</button>
+        <button class:active={looperPage} aria-pressed={looperPage} onclick={() => (looperPage = true)} title="The live looper: six loop tracks, their visuals and sections. Loops keep playing on the other tabs." data-midi-path="studio:set.looper" data-midi-label="Looper tab" data-midi-mode="toggle">{@render setMark('looper')}Looper</button>
       </div>
       {#if !looperPage && loopsRunning}
         <button class="text-btn loops-running" onclick={() => (looperPage = true)} title="Loops are playing: back to the Looper tab"><span class="led" aria-hidden="true"></span>Loops {loopsRunning}</button>

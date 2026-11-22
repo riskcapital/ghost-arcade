@@ -22,7 +22,7 @@
     undoLoopLayer,
   } from '../../music/loopStation';
   import { beatNow } from '../../music/loopUi';
-  import { COUNT_INS, LOOP_TRACK_COUNT, PEDAL_PRESETS, type CountIn, type PedalPreset } from '../../music/loopTrack';
+  import { COUNT_INS, LOOP_LENGTHS, LOOP_TRACK_COUNT, type LoopLength, PEDAL_PRESETS, type CountIn, type PedalPreset } from '../../music/loopTrack';
   import { INSTRUMENT_LABELS } from '../../music/instruments';
   import { launchClockTempo } from '../../stores/launchClock';
   import { audioStore } from '../../stores/audio';
@@ -112,10 +112,11 @@
     <span class="ga-eyebrow">Loop station</span>
     <b class="bpm">{launchClockTempo().toFixed(1)} BPM</b>
     <button class="text-btn small" onclick={() => audioStore.tapTempo()} title="Tap the tempo">Tap</button>
-    <span class="ga-eyebrow">First loop</span>
-    <div class="ga-segmented small" role="group" aria-label="First loop">
-      <button class:active={station.length !== 0} onclick={() => musicStudio.updateLoopStation((d) => ({ ...d, length: d.length === 0 ? 4 : d.length }))}>{station.length || 4} bars</button>
-      <button class:active={station.length === 0} onclick={() => musicStudio.updateLoopStation((d) => ({ ...d, length: 0 }))} title="Until pressed again; with nothing playing it sets the tempo">Free</button>
+    <span class="ga-eyebrow">Length</span>
+    <div class="ga-segmented small" role="group" aria-label="Loop length">
+      {#each LOOP_LENGTHS as bars}
+        <button class:active={station.length === bars} aria-pressed={station.length === bars} onclick={() => musicStudio.updateLoopStation((d) => ({ ...d, length: bars as LoopLength }))} title={bars ? `Record ${bars} bar${bars === 1 ? '' : 's'}` : 'Until pressed again; with nothing playing it sets the tempo'}>{bars || 'Free'}</button>
+      {/each}
     </div>
     <span class="ga-eyebrow">Count-in</span>
     <select value={station.countIn} onchange={(e) => musicStudio.updateLoopStation((d) => ({ ...d, countIn: Number((e.target as HTMLSelectElement).value) as CountIn }))} aria-label="Count-in">
