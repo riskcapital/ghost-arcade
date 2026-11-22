@@ -1,27 +1,76 @@
 /**
  * Analog Synth's WGSL (see graph.ts for the passes).
  *
+ *   cs_clock  moves the running phases on by one frame (compute)
  *   fs_synth  three raster oscillators, their modulation, the mixer, the
  *             picture controls and feedback from the last frame
  *   fs_keep   copies the new frame aside, for the next frame's feedback
  *   fs_out    the tube: scanlines, color bleed, roll and glow
  *
  * Bindings: 0 the patch (128 floats, see patch.ts), 1 the frame block the
- * core writes (time, audio), 2 the picture read, 3 the sampler.
+ * core writes (time, audio), 2 the picture read, 3 the sampler, 4 the input
+ * layer, 5 the running phases.
+ *
+ * Signal model (patch.ts MODEL_KEY): 2 reads its phases from the clock
+ * buffer and works the oscillators out in the order the patch needs; 1 is
+ * the first release's math, kept for patches saved with it.
  */
 import { SCENE3D_FRAME_WGSL } from '../renderer/scene3dFrame';
+import { SLOT_MODEL, SLOT_ORDER } from './patch';
 
-export const VIDEOSYNTH_WGSL = /* wgsl */ `
+/** Floats in the running-phase buffer: oscillators A–C, LFOs 1–3, roll, spare. */
+export const CLOCK_FLOATS = 8;
+
+/** What both modules read: the patch, its rates and the signal model. */
+const COMMON_WGSL = /* wgsl */ `
 ${SCENE3D_FRAME_WGSL}
 @group(0) @binding(0) var<uniform> controls: array<vec4f, 32>;
 @group(0) @binding(1) var<uniform> frame: SceneFrame;
-@group(0) @binding(2) var src: texture_2d<f32>;
-@group(0) @binding(3) var samp: sampler;
-@group(0) @binding(4) var input_tex: texture_2d<f32>;
 
 const TAU = 6.2831853;
 
 fn prm(i: u32) -> f32 { return controls[i >> 2u][i & 3u]; }
+fn model2() -> bool { return prm(${SLOT_MODEL}u) > 1.5; }
+
+// Frequency: 15 Hz to the line rate, ten octaves on the knob, plus fine.
+fn osc_freq(n: u32) -> f32 { let b = n * 12u; return 60.0 * pow(2.0, prm(b) * 10.0 - 2.0) + prm(b + 1u) * 2.0; }
+// How fast an oscillator's pattern drifts: its frequency, less the part its
+// sync locks to the picture (none from H on).
+fn drift_rate(n: u32) -> f32 { return max(0.0, 1.0 - prm(n * 12u + 2u)) * osc_freq(n); }
+// LFO: 0.002 Hz to 10 Hz on its knob.
+fn lfo_rate(k: u32) -> f32 { return 0.002 * pow(5000.0, prm(48u + k * 2u)); }
+// Roll: picture heights a second.
+fn roll_rate() -> f32 { return prm(56u) * 0.35; }
+`;
+
+/**
+ * The running phases, one frame on (signal model 2). Each phase moves by its
+ * rate times the frame's step, from wherever it is, so turning a rate knob
+ * changes the speed and never jumps the picture, however long the set has
+ * run; and the phases stay within one turn, so they stay exact for days.
+ * The buffer starts at zero and the core empties it when an export starts,
+ * so two renders of a show step identically. The core gives each frame one
+ * step (none for a repeated export frame).
+ */
+export const VIDEOSYNTH_CLOCK_WGSL = /* wgsl */ `
+${COMMON_WGSL}
+@group(0) @binding(2) var<storage, read_write> clock: array<f32, ${CLOCK_FLOATS}>;
+
+@compute @workgroup_size(1)
+fn cs_clock() {
+  let dt = clamp(frame.delta, 0.0, 0.1);
+  for (var n = 0u; n < 3u; n++) { clock[n] = fract(clock[n] + drift_rate(n) * dt); }
+  for (var k = 0u; k < 3u; k++) { clock[3u + k] = fract(clock[3u + k] + lfo_rate(k) * dt); }
+  clock[6] = fract(clock[6] + roll_rate() * dt);
+}
+`;
+
+export const VIDEOSYNTH_WGSL = /* wgsl */ `
+${COMMON_WGSL}
+@group(0) @binding(2) var src: texture_2d<f32>;
+@group(0) @binding(3) var samp: sampler;
+@group(0) @binding(4) var input_tex: texture_2d<f32>;
+@group(0) @binding(5) var<storage, read> clock: array<f32, ${CLOCK_FLOATS}>;
 
 struct VsOut { @builtin(position) clip: vec4f, @location(0) uv: vec2f }
 
@@ -41,11 +90,11 @@ fn hsv(h: f32, s: f32, v: f32) -> vec3f {
 }
 fn luma(c: vec3f) -> f32 { return dot(c, vec3f(0.299, 0.587, 0.114)); }
 
-// LFO: 0.002 Hz to 10 Hz on its knob; shape from rising saw through triangle to falling saw.
+// LFO: shape from rising saw through triangle to falling saw.
 fn lfo(k: u32) -> f32 {
-  let rate = 0.002 * pow(5000.0, prm(48u + k * 2u));
   let skew = clamp(prm(49u + k * 2u), 0.001, 0.999);
-  let p = fract(frame.time * rate + f32(k) * 0.37);
+  var p = fract(frame.time * lfo_rate(k) + f32(k) * 0.37);
+  if (model2()) { p = fract(clock[3u + k] + f32(k) * 0.37); }
   return select((1.0 - p) / (1.0 - skew), p / skew, p < skew);
 }
 
@@ -53,12 +102,18 @@ fn lfo(k: u32) -> f32 {
 // picture rate: whole multiples of 60 stand still as horizontal bands;
 // near the line rate they turn into vertical stripes. Sync blends free
 // running (drifting) into still horizontal (H) and then still vertical (V).
-fn osc_phase(freq: f32, sync: f32, uv: vec2f) -> f32 {
+// Model 2: the drift is oscillator n's running phase (cs_clock), and the
+// frequency as modulated (FM) only shapes the pattern across the raster.
+// Model 1: the drift is frequency × clock, FM included.
+fn osc_phase(freq: f32, sync: f32, uv: vec2f, n: u32) -> f32 {
   let lines = prm(60u);
-  let free = freq * (frame.time + (uv.y + uv.x / lines) / 60.0);
+  let raster = (uv.y + uv.x / lines) / 60.0;
   let h = freq / 60.0 * uv.y;
   let v = freq / 60.0 * uv.x * prm(59u);
-  if (sync < 1.0) { return mix(free, h, sync); }
+  if (sync < 1.0) {
+    if (model2()) { return clock[n] + mix(freq * raster, h, sync); }
+    return mix(freq * (frame.time + raster), h, sync);
+  }
   return mix(h, v, sync - 1.0);
 }
 fn wave(phase: f32, shape: f32) -> f32 {
@@ -100,18 +155,25 @@ fn source(k: f32) -> f32 {
   }
 }
 
+/** An oscillator's wave from its knobs alone, before any modulation. */
+fn bare_wave(n: u32, uv: vec2f) -> f32 {
+  let b = n * 12u;
+  return wave(osc_phase(osc_freq(n), prm(b + 2u), uv, n), prm(b + 3u));
+}
+
 fn oscillator(n: u32, uv: vec2f) -> vec4f {
   let b = n * 12u;
   let react = prm(58u);
-  // Frequency: 15 Hz to the line rate, ten octaves on the knob, plus fine.
-  var freq = 60.0 * pow(2.0, prm(b) * 10.0 - 2.0) + prm(b + 1u) * 2.0;
+  let m2 = model2();
+  var freq = osc_freq(n);
   // FM swings the frequency both ways about the knob; with no source there is
   // nothing to swing it (the music only deepens FM that has a source).
-  if (plugged(prm(b + 8u))) {
+  // Model 1 swung it with no source too, down by the FM amount.
+  if (plugged(prm(b + 8u)) || !m2) {
     let fm = prm(b + 7u) + react * frame.bass * 0.25;
     freq *= 1.0 + (source(prm(b + 8u)) * 2.0 - 1.0) * fm;
   }
-  var phase = osc_phase(freq, prm(b + 2u), uv);
+  var phase = osc_phase(freq, prm(b + 2u), uv, n);
   let mode = u32(prm(b + 4u) + 0.5);
   let m = source(prm(b + 6u)) * prm(b + 5u);
   var hue = prm(b + 9u) + react * frame.treble * 0.08;
@@ -122,9 +184,10 @@ fn oscillator(n: u32, uv: vec2f) -> vec4f {
   if (draws_input) { v = input_luma; }
   if (mode == 1u) {
     // Key: the wave shape sets the threshold; the source pushes past it,
-    // either way about its middle. With no source the threshold stays put.
+    // either way about its middle. With no source the threshold stays put
+    // (model 1 moved it down by half the Mod amount).
     let th = 0.5;
-    let push = select(0.0, m - prm(b + 5u) * 0.5, plugged(prm(b + 6u)));
+    let push = select(0.0, m - prm(b + 5u) * 0.5, plugged(prm(b + 6u)) || !m2);
     v = smoothstep(th - 0.01, th + 0.01, v + push);
   } else if (mode == 2u) {
     hue += m;
@@ -151,11 +214,7 @@ fn hue_rotate(c: vec3f, a: f32) -> vec3f {
 fn raw_source(k: f32, uv: vec2f) -> f32 {
   let i = u32(k + 0.5);
   if (i == 1u) { return luma(textureSampleLevel(src, samp, uv, 0.0).rgb); }
-  if (i >= 2u && i <= 4u) {
-    let b = (i - 2u) * 12u;
-    let freq = 60.0 * pow(2.0, prm(b) * 10.0 - 2.0) + prm(b + 1u) * 2.0;
-    return wave(osc_phase(freq, prm(b + 2u), uv), prm(b + 3u));
-  }
+  if (i >= 2u && i <= 4u) { return bare_wave(i - 2u, uv); }
   if (i == 13u) { return luma(textureSampleLevel(input_tex, samp, uv, 0.0).rgb); }
   return source(k);
 }
@@ -194,11 +253,28 @@ fn fs_synth(in: VsOut) -> @location(0) vec4f {
   input_rgb = textureSampleLevel(input_tex, samp, uv, 0.0).rgb;
   input_luma = luma(input_rgb);
 
-  // A, then B, then C: each can listen to the ones before it.
-  osc_values = vec3f(0.0);
-  let a = oscillator(0u, uv); osc_values.x = a.w;
-  let b = oscillator(1u, uv); osc_values.y = b.w;
-  let c = oscillator(2u, uv); osc_values.z = c.w;
+  var outs: array<vec4f, 3>;
+  if (model2()) {
+    // In the order the patch needs (patch.ts oscillatorOrder), so each one
+    // hears the ones it listens to as drawn. One not worked out yet (in a
+    // ring of cables, or itself) is heard as its bare wave: one step of
+    // delay, the same everywhere and every frame.
+    osc_values = vec3f(bare_wave(0u, uv), bare_wave(1u, uv), bare_wave(2u, uv));
+    for (var i = 0u; i < 3u; i++) {
+      let n = min(u32(prm(${SLOT_ORDER}u + i) + 0.5), 2u);
+      outs[n] = oscillator(n, uv);
+      osc_values[n] = outs[n].w;
+    }
+  } else {
+    // Model 1: A, then B, then C; each hears only the ones before it.
+    osc_values = vec3f(0.0);
+    outs[0] = oscillator(0u, uv); osc_values.x = outs[0].w;
+    outs[1] = oscillator(1u, uv); osc_values.y = outs[1].w;
+    outs[2] = oscillator(2u, uv); osc_values.z = outs[2].w;
+  }
+  let a = outs[0];
+  let b = outs[1];
+  let c = outs[2];
 
   var col = vec3f(0.0);
   let mixer = u32(prm(36u) + 0.5);
@@ -233,9 +309,12 @@ fn hash(p: vec2f) -> f32 { return fract(sin(dot(p, vec2f(12.9898, 78.233))) * 43
 fn fs_out(in: VsOut) -> @location(0) vec4f {
   let dims = vec2f(textureDimensions(src));
   var uv = in.uv;
-  // Roll: the picture slips vertically, more on a hit.
-  let roll = prm(56u) + prm(58u) * frame.kick * 0.15;
-  uv.y = fract(uv.y + roll * frame.time * 0.35 + jack(84u, in.uv) * 0.25);
+  // Roll: the picture slips vertically, nudged on a hit. Model 2 rolls by its
+  // running phase; model 1 by knob × clock, where a hit's nudge grew with
+  // how long the set had run.
+  var roll = (prm(56u) + prm(58u) * frame.kick * 0.15) * frame.time * 0.35;
+  if (model2()) { roll = clock[6] + prm(58u) * frame.kick * 0.05; }
+  uv.y = fract(uv.y + roll + jack(84u, in.uv) * 0.25);
   // Color bleed: red and blue spread sideways, as a tube's color carrier did.
   let bleed = prm(55u) * 4.0 / dims.x;
   var col = vec3f(
@@ -262,6 +341,8 @@ fn fs_out(in: VsOut) -> @location(0) vec4f {
 `;
 
 export const VIDEOSYNTH_SHADER_ID = 'videosynth/analog-synth';
+export const VIDEOSYNTH_CLOCK_SHADER_ID = 'videosynth/clock';
 export const videosynthPrecompileCommands = () => [
+  { type: 'precompile_shader' as const, shader_id: VIDEOSYNTH_CLOCK_SHADER_ID, stage: 'compute' as const, entry: 'cs_clock', source: VIDEOSYNTH_CLOCK_WGSL },
   { type: 'precompile_shader' as const, shader_id: VIDEOSYNTH_SHADER_ID, stage: 'render' as const, entry: 'fs_synth', source: VIDEOSYNTH_WGSL },
 ];

@@ -4,8 +4,9 @@ import { writeFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { closeNativeTestCore, gpuTestPlatform as platform } from './nativeHardwareTestPlatform';
 import { buildVideoSynthGraph } from '../videosynth/graph';
-import { presetValues, VIDEOSYNTH_PRESETS } from '../videosynth/patch';
-import { videosynthPrecompileCommands } from '../videosynth/shaders';
+import { MODEL_KEY, paramBlock, presetValues, VIDEOSYNTH_PRESETS } from '../videosynth/patch';
+import { CLOCK_FLOATS, VIDEOSYNTH_CLOCK_SHADER_ID, videosynthPrecompileCommands } from '../videosynth/shaders';
+import { SCENE3D_FRAME_BYTES, SCENE3D_FRAME_SLOT } from './scene3dFrame';
 import { snapshotPixels } from '../../../scripts/scene3d-spike/scene.mjs';
 
 /**
@@ -130,6 +131,86 @@ suite('Analog Synth video synth', () => {
       expect([img.rgba[c], img.rgba[c + 1], img.rgba[c + 2]], 'the input comes through').toEqual([expect.any(Number), expect.any(Number), expect.any(Number)]);
       expect(img.rgba[c]).toBeGreaterThan(150);
       expect(img.rgba[c + 1]).toBeLessThan(60);
+    } finally { await rpc.close(); }
+  }, 60000);
+
+  it('moves its running phases on from where they are when a rate changes', async () => {
+    const rpc = core();
+    try {
+      await rpc.send('start', { config: { backend: platform.rendererBackend, width: 64, height: 64, target_fps: 60 } });
+      await rpc.commands(videosynthPrecompileCommands());
+      const dt = 1 / 60;
+      const frameBlock = new Float32Array(SCENE3D_FRAME_BYTES / 4);
+      frameBlock[SCENE3D_FRAME_SLOT.delta] = dt;
+      // A huge clock: model 1's phases (rate × clock) would jump on any rate change.
+      frameBlock[SCENE3D_FRAME_SLOT.time] = 20000;
+      const b64 = (a: Float32Array) => Buffer.from(a.buffer, a.byteOffset, a.byteLength).toString('base64');
+      const clockId = 'videosynth:clock-test:phases';
+      const step = async (params: Record<string, unknown>) => {
+        const result = await rpc.send('compute_graph', {
+          buffers: [
+            { id: 'videosynth:clock-test:patch', kind: 'uniform', byte_length: 512, initial_b64: b64(paramBlock(params, 1)) },
+            { id: 'videosynth:clock-test:frame', kind: 'uniform', byte_length: SCENE3D_FRAME_BYTES, initial_b64: b64(frameBlock) },
+            { id: clockId, kind: 'storage', byte_length: CLOCK_FLOATS * 4, persistent: true },
+          ],
+          passes: [{
+            name: 'clock', shader_id: VIDEOSYNTH_CLOCK_SHADER_ID, entry: 'cs_clock', dispatch: [1, 1, 1],
+            bindings: [
+              { binding: 0, resource: 'videosynth:clock-test:patch', kind: 'uniform' },
+              { binding: 1, resource: 'videosynth:clock-test:frame', kind: 'uniform' },
+              { binding: 2, resource: clockId, kind: 'storage' },
+            ],
+          }],
+          readbacks: [{ id: clockId, include_bytes: true }],
+        });
+        const bytes = Buffer.from(result.readbacks[clockId].bytes_b64, 'base64');
+        return Array.from(new Float32Array(bytes.buffer, bytes.byteOffset, CLOCK_FLOATS));
+      };
+      const turn = (a: number, b: number) => { const d = a - b; return Math.abs(d - Math.round(d)); };
+      // LFO 1 at 0.5 Hz, Osc A free running at its lowest frequency (15 Hz), roll on.
+      const slow = { ...presetValues('warm-up'), vsLfo1Rate: Math.log(0.5 / 0.002) / Math.log(5000), vsAFreq: 0, vsASync: 0, vsRoll: 0.5 };
+      let p = await step(slow);
+      for (let i = 1; i < 30; i++) p = await step(slow);
+      expect(turn(p[3], 30 * dt * 0.5), 'LFO 1 after 30 frames').toBeLessThan(1e-4);
+      expect(turn(p[0], 30 * dt * 15), 'Osc A drift after 30 frames').toBeLessThan(1e-3);
+      expect(turn(p[6], 30 * dt * 0.5 * 0.35), 'roll after 30 frames').toBeLessThan(1e-4);
+      // Turn LFO 1 up to 8 Hz and Osc A up an octave: one frame on, not a jump.
+      const fast = { ...slow, vsLfo1Rate: Math.log(8 / 0.002) / Math.log(5000), vsAFreq: 0.1 };
+      const q = await step(fast);
+      expect(turn(q[3], p[3] + 8 * dt), 'LFO 1 one frame on').toBeLessThan(1e-4);
+      expect(turn(q[0], p[0] + 30 * dt), 'Osc A one frame on').toBeLessThan(1e-3);
+      // A locked oscillator does not drift.
+      expect(q[1], 'Osc B is synced, so it stands still').toBe(p[1]);
+    } finally { await rpc.close(); }
+  }, 60000);
+
+  it('a free-running oscillator drifts on the clock alone, and a model 1 patch still draws', async () => {
+    const rpc = core();
+    const source = 'videosynth:drift:out';
+    try {
+      await rpc.send('start', { config: { backend: platform.rendererBackend, width: W, height: H, target_fps: 60 } });
+      await rpc.commands(videosynthPrecompileCommands());
+      // Only Osc A, free running, nothing modulating, no feedback, no tube.
+      const still = { vsBLevel: 0, vsCLevel: 0, vsAMod: 0, vsAFm: 0, vsASync: 0, vsAFreq: 0.05, vsFeedback: 0, vsScanlines: 0, vsBleed: 0, vsGlow: 0, vsReact: 0 };
+      for (const [label, params] of [['model 2', { ...presetValues('warm-up'), ...still }], ['model 1', { ...presetValues('warm-up'), ...still, [MODEL_KEY]: undefined }]] as const) {
+        const graph = buildVideoSynthGraph({ params, sourceId: source, width: W, height: H, maxSide: 480 });
+        await rpc.commands([
+          { type: 'upsert_layer', layer_id: 'synth', z_index: 0, opacity: 1, blend_mode: 'normal', corners: full },
+          { type: 'set_layer_visibility', layer_id: 'synth', visible: true },
+          { type: 'set_native_graph_layer', layer_id: 'synth', kind: 'videosynth', instrument_source_id: source, composite_source_id: source, input_source_id: null, effect_graph: graph.config, params: {} },
+          { type: 'bind_media_source', layer_id: 'synth', source_id: source, uri: 'native-graph://videosynth/test', source_type: 'video' },
+        ]);
+        const shot = async () => { await rpc.commands([{ type: 'present' }]); return snapshotPixels(await rpc.send('frame_snapshot', { include_pixels: true })); };
+        for (let i = 0; i < 6; i++) { await wait(80); await rpc.commands([{ type: 'present' }]); }
+        const status = await rpc.send('status');
+        expect(String(status.last_shader_error || status.last_frame_error || ''), label).toBe('');
+        const a = await shot();
+        await wait(300);
+        const b = await shot();
+        let changed = 0;
+        for (let i = 0; i < a.rgba.length; i += 16) if (Math.abs(a.rgba[i] - b.rgba[i]) > 12) changed++;
+        expect(changed / (a.rgba.length / 16), `${label} drifts`).toBeGreaterThan(0.02);
+      }
     } finally { await rpc.close(); }
   }, 60000);
 });

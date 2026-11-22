@@ -216,9 +216,70 @@ export function morphBase(source: Record<string, unknown> | null | undefined, sn
 /** Slots the app fills after the controls. */
 export const SLOT_ASPECT = 59;
 export const SLOT_LINES = 60;
+/** The signal model the shader follows (see MODEL_KEY). */
+export const SLOT_MODEL = 86;
+/** Three slots: the oscillators in the order they are worked out (oscillatorOrder). */
+export const SLOT_ORDER = 87;
 export const PARAM_FLOATS = 128;
 
-export const VIDEOSYNTH_DEFAULTS: Record<string, number> = Object.fromEntries(VIDEOSYNTH_PARAMS.map((p) => [p.key, p.default]));
+/**
+ * Which signal model a patch was made with, on the effect source. 2, the
+ * current one: oscillators are worked out in the order their cables need
+ * (any oscillator can listen to any other), an input with nothing patched
+ * does nothing, and every running phase (oscillators, LFOs, roll) moves on
+ * from where it is when its rate changes. 1: the first release, where A
+ * could only be heard by B and C, an empty FM input lowered the pitch, an
+ * empty Key input moved the threshold and the phases were rate × clock (so
+ * a rate change late in a set jumped). A patch without the key was saved
+ * before 2 existed and keeps model 1, so saved looks do not change; a new
+ * patch and every factory preset start on 2. Not a control: Timeline, MIDI
+ * and the pad never touch it.
+ */
+export const MODEL_KEY = 'vsModel';
+export const SIGNAL_MODEL = 2;
+
+export function signalModel(source: Record<string, unknown> | null | undefined): 1 | 2 {
+  const v = Number(source?.[MODEL_KEY]);
+  return Number.isFinite(v) && v >= 2 ? 2 : 1;
+}
+
+/** A new patch: every control at its default, on the current signal model. */
+export const VIDEOSYNTH_DEFAULTS: Record<string, number> = {
+  ...Object.fromEntries(VIDEOSYNTH_PARAMS.map((p) => [p.key, p.default])),
+  [MODEL_KEY]: SIGNAL_MODEL,
+};
+
+/** Source numbers 2 to 4 are oscillators A to C. */
+const OSC_SOURCE = 2;
+
+/**
+ * The order the shader works the oscillators out in (signal model 2), so
+ * each one hears the oscillators it listens to (by Mod, FM or a cable into
+ * its level) as already drawn at that point. Oscillators that listen to
+ * each other in a ring cannot all go first: the ring is opened at its first
+ * oscillator in A, B, C order, and an oscillator that hears one not yet
+ * worked out (itself included) hears that one's bare wave, its knobs alone
+ * with no modulation: one step of delay, the same at every pixel and frame.
+ */
+export function oscillatorOrder(source: Record<string, unknown> | null | undefined): number[] {
+  const value = (key: string) => paramValue(source, VIDEOSYNTH_PARAMS.find((p) => p.key === key)!);
+  const hears = [0, 1, 2].map((n) => {
+    const name = 'ABC'[n];
+    const from = [value(`vs${name}ModSrc`), value(`vs${name}FmSrc`), value(`vs${name}LevelSrc`)];
+    return new Set(from.map((s) => s - OSC_SOURCE).filter((m) => m >= 0 && m <= 2 && m !== n));
+  });
+  const order: number[] = [];
+  // Whether `from` hears `to`, through any chain of oscillators not yet placed.
+  const reaches = (from: number, to: number, seen = new Set<number>()): boolean =>
+    [...hears[from]].some((m) => !order.includes(m) && (m === to || (!seen.has(m) && reaches(m, to, seen.add(m)))));
+  while (order.length < 3) {
+    const left = [0, 1, 2].filter((n) => !order.includes(n));
+    const ready = left.find((n) => [...hears[n]].every((m) => order.includes(m)));
+    // Nothing is ready: open a ring at its first oscillator.
+    order.push(ready ?? left.find((n) => reaches(n, n)) ?? left[0]);
+  }
+  return order;
+}
 
 /** A control's value from an effect source, clamped, or its default. */
 export function paramValue(source: Record<string, unknown> | null | undefined, p: ParamSpec): number {
@@ -237,6 +298,8 @@ export function paramBlock(source: Record<string, unknown> | null | undefined, a
   }
   out[SLOT_ASPECT] = aspect;
   out[SLOT_LINES] = 262;
+  out[SLOT_MODEL] = signalModel(source);
+  oscillatorOrder(source).forEach((n, i) => { out[SLOT_ORDER + i] = n; });
   return out;
 }
 

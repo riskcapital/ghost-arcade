@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MORPH_BASE_KEY, MORPH_KEY, morphBase, morphValues, paramBlock, paramValue, PARAM_FLOATS, SLOT_ASPECT, SLOT_LINES, VIDEOSYNTH_DEFAULTS, VIDEOSYNTH_PARAMS, VIDEOSYNTH_PRESETS } from './patch';
+import { MODEL_KEY, MORPH_BASE_KEY, MORPH_KEY, morphBase, morphValues, oscillatorOrder, paramBlock, presetValues, signalModel, SIGNAL_MODEL, SLOT_MODEL, SLOT_ORDER, paramValue, PARAM_FLOATS, SLOT_ASPECT, SLOT_LINES, VIDEOSYNTH_DEFAULTS, VIDEOSYNTH_PARAMS, VIDEOSYNTH_PRESETS } from './patch';
 import { buildVideoSynthGraph, VIDEOSYNTH_MAX_SIDE, videosynthIdPrefix } from './graph';
 import { discoverKeyframeableParams } from '../keyframes/paramDiscovery';
 import { applyParamOverrides } from '../keyframes/applyParamOverrides';
@@ -11,6 +11,7 @@ describe('Analog Synth controls', () => {
     expect(new Set(slots).size).toBe(slots.length);
     expect(slots).not.toContain(SLOT_ASPECT);
     expect(slots).not.toContain(SLOT_LINES);
+    for (const slot of [SLOT_MODEL, SLOT_ORDER, SLOT_ORDER + 1, SLOT_ORDER + 2]) expect(slots).not.toContain(slot);
     expect(Math.max(...slots)).toBeLessThan(PARAM_FLOATS);
   });
 
@@ -126,5 +127,63 @@ describe('Analog Synth graph', () => {
     const coreToken = `:${`${long}a`.slice(0, 160)}:`;
     for (const id of ids(a)) expect(id).toContain(coreToken);
     expect(videosynthIdPrefix('my layer/1')).toMatch(/^videosynth:my_layer_1:[0-9a-f]{8}:$/);
+  });
+
+  it('runs a clock pass and gives every picture pass the running phases', () => {
+    const g = buildVideoSynthGraph({ params: VIDEOSYNTH_DEFAULTS, sourceId: 's', width: 640, height: 360 });
+    const phases = (g.config.buffers as { id: string; kind: string; persistent?: boolean }[]).find((b) => b.id.endsWith(':phases'))!;
+    expect(phases).toMatchObject({ kind: 'storage', persistent: true });
+    expect(g.config.passes).toEqual([expect.objectContaining({ shader_id: 'videosynth/clock', entry: 'cs_clock', dispatch: [1, 1, 1] })]);
+    for (const pass of g.config.render_passes as { bindings: { binding: number; resource?: string; kind: string }[] }[]) {
+      expect(pass.bindings).toContainEqual({ binding: 5, resource: phases.id, kind: 'read-only-storage' });
+    }
+    // The phases are the GPU's: nothing in the patch moves with the clock.
+    const again = buildVideoSynthGraph({ params: VIDEOSYNTH_DEFAULTS, sourceId: 's', width: 640, height: 360 });
+    expect(again.values[0].initial_b64).toBe(g.values[0].initial_b64);
+  });
+});
+
+describe('Analog Synth signal model', () => {
+  it('starts new patches and factory presets on the current model, keeps saved ones on 1', () => {
+    expect(VIDEOSYNTH_DEFAULTS[MODEL_KEY]).toBe(SIGNAL_MODEL);
+    expect(SIGNAL_MODEL).toBe(2);
+    for (const preset of VIDEOSYNTH_PRESETS) expect(signalModel(presetValues(preset.id)), preset.id).toBe(2);
+    // Saved before the key existed: every control there, no model.
+    const saved: Record<string, unknown> = { ...VIDEOSYNTH_DEFAULTS };
+    delete saved[MODEL_KEY];
+    expect(signalModel(saved)).toBe(1);
+    expect(signalModel(null)).toBe(1);
+    expect(signalModel({ [MODEL_KEY]: 'x' })).toBe(1);
+    expect(paramBlock(saved, 1)[SLOT_MODEL]).toBe(1);
+    expect(paramBlock(VIDEOSYNTH_DEFAULTS, 1)[SLOT_MODEL]).toBe(2);
+    // Not a control: Timeline lines and the pad leave it alone.
+    expect(VIDEOSYNTH_PARAMS.some((p) => p.key === MODEL_KEY)).toBe(false);
+    expect(morphValues([VIDEOSYNTH_DEFAULTS, null, null, null], 0.5, 0.5, VIDEOSYNTH_DEFAULTS)).not.toHaveProperty(MODEL_KEY);
+  });
+
+  it('works oscillators out in the order their cables need', () => {
+    const order = (p: Record<string, number>) => oscillatorOrder({ ...VIDEOSYNTH_DEFAULTS, vsAModSrc: 0, vsBModSrc: 0, vsCModSrc: 0, vsAFmSrc: 0, vsBFmSrc: 0, vsCFmSrc: 0, ...p });
+    // The default patch: A ← feedback, B ← A, C ← B.
+    expect(oscillatorOrder(VIDEOSYNTH_DEFAULTS)).toEqual([0, 1, 2]);
+    expect(order({})).toEqual([0, 1, 2]);
+    // B into A (Mod), C into B (FM): C, then B, then A.
+    expect(order({ vsAModSrc: 3, vsBFmSrc: 4 })).toEqual([2, 1, 0]);
+    // C into A's level.
+    expect(order({ vsALevelSrc: 4 })).toEqual([1, 2, 0]);
+    // Listening to itself does not hold it back.
+    expect(order({ vsAFmSrc: 2 })).toEqual([0, 1, 2]);
+    // A ring (A ← B ← A) opens at A; C hears both, so it goes last.
+    expect(order({ vsAModSrc: 3, vsBModSrc: 2, vsCFmSrc: 2, vsCModSrc: 3 })).toEqual([0, 1, 2]);
+    // B ← C ← B with A hearing C: the ring opens at B.
+    expect(order({ vsBModSrc: 4, vsCModSrc: 3, vsAFmSrc: 4 })).toEqual([1, 2, 0]);
+    // The order goes into the block, and is always each oscillator once.
+    const block = paramBlock({ ...VIDEOSYNTH_DEFAULTS, vsAModSrc: 3, vsBModSrc: 0, vsBFmSrc: 4, vsCModSrc: 0 }, 1);
+    expect(Array.from(block.slice(SLOT_ORDER, SLOT_ORDER + 3))).toEqual([2, 1, 0]);
+    for (let mask = 0; mask < 512; mask++) {
+      const p: Record<string, number> = {};
+      ['vsAModSrc', 'vsBModSrc', 'vsCModSrc'].forEach((k, i) => { p[k] = [0, 2, 3, 4][(mask >> (i * 2)) & 3]; });
+      p.vsAFmSrc = [0, 3, 4][mask % 3];
+      expect([...order(p)].sort()).toEqual([0, 1, 2]);
+    }
   });
 });

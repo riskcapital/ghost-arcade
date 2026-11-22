@@ -64,6 +64,7 @@ describe('native plugin graphs', () => {
       'scene3d/drips-draw',
       'scene3d/flames',
       'scene3d/flames-draw',
+      'videosynth/clock',
       'videosynth/analog-synth',
     ]);
   });

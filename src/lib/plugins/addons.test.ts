@@ -125,7 +125,7 @@ describe('a build with the add-ons', () => {
 
   it('precompiles the synth shader and draws its layer', async () => {
     const b = await build(true);
-    expect(synthShaders(b)).toHaveLength(1);
+    expect(synthShaders(b).map((c: any) => c.shader_id)).toEqual(['videosynth/clock', 'videosynth/analog-synth']);
     const sync = graphSync(b);
     const layer = synthLayer(b);
     expect(b.sync.nativeUnsupportedSourceReason(layer, true)).toBeNull();

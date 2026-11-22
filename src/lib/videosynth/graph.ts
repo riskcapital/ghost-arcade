@@ -3,13 +3,14 @@
  * by the core every frame: the core writes the clock and audio into the
  * frame block, so the patch only goes out when a control moves.
  *
+ *   clock  (compute) the running phases move on one frame, in `phases`
  *   synth  oscillators, mixer, picture, feedback from `prev` → `next`
  *   keep   `next` → `prev`, for the next frame's feedback
  *   out    `next` through the tube → the layer's source
  */
 import { scene3dFrameBuffer } from '../renderer/scene3dFrame';
 import { INPUT_LAYER_KEY, PARAM_FLOATS, paramBlock } from './patch';
-import { VIDEOSYNTH_SHADER_ID } from './shaders';
+import { CLOCK_FLOATS, VIDEOSYNTH_CLOCK_SHADER_ID, VIDEOSYNTH_SHADER_ID } from './shaders';
 import { videosynthIdPrefix } from './ids';
 
 export { videosynthIdPrefix };
@@ -55,12 +56,20 @@ export function buildVideoSynthGraph(options: {
   const patch = { id: id('patch'), kind: 'uniform', byte_length: PARAM_FLOATS * 4, initial_b64: b64(paramBlock(options.params, aspect)) };
   const frame = scene3dFrameBuffer(id('clock'));
   const base = [{ binding: 0, resource: patch.id, kind: 'uniform' }, { binding: 1, resource: frame.id, kind: 'uniform' }];
+  // The running phases live on the GPU from frame to frame (see VIDEOSYNTH_CLOCK_WGSL).
+  const phases = { id: id('phases'), kind: 'storage', byte_length: CLOCK_FLOATS * 4, persistent: true };
+  const passes = [
+    { name: 'clock', shader_id: VIDEOSYNTH_CLOCK_SHADER_ID, entry: 'cs_clock', dispatch: [1, 1, 1], bindings: [...base, { binding: 2, resource: phases.id, kind: 'storage' }] },
+  ];
   // The input layer's composited picture (any layer; empty when none is set).
   const inputLayer = typeof options.params?.[INPUT_LAYER_KEY] === 'string' ? (options.params[INPUT_LAYER_KEY] as string) : '';
   const input = { binding: 4, kind: 'source-frame-texture', source_id: `layer-frame:${inputLayer}` };
   const pass = (name: string, entry: string, from: string, target: object) => ({
     name, shader_id: VIDEOSYNTH_SHADER_ID, vertex_entry: 'vs_main', fragment_entry: entry, vertex_count: 3, clear: true, clear_color: [0, 0, 0, 1],
-    bindings: [...base, { binding: 2, kind: 'graph-texture', texture: from }, { binding: 3, kind: 'source-frame-sampler' }, input],
+    bindings: [
+      ...base, { binding: 2, kind: 'graph-texture', texture: from }, { binding: 3, kind: 'source-frame-sampler' }, input,
+      { binding: 5, resource: phases.id, kind: 'read-only-storage' },
+    ],
     ...target,
   });
   const render_passes = [
@@ -69,7 +78,7 @@ export function buildVideoSynthGraph(options: {
     pass('out', 'fs_out', id('next'), { target: 'source_frame', source_id: options.sourceId, include_snapshot: false }),
   ];
   return {
-    config: { textures, buffers: [patch, frame], passes: [], render_passes, readbacks: [] },
+    config: { textures, buffers: [patch, frame, phases], passes, render_passes, readbacks: [] },
     topology: JSON.stringify([textures, options.sourceId, inputLayer]),
     values: [{ id: patch.id, initial_b64: patch.initial_b64 }],
   };
