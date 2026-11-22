@@ -17,7 +17,7 @@
 
 import { get, writable } from 'svelte/store';
 import { musicStudio, onMusicHydrate } from './musicStudioStore';
-import { BEATS_PER_BAR, MAX_LOOP_BARS, quantizeBeats, roleForRecording, type PlayedNote, type RecordedLoop, type RecordedNote } from './loopRecorder';
+import { BEATS_PER_BAR, MAX_LOOP_BARS, quantizeBeats, roleForRecording, type PlayedNote, type QuantizeId, type RecordedLoop, type RecordedNote } from './loopRecorder';
 import { clipFromRecording, findClip } from './session';
 import { readUserLoop, saveUserLoop } from './userLoops';
 import { generateUUID } from '../utils/uuid';
@@ -44,8 +44,11 @@ import {
   pressTrackButton,
   punchAt,
   pushLayer,
+  quantizeLayers,
   recordStart,
   redoLayer,
+  renameTrack,
+  setTrackInstrument,
   undoLayer,
   uniqueName,
   type LayerStack,
@@ -597,6 +600,35 @@ export function redoLoopLayer(i: number): boolean {
   return true;
 }
 
+/**
+ * Snap a MIDI track's notes to a grid (QUANTIZE_GRIDS). One undo brings the
+ * notes back as they were. False when there is nothing to snap.
+ */
+export function quantizeLoopTrack(i: number, quantize: QuantizeId): boolean {
+  const t = track(i);
+  const grid = quantizeBeats(quantize);
+  if (isAudio(i) || !t.layers.length || !(t.beats > 0) || !(grid > 0)) return false;
+  rts[i].editBefore = t.layers;
+  musicStudio.updateLoopTrack(i, { layers: quantizeLayers(t.layers, grid, t.beats) });
+  cutPending(i, clockNow().beat);
+  publish();
+  return true;
+}
+
+/** Rename a track; the name is kept and used when it is saved to My loops. */
+export function renameLoopTrack(i: number, name: string): void {
+  musicStudio.updateLoopStation((d) => ({ ...d, tracks: d.tracks.map((t, k) => (k === i ? renameTrack(t, name) : t)) }));
+  publish();
+}
+
+/** Change a MIDI track's sound at any time; what it holds plays on the new one from the next note. */
+export function setLoopTrackInstrument(i: number, instrument: InstrumentId | null): void {
+  musicStudio.updateLoopStation((d) => ({ ...d, tracks: d.tracks.map((t, k) => (k === i ? setTrackInstrument(t, instrument, INSTRUMENT_LABELS) : t)) }));
+  cutPending(i, clockNow().beat);
+  if (looperFocus && selectedLoopTrack() === i && instrument && get(musicStudio).instrument !== instrument) musicStudio.setInstrument(instrument);
+  publish();
+}
+
 /** Empty a track (one undo brings it back). */
 export function clearLoopTrack(i: number): void {
   const rt = rts[i];
@@ -606,7 +638,7 @@ export function clearLoopTrack(i: number): void {
   } else {
     const t = track(i);
     rt.cleared = t.layers.length ? { layers: t.layers, beats: t.beats } : null;
-    musicStudio.updateLoopTrack(i, { layers: [], name: '', savedId: undefined });
+    musicStudio.updateLoopTrack(i, { layers: [], name: '', customName: undefined, savedId: undefined });
   }
   rt.redo = [];
   rt.phase = 'empty';
@@ -956,6 +988,7 @@ export function suggestedLoopName(i: number): string {
   const t = track(i);
   const s = get(musicStudio);
   const bars = isAudio(i) ? audioEngine()?.bars(i) ?? 0 : Math.round(t.beats / BEATS_PER_BAR);
+  if (t.customName && t.name) return t.name;
   const label = t.name.split(' · ')[0] || (isAudio(i) ? `Audio ${i + 1}` : INSTRUMENT_LABELS[t.instrument ?? s.instrument]);
   return autoLoopName(label, Math.max(1, bars), launchClockTempo(), isAudio(i) ? null : s.key);
 }

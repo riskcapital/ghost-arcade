@@ -353,6 +353,8 @@ export function maxAudioBars(beatMs: number): number {
 export interface LoopTrackData {
   kind: LoopTrackKind;
   name: string;
+  /** The player named it: saves use the name as it is, and a new sound leaves it. */
+  customName?: boolean;
   /** MIDI: what it plays on. */
   instrument: InstrumentId | null;
   tone?: string;
@@ -507,6 +509,7 @@ export function normalizeTrack(raw: unknown, i: number): LoopTrackData {
   return {
     ...base,
     name: typeof r.name === 'string' ? r.name.slice(0, 80) : '',
+    ...(r.customName === true && typeof r.name === 'string' && r.name.trim() ? { customName: true } : {}),
     instrument: INSTRUMENTS.includes(r.instrument as InstrumentId) ? (r.instrument as InstrumentId) : null,
     ...(typeof r.tone === 'string' && r.tone ? { tone: r.tone } : {}),
     input: clamp(Math.round(finite(r.input, base.input)), 0, 3),
@@ -615,4 +618,41 @@ export function applyStationPreset(d: LoopStationData, preset: StationPreset, ha
 export function setTrackKind(t: LoopTrackData, i: number, kind: LoopTrackKind, empty: boolean): LoopTrackData {
   if (!empty || t.kind === kind) return t;
   return { ...blankTrack(i, kind), name: t.name, level: t.level };
+}
+
+// ── Editing a recorded loop ───────────────────────────────────────────
+
+/** Longest name a track keeps. */
+export const MAX_TRACK_NAME = 80;
+
+/** Rename a track. A blank name goes back to the automatic one. */
+export function renameTrack(t: LoopTrackData, name: string): LoopTrackData {
+  const clean = name.replace(/\s+/g, ' ').trim().slice(0, MAX_TRACK_NAME);
+  if (!clean) {
+    const { customName: _custom, ...rest } = t;
+    return { ...rest, name: '' };
+  }
+  return { ...t, name: clean, customName: true };
+}
+
+/**
+ * Give a MIDI track another sound, before or after recording: its notes stay
+ * and play on the new instrument. The instrument's own tone goes with it, and
+ * an automatic name that was the old sound's follows the new one.
+ */
+export function setTrackInstrument(t: LoopTrackData, instrument: InstrumentId | null, labels: Record<string, string>): LoopTrackData {
+  if (t.kind !== 'midi' || t.instrument === instrument) return t;
+  const { tone: _tone, ...rest } = t;
+  const next: LoopTrackData = { ...rest, instrument };
+  const old = t.instrument ? labels[t.instrument] : undefined;
+  if (!t.customName && instrument && old && t.name && (t.name === old || t.name.startsWith(`${old} `))) {
+    next.name = labels[instrument] + t.name.slice(old.length);
+  }
+  return next;
+}
+
+/** Each note's start snapped to `grid` beats (wrapping in the loop); lengths stay. 0 leaves them. */
+export function quantizeLayers(layers: readonly MidiLayer[], grid: number, beats: number): MidiLayer[] {
+  if (!(grid > 0) || !(beats > 0)) return layers.map((l) => l.map((n) => ({ ...n })));
+  return layers.map((l) => sortNotes(l.map((n) => ({ ...n, beat: wrapBeat(Math.round(n.beat / grid) * grid, beats) }))));
 }

@@ -26,7 +26,11 @@ import {
   saveLoopTrack,
   loadUserLoopToTrack,
   insertUserLoopInSession,
+  quantizeLoopTrack,
+  renameLoopTrack,
+  setLoopTrackInstrument,
 } from './loopStation';
+import { normalizeStationData } from './loopTrack';
 import { memoryBackend, setUserLoopsBackend, userLoops } from './userLoops';
 import type { PlayedNote } from './loopRecorder';
 import type { NoteEvent } from './noteEvents';
@@ -280,5 +284,60 @@ describe('MIDI follows the selected track', () => {
     selectLoopTrack(4);
     expect(loopMidiInstrument(0, 'kbd')).toBeNull();
     setLooperFocus(false);
+  });
+});
+
+describe('editing a recorded MIDI loop', () => {
+  function record(beats: number[]) {
+    pressLoopTrack(0);
+    runTo(4);
+    for (const b of beats) play(b);
+    runTo(20);
+  }
+
+  it('quantizes on demand, and one undo brings the notes back', () => {
+    musicStudio.setQuantize('off');
+    record([4.1, 6.4]);
+    expect(track0().layers[0].map((n) => n.beat)).toEqual([expect.closeTo(0.1, 6), expect.closeTo(2.4, 6)]);
+    expect(quantizeLoopTrack(0, '1/4')).toBe(true);
+    expect(track0().layers[0].map((n) => n.beat)).toEqual([0, 2]);
+    expect(undoLoopLayer(0)).toBe(true);
+    expect(track0().layers[0].map((n) => n.beat)).toEqual([expect.closeTo(0.1, 6), expect.closeTo(2.4, 6)]);
+    expect(quantizeLoopTrack(0, 'off')).toBe(false);
+  });
+
+  it('keeps record-time quantize', () => {
+    musicStudio.setQuantize('1/4');
+    record([4.1, 6.4]);
+    expect(track0().layers[0].map((n) => n.beat)).toEqual([0, 2]);
+  });
+
+  it('plays its notes on a new sound after recording', () => {
+    record([4]);
+    setLoopTrackInstrument(0, 'synth');
+    expect(track0().instrument).toBe('synth');
+    expect(track0().layers[0]).toHaveLength(1);
+    sent = [];
+    runTo(40);
+    const ons = sent.filter((e) => e.type === 'on');
+    expect(ons.length).toBeGreaterThan(0);
+    expect(ons.every((e) => e.instrument === 'synth')).toBe(true);
+  });
+
+  it('keeps a new name on the loop, in the project and when saved to My loops', async () => {
+    setUserLoopsBackend(memoryBackend(null));
+    record([4]);
+    renameLoopTrack(0, '  Night  riff ');
+    expect(track0().name).toBe('Night riff');
+    expect(track0().customName).toBe(true);
+    const reloaded = normalizeStationData(JSON.parse(JSON.stringify(get(musicStudio).loopStation)));
+    expect(reloaded.tracks[0]).toMatchObject({ name: 'Night riff', customName: true });
+    // A new sound leaves a name the player chose.
+    setLoopTrackInstrument(0, 'synth');
+    expect(track0().name).toBe('Night riff');
+    await saveLoopTrack(0);
+    expect(get(userLoops)[0].name).toBe('Night riff');
+    const clips = JSON.stringify(get(musicStudio).session);
+    expect(clips).toContain('Night riff');
   });
 });

@@ -12,9 +12,12 @@
     clearLoopTrack,
     loopStationView,
     playLoopSection,
+    quantizeLoopTrack,
+    renameLoopTrack,
     saveLoopTrack,
     selectLoopTrack,
     setLoopLevel,
+    setLoopTrackInstrument,
     startAllLoopTracks,
     stopAllLoopTracks,
     stopLoopTrack,
@@ -24,6 +27,7 @@
   import { beatNow } from '../../music/loopUi';
   import { COUNT_INS, LOOP_LENGTHS, LOOP_TRACK_COUNT, type LoopLength, PEDAL_PRESETS, type CountIn, type PedalPreset } from '../../music/loopTrack';
   import { INSTRUMENT_LABELS } from '../../music/instruments';
+  import { QUANTIZE_GRIDS, type QuantizeId } from '../../music/loopRecorder';
   import { launchClockTempo } from '../../stores/launchClock';
   import { audioStore } from '../../stores/audio';
   import { showToast } from '../../stores/errorToast';
@@ -32,9 +36,30 @@
   import { applyStationPreset, setTrackKind, type LoopTrackKind, type StationPreset } from '../../music/loopTrack';
   import { INSTRUMENTS, type InstrumentId } from '../../music/noteEvents';
 
-  /** A track's type changes only while it is empty (the selector shows only then). */
+  /** A track's type changes only while it is empty (the selector shows only then); its sound changes any time. */
   function setKind(i: number, kind: LoopTrackKind) {
     musicStudio.updateLoopStation((d) => ({ ...d, tracks: d.tracks.map((t, k) => (k === i ? setTrackKind(t, i, kind, $loopStationView.tracks[i].phase === 'empty') : t)) }));
+  }
+
+  /** Click a loop's name to rename it: Enter or leaving the field keeps it, Escape leaves it as it was. */
+  let renaming = $state<number | null>(null);
+  let draft = $state('');
+  function startRename(i: number, current: string) {
+    renaming = i;
+    draft = current;
+  }
+  function commitRename(i: number) {
+    if (renaming !== i) return;
+    renaming = null;
+    renameLoopTrack(i, draft);
+  }
+  function focusSelect(el: HTMLInputElement) {
+    el.focus();
+    el.select();
+  }
+
+  function quantize(i: number, id: QuantizeId) {
+    if (!quantizeLoopTrack(i, id)) showToast('Nothing to quantize on this track yet.', 'info');
   }
 
   function setCount(n: number) {
@@ -176,7 +201,7 @@
               <option value="audio">Audio</option>
             </select>
             {#if t.kind === 'midi'}
-              <select value={t.instrument ?? ''} onchange={(e) => musicStudio.updateLoopTrack(i, { instrument: ((e.target as HTMLSelectElement).value || null) as InstrumentId | null })} aria-label="Track {i + 1} instrument" title="What it plays and records; MIDI from any device plays it while the track is selected">
+              <select value={t.instrument ?? ''} onchange={(e) => setLoopTrackInstrument(i, ((e.target as HTMLSelectElement).value || null) as InstrumentId | null)} aria-label="Track {i + 1} instrument" title="What it plays and records; MIDI from any device plays it while the track is selected">
                 <option value="">Follow played</option>
                 {#each INSTRUMENTS as id}<option value={id}>{INSTRUMENT_LABELS[id]}</option>{/each}
               </select>
@@ -187,8 +212,26 @@
             {/if}
           </div>
         {:else}
-          <div class="name">{t.name || (t.kind === 'audio' ? `Audio ${i + 1}` : INSTRUMENT_LABELS[t.instrument ?? s.instrument])}</div>
-          <div class="ga-eyebrow meta">{t.kind === 'audio' ? `Input ${t.input + 1}` : INSTRUMENT_LABELS[t.instrument ?? s.instrument]} · {bars} bar{bars === 1 ? '' : 's'} · {v.phase === 'overdub' ? `layer ${v.layers + 1} recording` : `${v.layers} layer${v.layers === 1 ? '' : 's'}`}</div>
+          {@const label = t.name || (t.kind === 'audio' ? `Audio ${i + 1}` : INSTRUMENT_LABELS[t.instrument ?? s.instrument])}
+          {@const meta = `${t.kind === 'audio' ? `Input ${t.input + 1}` : INSTRUMENT_LABELS[t.instrument ?? s.instrument]} · ${bars} bar${bars === 1 ? '' : 's'} · ${v.phase === 'overdub' ? `layer ${v.layers + 1} recording` : `${v.layers} layer${v.layers === 1 ? '' : 's'}`}`}
+          {#if renaming === i}
+            <input class="name rename" type="text" maxlength="80" bind:value={draft} use:focusSelect onpointerdown={(e) => e.stopPropagation()} onkeydown={(e) => { e.stopPropagation(); if (e.key === 'Enter') commitRename(i); else if (e.key === 'Escape') renaming = null; }} onblur={() => commitRename(i)} aria-label="Loop {i + 1} name" />
+          {:else}
+            <button class="name" onclick={() => startRename(i, label)} title="{label}. Click to rename">{label}</button>
+          {/if}
+          <div class="ga-eyebrow meta" title={meta}>{t.kind === 'audio' ? `Input ${t.input + 1}` : INSTRUMENT_LABELS[t.instrument ?? s.instrument]} · {bars} bar{bars === 1 ? '' : 's'} · {v.phase === 'overdub' ? `layer ${v.layers + 1} recording` : `${v.layers} layer${v.layers === 1 ? '' : 's'}`}</div>
+          {#if t.kind === 'midi'}
+            <div class="pick">
+              <select value={t.instrument ?? ''} onchange={(e) => setLoopTrackInstrument(i, ((e.target as HTMLSelectElement).value || null) as InstrumentId | null)} aria-label="Track {i + 1} sound" title="The sound this loop plays: change it any time, the notes stay">
+                <option value="">Follow played</option>
+                {#each INSTRUMENTS as id}<option value={id}>{INSTRUMENT_LABELS[id]}</option>{/each}
+              </select>
+              <select value="" onchange={(e) => { quantize(i, (e.target as HTMLSelectElement).value as QuantizeId); (e.target as HTMLSelectElement).value = ''; }} aria-label="Quantize loop {i + 1}" title="Snap this loop's notes to a grid (Undo puts them back)">
+                <option value="" disabled>Quantize…</option>
+                {#each QUANTIZE_GRIDS.filter((g) => g.beats > 0) as g}<option value={g.id}>{g.label}</option>{/each}
+              </select>
+            </div>
+          {/if}
         {/if}
         <input class="fader" type="range" min="0" max="1" step="0.01" value={t.level} oninput={(e) => setLoopLevel(i, Number((e.target as HTMLInputElement).value))} aria-label="Loop {i + 1} level" />
         <select class="visual" value={voiceFor(i)} onchange={(e) => assignVisual(i, Number((e.target as HTMLSelectElement).value))} aria-label="Visual for loop {i + 1}" title={voices.length ? 'The visual voice that follows this loop (pick the look in the visuals rack)' : 'Add a visual in the visuals rack first'}>
@@ -237,12 +280,15 @@
   .phrase { height: 3px; background: var(--studio-edge-soft); }
   .phrase i { display: block; height: 100%; background: var(--studio-accent); }
   .cols { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); overflow: auto; }
-  .col { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 14px 8px 12px; border-right: 1px solid var(--studio-edge-soft); min-width: 120px; }
+  .col { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 14px 8px 12px; border-right: 1px solid var(--studio-edge-soft); min-width: 120px; overflow: hidden; }
   .col:last-child { border-right: 0; }
   .col.sel { background: rgba(255, 255, 255, 0.025); }
   .name { margin-top: 6px; font-weight: 600; font-size: var(--ga-text-control, 12px); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  button.name { border: 0; padding: 0; background: transparent; color: inherit; font-family: inherit; text-align: inherit; cursor: text; display: block; }
+  button.name:hover { text-decoration: underline dotted; }
+  .rename { width: 100%; box-sizing: border-box; height: 20px; padding: 0 4px; font-weight: 600; }
   .name.empty { color: var(--studio-muted); font-weight: 500; }
-  .meta { margin: 0; text-align: center; }
+  .meta { margin: 0; text-align: center; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .fader { width: 80%; margin: 10px 0; }
   .btns { display: flex; gap: 4px; }
   .visual { max-width: 100%; height: 22px; font-size: var(--ga-text-meta, 11px); }
@@ -260,7 +306,7 @@
   .compact .cols { flex: 0 0 auto; overflow: visible; }
   .compact .col { flex-direction: row; align-items: center; gap: 12px; padding: 14px 12px 12px; min-width: 0; position: relative; }
   .compact .col.sel { box-shadow: inset 0 -2px 0 var(--studio-rec); }
-  .compact .txt { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; flex: 1; }
+  .compact .txt { display: flex; overflow: hidden; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; flex: 1; }
   .compact .name { margin-top: 0; }
   .compact .meta { text-align: left; }
   .compact .fader { width: 100%; margin: 4px 0; }
@@ -268,6 +314,6 @@
   .compact .btns { flex-wrap: wrap; }
   .num { position: absolute; top: 5px; left: 8px; font-size: 10px; color: var(--studio-muted); }
   .compact { height: auto; }
-  .pick { display: flex; gap: 4px; flex-wrap: wrap; }
-  .pick select { height: 22px; max-width: 120px; font-size: var(--ga-text-meta, 11px); }
+  .pick { display: flex; gap: 4px; flex-wrap: wrap; max-width: 100%; }
+  .pick select { height: 22px; max-width: 120px; min-width: 0; font-size: var(--ga-text-meta, 11px); }
 </style>

@@ -437,6 +437,9 @@
       <div class="rack right face">
         <VisualRack />
       </div>
+      <!-- The keyboard and the beat, as on the other pages, to play into the loops. -->
+      <div class="slot looper-keys face"><PlayModule /></div>
+      <div class="slot b3 face"><BeatModule /></div>
     {:else if s.set === 'bath'}
       <div class="rack left face">
         <BathModules part="drone" />
@@ -717,13 +720,14 @@
   .rack { display: flex; flex-direction: column; gap: var(--studio-gap); min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; }
   .rack.left { grid-area: left; }
     .looper-page { grid-template-rows: var(--ga-bar-h, 48px) auto minmax(0, 1fr) minmax(220px, 34%); }
-  .looper-page .rack.left.looper-rail { grid-row: 2 / 5; padding: 0; }
+  .looper-page .rack.left.looper-rail { grid-row: 2 / 4; padding: 0; }
+  .looper-keys { grid-column: 1; grid-row: 4; }
   .looper-lanes { grid-column: 2; grid-row: 4; min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; z-index: 1; }
   .lane-editor { min-height: 0; overflow: auto; border: 1px solid var(--studio-edge); border-radius: var(--studio-radius); }
   .looper-stage { position: relative; flex: 1; min-height: 0; display: flex; }
   .loop-visuals { position: absolute; right: 0; top: 0; width: 250px; z-index: 1; background: var(--studio-panel); border: 1px solid var(--studio-edge); border-radius: var(--studio-radius); padding: 6px 8px; }
   .looper-cols { flex: 0 0 auto; position: relative; z-index: 1; border: 1px solid var(--studio-edge); border-radius: var(--studio-radius); overflow: hidden; }
-  .looper-page .rack.right { grid-row: 2 / 5; }
+  .looper-page .rack.right { grid-row: 2 / 4; }
   .loops-running { display: inline-flex; align-items: center; gap: 6px; }
   .loops-running .led { width: 7px; height: 7px; border-radius: 50%; background: var(--studio-accent); box-shadow: 0 0 6px var(--studio-accent); }
   .rack.right { grid-area: right; }

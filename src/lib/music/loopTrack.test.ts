@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  quantizeLayers,
+  renameTrack,
+  setTrackInstrument,
   AUDIO_MEMORY_BUDGET_BYTES,
   MAX_LAYERS,
   audioBytes,
@@ -271,5 +274,34 @@ describe('track types, count and the band setup', () => {
     const back = applyStationPreset(d, 'default', () => false);
     expect(back.tracks[0].instrument).toBeNull();
     expect(back.locks).toEqual([]);
+  });
+});
+
+describe('editing a track', () => {
+  const labels = { keys: 'Keys', synth: 'Synth' } as Record<string, string>;
+  it('quantizes every layer, wrapping into the loop and keeping lengths', () => {
+    const layers = [[{ beat: 0.1, dur: 0.3, note: 60, velocity: 0.8 }, { beat: 15.9, dur: 0.5, note: 62, velocity: 0.8 }], [{ beat: 2.6, dur: 1, note: 64, velocity: 0.8 }]];
+    const out = quantizeLayers(layers, 1, 16);
+    expect(out[0].map((n) => n.beat)).toEqual([0, 0]);
+    expect(out[0].map((n) => n.dur)).toEqual([0.3, 0.5]);
+    expect(out[1][0].beat).toBe(3);
+    expect(layers[0][0].beat).toBe(0.1);
+    expect(quantizeLayers(layers, 0, 16)[0][0].beat).toBe(0.1);
+  });
+  it('renames, and a blank name goes back to the automatic one', () => {
+    const t = renameTrack(blankTrack(0), '  Lead ');
+    expect(t).toMatchObject({ name: 'Lead', customName: true });
+    const back = renameTrack(t, '   ');
+    expect(back.name).toBe('');
+    expect(back.customName).toBeUndefined();
+  });
+  it('changes the sound with the notes kept; an automatic name follows it', () => {
+    const t = { ...blankTrack(0), instrument: 'keys' as const, tone: 'x', name: 'Keys 2', beats: 4, layers: [[{ beat: 0, dur: 1, note: 60, velocity: 1 }]] };
+    const next = setTrackInstrument(t, 'synth', labels);
+    expect(next).toMatchObject({ instrument: 'synth', name: 'Synth 2', layers: t.layers });
+    expect(next.tone).toBeUndefined();
+    expect(setTrackInstrument({ ...t, customName: true }, 'synth', labels).name).toBe('Keys 2');
+    const audio = blankTrack(5, 'audio');
+    expect(setTrackInstrument(audio, 'synth', labels)).toBe(audio);
   });
 });
