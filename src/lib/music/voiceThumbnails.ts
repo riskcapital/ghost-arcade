@@ -33,3 +33,11 @@ export function voiceRespondsTo(code: string): string {
   if (uses('vxBeat') || uses('vxBar')) out.push('the beat');
   return out.length ? out.join(', ') : 'the sound';
 }
+
+/**
+ * Where a voice's baked picture is (scripts/build-voice-thumbnails.mjs): the
+ * same files the visual browser shows. Engine voices use their instrument's.
+ */
+export function bakedVoiceThumb(file: string, engineThumb?: string | null): string {
+  return `./ISF/voice-thumbs/${engineThumb ?? file.replace(/^.*\//, '').replace(/\.fs$/, '.jpg')}`;
+}

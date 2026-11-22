@@ -49,12 +49,12 @@
   import { arrangeVisuals, moveVisualRow, visualOrder } from '../../music/visualOrder';
   import { DRIFT_DEFAULTS, driftCycleSeconds, driftRanges, toggledDrift, toggledHold } from '../../music/visualDrift';
   import StudioModule from './StudioModule.svelte';
-  import StudioKnob from './StudioKnob.svelte';
+  import NumericInput from '../NumericInput.svelte';
+  import VoiceThumb from './VoiceThumb.svelte';
   import { STUDIO_GRADES, normalizeFinish, type StudioGrade } from '../../music/studioFinish';
   import { AUTO_PALETTE, CLASSIC_PALETTE, KEY_PALETTE, SET_PALETTE, STUDIO_PALETTE_LIST } from '../../music/studioPalettes';
 
   /** Main controls shown on each voice; the rest open under it. */
-  const MAIN_CONTROLS = 4;
   const LOOK_SKIP = new Set(['vxSource', 'vxAuto', 'ink', 'accent']);
 
   const s = $derived($musicStudio);
@@ -64,7 +64,13 @@
   const finish = $derived(normalizeFinish(target?.source.musicFinish));
   const paletteId = $derived(target?.source.musicPalette ?? CLASSIC_PALETTE);
   const autoName = $derived(STUDIO_PALETTE_LIST.find((p) => p.id === SET_PALETTE[s.set])?.name ?? '');
-  let open = $state<number | null>(null);
+  /** Voices whose own settings are showing (by row), kept while the rack is open. */
+  let openRows = $state<Set<number>>(new Set());
+  function toggleOpen(i: number) {
+    const next = new Set(openRows);
+    if (next.has(i)) next.delete(i); else next.add(i);
+    openRows = next;
+  }
   let activity = $state<number[]>([]);
   /** Each track's clip visuals' light: dark while auto-mix has them sitting out. */
   let clipActivity = $state<Record<string, number>>({});
@@ -267,10 +273,10 @@
     if (to === from || from < 0 || from >= rows.length) return false;
     const next = moveVisualRow(rows, from, to);
     const { voices: order, places: placed } = arrangeVisuals(next, stacks.map((x) => x.entry));
-    // The open audio shader stays open under its new number.
-    const opened = open;
+    // Open audio shaders stay open under their new numbers.
+    const opened = [...openRows];
     if (!arrangeStudioVisuals(order, placed)) return false;
-    if (opened !== null) open = order.indexOf(opened);
+    openRows = new Set(opened.map((k) => order.indexOf(k)).filter((k) => k >= 0));
     return true;
   }
   function dropRow() {
@@ -286,7 +292,7 @@
 
   function addVoice() {
     if (!target && !placeStudio()) return;
-    visualPicker.set({ current: null, none: false, title: 'Add an audio shader', pick: (f) => { const at = voices.length; if (f && addStudioVoice(f, 'all')) open = at; } });
+    visualPicker.set({ current: null, none: false, title: 'Add an audio shader', pick: (f) => { const at = voices.length; if (f && addStudioVoice(f, 'all')) openRows = new Set([...openRows, at]); } });
   }
 
   // ── Drift: its settings slowly wander on their own (visualDrift.ts) ──
@@ -294,7 +300,7 @@
     const next = toggledDrift(voice.drift);
     setStudioVoice(i, { drift: next });
     // Turned on: show its amount, speed and which settings drift.
-    if (next.on) open = i;
+    if (next.on) openRows = new Set([...openRows, i]);
   }
   /** The settings of a visual that can drift (decimal settings, not counts or what the sound drives). */
   function driftNames(file: string): Set<string> {
@@ -321,8 +327,10 @@
   {@const free = driftNames(voice.file)}
   <div class="drift-edit" role="group" aria-label="Drift for voice {i + 1}">
     <span class="ga-eyebrow">Drift</span>
-    <StudioKnob label="Amount" title="How far its settings wander from where you set them" value={d.amount} defaultValue={DRIFT_DEFAULTS.amount} size={20} format={levelFormat} onchange={(v) => setStudioVoice(i, { drift: { ...d, amount: v } }, `voice:${i}:drift-amount`)} />
-    <StudioKnob label="Speed" title="How fast they wander: the time for one slow swing, in minutes and seconds" value={d.speed} defaultValue={DRIFT_DEFAULTS.speed} size={20} format={cycleFormat} onchange={(v) => setStudioVoice(i, { drift: { ...d, speed: v } }, `voice:${i}:drift-speed`)} />
+    <div class="drift-sliders">
+      <NumericInput label="Amount" title="How far its settings wander from where you set them" value={d.amount} min={0} max={1} step={0.01} defaultValue={DRIFT_DEFAULTS.amount} displayValue={levelFormat} on:input={(e) => setStudioVoice(i, { drift: { ...d, amount: e.detail } }, `voice:${i}:drift-amount`)} />
+      <NumericInput label="Speed" title="How fast they wander: the time for one slow swing, in minutes and seconds" value={d.speed} min={0} max={1} step={0.01} defaultValue={DRIFT_DEFAULTS.speed} displayValue={cycleFormat} on:input={(e) => setStudioVoice(i, { drift: { ...d, speed: e.detail } }, `voice:${i}:drift-speed`)} />
+    </div>
     {#if free.size}
       <div class="drift-params" role="group" aria-label="Settings that drift">
         {#each all.filter((input) => free.has(input.NAME)) as input (input.NAME)}
@@ -336,17 +344,18 @@
   </div>
 {/snippet}
 
-{#snippet knob(i: number, voice: StudioVoice, input: ShaderInput)}
-  <StudioKnob
+{#snippet slider(i: number, voice: StudioVoice, input: ShaderInput)}
+  {@const whole = input.TYPE === 'long' || (input.MAX ?? 1) - (input.MIN ?? 0) > 4}
+  <NumericInput
     label={input.LABEL ?? input.NAME}
-    title={input.LABEL ?? input.NAME}
+    title="{input.LABEL ?? input.NAME} (double-click: default)"
     value={numberOf(voice, input)}
     min={input.MIN ?? 0}
     max={input.MAX ?? 1}
+    step={whole ? 1 : 0.01}
     defaultValue={Number(input.DEFAULT ?? input.MIN ?? 0)}
-    size={20}
-    format={valueFormat(input)}
-    onchange={(v) => setStudioVoice(i, { params: { [input.NAME]: input.TYPE === 'long' || (input.MAX ?? 1) - (input.MIN ?? 0) > 4 ? Math.round(v) : v } }, `voice:${i}:${input.NAME}`)}
+    displayValue={valueFormat(input)}
+    on:input={(e) => setStudioVoice(i, { params: { [input.NAME]: whole ? Math.round(e.detail) : e.detail } }, `voice:${i}:${input.NAME}`)}
   />
 {/snippet}
 
@@ -397,9 +406,9 @@
         </select>
       </label>
       <div class="look-row finish">
-        <StudioKnob label="Glow" title="Bloom around bright things" value={finish.glow} defaultValue={0.5} size={20} format={levelFormat} midiPath="studio:visuals.glow" onchange={(v) => setStudioFinish({ glow: v }, 'finish:glow')} />
-        <StudioKnob label="Trails" title="How long each hit leaves a fading tail" value={finish.trails} defaultValue={0.35} size={20} format={levelFormat} midiPath="studio:visuals.trails" onchange={(v) => setStudioFinish({ trails: v }, 'finish:trails')} />
-        <StudioKnob label="Grain" title="Film grain and a soft vignette" value={finish.grain} defaultValue={0.3} size={20} format={levelFormat} midiPath="studio:visuals.grain" onchange={(v) => setStudioFinish({ grain: v }, 'finish:grain')} />
+        <NumericInput label="Glow" title="Bloom around bright things" value={finish.glow} min={0} max={1} step={0.01} defaultValue={0.5} displayValue={levelFormat} midiPath="studio:visuals.glow" on:input={(e) => setStudioFinish({ glow: e.detail }, 'finish:glow')} />
+        <NumericInput label="Trails" title="How long each hit leaves a fading tail" value={finish.trails} min={0} max={1} step={0.01} defaultValue={0.35} displayValue={levelFormat} midiPath="studio:visuals.trails" on:input={(e) => setStudioFinish({ trails: e.detail }, 'finish:trails')} />
+        <NumericInput label="Grain" title="Film grain and a soft vignette" value={finish.grain} min={0} max={1} step={0.01} defaultValue={0.3} displayValue={levelFormat} midiPath="studio:visuals.grain" on:input={(e) => setStudioFinish({ grain: e.detail }, 'finish:grain')} />
         <label class="grade-wrap">
           <span class="ga-eyebrow">Grade</span>
           <select class="grade" value={finish.grade} onchange={(e) => setStudioFinish({ grade: (e.target as HTMLSelectElement).value as StudioGrade })} title="One look over every visual">
@@ -452,7 +461,7 @@
             <select class="blend" value={stack.blend} onchange={(e) => saveStack(entry, { ...stack, blend: (e.target as HTMLSelectElement).value as BlendMode })} aria-label="Blend of {entry.clipName}'s visuals" title="How this clip's visuals blend over the rows below">
               {#each BLEND_MODE_ORDER as mode (mode)}<option value={mode}>{blendModeLabel(mode)}</option>{/each}
             </select>
-            <StudioKnob label="Opacity" title="How much of this clip's visuals show" value={stack.opacity} defaultValue={1} size={20} format={levelFormat} onchange={(v) => saveStack(entry, { ...stack, opacity: v })} />
+            <span class="opacity"><NumericInput label="Opacity" title="How much of this clip's visuals show" value={stack.opacity} min={0} max={1} step={0.01} defaultValue={1} displayValue={levelFormat} on:input={(e) => saveStack(entry, { ...stack, opacity: e.detail })} /></span>
           </div>
           {#if openStack === entry.uid}
             <ul class="layers">
@@ -471,7 +480,7 @@
                   </button>
                   <span class="kind">{itemKind(item)}</span>
                   <span class="item-name">{item.name}</span>
-                  <StudioKnob label="" title="How much of {item.name} shows" value={item.opacity} defaultValue={1} size={16} format={levelFormat} onchange={(v) => saveStack(entry, { ...stack, items: stack.items.map((x) => (x.id === item.id ? { ...x, opacity: v } : x)) })} />
+                  <input class="item-level" type="range" min="0" max="1" step="0.01" value={item.opacity} ondblclick={() => saveStack(entry, { ...stack, items: stack.items.map((x) => (x.id === item.id ? { ...x, opacity: 1 } : x)) })} oninput={(e) => { const v = Number((e.target as HTMLInputElement).value); saveStack(entry, { ...stack, items: stack.items.map((x) => (x.id === item.id ? { ...x, opacity: v } : x)) }); }} aria-label="How much of {item.name} shows" title="How much of {item.name} shows (double-click: full)" />
                 </li>
               {/each}
             </ul>
@@ -480,29 +489,45 @@
           {@const i = row.index}
           {@const voice = voices[i]}
           {@const all = looks(voice.file)}
-          <div class="line">
-            {@render grip(r, `voice ${i + 1}`)}
-            <button
-              class="led"
-              class:on={voice.level > 0}
-              style="--a: {activity[i] ?? 0}"
-              onclick={() => setStudioVoice(i, { level: toggledVoiceLevel(i, voice.level) })}
-              aria-pressed={voice.level === 0}
-              aria-label="Mute voice {i + 1}"
-              title={voice.level > 0 ? 'Mute this voice' : 'Bring this voice back'}
-              data-midi-path="studio:voice.{i + 1}.mute"
-              data-midi-label="Voice {i + 1} mute"
-              data-midi-mode="toggle"
-            ></button>
-            <button class="icon step" onclick={() => stepVoiceLook(i, -1)} aria-label="Previous look for voice {i + 1}" title="Previous look" data-midi-path="studio:voice.{i + 1}.look-prev" data-midi-label="Voice {i + 1} previous look" data-midi-mode="toggle">
-              <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M7.5 3 4.5 6l3 3" /></svg>
-            </button>
-            <span class="pick"><VisualPickButton file={voice.file} label="Voice {i + 1}" title="Visual for voice {i + 1}" onpick={(f) => { if (f) replaceStudioVoice(i, f); }} /></span>
-            <button class="icon step" onclick={() => stepVoiceLook(i, 1)} aria-label="Next look for voice {i + 1}" title="Next look" data-midi-path="studio:voice.{i + 1}.look-next" data-midi-label="Voice {i + 1} next look" data-midi-mode="toggle">
-              <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 3 7.5 6l-3 3" /></svg>
-            </button>
+          {@const hasMore = all.length > 0 || takesText(voice.file) || !!voice.drift?.on || !!engineInstrumentOf(voice.file)?.cloud}
+          <div class="voice">
+            <VoiceThumb file={voice.file} label="Voice {i + 1}" onclick={() => visualPicker.set({ current: voice.file, none: false, title: `Visual for voice ${i + 1}`, pick: (f) => { if (f) replaceStudioVoice(i, f); } })} />
+            <div class="voice-main">
+              <div class="line">
+                {@render grip(r, `voice ${i + 1}`)}
+                <button
+                  class="led"
+                  class:on={voice.level > 0}
+                  style="--a: {activity[i] ?? 0}"
+                  onclick={() => setStudioVoice(i, { level: toggledVoiceLevel(i, voice.level) })}
+                  aria-pressed={voice.level === 0}
+                  aria-label="Mute voice {i + 1}"
+                  title={voice.level > 0 ? 'Mute this voice' : 'Bring this voice back'}
+                  data-midi-path="studio:voice.{i + 1}.mute"
+                  data-midi-label="Voice {i + 1} mute"
+                  data-midi-mode="toggle"
+                ></button>
+                <button class="icon step" onclick={() => stepVoiceLook(i, -1)} aria-label="Previous look for voice {i + 1}" title="Previous look" data-midi-path="studio:voice.{i + 1}.look-prev" data-midi-label="Voice {i + 1} previous look" data-midi-mode="toggle">
+                  <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M7.5 3 4.5 6l3 3" /></svg>
+                </button>
+                <span class="pick"><VisualPickButton file={voice.file} label="Voice {i + 1}" title="Visual for voice {i + 1}" onpick={(f) => { if (f) replaceStudioVoice(i, f); }} /></span>
+                <button class="icon step" onclick={() => stepVoiceLook(i, 1)} aria-label="Next look for voice {i + 1}" title="Next look" data-midi-path="studio:voice.{i + 1}.look-next" data-midi-label="Voice {i + 1} next look" data-midi-mode="toggle">
+                  <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 3 7.5 6l-3 3" /></svg>
+                </button>
+                <span class="sp"></span>
+                {#if hasMore}
+                  <button class="params-btn" class:on={openRows.has(i)} onclick={() => toggleOpen(i)} aria-expanded={openRows.has(i)} aria-label="Settings of voice {i + 1}" title="This visual's own settings">
+                    Params
+                    <svg viewBox="0 0 12 12" aria-hidden="true"><path d={openRows.has(i) ? 'M3 7.5L6 4.5 9 7.5' : 'M3 4.5L6 7.5 9 4.5'} /></svg>
+                  </button>
+                {/if}
+                <button class="icon" onclick={() => removeStudioVoice(i)} aria-label="Remove voice {i + 1}" title="Remove this voice">
+                  <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3 3 9" /></svg>
+                </button>
+              </div>
+              <div class="line second">
             {#if liveOn && liveColorOf(voice.live)}<span class="follow-swatch" style="background: {liveColorOf(voice.live)}" aria-hidden="true"></span>{/if}
-            <select class="follows" class:live={liveOn && !!voice.live} class:loop={loopTrackOfSource(voice.live) >= 0} value={followValue(voice)} onchange={(e) => setFollow(i, (e.target as HTMLSelectElement).value)} aria-label="Sound voice {i + 1} follows" title={liveOn && voice.live ? 'The Live track this voice follows' : 'The sound this voice follows'} data-midi-path="studio:voice.{i + 1}.follow-next" data-midi-label="Voice {i + 1} next sound to follow" data-midi-mode="toggle">
+                <select class="follows" class:live={liveOn && !!voice.live} class:loop={loopTrackOfSource(voice.live) >= 0} value={followValue(voice)} onchange={(e) => setFollow(i, (e.target as HTMLSelectElement).value)} aria-label="Sound voice {i + 1} follows" title={liveOn && voice.live ? 'The Live track this voice follows' : 'The sound this voice follows'} data-midi-path="studio:voice.{i + 1}.follow-next" data-midi-label="Voice {i + 1} next sound to follow" data-midi-mode="toggle">
               {#if liveOn}
                 <optgroup label="Ableton Live">
                   {#each liveTracks as t, ti (ti)}
@@ -523,28 +548,24 @@
                 </optgroup>
               {/if}
             </select>
-            <button class="auto studio-btn" class:on={voice.auto} onclick={() => setStudioVoice(i, { auto: !voice.auto })} aria-pressed={voice.auto} title={voice.auto ? 'Shows only while its sound plays' : 'Always shows'}>Auto</button>
-            <button class="drift-btn studio-btn" class:on={!!voice.drift?.on} onclick={() => toggleDrift(i, voice)} aria-pressed={!!voice.drift?.on} title={voice.drift?.on ? 'Drift is on: its settings slowly wander on their own, under the sound. Click to ease back to your settings.' : 'Drift: let its settings slowly wander on their own, so it keeps changing while it plays'}>Drift</button>
-            <button class="icon" onclick={() => removeStudioVoice(i)} aria-label="Remove voice {i + 1}" title="Remove this voice">
-              <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3 3 9" /></svg>
-            </button>
-          </div>
-          <div class="controls">
-            {#each all.slice(0, MAIN_CONTROLS) as input (input.NAME)}{@render knob(i, voice, input)}{/each}
-            <select class="blend" class:cut={voice.clear} value={voice.clear ? CUT_OUT : studioVoiceBlend(voice.blend)} onchange={(e) => setVoiceBlend(i, (e.target as HTMLSelectElement).value)} aria-label="Blend mode for voice {i + 1}" title={voice.clear ? 'Cut out: only its picture draws, over the voices below like a drawing; its empty space shows them through' : 'How this voice blends over the ones below it'} data-midi-path="studio:voice.{i + 1}.blend-next" data-midi-label="Voice {i + 1} next blend mode" data-midi-mode="toggle">
+                <button class="auto studio-btn" class:on={voice.auto} onclick={() => setStudioVoice(i, { auto: !voice.auto })} aria-pressed={voice.auto} title={voice.auto ? 'Shows only while its sound plays' : 'Always shows'}>Auto</button>
+                <button class="drift-btn studio-btn" class:on={!!voice.drift?.on} onclick={() => toggleDrift(i, voice)} aria-pressed={!!voice.drift?.on} title={voice.drift?.on ? 'Drift is on: its settings slowly wander on their own, under the sound. Click to ease back to your settings.' : 'Drift: let its settings slowly wander on their own, so it keeps changing while it plays'}>Drift</button>
+                <select class="blend" class:cut={voice.clear} value={voice.clear ? CUT_OUT : studioVoiceBlend(voice.blend)} onchange={(e) => setVoiceBlend(i, (e.target as HTMLSelectElement).value)} aria-label="Blend mode for voice {i + 1}" title={voice.clear ? 'Cut out: only its picture draws, over the voices below like a drawing; its empty space shows them through' : 'How this voice blends over the ones below it'} data-midi-path="studio:voice.{i + 1}.blend-next" data-midi-label="Voice {i + 1} next blend mode" data-midi-mode="toggle">
               <option value={CUT_OUT}>Cut out</option>
               <optgroup label="Blend">
                 {#each BLEND_MODE_ORDER as mode (mode)}<option value={mode}>{blendModeLabel(mode)}</option>{/each}
               </optgroup>
             </select>
-            <StudioKnob label="Opacity" title="How much of this voice shows" value={voice.level} defaultValue={1} size={20} format={levelFormat} midiPath="studio:voice.{i + 1}.level" onchange={(v) => setStudioVoice(i, { level: v }, `voice:${i}:level`)} />
-            {#if all.length > MAIN_CONTROLS || takesText(voice.file) || voice.drift?.on || engineInstrumentOf(voice.file)?.cloud}
-              <button class="icon more" class:on={open === i} onclick={() => (open = open === i ? null : i)} aria-expanded={open === i} aria-label="All controls for voice {i + 1}" title="All controls">
-                <svg viewBox="0 0 12 12" aria-hidden="true"><path d={open === i ? 'M3 7.5L6 4.5 9 7.5' : 'M3 4.5L6 7.5 9 4.5'} /></svg>
-              </button>
-            {/if}
+                <span class="opacity"><NumericInput label="Opacity" title="How much of this voice shows (double-click: full)" value={voice.level} min={0} max={1} step={0.01} defaultValue={1} displayValue={levelFormat} midiPath="studio:voice.{i + 1}.level" midiLabel="Voice {i + 1} opacity" on:input={(e) => setStudioVoice(i, { level: e.detail }, `voice:${i}:level`)} /></span>
+              </div>
+            </div>
           </div>
-          {#if open === i && takesText(voice.file)}
+          {#if openRows.has(i) && all.length}
+            <div class="params">
+              {#each all as input (input.NAME)}{@render slider(i, voice, input)}{/each}
+            </div>
+          {/if}
+          {#if openRows.has(i) && takesText(voice.file)}
             <div class="text-edit">
               <label class="ga-eyebrow" for="voice-text-{i}">Text</label>
               <textarea
@@ -566,15 +587,10 @@
               </div>
             </div>
           {/if}
-          {#if open === i && engineInstrumentOf(voice.file)?.cloud}
+          {#if openRows.has(i) && engineInstrumentOf(voice.file)?.cloud}
             <EngineScanPicker scan={voice.scan} layerSuffix=":{i}" onpick={(scan) => setStudioVoice(i, { scan })} />
           {/if}
-          {#if open === i && voice.drift?.on}{@render driftEdit(i, voice, all)}{/if}
-          {#if open === i && all.length > MAIN_CONTROLS}
-            <div class="all">
-              {#each all.slice(MAIN_CONTROLS) as input (input.NAME)}{@render knob(i, voice, input)}{/each}
-            </div>
-          {/if}
+          {#if openRows.has(i) && voice.drift?.on}{@render driftEdit(i, voice, all)}{/if}
         {/if}
         </div>
       {/each}
@@ -651,6 +667,23 @@
   .order { margin: 6px 0 2px; font-size: var(--ga-text-micro, 9px); color: var(--studio-muted); }
   .row:last-of-type { border-bottom: 0; }
   .line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  /* An audio shader's row: its picture, then two lines of its layer controls. */
+  .voice { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+  .voice-main { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+  .line.second { gap: 6px; }
+  .line .sp { flex: 1 1 0; }
+  .line.second .follows { flex: 1 1 96px; }
+  .line.second .blend { flex: 0 1 96px; }
+  .opacity { flex: 1 1 120px; min-width: 96px; }
+  .controls .opacity { flex: 0 1 180px; }
+  .params-btn { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 7px; border: 1px solid var(--studio-edge-soft); border-radius: var(--studio-radius); background: none; color: var(--studio-muted); font: inherit; font-size: var(--ga-text-meta, 11px); cursor: pointer; }
+  .params-btn:hover, .params-btn.on { color: var(--studio-ink); border-color: var(--studio-edge); }
+  .params-btn svg { width: 9px; height: 9px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  /* The visual's own settings: sliders in two columns, as in the layer panels; labels keep their whole name. */
+  .params { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 6px 16px; padding: 8px 0 2px 72px; }
+  .drift-sliders { flex: 1 1 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 16px; }
+  .look-row.finish > :global(.ni) { flex: 1 1 0; min-width: 0; }
+  .item-level { width: 90px; flex: 0 0 auto; }
   .led {
     position: relative;
     flex: 0 0 auto;
@@ -679,7 +712,7 @@
   .line .drift-btn { flex: 0 0 auto; padding: 0 7px; font-size: var(--ga-text-meta, 11px); }
   .line .drift-btn:not(.on) { color: var(--studio-muted); }
   .line .drift-btn.on { color: var(--tl-on, #ff725f); border-color: var(--tl-on-line, rgba(255, 114, 95, 0.46)); background: var(--tl-on-soft, rgba(255, 114, 95, 0.13)); }
-  .drift-edit { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 8px 0 0 15px; }
+  .drift-edit { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 8px 0 0 72px; }
   .drift-edit .ga-eyebrow { color: var(--tl-on, #ff725f); flex: 0 0 auto; }
   .drift-edit :global(.knob-wrap) { flex: 0 0 52px; }
   .drift-params { flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 4px; }
@@ -726,7 +759,7 @@
   .icon svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
   .icon.on, .icon:hover { color: var(--studio-ink); border-color: var(--studio-edge); }
   .blend.cut { color: var(--studio-accent); }
-  .text-edit { display: flex; flex-direction: column; gap: 4px; padding: 8px 0 0 15px; }
+  .text-edit { display: flex; flex-direction: column; gap: 4px; padding: 8px 0 0 72px; }
   .text-edit textarea { width: 100%; box-sizing: border-box; resize: vertical; min-height: 52px; padding: 5px 7px; font: 12px/1.35 var(--ga-font-mono, ui-monospace); text-transform: uppercase; color: var(--studio-ink); background: var(--studio-well, rgba(0,0,0,0.35)); border: 1px solid var(--studio-edge); border-radius: 6px; user-select: text; }
   .text-edit textarea:focus { outline: none; border-color: var(--studio-accent); }
   .text-row { display: flex; align-items: center; gap: 8px; }

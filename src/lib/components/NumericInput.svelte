@@ -41,6 +41,16 @@
    *  Components that wrap NumericInput just pass these through. */
   export let midiPath: string | undefined = undefined;
   export let midiLabel: string | undefined = undefined;
+  /** When set, double-clicking the slider puts it back here. */
+  export let defaultValue: number | undefined = undefined;
+  /** Tooltip for the slider (what the setting does). */
+  export let title: string | undefined = undefined;
+
+  function reset() {
+    if (defaultValue === undefined) return;
+    dispatch('input', defaultValue);
+    dispatch('change', defaultValue);
+  }
 
   const dispatch = createEventDispatcher<{ input: number; change: number }>();
 
@@ -136,8 +146,10 @@
     {max}
     {step}
     {value}
+    {title}
     oninput={onSlider}
     onchange={onSliderChange}
+    ondblclick={reset}
     data-midi-path={midiPath}
     data-midi-label={midiLabel ?? label}
     data-midi-min={midiPath ? min : undefined}
