@@ -721,7 +721,12 @@
   .rack.left { grid-area: left; }
     .looper-page { grid-template-rows: var(--ga-bar-h, 48px) auto minmax(0, 1fr) minmax(220px, 34%); }
   .looper-page .rack.left.looper-rail { grid-row: 2 / 4; padding: 0; }
-  .looper-keys { grid-column: 1; grid-row: 4; }
+  /* The keys sit in the 336px side column: their header wraps onto more rows there rather than running
+     over the lanes (and the lane editor) beside them. */
+  .looper-keys { grid-column: 1; grid-row: 4; overflow: hidden; }
+  .looper-keys > :global(.module) { overflow: hidden; }
+  .looper-keys > :global(.module > .head) { height: auto; min-height: 32px; flex-wrap: wrap; row-gap: 4px; padding-top: 4px; padding-bottom: 4px; white-space: normal; }
+  .looper-keys > :global(.module > .head > *) { white-space: nowrap; }
   .looper-lanes { grid-column: 2; grid-row: 4; min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; z-index: 1; }
   .lane-editor { min-height: 0; overflow: auto; border: 1px solid var(--studio-edge); border-radius: var(--studio-radius); }
   .looper-stage { position: relative; flex: 1; min-height: 0; display: flex; }

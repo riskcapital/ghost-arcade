@@ -609,10 +609,10 @@ export class MusicAudioEngine {
   }
 
   /** A drone note on the chosen patch (the built-in warm pad when the library has none). */
-  private droneLibraryVoice(key: string, note: number, velocity: number, time: number): MelodicVoice {
+  private droneLibraryVoice(key: string, note: number, velocity: number, time: number, out?: AudioNode): MelodicVoice {
     const patch = padPatchById(this.dronePatch) ?? padPatchById(DEFAULT_DRONE_PATCH);
     if (!patch) return this.droneVoice(key, note, velocity, time);
-    const voice = patch.voice({ ctx: this.ctx!, out: this.bus!.drone, noise: this.noise!, params: this.params }, note, velocity, time);
+    const voice = patch.voice({ ctx: this.ctx!, out: out ?? this.bus!.drone, noise: this.noise!, params: this.params }, note, velocity, time);
     this.padVoices.add(voice);
     return {
       key,
@@ -890,11 +890,13 @@ export class MusicAudioEngine {
       return;
     }
     // A clip's own tone plays on its own engine, into its instrument's channel.
+    const own = event.insertChannel ? this.ownChain(event.insertChannel, event.instrument) : null;
+    const out = own?.input ?? this.bus![event.instrument];
     if (event.tone && this.tones) {
       const tone = toneById(event.tone);
-      if (tone && this.tones.clipNote(tone.id, tone.patch, event.instrument, this.bus![event.instrument], event.type === 'on' ? { t: 'on', note: event.note, vel: event.velocity, at: time } : { t: 'off', note: event.note, at: time })) return;
+      if (tone && this.tones.clipNote(tone.id, tone.patch, event.insertChannel ?? event.instrument, out, event.type === 'on' ? { t: 'on', note: event.note, vel: event.velocity, at: time } : { t: 'off', note: event.note, at: time })) return;
     }
-    if ((event.instrument === 'synth' || event.instrument === 'keys') && this.toneChoice[event.instrument] && this.tones?.ready && !(event.type === 'off' && this.voices.has(`${event.instrument}:${event.note}`))) {
+    if (!event.patch && !own && (event.instrument === 'synth' || event.instrument === 'keys') && this.toneChoice[event.instrument] && this.tones?.ready && !(event.type === 'off' && this.voices.has(`${event.instrument}:${event.note}`))) {
       if (event.type === 'on') this.tones.noteOn(event.instrument, event.note, event.velocity, time);
       else this.tones.noteOff(event.instrument, event.note, time);
       return;
@@ -954,10 +956,10 @@ export class MusicAudioEngine {
     }
     this.stealIfFull(event.instrument, time);
     const voice = event.instrument === 'synth'
-      ? this.synthVoice(key, event.note, event.velocity, time)
+      ? this.synthVoice(key, event.note, event.velocity, time, event.patch as SynthPatch | undefined, own?.input)
       : event.instrument === 'drone'
-        ? this.droneLibraryVoice(key, event.note, event.velocity, time)
-        : this.keysVoice(key, event.note, event.velocity, time);
+        ? this.droneLibraryVoice(key, event.note, event.velocity, time, own?.input)
+        : this.keysVoice(key, event.note, event.velocity, time, event.patch as KeysPatch | undefined, own?.input);
     this.voices.set(key, voice);
   }
 
@@ -1019,6 +1021,7 @@ export class MusicAudioEngine {
     master.connect(this.build.input);
     // The master's insert effects, after the build and before the macros.
     this.insertChains.clear();
+    this.ownChainTo.clear();
     const masterInserts = new MacroFxChain(ctx);
     this.insertChains.set('master', masterInserts);
     this.build.output.connect(masterInserts.input);
@@ -1109,9 +1112,9 @@ export class MusicAudioEngine {
     this.voices.delete(oldest.key);
   }
 
-  private synthVoice(key: string, note: number, velocity: number, time: number): MelodicVoice {
+  private synthVoice(key: string, note: number, velocity: number, time: number, patch?: SynthPatch, out?: AudioNode): MelodicVoice {
     const ctx = this.ctx!;
-    const p = SUBTRACTIVE[this.synthPatch];
+    const p = SUBTRACTIVE[patch && patch in SUBTRACTIVE ? patch : this.synthPatch];
     const freq = midiToHz(note);
     const peak = velocityGain(velocity) * p.level;
 
@@ -1145,7 +1148,7 @@ export class MusicAudioEngine {
 
     osc1.connect(filter);
     osc2.connect(osc2Gain).connect(filter);
-    filter.connect(amp).connect(this.bus!.synth);
+    filter.connect(amp).connect(out ?? this.bus!.synth);
     osc1.start(time);
     osc2.start(time);
 
@@ -1169,9 +1172,9 @@ export class MusicAudioEngine {
     };
   }
 
-  private keysVoice(key: string, note: number, velocity: number, time: number): MelodicVoice {
+  private keysVoice(key: string, note: number, velocity: number, time: number, own?: KeysPatch, out?: AudioNode): MelodicVoice {
     const ctx = this.ctx!;
-    const patch = this.keysPatch;
+    const patch: KeysPatch = own === 'epiano' || own === 'organ' || own === 'bell' ? own : this.keysPatch;
     const freq = midiToHz(note);
     const peak = velocityGain(velocity) * (patch === 'organ' ? 0.22 : 0.38);
     const amp = ctx.createGain();
@@ -1215,7 +1218,7 @@ export class MusicAudioEngine {
       release = patch === 'bell' ? 1.4 : 0.45;
     }
 
-    amp.connect(this.bus!.keys);
+    amp.connect(out ?? this.bus!.keys);
     for (const osc of oscs) osc.start(time);
     const stopAll = (at: number) => {
       for (const osc of oscs) { try { osc.stop(at); } catch { /* already stopped */ } }
@@ -1256,6 +1259,28 @@ export class MusicAudioEngine {
     if (this.tones && !this.tones.ready) void this.tones.load();
     if (fallback) this.playDrum(fallback, velocity, time);
   }
+
+  /**
+   * A loop track's own effects chain (insert channel "loop:N"), into the
+   * channel of the instrument it plays; made on first use, moved when the
+   * track's instrument changes.
+   */
+  private ownChain(channel: string, instrument: InstrumentId): MacroFxChain | null {
+    if (!this.ctx || !this.bus) return null;
+    let chain = this.insertChains.get(channel);
+    if (!chain) {
+      chain = new MacroFxChain(this.ctx);
+      this.insertChains.set(channel, chain);
+      this.syncInserts();
+    }
+    if (this.ownChainTo.get(channel) !== instrument) {
+      try { chain.output.disconnect(); } catch { /* not connected */ }
+      chain.output.connect(this.bus[instrument]);
+      this.ownChainTo.set(channel, instrument);
+    }
+    return chain;
+  }
+  private ownChainTo = new Map<string, InstrumentId>();
 
   /** A pad's own effects chain (insert channel "pad:N") when it has any switched on; made on first use. */
   private padChain(pad: number): MacroFxChain | null {

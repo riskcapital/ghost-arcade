@@ -21,7 +21,9 @@
   const clipName = $derived(channel?.startsWith('clip:') ? (findClip($musicStudio.session, channel.slice(5))?.clip.name ?? 'Clip') : null);
   const padIndex = $derived(channel?.startsWith('pad:') ? Number(channel.slice(4)) : -1);
   const padName = $derived(padIndex >= 0 ? `Pad ${padIndex + 1}: ${playingKit($musicStudio.machine).pads[padIndex]?.name ?? ''}` : null);
-  const name = $derived(padName ? padName : channel === 'master' ? 'Master' : clipName ? `${clipName} (clip)` : channel ? (INSTRUMENT_LABELS[channel as InstrumentId] ?? channel) : '');
+  const loopIndex = $derived(channel?.startsWith('loop:') ? Number(channel.slice(5)) : -1);
+  const loopName = $derived(loopIndex >= 0 ? `Loop ${loopIndex + 1}: ${$musicStudio.loopStation.tracks[loopIndex]?.name || INSTRUMENT_LABELS[$musicStudio.loopStation.tracks[loopIndex]?.instrument ?? $musicStudio.instrument]}` : null);
+  const name = $derived(loopName ? loopName : padName ? padName : channel === 'master' ? 'Master' : clipName ? `${clipName} (clip)` : channel ? (INSTRUMENT_LABELS[channel as InstrumentId] ?? channel) : '');
   const tempo = launchClockTempo();
   let dragging = $state<string | null>(null);
 

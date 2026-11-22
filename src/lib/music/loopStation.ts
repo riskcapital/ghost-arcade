@@ -22,7 +22,7 @@ import { clipFromRecording, findClip } from './session';
 import { readUserLoop, saveUserLoop } from './userLoops';
 import { generateUUID } from '../utils/uuid';
 import { INSTRUMENTS, noteOff, noteOn, type InstrumentId, type NoteEvent } from './noteEvents';
-import { INSTRUMENT_LABELS } from './instruments';
+import { INSTRUMENT_LABELS, type KeysPatch, type SynthPatch } from './instruments';
 import { launchClockPosition, launchClockTempo, resyncLaunchClock } from '../stores/launchClock';
 import { audioStore } from '../stores/audio';
 import {
@@ -48,7 +48,9 @@ import {
   recordStart,
   redoLayer,
   renameTrack,
-  setTrackInstrument,
+  loopFxChannel,
+  setTrackSound,
+  type LoopSound,
   undoLayer,
   uniqueName,
   type LayerStack,
@@ -278,7 +280,7 @@ export function selectLoopTrack(i: number): void {
   loopStationView.update((v) => ({ ...v, selected: i }));
   // The keys and the on-screen keyboard play the selected MIDI track's instrument.
   const t = track(i);
-  if (looperFocus && t?.kind === 'midi' && t.instrument && get(musicStudio).instrument !== t.instrument) musicStudio.setInstrument(t.instrument);
+  if (looperFocus) followTrackSound(t);
 }
 
 let looperFocus = false;
@@ -621,12 +623,29 @@ export function renameLoopTrack(i: number, name: string): void {
   publish();
 }
 
-/** Change a MIDI track's sound at any time; what it holds plays on the new one from the next note. */
-export function setLoopTrackInstrument(i: number, instrument: InstrumentId | null): void {
-  musicStudio.updateLoopStation((d) => ({ ...d, tracks: d.tracks.map((t, k) => (k === i ? setTrackInstrument(t, instrument, INSTRUMENT_LABELS) : t)) }));
+/** Change a MIDI track's sound (instrument, patch or tone) at any time; what it holds plays on the new one from the next note. */
+export function setLoopTrackSound(i: number, sound: LoopSound): void {
+  musicStudio.updateLoopStation((d) => ({ ...d, tracks: d.tracks.map((t, k) => (k === i ? setTrackSound(t, sound, INSTRUMENT_LABELS) : t)) }));
   cutPending(i, clockNow().beat);
-  if (looperFocus && selectedLoopTrack() === i && instrument && get(musicStudio).instrument !== instrument) musicStudio.setInstrument(instrument);
+  if (looperFocus && selectedLoopTrack() === i) followTrackSound(track(i));
   publish();
+}
+
+/** Another instrument for a MIDI track (its patch and tone go). */
+export function setLoopTrackInstrument(i: number, instrument: InstrumentId | null): void {
+  setLoopTrackSound(i, { instrument });
+}
+
+/** The keys play the selected loop track's sound, so what is recorded sounds as it will play. */
+function followTrackSound(t: LoopTrackData | undefined): void {
+  if (!t || t.kind !== 'midi' || !t.instrument) return;
+  const s = get(musicStudio);
+  if (s.instrument !== t.instrument) musicStudio.setInstrument(t.instrument);
+  if (t.instrument === 'synth' || t.instrument === 'keys') {
+    if (t.tone) { if ((t.instrument === 'synth' ? s.synthTone : s.keysTone) !== t.tone) musicStudio.setTone(t.instrument, t.tone); }
+    else if (t.patch && t.instrument === 'synth' && (s.synthPatch !== t.patch || s.synthTone)) musicStudio.setSynthPatch(t.patch as SynthPatch);
+    else if (t.patch && t.instrument === 'keys' && (s.keysPatch !== t.patch || s.keysTone)) musicStudio.setKeysPatch(t.patch as KeysPatch);
+  }
 }
 
 /** Empty a track (one undo brings it back). */
@@ -771,7 +790,7 @@ function endTrack(i: number, at: number): void {
 function cutPending(i: number, at: number): void {
   const rt = rts[i];
   const time = host?.now() ?? 0;
-  for (const p of rt.pendingOffs) if (p.offBeat > at) host?.send(withTone(noteOff(p.instrument, p.note, 'sequencer', time), p.tone));
+  for (const p of rt.pendingOffs) if (p.offBeat > at) host?.send({ ...withTone(noteOff(p.instrument, p.note, 'sequencer', time), p.tone), insertChannel: loopFxChannel(i) });
   rt.pendingOffs = [];
 }
 
@@ -878,8 +897,10 @@ function sendNote(i: number, n: RecordedNote, at: number, timeAt: (b: number) =>
   const t = track(i);
   const instrument = t.instrument ?? 'synth';
   const offBeat = rt.stopAt === null ? at + n.dur : Math.min(at + n.dur, rt.stopAt);
-  host!.send({ ...withTone(noteOn(instrument, n.note, n.velocity * (0.25 + 0.75 * t.level), 'sequencer', timeAt(at)), t.tone), loopTrack: i });
-  host!.send({ ...withTone(noteOff(instrument, n.note, 'sequencer', timeAt(offBeat)), t.tone), loopTrack: i });
+  // Its own sound: the track's patch, and its own effects chain before the instrument's.
+  const own = { loopTrack: i, insertChannel: loopFxChannel(i), ...(t.patch && !t.tone ? { patch: t.patch } : {}) };
+  host!.send({ ...withTone(noteOn(instrument, n.note, n.velocity * (0.25 + 0.75 * t.level), 'sequencer', timeAt(at)), t.tone), ...own });
+  host!.send({ ...withTone(noteOff(instrument, n.note, 'sequencer', timeAt(offBeat)), t.tone), ...own });
   rt.pendingOffs.push({ note: n.note, offBeat, instrument, tone: t.tone });
 }
 

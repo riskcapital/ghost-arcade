@@ -29,6 +29,7 @@ import {
   quantizeLoopTrack,
   renameLoopTrack,
   setLoopTrackInstrument,
+  setLoopTrackSound,
 } from './loopStation';
 import { normalizeStationData } from './loopTrack';
 import { memoryBackend, setUserLoopsBackend, userLoops } from './userLoops';
@@ -322,6 +323,21 @@ describe('editing a recorded MIDI loop', () => {
     const ons = sent.filter((e) => e.type === 'on');
     expect(ons.length).toBeGreaterThan(0);
     expect(ons.every((e) => e.instrument === 'synth')).toBe(true);
+  });
+
+  it('plays a chosen patch or tone, through the track\'s own effects channel', () => {
+    record([4]);
+    setLoopTrackSound(0, { instrument: 'keys', patch: 'organ' });
+    sent = [];
+    runTo(40);
+    let ons = sent.filter((e) => e.type === 'on');
+    expect(ons.length).toBeGreaterThan(0);
+    expect(ons.every((e) => e.instrument === 'keys' && e.patch === 'organ' && e.insertChannel === 'loop:0' && !e.tone)).toBe(true);
+    setLoopTrackSound(0, { instrument: 'synth', tone: 'some-tone' });
+    sent = [];
+    runTo(60);
+    ons = sent.filter((e) => e.type === 'on');
+    expect(ons.every((e) => e.instrument === 'synth' && e.tone === 'some-tone' && e.patch === undefined)).toBe(true);
   });
 
   it('keeps a new name on the loop, in the project and when saved to My loops', async () => {

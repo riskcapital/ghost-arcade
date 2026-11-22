@@ -81,6 +81,10 @@ export interface NoteEvent {
   pad?: number;
   /** Played by a live-looper track (0-5): visuals following that track see it. */
   loopTrack?: number;
+  /** The synth's or keys' built-in patch to play it on, over the instrument's current one (a loop track's own sound). */
+  patch?: string;
+  /** An insert-effects channel ("loop:N") it plays through before its instrument's channel. */
+  insertChannel?: string;
   source: NoteSource;
   /**
    * When the note sounds, in seconds on the music clock (the audio context's

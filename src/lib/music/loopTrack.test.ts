@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  loopFxChannel,
+  normalizeTrack,
+  parseSoundValue,
+  setTrackSound,
+  soundValue,
   quantizeLayers,
   renameTrack,
   setTrackInstrument,
@@ -303,5 +308,28 @@ describe('editing a track', () => {
     expect(setTrackInstrument({ ...t, customName: true }, 'synth', labels).name).toBe('Keys 2');
     const audio = blankTrack(5, 'audio');
     expect(setTrackInstrument(audio, 'synth', labels)).toBe(audio);
+  });
+});
+
+describe('a loop track sound', () => {
+  const labels = { keys: 'Keys', synth: 'Synth', drone: 'Drone' } as Record<string, string>;
+  it('round-trips the sound menu values', () => {
+    for (const v of ['', 'synth:pluck', 'keys:organ', 'tone:warm-bass', 'inst:drone']) expect(soundValue(parseSoundValue(v)!)).toBe(v);
+    expect(parseSoundValue('inst:nope')).toBeNull();
+    expect(parseSoundValue('tone:x')).toEqual({ instrument: 'synth', tone: 'x' });
+  });
+  it('takes a patch or a tone, never both, and keeps the notes', () => {
+    const t = { ...blankTrack(0), instrument: 'synth' as const, tone: 'old', beats: 4, layers: [[{ beat: 0, dur: 1, note: 60, velocity: 1 }]] };
+    const p = setTrackSound(t, { instrument: 'keys', patch: 'organ' }, labels);
+    expect(p).toMatchObject({ instrument: 'keys', patch: 'organ', layers: t.layers });
+    expect(p.tone).toBeUndefined();
+    const back = setTrackSound(p, { instrument: 'synth', tone: 'new' }, labels);
+    expect(back.patch).toBeUndefined();
+    expect(back.tone).toBe('new');
+  });
+  it('keeps its patch through a project reload, and has its own effects channel', () => {
+    const t = normalizeTrack(JSON.parse(JSON.stringify({ ...blankTrack(0), instrument: 'synth', patch: 'pluck' })), 0);
+    expect(t.patch).toBe('pluck');
+    expect(loopFxChannel(2)).toBe('loop:2');
   });
 });

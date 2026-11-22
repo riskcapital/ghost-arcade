@@ -17,7 +17,7 @@
     saveLoopTrack,
     selectLoopTrack,
     setLoopLevel,
-    setLoopTrackInstrument,
+    setLoopTrackSound,
     startAllLoopTracks,
     stopAllLoopTracks,
     stopLoopTrack,
@@ -26,7 +26,10 @@
   } from '../../music/loopStation';
   import { beatNow } from '../../music/loopUi';
   import { COUNT_INS, LOOP_LENGTHS, LOOP_TRACK_COUNT, type LoopLength, PEDAL_PRESETS, type CountIn, type PedalPreset } from '../../music/loopTrack';
-  import { INSTRUMENT_LABELS } from '../../music/instruments';
+  import { INSTRUMENT_LABELS, KEYS_PATCHES, SYNTH_PATCHES } from '../../music/instruments';
+  import { TONES, TONE_FAMILY_LABELS, type ToneFamily } from '../../music/tone/tones';
+  import { insertEditorChannel } from '../../music/studioUi';
+  import { loopFxChannel, parseSoundValue, soundValue } from '../../music/loopTrack';
   import { QUANTIZE_GRIDS, type QuantizeId } from '../../music/loopRecorder';
   import { launchClockTempo } from '../../stores/launchClock';
   import { audioStore } from '../../stores/audio';
@@ -34,7 +37,7 @@
   import { generateUUID } from '../../utils/uuid';
   import LoopTrackButton from './LoopTrackButton.svelte';
   import { applyStationPreset, setTrackKind, type LoopTrackKind, type StationPreset } from '../../music/loopTrack';
-  import { INSTRUMENTS, type InstrumentId } from '../../music/noteEvents';
+  import { INSTRUMENTS } from '../../music/noteEvents';
 
   /** A track's type changes only while it is empty (the selector shows only then); its sound changes any time. */
   function setKind(i: number, kind: LoopTrackKind) {
@@ -56,6 +59,14 @@
   function focusSelect(el: HTMLInputElement) {
     el.focus();
     el.select();
+  }
+
+  /** Every sound the keyboard's menu offers: synth and keys patches, the other instruments, and the library tones. */
+  const FAMILIES: ToneFamily[] = ['bass', 'lead', 'arp', 'pad'];
+  const OTHERS = INSTRUMENTS.filter((id) => id !== 'synth' && id !== 'keys');
+  function chooseSound(i: number, value: string) {
+    const sound = parseSoundValue(value);
+    if (sound) setLoopTrackSound(i, sound);
   }
 
   function quantize(i: number, id: QuantizeId) {
@@ -132,6 +143,24 @@
   }
 </script>
 
+{#snippet soundOptions()}
+  <option value="">Follow played</option>
+  <optgroup label="Synth">
+    {#each SYNTH_PATCHES as p (p.id)}<option value="synth:{p.id}">Synth · {p.label}</option>{/each}
+  </optgroup>
+  <optgroup label="Keys">
+    {#each KEYS_PATCHES as p (p.id)}<option value="keys:{p.id}">Keys · {p.label}</option>{/each}
+  </optgroup>
+  <optgroup label="Instruments">
+    {#each OTHERS as id (id)}<option value="inst:{id}">{INSTRUMENT_LABELS[id]}</option>{/each}
+  </optgroup>
+  {#each FAMILIES as fam (fam)}
+    <optgroup label={TONE_FAMILY_LABELS[fam]}>
+      {#each TONES.filter((x) => x.family === fam) as x (x.id)}<option value="tone:{x.id}" title={x.blurb}>{x.name}</option>{/each}
+    </optgroup>
+  {/each}
+{/snippet}
+
 <div class="live" class:compact>
   <div class="topbar">
     <span class="ga-eyebrow">Loop station</span>
@@ -201,9 +230,8 @@
               <option value="audio">Audio</option>
             </select>
             {#if t.kind === 'midi'}
-              <select value={t.instrument ?? ''} onchange={(e) => setLoopTrackInstrument(i, ((e.target as HTMLSelectElement).value || null) as InstrumentId | null)} aria-label="Track {i + 1} instrument" title="What it plays and records; MIDI from any device plays it while the track is selected">
-                <option value="">Follow played</option>
-                {#each INSTRUMENTS as id}<option value={id}>{INSTRUMENT_LABELS[id]}</option>{/each}
+              <select class="sound" value={soundValue(t)} onchange={(e) => chooseSound(i, (e.target as HTMLSelectElement).value)} aria-label="Track {i + 1} instrument" title="What it plays and records; MIDI from any device plays it while the track is selected">
+                {@render soundOptions()}
               </select>
             {:else}
               <select value={t.input} onchange={(e) => musicStudio.updateLoopTrack(i, { input: Number((e.target as HTMLSelectElement).value) })} aria-label="Track {i + 1} input" title="The band input it records">
@@ -222,9 +250,8 @@
           <div class="ga-eyebrow meta" title={meta}>{t.kind === 'audio' ? `Input ${t.input + 1}` : INSTRUMENT_LABELS[t.instrument ?? s.instrument]} · {bars} bar{bars === 1 ? '' : 's'} · {v.phase === 'overdub' ? `layer ${v.layers + 1} recording` : `${v.layers} layer${v.layers === 1 ? '' : 's'}`}</div>
           {#if t.kind === 'midi'}
             <div class="pick">
-              <select value={t.instrument ?? ''} onchange={(e) => setLoopTrackInstrument(i, ((e.target as HTMLSelectElement).value || null) as InstrumentId | null)} aria-label="Track {i + 1} sound" title="The sound this loop plays: change it any time, the notes stay">
-                <option value="">Follow played</option>
-                {#each INSTRUMENTS as id}<option value={id}>{INSTRUMENT_LABELS[id]}</option>{/each}
+              <select class="sound" value={soundValue(t)} onchange={(e) => chooseSound(i, (e.target as HTMLSelectElement).value)} aria-label="Track {i + 1} sound" title="The sound this loop plays: change it any time, the notes stay">
+                {@render soundOptions()}
               </select>
               <select value="" onchange={(e) => { quantize(i, (e.target as HTMLSelectElement).value as QuantizeId); (e.target as HTMLSelectElement).value = ''; }} aria-label="Quantize loop {i + 1}" title="Snap this loop's notes to a grid (Undo puts them back)">
                 <option value="" disabled>Quantize…</option>
@@ -246,6 +273,10 @@
             <button onclick={() => stopLoopTrack(i)} title="Stop on the next bar (Shift+Space)" aria-label="Stop"><svg viewBox="0 0 10 10" aria-hidden="true"><rect x="2" y="2" width="6" height="6" /></svg></button>
             <button onclick={() => clearLoopTrack(i)} title="Empty the track (Undo brings it back)">Clear</button>
             <button onclick={() => save(i)} title="Save it to My loops (S)">Save</button>
+            {#if t.kind === 'midi'}
+              {@const fxCount = s.inserts[loopFxChannel(i)]?.length ?? 0}
+              <button class:on={fxCount > 0} onclick={() => insertEditorChannel.set($insertEditorChannel === loopFxChannel(i) ? null : loopFxChannel(i))} title="Effects on this loop's sound">FX{fxCount ? ` ${fxCount}` : ''}</button>
+            {/if}
           {/if}
         </div>
         </div>
@@ -290,7 +321,7 @@
   .name.empty { color: var(--studio-muted); font-weight: 500; }
   .meta { margin: 0; text-align: center; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .fader { width: 80%; margin: 10px 0; }
-  .btns { display: flex; gap: 4px; }
+  .btns { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; }
   .visual { max-width: 100%; height: 22px; font-size: var(--ga-text-meta, 11px); }
   .btns button { height: 22px; min-width: 24px; padding: 0 7px; border: 1px solid var(--studio-edge); background: transparent; color: var(--studio-ink); border-radius: var(--studio-radius); font: inherit; font-size: var(--ga-text-meta, 11px); cursor: pointer; display: inline-grid; place-items: center; }
   .btns button.on { background: var(--studio-accent-soft); border-color: var(--studio-accent); }

@@ -358,6 +358,8 @@ export interface LoopTrackData {
   /** MIDI: what it plays on. */
   instrument: InstrumentId | null;
   tone?: string;
+  /** MIDI on the synth or keys: the built-in patch it plays (pluck, organ…), whatever the keys play. */
+  patch?: string;
   /** Audio: which band input (0-3) it records. */
   input: number;
   afterRecord: AfterRecord;
@@ -512,6 +514,7 @@ export function normalizeTrack(raw: unknown, i: number): LoopTrackData {
     ...(r.customName === true && typeof r.name === 'string' && r.name.trim() ? { customName: true } : {}),
     instrument: INSTRUMENTS.includes(r.instrument as InstrumentId) ? (r.instrument as InstrumentId) : null,
     ...(typeof r.tone === 'string' && r.tone ? { tone: r.tone } : {}),
+    ...(typeof r.patch === 'string' && r.patch ? { patch: r.patch.slice(0, 40) } : {}),
     input: clamp(Math.round(finite(r.input, base.input)), 0, 3),
     afterRecord: r.afterRecord === 'overdub' || r.afterRecord === 'play' ? r.afterRecord : base.afterRecord,
     level: clamp(finite(r.level, base.level), 0, 1),
@@ -635,20 +638,58 @@ export function renameTrack(t: LoopTrackData, name: string): LoopTrackData {
   return { ...t, name: clean, customName: true };
 }
 
+/** The insert-effects channel of loop track `i`: its own chain, saved with the project's inserts. */
+export const loopFxChannel = (i: number) => `loop:${i}`;
+
+/** A loop track's sound: an instrument, and on the synth or keys a built-in patch or a library tone. */
+export interface LoopSound {
+  instrument: InstrumentId | null;
+  patch?: string;
+  tone?: string;
+}
+
+/**
+ * The sound menu's value for a track, as the keyboard's menu writes them:
+ * "synth:pluck", "keys:organ", "tone:<id>", "inst:<id>", or "" (follow played).
+ */
+export function soundValue(t: Pick<LoopTrackData, 'instrument' | 'patch' | 'tone'>): string {
+  if (!t.instrument) return '';
+  if (t.tone) return `tone:${t.tone}`;
+  if ((t.instrument === 'synth' || t.instrument === 'keys') && t.patch) return `${t.instrument}:${t.patch}`;
+  return `inst:${t.instrument}`;
+}
+
+/** A sound menu value back to a sound; null when it is not one. */
+export function parseSoundValue(value: string): LoopSound | null {
+  if (!value) return { instrument: null };
+  const [kind, id] = value.split(/:(.*)/);
+  if (!id) return null;
+  if (kind === 'inst') return INSTRUMENTS.includes(id as InstrumentId) ? { instrument: id as InstrumentId } : null;
+  if (kind === 'synth' || kind === 'keys') return { instrument: kind, patch: id };
+  if (kind === 'tone') return { instrument: 'synth', tone: id };
+  return null;
+}
+
 /**
  * Give a MIDI track another sound, before or after recording: its notes stay
- * and play on the new instrument. The instrument's own tone goes with it, and
- * an automatic name that was the old sound's follows the new one.
+ * and play on the new one. An automatic name that was the old instrument's
+ * follows the new one.
  */
-export function setTrackInstrument(t: LoopTrackData, instrument: InstrumentId | null, labels: Record<string, string>): LoopTrackData {
-  if (t.kind !== 'midi' || t.instrument === instrument) return t;
-  const { tone: _tone, ...rest } = t;
-  const next: LoopTrackData = { ...rest, instrument };
+export function setTrackSound(t: LoopTrackData, sound: LoopSound, labels: Record<string, string>): LoopTrackData {
+  if (t.kind !== 'midi') return t;
+  const { tone: _tone, patch: _patch, ...rest } = t;
+  const next: LoopTrackData = { ...rest, instrument: sound.instrument, ...(sound.patch ? { patch: sound.patch } : {}), ...(sound.tone ? { tone: sound.tone } : {}) };
   const old = t.instrument ? labels[t.instrument] : undefined;
-  if (!t.customName && instrument && old && t.name && (t.name === old || t.name.startsWith(`${old} `))) {
-    next.name = labels[instrument] + t.name.slice(old.length);
+  if (!t.customName && sound.instrument && old && t.name && (t.name === old || t.name.startsWith(`${old} `))) {
+    next.name = labels[sound.instrument] + t.name.slice(old.length);
   }
   return next;
+}
+
+/** Another instrument for a MIDI track, with its patch and tone left behind. */
+export function setTrackInstrument(t: LoopTrackData, instrument: InstrumentId | null, labels: Record<string, string>): LoopTrackData {
+  if (t.kind !== 'midi' || t.instrument === instrument) return t;
+  return setTrackSound(t, { instrument }, labels);
 }
 
 /** Each note's start snapped to `grid` beats (wrapping in the loop); lengths stay. 0 leaves them. */
