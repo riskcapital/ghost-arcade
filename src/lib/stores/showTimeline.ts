@@ -871,8 +871,11 @@ function publishTrackFrame(s: ShowTimelineState, evalTime: number, force = false
   // (sound rows, Live clips, line recording) stands still with the playhead.
   const rolling = s.isPlaying && !sectionHolding(s);
   if (lineTicker) {
+    // Parked on the end of the show, blocks evaluate a hair inside it, but a
+    // line's last key (a hold or a switch at the very end) belongs to the end.
+    const lineTime = evalTime < s.currentTime && s.duration > 0 && s.currentTime >= s.duration && evalTime >= s.duration - 1e-5 ? s.duration : evalTime;
     try {
-      lineTicker({ doc: s.doc, time: evalTime, playing: rolling, tempo: s.tempo, manual: isManualClock() });
+      lineTicker({ doc: s.doc, time: lineTime, playing: rolling, tempo: s.tempo, manual: isManualClock() });
     } catch (err) {
       console.warn('[ShowTimeline] line tick failed:', err);
     }

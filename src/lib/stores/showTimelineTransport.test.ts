@@ -13,6 +13,7 @@ import {
   normalizeShowEndAction,
   setShowAudioClockReader,
   setShowCompositionLoader,
+  setShowLineTicker,
   setShowTransportSink,
   showTimeline,
   SHOW_MAX_ZOOM,
@@ -207,3 +208,15 @@ describe('laying a show out', () => {
     expect(get(showTimeline).zoom).toBe(12);
   });
 });
+
+describe('lines at the end of the show', () => {
+  it('evaluate at the exact end (a last key at the end applies)', () => {
+    hydrateShow({ duration: 10 });
+    const times: number[] = [];
+    setShowLineTicker((tick) => { times.push(tick.time); });
+    showTimeline.seek(10);
+    setShowLineTicker(null);
+    expect(times.at(-1)).toBe(get(showTimeline).duration);
+  });
+});
+
