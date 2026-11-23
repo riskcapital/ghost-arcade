@@ -165,7 +165,7 @@ export function hasLastAutoShow(): boolean {
   return lastPrep !== null;
 }
 
-function draftFor(prep: Omit<AutoShowPrep, 'draft' | 'timings' | 'inputs'> & { timings?: AutoShowPrep['timings'] }, library: CastMember[], existing = currentExisting()): { draft: AutoShowDraft; ms: number; inputs: DraftInputs } {
+function draftFor(prep: Omit<AutoShowPrep, 'draft' | 'timings' | 'inputs'> & { timings?: AutoShowPrep['timings'] }, library: CastMember[], existing = currentExisting(), keepEdited = false): { draft: AutoShowDraft; ms: number; inputs: DraftInputs } {
   const t0 = performance.now();
   // Read with the stage and the Timeline below, in the same task.
   const inputs = draftInputsNow();
@@ -181,6 +181,7 @@ function draftFor(prep: Omit<AutoShowPrep, 'draft' | 'timings' | 'inputs'> & { t
     shaderCode: (file) => shaderSources.get(file) ?? null,
     seed: prep.seed,
     ids: { next: (prefix) => `${prefix}-${generateUUID()}` },
+    keepEdited,
   });
   if (prep.tempoDetected) draft.adds.unshift(`Tempo ${Math.round(prep.tempo.segments[0].bpm * 10) / 10} BPM, from the song`);
   if (!prep.pulse) draft.skips.unshift('No steady beat in the song: cut to a 90 BPM grid, nothing cut on the beat.');
@@ -240,7 +241,11 @@ export async function prepareAutoShow(opts: { style?: ShowStyle; source?: AutoSh
   const analysisMs = performance.now() - t0;
   const base = { track, tempo, tempoDetected, pulse, features, structure, reading, style: opts.style ?? reading.style, source, libraryVideos: library.length, seed };
   const { draft, ms, inputs } = draftFor(base, library);
-  return { ok: true, prep: { ...base, draft, inputs, timings: { analysisMs, draftMs: ms } } };
+  const prep: AutoShowPrep = { ...base, draft, inputs, timings: { analysisMs, draftMs: ms } };
+  // Reopened over a show it laid earlier (the dialog let go of it on close):
+  // Shuffle works again, keeping the blocks edited since.
+  if (!lastPrep && laidOnTimeline(get(showTimeline), drafts)) lastPrep = prep;
+  return { ok: true, prep };
 }
 
 /**
@@ -320,7 +325,7 @@ export async function shuffleAutoShow(change: { style?: ShowStyle; source?: Auto
   const stripped = stripDrafts(s, drafts);
   const tempo = s.tempo ?? prev.tempo;
   const next = { ...prev, ...change, tempo, tempoDetected: false, seed: (hashString(songKey(prev.track)) + shuffleCount * 7919) >>> 0 };
-  const { draft, ms, inputs } = draftFor(next, library, stripped);
+  const { draft, ms, inputs } = draftFor(next, library, stripped, true);
   showTimeline.replaceTimelineParts({
     sections: [...stripped.sections, ...draft.sections],
     lookClips: [...stripped.lookClips, ...draft.lookClips],

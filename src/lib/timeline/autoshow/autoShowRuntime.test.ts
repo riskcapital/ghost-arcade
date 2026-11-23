@@ -168,6 +168,24 @@ describe('Shuffle', () => {
     expect(rt._autoDraftCount()).toBe(0);
   });
 
+  it('reopened after editing one block, Shuffle redrafts the rest and keeps the edit', async () => {
+    rt.commitAutoShow(await prepared(), { play: false });
+    showTimeline.pause();
+    const autoClips = () => get(showTimeline).layerTracks.flatMap((t) => t.clips.filter((c) => c.where?.namedOrder?.startsWith('autoshow:')));
+    const before = autoClips().length;
+    expect(before).toBeGreaterThan(1);
+    // Edit one block: it is the user's now.
+    const edited = autoClips()[0];
+    showTimeline.replaceTimelineParts({ layerTracks: get(showTimeline).layerTracks.map((t) => ({ ...t, clips: t.clips.map((c) => (c.id === edited.id ? { ...c, name: 'mine' } : c)) })) });
+    rt.releaseLastAutoShow();
+    await prepared();
+    expect((await rt.shuffleAutoShow()).ok).toBe(true);
+    showTimeline.pause();
+    const after = autoClips();
+    expect(after.some((c) => c.id === edited.id)).toBe(true);
+    expect(after.length).toBeGreaterThan(1);
+  });
+
   it('stopped while it waits, it changes nothing', async () => {
     rt.commitAutoShow(await prepared(), { play: false });
     const ids = get(showTimeline).sections.map((s) => s.id).join();

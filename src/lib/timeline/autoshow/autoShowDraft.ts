@@ -117,6 +117,9 @@ export interface AutoShowInput {
   mood?: AutoShowMood;
   seed: number;
   ids?: ScoreIds;
+  /** Shuffle: the earlier Auto show's untouched blocks are already gone, so
+   *  draft content around the blocks the user edited instead of skipping it all. */
+  keepEdited?: boolean;
 }
 
 export interface AutoShowPlanItem {
@@ -224,7 +227,7 @@ export function draftAutoShow(input: AutoShowInput): AutoShowDraft {
   const contentOn = !!host && !!hostRow && contentCast.length > 0 && groups.pieces.length > 0;
   const rows: Record<AutoRowKey, ShowLayerClip[]> = { stage: [], a: [], b: [], hero: [] };
   const heroBig = groups.hero.length > 0 && groups.pieces.length >= 3 && Math.max(...groups.pieces.filter((p) => groups.hero.includes(p.id)).map((p) => p.area)) >= 2.2 * median(groups.pieces.map((p) => p.area));
-  if (autoContentThere(existing.layerTracks, songStart, songEnd)) {
+  if (!input.keepEdited && autoContentThere(existing.layerTracks, songStart, songEnd)) {
     skips.push('Content: an earlier Auto show is on the Timeline under the song (Shuffle, or Cmd+Z it first).');
   } else if (!stage.layers.length || !groups.pieces.length) {
     skips.push('Content: no mapped pieces to put it on (map the stage first).');
@@ -304,8 +307,10 @@ export function draftAutoShow(input: AutoShowInput): AutoShowDraft {
   const mainTexture: Array<CastMember['texture'] | null> = [];
   const travelOrder = (k: number) => ((k + Math.floor(rnd() * 2)) % 2 === 0 ? GROUP_ORDER_IDS.rows : GROUP_ORDER_IDS.columns);
 
-  if (contentOn && !autoContentThere(existing.layerTracks, songStart, songEnd)) {
+  if (contentOn && (input.keepEdited || !autoContentThere(existing.layerTracks, songStart, songEnd))) {
     plan.forEach((p, k) => {
+      // An edited block kept from the last draft owns its span.
+      if (input.keepEdited && autoContentThere(existing.layerTracks, p.start, p.end)) return;
       const tier = sectionTier(p.kind, p.energy, style);
       const loud = p.kind === 'build' || p.kind === 'drop';
       const moodNow: AutoShowMood = loud ? palette.accent : p.kind === 'breakdown' ? 'dark' : palette.mood;
