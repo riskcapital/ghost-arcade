@@ -11,6 +11,7 @@ import { get, writable } from 'svelte/store';
 import { invoke, isElectron } from '../bridge';
 import type { RecordedNote } from './loopRecorder';
 import type { MusicKey } from './studioSets';
+import type { XyPoint } from './loopSources';
 import { uniqueName } from './loopTrack';
 
 export interface UserLoopMeta {
@@ -22,6 +23,10 @@ export interface UserLoopMeta {
   key: MusicKey | null;
   instrument: string | null;
   tone?: string;
+  /** A tab instrument's loop: "xy", "dub" or "pads" (loopSources.ts); absent for the keys. */
+  source?: string;
+  /** An XY loop: the puck's movement, every layer's points together. */
+  xy?: XyPoint[];
   createdAt: number;
 }
 

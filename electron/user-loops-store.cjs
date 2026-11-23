@@ -45,6 +45,9 @@ function cleanMeta(raw) {
     key: m.key && typeof m.key === 'object' ? { root: Math.round(num(m.key.root, 0, 11, 0)), scale: String(m.key.scale ?? '').slice(0, 24) } : null,
     instrument: typeof m.instrument === 'string' ? m.instrument.slice(0, 32) : null,
     tone: typeof m.tone === 'string' ? m.tone.slice(0, 64) : undefined,
+    // A tab instrument's loop (the XY pad, dub shots, drum pads), and an XY loop's puck movement.
+    source: ['xy', 'dub', 'pads'].includes(m.source) ? m.source : undefined,
+    xy: m.source === 'xy' && Array.isArray(m.xy) ? m.xy.slice(0, 20000).map((p) => ({ beat: num(p?.beat, 0, 256, 0), x: num(p?.x, 0, 1, 0.5), y: num(p?.y, 0, 1, 0.5) })) : undefined,
     notes: Array.isArray(m.notes) ? m.notes.slice(0, 20000).map((n) => ({
       beat: num(n?.beat, 0, 256, 0), dur: num(n?.dur, 0, 256, 0.25), note: Math.round(num(n?.note, 0, 127, 60)), velocity: num(n?.velocity, 0, 1, 0.8),
     })) : [],

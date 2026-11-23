@@ -38,6 +38,7 @@
   import LoopTrackButton from './LoopTrackButton.svelte';
   import { applyStationPreset, setTrackKind, type LoopTrackKind, type StationPreset } from '../../music/loopTrack';
   import { INSTRUMENTS } from '../../music/noteEvents';
+  import { trackSoundLabel, type LoopSource } from '../../music/loopSources';
 
   /** A track's type changes only while it is empty (the selector shows only then); its sound changes any time. */
   function setKind(i: number, kind: LoopTrackKind) {
@@ -63,7 +64,12 @@
 
   /** Every sound the keyboard's menu offers: synth and keys patches, the other instruments, and the library tones. */
   const FAMILIES: ToneFamily[] = ['bass', 'lead', 'arp', 'pad'];
-  const OTHERS = INSTRUMENTS.filter((id) => id !== 'synth' && id !== 'keys');
+  // The XY tone and the shots are recorded from their tabs (Tab instruments), as played there.
+  const OTHERS = INSTRUMENTS.filter((id) => id !== 'synth' && id !== 'keys' && id !== 'xy' && id !== 'shots');
+  /** The tab instruments a MIDI track can record: what each is called in the menu. */
+  const TAB_SOURCES: Array<{ id: LoopSource; label: string; title: string }> = [
+    { id: 'xy', label: 'XY pad', title: 'The Sound bath XY pad: its notes and the puck as you move it' },
+  ];
   function chooseSound(i: number, value: string) {
     const sound = parseSoundValue(value);
     if (sound) setLoopTrackSound(i, sound);
@@ -143,8 +149,11 @@
   }
 </script>
 
-{#snippet soundOptions()}
-  <option value="">Follow played</option>
+{#snippet soundOptions(current: string)}
+  <option value="" title="What you play on the tab showing when it records: the XY pad, the dub shots, the drum pads, or the keys">This tab</option>
+  <optgroup label="Tab instruments">
+    {#each TAB_SOURCES as x (x.id)}<option value="src:{x.id}" title={x.title}>{x.label}</option>{/each}
+  </optgroup>
   <optgroup label="Synth">
     {#each SYNTH_PATCHES as p (p.id)}<option value="synth:{p.id}">Synth · {p.label}</option>{/each}
   </optgroup>
@@ -153,6 +162,7 @@
   </optgroup>
   <optgroup label="Instruments">
     {#each OTHERS as id (id)}<option value="inst:{id}">{INSTRUMENT_LABELS[id]}</option>{/each}
+    {#if current === 'inst:xy' || current === 'inst:shots'}<option value={current}>{INSTRUMENT_LABELS[current === 'inst:xy' ? 'xy' : 'shots']}</option>{/if}
   </optgroup>
   {#each FAMILIES as fam (fam)}
     <optgroup label={TONE_FAMILY_LABELS[fam]}>
@@ -231,7 +241,7 @@
             </select>
             {#if t.kind === 'midi'}
               <select class="sound" value={soundValue(t)} onchange={(e) => chooseSound(i, (e.target as HTMLSelectElement).value)} aria-label="Track {i + 1} instrument" title="What it plays and records; MIDI from any device plays it while the track is selected">
-                {@render soundOptions()}
+                {@render soundOptions(soundValue(t))}
               </select>
             {:else}
               <select value={t.input} onchange={(e) => musicStudio.updateLoopTrack(i, { input: Number((e.target as HTMLSelectElement).value) })} aria-label="Track {i + 1} input" title="The band input it records">
@@ -240,18 +250,18 @@
             {/if}
           </div>
         {:else}
-          {@const label = t.name || (t.kind === 'audio' ? `Audio ${i + 1}` : INSTRUMENT_LABELS[t.instrument ?? s.instrument])}
-          {@const meta = `${t.kind === 'audio' ? `Input ${t.input + 1}` : INSTRUMENT_LABELS[t.instrument ?? s.instrument]} · ${bars} bar${bars === 1 ? '' : 's'} · ${v.phase === 'overdub' ? `layer ${v.layers + 1} recording` : `${v.layers} layer${v.layers === 1 ? '' : 's'}`}`}
+          {@const label = t.name || (t.kind === 'audio' ? `Audio ${i + 1}` : trackSoundLabel(t, s.instrument))}
+          {@const meta = `${t.kind === 'audio' ? `Input ${t.input + 1}` : trackSoundLabel(t, s.instrument)} · ${bars} bar${bars === 1 ? '' : 's'} · ${v.phase === 'overdub' ? `layer ${v.layers + 1} recording` : `${v.layers} layer${v.layers === 1 ? '' : 's'}`}`}
           {#if renaming === i}
             <input class="name rename" type="text" maxlength="80" bind:value={draft} use:focusSelect onpointerdown={(e) => e.stopPropagation()} onkeydown={(e) => { e.stopPropagation(); if (e.key === 'Enter') commitRename(i); else if (e.key === 'Escape') renaming = null; }} onblur={() => commitRename(i)} aria-label="Loop {i + 1} name" />
           {:else}
             <button class="name" onclick={() => startRename(i, label)} title="{label}. Click to rename">{label}</button>
           {/if}
-          <div class="ga-eyebrow meta" title={meta}>{t.kind === 'audio' ? `Input ${t.input + 1}` : INSTRUMENT_LABELS[t.instrument ?? s.instrument]} · {bars} bar{bars === 1 ? '' : 's'} · {v.phase === 'overdub' ? `layer ${v.layers + 1} recording` : `${v.layers} layer${v.layers === 1 ? '' : 's'}`}</div>
+          <div class="ga-eyebrow meta" title={meta}>{t.kind === 'audio' ? `Input ${t.input + 1}` : trackSoundLabel(t, s.instrument)} · {bars} bar{bars === 1 ? '' : 's'} · {v.phase === 'overdub' ? `layer ${v.layers + 1} recording` : `${v.layers} layer${v.layers === 1 ? '' : 's'}`}</div>
           {#if t.kind === 'midi'}
             <div class="pick">
               <select class="sound" value={soundValue(t)} onchange={(e) => chooseSound(i, (e.target as HTMLSelectElement).value)} aria-label="Track {i + 1} sound" title="The sound this loop plays: change it any time, the notes stay">
-                {@render soundOptions()}
+                {@render soundOptions(soundValue(t))}
               </select>
               <select value="" onchange={(e) => { quantize(i, (e.target as HTMLSelectElement).value as QuantizeId); (e.target as HTMLSelectElement).value = ''; }} aria-label="Quantize loop {i + 1}" title="Snap this loop's notes to a grid (Undo puts them back)">
                 <option value="" disabled>Quantize…</option>

@@ -357,6 +357,11 @@ export class MusicAudioEngine {
     this.tones?.releaseChannel('xy');
   }
 
+  /** A loop track's own tones (insert channel "loop:N") let go, a latched arp too. */
+  releaseToneChannel(channel: string): void {
+    this.tones?.releaseChannel(channel);
+  }
+
   /** Mod wheel and aftertouch (0-1) and pitch bend (-1..1) from a controller, for the tones. */
   expression(expr: { wheel?: number; pressure?: number; bend?: number }): void {
     this.tones?.expression(expr);
@@ -971,7 +976,8 @@ export class MusicAudioEngine {
       return;
     }
     if (event.instrument === 'xy') {
-      if (event.type === 'on') this.xyOn(event.note, event.velocity, time);
+      // A loop track's XY notes go through its own effects (a held voice keeps where it started).
+      if (event.type === 'on') this.xyOn(event.note, event.velocity, time, own?.input);
       else if (this.xyTone?.note === event.note) this.xyOff(time);
       return;
     }
@@ -1648,7 +1654,7 @@ export class MusicAudioEngine {
   }
 
   /** The XY pad's own voice: a soft gliding tone, brighter towards the top of the pad. */
-  private xyOn(note: number, velocity: number, time: number): void {
+  private xyOn(note: number, velocity: number, time: number, out?: AudioNode): void {
     const ctx = this.ctx!;
     const freq = midiToHz(note);
     if (this.xyTone) {
@@ -1684,7 +1690,7 @@ export class MusicAudioEngine {
     });
     vibrato.start(time);
     oscs.push(vibrato);
-    filter.connect(amp).connect(this.bus!.xy);
+    filter.connect(amp).connect(out ?? this.bus!.xy);
     this.xyTone = { oscs, filter, amp, note };
   }
 

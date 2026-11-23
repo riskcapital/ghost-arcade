@@ -14,7 +14,7 @@
   import { musicStudio } from '../../music/musicStudioStore';
   import { audioLayerPeaks, loopStationView, selectLoopTrack } from '../../music/loopStation';
   import { LOOP_TRACK_COUNT } from '../../music/loopTrack';
-  import { INSTRUMENT_LABELS } from '../../music/instruments';
+  import { trackSoundLabel } from '../../music/loopSources';
   import { launchClockPosition } from '../../stores/launchClock';
 
   let { onedit }: { onedit?: (i: number) => void } = $props();
@@ -98,7 +98,7 @@
       }
       g.fillStyle = v.phase === 'empty' ? muted : ink;
       g.font = '600 12px system-ui, sans-serif';
-      const name = t.name || (t.kind === 'audio' ? `Audio ${i + 1}` : t.instrument ? INSTRUMENT_LABELS[t.instrument] : `Track ${i + 1}`);
+      const name = t.name || (t.kind === 'audio' ? `Audio ${i + 1}` : t.instrument || t.source ? trackSoundLabel(t, 'synth') : `Track ${i + 1}`);
       g.fillText(`${i + 1} · ${name.split(' · ')[0]}`.slice(0, 22), 12, y0 + laneH / 2 + 4);
       g.font = '10px system-ui, sans-serif';
       if (v.phase === 'empty' || !(v.beats > 0)) continue;

@@ -116,7 +116,9 @@ import { editStudio, studioTargetNow } from './studioTarget';
 import { normalizeStudioSource } from './studioPlugin';
 import { soundById } from './sounds/library';
 import { KeyFinder, type KeyGuess } from './keyFinder';
-import { loopMidiInstrument, attachLoopStation, killLoopStation, scheduleStation, stationBusy, stationOldestBeat, stopAllLoopTracks } from './loopStation';
+import { loopMidiInstrument, attachLoopStation, captureSourceHit, captureSourceRelease, captureXyMove, killLoopStation, scheduleStation, stationBusy, stationOldestBeat, stopAllLoopTracks } from './loopStation';
+import { loopFxChannel } from './loopTrack';
+import { yAxisTarget } from './instrumentDress';
 import { audioLoopTracksFor, existingAudioLoopTracks } from './audioLoopEngine';
 import { registerLoopControls } from './loopControls';
 import { SessionAudio } from './sessionAudio';
@@ -368,6 +370,43 @@ export function panic(): void {
 export function letGoXy(): void {
   audio.releaseXy();
   if (latchedArps.delete('xy')) publishSustaining();
+}
+
+/** The XY puck at (x, y): its tone follows, and Y moves a send or the pan when the pad's Y is set to one. */
+function applyXy(x: number, y: number): void {
+  musicStudio.setParam('xy.x', x);
+  musicStudio.setParam('xy.y', y);
+  const target = yAxisTarget('xy', get(musicStudio).dress?.xy?.yAxis ?? 'space');
+  if (target) setPerformMod(target, y);
+}
+
+/** The XY puck moved by hand: it moves, and the looper can record the move. */
+export function moveXy(x: number, y: number): void {
+  ensureMusicRuntime();
+  applyXy(x, y);
+  captureXyMove(x, y, beatAtTime(liveTime()));
+}
+
+/** A loop's XY moves booked ahead, by loop track: each moves the puck when its time comes. */
+const loopXyMoves = new Map<number, Set<ReturnType<typeof setTimeout>>>();
+
+function scheduleLoopXy(x: number, y: number, time: number, track: number): void {
+  const delay = Math.max(0, (time - audio.now()) * 1000);
+  let timers = loopXyMoves.get(track);
+  if (!timers) loopXyMoves.set(track, (timers = new Set()));
+  const handle = setTimeout(() => {
+    timers.delete(handle);
+    applyXy(x, y);
+  }, delay);
+  timers.add(handle);
+}
+
+/** A loop track lets go of the XY pad: its moves still to come, its note, and a latched arp (its own tone too). */
+function letGoLoopXy(track: number): void {
+  for (const handle of loopXyMoves.get(track) ?? []) clearTimeout(handle);
+  loopXyMoves.delete(track);
+  audio.releaseToneChannel(loopFxChannel(track));
+  letGoXy();
 }
 
 /** Every atmosphere on the pads stops, with a short fade. */
@@ -2931,6 +2970,8 @@ export function ensureMusicRuntime(): void {
     },
     // Audio tracks once the studio's audio is running.
     audioTracks: () => (audio.peekNow() === null ? null : audioLoopTracksFor(audio)),
+    moveXy: scheduleLoopXy,
+    letGoXy: letGoLoopXy,
   });
   // Risers land on the next bar line of the launch clock.
   audio.setBarClock(() => {

@@ -8,7 +8,7 @@
   import { musicStudio, musicTransport } from '../../music/musicStudioStore';
   import { BOWL_PARAMS, DRONE_PARAMS, bowlNotes, chordName, chordNotes, keyLabel, scaleNote } from '../../music/studioSets';
   import { noteName } from '../../music/noteEvents';
-  import { letGoXy, playNote, releaseBowl, releaseChords, releaseNote, strikeBowl, toggleChord } from '../../music/musicRuntime';
+  import { letGoXy, moveXy, playNote, releaseBowl, releaseChords, releaseNote, strikeBowl, toggleChord } from '../../music/musicRuntime';
   import StudioModule from './StudioModule.svelte';
   import StudioKnob from './StudioKnob.svelte';
   import StudioJack from './StudioJack.svelte';
@@ -110,8 +110,8 @@
     // The puck's centre stays 13px inside the edges, so the touch maps to that range.
     const x = Math.max(0, Math.min(1, (e.clientX - r.left - 13) / Math.max(1, r.width - 26)));
     const y = Math.max(0, Math.min(1, 1 - (e.clientY - r.top - 13) / Math.max(1, r.height - 26)));
-    musicStudio.setParam('xy.x', x);
-    musicStudio.setParam('xy.y', y);
+    // The puck moves (and the looper can record the move).
+    moveXy(x, y);
     trail = [...trail.slice(-10), { x, y }];
     xyPlay(x, y);
   }

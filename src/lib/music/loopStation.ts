@@ -17,7 +17,23 @@
 
 import { get, writable } from 'svelte/store';
 import { musicStudio, onMusicHydrate } from './musicStudioStore';
-import { BEATS_PER_BAR, MAX_LOOP_BARS, quantizeBeats, roleForRecording, type PlayedNote, type QuantizeId, type RecordedLoop, type RecordedNote } from './loopRecorder';
+import { BEATS_PER_BAR, MAX_LOOP_BARS, PlayedNotes, quantizeBeats, roleForRecording, type PlayedNote, type QuantizeId, type RecordedLoop, type RecordedNote } from './loopRecorder';
+import {
+  SOURCE_INSTRUMENT,
+  alignXy,
+  fitXy,
+  isLoopSource,
+  loopXyInWindow,
+  mergeXy,
+  normalizeXyPoints,
+  tabSource,
+  trackSoundLabel,
+  xyLayerFor,
+  type LoopSource,
+  type XyLayer,
+  type XyPoint,
+} from './loopSources';
+import type { StudioSet } from './studioSets';
 import { clipFromRecording, findClip } from './session';
 import { readUserLoop, saveUserLoop } from './userLoops';
 import { generateUUID } from '../utils/uuid';
@@ -50,6 +66,7 @@ import {
   renameTrack,
   loopFxChannel,
   setTrackSound,
+  xyNotesForLayer,
   type LoopSound,
   undoLayer,
   uniqueName,
@@ -76,6 +93,12 @@ export interface StationHost {
   wake(): void;
   /** The audio loop tracks, created on first use; null where audio cannot record. */
   audioTracks(): AudioLoopTracks | null;
+  /** A loop's hit on a tab instrument: dub shot or drum machine pad `index` at `time`, held `dur` seconds. */
+  hit?(source: 'dub' | 'pads', index: number, velocity: number, time: number, dur: number, track: number): void;
+  /** A loop moving the XY puck (and what it moves) to (x, y) at `time`. */
+  moveXy?(x: number, y: number, time: number, track: number): void;
+  /** Let go of what loop track `track` holds on the XY pad: its note, a latched arp, moves still to come. */
+  letGoXy?(track: number): void;
 }
 
 /** A track as the panels show it. */
@@ -122,9 +145,18 @@ interface Rt {
   stopAt: number | null;
   scheduledBeat: number;
   pendingOffs: Array<{ note: number; offBeat: number; instrument: InstrumentId; tone?: string }>;
+  /** An XY track: note-offs not sent yet (XY notes go out in time order, so the pad glides as played). */
+  xyOffs: Array<{ note: number; offBeat: number; tone?: string }>;
+  /** An XY track has played a note since its last cut. */
+  xySounding: boolean;
   redo: MidiLayer[];
+  /** The XY points of the layers in `redo`, in the same order. */
+  redoXy: XyLayer[];
   /** What Clear took, for one undo. */
-  cleared: { layers: MidiLayer[]; beats: number } | null;
+  cleared: { layers: MidiLayer[]; beats: number; xy?: XyLayer[] } | null;
+  /** A "This tab" track recording: the tab showing when it was armed, and the instrument the keys played then. */
+  tab: StudioSet | null;
+  tabInstrument: InstrumentId | null;
   clickBeat: number;
   /** The layers before the full editor changed them: one undo brings them back. */
   editBefore: MidiLayer[] | null;
@@ -134,7 +166,7 @@ let host: StationHost | null = null;
 const rts: Rt[] = Array.from({ length: LOOP_TRACK_COUNT }, () => freshRt());
 
 function freshRt(): Rt {
-  return { phase: 'empty', recStart: 0, recEnd: null, freeSince: null, origin: 0, dubFrom: 0, dubTo: null, playAt: null, stopAt: null, scheduledBeat: 0, pendingOffs: [], redo: [], cleared: null, clickBeat: 0, editBefore: null };
+  return { phase: 'empty', recStart: 0, recEnd: null, freeSince: null, origin: 0, dubFrom: 0, dubTo: null, playAt: null, stopAt: null, scheduledBeat: 0, pendingOffs: [], xyOffs: [], xySounding: false, redo: [], redoXy: [], cleared: null, tab: null, tabInstrument: null, clickBeat: 0, editBefore: null };
 }
 
 export function attachLoopStation(h: StationHost): void {
@@ -292,8 +324,112 @@ const data = () => get(musicStudio).loopStation;
 const track = (i: number): LoopTrackData => data().tracks[i];
 const isAudio = (i: number) => track(i)?.kind === 'audio';
 
-function stackOf(i: number): LayerStack<MidiLayer> {
-  return { layers: track(i).layers, redo: rts[i].redo };
+/** A layer with its XY points (none on other tracks), so undo, redo and folding keep them together. */
+interface Layer {
+  notes: MidiLayer;
+  xy: XyLayer;
+}
+
+const mergeLayers = (a: Layer, b: Layer): Layer => ({ notes: mergeMidiLayers(a.notes, b.notes), xy: mergeXy(a.xy, b.xy) });
+
+function stackOf(i: number): LayerStack<Layer> {
+  const t = track(i);
+  const rt = rts[i];
+  return {
+    layers: t.layers.map((notes, k) => ({ notes, xy: t.xy?.[k] ?? [] })),
+    redo: rt.redo.map((notes, k) => ({ notes, xy: rt.redoXy[k] ?? [] })),
+  };
+}
+
+/** Keep a stack: its layers on the track (with their points on an XY track), its redo here. */
+function keepStack(i: number, stack: LayerStack<Layer>, extra: Partial<LoopTrackData> = {}): void {
+  const rt = rts[i];
+  rt.redo = stack.redo.map((l) => l.notes);
+  rt.redoXy = stack.redo.map((l) => l.xy);
+  musicStudio.updateLoopTrack(i, { layers: stack.layers.map((l) => l.notes), ...(track(i).source === 'xy' ? { xy: stack.layers.map((l) => l.xy) } : {}), ...extra });
+}
+
+// ── What the tab instruments played ──
+
+/** XY puck moves played live, oldest first. */
+let xyMoves: XyPoint[] = [];
+/** Dub shot and drum pad taps played live, as notes (note = shot or pad). */
+const hitsPlayed = new PlayedNotes();
+/** Beats of the tab instruments' playing kept when nothing records. */
+const KEEP_BEATS = 64;
+
+function forgetCaptured(beat: number): void {
+  const before = Math.min(beat - KEEP_BEATS, stationOldestBeat(beat));
+  if (xyMoves.length && xyMoves[0].beat < before) xyMoves = xyMoves.filter((p) => p.beat >= before);
+  hitsPlayed.forgetBefore(before);
+}
+
+/** The XY puck was moved by hand to (x, y) at `beat`. */
+export function captureXyMove(x: number, y: number, beat: number): void {
+  if (!Number.isFinite(beat)) return;
+  xyMoves.push({ beat, x, y });
+  forgetCaptured(beat);
+}
+
+/** A dub shot or drum pad was tapped at `beat`. */
+export function captureSourceHit(source: 'dub' | 'pads', index: number, velocity: number, beat: number): void {
+  if (!Number.isFinite(beat)) return;
+  hitsPlayed.noteOn(SOURCE_INSTRUMENT[source], index, velocity, beat);
+  // A pad is a one-shot: its length is fixed. A dub shot's lasts until it is let go (its Hold).
+  if (source === 'pads') hitsPlayed.noteOff(SOURCE_INSTRUMENT[source], index, beat + 0.25);
+  forgetCaptured(beat);
+}
+
+/** A held dub shot was let go at `beat`. */
+export function captureSourceRelease(source: 'dub' | 'pads', index: number, beat: number): void {
+  hitsPlayed.noteOff(SOURCE_INSTRUMENT[source], index, beat);
+}
+
+interface Captured {
+  played: readonly PlayedNote[];
+  moves: readonly XyPoint[];
+  hits: readonly PlayedNote[];
+}
+
+const captured = (): Captured => ({ played: host!.played(), moves: xyMoves, hits: hitsPlayed.all() });
+
+function takeFrom(source: LoopSource | undefined, instrument: InstrumentId, cap: Captured, from: number, to: number, origin: number, beats: number, grid: number): Layer {
+  if (source === 'xy') {
+    // The pad held across the punch-in: the layer starts where the puck was.
+    const held = cap.played.some((n) => n.instrument === 'xy' && n.beat < from && (n.end === null || n.end > from));
+    return { notes: xyNotesForLayer(cap.played, from, to, origin, beats, grid), xy: xyLayerFor(cap.moves, from, to, origin, beats, held) };
+  }
+  if (source) return { notes: notesForLayer(cap.hits, SOURCE_INSTRUMENT[source], from, to, origin, beats, grid), xy: [] };
+  return { notes: notesForLayer(cap.played, instrument, from, to, origin, beats, grid), xy: [] };
+}
+
+/**
+ * What track `i` recorded in [from, to), as a layer. A "This tab" track's
+ * first recording takes the tab's own instrument (the XY pad, the dub shots,
+ * the drum pads) when that is what was played, else the keys; either way the
+ * track keeps it from then on.
+ */
+function takeLayer(i: number, from: number, to: number, origin: number, beats: number, cap: Captured = captured()): Layer {
+  const rt = rts[i];
+  const s = get(musicStudio);
+  const grid = quantizeBeats(s.quantize);
+  const tab = rt.tab;
+  const keys = rt.tabInstrument ?? s.instrument;
+  rt.tab = null;
+  rt.tabInstrument = null;
+  if (tab) {
+    const src = tabSource(tab);
+    const taken = src ? takeFrom(src, SOURCE_INSTRUMENT[src], cap, from, to, origin, beats, grid) : null;
+    if (src && taken && (taken.notes.length || taken.xy.length)) {
+      musicStudio.updateLoopStation((d) => ({ ...d, tracks: d.tracks.map((t, k) => (k === i ? setTrackSound(t, { instrument: SOURCE_INSTRUMENT[src], source: src }, INSTRUMENT_LABELS) : t)) }));
+      return taken;
+    }
+    const played = takeFrom(undefined, keys, cap, from, to, origin, beats, grid);
+    if (played.notes.length) musicStudio.updateLoopTrack(i, { instrument: keys });
+    return played;
+  }
+  const t = track(i);
+  return takeFrom(t.source, t.instrument ?? keys, cap, from, to, origin, beats, grid);
 }
 
 function hasContent(i: number): boolean {
@@ -351,10 +487,11 @@ export function loopMidiInstrument(channel: number, device: string): InstrumentI
   const locked = lockedTrack(d.locks, channel, device, d.trackCount);
   if (locked >= 0) {
     const t = d.tracks[locked];
-    return t.kind === 'midi' ? t.instrument : null;
+    return t.kind === 'midi' && !t.source ? t.instrument : null;
   }
   const t = d.tracks[get(loopStationView).selected];
-  return t?.kind === 'midi' && t.instrument ? t.instrument : null;
+  // A track on a tab instrument (XY, shots, pads) leaves the keys as they are.
+  return t?.kind === 'midi' && t.instrument && !t.source ? t.instrument : null;
 }
 
 export function selectedLoopTrack(): number {
@@ -439,7 +576,9 @@ function arm(i: number, beat: number): void {
     return;
   }
   const t = track(i);
-  if (!t.instrument) musicStudio.updateLoopTrack(i, { instrument: get(musicStudio).instrument });
+  // "This tab": what it records is settled when the recording closes (takeLayer).
+  rt.tab = !t.instrument && !t.source ? get(musicStudio).set : null;
+  rt.tabInstrument = get(musicStudio).instrument;
   rt.freeSince = null;
   if (d.length === 0 && !busy) {
     // Nothing plays and the length is free: start now; the loop sets the tempo.
@@ -479,6 +618,7 @@ function finishFree(i: number, beat: number): void {
   rt.freeSince = null;
   const tempo = inferTempo(seconds);
   if (!tempo || recordedBeats < MIN_FREE_BEATS) {
+    rt.tab = null;
     rt.phase = hasContent(i) ? 'stopped' : 'empty';
     loopNotice('Too short');
     return;
@@ -486,11 +626,16 @@ function finishFree(i: number, beat: number): void {
   const beats = tempo.bars * BEATS_PER_BAR;
   const scale = beats / recordedBeats;
   const from = rt.recStart;
-  // The notes, read in the new tempo's beats from the loop's start.
-  const played: PlayedNote[] = host!.played()
-    .filter((n) => n.beat >= from - 0.125 && n.beat < beat)
-    .map((n) => ({ ...n, beat: (n.beat - from) * scale, end: n.end === null ? null : (n.end - from) * scale }));
-  const layer = notesForLayer(played, t.instrument ?? get(musicStudio).instrument, 0, beats, 0, beats, quantizeBeats(get(musicStudio).quantize));
+  // What was played, read in the new tempo's beats from the loop's start.
+  const rescale = (n: PlayedNote): PlayedNote => ({ ...n, beat: (n.beat - from) * scale, end: n.end === null ? null : (n.end - from) * scale });
+  const inside = (b: number) => b >= from - 0.125 && b < beat;
+  const cap = captured();
+  const layer = takeLayer(i, 0, beats, 0, beats, {
+    played: cap.played.filter((n) => inside(n.beat)).map(rescale),
+    hits: cap.hits.filter((n) => inside(n.beat)).map(rescale),
+    // Where the puck was held at the start too.
+    moves: cap.moves.filter((p) => p.beat < beat).map((p) => ({ ...p, beat: (p.beat - from) * scale })),
+  });
   audioStore.setManualBPM(tempo.bpm);
   // Now is the downbeat: the loop just ended its first pass.
   const synced = resyncLaunchClock();
@@ -499,17 +644,18 @@ function finishFree(i: number, beat: number): void {
   commitFirstLayer(i, layer, beats, origin, synced ? now : origin);
 }
 
-function commitFirstLayer(i: number, layer: MidiLayer, beats: number, origin: number, playFrom: number): void {
+function commitFirstLayer(i: number, layer: Layer, beats: number, origin: number, playFrom: number): void {
   const rt = rts[i];
-  if (!layer.length) {
+  if (!layer.notes.length && !layer.xy.length) {
     rt.phase = hasContent(i) ? 'stopped' : 'empty';
     loopNotice('Nothing was played');
     return;
   }
   const t = track(i);
-  const name = t.name || uniqueName(`${INSTRUMENT_LABELS[t.instrument ?? 'synth']}`, data().tracks.filter((_, j) => j !== i).map((x) => x.name));
-  musicStudio.updateLoopTrack(i, { layers: [layer], beats, name, savedId: undefined });
+  const name = t.name || uniqueName(trackSoundLabel(t, 'synth'), data().tracks.filter((_, j) => j !== i).map((x) => x.name));
+  musicStudio.updateLoopTrack(i, { layers: [layer.notes], ...(t.source === 'xy' ? { xy: [layer.xy] } : {}), beats, name, savedId: undefined });
   rt.redo = [];
+  rt.redoXy = [];
   rt.cleared = null;
   rt.origin = origin;
   rt.scheduledBeat = playFrom;
@@ -619,7 +765,7 @@ export function undoLoopLayer(i: number): boolean {
     return true;
   }
   if (rt.cleared && !track(i).layers.length) {
-    musicStudio.updateLoopTrack(i, { layers: rt.cleared.layers, beats: rt.cleared.beats });
+    musicStudio.updateLoopTrack(i, { layers: rt.cleared.layers, beats: rt.cleared.beats, ...(rt.cleared.xy ? { xy: rt.cleared.xy } : {}) });
     rt.cleared = null;
     rt.phase = 'stopped';
     publish();
@@ -628,8 +774,7 @@ export function undoLoopLayer(i: number): boolean {
   const stack = stackOf(i);
   if (!stack.layers.length) return false;
   const next = undoLayer(stack);
-  rt.redo = next.redo;
-  musicStudio.updateLoopTrack(i, { layers: next.layers, ...(next.layers.length ? {} : { beats: track(i).beats }) });
+  keepStack(i, next);
   cutPending(i, clockNow().beat);
   if (!next.layers.length) rt.phase = 'empty';
   publish();
@@ -645,9 +790,7 @@ export function redoLoopLayer(i: number): boolean {
     return ok;
   }
   if (!rt.redo.length || !(track(i).beats > 0)) return false;
-  const next = redoLayer(stackOf(i));
-  rt.redo = next.redo;
-  musicStudio.updateLoopTrack(i, { layers: next.layers });
+  keepStack(i, redoLayer(stackOf(i)));
   if (rt.phase === 'empty') rt.phase = 'stopped';
   publish();
   return true;
@@ -689,7 +832,7 @@ export function setLoopTrackInstrument(i: number, instrument: InstrumentId | nul
 
 /** The keys play the selected loop track's sound, so what is recorded sounds as it will play. */
 function followTrackSound(t: LoopTrackData | undefined): void {
-  if (!t || t.kind !== 'midi' || !t.instrument) return;
+  if (!t || t.kind !== 'midi' || !t.instrument || t.source) return;
   const s = get(musicStudio);
   if (s.instrument !== t.instrument) musicStudio.setInstrument(t.instrument);
   if (t.instrument === 'synth' || t.instrument === 'keys') {
@@ -710,29 +853,39 @@ export function clearLoopTrack(i: number): void {
     audioEngine()?.clear(i);
   } else {
     const t = track(i);
-    rt.cleared = t.layers.length ? { layers: t.layers, beats: t.beats } : null;
-    musicStudio.updateLoopTrack(i, { layers: [], name: '', customName: undefined, savedId: undefined });
+    rt.cleared = t.layers.length ? { layers: t.layers, beats: t.beats, ...(t.source === 'xy' ? { xy: t.xy ?? [] } : {}) } : null;
+    musicStudio.updateLoopTrack(i, { layers: [], ...(t.source === 'xy' ? { xy: [] } : {}), name: '', customName: undefined, savedId: undefined });
   }
   rt.redo = [];
+  rt.redoXy = [];
   rt.phase = 'empty';
   publish();
 }
 
 /** Put notes on a MIDI track from outside (the library or the quick editor): replaces its layers with one. */
-export function loadMidiIntoTrack(i: number, loop: { name: string; beats: number; notes: RecordedNote[]; instrument: InstrumentId | null; tone?: string; savedId?: string }, play = true): void {
+export function loadMidiIntoTrack(
+  i: number,
+  loop: { name: string; beats: number; notes: RecordedNote[]; instrument: InstrumentId | null; tone?: string; savedId?: string; source?: LoopSource; xy?: XyPoint[] },
+  play = true,
+): void {
   if (!host) return;
   const rt = rts[i];
   stopLoopTrack(i, true);
+  const source = isLoopSource(loop.source) ? loop.source : undefined;
   musicStudio.updateLoopTrack(i, {
     kind: 'midi',
     name: loop.name,
     beats: loop.beats,
     layers: [loop.notes.map((n) => ({ ...n }))],
-    instrument: loop.instrument ?? get(musicStudio).instrument,
-    tone: loop.tone,
+    instrument: source ? SOURCE_INSTRUMENT[source] : loop.instrument ?? get(musicStudio).instrument,
+    tone: source ? undefined : loop.tone,
+    patch: source ? undefined : track(i).patch,
+    source,
+    xy: source === 'xy' ? [normalizeXyPoints(loop.xy, loop.beats)] : undefined,
     savedId: loop.savedId,
   });
   rt.redo = [];
+  rt.redoXy = [];
   rt.cleared = null;
   rt.phase = 'stopped';
   if (play) startLoopTrack(i);
@@ -741,7 +894,10 @@ export function loadMidiIntoTrack(i: number, loop: { name: string; beats: number
 
 /** Replace a MIDI track's layers (the quick editor's edits). */
 export function setTrackLayers(i: number, layers: MidiLayer[], beats = track(i).beats): void {
-  musicStudio.updateLoopTrack(i, { layers, beats });
+  const t = track(i);
+  // An XY track's moves follow a new length (repeated when it doubled, cut when it halved).
+  const xy = t.source === 'xy' ? alignXy(t.xy, layers.length).map((l) => fitXy(l, t.beats, beats)) : undefined;
+  musicStudio.updateLoopTrack(i, { layers, beats, ...(xy ? { xy } : {}) });
   cutPending(i, clockNow().beat);
   // Notes already scheduled ahead play as they were; the next window reads the edit.
   publish();
@@ -755,7 +911,8 @@ export function setTrackLayers(i: number, layers: MidiLayer[], beats = track(i).
  */
 export function openTrackInFullEditor(i: number, setEditorId: (id: string | null) => void, editorId: { subscribe: (fn: (v: string | null) => void) => () => void }): void {
   const t = track(i);
-  if (!(t.beats > 0) || !t.layers.length) return;
+  // A tab instrument's loop (XY, shots, pads) has no clip to play it: the quick editor edits it.
+  if (!(t.beats > 0) || !t.layers.length || t.source) return;
   const st = get(musicStudio);
   const instrument = t.instrument ?? st.instrument;
   const notes = flattenMidi({ layers: t.layers, redo: [] }).map(({ layer: _l, ...n }) => n);
@@ -847,6 +1004,11 @@ function cutPending(i: number, at: number): void {
   const time = host?.now() ?? 0;
   for (const p of rt.pendingOffs) if (p.offBeat > at) host?.send({ ...withTone(noteOff(p.instrument, p.note, 'sequencer', time), p.tone), insertChannel: loopFxChannel(i) });
   rt.pendingOffs = [];
+  for (const p of rt.xyOffs) host?.send({ ...withTone(noteOff('xy', p.note, 'sequencer', time), p.tone), loopTrack: i, insertChannel: loopFxChannel(i) });
+  rt.xyOffs = [];
+  // The XY voice and a latched arp on its tone let go, and the moves booked ahead are dropped.
+  if (rt.xySounding) host?.letGoXy?.(i);
+  rt.xySounding = false;
 }
 
 const withTone = (event: NoteEvent, tone?: string): NoteEvent => (tone ? { ...event, tone } : event);
@@ -879,9 +1041,8 @@ function stepMidi(i: number, beat: number, horizon: number, timeAt: (b: number) 
     changed = true;
   }
   if (rt.phase === 'record' && rt.recEnd !== null && beat >= rt.recEnd - 0.02) {
-    const t = track(i);
     const beats = rt.recEnd - rt.recStart;
-    const layer = notesForLayer(host!.played(), t.instrument ?? get(musicStudio).instrument, rt.recStart, rt.recEnd, rt.recStart, beats, quantizeBeats(get(musicStudio).quantize));
+    const layer = takeLayer(i, rt.recStart, rt.recEnd, rt.recStart, beats);
     commitFirstLayer(i, layer, beats, rt.recStart, rt.recEnd);
     changed = true;
   }
@@ -906,12 +1067,10 @@ function stepOverdub(i: number, beat: number): boolean {
   if (!(t.beats > 0) || beat < rt.dubFrom) return false;
   const end = Math.min(passEnd(rt.origin, t.beats, rt.dubFrom), rt.dubTo ?? Infinity);
   if (beat < end - 0.02) return false;
-  const layer = notesForLayer(host!.played(), t.instrument ?? get(musicStudio).instrument, rt.dubFrom, end, rt.origin, t.beats, quantizeBeats(get(musicStudio).quantize));
-  if (layer.length) {
-    const next = pushLayer(stackOf(i), layer, mergeMidiLayers);
-    rt.redo = next.redo;
+  const layer = takeLayer(i, rt.dubFrom, end, rt.origin, t.beats);
+  if (layer.notes.length || layer.xy.length) {
     rt.editBefore = null;
-    musicStudio.updateLoopTrack(i, { layers: next.layers, savedId: undefined });
+    keepStack(i, pushLayer(stackOf(i), layer, mergeLayers), { savedId: undefined });
     // Its notes from the window already scheduled ahead go out now.
     catchUp(i, layer, end);
   }
@@ -923,14 +1082,13 @@ function stepOverdub(i: number, beat: number): boolean {
   return true;
 }
 
-function catchUp(i: number, layer: MidiLayer, from: number): void {
+function catchUp(i: number, layer: Layer, from: number): void {
   const rt = rts[i];
-  if (rt.scheduledBeat <= from) return;
-  const t = track(i);
+  if (rt.scheduledBeat <= from || track(i).muted) return;
   const { beat, beatMs } = clockNow();
   const now = host!.now();
   const timeAt = (b: number) => Math.max(now, now + ((b - beat) * beatMs) / 1000);
-  for (const n of loopNotesInWindow(layer, rt.origin, t.beats, from, rt.scheduledBeat)) sendNote(i, n, n.at, timeAt);
+  playWindow(i, layer.notes, layer.xy, from, rt.scheduledBeat, timeAt);
 }
 
 function schedulePlay(i: number, beat: number, horizon: number, timeAt: (b: number) => number): void {
@@ -938,13 +1096,64 @@ function schedulePlay(i: number, beat: number, horizon: number, timeAt: (b: numb
   const t = track(i);
   const until = rt.stopAt === null ? horizon : Math.min(horizon, rt.stopAt);
   if (until > rt.scheduledBeat) {
-    if (!t.muted) {
-      const notes = loopNotesInWindow(flattenMidi({ layers: t.layers, redo: [] }), rt.origin, t.beats, rt.scheduledBeat, until);
-      for (const n of notes) sendNote(i, n, n.at, timeAt);
-    }
+    if (!t.muted) playWindow(i, flattenMidi({ layers: t.layers, redo: [] }), t.source === 'xy' ? mergeXy(...(t.xy ?? [])) : [], rt.scheduledBeat, until, timeAt);
     rt.scheduledBeat = until;
   }
+  // XY note-offs go out when they come due, in order with the notes.
+  if (rt.xyOffs.length) sendXyEvents(i, [], until, timeAt);
   rt.pendingOffs = rt.pendingOffs.filter((p) => p.offBeat > beat);
+}
+
+/** A loop's notes (and XY moves) in [from, to), out to the sound it plays on. */
+function playWindow(i: number, notes: MidiLayer, xy: XyLayer, from: number, to: number, timeAt: (b: number) => number): void {
+  const rt = rts[i];
+  const t = track(i);
+  const due = loopNotesInWindow(notes, rt.origin, t.beats, from, to);
+  if (t.source === 'xy') {
+    for (const p of loopXyInWindow(xy, rt.origin, t.beats, from, to)) host!.moveXy?.(p.x, p.y, timeAt(p.at), i);
+    sendXyEvents(i, due, to, timeAt);
+    return;
+  }
+  for (const n of due) sendNote(i, n, n.at, timeAt);
+}
+
+/**
+ * An XY track's notes and the offs due before `to`, sent in time order (an
+ * on before an off at the same time), as the pad sends them: the new note
+ * first, so the voice glides instead of restarting.
+ */
+function sendXyEvents(i: number, ons: Array<RecordedNote & { at: number }>, to: number, timeAt: (b: number) => number): void {
+  const rt = rts[i];
+  const t = track(i);
+  const tone = xyTone();
+  const own = { loopTrack: i, insertChannel: loopFxChannel(i) };
+  const events: Array<{ at: number; on: boolean; note: number; velocity: number; tone?: string }> = [];
+  for (const n of ons) {
+    const velocity = loopNoteVelocity(n.velocity, t.level);
+    if (velocity <= 0) continue;
+    events.push({ at: n.at, on: true, note: n.note, velocity, tone });
+    rt.xyOffs.push({ note: n.note, offBeat: rt.stopAt === null ? n.at + n.dur : Math.min(n.at + n.dur, rt.stopAt), tone });
+  }
+  const later: Rt['xyOffs'] = [];
+  for (const off of rt.xyOffs) {
+    if (off.offBeat < to) events.push({ at: off.offBeat, on: false, note: off.note, velocity: 0, tone: off.tone });
+    else later.push(off);
+  }
+  rt.xyOffs = later;
+  events.sort((a, b) => a.at - b.at || Number(b.on) - Number(a.on));
+  for (const e of events) {
+    if (e.on) {
+      rt.xySounding = true;
+      host!.send({ ...withTone(noteOn('xy', e.note, e.velocity, 'sequencer', timeAt(e.at)), e.tone), ...own });
+    } else {
+      host!.send({ ...withTone(noteOff('xy', e.note, 'sequencer', timeAt(e.at)), e.tone), ...own });
+    }
+  }
+}
+
+/** The XY pad's tone as the tab plays it (its sound in the pad's header), or its own. */
+function xyTone(): string | undefined {
+  return get(musicStudio).dress?.xy?.tone || undefined;
 }
 
 /** A loop note's velocity at fader `level` (0–1): scaled straight, 0 silent. */
@@ -961,6 +1170,11 @@ function sendNote(i: number, n: RecordedNote, at: number, timeAt: (b: number) =>
   const velocity = loopNoteVelocity(n.velocity, t.level);
   if (velocity <= 0) return;
   const offBeat = rt.stopAt === null ? at + n.dur : Math.min(at + n.dur, rt.stopAt);
+  if (t.source === 'dub' || t.source === 'pads') {
+    // A hit on the tab's own instrument: the same shot or pad, as tapped.
+    host!.hit?.(t.source, n.note, velocity, timeAt(at), Math.max(0, timeAt(offBeat) - timeAt(at)), i);
+    return;
+  }
   // Its own sound: the track's patch, and its own effects chain before the instrument's.
   const own = { loopTrack: i, insertChannel: loopFxChannel(i), ...(t.patch && !t.tone ? { patch: t.patch } : {}) };
   host!.send({ ...withTone(noteOn(instrument, n.note, velocity, 'sequencer', timeAt(at)), t.tone), ...own });
@@ -1074,7 +1288,7 @@ export function suggestedLoopName(i: number): string {
   const s = get(musicStudio);
   const bars = isAudio(i) ? audioEngine()?.bars(i) ?? 0 : Math.round(t.beats / BEATS_PER_BAR);
   if (t.customName && t.name) return t.name;
-  const label = t.name.split(' · ')[0] || (isAudio(i) ? `Audio ${i + 1}` : INSTRUMENT_LABELS[t.instrument ?? s.instrument]);
+  const label = t.name.split(' · ')[0] || (isAudio(i) ? `Audio ${i + 1}` : trackSoundLabel(t, s.instrument));
   return autoLoopName(label, Math.max(1, bars), launchClockTempo(), isAudio(i) ? null : s.key);
 }
 
@@ -1106,10 +1320,18 @@ export async function saveLoopTrack(i: number, name = suggestedLoopName(i)): Pro
     bpm: launchClockTempo(),
     key: { ...s.key },
     instrument,
-    ...(t.tone ? { tone: t.tone } : {}),
+    ...(t.tone && !t.source ? { tone: t.tone } : {}),
+    ...(t.source ? { source: t.source } : {}),
+    ...(t.source === 'xy' ? { xy: mergeXy(...(t.xy ?? [])) } : {}),
     notes,
     createdAt: Date.now(),
   });
+  if (t.source) {
+    // A tab instrument's loop plays from the looper only: no session clip for it.
+    musicStudio.updateLoopTrack(i, { savedId: id, name: t.name || name.split(' · ')[0] });
+    publish();
+    return id;
+  }
   const loop: RecordedLoop = { kind: 'recorded', id: generateUUID(), name, role: roleForRecording(instrument, notes), instrument, beats: t.beats, notes, createdAt: Date.now() };
   musicStudio.addSessionClip(loop.role, clipFromRecording(loop));
   musicStudio.updateLoopTrack(i, { savedId: id, name: t.name || name.split(' · ')[0] });
@@ -1158,7 +1380,7 @@ export async function loadUserLoopToTrack(id: string, target?: number): Promise<
     return i;
   }
   const instrument = INSTRUMENTS.includes(loop.instrument as InstrumentId) ? (loop.instrument as InstrumentId) : null;
-  loadMidiIntoTrack(i, { name: loop.name, beats: loop.beats, notes: loop.notes, instrument, tone: loop.tone, savedId: loop.id });
+  loadMidiIntoTrack(i, { name: loop.name, beats: loop.beats, notes: loop.notes, instrument, tone: loop.tone, savedId: loop.id, source: isLoopSource(loop.source) ? loop.source : undefined, xy: loop.xy });
   selectLoopTrack(i);
   return i;
 }
@@ -1166,7 +1388,8 @@ export async function loadUserLoopToTrack(id: string, target?: number): Promise<
 /** Put a MIDI loop from My loops into the session grid, in its part's first empty slot. */
 export async function insertUserLoopInSession(id: string): Promise<boolean> {
   const loop = await readUserLoop(id);
-  if (!loop || loop.kind !== 'midi') return false;
+  // A tab instrument's loop (XY, shots, pads) has no clip to play it.
+  if (!loop || loop.kind !== 'midi' || loop.source) return false;
   const instrument = INSTRUMENTS.includes(loop.instrument as InstrumentId) ? (loop.instrument as InstrumentId) : get(musicStudio).instrument;
   const rec: RecordedLoop = { kind: 'recorded', id: generateUUID(), name: loop.name, role: roleForRecording(instrument, loop.notes), instrument, beats: Math.min(loop.beats, MAX_LOOP_BARS * BEATS_PER_BAR), notes: loop.notes.filter((n) => n.beat < MAX_LOOP_BARS * BEATS_PER_BAR), createdAt: Date.now() };
   musicStudio.addSessionClip(rec.role, { ...clipFromRecording(rec), ...(loop.tone ? { tone: loop.tone } : {}) });
@@ -1232,6 +1455,8 @@ export function _trackRuntime(i: number): Readonly<Rt> {
 /** For tests: forget everything. */
 export function _resetStationForTests(): void {
   for (let i = 0; i < LOOP_TRACK_COUNT; i++) rts[i] = freshRt();
+  xyMoves = [];
+  hitsPlayed.clear();
   host = null;
 }
 

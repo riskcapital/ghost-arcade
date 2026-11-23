@@ -217,7 +217,8 @@
       {#each t.layers as _, li}<button class:active={shownLayer === li} onclick={() => (shownLayer = li)}>L{li + 1}</button>{/each}
     </div>
     <span class="sp"></span>
-    <button class="text-btn small" onclick={openFull} title="Edit the loop in the full piano roll: edits play on the track at once (Undo brings back what it was)">Open full editor</button>
+    <!-- A tab instrument's loop (XY, shots, pads) is edited here only. -->
+    {#if !t.source}<button class="text-btn small" onclick={openFull} title="Edit the loop in the full piano roll: edits play on the track at once (Undo brings back what it was)">Open full editor</button>{/if}
     <button class="text-btn small pri" onclick={() => onsave?.()}>Save to library</button>
     <button class="text-btn small" onclick={() => onclose?.()} aria-label="Close the editor">Close</button>
   </div>

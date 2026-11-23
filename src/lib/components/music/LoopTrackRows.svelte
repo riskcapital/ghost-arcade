@@ -14,12 +14,22 @@
     redoLoopLayer,
     saveLoopTrack,
     selectLoopTrack,
+    setLoopTrackSound,
     suggestedLoopName,
     undoLoopLayer,
     audioPeaks,
   } from '../../music/loopStation';
   import { beatNow, trackProgress } from '../../music/loopUi';
-  import { setTrackKind, type LoopTrackKind } from '../../music/loopTrack';
+  import { parseSoundValue, setTrackKind, type LoopTrackKind } from '../../music/loopTrack';
+  import { SOURCE_LABELS, trackSoundLabel, type LoopSource } from '../../music/loopSources';
+  /** The tab instruments a MIDI track can record. */
+  const TAB_SOURCES: LoopSource[] = ['xy'];
+  /** What the track's menu shows: a tab instrument, an instrument, or This tab. */
+  const pickValue = (t: { source?: LoopSource; instrument: InstrumentId | null }) => (t.source ? `src:${t.source}` : t.instrument ? `inst:${t.instrument}` : '');
+  function pick(i: number, value: string) {
+    const sound = parseSoundValue(value);
+    if (sound) setLoopTrackSound(i, sound);
+  }
   import { musicMidiDevices } from '../../music/midiNotes';
   import { INSTRUMENT_LABELS } from '../../music/instruments';
   import { INSTRUMENTS, type InstrumentId } from '../../music/noteEvents';
@@ -125,9 +135,14 @@
                 <button class:active={t.kind === 'audio'} onclick={() => setKind(i, 'audio')}>Audio</button>
               </div>
               {#if t.kind === 'midi'}
-                <select value={t.instrument ?? ''} onchange={(e) => musicStudio.updateLoopTrack(i, { instrument: ((e.target as HTMLSelectElement).value || null) as InstrumentId | null })} aria-label="Instrument" title="What it records and plays: the instrument you play, or a fixed one">
-                  <option value="">Follow played</option>
-                  {#each INSTRUMENTS as id}<option value={id}>{INSTRUMENT_LABELS[id]}</option>{/each}
+                <select value={pickValue(t)} onchange={(e) => pick(i, (e.target as HTMLSelectElement).value)} aria-label="Instrument" title="What it records and plays: what you play on the tab showing, or a fixed instrument">
+                  <option value="">This tab</option>
+                  <optgroup label="Tab instruments">
+                    {#each TAB_SOURCES as id}<option value="src:{id}">{SOURCE_LABELS[id]}</option>{/each}
+                  </optgroup>
+                  <optgroup label="Instruments">
+                    {#each INSTRUMENTS.filter((id) => (id !== 'xy' && id !== 'shots') || (!t.source && t.instrument === id)) as id}<option value="inst:{id}">{INSTRUMENT_LABELS[id]}</option>{/each}
+                  </optgroup>
                 </select>
               {:else}
                 <select value={t.input} onchange={(e) => musicStudio.updateLoopTrack(i, { input: Number((e.target as HTMLSelectElement).value) })} aria-label="Input" title="The band input it records">
@@ -136,8 +151,8 @@
               {/if}
             </div>
           {:else}
-            <div class="name">{t.name || (t.kind === 'audio' ? `Audio ${i + 1}` : INSTRUMENT_LABELS[t.instrument ?? s.instrument])}</div>
-            <div class="ga-eyebrow sub">{t.kind === 'audio' ? `Input ${t.input + 1}` : INSTRUMENT_LABELS[t.instrument ?? s.instrument]} · {bars} bar{bars === 1 ? '' : 's'}{v.phase === 'overdub' ? ` · pass ${v.layers + 1}` : ''}</div>
+            <div class="name">{t.name || (t.kind === 'audio' ? `Audio ${i + 1}` : trackSoundLabel(t, s.instrument))}</div>
+            <div class="ga-eyebrow sub">{t.kind === 'audio' ? `Input ${t.input + 1}` : trackSoundLabel(t, s.instrument)} · {bars} bar{bars === 1 ? '' : 's'}{v.phase === 'overdub' ? ` · pass ${v.layers + 1}` : ''}</div>
             <div class="chips">
               {#each { length: v.layers } as _, li}<b class:new={v.phase === 'overdub' && li === v.layers - 1}>L{li + 1}</b>{/each}
               <button onclick={() => undoLoopLayer(i)} disabled={!v.layers} title="Undo the last layer (Cmd+Z)">Undo</button>

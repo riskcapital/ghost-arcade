@@ -7,7 +7,7 @@
   import { musicStudio } from '../../music/musicStudioStore';
   import { loopStationView } from '../../music/loopStation';
   import { LOOP_TRACK_COUNT } from '../../music/loopTrack';
-  import { INSTRUMENT_LABELS } from '../../music/instruments';
+  import { trackSoundLabel } from '../../music/loopSources';
   import { setStudioVoice, studioTarget } from '../../music/studioTarget';
   import { loopTrackOfSource, loopTrackSource } from '../../music/visualVoices';
   import { showToast } from '../../stores/errorToast';
@@ -18,7 +18,7 @@
   const voiceName = (file: string) => file.replace(/^VX-/, '').replace(/\.fs$/, '').replace(/[-_]/g, ' ');
   const trackName = (i: number) => {
     const t = tracks[i];
-    return (t?.name || (t?.kind === 'audio' ? `Audio ${i + 1}` : t?.instrument ? INSTRUMENT_LABELS[t.instrument] : `Track ${i + 1}`)).split(' · ')[0];
+    return (t?.name || (t?.kind === 'audio' ? `Audio ${i + 1}` : t?.instrument || t?.source ? trackSoundLabel(t, 'synth') : `Track ${i + 1}`)).split(' · ')[0];
   };
   const rows = $derived(
     Array.from({ length: $musicStudio.loopStation.trackCount }, (_, i) => ({ i, k: voices.findIndex((v) => v.live === loopTrackSource(i)) })).filter((r) => r.k >= 0 || r.i === sel),
