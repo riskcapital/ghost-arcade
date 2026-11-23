@@ -1129,8 +1129,15 @@ function startAudioClip(role: LoopRole, clip: AudioClip, now: boolean): void {
     },
     failed: () => {
       // The old clip carries on; the part goes back to it.
-      if (was !== undefined && player.clipIn(role) === was) audioParts.set(role, was);
+      const back = was !== undefined && player.clipIn(role) === was ? was : undefined;
+      if (back !== undefined) audioParts.set(role, back);
       else audioParts.delete(role);
+      // Its visual and effects go back too: the failed clip never played.
+      if (clipDressing.get(role) === clip.id || dressingTimers.has(role)) {
+        const old = back !== undefined ? findClip(get(musicStudio).session, back) : null;
+        if (old) dressTrack(role, old.clip, 0);
+        else undressTrack(role);
+      }
       unqueue();
       showToast(`Could not load the audio clip "${clip.name}": the part keeps playing what it was.`, 'warning');
     },
