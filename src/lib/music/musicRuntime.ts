@@ -370,7 +370,7 @@ export function letGoXy(): void {
   if (latchedArps.delete('xy')) publishSustaining();
 }
 
-/** Every atmosphere on the pads stops, with a short fade (the pads' panel closed). */
+/** Every atmosphere on the pads stops, with a short fade. */
 export function stopPadAtmospheres(): void {
   audio.stopPadLoops(0.4);
   syncPadLoops();
