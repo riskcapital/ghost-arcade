@@ -18,6 +18,7 @@
 
 import { BEATS_PER_BAR, EARLY_GRACE_BEATS, type PlayedNote, type RecordedNote } from './loopRecorder';
 import { INSTRUMENTS, clampNote, clampVelocity, type InstrumentId } from './noteEvents';
+import { SOURCE_INSTRUMENT, alignXy, isLoopSource, normalizeXyLayers, trackSoundLabel, type LoopSource, type XyLayer } from './loopSources';
 
 /** Tracks kept (the most a station shows); how many show is the station's `trackCount`. */
 export const LOOP_TRACK_COUNT = 8;
@@ -176,6 +177,23 @@ export function notesForLayer(
     out.push({ beat: snapped, dur, note: clampNote(n.note), velocity: clampVelocity(n.velocity) });
   }
   return sortNotes(out);
+}
+
+/**
+ * The XY pad's notes as a layer (notesForLayer): a note that ran straight
+ * into the next (the pad gliding) still does after the snap, so a quantized
+ * XY loop glides where it was played gliding.
+ */
+export function xyNotesForLayer(played: readonly PlayedNote[], from: number, to: number, origin: number, beats: number, grid: number): MidiLayer {
+  const raw = notesForLayer(played, 'xy', from, to, origin, beats, 0);
+  if (!(grid > 0)) return raw;
+  const snapped = raw.map((n) => ({ ...n, beat: wrapBeat(Math.round(n.beat / grid) * grid, beats) }));
+  for (let k = 0; k < raw.length - 1; k++) {
+    const glides = raw[k].beat + raw[k].dur >= raw[k + 1].beat - 1e-3;
+    const gap = snapped[k + 1].beat - snapped[k].beat;
+    if (glides && gap > 0) snapped[k].dur = Math.min(beats, gap);
+  }
+  return sortNotes(snapped);
 }
 
 /** Notes the loop plays in [fromBeat, toBeat), with pass 0 starting on `origin`. */
@@ -360,6 +378,10 @@ export interface LoopTrackData {
   tone?: string;
   /** MIDI on the synth or keys: the built-in patch it plays (pluck, organ…), whatever the keys play. */
   patch?: string;
+  /** MIDI from a tab instrument that is not a keyboard (the XY pad, the dub shots, the drum pads); absent: the keys. */
+  source?: LoopSource;
+  /** An XY track: the puck's movement, one list of points per layer (same order as `layers`). */
+  xy?: XyLayer[];
   /** Audio: which band input (0-3) it records. */
   input: number;
   afterRecord: AfterRecord;
@@ -508,13 +530,19 @@ export function normalizeTrack(raw: unknown, i: number): LoopTrackData {
   const base = blankTrack(i, kind);
   const beats = kind === 'midi' ? clamp(Math.round(finite(r.beats, 0) / BEATS_PER_BAR), 0, MAX_MIDI_LOOP_BARS) * BEATS_PER_BAR : 0;
   const layers = beats > 0 ? (Array.isArray(r.layers) ? r.layers : []).slice(-MAX_LAYERS).map((l) => normalizeLayer(l, beats)) : [];
+  const source = kind === 'midi' && isLoopSource(r.source) ? r.source : undefined;
+  // The points of the layers kept (the newest MAX_LAYERS), in the same order.
+  const dropped = Math.max(0, (Array.isArray(r.layers) ? r.layers.length : 0) - MAX_LAYERS);
+  const rawXy = Array.isArray(r.xy) ? r.xy.slice(dropped) : [];
   return {
     ...base,
     name: typeof r.name === 'string' ? r.name.slice(0, 80) : '',
     ...(r.customName === true && typeof r.name === 'string' && r.name.trim() ? { customName: true } : {}),
     instrument: INSTRUMENTS.includes(r.instrument as InstrumentId) ? (r.instrument as InstrumentId) : null,
-    ...(typeof r.tone === 'string' && r.tone ? { tone: r.tone } : {}),
-    ...(typeof r.patch === 'string' && r.patch ? { patch: r.patch.slice(0, 40) } : {}),
+    ...(typeof r.tone === 'string' && r.tone && !source ? { tone: r.tone } : {}),
+    ...(typeof r.patch === 'string' && r.patch && !source ? { patch: r.patch.slice(0, 40) } : {}),
+    ...(source ? { source, instrument: SOURCE_INSTRUMENT[source] } : {}),
+    ...(source === 'xy' ? { xy: normalizeXyLayers(rawXy, layers.length, beats) } : {}),
     input: clamp(Math.round(finite(r.input, base.input)), 0, 3),
     afterRecord: r.afterRecord === 'overdub' || r.afterRecord === 'play' ? r.afterRecord : base.afterRecord,
     level: clamp(finite(r.level, base.level), 0, 1),
@@ -641,18 +669,21 @@ export function renameTrack(t: LoopTrackData, name: string): LoopTrackData {
 /** The insert-effects channel of loop track `i`: its own chain, saved with the project's inserts. */
 export const loopFxChannel = (i: number) => `loop:${i}`;
 
-/** A loop track's sound: an instrument, and on the synth or keys a built-in patch or a library tone. */
+/** A loop track's sound: an instrument, and on the synth or keys a built-in patch or a library tone; or a tab instrument (source). */
 export interface LoopSound {
   instrument: InstrumentId | null;
   patch?: string;
   tone?: string;
+  source?: LoopSource;
 }
 
 /**
  * The sound menu's value for a track, as the keyboard's menu writes them:
- * "synth:pluck", "keys:organ", "tone:<id>", "inst:<id>", or "" (follow played).
+ * "synth:pluck", "keys:organ", "tone:<id>", "inst:<id>", "src:xy" (a tab
+ * instrument), or "" (this tab: whatever the tab showing when it records plays).
  */
-export function soundValue(t: Pick<LoopTrackData, 'instrument' | 'patch' | 'tone'>): string {
+export function soundValue(t: Pick<LoopTrackData, 'instrument' | 'patch' | 'tone' | 'source'>): string {
+  if (t.source) return `src:${t.source}`;
   if (!t.instrument) return '';
   if (t.tone) return `tone:${t.tone}`;
   if ((t.instrument === 'synth' || t.instrument === 'keys') && t.patch) return `${t.instrument}:${t.patch}`;
@@ -667,6 +698,7 @@ export function parseSoundValue(value: string): LoopSound | null {
   if (kind === 'inst') return INSTRUMENTS.includes(id as InstrumentId) ? { instrument: id as InstrumentId } : null;
   if (kind === 'synth' || kind === 'keys') return { instrument: kind, patch: id };
   if (kind === 'tone') return { instrument: 'synth', tone: id };
+  if (kind === 'src') return isLoopSource(id) ? { instrument: SOURCE_INSTRUMENT[id], source: id } : null;
   return null;
 }
 
@@ -677,11 +709,16 @@ export function parseSoundValue(value: string): LoopSound | null {
  */
 export function setTrackSound(t: LoopTrackData, sound: LoopSound, labels: Record<string, string>): LoopTrackData {
   if (t.kind !== 'midi') return t;
-  const { tone: _tone, patch: _patch, ...rest } = t;
-  const next: LoopTrackData = { ...rest, instrument: sound.instrument, ...(sound.patch ? { patch: sound.patch } : {}), ...(sound.tone ? { tone: sound.tone } : {}) };
-  const old = t.instrument ? labels[t.instrument] : undefined;
-  if (!t.customName && sound.instrument && old && t.name && (t.name === old || t.name.startsWith(`${old} `))) {
-    next.name = labels[sound.instrument] + t.name.slice(old.length);
+  const { tone: _tone, patch: _patch, source: _source, xy, ...rest } = t;
+  const source = sound.source && isLoopSource(sound.source) ? sound.source : undefined;
+  const next: LoopTrackData = source
+    ? { ...rest, instrument: SOURCE_INSTRUMENT[source], source, ...(source === 'xy' ? { xy: alignXy(xy, t.layers.length) } : {}) }
+    : { ...rest, instrument: sound.instrument, ...(sound.patch ? { patch: sound.patch } : {}), ...(sound.tone ? { tone: sound.tone } : {}) };
+  const label = (x: LoopTrackData) => (x.source ? trackSoundLabel(x, 'synth') : x.instrument ? labels[x.instrument] : undefined);
+  const old = label(t);
+  const now = label(next);
+  if (!t.customName && now && old && t.name && (t.name === old || t.name.startsWith(`${old} `))) {
+    next.name = now + t.name.slice(old.length);
   }
   return next;
 }
