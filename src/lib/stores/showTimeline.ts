@@ -386,8 +386,14 @@ function rollRun(s: Pick<ShowTimelineState, 'doc' | 'duration'>): boolean {
 }
 
 /** The span Loop plays: the in and out points when there are some. */
-function loopArea(s: Pick<ShowTimelineState, 'loop' | 'workArea'>): ShowWorkArea | null {
-  return s.loop && s.workArea ? s.workArea : null;
+function loopArea(s: Pick<ShowTimelineState, 'loop' | 'workArea' | 'duration'>): ShowWorkArea | null {
+  if (!s.loop || !s.workArea) return null;
+  // In / out points left past a show that got shorter: clamp them inside it,
+  // or the loop wrap and the clock fight every tick.
+  const dur = s.duration;
+  if (!(dur > 0) || s.workArea.end <= dur) return s.workArea;
+  if (s.workArea.start >= dur - 1e-6) return null;
+  return { ...s.workArea, end: dur };
 }
 
 // ─── Pure arrangement maths (exported for tests) ─────────────────────────
@@ -1463,8 +1469,9 @@ function forgetPhrases(): boolean {
   return from !== null;
 }
 
-/** The sections as the player sees them (the playing phrase's end action). */
-function playerSections(s: Pick<ShowTimelineState, 'sections'>): readonly TimelineSection[] {
+/** The sections as the player sees them (the playing phrase's end action).
+ *  GO and its words read these too, or GO on a looping phrase does nothing. */
+export function playerSections(s: Pick<ShowTimelineState, 'sections'>): readonly TimelineSection[] {
   return phrase.activeId ? withPhraseEnd(s.sections, phrase.activeId) : s.sections;
 }
 
@@ -4292,7 +4299,7 @@ export const showTimeline = {
       }
       return { kind: 'none' };
     }
-    const result = goSections(sectionPlayer, s.sections, s.tempo, s.currentTime, s.isPlaying, sectionClock());
+    const result = goSections(sectionPlayer, playerSections(s), s.tempo, s.currentTime, s.isPlaying, sectionClock());
     if (result.kind === 'resume') {
       runSectionEvents(result.events);
       transportClock.reset();

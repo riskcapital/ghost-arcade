@@ -8,7 +8,7 @@
  * here writes a store while the show plays.
  */
 import { derived, get, writable, type Readable } from 'svelte/store';
-import { showTimeline, showSectionStatus } from '../../stores/showTimeline';
+import { playerSections, showTimeline, showSectionStatus } from '../../stores/showTimeline';
 import { cueList, type CueFireSource } from '../../show/cueList';
 import { distinct, showSlice } from '../../components/show/timeline/timelineSlices';
 import { sectionAt } from '../sections/sectionModel';
@@ -59,7 +59,7 @@ export function goNow(): { decision: GoDecision; standby: StackItem | null; stac
   const decision = goDecision({
     playing: s.isPlaying,
     sectionsRun: s.doc === 'timeline' && !showTimeline.isChasing(),
-    sections: s.sections,
+    sections: playerSections(s),
     hereId: sectionAt(s.sections, s.currentTime)?.id ?? null,
     holdId: status.holdId,
     vampExitId: status.vampExitId,
@@ -72,7 +72,7 @@ export function goNow(): { decision: GoDecision; standby: StackItem | null; stac
 /** The words under the big GO: what it will do. */
 export function goNowWords(): string {
   const { decision, standby } = goNow();
-  return goWords(decision, get(showTimeline).sections, standby ? stackItemName(standby) : '');
+  return goWords(decision, playerSections(get(showTimeline)), standby ? stackItemName(standby) : '');
 }
 
 /** GO: the Timeline's one GO (toolbar, Perform, Enter, MIDI / OSC show:go). */
