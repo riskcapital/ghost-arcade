@@ -13,7 +13,7 @@ import { createDurableAssetRefFromFile } from '$lib/storage/assetRegistry';
 import { generateUUID, type MediaSource } from '$lib/types';
 import { prepareVideoImport } from '$lib/video/videoImport';
 import { AUDIO_FILE_HINT, mediaFileKind } from './mediaFileKind';
-import { configureSourceVideoElement, startSourceVideoElement } from './sourceVideoElement';
+import { configureSourceVideoElement, sourceVideoPreload, startSourceVideoElement } from './sourceVideoElement';
 
 /** The file cannot be a layer source; `message` says why, for a toast. */
 export class LayerMediaRejected extends Error {
@@ -49,6 +49,9 @@ export async function createLayerMediaSource(file: File): Promise<MediaSource> {
     video.src = url;
     // Chromium first, then the bundled ffmpeg for what Chromium cannot read.
     const imported = await prepareVideoImport(video, assetRef);
+    // Look done: beside the core the element goes back to metadata only, so
+    // Chromium stops buffering a file the core is the one playing.
+    video.preload = sourceVideoPreload();
     if (!isDesktopApp && video.error) {
       // The browser build plays through this element; nothing else can.
       throw new LayerMediaRejected("this browser can't play this video format.", 'error');

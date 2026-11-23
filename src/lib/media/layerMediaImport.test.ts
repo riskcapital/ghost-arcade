@@ -37,6 +37,14 @@ describe('mapping layer media import', () => {
     expect(source.videoElement).toBe(created[0]);
   });
 
+  it('probes with a full preload, then leaves the element metadata only beside the core', async () => {
+    let preloadDuringProbe = '';
+    mocks.prepare.mockImplementation(async (video: FakeVideo) => { preloadDuringProbe = video.preload; return { durationSeconds: 3 }; });
+    await createLayerMediaSource(file('show.mov', ''));
+    expect(preloadDuringProbe).toBe('auto');
+    expect(created[0].preload).toBe('metadata');
+  });
+
   it('turns an audio file away with a hint instead of making an image layer', async () => {
     await expect(createLayerMediaSource(file('song.wav', 'audio/wav'))).rejects.toThrow(/Show timeline/);
     await expect(createLayerMediaSource(file('song.mp3'))).rejects.toBeInstanceOf(LayerMediaRejected);

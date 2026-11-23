@@ -1,3 +1,5 @@
+import { sourceVideoIsMetadataOnly } from '$lib/media/sourceVideoElement';
+
 export interface VideoTrimPlaybackState {
   playbackMode?: 'loop' | 'once' | 'bounce' | 'timelapse';
   trimStart?: number;
@@ -68,7 +70,9 @@ function applyVideoTrimBoundary(video: HTMLVideoElement, state: VideoTrimPlaybac
   const action = getVideoTrimAction(video.currentTime, video.duration, state, ended);
   if (action === 'loop' || action === 'clamp-start') {
     video.currentTime = bounds.start;
-    if (action === 'loop' && state.isPlaying !== false && video.paused) {
+    // Beside the render core the element only carries metadata and the core
+    // plays the file; starting it here would decode the video a second time.
+    if (action === 'loop' && state.isPlaying !== false && video.paused && !sourceVideoIsMetadataOnly()) {
       void video.play().catch(() => {});
     }
   } else if (action === 'stop') {
