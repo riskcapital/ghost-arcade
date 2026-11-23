@@ -267,9 +267,11 @@ function stopSession(): void {
   contentRecorder.stop();
   unsubContent?.();
   unsubContent = null;
+  // Dispose first: it closes any open pass (a Live Key latch mid-move),
+  // and those points land through the store subscription below.
+  session?.dispose();
   unsubStore?.();
   unsubStore = null;
-  session?.dispose();
   session = null;
   syncRecordUi();
 }
