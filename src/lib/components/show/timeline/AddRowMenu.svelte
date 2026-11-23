@@ -10,7 +10,7 @@
   import { addRow } from '../../../timeline/sound/soundCommands';
   import { startGroupRow } from './groupRowUi';
   import { cameraLaneShown } from './cameraLaneUi';
-  import { ledRows } from './ledRowsUi';
+  import { ledGroupFolded, ledRows } from './ledRowsUi';
   import { askForRow, sendFold, type RowKind } from './rowSections';
   import { setLayersOpen } from './layersSection';
   import TimelineIcon, { type TimelineIconName } from './TimelineIcon.svelte';
@@ -64,7 +64,13 @@
         askForRow('camera');
         sendFold({ kind: 'open', id: 'stage' });
         break;
-      case 'leds': break;
+      case 'leds':
+        // One row per WLED controller, always there: show them (unfold the
+        // LED group and the Stage section that holds it).
+        askForRow('leds');
+        ledGroupFolded.set(false);
+        sendFold({ kind: 'open', id: 'stage' });
+        break;
       case 'line':
         if (anchor) online(anchor);
         askForRow('control');
