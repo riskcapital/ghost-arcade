@@ -9,7 +9,11 @@ import { writable } from 'svelte/store';
 const state = writable<Record<string, unknown>>({ isPlaying: false, tempo: null, currentTime: 0, zoom: 50, selection: null });
 let source: ((nowMs: number) => { beat: number; bpm: number } | null) | null = null;
 
-vi.mock('../../stores/showTimeline', () => ({ showTimeline: { subscribe: (fn: (v: unknown) => void) => state.subscribe(fn) } }));
+const status = writable<{ holdId: string | null }>({ holdId: null });
+vi.mock('../../stores/showTimeline', () => ({
+  showTimeline: { subscribe: (fn: (v: unknown) => void) => state.subscribe(fn) },
+  showSectionStatus: { subscribe: (fn: (v: { holdId: string | null }) => void) => status.subscribe(fn) },
+}));
 vi.mock('../../stores/launchClock', () => ({ setShowBeatSource: (s: typeof source) => { source = s; } }));
 
 const { installShowLaunchClock } = await import('./showLaunchClock');
@@ -49,6 +53,19 @@ describe('show launch clock anchor', () => {
     now = 300;
     state.update((s) => ({ ...s, isPlaying: true }));
     expect(source!(300)!.beat).toBeCloseTo(5.1, 9);
+    uninstall();
+  });
+
+  it('free-runs the beat through a Hold section', () => {
+    let now = 5000;
+    const uninstall = installShowLaunchClock(() => now);
+    state.set({ isPlaying: true, tempo, currentTime: 20, zoom: 50, selection: null });
+    status.set({ holdId: 'h' });
+    const start = source!(now)!.beat;
+    now += 2000;
+    // 2 s at 120 bpm: 4 beats on, not clamped to a quarter second.
+    expect(source!(now)!.beat - start).toBeCloseTo(4, 6);
+    status.set({ holdId: null });
     uninstall();
   });
 });

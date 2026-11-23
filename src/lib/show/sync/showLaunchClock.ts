@@ -9,7 +9,8 @@
  */
 import { engineNowMs, renderClockActive } from '../../recording/renderClock';
 import type { ShowTempoMap } from '../../types';
-import { showTimeline } from '../../stores/showTimeline';
+import { get } from 'svelte/store';
+import { showSectionStatus, showTimeline } from '../../stores/showTimeline';
 import { setShowBeatSource } from '../../stores/launchClock';
 import { barBeatAt, beatAtSeconds, secondsAtBar } from '../tempoMap';
 import { quartersPerBarAt, showTempoAt } from './beatChase';
@@ -18,6 +19,8 @@ interface Anchor {
   t: number;
   at: number;
   map: ShowTempoMap;
+  /** A Hold section: the playhead waits, the beat runs on (free-run). */
+  holding?: boolean;
 }
 
 /** Beat and tempo for a playing show at `nowMs`, from its last published
@@ -25,9 +28,23 @@ interface Anchor {
  *  launches land on its bars in 3/4 or 6/8 too. */
 export function showBeatAt(anchor: Anchor | null, nowMs: number): { beat: number; bpm: number; barQuarters: number; barOrigin: number } | null {
   if (!anchor) return null;
+  const { map } = anchor;
+  if (anchor.holding) {
+    // Held at a section end: beat LFOs, phrases and bar takeovers keep
+    // going at the hold's tempo and metre instead of stepping every 0.25 s.
+    const bpm = showTempoAt(map, anchor.t);
+    const base = beatAtSeconds(map, anchor.t);
+    const bar = barBeatAt(map, anchor.t).bar;
+    const segBar = map.segments.reduce((b, s) => (s.bar <= bar ? s.bar : b), map.segments[0]?.bar ?? 1);
+    return {
+      beat: base + (Math.max(0, nowMs - anchor.at) / 1000) * (bpm / 60),
+      bpm,
+      barQuarters: quartersPerBarAt(map, anchor.t),
+      barOrigin: beatAtSeconds(map, secondsAtBar(map, Math.min(segBar, bar))),
+    };
+  }
   const run = Math.max(-0.25, Math.min(0.25, (nowMs - anchor.at) / 1000));
   const t = anchor.t + run;
-  const { map } = anchor;
   // Bars count from the first bar of the segment in force (its metre).
   const bar = barBeatAt(map, t).bar;
   const segBar = map.segments.reduce((b, s) => (s.bar <= bar ? s.bar : b), map.segments[0]?.bar ?? 1);
@@ -52,12 +69,19 @@ export function installShowLaunchClock(now: () => number = () => engineNowMs()):
       anchor = null;
       return;
     }
-    if (anchor && anchor.t === s.currentTime && anchor.map === s.tempo) return;
-    anchor = { t: s.currentTime, at: now(), map: s.tempo };
+    const holding = s.isPlaying && !!get(showSectionStatus).holdId;
+    if (anchor && anchor.t === s.currentTime && anchor.map === s.tempo && !!anchor.holding === holding) return;
+    anchor = { t: s.currentTime, at: now(), map: s.tempo, holding };
+  });
+  // A hold starts or ends without the playhead moving: re-anchor then too.
+  const unsubHold = showSectionStatus.subscribe((st) => {
+    if (!anchor || !!anchor.holding === !!st.holdId) return;
+    anchor = { ...anchor, at: now(), holding: !!st.holdId && get(showTimeline).isPlaying };
   });
   setShowBeatSource((nowMs) => showBeatAt(anchor, nowMs));
   return () => {
     unsubscribe();
+    unsubHold();
     setShowBeatSource(null);
   };
 }
