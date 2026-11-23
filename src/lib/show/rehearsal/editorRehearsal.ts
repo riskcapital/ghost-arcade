@@ -8,7 +8,7 @@
  * without a jump, otherwise from a live capture of what the editor played.
  */
 import { get, writable } from 'svelte/store';
-import { showTimeline } from '../../stores/showTimeline';
+import { showTimeline, type ShowTimelineState } from '../../stores/showTimeline';
 import { project } from '../../stores/layers';
 import { cueList } from '../cueList';
 import { liveTakeover, takeoverSummary } from '../takeover/liveTakeover';
@@ -16,6 +16,7 @@ import { holdTakeoverForRender, releaseTakeoverRenderHolds } from '../../stores/
 import { clipAudioBus } from '../../audio/clipAudioBus';
 import { invoke } from '../../bridge';
 import { showMuxTracks } from '../showAudioExport';
+import { discardSoundtrackWav, openSoundtrackWav, TimelineSoundStream } from '../../timeline/sound/soundExport';
 import { muxSidecarAudio, startRecordingAudioSidecar, type AudioSidecar } from '../../recording/recorder';
 import {
   REHEARSAL_ALIVE_MS,
@@ -302,6 +303,10 @@ export function installEditorRehearsal(): () => void {
     }
     if (plan.kind === 'discontinuous') console.info(`[Rehearsal] live sound capture: ${plan.reason}`);
     const s = get(showTimeline);
+    if (plan.kind === 'exact' && s.doc === 'timeline' && await muxTimelineSound(s, plan, msg.videoPath, msg.durationSeconds)) {
+      session.sidecar?.discard();
+      return { ok: true, mode: 'exact' };
+    }
     if (plan.kind === 'exact') {
       const tracks = planMuxTracks(showMuxTracks(s.audioTracks), plan);
       if (tracks.length > 0) {
@@ -448,3 +453,44 @@ export function installEditorRehearsal(): () => void {
     channel.close();
   };
 }
+
+/**
+ * An exact recording's sound as the show plays it (effects, fades, levels,
+ * ducking, lines on the sound rows), not the raw song files: the Timeline's
+ * sound rendered to a WAV and put under the picture. False: not possible
+ * here (the raw files are used instead).
+ */
+async function muxTimelineSound(
+  s: ShowTimelineState,
+  plan: { showFrom: number; videoAt: number; length: number },
+  videoPath: string,
+  videoSeconds: number,
+): Promise<boolean> {
+  if (!s.audioTracks.some((t) => !t.muted && t.url && t.volume > 0)) return false;
+  const file = await openSoundtrackWav(48000).catch(() => null);
+  if (!file) return false;
+  let closed = false;
+  try {
+    const stream = await TimelineSoundStream.open(s, plan.showFrom + plan.length, { sampleRate: 48000, sink: file });
+    if (!stream) return false;
+    await stream.finish();
+    await file.close();
+    closed = true;
+    const result = await invoke<{ success?: boolean; error?: string }>('show_audio_mux', {
+      videoPath,
+      tracks: [{ path: file.path, startTime: plan.videoAt, offset: plan.showFrom, duration: plan.length, volume: 1 }],
+      showDuration: videoSeconds,
+      renderDuration: videoSeconds,
+      loop: false,
+    });
+    if (!result?.success) console.warn('[Rehearsal] show sound mux failed, using the song files:', result?.error);
+    return !!result?.success;
+  } catch (err) {
+    console.warn('[Rehearsal] show sound render failed, using the song files:', err);
+    return false;
+  } finally {
+    if (!closed) await file.close().catch(() => {});
+    await discardSoundtrackWav(file.path);
+  }
+}
+
