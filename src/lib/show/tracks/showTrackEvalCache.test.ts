@@ -40,6 +40,9 @@ function referencePreloads(tracks: ShowLayerTrack[], t: number) {
       const startsIn = clip.startTime - t;
       if (startsIn <= 0) continue;
       if (startsIn > 4) break;
+      // Already dissolving in: on screen, not prefetched.
+      const xf = trackTransitionWindow(tr.clips, clip);
+      if (xf && xf.start <= t) continue;
       if (clip.media.kind !== 'video' && clip.media.kind !== 'image') continue;
       const runId = runs.get(clip.id) ?? clip.id;
       if (runId !== clip.id) continue;

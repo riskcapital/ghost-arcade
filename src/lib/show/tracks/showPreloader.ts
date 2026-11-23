@@ -16,7 +16,7 @@
  * its track right now is left alone there (its decoder is in use).
  */
 import type { ShowLayerClip, ShowLayerTrack } from '../../types';
-import { cachedClipRuns, clipLoopStart, clipRate, findClipAt } from './showTrackEval';
+import { cachedClipRuns, clipLoopStart, clipRate, findClipAt, trackTransitionWindow } from './showTrackEval';
 
 export const SHOW_PRELOAD_HORIZON_SECONDS = 4;
 export const SHOW_PRELOAD_MAX_RUNS = 6;
@@ -49,8 +49,10 @@ export function selectShowPreloads(
   // Seconds left before the wrap, when it falls inside the horizon.
   const toWrap = loop > 0 && loop - t < horizon ? Math.max(0, loop - t) : null;
   const picks: ShowPreload[] = [];
+  // A solo keeps every row of its piece (as the evaluation does).
+  const solo = opts.soloTrackId ? tracks.find((tr) => tr.id === opts.soloTrackId) ?? null : null;
   for (const track of tracks) {
-    if (track.muted || (opts.soloTrackId && opts.soloTrackId !== track.id)) continue;
+    if (track.muted || (opts.soloTrackId && opts.soloTrackId !== track.id && (!solo || solo.layerId !== track.layerId))) continue;
     // Runs are worked out once per clip list (this runs 4 times a second),
     // and the walk starts at the first clip after `t`.
     const runs = cachedClipRuns(track.clips);
@@ -66,6 +68,10 @@ export function selectShowPreloads(
       const startsIn = clip.startTime - t;
       if (startsIn <= 0) continue;
       if (startsIn > horizon) break;
+      // Already dissolving in (the first half of its crossfade): it is on
+      // screen, so a paused pre-roll would fight the playing decoder.
+      const xf = trackTransitionWindow(clips, clip);
+      if (xf && xf.start <= t) continue;
       pick(clip, startsIn);
     }
     if (toWrap === null) continue;
