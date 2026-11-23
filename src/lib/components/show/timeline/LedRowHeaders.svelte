@@ -47,8 +47,10 @@
   $effect(() => {
     if (!menu) return;
     const close = (e: MouseEvent) => { if (!(e.target as HTMLElement)?.closest?.('[data-led-add-menu]')) menu = null; };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') menu = null; };
+    window.addEventListener('keydown', esc);
     const t = setTimeout(() => window.addEventListener('mousedown', close), 0);
-    return () => { clearTimeout(t); window.removeEventListener('mousedown', close); };
+    return () => { clearTimeout(t); window.removeEventListener('mousedown', close); window.removeEventListener('keydown', esc); };
   });
 </script>
 

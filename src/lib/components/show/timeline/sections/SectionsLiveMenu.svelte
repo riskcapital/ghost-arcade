@@ -57,7 +57,7 @@
   }
 </script>
 
-<svelte:window onmousedown={onWindowDown} />
+<svelte:window onmousedown={onWindowDown} onkeydown={(e) => { if (open && e.key === 'Escape') open = false; }} />
 
 <button
   class="slm-btn"

@@ -491,8 +491,10 @@
   $effect(() => {
     if (!menu) return;
     const close = () => { menu = null; };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') menu = null; };
+    window.addEventListener('keydown', esc);
     const t = setTimeout(() => window.addEventListener('mousedown', close), 0);
-    return () => { clearTimeout(t); window.removeEventListener('mousedown', close); };
+    return () => { clearTimeout(t); window.removeEventListener('mousedown', close); window.removeEventListener('keydown', esc); };
   });
 
   // Delete / Backspace on a line's depth points. Its keys (the points) are

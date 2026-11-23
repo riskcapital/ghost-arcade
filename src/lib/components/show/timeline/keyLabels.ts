@@ -44,6 +44,7 @@ const POPOVERS = [
   '[data-led-add-menu]',
   '[data-stage-block-picker]',
   '[data-where-popover]',
+  '[data-line-follow]',
   '[data-takeover-release-popover]',
   '[data-camera-clip-inspector]',
   '.kl-menu',
