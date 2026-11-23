@@ -234,17 +234,27 @@ async function saveAudioLayers(i: number): Promise<void> {
  * (the project then saves without that track's newest audio).
  */
 export async function flushAudioLoops(): Promise<void> {
-  for (const i of [...saveTimers.keys()]) {
-    clearTimeout(saveTimers.get(i));
-    saveTimers.delete(i);
-    void runAudioSave(i).catch(() => {});
+  // A layer that lands while a write is under way makes that write stand
+  // down and books another: go round until nothing is waiting (a few passes at most).
+  for (let pass = 0; pass < 4 && (saveTimers.size || inflight.size); pass++) {
+    for (const i of [...saveTimers.keys()]) {
+      clearTimeout(saveTimers.get(i));
+      saveTimers.delete(i);
+      void runAudioSave(i).catch(() => {});
+    }
+    const results = await Promise.allSettled([...inflight.values()]);
+    const failed = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+    if (failed.length) throw failed[0].reason instanceof Error ? failed[0].reason : new Error(String(failed[0].reason));
   }
-  const results = await Promise.allSettled([...inflight.values()]);
-  const failed = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
-  if (failed.length) throw failed[0].reason instanceof Error ? failed[0].reason : new Error(String(failed[0].reason));
 }
 
 async function restoreAudioLoops(a: AudioLoopTracks): Promise<void> {
+  // Every audio track gets the project's level and mute now, empty ones too
+  // (the engine starts each at its own default).
+  for (let i = 0; i < LOOP_TRACK_COUNT; i++) {
+    const t = track(i);
+    if (t?.kind === 'audio') a.setLevel(i, t.muted ? 0 : t.level);
+  }
   for (let i = 0; i < LOOP_TRACK_COUNT; i++) {
     const saved = track(i)?.audio;
     if (track(i)?.kind !== 'audio' || !saved || a.layerCount(i) > 0) continue;
@@ -1138,8 +1148,11 @@ export async function loadUserLoopToTrack(id: string, target?: number): Promise<
   }
   if (kind === 'audio') {
     const audio = audioEngine();
+    // A new take on this track: writes or restores still under way for it stand down.
+    bumpGen(i);
     if (!audio || !loop.wav || !(await audio.load(i, loop.wav, loop.bars))) return -1;
     musicStudio.updateLoopTrack(i, { name: loop.name, savedId: loop.id });
+    audio.setLevel(i, track(i).muted ? 0 : track(i).level);
     rts[i].phase = 'stopped';
     startLoopTrack(i);
     return i;
