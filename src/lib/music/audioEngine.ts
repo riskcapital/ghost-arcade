@@ -88,6 +88,9 @@ interface Strip {
   meter: AnalyserNode;
   /** Sends to the shared returns, after the fader and pan. */
   sends: Record<ReturnId, GainNode> | null;
+  /** Where the strip's main output goes now (master or the FX rack). Only this
+   * link is re-made on re-routing: sends and stem taps also hang off the gate. */
+  dest?: AudioNode;
 }
 
 const MIXER_RAMP_SECONDS = 0.015;
@@ -703,6 +706,7 @@ export class MusicAudioEngine {
         strip = this.makeStrip(ctx, gain);
         this.strips.set(id, strip);
         strip.gate.connect(this.masterGain!);
+        strip.dest = this.masterGain!;
         strip.gate.connect(strip.meter);
       }
       // The band comes in after its EQ and pan, before the monitor gate: its
@@ -868,8 +872,12 @@ export class MusicAudioEngine {
       this.racks[this.activeSet] = rack;
     }
     for (const [id, strip] of this.strips) {
-      try { strip.gate.disconnect(); } catch { /* not connected */ }
-      strip.gate.connect(!isInputChannel(id) && this.throughFx.has(id) ? rack.input : this.masterGain);
+      const dest = !isInputChannel(id) && this.throughFx.has(id) ? rack.input : this.masterGain;
+      if (strip.dest === dest) continue;
+      // Only the main output moves: the sends, meter and stem taps stay.
+      if (strip.dest) { try { strip.gate.disconnect(strip.dest); } catch { /* not connected */ } }
+      strip.gate.connect(dest);
+      strip.dest = dest;
       strip.gate.connect(strip.meter);
     }
   }
