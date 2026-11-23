@@ -399,7 +399,8 @@ export class VoiceSignals {
 
   /** Forget Live sources nobody follows any more. */
   dropLiveSources(keep: ReadonlySet<string>): void {
-    for (const id of [...this.states.keys()]) if (isLiveSource(id) && !keep.has(id)) { this.states.delete(id); this.levels.delete(id); }
+    // Looper tracks are the studio's own, not Live's: the Live feed never drops them.
+    for (const id of [...this.states.keys()]) if (isLiveSource(id) && loopTrackOfSource(id) < 0 && !keep.has(id)) { this.states.delete(id); this.levels.delete(id); }
   }
 
   /** Let every held note go (stop, panic); what is showing still fades. */

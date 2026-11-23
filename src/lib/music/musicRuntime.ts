@@ -128,7 +128,7 @@ import { BandFxVisuals } from './bandFxVisuals';
 import './studioMidiControls';
 import { analysisFromAnalyser, setVoiceSourceAudioFeed } from '../audio/voiceSourceAudio';
 import { getLastRawAnalysis } from '../stores/audio';
-import { isLiveSource as isLiveVoiceSource, loopTrackSource } from './visualVoices';
+import { isLiveSource as isLiveVoiceSource, loopTrackOfSource, loopTrackSource } from './visualVoices';
 import {
   ACID_STEPS,
   bowlNotes,
@@ -2631,8 +2631,9 @@ function drivenForStudio(source: VoiceSourceId, auto: boolean, live?: LiveSource
   // With the studio closed nothing plays, so a voice on Auto would never
   // show (a studio on a mapping layer would stay black): it shows at rest.
   const follows = auto && wasOpen;
-  // A voice given a Live track follows it while the studio plays with Live.
-  const followed: AnySourceId = live && liveFeedActive() ? live : source;
+  // A voice given a Live track follows it while the studio plays with Live;
+  // a looper track is the studio's own and is followed with or without Live.
+  const followed: AnySourceId = live && (liveFeedActive() || loopTrackOfSource(live) >= 0) ? live : source;
   const key = `${followed}:${follows}`;
   let values = studioDriven.get(key);
   if (!values) {

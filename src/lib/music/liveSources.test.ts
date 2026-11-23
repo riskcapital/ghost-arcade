@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { gmDrum, isLiveSource, liveSource, parseLiveSource, VoiceSignals, type AnySourceId } from './visualVoices';
+import { gmDrum, isLiveSource, liveSource, loopTrackSource, parseLiveSource, VoiceSignals, type AnySourceId } from './visualVoices';
 import { isDrumTrack } from './liveControl';
 import { normalizeStudioVoice } from './studioPlugin';
 import type { NoteEvent } from './noteEvents';
@@ -71,6 +71,13 @@ describe('Live sources: visuals that follow an Ableton track', () => {
     v.setLevel(liveSource('Old'), 0.5);
     v.dropLiveSources(new Set([liveSource('New')]));
     expect(v.inputs(liveSource('Old'), false).vxEnv).toBe(0);
+  });
+
+  it('never drops a looper track when the Live feed updates', () => {
+    const v = new VoiceSignals();
+    v.setLevel(loopTrackSource(0), 0.5);
+    v.dropLiveSources(new Set([liveSource('New')]));
+    expect(v.inputs(loopTrackSource(0), false).vxEnv).toBeGreaterThan(0);
   });
 
   it('keep a voice\'s Live track through a save, and refuse junk', () => {
