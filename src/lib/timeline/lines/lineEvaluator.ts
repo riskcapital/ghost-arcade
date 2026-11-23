@@ -63,9 +63,8 @@ function soundRowValue(songs: readonly PlacedSong[] | undefined, trackId: string
     const v = sample(song.features, at) * placedGain(song, local);
     best = best === null ? v : Math.max(best, v);
   }
-  // No block playing (a gap): no value, like a song track past its end,
-  // so a bipolar follow line rests instead of pinning to −depth.
-  return best;
+  // Nothing on the row: silent (0), not "no source" (soundLines.test.ts).
+  return best === null ? 0 : best;
 }
 
 export interface LineContext {
