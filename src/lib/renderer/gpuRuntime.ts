@@ -58,12 +58,15 @@ type PooledBuffer = {
   size: number;
   usage: number;
   label?: string;
+  /** Release order, so trimming evicts the least recently released first. */
+  releasedAt: number;
 };
 
 type PooledTexture = {
   texture: any;
   descriptor: Record<string, any>;
   label?: string;
+  releasedAt: number;
 };
 
 export interface GhostGpuResourcePoolOptions {
@@ -159,6 +162,7 @@ export class GhostGpuResourcePool {
   private createdTextures = 0;
   private reusedTextures = 0;
   private disposed = false;
+  private releaseCounter = 0;
 
   constructor(private device: any, options: GhostGpuResourcePoolOptions = {}) {
     this.options = { ...DEFAULT_POOL_OPTIONS, ...options };
@@ -227,7 +231,7 @@ export class GhostGpuResourcePool {
         }
         const key = GhostGpuResourcePool.bufferKey(alignedSize, usage);
         const bucket = this.buffers.get(key) ?? [];
-        bucket.push({ buffer, size: alignedSize, usage, label });
+        bucket.push({ buffer, size: alignedSize, usage, label, releasedAt: ++this.releaseCounter });
         this.buffers.set(key, bucket);
         this.pooledBytes += alignedSize;
         this.trim();
@@ -251,7 +255,7 @@ export class GhostGpuResourcePool {
         }
         const key = GhostGpuResourcePool.textureKey(descriptor);
         const bucket = this.textures.get(key) ?? [];
-        bucket.push({ texture, descriptor: { ...descriptor }, label });
+        bucket.push({ texture, descriptor: { ...descriptor }, label, releasedAt: ++this.releaseCounter });
         this.textures.set(key, bucket);
         this.pooledBytes += bytes;
         this.trim();
@@ -279,12 +283,30 @@ export class GhostGpuResourcePool {
   }
 
   trim(): void {
-    while (this.pooledBytes > this.options.maxPooledBytes || this.countBuffers() > this.options.maxPooledBuffers) {
+    while (this.countBuffers() > this.options.maxPooledBuffers) {
       if (!this.destroyOneBuffer()) break;
     }
     while (this.countTextures() > this.options.maxPooledTextures) {
       if (!this.destroyOneTexture()) break;
     }
+    // The byte cap counts textures too (usually most of the bytes): evict
+    // whichever pooled resource was released longest ago until it fits.
+    while (this.pooledBytes > this.options.maxPooledBytes) {
+      const buffer = this.oldestEntry(this.buffers);
+      const texture = this.oldestEntry(this.textures);
+      if (!buffer && !texture) break;
+      if (texture && (!buffer || texture.releasedAt < buffer.releasedAt)) this.destroyOneTexture();
+      else this.destroyOneBuffer();
+    }
+  }
+
+  private oldestEntry<T extends { releasedAt: number }>(pool: Map<string, T[]>): T | null {
+    let oldest: T | null = null;
+    for (const bucket of pool.values()) {
+      const item = bucket[0];
+      if (item && (!oldest || item.releasedAt < oldest.releasedAt)) oldest = item;
+    }
+    return oldest;
   }
 
   dispose(): void {
@@ -358,8 +380,11 @@ export class GhostGpuResourcePool {
     return count;
   }
 
+  /** Destroy the least recently released pooled buffer. */
   private destroyOneBuffer(): boolean {
+    const oldest = this.oldestEntry(this.buffers);
     for (const [key, bucket] of this.buffers) {
+      if (bucket[0] !== oldest) continue;
       const item = bucket.shift();
       if (!item) continue;
       this.pooledBytes = Math.max(0, this.pooledBytes - item.size);
@@ -370,8 +395,11 @@ export class GhostGpuResourcePool {
     return false;
   }
 
+  /** Destroy the least recently released pooled texture. */
   private destroyOneTexture(): boolean {
+    const oldest = this.oldestEntry(this.textures);
     for (const [key, bucket] of this.textures) {
+      if (bucket[0] !== oldest) continue;
       const item = bucket.shift();
       if (!item) continue;
       this.pooledBytes = Math.max(0, this.pooledBytes - textureByteEstimate(item.descriptor));

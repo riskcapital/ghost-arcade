@@ -102,6 +102,26 @@ describe('GhostGpuResourcePool', () => {
     expect(pool.stats().texturesReused).toBe(1);
   });
 
+  it('keeps pooled textures under the byte cap, evicting the least recently released', () => {
+    // Each 16x16 rgba8 texture is 1024 bytes; the cap holds two.
+    const pool = new GhostGpuResourcePool(createMockDevice(), { maxPooledBytes: 2048 });
+    const texture = (width: number) => pool.acquireTexture({
+      size: { width, height: 16, depthOrArrayLayers: 1 }, format: 'rgba8unorm', usage: 3,
+    });
+    const a = texture(16);
+    const b = texture(16);
+    const c = texture(16);
+    a.release();
+    b.release();
+    c.release();
+
+    expect(pool.stats().pooledBytes).toBe(2048);
+    expect(pool.stats().texturesInPool).toBe(2);
+    expect(a.texture.destroyed).toBe(true);
+    expect(b.texture.destroyed).toBe(false);
+    expect(c.texture.destroyed).toBe(false);
+  });
+
   it('waits for submitted queue work before reusing released buffers', async () => {
     let finishWork!: () => void;
     const submittedWorkDone = new Promise<void>((resolve) => { finishWork = resolve; });
