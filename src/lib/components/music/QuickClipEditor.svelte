@@ -18,6 +18,8 @@
   import { isBlackKey, noteName } from '../../music/noteEvents';
   import { INSTRUMENT_LABELS } from '../../music/instruments';
   import { clipEditorId } from '../../music/studioUi';
+  import { playingKit } from '../../music/drumMachine/machineRuntime';
+  import { isHitSource } from '../../music/loopSources';
 
   let { index, onclose, onsave }: { index: number; onclose?: () => void; onsave?: () => void } = $props();
 
@@ -47,7 +49,15 @@
   let rollEl = $state<HTMLDivElement | null>(null);
 
   const notes = $derived(flattenMidi({ layers: t.layers, redo: [] }));
+  /** A dub shots or drum pads loop: one row per shot or pad (note = its number), named as on its tab. */
+  const hitNames = $derived(t.source === 'dub' ? s.dubShots.map((d) => d.name) : t.source === 'pads' ? playingKit(s.machine).pads.slice(0, s.machine.padCount).map((p) => p.name) : null);
+  const rowName = (n: number) => (hitNames ? hitNames[n] ?? `${n + 1}` : noteName(n));
   const range = $derived.by(() => {
+    if (hitNames && isHitSource(t.source)) {
+      // The pads all show; of the many shots, the first eight and any played past them.
+      const top = t.source === 'pads' ? hitNames.length - 1 : Math.max(7, ...notes.map((n) => n.note));
+      return { lo: 0, hi: Math.min(hitNames.length - 1, top) };
+    }
     const pitches = notes.map((n) => n.note);
     let lo = pitches.length ? Math.min(...pitches) - 3 : 55;
     let hi = pitches.length ? Math.max(...pitches) + 3 : 79;
@@ -182,7 +192,7 @@
     onclose?.();
   }
 
-  const selInfo = $derived(sel ? `${noteName(sel.note)} · ${Math.floor(sel.beat / 4) + 1}.${(Math.floor(sel.beat) % 4) + 1}.${Math.floor((sel.beat % 1) * 4) + 1} · ${sel.dur >= 1 ? sel.dur : `1/${Math.round(4 / sel.dur)}`} · vel ${Math.round(sel.velocity * 127)}` : '');
+  const selInfo = $derived(sel ? `${rowName(sel.note)} · ${Math.floor(sel.beat / 4) + 1}.${(Math.floor(sel.beat) % 4) + 1}.${Math.floor((sel.beat % 1) * 4) + 1} · ${sel.dur >= 1 ? sel.dur : `1/${Math.round(4 / sel.dur)}`} · vel ${Math.round(sel.velocity * 127)}` : '');
 </script>
 
 <svelte:window onkeydown={key} />
@@ -203,10 +213,13 @@
       {#each STRENGTHS as k}<button class:active={strength === k} onclick={() => (strength = k)} title="How far notes move to the grid">{Math.round(k * 100)}%</button>{/each}
     </div>
     <button class="text-btn small" onclick={quantise} title="Snap the notes (the shown layer, or all) to the grid">Apply</button>
+    <!-- Shots and pads have no pitch to move: a hit's row is its shot or pad. -->
+    {#if !hitNames}
     <span class="ga-eyebrow">Transpose</span>
     <div class="ga-segmented small" role="group" aria-label="Transpose">
       <button onclick={() => transpose(-12)}>−12</button><button onclick={() => transpose(-1)}>−1</button><button onclick={() => transpose(1)}>+1</button><button onclick={() => transpose(12)}>+12</button>
     </div>
+    {/if}
     <div class="ga-segmented small" role="group" aria-label="Length">
       <button onclick={halve} disabled={beats <= 4} title="Keep the first half">Halve</button>
       <button onclick={double} title="Play it twice, as a loop twice as long">Double</button>
@@ -228,11 +241,11 @@
     <i class="brace"></i>
   </div>
   <div class="body">
-    <div class="keys">
-      {#each rows as n}<span class:black={isBlackKey(n)} style="height: {ROW}px">{n % 12 === 0 || n % 12 === 9 || n % 12 === 7 || n % 12 === 4 || n % 12 === 2 || n % 12 === 5 || n % 12 === 11 ? noteName(n) : ''}</span>{/each}
+    <div class="keys" class:wide={!!hitNames}>
+      {#each rows as n}<span class:black={!hitNames && isBlackKey(n)} class:hit={!!hitNames} style="height: {ROW}px" title={hitNames ? rowName(n) : undefined}>{hitNames ? rowName(n) : n % 12 === 0 || n % 12 === 9 || n % 12 === 7 || n % 12 === 4 || n % 12 === 2 || n % 12 === 5 || n % 12 === 11 ? noteName(n) : ''}</span>{/each}
     </div>
     <div class="roll" bind:this={rollEl} role="application" aria-label="Notes" style="height: {rows.length * ROW}px" onclick={clickRoll} onkeydown={() => {}} onpointermove={edgeMove} onpointerup={edgeUp}>
-      {#each rows as n, k}<div class="row" class:black={isBlackKey(n)} style="top: {k * ROW}px; height: {ROW}px"></div>{/each}
+      {#each rows as n, k}<div class="row" class:black={!hitNames && isBlackKey(n)} style="top: {k * ROW}px; height: {ROW}px"></div>{/each}
       {#each { length: bars * 4 } as _, b}<div class="beat" class:bar={b % 4 === 0} style="left: {(b / (bars * 4)) * 100}%"></div>{/each}
       {#each t.layers as layer, li}
         {#each layer as n, i}
@@ -295,6 +308,8 @@
   .keys { flex: 0 0 44px; display: flex; flex-direction: column; }
   .keys span { font-size: 9px; color: var(--studio-muted); padding-left: 4px; line-height: 16px; border-bottom: 1px solid var(--studio-edge-soft); box-sizing: border-box; }
   .keys span.black { background: var(--studio-panel); }
+  .keys.wide { flex-basis: 76px; }
+  .keys span.hit { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .roll { position: relative; flex: 1; cursor: crosshair; }
   .row { position: absolute; left: 0; right: 0; border-bottom: 1px solid var(--studio-edge-soft); box-sizing: border-box; pointer-events: none; }
   .row.black { background: rgba(255, 255, 255, 0.015); }

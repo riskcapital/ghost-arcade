@@ -341,10 +341,10 @@ export class MusicAudioEngine {
     this.dubShots?.setShots(shots);
   }
 
-  /** Fire a dub shot now; returns its echo's repeat time in seconds (0 if it could not play). */
-  fireDubShot(index: number, velocity: number): number {
+  /** Fire a dub shot now (or at `time`); returns its echo's repeat time in seconds (0 if it could not play). */
+  fireDubShot(index: number, velocity: number, time?: number): number {
     const ctx = this.ensure();
-    return this.dubShots?.fire(index, velocity, ctx.currentTime, this.keyRoot) ?? 0;
+    return this.dubShots?.fire(index, velocity, Math.max(ctx.currentTime, time ?? 0), this.keyRoot) ?? 0;
   }
 
   holdDubShot(index: number, on: boolean): void {

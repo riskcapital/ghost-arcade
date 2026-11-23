@@ -296,6 +296,9 @@ export function releaseNote(instrument: InstrumentId, note: number, source: Note
 export interface MachineHooks {
   /** A MIDI note in the drum machine set: true when it played a pad. */
   midiPad(note: number, velocity: number, on: boolean): boolean;
+  /** The voice pad `pad` acts as on the playing kit (null: no such pad), and its flash for a hit `delayMs` from now. */
+  padRole(pad: number): DrumVoice | null;
+  flashPad(pad: number, velocity: number, delayMs: number): void;
   padLevel(name: string): number;
   stop(): void;
 }
@@ -309,7 +312,24 @@ export function setMachineHooks(hooks: MachineHooks): void {
 /** A drum machine pad: its sound on the machine's kit, and a drum event (as `role`) for visuals, cables and takes. */
 export function sendMachineHit(pad: number, role: DrumVoice, velocity: number, source: NoteSource, time?: number): void {
   ensureMusicRuntime();
-  send({ ...noteOn('drums', DRUM_NOTES[role], velocity, source, time ?? liveTime()), pad });
+  const at = time ?? liveTime();
+  send({ ...noteOn('drums', DRUM_NOTES[role], velocity, source, at), pad });
+  // A pad tapped by hand: the looper can record it.
+  if (isLive(source)) captureSourceHit('pads', pad, velocity, beatAtTime(at));
+}
+
+/** A loop's hit on a drum machine pad: the pad's sound on the playing kit, flashed as it lands. */
+function loopPadHit(pad: number, velocity: number, time: number, track: number): void {
+  const hooks = machineHooks;
+  if (!hooks) {
+    // The drum machine was never opened: set it up, the next hit plays.
+    void import('./drumMachine/machineRuntime').then((m) => m.ensureMachine());
+    return;
+  }
+  const role = hooks.padRole(pad);
+  if (!role) return;
+  send({ ...noteOn('drums', DRUM_NOTES[role], velocity, 'sequencer', time), pad, loopTrack: track });
+  hooks.flashPad(pad, velocity, Math.max(0, (time - audio.now()) * 1000));
 }
 
 /** The music clock now, in seconds (the audio context's clock). */
@@ -1779,26 +1799,46 @@ export function triggerShot(index: number, velocity = 0.85): void {
  */
 export function fireDubShot(index: number, velocity = 0.85): void {
   ensureMusicRuntime();
-  const shot = get(musicStudio).dubShots[index];
-  if (!shot) return;
-  const repeat = audio.fireDubShot(index, velocity);
+  if (!playDubShot(index, velocity, audio.now(), 'screen')) return;
   audio.holdDubShot(index, true);
+  // The looper can record the tap.
+  captureSourceHit('dub', index, velocity, beatAtTime(audio.now()));
+}
+
+/** Fire shot `index` at `time`, with its hits (and its echoes) for the visuals. False when there is no such shot. */
+function playDubShot(index: number, velocity: number, time: number, source: NoteSource, loopTrack?: number): boolean {
+  const shot = get(musicStudio).dubShots[index];
+  if (!shot) return false;
+  const repeat = audio.fireDubShot(index, velocity, time);
   // The last few shots share the top note: it only tells the visuals a shot fired.
   const note = Math.min(127, DUB_SHOT_NOTE + index);
-  const t = audio.now();
+  const tag = loopTrack === undefined ? {} : { loopTrack };
   let vel = velocity;
   const echoes = repeat > 0 ? Math.min(8, Math.max(1, Math.round(1 + shot.feedback * 7))) : 0;
   for (let k = 0; k <= echoes; k++) {
-    const at = t + k * repeat;
-    send(noteOn('shots', note, Math.max(0.05, vel), 'screen', at));
-    send(noteOff('shots', note, 'screen', at + Math.min(0.08, repeat * 0.5)));
+    const at = time + k * repeat;
+    send({ ...noteOn('shots', note, Math.max(0.05, vel), source, at), ...tag });
+    send({ ...noteOff('shots', note, source, at + Math.min(0.08, repeat * 0.5)), ...tag });
     vel *= 0.35 + shot.feedback * 0.55;
   }
+  return true;
 }
 
 /** Let go of a held dub shot: a Hold echo starts to fade. */
 export function releaseDubShot(index: number): void {
   audio.holdDubShot(index, false);
+  captureSourceRelease('dub', index, beatAtTime(audio.now()));
+}
+
+/** A loop's dub shot: fired at `time`; a shot with Hold holds its echo for as long as it was held when played. */
+function loopDubShot(index: number, velocity: number, time: number, dur: number, track: number): void {
+  if (!playDubShot(index, velocity, time, 'sequencer', track)) return;
+  if (!get(musicStudio).dubShots[index]?.hold) return;
+  const delay = Math.max(0, (time - audio.now()) * 1000);
+  setTimeout(() => {
+    audio.holdDubShot(index, true);
+    setTimeout(() => audio.holdDubShot(index, false), Math.max(0, dur * 1000));
+  }, delay);
 }
 
 // ── Loop previews (the loop browser) ───────────────────────────────────
@@ -2972,6 +3012,7 @@ export function ensureMusicRuntime(): void {
     audioTracks: () => (audio.peekNow() === null ? null : audioLoopTracksFor(audio)),
     moveXy: scheduleLoopXy,
     letGoXy: letGoLoopXy,
+    hit: (source, index, velocity, time, dur, track) => (source === 'dub' ? loopDubShot(index, velocity, time, dur, track) : loopPadHit(index, velocity, time, track)),
   });
   // Risers land on the next bar line of the launch clock.
   audio.setBarClock(() => {

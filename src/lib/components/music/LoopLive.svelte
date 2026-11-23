@@ -69,6 +69,8 @@
   /** The tab instruments a MIDI track can record: what each is called in the menu. */
   const TAB_SOURCES: Array<{ id: LoopSource; label: string; title: string }> = [
     { id: 'xy', label: 'XY pad', title: 'The Sound bath XY pad: its notes and the puck as you move it' },
+    { id: 'dub', label: 'Dub shots', title: 'The Dub set echo shots: each tap, as long as it was held' },
+    { id: 'pads', label: 'Drum pads', title: 'The drum machine pads: each tap, on the playing kit' },
   ];
   function chooseSound(i: number, value: string) {
     const sound = parseSoundValue(value);
@@ -283,7 +285,8 @@
             <button onclick={() => stopLoopTrack(i)} title="Stop on the next bar (Shift+Space)" aria-label="Stop"><svg viewBox="0 0 10 10" aria-hidden="true"><rect x="2" y="2" width="6" height="6" /></svg></button>
             <button onclick={() => clearLoopTrack(i)} title="Empty the track (Undo brings it back)">Clear</button>
             <button onclick={() => save(i)} title="Save it to My loops (S)">Save</button>
-            {#if t.kind === 'midi'}
+            <!-- The dub shots and the drum pads play through their own effects (their FX buttons on their tabs). -->
+            {#if t.kind === 'midi' && t.source !== 'dub' && t.source !== 'pads'}
               {@const fxCount = s.inserts[loopFxChannel(i)]?.length ?? 0}
               <button class:on={fxCount > 0} onclick={() => insertEditorChannel.set($insertEditorChannel === loopFxChannel(i) ? null : loopFxChannel(i))} title="Effects on this loop's sound">FX{fxCount ? ` ${fxCount}` : ''}</button>
             {/if}

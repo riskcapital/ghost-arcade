@@ -29,6 +29,9 @@ export const isLoopSource = (v: unknown): v is LoopSource => LOOP_SOURCES.includ
 /** How a track header names a source. */
 export const SOURCE_LABELS: Record<LoopSource, string> = { xy: 'XY', dub: 'Dub shots', pads: 'Drum pads' };
 
+/** How a sound menu names a source. */
+export const SOURCE_MENU_LABELS: Record<LoopSource, string> = { xy: 'XY pad', dub: 'Dub shots', pads: 'Drum pads' };
+
 /** The instrument a source's notes are tagged with (visuals, roles, the insert chain's channel). */
 export const SOURCE_INSTRUMENT: Record<LoopSource, InstrumentId> = { xy: 'xy', dub: 'shots', pads: 'drums' };
 

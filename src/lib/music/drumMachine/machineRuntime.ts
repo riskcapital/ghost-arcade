@@ -121,6 +121,11 @@ export function ensureMachine(): void {
       if (on) playPad(pad, velocity, 'midi');
       return true;
     },
+    padRole(pad) {
+      const b = currentBeat();
+      return pad >= 0 && pad < b.padCount ? playingKit(b).pads[pad]?.role ?? null : null;
+    },
+    flashPad: markHit,
     padLevel,
     stop: stopMachine,
   });

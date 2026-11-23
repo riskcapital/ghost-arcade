@@ -21,9 +21,9 @@
   } from '../../music/loopStation';
   import { beatNow, trackProgress } from '../../music/loopUi';
   import { parseSoundValue, setTrackKind, type LoopTrackKind } from '../../music/loopTrack';
-  import { SOURCE_LABELS, trackSoundLabel, type LoopSource } from '../../music/loopSources';
+  import { SOURCE_MENU_LABELS, trackSoundLabel, type LoopSource } from '../../music/loopSources';
   /** The tab instruments a MIDI track can record. */
-  const TAB_SOURCES: LoopSource[] = ['xy'];
+  const TAB_SOURCES: LoopSource[] = ['xy', 'dub', 'pads'];
   /** What the track's menu shows: a tab instrument, an instrument, or This tab. */
   const pickValue = (t: { source?: LoopSource; instrument: InstrumentId | null }) => (t.source ? `src:${t.source}` : t.instrument ? `inst:${t.instrument}` : '');
   function pick(i: number, value: string) {
@@ -138,7 +138,7 @@
                 <select value={pickValue(t)} onchange={(e) => pick(i, (e.target as HTMLSelectElement).value)} aria-label="Instrument" title="What it records and plays: what you play on the tab showing, or a fixed instrument">
                   <option value="">This tab</option>
                   <optgroup label="Tab instruments">
-                    {#each TAB_SOURCES as id}<option value="src:{id}">{SOURCE_LABELS[id]}</option>{/each}
+                    {#each TAB_SOURCES as id}<option value="src:{id}">{SOURCE_MENU_LABELS[id]}</option>{/each}
                   </optgroup>
                   <optgroup label="Instruments">
                     {#each INSTRUMENTS.filter((id) => (id !== 'xy' && id !== 'shots') || (!t.source && t.instrument === id)) as id}<option value="inst:{id}">{INSTRUMENT_LABELS[id]}</option>{/each}
