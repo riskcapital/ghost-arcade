@@ -18,7 +18,7 @@
  */
 import { get } from 'svelte/store';
 import type { Layer, ShowLayerTrack, ShowLookClip, ShowTempoMap, WLEDController } from '../../types';
-import { setShowWhereDecorator, showFreeRunOffset, type ShowTimelineState } from '../../stores/showTimeline';
+import { setShowWhereDecorator, showFreeRunOffset, showTimeline, type ShowTimelineState } from '../../stores/showTimeline';
 import type { ShowLookState } from '../../show/tracks/showLooks';
 import { evaluateShowLooks } from '../../show/tracks/showLooks';
 import type { ShowTrackFrame } from '../../show/tracks/showTrackEval';
@@ -36,7 +36,7 @@ import { WHERE_KEYS, type WhereNamedOrder, type WhereSpec } from './whereModel';
 import { defaultBeatAt, kickOnsets, type WhereLineValues, type WhereMotionContext } from './whereMotion';
 import type { TimelineLedClip } from '../leds/ledClips';
 import type { LedLookOnStrips, LedLineValues } from '../leds/ledRender';
-import { publishLedTimeline } from '../leds/ledRuntime';
+import { currentLedTimeline, publishLedTimeline } from '../leds/ledRuntime';
 
 export interface WhereStageInput {
   time: number;
@@ -304,8 +304,17 @@ export function installWhereRuntime(): () => void {
       });
     },
   });
+  // Timeline closed and stopped: nothing evaluates any more, so hand the
+  // WLED controllers back to the project instead of holding the last frame.
+  const offClosed = showTimeline.subscribe((s) => {
+    if (!s.isOpen && !s.isPlaying && (lastStage || currentLedTimeline())) {
+      lastStage = null;
+      publishLedTimeline(null);
+    }
+  });
   // Edits while paused: the store republishes the frame itself.
   return () => {
+    offClosed();
     setShowWhereDecorator(null);
     publishLedTimeline(null);
     lastStage = null;
