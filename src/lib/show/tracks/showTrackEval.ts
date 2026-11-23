@@ -442,7 +442,9 @@ export function evaluateShowTracks(
   const states: ShowTrackState[] = tracks.map((track) => {
     // A solo keeps every row of its piece (the piece and the layers on it).
     const silenced = track.muted || (solo !== null && solo.id !== track.id && solo.layerId !== track.layerId);
-    const clip = findClipAt(track.clips, t);
+    // A row whose piece was deleted from the mapping draws nothing (its blocks
+    // stay on the row, to rebind or delete), not a ghost copy of the old piece.
+    const clip = track.row?.kind === 'missing' ? null : findClipAt(track.clips, t);
     const params = opts.laneValues ? opts.laneValues(track, t) : null;
     const sub = track.subRow ? { sub: true } : {};
     if (!clip) {

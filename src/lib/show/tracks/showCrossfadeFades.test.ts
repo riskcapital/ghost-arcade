@@ -19,3 +19,17 @@ describe('crossfade with fades', () => {
     }
   });
 });
+
+describe('a row whose piece was deleted', () => {
+  it('draws nothing', () => {
+    const track = {
+      id: 'r', layerId: 'gone', layerName: 'gone', template: { id: 'gone' }, lanes: [], gap: 'hide', muted: false, locked: false, collapsed: false,
+      row: { kind: 'missing', depth: 0, hidden: false, onStage: false },
+      clips: [clip('a', 0)],
+    } as unknown as ShowLayerTrack;
+    const st = evaluateShowTracks([track], 5, { playing: true, seekGeneration: 1 }).tracks[0];
+    expect(st.clip).toBeNull();
+    expect(st.opacity).toBe(0);
+  });
+});
+

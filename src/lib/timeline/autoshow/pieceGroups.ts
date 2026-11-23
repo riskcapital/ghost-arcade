@@ -58,7 +58,8 @@ const FACE_NAME = /·\s*(top|front|left|right|back|bottom)\s*$/i;
 export function pieceInfos(layers: readonly Layer[], aspect = 16 / 9): PieceInfo[] {
   const out: PieceInfo[] = [];
   for (const layer of layers) {
-    if (!isLookTarget(layer) || !layer.corners) continue;
+    // A hidden piece stays hidden: Auto show does not light it.
+    if (!isLookTarget(layer) || !layer.corners || layer.visible === false) continue;
     const centre = pieceCentre(layer);
     if (!centre) continue;
     const c = layer.corners;
