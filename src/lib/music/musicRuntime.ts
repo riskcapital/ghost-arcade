@@ -16,6 +16,7 @@
  */
 
 import { bringStack, dropStack } from './stackRuntime';
+import { toneById } from './tone/tones';
 import { derived, get, writable } from 'svelte/store';
 import { project } from '../stores/layers';
 import { hostWatch, studioHosted } from './studioHostWatch';
@@ -195,6 +196,10 @@ function send(event: NoteEvent): void {
 
 noteBus.subscribe((event) => {
   audio.play(event);
+  if (event.type === 'on' && latchesArp(event)) {
+    latchedArps.add(event.instrument);
+    publishSustaining();
+  }
   visuals.push(event);
   const heard = sourcesForEvent(event, sourceContext());
   voices.push(event, event.loopTrack === undefined ? heard : [...heard, loopTrackSource(event.loopTrack)]);
@@ -203,6 +208,30 @@ noteBus.subscribe((event) => {
   showInPanel(event);
   ensureFrameLoop();
 });
+
+/** The eight FX pads. */
+const PAD_INDEXES = [0, 1, 2, 3, 4, 5, 6, 7] as const;
+
+/** Instruments whose tone latches its arpeggio: it keeps playing after the keys let go, until Stop. */
+const latchedArps = new Set<InstrumentId>();
+
+function instrumentTone(instrument: InstrumentId, tone?: string): string | undefined {
+  if (tone) return tone;
+  const s = get(musicStudio);
+  return (instrument === 'synth' ? s.synthTone : instrument === 'keys' ? s.keysTone : null) ?? undefined;
+}
+
+function latchesArp(event: NoteEvent): boolean {
+  const id = instrumentTone(event.instrument, event.tone);
+  return !!(id && toneById(id)?.patch.arp?.latch);
+}
+
+/** Tell the transport whether anything plays on until stopped, so its button reads Stop. */
+function publishSustaining(): void {
+  const sustaining = latchedArps.size > 0 || PAD_INDEXES.some((i) => audio.padLoopPlaying(i));
+  if (get(musicTransport).sustaining === sustaining) return;
+  musicTransport.update((t) => ({ ...t, sustaining }));
+}
 
 /** Which instruments play which part now, for the visual voices. */
 function sourceContext(): SourceContext {
@@ -329,9 +358,37 @@ export function panic(): void {
   for (const { instrument, note } of held.all()) noteBus.emit(noteOff(instrument, note, 'keyboard', time));
   held.clear();
   audio.allNotesOff();
+  latchedArps.clear();
   visuals.releaseAll();
   voices.releaseAll();
-  musicTransport.update((s) => ({ ...s, held: new Set() }));
+  musicTransport.update((s) => ({ ...s, held: new Set(), sustaining: false }));
+}
+
+/** The XY pad let go for good (its panel closed): its note and any latched arp on its tone. */
+export function letGoXy(): void {
+  audio.releaseXy();
+  if (latchedArps.delete('xy')) publishSustaining();
+}
+
+/** Every atmosphere on the pads stops, with a short fade (the pads' panel closed). */
+export function stopPadAtmospheres(): void {
+  audio.stopPadLoops(0.4);
+  syncPadLoops();
+}
+
+/**
+ * A pad's atmosphere can stop without its pad being pressed (its sound
+ * changed, the set changed, Stop): let go of its held note too, so the pad
+ * is unlit and the next press starts it again.
+ */
+function syncPadLoops(): void {
+  for (const index of PAD_INDEXES) {
+    const note = 60 + index;
+    if (!held.isHeld('shots', note) || audio.padLoopPlaying(index)) continue;
+    held.forget('shots', note);
+    noteBus.emit(noteOff('shots', note, 'screen', audio.peekNow() ?? 0));
+  }
+  publishSustaining();
 }
 
 // ── Transport ───────────────────────────────────────────────────────────
@@ -418,7 +475,7 @@ export function freshStart(): void {
 export function changeSetSounds(from: StudioSet, to: StudioSet): void {
   if (from === to) return;
   // The XY tone lives in the Sound bath; the chords are on every tab and keep ringing.
-  if (to !== 'bath') audio.releaseXy();
+  if (to !== 'bath') letGoXy();
   // The siren lives in the Dub set.
   if (to !== 'dub') setSiren(false);
   syncPlayingClips(get(musicStudio), false, false);
@@ -1611,8 +1668,14 @@ export function fxPadSound(index: number) {
 function fireFxPad(index: number, velocity: number, time: number): void {
   const note = 60 + index;
   if (fxPadSound(index)?.kind === 'loop') {
-    if (audio.padLoopPlaying(index)) send(noteOff('shots', note, 'screen', time));
+    // The engine knows whether the atmosphere plays; the pad's held count
+    // follows it. Counted like a key, a count left over from a stop the pad
+    // never saw swallowed the next off, and the atmosphere could not be
+    // switched off again.
+    held.forget('shots', note);
+    if (audio.padLoopPlaying(index)) noteBus.emit(noteOff('shots', note, 'screen', time));
     else send(noteOn('shots', note, velocity, 'screen', time));
+    publishSustaining();
     return;
   }
   send(noteOn('shots', note, velocity, 'screen', time));
@@ -2886,6 +2949,10 @@ export function ensureMusicRuntime(): void {
     audio.setTones({ synth: s.synthTone, keys: s.keysTone, kit: s.drumKit });
     audio.setDronePatch(s.dronePatch);
     audio.setPadSounds(s.fxPads[s.set]);
+    syncPadLoops();
+    for (const instrument of ['synth', 'keys'] as const) {
+      if (latchedArps.has(instrument) && !toneById(instrumentTone(instrument) ?? '')?.patch.arp?.latch) latchedArps.delete(instrument);
+    }
     audio.setDubShots(s.dubShots);
     audio.setInserts(s.inserts);
     // A playing clip's effects follow edits to them.

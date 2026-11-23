@@ -16,7 +16,7 @@
   import { LOOP_ROLES, loopById } from '../../music/loops';
   import { findClip } from '../../music/session';
   import { scanPosition } from '../../music/scanSynth';
-  import { musicStudio } from '../../music/musicStudioStore';
+  import { musicStudio, musicTransport } from '../../music/musicStudioStore';
   import { ROOT_NAMES, SCALES, STUDIO_SETS, keyLabel, type ScaleId } from '../../music/studioSets';
   import { loadAnalogPatch, loadBerlinJam, loadDubJam } from '../../music/jams';
   import {
@@ -177,7 +177,8 @@
     return () => cancelAnimationFrame(frame);
   });
 
-  const playing = $derived(s.liveControl ? $abletonBridge.playing : s.sequencerPlaying || Object.keys(s.playingLoops).length > 0 || Object.keys(s.queuedLoops).length > 0 || !!s.playingTakeId);
+  // An atmosphere or a latched arp counts: Stop is the way to stop it.
+  const playing = $derived(s.liveControl ? $abletonBridge.playing : s.sequencerPlaying || Object.keys(s.playingLoops).length > 0 || Object.keys(s.queuedLoops).length > 0 || !!s.playingTakeId || !!$musicTransport.sustaining);
 
   ensureLiveFeed();
 

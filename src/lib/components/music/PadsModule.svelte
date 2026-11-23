@@ -1,3 +1,8 @@
+<script lang="ts" module>
+  /** FX pads panels on screen: atmospheres stop when the last one goes, so none is left with no switch to stop it. */
+  let padPanels = 0;
+</script>
+
 <script lang="ts">
   /**
    * Sixteen pads for finger and touch drumming: the kit on the bottom two
@@ -13,7 +18,8 @@
   import { DRUM_PAD_KEYS, PIANO_KEY_LABELS } from '../../music/keyboardLayout';
   import { SHOT_NAMES } from '../../music/dubSounds';
   import { musicStudio, musicTransport } from '../../music/musicStudioStore';
-  import { REPEAT_RATES, padDown, padUp, toggleLoopRecord, type PadSound } from '../../music/musicRuntime';
+  import { onDestroy } from 'svelte';
+  import { REPEAT_RATES, padDown, padUp, stopPadAtmospheres, toggleLoopRecord, type PadSound } from '../../music/musicRuntime';
   import { SHOT_PARAMS } from '../../music/studioSets';
   import { soundById, soundGroups } from '../../music/sounds/library';
   import { isChopId } from '../../music/sounds/chops';
@@ -111,6 +117,13 @@
   }
 
   const isDown = (index: number) => Object.values(pressed).includes(index);
+
+  padPanels++;
+  onDestroy(() => {
+    padPanels--;
+    // A layout swapping one pads panel for another mounts the new one first: check once that has happened.
+    queueMicrotask(() => { if (padPanels === 0) stopPadAtmospheres(); });
+  });
 </script>
 
 <StudioModule {title} led={drums && recording}>

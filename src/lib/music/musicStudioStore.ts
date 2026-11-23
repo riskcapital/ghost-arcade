@@ -1056,6 +1056,8 @@ export interface MusicTransportState {
   takeProgress: number;
   /** `${instrument}:${note}` of every sounding note. */
   held: Set<string>;
+  /** Something plays on its own until stopped: an atmosphere on a pad, or a latched arpeggio. */
+  sustaining?: boolean;
   /** Scale degrees of the chords the drone is holding. */
   chords: number[];
   /** The beat loop last loaded into the grid, and one waiting for the next bar. */

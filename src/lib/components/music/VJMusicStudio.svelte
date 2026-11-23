@@ -8,7 +8,7 @@
    */
   import { onDestroy, onMount } from 'svelte';
   import { showToast } from '../../stores/errorToast';
-  import { musicStudio } from '../../music/musicStudioStore';
+  import { musicStudio, musicTransport } from '../../music/musicStudioStore';
   import { musicMidiDevices, musicMidiStatus } from '../../music/midiNotes';
   import { ROOT_NAMES, SCALES, STUDIO_SETS, type ScaleId } from '../../music/studioSets';
   import {
@@ -66,7 +66,8 @@
     musicStudio.close();
   });
 
-  const playing = $derived(s.sequencerPlaying || Object.keys(s.playingLoops).length > 0 || Object.keys(s.queuedLoops).length > 0 || !!s.playingTakeId);
+  // An atmosphere or a latched arp counts: Stop is the way to stop it.
+  const playing = $derived(s.sequencerPlaying || Object.keys(s.playingLoops).length > 0 || Object.keys(s.queuedLoops).length > 0 || !!s.playingTakeId || !!$musicTransport.sustaining);
 
   function toggleAll() {
     if (playing) stopAll();

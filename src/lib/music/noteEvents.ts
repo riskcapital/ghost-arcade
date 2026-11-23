@@ -206,6 +206,11 @@ export class HeldNotes {
     return this.apply(event);
   }
 
+  /** Drop a note's count whatever it was: a toggled sound whose state lives in the engine. Returns whether it was held. */
+  forget(instrument: InstrumentId, note: number): boolean {
+    return this.held.delete(this.key(instrument, note));
+  }
+
   isHeld(instrument: InstrumentId, note: number): boolean {
     return this.held.has(this.key(instrument, note));
   }

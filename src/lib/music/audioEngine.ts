@@ -182,8 +182,12 @@ export class MusicAudioEngine {
   // ── Library sounds (sounds/library.ts) ──
   /** The current set's FX pads, by pad index. */
   private padSounds: string[] = [...DEFAULT_FX_PADS.dub];
-  /** Atmospheres playing on a pad, by pad index. */
-  private padLoops = new Map<number, SoundHandle>();
+  /**
+   * Atmospheres playing on a pad, by pad index. Each plays through a gate of
+   * its own, so stopping it always silences it, even if the sound's own stop
+   * (or its building) went wrong.
+   */
+  private padLoops = new Map<number, { handle: SoundHandle | null; gate: GainNode }>();
   /** When the sound last fired on each pad ends (Infinity while a loop plays). */
   private padEnds = new Map<number, number>();
   /** Bowl sound by the note the bowl sounds; anything else plays the first bowl's sound. */
@@ -347,9 +351,10 @@ export class MusicAudioEngine {
     this.dubShots?.hold(index, on);
   }
 
-  /** The XY tone lets go with its normal release (a set without the XY pad). */
+  /** The XY tone lets go with its normal release (a set without the XY pad); a latched arp on its tone stops too. */
   releaseXy(): void {
     if (this.ctx) this.xyOff(this.ctx.currentTime);
+    this.tones?.releaseChannel('xy');
   }
 
   /** Mod wheel and aftertouch (0-1) and pitch bend (-1..1) from a controller, for the tones. */
@@ -583,9 +588,18 @@ export class MusicAudioEngine {
     const note = this.keyRoot + 12;
     if (def.kind === 'loop') {
       if (this.padLoops.has(index)) return;
-      const handle = def.play(sc, note, velocity, time);
-      this.padLoops.set(index, handle);
+      const gate = this.ctx!.createGain();
+      gate.connect(this.bus!.shots);
+      // Kept before building, so a sound that fails halfway can still be switched off.
+      const entry: { handle: SoundHandle | null; gate: GainNode } = { handle: null, gate };
+      this.padLoops.set(index, entry);
       this.padEnds.set(index, Infinity);
+      try {
+        entry.handle = def.play({ ...sc, out: gate }, note, velocity, time);
+      } catch (err) {
+        console.warn('[Studio] An atmosphere failed to start:', err);
+        this.stopPadLoop(index, time, 0.05);
+      }
       return;
     }
     const handle = def.play(sc, note, velocity, time);
@@ -593,12 +607,23 @@ export class MusicAudioEngine {
   }
 
   private stopPadLoop(index: number, time: number, fade?: number): void {
-    const handle = this.padLoops.get(index);
-    if (!handle) return;
+    const entry = this.padLoops.get(index);
+    if (!entry) return;
     this.padLoops.delete(index);
-    this.padEnds.set(index, time + (fade ?? 1.5));
-    handle.stop(time, fade);
+    const seconds = Math.max(0.02, fade ?? 1.5);
+    this.padEnds.set(index, time + seconds);
+    try { entry.handle?.stop(time, fade); } catch (err) { console.warn('[Studio] An atmosphere did not stop cleanly:', err); }
+    // Whatever the sound did, its gate closes over the same fade and lets go.
+    fadeOutAndDrop(entry.gate, time, seconds);
   }
+
+  /** Stop every atmosphere on the pads, with a short fade. */
+  stopPadLoops(fade = 0.4): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    for (const index of [...this.padLoops.keys()]) this.stopPadLoop(index, t, fade);
+  }
+
 
   private strikeBowlSound(note: number, velocity: number, time: number): void {
     const def = soundById(this.bowlSounds.get(note) ?? this.bowlFallback);
@@ -637,6 +662,8 @@ export class MusicAudioEngine {
   kill(): void {
     if (!this.ctx || !this.masterGain) return;
     this.allNotesOff();
+    // The tones' own echoes (an arp's delay) go too, not just their voices.
+    try { this.tones?.panic(undefined, true); } catch { /* not running */ }
     this.bandFx?.kill();
     this.returns?.kill();
     for (const chain of this.insertChains.values()) chain.kill();
@@ -986,21 +1013,24 @@ export class MusicAudioEngine {
     this.voices.set(key, voice);
   }
 
-  /** Release every sounding note. */
+  /** Release every sounding note. One part failing to let go never keeps the others sounding. */
   allNotesOff(): void {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
-    for (const voice of this.voices.values()) voice.release(t);
+    const step = (fn: () => void) => {
+      try { fn(); } catch (err) { console.warn('[Studio] A part did not let go cleanly:', err); }
+    };
+    for (const voice of this.voices.values()) step(() => voice.release(t));
     this.voices.clear();
-    for (const r of this.releasing) if (r.at > t) r.voice.release(t);
+    for (const r of this.releasing) if (r.at > t) step(() => r.voice.release(t));
     this.releasing = [];
-    this.acidOff(t);
-    this.xyOff(t);
-    this.dubBass?.off(t);
-    this.siren?.off(t);
-    this.analog?.allOff(t);
-    this.tones?.panic();
-    for (const index of [...this.padLoops.keys()]) this.stopPadLoop(index, t, 0.4);
+    step(() => this.acidOff(t));
+    step(() => this.xyOff(t));
+    step(() => this.dubBass?.off(t));
+    step(() => this.siren?.off(t));
+    step(() => this.analog?.allOff(t));
+    step(() => this.tones?.panic());
+    step(() => this.stopPadLoops(0.4));
   }
 
   dispose(): void {
@@ -1697,6 +1727,16 @@ export class MusicAudioEngine {
 }
 
 /** Freeze a param at its current scheduled value from `time`, so a new ramp starts there. */
+/** Fade `node` to silence from `time` over `seconds`, then disconnect it. */
+function fadeOutAndDrop(node: GainNode, time: number, seconds: number): void {
+  const ctx = node.context;
+  const at = Math.max(ctx.currentTime, time);
+  holdAt(node.gain, at);
+  node.gain.linearRampToValueAtTime(0, at + seconds);
+  const wait = (at - ctx.currentTime + seconds + 0.1) * 1000;
+  setTimeout(() => { try { node.disconnect(); } catch { /* already gone */ } }, Math.max(0, wait));
+}
+
 function holdAt(param: AudioParam, time: number): void {
   const p = param as AudioParam & { cancelAndHoldAtTime?: (t: number) => AudioParam };
   if (typeof p.cancelAndHoldAtTime === 'function') {

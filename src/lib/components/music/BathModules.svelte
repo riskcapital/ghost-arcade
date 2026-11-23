@@ -8,7 +8,7 @@
   import { musicStudio, musicTransport } from '../../music/musicStudioStore';
   import { BOWL_PARAMS, DRONE_PARAMS, bowlNotes, chordName, chordNotes, keyLabel, scaleNote } from '../../music/studioSets';
   import { noteName } from '../../music/noteEvents';
-  import { playNote, releaseBowl, releaseChords, releaseNote, strikeBowl, toggleChord } from '../../music/musicRuntime';
+  import { letGoXy, playNote, releaseBowl, releaseChords, releaseNote, strikeBowl, toggleChord } from '../../music/musicRuntime';
   import StudioModule from './StudioModule.svelte';
   import StudioKnob from './StudioKnob.svelte';
   import StudioJack from './StudioJack.svelte';
@@ -140,6 +140,8 @@
     pressedBowls.clear();
     if (xyNote !== null) releaseNote('xy', xyNote, 'screen', xyTone);
     xyNote = null;
+    // A latched arp on the XY's tone would play on with no pad left to change it.
+    if (part === 'xy') letGoXy();
   });
 </script>
 
