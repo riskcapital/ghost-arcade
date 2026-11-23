@@ -63,7 +63,9 @@ function soundRowValue(songs: readonly PlacedSong[] | undefined, trackId: string
     const v = sample(song.features, at) * placedGain(song, local);
     best = best === null ? v : Math.max(best, v);
   }
-  return best === null ? 0 : best;
+  // No block playing (a gap): no value, like a song track past its end,
+  // so a bipolar follow line rests instead of pinning to −depth.
+  return best;
 }
 
 export interface LineContext {
@@ -181,10 +183,14 @@ function monotoneTangents(t: Float64Array, v: Float64Array, n: number): Float64A
   return m;
 }
 
-const compiledPoints = new WeakMap<readonly LinePoint[], CompiledPoints>();
+// One cache per default curve: the same points compile differently under
+// 'linear' and 'hold', and a lookup under one must not answer for the other.
+const compiledPoints = new Map<LineCurve, WeakMap<readonly LinePoint[], CompiledPoints>>();
 
 export function compilePoints(points: readonly LinePoint[], defaultCurve: LineCurve = 'linear'): CompiledPoints {
-  let hit = compiledPoints.get(points);
+  let cache = compiledPoints.get(defaultCurve);
+  if (!cache) compiledPoints.set(defaultCurve, (cache = new WeakMap()));
+  let hit = cache.get(points);
   if (hit) return hit;
   const n = points.length;
   const t = new Float64Array(n);
@@ -201,7 +207,7 @@ export function compilePoints(points: readonly LinePoint[], defaultCurve: LineCu
     b.set(h, i * 4);
   }
   hit = { n, t, v, m: monotoneTangents(t, v, n), c, b };
-  compiledPoints.set(points, hit);
+  cache.set(points, hit);
   return hit;
 }
 
