@@ -162,3 +162,50 @@ describe('MediaPipe camera startup', () => {
     expect(source.getOpts().mirror).toBe(true);
   });
 });
+
+describe('MediaPipe inference pacing', () => {
+  it('infers each camera frame once and replays its result on repeats', () => {
+    let now = 100;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const source = new MediaPipeSource() as any;
+    let frameCallback: (() => void) | null = null;
+    const video = { requestVideoFrameCallback: (cb: () => void) => { frameCallback = cb; return 1; }, cancelVideoFrameCallback() {} };
+    const posted: unknown[] = [];
+    source.worker = { postMessage: (msg: unknown) => posted.push(msg) };
+    source.workerReady = true;
+    source.video = video;
+    source.offscreen = { width: 4, height: 4, transferToImageBitmap: () => ({ close() {} }) };
+    source.offCtx = { save() {}, restore() {}, scale() {}, drawImage() {} };
+    source.startVideoFrameTracking(video);
+    const frames: unknown[] = [];
+    source.subscribe((frame: unknown) => frames.push(frame));
+    frames.length = 0;
+
+    source._pumpFrame();
+    expect(posted).toHaveLength(1);
+    now = 110;
+    source._onWorkerMessage({ data: { type: 'result', timestamp: 1, hands: [] }, target: {} });
+    expect(frames).toHaveLength(1);
+
+    // Same camera frame: no new inference; the result repeats on the
+    // display ticks the worker's answer (10 ms round trip) used to pace.
+    now = 116;
+    source._pumpFrame();
+    expect(posted).toHaveLength(1);
+    expect(frames).toHaveLength(2);
+    now = 122;
+    source._pumpFrame();
+    expect(frames).toHaveLength(2);
+    now = 126;
+    source._pumpFrame();
+    expect(posted).toHaveLength(1);
+    expect(frames).toHaveLength(3);
+
+    // A new camera frame is inferred.
+    frameCallback!();
+    now = 140;
+    source._pumpFrame();
+    expect(posted).toHaveLength(2);
+    vi.restoreAllMocks();
+  });
+});

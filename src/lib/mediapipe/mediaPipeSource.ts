@@ -127,6 +127,17 @@ export class MediaPipeSource {
   // into a queue of stale frames, which would show up as ever-growing
   // lag between the user's actual hand and the on-screen tracking.
   private framesInFlight = 0;
+  // New-camera-frame tracking (requestVideoFrameCallback). The pump runs on
+  // the display clock, faster than a webcam delivers frames; a frame the
+  // worker already saw is not inferred again. Its result is replayed instead
+  // at the pace the worker answered, so listeners (and the bus's
+  // per-frame smoothing) see the same cadence as before.
+  private videoFrameTracked = false;
+  private videoFrameFresh = true;
+  private videoFrameHandle: number | null = null;
+  private lastSentAt = 0;
+  private lastRoundTripMs = 0;
+  private lastWorkerResult: { hands: unknown; pose: unknown; face: unknown } | null = null;
   private opts: Required<MediaPipeStartOptions> = { ...DEFAULT_OPTS };
   private listeners = new Set<GestureListener>();
   private lastFrame: SignalFrame = EMPTY_SIGNAL_FRAME;
@@ -177,6 +188,7 @@ export class MediaPipeSource {
     if (this.stopTimer !== null) { clearTimeout(this.stopTimer); this.stopTimer = null; }
     this.running = false;
     if (this.rafId !== null) { cancelAnimationFrame(this.rafId); this.rafId = null; }
+    this.stopVideoFrameTracking();
     if (this.worker) {
       try { this.worker.postMessage({ type: 'dispose' }); } catch {}
       try { this.worker.terminate(); } catch {}
@@ -457,6 +469,7 @@ export class MediaPipeSource {
       // 4. Start frame loop
       this.lastFrameSentAt = 0;
       this.framesInFlight = 0;
+      this.startVideoFrameTracking(localVideo);
       const tick = () => {
         this.rafId = requestAnimationFrame(tick);
         this._pumpFrame();
@@ -475,6 +488,32 @@ export class MediaPipeSource {
     }
   }
 
+  private startVideoFrameTracking(video: HTMLVideoElement): void {
+    this.stopVideoFrameTracking();
+    this.videoFrameFresh = true;
+    this.lastWorkerResult = null;
+    this.lastRoundTripMs = 0;
+    if (typeof video.requestVideoFrameCallback !== 'function') return;
+    this.videoFrameTracked = true;
+    const onFrame = () => {
+      this.videoFrameHandle = null;
+      if (this.video !== video || !this.videoFrameTracked) return;
+      this.videoFrameFresh = true;
+      this.videoFrameHandle = video.requestVideoFrameCallback(onFrame);
+    };
+    this.videoFrameHandle = video.requestVideoFrameCallback(onFrame);
+  }
+
+  private stopVideoFrameTracking(): void {
+    if (this.videoFrameHandle !== null && this.video && typeof this.video.cancelVideoFrameCallback === 'function') {
+      try { this.video.cancelVideoFrameCallback(this.videoFrameHandle); } catch {}
+    }
+    this.videoFrameHandle = null;
+    this.videoFrameTracked = false;
+    this.videoFrameFresh = true;
+    this.lastWorkerResult = null;
+  }
+
   private _pumpFrame(): void {
     if (!this.workerReady || !this.video || !this.offCtx || !this.offscreen) return;
     // Strict request-response pacing: don't send a new frame until the
@@ -484,7 +523,17 @@ export class MediaPipeSource {
     const now = performance.now();
     const interval = 1000 / this.opts.targetFps;
     if (now - this.lastFrameSentAt < interval) return;
+    // Same camera frame as the last inference: replay its result once the
+    // worker would have answered, rather than inferring the picture again.
+    if (this.videoFrameTracked && !this.videoFrameFresh && this.lastWorkerResult) {
+      if (now - this.lastFrameSentAt < this.lastRoundTripMs) return;
+      this.lastFrameSentAt = now;
+      this._onWorkerMessage({ data: { type: 'result', timestamp: ++this.frameCounter, ...this.lastWorkerResult } } as MessageEvent, true);
+      return;
+    }
+    this.videoFrameFresh = false;
     this.lastFrameSentAt = now;
+    this.lastSentAt = now;
 
     // Mirror by negating the X axis when drawing — keeps the source
     // image consistent so landmark coords are correct for the user's
@@ -509,11 +558,16 @@ export class MediaPipeSource {
     }
   }
 
-  private _onWorkerMessage(e: MessageEvent): void {
+  private _onWorkerMessage(e: MessageEvent, replay = false): void {
     const msg = e.data;
     if (msg?.type === 'result') {
-      // Acknowledge the in-flight frame so the next pump can fire.
-      this.framesInFlight = Math.max(0, this.framesInFlight - 1);
+      if (!replay) {
+        // From the worker: acknowledge the in-flight frame so the next pump
+        // can fire, and keep the result for repeats of the same camera frame.
+        this.framesInFlight = Math.max(0, this.framesInFlight - 1);
+        this.lastRoundTripMs = performance.now() - this.lastSentAt;
+        this.lastWorkerResult = { hands: msg.hands, pose: msg.pose, face: msg.face };
+      }
       let hands = msg.hands as WorkerHandResult[];
       // When the source is mirrored (selfie-style), MediaPipe sees a
       // flipped image — your physical right hand looks shape-wise like
