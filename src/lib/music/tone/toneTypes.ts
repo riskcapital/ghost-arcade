@@ -167,4 +167,7 @@ export type ToneMessage =
   | { t: 'hit'; slot: number; vel: number; at: number; tweak: DrumTweak }
   | { t: 'expr'; wheel?: number; pressure?: number; bend?: number }
   | { t: 'tempo'; bpm: number }
-  | { t: 'panic' };
+  /** Silence now; `flush` also empties the engine's own echo and chorus (Kill). */
+  | { t: 'panic'; flush?: boolean }
+  /** Let go of everything held, a latched arpeggio included; tails ring out. */
+  | { t: 'release' };

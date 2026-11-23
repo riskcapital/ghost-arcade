@@ -110,6 +110,63 @@ describe('tone engine', () => {
     expect(e.busy).toBe(false);
   });
 
+  describe('a latched arp with its echo (the XY pad dressed in Glass arp)', () => {
+    const glass = TONES.find((t) => t.id === 'arp.glass')!;
+    /** Level of the next `seconds`, starting at `from`. */
+    const level = (e: ToneEngine, from: number, seconds: number) => {
+      const L = new Float32Array(BLOCK);
+      const R = new Float32Array(BLOCK);
+      let peak = 0;
+      for (let b = 0; b < Math.ceil((seconds * SR) / BLOCK); b++) {
+        L.fill(0);
+        R.fill(0);
+        e.process(L, R, BLOCK, from + (b * BLOCK) / SR);
+        for (let i = 0; i < BLOCK; i++) peak = Math.max(peak, Math.abs(L[i]), Math.abs(R[i]));
+      }
+      return peak;
+    };
+    /** A drag across the pad: each new note before the last lets go, then the finger lifts. */
+    const dragged = () => {
+      const e = new ToneEngine(SR);
+      e.message({ t: 'tempo', bpm: 120 }, 0);
+      e.message({ t: 'patch', patch: glass.patch }, 0);
+      e.message({ t: 'on', note: 60, vel: 0.9, at: 0 }, 0);
+      e.message({ t: 'on', note: 62, vel: 0.9, at: 0.2 }, 0);
+      e.message({ t: 'off', note: 60, at: 0.2 }, 0);
+      e.message({ t: 'off', note: 62, at: 0.5 }, 0);
+      return e;
+    };
+
+    it('plays on after the pad is let go (it is latched)', () => {
+      const e = dragged();
+      level(e, 0, 2);
+      expect(level(e, 2, 1)).toBeGreaterThan(0.02);
+    });
+
+    it('stops at once on a panic, and Kill also empties its echo', () => {
+      const soft = dragged();
+      level(soft, 0, 2);
+      soft.message({ t: 'panic' }, 2);
+      // A plain panic (Stop) cuts the voices and the run; the echo rings out.
+      level(soft, 2, 3);
+      expect(level(soft, 5, 1)).toBeLessThan(0.001);
+      const kill = dragged();
+      level(kill, 0, 2);
+      kill.message({ t: 'panic', flush: true }, 2);
+      expect(level(kill, 2, 1)).toBe(0);
+      expect(kill.busy).toBe(false);
+    });
+
+    it('lets go of the latched run when the pad goes away, and its echo dies out', () => {
+      const e = dragged();
+      level(e, 0, 2);
+      e.message({ t: 'release' }, 2);
+      level(e, 2, 3);
+      expect(level(e, 5, 1)).toBeLessThan(0.001);
+      expect(e.busy).toBe(false);
+    });
+  });
+
   it('keeps the ladder stable at full resonance', () => {
     const f = new Ladder();
     f.set(2000, 1, SR);

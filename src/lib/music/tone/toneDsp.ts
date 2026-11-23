@@ -391,6 +391,21 @@ class FxChain {
     this.delayR = new Float32Array(Math.ceil(sr * 2.1));
   }
 
+  /** Empty every buffer and filter state: no echo or chorus tail is left (Kill). */
+  flush(): void {
+    this.buf.fill(0);
+    this.delayL.fill(0);
+    this.delayR.fill(0);
+    this.dampL = this.dampR = 0;
+    this.apL.fill(0);
+    this.apR.fill(0);
+    this.phFbL = this.phFbR = 0;
+    this.wahEnv = 0;
+    this.wahL = new Svf();
+    this.wahR = new Svf();
+    this.holdL = this.holdR = 0;
+  }
+
   private tap(delaySamples: number): number {
     const pos = this.write - delaySamples;
     const i = Math.floor(pos);
@@ -478,7 +493,9 @@ class FxChain {
       }
     }
     if (fx.delay && fx.delay.mix > 0) {
-      const { mix, beats, fb } = fx.delay;
+      const { mix, beats } = fx.delay;
+      // Ping-pong: the loop gain is fb² per round trip, so below 1 every echo dies away.
+      const fb = clamp(fx.delay.fb, 0, 0.95);
       const size = this.delayL.length;
       const d = clamp(Math.round((beats * 60) / Math.max(30, bpm) * sr), 1, size - 1);
       const damp = 1 - Math.exp(-TAU * (1500 + (fx.delay.tone ?? 0.5) * 7000) / sr);
@@ -560,7 +577,24 @@ export class ToneEngine {
       if (msg.pressure !== undefined) this.expr.pressure = msg.pressure;
       if (msg.bend !== undefined) this.expr.bend = msg.bend;
     } else if (msg.t === 'tempo') this.bpm = msg.bpm;
-    else if (msg.t === 'panic') this.panic();
+    else if (msg.t === 'panic') {
+      this.panic();
+      if (msg.flush) this.fx.flush();
+    } else if (msg.t === 'release') this.releaseAll();
+  }
+
+  /** Let go of every held key and a latched arpeggio; voices and echoes ring out. */
+  releaseAll(): void {
+    this.arp?.clear();
+    // Keys and arp steps still waiting would start notes again: drop them.
+    this.queue = [];
+    this.stack = [];
+    for (const v of this.voices) {
+      if (!v.held) continue;
+      v.held = false;
+      v.amp.gate(false);
+      v.fenv.gate(false);
+    }
   }
 
   panic(): void {
@@ -928,6 +962,7 @@ export class DrumEngine {
     else if (msg.t === 'panic') {
       this.queue = [];
       for (const h of this.hits) h.done = true;
+      if (msg.flush) this.fx.flush();
     }
   }
 

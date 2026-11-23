@@ -165,10 +165,16 @@ export class ToneHost {
     for (const node of this.all()) node.port.postMessage({ t: 'tempo', bpm });
   }
 
-  /** Silence one part's engine, or all of them. */
-  panic(slot?: ToneSlot): void {
-    for (const [s, node] of this.nodes) if (!slot || s === slot) node.port.postMessage({ t: 'panic' });
-    if (!slot) for (const node of this.clipNodes.values()) node.port.postMessage({ t: 'panic' });
+  /** Silence one part's engine, or all of them. `flush` (Kill, all engines) also empties their own echoes. */
+  panic(slot?: ToneSlot, flush = false): void {
+    const msg: ToneMessage = flush && !slot ? { t: 'panic', flush: true } : { t: 'panic' };
+    for (const [s, node] of this.nodes) if (!slot || s === slot) node.port.postMessage(msg);
+    if (!slot) for (const node of [...this.clipNodes.values(), ...this.padNodes.values()]) node.port.postMessage(msg);
+  }
+
+  /** Let go of everything the tones playing into `channel` hold, a latched arpeggio included. */
+  releaseChannel(channel: string): void {
+    for (const [key, node] of this.clipNodes) if (key.endsWith(`@${channel}`)) node.port.postMessage({ t: 'release' });
   }
 
   dispose(): void {
