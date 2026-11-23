@@ -16,12 +16,12 @@ export interface CueNames {
 export function actionWords(a: CueAction, names: CueNames = {}): string {
   switch (a.kind) {
     case 'preset': return `Mapping preset · ${names.composition?.(a.compositionId) ?? 'missing'}`;
-    case 'snapshot': return `Snapshot ${a.slot + 1}`;
+    case 'snapshot': return `Snapshot ${a.slot}`;
     case 'vjClip': return `VJ clip ${a.deck}${a.layer + 1}·${a.column + 1}`;
     case 'vjColumn': return `VJ column ${a.column + 1}`;
     case 'vjStopAll': return 'Stop all VJ clips';
     case 'blackout': return a.on ? 'Blackout' : 'Lights back';
-    case 'macro': return `Macro ${a.macro + 1}`;
+    case 'macro': return `Macro ${a.macro}`;
     case 'layerOpacity': return `${names.layer?.(a.layerId) ?? 'Layer'} opacity`;
     case 'param': return `Set ${a.path}`;
     case 'timeline': return `Timeline ${a.op}`;
