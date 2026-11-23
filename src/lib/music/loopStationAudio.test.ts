@@ -29,6 +29,7 @@ function fakeEngine() {
     undo: (i: number) => { layers[i].pop(); e.onLayersChanged?.(i); return true; },
     info: (i: number) => ({ bars: 2, originBeat: 0, layers: layers[i].length, redo: 0 }),
     canRecord: () => true, state: () => 'stopped', clearAll: () => {}, peaks: () => [],
+    setLevel: () => {}, sampleRate: () => 48000,
   };
   return e;
 }
