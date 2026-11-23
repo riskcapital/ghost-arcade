@@ -638,6 +638,8 @@ export class MusicAudioEngine {
     if (!this.ctx || !this.masterGain) return;
     this.allNotesOff();
     this.bandFx?.kill();
+    this.returns?.kill();
+    for (const chain of this.insertChains.values()) chain.kill();
     this.dubShots?.silence();
     this.cancelBuild();
     this.scan?.stop();

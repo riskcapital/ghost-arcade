@@ -471,6 +471,7 @@ export class MacroFxChain {
   readonly output: GainNode;
   private units: Array<{ id: string; unit: Unit }> = [];
   private structure = '';
+  private last: { slots: MacroFxSlot[]; tempo: number } | null = null;
 
   constructor(private ctx: AudioContext) {
     // Load the sample-by-sample effects now, so adding one later is instant.
@@ -486,6 +487,7 @@ export class MacroFxChain {
 
   /** Bring the chain in line with the macros' effects and values. */
   sync(slots: MacroFxSlot[], tempo: number): void {
+    this.last = { slots, tempo };
     const active = slots.flatMap((slot) => slot.effects.filter((fx) => fx.enabled).map((fx) => ({ fx, macro: slot.macroValue })));
     const structure = active.map(({ fx }) => `${fx.id}:${fx.type}`).join('|');
     if (structure !== this.structure) this.rebuild(active.map(({ fx }) => fx), structure);
@@ -494,6 +496,22 @@ export class MacroFxChain {
       for (const [key, param] of Object.entries(fx.params)) values[key] = effectiveValue(param, macro);
       this.units[i]?.unit.set(values, tempo);
     });
+  }
+
+  /**
+   * Kill: every effect is built fresh, so no echo, loop or reverb has
+   * anything left in it, then set to the same values for the next play.
+   */
+  kill(): void {
+    try { this.input.disconnect(); } catch { /* none */ }
+    for (const { unit } of this.units) {
+      unit.dispose();
+      try { unit.output.disconnect(); } catch { /* none */ }
+    }
+    this.units = [];
+    this.structure = '';
+    this.input.connect(this.output);
+    if (this.last) this.sync(this.last.slots, this.last.tempo);
   }
 
   private rebuild(effects: MacroFxInstance[], structure: string): void {

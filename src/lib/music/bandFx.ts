@@ -31,6 +31,7 @@ export class BandFx {
   private readonly verbSend: GainNode;
   private readonly delay: DelayNode;
   private readonly feedback: GainNode;
+  private readonly echoOut: GainNode;
   private readonly loopTone: BiquadFilterNode;
   private readonly wowDepth: GainNode;
   private readonly wow: OscillatorNode;
@@ -70,9 +71,9 @@ export class BandFx {
     tape.curve = loopCurve(1.6);
     this.input.connect(this.echoSend).connect(this.delay);
     this.delay.connect(this.loopTone).connect(loopLow).connect(tape).connect(this.feedback).connect(this.delay);
-    const echoOut = ctx.createGain();
-    echoOut.gain.value = 0.9;
-    tape.connect(echoOut).connect(this.returnGain);
+    this.echoOut = ctx.createGain();
+    this.echoOut.gain.value = 0.9;
+    tape.connect(this.echoOut).connect(this.returnGain);
     this.wow = ctx.createOscillator();
     this.wow.frequency.value = 0.6;
     this.wowDepth = ctx.createGain();
@@ -177,9 +178,17 @@ export class BandFx {
     this.setWash(false);
     this.releaseFreeze(0.05);
     const t = this.ctx.currentTime;
+    // The loop and its output stay shut for one full pass of the delay line,
+    // so nothing still in it comes back round when they reopen.
+    const clear = t + Math.min(MAX_ECHO_SECONDS, this.delay.delayTime.value) + 0.1;
     holdAt(this.feedback.gain, t);
     this.feedback.gain.setValueAtTime(0, t);
-    this.feedback.gain.setTargetAtTime(Math.min(0.92, this.settings?.feedback ?? 0.55), t + 0.3, 0.05);
+    this.feedback.gain.setValueAtTime(0, clear);
+    this.feedback.gain.setTargetAtTime(Math.min(0.92, this.settings?.feedback ?? 0.55), clear, 0.05);
+    holdAt(this.echoOut.gain, t);
+    this.echoOut.gain.setValueAtTime(0, t);
+    this.echoOut.gain.setValueAtTime(0, clear);
+    this.echoOut.gain.linearRampToValueAtTime(0.9, clear + 0.05);
   }
 
   dispose(): void {

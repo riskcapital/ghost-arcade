@@ -7,6 +7,7 @@
 
 import { impulse, loopClip } from './fxRack';
 import { LazyConvolver } from './lazyConvolver';
+import { holdAt } from './sounds/kit';
 
 export type ReturnId = 'reverb' | 'echo' | 'spring';
 export const RETURN_IDS: ReturnId[] = ['reverb', 'echo', 'spring'];
@@ -30,6 +31,8 @@ export class SendReturns {
   readonly inputs: Record<ReturnId, GainNode>;
   private levels: Record<ReturnId, GainNode>;
   private delay: DelayNode;
+  private echoTone: BiquadFilterNode;
+  private echoFb: GainNode;
   private ctx: AudioContext;
   /** The reverb and the spring are built when a channel first sends to them. */
   private rooms: Record<'reverb' | 'spring', LazyConvolver>;
@@ -55,6 +58,8 @@ export class SendReturns {
     sat.curve = loopClip(1.3);
     const fb = ctx.createGain();
     fb.gain.value = 0.48;
+    this.echoTone = tone;
+    this.echoFb = fb;
     this.inputs.echo.connect(this.delay);
     this.delay.connect(tone).connect(hp).connect(sat);
     sat.connect(fb).connect(this.delay);
@@ -75,6 +80,34 @@ export class SendReturns {
   route(used: Record<ReturnId, boolean>, immediate = false): void {
     if (used.reverb) this.rooms.reverb.arm(immediate);
     if (used.spring) this.rooms.spring.arm(immediate);
+  }
+
+  /**
+   * Kill: the echo gets an empty delay line at once (its settings kept), and
+   * the reverb and spring returns stay shut until their tails have gone,
+   * then come back at their levels.
+   */
+  kill(): void {
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const old = this.delay;
+    const fresh = ctx.createDelay(3);
+    fresh.delayTime.value = old.delayTime.value;
+    try { this.inputs.echo.disconnect(old); } catch { /* gone */ }
+    try { this.echoFb.disconnect(old); } catch { /* gone */ }
+    try { old.disconnect(); } catch { /* gone */ }
+    this.inputs.echo.connect(fresh);
+    fresh.connect(this.echoTone);
+    this.echoFb.connect(fresh);
+    this.delay = fresh;
+    for (const [id, tail] of [['reverb', 3.4], ['spring', 1.7]] as const) {
+      const g = this.levels[id].gain;
+      const level = g.value;
+      holdAt(g, t);
+      g.setValueAtTime(0, t);
+      g.setValueAtTime(0, t + tail);
+      g.linearRampToValueAtTime(level, t + tail + 0.05);
+    }
   }
 
   /** Each return's level into the master, 0-1, and the echo's time from the tempo. */
