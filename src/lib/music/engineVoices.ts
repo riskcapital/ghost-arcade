@@ -166,7 +166,8 @@ export function engineLayerParams(id: string, params: Record<string, number>, fo
   const out: Record<string, unknown> = {};
   const keys = ENGINE_VOICE_KEYS[id];
   for (const c of engineControls(id) ?? []) {
-    if (c.kind === 'media-source') continue;
+    // A colour left unset keeps the palette: its panel default (white) is not sent.
+    if (c.kind === 'media-source' || c.kind === 'color') continue;
     if ('default' in c) out[c.key] = Array.isArray(c.default) ? [...c.default] : c.default;
     // Only the voice's own controls move; the rest stay at their defaults.
     if (keys && !keys.includes(c.key)) continue;

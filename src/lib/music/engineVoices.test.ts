@@ -13,6 +13,7 @@ const STRANDS_DEFS = paramControlsFromManifest([
   { kind: 'slider', key: 'speed', label: 'Speed', group: 'Motion', min: 0, max: 4, step: 0.01, default: 1 },
   { kind: 'select', key: 'palette', label: 'Palette', group: 'Look', default: 'ice-and-oxblood', options: [{ value: 'ice-and-oxblood', label: 'Ice' }, { value: 'verdigris', label: 'Verdigris' }] },
   { kind: 'select', key: 'quality', label: 'Quality', group: 'Points', default: 'medium', resets: true, options: [{ value: 'medium', label: 'Medium' }, { value: 'high', label: 'High' }] },
+  { kind: 'color', key: 'colorA', label: 'Colour A', group: 'Look', default: [255, 255, 255] },
   { kind: 'toggle', key: 'trigger', label: 'Trigger', group: 'Audio', default: false, button: true },
 ]);
 
@@ -69,6 +70,10 @@ describe('engine voices', () => {
   it('follows a Live track by its Live source, and the master when it follows everything', () => {
     expect(engineLayerParams('strands', {}, 'live:Drums/kick').audioSource).toBe('live:Drums/kick');
     expect(engineLayerParams('strands', {}, 'all').audioSource).toBeUndefined();
+  });
+
+  it('leaves an unset colour out so the palette keeps its own', () => {
+    expect('colorA' in engineLayerParams('strands', {}, 'all')).toBe(false);
   });
 
   it('sits in a clip stack beside an audio shader', () => {

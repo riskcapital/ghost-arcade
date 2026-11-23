@@ -338,6 +338,15 @@
 {/snippet}
 
 {#snippet slider(i: number, voice: StudioVoice, input: ShaderInput)}
+  {#if input.TYPE === 'long' && input.VALUES?.length}
+    <!-- A choice (palette, shape...): every option listed, not a 0-1 slider. -->
+    <label class="choice" title="{input.LABEL ?? input.NAME}">
+      <span>{input.LABEL ?? input.NAME}</span>
+      <select value={String(Math.round(numberOf(voice, input)))} onchange={(e) => setStudioVoice(i, { params: { [input.NAME]: Number((e.target as HTMLSelectElement).value) } }, `voice:${i}:${input.NAME}`)} aria-label={input.LABEL ?? input.NAME}>
+        {#each input.VALUES as v, k (v)}<option value={String(v)}>{input.LABELS?.[k] ?? v}</option>{/each}
+      </select>
+    </label>
+  {:else}
   {@const whole = input.TYPE === 'long' || (input.MAX ?? 1) - (input.MIN ?? 0) > 4}
   <NumericInput
     label={input.LABEL ?? input.NAME}
@@ -350,6 +359,7 @@
     displayValue={valueFormat(input)}
     on:input={(e) => setStudioVoice(i, { params: { [input.NAME]: whole ? Math.round(e.detail) : e.detail } }, `voice:${i}:${input.NAME}`)}
   />
+  {/if}
 {/snippet}
 
 {#snippet grip(r: number, name: string)}
@@ -600,6 +610,8 @@
 </StudioModule>
 
 <style>
+  .choice { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; font-size: 11px; }
+  .choice select { min-width: 0; max-width: 60%; }
   /* Head: Look (a summary of the colors and grade) and + Add. */
   .look-btn { display: inline-flex; align-items: center; gap: 4px; max-width: 150px; min-width: 0; }
   .look-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
