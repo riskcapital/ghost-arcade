@@ -529,3 +529,15 @@ describe('a shader clip\'s own time', () => {
     expect(sources.sourceFor(started.tracks[0], started)!._nativeShaderTime!.seconds).toBeCloseTo(0.02, 9);
   });
 });
+
+describe('loop start edits', () => {
+  it('re-trims a playing video when its loop start changes', () => {
+    const sources = new ShowClipSources({ now: () => 0 });
+    const a = track('t', 'A', [clip('c', 0, 60, { media: video('loop.mp4', 10), loopStart: 0 })]);
+    const f1 = frameAt([a], 2);
+    expect(sources.sourceFor(f1.tracks[0], f1)!.trimStart).toBe(0);
+    const b = track('t', 'A', [clip('c', 0, 60, { media: video('loop.mp4', 10), loopStart: 5 })]);
+    const f2 = frameAt([b], 2.1);
+    expect(sources.sourceFor(f2.tracks[0], f2)!.trimStart).toBeCloseTo(0.5, 9);
+  });
+});

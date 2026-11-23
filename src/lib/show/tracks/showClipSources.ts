@@ -98,6 +98,8 @@ export interface ShowClipAnchor {
   duration?: number;
   showSeekGeneration: number;
   nativeSeekSeq: number;
+  /** Anchored on the export clock (an offline render), not the live one. */
+  manual?: boolean;
   source: MediaSource;
 }
 
@@ -188,7 +190,10 @@ export class ShowClipSources {
   sourceFor(state: ShowTrackState, frame: ShowTrackFrame): MediaSource | null {
     // A crossfade that ended leaves no helper anchor behind: the next pass
     // through it hands the playing run over again instead of seeking.
-    if (!state.xfade) this.anchors.delete(state.trackId + XFADE_KEY_SUFFIX);
+    if (!state.xfade) {
+      this.anchors.delete(state.trackId + XFADE_KEY_SUFFIX);
+      this.shaderAnchors.delete(state.trackId + XFADE_KEY_SUFFIX);
+    }
     const clip = state.clip;
     if (!clip || clip.media.kind === 'layer') {
       this.anchors.delete(state.trackId);
@@ -312,7 +317,10 @@ export class ShowClipSources {
     const drifted = this.stale.delete(trackId);
     const sameRate = sameRun && Math.abs(prev!.rate - clip.rate) <= 1e-9;
     // A length found after the clip started (see showClipLength) re-trims it.
-    let reanchor = !sameRun || drifted || prev!.paused !== clip.paused || !sameRate || prev!.duration !== duration;
+    // A loop start edited in the inspector re-trims it; so does a switch
+    // between the live and the export clock (a render must not reuse a live seek).
+    let reanchor = !sameRun || drifted || prev!.paused !== clip.paused || !sameRate || prev!.duration !== duration
+      || prev!.loopStart !== clip.loopStart || !!prev!.manual !== !!frame.manualClock;
     if (!reanchor && prev!.showSeekGeneration !== frame.seekGeneration) {
       if (frame.manualClock) {
         const predicted = predictedMediaTime(prev!, frame.time);
@@ -414,6 +422,7 @@ export class ShowClipSources {
       duration,
       showSeekGeneration: frame.seekGeneration,
       nativeSeekSeq,
+      manual: !!frame.manualClock,
       source,
     });
     return source;
