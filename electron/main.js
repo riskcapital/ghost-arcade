@@ -8382,7 +8382,7 @@ function registerIpcHandlers() {
     ipcMain.handle(channel, async (_, args) => {
       try {
         wavStreams ??= createWavStreamStore(path.join(app.getPath('userData'), 'project-assets'));
-        return { success: true, ...wavStreams[method](args && typeof args === 'object' ? args : {}) };
+        return { success: true, ...(await wavStreams[method](args && typeof args === 'object' ? args : {})) };
       } catch (err) {
         return { success: false, error: err?.message || String(err) };
       }

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 const require = createRequire(import.meta.url);
-const { createWavStreamStore } = require('../../../electron/wav-stream-store.cjs');
+const { createWavStreamStore, wavHeader } = require('../../../electron/wav-stream-store.cjs');
 
 /** A fake audio graph: stems with a context, nodes that answer stop with what they were told. */
 const ctx = { currentTime: 1, sampleRate: 48000 } as unknown as AudioContext;
@@ -136,16 +136,28 @@ describe('streaming a WAV to disk', () => {
   it('writes batches and a header for what is on disk', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'wav-'));
     const store = createWavStreamStore(dir);
-    const call = async (cmd: string, args: Record<string, unknown>) => ({ success: true, ...store[cmd.replace('wav_stream_', '')](args) });
+    const call = async (cmd: string, args: Record<string, unknown>) => ({ success: true, ...(await store[cmd.replace('wav_stream_', '')](args)) });
     const sink = await streamingSink('Take', call);
     for (let i = 0; i < 3; i++) sink.push(new Float32Array(48000).fill(0.25), new Float32Array(48000).fill(-0.25));
     const path = (await sink.finish(48000))!;
     const wav = readFileSync(path);
     expect(wav.toString('ascii', 0, 4)).toBe('RIFF');
-    expect(wav.readUInt32LE(24)).toBe(48000);
-    expect(wav.readUInt32LE(40)).toBe(3 * 48000 * 4);
-    expect(wav.length).toBe(44 + 3 * 48000 * 4);
+    expect(wav.toString('ascii', 48, 52)).toBe('fmt ');
+    expect(wav.readUInt32LE(60)).toBe(48000);
+    expect(wav.toString('ascii', 72, 76)).toBe('data');
+    expect(wav.readUInt32LE(76)).toBe(3 * 48000 * 4);
+    expect(wav.readUInt32LE(4)).toBe(72 + 3 * 48000 * 4);
+    expect(wav.length).toBe(80 + 3 * 48000 * 4);
     rmSync(dir, { recursive: true });
+  });
+
+  it('writes an RF64 header past the 4 GB RIFF limit', () => {
+    const h = wavHeader(5 * 1024 ** 3, 48000);
+    expect(h.toString('ascii', 0, 4)).toBe('RF64');
+    expect(h.toString('ascii', 12, 16)).toBe('ds64');
+    expect(h.readBigUInt64LE(28)).toBe(BigInt(5 * 1024 ** 3));
+    expect(h.readUInt32LE(76)).toBe(0xffffffff);
+    expect(wavHeader(1000, 48000).toString('ascii', 0, 4)).toBe('RIFF');
   });
 
   it('fails the file (and removes it) when a write is refused', async () => {
@@ -154,7 +166,7 @@ describe('streaming a WAV to disk', () => {
     let file = '';
     const call = async (cmd: string, args: Record<string, unknown>) => {
       if (cmd === 'wav_stream_write') return { success: false, error: 'disk full' };
-      const r = store[cmd.replace('wav_stream_', '')](args);
+      const r = await store[cmd.replace('wav_stream_', '')](args);
       if (r.path) file = r.path;
       return { success: true, ...r };
     };

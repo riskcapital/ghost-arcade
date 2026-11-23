@@ -12,7 +12,13 @@ const crypto = require('crypto');
 
 const MAX_OPEN = 64;
 const MAX_WRITE = 32 * 1024 * 1024;
-const HEADER = 44;
+// 80 bytes: RIFF, a 28-byte JUNK chunk held for an RF64 ds64 chunk, fmt, data.
+// A take that ends up over 4 GB (the 32-bit RIFF sizes' limit, about 6 h of
+// 48 kHz stereo) is finished as RF64 (EBU Tech 3306) by turning that JUNK into
+// ds64 with the 64-bit sizes; anything smaller stays a plain WAV, and the JUNK
+// chunk is skipped by every reader.
+const HEADER = 80;
+const RIFF_LIMIT = 0xffffffff - (HEADER - 8);
 
 function toBuffer(bytes) {
   if (Buffer.isBuffer(bytes)) return bytes;
@@ -30,67 +36,94 @@ function safeName(raw) {
 
 function wavHeader(dataBytes, sampleRate) {
   const h = Buffer.alloc(HEADER);
-  h.write('RIFF', 0, 'ascii');
-  h.writeUInt32LE(36 + dataBytes, 4);
+  const big = dataBytes > RIFF_LIMIT;
+  h.write(big ? 'RF64' : 'RIFF', 0, 'ascii');
+  h.writeUInt32LE(big ? 0xffffffff : HEADER - 8 + dataBytes, 4);
   h.write('WAVE', 8, 'ascii');
-  h.write('fmt ', 12, 'ascii');
-  h.writeUInt32LE(16, 16);
-  h.writeUInt16LE(1, 20);
-  h.writeUInt16LE(2, 22);
-  h.writeUInt32LE(sampleRate, 24);
-  h.writeUInt32LE(sampleRate * 4, 28);
-  h.writeUInt16LE(4, 32);
-  h.writeUInt16LE(16, 34);
-  h.write('data', 36, 'ascii');
-  h.writeUInt32LE(dataBytes, 40);
+  h.write(big ? 'ds64' : 'JUNK', 12, 'ascii');
+  h.writeUInt32LE(28, 16);
+  if (big) {
+    h.writeBigUInt64LE(BigInt(HEADER - 8 + dataBytes), 20);
+    h.writeBigUInt64LE(BigInt(dataBytes), 28);
+    h.writeBigUInt64LE(BigInt(Math.floor(dataBytes / 4)), 36);
+    h.writeUInt32LE(0, 44);
+  }
+  h.write('fmt ', 48, 'ascii');
+  h.writeUInt32LE(16, 52);
+  h.writeUInt16LE(1, 56);
+  h.writeUInt16LE(2, 58);
+  h.writeUInt32LE(sampleRate, 60);
+  h.writeUInt32LE(sampleRate * 4, 64);
+  h.writeUInt16LE(4, 68);
+  h.writeUInt16LE(16, 70);
+  h.write('data', 72, 'ascii');
+  h.writeUInt32LE(big ? 0xffffffff : dataBytes, 76);
   return h;
 }
 
+// File work is async (fs.promises), so a long take never stalls the main
+// process. Each block's place in the file is fixed before it is written, so
+// blocks land in order even if their writes overlap.
 function createWavStreamStore(directory) {
   const dir = path.resolve(directory);
-  /** id -> { fd, file, bytes } */
+  /** id -> { handle, file, bytes, pending } */
   const open = new Map();
   const get = (id) => {
     const s = open.get(String(id ?? ''));
     if (!s) throw new Error('No such recording stream');
     return s;
   };
-  const close = (s) => { try { fs.closeSync(s.fd); } catch { /* closed */ } };
+  const close = async (s) => { try { await s.handle.close(); } catch { /* closed */ } };
 
   return {
-    begin(args) {
+    async begin(args) {
       if (open.size >= MAX_OPEN) throw new Error('Too many recordings open');
-      fs.mkdirSync(dir, { recursive: true });
+      await fs.promises.mkdir(dir, { recursive: true });
       const file = path.join(dir, safeName(args?.filename));
-      const fd = fs.openSync(file, 'w');
-      fs.writeSync(fd, wavHeader(0, 48000), 0, HEADER, 0);
+      const handle = await fs.promises.open(file, 'w');
+      try {
+        await handle.write(wavHeader(0, 48000), 0, HEADER, 0);
+      } catch (err) {
+        await close({ handle });
+        try { await fs.promises.unlink(file); } catch { /* gone */ }
+        throw err;
+      }
       const id = crypto.randomUUID();
-      open.set(id, { fd, file, bytes: 0 });
+      open.set(id, { handle, file, bytes: 0, pending: Promise.resolve() });
       return { id, path: file };
     },
-    write(args) {
+    async write(args) {
       const s = get(args?.id);
       const buf = toBuffer(args?.bytes);
       if (!buf || buf.length % 4 !== 0 || buf.length > MAX_WRITE) throw new Error('Invalid PCM block');
-      fs.writeSync(s.fd, buf, 0, buf.length, HEADER + s.bytes);
+      const at = HEADER + s.bytes;
       s.bytes += buf.length;
+      const done = s.handle.write(buf, 0, buf.length, at);
+      s.pending = s.pending.then(() => done, () => done);
+      await done;
       return { bytes: s.bytes };
     },
-    finish(args) {
+    async finish(args) {
       const s = get(args?.id);
       const rate = Math.round(Number(args?.sampleRate));
       if (!(rate >= 8000 && rate <= 384000)) throw new Error('Invalid sample rate');
-      fs.writeSync(s.fd, wavHeader(s.bytes, rate), 0, HEADER, 0);
-      close(s);
+      // Closed and forgotten whatever happens, so a failed finish never keeps the file open.
       open.delete(String(args.id));
+      try {
+        await s.pending.catch(() => {});
+        await s.handle.write(wavHeader(s.bytes, rate), 0, HEADER, 0);
+      } finally {
+        await close(s);
+      }
       return { path: s.file, frames: s.bytes / 4 };
     },
-    abort(args) {
+    async abort(args) {
       const s = open.get(String(args?.id ?? ''));
       if (!s) return {};
-      close(s);
       open.delete(String(args.id));
-      try { fs.unlinkSync(s.file); } catch { /* gone */ }
+      await s.pending.catch(() => {});
+      await close(s);
+      try { await fs.promises.unlink(s.file); } catch { /* gone */ }
       return {};
     },
   };
