@@ -164,6 +164,8 @@ export class LiveClipScheduler {
   private lastFire = new Map<number, { id: string; cmd: LiveCommand }>();
   private wasPlaying = false;
   private lastSeek = Number.NaN;
+  /** Show time of the last tick (a loop wrap goes from near the end to near 0). */
+  private lastT = 0;
   /** A jump waiting for the playhead to settle (wall ms it may run at). */
   private settleAt: number | null = null;
   /** Blocks a phrase landing already fired (see primeEntry). */
@@ -358,7 +360,9 @@ export class LiveClipScheduler {
       }
       if (loopAhead && !this.preFired.has(b.id) && b.slot !== null && b.start < loopAhead) {
         const lead = this.leadFor(row, b.start);
-        if (t >= loopAhead + b.start - lead && t < loopAhead && t > b.end) {
+        // A block that runs to the loop's end (a full-loop clip) is still
+        // playing here: fire it again all the same, so it lands on the wrap.
+        if (t >= loopAhead + b.start - lead && t < loopAhead && (t > b.end || b.end >= loopAhead - 1e-3)) {
           // The loop wraps into this block: fire it for the next pass.
           this.preFired.add(b.id);
           this.fire(row, b);
@@ -391,12 +395,24 @@ export class LiveClipScheduler {
       if (this.wasPlaying) this.stopAll();
       this.wasPlaying = false;
       this.lastSeek = seek;
+      this.lastT = t;
       return;
     }
     const start = !this.wasPlaying;
     const jump = !start && seek !== this.lastSeek;
+    const dur = this.env.duration ?? 0;
+    // The show looping back to its start is a jump too, but a planned one:
+    // what was pre-fired is landing now, so no scrub settle (a ~120 ms freeze).
+    const wrap = jump && this.env.loop && dur > 0 && this.lastT > dur - 0.5 && t < this.lastT && t < 0.5;
     this.wasPlaying = true;
     this.lastSeek = seek;
+    this.lastT = t;
+    if (wrap) {
+      this.settleAt = null;
+      this.cut = null;
+      this.resync(t);
+      return;
+    }
     if (start) {
       this.settleAt = null;
       this.cut = null;

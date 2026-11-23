@@ -159,6 +159,16 @@ describe('Live clip blocks: when Live is told', () => {
     expect(out.filter((o) => o.cmd.t === 'stop_track')).toHaveLength(0);
   });
 
+  it('loops: a full-loop clip is fired again for the wrap, with no stop and no settle freeze', () => {
+    const { s, out } = scheduler(env(5, { loop: true, duration: 8 }));
+    s.setBlocks([row('r', 0)], [blk('a', 'r', 0, 8, 0)]);
+    run(s, out, 0, 7.99, 0);
+    run(s, out, 0, 1, 1);
+    const fires = out.filter((o) => o.cmd.t === 'fire_clip');
+    expect(fires).toHaveLength(2);
+    expect(out.filter((o) => o.cmd.t === 'stop_track' || o.cmd.t === 'stop_all')).toHaveLength(0);
+  });
+
   it('an old script (protocol 4): no per-launch quantise, the set’s grid, no mid-block entry', () => {
     const { s, out } = scheduler(env(4, { setQuantize: 4 }));
     s.setBlocks([row('r', 0)], [blk('a', 'r', 4, 8)]);
