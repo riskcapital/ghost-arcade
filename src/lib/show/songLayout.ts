@@ -600,7 +600,8 @@ function noveltyBoundaries(env: Envelope, duration: number, minSection: number, 
   for (let k = 1; k < blocks - 1; k++) {
     const v = novelty[k];
     if (v <= mean || v < novelty[k - 1] || v < novelty[k + 1]) continue;
-    const time = k * BLOCK_SECONDS;
+    // A block is perBlock frames long (not exactly BLOCK_SECONDS): no drift on long songs.
+    const time = k * (perBlock / env.frameRate);
     if (time < minSection || duration - time < minSection) continue;
     candidates.push({ time, strength: v });
   }
