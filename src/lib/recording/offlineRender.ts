@@ -1026,6 +1026,8 @@ function createOfflineRenderStore() {
     // from the core's own status just before we resize it.
     let restoreWidth  = (engine as any)?.width  ?? canvas?.width ?? settings.width;
     let restoreHeight = (engine as any)?.height ?? canvas?.height ?? settings.height;
+    // The output's own rate, put back after the render (a 24 fps render must not leave it at 24).
+    let restoreRefreshHz = 60;
     const restoreManual = engine ? engine.manualTime : null;
     const restoreCanvasVisibility = canvas?.style.visibility ?? '';
 
@@ -1181,6 +1183,8 @@ function createOfflineRenderStore() {
           if (preStatus.output_width > 0) restoreWidth = preStatus.output_width;
           if (preStatus.output_height > 0) restoreHeight = preStatus.output_height;
         }
+        const hz = (await getNativeRendererStatus().catch(() => null))?.output_refresh_hz ?? 0;
+        if (hz > 0) restoreRefreshHz = hz;
         await submitNativeRendererCommands([
           { type: 'set_output', width: settings.width, height: settings.height, refresh_hz: Math.round(fps) },
         ]);
@@ -1368,6 +1372,7 @@ function createOfflineRenderStore() {
         dispatch({ type: 'encode', step: 'sound', progress: 0.8 });
         if (soundStream) await soundStream.finish();
         await soundtrackFile?.close();
+        soundtrackFile = null;
         checkStop();
         const audioNote = await addShowSoundtrack(encoded.outputPath, { start: startT, seconds: renderSeconds, soundtrackPath });
         soundtrackPath = null; // the mux deletes it
@@ -1446,12 +1451,14 @@ function createOfflineRenderStore() {
       }
       if (nativeJpegSequence && !nativeJpegSequenceFinished) await cancelNativeJpegSequence(nativeJpegSequence);
       if (nativeMp4FrameEncoder && !nativeMp4FrameEncoderFinished) await cancelNativeMp4FrameEncoder(nativeMp4FrameEncoder);
+      // Cancel or error mid-render: close the file before it is removed (no fd left open).
+      if (soundtrackFile) { await soundtrackFile.close().catch(() => {}); soundtrackFile = null; }
       if (soundtrackPath) await discardSoundtrackWav(soundtrackPath);
       if (jsPagesOnRenderClock) await nativeJsCanvasHosts.setRenderClock(false).catch(() => {});
       endRenderClock();
       if (nativeOutputNeedsRestore) {
         await submitNativeRendererCommands([
-          { type: 'set_output', width: restoreWidth, height: restoreHeight, refresh_hz: Math.round(fps) },
+          { type: 'set_output', width: restoreWidth, height: restoreHeight, refresh_hz: restoreRefreshHz },
         ]).catch(() => {});
       }
       if (engine && restoreManual !== null) engine.manualTime = restoreManual;
@@ -1588,6 +1595,8 @@ export function formatErr(err: unknown): string {
 }
 
 
+const THUMB_TIMEOUT_MS = 5000;
+
 export async function thumbnailFromVideoUrl(url: string, atSeconds: number): Promise<string | undefined> {
   // `url` stays alive after this returns when it is the media-library
   // item's src. Only the temporary <video> below must be released.
@@ -1595,12 +1604,14 @@ export async function thumbnailFromVideoUrl(url: string, atSeconds: number): Pro
   try {
     v.src = url;
     v.muted = true;
-    await new Promise<void>((resolve, reject) => {
+    // A file that never loads or seeks must not hang the render's finish.
+    const timeout = <T,>(p: Promise<T>) => Promise.race([p, new Promise<never>((_, reject) => setTimeout(() => reject(new Error('thumb timeout')), THUMB_TIMEOUT_MS))]);
+    await timeout(new Promise<void>((resolve, reject) => {
       v.onloadeddata = () => resolve();
       v.onerror = () => reject(new Error('thumb video load'));
-    });
+    }));
     v.currentTime = atSeconds;
-    await new Promise<void>((resolve) => { v.onseeked = () => resolve(); });
+    await timeout(new Promise<void>((resolve) => { v.onseeked = () => resolve(); }));
     const c = document.createElement('canvas');
     c.width = 160; c.height = 90;
     const ctx = c.getContext('2d');
