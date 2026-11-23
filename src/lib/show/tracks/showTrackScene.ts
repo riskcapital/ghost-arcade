@@ -179,7 +179,8 @@ function xfadeHelper(base: Layer, layerId: string, state: ShowTrackState, source
   helper._showClipId = xf.clip.clipId;
   const blend = xf.clip.blendMode ?? ownBlend;
   if (blend) helper.blendMode = blend;
-  else if (xf.clip.media.kind === 'layer') helper.source = ownSource;
+  // A 'layer' block shows the layer's own source (its blend says nothing about that).
+  if (xf.clip.media.kind === 'layer') helper.source = ownSource;
   if (xf.opacity < 1) helper._showOpacityMul = Math.max(0, xf.opacity);
   else delete helper._showOpacityMul;
   return helper;
@@ -460,12 +461,13 @@ export function showTrackSceneShape(frame: ShowTrackFrame): string {
       state.trackId,
       state.layerId,
       state.sub ? 's' : '',
-      state.clip ? `c${state.clip.blendMode ?? ''}` : '-',
+      // The block's id: the scene stamps it (_showClipId) for block-scoped lines.
+      state.clip ? `c${state.clip.clipId}:${state.clip.blendMode ?? ''}` : '-',
       state.opacity > 0 ? '+' : '0',
       state.opacity < 1 ? '<' : '1',
       state.params ? Object.keys(state.params).join(',') : '',
       state.warm ? 'w' : '',
-      xf ? `x${xf.clip.media.kind === 'layer' ? 'L' : ''}${xf.opacity > 0 ? '+' : '0'}${xf.opacity < 1 ? '<' : '1'}${xf.clip.blendMode ?? ''}` : '',
+      xf ? `x${xf.clip.clipId}:${xf.clip.media.kind === 'layer' ? 'L' : ''}${xf.opacity > 0 ? '+' : '0'}${xf.opacity < 1 ? '<' : '1'}${xf.clip.blendMode ?? ''}` : '',
       state.whereCopies?.length ? `W${state.whereCopies.map((c) => c.pieceId).join(',')}` : '',
       state.span ? 'S' : '',
     ].join('|'));

@@ -137,6 +137,9 @@ describe('ShowTrackSceneCache', () => {
     expect(showTrackSceneShape(at(a, { opacity: 0 }))).not.toBe(showTrackSceneShape(a));
     expect(showTrackSceneShape(at(a, { opacity: 1 }))).not.toBe(showTrackSceneShape(a));
     expect(showTrackSceneShape(at(a, { params: { 'layer:opacity': 0.5, 'shader:x': 1 } }))).not.toBe(showTrackSceneShape(a));
+    // A cut to a touching block (a split's right half): the block's id is stamped on the scene.
+    const c0 = a.tracks[0].clip;
+    if (c0) expect(showTrackSceneShape(at(a, { clip: { ...c0, clipId: 'other' } }))).not.toBe(showTrackSceneShape(a));
   });
 });
 
