@@ -4,6 +4,7 @@
    * pad and the chord pads. Rendered in pieces by `part`, so the Studio view
    * can place each where the set's layout puts it.
    */
+  import { onDestroy } from 'svelte';
   import { musicStudio, musicTransport } from '../../music/musicStudioStore';
   import { BOWL_PARAMS, DRONE_PARAMS, bowlNotes, chordName, chordNotes, keyLabel, scaleNote } from '../../music/studioSets';
   import { noteName } from '../../music/noteEvents';
@@ -130,7 +131,16 @@
     dragging = false;
     if (xyNote !== null) releaseNote('xy', xyNote, 'screen', xyTone);
     xyNote = null;
+    trail = [];
   }
+
+  // Leaving the tab mid-press lets go of what this panel was holding.
+  onDestroy(() => {
+    for (const note of pressedBowls.values()) releaseBowl(note);
+    pressedBowls.clear();
+    if (xyNote !== null) releaseNote('xy', xyNote, 'screen', xyTone);
+    xyNote = null;
+  });
 </script>
 
 {#if part === 'drone'}
