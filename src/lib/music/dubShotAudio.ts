@@ -7,19 +7,9 @@
  */
 
 import { divisionBeats, type DubShot } from './dubShots';
+import { loopCurve } from './sounds/kit';
 
 const midiToHz = (n: number) => 440 * Math.pow(2, (n - 69) / 12);
-
-/** A gentle tanh curve: unity for small signals, a soft ceiling for loud ones. */
-function softCurve(): Float32Array<ArrayBuffer> {
-  const n = 1024;
-  const c = new Float32Array(new ArrayBuffer(n * 4));
-  for (let i = 0; i < n; i++) {
-    const x = (i / (n - 1)) * 2 - 1;
-    c[i] = Math.tanh(x * 1.2) / Math.tanh(1.2);
-  }
-  return c;
-}
 
 /** A short metallic spring: decaying noise with a wobble in it. */
 function springImpulse(ctx: BaseAudioContext): AudioBuffer {
@@ -57,7 +47,7 @@ export class DubShotBank {
   private chains = new Map<number, Chain>();
   private shots: DubShot[] = [];
   private tempo = 120;
-  private curve = softCurve();
+  private curve = loopCurve(1.2);
   private springBuf: AudioBuffer | null = null;
   /** While a held pad keeps its echo going. */
   private holding = new Set<number>();

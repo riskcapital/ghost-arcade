@@ -18,7 +18,7 @@
 import { ECHO_TIMES, type BandFxSettings } from './soundSlots';
 import { impulse } from './fxRack';
 import { LazyConvolver } from './lazyConvolver';
-import { holdAt, softCurve } from './sounds/kit';
+import { holdAt, loopCurve } from './sounds/kit';
 
 const MAX_ECHO_SECONDS = 4;
 
@@ -66,7 +66,8 @@ export class BandFx {
     loopLow.type = 'highpass';
     loopLow.frequency.value = 140;
     const tape = ctx.createWaveShaper();
-    tape.curve = softCurve(1.6);
+    // Unity gain for small signals: the echo never repeats louder than its feedback.
+    tape.curve = loopCurve(1.6);
     this.input.connect(this.echoSend).connect(this.delay);
     this.delay.connect(this.loopTone).connect(loopLow).connect(tape).connect(this.feedback).connect(this.delay);
     const echoOut = ctx.createGain();

@@ -175,6 +175,21 @@ export function softCurve(amount: number): Float32Array<ArrayBuffer> {
   return c;
 }
 
+/**
+ * Saturation for inside a feedback loop: slope 1 for small signals (so the
+ * loop's gain is exactly its feedback setting), a soft ceiling of 1/amount
+ * for loud ones. Never more than unity gain anywhere.
+ */
+export function loopCurve(amount: number): Float32Array<ArrayBuffer> {
+  const c = new Float32Array(1024);
+  const a = Math.max(1, amount);
+  for (let i = 0; i < c.length; i++) {
+    const x = (i / (c.length - 1)) * 2 - 1;
+    c[i] = Math.tanh(x * a) / a;
+  }
+  return c;
+}
+
 // ── Pad patches (the drone's sounds) ────────────────────────────────────
 
 /** What a pad voice is played with: the drone's knobs, each 0-1. */
