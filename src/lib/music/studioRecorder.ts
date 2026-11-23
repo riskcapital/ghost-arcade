@@ -207,6 +207,9 @@ async function offerCopy(path: string, name: string): Promise<void> {
     filters: [{ name: 'WAV Audio', extensions: ['wav'] }],
   })) as { canceled?: boolean; filePath?: string | null } | null;
   if (!dialog || dialog.canceled || !dialog.filePath) return;
+  // Copied on disk by the main process: a long take is never read into memory here.
+  const copied = (await invoke('copy_file_to_project', { sourcePath: path, destPath: dialog.filePath }).catch(() => null)) as { success?: boolean } | null;
+  if (copied?.success) return;
   const bytes = new Uint8Array(await (await fetch(pathToFileUrl(path))).arrayBuffer());
   let bin = '';
   for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
@@ -226,6 +229,8 @@ interface PcmCapture {
   id: string;
   label: string;
   node: AudioWorkletNode;
+  /** What feeds the capture: unplugged when the take ends, or the node is kept alive. */
+  source: AudioNode | null;
   sink: WavSink;
   peak: number;
   done: Promise<number>;
@@ -249,17 +254,22 @@ interface Take {
 let take: Take | null = null;
 let serial = 0;
 let countInTimer: ReturnType<typeof setTimeout> | null = null;
-let workletLoaded: Promise<void> | null = null;
+/** The capture worklet, loaded once per audio context (a recreated context needs it again). */
+let workletLoaded = new WeakMap<BaseAudioContext, Promise<void>>();
 
 /** Test seam: what makes a capture's sink and its worklet. */
 export const recorderDeps = {
   sink: (name: string): Promise<WavSink> => (isElectron ? streamingSink(name) : Promise.resolve(memorySink(name))),
   async loadWorklet(ctx: AudioContext): Promise<void> {
-    workletLoaded ??= (async () => {
-      const { default: url } = await import('./pcmCaptureWorklet.ts?worker&url');
-      await ctx.audioWorklet.addModule(url);
-    })().catch((err) => { workletLoaded = null; throw err; });
-    await workletLoaded;
+    let loading = workletLoaded.get(ctx);
+    if (!loading) {
+      loading = (async () => {
+        const { default: url } = await import('./pcmCaptureWorklet.ts?worker&url');
+        await ctx.audioWorklet.addModule(url);
+      })().catch((err) => { workletLoaded.delete(ctx); throw err; });
+      workletLoaded.set(ctx, loading);
+    }
+    await loading;
   },
   node: (ctx: AudioContext): AudioWorkletNode =>
     new AudioWorkletNode(ctx, 'ghost-pcm-capture', { numberOfInputs: 1, numberOfOutputs: 0, channelCount: 2, channelCountMode: 'explicit' }),
@@ -267,7 +277,7 @@ export const recorderDeps = {
 
 function makeCapture(ctx: AudioContext, id: string, label: string, sink: WavSink): PcmCapture {
   const node = recorderDeps.node(ctx);
-  const c: PcmCapture = { id, label, node, sink, peak: 0, done: Promise.resolve(ctx.sampleRate) };
+  const c: PcmCapture = { id, label, node, source: null, sink, peak: 0, done: Promise.resolve(ctx.sampleRate) };
   c.done = new Promise((resolve) => {
     node.port.onmessage = (e: MessageEvent<{ left?: Float32Array; right?: Float32Array; done?: boolean; sampleRate?: number }>) => {
       if (e.data.left && e.data.right) {
@@ -278,6 +288,14 @@ function makeCapture(ctx: AudioContext, id: string, label: string, sink: WavSink
     };
   });
   return c;
+}
+
+/** Cut a capture out of the graph: its input link too (it has no outputs). */
+function unplug(c: PcmCapture): void {
+  if (c.source) { try { c.source.disconnect(c.node); } catch { /* gone */ } }
+  c.source = null;
+  try { c.node.port.onmessage = null; } catch { /* gone */ }
+  try { c.node.disconnect(); } catch { /* gone */ }
 }
 
 const idle = (mode: StudioRecMode) => studioRec.set({ phase: 'idle', startedAt: 0, mode });
@@ -295,7 +313,7 @@ async function release(t: Take): Promise<void> {
   t.captures = [];
   for (const c of caps) {
     try { c.node.port.postMessage({ stop: 0 }); } catch { /* gone */ }
-    try { c.node.disconnect(); } catch { /* gone */ }
+    unplug(c);
   }
   await Promise.allSettled(caps.map((c) => c.sink.abort()));
   if (t.video) {
@@ -336,7 +354,10 @@ async function begin(t: Take): Promise<void> {
       }
       t.captures = wanted.map((w, k) => makeCapture(ctx, w.id, w.label, sinks[k]));
       // Connected in one go and told one start frame: they line up to the sample.
-      for (const [k, c] of t.captures.entries()) wanted[k].source.connect(c.node);
+      for (const [k, c] of t.captures.entries()) {
+        wanted[k].source.connect(c.node);
+        c.source = wanted[k].source;
+      }
       const start = Math.round((ctx.currentTime + ALIGN_SECONDS) * ctx.sampleRate);
       for (const c of t.captures) c.node.port.postMessage({ start });
     }
@@ -444,7 +465,7 @@ export async function stopStudioRecording(): Promise<void> {
   try {
     for (const c of caps) {
       const rate = await Promise.race([c.done, new Promise<null>((r) => setTimeout(() => r(null), FLUSH_TIMEOUT_MS))]);
-      try { c.node.disconnect(); } catch { /* gone */ }
+      unplug(c);
       const isMix = c.id === 'mix';
       // Silent stems (an instrument that never played, on either side) are left out.
       if (rate === null || (!isMix && c.peak <= 1e-4)) {
@@ -474,6 +495,6 @@ export function _resetRecorderForTests(): void {
   if (countInTimer) clearTimeout(countInTimer);
   countInTimer = null;
   take = null;
-  workletLoaded = null;
+  workletLoaded = new WeakMap();
   idle('video');
 }
