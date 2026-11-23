@@ -122,6 +122,9 @@ export class MusicAudioEngine {
   private meterBuffer: Float32Array<ArrayBuffer> | null = null;
   private noise: AudioBuffer | null = null;
   private voices = new Map<string, MelodicVoice>();
+  /** Voices whose release is booked ahead (a loop sends its offs with its
+   * notes): a stop or mute can still cut them sooner. */
+  private releasing: Array<{ key: string; voice: MelodicVoice; at: number }> = [];
   private openHat: { gain: GainNode; time: number } | null = null;
   private analyserTap: AnalyserNode | null = null;
   private unsubscribeGraph: (() => void) | null = null;
@@ -951,9 +954,19 @@ export class MusicAudioEngine {
     const key = `${event.instrument}:${event.note}`;
     if (event.type === 'off') {
       const voice = this.voices.get(key);
+      const now = ctx.currentTime;
+      if (this.releasing.length) this.releasing = this.releasing.filter((r) => r.at > now);
       if (voice) {
         voice.release(time);
         this.voices.delete(key);
+        if (time > now + 0.05) this.releasing.push({ key, voice, at: time });
+      } else {
+        // An earlier off for a note whose release was booked later: let go now.
+        for (const r of this.releasing) {
+          if (r.key !== key || r.at <= time) continue;
+          r.voice.release(time);
+          r.at = time;
+        }
       }
       return;
     }
@@ -977,6 +990,8 @@ export class MusicAudioEngine {
     const t = this.ctx.currentTime;
     for (const voice of this.voices.values()) voice.release(t);
     this.voices.clear();
+    for (const r of this.releasing) if (r.at > t) r.voice.release(t);
+    this.releasing = [];
     this.acidOff(t);
     this.xyOff(t);
     this.dubBass?.off(t);

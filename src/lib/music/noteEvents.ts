@@ -196,6 +196,16 @@ export class HeldNotes {
     return false;
   }
 
+  /**
+   * A stop or mute letting a note go now. A loop's note-off is sent ahead
+   * with its note, so the count may already be 0 while the voice still
+   * sounds until that later off: a cut always reaches the bus then.
+   */
+  cut(event: NoteEvent): boolean {
+    if (!this.held.has(this.key(event.instrument, event.note))) return true;
+    return this.apply(event);
+  }
+
   isHeld(instrument: InstrumentId, note: number): boolean {
     return this.held.has(this.key(instrument, note));
   }

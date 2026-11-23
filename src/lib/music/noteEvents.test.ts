@@ -155,3 +155,21 @@ describe('MIDI note messages', () => {
     expect(parseMidiNoteMessage([0xe0, 0, 0])).toEqual({ kind: 'expr', channel: 0, bend: -1 });
   });
 });
+
+describe('HeldNotes.cut', () => {
+  it('lets a stop silence a loop note whose off was sent ahead', () => {
+    const h = new HeldNotes();
+    expect(h.apply(noteOn('pads', 60, 0.8, 'sequencer', 1))).toBe(true);
+    // The loop's own off, scheduled bars later, already brought the count to 0.
+    expect(h.apply(noteOff('pads', 60, 'sequencer', 9))).toBe(true);
+    expect(h.apply(noteOff('pads', 60, 'sequencer', 2))).toBe(false);
+    expect(h.cut(noteOff('pads', 60, 'sequencer', 2))).toBe(true);
+  });
+
+  it('still counts a note that is really held', () => {
+    const h = new HeldNotes();
+    h.apply(noteOn('pads', 60, 0.8, 'sequencer', 1));
+    expect(h.cut(noteOff('pads', 60, 'sequencer', 2))).toBe(true);
+    expect(h.isHeld('pads', 60)).toBe(false);
+  });
+});

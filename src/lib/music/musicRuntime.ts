@@ -180,6 +180,12 @@ const heldKey = (instrument: InstrumentId, note: number) => `${instrument}:${not
 
 // ── The note path ───────────────────────────────────────────────────────
 
+/** A note-off from Stop or a mute: always reaches the voices (HeldNotes.cut). */
+function sendCut(event: NoteEvent): void {
+  if (event.instrument !== 'drums' && !held.cut(event)) return;
+  noteBus.emit(event);
+}
+
 function send(event: NoteEvent): void {
   // Melodic notes are counted per pitch so two sources holding one note
   // release cleanly; only the first on and the last off reach the bus.
@@ -616,7 +622,7 @@ export function startSequencer(): void {
 
 export function stopSequencer(): void {
   sequencer = null;
-  if (acidHeld !== null) send(noteOff('acid', acidHeld, 'sequencer', audio.peekNow() ?? 0));
+  if (acidHeld !== null) sendCut(noteOff('acid', acidHeld, 'sequencer', audio.peekNow() ?? 0));
   acidHeld = null;
   musicStudio.setTransport({ sequencerPlaying: false });
   musicTransport.update((s) => ({ ...s, step: -1, acidStep: -1 }));
@@ -1283,7 +1289,7 @@ function onTone(slot: LoopSlot, event: NoteEvent): NoteEvent {
 function endLoopSlot(slot: LoopSlot, atBeat: number): void {
   const time = audio.peekNow() ?? 0;
   for (const p of slot.pending) {
-    if (p.offBeat > atBeat) send(onTone(slot, noteOff(slot.instrument, p.note, 'sequencer', time)));
+    if (p.offBeat > atBeat) sendCut(onTone(slot, noteOff(slot.instrument, p.note, 'sequencer', time)));
   }
   slot.pending = [];
 }
@@ -1750,7 +1756,7 @@ export function stopPreview(): void {
   if (preview) {
     const t = audio.peekNow() ?? 0;
     const beatNow = launchClockPosition().beat;
-    for (const p of preview.pending) if (p.offBeat > beatNow) send(previewEvent(noteOff(p.instrument, p.note, 'sequencer', t)));
+    for (const p of preview.pending) if (p.offBeat > beatNow) sendCut(previewEvent(noteOff(p.instrument, p.note, 'sequencer', t)));
   }
   if (preview?.auditionKit && !sequencer && get(musicStudio).drumKit === preview.auditionKit) {
     musicStudio.setDrumKit(preview.previousKit ?? null);
