@@ -804,17 +804,48 @@
   // Output-window transforms are applied in the final WebGL pass. Keeping them
   // out of CSS avoids compositor resampling of the live projection canvas.
 
-  // Redraw overlay when test pattern / edge blend settings change
+  // Redraw overlay when test pattern / edge blend settings change. Each
+  // field is read into its own value first, so an unrelated settings change
+  // (any of them, many times a second while a slider drags) no longer
+  // repaints the overlay.
+  $: overlayTestPattern = $settings.output.testPattern as TestPatternType;
+  $: overlayBlendL = $settings.output.edgeBlendLeft;
+  $: overlayBlendR = $settings.output.edgeBlendRight;
+  $: overlayBlendT = $settings.output.edgeBlendTop;
+  $: overlayBlendB = $settings.output.edgeBlendBottom;
+  $: overlayBlendGamma = $settings.output.edgeBlendGamma;
   $: if (outputOverlayCanvas) {
     updateOutputOverlay(
-      $settings.output.testPattern as TestPatternType,
-      $settings.output.edgeBlendLeft,
-      $settings.output.edgeBlendRight,
-      $settings.output.edgeBlendTop,
-      $settings.output.edgeBlendBottom,
-      $settings.output.edgeBlendGamma,
+      overlayTestPattern,
+      overlayBlendL,
+      overlayBlendR,
+      overlayBlendT,
+      overlayBlendB,
+      overlayBlendGamma,
     );
   }
+  // The overlay is sized from its box: repaint when the box resizes (this
+  // used to happen only as a side effect of unrelated settings changes).
+  let outputOverlayResizeObserver: ResizeObserver | null = null;
+  let outputOverlayObservedEl: HTMLElement | null = null;
+  $: {
+    const parent = outputOverlayCanvas?.parentElement ?? null;
+    if (parent !== outputOverlayObservedEl) {
+      outputOverlayResizeObserver?.disconnect();
+      outputOverlayResizeObserver = null;
+      outputOverlayObservedEl = parent;
+      if (parent && typeof ResizeObserver !== 'undefined') {
+        outputOverlayResizeObserver = new ResizeObserver(() => updateOutputOverlay(
+          overlayTestPattern, overlayBlendL, overlayBlendR, overlayBlendT, overlayBlendB, overlayBlendGamma,
+        ));
+        outputOverlayResizeObserver.observe(parent);
+      }
+    }
+  }
+  onDestroy(() => {
+    outputOverlayResizeObserver?.disconnect();
+    outputOverlayResizeObserver = null;
+  });
 
   function updateOutputOverlay(
     testPattern: TestPatternType,
@@ -854,6 +885,10 @@
       });
     }
   }
+
+  /** The editor canvas was resized (which clears it): the native preview
+   *  fallback redraws its last mirror frame even without a new one. */
+  let editorPreviewFallbackStale = true;
 
   // Mouse tracking for splat layer interactions
   let mouseNormalizedX = 0;
@@ -2603,9 +2638,9 @@
         }
       });
 
-      canvas.addEventListener('mousemove', handleCanvasMouseMove);
-      canvas.addEventListener('mouseleave', handleCanvasMouseLeave);
-      canvas.addEventListener('mouseenter', handleCanvasMouseEnter);
+      // No mouse tracking here: the pointer position only feeds the legacy
+      // engine's splat, fluid and particle passes, which do not run under the
+      // native driver, and measuring the canvas on every move cost a layout.
 
       // ── Editor preview fallback ────────────────────────────────────
       // The native core presents the editor preview by parenting a child
@@ -2706,6 +2741,12 @@
         }
       }
 
+      // The last picture drawn, so a display frame with no new mirror frame
+      // (the pump runs at 30, the display at 60+) skips the redraw. Setting
+      // the canvas size clears it even to the same size, so those sites mark
+      // the picture stale (`editorPreviewFallbackStale`).
+      let previewFallbackDrawnSeq = -1;
+      let previewFallbackDrawnKey = '';
       function drawEditorPreviewFallback(): void {
         if (!previewMirror || !previewMirrorCtx) return;
         const src = previewMirror.canvas;
@@ -2713,6 +2754,13 @@
         const dw = canvas.width;
         const dh = canvas.height;
         if (!dw || !dh) return;
+        const seq = (src as any).__gaFrameSeq ?? 0;
+        const key = `${dw}x${dh}:${src.width}x${src.height}`;
+        if (nativeMirrorPreviewActive && !editorPreviewFallbackStale
+          && seq === previewFallbackDrawnSeq && key === previewFallbackDrawnKey) return;
+        editorPreviewFallbackStale = false;
+        previewFallbackDrawnSeq = seq;
+        previewFallbackDrawnKey = key;
         // Letterbox rather than stretch: the preview is what the operator
         // judges framing from, so the aspect has to match the composite.
         const scale = Math.min(dw / src.width, dh / src.height);
@@ -2803,6 +2851,7 @@
         sizeContainer(parentW, parentH);
         canvas.width = pW;
         canvas.height = pH;
+        editorPreviewFallbackStale = true;
         window.dispatchEvent(new CustomEvent('ghost:native-vj-layers-sync'));
       });
       nativeResizeObserver.observe(wrapperEl);
@@ -2815,9 +2864,6 @@
         editorCanvasGeometrySnapshot = null;
         editorCanvasGeometrySignature = '';
         editorCanvasGeometry.set(null);
-        canvas.removeEventListener('mousemove', handleCanvasMouseMove);
-        canvas.removeEventListener('mouseleave', handleCanvasMouseLeave);
-        canvas.removeEventListener('mouseenter', handleCanvasMouseEnter);
       };
     }
 
@@ -4211,6 +4257,7 @@
       if (canvas) {
         canvas.width = pW;
         canvas.height = pH;
+        editorPreviewFallbackStale = true;
       }
     }
   }
