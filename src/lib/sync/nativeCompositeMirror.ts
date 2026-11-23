@@ -51,12 +51,11 @@ let pumpMaxDim = DEFAULT_MAX_DIM;
 let pumpFps = 0;
 // Each consumer's requested rate; the pump runs at the fastest one.
 const fpsRequests = new Map<object, number>();
-// Sizes asked for later through `update()`; the pump reads at the largest of
-// those and the size it started with.
+// Each live consumer's size (from acquire, replaced by its own `update()`);
+// the pump reads at the largest. Recomputed on every acquire, update and
+// release, so a large consumer letting go drops the pump back to the small
+// raw frames the LED senders read without a GPU readback.
 const dimRequests = new Map<object, number>();
-let basePumpMaxDim = DEFAULT_MAX_DIM;
-/** The consumer whose size the pump started at; its own `update()` replaces it. */
-let baseOwner: object | null = null;
 // Consumers allowed past the 30 fps cap of large frames.
 const highRateRequests = new Set<object>();
 let frameInfo: CompositeMirrorFrameInfo | null = null;
@@ -262,9 +261,7 @@ async function pumpOnce(maxDim: number): Promise<void> {
  *  pixel-map sampling) may run up to 60fps; large ones stay at 30. */
 function rearmPump(): void {
   if (fpsRequests.size === 0) return;
-  const base = (baseOwner && dimRequests.get(baseOwner)) || basePumpMaxDim;
-  const others = [...dimRequests.entries()].filter(([owner]) => owner !== baseOwner).map(([, dim]) => dim);
-  pumpMaxDim = Math.max(base, ...others);
+  pumpMaxDim = dimRequests.size > 0 ? Math.max(...dimRequests.values()) : DEFAULT_MAX_DIM;
   const cap = pumpMaxDim > 512 && highRateRequests.size === 0 ? 30 : 60;
   const fps = Math.min(cap, Math.max(...fpsRequests.values()));
   if (timer && fps === pumpFps) return;
@@ -289,10 +286,9 @@ export function acquireNativeCompositeMirror(
   consumers += 1;
   if (options.onFrame) frameListeners.add(options.onFrame);
   const request = {};
+  dimRequests.set(request, maxDim);
   if (!timer) {
     pumpMaxDim = maxDim;
-    basePumpMaxDim = maxDim;
-    baseOwner = request;
     void pumpOnce(maxDim);
   }
   fpsRequests.set(request, fps);
