@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { ShowLayerClip, ShowLayerTrack } from '../../types';
 import { adoptGroupWhere, groupRowWhere, normalizeTrackGroup, setGroupRowUnified } from './groupRows';
-import { normalizeWhere } from './whereModel';
+import { normalizeWhere, resolveOrderSpec } from './whereModel';
+import { computeSpatialOrder } from './spatialOrder';
 
 const clip = (id: string, where?: ShowLayerClip['where']): ShowLayerClip => ({
   id, startTime: 0, duration: 2, inPoint: 0, media: { kind: 'image', name: id, src: `/${id}.png` }, ...(where ? { where } : {}),
@@ -43,5 +44,11 @@ describe('group rows', () => {
     expect(normalizeTrackGroup({ orderId: 'left' })).toEqual({ orderId: 'left', unified: true });
     expect(normalizeTrackGroup({ orderId: 'x', unified: false })).toEqual({ orderId: 'x', unified: false });
     expect(normalizeTrackGroup({})).toBeNull();
+  });
+
+  it('a deleted group order takes no pieces instead of the whole stage', () => {
+    const spots = [{ id: 'a', x: 0.2, y: 0.5 }, { id: 'b', x: 0.8, y: 0.5 }] as Parameters<typeof computeSpatialOrder>[0];
+    const order = computeSpatialOrder(spots, resolveOrderSpec(groupRowWhere({ orderId: 'gone', unified: true }), []));
+    expect(order.slots).toEqual([]);
   });
 });

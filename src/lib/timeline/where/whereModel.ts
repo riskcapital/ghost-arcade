@@ -211,6 +211,9 @@ export function resolveOrderSpec(spec: WhereSpec, named: readonly WhereNamedOrde
   if (spec.namedOrder) {
     const hit = named.find((o) => o.id === spec.namedOrder);
     if (hit) return hit;
+    // A dark block (a Group row) whose order was deleted would otherwise
+    // fall back to every piece and black out the whole stage: no pieces.
+    if (spec.dark) return { ...spec, slots: [[]] };
   }
   return spec;
 }
