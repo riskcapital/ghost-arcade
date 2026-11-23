@@ -14,6 +14,15 @@ describe('studio controls', () => {
     expect(runStudioControl('test.pad', 1)).toBe(false);
   });
 
+  it('fires a momentary trigger on every 1 from OSC or MCP, with no 0 between', () => {
+    const hits: number[] = [];
+    const off = registerStudioControls([{ id: 'test.osc', label: 'Pad', group: 'Pads', kind: 'trigger', run: (v) => hits.push(v) }]);
+    runStudioControl('test.osc', 1, { momentary: true });
+    runStudioControl('test.osc', 1, { momentary: true });
+    expect(hits).toEqual([1, 1]);
+    off();
+  });
+
   it('holds while pressed and lets go on release or when released for it', () => {
     const states: number[] = [];
     const off = registerStudioControls([{ id: 'test.throw', label: 'Throw', group: 'Band', kind: 'hold', run: (v) => states.push(v) }]);

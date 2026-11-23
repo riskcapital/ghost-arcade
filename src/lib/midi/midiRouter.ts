@@ -422,7 +422,8 @@ class MidiRouter {
     // learned element had (the duck release knob is in seconds).
     const span = Number(mapping.max) - Number(mapping.min);
     const position = control.kind === 'value' && Number.isFinite(span) && span !== 0 ? (value - Number(mapping.min)) / span : value;
-    runStudioControl(id, position);
+    // Paths sent by OSC or MCP (not a controller's press/release) fire on every press.
+    runStudioControl(id, position, { momentary: !inputId || inputId.startsWith('path:') });
   }
 
   private dispatchShow(parts: string[], value: number, inputId: string) {

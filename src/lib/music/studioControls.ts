@@ -110,7 +110,7 @@ const PRESS = 0.04;
  * Play a control from a MIDI value, 0-1. Returns false when no control has
  * that id (the studio's code is not loaded, or a mapping outlived it).
  */
-export function runStudioControl(id: string, value: number): boolean {
+export function runStudioControl(id: string, value: number, opts: { momentary?: boolean } = {}): boolean {
   const control = studioControl(id);
   if (!control) return false;
   const v = Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
@@ -119,7 +119,9 @@ export function runStudioControl(id: string, value: number): boolean {
     return true;
   }
   const down = v > PRESS;
-  const was = pressed.get(id) === true;
+  // An OSC or MCP caller may send 1 with no 0 after it: each 1 is its own
+  // press for a trigger or toggle. A hold keeps its press-and-release.
+  const was = opts.momentary && control.kind !== 'hold' && down ? false : pressed.get(id) === true;
   if (down === was) return true;
   pressed.set(id, down);
   if (control.kind === 'hold') control.run(down ? v : 0);
