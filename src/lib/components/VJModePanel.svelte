@@ -1150,12 +1150,39 @@
 
   /** Draw the mirrored composite into the preview box, letterboxed: this is
    *  what the operator judges framing from, so its aspect has to hold. */
+  // The preview box's size, measured when it resizes rather than every
+  // frame; a frame is only redrawn when the mirror has a new picture or the
+  // box changed size.
+  let mirrorPreviewBox: { width: number; height: number } | null = null;
+  let mirrorPreviewBoxObserver: ResizeObserver | null = null;
+  let mirrorPreviewObservedEl: HTMLCanvasElement | null = null;
+  let mirrorPreviewDrawnSeq = -1;
+  let mirrorPreviewDrawnKey = '';
+  function observeMirrorPreviewBox(el: HTMLCanvasElement): void {
+    if (mirrorPreviewObservedEl === el) return;
+    mirrorPreviewBoxObserver?.disconnect();
+    mirrorPreviewObservedEl = el;
+    mirrorPreviewBox = null;
+    if (typeof ResizeObserver === 'undefined') return;
+    mirrorPreviewBoxObserver = new ResizeObserver(() => {
+      const box = el.getBoundingClientRect();
+      mirrorPreviewBox = { width: box.width, height: box.height };
+    });
+    mirrorPreviewBoxObserver.observe(el);
+  }
   function drawMirrorPreview(source: HTMLCanvasElement) {
     if (!previewCanvas || !previewCtx || !source.width || !source.height) return;
-    const box = previewCanvas.getBoundingClientRect();
+    observeMirrorPreviewBox(previewCanvas);
+    const box = mirrorPreviewBox ?? previewCanvas.getBoundingClientRect();
     const ratio = window.devicePixelRatio || 1;
     const width = Math.max(1, Math.round(box.width * ratio));
     const height = Math.max(1, Math.round(box.height * ratio));
+    const seq = (source as any).__gaFrameSeq ?? 0;
+    const key = `${width}x${height}:${source.width}x${source.height}`;
+    if (seq === mirrorPreviewDrawnSeq && key === mirrorPreviewDrawnKey
+      && previewCanvas.width === width && previewCanvas.height === height) return;
+    mirrorPreviewDrawnSeq = seq;
+    mirrorPreviewDrawnKey = key;
     if (previewCanvas.width !== width || previewCanvas.height !== height) {
       previewCanvas.width = width;
       previewCanvas.height = height;
@@ -1176,7 +1203,9 @@
   }
 
   // Watch for VJ mode open/close
-  $: if ($vjClipLauncher.isOpen && previewCanvas) {
+  // While the native presenter shows the picture through the box the loop
+  // has nothing to draw, so it does not run.
+  $: if ($vjClipLauncher.isOpen && previewCanvas && !nativePreviewActive) {
     previewCtx = previewCanvas.getContext('2d');
     startPreviewLoop();
   } else {
@@ -1199,6 +1228,8 @@
       void invoke('deck_monitor_detach').catch(() => { /* main may be gone */ });
     }
     stopPreviewLoop();
+    mirrorPreviewBoxObserver?.disconnect();
+    mirrorPreviewBoxObserver = null;
     stopModGhostLoop();
     stopCrossfaderAutoLoop();
     stopCrossfaderGlide();
@@ -2480,15 +2511,16 @@
       registerParamRanges(layerIndex, inputs, 'vj', clip.id);
       // Ensure all float/long params have their DEFAULT written to shaderValues
       // so modulation can find a base value even if the user hasn't moved the slider
+      // (one store update for all of them; showing the params is not an edit
+      // to the project).
+      const defaults: Record<string, number> = {};
       for (const inp of inputs) {
         if ((inp.TYPE === 'float' || inp.TYPE === 'long') && inp.DEFAULT !== undefined) {
           const current = clip.shaderValues?.[inp.NAME];
-          if (current === undefined) {
-            // Showing the params is not an edit to the project.
-            vjClipLauncher.updateActiveClipShaderValue(layerIndex, inp.NAME, inp.DEFAULT as number, undefined, false);
-          }
+          if (current === undefined) defaults[inp.NAME] = inp.DEFAULT as number;
         }
       }
+      vjClipLauncher.fillActiveClipShaderDefaults(layerIndex, defaults);
       // Store audio-ready flag on the clip for UI badges
       if (clip.shaderCode) {
         (clip as any)._isAudioReady = parsed.isAudioReady;
@@ -2864,12 +2896,19 @@
         modGhostRaf = null;
         return;
       }
+      // Reassigned only when a value changed: a new object every frame
+      // re-rendered every slider 60 times a second with no modulation at all.
       const newVals: Record<string, number> = {};
+      let count = 0;
+      let changed = false;
       for (const input of selectedClipShaderInputs) {
         const v = getModulatedValue(selectedLayerIndex, input.NAME);
-        if (v !== null) newVals[input.NAME] = v;
+        if (v === null) continue;
+        newVals[input.NAME] = v;
+        count += 1;
+        if (modGhostValues[input.NAME] !== v) changed = true;
       }
-      modGhostValues = newVals;
+      if (changed || count !== Object.keys(modGhostValues).length) modGhostValues = newVals;
       modGhostRaf = requestAnimationFrame(tick);
     };
     modGhostRaf = requestAnimationFrame(tick);

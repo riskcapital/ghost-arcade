@@ -2750,6 +2750,46 @@ function createVJClipLauncherStore() {
       }
     },
 
+    /**
+     * Fill in several shader defaults on a row's active clip in one store
+     * update: what `updateActiveClipShaderValue(..., saved = false)` does per
+     * value (not an edit, armed tracks still auto-record), published once
+     * instead of once per input when a clip's params first show.
+     */
+    fillActiveClipShaderDefaults(layerIndex: number, values: Record<string, any>, deck: VJDeck = 'A') {
+      const names = Object.keys(values);
+      if (names.length === 0) return;
+      update(state => {
+        const targetLayerStates = pickLayerStates(state, deck);
+        const activeClip = targetLayerStates[layerIndex]?.activeClip;
+        if (!activeClip) return state;
+        const newClip = {
+          ...activeClip,
+          shaderValues: { ...(activeClip.shaderValues || {}), ...values },
+        };
+        const newLayerStates = [...targetLayerStates];
+        newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], activeClip: newClip };
+        const placed = placeActiveClipEdit(state, deck, layerIndex, activeClip.id, newClip);
+        const next = withDeck(state, deck, newLayerStates, placed?.grid);
+        return placed ? { ...next, blocks: placed.blocks } : next;
+      });
+      const s = get({ subscribe });
+      const ls = deck === 'B' ? s.bankBLayerStates : s.layerStates;
+      const activeClipId = ls[layerIndex]?.activeClip?.id;
+      if (!activeClipId) return;
+      for (const name of names) {
+        const value = values[name];
+        if (typeof value !== 'number' && typeof value !== 'boolean') continue;
+        keyframeTimeline.autoRecord(
+          `vj-${activeClipId}`,
+          `shader:${name}`,
+          value,
+          name,
+          typeof value === 'boolean' ? 'boolean' : 'number'
+        );
+      }
+    },
+
     // Update a JS animation parameter on the active VJ clip. The clip owns
     // these values in VJ mode; Mapping's selected-layer editor must not leak
     // into this state.

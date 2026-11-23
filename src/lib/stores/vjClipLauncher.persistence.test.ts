@@ -205,6 +205,21 @@ describe('unsaved-changes counter', () => {
     expect(bumped()).toBe(true);
   });
 
+  it('fills shader defaults in one update that is not an edit', () => {
+    vjClipLauncher.setClip(0, 0, shader('d1'));
+    vjClipLauncher.triggerClipNow(0, 0);
+    const before = version();
+    let publishes = 0;
+    const stop = vjClipLauncher.subscribe(() => { publishes += 1; });
+    publishes = 0;
+    vjClipLauncher.fillActiveClipShaderDefaults(0, { a: 0.1, b: 2 });
+    stop();
+    expect(publishes).toBe(1);
+    expect(version()).toBe(before);
+    expect(playing(0).shaderValues).toEqual(expect.objectContaining({ a: 0.1, b: 2 }));
+    expect(blockCell(0, 0).shaderValues).toEqual(expect.objectContaining({ a: 0.1, b: 2 }));
+  });
+
   it('counts video settings but not transport', () => {
     vjClipLauncher.setClip(0, 0, { id: 'v', type: 'video', name: 'V', src: '/v.mov', durationSeconds: 4 } as any);
     vjClipLauncher.triggerClipNow(0, 0);
