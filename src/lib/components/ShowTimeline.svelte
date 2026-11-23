@@ -1123,6 +1123,11 @@
     if (e.key === 'Escape' && cancelActiveDrag()) return true;
     // Esc with a menu open is the menu's: it closes, the selection stays.
     if (e.key === 'Escape' && showPopoverOpen()) return false;
+    // Enter on a focused button (a modal's OK, a menu item) is that
+    // button's, not GO; nor is Enter inside an open dialog.
+    const target = e.target as HTMLElement | null;
+    if (e.key === 'Enter' && target?.closest?.('button, a[href], [role="button"], [role="menuitem"]')) return false;
+    if (e.key === 'Enter' && target?.closest?.('[role="dialog"], [aria-modal="true"], dialog')) return false;
     const s = get(showTimeline);
     const clipSel = hasClipSelection();
     const action = classifyShowKey(e, {
