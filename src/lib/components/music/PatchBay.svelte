@@ -4,7 +4,13 @@
    * in one place over the output, so a drop target is always in reach even
    * when its jack on the panel is small, scrolled away or not on this set.
    * Dropping on one of these is the same as dropping on the jack itself.
+   *
+   * It opens over the output, but lives at <body>: inside the studio's grid
+   * the panels below the output (their own stacking layers) were drawn over
+   * it. Placed against the window, it is kept inside it.
    */
+  import { portal } from '../../utils/portal';
+  import { bayPlacement } from '../../music/cablePatching';
   import { cableDrag } from '../../music/cablePatching';
   import { canConnect, jackKind } from '../../music/studioSets';
   import { musicStudio } from '../../music/musicStudioStore';
@@ -68,12 +74,32 @@
   });
 
   const kind = $derived(drag ? jackKind(drag.from) : null);
+
+  /** Where in the studio the bay belongs: over this element's parent (the output). */
+  let anchor = $state<HTMLElement | null>(null);
+  let place = $state({ left: 0, top: 0, width: 620, maxHeight: 560 });
+
+  function measure() {
+    const r = anchor?.parentElement?.getBoundingClientRect() ?? null;
+    place = bayPlacement(r, { width: window.innerWidth, height: window.innerHeight });
+  }
+
+  // Placed as a cable is picked up, and again if the window changes size while it is out.
+  $effect(() => {
+    if (!drag) return;
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  });
   // Control inputs add up every cable in them; only an audio input is replaced.
   const taken = (id: string) => !id.startsWith('dest:') && cables.some((c) => c.to === id && c.from !== drag?.from);
 </script>
 
+<span hidden bind:this={anchor}></span>
 {#if drag}
-  <div class="bay" role="group" aria-label="Where this cable can go">
+  <!-- The wrapper stays where Svelte put it; the bay itself moves to <body>. -->
+  <div style="display: contents">
+  <div class="bay studio-tokens" use:portal role="group" aria-label="Where this cable can go" style="left: {place.left}px; top: {place.top}px; width: {place.width}px; max-height: {place.maxHeight}px">
     <p class="head">
       {kind === 'audio' ? 'Drop on an input to route this sound' : 'Drop on an input to control it with this signal'}<span class="muted"> · let go anywhere else to cancel</span>
     </p>
@@ -94,17 +120,14 @@
       <p class="none">Nothing in this set takes {kind === 'audio' ? 'a sound' : 'a control signal'} yet.{kind === 'control' ? ' Add a macro or a deck layer to give it somewhere to go.' : ''}</p>
     {/if}
   </div>
+  </div>
 {/if}
 
 <style>
   .bay {
-    position: absolute;
-    top: 34px;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 6;
-    width: min(620px, calc(100% - 24px));
-    max-height: min(70vh, 560px);
+    /* Over the whole window, Audio Lab's panels included. */
+    position: fixed;
+    z-index: 4000;
     overflow-y: auto;
     box-sizing: border-box;
     padding: 8px 10px 10px;

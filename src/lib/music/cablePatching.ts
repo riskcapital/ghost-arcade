@@ -19,3 +19,32 @@ export const cableDrag = writable<CableDrag | null>(null);
 
 /** The cables just unplugged, so the next "Undo" can put them back. */
 export const lastUnplugged = writable<{ cables: Cable[]; at: number } | null>(null);
+
+const EDGE = 8;
+
+/**
+ * Where the patch bay opens, against the window: centred over the output
+ * (`host`), 34px below its top, at most 620px wide and never past an edge.
+ * Without a host it opens at the top of the window.
+ */
+export function bayPlacement(host: { left: number; top: number; width: number } | null, view: { width: number; height: number }): { left: number; top: number; width: number; maxHeight: number } {
+  const width = Math.max(160, Math.min(620, (host ? host.width : view.width) - 24, view.width - EDGE * 2));
+  const centre = host ? host.left + host.width / 2 : view.width / 2;
+  const left = Math.max(EDGE, Math.min(centre - width / 2, view.width - width - EDGE));
+  // Keep room for a useful list: near the bottom of the window it moves up.
+  const room = Math.min(200, view.height - EDGE * 2);
+  const top = Math.max(EDGE, Math.min(host ? host.top + 34 : EDGE, view.height - EDGE - room));
+  const maxHeight = Math.max(room, Math.min(560, view.height * 0.7, view.height - top - EDGE));
+  return { left, top, width, maxHeight };
+}
+
+/**
+ * A popover's corner at the pointer, moved so its whole `size` stays inside
+ * the window (8px from every edge).
+ */
+export function keepInWindow(at: { x: number; y: number }, size: { width: number; height: number }, view: { width: number; height: number }): { x: number; y: number } {
+  return {
+    x: Math.max(EDGE, Math.min(at.x, view.width - size.width - EDGE)),
+    y: Math.max(EDGE, Math.min(at.y, view.height - size.height - EDGE)),
+  };
+}

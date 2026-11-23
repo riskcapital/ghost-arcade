@@ -5,7 +5,7 @@
    * dropped anywhere else it is gone.
    */
   import { onDestroy } from 'svelte';
-  import { cableDrag, lastUnplugged } from '../../music/cablePatching';
+  import { cableDrag, keepInWindow, lastUnplugged } from '../../music/cablePatching';
   import type { Cable } from '../../music/studioSets';
   import { macros } from '../../stores/macros';
   import { INSTRUMENT_LABELS } from '../../music/instruments';
@@ -104,7 +104,7 @@
       e.preventDefault();
       e.stopPropagation();
       editing = null;
-      jackMenu = { jack, x: Math.min(e.clientX, innerWidth - 300), y: Math.min(e.clientY, innerHeight - 200) };
+      jackMenu = { jack, x: e.clientX, y: e.clientY };
       return;
     }
     const hit = cableAt(e.clientX, e.clientY);
@@ -112,8 +112,26 @@
     e.preventDefault();
     e.stopPropagation();
     jackMenu = null;
-    editing = { id: hit, x: Math.min(e.clientX, innerWidth - 300), y: Math.min(e.clientY, innerHeight - 260) };
+    editing = { id: hit, x: e.clientX, y: e.clientY };
   }
+
+  // Opened at the pointer, then moved by their measured size so all of them is inside the window.
+  let editorEl = $state<HTMLElement | null>(null);
+  let jackMenuEl = $state<HTMLElement | null>(null);
+  function fit<T extends { x: number; y: number }>(el: HTMLElement | null, at: T | null): T | null {
+    if (!el || !at) return null;
+    const r = el.getBoundingClientRect();
+    const p = keepInWindow(at, { width: r.width, height: r.height }, { width: innerWidth, height: innerHeight });
+    return Math.abs(p.x - at.x) > 0.5 || Math.abs(p.y - at.y) > 0.5 ? { ...at, ...p } : null;
+  }
+  $effect(() => {
+    const moved = fit(editorEl, editing);
+    if (moved) editing = moved;
+  });
+  $effect(() => {
+    const moved = fit(jackMenuEl, jackMenu);
+    if (moved) jackMenu = moved;
+  });
 
   const pct = (v: number) => `${Math.round(v * 100)}%`;
   /** A jack as people say it: "Echo shots", "Energy", "Synth pan". */
@@ -235,7 +253,7 @@
 {#if editing && editCable}
   {@const amount = editCable.amount ?? 1}
   {@const control = editCable.from.startsWith('cv:')}
-  <div class="cable-editor" role="dialog" aria-label="Cable" style="left: {editing.x}px; top: {editing.y}px">
+  <div class="cable-editor" role="dialog" aria-label="Cable" style="left: {editing.x}px; top: {editing.y}px" bind:this={editorEl}>
     <div class="row">
       <p class="route">{jackName(editCable.from)} <span class="muted">to</span> {jackName(editCable.to)}</p>
       <span class="spacer"></span>
@@ -260,7 +278,7 @@
 {/if}
 
 {#if jackMenu && jackCables.length}
-  <div class="cable-editor" role="dialog" aria-label="Cables in this jack" style="left: {jackMenu.x}px; top: {jackMenu.y}px">
+  <div class="cable-editor" role="dialog" aria-label="Cables in this jack" style="left: {jackMenu.x}px; top: {jackMenu.y}px" bind:this={jackMenuEl}>
     {#each jackCables as c (c.id)}
       <div class="row" onpointerenter={() => (hovered = c.id)} onpointerleave={() => (hovered = null)} role="group">
         <p class="route">{jackName(c.from)} <span class="muted">to</span> {jackName(c.to)}</p>
