@@ -47,7 +47,7 @@ describe('group rows', () => {
   });
 
   it('a deleted group order takes no pieces instead of the whole stage', () => {
-    const spots = [{ id: 'a', x: 0.2, y: 0.5 }, { id: 'b', x: 0.8, y: 0.5 }] as Parameters<typeof computeSpatialOrder>[0];
+    const spots = [{ id: 'a', x: 0.2, y: 0.5 }, { id: 'b', x: 0.8, y: 0.5 }] as unknown as Parameters<typeof computeSpatialOrder>[0];
     const order = computeSpatialOrder(spots, resolveOrderSpec(groupRowWhere({ orderId: 'gone', unified: true }), []));
     expect(order.slots).toEqual([]);
   });
