@@ -477,7 +477,9 @@ export function evaluateShowTracks(
         warm: warmFor(track, t, silenced),
         xfade: {
           clip: clipStateAt(track.clips, xf.outgoing, t, opts),
-          opacity: clipGain(xf.outgoing, t) * weights.outgoing,
+          // The dissolve is the outgoing edge's fade: its own fade out there
+          // (clamped to its end, so 0 from the cut on) would dip to dark.
+          opacity: clipGain(xf.outgoing.fadeOut ? { ...xf.outgoing, fadeOut: 0 } : xf.outgoing, t) * weights.outgoing,
           progress: xf.progress,
         },
       };
