@@ -27,6 +27,9 @@
   import SessionGrid from './SessionGrid.svelte';
   import ClipEditor from './ClipEditor.svelte';
   import ClipStackEditor from './ClipStackEditor.svelte';
+  import VisualPicker from './VisualPicker.svelte';
+  import LoopPicker from './LoopPicker.svelte';
+  import InsertEditor from './InsertEditor.svelte';
   import LoopRecordBar from './LoopRecordBar.svelte';
   import PadsModule from './PadsModule.svelte';
   import BathModules from './BathModules.svelte';
@@ -189,7 +192,8 @@
   </div>
 {/if}
 
-{#if shown}<ClipEditor /><ClipStackEditor />{/if}
+<!-- The grid's +, FX and Add visual open these: mounted here too, as the full studio view is not. -->
+{#if shown}<ClipEditor /><ClipStackEditor /><VisualPicker /><LoopPicker /><InsertEditor />{/if}
 
 <style>
   .music-tray {

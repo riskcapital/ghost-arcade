@@ -363,8 +363,9 @@
         </select>
       </div>
       <SceneBar />
-      <select class="set-menu" value={s.set} onchange={(e) => musicStudio.setSet((e.target as HTMLSelectElement).value as typeof s.set)} aria-label="Instrument set">
+      <select class="set-menu" value={looperPage ? 'looper' : s.set} onchange={(e) => { const v = (e.target as HTMLSelectElement).value; if (v === 'looper') { looperPage = true; return; } looperPage = false; musicStudio.setSet(v as typeof s.set); }} aria-label="Instrument set">
         {#each STUDIO_SETS as set}<option value={set.id}>{set.label}</option>{/each}
+        <option value="looper">Looper</option>
       </select>
       <div class="ga-segmented set-tabs" role="group" aria-label="Instrument set">
         {#each STUDIO_SETS as set}
