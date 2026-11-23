@@ -514,6 +514,14 @@ export class MacroFxChain {
     if (this.last) this.sync(this.last.slots, this.last.tempo);
   }
 
+  /** For good: every unit's oscillators stopped, nothing rebuilt. */
+  dispose(): void {
+    this.last = null;
+    this.kill();
+    try { this.input.disconnect(); } catch { /* none */ }
+    try { this.output.disconnect(); } catch { /* none */ }
+  }
+
   private rebuild(effects: MacroFxInstance[], structure: string): void {
     this.structure = structure;
     try { this.input.disconnect(); } catch { /* none */ }

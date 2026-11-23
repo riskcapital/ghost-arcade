@@ -62,3 +62,14 @@ describe('sound engine pruning', () => {
     expect(engine.blockGains.size).toBe(0);
   });
 });
+
+describe('row bus dispose', () => {
+  it('stops the effect chain (its LFO oscillators) for good', () => {
+    const ctx = new FakeAudioContext();
+    const bus = new RowBus(ctx as unknown as AudioContext, ctx.destination as unknown as AudioNode);
+    const stop = vi.spyOn(bus.chain, 'dispose');
+    bus.dispose();
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+});
+

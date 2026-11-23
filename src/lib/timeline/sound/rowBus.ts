@@ -108,6 +108,9 @@ export class RowBus {
   dispose(): void {
     this.buildFx?.cancel();
     this.ducker.dispose();
+    // The effects' LFOs are running oscillators: stop them, or every deleted
+    // row (and every offline export) leaves them going.
+    this.chain.dispose();
     for (const n of [this.input, this.chain.input, this.chain.output, this.level, ...(this.buildFx ? [this.buildFx.output] : [])]) {
       try { n.disconnect(); } catch { /* gone */ }
     }
