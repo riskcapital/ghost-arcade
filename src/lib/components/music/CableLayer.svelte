@@ -146,7 +146,16 @@
     invalidate();
     const sizes = new ResizeObserver(invalidate);
     sizes.observe(el);
-    const panels = new MutationObserver(invalidate);
+    // A pad's flash is re-made on every hit (and moves nothing): only nodes
+    // that can shift a jack count, so the jacks are not re-read every frame.
+    const shifts = (n: Node) => n.nodeType !== Node.COMMENT_NODE && !(n instanceof Element && n.hasAttribute('data-no-layout'));
+    const panels = new MutationObserver((list) => {
+      if (stale) return;
+      for (const m of list) {
+        for (const n of m.addedNodes) if (shifts(n)) { invalidate(); return; }
+        for (const n of m.removedNodes) if (shifts(n)) { invalidate(); return; }
+      }
+    });
     panels.observe(el, { childList: true, subtree: true });
     window.addEventListener('scroll', invalidate, { capture: true, passive: true });
     window.addEventListener('resize', invalidate);

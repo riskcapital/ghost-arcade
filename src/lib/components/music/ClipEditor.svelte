@@ -83,13 +83,24 @@
   });
 
   // The playhead follows the clip while it plays.
+  // Runs only while a clip is open and the window is shown.
   let frame = 0;
   function tick() {
+    frame = 0;
     position = id ? clipPosition(id) : null;
-    frame = requestAnimationFrame(tick);
+    if (id && !document.hidden) frame = requestAnimationFrame(tick);
   }
-  frame = requestAnimationFrame(tick);
-  onDestroy(() => cancelAnimationFrame(frame));
+  const wake = () => { if (!frame && id && !document.hidden) frame = requestAnimationFrame(tick); };
+  $effect(() => {
+    if (id) wake();
+    else position = null;
+  });
+  document.addEventListener('visibilitychange', wake);
+  onDestroy(() => {
+    if (frame) cancelAnimationFrame(frame);
+    frame = 0;
+    document.removeEventListener('visibilitychange', wake);
+  });
 
   const notesClip = $derived(clip?.kind === 'notes' ? (clip as NotesClip) : null);
   const notes = $derived(draft ?? notesClip?.notes ?? []);

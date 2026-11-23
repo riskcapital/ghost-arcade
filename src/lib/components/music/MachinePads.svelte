@@ -198,7 +198,7 @@
           title="{p.name}: {PAD_KEYS[i] ? `key ${PAD_KEYS[i].toUpperCase()}, ` : ''}note {36 + i}. Hit near the top for louder."
           aria-label="{p.name} pad"
         >
-          {#key $machinePadFlash[i]}<span class="flash" class:go={$machinePadFlash[i] > 0}></span>{/key}
+          {#key $machinePadFlash[i]}<span class="flash" data-no-layout class:go={$machinePadFlash[i] > 0}></span>{/key}
           <span class="name">{p.name}</span>
           <span class="foot">
             <span class="key">{PAD_KEYS[i]?.toUpperCase() ?? i + 1}</span>

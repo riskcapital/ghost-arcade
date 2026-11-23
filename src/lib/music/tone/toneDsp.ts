@@ -16,6 +16,8 @@ const TAU = Math.PI * 2;
 /** Samples between control updates (filter coefficients, LFOs, envelopes of the filter). */
 export const CONTROL = 16;
 const MAX_UNISON = 7;
+/** Scratch for a block's unison detune ratios (audio thread: no allocation). */
+const UNISON_MUL = new Float64Array(MAX_UNISON);
 
 const mtof = (n: number) => 440 * Math.pow(2, (n - 69) / 12);
 const clamp = (x: number, lo: number, hi: number) => (x < lo ? lo : x > hi ? hi : x);
@@ -795,6 +797,11 @@ export class ToneEngine {
       const uDet = p.unison?.detune ?? 0;
       const spread = p.unison?.spread ?? 0;
       const uLevel = 1 / Math.sqrt(unison);
+      // Each unison copy's detune ratio, once per block, not per sample.
+      for (let u = 0; u < unison; u++) {
+        const off = unison > 1 ? u / (unison - 1) - 0.5 : 0;
+        UNISON_MUL[u] = unison > 1 ? Math.pow(2, (off * uDet) / 1200) : 1;
+      }
       for (let s = from; s < to; s++) {
         if (v.glideCoef < 1) v.freq += (v.target - v.freq) * v.glideCoef;
         const hz = v.freq * pitchMul;
@@ -808,7 +815,7 @@ export class ToneEngine {
         const dt1 = (hz * m1) / sr;
         for (let u = 0; u < unison; u++) {
           const off = unison > 1 ? u / (unison - 1) - 0.5 : 0;
-          const dt = dt1 * (unison > 1 ? Math.pow(2, (off * uDet) / 1200) : 1);
+          const dt = dt1 * UNISON_MUL[u];
           const y = v.copies[u].next(o1.wave, dt, pw1, pm, whiteNoise) * o1.level * uLevel;
           if (stereo) {
             const pan = 0.5 + off * spread;

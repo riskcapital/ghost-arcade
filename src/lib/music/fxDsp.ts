@@ -458,13 +458,14 @@ class Hilbert {
     }
     return x;
   }
-  /** [in-phase, quadrature]. */
-  run(x: number): [number, number] {
-    const i = this.chain(x, Hilbert.A, this.sa);
+  /** In-phase and quadrature of the last run, read after it (no allocation on the audio thread). */
+  re = 0;
+  im = 0;
+  run(x: number): void {
+    this.re = this.chain(x, Hilbert.A, this.sa);
     const qNow = this.chain(x, Hilbert.B, this.sb);
-    const q = this.bDelay;
+    this.im = this.bDelay;
     this.bDelay = qNow;
-    return [i, q];
   }
 }
 
@@ -501,7 +502,9 @@ export class FreqShifter implements FxDsp {
         const f = c === 0 ? hz : hz * (1 - 2 * spread);
         this.phase[c] += f / this.sr;
         this.phase[c] -= Math.floor(this.phase[c]);
-        const [re, im] = this.hil[c].run(x + soft(this.last[c] * fb));
+        const h = this.hil[c];
+        h.run(x + soft(this.last[c] * fb));
+        const re = h.re, im = h.im;
         const y = re * Math.cos(TAU * this.phase[c]) + im * Math.sin(TAU * this.phase[c]);
         this.last[c] = y;
         const o = x * dryGain(mix) + y * wetGain(mix);
