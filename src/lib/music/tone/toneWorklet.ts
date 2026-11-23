@@ -3,7 +3,7 @@
  * polyphonic tone engine or a drum kit, played by timed messages.
  */
 
-import { DrumEngine, ToneEngine, softClip } from './toneDsp';
+import { DrumEngine, ToneEngine, kneeClip } from './toneDsp';
 import type { ToneMessage } from './toneTypes';
 
 declare const sampleRate: number;
@@ -48,8 +48,8 @@ class GhostToneProcessor extends AudioWorkletProcessor {
       return true;
     }
     for (let i = 0; i < L.length; i++) {
-      if (L[i] > 0.9 || L[i] < -0.9) L[i] = softClip(L[i]);
-      if (R !== L && (R[i] > 0.9 || R[i] < -0.9)) R[i] = softClip(R[i]);
+      L[i] = kneeClip(L[i]);
+      if (R !== L) R[i] = kneeClip(R[i]);
     }
     return true;
   }

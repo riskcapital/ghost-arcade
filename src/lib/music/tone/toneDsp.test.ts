@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DrumEngine, Ladder, ToneEngine } from './toneDsp';
+import { DrumEngine, Ladder, ToneEngine, kneeClip } from './toneDsp';
+import { loopCurve } from '../sounds/kit';
 import { TONES } from './tones';
 import { DRUM_KITS } from './kits';
 import { EXTRA_SOUNDS, MACHINE_KITS } from '../drumMachine/machineKits';
@@ -173,4 +174,20 @@ describe('drum machine kits', () => {
       }
     });
   }
+});
+
+describe('saturation', () => {
+  it('clips the output with no jump at the knee', () => {
+    expect(kneeClip(0.5)).toBe(0.5);
+    expect(Math.abs(kneeClip(0.9001) - 0.9001)).toBeLessThan(1e-4);
+    expect(kneeClip(-0.9001)).toBeCloseTo(-0.9001, 4);
+    expect(kneeClip(10)).toBeLessThanOrEqual(1);
+    for (let x = 0; x < 3; x += 0.001) expect(kneeClip(x + 0.001) - kneeClip(x)).toBeLessThanOrEqual(0.00101);
+  });
+
+  it('keeps a feedback loop at or under unity gain', () => {
+    const c = loopCurve(1.6);
+    const step = 2 / (c.length - 1);
+    for (let i = 1; i < c.length; i++) expect((c[i] - c[i - 1]) / step).toBeLessThanOrEqual(1.0001);
+  });
 });

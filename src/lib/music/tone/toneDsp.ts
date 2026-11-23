@@ -28,6 +28,19 @@ export function softClip(x: number): number {
   return (x * (27 + x2)) / (27 + 9 * x2);
 }
 
+/**
+ * Output safety clip: untouched below the knee, then softClip scaled into the
+ * headroom above it. Value and slope are continuous at the knee (softClip's
+ * slope at 0 is 1) and it tops out at ±1.
+ */
+export function kneeClip(x: number, knee = 0.9): number {
+  const a = x < 0 ? -x : x;
+  if (a <= knee) return x;
+  const room = 1 - knee;
+  const y = knee + room * softClip((a - knee) / room);
+  return x < 0 ? -y : y;
+}
+
 function polyBlep(t: number, dt: number): number {
   if (t < dt) {
     const x = t / dt;
