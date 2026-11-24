@@ -3,7 +3,9 @@
    * The ask for a locked add-on, opened from its dock button, its card or a
    * layer made with it: Try free for 3 days, Buy, or enter a licence key.
    * The trial starts on ghostarcade.live (it needs an account); the key the
-   * website shows then comes back here.
+   * website shows then comes back here. Buy opens the add-on's checkout and
+   * then waits: Check again when a key is already here (the purchase joins
+   * the licence), else the key from the email or the account page.
    */
   import {
     ADDON_PRODUCTS, ADDON_TRIAL_DAYS, addonOffer, addonsStatus, buyAddon, refreshAddonLicence, startAddonTrial,
@@ -91,6 +93,19 @@
         {:else}
           <LicenceKeyForm autofocus />
           <div class="actions quiet"><button onclick={() => startAddonTrial(offer.product)}>Open the website again</button></div>
+        {/if}
+      {:else if offer.step === 'buy'}
+        {#if hasKey}
+          <p class="lead">Finished checking out? Press Check again to unlock on this computer.</p>
+          <div class="actions">
+            <button class="primary" onclick={checkAgain} disabled={checking} data-addon-check>{checking ? 'Checking…' : 'Check again'}</button>
+            <button onclick={() => buyAddon(offer.product)} data-addon-checkout-again>Open checkout again</button>
+          </div>
+          {#if checkFailure}<p class="error" role="alert"><AddonErrorText code={checkFailure.code} /></p>{/if}
+        {:else}
+          <p class="lead">Paste the licence key from your email or account page here:</p>
+          <LicenceKeyForm autofocus />
+          <div class="actions quiet"><button onclick={() => buyAddon(offer.product)} data-addon-checkout-again>Open checkout again</button></div>
         {/if}
       {:else}
         <p class="lead">

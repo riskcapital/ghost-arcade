@@ -39,6 +39,17 @@ export const ADDON_TRIAL_DAYS = 3;
 export const ADDONS_PAGE_URL = 'https://ghostarcade.live/addons';
 export const ADDONS_ACCOUNT_URL = 'https://ghostarcade.live/account/addons';
 
+/** The product name the website's checkout takes, by add-on. */
+export const ADDON_CHECKOUT_SLUGS: Readonly<Record<AddonProductId, string>> = {
+  'addon.audio-lab': 'audio-lab',
+  'addon.analog-synth': 'analog-synth',
+};
+
+/** Where Buy goes for one add-on: straight to its checkout on ghostarcade.live. */
+export function addonCheckoutUrl(id: AddonProductId): string {
+  return `https://ghostarcade.live/addons/checkout?product=${ADDON_CHECKOUT_SLUGS[id]}`;
+}
+
 /** One add-on on this computer. Exactly one of these at a time. */
 export type AddonState =
   | { kind: 'locked' }
@@ -222,8 +233,11 @@ export const extendAddonLicence = () => act('addons_extend');
 /**
  * The add-on whose offer dialog is open, or null. `step` 'trial': the
  * website was opened for the trial and the dialog waits for the key.
+ * 'buy': its checkout was opened and the dialog waits for the purchase
+ * (Check again with a key here, or the key from the email).
  */
-export const addonOffer = writable<{ product: AddonProductId; step: 'offer' | 'trial' } | null>(null);
+export type AddonOfferStep = 'offer' | 'trial' | 'buy';
+export const addonOffer = writable<{ product: AddonProductId; step: AddonOfferStep } | null>(null);
 
 /** A locked button or key asks for this add-on: show its offer. */
 export function offerAddon(id: AddonProductId): void {
@@ -236,8 +250,13 @@ function openSite(url: string): void {
   else if (typeof window !== 'undefined') window.open(url, '_blank', 'noopener');
 }
 
-export function buyAddon(_id: AddonProductId): void {
-  openSite(ADDONS_PAGE_URL);
+/**
+ * Buy opens the add-on's checkout on ghostarcade.live; the offer dialog then
+ * waits for the purchase to reach this computer.
+ */
+export function buyAddon(id: AddonProductId): void {
+  openSite(addonCheckoutUrl(id));
+  addonOffer.set({ product: id, step: 'buy' });
 }
 
 /**
