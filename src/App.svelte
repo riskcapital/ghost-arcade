@@ -1521,15 +1521,32 @@
   let showRecoveryModal = false;
   let recoveryTimestamp = '';
 
+  /** What the unsaved-changes check reads, taken once so the autosave can
+   *  write the same export instead of exporting the project a second time. */
+  interface ProjectDirtyParts {
+    exported: Record<string, any>;
+    showTimeline: unknown;
+    showControl: unknown;
+  }
+  function takeProjectDirtyParts(): ProjectDirtyParts {
+    return {
+      exported: project.exportProject() as Record<string, any>,
+      // A snapshot only: the check must not rewrite the show's track
+      // templates in the store (a save still does).
+      showTimeline: showTimeline.serialize({ updateStore: false }),
+      showControl: serializeShowControl(),
+    };
+  }
+
   /**
    * `asSaved`: the state as it is, for a baseline. Otherwise sections still
    * as an automated recall left them read as saved (see recallImprint).
    */
-  function projectDirtySnapshot(asSaved = false): ProjectDirtySnapshot {
+  function projectDirtySnapshot(asSaved = false, parts: ProjectDirtyParts = takeProjectDirtyParts()): ProjectDirtySnapshot {
     const sections = projectSettingsSections({
-      exported: project.exportProject() as Record<string, any>,
-      showTimeline: showTimeline.serialize(),
-      showControl: serializeShowControl(),
+      exported: parts.exported,
+      showTimeline: parts.showTimeline,
+      showControl: parts.showControl,
       stage3d: get(stage3dScene),
     });
     const compared = asSaved ? sections : withRecallsAsSaved(sections, recallImprint, savedProjectState?.sections);
@@ -1564,10 +1581,10 @@
   onDestroy(stopRecallWatch);
 
   /** Work out whether the project has unsaved changes, now. */
-  function refreshUnsavedChanges(): boolean {
+  function refreshUnsavedChanges(parts?: ProjectDirtyParts): boolean {
     // An edit still waiting for its undo debounce is a change too. (Not
     // flushed here: the autosave tick must not split a drag in two.)
-    hasUnsavedChanges = hasPendingHistorySnapshot() || studioUnrecordedEdit || isProjectDirty(savedProjectState, projectDirtySnapshot());
+    hasUnsavedChanges = hasPendingHistorySnapshot() || studioUnrecordedEdit || isProjectDirty(savedProjectState, projectDirtySnapshot(false, parts));
     return hasUnsavedChanges;
   }
 
@@ -2581,10 +2598,18 @@
     autosaveInterval = setInterval(() => {
       // Nothing to recover while the recovery offer is still open.
       if (showRecoveryModal) return;
+      // One export serves both the check and the autosave written below.
+      let parts: ProjectDirtyParts | undefined;
+      try {
+        parts = takeProjectDirtyParts();
+      } catch (e) {
+        // As before: the check and the write export on their own.
+        console.warn('[AutoSave] project export failed:', e);
+      }
       // Only unsaved work is worth recovering. Writing the autosave every
       // 30 s regardless (and clearing it only on Save or New) meant nearly
       // every launch offered to recover a project that had been saved.
-      if (!refreshUnsavedChanges()) {
+      if (!refreshUnsavedChanges(parts)) {
         if (!autosaveFromEarlierSession) clearAutosave();
         return;
       }
@@ -2597,7 +2622,7 @@
         const pathAtSnapshot = currentProjectPath ?? '';
         let jsonStr: string;
         try {
-          jsonStr = project.exportProjectJSON();
+          jsonStr = project.exportProjectJSON(parts ?? {});
         } catch (e) {
           console.warn('[AutoSave] Failed to auto-save project:', e);
           return;

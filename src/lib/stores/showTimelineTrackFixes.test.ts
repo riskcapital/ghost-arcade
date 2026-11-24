@@ -167,6 +167,25 @@ describe('track templates', () => {
     expect(saved.layerTracks![0].template!.opacity).toBe(0.4);
     expect(saved.layerTracks![0].layerName).toBe('Wall left');
   });
+
+  it('can be snapshotted fresh without touching the store (the unsaved-changes check)', () => {
+    const rowId = showTimeline.addLayerTrack(wall);
+    showTimeline.addLayerClip(rowId, { kind: 'image', name: 'a.png', src: 'a.png' }, 0);
+    const edited = { ...wall, opacity: 0.4, name: 'Wall left' } as Layer;
+    setShowTemplateLayerSource(() => [edited]);
+    const before = get(showTimeline);
+    let published = 0;
+    const stop = showTimeline.subscribe(() => { published += 1; });
+    published = 0;
+    const checked = showTimeline.serialize({ updateStore: false });
+    stop();
+    expect(published).toBe(0);
+    expect(get(showTimeline)).toBe(before);
+    expect(checked.layerTracks![0].template!.opacity).toBe(0.4);
+    expect(checked.layerTracks![0].layerName).toBe('Wall left');
+    // The same snapshot a save takes.
+    expect(JSON.stringify(checked)).toBe(JSON.stringify(showTimeline.serialize()));
+  });
 });
 
 describe('measured clip lengths', () => {

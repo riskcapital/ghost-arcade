@@ -6113,8 +6113,15 @@ void main() {
      * Unlike exportProject(), this DOES carry the Stage 3D scene — the live
      * sync relay uses exportProject() directly and must not.
      */
-    exportProjectJSON(): string {
-      const exportData = this.exportProject() as any;
+    exportProjectJSON(parts: {
+      /** An `exportProject()` taken this tick, to reuse (it gets the save-only sections added). */
+      exported?: object;
+      /** `showTimeline.serialize()` taken this tick. */
+      showTimeline?: unknown;
+      /** `serializeShowControl()` taken this tick. */
+      showControl?: unknown;
+    } = {}): string {
+      const exportData = (parts.exported ?? this.exportProject()) as any;
       try {
         exportData.project.stage3d = JSON.parse(JSON.stringify(get(stage3dScene)));
       } catch { /* snapshot failed — autosave still carries the layers */ }
@@ -6125,12 +6132,12 @@ void main() {
         // Same save-only treatment: the show timeline carries audio
         // AssetRefs and a whole arrangement, neither of which belongs on
         // the per-tick sync relay.
-        exportData.project.showTimeline = showTimeline.serialize();
+        exportData.project.showTimeline = parts.showTimeline !== undefined ? parts.showTimeline : showTimeline.serialize();
       } catch { /* ditto */ }
       try {
         // Cue list, timecode, schedule and projectors: save-only for the
         // same reason as the show timeline.
-        exportData.project.showControl = serializeShowControl();
+        exportData.project.showControl = parts.showControl !== undefined ? parts.showControl : serializeShowControl();
       } catch { /* ditto */ }
       return JSON.stringify(exportData, null, 2);
     },

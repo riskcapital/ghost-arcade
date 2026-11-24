@@ -1988,8 +1988,8 @@ export function trackTemplateFromLayer(layer: Layer): Layer {
 }
 
 /** Track copies of their layers, refreshed where they changed. */
-function refreshTemplates(pairs: ReadonlyArray<readonly [ShowLayerTrack, Layer]>): void {
-  if (!pairs.length) return;
+/** The tracks whose copy of their layer is out of date, with the fresh copy. */
+function freshTemplates(pairs: ReadonlyArray<readonly [ShowLayerTrack, Layer]>): Map<string, { template: Layer; layerName: string }> {
   const next = new Map<string, { template: Layer; layerName: string }>();
   for (const [track, layer] of pairs) {
     const template = trackTemplateFromLayer(layer);
@@ -1998,6 +1998,25 @@ function refreshTemplates(pairs: ReadonlyArray<readonly [ShowLayerTrack, Layer]>
     if (track.template && track.layerName === layerName && sameJson(track.template, template)) continue;
     next.set(track.id, { template, layerName });
   }
+  return next;
+}
+
+/** Each track of `tracks` whose layer is in `layers`, paired with it. */
+function templatePairs(tracks: readonly ShowLayerTrack[], layers: readonly Layer[]): Array<[ShowLayerTrack, Layer]> {
+  const byId = new Map(layers.map((l) => [l.id, l]));
+  const pairs: Array<[ShowLayerTrack, Layer]> = [];
+  for (const track of tracks) {
+    // A row with nothing on it never draws a copy of its piece.
+    if (!track.template && !rowHasContent(track)) continue;
+    const layer = byId.get(track.layerId);
+    if (layer) pairs.push([track, layer]);
+  }
+  return pairs;
+}
+
+function refreshTemplates(pairs: ReadonlyArray<readonly [ShowLayerTrack, Layer]>): void {
+  if (!pairs.length) return;
+  const next = freshTemplates(pairs);
   if (!next.size) return;
   store.update((s) => ({
     ...s,
@@ -3371,15 +3390,7 @@ export const showTimeline = {
   /** Refresh every track whose layer is in `layers` (the project's live
    *  layers) at once. */
   refreshTrackTemplates(layers: readonly Layer[]) {
-    const byId = new Map(layers.map((l) => [l.id, l]));
-    const pairs: Array<[ShowLayerTrack, Layer]> = [];
-    for (const track of get(store).layerTracks) {
-      // A row with nothing on it never draws a copy of its piece.
-      if (!track.template && !rowHasContent(track)) continue;
-      const layer = byId.get(track.layerId);
-      if (layer) pairs.push([track, layer]);
-    }
-    refreshTemplates(pairs);
+    refreshTemplates(templatePairs(get(store).layerTracks, layers));
   },
 
   /**
@@ -4717,15 +4728,30 @@ export const showTimeline = {
    * projectionSimScene.exportForProject(). `isPlaying` / `currentTime` /
    * `activeClipId` are session state and never travel.
    */
-  serialize(): ShowTimelineSnapshot {
+  serialize(options: { updateStore?: boolean } = {}): ShowTimelineSnapshot {
     // A save carries each track's copy of its layer as the layer is now,
-    // not as the last refresh left it.
-    if (templateLayerSource && get(store).layerTracks.length) {
-      try { this.refreshTrackTemplates(templateLayerSource()); } catch (err) {
+    // not as the last refresh left it. `updateStore: false` (the unsaved-
+    // changes check) puts the fresh copies in the snapshot only, leaving the
+    // store and its subscribers alone; the snapshot is the same.
+    let s = get(store);
+    if (templateLayerSource && s.layerTracks.length) {
+      try {
+        if (options.updateStore === false) {
+          const fresh = freshTemplates(templatePairs(s.layerTracks, templateLayerSource()));
+          if (fresh.size) {
+            s = { ...s, layerTracks: s.layerTracks.map((t) => {
+              const next = fresh.get(t.id);
+              return next ? { ...t, ...next } : t;
+            }) };
+          }
+        } else {
+          this.refreshTrackTemplates(templateLayerSource());
+        }
+      } catch (err) {
         console.warn('[ShowTimeline] template refresh before save failed:', err);
       }
     }
-    const s = get(store);
+    if (options.updateStore !== false) s = get(store);
     const active = docSnapshot(s);
     const parked = docSnapshot(parkedDoc);
     const [show, timeline] = s.doc === 'show' ? [active, parked] : [parked, active];
