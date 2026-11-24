@@ -9,6 +9,7 @@ import type { GenerationType } from '../api/ai-client';
 import { localServerFetch } from '../remote/remotePairing';
 import { fetchCommunityCatalog, syncCommunityCatalog, type CommunitySyncResult } from '../community/communitySync';
 import { loadSketches, saveSketch, removeSketch, announceSketchChanges } from './sketchLibrary';
+import { communityEffectVersions, installCommunityEffect, removeCommunityEffect } from '../effects/customEffects';
 
 export interface SavedShader {
   id: string;
@@ -343,6 +344,13 @@ function createShaderLibraryStore() {
       putSketch: saveSketch,
       removeSketch,
       sketchesChanged: announceSketchChanges,
+      effectVersions: communityEffectVersions,
+      putEffect: (entry, code) => installCommunityEffect(
+        code,
+        { id: entry.id, version: entry.version, licence: entry.licence, ...(entry.author?.url ? { authorUrl: entry.author.url } : {}) },
+        { author: entry.author?.name },
+      ),
+      removeEffect: removeCommunityEffect,
     });
   }
 

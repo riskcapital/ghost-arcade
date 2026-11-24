@@ -19,7 +19,18 @@ const ISF = '/*{ "INPUTS": [] }*/\nvoid main(){ gl_FragColor = vec4(1.0); }\n';
 const P5 = 'function setup(){ createCanvas(windowWidth, windowHeight); }\nfunction draw(){ background(0); }\n';
 const THREE = '<!doctype html><html><body><script>window.shaderParams = { speed: 1 };</script></body></html>\n';
 
-async function entry(id: string, kind: 'isf' | 'p5' | 'three', code: string, version = 1): Promise<Record<string, unknown>> {
+const EFFECT = JSON.stringify({
+  version: 1,
+  type: 'soft-tint',
+  label: 'Soft Tint',
+  category: 'Color',
+  description: 'Washes the layer in a color.',
+  previewCSS: '#f0f',
+  params: [{ param: 'uAmount', name: 'Amount', type: 'slider', min: 0, max: 1, default: 0.5 }],
+  shader: 'uniform sampler2D uTexture;\nuniform float uAmount;\nvarying vec2 vUv;\nvoid main(){ gl_FragColor = texture2D(uTexture, vUv) * uAmount; }\n',
+});
+
+async function entry(id: string, kind: 'isf' | 'p5' | 'three' | 'effect', code: string, version = 1): Promise<Record<string, unknown>> {
   return {
     id,
     kind,
@@ -157,6 +168,41 @@ describe('Find latest with the community catalog', () => {
   it('uses the shader feed when the site has no signed catalog (404)', async () => {
     const f = vi.fn(async () => ({ status: 404, ok: false, url: `${ORIGIN}/api/shaders/catalog/v2` }) as Response) as unknown as typeof fetch;
     expect(await fetchCommunityCatalog(`${ORIGIN}/api/shaders`, f)).toBeNull();
+  });
+
+  it('installs an effect, and leaves effects alone in an app without an effects library', async () => {
+    const { publicHex, body } = await signedBody([await entry('e1', 'effect', EFFECT), await entry('s1', 'isf', ISF)]);
+    const catalog = (await readSignedCatalog(body, ORIGIN, publicHex))!;
+    expect(catalog.entries.map((e) => e.kind)).toEqual(['effect', 'isf']);
+
+    const effects = new Map<string, number>();
+    const { d } = deps({ e1: EFFECT, s1: ISF });
+    const result = await syncCommunityCatalog(catalog, {
+      ...d,
+      effectVersions: () => new Map(effects),
+      putEffect: (e) => { effects.set(e.id, e.version); return null; },
+      removeEffect: (id) => { effects.delete(id); },
+    });
+    expect(result).toMatchObject({ added: 2, rejected: [] });
+    expect(effects.get('e1')).toBe(1);
+
+    const older = deps({ e1: EFFECT, s1: ISF });
+    expect(await syncCommunityCatalog(catalog, older.d)).toMatchObject({ added: 1, rejected: [] });
+  });
+
+  it('reports an effect the library turns down, and removes a taken-down effect', async () => {
+    const { publicHex, body } = await signedBody([await entry('e1', 'effect', EFFECT)], ['e-gone']);
+    const catalog = (await readSignedCatalog(body, ORIGIN, publicHex))!;
+    const effects = new Map([['e-gone', 1]]);
+    const { d } = deps({ e1: EFFECT });
+    const result = await syncCommunityCatalog(catalog, {
+      ...d,
+      effectVersions: () => new Map(effects),
+      putEffect: () => 'the effect name "soft-tint" is already used by one of your own effects',
+      removeEffect: (id) => { effects.delete(id); },
+    });
+    expect(result).toMatchObject({ added: 0, removed: 1, rejected: ['effect e1'] });
+    expect(effects.has('e-gone')).toBe(false);
   });
 
   it('reports offline when the site cannot be reached', async () => {

@@ -1,6 +1,6 @@
 /**
  * The community catalog behind Find latest (version 2): shaders, p5.js
- * sketches and three.js pages made by Ghost Arcade contributors, with their
+ * sketches, three.js pages and effects made by Ghost Arcade contributors, with their
  * author, licence and the SHA-256 of every file.
  *
  * The website sends the catalog as a JSON string (`payload`) with an
@@ -16,7 +16,7 @@ import { jsAnimationFromHtml } from '../renderer/jsAnimationPage';
 /** ghostarcade.live's catalog signing key (public half). */
 export const COMMUNITY_CATALOG_PUBLIC_KEY = 'a20b6ae81c181768c10f65ab353226b1dbe6de51166e9e4fe0d5b39b4d7eae02';
 
-export type CommunityKind = 'isf' | 'p5' | 'three';
+export type CommunityKind = 'isf' | 'p5' | 'three' | 'effect';
 
 export interface CommunityAuthor {
   name: string;
@@ -77,7 +77,7 @@ export async function verifyEd25519(message: string, signatureHex: string, publi
 }
 
 const ID = /^[a-zA-Z0-9._-]{1,128}$/;
-const KINDS: CommunityKind[] = ['isf', 'p5', 'three'];
+const KINDS: CommunityKind[] = ['isf', 'p5', 'three', 'effect'];
 
 /** Only https downloads from the site the catalog came from. */
 function sameSiteHttps(url: unknown, catalogOrigin: string): url is string {

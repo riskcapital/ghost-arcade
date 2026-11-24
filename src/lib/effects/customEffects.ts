@@ -6,7 +6,8 @@
  * register it at runtime alongside the built-in effect catalog.
  *
  * Persistence: localStorage (`ghost-arcade-custom-effects`). Imported effects survive
- * app restarts; there's no cloud sync yet.
+ * app restarts. Effects from the community catalog (Find latest) land here too,
+ * marked with where they came from so updates and take-downs can find them.
  *
  * Runtime integration: `effects.ts::createEffectMaterial` and
  * `effects.ts::updateEffectUniforms` check the custom registry first, falling
@@ -86,6 +87,17 @@ export interface CustomEffect {
   defaults: Record<string, number | [number, number, number] | [number, number, number, number]>;
   /** When the user imported this effect. */
   importedAt: number;
+  /** Set when it came from the community catalog rather than the user's own file. */
+  community?: CommunityEffectOrigin;
+}
+
+export interface CommunityEffectOrigin {
+  /** The catalog id (not the effect type). */
+  id: string;
+  version: number;
+  licence: 'MIT' | 'CC0' | null;
+  /** The author's artist profile on ghostarcade.live. */
+  authorUrl?: string;
 }
 
 const LS_KEY = 'ghost-arcade-custom-effects';
@@ -155,7 +167,8 @@ export const customCatalogEntries = derived(customEffects, ($list) =>
     type: ce.type as unknown as EffectType,
     label: ce.label,
     category: ce.category,
-    description: ce.description,
+    // Community effects carry their credit, as community shaders do.
+    description: ce.community && ce.author ? `${ce.description} By ${ce.author}.` : ce.description,
     previewCSS: ce.previewCSS,
     tier: 'demo',
   })),
@@ -324,6 +337,46 @@ export function parseDMFX(json: string): ImportResult {
   };
 
   return { ok: true, effect };
+}
+
+/** Community effects installed: catalog id -> version. */
+export function communityEffectVersions(): Map<string, number> {
+  return new Map(get(customEffects).filter((e) => e.community).map((e) => [e.community!.id, e.community!.version]));
+}
+
+/**
+ * Install (or update) an effect from the community catalog. Returns a message
+ * instead when the file can't be read, or when its type is already used by
+ * one of the user's own effects or another community effect: those are never
+ * replaced.
+ */
+export function installCommunityEffect(
+  json: string,
+  origin: CommunityEffectOrigin,
+  credit: { author?: string },
+): string | null {
+  const result = parseDMFX(json);
+  if (!result.ok || !result.effect) return result.error ?? 'Unreadable effect file';
+  const effect = result.effect;
+  const existing = getCustomEffect(effect.type);
+  if (existing && existing.community?.id !== origin.id) {
+    return `the effect name "${effect.type}" is already used by ${existing.community ? 'another community effect' : 'one of your own effects'}`;
+  }
+  // If a new version renamed its type, drop the old one.
+  const previous = get(customEffects).find((e) => e.community?.id === origin.id && e.type !== effect.type);
+  if (previous) removeCustomEffect(previous.type);
+  addCustomEffect({
+    ...effect,
+    author: credit.author ?? effect.author,
+    community: origin,
+    importedAt: existing?.importedAt ?? previous?.importedAt ?? effect.importedAt,
+  });
+  return null;
+}
+
+/** Remove a community effect by its catalog id (when it is taken down). */
+export function removeCommunityEffect(id: string): void {
+  customEffects.update((list) => list.filter((e) => e.community?.id !== id));
 }
 
 /** Read a File from a <input type="file"> and import it. */

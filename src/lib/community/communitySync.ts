@@ -1,9 +1,10 @@
 /**
  * Find latest with the signed community catalog: brings in new and updated
- * shaders, p5.js sketches and three.js pages, and removes ones that were
- * taken down. Shaders go to the shader library; sketches and pages go to
- * the sketch library (the media tray's JS tab). Layers and clips that use
- * an item keep their own copy, so removing one never breaks a show.
+ * shaders, p5.js sketches, three.js pages and effects, and removes ones that
+ * were taken down. Shaders go to the shader library; sketches and pages go
+ * to the sketch library (the media tray's JS tab); effects go to the custom
+ * effects in the effect picker. Layers and clips that use an item keep their
+ * own copy, so removing one never breaks a show.
  */
 import { CatalogTrustError, communityJsSource, downloadVerified, readSignedCatalog, type CommunityCatalog, type CommunityEntry } from './catalogV2';
 import type { StoredSketch } from '../stores/sketchLibrary';
@@ -45,6 +46,11 @@ export interface CommunitySyncDeps {
   removeSketch(id: string): Promise<void>;
   /** Tell the tray what changed. */
   sketchesChanged(change: { put: StoredSketch[]; removed: string[] }): void;
+  /** Community effects already installed: catalog id -> version. */
+  effectVersions?(): Map<string, number>;
+  /** Install an effect file. A message when it can't be (unreadable, or its name is taken). */
+  putEffect?(entry: CommunityEntry, code: string): string | null;
+  removeEffect?(id: string): void;
   now?: () => number;
 }
 
@@ -71,6 +77,7 @@ export async function syncCommunityCatalog(catalog: CommunityCatalog, deps: Comm
   const result: CommunitySyncResult = { added: 0, updated: 0, removed: 0, skipped: 0, total: catalog.entries.length, rejected: [] };
 
   const shaderVersions = deps.shaderVersions();
+  const effectVersions = deps.effectVersions?.() ?? new Map<string, number>();
   const stored = await deps.loadSketches();
   const sketchVersions = new Map<string, number>();
   for (const s of stored) {
@@ -80,7 +87,11 @@ export async function syncCommunityCatalog(catalog: CommunityCatalog, deps: Comm
 
   const put: StoredSketch[] = [];
   for (const entry of catalog.entries) {
-    const local = entry.kind === 'isf' ? shaderVersions.get(entry.id) : sketchVersions.get(entry.id);
+    // Without an effects library to put them in, effects wait for a newer app.
+    if (entry.kind === 'effect' && !deps.putEffect) continue;
+    const local = entry.kind === 'isf' ? shaderVersions.get(entry.id)
+      : entry.kind === 'effect' ? effectVersions.get(entry.id)
+      : sketchVersions.get(entry.id);
     if (local !== undefined && local >= entry.version) {
       result.skipped++;
       continue;
@@ -96,6 +107,13 @@ export async function syncCommunityCatalog(catalog: CommunityCatalog, deps: Comm
 
     if (entry.kind === 'isf') {
       await deps.putShader(shaderRecord(entry, code), local === undefined);
+    } else if (entry.kind === 'effect') {
+      const problem = deps.putEffect!(entry, code);
+      if (problem) {
+        console.warn(`[community-sync] skipped ${entry.name}: ${problem}`);
+        result.rejected.push(entry.name);
+        continue;
+      }
     } else {
       const sketch: StoredSketch = {
         id: entry.id,
@@ -120,6 +138,10 @@ export async function syncCommunityCatalog(catalog: CommunityCatalog, deps: Comm
     if (sketchVersions.has(id)) {
       await deps.removeSketch(id);
       removed.push(id);
+      result.removed++;
+    }
+    if (effectVersions.has(id) && deps.removeEffect) {
+      deps.removeEffect(id);
       result.removed++;
     }
   }
