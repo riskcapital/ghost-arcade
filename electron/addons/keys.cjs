@@ -14,7 +14,7 @@
 
 const LICENCE_KEYS = Object.freeze({
   'lic-dev': Object.freeze({ publicKey: 'fa6352c1acc9d9b0191f384d52ebdc4c194befc6aee3c0989fd986531d57ac82', dev: true }),
-  // 'lic-2026-11': Object.freeze({ publicKey: '<64 hex characters>' }),
+  'lic-2026-11': Object.freeze({ publicKey: '65a93a86c2d1b3825f2a3aba3684d3be1dbe111bf7dd0da528a5d01613c6f375' }),
 });
 
 /** kid → 64-hex public key, for this kind of build. */
