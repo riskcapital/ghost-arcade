@@ -135,6 +135,14 @@ ipcMain.handle('addons_free_seat', (_, args) => addonEntitlements.freeSeatAndAct
 ipcMain.handle('addons_refresh', () => addonEntitlements.refresh());
 ipcMain.handle('addons_deactivate', () => addonEntitlements.deactivate());
 ipcMain.handle('addons_extend', () => addonEntitlements.useEmergencyExtension());
+/** Audio Lab usable in this run (its recording and My loops writes ask). */
+function audioLabUsable() {
+  try {
+    return addonEntitlements.status()?.products?.['addon.audio-lab']?.usable === true;
+  } catch {
+    return false;
+  }
+}
 
 // Linux: what the machine offers the render core (electron/linux-gpu-setup.cjs),
 // read when the core has fallen back to software so the user can be told why.
@@ -8401,6 +8409,8 @@ function registerIpcHandlers() {
   ]) {
     ipcMain.handle(channel, async (_, args) => {
       try {
+        // A new take needs Audio Lab (a paid add-on); one under way can always finish.
+        if (method === 'begin' && !audioLabUsable()) return { success: false, error: 'Audio Lab is not unlocked on this computer.' };
         wavStreams ??= createWavStreamStore(path.join(app.getPath('userData'), 'project-assets'));
         return { success: true, ...(await wavStreams[method](args && typeof args === 'object' ? args : {})) };
       } catch (err) {
@@ -8449,6 +8459,8 @@ function registerIpcHandlers() {
   ]) {
     ipcMain.handle(channel, async (_, args) => {
       try {
+        // Saving or renaming a loop needs Audio Lab (a paid add-on); listing, reading and deleting do not.
+        if ((method === 'save' || method === 'rename') && !audioLabUsable()) return { success: false, error: 'Audio Lab is not unlocked on this computer.' };
         const result = userLoops()[method](args && typeof args === 'object' ? args : {});
         return method === 'list' ? { success: true, loops: result } : { success: true, ...result };
       } catch (err) {

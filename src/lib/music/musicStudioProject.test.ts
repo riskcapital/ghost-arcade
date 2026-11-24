@@ -322,6 +322,36 @@ describe('music studio in the project file', () => {
     }
   });
 
+  it('opens a layer with engine voices unchanged while Audio Lab is locked, and saves it back the same', () => {
+    // Saved on a computer where Audio Lab is unlocked: a VX voice and two engine voices, one with its own scan.
+    const scan = { type: 'file', name: 'room.ply', assetRef: { kind: 'local-file', originalPath: '/scans/room.ply', name: 'room.ply' } };
+    const studioSource = {
+      effectType: 'music-studio',
+      musicSet: 'machine',
+      musicSceneId: null,
+      musicVoices: [
+        { file: 'VX-Scope.fs', source: 'lead', auto: false, level: 0.4, params: { scale: 2 } },
+        { file: 'engine:fluid-ink', source: 'drums', auto: true, level: 0.8, params: { burstSize: 0.7, palette: 2 } },
+        { file: 'engine:cloud-pulse', source: 'bass', auto: true, level: 0.6, params: { waveGain: 1.2 }, scan },
+      ],
+    };
+    const newer = {
+      version: '2.1.12',
+      project: {
+        id: 'voices', name: 'Voices', width: 1920, height: 1080,
+        layers: [
+          { id: 'voices-studio', name: 'Audio Lab', type: 'media', visible: true, opacity: 1,
+            source: { id: 'plugin-musicstudio-voices', type: 'effect', name: 'Audio Lab', src: 'plugin://musicstudio', effectSource: studioSource } },
+        ],
+      },
+    };
+    expect(layers.project.importProject(JSON.parse(JSON.stringify(newer)))).toBe(true);
+    const layer = get(layers.project).layers.find((l) => l.id === 'voices-studio');
+    expect(layer?.source?.effectSource).toEqual(studioSource);
+    const saved = JSON.parse(JSON.stringify(layers.project.exportProject())) as { project: { layers: Array<{ id: string; source: { effectSource: unknown } }> } };
+    expect(saved.project.layers.find((l) => l.id === 'voices-studio')?.source.effectSource).toEqual(studioSource);
+  });
+
   it('File > New resets the studio', () => {
     playSomething();
     layers.PROJECT_SECTION_RESETS.musicStudio();

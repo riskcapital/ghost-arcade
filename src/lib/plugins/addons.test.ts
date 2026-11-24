@@ -98,7 +98,25 @@ function graphSync(b: Build): any {
   return sync;
 }
 
+/** An Audio Lab engine voice as the studio expands it: a hidden gpu layer drawn by the core. */
+function engineVoice(b: Build): any {
+  const layer = b.types.createLayer('ev-1', 'Fluid Ink', 'gpu') as any;
+  layer.visible = true;
+  const content = b.types.createDefaultGPULayerContent();
+  content.shaderId = 'fluid-ink';
+  content.params = { burstSize: 0.5 } as any;
+  return { ...layer, opacity: 0, gpuLayerContent: content, engineVoice: true };
+}
+
+function voiceSync(b: Build): any {
+  const sync = graphSync(b);
+  sync.nativeFeatureFlags.native_fluid_ink_graph = true;
+  sync.nativeGraphReadyKinds = new Set(['fluid-ink']);
+  return sync;
+}
+
 const sent = () => h.batches.flat();
+const voiceInstalls = () => sent().filter((c) => c.type === 'set_native_graph_layer' && c.kind === 'fluid-ink');
 const synthInstalls = () => sent().filter((c) => c.type === 'set_native_graph_layer' && c.kind === 'videosynth');
 const synthShaders = (b: Build) => b.graphs.buildNativePluginPrecompileCommands().filter((c: any) => String(c.shader_id).startsWith('videosynth/'));
 
@@ -177,6 +195,29 @@ describe('add-ons locked on this computer', () => {
     await sync.flush(1920, 1080, [layer]);
     expect(synthInstalls()).toHaveLength(0);
     expect(sent().some((c) => JSON.stringify(c).includes('native-graph://videosynth'))).toBe(false);
+    expect(layer).toEqual(saved);
+  });
+});
+
+describe('Audio Lab engine voices', () => {
+  it('draws one when Audio Lab is unlocked', async () => {
+    const b = await build(true);
+    await voiceSync(b).flush(1920, 1080, [engineVoice(b)]);
+    expect(voiceInstalls()).toHaveLength(1);
+  });
+
+  it('draws none while it is locked, keeps the layer as it was, and draws it once unlocked', async () => {
+    const b = await build(false);
+    const sync = voiceSync(b);
+    const layer = engineVoice(b);
+    const saved = structuredClone(layer);
+    await sync.flush(1920, 1080, [layer]);
+    await sync.flush(1920, 1080, [layer]);
+    expect(voiceInstalls()).toHaveLength(0);
+    expect(layer).toEqual(saved);
+    b.access.setAddonsStatusForTests({ 'addon.audio-lab': true });
+    await sync.flush(1920, 1080, [layer]);
+    expect(voiceInstalls()).toHaveLength(1);
     expect(layer).toEqual(saved);
   });
 });

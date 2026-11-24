@@ -23,6 +23,10 @@ vi.mock('./loopStation', () => {
 
 import { loopKey, pedalActions, pedalResolve } from './loopControls';
 import * as station from './loopStation';
+import { setAddonsStatusForTests } from '../addons/addonAccess';
+
+// Audio Lab is a paid add-on: these tests run it unlocked.
+setAddonsStatusForTests({ 'addon.audio-lab': true });
 
 const calls = (station as unknown as { calls: string[] }).calls;
 const k = (code: string, extra: Partial<KeyboardEvent> = {}) => ({ key: extra.key ?? '', code, shiftKey: false, metaKey: false, ctrlKey: false, altKey: false, repeat: false, ...extra });

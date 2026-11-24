@@ -32,6 +32,7 @@ import {
 } from './loopStation';
 import { LOOP_TRACK_COUNT, trackForProgram, type PedalPreset } from './loopTrack';
 import { onProgramChange } from '../midi/programChange';
+import { addonUsable } from '../addons/addonAccess';
 
 /** A footswitch held this long undoes instead of pressing. */
 export const PEDAL_HOLD_MS = 500;
@@ -105,6 +106,11 @@ export function cancelProgramLearn(): void {
 }
 
 function onProgram(channel: number, program: number): void {
+  // Audio Lab is a paid add-on: locked, a pedal's Program Change does nothing.
+  if (!addonUsable('addon.audio-lab')) {
+    cancelProgramLearn();
+    return;
+  }
   if (learning) {
     const done = learning;
     learning = null;
@@ -166,6 +172,7 @@ export function registerLoopControls(): void {
  * key was the looper's.
  */
 export function loopKey(e: Pick<KeyboardEvent, 'key' | 'code' | 'shiftKey' | 'metaKey' | 'ctrlKey' | 'altKey' | 'repeat'>): boolean {
+  if (!addonUsable('addon.audio-lab')) return false;
   const mod = e.metaKey || e.ctrlKey;
   const i = get(loopStationView).selected;
   if (e.repeat) return false;

@@ -1,5 +1,5 @@
 import {sanitizeStoredInteractive} from '../mobile/studio/interactive';
-import { checkAddons } from '../addons/addonAccess';
+import { addonUsable, checkAddons } from '../addons/addonAccess';
 import {introScene} from '../mobile/studio/interactiveLibrary';
 import { buildWorld, WORLDS, type StageShape, type WorldId } from '../scene3d/worlds';
 import { interactiveFromScene3D, reliefStarterScene } from '../scene3d/reliefStarter';
@@ -43,6 +43,8 @@ import { showToast } from './errorToast';
  * snapshots it. A failed write still saves the rest, and says so.
  */
 export async function flushLooperAudio(): Promise<void> {
+  // Locked, the looper never ran in this session: nothing waits, and its code stays unloaded.
+  if (!addonUsable('addon.audio-lab')) return;
   try {
     const { flushAudioLoops } = await import('../music/loopStation');
     await flushAudioLoops();
